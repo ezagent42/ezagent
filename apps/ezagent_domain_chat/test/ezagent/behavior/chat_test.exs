@@ -39,8 +39,11 @@ defmodule Ezagent.Behavior.ChatTest do
       # tools write the durable `template_working_copy` field through it.
       # team-routing-unification §3.6 (PR-6) — `:set_legends` joins as the
       # session-scoped legend-registry writer (same authority class as
-      # :set_working_copy).
-      assert Chat.actions() == [:send, :receive, :join, :leave, :set_working_copy, :set_legends]
+      # :set_working_copy). team-routing-unification §3.4/§3.7 (PR-7) —
+      # `:set_prompt_templates` joins as the named prompt-template-map
+      # writer (same authority class; PR-7 materialization installs it).
+      assert Chat.actions() ==
+               [:send, :receive, :join, :leave, :set_working_copy, :set_legends, :set_prompt_templates]
     end
 
     test "state_slice/0 returns :chat" do
@@ -111,10 +114,12 @@ defmodule Ezagent.Behavior.ChatTest do
       assert Chat.template_working_copy(pre_pr2_slice) == Chat.default_template_working_copy()
     end
 
-    test "interface/0 declares all 6 actions" do
+    test "interface/0 declares all 7 actions" do
       keys = Chat.interface() |> Map.keys() |> Enum.sort()
-      # team-routing-unification §3.6 (PR-6) — :set_legends added.
-      assert keys == [:join, :leave, :receive, :send, :set_legends, :set_working_copy]
+      # team-routing-unification §3.6 (PR-6) — :set_legends added;
+      # §3.4/§3.7 (PR-7) — :set_prompt_templates added.
+      assert keys ==
+               [:join, :leave, :receive, :send, :set_legends, :set_prompt_templates, :set_working_copy]
     end
   end
 

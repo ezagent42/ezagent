@@ -476,11 +476,17 @@ defmodule EzagentDomainChat.Application do
       name: "default",
       description:
         "Default session template — orchestrator-only team. Compose " <>
-          "workers via the orchestrator's `add_agent_slot` tool. " <>
+          "the team via the orchestrator's member + rule-set tools. " <>
           "Seeded at boot under `workspace://system` so " <>
           "`mix ezagent workspace create_session --template-name default` " <>
           "and the LV New-session form resolve without operator setup.",
-      agent_slots: [],
+      # team-routing-unification §3.7 (PR-7) — SessionTemplate content carries
+      # `members` (in_session_template members) / `prompt_templates` / `legends`;
+      # `agent_slots` is NO LONGER a content field (PR-8 removes the slot tools).
+      # The default template is orchestrator-only → all three are empty.
+      members: [],
+      prompt_templates: %{},
+      legends: %{},
       orchestrator_template_uri: orchestrator_uri,
       routing_rules: [],
       default_workspace_uri: workspace_uri,
@@ -671,6 +677,12 @@ defmodule EzagentDomainChat.Application do
     # (orchestrator / system-internal authority — same class as
     # :set_working_copy; the PR-7 template materialization path will use it).
     :ok = CapabilityRegistry.register(Session, :set_legends, Chat)
+    # team-routing-unification §3.4/§3.7 (PR-7) — the session-scoped named
+    # prompt-template map is written via `?action=chat.set_prompt_templates`
+    # on the Session Kind (same orchestrator / system-internal authority class
+    # as :set_legends; the PR-7 template materialization path uses it to
+    # install a template's `prompt_templates`).
+    :ok = CapabilityRegistry.register(Session, :set_prompt_templates, Chat)
     :ok = CapabilityRegistry.register(User, :receive, Chat)
     :ok = CapabilityRegistry.register(Agent, :receive, Chat)
     # Phase 6 PR 2: Identity behavior registration (list_caps / has_cap?)

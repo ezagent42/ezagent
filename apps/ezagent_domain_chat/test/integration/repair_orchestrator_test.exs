@@ -21,7 +21,9 @@ defmodule EzagentDomainChat.Integration.RepairOrchestratorTest do
 
   use ExUnit.Case, async: false
 
-  alias Ezagent.Entity.{Session, User}
+  alias Ezagent.{Invocation, KindRegistry}
+  alias Ezagent.Ecto.KindSnapshot
+  alias Ezagent.Entity.{Session, SessionTemplate, User}
 
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
@@ -100,4 +102,161 @@ defmodule EzagentDomainChat.Integration.RepairOrchestratorTest do
                )
     end
   end
+
+  describe "repair must NOT destroy a live session on a re-materialization failure (codex cycle-2 MAJOR #3)" do
+    test "a materialization failure during REPAIR leaves the session Kind alive + snapshot intact, sweeping only residue" do
+      n = System.unique_integer([:positive])
+      template_name = "repair-mat-fail-#{n}"
+      role_name = "worker-#{n}"
+
+      # An echo-flavor source AgentTemplate the team member is spawned from.
+      source_template_uri = seed_echo_agent_template(n)
+
+      # An ORCHESTRATED SessionTemplate (cc-orchestrator OTU) carrying ONE
+      # spawned echo team member — so the repair path re-runs materialization.
+      content = orchestrated_team_content(template_name, source_template_uri, role_name)
+      _ = persist_session_template(content)
+
+      short = "repair-mat-sess-#{n}"
+
+      # Create the session — succeeds (status :ready), session Kind live.
+      assert {:ok, session_uri, create_meta} =
+               EzagentDomainChat.create_session(short, User.admin_uri(),
+                 template_name: template_name
+               )
+
+      assert create_meta.orchestrator_status == :ready
+      assert {:ok, live_pid} = KindRegistry.lookup(session_uri)
+      assert Process.alive?(live_pid)
+
+      snapshot_before = KindSnapshot.get(URI.to_string(session_uri))
+      assert snapshot_before != nil, "precondition: the live session has a snapshot"
+
+      # Sabotage the source AgentTemplate so the NEXT materialization (during
+      # repair) fails: overwrite its content to DROP the `flavor` field →
+      # `source_template_flavor/1` returns {:source_template_missing_flavor,_}
+      # at materialize time, BEFORE any member respawn (so no residue is even
+      # created — the key assertion is the live session survives).
+      :ok = overwrite_agent_template_without_flavor(source_template_uri)
+
+      # REPAIR — re-materialization now FAILS.
+      assert {:error, _reason} =
+               EzagentDomainChat.repair_orchestrator(session_uri)
+
+      # ── the live session SURVIVED the failed repair ──────────────────────
+      assert {:ok, still_pid} = KindRegistry.lookup(session_uri),
+             "repair re-materialization failure must NOT terminate the live session Kind"
+
+      assert Process.alive?(still_pid)
+      assert still_pid == live_pid, "the SAME session process is intact (not re-spawned)"
+
+      # snapshot row intact (not deleted by a rollback).
+      assert KindSnapshot.get(URI.to_string(session_uri)) != nil,
+             "the live session's snapshot must survive a failed repair (no teardown)"
+
+      # the pre-existing materialized member is still a session member.
+      slice = chat_slice(session_uri)
+      member_uri = Ezagent.Behavior.Chat.role_name_to_uri(slice.members, role_name)
+
+      assert match?(%URI{}, member_uri),
+             "the pre-existing team member must remain joined after a failed repair"
+
+      cleanup(session_uri)
+      cleanup(member_uri)
+      cleanup(create_meta.orchestrator_uri)
+    end
+  end
+
+  # ── helpers ────────────────────────────────────────────────────────────
+
+  defp chat_slice(session_uri) do
+    {:ok, pid} = KindRegistry.lookup(session_uri)
+    %{state: %{chat: %{state: slice}}} = :sys.get_state(pid)
+    slice
+  end
+
+  defp orchestrated_team_content(template_name, source_template_uri, role_name) do
+    %{
+      name: template_name,
+      description: "orchestrated team for repair-failure test",
+      orchestrator_template_uri:
+        Ezagent.URI.new!(Ezagent.Orchestrator.CcOrchestratorSeed.template_uri()),
+      default_workspace_uri: URI.parse("workspace://system"),
+      parent_template_uri: nil,
+      version_tag: nil,
+      created_by: User.admin_uri(),
+      created_at: ~U[2026-06-01 00:00:00Z],
+      members: [
+        %{
+          uri: nil,
+          role_name: role_name,
+          in_session_template: true,
+          source_template_uri: source_template_uri
+        }
+      ],
+      prompt_templates: %{},
+      legends: %{},
+      routing_rules: []
+    }
+  end
+
+  defp persist_session_template(content) do
+    hash = SessionTemplate.compute_version_hash(content)
+
+    _ =
+      KindSnapshot.delete(
+        URI.to_string(SessionTemplate.build_uri(content.name, hash, workspace: "system"))
+      )
+
+    {:ok, uri} = SessionTemplate.persist_version_as_system(content, "system")
+    uri
+  end
+
+  defp seed_echo_agent_template(n) do
+    uri = Ezagent.URI.new!("template://agent/system/repair-seed-#{n}")
+    {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
+    :ok = write_agent_template_content(uri, %{flavor: "echo"})
+    uri
+  end
+
+  defp overwrite_agent_template_without_flavor(%URI{} = uri) do
+    # Re-write the SAME AgentTemplate Kind's content WITHOUT a flavor field.
+    write_agent_template_content(uri, %{})
+  end
+
+  defp write_agent_template_content(%URI{} = uri, extra) when is_map(extra) do
+    {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
+
+    base = %{
+      working_directory: "/tmp",
+      default_caps: [],
+      created_by: User.admin_uri(),
+      created_at: ~U[2026-06-01 00:00:00Z]
+    }
+
+    {:ok, _} =
+      Invocation.dispatch(%Invocation{
+        target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=template.write"),
+        mode: :call,
+        args: %{content: Map.merge(base, extra)},
+        ctx: %{
+          caller: User.admin_uri(),
+          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+          reply: {:caller_inbox, self()}
+        }
+      })
+
+    :ok
+  end
+
+  defp cleanup(%URI{} = uri) do
+    on_exit(fn ->
+      case KindRegistry.lookup(uri) do
+        {:ok, pid} -> if Process.alive?(pid), do: Process.exit(pid, :kill)
+        :error -> :ok
+      end
+    end)
+  end
+
+  defp cleanup(_), do: :ok
 end
