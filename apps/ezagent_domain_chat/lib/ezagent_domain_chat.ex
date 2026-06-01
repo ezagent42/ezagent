@@ -1520,7 +1520,20 @@ defmodule EzagentDomainChat do
   #     host) → DISTINCT discriminators → DISTINCT member URIs (isolation);
   #   * the SAME session URI → the SAME discriminator → the SAME member URI
   #     (deterministic; re-materialize / respawn is idempotent).
-  defp session_discriminator(%URI{} = session_uri), do: URI.to_string(session_uri)
+  @doc false
+  # codex PR-7 cycle-3 BLOCKER: `session_instance_name/3` SANITIZES (slugs) its
+  # discriminator (the hash there is applied to the slot_name, not the
+  # discriminator), so passing the raw URI string lets two session URIs whose
+  # slug forms collide (differ only in sanitizer-stripped chars) produce the
+  # SAME member URI. Hash the FULL canonical URI to a 128-bit lowercase-hex
+  # token: hex is sanitize-stable (identity under sanitize_segment) + injective
+  # across distinct session URIs (negligible collision), while the SAME URI
+  # stays stable → idempotent respawn. Public so tests share one source of truth.
+  def session_discriminator(%URI{} = session_uri) do
+    :crypto.hash(:sha256, URI.to_string(session_uri))
+    |> Base.encode16(case: :lower)
+    |> binary_part(0, 32)
+  end
 
   # Dispatch a faceted `chat.join` under the trusted `system://session-internal`
   # principal (same authority class `join_session_members/2` uses), carrying the

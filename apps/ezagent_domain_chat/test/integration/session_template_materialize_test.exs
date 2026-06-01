@@ -687,7 +687,10 @@ defmodule EzagentDomainChat.Integration.SessionTemplateMaterializeTest do
     # #1) — distinct templates yield distinct member URIs.
     good_instance =
       "echo_" <>
-        Ezagent.Entity.Agent.session_instance_name(good_role, URI.to_string(session_uri))
+        Ezagent.Entity.Agent.session_instance_name(
+          good_role,
+          EzagentDomainChat.session_discriminator(session_uri)
+        )
 
     good_member_uri = URI.new!("entity://agent/system/#{good_instance}")
 
@@ -752,7 +755,7 @@ defmodule EzagentDomainChat.Integration.SessionTemplateMaterializeTest do
 
     short = "joinfail-sess-#{n}"
     session_uri = URI.new!("session://#{template_name}/system/#{short}")
-    disc = URI.to_string(session_uri)
+    disc = EzagentDomainChat.session_discriminator(session_uri)
 
     # The cc member's session-unique URI (spawned FRESH, then its join fails).
     cc_instance = "cc_" <> Ezagent.Entity.Agent.session_instance_name(role_name, disc)
