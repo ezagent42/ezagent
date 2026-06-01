@@ -158,16 +158,57 @@ defmodule Ezagent.Routing.Resolver do
   @spec resolve(Message.t(), URI.t(), [URI.t()], keyword()) :: [URI.t()]
   def resolve(%Message{} = message, %URI{} = current_session_uri, members, opts)
       when is_list(members) and is_list(opts) do
-    workspace_uri = Keyword.get(opts, :workspace_uri) |> uri_to_string()
-
-    Application.get_env(:ezagent_core, :routing_tables, @default_routing_tables)
-    |> Enum.flat_map(&query_table(&1, message, workspace_uri))
-    |> Enum.flat_map(&expand_receiver(&1, message, current_session_uri, members, workspace_uri))
-    |> Enum.uniq_by(&URI.to_string/1)
-    |> Enum.reject(&(URI.to_string(&1) == URI.to_string(current_session_uri)))
+    resolve_with_ctx(message, current_session_uri, members, opts)
+    |> Enum.map(fn {uri, _ctx} -> uri end)
   end
 
-  defp query_table(table_name, message, workspace_uri_str) do
+  @doc """
+  Like `resolve/4` but returns `[{recipient_uri, ctx}]`, where `ctx` is the
+  matched rule's context — `%{rule_id, rule_set, prompt_template_ref}` for
+  RuleStore-backed rules, or `nil` for legacy plain-list ETS entries (which
+  carry no rule identity).
+
+  team-routing-unification §3.5 (the CRITICAL gap codex flagged): the delivery
+  transform (a later PR) must know WHICH rule routed a message to a recipient
+  so it can apply that rule's `prompt_template_ref`. `resolve/4` drops `ctx`
+  for back-compat with its many existing callers (and now delegates here).
+
+  Dedup keeps the FIRST `ctx` when the same recipient is produced by multiple
+  rules (the rule-set / single-receiver model makes that rare; §3.5).
+  """
+  @spec resolve_with_ctx(Message.t(), URI.t(), [URI.t()], keyword()) ::
+          [{URI.t(), map() | nil}]
+  def resolve_with_ctx(%Message{} = message, %URI{} = current_session_uri, members, opts)
+      when is_list(members) and is_list(opts) do
+    workspace_uri = Keyword.get(opts, :workspace_uri) |> uri_to_string()
+    current_str = URI.to_string(current_session_uri)
+
+    Application.get_env(:ezagent_core, :routing_tables, @default_routing_tables)
+    |> Enum.flat_map(&query_table_with_ctx(&1, message, workspace_uri))
+    |> Enum.flat_map(fn {receiver, ctx} ->
+      expand_receiver(receiver, message, current_session_uri, members, workspace_uri)
+      |> Enum.map(&{&1, ctx})
+    end)
+    # Deterministic tie-break (codex 2026-06-01 MED): when two rules route to
+    # the SAME recipient, the lower rule_id (earliest-created rule) wins —
+    # stable + deterministic, vs the non-deterministic ETS iteration order.
+    # `sort_by` is stable, so `uniq_by` then keeps the lowest-rule_id ctx per
+    # recipient. (Also makes `resolve/4`'s recipient order deterministic.)
+    |> Enum.sort_by(fn {_uri, ctx} -> ctx_rank(ctx) end)
+    |> Enum.uniq_by(fn {uri, _ctx} -> URI.to_string(uri) end)
+    |> Enum.reject(fn {uri, _ctx} -> URI.to_string(uri) == current_str end)
+  end
+
+  # Rank for the duplicate-recipient ctx tie-break (§3.5): lower rule_id wins;
+  # nil ctx (legacy plain-list rules, no rule identity) ranks last.
+  defp ctx_rank(%{rule_id: id}) when is_integer(id), do: id
+  defp ctx_rank(_), do: 1_000_000_000
+
+  # team-routing-unification §3.5: pair each matched rule's receivers with
+  # that rule's ctx, so `resolve_with_ctx/4` can thread matched-rule context
+  # (rule_id / prompt_template_ref) through to delivery. (Replaces the old
+  # receiver-only `query_table/3`; `resolve/4` now maps ctx off.)
+  defp query_table_with_ctx(table_name, message, workspace_uri_str) do
     case safe_list_all(table_name) do
       [] ->
         []
@@ -186,10 +227,25 @@ defmodule Ezagent.Routing.Resolver do
           applies_to_workspace?(value, workspace_uri_str)
         end)
         |> Enum.flat_map(fn {_matcher, value} ->
-          receivers_of(value)
+          ctx = rule_ctx_of(value)
+          Enum.map(receivers_of(value), &{&1, ctx})
         end)
     end
   end
+
+  # Matched-rule context for §3.5 threading. RuleStore-loaded values are maps
+  # carrying rule_id/rule_set/prompt_template_ref (added in the rule-set schema
+  # PR); legacy plain-list ETS entries (RoutingRegistry.put — tests/hand-coded)
+  # carry no rule identity → nil ctx.
+  defp rule_ctx_of(value) when is_map(value) do
+    %{
+      rule_id: Map.get(value, :rule_id),
+      rule_set: Map.get(value, :rule_set),
+      prompt_template_ref: Map.get(value, :prompt_template_ref)
+    }
+  end
+
+  defp rule_ctx_of(_), do: nil
 
   # Phase 6 PR 5: rule value shape is either a plain list (legacy:
   # `[receiver_str, ...]`) or a map with `:receivers` + `:applies_to_users`.

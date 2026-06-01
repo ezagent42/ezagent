@@ -98,4 +98,72 @@ defmodule Ezagent.Routing.ResolverTest do
       assert [] = Resolver.resolve(msg(), URI.new!("session://default/system/main"))
     end
   end
+
+  describe "resolve_with_ctx/4 (matched-rule context, §3.5)" do
+    test "returns ctx with the matched rule's prompt_template_ref + rule_id", %{table: t} do
+      :ok =
+        RoutingRegistry.put(t, Matcher.always(), %{
+          receivers: ["session://default/team-alpha/oncall"],
+          applies_to_users: [],
+          workspace_uri: nil,
+          rule_id: 42,
+          rule_set: "telephone",
+          prompt_template_ref: "telephone_hop"
+        })
+
+      assert [{uri, ctx}] =
+               Resolver.resolve_with_ctx(msg(), URI.new!("session://default/system/main"), [], [])
+
+      assert URI.to_string(uri) == "session://default/team-alpha/oncall"
+      assert ctx.prompt_template_ref == "telephone_hop"
+      assert ctx.rule_id == 42
+      assert ctx.rule_set == "telephone"
+    end
+
+    test "ctx is nil for a legacy plain-list rule", %{table: t} do
+      :ok = RoutingRegistry.put(t, Matcher.always(), ["session://default/team-alpha/oncall"])
+
+      assert [{_uri, nil}] =
+               Resolver.resolve_with_ctx(msg(), URI.new!("session://default/system/main"), [], [])
+    end
+
+    test "resolve/4 still returns bare [URI] (back-compat — delegates to resolve_with_ctx)",
+         %{table: t} do
+      :ok = RoutingRegistry.put(t, Matcher.always(), ["session://default/team-alpha/oncall"])
+
+      assert Resolver.resolve(msg(), URI.new!("session://default/system/main"), [], []) ==
+               [URI.new!("session://default/team-alpha/oncall")]
+    end
+
+    test "duplicate recipient from two rules → lower rule_id ctx wins (deterministic)",
+         %{table: t} do
+      recv = "session://default/team-alpha/oncall"
+      base = %{receivers: [recv], applies_to_users: [], workspace_uri: nil}
+
+      # Two rules both match "hello" + route to the SAME recipient with
+      # different prompt_template_refs. Insert the HIGHER rule_id first so a
+      # naive ETS-order first-wins would pick rule 2 — the deterministic
+      # tie-break must pick the lower rule_id (1) regardless of insert order.
+      :ok =
+        RoutingRegistry.put(
+          t,
+          Matcher.text_contains("hello"),
+          Map.merge(base, %{rule_id: 2, prompt_template_ref: "from_rule_2"})
+        )
+
+      :ok =
+        RoutingRegistry.put(
+          t,
+          Matcher.always(),
+          Map.merge(base, %{rule_id: 1, prompt_template_ref: "from_rule_1"})
+        )
+
+      assert [{uri, ctx}] =
+               Resolver.resolve_with_ctx(msg("hello"), URI.new!("session://default/system/main"), [], [])
+
+      assert URI.to_string(uri) == recv
+      assert ctx.rule_id == 1
+      assert ctx.prompt_template_ref == "from_rule_1"
+    end
+  end
 end
