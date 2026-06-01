@@ -8,18 +8,10 @@ defmodule EzagentPluginCustomerChat.SessionViewLive do
   - Session metadata (URI, workspace, conv-id, mode)
   - Live transcript (subscribes to the session's events topic,
     stream-inserts each `{:chat_message, _, %Ezagent.Message{}}`)
-  - "Take over" button that dispatches Phase 2.6's mode-set action
-
-  ## Phase 2.6 integration point
-
-  The take-over button calls `dispatch_takeover/1`. Until Phase 2.6
-  merges, that helper dispatches a best-guess shape against
-  `session://...?action=mode.set`. Expected behavior pre-2.6:
-  dispatch returns `:no_such_actor` or `:unauthorized` — the
-  failure is itself the integration test that the wire is hooked
-  up. Post-2.6: replace the `action=mode.set` URI / args shape
-  with whatever 2.6 documents in
-  `poc/phase-2/6-mode-takeover.md`.
+  - "Take over" button that dispatches `mode.set %{mode: :takeover}`
+    on the session (`Ezagent.Behavior.Mode`, PR #511); `Chat.handle_send`
+    then suppresses agent-sender messages while the session is in
+    `:takeover`.
   """
 
   use Phoenix.LiveView
@@ -102,10 +94,7 @@ defmodule EzagentPluginCustomerChat.SessionViewLive do
       {:error, reason} ->
         {:noreply,
          socket
-         |> assign(
-           :flash_error,
-           "Take-over failed: #{inspect(reason)} (expected pre-Phase-2.6 — wire is connected)"
-         )}
+         |> assign(:flash_error, "Take-over failed: #{inspect(reason)}")}
     end
   end
 
@@ -273,15 +262,19 @@ defmodule EzagentPluginCustomerChat.SessionViewLive do
     Ezagent.Invocation.dispatch(inv)
   end
 
-  # ---- take-over dispatch (Phase 2.6 integration point) -----------------
+  # ---- take-over dispatch -----------------------------------------------
 
-  # PHASE_2.6_INTEGRATION — replace with the actual dispatch shape
-  # Phase 2.6 documents in `poc/phase-2/6-mode-takeover.md`. The
-  # action verb (`mode.set` vs `behavior.mode.set` vs a new
-  # `Behavior.Mode` dispatch entirely) and the args map (`%{mode:
-  # ...}` vs `%{value: ...}`) are both TBD. Pre-2.6 this dispatch
-  # is expected to return `{:error, :no_such_actor}` or similar —
-  # that failure is the proof that the LV wire is hooked up.
+  # Args for the `mode.set` dispatch. Kept as a named helper so the
+  # contract test can pin them against `Ezagent.Behavior.Mode`'s real
+  # `:set` action schema (`args: %{mode: :atom}`, PR #511) — the LV must
+  # send exactly `%{mode: :takeover}`, no extra keys.
+  @doc false
+  def takeover_args, do: %{mode: :takeover}
+
+  # Flip the session into operator-takeover mode via `Ezagent.Behavior.Mode`.
+  # The `:set` handler emits the `(客服已接管对话)` notice on the
+  # `:auto -> :takeover` edge and mutates the `:mode` slice; thereafter
+  # `Chat.handle_send` gates agent-sender messages.
   defp dispatch_takeover(socket) do
     target =
       URI.new!("#{socket.assigns.session_uri_str}?action=mode.set")
@@ -289,7 +282,7 @@ defmodule EzagentPluginCustomerChat.SessionViewLive do
     inv = %Ezagent.Invocation{
       target: target,
       mode: :call,
-      args: %{mode: :takeover, set_by: socket.assigns.current_entity_uri},
+      args: takeover_args(),
       ctx: %{
         caller: socket.assigns.current_entity_uri,
         caps: socket.assigns.caller_caps,
