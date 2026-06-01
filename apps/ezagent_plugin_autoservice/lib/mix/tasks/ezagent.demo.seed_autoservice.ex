@@ -84,6 +84,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
     :ok = ensure_workspace()
     :ok = seed_role_user(@admin_short, :admin, workspace_uri, ctx)
     :ok = seed_role_user(@operator_short, :operator, workspace_uri, ctx)
+    :ok = ensure_default_session(workspace_uri, ctx)
 
     results =
       Enum.map(customers, fn name ->
@@ -157,6 +158,62 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
     end
 
     _ = add_member(uri)
+    :ok
+  end
+
+  # --- default session for native UI (/sessions) -----------------------
+
+  defp ensure_default_session(workspace_uri, _ctx) do
+    # 1. Create a default SessionTemplate WITHOUT orchestrator
+    # (the autoservice has its own agents; no cc-orchestrator needed
+    # for the cinnox workspace).
+    content = %{
+      name: "default",
+      description: "Cinnox default session — plain (no orchestrator, uses autoservice agents)",
+      agent_slots: [],
+      orchestrator_template_uri: nil,
+      routing_rules: [],
+      default_workspace_uri: workspace_uri,
+      parent_template_uri: nil,
+      version_tag: nil,
+      created_by: nil,
+      created_at: nil
+    }
+
+    case Ezagent.Entity.SessionTemplate.persist_version_as_system(content, workspace_uri) do
+      {:ok, tmpl_uri} ->
+        Mix.shell().info("  default SessionTemplate #{URI.to_string(tmpl_uri)}")
+
+      {:error, reason} ->
+        Mix.shell().info("  default SessionTemplate already present (#{inspect(reason)})")
+    end
+
+    # 2. Create session://default/<ws>/main so the native /sessions page
+    # finds a live session on first visit (no orchestrator to fail).
+    admin_uri = user_uri(@admin_short)
+    main_uri = Ezagent.URI.new!("session://default/#{@workspace_name}/main")
+
+    case Ezagent.KindRegistry.lookup(main_uri) do
+      {:ok, _pid} ->
+        Mix.shell().info("  session #{URI.to_string(main_uri)} already alive")
+
+      :error ->
+        # 2026-05-31 orchestrator-startup-atomicity §4 step 9:
+        # the plain-session path (nil orchestrator) is the
+        # no-rollback fast-path — steps 5-7 are skipped, so
+        # there are no failures to roll back.
+        case EzagentDomainChat.create_session("main", admin_uri,
+               template_name: "default",
+               workspace_uri: workspace_uri
+             ) do
+          {:ok, sess_uri, _meta} ->
+            Mix.shell().info("  session #{URI.to_string(sess_uri)} created")
+
+          {:error, reason} ->
+            Mix.shell().info("  session create: #{inspect(reason)} (may be idempotent)")
+        end
+    end
+
     :ok
   end
 
