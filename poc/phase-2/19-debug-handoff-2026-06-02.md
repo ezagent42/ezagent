@@ -3,6 +3,28 @@
 > 2026-06-02. Mid-debug snapshot. PoC code is done + PRs are up; the open thread is
 > **getting the 3 demos recorded**, blocked by a "new sessions don't reply" symptom.
 
+## ✅ RESOLVED 2026-06-02 (post-compact) — read this first
+- **"New session no reply" was NOT an agent/orchestrator storm.** Definitive test on
+  a clean server + FRESH conv (SSE POST): real soul-aware reply in ~18s; the customer
+  session spawned **exactly 1 cc agent and 0 orchestrators**. The plain
+  orchestrator-less template holds. The earlier symptom was churned-recording-server
+  dirt (fixed conv-id accumulating history + leaked/cold agents), not a per-session
+  orchestrator. The 5 boot-restored `cc_wait_*` root agents are leftover registered
+  agents from old experiments (G2 boot-restore) — bounded, idle, not per-session.
+- **All 3 demos recorded + verified on acme** (screenshots show real AI answers):
+  `docs/assets/demo` (chat), `demo-soul` (12→18mo before/after), `demo-operator`
+  (takeover + Lily). Committed `447a73ab`, pushed.
+- **Operator demo failure was a recorder race**, not a backend bug: the take-over
+  `phx-click` fired before the LiveView socket connected → dropped → mode never
+  flipped → `#chat_text` never rendered. Fixed in `record-scenario.js` by gating the
+  click on `window.liveSocket.isConnected()`. Takeover itself always worked (Mode
+  23/0, takeover 4/0).
+- **Demos attached** to PR #529 (chat) / #530 (soul) / #532 (operator) as comments
+  embedding the GIFs via SHA-pinned raw URLs.
+- Everything below this box is the pre-resolution snapshot, kept for history.
+
+---
+
 ## Where the PoC stands (done + pushed)
 - Branch `poc/phase-2-customer-service`. PRs (all compile-green, review-focus + gap
   comments posted): **#511** Mode · **#525** PR-1 AI customer chat (base) · **#530**
