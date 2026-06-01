@@ -42,21 +42,21 @@ defmodule EzagentPluginAutoservice.Uris do
   @spec session_uri(URI.t()) :: URI.t()
   def session_uri(%URI{} = customer_uri) do
     {ws, name} = decompose_customer(customer_uri)
-    Ezagent.URI.parse!("session://#{@session_class}/#{ws}/#{name}")
+    Ezagent.URI.new!("session://#{@session_class}/#{ws}/#{name}")
   end
 
   @doc "Fast (curl/DeepSeek) agent URI: `entity://agent/<ws>/curl_fast-<name>`."
   @spec fast_agent_uri(URI.t()) :: URI.t()
   def fast_agent_uri(%URI{} = customer_uri) do
     {ws, name} = decompose_customer(customer_uri)
-    Ezagent.URI.parse!("entity://agent/#{ws}/curl_fast-#{name}")
+    Ezagent.URI.new!("entity://agent/#{ws}/curl_fast-#{name}")
   end
 
   @doc "Slow (cc) agent URI: `entity://agent/<ws>/cc_slow-<name>`."
   @spec slow_agent_uri(URI.t()) :: URI.t()
   def slow_agent_uri(%URI{} = customer_uri) do
     {ws, name} = decompose_customer(customer_uri)
-    Ezagent.URI.parse!("entity://agent/#{ws}/cc_slow-#{name}")
+    Ezagent.URI.new!("entity://agent/#{ws}/cc_slow-#{name}")
   end
 
   @doc """

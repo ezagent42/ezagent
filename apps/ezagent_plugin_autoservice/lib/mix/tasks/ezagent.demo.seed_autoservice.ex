@@ -76,7 +76,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
     if with_slow?, do: {:ok, _} = Application.ensure_all_started(:ezagent_plugin_cc)
     customers = parse_customers(opts[:customers])
 
-    workspace_uri = Ezagent.URI.parse!("workspace://#{@workspace_name}")
+    workspace_uri = Ezagent.URI.new!("workspace://#{@workspace_name}")
     ctx = mix_task_ctx()
 
     Mix.shell().info("Seeding autoservice tenant `#{@workspace_name}` …")
@@ -122,7 +122,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
       {:error, reason} ->
         # Some create paths return {:error, :already_exists}-style atoms;
         # treat a live workspace Kind as success.
-        case Ezagent.KindRegistry.lookup(Ezagent.URI.parse!("workspace://#{@workspace_name}")) do
+        case Ezagent.KindRegistry.lookup(Ezagent.URI.new!("workspace://#{@workspace_name}")) do
           {:ok, _pid} ->
             Mix.shell().info("  workspace://#{@workspace_name} already exists")
             :ok
@@ -183,7 +183,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
     end
   end
 
-  defp user_uri(short), do: Ezagent.URI.parse!("entity://user/#{@workspace_name}/#{short}")
+  defp user_uri(short), do: Ezagent.URI.new!("entity://user/#{@workspace_name}/#{short}")
 
   defp mix_task_ctx do
     %{

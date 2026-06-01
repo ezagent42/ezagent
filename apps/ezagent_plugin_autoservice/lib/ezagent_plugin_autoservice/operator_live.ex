@@ -41,7 +41,7 @@ defmodule EzagentPluginAutoservice.OperatorLive do
 
   @impl true
   def handle_event("select", %{"uri" => uri_str}, socket) do
-    session_uri = Ezagent.URI.parse!(uri_str)
+    session_uri = Ezagent.URI.new!(uri_str)
 
     # Rehydrate the session Kind if it's dormant (snapshot-backed but not
     # yet referenced this server uptime) so the join below has a live
@@ -125,7 +125,7 @@ defmodule EzagentPluginAutoservice.OperatorLive do
     |> Enum.uniq()
     |> Enum.filter(&String.starts_with?(&1, "session://cs/"))
     |> Enum.map(fn str ->
-      uri = Ezagent.URI.parse!(str)
+      uri = Ezagent.URI.new!(str)
       %{uri: uri, str: str, name: customer_name(uri)}
     end)
     |> Enum.sort_by(& &1.name)
