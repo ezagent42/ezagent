@@ -76,6 +76,14 @@ const TENANT_DEFAULTS = {
 const DEF = TENANT_DEFAULTS[TENANT] || TENANT_DEFAULTS.cinnox;
 const CHAT_QUESTIONS = (process.env.DEMO_QUESTIONS || DEF.questions.join('||')).split('||');
 
+// Unique conv id PER RUN. The conv id is the session id; a FIXED conv would
+// reuse the same session across runs and accumulate every prior run's messages
+// (which, sent by old random customers, render as stray "客服" bubbles via
+// load_history — and a fat transcript muddies the cc turn). A fresh conv per run
+// = empty transcript + a clean cold cc agent. Combined with cid=conv, each
+// recording is one customer, one fresh session.
+const RUN = process.env.DEMO_RUN || Date.now().toString(36);
+
 const log = (...a) => console.log('[record-scenario]', ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -136,7 +144,11 @@ async function waitComposer(page, label = '') {
 async function prewarm(browser, conv, storageState) {
   const ctx = await browser.newContext(storageState ? { storageState } : {});
   const p = await ctx.newPage();
-  const url = `${ORIGIN}/chat/${TENANT}?conv=${conv}`;
+  // Pin a STABLE customer id (= conv) so prewarm and the record page are the
+  // SAME anonymous customer. Without this each page got a random customer_<id>,
+  // and the record page rendered the other customer's messages as "客服" (green)
+  // duplicates with no AI answer. cid keeps ONE customer per conversation.
+  const url = `${ORIGIN}/chat/${TENANT}?conv=${conv}&cid=${conv}`;
   log('prewarming agent for conv', conv, '…');
   await p.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
   const ok = await waitComposer(p, `(prewarm ${conv})`);
@@ -174,11 +186,11 @@ async function sendAndWaitReply(page, text) {
 
 // ---- per-mode drivers -------------------------------------------------------
 async function driveChat(browser, snap) {
-  const conv = `chat-demo-${TENANT}`;
+  const conv = `chat-demo-${TENANT}-${RUN}`;
   await prewarm(browser, conv);
   const ctx = await browser.newContext({ viewport: { width: W, height: H }, recordVideo: { dir: OUT, size: { width: W, height: H } } });
   const page = await ctx.newPage();
-  await page.goto(`${ORIGIN}/chat/${TENANT}?conv=${conv}`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${ORIGIN}/chat/${TENANT}?conv=${conv}&cid=${conv}`, { waitUntil: 'domcontentloaded' });
   await waitComposer(page, '(chat record)');
   await page.waitForTimeout(800); await snap(page, 'loaded');
   for (let i = 0; i < CHAT_QUESTIONS.length; i++) {
@@ -191,13 +203,13 @@ async function driveChat(browser, snap) {
 }
 
 async function driveOperator(browser, snap) {
-  const conv = `op-demo-${TENANT}`;
+  const conv = `op-demo-${TENANT}-${RUN}`;
   const opState = await loginState(browser);
   await prewarm(browser, conv);
   // recording context = the CUSTOMER side (so the video shows the take-over land)
   const custCtx = await browser.newContext({ viewport: { width: W, height: H }, recordVideo: { dir: OUT, size: { width: W, height: H } } });
   const cust = await custCtx.newPage();
-  await cust.goto(`${ORIGIN}/chat/${TENANT}?conv=${conv}`, { waitUntil: 'domcontentloaded' });
+  await cust.goto(`${ORIGIN}/chat/${TENANT}?conv=${conv}&cid=${conv}`, { waitUntil: 'domcontentloaded' });
   await waitComposer(cust, '(operator: customer)');
   await cust.waitForTimeout(800); await snap(cust, 'loaded');
   // customer asks for a human
@@ -226,12 +238,12 @@ async function driveOperator(browser, snap) {
 
 async function driveSoul(browser, snap) {
   const adminState = await loginState(browser);
-  const convA = `soul-before-${TENANT}`;
+  const convA = `soul-before-${TENANT}-${RUN}`;
   await prewarm(browser, convA, adminState);
   const ctx = await browser.newContext({ storageState: adminState, viewport: { width: W, height: H }, recordVideo: { dir: OUT, size: { width: W, height: H } } });
   const page = await ctx.newPage();
   // BEFORE: ask price with the baseline soul
-  await page.goto(`${ORIGIN}/chat/${TENANT}?conv=${convA}`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${ORIGIN}/chat/${TENANT}?conv=${convA}&cid=${convA}`, { waitUntil: 'domcontentloaded' });
   await waitComposer(page, '(soul before)');
   await page.waitForTimeout(800); await snap(page, 'before-loaded');
   await sendAndWaitReply(page, DEF.soulQuestion);
@@ -248,9 +260,9 @@ async function driveSoul(browser, snap) {
   await page.getByRole('button', { name: /save|保存/i }).first().click().catch(() => {});
   await page.waitForTimeout(2000); await snap(page, 'saved');
   // AFTER: a NEW conversation gets a fresh agent that reads the edited soul
-  const convB = `soul-after-${TENANT}`;
+  const convB = `soul-after-${TENANT}-${RUN}`;
   await prewarm(browser, convB, adminState); // spawns AFTER the edit -> new soul
-  await page.goto(`${ORIGIN}/chat/${TENANT}?conv=${convB}`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${ORIGIN}/chat/${TENANT}?conv=${convB}&cid=${convB}`, { waitUntil: 'domcontentloaded' });
   await waitComposer(page, '(soul after)');
   await page.waitForTimeout(800);
   await sendAndWaitReply(page, DEF.soulQuestion);
