@@ -911,6 +911,16 @@ defmodule Ezagent.Orchestrator.McpServer do
        "The parent template is gone — use save_template_as to persist under a new name."}
 
   # team-routing-unification §3.8 — member/rule-set tool errors.
+  # codex M1 — `define_rule_set_rule`'s `receiver_role_name` MUST resolve to
+  # a CURRENT session member's role (or a magic token); a dangling
+  # role_name (even one that parses as a URI) is rejected here rather than
+  # silently binding a non-member receiver.
+  defp error_to_mcp({:unknown_member_role, r}),
+    do:
+      {:unknown_member_role,
+       "Rule receiver_role_name #{inspect(r)} is not a current session member's role_name — " <>
+         "add the managed member (add_managed_member) first, or use a magic token."}
+
   defp error_to_mcp({:unknown_rule_receiver, r}),
     do:
       {:unknown_rule_receiver,

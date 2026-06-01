@@ -141,6 +141,14 @@ defmodule Ezagent.Orchestrator.Tools do
          {:ok, caps} <- require_opt(opts, :caps),
          {:ok, workspace_uri} <- require_opt(opts, :workspace_uri),
          {:ok, session_uri} <- require_opt(opts, :session_uri),
+         # M2 (codex MAJOR) — PREFLIGHT the orchestrator's `{:within_session, S}`
+         # session authority (cap #1) BEFORE spawning. Pre-fix the spawn ran
+         # first and the `chat.join` cap check ran after, so a caller WITHOUT
+         # the cap still spawned a worker, then the denied join's compensation
+         # (`terminate_worker`, gated by the SAME possibly-insufficient caps)
+         # could leave an ORPHAN. Failing closed here means an unauthorized
+         # caller never spawns.
+         :ok <- preflight_within_session_cap(caps, session_uri),
          {:ok, flavor} <- source_template_flavor(source_agent_template_uri),
          {:ok, %URI{} = member_uri} <-
            spawn_member(source_agent_template_uri, flavor, role_name, session_uri, workspace_uri, caller) do
@@ -276,21 +284,32 @@ defmodule Ezagent.Orchestrator.Tools do
       :ok ->
         # Step 2 — prune routing rows naming this member (reporting
         # deleted/repointed counts — the rule-set impact §3.8 asks for).
-        prune_counts =
-          case prune_routing_rules_for(member_uri) do
-            {:ok, counts} -> counts
-            {:error, _} -> %{deleted_rules: 0, repointed_rules: 0}
-          end
+        #
+        # B2 (codex BLOCKER) — the prune is SCOPED to THIS session's rules
+        # (`created_by == session_uri`, matching B1's stamp) so a member with
+        # a same-named URI referenced by ANOTHER session's rules is never
+        # touched; and a prune/repoint FAILURE FAILS the tool (returns
+        # `{:error, _}`) instead of being swallowed into `deleted_rules: 0`
+        # while removal silently continues.
+        case prune_routing_rules_for(session_uri, member_uri) do
+          {:ok, prune_counts} ->
+            # Step 3 — drop the member from the session.
+            _ = leave_member(session_uri, member_uri, caller, caps)
 
-        # Step 3 — drop the member from the session.
-        _ = leave_member(session_uri, member_uri, caller, caps)
+            {:ok,
+             %{
+               status: :removed,
+               deleted_rules: prune_counts.deleted_rules,
+               repointed_rules: prune_counts.repointed_rules
+             }}
 
-        {:ok,
-         %{
-           status: :removed,
-           deleted_rules: prune_counts.deleted_rules,
-           repointed_rules: prune_counts.repointed_rules
-         }}
+          {:error, _reason} = err ->
+            # prune already labels its failures (`{:prune_failed, _}` /
+            # `{:registry_reload_failed, _}`); propagate as-is. The member is
+            # NOT dropped from the session — removal fails atomically rather
+            # than reporting a false success with `deleted_rules: 0`.
+            err
+        end
 
       {:error, :unauthorized} = err ->
         err
@@ -383,6 +402,13 @@ defmodule Ezagent.Orchestrator.Tools do
       add_opts = [
         workspace_uri: workspace_uri,
         source: "admin",
+        # B1 (codex BLOCKER) — stamp tool-created rules with
+        # `created_by = session_uri`, the SAME per-session identity PR-7
+        # materialization uses (`install_one_rule`). Without it the rule
+        # persists `created_by = nil` and `session_rule_set_rules/2` (the
+        # template snapshot, keyed on `created_by == session_uri`) silently
+        # drops it → the orchestrator-defined rule is LOST on save/materialize.
+        created_by: session_uri,
         rule_set: Keyword.get(opts, :rule_set),
         position: Keyword.get(opts, :position, 0),
         prompt_template_ref: Keyword.get(opts, :prompt_template_ref)
@@ -406,25 +432,30 @@ defmodule Ezagent.Orchestrator.Tools do
     end
   end
 
-  # Resolve a receiver to a member URI. A concrete URI passes through; a
-  # role_name string is resolved against the session's live :members slice
-  # (the binding role_name → current URI, which survives respawn — §3.1).
+  # Resolve a receiver to a member URI. A concrete `%URI{}` (a programmatic
+  # caller's pre-resolved receiver) passes through; a magic token
+  # (`$session_members` etc.) passes through (expanded at delivery); a
+  # `receiver_role_name` STRING MUST resolve to a CURRENT member's role in
+  # this session's live :members slice (the binding role_name → current URI,
+  # which survives respawn — §3.1).
+  #
+  # M1 (codex MAJOR) — pre-fix this fell back to parsing ANY URI-shaped
+  # string as a concrete receiver, so a `receiver_role_name` that wasn't a
+  # member role but happened to parse as a URI (e.g. `entity://agent/x/y`)
+  # BYPASSED member lookup and targeted a non-member. The tool's contract is
+  # "target a member BY ROLE_NAME"; a dangling role_name is now rejected
+  # `{:unknown_member_role, r}` instead of silently binding a non-member.
   defp resolve_role_receiver(_session_uri, %URI{} = uri), do: {:ok, uri}
 
   defp resolve_role_receiver(%URI{} = session_uri, role_name) when is_binary(role_name) do
-    members = read_members(session_uri)
+    cond do
+      Ezagent.Routing.Resolver.magic_token?(role_name) ->
+        {:ok, role_name}
 
-    case Chat.role_name_to_uri(members, role_name) do
-      %URI{} = uri ->
-        {:ok, uri}
-
-      nil ->
-        # Fall back: the receiver may be a concrete URI string (not a
-        # role_name). Parse it; otherwise it's a dangling receiver — fail
-        # loud HERE (don't store a receiver that crashes at send-time).
-        case Ezagent.URI.parse(role_name) do
-          {:ok, %URI{} = uri} -> {:ok, uri}
-          _ -> {:error, {:unknown_rule_receiver, role_name}}
+      true ->
+        case Chat.role_name_to_uri(read_members(session_uri), role_name) do
+          %URI{} = uri -> {:ok, uri}
+          nil -> {:error, {:unknown_member_role, role_name}}
         end
     end
   end
@@ -469,7 +500,13 @@ defmodule Ezagent.Orchestrator.Tools do
       when is_binary(name) and is_binary(template) do
     with {:ok, caller} <- require_opt(opts, :caller),
          {:ok, caps} <- require_opt(opts, :caps),
-         {:ok, session_uri} <- require_opt(opts, :session_uri) do
+         {:ok, session_uri} <- require_opt(opts, :session_uri),
+         # M3 (codex MAJOR) — reject a template missing the `{body}`
+         # placeholder BEFORE installing it. Without `{body}` the renderer
+         # (`Chat.render_for_delivery/4`) silently DROPS the original message
+         # at delivery. Validate at the tool boundary so the orchestrator gets
+         # `{:error, :body_placeholder_required}` instead of a live message loss.
+         :ok <- Ezagent.Routing.PromptTemplate.validate(template) do
       merged = Map.put(read_prompt_templates(session_uri), name, template)
 
       target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.set_prompt_templates")
@@ -540,16 +577,25 @@ defmodule Ezagent.Orchestrator.Tools do
   # (routing LOST — `Logger.warning`ed); rules with other receivers are
   # repointed. Returns `{:ok, %{deleted_rules, repointed_rules}}`. (todo #9
   # observability — the loss reaches the caller + the log.)
-  defp prune_routing_rules_for(%URI{} = member_uri) do
+  #
+  # B2 (codex BLOCKER) — SCOPED to THIS session's rules (`created_by ==
+  # session_uri`, the B1/PR-7 stamp). Pre-fix it pruned EVERY rule whose
+  # receivers named the member string, so a member with a same-named URI
+  # referenced by ANOTHER session's rule-set could be deleted/mutated out
+  # from under that session.
+  defp prune_routing_rules_for(%URI{} = session_uri, %URI{} = member_uri) do
     table = EzagentDomainChat.Routing.MentionRouting
     member_str = URI.to_string(member_uri)
+    session_str = URI.to_string(session_uri)
 
     txn =
       EzagentCore.Repo.transaction(fn ->
         rules = Ezagent.Routing.RuleStore.list(table)
 
         rules
-        |> Enum.filter(fn rule -> member_str in (rule.receivers || []) end)
+        |> Enum.filter(fn rule ->
+          rule.created_by == session_str and member_str in (rule.receivers || [])
+        end)
         |> Enum.reduce_while({[], 0}, fn rule, {deleted_meta, repointed} ->
           remaining =
             (rule.receivers || [])
@@ -856,6 +902,28 @@ defmodule Ezagent.Orchestrator.Tools do
   defp to_cap_set(%MapSet{} = caps), do: caps
   defp to_cap_set(caps) when is_list(caps), do: MapSet.new(caps)
   defp to_cap_set(_), do: MapSet.new()
+
+  # M2 — true iff `caps` carries the orchestrator's cap #1
+  # (`{:within_session, session_uri}` on the `:session` kind). Mirrors the
+  # session-side `Chat.orchestrator_cap_present?/1` check so the preflight
+  # decision matches the authority the deferred `chat.join` would enforce.
+  # `:ok` / `{:error, :unauthorized}` — fail closed.
+  defp preflight_within_session_cap(caps, %URI{} = session_uri) do
+    session_str = URI.to_string(session_uri)
+
+    authorized? =
+      caps
+      |> to_cap_set()
+      |> Enum.any?(fn
+        %Ezagent.Capability{kind: :session, instance: {:within_session, %URI{} = s}} ->
+          URI.to_string(s) == session_str
+
+        _ ->
+          false
+      end)
+
+    if authorized?, do: :ok, else: {:error, :unauthorized}
+  end
 
   defp require_opt(opts, key) do
     case Keyword.get(opts, key) do
