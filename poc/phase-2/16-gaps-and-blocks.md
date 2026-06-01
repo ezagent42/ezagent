@@ -80,6 +80,49 @@ public web chat by **synthesizing anonymous customer URIs**
 login. Works, but via a workaround. **Decision for Allen:** is synthetic-customer the
 blessed pattern, or should ezagent have a native anonymous/guest principal?
 
+### G7 — no native "fixed-agent team" / orchestrator-less composition path — GAP / DECISION → Allen
+Surfaced while manually testing customer chat (first message got no reply). The
+full chain we had to face to get ONE fixed CS agent answering in a session:
+1. **A per-tenant workspace has no `"default"` session template** — boot seeds the
+   default template only under `workspace://system` (`do_seed_default_session_template`
+   hardcodes it). acme had none → `create_session(template_name: "default")` →
+   `{:session_template_not_found, "default", "acme"}`.
+2. **The system `"default"` template forces a cc-orchestrator.** In the current
+   ezagent, **static `agent_slots` / routing-rule reconcile at session-create were
+   REMOVED** (`session_template.ex:118`, 2026-05-31 atomicity pass): the *only*
+   way the framework composes worker agents into a session is the **runtime LLM
+   orchestrator**. A plain session composes nothing.
+3. **That orchestrator can't start here.** Its template sets an isolated
+   `claude_config_dir` (`cc_orchestrator_seed.ex:228/380`, `api_key_helper: nil`)
+   → a fresh CLAUDE_CONFIG_DIR → the **claude 2.1.92 OAuth screen** (same G1 trap)
+   → never ready → `create_session` blocks `{:orchestrator_not_ready_within, 90_000}`
+   → session never spawns → `chat.send` → `:no_such_actor` → no reply.
+
+**Our fix (no core change):** customer_chat ensures a **plain (orchestrator-less)
+`"default"` session template** per workspace (`session_complete?` already treats a
+nil-orchestrator template as a complete plain session), and composes the cc agent
++ routing **plugin-side** — an explicit `Routing.add_rule` customer→cc (replacing
+the prior mention-synthesis).
+
+**The decision for Allen (the "does it have to be this heavy / this many problems?"
+question):** for a *deterministic, fixed-agent* vertical (customer service, fixed
+pipelines), the LLM orchestrator is the wrong tool (extra claude PTY/session,
+non-deterministic, OAuth-trapped), and there is **no native declarative path**.
+Should ezagent offer one or more of:
+- **(a)** a declarative **static-agent-slot / fixed-team** session template
+  (restore what §3 removed) so a session can be born with a known agent + routing,
+  no orchestrator, no plugin-side composition;
+- **(b)** a **`create_session(orchestrator: false)`** opt-out (the long-standing
+  deferred note) so callers don't need to pre-seed a plain template;
+- **(c)** **per-workspace default-template** provisioning at workspace create (so a
+  tenant workspace isn't missing `"default"`);
+- **(d)** non-fatal / fast-fail **orchestrator readiness** (90 s hard block on a
+  dead orchestrator is brutal for any caller).
+
+Until then, customer_chat's orchestrator-less plain-template + plugin-side routing
+is the correct fit, but it's more bookkeeping than a first-class framework path
+would need.
+
 ## What this validates (the migration answer)
 Customer web chat, editable soul, and operator takeover all run on ezagent using its
 native primitives (Session, Chat, Behavior, Capability, Routing, cc agent template)
