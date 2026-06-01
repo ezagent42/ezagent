@@ -79,6 +79,18 @@ defmodule EzagentWeb.Router do
     post "/workspaces/switch", WorkspaceSwitchController, :switch
   end
 
+  # Autoservice (customer-service vertical) — customer chat surface from the
+  # ezagent_plugin_autoservice OTP app. Reuses the same RequireEntity plug +
+  # LiveAuth on_mount as the rest of the app. (The operator console lives in
+  # the takeover block, which adds the `/operator` route on top of this.)
+  scope "/autoservice", EzagentPluginAutoservice do
+    pipe_through [:browser, EzagentWeb.Plugs.RequireEntity]
+
+    live_session :autoservice, on_mount: {EzagentWeb.LiveAuth, :require_entity} do
+      live "/", CustomerLive
+    end
+  end
+
   scope "/", EzagentPluginLiveview do
     pipe_through [:browser, EzagentWeb.Plugs.RequireEntity]
 
