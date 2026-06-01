@@ -45,25 +45,8 @@ defmodule EzagentPluginLoom.WebPlugTest do
     end
   end
 
-  describe "POST /api/chat" do
-    test "without DEEPSEEK_KEY → 502 + a plain-text config message (no network)" do
-      prev = System.get_env("DEEPSEEK_KEY")
-      System.delete_env("DEEPSEEK_KEY")
-
-      try do
-        conn =
-          conn(:post, "/api/chat")
-          |> Map.put(:body_params, %{"messages" => [%{"role" => "user", "content" => "hi"}]})
-          |> call()
-
-        assert conn.status == 502
-        assert ["text/plain" <> _] = get_resp_header(conn, "content-type")
-        assert conn.resp_body =~ "DeepSeek"
-      after
-        if prev, do: System.put_env("DEEPSEEK_KEY", prev)
-      end
-    end
-  end
+  # `POST /api/chat` was removed in the 2026-06-01 redesign (page generation
+  # moved to LoomV0Worker dispatched by the session orchestrator).
 
   describe "unknown method" do
     test "DELETE on any path → 404" do

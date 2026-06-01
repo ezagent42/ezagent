@@ -8,6 +8,7 @@ defmodule EzagentPluginLoom.Team do
   - orchestrator `entity://agent/<ws>/loomorch_<sid>`
   - worker `entity://agent/<ws>/loomworker_<sid>_policy` (政策侧)
   - worker `entity://agent/<ws>/loomworker_<sid>_company` (企业侧)
+  - v0worker `entity://agent/<ws>/loomv0_<sid>` (页面生成,2026-06-01)
 
   This is the **B path** chosen for the demo (no SessionTemplate /
   AgentTemplate records). The orchestrator discovers its roster at
@@ -45,11 +46,12 @@ defmodule EzagentPluginLoom.Team do
       orchestrator = URI.parse("entity://agent/#{ws}/loomorch_#{sid}")
       policy = URI.parse("entity://agent/#{ws}/loomworker_#{sid}_policy")
       company = URI.parse("entity://agent/#{ws}/loomworker_#{sid}_company")
-      members = [orchestrator, policy, company]
+      v0 = URI.parse("entity://agent/#{ws}/loomv0_#{sid}")
+      members = [orchestrator, policy, company, v0]
 
       with :ok <- Enum.reduce_while(members, :ok, &spawn_step/2),
            :ok <- Enum.reduce_while(members, :ok, fn uri, _ -> join_step(session_uri, uri) end) do
-        {:ok, %{orchestrator: orchestrator, workers: [policy, company]}}
+        {:ok, %{orchestrator: orchestrator, workers: [policy, company, v0]}}
       end
     end
   end

@@ -64,7 +64,16 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
       workers: normalize_workers(Map.get(args, :workers) || Map.get(args, "workers") || []),
       pending: %{},
       count: 0,
-      last_error: nil
+      last_error: nil,
+      # 2026-06-01 redesign: cached page source. Updated whenever v0 emits a
+      # `<span type="page_update">` reply (handle_receive page-update branch).
+      # Seeded from args :initial_loom_source (LoomSavedSession uses saved
+      # snapshot; LoomSession uses Prompts.loom_seed_source()).
+      loom_source:
+        to_string(
+          Map.get(args, :initial_loom_source) || Map.get(args, "initial_loom_source") ||
+            Prompts.loom_seed_source()
+        )
     }
   end
 
@@ -74,8 +83,16 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
   def handle_receive(%{message: %Message{} = msg}, ctx) do
     pending = ctx[:read].(:pending, %{})
+    page_src = page_update_source(msg)
 
     cond do
+      # 2026-06-01 redesign: v0 page_update reply — cache new source on slice +
+      # close any matching pending turn. Skip the compose path: v0's chat
+      # message is already in the session, the loom-view bridge will render
+      # it directly. (If v0 was bundled with policy/company in the same
+      # dispatch — shouldn't happen per the prompt — the others' replies
+      # become orphans and get dropped silently. v1 trade-off.)
+      page_src -> handle_page_update(msg, page_src, pending)
       worker_deliverable?(msg, pending) -> handle_deliverable(msg, ctx, pending)
       user_turn?(msg) -> handle_user_turn(msg, ctx, pending)
       # loop-guard: stray / un-addressed / worker chatter → ignore.
@@ -111,6 +128,8 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
         direct_answer(persona, msg, self_uri, session_uri, count)
 
       true ->
+        loom_source = ctx[:read].(:loom_source, "")
+
         case DeepSeek.chat(dispatch_messages(workers, text_of(msg)),
                temperature: 0.4,
                thinking_disabled: true
@@ -118,7 +137,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
           {:ok, raw} ->
             case parse_dispatch(raw, workers) do
               {:ok, entries} ->
-                fan_out(msg, entries, self_uri, session_uri, persona, pending, count)
+                fan_out(msg, entries, self_uri, session_uri, persona, pending, count, loom_source)
 
               :error ->
                 direct_answer(persona, msg, self_uri, session_uri, count)
@@ -173,6 +192,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
   def worker_label(s) when is_binary(s) do
     cond do
+      String.contains?(s, "/loomv0_") -> "v0"
       not String.contains?(s, "/loomworker_") -> nil
       String.contains?(s, "policy") -> "policy"
       String.contains?(s, "company") -> "company"
@@ -182,12 +202,22 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
   def worker_label(_), do: nil
 
-  defp fan_out(%Message{} = user_msg, entries, self_uri, session_uri, persona, pending, count) do
+  defp fan_out(
+         %Message{} = user_msg,
+         entries,
+         self_uri,
+         session_uri,
+         persona,
+         pending,
+         count,
+         loom_source
+       ) do
     turn_id = user_msg.id
 
     subs =
       for %{uri: worker_uri, task: task} <- entries do
-        Message.new(self_uri, %{text: task, attachments: []}, mentions: [worker_uri])
+        text = if v0?(worker_uri), do: v0_task(task, loom_source), else: task
+        Message.new(self_uri, %{text: text, attachments: []}, mentions: [worker_uri])
       end
 
     dispatch_effects =
@@ -325,21 +355,30 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
   # === prompts ===
 
   defp dispatch_messages(workers, user_text) do
-    roster = workers |> Enum.map(&"- #{&1.label}") |> Enum.join("\n")
+    roster = workers |> Enum.map(&"- #{&1.label} #{worker_hint(&1.label)}") |> Enum.join("\n")
 
     sys = """
     你是Loom 孵化器助手「Loom」的编排器。你手下有这些 worker(按 label):
     #{roster}
 
-    用户这轮的话见下。你必须把这轮任务拆成给 worker 的子任务并派发出去(不要自己直接回答用户)。
+    用户这轮的话见下。把这轮任务拆成给 worker 的子任务并派发出去(不要自己直接回答用户)。
+
+    **分类规则**:
+    - 当用户的请求是关于**生成、修改、设计页面 / UI**(例如"做一个登录页"、"把按钮改深色"、"加一个登录表单"),只派给 `v0`(它已经有当前页面源码,会输出新的 jsx)。**不要**同时派给 policy/company。
+    - 当用户的请求是关于**业务咨询、政策、企业匹配**等,派给 policy / company(可一条或两条);**不要**派给 v0。
+
     只输出一个 JSON 对象,形如:
     {"dispatch":[{"to":"<worker label>","task":"<给该 worker 的具体子任务,中文>"}]}
-    - 给每个相关 worker 一条聚焦的子任务,尽量覆盖你的全部 worker。
-    - 只输出这个 JSON,标签外不要写任何字。
+    标签外不要写任何字。
     """
 
     [%{"role" => "system", "content" => sys}, %{"role" => "user", "content" => user_text}]
   end
+
+  defp worker_hint("v0"), do: "(页面生成/修改:UI/页面相关请求)"
+  defp worker_hint("policy"), do: "(政策/资源面)"
+  defp worker_hint("company"), do: "(企业匹配/对接面)"
+  defp worker_hint(_), do: ""
 
   defp compose_messages(persona, frags, partial) do
     joined =
@@ -468,6 +507,67 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
   defp text_of(%Message{body: %{text: t}}) when is_binary(t), do: t
   defp text_of(%Message{body: %{"text" => t}}) when is_binary(t), do: t
   defp text_of(_), do: ""
+
+  # === 2026-06-01 redesign: page_update span handling ===
+
+  # Return the embedded `source` string from a `<span type="page_update">{...}</span>`
+  # message body, or nil if absent / malformed.
+  defp page_update_source(%Message{body: body}) do
+    text = body_text(body)
+
+    case Regex.run(~r/<span\s+type="page_update"\s*>([\s\S]*?)<\/span>/, text) do
+      [_full, inner] ->
+        case Jason.decode(String.trim(inner)) do
+          {:ok, %{"source" => src}} when is_binary(src) -> src
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp page_update_source(_), do: nil
+
+  defp body_text(%{text: t}) when is_binary(t), do: t
+  defp body_text(%{"text" => t}) when is_binary(t), do: t
+  defp body_text(_), do: ""
+
+  # Cache the new source on slice; close the pending turn (if any) so the
+  # aggregator no-ops and the compose path is skipped — v0's message already
+  # rendered to the session.
+  defp handle_page_update(%Message{ref_id: ref}, source, pending) when is_binary(ref) do
+    case find_turn_by_subtask(pending, ref) do
+      nil ->
+        {:ok, %{}, [{:set, :loom_source, source}]}
+
+      turn_id ->
+        {:ok, %{}, [{:set, :loom_source, source}, {:set, :pending, Map.delete(pending, turn_id)}]}
+    end
+  end
+
+  defp handle_page_update(_msg, source, _pending) do
+    {:ok, %{}, [{:set, :loom_source, source}]}
+  end
+
+  defp v0?(%URI{} = uri), do: String.contains?(URI.to_string(uri), "/loomv0_")
+  defp v0?(_), do: false
+
+  # Compose the v0 subtask text:current source + user's modification request.
+  # v0's system prompt (`Prompts.page_gen_system_prompt`) handles output rules.
+  defp v0_task(user_request, current_source) do
+    """
+    # 当前页面源码(jsx)
+    ```jsx
+    #{current_source}
+    ```
+
+    # 用户的修改/创建需求
+    #{user_request}
+
+    按系统提示词的规则,只输出一个 jsx 代码块表示新的完整 App;代码块前可以有 1 句对话说明你做了什么(会作为 page_update 的 summary)。
+    """
+  end
 
   def data_owner(_), do: :no_owner
 end
