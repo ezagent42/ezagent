@@ -9,13 +9,26 @@ defmodule EzagentPluginCustomerChat.Bootstrap do
     - `validate_workspace/1`
     - `ensure_session/2`
     - `ensure_cc_for_conv/3` (cc agent + EagerBridge + join)
+    - `install_customer_routing/3` (explicit customer→cc routing rule)
     - `dispatch_chat_send/2`
+
+  Customer→cc routing is via an explicit `Ezagent.Routing.RuleStore`
+  rule (`install_customer_routing/3`), mirroring B's
+  `EzagentPluginAutoservice.CustomerSession`. This replaces the former
+  mention-synthesis hack where `customer_message/3` stamped every
+  inbound message with `mentions: [cc_agent_uri]`.
 
   All tenant data is parameterized — no hardcoded tenant name
   (migration constraint #1).
   """
 
   require Logger
+
+  # The routing table the chat fan-out consults (`Ezagent.Routing.Resolver`
+  # default). Declared by `EzagentDomainChat` at boot. Same table B's
+  # `EzagentPluginAutoservice.CustomerSession` writes its customer→agent
+  # rule into.
+  @routing_table EzagentDomainChat.Routing.MentionRouting
 
   # ---- pure builders ----------------------------------------------------
 
@@ -35,16 +48,90 @@ defmodule EzagentPluginCustomerChat.Bootstrap do
     do: Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
 
   @doc """
-  Build the inbound customer message. We synthesize a server-side
-  `mentions: [cc_agent_uri]` because ezagent's default routing rule is
-  `[session_users, mentions]` — an agent only receives messages it is
-  @-mentioned in, and a customer's natural-language text carries no
-  @-syntax. The synthesized mention is what makes the resolver fan
-  `chat.receive` out to the cc agent.
+  Build the inbound customer message — a plain `chat.send` body, no
+  synthesized mentions.
+
+  Routing the customer's text to the cc agent is now handled by an
+  explicit `Ezagent.Routing.RuleStore` rule installed in
+  `install_customer_routing/3` (mirroring B's
+  `EzagentPluginAutoservice.CustomerSession.install_routing`), not by a
+  server-side `mentions: [cc_agent_uri]` hack. The rule's `{:from,
+  customer}` clause is what fans `chat.receive` out to the cc agent;
+  the message itself carries no @-syntax.
+
+  The third arg (`_cc_agent_uri`) is retained but UNUSED so the SSE
+  controller call site (`EzagentWeb.CustomerChatController`, out of this
+  plugin's edit scope) keeps compiling. Callers that want the cc agent
+  to actually receive the message must first install the routing rule
+  via `install_customer_routing/3` (the customer LiveView does this at
+  bootstrap).
   """
   @spec customer_message(URI.t(), String.t(), URI.t()) :: Ezagent.Message.t()
-  def customer_message(customer_uri, text, cc_agent_uri) do
-    Ezagent.Message.new(customer_uri, %{text: text, attachments: []}, mentions: [cc_agent_uri])
+  def customer_message(customer_uri, text, _cc_agent_uri) do
+    Ezagent.Message.new(customer_uri, %{text: text, attachments: []})
+  end
+
+  # ---- customer→cc routing rule ----------------------------------------
+
+  @doc """
+  Install the explicit customer→cc routing rule for this conversation.
+  Idempotent (reconciler style — re-running converges, never duplicates).
+
+  This REPLACES the old mention-synthesis: instead of stamping every
+  inbound customer message with `mentions: [cc_agent_uri]`, we register
+  one declarative `RuleStore` rule that fans the customer's plain text
+  out to the cc agent. The `{:from, customer}` clause scopes the rule to
+  messages the customer sends, so the cc agent's OWN replies (sender =
+  agent) do not match and never loop back.
+
+  Mirrors B's `EzagentPluginAutoservice.CustomerSession.install_routing`:
+  same `RuleStore` API, the same `{:and, [{:in_session, _}, {:from, _}]}`
+  matcher, the same list-based idempotency, and the same
+  `load_into_registry/1` after a successful add.
+  """
+  @spec install_customer_routing(URI.t(), URI.t(), URI.t()) :: :ok
+  def install_customer_routing(%URI{} = session_uri, %URI{} = customer_uri, %URI{} = agent_uri) do
+    agent_str = URI.to_string(agent_uri)
+    existing = Ezagent.Routing.RuleStore.list(@routing_table)
+
+    # Idempotent: each conversation's cc agent URI is unique, so an
+    # existing rule already routing to it means this conversation is wired.
+    if Enum.any?(existing, fn r -> agent_str in (r.receivers || []) end) do
+      _ = Ezagent.Routing.RuleStore.load_into_registry(@routing_table)
+      :ok
+    else
+      # Workspace derived structurally from the customer URI
+      # (`entity://user/<workspace>/customer_<id>` → `workspace://<ws>`),
+      # the same way B's seed passes its `workspace_uri` through.
+      workspace_uri = Ezagent.URI.entity_workspace_uri(customer_uri)
+
+      matcher =
+        {:and,
+         [
+           {:in_session, URI.to_string(session_uri)},
+           {:from, URI.to_string(customer_uri)}
+         ]}
+
+      case Ezagent.Routing.RuleStore.add(
+             @routing_table,
+             matcher,
+             [agent_uri],
+             nil,
+             workspace_uri: workspace_uri
+           ) do
+        {:ok, _rule} ->
+          _ = Ezagent.Routing.RuleStore.load_into_registry(@routing_table)
+          :ok
+
+        {:error, reason} ->
+          Logger.warning(
+            "customer_chat install_customer_routing(#{URI.to_string(session_uri)}) " <>
+              "failed: #{inspect(reason)}"
+          )
+
+          :ok
+      end
+    end
   end
 
   defp sanitize_for_uri(conv_id) when is_binary(conv_id) do
