@@ -37,14 +37,28 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
     end
   end
 
-  describe "handle_set_legends/2 — install path + authorization" do
-    test "system-internal ctx is authorized → emits a {:set, :legends, ...} effect" do
+  describe "handle_set_legends/2 — install path + authorization (codex HIGH #2 fix)" do
+    test "a TRUSTED system-principal caller is authorized → emits a {:set, :legends, ...} effect" do
       legends = Legend.put(%{}, "传话游戏", member_set: ["relay-cc"], bound_rule_set: "telephone")
 
-      ctx = %{self_uri: uri("session://default/team/s1"), system_internal: true}
+      # Authority rides the TRUSTED `caller` (a closed allowlist), NOT a
+      # caller-supplied ctx boolean. `system://session-internal` is the
+      # principal `system_set_legends/2` dispatches under.
+      ctx = %{
+        self_uri: uri("session://default/team/s1"),
+        caller: uri("system://session-internal")
+      }
 
-      assert {:ok, %{legends: ^legends}, effects} = Chat.handle_set_legends(%{legends: legends}, ctx)
+      assert {:ok, %{legends: ^legends}, effects} =
+               Chat.handle_set_legends(%{legends: legends}, ctx)
+
       assert Enum.any?(effects, fn {:set, :legends, l} -> l == legends; _ -> false end)
+    end
+
+    test "system://orchestrator-tools is also a trusted caller" do
+      legends = Legend.put(%{}, "team", member_set: [], bound_rule_set: "rs")
+      ctx = %{self_uri: uri("session://default/team/s1"), caller: uri("system://orchestrator-tools")}
+      assert {:ok, _, _} = Chat.handle_set_legends(%{legends: legends}, ctx)
     end
 
     test "the session's orchestrator (within_session cap) is authorized" do
@@ -69,6 +83,36 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
 
     test "a plain session-cap holder (no orchestrator authority) is denied" do
       ctx = %{self_uri: uri("session://default/team/s1"), caps: MapSet.new()}
+      assert {:error, :unauthorized} = Chat.handle_set_legends(%{legends: %{}}, ctx)
+    end
+
+    # The codex HIGH #2 regression: a plain session MEMBER (broad workspace
+    # session caps but NOT the orchestrator cap / trusted principal) who simply
+    # sets `system_internal: true` in their ctx MUST be denied — the old gate
+    # trusted that boolean, installing legends for any caller.
+    test "a session member who SPOOFS system_internal: true in ctx is DENIED" do
+      sess = uri("session://default/team-alpha/s1")
+
+      # A broad-but-not-orchestrator session cap: {:session, :any} structurally
+      # held by any workspace session member.
+      member_cap = %Ezagent.Capability{
+        kind: :session,
+        behavior: Chat,
+        action: :set_legends,
+        instance: :any,
+        workspace_uri: URI.parse("workspace://team-alpha"),
+        granted_by: URI.parse("system://test"),
+        granted_at: DateTime.utc_now()
+      }
+
+      ctx = %{
+        self_uri: sess,
+        caller: uri("entity://user/team-alpha/mallory"),
+        caps: MapSet.new([member_cap]),
+        # The spoofed bypass flag — now IGNORED for legends.
+        system_internal: true
+      }
+
       assert {:error, :unauthorized} = Chat.handle_set_legends(%{legends: %{}}, ctx)
     end
   end

@@ -447,6 +447,15 @@ defmodule Ezagent.Behavior.Chat do
   def handle_send(%{message: %Message{} = msg}, ctx) do
     session_uri = ctx[:self_uri]
 
+    # team-routing-unification §3.6 (PR-6): `:legend_triggers` is VIRTUAL, so
+    # the `MessageStore.write/2` round-trip re-fetches a persisted row WITHOUT
+    # it (resets to the `[]` default). Capture it off the ORIGINAL inbound msg
+    # and re-attach to `stored_msg` below so the rule-set ENTRY rule's
+    # `mention(<legend_name>)` matcher fires through the NORMAL Resolver
+    # expansion (carrying the entry's `prompt_template_ref` + expanding magic
+    # receivers like `$session_members`). `[]` → identical to pre-PR-6 routing.
+    legend_triggers = Map.get(msg, :legend_triggers) || []
+
     # 1. Persist — write failure means send failure per DECISIONS
     # impl-time §write-failure; let-it-crash on Repo errors rather than
     # silently dropping the message.
@@ -458,7 +467,10 @@ defmodule Ezagent.Behavior.Chat do
         # new `in_session(session_uri)` matcher (introduced for Feishu
         # binding) return false. Without this fix, in_session-scoped
         # routing rules never fire even when the binding is correct.
-        msg = stored_msg
+        #
+        # Re-attach the virtual legend triggers (lost across the persist
+        # round-trip) so the legend entry rule still matches (PR-6).
+        msg = %{stored_msg | legend_triggers: legend_triggers}
 
         # Phase 4-completion PR 9: Resolver is the SINGLE source of
         # truth for routing decisions. No hardcoded fan-out here — the
@@ -1138,14 +1150,63 @@ defmodule Ezagent.Behavior.Chat do
   # --- :set_legends (team-routing-unification §3.6, PR-6) ----------------
 
   # Install/overwrite the session-scoped legend registry on the :chat slice.
-  # Same orchestrator-only / system-internal authority as set_working_copy
-  # (a legend fronts a team + rule-set — orchestrator config, not generic
-  # session-chat), so it reuses `working_copy_write_authorized?/1`.
+  #
+  # ## Authorization (codex 2026-06-01 HIGH #2 — `system_internal` bypass fix)
+  #
+  # `set_legends` is a normal Chat action, so dispatch CapBAC step 5.5 derives
+  # the cap as `{kind: :session, behavior: Chat, instance: <session_uri>}` —
+  # which ANY non-admin session-cap holder holds STRUCTURALLY. So the handler
+  # needs an EXPLICIT extra gate.
+  #
+  # The PRIOR gate (`working_copy_write_authorized?/1`) trusted a
+  # CALLER-SUPPLIED `ctx[:system_internal] == true` boolean. But the runtime
+  # PRESERVES caller ctx before authz, so any dispatch that simply sets
+  # `system_internal: true` in its ctx installed legends — a privilege hole.
+  #
+  # The fix gates on a TRUSTED IDENTITY, not a ctx boolean
+  # (`legends_write_authorized?/1`): the caller must EITHER
+  #
+  #   - be a trusted system principal — `ctx.caller` ∈ a small allowlist
+  #     (`system://session-internal` / `system://orchestrator-tools`), the same
+  #     provenance-setting pattern; the `system_set_legends/2` path dispatches
+  #     under `system://session-internal` so it still works, OR
+  #   - be the session's orchestrator — hold the exact `{:within_session,
+  #     self_uri}` delegated cap (cap #1, granted only by the Generator).
+  #
+  # The `system_internal`-ctx-flag is NO LONGER consulted for legends.
   def handle_set_legends(%{legends: legends}, ctx) when is_map(legends) do
-    if working_copy_write_authorized?(ctx) do
+    if legends_write_authorized?(ctx) do
       {:ok, %{legends: legends}, [{:set, :legends, legends}]}
     else
       {:error, :unauthorized}
+    end
+  end
+
+  # The trusted-principal allowlist for `set_legends` — installing a legend is
+  # orchestrator/system config (a legend fronts a team + rule-set). Mirrors the
+  # provenance-setting trusted-principal pattern. `set_working_copy` STILL uses
+  # the older `system_internal`-flag gate (`working_copy_write_authorized?/1`) —
+  # codex flagged it shares the same flaw; tracked separately (see report), this
+  # PR fixes `set_legends` properly.
+  @legends_trusted_principals [
+    "system://session-internal",
+    "system://orchestrator-tools"
+  ]
+
+  defp legends_write_authorized?(ctx) do
+    trusted_legends_principal?(ctx) or orchestrator_cap_present?(ctx)
+  end
+
+  # True iff `ctx.caller` is one of the trusted system principals allowed to
+  # install legends. The caller is set by the dispatch path, NOT freely by an
+  # arbitrary user dispatch (a user dispatch carries the user's own
+  # `entity://user/...` caller), so unlike the old `system_internal` boolean
+  # this cannot be spoofed by setting a ctx field.
+  defp trusted_legends_principal?(ctx) do
+    case Map.get(ctx, :caller) do
+      %URI{} = caller -> URI.to_string(caller) in @legends_trusted_principals
+      caller when is_binary(caller) -> caller in @legends_trusted_principals
+      _ -> false
     end
   end
 
@@ -1192,10 +1253,14 @@ defmodule Ezagent.Behavior.Chat do
   @doc """
   System-internal path to install the legend registry (team-routing-unification
   §3.6, PR-6). Mirrors `system_set_working_copy/2`: a `chat.set_legends`
-  dispatch under the `system://session-internal` principal carrying
-  `ctx[:system_internal] = true`. Used by tests and by the PR-7 template
-  materialization path (which installs a template's legends at create_session
-  time, before any orchestrator cap exists).
+  dispatch under the `system://session-internal` principal. Used by tests and
+  by the PR-7 template materialization path (which installs a template's
+  legends at create_session time, before any orchestrator cap exists).
+
+  Authorization rides the TRUSTED `caller` (`system://session-internal` ∈ the
+  `set_legends` allowlist), NOT a ctx flag (codex 2026-06-01 HIGH #2). The old
+  `system_internal: true` marker is no longer consulted for legends — it is
+  omitted here.
   """
   @spec system_set_legends(URI.t(), Legend.registry()) :: {:ok, map()} | {:error, term()}
   def system_set_legends(%URI{} = session_uri, legends) when is_map(legends) do
@@ -1206,7 +1271,6 @@ defmodule Ezagent.Behavior.Chat do
            ctx: %{
              caller: Ezagent.SystemPrincipal.uri("session-internal"),
              caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
-             system_internal: true,
              reply: {:caller_inbox, self()}
            }
          }) do
