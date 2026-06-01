@@ -15,34 +15,36 @@ defmodule Ezagent.Behavior.ModeTest do
      see (operator messages are never gated).
   5. Flip back to `:auto` — AI agent sends → customer sees again.
 
-  ## Post-Phase-B dispatch contract (2026-06-01 main merge)
+  ## Post-Phase-B Lifecycle dispatch contract (2026-06-01 main merge)
 
-  PR #464 deleted the old-style `invoke/4` dispatch contract; `Chat`
-  migrated to `use Ezagent.Lifecycle`, so the removed
-  `Chat.invoke(:send, slice, args, ctx)` direct entry these scenarios
-  used is gone. They now drive the GENUINELY LIVE path: a real Session
-  Kind is spawned, the `:mode` sibling slice is set on it, and the
-  message goes in via `Ezagent.Invocation.dispatch(chat.send)` — the
-  Session executes the effects, so the conditional
-  `{:notify, session_events_topic, {:chat_message, _, msg}}` broadcast
-  (the customer-visible surface) fires or is suppressed for real. We
-  observe it by subscribing to `Chat.session_events_topic/1`, exactly
-  the original assertion style.
+  `Ezagent.Behavior.Mode` migrated from the old `use Ezagent.Behavior`
+  + `invoke/4` surface to `use Ezagent.Lifecycle`. Two consequences for
+  this file:
 
-  The `:mode` slice is written directly on the live Session
-  (`:sys.replace_state`, test-only) rather than via a `mode.set`
-  dispatch: `Ezagent.Behavior.Mode` is itself still an old-style
-  `@behaviour Ezagent.Behavior` (the Phase-B Lifecycle migration has
-  not reached it yet), so the new dispatch path refuses `mode.set`
-  with `{:not_a_behavior, _}`. Its `invoke/4` is unchanged and
-  callable directly, which is how scenario 2 still exercises the real
-  notice-emit side effect (`Mode.invoke(:set, ...)` →
-  `emit_takeover_notice/1` → live `chat.send` cast against
-  `ctx.self_uri`).
+  - The pure-unit `:get` / `:set` tests no longer call the removed
+    `Mode.invoke(:get|:set, slice, args, ctx)`. They drive the new
+    handler entrypoints directly: `Mode.handle_get/2` and
+    `Mode.handle_set/2`. `ctx` carries a `:read` closure over a slice
+    map (`fn key, default -> Map.get(slice, key, default) end`) — the
+    same shape the engine builds from the persisted `:state` container.
+    Assertions are on the new return grammar `{:ok, result_map,
+    effects}`: `handle_set` mutates via a `{:set, :mode, new}` effect
+    and returns `%{mode: new, previous: prev}`; `handle_get` is a pure
+    read (`[]` effects, `%{mode: cur}`).
+
+  - `mode.set` / `mode.get` are NOW DISPATCHABLE (the whole point of the
+    Lifecycle migration). The live-session scenarios therefore flip mode
+    through a REAL `Ezagent.Invocation.dispatch(mode.set)` against the
+    live Session Kind — the Session executes the `{:set, :mode, ...}`
+    effect and (on `:auto -> :takeover`) the `emit_takeover_notice/1`
+    `chat.send` cast, so the conditional customer-visible
+    `{:notify, session_events_topic, {:chat_message, _, msg}}` broadcast
+    fires or is suppressed for real. We observe it by subscribing to
+    `Chat.session_events_topic/1`, exactly the original assertion style.
   """
 
-  # Non-async — scenario 2 spawns a live Session via the integration
-  # path which shares `EzagentCore.Repo` + boot supervisors.
+  # Non-async — the live-session scenarios spawn a real Session via the
+  # integration path which shares `EzagentCore.Repo` + boot supervisors.
   use ExUnit.Case
   alias Ezagent.{Invocation, KindRegistry, Message, MessageStore}
   alias Ezagent.Behavior.{Chat, Mode}
@@ -74,7 +76,7 @@ defmodule Ezagent.Behavior.ModeTest do
   end
 
   # Bootstrap admin ctx (closed-Catalog wildcard) — same shape the
-  # integration tests use for `chat.send` / `chat.join`.
+  # integration tests use for `chat.send` / `chat.join` / `mode.set`.
   defp bootstrap_ctx do
     %{
       caller: Ezagent.SystemPrincipal.uri("bootstrap"),
@@ -83,44 +85,75 @@ defmodule Ezagent.Behavior.ModeTest do
     }
   end
 
+  # Normalise `Mode.create/1`'s return to the persistent state map. The
+  # canonical Lifecycle `create/1` contract is `{:ok, state}`; tolerate a
+  # bare-map return too so this contract assertion pins the DEFAULT value
+  # rather than the wrapper shape.
+  defp mode_create_state({:ok, state}) when is_map(state), do: state
+  defp mode_create_state(state) when is_map(state), do: state
+
+  # A `ctx` for the pure-unit handler tests: a `:read` closure over a flat
+  # slice map (`%{mode: ...}`), mirroring how the Lifecycle engine surfaces
+  # the persisted `:state` container to `handle_get/2` / `handle_set/2`.
+  # `:self_uri` is `:not_a_session` so `emit_takeover_notice/1` short-
+  # circuits (no live Session to cast `chat.send` against) — the handler's
+  # return value + `{:set, :mode, _}` effect is still produced for the
+  # assertion.
+  defp unit_ctx(slice) do
+    %{
+      read: fn key, default -> Map.get(slice, key, default) end,
+      self_uri: :not_a_session
+    }
+  end
+
   # Spawn a live Session Kind bound to workspace://team-alpha so dispatched
   # `chat.send` / `mode.set` invocations have somewhere to land and the
   # effect executor actually fires the `{:notify, ...}` broadcast (which is
-  # what the customer-visible subscriber observes). Mirrors scenario 2 +
-  # the integration tests (`session_auto_join_test`, `mention_gated_*`).
+  # what the customer-visible subscriber observes). Mirrors the integration
+  # tests (`session_auto_join_test`, `mention_gated_routing_test`).
   defp spawn_live_session(session_uri) do
     {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Session, %{uri: session_uri})
     :ok
   end
 
-  # Set the live Session's `:mode` slice directly on the GenServer state.
-  #
-  # The `:mode` slice is what `Chat.reads_sibling_slices() == [:mode]`
-  # causes `Kind.Runtime.maybe_inject_sibling_slices/3` to surface on
-  # `ctx.sibling_slices` at `chat.send` time — i.e. exactly the value the
-  # Phase 2.6 takeover gate reads. We write it via `:sys.replace_state`
-  # (test-only) rather than a `mode.set` dispatch: post-Phase-B,
-  # `Ezagent.Behavior.Mode` is still an old-style `@behaviour
-  # Ezagent.Behavior` (its `invoke/4` is callable directly — see the
-  # `invoke(:set/:get, ...)` unit tests above — but the new dispatch path
-  # refuses non-`use Ezagent.Lifecycle` Behaviors). Writing the slice
-  # directly keeps the customer-visible assertion on the genuinely-live
-  # `chat.send` broadcast while sidestepping the unmigrated dispatch entry.
-  #
-  # The GenServer wrapper holds per-Behavior slices under `:state`
-  # (`Ezagent.Kind.Server` struct field `state: %{atom() => map()}`); the
-  # `:mode` slice is a flat `%{mode: atom()}` (Mode is not yet a
-  # two-container Lifecycle slice).
-  defp set_mode(session_uri, mode) do
+  # Flip the live Session's mode through a REAL `mode.set` dispatch (now
+  # that Mode is `use Ezagent.Lifecycle`, `mode.set` is dispatchable). A
+  # `:call` so the effect pipeline — the `{:set, :mode, new}` slice write
+  # AND, on `:auto -> :takeover`, the `emit_takeover_notice/1` `chat.send`
+  # cast — has fully executed before we return. Returns the handler result
+  # (`%{mode: new, previous: prev}`).
+  defp dispatch_set_mode(session_uri, mode) do
+    target = URI.new!("#{URI.to_string(session_uri)}?action=mode.set")
+
+    result =
+      Invocation.dispatch(%Invocation{
+        target: target,
+        mode: :call,
+        args: %{mode: mode},
+        ctx: bootstrap_ctx()
+      })
+
+    # Drain the Session mailbox so any cast the effect pipeline enqueued
+    # (the takeover notice `chat.send`) has fully fired before we assert.
     {:ok, pid} = KindRegistry.lookup(session_uri)
+    _ = :sys.get_state(pid)
 
-    _ =
-      :sys.replace_state(pid, fn wrapper ->
-        slices = Map.get(wrapper, :state, %{})
-        %{wrapper | state: Map.put(slices, :mode, %{mode: mode})}
-      end)
+    # `mode.set` is a `:call` action — `Invocation.dispatch` wraps the
+    # handler's result map in `{:ok, _}`. Unwrap so callers can match the
+    # bare `%{mode:, previous:}` shape.
+    {:ok, res} = result
+    res
+  end
 
-    :ok
+  # Read the live Session's `:mode` slice (post Lifecycle migration the
+  # Mode slice is the two-container `%{state: %{mode: m}, transients: _}`
+  # shape; tolerate a flat fallback for robustness).
+  defp live_mode(session_uri) do
+    {:ok, pid} = KindRegistry.lookup(session_uri)
+    %{state: slices} = :sys.get_state(pid)
+    mode_slice = Map.get(slices, :mode, %{})
+    persistent = Map.get(mode_slice, :state, mode_slice)
+    Map.get(persistent, :mode, :auto)
   end
 
   # Send `msg` into the live Session via a `chat.send` dispatch (cast). The
@@ -157,8 +190,13 @@ defmodule Ezagent.Behavior.ModeTest do
       assert Mode.state_slice() == :mode
     end
 
-    test "init_slice/1 defaults to :auto" do
-      assert Mode.init_slice(%{}) == %{mode: :auto}
+    test "create/1 builds the initial :mode state defaulting to :auto" do
+      # Lifecycle `create/1` builds the FIRST-EVER persistent `:state`
+      # container for the slice (the Lifecycle successor to the old
+      # `init_slice/1`). Fresh sessions default to `:auto`. We pull the
+      # `mode` out of whatever container shape `create/1` returns so the
+      # assertion pins the DEFAULT (`:auto`), not the wrapper shape.
+      assert %{mode: :auto} = mode_create_state(Mode.create(%{}))
     end
 
     test "cap_subjects/0 covers every action" do
@@ -180,50 +218,46 @@ defmodule Ezagent.Behavior.ModeTest do
     end
   end
 
-  # --- :get / :set unit tests --------------------------------------------
+  # --- handle_get / handle_set unit tests --------------------------------
 
-  describe "invoke(:get, ...)" do
-    test "returns the current mode from the slice" do
-      assert {:ok, _slice, %{mode: :auto}} = Mode.invoke(:get, %{mode: :auto}, %{}, %{})
-      assert {:ok, _slice, %{mode: :takeover}} = Mode.invoke(:get, %{mode: :takeover}, %{}, %{})
+  describe "handle_get/2" do
+    test "returns the current mode from the slice (via ctx.read)" do
+      assert {:ok, %{mode: :auto}, []} = Mode.handle_get(%{}, unit_ctx(%{mode: :auto}))
+      assert {:ok, %{mode: :takeover}, []} = Mode.handle_get(%{}, unit_ctx(%{mode: :takeover}))
     end
 
     test "defaults to :auto for legacy (pre-Phase-2.6) slice without :mode key" do
-      assert {:ok, _slice, %{mode: :auto}} = Mode.invoke(:get, %{}, %{}, %{})
+      assert {:ok, %{mode: :auto}, []} = Mode.handle_get(%{}, unit_ctx(%{}))
     end
   end
 
-  describe "invoke(:set, ...) — slice mutation" do
-    test "flipping :auto -> :takeover sets the slice + returns previous" do
-      ctx = %{self_uri: :not_a_session}
-      slice = %{mode: :auto}
+  describe "handle_set/2 — slice mutation effect" do
+    test "flipping :auto -> :takeover emits a {:set, :mode, :takeover} effect + returns previous" do
+      ctx = unit_ctx(%{mode: :auto})
 
-      assert {:ok, %{mode: :takeover}, %{mode: :takeover, previous: :auto}} =
-               Mode.invoke(:set, slice, %{mode: :takeover}, ctx)
+      assert {:ok, %{mode: :takeover, previous: :auto}, [{:set, :mode, :takeover}]} =
+               Mode.handle_set(%{mode: :takeover}, ctx)
     end
 
-    test "flipping :takeover -> :auto sets the slice + previous (no notice)" do
-      ctx = %{self_uri: :not_a_session}
-      slice = %{mode: :takeover}
+    test "flipping :takeover -> :auto emits the effect + previous (no notice)" do
+      ctx = unit_ctx(%{mode: :takeover})
 
-      assert {:ok, %{mode: :auto}, %{mode: :auto, previous: :takeover}} =
-               Mode.invoke(:set, slice, %{mode: :auto}, ctx)
+      assert {:ok, %{mode: :auto, previous: :takeover}, [{:set, :mode, :auto}]} =
+               Mode.handle_set(%{mode: :auto}, ctx)
     end
 
     test "setting the same mode is a no-op transition (silent reaffirm)" do
-      ctx = %{self_uri: :not_a_session}
-      slice = %{mode: :takeover}
+      ctx = unit_ctx(%{mode: :takeover})
 
-      assert {:ok, %{mode: :takeover}, %{mode: :takeover, previous: :takeover}} =
-               Mode.invoke(:set, slice, %{mode: :takeover}, ctx)
+      assert {:ok, %{mode: :takeover, previous: :takeover}, [{:set, :mode, :takeover}]} =
+               Mode.handle_set(%{mode: :takeover}, ctx)
     end
 
     test "rejects unsupported mode atoms (open enum, narrow Phase 2.6 impl)" do
-      ctx = %{self_uri: :not_a_session}
-      slice = %{mode: :auto}
+      ctx = unit_ctx(%{mode: :auto})
 
       assert {:error, {:unsupported_mode, :copilot}} =
-               Mode.invoke(:set, slice, %{mode: :copilot}, ctx)
+               Mode.handle_set(%{mode: :copilot}, ctx)
     end
   end
 
@@ -238,7 +272,7 @@ defmodule Ezagent.Behavior.ModeTest do
       sender = agent_uri()
       msg = Message.new(sender, %{text: "Hi, I'm the AI", attachments: []})
 
-      # :auto is the init default — no flip needed.
+      # :auto is the create/1 default — no flip needed.
       :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, Chat.session_events_topic(session_uri))
 
       :ok = send_message(session_uri, msg)
@@ -260,7 +294,8 @@ defmodule Ezagent.Behavior.ModeTest do
       bind_to_default(session_uri)
       spawn_live_session(session_uri)
 
-      :ok = set_mode(session_uri, :takeover)
+      # Flip to :takeover via a real mode.set dispatch (now dispatchable).
+      assert %{mode: :takeover, previous: :auto} = dispatch_set_mode(session_uri, :takeover)
 
       sender = agent_uri()
       msg = Message.new(sender, %{text: "AI reply during takeover", attachments: []})
@@ -281,7 +316,7 @@ defmodule Ezagent.Behavior.ModeTest do
       bind_to_default(session_uri)
       spawn_live_session(session_uri)
 
-      :ok = set_mode(session_uri, :takeover)
+      assert %{mode: :takeover, previous: :auto} = dispatch_set_mode(session_uri, :takeover)
 
       operator = operator_uri()
       msg = Message.new(operator, %{text: "operator taking over", attachments: []})
@@ -308,14 +343,22 @@ defmodule Ezagent.Behavior.ModeTest do
 
       :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, Chat.session_events_topic(session_uri))
 
-      # Episode under :takeover — confirm suppressed.
-      :ok = set_mode(session_uri, :takeover)
+      # Episode under :takeover — flip emits the notice; confirm the AI
+      # send that follows is suppressed.
+      assert %{mode: :takeover, previous: :auto} = dispatch_set_mode(session_uri, :takeover)
+      # Drain the takeover-notice broadcast so it doesn't pollute the
+      # AI-send assertion below.
+      assert_receive {:chat_message, _, %Message{}}, 500
+
       msg_during = Message.new(sender, %{text: "during takeover", attachments: []})
       :ok = send_message(session_uri, msg_during)
       refute_receive {:chat_message, _, _}, 100
 
-      # Flip back to :auto — next AI send must reach the customer.
-      :ok = set_mode(session_uri, :auto)
+      # Flip back to :auto — next AI send must reach the customer (the
+      # reverse edge is silent: no notice).
+      assert %{mode: :auto, previous: :takeover} = dispatch_set_mode(session_uri, :auto)
+      refute_receive {:chat_message, _, _}, 100
+
       msg_after = Message.new(sender, %{text: "back to auto", attachments: []})
       :ok = send_message(session_uri, msg_after)
 
@@ -326,7 +369,7 @@ defmodule Ezagent.Behavior.ModeTest do
 
   # --- Scenario 2: takeover notice broadcast (integration via live Session) ----
 
-  describe "Mode.invoke(:set, :auto -> :takeover) emits the takeover notice (scenario 2)" do
+  describe "mode.set dispatch (:auto -> :takeover) emits the takeover notice (scenario 2)" do
     test "live Session: customer subscriber receives the (客服已接管对话) notice" do
       # Spawn a live Session Kind so the cast-dispatched `chat.send`
       # carrying the notice has somewhere to land. Subscribe to the
@@ -334,25 +377,18 @@ defmodule Ezagent.Behavior.ModeTest do
       # notice broadcast.
       session_uri = unique_session()
       bind_to_default(session_uri)
-
-      # Spawn the Session (uses snapshot:on_change, which Sandbox
-      # tolerates because we're shared-mode).
       spawn_live_session(session_uri)
 
       :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, Chat.session_events_topic(session_uri))
 
-      # Flip :auto -> :takeover via a DIRECT `Mode.invoke(:set, ...)`
-      # call with the live session ctx. Post-Phase-B, `mode.set` is no
-      # longer dispatchable (Mode is still old-style `@behaviour
-      # Ezagent.Behavior`), but `Mode.invoke/4` itself is unchanged and
-      # callable — its `emit_takeover_notice/1` side effect dispatches a
-      # genuine `chat.send` cast against `ctx.self_uri`, so the live
-      # Session processes it and broadcasts the notice exactly as before.
-      assert {:ok, %{mode: :takeover}, %{mode: :takeover, previous: :auto}} =
-               Mode.invoke(:set, %{mode: :auto}, %{mode: :takeover}, %{self_uri: session_uri})
+      # Flip :auto -> :takeover via a REAL `mode.set` dispatch. The
+      # handler's `emit_takeover_notice/1` side effect dispatches a
+      # genuine `chat.send` cast against the session, so the live Session
+      # processes it and broadcasts the notice.
+      assert %{mode: :takeover, previous: :auto} = dispatch_set_mode(session_uri, :takeover)
 
       # The notice was cast-dispatched as chat.send — the Session
-      # processes it next, broadcasting to session_events_topic.
+      # processes it, broadcasting to session_events_topic.
       assert_receive {:chat_message, _, %Message{body: body} = stored}, 1_000
 
       text = Map.get(body, :text) || Map.get(body, "text")
@@ -363,47 +399,31 @@ defmodule Ezagent.Behavior.ModeTest do
 
       assert URI.to_string(stored.sender) == "system://chat-router"
 
-      # Persist the flip onto the live Session's `:mode` slice (the direct
-      # invoke above returns the new slice but does not write it back
-      # through the Kind) so the customer-facing gate would observe
-      # :takeover on subsequent sends.
-      :ok = set_mode(session_uri, :takeover)
-
-      {:ok, pid} = KindRegistry.lookup(session_uri)
-      %{state: state} = :sys.get_state(pid)
-      assert state.mode.mode == :takeover
+      # The `{:set, :mode, :takeover}` effect was executed by the Session
+      # as part of the same dispatch, so the live slice now reads
+      # :takeover — subsequent customer-facing sends would be gated.
+      assert live_mode(session_uri) == :takeover
     end
 
     test "no notice on takeover -> auto flip (silent reverse edge)" do
       session_uri = unique_session()
       bind_to_default(session_uri)
-
       spawn_live_session(session_uri)
 
-      # First flip to takeover (consume notice; we don't assert here
-      # — covered above). DIRECT `Mode.invoke/4` call (mode.set is not
-      # dispatchable post-Phase-B — see the test above).
-      assert {:ok, %{mode: :takeover}, %{previous: :auto}} =
-               Mode.invoke(:set, %{mode: :auto}, %{mode: :takeover}, %{self_uri: session_uri})
+      # First flip to takeover (consume notice; covered above). REAL
+      # `mode.set` dispatch — the `{:set, :mode, :takeover}` effect lands
+      # on the live slice.
+      assert %{mode: :takeover, previous: :auto} = dispatch_set_mode(session_uri, :takeover)
+      assert live_mode(session_uri) == :takeover
 
-      # The takeover notice is cast-dispatched — drain the Session
-      # mailbox so the prior chat.send (notice) has fully fired
-      # BEFORE we subscribe. Without this, the historical notice
-      # races our subscription and pollutes the assertion.
-      {:ok, pid} = KindRegistry.lookup(session_uri)
-      _ = :sys.get_state(pid)
-      _ = :sys.get_state(pid)
-
-      # NOW subscribe — and flip back to :auto. No notice should fire.
+      # NOW subscribe — and flip back to :auto. No notice should fire
+      # (`emit_takeover_notice/1` only fires on :auto -> :takeover).
       :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, Chat.session_events_topic(session_uri))
 
-      # Reverse edge via DIRECT `Mode.invoke/4` — :takeover -> :auto is
-      # the silent edge (`emit_takeover_notice/1` only fires on
-      # :auto -> :takeover), so no `chat.send` cast is dispatched.
-      assert {:ok, %{mode: :auto}, %{mode: :auto, previous: :takeover}} =
-               Mode.invoke(:set, %{mode: :takeover}, %{mode: :auto}, %{self_uri: session_uri})
+      assert %{mode: :auto, previous: :takeover} = dispatch_set_mode(session_uri, :auto)
 
       refute_receive {:chat_message, _, _}, 300
+      assert live_mode(session_uri) == :auto
     end
   end
 end

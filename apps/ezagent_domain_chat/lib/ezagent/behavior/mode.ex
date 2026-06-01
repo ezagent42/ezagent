@@ -21,7 +21,7 @@ defmodule Ezagent.Behavior.Mode do
   The enum is intentionally open — `:copilot` and other business modes
   may join later. Only `:auto` and `:takeover` are implemented in
   Phase 2.6 of the AutoService → ezagent migration; everything else
-  raises at `:set`.
+  errors at `:set`.
 
   ## Actions
 
@@ -35,14 +35,25 @@ defmodule Ezagent.Behavior.Mode do
       %{mode: :auto | :takeover}
 
   Read by `Ezagent.Behavior.Chat` via `reads_sibling_slices/0 == [:mode]`
-  to gate the agent-sender fan-out in `Chat.invoke(:send, ...)`.
+  to gate the agent-sender fan-out in `Chat.handle_send/2`.
 
   ## Defaults & legacy snapshots
 
-  Fresh sessions init to `:auto`. A pre-Phase-2.6 Session snapshot has
-  no `:mode` slice — `Ezagent.Kind.Runtime`'s sibling-slice injection
-  defaults missing slices to `%{}`, so the Chat-side reader uses
-  `Map.get(sibling, :mode, :auto)` for the safe fallback.
+  Fresh sessions init to `:auto` (`create/1`). A pre-Phase-2.6 Session
+  snapshot has no `:mode` slice — `Ezagent.Kind.Runtime`'s sibling-slice
+  injection defaults missing slices to `%{}`, so the Chat-side reader
+  uses `Map.get(sibling, :mode, :auto)` for the safe fallback.
+
+  ## Contract (2026-06-01 main merge)
+
+  Migrated from `use Ezagent.Behavior` + `invoke/4` to
+  `use Ezagent.Lifecycle` (the two-container `%{state, transients}`
+  developer API) after PR #464 deleted the legacy `invoke/4` dispatch
+  path — without this migration `mode.set` was no longer dispatchable
+  (`{:not_a_behavior, Ezagent.Behavior.Mode}`) and operator take-over
+  broke. Actions are now declared with the `action` macro; handlers are
+  `handle_set/2` + `handle_get/2`; the slice mutation is a `{:set, :mode,
+  v}` effect.
 
   ## Why a Behavior (not a `:chat` slice field)
 
@@ -53,7 +64,7 @@ defmodule Ezagent.Behavior.Mode do
   already-heavy `:chat` slice with cross-business state.
   """
 
-  @behaviour Ezagent.Behavior
+  use Ezagent.Lifecycle, state_slice: :mode
 
   alias Ezagent.{Invocation, Message}
 
@@ -68,10 +79,27 @@ defmodule Ezagent.Behavior.Mode do
   @spec takeover_notice_text() :: String.t()
   def takeover_notice_text, do: @notice_text
 
-  @impl Ezagent.Behavior
-  def actions, do: [:set, :get]
+  action :set,
+    args: %{mode: :atom},
+    returns: %{mode: :atom, previous: :atom},
+    caps: [:set],
+    modes: [:call],
+    description:
+      "Set the session's operator-control mode (`:auto` / `:takeover`). " <>
+        "On `:auto -> :takeover` a system notice is pushed to the session " <>
+        "so the customer sees the handoff."
 
-  @impl Ezagent.Behavior
+  action :get,
+    args: %{},
+    returns: %{mode: :atom},
+    caps: [:get],
+    modes: [:call],
+    description: "Read the session's current operator-control mode."
+
+  # Mode caps ride the `:session` kind — `operator_auth.ex` and the
+  # Chat-side gate both check `cap(:session, Mode, :set/:get)`. Override
+  # the macro's default `required_caps/0` with the explicit session-kind
+  # caps (same pattern Workspace uses for its `:workspace` caps).
   def required_caps do
     %{
       set: Ezagent.Capability.cap(:session, __MODULE__, :set),
@@ -79,31 +107,18 @@ defmodule Ezagent.Behavior.Mode do
     }
   end
 
-  @impl Ezagent.Behavior
-  def cap_subjects do
-    [
-      {:set, "set this session's operator/agent control mode (auto/takeover)"},
-      {:get, "read this session's current operator/agent control mode"}
-    ]
-  end
+  @impl Ezagent.Lifecycle
+  def create(_args), do: {:ok, %{mode: :auto}}
 
-  @impl Ezagent.Behavior
-  def state_slice, do: :mode
-
-  @impl Ezagent.Behavior
-  def init_slice(_args), do: %{mode: :auto}
-
-  # `:get` — pure read.
-  @impl Ezagent.Behavior
-  def invoke(:get, slice, _args, _ctx) do
-    {:ok, slice, %{mode: Map.get(slice, :mode, :auto)}}
+  # `:get` — pure read; no slice mutation, no effects.
+  def handle_get(_args, ctx) do
+    {:ok, %{mode: ctx[:read].(:mode, :auto)}, []}
   end
 
   # `:set` — flip the mode, emit the handoff notice on auto→takeover.
-  def invoke(:set, slice, %{mode: new_mode}, ctx)
+  def handle_set(%{mode: new_mode}, ctx)
       when new_mode in [:auto, :takeover] do
-    prev_mode = Map.get(slice, :mode, :auto)
-    new_slice = Map.put(slice, :mode, new_mode)
+    prev_mode = ctx[:read].(:mode, :auto)
 
     # Notice only on the auto -> takeover edge. The reverse edge
     # (takeover -> auto) is silent — customer sees the next AI reply
@@ -113,32 +128,11 @@ defmodule Ezagent.Behavior.Mode do
       emit_takeover_notice(ctx)
     end
 
-    {:ok, new_slice, %{mode: new_mode, previous: prev_mode}}
+    {:ok, %{mode: new_mode, previous: prev_mode}, [{:set, :mode, new_mode}]}
   end
 
-  def invoke(:set, _slice, %{mode: bad}, _ctx) do
+  def handle_set(%{mode: bad}, _ctx) do
     {:error, {:unsupported_mode, bad}}
-  end
-
-  @impl Ezagent.Behavior
-  def interface do
-    %{
-      set: %{
-        description:
-          "Set the session's operator-control mode (`:auto` / `:takeover`). " <>
-            "On `:auto -> :takeover` a system notice is pushed to the session " <>
-            "so the customer sees the handoff.",
-        args: %{mode: :atom},
-        returns: %{mode: :atom, previous: :atom},
-        modes: [:call]
-      },
-      get: %{
-        description: "Read the session's current operator-control mode.",
-        args: %{},
-        returns: %{mode: :atom},
-        modes: [:call]
-      }
-    }
   end
 
   # PR-OWN-2 ownership shape: Mode caps on a Session ride the session's
@@ -166,7 +160,7 @@ defmodule Ezagent.Behavior.Mode do
 
     if not match?(%URI{scheme: "session"}, session_uri) do
       # Defensive: if called outside a session ctx (unit-testing a raw
-      # Mode invoke without ctx.self_uri set), skip the side effect.
+      # Mode handler without ctx.self_uri set), skip the side effect.
       # The slice mutation already happened — callers can still observe
       # the mode flip.
       :ok
@@ -180,12 +174,12 @@ defmodule Ezagent.Behavior.Mode do
       msg = Message.new(sender, %{text: @notice_text, attachments: []})
       msg = %{msg | body: Map.put(msg.body, :is_takeover_notice, true)}
 
-      target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+      target = Ezagent.URI.with_action(session_uri, :chat, :send)
 
       # `:cast` — we're inside the Session's own Kind.Server call
       # processing `mode.set`; a `:call` to ourselves would deadlock.
       # The cast enqueues the chat.send invocation to run after the
-      # current invoke returns; the customer sees the notice in the
+      # current handler returns; the customer sees the notice in the
       # same tick the mode flip completes (sub-ms).
       _ =
         Invocation.dispatch(%Invocation{
