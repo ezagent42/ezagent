@@ -221,11 +221,19 @@ async function driveOperator(browser, snap) {
   const opCtx = await browser.newContext({ storageState: opState, viewport: { width: 1100, height: 820 } });
   const op = await opCtx.newPage();
   await op.goto(`${ORIGIN}/operator/${TENANT}/${conv}`, { waitUntil: 'domcontentloaded' });
+  // CRITICAL: phx-click="take_over" is a no-op until the LiveView socket is
+  // connected. Clicking the (statically-rendered) button before connect drops
+  // the event -> mode never flips -> #chat_text never renders. Wait for connect.
+  await op.waitForFunction(() => window.liveSocket && window.liveSocket.isConnected(), null, { timeout: 15000 })
+    .catch(() => log('WARN: operator liveSocket not connected within 15s'));
   await op.locator('#take-over-button').waitFor({ state: 'visible', timeout: 20000 });
   await op.click('#take-over-button');
-  await op.waitForTimeout(1500);
   const opInput = op.locator('#chat_text');
-  await opInput.waitFor({ state: 'visible', timeout: 10000 });
+  await opInput.waitFor({ state: 'visible', timeout: 10000 }).catch(async (e) => {
+    await op.screenshot({ path: `${OUT}/op-takeover-fail.png` }).catch(() => {});
+    log('take-over did not surface #chat_text; saved op-takeover-fail.png');
+    throw e;
+  });
   await opInput.fill(DEF.operatorReply);
   await op.getByRole('button', { name: /send/i }).first().click().catch(() => opInput.press('Enter'));
   await opCtx.close();
