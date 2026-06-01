@@ -27,7 +27,7 @@ defmodule EzagentPluginCustomerChat.ConfigAuth do
   @spec caps_admit?(MapSet.t(Ezagent.Capability.t()) | [Ezagent.Capability.t()], String.t()) ::
           boolean()
   def caps_admit?(caps, tenant) when is_binary(tenant) do
-    ws = URI.parse("workspace://#{tenant}")
+    ws = URI.new!("workspace://#{tenant}")
 
     needed = %{
       kind: :workspace,

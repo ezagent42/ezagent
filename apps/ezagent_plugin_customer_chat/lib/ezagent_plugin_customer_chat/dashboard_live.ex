@@ -69,7 +69,7 @@ defmodule EzagentPluginCustomerChat.DashboardLive do
          |> redirect(to: "/operator")}
 
       true ->
-        workspace_uri = URI.parse("workspace://#{tenant}")
+        workspace_uri = URI.new!("workspace://#{tenant}")
         if connected?(socket), do: subscribe_to_sessions(workspace_uri)
         rows = enumerate_session_rows(workspace_uri)
 

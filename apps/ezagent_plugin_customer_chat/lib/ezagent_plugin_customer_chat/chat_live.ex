@@ -136,7 +136,7 @@ defmodule EzagentPluginCustomerChat.ChatLive do
       when is_binary(text) and text != "" do
     case socket.assigns do
       %{status: :ready, cc_agent_uri: agent_uri} ->
-        customer_uri = URI.parse(socket.assigns.customer_uri_str)
+        customer_uri = URI.new!(socket.assigns.customer_uri_str)
         msg = Bootstrap.customer_message(customer_uri, String.trim(text), agent_uri)
         Bootstrap.dispatch_chat_send(socket.assigns.session_uri, msg)
 

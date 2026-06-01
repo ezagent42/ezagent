@@ -13,7 +13,7 @@ defmodule EzagentPluginCustomerChat.OperatorAuth do
   def operator?(_caller, _tenant, true), do: true
 
   def operator?(%URI{} = caller, tenant, _sys?) when is_binary(tenant) do
-    ws = URI.parse("workspace://#{tenant}")
+    ws = URI.new!("workspace://#{tenant}")
 
     caller
     |> Ezagent.Identity.list_caps_for()

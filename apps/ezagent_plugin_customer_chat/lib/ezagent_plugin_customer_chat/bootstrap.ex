@@ -21,11 +21,11 @@ defmodule EzagentPluginCustomerChat.Bootstrap do
 
   @spec session_uri_for(String.t(), String.t()) :: URI.t()
   def session_uri_for(workspace, conv_id),
-    do: URI.parse("session://default/#{workspace}/#{conv_id}")
+    do: URI.new!("session://default/#{workspace}/#{conv_id}")
 
   @spec customer_uri_for(String.t(), String.t()) :: URI.t()
   def customer_uri_for(workspace, customer_id),
-    do: URI.parse("entity://user/#{workspace}/customer_#{customer_id}")
+    do: URI.new!("entity://user/#{workspace}/customer_#{customer_id}")
 
   @spec agent_name_for(String.t()) :: String.t()
   def agent_name_for(conv_id), do: "cust_" <> sanitize_for_uri(conv_id)
@@ -84,7 +84,7 @@ defmodule EzagentPluginCustomerChat.Bootstrap do
     # ask Allen for a `create_session(orchestrator: false)` opt-out. Tracked in
     # HANDOFF-2026-05-30.md "Deferred decisions".
     case EzagentDomainChat.create_session(conv_id, admin_uri,
-           workspace_uri: URI.parse("workspace://#{workspace}"),
+           workspace_uri: URI.new!("workspace://#{workspace}"),
            template_name: "default"
          ) do
       {:ok, _session_uri, _meta} ->
@@ -142,7 +142,7 @@ defmodule EzagentPluginCustomerChat.Bootstrap do
   end
 
   defp ensure_cc_agent(workspace, agent_name, cwd, soul_path, ctx) do
-    ws_uri = URI.parse("workspace://#{workspace}")
+    ws_uri = URI.new!("workspace://#{workspace}")
     args = %{flavor: "cc", name: agent_name, cwd: cwd, with_pty: true}
     args = if soul_path, do: Map.put(args, :soul_path, soul_path), else: args
 
@@ -152,7 +152,7 @@ defmodule EzagentPluginCustomerChat.Bootstrap do
           {:ok, u}
 
         {:error, {:already_exists, u_str}} when is_binary(u_str) ->
-          {:ok, URI.parse(u_str)}
+          {:ok, URI.new!(u_str)}
 
         {:error, {:already_exists, %URI{} = u}} ->
           {:ok, u}

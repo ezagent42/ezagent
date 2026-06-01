@@ -38,7 +38,7 @@ defmodule EzagentPluginCustomerChat.SessionViewLive do
     sys? = socket.assigns[:is_system_member?]
 
     if OperatorAuth.operator?(caller, tenant, sys?) do
-      session_uri = URI.parse("session://default/#{tenant}/#{conv}")
+      session_uri = URI.new!("session://default/#{tenant}/#{conv}")
       caller_caps = Ezagent.Identity.list_caps_for(caller)
 
       if connected?(socket) do
