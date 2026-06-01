@@ -112,6 +112,7 @@ defmodule Ezagent.Behavior.Chat do
   require Logger
 
   alias Ezagent.{Cmd, KindRegistry, Message, MessageStore}
+  alias Ezagent.Routing.Legend
 
   # PR-N3 r4 (Allen 2026-05-25) — bounded cursor-indexed ring depth for
   # the User-branch `:receive` `:recent_messages` ring. SPEC-pinned (NOT
@@ -189,6 +190,21 @@ defmodule Ezagent.Behavior.Chat do
     description:
       "Write the durable template_working_copy field on the Session's :chat " <>
         "slice (the orchestrator's source-template record — Phase 7 SPEC §1.6)"
+
+  # team-routing-unification §3.6 (PR-6) — install/overwrite the session-scoped
+  # legend registry (`name => %{member_set, bound_rule_set, fold}`) on the
+  # Session's :chat slice, alongside :members. Same authority class as
+  # :set_working_copy (orchestrator / system-internal only — a legend fronts a
+  # team + its rule-set, an orchestrator-config concern), so it reuses
+  # `working_copy_write_authorized?/1`.
+  action :set_legends,
+    args: %{legends: :map},
+    returns: %{legends: :map},
+    caps: [:set_legends],
+    modes: [:call],
+    description:
+      "Write the session-scoped legend registry on the Session's :chat slice " <>
+        "(team-routing-unification §3.6, PR-6)"
 
   # `create/1` — FIRST-EVER existence (SPEC 2026-05-29 §2). Builds the
   # PERSISTENT `state`. The macro-injected `init_slice/1` wraps this in
@@ -311,6 +327,12 @@ defmodule Ezagent.Behavior.Chat do
       # (behaviour-preserving). Readers MUST default via
       # `Map.get(slice, :prompt_templates, %{})` for legacy snapshots.
       prompt_templates: %{},
+      # team-routing-unification §3.6 (PR-6): session-scoped legend registry
+      # (`name => %{member_set, bound_rule_set, fold}`). A legend is a symbolic
+      # team handle that fronts a rule-set (resolution layer: `Ezagent.Routing.
+      # Legend`). Empty by default → no legends (behaviour-preserving). Readers
+      # MUST default via `legends_of/1` for legacy snapshots.
+      legends: %{},
       # Phase 7 completion PR-2 (SPEC §1.3 / §1.6) — the durable
       # source-template record for the orchestrator's working copy.
       # `template_working_copy` is template-SHAPED, not live-runtime
@@ -1110,6 +1132,87 @@ defmodule Ezagent.Behavior.Chat do
       {:ok, %{template_working_copy: _} = ok} -> {:ok, ok}
       {:error, _} = err -> err
       other -> {:error, {:unexpected_set_working_copy_result, other}}
+    end
+  end
+
+  # --- :set_legends (team-routing-unification §3.6, PR-6) ----------------
+
+  # Install/overwrite the session-scoped legend registry on the :chat slice.
+  # Same orchestrator-only / system-internal authority as set_working_copy
+  # (a legend fronts a team + rule-set — orchestrator config, not generic
+  # session-chat), so it reuses `working_copy_write_authorized?/1`.
+  def handle_set_legends(%{legends: legends}, ctx) when is_map(legends) do
+    if working_copy_write_authorized?(ctx) do
+      {:ok, %{legends: legends}, [{:set, :legends, legends}]}
+    else
+      {:error, :unauthorized}
+    end
+  end
+
+  @doc """
+  Read the session-scoped legend registry from a `:chat` slice, defaulting to
+  `%{}` when the key is absent (a pre-PR-6 Session snapshot — see `create/1`).
+  """
+  @spec legends_of(map()) :: Legend.registry()
+  def legends_of(chat_slice) when is_map(chat_slice) do
+    Map.get(chat_slice, :legends, %{})
+  end
+
+  @doc """
+  Resolve a legend NAME against a `:chat` slice's registry to its entry (the
+  bound rule-set handle). Delegates to `Ezagent.Routing.Legend.resolve/2`.
+
+  `{:ok, entry}` (carrying `:bound_rule_set` + `:name`) for a registered
+  legend, `:error` otherwise. team-routing-unification §3.6 (PR-6, GATE a).
+  """
+  @spec resolve_legend(map(), String.t()) :: {:ok, Legend.entry()} | :error
+  def resolve_legend(chat_slice, name) when is_map(chat_slice) and is_binary(name) do
+    Legend.resolve(legends_of(chat_slice), name)
+  end
+
+  @doc """
+  Member-list rows with folded legends collapsed (team-routing-unification
+  §3.6 fold, PR-6, GATE c). Wires this Behavior's `role_name_to_uri/2` into
+  `Ezagent.Routing.Legend.fold_members/3` so a legend's `member_set`
+  role_names resolve to live member URIs. Pure presentation transform — the
+  slice `:members` map is untouched, so every collapsed member stays
+  individually `@`-able.
+
+  Returns `[{:legend, name, [URI.t()]} | {:member, URI.t(), meta}]`.
+  """
+  @spec fold_members(map()) :: [
+          {:legend, String.t(), [URI.t()]} | {:member, URI.t(), map()}
+        ]
+  def fold_members(chat_slice) when is_map(chat_slice) do
+    members = Map.get(chat_slice, :members, %{})
+    legends = legends_of(chat_slice)
+    Legend.fold_members(members, legends, fn role -> role_name_to_uri(members, role) end)
+  end
+
+  @doc """
+  System-internal path to install the legend registry (team-routing-unification
+  §3.6, PR-6). Mirrors `system_set_working_copy/2`: a `chat.set_legends`
+  dispatch under the `system://session-internal` principal carrying
+  `ctx[:system_internal] = true`. Used by tests and by the PR-7 template
+  materialization path (which installs a template's legends at create_session
+  time, before any orchestrator cap exists).
+  """
+  @spec system_set_legends(URI.t(), Legend.registry()) :: {:ok, map()} | {:error, term()}
+  def system_set_legends(%URI{} = session_uri, legends) when is_map(legends) do
+    case Ezagent.Router.dispatch(%Cmd{
+           target: session_uri,
+           action: :set_legends,
+           args: %{legends: legends},
+           ctx: %{
+             caller: Ezagent.SystemPrincipal.uri("session-internal"),
+             caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+             system_internal: true,
+             reply: {:caller_inbox, self()}
+           }
+         }) do
+      {:ok, %{legends: _} = ok} -> {:ok, ok}
+      {:error, _} = err -> err
+      other -> {:error, {:unexpected_set_legends_result, other}}
     end
   end
 

@@ -967,6 +967,35 @@ defmodule Ezagent.Entity.Session do
     :exit, _ -> []
   end
 
+  @doc """
+  The live `:chat` slice's session-scoped legend registry (`name => entry`).
+
+  team-routing-unification §3.6 (PR-6) — the legend-aware mention parsers
+  (Feishu / LiveView) read this to resolve a `@legend` symbolic handle to its
+  bound rule-set entry BEFORE the URI-mention path. Reads the same
+  two-container `:chat` slice as `session_member_uris/1`; returns `%{}` when the
+  Session Kind is not live (no legends if it isn't running).
+  """
+  @spec session_legends(URI.t()) :: map()
+  def session_legends(%URI{} = session_uri) do
+    case Ezagent.KindRegistry.lookup(session_uri) do
+      {:ok, pid} ->
+        chat_slice =
+          pid
+          |> :sys.get_state()
+          |> Map.get(:state, %{})
+          |> Map.get(Ezagent.Behavior.Chat.state_slice(), %{})
+
+        chat_persistent = Map.get(chat_slice, :state, chat_slice)
+        Ezagent.Behavior.Chat.legends_of(chat_persistent)
+
+      :error ->
+        %{}
+    end
+  catch
+    :exit, _ -> %{}
+  end
+
   # ─────────────────────────────────────────────────────────────────────
   # grant_orchestrator_scoped_caps  (2026-05-31 §4 step 6; codex rev-2
   # HIGH-1 idempotency)

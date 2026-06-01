@@ -80,9 +80,10 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
       assert Chat.__behavior__?() == true
     end
 
-    test "declares the five actions" do
+    test "declares the six actions" do
+      # team-routing-unification §3.6 (PR-6) — :set_legends added.
       assert Enum.sort(Chat.__action_names__()) ==
-               [:join, :leave, :receive, :send, :set_working_copy]
+               [:join, :leave, :receive, :send, :set_legends, :set_working_copy]
     end
 
     test "state_slice/0 is :chat" do
