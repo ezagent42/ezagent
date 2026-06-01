@@ -79,10 +79,13 @@ defmodule EzagentPluginCustomerChat.Bootstrap do
 
   This REPLACES the old mention-synthesis: instead of stamping every
   inbound customer message with `mentions: [cc_agent_uri]`, we register
-  one declarative `RuleStore` rule that fans the customer's plain text
-  out to the cc agent. The `{:from, customer}` clause scopes the rule to
-  messages the customer sends, so the cc agent's OWN replies (sender =
-  agent) do not match and never loop back.
+  one declarative `RuleStore` rule that fans any non-agent message in the
+  session out to the cc agent. The matcher is `{:and, [{:in_session, S},
+  {:not, {:from, agent}}]}` — customer-AGNOSTIC (the customer id is
+  ephemeral per page-load, so a `{:from, customer}` rule would only match
+  the page that installed it), and the `{:not, {:from, agent}}` clause
+  excludes the cc agent's OWN replies so there is no loop. One rule per
+  (session, agent) covers every customer id.
 
   Mirrors B's `EzagentPluginAutoservice.CustomerSession.install_routing`:
   same `RuleStore` API, the same `{:and, [{:in_session, _}, {:from, _}]}`
@@ -105,17 +108,25 @@ defmodule EzagentPluginCustomerChat.Bootstrap do
       # the same way B's seed passes its `workspace_uri` through.
       workspace_uri = Ezagent.URI.entity_workspace_uri(customer_uri)
 
+      # Customer-AGNOSTIC on purpose. The customer id is EPHEMERAL — a fresh
+      # `customer_<rand>` per page-load / prewarm (ChatLive `rand_customer_id`).
+      # A `{:from, customer}` rule would only match the one page that installed
+      # it, so the recorder's prewarm-then-record (two different customer ids on
+      # the same conv) — and any reload — got NO delivery → no reply. Instead
+      # route ANY non-agent message in this session to the cc agent; the agent's
+      # OWN replies (sender = agent) are excluded by `{:not, {:from, agent}}`, so
+      # there is no loop. One rule per (session, agent) covers every customer id.
       matcher =
         {:and,
          [
            {:in_session, URI.to_string(session_uri)},
-           {:from, URI.to_string(customer_uri)}
+           {:not, {:from, agent_str}}
          ]}
 
       case Ezagent.Routing.RuleStore.add(
              @routing_table,
              matcher,
-             [agent_uri],
+             [agent_str],
              nil,
              workspace_uri: workspace_uri
            ) do
