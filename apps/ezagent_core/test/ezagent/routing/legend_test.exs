@@ -10,12 +10,23 @@ defmodule Ezagent.Routing.LegendTest do
   rule instead of silent-dropping / mis-routing through the URI matcher.
   """
   use ExUnit.Case
-  alias Ezagent.Routing.{Legend, Matcher, RuleStore}
+  alias Ezagent.Routing.{Legend, Matcher, Resolver, RuleStore}
   alias EzagentCore.Repo
 
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
     Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
+
+    original = Application.get_env(:ezagent_core, :routing_tables)
+
+    on_exit(fn ->
+      if original do
+        Application.put_env(:ezagent_core, :routing_tables, original)
+      else
+        Application.delete_env(:ezagent_core, :routing_tables)
+      end
+    end)
+
     :ok
   end
 
@@ -149,37 +160,84 @@ defmodule Ezagent.Routing.LegendTest do
       assert :not_a_legend = Legend.mention_token(%{}, "anything")
     end
 
-    test "entry_receivers/3 resolves a legend to its bound rule-set entry's concrete URIs" do
-      table = EzagentDomainChat.Routing.MentionRouting
+    test "the entry rule fires via the NORMAL Resolver path using legend_triggers" do
+      # team-routing §3.6 (PR-6 redesign): the legend NAME rides the VIRTUAL
+      # `Message.legend_triggers`, NOT `:mentions` (a CJK name can't be cast to
+      # a URI). The rule-set entry's `mention("传话游戏")` matcher fires against
+      # `legend_triggers`, so the entry's CONCRETE receiver is resolved by the
+      # normal Resolver — carrying the entry's `prompt_template_ref` ctx.
       relay_cc = "entity://agent/team/cc_relay"
+      session = URI.new!("session://default/team/s1")
 
-      {:ok, _} =
-        RuleStore.add(
-          table,
-          Matcher.mention("传话游戏"),
-          [relay_cc],
-          URI.new!("entity://user/system/admin"),
-          rule_set: "telephone",
-          position: 0,
-          prompt_template_ref: "telephone_hop"
+      install_table([{Matcher.mention("传话游戏"), legend_entry([relay_cc], "telephone_hop")}])
+
+      msg =
+        Ezagent.Message.new(
+          URI.new!("entity://user/team/operator"),
+          %{text: "@传话游戏 start"},
+          legend_triggers: ["传话游戏"]
         )
 
-      legends =
-        Legend.put(%{}, "传话游戏", member_set: ["relay-cc"], bound_rule_set: "telephone")
+      # The symbolic legend name never touches :mentions.
+      assert msg.mentions == []
 
-      # The legend fires its entry → delivers to the entry's CONCRETE receiver
-      # (persistence-safe; the symbolic name never enters message.mentions).
-      assert {:ok, [%URI{} = uri]} = Legend.entry_receivers(legends, table, "传话游戏")
+      assert [{%URI{} = uri, ctx}] = Resolver.resolve_with_ctx(msg, session, [], [])
+
       assert URI.to_string(uri) == relay_cc
+      assert ctx.prompt_template_ref == "telephone_hop"
     end
 
-    test "entry_receivers/3 is :error for a non-legend / a set with no entry" do
-      table = EzagentDomainChat.Routing.MentionRouting
-      legends = Legend.put(%{}, "ghost", member_set: [], bound_rule_set: "no-rules")
+    test "a legend entry with a magic receiver ($session_members) fans out via the Resolver" do
+      session = URI.new!("session://default/team/s1")
+      cc = URI.new!("entity://agent/team/cc_a")
+      codex = URI.new!("entity://agent/team/codex_b")
+      sender = URI.new!("entity://user/team/operator")
 
-      assert :error = Legend.entry_receivers(legends, table, "ghost")
-      assert :error = Legend.entry_receivers(%{}, table, "nope")
+      install_table([
+        {Matcher.mention("broadcast"), legend_entry(["$session_members"], nil)}
+      ])
+
+      msg =
+        Ezagent.Message.new(sender, %{text: "@broadcast hi"}, legend_triggers: ["broadcast"])
+
+      recipients =
+        Resolver.resolve(msg, session, [cc, codex, sender], [])
+        |> Enum.map(&URI.to_string/1)
+        |> Enum.sort()
+
+      # The magic receiver expanded to the session members (sender excluded).
+      assert recipients == Enum.sort([URI.to_string(cc), URI.to_string(codex)])
     end
+  end
+
+  # Declare a fresh, isolated RoutingRegistry ETS table and load `entries`
+  # (`{matcher_tuple, value}` pairs) into it. Returns the table atom. The
+  # value map mirrors the `RuleStore.load_into_registry/1` shape so the
+  # Resolver's ctx threading + magic expansion run exactly as in production.
+  defp install_table(entries) do
+    table = String.to_atom("legend_routing_#{System.unique_integer([:positive])}")
+    :ok = Ezagent.RoutingRegistry.declare_table(table, key_uniqueness: :duplicate)
+
+    Enum.each(entries, fn {matcher, value} ->
+      :ok = Ezagent.RoutingRegistry.put(table, matcher, value)
+    end)
+
+    # Point the Resolver at ONLY this isolated table for the test.
+    Application.put_env(:ezagent_core, :routing_tables, [table])
+    table
+  end
+
+  # The loaded-rule value shape (subset relevant to legends): receivers +
+  # rule identity + prompt_template_ref (RuleStore.load_into_registry/1).
+  defp legend_entry(receivers, prompt_template_ref) do
+    %{
+      receivers: receivers,
+      applies_to_users: [],
+      workspace_uri: nil,
+      rule_id: System.unique_integer([:positive]),
+      rule_set: "telephone",
+      prompt_template_ref: prompt_template_ref
+    }
   end
 
   # GATE (c) — fold hides folded-legend members in the list but they remain

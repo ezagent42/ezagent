@@ -6,8 +6,13 @@ defmodule Ezagent.Routing.MatcherTest do
   defp msg(opts \\ []) do
     sender = Keyword.get(opts, :sender, URI.new!("entity://user/system/admin"))
     mentions = Keyword.get(opts, :mentions, [])
+    legend_triggers = Keyword.get(opts, :legend_triggers, [])
     text = Keyword.get(opts, :text, "hello world")
-    Message.new(sender, %{text: text, attachments: []}, mentions: mentions)
+
+    Message.new(sender, %{text: text, attachments: []},
+      mentions: mentions,
+      legend_triggers: legend_triggers
+    )
   end
 
   describe "mention/1" do
@@ -26,6 +31,20 @@ defmodule Ezagent.Routing.MatcherTest do
     test "no match for different URI" do
       m = msg(mentions: [URI.new!("entity://agent/team-alpha/test_other")])
       refute Matcher.match?(Matcher.mention("entity://agent/team-alpha/test_cc-builder"), m)
+    end
+
+    # team-routing §3.6 (PR-6): a `mention(<token>)` matcher also fires when the
+    # token is in the VIRTUAL `legend_triggers` (the symbolic legend-name path —
+    # a CJK / non-URI name can't ride `:mentions`).
+    test "matches a SYMBOLIC legend name carried in legend_triggers (not :mentions)" do
+      m = msg(legend_triggers: ["传话游戏"])
+      assert m.mentions == []
+      assert Matcher.match?(Matcher.mention("传话游戏"), m)
+    end
+
+    test "no match when the legend name is absent from BOTH mentions and legend_triggers" do
+      refute Matcher.match?(Matcher.mention("传话游戏"), msg(legend_triggers: ["other"]))
+      refute Matcher.match?(Matcher.mention("传话游戏"), msg())
     end
   end
 

@@ -29,6 +29,8 @@ defmodule Ezagent.Message do
 
   必填 positional:`sender`(URI)+ `body`(map);其余 opts:
   - `:mentions` — `[URI.t()]`,默认 `[]`
+  - `:legend_triggers` — `[String.t()]`,默认 `[]`(VIRTUAL,non-persisted;
+    见 schema 注释 — 携带触发的 legend 名,绕过 `:mentions` 的 URI cast)
   - `:ref_id` — `String.t()` 或 `nil`,默认 `nil` (the id of the message
     being replied to)
   - `:inserted_at` — `DateTime.t()`,默认 `DateTime.utc_now()`
@@ -46,7 +48,10 @@ defmodule Ezagent.Message do
 
   # Drop Ecto.Schema's `:__meta__` field from JSON serialization (it's
   # internal Ecto state, not part of the Message envelope on the wire).
-  @derive {Jason.Encoder, except: [:__meta__]}
+  # `:legend_triggers` is a VIRTUAL, ephemeral routing hint (team-routing
+  # §3.6, PR-6) — it MUST NOT travel on the wire (PubSub / SSE payloads carry
+  # the persisted message shape). Excluded alongside Ecto's internal `:__meta__`.
+  @derive {Jason.Encoder, except: [:__meta__, :legend_triggers]}
 
   @type body_shape :: %{
           required(:text) => String.t(),
@@ -59,6 +64,7 @@ defmodule Ezagent.Message do
           workspace_uri: String.t() | nil,
           sender: URI.t(),
           mentions: [URI.t()],
+          legend_triggers: [String.t()],
           body: body_shape(),
           ref_id: String.t() | nil,
           inserted_at: DateTime.t()
@@ -84,6 +90,21 @@ defmodule Ezagent.Message do
     # Ezagent.Ecto.URI.dump → string). ecto_sqlite3 JSON-encodes arrays
     # transparently.
     field :mentions, {:array, Ezagent.Ecto.URI}, default: []
+    # team-routing-unification §3.6 (PR-6) — VIRTUAL (NOT persisted): the
+    # session-scoped legend NAMEs an inbound message triggered (e.g. CJK
+    # `["传话游戏"]`). A legend is a symbolic team handle, NOT a member/agent
+    # URI, so its name CANNOT ride `:mentions` (typed `[URI.t()]` via
+    # `Ezagent.Ecto.URI` → `URI.new!/1` rejects a CJK / non-URI name and
+    # crashes `MessageStore.write`). It rides this virtual field instead, so
+    # the rule-set entry's `mention(<legend_name>)` matcher fires through the
+    # NORMAL `Resolver.resolve_with_ctx/4` expansion (carrying the entry's
+    # `prompt_template_ref`, expanding magic receivers like `$session_members`)
+    # WITHOUT touching the persisted message. Because it is virtual, it resets
+    # to its default on the re-fetched persisted row — readers in `handle_send`
+    # MUST read it off the ORIGINAL inbound `msg`, before the
+    # `MessageStore.write/2` round-trip. Default `[]` (behaviour-preserving;
+    # a message with no legend trigger behaves exactly as before).
+    field :legend_triggers, {:array, :string}, virtual: true, default: []
     # body is a JSON-encoded map per ecto_sqlite3's :map column handling.
     field :body, :map
     # ref_id is a plain string referencing another message id (no URI type,
@@ -105,6 +126,7 @@ defmodule Ezagent.Message do
       id: Keyword.get(opts, :id, generate_id()),
       sender: sender,
       mentions: Keyword.get(opts, :mentions, []),
+      legend_triggers: Keyword.get(opts, :legend_triggers, []),
       body: Map.put_new(body, :attachments, []),
       ref_id: Keyword.get(opts, :ref_id),
       inserted_at: Keyword.get(opts, :inserted_at, DateTime.utc_now())

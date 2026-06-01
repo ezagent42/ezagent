@@ -76,9 +76,9 @@ defmodule Ezagent.Routing.Resolver do
 
   @doc """
   The primary routing table rules (and legend rule-sets) live in. Single source
-  for callers — e.g. the mention parsers resolving a legend's bound rule-set
-  entry via `Ezagent.Routing.Legend.entry_receivers/3` (team-routing-unification
-  §3.6, PR-6) — so they don't hard-code the table name.
+  for callers that need to fetch a legend's bound rule-set entry rule via
+  `Ezagent.Routing.Legend.entry_rule/2` (team-routing-unification §3.6, PR-6) —
+  so they don't hard-code the table name.
   """
   @spec default_routing_table() :: atom()
   def default_routing_table, do: hd(@default_routing_tables)
