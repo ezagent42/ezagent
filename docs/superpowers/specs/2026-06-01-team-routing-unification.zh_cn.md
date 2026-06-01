@@ -128,6 +128,7 @@ Clean cutover（Allen）。新 member 字段默认 nil/false → 普通成员行
 ## 7. 不在本期范围（v2+）
 
 - **投递 hook 子系统（B）**——可注册/排序/插拔的变换。v1 只在接缝上放一个 render 函数；B 是显式 future（Allen 的 Claude-Code-hooks 方向）。
+- **动态受众 / "回给刚 @ 我的人"**——需要 reply-context 原语（`Message` 加 in-reply-to/originator 字段 + `$reply_to` 收件 token 展开成*对方*、天然无环）。不是被砍的 `$sender`（回自己，会自环 + 不解决用例；codex 2026-06-01）。v1 核心用静态 `from(X) → [Y]` 规则。**已在实现计划里立为 PR-F1**（post-v1）。
 - 富模板语言（条件/循环/partial）——v1 扁平替换。
 - 嵌套 / 跨 session legend。
 - workspace 级共享模板注册表（v1 = session 内 map）。

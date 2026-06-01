@@ -278,6 +278,7 @@ production orchestrators to preserve).
   token expanding to the *other party*, loop-safe by construction). NOT the
   dropped `$sender`-as-own-sender token (loop-prone + doesn't serve the use case;
   codex 2026-06-01). The v1 core uses static `from(X) → [Y]` rules instead.
+  **Scoped as PR-F1** in the implementation plan (post-v1).
 - Rich template language (conditionals/loops/partials) — v1 flat substitution.
 - Nested / cross-session legends.
 - Workspace-level shared template registry (v1 = session-scoped map).

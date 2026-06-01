@@ -111,3 +111,14 @@ PR-2 ─→ PR-3 ─→ PR-4 ─┐
 ## Self-review (spec coverage)
 - §3.1 member facets/provenance/spawn-state → PR-5. §3.2 template vars → PR-4 (dynamic audience deferred, §7). §3.3 rule-set → PR-3. §3.4 prompt-template/path-A → PR-4. §3.5 matched-rule threading → PR-2. §3.6 legend → PR-6. §3.7 template+materialization → PR-7. §3.8 slot cutover → PR-8. §5 decisions → distributed. §8 resolved decisions → honored (existing CapabilityRegistry in PR-5; session-scoped templates PR-4; per-session role_name PR-5; meta spawn-state PR-5; Resolver shape PR-2). §9 testing + scenario-34 → PR-9 + per-PR gates. No spec section is unassigned.
 - Type consistency: `ctx` shape (`%{rule_id, prompt_template_ref}`) defined PR-2, consumed PR-4; `prompt_template_ref` column PR-3 feeds PR-2's ctx feeds PR-4's render; `role_name` defined PR-5, consumed PR-6 (member_set) + PR-7 (materialize). Consistent.
+
+## Future PRs (post-v1)
+
+### PR-F1 — `$reply_to` receiver token + reply-context (dynamic audience)
+Deferred from the dropped PR-1 (the `$sender`-as-own-sender token was loop-prone AND the wrong primitive — codex 2026-06-01). This is the correct way to do "reply to whoever addressed me / return to the asker":
+- **`Message` gains an `in_reply_to` field** — the URI of the message/originator this message is responding to, set when a user/agent replies to a specific message (thread context).
+- **`$reply_to` receiver magic token** — expands to the `in_reply_to` originator (the OTHER party), member-filtered via `valid_member?/2`. **Loop-safe by construction** (it is never the message's own sender).
+- **Reply-context threading** — when an agent receives a message (`chat.receive`) and replies (`chat.send`), the reply's `in_reply_to` is set to the received message's sender, so `$reply_to` routes the reply back to the originator.
+- **Use case (Allen 2026-06-01)**: rule `{a member's message contains "need clarify"} → $reply_to` routes that member's clarification back to the ORIGINAL broadcaster A — which `$sender` (= the member itself, B) could not do.
+- **Deps**: the v1 routing refactor (PR-2..PR-9) landed; needs a `Message` schema change + a UI/flow that sets `in_reply_to` (reply/threading).
+- **Why post-v1**: requires a Message schema change + reply/threading UX; the v1 core gets by with static `from(X) → [Y]` rules + `$session_members` broadcast.
