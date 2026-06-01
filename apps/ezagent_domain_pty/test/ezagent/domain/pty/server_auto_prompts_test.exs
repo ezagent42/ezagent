@@ -32,8 +32,29 @@ defmodule Ezagent.Domain.Pty.Server.AutoPromptsTest do
                          "\e[2B \x{276F} 1. I am using\e[1Cthis\e[1Cfor\e[1Clocal\e[1Cdevelopment\r\e[4C\e[1B2.\e[1CExit\r" <>
                          "\e[1BEnter to confirm\e[1C\x{00B7}\e[1CEsc\e[1Cto\e[1Ccancel"
 
+  # Real first-run theme picker ("Let's get started / Choose the text style…"),
+  # shown by claude >= ~2.1 whenever it starts in a fresh CLAUDE_CONFIG_DIR
+  # (every per-agent cc sandbox is fresh). Captured 2026-06-01 from claude
+  # 2.1.92. Each `\e[1C` (cursor-forward) strips to one space, so the prompt
+  # line stays readable for substring matching.
+  @theme_picker_buffer "Choose\e[1Cthe\e[1Ctext\e[1Cstyle\e[1Cthat\e[1Clooks\e[1Cbest\e[1Cwith\e[1Cyour\e[1Cterminal\e[22m\r\r\n" <>
+                          "\e[1C\e[38;5;246mTo\e[1Cchange\e[1Cthis\e[1Clater,\e[1Crun\e[1C/theme\e[39m\r\r\n" <>
+                          "\e[1C\x{276F}\e[1C1.\e[1CDark\e[1Cmode\r\r\n\e[3C2.\e[1CLight\e[1Cmode"
+
   defp spec(name),
     do: Enum.find(PtyServer.default_auto_prompts(), &(&1.name == name))
+
+  test ":theme_picker_dialog fires on the real first-run theme picker, sends Enter, and re-arms" do
+    p = spec(:theme_picker_dialog)
+    assert p, "theme_picker_dialog must be in default_auto_prompts/0"
+    assert PtyServer.matches?(p.match, AnsiStrip.strip(@theme_picker_buffer))
+    # bare Enter accepts the pre-highlighted default (safe if it leaks to a
+    # later default-highlighted dialog); a stray "1" could land as chat text.
+    assert p.send == "\r"
+    # the theme picker renders before claude is input-ready, so a one-shot
+    # would be eaten and never retry — it MUST re-arm.
+    assert Map.get(p, :repeat?) == true
+  end
 
   test ":trust_folder_dialog fires on the real folder-trust buffer and sends \"1\\r\"" do
     p = spec(:trust_folder_dialog)

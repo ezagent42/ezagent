@@ -407,6 +407,34 @@ defmodule Ezagent.Domain.Pty.Server do
   def default_auto_prompts do
     [
       %{
+        name: :theme_picker_dialog,
+        # claude >= ~2.1 shows a FIRST-RUN theme picker ("Let's get started /
+        # Choose the text style…") whenever it starts in a fresh
+        # CLAUDE_CONFIG_DIR — which every per-agent cc sandbox is. It blocks
+        # BEFORE the trust + dev-channels dialogs, so without this the spawned
+        # claude hangs on the theme menu, never reaches MCP init, and
+        # esr-bridge never binds (the 2026-06 regression: older claude on the
+        # original dev machine had no theme picker). Anchored on the two static
+        # prompt lines (rendered atomically, so they survive the ANSI-strip
+        # that fragments animated banners).
+        #
+        # `repeat?: true` (NOT one-shot): the theme picker is the FIRST screen,
+        # rendered ~1s in — before claude's TUI is ready for input — so a single
+        # keystroke sent that early is silently eaten (the same "calling too
+        # early eats the \r" hazard documented for the bridge kick). A one-shot
+        # prompt would mark itself fired and never retry, leaving claude stuck
+        # on the menu forever (verified: the prompt "matched" in the log yet the
+        # agent never bound). So we RE-fire (rate-limited in scan_auto_prompts/1)
+        # until the menu clears. We send a bare "\r" — accept the pre-highlighted
+        # "Dark mode" default — not "1\r": Enter is harmless if a re-fire leaks
+        # onto the next dialog (trust / dev-channels both default-highlight their
+        # safe option), whereas a stray "1" could land as text in the chat input.
+        match: ["Choose the text style", "looks best with your terminal"],
+        send: "\r",
+        repeat?: true,
+        fired?: false
+      },
+      %{
         name: :dev_channels_dialog,
         # Anchor on the menu OPTION label, not the WARNING prose: claude's
         # TUI animates/redraws the banner ("Loading…") with cursor-move
@@ -698,9 +726,19 @@ defmodule Ezagent.Domain.Pty.Server do
   def handle_info({stream, _os_pid, data}, state) when stream in [:stdout, :stderr] do
     chunk = if is_binary(data), do: data, else: IO.iodata_to_binary(data)
 
-    Logger.debug(
-      "PtyServer[#{state.os_pid}] #{stream}: #{chunk |> AnsiStrip.strip() |> String.trim_trailing()}"
-    )
+    # Scrub to valid UTF-8 before logging. claude >= 2.1 paints a Unicode
+    # welcome banner (block art ░▓█, ellipsis …) whose multi-byte codepoints
+    # get split across PTY read chunks, so a single chunk can hold a PARTIAL
+    # UTF-8 sequence (e.g. the lead byte 0xE2 of "…" with no trailer).
+    # Interpolating that invalid binary into a log message crashes the Logger
+    # formatter ("bad return value from Logger formatter") *inside this
+    # handle_info*, and OTP then force-removes the failing handler — collateral
+    # damage to the process that runs the auto-prompt scanner. Dropping the
+    # broken partial bytes keeps the debug log readable and crash-proof.
+    Logger.debug(fn ->
+      "PtyServer[#{state.os_pid}] #{stream}: " <>
+        (chunk |> AnsiStrip.strip() |> scrub_utf8() |> String.trim_trailing())
+    end)
 
     # Phase 5 PR 4: fan out raw chunk to LV Pty-Web subscribers
     # (xterm renders escape sequences directly — no ANSI strip here).
@@ -756,8 +794,7 @@ defmodule Ezagent.Domain.Pty.Server do
             {p, any?}
 
           matches?(p.match, stripped) ->
-            fire_prompt(p, state)
-            {%{p | fired?: true}, true}
+            fire_or_rearm(p, state, any?)
 
           true ->
             {p, any?}
@@ -785,6 +822,40 @@ defmodule Ezagent.Domain.Pty.Server do
     do: Enum.all?(needles, &String.contains?(stripped, &1))
 
   def matches?(%Regex{} = re, stripped), do: Regex.match?(re, stripped)
+
+  # Drop invalid/partial UTF-8 bytes (e.g. a multi-byte codepoint split across
+  # PTY read boundaries) so they can't crash the Logger formatter. Valid
+  # codepoints pass through unchanged.
+  defp scrub_utf8(bin) when is_binary(bin) do
+    for <<c::utf8 <- bin>>, into: "", do: <<c::utf8>>
+  end
+
+  # Minimum gap between re-fires of a `repeat?: true` prompt, so an early
+  # eaten keystroke is retried without spamming Enter at the redraw rate
+  # (which would queue up and leak onto later screens once the menu clears).
+  @rearm_min_ms 1200
+
+  # Decide whether to actually send for a MATCHED prompt.
+  #   - one-shot (default): fire once, mark fired? so it never retries.
+  #   - repeat?: true: re-fire while still matched, but at most once per
+  #     @rearm_min_ms; stays armed (fired? false) so it keeps retrying until
+  #     claude advances past the dialog and the match disappears.
+  defp fire_or_rearm(prompt, state, any?) do
+    if Map.get(prompt, :repeat?, false) do
+      now = System.monotonic_time(:millisecond)
+      last = Map.get(prompt, :last_fired_ms)
+
+      if is_nil(last) or now - last >= @rearm_min_ms do
+        fire_prompt(prompt, state)
+        {Map.put(prompt, :last_fired_ms, now), true}
+      else
+        {prompt, any?}
+      end
+    else
+      fire_prompt(prompt, state)
+      {%{prompt | fired?: true}, true}
+    end
+  end
 
   defp fire_prompt(prompt, state) do
     Logger.info(
