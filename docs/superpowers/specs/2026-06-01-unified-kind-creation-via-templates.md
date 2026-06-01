@@ -1,9 +1,16 @@
-# Unified Kind Creation via Templates — Design (rev 5)
+# Unified Kind Creation via Templates — Design (rev 6)
 
-**Date:** 2026-06-01
-**Status:** Draft rev 5 (four codex adversarial rounds folded in; pending re-review + Allen approval)
+**Date:** 2026-06-01 (rev 6: 2026-06-02)
+**Status:** Draft rev 6 — codex-verified SOUND (5 rounds); all OQs resolved by Allen; pending Allen's spec-review
 **Author:** Claude (with Allen)
 
+> **rev 6 changes** (Allen resolved all open questions 2026-06-02): **OQ-4 = B** —
+> narrow the over-broad default user `:session/:any/:any` cap to enumerated safe actions
+> (§3.11) instead of a Session `owner_uri` shim, so session-manage is gated by the
+> manage-cap uniformly (no Session special-case). OQ-1 = reuse per-scope create caps;
+> OQ-2 = one-shot migration, Workspace owner defaults to bootstrap-admin; OQ-3 = identity
+> fields immutable. (codex verdict on rev 5 mechanism: SOUND to proceed to a plan.)
+>
 > **rev 5 changes** (codex review of rev 4 — D-1 + stale framing CLOSED; closed the last
 > A-1 gap): the grant keys off the **result of the atomic durable INSERT** (`:created`
 > vs `:existed`), NOT the `ever_created?` pre-read that gates `create/1` (which runs
@@ -150,7 +157,7 @@ Concretely:
 `Kind.spawn/2` remains the mechanical primitive for rehydrate; **fresh creation outside
 the entry is a CI failure** (§6).
 
-### 3.3 Manage-cap grant — CORE step, `:any` action, Session caveat (A-1, C-1)
+### 3.3 Manage-cap grant — CORE step, `:any` action, Session caveat RESOLVED (A-1, C-1)
 
 After a fresh create (the atomic create path returned `:created`, §3.1, using the
 `created_by` threaded as a create arg), the core handler grants, for each freshly
@@ -171,16 +178,26 @@ cap(kind_of(uri), Ezagent.Behavior.Manage, :any, instance: uri)  → granted to 
 - Skipped on rehydrate (cap already durable). Idempotent across restart by construction.
 - Folds in the piecemeal Session/Template owner-cap grants.
 
-**Session caveat (C-1) — DECISION PENDING (OQ-4):** the kind-axis trick (a `:agent`/
-`:workspace`/`:user` manage-cap is NOT matched by the user baseline
-`cap(:session, :any, :any)`, `user.ex:175`) cleanly excludes ordinary users for those
-three Kinds. But a **`:session`** manage-cap `cap(:session, Manage, :any, S)` **IS**
-matched by that baseline wildcard when S is in the user's workspace — so in a shared
-workspace any member could `manage.reconfigure`/`delete` any session. Lean:
-**session-manage authority retains the existing `owner_uri` gate** (the Manage behavior,
-for Session, additionally checks the caller is the session owner or admin), with the
-uniform manage-cap serving Agent/Workspace/User. The alternative (narrow the default
-user `:session` wildcard) is a broader change. Allen to decide.
+**Session caveat (C-1) — RESOLVED: narrow the over-broad default cap (OQ-4 = B,
+Allen 2026-06-02).** The kind-axis cleanly excludes ordinary users from `:agent`/
+`:workspace`/`:user` manage-caps (different kind). The ONLY exposure is the **`:session`**
+manage-cap: the user baseline `cap(:session, :any, :any, :any, ws)` (`user.ex:175`,
+self-described "intentionally broad") matches `cap(:session, Manage, :any, S)` for any S
+in the user's workspace — so once Manage adds `:delete`/`:reconfigure` to the Session
+kind, that baseline would let any workspace member dissolve any session. This is
+**survivable only today** because no destructive Session action exists yet; adding
+Manage weaponizes the latent over-grant.
+
+**Resolution (B) — narrow the default cap, not a per-Kind shim.** Replace the
+`:session/:any/:any` baseline with the **specific** actions an ordinary user needs on
+sessions (`Chat :send` / `:join` / `:leave` / `:set_working_copy`) instead of `:any`
+action. Then Manage actions are NOT implicitly granted, and session-manage is gated by
+the manage-cap **uniformly with every other Kind** — no Session special-case, no
+`owner_uri` shim (which would be a workaround — `feedback_let_it_crash_no_workarounds`).
+This also removes a latent system-wide over-grant. **Required step (in the plan): audit
+every dispatch that today relies on the `:session/:any/:any` default** (so narrowing to
+the enumerated actions does not break legitimate send/join/leave/etc.); add any missing
+specific action to the new default cap set. See §3.11.
 
 ### 3.4 `Ezagent.Behavior.Manage` — uniform management surface (C-1)
 
@@ -193,8 +210,9 @@ as `register(Session, :join, Chat)`, `application.ex:662`). Actions:
 
 `required_caps[:reconfigure] = required_caps[:delete] = cap(:any, Manage, :any)`,
 resolved against the target instance at dispatch. The granted manage-cap
-(`cap(:<kind>, Manage, :any, instance)`, §3.3) satisfies both. For Session, the handler
-adds the `owner_uri`/admin check (§3.3 caveat) until OQ-4 is decided.
+(`cap(:<kind>, Manage, :any, instance)`, §3.3) satisfies both. **No Session special-case**
+— with the default cap narrowed (§3.3 / §3.11 / OQ-4 = B), the manage-cap gates Session
+uniformly with every other Kind.
 
 ### 3.5 `reconfigure` is a NEW per-Class hook (D-1)
 
@@ -308,6 +326,34 @@ The atomic-insert freshness signal (§3.1) requires three small, enumerated core
    arg into the initial slice / create context (the path `owner_uri` already takes for
    Session, `kind.ex:293`, `server.ex:95`, `ezagent_domain_chat.ex:314`).
 
+### 3.11 Narrow the default user session cap (OQ-4 = B)
+
+`Ezagent.Entity.User.default_caps/1` (`user.ex:175`) currently grants one
+`cap(:session, :any, :any, :any, ws)` — "any session action in my workspace". Replace
+the `:any` **action** with the enumerated set an ordinary user actually needs, so the
+new `Behavior.Manage` actions (`:reconfigure`/`:delete`) are NOT implicitly granted:
+
+```
+default_caps(ws) = [
+  cap(:session, Chat, :send,             instance: :any, ws),
+  cap(:session, Chat, :join,             instance: :any, ws),
+  cap(:session, Chat, :leave,            instance: :any, ws),
+  cap(:session, Chat, :set_working_copy, instance: :any, ws),
+]
+```
+
+(`behavior` stays `Chat` — or `:any` if simpler — but `action` is enumerated, NOT
+`:any`.) **Required audit step (in the plan, BEFORE flipping the default):** grep every
+`session://…?action=…` dispatch + every `required_caps` on Session-registered behaviors,
+and confirm the enumerated set covers all actions ordinary users legitimately invoke
+today (Chat + any other Session-kind behavior). Any action found that users must keep is
+added to the set; anything NOT in the set becomes manage-cap-gated (the intended
+tightening). Existing users are re-granted the narrowed set by the OQ-2 migration.
+
+This is the single highest-blast-radius change in the spec (it touches system-wide
+session authz) — it gets its own PR, the audit as an explicit pre-step, the §6
+"normal use still works" regression test, and (per the merge boundary) a held review.
+
 ## 4. Data flow
 
 **Create:** caller → dispatch `kind.create` (CapBAC create cap) → resolve Class →
@@ -317,8 +363,9 @@ create returned `:created` (§3.1) grant `cap(:<kind>, Manage, :any, uri)` to `c
 Class teardown (§5).
 
 **Modify:** caller → dispatch `manage.reconfigure` (cap `cap(:<kind>, Manage, :any,
-instance)`; Session also owner-checked) → `validate/1` → Class `reconfigure/4` effects on
-the live Kind → (if sidecar) `ensure_subprocess_alive/2`.
+instance)`, uniform across Kinds — default cap narrowed so no Session special-case) →
+`validate/1` → Class `reconfigure/4` effects on the live Kind → (if sidecar)
+`ensure_subprocess_alive/2`.
 
 **Delete:** `manage.delete` → Class teardown → Lifecycle `destroy/2`.
 
@@ -363,15 +410,19 @@ only the spawn + Class durables to undo.
   and `Behavior.Manage` registered (`CapabilityRegistry`).
 - **Reconfigure preserves identity + state:** `manage.reconfigure` keeps the URI and a
   representative runtime-state field (Session members; Agent conversation/PTY-alive).
-- **Manage authz:** non-owner without the manage-cap is denied `:reconfigure`/`:delete`;
-  for Session, a non-owner workspace member is denied (encodes the OQ-4 decision).
+- **Manage authz:** a caller without the manage-cap is denied `:reconfigure`/`:delete` —
+  including, for Session, an ordinary workspace member (proves the narrowed default cap
+  no longer subsumes session-manage; OQ-4 = B).
+- **Narrowed default cap doesn't break normal use:** a fresh user can still
+  `send`/`join`/`leave`/`set_working_copy` on their sessions with the narrowed default
+  cap (regression-guards the §3.11 audit).
 - **No external forge of `created_by`:** `created_by` is `ctx.caller` (authenticated);
   `template_data` cannot carry it.
 
 ## 7. Out of scope (this spec)
 
-Routing-row edit authz (team-routing follow-up); `manage.transfer`; versioned templates;
-narrowing the default user `:session` cap (unless OQ-4 chooses it).
+Routing-row edit authz (team-routing follow-up); `manage.transfer`; versioned templates.
+(Narrowing the default user `:session` cap is now IN scope — OQ-4 = B, §3.11.)
 
 ## 8. Decisions (Allen-approved 2026-06-01)
 
@@ -382,22 +433,22 @@ narrowing the default user `:session` cap (unless OQ-4 chooses it).
    `cap(:<kind>, Manage, :any, instance)` (`:any` action — C-1).
 4. **User manage-cap recipients:** user (self, in `caps_json` at row create) + creating
    admin/registrar.
-5. **Grant location:** core create step, gated by the atomic `ever_created`
-   `false→true` (`:created`) transition surfaced from the create path (§3.1), using
+5. **Grant location:** core create step, gated by the **atomic durable INSERT result**
+   (`:created` vs `:existed`, §3.1/§3.10) surfaced from the create path, using
    `created_by` = `ctx.caller` threaded as a create arg (plugin Classes unchanged).
 
 ## 9. Open questions
 
-- **OQ-1:** Does `kind.create` reuse existing per-scope create caps
-  (`workspace.create_agent` etc.) as its authz, or get a dedicated create-cap? (Lean:
-  reuse; the entry is the dispatch surface, the cap is per-scope.)
-- **OQ-2 (F-1):** Migration of pre-existing Kinds with no manage-cap → a **one-shot
-  migration** deriving owners from durable tables (Session `owner_uri`; Agent
-  lineage/`creator_uri`; Workspace — no owner field, needs a chosen default e.g.
-  bootstrap-admin or `:no_owner`) with explicit "no owner found" handling. NOT
-  activate-backfill (`activate/2` only reconciles a Kind's own slice; the cap lives on
-  the owner's identity — F-1).
-- **OQ-3:** Per-Kind immutable identity fields (username, workspace name) — rejected by
-  `validate`/`reconfigure`.
-- **OQ-4 (C-1) — Allen:** Session-manage authority: retain `owner_uri`/admin gate (lean)
-  vs narrow the default user `:session` wildcard.
+- **OQ-1 — RESOLVED (Allen 2026-06-02):** `kind.create` **reuses existing per-scope
+  create caps** (`workspace.create_agent` etc.); the entry is the dispatch surface, the
+  cap is per-scope. No dedicated create-cap.
+- **OQ-2 (F-1) — RESOLVED (Allen 2026-06-02):** one-shot migration deriving owners from
+  durable tables (Session `owner_uri`; Agent lineage/`creator_uri`); **Workspace has no
+  owner field → default owner = bootstrap-admin**. Explicit "no owner found" handling
+  (no silent skip). NOT activate-backfill (`activate/2` only reconciles a Kind's own
+  slice; the cap lives on the owner's identity — F-1).
+- **OQ-3 — RESOLVED (Allen 2026-06-02):** identity fields (username, workspace name) are
+  immutable — `validate`/`reconfigure` reject changes to them.
+- **OQ-4 (C-1) — RESOLVED = B (Allen 2026-06-02):** narrow the default user
+  `:session/:any/:any` cap to the enumerated safe actions (§3.3 / §3.11); no Session
+  `owner_uri` shim.
