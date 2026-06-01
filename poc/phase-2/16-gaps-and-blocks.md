@@ -67,6 +67,27 @@ change or a bounded agent pool — beyond a minimal feasibility PoC). For the co
 team: does ezagent want a native lifecycle for short-lived / anonymous-scoped agents,
 or is the ephemeral-template-dance the blessed pattern?
 
+**This conflicts directly with the plugin's reason for existing — serving many
+anonymous users — and gets WORSE with scale, not better:**
+- Customer service is **high-cardinality, short-lived, anonymous** agents (one cc per
+  anonymous conversation). Boot-restore assumes the opposite: **few, long-lived,
+  owned** agents that all rehydrate on restart. The two models are fundamentally
+  mismatched.
+- The `remove_template`-per-agent dance is a **per-agent opt-out of a default that is
+  wrong for this whole vertical**. It is fragile at scale: **any** path that registers
+  an agent without reaching `remove_template` (exception, crash mid-flow, a new entry
+  point, the manual/test paths) leaves a **permanent** registration that re-spawns on
+  every boot. We have **empirical evidence** of exactly this — stray `cc_wait_*` agents
+  from earlier experiments kept getting boot-restored on every server start (2026-06-02;
+  ops detail in the PoC's leftover-agents investigation note). Even if every path is
+  correct, restoring N historical conversations means **O(N) claude-PTY spawns at boot**
+  — untenable for a real CS deployment.
+- **Therefore the "service session" profile (M1) must own a lifecycle where
+  anonymous/ephemeral service agents are NOT boot-restored by default** — not leave
+  the plugin to cancel boot-restore one agent at a time. This raises G2 from "a documented
+  inconvenience" to "a scaling blocker for the anonymous-multi-user case the plugin is
+  built for."
+
 ### G3 — operator takeover requires a core hook OR pure routing — CORE DECISION → Allen
 Takeover is implemented via `Ezagent.Behavior.Mode` (#511, PR #532): a native
 Behavior + slice, **plus a small suppression hook in core `Chat.handle_send`** (drop
