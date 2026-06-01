@@ -195,6 +195,34 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   @impl Ezagent.Kind.Template
   def template_name, do: "cc.agent"
 
+  # SPEC 2026-06-01-flavor-generic-template-data (approach B): the
+  # cc-specific template_data fields formerly hardcoded in
+  # `AgentTemplate.to_template_data/2`. Reads atom-or-string content keys;
+  # returns string keys; nil values are dropped by the caller. Output is
+  # byte-for-byte the pre-fix cc set, so orchestrators + existing cc agents
+  # are unaffected.
+  @impl Ezagent.Kind.Template
+  def template_data_extra(content) when is_map(content) do
+    %{
+      "claude_config_dir" => content_field(content, :claude_config_dir),
+      "operator_settings_path" => content_field(content, :settings_path),
+      "operator_mcp_config_path" => content_field(content, :mcp_config_path),
+      "api_key_helper" => content_field(content, :api_key_helper),
+      "role" => content_field(content, :role)
+    }
+  end
+
+  def template_data_extra(_), do: %{}
+
+  # AgentTemplate `content` may carry atom (fresh) or string (post-JSON)
+  # keys — read tolerantly.
+  defp content_field(content, key) when is_atom(key) do
+    case Map.get(content, key) do
+      nil -> Map.get(content, Atom.to_string(key))
+      v -> v
+    end
+  end
+
   @impl Ezagent.Kind.Template
   def validate(tmpl) when is_map(tmpl) do
     with :ok <- check_class(tmpl),

@@ -65,11 +65,25 @@ defmodule Ezagent.Entity.AgentTemplate do
         created_at:         DateTime.t()
       }
 
-  **What is NOT in the slice** (deliberately): prompt, model, effort,
-  tools whitelist, MCP servers. All of those live in the pointed-at
-  `claude_config_dir` (or the explicit `settings_path` override).
-  ESR doesn't re-model what CC already encodes — AgentTemplate is a
-  sandbox pointer + cap policy, not a full agent spec.
+  The shape above is the cc-flavor view. Since SPEC
+  2026-06-01-flavor-generic-template-data (approach B), the content is a
+  UNIVERSAL base (`flavor`, `working_directory`, `default_caps`,
+  `parent_template_uri`, `created_by`, `created_at`) + **flavor-owned
+  extras** declared by each flavor's Template Class via
+  `c:Ezagent.Kind.Template.template_data_extra/1`. `to_template_data/2`
+  stays flavor-agnostic: cc contributes
+  `claude_config_dir`/`settings_path`/`mcp_config_path`/`api_key_helper`/`role`;
+  curl contributes `provider`/`api_url`/`model`/`system_prompt`/`max_history`;
+  codex contributes `model`/`approval_policy`/`sandbox`/… A template missing a
+  required flavor field fails loud at `to_template_data/2` (it runs the
+  flavor's `validate/1`).
+
+  **What is NOT in a cc AgentTemplate slice** (deliberately): prompt, model,
+  effort, tools whitelist, MCP servers — for cc, those live in the pointed-at
+  `claude_config_dir` (or the explicit `settings_path` override); ESR doesn't
+  re-model what CC already encodes. Other flavors (curl/codex) DO carry their
+  provider/model in the slice (they have no external config dir to point at) —
+  hence the flavor-owned extras above.
 
   ## Persistence
 
@@ -153,46 +167,76 @@ defmodule Ezagent.Entity.AgentTemplate do
   """
   @spec to_template_data(map(), URI.t()) :: {:ok, map()} | {:error, term()}
   def to_template_data(content, %URI{} = instance_agent_uri) when is_map(content) do
-    with {:ok, class} <- resolve_class_name(content),
+    # SPEC 2026-06-01-flavor-generic-template-data (approach B): core
+    # builds the UNIVERSAL base (class/agent_uri/cwd) and delegates every
+    # flavor-specific field to the flavor's Template Class via the optional
+    # `template_data_extra/1` callback. Core no longer hardcodes cc's field
+    # set — curl's provider/api_url/model + codex's model/sandbox/… are
+    # owned by their plugins. (Pre-fix this dropped curl/codex fields, so
+    # orchestrator-spawned curl/codex workers had nil provider/model.)
+    with {:ok, tc} <- resolve_template_class(content),
          {:ok, cwd} <- fetch_working_directory(content) do
       base = %{
-        "class" => class,
+        "class" => tc.template_name(),
         "agent_uri" => URI.to_string(instance_agent_uri),
         "cwd" => cwd
       }
 
-      # SPEC `2026-05-26-session-create-orchestrator-unified` Gap B —
-      # propagate the orchestrator `role` from the AgentTemplate content
-      # to the Template Class data. The cc-orchestrator AgentTemplate
-      # seed sets `role: "orchestrator"`; default cc AgentTemplates omit
-      # the field (resolves to `:default` downstream).
-      optional = %{
-        "operator_settings_path" => content_get(content, :settings_path),
-        "operator_mcp_config_path" => content_get(content, :mcp_config_path),
-        "claude_config_dir" => content_get(content, :claude_config_dir),
-        "api_key_helper" => content_get(content, :api_key_helper),
-        "role" => content_get(content, :role)
-      }
+      extra =
+        if function_exported?(tc, :template_data_extra, 1) do
+          tc.template_data_extra(content)
+        else
+          %{}
+        end
 
-      data =
-        Enum.reduce(optional, base, fn
-          {_k, nil}, acc -> acc
-          {k, v}, acc -> Map.put(acc, k, v)
-        end)
+      data = merge_template_extra(base, extra)
 
-      {:ok, data}
+      # Fail-fast (codex review HIGH): a misconfigured flavor template
+      # (e.g. curl missing provider) must NOT spawn a nil-config worker.
+      # The spawn path does not call validate/1 before instantiate, so we
+      # do it here against the flavor's OWN rules.
+      case validate_for_flavor(tc, data) do
+        :ok -> {:ok, data}
+        {:error, reason} -> {:error, {:invalid_template_data, reason}}
+      end
     end
   end
 
   def to_template_data(content, _uri), do: {:error, {:invalid_template_content, content}}
 
-  # The `"class"` key — the flavor's Template Class `template_name/0`,
-  # resolved through `Ezagent.AgentFlavorRegistry`.
-  defp resolve_class_name(content) do
+  # Reserved universal keys core owns — a flavor's template_data_extra/1
+  # must never override these.
+  @reserved_template_data_keys ~w(class agent_uri cwd)
+
+  # Merge the flavor's extras onto the base: stringify keys, drop nil
+  # values, and refuse reserved-key overrides (defensive — the callback
+  # contract already forbids them).
+  defp merge_template_extra(base, extra) when is_map(extra) do
+    Enum.reduce(extra, base, fn {k, v}, acc ->
+      ks = to_string(k)
+
+      cond do
+        is_nil(v) -> acc
+        ks in @reserved_template_data_keys -> acc
+        true -> Map.put(acc, ks, v)
+      end
+    end)
+  end
+
+  defp merge_template_extra(base, _not_a_map), do: base
+
+  defp validate_for_flavor(tc, data) do
+    if function_exported?(tc, :validate, 1), do: tc.validate(data), else: :ok
+  end
+
+  # Resolve the flavor's Template Class MODULE from content (ONE registry
+  # lookup — reused for `class`, `template_data_extra/1`, and `validate/1`;
+  # codex review LOW: no double lookup).
+  defp resolve_template_class(content) do
     case content_get(content, :flavor) do
       flavor when is_binary(flavor) and flavor != "" ->
         case Ezagent.AgentFlavorRegistry.lookup(flavor) do
-          {:ok, %{template_class: tc}} -> {:ok, tc.template_name()}
+          {:ok, %{template_class: tc}} -> {:ok, tc}
           :error -> {:error, {:unknown_flavor, flavor}}
         end
 
