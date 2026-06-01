@@ -223,19 +223,17 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpBridgeTest do
       list = Enum.find(responses, &(&1["id"] == 2))
       tools = list["result"]["tools"]
 
-      assert length(tools) == 7,
-             "the configured command's tools/list must return the 7 orchestrator " <>
-               "tool schemas. Got #{inspect(tools)}"
+      expected_names = MapSet.new(Enum.map(McpServer.tool_schemas(), & &1["name"]))
+
+      assert length(tools) == MapSet.size(expected_names),
+             "the configured command's tools/list must return McpServer.tool_schemas/0's " <>
+               "tools. Got #{inspect(tools)}"
 
       names = tools |> Enum.map(& &1["name"]) |> MapSet.new()
 
-      assert names ==
-               MapSet.new(~w(add_agent_slot remove_agent_slot update_agent_template
-                             write_matcher update_template save_template_as list_templates)),
-             "tools/list must serve exactly McpServer.tool_schemas/0's 7 tools"
-
-      # The schemas must be the SAME ones McpServer owns — single source.
-      assert names == MapSet.new(Enum.map(McpServer.tool_schemas(), & &1["name"]))
+      # tools/list must serve EXACTLY McpServer.tool_schemas/0 — the single
+      # source of truth (§3.8 rewrote this to the member/rule-set surface).
+      assert names == expected_names
     end
   end
 
@@ -278,7 +276,7 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpBridgeTest do
       # tools/list over the Channel — the BEAM-served redundancy path.
       ref = push(socket, "mcp_tools_list", %{})
       assert_reply ref, :ok, %{"tools" => tools}
-      assert length(tools) == 7
+      assert length(tools) == length(McpServer.tool_schemas())
 
       # tools/call — list_templates. The orchestrator holds the
       # :agent_template cap → agent_templates returned, session_templates

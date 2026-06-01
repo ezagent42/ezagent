@@ -304,11 +304,13 @@ defmodule Ezagent.Entity.Agent do
   same instance name (and hence the same worker URI). The digest is now
   the first **32 hex chars** (128 bits) — accidental collision is
   negligible. This is the probabilistic defense; the deterministic
-  guarantee is the Generator / `update_agent_template` uniqueness
-  preflight (`Ezagent.Orchestrator.SlotNames.preflight/2`), which
-  computes every candidate instance name up front and REJECTS the
-  operation if any two collide — uniqueness is then guaranteed, not
-  merely improbable.
+  guarantee is **per-session `role_name` uniqueness** (enforced at
+  `chat.join` by `Ezagent.Behavior.Chat`'s `role_name_conflict/3`,
+  team-routing-unification §3.1) — two members in one session cannot share
+  a role_name, and the session discriminator folded into the name keeps
+  distinct sessions distinct. (The pre-§3.8 slot-tool
+  `Ezagent.Orchestrator.SlotNames` up-front-collision preflight was
+  retired with the slot mechanism — clean cutover.)
   """
   @spec session_instance_name(String.t(), String.t(), non_neg_integer()) :: String.t()
   def session_instance_name(slot_name, session_discriminator, generation \\ 0)

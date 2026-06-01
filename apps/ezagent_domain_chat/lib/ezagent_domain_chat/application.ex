@@ -382,14 +382,14 @@ defmodule EzagentDomainChat.Application do
   # without operator setup, and `/admin/templates` is non-empty on a
   # fresh install.
   #
-  # Minimal-viable config (per task spec): empty `agent_slots` (no
-  # worker agents — just the orchestrator), empty `routing_rules`
-  # (no auto-routing), `orchestrator_template_uri` pointing at the
-  # cc-orchestrator AgentTemplate seeded in
-  # `seed_cc_orchestrator_template/0` above. A session instantiated
-  # from this template spawns only the orchestrator — the orchestrator
-  # then composes its team via `add_agent_slot` / `write_matcher`
-  # tools.
+  # Minimal-viable config: empty `members` (no worker agents — just the
+  # orchestrator), empty `routing_rules` (no auto-routing),
+  # `orchestrator_template_uri` pointing at the cc-orchestrator
+  # AgentTemplate seeded in `seed_cc_orchestrator_template/0` above. A
+  # session instantiated from this template spawns only the orchestrator —
+  # the orchestrator then composes its team via its member + rule-set tools
+  # (`add_managed_member` / `define_rule_set_rule` / `define_legend`,
+  # team-routing-unification §3.8).
   #
   # ## Idempotency (content-addressable)
   #
@@ -398,7 +398,8 @@ defmodule EzagentDomainChat.Application do
   # Kind. Re-running this seed with identical content resolves to the
   # SAME URI and `SpawnRegistry.spawn/1` returns `{:ok, _existing_pid}`
   # — no duplicate row in `kind_snapshots`. Hash inputs include
-  # `agent_slots`, `routing_rules`, `orchestrator_template_uri`, and
+  # `members`, `routing_rules`, `prompt_templates`, `legends`,
+  # `orchestrator_template_uri`, and
   # `default_workspace_uri`; `created_at`/`created_by` are explicitly
   # excluded (see `SessionTemplate.compute_version_hash/1`) so wall-
   # clock skew across reboots doesn't churn the hash.

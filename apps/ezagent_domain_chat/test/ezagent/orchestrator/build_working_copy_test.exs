@@ -1,37 +1,29 @@
 defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
   @moduledoc """
-  Phase 7 completion PR-2 (SPEC §2 "PR-2") — `Tools.build_working_copy/4`
-  rewrite: it now emits a **template-shaped** working-copy slice read
-  straight from the Session's durable `template_working_copy` field
-  (`Ezagent.Behavior.Chat`), not from live `WorkspaceRegistry` /
-  `RuleStore` state.
+  `Tools.build_working_copy/4` — the working-copy snapshot the
+  `update_template` / `save_template_as` tools persist.
 
-  `build_working_copy/4` is private; these tests exercise it through the
-  public `update_template/1` + `save_template_as/2` tools, observing the
-  version hash baked into the returned `template://session/...@<hash>`
-  URI. The hash is computed by
-  `Ezagent.Entity.SessionTemplate.compute_version_hash/1` over the
-  template-shaped slice — so the URI hash is a faithful witness of what
-  `build_working_copy/4` produced.
+  team-routing-unification §3.8 (PR-8) rewrote it: it no longer reads the
+  retired `template_working_copy.agent_slots`. A SessionTemplate now
+  snapshots the live session's **members** (those with
+  `in_session_template: true`), **prompt_templates**, **legends**, and the
+  session's rule-set **routing_rules** (the PR-7 SessionTemplate content
+  shape). `build_working_copy/4` is private; these tests exercise it through
+  the public `save_template_as/2` tool, observing the version hash baked
+  into the returned `template://session/...@<hash>` URI.
 
-  THE GATE (SPEC §2 PR-2 test list): identical team config in two
-  DIFFERENT sessions → `compute_version_hash/1` returns the SAME hash —
-  proving `session_uri` is excluded from the hash input.
+  THE GATE (carried over from PR-2): identical team config in two DIFFERENT
+  sessions → `compute_version_hash/1` returns the SAME hash — proving
+  `session_uri` is excluded from the hash input.
   """
 
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Behavior.Chat
-  alias Ezagent.Entity.{Session, SessionTemplate}
+  alias Ezagent.Entity.SessionTemplate
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Orchestrator.Tools
 
-  # Phase 7 completion PR-5 — `save_template_as`/`update_template` now
-  # require the orchestrator's cap #3 (`:session_template`
-  # `Behavior.Template`, `{:within_workspace, ws}`) at the tool
-  # boundary. These build-working-copy tests only exercise the
-  # hash-shape of `build_working_copy/4`, so they supply a workspace-
-  # scoped cap-#3 set.
   defp caps_3(workspace_uri) do
     MapSet.new([
       %Ezagent.Capability{
@@ -39,46 +31,50 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
         behavior: Ezagent.Behavior.Template,
         instance: {:within_workspace, workspace_uri},
         workspace_uri: workspace_uri,
-        granted_by: URI.parse("entity://user/system/admin"),
+        granted_by: Ezagent.URI.new!("entity://user/system/admin"),
         granted_at: DateTime.utc_now()
       }
     ])
   end
 
-  # A live, template-SHAPED working copy: agent_slots carry
-  # `template://agent` URIs (the durable source_agent_template_uri),
-  # routing receivers are slot NAMES.
-  defp sample_working_copy do
+  # A member-shaped live :chat slice: one in-session-template member with a
+  # role_name + spawn-source facet, a named prompt template, and a legend.
+  # The persistent fields `build_working_copy/4` snapshots.
+  defp sample_chat_state do
+    member_uri = Ezagent.URI.new!("entity://agent/team-alpha/echo_relay-cc")
+
     %{
-      agent_slots: [
-        {"backend", URI.parse("template://agent/system/cc-backend")},
-        {"frontend", URI.parse("template://agent/team-alpha/cc-frontend")}
-      ],
-      routing_rules: [{{:mention, "backend"}, ["backend"]}],
-      orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
-      default_workspace_uri: URI.parse("workspace://team-alpha"),
-      description: "two-agent team"
+      description: "two-agent team",
+      members: %{
+        member_uri => %{
+          online: true,
+          role_name: "relay-cc",
+          in_session_template: true,
+          source_template_uri: Ezagent.URI.new!("template://agent/system/cc-backend")
+        }
+      },
+      prompt_templates: %{"telephone_hop" => "接龙：{body}"},
+      legends: %{
+        "传话游戏" => %{member_set: ["relay-cc"], bound_rule_set: "telephone", fold: true}
+      },
+      template_working_copy: %{
+        orchestrator_template_uri: Ezagent.URI.new!("template://agent/system/cc-orchestrator")
+      }
     }
   end
 
-  # Spawn a Session Kind and stamp `working_copy` into its `:chat`
-  # slice's `template_working_copy` field (PR-2 has no Generator — PR-4
-  # — so the slice is set directly via :sys.replace_state, mirroring
-  # what the Generator/orchestrator tools will eventually do).
-  defp spawn_session_with_working_copy(session_uri, working_copy) do
+  # Spawn a Session Kind and stamp `chat_state` into its `:chat` slice's
+  # persistent `:state` container.
+  defp spawn_session_with_state(session_uri, chat_state) do
     :ok = KindSnapshot.delete(URI.to_string(session_uri))
-    {:ok, pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
+    {:ok, pid} = Ezagent.Kind.spawn(Ezagent.Entity.Session, %{uri: session_uri})
 
     :sys.replace_state(pid, fn server_state ->
-      # Lifecycle migration (SPEC 2026-05-29 §2.3C): the Chat slice is now
-      # the two-container `%{state, transients}` shape; the persistent
-      # `template_working_copy` lives under `:state`. Stamp it there (the
-      # Generator/orchestrator tools write via `{:set, ...}` effects, which
-      # land in the same place).
-      chat_slice = get_in(server_state, [:state, Chat.state_slice()]) || %{state: %{}, transients: %{}}
-      chat_state = Map.get(chat_slice, :state, %{})
-      new_state = Map.put(chat_state, :template_working_copy, working_copy)
-      new_chat = Map.put(chat_slice, :state, new_state)
+      chat_slice =
+        get_in(server_state, [:state, Chat.state_slice()]) || %{state: %{}, transients: %{}}
+
+      merged = Map.merge(Map.get(chat_slice, :state, %{}), chat_state)
+      new_chat = Map.put(chat_slice, :state, merged)
       put_in(server_state, [:state, Chat.state_slice()], new_chat)
     end)
 
@@ -91,67 +87,62 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
     pid
   end
 
-  describe "build_working_copy/4 emits template-shaped slices (via save_template_as/2)" do
-    test "emits template://agent URIs + slot-name routing — not live entity://agent URIs" do
+  describe "build_working_copy/4 emits the member-shaped SessionTemplate content" do
+    test "snapshots members (in_session_template) + prompt_templates + legends — not slots" do
       session_uri =
-        URI.parse("session://default/team-alpha/bwc-shape-#{System.unique_integer([:positive])}")
+        Ezagent.URI.new!("session://default/team-alpha/bwc-shape-#{System.unique_integer([:positive])}")
 
-      working_copy = sample_working_copy()
-      _pid = spawn_session_with_working_copy(session_uri, working_copy)
+      _pid = spawn_session_with_state(session_uri, sample_chat_state())
 
       assert {:ok, %URI{} = template_uri} =
                Tools.save_template_as("shape-team",
                  session_uri: session_uri,
-                 workspace_uri: URI.parse("workspace://team-alpha"),
-                 caller: URI.parse("entity://agent/team-alpha/cc_orch"),
-                 caps: caps_3(URI.parse("workspace://team-alpha"))
+                 workspace_uri: Ezagent.URI.new!("workspace://team-alpha"),
+                 caller: Ezagent.URI.new!("entity://agent/team-alpha/cc_orch"),
+                 caps: caps_3(Ezagent.URI.new!("workspace://team-alpha"))
                )
 
       assert template_uri.scheme == "template"
       assert template_uri.host == "session"
 
-      # The hash baked into the URI must equal compute_version_hash/1
-      # over the TEMPLATE-shaped slice — agent_slots as
-      # {slot_name, template://agent URI}, routing receivers as slot
-      # names. If build_working_copy/4 still emitted live
-      # entity://agent URIs (or live RuleStore-derived rows) the hash
-      # would differ from this expectation.
       [_name, uri_hash] =
         template_uri.path
         |> String.split("/", trim: true)
         |> List.last()
         |> String.split("@", parts: 2)
 
-      expected_slice = %{
+      expected = %{
         description: "two-agent team",
-        agent_slots:
-          Enum.sort([
-            {"backend", URI.parse("template://agent/system/cc-backend")},
-            {"frontend", URI.parse("template://agent/team-alpha/cc-frontend")}
-          ]),
-        orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
-        routing_rules: [{{:mention, "backend"}, ["backend"]}],
-        default_workspace_uri: URI.parse("workspace://team-alpha"),
+        members: [
+          %{
+            uri: Ezagent.URI.new!("entity://agent/team-alpha/echo_relay-cc"),
+            role_name: "relay-cc",
+            in_session_template: true,
+            source_template_uri: Ezagent.URI.new!("template://agent/system/cc-backend")
+          }
+        ],
+        prompt_templates: %{"telephone_hop" => "接龙：{body}"},
+        legends: %{
+          "传话游戏" => %{member_set: ["relay-cc"], bound_rule_set: "telephone", fold: true}
+        },
+        routing_rules: [],
+        orchestrator_template_uri: Ezagent.URI.new!("template://agent/system/cc-orchestrator"),
+        default_workspace_uri: Ezagent.URI.new!("workspace://team-alpha"),
         parent_template_uri: nil,
-        created_by: URI.parse("entity://agent/team-alpha/cc_orch")
+        created_by: Ezagent.URI.new!("entity://agent/team-alpha/cc_orch")
       }
 
-      assert uri_hash == SessionTemplate.compute_version_hash(expected_slice),
-             "build_working_copy/4 must emit a template-shaped slice — agent_slots " <>
-               "as {slot_name, template://agent URI}, routing receivers as slot names. " <>
-               "The URI hash diverged, meaning the slice shape is wrong."
+      assert uri_hash == SessionTemplate.compute_version_hash(expected),
+             "build_working_copy/4 must emit the member-shaped SessionTemplate content " <>
+               "(members/prompt_templates/legends), not slot tuples. The URI hash diverged."
     end
 
-    test "a Session with no populated working copy emits an empty template-shaped slice" do
-      # PR-2 graceful default — a Session whose :chat slice predates
-      # PR-2 (no template_working_copy key) reads through
-      # Chat.template_working_copy/1 → the empty default; the emitted
-      # slice has empty agent_slots / routing_rules, not a crash.
+    test "a Session with no team emits an empty member-shaped slice (no crash)" do
       session_uri =
-        URI.parse("session://default/team-alpha/bwc-empty-#{System.unique_integer([:positive])}")
+        Ezagent.URI.new!("session://default/team-alpha/bwc-empty-#{System.unique_integer([:positive])}")
 
       :ok = KindSnapshot.delete(URI.to_string(session_uri))
-      {:ok, pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
+      {:ok, pid} = Ezagent.Kind.spawn(Ezagent.Entity.Session, %{uri: session_uri})
 
       on_exit(fn ->
         if Process.alive?(pid) do
@@ -162,9 +153,9 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
       assert {:ok, %URI{} = template_uri} =
                Tools.save_template_as("empty-team",
                  session_uri: session_uri,
-                 workspace_uri: URI.parse("workspace://team-alpha"),
-                 caller: URI.parse("entity://agent/team-alpha/cc_orch"),
-                 caps: caps_3(URI.parse("workspace://team-alpha"))
+                 workspace_uri: Ezagent.URI.new!("workspace://team-alpha"),
+                 caller: Ezagent.URI.new!("entity://agent/team-alpha/cc_orch"),
+                 caps: caps_3(Ezagent.URI.new!("workspace://team-alpha"))
                )
 
       [_name, uri_hash] =
@@ -173,42 +164,37 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
         |> List.last()
         |> String.split("@", parts: 2)
 
-      # The product's `build_working_copy/4` defaults the orchestrator
-      # template URI via `Ezagent.URI.new!/1` (canonical `authority: nil`).
-      # `compute_version_hash/1` hashes `:erlang.term_to_binary/1`, which is
-      # sensitive to the URI struct's `authority` field — so the expected
-      # slice MUST use the canonical constructor, not `URI.parse/1`
-      # (`authority: "agent"`), or the hashes diverge despite identical
-      # canonical strings. (`created_by` is dropped by the hash.)
-      empty_slice = %{
+      empty = %{
         description: "",
-        agent_slots: [],
-        orchestrator_template_uri: Ezagent.URI.new!("template://agent/system/cc-orchestrator"),
+        members: [],
+        prompt_templates: %{},
+        legends: %{},
         routing_rules: [],
-        default_workspace_uri: URI.parse("workspace://team-alpha"),
+        orchestrator_template_uri: Ezagent.URI.new!("template://agent/system/cc-orchestrator"),
+        default_workspace_uri: Ezagent.URI.new!("workspace://team-alpha"),
         parent_template_uri: nil,
-        created_by: URI.parse("entity://agent/team-alpha/cc_orch")
+        created_by: Ezagent.URI.new!("entity://agent/team-alpha/cc_orch")
       }
 
-      assert uri_hash == SessionTemplate.compute_version_hash(empty_slice)
+      assert uri_hash == SessionTemplate.compute_version_hash(empty)
     end
   end
 
   describe "THE GATE — identical team config across sessions hashes identically" do
-    test "two DIFFERENT sessions with an identical working copy → SAME version hash" do
-      working_copy = sample_working_copy()
+    test "two DIFFERENT sessions with an identical team → SAME version hash" do
+      chat_state = sample_chat_state()
 
       session_a =
-        URI.parse("session://default/team-alpha/bwc-gate-a-#{System.unique_integer([:positive])}")
+        Ezagent.URI.new!("session://default/team-alpha/bwc-gate-a-#{System.unique_integer([:positive])}")
 
       session_b =
-        URI.parse("session://default/team-alpha/bwc-gate-b-#{System.unique_integer([:positive])}")
+        Ezagent.URI.new!("session://default/team-alpha/bwc-gate-b-#{System.unique_integer([:positive])}")
 
-      _pid_a = spawn_session_with_working_copy(session_a, working_copy)
-      _pid_b = spawn_session_with_working_copy(session_b, working_copy)
+      _pid_a = spawn_session_with_state(session_a, chat_state)
+      _pid_b = spawn_session_with_state(session_b, chat_state)
 
-      caller = URI.parse("entity://agent/team-alpha/cc_orch")
-      ws = URI.parse("workspace://team-alpha")
+      caller = Ezagent.URI.new!("entity://agent/team-alpha/cc_orch")
+      ws = Ezagent.URI.new!("workspace://team-alpha")
       caps = caps_3(ws)
 
       assert {:ok, uri_a} =
@@ -231,12 +217,10 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
       hash_b = uri_b.path |> String.split("@", parts: 2) |> List.last()
 
       assert hash_a == hash_b,
-             "Two different sessions with an identical team config produced " <>
-               "DIFFERENT version hashes — `session_uri` (or `name`) leaked into " <>
-               "the hash input. build_working_copy/4 MUST exclude session_uri + " <>
-               "name from the hash-input map (SPEC §1.3)."
+             "Two different sessions with an identical team produced DIFFERENT version " <>
+               "hashes — `session_uri` leaked into the hash input. build_working_copy/4 " <>
+               "MUST exclude session_uri + name from the hash-input map."
 
-      # And the full URIs are identical (same name + same hash + same ws).
       assert URI.to_string(uri_a) == URI.to_string(uri_b)
     end
   end
