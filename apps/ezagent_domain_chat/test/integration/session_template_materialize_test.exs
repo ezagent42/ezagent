@@ -424,6 +424,77 @@ defmodule EzagentDomainChat.Integration.SessionTemplateMaterializeTest do
            "re-materializing the same session for the same role must be idempotent (same URI)"
   end
 
+  test "two sessions from DIFFERENT templates (same workspace + same short_name) get DISTINCT member URIs (codex cycle-2 BLOCKER #1)" do
+    n = uniq()
+    role_name = "worker-#{n}"
+    source_template_uri = seed_agent_template(n)
+
+    build_content = fn template_name ->
+      %{
+        name: template_name,
+        description: "cross-template isolation team",
+        orchestrator_template_uri: nil,
+        default_workspace_uri: URI.parse("workspace://system"),
+        parent_template_uri: nil,
+        version_tag: nil,
+        created_by: User.admin_uri(),
+        created_at: ~U[2026-06-01 00:00:00Z],
+        members: [
+          %{
+            uri: nil,
+            role_name: role_name,
+            in_session_template: true,
+            source_template_uri: source_template_uri
+          }
+        ],
+        prompt_templates: %{},
+        legends: %{},
+        routing_rules: []
+      }
+    end
+
+    template_a = "xtpl-a-#{n}"
+    template_b = "xtpl-b-#{n}"
+    _ = persist_template(build_content.(template_a))
+    _ = persist_template(build_content.(template_b))
+
+    # SAME workspace (system), SAME short_name — the collision pre-condition.
+    # Only the template (the session URI host) differs.
+    short = "same-short-#{n}"
+
+    assert {:ok, session_a, _} =
+             EzagentDomainChat.create_session(short, User.admin_uri(),
+               template_name: template_a
+             )
+
+    assert {:ok, session_b, _} =
+             EzagentDomainChat.create_session(short, User.admin_uri(),
+               template_name: template_b
+             )
+
+    # Sanity: the two session URIs differ ONLY in their template host segment
+    # — exactly the case the name-only discriminator collapsed.
+    assert session_a.host == template_a
+    assert session_b.host == template_b
+    assert session_a.path == session_b.path
+
+    cleanup_session(session_a)
+    cleanup_session(session_b)
+
+    member_a = Chat.role_name_to_uri(chat_slice(session_a).members, role_name)
+    member_b = Chat.role_name_to_uri(chat_slice(session_b).members, role_name)
+
+    cleanup_agent(member_a)
+    cleanup_agent(member_b)
+
+    assert %URI{scheme: "entity", host: "agent"} = member_a
+    assert %URI{scheme: "entity", host: "agent"} = member_b
+
+    refute member_a == member_b,
+           "two sessions from DIFFERENT templates (same ws + short_name) must NOT " <>
+             "share a member URI; got #{URI.to_string(member_a)} for both"
+  end
+
   test "a template with a DANGLING role_name receiver fails materialization cleanly (codex MAJOR #2)" do
     n = uniq()
     template_name = "dangle-team-#{n}"
@@ -612,7 +683,12 @@ defmodule EzagentDomainChat.Integration.SessionTemplateMaterializeTest do
     # materialization does (so we can assert it was torn down).
     short = "rollback-sess-#{n}"
     session_uri = URI.new!("session://#{template_name}/system/#{short}")
-    good_instance = "echo_" <> Ezagent.Entity.Agent.session_instance_name(good_role, short)
+    # The discriminator is the FULL session URI string (codex cycle-2 BLOCKER
+    # #1) — distinct templates yield distinct member URIs.
+    good_instance =
+      "echo_" <>
+        Ezagent.Entity.Agent.session_instance_name(good_role, URI.to_string(session_uri))
+
     good_member_uri = URI.new!("entity://agent/system/#{good_instance}")
 
     assert {:error, reason} =

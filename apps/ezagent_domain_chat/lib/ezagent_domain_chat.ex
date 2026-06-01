@@ -1434,24 +1434,24 @@ defmodule EzagentDomainChat do
     "#{flavor}_#{session_unique}"
   end
 
-  # The session discriminator: the session URI's name segment
-  # (`session://<template>/<workspace>/<name>` → `<name>`). Mirrors
-  # `Ezagent.Entity.Session.session_discriminator/1` (private there) — the
-  # same value the orchestrator slot path folds into worker instance names,
-  # so a materialized member's uniqueness scope matches a dynamically-spawned
-  # worker's.
-  defp session_discriminator(%URI{} = session_uri) do
-    case session_uri.path do
-      "/" <> rest ->
-        case String.split(rest, "/", parts: 2) do
-          [_ws, name] when name != "" -> name
-          _ -> session_uri.host || "session"
-        end
-
-      _ ->
-        session_uri.host || "session"
-    end
-  end
+  # codex BLOCKER (cycle 2) — the session discriminator MUST be derived from
+  # the FULL session URI, not just its name segment. A session URI is
+  # `session://<template>/<workspace>/<name>` (host = template), so two
+  # sessions from DIFFERENT templates in the SAME workspace with the SAME
+  # `<name>` —
+  #   `session://templateA/team/main`  and
+  #   `session://templateB/team/main`
+  # — share the name segment `main`. The pre-fix name-only discriminator fed
+  # the SAME value into `Ezagent.Entity.Agent.session_instance_name/3`,
+  # collapsing both sessions onto ONE `entity://agent/<ws>/<flavor>_<hash>`
+  # member URI — the exact cross-session isolation bug. We now feed the
+  # FULL canonical URI string (`URI.to_string/1` — host + full path), which
+  # `session_instance_name/3` sanitizes + folds into a wide injective hash:
+  #   * distinct session URIs (any differing segment, incl. the template
+  #     host) → DISTINCT discriminators → DISTINCT member URIs (isolation);
+  #   * the SAME session URI → the SAME discriminator → the SAME member URI
+  #     (deterministic; re-materialize / respawn is idempotent).
+  defp session_discriminator(%URI{} = session_uri), do: URI.to_string(session_uri)
 
   # Dispatch a faceted `chat.join` under the trusted `system://session-internal`
   # principal (same authority class `join_session_members/2` uses), carrying the
