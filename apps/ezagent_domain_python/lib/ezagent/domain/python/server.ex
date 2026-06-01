@@ -333,35 +333,21 @@ defmodule Ezagent.Domain.Python.Server do
       :exec.send(exec_pid, bytes)
     catch
       kind, reason ->
-        Logger.warning(
-          "Domain.Python: :exec.send failed (#{inspect(kind)}, #{inspect(reason)})"
-        )
+        Logger.warning("Domain.Python: :exec.send failed (#{inspect(kind)}, #{inspect(reason)})")
 
         :error
     end
   end
 
   defp build_env(%Python.Spec{} = spec) do
-    base =
-      :os.getenv()
-      |> Enum.map(fn s ->
-        case :string.split(s, ~c"=") do
-          [k, v] -> {k, v}
-          _ -> {s, ~c""}
-        end
-      end)
-
     lib_dir = python_lib_dir()
 
-    overrides =
-      [
-        {~c"EZAGENT_PYTHON_LIB_DIR", String.to_charlist(lib_dir)}
-      ] ++
-        Enum.map(spec.env, fn {k, v} ->
-          {String.to_charlist(k), String.to_charlist(v)}
-        end)
-
-    overrides ++ base
+    [
+      {~c"EZAGENT_PYTHON_LIB_DIR", String.to_charlist(lib_dir)}
+    ] ++
+      Enum.map(spec.env, fn {k, v} ->
+        {String.to_charlist(k), String.to_charlist(v)}
+      end)
   end
 
   defp python_lib_dir do
@@ -391,15 +377,27 @@ defmodule Ezagent.Domain.Python.Server do
     {:noreply, %{state | ready_waiters: [from | waiters]}}
   end
 
-  def handle_call({:rpc_call, _method, _params, _timeout}, _from, %__MODULE__{tearing_down?: true} = state) do
+  def handle_call(
+        {:rpc_call, _method, _params, _timeout},
+        _from,
+        %__MODULE__{tearing_down?: true} = state
+      ) do
     {:reply, {:error, :subprocess_unhealthy}, state}
   end
 
-  def handle_call({:rpc_call, _method, _params, _timeout}, _from, %__MODULE__{ready?: false} = state) do
+  def handle_call(
+        {:rpc_call, _method, _params, _timeout},
+        _from,
+        %__MODULE__{ready?: false} = state
+      ) do
     {:reply, {:error, :not_alive}, state}
   end
 
-  def handle_call({:rpc_call, method, params, timeout}, from, %__MODULE__{test_mode: true} = state) do
+  def handle_call(
+        {:rpc_call, method, params, timeout},
+        from,
+        %__MODULE__{test_mode: true} = state
+      ) do
     # In test mode there is no real subprocess to round-trip the call
     # through; return :not_alive so tests can exercise the dispatch /
     # Registry / canonicalization paths without simulating Python.
@@ -630,6 +628,7 @@ defmodule Ezagent.Domain.Python.Server do
   defp reply_all_pending(state, reply) do
     Enum.each(state.pending_requests, fn {_id, {from, timer_ref}} ->
       _ = Process.cancel_timer(timer_ref)
+
       try do
         GenServer.reply(from, reply)
       catch
@@ -721,9 +720,7 @@ defmodule Ezagent.Domain.Python.Server do
         %{state | stderr_log_io: io, stderr_log_bytes: size}
 
       {:error, reason} ->
-        Logger.warning(
-          "Domain.Python: cannot open stderr log #{path}: #{inspect(reason)}"
-        )
+        Logger.warning("Domain.Python: cannot open stderr log #{path}: #{inspect(reason)}")
 
         state
     end
