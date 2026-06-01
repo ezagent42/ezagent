@@ -439,18 +439,41 @@ defmodule EzagentPluginLiveview.AdminLive do
   def handle_event("switch_view", %{"view" => view_str}, socket) do
     case SessionContext.safe_view_id(view_str) do
       {:ok, id} ->
-        {:noreply,
-         socket
-         |> assign(:current_view, id)
-         |> assign(
-           :view_module,
-           SessionContext.view_module_for(socket.assigns.applicable_views, id)
-         )}
+        socket =
+          socket
+          |> assign(:current_view, id)
+          |> assign(
+            :view_module,
+            SessionContext.view_module_for(socket.assigns.applicable_views, id)
+          )
+          |> maybe_restream_messages_on_view_switch(id)
+
+        {:noreply, socket}
 
       :error ->
         {:noreply, socket}
     end
   end
+
+  # 2026-06-01 (loom view 暴露的存量 bug):切到 Chat 之外的视图
+  # (:loom iframe / :routing / :external_mirror / :pty)时,
+  # session_editor 的 main_view slot 会把 ConversationView 整个从 DOM 拿掉。
+  # 切回 :conversation 时 stream 容器重新挂载,但 Phoenix.LiveView 的 stream
+  # 不会自动 replay 之前发过的 items —— 用户看到空白聊天,只能刷新。
+  #
+  # 修法:切回 :conversation 时重新从 MessageStore 拉一遍最近消息 +
+  # `stream(..., reset: true)`。等价于"重新打开这个 session"的状态恢复。
+  # 切到非 :conversation 视图不动 stream,免无谓 DB 读。
+  defp maybe_restream_messages_on_view_switch(socket, :conversation) do
+    messages = SessionContext.load_session_messages(socket.assigns.current_session_uri)
+
+    socket
+    |> assign(:oldest_cursor, SessionContext.oldest_cursor(messages))
+    |> assign(:messages_empty?, messages == [])
+    |> stream(:messages, messages, reset: true)
+  end
+
+  defp maybe_restream_messages_on_view_switch(socket, _other), do: socket
 
   # Phase 8b §3 stage g — clicking the 🖥️ button in MemberPanel
   # switches the main view to :pty and binds xterm to the chosen agent.
