@@ -4,10 +4,12 @@ defmodule EzagentPluginCustomerChat.ChatLive do
   is a synthetic `entity://user/<tenant>/customer_<id>`.
 
   Read path: subscribe to the session events topic.
-  Write path: dispatch `chat.send` via Bootstrap (mention-synthesized
-  to the cc agent). Operator takeover messages + the takeover notice
-  arrive on the SAME topic (no SSE 120 s window — this is the C3-tension
-  fix).
+  Write path: dispatch a plain `chat.send` via Bootstrap; the customer's
+  text reaches the cc agent through an explicit `Routing.add_rule`
+  installed by `Bootstrap.install_customer_routing/3` at bootstrap (no
+  per-message mention synthesis). Operator takeover messages + the
+  takeover notice arrive on the SAME topic (no SSE 120 s window — this is
+  the C3-tension fix).
 
   Heavy bootstrap (cc spawn + EagerBridge) runs only after `connected?`
   via a self-sent `:bootstrap` message, so the dead render is instant.
@@ -85,6 +87,17 @@ defmodule EzagentPluginCustomerChat.ChatLive do
 
     case Bootstrap.ensure_cc_for_conv(tenant, conv_id, session_uri) do
       {:ok, agent_uri} ->
+        # Wire the explicit customer→cc routing rule now that the cc
+        # agent URI is known (idempotent — safe on resume / retry).
+        # This is what fans the customer's plain text out to the cc
+        # agent, replacing the old per-message mention synthesis.
+        :ok =
+          Bootstrap.install_customer_routing(
+            session_uri,
+            URI.new!(socket.assigns.customer_uri_str),
+            agent_uri
+          )
+
         # Read the current mode now that the session is ensured. Done
         # here (async) rather than in mount so a slow/blocking dispatch
         # never stalls the first render. Resumed sessions mid-takeover
@@ -137,6 +150,10 @@ defmodule EzagentPluginCustomerChat.ChatLive do
     case socket.assigns do
       %{status: :ready, cc_agent_uri: agent_uri} ->
         customer_uri = URI.new!(socket.assigns.customer_uri_str)
+        # Routing to the cc agent is via the explicit rule installed at
+        # bootstrap (install_customer_routing/3); the message itself is
+        # plain (no synthesized mention). The agent_uri is passed only to
+        # satisfy the shared builder's arity — it is unused inside it.
         msg = Bootstrap.customer_message(customer_uri, String.trim(text), agent_uri)
         Bootstrap.dispatch_chat_send(socket.assigns.session_uri, msg)
 

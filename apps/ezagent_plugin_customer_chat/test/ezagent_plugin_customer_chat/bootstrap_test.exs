@@ -25,12 +25,16 @@ defmodule EzagentPluginCustomerChat.BootstrapTest do
     assert a != b
   end
 
-  test "customer_message tags mention of the cc agent" do
+  test "customer_message builds a plain message with no synthesized mentions" do
     cust = Bootstrap.customer_uri_for("acme", "alice")
     agent = URI.parse("entity://agent/acme/cc_cust_c1")
+    # The third arg is retained for the SSE controller's call site but is
+    # no longer used to synthesize a mention — routing is via the explicit
+    # rule installed by install_customer_routing/3.
     msg = Bootstrap.customer_message(cust, "hello", agent)
-    assert msg.mentions == [agent]
+    assert msg.mentions == []
     assert msg.body.text == "hello"
+    assert msg.sender == cust
   end
 
   test "ephemeral_template_name derives the cc.agent key from the agent_uri (keeps the cc_ flavor prefix)" do
@@ -41,5 +45,54 @@ defmodule EzagentPluginCustomerChat.BootstrapTest do
   test "ephemeral_template_name handles a bare entity path" do
     uri = %URI{path: "/cc_cust_x"}
     assert Bootstrap.ephemeral_template_name(uri) == "cc.agent.cc_cust_x"
+  end
+end
+
+defmodule EzagentPluginCustomerChat.BootstrapRoutingTest do
+  @moduledoc """
+  DB-backed idempotency check for `install_customer_routing/3`. Uses the
+  `EzagentCore.Repo` Ecto SQL sandbox (manual mode, set in the umbrella
+  test_helper) so the `Ezagent.Routing.RuleStore.add` insert + `list`
+  read run against an isolated connection. The `MentionRouting`
+  RoutingRegistry table is declared at `EzagentDomainChat.Application`
+  boot, so `load_into_registry/1` (called inside
+  `install_customer_routing/3`) has a live table to write into.
+
+  Non-async: shares the live RoutingRegistry ETS table and uses the
+  shared-owner sandbox pattern.
+  """
+  use ExUnit.Case, async: false
+
+  alias EzagentPluginCustomerChat.Bootstrap
+
+  @table EzagentDomainChat.Routing.MentionRouting
+
+  setup tags do
+    EzagentCore.DataCase.setup_sandbox(tags)
+    :ok
+  end
+
+  test "install_customer_routing is idempotent: twice adds at most one rule for the agent" do
+    # Unique per run so we never collide with boot-seeded / other-test rules.
+    suffix = System.unique_integer([:positive])
+    session_uri = Bootstrap.session_uri_for("acme", "conv_#{suffix}")
+    customer_uri = Bootstrap.customer_uri_for("acme", "alice_#{suffix}")
+    agent_uri = URI.new!("entity://agent/acme/cc_cust_conv_#{suffix}")
+    agent_str = URI.to_string(agent_uri)
+
+    count_for_agent = fn ->
+      @table
+      |> Ezagent.Routing.RuleStore.list()
+      |> Enum.count(fn r -> agent_str in (r.receivers || []) end)
+    end
+
+    assert count_for_agent.() == 0
+
+    assert :ok = Bootstrap.install_customer_routing(session_uri, customer_uri, agent_uri)
+    assert count_for_agent.() == 1
+
+    # Second call must short-circuit on the existing-receiver check.
+    assert :ok = Bootstrap.install_customer_routing(session_uri, customer_uri, agent_uri)
+    assert count_for_agent.() == 1
   end
 end
