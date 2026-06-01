@@ -410,12 +410,22 @@ defmodule Ezagent.Orchestrator.Tools do
 
   Required `opts`: `:caller`, `:caps`, `:workspace_uri`, `:session_uri`.
 
-  Returns `{:ok, :removed}` or `{:ok, :already_removed}` on success;
-  `{:partial, info}` if some converging step did not complete (e.g.
-  routing-rule removal failed); `{:error, reason}` otherwise.
+  ## Return shape
+
+  - `{:ok, %{status: :removed, deleted_rules: n, repointed_rules: m}}` —
+    slot removed. `deleted_rules` is how many routing rules were
+    cascade-FORCE-DELETED because pruning the worker left them with zero
+    receivers (routing to those rules is LOST — re-adding the slot does
+    NOT restore it; each such delete also emits a `Logger.warning`).
+    `repointed_rules` is how many rules merely had the worker dropped but
+    kept other receivers. (todo #9 — make the silent GC observable.)
+  - `{:ok, :already_removed}` — nothing was recorded; no dispatch.
+  - `{:partial, info}` — some converging step did not complete (e.g.
+    routing-rule removal failed).
+  - `{:error, reason}` — preflight / authorization failure.
   """
   @spec remove_agent_slot(String.t(), keyword()) ::
-          {:ok, :removed | :already_removed}
+          {:ok, :already_removed | %{status: :removed, deleted_rules: non_neg_integer(), repointed_rules: non_neg_integer()}}
           | {:partial, map()}
           | {:error, term()}
   def remove_agent_slot(slot_name, opts \\ []) when is_binary(slot_name) do
@@ -441,9 +451,10 @@ defmodule Ezagent.Orchestrator.Tools do
 
       {_n, _src, nil, _gen} ->
         # Slot recorded but with no live worker URI (legacy / partial).
-        # Just drop the slot tuple; nothing to terminate.
+        # Just drop the slot tuple; nothing to terminate, no routing to
+        # prune → zero rule counts.
         case drop_agent_slot(session_uri, slot_name, caller, caps) do
-          :ok -> {:ok, :removed}
+          :ok -> {:ok, %{status: :removed, deleted_rules: 0, repointed_rules: 0}}
           {:error, reason} -> {:error, reason}
         end
 
@@ -502,14 +513,18 @@ defmodule Ezagent.Orchestrator.Tools do
     errors = []
 
     # Step 2 — remove routing rules naming the worker, transactionally
-    # (round-4 atomic-repoint primitive REUSED for prune).
-    {pending, errors} =
+    # (round-4 atomic-repoint primitive REUSED for prune). The prune now
+    # reports how many rules were cascade-DELETED (last receiver pruned →
+    # routing lost) vs merely REPOINTED — surfaced to the caller so the
+    # silent loss (todo #9) becomes visible in the tool result.
+    {pending, errors, prune_counts} =
       case prune_routing_rules_for(worker_uri) do
-        :ok ->
-          {pending, errors}
+        {:ok, %{deleted_rules: _, repointed_rules: _} = counts} ->
+          {pending, errors, counts}
 
         {:error, reason} ->
-          {[:routing | pending], [{:routing, reason} | errors]}
+          {[:routing | pending], [{:routing, reason} | errors],
+           %{deleted_rules: 0, repointed_rules: 0}}
       end
 
     # Step 3 — drop the slot tuple from the working copy.
@@ -521,7 +536,12 @@ defmodule Ezagent.Orchestrator.Tools do
 
     case {pending, errors} do
       {[], []} ->
-        {:ok, :removed}
+        {:ok,
+         %{
+           status: :removed,
+           deleted_rules: prune_counts.deleted_rules,
+           repointed_rules: prune_counts.repointed_rules
+         }}
 
       _ ->
         {:partial,
@@ -1088,6 +1108,27 @@ defmodule Ezagent.Orchestrator.Tools do
   # every routing rule's receiver set inside ONE `Repo.transaction`.
   # Rules left with zero receivers are also removed (no stale empty
   # rules).
+  #
+  # OBSERVABILITY (todo #9, Allen 2026-06-01) — the cascade delete is a
+  # GC the user explicitly flagged as a SILENT failure: "remove + re-add"
+  # (the intuitive restart-this-worker move) loses ALL routing to a rule
+  # whose ONLY receiver was the pruned worker, and re-adding the slot
+  # does NOT restore it. We do NOT change the GC behavior here — we make
+  # the loss OBSERVABLE:
+  #
+  #   1. every force-deleted rule emits a `Logger.warning` naming the
+  #      rule id, its matcher, and the worker URI being removed;
+  #   2. the cascade-delete + repoint COUNTS are returned to the caller
+  #      so the tool result (and the LLM driving it) sees them.
+  #
+  # Returns `{:ok, %{deleted_rules: n, repointed_rules: m}}` on success,
+  # `{:error, reason}` on a transaction / registry failure.
+  #
+  # RECOMMENDATION (NOT implemented per todo #9 scope): the GC SHOULD
+  # arguably DISABLE the last-receiver rule (set `enabled: false`) rather
+  # than force-delete it, so a subsequent `add_agent_slot` + re-point (or
+  # a dedicated "restore" path) could revive routing. That is a behavior
+  # change, deferred — this PR is observability-only.
   defp prune_routing_rules_for(%URI{} = worker_uri) do
     table = EzagentDomainChat.Routing.MentionRouting
     worker_str = URI.to_string(worker_uri)
@@ -1098,31 +1139,57 @@ defmodule Ezagent.Orchestrator.Tools do
 
         rules
         |> Enum.filter(fn rule -> worker_str in (rule.receivers || []) end)
-        |> Enum.each(fn rule ->
+        |> Enum.reduce_while({[], 0}, fn rule, {deleted_meta, repointed} ->
           remaining =
             (rule.receivers || [])
             |> Enum.reject(fn r -> r == worker_str end)
             |> Enum.uniq()
 
-          result =
+          {result, acc} =
             if remaining == [] do
-              Ezagent.Routing.RuleStore.delete(rule.id, force: true)
+              # LAST receiver pruned → force-delete; routing to this rule is
+              # LOST. We do NOT log inside the transaction — a later
+              # `RuleStore` failure rolls the whole thing back, and an
+              # in-txn warning would falsely claim "routing LOST" for a
+              # delete that never committed (codex 2026-06-01 MED). Capture
+              # the rule id + matcher so the POST-COMMIT warning can name
+              # exactly what disappeared (todo #9 observability).
+              {Ezagent.Routing.RuleStore.delete(rule.id, force: true),
+               {[{rule.id, rule_matcher(rule)} | deleted_meta], repointed}}
             else
-              Ezagent.Routing.RuleStore.update_receivers(rule.id, remaining, rule.enabled)
+              # Rule still has other receivers — merely repoint (not a loss).
+              {Ezagent.Routing.RuleStore.update_receivers(rule.id, remaining, rule.enabled),
+               {deleted_meta, repointed + 1}}
             end
 
           case result do
-            :ok -> :ok
+            :ok -> {:cont, acc}
             {:error, reason} -> EzagentCore.Repo.rollback({:prune_failed, reason})
           end
         end)
-
-        :ok
       end)
 
     case txn do
-      {:ok, :ok} ->
-        reload_registry(table)
+      {:ok, {deleted_meta, repointed}} ->
+        case reload_registry(table) do
+          :ok ->
+            # Transaction committed — NOW it is safe to warn about routing
+            # that was ACTUALLY lost (codex MED: post-commit only). One
+            # warning per force-deleted rule, naming id + matcher + worker.
+            Enum.each(deleted_meta, fn {id, matcher} ->
+              Logger.warning(
+                "remove_agent_slot routing GC: force-deleted routing rule " <>
+                  "id=#{inspect(id)} matcher=#{inspect(matcher)} " <>
+                  "because removing worker #{worker_str} left it with ZERO receivers. " <>
+                  "Routing to this rule is LOST — re-adding the slot does NOT restore it."
+              )
+            end)
+
+            {:ok, %{deleted_rules: length(deleted_meta), repointed_rules: repointed}}
+
+          {:error, _} = err ->
+            err
+        end
 
       {:error, reason} ->
         {:error, reason}
@@ -1132,6 +1199,13 @@ defmodule Ezagent.Orchestrator.Tools do
   catch
     kind, reason -> {:error, {:prune_failed, {kind, reason}}}
   end
+
+  # Matcher accessor for the GC warning — `Ezagent.Routing.RuleStore`
+  # rows carry the matcher AST under `:matcher_data` (Jason-encoded per
+  # `Ezagent.Routing.Matcher.to_json/1`). Defensive `Map.get/3` so a
+  # non-standard row (test double / future shape) degrades to `:unknown`
+  # rather than raising inside the warning.
+  defp rule_matcher(rule), do: Map.get(rule, :matcher_data, :unknown)
 
   # HIGH-1 (round 4) — rewrite every routing rule whose receivers name
   # `old_worker_uri` so they point at `new_worker_uri` instead, inside

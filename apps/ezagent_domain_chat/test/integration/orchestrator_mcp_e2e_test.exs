@@ -478,6 +478,105 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
       refute result["isError"]
     end
 
+    # todo #9 (Allen 2026-06-01) — the routing-rule GC is SILENT: removing
+    # a slot whose worker is a rule's SOLE receiver force-deletes the rule
+    # and routing to it is LOST. This regression test pins the
+    # OBSERVABILITY contract: the count reaches the caller AND a warning
+    # is logged. (We do NOT assert the GC behavior changes — only that it
+    # is no longer silent.)
+    test "remove_agent_slot of a rule's SOLE receiver reports deleted_rules:1 + logs a warning",
+         ctx do
+      add =
+        McpServer.handle_tool_call(ctx.mcp, "add_agent_slot", %{
+          "slot_name" => "sole-dev",
+          "agent_template_uri" => URI.to_string(ctx.backend_uri)
+        })
+
+      refute add["isError"]
+
+      wm =
+        McpServer.handle_tool_call(ctx.mcp, "write_matcher", %{
+          "matcher_ast" => %{"type" => "text_contains", "arg" => "deploy"},
+          "receiver_slot_names" => ["sole-dev"]
+        })
+
+      refute wm["isError"], "write_matcher failed: #{inspect(wm)}"
+      rule_id = wm["structuredContent"]["id"]
+      assert is_integer(rule_id)
+
+      table = EzagentDomainChat.Routing.MentionRouting
+      assert Enum.any?(Ezagent.Routing.RuleStore.list(table), &(&1.id == rule_id))
+
+      {result, log} =
+        ExUnit.CaptureLog.with_log(fn ->
+          McpServer.handle_tool_call(ctx.mcp, "remove_agent_slot", %{"slot_name" => "sole-dev"})
+        end)
+
+      refute result["isError"], "remove_agent_slot failed: #{inspect(result)}"
+
+      # The cascade-delete count reached the caller via the tool result.
+      assert result["structuredContent"]["deleted_rules"] == 1,
+             "removing the sole receiver must report deleted_rules:1 — got #{inspect(result["structuredContent"])}"
+
+      assert result["structuredContent"]["repointed_rules"] == 0
+
+      # The loss is no longer silent — a warning names the rule + worker.
+      assert log =~ "force-deleted routing rule"
+      assert log =~ "ZERO receivers"
+
+      # The rule is in fact gone (GC behavior unchanged).
+      refute Enum.any?(Ezagent.Routing.RuleStore.list(table), &(&1.id == rule_id))
+    end
+
+    test "remove_agent_slot of ONE of several receivers reports repointed_rules:1, rule survives",
+         ctx do
+      keep_a =
+        McpServer.handle_tool_call(ctx.mcp, "add_agent_slot", %{
+          "slot_name" => "keep-a",
+          "agent_template_uri" => URI.to_string(ctx.backend_uri)
+        })
+
+      keep_b =
+        McpServer.handle_tool_call(ctx.mcp, "add_agent_slot", %{
+          "slot_name" => "keep-b",
+          "agent_template_uri" => URI.to_string(ctx.backend_uri)
+        })
+
+      refute keep_a["isError"]
+      refute keep_b["isError"]
+      keep_b_worker = keep_b["structuredContent"]
+
+      wm =
+        McpServer.handle_tool_call(ctx.mcp, "write_matcher", %{
+          "matcher_ast" => %{"type" => "text_contains", "arg" => "review"},
+          "receiver_slot_names" => ["keep-a", "keep-b"]
+        })
+
+      refute wm["isError"], "write_matcher failed: #{inspect(wm)}"
+      rule_id = wm["structuredContent"]["id"]
+
+      {result, log} =
+        ExUnit.CaptureLog.with_log(fn ->
+          McpServer.handle_tool_call(ctx.mcp, "remove_agent_slot", %{"slot_name" => "keep-a"})
+        end)
+
+      refute result["isError"], "remove_agent_slot failed: #{inspect(result)}"
+
+      assert result["structuredContent"]["repointed_rules"] == 1,
+             "removing one of several receivers must report repointed_rules:1 — got #{inspect(result["structuredContent"])}"
+
+      assert result["structuredContent"]["deleted_rules"] == 0
+
+      # No force-delete warning for a mere repoint.
+      refute log =~ "force-deleting routing rule"
+
+      # The rule SURVIVES, still naming the kept worker.
+      table = EzagentDomainChat.Routing.MentionRouting
+      surviving = Enum.find(Ezagent.Routing.RuleStore.list(table), &(&1.id == rule_id))
+      assert surviving, "the rule must survive — it still has keep-b as a receiver"
+      assert keep_b_worker in surviving.receivers
+    end
+
     test "update_agent_template swaps the slot's template, rollback-safe (cap-#2 + cap-#4)", ctx do
       add =
         McpServer.handle_tool_call(ctx.mcp, "add_agent_slot", %{
