@@ -1,3 +1,22 @@
+# PR #420 codex r4 MED (2026-06-01) — minimal stub adapter+binding used by
+# the `{msg.id, send_cursor}` composite-dedupe regression describe block
+# below. The stub adapter always returns `{:publish, payload}` (so the
+# Worker-level pre-adapter dedupe is the ONLY gate exercised); the stub
+# binding counts publish calls in a process-dict-free way by echoing the
+# payload back unchanged as the binding_state (the test reads
+# `last_publish_result` / `:ok` vs `:duplicate_skip` to assert publish vs
+# skip — it does not need to observe the binding directly).
+defmodule Ezagent.ExternalMirror.WorkerPublishTest.AlwaysPublishAdapter do
+  @moduledoc false
+  def event_to_payload(%Ezagent.Publisher.Event{} = event), do: {:publish, %{event: event}}
+end
+
+defmodule Ezagent.ExternalMirror.WorkerPublishTest.CountingBinding do
+  @moduledoc false
+  # binding_state is a counter; every publish bumps it. `{:ok, new_state}`.
+  def publish(_payload, count) when is_integer(count), do: {:ok, count + 1}
+end
+
 defmodule Ezagent.ExternalMirror.WorkerPublishTest do
   @moduledoc """
   PR-EM-2 acceptance tests for the Worker publish-flow + post_init
@@ -370,6 +389,158 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
       # ring position.
       assert is_integer(slice_after.publisher_cursor) or slice_after.publisher_cursor == :latest
     end
+  end
+
+  # PR #420 codex r4 MED (2026-06-01) — composite-dedupe regression.
+  #
+  # Drives `handle_publish/2` directly with a constructed ctx (the
+  # established direct-handler test pattern, cf.
+  # external_mirror_migration_parity_test.exs) so the dedupe cond is
+  # exercised in isolation — no spawn/Session/Publisher plumbing. The stub
+  # adapter ALWAYS returns `{:publish, _}`, so the Worker-level
+  # `{msg.id, send_cursor}` pre-adapter dedupe is the only gate under test.
+  #
+  # The bug: dedupe keyed on `msg.id` alone SILENTLY DROPS a legitimate
+  # retry-send (reused `msg.id`, bumped `send_cursor`). The fix keys on the
+  # pair so a retry publishes while a true replay (same pair) still dedupes.
+  describe "publish dedupe by {msg.id, send_cursor} composite (PR #420 codex r4 MED)" do
+    test "retry-send (REUSED msg.id, NEW send_cursor) MUST publish, not skip" do
+      msg = %Ezagent.Message{id: "msg-retry-1"}
+
+      # State carries the send_key from the FIRST publish: id="msg-retry-1",
+      # send_cursor=5.
+      ctx = dedupe_ctx(last_published_send_key: {"msg-retry-1", 5})
+
+      # The retry-send re-uses msg.id but bumps send_cursor 5 → 6.
+      event = chat_event(msg, send_cursor: 6, cursor: 42)
+
+      assert {:ok, %{ok: true} = result, effects} =
+               Ezagent.Behavior.ExternalMirrorWorker.handle_publish(%{event: event}, ctx)
+
+      # NOT skipped — the retry reaches the binding.
+      refute result[:skipped]
+
+      # The result fields confirm a real publish: :ok (not :duplicate_skip)
+      # and the new composite key {id, 6} is persisted.
+      assert {:set, :last_publish_result, :ok} in effects
+      assert {:set, :last_published_send_key, {"msg-retry-1", 6}} in effects
+    end
+
+    test "true replay (SAME msg.id AND SAME send_cursor) MUST dedupe" do
+      msg = %Ezagent.Message{id: "msg-replay-1"}
+
+      ctx = dedupe_ctx(last_published_send_key: {"msg-replay-1", 7})
+
+      # A re-delivered event for the already-published send: identical pair.
+      event = chat_event(msg, send_cursor: 7, cursor: 99)
+
+      assert {:ok, %{ok: true, skipped: true}, effects} =
+               Ezagent.Behavior.ExternalMirrorWorker.handle_publish(%{event: event}, ctx)
+
+      # Deduped BEFORE the adapter — result is :duplicate_skip and the
+      # send_key is unchanged (no {:set, :last_published_send_key, _}).
+      assert {:set, :last_publish_result, :duplicate_skip} in effects
+      refute Enum.any?(effects, &match?({:set, :last_published_send_key, _}, &1))
+    end
+
+    test "first publish (no prior send_key) publishes and records the pair" do
+      msg = %Ezagent.Message{id: "msg-first"}
+      ctx = dedupe_ctx(last_published_send_key: nil)
+      event = chat_event(msg, send_cursor: 1, cursor: 1)
+
+      assert {:ok, %{ok: true} = result, effects} =
+               Ezagent.Behavior.ExternalMirrorWorker.handle_publish(%{event: event}, ctx)
+
+      refute result[:skipped]
+      assert {:set, :last_published_send_key, {"msg-first", 1}} in effects
+    end
+
+    test "true replay delivered as a WRAPPED Lifecycle slice (%{state: ...}) still dedupes (codex 2026-06-01 HIGH)" do
+      # The production publisher payload's `new_slice` is strip_transients'd
+      # to `%{state: ...}` (SessionImpl.build_payload), NOT flat. The dedupe
+      # key must be extracted from the UNWRAPPED view, else send_key is nil
+      # and replays are never deduped in the real Lifecycle path.
+      msg = %Ezagent.Message{id: "msg-wrapped-replay"}
+      ctx = dedupe_ctx(last_published_send_key: {"msg-wrapped-replay", 7})
+
+      event = chat_event_wrapped(msg, send_cursor: 7, cursor: 99)
+
+      assert {:ok, %{ok: true}, effects} =
+               Ezagent.Behavior.ExternalMirrorWorker.handle_publish(%{event: event}, ctx)
+
+      assert {:set, :last_publish_result, :duplicate_skip} in effects
+      refute Enum.any?(effects, &match?({:set, :last_published_send_key, _}, &1))
+    end
+  end
+
+  # Build a `handle_publish/2` ctx: persistent fields via `read`, the live
+  # transport handles via `transients`. Defaults match a freshly-activated
+  # Worker (count 0, binding_state 0). Override `:last_published_send_key`
+  # to seed a prior publish.
+  defp dedupe_ctx(opts) do
+    state = %{
+      session_uri: URI.parse("session://default/system/main"),
+      adapter_id: "stub",
+      target_id: "tgt-dedupe",
+      opts: %{},
+      publisher_cursor: :latest,
+      count: 0,
+      error_count: 0,
+      last_published_at: nil,
+      last_publish_result: nil,
+      last_published_send_key: Keyword.get(opts, :last_published_send_key, nil)
+    }
+
+    %{
+      read: fn key, default -> Map.get(state, key, default) end,
+      transients: %{
+        adapter_module: Ezagent.ExternalMirror.WorkerPublishTest.AlwaysPublishAdapter,
+        binding_module: Ezagent.ExternalMirror.WorkerPublishTest.CountingBinding,
+        binding_state: 0,
+        subscription_state: :active
+      },
+      self_uri: URI.parse("entity://worker/default/stub_tgt-dedupe")
+    }
+  end
+
+  # A `:chat`-slice publisher event whose `new_slice` carries the message +
+  # send_cursor that `extract_event_send_key/1` reads.
+  defp chat_event(%Ezagent.Message{} = msg, opts) do
+    %Ezagent.Publisher.Event{
+      cursor: Keyword.fetch!(opts, :cursor),
+      publisher_uri: URI.parse("session://default/system/main"),
+      slice_key: :chat,
+      event_at: DateTime.utc_now(),
+      payload: %{
+        new_slice: %{
+          last_message: msg,
+          last_message_id: msg.id,
+          send_cursor: Keyword.fetch!(opts, :send_cursor)
+        }
+      }
+    }
+  end
+
+  # A `:chat` event whose `new_slice` is a Lifecycle two-container slice
+  # AFTER strip_transients — i.e. WRAPPED as `%{state: ...}` (the real
+  # publisher payload shape), not flat. Pins the unwrap in
+  # `extract_event_send_key/1` (codex 2026-06-01 HIGH).
+  defp chat_event_wrapped(%Ezagent.Message{} = msg, opts) do
+    %Ezagent.Publisher.Event{
+      cursor: Keyword.fetch!(opts, :cursor),
+      publisher_uri: URI.parse("session://default/system/main"),
+      slice_key: :chat,
+      event_at: DateTime.utc_now(),
+      payload: %{
+        new_slice: %{
+          state: %{
+            last_message: msg,
+            last_message_id: msg.id,
+            send_cursor: Keyword.fetch!(opts, :send_cursor)
+          }
+        }
+      }
+    }
   end
 
   # ----- helpers ----------------------------------------------------------

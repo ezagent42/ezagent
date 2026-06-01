@@ -33,9 +33,9 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
   `subscribe_from`; Publisher replays every ring event with
   `cursor > persisted` BEFORE returning. Replay messages land in the
   Worker's mailbox, self-dispatch through the normal `:publish` path,
-  hit the same `last_published_message_id` dedupe — so duplicate
-  replays (e.g. on snapshot churn) do not produce duplicate Feishu
-  posts.
+  hit the same `last_published_send_key` (`{msg.id, send_cursor}`)
+  dedupe — so duplicate replays (e.g. on snapshot churn) do not produce
+  duplicate Feishu posts.
 
   ## Test shape (independent of cold-spawn end-to-end)
 
@@ -50,9 +50,10 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
      — simulating the post-`reconcile_after_load` state without
      terminating the Session (so the same publisher `:cursor` keeps
      ticking).
-  3. Fire a slice mutation (`chat.join`). The Publisher appends to
-     `:ring` with `cursor = N+1` and fans out to the (now-empty)
-     subscribers map — silent drop.
+  3. Fire a slice mutation (`chat.send`, carrying a real
+     `{msg.id, send_cursor}`). The Publisher appends to `:ring` with
+     `cursor = N+1` and fans out to the (now-empty) subscribers map —
+     silent drop.
   4. Manually invoke `Ezagent.PublisherLifecycle.broadcast_alive/1`
      to trigger the Worker's re-subscribe handler.
   5. Assert the Worker eventually publishes the missed event.
@@ -164,11 +165,13 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
 
       # ----- emit one event INTO the empty subscribers map ----------------
       #
-      # `chat.join` mutates `:chat.members` → SliceChange fires →
-      # Publisher's `handle_kind_message/3` appends to `:ring` at
-      # `cursor = N+1` and fans out to `subscribers = %{}` (no-op).
-      # The Worker (subscribed to the lifecycle topic but NOT to the
-      # publisher) sees nothing.
+      # `chat.send` mutates `:chat` (last_message / last_message_id /
+      # send_cursor) → SliceChange fires → Publisher's
+      # `handle_kind_message/3` appends to `:ring` at `cursor = N+1` and
+      # fans out to `subscribers = %{}` (no-op). The Worker (subscribed to
+      # the lifecycle topic but NOT to the publisher) sees nothing. Because
+      # the event carries a real `{msg.id, send_cursor}`, the replayed copy
+      # traverses the Worker's populated composite-dedupe path on catch-up.
       send_chat_to_session(session_uri)
 
       # Brief wait for SliceChange / Publisher append. The event is now
@@ -363,27 +366,36 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
     :ok
   end
 
+  # PR #420 codex r4 MED (2026-06-01): use `chat.send` (NOT `chat.join`).
+  #
+  # `chat.send` mutates the `:chat` slice with `last_message` +
+  # `last_message_id` + `send_cursor` (PR-EM-6-PRE), so the publisher
+  # event carries a real `{msg.id, send_cursor}` composite — the Worker's
+  # dedupe path is exercised with a POPULATED key. `chat.join` only touches
+  # `:members`, leaving `extract_event_send_key/1` to return nil so the
+  # dedupe cond never engaged (the catchup assertion passed vacuously w.r.t.
+  # dedupe). Each call mints a FRESH msg.id + bumped send_cursor (monotonic
+  # via the live slice), so successive sends are distinct events.
+  #
+  # No recipients/mentions → the send just persists + mutates the slice
+  # (firing SliceChange) without needing any member to be present.
   defp send_chat_to_session(%URI{} = session_uri) do
-    member_uri =
+    sender_uri =
       URI.parse("entity://user/team-alpha/em-catchup-#{System.unique_integer([:positive])}")
 
-    user_module = Module.concat([Ezagent, Entity, User])
-
-    case apply(Ezagent.Kind, :spawn, [
-           user_module,
-           %{uri: member_uri, initial_caps: MapSet.new()}
-         ]) do
-      {:ok, _pid} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
-    end
+    msg =
+      Ezagent.Message.new(
+        sender_uri,
+        %{text: "catchup-#{System.unique_integer([:positive])}"}
+      )
 
     admin_uri = URI.parse("entity://user/system/admin")
-    target = URI.parse("#{URI.to_string(session_uri)}?action=chat.join")
+    target = URI.parse("#{URI.to_string(session_uri)}?action=chat.send")
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
       mode: :call,
-      args: %{member: member_uri},
+      args: %{message: msg},
       ctx: %{caller: admin_uri, caps: admin_caps(), reply: :ignore}
     })
   end

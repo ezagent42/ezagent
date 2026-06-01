@@ -112,7 +112,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorkerMigrationParityTest do
       assert state.publisher_cursor == :latest
       assert state.count == 0
       assert state.error_count == 0
-      assert is_nil(state.last_published_message_id)
+      assert is_nil(state.last_published_send_key)
       # The session_uri / adapter_id / target_id round-trip unchanged so
       # activate/2 can resolve the adapter + binding modules.
       assert state.session_uri == args.session_uri
