@@ -168,7 +168,9 @@ defmodule Ezagent.E2E.Scenario25PhxRestartRebuildTest do
       uri_out = URI.parse("entity://user/#{other_ws_name}/scen25-out-#{uniq()}")
 
       {:ok, _} = SnapshotStore.write(uri_in, %{identity: %{caps: MapSet.new()}}, kind_type: :user)
-      {:ok, _} = SnapshotStore.write(uri_out, %{identity: %{caps: MapSet.new()}}, kind_type: :user)
+
+      {:ok, _} =
+        SnapshotStore.write(uri_out, %{identity: %{caps: MapSet.new()}}, kind_type: :user)
 
       workspace = URI.parse("workspace://#{ws_name}")
       result = StateRebuilder.rebuild_all(workspace)

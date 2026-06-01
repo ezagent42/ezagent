@@ -537,7 +537,8 @@ defmodule Ezagent.URI do
   def entity_workspace_uri(%URI{scheme: "entity", path: "/" <> rest} = uri) do
     case String.split(rest, "/", parts: 2) do
       [workspace_name, entity_name] when workspace_name != "" and entity_name != "" ->
-        URI.new!("workspace://" <> workspace_name) # uri-canonical-allow: §3.6 structural derivation from validated workspace name
+        # uri-canonical-allow: §3.6 structural derivation from validated workspace name
+        URI.new!("workspace://" <> workspace_name)
 
       _ ->
         raise ArgumentError, stale_cookie_message(uri)

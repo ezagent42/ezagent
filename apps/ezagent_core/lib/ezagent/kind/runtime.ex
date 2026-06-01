@@ -522,12 +522,14 @@ defmodule Ezagent.Kind.Runtime do
     end
   end
 
-  defp needed_map_to_struct(%{
-         kind: k,
-         behavior: b,
-         instance: i,
-         workspace_uri: w
-       } = m) do
+  defp needed_map_to_struct(
+         %{
+           kind: k,
+           behavior: b,
+           instance: i,
+           workspace_uri: w
+         } = m
+       ) do
     %Ezagent.Capability{
       kind: k,
       behavior: b,

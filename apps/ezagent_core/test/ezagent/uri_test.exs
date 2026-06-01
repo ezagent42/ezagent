@@ -211,7 +211,9 @@ defmodule Ezagent.URITest do
     end
 
     test "works for cross-cutting schemes (workspace://, system://)" do
-      ws = Ezagent.URI.with_action(Ezagent.URI.new!("workspace://team-alpha"), :routing, :add_rule)
+      ws =
+        Ezagent.URI.with_action(Ezagent.URI.new!("workspace://team-alpha"), :routing, :add_rule)
+
       assert URI.to_string(ws) == "workspace://team-alpha?action=routing.add_rule"
 
       sys = Ezagent.URI.with_action(Ezagent.URI.new!("system://routing/default"), :routing, :add)

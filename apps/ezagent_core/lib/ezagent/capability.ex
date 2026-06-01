@@ -245,12 +245,15 @@ defmodule Ezagent.Capability do
   # this clause can be REMOVED (and the matcher will require `:action`
   # at the type-spec level, enforcing structural narrowing across the
   # umbrella).
-  def matches?(%__MODULE__{} = cap, %{
-        kind: _,
-        behavior: _,
-        instance: _,
-        workspace_uri: _
-      } = needed)
+  def matches?(
+        %__MODULE__{} = cap,
+        %{
+          kind: _,
+          behavior: _,
+          instance: _,
+          workspace_uri: _
+        } = needed
+      )
       when not is_map_key(needed, :action) do
     matches?(cap, Map.put(needed, :action, :any))
   end
@@ -611,7 +614,8 @@ defmodule Ezagent.Capability do
   defp workspace_from_3seg_path(%URI{path: "/" <> rest}) do
     case String.split(rest, "/", parts: 2) do
       [workspace_name, _name] when workspace_name != "" ->
-        URI.new!("workspace://" <> workspace_name) # uri-canonical-allow: §3.6 structural derivation from validated path segment
+        # uri-canonical-allow: §3.6 structural derivation from validated path segment
+        URI.new!("workspace://" <> workspace_name)
 
       _ ->
         raise ArgumentError,
@@ -760,7 +764,9 @@ defmodule Ezagent.Capability do
 
     instance =
       case Map.fetch(m, "instance") do
-        {:ok, i} -> decode_uri_or_any_strict!(i, "instance")
+        {:ok, i} ->
+          decode_uri_or_any_strict!(i, "instance")
+
         # `instance` is optional in declarative caps (defaults to
         # `:any`), but if the caller did NOT pass it explicitly we
         # require they understand the shape — for the CLI grant
@@ -936,16 +942,17 @@ defmodule Ezagent.Capability do
   holds in practice; pinned by `identity_grant_cap_shape_test.exs`.
   """
   @spec identity_key(t()) ::
-          {atom() | :any, module() | :any, atom() | :any,
-           URI.t() | :any | scope_tuple(), URI.t() | :any}
-  def identity_key(%__MODULE__{
-        kind: k,
-        behavior: b,
-        instance: i,
-        workspace_uri: w
-      } = cap),
-      do:
-        {k, b, action_of(cap), normalize_uri_for_key(i), normalize_uri_for_key(w)}
+          {atom() | :any, module() | :any, atom() | :any, URI.t() | :any | scope_tuple(),
+           URI.t() | :any}
+  def identity_key(
+        %__MODULE__{
+          kind: k,
+          behavior: b,
+          instance: i,
+          workspace_uri: w
+        } = cap
+      ),
+      do: {k, b, action_of(cap), normalize_uri_for_key(i), normalize_uri_for_key(w)}
 
   defp normalize_uri_for_key(%URI{} = u), do: URI.to_string(u)
   defp normalize_uri_for_key(other), do: other

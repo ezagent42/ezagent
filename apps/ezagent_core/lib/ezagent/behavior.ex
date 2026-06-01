@@ -671,15 +671,13 @@ defmodule Ezagent.Behavior do
         raise CompileError,
           file: env.file,
           line: env.line,
-          description:
-            "action :#{name} is missing required key :args (#{inspect(env.module)})"
+          description: "action :#{name} is missing required key :args (#{inspect(env.module)})"
 
       is_nil(returns_ast) ->
         raise CompileError,
           file: env.file,
           line: env.line,
-          description:
-            "action :#{name} is missing required key :returns (#{inspect(env.module)})"
+          description: "action :#{name} is missing required key :returns (#{inspect(env.module)})"
 
       true ->
         :ok
@@ -784,7 +782,8 @@ defmodule Ezagent.Behavior do
         def __action_names__, do: unquote(action_names)
       end
 
-    legacy_ast = maybe_inject_legacy_callbacks(env, action_names, interface, cap_subjects, actions)
+    legacy_ast =
+      maybe_inject_legacy_callbacks(env, action_names, interface, cap_subjects, actions)
 
     quote do
       unquote(introspection_ast)
@@ -815,22 +814,34 @@ defmodule Ezagent.Behavior do
 
     pieces =
       []
-      |> maybe_add_unless_defined(defined, :actions, 0,
+      |> maybe_add_unless_defined(
+        defined,
+        :actions,
+        0,
         quote do
           def actions, do: unquote(action_names_ast)
         end
       )
-      |> maybe_add_unless_defined(defined, :cap_subjects, 0,
+      |> maybe_add_unless_defined(
+        defined,
+        :cap_subjects,
+        0,
         quote do
           def cap_subjects, do: unquote(cap_subjects_ast)
         end
       )
-      |> maybe_add_unless_defined(defined, :interface, 0,
+      |> maybe_add_unless_defined(
+        defined,
+        :interface,
+        0,
         quote do
           def interface, do: unquote(interface_ast)
         end
       )
-      |> maybe_add_unless_defined(defined, :required_caps, 0,
+      |> maybe_add_unless_defined(
+        defined,
+        :required_caps,
+        0,
         quote do
           def required_caps,
             do:

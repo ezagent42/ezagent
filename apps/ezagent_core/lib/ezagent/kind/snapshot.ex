@@ -366,7 +366,14 @@ defmodule Ezagent.Kind.Snapshot do
         _ -> []
       end
 
-    case KindSnapshot.upsert(uri_str, kind_type_str, binary, version, workspace_uri_str, upsert_opts) do
+    case KindSnapshot.upsert(
+           uri_str,
+           kind_type_str,
+           binary,
+           version,
+           workspace_uri_str,
+           upsert_opts
+         ) do
       {:ok, _row} ->
         :telemetry.execute(
           [:ezagent, :persistence, :written],
@@ -573,7 +580,8 @@ defmodule Ezagent.Kind.Snapshot do
       # the original on outright parse failure (passive walker —
       # downstream let-it-crash governs the dispatch path, not this).
       ArgumentError ->
-        case URI.new(s) do # uri-canonical-allow: §3.7 external-URI fallback (non-Ezagent scheme — SchemeRegistry rejects, this re-canonicalizes via strict RFC 3986)
+        # uri-canonical-allow: §3.7 external-URI fallback (non-Ezagent scheme — SchemeRegistry rejects, this re-canonicalizes via strict RFC 3986)
+        case URI.new(s) do
           {:ok, canonical} -> canonical
           _ -> uri
         end

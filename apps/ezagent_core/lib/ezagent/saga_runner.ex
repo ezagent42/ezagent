@@ -123,7 +123,8 @@ defmodule Ezagent.SagaRunner do
     defstruct steps: []
   end
 
-  @type ok_result :: {:ok, %{step_results: %{Saga.step_name() => term()}, events: [Saga.effect()]}}
+  @type ok_result ::
+          {:ok, %{step_results: %{Saga.step_name() => term()}, events: [Saga.effect()]}}
   @type error_result ::
           {:error,
            %{
@@ -179,7 +180,13 @@ defmodule Ezagent.SagaRunner do
     {:ok, %{step_results: step_results, events: effects}}
   end
 
-  defp do_execute([{step_name, forward_fn, compensate_fn} | rest], ctx, step_results, effects, done) do
+  defp do_execute(
+         [{step_name, forward_fn, compensate_fn} | rest],
+         ctx,
+         step_results,
+         effects,
+         done
+       ) do
     case safe_forward(forward_fn, ctx, effects) do
       {:ok, result, new_effects} when is_list(new_effects) ->
         do_execute(
