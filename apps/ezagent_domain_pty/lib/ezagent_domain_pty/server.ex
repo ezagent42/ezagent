@@ -104,6 +104,13 @@ defmodule Ezagent.Domain.Pty.Server do
     # (AND); Regex = pattern match. send: bytes to write to PTY stdin.
     # fired? = true after one match → never re-fires (idempotent).
     auto_prompts: [],
+    # 2026-06-01 finding: claude 2.1.92 shows an OAuth login screen when
+    # CLAUDE_CONFIG_DIR has no valid credentials (Keychain isolation changed
+    # in 2.1.92 — fresh dirs no longer inherit Keychain; each dir needs its
+    # own Keychain entry). EagerBridge polls this flag and short-circuits with
+    # {:error, :oauth_required} so callers get a clear error instead of a
+    # 15s timeout with spurious "OAuth error: Invalid code" messages.
+    oauth_blocked?: false,
     # PTY-phase-state-machine 2026-05-26 follow-up (b). Three canonical
     # phases on the OS subprocess (per Allen's directive — exactly
     # three, no `:initializing` / `:ready` / `:respawning` middle states):
@@ -786,6 +793,28 @@ defmodule Ezagent.Domain.Pty.Server do
 
   defp scan_auto_prompts(%__MODULE__{auto_prompts: prompts, pty_buffer: buf} = state) do
     stripped = AnsiStrip.strip(buf)
+
+    # 2026-06-01: detect OAuth login screen early so EagerBridge can fail fast
+    # with :oauth_required instead of spinning for 15s. The screen text
+    # "Paste code here if prompted" is rendered by claude when CLAUDE_CONFIG_DIR
+    # has no valid credentials (Keychain isolation changed in claude 2.1.92 —
+    # fresh per-agent dirs no longer inherit the host's Keychain entry).
+    # We set oauth_blocked? and log; we do NOT write to the PTY here because
+    # any keystroke (including the repeated \r from theme_picker) becomes an
+    # "Invalid code" error that loops claude indefinitely.
+    state =
+      if not state.oauth_blocked? and
+           String.contains?(stripped, "Paste code here if prompted") do
+        Logger.warning(
+          "PtyServer[#{URI.to_string(state.agent_uri)}]: OAuth login screen detected — " <>
+            "CLAUDE_CONFIG_DIR has no valid credentials for claude 2.1.92. " <>
+            "Seed credentials before spawning this agent (see cc-agent-e2e.md runbook)."
+        )
+
+        %{state | oauth_blocked?: true}
+      else
+        state
+      end
 
     {new_prompts, fired_any?} =
       Enum.map_reduce(prompts, false, fn p, any? ->

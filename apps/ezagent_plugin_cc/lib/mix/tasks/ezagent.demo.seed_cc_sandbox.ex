@@ -112,7 +112,27 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
   end
 
   defp default_credentials_path do
-    Path.join(System.user_home() || System.tmp_dir!(), ".claude/.credentials.json")
+    # claude 2.1.92 on macOS stores OAuth credentials in the system Keychain,
+    # not in ~/.claude/.credentials.json. Warn if the file doesn't exist so
+    # operators know to use an API key / api_key_helper instead.
+    path = Path.join(System.user_home() || System.tmp_dir!(), ".claude/.credentials.json")
+
+    unless File.regular?(path) do
+      Mix.shell().info("""
+
+      Note: ~/.claude/.credentials.json not found (expected for claude >= 2.1.92
+      on macOS — Keychain-based auth replaced file-based auth in that release).
+
+      If you are on claude >= 2.1.92: set up an Anthropic API key via the
+      `api_key_helper` field on the AgentTemplate (see docs/runbook/cc-agent-config.md)
+      instead of using this credential-copy flow. This task's `--seed-template` option
+      still works for recording the sandbox path in the template; just skip the
+      `--credentials-file` step.
+
+      """)
+    end
+
+    path
   end
 
   # --- guards -------------------------------------------------------------
@@ -125,18 +145,12 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
 
       No credentials file at: #{source}
 
-      Reasons this might be empty:
+      On claude >= 2.1.92 (macOS): credentials are in the system Keychain, not in
+      ~/.claude/.credentials.json. Use an Anthropic API key + the `api_key_helper`
+      AgentTemplate field instead (see docs/runbook/cc-agent-config.md).
 
-        * You have not run `claude login` yet on this machine.
-        * On macOS, `claude login` stores credentials in the system
-          Keychain — NOT in `~/.claude/.credentials.json`. In that case
-          the sandbox cannot inherit credentials via a file copy. See
-          `docs/runbook/cc-agent-e2e.md` for the `api_key_helper`
-          workaround (per-template API key).
-
-      Either run `claude login` so the file is created, or pass
-      `--credentials-file <path>` pointing at a credentials JSON you
-      already have.
+      On older claude or Linux: run `claude login` so the file is created, or pass
+      `--credentials-file <path>` pointing at an existing credentials JSON.
       """)
     end
   end

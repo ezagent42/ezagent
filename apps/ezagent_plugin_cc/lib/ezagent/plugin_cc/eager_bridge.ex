@@ -29,35 +29,52 @@ defmodule EzagentPluginCc.EagerBridge do
   This module wraps that handshake:
 
   1. `Ezagent.AgentBridge.Registry.lookup/1` → if `{:ok, _}`, fast no-op
-  2. else: `Ezagent.Domain.Pty.Server.write_input(pty_pid, "\\r")`
+  2. else: wait for startup dialogs (theme picker, dev-channels, trust)
+     to clear, then `Ezagent.Domain.Pty.Server.write_input(pty_pid, "\\r")`
   3. Poll `Registry.lookup/1` every 100ms until `{:ok, _}` or timeout
+
+  ## Dialog wait behaviour (claude 2.1.92 note)
+
+  The gate waits for one-shot startup dialogs to fire before sending the
+  bridge-init `\\r`. If a dialog doesn't appear (e.g. `trust_folder` is
+  skipped when the cwd is already trusted in the operator's `~/.claude`),
+  the gate proceeds after `@dialog_wait_ms` anyway — a timeout here is
+  **not fatal**; the kick_loop still runs and retries.
+
+  The only immediately fatal case is `{:error, :oauth_required}`: if the
+  PTY server detects claude's OAuth login screen it means the
+  `CLAUDE_CONFIG_DIR` has no valid credentials. No amount of `\\r` kicks
+  will help — the caller must seed credentials before spawning the agent
+  (see `docs/runbook/cc-agent-e2e.md` §"Credential-copy").
 
   ## Idempotency + concurrent calls
 
   `ensure_bound!/2` is safe to call concurrently for the same `agent_uri`:
   the registry-lookup is atomic, the `write_input` is itself idempotent
-  (writing `\\r` twice is harmless — claude already past the `\\r`-triggered
-  init the second time around is a no-op), and the poll loop is per-process
-  so two callers each get their own `:ok` once binding lands.
+  (writing `\\r` twice is harmless), and the poll loop is per-process so
+  two callers each get their own `:ok` once binding lands.
 
-  ## Failure mode
+  ## Failure modes
 
-  Returns `{:error, :timeout}` after `timeout_ms` (default 5_000) if the
+  Returns `{:error, :timeout}` after `timeout_ms` (default 15_000) if the
   binding never forms. Caller should surface a real error to the customer
-  (e.g. SSE close with `event: error`), NOT silently retry — a timeout
-  here means something deeper is wrong (PtyServer dead? bridge python
-  can't reach WS endpoint? `EZAGENT_BRIDGE_WS_URL` env misconfigured? —
-  see ezagent#435).
+  (e.g. SSE close with `event: error`), NOT silently retry.
 
-  Returns `{:error, :no_pty}` if `Ezagent.Domain.Pty.lookup/1` returns
-  `:error` (agent's PtyServer isn't alive at all — caller likely spawned
-  the agent wrong or it crashed).
+  Returns `{:error, :no_pty}` if the PtyServer isn't alive.
+
+  Returns `{:error, :oauth_required}` if the PTY scanner detected an OAuth
+  login screen — the CLAUDE_CONFIG_DIR has no valid credentials for
+  claude 2.1.92. Seed credentials and respawn the agent before retrying.
   """
 
   @poll_interval_ms 100
   @kick_interval_ms 1_000
   @stabilize_ms 500
   @default_timeout_ms 15_000
+  # Maximum time to wait for startup dialogs before proceeding to kick anyway.
+  # Dialogs that don't appear (e.g. trust_folder when cwd already trusted) must
+  # not block the kick indefinitely — after this window we proceed optimistically.
+  @dialog_wait_ms 8_000
 
   @doc """
   Ensure `Ezagent.AgentBridge.Registry.lookup(agent_uri)` returns
@@ -72,7 +89,7 @@ defmodule EzagentPluginCc.EagerBridge do
       :ok = EzagentPluginCc.EagerBridge.ensure_bound!(agent_uri, 10_000)
   """
   @spec ensure_bound!(URI.t(), pos_integer()) ::
-          :ok | {:error, :timeout | :no_pty | term()}
+          :ok | {:error, :timeout | :no_pty | :oauth_required | term()}
   def ensure_bound!(%URI{} = agent_uri, timeout_ms \\ @default_timeout_ms)
       when is_integer(timeout_ms) and timeout_ms > 0 do
     case Ezagent.AgentBridge.Registry.lookup(agent_uri) do
@@ -92,14 +109,27 @@ defmodule EzagentPluginCc.EagerBridge do
         # dev_channels_dialog) gets eaten AND can desync claude so
         # subsequent `\r`s also don't trigger MCP init.
         #
-        # Gate the trigger on "all auto_prompts have fired? = true"
-        # + a small stabilize delay. That puts claude at its main
-        # TUI prompt where a bare `\r` reliably triggers MCP init.
-        with :ok <- wait_for_auto_prompts(pty_pid, timeout_ms),
-             remaining = remaining_after(timeout_ms, @stabilize_ms),
-             _ = Process.sleep(@stabilize_ms),
-             :ok <- kick_loop(agent_uri, pty_pid, remaining) do
-          :ok
+        # Gate the trigger on "all one-shot auto_prompts fired" + stabilize.
+        # That puts claude at its main TUI prompt where `\r` triggers MCP init.
+        #
+        # 2026-06-01 finding: some dialogs may NOT appear (e.g. trust_folder
+        # is skipped when cwd is already trusted in ~/.claude), so a timeout
+        # from wait_for_auto_prompts is NOT fatal — we proceed to kick anyway.
+        # Only {:error, :oauth_required} is immediately fatal: that means
+        # CLAUDE_CONFIG_DIR has no credentials and no kick will help.
+        dialog_budget = min(timeout_ms, @dialog_wait_ms)
+
+        case wait_for_auto_prompts(pty_pid, dialog_budget) do
+          {:error, :oauth_required} ->
+            {:error, :oauth_required}
+
+          _ok_or_timeout ->
+            # Proceed whether dialogs all fired or we hit the dialog window
+            # limit — an optimistic kick is safer than never kicking at all.
+            elapsed = dialog_budget + @stabilize_ms
+            remaining = remaining_after(timeout_ms, elapsed)
+            Process.sleep(@stabilize_ms)
+            kick_loop(agent_uri, pty_pid, remaining)
         end
 
       :error ->
@@ -109,9 +139,9 @@ defmodule EzagentPluginCc.EagerBridge do
 
   defp remaining_after(orig_ms, used_ms), do: max(0, orig_ms - used_ms)
 
-  # Poll PtyServer state until every auto_prompt entry has `fired?: true`.
-  # Returns :ok or {:error, :timeout}. Tolerates servers where auto_prompts
-  # is absent / empty (no prompts to wait for → immediate :ok).
+  # Poll PtyServer state until every one-shot auto_prompt has fired.
+  # Returns :ok, {:error, :timeout}, or {:error, :oauth_required}.
+  # Tolerates servers where auto_prompts is absent / empty → immediate :ok.
   defp wait_for_auto_prompts(_pty_pid, remaining_ms) when remaining_ms <= 0 do
     {:error, :timeout}
   end
@@ -120,11 +150,18 @@ defmodule EzagentPluginCc.EagerBridge do
     state = :sys.get_state(pty_pid, @poll_interval_ms)
     prompts = Map.get(state, :auto_prompts, []) || []
 
-    if all_fired?(prompts) do
-      :ok
-    else
-      Process.sleep(@poll_interval_ms)
-      wait_for_auto_prompts(pty_pid, remaining_ms - @poll_interval_ms)
+    cond do
+      Map.get(state, :oauth_blocked?) ->
+        # PTY scanner detected the OAuth login screen: CLAUDE_CONFIG_DIR has
+        # no valid credentials for claude 2.1.92. No kick will help.
+        {:error, :oauth_required}
+
+      all_fired?(prompts) ->
+        :ok
+
+      true ->
+        Process.sleep(@poll_interval_ms)
+        wait_for_auto_prompts(pty_pid, remaining_ms - @poll_interval_ms)
     end
   rescue
     _ -> {:error, :timeout}
