@@ -58,3 +58,6 @@ __pycache__/
 .DS_Store
 **/.DS_Store
 /deps
+
+# cinnox is a real tenant — keep its production soul LOCAL ONLY (compare vs ezagent plugin), never commit to this PoC repo
+/poc/fixtures/plugins/cinnox/
