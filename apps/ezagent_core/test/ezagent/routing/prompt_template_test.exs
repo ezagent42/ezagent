@@ -50,6 +50,13 @@ defmodule Ezagent.Routing.PromptTemplateTest do
       assert :ok = PromptTemplate.validate(tmpl)
       assert PromptTemplate.render(tmpl, %{body: "山顶的雪化了"}) =~ "山顶的雪化了"
     end
+
+    test "a value containing a placeholder-looking substring is preserved literally (codex MED)" do
+      # The message body LITERALLY contains "{sender}" — it must NOT be
+      # re-substituted by the sender pass (single-pass Regex render).
+      out = PromptTemplate.render("{body} — by {sender}", %{body: "raw {sender} text", sender: "alice"})
+      assert out == "raw {sender} text — by alice"
+    end
   end
 
   test "allowed_vars/0 lists the fixed v1 set" do

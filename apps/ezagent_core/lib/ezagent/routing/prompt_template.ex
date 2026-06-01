@@ -59,8 +59,23 @@ defmodule Ezagent.Routing.PromptTemplate do
   """
   @spec render(String.t(), vars()) :: String.t()
   def render(template, vars) when is_binary(template) and is_map(vars) do
-    Enum.reduce(vars, template, fn {key, value}, acc ->
-      String.replace(acc, "{#{key}}", stringify(value))
+    # Single pass over the ORIGINAL template via Regex.replace — replacement
+    # values are NOT re-scanned, so a value that itself contains a
+    # placeholder-looking substring (e.g. a user message body that literally
+    # contains "{sender}") is preserved LITERALLY rather than re-substituted
+    # on a later pass (codex 2026-06-01 MED). Unknown placeholders are left
+    # as-is.
+    Regex.replace(~r/\{([a-z_]+)\}/, template, fn whole, key ->
+      case fetch_var(vars, key) do
+        {:ok, value} -> stringify(value)
+        :error -> whole
+      end
+    end)
+  end
+
+  defp fetch_var(vars, key) do
+    Enum.find_value(vars, :error, fn {k, v} ->
+      if to_string(k) == key, do: {:ok, v}, else: nil
     end)
   end
 
