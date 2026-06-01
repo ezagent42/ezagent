@@ -36,6 +36,21 @@ defmodule Ezagent.Behavior.ChatMemberFacetsTest do
     end
   end
 
+  describe "provenance-setter allowlist (PR-5b-i drift guard)" do
+    test "every @provenance_setters entry is a registered system principal (codex LOW)" do
+      for uri <- Chat.provenance_setters() do
+        assert Ezagent.SystemPrincipal.Catalog.member?(uri),
+               "#{uri} must be a registered SystemPrincipal.Catalog principal — a " <>
+                 "Catalog rename must not silently break the provenance gate"
+      end
+    end
+
+    test "known non-setter system principals are NOT on the allowlist (codex B1)" do
+      refute "system://chat-router" in Chat.provenance_setters()
+      refute "system://chat-reply" in Chat.provenance_setters()
+    end
+  end
+
   describe "role_name_to_uri/2" do
     test "resolves a role_name to its member URI" do
       relay = uri("entity://agent/team/relay")

@@ -897,6 +897,18 @@ defmodule Ezagent.Behavior.Chat do
     "system://orchestrator-tools"
   ]
 
+  @doc false
+  # The trusted provenance-setter allowlist, exposed so a test can assert every
+  # entry is a registered `Ezagent.SystemPrincipal.Catalog` principal (drift
+  # guard — codex PR-5b-i LOW: a Catalog rename must not silently break the gate).
+  # NOTE (codex PR-5b-i MEDIUM, producer-wiring for PR-8): the orchestrator
+  # worker-spawn path currently dispatches as the orchestrator's `entity://agent`
+  # URI, NOT `system://orchestrator-tools`. When PR-8 wires orchestrator-set
+  # provenance it MUST route through an allowlisted principal (or that path's
+  # provenance is dropped). PR-5b-i ships the gate only; no producer sets
+  # provenance yet (session-internal join + materialization pass no :provenance).
+  def provenance_setters, do: @provenance_setters
+
   # team-routing-unification §3.1 (PR-5b-i) — honor a supplied `:provenance` ONLY
   # when (a) the caller is a trusted provenance-setter principal AND (b) the value
   # is an `entity://` authority URI (a user or agent owner — the only valid
