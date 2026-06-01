@@ -71,6 +71,145 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
     end
   end
 
+  describe "resolve/2 — @-mention disambiguation" do
+    # The membership reader is injected per-test so we don't spin up the
+    # full Session Kind supervision tree. We register a stub mapping of
+    # session_uri string → list of member URI strings via persistent_term;
+    # the stub returns `[]` for anything not registered (mirrors a
+    # non-live session, which `Session.session_member_uris/1` does too).
+    setup do
+      :persistent_term.put({__MODULE__, :members}, %{})
+
+      Application.put_env(
+        :ezagent_plugin_feishu,
+        :session_member_reader,
+        {__MODULE__, :stub_member_uris}
+      )
+
+      on_exit(fn ->
+        Application.delete_env(:ezagent_plugin_feishu, :session_member_reader)
+        :persistent_term.erase({__MODULE__, :members})
+      end)
+
+      :ok
+    end
+
+    # (a) single binding is unchanged — mentions are ignored, no ambiguity.
+    test "single binding returns {:ok, uri} regardless of mentions" do
+      chat_id = "oc_one_" <> uniq()
+      session_uri = "session://default/system/solo_" <> uniq()
+      insert_row(session_uri, "feishu", chat_id)
+
+      mention = URI.parse("entity://agent/default/cc_architect")
+
+      assert {:ok, %URI{} = parsed} = InboundChatLookup.resolve(chat_id, [mention])
+      assert URI.to_string(parsed) == session_uri
+    end
+
+    # (b) 2 bindings + an @-mention whose agent is in EXACTLY ONE bound
+    # session → route to that session.
+    test "2 bindings + mention in exactly one session → routes there" do
+      chat_id = "oc_disambig_" <> uniq()
+      sess_a = "session://default/system/team_a_" <> uniq()
+      sess_b = "session://default/system/team_b_" <> uniq()
+
+      insert_row(sess_a, "feishu", chat_id)
+      insert_row(sess_b, "feishu", chat_id)
+
+      # @architect is a member of session A only.
+      set_members(%{
+        sess_a => ["entity://agent/default/cc_architect"],
+        sess_b => ["entity://agent/default/cc_reviewer"]
+      })
+
+      mention = URI.parse("entity://agent/default/cc_architect")
+
+      assert {:ok, %URI{} = parsed} = InboundChatLookup.resolve(chat_id, [mention])
+      assert URI.to_string(parsed) == sess_a
+    end
+
+    # (c) 2 bindings + NO mention → still fails closed.
+    test "2 bindings + no mention → :ambiguous_chat_binding" do
+      chat_id = "oc_nomention_" <> uniq()
+      sess_a = "session://default/system/team_a_" <> uniq()
+      sess_b = "session://default/system/team_b_" <> uniq()
+
+      insert_row(sess_a, "feishu", chat_id)
+      insert_row(sess_b, "feishu", chat_id)
+
+      set_members(%{
+        sess_a => ["entity://agent/default/cc_architect"],
+        sess_b => ["entity://agent/default/cc_reviewer"]
+      })
+
+      assert {:error, :ambiguous_chat_binding} = InboundChatLookup.resolve(chat_id, [])
+    end
+
+    # (d) 2 bindings + a mention whose agent is a member of BOTH bound
+    # sessions → cannot narrow to one → still fails closed.
+    test "2 bindings + mention in two of them → :ambiguous_chat_binding" do
+      chat_id = "oc_shared_" <> uniq()
+      sess_a = "session://default/system/team_a_" <> uniq()
+      sess_b = "session://default/system/team_b_" <> uniq()
+
+      insert_row(sess_a, "feishu", chat_id)
+      insert_row(sess_b, "feishu", chat_id)
+
+      # @shared is a member of BOTH bound sessions → 2 candidates → fail closed.
+      set_members(%{
+        sess_a => ["entity://agent/default/cc_shared"],
+        sess_b => ["entity://agent/default/cc_shared"]
+      })
+
+      mention = URI.parse("entity://agent/default/cc_shared")
+
+      assert {:error, :ambiguous_chat_binding} =
+               InboundChatLookup.resolve(chat_id, [mention])
+    end
+
+    # Bonus: 2 bindings + a mention whose agent is in NEITHER bound
+    # session → 0 candidates → fail closed (the mention targets an agent
+    # that lives in some other chat).
+    test "2 bindings + mention in neither → :ambiguous_chat_binding" do
+      chat_id = "oc_miss_" <> uniq()
+      sess_a = "session://default/system/team_a_" <> uniq()
+      sess_b = "session://default/system/team_b_" <> uniq()
+
+      insert_row(sess_a, "feishu", chat_id)
+      insert_row(sess_b, "feishu", chat_id)
+
+      set_members(%{
+        sess_a => ["entity://agent/default/cc_architect"],
+        sess_b => ["entity://agent/default/cc_reviewer"]
+      })
+
+      mention = URI.parse("entity://agent/default/cc_stranger")
+
+      assert {:error, :ambiguous_chat_binding} =
+               InboundChatLookup.resolve(chat_id, [mention])
+    end
+
+    test "resolve/1 delegates to resolve(chat_id, []) — back-compat" do
+      chat_id = "oc_backcompat_" <> uniq()
+      session_uri = "session://default/system/backcompat_" <> uniq()
+      insert_row(session_uri, "feishu", chat_id)
+
+      assert {:ok, %URI{} = parsed} = InboundChatLookup.resolve(chat_id)
+      assert URI.to_string(parsed) == session_uri
+    end
+
+    defp set_members(map), do: :persistent_term.put({__MODULE__, :members}, map)
+  end
+
+  # Stub membership reader injected via :session_member_reader. Keyed on
+  # the canonical session URI string; returns member URI structs (the
+  # real reader returns URIs, and the lookup compares on canonical form).
+  def stub_member_uris(%URI{} = session_uri) do
+    :persistent_term.get({__MODULE__, :members}, %{})
+    |> Map.get(URI.to_string(session_uri), [])
+    |> Enum.map(&URI.parse/1)
+  end
+
   describe "chat_ids_for/1" do
     test "returns [] for a session with no feishu bindings" do
       uri = URI.parse("session://default/system/nobindings_" <> uniq())
