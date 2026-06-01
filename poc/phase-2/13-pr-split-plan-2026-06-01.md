@@ -79,12 +79,49 @@ Two real, architecturally-different implementations of the same vertical exist:
 lacks the soul-edit work that's the current focus (AE-BS tasks). If autoservice is
 the intended standard, do **B** (port soul-edit in); else **A**.
 
+## DECISION LOCKED (2026-06-01) — B (`autoservice`) canonical + 3-block split
+FatNine chose **B**. Reasons (deep compare in `poc/phase-2/` agent report): B is the
+cleaner, more ezagent-idiomatic skeleton; its **hot path is a `curl`/DeepSeek HTTP
+agent (no PTY, no esr-bridge)** so it **sidesteps the bind blocker** and structurally
+mirrors AutoService's pipeline_v2 three-color (deepseek-fast + cc-slow); soul-edit
+ports onto it cleanly (editor+auth reusable; `curl_agent` already exposes a runtime
+`configure` action → hot system_prompt update, *simpler* than A's file+respawn).
+`curl_agent` is **already in `origin/main`** (dependency ready). `customer_chat` (A)
+is **retired**; harvest its soul-edit + theming + tests onto B.
+
+### #446 = three functional blocks → three reviewable PRs (the point of splitting)
+Verified `operator_live` (takeover) is cleanly separable from `customer_live`/
+`customer_session` (it depends only on `Behavior.Mode` + shared `ChatUI` + its own
+session-list helper). So:
+
+| Block | Scope (on B) | Source | Base / stack |
+|---|---|---|---|
+| **0 — takeover behavior** (generic) | `Behavior.Mode` + `Chat.handle_send` gating | **#511** (effect-based, keep) | `main` |
+| **1 — AI customer service** | autoservice plugin core: `application`, `customer_session`, `customer_live`, `chat_ui` (shared), `roles`, `uris`, seed task, mix + web route | from #514 (minus operator) | `main` (dep: `curl_agent` ✅ in main) |
+| **2 — human takeover console** | `operator_live` + `Mode.set` wiring | from #514 (operator part) | stacked on **#511 + Block 1** (needs `Mode` + `ChatUI`) |
+| **3 — soul-edit** (NEW) | `ConfigLive` + `ConfigAuth` (port from A) + slice-backed store + `curl_agent` `configure` hot-update | new, harvest A | stacked on **Block 1** |
+
+`#514` (currently CS+operator bundled, stacked on #511) gets **re-split** into Block 1
++ Block 2. `#515` formatter: keep. The cc-only generic fixes (**NEW pty-theme-picker**,
+**#512 eager-bridge**, **liveview URI fix**, **agent soul_path**) are **no longer
+prerequisites** for the B blocks (curl path needs no PTY/bridge) — they remain
+independent upstreamable PRs for the cc/claude path generally.
+
+### PoC artifacts (per user)
+- **Demo videos: DELETE** — they were recorded while the bind was broken, unusable.
+  Done this session (`git rm docs/assets`, 17 files / 5.2 MB). Re-record later only
+  if needed, after the bind fix.
+- **PoC docs: classify by block** — `poc/phase-2/*` were written per functional
+  module; tag/group them under AI-CS / takeover / soul-edit so each block PR carries
+  its own docs and the umbrella shrinks.
+
 ## #446's fate
-Umbrella draft. Once the split PRs merge to `main`, #446 either rebases (shrinking
-to just docs + leftover glue) or closes. It is the PoC demonstration, **not** a
-merge target itself.
+Umbrella draft. Once Blocks 0-3 merge to `main`, #446 rebases (shrinking to docs +
+leftover glue) or closes. It is the PoC demonstration, **not** a merge target.
 
 ## Done this session
 - ✅ #512 eager-bridge: pushed the `all_fired?` repeat fix (`18d781fd`).
-- ✅ This plan + divergence map.
-- ⏸ Awaiting the plugin DECISION before the plugin/pty/soul-path PRs.
+- ✅ Divergence map + deep A-vs-B compare → **DECISION: B canonical**.
+- ✅ Deleted unusable demo assets from #446 (`docs/assets`, 17 files).
+- ⏭ Next: re-split #514 into Block 1 (AI CS) + Block 2 (operator); then Block 3
+  (soul-edit on B); classify poc docs by block.
