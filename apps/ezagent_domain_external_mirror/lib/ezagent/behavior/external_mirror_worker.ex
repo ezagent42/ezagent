@@ -36,7 +36,15 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
         count:              non_neg_integer(),
         error_count:        non_neg_integer(),
         last_published_at:  DateTime.t() | nil,
-        last_publish_result: :ok | :skip | {:error, term()} | nil
+        last_publish_result: :ok | :skip | {:error, term()} | nil,
+
+        # composite idempotency key of the last successfully-published
+        # event: `{message_id, send_cursor}` (or nil before the first
+        # publish). The `send_cursor` half is what distinguishes a
+        # legitimate retry-send (reused msg.id, bumped send_cursor —
+        # MUST publish) from a true event replay (same msg.id AND same
+        # send_cursor — MUST dedupe).
+        last_published_send_key: {term(), non_neg_integer()} | nil
       }
 
   ## :publish action
@@ -99,7 +107,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   #     publish telemetry the worker accumulates and that must survive a
   #     cold restart so cursor-based catch-up replays the right window
   #     (`publisher_cursor` / `count` / `error_count` / `last_published_at`
-  #     / `last_publish_result` / `last_published_message_id`).
+  #     / `last_publish_result` / `last_published_send_key`).
   #   - `transients` (NEVER persisted, rebuilt in `activate/2`): the LIVE
   #     transport handles — `adapter_module` / `binding_module` (resolved
   #     from registries every start), `binding_state` (the OPEN transport
@@ -190,11 +198,20 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
        # nil)` which returns true for any non-nil last_message_id —
        # re-publishing the SAME message every time the chat slice
        # mutates for ANY reason. Result: Allen got 4 identical replies
-       # in Feishu. The worker dedupes by tracking the most recently
-       # published message_id; if a publish event's payload carries
-       # the same `last_message_id`, the worker skips before invoking
-       # the adapter — no HTTP call, no Feishu duplicate.
-       last_published_message_id: nil
+       # in Feishu. The worker dedupes BEFORE invoking the adapter.
+       #
+       # PR #420 codex r4 MED (2026-06-01): the dedupe key is the
+       # COMPOSITE `{message_id, send_cursor}`, NOT message_id alone.
+       # `Chat.invoke(:send)` deliberately bumps `:send_cursor` on
+       # every send INCLUDING a retry that reuses `msg.id` (MessageStore
+       # `on_conflict: :nothing` returns the same row). The adapter's
+       # `chat_send_occurred?/2` already treats any `send_cursor` delta
+       # as a real publish, so dedupe by `msg.id` alone SILENTLY DROPS a
+       # legitimate retry-send. Keying on the pair lets a retry through
+       # (reused id + new cursor ≠ stored pair) while a true replay
+       # (same id AND same cursor — `send_cursor` is monotonic per
+       # `:send`, so a re-delivered event matches exactly) still dedupes.
+       last_published_send_key: nil
      }}
   end
 
@@ -431,7 +448,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   # `:latest`): the captured/persisted cursor is older than the ring's oldest
   # retained entry, so replaying the WHOLE (bounded-by-retention) ring is the
   # correct catch-up — `:latest` would silently DROP the spawn→subscribe
-  # window. Dedup by `last_published_message_id` keeps replayed-but-already-
+  # window. Dedup by `last_published_send_key` keeps replayed-but-already-
   # published events from re-hitting the external transport.
   defp do_initial_subscribe(%URI{} = session_uri, %URI{} = self_uri, worker_pid, persisted_cursor) do
     case subscribe_to_session_publisher_from(session_uri, self_uri, persisted_cursor, worker_pid) do
@@ -489,10 +506,11 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   # `Behavior.Publisher.SessionImpl.reconcile_after_load/2`), so the
   # ring carries events emitted during the window.
   #
-  # Idempotency: the worker dedupes by `last_published_message_id`
-  # in `invoke(:publish, ...)`. Replayed events for messages the
-  # worker already published get `:duplicate_skip` — no second
-  # outbound transport call.
+  # Idempotency: the worker dedupes by the composite
+  # `last_published_send_key` (`{msg.id, send_cursor}`) in
+  # `invoke(:publish, ...)`. Replayed events for sends the worker
+  # already published get `:duplicate_skip` — no second outbound
+  # transport call.
   #
   # Bounded: the publisher ring is bounded by `:retention` (default
   # 100 events); even if the persisted cursor is way behind, replay
@@ -625,21 +643,30 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   def handle_publish(%{event: %Event{} = event}, ctx) do
     slice = read_full_slice(ctx)
 
-    # 2026-05-26 (Allen e2e Bug 5): dedupe by last_message_id BEFORE
-    # calling the adapter. Every chat-slice mutation (presence,
-    # member join, last_seen) emits a publisher_event with the
-    # current `last_message` in `new_slice`; without this dedupe the
-    # adapter sees `chat_send_occurred?(new_slice, nil) == true` for
-    # ALL of them and re-publishes the SAME message N times to
-    # Feishu (Allen got 4 copies of one cc reply). The cursor field
-    # also advances on every mutation so we can't use it as the
-    # dedupe key — last_message_id is the stable invariant per
-    # actual chat.send.
-    event_msg_id = extract_event_message_id(event)
+    # 2026-05-26 (Allen e2e Bug 5): dedupe BEFORE calling the adapter.
+    # Every chat-slice mutation (presence, member join, last_seen)
+    # emits a publisher_event with the current `last_message` in
+    # `new_slice`; without this dedupe the adapter sees
+    # `chat_send_occurred?(new_slice, nil) == true` for ALL of them and
+    # re-publishes the SAME message N times to Feishu (Allen got 4
+    # copies of one cc reply).
+    #
+    # PR #420 codex r4 MED (2026-06-01): the dedupe key is the COMPOSITE
+    # `{msg.id, send_cursor}`. `msg.id` alone is too coarse — a
+    # legitimate retry-send reuses the id but bumps `send_cursor`
+    # (`Chat.invoke(:send)` always increments it; MessageStore's
+    # `on_conflict: :nothing` returns the same row). The adapter treats
+    # every `send_cursor` delta as a real publish, so an id-only dedupe
+    # SILENTLY DROPS the retry. Keying on the pair:
+    #   - retry-send (reused id, NEW cursor) ≠ stored pair → publishes
+    #   - true replay (same id AND same cursor — `send_cursor` is
+    #     monotonic per `:send`, a re-delivered event carries the exact
+    #     same pair) == stored pair → dedupes
+    event_send_key = extract_event_send_key(event)
 
     legacy_result =
       cond do
-        not is_nil(event_msg_id) and event_msg_id == slice.last_published_message_id ->
+        not is_nil(event_send_key) and event_send_key == slice.last_published_send_key ->
           new_slice = %{
             slice
             | publisher_cursor: event.cursor,
@@ -651,7 +678,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
           {:ok, new_slice, %{ok: true, cursor: event.cursor, skipped: true}}
 
         true ->
-          do_invoke_publish(slice, event, event_msg_id)
+          do_invoke_publish(slice, event, event_send_key)
       end
 
     translate_publish_return(slice, legacy_result)
@@ -677,7 +704,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
       error_count: ctx.read.(:error_count, 0),
       last_published_at: ctx.read.(:last_published_at, nil),
       last_publish_result: ctx.read.(:last_publish_result, nil),
-      last_published_message_id: ctx.read.(:last_published_message_id, nil)
+      last_published_send_key: ctx.read.(:last_published_send_key, nil)
     }
   end
 
@@ -693,7 +720,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
     :error_count,
     :last_publish_result,
     :last_published_at,
-    :last_published_message_id
+    :last_published_send_key
   ]
 
   defp translate_publish_return(old_slice, {:ok, new_slice, result}) do
@@ -721,24 +748,45 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
 
   # ----- internals -----
 
-  # Extract the message_id from the publisher event's payload. Only the
-  # :chat slice carries a `:last_message` ezagent.Message struct;
-  # other slices return nil (and we fall through to adapter-side
-  # `:skip`). String and atom keys are both accepted because the
-  # MessageStore JSON roundtrip serialises atom keys as strings.
-  defp extract_event_message_id(%Event{payload: %{} = payload, slice_key: :chat}) do
+  # Extract the COMPOSITE dedupe key `{message_id, send_cursor}` from the
+  # publisher event's payload. Only the :chat slice carries a
+  # `:last_message` ezagent.Message struct (the id half) alongside a
+  # `:send_cursor` counter (bumped on every `Chat.invoke(:send)`); other
+  # slices return nil (and we fall through to adapter-side `:skip`).
+  #
+  # PR #420 codex r4 MED (2026-06-01): the pair — not the id alone — is
+  # the dedupe key. A retry-send reuses `msg.id` but bumps `send_cursor`,
+  # so it must publish; a true replay carries the same pair, so it must
+  # dedupe.
+  #
+  # String and atom keys are both accepted because the MessageStore JSON
+  # roundtrip serialises atom keys as strings. `send_cursor` defaults to
+  # 0 when absent (a chat slice that predates the PR-EM-6-PRE
+  # `:send_cursor` field) so the key is still a stable pair.
+  defp extract_event_send_key(%Event{payload: %{} = payload, slice_key: :chat}) do
     new_slice = Map.get(payload, :new_slice) || Map.get(payload, "new_slice")
 
     case new_slice do
-      %{last_message: %Ezagent.Message{id: id}} -> id
-      %{"last_message" => %Ezagent.Message{id: id}} -> id
-      _ -> nil
+      %{last_message: %Ezagent.Message{id: id}} = ns ->
+        {id, fetch_send_cursor(ns)}
+
+      %{"last_message" => %Ezagent.Message{id: id}} = ns ->
+        {id, fetch_send_cursor(ns)}
+
+      _ ->
+        nil
     end
   end
 
-  defp extract_event_message_id(_), do: nil
+  defp extract_event_send_key(_), do: nil
 
-  defp do_invoke_publish(slice, %Event{} = event, event_msg_id) do
+  # Read `:send_cursor` from the chat new_slice (atom or string key),
+  # defaulting to 0 when absent.
+  defp fetch_send_cursor(new_slice) do
+    Map.get(new_slice, :send_cursor) || Map.get(new_slice, "send_cursor") || 0
+  end
+
+  defp do_invoke_publish(slice, %Event{} = event, event_send_key) do
     case slice.adapter_module.event_to_payload(event) do
       :skip ->
         new_slice = %{
@@ -761,7 +809,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
                 count: slice.count + 1,
                 last_publish_result: :ok,
                 last_published_at: DateTime.utc_now(),
-                last_published_message_id: event_msg_id
+                last_published_send_key: event_send_key
             }
 
             {:ok, new_slice, %{ok: true, cursor: event.cursor}}
