@@ -340,7 +340,14 @@ git push origin poc/phase-2-customer-service
 
 ## Phase 5 — Demos (after PR-1/2/3 land or on the integrated branch)
 
-Record on `acme`. Prereq: the cc template must use `~/.claude` or an `api_key_helper` (fresh per-agent `CLAUDE_CONFIG_DIR` hits the 2.1.92 OAuth screen — #524). Run on the integrated `poc/phase-2-customer-service` branch (has all three capabilities + bridge fix).
+Record on `acme`. Run on the integrated `poc/phase-2-customer-service` branch (has all three capabilities + bridge fix).
+
+**CRITICAL recording prereq — avoid the claude 2.1.92 OAuth screen** (from the bridge-fix session): a fresh per-agent `CLAUDE_CONFIG_DIR` triggers the OAuth login screen in 2.1.92 → `EagerBridge` returns `{:error, :oauth_required}` and the cc agent never binds. Before recording, ensure the cc agent **either** uses `~/.claude` directly (do **not** set `claude_config_dir` in the agent template) **or** has an `api_key_helper` configured (see `docs/runbook/cc-agent-config.md`).
+
+**Verify the bridge is actually connected before recording** (server log):
+- `grep 'CONNECTED TO Ezagent.AgentBridge.Socket' <server.log>` — the esr-bridge MCP reached the bridge.
+- `grep 'JOINED agent_bridge' <server.log>` — the agent JOINed its channel.
+Both must appear, and a customer message must produce a real cc reply, before capturing.
 
 ### Task 5.1: Record the 3 demos
 **Files:** `docs/assets/demo*` (re-created)

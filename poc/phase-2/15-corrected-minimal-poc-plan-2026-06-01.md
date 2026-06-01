@@ -55,6 +55,7 @@ stays — it's the generic takeover primitive, used by A too.
 | G2 | agent lifecycle for anonymous/per-conversation customers — ezagent's boot-restore + no persistent customer URI forces A's `remove_template`+GC workaround; the native long-lived-template pattern needs a logged-in customer model | **GAP** | **documented** (§4), not fixed (fixing = out of scope per §1.4) |
 | G3 | operator takeover requires either a core `Chat.handle_send` suppression hook (Mode, #511) or pure routing (zero core) | **CORE CHANGE / DECISION** | demonstrate Mode; **hand to Allen** (§6) |
 | G4 | orchestrator cannot provide soul-edit or takeover (it's an LLM-driven slot/router engine) | **FINDING** | documented (`12-orchestrator-vs-our-capabilities`) |
+| G6 | anonymous/unauthenticated customers — ezagent's Identity/Capability model assumes *identified* principals; A serves public web chat by **synthesizing anonymous customer URIs** (`entity://user/<ws>/customer_<id>`) as a workaround (customer route is public, `on_mount: :put_locale`, no login; operator/admin sides correctly require login) | **GAP / DECISION** | documented → **Allen**: is synthetic-customer the blessed pattern, or should ezagent have a native anonymous principal? |
 | G5 | soul edit, customer-chat fan-out, capability gating | **NO GAP** | ✅ migrate natively (table below) |
 
 The per-capability detail:
