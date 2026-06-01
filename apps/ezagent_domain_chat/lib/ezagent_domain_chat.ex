@@ -1274,6 +1274,15 @@ defmodule EzagentDomainChat do
             spawned = if fresh?, do: [member_uri | spawned], else: spawned
             {:cont, {:ok, acc, spawned}}
 
+          # codex cycle-2 MAJOR #2 — a member that was freshly SPAWNED
+          # (`spawn_fresh` bound the workspace + recorded lineage) but whose
+          # JOIN then failed returns its URI here so it enters the
+          # compensation set TOO. Without this, the spawned-but-unjoined URI
+          # was dropped → orphan Agent Kind + lineage + binding survived the
+          # rollback.
+          {:error, reason, %URI{} = orphan_uri} ->
+            {:halt, {:error, {:member_materialize_failed, member, reason}, [orphan_uri | spawned]}}
+
           {:error, reason} ->
             {:halt, {:error, {:member_materialize_failed, member, reason}, spawned}}
         end
@@ -1320,8 +1329,20 @@ defmodule EzagentDomainChat do
         |> maybe_put(:source_template_uri, source_template_uri)
 
       case join_member_with_facets(session_uri, member_uri, facets) do
-        :ok -> {:ok, member_uri, role_name, fresh?}
-        {:error, reason} -> {:error, reason}
+        :ok ->
+          {:ok, member_uri, role_name, fresh?}
+
+        # codex cycle-2 MAJOR #2 — spawn-succeeds/join-fails. If THIS call
+        # freshly spawned the member (`spawn_fresh` already bound the
+        # workspace + recorded lineage), surface its URI in the error so the
+        # caller folds it into the compensation set BEFORE the join was
+        # attempted — otherwise it orphans. A pre-existing (adopted, not
+        # fresh) member is NOT ours to tear down, so the plain 2-tuple stands.
+        {:error, reason} when fresh? ->
+          {:error, reason, member_uri}
+
+        {:error, reason} ->
+          {:error, reason}
       end
     end
   end

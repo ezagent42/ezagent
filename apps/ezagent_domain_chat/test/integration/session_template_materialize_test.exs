@@ -715,6 +715,116 @@ defmodule EzagentDomainChat.Integration.SessionTemplateMaterializeTest do
     cleanup_session(session_uri)
   end
 
+  test "a spawn-succeeds-but-join-fails member leaves NO orphan (codex cycle-2 MAJOR #2)" do
+    n = uniq()
+    template_name = "joinfail-team-#{n}"
+    # Two members sharing the SAME role_name but DIFFERENT flavors. role_name
+    # is UNIQUE-per-session (Chat.do_join's role_name_conflict guard), so:
+    #   * member A (echo flavor) spawns to echo_<...> + joins OK → role held;
+    #   * member B (cc flavor) — a DIFFERENT flavor → a DIFFERENT instance URI
+    #     (cc_<...>) — spawns FRESH (spawn_fresh binds workspace + records
+    #     lineage), then its faceted chat.join is REJECTED with a role_name
+    #     conflict. That is the genuine spawn-succeeds/join-fails orphan case
+    #     — no production test-hook needed.
+    role_name = "shared-role-#{n}"
+    echo_source = seed_agent_template(n)
+    cc_source = seed_cc_agent_template(n)
+
+    content = %{
+      name: template_name,
+      description: "join-fail team",
+      orchestrator_template_uri: nil,
+      default_workspace_uri: URI.parse("workspace://system"),
+      parent_template_uri: nil,
+      version_tag: nil,
+      created_by: User.admin_uri(),
+      created_at: ~U[2026-06-01 00:00:00Z],
+      members: [
+        %{uri: nil, role_name: role_name, in_session_template: true, source_template_uri: echo_source},
+        %{uri: nil, role_name: role_name, in_session_template: true, source_template_uri: cc_source}
+      ],
+      prompt_templates: %{},
+      legends: %{},
+      routing_rules: []
+    }
+
+    _template_uri = persist_template(content)
+
+    short = "joinfail-sess-#{n}"
+    session_uri = URI.new!("session://#{template_name}/system/#{short}")
+    disc = URI.to_string(session_uri)
+
+    # The cc member's session-unique URI (spawned FRESH, then its join fails).
+    cc_instance = "cc_" <> Ezagent.Entity.Agent.session_instance_name(role_name, disc)
+    cc_member_uri = URI.new!("entity://agent/system/#{cc_instance}")
+
+    assert {:error, _reason} =
+             EzagentDomainChat.create_session(short, User.admin_uri(),
+               template_name: template_name
+             )
+
+    # The freshly-spawned (join-failed) cc member Kind was terminated — NO
+    # orphan Agent Kind survives the failed join.
+    assert KindRegistry.lookup(cc_member_uri) == :error,
+           "spawn-succeeds/join-fails must leave no orphan member Kind; " <>
+             "it is still alive at #{URI.to_string(cc_member_uri)}"
+
+    # And its workspace binding was swept (no residue that would let a later
+    # `{:spawned_by,_}` cap resolve against a dead worker).
+    assert Ezagent.WorkspaceRegistry.lookup(cc_member_uri) == :error,
+           "spawn-succeeds/join-fails must sweep the workspace binding"
+
+    cleanup_session(session_uri)
+    cleanup_agent(cc_member_uri)
+  end
+
+  # A minimal cc-flavor AgentTemplate. The `cc` flavor is registered in the
+  # test boot (test_helper.exs) and short-circuits the real PTY in :test. Used
+  # to give a member a DIFFERENT flavor (distinct instance URI) while sharing a
+  # role_name with an echo member — the spawn-succeeds/join-fails lever.
+  defp seed_cc_agent_template(n) do
+    name = "seed-cc-#{n}"
+    uri = Ezagent.URI.new!("template://agent/system/#{name}")
+    {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
+
+    {:ok, _} =
+      Invocation.dispatch(%Invocation{
+        target: URI.new!("#{URI.to_string(uri)}?action=template.write"),
+        mode: :call,
+        args: %{
+          content: %{
+            flavor: "cc",
+            working_directory: "/tmp",
+            default_caps: [],
+            created_by: User.admin_uri(),
+            created_at: ~U[2026-06-01 00:00:00Z]
+          }
+        },
+        ctx: %{
+          caller: User.admin_uri(),
+          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+          reply: {:caller_inbox, self()}
+        }
+      })
+
+    on_exit(fn ->
+      case KindRegistry.lookup(uri) do
+        {:ok, pid} ->
+          if Process.alive?(pid),
+            do:
+              DynamicSupervisor.terminate_child(
+                EzagentDomainChat.AgentTemplateSupervisor,
+                pid
+              )
+
+        :error ->
+          :ok
+      end
+    end)
+
+    uri
+  end
+
   defp cleanup_session(session_uri) do
     on_exit(fn ->
       case KindRegistry.lookup(session_uri) do
