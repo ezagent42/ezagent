@@ -229,7 +229,7 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
 
   defp do_add(theme, %{role_desc: role_desc, system_prompt: sp}, ctx, session_uri, msg) do
     {ws, sid} = session_parts(session_uri)
-    new_uri = Ezagent.URI.parse!("entity://agent/#{ws}/loomworker_#{sid}_#{theme}")
+    new_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomworker_#{sid}_#{theme}")
 
     resolved_sp =
       if sp == "" do
@@ -273,7 +273,7 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
 
   defp do_remove(theme, ctx, session_uri, msg) do
     {ws, sid} = session_parts(session_uri)
-    target_uri = Ezagent.URI.parse!("entity://agent/#{ws}/loomworker_#{sid}_#{theme}")
+    target_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomworker_#{sid}_#{theme}")
 
     # 检查这条 URI 是不是真的在 session 里 — 不在的话回个友好提示
     workers = workers_in_session(session_uri)
@@ -305,7 +305,7 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
   end
 
   defp join_cmd(session_uri, member_uri) do
-    target = Ezagent.URI.parse!("#{URI.to_string(session_uri)}?action=chat.join")
+    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
 
     Cmd.new(target, :join, %{member: member_uri}, %{
       caller: Ezagent.SystemPrincipal.uri("session-internal"),
@@ -315,7 +315,7 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
   end
 
   defp leave_cmd(session_uri, member_uri) do
-    target = Ezagent.URI.parse!("#{URI.to_string(session_uri)}?action=chat.leave")
+    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.leave")
 
     Cmd.new(target, :leave, %{member: member_uri}, %{
       caller: Ezagent.SystemPrincipal.uri("session-internal"),

@@ -141,7 +141,7 @@ defmodule EzagentPluginLoom.WebPlug do
 
   # --- loom SDK 桥 helpers --------------------------------------------
 
-  defp session_uri(ws, sid), do: Ezagent.URI.parse!("session://loom/#{ws}/#{sid}")
+  defp session_uri(ws, sid), do: Ezagent.URI.new!("session://loom/#{ws}/#{sid}")
 
   # 2026-06-01 redesign: the loom view has no @-mention concept — every
   # message from this endpoint goes to the session's orchestrator, period.
@@ -154,7 +154,7 @@ defmodule EzagentPluginLoom.WebPlug do
   defp send_to_session(ws, sid, text) do
     suri = session_uri(ws, sid)
     orch_id = "loomorch_#{sid}"
-    orchestrator = Ezagent.URI.parse!("entity://agent/#{ws}/#{orch_id}")
+    orchestrator = Ezagent.URI.new!("entity://agent/#{ws}/#{orch_id}")
 
     # 2026-06-01 — 识别消息开头的 @<entity-id>。
     # - 用户写 "@loommeta_<sid> 加 painter" → mentions = [loommeta_<sid>]
@@ -209,12 +209,12 @@ defmodule EzagentPluginLoom.WebPlug do
       [_full, target_id] ->
         cond do
           target_id in valid_ids ->
-            uri = Ezagent.URI.parse!("entity://agent/#{ws}/#{target_id}")
+            uri = Ezagent.URI.new!("entity://agent/#{ws}/#{target_id}")
             {[uri], text}
 
           # 也允许 @loomworker_<sid>_<theme>(自定义 worker 也能直接 @)
           String.starts_with?(target_id, "loomworker_#{sid}_") ->
-            uri = Ezagent.URI.parse!("entity://agent/#{ws}/#{target_id}")
+            uri = Ezagent.URI.new!("entity://agent/#{ws}/#{target_id}")
             {[uri], text}
 
           true ->
@@ -367,7 +367,7 @@ defmodule EzagentPluginLoom.WebPlug do
   # 对每个 worker 读 :loom_worker slice,出 {theme, system_prompt, role} 三件套。
   # 找不到 session / slice 缺数据 → 空列表(降级到 Team 默认)。
   defp read_workers_snapshot(ws, sid) do
-    session_uri = Ezagent.URI.parse!("session://loom/#{ws}/#{sid}")
+    session_uri = Ezagent.URI.new!("session://loom/#{ws}/#{sid}")
 
     case Ezagent.Kind.get_slice(session_uri, :chat) do
       {:ok, %{members: members}} when is_map(members) ->
@@ -427,7 +427,7 @@ defmodule EzagentPluginLoom.WebPlug do
   # `pending` / `count` / `last_error` 是 runtime 易逝态,不进快照。
   # workers 也不抓 —— 当前 LoomWorker 用 init 默认值,LoomV0Worker 无状态。
   defp read_orchestrator_snapshot(ws, sid) do
-    orch_uri = Ezagent.URI.parse!("entity://agent/#{ws}/loomorch_#{sid}")
+    orch_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomorch_#{sid}")
 
     case Ezagent.Kind.get_slice(orch_uri, :loom_orchestrator) do
       {:ok, slice} when is_map(slice) ->
@@ -496,7 +496,7 @@ defmodule EzagentPluginLoom.WebPlug do
     with {:ok, class_module} <- Ezagent.TemplateRegistry.lookup(class_name),
          :ok <- refuse_if_session_exists(ws, new_session_name),
          tmpl = %{"class" => class_name, "session_name" => new_session_name},
-         workspace_uri = Ezagent.URI.parse!("workspace://#{ws}"),
+         workspace_uri = Ezagent.URI.new!("workspace://#{ws}"),
          {:ok, [session_uri | _]} <-
            class_module.instantiate(new_session_name, tmpl, workspace_uri) do
       %{ok: true, session_uri: URI.to_string(session_uri)}
@@ -508,7 +508,7 @@ defmodule EzagentPluginLoom.WebPlug do
   end
 
   defp refuse_if_session_exists(ws, name) do
-    uri = Ezagent.URI.parse!("session://loom/#{ws}/#{name}")
+    uri = Ezagent.URI.new!("session://loom/#{ws}/#{name}")
 
     case Ezagent.KindRegistry.lookup(uri) do
       {:ok, _pid} -> {:error, :session_already_exists}

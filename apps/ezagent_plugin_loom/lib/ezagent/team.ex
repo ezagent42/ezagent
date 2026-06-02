@@ -51,22 +51,22 @@ defmodule EzagentPluginLoom.Team do
     worker_themes = Keyword.get(opts, :worker_themes, ["policy", "company"])
 
     with {:ok, ws, sid} <- session_parts(session_uri) do
-      # 2026-06-01 — 用 `Ezagent.URI.parse!`(走 `URI.new`,canonical 形:无
+      # 2026-06-01 — 用 `Ezagent.URI.new!`(走 `URI.new`,canonical 形:无
       # `authority` 字段)代替 deprecated `URI.parse/1`(留 `authority: "agent"`)。
       # canonicalize_uris/1 在 snapshot load 时把 chat.members 的 key 全 rewrite
       # 到 canonical;若这里再用 URI.parse 加非 canonical key,Map.put 视为
       # 两个不同 key → 同一 agent 出现两条成员行(2026-06-01 demo6 双倍 bug)。
-      orchestrator = Ezagent.URI.parse!("entity://agent/#{ws}/loomorch_#{sid}")
+      orchestrator = Ezagent.URI.new!("entity://agent/#{ws}/loomorch_#{sid}")
 
       workers =
         Enum.map(worker_themes, fn theme ->
-          Ezagent.URI.parse!("entity://agent/#{ws}/loomworker_#{sid}_#{theme}")
+          Ezagent.URI.new!("entity://agent/#{ws}/loomworker_#{sid}_#{theme}")
         end)
 
-      v0 = Ezagent.URI.parse!("entity://agent/#{ws}/loomv0_#{sid}")
+      v0 = Ezagent.URI.new!("entity://agent/#{ws}/loomv0_#{sid}")
       # 2026-06-01 — team manager,接收 @ 的自然语言加 / 删 worker 指令。
       # 默认每个 loom session 都有。Behavior 是 mention-gated,不 @ 不动。
-      meta = Ezagent.URI.parse!("entity://agent/#{ws}/loommeta_#{sid}")
+      meta = Ezagent.URI.new!("entity://agent/#{ws}/loommeta_#{sid}")
 
       members = [orchestrator | workers] ++ [v0, meta]
 

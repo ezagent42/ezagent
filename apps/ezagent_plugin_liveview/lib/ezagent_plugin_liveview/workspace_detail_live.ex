@@ -103,6 +103,40 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
 
   defp template_status(_), do: :no_class_field
 
+  # 2026-06-02 — "open me in new tab" URL for the Spawn-template
+  # registrations table. Reuses the already-defined `session_uris_for_recipe/3`
+  # Template Class callback (which we added for the ghost-session
+  # dropdown filter): take the first session URI it declares, encode
+  # it into `/sessions?session=<encoded>`. The admin `/sessions` LV's
+  # `handle_params(%{"session" => encoded}, ...)` clause then routes
+  # to that session via `select_session/2`.
+  #
+  # Classes that don't own session URIs (e.g. `cc.agent`, which owns
+  # agent URIs) return `[]` from the callback → no link, row renders
+  # plain text. No separate `open_url_for_recipe/3` callback needed —
+  # one callback now serves both filter + link.
+  defp template_open_url(tmpl_name, %{"class" => class_name} = recipe, %URI{} = ws_uri)
+       when is_binary(tmpl_name) and is_binary(class_name) do
+    with {:ok, module} <- Ezagent.TemplateRegistry.lookup(class_name),
+         true <- function_exported?(module, :session_uris_for_recipe, 3),
+         [%URI{} = session_uri | _] <-
+           try_session_uris(module, tmpl_name, recipe, ws_uri) do
+      "/sessions?session=" <> URI.encode_www_form(URI.to_string(session_uri))
+    else
+      _ -> nil
+    end
+  end
+
+  defp template_open_url(_, _, _), do: nil
+
+  defp try_session_uris(module, tmpl_name, recipe, ws_uri) do
+    apply(module, :session_uris_for_recipe, [tmpl_name, recipe, ws_uri])
+  rescue
+    _ -> []
+  catch
+    _, _ -> []
+  end
+
   defp template_status_label(:class_registered), do: gettext("Class registered")
   defp template_status_label(:no_class), do: gettext("No Class registered")
   defp template_status_label(:no_class_field), do: gettext("Missing \"class\" field")
@@ -192,6 +226,98 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
   def handle_event("select_template_class", %{"class" => class_name}, socket) do
     {:noreply, assign(socket, :selected_class, class_name)}
   end
+
+  # 2026-06-02 — Delete a runtime-injected ("saved") Template Class.
+  # Duck-typed: the Class module must export `saved?/0` returning
+  # `true` (mark itself as user-created) AND `delete_self!/0` (the
+  # actual delete entry point). Built-in plugin Classes don't
+  # implement these → deletion is rejected with a friendly message.
+  # The UI 🗑️ button only renders for classes where `deletable?/1`
+  # is true, but the handler revalidates server-side because client
+  # DOM is untrusted.
+  def handle_event("delete_saved_class", %{"class" => class_name}, socket)
+      when is_binary(class_name) do
+    case Ezagent.TemplateRegistry.lookup(class_name) do
+      {:ok, module} ->
+        if deletable_class?(module) do
+          _ =
+            try do
+              apply(module, :delete_self!, [])
+            rescue
+              e ->
+                require Logger
+
+                Logger.warning(
+                  "delete_saved_class: #{class_name} delete_self! raised: #{inspect(e)}"
+                )
+
+                {:error, :delete_raised}
+            end
+
+          form_classes = Ezagent.UI.Form.list_form_classes()
+
+          # If the selected class was the one we just deleted, reset to
+          # the first remaining Class (or __json__ fallback) so the
+          # form doesn't render against a stale module.
+          new_selected =
+            case socket.assigns.selected_class do
+              ^class_name ->
+                case form_classes do
+                  [{n, _, _} | _] -> n
+                  [] -> "__json__"
+                end
+
+              other ->
+                other
+            end
+
+          {:noreply,
+           socket
+           |> assign(:form_classes, form_classes)
+           |> assign(
+             :registered_template_classes,
+             Ezagent.TemplateRegistry.registered_template_names()
+           )
+           |> assign(:selected_class, new_selected)
+           |> assign(:flash_error, nil)}
+        else
+          {:noreply,
+           assign(
+             socket,
+             :flash_error,
+             gettext(
+               "Cannot delete \"%{class}\" — built-in Class (only saved-as-template Classes are removable).",
+               class: class_name
+             )
+           )}
+        end
+
+      :error ->
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           gettext("Cannot delete — Class \"%{class}\" not registered.", class: class_name)
+         )}
+    end
+  end
+
+  # Duck-typed predicate: a Class module is deletable from the UI iff
+  # it explicitly opts in via `saved?/0 == true` AND exposes a
+  # `delete_self!/0` entry point. This keeps plugin_liveview agnostic
+  # about WHICH plugin owns the Class (loom's `SavedClasses` is the
+  # current implementer; a future plugin that ships user-savable
+  # Classes follows the same contract).
+  defp deletable_class?(module) when is_atom(module) do
+    Code.ensure_loaded?(module) and
+      function_exported?(module, :saved?, 0) and
+      function_exported?(module, :delete_self!, 0) and
+      apply(module, :saved?, []) == true
+  rescue
+    _ -> false
+  end
+
+  defp deletable_class?(_), do: false
 
   # JSON escape hatch — Class is read from JSON's "class" field.
   def handle_event(
@@ -313,7 +439,7 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
             "remove_template[#{tmpl_name}] calling #{inspect(class_module)}.cleanup/3"
           )
 
-          ws_uri = Ezagent.URI.parse!("workspace://#{ws_name}")
+          ws_uri = Ezagent.URI.new!("workspace://#{ws_name}")
 
           try do
             result = class_module.cleanup(tmpl_name, recipe, ws_uri)
@@ -644,7 +770,22 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
                       :for={{tmpl_name, tmpl_data} <- @workspace.session_templates}
                       class="border-b border-zinc-100 dark:border-zinc-900"
                     >
-                      <td class="px-1 py-1 font-medium">{tmpl_name}</td>
+                      <td class="px-1 py-1 font-medium">
+                        <% open_url = template_open_url(tmpl_name, tmpl_data, @workspace.uri) %>
+                        <%= if open_url do %>
+                          <a
+                            href={open_url}
+                            target="_blank"
+                            rel="noopener"
+                            class="text-sky-700 dark:text-sky-300 hover:underline"
+                            title={gettext("Open in new tab")}
+                          >
+                            {tmpl_name}
+                          </a>
+                        <% else %>
+                          {tmpl_name}
+                        <% end %>
+                      </td>
                       <td class="font-mono text-[11px]">{template_class_name(tmpl_data)}</td>
                       <td>{template_member_count(tmpl_data)}</td>
                       <td class={template_status_class(template_status(tmpl_data))}>
@@ -689,15 +830,38 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
                   </p>
 
                   <div class="mb-3 flex gap-1.5 flex-wrap">
-                    <button
-                      :for={{class_name, _module, _fields} <- @form_classes}
-                      type="button"
-                      phx-click="select_template_class"
-                      phx-value-class={class_name}
-                      class={tmpl_mode_btn_class(@selected_class == class_name)}
-                    >
-                      {class_name}
-                    </button>
+                    <%= for {class_name, module, _fields} <- @form_classes do %>
+                      <% deletable = deletable_class?(module) %>
+                      <div class="inline-flex">
+                        <button
+                          type="button"
+                          phx-click="select_template_class"
+                          phx-value-class={class_name}
+                          class={
+                            tmpl_mode_btn_class(@selected_class == class_name) <>
+                              if(deletable, do: " rounded-r-none", else: "")
+                          }
+                        >
+                          {class_name}
+                        </button>
+                        <button
+                          :if={deletable}
+                          type="button"
+                          phx-click="delete_saved_class"
+                          phx-value-class={class_name}
+                          data-confirm={
+                            gettext(
+                              "Delete saved Class \"%{class}\"? Existing instances spawned from it keep running, but no new instances can be created and the Class will disappear from this picker.",
+                              class: class_name
+                            )
+                          }
+                          title={gettext("Delete this saved Class")}
+                          class="px-1.5 py-1 -ml-px text-[11px] rounded-r border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950 cursor-pointer"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    <% end %>
                     <button
                       type="button"
                       phx-click="select_template_class"

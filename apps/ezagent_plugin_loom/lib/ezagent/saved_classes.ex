@@ -213,6 +213,39 @@ defmodule Ezagent.PluginLoom.SavedClasses do
 
         def cleanup(_tmpl_name, _tmpl, _ws_uri), do: :ok
 
+        # --- session_uris_for_recipe — visibility filter for /sessions
+        # dropdown. Delegates to LoomSession (which produces
+        # `session://loom/<ws>/<sn>` regardless of the saved-class
+        # specialization, because `instantiate/3` itself delegates).
+        # See LoomSession.session_uris_for_recipe/3 for rationale.
+        def session_uris_for_recipe(tmpl_name, %{"class" => @class_name} = tmpl, ws_uri) do
+          augmented = Map.put(tmpl, "class", "session.loom")
+
+          Ezagent.PluginLoom.Template.LoomSession.session_uris_for_recipe(
+            tmpl_name,
+            augmented,
+            ws_uri
+          )
+        end
+
+        def session_uris_for_recipe(_tmpl_name, _tmpl, _ws_uri), do: []
+
+        # --- saved?/0 + delete_self!/0 — duck-typed deletability ---------
+        #
+        # The admin LV (workspace_detail_live) renders a 🗑️ next to any
+        # Class in the Add-template picker whose module returns
+        # `saved?/0 == true`, then calls `delete_self!/0` on click.
+        # This keeps liveview plugin-agnostic — it never needs to know
+        # `Ezagent.PluginLoom.SavedClasses` exists.
+        #
+        # Built-in Classes (LoomSession, CcAgent, etc.) don't implement
+        # these → no delete button, can't be removed via UI.
+        def saved?, do: true
+
+        def delete_self! do
+          Ezagent.PluginLoom.SavedClasses.delete_one(@class_name)
+        end
+
         # --- Ezagent.UI.Form ---------------------------------------------
 
         @impl Ezagent.UI.Form
