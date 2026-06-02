@@ -126,18 +126,57 @@ defmodule Ezagent.AgentBridge do
     )
   end
 
-  # Default relaunch: ensure the agent Kind is running. If the Kind itself had
-  # exited, `SpawnRegistry.spawn/1` restarts it and its `Sandbox.activate/2`
-  # re-runs `ensure_subprocess_alive/2`. The "Kind alive but subprocess dead"
-  # case is healed by the richer ctx-derived heal_fn the dispatch caller passes
-  # (it has the Kind's template_class + respawn_template_data); this default is
-  # the dependency-free fallback. Runs out-of-Kind-process safe (SpawnRegistry
-  # is a separate process — no self-call).
+  # Default relaunch (PR-DR). Heals BOTH failure modes without a self-call
+  # deadlock (this runs INSIDE the target Kind's dispatch process via
+  # `Chat.handle_receive`, so reading the Kind's OWN live slice via
+  # `Kind.get_slice/2` would deadlock — see kind/server.ex):
+  #   1. Kind itself exited → `SpawnRegistry.spawn/1` restarts it (its
+  #      `Sandbox.activate/2` re-runs `ensure_subprocess_alive/2`).
+  #   2. Kind alive but the claude/python subprocess exited (the actual
+  #      blocker #1) → read the persisted Sandbox slice from the SNAPSHOT
+  #      STORE (a DB read, NOT a Kind call) for `template_class` +
+  #      `respawn_template_data`, then call `template_class.ensure_subprocess_
+  #      alive/2` — the same relaunch `Sandbox.activate/2` performs in-process,
+  #      so it is safe to call here too. The relaunched bridge re-joins and
+  #      `ensure_ready/2` observes the rebind via the Registry connect topic.
   defp default_heal(%URI{} = agent_uri) do
+    with :ok <- ensure_kind_running(agent_uri),
+         {:ok, template_class, respawn_data} <- load_sandbox_respawn(agent_uri) do
+      template_class.ensure_subprocess_alive(agent_uri, respawn_data)
+    end
+  end
+
+  defp ensure_kind_running(%URI{} = agent_uri) do
     case Ezagent.SpawnRegistry.spawn(agent_uri) do
       {:ok, _pid} -> :ok
-      {:error, {:no_spawn_fn, _scheme}} -> {:error, :no_spawn_fn}
-      {:error, reason} -> {:error, reason}
+      # Not a spawnable scheme (e.g. a flavor with no spawn_fn) — the
+      # snapshot path below can still relaunch the subprocess if state exists.
+      {:error, {:no_spawn_fn, _scheme}} -> :ok
+      {:error, reason} -> {:error, {:ensure_kind_failed, reason}}
+    end
+  end
+
+  # Read the persisted Sandbox slice for `agent_uri` without touching the live
+  # Kind (snapshot store = DB). Returns the relaunch inputs only when a usable
+  # `template_class` exporting `ensure_subprocess_alive/2` + a `respawn_data`
+  # map are present; otherwise an error so `ensure_ready/2` fails loud (no shim).
+  defp load_sandbox_respawn(%URI{} = agent_uri) do
+    case Ezagent.SnapshotStore.latest(agent_uri) do
+      {:ok, %{state: state}} when is_map(state) ->
+        sandbox = Ezagent.Kind.normalize_slice_view(Map.get(state, :sandbox, %{}))
+        template_class = Map.get(sandbox, :template_class)
+        respawn_data = Map.get(sandbox, :respawn_template_data)
+
+        if is_atom(template_class) and not is_nil(template_class) and is_map(respawn_data) and
+             Code.ensure_loaded?(template_class) and
+             function_exported?(template_class, :ensure_subprocess_alive, 2) do
+          {:ok, template_class, respawn_data}
+        else
+          {:error, :no_sandbox_respawn_state}
+        end
+
+      {:error, reason} ->
+        {:error, {:snapshot_unavailable, reason}}
     end
   end
 
