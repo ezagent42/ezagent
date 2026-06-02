@@ -194,10 +194,64 @@ defmodule Ezagent.Orchestrator.Tools do
         session_uri
       )
 
-    case Ezagent.Entity.Agent.spawn_fresh(source_template_uri, instance_name, workspace_uri, caller) do
-      {:ok, %{agent_uri: %URI{} = member_uri}} -> {:ok, member_uri}
-      {:error, _} = err -> err
+    # team-routing-unification LIVE-tier fix (2026-06-02) — spawn the member
+    # through `Agent.spawn_from_template_content/4` (the `Template.instantiate`
+    # chokepoint), NOT `Agent.spawn_fresh/4`. `spawn_fresh/4` only starts a bare
+    # Agent Kind (`SpawnRegistry.spawn_detailed → Kind.spawn`) and NEVER reaches
+    # `Template.instantiate`, so the plugin Template Class's instantiate — which
+    # brings up the cc/codex/curl CLI + PTY, writes the per-agent config_dir, and
+    # records `template_class`/`respawn_template_data` (the sandbox respawn state)
+    # — never runs. Result pre-fix: a member ENTITY with no live CLI, so the
+    # relay stalls at the first hop (no subprocess to receive `chat.receive`).
+    # This is the SAME bug class codex PR #408 fixed for `ensure_orchestrator`
+    # (`Session.spawn_orchestrator_via_template_content/5`); PR-8 left this path
+    # on the old bare spawn. The deterministic Tier-1 gate spawns no real agents,
+    # so only the LIVE tier exposed it.
+    workspace_name =
+      workspace_uri.host ||
+        raise ArgumentError,
+              "workspace_uri has no host (`workspace://<NAME>`) — got " <>
+                inspect(workspace_uri)
+
+    member_uri = Ezagent.URI.new!("entity://agent/#{workspace_name}/#{instance_name}")
+
+    with {:ok, content} <- read_source_template_content(source_template_uri),
+         {:ok, _result} <-
+           Ezagent.Entity.Agent.spawn_from_template_content(
+             content,
+             member_uri,
+             caller,
+             workspace_uri
+           ) do
+      {:ok, member_uri}
     end
+  end
+
+  # Read the source AgentTemplate Kind's content slice (the SOLE source of
+  # truth), mirroring `Session.read_orchestrator_template_content/1`. The
+  # content map is what `Agent.spawn_from_template_content/4` threads through
+  # `AgentTemplate.to_template_data/2` + the plugin Template Class instantiate.
+  defp read_source_template_content(%URI{} = template_uri) do
+    case Ezagent.KindRegistry.lookup(template_uri) do
+      :error ->
+        {:error, {:source_template_not_alive, template_uri}}
+
+      {:ok, pid} ->
+        case safe_get_template_content(pid) do
+          %{} = content when map_size(content) > 0 -> {:ok, content}
+          _ -> {:error, {:source_template_not_populated, template_uri}}
+        end
+    end
+  end
+
+  defp safe_get_template_content(pid) do
+    case :sys.get_state(pid, 500) do
+      %{state: %{template: %{state: %{content: content}}}} when is_map(content) -> content
+      %{state: %{template: %{content: content}}} when is_map(content) -> content
+      _ -> %{}
+    end
+  catch
+    :exit, _ -> %{}
   end
 
   # Faceted `chat.join` dispatch on the session — carries the PR-7 member
