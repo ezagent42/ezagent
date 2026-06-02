@@ -2,13 +2,12 @@ defmodule Ezagent.AgentBridge.Registry do
   @moduledoc """
   `agent_uri -> channel_pid` lookup table for bridge-backed agents.
 
-  This module is the promoted home of the historical
-  `EzagentPluginCc.BridgeRegistry`. PR-B intentionally keeps the
-  underlying ETS table name so live cc bridge bindings survive the
-  module move during the deprecation window.
+  This is the unified registry for all bridge-backed agent kinds (cc,
+  codex, ...). The deprecated cc-named shim `EzagentPluginCc.BridgeRegistry`
+  delegates here for the `/cc_socket` deprecation window.
   """
 
-  @table :ezagent_plugin_cc_bridges
+  @table :ezagent_plugin_agent_bridges
   @pubsub EzagentCore.PubSub
   @topic "esr:agent_bridge:bridges"
   @legacy_topic "esr:cc_channel:bridges"
