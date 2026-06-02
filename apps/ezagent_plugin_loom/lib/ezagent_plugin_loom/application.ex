@@ -193,6 +193,10 @@ defmodule EzagentPluginLoom.Application do
     # 所以 TemplateRegistry 已就绪。
     Ezagent.PluginLoom.SavedClasses.register_all_from_disk()
 
+    # 2026-06-02 — SDK v2 tools.把 `:tools` config 列表注册进 ETS 注册表。
+    # 失败不阻塞 boot:某个工具模块挂了不该让整个 plugin 起不来。
+    _ = EzagentPluginLoom.ToolRegistry.register_all()
+
     :ok
   end
 
