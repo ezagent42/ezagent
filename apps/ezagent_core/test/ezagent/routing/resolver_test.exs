@@ -159,7 +159,12 @@ defmodule Ezagent.Routing.ResolverTest do
         )
 
       assert [{uri, ctx}] =
-               Resolver.resolve_with_ctx(msg("hello"), URI.new!("session://default/system/main"), [], [])
+               Resolver.resolve_with_ctx(
+                 msg("hello"),
+                 URI.new!("session://default/system/main"),
+                 [],
+                 []
+               )
 
       assert URI.to_string(uri) == recv
       assert ctx.rule_id == 1

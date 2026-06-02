@@ -95,8 +95,7 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
     "restart_pty" => {:cli, "mix ezagent agent terminate --agent <uri>"},
 
     # --- Session / chat ops ---
-    "invite_member" =>
-      {:cli, "mix ezagent session join --session <uri> --member <member-uri>"},
+    "invite_member" => {:cli, "mix ezagent session join --session <uri> --member <member-uri>"},
     # chat_compose CLI is partial — text-only via `mix ezagent session send`.
     # File attachments + mentions are not yet representable in argv. See
     # `docs/notes/2026-05-24-cli-gui-parity-audit.md` §1 row 1.
@@ -119,7 +118,8 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
     # add_rule. Maps to `mix ezagent session add_rule --session <uri> ...`
     # which auto-derives from Behavior.Routing registered on Session Kind.
     "routing_rule_add_session" =>
-      {:cli, "mix ezagent session add_rule --session <uri> --table ... --matcher-json ... --receivers ..."},
+      {:cli,
+       "mix ezagent session add_rule --session <uri> --table ... --matcher-json ... --receivers ..."},
     # routing_rule_toggle — admin_live's per-row enable/disable. Maps to
     # `mix ezagent workspace disable_rule` / `enable_rule`.
     "routing_rule_toggle" =>
@@ -139,8 +139,7 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
     # `mix ezagent.user.set_password` retained as the admin-bootstrap
     # carve-out (chicken-and-egg: admin needs a password BEFORE they
     # can mint a token for `mix ezagent` calls).
-    "set_password" =>
-      {:cli, "mix ezagent user set_password --user <uri> --password <pw>"},
+    "set_password" => {:cli, "mix ezagent user set_password --user <uri> --password <pw>"},
     # display_name save — LV calls Ezagent.Entity.Profile.upsert/1
     # directly. Needs a Behavior on User Kind: :set_display_name
     # (or extend Behavior.Identity). Profile is its own slice today.
@@ -187,14 +186,14 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
     "save_smtp" =>
       {:deferred,
        "docs/futures/todo.md HIGH-3 — needs Behavior on App/SystemSettings Kind for :save_smtp_config; LV path uses Ezagent.AppSettings.put/2 directly"},
-    "send_test_email" =>
-      {:cli, "mix ezagent.auth.magic_link <email> (operator-debug mirror)"},
+    "send_test_email" => {:cli, "mix ezagent.auth.magic_link <email> (operator-debug mirror)"},
 
     # --- Agent extensions ---
     # The toggle event drives Behavior.Template.toggle_extension dispatch
     # in the cc plugin. mix ezagent auto-derives `mix ezagent template <action>`.
     "toggle" =>
-      {:cli, "mix ezagent template toggle_extension --template <name> --id <ext-id> --enabled <bool>"},
+      {:cli,
+       "mix ezagent template toggle_extension --template <name> --id <ext-id> --enabled <bool>"},
 
     # --- Pure UI state (no mutation — exempt) ---
     "filter" => {:ui_only, "in-page text filter; no backend mutation"},
@@ -225,7 +224,9 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
     "refresh" => {:ui_only, "force re-mount listings"},
 
     # --- PTY streaming ---
-    "pty_input" => {:pty_stream, "real-time keystroke stream; CLI seeding via `mix ezagent agent write` exists but interactive use is impractical from one-shot mix tasks"},
+    "pty_input" =>
+      {:pty_stream,
+       "real-time keystroke stream; CLI seeding via `mix ezagent agent write` exists but interactive use is impractical from one-shot mix tasks"},
     "pty_resize" => {:pty_stream, "real-time resize notification; ditto"}
   }
 

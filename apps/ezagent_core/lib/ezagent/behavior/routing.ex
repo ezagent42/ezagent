@@ -88,33 +88,37 @@ defmodule Ezagent.Behavior.Routing do
 
   alias Ezagent.Routing.{Matcher, RuleStore}
 
-  action :add_rule,
+  action(:add_rule,
     args: %{table: :atom, matcher_json: :map, receivers: {:list, :string}},
     returns: %{id: :integer},
     caps: [:add_rule],
     modes: [:call],
     description: "add a routing rule to this scope's rule store"
+  )
 
-  action :delete_rule,
+  action(:delete_rule,
     args: %{table: :atom, id: :integer},
     returns: %{deleted: :integer},
     caps: [:delete_rule],
     modes: [:call],
     description: "delete a routing rule from this scope's rule store"
+  )
 
-  action :disable_rule,
+  action(:disable_rule,
     args: %{table: :atom, id: :integer},
     returns: %{disabled: :integer},
     caps: [:disable_rule],
     modes: [:call],
     description: "disable an existing routing rule without removing it"
+  )
 
-  action :enable_rule,
+  action(:enable_rule,
     args: %{table: :atom, id: :integer},
     returns: %{enabled: :integer},
     caps: [:enable_rule],
     modes: [:call],
     description: "re-enable a previously disabled routing rule"
+  )
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   # Routing is registered on System + Workspace + Session — kind axis is

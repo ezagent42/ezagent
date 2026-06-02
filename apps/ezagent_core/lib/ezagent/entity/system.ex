@@ -48,5 +48,6 @@ defmodule Ezagent.Entity.System do
   # at compile time from `@global_routing_uri` in `routing_live.ex` (ETS
   # not yet started). `URI.new!/1` is the canonical form for hard-coded
   # constants (compile-time carve-out).
-  def routing_default_uri, do: URI.new!("system://routing/default") # uri-canonical-allow: §3.5 compile-time-callable (invoked from @global_routing_uri at compile time; ETS not started)
+  # uri-canonical-allow: §3.5 compile-time-callable (invoked from @global_routing_uri at compile time; ETS not started)
+  def routing_default_uri, do: URI.new!("system://routing/default")
 end

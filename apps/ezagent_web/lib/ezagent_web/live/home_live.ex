@@ -88,9 +88,7 @@ defmodule EzagentWeb.HomeLive do
       # ceremony. Tenant-customized session creation happens in
       # AdminLive (`/sessions` → "+ New"), where the dropdown is
       # mandatory.
-      case EzagentDomainChat.create_session(short_name, creator_uri,
-             template_name: "default"
-           ) do
+      case EzagentDomainChat.create_session(short_name, creator_uri, template_name: "default") do
         {:ok, session_uri, meta} ->
           # SPEC `2026-05-26-session-create-orchestrator-unified` Gap A
           # + Invariant #9 (no silent drops at user-facing surfaces) —

@@ -203,8 +203,14 @@ defmodule Ezagent.Router do
   defp derive_mode(%{reply: :ignore}), do: :cast
 
   defp derive_mode(%{reply: {kind, _}})
-       when kind in [:caller_inbox, :phoenix_pubsub, :phoenix_channel, :plug_conn, :stdio_pipe,
-                     :mcp_response],
+       when kind in [
+              :caller_inbox,
+              :phoenix_pubsub,
+              :phoenix_channel,
+              :plug_conn,
+              :stdio_pipe,
+              :mcp_response
+            ],
        do: :call
 
   defp derive_mode(_), do: :call

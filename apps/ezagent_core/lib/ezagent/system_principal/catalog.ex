@@ -256,7 +256,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # bootstrap-wildcard bridge masked this dependency). The cap
          # is narrowed to the exact Behavior + action; the runtime
          # dispatch path substitutes the per-agent instance + workspace.
-         Capability.cap(:agent, Sandbox, :write_path),
+         Capability.cap(:agent, Sandbox, :write_path)
          # Allen 2026-05-26 — `cap(:user, ApiKeys, :get_api_key)` was
          # part of `system://agent-internal` pre ApiKeys-to-Agent flip.
          # Post-flip, ApiKeys lives on the agent's own Kind and the

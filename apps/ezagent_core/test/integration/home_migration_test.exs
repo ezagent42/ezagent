@@ -59,9 +59,10 @@ defmodule Ezagent.Integration.HomeMigrationTest do
     user_state = %{
       identity: %{
         state: %{
-          caps: MapSet.new([
-            %{kind: :agent, behavior: Ezagent.Behavior.Sandbox, action: :read}
-          ])
+          caps:
+            MapSet.new([
+              %{kind: :agent, behavior: Ezagent.Behavior.Sandbox, action: :read}
+            ])
         }
       }
     }

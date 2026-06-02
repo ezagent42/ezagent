@@ -40,19 +40,21 @@ defmodule Ezagent.Behavior.Notifications do
 
   use Ezagent.Lifecycle
 
-  action :notify,
+  action(:notify,
     args: %{},
     returns: :ok,
     caps: [:notify],
     modes: [:call],
     description: "push a notification into a user's inbox (used by plugins / domains)"
+  )
 
-  action :subscribe,
+  action(:subscribe,
     args: %{},
     returns: :ok,
     caps: [:subscribe],
     modes: [:call],
     description: "subscribe to a user's notification stream (used by LV / admin / monitoring)"
+  )
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   # Notifications is cap-only and registered on User Kind only — kind
