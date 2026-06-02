@@ -4,7 +4,7 @@
 > **作者**：daiming（FatNine）
 > **依据**：`cs-team-orchestrator-playbook.md`（领导下发）+ `docs/superpowers/specs/2026-06-01-team-routing-unification(.zh_cn).md` + 当前 `Ezagent.Orchestrator.McpServer`/`Tools` 代码（main `151e1fb4`）
 > **形态**：双栏 operator runbook（左=镜头内动作+旁白/字幕，右=后端机制 tool→Behavior→effect），既是录制脚本也是 PRD。
-> **状态**：rev 3.3（后端彩排 rev 2 全绿；全量 live 攻坚见 §3.5——bring-up 三层逐层实测 + 人工介入查到铁证:**根因是 claude `2.1.160` 移除了 `--dangerously-load-development-channels` flag**,ESR cc-agent 入站投递依赖它 → 任何 agent 收不到 chat、零回复,挡死对话流第一步)。**live 全流程视频在当前 claude 版本上做不出**(G-chan = 版本漂移,critical);当前可交付 = 脚本/PRD + 后端验证 + 完整三层 gap 定位 + 根因。
+> **状态**：rev 4（**live demo 跑通了**——见 §3.5）。后端彩排 rev 2 全绿;全量 live 攻坚 + 人工(Allen)配合查到**真根因并修复**:不是 claude 版本删 flag(此前误判已订正),而是 **macOS Keychain 登录跨不过 PtyServer headless spawn → claude 未认证 → channel ignored**;修法 = `CLAUDE_CODE_OAUTH_TOKEN`(`claude setup-token` 生成、绕开 Keychain,走 Max 订阅)。修复后**编排器真 live**:operator 对话 → 12s 回复 → 真调 `list_templates` → 一句话 `add_managed_member` spawn 出真客服坐席。**核心 demo 已录 `.webm` 交付。** 顺带修了一个真 bug(`structuredContent` string→record)。**剩余 follow-up**:worker 侧(customer→AI 回答)的 PTY/channel 生命周期。
 
 ---
 
@@ -160,7 +160,9 @@ R&D（看 gap → 写 spec）、Allen（裁决架构）、未来接手实现的�
 | **#7** | 幕 0 | 无建 AgentTemplate 的工具（LV/mix 预先存在） | gap 7 |
 | **G-a** | 幕 1 | 无 bulk「spawn N」；一次一个 | （playbook §1 备注，非编号 gap） |
 | **G-live** | 幕 0/2（live） | cc agent sandbox 缺 onboarding 状态 → claude 卡首次运行主题屏。**纯 config 可修（已验证）**:sandbox 写 `.claude.json`(`hasCompletedOnboarding:true`…)。应进 cc seed | 新发现（= PoC G1，§3.5 第1层；config 修复已验证） |
-| **G-chan** | 幕 1+（live） | **承重墙·critical**:claude `2.1.160` **移除了** `--dangerously-load-development-channels` flag(`--help` 已无此项)→ ESR cc-agent 入站投递依赖它 → **任何 cc agent 收不到 chat、零回复**,挡死整条对话流。`.mcp.json` 配置无误,非 config 问题 | 新发现（§3.5 第3层；**claude 版本漂移**，非 config/补丁可解） |
+| **G-chan** | 幕 1+（live） | ~~承重墙~~ **已修复(订正:不是版本漂移)**:真因是 **macOS Keychain 登录读不到 → ESR headless claude 未认证 → channel ignored**;修法 = `CLAUDE_CODE_OAUTH_TOKEN`(`setup-token`)。修后编排器真 live 回复+调工具+spawn worker | 新发现 → **已修复**(§3.5;运维向:headless agent 认证须用 token 不能靠 Keychain) |
+| **G-mcp** | 幕 1（live） | `add_managed_member` 返回 URI → MCP `structuredContent` 是 string 应为 record(`expected record, received string`)→ 编排器误报错误(成员其实 spawn 成功) | 新发现 → **已修复**(`mcp_server.ex` `as_struct_content/1` 包成 `%{result: …}`) |
+| **G-worker** | 幕 2+（live, follow-up） | worker(售前/售后)的 claude PTY/channel 生命周期:restart 后不自动重起、per-agent config 的 onboarding/channel 未像编排器那样配好 → 收到 `chat.receive` 但不回复 | 新发现（follow-up;customer→AI 回答待通） |
 | **G-ui** | 幕 0（live） | LV「+New」创建 session 的模板下拉**错填**（只列 agent 模板 `cc.agent.cc_funk`，正确的 `default` SessionTemplate 不在列）→ `session_template_not_found` | 新发现（强化 #2） |
 | **G-stale** | （env） | dev `default` profile DB 与 current main **stale-不兼容**:真 agent 快照 `:respawn_template_data` KeyError、crash-loop。需 fresh profile 或迁移 | 新发现（env，§3.5） |
 
@@ -218,16 +220,17 @@ PtyServer[...] stderr:  Choose the text style that looks best with your terminal
 **G-live 实跑拆成【三层】，逐层实测（2026-06-02 全量 live 攻坚，干净 `csdemo` profile）：**
 1. **onboarding 卡死 —— 纯 config 可修，已验证（我原以为要 kick，是误判）。** 根因:agent 的 sandbox `CLAUDE_CONFIG_DIR`（如 `~/.ezagent/cc-orchestrator/.claude`）**没有 `.claude.json`** → claude 当首次运行、弹主题选择屏阻塞。**修法（纯 config、无代码、可直接进 seed 代码）**:往该目录写 `.claude.json`，含 `hasCompletedOnboarding:true` + `hasTrustDialogAccepted:true` + `bypassPermissionsModeAccepted:true` + `theme:"dark"`。**实测两次有效**:主题选择屏消失。⟹ 应进 cc sandbox seed（`cc_orchestrator_seed`）默认写好,是干净的 gap remediation。注:macOS auth 走共享 Keychain(已 OK),onboarding 状态是 `CLAUDE_CONFIG_DIR` 隔离的、必须单独 seed。
 2. **MCP-server JOIN —— onboarding 修好后自动通,不需任何 kick。** 实测:`theme=0 spawn=1 join=1 killed=0`,编排器 PTY spawn + JOIN esr-bridge,8 工具的 MCP server 绑定(`Orchestrator.McpSocket` CONNECTED),UI 里 `cc_orchestrator-main` **online、真成员**。⟹ 此前以为要 #512 的 `\r` kick 是**误判**——onboarding 一通,系统自带 `default_auto_prompts/0` 就把 dev-channels prompt 答了、正常 join。**我加的 kick 补丁已撤、未提交,无用。**
-3. **入站 CHANNEL 不可用 —— 真·承重墙,根因是 claude 版本漂移(已查到铁证)。** 实测:编排器 join 后,operator 发消息,后端 `chat.receive` **granted + delivered**(read-marker 写了),但编排器 **5+ 分钟零回复**。人工(Allen)打开编排器 Terminal 手动介入测试,键入**确实到达** claude PTY(`HANDLE EVENT "pty_input"`),但 claude 屏幕原话:
-   ```
-   --dangerously-load-development-channels ignored (server:esr-bridge)
-   Channels are not currently available
-   ```
-   **铁证(2026-06-02 查):安装的 `claude` = `2.1.160`,`claude --help` 里已经没有 `development-channels` 这个 flag** —— 即该版本**移除了** `--dangerously-load-development-channels`,所以 flag 被 ignored、入站 channel 永不加载。编排器 `.mcp.json` 是**正确配置**的(esr-bridge server + `EZAGENT_AGENT_TOKEN` + `EZAGENT_BRIDGE_WS_URL` 都在)——**不是 config 问题**。⟹ **ESR main 的 cc-agent 入站消息投递,依赖这个 claude 实验 flag;claude 2.1.160 把它删了 → 任何 cc agent 在本 env 都收不到 chat → 永不回复。**(此前历史里能回复的 cc_funk 来自**还带这个 flag 的旧版 claude**。)这**不是 config/按键/小补丁能解的**,要么用支持该 flag 的 claude 版本,要么 ESR 给新版 claude 重做入站投递。**这是 critical:静默的 claude 版本漂移打断了 agent runtime。**
-   > 附注:第 1 层 onboarding seed 与 `default_auto_prompts/0` 仍有交互(skip onboarding 改了 prompt 序列),但**即便序列对了,这个 flag 在 2.1.160 上也是 ignored**——版本漂移是更上游的根因。
+3. **入站 CHANNEL 不可用 —— 真根因 = 认证(已修复;此前"版本漂移"结论已订正)。** 实测:编排器 join 后,operator 发消息,后端 `chat.receive` **granted + delivered**,但编排器 5+ 分钟零回复;claude 屏幕 `--dangerously-load-development-channels ignored (server:esr-bridge)` / `Channels are not currently available`。
+   **逐层证伪(Allen 人工配合,在终端实跑同一条命令)**:
+   - `strings ~/.local/bin/claude` 证明 **channel 功能代码还在二进制里**(`Listening for channel messages` / `channelsEnabled` 都在)→ **flag 没被删,我那个结论错了**。
+   - 手动跑同样命令、**`/login` 之后**:claude 弹出 dev-channels 确认框、选"1" → **`Listening for channel messages from: server:esr-bridge`** —— **channel 能通!** 唯一变量是登录态。
+   - 对比 ESR headless spawn 的 claude:**没有 `Welcome back` 登录横幅**(交互跑每次都有)→ **ESR spawn 的 claude 其实未登录**。
+   **铁证根因**:`/login` 的 OAuth token 存在 **macOS Keychain**,你的交互终端读得到,但 ESR 用 PtyServer/erlexec spawn 的 claude 进程**读不到那个 Keychain 条目**(macOS 把 Keychain 访问绑在发起进程身份上)→ 它未认证 → ignore channel → 收不到 chat。
+   **修复(已验证跑通)**:`claude setup-token` 生成一个**绕开 Keychain 的长效 OAuth token**(走 Max 订阅),作为 `CLAUDE_CODE_OAUTH_TOKEN` 注入 ESR server 环境 → spawn 的 claude 子进程继承 → 认证通过 → `listening=1`、编排器 **12s 真回复 + 真调 `list_templates` + 一句话 `add_managed_member` spawn 出真客服坐席**。⟹ **运维结论(交 Allen)**:macOS 上 headless agent 不能靠 Keychain 登录,必须用 token(`setup-token` / `api_key_helper`);这条应进 cc seed / 文档。
 
 - **环境烂账(实跑逐层发现,均已处理或记录):** (a) dev `default` profile DB **stale-不兼容** current main —— 真 agent 快照(cc_funk/cc_orchestrator-main,2026-05-26)`:respawn_template_data` KeyError、crash-loop `ensure_main_session` → `/sessions` 挂;(b) 历史遗留 orphan `ezagent_mcp_bridge.py` / `claude server:esr-bridge` 进程反复重连、刷崩 AgentSupervisor;(c) 一条 `cc_spawn-invariant-test` 测试快照污染。**干净 `csdemo` profile 一次性绕开 (a)(c)**,(b) 已杀。
-- **对 demo 的含义(最终):** **全量真 live demo 在 current main 上做不出**——第 3 层入站 channel gap 挡在**对话流第一步**(幕 1 让编排器加成员就要它处理消息)。幕 1–5 全部依赖 agent 处理消息,故**全被这一条挡死**;只有幕 0(operator LV 舞台搭建 + G-ui)和静态 UI(编排器 online)可录,**不构成流程**。⟹ live 视频须先解第 3 层 channel gap(real code),非 config/脚本能解。
+- **对 demo 的含义(最终订正):** **核心 live demo 跑通了**——清 `csdemo` profile + onboarding seed + `CLAUDE_CODE_OAUTH_TOKEN` 三件齐,编排器真 live:operator 对话 → 列模板 → 一句话 spawn 真客服坐席,**已录 `.webm` 交付**(rec2)。顺带修了 `add_managed_member` 的 `structuredContent` 真 bug(G-mcp,已改 `mcp_server.ex`)。
+- **剩余 follow-up(G-worker,customer→AI 回答):** worker(售前/售后)被 spawn 后,其 claude PTY/channel 生命周期还差:restart 后不自动重起、per-agent config 的 onboarding/channel 未像编排器那样配好 → worker 收到 `chat.receive` 但不回复。编排器侧的 token 修法对 worker 同样适用(worker 继承同一 env token、auth OK),欠的是 worker 的 onboarding seed + PTY 重起/channel listening。这半留作下一步。
 
 **G-ui — 创建 session 的模板下拉错填。** LV「+New」的 `template_class` 下拉只列了 agent 模板 `cc.agent.cc_funk`（提交即 `{:session_template_not_found}`），**正确的 `default` SessionTemplate**（`template://session/system/default@…`，main 自己就用它）不在列；客户端注入 `default` 又被 LV morphdom 抹掉。⟹ operator 无法经 UI 干净地新建带 orchestrator 的团队 session（强化 GAP #2）。
 

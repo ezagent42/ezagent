@@ -77,7 +77,14 @@ defmodule Ezagent.Orchestrator.McpServer do
   alias Ezagent.Orchestrator.Tools
 
   @enforce_keys [:orchestrator_uri, :session_uri, :workspace_uri, :caps]
-  defstruct [:orchestrator_uri, :session_uri, :workspace_uri, :caps, :owner_uri, :parent_template_uri]
+  defstruct [
+    :orchestrator_uri,
+    :session_uri,
+    :workspace_uri,
+    :caps,
+    :owner_uri,
+    :parent_template_uri
+  ]
 
   @type t :: %__MODULE__{
           orchestrator_uri: URI.t(),
@@ -500,7 +507,8 @@ defmodule Ezagent.Orchestrator.McpServer do
             },
             "role_name" => %{
               "type" => "string",
-              "description" => "Stable per-session alias for this member (rules/legends target it)."
+              "description" =>
+                "Stable per-session alias for this member (rules/legends target it)."
             },
             "in_session_template" => %{
               "type" => "boolean",
@@ -522,7 +530,10 @@ defmodule Ezagent.Orchestrator.McpServer do
         "inputSchema" => %{
           "type" => "object",
           "properties" => %{
-            "role_name" => %{"type" => "string", "description" => "The member role_name to remove."}
+            "role_name" => %{
+              "type" => "string",
+              "description" => "The member role_name to remove."
+            }
           },
           "required" => ["role_name"]
         }
@@ -546,7 +557,8 @@ defmodule Ezagent.Orchestrator.McpServer do
             },
             "receiver_role_name" => %{
               "type" => "string",
-              "description" => "The member role_name (or concrete URI) the matched message routes to."
+              "description" =>
+                "The member role_name (or concrete URI) the matched message routes to."
             },
             "rule_set" => %{
               "type" => "string",
@@ -607,7 +619,8 @@ defmodule Ezagent.Orchestrator.McpServer do
             },
             "fold" => %{
               "type" => "boolean",
-              "description" => "Whether the legend collapses (folds) the member set. Defaults to true."
+              "description" =>
+                "Whether the legend collapses (folds) the member set. Defaults to true."
             }
           },
           "required" => ["legend_name", "member_role_names", "bound_rule_set"]
@@ -633,7 +646,10 @@ defmodule Ezagent.Orchestrator.McpServer do
         "inputSchema" => %{
           "type" => "object",
           "properties" => %{
-            "new_name" => %{"type" => "string", "description" => "Name for the new template family."}
+            "new_name" => %{
+              "type" => "string",
+              "description" => "Name for the new template family."
+            }
           },
           "required" => ["new_name"]
         }
@@ -870,7 +886,7 @@ defmodule Ezagent.Orchestrator.McpServer do
   defp to_mcp_result(_tool, {:ok, value}) do
     %{
       "content" => [%{"type" => "text", "text" => describe_success(value)}],
-      "structuredContent" => stringify(value),
+      "structuredContent" => as_struct_content(value),
       "isError" => false
     }
   end
@@ -884,9 +900,20 @@ defmodule Ezagent.Orchestrator.McpServer do
   defp to_mcp_result(_tool, other) do
     %{
       "content" => [%{"type" => "text", "text" => describe_success(other)}],
-      "structuredContent" => stringify(other),
+      "structuredContent" => as_struct_content(other),
       "isError" => false
     }
+  end
+
+  # MCP `structuredContent` MUST be a JSON object (record). A tool result that
+  # stringifies to a bare scalar (e.g. `add_managed_member` returns a member
+  # `%URI{}` → a string) would violate the client's schema
+  # (`expected record, received string`). Wrap any non-map under `result`.
+  defp as_struct_content(value) do
+    case stringify(value) do
+      m when is_map(m) -> m
+      other -> %{"result" => other}
+    end
   end
 
   defp mcp_error(code, message) do
