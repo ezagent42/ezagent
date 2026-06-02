@@ -107,15 +107,22 @@ defmodule Ezagent.Kind.Snapshot do
         |> prune_orphan_slices(kind_module)
         |> reconcile_after_load_behaviors(uri, kind_module)
 
-      :error ->
+      :not_found ->
         fresh
 
       {:error, reason} ->
-        Logger.warning(
-          "Ezagent.Kind.Snapshot: load failed for #{uri_str}: #{inspect(reason)}; using fresh init"
-        )
-
-        fresh
+        # PR-4 (blocker #2). A row EXISTS but is unloadable (version mismatch /
+        # decode failure). Returning `fresh` here lets `Kind.Server.init/1`
+        # persist EMPTY over the good row — the observed 256KB→91b cold-restart
+        # wipe (members/legends/working-copy lost). Fail loud instead: the
+        # durable state must NEVER be silently destroyed. `check_version`
+        # already documents Phase-4 fail-loud intent; this enforces it at the
+        # load layer. The Kind's supervisor surfaces the crash; the operator
+        # fixes the version/data (a future Phase-5 `upgrade_slice/3` migrates
+        # version-too-old in place instead of crashing).
+        raise "Ezagent.Kind.Snapshot: refusing to initialize #{uri_str} as fresh " <>
+                "over an EXISTING but unloadable snapshot (#{inspect(reason)}) — " <>
+                "this would wipe durable state on the initial persist (blocker #2)"
     end
   end
 
@@ -174,15 +181,25 @@ defmodule Ezagent.Kind.Snapshot do
     reconcile_after_load_behaviors(state, uri, kind_module)
   end
 
+  # Returns:
+  #   * `{:ok, state}`  — row present and loaded
+  #   * `:not_found`    — NO row (genuinely new Kind → fresh init is correct)
+  #   * `{:error, _}`   — row PRESENT but unloadable (version mismatch / decode
+  #                       failure). The caller MUST NOT reset to fresh: doing so
+  #                       + the unconditional initial persist would overwrite the
+  #                       good row with empty (the cold-restart wipe, blocker #2).
   defp fetch_snapshot(uri_str, kind_module) do
     case KindSnapshot.get(uri_str) do
       nil ->
-        :error
+        :not_found
 
       row ->
         with :ok <- check_version(row, kind_module),
              {:ok, state} <- KindSnapshot.decode_state(row) do
           {:ok, state}
+        else
+          {:error, reason} -> {:error, reason}
+          :error -> {:error, :decode_failed}
         end
     end
   end
