@@ -6,6 +6,40 @@ import Config
 # and secrets from environment variables or elsewhere. Do not define
 # any compile-time configuration in here, as it won't be applied.
 
+# 本地 .env 加载(dev/test;prod 走真正的环境变量/secrets,不读 .env)。
+# 把仓库根 `.env` 的 `KEY=VALUE` 注入进程环境,这样 `System.get_env/1`
+# (例如 loom 的 `DEEPSEEK_KEY`)无需改代码即可读到。已存在的真实环境
+# 变量优先,.env 只兜底——`EZAGENT_HOME=/x DEEPSEEK_KEY=... mix phx.server`
+# 仍覆盖文件值。`.env` 不进仓库(见 .gitignore),`.env.example` 是模板。
+if config_env() != :prod do
+  env_file = Path.expand("../.env", __DIR__)
+
+  if File.exists?(env_file) do
+    env_file
+    |> File.read!()
+    |> String.split("\n", trim: true)
+    |> Enum.each(fn line ->
+      trimmed = String.trim(line)
+
+      # 跳过空行 + `#` 注释行
+      unless trimmed == "" or String.starts_with?(trimmed, "#") do
+        case String.split(trimmed, "=", parts: 2) do
+          [key, value] ->
+            key = String.trim(key)
+            # 去掉包裹的引号(支持 KEY="v" / KEY='v' / KEY=v)
+            value = value |> String.trim() |> String.trim("\"") |> String.trim("'")
+
+            # 真实环境变量优先:仅当未设置/为空时才用 .env 的值
+            if System.get_env(key) in [nil, ""], do: System.put_env(key, value)
+
+          _ ->
+            :ok
+        end
+      end
+    end)
+  end
+end
+
 # Dev DB path comes from EZAGENT_HOME so the working tree stays clean
 # (Phase 6 PR 1). Test keeps its own ephemeral DB in repo root via
 # config/test.exs (Sandbox pool, gitignored). Prod still requires
