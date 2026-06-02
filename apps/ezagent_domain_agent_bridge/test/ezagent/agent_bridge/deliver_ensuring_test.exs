@@ -16,10 +16,10 @@ defmodule Ezagent.AgentBridge.DeliverEnsuringTest do
     @behaviour Ezagent.AgentBridge.Adapter
 
     @impl true
-    def flavor, do: "test"
+    def flavor, do: "drt"
 
     @impl true
-    def agent_uri_prefix, do: "test_"
+    def agent_uri_prefix, do: "drt_"
 
     @impl true
     def deliver(%Payload{} = payload, channel_pid) do
@@ -34,7 +34,7 @@ defmodule Ezagent.AgentBridge.DeliverEnsuringTest do
   setup do
     Registry.init()
     for {uri, _pid} <- Registry.list_all(), do: Registry.unbind(uri)
-    _ = AdapterRegistry.register("test", TestAdapter)
+    _ = AdapterRegistry.register("drt", TestAdapter)
 
     prev = Application.get_env(:ezagent_domain_agent_bridge, :bridge_heal_fn)
     prev_t = Application.get_env(:ezagent_domain_agent_bridge, :bridge_ready_timeout_ms)
@@ -53,7 +53,7 @@ defmodule Ezagent.AgentBridge.DeliverEnsuringTest do
   end
 
   defp uri(name),
-    do: URI.new!("entity://agent/team-alpha/test_#{name}-#{System.unique_integer([:positive])}")
+    do: URI.new!("entity://agent/team-alpha/drt_#{name}-#{System.unique_integer([:positive])}")
 
   defp payload(),
     do: %Payload{
