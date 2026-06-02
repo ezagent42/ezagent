@@ -176,6 +176,44 @@ defmodule EzagentPluginLoom.Prompts do
   }
   ```
 
+  ## 平台能力 v2：文件 / 资源 / 外部网络 / 命名工具
+  `./platform` 还导出四个能力，**按需引入**（不需要的不要写）：
+
+  ```jsx
+  import { uploadFile, openResource, fetch as pfetch, tool } from './platform';
+
+  // 1) 上传一个文件到本会话。返回 Promise<{ ok, uri, name, size, mime, error? }>
+  //    uri 形如 `resource://uploads/<ws>/<uuid>-<name>`，可直接拼进 sendMessage 文本
+  //    让 orchestrator/worker 读取它。
+  const r = await uploadFile(file);  // file 是 <input type="file"> 取出的 File 对象
+  if (r.ok) await sendMessage({ text: `帮我看这份资料 [资源](${r.uri})` });
+
+  // 2) 解析 resource:// URI 为可下载的 URL（用作 <img src> / <a href>）。
+  //    返回 Promise<{ ok, url, error? }>。url 只在当前会话有效。
+  const view = await openResource(uri);
+  if (view.ok) return <img src={view.url} />;
+
+  // 3) 经服务端代理调外部 API（白名单制，preset 必须在下面"可用 preset"清单里）。
+  //    形参跟 fetch 类似但首参是 preset；只允许 preset 配置允许的 URL 模式和方法。
+  //    返回 Promise<Response-like { ok, status, headers, body, truncated, error? }>。
+  const w = await pfetch('public', 'https://api.github.com/repos/elixir-lang/elixir');
+  if (w.ok && w.status === 200) { /* JSON.parse(w.body) */ }
+
+  // 4) 调用命名工具（白名单制，name 必须在下面"可用工具"清单里）。返回
+  //    Promise<{ ok, result?, error? }>。比 fetch 更高层，封装了 args 校验和后端逻辑。
+  const t = await tool('now', { tz: 'Asia/Shanghai' });
+  if (t.ok) console.log(t.result.iso);
+  ```
+
+  使用规则：
+  - **uploadFile**：用户场景里出现"上传/扫描文档/简历/合同/图片"才引入。上限 20MB，禁 .exe/.bat 类。
+  - **openResource**：只能解析 `resource://uploads/<同当前 ws>/<file>` 的 URI（跨工作区会被拒）；想在 `<img>` 或 `<embed>` 里显示用户上传的图/PDF 时用。
+  - **pfetch（platform.fetch）**：preset 决定能打哪些 URL。**不在清单里的 preset 直接拒绝**。不要硬编码外部 API key 在前端——服务端 preset 配置已经按需注入。
+  - **tool**：命名 RPC，参数和返回值都是 JSON。比 pfetch 更稳——args 由后端校验，不用前端拼 URL。优先用 tool；找不到合适 tool 再用 pfetch。
+  - **错误统一形态**：所有上述返回都形如 `{ ok: boolean, ... }`。`ok: false` 时显示 `error` 字段，不要崩。
+
+  #DYNAMIC_TOOL_AND_PRESET_BLOCK#
+
   ## 修改策略
   - 用户只想改一小部分时，输出修改后的完整代码（保持其他部分不变）
   - 用户要求大改时，重新生成完整代码
@@ -220,7 +258,27 @@ defmodule EzagentPluginLoom.Prompts do
   session-rooted redesign (previously also served `POST /loom/api/chat`
   for the standalone frontend, now deleted).
   """
-  def page_gen_system_prompt, do: @page_gen_system_prompt
+  def page_gen_system_prompt do
+    # 把模板里的占位符替换成 ToolRegistry / FetchProxy 当前注册的清单。
+    # 工具/preset 增删 → 重启即生效,不用动 prompt 代码。
+    tools = safe_apply(EzagentPluginLoom.ToolRegistry, :prompt_block, [])
+    presets = safe_apply(EzagentPluginLoom.FetchProxy, :prompt_block, [])
+
+    block =
+      [tools, presets]
+      |> Enum.reject(&(&1 == "" or is_nil(&1)))
+      |> Enum.join("\n")
+
+    String.replace(@page_gen_system_prompt, "#DYNAMIC_TOOL_AND_PRESET_BLOCK#", block)
+  end
+
+  defp safe_apply(mod, fun, args) do
+    apply(mod, fun, args)
+  rescue
+    _ -> ""
+  catch
+    _, _ -> ""
+  end
 
   @doc """
   Seed jsx source for a fresh loom session. Orchestrator's `post_init` emits

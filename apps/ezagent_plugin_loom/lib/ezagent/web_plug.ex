@@ -103,6 +103,47 @@ defmodule EzagentPluginLoom.WebPlug do
     json_resp(conn, 200, spawn_from_template(ws, name, new_name))
   end
 
+  # --- 2026-06-02 SDK v2 additions ------------------------------------
+  # AI 生成的页面可调:文件上传 / 资源下载 / 白名单 fetch / 命名 tool。
+  # 见 docs/loom/sdk-v2-additions.md(协议)+ Prompts.page_gen_system_prompt
+  # (AI 这边怎么用)。
+
+  # 上传文件:multipart `file` 字段;复用 admin 那套 `resource://uploads/<ws>/<name>`
+  # URI shape + 落盘到 Ezagent.Home.path("uploads")。
+  # body: multipart `file` (Plug.Upload struct)
+  # returns: %{ok: true, uri, name, size, mime} | %{ok: false, error}
+  post "/api/:ws/:sid/upload" do
+    json_resp(conn, 200, do_upload(conn, ws, sid))
+  end
+
+  # 解析 resource:// URI → 302 到 /files/<filename> 下载端点。
+  # 强校验:URI 必须 `resource://uploads/<ws>/<file>` 且 <ws> 跟 path param 一致
+  # (否则跨工作区资源访问)。
+  # query: ?uri=<URL-encoded resource URI>
+  get "/api/:ws/:sid/resource" do
+    case do_open_resource(conn, ws, sid) do
+      {:ok, redirect_to} ->
+        conn
+        |> put_resp_header("location", redirect_to)
+        |> send_resp(302, "")
+
+      {:error, reason} ->
+        json_resp(conn, 400, %{ok: false, error: to_string(reason)})
+    end
+  end
+
+  # 白名单代理 fetch。body: %{preset, url, method?, headers?, body?}
+  # returns: %{ok, status?, headers?, body?, truncated?, error?}
+  post "/api/:ws/:sid/fetch" do
+    json_resp(conn, 200, do_fetch(conn))
+  end
+
+  # 命名 tool RPC。body: %{name, args}
+  # returns: %{ok: true, result} | %{ok: false, error}
+  post "/api/:ws/:sid/tool" do
+    json_resp(conn, 200, do_tool(conn, ws, sid))
+  end
+
   # SPA 兜底:任何 GET 都返回 index.html(客户端从 /loom/:ws/:sid 读身份)。
   get "/*_path" do
     send_index(conn)
@@ -312,6 +353,180 @@ defmodule EzagentPluginLoom.WebPlug do
     |> put_resp_content_type("application/json")
     |> send_resp(status, Jason.encode!(data))
   end
+
+  # --- 2026-06-02 SDK v2 helpers -------------------------------------
+  # 共享约束:
+  # - upload 大小硬上限 20MB(早于读完 multipart);MIME 黑名单(.exe/.bat/.sh)
+  # - resource:// URI 必须 `resource://uploads/<ws>/<name>`,<ws> 必须等于
+  #   path param 的 ws(防跨工作区资源)
+  # - fetch 走 EzagentPluginLoom.FetchProxy(presets + 校验)
+  # - tool 走 EzagentPluginLoom.ToolRegistry(name → module + call/2)
+
+  @upload_max_bytes 20 * 1024 * 1024
+  @upload_mime_blocklist ["application/x-msdownload", "application/x-msdos-program"]
+  @upload_ext_blocklist ~w(.exe .bat .cmd .sh .com .scr .ps1)
+
+  defp do_upload(conn, ws, _sid) do
+    case Map.get(conn.body_params, "file") do
+      %Plug.Upload{path: tmp_path, filename: original_name, content_type: mime} ->
+        with :ok <- check_upload_size(tmp_path),
+             :ok <- check_upload_mime(original_name, mime) do
+          uuid = Ecto.UUID.generate()
+          safe = sanitize_upload_filename(original_name)
+          stored_name = "#{uuid}-#{safe}"
+          dest = Path.join(Ezagent.Home.path("uploads"), stored_name)
+          File.cp!(tmp_path, dest)
+
+          {:ok, %File.Stat{size: size}} = File.stat(dest)
+          uri_str = "resource://uploads/#{ws}/#{stored_name}"
+
+          %{
+            ok: true,
+            uri: uri_str,
+            name: original_name,
+            size: size,
+            mime: mime || "application/octet-stream"
+          }
+        else
+          {:error, reason} -> %{ok: false, error: to_string(reason)}
+        end
+
+      _ ->
+        %{ok: false, error: "missing or invalid 'file' upload field"}
+    end
+  rescue
+    e -> %{ok: false, error: "upload_failed: #{Exception.message(e)}"}
+  end
+
+  defp check_upload_size(tmp_path) do
+    case File.stat(tmp_path) do
+      {:ok, %File.Stat{size: s}} when s <= @upload_max_bytes -> :ok
+      {:ok, _} -> {:error, :file_too_large}
+      _ -> {:error, :upload_no_stat}
+    end
+  end
+
+  defp check_upload_mime(filename, mime) do
+    ext = filename |> Path.extname() |> String.downcase()
+
+    cond do
+      mime in @upload_mime_blocklist -> {:error, :mime_blocked}
+      ext in @upload_ext_blocklist -> {:error, :ext_blocked}
+      true -> :ok
+    end
+  end
+
+  defp sanitize_upload_filename(name) do
+    # Same shape as admin's upload sanitizer: keep alnum + - _ . and CJK
+    # (UTF-8 multibyte byte ≥ 0x80), replace everything else with "_".
+    name
+    |> :binary.bin_to_list()
+    |> Enum.map(fn b ->
+      cond do
+        b >= ?a and b <= ?z -> b
+        b >= ?A and b <= ?Z -> b
+        b >= ?0 and b <= ?9 -> b
+        b in [?-, ?_, ?.] -> b
+        b >= 0x80 -> b
+        true -> ?_
+      end
+    end)
+    |> :binary.list_to_bin()
+  end
+
+  defp do_open_resource(conn, ws, _sid) do
+    case Map.get(conn_query(conn), "uri") do
+      nil ->
+        {:error, "missing uri"}
+
+      "" ->
+        {:error, "empty uri"}
+
+      uri_str when is_binary(uri_str) ->
+        case URI.new(uri_str) do
+          {:ok, %URI{scheme: "resource", host: "uploads", path: "/" <> rest}} ->
+            case String.split(rest, "/", parts: 2) do
+              [^ws, filename] when filename != "" ->
+                # 302 to the canonical /files/:filename. The :show endpoint
+                # already enforces authz against current_entity_uri — for
+                # the loom SDK case, the temp UI user is the uploader so
+                # the per-uploader check there will succeed.
+                {:ok, "/files/" <> URI.encode(filename)}
+
+              [other_ws, _] ->
+                {:error, "cross_workspace_denied: ws=#{ws} vs uri=#{other_ws}"}
+
+              _ ->
+                {:error, "bad_resource_uri"}
+            end
+
+          _ ->
+            {:error, "not_a_resource_upload_uri"}
+        end
+    end
+  end
+
+  defp conn_query(conn) do
+    case conn.query_params do
+      %Plug.Conn.Unfetched{} -> Plug.Conn.fetch_query_params(conn).query_params
+      %{} = q -> q
+    end
+  end
+
+  defp do_fetch(conn) do
+    body = conn.body_params
+
+    preset = body |> Map.get("preset", "") |> to_string()
+    url = body |> Map.get("url", "") |> to_string()
+
+    opts =
+      body
+      |> Map.take(["method", "headers", "body"])
+      |> Map.new(fn {k, v} -> {k, v} end)
+
+    case EzagentPluginLoom.FetchProxy.call(preset, url, opts) do
+      {:ok, resp} ->
+        Map.merge(%{ok: true}, resp)
+
+      {:error, reason} ->
+        %{ok: false, error: to_string(reason)}
+    end
+  rescue
+    e -> %{ok: false, error: "fetch_proxy_raised: #{Exception.message(e)}"}
+  end
+
+  defp do_tool(conn, ws, sid) do
+    name = conn.body_params |> Map.get("name", "") |> to_string()
+    args = conn.body_params |> Map.get("args", %{}) |> normalize_args()
+
+    case EzagentPluginLoom.ToolRegistry.lookup(name) do
+      {:ok, module} ->
+        suri = session_uri(ws, sid)
+
+        ctx = %{
+          ws: ws,
+          sid: sid,
+          session_uri: suri,
+          caller: nil
+        }
+
+        try do
+          case module.call(args, ctx) do
+            {:ok, result} -> %{ok: true, result: result}
+            {:error, reason} -> %{ok: false, error: to_string(reason)}
+            other -> %{ok: false, error: "bad_tool_return: #{inspect(other)}"}
+          end
+        rescue
+          e -> %{ok: false, error: "tool_raised: #{Exception.message(e)}"}
+        end
+
+      :error ->
+        %{ok: false, error: "unknown tool: #{inspect(name)}"}
+    end
+  end
+
+  defp normalize_args(args) when is_map(args), do: args
+  defp normalize_args(_), do: %{}
 
   # --- save-as-template helpers ----------------------------------------
 

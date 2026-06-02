@@ -89,6 +89,28 @@ config :mime, :types, %{
 config :ezagent_web, EzagentWeb.Mailer, adapter: Swoosh.Adapters.SMTP
 config :swoosh, :api_client, false
 
+# 2026-06-02 — loom SDK v2.
+# `:tools` is the list of EzagentPluginLoom.Tool modules registered at
+# boot (ToolRegistry.register_all/0). Operators add their own modules
+# here; the defaults are minimal smoke-test tools.
+# `:fetch_presets` is the whitelist for `platform.fetch(preset, url, ...)`:
+# each entry has a URL regex, allowed methods, body/timeout caps, and
+# optional server-injected headers (use `{:env, "VAR"}` for secrets).
+config :ezagent_plugin_loom,
+  tools: [
+    EzagentPluginLoom.Tools.Echo,
+    EzagentPluginLoom.Tools.Now
+  ],
+  fetch_presets: %{
+    public: %{
+      url: ~r{^https://(api\.github\.com|httpbin\.org|jsonplaceholder\.typicode\.com)/},
+      methods: [:get, :post],
+      max_body: 100_000,
+      timeout_ms: 8_000,
+      headers: %{"user-agent" => "ezagent-loom-sdk/0.1"}
+    }
+  }
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"
