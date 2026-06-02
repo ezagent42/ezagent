@@ -227,7 +227,13 @@ defmodule EzagentPluginLiveview.AdminLive do
       # falls back to `[]` when `current_workspace_uri` is nil (LV
       # mounted outside `:require_entity` LiveAuth path) — deny by
       # absence rather than show-everything default.
-      |> assign(:sessions, list_sessions_for(socket.assigns[:current_workspace_uri]))
+      #
+      # 2026-06-02 — use the visibility-filtered list so removed
+      # templates' ghost sessions don't show in the dropdown. See
+      # `list_visible_sessions_for/1` for rationale (root cause:
+      # lazy-spawn-from-snapshot revives killed sessions on any
+      # in-flight dispatch).
+      |> assign(:sessions, list_visible_sessions_for(socket.assigns[:current_workspace_uri]))
       # Session auto-join (Allen 2026-05-26 — PR #374) — every
       # navigation to a session auto-dispatches `chat.join` for the
       # caller, so the MemberPanel renders the user WITHOUT requiring
@@ -831,7 +837,8 @@ defmodule EzagentPluginLiveview.AdminLive do
         {:noreply,
          socket
          # Task #55 — workspace-scoped session list (see mount/3).
-         |> assign(:sessions, list_sessions_for(socket.assigns[:current_workspace_uri]))
+         # 2026-06-02 — ghost-session filter; see mount/3 comment.
+         |> assign(:sessions, list_visible_sessions_for(socket.assigns[:current_workspace_uri]))
          |> assign(
            :new_session_form,
            to_form(%{"short_name" => "", "template_class" => ""}, as: "new_session")
@@ -2783,6 +2790,110 @@ defmodule EzagentPluginLiveview.AdminLive do
     do: EzagentDomainChat.list_sessions(workspace_uri)
 
   defp list_sessions_for(_), do: []
+
+  # 2026-06-02 — ghost-session filter.
+  #
+  # User repro: "Remove a loom session template via /workspaces/<ws>; the
+  # session still appears in the /sessions left-top dropdown." Root cause:
+  # `list_sessions_for/1` returns whatever's currently in `KindRegistry`
+  # under the session:// scheme, and **multiple paths re-spawn a session
+  # whose snapshot is still on disk**:
+  #
+  #   • `Invocation.attempt_lazy_spawn_and_redispatch` — any in-flight
+  #     dispatch to the dead URI triggers `StateRebuilder.snapshot_exists?`
+  #     → `SpawnRegistry.spawn` → Kind back in registry.
+  #   • An open loom iframe (`/loom/<ws>/<sid>`) keeps POSTing
+  #     `chat.send` after the operator removed the template.
+  #   • Feishu webhook arrivals for the mirrored chat_id.
+  #
+  # `LoomSession.cleanup/3` does terminate + snapshot delete, but it's
+  # fire-and-forget and any of the above paths can revive between
+  # cleanup completing and the operator reloading `/sessions`.
+  #
+  # Rather than try to plug every revival path (impossible: any external
+  # MCP / webhook / iframe arriving from outside our control can revive),
+  # the durable rule is: **a session is visible iff some current workspace
+  # template declares it**. Removing the template makes the session
+  # invisible to the operator regardless of whether a ghost Kind happens
+  # to be alive in memory.
+  #
+  # Subscribe loop (mount/3 line ~174) deliberately still uses the
+  # unfiltered `list_sessions_for/1` so the LV inbox stays scoped to
+  # the workspace (Task #55 invariant). Only the **dropdown assign**
+  # uses this filtered version.
+  defp list_visible_sessions_for(%URI{scheme: "workspace", host: ws_name} = workspace_uri) do
+    declared = declared_session_uri_strs(ws_name)
+
+    workspace_uri
+    |> list_sessions_for()
+    |> Enum.filter(fn uri ->
+      URI.to_string(uri) in declared or well_known_session?(uri)
+    end)
+  end
+
+  defp list_visible_sessions_for(_), do: []
+
+  # Walk `workspace.session_templates` and, for each recipe, ask its
+  # Template Class "what session URIs would you spawn?" via the
+  # optional duck-typed `session_uris_for_recipe/3` callback. Classes
+  # that don't own session URIs (e.g. `cc.agent`, which owns agent
+  # URIs) don't implement it and contribute nothing.
+  defp declared_session_uri_strs(ws_name) when is_binary(ws_name) do
+    case Ezagent.Workspace.Store.get_by_name(ws_name) do
+      %{session_templates: tmpls} when is_map(tmpls) ->
+        ws_uri =
+          try do
+            Ezagent.URI.new!("workspace://#{ws_name}")
+          rescue
+            _ -> nil
+          end
+
+        if ws_uri do
+          Enum.flat_map(tmpls, &declared_for_one(&1, ws_uri))
+        else
+          []
+        end
+
+      _ ->
+        []
+    end
+  end
+
+  defp declared_session_uri_strs(_), do: []
+
+  defp declared_for_one({tmpl_name, recipe}, ws_uri)
+       when is_binary(tmpl_name) and is_map(recipe) do
+    with class_name when is_binary(class_name) <- Map.get(recipe, "class"),
+         {:ok, mod} <- Ezagent.TemplateRegistry.lookup(class_name),
+         true <- function_exported?(mod, :session_uris_for_recipe, 3) do
+      try do
+        mod.session_uris_for_recipe(tmpl_name, recipe, ws_uri)
+        |> Enum.map(&URI.to_string/1)
+      rescue
+        _ -> []
+      catch
+        _, _ -> []
+      end
+    else
+      _ -> []
+    end
+  end
+
+  defp declared_for_one(_, _), do: []
+
+  # The default boot-time session(s) — never template-declared but the
+  # operator MUST always see them. Currently only the canonical
+  # `session://default/<ws>/main` (login-wizard / mix seeds). Add more
+  # well-knowns here if/when other plugins seed boot sessions outside
+  # the template path.
+  defp well_known_session?(%URI{scheme: "session", host: "default", path: "/" <> rest}) do
+    case String.split(rest, "/") do
+      [_ws, "main"] -> true
+      _ -> false
+    end
+  end
+
+  defp well_known_session?(_), do: false
 
   defp load_session_messages(%URI{} = session_uri) do
     session_uri

@@ -66,7 +66,7 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"session_name" => session_name} = tmpl, %URI{} = workspace_uri) do
     ws = workspace_uri.host
-    session_uri = Ezagent.URI.parse!("session://loom/#{ws}/#{session_name}")
+    session_uri = Ezagent.URI.new!("session://loom/#{ws}/#{session_name}")
 
     # 2026-06-01 save-as-template:可选 `saved_state` 字段,装上一个 session 的
     # orchestrator slice 快照(`persona` + `loom_source`)。有就用 Kind.spawn 把
@@ -141,7 +141,7 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
       when is_binary(session_name) and session_name != "" and is_binary(ws) do
     Logger.info("LoomSession.cleanup: tearing down session=#{session_name} workspace=#{ws}")
 
-    session_uri = Ezagent.URI.parse!("session://loom/#{ws}/#{session_name}")
+    session_uri = Ezagent.URI.new!("session://loom/#{ws}/#{session_name}")
 
     # 2026-06-01 — 加 loommeta_<sid>;之前只清了 orchestrator + v0 + 2 worker。
     # 自定义 worker(painter / lawyer 等用户加的)也得清,但我们这里硬列预制 4
@@ -154,7 +154,7 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
       "entity://agent/#{ws}/loomworker_#{session_name}_company"
     ]
 
-    team_uris = Enum.map(team_uri_strs, &Ezagent.URI.parse!/1)
+    team_uris = Enum.map(team_uri_strs, &Ezagent.URI.new!/1)
 
     # 扫 chat.members 把 custom workers(painter 等)也找出来
     custom_worker_uris = find_custom_workers(session_uri, session_name)
@@ -210,6 +210,34 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
   end
 
   def cleanup(_tmpl_name, _tmpl, _ws_uri), do: :ok
+
+  @doc """
+  Declare the Session URIs this template recipe would spawn.
+
+  Used by the admin LV (`/sessions` dropdown) to filter out **ghost
+  sessions**: a Kind instance that's alive in `KindRegistry` but whose
+  backing workspace template has been removed. Without this filter,
+  `remove_template` only kills the Kind once via fire-and-forget
+  `cleanup/3`, but lazy-spawn-from-snapshot paths
+  (`Invocation.attempt_lazy_spawn_and_redispatch` /
+  `StateRebuilder.snapshot_exists?`) can revive the session whenever
+  any in-flight dispatch hits the URI (iframe still polling, Feishu
+  webhook arrival, etc.). The operator's mental model is "Remove =
+  invisible", so we make visibility a function of "is the template
+  still declared" not "is a Kind alive".
+
+  Optional duck-typed callback (no formal `Ezagent.Kind.Template`
+  contract). Templates that don't own session URIs simply don't
+  implement it; the LV falls back to "treat as no declared URIs".
+
+  See user feedback "我把session删了，而sessions页面还是能看到遗留" (2026-06-02).
+  """
+  def session_uris_for_recipe(_tmpl_name, %{"session_name" => sn}, %URI{host: ws})
+      when is_binary(sn) and sn != "" and is_binary(ws) do
+    [Ezagent.URI.new!("session://loom/#{ws}/#{sn}")]
+  end
+
+  def session_uris_for_recipe(_tmpl_name, _recipe, _ws_uri), do: []
 
   defp safe_terminate(uri) do
     try do
@@ -288,7 +316,7 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
 
     sender = Ezagent.SystemPrincipal.uri("session-internal")
     msg = Ezagent.Message.new(sender, %{text: body, attachments: []}, mentions: [])
-    target = Ezagent.URI.parse!("#{URI.to_string(session_uri)}?action=chat.send")
+    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
 
     inv = %Ezagent.Invocation{
       target: target,
@@ -368,7 +396,7 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
       role = Map.get(worker, "role") || theme
 
       if theme != "" do
-        worker_uri = Ezagent.URI.parse!("entity://agent/#{ws}/loomworker_#{sid}_#{theme}")
+        worker_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomworker_#{sid}_#{theme}")
 
         args = %{
           uri: worker_uri,
@@ -392,7 +420,7 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
   defp pre_spawn_orchestrator_if_saved(_ws, _sid, saved) when map_size(saved) == 0, do: :ok
 
   defp pre_spawn_orchestrator_if_saved(ws, sid, saved) when is_map(saved) do
-    orch_uri = Ezagent.URI.parse!("entity://agent/#{ws}/loomorch_#{sid}")
+    orch_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomorch_#{sid}")
 
     args = %{
       uri: orch_uri,
@@ -420,7 +448,7 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
   end
 
   defp join_members(%URI{} = session_uri, members) when is_list(members) do
-    target = Ezagent.URI.parse!("#{URI.to_string(session_uri)}?action=chat.join")
+    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
 
     Enum.each(members, fn member_uri_str ->
       case safe_member_uri(member_uri_str) do
@@ -449,7 +477,7 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
   end
 
   defp safe_member_uri(s) when is_binary(s) do
-    {:ok, Ezagent.URI.parse!(s)}
+    {:ok, Ezagent.URI.new!(s)}
   rescue
     ArgumentError -> :error
   end
