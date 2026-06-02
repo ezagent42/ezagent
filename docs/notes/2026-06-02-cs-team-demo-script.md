@@ -212,7 +212,12 @@ PtyServer[...] stderr:  Choose the text style that looks best with your terminal
 ```
 根因：每 agent 的 sandbox `CLAUDE_CONFIG_DIR` 是**未完成 onboarding** 的新配置 → spawn 的 `claude` 落到首次运行主题选择屏、阻塞在 stdin → 永不进 MCP bridge 握手 → 90s 被杀（并反复 respawn）。所以 UI 里 orchestrator 乐观显示 "alive"，但**没有任何消息能投递、没有 agent 真回答**（我看到的 cc_funk 回答是 08:31 **历史数据**，非我触发的 live 回复）。附带还有一个 Logger formatter 在 onboarding 的制表符输出上 crash。
 - **已知修复存在但未合并：** PR **#512 `EzagentPluginCc.EagerBridge`**（`ensure_bound!/2`：等 PTY auto-prompts 触发完 → 写裸 `\r` 触发 MCP init → 轮询 `AgentBridge.Registry` 直到绑定）正是这条 G1 的修复，但它在 PoC stack（`poc/phase-2`）里、**`mergedAt: null` 未进 main**。current main 因此缺这条 bring-up 原语。设计上 operator-facing 流"人打开终端页第一次按键自然触发 MCP init"——即手动在 agent Terminal 页敲一下 Enter 也能 unstick，但当前是无人值守自动流。
-- **对 demo 的含义：** **全量真 live demo 在 current main 上无法自动起 agent**——被 G-live 堵死。需先合 #512（或等价 bring-up），或在录制时人工到每个 agent 的 Terminal 页敲 Enter 清掉 onboarding。
+
+**G-live 实际是【两段】，实跑拆清楚了（2026-06-02 续）：**
+1. **onboarding 卡死 —— config 可修，已验证。** 根因:agent 的 sandbox `CLAUDE_CONFIG_DIR`（如 `~/.ezagent/cc-orchestrator/.claude`）**没有 `.claude.json`** → claude 当首次运行、弹主题选择。**修法（纯 config、无代码、不入 commit）**:往该目录写 `.claude.json`，含 `hasCompletedOnboarding:true` + `hasTrustDialogAccepted:true` + `bypassPermissionsModeAccepted:true` + `theme:"dark"`。**实测有效**:重启后日志里主题选择屏(`Choose the text style`)**消失**。⟹ 这半段应进 cc sandbox seed（`cc_orchestrator_seed` 等）默认写好,是干净的 gap remediation。注:macOS 上 auth 走共享 Keychain(已 OK),但 onboarding 状态是 `CLAUDE_CONFIG_DIR` 隔离的、必须单独 seed。
+2. **过了 onboarding，仍不自动 JOIN bridge —— 需 `\r` kick（即 #512 的代码部分）。** 实测:onboarding 修掉后 agent "alive 但无 MCP children、无 bridge binding",仍需写裸 `\r` 触发 MCP init。这正是 EagerBridge 干的事,**这半段是代码、不是 config**,确认了"先 cherry-pick #512 再跑"的判断。
+- **环境噪声(实跑发现):** dev DB 里残留一个 **`cc_spawn-invariant-test` 测试 agent**,boot 时反复 cold-spawn 失败、刷爆 `AgentSupervisor` 崩溃日志(300+),会拖垮 `/sessions`。真录制前需先清这条 DB 污染。
+- **对 demo 的含义:** 全量真 live demo 要凑齐三件:**(a)** sandbox onboarding seed(config,已验证)+ **(b)** EagerBridge `\r` kick(#512 代码,cherry-pick 不入 commit)+ **(c)** 清 `cc_spawn-invariant-test` DB 污染。是一块实打实的 env 工作,非脚本问题。
 
 **G-ui — 创建 session 的模板下拉错填。** LV「+New」的 `template_class` 下拉只列了 agent 模板 `cc.agent.cc_funk`（提交即 `{:session_template_not_found}`），**正确的 `default` SessionTemplate**（`template://session/system/default@…`，main 自己就用它）不在列；客户端注入 `default` 又被 LV morphdom 抹掉。⟹ operator 无法经 UI 干净地新建带 orchestrator 的团队 session（强化 GAP #2）。
 
