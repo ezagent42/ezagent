@@ -4,7 +4,7 @@
 > **作者**：daiming（FatNine）
 > **依据**：`cs-team-orchestrator-playbook.md`（领导下发）+ `docs/superpowers/specs/2026-06-01-team-routing-unification(.zh_cn).md` + 当前 `Ezagent.Orchestrator.McpServer`/`Tools` 代码（main `151e1fb4`）
 > **形态**：双栏 operator runbook（左=镜头内动作+旁白/字幕，右=后端机制 tool→Behavior→effect），既是录制脚本也是 PRD。
-> **状态**：rev 1（已折入读代码确认的 Q2/Q3/Q4 结构性发现，见 §3.4）→ 待 review → 实跑录制（幕 0–5）→ 回填 §3.3 实跑待确认项。
+> **状态**：rev 2（后端彩排完成——Tools+Resolver 层 ExUnit 实测四项 §3.3 全绿，结论已回填；测试 `apps/ezagent_domain_chat/test/integration/cs_demo_backend_rehearsal_test.exs`）。仍待：真 agent live run（需 claude login）+ 浏览器截图 + 人工录屏。
 
 ---
 
@@ -107,7 +107,7 @@ R&D（看 gap → 写 spec）、Allen（裁决架构）、未来接手实现的�
 | operator → 编排器：「列一下我能用的客服模板。」 | `list_templates(name_filter?)` → 按 cap 过滤返回 AgentTemplate/SessionTemplate URI。operator 拿到要 spawn 的 `template://agent/<ws>/<name>`。 |
 | 「加两个 AI 坐席：一个售前 L1、一个售后 L2。」 | `add_managed_member(tmpl, "presale", true)` 与 `add_managed_member(tmpl, "aftersale", true)`。每次 **SPAWN** 一个 worker（承重约束 1），返回各自 member URI（升级边要用）。`in_session_template:true` → 进快照。**🔴 GAP 字幕**：「无 bulk spawn N，一次一个。」 |
 | 「把售前的 @ 入口和分组做好。」 | `define_rule_set_rule({"type":"mention","arg":"售前"}, "presale", rule_set:"presale", position:0)` + `define_legend("售前", ["presale"], "presale", true)`。售后同理（rule_set/legend `"售后"`→`aftersale`）。右栏旁白：legend = 用户把手，折叠团队并触发 rule-set entry rule。 |
-| 「售前答不了退换货时，接力给售后。」 | `define_rule_set_rule({"type":"from","arg":"<presale member URI>"}, "aftersale", rule_set:"escalate", position:0)`。成员间 relay 原语（playbook §1）。**🔴 GAP 字幕（候选）**：「`{:from}` 无条件——售前**每条**发言都会抄给售后；要『仅退货才升级』需 `and(from, text_matches(...))`，其精确语义见结尾实跑待确认项。」 |
+| 「售前答不了退换货时，接力给售后。」 | `define_rule_set_rule({"type":"from","arg":"<presale member URI>"}, "aftersale", rule_set:"escalate", position:0)`。成员间 relay 原语（playbook §1），**已实测成立**（§3.3 item 2）。**🔴 GAP 字幕（已确认，§3.3）**：「多规则命中同消息 = **扇出 union，position 不抑制**——售前**每条**发言都抄给售后；`and(mention,text_matches)` 这类条件升级也只会 fan-out，**做不到『仅退货才升级、且抑制掉 general entry』**。要可抑制/单选需新原语。」 |
 
 ### 幕 2 — AI 自动回答（对话 → 运行时）
 
@@ -167,14 +167,20 @@ R&D（看 gap → 写 spec）、Allen（裁决架构）、未来接手实现的�
 3. **人类成员 + handoff 建模（#4, #5）。** 一等公民人类成员（带 `role_name`）+ sticky/per-user 人工模式。**读代码后这块比 playbook 想的小**：(a) #4——`handle_join` 已接受 `:role_name` facet、resolver 已有 per-user 过滤，缺的是「人类 join 面暴露 role_name」或「放回校验过的具体成员-URI receiver」；(b) #5——`enabled`/`applies_to_users` 列已存在且 resolver 生效，缺的是把它们暴露到 `define_rule_set_rule` + 一个 remove/disable-rule 工具。**多为『暴露已有能力』而非从零设计新原语**——但仍要走 #533/`domain.agent` 统一设计，别又散着加。
 4. **未归域：#6 团队级 multicast。** playbook 把它列为 gap 6 但未分配到上述 3 域；它是路由原语，建议并入 area 3 的路由/handoff 建模一并设计。
 
-### 3.3 实跑待确认项（「先跑一次记 gap」清单，录制时回填）
+### 3.3 后端彩排结论（rev 2 — Tools+Resolver 层 ExUnit 实测，不需 claude login/浏览器/录屏）
 
-- [ ] `{:from, presale}->aftersale` **无条件**升级的实际观感：售后是否被售前每条发言刷屏？是否需要 `and(from, text_matches)` 才可用？
-- [ ] **条件升级语义**：rule-set 内多条规则命中同一消息时，`position` 是「优先级抑制」还是「扇出都投」？与 single-receiver 模型如何交互？（team-routing spec §3.5 提到 position 高的模板胜，但未明确是否抑制路由本身。）
-- [ ] ~~`@转人工` 后续是否继续走人工~~ → **已被 GAP #4 前置阻断**（连 `@转人工→Alice` 规则都建不起来）；改为确认：`{:from, presale}->aftersale` 这类**成员间** receiver（worker 有 role_name）是否正常，以隔离「只有人类 receiver 不行」。
-- [ ] prompt_template 改了售前 entry rule 后，**升级到售后**那条 `{:from}` 是否也被意外渲染？
-- [ ] `define_legend(fold:false)` 与 `fold:true` 在 UI 上的可见差异（录制需要拍出来）。
-- [ ] 换渠道验证（可选）：同一套 Behavior 后端，客户从飞书 inbound 进来是否零改动跑通（印证 P13）。
+> 复现：`mix test apps/ezagent_domain_chat/test/integration/cs_demo_backend_rehearsal_test.exs`
+> （+ item 2 由 `.../orchestrator_member_team_test.exs` 既有用例覆盖）。全绿。
+
+- [x] **item 2 — `{:from, presale}->aftersale` 成员间 receiver 正常。** worker（有 role_name）做 receiver 时 `{:from, cc}->codex` 确定性路由到目标成员（既有用例「relay chain ... {:from, role→uri}」）。⟹ 升级边对**成员**成立。
+- [x] **GAP #4 — 一个已 join 的人类成员仍指不到。** `define_rule_set_rule` 用 Alice 的 URI 字符串做 receiver → **`{:unknown_member_role}`**；MCP 对话层映射为 `error.code = "unknown_member_role"`；同 session 里真成员的 role_name 正常（对照）。⟹ 坐实「joined human 也够不到」，比 playbook §4「只能用 URI」更糟。
+- [x] **position 语义 = 扇出 union，不抑制。** general entry（`always->售前`,pos 1）+ 条件升级（`text_matches("退\|换\|退款")->售后`,pos 0）同时命中「我要退货」→ **售前与售后都收到**；非退货消息只给售前。⟹ **「仅退货才升级」做不到**——条件升级会 fan-out，不能抑制掉 general entry（`position`/`rule_id` 只用于同一 recipient 的 ctx tie-break，不抑制路由本身）。这正式把幕 1 的「GAP 候选」转成确认结论。
+- [x] **applies_to_users — Resolver 真的按 sender 做 per-user 过滤。** `applies_to_users:[A]` 的规则对 A 生效、对 B 静默跳过（`resolver.ex:268-270`）。⟹ 坐实 GAP #5「引擎已支持 per-user 隔离」；缺的只是工具面暴露 + remove/disable。
+
+**仍需真 agent / 浏览器的项（留待 claude login 后的 live run）：**
+- [ ] prompt_template 改售前 entry rule 后，升级到售后那条 `{:from}` 是否被意外渲染（需真投递）。
+- [ ] `define_legend(fold:false/true)` 的 UI 可见差异（需浏览器截图）。
+- [ ] 换渠道：客户从飞书 inbound 进来是否零改动跑通（印证 P13，需 live transport）。
 
 ### 3.4 对 playbook 的事实订正与结构性发现（读代码确认，附 file:line）
 
