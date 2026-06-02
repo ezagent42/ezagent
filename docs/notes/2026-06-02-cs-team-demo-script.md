@@ -4,7 +4,7 @@
 > **作者**：daiming（FatNine）
 > **依据**：`cs-team-orchestrator-playbook.md`（领导下发）+ `docs/superpowers/specs/2026-06-01-team-routing-unification(.zh_cn).md` + 当前 `Ezagent.Orchestrator.McpServer`/`Tools` 代码（main `151e1fb4`）
 > **形态**：双栏 operator runbook（左=镜头内动作+旁白/字幕，右=后端机制 tool→Behavior→effect），既是录制脚本也是 PRD。
-> **状态**：rev 3（后端彩排 rev 2 全绿；live demo 尝试见 §3.5——基础设施跑通，但 **live 视频被 G-live 阻塞**：spawn 的 cc agent 卡 onboarding、不进 esr-bridge，修复 PR #512 `EagerBridge` 未合并进 main）。下一步取决于是否先合 #512。
+> **状态**：rev 3.2（后端彩排 rev 2 全绿；全量 live 攻坚见 §3.5——bring-up 三层逐层实测:onboarding=config 已验证修复、JOIN 自动通、**入站 channel `Channels are not currently available` 是 main 代码 gap、挡死对话流第一步**）。**live 全流程视频在 current main 上做不出**（须先修 G-chan）；当前可交付 = 脚本/PRD + 后端验证 + 三层 gap 定位。
 
 ---
 
@@ -159,8 +159,10 @@ R&D（看 gap → 写 spec）、Allen（裁决架构）、未来接手实现的�
 | **#6** | （隐含） | 单 receiver 规则，无团队级 multicast（只有整 session `$session_members`） | gap 6 |
 | **#7** | 幕 0 | 无建 AgentTemplate 的工具（LV/mix 预先存在） | gap 7 |
 | **G-a** | 幕 1 | 无 bulk「spawn N」；一次一个 | （playbook §1 备注，非编号 gap） |
-| **G-live** | 幕 0/2（live） | **spawn 的 cc agent 卡在 claude 首次运行 onboarding（主题选择），不自动 JOIN esr-bridge → 90s 后被杀**；live demo 无法自动起 agent | 新发现（= PoC G1，见 §3.6） |
+| **G-live** | 幕 0/2（live） | cc agent sandbox 缺 onboarding 状态 → claude 卡首次运行主题屏。**纯 config 可修（已验证）**:sandbox 写 `.claude.json`(`hasCompletedOnboarding:true`…)。应进 cc seed | 新发现（= PoC G1，§3.5 第1层；config 修复已验证） |
+| **G-chan** | 幕 1+（live） | **承重墙**:onboarding 修好、编排器 JOIN 成功后,入站 dev-channel `Channels are not currently available` → delivered 的消息到不了 claude → agent **零回复**,挡死整条对话流 | 新发现（§3.5 第3层；main 代码 gap，非 config 可解） |
 | **G-ui** | 幕 0（live） | LV「+New」创建 session 的模板下拉**错填**（只列 agent 模板 `cc.agent.cc_funk`，正确的 `default` SessionTemplate 不在列）→ `session_template_not_found` | 新发现（强化 #2） |
+| **G-stale** | （env） | dev `default` profile DB 与 current main **stale-不兼容**:真 agent 快照 `:respawn_template_data` KeyError、crash-loop。需 fresh profile 或迁移 | 新发现（env，§3.5） |
 
 ### 3.2 按 playbook「Recommended path forward」3 设计域分组
 
@@ -213,15 +215,18 @@ PtyServer[...] stderr:  Choose the text style that looks best with your terminal
 根因：每 agent 的 sandbox `CLAUDE_CONFIG_DIR` 是**未完成 onboarding** 的新配置 → spawn 的 `claude` 落到首次运行主题选择屏、阻塞在 stdin → 永不进 MCP bridge 握手 → 90s 被杀（并反复 respawn）。所以 UI 里 orchestrator 乐观显示 "alive"，但**没有任何消息能投递、没有 agent 真回答**（我看到的 cc_funk 回答是 08:31 **历史数据**，非我触发的 live 回复）。附带还有一个 Logger formatter 在 onboarding 的制表符输出上 crash。
 - **已知修复存在但未合并：** PR **#512 `EzagentPluginCc.EagerBridge`**（`ensure_bound!/2`：等 PTY auto-prompts 触发完 → 写裸 `\r` 触发 MCP init → 轮询 `AgentBridge.Registry` 直到绑定）正是这条 G1 的修复，但它在 PoC stack（`poc/phase-2`）里、**`mergedAt: null` 未进 main**。current main 因此缺这条 bring-up 原语。设计上 operator-facing 流"人打开终端页第一次按键自然触发 MCP init"——即手动在 agent Terminal 页敲一下 Enter 也能 unstick，但当前是无人值守自动流。
 
-**G-live 实际是【两段】，实跑拆清楚了（2026-06-02 续）：**
-1. **onboarding 卡死 —— config 可修，已验证。** 根因:agent 的 sandbox `CLAUDE_CONFIG_DIR`（如 `~/.ezagent/cc-orchestrator/.claude`）**没有 `.claude.json`** → claude 当首次运行、弹主题选择。**修法（纯 config、无代码、不入 commit）**:往该目录写 `.claude.json`，含 `hasCompletedOnboarding:true` + `hasTrustDialogAccepted:true` + `bypassPermissionsModeAccepted:true` + `theme:"dark"`。**实测有效**:重启后日志里主题选择屏(`Choose the text style`)**消失**。⟹ 这半段应进 cc sandbox seed（`cc_orchestrator_seed` 等）默认写好,是干净的 gap remediation。注:macOS 上 auth 走共享 Keychain(已 OK),但 onboarding 状态是 `CLAUDE_CONFIG_DIR` 隔离的、必须单独 seed。
-2. **过了 onboarding，仍不自动 JOIN bridge —— 需 `\r` kick（即 #512 的代码部分）。** 实测:onboarding 修掉后 agent "alive 但无 MCP children、无 bridge binding",仍需写裸 `\r` 触发 MCP init。这正是 EagerBridge 干的事,**这半段是代码、不是 config**,确认了"先 cherry-pick #512 再跑"的判断。
-- **环境噪声(实跑发现):** dev DB 里残留一个 **`cc_spawn-invariant-test` 测试 agent**,boot 时反复 cold-spawn 失败、刷爆 `AgentSupervisor` 崩溃日志(300+),会拖垮 `/sessions`。真录制前需先清这条 DB 污染。
-- **对 demo 的含义:** 全量真 live demo 要凑齐三件:**(a)** sandbox onboarding seed(config,已验证)+ **(b)** EagerBridge `\r` kick(#512 代码,cherry-pick 不入 commit)+ **(c)** 清 `cc_spawn-invariant-test` DB 污染。是一块实打实的 env 工作,非脚本问题。
+**G-live 实跑拆成【三层】，逐层实测（2026-06-02 全量 live 攻坚，干净 `csdemo` profile）：**
+1. **onboarding 卡死 —— 纯 config 可修，已验证（我原以为要 kick，是误判）。** 根因:agent 的 sandbox `CLAUDE_CONFIG_DIR`（如 `~/.ezagent/cc-orchestrator/.claude`）**没有 `.claude.json`** → claude 当首次运行、弹主题选择屏阻塞。**修法（纯 config、无代码、可直接进 seed 代码）**:往该目录写 `.claude.json`，含 `hasCompletedOnboarding:true` + `hasTrustDialogAccepted:true` + `bypassPermissionsModeAccepted:true` + `theme:"dark"`。**实测两次有效**:主题选择屏消失。⟹ 应进 cc sandbox seed（`cc_orchestrator_seed`）默认写好,是干净的 gap remediation。注:macOS auth 走共享 Keychain(已 OK),onboarding 状态是 `CLAUDE_CONFIG_DIR` 隔离的、必须单独 seed。
+2. **MCP-server JOIN —— onboarding 修好后自动通,不需任何 kick。** 实测:`theme=0 spawn=1 join=1 killed=0`,编排器 PTY spawn + JOIN esr-bridge,8 工具的 MCP server 绑定(`Orchestrator.McpSocket` CONNECTED),UI 里 `cc_orchestrator-main` **online、真成员**。⟹ 此前以为要 #512 的 `\r` kick 是**误判**——onboarding 一通,系统自带 `default_auto_prompts/0` 就把 dev-channels prompt 答了、正常 join。**我加的 kick 补丁已撤、未提交,无用。**
+3. **入站 CHANNEL 不可用 —— 真·承重墙，挡死整条对话流。** 实测:编排器 join 后,operator 发消息,后端 `chat.receive` **granted + delivered**(read-marker 写了),但编排器 **5+ 分钟零回复、零工具调用**。根因(claude PTY stderr 原话):**`Channels are not currently available`**。即 `--dangerously-load-development-channels server:esr-bridge` 的**入站 channel**(把消息推进 claude 会话那条)没起来 → delivered 的消息根本到不了 claude → 永不回复。这跟 #512/EagerBridge 同族(bridge bring-up),但是**入站 channel 那一半,是 main 代码层 gap,config/小补丁绕不过**。
+   > 注意:第 1 层的 onboarding seed 让 claude **越过 onboarding、走到 dev-channels 这一步**,但 `default_auto_prompts/0` 当初是按"带 onboarding 的 prompt 序列"调的;skip onboarding 后 prompt 序列变了,auto-prompt 对 dev-channels 的应答**可能因此错位**——即 seed 与 auto-prompt 机制有交互,这条修复不是无副作用的,需连同 §（待 spec）一起设计。
+
+- **环境烂账(实跑逐层发现,均已处理或记录):** (a) dev `default` profile DB **stale-不兼容** current main —— 真 agent 快照(cc_funk/cc_orchestrator-main,2026-05-26)`:respawn_template_data` KeyError、crash-loop `ensure_main_session` → `/sessions` 挂;(b) 历史遗留 orphan `ezagent_mcp_bridge.py` / `claude server:esr-bridge` 进程反复重连、刷崩 AgentSupervisor;(c) 一条 `cc_spawn-invariant-test` 测试快照污染。**干净 `csdemo` profile 一次性绕开 (a)(c)**,(b) 已杀。
+- **对 demo 的含义(最终):** **全量真 live demo 在 current main 上做不出**——第 3 层入站 channel gap 挡在**对话流第一步**(幕 1 让编排器加成员就要它处理消息)。幕 1–5 全部依赖 agent 处理消息,故**全被这一条挡死**;只有幕 0(operator LV 舞台搭建 + G-ui)和静态 UI(编排器 online)可录,**不构成流程**。⟹ live 视频须先解第 3 层 channel gap(real code),非 config/脚本能解。
 
 **G-ui — 创建 session 的模板下拉错填。** LV「+New」的 `template_class` 下拉只列了 agent 模板 `cc.agent.cc_funk`（提交即 `{:session_template_not_found}`），**正确的 `default` SessionTemplate**（`template://session/system/default@…`，main 自己就用它）不在列；客户端注入 `default` 又被 LV morphdom 抹掉。⟹ operator 无法经 UI 干净地新建带 orchestrator 的团队 session（强化 GAP #2）。
 
-> 结论：后端语义（rev 2）已严格验证；**live 视频被 G-live（未合并的 #512）阻塞**，非脚本问题。下一步取决于是否先合 #512。
+> **最终结论：** 后端语义（rev 2）已严格验证；bring-up 三层里 onboarding 是 config 可修（已验证）、JOIN 自动通、**入站 channel 是 main 代码 gap、挡死整条 live 对话流**。**live 视频须先修第 3 层**;当前可交付 = 脚本/PRD + 后端验证 + 完整三层 gap 定位。
 
 ---
 
