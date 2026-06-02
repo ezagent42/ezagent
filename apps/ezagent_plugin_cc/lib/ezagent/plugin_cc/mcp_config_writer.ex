@@ -25,8 +25,13 @@ defmodule EzagentPluginCc.McpConfigWriter do
   v1 had no auth — any process that could reach the HTTP port could
   announce as any agent_uri. v2 gates the WS join via
   `Ezagent.AgentBridge.TokenStore`. `write!/1` mints (idempotent) a
-  token for `agent_uri` and bakes it into the mcp.json env block so
-  the Python bridge can present it on join.
+  token for `agent_uri` and RETURNS it (via `write_with_token!/1`). The
+  token is NOT written into the mcp.json env block — that file is shared
+  across agents (see `## Output`), so a per-agent token there would be
+  clobbered by a later spawn (2026-06-02 bug). Instead the caller
+  (`CcAgent.build_claude_cmd/3`) exports the agent URI + token into
+  claude's PROCESS env (`cmd_env`); the Python bridge reads them from
+  `os.environ` and every MCP server claude launches inherits them.
 
   ## Decision #131 preservation
 
@@ -85,9 +90,10 @@ defmodule EzagentPluginCc.McpConfigWriter do
   agent URI + token into the `claude` process env so every MCP-server
   subprocess `claude` launches inherits them.
 
-  Minting is idempotent per `agent_uri` (`TokenStore.mint/1`), so this
-  returns the SAME token `write!/1` baked into the esr-bridge config —
-  no second credential, no spoofing surface.
+  Minting is idempotent per `agent_uri` (`TokenStore.mint/1`), so the
+  returned token is stable per agent — one credential, exported into
+  `cmd_env` by the caller (NOT written into the shared esr-bridge config),
+  no spoofing surface.
   """
   @spec write_with_token!(keyword()) :: {:ok, String.t(), String.t()}
   def write_with_token!(opts) do
@@ -98,18 +104,32 @@ defmodule EzagentPluginCc.McpConfigWriter do
 
     {:ok, token} = mint_token!(agent_uri_str)
 
-    dir = Keyword.get(opts, :dir, Application.get_env(:ezagent_plugin_cc, :mcp_config_dir, @default_dir))
+    dir =
+      Keyword.get(
+        opts,
+        :dir,
+        Application.get_env(:ezagent_plugin_cc, :mcp_config_dir, @default_dir)
+      )
+
     File.mkdir_p!(dir)
 
     script_path = Keyword.get(opts, :script_path, bridge_script_path())
     ws_url = Keyword.get(opts, :ws_url, resolve_ws_url())
     agent_cwd = Keyword.get(opts, :agent_cwd)
 
-    env = %{
-      "EZAGENT_BRIDGE_WS_URL" => ws_url,
-      "EZAGENT_AGENT_URI" => agent_uri_str,
-      "EZAGENT_AGENT_TOKEN" => token
-    }
+    # Per-agent identity (URI + token) is intentionally NOT written into this
+    # env block. This config is written to THREE locations (the shared
+    # `~/.ezagent` dir, the git toplevel, and the agent cwd — see below); a
+    # later agent's write would clobber a per-agent token here, and claude
+    # would then launch the esr-bridge MCP server under the WRONG agent's
+    # identity → it joins `agent_bridge:cc:<wrong-uri>` → the real agent audits
+    # `:no_bridge` and silently drops inbound (the 2026-06-02 clobber bug).
+    # Identity instead flows via claude's PROCESS env (`cmd_env`, set per-agent
+    # in `CcAgent.build_claude_cmd/3`), which every MCP server claude launches
+    # inherits. Only the SHARED `ws_url` (identical for every agent) is safe to
+    # bake into this shared file. The `token` is still minted above + returned
+    # so `build_claude_cmd/3` can put it into `cmd_env`.
+    env = %{"EZAGENT_BRIDGE_WS_URL" => ws_url}
 
     # PR #129: use `uv run --script <path>` so uv honors the PEP 723
     # inline metadata header (`# /// script` block) and provisions the
