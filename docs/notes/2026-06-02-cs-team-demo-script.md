@@ -4,7 +4,7 @@
 > **作者**：daiming（FatNine）
 > **依据**：`cs-team-orchestrator-playbook.md`（领导下发）+ `docs/superpowers/specs/2026-06-01-team-routing-unification(.zh_cn).md` + 当前 `Ezagent.Orchestrator.McpServer`/`Tools` 代码（main `151e1fb4`）
 > **形态**：双栏 operator runbook（左=镜头内动作+旁白/字幕，右=后端机制 tool→Behavior→effect），既是录制脚本也是 PRD。
-> **状态**：rev 2（后端彩排完成——Tools+Resolver 层 ExUnit 实测四项 §3.3 全绿，结论已回填；测试 `apps/ezagent_domain_chat/test/integration/cs_demo_backend_rehearsal_test.exs`）。仍待：真 agent live run（需 claude login）+ 浏览器截图 + 人工录屏。
+> **状态**：rev 3（后端彩排 rev 2 全绿；live demo 尝试见 §3.5——基础设施跑通，但 **live 视频被 G-live 阻塞**：spawn 的 cc agent 卡 onboarding、不进 esr-bridge，修复 PR #512 `EagerBridge` 未合并进 main）。下一步取决于是否先合 #512。
 
 ---
 
@@ -159,6 +159,8 @@ R&D（看 gap → 写 spec）、Allen（裁决架构）、未来接手实现的�
 | **#6** | （隐含） | 单 receiver 规则，无团队级 multicast（只有整 session `$session_members`） | gap 6 |
 | **#7** | 幕 0 | 无建 AgentTemplate 的工具（LV/mix 预先存在） | gap 7 |
 | **G-a** | 幕 1 | 无 bulk「spawn N」；一次一个 | （playbook §1 备注，非编号 gap） |
+| **G-live** | 幕 0/2（live） | **spawn 的 cc agent 卡在 claude 首次运行 onboarding（主题选择），不自动 JOIN esr-bridge → 90s 后被杀**；live demo 无法自动起 agent | 新发现（= PoC G1，见 §3.6） |
+| **G-ui** | 幕 0（live） | LV「+New」创建 session 的模板下拉**错填**（只列 agent 模板 `cc.agent.cc_funk`，正确的 `default` SessionTemplate 不在列）→ `session_template_not_found` | 新发现（强化 #2） |
 
 ### 3.2 按 playbook「Recommended path forward」3 设计域分组
 
@@ -194,6 +196,28 @@ R&D（看 gap → 写 spec）、Allen（裁决架构）、未来接手实现的�
 
 **(发现 D / GAP #5 降级) sticky 模式：引擎已支持，缺工具面 + toggle。** `enabled`(默认 true,`rule_store.ex:45`) 与 `applies_to_users`(`rule_store.ex:49`) 列**已存在**，resolver **真的按 sender 过滤**（`resolver.ex:268-270`）。但 `define_rule_set_rule` 的 `add_opts`（`tools.ex:402-415`）**不传**这两列，且 8 工具里**无** remove/disable-rule。⟹ 进人工能加规则、退人工切不掉 → **不是不能，是缺『暴露已有列 + 一个 disable/remove-rule 工具』**，非从零新原语。playbook「no applies_to_users-style matcher」不准确。
 
+### 3.5 Live run 实跑状态与新发现 gap（2026-06-02，真 agent live demo 尝试）
+
+按"全量真多 agent live demo"启动后，基础设施**部分跑通**，但撞到一个**真 agent 起不来**的承重 gap，记录如下（用户指示参考 PR #512 并入 gap）。
+
+**跑通的：** dev server（`mix phx.server` @ `:10042`）、admin 登录、Playwright 驱动 LiveView（截图 + `.webm` 录屏链路全通，已出图）、标准库 `claude` CLI 已认证（Keychain，`claude -p` 回 `PONG`，网络可达 Anthropic）。
+
+**G-live（承重，= PoC G1）— spawn 的 cc agent 卡 onboarding、不 JOIN esr-bridge。** 现象（`phx.log`）：
+```
+PtyServer[...] stderr:  Choose the text style that looks best with your terminal
+   1. Auto   ❯ 2. Dark mode ✔  3. Light mode ...
+[error] Session.ensure_orchestrator: orchestrator cc_orchestrator-main did NOT join
+        its live MCP bridge within 90000ms — killing the PTY + Kind and failing loud
+[warning] AdminLive.ensure_main_session failed: {:orchestrator_not_ready_within, 90000}
+```
+根因：每 agent 的 sandbox `CLAUDE_CONFIG_DIR` 是**未完成 onboarding** 的新配置 → spawn 的 `claude` 落到首次运行主题选择屏、阻塞在 stdin → 永不进 MCP bridge 握手 → 90s 被杀（并反复 respawn）。所以 UI 里 orchestrator 乐观显示 "alive"，但**没有任何消息能投递、没有 agent 真回答**（我看到的 cc_funk 回答是 08:31 **历史数据**，非我触发的 live 回复）。附带还有一个 Logger formatter 在 onboarding 的制表符输出上 crash。
+- **已知修复存在但未合并：** PR **#512 `EzagentPluginCc.EagerBridge`**（`ensure_bound!/2`：等 PTY auto-prompts 触发完 → 写裸 `\r` 触发 MCP init → 轮询 `AgentBridge.Registry` 直到绑定）正是这条 G1 的修复，但它在 PoC stack（`poc/phase-2`）里、**`mergedAt: null` 未进 main**。current main 因此缺这条 bring-up 原语。设计上 operator-facing 流"人打开终端页第一次按键自然触发 MCP init"——即手动在 agent Terminal 页敲一下 Enter 也能 unstick，但当前是无人值守自动流。
+- **对 demo 的含义：** **全量真 live demo 在 current main 上无法自动起 agent**——被 G-live 堵死。需先合 #512（或等价 bring-up），或在录制时人工到每个 agent 的 Terminal 页敲 Enter 清掉 onboarding。
+
+**G-ui — 创建 session 的模板下拉错填。** LV「+New」的 `template_class` 下拉只列了 agent 模板 `cc.agent.cc_funk`（提交即 `{:session_template_not_found}`），**正确的 `default` SessionTemplate**（`template://session/system/default@…`，main 自己就用它）不在列；客户端注入 `default` 又被 LV morphdom 抹掉。⟹ operator 无法经 UI 干净地新建带 orchestrator 的团队 session（强化 GAP #2）。
+
+> 结论：后端语义（rev 2）已严格验证；**live 视频被 G-live（未合并的 #512）阻塞**，非脚本问题。下一步取决于是否先合 #512。
+
 ---
 
 ## 4. 录制注意
@@ -201,4 +225,4 @@ R&D（看 gap → 写 spec）、Allen（裁决架构）、未来接手实现的�
 - **字幕规范**：每个 `🔴 GAP` 当场打全屏字幕（红底/角标），停留 ≥2 秒，文案就用 §2 右栏里的 GAP 句；这些字幕是「demo → gap 统计」的桥。
 - **节奏**：幕 0 快（非对话前置，10–15s）；幕 2/幕 3 是高光（AI 自动答 + 对话改行为），放慢；幕 4 是**诚实的撞墙时刻**——拍清「编排器调用 → 后端返回 `{:unknown_member_role}` → GAP 字幕」，给错误返回一个特写。
 - **渠道次要**：全程旁白至少点一次「这里换飞书/external-mirror 后端一行不改」，呼应 P12/P13 论点。
-- **证据**：截图用 agent-browser headless Chrome 对 `100.64.0.27`，不靠肉眼复述。
+- **证据**：截图/录屏用 **Playwright**（headless Chromium + ffmpeg `.webm`，本机已装）对 `http://127.0.0.1:10042`，不靠肉眼复述。（"agent-browser" 不在 PATH，用 Playwright 等价替代——见 §3.5。）
