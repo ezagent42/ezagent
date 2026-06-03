@@ -82,13 +82,23 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
     Mix.shell().info("Seeding autoservice tenant `#{@workspace_name}` …")
 
     :ok = ensure_workspace()
+
+    # Create all users first.
     :ok = seed_role_user(@admin_short, :admin, workspace_uri, ctx)
     :ok = seed_role_user(@operator_short, :operator, workspace_uri, ctx)
-    :ok = ensure_default_session(workspace_uri, ctx)
+    Enum.each(customers, fn name ->
+      :ok = seed_role_user(name, :customer, workspace_uri, ctx)
+    end)
 
+    # Default SessionTemplate for native /sessions UI.
+    # Session creation is deferred to AdminLive.ensure_main_session
+    # (avoids cross-VM rollback issues).
+    :ok = ensure_default_template(workspace_uri)
+
+    # Provision customer-service sessions (fast + slow agents, routing,
+    # greeting).
     results =
       Enum.map(customers, fn name ->
-        :ok = seed_role_user(name, :customer, workspace_uri, ctx)
         customer_uri = user_uri(name)
 
         case CustomerSession.provision(customer_uri,
@@ -158,15 +168,36 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
     end
 
     _ = add_member(uri)
+
+    # Grant role caps via dispatch so they land in the Identity slice.
+    # Use :call (synchronous) — the seed VM exits after this function,
+    # so :cast would be dropped before the Kind is ready.
+    grant_ctx = Map.put(mix_task_ctx(), :reply, {:caller_inbox, self()})
+    Enum.each(extra_caps, fn cap ->
+      case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+             target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=identity.grant_cap"),
+             mode: :call,
+             args: %{cap: cap},
+             ctx: grant_ctx
+           }) do
+        {:ok, _result} -> :ok
+        {:error, reason} -> Mix.shell().info("  grant_cap #{URI.to_string(uri)}: #{inspect(reason)}")
+      end
+    end)
+
+    # Delete the snapshot written by the seed VM — its binary may
+    # contain atoms unknown to the phx.server VM (cross-VM :unsafe_atom).
+    # On next spawn, load_with_fallback will call fetch_snapshot → :error
+    # → init_fresh which calls create(args) with initial_caps from
+    # caps_json (ever_created? is reset by the delete, so create runs).
+    Ezagent.Ecto.KindSnapshot.delete(URI.to_string(uri))
+
     :ok
   end
 
-  # --- default session for native UI (/sessions) -----------------------
+  # --- default template for native UI (/sessions) --------------------
 
-  defp ensure_default_session(workspace_uri, _ctx) do
-    # 1. Create a default SessionTemplate WITHOUT orchestrator
-    # (the autoservice has its own agents; no cc-orchestrator needed
-    # for the cinnox workspace).
+  defp ensure_default_template(workspace_uri) do
     content = %{
       name: "default",
       description: "Cinnox default session — plain (no orchestrator, uses autoservice agents)",
@@ -186,32 +217,6 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
 
       {:error, reason} ->
         Mix.shell().info("  default SessionTemplate already present (#{inspect(reason)})")
-    end
-
-    # 2. Create session://default/<ws>/main so the native /sessions page
-    # finds a live session on first visit (no orchestrator to fail).
-    admin_uri = user_uri(@admin_short)
-    main_uri = Ezagent.URI.new!("session://default/#{@workspace_name}/main")
-
-    case Ezagent.KindRegistry.lookup(main_uri) do
-      {:ok, _pid} ->
-        Mix.shell().info("  session #{URI.to_string(main_uri)} already alive")
-
-      :error ->
-        # 2026-05-31 orchestrator-startup-atomicity §4 step 9:
-        # the plain-session path (nil orchestrator) is the
-        # no-rollback fast-path — steps 5-7 are skipped, so
-        # there are no failures to roll back.
-        case EzagentDomainChat.create_session("main", admin_uri,
-               template_name: "default",
-               workspace_uri: workspace_uri
-             ) do
-          {:ok, sess_uri, _meta} ->
-            Mix.shell().info("  session #{URI.to_string(sess_uri)} created")
-
-          {:error, reason} ->
-            Mix.shell().info("  session create: #{inspect(reason)} (may be idempotent)")
-        end
     end
 
     :ok

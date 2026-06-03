@@ -39,10 +39,18 @@ defmodule EzagentPluginAutoservice.CustomerSession do
 
   @default_greeting "您好,我是在线客服助手。请问有什么可以帮您?"
 
-  @fast_persona "你是一位友好、专业的在线客服助手,用简洁清晰的中文回答用户的问题。遇到无法处理的请求时,提示用户稍候,人工客服会介入。"
+  @fast_persona_fallback "你是一位友好、专业的在线客服助手,用简洁清晰的中文回复。先简短安抚用户（12-30字），稍候慢速 agent 会详细回答。遇到转人工请求时，告知人工客服即将介入。"
 
   @deepseek_api_url "https://api.deepseek.com/chat/completions"
   @deepseek_model "deepseek-chat"
+
+  defp fast_persona do
+    try do
+      EzagentPluginAutoservice.CinnoxAssets.build_fast_ack_prompt()
+    rescue
+      _ -> @fast_persona_fallback
+    end
+  end
 
   @typedoc "Setup context — `%{caller: URI.t(), caps: [Capability.t()]}`."
   @type setup_ctx :: %{caller: URI.t(), caps: list()}
@@ -68,7 +76,7 @@ defmodule EzagentPluginAutoservice.CustomerSession do
     workspace_uri = Keyword.fetch!(opts, :workspace_uri)
     ctx = Keyword.fetch!(opts, :ctx)
     greeting = Keyword.get(opts, :greeting, @default_greeting)
-    system_prompt = Keyword.get(opts, :system_prompt, @fast_persona)
+    system_prompt = Keyword.get(opts, :system_prompt, fast_persona())
     deepseek_key = Keyword.get(opts, :deepseek_key)
     with_slow? = Keyword.get(opts, :with_slow, false)
 
@@ -204,16 +212,34 @@ defmodule EzagentPluginAutoservice.CustomerSession do
         {:ok, slow_uri}
 
       :error ->
+        # Materialize shared CINNOX assets once (CLAUDE.md, skills,
+        # flow chunks, KB files). Each agent gets its own subdir so
+        # .mcp.json (esr-bridge token per agent) doesn't conflict.
         name = Uris.slow_agent_create_name(customer_uri)
-        cwd = Path.join(System.tmp_dir!(), "autoservice-cc-#{name}")
-        _ = File.mkdir_p(cwd)
+        base = EzagentPluginAutoservice.CinnoxRuntime.materialize_cinnox_cc!()
+        work_dir = Path.join(base, name)
+        File.mkdir_p!(work_dir)
+
+        # Symlink shared assets into per-agent dir (avoids copy bloat).
+        for entry <- File.ls!(base) |> Enum.reject(&(&1 in [".mcp.json", name])) do
+          src = Path.join(base, entry)
+          dst = Path.join(work_dir, entry)
+          unless File.exists?(dst), do: File.ln_s(src, dst)
+        end
 
         case Ezagent.Workspace.create_agent(
                workspace_uri,
-               %{flavor: "cc", name: name, cwd: cwd, with_pty: false},
+               %{flavor: "cc", name: name, cwd: work_dir, with_pty: false},
                ctx
              ) do
           {:ok, %{agent_uri: %URI{} = uri}} ->
+            # Merge cinnox-kb MCP config into the agent's .mcp.json
+            # (create_agent already wrote esr-bridge; add KB sidecar).
+            mcp_path = Path.join(work_dir, ".mcp.json")
+            mcp =
+              mcp_path |> File.read!() |> Jason.decode!()
+              |> Map.update!("mcpServers", &Map.merge(EzagentPluginAutoservice.CinnoxRuntime.kb_mcp_servers(), &1))
+            File.write!(mcp_path, Jason.encode_to_iodata!(mcp, pretty: true))
             {:ok, uri}
 
           {:error, reason} ->

@@ -38,8 +38,22 @@ defmodule EzagentPluginAutoservice.Roles do
 
   @doc "Extra caps (beyond `User.default_caps/1`) to grant a role in a workspace."
   @spec bundle(role(), URI.t()) :: [Capability.t()]
-  def bundle(:customer, %URI{scheme: "workspace"}), do: []
-  def bundle(:operator, %URI{scheme: "workspace"}), do: []
+  def bundle(:customer, %URI{scheme: "workspace"} = workspace_uri) do
+    now = DateTime.utc_now()
+    [
+      grantable_session_any(:send, workspace_uri, now),
+      grantable_session_any(:receive, workspace_uri, now)
+    ]
+  end
+
+  def bundle(:operator, %URI{scheme: "workspace"} = workspace_uri) do
+    now = DateTime.utc_now()
+    [
+      grantable_session_any(:join, workspace_uri, now),
+      grantable_session_any(:send, workspace_uri, now),
+      grantable_session_any(:receive, workspace_uri, now)
+    ]
+  end
 
   def bundle(:admin, %URI{scheme: "workspace"} = workspace_uri) do
     now = DateTime.utc_now()
@@ -66,6 +80,21 @@ defmodule EzagentPluginAutoservice.Roles do
       behavior: behavior,
       action: action,
       instance: workspace_uri,
+      workspace_uri: workspace_uri,
+      granted_by: @granted_by,
+      granted_at: now
+    }
+  end
+
+  # Session-scoped cap with `instance: :any` (matches any session in the
+  # workspace). Matches `User.default_caps/1` pattern — the workspace_uri
+  # scoping is already on the `workspace_uri` field.
+  defp grantable_session_any(action, %URI{} = workspace_uri, %DateTime{} = now) do
+    %Capability{
+      kind: :session,
+      behavior: :any,
+      action: action,
+      instance: :any,
       workspace_uri: workspace_uri,
       granted_by: @granted_by,
       granted_at: now

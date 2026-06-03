@@ -71,6 +71,17 @@ defmodule EzagentPluginAutoservice.CinnoxAssets do
     > reply. Once `kb_search` gives you the facts, answer **concisely and
     > directly** — do NOT loop on clarifying questions when you already have
     > enough to answer.
+    >
+    > **RESPONSE GATE — check BEFORE every reply:**
+    > - You are in a group chat. You receive the full chat history every time
+    >   ANYONE sends a message. Most messages are NOT for you.
+    > - **ONLY respond when @-mentioned** (`@cc_slow-alice` or
+    >   `@entity://agent/cinnox/cc_slow-alice`). Ignore all other messages.
+    > - **NEVER respond to your own messages.** If the latest message sender
+    >   is yourself (`entity://agent/cinnox/cc_slow-alice`), stay silent.
+    > - **NEVER re-answer a question you already replied to.** If a user asks
+    >   a question you already addressed, say briefly and STOP.
+    > - **If not @-mentioned: stay completely silent.**
 
     ---
 

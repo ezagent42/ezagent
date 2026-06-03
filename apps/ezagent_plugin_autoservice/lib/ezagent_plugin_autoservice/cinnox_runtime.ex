@@ -65,22 +65,20 @@ defmodule EzagentPluginAutoservice.CinnoxRuntime do
     File.cp!(CinnoxAssets.kb_mcp_script_path(), kb_mcp_script_runtime_path())
     File.cp!(CinnoxAssets.kb_query_expansion_path(), kb_query_expansion_runtime_path())
 
-    write_kb_mcp_config!()
+    # .mcp.json is written per-agent (esr-bridge token per agent +
+    # kb_mcp_servers merged in); see CustomerSession.maybe_slow_agent/4.
     work
   end
 
-  defp write_kb_mcp_config! do
-    body = %{
-      "mcpServers" => %{
-        "cinnox-kb" => %{
-          "command" => "uv",
-          "args" => ["run", "--script", kb_mcp_script_runtime_path()],
-          "env" => %{"KB_DB_PATH" => kb_db_runtime_path()}
-        }
+  @doc "KB MCP server config map merged into each agent's .mcp.json."
+  def kb_mcp_servers do
+    %{
+      "cinnox-kb" => %{
+        "command" => "uv",
+        "args" => ["run", "--script", kb_mcp_script_runtime_path()],
+        "env" => %{"KB_DB_PATH" => kb_db_runtime_path()}
       }
     }
-
-    File.write!(kb_mcp_config_runtime_path(), Jason.encode_to_iodata!(body, pretty: true))
   end
 
   defp copy_tree!(src, dst) do
