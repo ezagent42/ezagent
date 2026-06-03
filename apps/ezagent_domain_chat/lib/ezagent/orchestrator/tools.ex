@@ -149,9 +149,8 @@ defmodule Ezagent.Orchestrator.Tools do
          # could leave an ORPHAN. Failing closed here means an unauthorized
          # caller never spawns.
          :ok <- preflight_within_session_cap(caps, session_uri),
-         {:ok, flavor} <- source_template_flavor(source_agent_template_uri),
          {:ok, %URI{} = member_uri} <-
-           spawn_member(source_agent_template_uri, flavor, role_name, session_uri, workspace_uri, caller) do
+           spawn_member(source_agent_template_uri, role_name, session_uri, workspace_uri, caller) do
       facets =
         %{in_session_template: in_session_template, source_template_uri: source_agent_template_uri}
         |> Map.put(:role_name, role_name)
@@ -179,13 +178,37 @@ defmodule Ezagent.Orchestrator.Tools do
   # idempotently — re-adding the same role within a session is a no-op spawn.
   defp spawn_member(
          %URI{} = source_template_uri,
+         role_name,
+         %URI{} = session_uri,
+         %URI{} = workspace_uri,
+         %URI{} = caller
+       ) do
+    # codex review P2 (2026-06-03) — read the source template content ONCE and
+    # derive BOTH the flavor (→ member URI) and the spawn content from that
+    # single snapshot. Previously the flavor came from a separate
+    # `source_template_flavor/1` read and the spawn from a second
+    # `read_source_template_content/1` read; a concurrent template edit between
+    # the two could derive the member URI from the OLD flavor while spawning the
+    # NEW content. Bridge routing derives flavor from the URI prefix, so that
+    # divergence would route the sidecar via the wrong adapter / reject it.
+    # One read = no divergence by construction.
+    with {:ok, _pid} <- ensure_template_alive(source_template_uri),
+         {:ok, content} <- read_source_template_content(source_template_uri),
+         {:ok, flavor} <- content_flavor(content, source_template_uri) do
+      do_spawn_member(content, flavor, source_template_uri, role_name, session_uri, workspace_uri, caller)
+    end
+  end
+
+  defp do_spawn_member(
+         content,
          flavor,
+         %URI{} = source_template_uri,
          role_name,
          %URI{} = session_uri,
          %URI{} = workspace_uri,
          %URI{} = caller
        )
-       when is_binary(flavor) do
+       when is_map(content) and is_binary(flavor) do
     instance_name =
       EzagentDomainChat.spawned_member_instance_name_public(
         flavor,
@@ -215,8 +238,9 @@ defmodule Ezagent.Orchestrator.Tools do
 
     member_uri = Ezagent.URI.new!("entity://agent/#{workspace_name}/#{instance_name}")
 
-    with {:ok, content} <- read_source_template_content(source_template_uri),
-         {:ok, _result} <-
+    # `content` is the SAME snapshot the flavor (→ member_uri) was derived from
+    # (codex P2) — no second read, so URI-flavor and spawned-content cannot diverge.
+    with {:ok, _result} <-
            Ezagent.Entity.Agent.spawn_from_template_content(
              content,
              member_uri,
@@ -278,17 +302,15 @@ defmodule Ezagent.Orchestrator.Tools do
     end
   end
 
-  # Read the `flavor` field from a source AgentTemplate's `:template`
-  # content (demand-spawning the template Kind first). The flavor prefixes
-  # the spawned instance name so the member Agent URI resolves to a flavor
-  # Kind module. Shared shape with the PR-7 materialization spawn path.
-  defp source_template_flavor(%URI{} = source_template_uri) do
-    with {:ok, _pid} <- ensure_template_alive(source_template_uri),
-         {:ok, content} <- Ezagent.Entity.Session.read_template_content(source_template_uri) do
-      case Map.get(content, :flavor) || Map.get(content, "flavor") do
-        flavor when is_binary(flavor) and flavor != "" -> {:ok, flavor}
-        _ -> {:error, {:source_template_missing_flavor, source_template_uri}}
-      end
+  # Extract the `flavor` field from an ALREADY-READ source AgentTemplate
+  # content snapshot. The flavor prefixes the spawned instance name so the
+  # member Agent URI resolves to a flavor Kind module. codex P2 (2026-06-03):
+  # callers MUST derive flavor from the SAME content snapshot they spawn from
+  # (see `spawn_member/5`), so this takes the content rather than re-reading it.
+  defp content_flavor(content, %URI{} = source_template_uri) when is_map(content) do
+    case Map.get(content, :flavor) || Map.get(content, "flavor") do
+      flavor when is_binary(flavor) and flavor != "" -> {:ok, flavor}
+      _ -> {:error, {:source_template_missing_flavor, source_template_uri}}
     end
   end
 
