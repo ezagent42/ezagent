@@ -328,8 +328,8 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
       # proves the AgentTemplate adapter is the source of truth.
       at_content = %{
         flavor: "cc",
-        working_directory: agent_cwd,
-        claude_config_dir: Path.dirname(sandbox_config_dir),
+        project_cwd: agent_cwd,
+        config_dir: Path.dirname(sandbox_config_dir),
         settings_path: operator_settings_path,
         mcp_config_path: nil,
         api_key_helper: nil

@@ -61,8 +61,8 @@ defmodule EzagentDomainChat.Invariants.TemplateForkLineageTest do
       name: name,
       description: "fork-lineage parent",
       flavor: "cc",
-      working_directory: "/tmp/proj",
-      claude_config_dir: nil,
+      project_cwd: "/tmp/proj",
+      config_dir: nil,
       settings_path: nil,
       mcp_config_path: nil,
       api_key_helper: nil,
@@ -204,7 +204,7 @@ defmodule EzagentDomainChat.Invariants.TemplateForkLineageTest do
       # Copy preserved fields
       assert fork_content.description == parent_content.description
       assert fork_content.flavor == parent_content.flavor
-      assert fork_content.working_directory == parent_content.working_directory
+      assert fork_content.project_cwd == parent_content.project_cwd
 
       # Refreshed fields
       assert DateTime.compare(fork_content.created_at, before) in [:gt, :eq]

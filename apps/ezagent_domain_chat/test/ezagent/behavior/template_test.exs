@@ -70,7 +70,7 @@ defmodule Ezagent.Behavior.TemplateTest do
 
   describe "invoke(:write, ...) — AgentTemplate (mutable, versionless)" do
     test "plain replace into an empty slice" do
-      content = %{name: "a", flavor: "cc", working_directory: "/tmp"}
+      content = %{name: "a", flavor: "cc", project_cwd: "/tmp"}
       ctx = %{kind_module: AgentTemplate}
 
       assert {:ok, %{content: ^content}, %{content: ^content}} =
@@ -79,8 +79,8 @@ defmodule Ezagent.Behavior.TemplateTest do
 
     test "overwrites an already-populated slice in place (operator edit)" do
       ctx = %{kind_module: AgentTemplate}
-      old = %{name: "a", flavor: "cc", working_directory: "/old"}
-      new = %{name: "a", flavor: "cc", working_directory: "/new"}
+      old = %{name: "a", flavor: "cc", project_cwd: "/old"}
+      new = %{name: "a", flavor: "cc", project_cwd: "/new"}
 
       assert {:ok, %{content: ^new}, %{content: ^new}} =
                EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Template, :write, %{content: old}, %{content: new}, ctx)
@@ -174,7 +174,7 @@ defmodule Ezagent.Behavior.TemplateTest do
     # the only thing standing between the call and a spawn is the
     # cross-workspace guard.
     defp agent_template_content do
-      %{name: "cc-orch", flavor: "cc", working_directory: "/tmp/proj"}
+      %{name: "cc-orch", flavor: "cc", project_cwd: "/tmp/proj"}
     end
 
     test "a workspace_uri arg pointing at ANOTHER workspace → {:error, :cross_workspace_denied}" do

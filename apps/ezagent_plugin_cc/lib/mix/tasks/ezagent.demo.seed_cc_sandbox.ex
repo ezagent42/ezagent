@@ -230,8 +230,8 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
         "Seeded by `mix ezagent.demo.seed_cc_sandbox` — sandboxed cc agent " <>
           "with pre-copied credentials (avoid re-login flow).",
       flavor: "cc",
-      working_directory: sandbox_dir,
-      claude_config_dir: sandbox_dir,
+      project_cwd: sandbox_dir,
+      config_dir: sandbox_dir,
       settings_path: nil,
       mcp_config_path: nil,
       api_key_helper: nil,
@@ -284,10 +284,10 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
 
     Next step: use this sandbox when spawning a cc agent. Either:
 
-      * In the LV admin form (/admin/agent_templates/new), set
-        `claude_config_dir = #{sandbox_dir}`.
+      * In the LV admin form (/admin/agent_templates/new), set the
+        AgentTemplate `config_dir = #{sandbox_dir}`.
       * Or set `claude_config_dir` programmatically on the cc.agent
-        Template Class data map.
+        Template Class data map (the data key stays `claude_config_dir`).
 
     The spawned `claude` will see CLAUDE_CONFIG_DIR=#{sandbox_dir} and
     use the seeded credentials WITHOUT prompting for re-login.

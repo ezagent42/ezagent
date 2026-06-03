@@ -204,7 +204,11 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   @impl Ezagent.Kind.Template
   def template_data_extra(content) when is_map(content) do
     %{
-      "claude_config_dir" => content_field(content, :claude_config_dir),
+      # PR-2 (domain.agent): the AgentTemplate content field is `config_dir`
+      # (the sandbox config-home INPUT, renamed from `claude_config_dir`).
+      # The DATA KEY stays `"claude_config_dir"` — the universal contract the
+      # cc spawn path (`build_claude_config_env/2`) + Sandbox respawn data read.
+      "claude_config_dir" => content_field(content, :config_dir),
       "operator_settings_path" => content_field(content, :settings_path),
       "operator_mcp_config_path" => content_field(content, :mcp_config_path),
       "api_key_helper" => content_field(content, :api_key_helper),

@@ -55,7 +55,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
         name: "worker",
         description: "a worker",
         flavor: "cc",
-        working_directory: "/tmp/proj"
+        project_cwd: "/tmp/proj"
       }
 
       assert {:ok, data} = AgentTemplate.to_template_data(content, @instance_uri)
@@ -72,10 +72,10 @@ defmodule Ezagent.Entity.AgentTemplateTest do
       content = %{
         name: "worker",
         flavor: "cc",
-        working_directory: "/tmp/proj",
+        project_cwd: "/tmp/proj",
         settings_path: "/sandbox/settings.json",
         mcp_config_path: "/sandbox/mcp.json",
-        claude_config_dir: "/sandbox/.claude",
+        config_dir: "/sandbox/.claude",
         api_key_helper: "/sandbox/key.sh"
       }
 
@@ -86,20 +86,43 @@ defmodule Ezagent.Entity.AgentTemplateTest do
       assert data["api_key_helper"] == "/sandbox/key.sh"
     end
 
-    test "errors when working_directory is missing" do
+    test "errors when project_cwd is missing" do
       content = %{name: "w", flavor: "cc"}
-      assert {:error, :missing_working_directory} =
+      assert {:error, :missing_project_cwd} =
                AgentTemplate.to_template_data(content, @instance_uri)
     end
 
+    # PR-2 (domain.agent): the template carries TWO distinct, explicitly-named
+    # intents — `project_cwd` (universal: where the agent runs / cd's into,
+    # → "cwd") and the cc-flavor `config_dir` (the sandbox config-dir INPUT,
+    # → "claude_config_dir"). They map to DIFFERENT data keys; one is not the
+    # other.
+    test "project_cwd and config_dir are distinct intents → distinct data keys" do
+      content = %{
+        name: "w",
+        flavor: "cc",
+        project_cwd: "/tmp/project",
+        config_dir: "/tmp/sandbox/.claude"
+      }
+
+      assert {:ok, data} = AgentTemplate.to_template_data(content, @instance_uri)
+      assert data["cwd"] == "/tmp/project", "project_cwd drives the project cwd data key"
+
+      assert data["claude_config_dir"] == "/tmp/sandbox/.claude",
+             "config_dir drives the sandbox config-dir input data key"
+
+      refute data["cwd"] == data["claude_config_dir"],
+             "the two intents must NOT collapse to the same path"
+    end
+
     test "errors when flavor is missing" do
-      content = %{name: "w", working_directory: "/tmp"}
+      content = %{name: "w", project_cwd: "/tmp"}
       assert {:error, :missing_flavor} =
                AgentTemplate.to_template_data(content, @instance_uri)
     end
 
     test "the data map is a string-keyed map the cc Template Class accepts" do
-      content = %{name: "w", flavor: "cc", working_directory: "/tmp"}
+      content = %{name: "w", flavor: "cc", project_cwd: "/tmp"}
       {:ok, data} = AgentTemplate.to_template_data(content, @instance_uri)
 
       assert :ok = Ezagent.PluginCc.Template.CcAgent.validate(data)
@@ -120,7 +143,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
     test "threads curl provider/api_url/model (pre-fix these were dropped)" do
       content = %{
         flavor: "curl",
-        working_directory: "/tmp/c",
+        project_cwd: "/tmp/c",
         provider: "deepseek",
         api_url: "https://api.deepseek.com/chat/completions",
         model: "deepseek-chat",
@@ -138,7 +161,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
     test "threads codex model/approval/sandbox" do
       content = %{
         flavor: "codex",
-        working_directory: "/tmp/x",
+        project_cwd: "/tmp/x",
         model: "gpt-5-codex",
         approval_policy: "never",
         sandbox: "workspace-write"
@@ -154,7 +177,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
     test "fail-fast: curl content missing provider → {:error, {:invalid_template_data, _}}" do
       content = %{
         flavor: "curl",
-        working_directory: "/tmp/c",
+        project_cwd: "/tmp/c",
         api_url: "https://api.deepseek.com/chat/completions",
         model: "deepseek-chat"
       }
@@ -168,7 +191,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
     test "string-keyed (post-JSON) curl content threads the same" do
       content = %{
         "flavor" => "curl",
-        "working_directory" => "/tmp/c",
+        "project_cwd" => "/tmp/c",
         "provider" => "deepseek",
         "api_url" => "https://api.deepseek.com/chat/completions",
         "model" => "deepseek-chat"
@@ -182,8 +205,8 @@ defmodule Ezagent.Entity.AgentTemplateTest do
     test "cc still threads its fields (regression) — flavor callback owns them now" do
       content = %{
         flavor: "cc",
-        working_directory: "/tmp/proj",
-        claude_config_dir: "/sandbox/.claude",
+        project_cwd: "/tmp/proj",
+        config_dir: "/sandbox/.claude",
         role: "orchestrator"
       }
 

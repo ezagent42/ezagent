@@ -150,7 +150,7 @@ defmodule Ezagent.Entity.Agent do
 
   - Does NOT instantiate the underlying claude process (PtyServer
     spawns that on bridge announce). AgentTemplate's
-    `working_directory` / `claude_config_dir` / `settings_path`
+    `project_cwd` / `config_dir` / `settings_path`
     are consumed by the PR 32 v2 bridge / PtyServer integration —
     Agent.spawn/4 is the ESR-side Kind registration, not the
     PTY-side process spawn.
@@ -396,7 +396,7 @@ defmodule Ezagent.Entity.Agent do
   ## Args
 
   - `template_content_map` — the AgentTemplate `:template` slice content
-    (carries `flavor`, `working_directory`, the sandbox keys).
+    (carries `flavor`, `project_cwd`, the sandbox keys incl. `config_dir`).
   - `instance_uri` — the per-instance agent URI the caller built.
   - `spawned_by_uri` — `%URI{}` of the principal authorizing the spawn
     (the owner for the orchestrator agent; the orchestrator's own URI

@@ -11,8 +11,9 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   config, no system prompt. PR-5 makes the seed populate a real slice:
 
   - `flavor: "cc"` — the orchestrator is a `claude` PTY agent.
-  - `claude_config_dir` — an isolated `CLAUDE_CONFIG_DIR` sandbox so the
-    orchestrator's `claude` does not share the operator's `~/.claude`.
+  - `config_dir` — an isolated `CLAUDE_CONFIG_DIR` sandbox so the
+    orchestrator's `claude` does not share the operator's `~/.claude`
+    (PR-2: AgentTemplate content field, renamed from `claude_config_dir`).
   - `settings_path` — a `settings.json` enabling the orchestration
     pattern (the mandatory plugin safety `--settings` still wins; this
     operator file layers non-conflicting keys — §1.5 (c)).
@@ -32,7 +33,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
 
   ## Why files on disk
 
-  `claude_config_dir` / `settings_path` / `mcp_config_path` are file
+  `config_dir` / `settings_path` / `mcp_config_path` are file
   paths the cc Template Class threads to `claude` as `CLAUDE_CONFIG_DIR`
   env + `--settings` / `--mcp-config` flags. They must exist on disk for
   a live `claude` to use them. The seed writes dev-profile defaults
@@ -223,9 +224,12 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
     mcp_config_path = Path.join(base, "orchestrator.mcp.json")
     claude_md_path = Path.join(base, "CLAUDE.md")
 
+    # PR-2 (domain.agent): keys mirror the AgentTemplate content intents —
+    # `project_cwd` (project/working dir) vs `config_dir` (sandbox config-home
+    # input). `write_template_slice/2` threads these into the template content.
     sandbox = %{
-      working_directory: base,
-      claude_config_dir: config_dir,
+      project_cwd: base,
+      config_dir: config_dir,
       settings_path: settings_path,
       mcp_config_path: mcp_config_path
     }
@@ -376,8 +380,8 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
         "The session orchestrator — an LLM-driven manager that composes " <>
           "and routes a team of worker agents via the 7 orchestration tools.",
       flavor: "cc",
-      working_directory: sandbox.working_directory,
-      claude_config_dir: sandbox.claude_config_dir,
+      project_cwd: sandbox.project_cwd,
+      config_dir: sandbox.config_dir,
       settings_path: sandbox.settings_path,
       mcp_config_path: sandbox.mcp_config_path,
       api_key_helper: nil,

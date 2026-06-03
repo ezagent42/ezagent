@@ -17,7 +17,7 @@ defmodule Ezagent.Entity.AgentTemplate do
   > **Single source of truth for cc agent sandbox/config.** A
   > standalone `cc-agent-config` SPEC was drafted 2026-05-22 and
   > RETIRED 2026-05-23 (branch `docs/cc-agent-config-spec` deleted,
-  > never merged): this slice schema (`claude_config_dir`,
+  > never merged): this slice schema (`config_dir`,
   > `settings_path`, `mcp_config_path`, `api_key_helper`) already
   > covered it. Operator companion runbook:
   > `docs/runbook/cc-agent-config.md`. Future plugin authors
@@ -46,9 +46,16 @@ defmodule Ezagent.Entity.AgentTemplate do
         flavor:             String.t(),       # "cc" etc.
 
         # PTY launch params (the flavor Template Class translates these
-        # to erlexec env + CLI args when starting the claude process)
-        working_directory:  String.t(),
-        claude_config_dir:  String.t() | nil,
+        # to erlexec env + CLI args when starting the claude process).
+        #
+        # PR-2 (domain.agent): `working_directory` was split into two clean
+        # intents — `project_cwd` (universal: where the agent works / cd's
+        # into → "cwd" data key) vs the cc-flavor `config_dir` (the sandbox
+        # config-home INPUT → "claude_config_dir" data key; renamed from
+        # `claude_config_dir`). `project_cwd` is universal; `config_dir` is
+        # cc-flavor-owned (curl/codex have no external config dir).
+        project_cwd:        String.t(),       # universal — the project/working dir
+        config_dir:         String.t() | nil, # cc only — sandbox config-home input
         settings_path:      String.t() | nil,  # --settings override
         mcp_config_path:    String.t() | nil,  # --mcp-config override
         api_key_helper:     String.t() | nil,  # macOS multi-agent only
@@ -67,12 +74,12 @@ defmodule Ezagent.Entity.AgentTemplate do
 
   The shape above is the cc-flavor view. Since SPEC
   2026-06-01-flavor-generic-template-data (approach B), the content is a
-  UNIVERSAL base (`flavor`, `working_directory`, `default_caps`,
+  UNIVERSAL base (`flavor`, `project_cwd`, `default_caps`,
   `parent_template_uri`, `created_by`, `created_at`) + **flavor-owned
   extras** declared by each flavor's Template Class via
   `c:Ezagent.Kind.Template.template_data_extra/1`. `to_template_data/2`
   stays flavor-agnostic: cc contributes
-  `claude_config_dir`/`settings_path`/`mcp_config_path`/`api_key_helper`/`role`;
+  `config_dir`/`settings_path`/`mcp_config_path`/`api_key_helper`/`role`;
   curl contributes `provider`/`api_url`/`model`/`system_prompt`/`max_history`;
   codex contributes `model`/`approval_policy`/`sandbox`/… A template missing a
   required flavor field fails loud at `to_template_data/2` (it runs the
@@ -80,7 +87,7 @@ defmodule Ezagent.Entity.AgentTemplate do
 
   **What is NOT in a cc AgentTemplate slice** (deliberately): prompt, model,
   effort, tools whitelist, MCP servers — for cc, those live in the pointed-at
-  `claude_config_dir` (or the explicit `settings_path` override); ESR doesn't
+  `config_dir` (or the explicit `settings_path` override); ESR doesn't
   re-model what CC already encodes. Other flavors (curl/codex) DO carry their
   provider/model in the slice (they have no external config dir to point at) —
   hence the flavor-owned extras above.
@@ -153,11 +160,18 @@ defmodule Ezagent.Entity.AgentTemplate do
   |-----------------------------|------------------------------|
   | (flavor's Class name)       | `"class"`                    |
   | `instance_agent_uri`        | `"agent_uri"`                |
-  | `working_directory`         | `"cwd"` (required — errors if nil) |
+  | `project_cwd`               | `"cwd"` (required — errors if nil) |
   | `settings_path`             | `"operator_settings_path"`   |
   | `mcp_config_path`           | `"operator_mcp_config_path"` |
-  | `claude_config_dir`         | `"claude_config_dir"`        |
+  | `config_dir`                | `"claude_config_dir"`        |
   | `api_key_helper`            | `"api_key_helper"`           |
+
+  PR-2 (domain.agent): the universal `project_cwd` (the project/working dir
+  the agent runs in — renamed from `working_directory`) and the cc-flavor
+  `config_dir` (the sandbox config-home input — renamed from
+  `claude_config_dir`) are two distinct intents. The DATA KEYS (`"cwd"`,
+  `"claude_config_dir"`) are unchanged — they are the universal flavor
+  Template-Class contract.
 
   The four optional keys are only added when present (a nil value is
   dropped) so the legacy 3-key cc.agent form still validates when the
@@ -175,7 +189,7 @@ defmodule Ezagent.Entity.AgentTemplate do
     # owned by their plugins. (Pre-fix this dropped curl/codex fields, so
     # orchestrator-spawned curl/codex workers had nil provider/model.)
     with {:ok, tc} <- resolve_template_class(content),
-         {:ok, cwd} <- fetch_working_directory(content) do
+         {:ok, cwd} <- fetch_project_cwd(content) do
       base = %{
         "class" => tc.template_name(),
         "agent_uri" => URI.to_string(instance_agent_uri),
@@ -245,10 +259,14 @@ defmodule Ezagent.Entity.AgentTemplate do
     end
   end
 
-  defp fetch_working_directory(content) do
-    case content_get(content, :working_directory) do
+  # PR-2 (domain.agent): `project_cwd` is the universal "where the agent works /
+  # cd's into" intent — the project directory, distinct from the cc-flavor
+  # `config_dir` (the sandbox config-home input). It maps to the universal
+  # `"cwd"` data key every flavor Template Class consumes.
+  defp fetch_project_cwd(content) do
+    case content_get(content, :project_cwd) do
       cwd when is_binary(cwd) and cwd != "" -> {:ok, cwd}
-      _ -> {:error, :missing_working_directory}
+      _ -> {:error, :missing_project_cwd}
     end
   end
 

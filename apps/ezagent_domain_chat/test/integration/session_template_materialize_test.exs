@@ -797,7 +797,7 @@ defmodule EzagentDomainChat.Integration.SessionTemplateMaterializeTest do
         args: %{
           content: %{
             flavor: "cc",
-            working_directory: "/tmp",
+            project_cwd: "/tmp",
             default_caps: [],
             created_by: User.admin_uri(),
             created_at: ~U[2026-06-01 00:00:00Z]
@@ -870,7 +870,7 @@ defmodule EzagentDomainChat.Integration.SessionTemplateMaterializeTest do
         mode: :call,
         args: %{
           content: %{
-            working_directory: "/tmp",
+            project_cwd: "/tmp",
             default_caps: [],
             created_by: User.admin_uri(),
             created_at: ~U[2026-06-01 00:00:00Z]
@@ -919,7 +919,7 @@ defmodule EzagentDomainChat.Integration.SessionTemplateMaterializeTest do
         args: %{
           content: %{
             flavor: "echo",
-            working_directory: "/tmp",
+            project_cwd: "/tmp",
             default_caps: [],
             created_by: User.admin_uri(),
             created_at: ~U[2026-06-01 00:00:00Z]
