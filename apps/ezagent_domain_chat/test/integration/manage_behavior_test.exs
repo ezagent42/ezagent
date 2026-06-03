@@ -30,8 +30,8 @@ defmodule EzagentDomainChat.Integration.ManageBehaviorTest do
       assert caps[:reconfigure] == expected
     end
 
-    test "reconfigure is unsupported by default (immutable Kind until PR-5e Class hooks)" do
-      assert {:ok, {:error, :reconfigure_unsupported}, []} =
+    test "reconfigure is unsupported by default — surfaces a dispatch error (immutable Kind until PR-5e)" do
+      assert {:error, :reconfigure_unsupported} =
                Manage.handle_reconfigure(%{template_data: %{}}, %{})
     end
 

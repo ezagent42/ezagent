@@ -95,8 +95,11 @@ defmodule Ezagent.Behavior.Manage do
   # `reconfigure/4` hooks land (PR-5e), no Kind declares a reconfigure hook,
   # so reconfigure is unsupported. Fail explicitly (immutable Kind) rather
   # than silently no-op or write a `:spec` that nothing re-materializes.
+  # Return a handler ERROR (not {:ok, {:error, ...}}) so dispatch surfaces it
+  # as `{:error, :reconfigure_unsupported}` — a caller branching on dispatch
+  # errors must see the failure, not a wrapped-error "success" (codex P2).
   def handle_reconfigure(_args, _ctx) do
-    {:ok, {:error, :reconfigure_unsupported}, []}
+    {:error, :reconfigure_unsupported}
   end
 
   # --- internals ---------------------------------------------------------
