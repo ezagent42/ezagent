@@ -24,7 +24,8 @@
 
 - **dev server**：用 **fresh `csdemo` profile** 跑（`EZAGENT_PROFILE=csdemo`，DB 在 `~/.ezagent/csdemo/db/`）。**你的 `default` profile 数据没动**（default 的真 agent 快照 stale-不兼容 current main，故另起干净 profile）。
 - **上一段结束时 server 还在后台跑**（带 `CLAUDE_CODE_OAUTH_TOKEN` env）。重启请见下。
-- **admin 登录**：`entity://user/system/admin` / `8bdemo`（**用完整 URI，裸 `admin` 登录会失败**）。
+- **登录用户**（都 `8bdemo`，**用完整 URI、裸 `admin` 会失败**）：运营 = `entity://user/system/admin`；**真客户 = `entity://user/system/customer1`**（建于 2026-06-03,给了 chat caps,用于分屏的"真客户视角"——之前两边都是 admin 靠字幕区分、不诚实,已改成真身份)。建客户用户 + 让它进会话发消息这步本身踩 GAP #3/#4(人类成员/cap)。
+- **demo 录制脚本踩坑补**：分屏用 `lv-record-split.js`（两 context 不同身份登录 + 外部 `ffmpeg hstack`）；cc-agent **首答 flaky**(orchestrator-template 的 worker 会试 `orch:bridge` 被拒),录前先 **WORKER_URI 预热**(发消息 retry 到它回一次)再录。
 - **token 是 ephemeral**：上一段放在 job tmp(`$CLAUDE_JOB_DIR/tmp/.oat`，随 job 清理)。**下一段要重新拿**：让 operator(Damon) 跑 `CLAUDE_CONFIG_DIR=~/.ezagent/cc-orchestrator/.claude claude setup-token`、把 `sk-ant-oat01-…` 给你;或复用还在跑的 server。
 
 ### 重启 csdemo server(带 token)
