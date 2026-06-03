@@ -76,7 +76,11 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
       for path <- lib_files(),
           relative(path) not in @uri_parse_allowlist,
           {line, lineno} <- Enum.with_index(File.stream!(path), 1),
-          Regex.match?(~r/\bURI\.parse\(/, line),
+          # #23 — negative lookbehind for word-char OR DOT so a module-qualified
+          # `Ezagent.URI.parse(` (the canonical non-raising constructor, uri.ex:242) is
+          # NOT flagged — only bare stdlib `URI.parse(`. Mirrors the §5.2 URI.new! regex
+          # which already excludes module-qualified calls.
+          Regex.match?(~r/(?<![\w.])URI\.parse\(/, line),
           not String.contains?(line, "# uri-canonical-allow"),
           not in_comment?(line) do
         {relative(path), lineno, String.trim(line)}
