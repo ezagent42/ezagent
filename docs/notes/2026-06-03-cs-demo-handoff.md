@@ -3,12 +3,14 @@
 > 上一段 session 把 CS-team 客服 demo 从"做不出 + 错误结论"推到"**核心 live demo 跑通**"。
 > 本文件让下一个 session 30 秒进入状态。配套读:`docs/notes/2026-06-02-cs-team-demo-script.md`(脚本/PRD + 完整 gap §3)、PR **#538**、memory `project-headless-cc-agent-auth-token`。
 
-## TL;DR — 现在在哪
+## TL;DR — 现在在哪（2026-06-03 更新）
 
-- **分支**：`docs/cs-team-demo-script`；**PR #538**（已开、已订正、含 Demo GIF）。
-- **已交付**：脚本/PRD(rev 4) + 后端彩排测试(全绿) + **1 处 core 修复**(`mcp_server.ex` `as_struct_content/1`) + 核心 demo `.webm`/GIF。
-- **核心 demo 跑通**：operator 对话 → 编排器 12s 真回复 → 真调 `list_templates` → 一句话 `add_managed_member` **spawn 出真客服坐席**。
-- **下一步(G-worker)**：customer→AI 回答还没通——worker 收到 `chat.receive` 但不回复(worker 侧 PTY/channel 生命周期那一层)。
+- **分支**：`docs/cs-team-demo-script`（**已 rebase 到 main #539**，force-pushed）；**PR #538**（已开、已订正、含**完整流程** Demo GIF）。
+- **已交付**：脚本/PRD(rev 5) + 后端彩排测试(全绿) + **1 处 core 修复**(`mcp_server.ex` `as_struct_content/1`) + **完整 demo** `evidence/2026-06-03-cs-demo-full-flow.{webm,gif}`(带字幕)。
+- **完整 live demo 跑通**：运营对话搭团队(列模板 + 加售前坐席)→ **客户咨询 → 售前 AI 真回答**(只能话术周旋、查不了库存 = GAP #1)。
+- **G-worker 已解**：之前卡是因为没在 #539 上跑；**rebase 到 #539(PR-DR `deliver_ensuring`)后 fresh worker 一上来就答**。
+- **凭证**：Allen 评论已采纳——env-token 只是本地 harness、不入提交;生产 = domain.agent 的 login-once-persist-inherit(归 domain.agent + #533)。
+- **下一步(方向已和 Allen 对齐)**：(1) 等 Allen 合 PR #538 非 token 部分;(2) **产品侧推进 autoservice,建在 domain.agent 上**(别再 plugin 改核心,会被拒);(3) 把两条设计输入提给 Allen 等他推进地基:**凭证 persist-and-inherit** + **"硬编码 auto-prompt 跨环境必脆,应继承已配好的 sandbox"**(`cc_agent.ex:989` 的 `"1\r"` + #512 EagerBridge 都是这个脆弱补丁)。
 
 ## 真根因 + 修复(最重要,别再走弯路)
 
