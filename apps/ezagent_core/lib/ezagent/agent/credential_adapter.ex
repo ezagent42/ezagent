@@ -37,6 +37,18 @@ defmodule Ezagent.Agent.CredentialAdapter do
   """
   @callback auth_failure_signals() :: [Regex.t() | String.t()]
 
+  @doc """
+  #17 PR-E (④, TEST/E2E ONLY) — provision valid credentials into an agent's config
+  `home` from a `source` credential path (refresh-if-expired + copy), so E2E runs without
+  a human login. SEPARATE from the declarative all-or-none group below (a flavor may
+  declare the credential identity above without yet supporting test auto-provisioning).
+  Guarded to non-:prod by callers.
+  """
+  @callback refresh_test_credentials(source :: String.t(), home :: String.t(), opts :: keyword()) ::
+              :ok | {:error, term()}
+
+  @optional_callbacks [refresh_test_credentials: 3]
+
   @declarative_callbacks [
     {:credential_env_var, 0},
     {:credential_relpaths, 0},
