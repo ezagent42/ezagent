@@ -29,6 +29,7 @@ Six notes have bilingual `.zh_cn.md` companions (marked **[zh]** below).
 - [Workspace = Deployment Unit](workspace-as-deployment-unit.md) — **[zh]** workspace as the unit of deployment.
 - [URI Design — current state + open questions](uri-design.md) — **[zh]** URI SPEC design state and the URI normative spec (§5).
 - [Plugin Receiver Kind contract](plugin-receiver-kind-contract.md) — the contract for plugins that receive messages from outside ESR.
+- [Lifecycle persistence-access discipline (2026-06-03)](2026-06-03-lifecycle-persistence-discipline.md) — persistence + create/activate go through the Lifecycle/framework functions, not low-level primitives; scan result (already clean) + the enforcing lint + follow-ups (maybe_save / SnapshotStore.write test-only writers).
 
 ## Walkthroughs / demos
 
