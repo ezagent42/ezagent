@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "inventory-data": {
+      "command": "python3",
+      "args": ["/Users/daiming/workspace/ezagent42/ezagent/docs/notes/evidence/agent-data-access/inventory_mcp.py"],
+      "env": {
+        "EZAGENT_INVENTORY_PATH": "/Users/daiming/workspace/ezagent42/ezagent/docs/notes/evidence/agent-data-access/inventory.json"
+      }
+    }
+  }
+}

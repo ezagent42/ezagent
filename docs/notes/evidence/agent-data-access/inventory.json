@@ -1,0 +1,10 @@
+{
+  "items": [
+    {"sku": "DOWN-XL", "name": "羽绒服 XL", "aliases": "羽绒服 加大 down jacket xl", "stock": 7, "price": 899, "warehouse": "上海仓"},
+    {"sku": "DOWN-L",  "name": "羽绒服 L",  "aliases": "羽绒服 大码 down jacket l",  "stock": 0, "price": 899, "warehouse": "上海仓"},
+    {"sku": "TEE-M",   "name": "纯棉T恤 M",  "aliases": "t恤 中码 tee m",            "stock": 142, "price": 79, "warehouse": "广州仓"}
+  ],
+  "orders": [
+    {"order_id": "O-1001", "status": "已发货", "item": "羽绒服 XL", "carrier": "顺丰", "tracking": "SF1234567890"}
+  ]
+}
