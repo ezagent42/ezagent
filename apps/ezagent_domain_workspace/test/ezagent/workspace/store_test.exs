@@ -35,10 +35,16 @@ defmodule Ezagent.Workspace.StoreTest do
       assert decoded.routing_rules == rules
     end
 
-    test "duplicate name returns error from unique constraint" do
+    test "duplicate name returns {:exists, decoded} — the ephemeral-Workspace freshness signal (#533 5a §3.10.2)" do
       name = "dup-#{System.unique_integer([:positive])}"
-      {:ok, _} = Store.create(name)
-      assert {:error, _} = Store.create(name)
+      {:ok, created} = Store.create(name)
+      # Workspace is an :ephemeral Kind (no snapshot `ever_created` marker),
+      # so its create-vs-adopt signal is the workspaces-table unique conflict
+      # — the ephemeral analog of Lifecycle.fresh_create?. The conflict path
+      # returns the EXISTING decoded row so the create-entry (5d) can adopt it.
+      assert {:exists, existing} = Store.create(name)
+      assert existing.name == name
+      assert URI.to_string(existing.uri) == URI.to_string(created.uri)
     end
   end
 

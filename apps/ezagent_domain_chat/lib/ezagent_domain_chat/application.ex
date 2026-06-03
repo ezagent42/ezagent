@@ -317,6 +317,9 @@ defmodule EzagentDomainChat.Application do
               # persisting. Re-attempt just the Store row.
               case Ezagent.Workspace.Store.create(name, attrs) do
                 {:ok, _} -> :ok
+                # #533 5a — Store.create signals an already-present row as
+                # {:exists, _}; here that's the goal (row exists), so :ok.
+                {:exists, _} -> :ok
                 {:error, _} -> :ok
               end
 

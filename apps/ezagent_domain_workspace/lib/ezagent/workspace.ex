@@ -63,6 +63,16 @@ defmodule Ezagent.Workspace do
     with {:ok, _decoded} <- Store.create(name, attrs),
          {:ok, pid} <- spawn_workspace(name, attrs) do
       {:ok, pid}
+    else
+      # #533 5a — Store.create now signals an existing workspace as
+      # {:exists, decoded} (the ephemeral freshness signal). This facade is
+      # NOT the adopt path (that arrives with the create-entry in 5d), and a
+      # create on an existing workspace must FAIL — see the onboarding
+      # "cannot hijack an existing workspace" security test. Map it to a
+      # clear error; preserve every other {:error, _} (incl. spawn's
+      # {:already_started, pid}) unchanged.
+      {:exists, _decoded} -> {:error, :workspace_exists}
+      {:error, _} = err -> err
     end
   end
 
