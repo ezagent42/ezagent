@@ -36,7 +36,11 @@ CLAUDE_CODE_OAUTH_TOKEN="<the sk-ant-oat01 token>" EZAGENT_PROFILE=csdemo mix ph
 
 ## 怎么驱动(Playwright)
 
-可复用脚本已固化在 `docs/notes/evidence/cs-demo-playwright/`：`lv-login.js`(登录+截图)、`lv-chat.js`(发消息+轮询回复)、`lv-record.js`(录 .webm)、`lv-newsession.js`、`lv-terminal.js`。
+可复用脚本已固化在 `docs/notes/evidence/cs-demo-playwright/`：`lv-login.js`(登录+截图)、`lv-chat.js`(发消息+轮询回复)、`lv-record.js`(录 .webm)、**`lv-record-caption.js`(录**带字幕**版：旁白/视角标签/gap 字幕烧进视频)**、`lv-newsession.js`、`lv-terminal.js`。
+
+**demo 资产(已落库,持久路径)**：`docs/notes/evidence/2026-06-02-cs-demo-orchestrator-live.{webm,gif,png}`(带字幕)。PR #538 的 Demo GIF 指它们(SHA-pin)。
+
+**字幕做法(`lv-record-caption.js`)**：往页面注入两个 `position:fixed` overlay(顶部视角标签 + 底部旁白字幕条),**务必 `pointer-events:none`**(否则盖住 Send 按钮、消息发不出),底部留 padding 别遮聊天输入框。GIF 用系统 ffmpeg。
 
 **踩过的坑（务必照做）**：
 - `NODE_PATH=/Users/daiming/.npm/_npx/<hash>/node_modules`（playwright 在 npx cache;`find ~/.npm/_npx -name playwright -type d` 找）。
@@ -57,6 +61,8 @@ CLAUDE_CODE_OAUTH_TOKEN="<the sk-ant-oat01 token>" EZAGENT_PROFILE=csdemo mix ph
 3. 若 worker 卡 onboarding/channel,把同样的 seed + token 路套上去。
 4. 通了就用 `lv-record.js` 加一段"客户问 → AI 答"录完整流程,补进 PR #538 的 Demo。
 5. 作为紧接的下一个小 PR(G-worker)。
+
+**视频后续(Allen review 反馈)**：当前 demo 只有 operator↔编排器一侧、已加字幕(顶部"OPERATOR 视角"+底部旁白/gap 字幕)。Allen 想要**左右分屏(客服界面 | operator界面)**——这要 G-worker 通了才能拍:两个浏览器 context(operator 一个、customer 一个,各登录不同 user),各自录 .webm,再用 `ffmpeg hstack` 左右拼;或同屏两个 LiveView。gap 也继续用字幕标(沿用 `lv-record-caption.js` 的 overlay 做法)。
 
 ## 给 Allen 的待决策（已在 PR #538 正文）
 ① 把 token 认证做进 cc seed/部署文档(headless agent 不能靠 Keychain,有利弊表);② demo gap 群归 #533 + `domain.agent`;③ G-worker 下一个小 PR。
