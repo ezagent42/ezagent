@@ -176,3 +176,21 @@ flagged items confirmed GREEN:
 
 **Verdict:** placement + styling adhere to `ui-contract.md`. No issues found.
 The audit is complete; no restyling work indicated.
+
+## Closure (2026-06-03, #18/#19 follow-up pass)
+
+Re-verified every load-bearing claim above against current source — all hold
+(routes in `apps/ezagent_web/lib/ezagent_web/router.ex`; `LvCliParityTest` at
+`apps/ezagent_core/test/invariants/lv_cli_parity_test.exs`). The doc carries **no
+unchecked checklist items / TODO / FIXME** — it is a finished audit, not a live
+backlog. Q1/Q2/Q3 are all closed with verdicts.
+
+One residual a11y nit the audit *text* surfaced is NOT yet fixed and is **owned by
+`ezagent_domain_ui`, outside `ezagent_plugin_liveview`**: the workspace dropdown in
+`apps/ezagent_domain_ui/lib/ezagent_domain_ui/ide_shell.ex` (`workspace_dropdown/1`)
+hard-codes `aria-label="Switch workspace"` (`切换工作区`) on BOTH perspectives, but
+on `:admin` the rendered control is a `system`-context label, not a switcher — so
+the a11y label is misleading there. Fix = make the label perspective-aware. Flagged
+here as a handoff to whoever owns `ezagent_domain_ui` (kept out of the #18 plugin PR
+to respect the in-flight-PR sequencing — this note is the breadcrumb so it is not
+lost).
