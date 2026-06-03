@@ -146,6 +146,11 @@ defmodule EzagentPluginCc.CredentialRefresh do
   defp put_expiry(acc, _m, _now), do: acc
 
   defp default_http_post(url, content_type, body) do
+    # codex PR-E review P2 — :httpc needs :inets (+ :ssl for HTTPS), which the cc plugin
+    # does not start in its app config; ensure they're up before the request so an
+    # isolated cc release can still refresh.
+    _ = :application.ensure_all_started(:inets)
+    _ = :application.ensure_all_started(:ssl)
     request = {String.to_charlist(url), [], String.to_charlist(content_type), body}
 
     case :httpc.request(:post, request, [{:timeout, 10_000}, {:connect_timeout, 5_000}], []) do
@@ -171,28 +176,38 @@ defmodule EzagentPluginCc.CredentialRefresh do
   end
 
   defp atomic_write(path, cred) do
-    tmp = path <> ".tmp-#{System.unique_integer([:positive])}"
-    encoded = Jason.encode!(cred, pretty: true)
+    case write_private(path, Jason.encode!(cred, pretty: true)) do
+      :ok -> :ok
+      {:error, err} -> {:error, {:atomic_write_failed, err}}
+    end
+  end
 
-    with :ok <- File.write(tmp, encoded),
+  defp copy_into_home(cred, home_dir) do
+    dst = Path.join(home_dir, @cred_relpath)
+
+    with :ok <- File.mkdir_p(home_dir),
+         :ok <- write_private(dst, Jason.encode!(cred, pretty: true)) do
+      :ok
+    else
+      err -> {:error, {:copy_into_home_failed, err}}
+    end
+  end
+
+  # codex PR-E review P2 — write through a private temp (chmod 0600 BEFORE it holds the
+  # token) then atomically rename, so `.credentials.json` is never world/group-readable
+  # even briefly (no umask-dependent exposure window).
+  defp write_private(path, content) do
+    tmp = path <> ".tmp-#{System.unique_integer([:positive])}"
+
+    with :ok <- File.touch(tmp),
          :ok <- File.chmod(tmp, 0o600),
+         :ok <- File.write(tmp, content),
          :ok <- File.rename(tmp, path) do
       :ok
     else
       err ->
         _ = File.rm(tmp)
-        {:error, {:atomic_write_failed, err}}
-    end
-  end
-
-  defp copy_into_home(cred, home_dir) do
-    with :ok <- File.mkdir_p(home_dir),
-         dst = Path.join(home_dir, @cred_relpath),
-         :ok <- File.write(dst, Jason.encode!(cred, pretty: true)),
-         :ok <- File.chmod(dst, 0o600) do
-      :ok
-    else
-      err -> {:error, {:copy_into_home_failed, err}}
+        {:error, err}
     end
   end
 
