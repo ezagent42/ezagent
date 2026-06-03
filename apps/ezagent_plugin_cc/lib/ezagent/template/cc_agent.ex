@@ -1842,42 +1842,65 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
       File.dir?(target) and File.exists?(marker) ->
         # Already exists AND marker present → completed copy from a
-        # prior spawn. Idempotent — return the path (live state).
+        # prior spawn. Idempotent — preserve (incl. any user `/login` creds).
         {:ok, target}
 
-      File.dir?(target) ->
-        # Marker absent — either a stale/partially-copied dir OR the freshly
-        # domain-allocated EMPTY dir (PR-3: `ConfigDir.allocate/2` did mkdir+chmod
-        # before materialize). Both cases: wipe + re-copy from the reference so the
-        # result is a complete, marker-verified copy (cp_r creates `target` fresh).
-        # Codex PR3 round-1 HIGH-2: a partial cp_r leaves missing files; PTY would
-        # launch with corrupt credentials. Better to re-create than adopt.
-        case File.rm_rf(target) do
-          {:ok, _} ->
-            do_atomic_copy(reference_dir, target, marker)
-
-          {:error, reason, _} ->
-            {:error, {:stale_dir_cleanup_failed, reason}}
-        end
+      File.dir?(target) and has_user_credentials?(target) ->
+        # #17 PR-B (codex review HIGH) — marker absent BUT the agent's login
+        # credential files are present → this is a REAL interactive `/login`, NOT
+        # our interrupted copy. NEVER wipe it. Adopt as complete and stamp the
+        # marker so future spawns take the idempotent branch above.
+        _ = File.write(marker, "ok\n")
+        {:ok, target}
 
       true ->
-        do_atomic_copy(reference_dir, target, marker)
+        # target absent, OR a credential-LESS dir (freshly-allocated empty dir from
+        # `ConfigDir.allocate/2`, or a partial copy with no user creds). Safe to
+        # (re)materialize via atomic staging.
+        stage_and_swap(reference_dir, target, marker)
     end
   end
 
-  # Copy + chmod + write marker as the LAST step. If anything before
-  # the marker fails, the next spawn sees marker-absent → wipes + retries.
-  defp do_atomic_copy(reference_dir, target, marker) do
+  # #17 PR-B — ATOMIC STAGING: build the full copy in a sibling staging dir, write the
+  # completion marker INSIDE it, then swap it into place with an atomic `rename`. The
+  # target therefore only ever appears fully-formed (marker present) or absent — never a
+  # partial copy — so a marker-absent target is unambiguous (it is a user `/login`, never
+  # our half-done copy). Supersedes the old blind stale-wipe (codex review HIGH-3).
+  defp stage_and_swap(reference_dir, target, marker) do
+    staging = "#{target}.staging-#{System.unique_integer([:positive])}"
+    marker_name = Path.basename(marker)
+    _ = File.rm_rf(staging)
+
     with :ok <- File.mkdir_p(Path.dirname(target)),
-         {:ok, _} <- File.cp_r(reference_dir, target),
-         :ok <- File.chmod(target, 0o700),
-         :ok <- chmod_credentials(target),
-         :ok <- File.write(marker, "ok\n") do
+         {:ok, _} <- File.cp_r(reference_dir, staging),
+         :ok <- File.chmod(staging, 0o700),
+         :ok <- chmod_credentials(staging),
+         :ok <- File.write(Path.join(staging, marker_name), "ok\n"),
+         :ok <- swap_into_place(staging, target) do
       {:ok, target}
     else
-      {:error, reason} -> {:error, {:copy_reference_dir_failed, reason}}
-      err -> {:error, {:copy_reference_dir_failed, err}}
+      {:error, reason} ->
+        _ = File.rm_rf(staging)
+        {:error, {:copy_reference_dir_failed, reason}}
+
+      err ->
+        _ = File.rm_rf(staging)
+        {:error, {:copy_reference_dir_failed, err}}
     end
+  end
+
+  # Remove a credential-LESS existing target (the only case that reaches here — a
+  # credentialled target is preserved by the `has_user_credentials?` guard above), then
+  # rename the staging dir into place. `rename` is atomic on the same filesystem (staging
+  # is a sibling of target).
+  defp swap_into_place(staging, target) do
+    if File.dir?(target), do: File.rm_rf(target)
+    File.rename(staging, target)
+  end
+
+  # True iff any of the flavor's declared credential files exist in `dir` (a real login).
+  defp has_user_credentials?(dir) do
+    Enum.any?(credential_relpaths(), fn rel -> File.exists?(Path.join(dir, rel)) end)
   end
 
   # The seed convention chmods `.credentials.json` to 0600 (file
