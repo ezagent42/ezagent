@@ -19,6 +19,24 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   @impl Ezagent.Kind.Template
   def template_name, do: "codex.agent"
 
+  # #17 PR-A — the codex credential adapter. Experiment-confirmed (2026-06-03):
+  # codex isolates per-agent creds via CODEX_HOME (relocates config AND auth), so codex is
+  # a first-class per-agent-file flavor symmetric to cc. See
+  # [[reference_codex_codex_home_per_agent_auth]]. The CODEX_HOME allocation + auth.json
+  # copy + env wiring lands in PR-A2; these are the pure declarations.
+  @behaviour Ezagent.Agent.CredentialAdapter
+
+  @impl Ezagent.Agent.CredentialAdapter
+  def credential_env_var, do: "CODEX_HOME"
+
+  @impl Ezagent.Agent.CredentialAdapter
+  def credential_relpaths, do: ["auth.json", "config.toml"]
+
+  # codex's expiry/missing-auth signatures (confirm against a live expiry in PR-C).
+  @impl Ezagent.Agent.CredentialAdapter
+  def auth_failure_signals,
+    do: [~r/Run codex login/, ~r/401 Unauthorized/, "no Codex credentials"]
+
   # SPEC 2026-06-01-flavor-generic-template-data (approach B): codex's
   # template_data fields, so an orchestrator-spawned codex worker carries
   # its model/approval/sandbox (pre-fix dropped by core's cc-only mapping).

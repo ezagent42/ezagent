@@ -206,6 +206,21 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   @impl Ezagent.Kind.Template
   def config_dir_namespace, do: "cc"
 
+  # #17 PR-A — the cc credential adapter (flavor-generic credential contract).
+  @behaviour Ezagent.Agent.CredentialAdapter
+
+  @impl Ezagent.Agent.CredentialAdapter
+  def credential_env_var, do: "CLAUDE_CONFIG_DIR"
+
+  @impl Ezagent.Agent.CredentialAdapter
+  def credential_relpaths, do: [".credentials.json"]
+
+  # claude prints these when the OAuth access token is expired/missing (~daily). Pure
+  # data — the PR-C PTY observer consumes them to notify the owner to re-`/login`.
+  @impl Ezagent.Agent.CredentialAdapter
+  def auth_failure_signals,
+    do: [~r/Please run \/login/, "API Error: 403", ~r/API Error: 401/, ~r/Invalid API key/]
+
   # SPEC 2026-06-01-flavor-generic-template-data (approach B): the
   # cc-specific template_data fields formerly hardcoded in
   # `AgentTemplate.to_template_data/2`. Reads atom-or-string content keys;
