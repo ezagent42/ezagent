@@ -135,8 +135,25 @@ AI 两步都答对(库存 7 件 + 订单 O-1001 已发货/顺丰)。
 - **产品侧(路径 2)**:我们自己的外部 MCP server 运行时长工具 + 发通知 → **不需要 ezagent 的 reconfigure 就能给活 agent 加能力**。比预期更强。
 - **地基(路径 1)**:ezagent 的 bridge 目前发**静态** tools 文件(`load_tool_schemas` 读文件);要支持运行时长工具,bridge 需在 session 可用工具变化时重算工具面 + 发 `tools/list_changed`。这归 Allen/domain,但 E2 证明了**值得做**(claude 端已经接得住)。
 
+### E1b —— 挂到 ezagent spawn 的 in-session worker(**配置打通,被地基的 worker 生命周期挡住**)
+建了 agent template `template://agent/system/cc-presale-inventory`(`content.mcp_config_path` → `operator_mcp_config_path`,
+即外部 inventory MCP;role=default)。经编排器 `add_managed_member` 在 csdemo 真 session 里 spawn 出 worker
+`cc_presale_inv-6077…`。证据链:
+- **add_managed_member 成功**(需先补 PR #538 的 G-mcp `structuredContent` 修复 —— 本分支 off main 缺它,
+  会报 `expected record, received string`;已在本分支 re-apply,Allen 已认可该修复可独立 land)。编排器确认
+  "售前客服坐席已就绪 … in_session_template:true"。
+- **inventory MCP 确实挂上了**:worker 的 claude argv 实测含 `--mcp-config …/inventory.mcp.json`(在强制 chat bridge 之后,additive)。配置层完全打通。
+- **但 worker 不处理 chat**:客户 @mention → `AgentBridge deliver dropped: :timeout`,worker 零回复,inventory_mcp.py 始终没被拉起(claude 没走到处理消息那步)。chat esr-bridge 进程在跑,但 worker claude 没 join channel / 没消费消息。
+
+**结论**:**数据接入这一层是对的**(inventory MCP 成功挂到 in-session worker、add_managed_member 通);卡点是
+**cc-worker 的 chat-reply 生命周期**(deliver timeout / channel-join),跟 G-worker、#539 `deliver_ensuring`、
+#512 EagerBridge 同一类 —— **地基问题,非本探索的数据接入设计**。按约定:产品侧把 E1/E2 证清楚(已做),
+worker 生命周期归 Allen,提需求等推进。所以 E1b 的"live UI 版"暂时录不了;E1 的可交付是终端回放视频(已做)。
+
+> 未排除的次因:本 worker 用了最小 `claude_config_dir`(仅 .claude.json)+ role=default,与会能回复的 demo worker
+> (orchestrator-role、完整 config dir)不同;但即便如此,deliver timeout 指向 channel 生命周期而非配置缺失。
+
 ### 还没测
-- **E1b**:把这个外部 server 经 `operator_mcp_config_path` 挂到 **ezagent spawn 的 worker**(证明在 session 机制内也成立)。需要建带该字段的 agent template,是下一步集成验证。
 - read-cap / 真实数据源鉴权 —— 见 §8。
 
 ## 8. 待 Allen / 待定
