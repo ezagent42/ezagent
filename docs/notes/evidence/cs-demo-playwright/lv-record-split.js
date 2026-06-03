@@ -2,12 +2,13 @@
 // Records two videos; ffmpeg hstack外部拼接。
 const { chromium } = require('playwright');
 const BASE = process.env.BASE || 'http://127.0.0.1:10042';
-const USER = 'entity://user/system/admin';
+const OP_USER = 'entity://user/system/admin';        // 运营
+const CUST_USER = 'entity://user/system/customer1';  // 真客户
 const PASS = '8bdemo';
 const OUTL = process.argv[2] || '/tmp/recL';
 const OUTR = process.argv[3] || '/tmp/recR';
 const ORCH = 'entity://agent/system/cc_orchestrator-main';
-const ROLE = 'presale_split';
+const ROLE = 'presale_real2';
 const PANE = { width: 760, height: 900 };
 
 function overlay(page, role, cap, sub) {
@@ -21,21 +22,21 @@ function overlay(page, role, cap, sub) {
       bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:2147483647;pointer-events:none;background:rgba(8,12,24,.92);color:#fff;font:600 20px/1.3 -apple-system,system-ui,sans-serif;padding:14px 18px 88px;text-align:center;border-top:3px solid #34d399;';
       document.body.appendChild(bar);
     }
-    lab.textContent = role === 'op' ? '👤 运营视角' : '🛍️ 客户视角';
+    lab.textContent = role === 'op' ? '👤 运营视角 · 登录为 user/system/admin' : '🛍️ 客户视角 · 登录为 user/system/customer1';
     lab.style.background = role === 'op' ? 'rgba(37,99,235,.95)' : 'rgba(217,70,239,.95)';
     bar.innerHTML = cap + (sub ? `<div style="font-size:15px;font-weight:400;opacity:.88;margin-top:5px;">${sub}</div>` : '');
   }, { role, cap, sub: sub || '' });
 }
-async function login(page) {
+async function login(page, user) {
   for (let a = 1; a <= 3; a++) {
     await page.goto(`${BASE}/login`, { waitUntil: 'networkidle' });
-    await page.fill('input[name="entity_uri"]', USER); await page.fill('input[name="secret"]', PASS);
+    await page.fill('input[name="entity_uri"]', user); await page.fill('input[name="secret"]', PASS);
     await page.click('button[type="submit"]', { noWaitAfter: true });
     await page.waitForURL((u) => !String(u).includes('/login'), { timeout: 20000 }).catch(() => {});
     await page.waitForTimeout(1500);
     if (!String(page.url()).includes('/login')) return;
   }
-  throw new Error('login failed');
+  throw new Error('login failed: ' + user);
 }
 async function send(page, text) {
   const i = page.locator('textarea, input[placeholder*="message"], input[placeholder*="mention"]').first();
@@ -52,7 +53,7 @@ async function waitRep(page, m, b, ms) { const e = Date.now()+ms; while (Date.no
   const ctxL = await browser.newContext({ viewport: PANE, recordVideo: { dir: OUTL, size: PANE } });
   const ctxR = await browser.newContext({ viewport: PANE, recordVideo: { dir: OUTR, size: PANE } });
   const L = await ctxL.newPage(), R = await ctxR.newPage();
-  await Promise.all([login(L), login(R)]);
+  await Promise.all([login(L, CUST_USER), login(R, OP_USER)]);
   await Promise.all([L.goto(`${BASE}/sessions`,{waitUntil:'domcontentloaded'}), R.goto(`${BASE}/sessions`,{waitUntil:'domcontentloaded'})]);
   await L.waitForTimeout(2500);
   await overlay(L, 'cust', '电商 AI 客服台'); await overlay(R, 'op', '电商 AI 客服台');
@@ -67,17 +68,32 @@ async function waitRep(page, m, b, ms) { const e = Date.now()+ms; while (Date.no
   await overlay(R, 'op', '① 编排器返回真实模板', '→ 真调 list_templates 工具');
   await R.waitForTimeout(4000);
 
+  const WORKER = process.env.WORKER_URI;
+  let worker;
   b = await cnt(R, ORCH);
-  await overlay(R, 'op', '② 运营：「加一个售前 AI 客服坐席」');
-  await R.waitForTimeout(1500); await send(R, `@${ORCH} 请用 add_managed_member 从 template://agent/system/cc-orchestrator 启动一个售前客服坐席，role_name=${ROLE}，in_session_template=true。简短确认。`);
-  await overlay(R, 'op', '② 加售前客服坐席', '⏳ 编排器 add_managed_member、SPAWN 真 worker…'); await waitRep(R, ORCH, b, 120000);
-  await scroll(R); await overlay(R, 'op', '② 售前 AI 客服已上线', '→ 真 spawn cc worker（右侧 MEMBERS 多出成员）');
-  await R.waitForTimeout(5000);
-
-  const uris = await R.evaluate(() => { const re=/entity:\/\/agent\/system\/cc_[a-z0-9_]+-[0-9a-f]+--[0-9a-f]+/g; return Array.from(new Set((document.body.innerText.match(re)||[]))); });
-  const worker = uris.find(u=>u.includes(ROLE)) || uris.find(u=>!u.includes('orchestrator'));
+  if (WORKER) {
+    worker = WORKER;
+    await overlay(R, 'op', '② 运营：「确认售前 AI 客服已就绪」');
+    await R.waitForTimeout(1500); await send(R, `@${ORCH} 我这个会话里已经有一个售前客服坐席(role_name=${ROLE})，请简短确认它在线、可以接待客户。`);
+    await overlay(R, 'op', '② 确认售前客服', '⏳ 编排器确认中…'); await waitRep(R, ORCH, b, 90000);
+    await scroll(R); await overlay(R, 'op', '② 售前 AI 客服已就绪', '→ 编排器确认成员在线（右侧 MEMBERS 可见）');
+    await R.waitForTimeout(5000);
+  } else {
+    await overlay(R, 'op', '② 运营：「加一个售前 AI 客服坐席」');
+    await R.waitForTimeout(1500); await send(R, `@${ORCH} 请用 add_managed_member 从 template://agent/system/cc-orchestrator 启动一个售前客服坐席，role_name=${ROLE}，in_session_template=true。简短确认。`);
+    await overlay(R, 'op', '② 加售前客服坐席', '⏳ 编排器 add_managed_member、SPAWN 真 worker…'); await waitRep(R, ORCH, b, 120000);
+    await scroll(R); await overlay(R, 'op', '② 售前 AI 客服已上线', '→ 真 spawn cc worker（右侧 MEMBERS 多出成员）');
+    await R.waitForTimeout(5000);
+    worker = null;
+    for (let i = 0; i < 15; i++) {
+      await R.waitForTimeout(3000); await scroll(R);
+      const uris = await R.evaluate(() => { const re=/entity:\/\/agent\/system\/cc_[a-z0-9_]+-[0-9a-f]+--[0-9a-f]+/g; return Array.from(new Set((document.body.innerText.match(re)||[]))); });
+      worker = uris.find(u => u.includes(ROLE));
+      if (worker) break;
+    }
+    if (!worker) throw new Error('no worker uri for ' + ROLE);
+  }
   console.log('worker:', worker);
-  if (!worker) throw new Error('no worker uri');
 
   // Phase 2: customer asks (LEFT active, RIGHT shows ready)
   await overlay(R, 'op', '✅ 客服团队已搭好', '运营侧完成，看客户咨询 →');
