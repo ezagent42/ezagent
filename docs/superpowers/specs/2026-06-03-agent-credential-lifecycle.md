@@ -1,154 +1,160 @@
-# SPEC: domain.agent credential lifecycle (#17) — flavor-generic
+# SPEC: domain.agent credential lifecycle (#17) — flavor-generic (rev 2)
 
-> **Status:** DRAFT for Allen review + codex adversarial-review BEFORE implementation.
-> Builds on domain.agent (`2026-06-02-domain-agent-design.md`) + PR-3 (per-agent
-> `Ezagent.Sandbox.ConfigDir`, `CLAUDE_CONFIG_DIR` → sandbox). Terms: domain.agent spec.
-> Allen decisions (2026-06-03, Feishu): users log in interactively (PTY + `claude /login`);
-> our job is PERSIST + REUSE; auto-refresh is a TEST-SUITE capability (E2E must not need a
-> human re-login); **the mechanism must apply to codex too, not just cc** → flavor-generic.
+> **Status:** rev 2 — Allen decisions D1–D4 LOCKED (2026-06-03 Feishu) + codex
+> adversarial-review rev-1 findings folded (NO-SHIP → resolved below). For
+> re-adversarial-review BEFORE implementation. Builds on `2026-06-02-domain-agent-design.md`
+> + PR-3 (`Ezagent.Sandbox.ConfigDir`, `CLAUDE_CONFIG_DIR` → per-agent sandbox).
 
-## 1. Problem
+## Locked decisions (Allen 2026-06-03)
 
-A cc agent's claude login is a file `<config_dir>/.credentials.json`
-(`claudeAiOauth.{accessToken, refreshToken, expiresAt, scopes, subscriptionType,
-rateLimitTier}`). access tokens expire ~daily; refresh tokens are longer-lived but
-**single-use (rotated on use)**. Today:
+- **D1 — test mechanism = OAuth FILE path (fidelity), via refreshToken refresh.** NOT
+  API-key. **Architectural call: API-key auth is its own future FLAVOR** (API access ⇒
+  third-party models), not an auth-mode of cc — out of scope here. The cc credential
+  lifecycle is anchored on the real OAuth `.credentials.json` users actually produce.
+- **D2 — ② expiry notification** carries a **clickable terminal-PTY URL** (Tailscale
+  `100.64.0.27`) the user taps to enter the agent's terminal and run `/login`.
+- **D3 — ③ inheritance** = copy-at-spawn + owner-re-login resync; the **owner must be
+  resolved explicitly** (the user's root/default agent), NOT the lineage parent.
+- **D4 — codex is in scope**, reusing the **already-live codex agent config** (node
+  `~/.codex`) as the source — no new codex cred model built.
 
-- **No persistence guarantee surfaced as a contract** — creds happen to land in the
-  sandbox because PR-3 sets `CLAUDE_CONFIG_DIR` there; nothing tests/owns "user-login
-  creds survive respawn."
-- **Silent mute on expiry** — claude prints `API Error: 403` / `Please run /login`; the
-  PTY scanner (`Ezagent.Domain.Pty.Server.default_auto_prompts/0`) has NO auth-failure
-  rule, so an expired agent receives mentions but never replies (the 传话游戏 symptom).
-  NOTE: this is partly claude-code's own headless/copied-creds auto-refresh bug
-  (anthropics/claude-code #21765, #50743, #34306 — it 401s instead of using a valid
-  refreshToken when creds are copied to a headless node).
-- **No inheritance** — `mix ezagent.agent.create --from <uri>` clones a source agent's
-  config_dir manually; nothing wires lineage/ownership → a child's cred source.
-- **No test/E2E provisioning** — only `Mix.Tasks.Ezagent.Demo.SeedCcSandbox` (copy host
-  `~/.claude/.credentials.json`) + a manual `cp`; E2E needs a human `/login` per run.
-- **Codex** has NO credential code at all (relies on node `~/.codex` / env).
+## rev-1 codex findings → rev-2 resolutions
 
-## 2. Scope (Allen-confirmed)
+- **BLOCKER (test-provision callback can't express API-key env):** moot — D1 chose the
+  OAuth FILE path, so `provision_test_credentials/1` writes a FILE into the cred home;
+  the file-writer shape is correct. (API-key/env is a separate flavor, D1.)
+- **BLOCKER (owner ≠ lineage parent; session workers' spawned_by = orchestrator):**
+  resolved — §3.③ defines an explicit, cap-checked credential SOURCE; lineage is not the
+  authority. (D3 "owner 搞准".)
+- **BLOCKER (cc-shaped, codex generality overclaimed):** resolved — §3.0 defines TWO
+  credential MODELS (per-agent-isolated vs node-shared); codex's adapter is the
+  node-shared reuse-live one (D4), concrete not deferred.
+- **HIGH (3 callbacks on Kind.Template not "thin"):** resolved — a SEPARATE
+  `Ezagent.Agent.CredentialAdapter` behavior, registered per flavor, all-or-none opt-in
+  (mirrors the extension-callback all-or-none precedent).
+- **HIGH (persistence over-claim; stale-marker rm_rf clobbers user creds):** resolved —
+  §3.① adds a credential-aware guard: never `rm_rf` a target whose declared credential
+  files exist; the claim is narrowed.
+- **HIGH (inheritance copies whole tree; bypasses sandbox.read cap):** resolved — §3.③
+  uses a FILTERED copy of only declared credential files + reuses the existing
+  `sandbox.read` authorization seam.
+- **HIGH (OAuth rotation hazard for shared E2E fixture):** resolved — §3.④ uses a
+  per-test disposable/locked credential source + atomic write-back of the rotated token.
+- **MEDIUM (auth-detection on the stdin-sending auto-prompt scanner):** resolved — §3.②
+  is a SEPARATE PTY event detector that emits an event + notifies; never sends bytes.
 
-**Production runtime (flavor-generic):**
-- ① **Persistence** — creds the user writes via interactive `/login` (into the per-agent
-  `config_dir` = `CLAUDE_CONFIG_DIR`) survive agent restart / re-instantiate, never
-  clobbered.
-- ② **Clear error on expiry** — detect the flavor's auth-failure signature in PTY output
-  → notify the owner (channel) "re-login in agent X's terminal"; no silent mute.
-- ③ **Inheritance** — user logs in once in one agent (e.g. `<username>-default`); its
-  owned/forked agents inherit its creds at spawn via lineage.
+## 1. Problem (unchanged from rev 1 — abbreviated)
 
-**Test / E2E only:**
-- ④ **Credential auto-provision** — the test harness makes valid creds available to E2E
-  agents WITHOUT a human `/login`, so 传话游戏 E2E is self-sufficient (aligns with
-  `feedback_self_generate_test_credentials`).
+cc login = `<config_dir>/.credentials.json` (`claudeAiOauth.{accessToken, refreshToken,
+expiresAt, scopes, subscriptionType, rateLimitTier}`); access ~daily expiry; refresh
+tokens single-use/rotated. Today: no persistence contract, silent mute on expiry (no PTY
+auth-failure rule), no inheritance wiring, no test provisioning (manual cp / human
+/login), codex has no cred code (uses node `~/.codex`). claude-code itself has a known
+headless/copied-creds auto-refresh bug (#21765/#50743) → the 传话游戏 403.
 
-**NON-goals (explicitly dropped):** production auto-refresh runtime code; a custom login
-flow (use the existing PTY terminal + `/login`); explicit `HTTPS_PROXY` threading (the
-PTY child already inherits node OS env via erlexec — ops/deploy concern, #21).
+## 2. Scope
 
-## 3. Design — the flavor-generic credential contract
+Prod: ① persistence, ② clear-error+notify, ③ inheritance. Test/E2E: ④ auto-provision.
+**Non-goals:** API-key auth (separate flavor, D1); production runtime auto-refresh
+(users re-login); explicit HTTPS_PROXY threading (node OS-env inheritance, → #21);
+codex per-agent cred isolation (codex reuses node config, D4).
 
-The DOMAIN owns the lifecycle; each flavor PLUGIN provides a thin **credential adapter**.
-The adapter lives on `Ezagent.Kind.Template` as new OPTIONAL callbacks (a flavor with no
-creds — curl/echo — omits them):
+## 3. Design
+
+### 3.0 Two credential MODELS behind one adapter
+
+`Ezagent.Agent.CredentialAdapter` (new behavior; a flavor implements ALL callbacks or
+NONE — enforced by an invariant test like the extension-contract one):
 
 ```
-@callback credential_relpaths() :: [String.t()]
-  # files within config_dir that ARE the login state (cc: [".credentials.json"];
-  # codex: ["auth.json"]). Used by ③ inheritance (which files to carry) + ① (what to
-  # assert persists).
-
-@callback auth_failure_patterns() :: [Regex.t() | String.t()]
-  # PTY output signatures meaning "expired/missing auth, needs re-login"
-  # (cc: ~r/Please run \/login/, "API Error: 403"; codex: its equivalent).
-  # Fed into the Pty scanner for ②.
-
-@callback provision_test_credentials(config_dir :: String.t()) :: :ok | {:error, term}
-  # TEST/DEV ONLY (④): write valid creds into config_dir so an E2E agent works without a
-  # human /login. Guarded to non-:prod Mix.env (or an explicit allow flag).
+@callback credential_model() :: :per_agent_file | :node_shared
+@callback credential_home(agent_uri) :: {:ok, path} | :node   # where login state lives
+@callback credential_relpaths() :: [String.t()]               # the files that ARE login state
+@callback auth_failure_signals() :: [%{match: Regex.t()|String.t()}]  # PTY expiry signatures
+@callback provision_test_credentials(home_path) :: :ok | {:error, term}  # ④, test/dev only
 ```
 
-The domain owns: where creds live (the PR-3 `config_dir`), persistence (marker
-idempotence + restart-reuse), the owner-notification surface, and the lineage→source
-wiring. The plugin owns ONLY the flavor specifics above. (North-Star: plugin authors add
-a flavor without touching domain credential code.)
+- **cc** → `:per_agent_file`; home = the PR-3 per-agent `config_dir`; relpaths =
+  `[".credentials.json"]`; signals = `["Please run /login", "API Error: 403", ~r/401/]`;
+  provision = OAuth refresh (§3.④).
+- **codex** → `:node_shared`; home = `:node` (node `~/.codex`, already live, D4);
+  relpaths = `["auth.json"]`; signals = codex's expiry text (open: confirm);
+  provision = no-op (live node config already valid).
 
-### ① Persistence (mostly already true — make it a contract + test)
-- `/login` writes into `CLAUDE_CONFIG_DIR` = the per-agent `config_dir` (PR-3). Restart
-  (`ensure_subprocess_alive`) reuses the dir untouched; re-instantiate hits the
-  `.ezagent-config-complete` marker → idempotent, no re-copy (PR-3). So user creds
-  persist by construction.
-- **Hazard to close:** the production reference/seed dir must NOT ship a stale
-  `.credentials.json` that the FIRST materialize copies over a real one. Fresh-create
-  copies the reference BEFORE the user logs in, so the reference should be
-  credential-less in prod (the user supplies creds via `/login`). Assert: a reference
-  with no creds → empty cred slot → `/login` populates → survives respawn.
-- **Deliverable:** a regression test "a credential file written into a materialized
-  config_dir survives a re-instantiate (marker present → no re-copy)" — extends the
-  existing PR-3 idempotence test, framed for creds.
+Domain owns the LIFECYCLE (persist/notify/inherit/test-orchestrate); the adapter supplies
+only the flavor specifics. North-Star: a new flavor adds an adapter, touches no domain
+credential code.
 
-### ② Clear error on expiry
-- Add a domain-driven auth-failure rule to the Pty scanner: when PTY output matches the
-  flavor's `auth_failure_patterns/0`, emit a structured signal (phase/telemetry) AND
-  notify the agent's owner via the channel: "Agent <uri> needs re-login — open its
-  terminal and run `/login`." (Owner resolved via lineage/`created_by`.)
-- Must NOT auto-`/login` or swallow; it's an explicit, actionable notification (no silent
-  mute, no degrade — `feedback_let_it_crash_no_workarounds`).
+### 3.1 Persistence
+- cc: `/login` writes into `CLAUDE_CONFIG_DIR` = per-agent `config_dir` (PR-3). Restart
+  reuses the dir untouched; re-instantiate hits the marker → no re-copy.
+- **Guard (codex HIGH):** `materialize_config_dir` MUST NOT `rm_rf` a marker-absent target
+  when any `credential_relpaths/0` file exists in it — back up + refuse with a structured
+  error (a credentialled-but-markerless dir means a real login we must not destroy), not
+  a blind wipe. Narrowed claim: "marker-present OR credentialled dirs are never
+  auto-wiped."
+- Prod reference/seed dir ships NO `.credentials.json` (user supplies via /login).
+- Test: re-instantiate after a written credential preserves it (regression test).
 
-### ③ Inheritance (the one piece with real design weight)
-- At fresh spawn of an owned/forked agent, the domain sets the new agent's `config_dir`
-  REFERENCE to the OWNER's realized config_dir (so materialize cp_r's the owner's creds).
-- "Owner" = the lineage parent (`record_lineage` / `created_by`) — typically the user's
-  `<username>-default` agent the user logged into. Carry ONLY `credential_relpaths/0`
-  files (+ existing settings/skills) — not transient state.
-- Open: copy-at-spawn (snapshot; child diverges) vs re-sync on owner re-login. Recommend
-  copy-at-spawn for V1 (simple, matches existing cp_r); re-sync is a later enhancement.
+### 3.2 Clear error on expiry + notify (D2)
+- A SEPARATE PTY event detector (NOT `default_auto_prompts`, which sends stdin bytes):
+  scans stripped output for the adapter's `auth_failure_signals/0`; on match emits
+  `[:ezagent, :agent, :auth_failed]` telemetry + a phase signal AND notifies the owner.
+- **Notification** (D2): to the owner's channel — "Agent <uri> needs re-login" + a
+  **clickable terminal URL** `http://100.64.0.27:<port>/.../terminal/<agent_uri>` so the
+  user taps in and runs `/login`. Owner resolved per §3.3.
+- No auto-`/login`, no swallow, no degrade (`feedback_let_it_crash_no_workarounds`).
+- Signal fragility (codex MEDIUM): regex on UI text is best-effort; mark as the V1 signal,
+  prefer a stable bridge/exit signal if one surfaces (UNVERIFIED until found).
 
-### ④ Test/E2E auto-provision — DECISION POINT (see §4)
-- The harness calls `provision_test_credentials/1` for each E2E agent before launch.
-- Two candidate mechanisms (flavor adapter implements one) — Allen to pick (§4 D1).
+### 3.3 Inheritance (D3) — explicit, cap-checked, filtered
+- **Credential SOURCE resolution (codex BLOCKER fix):** NOT the lineage parent. The
+  source is EITHER (a) an explicitly selected source agent (operator/caller chooses), OR
+  (b) the **caller's root/default agent** (`<username>-default`, per
+  `project_username_default_agent`). Resolved by an explicit function, not `spawned_by`.
+- **Authorization (codex HIGH):** reading the source's credential home REUSES the existing
+  `sandbox.read` cap seam (as `mix ezagent.agent.create --from` does) — lineage may
+  PROPOSE a default source, but the `sandbox.read` check AUTHORIZES the copy. Unauthorized
+  → fail before any filesystem work.
+- **Filtered copy (codex HIGH):** copy ONLY `credential_relpaths/0` (+ explicitly allowed
+  settings/skills) from source home → child home — NEVER point the child's `config_dir`
+  reference at the source's realized dir (that would drag session/bridge/runtime
+  artifacts).
+- Timing (D3): copy-at-spawn (V1) + resync owned agents when the owner re-logs in
+  (triggered off the owner's `/login` success / a fresh `.credentials.json` mtime).
 
-## 4. DECISION POINTS (Allen)
+### 3.4 Test/E2E auto-provision (④, D1 = OAuth refresh)
+- The harness, before launching E2E agents, calls the adapter's
+  `provision_test_credentials/1`.
+- **cc:** refresh via `POST https://console.anthropic.com/api/oauth/token`
+  (`grant_type=refresh_token`, `client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e`,
+  `refresh_token=<stored>`), write the returned `accessToken`+rotated `refreshToken`+
+  `expiresAt` into the agent's `.credentials.json`. **Rotation safety (codex HIGH):** the
+  source refresh token is a per-test **disposable/locked copy** (a dedicated test
+  credential, NOT Allen's live host cred) with an exclusive lock around
+  read→refresh→atomic-write-back, so concurrent E2E tests never invalidate each other's
+  source. Endpoint path (`/api/oauth/token` vs `/v1/oauth/token`) VERIFIED against a live
+  cred before relying on it.
+- **codex:** no-op — relies on the already-live node `~/.codex` (D4). (If E2E needs codex
+  and the node lacks codex auth, that's an ops precondition like proxy, → #21.)
+- All provisioning guarded to non-`:prod` Mix.env / explicit test allow-flag.
 
-**D1 — ④ provisioning mechanism (the main fork):**
-- **(i) OAuth refresh** — adapter POSTs the stored `refreshToken` to
-  `https://console.anthropic.com/api/oauth/token` (`grant_type=refresh_token`,
-  `client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e`), writes back the rotated
-  access+refresh tokens. PRO: exercises the real OAuth cred path (high E2E fidelity);
-  uses the subscription. CON: reverse-engineers claude internals (endpoint/client_id
-  may change); single-use rotation means we MUST persist the new refreshToken or break
-  the source; per-flavor (codex needs its own OpenAI refresh endpoint).
-- **(ii) API key** — adapter writes `ANTHROPIC_API_KEY` (cc) / `OPENAI_API_KEY` (codex)
-  into the agent env from the host's key. PRO: Anthropic's OWN recommendation for
-  headless/CI; dead simple; never expires; generalizes across flavors uniformly; no
-  reverse-engineering. CON: tests the API-key path, not the OAuth file path (lower
-  fidelity to the production `/login` cred flow); uses API billing not the subscription.
-- **Recommendation:** **(ii) API key for the E2E happy-path** (robust, flavor-generic,
-  no brittle reverse-engineering) PLUS a SEPARATE small test that exercises the OAuth
-  file path with a (i)-style refresh so ①③ are covered for the real cred shape. i.e.
-  default E2E uses API-key; one focused test covers OAuth-refresh fidelity. ← challenge.
+## 4. Decomposition (small PRs)
+- **PR-A:** `CredentialAdapter` behavior + cc adapter (model/home/relpaths/signals) +
+  all-or-none invariant test. cc wired; codex adapter (node-shared, provision no-op).
+- **PR-B:** ① persistence guard (credential-aware stale-wipe refusal) + regression test.
+- **PR-C:** ② auth-failure detector + owner notify-with-PTY-URL (D2).
+- **PR-D:** ③ explicit cred-source resolver + `sandbox.read` cap + filtered copy
+  (copy-at-spawn) + owner-resync.
+- **PR-E:** ④ cc OAuth-refresh test provisioner (disposable/locked source, atomic
+  write-back) + wire 传话游戏 E2E to it (no human /login).
 
-**D2 — ② owner-notification surface:** notify via the channel (Feishu) the owner reads,
-keyed on `created_by`? Or also a LV badge on the agent? Recommend channel notify
-(primary) + the existing PTY phase badge.
-
-**D3 — ③ inheritance trigger:** copy-at-spawn only (V1), or also re-sync owned agents
-when the owner re-logs in? Recommend copy-at-spawn V1.
-
-## 5. Open items / investigation
-- **Codex credential adapter:** confirm codex's cred file (`~/.codex/auth.json`?) +
-  schema + its auth-failure PTY signature + whether `OPENAI_API_KEY` env suffices for
-  headless. (Implement the cc adapter first; codex adapter follows, same contract.)
-- **macOS Keychain:** on macOS `claude /login` stores creds in Keychain, not the file —
-  so ①③ file-based persistence/inheritance only hold on the Linux prod node (acceptable;
-  flag in the runbook).
-- Verify the refresh endpoint path (`/api/oauth/token` vs `/v1/oauth/token`) against a
-  live host cred before relying on (i).
+## 5. Open items
+- Confirm codex's `~/.codex/auth.json` schema + expiry PTY signature (for the codex
+  adapter's `auth_failure_signals/0`); codex provision stays no-op in V1.
+- Verify the refresh endpoint path against a live cred before PR-E.
+- macOS Keychain: file-based ①③ hold only on the Linux prod node (runbook note).
 
 ## 6. Process
-Allen picks D1–D3 → finalize SPEC → codex adversarial-review → writing-plans → TDD.
-Implement cc adapter + the generic domain lifecycle first; codex adapter as a follow-up
-PR on the same contract.
+codex adversarial-review rev 2 → writing-plans per PR → TDD. Implement PR-A→E in order;
+each PR → codex code-review before merge.
