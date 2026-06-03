@@ -68,11 +68,27 @@ async function login(page, user) {
   }
   throw new Error('login failed: ' + user);
 }
-async function send(page, text) {
+// Glow the ACTUAL composer element (queried, not coordinate-pinned) so the typed text —
+// which differs per role (customer's question vs operator's command) — is highlighted and
+// held visible for ~1.8s instead of flashing past in 1-2 frames after an instant fill().
+async function inputGlow(page, rgb, on) {
+  await page.evaluate(({ rgb, on }) => {
+    const i = document.querySelector('textarea, input[placeholder*="message"], input[placeholder*="mention"]');
+    if (!i) return;
+    i.style.transition = 'box-shadow .18s ease';
+    i.style.borderRadius = '8px';
+    i.style.boxShadow = on ? `0 0 0 3px rgba(${rgb},.95), 0 0 16px 3px rgba(${rgb},.7)` : '';
+  }, { rgb, on }).catch(() => {});
+}
+async function send(page, text, rgb) {
   const i = page.locator('textarea, input[placeholder*="message"], input[placeholder*="mention"]').first();
-  await i.click(); await i.fill(text); await page.waitForTimeout(400);
+  await i.click();
+  if (rgb) await inputGlow(page, rgb, true);   // highlight composer BEFORE text lands
+  await i.fill(text);
+  await page.waitForTimeout(rgb ? 1800 : 400); // hold the typed (highlighted) text visible across many frames
   await page.keyboard.press('Escape'); await page.waitForTimeout(250);
   await page.click('button:has-text("Send")', { noWaitAfter: true }).catch(async () => { await i.press('Enter'); });
+  if (rgb) { await page.waitForTimeout(500); await inputGlow(page, rgb, false); }
 }
 async function scroll(page) { await page.evaluate(() => document.querySelectorAll('[class*="overflow"],main').forEach(e=>e.scrollTop=e.scrollHeight)).catch(()=>{}); }
 async function cnt(page, s) { return page.locator(`text=${s}`).count().catch(() => 0); }
@@ -93,7 +109,7 @@ async function waitRep(page, m, b, ms) { const e = Date.now()+ms; while (Date.no
   await overlay(L, 'cust', '客户打开客服窗口', '⏳ 等售前 AI 客服上线…');
   let b = await cnt(R, ORCH);
   await overlay(R, 'op', '① 运营对编排器：「列出可用模板」');
-  await R.waitForTimeout(1500); await send(R, `@${ORCH} 请列出我当前可用的 agent 模板和 session 模板。`);
+  await R.waitForTimeout(1500); await send(R, `@${ORCH} 请列出我当前可用的 agent 模板和 session 模板。`, '37,99,235');
   await overlay(R, 'op', '① 列出可用模板', '⏳ 编排器调 list_templates…'); await waitRep(R, ORCH, b, 90000);
   await overlay(R, 'op', '① 编排器返回真实模板', '→ 真调 list_templates 工具');
   await R.waitForTimeout(4000);
@@ -104,13 +120,13 @@ async function waitRep(page, m, b, ms) { const e = Date.now()+ms; while (Date.no
   if (WORKER) {
     worker = WORKER;
     await overlay(R, 'op', '② 运营：「确认售前 AI 客服已就绪」');
-    await R.waitForTimeout(1500); await send(R, `@${ORCH} 我这个会话里已经有一个售前客服坐席(role_name=${ROLE})，请简短确认它在线、可以接待客户。`);
+    await R.waitForTimeout(1500); await send(R, `@${ORCH} 我这个会话里已经有一个售前客服坐席(role_name=${ROLE})，请简短确认它在线、可以接待客户。`, '37,99,235');
     await overlay(R, 'op', '② 确认售前客服', '⏳ 编排器确认中…'); await waitRep(R, ORCH, b, 90000);
     await scroll(R); await overlay(R, 'op', '② 售前 AI 客服已就绪', '→ 编排器确认成员在线（右侧 MEMBERS 可见）');
     await R.waitForTimeout(5000);
   } else {
     await overlay(R, 'op', '② 运营：「加一个售前 AI 客服坐席」');
-    await R.waitForTimeout(1500); await send(R, `@${ORCH} 请用 add_managed_member 从 template://agent/system/cc-orchestrator 启动一个售前客服坐席，role_name=${ROLE}，in_session_template=true。简短确认。`);
+    await R.waitForTimeout(1500); await send(R, `@${ORCH} 请用 add_managed_member 从 template://agent/system/cc-orchestrator 启动一个售前客服坐席，role_name=${ROLE}，in_session_template=true。简短确认。`, '37,99,235');
     await overlay(R, 'op', '② 加售前客服坐席', '⏳ 编排器 add_managed_member、SPAWN 真 worker…'); await waitRep(R, ORCH, b, 120000);
     await scroll(R); await overlay(R, 'op', '② 售前 AI 客服已上线', '→ 真 spawn cc worker（右侧 MEMBERS 多出成员）');
     await R.waitForTimeout(5000);
@@ -131,7 +147,7 @@ async function waitRep(page, m, b, ms) { const e = Date.now()+ms; while (Date.no
   await L.waitForTimeout(2500);
   b = await cnt(L, worker.slice(-20));
   await overlay(L, 'cust', '③ 客户：「羽绒服 XL 有现货吗？」');
-  await L.waitForTimeout(1500); await send(L, `@${worker} 你好，请问你们的羽绒服 XL 码有现货吗？`);
+  await L.waitForTimeout(1500); await send(L, `@${worker} 你好，请问你们的羽绒服 XL 码有现货吗？`, '217,70,239');
   await overlay(L, 'cust', '③ 客户咨询售前 AI 客服', '⏳ AI 客服真处理中…'); await waitRep(L, worker.slice(-20), b, 120000);
   await scroll(L); await overlay(L, 'cust', '③ 售前 AI 客服真回答', '→ 真 cc-agent 生成（非脚本、非预设）');
   await L.waitForTimeout(6000);
