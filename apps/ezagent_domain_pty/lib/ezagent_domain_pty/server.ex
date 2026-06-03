@@ -96,6 +96,13 @@ defmodule Ezagent.Domain.Pty.Server do
     # (AND); Regex = pattern match. send: bytes to write to PTY stdin.
     # fired? = true after one match → never re-fires (idempotent).
     auto_prompts: [],
+    # #17 PR-C — auth-failure OBSERVERS. Same match shapes as auto_prompts but
+    # EMIT-ONLY: on match they fire telemetry + broadcast `auth_failed_topic`
+    # (NEVER send bytes to stdin — that is auto_prompts' job). Used to surface an
+    # expired/missing login (cc 403 / "Please run /login", codex 401) instead of a
+    # silent mute. Each entry: %{name, match, fired?}. fired? → one-shot per match
+    # name (avoids re-notifying on every subsequent chunk).
+    auth_observers: [],
     # PTY-phase-state-machine 2026-05-26 follow-up (b). Three canonical
     # phases on the OS subprocess (per Allen's directive — exactly
     # three, no `:initializing` / `:ready` / `:respawning` middle states):
@@ -217,6 +224,15 @@ defmodule Ezagent.Domain.Pty.Server do
   @doc "PubSub topic for an agent's PTY stdout/stderr stream (Phase 5 PR 4)."
   def output_topic(%URI{} = agent_uri),
     do: "pty:output:" <> URI.to_string(agent_uri)
+
+  @doc """
+  #17 PR-C — PubSub topic for an agent's auth-failure signals. Subscribers receive
+  `{:pty_auth_failed, agent_uri, observer_name}` when the PTY output matches a credential
+  `auth_observer` (expired/missing login). The domain credential notifier (PR-C2) consumes
+  this to notify the agent's owner with a clickable terminal URL.
+  """
+  def auth_failed_topic(%URI{} = agent_uri),
+    do: "pty:auth_failed:" <> URI.to_string(agent_uri)
 
   @doc """
   PubSub topic for an agent's PTY phase transitions (PTY-phase-state-machine
@@ -377,6 +393,10 @@ defmodule Ezagent.Domain.Pty.Server do
       cmd_override: cmd_override,
       cmd_env: cmd_env,
       auto_prompts: default_auto_prompts() ++ Map.get(args, :auto_prompts, []),
+      auth_observers:
+        Enum.map(Map.get(args, :auth_observers, []), fn o ->
+          %{name: o.name, match: o.match, fired?: false}
+        end),
       phase: :starting
     }
 
@@ -656,6 +676,11 @@ defmodule Ezagent.Domain.Pty.Server do
     new_buffer = state.pty_buffer <> chunk
     state = %{state | pty_buffer: new_buffer}
 
+    # #17 PR-C — emit-only auth-failure detection BEFORE auto_prompts (auto_prompts may
+    # reset the buffer on a match; observers must see the same bytes). Observers never
+    # send to stdin.
+    state = scan_auth_observers(state, AnsiStrip.strip(new_buffer))
+
     state = scan_auto_prompts(state)
 
     {:noreply, state}
@@ -677,6 +702,48 @@ defmodule Ezagent.Domain.Pty.Server do
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
+
+  # --- #17 PR-C: emit-only auth-failure observers ----------------------
+
+  # Walk each (still-unfired) auth observer against the ANSI-stripped buffer; on a match
+  # EMIT telemetry + broadcast `auth_failed_topic` and mark it fired (one-shot). NEVER
+  # sends to stdin (that distinguishes it from auto_prompts — codex review). The buffer is
+  # left intact for scan_auto_prompts to handle.
+  defp scan_auth_observers(%__MODULE__{auth_observers: []} = state, _stripped), do: state
+
+  defp scan_auth_observers(%__MODULE__{auth_observers: observers} = state, stripped) do
+    new_observers =
+      Enum.map(observers, fn o ->
+        if o.fired? or not matches?(o.match, stripped) do
+          o
+        else
+          fire_auth_observer(o, state)
+          %{o | fired?: true}
+        end
+      end)
+
+    %{state | auth_observers: new_observers}
+  end
+
+  defp fire_auth_observer(observer, state) do
+    Logger.warning(
+      "PtyServer: AUTH FAILURE signal #{observer.name} matched for " <>
+        "#{URI.to_string(state.agent_uri)} — the agent's login is expired/missing; the " <>
+        "owner must re-`/login` in its terminal. (no silent mute — #17)"
+    )
+
+    :telemetry.execute(
+      [:ezagent, :agent, :auth_failed],
+      %{count: 1},
+      %{agent_uri: state.agent_uri, observer: observer.name}
+    )
+
+    Phoenix.PubSub.broadcast(
+      EzagentCore.PubSub,
+      auth_failed_topic(state.agent_uri),
+      {:pty_auth_failed, state.agent_uri, observer.name}
+    )
+  end
 
   # --- generic auto-prompt scanner (Phase 6 PR 19) ---------------------
 
