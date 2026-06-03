@@ -174,7 +174,12 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
       agent_uri = URI.new!("entity://agent/team-alpha/cc_create-test-#{uniq()}")
       # config_dir promotion (Allen 2026-06-03): cc reads the universal,
       # flavor-neutral "config_dir" data key (was "claude_config_dir").
-      tmpl = %{"config_dir" => reference}
+      # PR-3: the per-agent TARGET is domain-allocated + provided as
+      # "allocated_config_dir"; the plugin materializes the reference INTO it.
+      tmpl = %{
+        "config_dir" => reference,
+        "allocated_config_dir" => CcAgent.agent_config_dir(agent_uri)
+      }
 
       assert {:ok, dir} = CcAgent.create_agent_config_dir(agent_uri, tmpl)
       on_exit(fn -> File.rm_rf(dir) end)
@@ -197,7 +202,10 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
       File.write!(Path.join(reference, ".credentials.json"), "{}")
 
       agent_uri = URI.new!("entity://agent/team-alpha/cc_idem-test-#{uniq()}")
-      tmpl = %{"config_dir" => reference}
+      tmpl = %{
+        "config_dir" => reference,
+        "allocated_config_dir" => CcAgent.agent_config_dir(agent_uri)
+      }
 
       assert {:ok, dir1} = CcAgent.create_agent_config_dir(agent_uri, tmpl)
       on_exit(fn -> File.rm_rf(dir1) end)
@@ -246,10 +254,45 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
 
     test "returns error if reference dir doesn't exist" do
       agent_uri = URI.new!("entity://agent/team-alpha/cc_missing-ref-#{uniq()}")
-      tmpl = %{"config_dir" => "/nonexistent/path/123"}
+
+      tmpl = %{
+        "config_dir" => "/nonexistent/path/123",
+        "allocated_config_dir" => CcAgent.agent_config_dir(agent_uri)
+      }
 
       assert {:error, {:reference_dir_missing, "/nonexistent/path/123"}} =
                CcAgent.create_agent_config_dir(agent_uri, tmpl)
+    end
+
+    test "fails loud when a config_dir reference is present but the TARGET was not allocated (PR-3)" do
+      # Every spawn seam routes through provision_and_instantiate/4, which injects
+      # "allocated_config_dir". An absent target means an un-provisioned/direct
+      # caller — the plugin must NOT self-allocate a path (that scatter is the bug
+      # PR-3 removes). feedback_let_it_crash_no_workarounds.
+      agent_uri = URI.new!("entity://agent/team-alpha/cc_unallocated-#{uniq()}")
+      reference = make_tmpdir("cc-unalloc-ref")
+
+      assert {:error, :config_dir_not_allocated} =
+               CcAgent.create_agent_config_dir(agent_uri, %{"config_dir" => reference})
+    end
+
+    test "materializes into a pre-allocated (empty) TARGET dir — the production path (PR-3)" do
+      # Simulates ConfigDir.allocate/2 having already created the target (mkdir +
+      # chmod 700, no marker) BEFORE the plugin materializes the reference into it.
+      reference = make_tmpdir("cc-prealloc-ref")
+      File.write!(Path.join(reference, ".credentials.json"), "{}")
+
+      agent_uri = URI.new!("entity://agent/team-alpha/cc_prealloc-#{uniq()}")
+      target = CcAgent.agent_config_dir(agent_uri)
+      File.mkdir_p!(target)
+      File.chmod!(target, 0o700)
+      on_exit(fn -> File.rm_rf(target) end)
+
+      tmpl = %{"config_dir" => reference, "allocated_config_dir" => target}
+
+      assert {:ok, ^target} = CcAgent.create_agent_config_dir(agent_uri, tmpl)
+      assert File.exists?(Path.join(target, ".credentials.json"))
+      assert File.exists?(Path.join(target, ".ezagent-config-complete"))
     end
   end
 

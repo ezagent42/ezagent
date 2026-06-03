@@ -200,6 +200,12 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   @impl Ezagent.Kind.Template
   def template_name, do: "cc.agent"
 
+  # PR-3 (domain.agent D2) — the config_dir path namespace. Declared explicitly
+  # so `Ezagent.Sandbox.ConfigDir` builds `<Home>/cc-agents/<ws>/<name>` —
+  # byte-identical to the pre-PR-3 cc layout (no migration).
+  @impl Ezagent.Kind.Template
+  def config_dir_namespace, do: "cc"
+
   # SPEC 2026-06-01-flavor-generic-template-data (approach B): the
   # cc-specific template_data fields formerly hardcoded in
   # `AgentTemplate.to_template_data/2`. Reads atom-or-string content keys;
@@ -1310,43 +1316,14 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # callback (`destroy_config_dir/2`) verifies the path it removes
   # equals this — defense-in-depth against being handed a bogus path.
 
+  # PR-3 (domain.agent D2) — the per-agent config_dir TARGET path authority moved
+  # to `Ezagent.Sandbox.ConfigDir` (core, the sandbox concept owns the location).
+  # This thin delegate keeps cc's internal callers (rollback) + the canonical-path
+  # contract working; the scheme itself no longer lives in the plugin.
   @doc false
   def agent_config_dir(%URI{} = agent_uri) do
-    workspace = agent_workspace_segment(agent_uri)
-    name = agent_name_segment(agent_uri)
-    Path.join([Ezagent.Home.path("cc-agents"), workspace, name])
+    Ezagent.Sandbox.ConfigDir.path(agent_uri, Ezagent.Kind.Template.namespace_of(__MODULE__))
   end
-
-  defp agent_workspace_segment(%URI{host: "agent", path: "/" <> rest} = agent_uri) do
-    case String.split(rest, "/", parts: 2) do
-      [workspace, _name] when workspace != "" ->
-        workspace
-
-      _ ->
-        raise ArgumentError,
-              "agent URI is not canonical 3-segment `entity://agent/<workspace>/<name>` " <>
-                "— got #{inspect(agent_uri)}. Per SPEC #324 rev 3 / PR #335, there is NO " <>
-                "silent default workspace fallback; callers must pass a fully-formed URI."
-    end
-  end
-
-  defp agent_workspace_segment(other),
-    do:
-      raise(
-        ArgumentError,
-        "agent URI is not an `entity://agent/...` URI — got #{inspect(other)}. " <>
-          "Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace fallback; " <>
-          "callers must pass a fully-formed URI."
-      )
-
-  defp agent_name_segment(%URI{host: "agent", path: "/" <> rest}) do
-    case String.split(rest, "/", parts: 2) do
-      [_workspace, name] when name != "" -> name
-      _ -> "unknown"
-    end
-  end
-
-  defp agent_name_segment(_), do: "unknown"
 
   # `list_extensions/1` — scan `<config_dir>/.claude/plugins/*` for
   # installed Claude Code plugin bundles. A bundle is recognized by
@@ -1763,10 +1740,14 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # If no reference dir is configured on the template, returns
   # `{:ok, nil}` — agent runs without `CLAUDE_CONFIG_DIR` (legacy
   # behavior, valid for agents that need no sandbox).
+  # PR-3 (domain.agent D2) — MATERIALIZE the flavor reference into the per-agent
+  # config_dir TARGET the DOMAIN allocated (`"allocated_config_dir"`, injected by
+  # `Ezagent.Kind.Template.provision_and_instantiate/4`). The plugin no longer
+  # computes the path; `agent_uri` is retained only for the legacy signature.
   @doc false
   @spec create_agent_config_dir(URI.t(), map()) ::
           {:ok, String.t() | nil} | {:error, term()}
-  def create_agent_config_dir(%URI{} = agent_uri, tmpl) when is_map(tmpl) do
+  def create_agent_config_dir(%URI{} = _agent_uri, tmpl) when is_map(tmpl) do
     # codex P2 closure — fail loud on a stale `"claude_config_dir"` data key
     # (the loader path bypasses `validate/1`). See
     # `reject_stale_config_dir_data_key!/1`.
@@ -1786,7 +1767,18 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
         {:ok, nil}
 
       {:ok, ref} when is_binary(ref) and ref != "" ->
-        do_create_agent_config_dir(agent_uri, ref)
+        # PR-3: the TARGET is domain-allocated + provided as
+        # "allocated_config_dir". Every spawn seam routes through
+        # `provision_and_instantiate/4`, so an absent target means an
+        # un-provisioned / direct caller — FAIL LOUD rather than self-allocate
+        # (which would re-introduce the plugin-picks-the-path scatter).
+        case Map.fetch(tmpl, "allocated_config_dir") do
+          {:ok, target} when is_binary(target) and target != "" ->
+            materialize_config_dir(target, ref)
+
+          _ ->
+            {:error, :config_dir_not_allocated}
+        end
 
       {:ok, bad} ->
         {:error, {:invalid_config_dir, bad}}
@@ -1799,8 +1791,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # gets fully re-created. Codex PR3 round-1 HIGH-2.
   @config_complete_marker ".ezagent-config-complete"
 
-  defp do_create_agent_config_dir(agent_uri, reference_dir) do
-    target = agent_config_dir(agent_uri)
+  defp materialize_config_dir(target, reference_dir) do
     marker = Path.join(target, @config_complete_marker)
 
     cond do
@@ -1813,11 +1804,12 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
         {:ok, target}
 
       File.dir?(target) ->
-        # Stale / partially-copied dir (marker absent). Wipe + re-copy
-        # rather than silently adopting corrupted state. Codex PR3
-        # round-1 HIGH-2: a partial cp_r leaves missing files; PTY
-        # would launch with corrupt credentials. Better to fail loudly
-        # and re-create than ignore.
+        # Marker absent — either a stale/partially-copied dir OR the freshly
+        # domain-allocated EMPTY dir (PR-3: `ConfigDir.allocate/2` did mkdir+chmod
+        # before materialize). Both cases: wipe + re-copy from the reference so the
+        # result is a complete, marker-verified copy (cp_r creates `target` fresh).
+        # Codex PR3 round-1 HIGH-2: a partial cp_r leaves missing files; PTY would
+        # launch with corrupt credentials. Better to re-create than adopt.
         case File.rm_rf(target) do
           {:ok, _} ->
             do_atomic_copy(reference_dir, target, marker)
