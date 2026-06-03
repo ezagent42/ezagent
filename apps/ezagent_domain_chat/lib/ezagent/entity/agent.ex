@@ -595,7 +595,15 @@ defmodule Ezagent.Entity.Agent do
   # form has no signal — `fresh?` defaults conservatively to `false`
   # and meta is an empty map.
   defp instantiate_workers(template_class, data, %URI{} = workspace_uri) do
-    case template_class.instantiate(template_class.template_name(), data, workspace_uri) do
+    # PR-3 (domain.agent D2) — route through the core contract-boundary wrapper so
+    # the per-agent config_dir TARGET is domain-allocated + provided as data
+    # (`"allocated_config_dir"`) before the plugin materializes into it.
+    case Ezagent.Kind.Template.provision_and_instantiate(
+           template_class,
+           template_class.template_name(),
+           data,
+           workspace_uri
+         ) do
       {:ok, workers, meta} when is_list(workers) and is_map(meta) ->
         {:ok, workers, Map.get(meta, :fresh?, false) == true, meta}
 

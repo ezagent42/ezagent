@@ -269,4 +269,56 @@ defmodule Ezagent.Kind.Template do
       |> String.replace_suffix(".agent", "")
     end
   end
+
+  @doc """
+  PR-3 (domain.agent D2) — the single contract-boundary chokepoint for spawning a
+  flavor: allocate the per-agent config_dir TARGET (when the template carries a
+  `config_dir` reference) and provide it to the plugin as the `"allocated_config_dir"`
+  data key, THEN delegate to `class_module.instantiate/3`. The plugin materializes
+  content into the provided dir; it never chooses the path (North-Star isolation).
+
+  EVERY `instantiate/3` caller (the domain spawn helper, the workspace Loader
+  invoke + boot, the LV operator-create) routes through here, so the allocation is
+  uniform across fresh-create / loader / boot seams. Returns whatever
+  `instantiate/3` returns (the 2- or 3-element `{:ok, uris[, meta]}` / `{:error, _}`
+  shape).
+
+  Allocation is skipped when the template has no `config_dir` reference
+  (curl/codex/echo/np ⇒ zero filesystem footprint). A reference WITHOUT an
+  `"agent_uri"` fails loud — the target is undeterminable.
+  """
+  @spec provision_and_instantiate(module(), template_name(), template_data(), URI.t()) ::
+          {:ok, [URI.t()]}
+          | {:ok, [URI.t()], instantiate_meta()}
+          | {:error, term()}
+  def provision_and_instantiate(class_module, tmpl_name, tmpl_data, %URI{} = workspace_uri)
+      when is_atom(class_module) and is_map(tmpl_data) do
+    with {:ok, data} <- maybe_allocate_config_dir(class_module, tmpl_data) do
+      class_module.instantiate(tmpl_name, data, workspace_uri)
+    end
+  end
+
+  # Allocate the TARGET only when the template carries a config_dir REFERENCE
+  # (the flavor wants a config home). The realized target rides in as
+  # `"allocated_config_dir"`; the plugin copies the reference into it.
+  defp maybe_allocate_config_dir(class_module, tmpl_data) do
+    case Map.get(tmpl_data, "config_dir") do
+      ref when is_binary(ref) and ref != "" ->
+        with {:ok, agent_uri} <- fetch_agent_uri(tmpl_data),
+             {:ok, target} <-
+               Ezagent.Sandbox.ConfigDir.allocate(agent_uri, namespace_of(class_module)) do
+          {:ok, Map.put(tmpl_data, "allocated_config_dir", target)}
+        end
+
+      _ ->
+        {:ok, tmpl_data}
+    end
+  end
+
+  defp fetch_agent_uri(tmpl_data) do
+    case Map.get(tmpl_data, "agent_uri") do
+      s when is_binary(s) and s != "" -> {:ok, Ezagent.URI.new!(s)}
+      _ -> {:error, :config_dir_allocate_missing_agent_uri}
+    end
+  end
 end
