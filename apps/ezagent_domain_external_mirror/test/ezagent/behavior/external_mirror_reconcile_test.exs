@@ -98,4 +98,52 @@ defmodule Ezagent.Behavior.ExternalMirror.ReconcileAfterLoadTest do
       assert ExternalMirror.reconcile_bindings("not-a-uri", slice) == slice
     end
   end
+
+  describe "cold-load rehydration from an old-shape snapshot lacking :bindings (Track #14)" do
+    # Root cause: on a cold-load of an already-created Session, the
+    # Lifecycle `__init_slice__` skips `create/1` and lets the snapshot
+    # supply the `:external_mirror` state. An OLD-shape snapshot (written
+    # before `:bindings` existed, or with an empty `%{}` external_mirror
+    # state) rehydrates a state map with NO `:bindings` key. The reconcile
+    # head required `%{bindings: existing}`, so it fell through to the
+    # non-URI guard clause and returned the `:bindings`-less map verbatim;
+    # `activate/2` then raised `KeyError key :bindings` on
+    # `reconciled.bindings`. The DB projection (`external_mirror_bindings`)
+    # is the SoT — reconcile MUST materialize `:bindings` from it.
+
+    test "reconcile on state WITHOUT :bindings materializes the SoT (no crash)" do
+      session = session_uri("old-shape-empty")
+      _row = insert_binding!(session, "feishu", "oc_old_shape")
+
+      # Old-shape rehydrated state: the external_mirror slice state is `%{}`
+      # — the `:bindings` key never existed in this snapshot.
+      reconciled = ExternalMirror.reconcile_bindings(session, %{})
+
+      assert Map.has_key?(reconciled, :bindings)
+      assert length(reconciled.bindings) == 1
+      assert hd(reconciled.bindings).target_id == "oc_old_shape"
+    end
+
+    test "reconcile on state WITHOUT :bindings and no DB rows yields []" do
+      session = session_uri("old-shape-norows")
+
+      reconciled = ExternalMirror.reconcile_bindings(session, %{})
+
+      assert reconciled.bindings == []
+    end
+
+    test "activate/2 does not crash when rehydrated state lacks :bindings" do
+      session = session_uri("old-shape-activate")
+      _row = insert_binding!(session, "feishu", "oc_activate")
+
+      # Drives the exact crash site: activate/2 → reconcile_bindings → then
+      # `reconciled.bindings` (KeyError pre-fix). activate sends a message
+      # to self(); the test process receives it, proving no raise.
+      assert {:ok, %{}, reconciled} =
+               ExternalMirror.activate(%{}, %{self_uri: session})
+
+      assert length(reconciled.bindings) == 1
+      assert_receive {:ezagent_em_reconcile, [_binding]}
+    end
+  end
 end
