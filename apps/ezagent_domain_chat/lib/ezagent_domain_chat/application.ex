@@ -108,7 +108,10 @@ defmodule EzagentDomainChat.Application do
       # `esr:session_membership:changes` (broadcast by
       # `Ezagent.Behavior.Chat.broadcast_membership/2`) to maintain a
       # reverse `user_uri → MapSet(session_uri)` index.
-      EzagentDomainChat.PresenceFanout
+      EzagentDomainChat.PresenceFanout,
+      # #17 PR-C2 — subscribes to the shared PTY auth-failure topic and notifies an
+      # agent's owner (creator_uri) to re-`/login`, instead of the silent mute.
+      Ezagent.Agent.CredentialNotifier
     ]
 
     case Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__) do
