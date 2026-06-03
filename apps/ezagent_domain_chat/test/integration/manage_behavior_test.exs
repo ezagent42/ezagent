@@ -43,22 +43,41 @@ defmodule EzagentDomainChat.Integration.ManageBehaviorTest do
     end
   end
 
-  describe "registration on every Kind (§3.4)" do
-    test "Manage :delete + :reconfigure resolve on Session, Agent, User, Workspace, System, Templates" do
-      kinds = [
-        Ezagent.Entity.Session,
-        Ezagent.Entity.Agent,
-        Ezagent.Entity.User,
-        Ezagent.Entity.Workspace,
-        Ezagent.Entity.System,
-        Ezagent.Entity.AgentTemplate,
-        Ezagent.Entity.SessionTemplate
-      ]
+  describe "universal registration — every Kind by construction (§3.4, decision 1-B)" do
+    # Includes core/domain Kinds AND plugin Kinds (CurlAgent — the codex P2
+    # gap) AND an arbitrary never-registered module: Manage resolves for all
+    # via the UniversalBehaviors fallback, with NO per-Kind registration.
+    @kinds [
+      Ezagent.Entity.Session,
+      Ezagent.Entity.Agent,
+      Ezagent.Entity.User,
+      Ezagent.Entity.Workspace,
+      Ezagent.Entity.System,
+      Ezagent.Entity.AgentTemplate,
+      Ezagent.Entity.SessionTemplate,
+      Ezagent.Entity.CurlAgent,
+      Ezagent.NeverRegisteredFakeKind
+    ]
 
-      for kind <- kinds, action <- [:delete, :reconfigure] do
-        assert {:ok, _subject} = CapabilityRegistry.lookup_subject(kind, action),
-               "Manage #{action} not registered on #{inspect(kind)}"
+    test "lookup_subject resolves Manage :delete + :reconfigure for every Kind" do
+      for kind <- @kinds, action <- [:delete, :reconfigure] do
+        assert {:ok, %{behavior: Ezagent.Behavior.Manage}} =
+                 CapabilityRegistry.lookup_subject(kind, action),
+               "Manage #{action} did not resolve for #{inspect(kind)}"
       end
+    end
+
+    test "BehaviorRegistry.lookup resolves Manage (dispatch handler) for every Kind" do
+      for kind <- @kinds, action <- [:delete, :reconfigure] do
+        assert {:ok, Ezagent.Behavior.Manage} =
+                 Ezagent.BehaviorRegistry.lookup(kind, action),
+               "Manage #{action} dispatch handler did not resolve for #{inspect(kind)}"
+      end
+    end
+
+    test "non-manage actions are unaffected by the universal fallback" do
+      assert :error = Ezagent.BehaviorRegistry.lookup(Ezagent.NeverRegisteredFakeKind, :some_random_action)
+      assert :error = CapabilityRegistry.lookup_subject(Ezagent.NeverRegisteredFakeKind, :some_random_action)
     end
   end
 

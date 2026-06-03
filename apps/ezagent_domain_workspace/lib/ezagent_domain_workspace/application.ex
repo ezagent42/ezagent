@@ -55,11 +55,6 @@ defmodule EzagentDomainWorkspace.Application do
       :ok = CapabilityRegistry.register(WK, action, RB)
     end)
 
-    # #533 §3.4 — uniform Manage surface on the Workspace Kind.
-    Enum.each(Ezagent.Behavior.Manage.actions(), fn action ->
-      :ok = CapabilityRegistry.register(WK, action, Ezagent.Behavior.Manage)
-    end)
-
     :ok
   end
 

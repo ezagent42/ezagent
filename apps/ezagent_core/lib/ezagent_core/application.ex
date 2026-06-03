@@ -203,11 +203,6 @@ defmodule EzagentCore.Application do
       :ok = CapabilityRegistry.register(SK, action, RB)
     end)
 
-    # #533 §3.4 — uniform Manage surface on the System Kind.
-    Enum.each(Ezagent.Behavior.Manage.actions(), fn action ->
-      :ok = CapabilityRegistry.register(SK, action, Ezagent.Behavior.Manage)
-    end)
-
     :ok =
       Ezagent.SpawnRegistry.register("system", fn %URI{} = uri ->
         # V1 prevention (Allen 2026-05-21): routed through Ezagent.Kind.spawn/2.

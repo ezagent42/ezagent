@@ -67,6 +67,12 @@ defmodule Ezagent.Behavior.Manage do
     }
   end
 
+  # Manage exposes management ACTIONS, not per-instance owned data whose
+  # visibility needs gating — the manage-cap itself authorizes the actions.
+  # So no data owner (same as `Behavior.Terminable`). Required because any
+  # Behavior with cap_subjects must declare data_owner/1.
+  def data_owner(_), do: :no_owner
+
   # create/1 — FIRST-EVER existence: the `:spec` records the template_data
   # the Kind was created/last-reconfigured with (nil until set by the
   # create-entry (5c) or a reconfigure). No transients.

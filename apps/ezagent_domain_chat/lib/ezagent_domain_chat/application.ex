@@ -806,17 +806,10 @@ defmodule EzagentDomainChat.Application do
       :ok = CapabilityRegistry.register(Session, action, OrchAdminB)
     end)
 
-    # #533 §3.4 — uniform Manage surface (`:delete` / `:reconfigure`) on
-    # every Kind this domain defines: Session, Agent, and both Template
-    # Kinds. The manage-cap granted at create (PR-5c) gates these.
-    alias Ezagent.Behavior.Manage, as: ManageB
-
-    Enum.each(ManageB.actions(), fn action ->
-      :ok = CapabilityRegistry.register(Session, action, ManageB)
-      :ok = CapabilityRegistry.register(Agent, action, ManageB)
-      :ok = CapabilityRegistry.register(AgentTemplate, action, ManageB)
-      :ok = CapabilityRegistry.register(SessionTemplate, action, ManageB)
-    end)
+    # #533 §3.4 — Manage (`:delete` / `:reconfigure`) is a UNIVERSAL behavior
+    # (`Ezagent.UniversalBehaviors`); it resolves for every Kind by
+    # construction via the registry fallback, so no per-Kind registration
+    # here. The manage-cap granted at create (PR-5c) gates it.
 
     :ok
   end
