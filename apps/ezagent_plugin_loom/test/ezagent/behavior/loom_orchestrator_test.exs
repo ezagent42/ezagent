@@ -117,6 +117,32 @@ defmodule Ezagent.Behavior.LoomOrchestratorTest do
     end
   end
 
+  describe "handle_kind_message/3 {:cancel, _} (用户中止 / web_plug /stop)" do
+    test "清空在飞回合 → 迟到的 worker deliverable 变 stray 被丢,这一轮彻底丢弃" do
+      slice = pending_slice()
+      assert map_size(slice.pending) == 1
+
+      assert {:ok, cleared} =
+               LoomOrchestrator.handle_kind_message({:cancel, :all}, slice, ctx(slice))
+
+      assert cleared.pending == %{}
+    end
+
+    test "pending 已空时中止仍幂等返回(无在飞也不崩)" do
+      slice = %{LoomOrchestrator.init_slice(%{}) | pending: %{}}
+
+      assert {:ok, %{pending: %{}}} =
+               LoomOrchestrator.handle_kind_message({:cancel, :all}, slice, ctx(slice))
+    end
+
+    test "cancel payload 不限于 :all(任意 payload 都清空)" do
+      slice = pending_slice()
+
+      assert {:ok, %{pending: %{}}} =
+               LoomOrchestrator.handle_kind_message({:cancel, :whatever}, slice, ctx(slice))
+    end
+  end
+
   describe "worker_label/1 (S3-B roster discovery)" do
     test "labels loomworker agents by theme; ignores orchestrator + user" do
       assert LoomOrchestrator.worker_label(@policy) == "policy"
