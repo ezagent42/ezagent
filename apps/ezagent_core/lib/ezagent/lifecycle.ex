@@ -604,14 +604,25 @@ defmodule Ezagent.Lifecycle do
     #    rejected self-destroy leaves the row + process untouched.
     case run_developer_destroy_hooks(uri_str, reason) do
       :ok ->
-        # 2. Clear durable state + ever-created marker (one row delete).
-        :ok = Ezagent.Ecto.KindSnapshot.delete(uri_str)
-
-        # 3. Terminate the process (idempotent — already-gone is :ok).
+        # 2. Terminate the process FIRST (synchronous —
+        #    `Kind.terminate/1` blocks on `DynamicSupervisor.terminate_child`
+        #    until the process is dead; idempotent — already-gone is :ok).
+        #    The developer destroy hooks already ran above against the live
+        #    Kind, so termination loses nothing.
         case Ezagent.KindRegistry.lookup(uri_str) do
           {:ok, _pid} -> Ezagent.Kind.terminate(Ezagent.URI.new!(uri_str))
           :error -> :ok
         end
+
+        # 3. Clear durable state + ever-created marker AFTER the process is
+        #    gone — the final, race-free delete. If `delete` ran first
+        #    (the previous order), a live `{:snapshot, :on_change}` Kind
+        #    could commit a queued/concurrent dispatch in the window before
+        #    terminate, re-`upsert`ing the row and resurrecting a
+        #    destroyed/rolled-back Kind on the next boot (codex review #533
+        #    5a). Terminating first closes that window; this also reaps
+        #    anything an `:on_terminate` `terminate/2` save just wrote.
+        :ok = Ezagent.Ecto.KindSnapshot.delete(uri_str)
 
         :ok
 
