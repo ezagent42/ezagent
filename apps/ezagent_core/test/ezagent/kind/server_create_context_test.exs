@@ -44,4 +44,27 @@ defmodule Ezagent.Kind.ServerCreateContextTest do
     assert state.created_by == nil
     assert state.create_freshness == :created
   end
+
+  # Codex review P2 regression — a snapshot-rehydrated Lifecycle Kind must
+  # classify as :existed (NOT :unknown). Proves `hosts_lifecycle_slice?`
+  # still holds after `load_or_init` re-coerces the loaded slice to the
+  # two-container shape on cold restart, so `Lifecycle.fresh_create?/1`
+  # (marker=true) correctly yields :existed.
+  test "init records create_freshness=:existed on rehydrate (cold restart of an existing Lifecycle Kind)" do
+    uri = fixture_uri()
+
+    {:ok, pid1} =
+      Ezagent.Kind.spawn(LifecycleFixtureKind, %{uri: uri, counter: 0, label: "fx"})
+
+    assert :sys.get_state(pid1).create_freshness == :created
+
+    # Terminate the process; the snapshot row (ever_created=true) persists
+    # — this is a cold restart, not a destroy.
+    :ok = Ezagent.Kind.terminate(uri)
+
+    {:ok, pid2} =
+      Ezagent.Kind.spawn(LifecycleFixtureKind, %{uri: uri, counter: 0, label: "fx"})
+
+    assert :sys.get_state(pid2).create_freshness == :existed
+  end
 end

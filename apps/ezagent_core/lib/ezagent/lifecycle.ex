@@ -378,6 +378,29 @@ defmodule Ezagent.Lifecycle do
   def fresh_create?(%{uri: uri}), do: fresh_create?(uri)
   def fresh_create?(_), do: true
 
+  @doc """
+  Metadata predicate: does `kind_module` host at least one Lifecycle
+  behaviour — one that `use Ezagent.Lifecycle` (detected by the injected
+  `__ezagent_lifecycle_destroy__/3`)?
+
+  Use this — NOT a runtime check for a `:transients` sub-key in the slice
+  — to decide whether a Kind has a create/activate (marker-tracked)
+  lifecycle. The slice shape is unreliable across a cold restart: on
+  rehydrate `load_or_init` can yield a slice without `:transients` even for
+  a Lifecycle Kind, so a slice-based check mis-classifies a rehydrated
+  Lifecycle Kind as non-Lifecycle (codex review #533 5a P2). The Kind's
+  behaviour list is stable across fresh-create and rehydrate.
+  """
+  @spec hosts_lifecycle?(module()) :: boolean()
+  def hosts_lifecycle?(kind_module) when is_atom(kind_module) do
+    kind_module
+    |> Ezagent.Kind.behaviors_of()
+    |> Enum.any?(fn behaviour ->
+      Code.ensure_loaded?(behaviour) and
+        function_exported?(behaviour, :__ezagent_lifecycle_destroy__, 3)
+    end)
+  end
+
   defp ever_created?(%{uri: %URI{} = uri}), do: ever_created?(URI.to_string(uri))
   defp ever_created?(%{uri: uri}) when is_binary(uri), do: ever_created?(uri)
   defp ever_created?(uri_str) when is_binary(uri_str), do: marker_lookup(uri_str)

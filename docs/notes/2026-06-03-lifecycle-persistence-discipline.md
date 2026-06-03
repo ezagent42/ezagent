@@ -20,21 +20,35 @@ flagged. It was reverted. The signal now comes from one Lifecycle-owned
 function, `Ezagent.Lifecycle.fresh_create?/1`, read in `Kind.Server.init/1`
 before the initial persist sets the marker.
 
-## Scan result (2026-06-03) — already clean
+## Scan result (2026-06-03)
 
-Scanning all `apps/*/lib` for the three access axes:
+Scanning all `apps/*/lib` for the FULL Lifecycle surface — create AND
+destroy AND the markers:
 
-| Axis | Primitive | Production callers (all framework) |
-|---|---|---|
-| Snapshot WRITE | `KindSnapshot.upsert/6` | `kind/snapshot.ex`, `snapshot_store.ex` only |
-| Sync write | `Kind.Snapshot.save_now/4` | `kind/server.ex`, `snapshot/writer.ex`, `kind/snapshot.ex` (commit) only |
-| Create/activate READ | `KindSnapshot.ever_created?/1` | `lifecycle.ex` (+ `kind_snapshot.ex` definition) only |
+| Axis | Primitive | Production callers (framework / allowed) | Found |
+|---|---|---|---|
+| Snapshot WRITE | `KindSnapshot.upsert/6` | `kind/snapshot.ex`, `snapshot_store.ex` | clean |
+| Sync write | `Kind.Snapshot.save_now/4` | `kind/server.ex`, `snapshot/writer.ex`, `kind/snapshot.ex` (commit) | clean |
+| Create/activate READ | `KindSnapshot.ever_created?/1` | `lifecycle.ex` (+ schema def) | clean |
+| Create marker WRITE | `KindSnapshot.mark_ever_created/1` | `kind_snapshot.ex` (def), `lifecycle.ex` | clean |
+| Destroy / snapshot DELETE | `KindSnapshot.delete/1` | `lifecycle.ex` (`destroy/2`), `snapshot_store.ex`, schema def; ops: `mix snapshot.clear`, admin `snapshots_live` | **3 domain violations fixed** |
 
-No Behavior / plugin / domain module writes snapshots, calls `save_now`,
-or reads the marker directly. The single production write path is
-`commit/4` (policy gate) → `save_now/4` (primitive), plus the async
-`Writer` and `terminate`. The single create/activate signal is
-`Lifecycle.fresh_create?/1`.
+The write/read/marker axes were already clean. The **destroy axis was
+NOT**: `ezagent_domain_chat.ex` hand-rolled `Kind.terminate(uri) +
+KindSnapshot.delete(uri)` in 3 rollback/dissolve/compensate paths —
+bypassing `Lifecycle.destroy/2` and, crucially, **skipping the developer
+destroy hooks** (so a rolled-back Agent leaked its Sandbox `config_dir`).
+Migrated all three onto `Lifecycle.destroy/2` (hooks → snapshot+marker
+clear → terminate). Operator escape hatches (`mix ezagent.snapshot.clear`,
+admin `snapshots_live` row-delete) are allowlisted as explicitly low-level
+ops tools, not domain lifecycle.
+
+The single production write path is `commit/4` (policy gate) → `save_now/4`
+(primitive), plus the async `Writer` and `terminate`. The single
+create/activate signal is `Lifecycle.fresh_create?/1`. The single Kind
+teardown primitive is `Lifecycle.destroy/2`. Lifecycle-hosting is detected
+via `Lifecycle.hosts_lifecycle?/1` (Kind metadata — stable across
+fresh/rehydrate, unlike the slice `:transients` shape).
 
 ## The enforcing lint
 

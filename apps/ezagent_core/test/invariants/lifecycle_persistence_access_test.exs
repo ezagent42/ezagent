@@ -12,7 +12,9 @@ defmodule Ezagent.Invariants.LifecyclePersistenceAccessTest do
   the freshness signal off a save return instead of `Lifecycle.fresh_create?/1`).
 
   This test scans every production (`apps/*/lib`) source file and fails if
-  a non-framework module:
+  a non-framework module reaches a low-level persistence / Lifecycle-marker
+  primitive directly, across the FULL Lifecycle surface — create AND
+  destroy AND the markers:
 
     1. WRITES the snapshot table directly — `KindSnapshot.upsert(...)`.
        The only writers are the framework persistence modules. Domain
@@ -21,13 +23,22 @@ defmodule Ezagent.Invariants.LifecyclePersistenceAccessTest do
        `Kind.Server` / the async `Writer` / `Kind.Snapshot.commit` may.
     3. Reads the create-vs-activate marker `KindSnapshot.ever_created?(...)`
        directly. The single create/activate signal is
-       `Ezagent.Lifecycle.fresh_create?/1` — go through it so the
-       decision has exactly one definition and cannot drift.
+       `Ezagent.Lifecycle.fresh_create?/1`.
+    4. Writes the create marker `KindSnapshot.mark_ever_created(...)`
+       directly. It is written atomically by the initial persist under
+       the Lifecycle/Kind.Server path.
+    5. DELETES a snapshot / tears a Kind down via `KindSnapshot.delete(...)`
+       directly. Kind destroy goes through `Ezagent.Lifecycle.destroy/2`
+       (hooks → snapshot+marker clear → terminate); domain code must not
+       hand-roll `terminate + KindSnapshot.delete`.
 
-  As of 2026-06-03 the codebase is ALREADY clean on all three axes — this
-  test locks that in. A new violation means: route the call through the
-  Lifecycle / framework function, or (if genuinely a framework-internal
-  site) add it to the rule's allowlist with a one-line justification.
+  As of 2026-06-03 the codebase is clean on all five axes (the chat
+  rollback/dissolve/compensate paths were migrated from a hand-rolled
+  `terminate + KindSnapshot.delete` onto `Lifecycle.destroy/2` as part of
+  this change) — this test locks that in. A new violation means: route the
+  call through the Lifecycle / framework function named in the guidance, or
+  (if a genuine framework-internal / operator-ops site) add it to the
+  rule's allowlist with a one-line justification.
 
   Scans production code only (`apps/*/lib`); tests legitimately seed
   snapshot rows via the store helpers. Mirrors
@@ -54,7 +65,10 @@ defmodule Ezagent.Invariants.LifecyclePersistenceAccessTest do
     },
     %{
       name: "direct sync-write primitive (save_now/4)",
-      regex: ~r/(?<![\.\w])save_now\s*\(/,
+      # `\b` so this catches BOTH the bare `save_now(` (inside Kind.Snapshot)
+      # and the fully-qualified `Ezagent.Kind.Snapshot.save_now(` form
+      # (codex P3: a `(?<![\.\w])` lookbehind would miss the qualified call).
+      regex: ~r/\bsave_now\s*\(/,
       allowlist: [
         # Defines save_now + calls it from commit/4 (the :on_change policy gate).
         "apps/ezagent_core/lib/ezagent/kind/snapshot.ex",
@@ -80,6 +94,41 @@ defmodule Ezagent.Invariants.LifecyclePersistenceAccessTest do
       guidance:
         "The create-vs-activate signal is `Ezagent.Lifecycle.fresh_create?/1` " <>
           "— use it; never re-derive freshness from the marker / a save return."
+    },
+    %{
+      name: "direct create marker WRITE (KindSnapshot.mark_ever_created)",
+      regex: ~r/(?<![\.\w])(?:KindSnapshot|Ezagent\.Ecto\.KindSnapshot)\.mark_ever_created\s*\(/,
+      allowlist: [
+        # Defines the marker write.
+        "apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex",
+        # The Lifecycle owner of the create marker.
+        "apps/ezagent_core/lib/ezagent/lifecycle.ex"
+      ],
+      guidance:
+        "The ever-created marker is written atomically by the initial persist " <>
+          "(`save_now`/`upsert` with `mark_ever_created: true`) under the " <>
+          "Lifecycle/Kind.Server path — never mark it directly."
+    },
+    %{
+      name: "direct snapshot DELETE / destroy teardown (KindSnapshot.delete)",
+      regex: ~r/(?<![\.\w])(?:KindSnapshot|Ezagent\.Ecto\.KindSnapshot)\.delete\s*\(/,
+      allowlist: [
+        # Defines the row delete.
+        "apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex",
+        # `Lifecycle.destroy/2` — THE Kind teardown primitive (hooks →
+        # snapshot+marker clear → terminate). All domain destroy goes here.
+        "apps/ezagent_core/lib/ezagent/lifecycle.ex",
+        # Framework snapshot store wraps the row delete.
+        "apps/ezagent_core/lib/ezagent/snapshot_store.ex",
+        # Operator escape hatches (NOT domain lifecycle): bulk ops clear +
+        # admin single-row maintenance. Explicitly low-level ops tools.
+        "apps/ezagent_core/lib/mix/tasks/ezagent.snapshot.clear.ex",
+        "apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/snapshots_live.ex"
+      ],
+      guidance:
+        "Destroy a Kind via `Ezagent.Lifecycle.destroy/2` (runs developer " <>
+          "destroy hooks, clears the snapshot row + marker, terminates) — " <>
+          "domain code must NOT hand-roll `terminate + KindSnapshot.delete`."
     }
   ]
 

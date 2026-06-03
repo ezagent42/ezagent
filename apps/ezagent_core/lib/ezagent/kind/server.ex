@@ -140,10 +140,13 @@ defmodule Ezagent.Kind.Server do
         # the `ever_created` marker. We go through `Lifecycle.fresh_create?/1`
         # (the single Lifecycle-owned signal), NOT a snapshot/save return,
         # so the create/activate concept has one definition and can't drift.
-        # Only Lifecycle-hosting Kinds have a create/activate distinction;
-        # others are :unknown (no grant-relevant freshness).
+        # Gate on `Lifecycle.hosts_lifecycle?/1` (Kind METADATA) — NOT the
+        # slice shape: on cold restart the rehydrated slice can lack
+        # `:transients`, which would mis-classify a rehydrated Lifecycle Kind
+        # as :unknown instead of :existed (codex review P2). Non-Lifecycle
+        # Kinds have no create/activate distinction → :unknown.
         state =
-          if hosts_lifecycle_slice?(slice_state) do
+          if Ezagent.Lifecycle.hosts_lifecycle?(kind_module) do
             freshness = if Ezagent.Lifecycle.fresh_create?(uri), do: :created, else: :existed
             %{state | create_freshness: freshness}
           else
