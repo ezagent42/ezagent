@@ -179,7 +179,15 @@ defmodule EzagentPluginFeishu.InboundChatLookup do
     # the chat would wrongly stay :ambiguous_chat_binding. Rehydrate each
     # durably-existing candidate FIRST (best-effort, sanctioned
     # SpawnRegistry.ensure_live) so the reads see real data.
-    Enum.each(candidate_uris, fn uri -> _ = Ezagent.SpawnRegistry.ensure_live(uri) end)
+    #
+    # ONLY when there is a possible narrowing signal — with no resolved
+    # mention and no typed `@` token both predicates short-circuit to no
+    # candidates anyway, so cold-starting every bound session would be
+    # wasted work + post-init side effects for an ordinary message in a
+    # shared/misconfigured chat (codex P2 round 2).
+    if MapSet.size(mention_keys) > 0 or typed_tokens != [] do
+      Enum.each(candidate_uris, fn uri -> _ = Ezagent.SpawnRegistry.ensure_live(uri) end)
+    end
 
     candidates =
       Enum.filter(candidate_uris, fn session_uri ->

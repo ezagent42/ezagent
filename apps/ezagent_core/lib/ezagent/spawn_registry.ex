@@ -115,10 +115,15 @@ defmodule Ezagent.SpawnRegistry do
     * `{:error, :not_created}`  — never durably created → no spawn.
     * `{:error, term()}`        — durable, but the rehydrate spawn failed.
 
-  Durable existence is decided through the Lifecycle-owned signal
-  `Ezagent.Lifecycle.fresh_create?/1` (a URI that is NOT a fresh-create has
-  been durably created) — NOT a direct snapshot-marker read, per the
-  persistence-access discipline (`lifecycle_persistence_access_test`).
+  Durable existence is "a snapshot row was persisted for this URI"
+  (`KindSnapshot.get/1` — a plain read, NOT the create/activate marker, so
+  it stays within the persistence-access discipline). Row-existence — not
+  the `ever_created` marker — is the right signal: a row means `save_now`
+  ran, i.e. the Kind WAS created, and it is robust to legacy rows whose
+  `ever_created` marker predates the marker column or was never set (codex
+  review). A missing row means never-created (or destroyed → row deleted)
+  → refuse, so an inbound binding to a vanished session never silently
+  materialises a fresh unowned one.
   """
   @spec ensure_live(URI.t()) :: {:ok, :live | :rehydrated} | {:error, term()}
   def ensure_live(%URI{} = uri) do
@@ -127,10 +132,7 @@ defmodule Ezagent.SpawnRegistry do
         {:ok, :live}
 
       :error ->
-        # "durably exists" = NOT a fresh-create (the Lifecycle-owned
-        # create-vs-activate signal), routed through the framework API so
-        # this site stays within the persistence-access discipline.
-        if Ezagent.Lifecycle.fresh_create?(uri) do
+        if is_nil(Ezagent.Ecto.KindSnapshot.get(URI.to_string(uri))) do
           {:error, :not_created}
         else
           case __MODULE__.spawn(uri) do
