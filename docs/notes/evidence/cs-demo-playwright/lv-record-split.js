@@ -74,10 +74,17 @@ async function login(page, user) {
 async function inputGlow(page, rgb, on) {
   await page.evaluate(({ rgb, on }) => {
     const i = document.querySelector('textarea, input[placeholder*="message"], input[placeholder*="mention"]');
-    if (!i) return;
-    i.style.transition = 'box-shadow .18s ease';
-    i.style.borderRadius = '8px';
-    i.style.boxShadow = on ? `0 0 0 3px rgba(${rgb},.95), 0 0 16px 3px rgba(${rgb},.7)` : '';
+    if (i) {
+      i.style.transition = 'box-shadow .18s ease';
+      i.style.borderRadius = '8px';
+      i.style.boxShadow = on ? `0 0 0 3px rgba(${rgb},.95), 0 0 16px 3px rgba(${rgb},.7)` : '';
+    }
+    // While typing, the identity ring+tag sit right under the composer; have them step aside
+    // (fade out) so the glowing input is the sole focus, then fade back once input is done.
+    ['__ring', '__tag'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) { el.style.transition = 'opacity .25s ease'; el.style.opacity = on ? '0' : '1'; }
+    });
   }, { rgb, on }).catch(() => {});
 }
 async function send(page, text, rgb) {
