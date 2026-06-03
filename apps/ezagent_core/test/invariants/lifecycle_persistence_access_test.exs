@@ -52,7 +52,10 @@ defmodule Ezagent.Invariants.LifecyclePersistenceAccessTest do
   @rules [
     %{
       name: "direct snapshot-table WRITE (KindSnapshot.upsert)",
-      regex: ~r/(?<![\.\w])KindSnapshot\.upsert\s*\(/,
+      # Match both the aliased `KindSnapshot.upsert(` and the fully-qualified
+      # `Ezagent.Ecto.KindSnapshot.upsert(` (codex: a bare `KindSnapshot`
+      # pattern + `(?<![\.\w])` lookbehind misses the qualified form).
+      regex: ~r/(?<![\.\w])(?:KindSnapshot|Ezagent\.Ecto\.KindSnapshot)\.upsert\s*\(/,
       allowlist: [
         # The Lifecycle/RBK persistence module — the canonical write path.
         "apps/ezagent_core/lib/ezagent/kind/snapshot.ex",
