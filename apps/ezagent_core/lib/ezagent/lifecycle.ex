@@ -355,6 +355,29 @@ defmodule Ezagent.Lifecycle do
     end
   end
 
+  @doc """
+  Public create-vs-activate signal (#533 5a). Returns `true` iff `target`
+  (a `%URI{}`, a URI string, or an args map carrying `:uri`) has NOT yet
+  been durably created — i.e. THIS boot's `init` will run `create/1` (a
+  fresh create) rather than `activate/2` (rehydrate of an existing Kind).
+
+  This is the single **Lifecycle-owned** source of the freshness signal
+  the engine keys decisions off — e.g. the create-entry's manage-cap
+  grant (#533 §3.1). It MUST be read BEFORE the initial-snapshot persist
+  sets the `ever_created` marker (`Kind.Server.init/1` does this between
+  `KindRegistry.put_new` and `persist_initial_snapshot`).
+
+  Callers MUST NOT re-derive freshness by reading the snapshot table
+  (`KindSnapshot.ever_created?`), `Repo`, or a save return value directly
+  — go through this Lifecycle function so the create/activate decision has
+  exactly one definition and cannot drift.
+  """
+  @spec fresh_create?(URI.t() | String.t() | map()) :: boolean()
+  def fresh_create?(%URI{} = uri), do: fresh_create?(URI.to_string(uri))
+  def fresh_create?(uri_str) when is_binary(uri_str), do: not marker_lookup(uri_str)
+  def fresh_create?(%{uri: uri}), do: fresh_create?(uri)
+  def fresh_create?(_), do: true
+
   defp ever_created?(%{uri: %URI{} = uri}), do: ever_created?(URI.to_string(uri))
   defp ever_created?(%{uri: uri}) when is_binary(uri), do: ever_created?(uri)
   defp ever_created?(uri_str) when is_binary(uri_str), do: marker_lookup(uri_str)
