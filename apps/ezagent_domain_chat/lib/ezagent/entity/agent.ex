@@ -595,7 +595,15 @@ defmodule Ezagent.Entity.Agent do
   # form has no signal — `fresh?` defaults conservatively to `false`
   # and meta is an empty map.
   defp instantiate_workers(template_class, data, %URI{} = workspace_uri) do
-    case template_class.instantiate(template_class.template_name(), data, workspace_uri) do
+    # PR-3 (domain.agent D2) — route through the core contract-boundary wrapper so
+    # the per-agent config_dir TARGET is domain-allocated + provided as data
+    # (`"allocated_config_dir"`) before the plugin materializes into it.
+    case Ezagent.Kind.Template.provision_and_instantiate(
+           template_class,
+           template_class.template_name(),
+           data,
+           workspace_uri
+         ) do
       {:ok, workers, meta} when is_list(workers) and is_map(meta) ->
         {:ok, workers, Map.get(meta, :fresh?, false) == true, meta}
 
@@ -711,8 +719,10 @@ defmodule Ezagent.Entity.Agent do
   # the slice was never populated, so `Sandbox.invoke(:destroy, ...)`
   # would never know to clean it up. Call the plugin's
   # `destroy_config_dir/2` directly with the path we know
-  # (template_class is the cc plugin's CcAgent which provides
-  # `agent_config_dir/1` as the canonical builder).
+  # PR-3 (domain.agent D2/DD-1) — the per-agent config_dir path authority is core
+  # (`Ezagent.Sandbox.ConfigDir`), NOT the plugin. The domain derives the dir from
+  # the agent URI + the class's namespace (no dependency on a plugin path builder)
+  # and asks the plugin only to MATERIALIZE-cleanup it via `destroy_config_dir/2`.
   defp cleanup_partial_config_dirs(workers, template_class) do
     cond do
       not is_atom(template_class) ->
@@ -721,13 +731,11 @@ defmodule Ezagent.Entity.Agent do
       not function_exported?(template_class, :destroy_config_dir, 2) ->
         :ok
 
-      not function_exported?(template_class, :agent_config_dir, 1) ->
-        # No canonical path builder — can't safely guess the dir.
-        :ok
-
       true ->
+        namespace = Ezagent.Kind.Template.namespace_of(template_class)
+
         Enum.each(workers, fn worker_uri ->
-          dir = template_class.agent_config_dir(worker_uri)
+          dir = Ezagent.Sandbox.ConfigDir.path(worker_uri, namespace)
           _ = template_class.destroy_config_dir(worker_uri, dir)
         end)
     end

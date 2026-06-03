@@ -62,7 +62,12 @@ defmodule Ezagent.PluginCc.Template.CcAgentCloneFromTest do
       # config_dir promotion (Allen 2026-06-03): universal neutral key.
       target_uri = URI.new!("entity://agent/system/cc_clone-target-#{uniq()}")
       cleanup_target(target_uri)
-      tmpl = %{"config_dir" => source}
+      # PR-3: the per-agent TARGET is domain-allocated + provided as
+      # "allocated_config_dir"; the plugin materializes the source INTO it.
+      tmpl = %{
+        "config_dir" => source,
+        "allocated_config_dir" => CcAgent.agent_config_dir(target_uri)
+      }
 
       assert {:ok, target} = CcAgent.create_agent_config_dir(target_uri, tmpl)
 
@@ -93,7 +98,12 @@ defmodule Ezagent.PluginCc.Template.CcAgentCloneFromTest do
 
       target_uri = URI.new!("entity://agent/system/cc_indep-target-#{uniq()}")
       cleanup_target(target_uri)
-      tmpl = %{"config_dir" => source}
+      # PR-3: the per-agent TARGET is domain-allocated + provided as
+      # "allocated_config_dir"; the plugin materializes the source INTO it.
+      tmpl = %{
+        "config_dir" => source,
+        "allocated_config_dir" => CcAgent.agent_config_dir(target_uri)
+      }
 
       assert {:ok, target} = CcAgent.create_agent_config_dir(target_uri, tmpl)
       assert File.read!(Path.join(target, "user-data.txt")) == "before-clone"

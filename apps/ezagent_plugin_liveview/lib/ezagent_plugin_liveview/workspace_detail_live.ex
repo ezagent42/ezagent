@@ -322,7 +322,14 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
       class_name when is_binary(class_name) ->
         case Ezagent.TemplateRegistry.lookup(class_name) do
           {:ok, class_module} ->
-            class_module.instantiate(tmpl_name, tmpl, workspace_uri)
+            # PR-3 (domain.agent D2) — operator-create routes through the core
+            # contract-boundary wrapper (domain-allocated config_dir TARGET).
+            Ezagent.Kind.Template.provision_and_instantiate(
+              class_module,
+              tmpl_name,
+              tmpl,
+              workspace_uri
+            )
 
           :error ->
             {:error, {:no_template_class, class_name}}
