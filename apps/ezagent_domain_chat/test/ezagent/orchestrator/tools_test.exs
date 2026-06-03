@@ -22,6 +22,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
 
   @expected [
     :add_managed_member,
+    :update_member_template,
     :remove_member,
     :define_rule_set_rule,
     :define_prompt_template,
@@ -96,6 +97,15 @@ defmodule Ezagent.Orchestrator.ToolsTest do
       assert {:error, {:missing_opt, :caller}} = Tools.remove_member("role-x", [])
     end
 
+    test "update_member_template surfaces :missing_opt for required ctx (PR-6)" do
+      assert {:error, {:missing_opt, :caller}} =
+               Tools.update_member_template(
+                 "role-x",
+                 URI.new!("template://agent/system/t2"),
+                 []
+               )
+    end
+
     test "define_rule_set_rule surfaces :missing_opt without ctx" do
       assert {:error, {:missing_opt, :caller}} =
                Tools.define_rule_set_rule({:mention, "x"}, "role-x", rule_set: "rs")
@@ -128,6 +138,8 @@ defmodule Ezagent.Orchestrator.ToolsTest do
         {:list_templates, Tools.list_templates()},
         {:add_managed_member,
          Tools.add_managed_member(URI.new!("template://agent/system/x"), "role-x", true, [])},
+        {:update_member_template,
+         Tools.update_member_template("role-x", URI.new!("template://agent/system/t2"), [])},
         {:remove_member, Tools.remove_member("role-x", [])},
         {:define_rule_set_rule,
          Tools.define_rule_set_rule({:mention, "x"}, "role-x", rule_set: "rs")},
@@ -182,6 +194,58 @@ defmodule Ezagent.Orchestrator.ToolsTest do
     test "a template missing {body} is rejected before install" do
       assert {:error, :body_placeholder_required} =
                Tools.define_prompt_template("greet", "hello there", @ctx3)
+    end
+  end
+
+  describe "update_member_template (PR-6 — member-template swap + regenerate)" do
+    # The new tool reuses cap #1 ({:within_session, S}) authority — the same
+    # check `add_managed_member` preflights. With NO matching cap, the tool
+    # must fail closed BEFORE touching the (non-existent) member.
+    @swap_ctx_unauth [
+      caller: URI.new!("entity://agent/system/cc_orch-pr6"),
+      caps: MapSet.new(),
+      workspace_uri: URI.new!("workspace://system"),
+      session_uri: URI.new!("session://generic/system/no-such-pr6")
+    ]
+
+    test "fails closed (:unauthorized) without the {:within_session, S} cap" do
+      assert {:error, :unauthorized} =
+               Tools.update_member_template(
+                 "role-x",
+                 URI.new!("template://agent/system/t2"),
+                 @swap_ctx_unauth
+               )
+    end
+
+    test "with the session cap but no live member, resolves to :unknown_member_role" do
+      session_uri = URI.new!("session://generic/system/no-such-pr6")
+
+      caps =
+        MapSet.new([
+          %Ezagent.Capability{
+            kind: :session,
+            behavior: :any,
+            action: :any,
+            instance: {:within_session, session_uri},
+            workspace_uri: URI.new!("workspace://system"),
+            granted_by: URI.new!("entity://user/system/admin"),
+            granted_at: DateTime.utc_now()
+          }
+        ])
+
+      opts = [
+        caller: URI.new!("entity://agent/system/cc_orch-pr6"),
+        caps: caps,
+        workspace_uri: URI.new!("workspace://system"),
+        session_uri: session_uri
+      ]
+
+      assert {:error, {:unknown_member_role, "ghost-role"}} =
+               Tools.update_member_template(
+                 "ghost-role",
+                 URI.new!("template://agent/system/t2"),
+                 opts
+               )
     end
   end
 

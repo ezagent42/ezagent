@@ -239,8 +239,8 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
       # §3.8 retired the slot tools; the surface is member + rule-set
       # oriented plus the three retained template tools.
       assert names ==
-               MapSet.new(~w(add_managed_member remove_member define_rule_set_rule
-                             define_prompt_template define_legend
+               MapSet.new(~w(add_managed_member update_member_template remove_member
+                             define_rule_set_rule define_prompt_template define_legend
                              update_template save_template_as list_templates))
 
       for schema <- schemas do

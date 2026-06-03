@@ -78,6 +78,20 @@ defmodule Ezagent.Entity.AgentTemplate do
 
         # ESR side
         default_caps:       [Ezagent.Capability.t()],
+
+        # DOMAIN-owned desired skills/caps (PR-6, domain.agent). The DOMAIN
+        # (not the plugin) declares what a member built from this template
+        # SHOULD have. `desired_skills` are flavor-agnostic skill NAMES placed
+        # into the agent's config_dir by the flavor's instantiate/3;
+        # `desired_caps` are caps granted to the spawned member identity at the
+        # re-materialization seam (shared with PR-5 reconfigure). Distinct from
+        # `default_caps` (the template Kind's STRUCTURAL cap policy / fork
+        # baseline). Both UNIVERSAL (flavor-agnostic); both optional (omitted
+        # from to_template_data/2 when absent). See
+        # docs/notes/pr6-desired-skills-caps.md.
+        desired_skills:     [String.t()] | nil,
+        desired_caps:       [Ezagent.Capability.t()] | nil,
+
         created_by:         URI.t() | nil,
         created_at:         DateTime.t()
       }
@@ -221,12 +235,10 @@ defmodule Ezagent.Entity.AgentTemplate do
     with {:ok, tc} <- resolve_template_class(content),
          {:ok, cwd} <- fetch_project_cwd(content),
          {:ok, config_dir} <- fetch_config_dir(content) do
-      # config_dir promotion (Allen 2026-06-03): config_dir is UNIVERSAL —
+      # config_dir promotion (PR-2, Allen 2026-06-03): config_dir is UNIVERSAL —
       # every flavor's config-home dir is emitted here under the neutral
-      # `"config_dir"` data key. nil ⇒ dropped (agent runs without a
-      # config home). The cc Template Class reads this neutral key and
-      # applies its claude semantics; it does NOT re-emit it as a flavor
-      # extra.
+      # `"config_dir"` data key. nil ⇒ dropped. The cc Template Class reads this
+      # neutral key and applies its claude semantics.
       base =
         %{
           "class" => tc.template_name(),
@@ -234,6 +246,13 @@ defmodule Ezagent.Entity.AgentTemplate do
           "cwd" => cwd
         }
         |> put_config_dir(config_dir)
+        # PR-6 (domain.agent) — DOMAIN-owned desired skills/caps. UNIVERSAL
+        # (flavor-agnostic) content fields the DOMAIN declares for a member built
+        # from this template; they ride into the Template-Class data map so a
+        # flavor's instantiate/3 can place the skills + the domain spawn/regenerate
+        # path can grant the caps. Absent → omitted. Reads atom OR string keys.
+        |> put_universal_desired(content, :desired_skills)
+        |> put_universal_desired(content, :desired_caps)
 
       extra =
         if function_exported?(tc, :template_data_extra, 1) do
@@ -352,6 +371,18 @@ defmodule Ezagent.Entity.AgentTemplate do
     case content_get(content, :project_cwd) do
       cwd when is_binary(cwd) and cwd != "" -> {:ok, cwd}
       _ -> {:error, :missing_project_cwd}
+    end
+  end
+
+  # PR-6 — add a DOMAIN-owned desired field (skills/caps) to the
+  # Template-Class data map under its string key, ONLY when the content
+  # carries it. Absent / nil → leave the data map untouched (no empty key),
+  # mirroring the four optional cc keys. `key` is the universal content
+  # field name (atom); the data-map key is its string form.
+  defp put_universal_desired(data, content, key) when is_atom(key) do
+    case content_get(content, key) do
+      nil -> data
+      value -> Map.put(data, Atom.to_string(key), value)
     end
   end
 
