@@ -259,7 +259,20 @@ defmodule Ezagent.Behavior.ExternalMirror do
   binding is a no-op union; bypass paths get the new binding pulled in for
   `handle_signal/2` to spawn the worker).
   """
-  def reconcile_bindings(%URI{} = session_uri, %{bindings: existing} = state) do
+  def reconcile_bindings(%URI{} = session_uri, state) when is_map(state) do
+    # The DB projection (`external_mirror_bindings`) is the SoT (P3); the
+    # `:bindings` slice key is the in-memory CACHE of it. On a cold-load of
+    # an OLD-shape snapshot the rehydrated `state` may LACK `:bindings`
+    # entirely (the key was added after the snapshot, or the slice persisted
+    # as empty `%{}`). `create/1` is skipped on `ever_created?`, so this is
+    # the ONLY place the slice shape is re-established — reconcile must
+    # materialize `:bindings` from the SoT rather than pass through a
+    # `:bindings`-less map (which made `activate/2`'s `reconciled.bindings`
+    # raise KeyError — Track #14). Treating an absent cache as `[]` is the
+    # correct reconcile semantics: union the full SoT in. This is NOT a
+    # defaulting shim — it is the materialize-from-SoT contract (SPEC OQ-8).
+    existing = Map.get(state, :bindings, [])
+
     db_bindings =
       session_uri
       |> BindingRow.list_for_session()
@@ -270,12 +283,18 @@ defmodule Ezagent.Behavior.ExternalMirror do
     additions =
       Enum.reject(db_bindings, fn b -> MapSet.member?(existing_ids, b.binding_id) end)
 
-    %{state | bindings: existing ++ additions}
+    Map.put(state, :bindings, existing ++ additions)
   rescue
-    # DB unavailable — keep the snapshot's bindings. Same tolerance as
-    # create/1's rescue.
-    _ -> state
+    # DB unavailable — keep whatever cache the snapshot held, but still
+    # guarantee the `:bindings` key exists so `activate/2` never crashes
+    # on `reconciled.bindings`. Same boot tolerance as `create/1`'s rescue.
+    _ -> Map.put_new(state, :bindings, [])
   end
+
+  # Non-URI session arg (no SoT to read) — guarantee the slice carries a
+  # `:bindings` key without touching the DB.
+  def reconcile_bindings(_session_uri, state) when is_map(state),
+    do: Map.put_new(state, :bindings, [])
 
   def reconcile_bindings(_session_uri, state), do: state
 
