@@ -295,19 +295,23 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
       assert File.exists?(Path.join(target, ".ezagent-config-complete"))
     end
 
-    test "PRESERVES a user /login credential in a marker-absent target — never wipes it (PR-B)" do
-      # #17 PR-B (codex review HIGH): the user logged in (claude wrote
-      # .credentials.json into the per-agent dir) but the completion marker is
-      # absent (e.g. it was a fresh allocate the user logged into before any
-      # marker, or the marker was removed). materialize MUST NOT rm_rf the dir +
-      # re-copy the reference — that would destroy the real login.
+    test "marker-absent target with creds: preserve user login + FILL missing reference content (PR-B / codex P2)" do
+      # #17 PR-B: the user logged in (claude wrote .credentials.json) into a
+      # marker-absent dir. materialize MUST (a) NEVER destroy the real login, AND
+      # (b) NOT bless a possibly-incomplete tree — it overlays the user files on a
+      # fresh reference stage so missing reference content (e.g. .claude/plugins) is
+      # filled while user state wins (codex review P2).
       reference = make_tmpdir("cc-pr-b-ref")
       File.write!(Path.join(reference, ".credentials.json"), ~s/{"claudeAiOauth":"REFERENCE-stale"}/)
+      File.write!(Path.join(reference, "settings.json"), ~s/{"from":"reference"}/)
+      plugin_dir = Path.join([reference, ".claude", "plugins", "demo"])
+      File.mkdir_p!(plugin_dir)
+      File.write!(Path.join(plugin_dir, "plugin.json"), ~s/{"name":"demo"}/)
 
       agent_uri = URI.new!("entity://agent/team-alpha/cc_login-preserve-#{uniq()}")
       target = CcAgent.agent_config_dir(agent_uri)
       File.mkdir_p!(target)
-      # the user's real login — present, but NO completion marker
+      # the user's real login — present, but NO completion marker + NO other content
       user_creds = ~s/{"claudeAiOauth":"USER-REAL-LOGIN"}/
       File.write!(Path.join(target, ".credentials.json"), user_creds)
       refute File.exists?(Path.join(target, ".ezagent-config-complete"))
@@ -316,8 +320,11 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
       tmpl = %{"config_dir" => reference, "allocated_config_dir" => target}
 
       assert {:ok, ^target} = CcAgent.create_agent_config_dir(agent_uri, tmpl)
-      # the user's credential is intact (NOT overwritten by the reference's stale one)
+      # (a) the user's credential is intact (NOT overwritten by the reference's stale one)
       assert File.read!(Path.join(target, ".credentials.json")) == user_creds
+      # (b) missing reference content was FILLED (no incomplete config — codex P2)
+      assert File.read!(Path.join(target, "settings.json")) == ~s/{"from":"reference"}/
+      assert File.exists?(Path.join([target, ".claude", "plugins", "demo", "plugin.json"]))
       # and the dir is now stamped complete so future spawns are idempotent
       assert File.exists?(Path.join(target, ".ezagent-config-complete"))
     end

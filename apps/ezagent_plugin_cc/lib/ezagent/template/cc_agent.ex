@@ -1846,12 +1846,14 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
         {:ok, target}
 
       File.dir?(target) and has_user_credentials?(target) ->
-        # #17 PR-B (codex review HIGH) — marker absent BUT the agent's login
-        # credential files are present → this is a REAL interactive `/login`, NOT
-        # our interrupted copy. NEVER wipe it. Adopt as complete and stamp the
-        # marker so future spawns take the idempotent branch above.
-        _ = File.write(marker, "ok\n")
-        {:ok, target}
+        # #17 PR-B — marker absent BUT the agent's login credential files are present.
+        # This is either a real interactive `/login` OR a pre-atomic interrupted copy
+        # that got as far as the creds. Either way we must (a) NEVER lose the user's
+        # creds and (b) NOT bless a possibly-incomplete tree (codex review P2). So:
+        # stage the reference, OVERLAY the existing (user) files on top (user wins),
+        # stamp, atomic-swap → the result is COMPLETE reference content + all user
+        # state + marker.
+        stage_and_swap(reference_dir, target, marker, overlay: target)
 
       true ->
         # target absent, OR a credential-LESS dir (freshly-allocated empty dir from
@@ -1866,13 +1868,17 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # target therefore only ever appears fully-formed (marker present) or absent — never a
   # partial copy — so a marker-absent target is unambiguous (it is a user `/login`, never
   # our half-done copy). Supersedes the old blind stale-wipe (codex review HIGH-3).
-  defp stage_and_swap(reference_dir, target, marker) do
+  defp stage_and_swap(reference_dir, target, marker, opts \\ []) do
     staging = "#{target}.staging-#{System.unique_integer([:positive])}"
     marker_name = Path.basename(marker)
     _ = File.rm_rf(staging)
 
     with :ok <- File.mkdir_p(Path.dirname(target)),
          {:ok, _} <- File.cp_r(reference_dir, staging),
+         # Optional overlay (codex P2): copy an existing dir's files ON TOP of the
+         # reference (overlay source wins) so a user `/login` (or other user state) is
+         # preserved while the reference fills any missing content → complete tree.
+         :ok <- maybe_overlay(Keyword.get(opts, :overlay), staging),
          :ok <- File.chmod(staging, 0o700),
          :ok <- chmod_credentials(staging),
          :ok <- File.write(Path.join(staging, marker_name), "ok\n"),
@@ -1886,6 +1892,17 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       err ->
         _ = File.rm_rf(staging)
         {:error, {:copy_reference_dir_failed, err}}
+    end
+  end
+
+  defp maybe_overlay(nil, _staging), do: :ok
+
+  defp maybe_overlay(src, staging) when is_binary(src) do
+    # Don't overlay the in-progress completion marker (it's written fresh below); the
+    # overlay carries the user's credential + config files over the reference defaults.
+    case File.cp_r(src, staging) do
+      {:ok, _} -> :ok
+      {:error, reason, _} -> {:error, reason}
     end
   end
 
