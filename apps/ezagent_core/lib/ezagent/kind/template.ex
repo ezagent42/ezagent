@@ -231,12 +231,42 @@ defmodule Ezagent.Kind.Template do
   @callback ensure_subprocess_alive(agent_uri(), respawn_data :: map()) ::
               :ok | {:error, term()}
 
+  @doc """
+  PR-3 (domain.agent D2) — the config_dir path NAMESPACE for this flavor (e.g.
+  `"cc"` → `Ezagent.Sandbox.ConfigDir` builds `<Home>/cc-agents/<ws>/<name>`).
+
+  Optional: a flavor that omits it has its namespace derived from
+  `template_name/0` by stripping a trailing `.agent` (see `namespace_of/1`). cc
+  declares `"cc"` explicitly so the layout stays byte-identical to the pre-PR-3
+  `cc-agents/...` (no migration).
+  """
+  @callback config_dir_namespace() :: String.t()
+
   @optional_callbacks [
     validate: 1,
     template_data_extra: 1,
+    config_dir_namespace: 0,
     list_extensions: 1,
     toggle_extension: 3,
     destroy_config_dir: 2,
     ensure_subprocess_alive: 2
   ]
+
+  @doc """
+  Resolve the config_dir path namespace for a Template Class.
+
+  Boot-safe: the class module is available at every `instantiate/3` call site
+  (it is the receiver) AND on cold-restart, whereas `template_data` carries no
+  flavor key. Prefers the optional `config_dir_namespace/0` callback; otherwise
+  derives the namespace from `template_name/0` by stripping a trailing `.agent`.
+  """
+  @spec namespace_of(module()) :: String.t()
+  def namespace_of(class_module) when is_atom(class_module) do
+    if function_exported?(class_module, :config_dir_namespace, 0) do
+      class_module.config_dir_namespace()
+    else
+      class_module.template_name()
+      |> String.replace_suffix(".agent", "")
+    end
+  end
 end
