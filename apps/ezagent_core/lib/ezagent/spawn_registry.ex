@@ -101,6 +101,43 @@ defmodule Ezagent.SpawnRegistry do
   end
 
   @doc """
+  Ensure the Kind at `uri` is a LIVE actor, rehydrating it from durable
+  state if needed (team-routing-unification §3.8 rehydrate-or-spawn).
+
+  Unlike `spawn/1`, this REFUSES to materialise a Kind that was never
+  durably created. An access path (e.g. the Feishu inbound dispatcher
+  resolving a chat→session binding) uses this to bring a cold-but-real
+  Kind back to life after a node restart — without silently creating an
+  unowned fresh one when the durable state is genuinely absent.
+
+    * `{:ok, :live}`            — already a live actor.
+    * `{:ok, :rehydrated}`      — was cold but durably exists; spawned now.
+    * `{:error, :not_created}`  — never durably created → no spawn.
+    * `{:error, term()}`        — durable, but the rehydrate spawn failed.
+
+  Durable existence is the snapshot ever-created marker
+  (`Ezagent.Ecto.KindSnapshot.ever_created?/1`) — the same predicate the
+  Lifecycle create-vs-activate decision uses (`Ezagent.Lifecycle.fresh_create?/1`).
+  """
+  @spec ensure_live(URI.t()) :: {:ok, :live | :rehydrated} | {:error, term()}
+  def ensure_live(%URI{} = uri) do
+    case Ezagent.KindRegistry.lookup(uri) do
+      {:ok, _pid} ->
+        {:ok, :live}
+
+      :error ->
+        if Ezagent.Ecto.KindSnapshot.ever_created?(URI.to_string(uri)) do
+          case __MODULE__.spawn(uri) do
+            {:ok, _pid} -> {:ok, :rehydrated}
+            {:error, _} = err -> err
+          end
+        else
+          {:error, :not_created}
+        end
+    end
+  end
+
+  @doc """
   Spawn (or look up an existing) Kind at the given URI, PRESERVING the
   atomic "this call won the start" signal.
 

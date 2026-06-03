@@ -207,6 +207,45 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
   end
 
   defp do_dispatch(session_uri, caller_uri, caps, body, mentions) do
+    # team-routing-unification §3.8 (rehydrate-or-spawn): the chat resolved
+    # to a DURABLY-created session, but after a cold node restart that
+    # session may not be a live actor yet (nothing rehydrates bound sessions
+    # on boot). Without this, the dispatch below returns :no_such_actor and
+    # the human just gets an error (observed live: the s34full relay session
+    # after a node rebuild, 2026-06-03). Bring it back via the SANCTIONED
+    # rehydrate primitive (`SpawnRegistry.spawn`, the same path boot/login
+    # use) — NOT a raw spawn — gated on durable existence so we never create
+    # an unowned fresh session.
+    with :ok <- ensure_session_live(session_uri) do
+      dispatch_to_session(session_uri, caller_uri, caps, body, mentions)
+    end
+  end
+
+  # §3.8 — rehydrate a durably-existing-but-cold session before dispatch via
+  # the SANCTIONED `SpawnRegistry.ensure_live/1` (NOT a raw spawn). Live → :ok;
+  # cold-but-durable → rehydrated; never-created → refuse (surfacing the error
+  # beats silently creating a fresh unowned session).
+  defp ensure_session_live(session_uri) do
+    case Ezagent.SpawnRegistry.ensure_live(session_uri) do
+      {:ok, :live} ->
+        :ok
+
+      {:ok, :rehydrated} ->
+        require Logger
+
+        Logger.info(
+          "Feishu inbound: rehydrated cold-but-durable session " <>
+            "#{URI.to_string(session_uri)} before dispatch (§3.8 rehydrate-or-spawn)"
+        )
+
+        :ok
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp dispatch_to_session(session_uri, caller_uri, caps, body, mentions) do
     # Phase 6 PR 15: download attachments to local paths so recipients
     # (CC bridge, LV chat thread, future viewers) can show content
     # rather than just metadata. Best-effort — download failure keeps

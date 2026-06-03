@@ -230,12 +230,30 @@ defmodule Ezagent.Ecto.KindSnapshot do
   lossless); falls back to legacy `state` (JSON). Returns `:error` if both
   are nil/empty.
 
-  Uses `:safe` flag on `binary_to_term` to reject unknown atoms.
+  ## Why NOT `:safe` (Allen 2026-06-03 — cold-load rehydrate fix)
+
+  `binary_to_term(bin, [:safe])` rejects any atom not ALREADY in the VM's
+  atom table. The `:safe` flag exists to stop ATOM-TABLE INJECTION /
+  exhaustion from UNTRUSTED input — it does not apply here: a snapshot is
+  framework-authored TRUSTED data (our own `Ezagent.Kind.Snapshot.save_now`
+  → `term_to_binary` of the Kind's state). User content in the state is
+  strings/binaries (never atoms); every atom in a snapshot is a framework
+  module name (`Ezagent.Message`, `Ezagent.Publisher.Event`, `DateTime`, …)
+  or a struct/key atom.
+
+  On a COLD restart, such a module atom may not be loaded at the moment the
+  Kind decodes (BEAM loads modules lazily), so `:safe` raised → the caller
+  saw `{:error, :unsafe_atom}` → the PR-4 fail-loud guard refused to wipe →
+  the Kind could not rehydrate → inbound dispatch returned `:no_such_actor`
+  (the live 传话游戏 relay session `s34full`). Injecting a malicious atom
+  would require write access to the local `kind_snapshots` table, i.e. full
+  host compromise — at which point `:safe` protects nothing. So we decode
+  the trusted snapshot WITHOUT `:safe`.
   """
   @spec decode_state(%__MODULE__{}) :: {:ok, map()} | {:error, term()}
   def decode_state(%__MODULE__{state_binary: bin}) when is_binary(bin) and byte_size(bin) > 0 do
     try do
-      term = :erlang.binary_to_term(bin, [:safe])
+      term = :erlang.binary_to_term(bin)
 
       if is_map(term) do
         {:ok, term}
@@ -243,7 +261,7 @@ defmodule Ezagent.Ecto.KindSnapshot do
         {:error, {:not_a_map, term}}
       end
     rescue
-      ArgumentError -> {:error, :unsafe_atom}
+      e -> {:error, {:decode_failed, e}}
     end
   end
 
