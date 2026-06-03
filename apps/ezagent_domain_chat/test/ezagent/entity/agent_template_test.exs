@@ -325,4 +325,64 @@ defmodule Ezagent.Entity.AgentTemplateTest do
       assert :ok = Ezagent.PluginCc.Template.CcAgent.validate(data)
     end
   end
+  # PR-6 (domain.agent) — DOMAIN-owned desired skills/caps. These are
+  # universal (flavor-agnostic) content fields the DOMAIN declares; they
+  # ride into the Template-Class data map so a flavor's instantiate/3 can
+  # place skills, and the domain spawn path can grant caps. (The actual
+  # grant + live re-copy is the re-materialization seam shared with PR-5's
+  # reconfigure — see docs/notes/pr6-desired-skills-caps.md.)
+  describe "to_template_data/2 threads desired_skills/desired_caps (PR-6)" do
+    @cc_uri URI.new!("entity://agent/team-alpha/cc_w-pr6")
+
+    test "threads desired_skills into the data map when present" do
+      content = %{
+        flavor: "cc",
+        project_cwd: "/tmp/proj",
+        desired_skills: ["ezagent-developer", "elixir-phoenix-helper"]
+      }
+
+      assert {:ok, data} = AgentTemplate.to_template_data(content, @cc_uri)
+      assert data["desired_skills"] == ["ezagent-developer", "elixir-phoenix-helper"]
+    end
+
+    test "threads desired_caps into the data map when present" do
+      cap = %Ezagent.Capability{
+        kind: :session,
+        behavior: Ezagent.Behavior.Chat,
+        action: :any,
+        instance: :any,
+        workspace_uri: URI.new!("workspace://team-alpha"),
+        granted_by: URI.new!("entity://user/team-alpha/admin"),
+        granted_at: DateTime.utc_now()
+      }
+
+      content = %{
+        flavor: "cc",
+        project_cwd: "/tmp/proj",
+        desired_caps: [cap]
+      }
+
+      assert {:ok, data} = AgentTemplate.to_template_data(content, @cc_uri)
+      assert data["desired_caps"] == [cap]
+    end
+
+    test "omits desired_skills/desired_caps when absent (no empty keys)" do
+      content = %{flavor: "cc", project_cwd: "/tmp/proj"}
+
+      assert {:ok, data} = AgentTemplate.to_template_data(content, @cc_uri)
+      refute Map.has_key?(data, "desired_skills")
+      refute Map.has_key?(data, "desired_caps")
+    end
+
+    test "reads string-keyed desired_skills (post-JSON snapshot roundtrip)" do
+      content = %{
+        "flavor" => "cc",
+        "project_cwd" => "/tmp/proj",
+        "desired_skills" => ["s1"]
+      }
+
+      assert {:ok, data} = AgentTemplate.to_template_data(content, @cc_uri)
+      assert data["desired_skills"] == ["s1"]
+    end
+  end
 end

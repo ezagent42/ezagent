@@ -513,6 +513,31 @@ defmodule Ezagent.Orchestrator.McpServer do
         }
       },
       %{
+        "name" => "update_member_template",
+        "description" =>
+          "Swap a managed member's source AgentTemplate and REGENERATE the " <>
+            "member: terminate the old worker, spawn a fresh one from the new " <>
+            "template at the SAME role_name, and re-join it. Use this to change " <>
+            "a member's blueprint (flavor / cwd / skills / caps) after adding " <>
+            "it. Routing rules keyed on the role_name re-resolve automatically.",
+        "inputSchema" => %{
+          "type" => "object",
+          "properties" => %{
+            "role_name" => %{
+              "type" => "string",
+              "description" => "The member role_name to regenerate."
+            },
+            "new_source_template_uri" => %{
+              "type" => "string",
+              "description" =>
+                "template://agent/<workspace>/<name> — the NEW AgentTemplate to " <>
+                  "rebuild the member from."
+            }
+          },
+          "required" => ["role_name", "new_source_template_uri"]
+        }
+      },
+      %{
         "name" => "remove_member",
         "description" =>
           "Remove a session member by role_name: terminate the worker you " <>
@@ -723,6 +748,13 @@ defmodule Ezagent.Orchestrator.McpServer do
          {:ok, role_name} <- arg_string(args, "role_name") do
       in_session_template = arg_optional_boolean(args, "in_session_template", true)
       Tools.add_managed_member(tmpl_uri, role_name, in_session_template, tool_opts(ctx))
+    end
+  end
+
+  defp run_tool(%__MODULE__{} = ctx, :update_member_template, args) do
+    with {:ok, role_name} <- arg_string(args, "role_name"),
+         {:ok, new_tmpl_uri} <- arg_uri(args, "new_source_template_uri") do
+      Tools.update_member_template(role_name, new_tmpl_uri, tool_opts(ctx))
     end
   end
 
