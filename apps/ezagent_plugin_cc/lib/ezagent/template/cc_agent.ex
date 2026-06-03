@@ -916,9 +916,25 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
       _ ->
         with {:ok, {argv, cmd_env}} <- build_claude_cmd(agent_uri, cwd, tmpl) do
-          {:ok, %{cwd: cwd, cmd_override: argv, cmd_env: cmd_env}}
+          {:ok,
+           %{
+             cwd: cwd,
+             cmd_override: argv,
+             cmd_env: cmd_env,
+             # #17 PR-C — surface an expired/missing claude login as an emit-only
+             # auth-failure signal (no silent mute) from this flavor's adapter.
+             auth_observers: credential_auth_observers()
+           }}
         end
     end
+  end
+
+  # #17 PR-C — build the PTY auth-failure observers from the cc credential adapter's
+  # declared signals (one named observer per signal).
+  defp credential_auth_observers do
+    auth_failure_signals()
+    |> Enum.with_index()
+    |> Enum.map(fn {sig, i} -> %{name: :"cc_auth_failure_#{i}", match: sig} end)
   end
 
   defp start_pty(agent_uri, params) do

@@ -300,8 +300,18 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
 
   defp pty_params(cwd, socket_path, thread_id, tmpl, codex_path, false) do
     with {:ok, cmd} <- codex_tui_cmd(socket_path, cwd, thread_id, tmpl, codex_path) do
-      {:ok, %{cwd: cwd, cmd_override: cmd}}
+      # #17 PR-C (codex review P2) — wire codex's credential-adapter auth-failure signals
+      # as emit-only PTY observers, same as cc, so an expired codex login surfaces
+      # (telemetry + pty:auth_failed) instead of muting silently.
+      {:ok, %{cwd: cwd, cmd_override: cmd, auth_observers: credential_auth_observers()}}
     end
+  end
+
+  # #17 PR-C — one named emit-only observer per declared codex auth-failure signal.
+  defp credential_auth_observers do
+    auth_failure_signals()
+    |> Enum.with_index()
+    |> Enum.map(fn {sig, i} -> %{name: :"codex_auth_failure_#{i}", match: sig} end)
   end
 
   defp codex_tui_cmd(socket_path, cwd, _thread_id, tmpl, codex_path) do
