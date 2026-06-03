@@ -1456,20 +1456,23 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # `destroy_config_dir/2` — `rm -rf <config_dir>`. Called at agent
   # teardown by `Ezagent.Behavior.Sandbox.invoke(:destroy, ...)`.
   #
-  # Defense-in-depth: the path MUST equal what `agent_config_dir/1`
-  # would compute for this agent_uri. A buggy caller passing an
-  # arbitrary path (e.g. `/`) would otherwise be catastrophic.
+  # Defense-in-depth (PR-3 DD-5): the path MUST equal the canonical TARGET for
+  # this agent_uri — checked by the core authority `Ezagent.Sandbox.ConfigDir`
+  # (the path scheme lives there now, not in the plugin). A buggy caller passing
+  # an arbitrary path (e.g. `/`) is rejected.
   @impl Ezagent.Kind.Template
   def destroy_config_dir(%URI{} = agent_uri, config_dir) when is_binary(config_dir) do
-    expected = agent_config_dir(agent_uri)
+    namespace = Ezagent.Kind.Template.namespace_of(__MODULE__)
 
-    if Path.expand(config_dir) == Path.expand(expected) do
+    if Ezagent.Sandbox.ConfigDir.safe_to_destroy?(config_dir, agent_uri, namespace) do
       case File.rm_rf(config_dir) do
         {:ok, _removed} -> :ok
         {:error, reason, _path} -> {:error, {:rm_rf_failed, reason}}
       end
     else
-      {:error, {:path_mismatch, expected: expected, got: config_dir}}
+      {:error,
+       {:path_mismatch,
+        expected: Ezagent.Sandbox.ConfigDir.path(agent_uri, namespace), got: config_dir}}
     end
   end
 
