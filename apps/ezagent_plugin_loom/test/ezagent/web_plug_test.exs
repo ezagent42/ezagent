@@ -36,6 +36,16 @@ defmodule EzagentPluginLoom.WebPlugTest do
       assert conn.status == 200
       assert conn.resp_body =~ "<!DOCTYPE html>"
     end
+
+    # 新标签预览：/loom/preview/<ws>/<sid>（plug 看到的是去掉 /loom 前缀的
+    # /preview/<ws>/<sid>）走 SPA 兜底 → 同一份 index.html，客户端读 URL 渲染
+    # 纯预览。纯前端路由，后端无专门 handler，仅靠这条兜底。
+    test "GET /preview/:ws/:sid falls back to index (preview link is client-routed)" do
+      conn = call(conn(:get, "/preview/system/s_demo4"))
+      assert conn.status == 200
+      assert conn.resp_body =~ "<!DOCTYPE html>"
+      assert conn.resp_body =~ "/loom/_next/"
+    end
   end
 
   describe "static assets" do
