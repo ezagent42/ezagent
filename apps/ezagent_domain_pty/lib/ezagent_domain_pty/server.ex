@@ -235,6 +235,13 @@ defmodule Ezagent.Domain.Pty.Server do
     do: "pty:auth_failed:" <> URI.to_string(agent_uri)
 
   @doc """
+  #17 PR-C2 — the SHARED auth-failure topic (all agents). The domain credential notifier
+  subscribes here ONCE (rather than per-agent) and receives `{:pty_auth_failed, agent_uri,
+  observer_name}` for every agent, resolving the owner per event.
+  """
+  def auth_failed_all_topic, do: "pty:auth_failed"
+
+  @doc """
   PubSub topic for an agent's PTY phase transitions (PTY-phase-state-machine
   2026-05-26 follow-up b).
 
@@ -738,11 +745,10 @@ defmodule Ezagent.Domain.Pty.Server do
       %{agent_uri: state.agent_uri, observer: observer.name}
     )
 
-    Phoenix.PubSub.broadcast(
-      EzagentCore.PubSub,
-      auth_failed_topic(state.agent_uri),
-      {:pty_auth_failed, state.agent_uri, observer.name}
-    )
+    msg = {:pty_auth_failed, state.agent_uri, observer.name}
+    # Per-agent topic (LV badge etc.) + the shared topic (PR-C2 domain notifier).
+    Phoenix.PubSub.broadcast(EzagentCore.PubSub, auth_failed_topic(state.agent_uri), msg)
+    Phoenix.PubSub.broadcast(EzagentCore.PubSub, auth_failed_all_topic(), msg)
   end
 
   # --- generic auto-prompt scanner (Phase 6 PR 19) ---------------------
