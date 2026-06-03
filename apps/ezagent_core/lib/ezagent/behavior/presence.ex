@@ -41,13 +41,12 @@ defmodule Ezagent.Behavior.Presence do
 
   use Ezagent.Lifecycle
 
-  action(:online,
+  action :online,
     args: %{},
     returns: :ok,
     caps: [:online],
     modes: [:call],
     description: "observe an entity's online/offline status across all transports"
-  )
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   # Presence is registered on both User AND Agent — kind axis is `:any`

@@ -16,26 +16,23 @@ defmodule Ezagent.Test.TestBehavior do
   use Ezagent.Behavior
   @behaviour Ezagent.Behavior
 
-  action(:noop,
+  action :noop,
     args: %{msg: :string},
     returns: %{echoed: :string},
     modes: [:call, :cast],
     description: "Bump the slice counter and echo the message"
-  )
 
-  action(:fail,
+  action :fail,
     args: %{},
     returns: %{},
     modes: [:call],
     description: "Always return {:error, :test_failure}"
-  )
 
-  action(:raise,
+  action :raise,
     args: %{},
     returns: %{},
     modes: [:call],
     description: "Always raise — exercises the crash path"
-  )
 
   @impl Ezagent.Behavior
   def state_slice, do: :test

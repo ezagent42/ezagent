@@ -21,11 +21,10 @@ defmodule Ezagent.KindExtensionsTest do
     @moduledoc false
     use Ezagent.Behavior
 
-    action(:a_action,
+    action :a_action,
       args: %{},
       returns: :ok,
       caps: [:a]
-    )
 
     def handle_a_action(_args, _ctx), do: {:ok, :ok, []}
   end
@@ -34,11 +33,10 @@ defmodule Ezagent.KindExtensionsTest do
     @moduledoc false
     use Ezagent.Behavior
 
-    action(:b_action,
+    action :b_action,
       args: %{x: :integer},
       returns: %{y: :integer},
       caps: [:b]
-    )
 
     def handle_b_action(_args, _ctx), do: {:ok, %{y: 0}, []}
   end
@@ -49,11 +47,10 @@ defmodule Ezagent.KindExtensionsTest do
 
     # Same action name as BehaviorA — used to test OQ-5 collision
     # check at Kind-attach time.
-    action(:a_action,
+    action :a_action,
       args: %{},
       returns: :ok,
       caps: [:a]
-    )
 
     def handle_a_action(_args, _ctx), do: {:ok, :ok, []}
   end
@@ -65,8 +62,8 @@ defmodule Ezagent.KindExtensionsTest do
       uri_scheme: "session://test/",
       type_name: :test_session
 
-    attach(BehaviorA)
-    attach(BehaviorB, actions: [:b_action])
+    attach BehaviorA
+    attach BehaviorB, actions: [:b_action]
   end
 
   defmodule EntityKind do
@@ -76,7 +73,7 @@ defmodule Ezagent.KindExtensionsTest do
       uri_scheme: "entity://test_entity/",
       type_name: :test_entity
 
-    attach(BehaviorA)
+    attach BehaviorA
   end
 
   defmodule ColdResource do
@@ -86,7 +83,7 @@ defmodule Ezagent.KindExtensionsTest do
       uri_scheme: "resource://test/",
       type_name: :test_cold_resource
 
-    attach(BehaviorA)
+    attach BehaviorA
   end
 
   defmodule HotResource do
@@ -96,7 +93,7 @@ defmodule Ezagent.KindExtensionsTest do
       uri_scheme: "resource://test_hot/",
       type_name: :test_hot_resource
 
-    attach(BehaviorA)
+    attach BehaviorA
   end
 
   describe "use Ezagent.Kind — pattern declaration" do

@@ -25,13 +25,12 @@ defmodule Ezagent.TestSupport.LifecycleFixture do
 
   use Ezagent.Lifecycle
 
-  action(:bump,
+  action :bump,
     args: %{by: :integer},
     returns: %{counter: :integer},
     caps: [:bump],
     modes: [:call],
     description: "increment the persistent counter + record a transient hit"
-  )
 
   # This fixture is workspace-agnostic (system-scoped URI) — opt out of
   # the dispatch workspace-isolation check so the cold-restart test can
@@ -112,7 +111,7 @@ defmodule Ezagent.TestSupport.LifecycleFixtureOverride do
   # lifecycle:state_slice_override
   use Ezagent.Lifecycle, state_slice: :legacy_compat_key
 
-  action(:noop, args: %{}, returns: %{}, caps: [:noop], modes: [:call], description: "no-op")
+  action :noop, args: %{}, returns: %{}, caps: [:noop], modes: [:call], description: "no-op"
 
   @impl Ezagent.Behavior
   def cap_exempt_actions, do: [:noop]
@@ -134,7 +133,7 @@ defmodule Ezagent.TestSupport.TransientOnlyFixture do
   # lifecycle:state_slice_override
   use Ezagent.Lifecycle, state_slice: :transient_only
 
-  action(:tick, args: %{}, returns: %{}, caps: [:tick], modes: [:call], description: "tick")
+  action :tick, args: %{}, returns: %{}, caps: [:tick], modes: [:call], description: "tick"
 
   @impl Ezagent.Behavior
   def workspace_scoped?, do: false
@@ -173,13 +172,7 @@ defmodule Ezagent.TestSupport.LifecycleDestroyFixture do
 
   use Ezagent.Lifecycle
 
-  action(:touch,
-    args: %{},
-    returns: %{ok: :boolean},
-    caps: [:touch],
-    modes: [:call],
-    description: "touch"
-  )
+  action :touch, args: %{}, returns: %{ok: :boolean}, caps: [:touch], modes: [:call], description: "touch"
 
   @impl Ezagent.Behavior
   def workspace_scoped?, do: false
@@ -251,13 +244,12 @@ defmodule Ezagent.TestSupport.SelfDestroyFixture do
 
   use Ezagent.Lifecycle
 
-  action(:boom,
+  action :boom,
     args: %{},
     returns: %{result: :term},
     caps: [:boom],
     modes: [:call],
     description: "attempt to self-destroy from inside the handler (F2 footgun)"
-  )
 
   @impl Ezagent.Behavior
   def workspace_scoped?, do: false
@@ -265,8 +257,7 @@ defmodule Ezagent.TestSupport.SelfDestroyFixture do
   def cap_exempt_actions, do: [:boom]
 
   @impl Ezagent.Lifecycle
-  def create(args),
-    do: {:ok, %{label: Map.get(args, :label, "self"), probe: Map.get(args, :probe)}}
+  def create(args), do: {:ok, %{label: Map.get(args, :label, "self"), probe: Map.get(args, :probe)}}
 
   @impl Ezagent.Lifecycle
   def activate(_state, _ctx), do: {:ok, %{}}
@@ -306,21 +297,19 @@ defmodule Ezagent.TestSupport.LifecycleInterceptFixture do
 
   use Ezagent.Lifecycle
 
-  action(:run,
+  action :run,
     args: %{n: :integer},
     returns: %{n: :integer},
     caps: [:run],
     modes: [:call],
     description: "run"
-  )
 
-  action(:guarded,
+  action :guarded,
     args: %{},
     returns: %{},
     caps: [:guarded],
     modes: [:call],
     description: "guarded"
-  )
 
   @impl Ezagent.Behavior
   def workspace_scoped?, do: false
@@ -414,15 +403,9 @@ defmodule Ezagent.TestSupport.SiblingReader do
   @moduledoc false
   use Ezagent.Lifecycle
 
-  reads_siblings([:legacy_sibling, :lifecycle_sibling])
+  reads_siblings [:legacy_sibling, :lifecycle_sibling]
 
-  action(:read,
-    args: %{},
-    returns: %{},
-    caps: [:read],
-    modes: [:call],
-    description: "read siblings"
-  )
+  action :read, args: %{}, returns: %{}, caps: [:read], modes: [:call], description: "read siblings"
 
   @impl Ezagent.Behavior
   def workspace_scoped?, do: false
@@ -496,7 +479,7 @@ defmodule Ezagent.TestSupport.LifecycleSignalFixture do
   use Ezagent.Lifecycle, state_slice: :lifecycle_signal
 
   # lifecycle:state_slice_override
-  action(:noop, args: %{}, returns: %{}, caps: [:noop], modes: [:call], description: "noop")
+  action :noop, args: %{}, returns: %{}, caps: [:noop], modes: [:call], description: "noop"
 
   @impl Ezagent.Behavior
   def workspace_scoped?, do: false

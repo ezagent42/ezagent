@@ -42,18 +42,13 @@ defmodule EzagentWeb.UploadsControllerTest do
   setup tags do
     # Per-test isolated EZAGENT_HOME so the uploads dir doesn't
     # leak across tests or into developer state.
-    home =
-      Path.join(System.tmp_dir!(), "ezagent_uploads_test_#{System.unique_integer([:positive])}")
-
+    home = Path.join(System.tmp_dir!(), "ezagent_uploads_test_#{System.unique_integer([:positive])}")
     File.mkdir_p!(Path.join([home, Ezagent.Home.profile(), "uploads"]))
     prior_home = System.get_env("EZAGENT_HOME")
     System.put_env("EZAGENT_HOME", home)
 
     on_exit(fn ->
-      if prior_home,
-        do: System.put_env("EZAGENT_HOME", prior_home),
-        else: System.delete_env("EZAGENT_HOME")
-
+      if prior_home, do: System.put_env("EZAGENT_HOME", prior_home), else: System.delete_env("EZAGENT_HOME")
       _ = File.rm_rf(home)
     end)
 

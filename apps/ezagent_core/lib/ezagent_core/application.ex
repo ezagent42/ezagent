@@ -7,93 +7,92 @@ defmodule EzagentCore.Application do
 
   @impl true
   def start(_type, _args) do
-    children =
-      [
-        # ① ETS tables — must be ready before any process that reads/writes them
-        # (KindRegistry, Idempotency.Sweeper, plugin Kind instances).
-        # See DECISIONS impl-time §ETS+Application children.
-        EzagentCore.EtsOwner,
+    children = [
+      # ① ETS tables — must be ready before any process that reads/writes them
+      # (KindRegistry, Idempotency.Sweeper, plugin Kind instances).
+      # See DECISIONS impl-time §ETS+Application children.
+      EzagentCore.EtsOwner,
 
-        # ② stdlib Registry for URI → pid (Ezagent.KindRegistry wraps this).
-        {Registry, keys: :unique, name: Ezagent.KindRegistry},
+      # ② stdlib Registry for URI → pid (Ezagent.KindRegistry wraps this).
+      {Registry, keys: :unique, name: Ezagent.KindRegistry},
 
-        # ③ Idempotency LRU prune — its own GenServer so a crash doesn't
-        # take the ETS owner with it.
-        Ezagent.Idempotency.Sweeper,
+      # ③ Idempotency LRU prune — its own GenServer so a crash doesn't
+      # take the ETS owner with it.
+      Ezagent.Idempotency.Sweeper,
 
-        # ③·5 Plugin RegistrationHooks (SPEC
-        # docs/superpowers/specs/2026-05-25-external-mirror-auth-model-audit.md §5)
-        # — backing GenServer for `Ezagent.Plugin.publish_after_all_registered/2`,
-        # the cross-registry "wait for both/all populated" hook primitive.
-        # Started BEFORE any plugin boots (plugin boots run via each plugin's
-        # OTP Application — those start AFTER ezagent_core via umbrella mix
-        # deps). First consumer: ExternalMirror's AdapterInstall.
-        Ezagent.Plugin.RegistrationHooks,
+      # ③·5 Plugin RegistrationHooks (SPEC
+      # docs/superpowers/specs/2026-05-25-external-mirror-auth-model-audit.md §5)
+      # — backing GenServer for `Ezagent.Plugin.publish_after_all_registered/2`,
+      # the cross-registry "wait for both/all populated" hook primitive.
+      # Started BEFORE any plugin boots (plugin boots run via each plugin's
+      # OTP Application — those start AFTER ezagent_core via umbrella mix
+      # deps). First consumer: ExternalMirror's AdapterInstall.
+      Ezagent.Plugin.RegistrationHooks,
 
-        # ④ SQLite repo + migrations (Phase 0 baseline).
-        EzagentCore.Repo,
-        {Ecto.Migrator,
-         repos: Application.fetch_env!(:ezagent_core, :ecto_repos),
-         skip: EzagentCore.MigrationGate.skip?()},
-        {DNSCluster, query: Application.get_env(:ezagent_core, :dns_cluster_query) || :ignore},
+      # ④ SQLite repo + migrations (Phase 0 baseline).
+      EzagentCore.Repo,
+      {Ecto.Migrator,
+       repos: Application.fetch_env!(:ezagent_core, :ecto_repos),
+       skip: EzagentCore.MigrationGate.skip?()},
+      {DNSCluster, query: Application.get_env(:ezagent_core, :dns_cluster_query) || :ignore},
 
-        # ⑤ PubSub — needed by LiveView audit:stream + future view fan-outs.
-        {Phoenix.PubSub, name: EzagentCore.PubSub},
+      # ⑤ PubSub — needed by LiveView audit:stream + future view fan-outs.
+      {Phoenix.PubSub, name: EzagentCore.PubSub},
 
-        # ⑤·5 Presence (SPEC `docs/superpowers/specs/2026-05-23-presence.md`)
-        # — Phoenix.Presence CRDT for cross-node entity liveness. Must run
-        # AFTER PubSub (depends on it) and BEFORE any domain Application
-        # that subscribes. `permdown_on_shutdown: true` makes graceful node
-        # shutdown remove this node's local presences immediately; non-graceful
-        # crash still leaves remote view stale for `:down_period` (~30s) per
-        # SPEC §6.3 SLA.
-        {Ezagent.Presence.Tracker, [pool_size: 1, permdown_on_shutdown: true]},
+      # ⑤·5 Presence (SPEC `docs/superpowers/specs/2026-05-23-presence.md`)
+      # — Phoenix.Presence CRDT for cross-node entity liveness. Must run
+      # AFTER PubSub (depends on it) and BEFORE any domain Application
+      # that subscribes. `permdown_on_shutdown: true` makes graceful node
+      # shutdown remove this node's local presences immediately; non-graceful
+      # crash still leaves remote view stale for `:down_period` (~30s) per
+      # SPEC §6.3 SLA.
+      {Ezagent.Presence.Tracker, [pool_size: 1, permdown_on_shutdown: true]},
 
-        # ⑥ Audit batch writer — must come after Repo + PubSub.
-        # **Skipped in :test env** (2026-05-26): the 100ms timer-driven
-        # `Repo.insert_all("invocations", _)` flush is the singleton
-        # GenServer that triggers SQLite "Database busy" + DBConnection
-        # owner-exit interleaving against `Ecto.Adapters.SQL.Sandbox`'s
-        # per-test ownership lifecycle. Test code that exercises audit
-        # writes opts in via `use Ezagent.Test.AuditCase` (calls
-        # `start_supervised!/1` and `Sandbox.allow/3` per-test).
-        Ezagent.Audit.Writer,
+      # ⑥ Audit batch writer — must come after Repo + PubSub.
+      # **Skipped in :test env** (2026-05-26): the 100ms timer-driven
+      # `Repo.insert_all("invocations", _)` flush is the singleton
+      # GenServer that triggers SQLite "Database busy" + DBConnection
+      # owner-exit interleaving against `Ecto.Adapters.SQL.Sandbox`'s
+      # per-test ownership lifecycle. Test code that exercises audit
+      # writes opts in via `use Ezagent.Test.AuditCase` (calls
+      # `start_supervised!/1` and `Sandbox.allow/3` per-test).
+      Ezagent.Audit.Writer,
 
-        # ⑥·5 Notification subscription registry (SPEC v2 PR-N1,
-        # docs/superpowers/specs/2026-05-24-notification-architecture-v2.md).
-        # Dedicated GenServer with `:protected` ETS — codex PR-N1
-        # round-2 HIGH-1: cannot live in EtsOwner because `:public`
-        # would let raw `:ets.insert` bypass cap enforcement. Writes
-        # serialise through this GenServer's mailbox after cap check;
-        # reads stay direct (`:ets.match/2` on `:protected` works
-        # cross-process). Starts after PubSub because LV mount-time
-        # re-subscriptions (PR-N2) depend on both being up.
-        Ezagent.NotificationSubscriptions,
+      # ⑥·5 Notification subscription registry (SPEC v2 PR-N1,
+      # docs/superpowers/specs/2026-05-24-notification-architecture-v2.md).
+      # Dedicated GenServer with `:protected` ETS — codex PR-N1
+      # round-2 HIGH-1: cannot live in EtsOwner because `:public`
+      # would let raw `:ets.insert` bypass cap enforcement. Writes
+      # serialise through this GenServer's mailbox after cap check;
+      # reads stay direct (`:ets.match/2` on `:protected` works
+      # cross-process). Starts after PubSub because LV mount-time
+      # re-subscriptions (PR-N2) depend on both being up.
+      Ezagent.NotificationSubscriptions,
 
-        # ⑦ Snapshot async writer (Phase 4-completion Spec 04) — handles
-        # `:periodic` strategy; `:on_change` / `:on_terminate` go through
-        # `Ezagent.Kind.Snapshot.save_now/3` synchronously.
-        # **Skipped in :test env** for the same Sandbox-ownership reason
-        # as ⑥; see `Ezagent.Test.AuditCase` for opt-in pattern. Most
-        # tests use `:on_change` strategy so this writer is dormant; the
-        # 100ms timer firing in a sandbox-rolled-back state was leaving
-        # SQLite WAL locks contended for the next test's snapshot writes.
-        Ezagent.Snapshot.Writer,
+      # ⑦ Snapshot async writer (Phase 4-completion Spec 04) — handles
+      # `:periodic` strategy; `:on_change` / `:on_terminate` go through
+      # `Ezagent.Kind.Snapshot.save_now/3` synchronously.
+      # **Skipped in :test env** for the same Sandbox-ownership reason
+      # as ⑥; see `Ezagent.Test.AuditCase` for opt-in pattern. Most
+      # tests use `:on_change` strategy so this writer is dormant; the
+      # 100ms timer firing in a sandbox-rolled-back state was leaving
+      # SQLite WAL locks contended for the next test's snapshot writes.
+      Ezagent.Snapshot.Writer,
 
-        # ⑧ Foundation singleton supervisor — Phase 6 PR 2. Hosts core
-        # singletons (System Kind sentinels + future cross-domain
-        # controllers). Workspace.Supervisor moved out to
-        # ezagent_domain_workspace as part of the three-layer split.
-        {DynamicSupervisor, name: Ezagent.Core.SingletonSupervisor, strategy: :one_for_one},
+      # ⑧ Foundation singleton supervisor — Phase 6 PR 2. Hosts core
+      # singletons (System Kind sentinels + future cross-domain
+      # controllers). Workspace.Supervisor moved out to
+      # ezagent_domain_workspace as part of the three-layer split.
+      {DynamicSupervisor, name: Ezagent.Core.SingletonSupervisor, strategy: :one_for_one},
 
-        # ⑨ Default Kind supervisor — V1 structural prevention (Allen
-        # 2026-05-21). `Ezagent.Kind.spawn/2` routes here when a Kind
-        # module doesn't declare its own `supervisor/0` callback. Always
-        # available so spawn calls from any plugin or domain app at boot
-        # have a destination.
-        Ezagent.KindSupervisor
-      ]
-      |> Enum.reject(&skip_in_test_env?/1)
+      # ⑨ Default Kind supervisor — V1 structural prevention (Allen
+      # 2026-05-21). `Ezagent.Kind.spawn/2` routes here when a Kind
+      # module doesn't declare its own `supervisor/0` callback. Always
+      # available so spawn calls from any plugin or domain app at boot
+      # have a destination.
+      Ezagent.KindSupervisor
+    ]
+    |> Enum.reject(&skip_in_test_env?/1)
 
     result = Supervisor.start_link(children, strategy: :one_for_one, name: EzagentCore.Supervisor)
 

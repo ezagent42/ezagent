@@ -45,7 +45,6 @@ defmodule Ezagent.AgentLineageTest do
       # Simulate a cold restart: the ETS cache is recreated EMPTY by
       # EzagentCore.EtsOwner on every boot. Clear it to model that.
       :ets.delete_all_objects(AgentLineage.table())
-
       assert :error = AgentLineage.lookup(agent),
              "precondition: clearing ETS must lose the cache entry"
 

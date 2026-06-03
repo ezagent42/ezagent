@@ -79,19 +79,6 @@ defmodule EzagentWeb.Router do
     post "/workspaces/switch", WorkspaceSwitchController, :switch
   end
 
-  # Autoservice (customer-service vertical). Customer + operator chat
-  # surfaces from the ezagent_plugin_autoservice OTP app. Reuses the same
-  # RequireEntity plug + LiveAuth on_mount as the rest of the app (a
-  # logged-in entity gets current_entity_uri + current_workspace_uri).
-  scope "/autoservice", EzagentPluginAutoservice do
-    pipe_through [:browser, EzagentWeb.Plugs.RequireEntity]
-
-    live_session :autoservice, on_mount: {EzagentWeb.LiveAuth, :require_entity} do
-      live "/", CustomerLive
-      live "/operator", OperatorLive
-    end
-  end
-
   scope "/", EzagentPluginLiveview do
     pipe_through [:browser, EzagentWeb.Plugs.RequireEntity]
 

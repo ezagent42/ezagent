@@ -50,7 +50,3 @@ docs/phase-specs/phase3/artifacts/phase3-multi-agent*
 __pycache__/
 *.pyc
 .worktrees/
-
-# Imported AutoService cinnox data snapshot (15M source — selectively
-# vendored into ezagent_plugin_autoservice/priv; not tracked at repo root).
-/cinnox-data/

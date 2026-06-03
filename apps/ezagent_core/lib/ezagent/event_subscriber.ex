@@ -93,8 +93,7 @@ defmodule Ezagent.EventSubscriber do
 
   @typedoc "Subscription declaration captured by the `subscribe/1` macro."
   @type subscription :: %{
-          required(:to) =>
-            :all | {:aggregate, URI.t() | String.t()} | {:workspace, URI.t() | String.t()},
+          required(:to) => :all | {:aggregate, URI.t() | String.t()} | {:workspace, URI.t() | String.t()},
           required(:only) => :any | [event_name :: atom() | String.t()]
         }
 

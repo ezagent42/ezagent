@@ -395,18 +395,6 @@ defmodule Ezagent.Domain.Pty.Server do
   @doc false
   def default_auto_prompts do
     [
-      # claude's first-run "Is this a project you trust?" dialog for a
-      # cwd it hasn't seen before. Without auto-confirming it, the PTY
-      # child blocks here forever and never initializes its MCP servers
-      # (the esr-bridge never connects → AgentBridge :no_bridge). Option
-      # 1 is "Yes, I trust this folder"; claude persists the choice so it
-      # only prompts once per cwd.
-      %{
-        name: :trust_folder_dialog,
-        match: "Yes, I trust this folder",
-        send: "1\r",
-        fired?: false
-      },
       %{
         name: :dev_channels_dialog,
         # Anchor on the menu OPTION label, not the WARNING prose: claude's

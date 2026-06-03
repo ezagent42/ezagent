@@ -43,12 +43,11 @@ defmodule Ezagent.TestSupport.PostInitBehavior do
   use Ezagent.Behavior
   @behaviour Ezagent.Behavior
 
-  action(:noop,
+  action :noop,
     args: %{},
     returns: %{},
     modes: [:call],
     description: "test — no-op"
-  )
 
   @impl Ezagent.Behavior
   def state_slice, do: :post_init_behavior
@@ -101,12 +100,11 @@ defmodule Ezagent.TestSupport.PostInitBehaviorA do
   use Ezagent.Behavior
   @behaviour Ezagent.Behavior
 
-  action(:noop,
+  action :noop,
     args: %{},
     returns: %{},
     modes: [:call],
     description: "test — no-op"
-  )
 
   @impl Ezagent.Behavior
   def state_slice, do: :post_init_a
@@ -139,12 +137,11 @@ defmodule Ezagent.TestSupport.PostInitBehaviorB do
   use Ezagent.Behavior
   @behaviour Ezagent.Behavior
 
-  action(:noop,
+  action :noop,
     args: %{},
     returns: %{},
     modes: [:call],
     description: "test — no-op"
-  )
 
   @impl Ezagent.Behavior
   def state_slice, do: :post_init_b
@@ -177,12 +174,11 @@ defmodule Ezagent.TestSupport.NoPostInitBehavior do
   use Ezagent.Behavior
   @behaviour Ezagent.Behavior
 
-  action(:noop,
+  action :noop,
     args: %{},
     returns: %{},
     modes: [:call],
     description: "test — no-op"
-  )
 
   @impl Ezagent.Behavior
   def state_slice, do: :no_post_init
@@ -219,12 +215,11 @@ defmodule Ezagent.TestSupport.PostInitCrashBehavior do
   use Ezagent.Behavior
   @behaviour Ezagent.Behavior
 
-  action(:noop,
+  action :noop,
     args: %{},
     returns: %{},
     modes: [:call],
     description: "test — no-op"
-  )
 
   @impl Ezagent.Behavior
   def state_slice, do: :crash
@@ -267,12 +262,11 @@ defmodule Ezagent.TestSupport.PersistentPostInitBehavior do
   use Ezagent.Behavior
   @behaviour Ezagent.Behavior
 
-  action(:noop,
+  action :noop,
     args: %{},
     returns: %{},
     modes: [:call],
     description: "test — no-op"
-  )
 
   @impl Ezagent.Behavior
   def state_slice, do: :persistent
@@ -308,12 +302,11 @@ defmodule Ezagent.TestSupport.SlowPostInitBehavior do
   use Ezagent.Behavior
   @behaviour Ezagent.Behavior
 
-  action(:noop,
+  action :noop,
     args: %{msg: :string},
     returns: %{echoed: :string},
     modes: [:call, :cast],
     description: "test — no-op"
-  )
 
   @impl Ezagent.Behavior
   def state_slice, do: :slow

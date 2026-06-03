@@ -381,9 +381,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       }
 
       cap = Capability.from_map(legacy_map)
-
-      assert cap.action == :any,
-             "legacy caps_json missing `action` MUST default to `:any` (SPEC §3.4)"
+      assert cap.action == :any, "legacy caps_json missing `action` MUST default to `:any` (SPEC §3.4)"
     end
   end
 end

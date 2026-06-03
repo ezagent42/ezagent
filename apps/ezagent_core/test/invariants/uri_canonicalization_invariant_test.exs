@@ -270,8 +270,7 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
     # site where the legacy form is allowed to appear, and the
     # `# uri-canonical-allow` suppression marks the intent.
     parse_legacy = fn s ->
-      # uri-canonical-allow: SPEC §5.5 adversarial fixture
-      apply(URI, :parse, [s])
+      apply(URI, :parse, [s]) # uri-canonical-allow: SPEC §5.5 adversarial fixture
     end
 
     pre_migration_state = %{
@@ -382,8 +381,7 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
     # into a snapshot (pre-migration, or a fixture built the wrong way).
     # The reload walker must rewrite it so it matches the canonical
     # form a current caller holds.
-    # uri-canonical-allow: Task #111 adversarial fixture
-    legacy_key = apply(URI, :parse, ["entity://user/team-alpha/m-1"])
+    legacy_key = apply(URI, :parse, ["entity://user/team-alpha/m-1"]) # uri-canonical-allow: Task #111 adversarial fixture
     refute legacy_key.authority == nil, "fixture precondition: legacy key carries authority"
 
     held = Ezagent.URI.new!("entity://user/team-alpha/m-1")

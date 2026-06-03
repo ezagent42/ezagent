@@ -273,8 +273,7 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
       read = fn key, default -> Map.get(slice_state, key, default) end
 
       ctx = %{
-        self_uri:
-          URI.parse("entity://agent/parity/cc_gate-#{System.unique_integer([:positive])}"),
+        self_uri: URI.parse("entity://agent/parity/cc_gate-#{System.unique_integer([:positive])}"),
         kind_module: SuccessTC,
         read: read
       }

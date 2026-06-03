@@ -16,20 +16,18 @@ defmodule Ezagent.BehaviorTest do
     @moduledoc false
     use Ezagent.Behavior
 
-    action(:greet,
+    action :greet,
       args: %{name: :string},
       returns: %{greeted: :boolean},
       caps: [:greet],
       description: "say hello",
       modes: [:call]
-    )
 
-    action(:bump,
+    action :bump,
       args: %{},
       returns: %{count: :integer},
       caps: [:bump],
       modes: [:cast]
-    )
 
     def handle_greet(%{name: name}, _ctx) do
       {:ok, %{greeted: true, name: name},

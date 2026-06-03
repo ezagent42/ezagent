@@ -48,128 +48,111 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
     @moduledoc false
     use Ezagent.Behavior
 
-    action(:bump,
+    action :bump,
       args: %{},
       returns: %{count: :integer},
       caps: [:bump],
       modes: [:call]
-    )
 
-    action(:record,
+    action :record,
       args: %{value: :string},
       returns: %{stored: :boolean},
       caps: [:record],
       modes: [:call]
-    )
 
-    action(:emit_only,
+    action :emit_only,
       args: %{},
       returns: :ok,
       caps: [:emit_only],
       modes: [:call]
-    )
 
-    action(:fail,
+    action :fail,
       args: %{},
       returns: :ok,
       caps: [:fail],
       modes: [:call]
-    )
 
-    action(:bad_return,
+    action :bad_return,
       args: %{},
       returns: :ok,
       caps: [:bad_return],
       modes: [:call]
-    )
 
-    action(:halts,
+    action :halts,
       args: %{},
       returns: :ok,
       caps: [:halts],
       modes: [:call]
-    )
 
     # Phase 1.5b — actions exercising the full effect grammar
     # (dispatch, notify, emit, saga, terminate, multi-effect ordering).
 
-    action(:notify_topic,
+    action :notify_topic,
       args: %{topic: :string, payload: :map},
       returns: :ok,
       caps: [:notify_topic],
       modes: [:call]
-    )
 
-    action(:emit_event,
+    action :emit_event,
       args: %{event: :atom, payload: :map},
       returns: :ok,
       caps: [:emit_event],
       modes: [:call]
-    )
 
-    action(:dispatch_to,
+    action :dispatch_to,
       args: %{target: :string},
       returns: :ok,
       caps: [:dispatch_to],
       modes: [:call]
-    )
 
-    action(:saga_step,
+    action :saga_step,
       args: %{},
       returns: :ok,
       caps: [:saga_step],
       modes: [:call]
-    )
 
-    action(:terminate_target,
+    action :terminate_target,
       args: %{target: :string},
       returns: :ok,
       caps: [:terminate_target],
       modes: [:call]
-    )
 
-    action(:halt_after_set_and_notify,
+    action :halt_after_set_and_notify,
       args: %{},
       returns: :ok,
       caps: [:halt_after_set_and_notify],
       modes: [:call]
-    )
 
-    action(:multi_effect,
+    action :multi_effect,
       args: %{},
       returns: :ok,
       caps: [:multi_effect],
       modes: [:call]
-    )
 
-    action(:order_trace,
+    action :order_trace,
       args: %{},
       returns: :ok,
       caps: [:order_trace],
       modes: [:call]
-    )
 
     # SPEC 2026-05-29 `:dispatch_returning` exercising actions.
-    action(:dispatch_returning_to,
+    action :dispatch_returning_to,
       args: %{target: :string},
       returns: :ok,
       caps: [:dispatch_returning_to],
       modes: [:call]
-    )
 
-    action(:dispatch_returning_with_ref,
+    action :dispatch_returning_with_ref,
       args: %{target: :string},
       returns: :ok,
       caps: [:dispatch_returning_with_ref],
       modes: [:call]
-    )
 
-    action(:dispatch_returning_mixed_with_effect_returning,
+    action :dispatch_returning_mixed_with_effect_returning,
       args: %{target: :string},
       returns: :ok,
       caps: [:dispatch_returning_mixed_with_effect_returning],
       modes: [:call]
-    )
 
     def state_slice, do: :new_contract
 
@@ -233,8 +216,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
     def handle_saga_step(_args, _ctx) do
       saga =
         Ezagent.SagaRunner.new()
-        |> Ezagent.SagaRunner.run(
-          :step_a,
+        |> Ezagent.SagaRunner.run(:step_a,
           fn ctx, _eff ->
             send(ctx[:test_pid], {:saga_step_ran, ctx[:test_token]})
             {:ok, :step_a_done, []}
@@ -473,8 +455,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
          %{state: state, self_uri: self_uri} do
       inv = invocation(self_uri, :bad_return, %{})
 
-      assert {:error,
-              {:bad_handler_return, NewContractBehavior, :bad_return, :not_a_proper_shape}} =
+      assert {:error, {:bad_handler_return, NewContractBehavior, :bad_return, :not_a_proper_shape}} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, MixedKind, self_uri)
     end
 
@@ -571,8 +552,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
       rows = Ezagent.EventLog.stream_by_aggregate(self_uri)
 
       assert Enum.any?(rows, fn r ->
-               r.event_name == Atom.to_string(event_name) and
-                 r.payload == %{"kind" => "test", "body" => "from-emit"}
+               r.event_name == Atom.to_string(event_name) and r.payload == %{"kind" => "test", "body" => "from-emit"}
              end),
              "Expected EventLog row for event=#{inspect(event_name)}; got #{inspect(Enum.map(rows, & &1.event_name))}"
     end

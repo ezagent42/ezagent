@@ -183,9 +183,7 @@ defmodule Ezagent.Kind.StateRebuilder do
         {:error, :not_found}
 
       {:error, reason} ->
-        Logger.warning(
-          "Ezagent.Kind.StateRebuilder: rebuild failed for #{inspect(uri)}: #{inspect(reason)}"
-        )
+        Logger.warning("Ezagent.Kind.StateRebuilder: rebuild failed for #{inspect(uri)}: #{inspect(reason)}")
 
         {:error, reason}
     end

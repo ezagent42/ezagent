@@ -181,7 +181,6 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
       # Step 3: revoke the cap (simulating admin LV / CLI revoke). This
       # exercises `Capability.revoke/2` — the data-layer chokepoint.
       assert {:ok, after_revoke} = Capability.revoke(held, send_cap)
-
       assert MapSet.size(after_revoke) == 0,
              "revoke MUST remove the matching cap from the held set"
 

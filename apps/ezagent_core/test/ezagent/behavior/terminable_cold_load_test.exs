@@ -62,7 +62,9 @@ defmodule Ezagent.Behavior.TerminableColdLoadTest do
   end
 
   defp host_uri do
-    URI.new!("system://terminable_cold_load_host/inst-#{System.unique_integer([:positive])}")
+    URI.new!(
+      "system://terminable_cold_load_host/inst-#{System.unique_integer([:positive])}"
+    )
   end
 
   describe "create→two-container contract (all four no-transient modules)" do

@@ -123,7 +123,7 @@ defmodule Ezagent.Behavior.Sandbox do
 
   require Logger
 
-  action(:read,
+  action :read,
     args: %{},
     returns: %{
       config_dir_path: {:option, :string},
@@ -134,9 +134,8 @@ defmodule Ezagent.Behavior.Sandbox do
     caps: [:read],
     modes: [:call],
     description: "read the agent's sandbox state (config_dir_path, template_class)"
-  )
 
-  action(:write_path,
+  action :write_path,
     args: %{
       config_dir_path: {:option, :string},
       template_class: {:option, :atom},
@@ -148,9 +147,8 @@ defmodule Ezagent.Behavior.Sandbox do
     description:
       "set the agent's config_dir_path (one-time, at spawn — caller is the " <>
         "spawn orchestrator, system caps)"
-  )
 
-  action(:destroy,
+  action :destroy,
     args: %{},
     returns: %{destroyed: :boolean},
     caps: [:destroy],
@@ -158,7 +156,6 @@ defmodule Ezagent.Behavior.Sandbox do
     description:
       "destroy the agent — synchronous config-dir cleanup + scheduled " <>
         "Kind-process termination"
-  )
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   # Sandbox is registered on the Agent Kind — kind axis is `:agent`. The
@@ -406,7 +403,8 @@ defmodule Ezagent.Behavior.Sandbox do
             {:set, :template_class, tc}
           ] ++ rtd_effects
 
-        {:ok, %{config_dir_path: path, template_class: tc, respawn_template_data: rtd}, effects}
+        {:ok, %{config_dir_path: path, template_class: tc, respawn_template_data: rtd},
+         effects}
     end
   end
 

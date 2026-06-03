@@ -122,7 +122,9 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants.Lifecycle do
         Mix.shell().error(output)
       end)
 
-      Mix.raise("ezagent.check_invariants.lifecycle: #{length(failures)} gate(s) violated")
+      Mix.raise(
+        "ezagent.check_invariants.lifecycle: #{length(failures)} gate(s) violated"
+      )
     end
   end
 
@@ -287,10 +289,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants.Lifecycle do
 
     case offenders do
       [] ->
-        Mix.shell().info(
-          "  ✓ NP-2 layer-vocabulary lint clean (ezagent_core names no upper-layer concept)"
-        )
-
+        Mix.shell().info("  ✓ NP-2 layer-vocabulary lint clean (ezagent_core names no upper-layer concept)")
         :ok
 
       _ ->
@@ -325,10 +324,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants.Lifecycle do
 
     case offenders do
       [] ->
-        Mix.shell().info(
-          "  ✓ NP-3 width lint clean (no generic-named <=1-action Lifecycle module)"
-        )
-
+        Mix.shell().info("  ✓ NP-3 width lint clean (no generic-named <=1-action Lifecycle module)")
         :ok
 
       _ ->

@@ -248,7 +248,9 @@ defmodule Ezagent.SnapshotStore do
         {:ok, %{version: version}}
 
       {:error, reason} ->
-        Logger.warning("Ezagent.SnapshotStore: write failed for #{uri_str}: #{inspect(reason)}")
+        Logger.warning(
+          "Ezagent.SnapshotStore: write failed for #{uri_str}: #{inspect(reason)}"
+        )
 
         :telemetry.execute(
           [:ezagent, :snapshot_store, :failed],

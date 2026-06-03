@@ -73,7 +73,9 @@ defmodule Ezagent.InvocationLazySpawnTest do
     end)
 
     uri =
-      URI.parse("#{@scheme}://thing/team-alpha/lazy-#{System.unique_integer([:positive])}")
+      URI.parse(
+        "#{@scheme}://thing/team-alpha/lazy-#{System.unique_integer([:positive])}"
+      )
 
     {:ok, uri: uri, spawn_count_pid: spawn_count_pid}
   end
