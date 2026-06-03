@@ -806,6 +806,11 @@ defmodule EzagentDomainChat.Application do
       :ok = CapabilityRegistry.register(Session, action, OrchAdminB)
     end)
 
+    # #533 §3.4 — Manage (`:delete` / `:reconfigure`) is a UNIVERSAL behavior
+    # (`Ezagent.UniversalBehaviors`); it resolves for every Kind by
+    # construction via the registry fallback, so no per-Kind registration
+    # here. The manage-cap granted at create (PR-5c) gates it.
+
     :ok
   end
 

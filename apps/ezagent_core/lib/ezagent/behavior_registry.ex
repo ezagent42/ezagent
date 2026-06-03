@@ -47,8 +47,18 @@ defmodule Ezagent.BehaviorRegistry do
   @spec lookup(kind :: module(), action :: atom()) :: {:ok, module()} | :error
   def lookup(kind, action) when is_atom(kind) and is_atom(action) do
     case :ets.lookup(@table, {kind, action}) do
-      [{_, behavior}] -> {:ok, behavior}
-      [] -> :error
+      [{_, behavior}] ->
+        {:ok, behavior}
+
+      [] ->
+        # #533 §3.4 — universal behaviors (e.g. Ezagent.Behavior.Manage)
+        # resolve for EVERY Kind by construction, with no per-Kind
+        # registration. A per-Kind entry above always wins; this fallback
+        # only fires on a miss.
+        case Ezagent.UniversalBehaviors.behavior_for_action(action) do
+          nil -> :error
+          behavior -> {:ok, behavior}
+        end
     end
   end
 
