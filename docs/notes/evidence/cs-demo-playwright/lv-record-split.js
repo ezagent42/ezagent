@@ -11,20 +11,50 @@ const ORCH = 'entity://agent/system/cc_orchestrator-main';
 const ROLE = 'presale_real2';
 const PANE = { width: 760, height: 900 };
 
+// Overlay redesigned (rev 2): NEVER cover the two real differentiators —
+//   (a) top-right avatar button (~x724,y8)   (b) bottom ~85px = input row (y≈820-864) + footer identity (y≈875).
+// Instead, role label = top-LEFT pill, narration = floating pill ABOVE the input row,
+// and a colored RING actively spotlights the bottom-left footer `entity://user/system/<who>` (the only reliable
+// visual differentiator — the composer/input row is identical for both roles in the current admin console = G-ui gap).
 function overlay(page, role, cap, sub) {
   return page.evaluate(({ role, cap, sub }) => {
-    let bar = document.getElementById('__cap'), lab = document.getElementById('__lab');
-    if (!bar) {
+    const isOp = role === 'op';
+    const rgb = isOp ? '37,99,235' : '217,70,239';            // blue 运营 / pink 客户
+    const who = isOp ? 'user/system/admin' : 'user/system/customer1';
+    const title = (isOp ? '👤 运营 · 登录为 ' : '🛍️ 客户 · 登录为 ') + who;
+    let lab = document.getElementById('__lab'),
+        cb = document.getElementById('__cap'),
+        ring = document.getElementById('__ring'),
+        tag = document.getElementById('__tag');
+    if (!lab) {
+      // (1) role label — TOP-LEFT pill (leaves top-right avatar visible)
       lab = document.createElement('div'); lab.id = '__lab';
-      lab.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:2147483647;pointer-events:none;color:#fff;font:700 18px/1.4 -apple-system,system-ui,sans-serif;padding:10px 14px;text-align:center;';
+      lab.style.cssText = 'position:fixed;top:8px;left:8px;max-width:60%;z-index:2147483647;pointer-events:none;'
+        + 'color:#fff;font:700 14px/1.3 -apple-system,system-ui,sans-serif;padding:7px 12px;border-radius:9px;'
+        + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 2px 10px rgba(0,0,0,.3);';
       document.body.appendChild(lab);
-      bar = document.createElement('div'); bar.id = '__cap';
-      bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:2147483647;pointer-events:none;background:rgba(8,12,24,.92);color:#fff;font:600 20px/1.3 -apple-system,system-ui,sans-serif;padding:14px 18px 88px;text-align:center;border-top:3px solid #34d399;';
-      document.body.appendChild(bar);
+      // (2) narration — floating pill ABOVE the input row (bottom:96 clears input + footer)
+      cb = document.createElement('div'); cb.id = '__cap';
+      cb.style.cssText = 'position:fixed;bottom:96px;left:50%;transform:translateX(-50%);max-width:90%;z-index:2147483647;'
+        + 'pointer-events:none;background:rgba(8,12,24,.86);color:#fff;font:600 16px/1.32 -apple-system,system-ui,sans-serif;'
+        + 'padding:10px 17px;border-radius:12px;text-align:center;box-shadow:0 4px 18px rgba(0,0,0,.4);';
+      document.body.appendChild(cb);
+      // (3) identity spotlight — ring around bottom-left footer, kept fully VISIBLE
+      ring = document.createElement('div'); ring.id = '__ring';
+      ring.style.cssText = 'position:fixed;bottom:3px;left:3px;width:336px;height:24px;z-index:2147483646;'
+        + 'pointer-events:none;border-radius:7px;';
+      document.body.appendChild(ring);
+      tag = document.createElement('div'); tag.id = '__tag';
+      tag.style.cssText = 'position:fixed;bottom:30px;left:6px;z-index:2147483647;pointer-events:none;color:#fff;'
+        + 'font:700 11px/1.2 -apple-system,system-ui,sans-serif;padding:3px 8px;border-radius:6px;';
+      tag.textContent = '↓ 当前登录身份(UI 上唯一可区分处)';
+      document.body.appendChild(tag);
     }
-    lab.textContent = role === 'op' ? '👤 运营视角 · 登录为 user/system/admin' : '🛍️ 客户视角 · 登录为 user/system/customer1';
-    lab.style.background = role === 'op' ? 'rgba(37,99,235,.95)' : 'rgba(217,70,239,.95)';
-    bar.innerHTML = cap + (sub ? `<div style="font-size:15px;font-weight:400;opacity:.88;margin-top:5px;">${sub}</div>` : '');
+    lab.textContent = title;
+    lab.style.background = `rgba(${rgb},.96)`;
+    ring.style.border = `2.5px solid rgba(${rgb},1)`;
+    tag.style.background = `rgba(${rgb},.96)`;
+    cb.innerHTML = cap + (sub ? `<div style="font-size:13px;font-weight:400;opacity:.88;margin-top:5px;">${sub}</div>` : '');
   }, { role, cap, sub: sub || '' });
 }
 async function login(page, user) {
