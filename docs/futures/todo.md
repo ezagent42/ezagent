@@ -765,3 +765,13 @@ PR-4 snapshot guard, codex `--last`, table-rename).
   built. No UI for cc/claude login or proxy. Decision needed: each flavor
   inherits one generic UI vs provides its own via the `:form` config_surface
   contract — then build it. Ties to the credential-lifecycle item (login UI).
+
+## Architecture clarity (Allen 2026-06-03)
+
+- **Install + run `improve-codebase-architecture` skill to clarify the ESR
+  architecture.** Skill installed at `.claude/skills/improve-codebase-architecture/`
+  (cc-openclaw). Use it (informed by `UBIQUITOUS_LANGUAGE.md` + the `GLOSSARY.md`
+  decisions log) to surface "deepening opportunities" — shallow modules, leaky
+  seams, RBK / Kind / Behavior / Template / domain.agent layering friction — and
+  discuss how to make the codebase deeper, more testable, more AI-navigable. The
+  discussion + proposals are the deliverable.
