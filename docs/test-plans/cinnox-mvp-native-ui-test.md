@@ -25,7 +25,7 @@
 
 ```bash
 cd /home/huangjiajia/ezagent
-export DEEPSEEK_API_KEY="sk-998f483493ce48f08c289671d7f303c8"
+export DEEPSEEK_API_KEY="sk-your-deepseek-key-here"
 export ANTHROPIC_MODEL="deepseek-v4-pro"
 export MAX_THINKING_TOKENS="0"
 mix ecto.reset
@@ -155,7 +155,7 @@ ezagent 使用 **@-mention 路由**（需完整 URI 格式）：`@entity://agent
 ```bash
 pkill -f "mix phx.server"
 cd /home/huangjiajia/ezagent
-export DEEPSEEK_API_KEY="sk-998f483493ce48f08c289671d7f303c8"
+export DEEPSEEK_API_KEY="sk-your-deepseek-key-here"
 export ANTHROPIC_MODEL="deepseek-v4-pro"
 export MAX_THINKING_TOKENS="0"
 mix ecto.reset
