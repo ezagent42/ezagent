@@ -221,6 +221,14 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   def auth_failure_signals,
     do: [~r/Please run \/login/, "API Error: 403", ~r/API Error: 401/, ~r/Invalid API key/]
 
+  # #17 PR-E — test/E2E credential provisioning (refresh-if-expired + copy). Delegates to
+  # EzagentPluginCc.CredentialRefresh. Production users log in interactively, so this is
+  # only invoked by the test/E2E harness.
+  @impl Ezagent.Agent.CredentialAdapter
+  def refresh_test_credentials(source, home, opts \\ []) do
+    EzagentPluginCc.CredentialRefresh.provision(source, home, opts)
+  end
+
   # SPEC 2026-06-01-flavor-generic-template-data (approach B): the
   # cc-specific template_data fields formerly hardcoded in
   # `AgentTemplate.to_template_data/2`. Reads atom-or-string content keys;
