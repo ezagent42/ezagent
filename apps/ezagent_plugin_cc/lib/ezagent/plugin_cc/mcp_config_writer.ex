@@ -193,6 +193,22 @@ defmodule EzagentPluginCc.McpConfigWriter do
         :ok
     end
 
+    # PR-3 (domain.agent D2/DD-6): the AUTHORITATIVE per-agent .mcp.json lives in
+    # the domain-allocated `config_dir` (the sandbox-owned per-agent config home)
+    # — that is the file claude's `--mcp-config` points at (set in
+    # `CcAgent.build_claude_cmd/3`). The cwd / git-toplevel / `~/.ezagent` copies
+    # above remain only as compat surfaces for claude's dev-channel name-lookup
+    # (content-identical, no per-agent identity). Routing the per-agent write
+    # through the sandbox dir is the PR-3 "single owner" consolidation.
+    case Keyword.get(opts, :config_dir) do
+      d when is_binary(d) and d != "" ->
+        File.mkdir_p!(d)
+        File.write!(Path.join(d, ".mcp.json"), encoded)
+
+      _ ->
+        :ok
+    end
+
     {:ok, path, token}
   end
 

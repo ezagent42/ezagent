@@ -170,6 +170,38 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
       assert File.exists?(Path.join(agent_cwd, ".mcp.json"))
     end
 
+    test "write_with_token!/1 with :config_dir writes the AUTHORITATIVE per-agent .mcp.json there (PR-3 DD-6)", %{
+      out_dir: out_dir
+    } do
+      # PR-3: the per-agent .mcp.json the domain-allocated config_dir owns is the
+      # one claude's `--mcp-config` points at. The cwd copy remains as compat.
+      config_dir =
+        Path.join(System.tmp_dir!(), "esr-cfgdir-mcp-#{System.unique_integer([:positive])}")
+
+      agent_cwd =
+        Path.join(System.tmp_dir!(), "esr-cwd-mcp-#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(config_dir)
+      File.mkdir_p!(agent_cwd)
+      on_exit(fn -> File.rm_rf(config_dir); File.rm_rf(agent_cwd) end)
+
+      {:ok, _path, _token} =
+        McpConfigWriter.write_with_token!(
+          agent_uri: "entity://agent/team-alpha/cc_cfgdir",
+          dir: out_dir,
+          agent_cwd: agent_cwd,
+          config_dir: config_dir
+        )
+
+      cfg_mcp = Path.join(config_dir, ".mcp.json")
+      assert File.exists?(cfg_mcp), "expected the authoritative .mcp.json in config_dir"
+      # the cwd compat copy is still written
+      assert File.exists?(Path.join(agent_cwd, ".mcp.json"))
+
+      env = cfg_mcp |> File.read!() |> Jason.decode!() |> get_in(["mcpServers", "esr-bridge", "env"])
+      assert Map.keys(env) == ["EZAGENT_BRIDGE_WS_URL"]
+    end
+
     test "write!/1 without :agent_cwd skips the cwd write (back-compat)", %{out_dir: out_dir} do
       # No agent_cwd → only ~/.ezagent + git-root copies, no crash.
       {:ok, path} =

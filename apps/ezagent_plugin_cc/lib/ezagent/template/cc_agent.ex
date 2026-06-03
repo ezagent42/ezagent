@@ -984,10 +984,17 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       # join. Minting is idempotent per agent URI, so this is the SAME
       # token baked into the esr-bridge config: one credential, no
       # spoofing surface (Phase 7 completion PR-5).
+      # PR-3 (DD-6): the AUTHORITATIVE per-agent .mcp.json lives in the
+      # domain-allocated per-agent config home (sandbox-owned), which
+      # `--mcp-config` points at below. nil ⇒ agent has no config home (the cwd
+      # copy is used). The cwd/git-root/~/.ezagent copies remain as compat.
+      config_home = resolve_config_home(tmpl)
+
       {:ok, _global_mcp_path, agent_token} =
         EzagentPluginCc.McpConfigWriter.write_with_token!(
           agent_uri: URI.to_string(agent_uri),
-          agent_cwd: agent_cwd
+          agent_cwd: agent_cwd,
+          config_dir: config_home
         )
 
       # 2026-05-26 (Allen e2e Bug 4): the writer writes THREE copies of
@@ -1011,7 +1018,15 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       # Files (a) + (b) are now diagnostic surfaces only (operator can
       # eyeball the last-spawned agent's creds; they no longer gate
       # the runtime claude → bridge handshake).
-      per_agent_mcp_path = Path.join(agent_cwd, ".mcp.json")
+      # PR-3 (DD-6): point claude's `--mcp-config` at the sandbox-owned per-agent
+      # .mcp.json in the config home (the authoritative copy). Agents with no
+      # config home keep the cwd copy (codex DD-6 — repoint, don't leave claude
+      # reading the old path).
+      per_agent_mcp_path =
+        if is_binary(config_home) and config_home != "",
+          do: Path.join(config_home, ".mcp.json"),
+          else: Path.join(agent_cwd, ".mcp.json")
+
       settings_mcp_args = assemble_settings_mcp_args(mandatory_settings_path(), per_agent_mcp_path, tmpl)
 
       # argv element 0 is the resolved ABSOLUTE path (not bare
@@ -1141,6 +1156,22 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   defp valid_dir?(d) when is_binary(d) and d != "", do: true
   defp valid_dir?(_), do: false
+
+  # PR-3 (DD-6) — the resolved per-agent config home (the same value
+  # `build_claude_config_env/2` exports as `CLAUDE_CONFIG_DIR`): the realized
+  # per-agent `agent_config_dir` if valid, else the template `config_dir`, else
+  # nil (no config home). The happy-path mirror of `build_claude_config_env/2`'s
+  # cond; the malformed-key FAIL-LOUD still happens there (called right after).
+  defp resolve_config_home(tmpl) do
+    agent_dir = Map.get(tmpl, "agent_config_dir")
+    template_dir = Map.get(tmpl, "config_dir")
+
+    cond do
+      valid_dir?(agent_dir) -> agent_dir
+      valid_dir?(template_dir) -> template_dir
+      true -> nil
+    end
+  end
 
   # `"config_dir"` key is PRESENT but not a valid dir (`""` / non-binary /
   # `nil`-value). An absent key is NOT malformed (legitimate "no config home").
