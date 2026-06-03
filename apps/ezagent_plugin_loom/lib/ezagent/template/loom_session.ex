@@ -160,12 +160,17 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
     custom_worker_uris = find_custom_workers(session_uri, session_name)
     all_uris = [session_uri | team_uris] ++ custom_worker_uris
 
-    Logger.info("LoomSession.cleanup: terminating #{length(all_uris)} URIs (session + #{length(team_uris)} team + #{length(custom_worker_uris)} custom)")
+    Logger.info(
+      "LoomSession.cleanup: terminating #{length(all_uris)} URIs (session + #{length(team_uris)} team + #{length(custom_worker_uris)} custom)"
+    )
 
     for uri <- all_uris do
       term_result = safe_terminate(uri)
       snap_result = safe_snapshot_delete(uri)
-      Logger.debug("LoomSession.cleanup: #{URI.to_string(uri)} terminate=#{inspect(term_result)} snapshot=#{inspect(snap_result)}")
+
+      Logger.debug(
+        "LoomSession.cleanup: #{URI.to_string(uri)} terminate=#{inspect(term_result)} snapshot=#{inspect(snap_result)}"
+      )
     end
 
     _ = safe_unbind_feishu(session_uri)
@@ -277,7 +282,7 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
   # has a `<span type="page_update">` message in recent history, skip (the
   # bridge will pick it up). Else seed once.
   defp maybe_seed_loom_source(%URI{} = session_uri, source, summary)
-       when is_binary(source) and is_binary(summary) do
+       when is_binary(summary) do
     if already_seeded?(session_uri) do
       :ok
     else
@@ -307,10 +312,14 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
   # `mentions = []` (session-wide announcement, not addressed to anyone).
   # Best-effort; failures logged + swallowed.
   defp seed_loom_source(%URI{} = session_uri, source, summary)
-       when is_binary(source) and is_binary(summary) do
+       when is_binary(summary) do
+    # 2026-06-02 多文件:source 可能是 files map(新)或字符串(旧 saved/seed)→ 归一。
+    files = EzagentPluginLoom.Prompts.normalize_source(source)
+
     body =
       EzagentPluginLoom.Span.span("page_update", %{
-        "source" => source,
+        "files" => files,
+        "source" => Map.get(files, "/App.jsx", ""),
         "summary" => summary
       })
 
@@ -405,9 +414,14 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
         }
 
         case Ezagent.Kind.spawn(Ezagent.Entity.LoomWorker, args) do
-          {:ok, _} -> :ok
-          {:error, {:already_started, _}} -> :ok
-          {:error, reason} -> Logger.warning("LoomSession: worker pre_spawn #{theme} failed: #{inspect(reason)}")
+          {:ok, _} ->
+            :ok
+
+          {:error, {:already_started, _}} ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning("LoomSession: worker pre_spawn #{theme} failed: #{inspect(reason)}")
         end
       end
     end)
@@ -425,7 +439,9 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
     args = %{
       uri: orch_uri,
       persona: to_string(Map.get(saved, "persona") || "visitor"),
-      initial_loom_source: to_string(Map.get(saved, "loom_source") || "")
+      # 2026-06-02 多文件:saved loom_source 可能是 files map(新)或字符串(旧)。
+      # 原样传,orchestrator init_slice 用 normalize_source 归一。
+      initial_loom_source: Map.get(saved, "loom_source") || %{}
     }
 
     case Ezagent.Kind.spawn(Ezagent.Entity.LoomOrchestrator, args) do

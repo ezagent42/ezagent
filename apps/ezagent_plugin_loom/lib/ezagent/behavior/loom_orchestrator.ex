@@ -38,15 +38,17 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
   require Logger
 
   alias Ezagent.{Cmd, Message}
-  alias EzagentPluginLoom.{DeepSeek, Span, Prompts}
+  alias EzagentPluginLoom.{ClaudeCode, Span, Prompts}
 
-  # Bumped 12s → 45s (2026-06-01): v0worker calls DeepSeek to generate full
-  # pages, which routinely takes 10-20s. Old 12s timeout was firing before v0
-  # returned, leaving the user with a "partial" notice and then a silent late
-  # page_update. 45s comfortably covers v0; for business turns (policy/company)
-  # this slightly delays the "partial" notice but those workers reply in 1-3s
-  # anyway, so the timeout only fires on real failures.
-  @agg_timeout_ms 45_000
+  # 聚合**兜底**超时(2026-06-02 重构):正常完成是**事件驱动**的 —— worker 不管
+  # 成功/失败都必回一条 deliverable,`handle_deliverable` 收齐即合成,**与 model 多慢
+  # 无关**。这个超时只在 worker 进程**真死了、永不回复**时兜底,所以不该手猜一个跟
+  # model 速度赛跑的常数,而是从 worker 自己的时间上界推导:`ClaudeCode.max_run_ms()`
+  # (单次调用最大墙钟 = 超时 × 尝试 + 退避)再加余量。这样换慢 model / 调大 worker
+  # 超时,兜底自动跟着放大,永远只在真异常时触发。
+  @agg_margin_ms 30_000
+
+  defp agg_timeout_ms, do: EzagentPluginLoom.ClaudeCode.max_run_ms() + @agg_margin_ms
 
   action(:receive,
     args: %{message: :map},
@@ -71,14 +73,15 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
       pending: %{},
       count: 0,
       last_error: nil,
-      # 2026-06-01 redesign: cached page source. Updated whenever v0 emits a
-      # `<span type="page_update">` reply (handle_receive page-update branch).
-      # Seeded from args :initial_loom_source (LoomSavedSession uses saved
-      # snapshot; LoomSession uses Prompts.loom_seed_source()).
+      # 2026-06-01 redesign / 2026-06-02 多文件: cached page source —— 现为
+      # **files map** `%{path => content}`。每当 v0 发 `<span type="page_update">`
+      # 就整体替换(handle_page_update)。Seeded from args :initial_loom_source
+      # (LoomSavedSession 传 saved snapshot;LoomSession 用 seed)。旧字符串值经
+      # `normalize_source` 归一成 `%{"/App.jsx" => str}`,兼容旧快照/saved template。
       loom_source:
-        to_string(
+        Prompts.normalize_source(
           Map.get(args, :initial_loom_source) || Map.get(args, "initial_loom_source") ||
-            Prompts.loom_seed_source()
+            Prompts.loom_seed_files()
         )
     }
   end
@@ -89,7 +92,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
   def handle_receive(%{message: %Message{} = msg}, ctx) do
     pending = ctx[:read].(:pending, %{})
-    page_src = page_update_source(msg)
+    page_files = page_update_files(msg)
 
     cond do
       # 2026-06-01 redesign: v0 page_update reply — cache new source on slice +
@@ -98,7 +101,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
       # it directly. (If v0 was bundled with policy/company in the same
       # dispatch — shouldn't happen per the prompt — the others' replies
       # become orphans and get dropped silently. v1 trade-off.)
-      page_src -> handle_page_update(msg, page_src, pending)
+      page_files -> handle_page_update(msg, page_files, pending)
       worker_deliverable?(msg, pending) -> handle_deliverable(msg, ctx, pending)
       user_turn?(msg) -> handle_user_turn(msg, ctx, pending)
       # loop-guard: stray / un-addressed / worker chatter → ignore.
@@ -130,15 +133,21 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
       is_nil(self_uri) or is_nil(session_uri) ->
         {:ok, %{}, []}
 
+      # 单活跃生成守卫(2026-06-03):已有在飞回合(pending 非空)→ 不派新回合,
+      # 提示先停止。前端也会锁输入,这里是后端防御(防绕过/竞态)。
+      pending != %{} ->
+        busy_notice(self_uri, session_uri, msg)
+
       workers == [] ->
         direct_answer(persona, msg, self_uri, session_uri, count)
 
       true ->
-        loom_source = ctx[:read].(:loom_source, "")
+        loom_source = Prompts.normalize_source(ctx[:read].(:loom_source, %{}))
 
-        case DeepSeek.chat(dispatch_messages(workers, text_of(msg)),
+        case ClaudeCode.chat(dispatch_messages(workers, text_of(msg)),
                temperature: 0.4,
-               thinking_disabled: true
+               thinking_disabled: true,
+               group: URI.to_string(session_uri)
              ) do
           {:ok, raw} ->
             case parse_dispatch(raw, workers) do
@@ -245,7 +254,10 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
     subs =
       for %{uri: worker_uri, task: task} <- entries do
-        text = if v0?(worker_uri), do: v0_task(task, loom_source), else: task
+        # 2026-06-02 修意图丢失:v0(页面生成)直接拿**用户原话**,不用编排器转述的
+        # `task`(转述会丢 URL / "1:1" / 行业等关键细节,导致 v0 跑偏)。业务 worker
+        # 仍用编排器拆出的子任务。
+        text = if v0?(worker_uri), do: v0_task(text_of(user_msg), task, loom_source), else: task
         Message.new(self_uri, %{text: text, attachments: []}, mentions: [worker_uri])
       end
 
@@ -264,7 +276,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
     # The handler runs IN the Kind.Server process, so self() is the
     # orchestrator Kind — the timer message lands in handle_kind_message/3.
-    Process.send_after(self(), {:agg_timeout, turn_id}, @agg_timeout_ms)
+    Process.send_after(self(), {:agg_timeout, turn_id}, agg_timeout_ms())
 
     {:ok, %{},
      [
@@ -313,6 +325,12 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
     end
   end
 
+  # 用户中止(web_plug /stop 发来):清空在飞回合 → 迟到的 worker deliverable 变
+  # stray 被丢、不 compose、不出"部分结果"卡 → 这一轮彻底丢弃。
+  def handle_kind_message({:cancel, _}, slice, _ctx) do
+    {:ok, %{slice | pending: %{}}}
+  end
+
   def handle_kind_message(_other, _slice, _ctx), do: :ignore
 
   # === compose ===
@@ -330,9 +348,15 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
   defp build_reply_cmd(_turn, _collected, _self, nil, _partial), do: nil
 
   defp build_reply_cmd(turn, collected, %URI{} = self_uri, %URI{} = session_uri, partial) do
-    span = compose_span(turn, collected, partial)
-    reply = Message.new(self_uri, %{text: span, attachments: []}, mentions: [turn.user_uri])
-    send_chat_cmd(session_uri, self_uri, reply)
+    case compose_span(turn, collected, partial) do
+      # compose 被用户中止 → 不发任何回复(丢弃)。
+      nil ->
+        nil
+
+      span ->
+        reply = Message.new(self_uri, %{text: span, attachments: []}, mentions: [turn.user_uri])
+        send_chat_cmd(session_uri, self_uri, reply)
+    end
   end
 
   defp compose_span(turn, collected, partial) do
@@ -348,11 +372,13 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
         })
 
       true ->
-        case DeepSeek.chat(compose_messages(turn.persona, frags, partial),
+        case ClaudeCode.chat(compose_messages(turn.persona, frags, partial),
                temperature: 0.6,
-               thinking_disabled: true
+               thinking_disabled: true,
+               group: URI.to_string(turn.session_uri)
              ) do
           {:ok, raw} -> elem(Span.normalize(raw), 0)
+          {:error, :stopped} -> nil
           {:error, reason} -> Span.error_span(reason)
         end
     end
@@ -361,24 +387,45 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
   # === direct-answer degradation (dispatch parse failed / no roster) ===
 
   defp direct_answer(persona, %Message{} = msg, self_uri, session_uri, count) do
+    case ClaudeCode.chat(
+           [
+             %{"role" => "system", "content" => Prompts.web_system_prompt()},
+             %{"role" => "system", "content" => Prompts.persona_line(persona)},
+             %{"role" => "user", "content" => text_of(msg)}
+           ],
+           temperature: 0.6,
+           thinking_disabled: true,
+           group: URI.to_string(session_uri)
+         ) do
+      # 用户中止 → 不发任何回复(丢弃)。
+      {:error, :stopped} ->
+        {:ok, %{}, []}
+
+      result ->
+        span =
+          case result do
+            {:ok, raw} -> elem(Span.normalize(raw), 0)
+            {:error, reason} -> Span.error_span(reason)
+          end
+
+        reply = Message.new(self_uri, %{text: span, attachments: []}, mentions: [msg.sender])
+
+        {:ok, %{},
+         [{:set, :count, count + 1}, {:dispatch, send_chat_cmd(session_uri, self_uri, reply)}]}
+    end
+  end
+
+  # 已有在飞生成时,对新用户回合回一张"生成中"提示卡(不派新回合)。
+  defp busy_notice(self_uri, session_uri, %Message{} = msg) do
     span =
-      case DeepSeek.chat(
-             [
-               %{"role" => "system", "content" => Prompts.web_system_prompt()},
-               %{"role" => "system", "content" => Prompts.persona_line(persona)},
-               %{"role" => "user", "content" => text_of(msg)}
-             ],
-             temperature: 0.6,
-             thinking_disabled: true
-           ) do
-        {:ok, raw} -> elem(Span.normalize(raw), 0)
-        {:error, reason} -> Span.error_span(reason)
-      end
+      Span.span("notice", %{
+        "text" => "正在生成中,点上方「停止」后再发新的请求。",
+        "tone" => "warn",
+        "title" => "生成中"
+      })
 
     reply = Message.new(self_uri, %{text: span, attachments: []}, mentions: [msg.sender])
-
-    {:ok, %{},
-     [{:set, :count, count + 1}, {:dispatch, send_chat_cmd(session_uri, self_uri, reply)}]}
+    {:ok, %{}, [{:dispatch, send_chat_cmd(session_uri, self_uri, reply)}]}
   end
 
   # === prompts ===
@@ -511,7 +558,11 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
     list
     |> Enum.map(fn
       %{uri: u, label: l} = m ->
-        %{uri: to_uri(u), label: to_string(l), role: to_string(Map.get(m, :role) || Map.get(m, "role") || "")}
+        %{
+          uri: to_uri(u),
+          label: to_string(l),
+          role: to_string(Map.get(m, :role) || Map.get(m, "role") || "")
+        }
 
       %{"uri" => u, "label" => l} = m ->
         %{uri: to_uri(u), label: to_string(l), role: to_string(Map.get(m, "role") || "")}
@@ -570,21 +621,30 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
   # === 2026-06-01 redesign: page_update span handling ===
 
-  # Return the embedded `source` string from a `<span type="page_update">{...}</span>`
+  # Return the embedded **files map** from a `<span type="page_update">{...}</span>`
   # message body, or nil if absent / malformed.
+  #
+  # 2026-06-02 多文件:优先读 `files` map;只有旧 `source` 字符串则归一成
+  # `%{"/App.jsx" => src}`(兼容旧 span / 旧快照重放)。
   #
   # Greedy match (`[\s\S]*` NOT `[\s\S]*?`) is essential: v0's generated JSX often
   # contains nested `</span>` tokens; a non-greedy match terminates on the FIRST
   # inner `</span>` and yields malformed JSON. Greedy + the closing `</span>`
   # naturally anchors on the LAST occurrence which is the outer span's close.
-  defp page_update_source(%Message{body: body}) do
+  defp page_update_files(%Message{body: body}) do
     text = body_text(body)
 
     case Regex.run(~r/<span\s+type="page_update"\s*>([\s\S]*)<\/span>/, text) do
       [_full, inner] ->
         case Jason.decode(String.trim(inner)) do
-          {:ok, %{"source" => src}} when is_binary(src) -> src
-          _ -> nil
+          {:ok, %{"files" => files}} when is_map(files) and map_size(files) > 0 ->
+            Prompts.normalize_source(files)
+
+          {:ok, %{"source" => src}} when is_binary(src) and src != "" ->
+            Prompts.normalize_source(src)
+
+          _ ->
+            nil
         end
 
       _ ->
@@ -592,7 +652,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
     end
   end
 
-  defp page_update_source(_), do: nil
+  defp page_update_files(_), do: nil
 
   defp body_text(%{text: t}) when is_binary(t), do: t
   defp body_text(%{"text" => t}) when is_binary(t), do: t
@@ -601,36 +661,46 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
   # Cache the new source on slice; close the pending turn (if any) so the
   # aggregator no-ops and the compose path is skipped — v0's message already
   # rendered to the session.
-  defp handle_page_update(%Message{ref_id: ref}, source, pending) when is_binary(ref) do
+  defp handle_page_update(%Message{ref_id: ref}, files, pending) when is_binary(ref) do
     case find_turn_by_subtask(pending, ref) do
       nil ->
-        {:ok, %{}, [{:set, :loom_source, source}]}
+        {:ok, %{}, [{:set, :loom_source, files}]}
 
       turn_id ->
-        {:ok, %{}, [{:set, :loom_source, source}, {:set, :pending, Map.delete(pending, turn_id)}]}
+        {:ok, %{}, [{:set, :loom_source, files}, {:set, :pending, Map.delete(pending, turn_id)}]}
     end
   end
 
-  defp handle_page_update(_msg, source, _pending) do
-    {:ok, %{}, [{:set, :loom_source, source}]}
+  defp handle_page_update(_msg, files, _pending) do
+    {:ok, %{}, [{:set, :loom_source, files}]}
   end
 
   defp v0?(%URI{} = uri), do: String.contains?(URI.to_string(uri), "/loomv0_")
   defp v0?(_), do: false
 
-  # Compose the v0 subtask text:current source + user's modification request.
+  # Compose the v0 subtask text:current files + user's modification request.
   # v0's system prompt (`Prompts.page_gen_system_prompt`) handles output rules.
-  defp v0_task(user_request, current_source) do
-    """
-    # 当前页面源码(jsx)
-    ```jsx
-    #{current_source}
-    ```
+  # 2026-06-02 多文件:current_source 现为 files map,逐文件渲染成带 file= 的代码块。
+  defp v0_task(user_request, dispatch_hint, current_files) do
+    files_block =
+      current_files
+      |> Prompts.normalize_source()
+      |> Enum.sort_by(fn {path, _} -> path end)
+      |> Enum.map_join("\n\n", fn {path, src} -> "```jsx file=#{path}\n#{src}\n```" end)
 
-    # 用户的修改/创建需求
+    """
+    # 用户的需求(这是权威,以此为准)
     #{user_request}
 
-    按系统提示词的规则,只输出一个 jsx 代码块表示新的完整 App;代码块前可以有 1 句对话说明你做了什么(会作为 page_update 的 summary)。
+    (编排器对这条需求的理解,仅供参考:#{dispatch_hint})
+
+    # 当前页面的全部文件(仅作参考 —— 如果用户要的是一个全新页面,就**完全重做**,
+    #  不要被下面已有内容的主题/品牌带偏;如果用户只是小改,才在此基础上改)
+    #{files_block}
+
+    按系统提示词的规则输出新的页面:每个文件一个 ```jsx file=/路径``` 块,**带上整个页面的全部文件**
+    (改过的 + 没改的都要,平台整体替换),入口必须是 /App.jsx。代码块前可有 1 句对话说明你做了什么
+    (会作为 page_update 的 summary)。不要输出 /platform.js 或 /ezagent-ui.js。
     """
   end
 

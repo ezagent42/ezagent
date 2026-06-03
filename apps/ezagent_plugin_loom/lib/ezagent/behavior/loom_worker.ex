@@ -40,7 +40,7 @@ defmodule Ezagent.Behavior.LoomWorker do
   require Logger
 
   alias Ezagent.{Cmd, Message}
-  alias EzagentPluginLoom.DeepSeek
+  alias EzagentPluginLoom.ClaudeCode
 
   @default_system_prompt ~S"""
   你是Loom 科技企业孵化器编排团队里的一名 worker。编排器会把一个子任务交给你,
@@ -69,7 +69,7 @@ defmodule Ezagent.Behavior.LoomWorker do
     caps: [:receive],
     modes: [:cast],
     description:
-      "loom worker — produce a DeepSeek content fragment for an orchestrator subtask and reply (ref_id correlated)"
+      "loom worker — produce a Claude Code content fragment for an orchestrator subtask and reply (ref_id correlated)"
   )
 
   # Pin the kind axis `:loomworker` (macro's auto-derived default is `:any`).
@@ -103,18 +103,23 @@ defmodule Ezagent.Behavior.LoomWorker do
       count = ctx[:read].(:count, 0)
       role = ctx[:read].(:role, "worker")
 
-      case DeepSeek.chat(
+      case ClaudeCode.chat(
              [
                %{"role" => "system", "content" => system_prompt},
                %{"role" => "user", "content" => subtask}
              ],
              temperature: 0.6,
-             thinking_disabled: true
+             thinking_disabled: true,
+             group: group_id(ctx)
            ) do
         {:ok, fragment} ->
           {:ok, %{},
            [{:set, :count, count + 1}, {:set, :last_error, nil}] ++
              reply_effect(ctx, msg, fragment)}
+
+        # 用户中止 → 静默,不回任何卡(否则会在会话里留个"失败"卡)。
+        {:error, :stopped} ->
+          {:ok, %{}, []}
 
         {:error, reason} ->
           # silent-drop guard (PRD §8): tell the orchestrator the worker
@@ -197,6 +202,14 @@ defmodule Ezagent.Behavior.LoomWorker do
   def theme_for(_), do: nil
 
   # On the chat.receive path, `ctx.caller` is the originating session URI.
+  # 停止用的 group = 本 session 字符串(stop/1 据此中断本 session 全部 claude)。
+  defp group_id(ctx) do
+    case session_from_ctx(ctx) do
+      %URI{} = u -> URI.to_string(u)
+      _ -> nil
+    end
+  end
+
   defp session_from_ctx(%{caller: %URI{} = u}), do: u
 
   defp session_from_ctx(%{caller: s}) when is_binary(s) do

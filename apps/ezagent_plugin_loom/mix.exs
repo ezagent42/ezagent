@@ -27,10 +27,12 @@ defmodule EzagentPluginLoom.MixProject do
       # Plugin authoring contract SPEC §3.2 — names the plugin
       # contract module for the :ezagent_plugin_check gate.
       env: [ezagent_plugin: EzagentPluginLoom.Application],
-      # :inets + :ssl — `:httpc` is used to call the DeepSeek chat
-      # completion API from `Ezagent.Behavior.Loom`. Same choice as the
-      # curl-agent plugin (avoids a top-level HTTP client dep).
-      extra_applications: [:logger, :inets, :ssl]
+      # :inets + :ssl — `:httpc` is used by the (now-dormant) DeepSeek
+      # shell. Kept since `EzagentPluginLoom.DeepSeek` is retained.
+      # :erlexec — `EzagentPluginLoom.ClaudeCode` drives the local
+      # `claude -p` binary via `:exec.run_link/2` (2026-06-01: loom LLM
+      # backend switched from DeepSeek HTTP to local Claude Code).
+      extra_applications: [:logger, :inets, :ssl, :erlexec]
     ]
   end
 
@@ -40,6 +42,9 @@ defmodule EzagentPluginLoom.MixProject do
   defp deps do
     [
       {:ezagent_core, in_umbrella: true},
+      # 2026-06-01 — `EzagentPluginLoom.ClaudeCode` 用 `:exec.run_link/2`
+      # 跑本地 `claude -p` 作为 LLM 后端(项目唯一 OS-process 库)。
+      {:erlexec, "~> 2.3"},
       # Boot-order constraint only (no code referenced): the default
       # `loom_agent` instance is seeded in this plugin's `after_boot/0`
       # via the `entity://` SpawnRegistry dispatcher, which

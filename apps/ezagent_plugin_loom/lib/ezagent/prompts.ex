@@ -81,25 +81,59 @@ defmodule EzagentPluginLoom.Prompts do
   3. 可以局部修改已有代码，也可以完整重写
 
   ## 输出规范
-  当用户要求生成或修改页面时，你必须在回复中包含且仅包含一个 jsx 代码块，格式如下：
+  当用户要求生成或修改页面时，你可以输出**一个或多个** jsx 代码块，每个块对应一个文件。
+  **用代码块的 info-string 标注文件路径**：```` ```jsx file=/路径.jsx ````。
 
-  ```jsx
+  - **入口固定是 `/App.jsx`**，且必须 `export default function App()`（Sandpack 从这里渲染）。
+  - 可以把组件拆到多个文件（如 `/components/Header.jsx`、`/components/Hero.jsx`），在 `/App.jsx` 里
+    用相对路径 import（例：`import Header from './components/Header';`）。被 import 的子组件文件
+    要 `export default`。
+  - 简单页面只输出一个 `/App.jsx` 块即可（不强制拆分）。
+  - 一个未标 `file=` 的裸 jsx 块会被当作 `/App.jsx`（向后兼容）。
+
+  示例（多文件）：
+
+  ```jsx file=/App.jsx
+  import Header from './components/Header';
   export default function App() {
     return (
-      <div className="...">
-        {/* 你的 UI */}
+      <div className="min-h-screen bg-gray-50">
+        <Header />
+        {/* 其它 UI */}
       </div>
     );
   }
   ```
+  ```jsx file=/components/Header.jsx
+  export default function Header() {
+    return <header className="p-4 text-xl font-bold">My App</header>;
+  }
+  ```
+
+  ## 可用技术栈（这些已装好，放心 import）
+  - **React + Tailwind CSS**（Tailwind 走 CDN，直接写 className）
+  - **lucide-react** — 图标：`import { Menu, ArrowRight } from 'lucide-react'`（别用 emoji 当图标）
+  - **framer-motion** — 动画/进场/微交互：`import { motion } from 'framer-motion'`
+  - **gsap** + **@gsap/react** — 复杂时间线/滚动动画：`import { gsap } from 'gsap'; import { useGSAP } from '@gsap/react'`
+  - **clsx** / **tailwind-merge** / **class-variance-authority** — 条件类名/变体（shadcn 风格）
+  - **字体**（已通过 Google Fonts 加载，用 `style={{fontFamily:'...'}}` 或 Tailwind 任意类引用）：
+    `Playfair Display`、`Instrument Serif`（衬线/标题）、`Space Grotesk`、`Inter Tight`（无衬线/正文）
+  - 需交互/状态从 react 导入（useState/useEffect/useRef）；静态 UI 无需 import
+  - SVG / Canvas 自由用
+
+  ## 设计质量铁律（做出有辨识度的页面，别出 "AI 套路货"）
+  - **先定一个明确且大胆的美学方向**（极简、奢华精致、编辑/杂志感、复古未来、野兽派…）并贯彻到底。
+  - **排版**：用上面的特色字体——标题用衬线/展示字体，正文用无衬线；拉开字号层级，别全 16px。
+  - **配色**：定一套主色 + 克制的强调色（CSS 变量），别用「白底紫渐变」这种烂大街组合。
+  - **动效**：至少做一次有编排的进场（framer-motion 的 stagger / gsap timeline）+ 合理的 hover；高端站常有滚动触发。
+  - **空间**：敢留白、敢用非对称/重叠/打破网格，别永远居中三段式。
+  - **避免**：Inter/Arial/系统字体、千篇一律的卡片网格、平淡的纯色背景。背景可加渐变网格、噪点、纹理、阴影层次增加质感。
 
   ## 限制
-  - 只能使用 React + Tailwind CSS（Tailwind 通过 CDN 提供，直接写 className 即可）
-  - 渲染纯静态 UI 时无需任何 import（JSX 自动运行时已启用）
-  - 需要交互/状态时，按标准写法从 react 导入，例如：import { useState, useEffect } from 'react';
-  - 不要引入任何第三方 UI 库（除非用户明确要求）
-  - 组件名必须叫 App，并 export default
-  - SVG、Canvas 等原生能力可以自由使用（比如绘制奥特曼时用 SVG）
+  - 不要引入上面**没列出**的第三方库（没装的 import 不了会报错）。
+  - 入口文件 `/App.jsx` 的导出组件必须叫 `App` 并 `export default`
+  - **`./platform` 和 `./ezagent-ui` 是平台预置的只读模块，只能 `import`，绝不要定义或输出
+    `file=/platform.js`、`file=/ezagent-ui.js`（也不要写它们的实现）——这类文件会被平台丢弃。**
 
   ## 平台能力：跟 loom 会话交互（sendMessage / onMessage / getHistory）
   运行环境内置一个模块 `./platform`，可把本页接入它所属的 loom 会话（背后有一个编排器 + worker 团队在处理）。三个能力：
@@ -215,8 +249,10 @@ defmodule EzagentPluginLoom.Prompts do
   #DYNAMIC_TOOL_AND_PRESET_BLOCK#
 
   ## 修改策略
-  - 用户只想改一小部分时，输出修改后的完整代码（保持其他部分不变）
-  - 用户要求大改时，重新生成完整代码
+  - 任务里会给你**当前页面的全部文件**作为上下文。
+  - **每次都要输出整个页面的全部文件**（改过的 + 没改的都带上各自的 ```jsx file=/路径``` 块）——
+    平台用你这次输出的文件集**整体替换**当前页面。没带上的文件会丢失，所以不要省略未改动的文件。
+  - 不需要的文件就不要输出（等于删除它）；但入口 `/App.jsx` 必须始终在。
 
   请始终用中文回复用户的对话部分（简短说明你做了什么），但代码本身保持英文。
   """
@@ -269,7 +305,12 @@ defmodule EzagentPluginLoom.Prompts do
       |> Enum.reject(&(&1 == "" or is_nil(&1)))
       |> Enum.join("\n")
 
-    String.replace(@page_gen_system_prompt, "#DYNAMIC_TOOL_AND_PRESET_BLOCK#", block)
+    base = String.replace(@page_gen_system_prompt, "#DYNAMIC_TOOL_AND_PRESET_BLOCK#", block)
+
+    case design_system_md() do
+      nil -> base
+      md -> base <> "\n\n## 设计系统(DESIGN.md,务必遵循)\n\n" <> md
+    end
   end
 
   defp safe_apply(mod, fun, args) do
@@ -280,6 +321,18 @@ defmodule EzagentPluginLoom.Prompts do
     _, _ -> ""
   end
 
+  # 可插拔设计系统:若存在 `~/.ezagent/<profile>/loom-design.md`(运营自定义的
+  # DESIGN.md 风格规范),把它注进页面生成提示,让产出统一到既定品牌/风格。
+  # (借鉴 open-design 的 DESIGN.md systems。)不存在 → nil,用内置设计铁律即可。
+  defp design_system_md do
+    path = Ezagent.Home.path("loom-design.md")
+
+    case File.read(path) do
+      {:ok, content} when byte_size(content) > 0 -> content
+      _ -> nil
+    end
+  end
+
   @doc """
   Seed jsx source for a fresh loom session. Orchestrator's `post_init` emits
   this as a `<span type="page_update">` chat message so the loom-view bridge
@@ -287,6 +340,31 @@ defmodule EzagentPluginLoom.Prompts do
   (which seeds with the saved snapshot's source instead).
   """
   def loom_seed_source, do: @loom_seed_source
+
+  @doc """
+  Seed page as a **files map** (`%{path => content}`) for a fresh loom session.
+
+  2026-06-02 multi-file redesign: `:loom_source` slice is now a files map, not a
+  single string. The seed is just the entry file `/App.jsx`.
+  """
+  @spec loom_seed_files() :: %{String.t() => String.t()}
+  def loom_seed_files, do: %{"/App.jsx" => @loom_seed_source}
+
+  @doc """
+  Normalize a `:loom_source` value to the canonical **files map**.
+
+  Backward compat: legacy single-string source (old snapshots / saved templates
+  / old `page_update` spans) → `%{"/App.jsx" => string}`. A map passes through
+  with non-binary/blank keys+values dropped. Anything else → seed.
+  """
+  @spec normalize_source(term()) :: %{String.t() => String.t()}
+  def normalize_source(s) when is_binary(s) and s != "", do: %{"/App.jsx" => s}
+
+  def normalize_source(map) when is_map(map) and map_size(map) > 0 do
+    for {k, v} <- map, is_binary(k) and k != "" and is_binary(v), into: %{}, do: {k, v}
+  end
+
+  def normalize_source(_), do: loom_seed_files()
 
   @doc "The plain-chat system prompt (loom's `:receive` path)."
   def chat_system_prompt, do: @chat_system_prompt
