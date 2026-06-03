@@ -34,7 +34,7 @@ defmodule Ezagent.Behavior.LoomV0Worker do
   require Logger
 
   alias Ezagent.{Cmd, Message}
-  alias EzagentPluginLoom.{DeepSeek, Prompts, Span}
+  alias EzagentPluginLoom.{ClaudeCode, Prompts, Span}
 
   action(:receive,
     args: %{message: :map},
@@ -42,7 +42,7 @@ defmodule Ezagent.Behavior.LoomV0Worker do
     caps: [:receive],
     modes: [:cast],
     description:
-      "loom v0worker — page-gen DeepSeek call; reply with `<span type=\"page_update\">{source, summary}</span>` body"
+      "loom v0worker — page-gen Claude Code call; reply with `<span type=\"page_update\">{source, summary}</span>` body"
   )
 
   # Pin the kind axis `:loomv0` (macro's auto-derived default is `:any`).
@@ -65,18 +65,30 @@ defmodule Ezagent.Behavior.LoomV0Worker do
       subtask = extract_text(msg.body)
       count = ctx[:read].(:count, 0)
 
-      case DeepSeek.chat(
+      case ClaudeCode.chat(
              [
                %{"role" => "system", "content" => Prompts.page_gen_system_prompt()},
                %{"role" => "user", "content" => subtask}
              ],
              temperature: 0.7,
-             thinking_disabled: true
+             thinking_disabled: true,
+             group: group_id(ctx)
            ) do
+        # 用户中止 → 静默丢弃:不发 page_update、不发 error 卡 → :loom_source 不变、页面不变。
+        {:error, :stopped} ->
+          {:ok, %{}, []}
+
         {:ok, reply_text} ->
-          case extract_jsx_and_summary(reply_text) do
-            {:ok, source, summary} ->
-              body_text = Span.span("page_update", %{"source" => source, "summary" => summary})
+          case extract_files_and_summary(reply_text) do
+            {:ok, files, summary} ->
+              # 2026-06-02 多文件:span 带 `files`(权威,新 dist 用)+ `source`
+              # (= /App.jsx,旧 dist 单文件降级渲染兼容)+ `summary`。
+              body_text =
+                Span.span("page_update", %{
+                  "files" => files,
+                  "source" => Map.get(files, "/App.jsx", ""),
+                  "summary" => summary
+                })
 
               {:ok, %{},
                [{:set, :count, count + 1}, {:set, :last_error, nil}] ++
@@ -98,29 +110,75 @@ defmodule Ezagent.Behavior.LoomV0Worker do
     end
   end
 
-  # Extract the first ```jsx ... ``` block as source; first non-empty line of
-  # the prose around it as summary (fallback "页面已更新" if no prose).
+  # 2026-06-02 多文件:收集回复里**所有** ```jsx file=/路径``` 代码块 → files map。
+  # - 块标 `file=/x.jsx` → 用该路径;未标 → 兜底 `/App.jsx`(向后兼容旧单块输出)。
+  # - 丢弃命中受保护模块名的块(platform / ezagent-ui),agent 写了也不生效。
+  # - summary = 所有代码块之外的第一句 prose(fallback "页面已更新")。
+  # 返回 `{:ok, files_map, summary}`;一个有效文件都没有 → `:error`。
   @doc false
-  @spec extract_jsx_and_summary(String.t()) :: {:ok, String.t(), String.t()} | :error
-  def extract_jsx_and_summary(text) when is_binary(text) do
-    case Regex.run(~r/```(?:jsx|tsx|javascript|js|react)?\s*\n([\s\S]*?)```/, text) do
-      [full_match, source] ->
-        prose = text |> String.replace(full_match, "", global: false) |> String.trim()
+  @spec extract_files_and_summary(String.t()) ::
+          {:ok, %{String.t() => String.t()}, String.t()} | :error
+  def extract_files_and_summary(text) when is_binary(text) do
+    files =
+      ~r/```(?:jsx|tsx|javascript|js|react)?(?:\s+file=(\S+))?[^\n]*\n([\s\S]*?)```/
+      |> Regex.scan(text)
+      |> Enum.reduce(%{}, fn [_full, path, src], acc ->
+        p = normalize_file_path(path)
+        src = String.trim(src)
 
-        summary =
-          case prose |> String.split("\n", trim: true) |> List.first() do
-            line when is_binary(line) and line != "" -> String.trim(line)
-            _ -> "页面已更新"
-          end
+        if protected_file?(p) or src == "" do
+          acc
+        else
+          Map.put(acc, p, src)
+        end
+      end)
+      |> ensure_entry()
 
-        {:ok, String.trim(source), summary}
-
-      _ ->
-        :error
+    case map_size(files) do
+      0 -> :error
+      _ -> {:ok, files, extract_summary(text)}
     end
   end
 
-  def extract_jsx_and_summary(_), do: :error
+  def extract_files_and_summary(_), do: :error
+
+  # 空(未标 file=)→ /App.jsx;`./x` → `/x`;无前导 / → 补 /。
+  defp normalize_file_path(""), do: "/App.jsx"
+
+  defp normalize_file_path(path) when is_binary(path) do
+    cond do
+      String.starts_with?(path, "/") -> path
+      String.starts_with?(path, "./") -> "/" <> String.trim_leading(path, "./")
+      true -> "/" <> path
+    end
+  end
+
+  # 受保护:basename 去扩展名后是 platform / ezagent-ui(不分目录、不分扩展名)。
+  defp protected_file?(path) do
+    base = path |> Path.basename() |> String.replace(~r/\.(jsx?|tsx?)$/, "")
+    base in ~w(platform ezagent-ui)
+  end
+
+  # 没有入口但只有一个文件 → 把它当 /App.jsx(兜底)。多文件且缺 /App.jsx 则原样
+  # (属 agent 错误,前端会显示缺入口)。
+  defp ensure_entry(files) when map_size(files) == 0, do: files
+
+  defp ensure_entry(files) do
+    cond do
+      Map.has_key?(files, "/App.jsx") -> files
+      map_size(files) == 1 -> %{"/App.jsx" => files |> Map.values() |> hd()}
+      true -> files
+    end
+  end
+
+  defp extract_summary(text) do
+    prose = Regex.replace(~r/```[\s\S]*?```/, text, "") |> String.trim()
+
+    case prose |> String.split("\n", trim: true) |> List.first() do
+      line when is_binary(line) and line != "" -> String.trim(line)
+      _ -> "页面已更新"
+    end
+  end
 
   # ---------------------------------------------------------------
   # boilerplate — mention guard + reply dispatch (copied from LoomWorker)
@@ -159,6 +217,13 @@ defmodule Ezagent.Behavior.LoomV0Worker do
       [{:dispatch, cmd}]
     else
       _ -> []
+    end
+  end
+
+  defp group_id(ctx) do
+    case session_from_ctx(ctx) do
+      %URI{} = u -> URI.to_string(u)
+      _ -> nil
     end
   end
 

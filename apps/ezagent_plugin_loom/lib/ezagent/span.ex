@@ -62,8 +62,36 @@ defmodule EzagentPluginLoom.Span do
         "text" => "出错了",
         "tone" => "danger",
         "title" => "请求失败",
-        "description" => inspect(reason)
+        "description" => friendly_error(reason)
       })
+
+  # 把 ClaudeCode 错误形状翻成人话(不甩 raw Erlang term 给用户)。
+  defp friendly_error(reason) do
+    cond do
+      overloaded?(reason) ->
+        "Claude 服务暂时过载(Anthropic 服务端高峰),稍等几秒再发一遍就好。"
+
+      reason == :stalled ->
+        "这次生成中途卡住了(长时间没有响应),再发一遍试试。"
+
+      reason == :hard_cap or reason == :timeout ->
+        "这次生成时间过长被中断了,再发一遍或换个更简单的说法。"
+
+      match?({:claude_not_found}, reason) or reason == :claude_not_found ->
+        "本机没找到 claude 命令,请联系运维确认 Claude Code 已安装。"
+
+      true ->
+        "调用出错了,再发一遍试试。(#{inspect(reason)})"
+    end
+  end
+
+  defp overloaded?({:claude_error, msg}) when is_binary(msg),
+    do: String.contains?(msg, ["Overloaded", "overloaded", "rate limit", "429", "529", "503"])
+
+  defp overloaded?({:exit, _status, out}) when is_binary(out),
+    do: String.contains?(out, ["Overloaded", "overloaded", "rate limit", "529", "503"])
+
+  defp overloaded?(_), do: false
 
   @doc "Infer the card type from object field shape when `type` is missing."
   def infer_type(o) do

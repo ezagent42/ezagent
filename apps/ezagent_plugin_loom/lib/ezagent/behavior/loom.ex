@@ -33,14 +33,15 @@ defmodule Ezagent.Behavior.Loom do
   require Logger
 
   alias Ezagent.{Cmd, Message}
-  alias EzagentPluginLoom.{DeepSeek, Span, Prompts}
+  alias EzagentPluginLoom.{ClaudeCode, Span, Prompts}
 
   action(:say,
     args: %{messages: {:list, :map}, persona: :string, session: :string},
     returns: %{reply: :string},
     caps: [:say],
     modes: [:call],
-    description: "Generate a Loom scene-card (multi-turn messages + persona) via DeepSeek"
+    description:
+      "Generate a Loom scene-card (multi-turn messages + persona) via local Claude Code"
   )
 
   action(:receive,
@@ -48,7 +49,7 @@ defmodule Ezagent.Behavior.Loom do
     returns: %{},
     caps: [:receive],
     modes: [:cast],
-    description: "Plain DeepSeek reply into the originating session"
+    description: "Plain Claude Code reply into the originating session"
   )
 
   # Pin the kind axis `:loom` (macro's auto-derived default is `:any`).
@@ -79,7 +80,9 @@ defmodule Ezagent.Behavior.Loom do
         %{"role" => "system", "content" => Prompts.persona_line(persona)}
       ] ++ history
 
-    case DeepSeek.chat(full, temperature: 0.6, thinking_disabled: true) do
+    group = group_of(Map.get(args, :session) || Map.get(args, "session"))
+
+    case ClaudeCode.chat(full, temperature: 0.6, thinking_disabled: true, group: group) do
       {:ok, raw} ->
         {span, _readable} = Span.normalize(raw)
 
@@ -87,31 +90,48 @@ defmodule Ezagent.Behavior.Loom do
          [{:set, :count, count + 1}, {:set, :last_error, nil}] ++
            mirror_effects(args, ctx, history, span)}
 
+      # 用户中止 → 返回空回复、不镜像。
+      {:error, :stopped} ->
+        {:ok, %{reply: ""}, []}
+
       {:error, reason} ->
         {:ok, %{reply: Span.error_span(reason)}, [{:set, :last_error, reason}]}
     end
   end
+
+  defp group_of(s) when is_binary(s) and s != "", do: s
+  defp group_of(_), do: nil
 
   # `:receive` — chat/session/Feishu path. Plain friendly reply.
   def handle_receive(%{message: %Message{} = msg}, ctx) do
     user_text = extract_text(msg.body)
     count = ctx[:read].(:count, 0)
 
-    case DeepSeek.chat(
+    group =
+      case session_uri_from_caller(ctx) do
+        %URI{} = u -> URI.to_string(u)
+        _ -> nil
+      end
+
+    case ClaudeCode.chat(
            [
              %{"role" => "system", "content" => Prompts.chat_system_prompt()},
              %{"role" => "user", "content" => user_text}
            ],
-           []
+           group: group
          ) do
       {:ok, reply} ->
         {:ok, %{},
          [{:set, :count, count + 1}, {:set, :last_error, nil}] ++ reply_effect(ctx, msg, reply)}
 
+      # 用户中止 → 静默,不回卡。
+      {:error, :stopped} ->
+        {:ok, %{}, []}
+
       {:error, reason} ->
         {:ok, %{},
          [{:set, :last_error, reason}] ++
-           reply_effect(ctx, msg, "⚠️ DeepSeek 调用失败:#{inspect(reason)}")}
+           reply_effect(ctx, msg, "⚠️ Claude Code 调用失败:#{inspect(reason)}")}
     end
   end
 

@@ -37,7 +37,7 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
   require Logger
 
   alias Ezagent.{Cmd, Message}
-  alias EzagentPluginLoom.{DeepSeek, Prompts, Span}
+  alias EzagentPluginLoom.{ClaudeCode, Prompts, Span}
 
   # 预制 worker(用户不能误删 — manager 在 prompt 里就说不能删,但代码也兜底)。
   @builtin_themes ~w(policy company)
@@ -49,7 +49,7 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
     caps: [:receive],
     modes: [:cast],
     description:
-      "loom team manager — parse natural-language team mod via DeepSeek, emit spawn/join or leave/terminate effects"
+      "loom team manager — parse natural-language team mod via local Claude Code, emit spawn/join or leave/terminate effects"
   )
 
   def required_caps do
@@ -86,14 +86,19 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
       %URI{} = suri ->
         workers_summary = current_workers_summary(suri)
 
-        case DeepSeek.chat(
+        case ClaudeCode.chat(
                [
                  %{"role" => "system", "content" => Prompts.meta_system_prompt(workers_summary)},
                  %{"role" => "user", "content" => text}
                ],
                temperature: 0.2,
-               thinking_disabled: true
+               thinking_disabled: true,
+               group: URI.to_string(suri)
              ) do
+          # 用户中止 → 静默。
+          {:error, :stopped} ->
+            {:ok, %{}, []}
+
           {:ok, raw} ->
             case parse_op(raw) do
               {:ok, op} ->
@@ -114,24 +119,31 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
     end
   end
 
-  # DeepSeek API 故障的友好回复 — 不出 raw Erlang term。
-  defp human_friendly_api_error({:transport, {:failed_connect, _}}),
-    do: "网络连不上 DeepSeek API(可能 VPN 或代理一时卡了),再说一遍试试。"
-
-  defp human_friendly_api_error({:transport, _}),
-    do: "网络一时不通,再说一遍试试。"
-
-  defp human_friendly_api_error({:http, 401, _}),
-    do: ":no_api_key 或 key 已过期。让运维补一下 DEEPSEEK_KEY。"
-
-  defp human_friendly_api_error({:http, status, _}) when is_integer(status),
-    do: "DeepSeek 返回 HTTP #{status},等一下再试。"
+  # 本地 Claude Code 调用故障的友好回复 — 不出 raw Erlang term。
+  # (错误形状来自 `EzagentPluginLoom.ClaudeCode.chat/2`。)
+  defp human_friendly_api_error(:claude_not_found),
+    do: "本机没找到 claude 命令。让运维确认 Claude Code 已安装且在 PATH 上。"
 
   defp human_friendly_api_error(:timeout),
-    do: "DeepSeek 这次请求超时了(可能在算长 prompt 或网络抖),再说一遍。"
+    do: "Claude Code 这次响应超时了(可能在算长 prompt),再说一遍试试。"
+
+  defp human_friendly_api_error({:spawn, _}),
+    do: "起不了 claude 进程,让运维看一下。"
+
+  defp human_friendly_api_error({:exit, _status, _out}),
+    do: "Claude Code 进程异常退出,等一下再试。"
+
+  defp human_friendly_api_error({:claude_error, _}),
+    do: "Claude Code 返回了错误,等一下再试。"
+
+  defp human_friendly_api_error({:decode, _, _}),
+    do: "Claude Code 返回的内容没法解析,再说一遍试试。"
+
+  defp human_friendly_api_error({:decode, _}),
+    do: "Claude Code 返回的内容没法解析,再说一遍试试。"
 
   defp human_friendly_api_error(other),
-    do: "解析时出错:#{inspect(other)}。再说一遍试试。"
+    do: "调用出错:#{inspect(other)}。再说一遍试试。"
 
   # ---------------------------------------------------------------
   # DeepSeek JSON parse
@@ -175,8 +187,11 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
   defp execute_op({:add, %{theme: theme} = spec}, ctx, session_uri, msg) do
     cond do
       not theme_valid?(theme) ->
-        reply_text(ctx, msg,
-          "theme「#{theme}」不合法。只能用小写英文 + 数字 + 下划线(如 painter / lawyer / data_analyst)。")
+        reply_text(
+          ctx,
+          msg,
+          "theme「#{theme}」不合法。只能用小写英文 + 数字 + 下划线(如 painter / lawyer / data_analyst)。"
+        )
 
       theme in @builtin_themes or theme in @builtin_kinds ->
         reply_text(ctx, msg, "「#{theme}」是预制 worker,不需要再加,session 启动时已经在了。")

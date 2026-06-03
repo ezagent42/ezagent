@@ -74,6 +74,11 @@ defmodule EzagentPluginLoom.WebPlug do
     stream_session(conn, ws, sid)
   end
 
+  # 停止当前生成:中断该 session 所有在跑的 claude + 清编排器在飞回合(丢弃,不写文件)。
+  post "/api/:ws/:sid/stop" do
+    json_resp(conn, 200, stop_session(ws, sid))
+  end
+
   # 2026-06-01 save-as-template — snapshot 当前 session 的 :loom_source 进 workspace.session_templates。
   # body: %{"name" => "incubator-portal", "description" => "..可选.."}
   # 流程:read orch slice → build template payload → Workspace.add_template/3
@@ -183,6 +188,21 @@ defmodule EzagentPluginLoom.WebPlug do
   # --- loom SDK 桥 helpers --------------------------------------------
 
   defp session_uri(ws, sid), do: Ezagent.URI.new!("session://loom/#{ws}/#{sid}")
+
+  # 停止本 session 的生成:(1) 中断所有在跑的 claude(group=session 字符串);
+  # (2) 给编排器发 {:cancel,:all} 清在飞回合(丢弃,不写 :loom_source)。
+  defp stop_session(ws, sid) do
+    EzagentPluginLoom.ClaudeCode.stop(URI.to_string(session_uri(ws, sid)))
+
+    orch_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomorch_#{sid}")
+
+    case Ezagent.KindRegistry.lookup(orch_uri) do
+      {:ok, pid} -> send(pid, {:cancel, :all})
+      :error -> :ok
+    end
+
+    %{ok: true}
+  end
 
   # 2026-06-01 redesign: the loom view has no @-mention concept — every
   # message from this endpoint goes to the session's orchestrator, period.
@@ -614,7 +634,8 @@ defmodule EzagentPluginLoom.WebPlug do
                 [
                   %{
                     "theme" => theme,
-                    "system_prompt" => to_string(slice[:system_prompt] || slice["system_prompt"] || ""),
+                    "system_prompt" =>
+                      to_string(slice[:system_prompt] || slice["system_prompt"] || ""),
                     "role" => to_string(slice[:role] || slice["role"] || theme)
                   }
                 ]
@@ -647,17 +668,21 @@ defmodule EzagentPluginLoom.WebPlug do
     case Ezagent.Kind.get_slice(orch_uri, :loom_orchestrator) do
       {:ok, slice} when is_map(slice) ->
         persona = slice[:persona] || slice["persona"] || "visitor"
-        loom_source = slice[:loom_source] || slice["loom_source"] || ""
+        # 2026-06-02 多文件:loom_source 现为 files map。先判原始值是否"无源",
+        # 再归一存 map(不再 to_string)。normalize_source 对 nil/"" 会回退 seed,
+        # 所以空判用原始值,避免把 seed 当成用户自定义源快照下来。
+        raw = slice[:loom_source] || slice["loom_source"]
+        files = EzagentPluginLoom.Prompts.normalize_source(raw)
 
         cond do
-          loom_source == "" ->
+          raw in [nil, "", %{}] or map_size(files) == 0 ->
             {:error, :no_source_in_orchestrator}
 
           true ->
             {:ok,
              %{
                "persona" => to_string(persona),
-               "loom_source" => to_string(loom_source)
+               "loom_source" => files
              }}
         end
 
