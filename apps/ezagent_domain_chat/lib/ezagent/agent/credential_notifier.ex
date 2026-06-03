@@ -28,14 +28,14 @@ defmodule Ezagent.Agent.CredentialNotifier do
 
   @impl true
   def handle_info({:pty_auth_failed, %URI{} = agent_uri, observer}, state) do
-    case Ezagent.Behavior.ApiKeys.data_owner(agent_uri) do
+    case resolve_user_owner(agent_uri) do
       %URI{} = owner_uri ->
         notify_owner(owner_uri, agent_uri, observer)
 
-      _ ->
+      :no_owner ->
         Logger.warning(
           "CredentialNotifier: auth failure for #{URI.to_string(agent_uri)} (#{inspect(observer)}) " <>
-            "but no resolvable owner (creator_uri/lineage) — cannot notify."
+            "but no resolvable USER owner (creator chain) — cannot notify."
         )
     end
 
@@ -43,6 +43,23 @@ defmodule Ezagent.Agent.CredentialNotifier do
   end
 
   def handle_info(_other, state), do: {:noreply, state}
+
+  # codex PR-C2 review P2 — `ApiKeys.data_owner/1`'s lineage fallback can return a
+  # non-user agent (a worker's `spawned_by` is the ORCHESTRATOR), and
+  # `Notifications.notify/3` only accepts `entity://user/...`. Walk the creation chain
+  # (each agent's data_owner) up to the human user; bounded depth guards cycles.
+  defp resolve_user_owner(uri, depth \\ 8)
+  defp resolve_user_owner(_uri, 0), do: :no_owner
+
+  defp resolve_user_owner(%URI{} = uri, depth) do
+    case Ezagent.Behavior.ApiKeys.data_owner(uri) do
+      %URI{scheme: "entity", host: "user"} = user -> user
+      %URI{scheme: "entity", host: "agent"} = agent -> resolve_user_owner(agent, depth - 1)
+      _ -> :no_owner
+    end
+  end
+
+  defp resolve_user_owner(_other, _depth), do: :no_owner
 
   defp notify_owner(%URI{} = owner_uri, %URI{} = agent_uri, observer) do
     _ = Ezagent.Notifications.notify(owner_uri, build_notification(agent_uri, observer))
@@ -90,8 +107,26 @@ defmodule Ezagent.Agent.CredentialNotifier do
   """
   @spec terminal_url(URI.t()) :: String.t()
   def terminal_url(%URI{} = agent_uri) do
-    host = System.get_env("EZAGENT_PUBLIC_HOST", "app.ezagent.chat")
     encoded = URI.encode_www_form(URI.to_string(agent_uri))
-    "https://#{host}/identities/agents/#{encoded}/terminal"
+    "#{public_base_url()}/identities/agents/#{encoded}/terminal"
+  end
+
+  # codex PR-C2 review P2 — honor the deployment's configured public origin
+  # (EZAGENT_PUBLIC_SCHEME / _HOST / _PORT, per config/runtime.exs) so the clickable
+  # link points at the right place in https-prod AND http+port dev/Tailscale.
+  defp public_base_url do
+    scheme = System.get_env("EZAGENT_PUBLIC_SCHEME", "https")
+    host = System.get_env("EZAGENT_PUBLIC_HOST", "app.ezagent.chat")
+    default_port = if scheme == "https", do: "443", else: "80"
+
+    authority =
+      case System.get_env("EZAGENT_PUBLIC_PORT") do
+        nil -> host
+        "" -> host
+        ^default_port -> host
+        port -> "#{host}:#{port}"
+      end
+
+    "#{scheme}://#{authority}"
   end
 end
