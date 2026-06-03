@@ -268,6 +268,13 @@ defmodule EzagentDomainIdentity.Application do
       :ok = CapabilityRegistry.register(Ezagent.Entity.Agent, action, Identity)
     end
 
+    # #533 §3.4 — uniform Manage surface on the User Kind (identity owns
+    # User; Agent's Manage is registered in the chat domain alongside its
+    # other behaviors).
+    for action <- Ezagent.Behavior.Manage.actions() do
+      :ok = CapabilityRegistry.register(User, action, Ezagent.Behavior.Manage)
+    end
+
     # PR-OWN-3 (caps-data-ownership SPEC #306 §7): register the
     # split-out `IdentityAdmin` Behavior (cap-only, privileged
     # actions). Registered against the same Kinds as `Identity`
