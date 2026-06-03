@@ -106,6 +106,39 @@ cc 客服(claude TUI agent)在一个 session 里接客,客户问"羽绒服 XL �
 
 实验只动我们自己的 server + 一个新建 demo agent,**不改 core/domain/bridge**。E2 只读 `tools/list` 行为,不改契约。
 
+## 7b. 实验结果(2026-06-03,已跑)
+
+harness 在 `docs/notes/evidence/agent-data-access/`(`inventory_mcp.py` 零依赖 stdio MCP server + `inventory.json` 假库存 + mcp config)。
+
+### E1 —— 外部 MCP server + cc-agent 读真数据(**通过**)
+直接 `claude -p --mcp-config inventory.mcp.json`(**完全不经 ezagent**),问"羽绒服 XL 有货吗":
+- AI 答:"✅ 有货,库存 **7 件**,¥899,上海仓" —— 与 fixture 完全一致。
+- server call log 证明是真调用(非编造):`tools/call name=query_inventory args={'query': '羽绒服 XL'}`。
+- 对照:问"羽绒服 L"(库存 0)→ AI 答"库存为 0,暂时缺货"。不同商品不同真答 = 真读。
+
+**结论**:产品方向成立 —— 定制读数据能力可以做成**外挂在 ezagent 之外的 MCP server**,cc-agent 直接用,零 ezagent 改动。
+
+### E2 —— 运行中 agent 能否不重启长出新工具(命门,**通过**)
+单会话内:server 在第一次 `query_inventory` 调用后,自己长出第二个工具 `query_orders` 并发 `notifications/tools/list_changed`。
+server log:
+```
+tools/list id=1            ← 初始(只有 query_inventory)
+tools/call id=2 query_inventory
+phase2 self-trigger → query_orders + tools/list_changed
+tools/list id=3            ← claude 收到通知后【重新拉列表】
+tools/call id=4 query_orders ← 调用了运行时新增的工具
+```
+AI 两步都答对(库存 7 件 + 订单 O-1001 已发货/顺丰)。
+
+**结论(命门已答)**:**claude 的 MCP client honor `tools/list_changed`,会话中重拉工具列表并用上新工具。**
+所以"运行时给活着的 agent 加能力"**在协议层通**。两种利用:
+- **产品侧(路径 2)**:我们自己的外部 MCP server 运行时长工具 + 发通知 → **不需要 ezagent 的 reconfigure 就能给活 agent 加能力**。比预期更强。
+- **地基(路径 1)**:ezagent 的 bridge 目前发**静态** tools 文件(`load_tool_schemas` 读文件);要支持运行时长工具,bridge 需在 session 可用工具变化时重算工具面 + 发 `tools/list_changed`。这归 Allen/domain,但 E2 证明了**值得做**(claude 端已经接得住)。
+
+### 还没测
+- **E1b**:把这个外部 server 经 `operator_mcp_config_path` 挂到 **ezagent spawn 的 worker**(证明在 session 机制内也成立)。需要建带该字段的 agent template,是下一步集成验证。
+- read-cap / 真实数据源鉴权 —— 见 §8。
+
 ## 8. 待 Allen / 待定
 
 - E2 的命门结论 → 决定"运行时能力注入"是否要进 domain.agent。
