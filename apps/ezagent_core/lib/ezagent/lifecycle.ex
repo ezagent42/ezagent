@@ -355,6 +355,52 @@ defmodule Ezagent.Lifecycle do
     end
   end
 
+  @doc """
+  Public create-vs-activate signal (#533 5a). Returns `true` iff `target`
+  (a `%URI{}`, a URI string, or an args map carrying `:uri`) has NOT yet
+  been durably created — i.e. THIS boot's `init` will run `create/1` (a
+  fresh create) rather than `activate/2` (rehydrate of an existing Kind).
+
+  This is the single **Lifecycle-owned** source of the freshness signal
+  the engine keys decisions off — e.g. the create-entry's manage-cap
+  grant (#533 §3.1). It MUST be read BEFORE the initial-snapshot persist
+  sets the `ever_created` marker (`Kind.Server.init/1` does this between
+  `KindRegistry.put_new` and `persist_initial_snapshot`).
+
+  Callers MUST NOT re-derive freshness by reading the snapshot table
+  (`KindSnapshot.ever_created?`), `Repo`, or a save return value directly
+  — go through this Lifecycle function so the create/activate decision has
+  exactly one definition and cannot drift.
+  """
+  @spec fresh_create?(URI.t() | String.t() | map()) :: boolean()
+  def fresh_create?(%URI{} = uri), do: fresh_create?(URI.to_string(uri))
+  def fresh_create?(uri_str) when is_binary(uri_str), do: not marker_lookup(uri_str)
+  def fresh_create?(%{uri: uri}), do: fresh_create?(uri)
+  def fresh_create?(_), do: true
+
+  @doc """
+  Metadata predicate: does `kind_module` host at least one Lifecycle
+  behaviour — one that `use Ezagent.Lifecycle` (detected by the injected
+  `__ezagent_lifecycle_destroy__/3`)?
+
+  Use this — NOT a runtime check for a `:transients` sub-key in the slice
+  — to decide whether a Kind has a create/activate (marker-tracked)
+  lifecycle. The slice shape is unreliable across a cold restart: on
+  rehydrate `load_or_init` can yield a slice without `:transients` even for
+  a Lifecycle Kind, so a slice-based check mis-classifies a rehydrated
+  Lifecycle Kind as non-Lifecycle (codex review #533 5a P2). The Kind's
+  behaviour list is stable across fresh-create and rehydrate.
+  """
+  @spec hosts_lifecycle?(module()) :: boolean()
+  def hosts_lifecycle?(kind_module) when is_atom(kind_module) do
+    kind_module
+    |> Ezagent.Kind.behaviors_of()
+    |> Enum.any?(fn behaviour ->
+      Code.ensure_loaded?(behaviour) and
+        function_exported?(behaviour, :__ezagent_lifecycle_destroy__, 3)
+    end)
+  end
+
   defp ever_created?(%{uri: %URI{} = uri}), do: ever_created?(URI.to_string(uri))
   defp ever_created?(%{uri: uri}) when is_binary(uri), do: ever_created?(uri)
   defp ever_created?(uri_str) when is_binary(uri_str), do: marker_lookup(uri_str)
@@ -558,14 +604,25 @@ defmodule Ezagent.Lifecycle do
     #    rejected self-destroy leaves the row + process untouched.
     case run_developer_destroy_hooks(uri_str, reason) do
       :ok ->
-        # 2. Clear durable state + ever-created marker (one row delete).
-        :ok = Ezagent.Ecto.KindSnapshot.delete(uri_str)
-
-        # 3. Terminate the process (idempotent — already-gone is :ok).
+        # 2. Terminate the process FIRST (synchronous —
+        #    `Kind.terminate/1` blocks on `DynamicSupervisor.terminate_child`
+        #    until the process is dead; idempotent — already-gone is :ok).
+        #    The developer destroy hooks already ran above against the live
+        #    Kind, so termination loses nothing.
         case Ezagent.KindRegistry.lookup(uri_str) do
           {:ok, _pid} -> Ezagent.Kind.terminate(Ezagent.URI.new!(uri_str))
           :error -> :ok
         end
+
+        # 3. Clear durable state + ever-created marker AFTER the process is
+        #    gone — the final, race-free delete. If `delete` ran first
+        #    (the previous order), a live `{:snapshot, :on_change}` Kind
+        #    could commit a queued/concurrent dispatch in the window before
+        #    terminate, re-`upsert`ing the row and resurrecting a
+        #    destroyed/rolled-back Kind on the next boot (codex review #533
+        #    5a). Terminating first closes that window; this also reaps
+        #    anything an `:on_terminate` `terminate/2` save just wrote.
+        :ok = Ezagent.Ecto.KindSnapshot.delete(uri_str)
 
         :ok
 

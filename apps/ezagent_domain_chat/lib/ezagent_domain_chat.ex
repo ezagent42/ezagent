@@ -968,10 +968,15 @@ defmodule EzagentDomainChat do
       # 1c. Orchestrator Kind + its lineage + workspace binding (the
       #     spawn's `establish_post_spawn_obligations/3` writes) + its
       #     own snapshot row.
-      _ = Ezagent.Kind.terminate(orchestrator_uri)
+      # Kind teardown via the Lifecycle destroy primitive (runs developer
+      # destroy hooks → clears the snapshot row + ever-created marker →
+      # terminates the process). #533 5a (persistence-access discipline):
+      # domain code must NOT hand-roll `terminate + KindSnapshot.delete`
+      # — that skipped the destroy hooks (e.g. Sandbox config_dir cleanup)
+      # on rollback. Go through `Lifecycle.destroy/2`.
+      safe(fn -> Ezagent.Lifecycle.destroy(orchestrator_uri, :rollback) end)
       safe(fn -> Ezagent.WorkspaceRegistry.unbind(orchestrator_uri) end)
       forget_lineage(orchestrator_uri)
-      safe(fn -> Ezagent.Ecto.KindSnapshot.delete(URI.to_string(orchestrator_uri)) end)
 
       # 1d. Live-join durable readiness marker (codex #505 review HIGH).
       #     If the gate already saw the orchestrator's bridge join (step 5
@@ -1002,9 +1007,11 @@ defmodule EzagentDomainChat do
     # 4. Session Kind + its workspace binding + its snapshot row
     #    (`Kind.Server.init/1` wrote it synchronously at spawn time —
     #    Session.persistence/0 = {:snapshot, :on_change}).
-    _ = Ezagent.Kind.terminate(session_uri)
+    # #533 5a — Kind teardown through the Lifecycle destroy primitive
+    # (hooks → snapshot+marker clear → terminate), not a hand-rolled
+    # terminate + KindSnapshot.delete.
+    safe(fn -> Ezagent.Lifecycle.destroy(session_uri, :rollback) end)
     safe(fn -> Ezagent.WorkspaceRegistry.unbind(session_uri) end)
-    safe(fn -> Ezagent.Ecto.KindSnapshot.delete(URI.to_string(session_uri)) end)
     :ok
   end
 
@@ -1289,10 +1296,11 @@ defmodule EzagentDomainChat do
   # idempotent — mirrors the orchestrator teardown in `rollback_session/3`.
   defp compensate_spawned_members(spawned_uris) when is_list(spawned_uris) do
     Enum.each(spawned_uris, fn %URI{} = uri ->
-      _ = Ezagent.Kind.terminate(uri)
+      # #533 5a — teardown via the Lifecycle destroy primitive, not a
+      # hand-rolled terminate + KindSnapshot.delete (which skipped hooks).
+      safe(fn -> Ezagent.Lifecycle.destroy(uri, :rollback) end)
       safe(fn -> Ezagent.WorkspaceRegistry.unbind(uri) end)
       forget_lineage(uri)
-      safe(fn -> Ezagent.Ecto.KindSnapshot.delete(URI.to_string(uri)) end)
     end)
 
     :ok

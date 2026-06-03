@@ -120,12 +120,38 @@ defmodule Ezagent.Kind.Server do
       kind: kind_module,
       uri: uri,
       state: slice_state,
-      post_init_queue: post_init_queue
+      post_init_queue: post_init_queue,
+      # #533 5a (§3.10.3) — the authenticated creator, threaded as a
+      # create-arg exactly like Session's `owner_uri`. `nil` on rehydrate
+      # or when no creator is supplied. PR-5c reads this to grant the
+      # manage-cap to the right principal.
+      created_by: Map.get(args, :created_by),
+      # Set in the put_new branch below from the Lifecycle create-vs-activate
+      # signal (read BEFORE persist sets the marker).
+      create_freshness: :unknown
     }
 
     case Ezagent.KindRegistry.put_new(uri_str, self()) do
       :ok ->
         :ok = Ezagent.ReadyGate.put(uri_str, :not_ready)
+
+        # #533 5a (§3.10.3) — capture freshness from the Lifecycle's own
+        # create-vs-activate decision BEFORE persist_initial_snapshot sets
+        # the `ever_created` marker. We go through `Lifecycle.fresh_create?/1`
+        # (the single Lifecycle-owned signal), NOT a snapshot/save return,
+        # so the create/activate concept has one definition and can't drift.
+        # Gate on `Lifecycle.hosts_lifecycle?/1` (Kind METADATA) — NOT the
+        # slice shape: on cold restart the rehydrated slice can lack
+        # `:transients`, which would mis-classify a rehydrated Lifecycle Kind
+        # as :unknown instead of :existed (codex review P2). Non-Lifecycle
+        # Kinds have no create/activate distinction → :unknown.
+        state =
+          if Ezagent.Lifecycle.hosts_lifecycle?(kind_module) do
+            freshness = if Ezagent.Lifecycle.fresh_create?(uri), do: :created, else: :existed
+            %{state | create_freshness: freshness}
+          else
+            state
+          end
 
         case persist_initial_snapshot(uri, kind_module, slice_state) do
           :ok ->

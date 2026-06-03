@@ -87,7 +87,8 @@ defmodule Ezagent.Workspace.Store do
   - `:routing_rules` — `[map()]`
   - `:created_by` — `URI.t() | nil`
   """
-  @spec create(String.t(), map()) :: {:ok, decoded()} | {:error, term()}
+  @spec create(String.t(), map()) ::
+          {:ok, decoded()} | {:exists, decoded()} | {:error, term()}
   def create(name, attrs \\ %{}) when is_binary(name) and name != "" do
     uri_str = "workspace://#{name}"
 
@@ -105,8 +106,24 @@ defmodule Ezagent.Workspace.Store do
       |> Ecto.Changeset.unique_constraint(:uri, name: :workspaces_uri_index)
 
     case Repo.insert(changeset) do
-      {:ok, inserted} -> {:ok, decode(inserted)}
-      err -> err
+      {:ok, inserted} ->
+        # Fresh row — Workspace is :ephemeral (no kind_snapshots marker), so
+        # this unique INSERT IS its create-vs-adopt freshness signal (#533
+        # 5a §3.10.2, the ephemeral analog of Lifecycle.fresh_create?).
+        {:ok, decode(inserted)}
+
+      {:error, %Ecto.Changeset{errors: errors} = cs} ->
+        # A unique-constraint conflict means the workspace already exists.
+        # Return the EXISTING decoded row as `:exists` so the create-entry
+        # (5d) can adopt it, instead of forwarding the raw changeset error.
+        if Keyword.has_key?(errors, :name) or Keyword.has_key?(errors, :uri) do
+          case Repo.get_by(__MODULE__, name: name) do
+            nil -> {:error, cs}
+            existing -> {:exists, decode(existing)}
+          end
+        else
+          {:error, cs}
+        end
     end
   end
 
