@@ -4,7 +4,7 @@
 > **作者**：daiming（FatNine）
 > **依据**：`cs-team-orchestrator-playbook.md`（领导下发）+ `docs/superpowers/specs/2026-06-01-team-routing-unification(.zh_cn).md` + 当前 `Ezagent.Orchestrator.McpServer`/`Tools` 代码（main `151e1fb4`）
 > **形态**：双栏 operator runbook（左=镜头内动作+旁白/字幕，右=后端机制 tool→Behavior→effect），既是录制脚本也是 PRD。
-> **状态**：rev 4（**live demo 跑通了**——见 §3.5）。后端彩排 rev 2 全绿;全量 live 攻坚 + 人工(Allen)配合查到**真根因并修复**:不是 claude 版本删 flag(此前误判已订正),而是 **macOS Keychain 登录跨不过 PtyServer headless spawn → claude 未认证 → channel ignored**;修法 = `CLAUDE_CODE_OAUTH_TOKEN`(`claude setup-token` 生成、绕开 Keychain,走 Max 订阅)。修复后**编排器真 live**:operator 对话 → 12s 回复 → 真调 `list_templates` → 一句话 `add_managed_member` spawn 出真客服坐席。**核心 demo 已录 `.webm` 交付。** 顺带修了一个真 bug(`structuredContent` string→record)。**剩余 follow-up**:worker 侧(customer→AI 回答)的 PTY/channel 生命周期。
+> **状态**：rev 5（**完整 live demo 跑通**:operator 搭团队 + 客户→AI 回答,带字幕,见 §3.5 + `evidence/2026-06-03-cs-demo-full-flow.{webm,gif}`)。链路:① 真根因 = macOS Keychain 登录跨不过 PtyServer headless spawn → claude 未认证(本地跑 demo 用 `CLAUDE_CODE_OAUTH_TOKEN` env harness;**生产凭证按 Allen 方向 = domain.agent 的 login-once-persist-inherit**,见 PR #538 评论);② `structuredContent` string→record 真 bug 已修;③ **G-worker(customer→AI)在 rebase 到 main #539 后已通**——PR-DR `deliver_ensuring` 重启消失的 bridge。**剩余**:多 gap 仍归 domain.agent + #533(产品侧推进,地基提意见等 Allen)。
 
 ---
 
@@ -162,7 +162,7 @@ R&D（看 gap → 写 spec）、Allen（裁决架构）、未来接手实现的�
 | **G-live** | 幕 0/2（live） | cc agent sandbox 缺 onboarding 状态 → claude 卡首次运行主题屏。**纯 config 可修（已验证）**:sandbox 写 `.claude.json`(`hasCompletedOnboarding:true`…)。应进 cc seed | 新发现（= PoC G1，§3.5 第1层；config 修复已验证） |
 | **G-chan** | 幕 1+（live） | ~~承重墙~~ **已修复(订正:不是版本漂移)**:真因是 **macOS Keychain 登录读不到 → ESR headless claude 未认证 → channel ignored**;修法 = `CLAUDE_CODE_OAUTH_TOKEN`(`setup-token`)。修后编排器真 live 回复+调工具+spawn worker | 新发现 → **已修复**(§3.5;运维向:headless agent 认证须用 token 不能靠 Keychain) |
 | **G-mcp** | 幕 1（live） | `add_managed_member` 返回 URI → MCP `structuredContent` 是 string 应为 record(`expected record, received string`)→ 编排器误报错误(成员其实 spawn 成功) | 新发现 → **已修复**(`mcp_server.ex` `as_struct_content/1` 包成 `%{result: …}`) |
-| **G-worker** | 幕 2+（live, follow-up） | worker(售前/售后)的 claude PTY/channel 生命周期:restart 后不自动重起、per-agent config 的 onboarding/channel 未像编排器那样配好 → 收到 `chat.receive` 但不回复 | 新发现（follow-up;customer→AI 回答待通） |
+| **G-worker** | 幕 2+（live） | ~~worker 收到 `chat.receive` 但不回复~~ → **已解(订正:不是新 gap)**:我们之前跑在不带 #539 的 base 上;**rebase 到 main(#539)后,fresh worker 一上来就真回答**(PR-DR `deliver_ensuring` 重启消失的 bridge)。完整 customer→AI 流程跑通 | 新发现 → **#539 已解**;customer→AI 全流程 live OK |
 | **G-ui** | 幕 0（live） | LV「+New」创建 session 的模板下拉**错填**（只列 agent 模板 `cc.agent.cc_funk`，正确的 `default` SessionTemplate 不在列）→ `session_template_not_found` | 新发现（强化 #2） |
 | **G-stale** | （env） | dev `default` profile DB 与 current main **stale-不兼容**:真 agent 快照 `:respawn_template_data` KeyError、crash-loop。需 fresh profile 或迁移 | 新发现（env，§3.5） |
 
