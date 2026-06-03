@@ -20,7 +20,9 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
     File.mkdir_p!(out_dir)
 
     on_exit(fn ->
-      if prev_home, do: System.put_env("EZAGENT_HOME", prev_home), else: System.delete_env("EZAGENT_HOME")
+      if prev_home,
+        do: System.put_env("EZAGENT_HOME", prev_home),
+        else: System.delete_env("EZAGENT_HOME")
 
       if prev_profile,
         do: System.put_env("EZAGENT_PROFILE", prev_profile),
@@ -32,7 +34,13 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
     {:ok, tmp: tmp, out_dir: out_dir}
   end
 
-  test "write!/1 emits mcp.json with token + agent_uri in env", %{out_dir: out_dir} do
+  test "write!/1 emits mcp.json whose env carries NO per-agent identity (clobber-safe)", %{
+    out_dir: out_dir
+  } do
+    # Regression for the 2026-06-02 bridge-token clobber: this .mcp.json is
+    # written to SHARED locations (~/.ezagent, git toplevel, cwd), so it must
+    # NOT carry per-agent identity — that flows via claude's process env
+    # (cmd_env) instead. See docs/superpowers/specs/2026-06-02-domain-agent-design.md.
     agent_uri = "entity://agent/team-alpha/test_writer-test-#{System.unique_integer([:positive])}"
 
     {:ok, path} =
@@ -54,34 +62,37 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
              ["run", "--script", "/fake/path/ezagent_mcp_bridge.py"]
 
     env = config["mcpServers"]["esr-bridge"]["env"]
-    assert env["EZAGENT_AGENT_URI"] == agent_uri
+    # Only the SHARED ws_url is written (identical for every agent → clobber-safe).
     assert env["EZAGENT_BRIDGE_WS_URL"] == "ws://127.0.0.1:10042/agent_bridge/websocket"
-    assert is_binary(env["EZAGENT_AGENT_TOKEN"])
-    assert String.starts_with?(env["EZAGENT_AGENT_TOKEN"], "tok_")
+    # Per-agent identity must NOT be in the (shared) file:
+    refute Map.has_key?(env, "EZAGENT_AGENT_URI")
+    refute Map.has_key?(env, "EZAGENT_AGENT_TOKEN")
   end
 
-  test "write!/1 is token-idempotent — re-write returns the same token", %{out_dir: out_dir} do
-    agent_uri = "entity://agent/team-alpha/test_writer-idempotent-#{System.unique_integer([:positive])}"
+  test "write_with_token!/1 is token-idempotent — re-write returns the same token", %{
+    out_dir: out_dir
+  } do
+    agent_uri =
+      "entity://agent/team-alpha/test_writer-idempotent-#{System.unique_integer([:positive])}"
 
-    {:ok, path1} =
-      McpConfigWriter.write!(
+    # The token is no longer written into the .mcp.json env block (clobber-safe);
+    # read it from the RETURN value instead (which `build_claude_cmd/3` uses for
+    # cmd_env).
+    {:ok, path1, token1} =
+      McpConfigWriter.write_with_token!(
         agent_uri: agent_uri,
         dir: out_dir,
         script_path: "/x",
         ws_url: "ws://x"
       )
 
-    token1 = path1 |> File.read!() |> Jason.decode!() |> get_in(["mcpServers", "esr-bridge", "env", "EZAGENT_AGENT_TOKEN"])
-
-    {:ok, path2} =
-      McpConfigWriter.write!(
+    {:ok, path2, token2} =
+      McpConfigWriter.write_with_token!(
         agent_uri: agent_uri,
         dir: out_dir,
         script_path: "/x",
         ws_url: "ws://x"
       )
-
-    token2 = path2 |> File.read!() |> Jason.decode!() |> get_in(["mcpServers", "esr-bridge", "env", "EZAGENT_AGENT_TOKEN"])
 
     assert token1 == token2
     assert path1 == path2
@@ -104,7 +115,9 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
     try do
       assert McpConfigWriter.resolve_ws_url() == "ws://elsewhere:9999/socket"
     after
-      if prev, do: System.put_env("EZAGENT_BRIDGE_WS_URL", prev), else: System.delete_env("EZAGENT_BRIDGE_WS_URL")
+      if prev,
+        do: System.put_env("EZAGENT_BRIDGE_WS_URL", prev),
+        else: System.delete_env("EZAGENT_BRIDGE_WS_URL")
     end
   end
 
@@ -120,7 +133,9 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
   # "server:esr-bridge · no MCP server configured with that name".
   describe "agent_cwd option (regression — cwd-level .mcp.json)" do
     test "write!/1 with :agent_cwd ALSO writes .mcp.json to that dir", %{out_dir: out_dir} do
-      agent_cwd = Path.join(System.tmp_dir!(), "esr-agent-cwd-#{System.unique_integer([:positive])}")
+      agent_cwd =
+        Path.join(System.tmp_dir!(), "esr-agent-cwd-#{System.unique_integer([:positive])}")
+
       File.mkdir_p!(agent_cwd)
       on_exit(fn -> File.rm_rf(agent_cwd) end)
 
@@ -139,7 +154,9 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
     end
 
     test "write!/1 with non-existent :agent_cwd creates the dir + writes", %{out_dir: out_dir} do
-      agent_cwd = Path.join(System.tmp_dir!(), "esr-agent-nocwd-#{System.unique_integer([:positive])}")
+      agent_cwd =
+        Path.join(System.tmp_dir!(), "esr-agent-nocwd-#{System.unique_integer([:positive])}")
+
       refute File.exists?(agent_cwd)
       on_exit(fn -> File.rm_rf(agent_cwd) end)
 

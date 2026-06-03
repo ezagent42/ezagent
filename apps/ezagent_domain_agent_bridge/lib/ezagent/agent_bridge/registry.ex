@@ -2,13 +2,12 @@ defmodule Ezagent.AgentBridge.Registry do
   @moduledoc """
   `agent_uri -> channel_pid` lookup table for bridge-backed agents.
 
-  This module is the promoted home of the historical
-  `EzagentPluginCc.BridgeRegistry`. PR-B intentionally keeps the
-  underlying ETS table name so live cc bridge bindings survive the
-  module move during the deprecation window.
+  This is the unified registry for all bridge-backed agent kinds (cc,
+  codex, ...). The deprecated cc-named shim `EzagentPluginCc.BridgeRegistry`
+  delegates here for the `/cc_socket` deprecation window.
   """
 
-  @table :ezagent_plugin_cc_bridges
+  @table :ezagent_plugin_agent_bridges
   @pubsub EzagentCore.PubSub
   @topic "esr:agent_bridge:bridges"
   @legacy_topic "esr:cc_channel:bridges"
@@ -65,7 +64,7 @@ defmodule Ezagent.AgentBridge.Registry do
     end
   end
 
-  @doc "Unbind `agent_uri`."
+  @doc "Unbind `agent_uri` unconditionally (force). Prefer `unbind/2` from a channel."
   @spec unbind(URI.t()) :: :ok
   def unbind(%URI{} = agent_uri) do
     init()
@@ -75,6 +74,37 @@ defmodule Ezagent.AgentBridge.Registry do
     :ets.delete(@table, key)
     if existed?, do: broadcast_disconnected(agent_uri)
     :ok
+  end
+
+  @doc """
+  Unbind `agent_uri` ONLY if the stored row's pid matches `channel_pid`.
+
+  Pid-guarded: a STALE or SIBLING channel process terminating for the same
+  agent URI must NOT delete the row owned by a DIFFERENT (newer) live channel.
+  A cc agent can briefly have more than one channel process for the same URI
+  (reconnect / transient join churn); with the unguarded `unbind/1`, one
+  process's `terminate/2` would delete the binding a SECOND, still-live channel
+  just wrote — so the agent vanishes from the registry despite a connected
+  bridge, and `AgentBridge.deliver/2` returns `:no_bridge` (the 2026-06-02
+  cc-agent-not-deliverable bug). Call this from channel `terminate/2` with
+  `self()`.
+  """
+  @spec unbind(URI.t(), pid()) :: :ok
+  def unbind(%URI{} = agent_uri, channel_pid) when is_pid(channel_pid) do
+    init()
+
+    key = URI.to_string(agent_uri)
+
+    case :ets.lookup(@table, key) do
+      [{^key, %{pid: ^channel_pid}}] ->
+        :ets.delete(@table, key)
+        broadcast_disconnected(agent_uri)
+        :ok
+
+      _ ->
+        # Row owned by a different (newer) pid, or already gone — leave it.
+        :ok
+    end
   end
 
   @doc "Look up the live Channel pid bound to `agent_uri`."

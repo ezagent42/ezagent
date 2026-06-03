@@ -40,7 +40,7 @@ defmodule EzagentPluginCc.Integration.PluginContractTest do
   test "AgentBridge domain owns the bridge registry ETS table" do
     # PR-B promoted registry lifecycle out of cc. The table existing
     # proves the domain app started its registry before cc relies on it.
-    refute :ets.whereis(:ezagent_plugin_cc_bridges) == :undefined
+    refute :ets.whereis(:ezagent_plugin_agent_bridges) == :undefined
   end
 
   test "cc plugin declares :flavor config_surface" do

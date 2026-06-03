@@ -68,7 +68,10 @@ defmodule Ezagent.AgentBridge.Channel do
 
   @impl true
   def terminate(_reason, socket) do
-    BridgeRegistry.unbind(socket.assigns.agent_uri)
+    # Pid-guarded: only remove OUR OWN binding. A stale/sibling channel for the
+    # same agent URI terminating must not delete a newer live channel's row
+    # (the cc-agent-not-deliverable race — see Registry.unbind/2).
+    BridgeRegistry.unbind(socket.assigns.agent_uri, self())
     :ok
   end
 

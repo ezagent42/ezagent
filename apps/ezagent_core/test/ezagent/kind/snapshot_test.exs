@@ -174,4 +174,37 @@ defmodule Ezagent.Kind.SnapshotTest do
     # remediation C-D — the slice is now two-container (state/transients).
     assert %{identity: %{state: %{caps: %MapSet{}}}} = loaded
   end
+
+  test "load_or_init FAILS LOUD when a row is PRESENT but unloadable — never resets to fresh (PR-4 blocker #2: empty-over-good wipe)" do
+    uri =
+      URI.parse("entity://user/team-alpha/snap-unloadable-#{System.unique_integer([:positive])}")
+
+    uri_str = URI.to_string(uri)
+    caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+
+    # Seed a GOOD snapshot row (stand-in for the live 256KB session snapshot).
+    :ok = Snapshot.save_now(uri, Ezagent.Entity.User, %{identity: %{caps: caps}})
+    good_row = KindSnapshot.get(uri_str)
+    assert good_row != nil
+    good_binary = good_row.state_binary
+
+    # Make it PRESENT-but-unloadable: bump the stored version past the declared
+    # version → check_version returns {:error, :snapshot_version_too_new}. This
+    # is the cold-boot failure class (version mismatch / decode failure) that
+    # previously made load_or_init silently fall back to `fresh`, which
+    # Kind.Server.init then persisted EMPTY over the good row (256KB→91b wipe).
+    {:ok, _} =
+      good_row
+      |> Ecto.Changeset.change(version: 999_999)
+      |> EzagentCore.Repo.update()
+
+    # FIXED: load_or_init refuses to reset to fresh over a present-but-unloadable
+    # row — it fails loud so durable state is never silently destroyed.
+    assert_raise RuntimeError, ~r/unloadable/, fn ->
+      Snapshot.load_or_init(uri, Ezagent.Entity.User, %{uri: uri})
+    end
+
+    # The good row is untouched — no wipe.
+    assert KindSnapshot.get(uri_str).state_binary == good_binary
+  end
 end

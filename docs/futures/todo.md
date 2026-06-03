@@ -697,3 +697,71 @@ baseline worktree (`54df56c9`) chat run for apples-to-apples diff**.
   > receiver" observable signal (the silent default-fan-out half), (c) the
   > disable-not-delete GC option. Confirmed live 2026-06-01: an @-mention to a
   > non-member slot worker silently goes nowhere — that's the (b) gap.
+
+- **`domain.agent` abstraction — own per-agent identity + filesystem isolation as a
+  structural invariant (Allen 2026-06-02, after E2E acceptance)**: the scenario-34
+  live tier surfaced that per-agent resource isolation (cwd / config_dir / `.mcp.json`
+  / bridge token) is currently SCATTERED — partly from template data
+  (`working_directory`, which a mis-seeded template set to the SHARED
+  `~/.ezagent/cc-orchestrator`, so all cc workers clobbered one `.mcp.json` → wrong
+  bridge identity → `:no_bridge` silent drop), partly computed ad-hoc per flavor in
+  the plugin Template Class. A `domain.agent` would make "an agent is a first-class
+  entity with a UNIQUE identity + UNIQUE filesystem sandbox" a domain INVARIANT: the
+  domain assigns per-agent working dir / config_dir / token and guarantees uniqueness,
+  so no flavor's Template Class (or mis-set template field) can collapse two agents
+  onto a shared path. Plugin Template Classes keep only flavor-specific bits (which
+  binary, which flags). This makes the whole "shared-path leak" class structurally
+  impossible. Ties into: creation-unification (domain.agent IS the agent-creation
+  chokepoint), agent-clone-as-domain-primitive, per-agent-config_dir contract, and the
+  plugin-isolation north star. The 2026-06-02 cc_agent.ex cwd fix (force per-agent cwd
+  in `spawn_for_local_pty`) is the TACTICAL patch; domain.agent is the STRATEGIC home.
+  Sequencing per Allen: do AFTER E2E acceptance.
+
+- **Session snapshot WIPED on cold-start (e2e-orch15) — `{:snapshot,:on_change}` +
+  empty `activate` overwrites good state (seen repeatedly 2026-06-02)**: the
+  `session://default/system/e2e-orch15` snapshot (≈300KB: members/legends/
+  prompt_templates/template_working_copy) gets overwritten with a 91-byte empty
+  `%{state: %{}}` whenever the Session Kind cold-starts via a path whose `activate`
+  returns empty (observed on boot-Loader respawn AND on a misused
+  `SpawnRegistry.spawn/1`). Because the Session is `{:snapshot,:on_change}`, the empty
+  activate immediately persists, destroying the durable state — and then
+  `McpServer.rebuild_from_durable` can't find `template_working_copy.orchestrator_
+  template_uri` → orchestrator registration fails (`:orchestrator_not_registered`) →
+  orchestrator + tools dead. This is the `lifecycle_case.ex` "activate/2 didn't run or
+  returned empty — cold-restart bug class". It BLOCKED the scenario-34 live round-trip
+  (kept having to restore the snapshot from a DB backup; it re-wiped on the next cold
+  start). Fix: make the Session's `activate` rebuild from the durable snapshot before
+  any on_change persist (or guard on_change from writing an empty/partial slice over a
+  non-empty one). Lesson recorded: NEVER `SpawnRegistry.spawn/1` an existing entity
+  (fresh-spawns empty); revive via dispatch (`lazy_spawn_from_snapshot`).
+
+## domain.agent — config/credential lifecycle gaps (Allen review 2026-06-03)
+
+Surfaced answering Allen's two architecture questions after the scenario-34
+cc→codex→curl live E2E passed. Both are NEXT-phase domain.agent scope, NOT in
+the domain-agent-foundation PR (that PR is deliverability: PR-DR self-heal,
+PR-4 snapshot guard, codex `--last`, table-rename).
+
+- **Per-agent credential lifecycle (NOT implemented; test fixture only).**
+  `CcAgent.create_agent_config_dir/2` (cc_agent.ex:1669) cleanly copies a
+  template's `claude_config_dir` reference dir → per-agent private dir (cp_r +
+  chmod creds + completion marker). But what POPULATES the reference dir with
+  credentials is only test plumbing: the demo mix task
+  `ezagent.demo.seed_cc_sandbox` (copies `~/.claude/.credentials.json` to
+  "avoid re-login") and, during the live E2E, a MANUAL `cp` (not in code at
+  all). The real flow Allen wants — **user creates a new agent → logs in
+  themselves (claude `/login` inside the agent's sandbox) → credentials are
+  saved and reused on future spawns** — does not exist. Proxy config has no
+  code path either. domain.agent should own this lifecycle (login → persist →
+  reuse) + runtime config (proxy), with a CLEAN separation between the test
+  fixture (copy host creds) and the production config interface.
+
+- **Per-flavor config UI (partial + generic; plugin `:form` surface unbuilt).**
+  Create is a generic form (`agent_new_live`: flavor dropdown + name/cwd/pty);
+  post-create config is spread across generic screens (`agent_detail` /
+  `agent_extensions` / `agent_api_keys`). Flavors do NOT provide their own
+  config UI: `config_surface/0` is `:route | :flavor | nil` (V1); the `:form`
+  surface (plugin-provided config form, store V2 — SPEC §6.1) is noted but not
+  built. No UI for cc/claude login or proxy. Decision needed: each flavor
+  inherits one generic UI vs provides its own via the `:form` config_surface
+  contract — then build it. Ties to the credential-lifecycle item (login UI).

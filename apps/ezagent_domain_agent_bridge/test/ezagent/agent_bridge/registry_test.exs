@@ -23,6 +23,30 @@ defmodule Ezagent.AgentBridge.RegistryTest do
     assert :error = Registry.lookup(uri)
   end
 
+  test "unbind/2 is pid-guarded — a sibling pid's terminate does NOT delete a live binding" do
+    # Regression for the 2026-06-02 cc-agent-not-deliverable race: a cc agent
+    # can briefly have >1 channel process for the same URI; the unguarded
+    # unbind/1 on one process's terminate/2 deleted the binding a SECOND, still
+    # live channel just wrote → the agent vanished from the registry despite a
+    # connected bridge → AgentBridge.deliver returned :no_bridge.
+    uri =
+      URI.new!("entity://agent/team-alpha/test_bridge-race-#{System.unique_integer([:positive])}")
+
+    live = spawn(fn -> Process.sleep(:infinity) end)
+    sibling = spawn(fn -> Process.sleep(:infinity) end)
+
+    :ok = Registry.bind(uri, live)
+    assert {:ok, ^live} = Registry.lookup(uri)
+
+    # The SIBLING pid's terminate must NOT delete `live`'s row.
+    assert :ok = Registry.unbind(uri, sibling)
+    assert {:ok, ^live} = Registry.lookup(uri)
+
+    # `live`'s OWN unbind DOES delete it.
+    assert :ok = Registry.unbind(uri, live)
+    assert :error = Registry.lookup(uri)
+  end
+
   test "double-bind same pid is idempotent" do
     uri = URI.new!("entity://agent/team-alpha/test_bridge-double")
     pid = spawn(fn -> Process.sleep(:infinity) end)

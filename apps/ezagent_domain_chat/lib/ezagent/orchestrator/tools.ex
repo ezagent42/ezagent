@@ -149,9 +149,8 @@ defmodule Ezagent.Orchestrator.Tools do
          # could leave an ORPHAN. Failing closed here means an unauthorized
          # caller never spawns.
          :ok <- preflight_within_session_cap(caps, session_uri),
-         {:ok, flavor} <- source_template_flavor(source_agent_template_uri),
          {:ok, %URI{} = member_uri} <-
-           spawn_member(source_agent_template_uri, flavor, role_name, session_uri, workspace_uri, caller) do
+           spawn_member(source_agent_template_uri, role_name, session_uri, workspace_uri, caller) do
       facets =
         %{in_session_template: in_session_template, source_template_uri: source_agent_template_uri}
         |> Map.put(:role_name, role_name)
@@ -179,13 +178,37 @@ defmodule Ezagent.Orchestrator.Tools do
   # idempotently — re-adding the same role within a session is a no-op spawn.
   defp spawn_member(
          %URI{} = source_template_uri,
+         role_name,
+         %URI{} = session_uri,
+         %URI{} = workspace_uri,
+         %URI{} = caller
+       ) do
+    # codex review P2 (2026-06-03) — read the source template content ONCE and
+    # derive BOTH the flavor (→ member URI) and the spawn content from that
+    # single snapshot. Previously the flavor came from a separate
+    # `source_template_flavor/1` read and the spawn from a second
+    # `read_source_template_content/1` read; a concurrent template edit between
+    # the two could derive the member URI from the OLD flavor while spawning the
+    # NEW content. Bridge routing derives flavor from the URI prefix, so that
+    # divergence would route the sidecar via the wrong adapter / reject it.
+    # One read = no divergence by construction.
+    with {:ok, _pid} <- ensure_template_alive(source_template_uri),
+         {:ok, content} <- read_source_template_content(source_template_uri),
+         {:ok, flavor} <- content_flavor(content, source_template_uri) do
+      do_spawn_member(content, flavor, source_template_uri, role_name, session_uri, workspace_uri, caller)
+    end
+  end
+
+  defp do_spawn_member(
+         content,
          flavor,
+         %URI{} = source_template_uri,
          role_name,
          %URI{} = session_uri,
          %URI{} = workspace_uri,
          %URI{} = caller
        )
-       when is_binary(flavor) do
+       when is_map(content) and is_binary(flavor) do
     instance_name =
       EzagentDomainChat.spawned_member_instance_name_public(
         flavor,
@@ -194,10 +217,65 @@ defmodule Ezagent.Orchestrator.Tools do
         session_uri
       )
 
-    case Ezagent.Entity.Agent.spawn_fresh(source_template_uri, instance_name, workspace_uri, caller) do
-      {:ok, %{agent_uri: %URI{} = member_uri}} -> {:ok, member_uri}
-      {:error, _} = err -> err
+    # team-routing-unification LIVE-tier fix (2026-06-02) — spawn the member
+    # through `Agent.spawn_from_template_content/4` (the `Template.instantiate`
+    # chokepoint), NOT `Agent.spawn_fresh/4`. `spawn_fresh/4` only starts a bare
+    # Agent Kind (`SpawnRegistry.spawn_detailed → Kind.spawn`) and NEVER reaches
+    # `Template.instantiate`, so the plugin Template Class's instantiate — which
+    # brings up the cc/codex/curl CLI + PTY, writes the per-agent config_dir, and
+    # records `template_class`/`respawn_template_data` (the sandbox respawn state)
+    # — never runs. Result pre-fix: a member ENTITY with no live CLI, so the
+    # relay stalls at the first hop (no subprocess to receive `chat.receive`).
+    # This is the SAME bug class codex PR #408 fixed for `ensure_orchestrator`
+    # (`Session.spawn_orchestrator_via_template_content/5`); PR-8 left this path
+    # on the old bare spawn. The deterministic Tier-1 gate spawns no real agents,
+    # so only the LIVE tier exposed it.
+    workspace_name =
+      workspace_uri.host ||
+        raise ArgumentError,
+              "workspace_uri has no host (`workspace://<NAME>`) — got " <>
+                inspect(workspace_uri)
+
+    member_uri = Ezagent.URI.new!("entity://agent/#{workspace_name}/#{instance_name}")
+
+    # `content` is the SAME snapshot the flavor (→ member_uri) was derived from
+    # (codex P2) — no second read, so URI-flavor and spawned-content cannot diverge.
+    with {:ok, _result} <-
+           Ezagent.Entity.Agent.spawn_from_template_content(
+             content,
+             member_uri,
+             caller,
+             workspace_uri
+           ) do
+      {:ok, member_uri}
     end
+  end
+
+  # Read the source AgentTemplate Kind's content slice (the SOLE source of
+  # truth), mirroring `Session.read_orchestrator_template_content/1`. The
+  # content map is what `Agent.spawn_from_template_content/4` threads through
+  # `AgentTemplate.to_template_data/2` + the plugin Template Class instantiate.
+  defp read_source_template_content(%URI{} = template_uri) do
+    case Ezagent.KindRegistry.lookup(template_uri) do
+      :error ->
+        {:error, {:source_template_not_alive, template_uri}}
+
+      {:ok, pid} ->
+        case safe_get_template_content(pid) do
+          %{} = content when map_size(content) > 0 -> {:ok, content}
+          _ -> {:error, {:source_template_not_populated, template_uri}}
+        end
+    end
+  end
+
+  defp safe_get_template_content(pid) do
+    case :sys.get_state(pid, 500) do
+      %{state: %{template: %{state: %{content: content}}}} when is_map(content) -> content
+      %{state: %{template: %{content: content}}} when is_map(content) -> content
+      _ -> %{}
+    end
+  catch
+    :exit, _ -> %{}
   end
 
   # Faceted `chat.join` dispatch on the session — carries the PR-7 member
@@ -224,17 +302,15 @@ defmodule Ezagent.Orchestrator.Tools do
     end
   end
 
-  # Read the `flavor` field from a source AgentTemplate's `:template`
-  # content (demand-spawning the template Kind first). The flavor prefixes
-  # the spawned instance name so the member Agent URI resolves to a flavor
-  # Kind module. Shared shape with the PR-7 materialization spawn path.
-  defp source_template_flavor(%URI{} = source_template_uri) do
-    with {:ok, _pid} <- ensure_template_alive(source_template_uri),
-         {:ok, content} <- Ezagent.Entity.Session.read_template_content(source_template_uri) do
-      case Map.get(content, :flavor) || Map.get(content, "flavor") do
-        flavor when is_binary(flavor) and flavor != "" -> {:ok, flavor}
-        _ -> {:error, {:source_template_missing_flavor, source_template_uri}}
-      end
+  # Extract the `flavor` field from an ALREADY-READ source AgentTemplate
+  # content snapshot. The flavor prefixes the spawned instance name so the
+  # member Agent URI resolves to a flavor Kind module. codex P2 (2026-06-03):
+  # callers MUST derive flavor from the SAME content snapshot they spawn from
+  # (see `spawn_member/5`), so this takes the content rather than re-reading it.
+  defp content_flavor(content, %URI{} = source_template_uri) when is_map(content) do
+    case Map.get(content, :flavor) || Map.get(content, "flavor") do
+      flavor when is_binary(flavor) and flavor != "" -> {:ok, flavor}
+      _ -> {:error, {:source_template_missing_flavor, source_template_uri}}
     end
   end
 

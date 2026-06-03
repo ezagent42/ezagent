@@ -286,7 +286,7 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     end
   end
 
-  defp codex_tui_cmd(socket_path, cwd, thread_id, tmpl, codex_path) do
+  defp codex_tui_cmd(socket_path, cwd, _thread_id, tmpl, codex_path) do
     with {:ok, codex} <- codex_executable(codex_path) do
       base = [codex, "resume", "--remote", "unix://#{socket_path}", "--cd", cwd]
 
@@ -296,7 +296,19 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
         |> maybe_append("--ask-for-approval", Map.get(tmpl, "approval_policy"))
         |> maybe_append("--sandbox", Map.get(tmpl, "sandbox"))
 
-      {:ok, cmd ++ [thread_id]}
+      # codex 0.134.0: `resume --remote <addr> <SESSION_ID>` resolves the
+      # positional SESSION_ID against the LOCAL rollout store (ignoring
+      # --remote for the lookup) → "Failed to resume session from
+      # ~/.codex/sessions/.../rollout-*.jsonl" → exit 256, because the thread
+      # was created on the REMOTE app-server and has no local rollout. Verified
+      # live 2026-06-03: `resume --remote <sock> --last` correctly attaches to
+      # the remote app-server and resumes its most-recent thread. The
+      # app-server is PER-AGENT (socket derived from agent_uri) and the bridge
+      # sidecar just created the target thread before this TUI launches, so the
+      # remote's most-recent thread IS the bridge thread. `thread_id` is still
+      # created by the bridge (the TUI shares that thread); it is not passed
+      # positionally anymore (that path resolves locally and fails).
+      {:ok, cmd ++ ["--last"]}
     end
   end
 

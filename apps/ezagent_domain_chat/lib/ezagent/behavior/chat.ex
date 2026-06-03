@@ -683,7 +683,12 @@ defmodule Ezagent.Behavior.Chat do
           meta: meta
         }
 
-        _ = Ezagent.AgentBridge.deliver(ctx[:self_uri], payload)
+        # PR-DR (blocker #1): self-heal a vanished bridge before dropping. If
+        # the agent's claude/python subprocess exited (its WS Channel.terminate
+        # unbound the Registry row), `deliver_ensuring/2` relaunches it
+        # (snapshot-sourced, flavor-neutral) + awaits the rebind, then retries
+        # once — instead of silently `:no_bridge`-dropping the routed message.
+        _ = Ezagent.AgentBridge.deliver_ensuring(ctx[:self_uri], payload)
 
         {:ok, %{}, []}
 
