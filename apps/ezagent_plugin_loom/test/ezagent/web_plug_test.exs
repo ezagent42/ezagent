@@ -48,6 +48,24 @@ defmodule EzagentPluginLoom.WebPlugTest do
   # `POST /api/chat` was removed in the 2026-06-01 redesign (page generation
   # moved to LoomV0Worker dispatched by the session orchestrator).
 
+  describe "POST /api/:ws/:sid/stop (中断当前生成)" do
+    # 无在跑 claude / 未注册编排器时仍确定性返回 200 {ok:true}:
+    # `ClaudeCode.stop/1` 对空 ETS 匹配 → :ok;orchestrator lookup :error → :ok。
+    # 真正的"杀 claude + 清在飞回合"由 ClaudeCodeTest / LoomOrchestratorTest 单测,
+    # 端到端中断由 live e2e 覆盖。
+    test "返回 200 且 body 为 {ok:true}（幂等,无活动 session 也不崩）" do
+      conn = call(conn(:post, "/api/system/s_test/stop"))
+      assert conn.status == 200
+      assert %{"ok" => true} = Jason.decode!(conn.resp_body)
+    end
+
+    test "GET 同路径不命中 stop（仅 POST）" do
+      conn = call(conn(:get, "/api/system/s_test/stop"))
+      # SPA fallback 接住 GET → 返回 index.html，而非 stop 的 JSON。
+      assert conn.resp_body =~ "<!DOCTYPE html>"
+    end
+  end
+
   describe "unknown method" do
     test "DELETE on any path → 404" do
       conn = call(conn(:delete, "/whatever"))
