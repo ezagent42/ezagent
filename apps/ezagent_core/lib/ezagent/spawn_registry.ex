@@ -115,9 +115,10 @@ defmodule Ezagent.SpawnRegistry do
     * `{:error, :not_created}`  — never durably created → no spawn.
     * `{:error, term()}`        — durable, but the rehydrate spawn failed.
 
-  Durable existence is the snapshot ever-created marker
-  (`Ezagent.Ecto.KindSnapshot.ever_created?/1`) — the same predicate the
-  Lifecycle create-vs-activate decision uses (`Ezagent.Lifecycle.fresh_create?/1`).
+  Durable existence is decided through the Lifecycle-owned signal
+  `Ezagent.Lifecycle.fresh_create?/1` (a URI that is NOT a fresh-create has
+  been durably created) — NOT a direct snapshot-marker read, per the
+  persistence-access discipline (`lifecycle_persistence_access_test`).
   """
   @spec ensure_live(URI.t()) :: {:ok, :live | :rehydrated} | {:error, term()}
   def ensure_live(%URI{} = uri) do
@@ -126,13 +127,16 @@ defmodule Ezagent.SpawnRegistry do
         {:ok, :live}
 
       :error ->
-        if Ezagent.Ecto.KindSnapshot.ever_created?(URI.to_string(uri)) do
+        # "durably exists" = NOT a fresh-create (the Lifecycle-owned
+        # create-vs-activate signal), routed through the framework API so
+        # this site stays within the persistence-access discipline.
+        if Ezagent.Lifecycle.fresh_create?(uri) do
+          {:error, :not_created}
+        else
           case __MODULE__.spawn(uri) do
             {:ok, _pid} -> {:ok, :rehydrated}
             {:error, _} = err -> err
           end
-        else
-          {:error, :not_created}
         end
     end
   end
