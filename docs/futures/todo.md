@@ -734,3 +734,34 @@ baseline worktree (`54df56c9`) chat run for apples-to-apples diff**.
   any on_change persist (or guard on_change from writing an empty/partial slice over a
   non-empty one). Lesson recorded: NEVER `SpawnRegistry.spawn/1` an existing entity
   (fresh-spawns empty); revive via dispatch (`lazy_spawn_from_snapshot`).
+
+## domain.agent — config/credential lifecycle gaps (Allen review 2026-06-03)
+
+Surfaced answering Allen's two architecture questions after the scenario-34
+cc→codex→curl live E2E passed. Both are NEXT-phase domain.agent scope, NOT in
+the domain-agent-foundation PR (that PR is deliverability: PR-DR self-heal,
+PR-4 snapshot guard, codex `--last`, table-rename).
+
+- **Per-agent credential lifecycle (NOT implemented; test fixture only).**
+  `CcAgent.create_agent_config_dir/2` (cc_agent.ex:1669) cleanly copies a
+  template's `claude_config_dir` reference dir → per-agent private dir (cp_r +
+  chmod creds + completion marker). But what POPULATES the reference dir with
+  credentials is only test plumbing: the demo mix task
+  `ezagent.demo.seed_cc_sandbox` (copies `~/.claude/.credentials.json` to
+  "avoid re-login") and, during the live E2E, a MANUAL `cp` (not in code at
+  all). The real flow Allen wants — **user creates a new agent → logs in
+  themselves (claude `/login` inside the agent's sandbox) → credentials are
+  saved and reused on future spawns** — does not exist. Proxy config has no
+  code path either. domain.agent should own this lifecycle (login → persist →
+  reuse) + runtime config (proxy), with a CLEAN separation between the test
+  fixture (copy host creds) and the production config interface.
+
+- **Per-flavor config UI (partial + generic; plugin `:form` surface unbuilt).**
+  Create is a generic form (`agent_new_live`: flavor dropdown + name/cwd/pty);
+  post-create config is spread across generic screens (`agent_detail` /
+  `agent_extensions` / `agent_api_keys`). Flavors do NOT provide their own
+  config UI: `config_surface/0` is `:route | :flavor | nil` (V1); the `:form`
+  surface (plugin-provided config form, store V2 — SPEC §6.1) is noted but not
+  built. No UI for cc/claude login or proxy. Decision needed: each flavor
+  inherits one generic UI vs provides its own via the `:form` config_surface
+  contract — then build it. Ties to the credential-lifecycle item (login UI).
