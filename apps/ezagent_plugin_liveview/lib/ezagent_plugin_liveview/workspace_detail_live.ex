@@ -24,6 +24,7 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
   use Gettext, backend: EzagentPluginLiveview.Gettext
   alias EzagentDomainUi.AdminShell
   alias EzagentPluginLiveview.AppShell
+  alias EzagentPluginLiveview.ConfigForm
   use EzagentDomainUi.Components
   use EzagentDomainUi.Primitives
   import Phoenix.Component
@@ -111,18 +112,6 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
 
   defp template_status_class(_),
     do: "text-[11px] text-rose-600 dark:text-rose-400"
-
-  defp input_class_for(:path),
-    do:
-      "px-2 py-1 border border-zinc-300 dark:border-zinc-700 rounded text-xs font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
-
-  defp input_class_for(:uri),
-    do:
-      "px-2 py-1 border border-zinc-300 dark:border-zinc-700 rounded text-xs font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
-
-  defp input_class_for(_),
-    do:
-      "px-2 py-1 border border-zinc-300 dark:border-zinc-700 rounded text-xs bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
 
   defp tmpl_mode_btn_class(true),
     do:
@@ -640,44 +629,7 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
                       if n == @selected_class, do: fields
                     end) %>
 
-                  <div
-                    :for={field <- selected_fields}
-                    class="grid grid-cols-[200px_1fr] gap-1.5 mb-2"
-                  >
-                    <label class="text-xs text-zinc-500 self-center">
-                      {field.label}{if Map.get(field, :required, false), do: " *", else: ""}
-                    </label>
-                    <%= case field.type do %>
-                      <% :select -> %>
-                        <select
-                          name={"add_template[" <> field.name <> "]"}
-                          class="px-2 py-1 border border-zinc-300 dark:border-zinc-700 rounded text-xs font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
-                        >
-                          <option :for={opt <- Map.get(field, :options, [])} value={opt}>
-                            {opt}
-                          </option>
-                        </select>
-                      <% :path -> %>
-                        <div class="flex flex-col gap-0.5">
-                          <input
-                            type="text"
-                            name={"add_template[" <> field.name <> "]"}
-                            placeholder={Map.get(field, :placeholder, "/path/to/dir")}
-                            class={input_class_for(field.type)}
-                          />
-                          <span class="text-[10px] text-zinc-500">
-                            📁 {gettext("Filesystem path (server-side)")}
-                          </span>
-                        </div>
-                      <% _ -> %>
-                        <input
-                          type="text"
-                          name={"add_template[" <> field.name <> "]"}
-                          placeholder={Map.get(field, :placeholder, "")}
-                          class={input_class_for(field.type)}
-                        />
-                    <% end %>
-                  </div>
+                  <ConfigForm.config_fields fields={selected_fields} name_prefix="add_template" />
                 <% end %>
 
                 <.button type="submit" variant="success" size="sm">{gettext("Add template")}</.button>
