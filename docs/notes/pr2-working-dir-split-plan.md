@@ -26,43 +26,45 @@ key — required) has an ambiguous name that **conflates two intents**:
 
 ## Target
 
-At the TEMPLATE INPUT layer (`AgentTemplate` content), make the two intents explicit:
+At the TEMPLATE INPUT layer (`AgentTemplate` content), make the two intents explicit.
 
-| Concern | Before | After |
+> **DECISION UPDATE (Allen 2026-06-03): `config_dir` PROMOTED to UNIVERSAL.**
+> The original PR-2 kept `config_dir` cc-flavor-owned with the cc-named data key
+> `"claude_config_dir"` (and flagged the ambiguity below). The maintainer has since
+> decided the CONCEPT "every agent has a per-agent config home directory" is
+> UNIVERSAL — every flavor (cc/codex/curl/echo/np) gets a `config_dir`. Only the
+> CONTENTS / file-format are flavor-specific (cc reads it as `CLAUDE_CONFIG_DIR` +
+> writes `.claude.json`/`settings.json`/`.credentials.json`; codex/curl/echo use it
+> per their own format). This is consistent with approach B: the DIRECTORY concept is
+> universal; the cc FILE FORMAT stays cc-owned. The universal base now emits a
+> flavor-NEUTRAL `"config_dir"` data key; the cc-named `"claude_config_dir"` data key
+> is REMOVED (no back-compat shim — cc `validate/1` fails loud on it; DB wiped +
+> rebuilt).
+
+| Concern | Before | After (post-decision) |
 |---|---|---|
-| project cwd (universal) | `working_directory` | **`project_cwd`** (universal) → `"cwd"` data key (unchanged data key) |
-| config_dir input (cc) | `claude_config_dir` | **`config_dir`** (cc flavor-owned) → `"claude_config_dir"` data key (unchanged data key) |
+| project cwd (universal) | `working_directory` | **`project_cwd`** (universal) → `"cwd"` data key |
+| config home (universal) | `claude_config_dir` | **`config_dir`** (universal) → **`"config_dir"`** neutral data key (cc reads it for `CLAUDE_CONFIG_DIR`) |
 
 ### Why these choices
 
-- **Rename only the TEMPLATE CONTENT field names** (`working_directory` → `project_cwd`;
-  `claude_config_dir` → `config_dir`). The downstream **data keys** (`"cwd"`,
-  `"claude_config_dir"`) are NOT renamed — they are the universal flavor-Template-Class
-  contract consumed by 5+ modules and stored in the Sandbox respawn data. Renaming
-  them is out of scope (much larger blast radius; not what "split the template field"
-  means) and would touch the runtime sandbox shape PR-3 owns.
-- `project_cwd` stays UNIVERSAL (every flavor needs a cwd).
-- `config_dir` stays FLAVOR-OWNED (cc only). Per SPEC 2026-06-01-flavor-generic-template-data
-  (approach B): curl/codex have no external config dir; config_dir is a cc concept.
-  Promoting it to universal would violate that recent decision. **Flagged ambiguity below.**
+- **`project_cwd` is UNIVERSAL** (every flavor needs a cwd) → `"cwd"` data key
+  (unchanged).
+- **`config_dir` is UNIVERSAL** (every flavor has a per-agent config home) → the
+  flavor-NEUTRAL `"config_dir"` data key. The cc Template Class READS this neutral
+  key and applies its claude semantics (`CLAUDE_CONFIG_DIR`, the per-agent copy, the
+  claude file format). The cc-specific FILE FORMAT stays cc-owned (flavor extras:
+  `settings_path`/`mcp_config_path`/`api_key_helper`/`role`).
+- **The data key `"config_dir"` is neutral** — it does NOT leak the cc-specific name
+  into universal data emitted for curl/codex/echo. The old cc-named
+  `"claude_config_dir"` data key is renamed to `"config_dir"` at every consume site
+  (cc `build_claude_config_env/2` / `create_agent_config_dir/2`, the
+  `--from` clone override in `Behavior.Workspace`, the Sandbox `respawn_template_data`).
 - No back-compat shims (`feedback_let_it_crash_no_workarounds`): rename at every call
-  site; DB is wiped+rebuilt. The error atom becomes `:missing_project_cwd`.
-
-## DESIGN AMBIGUITY for the maintainer
-
-The brief says "make the two intents explicit at the template layer: project_cwd vs
-the config_dir input." But per the flavor-generic SPEC (2026-06-01, approach B),
-`config_dir` is a **cc-flavor** concept, not universal — curl/codex/echo/np carry no
-external config dir. So the two intents do NOT live at the same layer:
-
-- `project_cwd` → UNIVERSAL base field (correct home).
-- `config_dir` → cc FLAVOR-OWNED field (`CcAgent`), NOT universal.
-
-This PR makes both explicit but keeps `config_dir` flavor-owned. If the maintainer
-instead wants `config_dir` promoted to a universal template field (so the
-template-layer split is symmetric), that contradicts approach B and is a larger
-change — flagged, NOT guessed. Picked the structural option consistent with the most
-recent locked decision.
+  site; DB is wiped+rebuilt. `to_template_data/2` returns `:missing_project_cwd` for a
+  missing cwd and `{:error, {:invalid_config_dir, _}}` for a malformed (present but
+  not a non-empty binary) config_dir; cc `validate/1` returns
+  `{:error, {:stale_config_dir_key, "claude_config_dir", _}}` on a stale template.
 
 ## Files to change
 
@@ -73,8 +75,15 @@ recent locked decision.
 - `apps/ezagent_domain_chat/lib/ezagent/orchestrator/cc_orchestrator_seed.ex` — seed content
   (`working_directory:` → `project_cwd:`, `claude_config_dir:` → `config_dir:`).
 - `apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex` — moduledoc references.
-- `apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex` — `template_data_extra/1`
-  reads `:config_dir` content field (still emits `"claude_config_dir"` data key).
+- `apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex` — config_dir promotion:
+  `template_data_extra/1` NO LONGER emits config_dir (it's universal now); the consume
+  path (`build_claude_config_env/2`, `create_agent_config_dir/2`, `@optional_sandbox_keys`)
+  reads the neutral `"config_dir"` data key; `validate/1` fails loud on a stale
+  `"claude_config_dir"` key.
+- `apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex` — `--from` clone
+  override writes the neutral `"config_dir"` data key.
+- `apps/ezagent_core/lib/ezagent/{home/migration.ex,kind/template.ex,behavior/sandbox.ex}`
+  — moduledoc references to the config-home data key.
 - Mix demo seed task `ezagent.demo.seed_cc_sandbox.ex` — content field rename.
 - All affected tests (agent_template_test, template_test, fork_lineage, e2e fixtures, etc).
 

@@ -16,7 +16,7 @@ defmodule Ezagent.Behavior.Sandbox do
   hand-off.
 
   Before this module, sandbox config was per-TEMPLATE (multiple agents
-  from one template shared a single `claude_config_dir` — no per-agent
+  from one template shared a single config_dir reference — no per-agent
   isolation, no user-level extension toggle).
 
   ## The two-container split (SPEC §0.1 / §2.1 / §2.3B)

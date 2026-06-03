@@ -17,7 +17,7 @@ defmodule Ezagent.Entity.AgentTemplate do
   > **Single source of truth for cc agent sandbox/config.** A
   > standalone `cc-agent-config` SPEC was drafted 2026-05-22 and
   > RETIRED 2026-05-23 (branch `docs/cc-agent-config-spec` deleted,
-  > never merged): this slice schema (`config_dir`,
+  > never merged): this slice schema (`config_dir` — now universal,
   > `settings_path`, `mcp_config_path`, `api_key_helper`) already
   > covered it. Operator companion runbook:
   > `docs/runbook/cc-agent-config.md`. Future plugin authors
@@ -50,12 +50,22 @@ defmodule Ezagent.Entity.AgentTemplate do
         #
         # PR-2 (domain.agent): `working_directory` was split into two clean
         # intents — `project_cwd` (universal: where the agent works / cd's
-        # into → "cwd" data key) vs the cc-flavor `config_dir` (the sandbox
-        # config-home INPUT → "claude_config_dir" data key; renamed from
-        # `claude_config_dir`). `project_cwd` is universal; `config_dir` is
-        # cc-flavor-owned (curl/codex have no external config dir).
+        # into → "cwd" data key) vs `config_dir` (the per-agent config-home
+        # INPUT → "config_dir" data key; renamed from `claude_config_dir`).
+        # Both are UNIVERSAL.
+        #
+        # config_dir promotion (Allen 2026-06-03): the CONCEPT "every agent
+        # has a per-agent config home directory" is universal — every flavor
+        # (cc/codex/curl/echo/np) gets a `config_dir`. Only the CONTENTS /
+        # file-format of that dir are flavor-specific: the cc Template Class
+        # reads the universal `config_dir` and applies claude semantics (sets
+        # `CLAUDE_CONFIG_DIR`, writes `.claude.json` / `settings.json` /
+        # `.credentials.json` there). codex/curl/echo just receive a
+        # `config_dir` they may use per their own format. This is consistent
+        # with approach B (SPEC 2026-06-01-flavor-generic-template-data): the
+        # DIRECTORY concept is universal; the cc FILE FORMAT stays cc-owned.
         project_cwd:        String.t(),       # universal — the project/working dir
-        config_dir:         String.t() | nil, # cc only — sandbox config-home input
+        config_dir:         String.t() | nil, # universal — per-agent config-home input
         settings_path:      String.t() | nil,  # --settings override
         mcp_config_path:    String.t() | nil,  # --mcp-config override
         api_key_helper:     String.t() | nil,  # macOS multi-agent only
@@ -74,16 +84,26 @@ defmodule Ezagent.Entity.AgentTemplate do
 
   The shape above is the cc-flavor view. Since SPEC
   2026-06-01-flavor-generic-template-data (approach B), the content is a
-  UNIVERSAL base (`flavor`, `project_cwd`, `default_caps`,
+  UNIVERSAL base (`flavor`, `project_cwd`, `config_dir`, `default_caps`,
   `parent_template_uri`, `created_by`, `created_at`) + **flavor-owned
   extras** declared by each flavor's Template Class via
   `c:Ezagent.Kind.Template.template_data_extra/1`. `to_template_data/2`
-  stays flavor-agnostic: cc contributes
-  `config_dir`/`settings_path`/`mcp_config_path`/`api_key_helper`/`role`;
+  stays flavor-agnostic: it emits the universal base (incl. the neutral
+  `config_dir` data key) and cc contributes only its flavor extras
+  `settings_path`/`mcp_config_path`/`api_key_helper`/`role`;
   curl contributes `provider`/`api_url`/`model`/`system_prompt`/`max_history`;
   codex contributes `model`/`approval_policy`/`sandbox`/… A template missing a
   required flavor field fails loud at `to_template_data/2` (it runs the
   flavor's `validate/1`).
+
+  > **config_dir is UNIVERSAL (Allen 2026-06-03).** Every flavor has a
+  > per-agent config home dir; the universal base emits a flavor-NEUTRAL
+  > `"config_dir"` data key. The cc Template Class READS that neutral key
+  > and applies claude-specific semantics (`CLAUDE_CONFIG_DIR`,
+  > `.claude.json`/`settings.json`/`.credentials.json`). codex/curl/echo
+  > receive the same `"config_dir"` and use it per their own format. There
+  > is NO cc-named `"claude_config_dir"` data key — the universal concept
+  > carries the neutral name (no back-compat shim; DB is wiped + rebuilt).
 
   **What is NOT in a cc AgentTemplate slice** (deliberately): prompt, model,
   effort, tools whitelist, MCP servers — for cc, those live in the pointed-at
@@ -158,24 +178,34 @@ defmodule Ezagent.Entity.AgentTemplate do
 
   | AgentTemplate content field | cc.agent data key            |
   |-----------------------------|------------------------------|
+  | (flavor's Class name)       | universal data key           |
+  |-----------------------------|------------------------------|
   | (flavor's Class name)       | `"class"`                    |
   | `instance_agent_uri`        | `"agent_uri"`                |
   | `project_cwd`               | `"cwd"` (required — errors if nil) |
+  | `config_dir`                | `"config_dir"` (universal, neutral; nil dropped) |
+
+  cc flavor extras (`template_data_extra/1`):
+
+  | AgentTemplate content field | cc data key                  |
+  |-----------------------------|------------------------------|
   | `settings_path`             | `"operator_settings_path"`   |
   | `mcp_config_path`           | `"operator_mcp_config_path"` |
-  | `config_dir`                | `"claude_config_dir"`        |
   | `api_key_helper`            | `"api_key_helper"`           |
+  | `role`                      | `"role"`                     |
 
-  PR-2 (domain.agent): the universal `project_cwd` (the project/working dir
-  the agent runs in — renamed from `working_directory`) and the cc-flavor
-  `config_dir` (the sandbox config-home input — renamed from
-  `claude_config_dir`) are two distinct intents. The DATA KEYS (`"cwd"`,
-  `"claude_config_dir"`) are unchanged — they are the universal flavor
-  Template-Class contract.
+  PR-2 (domain.agent) + config_dir promotion (Allen 2026-06-03): the
+  universal `project_cwd` (the project/working dir the agent runs in —
+  renamed from `working_directory`) and the universal `config_dir` (the
+  per-agent config-home input — renamed from `claude_config_dir`) are two
+  distinct intents emitted in the universal base under the flavor-NEUTRAL
+  data keys `"cwd"` and `"config_dir"`. The cc Template Class READS the
+  neutral `"config_dir"` and applies its claude semantics; there is no
+  cc-named `"claude_config_dir"` data key.
 
-  The four optional keys are only added when present (a nil value is
-  dropped) so the legacy 3-key cc.agent form still validates when the
-  AgentTemplate sets none of them.
+  `config_dir` is only added when present (a nil value is dropped) so the
+  legacy 3-key cc.agent form still validates when the AgentTemplate sets
+  it to nil.
 
   Returns `{:ok, data_map}` or `{:error, reason}`.
   """
@@ -189,12 +219,21 @@ defmodule Ezagent.Entity.AgentTemplate do
     # owned by their plugins. (Pre-fix this dropped curl/codex fields, so
     # orchestrator-spawned curl/codex workers had nil provider/model.)
     with {:ok, tc} <- resolve_template_class(content),
-         {:ok, cwd} <- fetch_project_cwd(content) do
-      base = %{
-        "class" => tc.template_name(),
-        "agent_uri" => URI.to_string(instance_agent_uri),
-        "cwd" => cwd
-      }
+         {:ok, cwd} <- fetch_project_cwd(content),
+         {:ok, config_dir} <- fetch_config_dir(content) do
+      # config_dir promotion (Allen 2026-06-03): config_dir is UNIVERSAL —
+      # every flavor's config-home dir is emitted here under the neutral
+      # `"config_dir"` data key. nil ⇒ dropped (agent runs without a
+      # config home). The cc Template Class reads this neutral key and
+      # applies its claude semantics; it does NOT re-emit it as a flavor
+      # extra.
+      base =
+        %{
+          "class" => tc.template_name(),
+          "agent_uri" => URI.to_string(instance_agent_uri),
+          "cwd" => cwd
+        }
+        |> put_config_dir(config_dir)
 
       extra =
         if function_exported?(tc, :template_data_extra, 1) do
@@ -219,8 +258,54 @@ defmodule Ezagent.Entity.AgentTemplate do
   def to_template_data(content, _uri), do: {:error, {:invalid_template_content, content}}
 
   # Reserved universal keys core owns — a flavor's template_data_extra/1
-  # must never override these.
-  @reserved_template_data_keys ~w(class agent_uri cwd)
+  # must never override these. `config_dir` is universal (Allen
+  # 2026-06-03), so a flavor extra can't shadow it either.
+  @reserved_template_data_keys ~w(class agent_uri cwd config_dir)
+
+  # config_dir promotion (Allen 2026-06-03): validate the universal config
+  # home dir.
+  #
+  # - absent / nil  ⇒ `{:ok, nil}` (LEGITIMATE: the agent runs without a
+  #   config home — for cc that means claude reads `~/.claude`).
+  # - non-empty binary ⇒ `{:ok, dir}`.
+  # - present-but-malformed (non-binary, or "") ⇒ FAIL LOUD (codex P2): a
+  #   misconfigured config_dir must NOT be silently dropped (which would
+  #   spawn the agent without its isolated config dir). Per
+  #   `feedback_let_it_crash_no_workarounds` we return a structured error
+  #   rather than degrade. Mirrors cc's `check_optional_sandbox_keys/1`,
+  #   which fails loud on a malformed (present) sandbox key.
+  defp fetch_config_dir(content) do
+    # codex P2 closure — also fail loud on a STALE content-level
+    # `claude_config_dir` field. A content map that uses the new
+    # `project_cwd` but still carries the OLD `claude_config_dir` field would
+    # otherwise be silently ignored here (config_dir reads as absent) and the
+    # cc agent would spawn without its isolated `CLAUDE_CONFIG_DIR`. Reject
+    # it structurally (no shim) so the misconfiguration is visible.
+    cond do
+      has_stale_config_dir_field?(content) ->
+        {:error,
+         {:stale_config_dir_field, :claude_config_dir,
+          "config_dir is now the universal content field (Allen 2026-06-03); " <>
+            "rename `claude_config_dir` → `config_dir`. No back-compat shim."}}
+
+      true ->
+        case content_get(content, :config_dir) do
+          nil -> {:ok, nil}
+          dir when is_binary(dir) and dir != "" -> {:ok, dir}
+          bad -> {:error, {:invalid_config_dir, bad}}
+        end
+    end
+  end
+
+  # The stale field may be present under either an atom or a string key
+  # (atom for freshly-built content, string after a JSON snapshot round-trip).
+  defp has_stale_config_dir_field?(content) do
+    Map.has_key?(content, :claude_config_dir) or Map.has_key?(content, "claude_config_dir")
+  end
+
+  # Emit the neutral `"config_dir"` data key only when a config home is set.
+  defp put_config_dir(base, nil), do: base
+  defp put_config_dir(base, dir) when is_binary(dir), do: Map.put(base, "config_dir", dir)
 
   # Merge the flavor's extras onto the base: stringify keys, drop nil
   # values, and refuse reserved-key overrides (defensive — the callback

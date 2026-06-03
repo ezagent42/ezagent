@@ -286,8 +286,9 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
 
       * In the LV admin form (/admin/agent_templates/new), set the
         AgentTemplate `config_dir = #{sandbox_dir}`.
-      * Or set `claude_config_dir` programmatically on the cc.agent
-        Template Class data map (the data key stays `claude_config_dir`).
+      * Or set `config_dir` programmatically on the cc.agent
+        Template Class data map (the universal, flavor-neutral data key
+        is `config_dir` — config_dir promotion, Allen 2026-06-03).
 
     The spawned `claude` will see CLAUDE_CONFIG_DIR=#{sandbox_dir} and
     use the seeded credentials WITHOUT prompting for re-login.

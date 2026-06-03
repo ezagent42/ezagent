@@ -92,7 +92,7 @@ defmodule Ezagent.Integration.HomeMigrationTest do
           # time (audit finding #2) — must also be rewritten.
           respawn_template_data: %{
             "agent_config_dir" => config_dir_a,
-            "claude_config_dir" => config_dir_a
+            "config_dir" => config_dir_a
           },
           pty_phase: :running
         }
@@ -163,7 +163,7 @@ defmodule Ezagent.Integration.HomeMigrationTest do
 
     # respawn_template_data's embedded paths rewritten too.
     assert sandbox.respawn_template_data["agent_config_dir"] == config_dir_b
-    assert sandbox.respawn_template_data["claude_config_dir"] == config_dir_b
+    assert sandbox.respawn_template_data["config_dir"] == config_dir_b
 
     # Non-path fields preserved exactly through decode/rewrite/encode.
     assert sandbox.template_class == EzagentPluginCc.Template.CcAgent

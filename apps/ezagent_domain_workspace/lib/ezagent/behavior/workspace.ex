@@ -1137,13 +1137,17 @@ defmodule Ezagent.Behavior.Workspace do
     end
   end
 
-  # `--from` cloning works by overriding the cc Template Class's
-  # `claude_config_dir` field with the SOURCE agent's per-agent dir.
+  # `--from` cloning works by overriding the template's universal
+  # `config_dir` data key with the SOURCE agent's per-agent dir.
+  # config_dir promotion (Allen 2026-06-03): the per-agent config-home is
+  # the universal, flavor-neutral `"config_dir"` key (was the cc-named
+  # `"claude_config_dir"`); the cc Template Class reads it and applies
+  # claude semantics.
   defp maybe_put_clone_source(tmpl, nil), do: tmpl
 
   defp maybe_put_clone_source(tmpl, source_config_dir)
        when is_binary(source_config_dir) do
-    Map.put(tmpl, "claude_config_dir", source_config_dir)
+    Map.put(tmpl, "config_dir", source_config_dir)
   end
 
   # Register the template in the Workspace's session_templates slice +
