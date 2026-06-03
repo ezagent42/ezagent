@@ -25,7 +25,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
      `CLAUDE_CONFIG_DIR=<sandbox>` env threading.
   2. The cc agent's spawned process env carries
      `CLAUDE_CONFIG_DIR=<sandbox>` end-to-end (proves the AgentTemplate
-     `claude_config_dir` slice → `build_claude_cmd/3` cmd_env →
+     universal `config_dir` → `build_claude_cmd/3` cmd_env →
      `:exec.run/2` env → `execve(2)` env chain holds).
   3. The seeded credentials contents round-trip back to the test via
      the reply path: the fake claude tags the reply with `[creds:<contents>]`
@@ -255,7 +255,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
         "class" => "cc.agent",
         "agent_uri" => agent_uri_str,
         "cwd" => agent_cwd,
-        "claude_config_dir" => sandbox_dir
+        "config_dir" => sandbox_dir
       }
 
       # ---- 4. dedicated McpConfigWriter dir
@@ -557,7 +557,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
     }
 
     cmd_env =
-      case Map.get(tmpl, "claude_config_dir") do
+      case Map.get(tmpl, "config_dir") do
         dir when is_binary(dir) and dir != "" -> Map.put(base_env, "CLAUDE_CONFIG_DIR", dir)
         _ -> base_env
       end

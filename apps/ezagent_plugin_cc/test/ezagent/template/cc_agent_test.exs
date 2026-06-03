@@ -248,7 +248,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
                })
     end
 
-    test "extended 7-key form validates" do
+    test "extended form validates (config_dir is the universal neutral key)" do
       assert :ok =
                CcAgent.validate(%{
                  "class" => "cc.agent",
@@ -256,18 +256,35 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
                  "cwd" => "/tmp",
                  "operator_settings_path" => "/sandbox/settings.json",
                  "operator_mcp_config_path" => "/sandbox/mcp.json",
-                 "claude_config_dir" => "/sandbox/.claude",
+                 # config_dir promotion (Allen 2026-06-03): universal,
+                 # flavor-neutral key (was "claude_config_dir").
+                 "config_dir" => "/sandbox/.claude",
                  "api_key_helper" => "/sandbox/key-helper.sh"
                })
     end
 
     test "a non-string sandbox key is rejected" do
-      assert {:error, {:invalid_sandbox_key, "claude_config_dir", _}} =
+      assert {:error, {:invalid_sandbox_key, "config_dir", _}} =
                CcAgent.validate(%{
                  "class" => "cc.agent",
                  "agent_uri" => "entity://agent/team-alpha/cc_bad",
                  "cwd" => "/tmp",
-                 "claude_config_dir" => 123
+                 "config_dir" => 123
+               })
+    end
+
+    # config_dir promotion (Allen 2026-06-03) — codex P2 closure. A stale
+    # `"claude_config_dir"` key (from a persisted/hand-written template) must
+    # FAIL LOUD, not be silently ignored (which would spawn the agent without
+    # its isolated config dir / CLAUDE_CONFIG_DIR). No back-compat shim —
+    # `feedback_let_it_crash_no_workarounds`.
+    test "a stale claude_config_dir key fails loud (no silent fallback)" do
+      assert {:error, {:stale_config_dir_key, "claude_config_dir", _}} =
+               CcAgent.validate(%{
+                 "class" => "cc.agent",
+                 "agent_uri" => "entity://agent/team-alpha/cc_stale",
+                 "cwd" => "/tmp",
+                 "claude_config_dir" => "/sandbox/.claude"
                })
     end
   end

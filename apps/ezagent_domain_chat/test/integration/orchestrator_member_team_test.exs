@@ -71,7 +71,7 @@ defmodule EzagentDomainChat.Integration.OrchestratorMemberTeamTest do
         args: %{
           content: %{
             flavor: "echo",
-            working_directory: "/tmp",
+            project_cwd: "/tmp",
             default_caps: [],
             created_by: User.admin_uri(),
             created_at: ~U[2026-06-01 00:00:00Z]

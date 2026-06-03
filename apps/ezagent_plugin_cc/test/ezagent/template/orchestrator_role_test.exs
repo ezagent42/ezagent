@@ -142,7 +142,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
 
     test "nil config_dir = no-op even for orchestrator role" do
       tmpl = %{"role" => "orchestrator"}
-      # When the template has no `claude_config_dir` reference,
+      # When the template has no `config_dir` reference,
       # `create_agent_config_dir/2` returns `{:ok, nil}` and the
       # bootstrap is skipped.
       assert :ok = CcAgent.apply_orchestrator_role_bootstrap(tmpl, nil)

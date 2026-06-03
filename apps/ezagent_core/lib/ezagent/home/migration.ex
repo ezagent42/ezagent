@@ -30,8 +30,10 @@ defmodule Ezagent.Home.Migration do
 
   Per `docs/notes/home-portability-audit.md`, the ONLY persisted absolute
   paths are the Sandbox slice's `config_dir_path` + the
-  `agent_config_dir`/`claude_config_dir` embedded in
-  `respawn_template_data`, all under `<profile_dir>/cc-agents/...`. They are
+  `agent_config_dir`/`config_dir` embedded in
+  `respawn_template_data` (config_dir promotion, Allen 2026-06-03: the
+  per-agent config-home is the universal, flavor-neutral `config_dir` key —
+  was `claude_config_dir`), all under `<profile_dir>/cc-agents/...`. They are
   buried inside `kind_snapshots.state_binary` (`term_to_binary`). On
   `restore`, after the tree is in place, every snapshot blob is decoded, any
   string whose prefix is the *source* `profile_dir` is rewritten to the

@@ -172,7 +172,9 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
       File.write!(Path.join(reference, "settings.json"), "{}")
 
       agent_uri = URI.new!("entity://agent/team-alpha/cc_create-test-#{uniq()}")
-      tmpl = %{"claude_config_dir" => reference}
+      # config_dir promotion (Allen 2026-06-03): cc reads the universal,
+      # flavor-neutral "config_dir" data key (was "claude_config_dir").
+      tmpl = %{"config_dir" => reference}
 
       assert {:ok, dir} = CcAgent.create_agent_config_dir(agent_uri, tmpl)
       on_exit(fn -> File.rm_rf(dir) end)
@@ -195,7 +197,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
       File.write!(Path.join(reference, ".credentials.json"), "{}")
 
       agent_uri = URI.new!("entity://agent/team-alpha/cc_idem-test-#{uniq()}")
-      tmpl = %{"claude_config_dir" => reference}
+      tmpl = %{"config_dir" => reference}
 
       assert {:ok, dir1} = CcAgent.create_agent_config_dir(agent_uri, tmpl)
       on_exit(fn -> File.rm_rf(dir1) end)
@@ -209,16 +211,42 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
              "re-call must NOT re-copy from reference (would wipe live state)"
     end
 
-    test "returns {:ok, nil} when template has no claude_config_dir" do
+    test "returns {:ok, nil} when template has no config_dir" do
       agent_uri = URI.new!("entity://agent/team-alpha/cc_no-ref-#{uniq()}")
       tmpl = %{"agent_uri" => URI.to_string(agent_uri), "cwd" => "/tmp", "class" => "cc.agent"}
 
       assert {:ok, nil} = CcAgent.create_agent_config_dir(agent_uri, tmpl)
     end
 
+    test "fails loud on a stale claude_config_dir data key (codex P2 — loader bypasses validate)" do
+      # Workspace.Loader.invoke_template/2 calls instantiate/3 (→
+      # create_agent_config_dir/2) WITHOUT running validate/1, so a stale
+      # data key must fail loud HERE too, not silently spawn without the
+      # isolated config dir. feedback_let_it_crash_no_workarounds.
+      agent_uri = URI.new!("entity://agent/team-alpha/cc_stale-key-#{uniq()}")
+      tmpl = %{"claude_config_dir" => "/old/.claude"}
+
+      assert_raise ArgumentError, ~r/stale `claude_config_dir` data key/, fn ->
+        CcAgent.create_agent_config_dir(agent_uri, tmpl)
+      end
+    end
+
+    test "a present-but-malformed config_dir fails loud, NOT silently dropped (codex P2)" do
+      # The loader path bypasses validate/1; a present `""`/non-binary
+      # config_dir must fail loud here rather than be treated as absent
+      # (which would spawn without CLAUDE_CONFIG_DIR on the operator home).
+      agent_uri = URI.new!("entity://agent/team-alpha/cc_malformed-#{uniq()}")
+
+      assert {:error, {:invalid_config_dir, ""}} =
+               CcAgent.create_agent_config_dir(agent_uri, %{"config_dir" => ""})
+
+      assert {:error, {:invalid_config_dir, 123}} =
+               CcAgent.create_agent_config_dir(agent_uri, %{"config_dir" => 123})
+    end
+
     test "returns error if reference dir doesn't exist" do
       agent_uri = URI.new!("entity://agent/team-alpha/cc_missing-ref-#{uniq()}")
-      tmpl = %{"claude_config_dir" => "/nonexistent/path/123"}
+      tmpl = %{"config_dir" => "/nonexistent/path/123"}
 
       assert {:error, {:reference_dir_missing, "/nonexistent/path/123"}} =
                CcAgent.create_agent_config_dir(agent_uri, tmpl)

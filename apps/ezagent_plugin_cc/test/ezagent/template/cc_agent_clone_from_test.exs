@@ -5,7 +5,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCloneFromTest do
 
   The workspace action body (`Behavior.Workspace.:create_agent`) resolves
   the source agent's `config_dir_path` via a `sandbox.read` dispatch and
-  threads it into the cc template as `"claude_config_dir"`. The cc
+  threads it into the template under the universal `"config_dir"` key. The cc
   Template Class's existing `create_agent_config_dir/2` then does a
   `File.cp_r/2` from that source dir into the new agent's per-agent
   location.
@@ -57,11 +57,12 @@ defmodule Ezagent.PluginCc.Template.CcAgentCloneFromTest do
       )
 
       # The cc workspace action threads source's per-agent dir as
-      # `claude_config_dir` — that's the existing "reference dir to copy
-      # at spawn" key the cc Template Class already understands.
+      # the universal `config_dir` key — that is the existing "reference
+      # dir to copy at spawn" key the cc Template Class reads.
+      # config_dir promotion (Allen 2026-06-03): universal neutral key.
       target_uri = URI.new!("entity://agent/system/cc_clone-target-#{uniq()}")
       cleanup_target(target_uri)
-      tmpl = %{"claude_config_dir" => source}
+      tmpl = %{"config_dir" => source}
 
       assert {:ok, target} = CcAgent.create_agent_config_dir(target_uri, tmpl)
 
@@ -92,7 +93,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCloneFromTest do
 
       target_uri = URI.new!("entity://agent/system/cc_indep-target-#{uniq()}")
       cleanup_target(target_uri)
-      tmpl = %{"claude_config_dir" => source}
+      tmpl = %{"config_dir" => source}
 
       assert {:ok, target} = CcAgent.create_agent_config_dir(target_uri, tmpl)
       assert File.read!(Path.join(target, "user-data.txt")) == "before-clone"

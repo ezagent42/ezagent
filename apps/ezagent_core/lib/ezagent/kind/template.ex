@@ -67,12 +67,15 @@ defmodule Ezagent.Kind.Template do
   # --- flavor-specific template_data fields (SPEC 2026-06-01 approach B) -
   #
   # `Ezagent.Entity.AgentTemplate.to_template_data/2` builds the universal
-  # base (`class` / `agent_uri` / `cwd`) and then MERGES this callback's
-  # result for the flavor-specific fields the flavor's `instantiate/3`
-  # reads. This keeps core flavor-agnostic — cc's `claude_config_dir`,
-  # curl's `provider`/`api_url`/`model`, codex's `model`/`sandbox`/… are
-  # each owned by the respective plugin, NOT hardcoded in
-  # `ezagent_domain_chat`.
+  # base (`class` / `agent_uri` / `cwd` / `config_dir`) and then MERGES this
+  # callback's result for the flavor-specific fields the flavor's
+  # `instantiate/3` reads. This keeps core flavor-agnostic — the per-agent
+  # config-home dir is UNIVERSAL (the neutral `config_dir` key; config_dir
+  # promotion, Allen 2026-06-03), and the FLAVOR-specific extras — cc's
+  # `operator_settings_path`/`role`, curl's `provider`/`api_url`/`model`,
+  # codex's `model`/`sandbox`/… — are each owned by the respective plugin,
+  # NOT hardcoded in `ezagent_domain_chat`. cc READS the universal
+  # `config_dir` and applies its claude semantics (CLAUDE_CONFIG_DIR).
   #
   # Contract:
   # - Read from `content` (the AgentTemplate `:template` slice), which may
@@ -80,7 +83,8 @@ defmodule Ezagent.Kind.Template do
   #   JSON snapshot round-trip).
   # - Return a map with STRING keys (the `instantiate/3`/`validate/1`
   #   contract reads string keys). nil values are dropped by the caller;
-  #   the reserved keys `class`/`agent_uri`/`cwd` are ignored if returned.
+  #   the reserved keys `class`/`agent_uri`/`cwd`/`config_dir` are ignored
+  #   if returned.
   # - Omit optional fields that are not present / not non-empty binaries
   #   (e.g. codex `bridge_ws_url`/`codex_path` feed runtime paths).
   #
@@ -103,7 +107,7 @@ defmodule Ezagent.Kind.Template do
   # NO `create_config_dir/N` callback by design. The 2-phase pattern
   # ("init slice nil → late dispatch write_path") was too late for
   # plugins that launch a sidecar during `instantiate/3` using a
-  # filesystem path (cc starts its PTY with `claude_config_dir` before
+  # filesystem path (cc starts its PTY with the universal `config_dir` before
   # any subsequent dispatch could populate the slice). Instead, the
   # plugin's `instantiate/3` is the one that creates the per-agent dir
   # (it is the only place that knows the full plugin-specific spawn
