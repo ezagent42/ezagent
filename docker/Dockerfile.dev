@@ -33,6 +33,10 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && cp /root/.local/bin/uv /usr/local/bin/uv
 
 WORKDIR /app
+# Install Hex/rebar into a shared MIX_HOME under /app (later chowned to the esr user) so
+# the NON-ROOT runtime user can run mix (home.init / ecto.migrate / phx.server). Installing
+# to root's ~/.mix would be unreadable by esr.
+ENV MIX_HOME=/app/.mix
 RUN mix local.hex --force && mix local.rebar --force
 
 # --- deps + compile (dev) ---
@@ -50,4 +54,14 @@ RUN cd apps/ezagent_web && mix assets.setup && mix assets.build
 ENV HTTP_PROXY="" HTTPS_PROXY="" http_proxy="" https_proxy="" NO_PROXY="" no_proxy=""
 
 RUN chmod +x docker/entrypoint.sh
+
+# Run as NON-ROOT: erlexec's exec-port refuses to run as root without extra privilege
+# config, and the host runs non-root too. Create the user + own /app (incl. _build so dev
+# can recompile) and the volume mountpoints so a FRESH named volume inherits writable
+# ownership. (Recreate existing volumes with `docker compose down -v` after this change.)
+RUN useradd -m -u 1000 esr \
+    && mkdir -p /data /cred/cc /cred/codex /layers \
+    && chown -R esr:esr /app /data /cred /layers
+USER esr
+
 ENTRYPOINT ["/app/docker/entrypoint.sh"]

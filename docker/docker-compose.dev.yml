@@ -19,6 +19,7 @@ services:
       - "10042:10042"
     environment:
       PORT: "10042"
+      SHELL: /bin/bash          # erlexec's exec-port requires SHELL (unset for non-root user)
       EZAGENT_HOME: /data
       EZAGENT_PROFILE: default
       EZAGENT_COOKIE: esr_dev_cookie
@@ -38,6 +39,7 @@ services:
       - cred_cc:/cred/cc                # durable cc OAuth source (seed-once, rotates)
       - cred_codex:/cred/codex          # durable codex OAuth source (seed-once, rotates)
       - layers:/layers                  # E2E snapshot layer cache (cred-free tars)
+      - ./entrypoint.sh:/app/docker/entrypoint.sh:ro   # iterate entrypoint without a full rebuild
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:10042/"]
       interval: 10s
