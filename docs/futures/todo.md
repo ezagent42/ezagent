@@ -766,6 +766,70 @@ PR-4 snapshot guard, codex `--last`, table-rename).
   inherits one generic UI vs provides its own via the `:form` config_surface
   contract — then build it. Ties to the credential-lifecycle item (login UI).
 
+## domain-agent-handoff parked work ledger (2026-06-04)
+
+Source: `/tmp/handoff-esr-docker-pivot-2026-06-04.md` §4. Scope for the
+parallel handoff branch is all parked work EXCEPT #21 Dockerize. #21 remains in
+the separate cc-openclaw session; this ledger exists so non-#21 work is either
+merged into `domain-agent-handoff` or left with a concrete blocker/decision.
+
+- **#27 ComposerMention/AdminLive default session template seed — DONE.**
+  Allen chose option B: seed a per-workspace `default` SessionTemplate. Merged
+  to `domain-agent-handoff` as PR #559 (`66105e2c`). Targeted tests passed:
+  `default_session_template_seed_test.exs`, `composer_mention_test.exs`, and
+  the affected Admin/Agent LV suites.
+
+- **PR-A2 codex CODEX_HOME per-agent isolation — DONE.** `CodexAgent` now uses
+  ConfigDir namespace `codex`, materializes `auth.json`/`config.toml`, and
+  passes `CODEX_HOME` through app-server, bridge sidecar, and PTY launch
+  parameters. Merged to `domain-agent-handoff` as PR #560 (`4940f33f`).
+
+- **#17 remaining gap: production auto-refresh-on-spawn — DECISION-BLOCKED,
+  do not wire PR-E into production spawn by default.** The current spec
+  (`docs/superpowers/specs/2026-06-03-agent-credential-lifecycle.md`) locks D3
+  as "credential source resolved + cap-checked at agent CREATE time (human
+  caller present), not spawn" and lists "Production runtime auto-refresh (users
+  re-login)" under non-goals. `EzagentPluginCc.CredentialRefresh` is also
+  documented as "#17 PR-E (TEST/E2E ONLY)" and "NOT for production runtime".
+  Therefore the safe handoff status is:
+  - production keeps the explicit `/login` + PR-C owner notification flow;
+  - PR-E remains a non-prod/E2E provisioner;
+  - any spawn-time production refresh/copy needs Allen to approve a new
+    cap-checked credential-source model, not a direct call to the test
+    provisioner from `ensure_subprocess_alive`.
+
+- **#11 / #533 single authorized create path + manage-cap grant — GATED.**
+  Existing spec boundary says domain.agent lays provisioning/provenance first;
+  #533 owns the single authorized create entry and manage-cap grant. Await
+  Allen's security decision before implementation. Relevant docs:
+  `docs/superpowers/specs/2026-06-02-domain-agent-design.md` §3.3/§4 and
+  `docs/superpowers/specs/2026-06-01-unified-kind-creation-via-templates.md`.
+
+- **#24 narrow default user session cap (§3.11) — PROD/#21 ADJACENT BLOCKER.**
+  This gates a production Docker image because `Ezagent.Behavior.Manage` makes
+  session management depend on narrowing the current broad default session cap.
+  Keep it visible for the #21 prod-image review, but do not fold it into
+  Dockerize or merge to `main` from this handoff branch without explicit scope.
+
+- **#20 consolidate test-only snapshot writers — DEFERRED LOW-VALUE CHURN.**
+  Current test infra already has `Ezagent.Test.AuditCase` as the opt-in for
+  `Ezagent.Audit.Writer` / `Ezagent.Snapshot.Writer`; the remaining surface is
+  mostly direct test fixture writes (`Snapshot.save_now/3`,
+  `KindSnapshot.upsert/5`) spread across cold-restart, lifecycle, LV, and
+  migration tests. This is autonomous but broad and low-value relative to the
+  credential/security items; handle as a dedicated cleanup PR only if it gets a
+  narrow rule, helper API, and invariant for what direct writes remain allowed.
+
+- **#22 harden node RPC/distribution console — GATED SECURITY SCOPE.** Needs
+  Allen to choose the deployment posture (dev node convenience vs production
+  distribution hardening). Naturally relevant to #21 prod image lockdown, but
+  should be a security-scoped PR/spec rather than an incidental Docker change.
+
+- **#25 architecture discussion — PENDING DISCUSSION DELIVERABLE.** The
+  `improve-codebase-architecture` skill was installed in the cc-openclaw
+  environment; the remaining work is a discussion/proposal deliverable, not a
+  code patch in this handoff branch unless Allen asks for a written spec.
+
 ## Architecture clarity (Allen 2026-06-03)
 
 - **Install + run `improve-codebase-architecture` skill to clarify the ESR
