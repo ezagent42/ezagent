@@ -68,12 +68,26 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
     WorkerSpawn
   }
 
+  alias Ezagent.Entity.{Session, User}
   alias Ezagent.ExternalMirror.TestSupport.{MockPublishAdapter, MockPublishBinding}
 
   setup do
+    # Chat is a compile-but-not-runtime dep of :ezagent_domain_external_mirror
+    # (cycle break). Force-start so SessionSupervisor / scheme registration
+    # exist when this test runs alone.
+    {:ok, _} = Application.ensure_all_started(:ezagent_domain_chat)
+
     :ok = ensure_adapter_registered(MockPublishAdapter, MockPublishBinding)
     cleanup_workers()
-    on_exit(fn -> cleanup_workers() end)
+
+    session_uri = unique_session_uri("worker-publish")
+    owner_uri = unique_user_uri("worker-publish-owner")
+    :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+    on_exit(fn ->
+      cleanup_session(session_uri)
+      cleanup_workers()
+    end)
 
     # SliceChange hook is OFF by default — enable it so :chat slice
     # changes propagate to the Publisher (which fires our Worker's
@@ -89,7 +103,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
       end
     end)
 
-    {:ok, session_uri: URI.parse("session://default/system/main")}
+    {:ok, session_uri: session_uri}
   end
 
   describe "post_init handle_continue chain (PR-EM-2 acceptance test #5)" do
@@ -131,9 +145,11 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
       MockPublishBinding.register_observer(target_id, self())
 
       {:ok, _} = WorkerSpawn.spawn(session_uri, "mock_publish", target_id)
+      worker_uri = WorkerSpawn.worker_uri_for(session_uri, "mock_publish", target_id)
 
       # Trigger a slice change on the Session to fire a Publisher event.
-      send_chat_to_session(session_uri, "hello world")
+      :ok = await_worker_subscribed(session_uri, worker_uri, 100)
+      assert :ok = fire_until_publish_count(session_uri, worker_uri, 1, 20)
 
       # Binding's `publish/2` sent us {:published, payload, target_id, count}.
       assert_receive {:published, payload, ^target_id, _count}, 1_000
@@ -141,13 +157,15 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
       # The payload is what MockPublishAdapter.event_to_payload/1
       # returned: %{event: event, echoed_at: dt}
       assert %{event: %Ezagent.Publisher.Event{} = ev} = payload
-      assert ev.publisher_uri == session_uri or URI.to_string(ev.publisher_uri) == URI.to_string(session_uri)
+
+      assert ev.publisher_uri == session_uri or
+               URI.to_string(ev.publisher_uri) == URI.to_string(session_uri)
+
       assert ev.cursor >= 1
 
       # Slice carries the cursor + count.
-      worker_uri = WorkerSpawn.worker_uri_for(session_uri, "mock_publish", target_id)
       {:ok, slice} = Ezagent.Kind.get_slice(worker_uri, :external_mirror_worker)
-      assert slice.publisher_cursor == ev.cursor
+      assert slice.publisher_cursor >= ev.cursor
       assert slice.count >= 1
       assert slice.last_publish_result == :ok
       assert slice.last_published_at != nil
@@ -341,9 +359,10 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
       binding_uri = URI.to_string(worker_uri)
 
       # Drive a few publishes through.
-      send_chat_to_session(session_uri, "msg1")
+      :ok = await_worker_subscribed(session_uri, worker_uri, 100)
+      assert :ok = fire_until_publish_count(session_uri, worker_uri, 1, 20)
       assert_receive {:published, _, ^target_id, _}, 1_000
-      send_chat_to_session(session_uri, "msg2")
+      assert :ok = fire_until_publish_count(session_uri, worker_uri, 2, 20)
       assert_receive {:published, _, ^target_id, _}, 1_000
 
       Process.sleep(50)
@@ -570,6 +589,107 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
     :ok
   end
 
+  defp cleanup_session(%URI{} = session_uri) do
+    case Ezagent.KindRegistry.lookup(session_uri) do
+      {:ok, pid} when is_pid(pid) ->
+        _ = DynamicSupervisor.terminate_child(EzagentDomainChat.SessionSupervisor, pid)
+        :ok
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp spawn_owner_and_session(%URI{} = owner_uri, %URI{} = session_uri) do
+    :ok = spawn_user(owner_uri, Ezagent.SystemPrincipal.caps("system://bootstrap"))
+
+    case Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: owner_uri}) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+    end
+
+    case Ezagent.Capability.workspace_of(session_uri) do
+      %URI{} = workspace_uri -> :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
+      :any -> :ok
+    end
+
+    await_session_alive(session_uri, 50)
+  end
+
+  defp spawn_user(%URI{} = user_uri, caps) do
+    case Ezagent.Kind.spawn(User, %{uri: user_uri, initial_caps: caps}) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+    end
+
+    :ok
+  end
+
+  defp await_session_alive(_uri, 0), do: {:error, :timeout}
+
+  defp await_session_alive(uri, retries) do
+    case Ezagent.KindRegistry.lookup(uri) do
+      {:ok, pid} when is_pid(pid) ->
+        case Ezagent.ReadyGate.status(URI.to_string(uri)) do
+          :ready -> :ok
+          _ -> Process.sleep(20) && await_session_alive(uri, retries - 1)
+        end
+
+      _ ->
+        Process.sleep(20)
+        await_session_alive(uri, retries - 1)
+    end
+  end
+
+  defp await_worker_subscribed(_session_uri, _worker_uri, 0), do: {:error, :timeout}
+
+  defp await_worker_subscribed(session_uri, worker_uri, retries) do
+    with {:ok, worker_pid} <- Ezagent.KindRegistry.lookup(worker_uri),
+         {:ok, %{transients: %{subscribers: subscribers}}} <-
+           Ezagent.Kind.get_raw_slice(session_uri, :publisher),
+         true <- Map.has_key?(subscribers, worker_pid) do
+      :ok
+    else
+      _ ->
+        Process.sleep(20)
+        await_worker_subscribed(session_uri, worker_uri, retries - 1)
+    end
+  end
+
+  defp fire_until_publish_count(_session_uri, _worker_uri, _count, 0), do: {:error, :no_publish}
+
+  defp fire_until_publish_count(session_uri, worker_uri, count, retries) do
+    send_chat_to_session(session_uri, "publish-#{count}")
+
+    case await_publish_count_at_least(worker_uri, count, 20) do
+      :ok ->
+        :ok
+
+      {:error, :no_publish} ->
+        fire_until_publish_count(session_uri, worker_uri, count, retries - 1)
+    end
+  end
+
+  defp await_publish_count_at_least(_worker_uri, _count, 0), do: {:error, :no_publish}
+
+  defp await_publish_count_at_least(worker_uri, count, retries) do
+    case worker_publish_count_at_least?(worker_uri, count) do
+      true ->
+        :ok
+
+      false ->
+        Process.sleep(50)
+        await_publish_count_at_least(worker_uri, count, retries - 1)
+    end
+  end
+
+  defp worker_publish_count_at_least?(worker_uri, count) do
+    case Ezagent.Kind.get_slice(worker_uri, :external_mirror_worker) do
+      {:ok, %{count: actual}} when is_integer(actual) and actual >= count -> true
+      _ -> false
+    end
+  end
+
   # Trigger a Publisher event by mutating the Session's :chat slice
   # via `:chat.join` — joining a fresh user every call so the slice
   # ALWAYS differs from prior (SliceChange fires only on actual
@@ -579,17 +699,8 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
   # slice (writes go to MessageStore via Repo), so it does NOT
   # trigger SliceChange. chat.join writes `members` + `monitors`.
   defp send_chat_to_session(%URI{} = session_uri, _label) do
-    member_uri =
-      URI.parse("entity://user/team-alpha/em-pub-test-#{System.unique_integer([:positive])}")
-
-    # Spawn the member User Kind first (chat.join needs the member's
-    # Kind alive so :receive dispatches can land later).
-    user_module = Module.concat([Ezagent, Entity, User])
-
-    case apply(Ezagent.Kind, :spawn, [user_module, %{uri: member_uri, initial_caps: MapSet.new()}]) do
-      {:ok, _pid} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
-    end
+    member_uri = unique_user_uri("em-pub-test")
+    :ok = spawn_user(member_uri, MapSet.new())
 
     admin_uri = URI.parse("entity://user/system/admin")
 
@@ -614,6 +725,16 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
     ])
+  end
+
+  defp unique_user_uri(prefix) do
+    URI.parse("entity://user/team-alpha/#{prefix}-#{System.unique_integer([:positive])}")
+  end
+
+  defp unique_session_uri(prefix) do
+    Ezagent.URI.new!(
+      "session://default/team-alpha/#{prefix}-#{System.unique_integer([:positive])}"
+    )
   end
 
   defp wait_for_new_inner_pid(_sup_pid, _old_pid, 0), do: {:error, :timeout}
