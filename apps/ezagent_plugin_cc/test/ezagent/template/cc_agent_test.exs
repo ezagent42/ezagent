@@ -503,6 +503,47 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
     end
   end
 
+  # config_dir promotion (Allen 2026-06-03) — PR-F lazy migration. Agents
+  # SEEDED before the rename persisted `respawn_template_data` carrying the
+  # OLD `"claude_config_dir"` key. On a cold restart `ensure_subprocess_alive/2`
+  # feeds that persisted data straight into the build path whose
+  # `reject_stale_config_dir_data_key!/1` FAIL-LOUDS → the agent crash-loops
+  # and can never respawn its PTY (the 传话游戏 relay "no reply" bug,
+  # 2026-06-04). The fix migrates the legacy key forward AT the rehydration
+  # boundary so the fail-loud reject stays intact for fresh/validate paths
+  # while pre-rename persisted agents boot. Regression test
+  # (feedback_e2e_failure_earns_unit_test) for the pure migrator.
+  describe "migrate_legacy_config_dir_key/1 — PR-F cold-restart forward migration" do
+    test "renames a lone legacy claude_config_dir → config_dir (and drops the legacy key)" do
+      migrated = CcAgent.migrate_legacy_config_dir_key(%{"claude_config_dir" => "/sandbox/.claude"})
+
+      assert migrated == %{"config_dir" => "/sandbox/.claude"}
+      # the migrated map must NOT trip the stale-key fail-loud reject.
+      refute Map.has_key?(migrated, "claude_config_dir")
+    end
+
+    test "preserves the new config_dir and drops legacy when BOTH are present" do
+      migrated =
+        CcAgent.migrate_legacy_config_dir_key(%{
+          "claude_config_dir" => "/old/.claude",
+          "config_dir" => "/new/.claude"
+        })
+
+      # the current contract key wins; the legacy duplicate is removed.
+      assert migrated == %{"config_dir" => "/new/.claude"}
+    end
+
+    test "leaves a map with only the new config_dir unchanged" do
+      tmpl = %{"config_dir" => "/new/.claude", "cwd" => "/work"}
+      assert CcAgent.migrate_legacy_config_dir_key(tmpl) == tmpl
+    end
+
+    test "leaves a map with neither key unchanged" do
+      tmpl = %{"cwd" => "/work", "class" => "cc.agent"}
+      assert CcAgent.migrate_legacy_config_dir_key(tmpl) == tmpl
+    end
+  end
+
   # PTY-orphan-restart 2026-05-26 round-2 (codex finding #1) — the
   # demand-spawn race window. If a chat-router demand-spawn brings up
   # the Agent Kind WITHOUT a PtyServer (the chat router doesn't know
