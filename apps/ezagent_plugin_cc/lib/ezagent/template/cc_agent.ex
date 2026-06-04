@@ -1238,6 +1238,32 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   defp reject_stale_config_dir_data_key!(_), do: :ok
 
+  # config_dir promotion (Allen 2026-06-03) — PR-F lazy FORWARD migration.
+  # `reject_stale_config_dir_data_key!/1` correctly fail-louds on a stale
+  # `"claude_config_dir"` arriving on the FRESH create/validate path (a code-level
+  # misconfiguration). But agents SEEDED before the rename persisted their
+  # `respawn_template_data` with the old key; on a cold restart that persisted data
+  # is replayed verbatim through the same build path, so the fail-loud would crash-
+  # loop a legitimate pre-rename agent forever (the 传话游戏 relay "no reply" bug,
+  # 2026-06-04). This migrates the legacy key forward — applied ONLY at the
+  # rehydration boundary (`ensure_subprocess_alive/2`), NOT on the fresh path — so
+  # persisted agents boot while a genuinely misconfigured fresh template still
+  # fails loud. Schema-evolution of persisted data, not a back-compat shim
+  # (cf. PR-4 cold-restart state normalization).
+  #
+  # The current contract key wins: if BOTH keys are present the new `"config_dir"`
+  # is kept and the legacy duplicate is dropped.
+  @doc false
+  @spec migrate_legacy_config_dir_key(map()) :: map()
+  def migrate_legacy_config_dir_key(tmpl) when is_map(tmpl) do
+    if Map.has_key?(tmpl, "claude_config_dir") do
+      {legacy, rest} = Map.pop(tmpl, "claude_config_dir")
+      Map.put_new(rest, "config_dir", legacy)
+    else
+      tmpl
+    end
+  end
+
   @doc false
   # codex review of the PR-1 hardening (#233) — resolve the `claude`
   # executable to an ABSOLUTE PATH via `System.find_executable/1`.
@@ -1580,6 +1606,12 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # (`feedback_let_it_crash_no_workarounds`).
   @impl Ezagent.Kind.Template
   def ensure_subprocess_alive(%URI{} = agent_uri, respawn_data) when is_map(respawn_data) do
+    # PR-F — forward-migrate persisted respawn data from agents seeded BEFORE the
+    # `claude_config_dir` → `config_dir` rename, so the downstream build path's
+    # fail-loud stale-key reject doesn't crash-loop a legitimate pre-rename agent
+    # on cold restart. The fresh create/validate paths keep the fail-loud.
+    respawn_data = migrate_legacy_config_dir_key(respawn_data)
+
     cond do
       pty_server_alive?(agent_uri) ->
         :ok
