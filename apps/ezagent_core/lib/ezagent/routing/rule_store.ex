@@ -10,7 +10,7 @@ defmodule Ezagent.Routing.RuleStore do
 
   ```
   id            integer primary key
-  table_name    string  (e.g. "EzagentDomainChat.Routing.MentionRouting")
+  table_name    string  (e.g. "EzagentDomainInstanceMessage.Routing.MentionRouting")
   matcher_data  text    (Jason-encoded matcher AST per Ezagent.Routing.Matcher.to_json/1)
   receivers     text    (Jason-encoded [String.t()] of receiver URIs)
   created_by    string  (URI of admin who added; nil for system-default)
@@ -284,7 +284,7 @@ defmodule Ezagent.Routing.RuleStore do
   Replace a rule's receivers + set its `enabled` flag in place.
 
   Used by the mention-gated-routing migration
-  (`EzagentDomainChat.DefaultRules`) to migrate an existing persisted
+  (`EzagentDomainInstanceMessage.DefaultRules`) to migrate an existing persisted
   `system_default` row's receivers without deleting + re-seeding it
   (which would lose the row id and its `created_at`).
 

@@ -186,7 +186,7 @@ def data_owner({:within_session, _} = t), do: {:scope, elem(t, 0), elem(t, 1)}
 
 Rationale: the User's identity data (their cap set) is owned by the User themself; a User may grant caps from their own holding to another User they trust. An Agent is owned by its spawning principal (the human or orchestrator that ran `Agent.spawn/4`), so the spawner can grant caps to the agent or revoke them. If lineage is unknown (e.g. bootstrap-time admin Agent), default to the agent itself owning its data (which means only system-admin can grant on it because the agent can't legitimately self-grant in the bootstrap path).
 
-**`Ezagent.Behavior.Chat`** (`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:60`) — exposes `:send`, `:receive`, `:join`, `:leave`, `:set_working_copy`; registered on Session (for first four actions) and User/Agent (for `:receive`) (`apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:453-461`):
+**`Ezagent.Behavior.Chat`** (`apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:60`) — exposes `:send`, `:receive`, `:join`, `:leave`, `:set_working_copy`; registered on Session (for first four actions) and User/Agent (for `:receive`) (`apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/application.ex:453-461`):
 
 ```elixir
 def data_owner(%URI{scheme: "session"} = uri) do
@@ -219,7 +219,7 @@ def data_owner({:within_workspace, w_uri}), do: {:scope, :within_workspace, w_ur
 
 Rationale: a workspace is multi-admin by design; any workspace admin can grant workspace-management caps. The admin status is itself a `Behavior.Workspace` cap on the workspace, scoped by membership (see OQ-OWN-1 for whether to upgrade this to a single `workspace_owner_uri`).
 
-**`Ezagent.Behavior.Routing`** (`apps/ezagent_core/lib/ezagent/behavior/routing.ex:62-69`) — exposes `:add_rule`, `:delete_rule`, `:disable_rule`, `:enable_rule`; registered on Workspace (`apps/ezagent_domain_workspace/lib/ezagent_domain_workspace/application.ex:54-56`), Session (`apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:471-473`), and System (`apps/ezagent_core/lib/ezagent_core/application.ex:149-152`):
+**`Ezagent.Behavior.Routing`** (`apps/ezagent_core/lib/ezagent/behavior/routing.ex:62-69`) — exposes `:add_rule`, `:delete_rule`, `:disable_rule`, `:enable_rule`; registered on Workspace (`apps/ezagent_domain_workspace/lib/ezagent_domain_workspace/application.ex:54-56`), Session (`apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/application.ex:471-473`), and System (`apps/ezagent_core/lib/ezagent_core/application.ex:149-152`):
 
 ```elixir
 def data_owner(%URI{scheme: "workspace"}),    do: :any         # workspace admin grants
@@ -232,7 +232,7 @@ def data_owner({:within_workspace, w}),        do: {:scope, :within_workspace, w
 
 Rationale: a routing rule on a workspace is workspace-scoped data; on a session, the session-owner is the grantor; on `system://routing/default` is system-scoped (no per-instance owner, only bootstrap admin can grant).
 
-**`Ezagent.Behavior.Template`** (`apps/ezagent_domain_chat/lib/ezagent/behavior/template.ex:128`) — exposes `:read`, `:write`, `:instantiate`, `:fork`; registered on AgentTemplate + SessionTemplate (`apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:499-502`):
+**`Ezagent.Behavior.Template`** (`apps/ezagent_domain_instance_message/lib/ezagent/behavior/template.ex:128`) — exposes `:read`, `:write`, `:instantiate`, `:fork`; registered on AgentTemplate + SessionTemplate (`apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/application.ex:499-502`):
 
 ```elixir
 def data_owner(%URI{scheme: "template"} = uri) do
@@ -249,11 +249,11 @@ Rationale: a Template is owned by whoever wrote it; that owner can grant `:read`
 
 ### 3.4 Session.owner lookup — what PR-OWN-2 adds
 
-There is **no `Session.owner/1` function in the codebase today** (verified via `grep` against `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex`). Session is spawned with `owner_uri` (`apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:121`) but the value is not stored in any retrievable slice. PR-OWN-2 introduces the lookup, with three implementation options ranked by preference:
+There is **no `Session.owner/1` function in the codebase today** (verified via `grep` against `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex`). Session is spawned with `owner_uri` (`apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:121`) but the value is not stored in any retrievable slice. PR-OWN-2 introduces the lookup, with three implementation options ranked by preference:
 
 - **(a)** Add `:owner_uri` field to the `:chat` slice initialised at spawn (cheapest — `Behavior.Chat.init_slice/1` already runs at every Session spawn; one line addition).
 - **(b)** Add a dedicated `Ezagent.Entity.Session` slice carrying `{owner_uri, created_at}` — cleaner conceptually but requires a new Behavior or extending an existing one.
-- **(c)** Derive from the URI segment (`derive_session_uri/3` at `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:286-298` encodes owner_name in the URI itself: `session://<class>/<workspace>/<owner_name>-<template_name>`) — works but requires reverse-lookup to a `%URI{}` (owner_name is a display segment, not a full URI).
+- **(c)** Derive from the URI segment (`derive_session_uri/3` at `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:286-298` encodes owner_name in the URI itself: `session://<class>/<workspace>/<owner_name>-<template_name>`) — works but requires reverse-lookup to a `%URI{}` (owner_name is a display segment, not a full URI).
 
 PR-OWN-2 picks **(a)** because it's a one-line slice addition that doesn't fight the existing spawn flow. `Session.owner/1` becomes a Kind state read via `Ezagent.Kind.Runtime.get_slice/2` (already used by other lookups). If a future SPEC introduces a dedicated Session entity module, the lookup can migrate without breaking `Behavior.Chat.data_owner/1`.
 
@@ -454,7 +454,7 @@ Each PR is independently shippable (compiles, tests pass, no behavior change unl
 **Changes:**
 - Add `:owner_uri` field to `Behavior.Chat.init_slice/1` (one line — `Map.put(slice, :owner_uri, Map.get(args, :owner_uri))`).
 - Add `Ezagent.Entity.Session.owner/1` public function that does `Ezagent.Kind.Runtime.get_slice(session_uri, :chat) |> Map.get(:owner_uri)`.
-- Wire `Session.spawn_from_template/2` to pass `owner_uri` into the Chat slice (already has the value — `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:121`).
+- Wire `Session.spawn_from_template/2` to pass `owner_uri` into the Chat slice (already has the value — `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:121`).
 - Declare `Behavior.Chat.data_owner/1` per §3.3 (uses `Session.owner/1`).
 - Wire `Behavior.Identity.invoke(:grant_cap, ...)` to enforce §5.2 (the structural rule) — but ONLY for needed caps whose Behavior has `data_owner/1` declared. Behaviors without `data_owner/1` keep the old admin-cap check until they migrate (incremental rollout).
 - **r4 fix (codex CRITICAL)**: update `Ezagent.Identity.grant_cap/3` facade at `apps/ezagent_domain_identity/lib/ezagent/identity.ex:149-164` to pass the **granter's REAL caps** via `Ezagent.Behavior.Identity.list_caps(granter_uri)` instead of the current hardcoded `Ezagent.Entity.User.admin_caps()`. The §5.2 pre-check is moot if the facade always sends admin caps — every grant trivially passes regardless of what granter actually holds. Backward compat: existing callers (`mix ezagent.user.create`, Admin LV grant button, all currently invoked with `granter_uri = admin_uri`) keep working because that admin DOES hold admin caps; new caller paths that pass a non-admin `granter_uri` now correctly hit the §5.2 wildcard pre-check + the data-owner rule. Acceptance test (e) added below.

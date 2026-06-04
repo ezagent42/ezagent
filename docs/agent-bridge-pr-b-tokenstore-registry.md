@@ -22,6 +22,6 @@ This keeps existing cc bridge callers working while moving the shared
 stateful primitives into a plugin-independent domain app.
 
 The shims are documented as deprecated without compiler-level
-`@deprecated` attributes in PR-B so existing `domain_chat` and
+`@deprecated` attributes in PR-B so existing `domain_instance_message` and
 LiveView call sites do not introduce new warning-as-errors failures
 before PR-D/PR-E migrate those call sites.

@@ -1,16 +1,16 @@
 # ExternalMirror Domain — session-data mirroring to plugin-supplied surfaces
 
 **Status:** r3 (FINAL, supersedes r1 and r2). 2026-05-25.
-**Tier:** new Domain app `apps/ezagent_domain_external_mirror/` + amendments to `apps/ezagent_domain_chat/` (Publisher behaviour on Session Kind).
+**Tier:** new Domain app `apps/ezagent_domain_external_mirror/` + amendments to `apps/ezagent_domain_instance_message/` (Publisher behaviour on Session Kind).
 **Trigger:** Allen 2026-05-24 (Feishu) — "请规划 ExternalMirror 的 Domain。注意 game 只是举例方便你理解这个场景, 具体 external 是什么形式 (game, chat, 等等) 由 plugin 来决定, 这个 domain 只负责 session 数据的同步, 具体数据被怎么使用 (网页、ws 通讯等) 应该是透明的". Plus the resolved three-layer mental model (publisher / adapter / binding) Allen articulated 2026-05-24 evening on Feishu.
 **Predecessors (all merged on main):**
-- `docs/superpowers/specs/2026-05-24-caps-data-ownership-v2.md` (PRs #306 + #307 + #308 + #309 + #310) — the `data_owner/1` framework r3's bind cap is structurally derived from. **`Ezagent.Behavior.Chat.data_owner/1` and `Ezagent.Entity.Session.owner/1` are live** (`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:846` and `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:290`). `Ezagent.Behavior.IdentityAdmin.invoke(:grant_cap, ...)` is the single grant entry-point with §5.2 enforcement (`apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:170-220`).
+- `docs/superpowers/specs/2026-05-24-caps-data-ownership-v2.md` (PRs #306 + #307 + #308 + #309 + #310) — the `data_owner/1` framework r3's bind cap is structurally derived from. **`Ezagent.Behavior.Chat.data_owner/1` and `Ezagent.Entity.Session.owner/1` are live** (`apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:846` and `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:290`). `Ezagent.Behavior.IdentityAdmin.invoke(:grant_cap, ...)` is the single grant entry-point with §5.2 enforcement (`apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:170-220`).
 - `docs/superpowers/specs/2026-05-24-notification-architecture-v2.md` (PR-N1 landed; producer migrations PR-N2…N5 in flight). Defines the `Ezagent.SliceChange` primitive r3's Publisher layer sits on top of.
 - SKILL P1 (plugin isolation north star); P3 (single source of truth); P9 (reads-what-data → tier); P11 (plugin external integration = Receiver Kind/Behavior on an existing scheme — **never PubSub.subscribe + external write**); P14 (dispatch is the only path between Kinds); P15 (caps narrow by default); P16 (single Kind spawn entry); P18 (no silent drops at user-facing surfaces); P22 (reliability primitives in core; plugin authors cannot bypass); P23 (declare-don't-call plugin contract).
 - Existing one-off this Domain retires:
   - `apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/behavior/feishu_outbound.ex` (311 LOC; the single-tenant `:notify_external` Behavior on Session)
   - `apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/session_binding.ex` (130 LOC; `feishu_session_bindings` table)
-  - `Ezagent.Behavior.Chat`'s `maybe_notify_external/3` opportunistic dispatch (`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:699-720`)
+  - `Ezagent.Behavior.Chat`'s `maybe_notify_external/3` opportunistic dispatch (`apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:699-720`)
 **Companion:** `2026-05-24-external-mirror-domain.zh_cn.md` (Chinese mirror).
 
 ---
@@ -59,7 +59,7 @@ The Feishu plugin mirrors session messages to Lark chats through a one-off path.
 
 1. **A side-join table** — `apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/session_binding.ex` stores `chat_id ↔ session_uri` rows in the `feishu_session_bindings` SQLite table.
 2. **A Session-Kind Behavior** — `apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/behavior/feishu_outbound.ex` registers `:notify_external` against `Ezagent.Entity.Session`. This is the only Behavior in the system that sends bytes to a non-ezagent surface from inside `:invoke`.
-3. **An opportunistic dispatch in `Behavior.Chat`** — `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:699-720`'s `maybe_notify_external/3` looks up whether anyone registered `:notify_external` on the Session Kind and dispatches if so.
+3. **An opportunistic dispatch in `Behavior.Chat`** — `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:699-720`'s `maybe_notify_external/3` looks up whether anyone registered `:notify_external` on the Session Kind and dispatches if so.
 4. **A plugin-side admin LV** — `/plugins/feishu/bindings` for bind/unbind.
 
 This works for Feishu, exactly once. It doesn't compose. The next plugin (Slack, Discord, a game event stream, a web-view mirror, a WS remote-control surface) faces four structural problems:
@@ -91,7 +91,7 @@ Per **P9** (reads-what-data → tier):
 
 A Domain — `apps/ezagent_domain_external_mirror/` — owns:
 
-- The `Ezagent.Behavior.Publisher` behaviour (defined here; **first implementer is `Ezagent.Entity.Session` in `apps/ezagent_domain_chat/`** per Allen's option (a)).
+- The `Ezagent.Behavior.Publisher` behaviour (defined here; **first implementer is `Ezagent.Entity.Session` in `apps/ezagent_domain_instance_message/`** per Allen's option (a)).
 - The `Ezagent.Behavior.ExternalMirror` behaviour on Session Kind (`:bind` / `:unbind` / `:list_bindings`).
 - The `Ezagent.Behavior.ExternalMirrorWorker` behaviour on the per-binding Worker Kind (`:publish`).
 - The `Ezagent.ExternalMirror.AdapterRegistry` and `Ezagent.ExternalMirror.BindingRegistry` (ETS read-caches).
@@ -110,7 +110,7 @@ Same-VM plugins are trusted code (PR #303 round-5 disposition; Allen approved 20
 
 ### 2.1 Publisher — Session is a structured stream
 
-A **Publisher** is any Kind that exposes a slice-change history with cursor + replay semantics. Defined as a new behaviour `Ezagent.Behavior.Publisher` in `apps/ezagent_domain_external_mirror/`. Per Allen's option (a), the first implementer lives in the publishing domain (`Ezagent.Entity.Session` in `apps/ezagent_domain_chat/`) — NOT in an external-mirror buffer that copies session events. Sessions ARE publishers.
+A **Publisher** is any Kind that exposes a slice-change history with cursor + replay semantics. Defined as a new behaviour `Ezagent.Behavior.Publisher` in `apps/ezagent_domain_external_mirror/`. Per Allen's option (a), the first implementer lives in the publishing domain (`Ezagent.Entity.Session` in `apps/ezagent_domain_instance_message/`) — NOT in an external-mirror buffer that copies session events. Sessions ARE publishers.
 
 ```elixir
 defmodule Ezagent.Behavior.Publisher do
@@ -803,7 +803,7 @@ This section answers "what concretely changes in core / `domain.chat` / the new 
 
 ### 8.1 Session Kind implements `Ezagent.Behavior.Publisher`
 
-`apps/ezagent_domain_chat/lib/ezagent/entity/session.ex` gains:
+`apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex` gains:
 
 - `@behaviour Ezagent.Behavior.Publisher` declaration.
 - `:publisher_history` slice (bounded ring; default 100 events or 1 hour — see OQ-EM-A) initialized in `init/1`.
@@ -1036,10 +1036,10 @@ pattern in §6.1 + §3 fails compile.
 
 ### PR-EM-0 — Publisher behaviour + Session Kind implementation + retention policy
 
-**Owner:** `apps/ezagent_domain_chat/`.
+**Owner:** `apps/ezagent_domain_instance_message/`.
 
 - Define `Ezagent.Behavior.Publisher` behaviour in `apps/ezagent_domain_external_mirror/` (the SPEC home; behaviour lives in the new Domain even though Session is in `domain.chat`).
-- `Ezagent.Entity.Session` (`apps/ezagent_domain_chat/lib/ezagent/entity/session.ex`) implements `@behaviour Publisher`:
+- `Ezagent.Entity.Session` (`apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex`) implements `@behaviour Publisher`:
   - `:publisher_history` slice added to `init/1`.
   - `handle_info({:slice_changed, ...})` clause appends to ring with monotonic cursor.
   - `subscribe_from/3`, `snapshot/1`, `history/3` exported as Kind GenServer calls.
@@ -1047,7 +1047,7 @@ pattern in §6.1 + §3 fails compile.
 - Retention default: 100 events per session.
 - **Depends on:** PR-N1 (SliceChange hook landed). Inert until SliceChange is `:on`.
 
-**Acceptance:** new tests in `apps/ezagent_domain_chat/test/` cover Publisher API on a spawned session — subscribe_from latest receives next mutation's event; subscribe_from earliest replays retained history; history(from, to) returns the right window; cursor out-of-window raises.
+**Acceptance:** new tests in `apps/ezagent_domain_instance_message/test/` cover Publisher API on a spawned session — subscribe_from latest receives next mutation's event; subscribe_from earliest replays retained history; history(from, to) returns the right window; cursor out-of-window raises.
 
 **LOC est:** ~250.
 
@@ -1055,7 +1055,7 @@ pattern in §6.1 + §3 fails compile.
 
 **Owner:** new `apps/ezagent_domain_external_mirror/`.
 
-- Create app with standard umbrella shape; deps `:ezagent_core` + `:ezagent_domain_chat` only.
+- Create app with standard umbrella shape; deps `:ezagent_core` + `:ezagent_domain_instance_message` only.
 - Define `Ezagent.ExternalMirror.AdapterRegistry` (ETS, owned by `EzagentCore.EtsOwner` — extend the `@tables` list).
 - Define `Ezagent.ExternalMirror.BindingRegistry` (ETS; reverse-lookup cache).
 - Define `Ezagent.ExternalMirror` facade module (read-only helpers per §4.4).

@@ -30,7 +30,7 @@ defmodule EzagentPluginCc.Application do
     agent via the standard add-template chain.
   - `agent_flavors/0` — flavor `"cc"` → `{Ezagent.Entity.Agent,
     Ezagent.PluginCc.Template.CcAgent}`. Consumed by
-    `Ezagent.AgentFlavorRegistry`; PR-3 migrates the domain_chat agent
+    `Ezagent.AgentFlavorRegistry`; PR-3 migrates the domain_instance_message agent
     resolver onto it, replacing the hardcoded `kind_module_from_flavor`
     map. The cc Agent Kind is the shared `Ezagent.Entity.Agent` (cc
     flavor lives in the `entity://agent/<ws>/cc_<name>` name prefix per
@@ -56,7 +56,7 @@ defmodule EzagentPluginCc.Application do
   full cmd string and calling `Ezagent.Domain.Pty.start/2`.
 
   `Ezagent.Behavior.Pty` Agent-Kind registration moved to
-  `EzagentDomainChat.Application.start/2` in PR-B; `EzagentPluginCc`
+  `EzagentDomainInstanceMessage.Application.start/2` in PR-B; `EzagentPluginCc`
   has no PTY-Behavior registration of its own — hence `behaviors/0`
   keeps the `use Ezagent.Plugin` default `[]`.
   """
@@ -123,14 +123,14 @@ defmodule EzagentPluginCc.Application do
 
     # 2026-05-31 orchestrator-startup-atomicity §4 — the test-only
     # `session://default/system/main` seed runs HERE (not in
-    # `EzagentDomainChat.Application.start/2`) because the atomic
+    # `EzagentDomainInstanceMessage.Application.start/2`) because the atomic
     # `create_session/3` rolls `main` back when the orchestrator can't be
     # ensured. The orchestrator needs the `"cc"` agent flavor this plugin
     # registers; chat boots before us, so seeding at chat-boot always hit
     # `{:unknown_flavor, "cc"}` and tore `main` down. By `after_boot`,
     # `agent_flavors/0` has published `"cc"`, so the orchestrator spawns
     # and `main` persists. Same boot-order fix the echo seed uses.
-    _ = EzagentDomainChat.Application.maybe_seed_main_session_for_tests()
+    _ = EzagentDomainInstanceMessage.Application.maybe_seed_main_session_for_tests()
     :ok
   end
 

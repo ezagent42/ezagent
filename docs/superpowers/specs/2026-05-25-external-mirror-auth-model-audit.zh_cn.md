@@ -388,7 +388,7 @@ PR-EM-AUDIT (实现 PR) 把 `Ezagent.ExternalMirror.AdapterInstall.maybe_install
 | **17** | **读侧 `list_bindings/2` unauthorized** (NEW 按 codex r1 audit-SPEC HIGH-4) | 无 `:list_bindings` cap 的 caller 调 `Ezagent.ExternalMirror.list_bindings/2` → 返回 `{:error, :unauthorized}` (dispatch §5.5 拒)；无 binding 元组泄漏 | PR #317 r2 HIGH-2 + r3 HIGH-1 |
 | **18** | **Cap subject CapabilityRegistry 可见性** (NEW 按 codex r1 audit-SPEC HIGH-4) | AdapterInstall 为 adapter "test_em_a" 触发后, `CapabilityRegistry.list_subjects(Ezagent.Entity.Session)` 包含 `(Session, allow_test_em_a, _)` 条目 — admin 可通过正常 grant 路径授予 per-adapter cap | PR #317 r2 HIGH-3 |
 | **19** | **Unique-conflict 返回 changeset 不 raise** (NEW 按 codex r1 audit-SPEC HIGH-4) | 为 `(S, A, T)` insert 一个 `BindingRow`；为同 `(S, A, T)` 元组 insert **第二**个 — `BindingRow.insert/1` 返回 `{:error, %Ecto.Changeset{} = cs}` errors keyword 含 `constraint: :unique` (**不**是 raised `Ecto.ConstraintError`); `do_bind` 包装分类为 `{:ok, :idempotent_unique_conflict}` (按 §4.2) | PR #317 r3 HIGH-2 |
-| **20** | **BootReconciler retry 在 session spawn handler 缺失下存活** (NEW 按 codex r1 audit-SPEC HIGH-4) | 在 `:ezagent_domain_chat` 注册 `session://` spawn handler **之前** 有 `external_mirror_bindings` 行的状态下 boot; BootReconciler 初始 pass 对每行返回 `{:retry, _}`; 之后 (测试 setup 中) chat 注册其 handler; reconciler 下次 retry pass 成功; 所有行在 bounded retry 预算内被对账 | PR #317 r4 HIGH-1 |
+| **20** | **BootReconciler retry 在 session spawn handler 缺失下存活** (NEW 按 codex r1 audit-SPEC HIGH-4) | 在 `:ezagent_domain_instance_message` 注册 `session://` spawn handler **之前** 有 `external_mirror_bindings` 行的状态下 boot; BootReconciler 初始 pass 对每行返回 `{:retry, _}`; 之后 (测试 setup 中) chat 注册其 handler; reconciler 下次 retry pass 成功; 所有行在 bounded retry 预算内被对账 | PR #317 r4 HIGH-1 |
 
 ### 6.3 测试在返回值之外断言什么
 

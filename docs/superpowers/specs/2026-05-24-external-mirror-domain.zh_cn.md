@@ -1,16 +1,16 @@
 # ExternalMirror Domain — session 数据镜像到 plugin 提供的外部 surface
 
 **状态:** r3 (最终版, 取代 r1 和 r2). 2026-05-25.
-**层级:** 新 Domain app `apps/ezagent_domain_external_mirror/` + `apps/ezagent_domain_chat/` 加 Publisher behaviour (Session Kind 实现).
+**层级:** 新 Domain app `apps/ezagent_domain_external_mirror/` + `apps/ezagent_domain_instance_message/` 加 Publisher behaviour (Session Kind 实现).
 **触发:** Allen 2026-05-24 (Feishu) — "请规划 ExternalMirror 的 Domain。注意 game 只是举例方便你理解这个场景, 具体 external 是什么形式 (game, chat, 等等) 由 plugin 来决定, 这个 domain 只负责 session 数据的同步, 具体数据被怎么使用 (网页、ws 通讯等) 应该是透明的". 加上 Allen 当晚 Feishu 上拍板的三层心智模型 (publisher / adapter / binding).
 **前置 (全部已 merge 到 main):**
-- `docs/superpowers/specs/2026-05-24-caps-data-ownership-v2.md` (PR #306 + #307 + #308 + #309 + #310) — r3 的 bind cap 结构性派生自这套 `data_owner/1` 框架。**`Ezagent.Behavior.Chat.data_owner/1` 和 `Ezagent.Entity.Session.owner/1` 已经存在** (`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:846` 和 `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:290`). `Ezagent.Behavior.IdentityAdmin.invoke(:grant_cap, ...)` 是单一 grant 入口, §5.2 已经在执行 (`apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:170-220`).
+- `docs/superpowers/specs/2026-05-24-caps-data-ownership-v2.md` (PR #306 + #307 + #308 + #309 + #310) — r3 的 bind cap 结构性派生自这套 `data_owner/1` 框架。**`Ezagent.Behavior.Chat.data_owner/1` 和 `Ezagent.Entity.Session.owner/1` 已经存在** (`apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:846` 和 `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:290`). `Ezagent.Behavior.IdentityAdmin.invoke(:grant_cap, ...)` 是单一 grant 入口, §5.2 已经在执行 (`apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:170-220`).
 - `docs/superpowers/specs/2026-05-24-notification-architecture-v2.md` (PR-N1 已落地; 生产者迁移 PR-N2…N5 在进行). 定义了 `Ezagent.SliceChange` 原语, r3 的 Publisher 层在它之上构建.
 - SKILL P1 (plugin 隔离北极星); P3 (单一真实源); P9 (读什么数据 → 层级); P11 (plugin 外部集成 = Receiver Kind/Behavior 在已有 scheme 上 — **绝不 PubSub.subscribe + 外部写**); P14 (dispatch 是 Kind 间唯一路径); P15 (cap 默认窄); P16 (Kind 单一 spawn 入口); P18 (用户面无静默丢失); P22 (可靠性原语在 core; plugin 作者不能绕过); P23 (declare-don't-call plugin 合约).
 - 本 Domain 退役的一次性代码:
   - `apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/behavior/feishu_outbound.ex` (311 LOC; Session 上的单租户 `:notify_external` Behavior)
   - `apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/session_binding.ex` (130 LOC; `feishu_session_bindings` 表)
-  - `Ezagent.Behavior.Chat` 的 `maybe_notify_external/3` 投机 dispatch (`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:699-720`)
+  - `Ezagent.Behavior.Chat` 的 `maybe_notify_external/3` 投机 dispatch (`apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:699-720`)
 **双语对照:** `2026-05-24-external-mirror-domain.md` (英文版).
 
 ---
@@ -59,7 +59,7 @@ Feishu plugin 通过一条一次性路径把 session 消息镜像到 Lark chat. 
 
 1. **side-join 表** — `apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/session_binding.ex` 在 `feishu_session_bindings` SQLite 表存 `chat_id ↔ session_uri` 行.
 2. **Session-Kind Behavior** — `apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/behavior/feishu_outbound.ex` 在 `Ezagent.Entity.Session` 注册 `:notify_external`. 系统里唯一一个从 `:invoke` 里发字节到非 ezagent surface 的 Behavior.
-3. **`Behavior.Chat` 里的投机 dispatch** — `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:699-720` 的 `maybe_notify_external/3` 查 Session Kind 上有没有 `:notify_external` 注册并 dispatch.
+3. **`Behavior.Chat` 里的投机 dispatch** — `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:699-720` 的 `maybe_notify_external/3` 查 Session Kind 上有没有 `:notify_external` 注册并 dispatch.
 4. **plugin 自己的 admin LV** — `/plugins/feishu/bindings` 用来 bind/unbind.
 
 这套对 Feishu 工作, 恰好一次. 不能组合. 下一个 plugin (Slack, Discord, game event 流, web-view mirror, WS 远控 surface) 面临四个结构性问题:
@@ -91,7 +91,7 @@ Domain 拥有层级 wiring (Publisher behaviour + Binding GenServer 骨架 + Ada
 
 新 Domain — `apps/ezagent_domain_external_mirror/` — 拥有:
 
-- `Ezagent.Behavior.Publisher` behaviour (这里定义; **首个实现是 `Ezagent.Entity.Session` 在 `apps/ezagent_domain_chat/`** 按 Allen 选项 (a)).
+- `Ezagent.Behavior.Publisher` behaviour (这里定义; **首个实现是 `Ezagent.Entity.Session` 在 `apps/ezagent_domain_instance_message/`** 按 Allen 选项 (a)).
 - Session Kind 上的 `Ezagent.Behavior.ExternalMirror` behaviour (`:bind` / `:unbind` / `:list_bindings`).
 - per-binding Worker Kind 上的 `Ezagent.Behavior.ExternalMirrorWorker` behaviour (`:publish`).
 - `Ezagent.ExternalMirror.AdapterRegistry` 和 `Ezagent.ExternalMirror.BindingRegistry` (ETS 读 cache).
@@ -110,7 +110,7 @@ plugin 每个外部 surface 缩到两个模块: 一个 `Adapter` (无状态 wire
 
 ### 2.1 Publisher — Session 是结构化流
 
-**Publisher** 是任何暴露 slice-change 历史 + cursor + replay 语义的 Kind. 定义为新 behaviour `Ezagent.Behavior.Publisher` 在 `apps/ezagent_domain_external_mirror/`. 按 Allen 选项 (a), 首个实现住在发布 domain (`Ezagent.Entity.Session` 在 `apps/ezagent_domain_chat/`) — NOT 在拷贝 session event 的外部镜像缓冲. Session 就是 publisher.
+**Publisher** 是任何暴露 slice-change 历史 + cursor + replay 语义的 Kind. 定义为新 behaviour `Ezagent.Behavior.Publisher` 在 `apps/ezagent_domain_external_mirror/`. 按 Allen 选项 (a), 首个实现住在发布 domain (`Ezagent.Entity.Session` 在 `apps/ezagent_domain_instance_message/`) — NOT 在拷贝 session event 的外部镜像缓冲. Session 就是 publisher.
 
 ```elixir
 defmodule Ezagent.Behavior.Publisher do
@@ -714,7 +714,7 @@ Binding 通过 session URI 的 workspace segment 是 tenant-scoped. Domain 在 b
 
 ### 8.1 Session Kind 实现 `Ezagent.Behavior.Publisher`
 
-`apps/ezagent_domain_chat/lib/ezagent/entity/session.ex` 增加:
+`apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex` 增加:
 
 - `@behaviour Ezagent.Behavior.Publisher` 声明.
 - `:publisher_history` slice (有界环; default 100 events 或 1 hour — 见 OQ-EM-A) 在 `init/1` 初始化.
@@ -841,10 +841,10 @@ SliceChange subscribe + binding.init 推迟到 `announce_ready`
 
 ### PR-EM-0 — Publisher behaviour + Session Kind 实现 + retention 策略
 
-**Owner:** `apps/ezagent_domain_chat/`.
+**Owner:** `apps/ezagent_domain_instance_message/`.
 
 - 在 `apps/ezagent_domain_external_mirror/` 定义 `Ezagent.Behavior.Publisher` behaviour (SPEC 家; behaviour 住新 Domain, 即使 Session 在 `domain.chat`).
-- `Ezagent.Entity.Session` (`apps/ezagent_domain_chat/lib/ezagent/entity/session.ex`) 实现 `@behaviour Publisher`:
+- `Ezagent.Entity.Session` (`apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex`) 实现 `@behaviour Publisher`:
   - `:publisher_history` slice 加到 `init/1`.
   - `handle_info({:slice_changed, ...})` clause 追加到环带单调 cursor.
   - `subscribe_from/3`, `snapshot/1`, `history/3` 暴露为 Kind GenServer call.
@@ -852,7 +852,7 @@ SliceChange subscribe + binding.init 推迟到 `announce_ready`
 - Retention default: 100 events per session.
 - **依赖:** PR-N1 (SliceChange hook 落地). 在 SliceChange 是 `:on` 前 inert.
 
-**验收:** `apps/ezagent_domain_chat/test/` 新测覆盖 spawn 的 session 上 Publisher API — subscribe_from latest 收下个 mutation 的 event; subscribe_from earliest 重放保留历史; history(from, to) 返回正确窗口; cursor 越界 raise.
+**验收:** `apps/ezagent_domain_instance_message/test/` 新测覆盖 spawn 的 session 上 Publisher API — subscribe_from latest 收下个 mutation 的 event; subscribe_from earliest 重放保留历史; history(from, to) 返回正确窗口; cursor 越界 raise.
 
 **LOC 估:** ~250.
 
@@ -860,7 +860,7 @@ SliceChange subscribe + binding.init 推迟到 `announce_ready`
 
 **Owner:** 新 `apps/ezagent_domain_external_mirror/`.
 
-- 创建 app 标准 umbrella 形态; deps `:ezagent_core` + `:ezagent_domain_chat` 只.
+- 创建 app 标准 umbrella 形态; deps `:ezagent_core` + `:ezagent_domain_instance_message` 只.
 - 定义 `Ezagent.ExternalMirror.AdapterRegistry` (ETS, `EzagentCore.EtsOwner` 拥有 — 扩展 `@tables` 列).
 - 定义 `Ezagent.ExternalMirror.BindingRegistry` (ETS; 反向查询 cache).
 - 定义 `Ezagent.ExternalMirror` facade 模块 (只读 helper 按 §4.4).

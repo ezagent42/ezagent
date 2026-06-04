@@ -14,7 +14,9 @@ defmodule Ezagent.Runtime.PidFileTest do
   alias Ezagent.Runtime.PidFile
 
   setup do
-    tmp = Path.join(System.tmp_dir!(), "ezagent-pidfile-test-#{System.unique_integer([:positive])}")
+    tmp =
+      Path.join(System.tmp_dir!(), "ezagent-pidfile-test-#{System.unique_integer([:positive])}")
+
     File.mkdir_p!(tmp)
     prev_home = System.get_env("EZAGENT_HOME")
     prev_profile = System.get_env("EZAGENT_PROFILE")
@@ -22,8 +24,14 @@ defmodule Ezagent.Runtime.PidFileTest do
     System.put_env("EZAGENT_PROFILE", "pidfile-test")
 
     on_exit(fn ->
-      if prev_home, do: System.put_env("EZAGENT_HOME", prev_home), else: System.delete_env("EZAGENT_HOME")
-      if prev_profile, do: System.put_env("EZAGENT_PROFILE", prev_profile), else: System.delete_env("EZAGENT_PROFILE")
+      if prev_home,
+        do: System.put_env("EZAGENT_HOME", prev_home),
+        else: System.delete_env("EZAGENT_HOME")
+
+      if prev_profile,
+        do: System.put_env("EZAGENT_PROFILE", prev_profile),
+        else: System.delete_env("EZAGENT_PROFILE")
+
       File.rm_rf!(tmp)
     end)
 

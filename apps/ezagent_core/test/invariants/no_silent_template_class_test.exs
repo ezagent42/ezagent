@@ -22,7 +22,7 @@ defmodule Ezagent.Invariants.NoSilentTemplateClassTest do
   1. `Keyword.get(opts, :template_name | :template_class | :class,
      "<literal>")` — the canonical shim that lets every caller skip
      the choice. Catches the production lib site this PR (#366) fixed
-     in `apps/ezagent_domain_chat/lib/ezagent_domain_chat.ex`.
+     in `apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message.ex`.
   2. `defp <name-containing-template>(_), do: "default"` — single-
      clause catch-all returning the banned literal. Mirrors P4 in
      `no_silent_default_workspace_test.exs`.
@@ -113,7 +113,7 @@ defmodule Ezagent.Invariants.NoSilentTemplateClassTest do
     # fixed class by construction (all are GenericSession instances),
     # so this is NOT an operator-choice silent fallback — see the
     # SPEC #366 NOTE in the function for the codex r1 rationale.
-    "apps/ezagent_domain_chat/lib/ezagent/entity/session.ex",
+    "apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex",
     "lib/ezagent/entity/session.ex"
   ]
 
@@ -151,7 +151,7 @@ defmodule Ezagent.Invariants.NoSilentTemplateClassTest do
              "Rewrite each site to `Keyword.fetch!(opts, :template_name)` or a " <>
              "helper that raises ArgumentError with an operator-facing message. " <>
              "Canonical examples:\n" <>
-             "  * `apps/ezagent_domain_chat/lib/ezagent_domain_chat.ex` " <>
+             "  * `apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message.ex` " <>
              "(`require_template_name!/1`)\n" <>
              "  * `apps/ezagent_cli/lib/ezagent_cli/dispatch.ex` " <>
              "(`require_template_class!/3` raises with `--instance-class <class>` hint)"

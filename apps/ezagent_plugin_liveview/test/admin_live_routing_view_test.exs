@@ -24,17 +24,13 @@ defmodule EzagentPluginLiveview.AdminLiveRoutingViewTest do
     Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
 
     # Session-scoped routing rules are validated against the session's
-    # workspace. The rule URIs these tests submit live in `team-alpha`, so
-    # the operator must view the team-alpha session — otherwise the admin
-    # lands in the `system` workspace and every team-alpha matcher_arg /
-    # receiver is rejected as cross-workspace ("Rejected URI"). (post-
-    # lifecycle remediation: the setup never pinned the session workspace
-    # to match the rule URIs.)
+    # workspace. Use the boot-seeded system session so this test focuses
+    # on RoutingView behavior, not workspace/session provisioning.
     conn =
       Phoenix.ConnTest.build_conn()
       |> Plug.Test.init_test_session(%{
         "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
-        "current_workspace_uri" => "workspace://team-alpha"
+        "current_workspace_uri" => "workspace://system"
       })
 
     {:ok, conn: conn}
@@ -111,11 +107,10 @@ defmodule EzagentPluginLiveview.AdminLiveRoutingViewTest do
       render_hook(lv, "switch_view", %{"view" => "routing"})
 
       # V1 UI PR-1 — the RoutingView pickers are scoped to the
-      # session's workspace (session://default/system/main → default).
-      # URIs must be in `default`; pass them via render_submit/2 since
-      # the uri_picker hidden inputs are JS-managed (empty dead-render).
-      receiver = "entity://agent/team-alpha/echo-receiver-#{System.unique_integer([:positive])}"
-      mention_arg = "entity://user/team-alpha/admin"
+      # session's workspace. Use system-scoped URIs because the test
+      # session is `session://default/system/main`.
+      receiver = "entity://agent/system/echo-receiver-#{System.unique_integer([:positive])}"
+      mention_arg = "entity://user/system/admin"
 
       lv
       |> form("#session-routing-add-form", %{
@@ -147,7 +142,7 @@ defmodule EzagentPluginLiveview.AdminLiveRoutingViewTest do
       |> form("#session-routing-add-form", %{
         "rule" => %{"matcher_type" => "mention"}
       })
-      |> render_submit(%{"rule" => %{"matcher_arg" => "entity://user/team-alpha/admin"}})
+      |> render_submit(%{"rule" => %{"matcher_arg" => "entity://user/system/admin"}})
 
       html = render(lv)
       assert html =~ "receiver"
@@ -165,7 +160,7 @@ defmodule EzagentPluginLiveview.AdminLiveRoutingViewTest do
       })
       |> render_submit(%{
         "rule" => %{
-          "matcher_arg" => "entity://user/team-alpha/admin",
+          "matcher_arg" => "entity://user/system/admin",
           "receivers" => ["entity://agent/other-tenant/cc_leak"]
         }
       })
@@ -185,7 +180,7 @@ defmodule EzagentPluginLiveview.AdminLiveRoutingViewTest do
       |> render_submit(%{
         "rule" => %{
           "matcher_arg" => "entity://user/other-tenant/admin",
-          "receivers" => ["entity://agent/team-alpha/echo_default"]
+          "receivers" => ["entity://agent/system/echo_default"]
         }
       })
 
@@ -207,7 +202,7 @@ defmodule EzagentPluginLiveview.AdminLiveRoutingViewTest do
       })
       |> render_submit(%{
         "rule" => %{
-          "matcher_arg" => "entity://user/team-alpha/admin",
+          "matcher_arg" => "entity://user/system/admin",
           "receivers" => ["$session_members"]
         }
       })
@@ -231,7 +226,7 @@ defmodule EzagentPluginLiveview.AdminLiveRoutingViewTest do
       })
       |> render_submit(%{
         "rule" => %{
-          "matcher_arg" => "entity://user/team-alpha/admin",
+          "matcher_arg" => "entity://user/system/admin",
           "receivers" => ["$session_users", "$mentions"]
         }
       })

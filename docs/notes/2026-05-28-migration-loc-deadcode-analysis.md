@@ -154,7 +154,7 @@ SPEC §1.5.7 estimated "~2,480 LOC framework (down from ~5,000 LOC scattered tod
 | App | Pre LOC | Post LOC | Delta | Reduction |
 |---|---|---|---|---|
 | ezagent_core (whole app, includes core Behaviors) | 19,139 | 22,641 | +3,502 | −18.3% |
-| ezagent_domain_chat | 13,590 | 13,381 | −209 | 1.5% |
+| ezagent_domain_instance_message | 13,590 | 13,381 | −209 | 1.5% |
 | ezagent_domain_identity | 4,685 | 4,329 | −356 | 7.6% |
 | ezagent_domain_workspace | 4,007 | 3,885 | −122 | 3.0% |
 | ezagent_domain_external_mirror | 6,267 | 6,376 | +109 | −1.7% |
@@ -184,10 +184,10 @@ This is the surface the SPEC §11 LOC target measures (`apps/*/lib/ezagent/behav
 | ezagent_core/.../behavior/presence.ex | 67 | 73 | +6 |
 | ezagent_core/.../behavior/routing.ex | 236 | 232 | −4 |
 | ezagent_core/.../behavior/sandbox.ex | 746 | 762 | +16 |
-| ezagent_domain_chat/.../behavior/chat.ex | 1,343 | 1,152 | −191 |
-| ezagent_domain_chat/.../behavior/orchestrator_admin.ex | 112 | 125 | +13 |
-| ezagent_domain_chat/.../behavior/template.ex | 747 | 713 | −34 |
-| ezagent_domain_chat/.../behavior/publisher/session_impl.ex | 0 (new) | 613 | +613 |
+| ezagent_domain_instance_message/.../behavior/chat.ex | 1,343 | 1,152 | −191 |
+| ezagent_domain_instance_message/.../behavior/orchestrator_admin.ex | 112 | 125 | +13 |
+| ezagent_domain_instance_message/.../behavior/template.ex | 747 | 713 | −34 |
+| ezagent_domain_instance_message/.../behavior/publisher/session_impl.ex | 0 (new) | 613 | +613 |
 | ezagent_domain_external_mirror/.../behavior/external_mirror.ex | 877 | 920 | +43 |
 | ezagent_domain_external_mirror/.../behavior/external_mirror_worker.ex | 692 | 758 | +66 |
 | ezagent_domain_external_mirror/.../behavior/publisher.ex | 119 | 119 | 0 |

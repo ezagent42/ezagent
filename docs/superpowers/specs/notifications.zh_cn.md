@@ -42,7 +42,7 @@ PR-N1/N2/N3 引入了 SliceChange 模型: slice 变更本身就是 trigger,
 若干 producer 仍直接调用 legacy 路径 —— Workspace.add_member /
 remove_member (`apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:94,124`),
 Identity.grant_cap (`apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:301`),
-Template.fork (`apps/ezagent_domain_chat/lib/ezagent/behavior/template.ex:543`)。
+Template.fork (`apps/ezagent_domain_instance_message/lib/ezagent/behavior/template.ex:543`)。
 PR-N5 是计划中的清扫 sweep,把剩余调用方迁到 SliceChange chokepoint
 并删除 `Notifications.notify/3`。在 PR-N5 落地之前,两条路径都会发出
 通知 —— consumer 可能从任一渠道收到逻辑事件。

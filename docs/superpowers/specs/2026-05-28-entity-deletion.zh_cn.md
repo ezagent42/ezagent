@@ -4,7 +4,7 @@
 
 **r11 变更（在 r10 之上）：**
 
-- **B6'' —— 删除虚构的 SessionRow 直接 write；依赖已有读站点 DB-backing 防御（codex r10 CRITICAL §3.5/§3.7）。** r10 引入 `Repo.update_all(from s in SessionRow, ...)` 作为直接跨 Kind write，但 codex r10 验证代码库**没有 SessionRow schema 或 sessions 表**。Session 所有权住在活的 `:chat` slice（经 `Ezagent.Kind.get_slice(uri, :chat)`，apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:649），**不**在 DB 行。r10 的机制是无根的。
+- **B6'' —— 删除虚构的 SessionRow 直接 write；依赖已有读站点 DB-backing 防御（codex r10 CRITICAL §3.5/§3.7）。** r10 引入 `Repo.update_all(from s in SessionRow, ...)` 作为直接跨 Kind write，但 codex r10 验证代码库**没有 SessionRow schema 或 sessions 表**。Session 所有权住在活的 `:chat` slice（经 `Ezagent.Kind.get_slice(uri, :chat)`，apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:649），**不**在 DB 行。r10 的机制是无根的。
   **r11 修复：** 完全删除跨 Kind scrub。读站点 DB-backing 防御（自 r1–r6 保留）是处理"owner 已销毁"的结构性机制：
   - `Chat.data_owner/1` 读 `:chat` slice 的 `owner_uri` AND 检查 `Users.get_by_uri(owner_uri)`（r1–r6 设计的 check）。用户已销毁时返回 `:no_owner` 即使 slice cache 陈旧。
   - `Publisher.SessionImpl.data_owner/1` 在读站点做同 DB-backing check（自 r1–r6 保留）。
@@ -43,7 +43,7 @@
 **r9 变更（历史保留 —— 在 r8 之上）：**
 
 - **B1' —— dispatch 路径 fence（codex r8 CRITICAL q11）。** r8 声称"DB 行删后无新 dispatch 能达到活但已删的 pid" **是错的**：生产 dispatch 走 `Invocation.dispatch → ReadyGate.status → KindRegistry.lookup → GenServer.call/cast`（`apps/ezagent_core/lib/ezagent/invocation.ex:87,111`），完全绕过 `SpawnRegistry`。SpawnRegistry 的 backing_check_fn 只覆盖 SPAWN 路径，不覆盖 DISPATCH 路径。r9 修复：引入 **ReadyGate 的 `:destroying` 状态**作为通用 dispatch fence。`Kind.Server.destroy/2` 步骤 3a（步骤 3 的第一个子步骤，先于任何 per-Kind 清理）调 `ReadyGate.put(target_uri, :destroying)`。`Invocation.dispatch/1` 加新匹配臂 `{:destroying, _}` 返回 `{:error, :no_backing_entity}`（与 backing_check_fn 同错误码）。ReadyGate 的 ETS 写原子且被每个 dispatcher 读。事务提交后行已没 AND ReadyGate `:destroying` —— 两个 fence 都立；terminate_child 后 ReadyGate 清空（URI 不再需要 gate 状态）。
-- **B2' —— `Ezagent.Kind.spawn/2` 通用 backing-check（codex r8 CRITICAL q12/q5）。** r8 只守 `SpawnRegistry.spawn/1`，但生产有**多个**直接 `Kind.spawn/2` caller 绕过 SpawnRegistry：session 创建（`apps/ezagent_domain_chat/lib/ezagent_domain_chat.ex:157`）、workspace spawn（`apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:48`）、system principal ensure（`apps/ezagent_core/lib/ezagent/system_principal.ex:90`）、identity demand-spawn（`apps/ezagent_domain_identity/lib/ezagent/entity.ex:128`）。r9 把 backing-check 移到 `Ezagent.Kind.spawn/2` 自身 —— 它是**所有** spawn 路径流过的通用下层（SpawnRegistry 也通过它）。检查由 `kind_module.backing_check/1`（`Ezagent.Kind` behaviour 的**新** callback）键控 —— 每个 Kind 拥有自家存在性测试。r8 的 SpawnRegistry per-scheme `backing_check_fn` 被**移除**（冗余 —— 被 per-Kind callback 替换）。
+- **B2' —— `Ezagent.Kind.spawn/2` 通用 backing-check（codex r8 CRITICAL q12/q5）。** r8 只守 `SpawnRegistry.spawn/1`，但生产有**多个**直接 `Kind.spawn/2` caller 绕过 SpawnRegistry：session 创建（`apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message.ex:157`）、workspace spawn（`apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:48`）、system principal ensure（`apps/ezagent_core/lib/ezagent/system_principal.ex:90`）、identity demand-spawn（`apps/ezagent_domain_identity/lib/ezagent/entity.ex:128`）。r9 把 backing-check 移到 `Ezagent.Kind.spawn/2` 自身 —— 它是**所有** spawn 路径流过的通用下层（SpawnRegistry 也通过它）。检查由 `kind_module.backing_check/1`（`Ezagent.Kind` behaviour 的**新** callback）键控 —— 每个 Kind 拥有自家存在性测试。r8 的 SpawnRegistry per-scheme `backing_check_fn` 被**移除**（冗余 —— 被 per-Kind callback 替换）。
 - **B3' —— 存在性预检 步骤 0（codex r8 HIGH q13）。** r8 的 `{:ok, :already_destroyed}` 混淆了 "并发输家" 与 "URI 从未存在（operator typo）"。r9 加**步骤 0** 于步骤 1 之前：`if kind.backing_check(target_uri) == false → {:error, :not_found}`。Typo'd URI 返回 `:not_found`（清晰可操作错误），`{:ok, :already_destroyed}` 保留给真正的并发 race 输家。INV-22 新。Destroy 操作因此对"终态无行"展现三种不同返回：`:not_found`（从未存在）、`:already_destroyed`（通过步骤 0 后输了 race）、`:precheck_failed`（存在但 can_destroy?/2 拒绝）。
 - **B6 —— q16 ghost-user 模式：事务包裹外部清理（codex r8 HIGH q16）。** r8 的步骤 3（caps 撤销、memberships 删除、binding scrub）跑在事务**外**；若 4b 的 DB delete 失败，步骤 3 的效果留下而行仍在 —— 恰是 ghost-user bug。r9 修复：**所有 DB-write 清理移入 Repo.transaction**（步骤 3+4 折叠为单个原子事务）。事务包：caps 撤销（`Identity.revoke_all_caps/1`）、membership 行删除、binding 行删除、profile 删除、kind_snapshot 删除、domain DB 行删除、audit insert —— 全部原子。Per-Kind `destroy/2` callback 拆为两阶段：(a) `destroy_db/2`（DB-write 清理 —— 跑事务**内**）和 (b) `destroy_runtime/2`（外部资源释放 —— sidecar、file handle、PubSub 广播 —— 跑事务**外**，提交后 best-effort）。若 4b 失败，事务原子回滚一切：caps 未撤销、memberships 未删、audit 行未插。Operator 见失败可干净重跑。运行时-释放阶段是唯一 "let-it-crash" 表面，且作用在已删行上。
 - **B7 —— workspace cascade 切片冻结（codex r8 HIGH q14）。** r8 在预检时一次读 `member_uris`（从活 slice），然后 cascade。预检与 cascade 之间并发 `Workspace.add_member/2` 可加入逃过销毁的 member。r9 修复：`Workspace.destroy_db/2`（事务内阶段）开始时获取 `Repo.advisory_xact_lock` 于 `workspace:<uri>`，然后从 workspace **DB 行**（NOT 活 slice）读 `member_uris`。advisory lock 阻塞任何也试图获取同 lock 的并发 `Workspace.add_member/2`。事务内的 member 列表读是**一致点**；任何与 destroy 并发的 add_member 调用要么 (a) 先获 lock 并加入，destroy 见新 member；或 (b) 等 destroy 释放 lock 后发现 workspace 已没 —— add_member 失败 `:no_such_workspace`。INV-23 新。
@@ -835,10 +835,10 @@ r9 把失败处理拆为两阶段：
 - **修改** `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/adapter.ex` —— 加 `teardown/1` 到 `@callback`，列在 `@optional_callbacks` 配默认 no-op（默认实现在 Adapter 模块自身用于 fallthrough）。
 - **加** `Ezagent.SystemPrincipal.Catalog` 条目：`{"system://kind-destroy-cascade", [Capability.cap(Ezagent.Entity.Session, Ezagent.Behavior.Chat, :scrub_owner, :any, :any)]}`（从 r1–r6 的 `system://entity-deletion-cascade` 重命名）。
 - **修改** `apps/ezagent_core/lib/ezagent_core/application.ex` —— 在已有 principal ensure 后加 `SystemPrincipal.ensure(SystemPrincipal.uri("kind-destroy-cascade"))`。
-- **修改** `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex` —— 加 `:scrub_owner` action（完整 5-part Chat behavior 接线：actions、required_caps、cap_subjects、invoke、interface）。加 `Chat.data_owner/1` 变更：若 `Session.owner/1` 返回 `{:ok, owner}` 且 `Users.get_by_uri(owner) == nil`，返回 `:no_owner`（用 DB-backing check 替换 r1–r6 的 tombstone check）。
-- **修改** `apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex` `register_chat_behaviors/0` —— 加 `CapabilityRegistry.register(Session, :scrub_owner, Chat)`。
+- **修改** `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex` —— 加 `:scrub_owner` action（完整 5-part Chat behavior 接线：actions、required_caps、cap_subjects、invoke、interface）。加 `Chat.data_owner/1` 变更：若 `Session.owner/1` 返回 `{:ok, owner}` 且 `Users.get_by_uri(owner) == nil`，返回 `:no_owner`（用 DB-backing check 替换 r1–r6 的 tombstone check）。
+- **修改** `apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/application.ex` `register_chat_behaviors/0` —— 加 `CapabilityRegistry.register(Session, :scrub_owner, Chat)`。
 - **修改** `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex` `data_owner/1` —— 同 DB-backing check 模式。
-- **修改** `apps/ezagent_domain_chat/lib/ezagent/behavior/publisher/session_impl.ex` `data_owner/1` —— 同 DB-backing check 模式。
+- **修改** `apps/ezagent_domain_instance_message/lib/ezagent/behavior/publisher/session_impl.ex` `data_owner/1` —— 同 DB-backing check 模式。
 - **修改** `apps/ezagent_domain_identity/lib/ezagent/entity/token.ex` `verify/2` —— 把 r1–r6 的 `SpawnRegistry.tombstoned?(uri)` check 替换为 `Users.get_by_uri(uri) == nil`（或 per-Kind 等价 —— `Agents.get_by_uri/1`）。同 defense-in-depth 目的；同 `Bcrypt.no_user_verify()` timing-leak 处理；新错误 tag `{:error, :no_backing_entity}`。
 - `external_mirror_bindings.worker_uri` 列的 **migration**（Migration A `null: true` + backfill 任务 `mix ezagent.entity.backfill_worker_uri` + Migration B `NOT NULL`）—— 原样保留自 r1–r6 §4.1；它们独立有用，Worker.destroy/2 仍需要该列。
 - **修改** `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/binding_row.ex` —— 加 `:worker_uri` 到 schema + `@type t` + cast + validate_required（CRIT-4.2 原样保留）。
@@ -862,10 +862,10 @@ r9 把失败处理拆为两阶段：
 生产 Kind（`@behaviour Ezagent.Kind`）：
 
 - `apps/ezagent_domain_identity/lib/ezagent/entity/user.ex` —— `destroy/2`（User cascade 按 §3.5）+ `can_destroy?/2`（bootstrap admin 保护）+ `delete_db_row/1` → `Users.delete/1`。
-- `apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex` —— `destroy/2`（Agent cascade 按 §3.5；委托 `AgentBridge.Adapter.teardown/1`）+ `can_destroy?/2`。
-- `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex` —— `destroy/2`（Session cascade 按 §3.5）+ `can_destroy?/2`。
-- `apps/ezagent_domain_chat/lib/ezagent/entity/agent_template.ex` —— `destroy/2` 级联到所有从此 template 实例化的 agent（`Agents.list_by_template/1` + 每个 `Kind.Server.destroy(agent_uri, ctx_with_parent_trace)`）+ `can_destroy?/2` 拒绝含活 in-flight session 的 template。**r8 新加 —— codex r7 抓到此缺口。**
-- `apps/ezagent_domain_chat/lib/ezagent/entity/session_template.ex` —— `destroy/2` 级联到从此 template 实例化的 session + `can_destroy?/2`。**r8 新加。**
+- `apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex` —— `destroy/2`（Agent cascade 按 §3.5；委托 `AgentBridge.Adapter.teardown/1`）+ `can_destroy?/2`。
+- `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex` —— `destroy/2`（Session cascade 按 §3.5）+ `can_destroy?/2`。
+- `apps/ezagent_domain_instance_message/lib/ezagent/entity/agent_template.ex` —— `destroy/2` 级联到所有从此 template 实例化的 agent（`Agents.list_by_template/1` + 每个 `Kind.Server.destroy(agent_uri, ctx_with_parent_trace)`）+ `can_destroy?/2` 拒绝含活 in-flight session 的 template。**r8 新加 —— codex r7 抓到此缺口。**
+- `apps/ezagent_domain_instance_message/lib/ezagent/entity/session_template.ex` —— `destroy/2` 级联到从此 template 实例化的 session + `can_destroy?/2`。**r8 新加。**
 - `apps/ezagent_domain_workspace/lib/ezagent/entity/workspace.ex` —— `destroy/2`（Workspace cascade 按 §3.5；通过 `Kind.Server.destroy/2` 递归）+ `can_destroy?/2`（B4 —— 拒绝嵌套 workspace member）。
 - `apps/ezagent_domain_external_mirror/lib/ezagent/entity/external_mirror_worker.ex` —— `destroy/2`（Worker cascade 按 §3.5；用 `worker_uri` 列）+ `can_destroy?/2`。
 - `apps/ezagent_core/lib/ezagent/entity/system.ex` —— System Kind（system principal carrier）。`destroy/2` 返回 `{:ok, %{steps: []}}`（无 per-Kind state）+ `can_destroy?/2` 对**所有** bootstrap system URI 返回 `{:error, :system_principal_undestroyable}`。**r8 新加 —— codex r7 抓到。**
@@ -880,7 +880,7 @@ r9 把失败处理拆为两阶段：
 - `apps/ezagent_plugin_echo/lib/ezagent/template/echo_agent.ex` —— `destroy/2` 级联 + `can_destroy?/2`。**r8 新加。**
 - `apps/ezagent_plugin_curl_agent/lib/ezagent/template/curl_agent.ex` —— `destroy/2` 级联 + `can_destroy?/2`。**r8 新加。**
 - `apps/ezagent_plugin_np/lib/ezagent/template/np_agent.ex` —— `destroy/2` 级联 + `can_destroy?/2`。**r8 新加。**
-- `apps/ezagent_domain_chat/lib/ezagent/template/generic_session.ex` —— `destroy/2` 级联到用此 template 的 session + `can_destroy?/2`。**r8 新加。**
+- `apps/ezagent_domain_instance_message/lib/ezagent/template/generic_session.ex` —— `destroy/2` 级联到用此 template 的 session + `can_destroy?/2`。**r8 新加。**
 
 Test-support Kind（`apps/ezagent_core/test/support/test_behavior.ex`、`post_init_test_behaviors.ex` 等）用 `Kind.default_destroy/2` 宏（no-op）—— 它们仅在 test run 内存在且无生产生命周期。宏住在 `Ezagent.Kind.TestImpl`（PR-B 加的新 helper 模块）。
 
@@ -1000,7 +1000,7 @@ Plugin-isolation north-star 保留：PR-B 加契约；PR-C/D/E 插入它。未�
 |---|---|---|
 | `ezagent_core` | `Ezagent.Kind.destroy/2` callback、`Ezagent.Kind.Server.destroy/2` 公共 API、编排序列 | User 如何清 Feishu binding、Agent 如何终止 sidecar、Workspace 如何级联到 member |
 | `ezagent_domain_identity` | `User.destroy/2`（User 清理）、`User.can_destroy?/2`（bootstrap admin）、它 entity callback `user ->` arm 的 DB-backing check | Agent / Session / Workspace / Worker 内部 |
-| `ezagent_domain_chat` | `Agent.destroy/2` + `Session.destroy/2` + `:scrub_owner` Chat action 体；它 entity callback arm 的 DB-backing check | User / Workspace / Worker 内部 |
+| `ezagent_domain_instance_message` | `Agent.destroy/2` + `Session.destroy/2` + `:scrub_owner` Chat action 体；它 entity callback arm 的 DB-backing check | User / Workspace / Worker 内部 |
 | `ezagent_domain_workspace` | `Workspace.destroy/2` 通过 `Kind.Server.destroy/2` 级联到 member | per-member 内部（每个 member 自己是 Kind，其 `destroy/2` 做自家清理）|
 | `ezagent_domain_external_mirror` | `Worker.destroy/2` 用 `worker_uri` 列 | User / Agent / Session / Workspace 内部 |
 | `ezagent_domain_agent_bridge` | `AgentBridge.Adapter.teardown/1` callback 契约（默认 no-op） | cc 如何 unbind、codex 如何停 sidecar |
@@ -1165,7 +1165,7 @@ Allen 确认。
 
 8. **三站点 cold-load data_owner（替换 r1–r6 INV-13b）：** 同三解析器（Chat / ExternalMirror / Publisher.SessionImpl），现配 DB-backing check 而非 tombstone check。验证无第四解析器存在，AND DB-backing check 位置在 URI 返回**前**。
 
-9. **`destroy/2` REQUIRED 迁移成本：** 若 OQ-NEW 选 REQUIRED，每个已有 Kind 模块必须加 `destroy/2`。枚举：`apps/ezagent_domain_identity/lib/ezagent/entity/user.ex`、`apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex`、`apps/ezagent_domain_chat/lib/ezagent/entity/session.ex`、`apps/ezagent_domain_workspace/lib/ezagent/entity/workspace.ex`、`apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/worker.ex`。漏什么吗？有 test-fixture Kind 需要它吗？
+9. **`destroy/2` REQUIRED 迁移成本：** 若 OQ-NEW 选 REQUIRED，每个已有 Kind 模块必须加 `destroy/2`。枚举：`apps/ezagent_domain_identity/lib/ezagent/entity/user.ex`、`apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex`、`apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex`、`apps/ezagent_domain_workspace/lib/ezagent/entity/workspace.ex`、`apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/worker.ex`。漏什么吗？有 test-fixture Kind 需要它吗？
 
 10. **LV confirm dialog UX（保留自 r1–r6 q9）：** type-the-URI 确认默认。Allen 在 OQ-9 确认。
 

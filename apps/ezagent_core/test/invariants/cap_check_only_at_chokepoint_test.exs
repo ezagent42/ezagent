@@ -50,7 +50,7 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         "apps/ezagent_core/lib/ezagent/",
         "apps/ezagent_domain_identity/lib/ezagent/",
         "apps/ezagent_domain_external_mirror/lib/ezagent/",
-        "apps/ezagent_domain_chat/lib/ezagent/",
+        "apps/ezagent_domain_instance_message/lib/ezagent/",
         "apps/ezagent_plugin_liveview/lib/",
         # Mix tasks consume matches? for CLI display.
         "apps/ezagent_domain_external_mirror/lib/mix/tasks/",
@@ -64,7 +64,7 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
       allowlist: [
         "apps/ezagent_core/lib/ezagent/behavior.ex",
         "apps/ezagent_core/lib/ezagent/behavior/",
-        "apps/ezagent_domain_chat/lib/ezagent/behavior/",
+        "apps/ezagent_domain_instance_message/lib/ezagent/behavior/",
         "apps/ezagent_domain_external_mirror/lib/ezagent/behavior/",
         "apps/ezagent_domain_identity/lib/ezagent/behavior/",
         "apps/ezagent_domain_pty/lib/ezagent/behavior/",
@@ -94,7 +94,7 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         "apps/ezagent_plugin_liveview/lib/",
         # Orchestrator MCP tool — read-only display of caps to LLM
         # callers (P6 docstring allows tooling).
-        "apps/ezagent_domain_chat/lib/ezagent/orchestrator/mcp_server.ex",
+        "apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/mcp_server.ex",
         # External-mirror CLI — operator-driven cap display.
         "apps/ezagent_domain_external_mirror/lib/mix/tasks/",
         # Feishu binding sender resolver — read-only inbound-binding
@@ -102,14 +102,23 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         "apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/sender_resolver.ex",
         # Session entity — chat send recipient-resolution reads
         # member caps to filter mention-gated routing.
-        "apps/ezagent_domain_chat/lib/ezagent/entity/session.ex",
-        # RFC #402 (Allen 2026-05-26) — `create_session/3` reads the
-        # creator's caps to skip a duplicate OrchestratorAdmin
+        "apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex",
+        # RFC #402 (Allen 2026-05-26) — the internal session creator
+        # reads the creator's caps to skip a duplicate OrchestratorAdmin
         # :restart cap grant when an equivalent one already exists.
         # This is an idempotency-check on the create path (read-only
-        # against the granter's own caps), NOT a cap-gate decision
+        # against the grantee's own caps), NOT a cap-gate decision
         # outside the dispatch chokepoint.
-        "apps/ezagent_domain_chat/lib/ezagent_domain_chat.ex"
+        "apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/session_creator.ex",
+        # #533 PR-5 — create-time Manage cap grants use the same
+        # idempotency pattern in the Workspace facade: read existing
+        # caps to avoid duplicate grant writes, then dispatch the
+        # actual grant through Identity.
+        "apps/ezagent_domain_workspace/lib/ezagent/workspace.ex",
+        # First-login wizard: builds a real caller ctx for
+        # Workspace.create_session/3. Same class as LV display/ctx
+        # construction allowlisted for plugin LiveView.
+        "apps/ezagent_web/lib/ezagent_web/live/home_live.ex"
       ]
     },
     %{
@@ -120,14 +129,14 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         "apps/ezagent_domain_identity/lib/ezagent/",
         "apps/ezagent_plugin_liveview/lib/",
         "apps/ezagent_domain_workspace/lib/mix/",
-        "apps/ezagent_domain_chat/lib/ezagent/entity/session_template.ex",
-        "apps/ezagent_domain_chat/lib/ezagent/entity/agent_template.ex",
+        "apps/ezagent_domain_instance_message/lib/ezagent/entity/session_template.ex",
+        "apps/ezagent_domain_instance_message/lib/ezagent/entity/agent_template.ex",
         # Capability module references Identity.grant_cap in
         # docstrings + the chat Behavior dispatches it as part of
         # the reconciler's session-create path (lift to a future
         # refactor — for now allowlisted).
         "apps/ezagent_core/lib/ezagent/capability.ex",
-        "apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex"
+        "apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex"
       ]
     },
     %{

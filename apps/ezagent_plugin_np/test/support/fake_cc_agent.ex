@@ -49,7 +49,7 @@ defmodule Ezagent.PluginNp.Test.FakeCcAgent do
   ## Registration
 
   Registered against the EXISTING `Ezagent.Entity.Agent` Kind (the
-  generic Agent Kind from `ezagent_domain_chat`). The integration
+  generic Agent Kind from `ezagent_domain_instance_message`). The integration
   test's `.exs` setup block binds it transiently to the Agent Kind's
   `:receive` action for the test session, then restores
   `Ezagent.Behavior.Chat` in `on_exit`, so the e2e doesn't

@@ -51,8 +51,8 @@ Addresses 4 codex r1 REJECT blockers + LOW + NIT:
 - `docs/notes/uri-design.md` §5 — the SPEC v3 URI shape rules. This SPEC adds a STRUCTURAL canonicalization rule to that file (§5.15 — to be appended in the impl PR).
 - `apps/ezagent_core/lib/ezagent/uri.ex:124-143` — `Ezagent.URI.parse!/1` ALREADY exists and ALREADY uses strict `URI.new/1` under the hood. The remediation lifts this existing function from "the scheme-allowlist validator for strings entering the system" to "the only canonical `%URI{}` constructor for Ezagent-scheme URIs anywhere in the codebase". No new module is introduced.
 - `apps/ezagent_core/lib/ezagent/uri/scheme_registry.ex:16-18` — the 6-scheme allowlist (`entity, workspace, session, template, resource, system`). r2 confirms: NO `cap://` scheme exists.
-- `apps/ezagent_core/lib/ezagent/capability.ex:320-348` — `Capability.instance_match?/2` for two concrete URIs ALREADY compares via `URI.to_string/1`. The matcher path is immune. The bug surfaces are call sites that do raw struct `==` BEFORE reaching the matcher (e.g. `EzagentDomainChat.grant_owner_orchestrator_admin_cap/3` `has_equiv?` check; `Behavior.Identity.check_grant_authorized` `caller == owner` short-circuit).
-- `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:303-307` — the existing hand-rolled `URI.parse(URI.to_string(uri))` round-trip is a localized, undocumented version of the canonical-form rule THIS SPEC formalizes. The impl PR deletes the round-trip in favor of `Ezagent.URI.parse!/1`.
+- `apps/ezagent_core/lib/ezagent/capability.ex:320-348` — `Capability.instance_match?/2` for two concrete URIs ALREADY compares via `URI.to_string/1`. The matcher path is immune. The bug surfaces are call sites that do raw struct `==` BEFORE reaching the matcher (e.g. `EzagentDomainInstanceMessage.grant_owner_orchestrator_admin_cap/3` `has_equiv?` check; `Behavior.Identity.check_grant_authorized` `caller == owner` short-circuit).
+- `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:303-307` — the existing hand-rolled `URI.parse(URI.to_string(uri))` round-trip is a localized, undocumented version of the canonical-form rule THIS SPEC formalizes. The impl PR deletes the round-trip in favor of `Ezagent.URI.parse!/1`.
 - `apps/ezagent_core/lib/ezagent/kind/snapshot.ex:312` — `:erlang.term_to_binary(state)` writes `%URI{}` fields verbatim. r2 §9.2 mandates load-path canonicalization to handle pre-migration snapshots.
 - `2026-05-27-capability-action-axis.md` — concurrent SPEC adding the `:action` field. Independent: `:action` is an atom axis, not a URI axis. The two interact only in `Capability.identity_key/1` (which already routes through `normalize_uri_for_key/1` = `URI.to_string`); §8 enumerates.
 - `2026-05-27-workspace-cap-based-visibility.md` — concurrent SPEC on cap-based visibility. Independent on the URI axis: workspace visibility consumes `caller_uri` + caps, both of which become canonical after this SPEC lands. §8 enumerates.
@@ -93,13 +93,13 @@ stdlib `URI.parse/1` is deprecated since Elixir 1.13 because it is non-strict (R
 
 1. The seed at `apps/ezagent_domain_identity/lib/ezagent/entity/user.ex:29` constructs `@admin_uri URI.parse("entity://user/system/admin")` at COMPILE TIME — authority:"user".
 2. The wizard's `EzagentWeb.LiveAuth.parse_entity_uri/1` (`apps/ezagent_web/lib/ezagent_web/live_auth.ex:339-353`) routes through `Ezagent.URI.parse!/1`, which uses strict `URI.new/1` — authority:nil.
-3. The two `%URI{}` reach `EzagentDomainChat.create_session/3 → do_create_session/3 → finalize_session_create/3 → grant_owner_orchestrator_admin_cap/3`.
-4. `grant_owner_orchestrator_admin_cap/3`'s `has_equiv?` check (`apps/ezagent_domain_chat/lib/ezagent_domain_chat.ex:570-572`) uses `cap.instance == want.instance` raw struct equality. The held cap (admin's existing baseline) and the wanted cap (freshly constructed) differ on `:authority`, so `has_equiv?` is `false`.
+3. The two `%URI{}` reach `EzagentDomainInstanceMessage.create_session/3 → do_create_session/3 → finalize_session_create/3 → grant_owner_orchestrator_admin_cap/3`.
+4. `grant_owner_orchestrator_admin_cap/3`'s `has_equiv?` check (`apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message.ex:570-572`) uses `cap.instance == want.instance` raw struct equality. The held cap (admin's existing baseline) and the wanted cap (freshly constructed) differ on `:authority`, so `has_equiv?` is `false`.
 5. The grant proceeds to `Ezagent.Invocation.dispatch/1` → `Behavior.Identity.invoke(:grant_cap, ...)` → `check_grant_authorized/2`.
 6. `check_grant_authorized/2`'s `caller == owner` short-circuit (`apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:654`) is raw struct equality. `caller` is the wizard's `URI.new!`-built URI; `owner` is the `URI.parse`-built `@admin_uri` (via `Ezagent.CapabilityRegistry.data_owner_of/2`). They differ on `:authority`. The cond falls through to `{:error, :grant_not_owner}`.
 7. `finalize_session_create/3` receives `{:error, {:orchestrator_admin_cap_grant_failed, :grant_not_owner}}`, the test fails.
 
-The hand-rolled `URI.parse(URI.to_string(uri))` round-trip at `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:303-307` patches the SAME bug for the `Session.spawn_from_template/2` path but NOT for the direct `EzagentDomainChat.create_session/3` path. Two patches needed, one applied — the parity drift IS the bug.
+The hand-rolled `URI.parse(URI.to_string(uri))` round-trip at `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:303-307` patches the SAME bug for the `Session.spawn_from_template/2` path but NOT for the direct `EzagentDomainInstanceMessage.create_session/3` path. Two patches needed, one applied — the parity drift IS the bug.
 
 ### 1.3 The bug class
 
@@ -156,7 +156,7 @@ THE boundary surfaces — these are the FIVE input boundaries where strings ente
 
 **B4. Snapshot reload.** `apps/ezagent_core/lib/ezagent/kind/snapshot.ex:160` (`URI.new`), `:361` (`URI.parse`), `:159-164` (`URI.new` in `reconcile_after_load_behaviors`). All migrate to `Ezagent.URI.parse!/1`. Failure (raise) bubbles to the supervisor; let-it-crash per `feedback_let_it_crash_no_workarounds`. r2 §9.2 ADDS a mandatory `canonicalize_uris/1` pass on the decoded state map to handle pre-migration snapshots embedded with `URI.parse`-built `%URI{}` structs.
 
-**B5. External plugin payloads.** Feishu mention parser, MCP socket auth payload, etc. — `apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/mention_parser.ex:77`, `apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/socket.ex:24`, `apps/ezagent_domain_chat/lib/ezagent/orchestrator/mcp_socket.ex:51`. These do `URI.new/1` today (with case-pattern error handling). Migrate to `Ezagent.URI.parse!/1` wrapped in try/rescue at the boundary (so a malformed inbound payload produces a graceful `{:error, _}` to the external surface, NOT a process crash — Invariant #9 "no silent drops at user-facing surfaces").
+**B5. External plugin payloads.** Feishu mention parser, MCP socket auth payload, etc. — `apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/mention_parser.ex:77`, `apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/socket.ex:24`, `apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/mcp_socket.ex:51`. These do `URI.new/1` today (with case-pattern error handling). Migrate to `Ezagent.URI.parse!/1` wrapped in try/rescue at the boundary (so a malformed inbound payload produces a graceful `{:error, _}` to the external surface, NOT a process crash — Invariant #9 "no silent drops at user-facing surfaces").
 
 ### 3.4 Constructing query-bearing dispatch targets
 
@@ -233,7 +233,7 @@ PR-2: deletion-and-sweep, one production app at a time. r2 inventory from `rg -n
 |---|---|---|
 | `apps/ezagent_core/` | 28 | Includes `uri.ex` (allowlisted), `ecto/uri_type.ex` (dual-fallback §3.7), `kind/snapshot.ex` (§9.2), `system_principal/*`, `capability.ex`, `capability_registry.ex`, `presence.ex`, `audit.ex`, `notifications.ex`, `notification_subscriptions.ex`, `persistence.ex`, `agent_lineage.ex`, `entity/system.ex`, `capability/parser.ex`, `runtime/pid_file.ex`, `routing/resolver.ex`, `workspace_registry.ex`. |
 | `apps/ezagent_domain_identity/` | 15 | `entity/user.ex:29,30` (§3.5 constants), `identity.ex:45,105,152,161,188,265`, `entity_presenter.ex:61`. |
-| `apps/ezagent_domain_chat/` | 78 | Heavy site. `entity/session.ex` (delete 303-307 hand-roll), `behavior/chat.ex`, `behavior/template.ex`, `orchestrator/{tools,mcp_registry,mcp_socket,health}.ex`, `chat/read_marker.ex`, `template/generic_session.ex`, `entity/{agent,agent_template,session_template}.ex`. Most are §3.4 query-target form. |
+| `apps/ezagent_domain_instance_message/` | 78 | Heavy site. `entity/session.ex` (delete 303-307 hand-roll), `behavior/chat.ex`, `behavior/template.ex`, `orchestrator/{tools,mcp_registry,mcp_socket,health}.ex`, `chat/read_marker.ex`, `template/generic_session.ex`, `entity/{agent,agent_template,session_template}.ex`. Most are §3.4 query-target form. |
 | `apps/ezagent_domain_workspace/` | 18 | `workspace.ex:261,299,358,446,482,696,744,789,820`, `workspace/loader.ex:262,321`, **`workspace/store.ex:203,212`** (r2 additions), `entity/workspace.ex:83`, `behavior/workspace.ex:888,930,1225`, plus mix task `agent.create.ex:231` (r2: operator-facing prod). |
 | `apps/ezagent_domain_external_mirror/` | 11 | **r2: REJECTS r1 "0 prod changes"**. Hits: `adapter_install.ex:197`, `worker_spawn.ex:230`, `external_mirror.ex:209,250,391,550`, `behavior/external_mirror.ex:821`, `behavior/external_mirror_worker.ex:640,676`, plus mix task `ezagent_external_mirror_cli.ex:161,220`. |
 | `apps/ezagent_domain_agent_bridge/` | 7 | `registry.ex:98,111`, `token_store.ex:55,69`, `socket.ex:21`, `channel.ex:34,80`. |
@@ -785,7 +785,7 @@ If the impl PR lands and causes production regression:
 
 **Step 1.** Revert the impl PR. Persisted data is byte-identical (§9.1), so reverting the in-memory struct shape doesn't strand any DB rows. The matcher (`instance_match?/2` line 347) already does to_string comparison — fine either way.
 
-**Step 2.** Restore the hand-rolled round-trip at `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:303-307`. Bug 2 returns.
+**Step 2.** Restore the hand-rolled round-trip at `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:303-307`. Bug 2 returns.
 
 **Step 3.** Delete the invariant test temporarily. The codebase regresses to its pre-SPEC state.
 
@@ -832,9 +832,9 @@ If the impl PR lands and causes production regression:
 - `ezagent/entity_presenter.ex:61` — `case URI.new(uri_str)` → migrate to `parse!/1` rescue.
 - `mix/tasks/ezagent.user.token.ex:75` — `URI.parse(uri_str)` → migrate to `parse!/1` (r2 §4.2 operator-facing prod).
 
-### `apps/ezagent_domain_chat/lib/` (78 sites)
+### `apps/ezagent_domain_instance_message/lib/` (78 sites)
 
-- `ezagent_domain_chat.ex:116, 156, 494, 578, 631` — mix of `URI.new!` and `User.admin_uri()` (which becomes canonical post-§3.5 fix) → migrate runtime URI constructions to `parse!/1` where not §3.4.
+- `ezagent_domain_instance_message.ex:116, 156, 494, 578, 631` — mix of `URI.new!` and `User.admin_uri()` (which becomes canonical post-§3.5 fix) → migrate runtime URI constructions to `parse!/1` where not §3.4.
 - `ezagent/entity/session.ex:65, 304-307, 523, 709, 852, 918-923, 1073, 1175, 1215, 1240, 1541, 1629, 1672, 1695, 2018, 2055, 2107, 2136, 2227, 2228` — heavy URI surface, mix of forms. The 303-307 hand-roll DELETED; other sites migrated per §3.4 / §3.5 rules.
 - `ezagent/entity/session_template.ex:188, 425, 585, 627, 686, 718` — migrate per §3.4 / §3.5.
 - `ezagent/entity/agent_template.ex:275` — `URI.parse("#{...}?action=template.fork")` → migrate to `parse!/1` (query-target form).
@@ -847,7 +847,7 @@ If the impl PR lands and causes production regression:
 - `ezagent/orchestrator/mcp_socket.ex:50, 51` — `URI.new(agent_uri_str)` in `with` chain → migrate to `parse!/1` rescue.
 - `ezagent/orchestrator/health.ex:144` — `URI.new!(...)` constant-style → OK or move to module attr.
 - `ezagent/template/generic_session.ex:97, 118, 121, 161` — mix; sweep.
-- `ezagent_domain_chat/application.ex:415-416` — `URI.new!` for seed, OK.
+- `ezagent_domain_instance_message/application.ex:415-416` — `URI.new!` for seed, OK.
 
 ### `apps/ezagent_domain_workspace/lib/` (18 sites — r2 expanded)
 

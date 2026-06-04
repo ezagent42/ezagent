@@ -13,8 +13,8 @@
 - MED-7: PR-B made the SoT for Registry/TokenStore promotion; PR-C (Socket/Channel) can run in parallel with PR-D (chat.ex rewrite) AFTER PR-B lands.
 - MED-8: §12 added — "Adapter author checklist" with skeleton.
 - Missed items addressed: §3.9 BridgeRegistry PubSub topic rename plan; §3.10 McpConfigWriter `/cc_socket/websocket` → `/agent_bridge/websocket` switchover; §3.11 Python compatibility matrix; §3.12 app boot order race + AdapterRegistry deferred-registration; §3.13 multi-connection semantics (single agent URI = single channel).
-**Tier:** Multi-tier — extract bridge primitives from `ezagent_plugin_cc` into a new domain app `ezagent_domain_agent_bridge`; rewrite `Ezagent.Behavior.Chat` Entity.Agent receiver branch to use the domain facade; close the `ezagent_domain_chat → ezagent_plugin_cc` layer-violation.
-**Trigger:** Allen 2026-05-27 03:25 directive — codex plugin (codex TUI agent) needs to share the bridge infrastructure with cc plugin. Today, `EzagentPluginCc.{BridgeRegistry,TokenStore,Socket,Channel}` are cc-specific by name AND by call-site coupling — domain_chat reaches into them via `# layer-violation-exempt` marker. Future codex plugin would either re-implement the same surface or take a transitive cc dependency. Both fail the plugin-isolation north star.
+**Tier:** Multi-tier — extract bridge primitives from `ezagent_plugin_cc` into a new domain app `ezagent_domain_agent_bridge`; rewrite `Ezagent.Behavior.Chat` Entity.Agent receiver branch to use the domain facade; close the `ezagent_domain_instance_message → ezagent_plugin_cc` layer-violation.
+**Trigger:** Allen 2026-05-27 03:25 directive — codex plugin (codex TUI agent) needs to share the bridge infrastructure with cc plugin. Today, `EzagentPluginCc.{BridgeRegistry,TokenStore,Socket,Channel}` are cc-specific by name AND by call-site coupling — domain_instance_message reaches into them via `# layer-violation-exempt` marker. Future codex plugin would either re-implement the same surface or take a transitive cc dependency. Both fail the plugin-isolation north star.
 **Companion:** `2026-05-27-agent-bridge-domain-extraction.zh_cn.md` (per `feedback_bilingual_docs_convention`).
 
 **Parent / related:**
@@ -32,13 +32,13 @@
 
 ## 1. Problem in one paragraph
 
-`Ezagent.Behavior.Chat` Entity.Agent receiver branch at `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:531` directly calls `EzagentPluginCc.BridgeRegistry.lookup/1` and sends `{:to_claude, %{"content" => _, "meta" => _}}` — a cc-specific message + payload shape. `apps/ezagent_domain_chat/mix.exs:55-56` declares `{:ezagent_plugin_cc, in_umbrella: true}` with a `# layer-violation-exempt` marker. `apps/ezagent_domain_chat/lib/ezagent/orchestrator/mcp_socket.ex:43` aliases `EzagentPluginCc.TokenStore` for orchestrator socket auth. `apps/ezagent_domain_chat/lib/ezagent/domain/agent.ex:84-131` hardcodes the flavor string `"cc"` to delegate lifecycle to Domain.Pty. All four are structural debts that block adding a second agent flavor (codex) without either re-implementing the same bridge surface or taking a transitive cc dep — both violate the plugin-isolation north star.
+`Ezagent.Behavior.Chat` Entity.Agent receiver branch at `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:531` directly calls `EzagentPluginCc.BridgeRegistry.lookup/1` and sends `{:to_claude, %{"content" => _, "meta" => _}}` — a cc-specific message + payload shape. `apps/ezagent_domain_instance_message/mix.exs:55-56` declares `{:ezagent_plugin_cc, in_umbrella: true}` with a `# layer-violation-exempt` marker. `apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/mcp_socket.ex:43` aliases `EzagentPluginCc.TokenStore` for orchestrator socket auth. `apps/ezagent_domain_instance_message/lib/ezagent/domain/agent.ex:84-131` hardcodes the flavor string `"cc"` to delegate lifecycle to Domain.Pty. All four are structural debts that block adding a second agent flavor (codex) without either re-implementing the same bridge surface or taking a transitive cc dep — both violate the plugin-isolation north star.
 
 ## 2. Goals
 
 1. **Promote the bridge surface to Domain layer**: `Ezagent.AgentBridge.{Registry, TokenStore, Socket, Channel, Adapter}` lives in a new umbrella app `ezagent_domain_agent_bridge` at Domain tier.
 2. **Generic payload schema**: `Ezagent.Behavior.Chat` Entity.Agent receiver constructs a flavor-neutral payload struct; the per-flavor adapter (registered via the plugin's `agent_flavors/0` declaration) converts to the flavor-specific WS push payload.
-3. **Remove the `ezagent_plugin_cc` dep from `ezagent_domain_chat`**: `mix.exs` loses the `# layer-violation-exempt` line; `layer_purity_test` strengthened to grep-check in-code `EzagentPluginCc.*` references.
+3. **Remove the `ezagent_plugin_cc` dep from `ezagent_domain_instance_message`**: `mix.exs` loses the `# layer-violation-exempt` line; `layer_purity_test` strengthened to grep-check in-code `EzagentPluginCc.*` references.
 4. **Flavor-by-behavior, not flavor-by-string**: `Domain.Agent.lifecycle_status/1` detects PTY-alive via `Ezagent.Domain.Pty.alive?/1`, not flavor-string switch. Any PTY-backed agent (cc, codex, future) gets terminal UI for free.
 5. **Backward-compat for in-flight cc bridges**: existing Python sidecars connected to `/cc_socket` joining `cc:bridge:<uri>` continue working via a deprecation-window alias. New connections use `/agent_bridge` + `agent_bridge:<flavor>:<uri>`.
 
@@ -364,7 +364,7 @@ After PR-D this test passes WITHOUT the `# layer-violation-exempt` mechanism —
 | **PR-B** | Promote `TokenStore` + `Registry` from cc plugin to new domain app | move modules + tests; cc-side keeps thin shims delegating to new modules (backward-compat); YAML file path UNCHANGED (`~/.ezagent/<profile>/credentials/cc-channels.yaml` stays — just module location promoted). |
 | **PR-C** | Promote `Socket` + `Channel`; wire dual-mount for backward-compat | new `/agent_bridge` + alias `/cc_socket`; new `agent_bridge:cc:*` topic + alias `cc:bridge:*`. Existing Python sidecars continue working. |
 | **PR-D** | Rewrite `Chat.receive(Agent)` to use `AgentBridge.deliver/2` + cc plugin's `BridgeAdapter` impl | the chat.ex:531 site; new `EzagentPluginCc.BridgeAdapter` module implementing `@behaviour AgentBridge.Adapter`; existing chat-receive e2e still works (cc-agent inbound). |
-| **PR-E** | Remove `{:ezagent_plugin_cc, ...}` dep from `domain_chat/mix.exs`; strengthen `layer_purity_test` | mix.exs delete the line; layer_purity_test add the grep check; remove `# layer-violation-exempt` for plugin_cc; `Orchestrator.McpSocket` aliases `Ezagent.AgentBridge.TokenStore` not `EzagentPluginCc.TokenStore`. |
+| **PR-E** | Remove `{:ezagent_plugin_cc, ...}` dep from `domain_instance_message/mix.exs`; strengthen `layer_purity_test` | mix.exs delete the line; layer_purity_test add the grep check; remove `# layer-violation-exempt` for plugin_cc; `Orchestrator.McpSocket` aliases `Ezagent.AgentBridge.TokenStore` not `EzagentPluginCc.TokenStore`. |
 | **PR-F** | Refactor `Domain.Agent.lifecycle_status/1` from flavor-string to PTY-alive detection | `domain/agent.ex` collapse the 4 `defp delegate_alive_status/2` clauses into one PTY-detection clause; tests for cc/echo/curl/future-flavor coverage. |
 | **PR-G** | `ezagent_plugin_codex/` plugin app | new app: Template Class, BridgeAdapter, agent_flavors declaration, Python codex bridge script. Acceptance: spawn `entity://agent/system/codex_test1`; open `/terminal/<uri>`; live codex TUI. |
 
@@ -389,7 +389,7 @@ After PR-D this test passes WITHOUT the `# layer-violation-exempt` mechanism —
 
 - **PR-A** unblocks all others. Just the SPEC + new app shells + Adapter behaviour. No behavior change.
 - **PR-B** SoT for Registry + TokenStore promotion. PR-C and PR-D depend on B (Socket needs Registry; chat.ex needs Registry).
-- **PR-C and PR-D parallel after B**: Socket/Channel promotion (C) and Chat.receive rewrite (D) don't conflict — one touches plugin_cc lib + new app, other touches domain_chat lib.
+- **PR-C and PR-D parallel after B**: Socket/Channel promotion (C) and Chat.receive rewrite (D) don't conflict — one touches plugin_cc lib + new app, other touches domain_instance_message lib.
 - **PR-E** depends on both C + D done — mix.exs unrigging only safe when all chat.ex references to EzagentPluginCc are gone.
 - **PR-F** independent of B→E chain. Can land any time after PR-A. Just the lifecycle_status refactor in domain/agent.ex.
 - **PR-G** depends on PR-E (otherwise codex would also need the layer-violation-exempt marker).
@@ -400,7 +400,7 @@ This gives more parallelism than a strict A→G chain. Implementer / Codex can s
 
 **Cross-PR (must hold after each)**:
 - C-1: umbrella compiles green
-- C-2: `mix test --include integration` for touched apps has zero NEW failures vs baseline (the 17 pre-existing domain_chat sandbox flakes are baseline)
+- C-2: `mix test --include integration` for touched apps has zero NEW failures vs baseline (the 17 pre-existing domain_instance_message sandbox flakes are baseline)
 - C-3: `mix test apps/ezagent_core/test/invariants/layer_purity_test.exs` passes — at PR-E and later WITHOUT relying on `ezagent_plugin_cc`'s `layer-violation-exempt` marker; the new grep check finds zero `EzagentPluginCc.*` in domain_* lib/
 - C-4: every PR carries `Co-Authored-By: Claude Opus 4.7 (1M context)` line
 - C-5: every PR gets `/codex:adversarial-review` before merge
@@ -413,7 +413,7 @@ PR-C: dual-mount Phoenix routes (`/agent_bridge` + `/cc_socket`); dual-topic Cha
 
 PR-D: `chat.ex` Entity.Agent branch has zero `EzagentPluginCc.*` reference (grep verified); existing cc e2e (Feishu inbound → cc agent receives → replies via outbound mirror) still passes.
 
-PR-E: `domain_chat/mix.exs` has zero `{:ezagent_plugin_cc, ...}`; `domain_chat/lib/**/*.ex` has zero `EzagentPluginCc.*` (grep -rn returns zero); the new layer_purity_test passes.
+PR-E: `domain_instance_message/mix.exs` has zero `{:ezagent_plugin_cc, ...}`; `domain_instance_message/lib/**/*.ex` has zero `EzagentPluginCc.*` (grep -rn returns zero); the new layer_purity_test passes.
 
 PR-F: A test creating a `codex_*` (or any non-cc/echo/curl) agent and asserting `Domain.Agent.lifecycle_status/1` returns `:alive` with PTY detail — without flavor-string special-casing. All existing tests pass.
 
@@ -433,10 +433,10 @@ PR-G: `mix ezagent workspace create_agent --flavor codex --name test1 ...` works
 - `EzagentPluginCc.Channel` → `Ezagent.AgentBridge.Channel`
 
 **Modified**:
-- `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex` — Entity.Agent receiver branch rewritten
-- `apps/ezagent_domain_chat/lib/ezagent/domain/agent.ex` — flavor-string switch → PTY-alive detection
-- `apps/ezagent_domain_chat/lib/ezagent/orchestrator/mcp_socket.ex` — alias updated
-- `apps/ezagent_domain_chat/mix.exs` — `{:ezagent_plugin_cc, ...}` line + `# layer-violation-exempt` REMOVED
+- `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex` — Entity.Agent receiver branch rewritten
+- `apps/ezagent_domain_instance_message/lib/ezagent/domain/agent.ex` — flavor-string switch → PTY-alive detection
+- `apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/mcp_socket.ex` — alias updated
+- `apps/ezagent_domain_instance_message/mix.exs` — `{:ezagent_plugin_cc, ...}` line + `# layer-violation-exempt` REMOVED
 - `apps/ezagent_plugin_cc/mix.exs` — depends on `ezagent_domain_agent_bridge`
 - `apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/{bridge_registry,token_store,socket,channel}.ex` — replaced with thin `@deprecated` shims for one deprecation window
 - `apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/bridge_adapter.ex` (NEW) — `@behaviour Ezagent.AgentBridge.Adapter` impl
@@ -475,7 +475,7 @@ This is the SPEC's brainstorm draft. Codex should probe:
 4. **Backward-compat alias deprecation window**: 2 release cycles seems reasonable; should it be configurable per operator (env var to disable legacy mount earlier)? Or hard-coded?
 5. **`Ezagent.AgentBridge.deliver/2` failure mode**: if no adapter is registered for the URI's flavor prefix, what should the facade return? `{:error, :no_adapter}` and the caller logs + telemetry, OR raise (let-it-crash)?
 6. **Cap subject for the new app**: `Behavior.AgentBridge :deliver` — should it exist as a Behavior action with required cap, or is the deliver call internal-only (called only from Chat.receive)?
-7. **Domain.Pty.alive?/1 dependency**: PR-F lifecycle_status detection uses `Domain.Pty.alive?/1`. This adds a dep `ezagent_domain_chat → ezagent_domain_pty` (if not already). Is that dep already in place? If not, PR-F adds it.
+7. **Domain.Pty.alive?/1 dependency**: PR-F lifecycle_status detection uses `Domain.Pty.alive?/1`. This adds a dep `ezagent_domain_instance_message → ezagent_domain_pty` (if not already). Is that dep already in place? If not, PR-F adds it.
 8. **Orchestrator MCP TokenStore split**: today `Orchestrator.McpSocket` aliases `EzagentPluginCc.TokenStore` for ITS auth (separate from cc bridge but using the same TokenStore). After PR-B promotes TokenStore, the McpSocket alias updates. Is there any cc-specific token-mint semantics the TokenStore promotion would lose?
 9. **`layer_purity_test` grep check robustness**: `EzagentPluginCc\.` would also match comments + docstrings + test fixtures. Should the grep be restricted to non-comment lines? Or accept the false positives and add inline `# noqa` markers?
 10. **PR sequencing flexibility**: codex's brainstorm — can PR-F (lifecycle_status PTY-detection) run in parallel with PR-B/C/D, or must it strictly follow PR-E? My current ordering has PR-F after E, but PR-F is independent — could shift earlier.
@@ -555,7 +555,7 @@ That's the complete plugin-author surface for a new bridge-backed agent flavor. 
 
 ## 11. Rollback plan
 
-7-PR sequence; each is independently revertable. The most consequential rollback is PR-E (mix.exs unrigging) — if PR-E goes wrong and breaks cc agent operation, revert PR-E specifically: `domain_chat/mix.exs` regains the `{:ezagent_plugin_cc, ...}` dep + `layer-violation-exempt` marker. cc plugin's BridgeRegistry/TokenStore/Socket/Channel shims (post-PR-B/C) still work because they delegate to `Ezagent.AgentBridge.*` — but `Chat.receive(Agent)` reverts to calling them via the cc-prefixed module names. No data loss.
+7-PR sequence; each is independently revertable. The most consequential rollback is PR-E (mix.exs unrigging) — if PR-E goes wrong and breaks cc agent operation, revert PR-E specifically: `domain_instance_message/mix.exs` regains the `{:ezagent_plugin_cc, ...}` dep + `layer-violation-exempt` marker. cc plugin's BridgeRegistry/TokenStore/Socket/Channel shims (post-PR-B/C) still work because they delegate to `Ezagent.AgentBridge.*` — but `Chat.receive(Agent)` reverts to calling them via the cc-prefixed module names. No data loss.
 
 ---
 

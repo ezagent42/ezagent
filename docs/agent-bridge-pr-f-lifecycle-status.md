@@ -19,7 +19,7 @@ Codex and future agent flavors must reuse `Ezagent.Entity.Agent` plus `Ezagent.D
 Focused test:
 
 ```sh
-mix test apps/ezagent_domain_chat/test/ezagent/domain/agent_test.exs
+mix test apps/ezagent_domain_instance_message/test/ezagent/domain/agent_test.exs
 ```
 
 Result: 7 tests, 0 failures.

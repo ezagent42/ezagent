@@ -41,21 +41,23 @@ defmodule Ezagent.Behavior.Manage do
 
   require Logger
 
-  action :delete,
+  action(:delete,
     args: %{},
     returns: %{deleted: :boolean},
     caps: [:delete],
     modes: [:call],
     description:
       "tear the target Kind down via Lifecycle.destroy (hooks → clear snapshot+marker → terminate)"
+  )
 
-  action :reconfigure,
+  action(:reconfigure,
     args: %{template_data: :map},
     returns: %{reconfigured: :boolean},
     caps: [:reconfigure],
     modes: [:call],
     description:
       "live re-materialize the Kind from new template_data (per-Class reconfigure hook; #533 §3.5)"
+  )
 
   # #533 §3.3 — `:any` action, scoped to Manage + the dispatched instance.
   # The granted manage-cap `cap(:<kind>, Manage, :any, instance)` satisfies

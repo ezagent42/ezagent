@@ -3,12 +3,12 @@ defmodule Ezagent.AgentFlavorRegistry do
   AgentFlavorRegistry — declarative `flavor → {kind, template_class}`
   map (SPEC §6.3, codex MEDIUM-5).
 
-  Today the agent spawn resolver in `ezagent_domain_chat` has a
+  Today the agent spawn resolver in `ezagent_domain_instance_message` has a
   hardcoded `flavor → {kind, template_class}` map — that is why "add a
   6th agent-flavor plugin" actually requires editing a non-plugin file.
   Each agent plugin declares `agent_flavors/0` (a list of
   `t:Ezagent.Plugin.agent_flavor_decl/0`); `Ezagent.Plugin.boot/1`
-  registers each entry here. PR-3 then migrates the domain_chat
+  registers each entry here. PR-3 then migrates the domain_instance_message
   resolver to consult this registry — after which a new agent-flavor
   plugin truly touches only its own dir.
 

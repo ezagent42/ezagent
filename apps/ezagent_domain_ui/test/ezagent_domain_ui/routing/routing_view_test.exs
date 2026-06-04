@@ -65,7 +65,7 @@ defmodule EzagentDomainUi.Routing.RoutingViewTest do
       rules = [
         %{
           id: 42,
-          table_name: "Elixir.EzagentDomainChat.Routing.MentionRouting",
+          table_name: "Elixir.EzagentDomainInstanceMessage.Routing.MentionRouting",
           matcher: {:and, [{:in_session, "session://default/system/main"}, {:mention, "entity://agent/team-alpha/cc_demo"}]},
           matcher_repr:
             "{:and, [{:in_session, \"session://default/system/main\"}, {:mention, \"entity://agent/team-alpha/cc_demo\"}]}",
@@ -97,7 +97,7 @@ defmodule EzagentDomainUi.Routing.RoutingViewTest do
       rules = [
         %{
           id: 7,
-          table_name: "Elixir.EzagentDomainChat.Routing.MentionRouting",
+          table_name: "Elixir.EzagentDomainInstanceMessage.Routing.MentionRouting",
           matcher: {:always},
           matcher_repr: "{:always}",
           receivers: ["entity://agent/team-alpha/echo_default"],
@@ -122,7 +122,7 @@ defmodule EzagentDomainUi.Routing.RoutingViewTest do
       rules = [
         %{
           id: 1,
-          table_name: "Elixir.EzagentDomainChat.Routing.MentionRouting",
+          table_name: "Elixir.EzagentDomainInstanceMessage.Routing.MentionRouting",
           matcher: {:always},
           matcher_repr: "{:always}",
           receivers: ["$session_members"],

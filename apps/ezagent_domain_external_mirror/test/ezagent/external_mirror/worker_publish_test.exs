@@ -75,7 +75,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
     # Chat is a compile-but-not-runtime dep of :ezagent_domain_external_mirror
     # (cycle break). Force-start so SessionSupervisor / scheme registration
     # exist when this test runs alone.
-    {:ok, _} = Application.ensure_all_started(:ezagent_domain_chat)
+    {:ok, _} = Application.ensure_all_started(:ezagent_domain_instance_message)
 
     :ok = ensure_adapter_registered(MockPublishAdapter, MockPublishBinding)
     cleanup_workers()
@@ -169,6 +169,44 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
       assert slice.count >= 1
       assert slice.last_publish_result == :ok
       assert slice.last_published_at != nil
+    end
+
+    test "publish idempotency is scoped by worker uri, not cursor only",
+         %{session_uri: session_a_uri} do
+      suffix = System.unique_integer([:positive])
+      target_a = "tgt-publish-idem-a-#{suffix}"
+      target_b = "tgt-publish-idem-b-#{suffix}"
+      session_b_uri = unique_session_uri("worker-publish-idem")
+      owner_b_uri = unique_user_uri("worker-publish-idem-owner")
+
+      :ok = spawn_owner_and_session(owner_b_uri, session_b_uri)
+      on_exit(fn -> cleanup_session(session_b_uri) end)
+
+      MockPublishBinding.register_observer(target_a, self())
+      MockPublishBinding.register_observer(target_b, self())
+
+      {:ok, _} = WorkerSpawn.spawn(session_a_uri, "mock_publish", target_a)
+      {:ok, _} = WorkerSpawn.spawn(session_b_uri, "mock_publish", target_b)
+
+      worker_a_uri = WorkerSpawn.worker_uri_for(session_a_uri, "mock_publish", target_a)
+      worker_b_uri = WorkerSpawn.worker_uri_for(session_b_uri, "mock_publish", target_b)
+
+      :ok = await_worker_subscribed(session_a_uri, worker_a_uri, 100)
+      :ok = await_worker_subscribed(session_b_uri, worker_b_uri, 100)
+
+      send_chat_to_session(session_a_uri, "idempotency-a")
+      assert :ok = await_publish_count_at_least(worker_a_uri, 1, 20)
+
+      assert_receive {:published, %{event: %Ezagent.Publisher.Event{} = event_a}, ^target_a, 1},
+                     1_000
+
+      send_chat_to_session(session_b_uri, "idempotency-b")
+      assert :ok = await_publish_count_at_least(worker_b_uri, 1, 20)
+
+      assert_receive {:published, %{event: %Ezagent.Publisher.Event{} = event_b}, ^target_b, 1},
+                     1_000
+
+      assert event_a.cursor == event_b.cursor
     end
   end
 
@@ -592,7 +630,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
   defp cleanup_session(%URI{} = session_uri) do
     case Ezagent.KindRegistry.lookup(session_uri) do
       {:ok, pid} when is_pid(pid) ->
-        _ = DynamicSupervisor.terminate_child(EzagentDomainChat.SessionSupervisor, pid)
+        _ = DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, pid)
         :ok
 
       _ ->

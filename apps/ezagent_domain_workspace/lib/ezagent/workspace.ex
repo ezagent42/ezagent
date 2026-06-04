@@ -733,7 +733,7 @@ defmodule Ezagent.Workspace do
   `docs/superpowers/specs/2026-05-26-session-create-orchestrator-unified.md`
   Gap C.
 
-  Wraps `EzagentDomainChat.create_session/3` via the
+  Wraps `EzagentDomainInstanceMessage.SessionCreator.create_session/3` via the
   `Behavior.Workspace.:create_session` action so the CLI
   (`mix ezagent workspace create_session ...`) and the LV "New session"
   form both reach the same code path. The auto-spawned orchestrator
@@ -767,12 +767,39 @@ defmodule Ezagent.Workspace do
     caller = Map.fetch!(ctx, :caller)
     caps = Map.fetch!(ctx, :caps)
 
-    Router.dispatch(%Cmd{
-      target: target,
-      action: :create_session,
-      args: args,
-      ctx: %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
-    })
+    with :ok <- ensure_workspace_live(workspace_uri) do
+      Router.dispatch(%Cmd{
+        target: target,
+        action: :create_session,
+        args: args,
+        ctx: %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+      })
+    end
+  end
+
+  defp ensure_workspace_live(%URI{scheme: "workspace", host: name} = workspace_uri)
+       when is_binary(name) and name != "" do
+    case KindRegistry.lookup(workspace_uri) do
+      {:ok, _pid} ->
+        :ok
+
+      :error ->
+        case Store.get_by_name(name) do
+          nil ->
+            {:error, :workspace_not_found}
+
+          %{members: members, session_templates: templates, routing_rules: rules} ->
+            case spawn_workspace(name, %{
+                   members: members,
+                   session_templates: templates,
+                   routing_rules: rules
+                 }) do
+              {:ok, _pid} -> :ok
+              {:error, {:already_started, _pid}} -> :ok
+              {:error, reason} -> {:error, {:workspace_spawn_failed, reason}}
+            end
+        end
+    end
   end
 
   @doc """
@@ -848,6 +875,54 @@ defmodule Ezagent.Workspace do
          }) do
       {:ok, _} -> grant_initial_caps(agent_uri, rest, ctx)
       {:error, reason} -> {:error, {:grant_failed, cap, reason}}
+    end
+  end
+
+  @doc """
+  Grant the creator the abstract `Behavior.Manage :any` cap for a newly
+  created Kind instance.
+
+  The creation path injects the concrete `kind` axis (`:session`, `:agent`,
+  ...). The cap itself is built by `Ezagent.CreatorGrant`; this facade only
+  performs the Identity dispatch under the closed bootstrap system principal
+  because `Manage :any` is a wildcard-action cap whose target Behavior has
+  no data owner; Identity's grant boundary correctly requires admin authority
+  for that shape. The issued cap still records `granted_by: creator_uri`
+  because the business authority comes from the successful create operation,
+  not from the system principal.
+  """
+  @spec grant_creator_manage_cap(atom(), URI.t(), URI.t(), URI.t()) :: :ok | {:error, term()}
+  def grant_creator_manage_cap(
+        kind,
+        %URI{} = instance_uri,
+        %URI{} = workspace_uri,
+        %URI{} = creator_uri
+      )
+      when is_atom(kind) do
+    cap = Ezagent.CreatorGrant.manage_cap(kind, instance_uri, workspace_uri, creator_uri)
+    current = Ezagent.Identity.list_caps_for(creator_uri)
+
+    if Enum.any?(current, &Ezagent.CreatorGrant.same_authority?(&1, cap)) do
+      :ok
+    else
+      target = Ezagent.URI.with_action(creator_uri, :identity, :grant_cap)
+
+      case Router.dispatch(%Cmd{
+             target: target,
+             action: :grant_cap,
+             args: %{cap: cap},
+             ctx: %{
+               mode: :call,
+               caller: creator_uri,
+               caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+               reply: :ignore
+             }
+           }) do
+        {:ok, _} -> :ok
+        :ok -> :ok
+        {:error, reason} -> {:error, {:creator_manage_cap_grant_failed, reason}}
+        other -> {:error, {:creator_manage_cap_grant_unexpected, other}}
+      end
     end
   end
 end

@@ -204,7 +204,7 @@ raise、重跑继续。Loader 是 Generator 的"哥哥"。**Generator 从一开�
 
 - `update_agent_template`、`add_agent_slot`、`remove_agent_slot` —
   改为调用新的 reconciler,而非各自的 per-tool saga。
-- `apps/ezagent_domain_chat/lib/ezagent/orchestrator/tools.ex` 里
+- `apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools.ex` 里
   约 6 个 saga 补偿辅助**删除** (rollback_template_slot、
   restore_prior_working_copy、cleanup_routing_changes、per-tool
   `guard` 封装……)。

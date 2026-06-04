@@ -267,7 +267,7 @@ bob_uri = URI.parse("entity://user/default/bob_demo")
 {:ok, _pid} = Ezagent.SpawnRegistry.spawn(bob_uri)
 
 # Bob tries to send a chat — DENIED
-{:ok, session_uri} = EzagentDomainChat.create_session("caps_demo", Ezagent.Entity.User.admin_uri())
+{:ok, session_uri} = EzagentDomainInstanceMessage.create_session("caps_demo", Ezagent.Entity.User.admin_uri())
 
 msg = Ezagent.Message.new(bob_uri, %{text: "hello", attachments: []}, mentions: [])
 target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")

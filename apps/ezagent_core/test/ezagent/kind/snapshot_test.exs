@@ -27,6 +27,7 @@ defmodule Ezagent.Kind.SnapshotTest do
     # cap on its own URI so dispatch-path list_caps/has_cap? authorize.
     # remediation C-D — the slice is now two-container (state/transients).
     assert %{identity: %{state: %{caps: caps}}} = state
+
     refute Map.has_key?(state, :api_keys),
            "User Kind no longer holds :api_keys post Allen 2026-05-26 flip"
 

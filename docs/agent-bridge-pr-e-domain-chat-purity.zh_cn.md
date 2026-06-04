@@ -1,10 +1,10 @@
-# AgentBridge PR-E — domain_chat Layer Purity
+# AgentBridge PR-E — domain_instance_message Layer Purity
 
 本 PR 在 PR-D 已经把 Agent chat delivery 迁到 AgentBridge 之后，删除
-最后一个 `ezagent_domain_chat -> ezagent_plugin_cc` 依赖。
+最后一个 `ezagent_domain_instance_message -> ezagent_plugin_cc` 依赖。
 
 范围：
-- 从 `apps/ezagent_domain_chat/mix.exs` 删除
+- 从 `apps/ezagent_domain_instance_message/mix.exs` 删除
   `{:ezagent_plugin_cc, in_umbrella: true}`。
 - 删除该依赖对应的临时 `layer-violation-exempt` 标记。
 - 将 `Ezagent.Orchestrator.McpSocket` 改为使用
@@ -22,6 +22,6 @@
 - 删除 deprecated cc 兼容 shim。
 - 删除 `/cc_socket` 或 `cc:bridge:*` deprecation-window alias。
 
-本 PR 完成后，`ezagent_domain_chat` 的 bridge 相关行为只通过 domain
+本 PR 完成后，`ezagent_domain_instance_message` 的 bridge 相关行为只通过 domain
 abstraction 路由。这样 PR-G 添加 codex agent flavor 时，不会继承 cc
 plugin 依赖。

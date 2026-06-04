@@ -85,7 +85,7 @@
   - PR #390 — PTY/Python phase state machine + LV visibility
   - PR #424 — agent_bridge PR-B: TokenStore + Registry promoted out of cc plugin
   - PR #428 — agent_bridge PR-C: Socket + Channel promoted
-  - PR #432 — agent_bridge PR-E: removed domain_chat cc dependency
+  - PR #432 — agent_bridge PR-E: removed domain_instance_message cc dependency
   - PR #436 — agent_bridge PR-G: added codex plugin (orthogonal cc validation point)
 - Related SPECs:
   - `docs/superpowers/specs/2026-05-21-domain-pty-architecture.md`

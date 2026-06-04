@@ -19,7 +19,7 @@ Codex 和未来 agent flavor 必须复用 `Ezagent.Entity.Agent` 与 `Ezagent.Do
 Focused test：
 
 ```sh
-mix test apps/ezagent_domain_chat/test/ezagent/domain/agent_test.exs
+mix test apps/ezagent_domain_instance_message/test/ezagent/domain/agent_test.exs
 ```
 
 结果：7 tests, 0 failures。

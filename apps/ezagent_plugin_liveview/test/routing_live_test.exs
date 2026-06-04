@@ -39,7 +39,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     # 2026-05-25 — SessionRouting retired. Selectable tabs / sidebar
     # buttons for it must be gone; the table name itself only appears
     # inside the explanatory "was removed" copy of the blurb.
-    refute html =~ "phx-value-table='Elixir.EzagentDomainChat.Routing.SessionRouting'"
+    refute html =~ "phx-value-table='Elixir.EzagentDomainInstanceMessage.Routing.SessionRouting'"
     refute html =~ ~s(phx-click="switch_table")
     assert html =~ "SessionRouting table was removed"
     assert html =~ "external_mirror_bindings"
@@ -69,7 +69,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     lv
     |> form("#add-rule form",
       rule: %{
-        table: "Elixir.EzagentDomainChat.Routing.MentionRouting",
+        table: "Elixir.EzagentDomainInstanceMessage.Routing.MentionRouting",
         matcher_type: "mention"
       }
     )
@@ -103,7 +103,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     lv
     |> form("#add-rule form",
       rule: %{
-        table: "Elixir.EzagentDomainChat.Routing.MentionRouting",
+        table: "Elixir.EzagentDomainInstanceMessage.Routing.MentionRouting",
         matcher_json: combinator_json
       }
     )
@@ -119,7 +119,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     lv
     |> form("#add-rule form",
       rule: %{
-        table: "Elixir.EzagentDomainChat.Routing.MentionRouting",
+        table: "Elixir.EzagentDomainInstanceMessage.Routing.MentionRouting",
         matcher_type: "mention"
       }
     )
@@ -140,7 +140,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     lv
     |> form("#add-rule form",
       rule: %{
-        table: "Elixir.EzagentDomainChat.Routing.MentionRouting",
+        table: "Elixir.EzagentDomainInstanceMessage.Routing.MentionRouting",
         matcher_type: "mention"
       }
     )
@@ -161,7 +161,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     lv
     |> form("#add-rule form",
       rule: %{
-        table: "Elixir.EzagentDomainChat.Routing.MentionRouting",
+        table: "Elixir.EzagentDomainInstanceMessage.Routing.MentionRouting",
         matcher_type: "mention"
       }
     )
@@ -182,7 +182,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     lv
     |> form("#add-rule form",
       rule: %{
-        table: "Elixir.EzagentDomainChat.Routing.MentionRouting",
+        table: "Elixir.EzagentDomainInstanceMessage.Routing.MentionRouting",
         matcher_type: "mention"
       }
     )
@@ -216,7 +216,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     lv
     |> form("#add-rule form",
       rule: %{
-        table: "Elixir.EzagentDomainChat.Routing.MentionRouting",
+        table: "Elixir.EzagentDomainInstanceMessage.Routing.MentionRouting",
         matcher_type: "mention"
       }
     )
@@ -237,7 +237,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     lv
     |> form("#add-rule form",
       rule: %{
-        table: "Elixir.EzagentDomainChat.Routing.MentionRouting",
+        table: "Elixir.EzagentDomainInstanceMessage.Routing.MentionRouting",
         matcher_type: "mention"
       }
     )

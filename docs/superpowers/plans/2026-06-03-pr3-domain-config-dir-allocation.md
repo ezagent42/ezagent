@@ -171,7 +171,7 @@ a losing race re-mkdirs the same path (harmless). No new lock. Tested for idempo
 - Modify: `apps/ezagent_core/lib/ezagent/kind/template.ex` — add
   `provision_and_instantiate/4` (DD-3); update the `:106-117` note; document
   `"allocated_config_dir"`.
-- Modify: `apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex` — `:598` → wrapper;
+- Modify: `apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex` — `:598` → wrapper;
   `:724` cleanup → `ConfigDir.path/2`; `to_template_data/2` flavor key if absent.
 - Modify: `apps/ezagent_domain_workspace/lib/ezagent/workspace/loader.ex` — `:131`, `:389`
   → wrapper.
@@ -217,7 +217,7 @@ a losing race re-mkdirs the same path (harmless). No new lock. Tested for idempo
 - [ ] `build_claude_cmd/3`: pass `config_dir`, set `--mcp-config <config_dir>/.mcp.json`. Test argv. PASS. Commit.
 
 ### Task 6 — full suite + E2E smoke
-- [ ] `mix test apps/ezagent_core apps/ezagent_plugin_cc apps/ezagent_domain_chat apps/ezagent_domain_workspace` green.
+- [ ] `mix test apps/ezagent_core apps/ezagent_plugin_cc apps/ezagent_domain_instance_message apps/ezagent_domain_workspace` green.
 - [ ] Manual: spawn a cc agent; files under `<Home>/cc-agents/<ws>/<name>/` incl. `.mcp.json`;
       `--mcp-config` points there; bridge connects (传话游戏 path intact). Restart the agent → it
       relaunches from persisted `"agent_config_dir"` (no re-allocation, no break). Commit.

@@ -143,13 +143,14 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   # `caps: [:publish]` ⇒ atom; the macro's auto-derived `required_caps/0`
   # would produce `cap(:any, _, :publish)`. We override below to pin
   # the `:external_mirror_worker` kind axis Step 5.5 expects.
-  action :publish,
+  action(:publish,
     args: %{},
     returns: %{ok: :boolean, cursor: :integer},
     caps: [:publish],
     modes: [:cast],
     description:
       "publish a Publisher event to an external system via the bound adapter+binding pair"
+  )
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   # Explicit override — pin kind axis `:external_mirror_worker`.
@@ -897,7 +898,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   # requires explicit ctx.caps per CapBAC step 5.5).
   #
   # We don't call `Ezagent.Entity.Session.subscribe_from/4`
-  # directly: `:ezagent_domain_chat` depends on
+  # directly: `:ezagent_domain_instance_message` depends on
   # `:ezagent_domain_external_mirror` (for the Publisher contract),
   # so a reverse reference here would form a Mix dep cycle.
   # The dispatch goes through `?action=publisher.subscribe_from`
@@ -931,7 +932,12 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   # (`attempt_resubscribe`) run on the Worker process and default to `self()`.
   defp subscribe_to_session_publisher_from(session_uri, self_uri, cursor, subscriber_pid \\ nil)
 
-  defp subscribe_to_session_publisher_from(%URI{} = session_uri, %URI{} = self_uri, cursor, sub_pid) do
+  defp subscribe_to_session_publisher_from(
+         %URI{} = session_uri,
+         %URI{} = self_uri,
+         cursor,
+         sub_pid
+       ) do
     subscriber_pid = sub_pid || self()
 
     cmd =
@@ -978,11 +984,10 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   # publish through the Router (not invoking the binding inline) keeps step
   # 5.5 CapBAC + telemetry + idempotency on the publish path (P14 hygiene).
   defp dispatch_publish_effect(%URI{} = self_uri, %Event{} = event) do
-    # Idempotency key (preserved verbatim): Router forwards both
-    # `:command_uuid` and `:idempotency_key` so the de-dupe behaves as
-    # before — replayed events for an already-published cursor short-
-    # circuit without a second outbound transport call.
-    idem = "external_mirror_worker.publish/#{event.cursor}"
+    # Scope idempotency to the Worker URI. Publisher cursors are local to
+    # one publisher/session, while Ezagent.Idempotency is process-wide;
+    # cursor-only keys would make different workers with cursor 1 collide.
+    idem = "external_mirror_worker.publish/#{URI.to_string(self_uri)}##{event.cursor}"
 
     {:dispatch,
      Ezagent.Cmd.new(

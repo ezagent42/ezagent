@@ -266,9 +266,9 @@ sequenceDiagram
 |---|---|---|---|
 | **Kind: Loom**（薄壳） | `entity://loom/<ws>/<name>` | plugin install | 本 plugin（新 Kind，**state 仅是文件指针 + 缓存**） |
 | **Loom 文件**（真相，每文件 = 一个 loom 实例） | `Ezagent.Home.path(:plugins)/loom/looms/<ws>/<name>.json`<br/>= `$EZAGENT_HOME/$EZAGENT_PROFILE/plugins/loom/looms/<ws>/<name>.json`<br/>默认 `~/.ezagent/default/plugins/loom/looms/<ws>/<name>.json` | install / patch | **文件系统**（见 §5.5） |
-| **Agent: loom editor** | `entity://agent/<ws>/<name>_editor` | plugin install（flavor=loom_editor） | 复用 `Ezagent.Entity.Agent`（domain_chat） |
+| **Agent: loom editor** | `entity://agent/<ws>/<name>_editor` | plugin install（flavor=loom_editor） | 复用 `Ezagent.Entity.Agent`（domain_instance_message） |
 | **SessionTemplate** | `template://loom_page/<ver>` | plugin boot（`template_classes/0`） | 本 plugin |
-| **Session**（编辑会话） | `session://loom_page/<ws>/<name>` | install 调 `SessionTemplate.spawn_from_template`（domain_chat） | domain_chat |
+| **Session**（编辑会话） | `session://loom_page/<ws>/<name>` | install 调 `SessionTemplate.spawn_from_template`（domain_instance_message） | domain_instance_message |
 | **Behaviors** | `schema.patch` / `schema.read` / `schema.snapshot` | plugin boot（`behaviors/0`） | 本 plugin |
 | **Caps** | `loom:patch:<schema_uri>` / `loom:read:<schema_uri>` / `loom:raw_html:<schema_uri>` | install 时种到 admin + editor agent + session creator | CapabilityRegistry（core） |
 | **初始 schema 文件** | 同上路径 | plugin install 的 after_boot | 文件系统 |

@@ -289,7 +289,11 @@ defmodule EzagentCore.Invariants.CrossWorkspaceIsolationTest do
       # invariant per SPEC v3 §4.4. Admin dispatching into any
       # workspace must pass step 5.6 without any additional grant.
       inv =
-        send_invocation(ctx.team_alpha_session_uri, User.admin_uri(), Ezagent.SystemPrincipal.caps("system://bootstrap"))
+        send_invocation(
+          ctx.team_alpha_session_uri,
+          User.admin_uri(),
+          Ezagent.SystemPrincipal.caps("system://bootstrap")
+        )
 
       result = Invocation.dispatch(inv)
 

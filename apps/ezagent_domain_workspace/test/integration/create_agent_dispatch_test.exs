@@ -30,7 +30,11 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
     {:ok, _ws_pid} = Workspace.create(ws_name, %{})
 
     workspace_uri = URI.new!("workspace://#{ws_name}")
-    admin_ctx = %{caller: User.admin_uri(), caps: Ezagent.SystemPrincipal.caps("system://bootstrap")}
+
+    admin_ctx = %{
+      caller: User.admin_uri(),
+      caps: Ezagent.SystemPrincipal.caps("system://bootstrap")
+    }
 
     {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx}
   end
@@ -173,7 +177,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
 
     test "cc + --from pointing at a non-existent source returns {:error, :source_not_found}",
          %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
-      {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_chat)
+      {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_instance_message)
 
       # A real `cc_` URI shape so coerce + validate pass; the URI must
       # NOT correspond to a live Agent Kind — `sandbox.read` dispatch
@@ -252,10 +256,10 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
 
   describe "Ezagent.Workspace.create_agent/3 — end-to-end direct-spawn (codex r1 MEDIUM-6 / r2 MEDIUM-1)" do
     setup do
-      # Codex PR #330 r2 MEDIUM-1: explicitly start :ezagent_domain_chat
+      # Codex PR #330 r2 MEDIUM-1: explicitly start :ezagent_domain_instance_message
       # so the `agent` SpawnRegistry scheme is registered. Without this
       # the test would skip in CI's per-app test runs.
-      {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_chat)
+      {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_instance_message)
       :ok
     end
 
@@ -296,5 +300,66 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
                "agent should be alive in KindRegistry after create_agent returned :ok"
       end
     end
+
+    @tag :integration
+    test "creator receives an agent-scoped Manage cap after direct-spawn create_agent", %{
+      ws_name: ws_name,
+      workspace_uri: workspace_uri
+    } do
+      if not function_exported?(Ezagent.SpawnRegistry, :registered_schemes, 0) or
+           "entity" not in Ezagent.SpawnRegistry.registered_schemes() do
+        IO.puts(:stderr, "SKIP: entity spawn fn not registered (test bootstrap incomplete)")
+        :ok
+      else
+        creator_uri =
+          URI.new!("entity://user/#{ws_name}/agent-creator-#{System.unique_integer([:positive])}")
+
+        create_cap =
+          Ezagent.Capability.cap(
+            :workspace,
+            Ezagent.Behavior.Workspace,
+            :create_agent,
+            workspace_uri,
+            workspace_uri
+          )
+
+        {:ok, _pid} =
+          Ezagent.Kind.spawn(User, %{
+            uri: creator_uri,
+            initial_caps:
+              MapSet.new([
+                %{create_cap | granted_by: User.admin_uri(), granted_at: DateTime.utc_now()}
+              ])
+          })
+
+        name = "managed-#{System.unique_integer([:positive])}"
+
+        assert {:ok, %{agent_uri: agent_uri, template_name: nil}} =
+                 Workspace.create_agent(
+                   workspace_uri,
+                   %{flavor: "curl", name: name, cwd: "", with_pty: false},
+                   %{caller: creator_uri, caps: Ezagent.Identity.list_caps_for(creator_uri)}
+                 )
+
+        assert creator_has_manage_cap?(creator_uri, :agent, agent_uri, workspace_uri)
+      end
+    end
+  end
+
+  defp creator_has_manage_cap?(creator_uri, kind, instance_uri, workspace_uri) do
+    creator_uri
+    |> Ezagent.Identity.list_caps_for()
+    |> Enum.any?(fn
+      %Ezagent.Capability{} = cap ->
+        cap.kind == kind and
+          cap.behavior == Ezagent.Behavior.Manage and
+          cap.action == :any and
+          URI.to_string(cap.instance) == URI.to_string(instance_uri) and
+          URI.to_string(cap.workspace_uri) == URI.to_string(workspace_uri) and
+          URI.to_string(cap.granted_by) == URI.to_string(creator_uri)
+
+      _ ->
+        false
+    end)
   end
 end

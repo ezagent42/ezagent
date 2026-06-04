@@ -322,7 +322,7 @@ Ezagent 通过 `ezagent_plugin_cc`(Elixir HTTP/SSE + Python MCP server)桥接外
 
 **Meta schema(Phase 6 PR 26, Decision #132)**:`notifications/claude/channel` 的 `meta` 字段是 `Record<string, string>`(Anthropic channels-reference spec 强制)。**任何 non-string value(list / map / nested object)让 claude TUI 整条 notification silently drop**,没有错误返回——symptom 看起来跟 transport 失联一样,极难诊断(PR 14 加 list 类型 attachments key 坏了 inbound,3 周后才发现)。
 
-结构化数据放 `content`(文本 breadcrumb 形式);可选 `meta.file_path: <abs-path>` 字符串(单文件场景,仿 cc-openclaw 约定),由 claude `Read` tool 拉取实际内容。CI gate:`apps/ezagent_domain_chat/test/esr/behavior/chat_test.exs` "to_claude payload meta values are all strings"。
+结构化数据放 `content`(文本 breadcrumb 形式);可选 `meta.file_path: <abs-path>` 字符串(单文件场景,仿 cc-openclaw 约定),由 claude `Read` tool 拉取实际内容。CI gate:`apps/ezagent_domain_instance_message/test/esr/behavior/chat_test.exs` "to_claude payload meta values are all strings"。
 
 参考: ARCHITECTURE.md §12.8(Phase 1b 后已重写),Decision #86 #132; [docs/notes/phase-6-architecture-closeout.md](docs/notes/phase-6-architecture-closeout.md) §2.3
 
@@ -378,7 +378,7 @@ Router 的 dispatch 入口 envelope struct(SPEC §2.1)。Adapter(LV / CLI / Chan
 
 Phase 6 PR 27 引入。User Kind 的**结构性基线 cap 集**——返回 `[%Capability{kind: :session, behavior: :any, instance: :any, granted_by: system://bootstrap}]`。`Ezagent.Domain.Identity.Users.create/3` prepend 到 caller 提供的 caps;`EzagentPluginFeishu.BindingPolicy.apply/2` 对 pre-PR-27 user 在 bind 时 idempotent 补齐。
 
-⚠️ `behavior: :any` **不是 idiom**——是循环依赖妥协(`ezagent_domain_identity` 不能引用 `ezagent_domain_chat` 的 `Ezagent.Behavior.Chat` 模块)。能用模块引用就用模块引用,narrower scope 永远更安全。future plugin authors 不要 cargo-cult `:any`。
+⚠️ `behavior: :any` **不是 idiom**——是循环依赖妥协(`ezagent_domain_identity` 不能引用 `ezagent_domain_instance_message` 的 `Ezagent.Behavior.Chat` 模块)。能用模块引用就用模块引用,narrower scope 永远更安全。future plugin authors 不要 cargo-cult `:any`。
 
 跟 `admin_caps()` 的区别:`admin_caps` 是 `kind=:any behavior=:any instance=:any`,只授给 `user://admin`(authorization escape hatch);`default_caps` 是 `kind=:session behavior=:any instance=:any`,每个 user 都有(只能尝试 session 行为,session 内 ACL 仍走 routing rules)。
 

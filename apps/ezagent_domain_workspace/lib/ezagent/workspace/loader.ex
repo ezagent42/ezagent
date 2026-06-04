@@ -25,7 +25,7 @@ defmodule Ezagent.Workspace.Loader do
   chance to register their spawn fns. Plugin Applications **must**
   register their schemes before any Workspace declaring those schemes
   loads. We currently rely on Application start order (ezagent_core ⊂
-  ezagent_domain_chat) — chat plugin registers `agent`/`session`/`user`
+  ezagent_domain_instance_message) — chat plugin registers `agent`/`session`/`user`
   schemes in its own start callback, and at that point chat plugin
   also calls `Ezagent.Workspace.Loader.load_all/0` (so the Loader runs
   AFTER schemes are registered).

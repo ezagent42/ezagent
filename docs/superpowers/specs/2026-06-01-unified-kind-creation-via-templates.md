@@ -39,10 +39,10 @@ confirmed by a read-only audit of every Kind creation path:
   pure URI→pid registration. **Registration ≠ authorized creation.**
 - There is **no universal authorized create entry today.** `template.instantiate`
   exists only on AgentTemplate/SessionTemplate
-  (`apps/ezagent_domain_chat/lib/ezagent/behavior/template.ex:280`), and SessionTemplate
+  (`apps/ezagent_domain_instance_message/lib/ezagent/behavior/template.ex:280`), and SessionTemplate
   explicitly refuses it (`:285` → `{:error, :use_generator}`). Session/Workspace/User
   creation go through **domain-specific functions** — `create_session/3`
-  (`ezagent_domain_chat.ex:119`), `Workspace.create/2` (`workspace.ex:61`),
+  (`ezagent_domain_instance_message.ex:119`), `Workspace.create/2` (`workspace.ex:61`),
   `Users.create/3` via `workspace_user_admin` (`workspace_user_admin.ex:151`) — **none
   carrying a `ctx.caller`**. Authorization is bolted on only at the dispatched
   `workspace.create_*` actions; the ~7 direct-`spawn` paths bypass it (worst: the
@@ -120,7 +120,7 @@ depends on the insert result:
   `store.ex:104`) is changed to distinguish **`:created`** vs **`:exists`** (unique
   constraint conflict) — the same atomic-insert signal for the ephemeral path.
 - **`created_by` is threaded as a create arg** into `Kind.spawn` → `init` (exactly as
-  Session threads `owner_uri`, `ezagent_domain_chat.ex:314`), so the grant has the
+  Session threads `owner_uri`, `ezagent_domain_instance_message.ex:314`), so the grant has the
   authenticated creator without re-reading racy state.
 
 These three are **explicit in-scope core changes** (§3.10). The grant fires iff the
@@ -324,7 +324,7 @@ The atomic-insert freshness signal (§3.1) requires three small, enumerated core
    (`store.ex:104`).
 3. **`Kind.spawn/2` → `Kind.Server.init/1`**: thread an optional `created_by` create
    arg into the initial slice / create context (the path `owner_uri` already takes for
-   Session, `kind.ex:293`, `server.ex:95`, `ezagent_domain_chat.ex:314`).
+   Session, `kind.ex:293`, `server.ex:95`, `ezagent_domain_instance_message.ex:314`).
 
 ### 3.11 Narrow the default user session cap (OQ-4 = B)
 
@@ -384,7 +384,7 @@ Lifecycle `destroy/2` (`lifecycle.ex:554-570`, `server.ex:540-583`). Class teard
 **composes** with it; it does not duplicate or bypass it. Used by:
 - **Create-failure rollback** (after a fresh spawn fails at/after grant): run the Class
   teardown (undo durables) **then** `destroy/2` (terminate + delete snapshot). Mirrors
-  `rollback_session/3`'s explicit reversal (`ezagent_domain_chat.ex:871`), generalized
+  `rollback_session/3`'s explicit reversal (`ezagent_domain_instance_message.ex:871`), generalized
   per-Class + delegating termination to the engine.
 - **`manage.delete`**: Class teardown (undo durables) **then** `destroy/2`.
 

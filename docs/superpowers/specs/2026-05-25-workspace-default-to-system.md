@@ -70,14 +70,14 @@ Discovery method: `grep -rn "session://default/default/main\\|workspace://defaul
 | File | Construct | Change |
 |---|---|---|
 | `apps/ezagent_core/lib/ezagent/workspace_registry.ex:87` | `def default_workspace_uri, do: {:ok, URI.new!("workspace://default")}` | **DELETE the function entirely.** Add `@deprecated` removal note in commit. Audit + replace all callers (see §3.1a). |
-| `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:59` | `def default_uri, do: URI.new!("session://default/default/main")` | Return `URI.new!("session://default/system/main")` |
+| `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:59` | `def default_uri, do: URI.new!("session://default/default/main")` | Return `URI.new!("session://default/system/main")` |
 | `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_live.ex:55` | `@main_session_uri URI.new!("session://default/default/main")` | `URI.new!("session://default/system/main")` |
 | `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_caps_live.ex:116` | `URI.parse("workspace://default")` (fallback when assigns missing) | **Fail-fast** — raise `ArgumentError` instead of silently defaulting. LV should never mount without `current_workspace_uri` assign present per PR-N3 pattern. |
 | `apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/application.ex:175` | `Map.get(binding, "session_uri") \|\| "session://default/default/main"` | Remove the `\|\|` fallback — bindings without `session_uri` should fail-fast (the table is FK-style and per SPEC v2 §5.8 every binding row has a target). If a real backwards-compat row exists, write a per-environment seed; do not silently route to `system/main`. |
 | `apps/ezagent_web/lib/ezagent_web/session_principal.ex:121` | `workspace = Keyword.get(opts, :workspace, "default")` (bare-handle login fallback) | Remove the `"default"` literal default. Callers MUST pass `:workspace`. Bare-handle login (Phase 9 PR-2 SPEC v3 §6.2 option A) is admin-only; force `"system"` from the `magic_link_controller` admin path and raise otherwise. |
 | `apps/ezagent_web/lib/ezagent_web/controllers/session_controller.ex:276` | `Map.get(...) \|\| "default"` workspace fallback | Same fix pattern: admin login → `"system"`; tenant login → require the workspace param (raise if missing); legacy clients without the param hit the onboarding redirect (Phase 9 PR-8 path). |
 | `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/users_live.ex:281` | Admin "create user" flow falls back to `entity://user/default/<name>` for legacy 2-segment input | Add explicit workspace dropdown to admin create-user form (SPEC v3 §3 pending UX item flagged by SPEC v2 PR-F #297 comment). MUST be tracked + done — admin creating a user without a workspace is a fail-fast in rev 2. |
-| `apps/ezagent_domain_chat/lib/ezagent/entity/session_template.ex:177` + `:489` | `workspace = Keyword.get(opts, :workspace, "default")` (template URI build) | Same as session_principal — remove silent `"default"` default. All callers pass workspace explicitly (`AgentNewLive`, `Workspace.add_template`, mix tasks). Raise `ArgumentError` on missing `:workspace`. |
+| `apps/ezagent_domain_instance_message/lib/ezagent/entity/session_template.ex:177` + `:489` | `workspace = Keyword.get(opts, :workspace, "default")` (template URI build) | Same as session_principal — remove silent `"default"` default. All callers pass workspace explicitly (`AgentNewLive`, `Workspace.add_template`, mix tasks). Raise `ArgumentError` on missing `:workspace`. |
 | `apps/ezagent_plugin_echo/lib/ezagent_plugin_echo/application.ex:71` | `@default_uri URI.parse("entity://agent/default/echo_default")` | Rename to `entity://agent/system/echo_default` — the demo echo agent lives in admin's workspace. Confirm: echo is admin-owned (`User.admin_uri()` is its creator), so its home workspace IS system. |
 
 ### 3.1a `default_workspace_uri/0` caller audit
@@ -86,7 +86,7 @@ Discovery method: `grep -rn "session://default/default/main\\|workspace://defaul
 
 | Caller | Current | Replacement |
 |---|---|---|
-| `apps/ezagent_domain_chat/lib/ezagent_domain_chat.ex:50` (`create_session/3`) | `{:ok, default_workspace_uri} = Ezagent.WorkspaceRegistry.default_workspace_uri()` | Derive from `creator_uri` structurally: `Ezagent.URI.entity_workspace_uri(creator_uri)`. Wizard calls `create_session(short_name, admin_uri)` → admin's URI is `entity://user/system/admin` → workspace structurally is `workspace://system`. |
+| `apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message.ex:50` (`create_session/3`) | `{:ok, default_workspace_uri} = Ezagent.WorkspaceRegistry.default_workspace_uri()` | Derive from `creator_uri` structurally: `Ezagent.URI.entity_workspace_uri(creator_uri)`. Wizard calls `create_session(short_name, admin_uri)` → admin's URI is `entity://user/system/admin` → workspace structurally is `workspace://system`. |
 | `apps/ezagent_core/lib/ezagent/persistence.ex` (audit + snapshot writer fallback) | Uses for cross-cutting URIs | Drop the fallback; pass `system://` URIs through with `workspace_uri = "workspace://system"` literal (consistent with existing audit-writer pattern for `system://` cross-cutting schemes). Audit table's `workspace_uri` is denormalized + NOT FK so this is safe. |
 
 Any caller not in this table is a bug — the SPEC says "if grep finds more, list them in impl PR and decide site by site; do NOT add a new global fallback to plaster over them."
@@ -120,7 +120,7 @@ Any caller not in this table is a bug — the SPEC says "if grep finds more, lis
 | URI parser tests | `apps/ezagent_core/test/ezagent/uri_test.exs` | Rewrite fixture strings; assertion semantics unchanged |
 | Cap helpers | `apps/ezagent_core/test/support/cap_helper.ex` (`@default_workspace`) | Update module attribute to `workspace://system` + rename to `@system_workspace`; update doc-comments |
 | Test fixtures | `apps/ezagent_domain_identity/test/ezagent/users_test.exs`, etc. | Literal rewrite |
-| Integration tests | `apps/ezagent_domain_chat/test/integration/*.exs` | Literal rewrite + verify they still pass against renamed `Session.default_uri/0` |
+| Integration tests | `apps/ezagent_domain_instance_message/test/integration/*.exs` | Literal rewrite + verify they still pass against renamed `Session.default_uri/0` |
 
 ### 3.6 Echo demo agent rename (codex finding)
 

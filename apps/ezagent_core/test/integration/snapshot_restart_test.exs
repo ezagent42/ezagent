@@ -127,7 +127,7 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
 
       {:ok, pid} =
         DynamicSupervisor.start_child(
-          EzagentDomainChat.AgentSupervisor,
+          EzagentDomainInstanceMessage.AgentSupervisor,
           {Ezagent.Kind.Server, {Ezagent.Entity.Agent, %{uri: uri, initial_caps: MapSet.new()}}}
         )
 
@@ -137,7 +137,7 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
       assert %KindSnapshot{kind_type: "agent"} = KindSnapshot.get(uri_str)
 
       # Graceful terminate via supervisor
-      :ok = DynamicSupervisor.terminate_child(EzagentDomainChat.AgentSupervisor, pid)
+      :ok = DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.AgentSupervisor, pid)
 
       # Row should still exist
       wait_until(fn -> not is_nil(KindSnapshot.get(uri_str)) end, 100)

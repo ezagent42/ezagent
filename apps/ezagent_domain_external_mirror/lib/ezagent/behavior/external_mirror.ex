@@ -86,7 +86,7 @@ defmodule Ezagent.Behavior.ExternalMirror do
 
   We read the owner via `Ezagent.Kind.get_slice/2` rather than
   `Ezagent.Entity.Session.owner/1` to avoid a runtime call into
-  `:ezagent_domain_chat` (Mix-dep cycle — see
+  `:ezagent_domain_instance_message` (Mix-dep cycle — see
   `apps/ezagent_domain_external_mirror/mix.exs` moduledoc).
   """
 
@@ -212,7 +212,7 @@ defmodule Ezagent.Behavior.ExternalMirror do
     # started, etc.) — start with an empty list. The snapshot path
     # repopulates on first mutation; activate/2's reconcile re-reads the
     # SoT on the next start. Matches the existing `bind_session_workspace/1`
-    # boot tolerance pattern in `EzagentDomainChat.Application`.
+    # boot tolerance pattern in `EzagentDomainInstanceMessage.Application`.
     _ ->
       {:ok, %{bindings: []}}
   end
@@ -718,7 +718,7 @@ defmodule Ezagent.Behavior.ExternalMirror do
   data-ownership PR-OWN-2 #308). Reading the slice avoids a runtime
   call into `Ezagent.Entity.Session.owner/1` which would form a
   reverse Mix-dep edge from `:ezagent_domain_external_mirror` to
-  `:ezagent_domain_chat` (cycle — chat already depends on this app
+  `:ezagent_domain_instance_message` (cycle — chat already depends on this app
   for the Publisher contract).
 
   `:any` (class-wide caps) → workspace admin grants (per §5.2

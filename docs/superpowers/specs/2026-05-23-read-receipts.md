@@ -1,7 +1,7 @@
 # SPEC — `Ezagent.Chat.ReadMarker` (chat domain)
 
 **Status:** rev 1 · 2026-05-23
-**Tier:** `apps/ezagent_domain_chat/`
+**Tier:** `apps/ezagent_domain_instance_message/`
 **Predecessors:** SPEC `docs/superpowers/specs/2026-05-23-presence.md` (companion; Presence is for "connected", ReadMarker is for "consumed"), `Ezagent.MessageStore` (canonical message persistence)
 **Decided per Allen 2026-05-23 06:50**: "delivery ≠ consumption — two semantics, two primitives". This SPEC implements the consumption side; delivery already arrives via Mailer / Presence.
 
@@ -220,16 +220,16 @@ Per `check_invariants` rule (Phase 6 audit): `behavior/chat.ex` and `audit.ex` a
 | File | Action | LOC est |
 |---|---|---|
 | `apps/ezagent_core/priv/repo/migrations/20260605000000_phase10_read_markers.exs` | new | ~30 |
-| `apps/ezagent_domain_chat/lib/ezagent/chat/read_marker.ex` | new | ~200 |
+| `apps/ezagent_domain_instance_message/lib/ezagent/chat/read_marker.ex` | new | ~200 |
 | `apps/ezagent_core/lib/mix/tasks/ezagent.check_invariants.ex` | edit (allowlist `read_marker.ex` PubSub broadcast) | +2 |
-| `apps/ezagent_domain_chat/test/ezagent/chat/read_marker_test.exs` | new | ~150 (8 tests) |
+| `apps/ezagent_domain_instance_message/test/ezagent/chat/read_marker_test.exs` | new | ~150 (8 tests) |
 | `docs/superpowers/specs/2026-05-23-read-receipts.md` | new (this file) | — |
 
 Total: ~400 net LOC. Single PR.
 
 ## 9. Tests
 
-`apps/ezagent_domain_chat/test/ezagent/chat/read_marker_test.exs`:
+`apps/ezagent_domain_instance_message/test/ezagent/chat/read_marker_test.exs`:
 
 1. `mark/4` upserts; `last_read/3` returns the marker
 2. Repeat `mark/4` with same (session, user, message, source) → `:already_ahead`

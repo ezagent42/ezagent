@@ -178,12 +178,12 @@ defmodule Ezagent.ExternalMirror.AuthModelTestHelpers do
   end
 
   @doc """
-  Cleanup session by terminating its child of EzagentDomainChat.SessionSupervisor.
+  Cleanup session by terminating its child of EzagentDomainInstanceMessage.SessionSupervisor.
   """
   def cleanup_session(%URI{} = session_uri) do
     case Ezagent.KindRegistry.lookup(session_uri) do
       {:ok, pid} when is_pid(pid) ->
-        _ = DynamicSupervisor.terminate_child(EzagentDomainChat.SessionSupervisor, pid)
+        _ = DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, pid)
         :ok
 
       _ ->

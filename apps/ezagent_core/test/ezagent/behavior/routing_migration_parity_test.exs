@@ -37,7 +37,7 @@ defmodule Ezagent.Behavior.RoutingMigrationParityTest do
   alias Ezagent.{BehaviorRegistry, Invocation}
   alias Ezagent.Behavior.Routing
   alias Ezagent.Routing.RuleStore
-  alias EzagentDomainChat.Routing.MentionRouting
+  alias EzagentDomainInstanceMessage.Routing.MentionRouting
 
   # MentionRouting is a real RoutingRegistry table declared by the
   # chat plugin's boot path; using it here exercises the full
@@ -154,11 +154,16 @@ defmodule Ezagent.Behavior.RoutingMigrationParityTest do
       receivers = ["entity://user/system/admin"]
 
       inv =
-        build_invocation(self_uri, :add_rule, %{
-          table: table,
-          matcher_json: matcher_json,
-          receivers: receivers
-        }, admin_caps)
+        build_invocation(
+          self_uri,
+          :add_rule,
+          %{
+            table: table,
+            matcher_json: matcher_json,
+            receivers: receivers
+          },
+          admin_caps
+        )
 
       assert {:ok, new_state, %{id: id}, _slice_change_event} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubRoutingKind, self_uri)
@@ -233,11 +238,16 @@ defmodule Ezagent.Behavior.RoutingMigrationParityTest do
       # The handler must propagate the error verbatim (no slice
       # mutation, no RuleStore write).
       inv =
-        build_invocation(self_uri, :add_rule, %{
-          table: @table,
-          matcher_json: %{"type" => "totally_bogus"},
-          receivers: []
-        }, admin_caps)
+        build_invocation(
+          self_uri,
+          :add_rule,
+          %{
+            table: @table,
+            matcher_json: %{"type" => "totally_bogus"},
+            receivers: []
+          },
+          admin_caps
+        )
 
       result = Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubRoutingKind, self_uri)
 

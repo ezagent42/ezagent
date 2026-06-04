@@ -68,13 +68,13 @@ At the TEMPLATE INPUT layer (`AgentTemplate` content), make the two intents expl
 
 ## Files to change
 
-- `apps/ezagent_domain_chat/lib/ezagent/entity/agent_template.ex` — type, moduledoc,
+- `apps/ezagent_domain_instance_message/lib/ezagent/entity/agent_template.ex` — type, moduledoc,
   `to_template_data/2` (`fetch_working_directory` → `fetch_project_cwd`,
   `:missing_working_directory` → `:missing_project_cwd`), mapping table.
-- `apps/ezagent_domain_chat/lib/ezagent/behavior/template.ex` — universal-fields moduledoc.
-- `apps/ezagent_domain_chat/lib/ezagent/orchestrator/cc_orchestrator_seed.ex` — seed content
+- `apps/ezagent_domain_instance_message/lib/ezagent/behavior/template.ex` — universal-fields moduledoc.
+- `apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/cc_orchestrator_seed.ex` — seed content
   (`working_directory:` → `project_cwd:`, `claude_config_dir:` → `config_dir:`).
-- `apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex` — moduledoc references.
+- `apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex` — moduledoc references.
 - `apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex` — config_dir promotion:
   `template_data_extra/1` NO LONGER emits config_dir (it's universal now); the consume
   path (`build_claude_config_env/2`, `create_agent_config_dir/2`, `@optional_sandbox_keys`)

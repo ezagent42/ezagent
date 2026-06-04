@@ -1,5 +1,5 @@
 # Many EM tests reference `Ezagent.Entity.Session` / `User` / spawn paths
-# owned by `ezagent_domain_chat` (Session+User Kinds live in chat for
+# owned by `ezagent_domain_instance_message` (Session+User Kinds live in chat for
 # the deliberate one-way dep: chat depends on EM via Publisher contract,
 # EM cannot dep on chat without forming a cycle — see mix.exs comment).
 # At standalone `mix test` time only EM's own deps are auto-started, so
@@ -24,7 +24,7 @@ if File.dir?(umbrella_lib) do
   end
 end
 
-for app <- [:ezagent_domain_identity, :ezagent_domain_workspace, :ezagent_domain_chat] do
+for app <- [:ezagent_domain_identity, :ezagent_domain_workspace, :ezagent_domain_instance_message] do
   {:ok, _} = Application.ensure_all_started(app)
 end
 

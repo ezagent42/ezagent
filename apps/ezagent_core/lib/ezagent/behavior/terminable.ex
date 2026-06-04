@@ -110,13 +110,14 @@ defmodule Ezagent.Behavior.Terminable do
   # is the dispatch wrapper; inner `{:ok, :terminated}` is the action
   # result). The `:returns` schema is the human-readable contract; the
   # runtime does NOT enforce it on the result shape today.
-  action :terminate,
+  action(:terminate,
     args: %{},
     returns: %{terminated: :boolean},
     caps: [:terminate],
     modes: [:call],
     description:
       "terminate the target Kind's supervised process (idempotent — already-gone is :ok)"
+  )
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   # Terminable is registered on the Agent Kind (per
