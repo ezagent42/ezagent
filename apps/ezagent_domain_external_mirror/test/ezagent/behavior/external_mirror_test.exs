@@ -589,7 +589,8 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
       # post_init handle_continue spawned the worker again. The
       # mirror MUST receive this event.
       MockPublishBinding.register_observer(target_id, self())
-      fire_slice_change(session_uri)
+      :ok = await_worker_subscribed(session_uri, worker_uri, 100)
+      assert :ok = fire_until_published(session_uri, worker_uri, 20)
       assert_receive {:published, _, ^target_id, _}, 2_000
 
       # Worker is alive under the same URI (Registry-keyed).
