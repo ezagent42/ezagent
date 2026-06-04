@@ -107,6 +107,7 @@ Plus the 2026-05-25 caps-cleanup additions (see references/pointer-index.md §"C
 
 - **`uv run` not `python` / `python3`** — global hook blocks raw python invocations; always prefix with `uv run`.
 - **`pnpm` not `npm`** — same project convention.
+- **Formatter noise policy** — day-to-day patches should format only touched files (`mix format path/to/file.ex ...`) so a small behavior fix does not absorb existing formatter debt. Keep `mix precommit` / CI as the final gate, but prefer a check-only formatter gate (`mix format --check-formatted`) over an auto-rewriting gate when maintaining automation. If full-project `mix format` would rewrite unrelated files, do not include that mechanical churn in the feature/fix PR; open a separate "format baseline" PR to normalize the repo first, then future commits can stay clean.
 - **`agent-browser` for any UI/web debugging** — never iterate via "try it and tell me what you see"; launch headless Chrome from the agent side and screenshot. Memory `feedback_agent_browser_debug`.
 - **Bilingual docs convention**: `docs/<name>.md` (English) + `docs/<name>.zh_cn.md` (Chinese) parallel files; send the `.zh_cn.md` via Feishu; sync edits both ways. Memory `feedback_bilingual_docs_convention`.
 - **Decision Log new entry**: append to ARCHITECTURE.md Appendix B with next sequential number; format follows existing entries (subject line in bold + WHY + DRIFT DEFENSES). Phase 7 added #135-#144; SPEC v2 migration (PRs #140-#149) added documentation deltas to existing entries rather than new numbers.
