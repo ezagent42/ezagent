@@ -573,7 +573,8 @@ defmodule Ezagent.Kind.Snapshot do
       # the original on outright parse failure (passive walker —
       # downstream let-it-crash governs the dispatch path, not this).
       ArgumentError ->
-        case URI.new(s) do # uri-canonical-allow: §3.7 external-URI fallback (non-Ezagent scheme — SchemeRegistry rejects, this re-canonicalizes via strict RFC 3986)
+        # Non-Ezagent scheme: SchemeRegistry rejects, then strict RFC 3986 recanonicalizes.
+        case Ezagent.URI.strict_external_new(s) do
           {:ok, canonical} -> canonical
           _ -> uri
         end

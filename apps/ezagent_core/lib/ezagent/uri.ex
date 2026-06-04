@@ -261,6 +261,10 @@ defmodule Ezagent.URI do
     end
   end
 
+  @doc false
+  @spec strict_external_new(String.t()) :: {:ok, URI.t()} | {:error, term()}
+  def strict_external_new(s) when is_binary(s), do: URI.new(s)
+
   @doc """
   Predicate — is this `%URI{}` in canonical RFC-3986 form?
 

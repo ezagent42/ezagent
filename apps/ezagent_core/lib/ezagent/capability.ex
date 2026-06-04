@@ -611,7 +611,7 @@ defmodule Ezagent.Capability do
   defp workspace_from_3seg_path(%URI{path: "/" <> rest}) do
     case String.split(rest, "/", parts: 2) do
       [workspace_name, _name] when workspace_name != "" ->
-        URI.new!("workspace://" <> workspace_name) # uri-canonical-allow: §3.6 structural derivation from validated path segment
+        Ezagent.URI.new!("workspace://" <> workspace_name)
 
       _ ->
         raise ArgumentError,
