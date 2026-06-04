@@ -820,11 +820,11 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
   credential/security items; handle as a dedicated cleanup PR only if it gets a
   narrow rule, helper API, and invariant for what direct writes remain allowed.
 
-- **ExternalMirror flaky tests x3 — DEFERRED FLAKY TEST INFRA.** The handoff
-  notes these as deferred/flaky rather than part of the parked implementation
-  list. Keep them out of #21 and out of the credential lifecycle path; triage as
-  an ExternalMirror reliability/test-infra PR with isolated reproduction once
-  the dockerized fresh-seed environment is available.
+- **ExternalMirror flaky tests x3 — RESOLVED.** The flaky publish/rehydration
+  failures were isolated from #21 and fixed as an ExternalMirror reliability
+  PR. Merged to `domain-agent-handoff` as PR #563 (`017b8d2f`). The fix makes
+  Worker publish tests use unique sessions and wait for the Worker's deferred
+  Publisher subscription before asserting publish delivery.
 
 - **#22 harden node RPC/distribution console — GATED SECURITY SCOPE.** Needs
   Allen to choose the deployment posture (dev node convenience vs production
