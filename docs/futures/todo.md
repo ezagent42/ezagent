@@ -820,6 +820,12 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
   credential/security items; handle as a dedicated cleanup PR only if it gets a
   narrow rule, helper API, and invariant for what direct writes remain allowed.
 
+- **ExternalMirror flaky tests x3 — DEFERRED FLAKY TEST INFRA.** The handoff
+  notes these as deferred/flaky rather than part of the parked implementation
+  list. Keep them out of #21 and out of the credential lifecycle path; triage as
+  an ExternalMirror reliability/test-infra PR with isolated reproduction once
+  the dockerized fresh-seed environment is available.
+
 - **#22 harden node RPC/distribution console — GATED SECURITY SCOPE.** Needs
   Allen to choose the deployment posture (dev node convenience vs production
   distribution hardening). Naturally relevant to #21 prod image lockdown, but
