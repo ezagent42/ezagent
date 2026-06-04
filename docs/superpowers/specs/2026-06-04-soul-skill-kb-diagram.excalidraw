@@ -1,0 +1,102 @@
+{
+  "type": "excalidraw",
+  "version": 2,
+  "source": "https://excalidraw.com",
+  "elements": [
+    {"id":"title","type":"text","x":250,"y":0,"width":350,"height":30,"text":"Soul / Reference / KB 三层设计 (r12)","fontSize":22,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"Soul / Reference / KB 三层设计 (r12)","autoResize":true,"lineHeight":1.25},
+    {"id":"sub","type":"text","x":180,"y":32,"width":500,"height":18,"text":"模板(File) + 槽位(Slice) + 渲染(Template Class) · domain/core 零变更","fontSize":13,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"模板(File) + 槽位(Slice) + 渲染(Template Class) · domain/core 零变更","autoResize":true,"lineHeight":1.25},
+
+    {"id":"layers-title","type":"text","x":280,"y":62,"width":280,"height":18,"text":"三层模型 (旧 4 层 → 合并为 3 层)","fontSize":14,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"三层模型 (旧 4 层 → 合并为 3 层)","autoResize":true,"lineHeight":1.25},
+
+    {"id":"soul-box","type":"rectangle","x":20,"y":90,"width":240,"height":105,"backgroundColor":"#e8f5e9","strokeColor":"#2e7d32","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"id":"soul-title","type":"text","x":70,"y":98,"width":140,"height":20,"text":"Soul (inline)","fontSize":15,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"Soul (inline)","autoResize":true,"lineHeight":1.25},
+    {"id":"soul-load","type":"text","x":40,"y":118,"width":200,"height":15,"text":"始终在 prompt · ~15KB 预算","fontSize":11,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"始终在 prompt · ~15KB 预算","autoResize":true,"lineHeight":1.25},
+    {"id":"soul-content","type":"text","x":40,"y":138,"width":200,"height":50,"text":"身份/安全规则/分类/升级/风格\n{{identity.name}} 等 slot 占位符\nReference 索引 · smoke contracts","fontSize":10,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"身份/安全规则/分类/升级/风格\n{{identity.name}} 等 slot 占位符\nReference 索引 · smoke contracts","autoResize":true,"lineHeight":1.35},
+
+    {"id":"ref-box","type":"rectangle","x":290,"y":90,"width":240,"height":105,"backgroundColor":"#e3f2fd","strokeColor":"#1565c0","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"id":"ref-title","type":"text","x":310,"y":98,"width":200,"height":20,"text":"Reference (on-disk)","fontSize":15,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"Reference (on-disk)","autoResize":true,"lineHeight":1.25},
+    {"id":"ref-load","type":"text","x":310,"y":118,"width":200,"height":15,"text":"Read 工具按需 · 无大小限制","fontSize":11,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"Read 工具按需 · 无大小限制","autoResize":true,"lineHeight":1.25},
+    {"id":"ref-content","type":"text","x":310,"y":138,"width":200,"height":50,"text":"合并旧 skills + flow_chunks\n可选 {{slot}} (Phase 2)\n详细流程 · 示例 · 场景步骤","fontSize":10,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"合并旧 skills + flow_chunks\n可选 {{slot}} (Phase 2)\n详细流程 · 示例 · 场景步骤","autoResize":true,"lineHeight":1.35},
+
+    {"id":"kb-box","type":"rectangle","x":560,"y":90,"width":240,"height":105,"backgroundColor":"#f3e5f5","strokeColor":"#7b1fa2","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"id":"kb-title","type":"text","x":590,"y":98,"width":180,"height":20,"text":"KB (queryable)","fontSize":15,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"KB (queryable)","autoResize":true,"lineHeight":1.25},
+    {"id":"kb-load","type":"text","x":580,"y":118,"width":200,"height":15,"text":"MCP tool 查询 · 不占 prompt","fontSize":11,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"MCP tool 查询 · 不占 prompt","autoResize":true,"lineHeight":1.25},
+    {"id":"kb-content","type":"text","x":580,"y":138,"width":200,"height":50,"text":"产品术语/价格/规格 (glossary)\n可信策略配置 (escalation keywords)\n结构化数据 · system only","fontSize":10,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"产品术语/价格/规格 (glossary)\n可信策略配置 (escalation keywords)\n结构化数据 · system only","autoResize":true,"lineHeight":1.35},
+
+    {"id":"div1","type":"line","x":20,"y":215,"width":780,"height":0,"points":[[0,0],[780,0]],"strokeColor":"#999","strokeWidth":1},
+
+    {"id":"flow-title","type":"text","x":280,"y":228,"width":260,"height":20,"text":"数据流 (Create → Fork → Edit → Render)","fontSize":15,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"数据流 (Create → Fork → Edit → Render)","autoResize":true,"lineHeight":1.25},
+
+    {"id":"s1","type":"rectangle","x":20,"y":258,"width":170,"height":75,"backgroundColor":"#e8f5e9","strokeColor":"#2e7d32","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"id":"s1t","type":"text","x":40,"y":265,"width":130,"height":18,"text":"1. CREATE (Seed)","fontSize":12,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"1. CREATE (Seed)","autoResize":true,"lineHeight":1.25},
+    {"id":"s1b","type":"text","x":35,"y":288,"width":140,"height":40,"text":"解析旧 yaml → 提取默认值\n→ template.write\n→ soul_slot_values","fontSize":10,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"解析旧 yaml → 提取默认值\n→ template.write\n→ soul_slot_values","autoResize":true,"lineHeight":1.3},
+
+    {"id":"a1","type":"arrow","x":190,"y":295,"width":35,"height":0,"points":[[0,0],[35,0]],"strokeColor":"#666","strokeWidth":2},
+
+    {"id":"s2","type":"rectangle","x":230,"y":258,"width":170,"height":75,"backgroundColor":"#fff3e0","strokeColor":"#e65100","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"id":"s2t","type":"text","x":250,"y":265,"width":130,"height":18,"text":"2. FORK (已有)","fontSize":12,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"2. FORK (已有)","autoResize":true,"lineHeight":1.25},
+    {"id":"s2b","type":"text","x":245,"y":288,"width":140,"height":40,"text":"Behavior.Template :fork\n→ slot_values 复制\n→ tenant workspace","fontSize":10,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"Behavior.Template :fork\n→ slot_values 复制\n→ tenant workspace","autoResize":true,"lineHeight":1.3},
+
+    {"id":"a2","type":"arrow","x":400,"y":295,"width":35,"height":0,"points":[[0,0],[35,0]],"strokeColor":"#666","strokeWidth":2},
+
+    {"id":"s3","type":"rectangle","x":440,"y":258,"width":170,"height":75,"backgroundColor":"#e3f2fd","strokeColor":"#1565c0","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"id":"s3t","type":"text","x":455,"y":265,"width":140,"height":18,"text":"3. EDIT (已有)","fontSize":12,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"3. EDIT (已有)","autoResize":true,"lineHeight":1.25},
+    {"id":"s3b","type":"text","x":455,"y":288,"width":140,"height":40,"text":"LV → template.read\n→ 改 soul_slot_values\n→ template.write","fontSize":10,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"LV → template.read\n→ 改 soul_slot_values\n→ template.write","autoResize":true,"lineHeight":1.3},
+
+    {"id":"a3","type":"arrow","x":610,"y":295,"width":35,"height":0,"points":[[0,0],[35,0]],"strokeColor":"#666","strokeWidth":2},
+
+    {"id":"s4","type":"rectangle","x":650,"y":258,"width":155,"height":75,"backgroundColor":"#f3e5f5","strokeColor":"#7b1fa2","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"id":"s4t","type":"text","x":660,"y":265,"width":135,"height":18,"text":"4. RENDER","fontSize":12,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"4. RENDER","autoResize":true,"lineHeight":1.25},
+    {"id":"s4b","type":"text","x":660,"y":288,"width":135,"height":40,"text":"File.read(soul .md)\n+ render_slots()\n→ CLAUDE.md","fontSize":10,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"File.read(soul .md)\n+ render_slots()\n→ CLAUDE.md","autoResize":true,"lineHeight":1.3},
+
+    {"id":"div2","type":"line","x":20,"y":350,"width":780,"height":0,"points":[[0,0],[780,0]],"strokeColor":"#999","strokeWidth":1},
+
+    {"id":"sep-title","type":"text","x":200,"y":363,"width":420,"height":20,"text":"分离决策: Template Authoring Agent 分析 → 人类 review","fontSize":14,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"分离决策: Template Authoring Agent 分析 → 人类 review","autoResize":true,"lineHeight":1.25},
+
+    {"id":"sep-box","type":"rectangle","x":20,"y":393,"width":780,"height":135,"backgroundColor":"#fafafa","strokeColor":"#666","fillStyle":"solid","strokeWidth":1,"roundness":{"type":3}},
+
+    {"id":"sep1","type":"rectangle","x":35,"y":403,"width":235,"height":55,"backgroundColor":"#e8f5e9","strokeColor":"#2e7d32","fillStyle":"solid","strokeWidth":1},
+    {"id":"sep1t","type":"text","x":55,"y":410,"width":195,"height":16,"text":"判据: 进 Soul?","fontSize":12,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"判据: 进 Soul?","autoResize":true,"lineHeight":1.25},
+    {"id":"sep1b","type":"text","x":45,"y":430,"width":215,"height":25,"text":"每次回复需要? 安全影响? smoke contract?","fontSize":10,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"每次回复需要? 安全影响? smoke contract?","autoResize":true,"lineHeight":1.25},
+
+    {"id":"sep2","type":"rectangle","x":290,"y":403,"width":235,"height":55,"backgroundColor":"#e3f2fd","strokeColor":"#1565c0","fillStyle":"solid","strokeWidth":1},
+    {"id":"sep2t","type":"text","x":310,"y":410,"width":195,"height":16,"text":"判据: 进 Reference?","fontSize":12,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"判据: 进 Reference?","autoResize":true,"lineHeight":1.25},
+    {"id":"sep2b","type":"text","x":300,"y":430,"width":215,"height":25,"text":"体积>2KB? 特定场景才需要?","fontSize":10,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"体积>2KB? 特定场景才需要?","autoResize":true,"lineHeight":1.25},
+
+    {"id":"sep3","type":"rectangle","x":545,"y":403,"width":240,"height":55,"backgroundColor":"#f3e5f5","strokeColor":"#7b1fa2","fillStyle":"solid","strokeWidth":1},
+    {"id":"sep3t","type":"text","x":565,"y":410,"width":200,"height":16,"text":"判据: 进 KB?","fontSize":12,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"判据: 进 KB?","autoResize":true,"lineHeight":1.25},
+    {"id":"sep3b","type":"text","x":555,"y":430,"width":220,"height":25,"text":"结构化搜索? 独立于 agent 行为?","fontSize":10,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"结构化搜索? 独立于 agent 行为?","autoResize":true,"lineHeight":1.25},
+
+    {"id":"sep4","type":"rectangle","x":35,"y":468,"width":235,"height":50,"backgroundColor":"#fff3e0","strokeColor":"#e65100","fillStyle":"solid","strokeWidth":1},
+    {"id":"sep4t","type":"text","x":55,"y":475,"width":195,"height":16,"text":"判据: {{slot}}?","fontSize":12,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"判据: {{slot}}?","autoResize":true,"lineHeight":1.25},
+    {"id":"sep4b","type":"text","x":45,"y":495,"width":215,"height":20,"text":"跨租户可变? 有类型约束?","fontSize":10,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"跨租户可变? 有类型约束?","autoResize":true,"lineHeight":1.25},
+
+    {"id":"sep5","type":"rectangle","x":290,"y":468,"width":235,"height":50,"backgroundColor":"#fce4ec","strokeColor":"#c62828","fillStyle":"solid","strokeWidth":1},
+    {"id":"sep5t","type":"text","x":310,"y":475,"width":195,"height":16,"text":"人类 review","fontSize":12,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"人类 review","autoResize":true,"lineHeight":1.25},
+    {"id":"sep5b","type":"text","x":300,"y":495,"width":215,"height":20,"text":"确认/修正/驳回 Agent 建议","fontSize":10,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"确认/修正/驳回 Agent 建议","autoResize":true,"lineHeight":1.25},
+
+    {"id":"sep6","type":"rectangle","x":545,"y":468,"width":240,"height":50,"backgroundColor":"#e0f2f1","strokeColor":"#00695c","fillStyle":"solid","strokeWidth":1},
+    {"id":"sep6t","type":"text","x":565,"y":475,"width":200,"height":16,"text":"dispatch write","fontSize":12,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"dispatch write","autoResize":true,"lineHeight":1.25},
+    {"id":"sep6b","type":"text","x":555,"y":495,"width":220,"height":20,"text":"template.write → 决策记录在 YAML","fontSize":10,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"template.write → 决策记录在 YAML","autoResize":true,"lineHeight":1.25},
+
+    {"id":"div3","type":"line","x":20,"y":545,"width":780,"height":0,"points":[[0,0],[780,0]],"strokeColor":"#999","strokeWidth":1},
+
+    {"id":"archive-title","type":"text","x":280,"y":555,"width":280,"height":18,"text":"旧 soul 体积分解 → 新架构自然缩小","fontSize":14,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"旧 soul 体积分解 → 新架构自然缩小","autoResize":true,"lineHeight":1.25},
+
+    {"id":"old-box","type":"rectangle","x":20,"y":582,"width":370,"height":110,"backgroundColor":"#ffebee","strokeColor":"#c62828","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"id":"old-title","type":"text","x":100,"y":590,"width":210,"height":18,"text":"旧 AutoService: soul ~76KB","fontSize":13,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"旧 AutoService: soul ~76KB","autoResize":true,"lineHeight":1.25},
+    {"id":"old-body","type":"text","x":35,"y":615,"width":340,"height":70,"text":"身份/规则 ~13KB · 流程步骤 ~10KB · 可变文本 ~5KB\n产品术语 ~80KB(glossary) · 示例 ~2KB · flow_chunks ~46KB\n→ 没 slot · 没 KB分离 · 没 Reference提取 → 膨胀","fontSize":10,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"身份/规则 ~13KB · 流程步骤 ~10KB · 可变文本 ~5KB\n产品术语 ~80KB(glossary) · 示例 ~2KB · flow_chunks ~46KB\n→ 没 slot · 没 KB分离 · 没 Reference提取 → 膨胀","autoResize":true,"lineHeight":1.3},
+
+    {"id":"arrow-big","type":"arrow","x":395,"y":635,"width":60,"height":0,"points":[[0,0],[60,0]],"strokeColor":"#2e7d32","strokeWidth":3},
+
+    {"id":"new-box","type":"rectangle","x":460,"y":582,"width":345,"height":110,"backgroundColor":"#e8f5e9","strokeColor":"#2e7d32","fillStyle":"solid","strokeWidth":2,"roundness":{"type":3}},
+    {"id":"new-title","type":"text","x":540,"y":590,"width":185,"height":18,"text":"新 Ezagent: soul ~15KB","fontSize":13,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"新 Ezagent: soul ~15KB","autoResize":true,"lineHeight":1.25},
+    {"id":"new-body","type":"text","x":475,"y":615,"width":315,"height":70,"text":"Soul inline ~15KB (身份/规则 + {{slot}} 引用 + 索引)\nReference on-disk: 流程 ~12KB (Read on demand)\nKB queryable: glossary ~80KB (MCP, 不占 prompt)\n→ slot 替代可变文本 · KB 分离产品数据 · Reference 提取流程","fontSize":10,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"Soul inline ~15KB (身份/规则 + {{slot}} 引用 + 索引)\nReference on-disk: 流程 ~12KB (Read on demand)\nKB queryable: glossary ~80KB (MCP, 不占 prompt)\n→ slot 替代可变文本 · KB 分离产品数据 · Reference 提取流程","autoResize":true,"lineHeight":1.3},
+
+    {"id":"div4","type":"line","x":20,"y":710,"width":780,"height":0,"points":[[0,0],[780,0]],"strokeColor":"#999","strokeWidth":1},
+
+    {"id":"summary-box","type":"rectangle","x":60,"y":723,"width":700,"height":70,"backgroundColor":"#fafafa","strokeColor":"#666","fillStyle":"solid","strokeWidth":1,"roundness":{"type":3}},
+    {"id":"sum","type":"text","x":80,"y":733,"width":660,"height":50,"text":"Tier: core 0 | domain 0 | plugin (cc/curl template_data_extra +1 key + seed + Editor/Authoring Agent) | LV\n~380 LOC · 不建新 Kind/Behavior/Action/Scheme · 全部复用已有机制\n特点: 三层模型 (Soul/Reference/KB) · 文件+Slice 双层 SoT · 分离由 AI 分析+人类 review · 渐进收敛","fontSize":11,"fontFamily":1,"textAlign":"center","verticalAlign":"top","containerId":null,"originalText":"Tier: core 0 | domain 0 | plugin (cc/curl template_data_extra +1 key + seed + Editor/Authoring Agent) | LV\n~380 LOC · 不建新 Kind/Behavior/Action/Scheme · 全部复用已有机制\n特点: 三层模型 (Soul/Reference/KB) · 文件+Slice 双层 SoT · 分离由 AI 分析+人类 review · 渐进收敛","autoResize":true,"lineHeight":1.4}
+  ],
+  "appState": {"viewBackgroundColor":"#ffffff","gridSize":null}
+}
