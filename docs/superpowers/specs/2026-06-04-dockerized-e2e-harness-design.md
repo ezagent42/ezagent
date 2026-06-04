@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-04
 **Author:** Claude (cc-openclaw session), co-designed with Allen
-**Status:** Design — revised after codex adversarial-review (round 1); pending Allen approval
+**Status:** Design — revised after codex adversarial-review (rounds 1 + 2); pending Allen approval
 **Task:** #21 (promoted). Supersedes ad-hoc E2E on the shared dev node (see memory `feedback_e2e_in_docker_fresh_seed`).
 
 ---
@@ -28,7 +28,7 @@ This is itself the foundational **E2E "scenario 0"**: bring up a blank env + boo
 |---|----------|
 | Q1 | A/B/C in ONE spec; harness = E2E **scenario 0**; build order A→B→C. |
 | Q2 | A snapshot **layer = tar of `$EZAGENT_HOME/<profile>`**. Restore = unpack + restart node (rehydrate). Docker isolates; layers are state tarballs, NOT docker images. |
-| Q3 | Resolver = **chain hash** `fp(N)=hash(fp(N-1)+inputs_hash(step_N))`; layer "after step N" valid iff steps 0..N **and their declared input closure** unchanged. **Revised (codex finding 3):** the per-step hash covers not just the step's own AST but its **declared dependency closure** (helpers/prompts/fixtures), not just the body. |
+| Q3 | Resolver = **chain hash** `fp(N)=hash(fp(N-1)+inputs_hash(step_N))`; layer "after step N" valid iff steps 0..N **and their declared input closure** unchanged. **Revised (codex r1 finding 3):** the per-step hash covers the step's **declared dependency closure** (helpers/prompts/fixtures), not just the body. **Revised (codex r2 finding 1):** `inputs_hash` covers the **full executable step contract** — `run` + `await` + `assert` ASTs, not just `run` — so tightening a barrier or assertion invalidates the layer. **Revised (codex r2 finding 2):** a layer is published **only after `assert` passes**, and the resolver selects only `assert_passed` layers. |
 | Q4 | E2E drives programmatically. **Revised (codex finding 1):** Feishu-ingress steps inject at the real ingress boundary **`EzagentPluginFeishu.InboundDispatcher`** (exercising binding/mention/origin/presence/rehydrate/error-reporting); `Ezagent.Invocation.dispatch` is used ONLY for lower-level domain setup, and is the inner chokepoint — NOT the user-facing path. Two tiers: (1) programmatic via InboundDispatcher, autonomous in docker; (2) the raw Feishu WS frame + real human `@mention` as a manual "live tier" on top. |
 
 ## 4. Architecture
@@ -81,7 +81,7 @@ A **scenario** is an ordered list of named **steps**; each step performs actions
 
 **Step shape & hashing:**
 - **`Ezagent.E2E.Step`** — `%Step{name, kind, inputs_hash, run, await, assert, cacheable?}`.
-- **`defstep` macro** — captures the step body's AST AND a **declared dependency closure** `@layer_inputs` (helper modules, prompt files, fixture paths the step relies on). `inputs_hash = sha256(Macro.to_string(body_ast) <> hash_each(@layer_inputs))`. **Revised (codex finding 3):** hashing the body alone silently misses helper/prompt/fixture changes; requiring an explicit declared closure closes that hole. Steps with un-declared external dependencies are a lint error (a CI check greps step bodies for calls to known helper modules not listed in `@layer_inputs`).
+- **`defstep` macro** — captures the ASTs of **all three callbacks** (`run`, `await`, `assert`) AND a **declared dependency closure** `@layer_inputs` (helper modules, prompt files, fixture paths the step relies on). `inputs_hash = sha256(Macro.to_string(run_ast) <> Macro.to_string(await_ast) <> Macro.to_string(assert_ast) <> hash_each(@layer_inputs))`. **Revised (codex r1 finding 3):** hashing the body alone silently misses helper/prompt/fixture changes; the explicit declared closure closes that. **Revised (codex r2 finding 1):** hashing only `run` would let a tightened `await`/`assert` reuse a layer made under the weaker contract — so all three callbacks are in the key. Steps with un-declared external dependencies are a lint error (a CI check greps the callback bodies for calls to known helper modules not listed in `@layer_inputs`).
 - **`Ezagent.E2E.Scenario`** — `%Scenario{id, base, steps}`. `base` names a prerequisite scenario whose final layer is the starting point (scenario 0's base = blank).
 
 **Quiescence barrier before snapshot (codex finding 2):**
@@ -91,7 +91,7 @@ A **scenario** is an ordered list of named **steps**; each step performs actions
 **ctx + manifest codec (codex finding 4):**
 - `ctx` is threaded through steps. Because restore restarts the node (in-memory ctx is lost), ctx is persisted in the layer manifest — but **JSON-serializable is not enough** in this codebase (`%URI{}`, `MapSet` caps, atom-keyed maps, `DateTime`, message structs don't round-trip). The manifest has a **versioned schema with primitive-only ctx fields** + **explicit `encode/1` and `decode/1`**: URIs stored as strings and reloaded with `URI.new!/1`; caps NOT stored but rebuilt from durable principals on load; timestamps as ISO8601; no atoms/PIDs. Steps may only put codec-supported types in ctx (lint-checked).
 
-**Driver** — `mix ezagent.e2e.run <scenario> [--resume | --from-step N | --fresh]`: resolve the start layer (§4.C), restore it (extract tar + `decode` ctx), run remaining steps (each: `run` → `await` → snapshot → `assert`), report flunk-style with expected-vs-seen.
+**Driver** — `mix ezagent.e2e.run <scenario> [--resume | --from-step N | --fresh]`: resolve the start layer (§4.C), restore it (extract tar + `decode` ctx), run remaining steps, report flunk-style with expected-vs-seen. **Per-step order (codex r2 finding 2): `run` → `await` → `assert` → (only if assert passes) atomically publish the layer.** `await` proves terminal *durable* state but NOT correctness; snapshotting before `assert` would cache a wrong-but-settled state that a later resume could select and run past, skipping the failed step (false green). So a staged layer is published ONLY after `assert` returns `:ok`; on assert failure the staged tar is discarded and the run flunks. The published manifest records `assert_passed: true` bound to the current `fp` + `schema_version`.
 
 **Determinism note:** agent (claude/codex) output is non-deterministic. Step **assertions on agent content** check structure/markers (e.g. the `telephone_hop` wrapper, a sender URI), not exact prose. A snapshot taken after a step whose `await` confirmed terminal state caches that run's concrete output, so resuming is deterministic; re-executing a model step (because its `inputs_hash` changed) re-rolls — acceptable.
 
@@ -99,10 +99,10 @@ A **scenario** is an ordered list of named **steps**; each step performs actions
 
 ### 4.C — snapshot layers + resume-resolver
 
-- **Layer** = `tar(EZAGENT_HOME/<profile>)` + sidecar `manifest.json` = `{schema_version, scenario_id, step_index, step_name, fp, ctx (codec-encoded)}`. Stored in a layer-cache dir (its own volume/host dir), keyed/named by `fp`.
+- **Layer** = `tar(EZAGENT_HOME/<profile>)` + sidecar `manifest.json` = `{schema_version, scenario_id, step_index, step_name, fp, assert_passed: true, ctx (codec-encoded)}`. Stored in a layer-cache dir (its own volume/host dir), keyed/named by `fp`. A layer file only exists if its step's `assert` passed (the driver publishes atomically post-assert), so a present layer is by construction a known-good checkpoint.
 - **Fingerprint chain:** `fp(-1) = sha256(scenario.base_fp <> env_image_id)`; `fp(N) = sha256(fp(N-1) <> step_N.inputs_hash)`. `env_image_id` (the docker image digest) invalidates all layers when deps/CLIs change. `inputs_hash` includes the declared dependency closure (§4.B).
-- **Resolver:** to run scenario up to target step T — compute `fp(0..T)`; find the **highest M ≤ T** with a cached layer whose `fp == fp(M)`; restore it (extract tar + `decode` ctx); run steps `M+1..T`. No match → start from `base` (or blank) at step 0.
-- **Invalidation:** if any input in steps 0..K changes, `fp(K..)` change → cached layers ≥ K never match → recomputed. **No silent reuse**: a layer is used only on exact `fp` match. Stale layers are never selected (optional age/scenario-scoped GC via `--gc`).
+- **Resolver:** to run scenario up to target step T — compute `fp(0..T)`; find the **highest M ≤ T** with a cached layer whose `fp == fp(M)` **AND `assert_passed == true` AND `schema_version == current`**; restore it (extract tar + `decode` ctx); run steps `M+1..T`. No qualifying layer → start from `base` (or blank) at step 0.
+- **Invalidation:** if any input in steps 0..K changes — including a tightened `await`/`assert` (their ASTs are in `inputs_hash`) — `fp(K..)` change → cached layers ≥ K never match → recomputed. **No silent reuse**: a layer is used only on exact `fp` match with a recorded passing assertion under the current schema. Stale or assertion-less layers are never selected (optional age/scenario-scoped GC via `--gc`).
 - **Restore mechanism:** the harness (control process, outside the BEAM) does: `docker compose stop esr` → wipe + extract layer tar into the `$EZAGENT_HOME` named volume → `docker compose start esr` → wait healthy. The node then **rehydrates Kinds from the restored DB/snapshots** — the cold-restart path, made solid by #557 + PR-4. PTY subprocesses (claude/codex) respawn on rehydrate/demand; **live-only state (PTY buffers, app-server sockets, PubSub in-flight, in-memory registries) is NOT in the tar by design** — which is exactly why the `await` quiescence barrier (§4.B) must drive every live effect to a *durable* terminal state before a layer is taken. A layer is only ever taken at a quiescent boundary.
 
 **Deliverable (PR-3):** layer pack/unpack + manifest codec + resolver + restore orchestration + `--resume`/`--from-step`; demonstrated by re-running an unchanged-prefix scenario and observing it skip to the right step, AND by editing a helper to observe ≥-that-step layers rejected.
@@ -136,7 +136,9 @@ Restoring a layer = restart node + rehydrate from the restored `$EZAGENT_HOME`. 
   - chain-hash computation; highest-valid-layer selection; pack/unpack round-trip.
   - **helper-change invalidation** — editing only a declared `@layer_inputs` helper rejects cached layers ≥ that step (codex finding 3 regression).
   - **post-restore decoded ctx** — a step runs against `decode`d ctx (URIs as `%URI{}`, caps rebuilt) after a simulated restart, not just manifest round-trip (codex finding 4 regression).
-  - **no-snapshot-before-quiescence** — the driver refuses to snapshot when `await` returns `{:error, pending}` (codex finding 2 regression).
+  - **no-snapshot-before-quiescence** — the driver refuses to snapshot when `await` returns `{:error, pending}` (codex r1 finding 2 regression).
+  - **no-publish-before-assert** — a step whose `assert` fails publishes NO layer (staged tar discarded); the resolver never selects an assertion-less/`assert_passed=false` layer (codex r2 finding 2 regression).
+  - **contract-hash invalidation** — tightening only the `await` or `assert` callback (not `run`) changes `inputs_hash`, so cached layers ≥ that step are rejected (codex r2 finding 1 regression).
 - **Scenario 0** is the first integration target (blank → healthy).
 - **Scenario 34** ported as the worked example (PR-4/follow-on): tier-1 seeds the relay team (domain-setup steps) + drives the trigger through `InboundDispatcher` (ingress step) with an `await` on the rendered round-trip; tier-2 manual Feishu hook for the TRUE gate.
 - Every distinct bug found gets a fast regression test (`feedback_e2e_failure_earns_unit_test`).
@@ -151,6 +153,8 @@ Restoring a layer = restart node + rehydrate from the restored `$EZAGENT_HOME`. 
 6. **Feishu raw-WS frame can't be faked for the TRUE gate** — accepted; tier 2 is explicitly manual; tier 1 covers everything below the decode.
 7. **Layer store growth** — many scenarios × steps = many tarballs; `--gc` (age/scenario-scoped) documented; not auto-GC in v1.
 8. **`@layer_inputs` discipline** — correctness now depends on steps declaring their deps; mitigated by the lint check, but a determined author can still under-declare. Accepted residual (the lint + the `env_image_id` floor bound the blast radius).
+9. ~~Fingerprint excludes await/assert~~ — **resolved**: `inputs_hash` covers the full `run`+`await`+`assert` contract (§4.B, Q3).
+10. ~~Snapshot before assert → known-bad reusable checkpoint~~ — **resolved**: per-step order is `run`→`await`→`assert`→atomic publish; failed assert discards the staged layer; resolver selects only `assert_passed` layers (§4.B/§4.C).
 
 ## 10. PR decomposition (hand-off to writing-plans)
 
