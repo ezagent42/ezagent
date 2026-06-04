@@ -43,5 +43,11 @@ RUN mix deps.get && mix compile
 # first request / the Endpoint watchers don't stall.
 RUN cd apps/ezagent_web && mix assets.setup && mix assets.build
 
+# Clear the build-time proxy from the FINAL image (codex r-review): build steps above
+# already used it; baking it into runtime would make tools honoring lowercase proxy vars
+# use a stale build proxy + miss the runtime NO_PROXY (Feishu must go direct). The
+# runtime proxy is supplied fresh by docker-compose (both upper + lower case).
+ENV HTTP_PROXY="" HTTPS_PROXY="" http_proxy="" https_proxy="" NO_PROXY="" no_proxy=""
+
 RUN chmod +x docker/entrypoint.sh
 ENTRYPOINT ["/app/docker/entrypoint.sh"]

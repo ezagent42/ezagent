@@ -24,9 +24,14 @@ services:
       EZAGENT_COOKIE: esr_dev_cookie
       # Agents' claude/codex subprocesses inherit these to reach Anthropic/OpenAI.
       # Feishu + localhost go direct (NO_PROXY). host.docker.internal = host proxy.
+      # Set BOTH upper + lower case (many tools honor lowercase) so the runtime proxy
+      # + NO_PROXY are authoritative and no stale build value leaks (codex r-review).
       HTTP_PROXY: ${ESR_PROXY:-}
       HTTPS_PROXY: ${ESR_PROXY:-}
+      http_proxy: ${ESR_PROXY:-}
+      https_proxy: ${ESR_PROXY:-}
       NO_PROXY: "localhost,127.0.0.1,::1,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
+      no_proxy: "localhost,127.0.0.1,::1,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
     volumes:
       - esr_home:/data                  # the swappable $EZAGENT_HOME (E2E layers restore here)
       - ./secrets:/secrets:ro           # static secrets: feishu.yaml (+ cred seeds)

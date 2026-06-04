@@ -62,9 +62,15 @@ defmodule EzagentPluginCodex.CredentialRefresh do
     end)
   end
 
-  @doc "The crash-recoverable lock file path for a source dir (exposed for tests)."
+  @doc """
+  The crash-recoverable lock file path for a source dir (exposed for tests).
+
+  INSIDE the source dir (codex r-review) so concurrent containers sharing the same
+  mounted credential volume (e.g. `cred_codex:/cred/codex`) share the one lock — a
+  sibling-of-dir path would NOT be shared by the volume mount.
+  """
   @spec lock_path(String.t()) :: String.t()
-  def lock_path(source_dir), do: source_dir <> ".codex-refresh.lock"
+  def lock_path(source_dir), do: Path.join(source_dir, ".codex-refresh.lock")
 
   # --- refresh decision --------------------------------------------------
 
@@ -216,34 +222,48 @@ defmodule EzagentPluginCodex.CredentialRefresh do
 
   # --- crash-recoverable lease lock -------------------------------------
 
+  # Crash-recoverable, OWNER-FENCED lease lock (codex r-review):
+  #   * acquire writes a UNIQUE owner token into the lock file (exclusive create).
+  #   * a lock whose mtime is older than the lease is from a crashed run → stolen.
+  #   * release removes the lock ONLY if we still own it — a steal hands the lock to
+  #     another owner, and we must never delete THEIR lock (the un-fenced bug).
+  # `provision/3`'s critical section (one HTTP refresh + a couple file writes) is far
+  # shorter than the default lease, so a live holder is not stolen in practice; the
+  # fenced release makes a stale-steal safe even if it ever happened.
   defp with_source_lock(source_dir, opts, fun) do
     lock = lock_path(source_dir)
     lease = Keyword.get(opts, :lock_lease_ms, @default_lease_ms)
     timeout = Keyword.get(opts, :lock_timeout_ms, 10_000)
+    owner = mint_owner()
     deadline = System.monotonic_time(:millisecond) + timeout
 
-    case acquire(lock, lease, deadline) do
+    case acquire(lock, owner, lease, deadline) do
       :ok ->
         try do
           fun.()
         after
-          _ = File.rm(lock)
+          release(lock, owner)
         end
 
       {:error, :timeout} ->
         {:error, {:cred_refresh_lock_timeout, lock}}
 
       {:error, reason} ->
-        # e.g. the source's parent dir doesn't exist — surface the real cause.
+        # e.g. the source dir doesn't exist — surface the real cause.
         if File.dir?(source_dir),
           do: {:error, {:cred_refresh_lock_failed, reason}},
           else: {:error, {:source_not_found, source_dir}}
     end
   end
 
-  defp acquire(lock, lease, deadline) do
+  defp mint_owner do
+    "#{:erlang.phash2({node(), self()})}-#{System.system_time(:nanosecond)}-#{System.unique_integer([:positive])}"
+  end
+
+  defp acquire(lock, owner, lease, deadline) do
     case File.open(lock, [:write, :exclusive]) do
       {:ok, io} ->
+        IO.write(io, owner)
         File.close(io)
         :ok
 
@@ -251,11 +271,11 @@ defmodule EzagentPluginCodex.CredentialRefresh do
         cond do
           lock_stale?(lock, lease) ->
             _ = File.rm(lock)
-            acquire(lock, lease, deadline)
+            acquire(lock, owner, lease, deadline)
 
           System.monotonic_time(:millisecond) < deadline ->
             Process.sleep(50)
-            acquire(lock, lease, deadline)
+            acquire(lock, owner, lease, deadline)
 
           true ->
             {:error, :timeout}
@@ -263,6 +283,15 @@ defmodule EzagentPluginCodex.CredentialRefresh do
 
       {:error, reason} ->
         {:error, {:lock_open_failed, reason}}
+    end
+  end
+
+  # Release ONLY if we still own the lock (a stale-steal may have handed it to another
+  # owner; deleting theirs would reintroduce the double-rotation race).
+  defp release(lock, owner) do
+    case File.read(lock) do
+      {:ok, ^owner} -> _ = File.rm(lock)
+      _ -> :ok
     end
   end
 
