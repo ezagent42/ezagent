@@ -33,6 +33,7 @@ defmodule EzagentDomainChat.Integration.DefaultSessionTemplateSeedTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Ecto.KindSnapshot
+  alias Ezagent.Entity.User
   alias Ezagent.Orchestrator.CcOrchestratorSeed
 
   @workspace_uri_str "workspace://system"
@@ -44,6 +45,41 @@ defmodule EzagentDomainChat.Integration.DefaultSessionTemplateSeedTest do
     # (content-addressable) — no-op when the row already exists.
     :ok = EzagentDomainChat.Application.seed_default_session_template_now()
     :ok
+  end
+
+  test "seed_default_session_template_now/1 seeds `default` in the requested workspace" do
+    workspace_uri = Ezagent.URI.new!("workspace://team-alpha")
+
+    assert :ok = EzagentDomainChat.Application.seed_default_session_template_now(workspace_uri)
+
+    snapshots = KindSnapshot.list_in_workspace("workspace://team-alpha")
+
+    assert Enum.any?(snapshots, fn snap ->
+             is_binary(snap.uri) and
+               String.starts_with?(snap.uri, "template://session/team-alpha/default@")
+           end),
+           "expected a per-workspace `template://session/team-alpha/default@<hash>` " <>
+             "SessionTemplate seed; found #{inspect(Enum.map(snapshots, & &1.uri))}"
+  end
+
+  test "create_session/3 ensures a per-workspace default template before resolving it" do
+    workspace_name = "seed-ws-#{System.unique_integer([:positive])}"
+    workspace_uri = Ezagent.URI.new!("workspace://#{workspace_name}")
+    short = "from-default-#{System.unique_integer([:positive])}"
+
+    {:ok, _pid} = Ezagent.Workspace.create(workspace_name, %{})
+
+    assert {:ok, session_uri, _meta} =
+             EzagentDomainChat.create_session(short, User.admin_uri(),
+               workspace_uri: workspace_uri,
+               template_name: "default"
+             )
+
+    assert URI.to_string(session_uri) == "session://default/#{workspace_name}/#{short}"
+
+    assert workspace_name
+           |> default_template_uri_prefix()
+           |> snapshot_exists?()
   end
 
   test "workspace://system has a `default` session template at boot" do
@@ -111,6 +147,7 @@ defmodule EzagentDomainChat.Integration.DefaultSessionTemplateSeedTest do
         Map.get(content, "orchestrator_template_uri")
 
     assert name == "default"
+
     refute Map.has_key?(content, :agent_slots) or Map.has_key?(content, "agent_slots"),
            "PR-7: `agent_slots` must NOT be a SessionTemplate content field; got #{inspect(content)}"
 
@@ -149,5 +186,13 @@ defmodule EzagentDomainChat.Integration.DefaultSessionTemplateSeedTest do
     # The carve-out only applies in :test — guard that we ARE in test env
     # (otherwise this assertion is meaningless).
     assert Mix.env() == :test
+  end
+
+  defp default_template_uri_prefix(workspace_name),
+    do: "template://session/#{workspace_name}/default@"
+
+  defp snapshot_exists?(prefix) do
+    KindSnapshot.list_all()
+    |> Enum.any?(fn snap -> is_binary(snap.uri) and String.starts_with?(snap.uri, prefix) end)
   end
 end
