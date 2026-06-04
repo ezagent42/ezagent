@@ -205,7 +205,10 @@ defmodule EzagentDomainChat do
 
   @spec repair_orchestrator(URI.t(), URI.t() | nil) ::
           {:ok, URI.t(), create_session_meta()} | {:error, term()}
-  def repair_orchestrator(%URI{scheme: "session", host: template_name} = session_uri, %URI{} = workspace_uri)
+  def repair_orchestrator(
+        %URI{scheme: "session", host: template_name} = session_uri,
+        %URI{} = workspace_uri
+      )
       when is_binary(template_name) and template_name != "" do
     # The SAME per-URI lock ResourceId the create flow uses (`:create_session`,
     # NOT a distinct `:repair_orchestrator` id) so a repair and a concurrent
@@ -734,8 +737,37 @@ defmodule EzagentDomainChat do
             {:error, {:session_template_not_readable, template_name, reason}}
         end
 
+      :error when template_name == "default" ->
+        ensure_and_resolve_default_session_template(template_name, workspace_uri, workspace_name)
+
       :error ->
         {:error, {:session_template_not_found, template_name, workspace_name}}
+    end
+  end
+
+  defp ensure_and_resolve_default_session_template(
+         template_name,
+         %URI{} = workspace_uri,
+         workspace_name
+       ) do
+    case EzagentDomainChat.Application.ensure_default_session_template(workspace_uri) do
+      :ok ->
+        case find_session_template_uri(template_name, workspace_name) do
+          {:ok, %URI{} = session_template_uri} ->
+            with {:ok, _pid} <- Session.ensure_template_alive(session_template_uri),
+                 {:ok, content} <- Session.read_template_content(session_template_uri) do
+              {:ok, session_template_uri, content}
+            else
+              {:error, reason} ->
+                {:error, {:session_template_not_readable, template_name, reason}}
+            end
+
+          :error ->
+            {:error, {:session_template_not_found, template_name, workspace_name}}
+        end
+
+      {:error, reason} ->
+        {:error, {:session_template_seed_failed, template_name, workspace_name, reason}}
     end
   end
 
@@ -1025,7 +1057,9 @@ defmodule EzagentDomainChat do
 
     Ezagent.Routing.RuleStore.list(table)
     |> Enum.filter(fn row -> row.created_by == session_str end)
-    |> Enum.each(fn row -> safe(fn -> Ezagent.Routing.RuleStore.delete(row.id, force: true) end) end)
+    |> Enum.each(fn row ->
+      safe(fn -> Ezagent.Routing.RuleStore.delete(row.id, force: true) end)
+    end)
 
     safe(fn -> Ezagent.Routing.RuleStore.load_into_registry(table) end)
     :ok
@@ -1337,7 +1371,8 @@ defmodule EzagentDomainChat do
           # was dropped → orphan Agent Kind + lineage + binding survived the
           # rollback.
           {:error, reason, %URI{} = orphan_uri} ->
-            {:halt, {:error, {:member_materialize_failed, member, reason}, [orphan_uri | spawned]}}
+            {:halt,
+             {:error, {:member_materialize_failed, member, reason}, [orphan_uri | spawned]}}
 
           {:error, reason} ->
             {:halt, {:error, {:member_materialize_failed, member, reason}, spawned}}
@@ -1503,17 +1538,22 @@ defmodule EzagentDomainChat do
       ),
       do: spawned_member_instance_name(flavor, source_template_uri, role_name, session_uri)
 
-  defp spawned_member_instance_name(flavor, %URI{} = source_template_uri, role_name, %URI{} = session_uri)
+  defp spawned_member_instance_name(
+         flavor,
+         %URI{} = source_template_uri,
+         role_name,
+         %URI{} = session_uri
+       )
        when is_binary(flavor) do
     slot =
       if is_binary(role_name) and role_name != "" do
         role_name
       else
         # `template://agent/<ws>/<name>` → `<name>`; fall back to a slug.
-        (source_template_uri.path
-         |> to_string()
-         |> String.split("/", trim: true)
-         |> List.last()) || "member"
+        source_template_uri.path
+        |> to_string()
+        |> String.split("/", trim: true)
+        |> List.last() || "member"
       end
 
     session_unique =

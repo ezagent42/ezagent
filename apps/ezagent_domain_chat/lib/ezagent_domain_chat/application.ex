@@ -382,11 +382,13 @@ defmodule EzagentDomainChat.Application do
     Ezagent.Orchestrator.CcOrchestratorSeed.seed()
   end
 
-  # Task #50 (Allen 2026-05-27) — seed a `default` SessionTemplate Kind
-  # under `workspace://system` so admin can immediately use
-  # `mix ezagent workspace create_session --template-name default`
-  # without operator setup, and `/admin/templates` is non-empty on a
-  # fresh install.
+  # Task #50 (Allen 2026-05-27) seeded a `default` SessionTemplate Kind
+  # under `workspace://system`. Task #27 extends the invariant: every
+  # workspace that creates a `"default"` session must resolve a
+  # workspace-local `template://session/<workspace>/default@<hash>`.
+  # This keeps `session://default/team-alpha/main` from looking for a
+  # system-owned template or failing with
+  # `{:session_template_not_found, "default", "team-alpha"}`.
   #
   # Minimal-viable config: empty `members` (no worker agents — just the
   # orchestrator), empty `routing_rules` (no auto-routing),
@@ -400,8 +402,8 @@ defmodule EzagentDomainChat.Application do
   # ## Idempotency (content-addressable)
   #
   # `SessionTemplate.persist_version_as_system/2` hashes the content,
-  # builds `template://session/system/default@<hash>`, and spawns the
-  # Kind. Re-running this seed with identical content resolves to the
+  # builds `template://session/<workspace>/default@<hash>`, and spawns
+  # the Kind. Re-running this seed with identical content resolves to the
   # SAME URI and `SpawnRegistry.spawn/1` returns `{:ok, _existing_pid}`
   # — no duplicate row in `kind_snapshots`. Hash inputs include
   # `members`, `routing_rules`, `prompt_templates`, `legends`,
@@ -432,10 +434,10 @@ defmodule EzagentDomainChat.Application do
   # checkout. A hard crash here would break the whole suite's boot.
   defp seed_default_session_template do
     if test_env?() do
-      _ = do_seed_default_session_template()
+      _ = do_seed_default_session_template(Ezagent.URI.new!("workspace://system"))
       :ok
     else
-      case do_seed_default_session_template() do
+      case seed_default_session_templates_for_existing_workspaces() do
         :ok ->
           :ok
 
@@ -463,20 +465,75 @@ defmodule EzagentDomainChat.Application do
   """
   @spec seed_default_session_template_now() :: :ok | {:error, :test_only}
   def seed_default_session_template_now do
+    seed_default_session_template_now(Ezagent.URI.new!("workspace://system"))
+  end
+
+  @doc """
+  Test-only variant of `seed_default_session_template_now/0` for a
+  specific workspace.
+
+  Used by tests that create tenant workspaces inside an Ecto Sandbox
+  checkout. Production callers should use
+  `ensure_default_session_template/1`, which is the non-test, normal
+  runtime API used by `EzagentDomainChat.create_session/3`.
+  """
+  @spec seed_default_session_template_now(URI.t() | String.t()) :: :ok | {:error, :test_only}
+  def seed_default_session_template_now(workspace) do
     # codex review #419 r2 HIGH-1: this entry is test-only. Prod callers
     # must use the boot path (Application.start/2 invokes
-    # do_seed_default_session_template/0 once at startup). Reject calls
+    # do_seed_default_session_template/1 once at startup). Reject calls
     # outside test env so a stale operator script can't accidentally
     # double-seed prod.
     if test_env?() do
-      do_seed_default_session_template()
+      ensure_default_session_template(workspace)
     else
       {:error, :test_only}
     end
   end
 
-  defp do_seed_default_session_template do
-    workspace_uri = Ezagent.URI.new!("workspace://system")
+  @doc """
+  Ensure a workspace-local `default` SessionTemplate exists.
+
+  This is a normal runtime API, not a test escape hatch. It creates the
+  content-addressed `template://session/<workspace>/default@<hash>` for
+  the exact workspace passed in. It does not fall back to
+  `workspace://system`; if persistence fails, the caller receives the
+  concrete error and should fail loudly.
+  """
+  @spec ensure_default_session_template(URI.t() | String.t()) :: :ok | {:error, term()}
+  def ensure_default_session_template(workspace) do
+    workspace
+    |> workspace_uri!()
+    |> do_seed_default_session_template()
+  end
+
+  defp seed_default_session_templates_for_existing_workspaces do
+    existing_workspace_uris()
+    |> Enum.reduce_while(:ok, fn workspace_uri, :ok ->
+      case do_seed_default_session_template(workspace_uri) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {workspace_uri, reason}}}
+      end
+    end)
+  end
+
+  defp existing_workspace_uris do
+    system = Ezagent.URI.new!("workspace://system")
+
+    workspaces =
+      try do
+        Ezagent.Workspace.Store.list_all()
+        |> Enum.map(fn ws -> Ezagent.URI.new!("workspace://#{ws.name}") end)
+      rescue
+        _ -> []
+      end
+
+    [system | workspaces]
+    |> Enum.uniq_by(&URI.to_string/1)
+  end
+
+  defp do_seed_default_session_template(%URI{scheme: "workspace"} = workspace_uri) do
+    workspace_name = workspace_uri.host
     orchestrator_uri = Ezagent.URI.new!(Ezagent.Orchestrator.CcOrchestratorSeed.template_uri())
 
     content = %{
@@ -484,7 +541,7 @@ defmodule EzagentDomainChat.Application do
       description:
         "Default session template — orchestrator-only team. Compose " <>
           "the team via the orchestrator's member + rule-set tools. " <>
-          "Seeded at boot under `workspace://system` so " <>
+          "Seeded under `workspace://#{workspace_name}` so " <>
           "`mix ezagent workspace create_session --template-name default` " <>
           "and the LV New-session form resolve without operator setup.",
       # team-routing-unification §3.7 (PR-7) — SessionTemplate content carries
@@ -532,11 +589,19 @@ defmodule EzagentDomainChat.Application do
     e ->
       require Logger
 
-      Logger.error(
-        "seed_default_session_template raised #{inspect(e)} — §3 boot invariant."
-      )
+      Logger.error("seed_default_session_template raised #{inspect(e)} — §3 boot invariant.")
 
       {:error, {:seed_default_session_template_raised, e}}
+  end
+
+  defp workspace_uri!(%URI{scheme: "workspace"} = workspace_uri), do: workspace_uri
+
+  defp workspace_uri!(workspace) when is_binary(workspace) do
+    if String.starts_with?(workspace, "workspace://") do
+      Ezagent.URI.new!(workspace)
+    else
+      Ezagent.URI.new!("workspace://#{workspace}")
+    end
   end
 
   defp register_spawn_fns do
