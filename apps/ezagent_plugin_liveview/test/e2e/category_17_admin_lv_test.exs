@@ -101,13 +101,15 @@ defmodule EzagentPluginLiveview.E2E.Category17AdminLvTest do
   # ============================================================
 
   describe "/admin/snapshots — persisted kind state browser" do
+    alias Ezagent.Test.SnapshotFixtures
+
     @describetag scenario: "29-admin-lv-smoke"
 
     test "header renders + freshly persisted snapshot appears", %{conn: conn} do
       uri = URI.parse("entity://user/team-alpha/snap_cat17_#{System.unique_integer([:positive])}")
 
       :ok =
-        Ezagent.Kind.Snapshot.save_now(
+        SnapshotFixtures.save_kind_snapshot(
           uri,
           Ezagent.Entity.User,
           %{identity: %{caps: MapSet.new()}}
@@ -119,9 +121,18 @@ defmodule EzagentPluginLiveview.E2E.Category17AdminLvTest do
     end
 
     test "clear button deletes the persisted snapshot row", %{conn: conn} do
-      uri = URI.parse("entity://user/team-alpha/snap_clear_cat17_#{System.unique_integer([:positive])}")
+      uri =
+        URI.parse(
+          "entity://user/team-alpha/snap_clear_cat17_#{System.unique_integer([:positive])}"
+        )
+
       uri_str = URI.to_string(uri)
-      :ok = Ezagent.Kind.Snapshot.save_now(uri, Ezagent.Entity.User, %{identity: %{caps: MapSet.new()}})
+
+      :ok =
+        SnapshotFixtures.save_kind_snapshot(uri, Ezagent.Entity.User, %{
+          identity: %{caps: MapSet.new()}
+        })
+
       assert %{} = Ezagent.Ecto.KindSnapshot.get(uri_str)
 
       {:ok, lv, _html} = live(conn, "/admin/snapshots")

@@ -23,6 +23,7 @@ defmodule Ezagent.Integration.HomeMigrationTest do
 
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Home.Migration
+  alias Ezagent.Test.SnapshotFixtures
   alias EzagentCore.Repo
 
   @repo_config Application.compile_env(:ezagent_core, EzagentCore.Repo)
@@ -59,15 +60,16 @@ defmodule Ezagent.Integration.HomeMigrationTest do
     user_state = %{
       identity: %{
         state: %{
-          caps: MapSet.new([
-            %{kind: :agent, behavior: Ezagent.Behavior.Sandbox, action: :read}
-          ])
+          caps:
+            MapSet.new([
+              %{kind: :agent, behavior: Ezagent.Behavior.Sandbox, action: :read}
+            ])
         }
       }
     }
 
     {:ok, _} =
-      KindSnapshot.upsert(
+      SnapshotFixtures.upsert_kind_snapshot(
         user_uri,
         "user",
         :erlang.term_to_binary(user_state),
@@ -100,7 +102,7 @@ defmodule Ezagent.Integration.HomeMigrationTest do
     }
 
     {:ok, _} =
-      KindSnapshot.upsert(
+      SnapshotFixtures.upsert_kind_snapshot(
         agent_uri,
         "agent",
         :erlang.term_to_binary(sandbox_state),
@@ -194,7 +196,7 @@ defmodule Ezagent.Integration.HomeMigrationTest do
     boot_repo!(db_a)
 
     {:ok, _} =
-      KindSnapshot.upsert(
+      SnapshotFixtures.upsert_kind_snapshot(
         "entity://user/system/bob",
         "user",
         :erlang.term_to_binary(%{identity: %{state: %{caps: MapSet.new()}}}),
@@ -256,7 +258,14 @@ defmodule Ezagent.Integration.HomeMigrationTest do
       })
 
     {:ok, _} =
-      KindSnapshot.upsert("entity://agent/ws/cc_x", "agent", blob, 0, "workspace://ws", [])
+      SnapshotFixtures.upsert_kind_snapshot(
+        "entity://agent/ws/cc_x",
+        "agent",
+        blob,
+        0,
+        "workspace://ws",
+        []
+      )
 
     stop_repo()
 

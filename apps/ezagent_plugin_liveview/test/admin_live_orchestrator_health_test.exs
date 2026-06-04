@@ -19,6 +19,7 @@ defmodule EzagentPluginLiveview.AdminLiveOrchestratorHealthTest do
 
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.KindRegistry
+  alias Ezagent.Test.SnapshotFixtures
 
   @endpoint EzagentWeb.Endpoint
   @main_session_uri URI.new!("session://default/system/main")
@@ -140,10 +141,10 @@ defmodule EzagentPluginLiveview.AdminLiveOrchestratorHealthTest do
       :ok = ensure_no_orchestrator(orch_uri)
 
       # Persist a kind_snapshots row to model "spawned but no longer
-      # alive" — exact production write path so the row carries the
-      # NOT-NULL workspace_uri column.
+      # alive"; use the test fixture helper so low-level snapshot
+      # writes stay centralized.
       {:ok, _row} =
-        KindSnapshot.upsert(
+        SnapshotFixtures.upsert_kind_snapshot(
           URI.to_string(orch_uri),
           "Elixir.Ezagent.Entity.Agent",
           :erlang.term_to_binary(%{}),
@@ -175,7 +176,8 @@ defmodule EzagentPluginLiveview.AdminLiveOrchestratorHealthTest do
       # no all-caps admin grant). `caller_can_restart_orchestrator?/2`
       # consults `caller_caps` directly, so the simplest way to
       # exercise the gate is to mount as a fresh entity with no caps.
-      non_owner_uri = URI.new!("entity://user/system/non-owner-#{System.unique_integer([:positive])}")
+      non_owner_uri =
+        URI.new!("entity://user/system/non-owner-#{System.unique_integer([:positive])}")
 
       # Spawn the User Kind so AdminLive's `assign_session_context`
       # can resolve `caller_caps` from its Identity slice. Without a
@@ -192,7 +194,7 @@ defmodule EzagentPluginLiveview.AdminLiveOrchestratorHealthTest do
       :ok = ensure_no_orchestrator(orch_uri)
 
       {:ok, _row} =
-        KindSnapshot.upsert(
+        SnapshotFixtures.upsert_kind_snapshot(
           URI.to_string(orch_uri),
           "Elixir.Ezagent.Entity.Agent",
           :erlang.term_to_binary(%{}),
@@ -208,6 +210,7 @@ defmodule EzagentPluginLiveview.AdminLiveOrchestratorHealthTest do
             # — restart authority is session-owner-bound).
             assert html =~ ~s(id="orchestrator-health-card")
             assert html =~ "crashed"
+
             refute html =~ ~s(id="restart-orchestrator-button"),
                    "RFC #402: non-owner must not see the Restart button"
 

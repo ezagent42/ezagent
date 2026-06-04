@@ -811,14 +811,13 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
   Keep it visible for the #21 prod-image review, but do not fold it into
   Dockerize or merge to `main` from this handoff branch without explicit scope.
 
-- **#20 consolidate test-only snapshot writers — DEFERRED LOW-VALUE CHURN.**
-  Current test infra already has `Ezagent.Test.AuditCase` as the opt-in for
-  `Ezagent.Audit.Writer` / `Ezagent.Snapshot.Writer`; the remaining surface is
-  mostly direct test fixture writes (`Snapshot.save_now/3`,
-  `KindSnapshot.upsert/5`) spread across cold-restart, lifecycle, LV, and
-  migration tests. This is autonomous but broad and low-value relative to the
-  credential/security items; handle as a dedicated cleanup PR only if it gets a
-  narrow rule, helper API, and invariant for what direct writes remain allowed.
+- **#20 consolidate test-only snapshot writers — DONE.** Cleanup PR #565 makes
+  ordinary tests seed snapshot rows through `Ezagent.Test.SnapshotFixtures`,
+  with `test_snapshot_fixture_access_test.exs` preventing new direct fixture
+  writes to `Ezagent.Kind.Snapshot.save_now/3` and
+  `Ezagent.Ecto.KindSnapshot.upsert/5`. Low-level lifecycle/snapshot invariant
+  tests remain explicitly allowlisted because they exercise the primitive
+  persistence boundary itself.
 
 - **ExternalMirror flaky tests x3 — RESOLVED.** The flaky publish/rehydration
   failures were isolated from #21 and fixed as an ExternalMirror reliability
