@@ -67,7 +67,9 @@ Artifacts:
 - **`docker/entrypoint.sh`** — if `$EZAGENT_HOME/<profile>` is blank, run `mix ezagent.bootstrap` (home.init + adopt_db + ecto.migrate + health-check); then exec `mix phx.server`.
 - **`docker/.dockerignore`** — exclude `_build`, `deps`, `node_modules`, the `/private/tmp/esr-*` worktrees, `.git`.
 
-**Creds:** the image NEVER bakes credentials. Feishu creds + a claude/codex source login arrive via the read-only secrets mount; per-agent creds are provisioned during scenario steps by the existing `EzagentPluginCc.CredentialRefresh.provision/3` (PR-E) (and the codex analogue) — refresh-if-expired + copy into the per-agent config dir. (`feedback_self_generate_test_credentials`.)
+**Creds (codex r5 finding — static vs mutable):** the image NEVER bakes credentials. Two distinct secret classes:
+- **Static secrets — read-only mount:** Feishu `feishu.yaml`, fixtures. Never rotated.
+- **Mutable test OAuth source — writable disposable volume:** `CredentialRefresh.provision/3` (PR-E) refreshes an *expired* source and **atomically writes the rotated token back to the source** (single-use refresh-token rotation keeps the source valid for the next run). A read-only source would make the r3/r4/r5 recovery path fail (resolver falls back below the provision step, reruns provisioning, but cannot write back the rotated source → unrecoverable). So the dedicated test OAuth source is **copied from its read-only mount into a writable per-run/per-profile credential volume at startup**; the provisioner reads+rotates *there*. Per-agent creds are then provisioned from that writable source into per-agent config dirs during scenario steps. (`feedback_self_generate_test_credentials`.)
 
 **Deliverable (PR-1):** `docker compose -f docker/docker-compose.dev.yml up` → a blank, bootstrapped ESR reachable at `http://100.64.0.27:10042` (Tailscale, `feedback_remote_browser_ip`), Feishu WS connected.
 
@@ -148,6 +150,7 @@ Restoring a layer = restart node + rehydrate from the restored `$EZAGENT_HOME`. 
   - **no-publish-before-assert** — a step whose `assert` fails publishes NO layer (staged tar discarded); the resolver never selects an assertion-less/`assert_passed=false` layer (codex r2 finding 2 regression).
   - **contract-hash invalidation** — tightening only the `await` or `assert` callback (not `run`) changes `inputs_hash`, so cached layers ≥ that step are rejected (codex r2 finding 1 regression).
   - **restore-time expiry rejection (prefix-wide)** — credentials provisioned at step K, candidate layer M>K, recorded creds expired: the GLOBAL content-based validator rejects M (not just step_K's layer), and the resolver falls back below K to re-provision (codex r3 + r4 findings regression).
+  - **expired-source re-provision** — the test OAuth source starts EXPIRED; after resolver fallback, provisioning refreshes it (writes the rotated token back to the writable source volume) and succeeds — proving the source mount is writable (codex r5 finding regression).
 - **Scenario 0** is the first integration target (blank → healthy).
 - **Scenario 34** ported as the worked example (PR-4/follow-on): tier-1 seeds the relay team (domain-setup steps) + drives the trigger through `InboundDispatcher` (ingress step) with an `await` on the rendered round-trip; tier-2 manual Feishu hook for the TRUE gate.
 - Every distinct bug found gets a fast regression test (`feedback_e2e_failure_earns_unit_test`).
@@ -164,6 +167,7 @@ Restoring a layer = restart node + rehydrate from the restored `$EZAGENT_HOME`. 
 8. **`@layer_inputs` discipline** — correctness now depends on steps declaring their deps; mitigated by the lint check, but a determined author can still under-declare. Accepted residual (the lint + the `env_image_id` floor bound the blast radius).
 9. ~~Fingerprint excludes await/assert~~ — **resolved**: `inputs_hash` covers the full `run`+`await`+`assert` contract (§4.B, Q3).
 10. ~~Snapshot before assert → known-bad reusable checkpoint~~ — **resolved**: per-step order is `run`→`await`→`assert`→atomic publish; failed assert discards the staged layer; resolver selects only `assert_passed` layers (§4.B/§4.C).
+12. ~~Read-only source mount blocks re-provision of expired source~~ — **resolved**: static secrets (Feishu/fixtures) stay read-only; the mutable test OAuth source is copied to a writable per-run volume so `provision/3` can rotate+write-back; acceptance test for expired-source recovery (§4.A/§8, codex r5).
 11. ~~Resolver selects credential-expired checkpoints~~ — **resolved**: restore-validity is **content-based + global** — each layer's manifest records the expiry of the cred files actually in its tar, and the resolver applies global validators to EVERY candidate (not the selected step alone), so any layer ≥ the provision step with expired creds is rejected and the resolver falls back below it to re-provision (§4.B/§4.C, codex r3+r4). Subsumes the #17 "auto-refresh on (re)spawn" gap *within the harness*.
 
 ## 10. PR decomposition (hand-off to writing-plans)
