@@ -113,12 +113,21 @@ defmodule EzagentPluginCodex.AppServer do
           :exit_status,
           :stderr_to_stdout,
           {:args, ["app-server", "--listen", "unix://#{socket_path}"]},
-          {:cd, cwd}
+          {:cd, cwd},
+          {:env, port_env(Map.get(args, :cmd_env, %{}))}
         ])
 
       {:ok, port}
     end
   end
+
+  defp port_env(cmd_env) when is_map(cmd_env) do
+    Enum.map(cmd_env, fn {key, value} ->
+      {String.to_charlist(to_string(key)), String.to_charlist(to_string(value))}
+    end)
+  end
+
+  defp port_env(_), do: []
 
   defp codex_executable(args) do
     case Map.get(args, :codex_path) || System.find_executable("codex") do
