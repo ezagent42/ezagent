@@ -1,0 +1,45 @@
+# syntax=docker/dockerfile:1
+# ESR dev/test image — runs `mix phx.server` from a BLANK $EZAGENT_HOME, with the
+# claude/codex/uv CLIs that agents shell out to. NOT a prod release (mix release is
+# a later phase). See docs/superpowers/specs/2026-06-04-dockerized-e2e-harness-design.md.
+FROM hexpm/elixir:1.19.5-erlang-28.4.2-debian-bookworm-20260518
+
+# --- proxy: the host is behind a proxy (clash). Pass these as build args so apt /
+#     npm / curl / hex can reach the internet. Inside Docker Desktop the host proxy
+#     is reachable as host.docker.internal. ---
+ARG HTTP_PROXY=""
+ARG HTTPS_PROXY=""
+ARG NO_PROXY="localhost,127.0.0.1,::1"
+ENV HTTP_PROXY=${HTTP_PROXY} HTTPS_PROXY=${HTTPS_PROXY} \
+    http_proxy=${HTTP_PROXY} https_proxy=${HTTPS_PROXY} \
+    NO_PROXY=${NO_PROXY} no_proxy=${NO_PROXY}
+
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 MIX_ENV=dev DEBIAN_FRONTEND=noninteractive
+
+# --- OS deps + Node 22 LTS (the claude/codex CLIs ship via npm) ---
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git tar ca-certificates curl xz-utils procps locales \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- agent CLIs on PATH (pinned to the host's working versions) ---
+RUN npm i -g @anthropic-ai/claude-code@2.1.162 @openai/codex@0.137.0
+
+# --- uv (MCP bridges run `uv run --script`) ---
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && cp /root/.local/bin/uv /usr/local/bin/uv
+
+WORKDIR /app
+RUN mix local.hex --force && mix local.rebar --force
+
+# --- deps + compile (dev) ---
+# (.dockerignore strips _build/deps/node_modules/.git so the context is source-only)
+COPY . .
+RUN mix deps.get && mix compile
+# dev assets: install the standalone esbuild/tailwind binaries + precompile so the
+# first request / the Endpoint watchers don't stall.
+RUN cd apps/ezagent_web && mix assets.setup && mix assets.build
+
+RUN chmod +x docker/entrypoint.sh
+ENTRYPOINT ["/app/docker/entrypoint.sh"]
