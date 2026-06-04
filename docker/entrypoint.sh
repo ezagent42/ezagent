@@ -5,6 +5,12 @@
 # scenario time (NOT here) — this only handles the static, non-rotated Feishu cred.
 set -euo pipefail
 
+# Passthrough: `docker compose run esr <cmd>` (e.g. `mix test ...`, `mix ezagent.e2e.run ...`)
+# runs that command instead of the server. No args → bootstrap + phx.server.
+if [ "$#" -gt 0 ]; then
+  exec "$@"
+fi
+
 PROFILE="${EZAGENT_PROFILE:-default}"
 HOME_DIR="${EZAGENT_HOME:-/data}"
 PROFILE_DIR="${HOME_DIR}/${PROFILE}"
