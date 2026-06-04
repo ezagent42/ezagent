@@ -20,13 +20,12 @@ defmodule Ezagent.Orchestrator.HealthTest do
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.KindRegistry
   alias Ezagent.Orchestrator.Health
+  alias Ezagent.Test.SnapshotFixtures
   alias Ezagent.WorkspaceRegistry
 
   setup do
     session_uri =
-      URI.new!(
-        "session://default/system/orchhealth-#{System.unique_integer([:positive])}"
-      )
+      URI.new!("session://default/system/orchhealth-#{System.unique_integer([:positive])}")
 
     workspace_uri = URI.new!("workspace://system")
 
@@ -111,11 +110,10 @@ defmodule Ezagent.Orchestrator.HealthTest do
         Ezagent.Entity.Session.derive_orchestrator_uri(session_uri, workspace_uri)
 
       # Insert a snapshot row to model "orchestrator was spawned and
-      # has since died" — `Ezagent.Ecto.KindSnapshot.upsert/5` is the
-      # production write path; we use it directly so the test exercises
-      # the same shape (NOT NULL workspace_uri, kind_type, etc).
+      # has since died"; use the test fixture helper so low-level
+      # snapshot writes stay centralized.
       {:ok, _row} =
-        KindSnapshot.upsert(
+        SnapshotFixtures.upsert_kind_snapshot(
           URI.to_string(orch_uri),
           "Elixir.Ezagent.Entity.Agent",
           :erlang.term_to_binary(%{}),
@@ -138,9 +136,7 @@ defmodule Ezagent.Orchestrator.HealthTest do
 
     test "returns {:error, :session_not_workspace_bound} when session has no binding" do
       unbound =
-        URI.new!(
-          "session://default/system/unbound-#{System.unique_integer([:positive])}"
-        )
+        URI.new!("session://default/system/unbound-#{System.unique_integer([:positive])}")
 
       # Do NOT bind via WorkspaceRegistry.
 

@@ -39,8 +39,8 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpReregisterTest do
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Behavior.Chat
   alias Ezagent.Entity.Session
-  alias Ezagent.Kind.Snapshot
   alias Ezagent.Orchestrator.{McpRegistry, McpServer}
+  alias Ezagent.Test.SnapshotFixtures
 
   defp unique_session_uri do
     URI.parse(
@@ -84,7 +84,7 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpReregisterTest do
 
     :ok = KindSnapshot.delete(URI.to_string(session_uri))
     :ok = McpRegistry.unregister(orchestrator_uri)
-    :ok = Snapshot.save_now(session_uri, Session, %{chat: chat_slice})
+    :ok = SnapshotFixtures.save_kind_snapshot(session_uri, Session, %{chat: chat_slice})
 
     # Assert the precondition that makes this a REAL restart simulation.
     assert McpRegistry.lookup(orchestrator_uri) == :error
@@ -154,7 +154,9 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpReregisterTest do
       :ok = McpRegistry.unregister(orchestrator_uri)
       # Persist the EXACT on-disk shape: :chat wrapped in single-key %{state}
       # (what strip_transients leaves of the two-container in-memory slice).
-      :ok = Snapshot.save_now(session_uri, Session, %{chat: %{state: chat_slice}})
+      :ok =
+        SnapshotFixtures.save_kind_snapshot(session_uri, Session, %{chat: %{state: chat_slice}})
+
       assert McpRegistry.lookup(orchestrator_uri) == :error
 
       assert {:ok, %McpServer{} = mcp} = McpServer.from_orchestrator_uri(orchestrator_uri),
@@ -254,7 +256,7 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpReregisterTest do
         template_working_copy: Chat.default_template_working_copy()
       }
 
-      :ok = Snapshot.save_now(session_uri, Session, %{chat: plain_slice})
+      :ok = SnapshotFixtures.save_kind_snapshot(session_uri, Session, %{chat: plain_slice})
 
       assert McpServer.from_orchestrator_uri(orchestrator_uri) ==
                {:error, :orchestrator_not_registered},

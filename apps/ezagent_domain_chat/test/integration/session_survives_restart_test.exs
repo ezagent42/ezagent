@@ -42,6 +42,7 @@ defmodule EzagentDomainChat.Integration.SessionSurvivesRestartTest do
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Entity.{Session, User}
   alias Ezagent.Kind.Snapshot
+  alias Ezagent.Test.SnapshotFixtures
 
   # `chat.join` requires the member's Kind alive in KindRegistry; spawn
   # a real User Kind to act as the runtime-added member, mirroring the
@@ -243,7 +244,7 @@ defmodule EzagentDomainChat.Integration.SessionSurvivesRestartTest do
         chat: %{members: %{member => %{online: true}}, monitors: %{}, last_seen: %{}}
       }
 
-      :ok = Snapshot.save_now(session_uri, Session, chat_only_slice)
+      :ok = SnapshotFixtures.save_kind_snapshot(session_uri, Session, chat_only_slice)
 
       loaded = Snapshot.load_or_init(session_uri, Session, %{uri: session_uri})
 
@@ -311,7 +312,7 @@ defmodule EzagentDomainChat.Integration.SessionSurvivesRestartTest do
         template_working_copy: working_copy
       }
 
-      :ok = Snapshot.save_now(session_uri, Session, %{chat: chat_slice})
+      :ok = SnapshotFixtures.save_kind_snapshot(session_uri, Session, %{chat: chat_slice})
 
       loaded = Snapshot.load_or_init(session_uri, Session, %{uri: session_uri})
 
@@ -341,7 +342,7 @@ defmodule EzagentDomainChat.Integration.SessionSurvivesRestartTest do
       pre_pr2_chat = %{members: %{member => %{online: true}}, monitors: %{}, last_seen: %{}}
       refute Map.has_key?(pre_pr2_chat, :template_working_copy)
 
-      :ok = Snapshot.save_now(session_uri, Session, %{chat: pre_pr2_chat})
+      :ok = SnapshotFixtures.save_kind_snapshot(session_uri, Session, %{chat: pre_pr2_chat})
 
       # The snapshot loads without crashing. T4: the legacy flat slice is
       # coerced to the two-container `%{state, transients}` shape on load

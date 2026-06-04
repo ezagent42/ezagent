@@ -106,6 +106,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
   }
 
   alias Ezagent.ExternalMirror.TestSupport.{MockPublishAdapter, MockPublishBinding}
+  alias Ezagent.Test.SnapshotFixtures
 
   setup do
     # codex round-1 CONCERN #7 — see moduledoc. Chat is a compile-
@@ -191,7 +192,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
       # assert the snapshot carries the pid (it correctly does not — that is
       # the structural guarantee the migration delivered).
       kind_state = :sys.get_state(session_pid_1)
-      :ok = Ezagent.Kind.Snapshot.save_now(session_uri, kind_state.kind, kind_state.state)
+      :ok = SnapshotFixtures.save_kind_snapshot(session_uri, kind_state.kind, kind_state.state)
 
       live_subscribers =
         get_in(kind_state.state, [:publisher, :transients, :subscribers]) || %{}
