@@ -47,4 +47,18 @@ defmodule Ezagent.E2E.ManifestTest do
     json = Jason.encode!(%{"schema_version" => 999, "ctx" => %{}})
     assert {:error, {:schema_version_mismatch, 999, 1}} = Manifest.decode(json)
   end
+
+  test "user map carrying the reserved __uri__ key → encode error (no tag collision)" do
+    assert {:error, {:reserved_ctx_key, "__uri__"}} =
+             Manifest.encode(%Manifest{ctx: %{"e" => %{"__uri__" => "x", "other" => 1}}})
+
+    assert {:error, {:reserved_ctx_key, "__uri__"}} =
+             Manifest.encode(%Manifest{ctx: %{"__uri__" => "x"}})
+  end
+
+  test "decode preserves a multi-key __uri__ map as a MAP, never coercing to URI (no drop)" do
+    json = Jason.encode!(%{"schema_version" => 1, "ctx" => %{"e" => %{"__uri__" => "x", "other" => 1}}})
+    assert {:ok, d} = Manifest.decode(json)
+    assert d.ctx["e"] == %{"__uri__" => "x", "other" => 1}
+  end
 end

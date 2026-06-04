@@ -3,13 +3,14 @@ defmodule Ezagent.E2E.ScenarioTest do
   import Ezagent.E2E.Step
   alias Ezagent.E2E.Scenario
 
-  defp s(run_body),
-    do: step("s", run: run_body, await: fn _ -> :ok end, assert: fn _ -> :ok end)
-
   defp scen(steps), do: %Scenario{id: "t", base: nil, steps: steps}
 
   test "fp_chain has one cumulative fp per step" do
-    sc = scen([s(fn c -> {:ok, c} end), s(fn c -> {:ok, c} end)])
+    sc =
+      scen([
+        step("a", run: fn c -> {:ok, c} end, await: fn _ -> :ok end, assert: fn _ -> :ok end),
+        step("b", run: fn c -> {:ok, c} end, await: fn _ -> :ok end, assert: fn _ -> :ok end)
+      ])
     chain = Scenario.fp_chain(sc, "img-1")
     assert length(chain) == 2
     assert Enum.all?(chain, &(byte_size(&1) == 64))
@@ -34,7 +35,7 @@ defmodule Ezagent.E2E.ScenarioTest do
   end
 
   test "env_image_id is part of the chain (image change invalidates all)" do
-    sc = scen([s(fn c -> {:ok, c} end)])
+    sc = scen([step("a", run: fn c -> {:ok, c} end, await: fn _ -> :ok end, assert: fn _ -> :ok end)])
     refute Scenario.fp_chain(sc, "img-1") == Scenario.fp_chain(sc, "img-2")
   end
 end

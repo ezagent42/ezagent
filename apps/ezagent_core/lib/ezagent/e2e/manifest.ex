@@ -84,7 +84,15 @@ defmodule Ezagent.E2E.Manifest do
 
   # --- ctx codec --------------------------------------------------------
 
+  @uri_tag "__uri__"
+
   defp encode_ctx(nil), do: {:ok, %{}}
+
+  # Reject a user map carrying the reserved URI-tag key (codex review): otherwise an
+  # ordinary map `%{"__uri__" => ..., ...}` would be indistinguishable from our tag on
+  # decode. With this guard, the only `__uri__` map in encoded data is the tag we emit.
+  defp encode_ctx(ctx) when is_map(ctx) and is_map_key(ctx, @uri_tag),
+    do: {:error, {:reserved_ctx_key, @uri_tag}}
 
   defp encode_ctx(ctx) when is_map(ctx) do
     Enum.reduce_while(ctx, {:ok, %{}}, fn {k, v}, {:ok, acc} ->
@@ -127,7 +135,10 @@ defmodule Ezagent.E2E.Manifest do
   defp decode_ctx(m) when is_map(m), do: Map.new(m, fn {k, v} -> {k, decode_val(v)} end)
   defp decode_ctx(_), do: %{}
 
-  defp decode_val(%{"__uri__" => s}) when is_binary(s), do: URI.new!(s)
+  # Decode the tag ONLY on its EXACT shape (single key, binary value) — a map with
+  # `__uri__` plus other keys is NOT our tag, so it's preserved as an ordinary map (its
+  # other keys are never dropped). Encode prevents producing such a map anyway (codex review).
+  defp decode_val(%{@uri_tag => s} = m) when map_size(m) == 1 and is_binary(s), do: URI.new!(s)
   defp decode_val(v) when is_map(v), do: decode_ctx(v)
   defp decode_val(v) when is_list(v), do: Enum.map(v, &decode_val/1)
   defp decode_val(v), do: v

@@ -90,4 +90,18 @@ defmodule Ezagent.E2E.StepTest do
   test "inputs_hash is stable when nothing changes" do
     assert Ezagent.E2E.Step.inputs_hash(Base.s()) == Ezagent.E2E.Step.inputs_hash(Base.s())
   end
+
+  test "a non-inline (variable) callback FAILS TO COMPILE (enforced, not just documented)" do
+    code = """
+    defmodule BadStep#{System.unique_integer([:positive])} do
+      import Ezagent.E2E.Step
+      def s do
+        f = fn _ -> :ok end
+        step("x", run: f, await: fn _ -> :ok end, assert: fn _ -> :ok end)
+      end
+    end
+    """
+
+    assert_raise ArgumentError, ~r/inline `fn/, fn -> Code.compile_string(code) end
+  end
 end

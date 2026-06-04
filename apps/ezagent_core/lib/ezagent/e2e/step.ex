@@ -59,9 +59,9 @@ defmodule Ezagent.E2E.Step do
         assert: fn ctx -> if ctx[:admin], do: :ok, else: {:error, :no_admin} end
   """
   defmacro step(name, opts) do
-    run_ast = Keyword.fetch!(opts, :run)
-    await_ast = Keyword.get(opts, :await, quote(do: fn _ctx -> :ok end))
-    assert_ast = Keyword.get(opts, :assert, quote(do: fn _ctx -> :ok end))
+    run_ast = assert_inline_fn!(Keyword.fetch!(opts, :run), :run)
+    await_ast = assert_inline_fn!(Keyword.get(opts, :await, quote(do: fn _ctx -> :ok end)), :await)
+    assert_ast = assert_inline_fn!(Keyword.get(opts, :assert, quote(do: fn _ctx -> :ok end)), :assert)
     layer_inputs = Keyword.get(opts, :layer_inputs, [])
     kind = Keyword.get(opts, :kind, :setup)
     cacheable = Keyword.get(opts, :cacheable, true)
@@ -84,6 +84,19 @@ defmodule Ezagent.E2E.Step do
         callback_hash: unquote(callback_hash)
       }
     end
+  end
+
+  # ENFORCE the inline-literal contract (codex review): a variable/captured callback would
+  # hash to its name, not its body, silently breaking invalidation. Require `fn ... end`.
+  defp assert_inline_fn!({:fn, _, _} = ast, _which), do: ast
+
+  defp assert_inline_fn!(ast, which) do
+    raise ArgumentError,
+          "Ezagent.E2E.Step.step/2: `:#{which}` must be an inline `fn ... end` literal " <>
+            "(got `#{Macro.to_string(ast)}`). A variable/captured callback would hash to its " <>
+            "name, not its body, defeating cache invalidation. Factor shared logic into a " <>
+            "helper module, declare it in `:layer_inputs`, and call it inline: " <>
+            "`#{which}: fn ctx -> MyHelpers.do_it(ctx) end`."
   end
 
   @doc """
