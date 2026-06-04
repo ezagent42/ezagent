@@ -65,10 +65,15 @@ Artifacts:
 - **`docker/entrypoint.sh`** — blank `$EZAGENT_HOME/<profile>` → `mix ezagent.bootstrap`; then `mix phx.server`.
 - **`docker/.dockerignore`** — exclude `_build`, `deps`, `node_modules`, `/private/tmp/esr-*`, `.git`.
 
-**Credential handling (codex r5–r7) — three distinct stores:**
-1. **Static secrets — read-only mount:** Feishu `feishu.yaml`, fixtures. Never rotated.
-2. **Durable mutable OAuth source — durable volume, shared per profile/suite:** `CredentialRefresh.provision/3` (PR-E) refreshes an *expired* source and **atomically writes the rotated token back** (single-use refresh-token rotation). So the source must be **writable + durable**: seeded from a read-only seed **only when absent** (first run), **never re-overwritten from the seed after rotation** (else the rotated single-use token is lost next run). Its cross-process lock is **colocated** in this volume AND must be **crash-recoverable** — an **OS advisory lock on an open fd** (auto-released on process death) OR a lease with owner+mtime stale-lock recovery + fencing. (The current `provision/3` uses an `:exclusive` lockfile that is NOT crash-safe — a killed run leaves a stale lockfile that bricks later runs; the implementation MUST upgrade it.)
-3. **Per-agent credential dirs — NEVER in a layer:** provisioned from the durable source into each agent's config dir; excluded from every layer tar (§4.C) and re-provisioned on restore (§4.B restore hook).
+**The dev env MUST support all three agent flavors — cc, codex, curl(deepseek)** (Allen 2026-06-04). They have different secret models, so credential handling is split by *kind of secret*, not one-size-fits-all:
+
+**(i) Static secrets — read-only mount:** Feishu `feishu.yaml`, fixtures. Never rotated.
+
+**(ii) Expiring OAuth sources (cc + codex) — durable mutable volume, PER FLAVOR, shared per profile/suite:** cc's `.credentials.json` and codex's `auth.json` are OAuth tokens that expire and rotate (single-use refresh). Each flavor's provisioner refreshes an *expired* source and **atomically writes the rotated token back**, so each source must be **writable + durable**: seeded from a read-only seed **only when absent** (first run), **never re-overwritten from the seed after rotation**. Each source's cross-process lock is **colocated** in its volume AND **crash-recoverable** — an **OS advisory lock on an open fd** (auto-released on process death) OR a lease with owner+mtime stale-lock recovery + fencing. (The current cc `provision/3` uses an `:exclusive` lockfile that is NOT crash-safe — the implementation MUST upgrade it; the codex provisioner is built crash-safe from the start.) **cc has its provisioner (#17 PR-E); the codex provisioner (`refresh_test_credentials/3` over CODEX_HOME `auth.json`) is implemented WITHIN #21** so codex is layerable too (see §4.B + PR list).
+
+**(iii) Per-agent OAuth credential dirs (cc + codex) — NEVER in a layer:** provisioned from the per-flavor durable source into each agent's config dir; excluded from every layer tar (§4.C) and re-provisioned on restore (§4.B).
+
+**(iv) curl's static deepseek API key — NOT an OAuth credential:** curl implements NONE of the `CredentialAdapter` callbacks; its key lives in the agent's `:api_keys` DB slice (set via the `put_api_key` action, read via `reads_siblings([:api_keys])`). It does not expire and is captured in the layer's DB tar. So curl needs **no provisioner and no exclusion**: a domain-setup step seeds the key via `put_api_key` from the read-only mounted test key, and it simply rides in the layer (a static test key — see residual on optional scrubbing). curl is layerable trivially.
 
 **Deliverable (PR-1):** `docker compose -f docker/docker-compose.dev.yml up` → blank, bootstrapped ESR at `http://100.64.0.27:10042` (Tailscale, `feedback_remote_browser_ip`), Feishu WS connected.
 
@@ -88,10 +93,11 @@ A **scenario** is an ordered list of named **steps**; each performs actions agai
 
 **Credentials are NOT step-cached output (codex r3–r7):** credential files (the union of `Ezagent.Agent.CredentialAdapter.credential_relpaths/0` across flavors — `#17 PR-A`) are **excluded from every layer tar**. On **every restore**, a mandatory **provision hook** runs BEFORE the node serves: for each agent the restored DB references, the flavor's `refresh_test_credentials/3` provisioner (cc → `CredentialRefresh.provision/3`, refresh-if-expired from the **per-flavor** durable source, §4.A) writes fresh creds into the per-agent config dir. So creds are never frozen into a checkpoint, never expire-in-a-layer, and the resolver never reasons about credential time-sensitivity. (`valid_on_restore?` is NOT needed for creds; YAGNI for other time-sensitive state until a need arises.)
 
-**Exclusion boundary == provisioning boundary (codex r8 — contract totality):** because the layer *excludes* a flavor's `credential_relpaths`, that flavor MUST be able to *re-provide* them on restore, else the agent restores with missing auth. So a flavor is **layerable** iff it implements `refresh_test_credentials/3` (the provisioner) for its declared `credential_relpaths`. `refresh_test_credentials/3` is `@optional_callbacks` in `CredentialAdapter`, and today **only cc implements it — codex declares `auth.json`/`config.toml` but has NO provisioner.** Therefore:
-- the harness runs a **fail-loud preflight** (`feedback_let_it_crash_no_workarounds`): before creating or restoring any layer, if a scenario references a credentialled agent whose flavor is NOT layerable, it **aborts up front with a clear message** — never silently starts an agent with missing auth.
-- **v1 scope:** cc is layerable (#17 PR-E). **codex is NOT layerable until a codex `refresh_test_credentials/3` provisioner exists** (CODEX_HOME `auth.json` refresh — a prerequisite, related to PR-A2 / #17). Until then, codex-containing scenarios (e.g. the full cc→codex→curl relay) run in the **live/manual tier** or with codex steps marked non-layerable; the deterministic docker tier covers cc + curl. This boundary is enforced by the preflight, not assumed.
-- the **durable OAuth source is per-flavor** (cc source ≠ codex source); each layerable flavor maps to its own durable source volume + lock.
+**Layerability rule (codex r8 — contract totality) — all three flavors must be layerable (Allen):** a flavor is **layerable** iff every secret it uses is safe across a layer save/restore, by one of two routes:
+- **(a) Expiring OAuth creds** (cc, codex): the secret is declared via `credential_relpaths`, **excluded** from the layer, and **re-provisionable** via `refresh_test_credentials/3`. cc has its provisioner (#17 PR-E); **codex's provisioner is implemented within #21** (CODEX_HOME `auth.json` refresh) so codex is layerable — NOT deferred.
+- **(b) Static, non-expiring secrets** (curl's deepseek key): captured in the layer's DB (the `:api_keys` slice), seeded once via `put_api_key`; no provisioner/exclusion needed because there is no expiry.
+- the harness runs a **fail-loud preflight** (`feedback_let_it_crash_no_workarounds`): before creating/restoring a layer, if a scenario references an **expiring-credential** flavor that lacks a provisioner, it **aborts up front with a clear message** — never silently starts an agent with missing auth. (This guards future flavors; cc/codex/curl all pass once the codex provisioner lands.)
+- the **durable OAuth source is per-flavor** (cc source ≠ codex source); each maps to its own durable source volume + crash-safe lock (§4.A).
 
 **ctx + manifest codec (codex r1 finding 4):** ctx threads through steps; restore restarts the node, so ctx is persisted in the manifest — but JSON-serializable is insufficient (`%URI{}`, `MapSet` caps, atom-keyed maps, `DateTime`, message structs don't round-trip). The manifest has a **versioned schema with primitive-only ctx** + explicit `encode/1`/`decode/1`: URIs as strings reloaded via `URI.new!/1`; caps rebuilt from durable principals (not stored); timestamps ISO8601; no atoms/PIDs. Steps may only put codec-supported types in ctx (lint-checked).
 
@@ -147,7 +153,8 @@ Credential provisioning (the source/lock thread):
 - **expired-source recovery** — durable source starts expired → provision refreshes + writes back → succeeds (r5).
 - **cross-run + concurrent rotation** — two sequential runs reuse the durable source (second sees the first's rotated token, not the seed); two concurrent runs serialize on the colocated lock without double-rotating (r6).
 - **crash-recoverable lock** — a run killed mid-provision (stale lock) does NOT brick the next run: the advisory-fd lock auto-releases / the stale-lease policy recovers (r7).
-- **non-layerable-flavor preflight** — a scenario/layer referencing a credentialled agent whose flavor lacks `refresh_test_credentials/3` (e.g. codex today) is **rejected up front** with a clear error, never started with missing auth (r8).
+- **non-layerable-flavor preflight** — a scenario/layer referencing an EXPIRING-credential flavor that lacks `refresh_test_credentials/3` is **rejected up front** with a clear error, never started with missing auth (r8). (cc/codex/curl all pass; the guard is for future flavors.)
+- **all-three-flavor coverage** — the dev image + harness support cc, codex, AND curl(deepseek) agents end-to-end: cc+codex via exclude/provision, curl via in-DB static key (Allen requirement).
 Integration: **scenario 0** (blank → healthy); **scenario 34** ported (tier-1 programmatic relay seed via domain-setup + ingress-via-`InboundDispatcher`, with `await` on the rendered round-trip; tier-2 manual Feishu hook). Every distinct bug → a fast regression test (`feedback_e2e_failure_earns_unit_test`).
 
 ## 9. Residuals (post-review, accepted)
@@ -157,7 +164,8 @@ Integration: **scenario 0** (blank → healthy); **scenario 34** ported (tier-1 
 3. **Feishu raw-WS frame can't be faked for the TRUE gate** — tier 2 is explicitly manual; tier 1 covers everything below the decode.
 4. **Layer store growth** — `--gc` (age/scenario-scoped) documented; not auto-GC in v1.
 5. **Provision-on-every-restore cost** — a file copy + at most one OAuth refresh per restore; negligible vs. the node restart it accompanies. Accepted as the price of never caching secrets.
-6. **codex not yet layerable** — codex lacks a `refresh_test_credentials/3` provisioner, so codex-credentialled agents can't be in a deterministic layer yet; the preflight rejects them and codex runs in the live/manual tier until the codex provisioner lands (tracked prerequisite, PR-A2/#17 area). Accepted scoped boundary for v1.
+6. **curl's static deepseek key rides in the layer DB** — unlike cc/codex OAuth, curl's key is non-expiring state in the `:api_keys` slice, so it is captured in the layer tar. For a dev/test env with a dedicated test key this is acceptable; optional hardening (scrub the `:api_keys` slice from the tar + re-`put_api_key` on restore) is a documented future option, not v1. Accepted.
+7. **codex provisioner is new code in #21** — codex was previously non-layerable (no provisioner); #21 now includes implementing `refresh_test_credentials/3` for codex (CODEX_HOME `auth.json` refresh), so all three flavors are layerable. This is in-scope work, not a deferral.
 
 *(Resolved during review — folded into the design above: r1 ingress-via-InboundDispatcher + full-contract hash + ctx codec; r2 await-barrier + post-assert publish; r3–r7 the "secrets are never cached" stance, durable seed-once source, crash-recoverable colocated lock.)*
 
@@ -165,8 +173,9 @@ Integration: **scenario 0** (blank → healthy); **scenario 34** ported (tier-1 
 
 - **PR-1 (A):** `Dockerfile.dev` + `compose.dev` + `entrypoint` + three credential stores (static RO mount, durable seed-once OAuth source w/ crash-safe lock, per-agent dirs) → `compose up` healthy.
 - **PR-2 (B):** `Step`/`defstep`(full-contract hash + `@layer_inputs`)/`Scenario`/`Manifest` codec + `await` barrier + ingress-driver (`InboundDispatcher`) + `mix ezagent.e2e.run` + **scenario 0**.
-- **PR-3 (C):** `LayerStore` (cred-exclude) + `Resolver` + `EnvControl` (restore + provision-hook) + `--resume`/`--from-step`; resume-skip + helper-invalidation + crash-safe-lock demonstrated.
-- **PR-4 (follow-on):** port scenario 34 (relay) as the worked example incl. the tier-2 live hook.
+- **PR-2b (codex provisioner):** implement codex `refresh_test_credentials/3` (CODEX_HOME `auth.json` refresh + crash-safe durable source), so codex joins cc as layerable (Allen: all three flavors). Mirrors cc's `CredentialRefresh`.
+- **PR-3 (C):** `LayerStore` (cred-exclude per `credential_relpaths`) + `Resolver` + `EnvControl` (restore + per-flavor provision-hook + curl `put_api_key` seed) + layerability preflight + `--resume`/`--from-step`; resume-skip + helper-invalidation + crash-safe-lock + all-three-flavor restore demonstrated.
+- **PR-4 (follow-on):** port scenario 34 (relay) as the worked example — exercises cc→codex→curl all three layerable — incl. the tier-2 live hook.
 
 ## 11. Bilingual
 
