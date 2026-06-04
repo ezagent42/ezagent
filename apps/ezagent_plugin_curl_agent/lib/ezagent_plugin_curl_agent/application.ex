@@ -28,7 +28,7 @@ defmodule EzagentPluginCurlAgent.Application do
     add-template UI.
   - `agent_flavors/0` — flavor `"curl"` → `{Ezagent.Entity.CurlAgent,
     Ezagent.PluginCurlAgent.Template}`. Consumed by
-    `Ezagent.AgentFlavorRegistry`; PR-3 migrates the domain_chat agent
+    `Ezagent.AgentFlavorRegistry`; PR-3 migrates the domain_instance_message agent
     resolver onto it, replacing the hardcoded `kind_module_from_flavor`
     map.
   - `config_surface/0` — `:flavor` surface. The `/plugins` config icon

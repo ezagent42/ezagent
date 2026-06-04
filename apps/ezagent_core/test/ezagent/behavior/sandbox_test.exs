@@ -337,7 +337,13 @@ defmodule Ezagent.Behavior.SandboxTest do
     test "activate/2 rebuilds the phase-subscription transient (subscribe-only path)" do
       # nil template_class → "subscribe-only": phase-topic subscription
       # transient is rebuilt, but no subprocess re-spawn is attempted.
-      state = %{config_dir_path: nil, template_class: nil, respawn_template_data: nil, pty_phase: nil}
+      state = %{
+        config_dir_path: nil,
+        template_class: nil,
+        respawn_template_data: nil,
+        pty_phase: nil
+      }
+
       ctx = %{self_uri: uniq_uri(), kind_module: SomeKind}
 
       assert {:ok, %{phase_subscription: %{topic: topic, subscriber: sub}}} =
@@ -351,7 +357,13 @@ defmodule Ezagent.Behavior.SandboxTest do
       # `Enum` is a stdlib module that does not export the callback — the
       # `should_ensure_subprocess?/2` probe path is exercised; activate
       # still rebuilds the subscription transient and returns cleanly.
-      state = %{config_dir_path: nil, template_class: Enum, respawn_template_data: %{}, pty_phase: nil}
+      state = %{
+        config_dir_path: nil,
+        template_class: Enum,
+        respawn_template_data: %{},
+        pty_phase: nil
+      }
+
       ctx = %{self_uri: uniq_uri(), kind_module: SomeKind}
 
       assert {:ok, %{phase_subscription: %{}}} = Sandbox.activate(state, ctx)
@@ -359,7 +371,12 @@ defmodule Ezagent.Behavior.SandboxTest do
 
     test "activate/2 skips subprocess re-spawn when template_class is not an atom" do
       state =
-        %{config_dir_path: nil, template_class: "not-atom", respawn_template_data: %{}, pty_phase: nil}
+        %{
+          config_dir_path: nil,
+          template_class: "not-atom",
+          respawn_template_data: %{},
+          pty_phase: nil
+        }
 
       ctx = %{self_uri: uniq_uri(), kind_module: SomeKind}
 

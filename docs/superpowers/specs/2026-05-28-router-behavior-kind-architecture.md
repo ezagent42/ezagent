@@ -63,7 +63,7 @@ Current `@behaviour Ezagent.Behavior` (file `apps/ezagent_core/lib/ezagent/behav
 | Slice schema | The Behavior's `state_slice/0` atom, the slice's inner shape, defensive `Map.get/3` for legacy snapshots, how the slice is merged on snapshot load (`load_or_init/3`'s `init_slice` ∪ snapshot) | `state_slice/0`, `init_slice/1`, the 3rd arg of `invoke/4` |
 | Snapshot policy | The 5-enum `persistence/0` (`:ephemeral` / `{:snapshot, :on_change}` / `{:snapshot, :periodic, ms}` / `:on_terminate` / `:external`), what gets persisted, what doesn't, what `:not_durable` means | `Kind.persistence/0`, post-init commit nuances, `handle_kind_message/3` persistence, `terminate/3` slice non-persistence |
 | Invariant maintenance | Cross-Behavior slice fields (e.g. `:lifecycle` counter, `:identity` `caps`), `reads_sibling_slices/0` declaration, default `Map.update/4` lazy seeding for fold-on registered Behaviors | `reads_sibling_slices/0`, `Kind.Runtime.maybe_inject_sibling_slices/3` |
-| Cross-Kind dispatch from inside `invoke/4` | The `Ezagent.Invocation.dispatch/1` call, ctx threading, the `try/rescue` cleanup pattern for partial-failure | `EzagentDomainChat.create_session/3` is the canonical anti-pattern: 5 dispatches across 4 Kinds with hand-rolled compensation |
+| Cross-Kind dispatch from inside `invoke/4` | The `Ezagent.Invocation.dispatch/1` call, ctx threading, the `try/rescue` cleanup pattern for partial-failure | `EzagentDomainInstanceMessage.create_session/3` is the canonical anti-pattern: 5 dispatches across 4 Kinds with hand-rolled compensation |
 | Error-on-persist semantics | What happens when `commit_and_notify/3` returns `{:error, _}` — `commit_post_init/2` swallows + logs; `commit_and_notify/3` (dispatch path) propagates `{:persistence_failed, _}`; `persist_handle_info_mutation/4` swallows | 3 different paths (dispatch / post-init / handle_info) with 3 different policies |
 | Cap declaration with action axis | `required_caps/0` returns `Capability.cap/3` with kind+behavior+action; substitution of `:any` at dispatch time; `cap_exempt_actions/0`; `workspace_scoped?/0`; `data_owner/1` | 4 callbacks all interacting with `Kind.Runtime.handle_dispatch/4` step 5.5 |
 | Boot-order lifecycle | `post_init/2` + `handle_continue/3` + `on_ready/2` + `terminate/3` — when does each fire, what's persisted, what's discarded | 4 optional callbacks across `behavior.ex` lines 217-524 |
@@ -98,11 +98,11 @@ Current 22 Behaviors ([`find apps -path "*/lib/ezagent/behavior/*.ex"`](#) yield
 
 | Behavior | LOC | Pattern dominator |
 |---|---:|---|
-| Chat (`domain_chat/.../chat.ex`) | 1343 | invoke/4 + `MessageStore.write` + `Phoenix.PubSub.broadcast` + `Resolver.resolve` + N recipient dispatches |
+| Chat (`domain_instance_message/.../chat.ex`) | 1343 | invoke/4 + `MessageStore.write` + `Phoenix.PubSub.broadcast` + `Resolver.resolve` + N recipient dispatches |
 | Workspace (`domain_workspace/.../workspace.ex`) | 1332 | cross-Kind orchestration (workspace → bindings → sessions → agents) all in one invoke/4 |
 | Identity (`domain_identity/.../identity.ex`) | 912 | cap MapSet management + slice fields + boot reconcile + cross-Kind grant propagation |
 | ExternalMirror (`domain_external_mirror/.../external_mirror.ex`) | 877 | binding lifecycle, per-binding Worker spawn, slice-as-projection-cache |
-| AgentTemplate (`domain_chat/.../template.ex`) | 747 | template instantiation cascade |
+| AgentTemplate (`domain_instance_message/.../template.ex`) | 747 | template instantiation cascade |
 | Sandbox (`core/.../sandbox.ex`) | 746 | config_dir create/destroy + Template Class plugin contract |
 | ExternalMirrorWorker (`...external_mirror_worker.ex`) | 692 | publisher cursor + ring + slice reconcile |
 | Publisher.SessionImpl (`...publisher/session_impl.ex`) | 610 | slice-change observer + cursor management |
@@ -366,7 +366,7 @@ defmodule Ezagent.Entity.Agent do
   use Ezagent.Kind,
     pattern: :entity,                            # see §3
     uri_scheme: "entity://agent/",
-    supervisor: EzagentDomainChat.AgentSupervisor
+    supervisor: EzagentDomainInstanceMessage.AgentSupervisor
 
   # Behaviors attached to this Kind (and the cap-restriction shape)
   attach Ezagent.Behavior.Chat,            actions: [:receive]
@@ -515,11 +515,11 @@ This boundary fix is the largest single change a plugin-author actually sees in 
 | Current Kind | Module path | Pattern | Boundary issues (file:line) |
 |---|---|---|---|
 | `Ezagent.Entity.User` | `apps/ezagent_domain_identity/lib/ezagent/entity/user.ex:1` | Entity | Today: `MagicLinkToken` is a parallel Kind but conceptually owned-by-User — should be `resource://user/<owner>/magic-link/<id>` |
-| `Ezagent.Entity.Agent` | `apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex:1` | Entity | Today: `:sandbox` slice holds `config_dir_path` (line 79: `Ezagent.Behavior.Sandbox` attached) — should be Resource. `:api_keys` slice (line 80: `Ezagent.Behavior.ApiKeys`) — should be Resource |
+| `Ezagent.Entity.Agent` | `apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex:1` | Entity | Today: `:sandbox` slice holds `config_dir_path` (line 79: `Ezagent.Behavior.Sandbox` attached) — should be Resource. `:api_keys` slice (line 80: `Ezagent.Behavior.ApiKeys`) — should be Resource |
 | `Ezagent.Entity.Workspace` | `apps/ezagent_domain_workspace/lib/ezagent/entity/workspace.ex:1` | Entity | Today: binding lifecycle leaks into `Behavior.Workspace` slice — bindings should be Resources owned by Workspace |
-| `Ezagent.Entity.AgentTemplate` | `apps/ezagent_domain_chat/lib/ezagent/entity/agent_template.ex:1` | Entity | Clean — already Entity-shaped |
-| `Ezagent.Entity.SessionTemplate` | `apps/ezagent_domain_chat/lib/ezagent/entity/session_template.ex:1` | Entity | Clean |
-| `Ezagent.Entity.Session` | `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:1` | **Session** | The single Session-pattern Kind today. Misleading `Entity.` namespace — rename to `Ezagent.Session.Default` post-migration |
+| `Ezagent.Entity.AgentTemplate` | `apps/ezagent_domain_instance_message/lib/ezagent/entity/agent_template.ex:1` | Entity | Clean — already Entity-shaped |
+| `Ezagent.Entity.SessionTemplate` | `apps/ezagent_domain_instance_message/lib/ezagent/entity/session_template.ex:1` | Entity | Clean |
+| `Ezagent.Entity.Session` | `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:1` | **Session** | The single Session-pattern Kind today. Misleading `Entity.` namespace — rename to `Ezagent.Session.Default` post-migration |
 | `Ezagent.Entity.ExternalMirrorWorker` | `apps/ezagent_domain_external_mirror/lib/ezagent/entity/external_mirror_worker.ex:1` | **Resource** | Currently named `Entity.` but conceptually owned by `(Workspace, Binding)`. Has two-tier supervisor for this reason. URI should be `resource://workspace/<ws>/worker/<binding-id>` |
 | `Ezagent.Entity.Token` | `apps/ezagent_domain_identity/lib/ezagent/entity/token.ex:1` | Resource | Already owned-by-User, just not URI-shaped as resource |
 | `Ezagent.Entity.MagicLinkToken` | `apps/ezagent_domain_identity/lib/ezagent/entity/magic_link_token.ex:1` | Resource | Owned by User |
@@ -700,13 +700,13 @@ defmodule Ezagent.Behavior.Lifecycle do
 end
 ```
 
-The Resource cascade (User destroy → revoke all caps → destroy all sessions → destroy all agents) is no longer hand-rolled in `EzagentDomainChat.create_session/3`-style imperative code. The framework's destroy-saga walks `pattern: :entity`'s declared Resource set in declared order, with automatic compensation if any step fails. See §5.4.
+The Resource cascade (User destroy → revoke all caps → destroy all sessions → destroy all agents) is no longer hand-rolled in `EzagentDomainInstanceMessage.create_session/3`-style imperative code. The framework's destroy-saga walks `pattern: :entity`'s declared Resource set in declared order, with automatic compensation if any step fails. See §5.4.
 
 **LOC reduction**: 243 → ~25 (90% reduction).
 
 #### Example 3: `Behavior.Chat.send` (the biggest, hairiest Behavior)
 
-**Before** (`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:297-419`, ~120 LOC for `:send` alone):
+**Before** (`apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:297-419`, ~120 LOC for `:send` alone):
 
 The pre-existing handler does: `MessageStore.write` → `Phoenix.PubSub.broadcast` → `WorkspaceRegistry.lookup` → `Routing.Resolver.resolve` → `notify_dropped_mentions` → per-recipient `dispatch_receive` / `dispatch_cross_session` → 3-field slice mutation for SliceChange.
 
@@ -1072,7 +1072,7 @@ defstruct steps: [], compensations: [], ctx: %{}, name: nil, command_uuid: nil
 
 **This solves SPEC #440** by being honest about what's possible, NOT by claiming false rollback. The "User is in an inconsistent state" failure mode that codex flagged on #440 r4 becomes a **declared, observable, repair-tracked** state instead of a silent inconsistency. Operators have a UI to see "this destroy was 90% successful; 1 message was lost; here's the repair handle."
 
-**LOC**: ~200 (the existing `EzagentDomainChat.create_session/3` hand-rolled `try/rescue` cleanup pattern, lifted into a reusable primitive) + ~50 LOC for the partial-restore marker handling.
+**LOC**: ~200 (the existing `EzagentDomainInstanceMessage.create_session/3` hand-rolled `try/rescue` cleanup pattern, lifted into a reusable primitive) + ~50 LOC for the partial-restore marker handling.
 
 ### §5.5 — `Ezagent.EventSubscriber`
 
@@ -1167,7 +1167,7 @@ Each domain migrates its Behaviors and Kinds to the new contract. Order optimize
 | Phase 2 PR 1 | `ezagent_core` | Lifecycle, Routing, Sandbox, Notifications, Presence | Low — core test infra catches regressions |
 | Phase 2 PR 2 | `ezagent_domain_identity` | Identity, UserCredentials, UserTokens, ApiKeys, WorkspaceUserAdmin | Medium — auth touches every dispatch |
 | Phase 2 PR 3 | `ezagent_domain_workspace` | Workspace | Medium — workspace iso is in every dispatch step 5.6 |
-| Phase 2 PR 4 | `ezagent_domain_chat` | Chat, Template, OrchestratorAdmin, Publisher.SessionImpl | High — Chat is the biggest Behavior, multi-Kind |
+| Phase 2 PR 4 | `ezagent_domain_instance_message` | Chat, Template, OrchestratorAdmin, Publisher.SessionImpl | High — Chat is the biggest Behavior, multi-Kind |
 | Phase 2 PR 5 | `ezagent_domain_external_mirror` | ExternalMirror, ExternalMirrorWorker, Publisher | High — Worker has two-tier supervisor + boot reconciler |
 | Phase 2 PR 6 | `ezagent_domain_pty` | Pty | Low — small surface |
 | Phase 2 PR 7 | Plugin packages | NpAgent, CurlAgent, Echo | Low — plugin-isolated |
@@ -1280,7 +1280,7 @@ Derived rates:
 - **Phase 2 p90: 22 × 4.80 = 106 hr ≈ 3.5 wk**
 - Per-PR breakdown sanity check (8 PRs in §6.1 table):
   - PR 1 (`ezagent_core`, 5 Behaviors): 5 × 3.46 = 17 hr ≈ 3 days
-  - PR 4 (`ezagent_domain_chat`, 4 Behaviors, the biggest): 4 × 4.80 (p90) = 19 hr ≈ 3 days
+  - PR 4 (`ezagent_domain_instance_message`, 4 Behaviors, the biggest): 4 × 4.80 (p90) = 19 hr ≈ 3 days
   - PR 5 (`ezagent_domain_external_mirror`, 3 Behaviors + Worker Kind): comparable to past EM series = ~10 hr ≈ 2 days
   - PR 8 (Resource boundary fix, schema migration): no past comparable; budget 1 wk separately
 
@@ -1309,7 +1309,7 @@ Derived rates:
 #### §6.3.4 — Confidence statement + delta from r2
 
 **r3 confidence is bounded by**:
-1. **N=3 comparable Behavior-migration series** (`phase7-template`, `external-mirror`, `apikeys-flip`) — small sample; one outlier (e.g. a `domain_chat` migration that surfaces a HIGH-rated structural defect) could double Phase 2.
+1. **N=3 comparable Behavior-migration series** (`phase7-template`, `external-mirror`, `apikeys-flip`) — small sample; one outlier (e.g. a `domain_instance_message` migration that surfaces a HIGH-rated structural defect) could double Phase 2.
 2. **LegacyBehaviorAdapter approach is novel** — no past ezagent migration has used a runtime adapter for backward-compat. The ~400 LOC budget is design-derived, not empirically validated.
 3. **22 Behaviors is the SPEC count** — if domain-chat's "Publisher.SessionImpl" or `external_mirror`'s Worker have hidden sub-behaviors that don't fit cleanly into the macro, count rises.
 4. **Allen's bandwidth is the binding constraint**, not autonomous-loop throughput. The 30-hr/wk sustained rate is **above** historical sustained average outside burst weeks; if Allen reviews 1 PR/wk during a stretch, Phase 2 stretches to 8 wk wall-clock.
@@ -1512,7 +1512,7 @@ Pre-loaded for codex review subagent (10 prompts; static-only — no `mix` comma
 
 ### AV-1 — Effects vocabulary coverage
 
-Walk through `Behavior.Chat.invoke(:send)` (`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:297-419`), `Behavior.ExternalMirror.invoke(:bind_session)` (`apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex`), and `Behavior.Workspace.invoke(:create_session)` (`apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex`). For each: is every side effect expressible via the §4.4 grammar? If not, what's the missing effect? Specifically check: `MessageStore.write` inside Chat (an Ecto write — covered by `{:effect, &fn/N, args}`?). `Process.monitor` inside Chat's `:join` (a runtime primitive, not really an effect — does the framework expose a `{:monitor, target_uri}` effect?). `Phoenix.PubSub.subscribe` from Worker's `post_init` (not via effects — does it stay as a Kind lifecycle hook?).
+Walk through `Behavior.Chat.invoke(:send)` (`apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:297-419`), `Behavior.ExternalMirror.invoke(:bind_session)` (`apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex`), and `Behavior.Workspace.invoke(:create_session)` (`apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex`). For each: is every side effect expressible via the §4.4 grammar? If not, what's the missing effect? Specifically check: `MessageStore.write` inside Chat (an Ecto write — covered by `{:effect, &fn/N, args}`?). `Process.monitor` inside Chat's `:join` (a runtime primitive, not really an effect — does the framework expose a `{:monitor, target_uri}` effect?). `Phoenix.PubSub.subscribe` from Worker's `post_init` (not via effects — does it stay as a Kind lifecycle hook?).
 
 ### AV-2 — Framework-managed snapshot policy correctness
 

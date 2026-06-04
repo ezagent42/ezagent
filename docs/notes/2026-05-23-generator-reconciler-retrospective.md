@@ -229,7 +229,7 @@ been the same shape from the start.**
   rewritten to call the new reconciler instead of their own per-tool
   saga.
 - ~6 saga compensation helpers in
-  `apps/ezagent_domain_chat/lib/ezagent/orchestrator/tools.ex`
+  `apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools.ex`
   **deleted** (rollback_template_slot, restore_prior_working_copy,
   cleanup_routing_changes, the per-tool `guard` wrappers, …).
 - Cap idempotency probe uses **logical equality** (ignores

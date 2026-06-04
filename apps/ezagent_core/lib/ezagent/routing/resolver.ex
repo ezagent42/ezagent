@@ -71,7 +71,7 @@ defmodule Ezagent.Routing.Resolver do
   # Feishu chat ↔ session bridge it once held now lives in the
   # ExternalMirror domain (`external_mirror_bindings`, PR-EM-3 #317).
   @default_routing_tables [
-    EzagentDomainChat.Routing.MentionRouting
+    EzagentDomainInstanceMessage.Routing.MentionRouting
   ]
 
   @doc """
@@ -159,7 +159,7 @@ defmodule Ezagent.Routing.Resolver do
       `workspace_uri` only fire if it matches the context; rules with
       `nil` workspace_uri apply globally.
 
-  Use this from `EzagentDomainChat.Behavior.Chat.invoke(:send)` when the
+  Use this from `EzagentDomainInstanceMessage.Behavior.Chat.invoke(:send)` when the
   Session knows its workspace binding. Old 3-arg call sites continue
   to work — workspace scoping passes through as nil = global-only
   rules apply.

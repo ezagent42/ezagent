@@ -6,7 +6,7 @@ This walks you through writing a new plugin from scratch — concretely, a hypot
 
 A plugin is an OTP application under `apps/ezagent_plugin_<name>/` that:
 
-1. Depends on `:ezagent_core` (and optionally domain apps like `:ezagent_domain_chat`).
+1. Depends on `:ezagent_core` (and optionally domain apps like `:ezagent_domain_instance_message`).
 2. Ships a **plugin module** that `use Ezagent.Plugin` and **declares** what it contributes — Behaviors, spawn fns, Template Classes, agent flavors, routing tables, a config surface.
 3. Optionally ships its own Kinds, Behaviors, Template Classes.
 
@@ -68,7 +68,7 @@ end
 defp deps do
   [
     {:ezagent_core, in_umbrella: true},
-    {:ezagent_domain_chat, in_umbrella: true},
+    {:ezagent_domain_instance_message, in_umbrella: true},
     {:slack_sdk, "~> 0.5"}   # hypothetical
   ]
 end

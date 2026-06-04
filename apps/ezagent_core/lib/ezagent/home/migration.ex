@@ -126,9 +126,7 @@ defmodule Ezagent.Home.Migration do
         # consistent snapshot of `src_db`. dst must NOT pre-exist.
         File.rm(dst_db)
 
-        case System.cmd(sqlite3, [src_db, "VACUUM INTO '#{dst_db}'"],
-               stderr_to_stdout: true
-             ) do
+        case System.cmd(sqlite3, [src_db, "VACUUM INTO '#{dst_db}'"], stderr_to_stdout: true) do
           {_out, 0} -> :ok
           {out, code} -> {:error, {:vacuum_into_failed, code, String.trim(out)}}
         end
@@ -269,7 +267,8 @@ defmodule Ezagent.Home.Migration do
       tarball?(from_path) and File.regular?(from_path) ->
         dest = staging_dir!("ezagent-restore")
 
-        case :erl_tar.extract(String.to_charlist(Path.expand(from_path)),
+        case :erl_tar.extract(
+               String.to_charlist(Path.expand(from_path)),
                [:compressed, {:cwd, String.to_charlist(dest)}]
              ) do
           :ok -> {:ok, dest}

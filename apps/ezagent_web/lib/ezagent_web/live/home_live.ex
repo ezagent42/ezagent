@@ -5,18 +5,17 @@ defmodule EzagentWeb.HomeLive do
   ## Three-way mount
 
   - **No session cookie** (`current_entity_uri` absent) → redirect `/login`.
-  - **Authenticated AND ≥1 session in `EzagentDomainChat.list_sessions/0`** →
+  - **Authenticated AND ≥1 session in `EzagentDomainInstanceMessage.list_sessions/0`** →
     redirect `/sessions` (the default app surface, unchanged from Phase 8).
   - **Authenticated AND no sessions exist** → render the first-login
     wizard inline. Operator picks a short name (default "main") and
-    submits; we call `EzagentDomainChat.create_session/2` (which spawns
-    + binds workspace + joins admin) and then push_navigate to
-    `/sessions`.
+    submits; we call `Ezagent.Workspace.create_session/3` (which spawns
+    + binds workspace + joins admin) and then push_navigate to `/sessions`.
 
   ## Phase 8c PR-J context
 
   Before PR-J, `session://default/system/main` was a static supervisor child of
-  `EzagentDomainChat.Application` — hardcoded outside the canonical
+  `EzagentDomainInstanceMessage.Application` — hardcoded outside the canonical
   creation flow (`Session.spawn_from_template/2` / `create_session/2`).
   That bypass forced two boot-time workarounds (workspace bind +
   admin-join post-boot dispatch). PR-J drops the static child; the
@@ -47,7 +46,7 @@ defmodule EzagentWeb.HomeLive do
   end
 
   defp mount_authenticated(entity_uri_str, socket) do
-    case EzagentDomainChat.list_sessions() do
+    case EzagentDomainInstanceMessage.list_sessions() do
       [] ->
         # No sessions yet — render the wizard.
         socket =
@@ -77,8 +76,8 @@ defmodule EzagentWeb.HomeLive do
     else
       creator_uri = parse_entity_uri(socket.assigns.current_entity_uri_str)
 
-      # SPEC #366 (Allen 2026-05-26) — `EzagentDomainChat.create_session/3`
-      # now requires an explicit `:template_name`. The first-login
+      # SPEC #366 (Allen 2026-05-26) — create_session now requires an
+      # explicit `:template_name`. The first-login
       # wizard's job is to create the bootstrap session with the
       # canonical `session://default/<workspace>/main` URI shape, so
       # we pass `template_name: "default"` literally. This preserves
@@ -88,16 +87,26 @@ defmodule EzagentWeb.HomeLive do
       # ceremony. Tenant-customized session creation happens in
       # AdminLive (`/sessions` → "+ New"), where the dropdown is
       # mandatory.
-      case EzagentDomainChat.create_session(short_name, creator_uri,
-             template_name: "default"
-           ) do
-        {:ok, session_uri, meta} ->
+      workspace_uri = Ezagent.Capability.workspace_of(creator_uri)
+
+      result =
+        with :ok <- ensure_bootstrap_workspace(workspace_uri, creator_uri) do
+          Ezagent.Workspace.create_session(
+            workspace_uri,
+            %{short_name: short_name, template_name: "default"},
+            %{caller: creator_uri, caps: caller_caps_for(creator_uri)}
+          )
+        end
+
+      case result do
+        {:ok, %{session_uri: session_uri} = result} ->
           # SPEC `2026-05-26-session-create-orchestrator-unified` Gap A
           # + Invariant #9 (no silent drops at user-facing surfaces) —
           # surface the orchestrator status from `create_session`'s
           # new 3-tuple meta map. Silently discarding the meta would be
           # an Invariant #9 violation (the e2e flow's "did the
           # orchestrator come up?" question would be invisible).
+          meta = session_create_meta(result)
           if with_echo?, do: join_echo_agent(session_uri, creator_uri)
 
           {:noreply,
@@ -115,6 +124,23 @@ defmodule EzagentWeb.HomeLive do
       end
     end
   end
+
+  defp ensure_bootstrap_workspace(%URI{scheme: "workspace", host: "system"}, %URI{} = creator_uri) do
+    case Ezagent.Workspace.Store.get_by_name("system") do
+      nil ->
+        case Ezagent.Workspace.create("system", %{created_by: creator_uri}) do
+          {:ok, _pid} -> :ok
+          {:error, :workspace_exists} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
+          {:error, reason} -> {:error, {:system_workspace_seed_failed, reason}}
+        end
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp ensure_bootstrap_workspace(_workspace_uri, _creator_uri), do: :ok
 
   # SPEC `2026-05-26-session-create-orchestrator-unified` Gap A — render
   # the orchestrator status from `create_session`'s meta map so the
@@ -185,6 +211,24 @@ defmodule EzagentWeb.HomeLive do
       })
 
     :ok
+  end
+
+  defp caller_caps_for(%URI{} = caller_uri) do
+    caps = Ezagent.Identity.list_caps_for(caller_uri)
+
+    if MapSet.size(caps) > 0 do
+      caps
+    else
+      MapSet.new()
+    end
+  end
+
+  defp session_create_meta(result) when is_map(result) do
+    %{
+      orchestrator_uri: Map.get(result, :orchestrator_uri),
+      orchestrator_status: Map.get(result, :orchestrator_status),
+      orchestrator_error: Map.get(result, :orchestrator_error)
+    }
   end
 
   # Defensive parser — LiveAuth already validated this string at session

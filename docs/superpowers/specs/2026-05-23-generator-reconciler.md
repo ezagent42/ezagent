@@ -146,7 +146,7 @@ current call sites are:
 | Caller | File | Strict-atomic expectation? |
 |---|---|---|
 | `EzagentPluginLiveview.SessionLive.handle_event("create_from_template", ...)` | `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/session_live.ex` | No — uses `{:ok, _}/{:error, _}` for flash messages; partial+pending is strictly more useful for the UI. |
-| `EzagentDomainChat.GenericSessionAcceptance` / test fixtures | `apps/ezagent_domain_chat/test/` | No — assertions are `assert {:ok, %{session_uri: _, orchestrator_uri: _}} = ...`. The reconciler keeps the same success return shape (§1.2). |
+| `EzagentDomainInstanceMessage.GenericSessionAcceptance` / test fixtures | `apps/ezagent_domain_instance_message/test/` | No — assertions are `assert {:ok, %{session_uri: _, orchestrator_uri: _}} = ...`. The reconciler keeps the same success return shape (§1.2). |
 | `mix ezagent.session.create` (if any) | `apps/ezagent_core/lib/mix/tasks/` | Audit in PR-A; expected None. |
 | `Workspace.Loader` (potential — none today) | — | The Loader instantiates *workspace member templates*, not SessionTemplates. No call. |
 
@@ -844,7 +844,7 @@ for the LV "everything is healthy" indicator.
 ## §3 What goes away — the `cleanup_partial` saga
 
 The following code is **DELETED** in the rewrite PR (§6 PR-B). Specific
-file:line references against today's `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex`
+file:line references against today's `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex`
 (lengths from a 2026-05-23 read):
 
 | Symbol | Lines | Why deleted |
@@ -1057,7 +1057,7 @@ without separate branches).
 
 ### PR-A — `derive_session_uri/3` + `RuleStore.list/1` idempotency probe (NON-BREAKING)
 
-- `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex`: add
+- `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex`: add
   `derive_session_uri/3` as a NEW private fn (not yet wired into
   `spawn_from_template/2`).
 - `apps/ezagent_core/lib/ezagent/routing/rule_store.ex`: confirm `list/1`
@@ -1069,13 +1069,13 @@ without separate branches).
 
 ### PR-B — `spawn_from_template/2` becomes the reconciler (BREAKING — INTERNAL)
 
-- `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex`: replace
+- `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex`: replace
   `do_spawn/4` + `guard/2` + `cleanup_partial/1` + `terminate_kind/1` +
   `safe/1` with `reconcile_loop/3` + the 7 step fns from §2.
 - `spawn_from_template/2` retains its signature; return shape gains the
   `{:partial, _}` variant (the old `{:ok, %{session_uri, orchestrator_uri}}`
   is preserved + augmented with `slots`).
-- Tests: `apps/ezagent_domain_chat/test/integration/session_spawn_from_template_test.exs`
+- Tests: `apps/ezagent_domain_instance_message/test/integration/session_spawn_from_template_test.exs`
   rewrites every assertion to reconciler semantics. New tests:
   - `idempotent_re_run_test.exs` — invoke twice, assert second call's
     URIs match first, no duplicate state, no errors;
@@ -1094,13 +1094,13 @@ without separate branches).
 
 ### PR-C — `update_agent_template` becomes per-slot reconciler
 
-- `apps/ezagent_domain_chat/lib/ezagent/orchestrator/tools.ex`: rewrite
+- `apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools.ex`: rewrite
   `do_update_agent_template/8` per §4. Delete `abort_swap_after_repoint_rollback`,
   `halt_routing_revert_failed`, `manual_repair_error`, `rollback_slot_to_old`,
   `compensate_orphan_worker`.
 - The `{:error, {:update_needs_manual_repair, _}}` return shape is REMOVED;
   replaced by `{:partial, %{slot, completed, pending, errors}}`.
-- Tests: `apps/ezagent_domain_chat/test/orchestrator/update_agent_template_test.exs`
+- Tests: `apps/ezagent_domain_instance_message/test/orchestrator/update_agent_template_test.exs`
   rewrites every "saga rollback" assertion to reconciler semantics.
 
 ### PR-D — Docs update (NO code)
@@ -1232,7 +1232,7 @@ orchestrator + all slot workers + routing rules + caps. `{:ok, %{session_uri,
 orchestrator_uri, slots: [...]}}`. **Identical to today's behaviour for the
 happy path.**
 
-Test: `apps/ezagent_domain_chat/test/integration/spawn_from_template_full_convergence_test.exs`
+Test: `apps/ezagent_domain_instance_message/test/integration/spawn_from_template_full_convergence_test.exs`
 (repurpose existing test; assert the new `slots:` field too).
 
 ### V1-R2 — Idempotent re-run (with cap + routing + audit churn assertions — codex rev-2)
@@ -1289,7 +1289,7 @@ Test: `failed_slot_retry_test.exs`.
 
 The existing Phase-7 round-1..3 invariant tests:
 
-- `workspace_isolation_test.exs` (`apps/ezagent_domain_chat/test/integration/`)
+- `workspace_isolation_test.exs` (`apps/ezagent_domain_instance_message/test/integration/`)
 - `cross_workspace_isolation_test.exs`
 - `template_caps_test.exs` (`apps/ezagent_core/test/ezagent/`)
 
@@ -1323,10 +1323,10 @@ is a test that FAILS when the architectural goal is unmet. The reconciler's
 goal is "no saga rollback code in the Generator." The invariant test:
 
 ```elixir
-# apps/ezagent_domain_chat/test/invariants/generator_no_saga_rollback_test.exs
+# apps/ezagent_domain_instance_message/test/invariants/generator_no_saga_rollback_test.exs
 test "Generator + update_agent_template have no cleanup_partial-style saga rollback" do
-  generator = File.read!("apps/ezagent_domain_chat/lib/ezagent/entity/session.ex")
-  tools     = File.read!("apps/ezagent_domain_chat/lib/ezagent/orchestrator/tools.ex")
+  generator = File.read!("apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex")
+  tools     = File.read!("apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools.ex")
 
   refute generator =~ ~r/cleanup_partial|abort_swap|guard\([^,]+,\s*spawned\)/
   refute tools     =~ ~r/abort_swap_after_repoint_rollback|halt_routing_revert_failed|manual_repair_error|rollback_slot_to_old/

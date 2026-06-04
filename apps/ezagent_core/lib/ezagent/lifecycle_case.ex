@@ -17,7 +17,7 @@ defmodule Ezagent.LifecycleCase do
   already uses. `test/support/` is only on the OWNING app's elixirc path
   (`elixirc_paths(:test)` = `["lib", "test/support"]`), so a helper there
   is invisible to the plugin / domain test suites (curl / feishu / np,
-  domain_chat / identity / …) that must `use Ezagent.LifecycleCase` to
+  domain_instance_message / identity / …) that must `use Ezagent.LifecycleCase` to
   assert `assert_transients_rebuilt/2` on their converted modules.
   Compiling it into `ezagent_core/lib` puts it on every dependent app's
   compile path (those apps already depend on `:ezagent_core` and

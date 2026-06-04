@@ -50,7 +50,7 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
   # Workspace Kind GenServer.
   #
   # Test-env boot deliberately skips `ensure_default_workspace` (see
-  # `EzagentDomainChat.Application.ensure_default_workspace/0`
+  # `EzagentDomainInstanceMessage.Application.ensure_default_workspace/0`
   # moduledoc — DB writes in `Application.start/2` race with Sandbox
   # checkout). So `default` is missing from the DB on every fresh
   # test-suite run; one of these per-suite setups creates it. The

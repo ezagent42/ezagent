@@ -107,7 +107,7 @@ Opt-in via `config :ezagent_plugin_cc, reap_orphans_on_boot: true`.
   slice-shape assertions; added post_init / handle_continue tests.
 
 ### Chat domain
-- `apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex` — threaded
+- `apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex` — threaded
   `respawn_template_data` from `instantiate_meta` through
   `record_sandbox_state/3` into the `sandbox.write_path` dispatch.
 
@@ -204,7 +204,7 @@ deployment reaping). Two parallel worktrees get different deployment_ids
 
 **Problem**: My round-1 used `raise` in `Sandbox.handle_continue/3`
 on `{:error, _}` from the callback. This triggers `Kind.Server`
-GenServer crash → `EzagentDomainChat.AgentSupervisor` restart with
+GenServer crash → `EzagentDomainInstanceMessage.AgentSupervisor` restart with
 default DynamicSupervisor intensity (`max_restarts: 3, max_seconds:
 5`). A persistent failure (claude removed from PATH after a successful
 spawn) burns through 3 restarts in milliseconds → AgentSupervisor

@@ -58,7 +58,7 @@ defmodule EzagentCore.Invariants.SessionsHaveWorkspaceTest do
            #{Enum.map_join(bad_shape, "\n  ", &"- #{&1}")}
 
            Every session URI must be `session://<template>/<workspace>/<name>`.
-           Construction sites: `EzagentDomainChat.create_session/3`,
+           Construction sites: `Ezagent.Workspace.create_session/3`,
            `Ezagent.Entity.Session.spawn_from_template/2`,
            `Ezagent.Template.GenericSession.instantiate/3`.
            """

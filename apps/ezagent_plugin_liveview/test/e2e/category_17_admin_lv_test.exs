@@ -218,7 +218,7 @@ defmodule EzagentPluginLiveview.E2E.Category17AdminLvTest do
       lv
       |> form("#add-rule form",
         rule: %{
-          table: "Elixir.EzagentDomainChat.Routing.MentionRouting",
+          table: "Elixir.EzagentDomainInstanceMessage.Routing.MentionRouting",
           matcher_type: "mention"
         }
       )

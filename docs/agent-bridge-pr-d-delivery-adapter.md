@@ -29,12 +29,12 @@ Compatibility:
   `{:to_claude, payload}` to the bound Channel pid.
 - The existing cc Channel can continue to receive `{:to_claude, ...}`
   while PR-C promotes Socket/Channel separately.
-- `ezagent_domain_chat` still carries the temporary `ezagent_plugin_cc`
+- `ezagent_domain_instance_message` still carries the temporary `ezagent_plugin_cc`
   dependency until PR-E removes it and strengthens layer-purity tests.
 
 Out of scope:
 - Socket and Channel promotion.
-- Removing the `ezagent_domain_chat -> ezagent_plugin_cc` dependency.
+- Removing the `ezagent_domain_instance_message -> ezagent_plugin_cc` dependency.
 - Codex plugin implementation.
 
 This is the layer-boundary change needed before codex can share the

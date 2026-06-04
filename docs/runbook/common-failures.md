@@ -25,7 +25,7 @@ If meta_keys includes anything other than known string keys, that's likely the b
 **Fix:** strip non-string values from meta. Structured data goes in `content` text or via `tools/call` round-trip. The only allowed non-trivial value is the single optional `meta.file_path` string (mirroring cc-openclaw convention).
 
 **Forensic:** `docs/notes/phase-6-architecture-closeout.md` §2.3, Phase 6 PR 26.
-**CI gate:** `apps/ezagent_domain_chat/test/esr/behavior/chat_test.exs` "to_claude payload meta values are all strings".
+**CI gate:** `apps/ezagent_domain_instance_message/test/esr/behavior/chat_test.exs` "to_claude payload meta values are all strings".
 
 ### Cause 2: Cap shape mismatch on `behavior` field (atom vs module)
 
@@ -61,7 +61,7 @@ Ezagent.WorkspaceRegistry.lookup(URI.parse("session://your-session"))
 **Fix:** in your plugin's spawn-session code path, call `Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)` after `Ezagent.SpawnRegistry.spawn`. `Ezagent.Workspace.Loader.invoke_template` does this for the canonical session classes; custom Template Classes follow the same pattern.
 
 **Forensic:** `docs/phase-specs/phase7/DECISIONS.md` IMPL-7-1, Decision #135.
-**CI gate:** `apps/ezagent_domain_chat/test/integration/workspace_isolation_test.exs`.
+**CI gate:** `apps/ezagent_domain_instance_message/test/integration/workspace_isolation_test.exs`.
 
 ### Cause 4: Inbound transport using `:cast` instead of `:call`
 

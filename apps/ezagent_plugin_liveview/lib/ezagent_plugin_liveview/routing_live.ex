@@ -7,7 +7,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
   `mix ezagent.routing.add_rule` CLI workflow for admin operators.
   Workspace.routing_rules per Workspace stays config-only metadata
   (Q-RT-1 default γ); this LV manages the **global**
-  `EzagentDomainChat.Routing.MentionRouting` table from the chat
+  `EzagentDomainInstanceMessage.Routing.MentionRouting` table from the chat
   plugin.
 
   ## /routing → /admin/routing relocation (2026-05-25)
@@ -90,7 +90,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
   # list with a selector. The hidden form input `rule[table]` still
   # carries this URI-encoded module atom so dispatched payloads stay
   # shape-compatible with the routing-admin Behavior.
-  @table EzagentDomainChat.Routing.MentionRouting
+  @table EzagentDomainInstanceMessage.Routing.MentionRouting
 
   @matcher_types [
     {"mention", "URI"},

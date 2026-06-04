@@ -39,6 +39,63 @@ defmodule EzagentCore.Invariants.DemoSmokeTest do
   """
   use ExUnit.Case, async: false
 
+  setup do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
+    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+    :ok
+  end
+
+  defp create_session_via_workspace(short_name, creator_uri, opts) do
+    template_name = Keyword.fetch!(opts, :template_name)
+
+    workspace_uri =
+      Keyword.get(opts, :workspace_uri, Ezagent.Capability.workspace_of(creator_uri))
+
+    ensure_workspace_seeded!(workspace_uri)
+
+    with {:ok, result} <-
+           Ezagent.Workspace.create_session(
+             workspace_uri,
+             %{short_name: short_name, template_name: template_name},
+             %{caller: creator_uri, caps: Ezagent.SystemPrincipal.caps("system://bootstrap")}
+           ) do
+      {:ok, result.session_uri,
+       %{
+         orchestrator_uri: result.orchestrator_uri,
+         orchestrator_status: result.orchestrator_status,
+         orchestrator_error: result.orchestrator_error
+       }}
+    end
+  end
+
+  defp ensure_workspace_seeded!(workspace_uri, retries \\ 5)
+
+  defp ensure_workspace_seeded!(%URI{scheme: "workspace", host: name} = workspace_uri, retries)
+       when is_binary(name) and name != "" do
+    case Ezagent.Workspace.Store.get_by_name(name) do
+      nil ->
+        try do
+          case Ezagent.Workspace.create(name, %{}) do
+            {:ok, _pid} -> :ok
+            {:error, :workspace_exists} -> :ok
+            {:error, {:already_started, _pid}} -> :ok
+            {:error, reason} -> raise "failed to seed workspace #{name}: #{inspect(reason)}"
+          end
+        rescue
+          error ->
+            if retries > 0 do
+              Process.sleep(50)
+              ensure_workspace_seeded!(workspace_uri, retries - 1)
+            else
+              reraise error, __STACKTRACE__
+            end
+        end
+
+      _ ->
+        :ok
+    end
+  end
+
   describe "Bug 1: Repo database config" do
     test "EzagentCore.Repo has a non-nil :database setting at runtime" do
       db = Application.get_env(:ezagent_core, EzagentCore.Repo)[:database]
@@ -122,7 +179,7 @@ defmodule EzagentCore.Invariants.DemoSmokeTest do
       # it via the idempotent create_session facade (returns the existing
       # Session via the `:adopted` path if already alive) before asserting.
       _ =
-        EzagentDomainChat.create_session("main", Ezagent.Entity.User.admin_uri(),
+        create_session_via_workspace("main", Ezagent.Entity.User.admin_uri(),
           template_name: "default"
         )
 

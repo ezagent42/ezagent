@@ -94,9 +94,9 @@ graph TD
 | URI 层 | Kind | 持久化 | 旁挂 Behaviors | **对应 Template** | 实例化函数 |
 |---|---|---|---|---|---|
 | **W** `workspace://` | `Ezagent.Entity.Workspace` (`apps/ezagent_domain_workspace`) | `:ephemeral` + SQLite via `Workspace.Loader` | `Behavior.Workspace`、`Behavior.WorkspaceUserAdmin` | **没有自己的 Template Class**——但 `workspace.session_templates` map 是"Template Instances"的容器（一种 declarative 配方清单） | `Workspace.Loader` boot 时 |
-| **S** `session://` | `Ezagent.Entity.Session` (`apps/ezagent_domain_chat`) | `{:snapshot, :on_change}` | `Behavior.Chat`、`Behavior.Publisher.SessionImpl`、`Behavior.ExternalMirror` | **`SessionTemplate` Kind**（`template://session/...@hash`）+ `Ezagent.Template.GenericSession`（Template Class，`"session.generic"`） | `Session.spawn_from_template/2` (Generator) |
+| **S** `session://` | `Ezagent.Entity.Session` (`apps/ezagent_domain_instance_message`) | `{:snapshot, :on_change}` | `Behavior.Chat`、`Behavior.Publisher.SessionImpl`、`Behavior.ExternalMirror` | **`SessionTemplate` Kind**（`template://session/...@hash`）+ `Ezagent.Template.GenericSession`（Template Class，`"session.generic"`） | `Session.spawn_from_template/2` (Generator) |
 | **E** `entity://user/...` | `Ezagent.Entity.User` (`apps/ezagent_domain_identity`) | `{:snapshot, :on_change}` | `Behavior.Identity`（caps 容器）、`Behavior.ApiKeys`、`Behavior.UserCredentials`、`Behavior.UserTokens`、`+ 插件可挂 FeishuReceive 等` | **没有 Template**（User 是手工/管理面 provision，无 template class） | `Users.create/3` + `SpawnRegistry` |
-| **E** `entity://agent/...` | `Ezagent.Entity.Agent` (`apps/ezagent_domain_chat`) `+ CurlAgent / Echo / NpAgent` 等 plugin Kind | `{:snapshot, :on_change}` | `Behavior.Chat`(receive 端)、+ flavor 特定 Behavior | **`AgentTemplate` Kind**（`template://agent/...`，无 @hash）+ `Ezagent.Kind.Template` 行为类，**插件提供**：`cc.agent`、`curl.agent`、`echo.agent`、`np.agent` | `Agent.spawn/4` 经由 Template Class `instantiate/3` |
+| **E** `entity://agent/...` | `Ezagent.Entity.Agent` (`apps/ezagent_domain_instance_message`) `+ CurlAgent / Echo / NpAgent` 等 plugin Kind | `{:snapshot, :on_change}` | `Behavior.Chat`(receive 端)、+ flavor 特定 Behavior | **`AgentTemplate` Kind**（`template://agent/...`，无 @hash）+ `Ezagent.Kind.Template` 行为类，**插件提供**：`cc.agent`、`curl.agent`、`echo.agent`、`np.agent` | `Agent.spawn/4` 经由 Template Class `instantiate/3` |
 | **R** `resource://` | 不是 live Kind | 文件系统 + DB row | n/a | **没有 Template** | LV 上传 / Behavior 产出 |
 
 **关键观察**：
@@ -306,7 +306,7 @@ graph TB
     end
 
     subgraph DOMAIN["domain (必装第一类 Kind/Behavior, 互相允许依赖, 无环)"]
-        DCHAT["ezagent_domain_chat<br/>Session/Agent Kind<br/>Chat/Publisher Behaviors<br/>SessionTemplate/AgentTemplate<br/>GenericSession Template Class"]
+        DCHAT["ezagent_domain_instance_message<br/>Session/Agent Kind<br/>Chat/Publisher Behaviors<br/>SessionTemplate/AgentTemplate<br/>GenericSession Template Class"]
         DIDENT["ezagent_domain_identity<br/>User Kind<br/>Identity/ApiKeys/UserCredentials/UserTokens<br/>WorkspaceUserAdmin"]
         DWS["ezagent_domain_workspace<br/>Workspace Kind + Loader<br/>Behavior.Workspace<br/>DefaultRules"]
         DEM["ezagent_domain_external_mirror<br/>Adapter / Binding / Worker<br/>3-layer 外拓模型 (P15)"]
@@ -366,9 +366,9 @@ graph TB
 | WSER | core 内提供什么 | domain 实现什么 | plugin 旁挂什么 |
 |---|---|---|---|
 | **workspace://** | `Ezagent.WorkspaceRegistry` (consistency cache)、`Capability.workspace_of/1`、5.6 跨 ws 门 | `ezagent_domain_workspace`：Kind、Loader（boot 时从 SQLite 重建）、Behavior.Workspace、DefaultRules | （无；workspace 不留给 plugin 定义） |
-| **session://** | `KindRegistry`、`PendingDelivery`、`Snapshot` | `ezagent_domain_chat`：Kind、Behavior.Chat（send/join/leave）、Publisher.SessionImpl、ExternalMirror.Behavior、SessionTemplate、Generator (`spawn_from_template`)、GenericSession Template Class | ExternalMirror Adapter+Binding 对（FeishuChatBinding 等） |
+| **session://** | `KindRegistry`、`PendingDelivery`、`Snapshot` | `ezagent_domain_instance_message`：Kind、Behavior.Chat（send/join/leave）、Publisher.SessionImpl、ExternalMirror.Behavior、SessionTemplate、Generator (`spawn_from_template`)、GenericSession Template Class | ExternalMirror Adapter+Binding 对（FeishuChatBinding 等） |
 | **entity://user/** | `Ezagent.Capability`、SystemPrincipal.Catalog | `ezagent_domain_identity`：User Kind、Identity/ApiKeys/UserCredentials/UserTokens、Users.create | `FeishuReceive` Behavior（旁挂 User），其它 IM/邮件 plugin 同模式 |
-| **entity://agent/** | `SpawnRegistry`、`AgentLineage`、`Kind.Template` behaviour | `ezagent_domain_chat`：Agent Kind、AgentTemplate Kind（template 内容）、`Behavior.Template` (read/write/instantiate) | **Template Class 在 plugin**：`cc.agent`、`curl.agent`、`echo.agent`、`np.agent` — kind_module 通过 AgentTemplate 的 flavor 字段授权 |
+| **entity://agent/** | `SpawnRegistry`、`AgentLineage`、`Kind.Template` behaviour | `ezagent_domain_instance_message`：Agent Kind、AgentTemplate Kind（template 内容）、`Behavior.Template` (read/write/instantiate) | **Template Class 在 plugin**：`cc.agent`、`curl.agent`、`echo.agent`、`np.agent` — kind_module 通过 AgentTemplate 的 flavor 字段授权 |
 | **template://** | `TemplateRegistry`、`@hash` 内容寻址 | SessionTemplate Kind（`template://session/...@<hash>`）+ AgentTemplate Kind | （插件提供 Template Class 注册到 TemplateRegistry） |
 | **resource://** | `Ezagent.Persistence.scope_by_workspace`（read 路径）、`workspace_uri` 列约束 | （主要在 UI/Web 层与文件系统） | （无核心 plugin；具体 resource type 在使用方定义） |
 | **system://** | `Ezagent.Entity.System`（Kind）、`SystemPrincipal.Catalog` (14-URI 闭集) | DefaultRules 在 system://routing/default 注册 | （插件 boot 时往 routing_tables 加 rule） |

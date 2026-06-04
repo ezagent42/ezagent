@@ -66,6 +66,7 @@ defmodule Ezagent.Agent.CredentialAdapter do
   @spec credentialled?(module()) :: boolean()
   def credentialled?(class_module) when is_atom(class_module) do
     Code.ensure_loaded(class_module)
+
     Enum.all?(@declarative_callbacks, fn {name, arity} ->
       function_exported?(class_module, name, arity)
     end)

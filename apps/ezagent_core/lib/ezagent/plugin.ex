@@ -125,7 +125,7 @@ defmodule Ezagent.Plugin do
 
   @typedoc """
   An agent-flavor → `{kind, template_class}` mapping. Declared by an
-  agent-flavor plugin so the domain_chat spawn resolver consumes it
+  agent-flavor plugin so the domain_instance_message spawn resolver consumes it
   from `Ezagent.AgentFlavorRegistry` declaratively instead of a
   hardcoded map (codex MEDIUM-5).
   """
@@ -479,7 +479,7 @@ defmodule Ezagent.Plugin do
   #
   # Reachability caveat: a flavor's `kind` may be a CORE/domain Kind
   # the plugin REUSES rather than owns (cc's flavor `kind` is
-  # `Ezagent.Entity.Agent` from `ezagent_domain_chat`). The plugin
+  # `Ezagent.Entity.Agent` from `ezagent_domain_instance_message`). The plugin
   # cannot depend on a domain app that already depends on it (cycle),
   # so that module's beam is not on the plugin's standalone code path.
   # `assert_implements!` therefore behaviour-checks only modules it can

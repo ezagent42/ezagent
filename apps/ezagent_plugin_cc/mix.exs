@@ -60,7 +60,7 @@ defmodule EzagentPluginCc.MixProject do
       #
       # TEST-ONLY chat dep (post-lifecycle remediation): cc agents are
       # the shared `Ezagent.Entity.Agent` Kind, which is DEFINED in
-      # ezagent_domain_chat, and the `entity://agent` SpawnRegistry host
+      # ezagent_domain_instance_message, and the `entity://agent` SpawnRegistry host
       # handler (flavor-prefix → Kind resolution) is REGISTERED by
       # chat's Application.start. Running the cc suite in isolation
       # without chat leaves `Ezagent.Entity.Agent` unloadable and the
@@ -71,7 +71,7 @@ defmodule EzagentPluginCc.MixProject do
       # production topology (chat always co-runs) without re-coupling
       # the lib/ build. Mirrors ezagent_plugin_echo, which depends on
       # chat outright for the same Agent-Kind/dispatcher reason.
-      {:ezagent_domain_chat, in_umbrella: true, only: :test},
+      {:ezagent_domain_instance_message, in_umbrella: true, only: :test},
       # Absorbed from the deleted ezagent_plugin_cc_channel:
       # Phoenix.Socket/Channel for the v2 WS bridge mounted at
       # /cc_socket in EzagentWeb.Endpoint.

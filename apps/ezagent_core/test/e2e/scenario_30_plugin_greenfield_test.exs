@@ -60,33 +60,37 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
     use Ezagent.Behavior
     @behaviour Ezagent.Behavior
 
-    action :greet,
+    action(:greet,
       args: %{name: :string},
       returns: %{greeted: :boolean},
       caps: [:greet],
       modes: [:call],
       description: "say hello to the named caller"
+    )
 
-    action :process,
+    action(:process,
       args: %{input: :string},
       returns: %{processed: :string},
       caps: [:process],
       modes: [:call],
       description: "process input and emit a widget_processed event"
+    )
 
-    action :broadcast,
+    action(:broadcast,
       args: %{message: :string},
       returns: %{ok: :boolean},
       caps: [:broadcast],
       modes: [:cast],
       description: "broadcast a message via Phoenix.PubSub :notify effect"
+    )
 
-    action :forward,
+    action(:forward,
       args: %{target: :string, payload: :string},
       returns: %{forwarded: :boolean},
       caps: [:forward],
       modes: [:call],
       description: "forward by dispatching to another target via :dispatch effect"
+    )
 
     def state_slice, do: :widget
 
@@ -167,9 +171,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
     # to-end, matching production behaviour.
 
     uri =
-      URI.parse(
-        "entity://widget/team-alpha/widget_#{System.unique_integer([:positive])}"
-      )
+      URI.parse("entity://widget/team-alpha/widget_#{System.unique_integer([:positive])}")
 
     {:ok, _pid} = Ezagent.Kind.Server.start_link({WidgetKind, %{uri: uri}})
     :ok = wait_until_ready(uri)
@@ -502,5 +504,4 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
         end
     end
   end
-
 end

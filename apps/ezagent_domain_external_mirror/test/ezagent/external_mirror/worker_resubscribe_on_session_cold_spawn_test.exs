@@ -10,7 +10,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
   - Worker Kind is spawned + subscribed to the Session Publisher.
   - Session Kind is terminated, but the Worker is NOT terminated
     (the Worker lives under `Ezagent.ExternalMirror.RootSupervisor`,
-    NOT under `EzagentDomainChat.SessionSupervisor` — they have
+    NOT under `EzagentDomainInstanceMessage.SessionSupervisor` — they have
     independent lifecycles).
   - Session is cold-spawned via `SpawnRegistry.spawn/1` (the on-
     demand path — NOT a fresh boot).
@@ -80,10 +80,10 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
 
   ## Test isolation (codex round-1 CONCERN #7)
 
-  `EzagentDomainChat` is NOT a runtime dep of
+  `EzagentDomainInstanceMessage` is NOT a runtime dep of
   `ezagent_domain_external_mirror` (cycle break). When this file is
   the only test file that triggers (e.g. `mix test path/to/this`),
-  `:ezagent_domain_chat` is not auto-started — its
+  `:ezagent_domain_instance_message` is not auto-started — its
   `SessionSupervisor`, scheme registration, etc. are absent and
   `SpawnRegistry.spawn(session_uri)` would fail with
   `{:error, :no_spawn_fn}`. We explicitly `Application.ensure_all_started/1`
@@ -105,20 +105,28 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
     WorkerSpawn
   }
 
+  alias Ezagent.Entity.{Session, User}
   alias Ezagent.ExternalMirror.TestSupport.{MockPublishAdapter, MockPublishBinding}
   alias Ezagent.Test.SnapshotFixtures
 
   setup do
     # codex round-1 CONCERN #7 — see moduledoc. Chat is a compile-
     # but-not-runtime dep here (the cycle break). Force-start so
-    # `EzagentDomainChat.SessionSupervisor` + the `"session"` scheme
+    # `EzagentDomainInstanceMessage.SessionSupervisor` + the `"session"` scheme
     # spawn fn exist when we resolve / cold-spawn the default Session.
-    {:ok, _} = Application.ensure_all_started(:ezagent_domain_chat)
+    {:ok, _} = Application.ensure_all_started(:ezagent_domain_instance_message)
 
     :ok = ensure_adapter_registered(MockPublishAdapter, MockPublishBinding)
     cleanup_workers()
 
-    on_exit(fn -> cleanup_workers() end)
+    session_uri = unique_session_uri("worker-resub-cold")
+    owner_uri = unique_user_uri("worker-resub-owner")
+    :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+    on_exit(fn ->
+      cleanup_session(session_uri)
+      cleanup_workers()
+    end)
 
     # SliceChange hook is unconditional post-PR-N3, but keep the
     # explicit toggle for cross-branch resilience (matches
@@ -134,7 +142,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
       end
     end)
 
-    {:ok, session_uri: URI.parse("session://default/system/main")}
+    {:ok, session_uri: session_uri}
   end
 
   describe "task #49 cold-spawn re-subscribe" do
@@ -203,7 +211,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
                "live subscribers (transient)=#{inspect(live_subscribers)}"
 
       # Terminate the Session via its supervisor (boot-seed path uses
-      # EzagentDomainChat.SessionSupervisor; lazy-demand spawn path
+      # EzagentDomainInstanceMessage.SessionSupervisor; lazy-demand spawn path
       # also routes through Session's declared supervisor — resolve
       # from the pid's ancestors to be safe).
       session_supervisor = resolve_session_supervisor(session_pid_1)
@@ -231,7 +239,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
       # handshake may have already re-attached the Worker — the very
       # behaviour this test exercises. Direct `reconcile_after_load/2`
       # unit coverage lives in
-      # `apps/ezagent_domain_chat/test/ezagent/behavior/publisher/session_impl_reconcile_after_load_test.exs`
+      # `apps/ezagent_domain_instance_message/test/ezagent/behavior/publisher/session_impl_reconcile_after_load_test.exs`
       # (race-free, pure-function test). This integration test
       # exercises only the END-TO-END invariant: the first slice
       # change after cold-spawn must reach the still-alive Worker.
@@ -310,6 +318,42 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
     :ok
   end
 
+  defp cleanup_session(%URI{} = session_uri) do
+    case Ezagent.KindRegistry.lookup(session_uri) do
+      {:ok, pid} when is_pid(pid) ->
+        _ = DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, pid)
+        :ok
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp spawn_owner_and_session(%URI{} = owner_uri, %URI{} = session_uri) do
+    :ok = spawn_user(owner_uri, Ezagent.SystemPrincipal.caps("system://bootstrap"))
+
+    case Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: owner_uri}) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+    end
+
+    case Ezagent.Capability.workspace_of(session_uri) do
+      %URI{} = workspace_uri -> :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
+      :any -> :ok
+    end
+
+    await_session_ready(session_uri, 50)
+  end
+
+  defp spawn_user(%URI{} = user_uri, caps) do
+    case Ezagent.Kind.spawn(User, %{uri: user_uri, initial_caps: caps}) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+    end
+
+    :ok
+  end
+
   # Drives a Publisher event by mutating the Session's `:chat` slice
   # via `:chat.join` (same pattern as `worker_publish_test.exs`'s
   # helper). SliceChange fires only on actual slice mutation, so a
@@ -330,12 +374,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
     do: flunk("timed out spawning chat member for publisher event: #{URI.to_string(member_uri)}")
 
   defp spawn_user_with_retry(member_uri, attempts) do
-    user_module = Module.concat([Ezagent, Entity, User])
-
-    case apply(Ezagent.Kind, :spawn, [
-           user_module,
-           %{uri: member_uri, initial_caps: MapSet.new()}
-         ]) do
+    case Ezagent.Kind.spawn(User, %{uri: member_uri, initial_caps: MapSet.new()}) do
       {:ok, _pid} ->
         :ok
 
@@ -396,6 +435,16 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
     ])
   end
 
+  defp unique_user_uri(prefix) do
+    URI.parse("entity://user/team-alpha/#{prefix}-#{System.unique_integer([:positive])}")
+  end
+
+  defp unique_session_uri(prefix) do
+    Ezagent.URI.new!(
+      "session://default/team-alpha/#{prefix}-#{System.unique_integer([:positive])}"
+    )
+  end
+
   defp wait_until_dead(_uri, 0), do: :error
 
   defp wait_until_dead(uri, retries) do
@@ -450,8 +499,8 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
   end
 
   # The boot-seeded default Session may live under either
-  # `EzagentDomainChat.SessionSupervisor` (test-env seed via
-  # `EzagentDomainChat.create_session/3` → `Ezagent.Kind.spawn(Session,
+  # `EzagentDomainInstanceMessage.SessionSupervisor` (test-env seed via
+  # `EzagentDomainInstanceMessage.SessionCreator.create_session/3` → `Ezagent.Kind.spawn(Session,
   # _)` → SessionSupervisor) OR the lazy-demand-spawn path that
   # routes through `Ezagent.SpawnRegistry.spawn/1` (which also uses
   # `Ezagent.Kind.spawn(Session, _)` since Session declares its
@@ -462,13 +511,13 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
       {:dictionary, dict} ->
         ancestors = Keyword.get(dict, :"$ancestors", [])
 
-        Enum.find(ancestors, EzagentDomainChat.SessionSupervisor, fn ancestor ->
-          ancestor == EzagentDomainChat.SessionSupervisor or
+        Enum.find(ancestors, EzagentDomainInstanceMessage.SessionSupervisor, fn ancestor ->
+          ancestor == EzagentDomainInstanceMessage.SessionSupervisor or
             ancestor == Ezagent.KindSupervisor
         end)
 
       _ ->
-        EzagentDomainChat.SessionSupervisor
+        EzagentDomainInstanceMessage.SessionSupervisor
     end
   end
 end

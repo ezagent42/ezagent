@@ -47,7 +47,7 @@ Several producers (Workspace.add_member / remove_member at
 `apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:94,124`,
 Identity.grant_cap at
 `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:301`,
-Template.fork at `apps/ezagent_domain_chat/lib/ezagent/behavior/template.ex:543`)
+Template.fork at `apps/ezagent_domain_instance_message/lib/ezagent/behavior/template.ex:543`)
 still call the legacy `Notifications.notify/3` directly. PR-N5 is the
 planned sweep that migrates all remaining callers onto the SliceChange
 chokepoint and deletes `Notifications.notify/3` entirely. Until PR-N5

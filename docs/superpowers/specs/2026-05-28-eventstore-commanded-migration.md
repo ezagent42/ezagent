@@ -112,8 +112,8 @@ Addresses 6 HIGH + 2 MED + 1 corollary HIGH from codex r3 REJECT (final budgeted
 
 - **HIGH-2 (§4.1 stale "no migration" mapping contradicts §6.0):** r3 §4.1 row for `kind_snapshots` still said migrated Kinds "do NOT migrate existing snapshots; first command creates fresh event-sourced state" while §6.0 mandates import. **r4 fix:** §4.1 row REWRITTEN to: "For migrated Kinds: existing snapshot data is forward-migrated via §6.0 snapshot-import as Step 0 of each Phase. The `kind_snapshots` table itself is read-only post-import; deletion gated by §6.4 preflight." This removes the contradiction and aligns §4.1 with §6.0.
 
-- **HIGH-3 (§4.8 AST gate cannot trace facades):** r3 AST gate only matched direct `Ezagent.CommandedApp.dispatch/2` in `handle_event/3`. Actual LV writes route through facades: `Ezagent.Workspace.add_template/3` @ `workspace_detail_live.ex:307`, `EzagentDomainChat.create_session/3` @ `admin_live.ex:804`, `chat.join` dispatches @ `admin_live.ex:1019`, session routing CRUD @ `admin_live.ex:1381`, `EzagentPluginFeishu.bind/2` @ `feishu_bindings_live.ex:88`, `ExternalMirror.bind/4` @ `session_external_mirror_live.ex:221`. **r4 fix:** §4.8 dual-gate architecture:
-  - **Facade declaration:** every domain-context write facade (e.g. `Ezagent.Workspace.add_template/3`, `EzagentDomainChat.create_session/3`, `EzagentPluginFeishu.bind/2`) declares a `@consistency :strong | :eventual | {:named, [projector]}` module attribute on its function head. The attribute is the API contract; callers see it via docs + `@type`.
+- **HIGH-3 (§4.8 AST gate cannot trace facades):** r3 AST gate only matched direct `Ezagent.CommandedApp.dispatch/2` in `handle_event/3`. Actual LV writes route through facades: `Ezagent.Workspace.add_template/3` @ `workspace_detail_live.ex:307`, `EzagentDomainInstanceMessage.create_session/3` @ `admin_live.ex:804`, `chat.join` dispatches @ `admin_live.ex:1019`, session routing CRUD @ `admin_live.ex:1381`, `EzagentPluginFeishu.bind/2` @ `feishu_bindings_live.ex:88`, `ExternalMirror.bind/4` @ `session_external_mirror_live.ex:221`. **r4 fix:** §4.8 dual-gate architecture:
+  - **Facade declaration:** every domain-context write facade (e.g. `Ezagent.Workspace.add_template/3`, `EzagentDomainInstanceMessage.create_session/3`, `EzagentPluginFeishu.bind/2`) declares a `@consistency :strong | :eventual | {:named, [projector]}` module attribute on its function head. The attribute is the API contract; callers see it via docs + `@type`.
   - **AST gate widened:** `Ezagent.Invariants.ConsistencyMatrixTest` walks each facade module, asserts every public `def` that ends in a `Commanded.App.dispatch/2` call has a `@consistency` attribute; then walks each LV `handle_event/3`, for each facade call, looks up the declared `@consistency` and asserts the LV's subsequent `assign/2` re-read is compatible with that attribute (i.e. if the LV re-reads, the facade must be `:strong` or a named-projector list covering the projection). Facade-to-projection coverage map lives in §5.1 (each projection lists the facades that update it).
   - The hand-table in §4.8 is now annotated with the FACADE name + the dispatching LV file:line. The full list of facades + their `@consistency` declarations is in a new Appendix D.
 
@@ -156,7 +156,7 @@ Addresses 6 HIGH + 2 MED from codex r2 REJECT (no CRIT in r2 — r1 CRITs closed
 
 - **HIGH-5 (§4.2.1 User projections still omit fields):** r2 added profile/token fields to aggregate state but the §5.1 projection table rows didn't reflect them. **r3 fix:** §5.1 projection table updated — `user_profile_projection(uri, workspace_uri, display_name, email, registered_at, destroyed?)`; `user_tokens_projection(uri, token_id, token_hash, label, scope, expires_at, last_used_at, minted_at, revoked_at, workspace_uri)`. Field-level parity gates added against `entity_profiles` + `entity_tokens` during the §6.0 import: every row in those tables must produce a matching projection row post-replay.
 
-- **MED-6 (§4.2.3 Session working-copy shape underspecified):** r2 had `template_working_copy: nil` — actual default is a structured map at `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:255` with `agent_slots`, `routing_rules`, `orchestrator_template_uri`, `default_workspace_uri`, `description`. **r3 fix:** §4.2.3 expanded — `template_working_copy` is now a sub-struct with the 5 named fields, default per `default_template_working_copy/0`. Replay test added: a Session with a populated working copy reconstructs all 5 fields.
+- **MED-6 (§4.2.3 Session working-copy shape underspecified):** r2 had `template_working_copy: nil` — actual default is a structured map at `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:255` with `agent_slots`, `routing_rules`, `orchestrator_template_uri`, `default_workspace_uri`, `description`. **r3 fix:** §4.2.3 expanded — `template_working_copy` is now a sub-struct with the 5 named fields, default per `default_template_working_copy/0`. Replay test added: a Session with a populated working copy reconstructs all 5 fields.
 
 - **HIGH-7 (§3.8 saga step 0 was commentary, not code):** r2 documented `pre_destroy_caps` / `pre_destroy_sessions` / `pre_destroy_lineage_parent` in saga defstruct comments but the actual `defstruct` line didn't include them. **r3 fix:** §3.8 saga is REWRITTEN with explicit step 0:
   ```elixir
@@ -183,9 +183,9 @@ Addresses 2 CRIT + 4 HIGH + 2 MED from codex r1 REJECT:
 - **CRIT-2 (Phase 10-A bridge gap — §6.1 / §8.2):** r1 had Phase 10-A migrate Worker only, but legacy Session `Behavior.ExternalMirror` still calls `Ezagent.Kind.spawn(Ezagent.Entity.ExternalMirrorWorker, params)` directly at `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex:394` + `:677`. No `BindingCreated` event is emitted while Session remains a GenServer, so `BootstrapWorkerSaga` never fires. **r2 fix:** Phase 10-A is REVISED to either (a) migrate Session ExternalMirror behavior+Worker together (preferred — they're tightly coupled at the bind callsite) OR (b) ship an explicit `Ezagent.MigrationBridge.LegacyBind` shim that translates legacy `Kind.spawn(Worker, params)` calls into `%SpawnWorker{}` commands on the new aggregate AND emits a synthetic `%BindingCreated{}` event into the new event stream so saga triggers fire. Option (a) is taken as r2 default; option (b) documented as fallback if Session-side migration proves too entangled. §6.1 expanded to include the Session ExternalMirror behavior delta.
 - **HIGH-3 (read-after-write consistency matrix was missing — §3.3 / §6.2):** r1 said "opt to :strong per dispatch site" without enumerating sites. r2 adds §4.8 (LV / Channel / CLI Consistency Matrix) — a table listing every write callsite that immediately re-reads state, with the required consistency mode. Sites already inventoried statically: `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/users_live.ex:137` (create→list_users), `workspace_detail_live.ex:165` (add member→get_by_name), `entity_caps_live.ex:142` (grant cap→reload caps), `routing_live.ex:235` (add rule→reload rules). All MUST use `consistency: :strong` (or named-projector list). The Phase 10-B/10-C invariant tests assert each enumerated site does so; a CI grep gate rejects `consistency: :eventual` on these specific dispatch paths.
 - **HIGH-4 (Kind/Behavior inventory was incomplete — §4.2 / §4.3):** r1 said "5 entity Kinds" + "11 Behavior modules" — actual count is much larger. r2 adds §4.1.5 (complete Kind/Behavior inventory) statically enumerated from the checkout: 15+ Kind modules (including durable `Ezagent.Entity.AgentTemplate` + `Ezagent.Entity.SessionTemplate`, both `{:snapshot, :on_change}`, plus per-flavor `CurlAgent` / `Echo` / `NpAgent`), 24 Behavior modules (added: `ApiKeys`, `Template`, `OrchestratorAdmin`, `Pty`, `UserBinding`, `FeishuAllow`, plus the 4 plugin agent-flavor behaviors). Each gets a per-Phase migration disposition column. §4.3 rewritten with the full list.
-- **HIGH-5 (Session aggregate state omitted durable fields — §4.2.3):** r1's Session aggregate state struct missed `owner_uri`, `last_seen`, `monitors`, `last_message_id`, `last_message`, `send_cursor`, `recent_messages`, `template_working_copy`, plus Publisher's `ring` / `cursor` / `retention` (all durable — `Behavior.Chat.init_slice` at `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:144`-`:242` + `Publisher.SessionImpl.init_slice` at `apps/ezagent_domain_chat/lib/ezagent/behavior/publisher/session_impl.ex:150`-`:165`). r2 fix: §4.2.3 Session aggregate state struct is REWRITTEN to enumerate every durable field; non-durable runtime fields (`monitors` — process refs that don't survive restart) are explicitly excluded with a comment. Replay tests for rejoin / external mirror dedupe / publisher cursor catchup are added as Phase 10-B invariant tests.
+- **HIGH-5 (Session aggregate state omitted durable fields — §4.2.3):** r1's Session aggregate state struct missed `owner_uri`, `last_seen`, `monitors`, `last_message_id`, `last_message`, `send_cursor`, `recent_messages`, `template_working_copy`, plus Publisher's `ring` / `cursor` / `retention` (all durable — `Behavior.Chat.init_slice` at `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:144`-`:242` + `Publisher.SessionImpl.init_slice` at `apps/ezagent_domain_instance_message/lib/ezagent/behavior/publisher/session_impl.ex:150`-`:165`). r2 fix: §4.2.3 Session aggregate state struct is REWRITTEN to enumerate every durable field; non-durable runtime fields (`monitors` — process refs that don't survive restart) are explicitly excluded with a comment. Replay tests for rejoin / external mirror dedupe / publisher cursor catchup are added as Phase 10-B invariant tests.
 - **HIGH-6 (User projection schema missed profile + token fields — §4.2.1 / §4.7):** r1's `user_profile_projection` had only `(uri, workspace_uri, registered_at, destroyed?)`. Current `Entity.Profile` schema (`apps/ezagent_domain_identity/lib/ezagent/entity/profile.ex:21`) has `display_name` (required) + `email`. Current `Entity.Token` schema (`apps/ezagent_domain_identity/lib/ezagent/entity/token.ex:43`) has `token_hash`, `label`, `last_used_at`. **r2 fix:** §4.2.1 User aggregate gains a `:profile` field (`%{display_name, email}`) + commands `%UpsertProfile{}` / events `%ProfileUpserted{}`. Token aggregate state + events extended to carry hash/label/last-used. Projections in §5.1 updated to match.
-- **MED-7 (DestroyAgentSaga compensation was only retry/stop — §3.8 / §4.4):** r1's saga `error/3` retried then stopped. Current cleanup paths (`apps/ezagent_domain_chat/lib/ezagent_domain_chat.ex:189` session-create rollback, `apps/ezagent_core/lib/ezagent/behavior/sandbox.ex:240` sandbox-destroy cleanup) do explicit reverse-operations. **r2 fix:** §3.8 DestroyAgentSaga is REWRITTEN to use `{:continue, [%ReverseCommand{}, ...], context}` per-step compensation in the `error/3` callback. Each step is documented with: (a) idempotency contract; (b) residue on failure; (c) reverse command; (d) resume behavior. Step-failure tests are Phase 10-C invariants.
+- **MED-7 (DestroyAgentSaga compensation was only retry/stop — §3.8 / §4.4):** r1's saga `error/3` retried then stopped. Current cleanup paths (`apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message.ex:189` session-create rollback, `apps/ezagent_core/lib/ezagent/behavior/sandbox.ex:240` sandbox-destroy cleanup) do explicit reverse-operations. **r2 fix:** §3.8 DestroyAgentSaga is REWRITTEN to use `{:continue, [%ReverseCommand{}, ...], context}` per-step compensation in the `error/3` callback. Each step is documented with: (a) idempotency contract; (b) residue on failure; (c) reverse command; (d) resume behavior. Step-failure tests are Phase 10-C invariants.
 - **MED-8 (Phase 10-D destructive cleanup lacked operator gate — §6.4 / §8.4):** r1 said "delete `kind_snapshots` after a final data dump". Per `feedback_destructive_migration_anti_pattern` + `feedback_completion_requires_invariant_test`, that's not a gate. **r2 fix:** §6.4 Phase 10-D `DROP TABLE kind_snapshots` is gated on: (a) operator approval flag in the migration script (mix task requires `--operator-approved <ticket-id>`); (b) verified backup restore drill — operator restores last snapshot dump to a temp DB and asserts row count matches; (c) post-restore parity check — the import-replay vs original snapshots must equal across all migrated URIs. The gate is itself a `mix ezagent.cleanup.preflight` task that exits non-zero unless (a)+(b)+(c) hold. SPEC §8.4 expanded.
 
 ---
@@ -278,7 +278,7 @@ External request (LV / CLI / Feishu / MCP / HTTP)
     → reply/2 routes result to caller
 ```
 
-State mutation is **CRUD-shaped**: each `Behavior.invoke/4` is a function `(slice, args) -> new_slice`. There is no formal command/event split. The audit log (`invocations` table) is a side-channel recording of `(caller, target, action, result)` tuples written by a telemetry handler — it is NOT the source of truth (the slice/snapshot is). Cross-Kind workflows are sequences of `Invocation.dispatch/1` calls strung together imperatively in caller code (e.g. `EzagentDomainChat.create_session/3` orchestrates 5 dispatches across 4 Kinds with try/rescue cleanup at each step).
+State mutation is **CRUD-shaped**: each `Behavior.invoke/4` is a function `(slice, args) -> new_slice`. There is no formal command/event split. The audit log (`invocations` table) is a side-channel recording of `(caller, target, action, result)` tuples written by a telemetry handler — it is NOT the source of truth (the slice/snapshot is). Cross-Kind workflows are sequences of `Invocation.dispatch/1` calls strung together imperatively in caller code (e.g. `EzagentDomainInstanceMessage.create_session/3` orchestrates 5 dispatches across 4 Kinds with try/rescue cleanup at each step).
 
 The shape this leaves us with:
 - **No formal command** — `Behavior.invoke/4`'s `args` argument is just a map; there is no Command struct, no router, no central catalog of what commands exist.
@@ -568,7 +568,7 @@ What's NOT yet there (the missing 30%):
 - **No formal command struct** — `args` is a `map`, not a `%Command{}`. The catalog of valid commands lives implicitly in each Behavior's `interface/0`.
 - **No formal event struct** — `Behavior.invoke/4` returns a new slice, not a list of events. The slice diff IS the event, but it isn't named or structured.
 - **No replay** — `load_or_init/3` reads the latest snapshot; if you don't have a snapshot you start from `init_slice/1`. The `invocations` history between snapshots is not consulted.
-- **No event-driven cross-Kind orchestration** — multi-Kind workflows are imperative caller code with `try/rescue` cleanup (e.g. `EzagentDomainChat.create_session/3`). The destroy cascade is the most acute example.
+- **No event-driven cross-Kind orchestration** — multi-Kind workflows are imperative caller code with `try/rescue` cleanup (e.g. `EzagentDomainInstanceMessage.create_session/3`). The destroy cascade is the most acute example.
 - **No projection / read-model split** — LV reads slice directly via `Kind.get_slice/2`. There is no eventually-consistent read view that subscribes to events.
 - **No idempotency-on-command-id** — dispatch-level `Ezagent.Idempotency` keys on the `%Invocation{}` envelope, not on a `command_uuid` the caller supplies.
 
@@ -591,7 +591,7 @@ Each row tracks one ES concept across three columns: what ezagent has today (wit
 
 ##### b. Command / Event separation
 
-- **ezagent today** — `Behavior.invoke(action, slice, args, ctx)` is a **combined** primitive: it decides what to do (command), mutates state (apply event), and may return a result. The slice diff is the implicit event payload. Source: `apps/ezagent_core/lib/ezagent/behavior.ex:106`, concrete example `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:297`.
+- **ezagent today** — `Behavior.invoke(action, slice, args, ctx)` is a **combined** primitive: it decides what to do (command), mutates state (apply event), and may return a result. The slice diff is the implicit event payload. Source: `apps/ezagent_core/lib/ezagent/behavior.ex:106`, concrete example `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:297`.
 - **Commanded** — separates `execute(state, %Command{}) :: [%Event{}]` (decide + emit) from `apply(state, %Event{}) :: new_state` (pure fold). Per Commanded docs: "multiple events can be generated from a single command... aggregate apply functions are invoked between execution steps to maintain updated state for subsequent operations." Snippet:
   ```elixir
   def execute(%BankAccount{state: :active} = acct, %WithdrawMoney{amount: amt}),
@@ -634,7 +634,7 @@ Each row tracks one ES concept across three columns: what ezagent has today (wit
 
 ##### f. Saga / Process Manager
 
-- **ezagent today** — ad-hoc PubSub handlers (e.g. ExternalMirror Worker subscribes to Session's `:slice_change` topic) + ad-hoc cross-Kind imperative code (e.g. `EzagentDomainChat.create_session/3` has 5 dispatches across 4 Kinds with `try/rescue` cleanup at each step). No common abstraction; each saga reinvents the resume + compensate primitives. **This is the strongest motivator for Commanded-shaped thinking** — every multi-Kind workflow is a one-off.
+- **ezagent today** — ad-hoc PubSub handlers (e.g. ExternalMirror Worker subscribes to Session's `:slice_change` topic) + ad-hoc cross-Kind imperative code (e.g. `EzagentDomainInstanceMessage.create_session/3` has 5 dispatches across 4 Kinds with `try/rescue` cleanup at each step). No common abstraction; each saga reinvents the resume + compensate primitives. **This is the strongest motivator for Commanded-shaped thinking** — every multi-Kind workflow is a one-off.
 - **Commanded** — `Commanded.ProcessManagers.ProcessManager`: `interested?/1` selects events, `handle/2` returns commands to dispatch, `apply/2` mutates the PM's own state. PM state is event-store-persisted; cross-restart resume is native. Snippet:
   ```elixir
   def interested?(%TransferRequested{id: id}), do: {:start, id}
@@ -709,7 +709,7 @@ Where ezagent violates this today: `Behavior.invoke/4` can synchronously dispatc
 
 **B'' refinement** — `Behavior.invoke/4` MAY dispatch into OTHER Kinds, but cross-Kind effects MUST be wrapped in:
 
-- **`SagaRunner.run(steps, ctx)`** for synchronous linear cascades (destroy, session-create). Each step is `{forward_fn, compensate_fn}`. On step N failure, steps N-1..1 reverse-compensate. The current `try/rescue` cleanup pattern in `EzagentDomainChat.create_session/3` is a hand-rolled version of this.
+- **`SagaRunner.run(steps, ctx)`** for synchronous linear cascades (destroy, session-create). Each step is `{forward_fn, compensate_fn}`. On step N failure, steps N-1..1 reverse-compensate. The current `try/rescue` cleanup pattern in `EzagentDomainInstanceMessage.create_session/3` is a hand-rolled version of this.
 - **`EventSubscriber`** for asynchronous cross-call workflows (worker bootstrap on `BindingCreated`).
 - **NEVER from inside `Behavior.invoke/4` directly** for orchestration — `invoke/4` may emit ONE command-equivalent effect (the slice mutation), and may emit declarative `effects/2` (PubSub broadcast etc.), but it does NOT chain dispatches itself.
 
@@ -949,7 +949,7 @@ This last point is critical. The four options compared in §1.5.7.6 have differe
   - `EventLog` → `commanded_eventstore_adapter`: ~1 week (mostly schema migration + dual-write cutover; the public API IS already a 1:1 wrap of stream-by-aggregate semantics).
   - `SnapshotStore` → Commanded snapshots: ~3-4 days (policies differ — `:on_change` / `:on_terminate` are ezagent-shapes vs Commanded's `snapshot_every: N`; the migration converts policy declarations).
   - `EventSubscriber` → `Commanded.Event.Handler`: ~1 week (subscriber registration semantics match; partition mode (B'' Ext.) maps to Commanded's `subscribe_to: :all` + handler concurrency).
-  - **`SagaRunner` → `Commanded.ProcessManagers.ProcessManager`: ~3-4 weeks per non-trivial saga**, because each step's forward/compensate closure becomes a PM event-handler clause, with correlation id derivation + interested? selectors + apply/2 fold + stop condition. The 5 single-call cascades in §4.4 each cost ~3-5 days; cross-call workflows like the `EzagentDomainChat.create_session/3` flow (lock + spawn + bind + cast `chat.join` async + grant owner cap + `ensure_orchestrator_with_meta` with `:partial` bounded retry — `ezagent_domain_chat.ex:143-200, 540-615, 619-648`; `session.ex:850-889, 984-1003`) cost ~1-2 weeks each because the async legs and the `:partial`-result branch need persisted PM correlation state.
+  - **`SagaRunner` → `Commanded.ProcessManagers.ProcessManager`: ~3-4 weeks per non-trivial saga**, because each step's forward/compensate closure becomes a PM event-handler clause, with correlation id derivation + interested? selectors + apply/2 fold + stop condition. The 5 single-call cascades in §4.4 each cost ~3-5 days; cross-call workflows like the `EzagentDomainInstanceMessage.create_session/3` flow (lock + spawn + bind + cast `chat.join` async + grant owner cap + `ensure_orchestrator_with_meta` with `:partial` bounded retry — `ezagent_domain_instance_message.ex:143-200, 540-615, 619-648`; `session.ex:850-889, 984-1003`) cost ~1-2 weeks each because the async legs and the `:partial`-result branch need persisted PM correlation state.
   - Per-Kind `events_for/4` + `apply_event/2` + `effects/2` triplet → Commanded `execute/2` + `apply/2`: per opted-in Kind ~1-2 weeks (the slice-per-Behavior model has to fuse into a single aggregate state struct — see also the codex r7 HIGH-acknowledgment in §1.5.7.1 below).
 
   **Honest revised total**: ~6-10 weeks for the simplest mix (1-2 small sagas, no cross-call workflows, no Kinds opted into events-as-truth), ~10-14 weeks if 2+ cross-call workflows + multi-Behavior Kinds need migration. The earlier "~4-6 weeks" figure was the optimistic floor; codex r7 HIGH-3 review correctly flagged it as understated. **Even at the revised range, B'' → Commanded is cheaper than Option B → Commanded (~10-12 weeks for sagas alone, plus events have to be inferred from scratch) and dramatically cheaper than Option B' → Commanded (~14-16 weeks).**
@@ -1475,7 +1475,7 @@ defmodule Ezagent.Saga.DestroyAgentSaga do
   def apply(pm, %AgentLineageUnlinked{}), do: %{pm | step: :lineage_unlinked}
 
   # Error / compensation (r2 — explicit reverse-commands per step,
-  # mirroring `apps/ezagent_domain_chat/lib/ezagent_domain_chat.ex:189`
+  # mirroring `apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message.ex:189`
   # session-create rollback and `apps/ezagent_core/lib/ezagent/behavior/sandbox.ex:240`
   # sandbox-destroy cleanup patterns).
   #
@@ -1603,7 +1603,7 @@ These bubble up to §11 codex review:
 | `Ezagent.Invocation.dispatch/1` | `Ezagent.CommandedApp.dispatch/2` (wrapped by pre-dispatch pipeline) | The 12-step flow collapses (steps 5-10 become Commanded internals); steps 1-4 + 5.5-5.6 + 11-12 stay (now in pre-dispatch pipeline + `after_dispatch` projection-trigger). |
 | `Ezagent.KindRegistry` (URI → pid) | Commanded's internal aggregate registry | Direct lookups (e.g. for `Kind.get_slice/2`) are replaced by projection reads. No external callers of `KindRegistry.lookup/1` survive post-migration. |
 | `Ezagent.SpawnRegistry` + `Kind.spawn/2` | Implicit (first command at aggregate ID creates it) | The "spawn" verb disappears; aggregates are created by their first creation command (`%RegisterUser{}`, `%CreateSession{}`, etc.). `{:error, {:already_started, pid}}` race becomes `{:error, :already_created}` returned deterministically by the aggregate's `execute/2`. |
-| Cross-Kind cascade in imperative caller code (e.g. `EzagentDomainChat.create_session/3`'s 5-dispatch orchestration) | Process Manager (Saga) subscribing to the originating event | E.g. `SessionCreated` event triggers `GrantOwnerCapsSaga` which dispatches `GrantCap` commands; saga's error/3 handles compensation. |
+| Cross-Kind cascade in imperative caller code (e.g. `EzagentDomainInstanceMessage.create_session/3`'s 5-dispatch orchestration) | Process Manager (Saga) subscribing to the originating event | E.g. `SessionCreated` event triggers `GrantOwnerCapsSaga` which dispatches `GrantCap` commands; saga's error/3 handles compensation. |
 | `Ezagent.Audit.Writer` writing to `invocations` SQLite table | Event stream IS the audit log (for domain events) + audit-events projection for queryable subset | Cross-cutting telemetry (denied authz, persistence failure, cc_bridge events) stays in SQLite audit; domain events move to event stream + queryable projection. See §4.7. |
 | `kind_snapshots` SQLite table | Commanded snapshot store (in `eventstore` Postgres schema) | **r4 corrected:** For migrated Kinds, existing snapshot data is forward-migrated via §6.0 snapshot-import as Step 0 of each Phase. The `kind_snapshots` table becomes read-only post-import (no new writes from migrated Kinds); deletion of the table itself is gated by §6.4 preflight (drill receipt + cooldown). Snapshot data for un-migrated Kinds continues to be written during the hybrid window. |
 | `Ezagent.ReadyGate` (status: `:ready` / `:not_ready` / `:unknown`) | Implicit (aggregate exists ⇔ command can be dispatched) | The `:not_ready` post-init buffering pattern becomes "first creation command must precede any other command"; subsequent commands fail until the aggregate is created. Buffering (the old `Ezagent.PendingDelivery`) is retired for migrated Kinds. |
@@ -1622,11 +1622,11 @@ r1 said "5 entity Kinds + 11 Behavior modules" — actual checkout enumeration:
 | Kind module | App | Persistence (actual @file:line) | Durable source | Migration target |
 |---|---|---|---|---|
 | `Ezagent.Entity.User` | ezagent_domain_identity | `{:snapshot, :on_change}` @ `user.ex:234` | `kind_snapshots` + `users` + `entity_profiles` + `entity_tokens` | `Ezagent.Aggregate.User` (§4.2.1) |
-| `Ezagent.Entity.Session` | ezagent_domain_chat | `{:snapshot, :on_change}` @ `session.ex:48` | `kind_snapshots` + `messages`+ `message_routings` + `external_mirror_bindings` | `Ezagent.Aggregate.Session` (§4.2.3) |
-| `Ezagent.Entity.Agent` | ezagent_domain_chat | `{:snapshot, :on_change}` @ `agent.ex` | `kind_snapshots` + `agent_api_keys` + `agent_lineage` (registry, not DB) | `Ezagent.Aggregate.Agent` (§4.2.2) |
+| `Ezagent.Entity.Session` | ezagent_domain_instance_message | `{:snapshot, :on_change}` @ `session.ex:48` | `kind_snapshots` + `messages`+ `message_routings` + `external_mirror_bindings` | `Ezagent.Aggregate.Session` (§4.2.3) |
+| `Ezagent.Entity.Agent` | ezagent_domain_instance_message | `{:snapshot, :on_change}` @ `agent.ex` | `kind_snapshots` + `agent_api_keys` + `agent_lineage` (registry, not DB) | `Ezagent.Aggregate.Agent` (§4.2.2) |
 | `Ezagent.Workspace` | ezagent_domain_workspace | **`:ephemeral`** @ `workspace.ex:61` (r3 corrected) | `workspaces` SQLite table via `Workspace.Store` — durable EXTERNALLY | `Ezagent.Aggregate.Workspace` (§4.2.4) reading from `Workspace.Store` at import |
-| `Ezagent.Entity.AgentTemplate` | ezagent_domain_chat | `{:snapshot, :on_change}` @ `agent_template.ex:118` | `kind_snapshots` | `Ezagent.Aggregate.AgentTemplate` (§4.2.6) |
-| `Ezagent.Entity.SessionTemplate` | ezagent_domain_chat | `{:snapshot, :on_change}` @ `session_template.ex:61` | `kind_snapshots` | `Ezagent.Aggregate.SessionTemplate` (§4.2.7) |
+| `Ezagent.Entity.AgentTemplate` | ezagent_domain_instance_message | `{:snapshot, :on_change}` @ `agent_template.ex:118` | `kind_snapshots` | `Ezagent.Aggregate.AgentTemplate` (§4.2.6) |
+| `Ezagent.Entity.SessionTemplate` | ezagent_domain_instance_message | `{:snapshot, :on_change}` @ `session_template.ex:61` | `kind_snapshots` | `Ezagent.Aggregate.SessionTemplate` (§4.2.7) |
 | `Ezagent.Entity.ExternalMirrorWorker` | ezagent_domain_external_mirror | **`:ephemeral`** @ `external_mirror_worker.ex:71` (r3 corrected) | NOT durable per-Kind — bindings durable on Session in `external_mirror_bindings` | `Ezagent.Aggregate.ExternalMirrorWorker` (§4.2.5) reconstructed from binding events |
 | `Ezagent.Entity.System` (r1+r2 missed) | ezagent_core | **`:ephemeral`** @ `system.ex:32` (r3 added) | NOT durable — config-derived bootstrap singleton | NOT migrated as Aggregate; stays as runtime `Ezagent.Entity.System` GenServer (singleton; analogous to Pty — documented exception) |
 | `Ezagent.Entity.CurlAgent` | ezagent_plugin_curl_agent | `{:snapshot, :on_change}` @ `curl_agent.ex` | `kind_snapshots` + `agent_api_keys` | flavor variant of `Aggregate.Agent` |
@@ -1648,10 +1648,10 @@ r1 said "5 entity Kinds + 11 Behavior modules" — actual checkout enumeration:
 | `Ezagent.Behavior.UserTokens` | ezagent_domain_identity | User aggregate commands |
 | `Ezagent.Behavior.ApiKeys` (r1 missed) | ezagent_domain_identity | Agent aggregate commands |
 | `Ezagent.Behavior.WorkspaceUserAdmin` | ezagent_domain_identity | Workspace aggregate commands |
-| `Ezagent.Behavior.Chat` | ezagent_domain_chat | Session aggregate commands |
-| `Ezagent.Behavior.Template` (r1 missed) | ezagent_domain_chat | AgentTemplate + SessionTemplate aggregate commands |
-| `Ezagent.Behavior.OrchestratorAdmin` (r1 missed) | ezagent_domain_chat | Session aggregate commands (orchestrator-scoped) |
-| `Ezagent.Behavior.Publisher.SessionImpl` | ezagent_domain_chat | Session aggregate + subscriber tracking moved to projection-side runtime |
+| `Ezagent.Behavior.Chat` | ezagent_domain_instance_message | Session aggregate commands |
+| `Ezagent.Behavior.Template` (r1 missed) | ezagent_domain_instance_message | AgentTemplate + SessionTemplate aggregate commands |
+| `Ezagent.Behavior.OrchestratorAdmin` (r1 missed) | ezagent_domain_instance_message | Session aggregate commands (orchestrator-scoped) |
+| `Ezagent.Behavior.Publisher.SessionImpl` | ezagent_domain_instance_message | Session aggregate + subscriber tracking moved to projection-side runtime |
 | `Ezagent.Behavior.Publisher` (interface) | ezagent_domain_external_mirror | namespace; no slice |
 | `Ezagent.Behavior.ExternalMirror` | ezagent_domain_external_mirror | Session aggregate commands |
 | `Ezagent.Behavior.ExternalMirrorWorker` | ezagent_domain_external_mirror | Worker aggregate commands |
@@ -1786,7 +1786,7 @@ Per-flavor (cc, codex, ...):
 
 **New aggregate state (r2 — every durable Chat/Publisher slice field enumerated):**
 
-Sourced statically from `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:144-:242` (Chat slice) + `apps/ezagent_domain_chat/lib/ezagent/behavior/publisher/session_impl.ex:150-:165` (Publisher slice) + `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex` (ExternalMirror slice).
+Sourced statically from `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:144-:242` (Chat slice) + `apps/ezagent_domain_instance_message/lib/ezagent/behavior/publisher/session_impl.ex:150-:165` (Publisher slice) + `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex` (ExternalMirror slice).
 
 ```elixir
 defmodule Ezagent.Aggregate.Session do
@@ -1824,10 +1824,10 @@ defmodule Ezagent.Aggregate.Session do
 
     # SessionTemplate working copy — durable structured map staged before
     # instantiate. r3 fix (MED-6): actual default per
-    # `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:255`
+    # `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:255`
     # `default_template_working_copy/0` has these 5 sub-fields:
     # r4 (MED-7): nested field names verbatim from `default_template_working_copy/0`
-    # at `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:255`-`:285`.
+    # at `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:255`-`:285`.
     template_working_copy: %{
       # [{slot_name :: String.t(),
       #   source_agent_template_uri :: URI.t(),   # NOT source_template_uri (r3 was wrong)
@@ -1939,7 +1939,7 @@ end
 
 #### 4.2.6 `Ezagent.Entity.AgentTemplate` → `Ezagent.Aggregate.AgentTemplate` (r2 — HIGH-4 fix)
 
-r1 missed this. AgentTemplate is `{:snapshot, :on_change}` (durable; `apps/ezagent_domain_chat/lib/ezagent/entity/agent_template.ex:118`), carries 2 slices (Identity + Template), and serves dispatchable `:read` / `:write` / `:instantiate` actions.
+r1 missed this. AgentTemplate is `{:snapshot, :on_change}` (durable; `apps/ezagent_domain_instance_message/lib/ezagent/entity/agent_template.ex:118`), carries 2 slices (Identity + Template), and serves dispatchable `:read` / `:write` / `:instantiate` actions.
 
 **New aggregate state:**
 ```elixir
@@ -1960,7 +1960,7 @@ end
 
 #### 4.2.7 `Ezagent.Entity.SessionTemplate` → `Ezagent.Aggregate.SessionTemplate` (r2 — HIGH-4 fix)
 
-Same shape as AgentTemplate; persistence `{:snapshot, :on_change}` (`apps/ezagent_domain_chat/lib/ezagent/entity/session_template.ex:61`). Carries `update_template` / `save_template_as` / `fork` action vocabulary on top of standard Template commands.
+Same shape as AgentTemplate; persistence `{:snapshot, :on_change}` (`apps/ezagent_domain_instance_message/lib/ezagent/entity/session_template.ex:61`). Carries `update_template` / `save_template_as` / `fork` action vocabulary on top of standard Template commands.
 
 **Distinguishing commands:** `%UpdateSessionTemplate{}` (new version of current parent), `%SaveSessionTemplateAs{new_name}` (first version of new template — parent_template_uri set), `%ForkSessionTemplate{}`.
 
@@ -2128,7 +2128,7 @@ Codex r1 HIGH-3: r1 said "opt to :strong per dispatch site" without enumerating 
 | Callsite | File:line | Facade | Required mode |
 |---|---|---|---|
 | Workspace add_template | `workspace_detail_live.ex:307` (facade `Ezagent.Workspace.add_template/3`) | facade-declared `@consistency :strong` | `:strong` |
-| Admin create session | `admin_live.ex:804` (facade `EzagentDomainChat.create_session/3`) | facade-declared `@consistency :strong` | `:strong` |
+| Admin create session | `admin_live.ex:804` (facade `EzagentDomainInstanceMessage.create_session/3`) | facade-declared `@consistency :strong` | `:strong` |
 | Admin invite session member | `admin_live.ex:1019` (facade chat join via `Behavior.Chat`) | facade-declared `@consistency :strong` | `:strong` |
 | Admin session routing CRUD | `admin_live.ex:1381` | facade-declared `@consistency :strong` | `:strong` |
 | Feishu user bind | `feishu_bindings_live.ex:88` (facade `EzagentPluginFeishu.bind/2`) | facade-declared `@consistency :strong` | `:strong` |
@@ -2140,12 +2140,12 @@ Codex r1 HIGH-3: r1 said "opt to :strong per dispatch site" without enumerating 
 
 **Phase 10-B/10-C invariant test (r4 — dual-gate, facade-aware):**
 
-The r3 single-AST-rule "find dispatch in handle_event" was insufficient because LV writes go through facade modules (`Ezagent.Workspace.add_template/3`, `EzagentDomainChat.create_session/3`, etc) — the LV doesn't see `Commanded.App.dispatch/2` directly. r4 splits the gate in two:
+The r3 single-AST-rule "find dispatch in handle_event" was insufficient because LV writes go through facade modules (`Ezagent.Workspace.add_template/3`, `EzagentDomainInstanceMessage.create_session/3`, etc) — the LV doesn't see `Commanded.App.dispatch/2` directly. r4 splits the gate in two:
 
 **Gate 1 — Facade declaration (write side):** Every domain-context write facade (the modules under `apps/ezagent_domain_*/` that LVs/CLI/Channel call) declares a `@consistency :strong | :eventual | {:named, [projector]}` module attribute on each public function that ends in a `Ezagent.CommandedApp.dispatch/2` call. The attribute is the API contract. Example:
 
 ```elixir
-defmodule EzagentDomainChat do
+defmodule EzagentDomainInstanceMessage do
   @consistency :strong
   @doc "Create a new session — uses strong consistency because callers redirect to the detail page."
   def create_session(name, owner_uri, opts) do
@@ -2468,7 +2468,7 @@ r2 commits to (a) unless impl PR-A1 codex review identifies a blocker.
 - `Ezagent.Aggregate.User` + commands/events/projections (§4.2.1).
 - `Ezagent.Aggregate.Session` + commands/events/projections (§4.2.3).
 - Sagas: `CreateSessionSaga`, `DestroySessionSaga`, `DestroyUserSaga`, `CapGrantOwnershipVerifySaga`.
-- All User + Session callsites migrated to the new Command-based API. Existing `EzagentDomainChat.create_session/3` becomes `EzagentDomainChat.create_session_command/3` returning `{:ok, cmd}` + a dispatch site OR is rewritten to dispatch directly.
+- All User + Session callsites migrated to the new Command-based API. Existing `EzagentDomainInstanceMessage.create_session/3` becomes `EzagentDomainInstanceMessage.create_session_command/3` returning `{:ok, cmd}` + a dispatch site OR is rewritten to dispatch directly.
 
 **Phase 10-B invariant tests:**
 - User caps reconstruct from event stream.
@@ -2717,7 +2717,7 @@ The risk is bounded: in the worst case (every phase fails), data is recoverable 
 ### 9.2 What surface changes
 
 - Plugin authors: instead of `@behaviour Ezagent.Kind` + `Ezagent.Behavior` modules, they write `@behaviour Commanded.Aggregates.Aggregate` + Command modules + Event modules + a per-Aggregate execute clause. The `ezagent-developer` skill is rewritten Phase 10-D.
-- Domain context modules: `EzagentDomainChat.create_session/3` either becomes a thin wrapper that constructs `%CreateSession{}` and dispatches, OR is deleted and replaced by direct dispatch from the LV / channel. Decision per impl PR.
+- Domain context modules: `EzagentDomainInstanceMessage.create_session/3` either becomes a thin wrapper that constructs `%CreateSession{}` and dispatches, OR is deleted and replaced by direct dispatch from the LV / channel. Decision per impl PR.
 - Audit consumers: queries against the SQLite `invocations` table for domain events fail post-10-D — those queries must move to `audit_events_projection` OR to event-stream filters via `EventStore.read_stream_forward/4`. Migrated piecewise during 10-B / 10-C.
 
 ### 9.3 Plugin compatibility
@@ -2914,19 +2914,19 @@ Used by `Ezagent.Invariants.LVConsistencyTest` to verify that LV write→read co
 | `Ezagent.Projection.UserProfile` | `Ezagent.Users.create/3`, `Ezagent.Users.set_password/2`, `EzagentDomainIdentity.UserCredentials.rotate/2`, `Ezagent.Entity.Profile.upsert/1` |
 | `Ezagent.Projection.UserCaps` | `EzagentDomainIdentity.grant_cap/3`, `EzagentDomainIdentity.revoke_cap/3`, `Ezagent.Workspace.add_member/2` (default-grant), `Ezagent.Workspace.remove_member/2` (cascade revoke) |
 | `Ezagent.Projection.UserTokens` | `Ezagent.Users.Token.mint/2`, `Ezagent.Users.Token.revoke/2`, `EzagentDomainIdentity.UserTokens.mark_used/2` |
-| `Ezagent.Projection.AgentProfile` | `EzagentDomainChat.create_agent/4`, `EzagentDomainChat.destroy_agent/2`, plugin-flavor facade `Ezagent.PluginCc.spawn_agent/3` |
+| `Ezagent.Projection.AgentProfile` | `EzagentDomainInstanceMessage.create_agent/4`, `EzagentDomainInstanceMessage.destroy_agent/2`, plugin-flavor facade `Ezagent.PluginCc.spawn_agent/3` |
 | `Ezagent.Projection.AgentCaps` | `EzagentDomainIdentity.grant_cap/3` (agent target), `EzagentDomainIdentity.revoke_cap/3` (agent target) |
-| `Ezagent.Projection.AgentLineage` | `EzagentDomainChat.create_agent/4` (parent_uri set), `EzagentDomainChat.destroy_agent/2` |
+| `Ezagent.Projection.AgentLineage` | `EzagentDomainInstanceMessage.create_agent/4` (parent_uri set), `EzagentDomainInstanceMessage.destroy_agent/2` |
 | `Ezagent.Projection.AgentApiKeys` | `EzagentDomainIdentity.ApiKeys.put/3`, `EzagentDomainIdentity.ApiKeys.delete/2` |
-| `Ezagent.Projection.SessionProfile` | `EzagentDomainChat.create_session/3`, `EzagentDomainChat.destroy_session/2`, `EzagentDomainChat.transfer_ownership/3` |
+| `Ezagent.Projection.SessionProfile` | `EzagentDomainInstanceMessage.create_session/3`, `EzagentDomainInstanceMessage.destroy_session/2`, `EzagentDomainInstanceMessage.transfer_ownership/3` |
 | `Ezagent.Projection.SessionMembers` | `Behavior.Chat.invoke(:join, ...)`, `Behavior.Chat.invoke(:leave, ...)` |
 | `Ezagent.Projection.SessionMessages` | `Behavior.Chat.invoke(:send, ...)` (after Phase 10-B); pre-cutover messages remain in `messages` table (archive) |
 | `Ezagent.Projection.ExternalMirrorBindings` | `Behavior.ExternalMirror.invoke(:bind, ...)`, `:unbind`, `EzagentPluginFeishu.bind/2`, `EzagentPluginFeishu.unbind/2` |
 | `Ezagent.Projection.ExternalMirrorWorkers` | saga-emitted `%SpawnWorker{}`, `%TerminateWorker{}`, `%AdvanceWorkerCursor{}` |
 | `Ezagent.Projection.Workspaces` | `Ezagent.Workspace.create/2`, `Ezagent.Workspace.destroy/1` |
 | `Ezagent.Projection.WorkspaceMembers` | `Ezagent.Workspace.add_member/2`, `Ezagent.Workspace.remove_member/2` |
-| `Ezagent.Projection.AgentTemplateProfile` | `EzagentDomainChat.create_agent_template/3`, `Behavior.Template.invoke(:write, ...)`, `:instantiate` |
-| `Ezagent.Projection.SessionTemplateProfile` | `EzagentDomainChat.save_template_as/3`, `EzagentDomainChat.update_template/3`, `:fork` |
+| `Ezagent.Projection.AgentTemplateProfile` | `EzagentDomainInstanceMessage.create_agent_template/3`, `Behavior.Template.invoke(:write, ...)`, `:instantiate` |
+| `Ezagent.Projection.SessionTemplateProfile` | `EzagentDomainInstanceMessage.save_template_as/3`, `EzagentDomainInstanceMessage.update_template/3`, `:fork` |
 | `Ezagent.Projection.AuditEvents` | (all domain events; updated by AuditProjector subscribing to `$all` stream) |
 
 Each facade in this table MUST carry an `@consistency` module attribute (Gate 1 §4.8). The LV invariant uses this map to validate that LV re-reads after facade calls have the right consistency mode.

@@ -62,7 +62,7 @@
 | 文件 | 当前代码 | 改动 |
 |---|---|---|
 | `apps/ezagent_core/lib/ezagent/workspace_registry.ex:87` | `def default_workspace_uri, do: {:ok, URI.new!("workspace://default")}` | 返回 `workspace://system` |
-| `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:59` | `def default_uri, do: URI.new!("session://default/default/main")` | 返回 `URI.new!("session://default/system/main")` |
+| `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:59` | `def default_uri, do: URI.new!("session://default/default/main")` | 返回 `URI.new!("session://default/system/main")` |
 | `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_live.ex:55` | `@main_session_uri URI.new!("session://default/default/main")` | `URI.new!("session://default/system/main")` |
 | `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_caps_live.ex:116` | `URI.parse("workspace://default")` (assign 缺失时的兜底) | `URI.parse("workspace://system")` |
 | `apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/application.ex:175` | `Map.get(binding, "session_uri") \\|\\| "session://default/default/main"` | `... \\|\\| "session://default/system/main"` |
@@ -95,7 +95,7 @@
 | URI 解析 tests | `apps/ezagent_core/test/ezagent/uri_test.exs` | 改 fixture 字符串; 断言语义不变 |
 | Cap helpers | `apps/ezagent_core/test/support/cap_helper.ex` (`@default_workspace`) | 模块属性值改 `workspace://system` + 改名 `@system_workspace`; 改 doc-comment |
 | Test fixtures | `apps/ezagent_domain_identity/test/ezagent/users_test.exs` 等 | 字面量改名 |
-| Integration tests | `apps/ezagent_domain_chat/test/integration/*.exs` | 字面量改名 + 验证改名 `Session.default_uri/0` 后仍 pass |
+| Integration tests | `apps/ezagent_domain_instance_message/test/integration/*.exs` | 字面量改名 + 验证改名 `Session.default_uri/0` 后仍 pass |
 
 ### 3.6 Migrations — 历史文件, **不**改
 

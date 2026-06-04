@@ -16,7 +16,7 @@
 >   reintroduces the forbidden `feishu://`-style plugin-owned scheme →
 >   **scheme allowlist**; (e) the "6th plugin touches only its own
 >   dir" claim was false — agent-flavor→kind mapping is hardcoded in
->   domain_chat → added a declarative `agent_flavors/0` + resolver
+>   domain_instance_message → added a declarative `agent_flavors/0` + resolver
 >   migration; (f) `:form` config surface promised a settings store
 >   the SPEC deferred → `:form` is **rejected in V1**.
 
@@ -88,7 +88,7 @@ defmodule Ezagent.Plugin do
   @type routing_decl :: {table_name :: atom(), opts :: keyword()}
 
   # rev 2 (codex MEDIUM-5): agent-flavor plugins declare their
-  # flavor → {kind, template_class} mapping so the domain_chat spawn
+  # flavor → {kind, template_class} mapping so the domain_instance_message spawn
   # resolver consumes it declaratively instead of a hardcoded map.
   @type agent_flavor_decl :: %{
           flavor: String.t(),               # "cc", "curl", "echo" — the entity-name prefix
@@ -244,11 +244,11 @@ config icon wired from `config_surface/0`. The hardcoded
 
 ### 6.3 `Ezagent.AgentFlavorRegistry` — declarative flavor→kind (codex MEDIUM-5)
 
-Today the agent spawn resolver in `ezagent_domain_chat` has a
+Today the agent spawn resolver in `ezagent_domain_instance_message` has a
 hardcoded flavor→{kind, template_class} map — that is why "add a 6th
 agent-flavor plugin" actually requires editing a non-plugin file. rev
 2 adds `Ezagent.AgentFlavorRegistry` (ETS); each agent plugin declares
-`agent_flavors/0`; `boot/1` registers it; the domain_chat resolver is
+`agent_flavors/0`; `boot/1` registers it; the domain_instance_message resolver is
 migrated to consult the registry instead of its hardcoded map. After
 this a new agent-flavor plugin truly touches only its own dir.
 
@@ -258,7 +258,7 @@ this a new agent-flavor plugin truly touches only its own dir.
 |----|-------|
 | 1 | `Ezagent.Plugin` behaviour + `use` macro (plugin-local `@after_compile`) + `Ezagent.PluginRegistry` + `Ezagent.AgentFlavorRegistry` + `Ezagent.Plugin.boot/1` (two-phase) + the `:ezagent_plugin_check` Mix compiler + `plugin_contract_test.exs`. Unit-tested with a fixture plugin AND a deliberately-broken fixture that must fail the gate. |
 | 2 | Migrate echo + curl_agent to `use Ezagent.Plugin`; `start/2` → `boot/1`; declare `agent_flavors/0`. **Acceptance tests use the real echo/curl startup paths**, not only fixtures (codex next-step). |
-| 3 | Migrate cc + feishu + liveview. Migrate the domain_chat agent resolver onto `AgentFlavorRegistry`. |
+| 3 | Migrate cc + feishu + liveview. Migrate the domain_instance_message agent resolver onto `AgentFlavorRegistry`. |
 | 4 | `plugin_card` component + `plugins_live` rendered from `PluginRegistry` + `config_surface/0`; delete hardcoded `pretty_name`/`pretty_desc`/`primary_link`. Rewrite `docs/onboarding/adding-a-plugin.md` (its current Slack example uses a `slack://` scheme — the exact §5.8-forbidden pattern — and must be rewritten). |
 
 Additive: PR-1 ships the contract; the `:ezagent_plugin_check` compiler
@@ -297,7 +297,7 @@ the codex review — §3.2 app-level gate + §6.1 `:form`-is-V2.)
 6. All 5 existing plugins migrated; each `start/2` is one line; no
    plugin calls a `*Registry` directly; migration tests exercise the
    real echo/curl/cc startup paths.
-7. `AgentFlavorRegistry` drives the domain_chat resolver — a 6th
+7. `AgentFlavorRegistry` drives the domain_instance_message resolver — a 6th
    agent-flavor plugin spawns through `entity://agent/<ws>/<flavor>_<n>`
    with ZERO non-plugin file edited.
 8. `/plugins` renders entirely from `PluginRegistry` — `grep` finds no

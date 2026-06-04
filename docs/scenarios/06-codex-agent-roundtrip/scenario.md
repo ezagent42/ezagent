@@ -54,7 +54,7 @@
   - PR #424 — PR-B TokenStore + Registry
   - PR #428 — PR-C Socket + Channel
   - PR #429 — PR-D route Agent chat through BridgeAdapter
-  - PR #432 — PR-E remove domain_chat cc dependency
+  - PR #432 — PR-E remove domain_instance_message cc dependency
   - PR #425 — PR-F detect PTY lifecycle by behavior
   - PR #436 — PR-G add codex agent plugin
   - PR #437 — TUI bridge thread resume

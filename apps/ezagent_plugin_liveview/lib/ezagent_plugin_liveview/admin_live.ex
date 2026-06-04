@@ -379,7 +379,7 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   defp session_in_caller_workspace?(_, _), do: false
 
-  # PR-4 of Read Receipts rollout — `EzagentDomainChat.PresenceFanout`
+  # PR-4 of Read Receipts rollout — `EzagentDomainInstanceMessage.PresenceFanout`
   # broadcasts when a session member's Presence changes. Refresh the
   # member panel so online/offline state in the MemberPanel updates
   # live without browser refresh.
@@ -789,7 +789,7 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   # SPEC #366 (Allen 2026-05-26) — `template_class` is now a required
   # form field (rendered as a dropdown). The previous silent
-  # `"default"` fallback in `EzagentDomainChat.create_session/3` was
+  # `"default"` fallback in the lower-level session materializer was
   # removed; this LV handler refuses the submit when the operator
   # didn't pick a class.
   #
@@ -806,18 +806,19 @@ defmodule EzagentPluginLiveview.AdminLive do
         socket
       )
       when is_binary(name) and name != "" and is_binary(class) and class != "" do
-    case EzagentDomainChat.create_session(
-           String.trim(name),
-           socket.assigns.caller_uri,
-           template_name: class,
-           workspace_uri: socket.assigns.current_workspace_uri
+    case Ezagent.Workspace.create_session(
+           socket.assigns.current_workspace_uri,
+           %{short_name: String.trim(name), template_name: class},
+           %{caller: socket.assigns.caller_uri, caps: socket.assigns.caller_caps}
          ) do
-      {:ok, session_uri, meta} ->
+      {:ok, %{session_uri: session_uri} = result} ->
         # SPEC `2026-05-26-session-create-orchestrator-unified` Gap A +
         # Invariant #9 — render the orchestrator status from the meta
         # map. Silently discarding the meta would be an Invariant #9
         # violation: a `:pending` / `:failed` orchestrator would be
         # invisible to the operator at the moment of creation.
+        meta = session_create_meta(result)
+
         if connected?(socket) do
           Phoenix.PubSub.subscribe(EzagentCore.PubSub, session_events_topic(session_uri))
           # PR-N2 codex r2 HIGH-1 revert — see the matching comment
@@ -850,7 +851,7 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   # SPEC `2026-05-26-session-create-orchestrator-unified` Gap A — produce
   # a `flash_error` text for the orchestrator-status field of
-  # `EzagentDomainChat.create_session/3`'s meta map. `:ready` → nil
+  # `Ezagent.Workspace.create_session/3`'s meta map. `:ready` → nil
   # (suppress the existing error banner — happy path); `:pending` /
   # `:failed` → human-readable text that surfaces the partial-success
   # to the operator. The `flash_error` assign re-uses the LV's existing
@@ -1134,7 +1135,7 @@ defmodule EzagentPluginLiveview.AdminLive do
         #
         # 2026-05-31 orchestrator-startup-atomicity §6 — once the cap
         # check passes, the restart REPAIRS via
-        # `EzagentDomainChat.repair_orchestrator/2` (re-materialize OTU +
+        # `EzagentDomainInstanceMessage.repair_orchestrator/2` (re-materialize OTU +
         # §5 atomic gate). The owner/lineage/`spawned_by` resolution that
         # the old `template.instantiate` dispatch needed is now internal
         # to `repair_orchestrator` (it reads `Session.owner/1`), so the LV
@@ -1167,12 +1168,12 @@ defmodule EzagentPluginLiveview.AdminLive do
     # REPAIR. The old path dispatched `template.instantiate` + respawned
     # the PTY but NEVER set `orchestrator_template_uri` (OTU), so it could
     # not fix the nil-OTU sessions (`main`, `orch-feishu-7429`) that were
-    # the whole reason for the SPEC. `EzagentDomainChat.repair_orchestrator/2`
+    # the whole reason for the SPEC. `EzagentDomainInstanceMessage.repair_orchestrator/2`
     # RE-MATERIALIZES the OTU from the session's template THEN runs the §5
     # atomic readiness gate (cap grants + MCP registration + member join).
     # The OrchestratorAdmin :restart cap was already checked in the
     # `handle_event` clause above.
-    result = EzagentDomainChat.repair_orchestrator(session_uri, health.workspace_uri)
+    result = EzagentDomainInstanceMessage.repair_orchestrator(session_uri, health.workspace_uri)
 
     case result do
       {:ok, ^session_uri, _meta} ->
@@ -1337,7 +1338,7 @@ defmodule EzagentPluginLiveview.AdminLive do
          matcher = wrap_in_session(leaf_matcher, session_uri),
          {:ok, _} <-
            dispatch_session_routing(socket, :add_rule, %{
-             table: EzagentDomainChat.Routing.MentionRouting,
+             table: EzagentDomainInstanceMessage.Routing.MentionRouting,
              matcher_json: Ezagent.Routing.Matcher.to_json(matcher),
              receivers: receivers
            }) do
@@ -2150,6 +2151,14 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   defp caller_can_restart_orchestrator?(_socket, _), do: false
 
+  defp session_create_meta(result) when is_map(result) do
+    %{
+      orchestrator_uri: Map.get(result, :orchestrator_uri),
+      orchestrator_status: Map.get(result, :orchestrator_status),
+      orchestrator_error: Map.get(result, :orchestrator_error)
+    }
+  end
+
   # ExternalMirror bindings for a session, via the dispatched
   # `list_bindings` facade so the CapBAC gate runs. Read failures (no
   # Cap 1 / not_ready / cross_workspace_denied / no_such_actor) are
@@ -2415,7 +2424,7 @@ defmodule EzagentPluginLiveview.AdminLive do
   # session bridge it once held now lives in `external_mirror_bindings`
   # (PR-EM-3 #317). MentionRouting remains the sole routing-rule table.
   @routing_tables_for_session [
-    EzagentDomainChat.Routing.MentionRouting
+    EzagentDomainInstanceMessage.Routing.MentionRouting
   ]
 
   defp list_session_scoped_rules(%URI{} = session_uri) do
@@ -2750,14 +2759,14 @@ defmodule EzagentPluginLiveview.AdminLive do
   # subscription loop. When `current_workspace_uri` is missing
   # (mount outside the `:require_entity` live_session), return
   # an EMPTY list rather than every workspace's sessions. Pre-fix
-  # the fallback returned `EzagentDomainChat.list_sessions/0` (all
+  # the fallback returned `EzagentDomainInstanceMessage.list_sessions/0` (all
   # workspaces), so an LV mounted outside LiveAuth would subscribe
   # to every session's event topic. The structural default must
   # be "deny by absence" — if we don't know the operator's
   # workspace, we cannot scope a subscription, so we subscribe to
   # nothing.
   defp list_sessions_for(%URI{scheme: "workspace"} = workspace_uri),
-    do: EzagentDomainChat.list_sessions(workspace_uri)
+    do: EzagentDomainInstanceMessage.list_sessions(workspace_uri)
 
   defp list_sessions_for(_), do: []
 
@@ -2834,11 +2843,16 @@ defmodule EzagentPluginLiveview.AdminLive do
         # lifecycle remediation.)
         session_workspace_uri = Ezagent.Capability.workspace_of(uri)
 
-        case EzagentDomainChat.create_session("main", creator,
-               template_name: "default",
-               workspace_uri: session_workspace_uri
+        case Ezagent.Workspace.create_session(
+               session_workspace_uri,
+               %{short_name: "main", template_name: "default"},
+               %{
+                 caller: creator,
+                 caps: Map.get(socket.assigns, :caller_caps, MapSet.new())
+               }
              ) do
-          {:ok, _spawned_uri, meta} ->
+          {:ok, result} ->
+            meta = session_create_meta(result)
             log_orchestrator_status_on_rehydrate(uri, meta)
             {uri, assign_rehydrate_flash(socket, meta)}
 

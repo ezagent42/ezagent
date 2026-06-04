@@ -85,7 +85,7 @@
   - PR #390 — PTY/Python phase 状态机 + LV 可见性
   - PR #424 — agent_bridge PR-B：TokenStore + Registry 从 cc 提升
   - PR #428 — agent_bridge PR-C：Socket + Channel 提升
-  - PR #432 — agent_bridge PR-E：移除 domain_chat cc 依赖
+  - PR #432 — agent_bridge PR-E：移除 domain_instance_message cc 依赖
   - PR #436 — agent_bridge PR-G：加 codex plugin（cc 的正交验证点）
 - 相关 SPEC：
   - `docs/superpowers/specs/2026-05-21-domain-pty-architecture.md`

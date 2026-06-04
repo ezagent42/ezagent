@@ -112,7 +112,7 @@ cd apps/ezagent_core && MIX_ENV=test mix test \
 ### Tier 2 — LIVE runbook (Allen's environment — the TRUE gate, Standard 3)
 
 **Harness**:
-`apps/ezagent_domain_chat/test/e2e/scenario_34_sender_locked_relay_live_test.exs`
+`apps/ezagent_domain_instance_message/test/e2e/scenario_34_sender_locked_relay_live_test.exs`
 — `@moduletag :live`, SKIPPED by default; un-gated only by `SCENARIO_34_LIVE=1`.
 It does NOT fake a live pass and it does NOT pass on env-vars-only. After Allen
 sends the real `@传话游戏 <word>`, the harness **polls the live session for the
@@ -169,7 +169,7 @@ running services, real Feishu group, provider creds, agent-browser):
    arrives within the budget):
    ```bash
    SCENARIO_34_LIVE=1 MIX_ENV=test mix test \
-     apps/ezagent_domain_chat/test/e2e/scenario_34_sender_locked_relay_live_test.exs
+     apps/ezagent_domain_instance_message/test/e2e/scenario_34_sender_locked_relay_live_test.exs
    ```
    It reads `MessageStore.recent_in_session/2` (production path) and watches for
    a `telephone_hop`-rendered message. Optionally tighten the gate with

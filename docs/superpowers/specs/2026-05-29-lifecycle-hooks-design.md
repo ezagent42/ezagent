@@ -494,10 +494,10 @@ The **23 developer Behaviors to migrate**:
 | 3 | `Ezagent.Behavior.Presence` | ezagent_core | core |
 | 4 | `Ezagent.Behavior.Routing` | ezagent_core | core |
 | 5 | `Ezagent.Behavior.Sandbox` | ezagent_core | core (rep. example B — transients) |
-| 6 | `Ezagent.Behavior.Chat` | ezagent_domain_chat | domain (rep. example C — rich) |
-| 7 | `Ezagent.Behavior.OrchestratorAdmin` | ezagent_domain_chat | domain |
-| 8 | `Ezagent.Behavior.Publisher.SessionImpl` | ezagent_domain_chat | domain |
-| 9 | `Ezagent.Behavior.Template` (chat) | ezagent_domain_chat | domain |
+| 6 | `Ezagent.Behavior.Chat` | ezagent_domain_instance_message | domain (rep. example C — rich) |
+| 7 | `Ezagent.Behavior.OrchestratorAdmin` | ezagent_domain_instance_message | domain |
+| 8 | `Ezagent.Behavior.Publisher.SessionImpl` | ezagent_domain_instance_message | domain |
+| 9 | `Ezagent.Behavior.Template` (chat) | ezagent_domain_instance_message | domain |
 | 10 | `Ezagent.Behavior.ExternalMirrorWorker` | ezagent_domain_external_mirror | domain (transients: transport handles) |
 | 11 | `Ezagent.Behavior.ExternalMirror` | ezagent_domain_external_mirror | domain (DB-projection → reconcile-in-activate) |
 | 12 | `Ezagent.Behavior.ApiKeys` | ezagent_domain_identity | domain |

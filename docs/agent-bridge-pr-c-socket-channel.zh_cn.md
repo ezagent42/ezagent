@@ -36,7 +36,7 @@
 - 将 `Chat.receive(Entity.Agent)` 改为调用
   `Ezagent.AgentBridge.deliver/2`。
 - `Ezagent.AgentBridge.Payload` 与 BridgeAdapter delivery。
-- 移除 `ezagent_domain_chat` 对 `ezagent_plugin_cc` 的依赖。
+- 移除 `ezagent_domain_instance_message` 对 `ezagent_plugin_cc` 的依赖。
 - 创建 `ezagent_plugin_codex`。
 
 这个改动保持 cc 可运行，同时把 bridge transport 移到

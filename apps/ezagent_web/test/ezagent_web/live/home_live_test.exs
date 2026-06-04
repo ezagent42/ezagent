@@ -3,6 +3,29 @@ defmodule EzagentWeb.HomeLiveTest do
 
   import Phoenix.LiveViewTest
 
+  defp create_session_via_workspace(short_name, creator_uri, opts) do
+    template_name = Keyword.fetch!(opts, :template_name)
+
+    workspace_uri =
+      Keyword.get(opts, :workspace_uri, Ezagent.Capability.workspace_of(creator_uri))
+
+    ensure_workspace_seeded!(workspace_uri)
+
+    with {:ok, result} <-
+           Ezagent.Workspace.create_session(
+             workspace_uri,
+             %{short_name: short_name, template_name: template_name},
+             %{caller: creator_uri, caps: Ezagent.SystemPrincipal.caps("system://bootstrap")}
+           ) do
+      {:ok, result.session_uri,
+       %{
+         orchestrator_uri: result.orchestrator_uri,
+         orchestrator_status: result.orchestrator_status,
+         orchestrator_error: result.orchestrator_error
+       }}
+    end
+  end
+
   test "GET / unauthenticated redirects to /login", %{conn: conn} do
     assert {:error, {:live_redirect, %{to: "/login"}}} = live(conn, ~p"/")
   end
@@ -11,7 +34,7 @@ defmodule EzagentWeb.HomeLiveTest do
     # The chat Application's `:test`-env seed populates `session://default/system/main`
     # at boot, so `list_sessions/0` returns non-empty by default in the
     # web test suite. Verify the redirect path under that condition.
-    assert EzagentDomainChat.list_sessions() != []
+    assert EzagentDomainInstanceMessage.list_sessions() != []
 
     conn =
       conn
@@ -28,7 +51,7 @@ defmodule EzagentWeb.HomeLiveTest do
       # session currently registered under the SessionSupervisor via
       # `DynamicSupervisor.terminate_child/2` (plain `GenServer.stop`
       # would trigger the default `:permanent` restart). Sessions then
-      # disappear from `EzagentDomainChat.list_sessions/0`.
+      # disappear from `EzagentDomainInstanceMessage.list_sessions/0`.
       torn_down = drain_sessions()
 
       on_exit(fn ->
@@ -40,7 +63,7 @@ defmodule EzagentWeb.HomeLiveTest do
           # return is `{:ok, uri, meta} | {:error, _}`. This re-seed
           # discards everything; we only need the side effect.
           _ =
-            EzagentDomainChat.create_session(short, Ezagent.Entity.User.admin_uri(),
+            create_session_via_workspace(short, Ezagent.Entity.User.admin_uri(),
               template_name: "default"
             )
         end
@@ -87,10 +110,26 @@ defmodule EzagentWeb.HomeLiveTest do
     end
   end
 
-  # Terminate every session under EzagentDomainChat.SessionSupervisor so
+  defp ensure_workspace_seeded!(%URI{scheme: "workspace", host: name})
+       when is_binary(name) and name != "" do
+    case Ezagent.Workspace.Store.get_by_name(name) do
+      nil ->
+        case Ezagent.Workspace.create(name, %{}) do
+          {:ok, _pid} -> :ok
+          {:error, :workspace_exists} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
+          {:error, reason} -> raise "failed to seed workspace #{name}: #{inspect(reason)}"
+        end
+
+      _ ->
+        :ok
+    end
+  end
+
+  # Terminate every session under EzagentDomainInstanceMessage.SessionSupervisor so
   # the wizard's empty-list branch can be exercised. Returns the list of
   # session short_names that were torn down (so `on_exit` can re-seed).
-  # Drive `EzagentDomainChat.list_sessions/0` to empty so HomeLive takes
+  # Drive `EzagentDomainInstanceMessage.list_sessions/0` to empty so HomeLive takes
   # the wizard branch.
   #
   # `list_sessions/0` derives its result from `Ezagent.KindRegistry`
@@ -98,7 +137,7 @@ defmodule EzagentWeb.HomeLiveTest do
   # supervisor. The boot-seeded `session://default/system/main` is in
   # fact a `:permanent` child of the GENERIC `Ezagent.KindSupervisor`
   # (the `resolve_supervisor/1` fallback), NOT
-  # `EzagentDomainChat.SessionSupervisor` — so the old drain, which
+  # `EzagentDomainInstanceMessage.SessionSupervisor` — so the old drain, which
   # only walked `SessionSupervisor`'s children, found nothing to
   # terminate and the wizard branch never fired.
   #

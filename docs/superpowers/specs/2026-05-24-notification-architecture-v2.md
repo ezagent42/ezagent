@@ -78,13 +78,13 @@ Per P3 (single source of truth) and P6 (completion claim requires invariant test
 ### 1.2 Doesn't align ❌
 
 - **`Ezagent.Notifications.notify/3` is used as an ad-hoc helper** at 4 producer sites (PR #300):
-  - `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:269` — chat receive (the original chat-domain producer, dating from PR-C)
+  - `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:269` — chat receive (the original chat-domain producer, dating from PR-C)
   - `apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:94` — `add_member`
   - `apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:118` — `remove_member`
   - `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:106` (via `notify_cap_change/4`) — `grant_cap` / `revoke_cap`
   Each is an explicit `Ezagent.Notifications.notify(...)` call inside the action body — exactly the ad-hoc pattern model point 0.4 wants to eliminate.
 - **`chat.ex:269` mixes two roles**: chat-the-message-delivery (0.1 producer of `Behavior.Chat`) *and* notification-of-affected-entity (0.2 owner of user's stream). The current code makes Chat the producer of *both*, but per the model, only the Chat dispatch should be Chat's responsibility; the User's `Chat.receive` slice change should be the notification trigger automatically.
-- **Producer responsibility is split across tiers inconsistently**: `domain_workspace` (the actor's domain) emits the notification for the affected user; `domain_identity` (the actor's domain) emits it via `notify_cap_change/4`; but `domain_chat` emits it via the receive-side behavior. Three different patterns for what should be one auto-mechanism.
+- **Producer responsibility is split across tiers inconsistently**: `domain_workspace` (the actor's domain) emits the notification for the affected user; `domain_identity` (the actor's domain) emits it via `notify_cap_change/4`; but `domain_instance_message` emits it via the receive-side behavior. Three different patterns for what should be one auto-mechanism.
 - **No CI gate forbids a new producer from skipping the helper.** Per audit Finding 1, the `check_invariants` PubSub allowlist allows direct `Phoenix.PubSub.broadcast(... topic("esr:user:..."))` from any module today. A plugin author can copy the legacy `chat.ex:261-265` pattern and bypass the cap check + telemetry + audit, with zero test failure.
 - **`chat.ex:261-265` legacy raw broadcast still fires in parallel** to the new helper path — the "transition window" never closed. Two independent producers, same topic, different envelope shapes — exactly the divergence P3 forbids.
 - **Snapshot diff and notification diff are computed independently.** `Ezagent.Kind.Snapshot.maybe_save/4` already implements `new_slice != old_slice` semantics inside `server.ex:128/134/148/156`. A second pass (the proposed notification hook) needs the same comparison and should not re-derive it.
@@ -244,7 +244,7 @@ Slices that fail (3) — where the per-event payload is computed lazily from the
 
 **Reference implementation**. `Ezagent.Behavior.Chat` `:recent_messages` ring on the User-branch `:receive` slice mutation; cursor pre-allocation in `Ezagent.Kind.Runtime.handle_dispatch/4`; envelope cursor honored from event in `Ezagent.SliceChange.build_broadcast_event/2`. Test surface:
 
-- `apps/ezagent_domain_chat/test/ezagent/behavior/chat_test.exs` — ring populate / trim / lookup / missing-cursor-tolerance
+- `apps/ezagent_domain_instance_message/test/ezagent/behavior/chat_test.exs` — ring populate / trim / lookup / missing-cursor-tolerance
 - `apps/ezagent_plugin_liveview/test/admin_live_test.exs` — end-to-end race regression (3-message burst resolves to 3 distinct flashes)
 
 ### 2.2 What `Notifications.notify/3` becomes
@@ -500,7 +500,7 @@ Code touched by the migration:
 - `apps/ezagent_core/lib/ezagent/audit.ex` — telemetry event rename (PR-N5)
 - `apps/ezagent_core/lib/mix/tasks/ezagent.check_invariants.ex` — three new gates (PR-N5)
 - `apps/ezagent_core/lib/ezagent_core/application.ex:186-187` — Notifications cap registration (extended in PR-N5)
-- `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:244-279` — User-branch simplified (PR-N3)
+- `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:244-279` — User-branch simplified (PR-N3)
 - `apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:94, 118` — explicit notify calls deleted (PR-N4)
 - `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:101-114` — `notify_cap_change/4` helper deleted (PR-N4)
 - `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_live.ex:108, 257-259` — topic + handler rename (PR-N2 + PR-N5)

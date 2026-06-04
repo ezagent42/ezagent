@@ -18,7 +18,7 @@ defmodule Ezagent.Routing.RuleStoreTest do
   end
 
   test "add → list round-trip with matcher JSON encoded" do
-    table = EzagentDomainChat.Routing.MentionRouting
+    table = EzagentDomainInstanceMessage.Routing.MentionRouting
 
     {:ok, row} =
       RuleStore.add(
@@ -40,7 +40,7 @@ defmodule Ezagent.Routing.RuleStoreTest do
 
   describe "rule-set columns (team-routing-unification §3.3)" do
     test "add persists rule_set / position / prompt_template_ref + loads them" do
-      table = EzagentDomainChat.Routing.MentionRouting
+      table = EzagentDomainInstanceMessage.Routing.MentionRouting
 
       {:ok, row} =
         RuleStore.add(
@@ -64,7 +64,7 @@ defmodule Ezagent.Routing.RuleStoreTest do
     end
 
     test "a rule in a named rule_set MUST be single-receiver" do
-      table = EzagentDomainChat.Routing.MentionRouting
+      table = EzagentDomainInstanceMessage.Routing.MentionRouting
       admin = URI.new!("entity://user/system/admin")
 
       assert {:error, :rule_set_requires_single_receiver} =
@@ -115,7 +115,7 @@ defmodule Ezagent.Routing.RuleStoreTest do
     end
 
     test "update_receivers must not widen a rule_set rule to multi-receiver" do
-      table = EzagentDomainChat.Routing.MentionRouting
+      table = EzagentDomainInstanceMessage.Routing.MentionRouting
       admin = URI.new!("entity://user/system/admin")
 
       {:ok, row} =
@@ -145,7 +145,7 @@ defmodule Ezagent.Routing.RuleStoreTest do
 
     {:ok, _} =
       RuleStore.add(
-        EzagentDomainChat.Routing.MentionRouting,
+        EzagentDomainInstanceMessage.Routing.MentionRouting,
         Matcher.always(),
         ["session://default/team-alpha/a"],
         nil
@@ -159,14 +159,14 @@ defmodule Ezagent.Routing.RuleStoreTest do
         nil
       )
 
-    assert length(admin_rules(EzagentDomainChat.Routing.MentionRouting)) == 1
+    assert length(admin_rules(EzagentDomainInstanceMessage.Routing.MentionRouting)) == 1
     assert length(admin_rules(other_table)) == 1
   end
 
   test "delete removes by id" do
     {:ok, row} =
       RuleStore.add(
-        EzagentDomainChat.Routing.MentionRouting,
+        EzagentDomainInstanceMessage.Routing.MentionRouting,
         Matcher.always(),
         ["session://default/team-alpha/x"],
         nil
@@ -174,13 +174,13 @@ defmodule Ezagent.Routing.RuleStoreTest do
 
     assert :ok = RuleStore.delete(row.id)
     assert {:error, :not_found} = RuleStore.delete(row.id)
-    assert [] = admin_rules(EzagentDomainChat.Routing.MentionRouting)
+    assert [] = admin_rules(EzagentDomainInstanceMessage.Routing.MentionRouting)
   end
 
   test "URI struct receiver gets serialized to string" do
     {:ok, row} =
       RuleStore.add(
-        EzagentDomainChat.Routing.MentionRouting,
+        EzagentDomainInstanceMessage.Routing.MentionRouting,
         Matcher.always(),
         [URI.new!("session://default/team-alpha/x"), URI.new!("session://default/team-alpha/y")],
         URI.new!("entity://user/system/admin")

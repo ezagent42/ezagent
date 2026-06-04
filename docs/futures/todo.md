@@ -293,7 +293,7 @@ open after HIGH-1 (admin fallback hole) closed in PR #298:
   | `dump`, `clear` (snapshots) | ✅ `mix ezagent.snapshot.*` |
   | `add_binding`, `unbind` (ext mirror) | ✅ `mix ezagent.external_mirror.*` |
   | `send_test_email` | ⚠️ semi-covered by `mix ezagent.auth.magic_link` (different intent — operator-debug) |
-  | **`create_session`** | ⏳ DEFERRED. Needs a `:create_session` action on `Behavior.Workspace` (parallels `:create_agent` from PR #344). LV currently calls `EzagentDomainChat.create_session/3` directly — bypasses dispatch in BOTH surfaces. |
+  | **`create_session`** | ✅ **DONE (PR-5 / 2026-06-04).** `Behavior.Workspace :create_session` is the user/operator entry; LV and E2E setup now call `Ezagent.Workspace.create_session/3`, while lower-level instance-message materialization is internal-only. |
   | **`create_user`** | ✅ **DONE (2026-05-26).** `Behavior.Workspace :create_user` (see HIGH-2 table). Auto-derived `mix ezagent workspace create_user`. |
   | **`set_password`** | ✅ **DONE (2026-05-26).** New `Behavior.UserCredentials :set_password` on User Kind (see HIGH-2 table). Auto-derived `mix ezagent user set_password`. |
   | **`save_display_name`** | ⏳ DEFERRED. Needs Behavior on User Kind for `:set_display_name` (Profile slice); LV uses `Ezagent.Entity.Profile.upsert/1` directly. |
@@ -304,8 +304,8 @@ open after HIGH-1 (admin fallback hole) closed in PR #298:
   enumerated in the invariant test's `@event_to_cli` table with
   category `:deferred` and a `docs/futures/todo.md` citation.
   Post-2026-05-26 HIGH-2 completion: `create_user` + `set_password`
-  closed; 4 deferred rows remain (`chat_compose`, `create_session`,
-  `save_display_name`, `save_smtp`).
+  closed; 3 deferred rows remain (`chat_compose`, `save_display_name`,
+  `save_smtp`).
 
 ### ~~`/admin/uploads/:filename` controller route — scope mismatch~~ — RESOLVED 2026-05-25
 Codex PR #305 round-4 HIGH (2026-05-24): the chat-compose-upload
@@ -349,9 +349,9 @@ of `session://<class>/<workspace>/<name>`, not a workspace fallback.
 PR #300 wired AdminLive as the operator subscriber + added notify
 calls to `Workspace.add/remove_member` and `Identity.grant/revoke_cap`.
 ~~Additional producers still silent~~ — all 3 wired in med-batch:
-- ✅ `Chat.join` notifies joinee (`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex` `invoke(:join, …)` — `:session_member_joined`)
+- ✅ `Chat.join` notifies joinee (`apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex` `invoke(:join, …)` — `:session_member_joined`)
 - ✅ `agent.terminate` notifies spawning principal via `AgentLineage.lookup/1` (`apps/ezagent_core/lib/ezagent/behavior/lifecycle.ex` `invoke(:terminate, …)` — `:agent_terminated`)
-- ✅ `agent_template.fork` notifies fork-owner (`apps/ezagent_domain_chat/lib/ezagent/behavior/template.ex` `fork_agent_template/3` — `:agent_template_forked`)
+- ✅ `agent_template.fork` notifies fork-owner (`apps/ezagent_domain_instance_message/lib/ezagent/behavior/template.ex` `fork_agent_template/3` — `:agent_template_forked`)
 
 All gated by `user_uri?/1`. Tests added to `chat_test.exs`,
 `lifecycle_terminate_test.exs`, `template_fork_lineage_test.exs`.
@@ -798,10 +798,12 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
     cap-checked credential-source model, not a direct call to the test
     provisioner from `ensure_subprocess_alive`.
 
-- **#11 / #533 single authorized create path + manage-cap grant — GATED.**
-  Existing spec boundary says domain.agent lays provisioning/provenance first;
-  #533 owns the single authorized create entry and manage-cap grant. Await
-  Allen's security decision before implementation. Relevant docs:
+- **#11 / #533 single authorized create path + manage-cap grant — IN PROGRESS
+  IN PR-5 (2026-06-04).** The approved direction is to route user/operator
+  session creation through `Ezagent.Workspace.create_session/3`, keep
+  instance-message materialization as an internal implementation detail, and
+  grant creator Manage caps through the shared create-time grant policy.
+  Relevant docs:
   `docs/superpowers/specs/2026-06-02-domain-agent-design.md` §3.3/§4 and
   `docs/superpowers/specs/2026-06-01-unified-kind-creation-via-templates.md`.
 

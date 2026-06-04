@@ -87,10 +87,14 @@ defmodule EzagentCore.Invariants.Phase5NoRegressionTest do
     # the only chat-plugin-owned routing table. The same invariant
     # also actively guards against a re-introduction of SessionRouting.
     test "MentionRouting table exists; SessionRouting is NOT (re-)declared" do
-      assert :ets.whereis(:"ezagent_routing_Elixir.EzagentDomainChat.Routing.MentionRouting") !=
+      assert :ets.whereis(
+               :"ezagent_routing_Elixir.EzagentDomainInstanceMessage.Routing.MentionRouting"
+             ) !=
                :undefined
 
-      assert :ets.whereis(:"ezagent_routing_Elixir.EzagentDomainChat.Routing.SessionRouting") ==
+      assert :ets.whereis(
+               :"ezagent_routing_Elixir.EzagentDomainInstanceMessage.Routing.SessionRouting"
+             ) ==
                :undefined
     end
 
@@ -101,7 +105,7 @@ defmodule EzagentCore.Invariants.Phase5NoRegressionTest do
       # changed its receivers from [$session_members] to
       # [$session_users, $mentions]. Without this rule, chat/send
       # routes nowhere.
-      entries = RoutingRegistry.list_all(EzagentDomainChat.Routing.MentionRouting)
+      entries = RoutingRegistry.list_all(EzagentDomainInstanceMessage.Routing.MentionRouting)
 
       assert Enum.any?(entries, fn {_matcher, value} ->
                receivers =

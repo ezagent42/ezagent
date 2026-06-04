@@ -61,7 +61,7 @@ and the result is visible back in the Feishu group.
 
 ## Verification (two tiers — both required for the gate)
 
-- **Automated invariant test** (`apps/ezagent_domain_chat/test/e2e/scenario_32_*`):
+- **Automated invariant test** (`apps/ezagent_domain_instance_message/test/e2e/scenario_32_*`):
   asserts G1 (orch is a member after create), G2 (a mention to the orch routes a
   `chat.receive`/delivery to the orchestrator URI — not just session-level), G3/G4/G5
   by dispatching the orchestrator's tool actions and asserting their durable effects,

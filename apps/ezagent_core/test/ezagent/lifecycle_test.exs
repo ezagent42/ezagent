@@ -121,7 +121,10 @@ defmodule Ezagent.LifecycleTest do
       uri_str = URI.to_string(uri)
 
       slice_state = %{
-        lifecycle_fixture: %{state: %{counter: 9, label: "persisted"}, transients: %{worker: self()}}
+        lifecycle_fixture: %{
+          state: %{counter: 9, label: "persisted"},
+          transients: %{worker: self()}
+        }
       }
 
       :ok = Snapshot.save_now(uri, LifecycleFixtureKind, slice_state)
@@ -398,7 +401,9 @@ defmodule Ezagent.LifecycleTest do
       # single-key `%{state: map}`. This MUST flatten — the regression that
       # broke orchestrator MCP registration (+ Feishu mirror #502) was this
       # exact case falling through unchanged.
-      persisted = %{state: %{owner_uri: :z, template_working_copy: %{orchestrator_template_uri: :u}}}
+      persisted = %{
+        state: %{owner_uri: :z, template_working_copy: %{orchestrator_template_uri: :u}}
+      }
 
       assert Ezagent.Kind.normalize_slice_view(persisted) ==
                %{owner_uri: :z, template_working_copy: %{orchestrator_template_uri: :u}}

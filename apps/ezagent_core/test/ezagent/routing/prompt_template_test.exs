@@ -54,7 +54,12 @@ defmodule Ezagent.Routing.PromptTemplateTest do
     test "a value containing a placeholder-looking substring is preserved literally (codex MED)" do
       # The message body LITERALLY contains "{sender}" — it must NOT be
       # re-substituted by the sender pass (single-pass Regex render).
-      out = PromptTemplate.render("{body} — by {sender}", %{body: "raw {sender} text", sender: "alice"})
+      out =
+        PromptTemplate.render("{body} — by {sender}", %{
+          body: "raw {sender} text",
+          sender: "alice"
+        })
+
       assert out == "raw {sender} text — by alice"
     end
   end

@@ -354,7 +354,7 @@ The backend is layered. Mirror that layering in the prototype's directory struct
 | Layer | Apps | What lives here |
 |---|---|---|
 | `ezagent_core` | `apps/ezagent_core/` | Domain-agnostic infra: `Kind`, `Behavior`, `Capability`, `Routing`, `KindRegistry`, `BehaviorRegistry`, `RoutingRegistry`, `SpawnRegistry`, `Ezagent.UI.Form` (auto-form behaviour) |
-| `ezagent_domain_*` | `apps/ezagent_domain_chat`, `_identity`, `_workspace`, `_ui`, `_python` | Bounded contexts. `_ui` is where the shadcn-like HEEx primitives (`<.button>`, `<.card>`, …) live |
+| `ezagent_domain_*` | `apps/ezagent_domain_instance_message`, `_identity`, `_workspace`, `_ui`, `_python` | Bounded contexts. `_ui` is where the shadcn-like HEEx primitives (`<.button>`, `<.card>`, …) live |
 | `ezagent_plugin_*` | `apps/ezagent_plugin_cc`, `_cc_channel`, `_curl_agent`, `_feishu`, `_echo`, `_liveview` | Drop-in agent integrations. Each plugin self-registers its Kind, Template Class, and (via `Ezagent.UI.Form`) its form fields. `ezagent_plugin_liveview` is itself a plugin — it owns every Live* page |
 | `ezagent_web` | `apps/ezagent_web/` | Phoenix endpoint, router, auth controllers, JS hooks, CSS pipeline |
 

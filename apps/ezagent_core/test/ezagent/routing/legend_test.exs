@@ -104,7 +104,7 @@ defmodule Ezagent.Routing.LegendTest do
     end
 
     test "the entry rule of the bound rule-set is matched by mention(<legend_name>)" do
-      table = EzagentDomainChat.Routing.MentionRouting
+      table = EzagentDomainInstanceMessage.Routing.MentionRouting
 
       # The telephone rule-set entry: mention(传话游戏) → relay-cc (single-receiver).
       {:ok, _} =
@@ -139,7 +139,8 @@ defmodule Ezagent.Routing.LegendTest do
     end
 
     test "entry_rule/2 is :error for a rule-set with no rules" do
-      assert :error = Legend.entry_rule(EzagentDomainChat.Routing.MentionRouting, "ghost")
+      assert :error =
+               Legend.entry_rule(EzagentDomainInstanceMessage.Routing.MentionRouting, "ghost")
     end
   end
 

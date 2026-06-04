@@ -22,10 +22,10 @@ Every URI scheme currently constructed or parsed in `apps/`. Columns:
 | Scheme | Instance shape | Sub-resource | Spawned via | Persisted | Defining file (line) |
 |---|---|---|---|---|---|
 | `agent://` | `agent://<type>/<name>` (PR #131, typed) | `/behavior/<kind>/<action>` | `SpawnRegistry("agent")` → `AgentTypeRegistry` | yes (via Workspace.session_templates) | `apps/ezagent_core/lib/ezagent/agent_type_registry.ex:96` |
-| `session://` | `session://<name>` (flat) | `/behavior/<kind>/<action>` | `SpawnRegistry("session")` | snapshot | `apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:176` |
+| `session://` | `session://<name>` (flat) | `/behavior/<kind>/<action>` | `SpawnRegistry("session")` | snapshot | `apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/application.ex:176` |
 | `user://` | `user://<name>` (flat) | `/behavior/identity/<action>` | `SpawnRegistry("user")` | snapshot | `apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex:71` |
 | `workspace://` | `workspace://<name>` (flat) | `/behavior/workspace/<action>` | n/a — created by Workspace API | snapshot | `apps/ezagent_domain_workspace/lib/ezagent/entity/workspace.ex:78` |
-| `template://` | `template://<class>/<name>[@<hash>]` — TWO host values: `agent` (versionless) and `session` (`@hash`) | `/behavior/...` allowed in principle | `SpawnRegistry("template")` switches on `uri.host` (`agent` vs `session`) | snapshot | `apps/ezagent_domain_chat/lib/ezagent/entity/session_template.ex:136`, `apps/ezagent_domain_chat/lib/ezagent/entity/agent_template.ex:19` |
+| `template://` | `template://<class>/<name>[@<hash>]` — TWO host values: `agent` (versionless) and `session` (`@hash`) | `/behavior/...` allowed in principle | `SpawnRegistry("template")` switches on `uri.host` (`agent` vs `session`) | snapshot | `apps/ezagent_domain_instance_message/lib/ezagent/entity/session_template.ex:136`, `apps/ezagent_domain_instance_message/lib/ezagent/entity/agent_template.ex:19` |
 | `resource://` | `resource://uploads/<filename>` — host is a "namespace" | none today | not a live Kind — pure data ref | filesystem on disk | `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_live.ex:230` |
 | `system://` | `system://bootstrap`, `system://other` (flat sentinel) | none | not spawned — fixed sentinels | n/a | `apps/ezagent_domain_identity/lib/ezagent/entity/user.ex:24`, `apps/ezagent_core/lib/ezagent/capability.ex:10` |
 | `message://` | `message://<uuid16>` (16 hex chars, auto-gen) | none | not a Kind — opaque ref | yes (messages table) | `apps/ezagent_core/lib/ezagent/message.ex:101` |
@@ -63,7 +63,7 @@ Three different "what is the host?" conventions. A plugin author writing a new s
 
 - `template://agent/<name>` — host="agent" means "Class is AgentTemplate", versionless.
 - `template://session/<name>@<hash>` — host="session" means "Class is SessionTemplate", content-addressed via `@hash`.
-- `template://session/<name>:<tag>` — same scheme, but `:tag` instead of `@hash` (mutable pointer; `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:74` mentions it but I didn't find a writer — may be design-only).
+- `template://session/<name>:<tag>` — same scheme, but `:tag` instead of `@hash` (mutable pointer; `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:74` mentions it but I didn't find a writer — may be design-only).
 
 So `template://` is doing four jobs at once:
 1. Saying "this is a template" (scheme).
@@ -145,7 +145,7 @@ Each question has a default proposal and the tradeoff against alternatives.
 - Pro: each scheme has one shape.
 - Con: more schemes; "they're both templates" semantically.
 
-**Proposal B (uniform 2-seg)**: Keep `template://<class>/<name>`; require `@hash` always (even for AgentTemplate). Today AgentTemplate is versionless because it's "human-edited" (`apps/ezagent_domain_chat/lib/ezagent/entity/agent_template.ex:19`). Forcing a hash unifies the shape but loses the human-edited model.
+**Proposal B (uniform 2-seg)**: Keep `template://<class>/<name>`; require `@hash` always (even for AgentTemplate). Today AgentTemplate is versionless because it's "human-edited" (`apps/ezagent_domain_instance_message/lib/ezagent/entity/agent_template.ex:19`). Forcing a hash unifies the shape but loses the human-edited model.
 - Pro: every template URI has the same shape.
 - Con: AgentTemplate would need a versioning model it doesn't currently want.
 
@@ -316,7 +316,7 @@ So workspace serves **two functions**:
 
 1. **Declarative**: "when this instance boots, ensure these entities are alive + these templates are loaded + these rules are installed."  This is the bootable-config role; not a folder.
 
-2. **Routing scope**: at dispatch time, the bound workspace_uri filters which routing rules apply. `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:127-137` resolves session_uri → workspace_uri via WorkspaceRegistry, passes that to the rule evaluator.
+2. **Routing scope**: at dispatch time, the bound workspace_uri filters which routing rules apply. `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:127-137` resolves session_uri → workspace_uri via WorkspaceRegistry, passes that to the rule evaluator.
 
 Allen's "as folder" framing probes whether workspace is **one concept too many**. Three coherent answers:
 

@@ -55,7 +55,7 @@ not reachable from any CLI.
 | Send chat message (text + attachments + mentions) | `admin_live.ex:258` chat_compose | `mix ezagent session send --session <name> --message <…>` (auto via `Behavior.Chat.@interface[:send]`) | ⚠️ partial — CLI has no file-upload primitive; `--message` carries text only. Attachments would need a `resource://` upload facade that does not exist. |
 | Mark message displayed | `admin_live.ex:311` mark_displayed | — | ❌ GUI-only (`Ezagent.Chat.ReadMarker.mark/4` is a direct module call from LV; no Behavior, no Facade) |
 | Switch active session in chat panel | `admin_live.ex:323` switch_session | n/a (UI-only navigation; not an ESR mutation) | n/a |
-| Create session (short_name) | `admin_live.ex:334` create_session | `mix ezagent session create <name>` is NOT registered; closest is `mix ezagent session join` (auto from `Chat.@interface[:join]`). | ❌ no CLI; LV calls `EzagentDomainChat.create_session/3` directly — bypasses dispatch (P14 violation in BOTH surfaces). |
+| Create session (short_name) | `admin_live.ex:334` create_session | `mix ezagent session create <name>` is NOT registered; closest is `mix ezagent session join` (auto from `Chat.@interface[:join]`). | ❌ no CLI; LV calls `EzagentDomainInstanceMessage.create_session/3` directly — bypasses dispatch (P14 violation in BOTH surfaces). |
 | Invite member to session | `admin_live.ex:430` invite_member | `mix ezagent session join --session <…> --member <uri>` (auto from `Chat.@interface[:join]`) — invariant test uses this exact path | ✅ |
 | Switch session view (chat/terminal) | `admin_live.ex:372` switch_view | n/a (UI-only) | n/a |
 | Switch active PTY agent | `admin_live.ex:394` switch_to_pty_for_agent | n/a (UI-only) | n/a |

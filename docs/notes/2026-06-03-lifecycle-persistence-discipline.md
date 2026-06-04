@@ -34,7 +34,7 @@ destroy AND the markers:
 | Destroy / snapshot DELETE | `KindSnapshot.delete/1` | `lifecycle.ex` (`destroy/2`), `snapshot_store.ex`, schema def; ops: `mix snapshot.clear`, admin `snapshots_live` | **3 domain violations fixed** |
 
 The write/read/marker axes were already clean. The **destroy axis was
-NOT**: `ezagent_domain_chat.ex` hand-rolled `Kind.terminate(uri) +
+NOT**: `ezagent_domain_instance_message.ex` hand-rolled `Kind.terminate(uri) +
 KindSnapshot.delete(uri)` in 3 rollback/dissolve/compensate paths —
 bypassing `Lifecycle.destroy/2` and, crucially, **skipping the developer
 destroy hooks** (so a rolled-back Agent leaked its Sandbox `config_dir`).

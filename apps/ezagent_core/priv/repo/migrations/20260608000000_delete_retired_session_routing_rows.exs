@@ -11,7 +11,7 @@ defmodule EzagentCore.Repo.Migrations.DeleteRetiredSessionRoutingRows do
   `external_mirror_bindings` table. The Feishu chat ↔ session bridge
   that `SessionRouting` (a `routing_rules.table_name` group) previously
   held has fully migrated there. The `SessionRouting` table declaration
-  is being removed from `EzagentDomainChat.Application`, along with
+  is being removed from `EzagentDomainInstanceMessage.Application`, along with
   every code-side reference (resolver default tables, default-rules
   bootstrap, /routing LV table switcher, admin_live session-scoped
   rule listing, RoutingRegistry boot test).
@@ -25,7 +25,7 @@ defmodule EzagentCore.Repo.Migrations.DeleteRetiredSessionRoutingRows do
   --------
 
   - Forward-only `DELETE` against the legacy `table_name` string
-    `"Elixir.EzagentDomainChat.Routing.SessionRouting"`.
+    `"Elixir.EzagentDomainInstanceMessage.Routing.SessionRouting"`.
   - Idempotent: re-running the migration on an already-cleaned DB is
     a no-op (delete-where-exists).
   - No backfill / migration to ExternalMirror: those rows were the
@@ -41,7 +41,7 @@ defmodule EzagentCore.Repo.Migrations.DeleteRetiredSessionRoutingRows do
 
   def up do
     execute(
-      "DELETE FROM routing_rules WHERE table_name = 'Elixir.EzagentDomainChat.Routing.SessionRouting'"
+      "DELETE FROM routing_rules WHERE table_name = 'Elixir.EzagentDomainInstanceMessage.Routing.SessionRouting'"
     )
   end
 

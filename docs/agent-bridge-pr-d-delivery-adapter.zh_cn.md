@@ -28,12 +28,12 @@ AgentBridge domain facade。
   发送 `{:to_claude, payload}`。
 - 在 PR-C 独立提升 Socket/Channel 之前，现有 cc Channel 仍可继续接收
   `{:to_claude, ...}`。
-- `ezagent_domain_chat` 暂时仍保留对 `ezagent_plugin_cc` 的依赖，直到
+- `ezagent_domain_instance_message` 暂时仍保留对 `ezagent_plugin_cc` 的依赖，直到
   PR-E 删除该依赖并加强 layer-purity test。
 
 不在本 PR 范围内：
 - Socket 与 Channel 提升。
-- 删除 `ezagent_domain_chat -> ezagent_plugin_cc` 依赖。
+- 删除 `ezagent_domain_instance_message -> ezagent_plugin_cc` 依赖。
 - Codex plugin 实现。
 
 这是 codex 复用同一个 Agent Kind 与 bridge domain 之前必须完成的

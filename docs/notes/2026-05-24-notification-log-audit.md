@@ -21,7 +21,7 @@ The deepest finding: **the Notifications module exists but doesn't yet meet P3 (
 |---|---|---|
 | `Ezagent.Notifications` | `apps/ezagent_core/lib/ezagent/notifications.ex:1` | Unified user-inbox primitive (`notify/3`, `subscribe/2`, `unsubscribe/1`, `topic/1`). |
 | `Ezagent.Behavior.Notifications` | `apps/ezagent_core/lib/ezagent/behavior/notifications.ex:1` | Cap-only Behavior; subjects `:notify` and `:subscribe`. `dispatchable?: false` — cannot be invoked via `Invocation.dispatch/1`. |
-| `Ezagent.Behavior.Chat` (producer) | `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:269` | Only current caller of `Ezagent.Notifications.notify/3`. |
+| `Ezagent.Behavior.Chat` (producer) | `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:269` | Only current caller of `Ezagent.Notifications.notify/3`. |
 | `EzagentPluginLiveview.AdminLive` (consumer) | `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_live.ex:245` | Receives `{:notification, user_uri, payload}` envelope (currently no-ops it — the parallel legacy `:chat_message` still feeds the stream). |
 | Registration | `apps/ezagent_core/lib/ezagent_core/application.ex:186-187` | `CapabilityRegistry.register(User, :notify, NB)` + `(User, :subscribe, NB)`. **Only on `User` Kind.** |
 
@@ -92,14 +92,14 @@ Producers fall into three patterns:
 **Pattern A — `Logger.{info,warning,error,debug}`** (118 sites). Free-form binary text. Examples:
 - `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:333` (info)
 - `apps/ezagent_core/lib/ezagent/audit/writer.ex:85` (error)
-- `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:346` (warning — silent-drop alert; aligns with P27)
+- `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:346` (warning — silent-drop alert; aligns with P27)
 
 **Pattern B — `:telemetry.execute(event_name, measurements, metadata)`** at 13 production sites. Examples:
 - `apps/ezagent_core/lib/ezagent/kind/runtime.ex:88,108,148,151,206` — `[:ezagent, :invoke, :stop/:error]`, `[:ezagent, :authz, :granted/:denied]`, `[:ezagent, :workspace, :denied]`
 - `apps/ezagent_core/lib/ezagent/kind/snapshot.ex:202,213,251` — `[:ezagent, :persistence, :restored/:written/:failed]`
 - `apps/ezagent_core/lib/ezagent/dlq.ex:45` — `[:ezagent, :dlq, :write]`
 - `apps/ezagent_core/lib/ezagent/cc_events.ex:51` — `[:ezagent, :cc_bridge, :event]`
-- `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:353` — `[:ezagent, :chat, :receive, :dropped]` (NOT in `@events` of Audit — so this telemetry event has no audit row today)
+- `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:353` — `[:ezagent, :chat, :receive, :dropped]` (NOT in `@events` of Audit — so this telemetry event has no audit row today)
 
 **Pattern C — Direct table writes**:
 - `Ezagent.DLQ.put/2` → `dlq` table (sync)
@@ -212,7 +212,7 @@ This makes telemetry the unified observability spine (which Allen's architecture
 
 - **Severity: HIGH**
 - **What:** `Ezagent.Notifications.notify/3` is documented as "the unified entry" but is only called from ONE site (`chat.ex:269`). The legacy raw `Phoenix.PubSub.broadcast` to the **same topic** still fires from `chat.ex:261` ("transition window"). Any new producer can copy the legacy pattern and skip the helper — no CI gate exists.
-- **Where:** `apps/ezagent_core/lib/ezagent/notifications.ex:1`, `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:261-277`
+- **Where:** `apps/ezagent_core/lib/ezagent/notifications.ex:1`, `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:261-277`
 - **Why it matters:** P3 says SoT means "other surfaces are caches/projections, never independent records." Today the topic has TWO independent producers writing two different envelope shapes (`{:message_received, msg}` and `{:notification, uri, payload}`), and subscribers must pattern-match both — exactly the "silent divergence" failure mode P3 prevents.
 - **Recommendation:** (1) Delete the legacy broadcast `chat.ex:261-265` after migrating any remaining subscribers (V2 deprecation noted in `chat.ex:258`). (2) Add an invariant test: grep `apps/*/lib` for `Phoenix.PubSub.broadcast.*esr:user:` outside `notifications.ex` — must be empty. (3) Same allowlist style as Audit's check_invariants #1.
 
@@ -236,7 +236,7 @@ This makes telemetry the unified observability spine (which Allen's architecture
 
 - **Severity: MEDIUM**
 - **What:** `chat.ex:353` emits this telemetry when the Agent's bridge isn't bound — the highest-signal "why didn't the agent reply?" event. But `Ezagent.Audit.@events` doesn't include it (`audit.ex:33-50`), so it never persists. Operator sees the `Logger.warning` from `chat.ex:346` in `phx.log` (good) but not in `/admin/logs` (bad).
-- **Where:** `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:353-357` vs `apps/ezagent_core/lib/ezagent/audit.ex:33-50`
+- **Where:** `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:353-357` vs `apps/ezagent_core/lib/ezagent/audit.ex:33-50`
 - **Why it matters:** P22 ("zero-match routes emit telemetry + DLQ-unroutable; silent drop is forbidden") is partially honored (Logger fires) but partially violated (no durable record beyond stdout). Operators tailing `/admin/logs` think the system is healthy when bridge drops are happening.
 - **Recommendation:** Add `[:ezagent, :chat, :receive, :dropped]` to `Audit.@events` + a `build_row/3` clause. ~15 LOC.
 

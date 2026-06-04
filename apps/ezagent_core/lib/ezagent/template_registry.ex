@@ -7,7 +7,7 @@ defmodule Ezagent.TemplateRegistry do
 
   Plugin authors register their Template Classes in `Application.start/2`:
 
-      Ezagent.TemplateRegistry.register(EzagentDomainChat.Template.GenericSession)
+      Ezagent.TemplateRegistry.register(EzagentDomainInstanceMessage.Template.GenericSession)
 
   When `Ezagent.Workspace.Loader` walks a Workspace's `session_templates`
   on boot, it looks up the Class via `template_name` from the template

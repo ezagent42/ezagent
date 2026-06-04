@@ -24,7 +24,7 @@ defmodule EzagentDomainUi.Routing.RoutingView do
 
   - Add → dispatch to `<session_uri>?action=routing.add_rule` against
     the Session Kind's `Ezagent.Behavior.Routing` (registered in
-    `EzagentDomainChat.Application`).
+    `EzagentDomainInstanceMessage.Application`).
   - Toggle enable/disable → dispatch to the same target with
     `routing.disable_rule` / `routing.enable_rule`.
 

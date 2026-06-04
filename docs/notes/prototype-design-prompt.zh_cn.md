@@ -354,7 +354,7 @@ LV 表单合约：
 | 层 | Apps | 此处的内容 |
 |---|---|---|
 | `ezagent_core` | `apps/ezagent_core/` | 与领域无关的基础设施：`Kind`、`Behavior`、`Capability`、`Routing`、`KindRegistry`、`BehaviorRegistry`、`RoutingRegistry`、`SpawnRegistry`、`Ezagent.UI.Form`（自动表单 behaviour） |
-| `ezagent_domain_*` | `apps/ezagent_domain_chat`、`_identity`、`_workspace`、`_ui`、`_python` | 有界上下文。`_ui` 是 shadcn 风格 HEEx 原语（`<.button>`、`<.card>`…）所在地 |
+| `ezagent_domain_*` | `apps/ezagent_domain_instance_message`、`_identity`、`_workspace`、`_ui`、`_python` | 有界上下文。`_ui` 是 shadcn 风格 HEEx 原语（`<.button>`、`<.card>`…）所在地 |
 | `ezagent_plugin_*` | `apps/ezagent_plugin_cc`、`_curl_agent`、`_feishu`、`_echo`、`_liveview` | 即插即用的 agent 集成。每个插件自注册其 Kind、Template Class，以及（通过 `Ezagent.UI.Form`）其表单字段。`ezagent_plugin_liveview` 本身也是一个插件 —— 它拥有所有 Live* 页面 |
 | `ezagent_web` | `apps/ezagent_web/` | Phoenix endpoint、router、auth controllers、JS hooks、CSS pipeline |
 

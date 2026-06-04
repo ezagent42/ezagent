@@ -16,6 +16,22 @@ defmodule EzagentPluginLiveview.ComposerMentionTest do
   silent no-op on the real surface.
   """
 
+  defp ensure_workspace_seeded!(%URI{scheme: "workspace", host: name})
+       when is_binary(name) and name != "" do
+    case Ezagent.Workspace.Store.get_by_name(name) do
+      nil ->
+        case Ezagent.Workspace.create(name, %{}) do
+          {:ok, _pid} -> :ok
+          {:error, :workspace_exists} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
+          {:error, reason} -> raise "failed to seed workspace #{name}: #{inspect(reason)}"
+        end
+
+      _ ->
+        :ok
+    end
+  end
+
   # This test counts persisted audit rows (the `invocations` table) to
   # prove the mention actuated the agent. Audit rows are written by the
   # async `Ezagent.Audit.Writer`, which is DELIBERATELY skipped from the
@@ -76,6 +92,29 @@ defmodule EzagentPluginLiveview.ComposerMentionTest do
     )
   end
 
+  defp create_session_via_workspace(short_name, creator_uri, opts) do
+    template_name = Keyword.fetch!(opts, :template_name)
+
+    workspace_uri =
+      Keyword.get(opts, :workspace_uri, Ezagent.Capability.workspace_of(creator_uri))
+
+    ensure_workspace_seeded!(workspace_uri)
+
+    with {:ok, result} <-
+           Ezagent.Workspace.create_session(
+             workspace_uri,
+             %{short_name: short_name, template_name: template_name},
+             %{caller: creator_uri, caps: Ezagent.SystemPrincipal.caps("system://bootstrap")}
+           ) do
+      {:ok, result.session_uri,
+       %{
+         orchestrator_uri: result.orchestrator_uri,
+         orchestrator_status: result.orchestrator_status,
+         orchestrator_error: result.orchestrator_error
+       }}
+    end
+  end
+
   # Ensure the team-alpha main session Kind is live BEFORE any join —
   # the agents join `@session` via a fire-and-forget cast, which would
   # be dropped with `:no_such_actor` if the session weren't spawned yet
@@ -87,7 +126,7 @@ defmodule EzagentPluginLiveview.ComposerMentionTest do
 
       :error ->
         {:ok, _spawned, _meta} =
-          EzagentDomainChat.create_session("main", Ezagent.Entity.User.admin_uri(),
+          create_session_via_workspace("main", Ezagent.Entity.User.admin_uri(),
             template_name: "default",
             workspace_uri: Ezagent.Capability.workspace_of(@session)
           )
@@ -117,7 +156,9 @@ defmodule EzagentPluginLiveview.ComposerMentionTest do
   test "composing '@<agent_uri>' actuates exactly that mentioned, joined agent", %{conn: conn} do
     # A real echo agent joined to the default session. valid_member?/2
     # requires the mention to be a registered member, so it MUST join.
-    agent = URI.new!("entity://agent/team-alpha/echo_compose-#{System.unique_integer([:positive])}")
+    agent =
+      URI.new!("entity://agent/team-alpha/echo_compose-#{System.unique_integer([:positive])}")
+
     {:ok, _} = Ezagent.SpawnRegistry.spawn(agent)
     join(agent)
 
@@ -127,7 +168,8 @@ defmodule EzagentPluginLiveview.ComposerMentionTest do
 
     # The composer's parse_mentions/1 extracts `@entity://...` from the
     # raw compose text — this is the production compose → mentions path.
-    text = "hey @#{URI.to_string(agent)} please look at this #{System.unique_integer([:positive])}"
+    text =
+      "hey @#{URI.to_string(agent)} please look at this #{System.unique_integer([:positive])}"
 
     lv
     |> form("form[phx-submit=chat_compose]", %{"chat" => %{"text" => text}})

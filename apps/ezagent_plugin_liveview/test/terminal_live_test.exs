@@ -82,7 +82,7 @@ defmodule EzagentPluginLiveview.TerminalLiveTest do
       # For the `:registered` branch (cc agent kind alive but PtyServer
       # not yet up) we'd need a cc agent without PtyServer — skip that
       # particular phase here since the helper logic is exercised by
-      # `Ezagent.Domain.Agent.lifecycle_status` tests in domain_chat.
+      # `Ezagent.Domain.Agent.lifecycle_status` tests in domain_instance_message.
       #
       # This test confirms the render-branch is reachable: a live agent
       # without PTY hits the `_` (catch-all) branch in render which

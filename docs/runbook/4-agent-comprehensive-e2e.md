@@ -146,7 +146,7 @@ end
 
 # Per-sender chain rules (admin→cc, cc→curl, curl→np, np→admin)
 alias Ezagent.Routing.{Matcher, RuleStore}
-table = EzagentDomainChat.Routing.MentionRouting
+table = EzagentDomainInstanceMessage.Routing.MentionRouting
 
 for {from, to} <- [
   {admin, cc}, {cc, curl}, {curl, np}, {np, admin}

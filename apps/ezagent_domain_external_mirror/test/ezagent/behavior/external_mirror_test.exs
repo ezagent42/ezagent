@@ -191,7 +191,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
 
       # Re-spawn the Session to exercise the init_slice rehydration path.
       {:ok, pid_a} = Ezagent.KindRegistry.lookup(session_uri)
-      :ok = DynamicSupervisor.terminate_child(EzagentDomainChat.SessionSupervisor, pid_a)
+      :ok = DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, pid_a)
       wait_until_dead(session_uri, 30)
       {:ok, _pid_b} = Ezagent.SpawnRegistry.spawn(session_uri)
       :ok = await_session_alive(session_uri, 50)
@@ -572,7 +572,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
       {:ok, session_pid_1} = Ezagent.KindRegistry.lookup(session_uri)
 
       :ok =
-        DynamicSupervisor.terminate_child(EzagentDomainChat.SessionSupervisor, session_pid_1)
+        DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, session_pid_1)
 
       wait_until_dead(session_uri, 30)
 
@@ -1703,7 +1703,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
   defp cleanup_session(%URI{} = session_uri) do
     case Ezagent.KindRegistry.lookup(session_uri) do
       {:ok, pid} when is_pid(pid) ->
-        _ = DynamicSupervisor.terminate_child(EzagentDomainChat.SessionSupervisor, pid)
+        _ = DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, pid)
         :ok
 
       _ ->

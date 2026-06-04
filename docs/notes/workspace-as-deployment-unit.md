@@ -36,7 +36,7 @@ Concretely, a workspace is a record in
 | `routing_rules` | Per-workspace mention / session-receive rules |
 
 A session is created via [`Ezagent.Entity.Session.spawn_from_template/2`][session-spawn]
-or `EzagentDomainChat.create_session/2`. The flow:
+or `EzagentDomainInstanceMessage.create_session/2`. The flow:
 
 1. Spawn the Session Kind into KindRegistry
 2. Bind it to a workspace via [`Ezagent.WorkspaceRegistry.bind/2`][workspace-registry]
@@ -182,8 +182,8 @@ automatically.
 Phase 9 transition is mechanical, not architectural:
 
 1. **Sessions always go through `Ezagent.Entity.Session.spawn_from_template/2`**
-   (or `EzagentDomainChat.create_session/2` which wraps it). Never
-   directly spawn into `EzagentDomainChat.SessionSupervisor`. This
+   (or `EzagentDomainInstanceMessage.create_session/2` which wraps it). Never
+   directly spawn into `EzagentDomainInstanceMessage.SessionSupervisor`. This
    guarantees workspace binding.
 2. **Entities (User / Agent) always go through their standard create APIs**
    (`Ezagent.Users.create/3`, `Ezagent.SpawnRegistry.spawn/1` + `Identity.grant_cap`).
@@ -217,7 +217,7 @@ don't add per-call workspace shims; do the structural fix.
   - [`Ezagent.WorkspaceRegistry`][workspace-registry] — session↔workspace ETS binding
   - [`Ezagent.Workspace.Store`][workspace-store] — DB persistence
   - [`Ezagent.Entity.Session.spawn_from_template/2`][session-spawn] — canonical session creator
-  - `EzagentDomainChat.create_session/2` — the user-facing facade
+  - `EzagentDomainInstanceMessage.create_session/2` — the user-facing facade
   - `apps/ezagent_core/test/invariants/sessions_have_workspace_test.exs` — enforces the binding invariant
 
 - **Glossary**:
@@ -229,4 +229,4 @@ don't add per-call workspace shims; do the structural fix.
 
 [workspace-store]: ../../apps/ezagent_domain_workspace/lib/ezagent/workspace/store.ex
 [workspace-registry]: ../../apps/ezagent_core/lib/ezagent/workspace_registry.ex
-[session-spawn]: ../../apps/ezagent_domain_chat/lib/ezagent/entity/session.ex
+[session-spawn]: ../../apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex

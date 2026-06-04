@@ -366,7 +366,14 @@ defmodule Ezagent.Kind.Snapshot do
         _ -> []
       end
 
-    case KindSnapshot.upsert(uri_str, kind_type_str, binary, version, workspace_uri_str, upsert_opts) do
+    case KindSnapshot.upsert(
+           uri_str,
+           kind_type_str,
+           binary,
+           version,
+           workspace_uri_str,
+           upsert_opts
+         ) do
       {:ok, _row} ->
         :telemetry.execute(
           [:ezagent, :persistence, :written],

@@ -13,7 +13,7 @@ defmodule Ezagent.Test.AuditCase do
   ~22 `ezagent_plugin_liveview` "baseline flakes".)
 
   Tests that actually verify audit writes (e.g.
-  `Ezagent.AuditTest`, `EzagentDomainChat.Integration.MentionGatedRoutingTest`,
+  `Ezagent.AuditTest`, `EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest`,
   `EzagentPluginLiveview.ObservabilityLiveTest`) use this case to:
 
     1. `start_supervised!/1` the writer per-test (terminated on test exit

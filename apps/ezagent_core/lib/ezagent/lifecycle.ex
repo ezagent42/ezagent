@@ -526,7 +526,8 @@ defmodule Ezagent.Lifecycle do
   end
 
   @doc false
-  @spec __run_destroy__(module(), term(), %{state: map(), transients: map()} | map(), map()) :: :ok
+  @spec __run_destroy__(module(), term(), %{state: map(), transients: map()} | map(), map()) ::
+          :ok
   def __run_destroy__(module, reason, slice, ctx) do
     st =
       case slice do

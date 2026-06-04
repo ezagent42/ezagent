@@ -45,7 +45,7 @@ routing、租户隔离、nested-shell UI）。Phase-7 的缺口是被带着走�
 
 ### Orchestrator 深挖（要素 7）—— 最关键的发现
 
-`apps/ezagent_domain_chat/lib/ezagent/orchestrator/tools.ex`（444 行）
+`apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools.ex`（444 行）
 声明正好 7 个工具函数。读工具体：
 
 - `add_agent_slot` / `remove_agent_slot` / `update_agent_template` /

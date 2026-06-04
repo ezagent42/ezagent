@@ -77,7 +77,7 @@ defmodule Ezagent.Routing.RuntimeAddTest do
     # The chat plugin owns MentionRouting at boot. Test process is
     # not the owner. Adding a rule via RuleStore.add + load_into_registry
     # from this test process must still update the live table.
-    table = EzagentDomainChat.Routing.MentionRouting
+    table = EzagentDomainInstanceMessage.Routing.MentionRouting
 
     {:ok, row} =
       RuleStore.add(

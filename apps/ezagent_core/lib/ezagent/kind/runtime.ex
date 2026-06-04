@@ -522,12 +522,14 @@ defmodule Ezagent.Kind.Runtime do
     end
   end
 
-  defp needed_map_to_struct(%{
-         kind: k,
-         behavior: b,
-         instance: i,
-         workspace_uri: w
-       } = m) do
+  defp needed_map_to_struct(
+         %{
+           kind: k,
+           behavior: b,
+           instance: i,
+           workspace_uri: w
+         } = m
+       ) do
     %Ezagent.Capability{
       kind: k,
       behavior: b,
@@ -550,7 +552,7 @@ defmodule Ezagent.Kind.Runtime do
   # loaded in this build).
   #
   # NOTE: `Ezagent.Entity.User` / `Ezagent.Entity.Agent` live in
-  # `ezagent_domain_identity` / `ezagent_domain_chat` — outside core's
+  # `ezagent_domain_identity` / `ezagent_domain_instance_message` — outside core's
   # dependency cone (P9). Resolve via `Code.ensure_loaded?/1` at
   # runtime, falling back to nil (default impl) when domain apps
   # haven't loaded.

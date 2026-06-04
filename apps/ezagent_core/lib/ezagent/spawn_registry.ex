@@ -19,7 +19,7 @@ defmodule Ezagent.SpawnRegistry do
 
   When the Loader sees `entity://agent/team-alpha/cc_builder` it calls
   `Ezagent.SpawnRegistry.spawn(uri)` and ezagent_core never has to know
-  about `EzagentDomainChat.AgentSupervisor`.
+  about `EzagentDomainInstanceMessage.AgentSupervisor`.
 
   ## Idempotency
 
