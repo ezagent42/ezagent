@@ -240,8 +240,8 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
       :ok = await_session_ready(session_uri, 100)
 
       # The Worker is STILL the same pid (post-cold-spawn invariant).
-      binding_uri =
-        URI.to_string(WorkerSpawn.worker_uri_for(session_uri, "mock_publish", target_id))
+      worker_uri = WorkerSpawn.worker_uri_for(session_uri, "mock_publish", target_id)
+      binding_uri = URI.to_string(worker_uri)
 
       {:ok, sup_pid_after} = WorkerRegistry.lookup(binding_uri)
       assert sup_pid_after == sup_pid_before
@@ -253,16 +253,16 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
                "*Worker stayed alive* across the Session vanish. If the Worker died, the " <>
                "scenario reduces to PR-EM-3 (h) and this test is no longer covering task #49."
 
-      # Re-register the observer (test infra may have flushed) + give
-      # the PublisherLifecycle broadcast + Worker re-subscribe time to
-      # propagate. The lifecycle broadcast fires in SessionImpl's
-      # `on_ready/2` AFTER `Ezagent.ReadyGate.mark_ready/1` flips (codex
-      # r1 FAIL #6 fix — previously this lived in `handle_continue/3`
-      # and raced peer `:call` re-subscribes against the unflipped
-      # ReadyGate); the Worker receives the event as a `Kind.Server`
-      # mailbox message and re-runs `subscribe_to_session_publisher/2`.
+      # Re-register the observer (test infra may have flushed), then
+      # wait for the PublisherLifecycle broadcast + Worker re-subscribe
+      # to actually land. A fixed sleep is flaky under the full suite:
+      # the lifecycle broadcast fires in SessionImpl's `on_ready/2`,
+      # then the Worker handles `:publisher_alive`, dispatches a
+      # `:subscribe_from` call, and the Session mutates its transient
+      # subscriber map. The observable postcondition is the Worker's pid
+      # in that map.
       MockPublishBinding.register_observer(target_id, self())
-      Process.sleep(100)
+      :ok = await_worker_subscribed(session_uri, worker_uri, 100)
 
       # First slice change after the cold-spawn — pre-fix this was
       # silently dropped (the Worker pid wasn't in the new
@@ -318,25 +318,69 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
     member_uri =
       URI.parse("entity://user/team-alpha/em-pub-test-#{System.unique_integer([:positive])}")
 
+    :ok = spawn_user_with_retry(member_uri, 20)
+
+    admin_uri = URI.parse("entity://user/system/admin")
+    target = URI.parse("#{URI.to_string(session_uri)}?action=chat.join")
+
+    dispatch_chat_join_with_retry(target, member_uri, admin_uri, 20)
+  end
+
+  defp spawn_user_with_retry(member_uri, 0),
+    do: flunk("timed out spawning chat member for publisher event: #{URI.to_string(member_uri)}")
+
+  defp spawn_user_with_retry(member_uri, attempts) do
     user_module = Module.concat([Ezagent, Entity, User])
 
     case apply(Ezagent.Kind, :spawn, [
            user_module,
            %{uri: member_uri, initial_caps: MapSet.new()}
          ]) do
-      {:ok, _pid} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
+      {:ok, _pid} ->
+        :ok
+
+      {:error, {:already_started, _pid}} ->
+        :ok
+
+      {:error, {:persistence_failed, %{message: "Database busy"}}} ->
+        Process.sleep(25)
+        spawn_user_with_retry(member_uri, attempts - 1)
+
+      other ->
+        flunk("failed to spawn chat member for publisher event: #{inspect(other)}")
     end
+  end
 
-    admin_uri = URI.parse("entity://user/system/admin")
-    target = URI.parse("#{URI.to_string(session_uri)}?action=chat.join")
+  defp dispatch_chat_join_with_retry(target, member_uri, _admin_uri, 0),
+    do:
+      flunk(
+        "timed out dispatching chat.join for publisher event: " <>
+          "target=#{URI.to_string(target)} member=#{URI.to_string(member_uri)}"
+      )
 
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: target,
-      mode: :call,
-      args: %{member: member_uri},
-      ctx: %{caller: admin_uri, caps: admin_caps(), reply: :ignore}
-    })
+  defp dispatch_chat_join_with_retry(target, member_uri, admin_uri, attempts) do
+    result =
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        target: target,
+        mode: :call,
+        args: %{member: member_uri},
+        ctx: %{caller: admin_uri, caps: admin_caps(), reply: :ignore}
+      })
+
+    case result do
+      {:ok, _} ->
+        :ok
+
+      :ok ->
+        :ok
+
+      {:error, {:persistence_failed, %{message: "Database busy"}}} ->
+        Process.sleep(25)
+        dispatch_chat_join_with_retry(target, member_uri, admin_uri, attempts - 1)
+
+      other ->
+        flunk("chat.join failed while driving publisher event: #{inspect(other)}")
+    end
   end
 
   defp admin_caps do
@@ -374,6 +418,26 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
       _ ->
         Process.sleep(20)
         await_session_ready(uri, retries - 1)
+    end
+  end
+
+  defp await_worker_subscribed(session_uri, worker_uri, 0),
+    do:
+      flunk(
+        "worker did not re-subscribe to Session publisher: " <>
+          "session=#{URI.to_string(session_uri)} worker=#{URI.to_string(worker_uri)}"
+      )
+
+  defp await_worker_subscribed(session_uri, worker_uri, retries) do
+    with {:ok, worker_pid} <- Ezagent.KindRegistry.lookup(worker_uri),
+         {:ok, %{transients: %{subscribers: subscribers}}} <-
+           Ezagent.Kind.get_raw_slice(session_uri, :publisher),
+         true <- Map.has_key?(subscribers, worker_pid) do
+      :ok
+    else
+      _ ->
+        Process.sleep(20)
+        await_worker_subscribed(session_uri, worker_uri, retries - 1)
     end
   end
 

@@ -820,10 +820,12 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
   persistence boundary itself.
 
 - **ExternalMirror flaky tests x3 — RESOLVED.** The flaky publish/rehydration
-  failures were isolated from #21 and fixed as an ExternalMirror reliability
-  PR. Merged to `domain-agent-handoff` as PR #563 (`017b8d2f`). The fix makes
-  Worker publish tests use unique sessions and wait for the Worker's deferred
-  Publisher subscription before asserting publish delivery.
+  failures were isolated from #21 and fixed as ExternalMirror reliability PRs.
+  Merged to `domain-agent-handoff` as PR #563 (`017b8d2f`) and follow-up PR
+  #566. The fixes make Worker publish tests use unique sessions, wait for the
+  Worker's deferred Publisher subscription before asserting publish delivery,
+  and wait for cold-spawn re-subscription via the Session publisher subscriber
+  map instead of a fixed sleep.
 
 - **#22 harden node RPC/distribution console — GATED SECURITY SCOPE.** Needs
   Allen to choose the deployment posture (dev node convenience vs production
