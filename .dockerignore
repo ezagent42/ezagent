@@ -1,0 +1,13 @@
+# Build context excludes — keep the image build lean + reproducible.
+_build/
+deps/
+**/node_modules/
+.git/
+.elixir_ls/
+priv/static/assets/
+*.db
+*.db-*
+erl_crash.dump
+/private/tmp/
+docker/secrets/
+tmp/

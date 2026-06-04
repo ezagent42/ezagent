@@ -37,6 +37,16 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   def auth_failure_signals,
     do: [~r/Run codex login/, ~r/401 Unauthorized/, "no Codex credentials"]
 
+  # #21 PR-2b (④, TEST/E2E ONLY) — provision the full CODEX_HOME credential set
+  # (auth.json + config.toml) from a durable `source` dir into the agent's `home`
+  # CODEX_HOME, so the dockerized E2E runs without a human `codex login`. `source`
+  # and `home` are CODEX_HOME DIRECTORIES (codex is dir-based, unlike cc's single
+  # file). See `EzagentPluginCodex.CredentialRefresh`.
+  @impl Ezagent.Agent.CredentialAdapter
+  def refresh_test_credentials(source, home, opts \\ []) do
+    EzagentPluginCodex.CredentialRefresh.provision(source, home, opts)
+  end
+
   # SPEC 2026-06-01-flavor-generic-template-data (approach B): codex's
   # template_data fields, so an orchestrator-spawned codex worker carries
   # its model/approval/sandbox (pre-fix dropped by core's cc-only mapping).
