@@ -33,21 +33,33 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && cp /root/.local/bin/uv /usr/local/bin/uv
 
 WORKDIR /app
+# Install Hex/rebar into a shared MIX_HOME under /app (later chowned to the esr user) so
+# the NON-ROOT runtime user can run mix (home.init / ecto.migrate / phx.server).
+ENV MIX_HOME=/app/.mix
 RUN mix local.hex --force && mix local.rebar --force
 
-# --- deps + compile (dev) ---
-# (.dockerignore strips _build/deps/node_modules/.git so the context is source-only)
+# --- deps + compile (dev). (Umbrella path-deps mean we can't cleanly pre-compile deps
+#     before the source; .dockerignore strips _build/deps/node_modules/.git.) ---
 COPY . .
 RUN mix deps.get && mix compile
-# dev assets: install the standalone esbuild/tailwind binaries + precompile so the
-# first request / the Endpoint watchers don't stall.
+# dev assets: install the standalone esbuild/tailwind binaries + precompile.
 RUN cd apps/ezagent_web && mix assets.setup && mix assets.build
+# feishu WS sidecar node deps (the real-Feishu inbound path needs @larksuiteoapi/node-sdk;
+# .dockerignore strips the host node_modules so we install fresh for linux).
+RUN cd apps/ezagent_plugin_feishu/priv/ws_sidecar && npm install --omit=dev
 
-# Clear the build-time proxy from the FINAL image (codex r-review): build steps above
-# already used it; baking it into runtime would make tools honoring lowercase proxy vars
-# use a stale build proxy + miss the runtime NO_PROXY (Feishu must go direct). The
-# runtime proxy is supplied fresh by docker-compose (both upper + lower case).
+# Clear the build-time proxy from the FINAL image (codex r-review) — runtime proxy is
+# supplied fresh by docker-compose (both upper + lower case), Feishu must go direct.
 ENV HTTP_PROXY="" HTTPS_PROXY="" http_proxy="" https_proxy="" NO_PROXY="" no_proxy=""
 
 RUN chmod +x docker/entrypoint.sh
+
+# Run as NON-ROOT: erlexec's exec-port refuses to run as root, and the host runs non-root.
+# Own /app (incl. _build for dev recompile) + the volume mountpoints so a FRESH named
+# volume inherits writable ownership. (Recreate volumes with `down -v` after this change.)
+RUN useradd -m -u 1000 esr \
+    && mkdir -p /data /cred/cc /cred/codex /layers \
+    && chown -R esr:esr /app /data /cred /layers
+USER esr
+
 ENTRYPOINT ["/app/docker/entrypoint.sh"]
