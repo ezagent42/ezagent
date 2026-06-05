@@ -455,7 +455,7 @@ defmodule Ezagent.Plugin do
                 "URI schemes (#{Enum.join(@core_schemes, ", ")}) are owned by " <>
                 "core/domain; spawns/0 is reserved and must return []. Extend an " <>
                 "existing scheme via your Kind's type/name prefix " <>
-                "(e.g. entity://agent/<ws>/<flavor>_<name>), or register a " <>
+                "(for example an entity agent URI), or register a " <>
                 "Behavior on a core Kind instead."
     end
   end

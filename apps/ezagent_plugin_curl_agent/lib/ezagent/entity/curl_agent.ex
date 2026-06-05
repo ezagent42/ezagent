@@ -39,17 +39,16 @@ defmodule Ezagent.Entity.CurlAgent do
 
   use Ezagent.Kind,
     pattern: :entity,
-    uri_scheme: "entity://agent/",
     type_name: :curl_agent,
     supervisor: EzagentPluginCurlAgent.InstanceSupervisor
 
   @behaviour Ezagent.Kind
 
-  attach Ezagent.Behavior.CurlAgent
+  attach(Ezagent.Behavior.CurlAgent)
   # Allen 2026-05-26 — `Ezagent.Behavior.ApiKeys` listed here so the
   # `:api_keys` slice gets `init_slice`'d at spawn alongside the
   # plugin's own `:curl_agent` slice.
-  attach Ezagent.Behavior.ApiKeys
+  attach(Ezagent.Behavior.ApiKeys)
 
   # Kind.Server still reads behaviors/0; keep the legacy callback.
   def behaviors, do: [Ezagent.Behavior.CurlAgent, Ezagent.Behavior.ApiKeys]

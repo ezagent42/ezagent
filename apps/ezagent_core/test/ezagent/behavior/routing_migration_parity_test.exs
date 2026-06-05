@@ -100,7 +100,7 @@ defmodule Ezagent.Behavior.RoutingMigrationParityTest do
     :ok = BehaviorRegistry.register(StubRoutingKind, :disable_rule, Routing)
     :ok = BehaviorRegistry.register(StubRoutingKind, :enable_rule, Routing)
 
-    self_uri = URI.parse("system://routing/default")
+    self_uri = Ezagent.URI.new!("system://routing/default")
     admin_caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
     state = %{routing: %{calls: 0}}
 
@@ -108,13 +108,13 @@ defmodule Ezagent.Behavior.RoutingMigrationParityTest do
   end
 
   defp build_invocation(self_uri, action, args, caps) do
-    target = URI.parse("#{URI.to_string(self_uri)}?action=routing.#{action}")
+    target = Ezagent.URI.new!("#{URI.to_string(self_uri)}?action=routing.#{action}")
 
     %Invocation{
       target: target,
       mode: :call,
       args: args,
-      ctx: %{caller: URI.parse("entity://user/system/admin"), caps: caps, reply: :sync}
+      ctx: %{caller: Ezagent.URI.new!("entity://system/user/admin"), caps: caps, reply: :sync}
     }
   end
 
@@ -151,7 +151,7 @@ defmodule Ezagent.Behavior.RoutingMigrationParityTest do
       table = @table
 
       matcher_json = %{"type" => "always"}
-      receivers = ["entity://user/system/admin"]
+      receivers = ["entity://system/user/admin"]
 
       inv =
         build_invocation(
@@ -183,7 +183,7 @@ defmodule Ezagent.Behavior.RoutingMigrationParityTest do
 
       # Seed a rule we can delete.
       {:ok, matcher} = Ezagent.Routing.Matcher.from_json(%{"type" => "always"})
-      {:ok, row} = RuleStore.add(table, matcher, ["entity://user/system/admin"], nil, [])
+      {:ok, row} = RuleStore.add(table, matcher, ["entity://system/user/admin"], nil, [])
 
       inv =
         build_invocation(self_uri, :delete_rule, %{table: table, id: row.id}, admin_caps)
@@ -199,7 +199,7 @@ defmodule Ezagent.Behavior.RoutingMigrationParityTest do
          %{self_uri: self_uri, admin_caps: admin_caps, state: state} do
       table = @table
       {:ok, matcher} = Ezagent.Routing.Matcher.from_json(%{"type" => "always"})
-      {:ok, row} = RuleStore.add(table, matcher, ["entity://user/system/admin"], nil, [])
+      {:ok, row} = RuleStore.add(table, matcher, ["entity://system/user/admin"], nil, [])
 
       inv =
         build_invocation(self_uri, :disable_rule, %{table: table, id: row.id}, admin_caps)
@@ -217,7 +217,7 @@ defmodule Ezagent.Behavior.RoutingMigrationParityTest do
          %{self_uri: self_uri, admin_caps: admin_caps, state: state} do
       table = @table
       {:ok, matcher} = Ezagent.Routing.Matcher.from_json(%{"type" => "always"})
-      {:ok, row} = RuleStore.add(table, matcher, ["entity://user/system/admin"], nil, [])
+      {:ok, row} = RuleStore.add(table, matcher, ["entity://system/user/admin"], nil, [])
       :ok = RuleStore.disable(row.id)
 
       inv =
@@ -296,12 +296,12 @@ defmodule Ezagent.Behavior.RoutingMigrationParityTest do
     end
 
     test "data_owner/1 — workspace-scoped URI returns :any (workspace admin grants)" do
-      ws_uri = URI.parse("workspace://team-alpha")
+      ws_uri = Ezagent.URI.new!("workspace://team-alpha")
       assert Routing.data_owner(ws_uri) == :any
     end
 
     test "data_owner/1 — global system instance returns :no_owner (bootstrap-admin only)" do
-      sys_uri = URI.parse("system://routing/default")
+      sys_uri = Ezagent.URI.new!("system://routing/default")
       assert Routing.data_owner(sys_uri) == :no_owner
     end
   end

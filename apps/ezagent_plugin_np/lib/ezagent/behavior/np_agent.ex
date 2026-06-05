@@ -89,7 +89,7 @@ defmodule Ezagent.Behavior.NpAgent do
 
   @default_timeout_ms 10_000
 
-  action :receive,
+  action(:receive,
     args: %{message: :map},
     returns: %{ok: :boolean, result: :string, error: :atom},
     caps: [:receive],
@@ -97,20 +97,23 @@ defmodule Ezagent.Behavior.NpAgent do
     description:
       "Evaluate the inbound text as a numpy/sympy expression and reply " <>
         "with the computed value"
+  )
 
-  action :reset,
+  action(:reset,
     args: %{},
     returns: %{ok: :boolean},
     caps: [:reset],
     modes: [:call],
     description: "Clear the agent's last_input / last_result / last_error"
+  )
 
-  action :configure,
+  action(:configure,
     args: %{timeout_ms: :integer},
     returns: %{ok: :boolean},
     caps: [:configure],
     modes: [:call],
     description: "Update the agent's per-call timeout (ms)"
+  )
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   # NpAgent is registered on Entity.NpAgent Kind (type_name :np_agent) —
@@ -316,7 +319,7 @@ defmodule Ezagent.Behavior.NpAgent do
             caller: self_uri,
             # SPEC caps-cleanup-v1 §4.4 — agent reply runs under
             # `system://chat-reply` (closed Catalog).
-            caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
+            caps: "chat-reply" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
             reply: :ignore
           })
 

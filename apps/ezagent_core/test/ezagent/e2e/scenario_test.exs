@@ -11,6 +11,7 @@ defmodule Ezagent.E2E.ScenarioTest do
         step("a", run: fn c -> {:ok, c} end, await: fn _ -> :ok end, assert: fn _ -> :ok end),
         step("b", run: fn c -> {:ok, c} end, await: fn _ -> :ok end, assert: fn _ -> :ok end)
       ])
+
     chain = Scenario.fp_chain(sc, "img-1")
     assert length(chain) == 2
     assert Enum.all?(chain, &(byte_size(&1) == 64))
@@ -21,10 +22,33 @@ defmodule Ezagent.E2E.ScenarioTest do
     # NOTE: callbacks MUST be inline literals at the `step` call site — the macro hashes
     # the AST there, so a var-passed fn would hash to the var name (identical for all).
     # Shared logic goes in @layer_inputs helpers, called inline.
-    a = step("a", run: fn c -> {:ok, Map.put(c, :a, 1)} end, await: fn _ -> :ok end, assert: fn _ -> :ok end)
-    b1 = step("b", run: fn c -> {:ok, Map.put(c, :b, 1)} end, await: fn _ -> :ok end, assert: fn _ -> :ok end)
-    b2 = step("b", run: fn c -> {:ok, Map.put(c, :b, 999)} end, await: fn _ -> :ok end, assert: fn _ -> :ok end)
-    cstep = step("c", run: fn c -> {:ok, Map.put(c, :c, 1)} end, await: fn _ -> :ok end, assert: fn _ -> :ok end)
+    a =
+      step("a",
+        run: fn c -> {:ok, Map.put(c, :a, 1)} end,
+        await: fn _ -> :ok end,
+        assert: fn _ -> :ok end
+      )
+
+    b1 =
+      step("b",
+        run: fn c -> {:ok, Map.put(c, :b, 1)} end,
+        await: fn _ -> :ok end,
+        assert: fn _ -> :ok end
+      )
+
+    b2 =
+      step("b",
+        run: fn c -> {:ok, Map.put(c, :b, 999)} end,
+        await: fn _ -> :ok end,
+        assert: fn _ -> :ok end
+      )
+
+    cstep =
+      step("c",
+        run: fn c -> {:ok, Map.put(c, :c, 1)} end,
+        await: fn _ -> :ok end,
+        assert: fn _ -> :ok end
+      )
 
     chain1 = Scenario.fp_chain(scen([a, b1, cstep]), "img-1")
     chain2 = Scenario.fp_chain(scen([a, b2, cstep]), "img-1")
@@ -35,7 +59,11 @@ defmodule Ezagent.E2E.ScenarioTest do
   end
 
   test "env_image_id is part of the chain (image change invalidates all)" do
-    sc = scen([step("a", run: fn c -> {:ok, c} end, await: fn _ -> :ok end, assert: fn _ -> :ok end)])
+    sc =
+      scen([
+        step("a", run: fn c -> {:ok, c} end, await: fn _ -> :ok end, assert: fn _ -> :ok end)
+      ])
+
     refute Scenario.fp_chain(sc, "img-1") == Scenario.fp_chain(sc, "img-2")
   end
 end

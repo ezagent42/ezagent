@@ -7,7 +7,7 @@ defmodule Ezagent.Kind.ServerTest do
     # PR #141: agent URIs are entity://agent/<flavor>_<name>; use "test" flavor.
     uri =
       URI.parse(
-        "entity://agent/team-alpha/test_kind-server-#{System.unique_integer([:positive])}"
+        "entity://team-alpha/agent/test_kind-server-#{System.unique_integer([:positive])}"
       )
 
     # Wire TestKind/TestBehavior into the BehaviorRegistry for this test —
@@ -38,11 +38,11 @@ defmodule Ezagent.Kind.ServerTest do
     :ok = wait_until_ready(uri, 500)
 
     inv = %Ezagent.Invocation{
-      target: URI.parse("#{URI.to_string(uri)}?action=test.noop"),
+      target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop"),
       mode: :call,
       args: %{msg: "hello"},
       ctx: %{
-        caller: URI.parse("entity://user/system/admin"),
+        caller: Ezagent.URI.new!("entity://system/user/admin"),
         caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
         reply: :ignore
       }
@@ -56,11 +56,11 @@ defmodule Ezagent.Kind.ServerTest do
     :ok = wait_until_ready(uri, 500)
 
     inv = %Ezagent.Invocation{
-      target: URI.parse("#{URI.to_string(uri)}?action=test.noop"),
+      target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop"),
       mode: :cast,
       args: %{msg: "via-cast"},
       ctx: %{
-        caller: URI.parse("entity://user/system/admin"),
+        caller: Ezagent.URI.new!("entity://system/user/admin"),
         caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
         reply: {:caller_inbox, self()}
       }
@@ -75,11 +75,11 @@ defmodule Ezagent.Kind.ServerTest do
     # Buffer a message *before* the server exists, then start the server —
     # the message should be drained during announce_ready.
     pre_inv = %Ezagent.Invocation{
-      target: URI.parse("#{URI.to_string(uri)}?action=test.noop"),
+      target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop"),
       mode: :cast,
       args: %{msg: "pre-ready"},
       ctx: %{
-        caller: URI.parse("entity://user/system/admin"),
+        caller: Ezagent.URI.new!("entity://system/user/admin"),
         caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
         reply: {:caller_inbox, self()}
       }

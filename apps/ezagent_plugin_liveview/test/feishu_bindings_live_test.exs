@@ -49,14 +49,14 @@ defmodule EzagentPluginLiveview.FeishuBindingsLiveTest do
       {:ok, _row} =
         UserBinding.bind(
           "ou_existing",
-          "entity://user/system/alice",
-          "entity://user/system/admin"
+          "entity://system/user/alice",
+          "entity://system/user/admin"
         )
 
       {:ok, _lv, html} = live(conn, "/plugins/feishu/bindings")
 
       assert html =~ "ou_existing"
-      assert html =~ "entity://user/system/alice"
+      assert html =~ "entity://system/user/alice"
       refute html =~ "No bindings yet"
     end
   end
@@ -95,7 +95,7 @@ defmodule EzagentPluginLiveview.FeishuBindingsLiveTest do
           "bind" => %{"open_id" => "ou_tamper_user"}
         })
         |> render_submit(%{
-          "bind" => %{"user_uri" => "entity://user/other-tenant/evil"}
+          "bind" => %{"user_uri" => "entity://other-tenant/user/evil"}
         })
 
       assert html =~ "Rejected"

@@ -53,7 +53,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateAtomicityTest do
       workspace_uri = Ezagent.URI.entity_workspace_uri(owner)
 
       short = "atomicity-incomplete-#{System.unique_integer([:positive])}"
-      session_uri = URI.new!("session://default/system/#{short}")
+      session_uri = URI.new!("session://system/default/#{short}")
 
       # ---- Stage a HALF-CREATED session by hand ----
       # Session Kind spawned + workspace bound (steps 2-3), but
@@ -66,7 +66,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateAtomicityTest do
 
       # Sanity — the half-session is genuinely incomplete BEFORE we
       # re-create: no orchestrator registered, owner not a member.
-      orch_uri = Session.derive_orchestrator_uri(session_uri, workspace_uri)
+      orch_uri = Session.planned_orchestrator_uri(session_uri, workspace_uri)
       assert KindRegistry.lookup(orch_uri) == :error
       refute owner in Session.session_member_uris(session_uri)
 
@@ -74,11 +74,14 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateAtomicityTest do
       # The spawn returns `{:already_started}` → verify_or_recreate
       # detects INCOMPLETE → rollback + recreate fresh.
       assert {:ok, ^session_uri, meta} =
-               EzagentDomainInstanceMessage.SessionCreator.create_session(short, owner, template_name: "default")
+               EzagentDomainInstanceMessage.SessionCreator.create_session(short, owner,
+                 template_name: "default"
+               )
 
       # ---- The result must be a COMPLETE session, not the half one ----
       # 1. OTU materialized (step 4).
       wc = Session.read_template_working_copy(session_uri)
+
       assert match?(%URI{}, Map.get(wc, :orchestrator_template_uri)),
              "recreated session must have its orchestrator_template_uri set"
 
@@ -104,19 +107,27 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateAtomicityTest do
 
       # First create → complete.
       {:ok, session_uri, _meta1} =
-        EzagentDomainInstanceMessage.SessionCreator.create_session(short, owner, template_name: "default")
+        EzagentDomainInstanceMessage.SessionCreator.create_session(short, owner,
+          template_name: "default"
+        )
 
       {:ok, orch_pid_before} =
-        KindRegistry.lookup(Session.derive_orchestrator_uri(session_uri, URI.new!("workspace://system")))
+        KindRegistry.lookup(
+          Session.planned_orchestrator_uri(session_uri, URI.new!("workspace://system"))
+        )
 
       # Second create → `{:already_started}` → COMPLETE → return existing
       # WITHOUT recreating (the orchestrator pid must be unchanged — a
       # recreate would have torn it down + re-spawned).
       {:ok, ^session_uri, _meta2} =
-        EzagentDomainInstanceMessage.SessionCreator.create_session(short, owner, template_name: "default")
+        EzagentDomainInstanceMessage.SessionCreator.create_session(short, owner,
+          template_name: "default"
+        )
 
       {:ok, orch_pid_after} =
-        KindRegistry.lookup(Session.derive_orchestrator_uri(session_uri, URI.new!("workspace://system")))
+        KindRegistry.lookup(
+          Session.planned_orchestrator_uri(session_uri, URI.new!("workspace://system"))
+        )
 
       assert orch_pid_before == orch_pid_after,
              "a complete session must be returned idempotently — the orchestrator " <>
@@ -134,7 +145,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateAtomicityTest do
       # Create a real, COMPLETE orchestrator-bearing session so EVERY
       # write rollback must reverse is present.
       {:ok, session_uri, meta} =
-        EzagentDomainInstanceMessage.SessionCreator.create_session(short, owner, template_name: "default")
+        EzagentDomainInstanceMessage.SessionCreator.create_session(short, owner,
+          template_name: "default"
+        )
 
       orch_uri = meta.orchestrator_uri
       assert match?(%URI{}, orch_uri)
@@ -152,6 +165,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateAtomicityTest do
              "owner must hold the OrchestratorAdmin :restart cap before rollback"
 
       orch_caps_before = Ezagent.Identity.list_caps_for(orch_uri)
+
       assert Enum.any?(orch_caps_before, &within_session_cap?(&1, session_uri)),
              "orchestrator must hold the within-session scoped cap before rollback"
 

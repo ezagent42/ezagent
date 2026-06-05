@@ -9,16 +9,16 @@ defmodule Ezagent.Agent.CredentialNotifierTest do
   alias Ezagent.Agent.CredentialNotifier
   alias Ezagent.Domain.Pty.Server, as: PtyServer
 
-  defp agent_uri, do: Ezagent.URI.new!("entity://agent/team-alpha/cc_crednotif-#{System.unique_integer([:positive])}")
+  defp agent_uri, do: Ezagent.URI.new!("entity://team-alpha/agent/cc_crednotif-#{System.unique_integer([:positive])}")
 
   describe "terminal_url/1 (D2)" do
     test "builds the deployment-host Phoenix terminal route with a URL-encoded agent URI" do
-      uri = Ezagent.URI.new!("entity://agent/team-alpha/cc_foo")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_foo")
       url = CredentialNotifier.terminal_url(uri)
 
       assert url =~ ~r{^https://[^/]+/identities/agents/.+/terminal$}
       # the agent URI is URL-encoded into the path segment
-      assert url =~ URI.encode_www_form("entity://agent/team-alpha/cc_foo")
+      assert url =~ URI.encode_www_form("entity://team-alpha/agent/cc_foo")
       # default deployment host when EZAGENT_PUBLIC_HOST is unset
       assert url =~ System.get_env("EZAGENT_PUBLIC_HOST", "app.ezagent.chat")
     end
@@ -37,7 +37,7 @@ defmodule Ezagent.Agent.CredentialNotifierTest do
         end
       end)
 
-      url = CredentialNotifier.terminal_url(Ezagent.URI.new!("entity://agent/team-alpha/cc_foo"))
+      url = CredentialNotifier.terminal_url(Ezagent.URI.new!("entity://team-alpha/agent/cc_foo"))
       assert String.starts_with?(url, "http://100.64.0.27:10042/identities/agents/")
     end
   end
@@ -81,7 +81,7 @@ defmodule Ezagent.Agent.CredentialNotifierTest do
       # worker agent whose lineage owner is the ORCHESTRATOR (an agent), whose owner is
       # the human admin. Notifications only accepts users → must walk to admin.
       worker = agent_uri()
-      orch = Ezagent.URI.new!("entity://agent/team-alpha/cc_orch-#{System.unique_integer([:positive])}")
+      orch = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch-#{System.unique_integer([:positive])}")
       owner = Ezagent.Entity.User.admin_uri()
 
       :ets.insert(Ezagent.AgentLineage.table(), {URI.to_string(worker), URI.to_string(orch)})

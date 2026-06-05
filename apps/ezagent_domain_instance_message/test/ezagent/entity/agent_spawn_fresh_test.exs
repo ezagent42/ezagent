@@ -20,10 +20,17 @@ defmodule Ezagent.Entity.AgentSpawnFreshTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Entity.Agent
-  alias Ezagent.{AgentLineage, AgentFlavorRegistry, SpawnRegistry, WorkspaceRegistry}
+
+  alias Ezagent.{
+    AgentFlavorAttributes,
+    AgentFlavorRegistry,
+    AgentLineage,
+    SpawnRegistry,
+    WorkspaceRegistry
+  }
 
   @default_ws URI.new!("workspace://team-alpha")
-  @template_uri URI.parse("template://agent/system/cc-orchestrator")
+  @template_uri Ezagent.URI.new!("template://system/agent/cc-orchestrator")
 
   defp uniq, do: System.unique_integer([:positive])
 
@@ -40,17 +47,25 @@ defmodule Ezagent.Entity.AgentSpawnFreshTest do
     flavor
   end
 
+  defp store_flavor(instance, flavor) do
+    agent_uri = Ezagent.URI.agent("team-alpha", instance)
+    :ok = AgentFlavorAttributes.put(agent_uri, flavor)
+    on_exit(fn -> AgentFlavorAttributes.delete(agent_uri) end)
+    :ok
+  end
+
   describe "spawn_fresh/4 — codex rev-4 HIGH-1 contract" do
     test "first spawn → fresh?: true + lineage + binding recorded" do
       flavor = register_no_class_flavor()
       instance = "#{flavor}_first-#{uniq()}"
-      granted_by = URI.parse("entity://user/team-alpha/granter-#{uniq()}")
+      granted_by = Ezagent.URI.new!("entity://team-alpha/user/granter-#{uniq()}")
+      :ok = store_flavor(instance, flavor)
 
       assert {:ok, %{pid: pid, fresh?: true, agent_uri: agent_uri}} =
                Agent.spawn_fresh(@template_uri, instance, @default_ws, granted_by)
 
       assert is_pid(pid)
-      assert URI.to_string(agent_uri) == "entity://agent/team-alpha/#{instance}"
+      assert URI.to_string(agent_uri) == "entity://team-alpha/agent/#{instance}"
 
       # Side effects ARE recorded for a fresh worker.
       assert {:ok, %URI{} = bound} = WorkspaceRegistry.lookup(agent_uri)
@@ -63,9 +78,10 @@ defmodule Ezagent.Entity.AgentSpawnFreshTest do
     test "second spawn of same URI → fresh?: false + NO lineage/binding mutation" do
       flavor = register_no_class_flavor()
       instance = "#{flavor}_second-#{uniq()}"
+      :ok = store_flavor(instance, flavor)
 
-      first_granter = URI.parse("entity://user/team-alpha/first-#{uniq()}")
-      other_granter = URI.parse("entity://user/team-alpha/other-#{uniq()}")
+      first_granter = Ezagent.URI.new!("entity://team-alpha/user/first-#{uniq()}")
+      other_granter = Ezagent.URI.new!("entity://team-alpha/user/other-#{uniq()}")
 
       # First call records the ORIGINAL lineage + binding.
       assert {:ok, %{fresh?: true, agent_uri: agent_uri}} =
@@ -109,12 +125,13 @@ defmodule Ezagent.Entity.AgentSpawnFreshTest do
     test "first call → {:ok, agent_uri} (pre-PR-A shape preserved)" do
       flavor = register_no_class_flavor()
       instance = "#{flavor}_shim-first-#{uniq()}"
-      granted_by = URI.parse("entity://user/team-alpha/shim-granter-#{uniq()}")
+      granted_by = Ezagent.URI.new!("entity://team-alpha/user/shim-granter-#{uniq()}")
+      :ok = store_flavor(instance, flavor)
 
       assert {:ok, %URI{} = agent_uri} =
                Agent.spawn(@template_uri, instance, @default_ws, granted_by)
 
-      assert URI.to_string(agent_uri) == "entity://agent/team-alpha/#{instance}"
+      assert URI.to_string(agent_uri) == "entity://team-alpha/agent/#{instance}"
 
       assert {:ok, _} = AgentLineage.lookup(agent_uri)
       assert {:ok, _} = WorkspaceRegistry.lookup(agent_uri)
@@ -123,9 +140,10 @@ defmodule Ezagent.Entity.AgentSpawnFreshTest do
     test "second call → {:ok, agent_uri} too (legacy: re-binds + re-records)" do
       flavor = register_no_class_flavor()
       instance = "#{flavor}_shim-second-#{uniq()}"
+      :ok = store_flavor(instance, flavor)
 
-      first_granter = URI.parse("entity://user/team-alpha/shim-first-#{uniq()}")
-      second_granter = URI.parse("entity://user/team-alpha/shim-second-#{uniq()}")
+      first_granter = Ezagent.URI.new!("entity://team-alpha/user/shim-first-#{uniq()}")
+      second_granter = Ezagent.URI.new!("entity://team-alpha/user/shim-second-#{uniq()}")
 
       # First call.
       assert {:ok, agent_uri} =

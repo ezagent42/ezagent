@@ -18,18 +18,18 @@ defmodule Ezagent.Behavior.ChatMemberFacetsTest do
 
   describe "role_name_to_uri/2" do
     test "resolves a role_name to its member URI" do
-      relay = uri("entity://agent/team/relay")
+      relay = uri("entity://team/agent/relay")
 
       members = %{
         relay => %{online: true, role_name: "relay"},
-        uri("entity://user/system/admin") => %{online: true}
+        uri("entity://system/user/admin") => %{online: true}
       }
 
       assert Chat.role_name_to_uri(members, "relay") == relay
     end
 
     test "returns nil when no member carries that role_name" do
-      members = %{uri("entity://user/system/admin") => %{online: true, role_name: "owner"}}
+      members = %{uri("entity://system/user/admin") => %{online: true, role_name: "owner"}}
       assert Chat.role_name_to_uri(members, "relay") == nil
     end
 

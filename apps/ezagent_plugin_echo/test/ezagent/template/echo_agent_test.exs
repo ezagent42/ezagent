@@ -44,7 +44,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
       assert :ok =
                EchoAgent.validate(%{
                  "class" => "echo.agent",
-                 "agent_uri" => "entity://agent/team-alpha/echo_no-pty"
+                 "agent_uri" => "entity://team-alpha/agent/echo_no-pty"
                })
     end
 
@@ -52,7 +52,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
       assert :ok =
                EchoAgent.validate(%{
                  "class" => "echo.agent",
-                 "agent_uri" => "entity://agent/team-alpha/echo_off",
+                 "agent_uri" => "entity://team-alpha/agent/echo_off",
                  "with_pty" => false,
                  # cwd allowed but ignored when with_pty: false
                  "cwd" => ""
@@ -63,7 +63,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
       assert :ok =
                EchoAgent.validate(%{
                  "class" => "echo.agent",
-                 "agent_uri" => "entity://agent/team-alpha/echo_on",
+                 "agent_uri" => "entity://team-alpha/agent/echo_on",
                  "with_pty" => true,
                  "cwd" => "/tmp"
                })
@@ -73,7 +73,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
       assert {:error, :cwd_required_when_with_pty} =
                EchoAgent.validate(%{
                  "class" => "echo.agent",
-                 "agent_uri" => "entity://agent/team-alpha/echo_x",
+                 "agent_uri" => "entity://team-alpha/agent/echo_x",
                  "with_pty" => true
                })
     end
@@ -82,7 +82,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
       assert {:error, :cwd_required_when_with_pty} =
                EchoAgent.validate(%{
                  "class" => "echo.agent",
-                 "agent_uri" => "entity://agent/team-alpha/echo_x",
+                 "agent_uri" => "entity://team-alpha/agent/echo_x",
                  "with_pty" => true,
                  "cwd" => ""
                })
@@ -90,14 +90,14 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
 
     test "rejects missing class" do
       assert {:error, :missing_class_field} =
-               EchoAgent.validate(%{"agent_uri" => "entity://agent/team-alpha/echo_x"})
+               EchoAgent.validate(%{"agent_uri" => "entity://team-alpha/agent/echo_x"})
     end
 
     test "rejects wrong class" do
       assert {:error, {:wrong_class, "cc.agent"}} =
                EchoAgent.validate(%{
                  "class" => "cc.agent",
-                 "agent_uri" => "entity://agent/team-alpha/echo_x"
+                 "agent_uri" => "entity://team-alpha/agent/echo_x"
                })
     end
 
@@ -106,19 +106,19 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
                EchoAgent.validate(%{"class" => "echo.agent"})
     end
 
-    test "rejects wrong agent flavor in name prefix" do
-      assert {:error, {:wrong_agent_flavor, "cc", expected: "echo"}} =
+    test "ignores legacy name prefix when validating stored flavor" do
+      assert :ok =
                EchoAgent.validate(%{
                  "class" => "echo.agent",
-                 "agent_uri" => "entity://agent/team-alpha/cc_demo"
+                 "agent_uri" => "entity://team-alpha/agent/cc_demo"
                })
     end
 
-    test "rejects entity://agent/<name> without flavor prefix" do
-      assert {:error, {:missing_flavor_prefix, _, _}} =
+    test "accepts entity://agent/<name> without flavor prefix" do
+      assert :ok =
                EchoAgent.validate(%{
                  "class" => "echo.agent",
-                 "agent_uri" => "entity://agent/team-alpha/just-a-name"
+                 "agent_uri" => "entity://team-alpha/agent/just-a-name"
                })
     end
 
@@ -126,15 +126,15 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
       assert {:error, {:invalid_agent_uri, _, _}} =
                EchoAgent.validate(%{
                  "class" => "echo.agent",
-                 "agent_uri" => "entity://user/team-alpha/x"
+                 "agent_uri" => "entity://team-alpha/user/x"
                })
     end
 
     test "rejects non-entity scheme" do
-      assert {:error, {:bad_agent_uri, _}} =
+      assert {:error, {:invalid_agent_uri, _, "agent URI must be an entity agent URI"}} =
                EchoAgent.validate(%{
                  "class" => "echo.agent",
-                 "agent_uri" => "session://default/system/main"
+                 "agent_uri" => "session://system/default/main"
                })
     end
   end
@@ -142,7 +142,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
   describe "instantiate/3 — without with_pty" do
     test "spawns the Agent Kind alone (no PtyServer)" do
       agent_uri_str =
-        "entity://agent/team-alpha/echo_test-no-pty-#{System.unique_integer([:positive])}"
+        "entity://team-alpha/agent/echo_test-no-pty-#{System.unique_integer([:positive])}"
 
       # Build via the canonical chokepoint so the pinned struct matches
       # what `instantiate/3` returns. Post-SPEC 2026-05-27 URI
@@ -157,7 +157,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
         "agent_uri" => agent_uri_str
       }
 
-      workspace_uri = URI.parse("workspace://test")
+      workspace_uri = Ezagent.URI.new!("workspace://test")
 
       # codex round-6 HIGH-1 — `instantiate/3` returns the 3-element
       # `{:ok, uris, %{fresh?: _}}` form; a first spawn is `fresh?: true`.
@@ -180,7 +180,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
   describe "instantiate/3 — with with_pty: true" do
     test "spawns BOTH the Agent Kind AND a PtyServer (Domain.Pty SPEC §4 cross-flavor opt-in)" do
       agent_uri_str =
-        "entity://agent/team-alpha/echo_test-pty-#{System.unique_integer([:positive])}"
+        "entity://team-alpha/agent/echo_test-pty-#{System.unique_integer([:positive])}"
 
       # Build via the canonical chokepoint so the pinned struct matches
       # what `instantiate/3` returns. Post-SPEC 2026-05-27 URI
@@ -197,7 +197,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
         "cwd" => System.tmp_dir!()
       }
 
-      workspace_uri = URI.parse("workspace://test")
+      workspace_uri = Ezagent.URI.new!("workspace://test")
 
       # codex round-6 HIGH-1 — 3-element return; a first spawn is fresh.
       assert {:ok, [^agent_uri], %{fresh?: true}} =
@@ -220,7 +220,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
 
     test "is idempotent — second call returns same URI without spawning a second PtyServer" do
       agent_uri_str =
-        "entity://agent/team-alpha/echo_idem-#{System.unique_integer([:positive])}"
+        "entity://team-alpha/agent/echo_idem-#{System.unique_integer([:positive])}"
 
       # Build via the canonical chokepoint so the pinned struct matches
       # what `instantiate/3` returns. Post-SPEC 2026-05-27 URI
@@ -237,7 +237,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
         "cwd" => System.tmp_dir!()
       }
 
-      workspace_uri = URI.parse("workspace://test")
+      workspace_uri = Ezagent.URI.new!("workspace://test")
 
       # codex round-6 HIGH-1 — first spawn is fresh, the idempotent
       # re-call adopts the already-live worker (`fresh?: false`).
@@ -261,7 +261,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
     # `Ezagent.PluginCc.Template.CcAgentTest`'s no-sidecar test.
     test "an already-started Agent Kind returns fresh?: false and starts NO PtyServer" do
       agent_uri_str =
-        "entity://agent/team-alpha/echo_already-#{System.unique_integer([:positive])}"
+        "entity://team-alpha/agent/echo_already-#{System.unique_integer([:positive])}"
 
       # Build via the canonical chokepoint so the pinned struct matches
       # what `instantiate/3` returns. Post-SPEC 2026-05-27 URI
@@ -271,10 +271,10 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
       # `URI.parse`-built pin no longer `==` the returned URI.
       agent_uri = Ezagent.URI.new!(agent_uri_str)
 
-      # Bring up ONLY the Agent Kind — directly, NOT via the template.
-      # Kind alive, no PtyServer: the "worker this call did not create"
-      # state.
-      assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+      # Bring up ONLY the Echo Kind — directly, NOT via the template or
+      # URI-derived flavor dispatch. Kind alive, no PtyServer: the
+      # "worker this call did not create" state.
+      assert {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Echo, %{uri: agent_uri})
       assert {:ok, _} = Ezagent.KindRegistry.lookup(agent_uri)
 
       refute Ezagent.Domain.Pty.alive?(agent_uri),
@@ -287,7 +287,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
         "cwd" => System.tmp_dir!()
       }
 
-      workspace_uri = URI.parse("workspace://test")
+      workspace_uri = Ezagent.URI.new!("workspace://test")
 
       # Kind alive but PTY absent → idempotency short-circuit does not
       # fire → `ensure_agent_kind` reports `:already_started` → the
@@ -352,21 +352,21 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
     test "coerces with_pty=\"true\" string to atom true" do
       out =
         EchoAgent.form_to_args(%{
-          "agent_uri" => "entity://agent/team-alpha/echo_my-bot",
+          "agent_uri" => "entity://team-alpha/agent/echo_my-bot",
           "with_pty" => "true",
           "cwd" => "/tmp/echo-sandbox"
         })
 
       assert out["with_pty"] == true
       assert out["class"] == "echo.agent"
-      assert out["agent_uri"] == "entity://agent/team-alpha/echo_my-bot"
+      assert out["agent_uri"] == "entity://team-alpha/agent/echo_my-bot"
       assert out["cwd"] == "/tmp/echo-sandbox"
     end
 
     test "coerces with_pty=\"false\" string to atom false" do
       out =
         EchoAgent.form_to_args(%{
-          "agent_uri" => "entity://agent/team-alpha/echo_no-pty",
+          "agent_uri" => "entity://team-alpha/agent/echo_no-pty",
           "with_pty" => "false"
         })
 
@@ -377,7 +377,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
     test "output passes validate/1 round-trip (with_pty true + cwd)" do
       out =
         EchoAgent.form_to_args(%{
-          "agent_uri" => "entity://agent/team-alpha/echo_roundtrip",
+          "agent_uri" => "entity://team-alpha/agent/echo_roundtrip",
           "with_pty" => "true",
           "cwd" => "/tmp"
         })
@@ -388,7 +388,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
     test "output passes validate/1 round-trip (with_pty false, no cwd)" do
       out =
         EchoAgent.form_to_args(%{
-          "agent_uri" => "entity://agent/team-alpha/echo_roundtrip-off",
+          "agent_uri" => "entity://team-alpha/agent/echo_roundtrip-off",
           "with_pty" => "false"
         })
 
@@ -402,14 +402,14 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
     test "raises on with_pty value other than \"true\"/\"false\"" do
       assert_raise ArgumentError, ~r/with_pty must be/, fn ->
         EchoAgent.form_to_args(%{
-          "agent_uri" => "entity://agent/team-alpha/echo_drift",
+          "agent_uri" => "entity://team-alpha/agent/echo_drift",
           "with_pty" => "yes"
         })
       end
 
       assert_raise ArgumentError, ~r/with_pty must be/, fn ->
         EchoAgent.form_to_args(%{
-          "agent_uri" => "entity://agent/team-alpha/echo_drift",
+          "agent_uri" => "entity://team-alpha/agent/echo_drift",
           "with_pty" => "tru"
         })
       end
@@ -423,19 +423,19 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
       out =
         EchoAgent.form_to_args(%{
           "tmpl_name" => "echo-test",
-          "agent_uri" => "entity://agent/team-alpha/echo_xyz",
+          "agent_uri" => "entity://team-alpha/agent/echo_xyz",
           "with_pty" => "false"
         })
 
       refute Map.has_key?(out, "tmpl_name")
-      assert out["agent_uri"] == "entity://agent/team-alpha/echo_xyz"
+      assert out["agent_uri"] == "entity://team-alpha/agent/echo_xyz"
       assert out["class"] == "echo.agent"
     end
 
     test "with_pty absent → output omits with_pty (validate defaults to no-PTY)" do
       out =
         EchoAgent.form_to_args(%{
-          "agent_uri" => "entity://agent/team-alpha/echo_no-field"
+          "agent_uri" => "entity://team-alpha/agent/echo_no-field"
         })
 
       refute Map.has_key?(out, "with_pty")

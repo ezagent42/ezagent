@@ -37,7 +37,7 @@ defmodule Ezagent.Behavior.ApiKeysMigrationParityTest do
     :ok = BehaviorRegistry.register(StubAgentKind, :delete_api_key, ApiKeys)
     :ok = BehaviorRegistry.register(StubAgentKind, :get_api_key, ApiKeys)
 
-    agent_uri = URI.parse("entity://agent/parity/curl_agent-#{System.unique_integer([:positive])}")
+    agent_uri = Ezagent.URI.new!("entity://parity/agent/curl_agent-#{System.unique_integer([:positive])}")
     state = %{api_keys: ApiKeys.init_slice(%{})}
 
     {:ok, agent_uri: agent_uri, state: state}

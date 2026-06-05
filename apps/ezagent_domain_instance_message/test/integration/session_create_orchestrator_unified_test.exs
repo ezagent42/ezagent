@@ -42,9 +42,11 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorUnif
       short = "unified-a1-#{System.unique_integer([:positive])}"
 
       assert {:ok, session_uri, meta} =
-               EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(), template_name: "default")
+               EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(),
+                 template_name: "default"
+               )
 
-      assert URI.to_string(session_uri) == "session://default/system/#{short}"
+      assert URI.to_string(session_uri) == "session://system/default/#{short}"
       assert is_map(meta)
       assert Map.has_key?(meta, :orchestrator_uri)
       assert Map.has_key?(meta, :orchestrator_status)
@@ -57,8 +59,13 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorUnif
       assert meta.orchestrator_status == :ready,
              "expected :ready, got #{inspect(meta.orchestrator_status)} (error=#{inspect(meta.orchestrator_error)})"
 
-      assert %URI{scheme: "entity", host: "agent"} = meta.orchestrator_uri
+      assert %URI{scheme: "entity", host: "system"} = meta.orchestrator_uri
+      assert Ezagent.URI.type?(meta.orchestrator_uri, :agent)
       assert is_nil(meta.orchestrator_error)
+
+      wc = Session.read_template_working_copy(session_uri)
+      assert %URI{} = stored_orchestrator_uri = Map.get(wc, :orchestrator_uri)
+      assert URI.to_string(stored_orchestrator_uri) == URI.to_string(meta.orchestrator_uri)
     end
   end
 
@@ -67,21 +74,25 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorUnif
       short = "unified-a2-#{System.unique_integer([:positive])}"
 
       {:ok, _session_uri, meta} =
-        EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(), template_name: "default")
+        EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(),
+          template_name: "default"
+        )
 
       assert meta.orchestrator_status == :ready
       assert {:ok, pid} = KindRegistry.lookup(meta.orchestrator_uri)
       assert Process.alive?(pid)
     end
 
-    test "orchestrator URI matches `derive_orchestrator_uri` for this session" do
+    test "orchestrator URI matches `planned_orchestrator_uri` for this session" do
       short = "unified-a2-shape-#{System.unique_integer([:positive])}"
 
       {:ok, session_uri, meta} =
-        EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(), template_name: "default")
+        EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(),
+          template_name: "default"
+        )
 
       workspace_uri = Ezagent.URI.entity_workspace_uri(User.admin_uri())
-      expected = Session.derive_orchestrator_uri(session_uri, workspace_uri)
+      expected = Session.planned_orchestrator_uri(session_uri, workspace_uri)
 
       assert URI.to_string(meta.orchestrator_uri) == URI.to_string(expected)
     end
@@ -108,7 +119,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorUnif
       short = "unified-a3-struct-#{System.unique_integer([:positive])}"
 
       {:ok, _session_uri, meta} =
-        EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(), template_name: "default")
+        EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(),
+          template_name: "default"
+        )
 
       assert MapSet.subset?(
                MapSet.new([:orchestrator_uri, :orchestrator_status, :orchestrator_error]),
@@ -118,15 +131,17 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorUnif
   end
 
   describe "URI invariant — session URI shape unchanged vs pre-Gap-A path" do
-    test "default template still yields session://default/system/<short>" do
+    test "default template still yields session://system/default/<short>" do
       # SPEC #366 + #324 invariant — the auto-spawn shouldn't have
       # changed the session URI itself.
       short = "unified-uri-#{System.unique_integer([:positive])}"
 
       {:ok, session_uri, _meta} =
-        EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(), template_name: "default")
+        EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(),
+          template_name: "default"
+        )
 
-      assert URI.to_string(session_uri) == "session://default/system/#{short}"
+      assert URI.to_string(session_uri) == "session://system/default/#{short}"
     end
   end
 
@@ -163,13 +178,15 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorUnif
       # `Agent.spawn_from_template_content/4` (which runs the cc Template
       # Class's instantiate). We assert this indirectly — the spawn IS
       # successful AND the worker URI lands at the deterministic
-      # `derive_orchestrator_uri/2` shape AND the cc Template Class's
+      # `planned_orchestrator_uri/2` shape AND the cc Template Class's
       # post-spawn obligations (lineage, workspace binding) were
       # established by `spawn_from_template_content/4`.
       short = "crit-auto-spawn-#{System.unique_integer([:positive])}"
 
       {:ok, _session_uri, meta} =
-        EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(), template_name: "default")
+        EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(),
+          template_name: "default"
+        )
 
       assert meta.orchestrator_status == :ready,
              "expected :ready, got #{inspect(meta.orchestrator_status)} (error=#{inspect(meta.orchestrator_error)})"
@@ -202,7 +219,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorUnif
       short = "crit-auto-degraded-#{System.unique_integer([:positive])}"
 
       {:ok, _session_uri, meta} =
-        EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(), template_name: "default")
+        EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(),
+          template_name: "default"
+        )
 
       assert meta.orchestrator_status == :ready,
              "agent must spawn (best-effort UX); got #{inspect(meta)}"
@@ -233,7 +252,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorUnif
       short = "hi1-#{System.unique_integer([:positive])}"
 
       assert {:ok, _, meta} =
-               EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(), template_name: "default")
+               EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(),
+                 template_name: "default"
+               )
 
       assert meta.orchestrator_status in [:ready, :failed]
     end
@@ -247,7 +268,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorUnif
       # circuits → `create_session/3` returns `{:error, _}` and no
       # orchestrator-meta is emitted.
 
-      bare_uri = URI.new!("entity://user/system/hi1-bare-#{System.unique_integer([:positive])}")
+      bare_uri = URI.new!("entity://system/user/hi1-bare-#{System.unique_integer([:positive])}")
       {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: bare_uri, initial_caps: MapSet.new()})
 
       short = "hi1-denied-#{System.unique_integer([:positive])}"
@@ -255,14 +276,17 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorUnif
       # Bare user can't grant their own caps → the grant_cap dispatch
       # inside `grant_owner_orchestrator_admin_cap/3` denies → the `with`
       # chain short-circuits BEFORE `ensure_orchestrator_meta/3` runs.
-      result = EzagentDomainInstanceMessage.SessionCreator.create_session(short, bare_uri, template_name: "default")
+      result =
+        EzagentDomainInstanceMessage.SessionCreator.create_session(short, bare_uri,
+          template_name: "default"
+        )
 
       case result do
         {:error, {:orchestrator_admin_cap_grant_failed, _}} ->
           # The structural short-circuit fired — no orchestrator spawned.
           orch_uri =
-            Session.derive_orchestrator_uri(
-              URI.new!("session://default/system/#{short}"),
+            Session.planned_orchestrator_uri(
+              URI.new!("session://system/default/#{short}"),
               URI.new!("workspace://system")
             )
 
@@ -313,7 +337,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorUnif
     test "rollback_session/2 tears down Kind + workspace bind + snapshot row" do
       # Spawn a real Session so rollback has something to tear down.
       short = "hi1-rollback-unit-#{System.unique_integer([:positive])}"
-      session_uri = URI.new!("session://default/system/#{short}")
+      session_uri = URI.new!("session://system/default/#{short}")
       uri_str = URI.to_string(session_uri)
       workspace_uri = URI.new!("workspace://system")
 
@@ -378,7 +402,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorUnif
     # which is the regression signal we want.
     test "create_session/3 serializes via :global.set_lock per session_uri" do
       short = "hi2-lock-#{System.unique_integer([:positive])}"
-      session_uri = URI.new!("session://default/system/#{short}")
+      session_uri = URI.new!("session://system/default/#{short}")
       uri_str = URI.to_string(session_uri)
 
       lock_resource = {:ezagent_domain_instance_message, :create_session, uri_str}
@@ -393,7 +417,10 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorUnif
       task =
         Task.async(fn ->
           Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, parent, self())
-          EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(), template_name: "default")
+
+          EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(),
+            template_name: "default"
+          )
         end)
 
       # The task should still be running — the lock blocks its
@@ -464,7 +491,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorUnif
       )
 
       short = "hi3-generator-degraded-#{System.unique_integer([:positive])}"
-      session_uri = URI.new!("session://default/system/#{short}")
+      session_uri = URI.new!("session://system/default/#{short}")
       workspace_uri = URI.new!("workspace://system")
 
       # Spawn the Session first so ensure_orchestrator has something to

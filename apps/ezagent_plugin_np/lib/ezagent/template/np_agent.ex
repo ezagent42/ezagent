@@ -72,35 +72,21 @@ defmodule Ezagent.PluginNp.Template.NpAgent do
   defp check_class(%{"class" => other}), do: {:error, {:wrong_class, other}}
   defp check_class(_), do: {:error, :missing_class_field}
 
-  # SPEC v3 §3: entity URIs are 3-segment `/<workspace>/<entity_name>`,
-  # flavor lives in the entity_name prefix as `<flavor>_<rest>` per
-  # SPEC v2 §5.14. np.agent requires flavor=np.
   defp check_agent_uri(%{"agent_uri" => uri_str}) when is_binary(uri_str) and uri_str != "" do
-    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
-    # with try/rescue keeping the structured `{:error, _}` contract.
+    # PR-B unify-uri-query: the URI is an opaque identifier. This validator
+    # checks only the structural entity-agent shape; flavor is stored in the
+    # Template Class/content, never parsed from the URI name prefix.
     try do
       case Ezagent.URI.new!(uri_str) do
-        %URI{scheme: "entity", host: "agent", path: "/" <> rest} when rest != "" ->
-          with [_workspace, entity_name] when entity_name != "" <-
-                 String.split(rest, "/", parts: 2),
-               [flavor, suffix] when flavor != "" and suffix != "" <-
-                 String.split(entity_name, "_", parts: 2) do
-            if flavor == "np" do
-              :ok
-            else
-              {:error, {:wrong_agent_flavor, flavor, expected: "np"}}
-            end
+        %URI{scheme: "entity"} = uri ->
+          if Ezagent.URI.type?(uri, :agent) do
+            :ok
           else
-            _ ->
-              {:error,
-               {:missing_flavor_prefix, uri_str,
-                "agent URIs must be `entity://agent/<workspace>/np_<name>` (SPEC v3 §3)"}}
+            {:error, {:invalid_agent_uri, uri_str, "agent URI must be an entity agent URI"}}
           end
 
-        %URI{scheme: "entity"} ->
-          {:error,
-           {:invalid_agent_uri, uri_str,
-            "agent URIs must be `entity://agent/<workspace>/np_<name>` (SPEC v3 §3)"}}
+        %URI{} ->
+          {:error, {:invalid_agent_uri, uri_str, "agent URI must be an entity agent URI"}}
 
         _ ->
           {:error, {:bad_agent_uri, uri_str}}
@@ -132,66 +118,69 @@ defmodule Ezagent.PluginNp.Template.NpAgent do
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => agent_uri_str} = tmpl, _workspace_uri) do
     agent_uri = Ezagent.URI.new!(agent_uri_str)
-    cwd = Map.get(tmpl, "cwd") || System.tmp_dir!()
-    timeout_ms = parse_int(tmpl["timeout_ms"], 10_000)
 
-    init_args = %{
-      uri: agent_uri,
-      python_handle: agent_uri,
-      timeout_ms: timeout_ms,
-      # PTY-orphan-restart 2026-05-26 — captured in NpAgent slice so
-      # post_init/2 can re-spawn the Python subprocess on demand-spawn
-      # / boot races. Same value passed to start_python/2 below.
-      cwd: cwd
-    }
+    with :ok <- Ezagent.AgentFlavorAttributes.put_from_template_class(agent_uri, __MODULE__) do
+      cwd = Map.get(tmpl, "cwd") || System.tmp_dir!()
+      timeout_ms = parse_int(tmpl["timeout_ms"], 10_000)
 
-    case Ezagent.Kind.spawn(Ezagent.Entity.NpAgent, init_args) do
-      {:ok, _pid} ->
-        # Fresh start — pair the Python subprocess. If it fails, undo
-        # the Kind we just started.
-        case start_python(agent_uri, cwd) do
-          :ok ->
-            {:ok, [agent_uri], %{fresh?: true}}
+      init_args = %{
+        uri: agent_uri,
+        python_handle: agent_uri,
+        timeout_ms: timeout_ms,
+        # PTY-orphan-restart 2026-05-26 — captured in NpAgent slice so
+        # post_init/2 can re-spawn the Python subprocess on demand-spawn
+        # / boot races. Same value passed to start_python/2 below.
+        cwd: cwd
+      }
 
-          {:error, reason} ->
-            _ = Ezagent.Kind.terminate(agent_uri)
-            {:error, {:python_start_failed, reason}}
-        end
+      case Ezagent.Kind.spawn(Ezagent.Entity.NpAgent, init_args) do
+        {:ok, _pid} ->
+          # Fresh start — pair the Python subprocess. If it fails, undo
+          # the Kind we just started.
+          case start_python(agent_uri, cwd) do
+            :ok ->
+              {:ok, [agent_uri], %{fresh?: true}}
 
-      {:error, {:already_started, _pid}} ->
-        # Adopted — only ensure the Python subprocess is alive, but do
-        # NOT undo this branch's work if Python is already running
-        # (idempotent re-instantiate).
-        #
-        # PTY-orphan-restart round-2 (codex finding #4) —
-        # `ensure_python_alive/2` now propagates start failures
-        # instead of swallowing them. We log + return the error
-        # SO the caller (chat domain) gets a real signal. But we do
-        # NOT terminate the adopted Kind (it was started by someone
-        # else; we don't own its lifecycle on the adopted branch).
-        # Returning fresh?:false lets `record_sandbox_state` skip the
-        # slice write, preserving the original spawn's state.
-        case ensure_python_alive(agent_uri, cwd) do
-          :ok ->
-            {:ok, [agent_uri], %{fresh?: false}}
+            {:error, reason} ->
+              _ = Ezagent.Kind.terminate(agent_uri)
+              {:error, {:python_start_failed, reason}}
+          end
 
-          {:error, reason} = err ->
-            Logger.error(
-              "np.agent: ensure_python_alive failed for adopted Kind " <>
-                "#{URI.to_string(agent_uri)}: #{inspect(reason)}. " <>
-                "Kind remains alive without Python subprocess."
-            )
+        {:error, {:already_started, _pid}} ->
+          # Adopted — only ensure the Python subprocess is alive, but do
+          # NOT undo this branch's work if Python is already running
+          # (idempotent re-instantiate).
+          #
+          # PTY-orphan-restart round-2 (codex finding #4) —
+          # `ensure_python_alive/2` now propagates start failures
+          # instead of swallowing them. We log + return the error
+          # SO the caller (chat domain) gets a real signal. But we do
+          # NOT terminate the adopted Kind (it was started by someone
+          # else; we don't own its lifecycle on the adopted branch).
+          # Returning fresh?:false lets `record_sandbox_state` skip the
+          # slice write, preserving the original spawn's state.
+          case ensure_python_alive(agent_uri, cwd) do
+            :ok ->
+              {:ok, [agent_uri], %{fresh?: false}}
 
-            err
-        end
+            {:error, reason} = err ->
+              Logger.error(
+                "np.agent: ensure_python_alive failed for adopted Kind " <>
+                  "#{URI.to_string(agent_uri)}: #{inspect(reason)}. " <>
+                  "Kind remains alive without Python subprocess."
+              )
 
-      {:error, reason} ->
-        Logger.warning(
-          "np.agent Template instantiate failed for #{URI.to_string(agent_uri)}: " <>
-            inspect(reason)
-        )
+              err
+          end
 
-        {:error, reason}
+        {:error, reason} ->
+          Logger.warning(
+            "np.agent Template instantiate failed for #{URI.to_string(agent_uri)}: " <>
+              inspect(reason)
+          )
+
+          {:error, reason}
+      end
     end
   end
 
@@ -256,7 +245,7 @@ defmodule Ezagent.PluginNp.Template.NpAgent do
         # owning agent URI so `EzagentPluginNp.OrphanReaper` can
         # identify cross-BEAM orphans by env (mirrors cc PtyServer's
         # `EZAGENT_AGENT_URI` convention).
-        "EZAGENT_AGENT_URI" => URI.to_string(agent_uri),
+        "EZAGENT_AGENT_URI" => Ezagent.URI.stable_key(agent_uri),
         # PTY-orphan-restart 2026-05-26 round-2 (codex finding #2) —
         # tag with this deployment's identity so the reaper can
         # distinguish "orphan from our prior BEAM run" from "live
@@ -342,9 +331,9 @@ defmodule Ezagent.PluginNp.Template.NpAgent do
       %{
         name: "agent_uri",
         type: :uri,
-        label: "Agent URI (entity://agent/<workspace>/np_<name>)",
+        label: "Agent URI",
         required: true,
-        placeholder: "entity://agent/team-alpha/np_my-calc"
+        placeholder: "np_my-calc"
       },
       %{
         name: "cwd",

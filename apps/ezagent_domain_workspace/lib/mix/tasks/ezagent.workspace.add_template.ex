@@ -46,7 +46,7 @@ defmodule Mix.Tasks.Ezagent.Workspace.AddTemplate do
         case Ezagent.Workspace.add_template(workspace_name, tmpl_name, tmpl) do
           :ok ->
             Mix.shell().info(
-              "✓ added template #{inspect(tmpl_name)} to workspace://#{workspace_name}"
+              "✓ added template #{inspect(tmpl_name)} to workspace #{workspace_name}"
             )
 
           {:error, reason} ->

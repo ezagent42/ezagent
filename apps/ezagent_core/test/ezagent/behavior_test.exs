@@ -148,7 +148,7 @@ defmodule Ezagent.BehaviorTest do
     end
 
     test ":dispatch effects collect into dispatches bucket" do
-      cmd = Cmd.new("entity://agent/test/x", :ping, %{}, %{})
+      cmd = Cmd.new("entity://test/agent/x", :ping, %{}, %{})
 
       assert {:ok, result} = Behavior.apply_effects([{:dispatch, cmd}], %{})
       assert [{:dispatch, ^cmd}] = result.dispatches
@@ -219,13 +219,13 @@ defmodule Ezagent.BehaviorTest do
   describe "apply_effects/2 — :dispatch_returning bucketing (SPEC 2026-05-29)" do
     test "valid :dispatch_returning is bucketed into :dispatches_returning, preserving declared order" do
       cmd1 =
-        Cmd.new("entity://user/acme/alice", :ping, %{}, %{
+        Cmd.new("entity://acme/user/alice", :ping, %{}, %{
           caller: :system,
           reply: {:caller_inbox, self()}
         })
 
       cmd2 =
-        Cmd.new("entity://user/acme/bob", :ping, %{}, %{
+        Cmd.new("entity://acme/user/bob", :ping, %{}, %{
           caller: :system,
           reply: {:caller_inbox, self()}
         })
@@ -252,7 +252,7 @@ defmodule Ezagent.BehaviorTest do
 
     test ":dispatch_returning without :bind_as raises ArgumentError" do
       cmd =
-        Cmd.new("entity://user/acme/alice", :ping, %{}, %{
+        Cmd.new("entity://acme/user/alice", :ping, %{}, %{
           caller: :system,
           reply: {:caller_inbox, self()}
         })
@@ -299,7 +299,7 @@ defmodule Ezagent.BehaviorTest do
     end
 
     test "delegates to behavior.data_owner/1 for concrete instances" do
-      uri = URI.parse("entity://agent/team-alpha/foo")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/foo")
       assert %URI{path: "/owner"} = Behavior.data_owner_of(DataOwnerBehavior, uri)
     end
 

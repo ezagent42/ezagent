@@ -13,9 +13,6 @@ defmodule Ezagent.AgentBridge.SocketChannelTest do
     def flavor, do: "testchan"
 
     @impl true
-    def agent_uri_prefix, do: "testchan_"
-
-    @impl true
     def deliver(_payload, _channel_pid), do: :ok
 
     @impl true
@@ -63,12 +60,23 @@ defmodule Ezagent.AgentBridge.SocketChannelTest do
       Registry.unbind(uri)
     end
 
+    Ezagent.UriQuery.init()
+    previous_flavor_query = :ets.lookup(Ezagent.UriQuery.table(), :flavor)
+
     on_exit(fn ->
       for {uri, _pid} <- Registry.list_all() do
         Registry.unbind(uri)
       end
 
-      if prev_home, do: System.put_env("EZAGENT_HOME", prev_home), else: System.delete_env("EZAGENT_HOME")
+      :ets.delete(Ezagent.UriQuery.table(), :flavor)
+
+      for entry <- previous_flavor_query do
+        :ets.insert(Ezagent.UriQuery.table(), entry)
+      end
+
+      if prev_home,
+        do: System.put_env("EZAGENT_HOME", prev_home),
+        else: System.delete_env("EZAGENT_HOME")
 
       if prev_profile,
         do: System.put_env("EZAGENT_PROFILE", prev_profile),
@@ -81,7 +89,7 @@ defmodule Ezagent.AgentBridge.SocketChannelTest do
   end
 
   test "Socket.connect/3 authenticates agent_uri against token" do
-    agent_uri = uri!("entity://agent/team-alpha/cc_socket-auth-#{u()}")
+    agent_uri = uri!("entity://team-alpha/agent/cc_socket-auth-#{u()}")
     {:ok, token} = TokenStore.mint(agent_uri)
 
     assert {:ok, socket} =
@@ -94,7 +102,7 @@ defmodule Ezagent.AgentBridge.SocketChannelTest do
     assert socket.assigns.agent_uri == agent_uri
     assert Socket.id(socket) == "agent_bridge:" <> URI.to_string(agent_uri)
 
-    other_uri = uri!("entity://agent/team-alpha/cc_socket-other-#{u()}")
+    other_uri = uri!("entity://team-alpha/agent/cc_socket-other-#{u()}")
 
     assert :error =
              Socket.connect(
@@ -105,7 +113,8 @@ defmodule Ezagent.AgentBridge.SocketChannelTest do
   end
 
   test "canonical agent_bridge:cc topic joins and forwards BEAM pushes" do
-    agent_uri = uri!("entity://agent/team-alpha/cc_new-topic-#{u()}")
+    agent_uri = uri!("entity://team-alpha/agent/cc_new-topic-#{u()}")
+    put_flavor(agent_uri, "cc")
 
     {:ok, _reply, socket} =
       @endpoint
@@ -120,11 +129,24 @@ defmodule Ezagent.AgentBridge.SocketChannelTest do
 
     payload = %{"content" => "hello", "meta" => %{}}
     send(socket.channel_pid, {:agent_bridge_push, "to_claude", payload})
-    assert_push "to_claude", ^payload
+    assert_push("to_claude", ^payload)
+  end
+
+  test "canonical topic verifies flavor through UriQuery for prefixless agent URIs" do
+    agent_uri = uri!("entity://team-alpha/agent/new-topic-#{u()}")
+    put_flavor(agent_uri, "cc")
+
+    {:ok, _reply, socket} =
+      @endpoint
+      |> socket("agent_bridge:#{URI.to_string(agent_uri)}", %{agent_uri: agent_uri})
+      |> subscribe_and_join(Channel, "agent_bridge:cc:#{URI.to_string(agent_uri)}", %{})
+
+    assert {:ok, socket.channel_pid} == Registry.lookup(agent_uri)
   end
 
   test "legacy cc:bridge topic still joins during the deprecation window" do
-    agent_uri = uri!("entity://agent/team-alpha/cc_legacy-topic-#{u()}")
+    agent_uri = uri!("entity://team-alpha/agent/cc_legacy-topic-#{u()}")
+    put_flavor(agent_uri, "cc")
 
     {:ok, _reply, socket} =
       @endpoint
@@ -135,8 +157,9 @@ defmodule Ezagent.AgentBridge.SocketChannelTest do
   end
 
   test "client events delegate to the registered flavor adapter" do
-    agent_uri = uri!("entity://agent/team-alpha/testchan_bridge-#{u()}")
+    agent_uri = uri!("entity://team-alpha/agent/testchan_bridge-#{u()}")
     :ok = Ezagent.AgentBridge.AdapterRegistry.register("testchan", TestAdapter)
+    put_flavor(agent_uri, "testchan")
 
     {:ok, _reply, socket} =
       @endpoint
@@ -145,15 +168,15 @@ defmodule Ezagent.AgentBridge.SocketChannelTest do
 
     ref = push(socket, "custom_event", %{"value" => "ok"})
 
-    assert_reply ref, :ok, %{
+    assert_reply(ref, :ok, %{
       "event" => "custom_event",
       "params" => %{"value" => "ok"}
-    }
+    })
   end
 
   test "join rejects a topic URI different from the token-authenticated socket URI" do
-    authed_uri = uri!("entity://agent/team-alpha/cc_authed-#{u()}")
-    topic_uri = uri!("entity://agent/team-alpha/cc_spoofed-#{u()}")
+    authed_uri = uri!("entity://team-alpha/agent/cc_authed-#{u()}")
+    topic_uri = uri!("entity://team-alpha/agent/cc_spoofed-#{u()}")
 
     assert {:error, %{reason: reason}} =
              @endpoint
@@ -164,8 +187,9 @@ defmodule Ezagent.AgentBridge.SocketChannelTest do
     assert :error = Registry.lookup(authed_uri)
   end
 
-  test "join rejects a topic flavor different from the URI flavor" do
-    codex_uri = uri!("entity://agent/team-alpha/codex_wrong-topic-#{u()}")
+  test "join rejects a topic flavor different from the stored agent flavor" do
+    codex_uri = uri!("entity://team-alpha/agent/codex_wrong-topic-#{u()}")
+    put_flavor(codex_uri, "codex")
 
     assert {:error, %{reason: reason}} =
              @endpoint
@@ -178,4 +202,8 @@ defmodule Ezagent.AgentBridge.SocketChannelTest do
 
   defp uri!(value), do: URI.new!(value)
   defp u, do: System.unique_integer([:positive])
+
+  defp put_flavor(agent_uri, flavor) do
+    :ets.insert(Ezagent.UriQuery.table(), {:flavor, fn ^agent_uri -> {:ok, flavor} end})
+  end
 end

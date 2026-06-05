@@ -115,7 +115,7 @@ defmodule Ezagent.Persistence do
       {:error, :no_workspace} ->
         raise ArgumentError,
               "no workspace can be derived from #{inspect(uri)} — " <>
-                "cross-cutting URI schemes (system://, template://, resource://) " <>
+                "cross-cutting URI schemes " <>
                 "require an explicit fallback workspace at the insert site."
     end
   end

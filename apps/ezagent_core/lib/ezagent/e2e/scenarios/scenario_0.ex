@@ -18,7 +18,9 @@ defmodule Ezagent.E2E.Scenarios.Scenario0 do
         step("node-alive",
           run: fn ctx -> {:ok, Map.put(ctx, "node", to_string(node()))} end,
           await: fn _ -> :ok end,
-          assert: fn ctx -> if is_binary(ctx["node"]) and ctx["node"] != "", do: :ok, else: {:error, :no_node} end
+          assert: fn ctx ->
+            if is_binary(ctx["node"]) and ctx["node"] != "", do: :ok, else: {:error, :no_node}
+          end
         ),
         step("core-app-started",
           run: fn ctx ->
@@ -26,7 +28,9 @@ defmodule Ezagent.E2E.Scenarios.Scenario0 do
             {:ok, Map.put(ctx, "core_started", :ezagent_core in apps)}
           end,
           await: fn _ -> :ok end,
-          assert: fn ctx -> if ctx["core_started"], do: :ok, else: {:error, :ezagent_core_not_started} end
+          assert: fn ctx ->
+            if ctx["core_started"], do: :ok, else: {:error, :ezagent_core_not_started}
+          end
         )
       ]
     }

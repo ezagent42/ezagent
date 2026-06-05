@@ -53,13 +53,20 @@ defmodule Ezagent.Agent.CredentialNotifier do
 
   defp resolve_user_owner(%URI{} = uri, depth) do
     case Ezagent.Behavior.ApiKeys.data_owner(uri) do
-      %URI{scheme: "entity", host: "user"} = user -> user
-      %URI{scheme: "entity", host: "agent"} = agent -> resolve_user_owner(agent, depth - 1)
+      %URI{scheme: "entity"} = owner -> resolve_entity_owner(owner, depth)
       _ -> :no_owner
     end
   end
 
   defp resolve_user_owner(_other, _depth), do: :no_owner
+
+  defp resolve_entity_owner(%URI{} = owner, depth) do
+    cond do
+      Ezagent.URI.type?(owner, :user) -> owner
+      Ezagent.URI.type?(owner, :agent) -> resolve_user_owner(owner, depth - 1)
+      true -> :no_owner
+    end
+  end
 
   defp notify_owner(%URI{} = owner_uri, %URI{} = agent_uri, observer) do
     _ = Ezagent.Notifications.notify(owner_uri, build_notification(agent_uri, observer))

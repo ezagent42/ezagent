@@ -92,7 +92,7 @@ defmodule Ezagent.Behavior.UserTokens do
 
   use Ezagent.Lifecycle
 
-  action :mint_token,
+  action(:mint_token,
     args: %{
       label: {:option, :string},
       expires_at: {:option, :string}
@@ -106,8 +106,9 @@ defmodule Ezagent.Behavior.UserTokens do
         "target's URI (`ctx.self_uri`).",
     data_owner: :self,
     modes: [:call]
+  )
 
-  action :list_tokens,
+  action(:list_tokens,
     args: %{},
     returns: %{tokens: {:list, :map}},
     caps: [{:list_tokens, kind: :user}],
@@ -116,14 +117,16 @@ defmodule Ezagent.Behavior.UserTokens do
         "plain — only id / label / timestamps). Read-only.",
     data_owner: :self,
     modes: [:call]
+  )
 
-  action :revoke_token,
+  action(:revoke_token,
     args: %{token_id: :integer},
     returns: %{revoked: :integer},
     caps: [{:revoke_token, kind: :user}],
     description: "Revoke a token by id. Idempotent — unknown ids return :ok.",
     data_owner: :self,
     modes: [:call]
+  )
 
   # =================================================================
   # Explicit `required_caps/0` — preserves `kind: :user` axis (the
@@ -229,8 +232,7 @@ defmodule Ezagent.Behavior.UserTokens do
       :ok = Ezagent.Entity.Token.revoke(token_id)
       cur = ctx[:read].(:revoke_count, 0)
 
-      {:ok,
-       %{revoked: token_id},
+      {:ok, %{revoked: token_id},
        [
          {:set, :revoke_count, cur + 1},
          {:emit, :token_revoked,
@@ -253,8 +255,8 @@ defmodule Ezagent.Behavior.UserTokens do
 
   defp target_user_uri(ctx) do
     case Map.get(ctx, :self_uri) do
-      %URI{scheme: "entity", host: "user"} = uri ->
-        {:ok, uri}
+      %URI{scheme: "entity"} = uri ->
+        if Ezagent.URI.type?(uri, :user), do: {:ok, uri}, else: {:error, {:bad_target_uri, uri}}
 
       other ->
         {:error, {:bad_target_uri, other}}

@@ -75,9 +75,9 @@ defmodule Mix.Tasks.Ezagent.Routing.AddRule do
     standard dispatch pipeline:
 
         mix ezagent routing add_rule \\
-            --uri system://routing/default \\
-            --matcher mention:entity://agent/team-alpha/cc_builder \\
-            --receivers session://demo-class/demo-workspace/architect
+            --uri <routing-uri> \\
+            --matcher mention:<agent-uri> \\
+            --receivers <session-uri>
 
     See `Ezagent.Behavior.Routing.interface/0` for the full action
     schema. The GUI's /routing page uses the SAME dispatch path.

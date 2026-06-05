@@ -76,7 +76,7 @@ defmodule EzagentCore.Invariants.SessionsHaveWorkspaceTest do
       sessions
       |> Enum.flat_map(fn entry ->
         uri_str = entry_uri(entry)
-        parsed = URI.parse(uri_str)
+        parsed = Ezagent.URI.new!(uri_str)
 
         case WorkspaceRegistry.lookup(uri_str) do
           {:ok, bound_ws} ->

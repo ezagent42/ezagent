@@ -99,25 +99,20 @@ defmodule EzagentDomainUi.Primitives do
   defp avatar_label_and_hues(uri) do
     str = uri_to_string(uri)
 
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue for display-fallback ("?", "fallback") on parse
+    # failure (avatar must always render).
     {label, hue_seed} =
-      # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
-      # with try/rescue for display-fallback ("?", "fallback") on parse
-      # failure (avatar must always render).
       try do
         case Ezagent.URI.new!(str) do
-          # Phase 9 PR-2 (SPEC v3 §3): entity URIs are 3-segment;
-          # extract entity_name (second path segment) for label/hue.
-          %URI{scheme: "entity", host: "user", path: "/" <> rest} ->
-            name = entity_name_from_path(rest)
-            {String.upcase(String.first(name) || "?"), name}
+          %URI{scheme: "entity"} = uri ->
+            entity_avatar_seed(uri)
 
-          %URI{scheme: "entity", host: "agent", path: "/" <> rest} ->
-            name = entity_name_from_path(rest)
-            flavor = name |> String.split("_", parts: 2) |> List.first()
-            {flavor |> String.first() |> String.upcase(), flavor}
-
-          %URI{host: host} when is_binary(host) ->
-            {String.upcase(String.first(host) || "?"), host}
+          %URI{} = uri ->
+            case Ezagent.URI.name(uri) do
+              {:ok, name} -> {String.upcase(String.first(name) || "?"), name}
+              :error -> {"?", "fallback"}
+            end
 
           _ ->
             {"?", "fallback"}
@@ -136,12 +131,25 @@ defmodule EzagentDomainUi.Primitives do
   defp uri_to_string(s) when is_binary(s), do: s
   defp uri_to_string(_), do: ""
 
-  # Phase 9 PR-2 (SPEC v3 §3): pull the entity-name segment out of a
-  # 3-segment entity URI path (`<workspace>/<entity_name>`).
-  defp entity_name_from_path(rest) when is_binary(rest) do
-    case String.split(rest, "/", parts: 2) do
-      [_workspace, entity_name] -> entity_name
-      [name] -> name
+  defp stored_agent_flavor(%URI{} = uri) do
+    case Ezagent.UriQuery.resolve(:flavor, uri) do
+      {:ok, flavor} when is_binary(flavor) and flavor != "" -> flavor
+      _ -> nil
+    end
+  end
+
+  defp entity_avatar_seed(%URI{} = uri) do
+    name =
+      case Ezagent.URI.name(uri) do
+        {:ok, name} -> name
+        :error -> URI.to_string(uri)
+      end
+
+    if Ezagent.URI.type?(uri, :agent) do
+      label_seed = stored_agent_flavor(uri) || name
+      {label_seed |> String.first() |> String.upcase(), label_seed}
+    else
+      {String.upcase(String.first(name) || "?"), name}
     end
   end
 
@@ -763,7 +771,7 @@ defmodule EzagentDomainUi.Primitives do
           name={uri_picker_freetext_name(@name, @mode)}
           value={@freetext_value}
           disabled
-          placeholder="entity://agent/team-alpha/cc_demo"
+          placeholder="agent in workspace"
           class="mt-1 w-full px-2 py-1.5 text-xs border rounded-md font-mono border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
         />
       </details>

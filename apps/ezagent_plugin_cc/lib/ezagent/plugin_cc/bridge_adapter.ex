@@ -26,9 +26,6 @@ defmodule EzagentPluginCc.BridgeAdapter do
   def flavor, do: "cc"
 
   @impl Ezagent.AgentBridge.Adapter
-  def agent_uri_prefix, do: "cc_"
-
-  @impl Ezagent.AgentBridge.Adapter
   def deliver(%Payload{} = payload, channel_pid) when is_pid(channel_pid) do
     send(
       channel_pid,
@@ -178,7 +175,10 @@ defmodule EzagentPluginCc.BridgeAdapter do
                 args: %{message: msg},
                 ctx: %{
                   caller: agent_uri,
-                  caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
+                  caps:
+                    "chat-reply"
+                    |> Ezagent.SystemPrincipal.uri()
+                    |> Ezagent.SystemPrincipal.caps(),
                   reply: :ignore
                 }
               })
@@ -208,28 +208,28 @@ defmodule EzagentPluginCc.BridgeAdapter do
     if skipped != [] do
       Logger.warning(
         "EzagentPluginCc.BridgeAdapter: dropped #{length(skipped)} malformed " <>
-          "session URI(s) from cc bridge reply (agent=#{URI.to_string(agent_uri)}): " <>
+          "session URI(s) from cc bridge reply (agent=#{Ezagent.URI.stable_key(agent_uri)}): " <>
           "#{inspect(skipped)}"
       )
 
       :telemetry.execute(
         [:ezagent, :plugin_cc, :bridge_adapter, :reply_skipped],
         %{count: length(skipped)},
-        %{agent_uri: URI.to_string(agent_uri), skipped: skipped}
+        %{agent_uri: Ezagent.URI.stable_key(agent_uri), skipped: skipped}
       )
     end
 
     if failed != [] do
       Logger.warning(
         "EzagentPluginCc.BridgeAdapter: dispatch failed for #{length(failed)} " <>
-          "session URI(s) from cc bridge reply (agent=#{URI.to_string(agent_uri)}): " <>
+          "session URI(s) from cc bridge reply (agent=#{Ezagent.URI.stable_key(agent_uri)}): " <>
           "#{inspect(failed)}"
       )
 
       :telemetry.execute(
         [:ezagent, :plugin_cc, :bridge_adapter, :reply_failed],
         %{count: length(failed)},
-        %{agent_uri: URI.to_string(agent_uri), failed: failed}
+        %{agent_uri: Ezagent.URI.stable_key(agent_uri), failed: failed}
       )
     end
 

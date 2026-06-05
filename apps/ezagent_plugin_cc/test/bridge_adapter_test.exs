@@ -7,11 +7,11 @@ defmodule EzagentPluginCc.BridgeAdapterTest do
   test "deliver/2 converts generic payload to Claude channel frame" do
     payload = %Payload{
       message_id: "m1",
-      session_uri: URI.new!("session://default/team-alpha/s1"),
-      sender_uri: URI.new!("entity://user/system/admin"),
+      session_uri: URI.new!("session://team-alpha/default/s1"),
+      sender_uri: URI.new!("entity://system/user/admin"),
       text: "hello cc",
       event_type: :chat_send,
-      meta: %{"sender" => "entity://user/system/admin"}
+      meta: %{"sender" => "entity://system/user/admin"}
     }
 
     assert :ok = BridgeAdapter.deliver(payload, self())
@@ -19,12 +19,12 @@ defmodule EzagentPluginCc.BridgeAdapterTest do
     assert_receive {:agent_bridge_push, "to_claude",
                     %{
                       "content" => "hello cc",
-                      "meta" => %{"sender" => "entity://user/system/admin"}
+                      "meta" => %{"sender" => "entity://system/user/admin"}
                     }}
   end
 
   test "handle_client_event/3 validates reply payload shape" do
-    socket = %Phoenix.Socket{assigns: %{agent_uri: URI.new!("entity://agent/team-alpha/cc_test")}}
+    socket = %Phoenix.Socket{assigns: %{agent_uri: URI.new!("entity://team-alpha/agent/cc_test")}}
 
     assert {:reply, {:error, %{reason: "reply requires text + session_uris"}}, ^socket} =
              BridgeAdapter.handle_client_event("reply", %{"text" => "missing sessions"}, socket)
@@ -37,7 +37,7 @@ defmodule EzagentPluginCc.BridgeAdapterTest do
     # rejects the case with a structured `:error` ACK + Logger
     # warning + telemetry.
     socket = %Phoenix.Socket{
-      assigns: %{agent_uri: Ezagent.URI.new!("entity://agent/team-alpha/cc_test")}
+      assigns: %{agent_uri: Ezagent.URI.new!("entity://team-alpha/agent/cc_test")}
     }
 
     assert {:reply,
@@ -59,17 +59,17 @@ defmodule EzagentPluginCc.BridgeAdapterTest do
     # - `failed`:     Invocation.dispatch returned {:error, reason}
     #                 (e.g. :no_such_actor for a stale-but-canonical URI).
     # - `skipped`:    safe_parse_session failed (malformed string).
-    agent_uri = Ezagent.URI.new!("entity://agent/team-alpha/cc_test")
+    agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_test")
 
     # All test URIs are syntactically canonical but no Kinds are alive,
     # so dispatch will return {:error, :no_such_actor} for the
     # well-formed ones. The malformed ones go to skipped without
     # reaching dispatch.
     sessions = [
-      "session://default/system/main",
+      "session://system/default/main",
       "garbage://not-a-real-scheme",
       "",
-      "session://default/team-alpha/real"
+      "session://team-alpha/default/real"
     ]
 
     assert {:ok, %{dispatched: dispatched, failed: failed, skipped: skipped}} =
@@ -83,8 +83,8 @@ defmodule EzagentPluginCc.BridgeAdapterTest do
     # either target, both should land in `failed` (the codex r4
     # finding — pre-fix they would have wrongly counted as dispatched).
     canonical_inputs = [
-      "session://default/system/main",
-      "session://default/team-alpha/real"
+      "session://system/default/main",
+      "session://team-alpha/default/real"
     ]
 
     canonical_outcomes = dispatched ++ Enum.map(failed, fn {s, _reason} -> s end)

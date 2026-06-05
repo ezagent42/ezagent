@@ -39,7 +39,7 @@ defmodule EzagentWeb.WorkspaceSwitchControllerTest do
       _ -> :ok
     end
 
-    regular_uri = "entity://user/team-alpha/wsswitch-#{System.unique_integer([:positive])}"
+    regular_uri = "entity://team-alpha/user/wsswitch-#{System.unique_integer([:positive])}"
     {:ok, _} = Ezagent.Users.create(regular_uri, "pw", [])
 
     %{
@@ -154,7 +154,7 @@ defmodule EzagentWeb.WorkspaceSwitchControllerTest do
       # NOTE: this branch fires for REGULAR users whose
       # current_workspace equals target (admin is a system member,
       # which goes through the context-swap branch).
-      regular = "entity://user/" <> target <> "/u-#{System.unique_integer([:positive])}"
+      regular = "entity://" <> target <> "/user/u-#{System.unique_integer([:positive])}"
       {:ok, _} = Ezagent.Users.create(regular, "pw", [])
 
       _ = admin_uri

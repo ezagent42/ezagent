@@ -103,7 +103,7 @@ defmodule Mix.Tasks.Ezagent.Auth.MagicLink do
         Mix.shell().info("      Ezagent.Workspace.create(\"#{slug_of_domain(email)}\", %{})")
 
         Mix.shell().info(
-          "      Ezagent.Workspace.add_magic_link_rule(\"workspace://#{slug_of_domain(email)}\", \"domain\", \"#{domain_of(email)}\")"
+          "      Ezagent.Workspace.add_magic_link_rule(<workspace-uri>, \"domain\", \"#{domain_of(email)}\")"
         )
 
         System.halt(1)

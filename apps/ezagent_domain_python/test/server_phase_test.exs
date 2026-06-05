@@ -25,7 +25,7 @@ defmodule Ezagent.Domain.Python.Server.PhaseTest do
 
   defp fresh_uri do
     URI.new!(
-      "entity://agent/team-alpha/test_pyphase-#{System.unique_integer([:positive])}"
+      "entity://team-alpha/agent/test_pyphase-#{System.unique_integer([:positive])}"
     )
   end
 
@@ -58,7 +58,7 @@ defmodule Ezagent.Domain.Python.Server.PhaseTest do
 
   describe "phase_topic/1" do
     test "matches PtyServer's topic shape exactly (one subscriber for both flavors)" do
-      uri = URI.new!("entity://agent/team-alpha/test_topic")
+      uri = URI.new!("entity://team-alpha/agent/test_topic")
 
       assert PyServer.phase_topic(uri) ==
                Ezagent.Domain.Pty.Server.phase_topic(uri)
@@ -86,7 +86,7 @@ defmodule Ezagent.Domain.Python.Server.PhaseTest do
     test "phase/1 returns :dead when no server exists" do
       ghost =
         URI.new!(
-          "entity://agent/team-alpha/test_pyphase-nonexistent-#{System.unique_integer([:positive])}"
+          "entity://team-alpha/agent/test_pyphase-nonexistent-#{System.unique_integer([:positive])}"
         )
 
       assert :dead = PyServer.phase(ghost)
@@ -101,7 +101,7 @@ defmodule Ezagent.Domain.Python.Server.PhaseTest do
       bin_handle = "test://server-phase-bin/" <> Integer.to_string(System.unique_integer([:positive]))
 
       # Subscribe to a URI-shaped topic — should never receive anything
-      probe_uri = URI.new!("entity://agent/team-alpha/test_pyphase-probe")
+      probe_uri = URI.new!("entity://team-alpha/agent/test_pyphase-probe")
       :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, PyServer.phase_topic(probe_uri))
 
       assert {:ok, _pid} = Python.start_subprocess(test_spec(bin_handle))

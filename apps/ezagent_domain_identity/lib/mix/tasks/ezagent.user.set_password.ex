@@ -46,7 +46,7 @@ defmodule Mix.Tasks.Ezagent.User.SetPassword do
     Use the dispatch-backed equivalent (CapBAC + audit + cross-workspace iso):
 
         mix ezagent user set_password \\
-            --user entity://user/<workspace>/<name> \\
+            --user <user-uri> \\
             --password '<new-pw>'
 
     This task still works (admin-bootstrap carve-out — first password

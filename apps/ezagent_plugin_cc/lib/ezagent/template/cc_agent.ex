@@ -352,36 +352,20 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   defp check_class(_), do: {:error, :missing_class_field}
 
   defp check_agent_uri(%{"agent_uri" => uri_str}) when is_binary(uri_str) and uri_str != "" do
-    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
-    # with try/rescue keeping the structured `{:error, _}` contract for
-    # each validator branch.
+    # PR-B unify-uri-query: the URI is an opaque identifier. This validator
+    # checks only the structural entity-agent shape; flavor is stored in the
+    # Template Class/content, never parsed from the URI name prefix.
     try do
       case Ezagent.URI.new!(uri_str) do
-        %URI{scheme: "entity", host: "agent", path: "/" <> rest} when rest != "" ->
-          # Phase 9 PR-2 (SPEC v3 §3): entity URIs are 3-segment:
-          # /<workspace>/<entity_name>. Flavor lives in the entity_name
-          # prefix as `<flavor>_<rest>` (SPEC v2 §5.14). cc.agent
-          # template requires flavor=cc.
-          with [_workspace, entity_name] when entity_name != "" <-
-                 String.split(rest, "/", parts: 2),
-               [flavor, suffix] when flavor != "" and suffix != "" <-
-                 String.split(entity_name, "_", parts: 2) do
-            if flavor == "cc" do
-              :ok
-            else
-              {:error, {:wrong_agent_flavor, flavor, expected: "cc"}}
-            end
+        %URI{scheme: "entity"} = uri ->
+          if Ezagent.URI.type?(uri, :agent) do
+            :ok
           else
-            _ ->
-              {:error,
-               {:missing_flavor_prefix, uri_str,
-                "agent URIs must be `entity://agent/<workspace>/cc_<name>` (Phase 9 PR-2)"}}
+            {:error, {:invalid_agent_uri, uri_str, "agent URI must be an entity agent URI"}}
           end
 
-        %URI{scheme: "entity"} ->
-          {:error,
-           {:invalid_agent_uri, uri_str,
-            "agent URIs must be `entity://agent/<workspace>/cc_<name>` (Phase 9 PR-2)"}}
+        %URI{} ->
+          {:error, {:invalid_agent_uri, uri_str, "agent URI must be an entity agent URI"}}
 
         _ ->
           {:error, {:bad_agent_uri, uri_str}}
@@ -400,20 +384,22 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, workspace_uri) do
     agent_uri = Ezagent.URI.new!(uri_str)
 
-    # PR-D2 idempotency short-circuit: if BOTH the Agent Kind and the
-    # PtyServer are already alive we have nothing to do. Each plugin
-    # re-running Workspace.Loader.load_all/0 hits this on subsequent
-    # passes; the first pass spawns, the rest no-op.
-    #
-    # codex round-6 HIGH-1 — the 3-element `{:ok, uris, %{fresh?: _}}`
-    # return carries whether THIS call STARTED the Agent Kind worker.
-    # The short-circuit means the worker pre-existed → `fresh?: false`.
-    cond do
-      agent_kind_alive?(agent_uri) and pty_server_alive?(agent_uri) ->
-        {:ok, [agent_uri], %{fresh?: false}}
+    with :ok <- Ezagent.AgentFlavorAttributes.put_from_template_class(agent_uri, __MODULE__) do
+      # PR-D2 idempotency short-circuit: if BOTH the Agent Kind and the
+      # PtyServer are already alive we have nothing to do. Each plugin
+      # re-running Workspace.Loader.load_all/0 hits this on subsequent
+      # passes; the first pass spawns, the rest no-op.
+      #
+      # codex round-6 HIGH-1 — the 3-element `{:ok, uris, %{fresh?: _}}`
+      # return carries whether THIS call STARTED the Agent Kind worker.
+      # The short-circuit means the worker pre-existed → `fresh?: false`.
+      cond do
+        agent_kind_alive?(agent_uri) and pty_server_alive?(agent_uri) ->
+          {:ok, [agent_uri], %{fresh?: false}}
 
-      true ->
-        spawn_for_local_pty(agent_uri, tmpl, workspace_uri)
+        true ->
+          spawn_for_local_pty(agent_uri, tmpl, workspace_uri)
+      end
     end
   end
 
@@ -1066,7 +1052,8 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
           do: Path.join(config_home, ".mcp.json"),
           else: Path.join(agent_cwd, ".mcp.json")
 
-      settings_mcp_args = assemble_settings_mcp_args(mandatory_settings_path(), per_agent_mcp_path, tmpl)
+      settings_mcp_args =
+        assemble_settings_mcp_args(mandatory_settings_path(), per_agent_mcp_path, tmpl)
 
       # argv element 0 is the resolved ABSOLUTE path (not bare
       # "claude"); the rest is the hardening's safe arg assembly.
@@ -1102,7 +1089,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
       base_env = %{
         # Inherited by every MCP-server subprocess `claude` spawns.
-        "EZAGENT_AGENT_URI" => URI.to_string(agent_uri),
+        "EZAGENT_AGENT_URI" => Ezagent.URI.stable_key(agent_uri),
         "EZAGENT_AGENT_TOKEN" => agent_token
       }
 
@@ -1779,15 +1766,9 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # into. A mismatch means "another workspace's template is referencing
   # our URI" — we must refuse (preserves codex round-8 invariant).
   defp owns_this_agent?(%URI{} = agent_uri, %URI{} = workspace_uri) do
-    case agent_uri do
-      %URI{scheme: "entity", host: "agent", path: "/" <> rest} ->
-        case String.split(rest, "/", parts: 2) do
-          [ws_segment, _name] when is_binary(ws_segment) -> ws_segment == workspace_uri.host
-          _ -> false
-        end
-
-      _ ->
-        false
+    case {Ezagent.URI.type(agent_uri), Ezagent.URI.workspace_name(agent_uri)} do
+      {{:ok, "agent"}, {:ok, ws_segment}} -> ws_segment == workspace_uri.host
+      _ -> false
     end
   end
 
@@ -1997,9 +1978,9 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       %{
         name: "agent_uri",
         type: :uri,
-        label: "Agent URI (entity://agent/<workspace>/cc_<name>)",
+        label: "Agent URI",
         required: true,
-        placeholder: "entity://agent/team-alpha/cc_architect"
+        placeholder: "cc_architect"
       },
       %{
         name: "cwd",

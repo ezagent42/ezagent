@@ -55,7 +55,7 @@ defmodule Ezagent.Behavior.PublisherTest do
     test "has exactly the five enforced fields per SPEC §2.1 + PR-EM-0 brief" do
       event = %Ezagent.Publisher.Event{
         cursor: 1,
-        publisher_uri: URI.parse("session://default/system/main"),
+        publisher_uri: Ezagent.URI.new!("session://system/default/main"),
         slice_key: :chat,
         event_at: DateTime.utc_now(),
         payload: %{}

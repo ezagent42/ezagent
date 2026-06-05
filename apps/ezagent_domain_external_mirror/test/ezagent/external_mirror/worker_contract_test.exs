@@ -67,7 +67,7 @@ defmodule Ezagent.ExternalMirror.WorkerContractTest do
     end
 
     test "data_owner/1 on a worker URI returns :no_owner (SPEC §4.3 — framework-internal)" do
-      worker_uri = URI.parse("entity://worker/default/em_deadbeefcafe")
+      worker_uri = Ezagent.URI.new!("entity://default/worker/em_deadbeefcafe")
       assert Ezagent.Behavior.ExternalMirrorWorker.data_owner(worker_uri) == :no_owner
     end
 

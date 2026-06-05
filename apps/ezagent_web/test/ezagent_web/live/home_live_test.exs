@@ -31,7 +31,7 @@ defmodule EzagentWeb.HomeLiveTest do
   end
 
   test "GET / with session AND existing sessions redirects to /sessions", %{conn: conn} do
-    # The chat Application's `:test`-env seed populates `session://default/system/main`
+    # The chat Application's `:test`-env seed populates `session://system/default/main`
     # at boot, so `list_sessions/0` returns non-empty by default in the
     # web test suite. Verify the redirect path under that condition.
     assert EzagentDomainInstanceMessage.list_sessions() != []
@@ -39,7 +39,7 @@ defmodule EzagentWeb.HomeLiveTest do
     conn =
       conn
       |> Plug.Test.init_test_session(%{
-        "current_entity_uri" => "entity://user/system/admin"
+        "current_entity_uri" => "entity://system/user/admin"
       })
 
     assert {:error, {:live_redirect, %{to: "/sessions"}}} = live(conn, ~p"/")
@@ -57,7 +57,7 @@ defmodule EzagentWeb.HomeLiveTest do
       on_exit(fn ->
         # Re-seed any session we terminated so this test file's teardown
         # doesn't poison subsequent test files (most of which assume
-        # `session://default/system/main` alive at boot).
+        # `session://system/default/main` alive at boot).
         for short <- torn_down do
           # SPEC `2026-05-26-session-create-orchestrator-unified` Gap A —
           # return is `{:ok, uri, meta} | {:error, _}`. This re-seed
@@ -76,7 +76,7 @@ defmodule EzagentWeb.HomeLiveTest do
       conn =
         conn
         |> Plug.Test.init_test_session(%{
-          "current_entity_uri" => "entity://user/system/admin"
+          "current_entity_uri" => "entity://system/user/admin"
         })
 
       {:ok, _lv, html} = live(conn, ~p"/")
@@ -90,7 +90,7 @@ defmodule EzagentWeb.HomeLiveTest do
       conn =
         conn
         |> Plug.Test.init_test_session(%{
-          "current_entity_uri" => "entity://user/system/admin"
+          "current_entity_uri" => "entity://system/user/admin"
         })
 
       {:ok, lv, _html} = live(conn, ~p"/")
@@ -102,11 +102,11 @@ defmodule EzagentWeb.HomeLiveTest do
                |> form("#first-session-wizard", %{"wizard" => %{"short_name" => "main"}})
                |> render_submit()
 
-      # session://default/system/main is now registered.
-      assert {:ok, _pid} = Ezagent.KindRegistry.lookup(URI.new!("session://default/system/main"))
+      # session://system/default/main is now registered.
+      assert {:ok, _pid} = Ezagent.KindRegistry.lookup(URI.new!("session://system/default/main"))
       # …and bound to the default workspace (invariant).
       assert {:ok, _workspace_uri} =
-               Ezagent.WorkspaceRegistry.lookup(URI.new!("session://default/system/main"))
+               Ezagent.WorkspaceRegistry.lookup(URI.new!("session://system/default/main"))
     end
   end
 
@@ -134,7 +134,7 @@ defmodule EzagentWeb.HomeLiveTest do
   #
   # `list_sessions/0` derives its result from `Ezagent.KindRegistry`
   # (every live `session://` Kind), NOT from the membership of any one
-  # supervisor. The boot-seeded `session://default/system/main` is in
+  # supervisor. The boot-seeded `session://system/default/main` is in
   # fact a `:permanent` child of the GENERIC `Ezagent.KindSupervisor`
   # (the `resolve_supervisor/1` fallback), NOT
   # `EzagentDomainInstanceMessage.SessionSupervisor` — so the old drain, which

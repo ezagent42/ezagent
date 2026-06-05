@@ -10,15 +10,15 @@ defmodule Ezagent.Ecto.URITest do
 
   describe "cast/1" do
     test "accepts %URI{} struct unchanged" do
-      uri = URI.new!("entity://agent/team-alpha/test_cc-builder")
+      uri = URI.new!("entity://team-alpha/agent/test_cc-builder")
       assert {:ok, ^uri} = URIType.cast(uri)
     end
 
     test "accepts string + parses to %URI{}" do
-      assert {:ok, %URI{} = uri} = URIType.cast("entity://agent/team-alpha/test_cc-builder")
+      assert {:ok, %URI{} = uri} = URIType.cast("entity://team-alpha/agent/test_cc-builder")
       assert uri.scheme == "entity"
-      assert uri.host == "agent"
-      assert uri.path == "/team-alpha/test_cc-builder"
+      assert uri.host == "team-alpha"
+      assert uri.path == "/agent/test_cc-builder"
     end
 
     test "rejects non-URI non-string input" do
@@ -30,10 +30,10 @@ defmodule Ezagent.Ecto.URITest do
 
   describe "load/1" do
     test "DB string → %URI{} struct" do
-      assert {:ok, %URI{} = uri} = URIType.load("session://default/system/main")
+      assert {:ok, %URI{} = uri} = URIType.load("session://system/default/main")
       assert uri.scheme == "session"
-      assert uri.host == "default"
-      assert uri.path == "/system/main"
+      assert uri.host == "system"
+      assert uri.path == "/default/main"
     end
 
     test "rejects non-string" do
@@ -44,13 +44,13 @@ defmodule Ezagent.Ecto.URITest do
 
   describe "dump/1" do
     test "%URI{} → DB string" do
-      uri = URI.new!("entity://user/system/admin")
-      assert {:ok, "entity://user/system/admin"} = URIType.dump(uri)
+      uri = URI.new!("entity://system/user/admin")
+      assert {:ok, "entity://system/user/admin"} = URIType.dump(uri)
     end
 
     test "accepts already-string (idempotent)" do
-      assert {:ok, "session://default/system/main"} =
-               URIType.dump("session://default/system/main")
+      assert {:ok, "session://system/default/main"} =
+               URIType.dump("session://system/default/main")
     end
 
     test "rejects others" do
@@ -61,7 +61,7 @@ defmodule Ezagent.Ecto.URITest do
 
   describe "round-trip" do
     test "cast → dump → load preserves URI semantics" do
-      original = URI.new!("entity://agent/team-alpha/test_cc-builder")
+      original = URI.new!("entity://team-alpha/agent/test_cc-builder")
       {:ok, casted} = URIType.cast(original)
       {:ok, dumped} = URIType.dump(casted)
       {:ok, loaded} = URIType.load(dumped)

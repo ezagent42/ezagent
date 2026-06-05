@@ -63,7 +63,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentSpawnInvariantTest do
 
   alias Ezagent.PluginCc.Template.CcAgent
 
-  @agent_uri URI.parse("entity://agent/system/cc_spawn-invariant-test")
+  @agent_uri Ezagent.URI.new!("entity://system/agent/cc_spawn-invariant-test")
   @cwd System.tmp_dir!()
 
   setup do

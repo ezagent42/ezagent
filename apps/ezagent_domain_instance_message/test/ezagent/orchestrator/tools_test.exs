@@ -86,7 +86,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
     test "add_managed_member surfaces :missing_opt for required ctx" do
       assert {:error, {:missing_opt, :caller}} =
                Tools.add_managed_member(
-                 URI.new!("template://agent/system/x"),
+                 URI.new!("template://system/agent/x"),
                  "role-x",
                  true,
                  []
@@ -101,7 +101,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
       assert {:error, {:missing_opt, :caller}} =
                Tools.update_member_template(
                  "role-x",
-                 URI.new!("template://agent/system/t2"),
+                 URI.new!("template://system/agent/t2"),
                  []
                )
     end
@@ -137,9 +137,9 @@ defmodule Ezagent.Orchestrator.ToolsTest do
       results = [
         {:list_templates, Tools.list_templates()},
         {:add_managed_member,
-         Tools.add_managed_member(URI.new!("template://agent/system/x"), "role-x", true, [])},
+         Tools.add_managed_member(URI.new!("template://system/agent/x"), "role-x", true, [])},
         {:update_member_template,
-         Tools.update_member_template("role-x", URI.new!("template://agent/system/t2"), [])},
+         Tools.update_member_template("role-x", URI.new!("template://system/agent/t2"), [])},
         {:remove_member, Tools.remove_member("role-x", [])},
         {:define_rule_set_rule,
          Tools.define_rule_set_rule({:mention, "x"}, "role-x", rule_set: "rs")},
@@ -163,17 +163,17 @@ defmodule Ezagent.Orchestrator.ToolsTest do
     # URI-shaped string fell through to `Ezagent.URI.parse/1` and bound a
     # NON-MEMBER receiver (the M1 bypass).
     @ctx [
-      caller: URI.new!("entity://agent/system/cc_orch-m1"),
+      caller: URI.new!("entity://system/agent/cc_orch-m1"),
       caps: MapSet.new(),
       workspace_uri: URI.new!("workspace://system"),
       session_uri: URI.new!("session://generic/system/no-such-m1")
     ]
 
     test "a dangling, URI-shaped role_name is rejected (not bound as a non-member)" do
-      assert {:error, {:unknown_member_role, "entity://agent/system/not-a-member"}} =
+      assert {:error, {:unknown_member_role, "entity://system/agent/not-a-member"}} =
                Tools.define_rule_set_rule(
                  {:mention, "x"},
-                 "entity://agent/system/not-a-member",
+                 "entity://system/agent/not-a-member",
                  [rule_set: "rs"] ++ @ctx
                )
     end
@@ -186,7 +186,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
 
   describe "codex M3 — define_prompt_template enforces {body}" do
     @ctx3 [
-      caller: URI.new!("entity://agent/system/cc_orch-m3"),
+      caller: URI.new!("entity://system/agent/cc_orch-m3"),
       caps: MapSet.new(),
       session_uri: URI.new!("session://generic/system/no-such-m3")
     ]
@@ -202,7 +202,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
     # check `add_managed_member` preflights. With NO matching cap, the tool
     # must fail closed BEFORE touching the (non-existent) member.
     @swap_ctx_unauth [
-      caller: URI.new!("entity://agent/system/cc_orch-pr6"),
+      caller: URI.new!("entity://system/agent/cc_orch-pr6"),
       caps: MapSet.new(),
       workspace_uri: URI.new!("workspace://system"),
       session_uri: URI.new!("session://generic/system/no-such-pr6")
@@ -212,7 +212,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
       assert {:error, :unauthorized} =
                Tools.update_member_template(
                  "role-x",
-                 URI.new!("template://agent/system/t2"),
+                 URI.new!("template://system/agent/t2"),
                  @swap_ctx_unauth
                )
     end
@@ -228,13 +228,13 @@ defmodule Ezagent.Orchestrator.ToolsTest do
             action: :any,
             instance: {:within_session, session_uri},
             workspace_uri: URI.new!("workspace://system"),
-            granted_by: URI.new!("entity://user/system/admin"),
+            granted_by: URI.new!("entity://system/user/admin"),
             granted_at: DateTime.utc_now()
           }
         ])
 
       opts = [
-        caller: URI.new!("entity://agent/system/cc_orch-pr6"),
+        caller: URI.new!("entity://system/agent/cc_orch-pr6"),
         caps: caps,
         workspace_uri: URI.new!("workspace://system"),
         session_uri: session_uri
@@ -243,7 +243,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
       assert {:error, {:unknown_member_role, "ghost-role"}} =
                Tools.update_member_template(
                  "ghost-role",
-                 URI.new!("template://agent/system/t2"),
+                 URI.new!("template://system/agent/t2"),
                  opts
                )
     end
@@ -251,7 +251,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
 
   describe "in-flight template deletion semantics" do
     test "update_template returns :parent_template_deleted when parent hash is gone" do
-      parent_uri = URI.new!("template://session/pr48-test/never-registered@deadbeefdeadbeef")
+      parent_uri = URI.new!("template://pr48-test/session/never-registered@deadbeefdeadbeef")
       ws = URI.new!("workspace://pr48-test")
 
       caps =
@@ -261,16 +261,16 @@ defmodule Ezagent.Orchestrator.ToolsTest do
             behavior: Ezagent.Behavior.Template,
             instance: {:within_workspace, ws},
             workspace_uri: ws,
-            granted_by: URI.new!("entity://user/system/admin"),
+            granted_by: URI.new!("entity://system/user/admin"),
             granted_at: DateTime.utc_now()
           }
         ])
 
       assert {:error, :parent_template_deleted} =
                Tools.update_template(
-                 session_uri: URI.new!("session://default/pr48-test/pr48-test"),
+                 session_uri: URI.new!("session://pr48-test/default/pr48-test"),
                  workspace_uri: ws,
-                 caller: URI.new!("entity://agent/pr48-test/test_pr48-orchestrator"),
+                 caller: URI.new!("entity://pr48-test/agent/test_pr48-orchestrator"),
                  caps: caps,
                  parent_template_uri: parent_uri
                )

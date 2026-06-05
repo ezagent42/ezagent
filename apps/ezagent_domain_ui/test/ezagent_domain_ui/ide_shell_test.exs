@@ -58,8 +58,8 @@ defmodule EzagentDomainUi.IdeShellTest do
         query: "ses",
         results: [
           %{
-            key: "session://default/system/main",
-            label: "session://default/system/main",
+            key: "session://system/default/main",
+            label: "session://system/default/main",
             icon: "message-square",
             group: "session"
           }
@@ -71,7 +71,7 @@ defmodule EzagentDomainUi.IdeShellTest do
         <IdeShell.command_palette open={@open} query={@query} results={@results} />
         """)
 
-      assert html =~ "session://default/system/main"
+      assert html =~ "session://system/default/main"
       refute html =~ "没有结果"
     end
   end

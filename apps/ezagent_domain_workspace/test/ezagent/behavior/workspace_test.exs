@@ -102,8 +102,8 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       assert {:ok, state} =
                WB.create(%{
                  members: [
-                   URI.parse("entity://user/system/admin"),
-                   URI.parse("entity://agent/team-alpha/test_x")
+                   Ezagent.URI.new!("entity://system/user/admin"),
+                   Ezagent.URI.new!("entity://team-alpha/agent/test_x")
                  ]
                })
 
@@ -111,7 +111,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     end
 
     test "accepts members as MapSet directly" do
-      uris = MapSet.new([URI.parse("entity://user/system/admin")])
+      uris = MapSet.new([Ezagent.URI.new!("entity://system/user/admin")])
       assert {:ok, state} = WB.create(%{members: uris})
       assert state.members == uris
     end
@@ -130,8 +130,8 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       slice =
         slice(%{
           members: [
-            URI.parse("entity://user/system/admin"),
-            URI.parse("entity://agent/team-alpha/test_x")
+            Ezagent.URI.new!("entity://system/user/admin"),
+            Ezagent.URI.new!("entity://team-alpha/agent/test_x")
           ]
         })
 
@@ -141,14 +141,14 @@ defmodule Ezagent.Behavior.WorkspaceTest do
 
     test "add_member inserts a new URI" do
       slice = slice(%{})
-      uri = URI.parse("entity://user/system/admin")
+      uri = Ezagent.URI.new!("entity://system/user/admin")
 
       assert {:ok, new_slice} = invoke(:add_member, slice, %{member: uri}, %{})
       assert MapSet.member?(new_slice.members, uri)
     end
 
     test "remove_member drops the URI" do
-      uri = URI.parse("entity://user/system/admin")
+      uri = Ezagent.URI.new!("entity://system/user/admin")
       slice = slice(%{members: [uri]})
 
       assert {:ok, new_slice} = invoke(:remove_member, slice, %{member: uri}, %{})
@@ -165,8 +165,8 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     # callers (LV forms, mix tasks, CLI, RPC) all get the same gate.
 
     test "accepts same-prefix user member" do
-      workspace_uri = URI.parse("workspace://h2oslabs")
-      member_uri = URI.parse("entity://user/h2oslabs/alice")
+      workspace_uri = Ezagent.URI.new!("workspace://h2oslabs")
+      member_uri = Ezagent.URI.new!("entity://h2oslabs/user/alice")
       # Task #46 (main) — `:add_member` pre-spawns the user Kind via
       # `SpawnRegistry.spawn/1`, which requires the row in DB. Seed
       # the user before driving the action.
@@ -180,8 +180,8 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     end
 
     test "accepts same-prefix agent member" do
-      workspace_uri = URI.parse("workspace://h2oslabs")
-      member_uri = URI.parse("entity://agent/h2oslabs/cc_main")
+      workspace_uri = Ezagent.URI.new!("workspace://h2oslabs")
+      member_uri = Ezagent.URI.new!("entity://h2oslabs/agent/cc_main")
       slice = slice(%{})
 
       ctx = %{self_uri: workspace_uri}
@@ -191,11 +191,11 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     end
 
     test "rejects cross-prefix user member" do
-      workspace_uri = URI.parse("workspace://h2oslabs")
+      workspace_uri = Ezagent.URI.new!("workspace://h2oslabs")
       # The exact violator empirically observed in the h2oslabs row
-      # 2026-05-27 02:47 — `entity://user/system/linyilun` inside
+      # 2026-05-27 02:47 — `entity://system/user/linyilun` inside
       # `workspace://h2oslabs` is a cross-prefix leak.
-      member_uri = URI.parse("entity://user/system/linyilun")
+      member_uri = Ezagent.URI.new!("entity://system/user/linyilun")
       slice = slice(%{})
 
       ctx = %{self_uri: workspace_uri}
@@ -208,8 +208,8 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     end
 
     test "rejects cross-prefix agent member" do
-      workspace_uri = URI.parse("workspace://team-alpha")
-      member_uri = URI.parse("entity://agent/system/cc_main")
+      workspace_uri = Ezagent.URI.new!("workspace://team-alpha")
+      member_uri = Ezagent.URI.new!("entity://system/agent/cc_main")
       slice = slice(%{})
 
       ctx = %{self_uri: workspace_uri}
@@ -219,8 +219,8 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     end
 
     test "rejects non-entity member (system://)" do
-      workspace_uri = URI.parse("workspace://system")
-      member_uri = URI.parse("system://workspace-loader")
+      workspace_uri = Ezagent.URI.new!("workspace://system")
+      member_uri = Ezagent.URI.new!("system://workspace-loader")
       slice = slice(%{})
 
       ctx = %{self_uri: workspace_uri}
@@ -235,7 +235,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       # unit tests that drive the action directly. The structural
       # production gate runs through `Kind.Server` which always
       # populates `self_uri`.
-      member_uri = URI.parse("entity://user/system/admin")
+      member_uri = Ezagent.URI.new!("entity://system/user/admin")
       slice = slice(%{})
 
       assert {:ok, new_slice} = invoke(:add_member, slice, %{member: member_uri}, %{})
@@ -254,8 +254,8 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     # allowlist.
 
     test "rejects 4-segment entity URI (extra path segment)" do
-      workspace_uri = URI.parse("workspace://h2oslabs")
-      # 4-segment: entity://user/h2oslabs/alice/extra. Hand-construct
+      workspace_uri = Ezagent.URI.new!("workspace://h2oslabs")
+      # 4-segment: entity://h2oslabs/user/alice/extra. Hand-construct
       # via URI struct so the test isn't masked by `URI.parse/1`'s own
       # tolerance (production paths typically arrive from RPC / form
       # submit as user-controlled strings).
@@ -274,7 +274,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     end
 
     test "rejects entity URI with trailing slash" do
-      workspace_uri = URI.parse("workspace://h2oslabs")
+      workspace_uri = Ezagent.URI.new!("workspace://h2oslabs")
       member_uri = %URI{
         scheme: "entity",
         host: "user",
@@ -290,15 +290,15 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     end
 
     test "rejects entity URI with query string (action=) that masks the prefix check" do
-      workspace_uri = URI.parse("workspace://h2oslabs")
-      # `entity://user/system/alice?action=identity.grant_cap` —
+      workspace_uri = Ezagent.URI.new!("workspace://h2oslabs")
+      # `entity://system/user/alice?action=identity.grant_cap` —
       # cross-prefix with the query string. Pre-fix the validator
       # didn't strip the query → false-negative on the prefix check.
       # Post-fix: the round-2 codex r2 follow-up rejects ANY member
       # URI carrying a query (regardless of prefix match) as
       # `:bad_member_uri`. Membership identity must be in instance
       # form (no query, no fragment).
-      member_uri = URI.parse("entity://user/system/alice?action=identity.grant_cap")
+      member_uri = Ezagent.URI.new!("entity://system/user/alice?action=identity.grant_cap")
 
       slice = slice(%{})
       ctx = %{self_uri: workspace_uri}
@@ -308,14 +308,14 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     end
 
     test "rejects SAME-workspace entity URI with query (instance-form required) — codex r2 HIGH-1 follow-up" do
-      workspace_uri = URI.parse("workspace://h2oslabs")
+      workspace_uri = Ezagent.URI.new!("workspace://h2oslabs")
       # Same workspace, but with ?action= — pre-codex-r2 this fell
       # through the prefix check (after instance/1 stripped ?action,
       # the workspace segment matched), so the URI landed durable in
       # the slice + Store. Post-fix: rejected as bad_member_uri so the
       # original member_uri (still carrying the query) never reaches
       # persistence.
-      member_uri = URI.parse("entity://user/h2oslabs/alice?action=anything")
+      member_uri = Ezagent.URI.new!("entity://h2oslabs/user/alice?action=anything")
 
       slice = slice(%{})
       ctx = %{self_uri: workspace_uri}
@@ -325,8 +325,8 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     end
 
     test "rejects entity URI with #fragment (instance-form required)" do
-      workspace_uri = URI.parse("workspace://h2oslabs")
-      member_uri = URI.parse("entity://user/h2oslabs/alice#somewhere")
+      workspace_uri = Ezagent.URI.new!("workspace://h2oslabs")
+      member_uri = Ezagent.URI.new!("entity://h2oslabs/user/alice#somewhere")
 
       slice = slice(%{})
       ctx = %{self_uri: workspace_uri}
@@ -336,7 +336,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     end
 
     test "rejects entity URI with non-user, non-agent host segment" do
-      workspace_uri = URI.parse("workspace://h2oslabs")
+      workspace_uri = Ezagent.URI.new!("workspace://h2oslabs")
       # `entity://something_weird/h2oslabs/alice` — SPEC v3 §3.3 says
       # the type axis is `user | agent`; pre-fix the validator only
       # matched `scheme: "entity"`, never the host. Post-fix the host
@@ -358,7 +358,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     test "rejects 2-segment entity URI (missing workspace segment)" do
       # `entity://user/alice` — pre-SPEC-v3 shape that should not be
       # admitted. parse!/1 rejects (workspace segment required).
-      workspace_uri = URI.parse("workspace://h2oslabs")
+      workspace_uri = Ezagent.URI.new!("workspace://h2oslabs")
       member_uri = %URI{scheme: "entity", host: "user", authority: "user", path: "/alice"}
 
       slice = slice(%{})
@@ -377,11 +377,11 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     # queue so classify-then-mutate is atomic.
 
     test "atomically removes cross-prefix entity members" do
-      workspace_uri = URI.parse("workspace://h2oslabs")
-      violator_user = URI.parse("entity://user/system/linyilun")
-      violator_agent = URI.parse("entity://agent/other-ws/cc_main")
-      legit_user = URI.parse("entity://user/h2oslabs/alice")
-      legit_agent = URI.parse("entity://agent/h2oslabs/cc_demo")
+      workspace_uri = Ezagent.URI.new!("workspace://h2oslabs")
+      violator_user = Ezagent.URI.new!("entity://system/user/linyilun")
+      violator_agent = Ezagent.URI.new!("entity://other-ws/agent/cc_main")
+      legit_user = Ezagent.URI.new!("entity://h2oslabs/user/alice")
+      legit_agent = Ezagent.URI.new!("entity://h2oslabs/agent/cc_demo")
 
       slice =
         slice(%{
@@ -406,9 +406,9 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     end
 
     test "removes non-entity members (system://, workspace://) too" do
-      workspace_uri = URI.parse("workspace://h2oslabs")
-      bad_system = URI.parse("system://workspace-loader")
-      legit = URI.parse("entity://user/h2oslabs/alice")
+      workspace_uri = Ezagent.URI.new!("workspace://h2oslabs")
+      bad_system = Ezagent.URI.new!("system://workspace-loader")
+      legit = Ezagent.URI.new!("entity://h2oslabs/user/alice")
 
       slice = slice(%{members: [bad_system, legit]})
       ctx = %{self_uri: workspace_uri}
@@ -421,9 +421,9 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     end
 
     test "clean workspace returns empty removed list + unchanged slice" do
-      workspace_uri = URI.parse("workspace://h2oslabs")
-      legit_a = URI.parse("entity://user/h2oslabs/alice")
-      legit_b = URI.parse("entity://agent/h2oslabs/cc_demo")
+      workspace_uri = Ezagent.URI.new!("workspace://h2oslabs")
+      legit_a = Ezagent.URI.new!("entity://h2oslabs/user/alice")
+      legit_b = Ezagent.URI.new!("entity://h2oslabs/agent/cc_demo")
 
       slice = slice(%{members: [legit_a, legit_b]})
       ctx = %{self_uri: workspace_uri}
@@ -433,7 +433,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     end
 
     test "errors when ctx.self_uri is missing (production safety net)" do
-      slice = slice(%{members: [URI.parse("entity://user/system/admin")]})
+      slice = slice(%{members: [Ezagent.URI.new!("entity://system/user/admin")]})
 
       assert {:error, {:missing_self_uri, nil}} =
                invoke(:remove_cross_prefix_members, slice, %{}, %{})
@@ -446,9 +446,9 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       # would be reported clean by the cleanup pass. Post-fix the
       # cleanup classifier shares the validator's logic — any URI the
       # validator would reject is also classified as a violator here.
-      workspace_uri = URI.parse("workspace://h2oslabs")
-      non_canonical = URI.parse("entity://user/h2oslabs/alice?action=foo")
-      canonical_same = URI.parse("entity://user/h2oslabs/bob")
+      workspace_uri = Ezagent.URI.new!("workspace://h2oslabs")
+      non_canonical = Ezagent.URI.new!("entity://h2oslabs/user/alice?action=foo")
+      canonical_same = Ezagent.URI.new!("entity://h2oslabs/user/bob")
 
       slice = slice(%{members: [non_canonical, canonical_same]})
       ctx = %{self_uri: workspace_uri}
@@ -465,7 +465,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
   describe "session_template actions" do
     test "add_template + list_templates round-trip" do
       slice = slice(%{})
-      tmpl = %{members: ["entity://user/system/admin"], routing_rules: []}
+      tmpl = %{members: ["entity://system/user/admin"], routing_rules: []}
 
       {:ok, slice2} = invoke(:add_template, slice, %{name: "main", template: tmpl}, %{})
 
@@ -483,7 +483,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
   describe "routing_rules actions" do
     test "set + list round-trip" do
       slice = slice(%{})
-      rules = [%{matcher: %{type: "always"}, receivers: ["session://default/system/main"]}]
+      rules = [%{matcher: %{type: "always"}, receivers: ["session://system/default/main"]}]
 
       {:ok, slice2} = invoke(:set_routing_rules, slice, %{rules: rules}, %{})
 
@@ -495,8 +495,8 @@ defmodule Ezagent.Behavior.WorkspaceTest do
   describe "instantiate (north-star action)" do
     test "returns child list with one entry per member" do
       uris = [
-        URI.parse("entity://user/system/admin"),
-        URI.parse("entity://agent/team-alpha/test_cc-builder")
+        Ezagent.URI.new!("entity://system/user/admin"),
+        Ezagent.URI.new!("entity://team-alpha/agent/test_cc-builder")
       ]
 
       slice = slice(%{members: uris})

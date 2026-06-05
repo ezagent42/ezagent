@@ -62,20 +62,21 @@ defmodule Ezagent.Behavior.Echo do
 
   alias Ezagent.{Cmd, Message}
 
-  action :say,
+  action(:say,
     args: %{msg: :string},
     returns: %{echo: :string},
     caps: [:say],
     modes: [:call, :cast],
     description: "Echo a string back to the caller"
+  )
 
-  action :receive,
+  action(:receive,
     args: %{message: :map},
     returns: %{},
     caps: [:receive],
     modes: [:cast],
-    description:
-      "Reply to an inbound chat message with an \"echo: <text>\" line"
+    description: "Reply to an inbound chat message with an \"echo: <text>\" line"
+  )
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   # Echo is registered on Entity.Echo Kind (type_name :echo) — kind axis
@@ -178,7 +179,8 @@ defmodule Ezagent.Behavior.Echo do
               caller: agent_uri,
               # SPEC caps-cleanup-v1 §4.4 — agent reply path runs under
               # the `system://chat-reply` principal.
-              caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
+              caps:
+                "chat-reply" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
               reply: :ignore
             })
 

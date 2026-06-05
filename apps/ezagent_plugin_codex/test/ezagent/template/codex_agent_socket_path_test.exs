@@ -21,7 +21,7 @@ defmodule Ezagent.PluginCodex.Template.CodexAgentSocketPathTest do
     # The exact shape that broke it: codex_worker-<slot>-<32 hex>--<session>.
     uri =
       URI.new!(
-        "entity://agent/system/codex_worker-cx-52967c238ab935521dd83083cce7e787--e2e-orch15"
+        "entity://system/agent/codex_worker-cx-52967c238ab935521dd83083cce7e787--e2e-orch15"
       )
 
     path = CodexAgent.default_app_server_socket_path(uri)
@@ -34,14 +34,14 @@ defmodule Ezagent.PluginCodex.Template.CodexAgentSocketPathTest do
   end
 
   test "socket path is deterministic (respawn + the 4 consumers must agree)" do
-    uri = URI.new!("entity://agent/system/codex_worker-a-deadbeef--sess")
+    uri = URI.new!("entity://system/agent/codex_worker-a-deadbeef--sess")
     assert CodexAgent.default_app_server_socket_path(uri) ==
              CodexAgent.default_app_server_socket_path(uri)
   end
 
   test "distinct agent URIs get distinct socket dirs" do
-    a = CodexAgent.default_app_server_socket_path(URI.new!("entity://agent/system/codex_a--s"))
-    b = CodexAgent.default_app_server_socket_path(URI.new!("entity://agent/system/codex_b--s"))
+    a = CodexAgent.default_app_server_socket_path(URI.new!("entity://system/agent/codex_a--s"))
+    b = CodexAgent.default_app_server_socket_path(URI.new!("entity://system/agent/codex_b--s"))
     assert Path.dirname(a) != Path.dirname(b)
   end
 end

@@ -22,8 +22,8 @@ defmodule Ezagent.SnapshotStoreTest do
   alias Ezagent.Ecto.KindSnapshot
 
   defp uniq, do: System.unique_integer([:positive])
-  defp entity_uri, do: URI.parse("entity://user/team-alpha/snapstore-#{uniq()}")
-  defp system_uri, do: URI.parse("system://bootstrap-#{uniq()}")
+  defp entity_uri, do: Ezagent.URI.new!("entity://team-alpha/user/snapstore-#{uniq()}")
+  defp system_uri, do: Ezagent.URI.new!("system://bootstrap-#{uniq()}")
 
   test "write/3 then latest/1 round-trips state + version + kind_type" do
     uri = entity_uri()
@@ -111,7 +111,7 @@ defmodule Ezagent.SnapshotStoreTest do
   end
 
   test "entity:// URI derives workspace structurally from URI path" do
-    uri = URI.parse("entity://user/team-alpha/wsderive-#{uniq()}")
+    uri = Ezagent.URI.new!("entity://team-alpha/user/wsderive-#{uniq()}")
 
     {:ok, _} = SnapshotStore.write(uri, %{x: 1}, kind_type: :user)
 

@@ -29,13 +29,13 @@ defmodule EzagentDomainInstanceMessage.PresenceFanoutTest do
   defp unique_session_uri(suffix),
     do:
       Ezagent.URI.new!(
-        "session://default/team-alpha/presence_fanout_#{suffix}_#{System.unique_integer([:positive])}"
+        "session://team-alpha/default/presence_fanout_#{suffix}_#{System.unique_integer([:positive])}"
       )
 
   defp unique_user_uri(suffix),
     do:
       Ezagent.URI.new!(
-        "entity://user/team-alpha/presence_fanout_#{suffix}_#{System.unique_integer([:positive])}"
+        "entity://team-alpha/user/presence_fanout_#{suffix}_#{System.unique_integer([:positive])}"
       )
 
   defp broadcast_change(session_uri, event) do
@@ -154,7 +154,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanoutTest do
       # index gets re-populated from the live Session's :chat slice.
       member_uri =
         Ezagent.URI.new!(
-          "entity://user/team-alpha/bootstrap_test_#{System.unique_integer([:positive])}"
+          "entity://team-alpha/user/bootstrap_test_#{System.unique_integer([:positive])}"
         )
 
       # Spawn the member user Kind

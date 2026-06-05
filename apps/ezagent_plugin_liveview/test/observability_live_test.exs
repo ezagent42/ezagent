@@ -96,7 +96,7 @@ defmodule EzagentPluginLiveview.ObservabilityLiveTest do
     test "current_workspace_uri as %URI{} → {:scoped, <string>}" do
       assigns = %{
         is_system_member?: false,
-        current_workspace_uri: URI.parse("workspace://team-alpha")
+        current_workspace_uri: Ezagent.URI.new!("workspace://team-alpha")
       }
 
       assert filter_contract(assigns) == {:scoped, "workspace://team-alpha"}
@@ -178,7 +178,7 @@ defmodule EzagentPluginLiveview.ObservabilityLiveTest do
     now = NaiveDateTime.utc_now() |> NaiveDateTime.to_iso8601()
 
     workspace_segment = String.replace(workspace_uri, "workspace://", "")
-    caller = "entity://user/#{workspace_segment}/test-caller"
+    caller = "entity://#{workspace_segment}/user/test-caller"
 
     {:ok, _} =
       EzagentCore.Repo.query(
@@ -286,8 +286,8 @@ defmodule EzagentPluginLiveview.ObservabilityLiveTest do
       assert src =~ ~r/defp\s+workspace_filter_for\(%\{current_workspace_uri:/,
              "workspace_filter_for/1 must dispatch non-system callers via current_workspace_uri"
 
-      assert src =~ ~r/workspace:\/\/__none__/,
-             "workspace_filter_for/1 must fail-closed to workspace://__none__ on degenerate assigns"
+      assert src =~ "Ezagent.URI.workspace(:__none__)",
+             "workspace_filter_for/1 must fail-closed through the typed workspace URI builder"
     end
 
     test "module documents the LOW-11 filter as workspace-scoped tenant isolation", %{

@@ -22,7 +22,7 @@ defmodule EzagentPluginLiveview.EntityCapsLiveTest do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
     Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
 
-    # The agents these tests spawn live in `entity://agent/team-alpha/…`.
+    # The agents these tests spawn live in `entity://team-alpha/agent/…`.
     # IdentitiesLive filters its directory to the operator's current
     # workspace (Task #55), so the session must view team-alpha — without
     # it the admin lands in `workspace://system` and the team-alpha agent
@@ -49,9 +49,11 @@ defmodule EzagentPluginLiveview.EntityCapsLiveTest do
 
   test "GET /identities/agents/:uri/caps renders grant form for a live agent", %{conn: conn} do
     agent_uri =
-      URI.parse("entity://agent/team-alpha/test_caps-render-#{System.unique_integer([:positive])}")
+      URI.parse(
+        "entity://team-alpha/agent/test_caps-render-#{System.unique_integer([:positive])}"
+      )
 
-    {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+    {:ok, _pid} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(agent_uri, "test")
 
     encoded = URI.encode_www_form(URI.to_string(agent_uri))
     {:ok, _lv, html} = live(conn, "/identities/agents/#{encoded}/caps")
@@ -69,9 +71,9 @@ defmodule EzagentPluginLiveview.EntityCapsLiveTest do
 
   test "grant + revoke round-trip works on a live agent", %{conn: conn} do
     agent_uri =
-      URI.parse("entity://agent/team-alpha/test_caps-grant-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!("entity://team-alpha/agent/test_caps-grant-#{System.unique_integer([:positive])}")
 
-    {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+    {:ok, _pid} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(agent_uri, "test")
 
     encoded = URI.encode_www_form(URI.to_string(agent_uri))
     {:ok, lv, _html} = live(conn, "/identities/agents/#{encoded}/caps")
@@ -111,9 +113,9 @@ defmodule EzagentPluginLiveview.EntityCapsLiveTest do
 
   test "/identities lists agents with a Caps link", %{conn: conn} do
     agent_uri =
-      URI.parse("entity://agent/team-alpha/test_caps-list-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!("entity://team-alpha/agent/test_caps-list-#{System.unique_integer([:positive])}")
 
-    {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+    {:ok, _pid} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(agent_uri, "test")
 
     {:ok, _lv, html} = live(conn, "/identities")
 

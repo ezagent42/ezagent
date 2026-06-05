@@ -149,8 +149,8 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
     end
 
     test "caps/1 raises on non-system URI" do
-      assert_raise ArgumentError, ~r/expects a system:\/\/ URI/, fn ->
-        Ezagent.SystemPrincipal.caps("entity://user/system/admin")
+      assert_raise ArgumentError, ~r/expects a system URI/, fn ->
+        Ezagent.SystemPrincipal.caps("entity://system/user/admin")
       end
     end
 

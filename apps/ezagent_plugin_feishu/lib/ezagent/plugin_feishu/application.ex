@@ -191,7 +191,7 @@ defmodule EzagentPluginFeishu.Application do
   end
 
   defp seed_each_user_binding(bindings) do
-    admin_uri = "entity://user/system/admin"
+    admin_uri = Ezagent.Entity.User.admin_uri() |> URI.to_string()
 
     Enum.each(bindings, fn binding ->
       open_id = Map.get(binding, "open_id")

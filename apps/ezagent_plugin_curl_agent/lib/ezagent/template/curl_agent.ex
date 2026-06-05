@@ -92,37 +92,21 @@ defmodule Ezagent.PluginCurlAgent.Template do
   defp check_class(%{"class" => other}), do: {:error, {:wrong_class, other}}
   defp check_class(_), do: {:error, :missing_class_field}
 
-  # PR #141 (SPEC v2 §5.14): strict `entity://agent/team-alpha/curl_<name>` shape.
-  # The legacy `agent://curl/<name>` and `curl-agent://` schemes are
-  # both rejected — clean rebuild per SPEC §5.11.
   defp check_agent_uri(%{"agent_uri" => uri_str}) when is_binary(uri_str) and uri_str != "" do
-    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
-    # with try/rescue keeping the structured `{:error, _}` contract.
+    # PR-B unify-uri-query: the URI is an opaque identifier. This validator
+    # checks only the structural entity-agent shape; flavor is stored in the
+    # Template Class/content, never parsed from the URI name prefix.
     try do
       case Ezagent.URI.new!(uri_str) do
-        %URI{scheme: "entity", host: "agent", path: "/" <> rest} when rest != "" ->
-          # Phase 9 PR-2 (SPEC v3 §3): entity URIs are 3-segment:
-          # /<workspace>/<entity_name>. Flavor lives in entity_name prefix.
-          with [_workspace, entity_name] when entity_name != "" <-
-                 String.split(rest, "/", parts: 2),
-               [flavor, suffix] when flavor != "" and suffix != "" <-
-                 String.split(entity_name, "_", parts: 2) do
-            if flavor == "curl" do
-              :ok
-            else
-              {:error, {:wrong_agent_flavor, flavor, expected: "curl"}}
-            end
+        %URI{scheme: "entity"} = uri ->
+          if Ezagent.URI.type?(uri, :agent) do
+            :ok
           else
-            _ ->
-              {:error,
-               {:missing_flavor_prefix, uri_str,
-                "agent URIs must be `entity://agent/<workspace>/curl_<name>` (Phase 9 PR-2)"}}
+            {:error, {:invalid_agent_uri, uri_str, "agent URI must be an entity agent URI"}}
           end
 
-        %URI{scheme: "entity"} ->
-          {:error,
-           {:invalid_agent_uri, uri_str,
-            "agent URIs must be `entity://agent/<workspace>/curl_<name>` (Phase 9 PR-2)"}}
+        %URI{} ->
+          {:error, {:invalid_agent_uri, uri_str, "agent URI must be an entity agent URI"}}
 
         _ ->
           {:error, {:bad_agent_uri, uri_str}}
@@ -222,9 +206,9 @@ defmodule Ezagent.PluginCurlAgent.Template do
       %{
         name: "agent_uri",
         type: :uri,
-        label: "Agent URI (entity://agent/team-alpha/curl_<name> — appears in mention/floating dropdowns)",
+        label: "Agent URI",
         required: true,
-        placeholder: "entity://agent/team-alpha/curl_my-deepseek"
+        placeholder: "curl_my-deepseek"
       },
       %{
         name: "provider",

@@ -443,9 +443,10 @@ defmodule Ezagent.Behavior.Workspace do
 
   defp validate_member_prefix(
          %URI{scheme: "entity"} = member_uri,
-         %URI{scheme: "workspace", host: workspace_name} = workspace_uri
-       )
-       when is_binary(workspace_name) and workspace_name != "" do
+         %URI{scheme: "workspace"} = workspace_uri
+       ) do
+    workspace_name = Ezagent.URI.name!(workspace_uri)
+
     # Task #55 round-2 codex r2 review HIGH-1 follow-up — explicitly
     # reject query + fragment on the ORIGINAL member URI. Pre-fix
     # `Ezagent.URI.new!/1` accepts URIs with query strings (they're
@@ -476,14 +477,13 @@ defmodule Ezagent.Behavior.Workspace do
 
   defp validate_member_prefix_canonical(member_uri, workspace_uri, workspace_name) do
     with {:ok, canonical} <- canonicalize_entity_uri(member_uri),
-         %URI{host: host, path: "/" <> rest} = canonical,
-         true <- host in ["user", "agent"] or {:bad_host, host} do
-      # parse!/instance guarantees rest splits cleanly into [ws, name].
-      case String.split(rest, "/") do
-        [^workspace_name, entity_name] when entity_name != "" ->
+         {:ok, type_axis} <- Ezagent.URI.type(canonical),
+         true <- type_axis in ["user", "agent"] or {:bad_host, type_axis} do
+      case {Ezagent.URI.workspace_name(canonical), Ezagent.URI.name(canonical)} do
+        {{:ok, ^workspace_name}, {:ok, _entity_name}} ->
           :ok
 
-        [_other_workspace, _entity_name] ->
+        {{:ok, _other_workspace}, {:ok, _entity_name}} ->
           {:error, {:cross_workspace_member_not_permitted, member_uri, workspace_uri}}
 
         _ ->
@@ -494,7 +494,7 @@ defmodule Ezagent.Behavior.Workspace do
           {:error, {:bad_member_uri, member_uri}}
       end
     else
-      {:bad_host, _host} ->
+      {:bad_host, _type_axis} ->
         # `entity://something_weird/ws/name` — host axis must be
         # exactly `user` or `agent` (the two allowed entity types
         # per SPEC v3 §3). Anything else is malformed.
@@ -539,16 +539,20 @@ defmodule Ezagent.Behavior.Workspace do
   # working; production never reaches this branch because
   # `EzagentDomainInstanceMessage.Application.start/2` registers the `entity://`
   # spawn fn before any workspace dispatch can fire.
-  defp ensure_member_kind_spawned(%URI{scheme: "entity", host: "user"} = uri) do
-    case Ezagent.SpawnRegistry.spawn(uri) do
-      {:ok, _pid} ->
-        :ok
+  defp ensure_member_kind_spawned(%URI{scheme: "entity"} = uri) do
+    if Ezagent.URI.type?(uri, :user) do
+      case Ezagent.SpawnRegistry.spawn(uri) do
+        {:ok, _pid} ->
+          :ok
 
-      {:error, {:no_spawn_fn, _scheme}} ->
-        :ok
+        {:error, {:no_spawn_fn, _scheme}} ->
+          :ok
 
-      {:error, reason} ->
-        {:error, {:member_user_spawn_failed, uri, reason}}
+        {:error, reason} ->
+          {:error, {:member_user_spawn_failed, uri, reason}}
+      end
+    else
+      :ok
     end
   end
 
@@ -585,8 +589,9 @@ defmodule Ezagent.Behavior.Workspace do
     members = ctx[:read].(:members, MapSet.new())
 
     case workspace_uri do
-      %URI{scheme: "workspace", host: workspace_name}
-      when is_binary(workspace_name) and workspace_name != "" ->
+      %URI{scheme: "workspace"} = workspace_uri ->
+        workspace_name = Ezagent.URI.name!(workspace_uri)
+
         {violators, kept} =
           members
           |> MapSet.to_list()
@@ -624,7 +629,7 @@ defmodule Ezagent.Behavior.Workspace do
   defp cross_prefix_violator?(%URI{} = member_uri, workspace_name) do
     case validate_member_prefix(
            member_uri,
-           %URI{scheme: "workspace", host: workspace_name, path: nil}
+           Ezagent.URI.workspace(workspace_name)
          ) do
       :ok -> false
       {:error, _} -> true
@@ -807,9 +812,12 @@ defmodule Ezagent.Behavior.Workspace do
     end
   end
 
-  defp require_session_workspace_uri(%URI{scheme: "workspace", host: host} = uri)
-       when is_binary(host) and host != "",
-       do: {:ok, uri}
+  defp require_session_workspace_uri(%URI{scheme: "workspace"} = uri) do
+    case Ezagent.URI.name(uri) do
+      {:ok, _name} -> {:ok, uri}
+      :error -> {:error, {:bad_workspace_uri, uri}}
+    end
+  end
 
   defp require_session_workspace_uri(other),
     do: {:error, {:bad_workspace_uri, other}}
@@ -886,13 +894,18 @@ defmodule Ezagent.Behavior.Workspace do
 
   defp valid_from?(nil), do: true
 
-  defp valid_from?(%URI{scheme: "entity", host: "agent", path: "/" <> _}), do: true
+  defp valid_from?(%URI{scheme: "entity"} = uri) do
+    Ezagent.URI.type?(uri, :agent) and match?({:ok, _name}, Ezagent.URI.name(uri))
+  end
 
   defp valid_from?(_), do: false
 
-  defp require_workspace_uri(%URI{scheme: "workspace", host: host} = uri)
-       when is_binary(host) and host != "",
-       do: {:ok, uri}
+  defp require_workspace_uri(%URI{scheme: "workspace"} = uri) do
+    case Ezagent.URI.name(uri) do
+      {:ok, _name} -> {:ok, uri}
+      :error -> {:error, {:bad_workspace_uri, uri}}
+    end
+  end
 
   defp require_workspace_uri(other), do: {:error, {:bad_workspace_uri, other}}
 
@@ -1029,16 +1042,13 @@ defmodule Ezagent.Behavior.Workspace do
     end
   end
 
-  # Per SPEC v3 §3 / Phase 9 PR-2 — entity URI is
-  # `entity://agent/<workspace>/<flavor>_<name>`.
-  defp compose_agent_uri(flavor, name, workspace_name)
-       when is_binary(flavor) and is_binary(name) and is_binary(workspace_name) do
-    full = "entity://agent/#{workspace_name}/#{flavor}_#{name}"
-
+  # Agent flavor is stored template metadata, not part of the stable URI.
+  defp compose_agent_uri(_flavor, name, workspace_name)
+       when is_binary(name) and is_binary(workspace_name) do
     try do
-      {:ok, Ezagent.URI.new!(full)}
+      {:ok, Ezagent.URI.agent(workspace_name, name)}
     rescue
-      ArgumentError -> {:error, {:bad_uri, full}}
+      ArgumentError -> {:error, {:bad_uri, {workspace_name, name}}}
     end
   end
 
@@ -1063,7 +1073,7 @@ defmodule Ezagent.Behavior.Workspace do
     tmpl =
       %{
         "class" => "cc.agent",
-        "agent_uri" => URI.to_string(agent_uri),
+        "agent_uri" => agent_uri_string(agent_uri),
         "cwd" => Path.expand(cwd)
       }
       |> maybe_put_clone_source(source_config_dir)
@@ -1091,7 +1101,7 @@ defmodule Ezagent.Behavior.Workspace do
 
     tmpl = %{
       "class" => "echo.agent",
-      "agent_uri" => URI.to_string(agent_uri),
+      "agent_uri" => agent_uri_string(agent_uri),
       "with_pty" => with_pty?,
       "cwd" => if(with_pty?, do: Path.expand(cwd), else: cwd)
     }
@@ -1118,7 +1128,7 @@ defmodule Ezagent.Behavior.Workspace do
 
     tmpl = %{
       "class" => "codex.agent",
-      "agent_uri" => URI.to_string(agent_uri),
+      "agent_uri" => agent_uri_string(agent_uri),
       "cwd" => Path.expand(cwd)
     }
 
@@ -1133,9 +1143,11 @@ defmodule Ezagent.Behavior.Workspace do
     )
   end
 
-  # Any other flavor (curl / np / future) — direct SpawnRegistry.spawn.
-  defp do_create_agent(_other_flavor, agent_uri, _session_templates, params) do
-    case Ezagent.SpawnRegistry.spawn(agent_uri) do
+  # Any other flavor (curl / np / future) — direct Kind spawn via the
+  # stored flavor declaration. URI names are opaque; do not recover the
+  # flavor from the agent URI.
+  defp do_create_agent(other_flavor, agent_uri, _session_templates, params) do
+    case direct_spawn_flavor_agent(other_flavor, agent_uri) do
       {:ok, _pid} ->
         record_creator_lineage(agent_uri, params)
 
@@ -1151,6 +1163,13 @@ defmodule Ezagent.Behavior.Workspace do
 
       {:error, reason} ->
         {:error, {:spawn_failed, reason}}
+    end
+  end
+
+  defp direct_spawn_flavor_agent(flavor, agent_uri) when is_binary(flavor) do
+    with {:ok, %{kind: kind_module}} <- Ezagent.AgentFlavorRegistry.lookup(flavor),
+         :ok <- Ezagent.AgentFlavorAttributes.put(agent_uri, flavor) do
+      Ezagent.Kind.spawn(kind_module, %{uri: agent_uri})
     end
   end
 
@@ -1293,11 +1312,13 @@ defmodule Ezagent.Behavior.Workspace do
     end
   end
 
-  # Per SPEC v3 §3, entity URI path is `/<workspace>/<entity_name>`.
-  defp agent_name(%URI{path: "/" <> rest}) do
-    case String.split(rest, "/", parts: 2) do
-      [_workspace, entity_name] -> entity_name
-      [name] -> name
+  defp agent_uri_string(%URI{} = uri), do: URI.to_string(uri)
+
+  # Entity URI names are opaque; this accessor is the only local reader.
+  defp agent_name(%URI{} = uri) do
+    case Ezagent.URI.name(uri) do
+      {:ok, name} -> name
+      :error -> URI.to_string(uri)
     end
   end
 
@@ -1336,30 +1357,37 @@ defmodule Ezagent.Behavior.Workspace do
   # `docs/futures/todo.md` for the full discussion + planned fix).
   defp grant_member_create_session_cap_effects(
          %URI{scheme: "workspace"} = workspace_uri,
-         %URI{scheme: "entity", host: "user"} = member_uri
+         %URI{scheme: "entity"} = member_uri
        ) do
-    cap = %Ezagent.Capability{
-      kind: :workspace,
-      behavior: __MODULE__,
-      action: :create_session,
-      instance: workspace_uri,
-      workspace_uri: workspace_uri,
-      granted_by: Ezagent.SystemPrincipal.uri("template-materialize"),
-      granted_at: DateTime.utc_now()
-    }
-
-    cmd = %Ezagent.Cmd{
-      target: member_uri,
-      action: :grant_cap,
-      args: %{cap: cap},
-      ctx: %{
-        caller: Ezagent.SystemPrincipal.uri("template-materialize"),
-        caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
-        reply: :ignore
+    unless Ezagent.URI.type?(member_uri, :user) do
+      []
+    else
+      cap = %Ezagent.Capability{
+        kind: :workspace,
+        behavior: __MODULE__,
+        action: :create_session,
+        instance: workspace_uri,
+        workspace_uri: workspace_uri,
+        granted_by: Ezagent.SystemPrincipal.uri("template-materialize"),
+        granted_at: DateTime.utc_now()
       }
-    }
 
-    [{:dispatch, cmd}]
+      cmd = %Ezagent.Cmd{
+        target: member_uri,
+        action: :grant_cap,
+        args: %{cap: cap},
+        ctx: %{
+          caller: Ezagent.SystemPrincipal.uri("template-materialize"),
+          caps:
+            "template-materialize"
+            |> Ezagent.SystemPrincipal.uri()
+            |> Ezagent.SystemPrincipal.caps(),
+          reply: :ignore
+        }
+      }
+
+      [{:dispatch, cmd}]
+    end
   end
 
   # Non-user member (agent) or missing workspace URI — no grant.

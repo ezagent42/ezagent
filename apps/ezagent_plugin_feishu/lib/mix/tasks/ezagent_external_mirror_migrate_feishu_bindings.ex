@@ -87,7 +87,7 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.MigrateFeishuBindings do
     else
       Mix.Task.run("app.start")
 
-      admin_uri_str = opts[:admin] || "entity://user/system/admin"
+      admin_uri_str = opts[:admin] || Ezagent.URI.stable_key(Ezagent.Entity.User.admin_uri())
       dry_run? = !!opts[:dry_run]
 
       rows = read_legacy_rows()

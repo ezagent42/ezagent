@@ -69,12 +69,21 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
      |> assign(:caller_caps, caller_caps)
      |> assign(:flash_error, nil)
      |> assign(:flash_info, nil)
-     |> assign(:grant_form, to_form(%{"kind" => "", "behavior" => "any", "instance" => "any"}, as: "grant"))
+     |> assign(
+       :grant_form,
+       to_form(%{"kind" => "", "behavior" => "any", "instance" => "any"}, as: "grant")
+     )
      |> load_caps()}
   end
 
   # Returns "user" | "agent" | "entity" for breadcrumb/copy.
-  defp entity_kind(%URI{scheme: "entity", host: host}) when host in ["user", "agent"], do: host
+  defp entity_kind(%URI{scheme: "entity"} = uri) do
+    case Ezagent.URI.type(uri) do
+      {:ok, kind} when kind in ["user", "agent"] -> kind
+      _ -> "entity"
+    end
+  end
+
   defp entity_kind(_), do: "entity"
 
   defp load_caps(socket) do
@@ -117,7 +126,7 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
         socket,
         :grant_cap,
         cap,
-        gettext("Granted cap to %{uri}", uri: URI.to_string(socket.assigns.entity_uri))
+        gettext("Granted cap to %{uri}", uri: Ezagent.URI.stable_key(socket.assigns.entity_uri))
       )
     end
   end
@@ -228,7 +237,9 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(Map.get(assigns, :current_entity_uri) || Ezagent.URI.new!("entity://user/system/admin"))
+        Ezagent.URI.stable_key(
+          Map.get(assigns, :current_entity_uri) || Ezagent.Entity.User.admin_uri()
+        )
       end)
 
     ~H"""
@@ -248,81 +259,121 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
           current_path={"/identities/" <> @entity_kind <> "s"}
           status={%{agents_alive: 0, bridges: 0, debug_events: 0, version: "dev"}}
         >
-      <:main_window>
-        <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-          <.page_header title={gettext("Caps for %{uri}", uri: URI.to_string(@entity_uri))}>
-            <:subtitle>
-              {gettext("Live cap mutation via Identity Behavior. Admin caps required (CapBAC at dispatch step 5.5).")}
-              <a href={parent_path(@entity_kind)} class="text-zinc-600 dark:text-zinc-400 underline hover:text-zinc-900 dark:hover:text-zinc-100 ml-1">{parent_label(@entity_kind)}</a>
-            </:subtitle>
-          </.page_header>
+          <:main_window>
+            <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
+              <.page_header title={
+                gettext("Caps for %{uri}", uri: Ezagent.URI.stable_key(@entity_uri))
+              }>
+                <:subtitle>
+                  {gettext(
+                    "Live cap mutation via Identity Behavior. Admin caps required (CapBAC at dispatch step 5.5)."
+                  )}
+                  <a
+                    href={parent_path(@entity_kind)}
+                    class="text-zinc-600 dark:text-zinc-400 underline hover:text-zinc-900 dark:hover:text-zinc-100 ml-1"
+                  >
+                    {parent_label(@entity_kind)}
+                  </a>
+                </:subtitle>
+              </.page_header>
 
-          <p :if={@flash_info} class="text-emerald-700 dark:text-emerald-300 text-sm mb-3">{@flash_info}</p>
-          <p :if={@flash_error} class="text-red-700 dark:text-red-300 text-sm mb-3">{@flash_error}</p>
+              <p :if={@flash_info} class="text-emerald-700 dark:text-emerald-300 text-sm mb-3">
+                {@flash_info}
+              </p>
+              <p :if={@flash_error} class="text-red-700 dark:text-red-300 text-sm mb-3">
+                {@flash_error}
+              </p>
 
-          <.card class="mb-6">
-            <:header>{gettext("Grant new cap")}</:header>
-            <.form for={@grant_form} phx-submit="grant" id="grant-cap-form" class="grid grid-cols-3 gap-2 items-end">
-              <label class="text-xs">
-                kind
-                <input type="text" name="grant[kind]" placeholder="echo or :any"
-                  class="block w-full px-2 py-1 text-sm border border-zinc-300 dark:border-zinc-700 rounded-md" />
-              </label>
-              <label class="text-xs">
-                behavior
-                <input type="text" name="grant[behavior]" value="any"
-                  class="block w-full px-2 py-1 text-sm border border-zinc-300 dark:border-zinc-700 rounded-md" />
-              </label>
-              <label class="text-xs">
-                instance
-                <input type="text" name="grant[instance]" value="any"
-                  class="block w-full px-2 py-1 text-sm border border-zinc-300 dark:border-zinc-700 rounded-md" />
-              </label>
-              <div class="col-span-3 flex justify-end">
-                <.button type="submit" variant="primary" size="sm">{gettext("Grant")}</.button>
-              </div>
-            </.form>
-          </.card>
+              <.card class="mb-6">
+                <:header>{gettext("Grant new cap")}</:header>
+                <.form
+                  for={@grant_form}
+                  phx-submit="grant"
+                  id="grant-cap-form"
+                  class="grid grid-cols-3 gap-2 items-end"
+                >
+                  <label class="text-xs">
+                    kind
+                    <input
+                      type="text"
+                      name="grant[kind]"
+                      placeholder="echo or :any"
+                      class="block w-full px-2 py-1 text-sm border border-zinc-300 dark:border-zinc-700 rounded-md"
+                    />
+                  </label>
+                  <label class="text-xs">
+                    behavior
+                    <input
+                      type="text"
+                      name="grant[behavior]"
+                      value="any"
+                      class="block w-full px-2 py-1 text-sm border border-zinc-300 dark:border-zinc-700 rounded-md"
+                    />
+                  </label>
+                  <label class="text-xs">
+                    instance
+                    <input
+                      type="text"
+                      name="grant[instance]"
+                      value="any"
+                      class="block w-full px-2 py-1 text-sm border border-zinc-300 dark:border-zinc-700 rounded-md"
+                    />
+                  </label>
+                  <div class="col-span-3 flex justify-end">
+                    <.button type="submit" variant="primary" size="sm">{gettext("Grant")}</.button>
+                  </div>
+                </.form>
+              </.card>
 
-          <.card>
-            <:header>{gettext("Current caps")}</:header>
-            <%= case @caps do %>
-              <% :entity_not_live -> %>
-                <p class="text-red-700 dark:text-red-300 text-sm">{gettext("%{kind} Kind not registered (not live in BEAM).", kind: String.capitalize(@entity_kind))}</p>
-              <% {:error, reason} -> %>
-                <p class="text-red-700 dark:text-red-300 text-sm">{gettext("Error reading caps: %{reason}", reason: inspect(reason))}</p>
-              <% caps when is_list(caps) and caps == [] -> %>
-                <p class="text-zinc-500 italic text-sm">{gettext("No caps. Grant one above.")}</p>
-              <% caps when is_list(caps) -> %>
-                <table class="w-full text-sm">
-                  <thead class="bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800">
-                    <tr class="text-left text-xs uppercase tracking-wide text-zinc-500">
-                      <th class="px-2 py-2">kind</th>
-                      <th class="py-2">behavior</th>
-                      <th class="py-2">instance</th>
-                      <th class="py-2">granted_by</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr :for={{cap, i} <- Enum.with_index(caps)} class="border-b border-zinc-100 dark:border-zinc-900 last:border-0">
-                      <td class="px-2 py-2 font-mono text-xs">{inspect(cap.kind)}</td>
-                      <td class="py-2 font-mono text-xs">{inspect(cap.behavior)}</td>
-                      <td class="py-2 font-mono text-xs">{inspect(cap.instance)}</td>
-                      <td class="py-2 font-mono text-xs">{cap.granted_by && URI.to_string(cap.granted_by)}</td>
-                      <td class="py-2 text-right pr-2">
-                        <.button variant="danger" size="sm" phx-click="revoke" phx-value-index={i}>
-                          {gettext("revoke")}
-                        </.button>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-            <% end %>
-          </.card>
-        </div>
-      </:main_window>
-
+              <.card>
+                <:header>{gettext("Current caps")}</:header>
+                <%= case @caps do %>
+                  <% :entity_not_live -> %>
+                    <p class="text-red-700 dark:text-red-300 text-sm">
+                      {gettext("%{kind} Kind not registered (not live in BEAM).",
+                        kind: String.capitalize(@entity_kind)
+                      )}
+                    </p>
+                  <% {:error, reason} -> %>
+                    <p class="text-red-700 dark:text-red-300 text-sm">
+                      {gettext("Error reading caps: %{reason}", reason: inspect(reason))}
+                    </p>
+                  <% caps when is_list(caps) and caps == [] -> %>
+                    <p class="text-zinc-500 italic text-sm">{gettext("No caps. Grant one above.")}</p>
+                  <% caps when is_list(caps) -> %>
+                    <table class="w-full text-sm">
+                      <thead class="bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800">
+                        <tr class="text-left text-xs uppercase tracking-wide text-zinc-500">
+                          <th class="px-2 py-2">kind</th>
+                          <th class="py-2">behavior</th>
+                          <th class="py-2">instance</th>
+                          <th class="py-2">granted_by</th>
+                          <th></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr
+                          :for={{cap, i} <- Enum.with_index(caps)}
+                          class="border-b border-zinc-100 dark:border-zinc-900 last:border-0"
+                        >
+                          <td class="px-2 py-2 font-mono text-xs">{inspect(cap.kind)}</td>
+                          <td class="py-2 font-mono text-xs">{inspect(cap.behavior)}</td>
+                          <td class="py-2 font-mono text-xs">{inspect(cap.instance)}</td>
+                          <td class="py-2 font-mono text-xs">
+                            {cap.granted_by && Ezagent.URI.stable_key(cap.granted_by)}
+                          </td>
+                          <td class="py-2 text-right pr-2">
+                            <.button variant="danger" size="sm" phx-click="revoke" phx-value-index={i}>
+                              {gettext("revoke")}
+                            </.button>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                <% end %>
+              </.card>
+            </div>
+          </:main_window>
         </WorkspaceShell.workspace_shell>
       </:body>
     </AppShell.app_shell>

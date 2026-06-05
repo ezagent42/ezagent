@@ -34,7 +34,7 @@ defmodule Ezagent.Behavior.WorkspaceUserAdminMigrationParityTest do
     :ok = BehaviorRegistry.register(StubWorkspaceKind, :create_user, WorkspaceUserAdmin)
 
     n = System.unique_integer([:positive])
-    workspace_uri = URI.parse("workspace://wua-parity-#{n}")
+    workspace_uri = Ezagent.URI.new!("workspace://wua-parity-#{n}")
     state = %{workspace_user_admin: WorkspaceUserAdmin.init_slice(%{})}
 
     {:ok, workspace_uri: workspace_uri, state: state}
@@ -59,7 +59,7 @@ defmodule Ezagent.Behavior.WorkspaceUserAdminMigrationParityTest do
     test "create_user happy path inserts row + bumps create_count + emits event",
          %{workspace_uri: workspace_uri, state: state} do
       user_uri_str = URI.to_string(workspace_uri) |> String.replace("workspace://", "")
-      user_uri = "entity://user/#{user_uri_str}/parity-alice"
+      user_uri = "entity://#{user_uri_str}/user/parity-alice"
 
       inv =
         build_invocation(workspace_uri, :create_user, %{
@@ -91,7 +91,7 @@ defmodule Ezagent.Behavior.WorkspaceUserAdminMigrationParityTest do
     test "create_user with cross-workspace user URI is refused",
          %{workspace_uri: workspace_uri, state: state} do
       # User URI's workspace segment doesn't match dispatch target's.
-      cross_user_uri = "entity://user/different-workspace/alice"
+      cross_user_uri = "entity://different-workspace/user/alice"
 
       inv =
         build_invocation(workspace_uri, :create_user, %{

@@ -22,7 +22,7 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
 
   describe "slice default — :legends" do
     test "a fresh session's :chat state carries an empty legends map" do
-      {:ok, state} = Chat.create(%{owner_uri: uri("entity://user/system/admin")})
+      {:ok, state} = Chat.create(%{owner_uri: uri("entity://system/user/admin")})
       assert state.legends == %{}
     end
 
@@ -45,7 +45,7 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
       # caller-supplied ctx boolean. `system://session-internal` is the
       # principal `system_set_legends/2` dispatches under.
       ctx = %{
-        self_uri: uri("session://default/team/s1"),
+        self_uri: uri("session://team/default/s1"),
         caller: uri("system://session-internal")
       }
 
@@ -57,12 +57,12 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
 
     test "system://orchestrator-tools is also a trusted caller" do
       legends = Legend.put(%{}, "team", member_set: [], bound_rule_set: "rs")
-      ctx = %{self_uri: uri("session://default/team/s1"), caller: uri("system://orchestrator-tools")}
+      ctx = %{self_uri: uri("session://team/default/s1"), caller: uri("system://orchestrator-tools")}
       assert {:ok, _, _} = Chat.handle_set_legends(%{legends: legends}, ctx)
     end
 
     test "the session's orchestrator (within_session cap) is authorized" do
-      sess = uri("session://default/team-alpha/s1")
+      sess = uri("session://team-alpha/default/s1")
       legends = Legend.put(%{}, "team", member_set: [], bound_rule_set: "rs")
 
       orch_cap = %Ezagent.Capability{
@@ -70,8 +70,8 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
         behavior: Chat,
         action: :set_legends,
         instance: {:within_session, sess},
-        workspace_uri: URI.parse("workspace://team-alpha"),
-        granted_by: URI.parse("system://test"),
+        workspace_uri: Ezagent.URI.new!("workspace://team-alpha"),
+        granted_by: Ezagent.URI.new!("system://test"),
         granted_at: DateTime.utc_now()
       }
 
@@ -82,7 +82,7 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
     end
 
     test "a plain session-cap holder (no orchestrator authority) is denied" do
-      ctx = %{self_uri: uri("session://default/team/s1"), caps: MapSet.new()}
+      ctx = %{self_uri: uri("session://team/default/s1"), caps: MapSet.new()}
       assert {:error, :unauthorized} = Chat.handle_set_legends(%{legends: %{}}, ctx)
     end
 
@@ -91,7 +91,7 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
     # sets `system_internal: true` in their ctx MUST be denied — the old gate
     # trusted that boolean, installing legends for any caller.
     test "a session member who SPOOFS system_internal: true in ctx is DENIED" do
-      sess = uri("session://default/team-alpha/s1")
+      sess = uri("session://team-alpha/default/s1")
 
       # A broad-but-not-orchestrator session cap: {:session, :any} structurally
       # held by any workspace session member.
@@ -100,14 +100,14 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
         behavior: Chat,
         action: :set_legends,
         instance: :any,
-        workspace_uri: URI.parse("workspace://team-alpha"),
-        granted_by: URI.parse("system://test"),
+        workspace_uri: Ezagent.URI.new!("workspace://team-alpha"),
+        granted_by: Ezagent.URI.new!("system://test"),
         granted_at: DateTime.utc_now()
       }
 
       ctx = %{
         self_uri: sess,
-        caller: uri("entity://user/team-alpha/mallory"),
+        caller: uri("entity://team-alpha/user/mallory"),
         caps: MapSet.new([member_cap]),
         # The spoofed bypass flag — now IGNORED for legends.
         system_internal: true
@@ -140,9 +140,9 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
   # @-able (the SoT members map is untouched + role_name_to_uri still resolves).
   describe "fold_members/2 (GATE c) — wires role_name_to_uri into Legend.fold_members" do
     test "folded legend members collapse into one legend row; non-members untouched" do
-      relay_cc = uri("entity://agent/team/cc_relay")
-      relay_codex = uri("entity://agent/team/codex_relay")
-      admin = uri("entity://user/system/admin")
+      relay_cc = uri("entity://team/agent/cc_relay")
+      relay_codex = uri("entity://team/agent/codex_relay")
+      admin = uri("entity://system/user/admin")
 
       members = %{
         relay_cc => %{online: true, role_name: "relay-cc"},
@@ -187,7 +187,7 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
     end
 
     test "no legends → every member is a plain row" do
-      admin = uri("entity://user/system/admin")
+      admin = uri("entity://system/user/admin")
       slice = %{members: %{admin => %{online: true}}, legends: %{}}
 
       assert Chat.fold_members(slice) == [{:member, admin, %{online: true}}]

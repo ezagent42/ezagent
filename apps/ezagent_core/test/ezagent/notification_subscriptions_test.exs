@@ -26,7 +26,7 @@ defmodule Ezagent.NotificationSubscriptionsTest do
       action: :subscribe,
       instance: :any,
       workspace_uri: :any,
-      granted_by: URI.parse("entity://user/system/test"),
+      granted_by: Ezagent.URI.new!("entity://system/user/test"),
       granted_at: DateTime.utc_now()
     }
   end
@@ -41,7 +41,7 @@ defmodule Ezagent.NotificationSubscriptionsTest do
       action: :notify,
       instance: :any,
       workspace_uri: :any,
-      granted_by: URI.parse("entity://user/system/test"),
+      granted_by: Ezagent.URI.new!("entity://system/user/test"),
       granted_at: DateTime.utc_now()
     }
   end
@@ -52,7 +52,7 @@ defmodule Ezagent.NotificationSubscriptionsTest do
       behavior: Ezagent.Behavior.Chat,
       instance: :any,
       workspace_uri: :any,
-      granted_by: URI.parse("entity://user/system/test"),
+      granted_by: Ezagent.URI.new!("entity://system/user/test"),
       granted_at: DateTime.utc_now()
     }
   end
@@ -66,13 +66,13 @@ defmodule Ezagent.NotificationSubscriptionsTest do
   # admin ctx. This is the legitimate "I'm bootstrapping a test
   # row" pathway under round-4.
   defp seed(entity, stream) do
-    admin = URI.parse("entity://user/system/test-seeder")
+    admin = Ezagent.URI.new!("entity://system/user/test-seeder")
     :ok = Subs.register_subscription(entity, stream, admin_ctx_for(admin))
   end
 
   test "register + list + unregister flow (via cap path)" do
-    entity = URI.parse("entity://user/acme/alice-#{uniq()}")
-    stream = URI.parse("entity://user/acme/bob-#{uniq()}")
+    entity = Ezagent.URI.new!("entity://acme/user/alice-#{uniq()}")
+    stream = Ezagent.URI.new!("entity://acme/user/bob-#{uniq()}")
 
     assert Subs.list_subscriptions(entity) == []
 
@@ -84,7 +84,7 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     assert stream_str == URI.to_string(stream)
     assert %DateTime{} = meta.registered_at
 
-    admin = URI.parse("entity://user/system/test-unregisterer")
+    admin = Ezagent.URI.new!("entity://system/user/test-unregisterer")
 
     assert :ok =
              Subs.unregister_subscription(entity, stream, admin_ctx_for(admin))
@@ -93,9 +93,9 @@ defmodule Ezagent.NotificationSubscriptionsTest do
   end
 
   test "list_subscribers reverse lookup" do
-    stream = URI.parse("entity://user/acme/popular-#{uniq()}")
-    alice = URI.parse("entity://user/acme/alice-#{uniq()}")
-    bob = URI.parse("entity://user/acme/bob-#{uniq()}")
+    stream = Ezagent.URI.new!("entity://acme/user/popular-#{uniq()}")
+    alice = Ezagent.URI.new!("entity://acme/user/alice-#{uniq()}")
+    bob = Ezagent.URI.new!("entity://acme/user/bob-#{uniq()}")
 
     seed(alice, stream)
     seed(bob, stream)
@@ -106,10 +106,10 @@ defmodule Ezagent.NotificationSubscriptionsTest do
   end
 
   test "subscriptions are scoped per entity" do
-    a = URI.parse("entity://user/acme/a-#{uniq()}")
-    b = URI.parse("entity://user/acme/b-#{uniq()}")
-    s1 = URI.parse("entity://user/acme/s1-#{uniq()}")
-    s2 = URI.parse("entity://user/acme/s2-#{uniq()}")
+    a = Ezagent.URI.new!("entity://acme/user/a-#{uniq()}")
+    b = Ezagent.URI.new!("entity://acme/user/b-#{uniq()}")
+    s1 = Ezagent.URI.new!("entity://acme/user/s1-#{uniq()}")
+    s2 = Ezagent.URI.new!("entity://acme/user/s2-#{uniq()}")
 
     seed(a, s1)
     seed(b, s2)
@@ -124,17 +124,17 @@ defmodule Ezagent.NotificationSubscriptionsTest do
   end
 
   test "string-form entity URI lookup works" do
-    entity_str = "entity://user/acme/string-#{uniq()}"
-    stream = URI.parse("entity://user/acme/s-#{uniq()}")
+    entity_str = "entity://acme/user/string-#{uniq()}"
+    stream = Ezagent.URI.new!("entity://acme/user/s-#{uniq()}")
 
-    seed(URI.parse(entity_str), stream)
+    seed(Ezagent.URI.new!(entity_str), stream)
     assert [{_, _}] = Subs.list_subscriptions(entity_str)
   end
 
   describe "cap enforcement (codex round-1 CRITICAL)" do
     test "non-system caller with empty caps is denied (deny-by-default)" do
-      entity = URI.parse("entity://user/acme/alice-#{uniq()}")
-      stream = URI.parse("entity://user/acme/bob-#{uniq()}")
+      entity = Ezagent.URI.new!("entity://acme/user/alice-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/bob-#{uniq()}")
 
       assert {:error, :unauthorized} =
                Subs.register_subscription(entity, stream, %{
@@ -146,16 +146,16 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     end
 
     test "missing :caps key in ctx is denied (not silently allowed)" do
-      entity = URI.parse("entity://user/acme/alice-#{uniq()}")
-      stream = URI.parse("entity://user/acme/bob-#{uniq()}")
+      entity = Ezagent.URI.new!("entity://acme/user/alice-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/bob-#{uniq()}")
 
       assert {:error, :unauthorized_for_entity} =
                Subs.register_subscription(entity, stream, %{})
     end
 
     test "self-register with matching cap is accepted" do
-      entity = URI.parse("entity://user/acme/alice-#{uniq()}")
-      stream = URI.parse("entity://user/acme/bob-#{uniq()}")
+      entity = Ezagent.URI.new!("entity://acme/user/alice-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/bob-#{uniq()}")
 
       assert :ok =
                Subs.register_subscription(entity, stream, %{
@@ -169,7 +169,7 @@ defmodule Ezagent.NotificationSubscriptionsTest do
 
   describe "explicit ctx required (codex round-2 CRITICAL)" do
     test "register_subscription/2 (no ctx) is not defined" do
-      stream = URI.parse("entity://user/acme/bob-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/bob-#{uniq()}")
 
       refute function_exported?(Subs, :register_subscription, 2)
       refute function_exported?(Subs, :unregister_subscription, 2)
@@ -181,8 +181,8 @@ defmodule Ezagent.NotificationSubscriptionsTest do
 
   describe "unregister authorization (codex round-1 HIGH-3 + round-2 HIGH-3)" do
     test "owner can unregister their own subscription" do
-      entity = URI.parse("entity://user/acme/owner-#{uniq()}")
-      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+      entity = Ezagent.URI.new!("entity://acme/user/owner-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/stream-#{uniq()}")
 
       seed(entity, stream)
 
@@ -196,9 +196,9 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     end
 
     test "stranger cannot unregister someone else's subscription" do
-      owner = URI.parse("entity://user/acme/owner-#{uniq()}")
-      stranger = URI.parse("entity://user/acme/stranger-#{uniq()}")
-      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+      owner = Ezagent.URI.new!("entity://acme/user/owner-#{uniq()}")
+      stranger = Ezagent.URI.new!("entity://acme/user/stranger-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/stream-#{uniq()}")
 
       seed(owner, stream)
 
@@ -212,9 +212,9 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     end
 
     test "notifications-admin (:any + Behavior.Notifications) can unregister anyone" do
-      owner = URI.parse("entity://user/acme/owner-#{uniq()}")
-      admin = URI.parse("entity://user/system/admin-#{uniq()}")
-      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+      owner = Ezagent.URI.new!("entity://acme/user/owner-#{uniq()}")
+      admin = Ezagent.URI.new!("entity://system/user/admin-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/stream-#{uniq()}")
 
       seed(owner, stream)
 
@@ -225,9 +225,9 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     end
 
     test "narrow cross-workspace cap (non-Notifications) does NOT count as admin" do
-      owner = URI.parse("entity://user/acme/owner-#{uniq()}")
-      stranger = URI.parse("entity://user/acme/stranger-#{uniq()}")
-      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+      owner = Ezagent.URI.new!("entity://acme/user/owner-#{uniq()}")
+      stranger = Ezagent.URI.new!("entity://acme/user/stranger-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/stream-#{uniq()}")
 
       seed(owner, stream)
 
@@ -241,8 +241,8 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     end
 
     test "ctx without :caller is rejected" do
-      entity = URI.parse("entity://user/acme/alice-#{uniq()}")
-      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+      entity = Ezagent.URI.new!("entity://acme/user/alice-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/stream-#{uniq()}")
 
       seed(entity, stream)
 
@@ -253,8 +253,8 @@ defmodule Ezagent.NotificationSubscriptionsTest do
 
   describe "public API rejects :system ctx (codex round-3 CRITICAL)" do
     test "register_subscription/3 with caps: :system is denied" do
-      entity = URI.parse("entity://user/acme/sneaky-#{uniq()}")
-      stream = URI.parse("entity://user/acme/target-#{uniq()}")
+      entity = Ezagent.URI.new!("entity://acme/user/sneaky-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/target-#{uniq()}")
 
       assert {:error, :system_caps_not_allowed_in_public_api} =
                Subs.register_subscription(entity, stream, %{
@@ -266,15 +266,15 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     end
 
     test "unregister_subscription/3 with caps: :system is denied" do
-      owner = URI.parse("entity://user/acme/owner-#{uniq()}")
-      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+      owner = Ezagent.URI.new!("entity://acme/user/owner-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/stream-#{uniq()}")
 
       seed(owner, stream)
 
       assert {:error, :system_caps_not_allowed_in_public_api} =
                Subs.unregister_subscription(owner, stream, %{
                  caps: :system,
-                 caller: URI.parse("entity://user/acme/stranger-#{uniq()}")
+                 caller: Ezagent.URI.new!("entity://acme/user/stranger-#{uniq()}")
                })
 
       assert [{_, _}] = Subs.list_subscriptions(owner)
@@ -283,8 +283,8 @@ defmodule Ezagent.NotificationSubscriptionsTest do
 
   describe "protected ETS boundary (codex round-2 HIGH-1)" do
     test "table is :protected — direct :ets.insert from non-owner raises" do
-      entity_str = "entity://user/acme/sneaky-#{uniq()}"
-      stream_str = "entity://user/acme/target-#{uniq()}"
+      entity_str = "entity://acme/user/sneaky-#{uniq()}"
+      stream_str = "entity://acme/user/target-#{uniq()}"
 
       assert_raise ArgumentError, fn ->
         :ets.insert(
@@ -312,8 +312,8 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     end
 
     test "direct GenServer.call forgery of :system_register is rejected" do
-      victim = URI.parse("entity://user/acme/victim-#{uniq()}")
-      stream = URI.parse("entity://user/acme/poison-#{uniq()}")
+      victim = Ezagent.URI.new!("entity://acme/user/victim-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/poison-#{uniq()}")
 
       # Codex round-4 attack: send the system message tag directly.
       # The catch-all handler now returns `:unknown_message` instead
@@ -338,8 +338,8 @@ defmodule Ezagent.NotificationSubscriptionsTest do
 
   describe "subscribe/3 cap-gated wrapper (codex round-5 option a)" do
     test "subscribe/3 registers intent AND PubSub-subscribes the caller" do
-      entity = URI.parse("entity://user/acme/alice-#{uniq()}")
-      stream = URI.parse("entity://user/acme/bob-#{uniq()}")
+      entity = Ezagent.URI.new!("entity://acme/user/alice-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/bob-#{uniq()}")
 
       # Self-subscribe with a real cap.
       assert :ok =
@@ -382,8 +382,8 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     end
 
     test "subscribe/3 denies non-system caller without cap" do
-      entity = URI.parse("entity://user/acme/alice-#{uniq()}")
-      stream = URI.parse("entity://user/acme/bob-#{uniq()}")
+      entity = Ezagent.URI.new!("entity://acme/user/alice-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/bob-#{uniq()}")
 
       assert {:error, :unauthorized} =
                Subs.subscribe(entity, stream, %{
@@ -395,8 +395,8 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     end
 
     test "unsubscribe/3 drops the registry row AND PubSub-unsubscribes" do
-      entity = URI.parse("entity://user/acme/alice-#{uniq()}")
-      stream = URI.parse("entity://user/acme/bob-#{uniq()}")
+      entity = Ezagent.URI.new!("entity://acme/user/alice-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/bob-#{uniq()}")
 
       :ok =
         Subs.subscribe(entity, stream, %{
@@ -424,7 +424,7 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     # `{:error, :invalid_args}` at the caller — registry stays alive.
 
     test "register_subscription/3 with non-URI entity returns :invalid_args" do
-      stream = URI.parse("entity://user/acme/s-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/s-#{uniq()}")
 
       assert {:error, :invalid_args} =
                Subs.register_subscription(:not_a_uri, stream, %{caps: MapSet.new()})
@@ -433,7 +433,7 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     end
 
     test "unregister_subscription/3 with malformed entity returns :invalid_args" do
-      stream = URI.parse("entity://user/acme/s-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/s-#{uniq()}")
 
       assert {:error, :invalid_args} =
                Subs.unregister_subscription(:atom_not_uri, stream, %{caps: MapSet.new()})
@@ -442,7 +442,7 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     end
 
     test "subscribe/3 with non-URI stream returns :invalid_args" do
-      entity = URI.parse("entity://user/acme/a-#{uniq()}")
+      entity = Ezagent.URI.new!("entity://acme/user/a-#{uniq()}")
 
       assert {:error, :invalid_args} =
                Subs.subscribe(entity, 12345, %{
@@ -454,8 +454,8 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     end
 
     test "unsubscribe/3 with malformed entity preserves existing rows + GenServer" do
-      victim = URI.parse("entity://user/acme/victim-#{uniq()}")
-      stream = URI.parse("entity://user/acme/s-#{uniq()}")
+      victim = Ezagent.URI.new!("entity://acme/user/victim-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/s-#{uniq()}")
       seed(victim, stream)
 
       original_pid = Process.whereis(Subs)
@@ -554,9 +554,9 @@ defmodule Ezagent.NotificationSubscriptionsTest do
       # process before the cap check rejected the call. Round-7
       # adds a preflight: stranger gets {:error, :unauthorized}
       # WITHOUT the victim's subscription being touched.
-      owner = URI.parse("entity://user/acme/owner-#{uniq()}")
-      stranger = URI.parse("entity://user/acme/stranger-#{uniq()}")
-      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+      owner = Ezagent.URI.new!("entity://acme/user/owner-#{uniq()}")
+      stranger = Ezagent.URI.new!("entity://acme/user/stranger-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/stream-#{uniq()}")
 
       :ok =
         Subs.subscribe(owner, stream, %{
@@ -614,9 +614,9 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     # on behalf of OTHER users. The fix requires `action: :subscribe`.
 
     test "notify-only cap does NOT authorize unregister of another entity" do
-      owner = URI.parse("entity://user/acme/owner-#{uniq()}")
-      attacker = URI.parse("entity://user/acme/attacker-#{uniq()}")
-      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+      owner = Ezagent.URI.new!("entity://acme/user/owner-#{uniq()}")
+      attacker = Ezagent.URI.new!("entity://acme/user/attacker-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/stream-#{uniq()}")
 
       seed(owner, stream)
 
@@ -631,9 +631,9 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     end
 
     test "notify-only cap does NOT authorize register on behalf of another entity" do
-      attacker = URI.parse("entity://user/acme/attacker-#{uniq()}")
-      victim = URI.parse("entity://user/acme/victim-#{uniq()}")
-      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+      attacker = Ezagent.URI.new!("entity://acme/user/attacker-#{uniq()}")
+      victim = Ezagent.URI.new!("entity://acme/user/victim-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/stream-#{uniq()}")
 
       assert {:error, :unauthorized_for_entity} =
                Subs.register_subscription(victim, stream, %{
@@ -645,9 +645,9 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     end
 
     test "notify-only cap does NOT authorize subscribe on behalf of another entity" do
-      attacker = URI.parse("entity://user/acme/attacker-#{uniq()}")
-      victim = URI.parse("entity://user/acme/victim-#{uniq()}")
-      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+      attacker = Ezagent.URI.new!("entity://acme/user/attacker-#{uniq()}")
+      victim = Ezagent.URI.new!("entity://acme/user/victim-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/stream-#{uniq()}")
 
       assert {:error, :unauthorized_for_entity} =
                Subs.subscribe(victim, stream, %{
@@ -659,9 +659,9 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     end
 
     test "subscribe-action wildcard cap DOES authorize admin (positive control)" do
-      owner = URI.parse("entity://user/acme/owner-#{uniq()}")
-      admin = URI.parse("entity://user/system/admin-#{uniq()}")
-      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+      owner = Ezagent.URI.new!("entity://acme/user/owner-#{uniq()}")
+      admin = Ezagent.URI.new!("entity://system/user/admin-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/stream-#{uniq()}")
 
       seed(owner, stream)
 
@@ -686,8 +686,8 @@ defmodule Ezagent.NotificationSubscriptionsTest do
       # We document this as accepted by including a passing test
       # that DEMONSTRATES the bypass — future readers see "yes,
       # this works; the cap system protects USERS not PLUGINS".
-      victim = URI.parse("entity://user/acme/victim-#{uniq()}")
-      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+      victim = Ezagent.URI.new!("entity://acme/user/victim-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/stream-#{uniq()}")
       key = {URI.to_string(victim), URI.to_string(stream)}
 
       # Confirm victim has no subscription via the legitimate API.
@@ -720,7 +720,7 @@ defmodule Ezagent.NotificationSubscriptionsTest do
       # check. The topic name is derivable from the entity URI;
       # there is no secret. Cap-gated `NotificationSubscriptions.subscribe/3`
       # is the AUDIT path, not a transport guard.
-      victim = URI.parse("entity://user/acme/peeped-#{uniq()}")
+      victim = Ezagent.URI.new!("entity://acme/user/peeped-#{uniq()}")
 
       # No cap, no registry entry — just compute the topic and
       # subscribe.
@@ -744,9 +744,9 @@ defmodule Ezagent.NotificationSubscriptionsTest do
       # specific workspace, NOT `:any` admin) — it passes the
       # stream-cap check but the caller is NOT the victim entity
       # AND NOT a notifications-admin → must be rejected.
-      stranger = URI.parse("entity://user/acme/stranger-#{uniq()}")
-      victim = URI.parse("entity://user/acme/victim-#{uniq()}")
-      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+      stranger = Ezagent.URI.new!("entity://acme/user/stranger-#{uniq()}")
+      victim = Ezagent.URI.new!("entity://acme/user/victim-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/stream-#{uniq()}")
 
       narrow_stream_cap = %Ezagent.Capability{
         kind: :user,
@@ -754,8 +754,8 @@ defmodule Ezagent.NotificationSubscriptionsTest do
         instance: :any,
         # NOT `:any` — scoped to this specific workspace, so it's
         # NOT an admin cap.
-        workspace_uri: URI.parse("workspace://acme"),
-        granted_by: URI.parse("entity://user/system/test"),
+        workspace_uri: Ezagent.URI.new!("workspace://acme"),
+        granted_by: Ezagent.URI.new!("entity://system/user/test"),
         granted_at: DateTime.utc_now()
       }
 
@@ -772,9 +772,9 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     test "notifications-admin CAN register on behalf of another entity" do
       # Symmetric with unregister: a real admin (with the proper
       # cap shape) is allowed to seed someone else's subscription.
-      admin = URI.parse("entity://user/system/admin-#{uniq()}")
-      entity = URI.parse("entity://user/acme/regular-#{uniq()}")
-      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+      admin = Ezagent.URI.new!("entity://system/user/admin-#{uniq()}")
+      entity = Ezagent.URI.new!("entity://acme/user/regular-#{uniq()}")
+      stream = Ezagent.URI.new!("entity://acme/user/stream-#{uniq()}")
 
       assert :ok =
                Subs.register_subscription(entity, stream, %{

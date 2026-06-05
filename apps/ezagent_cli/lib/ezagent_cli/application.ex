@@ -35,7 +35,12 @@ defmodule EzagentCli.Application do
 
     case Ezagent.Workspace.create(name, %{members: members}) do
       {:ok, _pid} ->
-        {:ok, %{name: name, uri: "workspace://#{name}", members: length(members)}}
+        {:ok,
+         %{
+           name: name,
+           uri: name |> Ezagent.URI.workspace() |> URI.to_string(),
+           members: length(members)
+         }}
 
       err ->
         err

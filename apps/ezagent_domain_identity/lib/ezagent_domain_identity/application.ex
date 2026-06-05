@@ -150,7 +150,10 @@ defmodule EzagentDomainIdentity.Application do
       # by `system://bootstrap`), not the deleted `User.admin_caps/0`.
       case Ezagent.Kind.spawn(User, %{
              uri: admin_uri,
-             initial_caps: Ezagent.SystemPrincipal.caps("system://bootstrap")
+             initial_caps:
+               "bootstrap"
+               |> Ezagent.SystemPrincipal.uri()
+               |> Ezagent.SystemPrincipal.caps()
            }) do
         {:ok, _pid} ->
           :ok
@@ -204,7 +207,8 @@ defmodule EzagentDomainIdentity.Application do
             # SPEC caps-cleanup-v1 §4.4 — bootstrap caps come from the
             # closed Catalog via `Ezagent.SystemPrincipal`.
             admin_cap_list =
-              "system://bootstrap"
+              "bootstrap"
+              |> Ezagent.SystemPrincipal.uri()
               |> Ezagent.SystemPrincipal.caps()
               |> MapSet.to_list()
 
@@ -246,8 +250,8 @@ defmodule EzagentDomainIdentity.Application do
   defp register_user_only_entity_spawn_fn do
     :ok =
       SpawnRegistry.register("entity", fn uri ->
-        case uri.host do
-          "user" ->
+        case Ezagent.URI.type(uri) do
+          {:ok, "user"} ->
             # SPEC caps-cleanup-v1 §4.4 — admin's bootstrap caps come
             # from `Ezagent.SystemPrincipal` (closed Catalog). Non-admin
             # users have their caps hydrated from `users.caps_json` (the

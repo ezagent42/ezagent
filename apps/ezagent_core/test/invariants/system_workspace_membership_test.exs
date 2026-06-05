@@ -15,7 +15,7 @@ defmodule EzagentCore.Invariants.SystemWorkspaceMembershipTest do
 
   - `workspace://system` exists at boot.
   - `Ezagent.Entity.User.admin_uri/0` returns
-    `entity://user/system/admin` (admin's URI structurally lives in
+    `entity://system/user/admin` (admin's URI structurally lives in
     workspace://system).
   - `Capability.cross_workspace?(cap, system_member_uri)` returns
     true for ANY cap (membership-based authority — the Keycloak
@@ -65,7 +65,7 @@ defmodule EzagentCore.Invariants.SystemWorkspaceMembershipTest do
       behavior: :any,
       instance: :any,
       workspace_uri: :any,
-      granted_by: URI.parse("system://bootstrap/default"),
+      granted_by: Ezagent.URI.new!("system://bootstrap/default"),
       granted_at: ~U[2026-05-21 00:00:00Z]
     }
   end
@@ -110,9 +110,9 @@ defmodule EzagentCore.Invariants.SystemWorkspaceMembershipTest do
   end
 
   describe "admin URI" do
-    test "User.admin_uri/0 returns entity://user/system/admin" do
+    test "User.admin_uri/0 returns entity://system/user/admin" do
       assert URI.to_string(Ezagent.Entity.User.admin_uri()) ==
-               "entity://user/system/admin",
+               "entity://system/user/admin",
              "admin's URI MUST be in workspace://system per SPEC §13.1. " <>
                "If this fails, the Keycloak realm-admin model is broken — " <>
                "admin would be in workspace://default and would not be a " <>
@@ -157,7 +157,7 @@ defmodule EzagentCore.Invariants.SystemWorkspaceMembershipTest do
     end
 
     test "regular user + concrete workspace cap → false (no bypass)" do
-      caller = URI.new!("entity://user/default/allen")
+      caller = URI.new!("entity://default/user/allen")
       narrow_cap = cap_in_workspace("workspace://team-alpha")
 
       refute Capability.cross_workspace?(narrow_cap, caller),
@@ -168,7 +168,7 @@ defmodule EzagentCore.Invariants.SystemWorkspaceMembershipTest do
     end
 
     test "regular user + :any cap → true (structural bypass only)" do
-      caller = URI.new!("entity://user/default/allen")
+      caller = URI.new!("entity://default/user/allen")
       any_cap = cap_any_workspace()
 
       assert Capability.cross_workspace?(any_cap, caller),

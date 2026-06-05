@@ -43,7 +43,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
   describe "post-init continuation hook" do
     test "post-init handle_continue/3 runs BEFORE :ready is published and merges new slice back",
          %{tracker: tracker, suffix: suffix} do
-      uri = URI.parse("entity://agent/team-alpha/test_post_init-#{suffix}")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/test_post_init-#{suffix}")
       uri_str = URI.to_string(uri)
 
       :ok = Ezagent.BehaviorRegistry.register(PostInitKind, :noop, PostInitBehavior)
@@ -79,7 +79,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
     # -----------------------------------------------------------------
     test "Behavior without post_init/2 boots unchanged (backwards-compat)",
          %{suffix: suffix} do
-      uri = URI.parse("entity://agent/team-alpha/test_no_post_init-#{suffix}")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/test_no_post_init-#{suffix}")
       uri_str = URI.to_string(uri)
 
       :ok = Ezagent.BehaviorRegistry.register(NoPostInitKind, :noop, NoPostInitBehavior)
@@ -108,7 +108,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
     # -----------------------------------------------------------------
     test "multiple Behaviors' post-init continuations run in behaviors/0 order",
          %{tracker: tracker, suffix: suffix} do
-      uri = URI.parse("entity://agent/team-alpha/test_multi_post_init-#{suffix}")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/test_multi_post_init-#{suffix}")
       uri_str = URI.to_string(uri)
 
       :ok = Ezagent.BehaviorRegistry.register(MultiPostInitKind, :noop, PostInitBehaviorA)
@@ -143,7 +143,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
     # -----------------------------------------------------------------
     test "pre-ready buffered cast survives a crashing post-init continuation",
          %{suffix: suffix} do
-      uri = URI.parse("entity://agent/team-alpha/test_crash_post_init-#{suffix}")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/test_crash_post_init-#{suffix}")
       uri_str = URI.to_string(uri)
 
       :ok =
@@ -154,7 +154,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
         mode: :cast,
         args: %{},
         ctx: %{
-          caller: URI.parse("entity://user/system/admin"),
+          caller: Ezagent.URI.new!("entity://system/user/admin"),
           caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
           reply: :ignore
         }
@@ -200,7 +200,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
     # -----------------------------------------------------------------
     test "cast dispatched during post-init window buffers via PendingDelivery (not mailbox)",
          %{suffix: suffix} do
-      uri = URI.parse("entity://agent/team-alpha/test_dispatch_during_post_init-#{suffix}")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/test_dispatch_during_post_init-#{suffix}")
       uri_str = URI.to_string(uri)
 
       :ok = Ezagent.BehaviorRegistry.register(SlowPostInitKind, :noop, SlowPostInitBehavior)
@@ -226,7 +226,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
         mode: :cast,
         args: %{msg: "during-post-init"},
         ctx: %{
-          caller: URI.parse("entity://user/system/admin"),
+          caller: Ezagent.URI.new!("entity://system/user/admin"),
           caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
           reply: {:caller_inbox, self()}
         }
@@ -260,7 +260,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
     # -----------------------------------------------------------------
     test "PendingDelivery buffer is empty by the time ReadyGate is :ready",
          %{suffix: suffix} do
-      uri = URI.parse("entity://agent/team-alpha/test_fifo_post_init-#{suffix}")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/test_fifo_post_init-#{suffix}")
       uri_str = URI.to_string(uri)
 
       :ok = Ezagent.BehaviorRegistry.register(SlowPostInitKind, :noop, SlowPostInitBehavior)
@@ -273,7 +273,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
           mode: :cast,
           args: %{msg: "pre-ready-#{n}"},
           ctx: %{
-            caller: URI.parse("entity://user/system/admin"),
+            caller: Ezagent.URI.new!("entity://system/user/admin"),
             caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
             reply: :ignore
           }

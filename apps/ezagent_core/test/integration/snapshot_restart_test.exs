@@ -22,7 +22,9 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
   describe "{:snapshot, :on_change} restart roundtrip — THE GATE" do
     test "User caps granted before restart are present after restart" do
       uri =
-        URI.parse("entity://user/team-alpha/snap-restart-#{System.unique_integer([:positive])}")
+        Ezagent.URI.new!(
+          "entity://team-alpha/user/snap-restart-#{System.unique_integer([:positive])}"
+        )
 
       caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
 
@@ -67,7 +69,7 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
       # below races the continuation and fails fast with
       # `{:error, :not_ready}` per hard-invariant #3.
       #
-      # For the test fixture URI (`entity://user/team-alpha/snap-restart-N`)
+      # For the test fixture URI (`entity://team-alpha/user/snap-restart-N`)
       # the `users` table has no row, so `handle_continue/3` returns
       # `:ignore` and the Kind reaches `:ready` after one continue
       # round — typically <1ms wall-clock.
@@ -95,7 +97,7 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
 
   describe ":ephemeral does NOT persist" do
     test "TestKind state lost on restart" do
-      uri = URI.parse("test://snap-eph-#{System.unique_integer([:positive])}")
+      uri = URI.new!("test://snap-eph-#{System.unique_integer([:positive])}")
 
       {:ok, pid1} =
         DynamicSupervisor.start_child(
@@ -121,8 +123,8 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
       # graceful terminate leaves it intact (no regression in the
       # restart roundtrip).
       uri =
-        URI.parse(
-          "entity://agent/team-alpha/test_snap-term-#{System.unique_integer([:positive])}"
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/test_snap-term-#{System.unique_integer([:positive])}"
         )
 
       {:ok, pid} =

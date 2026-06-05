@@ -111,7 +111,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
     end
 
     test "init_slice/1 honors :owner_uri arg (PR-OWN-2)" do
-      owner = URI.parse("entity://user/system/admin")
+      owner = Ezagent.URI.new!("entity://system/user/admin")
       assert Chat.init_slice(%{owner_uri: owner}).state.owner_uri == owner
     end
 
@@ -124,11 +124,11 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
   describe "handle_send/2 — slice mutations + :notify effect" do
     test "successful send returns three :set effects + one :notify" do
       session_uri =
-        URI.new!("session://default/team-alpha/parity-#{System.unique_integer([:positive])}")
+        URI.new!("session://team-alpha/default/parity-#{System.unique_integer([:positive])}")
 
       bind_to_default(session_uri)
 
-      sender = URI.new!("entity://user/system/admin")
+      sender = URI.new!("entity://system/user/admin")
       msg = Message.new(sender, %{text: "hi", attachments: []})
 
       slice = empty_chat_slice()
@@ -158,11 +158,11 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
 
     test "send_cursor increments with each call (HIGH-1: retries still mutate)" do
       session_uri =
-        URI.new!("session://default/team-alpha/parity-cursor-#{System.unique_integer([:positive])}")
+        URI.new!("session://team-alpha/default/parity-cursor-#{System.unique_integer([:positive])}")
 
       bind_to_default(session_uri)
 
-      sender = URI.new!("entity://user/system/admin")
+      sender = URI.new!("entity://system/user/admin")
       msg = Message.new(sender, %{text: "first", attachments: []})
 
       slice = empty_chat_slice()
@@ -190,11 +190,11 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
       # path's let-it-crash behaviour on Repo errors is covered by
       # the integration suite (chat_routing_test).
       session_uri =
-        URI.new!("session://default/team-alpha/parity-error-#{System.unique_integer([:positive])}")
+        URI.new!("session://team-alpha/default/parity-error-#{System.unique_integer([:positive])}")
 
       bind_to_default(session_uri)
 
-      sender = URI.new!("entity://user/system/admin")
+      sender = URI.new!("entity://system/user/admin")
       # Build a Message struct with an inserted_at that violates
       # MessageStore.write's expectations is brittle; instead we just
       # confirm the happy path returns {:ok, _, _} which is the
@@ -214,8 +214,8 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
 
   describe "handle_receive/2 — User branch" do
     test "produces :set effects for :last_received + :recent_messages ring" do
-      user_uri = URI.new!("entity://user/team-alpha/u-#{System.unique_integer([:positive])}")
-      sender = URI.new!("entity://user/team-alpha/sender")
+      user_uri = URI.new!("entity://team-alpha/user/u-#{System.unique_integer([:positive])}")
+      sender = URI.new!("entity://team-alpha/user/sender")
       msg = Message.new(sender, %{text: "hello", attachments: []})
 
       slice = empty_chat_slice()
@@ -241,8 +241,8 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
     end
 
     test "recent_messages ring caps at SPEC-pinned depth" do
-      user_uri = URI.new!("entity://user/team-alpha/cap-#{System.unique_integer([:positive])}")
-      sender = URI.new!("entity://user/team-alpha/sender")
+      user_uri = URI.new!("entity://team-alpha/user/cap-#{System.unique_integer([:positive])}")
+      sender = URI.new!("entity://team-alpha/user/sender")
 
       # Pre-fill ring to capacity-1; new entry should land at HEAD,
       # oldest entry falls off the tail.
@@ -280,9 +280,9 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
   describe "handle_receive/2 — Agent branch" do
     test "produces no :set effects (agent slice is empty by design)" do
       agent_uri =
-        URI.new!("entity://agent/team-alpha/cc_demo-#{System.unique_integer([:positive])}")
+        URI.new!("entity://team-alpha/agent/cc_demo-#{System.unique_integer([:positive])}")
 
-      sender = URI.new!("entity://user/team-alpha/sender")
+      sender = URI.new!("entity://team-alpha/user/sender")
       msg = Message.new(sender, %{text: "agent hello", attachments: []})
 
       slice = empty_chat_slice()
@@ -291,14 +291,14 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
         ctx_for(slice, %{
           self_uri: agent_uri,
           kind_module: Ezagent.Entity.Agent,
-          caller: URI.to_string(URI.new!("session://default/team-alpha/x"))
+          caller: URI.to_string(URI.new!("session://team-alpha/default/x"))
         })
 
       assert {:ok, %{}, []} = Chat.handle_receive(%{message: msg}, ctx)
     end
 
     test "unsupported kind → typed error" do
-      sender = URI.new!("entity://user/team-alpha/sender")
+      sender = URI.new!("entity://team-alpha/user/sender")
       msg = Message.new(sender, %{text: "x", attachments: []})
       ctx = ctx_for(empty_chat_slice(), %{kind_module: SomeOtherKind})
 
@@ -310,11 +310,11 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
   describe "handle_join/2 — member not in registry" do
     test "returns {:error, {:member_not_registered, uri}} for unregistered member" do
       session_uri =
-        URI.new!("session://default/team-alpha/join-noreg-#{System.unique_integer([:positive])}")
+        URI.new!("session://team-alpha/default/join-noreg-#{System.unique_integer([:positive])}")
 
       bind_to_default(session_uri)
 
-      stranger = URI.new!("entity://user/team-alpha/not-spawned")
+      stranger = URI.new!("entity://team-alpha/user/not-spawned")
 
       slice = empty_chat_slice()
       ctx = ctx_for(slice, %{self_uri: session_uri})
@@ -327,11 +327,11 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
   describe "handle_leave/2 — slice mutations + :notify effects" do
     test "removes member + emits two :notify effects (per-session + global membership)" do
       session_uri =
-        URI.new!("session://default/team-alpha/leave-#{System.unique_integer([:positive])}")
+        URI.new!("session://team-alpha/default/leave-#{System.unique_integer([:positive])}")
 
       bind_to_default(session_uri)
 
-      member = URI.new!("entity://user/team-alpha/leaver")
+      member = URI.new!("entity://team-alpha/user/leaver")
       slice = empty_chat_slice(%{members: %{member => %{online: true}}})
 
       ctx = ctx_for(slice, %{self_uri: session_uri})
@@ -366,7 +366,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
   describe "handle_set_working_copy/2 — authorization gate" do
     test "denies caller without orchestrator cap or system_internal flag" do
       session_uri =
-        URI.new!("session://default/team-alpha/setwc-#{System.unique_integer([:positive])}")
+        URI.new!("session://team-alpha/default/setwc-#{System.unique_integer([:positive])}")
 
       slice = empty_chat_slice()
       ctx = ctx_for(slice, %{self_uri: session_uri})
@@ -380,7 +380,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
 
     test "allows caller with ctx[:system_internal] = true" do
       session_uri =
-        URI.new!("session://default/team-alpha/setwc-sys-#{System.unique_integer([:positive])}")
+        URI.new!("session://team-alpha/default/setwc-sys-#{System.unique_integer([:positive])}")
 
       slice = empty_chat_slice()
       ctx = ctx_for(slice, %{self_uri: session_uri, system_internal: true})
@@ -398,15 +398,15 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
 
     test "allows caller holding orchestrator's {:within_session, self_uri} cap" do
       session_uri =
-        URI.new!("session://default/team-alpha/setwc-orch-#{System.unique_integer([:positive])}")
+        URI.new!("session://team-alpha/default/setwc-orch-#{System.unique_integer([:positive])}")
 
       orch_cap = %Ezagent.Capability{
         kind: :session,
         behavior: Chat,
         action: :set_working_copy,
         instance: {:within_session, session_uri},
-        workspace_uri: URI.parse("workspace://team-alpha"),
-        granted_by: URI.parse("system://test"),
+        workspace_uri: Ezagent.URI.new!("workspace://team-alpha"),
+        granted_by: Ezagent.URI.new!("system://test"),
         granted_at: DateTime.utc_now()
       }
 
@@ -427,7 +427,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
 
   describe "data_owner/1" do
     test "non-session URI returns :no_owner" do
-      assert Chat.data_owner(URI.parse("entity://user/x/y")) == :no_owner
+      assert Chat.data_owner(Ezagent.URI.new!("entity://x/user/y")) == :no_owner
     end
 
     test ":any returns :any" do
@@ -442,7 +442,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
   # `{:set_transient, :monitors, _}`; offline-flip + last_seen persisted.
   describe "handle_signal/2 — :DOWN bookkeeping" do
     test "unknown ref returns :ignore" do
-      ctx = ctx_for(empty_chat_slice(), %{self_uri: URI.parse("session://x/y/z")})
+      ctx = ctx_for(empty_chat_slice(), %{self_uri: Ezagent.URI.new!("session://x/y/z")})
 
       msg = {:DOWN, make_ref(), :process, self(), :normal}
 
@@ -451,7 +451,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
 
     test "known ref flips member online → false + records last_seen + drops transient ref" do
       ref = make_ref()
-      member = URI.new!("entity://user/team-alpha/down-test")
+      member = URI.new!("entity://team-alpha/user/down-test")
 
       slice =
         empty_chat_slice(%{
@@ -459,7 +459,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
           monitors: %{ref => member}
         })
 
-      ctx = ctx_for(slice, %{self_uri: URI.parse("session://default/team-alpha/down-parity")})
+      ctx = ctx_for(slice, %{self_uri: Ezagent.URI.new!("session://team-alpha/default/down-parity")})
 
       assert {:ok, effects} =
                Chat.handle_signal({:DOWN, ref, :process, self(), :normal}, ctx)

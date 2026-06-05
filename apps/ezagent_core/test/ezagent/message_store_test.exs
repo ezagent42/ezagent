@@ -14,10 +14,10 @@ defmodule Ezagent.MessageStoreTest do
   alias Ezagent.{Message, MessageStore}
   alias EzagentCore.Repo
 
-  @session_a URI.new!("session://default/system/main")
-  @session_b URI.new!("session://default/team-alpha/other")
-  @admin URI.new!("entity://user/system/admin")
-  @bot URI.new!("entity://agent/team-alpha/test_cc-builder")
+  @session_a URI.new!("session://system/default/main")
+  @session_b URI.new!("session://team-alpha/default/other")
+  @admin URI.new!("entity://system/user/admin")
+  @bot URI.new!("entity://team-alpha/agent/test_cc-builder")
 
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
@@ -59,7 +59,7 @@ defmodule Ezagent.MessageStoreTest do
     end
 
     test "preserves the Message envelope identity (Decision #40)" do
-      mention = URI.new!("entity://agent/team-alpha/test_cc-builder")
+      mention = URI.new!("entity://team-alpha/agent/test_cc-builder")
       ref_id = "aabbccdd00000000"
 
       msg =

@@ -251,7 +251,10 @@ defmodule EzagentPluginFeishu.BindingPolicy do
       # ambient-authority caller and is no longer load-bearing.
       ctx: %{
         caller: Ezagent.SystemPrincipal.uri("feishu-binding-policy"),
-        caps: Ezagent.SystemPrincipal.caps("system://feishu-binding-policy"),
+        caps:
+          "feishu-binding-policy"
+          |> Ezagent.SystemPrincipal.uri()
+          |> Ezagent.SystemPrincipal.caps(),
         reply: :sync
       }
     }

@@ -95,7 +95,7 @@ defmodule Ezagent.Behavior.WorkspaceUserAdmin do
 
   use Ezagent.Lifecycle
 
-  action :create_user,
+  action(:create_user,
     args: %{
       user_uri: :string,
       password: {:option, :string},
@@ -115,6 +115,7 @@ defmodule Ezagent.Behavior.WorkspaceUserAdmin do
         "subject from `Behavior.Workspace`'s member-management " <>
         "actions (codex PR #356 r1 CRIT fix).",
     modes: [:call]
+  )
 
   # =================================================================
   # Explicit `required_caps/0` — preserves `kind: :workspace` axis.
@@ -207,11 +208,15 @@ defmodule Ezagent.Behavior.WorkspaceUserAdmin do
   defp parse_user_uri(s) when is_binary(s) do
     try do
       case Ezagent.URI.new!(s) do
-        %URI{scheme: "entity", host: "user", path: "/" <> _} = uri ->
-          {:ok, uri}
+        %URI{scheme: "entity"} = uri ->
+          if Ezagent.URI.type?(uri, :user) and match?({:ok, _name}, Ezagent.URI.name(uri)) do
+            {:ok, uri}
+          else
+            {:error, {:bad_user_uri, s, "expected entity user URI"}}
+          end
 
         _ ->
-          {:error, {:bad_user_uri, s, "expected entity://user/<workspace>/<name>"}}
+          {:error, {:bad_user_uri, s, "expected entity user URI"}}
       end
     rescue
       e in ArgumentError ->
@@ -219,9 +224,15 @@ defmodule Ezagent.Behavior.WorkspaceUserAdmin do
     end
   end
 
-  defp require_workspace_uri(%URI{scheme: "workspace", host: host} = uri)
-       when is_binary(host) and host != "",
-       do: {:ok, uri}
+  defp require_workspace_uri(%URI{scheme: "workspace"} = uri) do
+    case Ezagent.URI.name(uri) do
+      {:ok, _name} ->
+        {:ok, uri}
+
+      :error ->
+        {:error, {:bad_workspace_uri, uri}}
+    end
+  end
 
   defp require_workspace_uri(other), do: {:error, {:bad_workspace_uri, other}}
 
@@ -233,8 +244,7 @@ defmodule Ezagent.Behavior.WorkspaceUserAdmin do
         else
           {:error,
            {:cross_workspace_user,
-            target_workspace: URI.to_string(target_ws),
-            user_workspace: URI.to_string(user_ws)}}
+            target_workspace: URI.to_string(target_ws), user_workspace: URI.to_string(user_ws)}}
         end
 
       _ ->

@@ -55,12 +55,21 @@ defmodule EzagentPluginLiveview.EntitiesLive do
     %{
       uri_str: uri_str,
       scheme: parsed && parsed.scheme,
-      host: parsed && parsed.host,
-      path: parsed && parsed.path,
+      type: parsed |> type_or_nil(),
+      name: parsed |> name_or_nil(),
       pid: pid,
       pid_str: inspect(pid)
     }
   end
+
+  defp type_or_nil(nil), do: nil
+  defp type_or_nil(%URI{} = uri), do: uri |> Ezagent.URI.type() |> ok_or_nil()
+
+  defp name_or_nil(nil), do: nil
+  defp name_or_nil(%URI{} = uri), do: uri |> Ezagent.URI.name() |> ok_or_nil()
+
+  defp ok_or_nil({:ok, value}), do: value
+  defp ok_or_nil(:error), do: nil
 
   defp parse_or_nil(uri_str) do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
@@ -73,9 +82,9 @@ defmodule EzagentPluginLiveview.EntitiesLive do
   end
 
   # Filter chips map to either a scheme ("session", "workspace",
-  # "template", "system") OR an "entity://<host>" pair ("user", "agent").
+  # "template", "system") OR an entity type ("user", "agent").
   defp matches_filter?(_, "all"), do: true
-  defp matches_filter?(%{scheme: "entity", host: host}, host), do: true
+  defp matches_filter?(%{scheme: "entity", type: type}, type), do: true
   defp matches_filter?(%{scheme: scheme}, scheme), do: true
   defp matches_filter?(_, _), do: false
 
@@ -85,7 +94,9 @@ defmodule EzagentPluginLiveview.EntitiesLive do
     # over AdminShell.admin_shell.
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(assigns.current_entity_uri || Ezagent.URI.new!("entity://user/system/admin"))
+        assigns.current_entity_uri
+        |> Kernel.||(Ezagent.Entity.User.admin_uri())
+        |> Ezagent.URI.stable_key()
       end)
 
     ~H"""
@@ -116,14 +127,16 @@ defmodule EzagentPluginLiveview.EntitiesLive do
                     Filter chips inlined above the table since the left
                     rail is now the admin sub-section nav. --%>
               <div class="flex items-center gap-1 flex-wrap mt-3 mb-4">
-                <span class="text-[10px] uppercase tracking-wide text-zinc-500 mr-2">{gettext("Filters")}</span>
+                <span class="text-[10px] uppercase tracking-wide text-zinc-500 mr-2">
+                  {gettext("Filters")}
+                </span>
                 <.filter_chip filter={@filter} value="all" label="all" />
-                <.filter_chip filter={@filter} value="user" label="entity://user" />
-                <.filter_chip filter={@filter} value="agent" label="entity://agent" />
-                <.filter_chip filter={@filter} value="session" label="session://" />
-                <.filter_chip filter={@filter} value="workspace" label="workspace://" />
-                <.filter_chip filter={@filter} value="template" label="template://" />
-                <.filter_chip filter={@filter} value="system" label="system://" />
+                <.filter_chip filter={@filter} value="user" label="user" />
+                <.filter_chip filter={@filter} value="agent" label="agent" />
+                <.filter_chip filter={@filter} value="session" label="session" />
+                <.filter_chip filter={@filter} value="workspace" label="workspace" />
+                <.filter_chip filter={@filter} value="template" label="template" />
+                <.filter_chip filter={@filter} value="system" label="system" />
               </div>
 
               <.card>
@@ -143,8 +156,8 @@ defmodule EzagentPluginLiveview.EntitiesLive do
                   <thead>
                     <tr class="border-b border-zinc-200 dark:border-zinc-800">
                       <th class="text-left px-1 py-1.5">scheme</th>
-                      <th class="text-left">host</th>
-                      <th class="text-left">path</th>
+                      <th class="text-left">type</th>
+                      <th class="text-left">name</th>
                       <th class="text-left">pid</th>
                       <th></th>
                     </tr>
@@ -157,8 +170,8 @@ defmodule EzagentPluginLiveview.EntitiesLive do
                       <td class="px-1 py-1 font-mono text-xs text-violet-700 dark:text-violet-400">
                         {e.scheme || "—"}
                       </td>
-                      <td class="font-mono text-xs">{e.host || "—"}</td>
-                      <td class="font-mono text-xs">{e.path || "—"}</td>
+                      <td class="font-mono text-xs">{e.type || "—"}</td>
+                      <td class="font-mono text-xs">{e.name || "—"}</td>
                       <td class="font-mono text-[11px] text-zinc-500">{e.pid_str}</td>
                       <td>
                         <a

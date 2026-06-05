@@ -72,7 +72,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
     # MUST report the real freshness signal — `update_agent_template`'s
     # swap rejects a non-fresh (adopted) candidate.
     def instantiate(_tmpl_name, %{"agent_uri" => uri_str}, _workspace_uri) do
-      agent_uri = URI.parse(uri_str)
+      agent_uri = Ezagent.URI.new!(uri_str)
 
       case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
         {:ok, :started, _pid} -> {:ok, [agent_uri], %{fresh?: true}}
@@ -107,7 +107,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
   end
 
   defp dispatch(uri, action, args) do
-    target = URI.parse("#{URI.to_string(uri)}?action=#{action}")
+    target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=#{action}")
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
@@ -184,8 +184,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
 
   # Spawn a fresh Session Kind + bind its workspace.
   defp spawn_session do
-    session_uri =
-      URI.parse("session://generic/team-alpha/mcp-e2e-#{uniq()}")
+    session_uri = Ezagent.URI.session("team-alpha", "generic", "mcp-e2e-#{uniq()}")
 
     {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, @workspace_uri)
@@ -196,7 +195,13 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
   # Generator would have spawned).
   defp spawn_orchestrator do
     orchestrator_uri =
-      URI.parse("entity://agent/team-alpha/cc_orch-#{uniq()}")
+      Ezagent.URI.new!("entity://team-alpha/agent/cc_orch-#{uniq()}")
+
+    :ok = Ezagent.AgentFlavorAttributes.put(orchestrator_uri, "cc")
+
+    on_exit(fn ->
+      Ezagent.AgentFlavorAttributes.delete(orchestrator_uri)
+    end)
 
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri})
     :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
@@ -285,7 +290,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
 
       mcp =
         mcp_server(session_uri, orchestrator_uri, caps,
-          parent_template_uri: URI.parse("template://session/team-alpha/x@abc")
+          parent_template_uri: Ezagent.URI.new!("template://team-alpha/session/x@abc")
         )
 
       result = McpServer.handle_tool_call(mcp, "update_template", %{})
@@ -302,7 +307,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
       flavor = register_test_flavor()
 
       # One AgentTemplate + one SessionTemplate in the workspace.
-      at_uri = URI.new!("template://agent/team-alpha/mcp-list-at-#{uniq()}")
+      at_uri = URI.new!("template://team-alpha/agent/mcp-list-at-#{uniq()}")
       :ok = create_agent_template(at_uri, flavor, "list-worker")
 
       st_content = %{
@@ -310,7 +315,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
         description: "list test team",
         agent_slots: [],
         routing_rules: [],
-        orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
+        orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator"),
         default_workspace_uri: @workspace_uri,
         parent_template_uri: nil,
         created_by: User.admin_uri(),
@@ -348,7 +353,9 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
 
     test "cap-#3-only caller sees ONLY session_templates, NOT agent_templates", ctx do
       caps =
-        orchestrator_caps(ctx.session_uri, ctx.orchestrator_uri, @workspace_uri, [:session_template])
+        orchestrator_caps(ctx.session_uri, ctx.orchestrator_uri, @workspace_uri, [
+          :session_template
+        ])
 
       mcp = mcp_server(ctx.session_uri, ctx.orchestrator_uri, caps)
       result = McpServer.handle_tool_call(mcp, "list_templates", %{})
@@ -386,7 +393,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
     setup do
       flavor = register_test_flavor()
 
-      backend_uri = URI.new!("template://agent/team-alpha/mcp-backend-#{uniq()}")
+      backend_uri = URI.new!("template://team-alpha/agent/mcp-backend-#{uniq()}")
       :ok = create_agent_template(backend_uri, flavor, "backend")
 
       session_uri = spawn_session()
@@ -423,7 +430,10 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
 
       # The worker is in AgentLineage UNDER THE ORCHESTRATOR — what makes
       # cap #2 resolve for remove_member.
-      assert AgentLineage.spawned_in_lineage?(URI.parse(member_uri_str), ctx.orchestrator_uri),
+      assert AgentLineage.spawned_in_lineage?(
+               Ezagent.URI.new!(member_uri_str),
+               ctx.orchestrator_uri
+             ),
              "the spawned member must be recorded under the orchestrator's lineage — cap #2 depends on it"
 
       # It joined the session as a member carrying its role_name + facets.
@@ -465,7 +475,8 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
       refute result["isError"]
     end
 
-    test "remove_member of a rule's SOLE receiver reports deleted_rules:1 + logs a warning", ctx do
+    test "remove_member of a rule's SOLE receiver reports deleted_rules:1 + logs a warning",
+         ctx do
       add =
         McpServer.handle_tool_call(ctx.mcp, "add_managed_member", %{
           "source_agent_template_uri" => URI.to_string(ctx.backend_uri),
@@ -504,7 +515,8 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
       refute Enum.any?(Ezagent.Routing.RuleStore.list(table), &(&1.id == rule_id))
     end
 
-    test "remove_member of ONE of several receivers reports repointed_rules:1, rule survives", ctx do
+    test "remove_member of ONE of several receivers reports repointed_rules:1, rule survives",
+         ctx do
       keep_a =
         McpServer.handle_tool_call(ctx.mcp, "add_managed_member", %{
           "source_agent_template_uri" => URI.to_string(ctx.backend_uri),
@@ -535,7 +547,10 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
           source: "admin"
         )
 
-      :ok = Ezagent.Routing.RuleStore.load_into_registry(EzagentDomainInstanceMessage.Routing.MentionRouting)
+      :ok =
+        Ezagent.Routing.RuleStore.load_into_registry(
+          EzagentDomainInstanceMessage.Routing.MentionRouting
+        )
 
       {result, log} =
         ExUnit.CaptureLog.with_log(fn ->
@@ -573,7 +588,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
       # receiver, created_by a DIFFERENT session. Pre-fix the unscoped prune
       # (filter = "member string in receivers", no created_by check) would
       # delete/mutate it out from under that other session.
-      foreign_session = URI.new!("session://default/team-alpha/foreign-#{uniq()}")
+      foreign_session = URI.new!("session://team-alpha/default/foreign-#{uniq()}")
 
       {:ok, foreign_row} =
         Ezagent.Routing.RuleStore.add(
@@ -588,7 +603,9 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
 
       :ok = Ezagent.Routing.RuleStore.load_into_registry(table)
 
-      result = McpServer.handle_tool_call(ctx.mcp, "remove_member", %{"role_name" => "scoped-dev"})
+      result =
+        McpServer.handle_tool_call(ctx.mcp, "remove_member", %{"role_name" => "scoped-dev"})
+
       refute result["isError"], "remove_member failed: #{inspect(result)}"
 
       # The foreign session's rule SURVIVES with its receiver unchanged —
@@ -659,7 +676,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
   describe "define_rule_set_rule / define_prompt_template / define_legend (cap-#1)" do
     setup do
       flavor = register_test_flavor()
-      backend_uri = URI.new!("template://agent/team-alpha/mcp-wm-backend-#{uniq()}")
+      backend_uri = URI.new!("template://team-alpha/agent/mcp-wm-backend-#{uniq()}")
       :ok = create_agent_template(backend_uri, flavor, "wm-backend")
 
       session_uri = spawn_session()
@@ -724,7 +741,8 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
                Behavior.Chat.resolve_legend(chat_slice(ctx.session_uri), "team-x")
     end
 
-    test "define_rule_set_rule with an unknown receiver role → structured error (codex M1)", ctx do
+    test "define_rule_set_rule with an unknown receiver role → structured error (codex M1)",
+         ctx do
       result =
         McpServer.handle_tool_call(ctx.mcp, "define_rule_set_rule", %{
           "matcher_ast" => %{"type" => "text_contains", "arg" => "x"},
@@ -745,7 +763,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
       result =
         McpServer.handle_tool_call(ctx.mcp, "define_rule_set_rule", %{
           "matcher_ast" => %{"type" => "text_contains", "arg" => "x"},
-          "receiver_role_name" => "entity://agent/team-alpha/not_a_member_#{uniq()}",
+          "receiver_role_name" => "entity://team-alpha/agent/not_a_member_#{uniq()}",
           "rule_set" => "rs"
         })
 
@@ -791,7 +809,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
         description: "parent team",
         agent_slots: [],
         routing_rules: [],
-        orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
+        orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator"),
         default_workspace_uri: @workspace_uri,
         parent_template_uri: nil,
         created_by: User.admin_uri(),
@@ -801,7 +819,9 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
       {:ok, parent_uri} = SessionTemplate.persist_version(parent_content, "team-alpha")
 
       mcp =
-        mcp_server(ctx.session_uri, ctx.orchestrator_uri, ctx.caps, parent_template_uri: parent_uri)
+        mcp_server(ctx.session_uri, ctx.orchestrator_uri, ctx.caps,
+          parent_template_uri: parent_uri
+        )
 
       result = McpServer.handle_tool_call(mcp, "update_template", %{})
 
@@ -817,7 +837,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
       mcp =
         mcp_server(ctx.session_uri, ctx.orchestrator_uri, ctx.caps,
           parent_template_uri:
-            URI.parse("template://session/team-alpha/never-existed-#{uniq()}@deadbeef")
+            Ezagent.URI.new!("template://team-alpha/session/never-existed-#{uniq()}@deadbeef")
         )
 
       result = McpServer.handle_tool_call(mcp, "update_template", %{})
@@ -864,7 +884,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
   describe "McpServer as a process" do
     test "start_link + tool_call run a tool against the bound context" do
       flavor = register_test_flavor()
-      backend_uri = URI.new!("template://agent/team-alpha/mcp-proc-#{uniq()}")
+      backend_uri = URI.new!("template://team-alpha/agent/mcp-proc-#{uniq()}")
       :ok = create_agent_template(backend_uri, flavor, "proc-worker")
 
       session_uri = spawn_session()

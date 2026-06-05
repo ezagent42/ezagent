@@ -245,7 +245,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
     end
 
     def handle_terminate_target(%{target: target_str}, _ctx) do
-      uri = URI.parse(target_str)
+      uri = Ezagent.URI.new!(target_str)
       {:ok, :ok, [{:terminate, uri}]}
     end
 
@@ -401,7 +401,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
         NewContractBehavior
       )
 
-    self_uri = URI.parse("entity://agent/team-alpha/runtime-new-contract-test")
+    self_uri = Ezagent.URI.new!("entity://team-alpha/agent/runtime-new-contract-test")
 
     # Start with empty slices for each Behavior (defensive; mirrors
     # what Kind.Server.init/1 would have built via init_slice/1).
@@ -603,7 +603,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
       # surface as `{:error, {:effect_dispatch_failed, _}}` — proving
       # the executor (a) actually called Router.dispatch and (b)
       # propagated the failure.
-      target_str = "entity://agent/team-alpha/phase15b-dispatch-target"
+      target_str = "entity://team-alpha/agent/phase15b-dispatch-target"
 
       inv = invocation(self_uri, :dispatch_to, %{target: target_str})
 
@@ -618,7 +618,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
       # {:ok, _, _} even with a bogus target. The previous test
       # asserts the failure path; this one asserts the executor at
       # minimum INVOKED the Router (no silent drop).
-      target_str = "entity://agent/team-alpha/another-missing"
+      target_str = "entity://team-alpha/agent/another-missing"
       inv = invocation(self_uri, :dispatch_to, %{target: target_str})
 
       # We expect an error (no live actor) — the IMPORTANT thing is
@@ -682,7 +682,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
       # lookups so we can't see a positive signal without spawning
       # a real Kind (which would need the full Application + Sup
       # tree). The dispatch returning {:ok, _} IS the assertion.
-      target_str = "entity://agent/team-alpha/phase15b-terminate-absent"
+      target_str = "entity://team-alpha/agent/phase15b-terminate-absent"
 
       inv = invocation(self_uri, :terminate_target, %{target: target_str})
 
@@ -751,7 +751,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
       # MUST surface that as `{:error, {:dispatch_returning_failed, :bumped, :no_such_actor}}`
       # — NOT silently succeed (pre-SPEC behaviour for `:dispatch`) and
       # NOT collapse into the generic `:effect_dispatch_failed` wrapper.
-      target_str = "entity://agent/team-alpha/dr-failure-target"
+      target_str = "entity://team-alpha/agent/dr-failure-target"
 
       inv = invocation(self_uri, :dispatch_returning_to, %{target: target_str})
 
@@ -765,7 +765,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
       # the executor incorrectly ran past the failure.
       :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, "test:dr-ref:notify")
 
-      target_str = "entity://agent/team-alpha/dr-ref-failure-target"
+      target_str = "entity://team-alpha/agent/dr-ref-failure-target"
       inv = invocation(self_uri, :dispatch_returning_with_ref, %{target: target_str})
 
       assert {:error, {:dispatch_returning_failed, :bumped, :no_such_actor}} =
@@ -786,7 +786,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
       # proving the executor reached the :dispatch_returning bucket
       # AFTER processing the :effect_returning bucket (which had
       # populated `returning` before the :dispatch_returning ran).
-      target_str = "entity://agent/team-alpha/dr-mixed-failure-target"
+      target_str = "entity://team-alpha/agent/dr-mixed-failure-target"
 
       inv =
         invocation(

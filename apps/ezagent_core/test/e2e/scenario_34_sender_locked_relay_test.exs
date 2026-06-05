@@ -51,10 +51,10 @@ defmodule Ezagent.E2E.Scenario34_SenderLockedRelayTest do
   # The relay team (spec §4). role_name → URI; the rule-set keys on the URIs
   # (the resolved members), the legend's member_set keys on role_names.
   @session URI.new!("session://generic/team-alpha/relay-1")
-  @operator URI.new!("entity://user/team-alpha/operator")
-  @relay_cc URI.new!("entity://agent/team-alpha/cc_relay")
-  @relay_codex URI.new!("entity://agent/team-alpha/codex_relay")
-  @relay_curl URI.new!("entity://agent/team-alpha/curl_relay")
+  @operator URI.new!("entity://team-alpha/user/operator")
+  @relay_cc URI.new!("entity://team-alpha/agent/cc_relay")
+  @relay_codex URI.new!("entity://team-alpha/agent/codex_relay")
+  @relay_curl URI.new!("entity://team-alpha/agent/curl_relay")
 
   @legend_name "传话游戏"
   @rule_set "telephone"

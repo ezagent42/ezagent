@@ -156,8 +156,7 @@ defmodule EzagentWeb.ApiV1Controller do
             end
 
           [] ->
-            {:error, 401, "missing_entity_uri",
-             "X-Ezagent-Entity-URI header required (e.g. `entity://user/system/admin`)"}
+            {:error, 401, "missing_entity_uri", "X-Ezagent-Entity-URI header required"}
         end
 
       _ ->

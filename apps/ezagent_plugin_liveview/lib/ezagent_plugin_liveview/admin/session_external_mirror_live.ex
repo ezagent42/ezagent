@@ -329,7 +329,7 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
 
   defp build_ctx(caller_uri, caller_caps) do
     %{
-      caller: caller_uri || Ezagent.URI.new!("entity://user/system/admin"),
+      caller: caller_uri || Ezagent.Entity.User.admin_uri(),
       caps: caller_caps || MapSet.new(),
       reply: :ignore
     }
@@ -519,7 +519,7 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
   defp fresh_bind_form, do: to_form(%{"adapter_id" => "", "target_id" => ""}, as: "binding")
 
   defp audit_event_target(%{metadata: %{target: t}}) when is_binary(t), do: t
-  defp audit_event_target(%{metadata: %{target: %URI{} = t}}), do: URI.to_string(t)
+  defp audit_event_target(%{metadata: %{target: %URI{} = t}}), do: Ezagent.URI.stable_key(t)
   defp audit_event_target(_), do: nil
 
   defp session_event?(target, session_uri_str) do
@@ -563,8 +563,8 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(
-          Map.get(assigns, :current_entity_uri) || Ezagent.URI.new!("entity://user/system/admin")
+        Ezagent.URI.stable_key(
+          Map.get(assigns, :current_entity_uri) || Ezagent.Entity.User.admin_uri()
         )
       end)
 
@@ -668,7 +668,12 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
                             phx-click="unbind"
                             phx-value-adapter-id={binding.adapter_id}
                             phx-value-target-id={binding.target_id}
-                            data-confirm={gettext("Unbind %{a} → %{t}?", a: binding.adapter_id, t: binding.target_id)}
+                            data-confirm={
+                              gettext("Unbind %{a} → %{t}?",
+                                a: binding.adapter_id,
+                                t: binding.target_id
+                              )
+                            }
                             type="button"
                             class="text-xs text-rose-600 dark:text-rose-400 hover:underline"
                             phx-click-loading
@@ -703,12 +708,18 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
                             </li>
                           </ul>
 
-                          <div :if={@session_audit_events != []} class="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800">
+                          <div
+                            :if={@session_audit_events != []}
+                            class="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800"
+                          >
                             <div class="text-[10px] uppercase tracking-wide text-zinc-500 mb-2">
                               {gettext("Session-level events (bind / unbind / list)")}
                             </div>
                             <ul class="space-y-1 font-mono text-[11px]">
-                              <li :for={ev <- @session_audit_events} class="text-zinc-600 dark:text-zinc-400">
+                              <li
+                                :for={ev <- @session_audit_events}
+                                class="text-zinc-600 dark:text-zinc-400"
+                              >
                                 <span class="text-zinc-500">{DateTime.to_iso8601(ev.at)}</span>
                                 <span class="ml-2">{format_audit_event(ev)}</span>
                               </li>
@@ -828,5 +839,4 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
 
     Enum.join(parts, " ")
   end
-
 end

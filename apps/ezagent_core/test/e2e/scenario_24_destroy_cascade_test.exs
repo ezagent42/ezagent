@@ -66,14 +66,14 @@ defmodule Ezagent.E2E.Scenario24DestroyCascadeTest do
   end
 
   defp spawn_agent! do
-    uri = URI.parse("entity://agent/team-alpha/scen24-agent-#{uniq()}")
+    uri = Ezagent.URI.new!("entity://team-alpha/agent/scen24-agent-#{uniq()}")
     {:ok, _pid} = Ezagent.Kind.spawn(AgentKind, %{uri: uri})
     :ok = Ezagent.WorkspaceRegistry.bind(uri, @workspace_uri)
     uri
   end
 
   defp spawn_session! do
-    uri = URI.parse("session://default/team-alpha/scen24-sess-#{uniq()}")
+    uri = Ezagent.URI.new!("session://team-alpha/default/scen24-sess-#{uniq()}")
     {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: uri})
 
     :ok =
@@ -86,7 +86,7 @@ defmodule Ezagent.E2E.Scenario24DestroyCascadeTest do
   end
 
   defp dispatch(uri, action, args \\ %{}) do
-    target = URI.parse("#{URI.to_string(uri)}?action=#{action}")
+    target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=#{action}")
 
     Invocation.dispatch(%Invocation{
       target: target,

@@ -108,6 +108,7 @@ defmodule Ezagent.Behavior.Chat do
   # depends on the stable key, so we declare it explicitly with the
   # sanctioned marker rather than relying on derivation.
   use Ezagent.Lifecycle, state_slice: :chat
+  reads_siblings([:sandbox])
 
   require Logger
 
@@ -152,21 +153,23 @@ defmodule Ezagent.Behavior.Chat do
   #   - Agent Kind for :receive
   # The multi-Kind registration → kind axis is `:any` (check 11(b) escape).
 
-  action :send,
+  action(:send,
     args: %{message: :map},
     returns: %{stored: :boolean},
     caps: [:send],
     modes: [:cast],
     description: "Post a message into the session and fan it out to members"
+  )
 
-  action :receive,
+  action(:receive,
     args: %{message: :map},
     returns: %{},
     caps: [:receive],
     modes: [:cast],
     description: "Deliver a session message to this member (User inbox / Agent bridge)"
+  )
 
-  action :join,
+  action(:join,
     # Allow both — admin User joins via :cast at boot (non-blocking);
     # admin or programmatic callers may :call to read members back.
     args: %{member: :uri},
@@ -174,15 +177,17 @@ defmodule Ezagent.Behavior.Chat do
     caps: [:join],
     modes: [:call, :cast],
     description: "Add a member to the session and replay any missed messages"
+  )
 
-  action :leave,
+  action(:leave,
     args: %{member: :uri},
     returns: %{},
     caps: [:leave],
     modes: [:cast],
     description: "Remove a member from the session"
+  )
 
-  action :set_working_copy,
+  action(:set_working_copy,
     args: %{template_working_copy: :map},
     returns: %{template_working_copy: :map},
     caps: [:set_working_copy],
@@ -190,6 +195,7 @@ defmodule Ezagent.Behavior.Chat do
     description:
       "Write the durable template_working_copy field on the Session's :chat " <>
         "slice (the orchestrator's source-template record — Phase 7 SPEC §1.6)"
+  )
 
   # team-routing-unification §3.6 (PR-6) — install/overwrite the session-scoped
   # legend registry (`name => %{member_set, bound_rule_set, fold}`) on the
@@ -197,7 +203,7 @@ defmodule Ezagent.Behavior.Chat do
   # :set_working_copy (orchestrator / system-internal only — a legend fronts a
   # team + its rule-set, an orchestrator-config concern), so it reuses
   # `working_copy_write_authorized?/1`.
-  action :set_legends,
+  action(:set_legends,
     args: %{legends: :map},
     returns: %{legends: :map},
     caps: [:set_legends],
@@ -205,6 +211,7 @@ defmodule Ezagent.Behavior.Chat do
     description:
       "Write the session-scoped legend registry on the Session's :chat slice " <>
         "(team-routing-unification §3.6, PR-6)"
+  )
 
   # team-routing-unification §3.4 (PR-4b) / §3.7 (PR-7) — install/overwrite the
   # session-scoped named prompt-template map (`name => template string`) on the
@@ -213,7 +220,7 @@ defmodule Ezagent.Behavior.Chat do
   # orchestrator/system-config concern). PR-4b added the READ side
   # (`render_for_delivery/4`); PR-7 adds this WRITE side so SessionTemplate
   # materialization can install a template's `prompt_templates`.
-  action :set_prompt_templates,
+  action(:set_prompt_templates,
     args: %{prompt_templates: :map},
     returns: %{prompt_templates: :map},
     caps: [:set_prompt_templates],
@@ -221,6 +228,7 @@ defmodule Ezagent.Behavior.Chat do
     description:
       "Write the session-scoped named prompt-template map on the Session's " <>
         ":chat slice (team-routing-unification §3.4/§3.7, PR-7)"
+  )
 
   # `create/1` — FIRST-EVER existence (SPEC 2026-05-29 §2). Builds the
   # PERSISTENT `state`. The macro-injected `init_slice/1` wraps this in
@@ -261,111 +269,111 @@ defmodule Ezagent.Behavior.Chat do
        # (SPEC §2.3C). Persisting it snapshotted dead refs.
        # %{URI => DateTime} — when last seen offline (only present for offline)
        last_seen: %{},
-      # PR-EM-6-PRE (Allen 2026-05-25) — the architectural seam
-      # external-mirror plugins (Feishu / future Slack / etc) ride on
-      # after PR-EM-6 deletes `maybe_notify_external/3`. The flow is
-      # Chat.send → slice mutation → `Kind.Runtime` step 9.5 builds
-      # `slice_change_event` (gated on `new_slice != slice`) →
-      # `Kind.Server.commit_and_notify/3` → `SliceChange.emit/1` →
-      # Publisher → ExternalMirror Worker → adapter dispatch.
-      #
-      # Three fields, three jobs (codex r1 2026-05-25 HIGH-1 + HIGH-2):
-      #
-      # - `:last_message_id` — the id of the most recently persisted
-      #   Message. Stable cross-reference for MessageStore + ReadMarker
-      #   rows; NOT sufficient on its own because a retried send of the
-      #   same msg.id leaves it byte-equal (HIGH-1).
-      #
-      # - `:last_message` — the full `Ezagent.Message.t()` returned by
-      #   `MessageStore.write/2` (has `:session_uri` + `:workspace_uri`
-      #   stamped). ExternalMirror adapters convert `Publisher.Event` →
-      #   payload as PURE FUNCTIONS (no DB lookup); carrying the
-      #   message here lets adapters render sender / body / attachments
-      #   / mentions directly from the event without an out-of-band
-      #   MessageStore round-trip (HIGH-2).
-      #
-      # - `:send_cursor` — monotonically-incrementing counter, bumped
-      #   on EVERY `:send` that successfully persists, even when
-      #   `msg.id` matches an earlier write (MessageStore is idempotent
-      #   on `(msg.id, session_uri)` per its `on_conflict: :nothing`).
-      #   Without this, a resend of an already-persisted message id
-      #   would leave `last_message_id` + `last_message` byte-equal,
-      #   SliceChange would short-circuit, and external mirrors would
-      #   silently miss the retry while in-session subscribers received
-      #   it (HIGH-1).
-      #
-      # All three start `nil` / `0` on a fresh session; readers must
-      # tolerate the legacy shape where the keys are absent entirely
-      # (pre-PR-EM-6-PRE snapshots — `Kind.Snapshot.load_or_init/3`
-      # merges loaded INTO fresh, so a Session that pre-dates this PR
-      # keeps its pre-existing `:chat` slice without these keys until
-      # its next `:send`).
-      last_message_id: nil,
-      last_message: nil,
-      send_cursor: 0,
-      # PR-N3 r4 (Allen 2026-05-25) — cursor-indexed bounded ring of
-      # recent message ids for the User-branch `:receive` action. Each
-      # entry is `{slice_change_cursor :: pos_integer(), msg_id ::
-      # String.t()}`; the cursor matches the `SliceChange` broadcast
-      # envelope cursor (pre-allocated by `Ezagent.Kind.Runtime` and
-      # passed via `ctx.slice_change_cursor`), so a flash subscriber
-      # that receives envelope cursor C can re-fetch the slice and
-      # look up the correct `msg_id` via `List.keyfind(ring, C, 0)`
-      # WITHOUT racing the latest pointer.
-      #
-      # Pre-fix (r3): User-branch :receive wrote a single
-      # `:last_received` pointer. Under burst (N events arriving faster
-      # than AdminLive's LV process drained its mailbox), every flash
-      # re-fetch read the LATEST pointer — so all N flashes rendered
-      # the same (most-recent) message, losing N-1 distinct
-      # notifications. Codex r3 PR-N3 flagged this as HIGH-1.
-      #
-      # Ring depth is SPEC-pinned via
-      # `recent_messages_ring_depth/0` (NOT a runtime config knob —
-      # per `feedback_let_it_crash_no_workarounds`). Entries past the
-      # bound fall off the tail; the bridge gracefully degrades to the
-      # "New chat update on <uri>" line for any envelope cursor that's
-      # no longer in the ring (no crash, no silent wrong-render — the
-      # flash still fires, just generic).
-      #
-      # Newest-first ordering; HEAD is the most recently received
-      # message. `List.keyfind/3` is O(N) on N=20 = fine.
-      #
-      # Legacy slice shape (pre-PR-N3-r4): missing key.
-      # `Kind.Snapshot.load_or_init/3` merges loaded INTO fresh, so
-      # pre-PR snapshots keep their `:chat` slice without this key
-      # until the next `:receive` populates it. Readers MUST default
-      # via `Map.get(slice, :recent_messages, [])`.
-      recent_messages: [],
-      # team-routing-unification §3.4 (PR-4b): session-scoped named prompt
-      # templates (name => template string), applied at delivery to a rule's
-      # receiver via `render_for_delivery/4`. Empty by default → no rendering
-      # (behaviour-preserving). Readers MUST default via
-      # `Map.get(slice, :prompt_templates, %{})` for legacy snapshots.
-      prompt_templates: %{},
-      # team-routing-unification §3.6 (PR-6): session-scoped legend registry
-      # (`name => %{member_set, bound_rule_set, fold}`). A legend is a symbolic
-      # team handle that fronts a rule-set (resolution layer: `Ezagent.Routing.
-      # Legend`). Empty by default → no legends (behaviour-preserving). Readers
-      # MUST default via `legends_of/1` for legacy snapshots.
-      legends: %{},
-      # Phase 7 completion PR-2 (SPEC §1.3 / §1.6) — the durable
-      # source-template record for the orchestrator's working copy.
-      # `template_working_copy` is template-SHAPED, not live-runtime
-      # shaped (codex rev-3 HIGH-3): `agent_slots` carries the
-      # `template://agent/<ws>/<name>` AgentTemplate URI each slot was
-      # spawned from (the durable `source_agent_template_uri`), NOT a
-      # live `entity://agent` instance URI; routing receivers are slot
-      # NAMES, not live URIs. Because Session is `{:snapshot,
-      # :on_change}` this field persists across restart.
-      #
-      # A pre-PR-2 Session snapshot has a `:chat` slice WITHOUT this
-      # key. `Kind.Snapshot.load_or_init/3` merges at the
-      # slice-key level (`Map.merge(fresh, loaded)`), so the loaded
-      # `:chat` slice would replace the fresh one entirely — readers
-      # MUST therefore treat a missing key as the default via
-      # `template_working_copy/1` below rather than dot-access.
-      template_working_copy: default_template_working_copy()
+       # PR-EM-6-PRE (Allen 2026-05-25) — the architectural seam
+       # external-mirror plugins (Feishu / future Slack / etc) ride on
+       # after PR-EM-6 deletes `maybe_notify_external/3`. The flow is
+       # Chat.send → slice mutation → `Kind.Runtime` step 9.5 builds
+       # `slice_change_event` (gated on `new_slice != slice`) →
+       # `Kind.Server.commit_and_notify/3` → `SliceChange.emit/1` →
+       # Publisher → ExternalMirror Worker → adapter dispatch.
+       #
+       # Three fields, three jobs (codex r1 2026-05-25 HIGH-1 + HIGH-2):
+       #
+       # - `:last_message_id` — the id of the most recently persisted
+       #   Message. Stable cross-reference for MessageStore + ReadMarker
+       #   rows; NOT sufficient on its own because a retried send of the
+       #   same msg.id leaves it byte-equal (HIGH-1).
+       #
+       # - `:last_message` — the full `Ezagent.Message.t()` returned by
+       #   `MessageStore.write/2` (has `:session_uri` + `:workspace_uri`
+       #   stamped). ExternalMirror adapters convert `Publisher.Event` →
+       #   payload as PURE FUNCTIONS (no DB lookup); carrying the
+       #   message here lets adapters render sender / body / attachments
+       #   / mentions directly from the event without an out-of-band
+       #   MessageStore round-trip (HIGH-2).
+       #
+       # - `:send_cursor` — monotonically-incrementing counter, bumped
+       #   on EVERY `:send` that successfully persists, even when
+       #   `msg.id` matches an earlier write (MessageStore is idempotent
+       #   on `(msg.id, session_uri)` per its `on_conflict: :nothing`).
+       #   Without this, a resend of an already-persisted message id
+       #   would leave `last_message_id` + `last_message` byte-equal,
+       #   SliceChange would short-circuit, and external mirrors would
+       #   silently miss the retry while in-session subscribers received
+       #   it (HIGH-1).
+       #
+       # All three start `nil` / `0` on a fresh session; readers must
+       # tolerate the legacy shape where the keys are absent entirely
+       # (pre-PR-EM-6-PRE snapshots — `Kind.Snapshot.load_or_init/3`
+       # merges loaded INTO fresh, so a Session that pre-dates this PR
+       # keeps its pre-existing `:chat` slice without these keys until
+       # its next `:send`).
+       last_message_id: nil,
+       last_message: nil,
+       send_cursor: 0,
+       # PR-N3 r4 (Allen 2026-05-25) — cursor-indexed bounded ring of
+       # recent message ids for the User-branch `:receive` action. Each
+       # entry is `{slice_change_cursor :: pos_integer(), msg_id ::
+       # String.t()}`; the cursor matches the `SliceChange` broadcast
+       # envelope cursor (pre-allocated by `Ezagent.Kind.Runtime` and
+       # passed via `ctx.slice_change_cursor`), so a flash subscriber
+       # that receives envelope cursor C can re-fetch the slice and
+       # look up the correct `msg_id` via `List.keyfind(ring, C, 0)`
+       # WITHOUT racing the latest pointer.
+       #
+       # Pre-fix (r3): User-branch :receive wrote a single
+       # `:last_received` pointer. Under burst (N events arriving faster
+       # than AdminLive's LV process drained its mailbox), every flash
+       # re-fetch read the LATEST pointer — so all N flashes rendered
+       # the same (most-recent) message, losing N-1 distinct
+       # notifications. Codex r3 PR-N3 flagged this as HIGH-1.
+       #
+       # Ring depth is SPEC-pinned via
+       # `recent_messages_ring_depth/0` (NOT a runtime config knob —
+       # per `feedback_let_it_crash_no_workarounds`). Entries past the
+       # bound fall off the tail; the bridge gracefully degrades to the
+       # "New chat update on <uri>" line for any envelope cursor that's
+       # no longer in the ring (no crash, no silent wrong-render — the
+       # flash still fires, just generic).
+       #
+       # Newest-first ordering; HEAD is the most recently received
+       # message. `List.keyfind/3` is O(N) on N=20 = fine.
+       #
+       # Legacy slice shape (pre-PR-N3-r4): missing key.
+       # `Kind.Snapshot.load_or_init/3` merges loaded INTO fresh, so
+       # pre-PR snapshots keep their `:chat` slice without this key
+       # until the next `:receive` populates it. Readers MUST default
+       # via `Map.get(slice, :recent_messages, [])`.
+       recent_messages: [],
+       # team-routing-unification §3.4 (PR-4b): session-scoped named prompt
+       # templates (name => template string), applied at delivery to a rule's
+       # receiver via `render_for_delivery/4`. Empty by default → no rendering
+       # (behaviour-preserving). Readers MUST default via
+       # `Map.get(slice, :prompt_templates, %{})` for legacy snapshots.
+       prompt_templates: %{},
+       # team-routing-unification §3.6 (PR-6): session-scoped legend registry
+       # (`name => %{member_set, bound_rule_set, fold}`). A legend is a symbolic
+       # team handle that fronts a rule-set (resolution layer: `Ezagent.Routing.
+       # Legend`). Empty by default → no legends (behaviour-preserving). Readers
+       # MUST default via `legends_of/1` for legacy snapshots.
+       legends: %{},
+       # Phase 7 completion PR-2 (SPEC §1.3 / §1.6) — the durable
+       # source-template record for the orchestrator's working copy.
+       # `template_working_copy` is template-SHAPED, not live-runtime
+       # shaped (codex rev-3 HIGH-3): `agent_slots` carries the
+       # `template://agent/<ws>/<name>` AgentTemplate URI each slot was
+       # spawned from (the durable `source_agent_template_uri`), NOT a
+       # live `entity://agent` instance URI; routing receivers are slot
+       # NAMES, not live URIs. Because Session is `{:snapshot,
+       # :on_change}` this field persists across restart.
+       #
+       # A pre-PR-2 Session snapshot has a `:chat` slice WITHOUT this
+       # key. `Kind.Snapshot.load_or_init/3` merges at the
+       # slice-key level (`Map.merge(fresh, loaded)`), so the loaded
+       # `:chat` slice would replace the fresh one entirely — readers
+       # MUST therefore treat a missing key as the default via
+       # `template_working_copy/1` below rather than dot-access.
+       template_working_copy: default_template_working_copy()
      }}
   end
 
@@ -422,6 +430,10 @@ defmodule Ezagent.Behavior.Chat do
       routing_rules: [],
       # URI.t() | nil — the orchestrator agent's AgentTemplate
       orchestrator_template_uri: nil,
+      # URI.t() | nil — the orchestrator Agent Kind chosen for this
+      # Session. Stored once at create and read through Ezagent.UriQuery;
+      # callers must not re-derive it from URI shape.
+      orchestrator_uri: nil,
       # URI.t() | nil — the SessionTemplate this Session was
       # instantiated from (the Generator's `parent_template_uri`,
       # Task #110). Durable because Session is `{:snapshot, :on_change}`,
@@ -654,7 +666,7 @@ defmodule Ezagent.Behavior.Chat do
           end
 
         base_meta = %{
-          "sender" => URI.to_string(msg.sender),
+          "sender" => Ezagent.URI.stable_key(msg.sender),
           "message_id" => msg.id,
           "session" => source_session
         }
@@ -688,7 +700,14 @@ defmodule Ezagent.Behavior.Chat do
         # unbound the Registry row), `deliver_ensuring/2` relaunches it
         # (snapshot-sourced, flavor-neutral) + awaits the rebind, then retries
         # once — instead of silently `:no_bridge`-dropping the routed message.
-        _ = Ezagent.AgentBridge.deliver_ensuring(ctx[:self_uri], payload)
+        _ =
+          case resolve_agent_flavor_from_ctx(ctx) do
+            {:ok, flavor} ->
+              Ezagent.AgentBridge.deliver_ensuring_with_flavor(ctx[:self_uri], payload, flavor)
+
+            :none ->
+              Ezagent.AgentBridge.deliver_ensuring(ctx[:self_uri], payload)
+          end
 
         {:ok, %{}, []}
 
@@ -696,6 +715,12 @@ defmodule Ezagent.Behavior.Chat do
         # Should not happen — :receive is only registered for User/Agent.
         {:error, {:receive_unsupported_for_kind, ctx[:kind_module]}}
     end
+  end
+
+  defp resolve_agent_flavor_from_ctx(ctx) do
+    ctx
+    |> get_in([:siblings, :sandbox])
+    |> EzagentDomainInstanceMessage.UriQueryResolvers.resolve_flavor_from_sandbox()
   end
 
   # --- :join -------------------------------------------------------------
@@ -897,7 +922,7 @@ defmodule Ezagent.Behavior.Chat do
   # `Ezagent.Domain.Workspace.user_uri?/1` uses. Keeps the agent-target
   # silence guarantee local to Chat without crossing the
   # workspace-domain boundary.
-  defp user_uri?(%URI{scheme: "entity", host: "user"}), do: true
+  defp user_uri?(%URI{scheme: "entity"} = uri), do: Ezagent.URI.type?(uri, :user)
   defp user_uri?(_), do: false
 
   # team-routing-unification §3.1 — fold the optional, non-authority facets
@@ -944,8 +969,11 @@ defmodule Ezagent.Behavior.Chat do
   defp role_name_conflict(members, %URI{} = member_uri, role_name)
        when is_map(members) and is_binary(role_name) do
     case role_name_to_uri(members, role_name) do
-      nil -> :ok
-      %URI{} = holder -> if uri_eq?(holder, member_uri), do: :ok, else: {:error, {:role_name_taken, role_name}}
+      nil ->
+        :ok
+
+      %URI{} = holder ->
+        if uri_eq?(holder, member_uri), do: :ok, else: {:error, {:role_name_taken, role_name}}
     end
   end
 
@@ -1013,7 +1041,7 @@ defmodule Ezagent.Behavior.Chat do
                args: %{cap: want},
                ctx: %{
                  caller: owner_uri,
-                 caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
+                 caps: system_caps("template-materialize"),
                  reply: :ignore
                }
              }) do
@@ -1163,7 +1191,7 @@ defmodule Ezagent.Behavior.Chat do
            # `system://session-internal` (closed Catalog).
            ctx: %{
              caller: Ezagent.SystemPrincipal.uri("session-internal"),
-             caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+             caps: system_caps("session-internal"),
              system_internal: true,
              reply: {:caller_inbox, self()}
            }
@@ -1215,10 +1243,7 @@ defmodule Ezagent.Behavior.Chat do
   # the older `system_internal`-flag gate (`working_copy_write_authorized?/1`) —
   # codex flagged it shares the same flaw; tracked separately (see report), this
   # PR fixes `set_legends` properly.
-  @legends_trusted_principals [
-    "system://session-internal",
-    "system://orchestrator-tools"
-  ]
+  @legends_trusted_principals ["session-internal", "orchestrator-tools"]
 
   defp legends_write_authorized?(ctx) do
     trusted_legends_principal?(ctx) or orchestrator_cap_present?(ctx)
@@ -1231,10 +1256,18 @@ defmodule Ezagent.Behavior.Chat do
   # this cannot be spoofed by setting a ctx field.
   defp trusted_legends_principal?(ctx) do
     case Map.get(ctx, :caller) do
-      %URI{} = caller -> URI.to_string(caller) in @legends_trusted_principals
-      caller when is_binary(caller) -> caller in @legends_trusted_principals
+      %URI{} = caller -> trusted_principal?(caller)
+      caller when is_binary(caller) -> caller |> Ezagent.URI.new!() |> trusted_principal?()
       _ -> false
     end
+  end
+
+  defp trusted_principal?(%URI{} = caller) do
+    caller = caller |> Ezagent.URI.instance() |> URI.to_string()
+
+    Enum.any?(@legends_trusted_principals, fn name ->
+      name |> Ezagent.SystemPrincipal.uri() |> URI.to_string() == caller
+    end)
   end
 
   @doc """
@@ -1297,7 +1330,7 @@ defmodule Ezagent.Behavior.Chat do
            args: %{legends: legends},
            ctx: %{
              caller: Ezagent.SystemPrincipal.uri("session-internal"),
-             caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+             caps: system_caps("session-internal"),
              reply: {:caller_inbox, self()}
            }
          }) do
@@ -1344,7 +1377,7 @@ defmodule Ezagent.Behavior.Chat do
            args: %{prompt_templates: prompt_templates},
            ctx: %{
              caller: Ezagent.SystemPrincipal.uri("session-internal"),
-             caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+             caps: system_caps("session-internal"),
              reply: {:caller_inbox, self()}
            }
          }) do
@@ -1464,13 +1497,13 @@ defmodule Ezagent.Behavior.Chat do
     if mention_uris == [] do
       :ok
     else
-      recipient_strs = MapSet.new(recipients, &URI.to_string/1)
+      recipients = MapSet.new(recipients, &Ezagent.URI.instance/1)
 
       dropped =
         mention_uris
         |> Enum.map(&to_uri_struct/1)
         |> Enum.reject(&is_nil/1)
-        |> Enum.reject(fn uri -> MapSet.member?(recipient_strs, URI.to_string(uri)) end)
+        |> Enum.reject(fn uri -> MapSet.member?(recipients, Ezagent.URI.instance(uri)) end)
 
       sender_uri = msg.sender
 
@@ -1527,7 +1560,7 @@ defmodule Ezagent.Behavior.Chat do
     # behavior name (see `dispatch_receive_call/3` — a bare
     # `action: :send` yields the `_.send` Router sentinel).
     send_target =
-      Ezagent.URI.new!("#{URI.to_string(target_session_uri)}?action=chat.send")
+      Ezagent.URI.with_action(target_session_uri, :chat, :send)
 
     Ezagent.Router.dispatch(%Cmd{
       target: send_target,
@@ -1537,7 +1570,7 @@ defmodule Ezagent.Behavior.Chat do
         caller: msg.sender,
         # SPEC caps-cleanup-v1 §4.4 — cross-session forwarding is
         # system-routed; `system://chat-router` per Catalog.
-        caps: Ezagent.SystemPrincipal.caps("system://chat-router"),
+        caps: system_caps("chat-router"),
         reply: :ignore
       }
     })
@@ -1593,6 +1626,12 @@ defmodule Ezagent.Behavior.Chat do
   defp put_rendered_text(body, text) when is_map(body), do: Map.put(body, :text, text)
   defp put_rendered_text(_body, text), do: %{text: text}
 
+  defp system_caps(name) when is_binary(name) do
+    name
+    |> Ezagent.SystemPrincipal.uri()
+    |> Ezagent.SystemPrincipal.caps()
+  end
+
   defp dispatch_receive_call(recipient_uri, %Message{} = msg, session_uri) do
     # Canonicalize the session URI before it crosses into the recipient's
     # `chat.receive` — it becomes `ctx.caller`, which the recipient behavior
@@ -1617,7 +1656,7 @@ defmodule Ezagent.Behavior.Chat do
     # `?action=chat.receive`. Router's `annotate_target_with_action/2`
     # leaves a pre-baked `action=` query untouched.
     receive_target =
-      Ezagent.URI.new!("#{URI.to_string(recipient_uri)}?action=chat.receive")
+      Ezagent.URI.with_action(recipient_uri, :chat, :receive)
 
     result =
       Ezagent.Router.dispatch(%Cmd{
@@ -1626,7 +1665,7 @@ defmodule Ezagent.Behavior.Chat do
         args: %{message: msg},
         ctx: %{
           caller: session_uri,
-          caps: Ezagent.SystemPrincipal.caps("system://chat-router"),
+          caps: system_caps("chat-router"),
           reply: :ignore
         }
       })
@@ -1665,7 +1704,8 @@ defmodule Ezagent.Behavior.Chat do
       # to maintain the `user_uri → MapSet(session_uri)` reverse index
       # without coupling back to this module. Wrapper carries the
       # session_uri the inner `event` lacks.
-      {:notify, "esr:session_membership:changes", {:session_membership_change, session_uri, event}}
+      {:notify, "esr:session_membership:changes",
+       {:session_membership_change, session_uri, event}}
     ]
   end
 

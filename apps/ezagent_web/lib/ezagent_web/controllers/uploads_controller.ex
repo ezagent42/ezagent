@@ -227,9 +227,8 @@ defmodule EzagentWeb.UploadsController do
   end
 
   # Resource URI shape: `resource://uploads/<workspace>/<filename>`.
-  # Match the host + last path segment exactly.
-  defp attachment_matches?(%URI{scheme: "resource", host: "uploads", path: "/" <> rest}, filename) do
-    Path.basename(rest) == filename
+  defp attachment_matches?(%URI{scheme: "resource"} = uri, filename) do
+    Ezagent.URI.type?(uri, :uploads) and Ezagent.URI.name?(uri, filename)
   end
 
   defp attachment_matches?(s, filename) when is_binary(s) do

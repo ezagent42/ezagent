@@ -26,9 +26,9 @@ defmodule Mix.Tasks.Ezagent.User.CreateEmailTest do
 
   test "user.create --email path writes BOTH users row AND entity_profiles row" do
     uri_str =
-      "entity://user/team-alpha/email-create-#{System.unique_integer([:positive])}"
+      "entity://team-alpha/user/email-create-#{System.unique_integer([:positive])}"
 
-    user_uri = URI.parse(uri_str)
+    user_uri = Ezagent.URI.new!(uri_str)
     email = "test-#{System.unique_integer([:positive])}@example.com"
 
     # Step 1: same as task's `Users.create/3` call
@@ -59,9 +59,9 @@ defmodule Mix.Tasks.Ezagent.User.CreateEmailTest do
     # path that fires unconditionally). If someone refactors the task
     # to ALWAYS upsert, this test goes red and surfaces the change.
     uri_str =
-      "entity://user/team-alpha/no-email-#{System.unique_integer([:positive])}"
+      "entity://team-alpha/user/no-email-#{System.unique_integer([:positive])}"
 
-    user_uri = URI.parse(uri_str)
+    user_uri = Ezagent.URI.new!(uri_str)
     assert {:ok, _} = Users.create(user_uri, "temp-pw", [])
 
     # No profile means no email shortcut for this URI.

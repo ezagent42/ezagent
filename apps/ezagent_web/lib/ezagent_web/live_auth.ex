@@ -41,7 +41,7 @@ defmodule EzagentWeb.LiveAuth do
   ## PR #149 (S-8) hardening
 
   WS reconnect path now asserts the session URI parses to an
-  `entity://` shape with `host in ["user", "agent"]`. A malformed
+  `entity://` shape with a user or agent type axis. A malformed
   or non-entity URI in the cookie redirects to `/login` instead of
   silently propagating into LV assigns. Same vigilance as PR #123:
   prevent any silent fallback to admin on reconnect.
@@ -226,7 +226,7 @@ defmodule EzagentWeb.LiveAuth do
   defp system_member?(%URI{} = entity_uri) do
     try do
       caller_workspace = Ezagent.URI.entity_workspace_uri(entity_uri)
-      URI.to_string(caller_workspace) == "workspace://system"
+      Ezagent.URI.name?(caller_workspace, :system)
     rescue
       _ -> false
     end
@@ -262,7 +262,13 @@ defmodule EzagentWeb.LiveAuth do
   # session URI's bound workspace, which ignores the cookie's
   # workspace slot — so the IdeShell `ezagent / <name>` trigger
   # didn't update after a successful workspace switch).
-  defp workspace_name_from_uri(%URI{host: name}) when is_binary(name) and name != "", do: name
+  defp workspace_name_from_uri(%URI{} = uri) do
+    case Ezagent.URI.workspace_name(uri) do
+      {:ok, name} -> name
+      :error -> nil
+    end
+  end
+
   defp workspace_name_from_uri(_), do: nil
 
   # Phase 8c follow-up (Allen 2026-05-20) — `is_admin?` was set in
@@ -372,12 +378,11 @@ defmodule EzagentWeb.LiveAuth do
     try do
       uri = Ezagent.URI.new!(uri_str)
 
-      case uri do
-        %URI{scheme: "entity", host: host} when host in ["user", "agent"] ->
-          {:ok, uri}
-
-        _ ->
-          :error
+      if Ezagent.URI.scheme?(uri, :entity) and
+           match?({:ok, kind} when kind in ["user", "agent"], Ezagent.URI.type(uri)) do
+        {:ok, uri}
+      else
+        :error
       end
     rescue
       ArgumentError -> :error

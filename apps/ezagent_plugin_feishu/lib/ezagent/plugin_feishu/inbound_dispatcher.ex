@@ -64,7 +64,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
     case SenderResolver.resolve(sender) do
       {:pending, open_id} ->
         Logger.info(
-          "Feishu inbound: open_id=#{open_id} unbound — pending. Run `mix ezagent.feishu.bind #{open_id} entity://user/<name>` to attach."
+          "Feishu inbound: open_id=#{open_id} unbound — pending. Run the Feishu bind task with a full user URI to attach."
         )
 
         # lark react API rejected EYES with code 231001 "reaction type
@@ -108,15 +108,15 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
                 # reaches the human via a text in the original chat +
                 # THUMBSDOWN react, not a void log line.
                 Logger.info(
-                  "Feishu inbound: cap denied for #{URI.to_string(caller_uri)} → " <>
-                    "#{URI.to_string(session_uri)}/chat/send; sending text back"
+                  "Feishu inbound: cap denied for #{Ezagent.URI.stable_key(caller_uri)} → " <>
+                    "#{Ezagent.URI.stable_key(session_uri)} chat.send; sending text back"
                 )
 
                 send_dispatch_error(
                   chat_id,
                   message_id,
                   "THUMBSDOWN",
-                  "🚫 ESR: 没有权限发送到 #{URI.to_string(session_uri)} " <>
+                  "🚫 ESR: 没有权限发送到 #{Ezagent.URI.stable_key(session_uri)} " <>
                     "(missing cap: session.chat). " <>
                     "请联系管理员补一条 `kind=:session behavior=:chat` 的 cap。"
                 )
@@ -140,8 +140,8 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
                 # the text body carries the same semantic for the
                 # human reader.
                 Logger.info(
-                  "Feishu inbound: cross-workspace denied for #{URI.to_string(caller_uri)} → " <>
-                    "#{URI.to_string(session_uri)}/chat/send; sending text back"
+                  "Feishu inbound: cross-workspace denied for #{Ezagent.URI.stable_key(caller_uri)} → " <>
+                    "#{Ezagent.URI.stable_key(session_uri)} chat.send; sending text back"
                 )
 
                 send_dispatch_error(
@@ -149,8 +149,8 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
                   message_id,
                   "NO",
                   "🌐 ESR: 跨 workspace dispatch 被拒绝。" <>
-                    "你的身份 (#{URI.to_string(caller_uri)}) 与目标 session " <>
-                    "(#{URI.to_string(session_uri)}) 不在同一 workspace。" <>
+                    "你的身份 (#{Ezagent.URI.stable_key(caller_uri)}) 与目标 session " <>
+                    "(#{Ezagent.URI.stable_key(session_uri)}) 不在同一 workspace。" <>
                     "需要 admin 授予 cross-workspace cap 才能跨 workspace 发送。"
                 )
 
@@ -235,7 +235,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
 
         Logger.info(
           "Feishu inbound: rehydrated cold-but-durable session " <>
-            "#{URI.to_string(session_uri)} before dispatch (§3.8 rehydrate-or-spawn)"
+            "#{Ezagent.URI.stable_key(session_uri)} before dispatch (§3.8 rehydrate-or-spawn)"
         )
 
         :ok
@@ -283,7 +283,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
         legend_triggers: legend_triggers
       )
 
-    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+    target = Ezagent.URI.with_action(session_uri, :chat, :send)
 
     # Allen 2026-05-18: mode :call so cap-denial bubbles back
     # synchronously; the caller (dispatch/1) sends a text message to

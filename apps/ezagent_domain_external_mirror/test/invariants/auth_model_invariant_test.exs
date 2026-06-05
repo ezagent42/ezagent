@@ -72,7 +72,7 @@ defmodule Ezagent.ExternalMirror.AuthModelInvariantTest do
     MockPublishBinding
   }
 
-  @workspace_uri URI.parse("workspace://default")
+  @workspace_uri Ezagent.URI.new!("workspace://default")
 
   setup do
     :ok = FacadeNonceTable.__clear_all__()
@@ -653,7 +653,7 @@ defmodule Ezagent.ExternalMirror.AuthModelInvariantTest do
         adapter_id: "mock_publish",
         target_id: "tgt-s11",
         opts_json: "{}",
-        bound_by: "entity://user/default/admin",
+        bound_by: "entity://default/user/admin",
         bound_at: DateTime.utc_now()
       }
 
@@ -1023,7 +1023,7 @@ defmodule Ezagent.ExternalMirror.AuthModelInvariantTest do
             behavior: :any,
             instance: :any,
             workspace_uri: :any,
-            granted_by: URI.parse("system://bootstrap/default"),
+            granted_by: Ezagent.URI.new!("system://bootstrap/default"),
             granted_at: ~U[2026-01-01 00:00:00Z]
           }
         ]),

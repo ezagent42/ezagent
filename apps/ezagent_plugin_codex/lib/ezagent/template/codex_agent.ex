@@ -122,9 +122,9 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
       %{
         name: "agent_uri",
         type: :uri,
-        label: "Agent URI (entity://agent/<workspace>/codex_<name>)",
+        label: "Agent URI",
         required: true,
-        placeholder: "entity://agent/team-alpha/codex_builder"
+        placeholder: "codex_builder"
       },
       %{
         name: "cwd",
@@ -656,10 +656,10 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     end
   end
 
-  defp owns_this_agent?(%URI{path: "/" <> rest}, %URI{} = workspace_uri) do
-    case String.split(rest, "/", parts: 2) do
-      [workspace, _entity_name] -> workspace == workspace_uri.host
-      _ -> false
+  defp owns_this_agent?(%URI{} = agent_uri, %URI{} = workspace_uri) do
+    case Ezagent.URI.workspace_name(agent_uri) do
+      {:ok, workspace} -> workspace == workspace_uri.host
+      :error -> false
     end
   end
 
@@ -782,32 +782,20 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   end
 
   defp check_agent_uri(%{"agent_uri" => uri_str}) when is_binary(uri_str) and uri_str != "" do
-    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
-    # with try/rescue keeping the structured `{:error, _}` contract for
-    # each validator branch. Mirrors `EzagentPluginCc.Template.CcAgent.check_agent_uri/1`.
+    # PR-B unify-uri-query: the URI is an opaque identifier. This validator
+    # checks only the structural entity-agent shape; flavor is stored in the
+    # Template Class/content, never parsed from the URI name prefix.
     try do
       case Ezagent.URI.new!(uri_str) do
-        %URI{scheme: "entity", host: "agent", path: "/" <> rest} when rest != "" ->
-          with [_workspace, entity_name] when entity_name != "" <-
-                 String.split(rest, "/", parts: 2),
-               [flavor, suffix] when flavor != "" and suffix != "" <-
-                 String.split(entity_name, "_", parts: 2) do
-            if flavor == "codex" do
-              :ok
-            else
-              {:error, {:wrong_agent_flavor, flavor, expected: "codex"}}
-            end
+        %URI{scheme: "entity"} = uri ->
+          if Ezagent.URI.type?(uri, :agent) do
+            :ok
           else
-            _ ->
-              {:error,
-               {:missing_flavor_prefix, uri_str,
-                "agent URIs must be `entity://agent/<workspace>/codex_<name>`"}}
+            {:error, {:invalid_agent_uri, uri_str, "agent URI must be an entity agent URI"}}
           end
 
-        %URI{scheme: "entity"} ->
-          {:error,
-           {:invalid_agent_uri, uri_str,
-            "agent URIs must be `entity://agent/<workspace>/codex_<name>`"}}
+        %URI{} ->
+          {:error, {:invalid_agent_uri, uri_str, "agent URI must be an entity agent URI"}}
 
         _ ->
           {:error, {:bad_agent_uri, uri_str}}

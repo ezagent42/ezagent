@@ -5,7 +5,9 @@ defmodule Ezagent.InvocationTest do
   setup do
     # PR #141: agent URIs are entity://agent/<flavor>_<name>; use "test" flavor
     uri =
-      URI.parse("entity://agent/team-alpha/test_invocation-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!(
+        "entity://team-alpha/agent/test_invocation-#{System.unique_integer([:positive])}"
+      )
 
     :ok = Ezagent.BehaviorRegistry.register(TestKind, :noop, TestBehavior)
     :ok = Ezagent.BehaviorRegistry.register(TestKind, :fail, TestBehavior)
@@ -13,7 +15,7 @@ defmodule Ezagent.InvocationTest do
     {:ok, _pid} = Ezagent.Kind.Server.start_link({TestKind, %{uri: uri}})
     :ok = wait_until_ready(uri)
 
-    {:ok, instance_uri: uri, target: URI.parse("#{URI.to_string(uri)}?action=test.noop")}
+    {:ok, instance_uri: uri, target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop")}
   end
 
   describe "dispatch/1 — happy path" do
@@ -44,7 +46,8 @@ defmodule Ezagent.InvocationTest do
   describe "dispatch/1 — error paths" do
     test ":no_such_actor for unknown URI" do
       inv = %Invocation{
-        target: URI.parse("entity://agent/team-alpha/echo_does-not-exist?action=test.noop"),
+        target:
+          Ezagent.URI.new!("entity://team-alpha/agent/echo_does-not-exist?action=test.noop"),
         mode: :call,
         args: %{msg: "x"},
         ctx: ctx_for(self())
@@ -69,7 +72,7 @@ defmodule Ezagent.InvocationTest do
       end)
 
       inv = %Invocation{
-        target: URI.parse("#{URI.to_string(uri)}?action=test.noop"),
+        target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop"),
         mode: :call,
         args: %{msg: "x"},
         ctx: ctx_for(self())
@@ -84,7 +87,7 @@ defmodule Ezagent.InvocationTest do
     test ":not_ready + :cast → buffered (no error)", %{instance_uri: uri} do
       :ok = Ezagent.ReadyGate.put(uri, :not_ready)
 
-      target = URI.parse("#{URI.to_string(uri)}?action=test.noop")
+      target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop")
 
       inv = %Invocation{
         target: target,
@@ -159,7 +162,7 @@ defmodule Ezagent.InvocationTest do
 
   defp ctx_for(pid) do
     %{
-      caller: URI.parse("entity://user/system/admin"),
+      caller: Ezagent.URI.new!("entity://system/user/admin"),
       caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
       reply: {:caller_inbox, pid}
     }

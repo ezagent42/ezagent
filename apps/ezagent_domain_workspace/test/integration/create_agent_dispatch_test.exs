@@ -141,7 +141,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
   describe "Ezagent.Workspace.grant_initial_caps/3 — empty list short-circuit" do
     test "empty cap list returns :ok without dispatching", %{admin_ctx: admin_ctx} do
       # No agent URI needed — empty list never touches dispatch.
-      fake_uri = URI.parse("entity://agent/system/cc_fake")
+      fake_uri = Ezagent.URI.new!("entity://system/agent/cc_fake")
       assert :ok = Workspace.grant_initial_caps(fake_uri, [], admin_ctx)
     end
   end
@@ -159,7 +159,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
       workspace_uri: workspace_uri,
       admin_ctx: admin_ctx
     } do
-      source_uri = URI.parse("entity://agent/system/cc_some-source")
+      source_uri = Ezagent.URI.new!("entity://system/agent/cc_some-source")
 
       assert {:error, {:from_unsupported_for_flavor, "echo"}} =
                Workspace.create_agent(
@@ -184,7 +184,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
       # short-circuits at ReadyGate with `:no_such_actor`.
       source_uri =
         URI.parse(
-          "entity://agent/#{ws_name}/cc_definitely-does-not-exist-#{System.unique_integer([:positive])}"
+          "entity://#{ws_name}/agent/cc_definitely-does-not-exist-#{System.unique_integer([:positive])}"
         )
 
       # cwd MUST exist for the cc validator to get past `:cwd_not_a_dir`
@@ -260,6 +260,12 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
       # so the `agent` SpawnRegistry scheme is registered. Without this
       # the test would skip in CI's per-app test runs.
       {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_instance_message)
+
+      case EzagentDomainInstanceMessage.UriQueryResolvers.register() do
+        :ok -> :ok
+        {:error, {:already_registered, _attr}} -> :ok
+      end
+
       :ok
     end
 
@@ -279,7 +285,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
         :ok
       else
         name = "ee-#{System.unique_integer([:positive])}"
-        expected_uri_str = "entity://agent/#{ws_name}/curl_#{name}"
+        expected_uri = Ezagent.URI.agent(ws_name, name)
 
         # Hard requirement: dispatch must return {:ok, _} AND the agent
         # MUST be alive in KindRegistry afterward. Per codex r2 MEDIUM-1
@@ -291,7 +297,8 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
                    admin_ctx
                  )
 
-        assert URI.to_string(agent_uri) == expected_uri_str
+        assert agent_uri == expected_uri
+        assert {:ok, "curl"} = Ezagent.UriQuery.resolve(:flavor, agent_uri)
 
         # The agent Kind must be alive in KindRegistry — this is the
         # invariant the original test was supposed to cover. Without
@@ -312,7 +319,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
         :ok
       else
         creator_uri =
-          URI.new!("entity://user/#{ws_name}/agent-creator-#{System.unique_integer([:positive])}")
+          URI.new!("entity://#{ws_name}/user/agent-creator-#{System.unique_integer([:positive])}")
 
         create_cap =
           Ezagent.Capability.cap(

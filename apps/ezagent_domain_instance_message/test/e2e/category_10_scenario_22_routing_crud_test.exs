@@ -51,7 +51,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
 
   describe "add_rule via Behavior.Routing dispatch" do
     test "admin can add a mention-matcher rule + it appears in list" do
-      receiver = "entity://agent/team-alpha/echo_#{uniq("x")}"
+      receiver = "entity://team-alpha/agent/echo_#{uniq("x")}"
       matcher = Matcher.mention(receiver)
 
       assert {:ok, %{id: rule_id}} =
@@ -74,7 +74,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
     end
 
     test "newly-added rule serializes Matcher AST via to_json round-trip" do
-      receiver = "entity://agent/team-alpha/echo_#{uniq("rt")}"
+      receiver = "entity://team-alpha/agent/echo_#{uniq("rt")}"
       matcher = Matcher.text_contains("urgent")
 
       {:ok, %{id: rule_id}} =
@@ -101,8 +101,8 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
     test "5-leaf grammar — all matcher types serialize + parse identically" do
       # Per PR #118 / Decision #118 the routing grammar has 5 leaves +
       # 3 combinators. Pin them all to prevent silent grammar drift.
-      mention_uri = "entity://agent/team-alpha/echo_a"
-      from_uri = "entity://user/team-alpha/alice"
+      mention_uri = "entity://team-alpha/agent/echo_a"
+      from_uri = "entity://team-alpha/user/alice"
 
       cases = [
         {Matcher.mention(mention_uri), %{"type" => "mention", "arg" => mention_uri}},
@@ -121,7 +121,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
     end
 
     test "combinators (and / or / not) compose leaves correctly" do
-      a = Matcher.mention("entity://agent/team-alpha/echo_a")
+      a = Matcher.mention("entity://team-alpha/agent/echo_a")
       b = Matcher.text_contains("urgent")
 
       and_matcher = Matcher.all_of([a, b])
@@ -138,7 +138,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
 
   describe "disable + enable" do
     test "disable removes the rule from the live ETS table; enable re-adds" do
-      receiver = "entity://agent/team-alpha/echo_#{uniq("de")}"
+      receiver = "entity://team-alpha/agent/echo_#{uniq("de")}"
       matcher = Matcher.text_contains("dis_marker_#{uniq("x")}")
 
       {:ok, %{id: rule_id}} =
@@ -190,7 +190,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
 
   describe "delete_rule" do
     test "delete removes the rule + clears its ETS entry" do
-      receiver = "entity://agent/team-alpha/echo_#{uniq("del")}"
+      receiver = "entity://team-alpha/agent/echo_#{uniq("del")}"
       matcher = Matcher.text_contains("del_marker_#{uniq("y")}")
 
       {:ok, %{id: rule_id}} =
@@ -265,7 +265,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
         RuleStore.add(
           @table,
           Matcher.text_contains("force_marker_#{uniq("f")}"),
-          ["entity://agent/team-alpha/echo_force"],
+          ["entity://team-alpha/agent/echo_force"],
           nil,
           source: RuleStore.system_default_source()
         )

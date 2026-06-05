@@ -125,11 +125,13 @@ defmodule Ezagent.ExternalMirror.WorkerSpawn do
   `DynamicSupervisor.start_child/2`.
   """
   @spec spawn_kind_server(map()) :: DynamicSupervisor.on_start_child()
-  def spawn_kind_server(%{
-        session_uri: %URI{} = session_uri,
-        adapter_id: adapter_id,
-        target_id: target_id
-      } = params)
+  def spawn_kind_server(
+        %{
+          session_uri: %URI{} = session_uri,
+          adapter_id: adapter_id,
+          target_id: target_id
+        } = params
+      )
       when is_binary(adapter_id) do
     spawn(session_uri, adapter_id, target_id, Map.get(params, :opts, %{}))
   end
@@ -217,7 +219,7 @@ defmodule Ezagent.ExternalMirror.WorkerSpawn do
   @spec worker_uri_for(URI.t(), String.t(), term()) :: URI.t()
   def worker_uri_for(%URI{scheme: "session"} = session_uri, adapter_id, target_id)
       when is_binary(adapter_id) do
-    workspace = workspace_of(session_uri)
+    workspace = Ezagent.URI.workspace_name!(session_uri)
 
     hash =
       :crypto.hash(
@@ -227,23 +229,8 @@ defmodule Ezagent.ExternalMirror.WorkerSpawn do
       |> Base.encode16(case: :lower)
       |> String.slice(0, 12)
 
-    Ezagent.URI.new!("entity://worker/#{workspace}/em_#{hash}")
+    Ezagent.URI.worker(workspace, "em_#{hash}")
   end
-
-  # Session URIs are `session://<template>/<workspace>/<name>`
-  # (Phase 9 PR-7 — 3-segment). After `URI.parse/1`, `<template>` is
-  # in `:host` and `<workspace>/<name>` is in `:path`. The workspace
-  # is the FIRST path segment.
-  defp workspace_of(%URI{scheme: "session", path: "/" <> rest})
-       when rest != "" do
-    case String.split(rest, "/", parts: 2) do
-      [workspace, name] when workspace != "" and name != "" -> workspace
-      _ -> raise ArgumentError, "session URI lacks 3-segment shape <template>/<workspace>/<name>"
-    end
-  end
-
-  defp workspace_of(%URI{} = uri),
-    do: raise(ArgumentError, "expected session://<template>/<workspace>/<name>, got #{URI.to_string(uri)}")
 
   defp stringify(term) when is_binary(term), do: term
   defp stringify(term) when is_atom(term), do: Atom.to_string(term)

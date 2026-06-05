@@ -122,8 +122,8 @@ defmodule EzagentPluginLiveview.AdminTemplatesLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(
-          Map.get(assigns, :current_entity_uri) || Ezagent.URI.new!("entity://user/system/admin")
+        Ezagent.URI.stable_key(
+          Map.get(assigns, :current_entity_uri) || Ezagent.Entity.User.admin_uri()
         )
       end)
 
@@ -157,7 +157,11 @@ defmodule EzagentPluginLiveview.AdminTemplatesLive do
                 <span class="text-[10px] uppercase tracking-wide text-zinc-500 mr-2">
                   {gettext("Type")}
                 </span>
-                <.filter_chip filter={@filter} value="all" label={gettext("all (%{n})", n: total_count(@counts))} />
+                <.filter_chip
+                  filter={@filter}
+                  value="all"
+                  label={gettext("all (%{n})", n: total_count(@counts))}
+                />
                 <.filter_chip
                   filter={@filter}
                   value="agent_template"
@@ -166,7 +170,9 @@ defmodule EzagentPluginLiveview.AdminTemplatesLive do
                 <.filter_chip
                   filter={@filter}
                   value="session_template"
-                  label={gettext("SessionTemplate (%{n})", n: Map.get(@counts, "session_template", 0))}
+                  label={
+                    gettext("SessionTemplate (%{n})", n: Map.get(@counts, "session_template", 0))
+                  }
                 />
               </div>
 
@@ -246,9 +252,9 @@ defmodule EzagentPluginLiveview.AdminTemplatesLive do
   defp type_badge_variant("session_template"), do: "primary"
   defp type_badge_variant(_), do: "default"
 
-  attr :filter, :string, required: true
-  attr :value, :string, required: true
-  attr :label, :string, required: true
+  attr(:filter, :string, required: true)
+  attr(:value, :string, required: true)
+  attr(:label, :string, required: true)
 
   defp filter_chip(assigns) do
     ~H"""

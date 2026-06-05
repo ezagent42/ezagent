@@ -164,7 +164,11 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
 
           {:error, reason} ->
             {:noreply,
-             assign(socket, :flash_error, gettext("add failed: %{reason}", reason: inspect(reason)))}
+             assign(
+               socket,
+               :flash_error,
+               gettext("add failed: %{reason}", reason: inspect(reason))
+             )}
         end
     end
   end
@@ -347,7 +351,7 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
     # AdminShell.admin_shell so it carries the universal chrome.
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(assigns.current_entity_uri || Ezagent.URI.new!("entity://user/system/admin"))
+        Ezagent.URI.stable_key(assigns.current_entity_uri || Ezagent.Entity.User.admin_uri())
       end)
 
     ~H"""
@@ -390,7 +394,7 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
     # workflow surface; it now gains the universal chrome.
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(assigns.current_entity_uri || Ezagent.URI.new!("entity://user/system/admin"))
+        Ezagent.URI.stable_key(assigns.current_entity_uri || Ezagent.Entity.User.admin_uri())
       end)
 
     ~H"""
@@ -411,14 +415,14 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
         >
           <:main>
             <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-          <a
-            href="/workspaces"
-            class="inline-flex items-center gap-1 text-xs text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 mb-4"
-          >
-            <.icon name="chevron-left" size="xs" />
-            <span>{gettext("All workspaces")}</span>
-          </a>
-          <%!--
+              <a
+                href="/workspaces"
+                class="inline-flex items-center gap-1 text-xs text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 mb-4"
+              >
+                <.icon name="chevron-left" size="xs" />
+                <span>{gettext("All workspaces")}</span>
+              </a>
+              <%!--
             Phase 8c PR-H: NOT using `<.page_header>` here because the page
             title contains a `<code>` child — a test (workspaces_live_test
             "detail page shows existing workspace + members section")
@@ -427,78 +431,80 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
             a child element. We use the same h1 classes the atom uses
             internally so the visual stays consistent with the atom layer.
           --%>
-          <div class="flex items-end justify-between mb-6 pb-4 border-b border-zinc-200 dark:border-zinc-800">
-            <div>
-              <h1 class="text-xl font-semibold text-zinc-900 dark:text-zinc-100">
-                {gettext("Workspace:")} <code>{@workspace.name}</code>
-              </h1>
-              <p class="mt-1 text-sm text-zinc-500">
-                <code>{URI.to_string(@workspace.uri)}</code>
-              </p>
-            </div>
-          </div>
+              <div class="flex items-end justify-between mb-6 pb-4 border-b border-zinc-200 dark:border-zinc-800">
+                <div>
+                  <h1 class="text-xl font-semibold text-zinc-900 dark:text-zinc-100">
+                    {gettext("Workspace:")} <code>{@workspace.name}</code>
+                  </h1>
+                  <p class="mt-1 text-sm text-zinc-500">
+                    <code>{URI.to_string(@workspace.uri)}</code>
+                  </p>
+                </div>
+              </div>
 
-          <.card id="members" class="mt-6">
-            <h2 class="text-sm font-medium mb-3 text-zinc-900 dark:text-zinc-100">
-              {gettext("Members (%{count})", count: length(@workspace.members))}
-            </h2>
+              <.card id="members" class="mt-6">
+                <h2 class="text-sm font-medium mb-3 text-zinc-900 dark:text-zinc-100">
+                  {gettext("Members (%{count})", count: length(@workspace.members))}
+                </h2>
 
-            <p :if={@workspace.members == []} id="members-empty" class="text-zinc-500 italic">
-              {gettext("No members. Add one below to declare a Kind that should be alive whenever this Workspace is loaded.")}
-            </p>
+                <p :if={@workspace.members == []} id="members-empty" class="text-zinc-500 italic">
+                  {gettext(
+                    "No members. Add one below to declare a Kind that should be alive whenever this Workspace is loaded."
+                  )}
+                </p>
 
-            <ul :if={@workspace.members != []} id="members-list" class="list-none p-0 m-0">
-              <li
-                :for={member <- @workspace.members}
-                class="flex items-center py-1.5 border-b border-zinc-100 dark:border-zinc-900"
-              >
-                <code class="flex-1 text-xs">{URI.to_string(member)}</code>
-                <.button
-                  variant="outline"
-                  size="sm"
-                  type="button"
-                  phx-click="remove_member"
-                  phx-value-member_uri={URI.to_string(member)}
-                  class="text-rose-600 dark:text-rose-400 border-rose-600 dark:border-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950 text-[11px]"
-                  data-confirm={gettext("Remove this member?")}
-                >
-                  {gettext("Remove")}
-                </.button>
-              </li>
-            </ul>
+                <ul :if={@workspace.members != []} id="members-list" class="list-none p-0 m-0">
+                  <li
+                    :for={member <- @workspace.members}
+                    class="flex items-center py-1.5 border-b border-zinc-100 dark:border-zinc-900"
+                  >
+                    <code class="flex-1 text-xs">{URI.to_string(member)}</code>
+                    <.button
+                      variant="outline"
+                      size="sm"
+                      type="button"
+                      phx-click="remove_member"
+                      phx-value-member_uri={URI.to_string(member)}
+                      class="text-rose-600 dark:text-rose-400 border-rose-600 dark:border-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950 text-[11px]"
+                      data-confirm={gettext("Remove this member?")}
+                    >
+                      {gettext("Remove")}
+                    </.button>
+                  </li>
+                </ul>
 
-            <%!--
+                <%!--
               V1 UI PR-1 (SPEC §1.2 / §1.4) — :single uri_picker over
               in-workspace entities. allow_freetext ON so an operator
               can declare a member Kind not yet live (a member is a
               declaration of what should be alive when the workspace
               loads). Submits add_member[member_uri] as a string.
             --%>
-            <.form for={@add_form} phx-submit="add_member" class="flex gap-2 mt-4 items-start">
-              <div class="flex-1">
-                <.uri_picker
-                  name="add_member[member_uri]"
-                  mode={:single}
-                  kinds={[:entity]}
-                  options={@member_options}
-                  allow_freetext={true}
-                  placeholder={gettext("pick an entity to add as a member")}
-                />
-              </div>
-              <.button type="submit" variant="primary" size="sm">{gettext("Add member")}</.button>
-            </.form>
-            <p :if={@flash_error} class="text-rose-600 dark:text-rose-400 text-xs mt-2">
-              {@flash_error}
-            </p>
-          </.card>
+                <.form for={@add_form} phx-submit="add_member" class="flex gap-2 mt-4 items-start">
+                  <div class="flex-1">
+                    <.uri_picker
+                      name="add_member[member_uri]"
+                      mode={:single}
+                      kinds={[:entity]}
+                      options={@member_options}
+                      allow_freetext={true}
+                      placeholder={gettext("pick an entity to add as a member")}
+                    />
+                  </div>
+                  <.button type="submit" variant="primary" size="sm">{gettext("Add member")}</.button>
+                </.form>
+                <p :if={@flash_error} class="text-rose-600 dark:text-rose-400 text-xs mt-2">
+                  {@flash_error}
+                </p>
+              </.card>
 
-          <.card id="templates" class="mt-6">
-            <h2 class="text-sm font-medium mb-1 text-zinc-900 dark:text-zinc-100">
-              {gettext("Spawn-template registrations (%{count})",
-                count: map_size(@workspace.session_templates)
-              )}
-            </h2>
-            <%!--
+              <.card id="templates" class="mt-6">
+                <h2 class="text-sm font-medium mb-1 text-zinc-900 dark:text-zinc-100">
+                  {gettext("Spawn-template registrations (%{count})",
+                    count: map_size(@workspace.session_templates)
+                  )}
+                </h2>
+                <%!--
               G-12 partial (audit 2026-05-23) — distinguish the legacy
               `Workspace.Store.session_templates` map (Phase-4d
               spawn-template REGISTRATIONS like cc.agent / echo.agent)
@@ -506,158 +512,166 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
               live in their own surface — link to it so operators
               don't conflate the two.
             --%>
-            <p class="text-[11px] text-zinc-500 mb-3">
-              {gettext(
-                "These are Template Class registrations (cc.agent, echo.agent, …) — the recipes used when an agent is created in this workspace. NOT the Phase-7 SessionTemplate Kinds."
-              )}
-              <a
-                href="/admin/templates?type=session_template"
-                class="ml-1 text-sky-700 dark:text-sky-300 hover:underline"
-              >
-                {gettext("View SessionTemplate Kinds →")}
-              </a>
-            </p>
-            <p
-              :if={@workspace.session_templates == %{}}
-              id="templates-empty"
-              class="text-zinc-500 italic"
-            >
-              {gettext("No session templates declared.")}
-            </p>
-            <table
-              :if={@workspace.session_templates != %{}}
-              id="templates-table"
-              class="w-full text-xs border-collapse"
-            >
-              <thead>
-                <tr class="border-b border-zinc-200 dark:border-zinc-800">
-                  <th class="text-left px-1 py-1.5">{gettext("Name")}</th>
-                  <th class="text-left">{gettext("Class")}</th>
-                  <th class="text-left">{gettext("Members")}</th>
-                  <th class="text-left">{gettext("Status")}</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  :for={{tmpl_name, tmpl_data} <- @workspace.session_templates}
-                  class="border-b border-zinc-100 dark:border-zinc-900"
+                <p class="text-[11px] text-zinc-500 mb-3">
+                  {gettext(
+                    "These are Template Class registrations (cc.agent, echo.agent, …) — the recipes used when an agent is created in this workspace. NOT the Phase-7 SessionTemplate Kinds."
+                  )}
+                  <a
+                    href="/admin/templates?type=session_template"
+                    class="ml-1 text-sky-700 dark:text-sky-300 hover:underline"
+                  >
+                    {gettext("View SessionTemplate Kinds →")}
+                  </a>
+                </p>
+                <p
+                  :if={@workspace.session_templates == %{}}
+                  id="templates-empty"
+                  class="text-zinc-500 italic"
                 >
-                  <td class="px-1 py-1 font-medium">{tmpl_name}</td>
-                  <td class="font-mono text-[11px]">{template_class_name(tmpl_data)}</td>
-                  <td>{template_member_count(tmpl_data)}</td>
-                  <td class={template_status_class(template_status(tmpl_data))}>
-                    {template_status_label(template_status(tmpl_data))}
-                  </td>
-                  <td>
-                    <.button
-                      variant="outline"
-                      size="sm"
-                      type="button"
-                      phx-click="remove_template"
-                      phx-value-name={tmpl_name}
-                      class="text-rose-600 dark:text-rose-400 border-rose-600 dark:border-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950 text-[10px] px-2 py-0.5 h-auto"
-                      data-confirm={gettext("Remove this template? (already-spawned Kinds stay alive)")}
+                  {gettext("No session templates declared.")}
+                </p>
+                <table
+                  :if={@workspace.session_templates != %{}}
+                  id="templates-table"
+                  class="w-full text-xs border-collapse"
+                >
+                  <thead>
+                    <tr class="border-b border-zinc-200 dark:border-zinc-800">
+                      <th class="text-left px-1 py-1.5">{gettext("Name")}</th>
+                      <th class="text-left">{gettext("Class")}</th>
+                      <th class="text-left">{gettext("Members")}</th>
+                      <th class="text-left">{gettext("Status")}</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      :for={{tmpl_name, tmpl_data} <- @workspace.session_templates}
+                      class="border-b border-zinc-100 dark:border-zinc-900"
                     >
-                      {gettext("Remove")}
-                    </.button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-            <p
-              :if={@registered_template_classes != []}
-              id="registered-classes"
-              class="mt-3 text-[11px] text-zinc-500"
-            >
-              {gettext("Registered Template Classes:")}
-              <code>{Enum.join(@registered_template_classes, ", ")}</code>
-            </p>
-
-            <div id="add-template" class="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">
-              <h3 class="text-[13px] font-medium mb-2 text-zinc-900 dark:text-zinc-100">
-                {gettext("Add template")}
-              </h3>
-
-              <p class="text-[11px] text-zinc-500 mb-2">
-                {gettext(
-                  "Class picker drives the form below — each registered Template Class self-describes its fields via Ezagent.UI.Form.form_fields/0. JSON mode is the escape hatch for custom Classes that don't implement the form behaviour."
-                )}
-              </p>
-
-              <div class="mb-3 flex gap-1.5 flex-wrap">
-                <button
-                  :for={{class_name, _module, _fields} <- @form_classes}
-                  type="button"
-                  phx-click="select_template_class"
-                  phx-value-class={class_name}
-                  class={tmpl_mode_btn_class(@selected_class == class_name)}
+                      <td class="px-1 py-1 font-medium">{tmpl_name}</td>
+                      <td class="font-mono text-[11px]">{template_class_name(tmpl_data)}</td>
+                      <td>{template_member_count(tmpl_data)}</td>
+                      <td class={template_status_class(template_status(tmpl_data))}>
+                        {template_status_label(template_status(tmpl_data))}
+                      </td>
+                      <td>
+                        <.button
+                          variant="outline"
+                          size="sm"
+                          type="button"
+                          phx-click="remove_template"
+                          phx-value-name={tmpl_name}
+                          class="text-rose-600 dark:text-rose-400 border-rose-600 dark:border-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950 text-[10px] px-2 py-0.5 h-auto"
+                          data-confirm={
+                            gettext("Remove this template? (already-spawned Kinds stay alive)")
+                          }
+                        >
+                          {gettext("Remove")}
+                        </.button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p
+                  :if={@registered_template_classes != []}
+                  id="registered-classes"
+                  class="mt-3 text-[11px] text-zinc-500"
                 >
-                  {class_name}
-                </button>
-                <button
-                  type="button"
-                  phx-click="select_template_class"
-                  phx-value-class="__json__"
-                  class={tmpl_mode_btn_class(@selected_class == "__json__")}
-                >
-                  {gettext("JSON (custom class)")}
-                </button>
-              </div>
+                  {gettext("Registered Template Classes:")}
+                  <code>{Enum.join(@registered_template_classes, ", ")}</code>
+                </p>
 
-              <.form for={@add_template_form} phx-submit="add_template">
-                <div class="grid grid-cols-[200px_1fr] gap-1.5 mb-3">
-                  <input
-                    type="text"
-                    name="add_template[tmpl_name]"
-                    placeholder={gettext("template name (e.g. main)")}
-                    class="px-2 py-1 border border-zinc-300 dark:border-zinc-700 rounded text-xs bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
-                  />
-                  <span class="text-[11px] text-zinc-500 self-center">
-                    {gettext("Class =")} <code>{@selected_class}</code>
-                  </span>
-                </div>
+                <div id="add-template" class="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">
+                  <h3 class="text-[13px] font-medium mb-2 text-zinc-900 dark:text-zinc-100">
+                    {gettext("Add template")}
+                  </h3>
 
-                <%= if @selected_class == "__json__" do %>
-                  <div class="mb-2">
-                    <textarea
-                      name="add_template[json]"
-                      rows="5"
-                      placeholder={~s({"class":"some.class","field":"value"})}
-                      class="w-full px-2.5 py-1.5 border border-zinc-300 dark:border-zinc-700 rounded font-mono text-[11px] bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
-                    ></textarea>
-                    <p class="text-[10px] text-zinc-500 mt-1">
-                      {gettext("Full template JSON — \"class\" field must reference a registered Class.")}
-                    </p>
+                  <p class="text-[11px] text-zinc-500 mb-2">
+                    {gettext(
+                      "Class picker drives the form below — each registered Template Class self-describes its fields via Ezagent.UI.Form.form_fields/0. JSON mode is the escape hatch for custom Classes that don't implement the form behaviour."
+                    )}
+                  </p>
+
+                  <div class="mb-3 flex gap-1.5 flex-wrap">
+                    <button
+                      :for={{class_name, _module, _fields} <- @form_classes}
+                      type="button"
+                      phx-click="select_template_class"
+                      phx-value-class={class_name}
+                      class={tmpl_mode_btn_class(@selected_class == class_name)}
+                    >
+                      {class_name}
+                    </button>
+                    <button
+                      type="button"
+                      phx-click="select_template_class"
+                      phx-value-class="__json__"
+                      class={tmpl_mode_btn_class(@selected_class == "__json__")}
+                    >
+                      {gettext("JSON (custom class)")}
+                    </button>
                   </div>
-                <% else %>
-                  <% selected_fields =
-                    Enum.find_value(@form_classes, [], fn {n, _m, fields} ->
-                      if n == @selected_class, do: fields
-                    end) %>
 
-                  <ConfigForm.config_fields fields={selected_fields} name_prefix="add_template" />
-                <% end %>
+                  <.form for={@add_template_form} phx-submit="add_template">
+                    <div class="grid grid-cols-[200px_1fr] gap-1.5 mb-3">
+                      <input
+                        type="text"
+                        name="add_template[tmpl_name]"
+                        placeholder={gettext("template name (e.g. main)")}
+                        class="px-2 py-1 border border-zinc-300 dark:border-zinc-700 rounded text-xs bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+                      />
+                      <span class="text-[11px] text-zinc-500 self-center">
+                        {gettext("Class =")} <code>{@selected_class}</code>
+                      </span>
+                    </div>
 
-                <.button type="submit" variant="success" size="sm">{gettext("Add template")}</.button>
-              </.form>
-            </div>
-          </.card>
+                    <%= if @selected_class == "__json__" do %>
+                      <div class="mb-2">
+                        <textarea
+                          name="add_template[json]"
+                          rows="5"
+                          placeholder={~s({"class":"some.class","field":"value"})}
+                          class="w-full px-2.5 py-1.5 border border-zinc-300 dark:border-zinc-700 rounded font-mono text-[11px] bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+                        ></textarea>
+                        <p class="text-[10px] text-zinc-500 mt-1">
+                          {gettext(
+                            "Full template JSON — \"class\" field must reference a registered Class."
+                          )}
+                        </p>
+                      </div>
+                    <% else %>
+                      <% selected_fields =
+                        Enum.find_value(@form_classes, [], fn {n, _m, fields} ->
+                          if n == @selected_class, do: fields
+                        end) %>
 
-          <.card id="routing-rules" class="mt-6">
-            <h2 class="text-sm font-medium mb-3 text-zinc-900 dark:text-zinc-100">
-              {gettext("Routing rules (%{count})", count: length(@workspace.routing_rules))}
-              <span class="text-[11px] text-zinc-500 font-normal">{gettext("(read-only — Phase 5 editor)")}</span>
-            </h2>
-            <p :if={@workspace.routing_rules == []} id="rules-empty" class="text-zinc-500 italic">
-              {gettext("No routing rules declared.")}
-            </p>
-            <pre
-              :if={@workspace.routing_rules != []}
-              id="rules-json"
-              class="bg-zinc-100 dark:bg-zinc-900 p-3 rounded overflow-x-auto text-[11px] font-mono text-zinc-900 dark:text-zinc-100"
-            >{Jason.encode!(@workspace.routing_rules, pretty: true)}</pre>
-          </.card>
+                      <ConfigForm.config_fields fields={selected_fields} name_prefix="add_template" />
+                    <% end %>
+
+                    <.button type="submit" variant="success" size="sm">
+                      {gettext("Add template")}
+                    </.button>
+                  </.form>
+                </div>
+              </.card>
+
+              <.card id="routing-rules" class="mt-6">
+                <h2 class="text-sm font-medium mb-3 text-zinc-900 dark:text-zinc-100">
+                  {gettext("Routing rules (%{count})", count: length(@workspace.routing_rules))}
+                  <span class="text-[11px] text-zinc-500 font-normal">
+                    {gettext("(read-only — Phase 5 editor)")}
+                  </span>
+                </h2>
+                <p :if={@workspace.routing_rules == []} id="rules-empty" class="text-zinc-500 italic">
+                  {gettext("No routing rules declared.")}
+                </p>
+                <pre
+                  :if={@workspace.routing_rules != []}
+                  id="rules-json"
+                  class="bg-zinc-100 dark:bg-zinc-900 p-3 rounded overflow-x-auto text-[11px] font-mono text-zinc-900 dark:text-zinc-100"
+                >{Jason.encode!(@workspace.routing_rules, pretty: true)}</pre>
+              </.card>
             </div>
           </:main>
         </AdminShell.admin_shell>

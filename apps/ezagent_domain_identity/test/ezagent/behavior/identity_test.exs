@@ -13,7 +13,7 @@ defmodule Ezagent.Behavior.IdentityTest do
     %{
       caller: :system,
       caps: MapSet.new(),
-      self_uri: URI.parse("entity://user/team-alpha/test"),
+      self_uri: Ezagent.URI.new!("entity://team-alpha/user/test"),
       reply: :sync,
       read: fn key, default ->
         case key do
@@ -27,7 +27,7 @@ defmodule Ezagent.Behavior.IdentityTest do
   # Phase B: `init_slice/1` → `create/1` (PERSISTENT state, `{:ok, state}`).
   describe "create/1" do
     test "default initial_caps contains owner-derived self-Identity cap (PR-OWN-3)" do
-      uri = URI.new!("entity://user/team-alpha/x")
+      uri = URI.new!("entity://team-alpha/user/x")
       assert {:ok, %{caps: caps}} = Identity.create(%{uri: uri})
       assert MapSet.size(caps) == 1
 
@@ -77,7 +77,7 @@ defmodule Ezagent.Behavior.IdentityTest do
       needed = %{
         kind: :session,
         behavior: Ezagent.Behavior.Chat,
-        instance: URI.new!("session://default/system/main"),
+        instance: URI.new!("session://system/default/main"),
         workspace_uri: URI.new!("workspace://team-alpha")
       }
 
@@ -90,7 +90,7 @@ defmodule Ezagent.Behavior.IdentityTest do
       needed = %{
         kind: :session,
         behavior: Ezagent.Behavior.Chat,
-        instance: URI.new!("session://default/system/main"),
+        instance: URI.new!("session://system/default/main"),
         workspace_uri: URI.new!("workspace://team-alpha")
       }
 
@@ -134,7 +134,7 @@ defmodule Ezagent.Behavior.IdentityTest do
       assert Capability.matches?(admin_cap, %{
                kind: :anything,
                behavior: SomeMod,
-               instance: URI.new!("entity://agent/team-alpha/test_X"),
+               instance: URI.new!("entity://team-alpha/agent/test_X"),
                workspace_uri: URI.new!("workspace://team-alpha")
              })
     end

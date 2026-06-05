@@ -140,7 +140,12 @@ defmodule Ezagent.Orchestrator.Tools do
   """
   @spec add_managed_member(URI.t(), String.t(), boolean(), keyword()) ::
           {:ok, URI.t()} | {:error, term()}
-  def add_managed_member(%URI{} = source_agent_template_uri, role_name, in_session_template, opts \\ [])
+  def add_managed_member(
+        %URI{} = source_agent_template_uri,
+        role_name,
+        in_session_template,
+        opts \\ []
+      )
       when is_binary(role_name) and is_boolean(in_session_template) do
     with {:ok, caller} <- require_opt(opts, :caller),
          {:ok, caps} <- require_opt(opts, :caps),
@@ -157,7 +162,10 @@ defmodule Ezagent.Orchestrator.Tools do
          {:ok, %URI{} = member_uri} <-
            spawn_member(source_agent_template_uri, role_name, session_uri, workspace_uri, caller) do
       facets =
-        %{in_session_template: in_session_template, source_template_uri: source_agent_template_uri}
+        %{
+          in_session_template: in_session_template,
+          source_template_uri: source_agent_template_uri
+        }
         |> Map.put(:role_name, role_name)
 
       case join_member(session_uri, member_uri, facets, caller, caps) do
@@ -200,7 +208,15 @@ defmodule Ezagent.Orchestrator.Tools do
     with {:ok, _pid} <- ensure_template_alive(source_template_uri),
          {:ok, content} <- read_source_template_content(source_template_uri),
          {:ok, flavor} <- content_flavor(content, source_template_uri) do
-      do_spawn_member(content, flavor, source_template_uri, role_name, session_uri, workspace_uri, caller)
+      do_spawn_member(
+        content,
+        flavor,
+        source_template_uri,
+        role_name,
+        session_uri,
+        workspace_uri,
+        caller
+      )
     end
   end
 
@@ -235,13 +251,9 @@ defmodule Ezagent.Orchestrator.Tools do
     # (`Session.spawn_orchestrator_via_template_content/5`); PR-8 left this path
     # on the old bare spawn. The deterministic Tier-1 gate spawns no real agents,
     # so only the LIVE tier exposed it.
-    workspace_name =
-      workspace_uri.host ||
-        raise ArgumentError,
-              "workspace_uri has no host (`workspace://<NAME>`) — got " <>
-                inspect(workspace_uri)
+    workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
 
-    member_uri = Ezagent.URI.new!("entity://agent/#{workspace_name}/#{instance_name}")
+    member_uri = Ezagent.URI.agent(workspace_name, instance_name)
 
     # `content` is the SAME snapshot the flavor (→ member_uri) was derived from
     # (codex P2) — no second read, so URI-flavor and spawned-content cannot diverge.
@@ -283,14 +295,16 @@ defmodule Ezagent.Orchestrator.Tools do
         session_uri
       )
 
-    workspace_name =
-      workspace_uri.host ||
-        raise ArgumentError,
-              "workspace_uri has no host (`workspace://<NAME>`) — got " <> inspect(workspace_uri)
+    workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
 
-    member_uri = Ezagent.URI.new!("entity://agent/#{workspace_name}/#{instance_name}")
+    member_uri = Ezagent.URI.agent(workspace_name, instance_name)
 
-    case Ezagent.Entity.Agent.spawn_from_template_content(content, member_uri, caller, workspace_uri) do
+    case Ezagent.Entity.Agent.spawn_from_template_content(
+           content,
+           member_uri,
+           caller,
+           workspace_uri
+         ) do
       {:ok, %{fresh?: true}} ->
         {:ok, member_uri}
 
@@ -733,11 +747,7 @@ defmodule Ezagent.Orchestrator.Tools do
     with {:ok, _pid} <- ensure_template_alive(new_source_template_uri),
          {:ok, content} <- read_source_template_content(new_source_template_uri),
          {:ok, flavor} <- content_flavor(content, new_source_template_uri) do
-      workspace_name =
-        workspace_uri.host ||
-          raise ArgumentError,
-                "workspace_uri has no host (`workspace://<NAME>`) — got " <>
-                  inspect(workspace_uri)
+      workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
 
       instance_name =
         EzagentDomainInstanceMessage.spawned_member_instance_name_public(
@@ -747,7 +757,7 @@ defmodule Ezagent.Orchestrator.Tools do
           session_uri
         )
 
-      new_member_uri = Ezagent.URI.new!("entity://agent/#{workspace_name}/#{instance_name}")
+      new_member_uri = Ezagent.URI.agent(workspace_name, instance_name)
 
       # codex P2 (round 2) — flavor-present is NOT enough: a template alive +
       # flavored but missing `working_directory` (or a required flavor field,
@@ -784,7 +794,11 @@ defmodule Ezagent.Orchestrator.Tools do
        when old_uri == new_uri,
        do: :ok
 
-  defp repoint_routing_rules(%URI{} = session_uri, %URI{} = old_member_uri, %URI{} = new_member_uri) do
+  defp repoint_routing_rules(
+         %URI{} = session_uri,
+         %URI{} = old_member_uri,
+         %URI{} = new_member_uri
+       ) do
     table = EzagentDomainInstanceMessage.Routing.MentionRouting
     old_str = URI.to_string(old_member_uri)
     new_str = URI.to_string(new_member_uri)
@@ -865,7 +879,10 @@ defmodule Ezagent.Orchestrator.Tools do
     case Ezagent.Routing.Matcher.from_json(matcher_data) do
       {:ok, matcher} ->
         {rewritten, changed?} = rewrite_from(matcher, old_str, new_str)
-        if changed?, do: {Ezagent.Routing.Matcher.to_json(rewritten), true}, else: {matcher_data, false}
+
+        if changed?,
+          do: {Ezagent.Routing.Matcher.to_json(rewritten), true},
+          else: {matcher_data, false}
 
       _ ->
         {matcher_data, false}
@@ -941,7 +958,13 @@ defmodule Ezagent.Orchestrator.Tools do
   - `{:error, reason}` — preflight / authorization failure.
   """
   @spec remove_member(String.t(), keyword()) ::
-          {:ok, :already_removed | %{status: :removed, deleted_rules: non_neg_integer(), repointed_rules: non_neg_integer()}}
+          {:ok,
+           :already_removed
+           | %{
+               status: :removed,
+               deleted_rules: non_neg_integer(),
+               repointed_rules: non_neg_integer()
+             }}
           | {:error, term()}
   def remove_member(role_name, opts \\ []) when is_binary(role_name) do
     with {:ok, caller} <- require_opt(opts, :caller),
@@ -1037,12 +1060,23 @@ defmodule Ezagent.Orchestrator.Tools do
       {:ok, %{destroyed: true}} ->
         :ok
 
-      {:ok, {:ok, :terminated}} -> :ok
-      {:ok, :terminated} -> :ok
-      {:error, :no_such_actor} -> :ok
-      {:error, :not_ready} -> :ok
-      {:error, _} = err -> err
-      other -> {:error, {:unexpected_terminate_result, other}}
+      {:ok, {:ok, :terminated}} ->
+        :ok
+
+      {:ok, :terminated} ->
+        :ok
+
+      {:error, :no_such_actor} ->
+        :ok
+
+      {:error, :not_ready} ->
+        :ok
+
+      {:error, _} = err ->
+        err
+
+      other ->
+        {:error, {:unexpected_terminate_result, other}}
     end
   end
 
@@ -1079,7 +1113,7 @@ defmodule Ezagent.Orchestrator.Tools do
          {:ok, session_uri} <- require_opt(opts, :session_uri),
          {:ok, matcher_json} <- normalize_matcher(matcher_ast),
          {:ok, receiver_uri} <- resolve_role_receiver(session_uri, receiver_role_name) do
-      target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=routing.add_rule")
+      target = Ezagent.URI.with_action(session_uri, :routing, :add_rule)
 
       add_opts = [
         workspace_uri: workspace_uri,
@@ -1102,7 +1136,7 @@ defmodule Ezagent.Orchestrator.Tools do
              args: %{
                table: EzagentDomainInstanceMessage.Routing.MentionRouting,
                matcher_json: matcher_json,
-               receivers: [URI.to_string(receiver_uri)],
+               receivers: [Ezagent.URI.stable_key(receiver_uri)],
                opts: add_opts
              },
              ctx: ctx(caller, caps)
@@ -1477,7 +1511,7 @@ defmodule Ezagent.Orchestrator.Tools do
       granted_at: DateTime.utc_now()
     }
 
-    target = Ezagent.URI.new!("#{URI.to_string(owner_uri)}?action=identity.grant_cap")
+    target = Ezagent.URI.with_action(owner_uri, :identity, :grant_cap)
 
     case Invocation.dispatch(%Invocation{
            target: target,
@@ -1485,7 +1519,10 @@ defmodule Ezagent.Orchestrator.Tools do
            args: %{cap: cap},
            ctx: %{
              caller: Ezagent.SystemPrincipal.uri("template-materialize"),
-             caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
+             caps:
+               "template-materialize"
+               |> Ezagent.SystemPrincipal.uri()
+               |> Ezagent.SystemPrincipal.caps(),
              reply: :ignore
            }
          }) do
@@ -1629,18 +1666,12 @@ defmodule Ezagent.Orchestrator.Tools do
   end
 
   defp has_template_cap?(caps, kind, %URI{} = workspace_uri) do
-    workspace_name =
-      workspace_uri.host ||
-        raise ArgumentError,
-              "workspace_uri has no host (`workspace://<NAME>`) — got " <>
-                inspect(workspace_uri) <>
-                ". Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
-                "fallback; callers must pass a workspace URI with an explicit name."
+    workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
 
     representative =
       case kind do
-        :agent_template -> Ezagent.URI.new!("template://agent/#{workspace_name}/_catalog")
-        :session_template -> Ezagent.URI.new!("template://session/#{workspace_name}/_catalog@_")
+        :agent_template -> Ezagent.URI.template(workspace_name, :agent, :_catalog)
+        :session_template -> Ezagent.URI.template(workspace_name, :session, "_catalog@_")
       end
 
     needed = %{
@@ -1664,36 +1695,39 @@ defmodule Ezagent.Orchestrator.Tools do
     end
   end
 
-  defp template_match?(%URI{scheme: "template", host: host} = uri, expected_host, nil) do
-    host == expected_host and is_binary(uri.path)
+  defp template_match?(%URI{scheme: "template"} = uri, expected_host, nil) do
+    Ezagent.URI.type?(uri, expected_host) and match?({:ok, _name}, Ezagent.URI.name(uri))
   end
 
   defp template_match?(
-         %URI{scheme: "template", host: _host, path: path} = uri,
+         %URI{scheme: "template"} = uri,
          expected_host,
          filter
        )
        when is_binary(filter) do
     template_match?(uri, expected_host, nil) and
-      (path != nil and String.contains?(path, filter))
+      uri |> Ezagent.URI.name!() |> String.contains?(filter)
   end
 
   defp template_match?(_, _, _), do: false
 
-  defp extract_template_name(%URI{scheme: "template", host: "session", path: path})
-       when is_binary(path) do
-    case String.split(path, "/", trim: true) do
-      [_workspace, name_with_hash | _] ->
-        name = name_with_hash |> String.split("@") |> hd()
+  defp extract_template_name(%URI{scheme: "template"} = uri) do
+    if not Ezagent.URI.type?(uri, :session) do
+      {:error, {:not_a_session_template_uri, uri}}
+    else
+      case Ezagent.URI.name(uri) do
+        {:ok, name_with_hash} ->
+          name = name_with_hash |> String.split("@") |> hd()
 
-        if name == "" do
+          if name == "" do
+            {:error, :template_name_empty}
+          else
+            {:ok, name}
+          end
+
+        _ ->
           {:error, :template_name_empty}
-        else
-          {:ok, name}
-        end
-
-      _ ->
-        {:error, :template_name_empty}
+      end
     end
   end
 
@@ -1748,7 +1782,7 @@ defmodule Ezagent.Orchestrator.Tools do
     orchestrator_template_uri =
       Map.get(slice, :orchestrator_template_uri) ||
         get_in(slice, [:template_working_copy, :orchestrator_template_uri]) ||
-        Ezagent.URI.new!("template://agent/system/cc-orchestrator")
+        Ezagent.URI.template(:system, :agent, "cc-orchestrator")
 
     members = Map.get(slice, :members, %{})
 
@@ -1799,7 +1833,8 @@ defmodule Ezagent.Orchestrator.Tools do
           [
             %{
               matcher: matcher,
-              receivers: Enum.map(r.receivers || [], fn rec -> Map.get(uri_to_role, rec, rec) end),
+              receivers:
+                Enum.map(r.receivers || [], fn rec -> Map.get(uri_to_role, rec, rec) end),
               rule_set: r.rule_set,
               position: r.position,
               prompt_template_ref: r.prompt_template_ref
@@ -1816,8 +1851,11 @@ defmodule Ezagent.Orchestrator.Tools do
   defp uri_to_role_map(%URI{} = session_uri) do
     read_members(session_uri)
     |> Enum.flat_map(fn
-      {%URI{} = uri, %{role_name: role}} when is_binary(role) -> [{URI.to_string(uri), role}]
-      _ -> []
+      {%URI{} = uri, %{role_name: role}} when is_binary(role) ->
+        [{Ezagent.URI.stable_key(uri), role}]
+
+      _ ->
+        []
     end)
     |> Map.new()
   end

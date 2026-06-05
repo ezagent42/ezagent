@@ -223,13 +223,13 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
 
   test "canonical URI round-trips through to_string/parse! unchanged" do
     cases = [
-      "entity://user/system/admin",
-      "entity://agent/team-alpha/cc_demo",
-      "session://default/system/main",
+      "entity://system/user/admin",
+      "entity://team-alpha/agent/cc_demo",
+      "session://system/default/main",
       "session://template-x/team-alpha/main?action=chat.send",
-      "template://agent/system/cc-orchestrator",
-      "template://session/team-alpha/code@abc123",
-      "resource://uploads/team-alpha/file-abc",
+      "template://system/agent/cc-orchestrator",
+      "template://team-alpha/session/code@abc123",
+      "resource://team-alpha/uploads/file-abc",
       "workspace://team-alpha",
       "workspace://system",
       "system://bootstrap/default",
@@ -250,8 +250,8 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
 
   test "admin_uri produced any-which-way is canonical-equal" do
     from_constant = Ezagent.Entity.User.admin_uri()
-    from_parse = Ezagent.URI.new!("entity://user/system/admin")
-    {:ok, from_string_via_ecto} = Ezagent.Ecto.URI.load("entity://user/system/admin")
+    from_parse = Ezagent.URI.new!("entity://system/user/admin")
+    {:ok, from_string_via_ecto} = Ezagent.Ecto.URI.load("entity://system/user/admin")
 
     assert from_constant == from_parse,
            "admin_uri constant != parse!/1 — would resurrect Bug 2"
@@ -285,15 +285,15 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
 
     pre_migration_state = %{
       chat: %{
-        owner: parse_legacy.("entity://user/system/admin"),
-        members: [parse_legacy.("entity://user/team-alpha/alice")],
-        deep: %{nested: %{list: [parse_legacy.("entity://user/team-alpha/bob")]}},
+        owner: parse_legacy.("entity://system/user/admin"),
+        members: [parse_legacy.("entity://team-alpha/user/alice")],
+        deep: %{nested: %{list: [parse_legacy.("entity://team-alpha/user/bob")]}},
         # URI as map KEY.
-        per_member: %{parse_legacy.("entity://user/team-alpha/carol") => :online},
+        per_member: %{parse_legacy.("entity://team-alpha/user/carol") => :online},
         # Tuple element.
-        last_event: {:joined, parse_legacy.("entity://user/team-alpha/dave"), 1_700_000_000},
+        last_event: {:joined, parse_legacy.("entity://team-alpha/user/dave"), 1_700_000_000},
         # Custom struct holding URI.
-        binding: %MyBinding{uri: parse_legacy.("entity://user/team-alpha/eve"), meta: %{}}
+        binding: %MyBinding{uri: parse_legacy.("entity://team-alpha/user/eve"), meta: %{}}
       }
     }
 
@@ -321,7 +321,7 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
     assert canonicalized.chat.binding.uri.authority == nil
 
     # Equality against parse!/1 result holds
-    assert canonicalized.chat.owner == Ezagent.URI.new!("entity://user/system/admin")
+    assert canonicalized.chat.owner == Ezagent.URI.new!("entity://system/user/admin")
   end
 
   # ---------------------------------------------------------------------
@@ -342,9 +342,9 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
 
   test "canonical URI is map-key-stable across a canonicalize_uris/1 round-trip (Task #111)" do
     cases = [
-      "entity://user/team-alpha/m-1",
-      "entity://agent/team-alpha/cc_demo",
-      "session://default/team-alpha/main",
+      "entity://team-alpha/user/m-1",
+      "entity://team-alpha/agent/cc_demo",
+      "session://team-alpha/default/main",
       "session://template-x/team-alpha/main",
       "workspace://team-alpha",
       "system://routing/default"
@@ -392,10 +392,10 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
     # The reload walker must rewrite it so it matches the canonical
     # form a current caller holds.
     # uri-canonical-allow: Task #111 adversarial fixture
-    legacy_key = apply(URI, :parse, ["entity://user/team-alpha/m-1"])
+    legacy_key = apply(URI, :parse, ["entity://team-alpha/user/m-1"])
     refute legacy_key.authority == nil, "fixture precondition: legacy key carries authority"
 
-    held = Ezagent.URI.new!("entity://user/team-alpha/m-1")
+    held = Ezagent.URI.new!("entity://team-alpha/user/m-1")
     refute legacy_key == held, "fixture precondition: legacy and canonical structs differ"
 
     reloaded =

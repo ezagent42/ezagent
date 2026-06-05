@@ -156,7 +156,7 @@ defmodule Ezagent.Orchestrator.SlotRetirementTest do
       # Proves the {:from, sender} matcher — the relay hop primitive — is a
       # real, parseable matcher the rule-set tool accepts. (No model token
       # needed: a hop fires on the previous agent being the SENDER.)
-      from_json = Ezagent.Routing.Matcher.to_json({:from, "entity://agent/system/relay-cc"})
+      from_json = Ezagent.Routing.Matcher.to_json({:from, "entity://system/agent/relay-cc"})
       assert {:ok, {:from, _}} = Ezagent.Routing.Matcher.from_json(from_json)
     end
   end

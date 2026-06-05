@@ -242,7 +242,7 @@ defmodule Ezagent.Entity.AgentTemplate do
       base =
         %{
           "class" => tc.template_name(),
-          "agent_uri" => URI.to_string(instance_agent_uri),
+          "agent_uri" => Ezagent.URI.stable_key(instance_agent_uri),
           "cwd" => cwd
         }
         |> put_config_dir(config_dir)

@@ -78,22 +78,22 @@ defmodule EzagentPluginLiveview.AdminDashboardLive do
 
     sessions_count =
       Enum.count(kinds, fn {uri_str, _pid} ->
-        String.starts_with?(uri_str, "session://")
+        uri_scheme?(uri_str, :session)
       end)
 
     workspaces_count =
       Enum.count(kinds, fn {uri_str, _pid} ->
-        String.starts_with?(uri_str, "workspace://")
+        uri_scheme?(uri_str, :workspace)
       end)
 
     identities_count =
       Enum.count(kinds, fn {uri_str, _pid} ->
-        String.starts_with?(uri_str, "entity://")
+        uri_scheme?(uri_str, :entity)
       end)
 
     agents_count =
       Enum.count(kinds, fn {uri_str, _pid} ->
-        String.starts_with?(uri_str, "entity://agent/")
+        entity_type?(uri_str, :agent)
       end)
 
     socket
@@ -108,7 +108,10 @@ defmodule EzagentPluginLiveview.AdminDashboardLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(Map.get(assigns, :current_entity_uri) || Ezagent.URI.new!("entity://user/system/admin"))
+        assigns
+        |> Map.get(:current_entity_uri)
+        |> Kernel.||(Ezagent.Entity.User.admin_uri())
+        |> Ezagent.URI.stable_key()
       end)
 
     ~H"""
@@ -126,65 +129,73 @@ defmodule EzagentPluginLiveview.AdminDashboardLive do
         <AdminShell.admin_shell current_path="/admin" active_section={:overview}>
           <:main>
             <div class="px-6 py-6 text-zinc-900 dark:text-zinc-100">
-          <.page_header title={gettext("Overview")}>
-            <:subtitle>
-              {gettext(
-                "System layer (admin settings drawer). Workspace-layer surfaces — Sessions, Workspaces, Identities, Routing, Plugins — live on the main Activity Bar. Close this drawer to return."
-              )}
-            </:subtitle>
-          </.page_header>
+              <.page_header title={gettext("Overview")}>
+                <:subtitle>
+                  {gettext(
+                    "System layer (admin settings drawer). Workspace-layer surfaces — Sessions, Workspaces, Identities, Routing, Plugins — live on the main Activity Bar. Close this drawer to return."
+                  )}
+                </:subtitle>
+              </.page_header>
 
-          <%!-- 2026-05-26 (Allen): Boot diagnostics card moved here
+              <%!-- 2026-05-26 (Allen): Boot diagnostics card moved here
                 from /plugins. The cc-orchestrator AgentTemplate seed
-                is system-level boot-health — `template://agent/system/
-                cc-orchestrator` must exist by the time the Generator
+                is system-level boot-health — the cc-orchestrator AgentTemplate
+                must exist by the time the Generator
                 tries to spawn an orchestrator instance. A silent seed
                 failure used to leave operators grepping logs to find
                 out; this card surfaces the status at a glance. Per-
                 session orchestrator INSTANCE health goes in the
                 session-detail UI (separate panel). --%>
-          <.boot_diagnostics_card status={@cc_orchestrator_status} />
+              <.boot_diagnostics_card status={@cc_orchestrator_status} />
 
-          <%!-- Phase 8c PR-D — animated KPIs. The value renders SSR-final
+              <%!-- Phase 8c PR-D — animated KPIs. The value renders SSR-final
                 (no flash of 0); the `CountUp` JS hook resets to 0 on
                 mount and animates 0 → target over 800ms with an
                 ease-out curve. Falls back gracefully to the static
                 number if JS doesn't run. --%>
-          <div class="grid grid-cols-4 gap-3 mb-6 mt-4">
-            <.card><.kpi label={gettext("Sessions")} value={@sessions_count} id="kpi-sessions" /></.card>
-            <.card><.kpi label={gettext("Workspaces")} value={@workspaces_count} id="kpi-workspaces" /></.card>
-            <.card><.kpi label={gettext("Identities")} value={@identities_count} id="kpi-identities" /></.card>
-            <.card><.kpi label={gettext("Kinds alive")} value={@kinds_total} id="kpi-kinds" /></.card>
-          </div>
+              <div class="grid grid-cols-4 gap-3 mb-6 mt-4">
+                <.card>
+                  <.kpi label={gettext("Sessions")} value={@sessions_count} id="kpi-sessions" />
+                </.card>
+                <.card>
+                  <.kpi label={gettext("Workspaces")} value={@workspaces_count} id="kpi-workspaces" />
+                </.card>
+                <.card>
+                  <.kpi label={gettext("Identities")} value={@identities_count} id="kpi-identities" />
+                </.card>
+                <.card>
+                  <.kpi label={gettext("Kinds alive")} value={@kinds_total} id="kpi-kinds" />
+                </.card>
+              </div>
 
-          <div class="grid grid-cols-3 gap-3">
-            <a href="/admin/logs" class="block">
-              <.card>
-                <div class="font-medium text-sm">{gettext("Logs & Audit")} →</div>
-                <div class="text-xs text-zinc-500 mt-1">
-                  {gettext("Dispatch audit log, events, bridges. Renamed from Observability.")}
-                </div>
-              </.card>
-            </a>
-            <a href="/admin/registry" class="block">
-              <.card>
-                <div class="font-medium text-sm">{gettext("Registry")} →</div>
-                <div class="text-xs text-zinc-500 mt-1">
-                  {gettext("Live %{registry} snapshot — every Kind, every URI.",
-                    registry: "Ezagent.KindRegistry"
-                  )}
-                </div>
-              </.card>
-            </a>
-            <a href="/admin/snapshots" class="block">
-              <.card>
-                <div class="font-medium text-sm">{gettext("Snapshots")} →</div>
-                <div class="text-xs text-zinc-500 mt-1">
-                  {gettext("Persisted Kind state per %{table} table.", table: "kind_snapshots")}
-                </div>
-              </.card>
-            </a>
-          </div>
+              <div class="grid grid-cols-3 gap-3">
+                <a href="/admin/logs" class="block">
+                  <.card>
+                    <div class="font-medium text-sm">{gettext("Logs & Audit")} →</div>
+                    <div class="text-xs text-zinc-500 mt-1">
+                      {gettext("Dispatch audit log, events, bridges. Renamed from Observability.")}
+                    </div>
+                  </.card>
+                </a>
+                <a href="/admin/registry" class="block">
+                  <.card>
+                    <div class="font-medium text-sm">{gettext("Registry")} →</div>
+                    <div class="text-xs text-zinc-500 mt-1">
+                      {gettext("Live %{registry} snapshot — every Kind, every URI.",
+                        registry: "Ezagent.KindRegistry"
+                      )}
+                    </div>
+                  </.card>
+                </a>
+                <a href="/admin/snapshots" class="block">
+                  <.card>
+                    <div class="font-medium text-sm">{gettext("Snapshots")} →</div>
+                    <div class="text-xs text-zinc-500 mt-1">
+                      {gettext("Persisted Kind state per %{table} table.", table: "kind_snapshots")}
+                    </div>
+                  </.card>
+                </a>
+              </div>
             </div>
           </:main>
         </AdminShell.admin_shell>
@@ -201,7 +212,7 @@ defmodule EzagentPluginLiveview.AdminDashboardLive do
   # badge + a one-sentence operator-facing explanation. Always rendered
   # (even on all-green) so operators see "everything OK" at a glance
   # instead of wondering whether the page hides its diagnostics.
-  attr :status, :any, required: true
+  attr(:status, :any, required: true)
 
   defp boot_diagnostics_card(assigns) do
     ~H"""
@@ -266,10 +277,21 @@ defmodule EzagentPluginLiveview.AdminDashboardLive do
       )
 
   defp cc_seed_subtitle(:unavailable),
-    do:
-      gettext(
-        "Status unavailable — chat domain not loaded (test env) or seed module missing."
-      )
+    do: gettext("Status unavailable — chat domain not loaded (test env) or seed module missing.")
+
+  defp uri_scheme?(uri_str, scheme) when is_binary(uri_str) and is_atom(scheme) do
+    case Ezagent.URI.parse(uri_str) do
+      {:ok, %URI{} = uri} -> Ezagent.URI.scheme?(uri, scheme)
+      {:error, _} -> false
+    end
+  end
+
+  defp entity_type?(uri_str, type) when is_binary(uri_str) and is_atom(type) do
+    case Ezagent.URI.parse(uri_str) do
+      {:ok, %URI{} = uri} -> Ezagent.URI.scheme?(uri, :entity) and Ezagent.URI.type?(uri, type)
+      {:error, _} -> false
+    end
+  end
 
   # --- kpi -----------------------------------------------------------------
 

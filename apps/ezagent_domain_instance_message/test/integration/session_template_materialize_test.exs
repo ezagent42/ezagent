@@ -77,7 +77,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
       # Plain session (no orchestrator) keeps the gate focused on
       # materialization, not orchestrator startup.
       orchestrator_template_uri: nil,
-      default_workspace_uri: URI.parse("workspace://system"),
+      default_workspace_uri: Ezagent.URI.new!("workspace://system"),
       parent_template_uri: nil,
       version_tag: nil,
       created_by: User.admin_uri(),
@@ -157,7 +157,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     # ONLY by an explicit rule, so the legend rule-set is its sole route.
     source_template_uri = seed_agent_template(n)
 
-    content = relay_team_content(template_name, source_template_uri, role_name, legend_name, tpl_ref)
+    content =
+      relay_team_content(template_name, source_template_uri, role_name, legend_name, tpl_ref)
+
     _template_uri = persist_template(content)
 
     # ── instantiate the template ────────────────────────────────────────
@@ -172,7 +174,11 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
       case KindRegistry.lookup(session_uri) do
         {:ok, pid} ->
           if Process.alive?(pid),
-            do: DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, pid)
+            do:
+              DynamicSupervisor.terminate_child(
+                EzagentDomainInstanceMessage.SessionSupervisor,
+                pid
+              )
 
         :error ->
           :ok
@@ -185,7 +191,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     # The spawned agent member was recreated + joined, carrying role_name +
     # the in_session_template snapshot facet + the spawn-source facet.
     member_uri = Chat.role_name_to_uri(slice.members, role_name)
-    assert %URI{scheme: "entity", host: "agent"} = member_uri
+    assert Ezagent.URI.type?(member_uri, :agent)
 
     assert %{online: true, role_name: ^role_name, in_session_template: true} =
              slice.members[member_uri]
@@ -196,7 +202,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
       case KindRegistry.lookup(member_uri) do
         {:ok, pid} ->
           if Process.alive?(pid),
-            do: DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.AgentSupervisor, pid)
+            do:
+              DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.AgentSupervisor, pid)
 
         :error ->
           :ok
@@ -213,7 +220,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     rows = RoutingRegistry.list_all(table)
 
     assert Enum.any?(rows, fn
-             {{:mention, ^legend_name}, %{rule_set: "telephone", prompt_template_ref: ^tpl_ref} = v} ->
+             {{:mention, ^legend_name},
+              %{rule_set: "telephone", prompt_template_ref: ^tpl_ref} = v} ->
                URI.to_string(member_uri) in v.receivers
 
              _ ->
@@ -231,9 +239,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     operator = User.admin_uri()
 
     msg =
-      Message.new(operator, %{text: "山顶的雪化了", attachments: []},
-        legend_triggers: [legend_name]
-      )
+      Message.new(operator, %{text: "山顶的雪化了", attachments: []}, legend_triggers: [legend_name])
 
     in_session_members = Map.keys(slice.members)
 
@@ -288,7 +294,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
       name: template_name,
       description: "spawned-member team",
       orchestrator_template_uri: nil,
-      default_workspace_uri: URI.parse("workspace://system"),
+      default_workspace_uri: Ezagent.URI.new!("workspace://system"),
       parent_template_uri: nil,
       version_tag: nil,
       created_by: User.admin_uri(),
@@ -319,7 +325,11 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
       case KindRegistry.lookup(session_uri) do
         {:ok, pid} ->
           if Process.alive?(pid),
-            do: DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, pid)
+            do:
+              DynamicSupervisor.terminate_child(
+                EzagentDomainInstanceMessage.SessionSupervisor,
+                pid
+              )
 
         :error ->
           :ok
@@ -328,11 +338,11 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
 
     slice = chat_slice(session_uri)
 
-    # A spawned agent member appears, recreated under entity://agent/<ws>/...
+    # A spawned agent member appears under a workspace-first entity agent URI
     # and carrying its role_name + the spawn-source facet (so a future
     # respawn can rebuild it).
     spawned = Chat.role_name_to_uri(slice.members, role_name)
-    assert %URI{scheme: "entity", host: "agent"} = spawned
+    assert Ezagent.URI.type?(spawned, :agent)
     assert slice.members[spawned].in_session_template == true
     assert slice.members[spawned].source_template_uri == source_template_uri
 
@@ -340,7 +350,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
       case KindRegistry.lookup(spawned) do
         {:ok, pid} ->
           if Process.alive?(pid),
-            do: DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.AgentSupervisor, pid)
+            do:
+              DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.AgentSupervisor, pid)
 
         :error ->
           :ok
@@ -358,7 +369,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
       name: template_name,
       description: "isolation team",
       orchestrator_template_uri: nil,
-      default_workspace_uri: URI.parse("workspace://system"),
+      default_workspace_uri: Ezagent.URI.new!("workspace://system"),
       parent_template_uri: nil,
       version_tag: nil,
       created_by: User.admin_uri(),
@@ -380,12 +391,16 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
 
     # ── two DISTINCT sessions from the SAME template in the SAME workspace ─
     assert {:ok, session_a, _} =
-             EzagentDomainInstanceMessage.SessionCreator.create_session("iso-a-#{n}", User.admin_uri(),
+             EzagentDomainInstanceMessage.SessionCreator.create_session(
+               "iso-a-#{n}",
+               User.admin_uri(),
                template_name: template_name
              )
 
     assert {:ok, session_b, _} =
-             EzagentDomainInstanceMessage.SessionCreator.create_session("iso-b-#{n}", User.admin_uri(),
+             EzagentDomainInstanceMessage.SessionCreator.create_session(
+               "iso-b-#{n}",
+               User.admin_uri(),
                template_name: template_name
              )
 
@@ -399,10 +414,11 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     cleanup_agent(member_b)
 
     # The prior isolation bug: both sessions collided on the SAME
-    # entity://agent/<ws>/<flavor>_<role> URI. The session-discriminator
+    # entity agent URI. The session-discriminator
     # in the instance name must make them DISTINCT.
-    assert %URI{scheme: "entity", host: "agent"} = member_a
-    assert %URI{scheme: "entity", host: "agent"} = member_b
+    assert Ezagent.URI.type?(member_a, :agent)
+    assert Ezagent.URI.type?(member_b, :agent)
+
     refute member_a == member_b,
            "two sessions from one template must NOT share a member URI; got #{URI.to_string(member_a)} for both"
 
@@ -434,7 +450,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
         name: template_name,
         description: "cross-template isolation team",
         orchestrator_template_uri: nil,
-        default_workspace_uri: URI.parse("workspace://system"),
+        default_workspace_uri: Ezagent.URI.new!("workspace://system"),
         parent_template_uri: nil,
         version_tag: nil,
         created_by: User.admin_uri(),
@@ -459,7 +475,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     _ = persist_template(build_content.(template_b))
 
     # SAME workspace (system), SAME short_name — the collision pre-condition.
-    # Only the template (the session URI host) differs.
+    # Only the template/type axis differs.
     short = "same-short-#{n}"
 
     assert {:ok, session_a, _} =
@@ -472,11 +488,14 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
                template_name: template_b
              )
 
-    # Sanity: the two session URIs differ ONLY in their template host segment
+    # Sanity: the two session URIs differ ONLY in their template/type segment
     # — exactly the case the name-only discriminator collapsed.
-    assert session_a.host == template_a
-    assert session_b.host == template_b
-    assert session_a.path == session_b.path
+    assert Ezagent.URI.type(session_a) == {:ok, template_a}
+    assert Ezagent.URI.type(session_b) == {:ok, template_b}
+    assert Ezagent.URI.workspace_name(session_a) == {:ok, "system"}
+    assert Ezagent.URI.workspace_name(session_b) == {:ok, "system"}
+    assert Ezagent.URI.name(session_a) == {:ok, short}
+    assert Ezagent.URI.name(session_b) == {:ok, short}
 
     cleanup_session(session_a)
     cleanup_session(session_b)
@@ -487,8 +506,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     cleanup_agent(member_a)
     cleanup_agent(member_b)
 
-    assert %URI{scheme: "entity", host: "agent"} = member_a
-    assert %URI{scheme: "entity", host: "agent"} = member_b
+    assert Ezagent.URI.type?(member_a, :agent)
+    assert Ezagent.URI.type?(member_b, :agent)
 
     refute member_a == member_b,
            "two sessions from DIFFERENT templates (same ws + short_name) must NOT " <>
@@ -505,7 +524,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
       name: template_name,
       description: "dangling-receiver team",
       orchestrator_template_uri: nil,
-      default_workspace_uri: URI.parse("workspace://system"),
+      default_workspace_uri: Ezagent.URI.new!("workspace://system"),
       parent_template_uri: nil,
       version_tag: nil,
       created_by: User.admin_uri(),
@@ -550,7 +569,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
              (is_tuple(reason) and elem(reason, 0) == :install_rule_failed),
            "expected a clean {:unknown_rule_receiver, _} failure; got #{inspect(reason)}"
 
-    cleanup_session(URI.new!("session://#{template_name}/system/#{short}"))
+    cleanup_session(Ezagent.URI.session("system", template_name, short))
   end
 
   test "re-materializing an existing session twice does NOT duplicate rule rows (codex MAJOR #4)" do
@@ -564,7 +583,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
       name: template_name,
       description: "idempotent rules team",
       orchestrator_template_uri: nil,
-      default_workspace_uri: URI.parse("workspace://system"),
+      default_workspace_uri: Ezagent.URI.new!("workspace://system"),
       parent_template_uri: nil,
       version_tag: nil,
       created_by: User.admin_uri(),
@@ -593,7 +612,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     _template_uri = persist_template(content)
 
     assert {:ok, session_uri, _} =
-             EzagentDomainInstanceMessage.SessionCreator.create_session("idem-sess-#{n}", User.admin_uri(),
+             EzagentDomainInstanceMessage.SessionCreator.create_session(
+               "idem-sess-#{n}",
+               User.admin_uri(),
                template_name: template_name
              )
 
@@ -655,14 +676,24 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
       name: template_name,
       description: "rollback team",
       orchestrator_template_uri: nil,
-      default_workspace_uri: URI.parse("workspace://system"),
+      default_workspace_uri: Ezagent.URI.new!("workspace://system"),
       parent_template_uri: nil,
       version_tag: nil,
       created_by: User.admin_uri(),
       created_at: ~U[2026-06-01 00:00:00Z],
       members: [
-        %{uri: nil, role_name: good_role, in_session_template: true, source_template_uri: good_source},
-        %{uri: nil, role_name: bad_role, in_session_template: true, source_template_uri: bad_source}
+        %{
+          uri: nil,
+          role_name: good_role,
+          in_session_template: true,
+          source_template_uri: good_source
+        },
+        %{
+          uri: nil,
+          role_name: bad_role,
+          in_session_template: true,
+          source_template_uri: bad_source
+        }
       ],
       prompt_templates: %{},
       legends: %{},
@@ -682,7 +713,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     # The good member's session-unique URI, computed the same way
     # materialization does (so we can assert it was torn down).
     short = "rollback-sess-#{n}"
-    session_uri = URI.new!("session://#{template_name}/system/#{short}")
+    session_uri = Ezagent.URI.session("system", template_name, short)
     # The discriminator is the FULL session URI string (codex cycle-2 BLOCKER
     # #1) — distinct templates yield distinct member URIs.
     good_instance =
@@ -692,7 +723,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
           EzagentDomainInstanceMessage.session_discriminator(session_uri)
         )
 
-    good_member_uri = URI.new!("entity://agent/system/#{good_instance}")
+    good_member_uri = URI.new!("entity://system/agent/#{good_instance}")
 
     assert {:error, reason} =
              EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(),
@@ -725,10 +756,11 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     # is UNIQUE-per-session (Chat.do_join's role_name_conflict guard), so:
     #   * member A (echo flavor) spawns to echo_<...> + joins OK → role held;
     #   * member B (cc flavor) — a DIFFERENT flavor → a DIFFERENT instance URI
-    #     (cc_<...>) — spawns FRESH (spawn_fresh binds workspace + records
-    #     lineage), then its faceted chat.join is REJECTED with a role_name
-    #     conflict. That is the genuine spawn-succeeds/join-fails orphan case
-    #     — no production test-hook needed.
+    #     (cc_<...>) — spawns FRESH through `spawn_from_template_content/4`
+    #     (which binds workspace + records lineage), then its faceted
+    #     chat.join is REJECTED with a role_name conflict. That is the genuine
+    #     spawn-succeeds/join-fails orphan case — no production test-hook
+    #     needed.
     role_name = "shared-role-#{n}"
     echo_source = seed_agent_template(n)
     cc_source = seed_cc_agent_template(n)
@@ -737,14 +769,24 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
       name: template_name,
       description: "join-fail team",
       orchestrator_template_uri: nil,
-      default_workspace_uri: URI.parse("workspace://system"),
+      default_workspace_uri: Ezagent.URI.new!("workspace://system"),
       parent_template_uri: nil,
       version_tag: nil,
       created_by: User.admin_uri(),
       created_at: ~U[2026-06-01 00:00:00Z],
       members: [
-        %{uri: nil, role_name: role_name, in_session_template: true, source_template_uri: echo_source},
-        %{uri: nil, role_name: role_name, in_session_template: true, source_template_uri: cc_source}
+        %{
+          uri: nil,
+          role_name: role_name,
+          in_session_template: true,
+          source_template_uri: echo_source
+        },
+        %{
+          uri: nil,
+          role_name: role_name,
+          in_session_template: true,
+          source_template_uri: cc_source
+        }
       ],
       prompt_templates: %{},
       legends: %{},
@@ -754,12 +796,12 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     _template_uri = persist_template(content)
 
     short = "joinfail-sess-#{n}"
-    session_uri = URI.new!("session://#{template_name}/system/#{short}")
+    session_uri = Ezagent.URI.session("system", template_name, short)
     disc = EzagentDomainInstanceMessage.session_discriminator(session_uri)
 
     # The cc member's session-unique URI (spawned FRESH, then its join fails).
     cc_instance = "cc_" <> Ezagent.Entity.Agent.session_instance_name(role_name, disc)
-    cc_member_uri = URI.new!("entity://agent/system/#{cc_instance}")
+    cc_member_uri = URI.new!("entity://system/agent/#{cc_instance}")
 
     assert {:error, _reason} =
              EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(),
@@ -787,7 +829,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
   # role_name with an echo member — the spawn-succeeds/join-fails lever.
   defp seed_cc_agent_template(n) do
     name = "seed-cc-#{n}"
-    uri = Ezagent.URI.new!("template://agent/system/#{name}")
+    uri = Ezagent.URI.new!("template://system/agent/#{name}")
     {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
 
     {:ok, _} =
@@ -833,7 +875,11 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
       case KindRegistry.lookup(session_uri) do
         {:ok, pid} ->
           if Process.alive?(pid),
-            do: DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, pid)
+            do:
+              DynamicSupervisor.terminate_child(
+                EzagentDomainInstanceMessage.SessionSupervisor,
+                pid
+              )
 
         :error ->
           :ok
@@ -846,7 +892,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
       case KindRegistry.lookup(agent_uri) do
         {:ok, pid} ->
           if Process.alive?(pid),
-            do: DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.AgentSupervisor, pid)
+            do:
+              DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.AgentSupervisor, pid)
 
         :error ->
           :ok
@@ -861,7 +908,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
   # rollback test triggers on the Nth member).
   defp seed_agent_template_no_flavor(n) do
     name = "seed-noflavor-#{n}"
-    uri = Ezagent.URI.new!("template://agent/system/#{name}")
+    uri = Ezagent.URI.new!("template://system/agent/#{name}")
     {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
 
     {:ok, _} =
@@ -903,10 +950,10 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
 
   # Persist a minimal echo-flavor AgentTemplate Kind to spawn workers from.
   # The `echo` flavor is registered in the test boot (test_helper.exs), so a
-  # spawned `entity://agent/<ws>/echo_<...>` resolves to a joinable Echo Kind.
+  # spawned workspace-first echo agent URI resolves to a joinable Echo Kind.
   defp seed_agent_template(n) do
     name = "seed-tpl-#{n}"
-    uri = Ezagent.URI.new!("template://agent/system/#{name}")
+    uri = Ezagent.URI.new!("template://system/agent/#{name}")
     {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
 
     # Populate its :template content with `flavor: "echo"` (the field the

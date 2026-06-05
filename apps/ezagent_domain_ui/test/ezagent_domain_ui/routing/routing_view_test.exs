@@ -23,13 +23,13 @@ defmodule EzagentDomainUi.Routing.RoutingViewTest do
     end
 
     test "applies_to?/1 returns true for any session URI" do
-      assert RoutingView.applies_to?(URI.parse("session://default/system/main"))
-      assert RoutingView.applies_to?(URI.parse("session://default/team-alpha/foo"))
+      assert RoutingView.applies_to?(Ezagent.URI.new!("session://system/default/main"))
+      assert RoutingView.applies_to?(Ezagent.URI.new!("session://team-alpha/default/foo"))
     end
 
     test "applies_to?/1 returns false for non-URI input" do
       refute RoutingView.applies_to?(nil)
-      refute RoutingView.applies_to?("session://default/system/main")
+      refute RoutingView.applies_to?("session://system/default/main")
       refute RoutingView.applies_to?(:atom)
     end
   end
@@ -40,12 +40,12 @@ defmodule EzagentDomainUi.Routing.RoutingViewTest do
     test "renders header + session URI + link to /admin/routing" do
       html =
         render_component(&RoutingView.render/1,
-          session_uri: URI.parse("session://default/system/main"),
+          session_uri: Ezagent.URI.new!("session://system/default/main"),
           session_routing_rules: []
         )
 
       assert html =~ "Session Routing Rules"
-      assert html =~ "session://default/system/main"
+      assert html =~ "session://system/default/main"
       # 2026-05-25 — /routing relocated to /admin/routing (admin scope).
       assert html =~ ~s(href="/admin/routing")
     end
@@ -53,7 +53,7 @@ defmodule EzagentDomainUi.Routing.RoutingViewTest do
     test "renders empty state when no rules" do
       html =
         render_component(&RoutingView.render/1,
-          session_uri: URI.parse("session://default/system/main"),
+          session_uri: Ezagent.URI.new!("session://system/default/main"),
           session_routing_rules: []
         )
 
@@ -66,11 +66,11 @@ defmodule EzagentDomainUi.Routing.RoutingViewTest do
         %{
           id: 42,
           table_name: "Elixir.EzagentDomainInstanceMessage.Routing.MentionRouting",
-          matcher: {:and, [{:in_session, "session://default/system/main"}, {:mention, "entity://agent/team-alpha/cc_demo"}]},
+          matcher: {:and, [{:in_session, "session://system/default/main"}, {:mention, "entity://team-alpha/agent/cc_demo"}]},
           matcher_repr:
-            "{:and, [{:in_session, \"session://default/system/main\"}, {:mention, \"entity://agent/team-alpha/cc_demo\"}]}",
-          receivers: ["entity://agent/team-alpha/echo_default"],
-          receivers_repr: "entity://agent/team-alpha/echo_default",
+            "{:and, [{:in_session, \"session://system/default/main\"}, {:mention, \"entity://team-alpha/agent/cc_demo\"}]}",
+          receivers: ["entity://team-alpha/agent/echo_default"],
+          receivers_repr: "entity://team-alpha/agent/echo_default",
           source: "admin",
           enabled: true
         }
@@ -78,14 +78,14 @@ defmodule EzagentDomainUi.Routing.RoutingViewTest do
 
       html =
         render_component(&RoutingView.render/1,
-          session_uri: URI.parse("session://default/system/main"),
+          session_uri: Ezagent.URI.new!("session://system/default/main"),
           session_routing_rules: rules
         )
 
       refute html =~ ~s(id="session-routing-rules-empty")
       assert html =~ ~s(id="session-routing-rule-42")
-      assert html =~ "entity://agent/team-alpha/cc_demo"
-      assert html =~ "entity://agent/team-alpha/echo_default"
+      assert html =~ "entity://team-alpha/agent/cc_demo"
+      assert html =~ "entity://team-alpha/agent/echo_default"
       assert html =~ "Disable"
       # Toggle button carries the row metadata.
       assert html =~ ~s(phx-click="routing_rule_toggle")
@@ -100,8 +100,8 @@ defmodule EzagentDomainUi.Routing.RoutingViewTest do
           table_name: "Elixir.EzagentDomainInstanceMessage.Routing.MentionRouting",
           matcher: {:always},
           matcher_repr: "{:always}",
-          receivers: ["entity://agent/team-alpha/echo_default"],
-          receivers_repr: "entity://agent/team-alpha/echo_default",
+          receivers: ["entity://team-alpha/agent/echo_default"],
+          receivers_repr: "entity://team-alpha/agent/echo_default",
           source: "admin",
           enabled: false
         }
@@ -109,7 +109,7 @@ defmodule EzagentDomainUi.Routing.RoutingViewTest do
 
       html =
         render_component(&RoutingView.render/1,
-          session_uri: URI.parse("session://default/system/main"),
+          session_uri: Ezagent.URI.new!("session://system/default/main"),
           session_routing_rules: rules
         )
 
@@ -134,7 +134,7 @@ defmodule EzagentDomainUi.Routing.RoutingViewTest do
 
       html =
         render_component(&RoutingView.render/1,
-          session_uri: URI.parse("session://default/system/main"),
+          session_uri: Ezagent.URI.new!("session://system/default/main"),
           session_routing_rules: rules
         )
 
@@ -144,7 +144,7 @@ defmodule EzagentDomainUi.Routing.RoutingViewTest do
     test "renders add-rule form with matcher_type + receivers inputs" do
       html =
         render_component(&RoutingView.render/1,
-          session_uri: URI.parse("session://default/system/main"),
+          session_uri: Ezagent.URI.new!("session://system/default/main"),
           session_routing_rules: []
         )
 

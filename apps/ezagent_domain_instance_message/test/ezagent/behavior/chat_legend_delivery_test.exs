@@ -65,8 +65,8 @@ defmodule Ezagent.Behavior.ChatLegendDeliveryTest do
   end
 
   test "a legend-triggered delivery carries the entry's prompt_template_ref (templated payload)" do
-    session = URI.new!("session://default/team/s1")
-    relay = "entity://agent/team/cc_relay"
+    session = URI.new!("session://team/default/s1")
+    relay = "entity://team/agent/cc_relay"
 
     install_table([
       {Matcher.mention("传话游戏"), entry_value([relay], "telephone_hop", "telephone")}
@@ -76,7 +76,7 @@ defmodule Ezagent.Behavior.ChatLegendDeliveryTest do
 
     msg =
       Message.new(
-        URI.new!("entity://user/team/operator"),
+        URI.new!("entity://team/user/operator"),
         %{text: "山顶的雪化了", attachments: []},
         legend_triggers: ["传话游戏"]
       )
@@ -91,16 +91,16 @@ defmodule Ezagent.Behavior.ChatLegendDeliveryTest do
 
     # The per-recipient delivery applies the entry's template → templated body.
     delivered = Chat.render_for_delivery(msg, ctx, templates, session)
-    assert delivered.body.text == "接龙：山顶的雪化了（by entity://user/team/operator）"
+    assert delivered.body.text == "接龙：山顶的雪化了（by entity://team/user/operator）"
     # identity preserved
     assert delivered.sender == msg.sender
   end
 
   test "a legend entry with a magic receiver ($session_members) fans out + carries ctx" do
-    session = URI.new!("session://default/team/s1")
-    cc = URI.new!("entity://agent/team/cc_a")
-    codex = URI.new!("entity://agent/team/codex_b")
-    sender = URI.new!("entity://user/team/operator")
+    session = URI.new!("session://team/default/s1")
+    cc = URI.new!("entity://team/agent/cc_a")
+    codex = URI.new!("entity://team/agent/codex_b")
+    sender = URI.new!("entity://team/user/operator")
 
     install_table([
       {Matcher.mention("broadcast"), entry_value(["$session_members"], "bcast_tpl", nil)}

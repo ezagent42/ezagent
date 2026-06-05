@@ -93,8 +93,8 @@ defmodule Ezagent.Template.GenericSession do
     # SPEC v3 §3.6 (Phase 9 PR-7) — sessions are 3-segment
     # `session://<template>/<workspace>/<name>`. GenericSession is
     # itself the template (template name `generic`).
-    workspace_name = workspace_uri.host
-    session_uri = Ezagent.URI.new!("session://generic/#{workspace_name}/#{session_name}")
+    workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
+    session_uri = Ezagent.URI.session(workspace_name, :generic, session_name)
 
     with {:ok, _session_pid} <- spawn_session(session_uri),
          :ok <- join_members(session_uri, Map.get(tmpl, "members", [])),
@@ -133,7 +133,10 @@ defmodule Ezagent.Template.GenericSession do
               # `system://template-materialize` (closed Catalog).
               ctx: %{
                 caller: Ezagent.SystemPrincipal.uri("template-materialize"),
-                caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
+                caps:
+                  "template-materialize"
+                  |> Ezagent.SystemPrincipal.uri()
+                  |> Ezagent.SystemPrincipal.caps(),
                 reply: :ignore
               }
             })
@@ -192,14 +195,14 @@ defmodule Ezagent.Template.GenericSession do
         type: :text,
         label: "Session name",
         required: true,
-        placeholder: "architect-review (becomes session://default/team-alpha/X)"
+        placeholder: "architect-review"
       },
       %{
         name: "members_csv",
         type: :text,
         label: "Members (comma-separated URIs)",
         required: false,
-        placeholder: "entity://user/system/admin,entity://agent/team-alpha/cc_architect"
+        placeholder: "admin,cc_architect"
       }
     ]
   end

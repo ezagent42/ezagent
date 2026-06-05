@@ -68,32 +68,30 @@ defmodule Ezagent.Sandbox.ConfigDir do
   # ── URI segments (relocated verbatim from EzagentPluginCc.CcAgent — PR-3 moves
   #    the path authority to core) ──────────────────────────────────────────────
 
-  defp workspace_segment(%URI{host: "agent", path: "/" <> rest} = agent_uri) do
-    case String.split(rest, "/", parts: 2) do
-      [workspace, _name] when workspace != "" ->
-        workspace
-
-      _ ->
-        raise ArgumentError,
-              "agent URI is not canonical 3-segment `entity://agent/<workspace>/<name>` " <>
-                "— got #{inspect(agent_uri)}. Per SPEC #324 rev 3 / PR #335, there is NO " <>
-                "silent default workspace fallback; callers must pass a fully-formed URI."
+  defp workspace_segment(%URI{} = agent_uri) do
+    case Ezagent.URI.type(agent_uri) do
+      {:ok, "agent"} -> Ezagent.URI.workspace_name!(agent_uri)
+      _ -> raise_agent_uri!(agent_uri)
     end
   end
 
-  defp workspace_segment(other) do
-    raise ArgumentError,
-          "agent URI is not an `entity://agent/...` URI — got #{inspect(other)}. " <>
-            "Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace fallback; " <>
-            "callers must pass a fully-formed URI."
-  end
+  defp workspace_segment(other), do: raise_agent_uri!(other)
 
-  defp name_segment(%URI{host: "agent", path: "/" <> rest}) do
-    case String.split(rest, "/", parts: 2) do
-      [_workspace, name] when name != "" -> name
+  defp name_segment(%URI{} = agent_uri) do
+    case Ezagent.URI.type(agent_uri) do
+      {:ok, "agent"} -> Ezagent.URI.name!(agent_uri)
       _ -> "unknown"
     end
+  rescue
+    ArgumentError -> "unknown"
   end
 
   defp name_segment(_), do: "unknown"
+
+  defp raise_agent_uri!(other) do
+    raise ArgumentError,
+          "agent URI is not an entity agent URI — got #{inspect(other)}. " <>
+            "Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace fallback; " <>
+            "callers must pass a fully-formed URI."
+  end
 end

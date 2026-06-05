@@ -76,7 +76,9 @@ defmodule EzagentPluginLiveview.AutoDeriveLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(Map.get(assigns, :current_entity_uri) || Ezagent.URI.new!("entity://user/system/admin"))
+        Ezagent.URI.stable_key(
+          Map.get(assigns, :current_entity_uri) || Ezagent.Entity.User.admin_uri()
+        )
       end)
 
     ~H"""
@@ -96,96 +98,111 @@ defmodule EzagentPluginLiveview.AutoDeriveLive do
           current_path="/plugins/auto"
           status={%{agents_alive: 0, bridges: 0, debug_events: 0, version: "dev"}}
         >
-      <:main_window>
-        <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-      <.page_header title={gettext("Auto-derived: %{kind}", kind: Atom.to_string(@kind))}>
-        <:subtitle>
-          {gettext("Generic admin surface, no hand-written code per Kind.")}
-          <a href="/plugins" class="text-zinc-600 dark:text-zinc-400 underline hover:text-zinc-900 dark:hover:text-zinc-100 ml-1">← {gettext("Plugins")}</a>
-        </:subtitle>
-      </.page_header>
-
-      <div :if={!@detail_uri}>
-        <.card>
-          <:header>{gettext("%{count} live instance(s)", count: length(@instances))}</:header>
-          <p :if={@instances == []} class="text-zinc-500 italic text-sm">
-            {gettext("No live instances of %{kind}.", kind: to_string(@kind))}
-          </p>
-
-          <table :if={@instances != []} class="w-full text-sm">
-            <thead class="bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800">
-              <tr class="text-left text-xs uppercase tracking-wide text-zinc-500">
-                <th class="px-2 py-2">{gettext("URI")}</th>
-                <th class="py-2">{gettext("Slice keys")}</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr :for={inst <- @instances} class="border-b border-zinc-100 dark:border-zinc-900 last:border-0">
-                <td class="px-2 py-2 font-mono text-xs">{URI.to_string(inst.uri)}</td>
-                <td class="py-2">
-                  <.badge :for={k <- inst.slice_keys} variant="info" class="mr-1">
-                    {k}
-                  </.badge>
-                </td>
-                <td class="py-2 text-right pr-2">
+          <:main_window>
+            <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
+              <.page_header title={gettext("Auto-derived: %{kind}", kind: Atom.to_string(@kind))}>
+                <:subtitle>
+                  {gettext("Generic admin surface, no hand-written code per Kind.")}
                   <a
-                    href={"/plugins/auto/" <> Atom.to_string(@kind) <> "/" <> URI.encode_www_form(URI.to_string(inst.uri))}
-                    class="text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 text-xs"
-                  >{gettext("detail")} →</a>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </.card>
-      </div>
+                    href="/plugins"
+                    class="text-zinc-600 dark:text-zinc-400 underline hover:text-zinc-900 dark:hover:text-zinc-100 ml-1"
+                  >
+                    ← {gettext("Plugins")}
+                  </a>
+                </:subtitle>
+              </.page_header>
 
-      <div :if={@detail_uri}>
-        <.card class="mb-4">
-          <:header>{URI.to_string(@detail_uri)}</:header>
-          <%= case @detail do %>
-            <% nil -> %>
-              <p class="text-zinc-500 italic text-sm">{gettext("Loading…")}</p>
-            <% {:error, reason} -> %>
-              <p class="text-red-700 dark:text-red-300 text-sm">{gettext("Error: %{reason}", reason: inspect(reason))}</p>
-            <% detail when is_map(detail) -> %>
-              <div class="space-y-2">
-                <div>
-                  <span class="text-xs uppercase text-zinc-500">{gettext("Kind module")}</span>
-                  <code class="block text-xs">{detail.kind_module}</code>
-                </div>
-                <div>
-                  <span class="text-xs uppercase text-zinc-500">{gettext("Behaviors")}</span>
-                  <ul class="text-xs">
-                    <li :for={b <- detail.behaviors}>
-                      <code>{b.module}</code> — {Enum.join(b.actions, ", ")}
-                    </li>
-                  </ul>
-                </div>
+              <div :if={!@detail_uri}>
+                <.card>
+                  <:header>{gettext("%{count} live instance(s)", count: length(@instances))}</:header>
+                  <p :if={@instances == []} class="text-zinc-500 italic text-sm">
+                    {gettext("No live instances of %{kind}.", kind: to_string(@kind))}
+                  </p>
+
+                  <table :if={@instances != []} class="w-full text-sm">
+                    <thead class="bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800">
+                      <tr class="text-left text-xs uppercase tracking-wide text-zinc-500">
+                        <th class="px-2 py-2">{gettext("URI")}</th>
+                        <th class="py-2">{gettext("Slice keys")}</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        :for={inst <- @instances}
+                        class="border-b border-zinc-100 dark:border-zinc-900 last:border-0"
+                      >
+                        <td class="px-2 py-2 font-mono text-xs">{URI.to_string(inst.uri)}</td>
+                        <td class="py-2">
+                          <.badge :for={k <- inst.slice_keys} variant="info" class="mr-1">
+                            {k}
+                          </.badge>
+                        </td>
+                        <td class="py-2 text-right pr-2">
+                          <a
+                            href={"/plugins/auto/" <> Atom.to_string(@kind) <> "/" <> URI.encode_www_form(URI.to_string(inst.uri))}
+                            class="text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 text-xs"
+                          >
+                            {gettext("detail")} →
+                          </a>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </.card>
               </div>
-          <% end %>
-        </.card>
 
-        <.card :if={is_map(@detail)}>
-          <:header>{gettext("Slices")}</:header>
-          <%= for {slice_key, slice_val} <- (@detail && @detail[:slices]) || %{} do %>
-            <div class="mb-3">
-              <div class="text-xs uppercase text-zinc-500 mb-1">{slice_key}</div>
-              <pre class="text-xs bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded p-2 overflow-x-auto"><%= inspect(slice_val, pretty: true) %></pre>
+              <div :if={@detail_uri}>
+                <.card class="mb-4">
+                  <:header>{URI.to_string(@detail_uri)}</:header>
+                  <%= case @detail do %>
+                    <% nil -> %>
+                      <p class="text-zinc-500 italic text-sm">{gettext("Loading…")}</p>
+                    <% {:error, reason} -> %>
+                      <p class="text-red-700 dark:text-red-300 text-sm">
+                        {gettext("Error: %{reason}", reason: inspect(reason))}
+                      </p>
+                    <% detail when is_map(detail) -> %>
+                      <div class="space-y-2">
+                        <div>
+                          <span class="text-xs uppercase text-zinc-500">
+                            {gettext("Kind module")}
+                          </span>
+                          <code class="block text-xs">{detail.kind_module}</code>
+                        </div>
+                        <div>
+                          <span class="text-xs uppercase text-zinc-500">{gettext("Behaviors")}</span>
+                          <ul class="text-xs">
+                            <li :for={b <- detail.behaviors}>
+                              <code>{b.module}</code> — {Enum.join(b.actions, ", ")}
+                            </li>
+                          </ul>
+                        </div>
+                      </div>
+                  <% end %>
+                </.card>
+
+                <.card :if={is_map(@detail)}>
+                  <:header>{gettext("Slices")}</:header>
+                  <%= for {slice_key, slice_val} <- (@detail && @detail[:slices]) || %{} do %>
+                    <div class="mb-3">
+                      <div class="text-xs uppercase text-zinc-500 mb-1">{slice_key}</div>
+                      <pre class="text-xs bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded p-2 overflow-x-auto"><%= inspect(slice_val, pretty: true) %></pre>
+                    </div>
+                  <% end %>
+                </.card>
+
+                <p class="mt-4">
+                  <a
+                    href={"/plugins/auto/" <> Atom.to_string(@kind)}
+                    class="text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 text-xs"
+                  >
+                    ← {gettext("back to list")}
+                  </a>
+                </p>
+              </div>
             </div>
-          <% end %>
-        </.card>
-
-        <p class="mt-4">
-          <a
-            href={"/plugins/auto/" <> Atom.to_string(@kind)}
-            class="text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 text-xs"
-          >← {gettext("back to list")}</a>
-        </p>
-      </div>
-        </div>
-      </:main_window>
-
+          </:main_window>
         </WorkspaceShell.workspace_shell>
       </:body>
     </AppShell.app_shell>

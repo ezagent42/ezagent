@@ -165,7 +165,7 @@ defmodule Ezagent.Integration.LoaderFreshGateTest do
         tmpl_name => %{"class" => class, "probe_name" => probe_name}
       })
 
-    {URI.parse("workspace://#{workspace_name}"), tmpl_name}
+    {Ezagent.URI.new!("workspace://#{workspace_name}"), tmpl_name}
   end
 
   describe "HIGH-1 r9 — Loader fresh?: false adopt-only-if-owned gate" do

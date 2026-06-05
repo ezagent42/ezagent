@@ -111,8 +111,8 @@ defmodule Ezagent.Routing.LegendTest do
         RuleStore.add(
           table,
           Matcher.mention("传话游戏"),
-          ["entity://agent/team/cc_relay"],
-          URI.new!("entity://user/system/admin"),
+          ["entity://team/agent/cc_relay"],
+          URI.new!("entity://system/user/admin"),
           rule_set: "telephone",
           position: 0,
           prompt_template_ref: "telephone_hop"
@@ -122,9 +122,9 @@ defmodule Ezagent.Routing.LegendTest do
       {:ok, _} =
         RuleStore.add(
           table,
-          Matcher.from("entity://agent/team/cc_relay"),
-          ["entity://agent/team/codex_relay"],
-          URI.new!("entity://user/system/admin"),
+          Matcher.from("entity://team/agent/cc_relay"),
+          ["entity://team/agent/codex_relay"],
+          URI.new!("entity://system/user/admin"),
           rule_set: "telephone",
           position: 1,
           prompt_template_ref: "telephone_hop"
@@ -167,14 +167,14 @@ defmodule Ezagent.Routing.LegendTest do
       # a URI). The rule-set entry's `mention("传话游戏")` matcher fires against
       # `legend_triggers`, so the entry's CONCRETE receiver is resolved by the
       # normal Resolver — carrying the entry's `prompt_template_ref` ctx.
-      relay_cc = "entity://agent/team/cc_relay"
-      session = URI.new!("session://default/team/s1")
+      relay_cc = "entity://team/agent/cc_relay"
+      session = URI.new!("session://team/default/s1")
 
       install_table([{Matcher.mention("传话游戏"), legend_entry([relay_cc], "telephone_hop")}])
 
       msg =
         Ezagent.Message.new(
-          URI.new!("entity://user/team/operator"),
+          URI.new!("entity://team/user/operator"),
           %{text: "@传话游戏 start"},
           legend_triggers: ["传话游戏"]
         )
@@ -189,10 +189,10 @@ defmodule Ezagent.Routing.LegendTest do
     end
 
     test "a legend entry with a magic receiver ($session_members) fans out via the Resolver" do
-      session = URI.new!("session://default/team/s1")
-      cc = URI.new!("entity://agent/team/cc_a")
-      codex = URI.new!("entity://agent/team/codex_b")
-      sender = URI.new!("entity://user/team/operator")
+      session = URI.new!("session://team/default/s1")
+      cc = URI.new!("entity://team/agent/cc_a")
+      codex = URI.new!("entity://team/agent/codex_b")
+      sender = URI.new!("entity://team/user/operator")
 
       install_table([
         {Matcher.mention("broadcast"), legend_entry(["$session_members"], nil)}
@@ -245,9 +245,9 @@ defmodule Ezagent.Routing.LegendTest do
   # first-class members (individually @-able + snapshot-able).
   describe "fold_members/2 — UI fold collapses folded legend members (GATE c)" do
     test "folded legend members collapse to a single legend entry; non-members untouched" do
-      relay_cc = uri("entity://agent/team/cc_relay")
-      relay_codex = uri("entity://agent/team/codex_relay")
-      admin = uri("entity://user/system/admin")
+      relay_cc = uri("entity://team/agent/cc_relay")
+      relay_codex = uri("entity://team/agent/codex_relay")
+      admin = uri("entity://system/user/admin")
 
       members = %{
         relay_cc => %{online: true, role_name: "relay-cc"},
@@ -291,7 +291,7 @@ defmodule Ezagent.Routing.LegendTest do
     end
 
     test "members stay individually addressable — the underlying members map is unchanged" do
-      relay_cc = uri("entity://agent/team/cc_relay")
+      relay_cc = uri("entity://team/agent/cc_relay")
       members = %{relay_cc => %{online: true, role_name: "relay-cc"}}
 
       legends =
@@ -308,7 +308,7 @@ defmodule Ezagent.Routing.LegendTest do
     end
 
     test "a non-folded legend does NOT collapse its members" do
-      relay_cc = uri("entity://agent/team/cc_relay")
+      relay_cc = uri("entity://team/agent/cc_relay")
       members = %{relay_cc => %{online: true, role_name: "relay-cc"}}
 
       legends =

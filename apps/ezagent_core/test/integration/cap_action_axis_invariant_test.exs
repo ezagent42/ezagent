@@ -32,7 +32,7 @@ defmodule Ezagent.Integration.CapActionAxisInvariantTest do
   alias Ezagent.Capability
 
   @workspace_uri URI.new!("workspace://team-alpha")
-  @other_user_uri URI.new!("entity://user/team-alpha/member-2")
+  @other_user_uri URI.new!("entity://team-alpha/user/member-2")
 
   describe "B1 (THE MERGE GATE) — workspace member with :create_session does NOT satisfy :add_member" do
     test "narrow :create_session cap is REJECTED for :add_member dispatch" do

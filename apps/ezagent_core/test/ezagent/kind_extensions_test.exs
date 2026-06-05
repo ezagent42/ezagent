@@ -116,8 +116,8 @@ defmodule Ezagent.KindExtensionsTest do
       assert HotResource.__pattern__() == {:resource, :hot}
     end
 
-    test "__uri_scheme__/0 returns the declared scheme" do
-      assert SessionKind.__uri_scheme__() == "session://test/"
+    test "__uri_scheme__/0 is not injected" do
+      refute function_exported?(SessionKind, :__uri_scheme__, 0)
     end
 
     test "type_name/0 is injected when provided" do

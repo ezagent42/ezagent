@@ -219,17 +219,16 @@ defmodule Ezagent.Entity.Agent do
   """
   @spec spawn_fresh(URI.t(), String.t(), URI.t(), URI.t()) ::
           {:ok, %{pid: pid(), fresh?: boolean(), agent_uri: URI.t()}} | {:error, term()}
-  def spawn_fresh(%URI{} = _template_uri, instance_name, %URI{} = workspace_uri, %URI{} = granted_by)
+  def spawn_fresh(
+        %URI{} = _template_uri,
+        instance_name,
+        %URI{} = workspace_uri,
+        %URI{} = granted_by
+      )
       when is_binary(instance_name) do
-    workspace_name =
-      workspace_uri.host ||
-        raise ArgumentError,
-              "workspace_uri has no host (`workspace://<NAME>`) — got " <>
-                inspect(workspace_uri) <>
-                ". Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
-                "fallback; callers must pass a workspace URI with an explicit name."
+    workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
 
-    agent_uri = Ezagent.URI.new!("entity://agent/#{workspace_name}/#{instance_name}")
+    agent_uri = Ezagent.URI.agent(workspace_name, instance_name)
 
     case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
       {:ok, :started, pid} ->
@@ -496,10 +495,14 @@ defmodule Ezagent.Entity.Agent do
       )
       when is_map(template_content_map) do
     with {:ok, template_class} <- resolve_template_class(template_content_map),
+         {:ok, flavor} <- template_content_flavor(template_content_map),
          {:ok, data} <-
            Ezagent.Entity.AgentTemplate.to_template_data(template_content_map, instance_uri),
+         :ok <- Ezagent.AgentFlavorAttributes.put(instance_uri, flavor),
          {:ok, workers, fresh?, instantiate_meta} <-
            instantiate_workers(template_class, data, workspace_uri) do
+      instantiate_meta = put_respawn_flavor(instantiate_meta, template_content_map)
+
       # codex PR #408 review HIGH-3 — surface role-bootstrap degradation
       # from the plugin Template Class's instantiate meta. The plugin
       # (cc) attaches `:role_degraded` + `:role_degraded_reason` keys to
@@ -514,6 +517,7 @@ defmodule Ezagent.Entity.Agent do
           map when map_size(map) == 0 -> %{}
           map -> map
         end
+
       # codex round-7 HIGH-1 — the post-spawn obligations (lineage +
       # workspace binding) are side effects that OVERWRITE existing rows:
       # `AgentLineage.record/2` is an ETS set insert (re-parents the
@@ -584,6 +588,29 @@ defmodule Ezagent.Entity.Agent do
 
   def spawn_from_template_content(_content, _instance, _spawned_by, _workspace) do
     {:error, :invalid_spawn_from_template_content_args}
+  end
+
+  defp template_content_flavor(template_content_map) when is_map(template_content_map) do
+    case Map.get(template_content_map, :flavor) || Map.get(template_content_map, "flavor") do
+      flavor when is_binary(flavor) and flavor != "" -> {:ok, flavor}
+      _ -> {:error, :missing_flavor}
+    end
+  end
+
+  defp put_respawn_flavor(meta, template_content_map) when is_map(meta) do
+    case Map.get(template_content_map, :flavor) || Map.get(template_content_map, "flavor") do
+      flavor when is_binary(flavor) and flavor != "" ->
+        case Map.get(meta, :respawn_template_data) do
+          data when is_map(data) ->
+            Map.put(meta, :respawn_template_data, Map.put_new(data, "flavor", flavor))
+
+          _ ->
+            meta
+        end
+
+      _ ->
+        meta
+    end
   end
 
   # codex round-6 HIGH-1 + PR3 2026-05-24 — call the plugin Template
@@ -703,7 +730,10 @@ defmodule Ezagent.Entity.Agent do
              # `system://agent-internal` (closed Catalog).
              ctx: %{
                caller: Ezagent.SystemPrincipal.uri("agent-internal"),
-               caps: Ezagent.SystemPrincipal.caps("system://agent-internal"),
+               caps:
+                 "agent-internal"
+                 |> Ezagent.SystemPrincipal.uri()
+                 |> Ezagent.SystemPrincipal.caps(),
                reply: {:caller_inbox, self()}
              }
            }) do
@@ -827,7 +857,7 @@ defmodule Ezagent.Entity.Agent do
 
       Logger.debug(
         "Ezagent.Entity.Agent.spawn: AgentLineage registry not loaded; " <>
-          "{:spawned_by, _} cap shapes will deny for #{URI.to_string(agent_uri)}"
+          "{:spawned_by, _} cap shapes will deny for #{Ezagent.URI.stable_key(agent_uri)}"
       )
 
       :ok

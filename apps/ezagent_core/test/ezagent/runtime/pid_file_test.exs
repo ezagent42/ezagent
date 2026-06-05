@@ -53,7 +53,7 @@ defmodule Ezagent.Runtime.PidFileTest do
 
   describe "write/3 + enumerate/1 roundtrip" do
     test "URI is faithfully reconstructed from filename" do
-      uri = URI.parse("entity://agent/team-alpha/cc_demo")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_demo")
       own_pid = String.to_integer(System.pid())
 
       :ok = PidFile.write("cc", uri, own_pid)
@@ -69,9 +69,9 @@ defmodule Ezagent.Runtime.PidFileTest do
       own_pid = String.to_integer(System.pid())
 
       uris = [
-        URI.parse("entity://agent/team-alpha/cc_one"),
-        URI.parse("entity://agent/team-alpha/cc_two"),
-        URI.parse("entity://agent/team-beta/cc_three")
+        Ezagent.URI.new!("entity://team-alpha/agent/cc_one"),
+        Ezagent.URI.new!("entity://team-alpha/agent/cc_two"),
+        Ezagent.URI.new!("entity://team-beta/agent/cc_three")
       ]
 
       Enum.each(uris, &PidFile.write("cc", &1, own_pid))
@@ -86,7 +86,7 @@ defmodule Ezagent.Runtime.PidFileTest do
 
   describe "remove/2" do
     test "deletes the file" do
-      uri = URI.parse("entity://agent/team-alpha/cc_remove")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_remove")
       own_pid = String.to_integer(System.pid())
       :ok = PidFile.write("cc", uri, own_pid)
       assert [_] = PidFile.enumerate("cc")
@@ -96,7 +96,7 @@ defmodule Ezagent.Runtime.PidFileTest do
     end
 
     test "is idempotent when the file is missing" do
-      uri = URI.parse("entity://agent/team-alpha/cc_never_written")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_never_written")
       :ok = PidFile.remove("cc", uri)
     end
   end

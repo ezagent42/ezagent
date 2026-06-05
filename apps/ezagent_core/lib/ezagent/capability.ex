@@ -422,9 +422,9 @@ defmodule Ezagent.Capability do
         action: :any,
         instance: :any,
         workspace_uri: :any,
-        granted_by: %URI{scheme: "system", host: "bootstrap"}
+        granted_by: granted_by
       }),
-      do: true
+      do: Ezagent.URI.scheme?(granted_by, :system) and Ezagent.URI.type?(granted_by, :bootstrap)
 
   # codex r4 SPEC option-B: legacy fallback REMOVED. Pre-SPEC admin caps
   # missing `:action` no longer recognized — operators MUST re-grant
@@ -492,7 +492,7 @@ defmodule Ezagent.Capability do
   @spec home_is_system?(URI.t()) :: boolean()
   def home_is_system?(%URI{} = caller_uri) do
     case workspace_of_caller_safe(caller_uri) do
-      %URI{} = workspace -> URI.to_string(workspace) == "workspace://system"
+      %URI{} = workspace -> Ezagent.URI.name?(workspace, :system)
       _ -> false
     end
   end
@@ -574,59 +574,7 @@ defmodule Ezagent.Capability do
   for — guarded by `all_per_tenant_uris_have_workspace_test.exs`.
   """
   @spec workspace_of(URI.t()) :: URI.t() | :any
-  def workspace_of(%URI{scheme: "entity"} = uri) do
-    Ezagent.URI.entity_workspace_uri(%URI{uri | query: nil, fragment: nil})
-  end
-
-  def workspace_of(%URI{scheme: "session"} = uri),
-    do: workspace_from_3seg_path(%URI{uri | query: nil, fragment: nil})
-
-  def workspace_of(%URI{scheme: "template"} = uri),
-    do: workspace_from_3seg_path(%URI{uri | query: nil, fragment: nil})
-
-  def workspace_of(%URI{scheme: "resource"} = uri),
-    do: workspace_from_3seg_path(%URI{uri | query: nil, fragment: nil})
-
-  def workspace_of(%URI{scheme: "workspace"} = uri),
-    do: %URI{uri | query: nil, fragment: nil}
-
-  def workspace_of(%URI{scheme: "system"}), do: :any
-
-  # Catch-all for test-only schemes (e.g. `probecli://`, `test://`)
-  # and any future scheme not yet wired through workspace derivation.
-  # Defaults to `:any` (cross-workspace) so unknown schemes don't
-  # silently fail with FunctionClauseError — production paths are
-  # constrained by `Ezagent.URI.SchemeRegistry` ETS allowlist per
-  # SPEC v2 §5.8, so this only fires for test fixtures using
-  # unregistered schemes.
-  def workspace_of(%URI{}), do: :any
-
-  # SPEC v3 §3.6 (Phase 9 PR-7) — extract the workspace URI from a
-  # 3-segment per-tenant URI path. Shared by session/template/resource
-  # scheme handlers above. parse!/1 guarantees the 3-segment shape;
-  # hand-constructed URIs bypassing parse!/1 raise here (structural
-  # programming error — let it crash rather than mask).
-  #
-  # NB: a URI like `session://default/team-alpha/main` parses to
-  # `%URI{host: "default", path: "/default/main"}`. The path's first
-  # segment is the workspace name; the second is the instance name.
-  # The `<type>` axis lives in `host`, NOT in the path.
-  defp workspace_from_3seg_path(%URI{path: "/" <> rest}) do
-    case String.split(rest, "/", parts: 2) do
-      [workspace_name, _name] when workspace_name != "" ->
-        Ezagent.URI.new!("workspace://" <> workspace_name)
-
-      _ ->
-        raise ArgumentError,
-              "URI does not have a 3-segment authority — expected " <>
-                "<scheme>://<type>/<workspace>/<name>, got path: #{inspect("/" <> rest)}"
-    end
-  end
-
-  defp workspace_from_3seg_path(%URI{} = uri) do
-    raise ArgumentError,
-          "URI has no path; cannot extract workspace segment: #{inspect(URI.to_string(uri))}"
-  end
+  def workspace_of(%URI{} = uri), do: Ezagent.URI.workspace_of(uri)
 
   @doc """
   Serialize a Capability to a JSON-safe map (for `users.caps_json`
@@ -757,7 +705,7 @@ defmodule Ezagent.Capability do
                   "required `\"workspace_uri\"` field — per SPEC v3 §4 + " <>
                   "`feedback_let_it_crash_no_workarounds`, workspace_uri has no " <>
                   "silent default at the grant chokepoint. Pass either `\"any\"` " <>
-                  "(cross-workspace) or a concrete `\"workspace://<name>\"` URI. " <>
+                  "(cross-workspace) or a concrete workspace URI. " <>
                   "Got: #{inspect(m)}"
       end
 
@@ -953,7 +901,7 @@ defmodule Ezagent.Capability do
       ),
       do: {k, b, action_of(cap), normalize_uri_for_key(i), normalize_uri_for_key(w)}
 
-  defp normalize_uri_for_key(%URI{} = u), do: URI.to_string(u)
+  defp normalize_uri_for_key(%URI{} = u), do: Ezagent.URI.stable_key(u)
   defp normalize_uri_for_key(other), do: other
 
   defp atom_or_module_to_string(:any), do: "any"

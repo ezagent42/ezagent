@@ -19,7 +19,7 @@ defmodule Ezagent.Invariants.NoNilWorkspaceWritesIdentityTest do
     test "users without workspace_uri raises NOT NULL violation" do
       row =
         %Ezagent.Users{
-          uri: "entity://user/team-alpha/no-ws-test",
+          uri: "entity://team-alpha/user/no-ws-test",
           password_hash: nil,
           caps_json: "[]"
           # workspace_uri intentionally omitted
@@ -31,7 +31,7 @@ defmodule Ezagent.Invariants.NoNilWorkspaceWritesIdentityTest do
     test "entity_tokens without workspace_uri raises NOT NULL violation" do
       row =
         %Ezagent.Entity.Token{
-          entity_uri: "entity://user/team-alpha/no-ws-test",
+          entity_uri: "entity://team-alpha/user/no-ws-test",
           token_hash: "fake-hash-for-not-null-test",
           label: "test"
           # workspace_uri intentionally omitted
@@ -43,7 +43,7 @@ defmodule Ezagent.Invariants.NoNilWorkspaceWritesIdentityTest do
     test "entity_profiles without workspace_uri raises NOT NULL violation" do
       row =
         %Ezagent.Entity.Profile{
-          entity_uri: "entity://user/team-alpha/no-ws-test",
+          entity_uri: "entity://team-alpha/user/no-ws-test",
           display_name: "No WS"
           # workspace_uri intentionally omitted
         }

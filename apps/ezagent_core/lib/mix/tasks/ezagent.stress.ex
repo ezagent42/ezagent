@@ -81,7 +81,9 @@ defmodule Mix.Tasks.Ezagent.Stress do
   # SPEC caps-cleanup-v1 §4.4 — operator stress task runs under
   # `system://mix-task` (closed Catalog). The local `admin_caps/0`
   # helper now returns the SystemPrincipal bridge MapSet.
-  defp admin_caps, do: Ezagent.SystemPrincipal.caps("system://mix-task")
+  defp admin_caps,
+    do: "mix-task" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps()
+
   defp user_default_caps(ws_uri), do: apply(@user_mod, :default_caps, [ws_uri])
 
   @switches [
@@ -191,16 +193,16 @@ defmodule Mix.Tasks.Ezagent.Stress do
     # Scenario A — one session, N agent members. Re-create the session
     # fresh each step so membership is exactly N.
     workspace = "system"
-    session_uri = uri!("session://default/#{workspace}/stress_a_#{n}")
+    session_uri = Ezagent.URI.session(workspace, :default, "stress_a_#{n}")
 
     {spawn_us, :ok} =
       timed(fn ->
         spawn_kind!(session_mod(), session_uri)
-        :ok = WorkspaceRegistry.bind(session_uri, uri!("workspace://#{workspace}"))
+        :ok = WorkspaceRegistry.bind(session_uri, Ezagent.URI.workspace(workspace))
         await_ready!(session_uri)
 
         for i <- 1..n do
-          agent_uri = uri!("entity://agent/#{workspace}/echo_a#{n}_#{i}")
+          agent_uri = Ezagent.URI.agent(workspace, "echo_a#{n}_#{i}")
           spawn_kind!(echo_mod(), agent_uri)
           await_ready!(agent_uri)
           join!(session_uri, agent_uri)
@@ -275,18 +277,18 @@ defmodule Mix.Tasks.Ezagent.Stress do
     {spawn_us, :ok} =
       timed(fn ->
         for s <- (prev + 1)..n do
-          session_uri = uri!("session://default/#{workspace}/stress_b_#{s}")
+          session_uri = Ezagent.URI.session(workspace, :default, "stress_b_#{s}")
           spawn_kind!(session_mod(), session_uri)
-          :ok = WorkspaceRegistry.bind(session_uri, uri!("workspace://#{workspace}"))
+          :ok = WorkspaceRegistry.bind(session_uri, Ezagent.URI.workspace(workspace))
           await_ready!(session_uri)
 
-          user_uri = uri!("entity://user/#{workspace}/u_b#{s}")
+          user_uri = Ezagent.URI.user(workspace, "u_b#{s}")
           spawn_user!(user_uri, workspace)
           await_ready!(user_uri)
           join!(session_uri, user_uri)
 
           for a <- 1..2 do
-            agent_uri = uri!("entity://agent/#{workspace}/echo_b#{s}_#{a}")
+            agent_uri = Ezagent.URI.agent(workspace, "echo_b#{s}_#{a}")
             spawn_kind!(echo_mod(), agent_uri)
             await_ready!(agent_uri)
             join!(session_uri, agent_uri)
@@ -324,7 +326,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
     {spawn_us, :ok} =
       timed(fn ->
         for u <- (prev + 1)..n do
-          user_uri = uri!("entity://user/#{workspace}/u_c#{u}")
+          user_uri = Ezagent.URI.user(workspace, "u_c#{u}")
           spawn_user!(user_uri, workspace)
           await_ready!(user_uri)
         end
@@ -366,7 +368,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
 
   defp inject_messages(session_uri, budget, interval_ms, turn_cap) do
     admin = admin_uri()
-    target = uri!("#{URI.to_string(session_uri)}?action=chat.send")
+    target = Ezagent.URI.with_action(session_uri, :chat, :send)
     caps = admin_caps()
 
     Enum.reduce(1..budget, 0, fn i, count ->
@@ -446,7 +448,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
   end
 
   defp spawn_user!(uri, workspace) do
-    caps = user_default_caps(uri!("workspace://#{workspace}"))
+    caps = user_default_caps(Ezagent.URI.workspace(workspace))
 
     case Kind.spawn(user_mod(), %{uri: uri, initial_caps: MapSet.new(caps)}) do
       {:ok, _pid} -> :ok
@@ -478,7 +480,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
   end
 
   defp join!(session_uri, member_uri) do
-    target = uri!("#{URI.to_string(session_uri)}?action=chat.join")
+    target = Ezagent.URI.with_action(session_uri, :chat, :join)
 
     result =
       Invocation.dispatch(%Invocation{
@@ -500,8 +502,6 @@ defmodule Mix.Tasks.Ezagent.Stress do
   end
 
   # --- misc --------------------------------------------------------------
-
-  defp uri!(s), do: Ezagent.URI.new!(s)
 
   defp timed(fun) do
     t0 = System.monotonic_time(:microsecond)

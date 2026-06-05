@@ -556,12 +556,12 @@ defmodule Ezagent.Kind.Runtime do
   # dependency cone (P9). Resolve via `Code.ensure_loaded?/1` at
   # runtime, falling back to nil (default impl) when domain apps
   # haven't loaded.
-  defp resolve_caller_kind(%URI{scheme: "entity", host: "user"}) do
-    safe_module(Ezagent.Entity.User)
-  end
-
-  defp resolve_caller_kind(%URI{scheme: "entity", host: "agent"}) do
-    safe_module(Ezagent.Entity.Agent)
+  defp resolve_caller_kind(%URI{scheme: "entity"} = uri) do
+    cond do
+      Ezagent.URI.type?(uri, :user) -> safe_module(Ezagent.Entity.User)
+      Ezagent.URI.type?(uri, :agent) -> safe_module(Ezagent.Entity.Agent)
+      true -> nil
+    end
   end
 
   defp resolve_caller_kind(%URI{scheme: "system"}) do
@@ -1326,16 +1326,18 @@ defmodule Ezagent.Kind.Runtime do
   # `system://` principals + cross-cutting templates).
   defp derive_workspace_uri(%URI{} = self_uri) do
     case Ezagent.Capability.workspace_of(self_uri) do
-      :any -> "workspace://system"
+      :any -> system_workspace_uri_string()
       %URI{} = ws -> ws
       bin when is_binary(bin) -> bin
-      _ -> "workspace://system"
+      _ -> system_workspace_uri_string()
     end
   rescue
-    _ -> "workspace://system"
+    _ -> system_workspace_uri_string()
   end
 
-  defp derive_workspace_uri(_), do: "workspace://system"
+  defp derive_workspace_uri(_), do: system_workspace_uri_string()
+
+  defp system_workspace_uri_string, do: :system |> Ezagent.URI.workspace() |> URI.to_string()
 
   # `:terminate` effects → `Ezagent.Kind.terminate/1`. Each entry
   # is `{:terminate, :self | URI.t()}`. `:self` resolves to

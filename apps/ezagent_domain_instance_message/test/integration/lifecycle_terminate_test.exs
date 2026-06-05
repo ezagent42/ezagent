@@ -28,7 +28,7 @@ defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
 
   # Spawn an Agent Kind, bind workspace, record lineage under `spawned_by`.
   defp spawn_worker(spawned_by) do
-    worker_uri = URI.parse("entity://agent/team-alpha/test_worker-#{uniq()}")
+    worker_uri = Ezagent.URI.new!("entity://team-alpha/agent/test_worker-#{uniq()}")
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: worker_uri})
     :ok = Ezagent.WorkspaceRegistry.bind(worker_uri, @workspace_uri)
     :ok = AgentLineage.record(worker_uri, spawned_by)
@@ -48,7 +48,7 @@ defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
   end
 
   defp terminate(worker_uri, caller_uri, caps) do
-    target = URI.parse("#{URI.to_string(worker_uri)}?action=lifecycle.terminate")
+    target = Ezagent.URI.new!("#{URI.to_string(worker_uri)}?action=lifecycle.terminate")
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
@@ -73,7 +73,7 @@ defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
   end
 
   test "an in-lineage worker is terminated via dispatch (cap-#2 happy path)" do
-    orchestrator = URI.parse("entity://agent/team-alpha/cc_orch-#{uniq()}")
+    orchestrator = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch-#{uniq()}")
     worker_uri = spawn_worker(orchestrator)
 
     assert {:ok, _pid} = KindRegistry.lookup(worker_uri)
@@ -87,8 +87,8 @@ defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
   end
 
   test "cap-#2 control — terminating an agent NOT in your lineage is :unauthorized" do
-    orchestrator_a = URI.parse("entity://agent/team-alpha/cc_orch-a-#{uniq()}")
-    orchestrator_b = URI.parse("entity://agent/team-alpha/cc_orch-b-#{uniq()}")
+    orchestrator_a = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch-a-#{uniq()}")
+    orchestrator_b = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch-b-#{uniq()}")
 
     # The worker is spawned by A.
     worker_uri = spawn_worker(orchestrator_a)
@@ -104,7 +104,7 @@ defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
   end
 
   test "termination is idempotent — a second terminate on a gone agent still succeeds" do
-    orchestrator = URI.parse("entity://agent/team-alpha/cc_orch-idem-#{uniq()}")
+    orchestrator = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch-idem-#{uniq()}")
     worker_uri = spawn_worker(orchestrator)
     caps = MapSet.new([spawned_by_cap(orchestrator)])
 
@@ -129,7 +129,7 @@ defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
       # the recipient URI via `parse_uri!` (canonical), so the `^user_uri`
       # pin on the `{:notification, user_uri, _}` envelope must hold the
       # canonical struct, not the `URI.parse` (`authority: "user"`) form.
-      user_uri = Ezagent.URI.new!("entity://user/team-alpha/spawner-#{uniq()}")
+      user_uri = Ezagent.URI.new!("entity://team-alpha/user/spawner-#{uniq()}")
       :ok = Ezagent.Notifications.subscribe(user_uri, %{caps: :system})
 
       worker_uri = spawn_worker(user_uri)
@@ -152,7 +152,7 @@ defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
     end
 
     test "does NOT notify when spawning principal is an agent URI" do
-      orchestrator = URI.parse("entity://agent/team-alpha/cc_orch-noinbox-#{uniq()}")
+      orchestrator = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch-noinbox-#{uniq()}")
       worker_uri = spawn_worker(orchestrator)
       caps = MapSet.new([spawned_by_cap(orchestrator)])
 
