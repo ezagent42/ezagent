@@ -1,0 +1,70 @@
+# ESR PROD environment — `mix release` image + a containerized cloudflared that
+# fronts app.ezagent.chat (reusing tunnel 7339e970). Prod data binds the STABLE
+# host home ~/.ezagent (persistent across redeploys); dev/test use named volumes
+# in docker-compose.dev.yml instead.
+#   build: docker compose -f docker/docker-compose.prod.yml build \
+#            --build-arg HTTP_PROXY=http://host.docker.internal:7897 \
+#            --build-arg HTTPS_PROXY=http://host.docker.internal:7897
+#   run:   ESR_PROXY=http://host.docker.internal:7897 \
+#            docker compose -f docker/docker-compose.prod.yml up -d
+# PREREQ: stop the host-level cloudflared (~/.cloudflared/ezagent.yml) first —
+# two connectors on tunnel 7339e970 with different ingress mis-route requests.
+services:
+  esr:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.prod
+      args:
+        HTTP_PROXY: ${DOCKER_BUILD_PROXY:-}
+        HTTPS_PROXY: ${DOCKER_BUILD_PROXY:-}
+        NO_PROXY: "localhost,127.0.0.1,::1"
+    image: esr-prod:latest
+    restart: unless-stopped
+    # Host-port 10043 (dev uses 10042) for Tailscale/admin access; cloudflared
+    # reaches the app internally via the compose network (esr:10042).
+    ports:
+      - "10043:10042"
+    environment:
+      PORT: "10042"
+      SHELL: /bin/bash
+      EZAGENT_HOME: /data
+      EZAGENT_PROFILE: default
+      EZAGENT_PUBLIC_HOST: app.ezagent.chat
+      EZAGENT_PUBLIC_SCHEME: https
+      # Agents' claude/codex subprocesses reach providers via the proxy; Feishu
+      # + localhost go direct.
+      HTTP_PROXY: ${ESR_PROXY:-}
+      HTTPS_PROXY: ${ESR_PROXY:-}
+      http_proxy: ${ESR_PROXY:-}
+      https_proxy: ${ESR_PROXY:-}
+      NO_PROXY: "localhost,127.0.0.1,::1,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
+      no_proxy: "localhost,127.0.0.1,::1,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
+    volumes:
+      # STABLE prod data — persists across redeploys (DB, profile, credentials
+      # incl. the prod feishu app cli_a96e). Bind the host's ~/.ezagent.
+      - ${HOME}/.ezagent:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:10042/"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 40s
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: ["tunnel", "--config", "/etc/cloudflared/config.yml", "run"]
+    # cloudflared must reach the cloudflare edge; if the host requires a proxy,
+    # supply it here. Feishu/cloudflare egress validation is a known check.
+    environment:
+      HTTPS_PROXY: ${ESR_PROXY:-}
+      https_proxy: ${ESR_PROXY:-}
+      NO_PROXY: "esr,localhost,127.0.0.1,::1"
+      no_proxy: "esr,localhost,127.0.0.1,::1"
+    volumes:
+      - ./cloudflared/prod-config.yml:/etc/cloudflared/config.yml:ro
+      # Tunnel 7339e970 credentials (read-only) from the host.
+      - ${HOME}/.cloudflared/7339e970-1a2b-4f03-84c9-a1ea50965eba.json:/etc/cloudflared/cred.json:ro
+    depends_on:
+      esr:
+        condition: service_healthy
