@@ -22,6 +22,8 @@ services:
       SHELL: /bin/bash          # erlexec's exec-port requires SHELL (unset for non-root user)
       EZAGENT_HOME: /data
       EZAGENT_PROFILE: default
+      EZAGENT_PUBLIC_HOST: dev.ezagent.chat   # generated URLs (magic-link) use the DEV host
+      EZAGENT_PUBLIC_SCHEME: https
       EZAGENT_COOKIE: ezagent_dev_cookie
       # Agents' claude/codex subprocesses inherit these to reach Anthropic/OpenAI.
       # Feishu + localhost go direct (NO_PROXY). host.docker.internal = host proxy.
