@@ -697,6 +697,23 @@ baseline worktree (`54df56c9`) chat run for apples-to-apples diff**.
   > receiver" observable signal (the silent default-fan-out half), (c) the
   > disable-not-delete GC option. Confirmed live 2026-06-01: an @-mention to a
   > non-member slot worker silently goes nowhere — that's the (b) gap.
+  >
+  > **Update 2026-06-05 (verified vs origin/main):** `remove_agent_slot` was
+  > RETIRED → replaced by member-model `remove_member` (tools.ex §3.8), which
+  > SUBSUMES the #519 observability half — its result reports
+  > `deleted_rules` (cascade-deleted, routing LOST + Logger.warning'd) vs
+  > `repointed_rules`. So the remove-side observability (a-partial) is done.
+  > **Genuine residual = (b)**: the "message matched no worker receiver →
+  > silent default fan-out" signal lives in the ROUTING layer, not remove.
+  > `Ezagent.Routing.Resolver.resolve_with_ctx/4`
+  > (`apps/ezagent_core/lib/ezagent/routing/resolver.ex:190`) treats
+  > `system_default` (`$session_users`/`$mentions`) as just another matched
+  > rule; there is no signal distinguishing "matched a real worker/member
+  > rule" from "only matched system_default" when a message carried
+  > `@mentions` that resolved to no member. (b) is a NEW observability
+  > feature needing design (signal shape + false-positive guard for
+  > legitimate broadcasts) — NOT a quick patch. Recommend a small
+  > brainstorm/spec before implementing.
 
 - **✅ `domain.agent` — DONE (verified against origin/main 2026-06-05).** Content
   audit (not SHA — the stale local `domain-agent-foundation` branch's commits are on
