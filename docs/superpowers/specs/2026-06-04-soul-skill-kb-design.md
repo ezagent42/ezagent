@@ -1,7 +1,8 @@
 # SPEC — Soul / Skill / KB 设计（最小 domain 变更）
 
-**Status:** r12 — Codex r11 闭合 (0 CRITICAL, 2 HIGH fixed): Reference slot 延后到 Phase 2；修正 template_data_extra 示例匹配实际 contract；KB 定义扩展含 policy trigger；soul 15KB 标记为目标预算
-**Branch:** `feat/autoservice-cinnox`
+**Status:** r13 — 吸取 AutoService 实施经验: Soul lint gate、Reference discovery 机制、路径权限、Phase 0 实测数据
+**Branch:** `autoservice-dev`
+**参考:** AutoService `docs/superpowers/specs/2026-06-05-soul-reference-kb-design.md` (同架构实现版)
 
 ---
 
@@ -152,7 +153,88 @@ KB (queryable)          kb.db + MCP script                   KBCurator Agent
   结构化数据              不进 Slice                          改文件 → 重建 kb.db
 ```
 
----
+### 1.7 吸取 AutoService 实施经验
+
+AutoService 基于本 SPEC 做了独立实现 (`docs/superpowers/specs/2026-06-05-soul-reference-kb-design.md`)，提炼了以下改进:
+
+**A. Soul 预算 lint gate**
+
+AutoService 实测 soul 从 1337 行 (~52KB) 瘦身到 ~440 行 (~20KB) (Phase 0-3)。建议增加 CI gate 防止再次膨胀:
+
+| Rule | 阈值 | 行为 |
+|------|------|------|
+| Soul size warning | > 25KB | WARNING — 建议分析可提取到 Reference 的内容 |
+| Soul size error | > 30KB | ERROR — 阻止合入，必须提取或写豁免说明 |
+
+Phase 1 作为 manual check，Phase 3 瘦身后作为 CI gate 加入。
+
+**B. Reference discovery 机制**
+
+AutoService 实现: 加载器扫描 Reference 目录 → 生成索引 → 注入 Soul。ezagent 对应:
+
+```elixir
+# Template Class instantiate 时:
+reference_index = build_reference_index(reference_dir())
+# 输出:
+# ## Reference Index (cc 在需要时 Read 对应文件)
+# - 一般产品咨询 → reference/general-inquiry-flow.md
+# - Lead 收集流程 → reference/lead-collection-flow.md
+
+# 注入 CLAUDE.md:
+claude_md = rendered_soul <> reference_index <> rendered_reference_files
+```
+
+cc 看到索引后按需 Read。新增/删除 Reference 文件 → 需 agent re-spawn（索引在 spawn 时注入）。内容修改 → cc 下次 Read 自动生效。
+
+**C. 路径自带权限边界（AutoService 简化）**
+
+AutoService 去掉了 `editable_by` / `locked_by` 字段 — 文件路径本身决定了编辑权限:
+
+```
+路径                                      权限
+────                                      ────
+priv/<tenant>/soul/soul.md                tenant admin (LV dispatch)
+priv/<tenant>/reference/*.md              tenant admin (直接文件编辑)
+priv/<tenant>/kb/                         system admin (KBCurator Agent)
+master/templates/ (system 模板源)          system admin (git PR)
+master/kb/escalation_keywords.json        system admin (git PR)
+```
+
+在 ezagent 中，AgentTemplate 的 workspace-scoped CapBAC 已经提供了等效保护。不需要额外 RBAC 字段。
+
+**D. 确认的简化（AutoService 已落地）**
+
+AutoService 实施中去掉了以下内容，与本 SPEC 的设计一致:
+
+| 去掉 | 估算行数 | 原因 |
+|------|---------|------|
+| priority.yaml + 跨层 lint | ~120 | 后覆盖前足够 |
+| `_template_version` + drift detection | ~150 | 渲染保留 raw `{{key}}` 作为信号 |
+| `_source_yaml` 间接引用 | ~50 | 直接内联或放 Reference |
+| `SOUL_LAYERED_LOADER` 开关 | 2 处 | 已默认 on，退役 |
+| sandbox_locks (section 粒度) | ~200 | slot flat map 无跨资源依赖 |
+| release_snapshot soul 逻辑 | ~300 | 渲染时产出，不 snapshot |
+| skill 概念 | — | 合并入 Reference |
+| flow_directive 概念 | — | 合并入 Reference |
+| open/guarded Reference 区分 | — | Soul 行为约束替代 |
+| **合计** | **~1,027** | |
+
+**E. AutoService vs Ezagent 的关键差异**
+
+| 维度 | AutoService | Ezagent |
+|------|-----------|---------|
+| 内容来源层级 | Framework / Platform / Industry / Tenant | System / Tenant (2 级，Industry 可延后) |
+| 槽位存储 | `slot_values.yaml` 文件 | AgentTemplate slice (flavor extra) |
+| 编辑生效 | recycle pool (重 spawn) | agent re-spawn |
+| 权限模型 | 路径自带 | workspace-scoped CapBAC (已有) |
+| 模板文件位置 | `master/templates/` (git) | `priv/` (plugin 打包) |
+
+**F. 吸取的关键教训**
+
+1. **Phase 0 (KB 提取) 效果显著**: soul 1337→440 行，p50 TTFT 改善 ≥100ms。证明"先提取再迭代"策略正确。
+2. **不要过早建 RBAC 字段**: 路径/workspace 已经提供足够边界，`editable_by` 等字段在不需要时就是债务。
+3. **渲染时产出优于 snapshot**: soul 是渲染产物，每次 spawn 时重新生成比持久化 snapshot 更简单可靠。
+4. **简单文本替换优于复杂模板引擎**: `{{key}}` + flat slot_values 足够覆盖 ~100 个 key 的需求。
 
 ## §2 — 模板从哪里来
 
