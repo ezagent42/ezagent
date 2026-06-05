@@ -1602,10 +1602,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     session_unique =
       Ezagent.Entity.Agent.session_instance_name(slot, session_discriminator(session_uri))
 
-    # Historical `<flavor>_<session-unique-slot>` shape, retained until PR-E.
-    # The session-unique suffix gives per-(session, role) isolation; runtime
-    # flavor/Kind selection reads stored flavor, not this name.
-    "#{flavor}_#{session_unique}"
+    # PR-E: agent URI names carry NO flavor prefix. Flavor is stored
+    # (AgentTemplate.flavor) and read via `UriQuery.resolve(:flavor, _)`; the
+    # session-unique suffix alone gives per-(session, role) isolation.
+    session_unique
   end
 
   # codex BLOCKER (cycle 2) — the session discriminator MUST be derived from

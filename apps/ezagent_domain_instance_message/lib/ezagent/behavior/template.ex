@@ -403,20 +403,15 @@ defmodule Ezagent.Behavior.Template do
   end
 
   # The per-instance agent URI. The caller (Generator / add_agent_slot)
-  # supplies `instance_name`; the URI is built in the resolved
-  # workspace, flavor-prefixed per SPEC §1.2.
+  # supplies `instance_name`; the URI is built in the resolved workspace.
+  # PR-E: the name carries NO flavor prefix — flavor is stored template content,
+  # read via `UriQuery.resolve(:flavor, _)`, never encoded in the URI name.
   defp resolve_instance_uri(content, args, self_uri, ctx) do
     with {:ok, workspace_uri} <- resolve_workspace_uri(content, args, self_uri) do
-      flavor = Map.get(content, :flavor) || Map.get(content, "flavor")
       workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
 
       case Map.get(args, :instance_name) do
-        name when is_binary(name) and name != "" and is_binary(flavor) and flavor != "" ->
-          {:ok, Ezagent.URI.agent(workspace_name, "#{flavor}_#{name}")}
-
         name when is_binary(name) and name != "" ->
-          # No flavor in the content — let the helper error on the
-          # flavor lookup instead of constructing a bad URI.
           {:ok, Ezagent.URI.agent(workspace_name, name)}
 
         _ ->

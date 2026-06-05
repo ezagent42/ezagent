@@ -482,6 +482,18 @@ defmodule Ezagent.URI do
   # structural roots).
   @unified_per_tenant_schemes ~w(entity session template resource)
 
+  # The workspace host is REQUIRED for every per-tenant scheme. Without this,
+  # a URI like `session:///default/main` (empty host, valid /<type>/<name> path)
+  # would pass the path-shape check and later fall back to the `:any` workspace —
+  # silently turning a malformed URI into cross-workspace scope (authz hole).
+  # Must precede the path-shape clauses (which don't constrain host).
+  defp validate_3seg_shape!(%URI{scheme: scheme, host: host}, raw)
+       when scheme in @unified_per_tenant_schemes and (is_nil(host) or host == "") do
+    raise ArgumentError,
+          "#{scheme} URI must include a non-empty workspace host (expected " <>
+            "#{scheme}://<workspace>/<type>/<name>): " <> inspect(raw)
+  end
+
   defp validate_3seg_shape!(%URI{scheme: scheme, path: nil}, raw)
        when scheme in @unified_per_tenant_schemes,
        do:

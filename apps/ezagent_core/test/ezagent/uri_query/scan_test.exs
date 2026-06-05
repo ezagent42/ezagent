@@ -84,6 +84,35 @@ defmodule Ezagent.UriQuery.ScanTest do
                violations_for(violations, :flavor_prefix_dependency)
     end
 
+    test "classifies dynamic flavor-prefix interpolation in agent URI names" do
+      # The construction counterpart to the parsing rules — `"#{flavor}_#{name}"`
+      # builds a flavor-prefixed agent URI name and must be flagged (codex review).
+      path =
+        fixture!("flavor_interp.ex", """
+        defmodule Fixture.FlavorInterp do
+          def build(flavor, name), do: Ezagent.URI.agent("ws", "\#{flavor}_\#{name}")
+        end
+        """)
+
+      violations = Scan.scan_paths([path])
+
+      assert [%Scan.Violation{category: :flavor_prefix_dependency} | _] =
+               violations_for(violations, :flavor_prefix_dependency)
+    end
+
+    test "does not classify non-flavor interpolation as flavor-prefix dependency" do
+      path =
+        fixture!("plain_interp.ex", """
+        defmodule Fixture.PlainInterp do
+          def build(name, id), do: "\#{name}_\#{id}"
+        end
+        """)
+
+      violations = Scan.scan_paths([path])
+
+      assert [] = violations_for(violations, :flavor_prefix_dependency)
+    end
+
     test "classifies flavor prefix adapter callbacks" do
       path =
         fixture!("agent_uri_prefix.ex", """

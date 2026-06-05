@@ -203,7 +203,50 @@ defmodule Ezagent.UriQuery.Scan do
     )
   end
 
+  # Dynamic flavor-prefix CONSTRUCTION via string interpolation, e.g.
+  # `"#{flavor}_#{name}"` — a flavor-bearing interpolation segment immediately
+  # followed by an `_`-leading literal segment. The earlier rules only caught
+  # parsing (`String.split`) and literal-prefix `<>`; this closes the gap where
+  # production code BUILDS a flavor-prefixed agent URI name (codex review).
+  defp flavor_prefix_dependency_finding({:<<>>, meta, parts}, path, snippets)
+       when is_list(parts) do
+    if flavor_underscore_interpolation?(parts) do
+      violation(
+        :flavor_prefix_dependency,
+        path,
+        line(meta),
+        "agent URI names must not interpolate flavor as a prefix; store flavor and read via Ezagent.UriQuery",
+        snippet(snippets, meta)
+      )
+    end
+  end
+
   defp flavor_prefix_dependency_finding(_node, _path, _snippets), do: nil
+
+  # True if any flavor-bearing interpolation segment is immediately followed by
+  # an `_`-leading literal — i.e. a `<flavor>_…` name being constructed.
+  defp flavor_underscore_interpolation?(parts) do
+    parts
+    |> Enum.chunk_every(2, 1, :discard)
+    |> Enum.any?(fn
+      [seg, next] -> flavor_interpolation_segment?(seg) and underscore_leading_literal?(next)
+      _ -> false
+    end)
+  end
+
+  defp flavor_interpolation_segment?({:"::", _, [expr, {:binary, _, _}]}),
+    do: ast_mentions_flavor?(expr)
+
+  defp flavor_interpolation_segment?(_), do: false
+
+  defp ast_mentions_flavor?(ast) do
+    ast |> Macro.to_string() |> String.contains?("flavor")
+  rescue
+    _ -> false
+  end
+
+  defp underscore_leading_literal?(bin) when is_binary(bin), do: String.starts_with?(bin, "_")
+  defp underscore_leading_literal?(_), do: false
 
   defp tenant_derivation_finding(
          {{:., meta, [{:__aliases__, _, [:String]}, :split]}, _, args},

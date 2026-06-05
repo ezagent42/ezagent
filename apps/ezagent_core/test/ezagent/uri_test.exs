@@ -116,6 +116,24 @@ defmodule Ezagent.URITest do
       assert {:error, {:malformed, _}} = Ezagent.URI.parse("ht!tp://bad uri ::::")
     end
 
+    test "per-tenant URIs REQUIRE a non-empty workspace host (reject `scheme:///type/name`)" do
+      # Without this, an empty-host per-tenant URI passes the path-shape check and
+      # later falls back to the `:any` workspace — a cross-tenant scope/authz hole.
+      for s <- [
+            "entity://" <> "/agent/x",
+            "session://" <> "/default/main",
+            "template://" <> "/agent/x",
+            "resource://" <> "/uploads/x"
+          ] do
+        assert {:error, {:invalid_shape, msg}} = Ezagent.URI.parse(s),
+               "expected reject for #{inspect(s)}"
+
+        assert msg =~ "workspace host", "wrong message for #{inspect(s)}: #{inspect(msg)}"
+
+        assert_raise ArgumentError, ~r/workspace host/, fn -> Ezagent.URI.new!(s) end
+      end
+    end
+
     test "parse/1 never raises on the inputs new!/1 would reject" do
       bad = ["/no-scheme", "http://x", "entity://system/" <> "solo", "garbage ::::"]
 
