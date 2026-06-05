@@ -255,9 +255,10 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
   defp maybe_start_pty(%{"with_pty" => true, "cwd" => cwd}, agent_uri)
        when is_binary(cwd) and cwd != "" do
     params =
-      case Mix.env() do
-        :test -> %{cwd: cwd, test_mode: true}
-        _ -> %{cwd: cwd, cmd_override: "/bin/bash -i"}
+      if Code.ensure_loaded?(Mix) and Mix.env() == :test do
+        %{cwd: cwd, test_mode: true}
+      else
+        %{cwd: cwd, cmd_override: "/bin/bash -i"}
       end
 
     case Ezagent.Domain.Pty.start(agent_uri, params) do

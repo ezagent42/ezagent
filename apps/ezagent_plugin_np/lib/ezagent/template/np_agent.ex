@@ -298,10 +298,7 @@ defmodule Ezagent.PluginNp.Template.NpAgent do
   # In `:test` we explicitly force `false` so the e2e gets a real
   # subprocess.
   defp test_mode_override do
-    case Mix.env() do
-      :test -> false
-      _ -> nil
-    end
+    if Code.ensure_loaded?(Mix) and Mix.env() == :test, do: false, else: nil
   end
 
   # PTY-orphan-restart round-2 (codex finding #4) — propagate

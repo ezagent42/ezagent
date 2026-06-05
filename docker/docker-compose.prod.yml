@@ -43,9 +43,18 @@ services:
       NO_PROXY: "localhost,127.0.0.1,::1,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
       no_proxy: "localhost,127.0.0.1,::1,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
     volumes:
-      # STABLE prod data — persists across redeploys (DB, profile, credentials
-      # incl. the prod feishu app cli_a96e). Bind the host's ~/.ezagent.
-      - ${HOME}/.ezagent:/data
+      # STABLE prod data — Docker NAMED VOLUME (persists across redeploys; only
+      # `down -v` removes it). Chosen over a ${HOME}/.ezagent host bind because
+      # Docker Desktop's VirtioFS maps host-dir ownership inconsistently for a
+      # non-root container (uid 1000 can't create /data/default on the bind),
+      # which is unreliable for a writable data dir. Inspect via:
+      #   docker compose -f docker/docker-compose.prod.yml exec esr ls -la /data/default
+      - prod_home:/data
+      # Static prod secrets (feishu app cli_a96e) — seeded into the volume on
+      # first boot by the entrypoint. read-only.
+      - ./secrets-prod:/secrets:ro
+      # Iterate the entrypoint without a full image rebuild.
+      - ./entrypoint.prod.sh:/app/entrypoint.prod.sh:ro
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:10042/"]
       interval: 10s
@@ -71,3 +80,6 @@ services:
     depends_on:
       esr:
         condition: service_healthy
+
+volumes:
+  prod_home:   # stable prod data (DB, profile, credentials) — survives redeploys

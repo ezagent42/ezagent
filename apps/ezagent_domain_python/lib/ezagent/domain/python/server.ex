@@ -180,7 +180,7 @@ defmodule Ezagent.Domain.Python.Server do
     end
   end
 
-  defp resolve_test_mode(%Python.Spec{test_mode: nil}), do: Mix.env() == :test
+  defp resolve_test_mode(%Python.Spec{test_mode: nil}), do: (Code.ensure_loaded?(Mix) and Mix.env() == :test)
   defp resolve_test_mode(%Python.Spec{test_mode: tm}) when is_boolean(tm), do: tm
 
   defp do_spawn_and_ping(state) do

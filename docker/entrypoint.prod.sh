@@ -16,7 +16,24 @@ HOME_DIR="${EZAGENT_HOME:-/data}"
 PROFILE_DIR="${HOME_DIR}/${PROFILE}"
 
 export DATABASE_PATH="${DATABASE_PATH:-${PROFILE_DIR}/db/ezagent_core.db}"
-mkdir -p "$(dirname "${DATABASE_PATH}")" "${PROFILE_DIR}/credentials" "${PROFILE_DIR}/runtime"
+
+# Home skeleton (release has no `mix ezagent.home.init`). Mirror
+# Ezagent.Home.skeleton_dirs (credentials/db/snapshots/logs/plugins) + runtime,
+# so a CLEAN bind-mounted home (prod starts blank) has the dirs the BEAM needs.
+chmod 700 "${PROFILE_DIR}" 2>/dev/null || true
+for d in credentials db snapshots logs plugins runtime; do
+  mkdir -p "${PROFILE_DIR}/${d}"
+done
+chmod 700 "${PROFILE_DIR}/credentials" 2>/dev/null || true
+
+# Seed the static prod Feishu credential from the read-only secrets mount on
+# first boot (the container OWNS the bind dir it just created). Thereafter it
+# persists in the prod home. Per-agent OAuth is provisioned later, not here.
+if [ -f /secrets/feishu.yaml ] && [ ! -f "${PROFILE_DIR}/credentials/feishu.yaml" ]; then
+  echo "[entrypoint.prod] seeding feishu.yaml from /secrets"
+  cp /secrets/feishu.yaml "${PROFILE_DIR}/credentials/feishu.yaml"
+  chmod 600 "${PROFILE_DIR}/credentials/feishu.yaml"
+fi
 
 # SECRET_KEY_BASE is REQUIRED by config/runtime.exs (it raises if missing).
 # If the operator didn't supply one via env, bootstrap + persist one in the
