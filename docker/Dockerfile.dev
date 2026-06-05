@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# ESR dev/test image — runs `mix phx.server` from a BLANK $EZAGENT_HOME, with the
+# ezagent dev/test image — runs `mix phx.server` from a BLANK $EZAGENT_HOME, with the
 # claude/codex/uv CLIs that agents shell out to. NOT a prod release (mix release is
 # a later phase). See docs/superpowers/specs/2026-06-04-dockerized-e2e-harness-design.md.
 FROM hexpm/elixir:1.19.5-erlang-28.4.2-debian-bookworm-20260518
@@ -34,13 +34,13 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
 
 # Create the non-root runtime user EARLY + set HOME, so COMPILE-TIME `~` expansions
 # (e.g. `@default_dir Path.expand("~/.ezagent")` in McpConfigWriter) bake a path the
-# runtime esr user can write — otherwise they freeze as `/root/.ezagent` (built as root)
+# runtime ezagent user can write — otherwise they freeze as `/root/.ezagent` (built as root)
 # and fail at runtime with EACCES.
-RUN useradd -m -u 1000 esr
-ENV HOME=/home/esr
+RUN useradd -m -u 1000 ezagent
+ENV HOME=/home/ezagent
 
 WORKDIR /app
-# Install Hex/rebar into a shared MIX_HOME under /app (later chowned to the esr user) so
+# Install Hex/rebar into a shared MIX_HOME under /app (later chowned to the ezagent user) so
 # the NON-ROOT runtime user can run mix (home.init / ecto.migrate / phx.server).
 ENV MIX_HOME=/app/.mix
 RUN mix local.hex --force && mix local.rebar --force
@@ -67,12 +67,12 @@ ENV HTTP_PROXY="" HTTPS_PROXY="" http_proxy="" https_proxy="" NO_PROXY="" no_pro
 
 RUN chmod +x docker/entrypoint.sh
 
-# Run as NON-ROOT (esr created above): erlexec's exec-port refuses to run as root, and the
-# host runs non-root. Own /app (incl. _build for dev recompile), /home/esr (compile-time ~
+# Run as NON-ROOT (ezagent created above): erlexec's exec-port refuses to run as root, and the
+# host runs non-root. Own /app (incl. _build for dev recompile), /home/ezagent (compile-time ~
 # paths), + the volume mountpoints so a FRESH named volume inherits writable ownership.
 # (Recreate volumes with `down -v` after this change.)
 RUN mkdir -p /data /cred/cc /cred/codex /layers \
-    && chown -R esr:esr /app /home/esr /data /cred /layers
-USER esr
+    && chown -R ezagent:ezagent /app /home/ezagent /data /cred /layers
+USER ezagent
 
 ENTRYPOINT ["/app/docker/entrypoint.sh"]

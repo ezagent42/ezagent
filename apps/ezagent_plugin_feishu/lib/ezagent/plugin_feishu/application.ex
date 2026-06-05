@@ -155,7 +155,7 @@ defmodule EzagentPluginFeishu.Application do
   # --- internals ------------------------------------------------------
 
   defp maybe_ws_client_spec do
-    if Mix.env() == :test do
+    if Code.ensure_loaded?(Mix) and Mix.env() == :test do
       nil
     else
       EzagentPluginFeishu.WsClient
@@ -165,7 +165,7 @@ defmodule EzagentPluginFeishu.Application do
   defp seed_initial_user_bindings do
     # Skip in test env so the test suite doesn't leak real network
     # calls to Feishu via boot-seeded subscribers.
-    if Mix.env() == :test do
+    if Code.ensure_loaded?(Mix) and Mix.env() == :test do
       :ok
     else
       do_seed_initial_user_bindings()
