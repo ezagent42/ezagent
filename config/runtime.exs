@@ -49,6 +49,9 @@ if config_env() == :prod do
   # gets a 403 on WS upgrade — keeps any other-origin browser tab
   # from opening a cross-origin LV channel.
   config :ezagent_web, EzagentWeb.Endpoint,
+    # OTP release boot must start the endpoint (no `mix phx.server` in prod).
+    # The prod container always serves, so set it unconditionally here.
+    server: true,
     http: [
       # Enable IPv6 and bind on all interfaces.
       # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
