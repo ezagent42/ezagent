@@ -137,7 +137,7 @@ defmodule EzagentCore.Invariants.ReceiverKindPatternTest do
 
   defp repo_root! do
     out =
-      case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: true) do
+      case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: false) do
         {top, 0} ->
           top
 

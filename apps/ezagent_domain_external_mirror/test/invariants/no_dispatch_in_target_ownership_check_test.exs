@@ -185,7 +185,7 @@ defmodule Ezagent.ExternalMirror.Invariants.NoDispatchInTargetOwnershipCheckTest
 
   defp umbrella_root do
     out =
-      case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: true) do
+      case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: false) do
         {top, 0} ->
           top
 
@@ -220,12 +220,16 @@ defmodule Ezagent.ExternalMirror.Invariants.NoDispatchInTargetOwnershipCheckTest
 
   defp scan_file(file) do
     Enum.flat_map(@forbidden_patterns, fn pattern ->
-      {output, _exit} =
+      {output, grep_exit} =
         System.cmd(
           "grep",
           ["-En", pattern, file],
           stderr_to_stdout: false
         )
+
+      # grep exit 0 = matches, 1 = clean (no matches); ≥2 = scan error. Fail
+      # loud rather than silently passing the gate on an empty result.
+      if grep_exit > 1, do: raise("grep scan failed (exit #{grep_exit}) for #{file}")
 
       output
       |> String.split("\n", trim: true)
@@ -270,7 +274,7 @@ defmodule Ezagent.ExternalMirror.Invariants.NoDispatchInTargetOwnershipCheckTest
 
   defp apps_root do
     out =
-      case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: true) do
+      case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: false) do
         {top, 0} ->
           top
 

@@ -32,7 +32,7 @@ defmodule EzagentCore.Invariants.LayerPurityTest do
     # cwd is the umbrella app being tested (apps/ezagent_core), so go up
     # two levels and back into apps/.
     out =
-      case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: true) do
+      case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: false) do
         {top, 0} ->
           top
 
@@ -154,7 +154,7 @@ defmodule EzagentCore.Invariants.LayerPurityTest do
 
   defp repo_root do
     out =
-      case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: true) do
+      case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: false) do
         {top, 0} ->
           top
 

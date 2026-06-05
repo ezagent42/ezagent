@@ -49,7 +49,7 @@ defmodule Ezagent.Invariants.SingleSpawnEntryTest do
   test "no direct DynamicSupervisor.start_child for Kind processes in lib code" do
     apps_root = apps_root()
 
-    {output, _exit_code} =
+    {output, grep_exit} =
       System.cmd(
         "grep",
         [
@@ -60,6 +60,10 @@ defmodule Ezagent.Invariants.SingleSpawnEntryTest do
         ],
         stderr_to_stdout: false
       )
+
+    # grep exit 0 = matches, 1 = clean (no matches); ≥2 = scan error. Fail loud
+    # rather than silently passing the gate on an empty result.
+    if grep_exit > 1, do: raise("grep scan failed (exit #{grep_exit}) for #{apps_root}")
 
     violations =
       output
@@ -83,7 +87,7 @@ defmodule Ezagent.Invariants.SingleSpawnEntryTest do
 
   defp apps_root do
     out =
-      case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: true) do
+      case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: false) do
         {top, 0} ->
           top
 

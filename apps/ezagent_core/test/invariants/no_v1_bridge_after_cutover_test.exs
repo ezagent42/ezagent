@@ -28,7 +28,7 @@ defmodule EzagentCore.Invariants.NoV1BridgeAfterCutoverTest do
 
   defp apps_root do
     out =
-      case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: true) do
+      case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: false) do
         {top, 0} ->
           top
 

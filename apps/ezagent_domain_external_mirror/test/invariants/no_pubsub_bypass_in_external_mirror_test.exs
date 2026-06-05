@@ -227,7 +227,7 @@ defmodule Ezagent.ExternalMirror.Invariants.NoPubsubBypassTest do
 
   defp umbrella_root do
     out =
-      case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: true) do
+      case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: false) do
         {top, 0} ->
           top
 
@@ -279,12 +279,16 @@ defmodule Ezagent.ExternalMirror.Invariants.NoPubsubBypassTest do
   defp scan_dir_for_forbidden(lib_dir), do: scan_dir(lib_dir)
 
   defp scan_dir(dir) do
-    {output, _exit} =
+    {output, grep_exit} =
       System.cmd(
         "grep",
         ["-rEn", @forbidden.source, dir, "--include=*.ex"],
         stderr_to_stdout: false
       )
+
+    # grep exit 0 = matches, 1 = clean (no matches); ≥2 = scan error. Fail loud
+    # rather than silently passing the gate on an empty result.
+    if grep_exit > 1, do: raise("grep scan failed (exit #{grep_exit}) for #{dir}")
 
     output
     |> String.split("\n", trim: true)
@@ -332,7 +336,7 @@ defmodule Ezagent.ExternalMirror.Invariants.NoPubsubBypassTest do
 
   defp apps_root do
     out =
-      case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: true) do
+      case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: false) do
         {top, 0} ->
           top
 
