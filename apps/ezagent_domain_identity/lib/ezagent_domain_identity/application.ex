@@ -68,6 +68,7 @@ defmodule EzagentDomainIdentity.Application do
         # MapSet.to_list(SystemPrincipal.caps("system://bootstrap")))` in setup. Dev/prod see
         # the seed on every boot (idempotent).
         :ok = maybe_ensure_admin_user()
+        _ = maybe_seed_smtp_config()
 
         # PR-A (Allen 2026-05-23) seeded a `default` non-admin operator
         # user under the `default` workspace; SPEC v2 PR-C (#295)
@@ -106,6 +107,29 @@ defmodule EzagentDomainIdentity.Application do
     else
       ensure_admin_user()
     end
+  end
+
+  # Auto-seed SMTP from a credential file on boot so a fresh / reseeded env
+  # (dev reseeds each E2E) has email (magic-link login) working without a
+  # manual admin step. Idempotent: writes ONLY when smtp isn't already
+  # configured AND `<credentials>/smtp_config.json` exists. The file itself is
+  # seeded from the read-only /secrets mount by the docker entrypoint, mirroring
+  # how feishu.yaml is seeded. Never crashes boot.
+  defp maybe_seed_smtp_config do
+    path = Path.join(Ezagent.Home.path(:credentials), "smtp_config.json")
+
+    with false <- Ezagent.AppSettings.smtp_configured?(),
+         {:ok, body} <- File.read(path),
+         {:ok, %{} = cfg} <- Jason.decode(body) do
+      Ezagent.AppSettings.put("smtp_config", cfg)
+    else
+      _ -> :ok
+    end
+  rescue
+    e ->
+      require Logger
+      Logger.warning("SMTP auto-seed skipped: #{inspect(e)}")
+      :ok
   end
 
   defp maybe_seed_admin_kind_for_tests do

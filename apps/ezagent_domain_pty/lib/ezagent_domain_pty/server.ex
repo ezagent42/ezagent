@@ -387,7 +387,7 @@ defmodule Ezagent.Domain.Pty.Server do
   def init(args) do
     agent_uri = Map.fetch!(args, :agent_uri)
     cwd = Map.get(args, :cwd, File.cwd!())
-    test_mode = Map.get(args, :test_mode, Mix.env() == :test)
+    test_mode = Map.get(args, :test_mode, Code.ensure_loaded?(Mix) and Mix.env() == :test)
     cmd_override = Map.get(args, :cmd_override)
     cmd_env = Map.get(args, :cmd_env, %{})
 

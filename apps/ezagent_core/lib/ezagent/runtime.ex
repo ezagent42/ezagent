@@ -35,22 +35,38 @@ defmodule Ezagent.Runtime do
   """
   @spec ensure_cookie!() :: atom()
   def ensure_cookie! do
-    path = cookie_path()
-
     cookie_str =
-      case File.read(path) do
-        {:ok, content} ->
-          String.trim(content)
+      case System.get_env("EZAGENT_COOKIE") do
+        s when is_binary(s) and s != "" ->
+          # Operator-supplied fixed cookie (docker compose sets EZAGENT_COOKIE).
+          # Makes the node's distribution cookie deterministic so `mix ezagent`
+          # / `bin/ezagent rpc` (which read EZAGENT_COOKIE / RELEASE_COOKIE)
+          # connect out-of-the-box, instead of a random per-boot file cookie
+          # (the random one is also URL-base64 and can start with `-`, which
+          # breaks `--cookie` arg parsing).
+          String.trim(s)
 
-        {:error, :enoent} ->
-          File.mkdir_p!(Path.dirname(path))
-          new_cookie = :crypto.strong_rand_bytes(16) |> Base.url_encode64(padding: false)
-          File.write!(path, new_cookie)
-          File.chmod!(path, 0o600)
-          new_cookie
+        _ ->
+          read_or_generate_cookie_file()
       end
 
     String.to_atom(cookie_str)
+  end
+
+  defp read_or_generate_cookie_file do
+    path = cookie_path()
+
+    case File.read(path) do
+      {:ok, content} ->
+        String.trim(content)
+
+      {:error, :enoent} ->
+        File.mkdir_p!(Path.dirname(path))
+        new_cookie = :crypto.strong_rand_bytes(16) |> Base.url_encode64(padding: false)
+        File.write!(path, new_cookie)
+        File.chmod!(path, 0o600)
+        new_cookie
+    end
   end
 
   @doc """
