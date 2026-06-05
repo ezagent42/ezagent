@@ -18,6 +18,16 @@ defmodule EzagentPluginLoom.DeepSeek do
   @api_url "https://api.deepseek.com/chat/completions"
   @model "deepseek-v4-flash"
   @timeout_ms 60_000
+  @connect_timeout_ms 10_000
+
+  @doc """
+  单次 `chat/2` 的墙钟上界(ms):连接超时 + 请求超时。DeepSeek 壳是单发非流式
+  HTTP、无重试,所以上界就是 `connect_timeout + timeout`。与
+  `EzagentPluginLoom.ClaudeCode.max_run_ms/1` 对齐(经 `EzagentPluginLoom.LLM`
+  分发),供 loom 编排器推导 dead-worker 兜底超时。`opts` 为兼容签名而接受、暂忽略。
+  """
+  @spec max_run_ms(keyword()) :: pos_integer()
+  def max_run_ms(_opts \\ []), do: @connect_timeout_ms + @timeout_ms
 
   @doc """
   Call DeepSeek chat completions (non-streaming).
@@ -48,7 +58,7 @@ defmodule EzagentPluginLoom.DeepSeek do
         ]
 
         request = {String.to_charlist(@api_url), headers, ~c"application/json", body}
-        http_opts = [{:timeout, @timeout_ms}, {:connect_timeout, 10_000}]
+        http_opts = [{:timeout, @timeout_ms}, {:connect_timeout, @connect_timeout_ms}]
 
         case :httpc.request(:post, request, http_opts, body_format: :binary) do
           {:ok, {{_, status, _}, _h, resp}} when status >= 200 and status < 300 ->

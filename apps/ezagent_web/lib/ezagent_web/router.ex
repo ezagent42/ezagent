@@ -35,6 +35,9 @@ defmodule EzagentWeb.Router do
     post "/login", SessionController, :create
     get "/login/credentials", SessionController, :credentials_new
     post "/login/credentials", SessionController, :credentials_create
+    # 2026-06-05 (Allen 批准) — loom 分享页轻量自助注册(开放,跳过邮箱验证)。
+    # 用户名+密码 → 建 entity://user/<ws>/<username> + 即登录。仅 loom modal 用。
+    post "/loom-signup", SessionController, :loom_signup
     delete "/logout", SessionController, :delete
     post "/logout", SessionController, :delete
     get "/auth/magic/:token", MagicLinkController, :consume

@@ -1035,6 +1035,16 @@ defmodule EzagentPluginLiveview.AdminLive do
     end
   end
 
+  # 2026-06-05 — loom 发布物/分享 fork 出的 preview session(`pub_<hex>`)是临时直接
+  # instantiate 的,没注册进 workspace.session_templates,默认被 declared 过滤掉。
+  # 显式放出来,让操作员在 /sessions 下拉能看到这些会话。
+  defp well_known_session?(%URI{scheme: "session", host: "loom", path: "/" <> rest}) do
+    case String.split(rest, "/") do
+      [_ws, name] -> String.starts_with?(name, "pub_")
+      _ -> false
+    end
+  end
+
   defp well_known_session?(_), do: false
   defp ensure_main_session(%URI{} = uri, socket) do
     case Ezagent.KindRegistry.lookup(uri) do

@@ -112,7 +112,12 @@ defmodule EzagentPluginLoom.Prompts do
 
   ## 可用技术栈（这些已装好，放心 import）
   - **React + Tailwind CSS**（Tailwind 走 CDN，直接写 className）
-  - **lucide-react** — 图标：`import { Menu, ArrowRight } from 'lucide-react'`（别用 emoji 当图标）
+  - **lucide-react** — 图标：`import { Menu, ArrowRight } from 'lucide-react'`（别用 emoji 当图标）。
+    ⚠️ **图标名必须是 lucide-react 里真实存在的**（PascalCase）。**绝不要凭印象编名字**——import 一个
+    不存在的图标会得到 `undefined`，渲染时**整页崩溃白屏**（`Element type is invalid ... got: undefined`）。
+    不确定就换一个你确定存在的常见图标。安全可用的有：`Menu` `X` `Search` `ShoppingBag` `ShoppingCart`
+    `Heart` `Star` `Send` `ArrowRight` `ArrowLeft` `Check` `Plus` `Minus` `User` `Settings` `Play` `Pause`
+    `ChevronRight` `ChevronDown` `Sparkles` `Footprints`。**鞋类没有 `Shoe`/`Sneaker`**，用 `Footprints` 或 `SportShoe`
   - **framer-motion** — 动画/进场/微交互：`import { motion } from 'framer-motion'`
   - **gsap** + **@gsap/react** — 复杂时间线/滚动动画：`import { gsap } from 'gsap'; import { useGSAP } from '@gsap/react'`
   - **clsx** / **tailwind-merge** / **class-variance-authority** — 条件类名/变体（shadcn 风格）
@@ -131,6 +136,7 @@ defmodule EzagentPluginLoom.Prompts do
 
   ## 限制
   - 不要引入上面**没列出**的第三方库（没装的 import 不了会报错）。
+  - **lucide 图标名必须真实存在**——编造的图标名 import 进来是 `undefined`，会让整页白屏崩溃。不确定就用常见安全图标（见上）。
   - 入口文件 `/App.jsx` 的导出组件必须叫 `App` 并 `export default`
   - **`./platform` 和 `./ezagent-ui` 是平台预置的只读模块，只能 `import`，绝不要定义或输出
     `file=/platform.js`、`file=/ezagent-ui.js`（也不要写它们的实现）——这类文件会被平台丢弃。**

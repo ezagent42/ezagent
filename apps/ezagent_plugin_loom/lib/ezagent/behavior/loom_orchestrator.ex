@@ -38,17 +38,17 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
   require Logger
 
   alias Ezagent.{Cmd, Message}
-  alias EzagentPluginLoom.{ClaudeCode, Span, Prompts}
+  alias EzagentPluginLoom.{LLM, Span, Prompts}
 
   # 聚合**兜底**超时(2026-06-02 重构):正常完成是**事件驱动**的 —— worker 不管
   # 成功/失败都必回一条 deliverable,`handle_deliverable` 收齐即合成,**与 model 多慢
   # 无关**。这个超时只在 worker 进程**真死了、永不回复**时兜底,所以不该手猜一个跟
-  # model 速度赛跑的常数,而是从 worker 自己的时间上界推导:`ClaudeCode.max_run_ms()`
+  # model 速度赛跑的常数,而是从 worker 自己的时间上界推导:`LLM.max_run_ms()`
   # (单次调用最大墙钟 = 超时 × 尝试 + 退避)再加余量。这样换慢 model / 调大 worker
   # 超时,兜底自动跟着放大,永远只在真异常时触发。
   @agg_margin_ms 30_000
 
-  defp agg_timeout_ms, do: EzagentPluginLoom.ClaudeCode.max_run_ms() + @agg_margin_ms
+  defp agg_timeout_ms, do: EzagentPluginLoom.LLM.max_run_ms() + @agg_margin_ms
 
   action(:receive,
     args: %{message: :map},
@@ -144,7 +144,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
       true ->
         loom_source = Prompts.normalize_source(ctx[:read].(:loom_source, %{}))
 
-        case ClaudeCode.chat(dispatch_messages(workers, text_of(msg)),
+        case LLM.chat(dispatch_messages(workers, text_of(msg)),
                temperature: 0.4,
                thinking_disabled: true,
                group: URI.to_string(session_uri)
@@ -165,16 +165,23 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
   end
 
   defp effective_workers(ctx, session_uri) do
-    case ctx[:read].(:workers, []) do
-      w when is_list(w) and w != [] ->
-        normalize_workers(w)
+    raw =
+      case ctx[:read].(:workers, []) do
+        w when is_list(w) and w != [] ->
+          normalize_workers(w)
 
-      _ ->
-        case session_uri do
-          %URI{} = s -> discover_workers(s)
-          _ -> []
-        end
-    end
+        _ ->
+          case session_uri do
+            %URI{} = s -> discover_workers(s)
+            _ -> []
+          end
+      end
+
+    # 2026-06-05 — v0 从编排器解耦(同 loommeta 的 mention-gated 模型):v0 不进编排器
+    # 可派发的 worker 列表。只有**直接 @loomv0** 才改页;@编排器说"改页"无效(编排器
+    # 不再把改页派给 v0)。v0 仍是 session 成员、回复仍 @编排器(见 LoomV0Worker),
+    # 让编排器继续缓存 loom_source(publish/snapshot 依赖)。
+    Enum.reject(raw, fn w -> w[:label] == "v0" end)
   end
 
   @doc """
@@ -372,7 +379,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
         })
 
       true ->
-        case ClaudeCode.chat(compose_messages(turn.persona, frags, partial),
+        case LLM.chat(compose_messages(turn.persona, frags, partial),
                temperature: 0.6,
                thinking_disabled: true,
                group: URI.to_string(turn.session_uri)
@@ -387,7 +394,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
   # === direct-answer degradation (dispatch parse failed / no roster) ===
 
   defp direct_answer(persona, %Message{} = msg, self_uri, session_uri, count) do
-    case ClaudeCode.chat(
+    case LLM.chat(
            [
              %{"role" => "system", "content" => Prompts.web_system_prompt()},
              %{"role" => "system", "content" => Prompts.persona_line(persona)},

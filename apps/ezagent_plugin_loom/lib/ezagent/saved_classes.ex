@@ -65,17 +65,65 @@ defmodule Ezagent.PluginLoom.SavedClasses do
 
   # --- public API ------------------------------------------------------
 
-  @doc "List saved classes (for UI). Returns [%{name, description, saved_at}]."
+  @doc """
+  List saved classes (for UI). Returns
+  `[%{name, description, saved_at, published}]`. `published` is `true` for
+  classes minted by loom 发布 (immutable + share-link) — the loom UI filters
+  these out of its editable-template list (they are a distinct concept).
+  """
   def list_entries do
     load_all()
     |> Enum.map(fn {name, entry} ->
       %{
         "name" => name,
         "description" => Map.get(entry, "description"),
-        "saved_at" => Map.get(entry, "saved_at")
+        "saved_at" => Map.get(entry, "saved_at"),
+        "published" => Map.get(entry, "published", false) == true
       }
     end)
     |> Enum.sort_by(& &1["name"])
+  end
+
+  @doc """
+  Resolve a 发布 share-link token → `{:ok, class_name, ws}` or `:error`.
+
+  Published entries carry `%{"published" => true, "token" => <hex>, "ws" => <ws>}`
+  (set by `EzagentPluginLoom.WebPlug` at publish time). The token is the opaque
+  capability in `/loom/p/<token>`; this is the only lookup path from token back
+  to the immutable Template Class + its origin workspace.
+  """
+  @spec find_by_token(String.t()) :: {:ok, String.t(), String.t()} | :error
+  def find_by_token(token) when is_binary(token) and token != "" do
+    load_all()
+    |> Enum.find_value(:error, fn {class_name, entry} ->
+      if Map.get(entry, "token") == token do
+        {:ok, class_name, Map.get(entry, "ws")}
+      end
+    end)
+  end
+
+  def find_by_token(_), do: :error
+
+  @doc """
+  List published templates(发布历史)—— 只返回 `published: true` 的条目,带 token /
+  ws / 说明 / 发布时间 / 来源 session,**新的在前**。loom 发布弹窗用它展示历史 + 链接,
+  关掉弹窗也能找回。
+  """
+  @spec list_published() :: [map()]
+  def list_published do
+    load_all()
+    |> Enum.filter(fn {_cn, e} -> Map.get(e, "published") == true end)
+    |> Enum.map(fn {class_name, e} ->
+      %{
+        "class_name" => class_name,
+        "token" => Map.get(e, "token"),
+        "ws" => Map.get(e, "ws"),
+        "description" => Map.get(e, "description"),
+        "published_at" => Map.get(e, "saved_at"),
+        "published_from" => Map.get(e, "published_from")
+      }
+    end)
+    |> Enum.sort_by(& &1["published_at"], :desc)
   end
 
   @doc """
@@ -85,17 +133,24 @@ defmodule Ezagent.PluginLoom.SavedClasses do
   Class name registered is `"session.<suffix>"`. Only `[a-zA-Z0-9_-]+`.
   `saved_state` is a map (e.g. `%{"orchestrator" => %{...}}`).
   """
-  @spec save_one(String.t(), map(), String.t() | nil) ::
+  @spec save_one(String.t(), map(), String.t() | nil, map()) ::
           {:ok, String.t()} | {:error, term()}
-  def save_one(name_suffix, saved_state, description \\ nil) when is_binary(name_suffix) do
+  def save_one(name_suffix, saved_state, description \\ nil, meta \\ %{})
+      when is_binary(name_suffix) and is_map(meta) do
     if Regex.match?(~r/^[a-zA-Z0-9_-]+$/, name_suffix) do
       class_name = @class_prefix <> name_suffix
 
-      entry = %{
-        "saved_state" => saved_state,
-        "description" => description,
-        "saved_at" => DateTime.utc_now() |> DateTime.to_iso8601()
-      }
+      # `meta` carries optional extra fields merged into the persisted entry —
+      # loom 发布 passes `%{"published" => true, "token" => ..., "ws" => ...}`
+      # so the same Class machinery (module synthesis + boot re-register) backs
+      # both manual save-as-template and immutable published templates.
+      entry =
+        %{
+          "saved_state" => saved_state,
+          "description" => description,
+          "saved_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+        }
+        |> Map.merge(meta)
 
       map = load_all() |> Map.put(class_name, entry)
       save_all(map)
@@ -144,9 +199,7 @@ defmodule Ezagent.PluginLoom.SavedClasses do
         end
       rescue
         e ->
-          Logger.warning(
-            "SavedClasses: register #{class_name} raised: #{inspect(e)}"
-          )
+          Logger.warning("SavedClasses: register #{class_name} raised: #{inspect(e)}")
       end
     end)
   end
@@ -195,6 +248,9 @@ defmodule Ezagent.PluginLoom.SavedClasses do
           augmented =
             tmpl
             |> Map.put("class", "session.loom")
+            # 2026-06-05 — 发布物(SavedClass)衍生的 session 一律无 v0:base 冻结,
+            # 只能 user_schema 叠加。只有最初的 session.loom 有 v0。
+            |> Map.put("no_v0", true)
             |> then(fn t -> Map.merge(%{"saved_state" => @saved_state}, t) end)
 
           Ezagent.PluginLoom.Template.LoomSession.instantiate(tmpl_name, augmented, ws_uri)

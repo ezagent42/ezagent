@@ -40,7 +40,7 @@ defmodule Ezagent.Behavior.LoomWorker do
   require Logger
 
   alias Ezagent.{Cmd, Message}
-  alias EzagentPluginLoom.ClaudeCode
+  alias EzagentPluginLoom.LLM
 
   @default_system_prompt ~S"""
   你是Loom 科技企业孵化器编排团队里的一名 worker。编排器会把一个子任务交给你,
@@ -103,7 +103,7 @@ defmodule Ezagent.Behavior.LoomWorker do
       count = ctx[:read].(:count, 0)
       role = ctx[:read].(:role, "worker")
 
-      case ClaudeCode.chat(
+      case LLM.chat(
              [
                %{"role" => "system", "content" => system_prompt},
                %{"role" => "user", "content" => subtask}

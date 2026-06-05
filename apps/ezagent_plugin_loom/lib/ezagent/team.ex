@@ -49,6 +49,9 @@ defmodule EzagentPluginLoom.Team do
     # "company"]` 保留原行为。saved template 实例化时 LoomSession 从
     # saved_state.workers 里抽 theme 列表传进来,实现"模板带 worker spec"。
     worker_themes = Keyword.get(opts, :worker_themes, ["policy", "company"])
+    # 2026-06-05 — 可关 v0。只有最初的 session.loom 有 v0(页面创作);发布物 fork
+    # 出的 session `include_v0: false`,base 冻结、只能叠 user_schema ops,不能重写源码。
+    include_v0? = Keyword.get(opts, :include_v0, true)
 
     with {:ok, ws, sid} <- session_parts(session_uri) do
       # 2026-06-01 — 用 `Ezagent.URI.new!`(走 `URI.new`,canonical 形:无
@@ -63,16 +66,20 @@ defmodule EzagentPluginLoom.Team do
           Ezagent.URI.new!("entity://agent/#{ws}/loomworker_#{sid}_#{theme}")
         end)
 
-      v0 = Ezagent.URI.new!("entity://agent/#{ws}/loomv0_#{sid}")
+      v0_members =
+        if include_v0?,
+          do: [Ezagent.URI.new!("entity://agent/#{ws}/loomv0_#{sid}")],
+          else: []
+
       # 2026-06-01 — team manager,接收 @ 的自然语言加 / 删 worker 指令。
       # 默认每个 loom session 都有。Behavior 是 mention-gated,不 @ 不动。
       meta = Ezagent.URI.new!("entity://agent/#{ws}/loommeta_#{sid}")
 
-      members = [orchestrator | workers] ++ [v0, meta]
+      members = [orchestrator | workers] ++ v0_members ++ [meta]
 
       with :ok <- Enum.reduce_while(members, :ok, &spawn_step/2),
            :ok <- Enum.reduce_while(members, :ok, fn uri, _ -> join_step(session_uri, uri) end) do
-        {:ok, %{orchestrator: orchestrator, workers: workers ++ [v0, meta]}}
+        {:ok, %{orchestrator: orchestrator, workers: workers ++ v0_members ++ [meta]}}
       end
     end
   end

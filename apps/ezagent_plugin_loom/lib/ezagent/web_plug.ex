@@ -94,9 +94,103 @@ defmodule EzagentPluginLoom.WebPlug do
     json_resp(conn, 200, list_loom_templates(ws))
   end
 
+  # 2026-06-05 发布历史:本 ws 下所有 published 模板 + 对应分享链接(新的在前)。
+  # loom 发布弹窗用它展示历史,关掉弹窗也能找回链接。
+  get "/api/:ws/published" do
+    json_resp(conn, 200, %{ok: true, items: list_published_for_ws(ws)})
+  end
+
   # 删除一个 template entry。
   delete "/api/:ws/templates/:name" do
     json_resp(conn, 200, remove_template_entry(ws, name))
+  end
+
+  # 2026-06-04 发布(share-link)— 把当前 session 快照成一个**不可变**的
+  # published Template Class(自动唯一命名 `pub_<hex>` + 16-hex token),返回
+  # 分享链接 `/loom/p/<token>`。每次发布生成新模板+新链接(不可变,不覆盖)。
+  # body: %{"description" => "..可选.."}。
+  post "/api/:ws/:sid/publish" do
+    description = conn.body_params |> Map.get("description", "") |> to_string()
+    json_resp(conn, 200, publish_session(ws, sid, description))
+  end
+
+  # 2026-06-04 可增强发布页 v0 —— per-session user_schema(操作序列)。
+  # base 发布物所有访客共享;每个访客 session 一份 user_schema,引擎在 base 上叠加。
+  # GET:读 op 列表(打开页面时拉,重放出该访客之前的增强)。
+  get "/api/:ws/:sid/user-schema" do
+    json_resp(conn, 200, %{ok: true, ops: Ezagent.PluginLoom.UserSchema.get(ws, sid)})
+  end
+
+  # POST:追加一个 op(悬浮框生成后存),返回更新后的完整列表。body: %{"op" => %{...}}
+  post "/api/:ws/:sid/user-schema" do
+    op = conn.body_params |> Map.get("op")
+
+    case Ezagent.PluginLoom.UserSchema.append(ws, sid, op) do
+      {:ok, ops} -> json_resp(conn, 200, %{ok: true, ops: ops})
+      {:error, reason} -> json_resp(conn, 200, %{ok: false, error: to_string(reason)})
+    end
+  end
+
+  # 2026-06-05 Stitch:preview 右下角聊天界面。GET 读对话(打开页面时拉,重放)。
+  get "/api/:ws/:sid/stitch" do
+    json_resp(conn, 200, %{ok: true, conversation: Ezagent.PluginLoom.StitchChat.get(ws, sid)})
+  end
+
+  # POST 发一条消息:接**独立 DeepSeek-v4-flash(非思考)**,回复 + 可能产生一个增强
+  # op(如 addText)。两条(user+assistant)都进 StitchChat 持久化;op 进 user_schema。
+  # body: %{"text" => "..."}
+  post "/api/:ws/:sid/stitch" do
+    text = conn.body_params |> Map.get("text", "") |> to_string()
+    json_resp(conn, 200, stitch_send(ws, sid, text))
+  end
+
+  # 2026-06-05 分享:preview 页"分享"按钮调用。把**当前 preview 会话**的增强状态
+  # **冻结成一份副本**(页面 + ops + 浮层对话)→ 新快照 token + 分享链接。
+  # copy-on-snapshot:之后用户继续在本页增强不回流到这份快照。
+  post "/api/:ws/:sid/snapshot" do
+    json_resp(conn, 200, create_snapshot(ws, sid))
+  end
+
+  # 2026-06-04 发布链接入口:用 token 对应的不可变模板 mint 一个**全新** session
+  # (随机 sid `pub_<hex>`)+ 一个 per-tab 临时用户(`loomui_<sid>`),join 进去,
+  # 返回 {ws, sid} 供 preview-only 前端连 SDK 桥。每次打开/刷新都建新 session
+  # (token→session 1:多;内部测试阶段接受无界增长,不回收)。
+  post "/p/:token/open" do
+    json_resp(conn, 200, open_published(token))
+  end
+
+  # 2026-06-05 分享快照只读:返回冻结的**页面 + ops + 浮层对话**(均为分享时刻的副本)。
+  # 打开分享链接时拉它做只读渲染,不建 session。token 无快照(=发布物 token)→ unknown,
+  # 前端据此回退到交互增强(openPublished)。
+  # (forward "/loom" 已剥前缀,故路由是 /snapshot/...,前端调 /loom/snapshot/...)
+  get "/snapshot/:token" do
+    case Ezagent.PluginLoom.Snapshots.get(token) do
+      {:ok, snap} ->
+        json_resp(conn, 200, %{
+          ok: true,
+          page: Map.get(snap, "page", %{}),
+          ops: Map.get(snap, "ops", []),
+          conversation: Map.get(snap, "conversation", []),
+          ws: Map.get(snap, "ws"),
+          origin_sid: Map.get(snap, "origin_sid")
+        })
+
+      :error ->
+        json_resp(conn, 200, %{ok: false, error: "unknown token"})
+    end
+  end
+
+  # 2026-06-05 whoami:从 ezagent 鉴权 session(cookie)解析当前登录身份。loom 路径
+  # 绕过 :browser pipeline,但 endpoint 顶层已 `Plug.Session`,故能自行 fetch_session。
+  # 前端用它做 fork 闸:未登录 → 跳登录;已登录 → 可 fork。
+  get "/whoami" do
+    json_resp(conn, 200, whoami(conn))
+  end
+
+  # 2026-06-05 fork:从分享快照建一个**自己的**新 session(无 v0,base=快照冻结页面),
+  # 把快照 ops 复制进新 session 的 user_schema。浮层对话由前端只读展示。返回 {ws, sid}。
+  post "/p/:token/fork" do
+    json_resp(conn, 200, fork_published(token))
   end
 
   # 用模板创建一个新 session(loom UI 自己的"从模板新建"入口,绕过 LV "+ New"
@@ -192,7 +286,7 @@ defmodule EzagentPluginLoom.WebPlug do
   # 停止本 session 的生成:(1) 中断所有在跑的 claude(group=session 字符串);
   # (2) 给编排器发 {:cancel,:all} 清在飞回合(丢弃,不写 :loom_source)。
   defp stop_session(ws, sid) do
-    EzagentPluginLoom.ClaudeCode.stop(URI.to_string(session_uri(ws, sid)))
+    EzagentPluginLoom.LLM.stop(URI.to_string(session_uri(ws, sid)))
 
     orch_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomorch_#{sid}")
 
@@ -580,6 +674,260 @@ defmodule EzagentPluginLoom.WebPlug do
     end
   end
 
+  # --- 发布 / share-link helpers --------------------------------------
+
+  # 把当前 session 快照成一个不可变 published Template Class + token,返回链接。
+  # 复用 save-as-template 的整盘快照(orchestrator persona+loom_source / workers
+  # / v0),只是名字自动唯一(`pub_<hex>`,不可覆盖)+ 带 published/token/ws 元数据。
+  defp publish_session(ws, sid, description) do
+    case read_full_session_snapshot(ws, sid) do
+      {:ok, full_snapshot} ->
+        token = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+        name = "pub_" <> (:crypto.strong_rand_bytes(4) |> Base.encode16(case: :lower))
+
+        meta = %{
+          "published" => true,
+          "token" => token,
+          "ws" => ws,
+          "published_from" => sid
+        }
+
+        # 发布物 = **纯模板**(无快照)。打开它的链接 = 交互增强页(浮层 + 标注 +
+        # 分享按钮)。快照由 preview 页的"分享"按钮另行创建(见 create_snapshot/2)。
+        case Ezagent.PluginLoom.SavedClasses.save_one(name, full_snapshot, description, meta) do
+          {:ok, class_name} ->
+            %{ok: true, token: token, link: "/loom/p/#{token}", class_name: class_name}
+
+          {:error, reason} ->
+            %{ok: false, error: inspect(reason)}
+        end
+
+      {:error, reason} ->
+        %{ok: false, error: inspect(reason)}
+    end
+  end
+
+  # token → 不可变模板 → mint 全新 session(随机 sid)+ per-tab 临时用户 + join。
+  # 每次调用都是一个独立访客 session(sid 随机 → loomui_<sid> 自然 per-tab 唯一)。
+  defp open_published(token) do
+    with {:ok, class_name, ws} <- Ezagent.PluginLoom.SavedClasses.find_by_token(token),
+         :ok <- validate_published_ws(ws),
+         {:ok, class_module} <- Ezagent.TemplateRegistry.lookup(class_name),
+         sid = mint_published_sid(),
+         workspace_uri = Ezagent.URI.new!("workspace://#{ws}"),
+         tmpl = %{"class" => class_name, "session_name" => sid},
+         {:ok, [session_uri | _]} <- class_module.instantiate(sid, tmpl, workspace_uri),
+         {:ok, user_uri} <- EzagentPluginLoom.TempUser.ensure_named(ws, "loomui_#{sid}"),
+         :ok <- ensure_joined(session_uri, user_uri) do
+      %{ok: true, ws: ws, sid: sid}
+    else
+      :error -> %{ok: false, error: "unknown token"}
+      {:error, reason} -> %{ok: false, error: inspect(reason)}
+      other -> %{ok: false, error: inspect({:unexpected, other})}
+    end
+  end
+
+  defp validate_published_ws(ws) when is_binary(ws) and ws != "", do: :ok
+  defp validate_published_ws(_), do: {:error, :no_ws_in_published_entry}
+
+  # 从 cookie session 读 current_entity_uri(同 LiveAuth 的 key)。endpoint 顶层
+  # 已配 Plug.Session,故 fetch_session 可用。无身份 → logged_in false。
+  defp whoami(conn) do
+    conn = Plug.Conn.fetch_session(conn)
+
+    case Plug.Conn.get_session(conn, "current_entity_uri") do
+      uri when is_binary(uri) and uri != "" ->
+        %{ok: true, logged_in: true, entity_uri: uri}
+
+      _ ->
+        %{ok: true, logged_in: false}
+    end
+  rescue
+    _ -> %{ok: true, logged_in: false}
+  end
+
+  # --- Stitch(独立 DeepSeek-v4-flash 聊天 + 简单增强)-----------------
+
+  @stitch_system_prompt """
+  你是 Stitch —— 一个网页增强小助手。用户在浏览一个已发布的网页,想做点小增强或问你点事。
+  你能做的操作(目前只有一种):**在页面某个固定位置叠加一段文字**。
+
+  规则:
+  - 如果用户想加一段文字,在你回复的**最后另起一行**输出(只一行):
+    OP: {"op":"addText","position":"<top|bottom|top-right|top-left|bottom-right|bottom-left>","text":"<要加的文字>"}
+    然后用一句话告诉用户你加了什么。
+  - 如果用户只是聊天、问问题,正常简短回复,**不要**输出 OP 行。
+  - 保持简短、友好、中文。
+  """
+
+  defp stitch_send(_ws, _sid, ""), do: %{ok: false, error: "empty text"}
+
+  defp stitch_send(ws, sid, text) do
+    user_msg = %{"role" => "user", "text" => text, "id" => stitch_id()}
+    _ = Ezagent.PluginLoom.StitchChat.append(ws, sid, user_msg)
+
+    history = Ezagent.PluginLoom.StitchChat.get(ws, sid)
+
+    ds_messages =
+      [%{"role" => "system", "content" => @stitch_system_prompt}] ++
+        Enum.map(history, fn m -> %{"role" => m["role"], "content" => m["text"]} end)
+
+    # 独立直连 DeepSeek-v4-flash,非思考(不走 LLM 分发器 / 不走会话编排器)。
+    case EzagentPluginLoom.DeepSeek.chat(ds_messages, temperature: 0.3, thinking_disabled: true) do
+      {:ok, raw} ->
+        {reply, op} = parse_stitch_reply(raw)
+
+        _ =
+          Ezagent.PluginLoom.StitchChat.append(ws, sid, %{
+            "role" => "assistant",
+            "text" => reply,
+            "id" => stitch_id()
+          })
+
+        applied = if op, do: apply_stitch_op(ws, sid, op), else: nil
+
+        %{
+          ok: true,
+          reply: reply,
+          op: applied,
+          conversation: Ezagent.PluginLoom.StitchChat.get(ws, sid),
+          ops: Ezagent.PluginLoom.UserSchema.get(ws, sid)
+        }
+
+      {:error, reason} ->
+        # 失败也把一条错误助手消息记进对话,UI 有反馈。
+        msg = "(增强助手暂时不可用:#{inspect(reason)})"
+
+        _ =
+          Ezagent.PluginLoom.StitchChat.append(ws, sid, %{
+            "role" => "assistant",
+            "text" => msg,
+            "id" => stitch_id()
+          })
+
+        %{
+          ok: false,
+          error: inspect(reason),
+          conversation: Ezagent.PluginLoom.StitchChat.get(ws, sid)
+        }
+    end
+  end
+
+  defp apply_stitch_op(ws, sid, op) do
+    op = Map.put_new(op, "id", "op_" <> stitch_id())
+    _ = Ezagent.PluginLoom.UserSchema.append(ws, sid, op)
+    op
+  end
+
+  defp stitch_id, do: :crypto.strong_rand_bytes(6) |> Base.encode16(case: :lower)
+
+  # 从 DeepSeek 回复里抽出 `OP: {json}` 行(若有)→ {显示文本, op|nil}。
+  defp parse_stitch_reply(raw) when is_binary(raw) do
+    lines = String.split(raw, "\n")
+
+    {op_lines, text_lines} =
+      Enum.split_with(lines, fn l -> l |> String.trim() |> String.starts_with?("OP:") end)
+
+    op =
+      case op_lines do
+        [line | _] ->
+          json = line |> String.trim() |> String.replace_prefix("OP:", "") |> String.trim()
+
+          case Jason.decode(json) do
+            {:ok, %{"op" => _} = o} -> o
+            _ -> nil
+          end
+
+        _ ->
+          nil
+      end
+
+    text =
+      case text_lines |> Enum.join("\n") |> String.trim() do
+        "" -> "好的。"
+        t -> t
+      end
+
+    {text, op}
+  end
+
+  # 从当前 preview 会话冻结快照副本(页面取自 orchestrator 的 loom_source,ops 取自
+  # user_schema,**Stitch 对话取自 StitchChat**)。三者都是**副本**:之后 live 会话继续
+  # 增强/对话,这份快照不变,被分享者看到的是冻结时刻的状态。
+  defp create_snapshot(ws, sid) do
+    case read_orchestrator_snapshot(ws, sid) do
+      {:ok, %{"loom_source" => page}} ->
+        token = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+
+        Ezagent.PluginLoom.Snapshots.put(token, %{
+          "ws" => ws,
+          "page" => page,
+          "ops" => Ezagent.PluginLoom.UserSchema.get(ws, sid),
+          "conversation" => Ezagent.PluginLoom.StitchChat.get(ws, sid),
+          "origin_sid" => sid,
+          "created_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+        })
+
+        %{ok: true, token: token, link: "/loom/p/#{token}"}
+
+      {:error, reason} ->
+        %{ok: false, error: inspect(reason)}
+    end
+  end
+
+  # fork:从分享快照建一个**无 v0** 的新 session(用冻结页面作 base)+ 复制快照 ops。
+  # base 是快照冻结的页面(经 saved_state.orchestrator.loom_source 注入 + seed);
+  # 不依赖原 preview 会话仍存活。
+  defp fork_published(token) do
+    with {:ok, snap} <- Ezagent.PluginLoom.Snapshots.get(token),
+         ws = Map.get(snap, "ws"),
+         :ok <- validate_published_ws(ws),
+         page = Map.get(snap, "page", %{}),
+         sid = mint_published_sid(),
+         workspace_uri = Ezagent.URI.new!("workspace://#{ws}"),
+         tmpl = %{
+           "class" => "session.loom",
+           "session_name" => sid,
+           "no_v0" => true,
+           "saved_state" => %{"orchestrator" => %{"loom_source" => page}}
+         },
+         {:ok, [session_uri | _]} <-
+           Ezagent.PluginLoom.Template.LoomSession.instantiate(
+             "session.loom",
+             tmpl,
+             workspace_uri
+           ),
+         {:ok, user_uri} <- EzagentPluginLoom.TempUser.ensure_named(ws, "loomui_#{sid}"),
+         :ok <- ensure_joined(session_uri, user_uri) do
+      # 复制快照 ops + Stitch 对话进新 session(forker 之后改不影响快照)。
+      _ = Ezagent.PluginLoom.UserSchema.replace(ws, sid, Map.get(snap, "ops", []))
+      _ = Ezagent.PluginLoom.StitchChat.replace(ws, sid, Map.get(snap, "conversation", []))
+      %{ok: true, ws: ws, sid: sid}
+    else
+      :error -> %{ok: false, error: "unknown token"}
+      {:error, reason} -> %{ok: false, error: inspect(reason)}
+      other -> %{ok: false, error: inspect({:unexpected, other})}
+    end
+  end
+
+  # 本 ws 的发布历史:每条带分享链接 `/loom/p/<token>`(新的在前)。
+  defp list_published_for_ws(ws) do
+    Ezagent.PluginLoom.SavedClasses.list_published()
+    |> Enum.filter(fn e -> e["ws"] == ws end)
+    |> Enum.map(fn e ->
+      %{
+        token: e["token"],
+        link: "/loom/p/#{e["token"]}",
+        description: e["description"] || "",
+        published_at: e["published_at"],
+        published_from: e["published_from"]
+      }
+    end)
+  end
+
+  defp mint_published_sid,
+    do: "pub_" <> (:crypto.strong_rand_bytes(6) |> Base.encode16(case: :lower))
+
   defp read_full_session_snapshot(ws, sid) do
     case read_orchestrator_snapshot(ws, sid) do
       {:ok, orch_snapshot} ->
@@ -698,6 +1046,9 @@ defmodule EzagentPluginLoom.WebPlug do
   # workspace.session_templates(那里现在是 Instance 级别,跟保存的 Class 是不同概念)。
   defp list_loom_templates(_ws) do
     Ezagent.PluginLoom.SavedClasses.list_entries()
+    # 发布(published)模板是不可变 + 带分享链接的独立概念,不进 loom UI 的
+    # 可编辑模板列表(跟手动"生成模板"区分开)。
+    |> Enum.reject(& &1["published"])
     |> Enum.map(fn entry ->
       %{
         "name" => entry["name"],
