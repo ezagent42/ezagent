@@ -142,8 +142,8 @@ Template Authoring Agent:
 三层                     Ezagent 表达                         编辑方式
 ────                    ────────────                         ────────
 Soul (inline)           AgentTemplate.soul_slot_values       LV → dispatch
-  .md 模板文件            (flavor extra)                      template.write
-  含 {{key}} 占位符
+  .md 模板文件            (flavor extra — 扩展现有 schema,    template.write
+  含 {{key}} 占位符       cc 的 prompt/model 不进 Slice)
 
 Reference (on-disk)     priv/ 下 .md 文件                    直接文件编辑
   可以含 {{key}}         AgentTemplate.reference_slot_values  或 LV (如果需要 slot)
@@ -173,7 +173,8 @@ Phase 1 作为 manual check，Phase 3 瘦身后作为 CI gate 加入。
 AutoService 实现: 加载器扫描 Reference 目录 → 生成索引 → 注入 Soul。ezagent 对应:
 
 ```elixir
-# Template Class instantiate 时:
+# cc.agent flavor 的 instantiate/3 内（plugin 层, 非 core 通用步骤）:
+# core 的 provision_and_instantiate/4 只分配 config dir，不感知内容
 reference_index = build_reference_index(reference_dir())
 # 输出:
 # ## Reference Index (cc 在需要时 Read 对应文件)
@@ -181,7 +182,9 @@ reference_index = build_reference_index(reference_dir())
 # - Lead 收集流程 → reference/lead-collection-flow.md
 
 # 注入 CLAUDE.md:
-claude_md = rendered_soul <> reference_index <> rendered_reference_files
+claude_md = rendered_soul <> reference_index
+# NOTE: Reference 文件体不注入 CLAUDE.md，只有索引。
+# cc 看到索引后按需 Read 对应文件。
 ```
 
 cc 看到索引后按需 Read。新增/删除 Reference 文件 → 需 agent re-spawn（索引在 spawn 时注入）。内容修改 → cc 下次 Read 自动生效。
