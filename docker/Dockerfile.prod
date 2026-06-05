@@ -27,9 +27,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Create the runtime user + HOME EARLY so COMPILE-TIME `~` expansions
 # (e.g. McpConfigWriter `@default_dir Path.expand("~/.ezagent")`) bake
-# /home/esr (matching the runtime user), not /root. Same lesson as Dockerfile.dev.
-RUN useradd -m -u 1000 esr
-ENV HOME=/home/esr
+# /home/ezagent (matching the runtime user), not /root. Same lesson as Dockerfile.dev.
+RUN useradd -m -u 1000 ezagent
+ENV HOME=/home/ezagent
 
 WORKDIR /app
 RUN mix local.hex --force && mix local.rebar --force
@@ -79,18 +79,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Clear build-time proxy from the final image; runtime proxy comes from compose.
 ENV HTTP_PROXY="" HTTPS_PROXY="" http_proxy="" https_proxy="" NO_PROXY="" no_proxy=""
 
-RUN useradd -m -u 1000 esr
-ENV HOME=/home/esr
+RUN useradd -m -u 1000 ezagent
+ENV HOME=/home/ezagent
 WORKDIR /app
 
 # The assembled release + the prod entrypoint.
-COPY --from=builder --chown=esr:esr /app/_build/prod/rel/ezagent ./
-COPY --chown=esr:esr docker/entrypoint.prod.sh /app/entrypoint.prod.sh
+COPY --from=builder --chown=ezagent:ezagent /app/_build/prod/rel/ezagent ./
+COPY --chown=ezagent:ezagent docker/entrypoint.prod.sh /app/entrypoint.prod.sh
 RUN chmod +x /app/entrypoint.prod.sh \
     && mkdir -p /data \
-    && chown -R esr:esr /data /home/esr
+    && chown -R ezagent:ezagent /data /home/ezagent
 
-USER esr
+USER ezagent
 # erlexec's exec-port refuses to run as root + needs SHELL set.
 ENV SHELL=/bin/bash
 ENTRYPOINT ["/app/entrypoint.prod.sh"]

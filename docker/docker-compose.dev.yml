@@ -34,7 +34,7 @@ services:
       NO_PROXY: "localhost,127.0.0.1,::1,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
       no_proxy: "localhost,127.0.0.1,::1,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
     volumes:
-      - esr_home:/data                  # the swappable $EZAGENT_HOME (E2E layers restore here)
+      - ezagent_home:/data                  # the swappable $EZAGENT_HOME (E2E layers restore here)
       - ./secrets:/secrets:ro           # static secrets: feishu.yaml (+ cred seeds)
       - cred_cc:/cred/cc                # durable cc OAuth source (seed-once, rotates)
       - cred_codex:/cred/codex          # durable codex OAuth source (seed-once, rotates)
@@ -67,7 +67,7 @@ services:
         condition: service_healthy
 
 volumes:
-  esr_home:
+  ezagent_home:
   cred_cc:
   cred_codex:
   layers:
