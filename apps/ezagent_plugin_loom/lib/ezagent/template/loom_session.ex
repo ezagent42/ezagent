@@ -123,9 +123,15 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
   semantics implement this.
 
   Steps for a loom session at `session://loom/<ws>/<session_name>`:
-  1. Terminate the Kind processes(session + 4 team agents).
-  2. Drop snapshots for each.
-  3. Drop the Feishu external_mirror_bindings row(if present).
+  1. `Ezagent.Lifecycle.destroy/2` each Kind(session + team + custom
+     workers): runs destroy hooks → terminates the process → clears the
+     snapshot AND the `ever_created` marker. Clearing the marker is what
+     the previous hand-rolled `terminate + snapshot delete` missed —
+     without it a removed session lazy-revives into a ghost on the next
+     dispatch that hits its URI (see `session_uris_for_recipe/3`).
+  2. Drop the Feishu external_mirror_bindings row(if present)— the
+     Session's `ExternalMirror` Behavior has no custom destroy hook, so
+     `destroy/2` does NOT clear the binding row; we do it explicitly.
 
   Best-effort: every sub-step is wrapped + ignored on error. The LV
   treats `cleanup/3` as fire-and-forget — caller has already done the
@@ -161,15 +167,14 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
     all_uris = [session_uri | team_uris] ++ custom_worker_uris
 
     Logger.info(
-      "LoomSession.cleanup: terminating #{length(all_uris)} URIs (session + #{length(team_uris)} team + #{length(custom_worker_uris)} custom)"
+      "LoomSession.cleanup: destroying #{length(all_uris)} URIs (session + #{length(team_uris)} team + #{length(custom_worker_uris)} custom)"
     )
 
     for uri <- all_uris do
-      term_result = safe_terminate(uri)
-      snap_result = safe_snapshot_delete(uri)
+      result = safe_destroy(uri)
 
       Logger.debug(
-        "LoomSession.cleanup: #{URI.to_string(uri)} terminate=#{inspect(term_result)} snapshot=#{inspect(snap_result)}"
+        "LoomSession.cleanup: #{URI.to_string(uri)} destroy=#{inspect(result)}"
       )
     end
 
@@ -244,24 +249,19 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
 
   def session_uris_for_recipe(_tmpl_name, _recipe, _ws_uri), do: []
 
-  defp safe_terminate(uri) do
-    try do
-      Ezagent.Kind.terminate(uri)
-    rescue
-      _ -> :ok
-    catch
-      _, _ -> :ok
-    end
-  end
-
-  defp safe_snapshot_delete(uri) do
-    try do
-      Ezagent.SnapshotStore.delete(uri)
-    rescue
-      _ -> :ok
-    catch
-      _, _ -> :ok
-    end
+  # 走框架标准 Kind 销毁路径(Allen 2026-06-03 "基于 lifecycle,不要基于特定
+  # 函数")。`Ezagent.Lifecycle.destroy/2` 顺序:跑 developer destroy hook →
+  # terminate 进程 → 清 snapshot + `ever_created` marker。清 marker 是旧的手搓
+  # "terminate + 直接删快照" 漏掉的一步 —— 漏了它,删过的 session 会
+  # 在下次命中其 URI 的 dispatch 时 lazy-revive 成 ghost。幂等:已不存在的 URI
+  # 返回 :ok。cleanup 跑在 LV 进程(非任一 Kind 进程),不会触发 destroy/2 的
+  # self-destroy guard。best-effort 包裹:一个 URI 失败不中断其余(fire-and-forget)。
+  defp safe_destroy(uri) do
+    Ezagent.Lifecycle.destroy(uri, :destroy)
+  rescue
+    _ -> :ok
+  catch
+    _, _ -> :ok
   end
 
   defp safe_unbind_feishu(session_uri) do
