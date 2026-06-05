@@ -1,142 +1,154 @@
-# Unify URI Query — Design Spec (preliminary)
+# Unify URI Query — Design Spec
 
-**Status:** preliminary — for codex to complete & implement. Authored 2026-06-05 (Claude), per Allen's direction. Branch/worktree: `unify-uri-query` (off `main` @ 53f3c48b, post `domain_chat → domain_instance_message` rename).
+**Status:** ready for codex adversarial-review → implementation. Authored 2026-06-05 (Claude + Allen, via Feishu design session). Branch/worktree: `unify-uri-query` (off `main` @ 53f3c48b, post `domain_chat → domain_instance_message` rename).
 
-**Goal (one sentence):** A URI is an opaque, stable identifier; every secondary/mutable/creation-time attribute (agent **flavor**, **orchestrator/role**, session **template**) is a STORED attribute fetched through a single query function — code must never parse attributes out of, nor hand-concatenate, URI strings.
+**Root cause this fixes (Allen's framing):** Two coupled defects, not "the cc_ flavor bug":
+1. **URI inconsistency** — URIs encode mutable/secondary/creation-time attributes (agent **flavor** as a name prefix; session **template** as a segment) and the segment order (`<type>/<workspace>`) does not reflect the real scoping hierarchy (type is workspace-scoped).
+2. **Missing query capability** — there is no single, sanctioned way to (a) construct a URI or (b) read an entity attribute; code hand-concatenates URI strings (~3800 literals) and hand-parses attributes out of them (`String.split` on the path), so the same thing is done many divergent ways and drifts (the `cc_` orchestrator bug was one symptom).
 
-**Why now (sequencing):** The acute symptom was the `cc_` orchestrator prefix bug — the orchestrator URI is *re-derived by formula* at 4 sites instead of stored+queried, and the flavor prefix is *load-bearing* because the bridge parses it from the URI. That is one instance of a system-wide anti-pattern. Per [[feedback_systematic_fix_over_local_entropy]]: don't point-patch — locate ALL instances via a test/scan (#30), then fix them in one mechanical pass (#31). The `domain-agent-handoff` rename has already landed on `main`, so this work builds on the final `ezagent_domain_instance_message` paths with no rename conflicts.
+The fix targets the root cause AND prevents recurrence (a scan test), per [[feedback_systematic_fix_over_local_entropy]].
 
----
-
-## 1. The principle / invariant
-
-> **A URI carries only: the immutable structural Kind (scheme + type axis) + a stable opaque `name` + the `workspace` tenant segment. Nothing else.**
->
-> All mutable / creation-time / secondary attributes — agent **flavor** (cc/codex/curl), **role** (orchestrator vs member), session **template** association — are STORED on the entity and read through ONE query function. No code may (a) parse such an attribute out of a URI string, nor (b) hand-concatenate a URI to *address* an entity by attribute.
-
-This is the same principle already accepted for identifiers elsewhere: [[feedback_uuid_is_canonical_identifier]] (UUID canonical, username display-only, resolve via a lookup step — never key by the mutable attribute).
-
-### Legitimate vs illegitimate URI content
-
-The finite, legitimate URI shape (already enforced by `Ezagent.URI` + `Ezagent.URI.SchemeRegistry`):
-
-```
-<scheme>://<type>/<workspace>/<name>[?action=<behavior>.<action>]
-```
-
-The **6 registered schemes** (boot seed, `apps/ezagent_core/lib/ezagent_core/application.ex:185`):
-`entity` · `workspace` · `session` · `template` · `resource` · `system`
-
-- `entity://<type>/<ws>/<name>` — `type ∈ {user, agent, worker}` (the Kind; immutable, structural → **OK in URI**)
-- `session://<type>/<ws>/<name>` — here `<type>` currently encodes the **session template** → **VIOLATION** (template is a secondary attribute)
-- `workspace://<name>`, `template://<type>/<ws>/<name>`, `system://<type>/<name>` — scheme+type are structural → OK
-
-**Two concrete violations of the principle today:**
-1. **Agent flavor prefix** — agent `name` is written as `<flavor>_<name>` (e.g. `cc_orchestrator-<disc>`), and `flavor` is parsed back out by consumers.
-2. **Session template segment** — `session://<template>/<ws>/<name>` bakes the template into identity (also the open segment-order question, old task #31).
-
-`entity://<type>` keeping the Kind (user/agent/worker) is **not** a violation — that's immutable structure, the thing the URI legitimately routes on.
+**No data migration:** the system is not in production. Existing dev data is wiped + re-seeded ([[feedback_e2e_in_docker_fresh_seed]]). This is a **pure code change** — so we adopt the clean final convention directly, no back-compat shims ([[feedback_let_it_crash_no_workarounds]]).
 
 ---
 
-## 2. Storage slots (where the attributes live / will live)
+## 1. The invariant
 
-Good news — most slots already exist; the bug is consumers not reading them:
+> 1. A URI is an **opaque, stable identifier** carrying ONLY: scheme + the **workspace** tenant segment + the structural **type** axis + a stable **name**.
+> 2. **Uniform shape, workspace-first:** `<scheme>://<workspace>/<type>/<name>` for the per-tenant schemes (because `type` is scoped *within* a workspace — see §2).
+> 3. URIs are **constructed** only through typed builders in `Ezagent.URI` (never hand-concatenated).
+> 4. Entity **attributes** (agent flavor, orchestrator/role, session template, …) are **stored** and read only through `Ezagent.UriQuery.resolve/2` (never parsed out of a URI string).
 
-| Attribute | Stored today? | Where | Gap |
+A `#30` scan test enforces (3) and (4) mechanically and fails on any violation → recurrence is structurally prevented.
+
+This is the same principle already accepted for identifiers: [[feedback_uuid_is_canonical_identifier]] (canonical id is opaque; mutable attributes are looked up, never keyed-on).
+
+---
+
+## 2. URI structure — workspace-first, and why
+
+**Change the universal per-tenant shape from `<scheme>://<type>/<workspace>/<name>` to `<scheme>://<workspace>/<type>/<name>`.**
+
+Rationale (Allen): `type` is **workspace-scoped**, so workspace is the outer namespace. Confirmed in code — default *session templates are seeded per workspace* (#559: `seed_default_session_templates_for_existing_workspaces`, `ensure_default_session_template(workspace_uri)`), so workspace A's `default` template and workspace B's `default` are different entities. Putting workspace first makes the URI read as the real containment hierarchy (workspace ▸ type ▸ name) and aligns identity with the tenancy/routing boundary.
+
+The 6 registered schemes (`apps/ezagent_core/lib/ezagent_core/application.ex:185`): `entity` · `workspace` · `session` · `template` · `resource` · `system`. The `type` axis per scheme:
+- `entity://<workspace>/<type>/<name>` — `type ∈ {user, agent, worker}` (structural Kind; stays, but **drop the `<flavor>_` prefix from the agent name** — flavor is an attribute, §4).
+- `session://<workspace>/<template>/<name>` — template now correctly *after* workspace (it is workspace-scoped). (Codex: confirm whether template stays as the type-axis value or whether session collapses to `session://<workspace>/<name>` with template purely stored — **lean: keep it as the type-axis value** so all schemes keep the uniform 3-segment shape; it is never parsed for behavior, only constructed/displayed.)
+- `workspace://<name>` and `system://<type>/<name>` — cross-cutting; keep their shape (no workspace segment by definition). Codex confirms these are exempt from the reorder.
+
+`entity://<type>` keeping `user/agent/worker` is NOT a violation — that is the immutable structural Kind the URI legitimately routes on. Only **flavor** (agent) is the offending attribute baked into the agent name.
+
+---
+
+## 3. Construction side — typed builders in `Ezagent.URI` (mandatory)
+
+Today `Ezagent.URI` has only string constructors (`new!/1`, `parse/1`); the segment order therefore lives in ~3800 hand-built string literals. Add typed builders so the order is defined in **one place**:
+
+```elixir
+# in apps/ezagent_core/lib/ezagent/uri.ex (codex finalizes signatures)
+Ezagent.URI.entity(workspace, type, name)          # type :: :user | :agent | :worker
+Ezagent.URI.session(workspace, template, name)
+Ezagent.URI.template(workspace, type, name)
+Ezagent.URI.resource(workspace, type, name)
+Ezagent.URI.workspace(name)
+Ezagent.URI.system(type, name)
+```
+
+- Workspace-first order is encoded ONCE here. A future reorder = edit these builders + the centralized accessors (`instance/1`, `entity_workspace_uri/1`, `subresource/1`) — NOT 3800 call sites.
+- **Mandatory everywhere, including tests** (Allen chose option (1)). Replace all ~3800 `"<scheme>://…"` literals with builder calls (mechanical codemod). The scan then forbids any raw `<scheme>://` string construction outside `Ezagent.URI` itself.
+- For test readability, add a thin helper/sigil (e.g. `~u"…"` parsing+validating at compile time, or `Ezagent.URI.test_*` helpers) so tests stay legible while still routing through the canonical parser. Codex picks the ergonomic form; it must NOT reintroduce hand-built ordering.
+
+Accessors that parse positions (`instance/1`, `entity_workspace_uri/1`, `subresource/1`, the `host:`/`path:` matches) are already centralized in `Ezagent.URI` — update them for the new order in one place.
+
+---
+
+## 4. Read side — `Ezagent.UriQuery` registry-dispatcher
+
+**Why a registry, not a static facade:** `Ezagent.URI`/`UriQuery` live in `ezagent_core`, and `ezagent_core` depends on **no** domain (verified: domains depend on core, never the reverse). A static facade in core therefore *cannot* call into domain stores. So `UriQuery` is a thin **dispatcher**; each domain **registers** its attribute resolvers at boot — exactly the codebase's established pattern (10 existing registries incl. `ezagent_core/.../agent_flavor_registry.ex`, `scheme_registry.ex`, `spawn_registry.ex`). This also satisfies the plugin-isolation north star ([[feedback_north_star_plugin_isolation]]): a new flavor/plugin adds its own query without touching core.
+
+```elixir
+# core (apps/ezagent_core/lib/ezagent/uri_query.ex)
+Ezagent.UriQuery.register(attr :: atom, resolver :: (term -> {:ok, term} | :none | {:error, term}))
+Ezagent.UriQuery.resolve(attr :: atom, arg) :: {:ok, term} | :none | {:error, term}
+```
+
+Core attribute resolvers registered by their owning domains at boot:
+| attr | registered by (domain Application.start) | resolver reads |
+|---|---|---|
+| `:flavor` | cc/codex/curl flavors (or instance_message) | `AgentFlavorRegistry` / `AgentTemplate.flavor` (NOT the URI prefix) |
+| `:orchestrator` | `ezagent_domain_instance_message` | session's new stored `orchestrator_uri` field (NOT `derive_orchestrator_uri/2`) |
+| `:member_by_role` | `ezagent_domain_instance_message` | member `:role_name` facet on the chat slice |
+| `:session_template` | `ezagent_domain_instance_message` | session's stored template assoc |
+
+**Add-a-capability workflow** (e.g. "workspace-scoped default session template"):
+1. In the owning domain's `Application.start/2`: `Ezagent.UriQuery.register(:default_session_template, &SessionTemplates.default_for/1)`.
+2. Implement `SessionTemplates.default_for(workspace_uri)` in that domain.
+3. Callers anywhere: `Ezagent.UriQuery.resolve(:default_session_template, workspace_uri)`.
+→ **Zero edits to `ezagent_core`/`UriQuery`; zero edits to other domains.**
+
+(Ergonomics: domains MAY expose typed wrappers in their own namespace delegating to `resolve/2`; the scan whitelists `UriQuery.resolve/2` either way.)
+
+---
+
+## 5. Storage slots
+
+| Attribute | Stored today? | Where | Action |
 |---|---|---|---|
-| agent **flavor** | ✅ yes | `AgentTemplate` content `flavor: "cc"` (universal base, SPEC 2026-06-01 flavor-generic-template-data) | consumers parse the URI prefix instead of reading this |
-| member **role** | ⚠️ partial | member `:role_name` facet on the chat slice (per-session unique; `behavior/chat.ex`) | no `query(role=…)`; orchestrator not looked up via it |
-| **orchestrator** of a session | ❌ no | (re-derived by formula) | **add a stored `orchestrator_uri` field on the session** (single source of truth) |
-| session **template** | ✅ yes (assoc known at create) | session working-copy / creation metadata | encoded in URI segment + no clean accessor |
+| agent **flavor** | ✅ | `AgentTemplate.flavor` ("cc") + `AgentFlavorRegistry` | readers switch to `UriQuery.resolve(:flavor, _)`; drop `<flavor>_` from agent name |
+| member **role** | ⚠️ partial | member `:role_name` facet | expose via `:member_by_role` resolver |
+| **orchestrator** of session | ❌ | (re-derived) | **add stored `orchestrator_uri` field on session**, set once at create |
+| session **template** | ✅ (known at create) | session working-copy / creation meta | expose via `:session_template`; stop relying on URI segment for behavior |
 
 ---
 
-## 3. The canonical query/constructor API (target)
+## 6. Phase #30 — the scan test (write FIRST, must fail)
 
-Introduce (or consolidate onto) ONE module — proposed `Ezagent.UriQuery` (codex to confirm best home; likely alongside `Ezagent.URI`) — the *only* sanctioned way to obtain an entity URI by attribute or read an attribute from an entity:
+A test that mechanically enumerates violations and **fails until zero**. It IS the completion gate + the recurrence guard.
 
-- `Ezagent.UriQuery.orchestrator_of(session_uri) :: {:ok, URI.t()} | :none`
-  reads the session's stored `orchestrator_uri` (NOT `derive_orchestrator_uri/2`).
-- `Ezagent.UriQuery.flavor_of(agent_uri) :: {:ok, String.t()} | {:error, _}`
-  reads `AgentTemplate.flavor` (NOT `String.split(name, "_")`).
-- `Ezagent.UriQuery.member_by_role(session_uri, role) :: {:ok, URI.t()} | :none`
-  reads the `:role_name` facet (generalizes the orchestrator case).
-- `Ezagent.URI.new!/1` + `instance/1` / accessors remain the ONLY constructors/部分访问器 for the structural shape.
+1. Source the finite legitimate forms from `Ezagent.URI.SchemeRegistry` (6 schemes) — not a hardcoded list.
+2. Statically scan `apps/**/*.{ex,exs}` (exclude `Ezagent.URI*` and `Ezagent.UriQuery` themselves) for:
+   - **(C-construct)** any string literal / interpolation forming a `<scheme>://…` URI (hand-construction) outside the builders;
+   - **(P-parse)** any `String.split`/`String.starts_with?`/regex extracting flavor/role/template/type from a URI's `path`/`host`/instance, outside the centralized accessors;
+   - any call to the to-be-removed `derive_orchestrator_uri/2`, `derive_orchestrator_instance_name/1`, or the bridge `derive_flavor/1`.
+3. Assert the violation set is **empty**. While #31 is in progress, the set is an explicit shrinking allowlist that must reach `[]`.
 
-Everything else becomes a caller of these. No bespoke string building/parsing.
-
----
-
-## 4. Known violations (audit — new-main paths @ 53f3c48b)
-
-This is the *starting* fix list; #30's scan must find the complete set (do not assume this is exhaustive).
-
-**A. Orchestrator URI re-derived by formula (should read stored `orchestrator_uri`)** — 4 sites:
-- `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:369` (`ensure_orchestrator`), `:843` (`derive_orchestrator_uri/2` def), `:866` (`derive_orchestrator_instance_name/1` def)
-- `apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/session_creator.ex:470` (MCP re-register), `:1167` (ready_meta/status)
-- `apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/health.ex:105`
-- also `session.ex:370` hardcodes `template://agent/system/cc-orchestrator` (flavor-blind template pin).
-
-**B. Flavor parsed out of the agent URI (should read `AgentTemplate.flavor`)** — bridge-routing hot path:
-- `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge.ex:211` `derive_flavor/1` (`String.split(entity_name, "_")`)
-- `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/channel.ex:179` `derive_flavor/1`
-
-**C. Flavor parsed/validated/assembled in `<flavor>_<name>` form (audit each — some are legit display, some are addressing):**
-- `apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/mention_parser.ex` (strips flavor prefix to match `@name`)
-- `apps/ezagent_domain_workspace/lib/mix/tasks/ezagent.agent.create.ex` (parses/validates `<flavor>_<name>`)
-- `apps/ezagent_plugin_liveview/.../agent_detail_live.ex`, `agent_extensions_live.ex`, `agent_new_live.ex` (extract flavor for display)
-- `apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/session_creator.ex:~1530` (`"#{flavor}_#{session_unique}"` assembly)
-- cc/echo agent templates validating the prefix; cc-agents file-path layout `<flavor>_<name>/`.
-
-**D. Session template encoded in URI segment** — `session://<template>/<ws>/<name>` (`session.ex:81`, SPEC v3 §3.6) + the segment-order question (old #31).
-
-> Distinguish **display** (showing flavor in a UI label — acceptable if it reads the stored attribute) from **addressing/branching** (deciding behavior by parsing the URI — forbidden). The scan should flag addressing; display sites must switch to reading the stored attribute, not string-parsing.
+Prefer AST matching (`Code.string_to_quoted/1`) over grep for robustness; a grep first-cut is acceptable if AST proves too heavy (codex decides). The scan must be runnable as an ExUnit test in CI.
 
 ---
 
-## 5. Approach — two phases (Allen's plan)
+## 7. Phase #31 — fix-all (mechanical, one pass)
 
-### #30 — test-first scan (write the failing test FIRST)
-A test/scan that mechanically enumerates violations and FAILS until they're gone. It encodes the invariant so future regressions are caught. Concretely it should:
+Drive the scan to zero:
+1. **Builders + reorder:** add the §3 builders; codemod all ~3800 literals → builder calls in the new workspace-first order; update centralized accessors. (~740 non-test + ~3000 test sites — mechanical, scan-verified.)
+2. **`UriQuery`:** add the core dispatcher; register the §4 resolvers in each owning domain's `Application`.
+3. **Orchestrator:** add stored `orchestrator_uri` to session state; set once in `session_creator`; replace the 4 derive sites (`session.ex:369`, `session_creator.ex:470/1167`, `health.ex:105`) with `UriQuery.resolve(:orchestrator, session_uri)`. Remove `derive_orchestrator_uri/*`. Drop the hardcoded `template://agent/system/cc-orchestrator` pin (`session.ex:370`) — resolve the orchestrator template per the session's flavor/config.
+4. **Flavor:** repoint bridge `derive_flavor/1` (`agent_bridge.ex:211`, `channel.ex:179`) → `UriQuery.resolve(:flavor, agent_uri)`. Drop `<flavor>_` from new agent names; convert display sites (mention_parser, agent.create, the 3 LiveViews) to read flavor via `UriQuery` rather than string-split.
+5. Run the scan → `[]`; full suite green; tier2 live Feishu E2E still works (flavor now read from store).
 
-1. Enumerate the finite legitimate URI forms from `SchemeRegistry` (the 6 schemes + type axes) — single source of truth, not a hardcoded list.
-2. **Static scan** of `apps/**/*.ex` (exclude `_test.exs`, exclude the `Ezagent.URI*`/`Ezagent.UriQuery` modules themselves) for:
-   - direct attribute parsing from URIs: `String.split` / `String.starts_with?` / regex over a URI's `path`/`host`/instance to extract flavor/role/template;
-   - hand-concatenation that *builds an addressing URI* from a flavor/role/template string (`"#{flavor}_..."`, `"cc_orchestrator-" <> ...`, `<> "_orchestrator"`);
-   - any call to the to-be-deprecated `derive_orchestrator_uri/2` / `derive_orchestrator_instance_name/1` outside the query module.
-3. Assert: every attribute access goes through `Ezagent.UriQuery`; the scan set is **empty**. Until #31, the test enumerates the known offenders as an explicit allowlist that shrinks to zero (so the test is green only when the list is empty).
-
-(Codex: decide the scan mechanism — an ExUnit test that walks files with `Code.string_to_quoted` AST matching is more robust than grep; a grep-based test is acceptable for a first cut if AST is too heavy. Prefer AST.)
-
-### #31 — fix-all in one mechanical pass
-Drive every violation the scan finds to zero:
-1. Add the stored `orchestrator_uri` field to session state; set it once at create (in `session_creator`), read it everywhere (replace the 4 derive sites). Keep `flavor` stored per-session (already stamped) for the bridge.
-2. Repoint `AgentBridge.derive_flavor` → `Ezagent.UriQuery.flavor_of/1` (reads `AgentTemplate.flavor`).
-3. Convert C-list display sites to read the stored flavor; convert addressing sites to query.
-4. Decide the agent-name shape: drop the `<flavor>_` prefix from new agent URIs → `entity://agent/<ws>/<name>`. **Migration** (below).
-5. Session template: stop encoding template in the `session://` type segment (and resolve the segment-order question) — read the stored template assoc. **Migration** (below).
-6. Make `derive_orchestrator_uri/*` private/deleted; the scan goes green.
+Split into reviewable PRs (each gets codex review — [[feedback_codex_review_every_pr]]): (a) builders + codemod + accessors; (b) UriQuery + resolvers; (c) orchestrator store-the-URI; (d) flavor read-through + name-prefix drop; (e) the #30 scan flips to enforcing. Order: ship the scan as warn-only first, then each PR shrinks the allowlist, last PR makes it hard-fail.
 
 ---
 
-## 6. Migration concerns (FLAG — needs care / possibly Allen input)
+## 8. Known offender audit (new-main paths @ 53f3c48b — starting list, scan finds the rest)
 
-Dropping `<flavor>_` from agent URIs and the template segment from session URIs **changes existing identities** → existing persisted Kinds, caps (keyed by URI), routing rules, bindings, lineage, file paths all reference the old URIs.
-
-Options (codex to evaluate, Allen to ratify the risky ones):
-- **(a) Grandfather**: new entities use the new shape; a one-time data migration rewrites existing URIs across `kind_snapshots`, caps, routing rules, external-mirror bindings, lineage, workspace registry, and on-disk config-dir paths. High blast radius; must be atomic + reversible.
-- **(b) New-shape-forward only**: keep old URIs as-is (opaque — the whole point is we no longer parse them), require the stored attributes to be backfilled for existing entities, and only NEW entities adopt the prefix-free name. Lower risk; leaves mixed shapes (acceptable *because* nothing parses them anymore).
-
-Recommendation: lean (b) — it is the minimal change consistent with "URIs are opaque" and avoids a giant destructive migration ([[feedback_destructive_migration_anti_pattern]], [[feedback_let_it_crash_no_workarounds]] — no shims, but also no gratuitous rewrite). The orchestrator `orchestrator_uri` field + flavor-from-AgentTemplate work regardless of old vs new name shape. **Allen to confirm (a) vs (b).**
+- **Orchestrator re-derive (→ stored `orchestrator_uri`):** `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:369,843,866`; `…/session_creator.ex:470,1167`; `…/orchestrator/health.ex:105`; hardcoded template pin `session.ex:370`.
+- **Flavor parsed from URI (→ `UriQuery.resolve(:flavor,_)`):** `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge.ex:211`; `…/agent_bridge/channel.ex:179`.
+- **`<flavor>_<name>` parse/assemble (audit display vs addressing):** `apps/ezagent_plugin_feishu/.../mention_parser.ex`; `apps/ezagent_domain_workspace/lib/mix/tasks/ezagent.agent.create.ex`; `apps/ezagent_plugin_liveview/.../agent_detail_live.ex`, `agent_extensions_live.ex`, `agent_new_live.ex`; `…/session_creator.ex:~1530` (`"#{flavor}_#{session_unique}"`); cc/echo template prefix validation; cc-agents file-path layout.
+- **URI literals (codemod target):** ~3805 `<scheme>://` literals across `apps/**/*.{ex,exs}`.
 
 ---
 
-## 7. User-assist / risk flags (per [[feedback_flag_user_assist_steps]])
-- **Allen decision**: migration strategy (a) vs (b) in §6.
-- **Allen decision**: session URI segment order (old #31) — fix as part of this, or keep template out of URI entirely?
-- No live-node hacks; prototype against the throwaday docker dev node only ([[feedback_no_hack_use_cli_on_live_node]]).
-- codex companion runs static-only (no `mix` deps) — the AST scan must be runnable, but codex's own verification is static ([[feedback_codex_companion_no_mix]]).
+## 9. Decisions — locked + open
 
-## 8. Verification (the durable invariant test — [[feedback_completion_requires_invariant_test]])
-The #30 scan IS the completion gate: it fails while any code parses/concatenates URI attributes and passes only when all access flows through `Ezagent.UriQuery`. Plus: existing suites green; tier2 live Feishu E2E still works (flavor now read from store, not URI).
+**Locked (this session):** workspace-first reorder ✅ · mandatory builders incl. tests ✅ · UriQuery registry-dispatcher ✅ · no data migration (code-only + dev reseed) ✅ · root-cause scope (not flavor-only) ✅.
+
+**Open for codex / Allen:**
+- session URI: keep template as the type-axis value (`session://<ws>/<template>/<name>`, uniform 3-seg, recommended) vs collapse to `session://<ws>/<name>` (template stored only).
+- exact builder signatures + the test-ergonomic helper/sigil form.
+- AST vs grep for the scan.
+
+## 10. Constraints (codex must honor)
+[[feedback_let_it_crash_no_workarounds]] (no shims/back-compat) · [[feedback_codex_companion_no_mix]] (codex verification static-only) · [[feedback_no_hack_use_cli_on_live_node]] (prototype on throwaway docker node only) · [[feedback_subagent_must_load_project_skills]] (load `esr-developer` + `elixir-phoenix-helper`) · [[feedback_north_star_plugin_isolation]] (registry keeps plugins out of core).
+
+## 11. Verification gate (completion test — [[feedback_completion_requires_invariant_test]])
+The #30 scan returns `[]` (hard-fail in CI) **and** full suite green **and** tier2 live Feishu E2E round-trip still works with flavor read from the store, not the URI.
