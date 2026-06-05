@@ -1,6 +1,6 @@
-# Unify URI Query — Design Spec (rev 3)
+# Unify URI Query — Design Spec (rev 4)
 
-**Status:** rev 3 — incorporates codex r1 (4 findings) + r2 (registry-driven flavor inventory incl. `np`) + Allen's locked decisions. Ready for implementation. Authored 2026-06-05 (Claude + Allen, Feishu session). Branch/worktree: `unify-uri-query` (off `main` @ 53f3c48b, post `domain_chat → domain_instance_message` rename).
+**Status:** rev 4 — incorporates codex r1 (4 findings) + r2 (registry-driven flavor inventory incl. `np`) + r3 (prefix-split scan hard-gates PR-B / precondition of PR-E) + Allen's locked decisions. codex r3 confirmed no flavor provider beyond cc/codex/curl/echo/np. Ready for implementation. Authored 2026-06-05 (Claude + Allen, Feishu session). Branch/worktree: `unify-uri-query` (off `main` @ 53f3c48b, post `domain_chat → domain_instance_message` rename).
 
 **Root cause (Allen's framing):** Two coupled defects, not "the cc_ flavor bug":
 1. **URI inconsistency** — URIs encode mutable/secondary/creation-time attributes (agent **flavor** as a name prefix) and the segment order (`<type>/<workspace>`) does not reflect the real scoping hierarchy (type is workspace-scoped).
@@ -126,10 +126,10 @@ Order matters — each PR keeps main green; the scan ships warn-only first, then
 
 - **PR-0 (#30 scan, warn-only):** AST scan enumerating violations (broadened per §8); reports, doesn't fail. Establishes the shrinking allowlist.
 - **PR-A (UriQuery core):** dispatcher + readiness semantics + `:flavor`/`:orchestrator`/`:member_by_role`/`:session_template` resolvers registered. Tests incl. pre-registration + boot-order.
-- **PR-B (flavor prerequisite, §6):** all flavor/Kind resolution + validators + paths read stored flavor. NO prefix drop yet (URIs unchanged) — main stays green.
+- **PR-B (flavor prerequisite, §6):** all flavor/Kind resolution + validators + paths read stored flavor. NO prefix drop yet (URIs unchanged) — main stays green. **HARD GATE (codex r3):** PR-B does NOT complete until the registry-driven `check_agent_uri` prefix-split sub-scan returns **zero** across EVERY `agent_flavors/0` provider — this specific rule hard-fails here (not warn-only), even though the broader #30 scan stays warn-only until PR-F. This is the proof PR-E depends on.
 - **PR-C (builders + consolidate positional parsers, §2/§3):** add `Ezagent.URI` builders; consolidate `capability.workspace_of`, worker_spawn derivation, all `%URI{host,path}` matches onto accessors. NO reorder yet.
 - **PR-D (codemod reorder):** flip to workspace-first; codemod ~3800 literals → builders in new order; update accessors. Reseed dev. tier2 E2E re-verify.
-- **PR-E (drop flavor prefix):** remove `<flavor>_` from agent names (safe now — PR-B removed all prefix dependence). Reseed dev.
+- **PR-E (drop flavor prefix):** remove `<flavor>_` from agent names. **Precondition (codex r3):** the PR-B registry-driven `check_agent_uri` prefix-split sub-scan is green (zero across all `agent_flavors/0` providers) — PR-E must not merge otherwise. Reseed dev.
 - **PR-F (#30 hard-fail):** allowlist is empty; scan enforces in CI. Completion gate.
 
 ---
@@ -141,7 +141,7 @@ Beyond `String.split`/literals, the scan must catch:
 - all `workspace_of`/tenant-derivation + worker/session URI derivations outside `Ezagent.URI`/`UriQuery`.
 - hand-built `<scheme>://` strings: interpolation `#{}`, `<>` concatenation, sigils, and interpolation **embedded inside larger strings**.
 - URI-as-string map/cap **keys** and routing **receiver** strings built by hand.
-- plugin template `check_agent_uri` validators that parse the name prefix — iterate ALL `agent_flavors/0` providers (cc/codex/curl/echo/np/future); fail on any remaining prefix split.
+- plugin template `check_agent_uri` validators that parse the name prefix — iterate ALL `agent_flavors/0` providers (cc/codex/curl/echo/np/future); fail on any remaining prefix split. **This sub-rule hard-fails at PR-B completion and gates PR-E** (codex r3), even while the rest of the scan is warn-only until PR-F.
 - on-disk path builders that parse a URI for flavor/workspace (`Path.join`, config_dir).
 AST matching (`Code.string_to_quoted/1`) strongly preferred over grep for the embedded-interpolation + pattern-match cases.
 
