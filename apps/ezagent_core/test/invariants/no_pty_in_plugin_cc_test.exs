@@ -59,7 +59,7 @@ defmodule EzagentCore.Invariants.NoPtyInPluginCcTest do
     violations =
       @forbidden
       |> Enum.flat_map(fn name ->
-        case System.cmd("grep", ["-rn", name, cc_lib, "--include=*.ex"], stderr_to_stdout: true) do
+        case System.cmd("grep", ["-rn", name, cc_lib, "--include=*.ex"], stderr_to_stdout: false) do
           {output, 0} ->
             String.split(output, "\n", trim: true)
 

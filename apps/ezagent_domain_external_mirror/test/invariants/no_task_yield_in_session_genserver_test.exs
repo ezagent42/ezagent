@@ -96,7 +96,7 @@ defmodule Ezagent.ExternalMirror.Invariants.NoTaskYieldInSessionGenServerTest do
           System.cmd(
             "grep",
             ["-En", pattern, path],
-            stderr_to_stdout: true
+            stderr_to_stdout: false
           )
 
         output

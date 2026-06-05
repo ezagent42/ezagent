@@ -77,7 +77,7 @@ defmodule Ezagent.ExternalMirror.Invariants.NoHardMatchKindSpawnTest do
       System.cmd(
         "grep",
         ["-rEn", pattern, dir, "--include=*.ex"],
-        stderr_to_stdout: true
+        stderr_to_stdout: false
       )
 
     output

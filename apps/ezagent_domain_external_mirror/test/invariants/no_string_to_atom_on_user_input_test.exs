@@ -41,7 +41,7 @@ defmodule Ezagent.ExternalMirror.Invariants.NoStringToAtomOnUserInputTest do
       System.cmd(
         "grep",
         ["-rEn", @pattern, domain_lib, "--include=*.ex"],
-        stderr_to_stdout: true
+        stderr_to_stdout: false
       )
 
     violations =

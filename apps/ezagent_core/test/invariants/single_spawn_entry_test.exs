@@ -58,7 +58,7 @@ defmodule Ezagent.Invariants.SingleSpawnEntryTest do
           apps_root,
           "--include=*.ex"
         ],
-        stderr_to_stdout: true
+        stderr_to_stdout: false
       )
 
     violations =

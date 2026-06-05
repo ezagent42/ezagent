@@ -224,7 +224,7 @@ defmodule Ezagent.ExternalMirror.Invariants.NoDispatchInTargetOwnershipCheckTest
         System.cmd(
           "grep",
           ["-En", pattern, file],
-          stderr_to_stdout: true
+          stderr_to_stdout: false
         )
 
       output

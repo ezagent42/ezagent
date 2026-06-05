@@ -283,7 +283,7 @@ defmodule Ezagent.ExternalMirror.Invariants.NoPubsubBypassTest do
       System.cmd(
         "grep",
         ["-rEn", @forbidden.source, dir, "--include=*.ex"],
-        stderr_to_stdout: true
+        stderr_to_stdout: false
       )
 
     output
