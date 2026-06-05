@@ -35,6 +35,14 @@ if [ -f /secrets/feishu.yaml ] && [ ! -f "${PROFILE_DIR}/credentials/feishu.yaml
   chmod 600 "${PROFILE_DIR}/credentials/feishu.yaml"
 fi
 
+# Static SMTP config (read-only secret) → profile credentials, if not present.
+# The app auto-seeds the `smtp_config` app_setting from this file on boot.
+if [ -f /secrets/smtp_config.json ] && [ ! -f "${PROFILE_DIR}/credentials/smtp_config.json" ]; then
+  echo "[entrypoint.prod] seeding smtp_config.json from /secrets"
+  cp /secrets/smtp_config.json "${PROFILE_DIR}/credentials/smtp_config.json"
+  chmod 600 "${PROFILE_DIR}/credentials/smtp_config.json"
+fi
+
 # SECRET_KEY_BASE is REQUIRED by config/runtime.exs (it raises if missing).
 # If the operator didn't supply one via env, bootstrap + persist one in the
 # stable prod home (same pattern as the dev cookie) so restarts are stable.

@@ -34,6 +34,14 @@ services:
       EZAGENT_PROFILE: default
       EZAGENT_PUBLIC_HOST: app.ezagent.chat
       EZAGENT_PUBLIC_SCHEME: https
+      # Deterministic distribution so `bin/ezagent rpc` connects out-of-the-box:
+      # release boots as ezagent_runtime@127.0.0.1 (matches Ezagent.Runtime), and
+      # the cookie is fixed — the app's ensure_cookie! prefers EZAGENT_COOKIE, and
+      # RELEASE_COOKIE must equal it so the rpc helper uses the same cookie.
+      RELEASE_DISTRIBUTION: name
+      RELEASE_NODE: ezagent_runtime@127.0.0.1
+      EZAGENT_COOKIE: ezagent_prod_cookie
+      RELEASE_COOKIE: ezagent_prod_cookie
       # Agents' claude/codex subprocesses reach providers via the proxy; Feishu
       # + localhost go direct.
       HTTP_PROXY: ${ESR_PROXY:-}
