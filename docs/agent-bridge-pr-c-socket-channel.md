@@ -35,7 +35,7 @@ Backward compatibility:
 Out of scope:
 - `Chat.receive(Entity.Agent)` rewrite to `Ezagent.AgentBridge.deliver/2`.
 - `Ezagent.AgentBridge.Payload` and BridgeAdapter delivery.
-- Removing `ezagent_domain_chat`'s dependency on `ezagent_plugin_cc`.
+- Removing `ezagent_domain_instance_message`'s dependency on `ezagent_plugin_cc`.
 - Creating `ezagent_plugin_codex`.
 
 This keeps cc operational while making the bridge transport

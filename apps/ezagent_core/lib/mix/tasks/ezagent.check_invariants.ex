@@ -101,10 +101,10 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
           "-c",
           # Strip lines that are pure prose mentions (backtick-quoted
           # symbol inside docstring) rather than actual code calls.
-          "grep -rnE 'PubSub\\.broadcast' apps/ezagent_core apps/ezagent_plugin_echo apps/ezagent_domain_chat apps/ezagent_plugin_liveview 2>/dev/null --include='*.ex' " <>
+          "grep -rnE 'PubSub\\.broadcast' apps/ezagent_core apps/ezagent_plugin_echo apps/ezagent_domain_instance_message apps/ezagent_plugin_liveview 2>/dev/null --include='*.ex' " <>
             "| grep -v 'lib/esr/audit.ex' " <>
             "| grep -v 'lib/esr/invocation.ex' " <>
-            "| grep -v 'ezagent_domain_chat/lib/esr/behavior/chat.ex' " <>
+            "| grep -v 'ezagent_domain_instance_message/lib/esr/behavior/chat.ex' " <>
             "| grep -v '_test.exs' " <>
             "| grep -v 'ezagent.check_invariants.ex' " <>
             "| grep -v ' `PubSub' || true"
@@ -130,14 +130,14 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
         "bash",
         [
           "-c",
-          "grep -rnE '^\\s*def init\\(' apps/ezagent_core apps/ezagent_plugin_echo apps/ezagent_domain_chat apps/ezagent_plugin_liveview 2>/dev/null --include='*.ex' " <>
+          "grep -rnE '^\\s*def init\\(' apps/ezagent_core apps/ezagent_plugin_echo apps/ezagent_domain_instance_message apps/ezagent_plugin_liveview 2>/dev/null --include='*.ex' " <>
             "| grep -v 'kind/server.ex' " <>
             "| grep -v 'ets_owner.ex' " <>
             "| grep -v 'idempotency/sweeper.ex' " <>
             "| grep -v 'audit/writer.ex' " <>
             "| grep -v 'ezagent_core/application.ex' " <>
             "| grep -v 'ezagent_plugin_echo/application.ex' " <>
-            "| grep -v 'ezagent_domain_chat/application.ex' " <>
+            "| grep -v 'ezagent_domain_instance_message/application.ex' " <>
             "| grep -v '_test.exs' || true"
         ],
         stderr_to_stdout: true
@@ -243,7 +243,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
           # Match :stub_grant only outside backtick-quoted prose. Allowlist
           # files that legitimately mention the atom in their moduledoc
           # to explain the Phase 3d hard-flip rationale.
-          "grep -rnE ':stub_grant' apps/ezagent_core/lib apps/ezagent_domain_chat/lib " <>
+          "grep -rnE ':stub_grant' apps/ezagent_core/lib apps/ezagent_domain_instance_message/lib " <>
             "apps/ezagent_plugin_echo/lib apps/ezagent_web/lib apps/ezagent_plugin_liveview/lib " <>
             "--include='*.ex' 2>/dev/null " <>
             "| grep -v 'ezagent.check_invariants.ex' " <>

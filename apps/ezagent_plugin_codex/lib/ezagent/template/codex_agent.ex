@@ -19,6 +19,37 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   @impl Ezagent.Kind.Template
   def template_name, do: "codex.agent"
 
+  @impl Ezagent.Kind.Template
+  def config_dir_namespace, do: "codex"
+
+  # #17 PR-A — the codex credential adapter. Experiment-confirmed (2026-06-03):
+  # codex isolates per-agent creds via CODEX_HOME (relocates config AND auth), so codex is
+  # a first-class per-agent-file flavor symmetric to cc. See
+  # [[reference_codex_codex_home_per_agent_auth]]. The CODEX_HOME allocation + auth.json
+  # copy + env wiring lands in PR-A2; these are the pure declarations.
+  @behaviour Ezagent.Agent.CredentialAdapter
+
+  @impl Ezagent.Agent.CredentialAdapter
+  def credential_env_var, do: "CODEX_HOME"
+
+  @impl Ezagent.Agent.CredentialAdapter
+  def credential_relpaths, do: ["auth.json", "config.toml"]
+
+  # codex's expiry/missing-auth signatures (confirm against a live expiry in PR-C).
+  @impl Ezagent.Agent.CredentialAdapter
+  def auth_failure_signals,
+    do: [~r/Run codex login/, ~r/401 Unauthorized/, "no Codex credentials"]
+
+  # #21 PR-2b (④, TEST/E2E ONLY) — provision the full CODEX_HOME credential set
+  # (auth.json + config.toml) from a durable `source` dir into the agent's `home`
+  # CODEX_HOME, so the dockerized E2E runs without a human `codex login`. `source`
+  # and `home` are CODEX_HOME DIRECTORIES (codex is dir-based, unlike cc's single
+  # file). See `EzagentPluginCodex.CredentialRefresh`.
+  @impl Ezagent.Agent.CredentialAdapter
+  def refresh_test_credentials(source, home, opts \\ []) do
+    EzagentPluginCodex.CredentialRefresh.provision(source, home, opts)
+  end
+
   # SPEC 2026-06-01-flavor-generic-template-data (approach B): codex's
   # template_data fields, so an orchestrator-spawned codex worker carries
   # its model/approval/sandbox (pre-fix dropped by core's cc-only mapping).
@@ -57,6 +88,7 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     with :ok <- check_class(tmpl),
          :ok <- check_agent_uri(tmpl),
          :ok <- check_cwd(tmpl),
+         :ok <- check_optional_config_dir(tmpl),
          :ok <- check_optional_string(tmpl, "model"),
          :ok <- check_optional_string(tmpl, "approval_policy"),
          :ok <- check_optional_string(tmpl, "sandbox") do
@@ -141,24 +173,42 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
       case started_or_adopted do
         :already_started ->
           if owns_this_agent?(agent_uri, workspace_uri) do
-            _ = ensure_sidecars(agent_uri, tmpl)
+            _ = ensure_subprocess_alive(agent_uri, tmpl)
           end
 
           {:ok, [agent_uri], %{fresh?: false}}
 
         :started ->
-          case ensure_sidecars(agent_uri, tmpl) do
-            {:ok, meta} ->
-              {:ok, [agent_uri], Map.put(meta, :fresh?, true)}
+          case create_agent_config_dir(agent_uri, tmpl) do
+            {:ok, config_dir} ->
+              tmpl_with_dir = put_agent_config_dir(tmpl, config_dir)
+
+              case ensure_sidecars(agent_uri, tmpl_with_dir) do
+                {:ok, meta} ->
+                  {:ok, [agent_uri],
+                   meta
+                   |> Map.put(:fresh?, true)
+                   |> Map.put(:config_dir_path, config_dir)
+                   |> Map.put(:respawn_template_data, tmpl_with_dir)}
+
+                {:error, reason} ->
+                  rollback_sidecars(agent_uri)
+                  _ = Ezagent.Kind.terminate(agent_uri)
+                  rollback_agent_config_dir(agent_uri)
+                  {:error, reason}
+              end
 
             {:error, reason} ->
-              rollback_sidecars(agent_uri)
+              rollback_agent_config_dir(agent_uri)
               _ = Ezagent.Kind.terminate(agent_uri)
               {:error, reason}
           end
       end
     end
   end
+
+  defp put_agent_config_dir(tmpl, nil), do: tmpl
+  defp put_agent_config_dir(tmpl, dir), do: Map.put(tmpl, "agent_config_dir", dir)
 
   defp ensure_sidecars(agent_uri, tmpl) do
     cwd = Map.fetch!(tmpl, "cwd")
@@ -170,7 +220,7 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
 
     # Bridge creates the Codex thread first; the PTY TUI resumes that
     # thread so operator input and AgentBridge turns share one context.
-    with :ok <- ensure_app_server(agent_uri, cwd, socket_path, codex_path, test_mode),
+    with :ok <- ensure_app_server(agent_uri, cwd, socket_path, codex_path, test_mode, tmpl),
          :ok <- reset_thread_id_file_for_new_bridge(agent_uri, thread_id_path, test_mode),
          :ok <-
            ensure_bridge_sidecar(
@@ -195,16 +245,14 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     end
   end
 
-  defp ensure_app_server(agent_uri, cwd, socket_path, codex_path, test_mode) do
+  defp ensure_app_server(agent_uri, cwd, socket_path, codex_path, test_mode, tmpl) do
     if EzagentPluginCodex.AppServer.alive?(agent_uri) do
       :ok
     else
-      case EzagentPluginCodex.AppServer.start(agent_uri, %{
-             cwd: cwd,
-             socket_path: socket_path,
-             codex_path: codex_path,
-             test_mode: test_mode
-           }) do
+      case EzagentPluginCodex.AppServer.start(
+             agent_uri,
+             build_app_server_params(cwd, socket_path, codex_path, test_mode, tmpl)
+           ) do
         {:ok, _pid} -> :ok
         {:error, {:already_started, _pid}} -> :ok
         {:error, reason} -> {:error, {:codex_app_server_start_failed, reason}}
@@ -241,17 +289,18 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     if EzagentPluginCodex.BridgeSidecar.alive?(agent_uri) do
       :ok
     else
-      case EzagentPluginCodex.BridgeSidecar.start(agent_uri, %{
-             cwd: cwd,
-             app_server_socket: socket_path,
-             thread_id_file: thread_id_path,
-             bridge_ws_url: bridge_ws_url,
-             codex_path: codex_path,
-             model: Map.get(tmpl, "model"),
-             approval_policy: Map.get(tmpl, "approval_policy"),
-             sandbox: Map.get(tmpl, "sandbox"),
-             test_mode: test_mode
-           }) do
+      case EzagentPluginCodex.BridgeSidecar.start(
+             agent_uri,
+             build_bridge_sidecar_params(
+               cwd,
+               socket_path,
+               thread_id_path,
+               bridge_ws_url,
+               tmpl,
+               codex_path,
+               test_mode
+             )
+           ) do
         {:ok, _pid} -> :ok
         {:error, {:already_started, _pid}} -> :ok
         {:error, reason} -> {:error, {:codex_bridge_sidecar_start_failed, reason}}
@@ -276,14 +325,44 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     :ok
   end
 
-  defp pty_params(cwd, _socket_path, _thread_id, _tmpl, _codex_path, true) do
-    {:ok, %{cwd: cwd, test_mode: true}}
+  defp rollback_agent_config_dir(agent_uri) do
+    _ = File.rm_rf(agent_config_dir(agent_uri))
+    :ok
+  end
+
+  defp pty_params(cwd, socket_path, thread_id, tmpl, codex_path, true) do
+    build_pty_params_for_env(cwd, socket_path, thread_id, tmpl, codex_path, :test)
   end
 
   defp pty_params(cwd, socket_path, thread_id, tmpl, codex_path, false) do
+    build_pty_params_for_env(cwd, socket_path, thread_id, tmpl, codex_path, :dev)
+  end
+
+  @doc false
+  def build_pty_params_for_env(cwd, _socket_path, _thread_id, _tmpl, _codex_path, :test) do
+    {:ok, %{cwd: cwd, test_mode: true}}
+  end
+
+  def build_pty_params_for_env(cwd, socket_path, thread_id, tmpl, codex_path, _env) do
     with {:ok, cmd} <- codex_tui_cmd(socket_path, cwd, thread_id, tmpl, codex_path) do
-      {:ok, %{cwd: cwd, cmd_override: cmd}}
+      # #17 PR-C (codex review P2) — wire codex's credential-adapter auth-failure signals
+      # as emit-only PTY observers, same as cc, so an expired codex login surfaces
+      # (telemetry + pty:auth_failed) instead of muting silently.
+      {:ok,
+       %{
+         cwd: cwd,
+         cmd_override: cmd,
+         cmd_env: codex_home_env(tmpl),
+         auth_observers: credential_auth_observers()
+       }}
     end
+  end
+
+  # #17 PR-C — one named emit-only observer per declared codex auth-failure signal.
+  defp credential_auth_observers do
+    auth_failure_signals()
+    |> Enum.with_index()
+    |> Enum.map(fn {sig, i} -> %{name: :"codex_auth_failure_#{i}", match: sig} end)
   end
 
   defp codex_tui_cmd(socket_path, cwd, _thread_id, tmpl, codex_path) do
@@ -324,6 +403,199 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     end
   end
 
+  @doc false
+  def build_app_server_params(cwd, socket_path, codex_path, test_mode, tmpl) do
+    %{
+      cwd: cwd,
+      socket_path: socket_path,
+      codex_path: codex_path,
+      test_mode: test_mode,
+      cmd_env: codex_home_env(tmpl)
+    }
+  end
+
+  @doc false
+  def build_bridge_sidecar_params(
+        cwd,
+        socket_path,
+        thread_id_path,
+        bridge_ws_url,
+        tmpl,
+        codex_path,
+        test_mode
+      ) do
+    %{
+      cwd: cwd,
+      app_server_socket: socket_path,
+      thread_id_file: thread_id_path,
+      bridge_ws_url: bridge_ws_url,
+      codex_path: codex_path,
+      model: Map.get(tmpl, "model"),
+      approval_policy: Map.get(tmpl, "approval_policy"),
+      sandbox: Map.get(tmpl, "sandbox"),
+      test_mode: test_mode,
+      cmd_env: codex_home_env(tmpl)
+    }
+  end
+
+  @doc false
+  def codex_home_env(%URI{} = agent_uri, tmpl) when is_map(tmpl) do
+    case resolve_config_home(agent_uri, tmpl) do
+      dir when is_binary(dir) and dir != "" -> %{"CODEX_HOME" => dir}
+      _ -> %{}
+    end
+  end
+
+  def codex_home_env(tmpl) when is_map(tmpl) do
+    case Map.get(tmpl, "agent_uri") do
+      uri_str when is_binary(uri_str) and uri_str != "" ->
+        codex_home_env(Ezagent.URI.new!(uri_str), tmpl)
+
+      _ ->
+        case Map.get(tmpl, "agent_config_dir") || Map.get(tmpl, "allocated_config_dir") do
+          dir when is_binary(dir) and dir != "" -> %{"CODEX_HOME" => dir}
+          _ -> %{}
+        end
+    end
+  end
+
+  @doc false
+  def resolve_config_home(%URI{} = agent_uri, tmpl) when is_map(tmpl) do
+    cond do
+      valid_dir?(Map.get(tmpl, "agent_config_dir")) ->
+        Map.get(tmpl, "agent_config_dir")
+
+      valid_dir?(Map.get(tmpl, "allocated_config_dir")) ->
+        Map.get(tmpl, "allocated_config_dir")
+
+      valid_dir?(Map.get(tmpl, "config_dir")) ->
+        agent_config_dir(agent_uri)
+
+      config_dir_present_but_malformed?(tmpl) ->
+        raise ArgumentError,
+              "codex.agent: invalid config_dir #{inspect(Map.get(tmpl, "config_dir"))} — " <>
+                "must be a non-empty string or absent. No silent fallback to operator " <>
+                "CODEX_HOME."
+
+      true ->
+        nil
+    end
+  end
+
+  defp valid_dir?(dir) when is_binary(dir) and dir != "", do: true
+  defp valid_dir?(_), do: false
+
+  defp config_dir_present_but_malformed?(tmpl) do
+    case Map.fetch(tmpl, "config_dir") do
+      :error -> false
+      {:ok, value} -> not valid_dir?(value)
+    end
+  end
+
+  @doc false
+  def agent_config_dir(%URI{} = agent_uri) do
+    Ezagent.Sandbox.ConfigDir.path(agent_uri, Ezagent.Kind.Template.namespace_of(__MODULE__))
+  end
+
+  @doc false
+  @spec create_agent_config_dir(URI.t(), map()) :: {:ok, String.t() | nil} | {:error, term()}
+  def create_agent_config_dir(%URI{} = _agent_uri, tmpl) when is_map(tmpl) do
+    case Map.fetch(tmpl, "config_dir") do
+      :error ->
+        {:ok, nil}
+
+      {:ok, ref} when is_binary(ref) and ref != "" ->
+        case Map.fetch(tmpl, "allocated_config_dir") do
+          {:ok, target} when is_binary(target) and target != "" ->
+            materialize_config_dir(target, ref)
+
+          _ ->
+            {:error, :config_dir_not_allocated}
+        end
+
+      {:ok, bad} ->
+        {:error, {:invalid_config_dir, bad}}
+    end
+  end
+
+  @config_complete_marker ".ezagent-config-complete"
+
+  defp materialize_config_dir(target, reference_dir) do
+    marker = Path.join(target, @config_complete_marker)
+
+    cond do
+      not File.dir?(reference_dir) ->
+        {:error, {:reference_dir_missing, reference_dir}}
+
+      File.dir?(target) and File.exists?(marker) ->
+        {:ok, target}
+
+      File.dir?(target) and has_user_credentials?(target) ->
+        stage_and_swap(reference_dir, target, marker, overlay: target)
+
+      true ->
+        stage_and_swap(reference_dir, target, marker)
+    end
+  end
+
+  defp stage_and_swap(reference_dir, target, marker, opts \\ []) do
+    staging = "#{target}.staging-#{System.unique_integer([:positive])}"
+    marker_name = Path.basename(marker)
+    _ = File.rm_rf(staging)
+
+    with :ok <- File.mkdir_p(Path.dirname(target)),
+         {:ok, _} <- File.cp_r(reference_dir, staging),
+         :ok <- maybe_overlay(Keyword.get(opts, :overlay), staging),
+         :ok <- File.chmod(staging, 0o700),
+         :ok <- chmod_credential_files(staging),
+         :ok <- File.write(Path.join(staging, marker_name), "ok\n"),
+         :ok <- swap_into_place(staging, target) do
+      {:ok, target}
+    else
+      {:error, reason} ->
+        _ = File.rm_rf(staging)
+        {:error, {:config_dir_materialize_failed, reason}}
+
+      err ->
+        _ = File.rm_rf(staging)
+        {:error, {:config_dir_materialize_failed, err}}
+    end
+  end
+
+  defp maybe_overlay(nil, _staging), do: :ok
+
+  defp maybe_overlay(src, staging) when is_binary(src) do
+    case File.cp_r(src, staging) do
+      {:ok, _} -> :ok
+      {:error, reason, _path} -> {:error, reason}
+    end
+  end
+
+  defp swap_into_place(staging, target) do
+    _ = File.rm_rf(target)
+    File.rename(staging, target)
+  end
+
+  defp chmod_credential_files(dir) do
+    credential_relpaths()
+    |> Enum.reduce_while(:ok, fn relpath, :ok ->
+      path = Path.join(dir, relpath)
+
+      if File.exists?(path) do
+        case File.chmod(path, 0o600) do
+          :ok -> {:cont, :ok}
+          {:error, reason} -> {:halt, {:error, {:chmod_failed, relpath, reason}}}
+        end
+      else
+        {:cont, :ok}
+      end
+    end)
+  end
+
+  defp has_user_credentials?(dir) do
+    Enum.any?(credential_relpaths(), fn relpath -> File.exists?(Path.join(dir, relpath)) end)
+  end
+
   defp ensure_agent_kind(agent_uri) do
     case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
       {:ok, :started, _pid} -> {:ok, :started}
@@ -333,11 +605,49 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   end
 
   defp fully_alive?(agent_uri) do
-    agent_kind_alive?(agent_uri) and
-      EzagentPluginCodex.AppServer.alive?(agent_uri) and
+    agent_kind_alive?(agent_uri) and sidecars_alive?(agent_uri)
+  end
+
+  defp sidecars_alive?(agent_uri) do
+    EzagentPluginCodex.AppServer.alive?(agent_uri) and
       Ezagent.Domain.Pty.alive?(agent_uri) and
       EzagentPluginCodex.BridgeSidecar.alive?(agent_uri)
   end
+
+  @impl Ezagent.Kind.Template
+  def ensure_subprocess_alive(%URI{} = agent_uri, respawn_data) when is_map(respawn_data) do
+    cond do
+      sidecars_alive?(agent_uri) ->
+        :ok
+
+      true ->
+        case Map.fetch(respawn_data, "cwd") do
+          {:ok, cwd} when is_binary(cwd) and cwd != "" ->
+            case ensure_sidecars(agent_uri, respawn_data) do
+              {:ok, _meta} ->
+                Logger.info(
+                  "codex.agent.ensure_subprocess_alive: respawned sidecars for " <>
+                    URI.to_string(agent_uri)
+                )
+
+                :ok
+
+              {:error, reason} ->
+                Logger.error(
+                  "codex.agent.ensure_subprocess_alive: failed to respawn sidecars for " <>
+                    "#{URI.to_string(agent_uri)}: #{inspect(reason)}"
+                )
+
+                {:error, reason}
+            end
+
+          _ ->
+            {:error, {:missing_cwd_in_respawn_data, agent_uri}}
+        end
+    end
+  end
+
+  def ensure_subprocess_alive(_, _), do: {:error, :invalid_args}
 
   defp agent_kind_alive?(agent_uri) do
     case Ezagent.KindRegistry.lookup(agent_uri) do
@@ -454,6 +764,14 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
 
   defp check_cwd(%{"cwd" => cwd}) when is_binary(cwd) and cwd != "", do: :ok
   defp check_cwd(_), do: {:error, :missing_cwd}
+
+  defp check_optional_config_dir(tmpl) do
+    case Map.fetch(tmpl, "config_dir") do
+      :error -> :ok
+      {:ok, value} when is_binary(value) and value != "" -> :ok
+      {:ok, bad} -> {:error, {:invalid_config_dir, bad}}
+    end
+  end
 
   defp check_optional_string(tmpl, key) do
     case Map.fetch(tmpl, key) do

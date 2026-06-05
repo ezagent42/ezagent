@@ -26,7 +26,7 @@ After Phase 6, a small team can:
 ```
 apps/
 ├── ezagent_core/                       — protocols + mechanisms only
-├── ezagent_domain_chat/                — Chat Behavior + Session/Agent Kind + routing tables + DefaultRules
+├── ezagent_domain_instance_message/                — Chat Behavior + Session/Agent Kind + routing tables + DefaultRules
 ├── ezagent_domain_identity/            — User Kind + Users table + Identity Behavior + Capability.Parser
 ├── ezagent_domain_workspace/           — Workspace Kind + Loader + Store + RoutingAdmin synthetic Kind
 ├── esr_domain_cli/                 — TreeBuilder + Dispatch + Coercion + Formatter + Mix.Tasks.Esr
@@ -68,7 +68,7 @@ DELETED in Phase 6: `apps/ezagent_web_liveview/`, `apps/ezagent_plugin_cc_bridge
 | PR | Theme | Layer | LOC est |
 |---|---|---|---|
 | 1 | **6b** EZAGENT_HOME DB migration (`mix ezagent.home.adopt_db` + config refactor) | core+domain | ~200 |
-| 2 | **6h.1** Domain extraction part 1: rename esr_plugin_chat → ezagent_domain_chat; create ezagent_domain_identity (extract User/Users/Identity/Capability.Parser from core); create ezagent_domain_workspace (extract Workspace/Loader/RoutingAdmin from core) | core→domain | ~250 |
+| 2 | **6h.1** Domain extraction part 1: rename esr_plugin_chat → ezagent_domain_instance_message; create ezagent_domain_identity (extract User/Users/Identity/Capability.Parser from core); create ezagent_domain_workspace (extract Workspace/Loader/RoutingAdmin from core) | core→domain | ~250 |
 | 3 | **6h.2** Domain extraction part 2: rename ezagent_web → esr_domain_web; rename ezagent_cli → esr_domain_cli; split ezagent_web_liveview → ezagent_domain_ui (base components incl shadcn-like primitives) + esr_plugin_ezagent (admin pages rewritten with new components). Add `layer_purity_test.exs` CI gate | rename+extract+CI | ~600 |
 | 4 | **6a** CC channel v2 (Phoenix.Channel WS) + delete ezagent_plugin_cc_bridge_v1_prototype | plugin | ~500 net (~-460 from v1 delete) |
 | 5 | **6c.1** Per-rule applies_to_users + Resolver filter + LV form | domain | ~250 |
@@ -106,7 +106,7 @@ DELETED in Phase 6: `apps/ezagent_web_liveview/`, `apps/ezagent_plugin_cc_bridge
 
 ### B. Plugin shape
 - B1 Receiver Kind: CC v2 ChannelServer is a stateful Kind. Feishu/CC plugin both follow Receiver Kind contract
-- B2 Boot order: cc_channel after ezagent_domain_chat (depends on Session); ezagent after all domain apps
+- B2 Boot order: cc_channel after ezagent_domain_instance_message (depends on Session); ezagent after all domain apps
 - B3 Storage: EZAGENT_HOME credentials; SQLite for routing_rules/users; ETS for Registries; GenServer for per-instance ChannelServer state
 
 ### C. Invariant tests

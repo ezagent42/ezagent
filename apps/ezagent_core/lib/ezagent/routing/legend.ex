@@ -245,8 +245,12 @@ defmodule Ezagent.Routing.Legend do
   end
 
   defp safe_uri(s) do
-    URI.new!(s)
-  rescue
-    _ -> nil
+    # #23 — use the canonical non-raising constructor (validates + canonicalizes the
+    # Ezagent-scheme URI) instead of stdlib URI.new!, which yields a non-canonical struct
+    # for Ezagent schemes (the silent-error hole the URI invariant guards).
+    case Ezagent.URI.parse(s) do
+      {:ok, uri} -> uri
+      {:error, _} -> nil
+    end
   end
 end

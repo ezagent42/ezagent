@@ -102,12 +102,12 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
     "chat_compose" =>
       {:deferred,
        "docs/futures/todo.md — chat_compose attachment shapes need a `resource://` upload primitive"},
-    # create_session — LV calls EzagentDomainChat.create_session/3
-    # directly (bypasses dispatch in BOTH surfaces per audit Finding 1).
-    # CLI gap: no `mix ezagent session create` yet. Tracked.
+    # create_session now routes through Workspace.create_session/3, the
+    # same higher-class behavior surface as agent creation. CLI parity is
+    # tracked against the workspace task surface.
     "create_session" =>
-      {:deferred,
-       "docs/futures/todo.md — HIGH-3 admin_live.create_session needs a Behavior + action (likely on Workspace Kind: :create_session, parallels :create_agent)"},
+      {:cli,
+       "mix ezagent workspace create_session <workspace> <short_name> --template-name <class>"},
 
     # --- Routing ops (Behavior.Routing covers all 4 actions auto-deriving) ---
     "add_rule" => {:cli, "mix ezagent workspace add_rule --workspace <name> ..."},

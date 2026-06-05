@@ -231,7 +231,7 @@ A plugin contributes Kinds by **either** (a) extending an existing scheme's type
 
 For `notifications/claude/channel` payloads (Anthropic channels-reference spec), every `meta` value MUST be a string. List / map / nested-object values cause claude TUI to silently drop the entire notification — no error returned to either side. Structured data goes in `content` as text breadcrumbs, or via a `tools/call` round-trip. The only structured-ish field allowed is the optional `meta.file_path: <abs-path>` string (mirroring cc-openclaw convention).
 *Why*: silent drop on the human-facing surface — the worst class of bug. CC channels use stdio (protocol-required), so the meta schema is the one we can defend at our boundary.
-*CI gate*: `apps/ezagent_domain_chat/test/esr/behavior/chat_test.exs` ("to_claude payload meta values are all strings").
+*CI gate*: `apps/ezagent_domain_instance_message/test/esr/behavior/chat_test.exs` ("to_claude payload meta values are all strings").
 *See also*: ARCHITECTURE.md §12.8 + Decision Log #132; invariant 3 below.
 
 #### **P26. SessionTemplate fork = configuration only.**
@@ -317,13 +317,13 @@ If your code path can't import the module reference (circular dep), use `:any` a
 
 For `notifications/claude/channel` payloads (per Anthropic channels-reference spec), every meta value MUST be a string. List/map/nested-object values cause claude TUI to silently drop the entire notification — no error to either side. Structured data goes in `content` as text breadcrumbs, or via a `tools/call` round-trip. The optional `meta.file_path` string (mirroring cc-openclaw convention) is the only way to surface a single file path through meta.
 
-CI gate: `apps/ezagent_domain_chat/test/esr/behavior/chat_test.exs` "to_claude payload meta values are all strings".
+CI gate: `apps/ezagent_domain_instance_message/test/esr/behavior/chat_test.exs` "to_claude payload meta values are all strings".
 
 ### 4. **Workspace scoping is enforced via Ezagent.WorkspaceRegistry** (Decision #135)
 
 `Ezagent.Behavior.Chat.invoke(:send, ...)` calls `Ezagent.Routing.Resolver.resolve/4` with `workspace_uri:` opt derived from `Ezagent.WorkspaceRegistry.lookup(session_uri)`. Without this plumbing, workspace-scoped routing rules silently never fire. New plugin Template Classes that spawn sessions MUST call `Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)` after `SpawnRegistry.spawn`.
 
-CI gate: `apps/ezagent_domain_chat/test/integration/workspace_isolation_test.exs`.
+CI gate: `apps/ezagent_domain_instance_message/test/integration/workspace_isolation_test.exs`.
 
 ### 5. **Scope-bounded delegation cap shapes narrow, never broaden** (Decision #137)
 
@@ -479,14 +479,14 @@ Includes:
 **First-class domain Kinds + Behaviors.** Load-bearing — you cannot uninstall a domain app without breaking the system. The vocabulary that ezagent is FOR.
 
 Apps:
-- `ezagent_domain_chat` — Session Kind, Agent Kind, Chat Behavior, SessionTemplate, AgentTemplate, GenericSession Template Class, orchestrator tools, FeishuOutbound Behavior (moved here in PR #143, see invariant 8)
+- `ezagent_domain_instance_message` — Session Kind, Agent Kind, Chat Behavior, SessionTemplate, AgentTemplate, GenericSession Template Class, orchestrator tools, FeishuOutbound Behavior (moved here in PR #143, see invariant 8)
 - `ezagent_domain_identity` — User Kind, Identity Behavior, ApiKeys Behavior, Entity facade (`Ezagent.Entity.authenticate/2`), Users provisioning, Token + ApiKey tables
 - `ezagent_domain_workspace` — Workspace Kind, Workspace Loader, DefaultRules
 - `ezagent_domain_python` — Python sidecar runner (PyProcess wrapper around erlexec)
 - `ezagent_domain_ui` — UI primitives library (`Ezagent.UI.IdeShell`, button/card/badge/status_dot/uri_chip/modal/...); shadcn-inspired; consumed by `ezagent_plugin_liveview` + `ezagent_web`
 
 **Rules**:
-- `domain_*` MAY depend on `core` and on other `domain_*` apps as needed (with care to avoid cycles — `domain_identity` cannot depend on `domain_chat`, see invariant 6).
+- `domain_*` MAY depend on `core` and on other `domain_*` apps as needed (with care to avoid cycles — `domain_identity` cannot depend on `domain_instance_message`, see invariant 6).
 - Adds first-class Kinds/Behaviors only.
 
 ### Tier 3 — `plugin` (`apps/ezagent_plugin_*/`)
@@ -617,9 +617,9 @@ Pre-built examples:
 4. If your Kind carries an Identity slice for caps, document the `init_slice/1` args shape (typically `%{initial_caps: MapSet.t()}`).
 
 Reference Kinds:
-- `apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex` (Agent — most complex)
-- `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex` (Session — typical container)
-- `apps/ezagent_domain_chat/lib/ezagent/entity/agent_template.ex` (Template Kind)
+- `apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex` (Agent — most complex)
+- `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex` (Session — typical container)
+- `apps/ezagent_domain_instance_message/lib/ezagent/entity/agent_template.ex` (Template Kind)
 
 ### How-to: add a Behavior
 
@@ -630,7 +630,7 @@ Reference Kinds:
    `:ok = BehaviorRegistry.register(SomeKind, :action, YourBehavior)`.
 5. Actions are dispatched via `?action=<your_behavior_dot_form>.<action>` per SPEC v2 §5.2. The behavior dot-form is what `interface/0` returns (e.g. `:chat` → `?action=chat.send`).
 
-Reference: `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex` (most complex, well-commented).
+Reference: `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex` (most complex, well-commented).
 
 ### How-to: add a Template Class
 
@@ -643,7 +643,7 @@ Reference: `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex` (most complex
 4. Per SPEC v2 §5.14: the AgentTemplate carries `kind_module` (the Behavior to use for instantiated agents). `Ezagent.AgentTypeRegistry` (PR #131) has been DELETED — the Template owns kind_module wiring directly.
 5. **If your Template Class orchestrates spawning multiple Kinds** (e.g. a Generator-like flow that wires up several agents + routing rules + caps), follow the **reconciler pattern** — NOT a saga with `cleanup_partial`. The canonical reference is `Ezagent.Workspace.Loader.load_one/1` + `invoke_template/2`: idempotent re-run, `{:already_started, _}` → no-op, `fresh?`-gated bind, errors logged not raised. `Session.spawn_from_template/2` follows the same shape (PR-A #259, PR-C #260). Use per-Kind idempotency helpers (`Agent.spawn_fresh/4`, `WorkspaceRegistry.bind_if_fresh/2`, `AgentLineage.record_if_fresh/3`, `RuleStore.upsert_by_logical_key/5`). See `docs/notes/2026-05-23-generator-reconciler-retrospective.md` for the post-mortem of why a saga over N stores is the wrong abstraction.
 
-Reference: `apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex` (current cc.agent class) + `apps/ezagent_domain_chat/lib/ezagent/template/generic_session.ex` (Session class) + `apps/ezagent_domain_workspace/lib/ezagent/workspace/loader.ex` (the canonical reconciler reference for multi-Kind orchestration).
+Reference: `apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex` (current cc.agent class) + `apps/ezagent_domain_instance_message/lib/ezagent/template/generic_session.ex` (Session class) + `apps/ezagent_domain_workspace/lib/ezagent/workspace/loader.ex` (the canonical reconciler reference for multi-Kind orchestration).
 
 ### How-to: add a routing rule
 
@@ -656,7 +656,7 @@ Always pass `workspace_uri:` opt unless the rule is intentionally global (matche
 
 ### How-to: write an invariant test
 
-Pattern (see `apps/ezagent_domain_chat/test/integration/workspace_isolation_test.exs` for the canonical example):
+Pattern (see `apps/ezagent_domain_instance_message/test/integration/workspace_isolation_test.exs` for the canonical example):
 
 1. **`use EzagentCore.DataCase, async: false`** (the test exercises persistence + dispatch + sandbox semantics)
 2. Spawn the production setup (`Ezagent.SpawnRegistry.spawn(uri)`, `WorkspaceRegistry.bind`, `RuleStore.add` etc.) — not mock objects
@@ -683,7 +683,7 @@ Caveats:
 In order of likelihood:
 
 1. **URI shape mismatch — non-canonical input.** Per SPEC v2 §5.1, 2-segment authority `<scheme>://<type>/<name>` is mandatory; old 1-segment forms like `user://admin` return parse error from `Ezagent.URI.parse!/1`. Check the URI string at the call site — it must be `entity://user/admin`, not `user://admin`. Same for `entity://agent/cc_X` (not `agent://cc/X` per SPEC v2 §5.12 + §5.14).
-2. **Channel notification meta has non-string value** (Decision #132). Grep `meta = ...` in your push path; ensure every value is `String.t()`. Run `apps/ezagent_domain_chat/test/esr/behavior/chat_test.exs` "to_claude payload meta values are all strings".
+2. **Channel notification meta has non-string value** (Decision #132). Grep `meta = ...` in your push path; ensure every value is `String.t()`. Run `apps/ezagent_domain_instance_message/test/esr/behavior/chat_test.exs` "to_claude payload meta values are all strings".
 3. **Cap shape mismatch on `behavior`** (invariant 2). Check via `:rpc` that `Capability.matches?/2` returns true for the user's cap + the action's needed cap. Common error: cap struct has `behavior: :chat` (atom) while needed has `behavior: Ezagent.Behavior.Chat` (module).
 4. **Workspace scope not plumbed** (invariant 4). Check `WorkspaceRegistry.lookup(session_uri)` returns `{:ok, _}` for the session involved. If `:error`, the session was spawned without `bind` (custom Template Class missed step 3 of how-to add a Template Class).
 5. **Inbound transport using `:cast`** (Decision #134). For Feishu/Slack/etc inbound, verify the dispatch uses `mode: :call` and decomposes the result.
@@ -761,7 +761,7 @@ The durable record. When you (or a future contributor) need authoritative answer
 | `docs/notes/plugin-receiver-kind-contract.md` | Why Plugin X cannot PubSub.broadcast to Plugin Y (Decision #127) — note: SPEC v2 §5.8 supersedes the "Receiver Kind = own a scheme" framing; current pattern is "register a Behavior on the existing core Kind" |
 | `docs/notes/phase-7-resume-state.md` | Per-PR live status table (resume any session mid-Phase-7) |
 | `docs/notes/phase-8-deploy-notes.zh_cn.md` | Phase 8 branch verification + operator runbook |
-| `apps/ezagent_domain_chat/lib/ezagent/entity/agent_template.ex` moduledoc | **Authoritative source for cc agent sandbox/config** — `claude_config_dir` / `settings_path` / `mcp_config_path` / `api_key_helper`. The standalone `cc-agent-config` SPEC was retired 2026-05-23 and absorbed here. Operator companion: `docs/runbook/cc-agent-config.md` |
+| `apps/ezagent_domain_instance_message/lib/ezagent/entity/agent_template.ex` moduledoc | **Authoritative source for cc agent sandbox/config** — `claude_config_dir` / `settings_path` / `mcp_config_path` / `api_key_helper`. The standalone `cc-agent-config` SPEC was retired 2026-05-23 and absorbed here. Operator companion: `docs/runbook/cc-agent-config.md` |
 
 ---
 

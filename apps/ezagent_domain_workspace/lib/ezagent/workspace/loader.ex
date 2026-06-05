@@ -25,7 +25,7 @@ defmodule Ezagent.Workspace.Loader do
   chance to register their spawn fns. Plugin Applications **must**
   register their schemes before any Workspace declaring those schemes
   loads. We currently rely on Application start order (ezagent_core ⊂
-  ezagent_domain_chat) — chat plugin registers `agent`/`session`/`user`
+  ezagent_domain_instance_message) — chat plugin registers `agent`/`session`/`user`
   schemes in its own start callback, and at that point chat plugin
   also calls `Ezagent.Workspace.Loader.load_all/0` (so the Loader runs
   AFTER schemes are registered).
@@ -128,7 +128,15 @@ defmodule Ezagent.Workspace.Loader do
     # `load_all/0` path: bind unconditionally for `fresh?: true` / the
     # legacy 2-tuple, but for `fresh?: false` bind ONLY if the worker is
     # already bound to this workspace.
-    case class_module.instantiate(tmpl_name, tmpl_data, workspace_uri) do
+    # PR-3 (domain.agent D2) — route through the core contract-boundary wrapper so
+    # boot/loader seams allocate the per-agent config_dir TARGET uniformly (this
+    # was the rev-1 codex BLOCKER: the loader bypassed single-seam allocation).
+    case Ezagent.Kind.Template.provision_and_instantiate(
+           class_module,
+           tmpl_name,
+           tmpl_data,
+           workspace_uri
+         ) do
       {:ok, uris} when is_list(uris) ->
         gated_load_bind(uris, workspace_uri, true)
 
@@ -386,7 +394,15 @@ defmodule Ezagent.Workspace.Loader do
   end
 
   defp invoke_template(class_module, tmpl_name, tmpl_data, workspace_uri) do
-    case class_module.instantiate(tmpl_name, tmpl_data, workspace_uri) do
+    # PR-3 (domain.agent D2) — route through the core contract-boundary wrapper so
+    # boot/loader seams allocate the per-agent config_dir TARGET uniformly (this
+    # was the rev-1 codex BLOCKER: the loader bypassed single-seam allocation).
+    case Ezagent.Kind.Template.provision_and_instantiate(
+           class_module,
+           tmpl_name,
+           tmpl_data,
+           workspace_uri
+         ) do
       # codex round-6 HIGH-1 — accept both the 2-element `{:ok, uris}`
       # and the 3-element `{:ok, uris, meta}` form (meta carries
       # `fresh?`).

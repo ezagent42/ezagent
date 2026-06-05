@@ -37,7 +37,7 @@ defmodule Ezagent.Behavior.RoutingMigrationParityTest do
   alias Ezagent.{BehaviorRegistry, Invocation}
   alias Ezagent.Behavior.Routing
   alias Ezagent.Routing.RuleStore
-  alias EzagentDomainChat.Routing.MentionRouting
+  alias EzagentDomainInstanceMessage.Routing.MentionRouting
 
   # MentionRouting is a real RoutingRegistry table declared by the
   # chat plugin's boot path; using it here exercises the full

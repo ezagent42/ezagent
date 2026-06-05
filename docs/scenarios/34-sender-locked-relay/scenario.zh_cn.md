@@ -101,7 +101,7 @@ cd apps/ezagent_core && MIX_ENV=test mix test \
 ### 层级 2 —— 实况 runbook（Allen 的环境 —— 真正的闸门，Standard 3）
 
 **Harness**：
-`apps/ezagent_domain_chat/test/e2e/scenario_34_sender_locked_relay_live_test.exs`
+`apps/ezagent_domain_instance_message/test/e2e/scenario_34_sender_locked_relay_live_test.exs`
 —— `@moduletag :live`，默认 SKIPPED；仅由 `SCENARIO_34_LIVE=1` 解除。它不伪造
 实况通过，也不会仅凭环境变量就通过。Allen 发出真实的 `@传话游戏 <词>` 后，harness
 **用系统自身的生产读取路径轮询实况会话里已投递+已渲染的接力**
@@ -150,7 +150,7 @@ Feishu 群、provider 凭据、agent-browser）：
    往返（预算内未到达即 flunk）：
    ```bash
    SCENARIO_34_LIVE=1 MIX_ENV=test mix test \
-     apps/ezagent_domain_chat/test/e2e/scenario_34_sender_locked_relay_live_test.exs
+     apps/ezagent_domain_instance_message/test/e2e/scenario_34_sender_locked_relay_live_test.exs
    ```
    它读 `MessageStore.recent_in_session/2`（生产路径），监视经 `telephone_hop` 渲染的
    消息。可选地用 `SCENARIO_34_RELAY_CODEX_URI`（终跳 codex→curl 的发送者）收紧闸门。

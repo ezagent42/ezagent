@@ -166,7 +166,24 @@ defmodule Ezagent.CapabilityRegistry do
          }}
 
       [] ->
-        :error
+        # #533 §3.4 — universal behaviors (e.g. Ezagent.Behavior.Manage)
+        # are grantable on EVERY Kind by construction. On a per-Kind miss,
+        # synthesize the subject for the universal behavior handling this
+        # action (a per-Kind registration above always wins).
+        case Ezagent.UniversalBehaviors.behavior_for_action(action) do
+          nil ->
+            :error
+
+          behavior ->
+            {:ok,
+             %{
+               kind: kind,
+               behavior: behavior,
+               action: action,
+               description: lookup_description!(behavior, action),
+               dispatchable?: behavior_dispatchable?(behavior)
+             }}
+        end
     end
   end
 

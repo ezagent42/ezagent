@@ -151,7 +151,7 @@ G2 (PR-A) ──→ G3 (PR-B) ──→ G1 (PR-C) ──→ G5 (PR-D)
 **Depends on:** PR-B (registration flow no longer hard-codes `default`).
 
 **Scope:**
-1. `ezagent_domain_chat/application.ex:252-253` — remove `ensure_workspace("default", %{})`.
+1. `ezagent_domain_instance_message/application.ex:252-253` — remove `ensure_workspace("default", %{})`.
 2. `ezagent_domain_identity/application.ex:227-284` — remove `ensure_default_non_admin_user/0`.
 3. Test fixtures that depend on `default` workspace existing → swap to test-created workspace per setup.
 4. Invariant test (post-PR): boot test env → `Workspace.list_all/0` returns exactly `[system]`.

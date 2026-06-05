@@ -160,7 +160,7 @@ These are pragmatic choices made under specific constraints. If the dev team enc
 
 ### 1. `:any` wildcard on cap behavior — *circular-dependency workaround, not idiom*
 
-`Ezagent.Entity.User.default_caps/0` uses `kind=:session, behavior=:any` for the structural session-chat baseline. The "right" cap would be `behavior: Ezagent.Behavior.Chat` (specific module). But `Ezagent.Entity.User` lives in `ezagent_domain_identity`, and `Ezagent.Behavior.Chat` lives in `ezagent_domain_chat`, which already depends on identity → circular dep at compile time.
+`Ezagent.Entity.User.default_caps/0` uses `kind=:session, behavior=:any` for the structural session-chat baseline. The "right" cap would be `behavior: Ezagent.Behavior.Chat` (specific module). But `Ezagent.Entity.User` lives in `ezagent_domain_identity`, and `Ezagent.Behavior.Chat` lives in `ezagent_domain_instance_message`, which already depends on identity → circular dep at compile time.
 
 Choices considered:
 - Module reference (correct): requires breaking circular dep (significant refactor)
@@ -193,9 +193,9 @@ Decision #144 names these. Each has a CI gate test:
 
 | Invariant | CI gate |
 |---|---|
-| Channel `meta` values are all strings | `apps/ezagent_domain_chat/test/esr/behavior/chat_test.exs` "to_claude payload meta values are all strings" |
+| Channel `meta` values are all strings | `apps/ezagent_domain_instance_message/test/esr/behavior/chat_test.exs` "to_claude payload meta values are all strings" |
 | Every user has `session.chat` baseline cap | `apps/ezagent_domain_identity/test/esr/entity/user_test.exs` `describe "default_caps/0 (PR 27)"` |
-| `Chat.invoke(:send)` plumbs workspace_uri to Resolver | `apps/ezagent_domain_chat/test/integration/workspace_isolation_test.exs` |
+| `Chat.invoke(:send)` plumbs workspace_uri to Resolver | `apps/ezagent_domain_instance_message/test/integration/workspace_isolation_test.exs` |
 | Scope-bounded delegation narrows, never broadens | `apps/ezagent_core/test/esr/capability_test.exs` "scope-bounded instance tuples" |
 | Feishu inbound deny → text + react back, not silent drop | `apps/ezagent_plugin_feishu/test/feishu_inbound_cap_denial_feedback_test.exs` (TODO if not yet) |
 | No `Ezagent.Bridge.V1Prototype` references in apps/ | `no_v1_bridge_after_cutover_test.exs` (ships with PR 32) |

@@ -1,0 +1,54 @@
+# ESR dev/test environment. Brings up a BLANK ESR via `mix phx.server`.
+#   build:  docker compose -f docker/docker-compose.dev.yml build \
+#             --build-arg HTTP_PROXY=http://host.docker.internal:7897 \
+#             --build-arg HTTPS_PROXY=http://host.docker.internal:7897
+#   run:    ESR_PROXY=http://host.docker.internal:7897 \
+#             docker compose -f docker/docker-compose.dev.yml up -d
+# Reachable at http://100.64.0.27:10042 (Tailscale) — see docker/README.md.
+services:
+  esr:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+      args:
+        HTTP_PROXY: ${DOCKER_BUILD_PROXY:-}
+        HTTPS_PROXY: ${DOCKER_BUILD_PROXY:-}
+        NO_PROXY: "localhost,127.0.0.1,::1"
+    image: esr-dev:latest
+    ports:
+      - "10042:10042"
+    environment:
+      PORT: "10042"
+      SHELL: /bin/bash          # erlexec's exec-port requires SHELL (unset for non-root user)
+      EZAGENT_HOME: /data
+      EZAGENT_PROFILE: default
+      EZAGENT_COOKIE: esr_dev_cookie
+      # Agents' claude/codex subprocesses inherit these to reach Anthropic/OpenAI.
+      # Feishu + localhost go direct (NO_PROXY). host.docker.internal = host proxy.
+      # Set BOTH upper + lower case (many tools honor lowercase) so the runtime proxy
+      # + NO_PROXY are authoritative and no stale build value leaks (codex r-review).
+      HTTP_PROXY: ${ESR_PROXY:-}
+      HTTPS_PROXY: ${ESR_PROXY:-}
+      http_proxy: ${ESR_PROXY:-}
+      https_proxy: ${ESR_PROXY:-}
+      NO_PROXY: "localhost,127.0.0.1,::1,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
+      no_proxy: "localhost,127.0.0.1,::1,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
+    volumes:
+      - esr_home:/data                  # the swappable $EZAGENT_HOME (E2E layers restore here)
+      - ./secrets:/secrets:ro           # static secrets: feishu.yaml (+ cred seeds)
+      - cred_cc:/cred/cc                # durable cc OAuth source (seed-once, rotates)
+      - cred_codex:/cred/codex          # durable codex OAuth source (seed-once, rotates)
+      - layers:/layers                  # E2E snapshot layer cache (cred-free tars)
+      - ./entrypoint.sh:/app/docker/entrypoint.sh:ro   # iterate entrypoint without a full rebuild
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:10042/"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+
+volumes:
+  esr_home:
+  cred_cc:
+  cred_codex:
+  layers:

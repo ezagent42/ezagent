@@ -35,7 +35,7 @@ does not exercise this mapping.
 The flavor's Template Class — which already owns `template_name/0` /
 `validate/1` / `instantiate/3` — declares which of its content fields to thread.
 Core stays flavor-agnostic (north-star: plugin isolation; keep curl/codex field
-knowledge OUT of `ezagent_domain_chat`).
+knowledge OUT of `ezagent_domain_instance_message`).
 
 ### New optional callback on `Ezagent.Kind.Template`
 

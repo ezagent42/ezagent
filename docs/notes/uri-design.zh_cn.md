@@ -22,10 +22,10 @@
 | Scheme | 实例形状 | 子资源 | 生成方式 | 持久化 | 定义文件（行号） |
 |---|---|---|---|---|---|
 | `agent://` | `agent://<type>/<name>`（PR #131，带类型） | `/behavior/<kind>/<action>` | `SpawnRegistry("agent")` → `AgentTypeRegistry` | 是（通过 Workspace.session_templates） | `apps/ezagent_core/lib/ezagent/agent_type_registry.ex:96` |
-| `session://` | `session://<name>`（扁平） | `/behavior/<kind>/<action>` | `SpawnRegistry("session")` | 快照 | `apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:176` |
+| `session://` | `session://<name>`（扁平） | `/behavior/<kind>/<action>` | `SpawnRegistry("session")` | 快照 | `apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/application.ex:176` |
 | `user://` | `user://<name>`（扁平） | `/behavior/identity/<action>` | `SpawnRegistry("user")` | 快照 | `apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex:71` |
 | `workspace://` | `workspace://<name>`（扁平） | `/behavior/workspace/<action>` | n/a —— 由 Workspace API 创建 | 快照 | `apps/ezagent_domain_workspace/lib/ezagent/entity/workspace.ex:78` |
-| `template://` | `template://<class>/<name>[@<hash>]` —— 两种主机值：`agent`（无版本）与 `session`（带 `@hash`） | 原则上允许 `/behavior/...` | `SpawnRegistry("template")` 按 `uri.host` 分支（`agent` vs `session`） | 快照 | `apps/ezagent_domain_chat/lib/ezagent/entity/session_template.ex:136`、`apps/ezagent_domain_chat/lib/ezagent/entity/agent_template.ex:19` |
+| `template://` | `template://<class>/<name>[@<hash>]` —— 两种主机值：`agent`（无版本）与 `session`（带 `@hash`） | 原则上允许 `/behavior/...` | `SpawnRegistry("template")` 按 `uri.host` 分支（`agent` vs `session`） | 快照 | `apps/ezagent_domain_instance_message/lib/ezagent/entity/session_template.ex:136`、`apps/ezagent_domain_instance_message/lib/ezagent/entity/agent_template.ex:19` |
 | `resource://` | `resource://uploads/<filename>` —— 主机段是"命名空间" | 当前无 | 非活跃 Kind —— 纯数据引用 | 磁盘文件系统 | `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_live.ex:230` |
 | `system://` | `system://bootstrap`、`system://other`（扁平哨兵） | 无 | 非派生 —— 固定哨兵 | n/a | `apps/ezagent_domain_identity/lib/ezagent/entity/user.ex:24`、`apps/ezagent_core/lib/ezagent/capability.ex:10` |
 | `message://` | `message://<uuid16>`（16 位十六进制，自动生成） | 无 | 非 Kind —— 不透明引用 | 是（messages 表） | `apps/ezagent_core/lib/ezagent/message.ex:101` |
@@ -63,7 +63,7 @@
 
 - `template://agent/<name>` —— host="agent" 表示"Class 是 AgentTemplate"，无版本。
 - `template://session/<name>@<hash>` —— host="session" 表示"Class 是 SessionTemplate"，通过 `@hash` 进行内容寻址。
-- `template://session/<name>:<tag>` —— 同一 scheme，但用 `:tag` 代替 `@hash`（可变指针；`apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:74` 提到了，但我没找到写入方 —— 可能只是设计层）。
+- `template://session/<name>:<tag>` —— 同一 scheme，但用 `:tag` 代替 `@hash`（可变指针；`apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:74` 提到了，但我没找到写入方 —— 可能只是设计层）。
 
 所以 `template://` 同时在做四件事：
 1. 声明"这是一个模板"（scheme）。
@@ -145,7 +145,7 @@ PR-A（PR #132）通过位置切分解决了 **解析器** 的歧义（解析器
 - 优点：每个 scheme 只有一种形状。
 - 缺点：scheme 更多；从语义上讲"它们都是模板"。
 
-**提案 B（统一两段式）**：保留 `template://<class>/<name>`；要求始终带 `@hash`（哪怕是 AgentTemplate）。今天 AgentTemplate 无版本，是因为它是"人工编辑"的（`apps/ezagent_domain_chat/lib/ezagent/entity/agent_template.ex:19`）。强制带 hash 能统一形状，但会失去人工编辑模型。
+**提案 B（统一两段式）**：保留 `template://<class>/<name>`；要求始终带 `@hash`（哪怕是 AgentTemplate）。今天 AgentTemplate 无版本，是因为它是"人工编辑"的（`apps/ezagent_domain_instance_message/lib/ezagent/entity/agent_template.ex:19`）。强制带 hash 能统一形状，但会失去人工编辑模型。
 - 优点：所有 template URI 形状一致。
 - 缺点：AgentTemplate 得引入一个它目前并不需要的版本化模型。
 

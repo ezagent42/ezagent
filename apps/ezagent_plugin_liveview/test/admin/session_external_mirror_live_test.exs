@@ -547,7 +547,7 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
   defp cleanup_session(%URI{} = session_uri) do
     case Ezagent.KindRegistry.lookup(session_uri) do
       {:ok, pid} when is_pid(pid) ->
-        _ = DynamicSupervisor.terminate_child(EzagentDomainChat.SessionSupervisor, pid)
+        _ = DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, pid)
         :ok
 
       _ ->

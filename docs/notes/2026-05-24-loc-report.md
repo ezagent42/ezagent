@@ -7,7 +7,7 @@
 | App | Tier | LOC | Files |
 |---|---|---:|---:|
 | `ezagent_core` | Tier 1 (core) | 12,390 | 80 |
-| `ezagent_domain_chat` | Tier 2 (domain) | 10,305 | 20 |
+| `ezagent_domain_instance_message` | Tier 2 (domain) | 10,305 | 20 |
 | `ezagent_domain_identity` | Tier 2 (domain) | 2,491 | 18 |
 | `ezagent_domain_workspace` | Tier 2 (domain) | 1,579 | 8 |
 | `ezagent_domain_ui` | Tier 2 (domain) | 3,829 | 17 |
@@ -39,7 +39,7 @@ ARCH §14 LOC budget target for core was historically ~920 LOC (the "less invent
 | App | LOC | Files |
 |---|---:|---:|
 | `ezagent_core` | 10,357 | 82 |
-| `ezagent_domain_chat` | 12,650 | 41 |
+| `ezagent_domain_instance_message` | 12,650 | 41 |
 | `ezagent_domain_identity` | 1,095 | 15 |
 | `ezagent_domain_workspace` | 1,387 | 9 |
 | `ezagent_domain_ui` | 1,620 | 13 |
@@ -59,16 +59,16 @@ ARCH §14 LOC budget target for core was historically ~920 LOC (the "less invent
 
 | File | LOC |
 |---|---:|
-| `apps/ezagent_domain_chat/lib/ezagent/orchestrator/tools.ex` | 1,792 |
+| `apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools.ex` | 1,792 |
 | `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_live.ex` | 1,711 |
-| `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex` | 1,457 |
+| `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex` | 1,457 |
 | `apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex` | 1,024 |
-| `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex` | 816 |
+| `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex` | 816 |
 | `apps/ezagent_domain_ui/lib/ezagent_domain_ui/primitives.ex` | 811 |
 | `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/routing_live.ex` | 760 |
-| `apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex` | 733 |
-| `apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex` | 724 |
-| `apps/ezagent_domain_chat/lib/ezagent/orchestrator/mcp_server.ex` | 722 |
+| `apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/application.ex` | 733 |
+| `apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex` | 724 |
+| `apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/mcp_server.ex` | 722 |
 
 ## Total
 
@@ -79,14 +79,14 @@ ARCH §14 LOC budget target for core was historically ~920 LOC (the "less invent
 | Repo-root docs (md) | 4,982 (ARCHITECTURE + IMPLEMENTATION_ROADMAP + GLOSSARY + CLAUDE.md + AGENTS.md + README) |
 | All `docs/` (md) | 33,456 |
 
-**Test-to-production ratio**: 39,867 / 57,654 = **0.69x** (test code is 69% of production code by line). Reasonable for an OTP umbrella with heavy integration + invariant testing; the heaviest test apps (`domain_chat` 12,650 LOC, `core` 10,357 LOC) are the ones doing the most cross-Kind orchestration work, which makes sense.
+**Test-to-production ratio**: 39,867 / 57,654 = **0.69x** (test code is 69% of production code by line). Reasonable for an OTP umbrella with heavy integration + invariant testing; the heaviest test apps (`domain_instance_message` 12,650 LOC, `core` 10,357 LOC) are the ones doing the most cross-Kind orchestration work, which makes sense.
 
 ## Comparison vs 2-day baseline (commit `a363a72`, ~2026-05-21)
 
 | App | lib Δ | test Δ |
 |---|---:|---:|
 | `ezagent_core` | **+4,484** | +3,551 |
-| `ezagent_domain_chat` | **+7,199** | +10,508 |
+| `ezagent_domain_instance_message` | **+7,199** | +10,508 |
 | `ezagent_domain_identity` | +167 | 0 |
 | `ezagent_domain_workspace` | +407 | +485 |
 | `ezagent_domain_ui` | +491 | +62 |
@@ -105,7 +105,7 @@ ARCH §14 LOC budget target for core was historically ~920 LOC (the "less invent
 **Test-to-production growth ratio**: 19,573 / 19,639 = **1.00x** — the 2-day session added tests in lock-step with code. The heavy invariant-test discipline (P6) shows up here.
 
 The biggest two-day movers:
-- `domain_chat lib +7,199` — primarily PR1 fork lift, PR2 Sandbox wiring in `agent.ex`, PR3 `record_sandbox_state` + `sandbox.destroy` migration in orchestrator tools. Also includes earlier-in-window PRs (#280-#284 LiveView refactors) that are not in this audit scope.
+- `domain_instance_message lib +7,199` — primarily PR1 fork lift, PR2 Sandbox wiring in `agent.ex`, PR3 `record_sandbox_state` + `sandbox.destroy` migration in orchestrator tools. Also includes earlier-in-window PRs (#280-#284 LiveView refactors) that are not in this audit scope.
 - `core lib +4,484` — primarily PR2's `Behavior.Sandbox` (389 LOC) + `Kind.Template` callback declarations; PR-D's `Capability.cross_workspace?/2` membership branch; plus pre-audit-window primitives (Audit infra, ReadyGate hardening, etc).
 
 Caveat on baseline: the `a363a72` baseline includes ~85 commits across 2 days, only the last 10 of which (PRs #287-#296) are in scope for this audit. The non-audit commits contribute significantly to the LOC delta (e.g. PR #275 — np plugin extraction, +1,500 LOC). The audit-scope PRs alone are roughly **+3,800 LOC production / +3,900 LOC test** (sum of PR additions per `gh pr view`).

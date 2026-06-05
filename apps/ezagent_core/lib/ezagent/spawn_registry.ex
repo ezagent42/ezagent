@@ -19,7 +19,7 @@ defmodule Ezagent.SpawnRegistry do
 
   When the Loader sees `entity://agent/team-alpha/cc_builder` it calls
   `Ezagent.SpawnRegistry.spawn(uri)` and ezagent_core never has to know
-  about `EzagentDomainChat.AgentSupervisor`.
+  about `EzagentDomainInstanceMessage.AgentSupervisor`.
 
   ## Idempotency
 
@@ -97,6 +97,49 @@ defmodule Ezagent.SpawnRegistry do
     case spawn_detailed(uri) do
       {:ok, _started_or_adopted, pid} -> {:ok, pid}
       {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Ensure the Kind at `uri` is a LIVE actor, rehydrating it from durable
+  state if needed (team-routing-unification §3.8 rehydrate-or-spawn).
+
+  Unlike `spawn/1`, this REFUSES to materialise a Kind that was never
+  durably created. An access path (e.g. the Feishu inbound dispatcher
+  resolving a chat→session binding) uses this to bring a cold-but-real
+  Kind back to life after a node restart — without silently creating an
+  unowned fresh one when the durable state is genuinely absent.
+
+    * `{:ok, :live}`            — already a live actor.
+    * `{:ok, :rehydrated}`      — was cold but durably exists; spawned now.
+    * `{:error, :not_created}`  — never durably created → no spawn.
+    * `{:error, term()}`        — durable, but the rehydrate spawn failed.
+
+  Durable existence is "a snapshot row was persisted for this URI"
+  (`KindSnapshot.get/1` — a plain read, NOT the create/activate marker, so
+  it stays within the persistence-access discipline). Row-existence — not
+  the `ever_created` marker — is the right signal: a row means `save_now`
+  ran, i.e. the Kind WAS created, and it is robust to legacy rows whose
+  `ever_created` marker predates the marker column or was never set (codex
+  review). A missing row means never-created (or destroyed → row deleted)
+  → refuse, so an inbound binding to a vanished session never silently
+  materialises a fresh unowned one.
+  """
+  @spec ensure_live(URI.t()) :: {:ok, :live | :rehydrated} | {:error, term()}
+  def ensure_live(%URI{} = uri) do
+    case Ezagent.KindRegistry.lookup(uri) do
+      {:ok, _pid} ->
+        {:ok, :live}
+
+      :error ->
+        if is_nil(Ezagent.Ecto.KindSnapshot.get(URI.to_string(uri))) do
+          {:error, :not_created}
+        else
+          case __MODULE__.spawn(uri) do
+            {:ok, _pid} -> {:ok, :rehydrated}
+            {:error, _} = err -> err
+          end
+        end
     end
   end
 

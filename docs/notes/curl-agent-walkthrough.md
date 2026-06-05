@@ -94,7 +94,7 @@ gate.
 
 `Ezagent.RoutingRegistry.put/3` requires the calling process to
 **own** the table (via `declare_table`). The chat plugin's
-`EzagentDomainChat.Application` is the owner. Rules added via
+`EzagentDomainInstanceMessage.Application` is the owner. Rules added via
 `/admin/routing` (from the LV process) call `RuleStore.add` →
 inserts into DB → `RuleStore.load_into_registry` → `RoutingRegistry.put`
 **fails silently** with `{:error, {:not_owner, ...}}` because the LV

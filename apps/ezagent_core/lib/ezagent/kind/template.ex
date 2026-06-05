@@ -67,12 +67,15 @@ defmodule Ezagent.Kind.Template do
   # --- flavor-specific template_data fields (SPEC 2026-06-01 approach B) -
   #
   # `Ezagent.Entity.AgentTemplate.to_template_data/2` builds the universal
-  # base (`class` / `agent_uri` / `cwd`) and then MERGES this callback's
-  # result for the flavor-specific fields the flavor's `instantiate/3`
-  # reads. This keeps core flavor-agnostic — cc's `claude_config_dir`,
-  # curl's `provider`/`api_url`/`model`, codex's `model`/`sandbox`/… are
-  # each owned by the respective plugin, NOT hardcoded in
-  # `ezagent_domain_chat`.
+  # base (`class` / `agent_uri` / `cwd` / `config_dir`) and then MERGES this
+  # callback's result for the flavor-specific fields the flavor's
+  # `instantiate/3` reads. This keeps core flavor-agnostic — the per-agent
+  # config-home dir is UNIVERSAL (the neutral `config_dir` key; config_dir
+  # promotion, Allen 2026-06-03), and the FLAVOR-specific extras — cc's
+  # `operator_settings_path`/`role`, curl's `provider`/`api_url`/`model`,
+  # codex's `model`/`sandbox`/… — are each owned by the respective plugin,
+  # NOT hardcoded in `ezagent_domain_instance_message`. cc READS the universal
+  # `config_dir` and applies its claude semantics (CLAUDE_CONFIG_DIR).
   #
   # Contract:
   # - Read from `content` (the AgentTemplate `:template` slice), which may
@@ -80,7 +83,8 @@ defmodule Ezagent.Kind.Template do
   #   JSON snapshot round-trip).
   # - Return a map with STRING keys (the `instantiate/3`/`validate/1`
   #   contract reads string keys). nil values are dropped by the caller;
-  #   the reserved keys `class`/`agent_uri`/`cwd` are ignored if returned.
+  #   the reserved keys `class`/`agent_uri`/`cwd`/`config_dir` are ignored
+  #   if returned.
   # - Omit optional fields that are not present / not non-empty binaries
   #   (e.g. codex `bridge_ws_url`/`codex_path` feed runtime paths).
   #
@@ -103,7 +107,7 @@ defmodule Ezagent.Kind.Template do
   # NO `create_config_dir/N` callback by design. The 2-phase pattern
   # ("init slice nil → late dispatch write_path") was too late for
   # plugins that launch a sidecar during `instantiate/3` using a
-  # filesystem path (cc starts its PTY with `claude_config_dir` before
+  # filesystem path (cc starts its PTY with the universal `config_dir` before
   # any subsequent dispatch could populate the slice). Instead, the
   # plugin's `instantiate/3` is the one that creates the per-agent dir
   # (it is the only place that knows the full plugin-specific spawn
@@ -227,12 +231,94 @@ defmodule Ezagent.Kind.Template do
   @callback ensure_subprocess_alive(agent_uri(), respawn_data :: map()) ::
               :ok | {:error, term()}
 
+  @doc """
+  PR-3 (domain.agent D2) — the config_dir path NAMESPACE for this flavor (e.g.
+  `"cc"` → `Ezagent.Sandbox.ConfigDir` builds `<Home>/cc-agents/<ws>/<name>`).
+
+  Optional: a flavor that omits it has its namespace derived from
+  `template_name/0` by stripping a trailing `.agent` (see `namespace_of/1`). cc
+  declares `"cc"` explicitly so the layout stays byte-identical to the pre-PR-3
+  `cc-agents/...` (no migration).
+  """
+  @callback config_dir_namespace() :: String.t()
+
   @optional_callbacks [
     validate: 1,
     template_data_extra: 1,
+    config_dir_namespace: 0,
     list_extensions: 1,
     toggle_extension: 3,
     destroy_config_dir: 2,
     ensure_subprocess_alive: 2
   ]
+
+  @doc """
+  Resolve the config_dir path namespace for a Template Class.
+
+  Boot-safe: the class module is available at every `instantiate/3` call site
+  (it is the receiver) AND on cold-restart, whereas `template_data` carries no
+  flavor key. Prefers the optional `config_dir_namespace/0` callback; otherwise
+  derives the namespace from `template_name/0` by stripping a trailing `.agent`.
+  """
+  @spec namespace_of(module()) :: String.t()
+  def namespace_of(class_module) when is_atom(class_module) do
+    if function_exported?(class_module, :config_dir_namespace, 0) do
+      class_module.config_dir_namespace()
+    else
+      class_module.template_name()
+      |> String.replace_suffix(".agent", "")
+    end
+  end
+
+  @doc """
+  PR-3 (domain.agent D2) — the single contract-boundary chokepoint for spawning a
+  flavor: allocate the per-agent config_dir TARGET (when the template carries a
+  `config_dir` reference) and provide it to the plugin as the `"allocated_config_dir"`
+  data key, THEN delegate to `class_module.instantiate/3`. The plugin materializes
+  content into the provided dir; it never chooses the path (North-Star isolation).
+
+  EVERY `instantiate/3` caller (the domain spawn helper, the workspace Loader
+  invoke + boot, the LV operator-create) routes through here, so the allocation is
+  uniform across fresh-create / loader / boot seams. Returns whatever
+  `instantiate/3` returns (the 2- or 3-element `{:ok, uris[, meta]}` / `{:error, _}`
+  shape).
+
+  Allocation is skipped when the template has no `config_dir` reference
+  (curl/codex/echo/np ⇒ zero filesystem footprint). A reference WITHOUT an
+  `"agent_uri"` fails loud — the target is undeterminable.
+  """
+  @spec provision_and_instantiate(module(), template_name(), template_data(), URI.t()) ::
+          {:ok, [URI.t()]}
+          | {:ok, [URI.t()], instantiate_meta()}
+          | {:error, term()}
+  def provision_and_instantiate(class_module, tmpl_name, tmpl_data, %URI{} = workspace_uri)
+      when is_atom(class_module) and is_map(tmpl_data) do
+    with {:ok, data} <- maybe_allocate_config_dir(class_module, tmpl_data) do
+      class_module.instantiate(tmpl_name, data, workspace_uri)
+    end
+  end
+
+  # Allocate the TARGET only when the template carries a config_dir REFERENCE
+  # (the flavor wants a config home). The realized target rides in as
+  # `"allocated_config_dir"`; the plugin copies the reference into it.
+  defp maybe_allocate_config_dir(class_module, tmpl_data) do
+    case Map.get(tmpl_data, "config_dir") do
+      ref when is_binary(ref) and ref != "" ->
+        with {:ok, agent_uri} <- fetch_agent_uri(tmpl_data),
+             {:ok, target} <-
+               Ezagent.Sandbox.ConfigDir.allocate(agent_uri, namespace_of(class_module)) do
+          {:ok, Map.put(tmpl_data, "allocated_config_dir", target)}
+        end
+
+      _ ->
+        {:ok, tmpl_data}
+    end
+  end
+
+  defp fetch_agent_uri(tmpl_data) do
+    case Map.get(tmpl_data, "agent_uri") do
+      s when is_binary(s) and s != "" -> {:ok, Ezagent.URI.new!(s)}
+      _ -> {:error, :config_dir_allocate_missing_agent_uri}
+    end
+  end
 end

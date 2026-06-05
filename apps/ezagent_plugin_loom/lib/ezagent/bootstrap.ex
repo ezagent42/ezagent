@@ -111,7 +111,7 @@ defmodule EzagentPluginLoom.Bootstrap do
     # — every chat session now auto-spawns a (cc) orchestrator. Loom uses
     # its OWN loomorch via `Team.ensure_team/1`, so we discard that
     # built-in orchestrator info and normalize back to `{:ok, session_uri}`.
-    case EzagentDomainChat.create_session(sid, nil,
+    case EzagentDomainInstanceMessage.SessionCreator.create_session(sid, nil,
            template_name: "loom",
            workspace_uri: URI.parse("workspace://#{@workspace}")
          ) do

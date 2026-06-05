@@ -3,6 +3,8 @@ defmodule EzagentPluginLiveview.SnapshotsLiveTest do
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
 
+  alias Ezagent.Test.SnapshotFixtures
+
   @endpoint EzagentWeb.Endpoint
 
   setup do
@@ -25,7 +27,11 @@ defmodule EzagentPluginLiveview.SnapshotsLiveTest do
 
   test "snapshot list shows persisted rows", %{conn: conn} do
     uri = URI.parse("entity://user/team-alpha/snap-lv-#{System.unique_integer([:positive])}")
-    :ok = Ezagent.Kind.Snapshot.save_now(uri, Ezagent.Entity.User, %{identity: %{caps: MapSet.new()}})
+
+    :ok =
+      SnapshotFixtures.save_kind_snapshot(uri, Ezagent.Entity.User, %{
+        identity: %{caps: MapSet.new()}
+      })
 
     {:ok, _lv, html} = live(conn, "/admin/snapshots")
     assert html =~ URI.to_string(uri)
@@ -34,7 +40,12 @@ defmodule EzagentPluginLiveview.SnapshotsLiveTest do
   test "clear deletes the snapshot row", %{conn: conn} do
     uri = URI.parse("entity://user/team-alpha/snap-clear-#{System.unique_integer([:positive])}")
     uri_str = URI.to_string(uri)
-    :ok = Ezagent.Kind.Snapshot.save_now(uri, Ezagent.Entity.User, %{identity: %{caps: MapSet.new()}})
+
+    :ok =
+      SnapshotFixtures.save_kind_snapshot(uri, Ezagent.Entity.User, %{
+        identity: %{caps: MapSet.new()}
+      })
+
     assert %{} = Ezagent.Ecto.KindSnapshot.get(uri_str)
 
     {:ok, lv, _html} = live(conn, "/admin/snapshots")

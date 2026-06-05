@@ -25,7 +25,7 @@
 | `session_templates` | `<template_name>` → template config 的 map |
 | `routing_rules` | 该 workspace 内的 mention / session-receive 规则 |
 
-Session 通过 [`Ezagent.Entity.Session.spawn_from_template/2`][session-spawn] 或 `EzagentDomainChat.create_session/2` 创建。流程：
+Session 通过 [`Ezagent.Entity.Session.spawn_from_template/2`][session-spawn] 或 `EzagentDomainInstanceMessage.create_session/2` 创建。流程：
 
 1. 把 Session Kind spawn 进 KindRegistry
 2. 通过 [`Ezagent.WorkspaceRegistry.bind/2`][workspace-registry] 绑定到一个 workspace —— 这是 **运行时查询表**（"这个 session 归哪个 workspace?"）
@@ -125,7 +125,7 @@ Option A 更接近 "URI 告诉你一切"（没有隐藏的 ambient 上下文，�
 
 **现在 (Phase 8c) 写新代码时**，遵循下面这些规则，让 Phase 9 transition 是机械的而非架构性的：
 
-1. **Session 永远走 `Ezagent.Entity.Session.spawn_from_template/2`**（或包装它的 `EzagentDomainChat.create_session/2`）。永远不要直接 spawn 进 `EzagentDomainChat.SessionSupervisor`。这保证 workspace 绑定。
+1. **Session 永远走 `Ezagent.Entity.Session.spawn_from_template/2`**（或包装它的 `EzagentDomainInstanceMessage.create_session/2`）。永远不要直接 spawn 进 `EzagentDomainInstanceMessage.SessionSupervisor`。这保证 workspace 绑定。
 2. **Entity (User / Agent) 永远走标准 create API**（`Ezagent.Users.create/3`、`Ezagent.SpawnRegistry.spawn/1` + `Identity.grant_cap`）。永远别用 static supervisor child。这是 PR-M 干的清理。
 3. **Cap 永远通过 `Ezagent.Identity.grant_cap/3` 授权**，永远别手动插入。当 per-workspace cap 落地时，这个 API 多一个可选 workspace 参数，调用点保持向后兼容。
 4. **Routing rules 永远 per-workspace**（每条 rule 有 `workspace_uri` 字段）。PR #146-149 之后已经如此。
@@ -147,7 +147,7 @@ Option A 更接近 "URI 告诉你一切"（没有隐藏的 ambient 上下文，�
   - [`Ezagent.WorkspaceRegistry`][workspace-registry] —— session↔workspace ETS 绑定
   - [`Ezagent.Workspace.Store`][workspace-store] —— DB 持久化
   - [`Ezagent.Entity.Session.spawn_from_template/2`][session-spawn] —— canonical session 创建器
-  - `EzagentDomainChat.create_session/2` —— 面向用户的 facade
+  - `EzagentDomainInstanceMessage.create_session/2` —— 面向用户的 facade
   - `apps/ezagent_core/test/invariants/sessions_have_workspace_test.exs` —— 强制 workspace 绑定的 invariant
 
 - **术语表**：
@@ -158,4 +158,4 @@ Option A 更接近 "URI 告诉你一切"（没有隐藏的 ambient 上下文，�
 
 [workspace-store]: ../../apps/ezagent_domain_workspace/lib/ezagent/workspace/store.ex
 [workspace-registry]: ../../apps/ezagent_core/lib/ezagent/workspace_registry.ex
-[session-spawn]: ../../apps/ezagent_domain_chat/lib/ezagent/entity/session.ex
+[session-spawn]: ../../apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex

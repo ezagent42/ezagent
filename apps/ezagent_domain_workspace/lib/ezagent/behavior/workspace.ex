@@ -29,7 +29,8 @@ defmodule Ezagent.Behavior.Workspace do
         chain's per-flavor error mapping happens INSIDE the handler
         body, not in downstream effects),
       * inline facade calls when the handler needs a structured return
-        (e.g. `EzagentDomainChat.create_session/3` in `:create_session`),
+        (e.g. `EzagentDomainInstanceMessage.SessionCreator.create_session/3`
+        in `:create_session`),
       * `{:dispatch, %Ezagent.Cmd{...}}` effects when the side-effect
         is fire-and-forget AFTER the slice mutation is committed
         (e.g. the post-add-member `:create_session` cap grant),
@@ -166,70 +167,79 @@ defmodule Ezagent.Behavior.Workspace do
   # `Ezagent.Kind.Runtime.resolve_required_cap/4` substitutes the
   # actual Kind's `type_name/0` at dispatch time.
 
-  action :list_members,
+  action(:list_members,
     args: %{},
     returns: %{members: {:list, :uri}},
     caps: [:list_members],
     modes: [:call],
     description: "list members (user URIs) of this workspace"
+  )
 
-  action :add_member,
+  action(:add_member,
     args: %{member: :uri},
     returns: %{},
     caps: [:add_member],
     modes: [:cast, :call],
     description: "add a user URI to this workspace's member set"
+  )
 
-  action :remove_member,
+  action(:remove_member,
     args: %{member: :uri},
     returns: %{},
     caps: [:remove_member],
     modes: [:cast, :call],
     description: "remove a user URI from this workspace's member set"
+  )
 
-  action :list_templates,
+  action(:list_templates,
     args: %{},
     returns: %{templates: :map},
     caps: [:list_templates],
     modes: [:call],
     description: "list templates (SessionTemplate / AgentTemplate) bound to this workspace"
+  )
 
-  action :add_template,
+  action(:add_template,
     args: %{name: :string, template: :map},
     returns: %{},
     caps: [:add_template],
     modes: [:cast, :call],
     description: "bind a template version to this workspace"
+  )
 
-  action :remove_template,
+  action(:remove_template,
     args: %{name: :string},
     returns: %{},
     caps: [:remove_template],
     modes: [:cast, :call],
     description: "unbind a template from this workspace"
+  )
 
-  action :list_routing_rules,
+  action(:list_routing_rules,
     args: %{},
     returns: %{rules: {:list, :map}},
     caps: [:list_routing_rules],
     modes: [:call],
     description: "list workspace-scoped routing rules"
+  )
 
-  action :set_routing_rules,
+  action(:set_routing_rules,
     args: %{rules: {:list, :map}},
     returns: %{},
     caps: [:set_routing_rules],
     modes: [:cast, :call],
     description: "replace the workspace's routing rule set"
+  )
 
-  action :instantiate,
+  action(:instantiate,
     args: %{},
     returns: %{children: {:list, :tuple}},
     caps: [:instantiate],
     modes: [:call],
     description: "instantiate a fresh workspace from a workspace template"
+  )
 
-  action :create_agent,
+  action(:create_agent,
     args: %{
       flavor: :string,
       name: :string,
@@ -243,8 +253,9 @@ defmodule Ezagent.Behavior.Workspace do
     description:
       "create a new agent in this workspace (registers Template Class, " <>
         "spawns Agent Kind, starts PTY for cc / echo-with-PTY)"
+  )
 
-  action :create_session,
+  action(:create_session,
     args: %{short_name: :string, template_name: :string},
     returns: %{
       session_uri: :uri,
@@ -258,8 +269,9 @@ defmodule Ezagent.Behavior.Workspace do
       "create a new session in this workspace + auto-spawn the " <>
         "orchestrator agent owned by the caller (SPEC " <>
         "2026-05-26-session-create-orchestrator-unified Gap C)"
+  )
 
-  action :remove_cross_prefix_members,
+  action(:remove_cross_prefix_members,
     args: %{},
     returns: %{removed: {:list, :uri}, kept_count: :integer},
     caps: [:remove_cross_prefix_members],
@@ -267,6 +279,7 @@ defmodule Ezagent.Behavior.Workspace do
     description:
       "atomically strip members whose URI workspace segment doesn't " <>
         "match this workspace (task #55 codex r2 HIGH-2 cleanup)"
+  )
 
   # ---------------------------------------------------------------
   # State slice machinery (unchanged from legacy contract — the macro
@@ -335,16 +348,14 @@ defmodule Ezagent.Behavior.Workspace do
       list_templates: Ezagent.Capability.cap(:workspace, __MODULE__, :list_templates),
       add_template: Ezagent.Capability.cap(:workspace, __MODULE__, :add_template),
       remove_template: Ezagent.Capability.cap(:workspace, __MODULE__, :remove_template),
-      list_routing_rules:
-        Ezagent.Capability.cap(:workspace, __MODULE__, :list_routing_rules),
+      list_routing_rules: Ezagent.Capability.cap(:workspace, __MODULE__, :list_routing_rules),
       set_routing_rules: Ezagent.Capability.cap(:workspace, __MODULE__, :set_routing_rules),
       instantiate: Ezagent.Capability.cap(:workspace, __MODULE__, :instantiate),
       create_agent: Ezagent.Capability.cap(:workspace, __MODULE__, :create_agent),
       # SPEC `docs/superpowers/specs/2026-05-26-session-create-orchestrator-unified.md`
       # Gap C — workspace-scoped session creation. Invariant #2: cap
       # subject uses MODULE reference (`__MODULE__`), not atom shorthand.
-      create_session:
-        Ezagent.Capability.cap(:workspace, __MODULE__, :create_session),
+      create_session: Ezagent.Capability.cap(:workspace, __MODULE__, :create_session),
       # Task #55 round-2 codex HIGH-2 — admin-only cleanup. The mix
       # task dispatches under `system://workspace-loader` so the system
       # principal's caps satisfy this; no operator-facing entry point
@@ -526,7 +537,7 @@ defmodule Ezagent.Behavior.Workspace do
   # (without booting the chat plugin) have no `entity://` spawn fn
   # registered. Treating that as `:ok` keeps the unit-test surface
   # working; production never reaches this branch because
-  # `EzagentDomainChat.Application.start/2` registers the `entity://`
+  # `EzagentDomainInstanceMessage.Application.start/2` registers the `entity://`
   # spawn fn before any workspace dispatch can fire.
   defp ensure_member_kind_spawned(%URI{scheme: "entity", host: "user"} = uri) do
     case Ezagent.SpawnRegistry.spawn(uri) do
@@ -703,7 +714,7 @@ defmodule Ezagent.Behavior.Workspace do
   # --- create_session (unified CLI/LV session provisioning) -----------
   #
   # SPEC `docs/superpowers/specs/2026-05-26-session-create-orchestrator-unified.md`
-  # Gap C. Wraps `EzagentDomainChat.create_session/3` so the CLI and LV
+  # Gap C. Wraps `EzagentDomainInstanceMessage.SessionCreator.create_session/3` so the CLI and LV
   # share one entry. Translates the facade's 3-tuple meta map into a
   # handler return shape with the orchestrator URI/status surfaced for
   # the caller (CLI human-readable formatter; LV flash).
@@ -734,13 +745,21 @@ defmodule Ezagent.Behavior.Workspace do
              template_name: template_name
            ) do
         {:ok, %URI{} = session_uri, meta} when is_map(meta) ->
-          {:ok,
-           %{
-             session_uri: session_uri,
-             orchestrator_uri: Map.get(meta, :orchestrator_uri),
-             orchestrator_status: Map.get(meta, :orchestrator_status),
-             orchestrator_error: format_orchestrator_error(Map.get(meta, :orchestrator_error))
-           }, []}
+          with :ok <-
+                 Ezagent.Workspace.grant_creator_manage_cap(
+                   :session,
+                   session_uri,
+                   workspace_uri,
+                   caller
+                 ) do
+            {:ok,
+             %{
+               session_uri: session_uri,
+               orchestrator_uri: Map.get(meta, :orchestrator_uri),
+               orchestrator_status: Map.get(meta, :orchestrator_status),
+               orchestrator_error: format_orchestrator_error(Map.get(meta, :orchestrator_error))
+             }, []}
+          end
 
         {:error, reason} ->
           {:error, reason}
@@ -749,17 +768,21 @@ defmodule Ezagent.Behavior.Workspace do
   end
 
   # SPEC `2026-05-26-session-create-orchestrator-unified` Gap C — DI
-  # provider lookup for the session-creation facade. `ezagent_domain_chat`
+  # provider lookup for the session-creation facade. `ezagent_domain_instance_message`
   # depends on `ezagent_domain_workspace` (workspace boots first), so a
   # compile-time alias would invert the dep graph and create a cycle.
   # Instead the facade module is looked up at runtime via the
-  # application env key (default: `EzagentDomainChat`). Tests can
+  # application env key (default: `EzagentDomainInstanceMessage.SessionCreator`). Tests can
   # override via `Application.put_env(:ezagent_domain_workspace,
   # :session_facade, FakeFacade)` to drive `:create_session` without
   # the full chat domain.
   defp resolve_session_facade do
     facade =
-      Application.get_env(:ezagent_domain_workspace, :session_facade, EzagentDomainChat)
+      Application.get_env(
+        :ezagent_domain_workspace,
+        :session_facade,
+        EzagentDomainInstanceMessage.SessionCreator
+      )
 
     if Code.ensure_loaded?(facade) and function_exported?(facade, :create_session, 3) do
       {:ok, facade}
@@ -1051,7 +1074,8 @@ defmodule Ezagent.Behavior.Workspace do
       workspace_uri,
       tmpl_name,
       tmpl,
-      agent_uri
+      agent_uri,
+      Map.get(params, :caller)
     )
   end
 
@@ -1078,7 +1102,8 @@ defmodule Ezagent.Behavior.Workspace do
       workspace_uri,
       tmpl_name,
       tmpl,
-      agent_uri
+      agent_uri,
+      Map.get(params, :caller)
     )
   end
 
@@ -1103,7 +1128,8 @@ defmodule Ezagent.Behavior.Workspace do
       workspace_uri,
       tmpl_name,
       tmpl,
-      agent_uri
+      agent_uri,
+      Map.get(params, :caller)
     )
   end
 
@@ -1112,8 +1138,12 @@ defmodule Ezagent.Behavior.Workspace do
     case Ezagent.SpawnRegistry.spawn(agent_uri) do
       {:ok, _pid} ->
         record_creator_lineage(agent_uri, params)
-        # No slice mutation (no template registered for curl/np).
-        {:ok, %{agent_uri: agent_uri, template_name: nil}, []}
+
+        with :ok <-
+               grant_agent_creator_manage_cap(agent_uri, Map.get(params, :workspace_uri), params) do
+          # No slice mutation (no template registered for curl/np).
+          {:ok, %{agent_uri: agent_uri, template_name: nil}, []}
+        end
 
       {:error, {:already_started, _pid}} ->
         # Idempotent re-create — do NOT re-record lineage.
@@ -1137,13 +1167,17 @@ defmodule Ezagent.Behavior.Workspace do
     end
   end
 
-  # `--from` cloning works by overriding the cc Template Class's
-  # `claude_config_dir` field with the SOURCE agent's per-agent dir.
+  # `--from` cloning works by overriding the template's universal
+  # `config_dir` data key with the SOURCE agent's per-agent dir.
+  # config_dir promotion (Allen 2026-06-03): the per-agent config-home is
+  # the universal, flavor-neutral `"config_dir"` key (was the cc-named
+  # `"claude_config_dir"`); the cc Template Class reads it and applies
+  # claude semantics.
   defp maybe_put_clone_source(tmpl, nil), do: tmpl
 
   defp maybe_put_clone_source(tmpl, source_config_dir)
        when is_binary(source_config_dir) do
-    Map.put(tmpl, "claude_config_dir", source_config_dir)
+    Map.put(tmpl, "config_dir", source_config_dir)
   end
 
   # Register the template in the Workspace's session_templates slice +
@@ -1161,7 +1195,8 @@ defmodule Ezagent.Behavior.Workspace do
          workspace_uri,
          tmpl_name,
          tmpl,
-         agent_uri
+         agent_uri,
+         creator_uri
        ) do
     new_templates = Map.put(session_templates, tmpl_name, tmpl)
 
@@ -1175,12 +1210,23 @@ defmodule Ezagent.Behavior.Workspace do
              tmpl_name,
              session_templates
            ) do
-      # On success: emit slice mutation as a `:set` effect and return
-      # the template + agent URIs to the caller.
-      {:ok, %{agent_uri: agent_uri, template_name: tmpl_name},
-       [{:set, :session_templates, new_templates}]}
+      with :ok <-
+             grant_agent_creator_manage_cap(agent_uri, workspace_uri, %{caller: creator_uri}) do
+        # On success: emit slice mutation as a `:set` effect and return
+        # the template + agent URIs to the caller.
+        {:ok, %{agent_uri: agent_uri, template_name: tmpl_name},
+         [{:set, :session_templates, new_templates}]}
+      end
     end
   end
+
+  defp grant_agent_creator_manage_cap(%URI{} = agent_uri, %URI{} = workspace_uri, %{
+         caller: %URI{} = creator_uri
+       }) do
+    Ezagent.Workspace.grant_creator_manage_cap(:agent, agent_uri, workspace_uri, creator_uri)
+  end
+
+  defp grant_agent_creator_manage_cap(_agent_uri, _workspace_uri, _params), do: :ok
 
   # Codex PR #330 r1 HIGH-1 — call invoke_template_now; on failure,
   # roll back the Store.update_templates write so the DB matches the

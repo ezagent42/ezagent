@@ -94,7 +94,9 @@ defmodule EzagentPluginCodex.BridgeSidecar do
         :ok
 
       output ->
-        Logger.info("codex bridge sidecar output for #{URI.to_string(state.agent_uri)}:\n#{output}")
+        Logger.info(
+          "codex bridge sidecar output for #{URI.to_string(state.agent_uri)}:\n#{output}"
+        )
     end
 
     {:noreply, %{state | output: trim_output(state.output <> data)}}
@@ -122,18 +124,22 @@ defmodule EzagentPluginCodex.BridgeSidecar do
     with {:ok, {runner, runner_args}} <- bridge_runner(args),
          {:ok, token} <- Ezagent.AgentBridge.TokenStore.mint(agent_uri),
          {:ok, script} <- bridge_script_path() do
-      env = [
-        {~c"EZAGENT_AGENT_URI", agent_uri |> URI.to_string() |> String.to_charlist()},
-        {~c"EZAGENT_AGENT_TOKEN", String.to_charlist(token)},
-        {~c"EZAGENT_BRIDGE_WS_URL", String.to_charlist(Map.fetch!(args, :bridge_ws_url))},
-        {~c"EZAGENT_CODEX_APP_SERVER_SOCK", String.to_charlist(Map.fetch!(args, :app_server_socket))},
-        {~c"EZAGENT_CODEX_THREAD_ID_FILE", String.to_charlist(Map.fetch!(args, :thread_id_file))},
-        {~c"EZAGENT_CODEX_CWD", String.to_charlist(Map.fetch!(args, :cwd))}
-      ]
-      |> maybe_env(~c"EZAGENT_CODEX_BIN", Map.get(args, :codex_path))
-      |> maybe_env(~c"EZAGENT_CODEX_MODEL", Map.get(args, :model))
-      |> maybe_env(~c"EZAGENT_CODEX_APPROVAL_POLICY", Map.get(args, :approval_policy))
-      |> maybe_env(~c"EZAGENT_CODEX_SANDBOX", Map.get(args, :sandbox))
+      env =
+        [
+          {~c"EZAGENT_AGENT_URI", agent_uri |> URI.to_string() |> String.to_charlist()},
+          {~c"EZAGENT_AGENT_TOKEN", String.to_charlist(token)},
+          {~c"EZAGENT_BRIDGE_WS_URL", String.to_charlist(Map.fetch!(args, :bridge_ws_url))},
+          {~c"EZAGENT_CODEX_APP_SERVER_SOCK",
+           String.to_charlist(Map.fetch!(args, :app_server_socket))},
+          {~c"EZAGENT_CODEX_THREAD_ID_FILE",
+           String.to_charlist(Map.fetch!(args, :thread_id_file))},
+          {~c"EZAGENT_CODEX_CWD", String.to_charlist(Map.fetch!(args, :cwd))}
+        ]
+        |> maybe_env(~c"EZAGENT_CODEX_BIN", Map.get(args, :codex_path))
+        |> maybe_env(~c"EZAGENT_CODEX_MODEL", Map.get(args, :model))
+        |> maybe_env(~c"EZAGENT_CODEX_APPROVAL_POLICY", Map.get(args, :approval_policy))
+        |> maybe_env(~c"EZAGENT_CODEX_SANDBOX", Map.get(args, :sandbox))
+        |> merge_cmd_env(Map.get(args, :cmd_env, %{}))
 
       port =
         Port.open({:spawn_executable, runner}, [
@@ -180,7 +186,17 @@ defmodule EzagentPluginCodex.BridgeSidecar do
   end
 
   defp maybe_env(env, _key, value) when value in [nil, ""], do: env
-  defp maybe_env(env, key, value) when is_binary(value), do: [{key, String.to_charlist(value)} | env]
+
+  defp maybe_env(env, key, value) when is_binary(value),
+    do: [{key, String.to_charlist(value)} | env]
+
+  defp merge_cmd_env(env, cmd_env) when is_map(cmd_env) do
+    Enum.reduce(cmd_env, env, fn {key, value}, acc ->
+      [{String.to_charlist(to_string(key)), String.to_charlist(to_string(value))} | acc]
+    end)
+  end
+
+  defp merge_cmd_env(env, _), do: env
 
   defp trim_output(output) when byte_size(output) > 8192 do
     binary_part(output, byte_size(output), -8192)

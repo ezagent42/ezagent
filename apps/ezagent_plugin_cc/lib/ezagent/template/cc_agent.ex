@@ -43,21 +43,26 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
         "cwd" => "/path"
       }
 
-  Extended 7-key form (Phase 7 completion PR-1, SPEC §1.5 (c)) — the
+  Extended form (Phase 7 completion PR-1, SPEC §1.5 (c)) — the
   AgentTemplate→cc adapter (`Ezagent.Entity.AgentTemplate.to_template_data/2`)
-  threads these four OPTIONAL sandbox keys:
+  threads these OPTIONAL keys:
 
       %{
         "class" => "cc.agent",
         "agent_uri" => "entity://agent/<workspace>/cc_<name>",
         "cwd" => "/path",
+        "config_dir" => "/path/to/per-agent/.claude",
         "operator_settings_path" => "/path/to/operator/settings.json",
         "operator_mcp_config_path" => "/path/to/operator/mcp.json",
-        "claude_config_dir" => "/path/to/sandbox/.claude",
         "api_key_helper" => "/path/to/api-key-helper.sh"
       }
 
-  All four extended keys are optional — absent ⇒ the legacy behavior,
+  `"config_dir"` is the UNIVERSAL, flavor-neutral per-agent config-home
+  data key (Allen 2026-06-03): every flavor's `AgentTemplate` emits it; the
+  cc Template Class READS it and applies claude semantics (it copies the
+  dir per-agent and exports `CLAUDE_CONFIG_DIR`). It is NOT a cc-named
+  `"claude_config_dir"` key. All extended keys are optional — absent ⇒ the
+  legacy behavior,
   no regression. `build_claude_cmd/3` emits the operator `--settings` /
   `--mcp-config` such that the **mandatory plugin safety `--settings`
   is LAST** (claude `--settings` is last-wins, so `remoteControlAtStartup:
@@ -75,8 +80,8 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   metacharacters (`;`, `$()`, backtick, `&&`) is delivered to `claude`
   verbatim as a single argument — it cannot create an extra flag
   (which would defeat the `--settings` last-wins safety guarantee) and
-  it cannot execute a shell command. `claude_config_dir` is passed as
-  a structured `CLAUDE_CONFIG_DIR` env var via the Server's `:cmd_env`
+  it cannot execute a shell command. The universal `config_dir` is passed
+  as a structured `CLAUDE_CONFIG_DIR` env var via the Server`s `:cmd_env`
   param, never as a `VAR=val` command prefix.
 
   ## codex review of #233 — argv element 0 is an ABSOLUTE PATH
@@ -195,6 +200,35 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   @impl Ezagent.Kind.Template
   def template_name, do: "cc.agent"
 
+  # PR-3 (domain.agent D2) — the config_dir path namespace. Declared explicitly
+  # so `Ezagent.Sandbox.ConfigDir` builds `<Home>/cc-agents/<ws>/<name>` —
+  # byte-identical to the pre-PR-3 cc layout (no migration).
+  @impl Ezagent.Kind.Template
+  def config_dir_namespace, do: "cc"
+
+  # #17 PR-A — the cc credential adapter (flavor-generic credential contract).
+  @behaviour Ezagent.Agent.CredentialAdapter
+
+  @impl Ezagent.Agent.CredentialAdapter
+  def credential_env_var, do: "CLAUDE_CONFIG_DIR"
+
+  @impl Ezagent.Agent.CredentialAdapter
+  def credential_relpaths, do: [".credentials.json"]
+
+  # claude prints these when the OAuth access token is expired/missing (~daily). Pure
+  # data — the PR-C PTY observer consumes them to notify the owner to re-`/login`.
+  @impl Ezagent.Agent.CredentialAdapter
+  def auth_failure_signals,
+    do: [~r/Please run \/login/, "API Error: 403", ~r/API Error: 401/, ~r/Invalid API key/]
+
+  # #17 PR-E — test/E2E credential provisioning (refresh-if-expired + copy). Delegates to
+  # EzagentPluginCc.CredentialRefresh. Production users log in interactively, so this is
+  # only invoked by the test/E2E harness.
+  @impl Ezagent.Agent.CredentialAdapter
+  def refresh_test_credentials(source, home, opts \\ []) do
+    EzagentPluginCc.CredentialRefresh.provision(source, home, opts)
+  end
+
   # SPEC 2026-06-01-flavor-generic-template-data (approach B): the
   # cc-specific template_data fields formerly hardcoded in
   # `AgentTemplate.to_template_data/2`. Reads atom-or-string content keys;
@@ -203,8 +237,15 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # are unaffected.
   @impl Ezagent.Kind.Template
   def template_data_extra(content) when is_map(content) do
+    # config_dir promotion (Allen 2026-06-03): `config_dir` is now a
+    # UNIVERSAL AgentTemplate field — `AgentTemplate.to_template_data/2`
+    # emits it in the universal base under the flavor-neutral `"config_dir"`
+    # data key. cc does NOT re-emit it here; cc's consume path
+    # (`build_claude_config_env/2` / `create_agent_config_dir/2`) READS the
+    # neutral `"config_dir"` key and applies claude semantics
+    # (`CLAUDE_CONFIG_DIR`, the per-agent copy, the claude file format).
+    # Only the cc-specific extras remain owned here.
     %{
-      "claude_config_dir" => content_field(content, :claude_config_dir),
       "operator_settings_path" => content_field(content, :settings_path),
       "operator_mcp_config_path" => content_field(content, :mcp_config_path),
       "api_key_helper" => content_field(content, :api_key_helper),
@@ -225,7 +266,8 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   @impl Ezagent.Kind.Template
   def validate(tmpl) when is_map(tmpl) do
-    with :ok <- check_class(tmpl),
+    with :ok <- check_no_stale_config_dir_key(tmpl),
+         :ok <- check_class(tmpl),
          :ok <- check_agent_uri(tmpl),
          :ok <- check_cwd(tmpl),
          :ok <- check_optional_sandbox_keys(tmpl),
@@ -236,11 +278,35 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   def validate(_), do: {:error, :not_a_map}
 
+  # config_dir promotion (Allen 2026-06-03) — FAIL LOUD on a stale
+  # `"claude_config_dir"` data key (codex P2 closure). The per-agent
+  # config-home is now the universal, flavor-neutral `"config_dir"` key;
+  # `"claude_config_dir"` is NO LONGER part of the contract. A persisted /
+  # hand-written template still carrying it would otherwise pass validate
+  # (unknown keys are ignored) and then SILENTLY spawn without its isolated
+  # config dir / `CLAUDE_CONFIG_DIR` (the consume path reads only
+  # `"config_dir"`). Per `feedback_let_it_crash_no_workarounds` (no
+  # back-compat shim — DB is wiped + rebuilt), we reject it structurally so
+  # the misconfiguration is visible, NOT translated.
+  defp check_no_stale_config_dir_key(tmpl) do
+    if Map.has_key?(tmpl, "claude_config_dir") do
+      {:error,
+       {:stale_config_dir_key, "claude_config_dir",
+        "config_dir is now the universal, flavor-neutral data key (Allen " <>
+          "2026-06-03); rename `claude_config_dir` → `config_dir`. No back-compat " <>
+          "shim — see feedback_let_it_crash_no_workarounds."}}
+    else
+      :ok
+    end
+  end
+
   # Phase 7 completion PR-1 (SPEC §1.5 (c)) — the four sandbox keys are
   # OPTIONAL. Absent ⇒ legacy behavior (the 3-key form still validates).
   # When present, each must be a non-empty string.
+  # config_dir promotion (Allen 2026-06-03): the per-agent config-home key
+  # is the universal, flavor-neutral `"config_dir"` (NOT `"claude_config_dir"`).
   @optional_sandbox_keys ~w(operator_settings_path operator_mcp_config_path
-                            claude_config_dir api_key_helper)
+                            config_dir api_key_helper)
 
   defp check_optional_sandbox_keys(tmpl) do
     Enum.reduce_while(@optional_sandbox_keys, :ok, fn key, :ok ->
@@ -512,7 +578,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   #
   # Skipped when role is `:default` / `"default"` / absent — no-op.
   # Skipped when `config_dir` is `nil` (template has no
-  # `claude_config_dir` reference; nowhere to copy the skill).
+  # `config_dir` reference; nowhere to copy the skill).
   @doc false
   @spec apply_orchestrator_role_bootstrap(map(), String.t() | nil) ::
           :ok | {:error, term()}
@@ -858,9 +924,25 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
       _ ->
         with {:ok, {argv, cmd_env}} <- build_claude_cmd(agent_uri, cwd, tmpl) do
-          {:ok, %{cwd: cwd, cmd_override: argv, cmd_env: cmd_env}}
+          {:ok,
+           %{
+             cwd: cwd,
+             cmd_override: argv,
+             cmd_env: cmd_env,
+             # #17 PR-C — surface an expired/missing claude login as an emit-only
+             # auth-failure signal (no silent mute) from this flavor's adapter.
+             auth_observers: credential_auth_observers()
+           }}
         end
     end
+  end
+
+  # #17 PR-C — build the PTY auth-failure observers from the cc credential adapter's
+  # declared signals (one named observer per signal).
+  defp credential_auth_observers do
+    auth_failure_signals()
+    |> Enum.with_index()
+    |> Enum.map(fn {sig, i} -> %{name: :"cc_auth_failure_#{i}", match: sig} end)
   end
 
   defp start_pty(agent_uri, params) do
@@ -901,7 +983,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # (`operator_settings_path` / `operator_mcp_config_path`) is one list
   # element — it can neither split into extra arguments (defeating the
   # rev-5 "mandatory `--settings` last-wins" guarantee) nor smuggle a
-  # shell command. `claude_config_dir` is returned as a structured env
+  # shell command. The universal `config_dir` is returned as a structured env
   # var (`CLAUDE_CONFIG_DIR`), NOT a `VAR=val` shell prefix (a prefix
   # is meaningless in argv form and was shell-injectable in string
   # form).
@@ -941,10 +1023,17 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       # join. Minting is idempotent per agent URI, so this is the SAME
       # token baked into the esr-bridge config: one credential, no
       # spoofing surface (Phase 7 completion PR-5).
+      # PR-3 (DD-6): the AUTHORITATIVE per-agent .mcp.json lives in the
+      # domain-allocated per-agent config home (sandbox-owned), which
+      # `--mcp-config` points at below. nil ⇒ agent has no config home (the cwd
+      # copy is used). The cwd/git-root/~/.ezagent copies remain as compat.
+      config_home = resolve_config_home(agent_uri, tmpl)
+
       {:ok, _global_mcp_path, agent_token} =
         EzagentPluginCc.McpConfigWriter.write_with_token!(
           agent_uri: URI.to_string(agent_uri),
-          agent_cwd: agent_cwd
+          agent_cwd: agent_cwd,
+          config_dir: config_home
         )
 
       # 2026-05-26 (Allen e2e Bug 4): the writer writes THREE copies of
@@ -968,7 +1057,15 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       # Files (a) + (b) are now diagnostic surfaces only (operator can
       # eyeball the last-spawned agent's creds; they no longer gate
       # the runtime claude → bridge handshake).
-      per_agent_mcp_path = Path.join(agent_cwd, ".mcp.json")
+      # PR-3 (DD-6): point claude's `--mcp-config` at the sandbox-owned per-agent
+      # .mcp.json in the config home (the authoritative copy). Agents with no
+      # config home keep the cwd copy (codex DD-6 — repoint, don't leave claude
+      # reading the old path).
+      per_agent_mcp_path =
+        if is_binary(config_home) and config_home != "",
+          do: Path.join(config_home, ".mcp.json"),
+          else: Path.join(agent_cwd, ".mcp.json")
+
       settings_mcp_args = assemble_settings_mcp_args(mandatory_settings_path(), per_agent_mcp_path, tmpl)
 
       # argv element 0 is the resolved ABSOLUTE path (not bare
@@ -1021,7 +1118,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       # the SHARED template ref dir (cross-agent credential leak).
       cmd_env =
         base_env
-        |> build_claude_config_env(tmpl)
+        |> put_claude_config_dir(config_home, tmpl)
         |> maybe_put_orchestrator_role_env(tmpl)
 
       {:ok, {argv, cmd_env}}
@@ -1041,30 +1138,34 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     end
   end
 
-  # Strict precedence — codex PR3 round-1 MEDIUM-1.
-  # 1. valid `agent_config_dir` → use it
-  # 2. invalid `agent_config_dir` (present but not valid binary) AND
-  #    `claude_config_dir` also present → RAISE (would silently leak
-  #    cross-agent credentials via shared ref dir)
-  # 3. no `agent_config_dir` + valid `claude_config_dir` → use it (legacy)
-  # 4. neither valid → no CLAUDE_CONFIG_DIR (claude uses ~/.claude)
-  defp build_claude_config_env(base_env, tmpl) do
-    agent_dir = Map.get(tmpl, "agent_config_dir")
-    template_dir = Map.get(tmpl, "claude_config_dir")
+  # PR-3 (DD-6 + codex review P2) — set `CLAUDE_CONFIG_DIR` to the SAME resolved
+  # per-agent config home used for the `.mcp.json` (`resolve_config_home/2`), so
+  # both always agree and NEITHER ever points at the shared template reference
+  # dir. `config_home` is the resolver output (realized > allocated >
+  # derived-from-URI > nil).
+  #
+  # config_dir promotion (Allen 2026-06-03): the template's reference config-home
+  # arrives under the UNIVERSAL, flavor-neutral `"config_dir"` data key.
+  defp put_claude_config_dir(base_env, config_home, tmpl) do
+    # codex P2 closure — fail loud on a STALE `"claude_config_dir"` data key.
+    # `Workspace.Loader.invoke_template/2` calls `instantiate/3` directly WITHOUT
+    # running `validate/1`, so a persisted template carrying the old key would
+    # bypass the validator-level check. This is the PTY-env chokepoint on BOTH
+    # the fresh and respawn paths.
+    reject_stale_config_dir_data_key!(tmpl)
 
     cond do
-      valid_dir?(agent_dir) ->
-        Map.put(base_env, "CLAUDE_CONFIG_DIR", agent_dir)
+      is_binary(config_home) and config_home != "" ->
+        Map.put(base_env, "CLAUDE_CONFIG_DIR", config_home)
 
-      not is_nil(agent_dir) and valid_dir?(template_dir) ->
+      # A PRESENT-but-malformed `"config_dir"` (`""` / non-binary) must FAIL LOUD
+      # rather than silently spawn without `CLAUDE_CONFIG_DIR` (operator home).
+      # An ABSENT key is the only legitimate "no config home".
+      config_dir_present_but_malformed?(tmpl) ->
         raise ArgumentError,
-              "cc.agent: invalid agent_config_dir #{inspect(agent_dir)} but " <>
-                "claude_config_dir is also present — refusing to fall back to " <>
-                "the shared template reference dir (cross-agent credential leak risk). " <>
-                "Fix the per-agent dir creation."
-
-      valid_dir?(template_dir) ->
-        Map.put(base_env, "CLAUDE_CONFIG_DIR", template_dir)
+              "cc.agent: invalid config_dir #{inspect(Map.get(tmpl, "config_dir"))} — must " <>
+                "be a non-empty string (or absent for no config home). No silent fallback " <>
+                "to the operator home (feedback_let_it_crash_no_workarounds)."
 
       true ->
         base_env
@@ -1073,6 +1174,95 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   defp valid_dir?(d) when is_binary(d) and d != "", do: true
   defp valid_dir?(_), do: false
+
+  # PR-3 (DD-6 + codex review P2) — the resolved per-agent config home: the single
+  # value used for BOTH `CLAUDE_CONFIG_DIR` and the authoritative `--mcp-config`
+  # `.mcp.json`. Precedence:
+  #   1. realized `agent_config_dir` (threaded at fresh create / persisted respawn);
+  #   2. `allocated_config_dir` (the domain-allocated TARGET injected by
+  #      `provision_and_instantiate/4` — present on the `:already_started`
+  #      PTY-recovery path that skips `create_agent_config_dir/2`);
+  #   3. a `config_dir` REFERENCE is present (the agent HAS a config home) but
+  #      neither realized nor allocated key is in tmpl → DERIVE the per-agent
+  #      target from the agent URI. **Never** the shared template reference dir —
+  #      that would write per-agent files into the shared source (codex P2,
+  #      `feedback_let_it_crash_no_workarounds`: no shared-fallback);
+  #   4. no reference → nil (no config home; claude uses ~/.claude).
+  @doc false
+  def resolve_config_home(%URI{} = agent_uri, tmpl) do
+    cond do
+      valid_dir?(Map.get(tmpl, "agent_config_dir")) ->
+        Map.get(tmpl, "agent_config_dir")
+
+      valid_dir?(Map.get(tmpl, "allocated_config_dir")) ->
+        Map.get(tmpl, "allocated_config_dir")
+
+      valid_dir?(Map.get(tmpl, "config_dir")) ->
+        Ezagent.Sandbox.ConfigDir.path(agent_uri, Ezagent.Kind.Template.namespace_of(__MODULE__))
+
+      true ->
+        nil
+    end
+  end
+
+  # `"config_dir"` key is PRESENT but not a valid dir (`""` / non-binary /
+  # `nil`-value). An absent key is NOT malformed (legitimate "no config home").
+  defp config_dir_present_but_malformed?(tmpl) do
+    case Map.fetch(tmpl, "config_dir") do
+      :error -> false
+      {:ok, v} -> not valid_dir?(v)
+    end
+  end
+
+  # config_dir promotion (Allen 2026-06-03) — FAIL LOUD on a stale
+  # `"claude_config_dir"` data key (codex P2 closure). Used by the cc consume
+  # path (`create_agent_config_dir/2`, `build_claude_config_env/2`), which is
+  # reached on the loader/boot path that bypasses `validate/1`. The per-agent
+  # config-home is the universal, flavor-neutral `"config_dir"` key; the
+  # cc-named key is NO LONGER part of the contract. A template still carrying
+  # it would otherwise be silently dropped → the agent spawns without its
+  # isolated config dir / `CLAUDE_CONFIG_DIR`. No back-compat shim
+  # (`feedback_let_it_crash_no_workarounds`) — raise so the misconfiguration
+  # is visible.
+  defp reject_stale_config_dir_data_key!(tmpl) when is_map(tmpl) do
+    if Map.has_key?(tmpl, "claude_config_dir") do
+      raise ArgumentError,
+            "cc.agent: stale `claude_config_dir` data key — config_dir is now the " <>
+              "universal, flavor-neutral `config_dir` key (Allen 2026-06-03). Rename " <>
+              "`claude_config_dir` → `config_dir`. No back-compat shim " <>
+              "(feedback_let_it_crash_no_workarounds)."
+    else
+      :ok
+    end
+  end
+
+  defp reject_stale_config_dir_data_key!(_), do: :ok
+
+  # config_dir promotion (Allen 2026-06-03) — PR-F lazy FORWARD migration.
+  # `reject_stale_config_dir_data_key!/1` correctly fail-louds on a stale
+  # `"claude_config_dir"` arriving on the FRESH create/validate path (a code-level
+  # misconfiguration). But agents SEEDED before the rename persisted their
+  # `respawn_template_data` with the old key; on a cold restart that persisted data
+  # is replayed verbatim through the same build path, so the fail-loud would crash-
+  # loop a legitimate pre-rename agent forever (the 传话游戏 relay "no reply" bug,
+  # 2026-06-04). This migrates the legacy key forward — applied ONLY at the
+  # rehydration boundary (`ensure_subprocess_alive/2`), NOT on the fresh path — so
+  # persisted agents boot while a genuinely misconfigured fresh template still
+  # fails loud. Schema-evolution of persisted data, not a back-compat shim
+  # (cf. PR-4 cold-restart state normalization).
+  #
+  # The current contract key wins: if BOTH keys are present the new `"config_dir"`
+  # is kept and the legacy duplicate is dropped.
+  @doc false
+  @spec migrate_legacy_config_dir_key(map()) :: map()
+  def migrate_legacy_config_dir_key(tmpl) when is_map(tmpl) do
+    if Map.has_key?(tmpl, "claude_config_dir") do
+      {legacy, rest} = Map.pop(tmpl, "claude_config_dir")
+      Map.put_new(rest, "config_dir", legacy)
+    else
+      tmpl
+    end
+  end
 
   @doc false
   # codex review of the PR-1 hardening (#233) — resolve the `claude`
@@ -1190,8 +1380,8 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # --- Per-agent config_dir + extension management (PR3 2026-05-24) -----------
   #
   # Allen 2026-05-24 architectural decision (PR2 + PR3): every spawned cc
-  # agent gets its OWN config dir (copied from the template's reference
-  # `claude_config_dir` at spawn). The dir is the per-agent CLAUDE_CONFIG_DIR
+  # agent gets its OWN config dir (copied from the template`s reference
+  # universal `config_dir` at spawn). The dir is the per-agent CLAUDE_CONFIG_DIR
   # — claude reads `.credentials.json` etc. from it — and houses an
   # installable extensions tree at `<dir>/.claude/plugins/<ext_id>/`
   # (Anthropic Claude Code "plugin" bundles, per the marketplace cache
@@ -1215,43 +1405,14 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # callback (`destroy_config_dir/2`) verifies the path it removes
   # equals this — defense-in-depth against being handed a bogus path.
 
+  # PR-3 (domain.agent D2) — the per-agent config_dir TARGET path authority moved
+  # to `Ezagent.Sandbox.ConfigDir` (core, the sandbox concept owns the location).
+  # This thin delegate keeps cc's internal callers (rollback) + the canonical-path
+  # contract working; the scheme itself no longer lives in the plugin.
   @doc false
   def agent_config_dir(%URI{} = agent_uri) do
-    workspace = agent_workspace_segment(agent_uri)
-    name = agent_name_segment(agent_uri)
-    Path.join([Ezagent.Home.path("cc-agents"), workspace, name])
+    Ezagent.Sandbox.ConfigDir.path(agent_uri, Ezagent.Kind.Template.namespace_of(__MODULE__))
   end
-
-  defp agent_workspace_segment(%URI{host: "agent", path: "/" <> rest} = agent_uri) do
-    case String.split(rest, "/", parts: 2) do
-      [workspace, _name] when workspace != "" ->
-        workspace
-
-      _ ->
-        raise ArgumentError,
-              "agent URI is not canonical 3-segment `entity://agent/<workspace>/<name>` " <>
-                "— got #{inspect(agent_uri)}. Per SPEC #324 rev 3 / PR #335, there is NO " <>
-                "silent default workspace fallback; callers must pass a fully-formed URI."
-    end
-  end
-
-  defp agent_workspace_segment(other),
-    do:
-      raise(
-        ArgumentError,
-        "agent URI is not an `entity://agent/...` URI — got #{inspect(other)}. " <>
-          "Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace fallback; " <>
-          "callers must pass a fully-formed URI."
-      )
-
-  defp agent_name_segment(%URI{host: "agent", path: "/" <> rest}) do
-    case String.split(rest, "/", parts: 2) do
-      [_workspace, name] when name != "" -> name
-      _ -> "unknown"
-    end
-  end
-
-  defp agent_name_segment(_), do: "unknown"
 
   # `list_extensions/1` — scan `<config_dir>/.claude/plugins/*` for
   # installed Claude Code plugin bundles. A bundle is recognized by
@@ -1384,20 +1545,23 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # `destroy_config_dir/2` — `rm -rf <config_dir>`. Called at agent
   # teardown by `Ezagent.Behavior.Sandbox.invoke(:destroy, ...)`.
   #
-  # Defense-in-depth: the path MUST equal what `agent_config_dir/1`
-  # would compute for this agent_uri. A buggy caller passing an
-  # arbitrary path (e.g. `/`) would otherwise be catastrophic.
+  # Defense-in-depth (PR-3 DD-5): the path MUST equal the canonical TARGET for
+  # this agent_uri — checked by the core authority `Ezagent.Sandbox.ConfigDir`
+  # (the path scheme lives there now, not in the plugin). A buggy caller passing
+  # an arbitrary path (e.g. `/`) is rejected.
   @impl Ezagent.Kind.Template
   def destroy_config_dir(%URI{} = agent_uri, config_dir) when is_binary(config_dir) do
-    expected = agent_config_dir(agent_uri)
+    namespace = Ezagent.Kind.Template.namespace_of(__MODULE__)
 
-    if Path.expand(config_dir) == Path.expand(expected) do
+    if Ezagent.Sandbox.ConfigDir.safe_to_destroy?(config_dir, agent_uri, namespace) do
       case File.rm_rf(config_dir) do
         {:ok, _removed} -> :ok
         {:error, reason, _path} -> {:error, {:rm_rf_failed, reason}}
       end
     else
-      {:error, {:path_mismatch, expected: expected, got: config_dir}}
+      {:error,
+       {:path_mismatch,
+        expected: Ezagent.Sandbox.ConfigDir.path(agent_uri, namespace), got: config_dir}}
     end
   end
 
@@ -1442,6 +1606,12 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # (`feedback_let_it_crash_no_workarounds`).
   @impl Ezagent.Kind.Template
   def ensure_subprocess_alive(%URI{} = agent_uri, respawn_data) when is_map(respawn_data) do
+    # PR-F — forward-migrate persisted respawn data from agents seeded BEFORE the
+    # `claude_config_dir` → `config_dir` rename, so the downstream build path's
+    # fail-loud stale-key reject doesn't crash-loop a legitimate pre-rename agent
+    # on cold restart. The fresh create/validate paths keep the fail-loud.
+    respawn_data = migrate_legacy_config_dir_key(respawn_data)
+
     cond do
       pty_server_alive?(agent_uri) ->
         :ok
@@ -1575,7 +1745,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   # The lifecycle topic string. Hard-coded here (NOT a call into
   # `Ezagent.Orchestrator.McpChannel.lifecycle_topic/0`) because
-  # `ezagent_domain_chat` is a `only: :test` dep of this plugin — it is
+  # `ezagent_domain_instance_message` is a `only: :test` dep of this plugin — it is
   # NOT a compile dep in prod. The topic is a stable string contract
   # shared with `McpChannel.join/3`'s broadcast (§5); a drift would be
   # caught by the live e2e (the only validator of the live gate).
@@ -1656,28 +1826,60 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # Called from `spawn_for_local_pty/2` BEFORE PTY launch so the
   # cc process gets `CLAUDE_CONFIG_DIR=<per-agent-dir>` and reads its
   # own private credentials/settings. The reference dir is the
-  # template's `claude_config_dir` field (now interpreted as
+  # template's universal `config_dir` field (now interpreted as
   # "reference" — not the dir the process actually uses).
+  #
+  # config_dir promotion (Allen 2026-06-03): the reference config-home
+  # arrives under the UNIVERSAL, flavor-neutral `"config_dir"` data key
+  # (was `"claude_config_dir"`); cc reads it here as its claude reference
+  # dir to copy per-agent.
   #
   # Returns `{:ok, path}` where path is the absolute per-agent dir.
   # If no reference dir is configured on the template, returns
   # `{:ok, nil}` — agent runs without `CLAUDE_CONFIG_DIR` (legacy
   # behavior, valid for agents that need no sandbox).
+  # PR-3 (domain.agent D2) — MATERIALIZE the flavor reference into the per-agent
+  # config_dir TARGET the DOMAIN allocated (`"allocated_config_dir"`, injected by
+  # `Ezagent.Kind.Template.provision_and_instantiate/4`). The plugin no longer
+  # computes the path; `agent_uri` is retained only for the legacy signature.
   @doc false
   @spec create_agent_config_dir(URI.t(), map()) ::
           {:ok, String.t() | nil} | {:error, term()}
-  def create_agent_config_dir(%URI{} = agent_uri, tmpl) when is_map(tmpl) do
-    reference_dir = Map.get(tmpl, "claude_config_dir")
+  def create_agent_config_dir(%URI{} = _agent_uri, tmpl) when is_map(tmpl) do
+    # codex P2 closure — fail loud on a stale `"claude_config_dir"` data key
+    # (the loader path bypasses `validate/1`). See
+    # `reject_stale_config_dir_data_key!/1`.
+    reject_stale_config_dir_data_key!(tmpl)
 
-    case reference_dir do
-      ref when is_binary(ref) and ref != "" ->
-        do_create_agent_config_dir(agent_uri, ref)
-
-      _ ->
-        # No reference dir on template — the agent runs without one
-        # (legacy: claude reads from `~/.claude` on the operator's
-        # machine). The Sandbox slice's config_dir_path will be nil.
+    # codex P2 closure — distinguish ABSENT/nil (legitimate: no config home)
+    # from PRESENT-but-malformed (`""` / non-binary → FAIL LOUD). The loader
+    # path bypasses `validate/1`, so a malformed `"config_dir"` must be
+    # rejected here rather than silently treated as absent (which would spawn
+    # without `CLAUDE_CONFIG_DIR`, falling back to the operator home). Use
+    # `Map.fetch/2` so a present `nil` is also rejected as malformed (an
+    # absent key is the only legitimate "no config home").
+    case Map.fetch(tmpl, "config_dir") do
+      :error ->
+        # Key absent — the agent runs without a config home (legacy: claude
+        # reads from `~/.claude`). The Sandbox slice's config_dir_path is nil.
         {:ok, nil}
+
+      {:ok, ref} when is_binary(ref) and ref != "" ->
+        # PR-3: the TARGET is domain-allocated + provided as
+        # "allocated_config_dir". Every spawn seam routes through
+        # `provision_and_instantiate/4`, so an absent target means an
+        # un-provisioned / direct caller — FAIL LOUD rather than self-allocate
+        # (which would re-introduce the plugin-picks-the-path scatter).
+        case Map.fetch(tmpl, "allocated_config_dir") do
+          {:ok, target} when is_binary(target) and target != "" ->
+            materialize_config_dir(target, ref)
+
+          _ ->
+            {:error, :config_dir_not_allocated}
+        end
+
+      {:ok, bad} ->
+        {:error, {:invalid_config_dir, bad}}
     end
   end
 
@@ -1687,8 +1889,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # gets fully re-created. Codex PR3 round-1 HIGH-2.
   @config_complete_marker ".ezagent-config-complete"
 
-  defp do_create_agent_config_dir(agent_uri, reference_dir) do
-    target = agent_config_dir(agent_uri)
+  defp materialize_config_dir(target, reference_dir) do
     marker = Path.join(target, @config_complete_marker)
 
     cond do
@@ -1697,41 +1898,82 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
       File.dir?(target) and File.exists?(marker) ->
         # Already exists AND marker present → completed copy from a
-        # prior spawn. Idempotent — return the path (live state).
+        # prior spawn. Idempotent — preserve (incl. any user `/login` creds).
         {:ok, target}
 
-      File.dir?(target) ->
-        # Stale / partially-copied dir (marker absent). Wipe + re-copy
-        # rather than silently adopting corrupted state. Codex PR3
-        # round-1 HIGH-2: a partial cp_r leaves missing files; PTY
-        # would launch with corrupt credentials. Better to fail loudly
-        # and re-create than ignore.
-        case File.rm_rf(target) do
-          {:ok, _} ->
-            do_atomic_copy(reference_dir, target, marker)
-
-          {:error, reason, _} ->
-            {:error, {:stale_dir_cleanup_failed, reason}}
-        end
+      File.dir?(target) and has_user_credentials?(target) ->
+        # #17 PR-B — marker absent BUT the agent's login credential files are present.
+        # This is either a real interactive `/login` OR a pre-atomic interrupted copy
+        # that got as far as the creds. Either way we must (a) NEVER lose the user's
+        # creds and (b) NOT bless a possibly-incomplete tree (codex review P2). So:
+        # stage the reference, OVERLAY the existing (user) files on top (user wins),
+        # stamp, atomic-swap → the result is COMPLETE reference content + all user
+        # state + marker.
+        stage_and_swap(reference_dir, target, marker, overlay: target)
 
       true ->
-        do_atomic_copy(reference_dir, target, marker)
+        # target absent, OR a credential-LESS dir (freshly-allocated empty dir from
+        # `ConfigDir.allocate/2`, or a partial copy with no user creds). Safe to
+        # (re)materialize via atomic staging.
+        stage_and_swap(reference_dir, target, marker)
     end
   end
 
-  # Copy + chmod + write marker as the LAST step. If anything before
-  # the marker fails, the next spawn sees marker-absent → wipes + retries.
-  defp do_atomic_copy(reference_dir, target, marker) do
+  # #17 PR-B — ATOMIC STAGING: build the full copy in a sibling staging dir, write the
+  # completion marker INSIDE it, then swap it into place with an atomic `rename`. The
+  # target therefore only ever appears fully-formed (marker present) or absent — never a
+  # partial copy — so a marker-absent target is unambiguous (it is a user `/login`, never
+  # our half-done copy). Supersedes the old blind stale-wipe (codex review HIGH-3).
+  defp stage_and_swap(reference_dir, target, marker, opts \\ []) do
+    staging = "#{target}.staging-#{System.unique_integer([:positive])}"
+    marker_name = Path.basename(marker)
+    _ = File.rm_rf(staging)
+
     with :ok <- File.mkdir_p(Path.dirname(target)),
-         {:ok, _} <- File.cp_r(reference_dir, target),
-         :ok <- File.chmod(target, 0o700),
-         :ok <- chmod_credentials(target),
-         :ok <- File.write(marker, "ok\n") do
+         {:ok, _} <- File.cp_r(reference_dir, staging),
+         # Optional overlay (codex P2): copy an existing dir's files ON TOP of the
+         # reference (overlay source wins) so a user `/login` (or other user state) is
+         # preserved while the reference fills any missing content → complete tree.
+         :ok <- maybe_overlay(Keyword.get(opts, :overlay), staging),
+         :ok <- File.chmod(staging, 0o700),
+         :ok <- chmod_credentials(staging),
+         :ok <- File.write(Path.join(staging, marker_name), "ok\n"),
+         :ok <- swap_into_place(staging, target) do
       {:ok, target}
     else
-      {:error, reason} -> {:error, {:copy_reference_dir_failed, reason}}
-      err -> {:error, {:copy_reference_dir_failed, err}}
+      {:error, reason} ->
+        _ = File.rm_rf(staging)
+        {:error, {:copy_reference_dir_failed, reason}}
+
+      err ->
+        _ = File.rm_rf(staging)
+        {:error, {:copy_reference_dir_failed, err}}
     end
+  end
+
+  defp maybe_overlay(nil, _staging), do: :ok
+
+  defp maybe_overlay(src, staging) when is_binary(src) do
+    # Don't overlay the in-progress completion marker (it's written fresh below); the
+    # overlay carries the user's credential + config files over the reference defaults.
+    case File.cp_r(src, staging) do
+      {:ok, _} -> :ok
+      {:error, reason, _} -> {:error, reason}
+    end
+  end
+
+  # Remove a credential-LESS existing target (the only case that reaches here — a
+  # credentialled target is preserved by the `has_user_credentials?` guard above), then
+  # rename the staging dir into place. `rename` is atomic on the same filesystem (staging
+  # is a sibling of target).
+  defp swap_into_place(staging, target) do
+    if File.dir?(target), do: File.rm_rf(target)
+    File.rename(staging, target)
+  end
+
+  # True iff any of the flavor's declared credential files exist in `dir` (a real login).
+  defp has_user_credentials?(dir) do
+    Enum.any?(credential_relpaths(), fn rel -> File.exists?(Path.join(dir, rel)) end)
   end
 
   # The seed convention chmods `.credentials.json` to 0600 (file

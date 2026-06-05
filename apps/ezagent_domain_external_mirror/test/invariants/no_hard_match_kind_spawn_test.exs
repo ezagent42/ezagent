@@ -25,7 +25,7 @@ defmodule Ezagent.ExternalMirror.Invariants.NoHardMatchKindSpawnTest do
   ## Scope
 
   Greps `apps/ezagent_domain_external_mirror/` AND
-  `apps/ezagent_domain_chat/` (where the Behavior's reconciliation
+  `apps/ezagent_domain_instance_message/` (where the Behavior's reconciliation
   loop spawns Workers). Plugins are NOT scoped because they should
   go through the `Ezagent.ExternalMirror.bind/4` facade, never
   `Kind.spawn` Workers directly.
@@ -45,7 +45,7 @@ defmodule Ezagent.ExternalMirror.Invariants.NoHardMatchKindSpawnTest do
 
   @scoped_dirs [
     "ezagent_domain_external_mirror/lib",
-    "ezagent_domain_chat/lib"
+    "ezagent_domain_instance_message/lib"
   ]
 
   test "no `:ok = Kind.spawn(...)` (or equivalent) hard-matches in ExternalMirror + Chat lib" do

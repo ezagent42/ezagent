@@ -25,5 +25,5 @@ defmodule Ezagent.Entity.Loom do
   # flavor-prefix `spawn_agent/1` resolver routes them there, same as
   # Echo). `Ezagent.Kind.spawn/2` reads this.
   @impl Ezagent.Kind
-  def supervisor, do: EzagentDomainChat.AgentSupervisor
+  def supervisor, do: EzagentDomainInstanceMessage.AgentSupervisor
 end

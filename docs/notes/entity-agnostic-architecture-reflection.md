@@ -35,7 +35,7 @@ There is no "if scheme == user, do X; if scheme == agent, do Y" anywhere in the 
 
 ### 2.2 Spawn is URI-scheme-keyed, not sub-type-keyed
 
-`apps/ezagent_core/lib/ezagent/spawn_registry.ex:62` — `SpawnRegistry.spawn(%URI{scheme: scheme})` looks up the registered spawn fn for the scheme and returns `{:ok, pid}`. The plugin that owns `agent://` (`ezagent_domain_chat` for the User Kind, etc.) is symmetrical with the plugin that owns `user://`. Both register identically:
+`apps/ezagent_core/lib/ezagent/spawn_registry.ex:62` — `SpawnRegistry.spawn(%URI{scheme: scheme})` looks up the registered spawn fn for the scheme and returns `{:ok, pid}`. The plugin that owns `agent://` (`ezagent_domain_instance_message` for the User Kind, etc.) is symmetrical with the plugin that owns `user://`. Both register identically:
 
 ```elixir
 Ezagent.SpawnRegistry.register("agent", fn uri -> ... end)
@@ -54,7 +54,7 @@ The Loader at app start iterates `[{:member, URI}]` tuples and calls `SpawnRegis
 
 ### 2.5 Session membership is a `members` map of URIs, not two parallel maps
 
-`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:73` — the Chat slice's `members` field is `%{URI => %{online: bool}}`. `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:242` — `invoke(:join, slice, %{member: %URI{} = member_uri}, ctx)` accepts any URI and merges it in without inspecting scheme. Routing fan-out at `chat.ex:130` (`in_session_members = Map.keys(slice.members)`) treats every member identically.
+`apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:73` — the Chat slice's `members` field is `%{URI => %{online: bool}}`. `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:242` — `invoke(:join, slice, %{member: %URI{} = member_uri}, ctx)` accepts any URI and merges it in without inspecting scheme. Routing fan-out at `chat.ex:130` (`in_session_members = Map.keys(slice.members)`) treats every member identically.
 
 ### 2.6 Auto-derived REST API is the entity-agnostic dispatch surface
 
@@ -66,7 +66,7 @@ The Loader at app start iterates `[{:member, URI}]` tuples and calls `SpawnRegis
 
 ### 2.8 Agent Kind carries the Identity Behavior too
 
-`apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex:57` — `def behaviors, do: [Ezagent.Behavior.Chat, Ezagent.Behavior.Identity]`. Agents and Users share the Identity Behavior, so caps live in the same slice shape for both, and the same `identity/grant_cap` action works against `user://X` and `agent://X` interchangeably.
+`apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex:57` — `def behaviors, do: [Ezagent.Behavior.Chat, Ezagent.Behavior.Identity]`. Agents and Users share the Identity Behavior, so caps live in the same slice shape for both, and the same `identity/grant_cap` action works against `user://X` and `agent://X` interchangeably.
 
 ---
 
@@ -100,7 +100,7 @@ The `EzagentWeb.Plugs.RequireUser` plug (`apps/ezagent_web/lib/ezagent_web/plugs
 
 ### 3.4 Mention dropdown lists `agent://` URIs only
 
-`apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_live.ex:512` — `list_session_agent_uris/1` filters `read_session_members(session_uri) |> Enum.filter(&String.starts_with?(&1, "agent://"))`. The compose dropdown at `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin/chat_window.ex:75` is fed from that list, so a human in a multi-human Session cannot `@mention` another human via the UI even though the Routing layer (`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:130`) and the matcher DSL have no such restriction.
+`apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_live.ex:512` — `list_session_agent_uris/1` filters `read_session_members(session_uri) |> Enum.filter(&String.starts_with?(&1, "agent://"))`. The compose dropdown at `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin/chat_window.ex:75` is fed from that list, so a human in a multi-human Session cannot `@mention` another human via the UI even though the Routing layer (`apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:130`) and the matcher DSL have no such restriction.
 
 ### 3.5 Floating-agent and Agents pages are agent-only by name
 
@@ -120,7 +120,7 @@ A grep for `current_user_uri`, `the user`, etc. across `apps/ezagent_web/` and `
 
 ### 3.9 Comments and docstrings still call out a User/Agent split
 
-E.g. `apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex:8`: "an Agent is a peer of admin User in the Session — it can send messages [...] and receive messages [...]." The split is described as a near-symmetry. The fact that we have to say "peer" — rather than "another Entity" — reveals that the model is two siblings under an implicit parent that has no Elixir module.
+E.g. `apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex:8`: "an Agent is a peer of admin User in the Session — it can send messages [...] and receive messages [...]." The split is described as a near-symmetry. The fact that we have to say "peer" — rather than "another Entity" — reveals that the model is two siblings under an implicit parent that has no Elixir module.
 
 ---
 
@@ -184,11 +184,11 @@ Ranked by impact on the principle, not by scope. Scope estimates are rough sketc
 
 ### S-10. Add session-scoped routing rules (`routing_rules.session_uri` column) + fix the SessionTemplate fork gap. (Medium)
 
-**What:** Today `Ezagent.Routing.RuleStore.list/1` rules carry an optional `workspace_uri`. Add an optional `session_uri` column. Scope hierarchy becomes global ⊂ workspace ⊂ session. Dispatch evaluation walks all three layers. SessionTemplate's working-copy slice (built by `apps/ezagent_domain_chat/lib/ezagent/orchestrator/tools.ex:build_working_copy/4`) snapshots rules by session_uri; on `spawn_from_template/2` they're replayed under the new session's URI — fork isolation is automatic.
+**What:** Today `Ezagent.Routing.RuleStore.list/1` rules carry an optional `workspace_uri`. Add an optional `session_uri` column. Scope hierarchy becomes global ⊂ workspace ⊂ session. Dispatch evaluation walks all three layers. SessionTemplate's working-copy slice (built by `apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools.ex:build_working_copy/4`) snapshots rules by session_uri; on `spawn_from_template/2` they're replayed under the new session's URI — fork isolation is automatic.
 
 **Why:** Two latent bugs surfaced by Allen 2026-05-19 reading the SessionTemplate code:
 
-  1. **`spawn_from_template/2` doesn't replay routing rules.** `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:spawn_from_template/2` spawns a fresh session URI, binds it to `workspace://generated-sessions`, spawns an orchestrator, and stops. The template's slice contains routing_rules (captured at save time by `build_working_copy/4`), but they are never installed into RuleStore for the new session. Symptom: forks have no routing wiring beyond global rules. Marked TODO in `default_workspace_for_session` ("PR 46 era").
+  1. **`spawn_from_template/2` doesn't replay routing rules.** `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:spawn_from_template/2` spawns a fresh session URI, binds it to `workspace://generated-sessions`, spawns an orchestrator, and stops. The template's slice contains routing_rules (captured at save time by `build_working_copy/4`), but they are never installed into RuleStore for the new session. Symptom: forks have no routing wiring beyond global rules. Marked TODO in `default_workspace_for_session` ("PR 46 era").
   2. **Even if (1) is fixed, all forks share `workspace://generated-sessions`.** Every `spawn_from_template/2` call hardcodes the same workspace URI. If rules are installed by workspace_uri, fork A's rules land in the same workspace as fork B's — cross-pollution. Session-scoped rules dodge this because each fork gets a unique session_uri naturally.
 
 Path Y (this proposal) keeps workspace as the operator-organized scope and adds session as the fork-scoped scope. Cleaner than Path X (which would require minting a unique workspace per fork — workspaces become per-session noise, defeating their organizational purpose). Ship as its own PR-E so the schema change + migration + spawn_from_template fix land together.

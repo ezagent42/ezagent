@@ -21,7 +21,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
     7. `:list_routing_rules` — pure read
     8. `:set_routing_rules` — `{:set, :routing_rules, list}`
     9. `:instantiate`    — pure read (returns children list)
-   10. `:create_session` — cross-domain DI lookup (`EzagentDomainChat`)
+   10. `:create_session` — cross-domain DI lookup (`EzagentDomainInstanceMessage`)
                            via app-env override; verifies the dispatch
                            lands AND the result return shape matches
                            pre-migration behaviour.
@@ -46,7 +46,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
 
   ## Cross-domain dispatch coverage (`:create_session`)
 
-  The handler calls `EzagentDomainChat.create_session/3` via a
+  The handler calls `EzagentDomainInstanceMessage.SessionCreator.create_session/3` via a
   runtime app-env lookup. To exercise the cross-domain call WITHOUT
   booting the full chat application (heavy: requires `Repo`,
   `SystemPrincipal.Catalog`, plugin registrations…), we install a
@@ -69,7 +69,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
   alias Ezagent.Behavior.Workspace, as: WB
 
   # ---------------------------------------------------------------
-  # Fake `EzagentDomainChat` facade — recorded calls go via
+  # Fake `EzagentDomainInstanceMessage` facade — recorded calls go via
   # `Process.put({__MODULE__, :calls}, ...)` because each test runs
   # in its own process and the fake's calls accumulate per test.
   # ---------------------------------------------------------------
@@ -83,10 +83,10 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
 
       # Mirror the real facade's success return: {:ok, session_uri, meta}.
       session_uri =
-        URI.parse("session://default/#{workspace_uri.host}/#{short_name}")
+        Ezagent.URI.new!("session://default/#{workspace_uri.host}/#{short_name}")
 
       orchestrator_uri =
-        URI.parse("entity://agent/#{workspace_uri.host}/cc_orchestrator_#{short_name}")
+        Ezagent.URI.new!("entity://agent/#{workspace_uri.host}/cc_orchestrator_#{short_name}")
 
       meta = %{
         orchestrator_uri: orchestrator_uri,
@@ -395,9 +395,15 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
     test "calls the configured session facade with the workspace + caller passed through" do
       Application.put_env(:ezagent_domain_workspace, :session_facade, FakeChatFacade)
 
-      workspace_uri = URI.parse("workspace://team-alpha")
-      caller = URI.parse("entity://user/team-alpha/alice")
+      workspace_uri = Ezagent.URI.new!("workspace://team-alpha")
+
+      caller =
+        Ezagent.URI.new!("entity://user/team-alpha/alice-#{System.unique_integer([:positive])}")
+
       slice = slice(%{})
+
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(Ezagent.Entity.User, %{uri: caller, initial_caps: MapSet.new()})
 
       ctx = %{self_uri: workspace_uri, caller: caller}
 
@@ -481,7 +487,8 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
 
       workspace_uri = URI.parse("workspace://team-alpha")
       slice = slice(%{})
-      ctx = %{self_uri: workspace_uri}  # no :caller key
+      # no :caller key
+      ctx = %{self_uri: workspace_uri}
 
       assert {:error, {:bad_caller, nil}} =
                dispatch(

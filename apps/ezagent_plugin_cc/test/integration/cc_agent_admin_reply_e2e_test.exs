@@ -15,7 +15,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
 
   The full real production wiring is exercised:
 
-    AgentTemplate slice (`flavor: "cc"`, `claude_config_dir`, …)
+    AgentTemplate slice (`flavor: "cc"`, universal `config_dir`, …)
       → `AgentTemplate.to_template_data/2`
       → `CcAgent.instantiate/3`
       → `build_claude_cmd/3` returns the argv list (mandatory `--settings`
@@ -319,7 +319,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
         "class" => "cc.agent",
         "agent_uri" => agent_uri_str,
         "cwd" => agent_cwd,
-        "claude_config_dir" => Path.dirname(sandbox_config_dir),
+        "config_dir" => Path.dirname(sandbox_config_dir),
         "operator_settings_path" => operator_settings_path
       }
 
@@ -328,8 +328,8 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
       # proves the AgentTemplate adapter is the source of truth.
       at_content = %{
         flavor: "cc",
-        working_directory: agent_cwd,
-        claude_config_dir: Path.dirname(sandbox_config_dir),
+        project_cwd: agent_cwd,
+        config_dir: Path.dirname(sandbox_config_dir),
         settings_path: operator_settings_path,
         mcp_config_path: nil,
         api_key_helper: nil
@@ -340,7 +340,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
 
       assert derived["agent_uri"] == agent_uri_str
       assert derived["cwd"] == agent_cwd
-      assert derived["claude_config_dir"] == Path.dirname(sandbox_config_dir)
+      assert derived["config_dir"] == Path.dirname(sandbox_config_dir)
       assert derived["operator_settings_path"] == operator_settings_path
 
       # ---- 3. assert the argv build path emits the mandatory safety
@@ -545,7 +545,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
       # CLAUDE_CONFIG_DIR threaded through — proves the AgentTemplate's
       # sandbox knob actually reaches the spawned `claude`.
       assert get_in(status, ["env", "CLAUDE_CONFIG_DIR"]) == Path.dirname(sandbox_config_dir),
-             "the AgentTemplate's claude_config_dir must reach the spawned claude via CLAUDE_CONFIG_DIR"
+             "the AgentTemplate config_dir (universal) must reach the spawned claude via CLAUDE_CONFIG_DIR"
 
       # EZAGENT_AGENT_URI threaded through (used by the bridge to identify itself).
       assert get_in(status, ["env", "EZAGENT_AGENT_URI"]) == agent_uri_str
@@ -713,7 +713,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
     }
 
     cmd_env =
-      case Map.get(tmpl, "claude_config_dir") do
+      case Map.get(tmpl, "config_dir") do
         dir when is_binary(dir) and dir != "" -> Map.put(base_env, "CLAUDE_CONFIG_DIR", dir)
         _ -> base_env
       end

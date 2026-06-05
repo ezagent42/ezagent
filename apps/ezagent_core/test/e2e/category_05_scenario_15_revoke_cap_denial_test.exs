@@ -61,12 +61,35 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
     short = uniq("rev_demo")
 
     {:ok, uri, _meta} =
-      EzagentDomainChat.create_session(short, Ezagent.Entity.User.admin_uri(),
+      create_session_via_workspace(short, Ezagent.Entity.User.admin_uri(),
         template_name: "default",
         workspace_uri: workspace_uri
       )
 
     uri
+  end
+
+  defp create_session_via_workspace(short_name, creator_uri, opts) do
+    template_name = Keyword.fetch!(opts, :template_name)
+
+    workspace_uri =
+      Keyword.get(opts, :workspace_uri, Ezagent.Capability.workspace_of(creator_uri))
+
+    ensure_workspace_seeded!(workspace_uri)
+
+    with {:ok, result} <-
+           Ezagent.Workspace.create_session(
+             workspace_uri,
+             %{short_name: short_name, template_name: template_name},
+             %{caller: creator_uri, caps: Ezagent.SystemPrincipal.caps("system://bootstrap")}
+           ) do
+      {:ok, result.session_uri,
+       %{
+         orchestrator_uri: result.orchestrator_uri,
+         orchestrator_status: result.orchestrator_status,
+         orchestrator_error: result.orchestrator_error
+       }}
+    end
   end
 
   defp dispatch_send(caller_uri, caps, session_uri, text) do
@@ -78,6 +101,22 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
       args: %{message: msg},
       ctx: %{caller: caller_uri, caps: caps, reply: :inline}
     })
+  end
+
+  defp ensure_workspace_seeded!(%URI{scheme: "workspace", host: name})
+       when is_binary(name) and name != "" do
+    case Ezagent.Workspace.Store.get_by_name(name) do
+      nil ->
+        case Ezagent.Workspace.create(name, %{}) do
+          {:ok, _pid} -> :ok
+          {:error, :workspace_exists} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
+          {:error, reason} -> raise "failed to seed workspace #{name}: #{inspect(reason)}"
+        end
+
+      _ ->
+        :ok
+    end
   end
 
   # Either denial mode means the dispatch was rejected. `:unauthorized`

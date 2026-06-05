@@ -56,7 +56,7 @@ collapses the team and triggers its flow).
 - **SessionTemplate** content = `{agent_slots, routing_rules,
   orchestrator_template_uri, default_workspace_uri}` (version-hashed). **Members
   are NOT in the template**; `create_session/3` joins only
-  `[effective_owner, orchestrator_uri]` (`ezagent_domain_chat.ex:512/604`).
+  `[effective_owner, orchestrator_uri]` (`ezagent_domain_instance_message.ex:512/604`).
 - **`Ezagent.Message` is a plain value struct** — NOT a Kind, no lifecycle/hooks.
 - **Capability action-axis is DONE/merged** — `Capability` has `:action`
   (default `:any`), `matches?/2` treats it as a 5th dimension (PRs #503/#426).

@@ -21,5 +21,5 @@
 这样可以保持现有 cc bridge 调用方继续工作，同时把共享的有状态基础设施迁移到不依赖插件的 domain app。
 
 PR-B 中 shim 只做文档级 deprecated 标记，不使用会触发编译 warning 的
-`@deprecated` 属性；否则在 PR-D/PR-E 迁移 `domain_chat` 与 LiveView 调用点之前，
+`@deprecated` 属性；否则在 PR-D/PR-E 迁移 `domain_instance_message` 与 LiveView 调用点之前，
 会引入新的 warning-as-errors 失败。

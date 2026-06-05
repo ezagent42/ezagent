@@ -3,7 +3,7 @@
 How an operator configures a CC (Claude Code) agent in ezagent. The
 **authoritative design** lives in `Ezagent.Entity.AgentTemplate`
 (Phase 7) — read the moduledoc at
-`apps/ezagent_domain_chat/lib/ezagent/entity/agent_template.ex` first.
+`apps/ezagent_domain_instance_message/lib/ezagent/entity/agent_template.ex` first.
 This page covers the operator-facing knobs, the macOS Keychain
 caveat, and the credential-seeding question.
 

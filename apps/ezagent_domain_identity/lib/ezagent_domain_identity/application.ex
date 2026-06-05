@@ -29,7 +29,7 @@ defmodule EzagentDomainIdentity.Application do
 
   PR-M removes the static child; the admin User Kind now spawns lazily
   via the `entity://` SpawnRegistry fn on first dispatch reference
-  (e.g. `EzagentDomainChat.create_session("main", admin_uri)` joins admin).
+  (e.g. `Ezagent.Workspace.create_session/3` joins admin while creating the session).
   The DB row is provisioned at boot via `ensure_admin_user/0` — idempotent
   `Ezagent.Users.create/3` with `password: nil` (matches the
   `mix ezagent.user.create` flow when `--password` is omitted; first login
@@ -264,7 +264,7 @@ defmodule EzagentDomainIdentity.Application do
       # to chat plugin but identity actions on it are an Identity
       # concern. Both apps load before plugins start dispatching, so
       # registering against Ezagent.Entity.Agent here is safe even though
-      # Agent is defined in ezagent_domain_chat.
+      # Agent is defined in ezagent_domain_instance_message.
       :ok = CapabilityRegistry.register(Ezagent.Entity.Agent, action, Identity)
     end
 

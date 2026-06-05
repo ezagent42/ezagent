@@ -50,9 +50,9 @@ defmodule EzagentCore.Invariants.AgentCreateSinglePathTest do
     # `EzagentPluginCc.Channel.join/3` moduledoc.
     "apps/ezagent_plugin_cc/lib/ezagent_plugin_cc/channel.ex",
     # Reconciler / spawn_fresh path (orchestrator-spawned workers).
-    "apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex",
+    "apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex",
     # The reconciler module itself.
-    "apps/ezagent_domain_chat/lib/ezagent/orchestrator/reconciler.ex",
+    "apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/reconciler.ex",
     # SpawnRegistry itself.
     "apps/ezagent_core/lib/ezagent/spawn_registry.ex"
   ]

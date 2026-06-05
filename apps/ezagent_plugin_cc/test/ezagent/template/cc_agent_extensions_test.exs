@@ -172,7 +172,14 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
       File.write!(Path.join(reference, "settings.json"), "{}")
 
       agent_uri = URI.new!("entity://agent/team-alpha/cc_create-test-#{uniq()}")
-      tmpl = %{"claude_config_dir" => reference}
+      # config_dir promotion (Allen 2026-06-03): cc reads the universal,
+      # flavor-neutral "config_dir" data key (was "claude_config_dir").
+      # PR-3: the per-agent TARGET is domain-allocated + provided as
+      # "allocated_config_dir"; the plugin materializes the reference INTO it.
+      tmpl = %{
+        "config_dir" => reference,
+        "allocated_config_dir" => CcAgent.agent_config_dir(agent_uri)
+      }
 
       assert {:ok, dir} = CcAgent.create_agent_config_dir(agent_uri, tmpl)
       on_exit(fn -> File.rm_rf(dir) end)
@@ -195,7 +202,10 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
       File.write!(Path.join(reference, ".credentials.json"), "{}")
 
       agent_uri = URI.new!("entity://agent/team-alpha/cc_idem-test-#{uniq()}")
-      tmpl = %{"claude_config_dir" => reference}
+      tmpl = %{
+        "config_dir" => reference,
+        "allocated_config_dir" => CcAgent.agent_config_dir(agent_uri)
+      }
 
       assert {:ok, dir1} = CcAgent.create_agent_config_dir(agent_uri, tmpl)
       on_exit(fn -> File.rm_rf(dir1) end)
@@ -209,19 +219,114 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
              "re-call must NOT re-copy from reference (would wipe live state)"
     end
 
-    test "returns {:ok, nil} when template has no claude_config_dir" do
+    test "returns {:ok, nil} when template has no config_dir" do
       agent_uri = URI.new!("entity://agent/team-alpha/cc_no-ref-#{uniq()}")
       tmpl = %{"agent_uri" => URI.to_string(agent_uri), "cwd" => "/tmp", "class" => "cc.agent"}
 
       assert {:ok, nil} = CcAgent.create_agent_config_dir(agent_uri, tmpl)
     end
 
+    test "fails loud on a stale claude_config_dir data key (codex P2 — loader bypasses validate)" do
+      # Workspace.Loader.invoke_template/2 calls instantiate/3 (→
+      # create_agent_config_dir/2) WITHOUT running validate/1, so a stale
+      # data key must fail loud HERE too, not silently spawn without the
+      # isolated config dir. feedback_let_it_crash_no_workarounds.
+      agent_uri = URI.new!("entity://agent/team-alpha/cc_stale-key-#{uniq()}")
+      tmpl = %{"claude_config_dir" => "/old/.claude"}
+
+      assert_raise ArgumentError, ~r/stale `claude_config_dir` data key/, fn ->
+        CcAgent.create_agent_config_dir(agent_uri, tmpl)
+      end
+    end
+
+    test "a present-but-malformed config_dir fails loud, NOT silently dropped (codex P2)" do
+      # The loader path bypasses validate/1; a present `""`/non-binary
+      # config_dir must fail loud here rather than be treated as absent
+      # (which would spawn without CLAUDE_CONFIG_DIR on the operator home).
+      agent_uri = URI.new!("entity://agent/team-alpha/cc_malformed-#{uniq()}")
+
+      assert {:error, {:invalid_config_dir, ""}} =
+               CcAgent.create_agent_config_dir(agent_uri, %{"config_dir" => ""})
+
+      assert {:error, {:invalid_config_dir, 123}} =
+               CcAgent.create_agent_config_dir(agent_uri, %{"config_dir" => 123})
+    end
+
     test "returns error if reference dir doesn't exist" do
       agent_uri = URI.new!("entity://agent/team-alpha/cc_missing-ref-#{uniq()}")
-      tmpl = %{"claude_config_dir" => "/nonexistent/path/123"}
+
+      tmpl = %{
+        "config_dir" => "/nonexistent/path/123",
+        "allocated_config_dir" => CcAgent.agent_config_dir(agent_uri)
+      }
 
       assert {:error, {:reference_dir_missing, "/nonexistent/path/123"}} =
                CcAgent.create_agent_config_dir(agent_uri, tmpl)
+    end
+
+    test "fails loud when a config_dir reference is present but the TARGET was not allocated (PR-3)" do
+      # Every spawn seam routes through provision_and_instantiate/4, which injects
+      # "allocated_config_dir". An absent target means an un-provisioned/direct
+      # caller — the plugin must NOT self-allocate a path (that scatter is the bug
+      # PR-3 removes). feedback_let_it_crash_no_workarounds.
+      agent_uri = URI.new!("entity://agent/team-alpha/cc_unallocated-#{uniq()}")
+      reference = make_tmpdir("cc-unalloc-ref")
+
+      assert {:error, :config_dir_not_allocated} =
+               CcAgent.create_agent_config_dir(agent_uri, %{"config_dir" => reference})
+    end
+
+    test "materializes into a pre-allocated (empty) TARGET dir — the production path (PR-3)" do
+      # Simulates ConfigDir.allocate/2 having already created the target (mkdir +
+      # chmod 700, no marker) BEFORE the plugin materializes the reference into it.
+      reference = make_tmpdir("cc-prealloc-ref")
+      File.write!(Path.join(reference, ".credentials.json"), "{}")
+
+      agent_uri = URI.new!("entity://agent/team-alpha/cc_prealloc-#{uniq()}")
+      target = CcAgent.agent_config_dir(agent_uri)
+      File.mkdir_p!(target)
+      File.chmod!(target, 0o700)
+      on_exit(fn -> File.rm_rf(target) end)
+
+      tmpl = %{"config_dir" => reference, "allocated_config_dir" => target}
+
+      assert {:ok, ^target} = CcAgent.create_agent_config_dir(agent_uri, tmpl)
+      assert File.exists?(Path.join(target, ".credentials.json"))
+      assert File.exists?(Path.join(target, ".ezagent-config-complete"))
+    end
+
+    test "marker-absent target with creds: preserve user login + FILL missing reference content (PR-B / codex P2)" do
+      # #17 PR-B: the user logged in (claude wrote .credentials.json) into a
+      # marker-absent dir. materialize MUST (a) NEVER destroy the real login, AND
+      # (b) NOT bless a possibly-incomplete tree — it overlays the user files on a
+      # fresh reference stage so missing reference content (e.g. .claude/plugins) is
+      # filled while user state wins (codex review P2).
+      reference = make_tmpdir("cc-pr-b-ref")
+      File.write!(Path.join(reference, ".credentials.json"), ~s/{"claudeAiOauth":"REFERENCE-stale"}/)
+      File.write!(Path.join(reference, "settings.json"), ~s/{"from":"reference"}/)
+      plugin_dir = Path.join([reference, ".claude", "plugins", "demo"])
+      File.mkdir_p!(plugin_dir)
+      File.write!(Path.join(plugin_dir, "plugin.json"), ~s/{"name":"demo"}/)
+
+      agent_uri = URI.new!("entity://agent/team-alpha/cc_login-preserve-#{uniq()}")
+      target = CcAgent.agent_config_dir(agent_uri)
+      File.mkdir_p!(target)
+      # the user's real login — present, but NO completion marker + NO other content
+      user_creds = ~s/{"claudeAiOauth":"USER-REAL-LOGIN"}/
+      File.write!(Path.join(target, ".credentials.json"), user_creds)
+      refute File.exists?(Path.join(target, ".ezagent-config-complete"))
+      on_exit(fn -> File.rm_rf(target) end)
+
+      tmpl = %{"config_dir" => reference, "allocated_config_dir" => target}
+
+      assert {:ok, ^target} = CcAgent.create_agent_config_dir(agent_uri, tmpl)
+      # (a) the user's credential is intact (NOT overwritten by the reference's stale one)
+      assert File.read!(Path.join(target, ".credentials.json")) == user_creds
+      # (b) missing reference content was FILLED (no incomplete config — codex P2)
+      assert File.read!(Path.join(target, "settings.json")) == ~s/{"from":"reference"}/
+      assert File.exists?(Path.join([target, ".claude", "plugins", "demo", "plugin.json"]))
+      # and the dir is now stamped complete so future spawns are idempotent
+      assert File.exists?(Path.join(target, ".ezagent-config-complete"))
     end
   end
 

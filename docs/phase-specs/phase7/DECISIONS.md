@@ -56,7 +56,7 @@ Decisions promote to ARCHITECTURE.md Decision Log at Phase 7 closeout (7-4 PR 53
 1. New `apps/ezagent_core/lib/esr/workspace_registry.ex` — ETS owner, `bind/2`, `unbind/1`, `lookup/1`, `list_all/0`
 2. `EzagentCore.EtsOwner` adds `{Ezagent.WorkspaceRegistry, :set}` to owned tables (boot-time creation)
 3. `apps/ezagent_domain_workspace/lib/esr/workspace/loader.ex` `spawn_child({:template, ...})` and `invoke_template` paths call `WorkspaceRegistry.bind(session_uri, workspace_uri)` for each spawned session URI
-4. `apps/ezagent_domain_chat/lib/esr/behavior/chat.ex:116` reads `workspace_uri = Ezagent.WorkspaceRegistry.lookup(session_uri)` and passes `workspace_uri:` opt to `Resolver.resolve/4` (nil falls back to global = today's behavior)
-5. New `apps/ezagent_domain_chat/test/integration/workspace_isolation_test.exs` — drives the real Loader → Chat.invoke(:send) → Resolver path; asserts rule scoped to `workspace://A` doesn't fire for message in `workspace://B`; negative control: nil-scoped rule fires from both
+4. `apps/ezagent_domain_instance_message/lib/esr/behavior/chat.ex:116` reads `workspace_uri = Ezagent.WorkspaceRegistry.lookup(session_uri)` and passes `workspace_uri:` opt to `Resolver.resolve/4` (nil falls back to global = today's behavior)
+5. New `apps/ezagent_domain_instance_message/test/integration/workspace_isolation_test.exs` — drives the real Loader → Chat.invoke(:send) → Resolver path; asserts rule scoped to `workspace://A` doesn't fire for message in `workspace://B`; negative control: nil-scoped rule fires from both
 
 **Promote to Decision Log?** Yes — `WorkspaceRegistry` becomes a permanent fifth Registry family (Kind / Behavior / Routing / Template / Workspace). Document at Phase 7 closeout (PR 53) as Decision #135 (the first new Decision after Phase 6's #132-#134).

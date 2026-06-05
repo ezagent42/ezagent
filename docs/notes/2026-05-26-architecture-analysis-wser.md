@@ -95,9 +95,9 @@ graph TD
 | URI layer | Kind | Persistence | Side-mounted Behaviors | **Corresponding Template** | Instantiator |
 |---|---|---|---|---|---|
 | **W** `workspace://` | `Ezagent.Entity.Workspace` (`apps/ezagent_domain_workspace`) | `:ephemeral` + SQLite via `Workspace.Loader` | `Behavior.Workspace`, `Behavior.WorkspaceUserAdmin` | **No own Template Class** — but `workspace.session_templates` map is a container of "Template Instances" (a declarative recipe list) | `Workspace.Loader` at boot |
-| **S** `session://` | `Ezagent.Entity.Session` (`apps/ezagent_domain_chat`) | `{:snapshot, :on_change}` | `Behavior.Chat`, `Behavior.Publisher.SessionImpl`, `Behavior.ExternalMirror` | **`SessionTemplate` Kind** (`template://session/...@hash`) + `Ezagent.Template.GenericSession` (Template Class, `"session.generic"`) | `Session.spawn_from_template/2` (Generator) |
+| **S** `session://` | `Ezagent.Entity.Session` (`apps/ezagent_domain_instance_message`) | `{:snapshot, :on_change}` | `Behavior.Chat`, `Behavior.Publisher.SessionImpl`, `Behavior.ExternalMirror` | **`SessionTemplate` Kind** (`template://session/...@hash`) + `Ezagent.Template.GenericSession` (Template Class, `"session.generic"`) | `Session.spawn_from_template/2` (Generator) |
 | **E** `entity://user/...` | `Ezagent.Entity.User` (`apps/ezagent_domain_identity`) | `{:snapshot, :on_change}` | `Behavior.Identity` (cap container), `Behavior.ApiKeys`, `Behavior.UserCredentials`, `Behavior.UserTokens`, *plus plugin-attached e.g. `FeishuReceive`* | **No Template** (Users are provisioned manually / via admin flow; no template class) | `Users.create/3` + `SpawnRegistry` |
-| **E** `entity://agent/...` | `Ezagent.Entity.Agent` (`apps/ezagent_domain_chat`) *+ CurlAgent / Echo / NpAgent etc., plugin-defined Kinds* | `{:snapshot, :on_change}` | `Behavior.Chat` (receive side), + flavor-specific Behaviors | **`AgentTemplate` Kind** (`template://agent/...`, no `@hash`) + `Ezagent.Kind.Template` behaviour; **plugins provide**: `cc.agent`, `curl.agent`, `echo.agent`, `np.agent` | `Agent.spawn/4` via the Template Class's `instantiate/3` |
+| **E** `entity://agent/...` | `Ezagent.Entity.Agent` (`apps/ezagent_domain_instance_message`) *+ CurlAgent / Echo / NpAgent etc., plugin-defined Kinds* | `{:snapshot, :on_change}` | `Behavior.Chat` (receive side), + flavor-specific Behaviors | **`AgentTemplate` Kind** (`template://agent/...`, no `@hash`) + `Ezagent.Kind.Template` behaviour; **plugins provide**: `cc.agent`, `curl.agent`, `echo.agent`, `np.agent` | `Agent.spawn/4` via the Template Class's `instantiate/3` |
 | **R** `resource://` | Not a live Kind | Filesystem + DB row | n/a | **No Template** | LV upload / Behavior output |
 
 **Key observations**:
@@ -309,7 +309,7 @@ graph TB
     end
 
     subgraph DOMAIN["domain (mandatory first-class Kinds/Behaviors, siblings allowed, no cycles)"]
-        DCHAT["ezagent_domain_chat<br/>Session/Agent Kind<br/>Chat/Publisher Behaviors<br/>SessionTemplate/AgentTemplate<br/>GenericSession Template Class"]
+        DCHAT["ezagent_domain_instance_message<br/>Session/Agent Kind<br/>Chat/Publisher Behaviors<br/>SessionTemplate/AgentTemplate<br/>GenericSession Template Class"]
         DIDENT["ezagent_domain_identity<br/>User Kind<br/>Identity/ApiKeys/UserCredentials/UserTokens<br/>WorkspaceUserAdmin"]
         DWS["ezagent_domain_workspace<br/>Workspace Kind + Loader<br/>Behavior.Workspace<br/>DefaultRules"]
         DEM["ezagent_domain_external_mirror<br/>Adapter / Binding / Worker<br/>3-layer outbound model (P15)"]
@@ -369,9 +369,9 @@ WSER (horizontal) × core/domain/plugin (vertical) in one table:
 | WSER | What `core` provides | What `domain` implements | What `plugin` side-mounts |
 |---|---|---|---|
 | **workspace://** | `Ezagent.WorkspaceRegistry` (consistency cache), `Capability.workspace_of/1`, step 5.6 cross-ws gate | `ezagent_domain_workspace`: Kind, Loader (boot-time SQLite rebuild), Behavior.Workspace, DefaultRules | *(none; workspace is not extensible by plugins)* |
-| **session://** | `KindRegistry`, `PendingDelivery`, `Snapshot` | `ezagent_domain_chat`: Kind, Behavior.Chat (send/join/leave), Publisher.SessionImpl, ExternalMirror.Behavior, SessionTemplate, Generator (`spawn_from_template`), GenericSession Template Class | ExternalMirror Adapter+Binding pairs (FeishuChatBinding, etc.) |
+| **session://** | `KindRegistry`, `PendingDelivery`, `Snapshot` | `ezagent_domain_instance_message`: Kind, Behavior.Chat (send/join/leave), Publisher.SessionImpl, ExternalMirror.Behavior, SessionTemplate, Generator (`spawn_from_template`), GenericSession Template Class | ExternalMirror Adapter+Binding pairs (FeishuChatBinding, etc.) |
 | **entity://user/** | `Ezagent.Capability`, `SystemPrincipal.Catalog` | `ezagent_domain_identity`: User Kind, Identity/ApiKeys/UserCredentials/UserTokens, Users.create | `FeishuReceive` Behavior (side-mounted on User); other IM/email plugins follow the same pattern |
-| **entity://agent/** | `SpawnRegistry`, `AgentLineage`, `Kind.Template` behaviour | `ezagent_domain_chat`: Agent Kind, AgentTemplate Kind (template content), `Behavior.Template` (read/write/instantiate) | **Template Classes live in plugins**: `cc.agent`, `curl.agent`, `echo.agent`, `np.agent` — `kind_module` wiring is authoritative on AgentTemplate's `flavor` field |
+| **entity://agent/** | `SpawnRegistry`, `AgentLineage`, `Kind.Template` behaviour | `ezagent_domain_instance_message`: Agent Kind, AgentTemplate Kind (template content), `Behavior.Template` (read/write/instantiate) | **Template Classes live in plugins**: `cc.agent`, `curl.agent`, `echo.agent`, `np.agent` — `kind_module` wiring is authoritative on AgentTemplate's `flavor` field |
 | **template://** | `TemplateRegistry`, `@hash` content addressing | SessionTemplate Kind (`template://session/...@<hash>`) + AgentTemplate Kind | *(plugins ship Template Classes registered in TemplateRegistry)* |
 | **resource://** | `Ezagent.Persistence.scope_by_workspace` (read path), `workspace_uri` column constraint | *(mainly in UI/Web layer + filesystem)* | *(no core plugin; the specific resource type lives in its consumer)* |
 | **system://** | `Ezagent.Entity.System` (Kind), `SystemPrincipal.Catalog` (14-URI closed set) | DefaultRules registered under `system://routing/default` | *(plugins add rules at boot via routing_tables)* |

@@ -50,7 +50,7 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
   # Workspace Kind GenServer.
   #
   # Test-env boot deliberately skips `ensure_default_workspace` (see
-  # `EzagentDomainChat.Application.ensure_default_workspace/0`
+  # `EzagentDomainInstanceMessage.Application.ensure_default_workspace/0`
   # moduledoc — DB writes in `Application.start/2` race with Sandbox
   # checkout). So `default` is missing from the DB on every fresh
   # test-suite run; one of these per-suite setups creates it. The
@@ -80,6 +80,11 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
             # test (or stub). Re-insert just the row.
             case Ezagent.Workspace.Store.create(name, %{}) do
               {:ok, _} -> :ok
+              # 5a (#542): Store.create now signals an already-present row as
+              # {:exists, decoded} (the create-entry freshness signal) instead of
+              # an Ecto changeset error. The prior Workspace.create attempt above
+              # re-inserted the row, so this direct call sees it as existing.
+              {:exists, _} -> :ok
               {:error, %Ecto.Changeset{}} -> :ok
             end
         end

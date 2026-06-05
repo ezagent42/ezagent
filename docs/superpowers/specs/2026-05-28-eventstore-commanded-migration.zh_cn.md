@@ -110,7 +110,7 @@ Codex r4 REJECT 仍有 4 HIGH + 3 MED 未决。这些**不**继续阻塞 SPEC，
 
 - **HIGH-1（§4.1.5 仍误分类）：** r3 把 Echo + NpAgent 标为模糊「per-flavor」靠 `kind_snapshots` — 两者实际 `:ephemeral`（`echo.ex:21`、`np_agent.ex:65`）；Sandbox 标「test fixture only」但生产 `Entity.Agent` 在 `agent.ex:75` 声明它且暴露 `:read/:write_path/:destroy` actions @ `sandbox.ex:86`。**r4 fix：** §4.1.5 表更新 Echo + NpAgent 为 `:ephemeral`（无持久状态 — 仅以 message-reply 事件出现）；Sandbox 行加入 behavior 列表，显式迁移去向：作为 Agent aggregate 命令保留（真实 `:read`/`:write_path`/`:destroy` 命令 on Agent aggregate）。
 - **HIGH-2（§4.1 旧「不迁」行与 §6.0 矛盾）：** r3 §4.1 关于 `kind_snapshots` 的行仍说「迁移 Kind 的现有 snapshot **不**迁；首条命令创建新鲜事件溯源状态」— 与 §6.0 强制 import 矛盾。**r4 fix：** §4.1 行重写为：「迁移 Kind 的现有 snapshot 数据经 §6.0 snapshot-import 作每 Phase 的 Step 0 前向迁移。`kind_snapshots` 表 import 后只读；删表本身经 §6.4 preflight 门控。」
-- **HIGH-3（§4.8 AST 门追不到 facade）：** r3 AST 门只匹配 `handle_event/3` 中的直接 `Ezagent.CommandedApp.dispatch/2`。实际 LV 写经 facade：`Ezagent.Workspace.add_template/3` @ `workspace_detail_live.ex:307`、`EzagentDomainChat.create_session/3` @ `admin_live.ex:804`、chat.join @ `admin_live.ex:1019`、session routing @ `:1381`、`EzagentPluginFeishu.bind/2` @ `feishu_bindings_live.ex:88`、`ExternalMirror.bind/4` @ `session_external_mirror_live.ex:221`。**r4 fix：** §4.8 双门架构：(Gate 1) 每个 domain-context 写 facade 在公开 `def` 上声明 `@consistency` 模块属性；invariant `FacadeConsistencyDeclaredTest` 验所有发派发的 facade 都带属性。(Gate 2) `LVConsistencyTest` 走 LV `handle_event/3` 找 facade 调用 + 后续 `assign/2` 重读、按 facade `@consistency` 验。Projection→facade 映射表见新 Appendix D。
+- **HIGH-3（§4.8 AST 门追不到 facade）：** r3 AST 门只匹配 `handle_event/3` 中的直接 `Ezagent.CommandedApp.dispatch/2`。实际 LV 写经 facade：`Ezagent.Workspace.add_template/3` @ `workspace_detail_live.ex:307`、`EzagentDomainInstanceMessage.create_session/3` @ `admin_live.ex:804`、chat.join @ `admin_live.ex:1019`、session routing @ `:1381`、`EzagentPluginFeishu.bind/2` @ `feishu_bindings_live.ex:88`、`ExternalMirror.bind/4` @ `session_external_mirror_live.ex:221`。**r4 fix：** §4.8 双门架构：(Gate 1) 每个 domain-context 写 facade 在公开 `def` 上声明 `@consistency` 模块属性；invariant `FacadeConsistencyDeclaredTest` 验所有发派发的 facade 都带属性。(Gate 2) `LVConsistencyTest` 走 LV `handle_event/3` 找 facade 调用 + 后续 `assign/2` 重读、按 facade `@consistency` 验。Projection→facade 映射表见新 Appendix D。
 - **HIGH-4（§6.1 split-brain 对 bind→spawn→subscribe 仍不安全）：** r3 显式跑两份状态存储 + 比对 legacy slice 与 aggregate projection — 但 bind/spawn/subscribe 是一个跨 `:external_mirror` slice + `:publisher` 订阅的工作流，分裂仍不安全。**r4 fix：** Option a 默认 — **完全放弃 split-brain**。Session 在 10-A 保持完全 legacy GenServer（Chat + Publisher + ExternalMirror + OrchestratorAdmin slice 全留）。只有 Worker 迁到 aggregate。`BootstrapWorkerSaga` 订阅 legacy Session 的 `:slice_change` PubSub topic（不是事件流），观察绑定后派发 `%SpawnWorker{}` 到 Worker aggregate；Worker 反向订阅 Session publisher 经 `MigrationBridge` 走 legacy `Invocation.dispatch/1` 到 `Behavior.Publisher.SessionImpl.subscribe_from/4`。无种族；legacy + 新 aggregate 经 PubSub（push）+ bridge（pull）协调。SessionRouter 与 SessionSplitBrainConsistencyTest **删除**。
 - **HIGH-5（§6.0 UNION 漏 workspace + cursor 类型错）：** r3 UNION 过滤/排序按 `m.inserted_at` 但漏 `m.workspace_uri == ?`（per `message_store.ex:174`/`:201`/`:149`）。r3 写 `older_than(session_uri, msg_id)` — 实际 cursor 类型是 `DateTime`，不是 msg_id（per `message_store.ex:195`）。**r4 fix：** §6.0 UNION 重写三个 SQL 模板：`recent_in_session(session_uri, workspace_str, n)`、`older_than(session_uri, workspace_str, before_dt :: DateTime, limit)`、`in_session_since(session_uri, workspace_str, since_dt :: DateTime)`。每个 SQL 在两半 UNION 中都带 `workspace_uri` 过滤 + `r.inserted_at` 排序。
 - **HIGH-6（§5.1 + §6.0 User projection parity 未真正实施）：** r3 说 §5.1 更新了但 §6.0 verify 仍引用泛 `kind_snapshots.state_binary` parity。**r4 fix：** §5.1 投影列表显式枚举每个 User projection 的 COLUMNS；§6.0 `mix ezagent.aggregate.verify --kind user` 扩展显式 per-表 parity 断言：遍历 `entity_profiles` 每行断言对应 `user_profile_projection` 行 `display_name + email + workspace_uri + registered_at` 相等；遍历 `entity_tokens` 断言对应 `user_tokens_projection` 行 `token_hash + label + last_used_at + workspace_uri` 相等。
@@ -147,9 +147,9 @@ Codex r4 REJECT 仍有 4 HIGH + 3 MED 未决。这些**不**继续阻塞 SPEC，
 - **CRIT-2（Phase 10-A 桥缺口 — §6.1 / §8.2）：** r1 Phase 10-A 只迁 Worker，但 legacy Session 的 `Behavior.ExternalMirror` 仍在 `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex:394` + `:677` 直接调 `Ezagent.Kind.spawn(Ezagent.Entity.ExternalMirrorWorker, params)`。Session 仍为 GenServer 时不发 `BindingCreated` 事件，`BootstrapWorkerSaga` 永远不触发。**r2 fix：** Phase 10-A 修订为：(a) 把 Session ExternalMirror behavior + Worker 一起迁（推荐 — bind 调用点紧耦合）**或** (b) ship 显式 `Ezagent.MigrationBridge.LegacyBind` shim，把 legacy `Kind.spawn(Worker, params)` 翻译为新 aggregate 上的 `%SpawnWorker{}` 命令 + 向新事件流注入合成 `%BindingCreated{}` 事件触发 saga。r2 默认选 (a)；如 Session-side 迁移过于纠缠则 fallback 到 (b)。§6.1 扩展含 Session ExternalMirror behavior delta。
 - **HIGH-3（缺读后写一致性矩阵 — §3.3 / §6.2）：** r1 只说 "per 派发点 opt 到 :strong"、不枚举。r2 新增 §4.8（LV / Channel / CLI 一致性矩阵）— 一张表列出所有写后立即重读 state 的 callsite 及其要求一致性模式。静态枚举的 sites：`apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/users_live.ex:137`（create→list_users）、`workspace_detail_live.ex:165`（add member→get_by_name）、`entity_caps_live.ex:142`（grant cap→reload caps）、`routing_live.ex:235`（add rule→reload rules）。所有这些**必须**用 `consistency: :strong`（或具名投影器列表）。Phase 10-B/10-C 不变式测试断言每个枚举 site 满足；CI grep 门拒绝在这些派发路径上显式用 `consistency: :eventual`。
 - **HIGH-4（Kind/Behavior 清单不全 — §4.2 / §4.3）：** r1 "5 entity Kind + 11 Behavior" — 实际 checkout 计数大得多。r2 新增 §4.1.5（完整 Kind/Behavior 清单）从 checkout 静态枚举：15+ Kind 模块（含持久的 `Ezagent.Entity.AgentTemplate` + `Ezagent.Entity.SessionTemplate`，皆 `{:snapshot, :on_change}`，加 per-flavor `CurlAgent` / `Echo` / `NpAgent`），24 个 Behavior 模块（漏掉：`ApiKeys`、`Template`、`OrchestratorAdmin`、`Pty`、`UserBinding`、`FeishuAllow`，加 4 个插件 agent-flavor behavior）。每个加 per-Phase 迁移去向列。§4.3 用完整列表重写。
-- **HIGH-5（Session aggregate state 漏耐久字段 — §4.2.3）：** r1 Session aggregate struct 漏 `owner_uri`、`last_seen`、`monitors`、`last_message_id`、`last_message`、`send_cursor`、`recent_messages`、`template_working_copy` + Publisher 的 `ring` / `cursor` / `retention`（都耐久 — `Behavior.Chat.init_slice` 在 `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:144`-`:242` + `Publisher.SessionImpl.init_slice` 在 `apps/ezagent_domain_chat/lib/ezagent/behavior/publisher/session_impl.ex:150`-`:165`）。r2 fix：§4.2.3 Session aggregate state struct **重写**枚举每个耐久字段；非耐久运行时字段（`monitors` — 进程 ref 跨重启不存活）显式排除并加注。Rejoin / external mirror dedupe / publisher cursor catchup 的 replay 测试加入 Phase 10-B 不变式测试。
+- **HIGH-5（Session aggregate state 漏耐久字段 — §4.2.3）：** r1 Session aggregate struct 漏 `owner_uri`、`last_seen`、`monitors`、`last_message_id`、`last_message`、`send_cursor`、`recent_messages`、`template_working_copy` + Publisher 的 `ring` / `cursor` / `retention`（都耐久 — `Behavior.Chat.init_slice` 在 `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:144`-`:242` + `Publisher.SessionImpl.init_slice` 在 `apps/ezagent_domain_instance_message/lib/ezagent/behavior/publisher/session_impl.ex:150`-`:165`）。r2 fix：§4.2.3 Session aggregate state struct **重写**枚举每个耐久字段；非耐久运行时字段（`monitors` — 进程 ref 跨重启不存活）显式排除并加注。Rejoin / external mirror dedupe / publisher cursor catchup 的 replay 测试加入 Phase 10-B 不变式测试。
 - **HIGH-6（User 投影 schema 漏 profile + token 字段 — §4.2.1 / §4.7）：** r1 `user_profile_projection` 只 `(uri, workspace_uri, registered_at, destroyed?)`。当前 `Entity.Profile` schema（`apps/ezagent_domain_identity/lib/ezagent/entity/profile.ex:21`）有 `display_name`（必需）+ `email`。当前 `Entity.Token` schema（`apps/ezagent_domain_identity/lib/ezagent/entity/token.ex:43`）有 `token_hash`、`label`、`last_used_at`。**r2 fix：** §4.2.1 User aggregate 加 `:profile` 字段（`%{display_name, email}`）+ 命令 `%UpsertProfile{}` / 事件 `%ProfileUpserted{}`。Token aggregate state + events 扩展含 hash/label/last-used。§5.1 投影更新匹配。
-- **MED-7（DestroyAgentSaga 补偿只 retry/stop — §3.8 / §4.4）：** r1 saga `error/3` 重试后停。当前清理路径（`apps/ezagent_domain_chat/lib/ezagent_domain_chat.ex:189` session-create rollback、`apps/ezagent_core/lib/ezagent/behavior/sandbox.ex:240` sandbox-destroy cleanup）做显式逆操作。**r2 fix：** §3.8 DestroyAgentSaga 重写为 `error/3` 回调用 `{:continue, [%ReverseCommand{}, ...], context}` per-step 补偿。每步文档化：(a) 幂等合约；(b) 失败残留；(c) 逆命令；(d) 续跑行为。Step-failure 测试是 Phase 10-C 不变式。
+- **MED-7（DestroyAgentSaga 补偿只 retry/stop — §3.8 / §4.4）：** r1 saga `error/3` 重试后停。当前清理路径（`apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message.ex:189` session-create rollback、`apps/ezagent_core/lib/ezagent/behavior/sandbox.ex:240` sandbox-destroy cleanup）做显式逆操作。**r2 fix：** §3.8 DestroyAgentSaga 重写为 `error/3` 回调用 `{:continue, [%ReverseCommand{}, ...], context}` per-step 补偿。每步文档化：(a) 幂等合约；(b) 失败残留；(c) 逆命令；(d) 续跑行为。Step-failure 测试是 Phase 10-C 不变式。
 - **MED-8（Phase 10-D 破坏性清理缺 operator gate — §6.4 / §8.4）：** r1 "最后 data dump 后删 `kind_snapshots`"。按 `feedback_destructive_migration_anti_pattern` + `feedback_completion_requires_invariant_test`，那不是门。**r2 fix：** §6.4 Phase 10-D `DROP TABLE kind_snapshots` 由三项门控：(a) 迁移脚本里 operator 批准 flag（mix 任务需 `--operator-approved <ticket-id>`）；(b) 已验证 backup restore drill — operator 把上次 snapshot dump 恢复到 temp DB 并断言行数匹配；(c) restore 后 parity check — import-replay vs 原 snapshot 在所有迁移 URI 跨字段相等。门本身是 `mix ezagent.cleanup.preflight` 任务，除非 (a)+(b)+(c) 全成立否则非 0 退出。SPEC §8.4 扩展。
 
 ---
@@ -250,7 +250,7 @@ SPEC #440（实体销毁生命周期）连续 4 轮 codex REJECT 没有收敛。
     → reply/2 把结果发回调用者
 ```
 
-状态变更**形状是 CRUD**：每个 `Behavior.invoke/4` 是 `(slice, args) -> new_slice` 的函数。没有正式的 command/event 切分。审计日志（`invocations` 表）是 telemetry handler 写出来的 `(caller, target, action, result)` 元组旁路记录 — 它**不是**真值（真值是 slice/snapshot）。跨-Kind 工作流是在调用者代码里命令式串起来的多次 `Invocation.dispatch/1`（例如 `EzagentDomainChat.create_session/3` 用 try/rescue 编排了跨 4 个 Kind 的 5 次派发，每步手工清理）。
+状态变更**形状是 CRUD**：每个 `Behavior.invoke/4` 是 `(slice, args) -> new_slice` 的函数。没有正式的 command/event 切分。审计日志（`invocations` 表）是 telemetry handler 写出来的 `(caller, target, action, result)` 元组旁路记录 — 它**不是**真值（真值是 slice/snapshot）。跨-Kind 工作流是在调用者代码里命令式串起来的多次 `Invocation.dispatch/1`（例如 `EzagentDomainInstanceMessage.create_session/3` 用 try/rescue 编排了跨 4 个 Kind 的 5 次派发，每步手工清理）。
 
 这种形状留给我们的是：
 - **没有正式命令** — `Behavior.invoke/4` 的 `args` 就是个 map；没有 Command struct、没有 router、没有命令的集中目录。
@@ -540,7 +540,7 @@ Allen 2026-05-28 09:33 指令 — 推一个新的顶级推荐。Path B（Sage + 
 - **没有正式 Command 结构体** — `args` 是 `map`，不是 `%Command{}`。合法命令的目录隐含活在每个 Behavior 的 `interface/0` 里。
 - **没有正式 Event 结构体** — `Behavior.invoke/4` 返回新 slice，不返回事件列表。slice diff **是**事件，但没被命名也没被结构化。
 - **没有回放** — `load_or_init/3` 读最新 snapshot；没 snapshot 就从 `init_slice/1` 重开。snapshot 之间的 `invocations` 历史不被查阅。
-- **没有事件驱动的跨 Kind 编排** — 多 Kind 工作流是 caller 代码里的命令式 `try/rescue` 清理（例如 `EzagentDomainChat.create_session/3`）。销毁级联是最尖锐的例子。
+- **没有事件驱动的跨 Kind 编排** — 多 Kind 工作流是 caller 代码里的命令式 `try/rescue` 清理（例如 `EzagentDomainInstanceMessage.create_session/3`）。销毁级联是最尖锐的例子。
 - **没有 projection / 读模型分离** — LV 直接通过 `Kind.get_slice/2` 读 slice。没有订阅事件的最终一致性读视图。
 - **没有按 command-id 的幂等** — 派发级 `Ezagent.Idempotency` keyed on `%Invocation{}` 信封的 trace_id，不是 caller 提供的 `command_uuid`。
 
@@ -563,7 +563,7 @@ Allen 2026-05-28 09:33 指令 — 推一个新的顶级推荐。Path B（Sage + 
 
 ##### b. 命令 / 事件分离
 
-- **ezagent 今天** — `Behavior.invoke(action, slice, args, ctx)` 是**合并的**原语：决定要做什么（命令）、变更状态（apply 事件）、可能返回结果。slice diff 是隐式事件载荷。来源：`apps/ezagent_core/lib/ezagent/behavior.ex:106`，具体例子 `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:297`。
+- **ezagent 今天** — `Behavior.invoke(action, slice, args, ctx)` 是**合并的**原语：决定要做什么（命令）、变更状态（apply 事件）、可能返回结果。slice diff 是隐式事件载荷。来源：`apps/ezagent_core/lib/ezagent/behavior.ex:106`，具体例子 `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:297`。
 - **Commanded** — 把 `execute(state, %Command{}) :: [%Event{}]`（决定 + 发射）和 `apply(state, %Event{}) :: new_state`（纯 fold）分开。文档原话：「单个命令可以产生多个事件…… aggregate apply 函数在执行步骤之间被调用，为后续操作维护更新后的状态。」片段：
   ```elixir
   def execute(%BankAccount{state: :active} = acct, %WithdrawMoney{amount: amt}),
@@ -606,7 +606,7 @@ Allen 2026-05-28 09:33 指令 — 推一个新的顶级推荐。Path B（Sage + 
 
 ##### f. Saga / Process Manager
 
-- **ezagent 今天** — ad-hoc PubSub handler（例如 ExternalMirror Worker 订阅 Session 的 `:slice_change` topic）+ ad-hoc 跨 Kind 命令式代码（例如 `EzagentDomainChat.create_session/3` 在 4 个 Kind 上做 5 次派发并在每步加 `try/rescue` 清理）。无公共抽象；每个 saga 都重发明 resume + compensate 原语。**这是 Commanded 风格思路的最强动机** — 每个多 Kind 工作流都是一次性的。
+- **ezagent 今天** — ad-hoc PubSub handler（例如 ExternalMirror Worker 订阅 Session 的 `:slice_change` topic）+ ad-hoc 跨 Kind 命令式代码（例如 `EzagentDomainInstanceMessage.create_session/3` 在 4 个 Kind 上做 5 次派发并在每步加 `try/rescue` 清理）。无公共抽象；每个 saga 都重发明 resume + compensate 原语。**这是 Commanded 风格思路的最强动机** — 每个多 Kind 工作流都是一次性的。
 - **Commanded** — `Commanded.ProcessManagers.ProcessManager`：`interested?/1` 选事件、`handle/2` 返回要派发的命令、`apply/2` 变更 PM 自己的状态。PM 状态被 event-store 持久化；跨重启 resume 原生。片段：
   ```elixir
   def interested?(%TransferRequested{id: id}), do: {:start, id}
@@ -681,7 +681,7 @@ ezagent 今天违反这个的地方：`Behavior.invoke/4` 可以通过 `Ezagent.
 
 **B'' 改进** — `Behavior.invoke/4` **可以**派发到**其它** Kind，但跨 Kind 效应**必须**包装在：
 
-- **`SagaRunner.run(steps, ctx)`** 给同步线性级联（销毁、session-create）。每步是 `{forward_fn, compensate_fn}`。第 N 步失败时，第 N-1..1 步逆序补偿。现在 `EzagentDomainChat.create_session/3` 里的 `try/rescue` 清理模式是这个的手写版。
+- **`SagaRunner.run(steps, ctx)`** 给同步线性级联（销毁、session-create）。每步是 `{forward_fn, compensate_fn}`。第 N 步失败时，第 N-1..1 步逆序补偿。现在 `EzagentDomainInstanceMessage.create_session/3` 里的 `try/rescue` 清理模式是这个的手写版。
 - **`EventSubscriber`** 给异步跨调用工作流（worker bootstrap 在 `BindingCreated` 上）。
 - **永远不在 `Behavior.invoke/4` 内部直接做编排** — `invoke/4` 可以发**一个**命令等价效应（slice 变更），可以发声明式 `effects/2`（PubSub 广播等），但**不**自己链式派发。
 
@@ -921,7 +921,7 @@ end
   - `EventLog` → `commanded_eventstore_adapter`：~1 周（主要是 schema 迁移 + 双写 cutover；公共 API **已经**是 stream-by-aggregate 语义的 1:1 wrap）。
   - `SnapshotStore` → Commanded snapshot：~3-4 天（策略不同 — `:on_change` / `:on_terminate` 是 ezagent 形状 vs Commanded 的 `snapshot_every: N`；迁移转换策略声明）。
   - `EventSubscriber` → `Commanded.Event.Handler`：~1 周（订阅者注册语义匹配；partition 模式（B'' Ext.）映射到 Commanded 的 `subscribe_to: :all` + handler 并发）。
-  - **`SagaRunner` → `Commanded.ProcessManagers.ProcessManager`：每个非平凡 saga ~3-4 周**，因为每步的 forward/compensate 闭包变成 PM 事件 handler 分支，含 correlation id 派生 + interested? 选择器 + apply/2 fold + 停止条件。§4.4 的 5 个单调用级联各 ~3-5 天；跨调用工作流如 `EzagentDomainChat.create_session/3` 流（lock + spawn + bind + 异步 cast `chat.join` + grant owner cap + `ensure_orchestrator_with_meta` 带 `:partial` 有界重试 — `ezagent_domain_chat.ex:143-200, 540-615, 619-648`；`session.ex:850-889, 984-1003`）各 ~1-2 周，因为异步腿和 `:partial`-结果分支需要持久 PM correlation 状态。
+  - **`SagaRunner` → `Commanded.ProcessManagers.ProcessManager`：每个非平凡 saga ~3-4 周**，因为每步的 forward/compensate 闭包变成 PM 事件 handler 分支，含 correlation id 派生 + interested? 选择器 + apply/2 fold + 停止条件。§4.4 的 5 个单调用级联各 ~3-5 天；跨调用工作流如 `EzagentDomainInstanceMessage.create_session/3` 流（lock + spawn + bind + 异步 cast `chat.join` + grant owner cap + `ensure_orchestrator_with_meta` 带 `:partial` 有界重试 — `ezagent_domain_instance_message.ex:143-200, 540-615, 619-648`；`session.ex:850-889, 984-1003`）各 ~1-2 周，因为异步腿和 `:partial`-结果分支需要持久 PM correlation 状态。
   - 每 Kind `events_for/4` + `apply_event/2` + `effects/2` 三元组 → Commanded `execute/2` + `apply/2`：每个 opt-in 的 Kind ~1-2 周（slice-per-Behavior 模型必须融合成单一 aggregate 状态 struct — 见下方 §1.5.7.1 codex r7 HIGH 承认）。
 
   **诚实修正总数**：~6-10 周（最简单组合：1-2 个小 saga，无跨调用工作流，无 Kind opt-in 到事件作真理源），~10-14 周（若有 2+ 跨调用工作流 + 多 Behavior Kind 需要迁移）。先前「~4-6 周」是乐观下限；codex r7 HIGH-3 评审正确标记为低估。**即便在修正区间，B'' → Commanded 仍比 Option B → Commanded 便宜（仅 saga 就 ~10-12 周，加上事件得从零推断），比 Option B' → Commanded 戏剧性更便宜（~14-16 周）。**
@@ -1447,7 +1447,7 @@ end
 | `Ezagent.Invocation.dispatch/1` | `Ezagent.CommandedApp.dispatch/2`（由派发前流水线包裹） | 12 步流折叠（5-10 变 Commanded 内部）；1-4 + 5.5-5.6 + 11-12 保留（现在在派发前流水线 + 投影器触发的 `after_dispatch`）。 |
 | `Ezagent.KindRegistry`（URI → pid） | Commanded 内部 aggregate registry | 直接查找（如给 `Kind.get_slice/2`）由投影读替代。`KindRegistry.lookup/1` 的外部调用者迁移后无幸存。 |
 | `Ezagent.SpawnRegistry` + `Kind.spawn/2` | 隐式（aggregate ID 上的第一条命令创建它） | 「spawn」动词消失；aggregate 由它的第一条创建命令（`%RegisterUser{}`、`%CreateSession{}` 等）创建。`{:error, {:already_started, pid}}` 竞速变 aggregate `execute/2` 确定性返回的 `{:error, :already_created}`。 |
-| 跨-Kind 级联在调用者命令式代码（如 `EzagentDomainChat.create_session/3` 跨 4 Kind 的 5 派发编排） | 订阅源事件的 Process Manager (Saga) | 如 `SessionCreated` 事件触发 `GrantOwnerCapsSaga`，发 `GrantCap` 命令；saga `error/3` 处理补偿。 |
+| 跨-Kind 级联在调用者命令式代码（如 `EzagentDomainInstanceMessage.create_session/3` 跨 4 Kind 的 5 派发编排） | 订阅源事件的 Process Manager (Saga) | 如 `SessionCreated` 事件触发 `GrantOwnerCapsSaga`，发 `GrantCap` 命令；saga `error/3` 处理补偿。 |
 | `Ezagent.Audit.Writer` 写 `invocations` SQLite 表 | 事件流**就是**审计日志（对领域事件） + audit-events 投影做可查子集 | 跨切 telemetry（被否决 authz、持久化失败、cc_bridge 事件）留 SQLite audit；领域事件移事件流 + 可查投影。见 §4.7。 |
 | `kind_snapshots` SQLite 表 | Commanded snapshot 存储（在 `eventstore` Postgres schema 中） | 对迁移完的 Kind：现有 snapshot **不**迁移（per `feedback_destructive_migration_anti_pattern`）；迁移后 Aggregate 上的第一条命令创建新鲜的事件溯源状态。混合期间未迁移 Kind 的 snapshot 数据原样不动。 |
 | `Ezagent.ReadyGate`（状态 `:ready` / `:not_ready` / `:unknown`） | 隐式（aggregate 存在 ⇔ 命令可派发） | post-init 缓冲的 `:not_ready` 模式变「第一条创建命令必先于其它命令」；后续命令在 aggregate 创建前失败。Buffering（旧 `Ezagent.PendingDelivery`）对迁移 Kind 退役。 |
@@ -1466,11 +1466,11 @@ r1 说「5 entity Kinds + 11 Behavior modules」— 实际 checkout 枚举：
 | Kind 模块 | App | 持久化 | 迁移目标 |
 |---|---|---|---|
 | `Ezagent.Entity.User` | ezagent_domain_identity | `{:snapshot, :on_change}` | `Ezagent.Aggregate.User`（§4.2.1） |
-| `Ezagent.Entity.Session` | ezagent_domain_chat | `{:snapshot, :on_change}` | `Ezagent.Aggregate.Session`（§4.2.3） |
-| `Ezagent.Entity.Agent` | ezagent_domain_chat | `{:snapshot, :on_change}` | `Ezagent.Aggregate.Agent`（§4.2.2） |
+| `Ezagent.Entity.Session` | ezagent_domain_instance_message | `{:snapshot, :on_change}` | `Ezagent.Aggregate.Session`（§4.2.3） |
+| `Ezagent.Entity.Agent` | ezagent_domain_instance_message | `{:snapshot, :on_change}` | `Ezagent.Aggregate.Agent`（§4.2.2） |
 | `Ezagent.Workspace` | ezagent_domain_workspace | `{:snapshot, :on_change}` | `Ezagent.Aggregate.Workspace`（§4.2.4） |
-| `Ezagent.Entity.AgentTemplate` | ezagent_domain_chat | `{:snapshot, :on_change}` | **`Ezagent.Aggregate.AgentTemplate`**（r2 §4.2.6 新加） |
-| `Ezagent.Entity.SessionTemplate` | ezagent_domain_chat | `{:snapshot, :on_change}` | **`Ezagent.Aggregate.SessionTemplate`**（r2 §4.2.7 新加） |
+| `Ezagent.Entity.AgentTemplate` | ezagent_domain_instance_message | `{:snapshot, :on_change}` | **`Ezagent.Aggregate.AgentTemplate`**（r2 §4.2.6 新加） |
+| `Ezagent.Entity.SessionTemplate` | ezagent_domain_instance_message | `{:snapshot, :on_change}` | **`Ezagent.Aggregate.SessionTemplate`**（r2 §4.2.7 新加） |
 | `Ezagent.Entity.ExternalMirrorWorker` | ezagent_domain_external_mirror | `:on_terminate` | `Ezagent.Aggregate.ExternalMirrorWorker`（§4.2.5） |
 | `Ezagent.Entity.CurlAgent` | ezagent_plugin_curl_agent | `{:snapshot, :on_change}` | `Aggregate.Agent` 的 flavor 变体 |
 | `Ezagent.Entity.Echo` | ezagent_plugin_echo | 视 flavor | `Aggregate.Agent` 的 flavor 变体 |
@@ -1996,7 +1996,7 @@ mix ezagent.aggregate.verify --kind <kind>
 - `Ezagent.Aggregate.User` + 命令/事件/投影（§4.2.1）。
 - `Ezagent.Aggregate.Session` + 命令/事件/投影（§4.2.3）。
 - Saga：`CreateSessionSaga`、`DestroySessionSaga`、`DestroyUserSaga`、`CapGrantOwnershipVerifySaga`。
-- 所有 User + Session 调用点迁到新命令-based API。现有 `EzagentDomainChat.create_session/3` 要么变成构造 `%CreateSession{}` + 派发点的薄包装，要么改为直接派发。
+- 所有 User + Session 调用点迁到新命令-based API。现有 `EzagentDomainInstanceMessage.create_session/3` 要么变成构造 `%CreateSession{}` + 派发点的薄包装，要么改为直接派发。
 
 **Phase 10-B 不变式测试：**
 - User caps 从事件流重建。
@@ -2200,7 +2200,7 @@ per `feedback_destructive_migration_anti_pattern`：
 ### 9.2 变的面
 
 - 插件作者：不再 `@behaviour Ezagent.Kind` + `Ezagent.Behavior` 模块，他们写 `@behaviour Commanded.Aggregates.Aggregate` + Command 模块 + Event 模块 + per-Aggregate execute 子句。`ezagent-developer` skill 在 Phase 10-D 重写。
-- Domain context 模块：`EzagentDomainChat.create_session/3` 要么变薄包装（构造 `%CreateSession{}` 并派发），要么删并由 LV / channel 直接派发取代。每 impl PR 决定。
+- Domain context 模块：`EzagentDomainInstanceMessage.create_session/3` 要么变薄包装（构造 `%CreateSession{}` 并派发），要么删并由 LV / channel 直接派发取代。每 impl PR 决定。
 - 审计消费者：对领域事件查 SQLite `invocations` 表的查询在 10-D 后失败 — 那些查询必须迁到 `audit_events_projection`、或经 `EventStore.read_stream_forward/4` 的事件流过滤。Phase 10-B / 10-C 期间分段迁移。
 
 ### 9.3 插件兼容

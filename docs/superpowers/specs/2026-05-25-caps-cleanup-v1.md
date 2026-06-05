@@ -266,7 +266,7 @@ When a system-internal operation (BootReconciler, AdapterInstall, migration mix 
 
 | Site category | Sample call sites |
 |---|---|
-| Boot / reconciler | `EzagentDomainIdentity.Application` (admin User spawn), `EzagentDomainChat.Application` (CC orchestrator seed), `EzagentDomainWorkspace.Workspace.Loader` (boot loader) |
+| Boot / reconciler | `EzagentDomainIdentity.Application` (admin User spawn), `EzagentDomainInstanceMessage.Application` (CC orchestrator seed), `EzagentDomainWorkspace.Workspace.Loader` (boot loader) |
 | Mix tasks | `mix ezagent.agent.create`, `mix ezagent.demo.seed_cc_agent`, `mix ezagent.demo.seed_cc_sandbox` |
 | Plugin reply dispatch | `Plugin.CurlAgent` (LLM reply dispatch), `Plugin.NP` (NP-agent reply), `Plugin.CC.Channel` (channel reply), `Plugin.Echo` (echo reply), `Plugin.Feishu.BindingPolicy` |
 | Chat domain internals | `Behavior.Chat` (reply send, system messages), `Behavior.Template` (template materialization), `Entity.Session` (member sync, slice mutations), `Entity.Agent` (default caps grant), `Orchestrator.{MCPServer, Tools, CCSeed}` |

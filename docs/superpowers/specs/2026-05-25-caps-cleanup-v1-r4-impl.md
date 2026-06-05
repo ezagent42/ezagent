@@ -570,7 +570,7 @@ PR-CC-2-v2 merges only when all of the following hold:
   - `cap_check_only_at_chokepoint_test.exs` — 12 probes return zero offenders.
   - `no_wildcard_system_principals_test.exs` — no non-bootstrap principal has wildcard caps.
   - `dispatch_uses_required_caps_struct_test.exs` — `Invocation.dispatch/1` source references `required_caps/0` + `holds_cap?/2`.
-- (d) Baseline failures unchanged: `ezagent_core` 657/9 ± 1 (allowing for incidental flaky clears); `domain_chat` / `domain_external_mirror` / `domain_identity` / `domain_workspace` baseline preserved.
+- (d) Baseline failures unchanged: `ezagent_core` 657/9 ± 1 (allowing for incidental flaky clears); `domain_instance_message` / `domain_external_mirror` / `domain_identity` / `domain_workspace` baseline preserved.
 - (e) No new code-level reference to deleted scattered cap-check helpers (the §8 Pathology B sweep complete).
 - (f) PR body explicitly enumerates the 14 catalog entries' before-string → after-struct conversion table, with any deviations from the original string semantics flagged.
 - (g) Codex round 1 returns either clean-bill OR findings that the subagent addresses in round 2 OR self-static-review documents (per r3-FINAL codex history pattern).

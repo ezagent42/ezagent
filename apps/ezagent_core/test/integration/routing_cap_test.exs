@@ -21,7 +21,7 @@ defmodule Ezagent.Integration.RoutingCapTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Invocation, Routing.Matcher}
-  alias EzagentDomainChat.Routing.MentionRouting
+  alias EzagentDomainInstanceMessage.Routing.MentionRouting
 
   defp admin_ctx do
     %{

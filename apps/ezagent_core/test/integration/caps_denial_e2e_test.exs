@@ -52,7 +52,9 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
     short = "caps_demo_#{System.unique_integer([:positive])}"
 
     {:ok, uri, _meta} =
-      EzagentDomainChat.create_session(short, Ezagent.Entity.User.admin_uri(),
+      EzagentDomainInstanceMessage.SessionCreator.create_session(
+        short,
+        Ezagent.Entity.User.admin_uri(),
         template_name: "default"
       )
 

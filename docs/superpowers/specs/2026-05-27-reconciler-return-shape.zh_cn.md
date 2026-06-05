@@ -22,7 +22,7 @@
 
 ### 1.1 失败的断言
 
-`apps/ezagent_domain_chat/test/integration/reconciler_test.exs:523`：
+`apps/ezagent_domain_instance_message/test/integration/reconciler_test.exs:523`：
 
 ```elixir
 test "ownership-pending retry exhaustion → :partial (NOT :error)" do
@@ -56,7 +56,7 @@ SPEC §1.2 ratify，并经 codex 对抗性评审后由 §7-2 再次确认。每�
 把 `:partial` 折叠进 `:ok` 会破坏调用方的判别能力 —— 无法区分
 "session 活着但 orchestrator 还在 pending" 和 "session 已完全就绪"。
 而这两者今天就被 LiveView 的 session 面板和
-`EzagentDomainChat.create_session/3` 门面 **分别 pattern-match**。
+`EzagentDomainInstanceMessage.create_session/3` 门面 **分别 pattern-match**。
 
 ### 1.3 实际根因 — 测试 helper URI 派生 mismatch（codex r1 发现）
 
@@ -120,7 +120,7 @@ exercise 这条路径。
 
 2. **失败站点的生产代码仍然返回 `:partial`**：通过
    `retry_after_race/3` →
-   `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:984-986`：
+   `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:984-986`：
 
    ```elixir
    defp do_retry(%URI{} = uri, _owner_uri, _workspace_uri, 0) do
@@ -133,11 +133,11 @@ exercise 这条路径。
    %{session_uri, orchestrator_uri, completed, pending, errors}}`。
 
 3. **多个生产调用方都 pattern-match `:partial`**（详见 §3.3）：
-   - `EzagentDomainChat.create_session/3` 的 `ensure_orchestrator_meta/3`
-     门面 — `apps/ezagent_domain_chat/lib/ezagent_domain_chat.ex:350`
+   - `EzagentDomainInstanceMessage.create_session/3` 的 `ensure_orchestrator_meta/3`
+     门面 — `apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message.ex:350`
      把 `{:partial, _}` 映射为 `orchestrator_status: :pending`。
    - `Ezagent.Orchestrator.MCPServer.to_mcp_result/2` —
-     `apps/ezagent_domain_chat/lib/ezagent/orchestrator/mcp_server.ex:548`
+     `apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/mcp_server.ex:548`
      在 MCP tool 输出中专门渲染 `:partial`。
    - `EzagentPluginLiveview.AdminDashboardLive.cc_seed_badge/1` —
      `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_dashboard_live.ex:233`。
@@ -192,7 +192,7 @@ exercise 这条路径。
 2. **SPEC 明确考虑并 REJECTED 了双臂替代方案**（§7-2）。反转那个
    决策需要原 SPEC 没看到的新证据 —— 没有。
 
-3. **`EzagentDomainChat.create_session/3` 的 meta map**（对外可见
+3. **`EzagentDomainInstanceMessage.create_session/3` 的 meta map**（对外可见
    的 `:orchestrator_status` 字段）有三个值：`:ready | :pending |
    :failed`。把 reconciler 的 `:partial` 删掉就切断了 `:pending`
    的数据源 —— 每一条 `:partial` 路径都是这个门面 `:pending` 的
@@ -275,7 +275,7 @@ exercise 这条路径。
 
 | 调用方 | 分支 `:partial`？ | 做什么 |
 |---|---|---|
-| `EzagentDomainChat.create_session/3`（经 `ensure_orchestrator_meta/3`） | 是 | 把 `{:partial, %{orchestrator_pending: uri}}` 映射为 `%{orchestrator_uri: uri, orchestrator_status: :pending}`（350-355 行） |
+| `EzagentDomainInstanceMessage.create_session/3`（经 `ensure_orchestrator_meta/3`） | 是 | 把 `{:partial, %{orchestrator_pending: uri}}` 映射为 `%{orchestrator_uri: uri, orchestrator_status: :pending}`（350-355 行） |
 | `Ezagent.Orchestrator.MCPServer.to_mcp_result/2` | 是 | 把 `:partial` 渲染为独立的 MCP result 变体（548 行） |
 | `EzagentPluginLiveview.AdminDashboardLive.cc_seed_badge/1` | 是 | 渲染 "partial" 徽章（233 行） |
 | `Ezagent.Orchestrator.Tools` | 是（自有三臂协议） | spawn / update_agent_template / remove 各自分发 `:partial` 形态 |
@@ -316,7 +316,7 @@ breaking change。SPEC 确认保留。
 
 **一处必修的测试 helper 修复**（基于 §1.3 根因分析）：
 
-`apps/ezagent_domain_chat/test/integration/reconciler_test.exs:595-611` —
+`apps/ezagent_domain_instance_message/test/integration/reconciler_test.exs:595-611` —
 `derive_orch_uri_for_test/1` 硬编码 `ws_name = "default"`，跟测试
 SessionTemplate 的 `default_workspace_uri: "workspace://team-alpha"`
 mismatch。预 spawn 的 limbo 进程落在错的 URI 前缀，生产
@@ -375,7 +375,7 @@ PR 改动都需要一个 **不变量测试**，能在架构目标失败时挂掉
 路径触达。*
 
 **测试**（加到
-`apps/ezagent_domain_chat/test/integration/reconciler_test.exs` 或
+`apps/ezagent_domain_instance_message/test/integration/reconciler_test.exs` 或
 兄弟文件 `reconciler_shape_invariant_test.exs`）：
 
 ```elixir
@@ -407,7 +407,7 @@ describe "return-shape invariant (SPEC 2026-05-27-reconciler-return-shape)" do
 
     assert match?({:partial, %{orchestrator_pending: ^orch_uri}}, result),
            "ensure_orchestrator_with_meta 必须在 ownership-pending exhaustion " <>
-           "时返回 :partial；折成 :ok 会破坏 EzagentDomainChat.create_session/3 + " <>
+           "时返回 :partial；折成 :ok 会破坏 EzagentDomainInstanceMessage.create_session/3 + " <>
            "LV 'Retry instantiation' 的分支。实得：#{inspect(result)}"
   end
 

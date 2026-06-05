@@ -23,7 +23,7 @@ production code regression.
 
 ### 1.1 The failing assertion
 
-`apps/ezagent_domain_chat/test/integration/reconciler_test.exs:523` —
+`apps/ezagent_domain_instance_message/test/integration/reconciler_test.exs:523` —
 
 ```elixir
 test "ownership-pending retry exhaustion → :partial (NOT :error)" do
@@ -59,7 +59,7 @@ distinct, load-bearing semantics:
 Collapsing `:partial` into `:ok` would break the caller's ability to
 distinguish "session is alive but the orchestrator is still pending"
 from "session is fully ready" — a distinction the LiveView session
-panel and the `EzagentDomainChat.create_session/3` facade BOTH branch
+panel and the `EzagentDomainInstanceMessage.create_session/3` facade BOTH branch
 on today.
 
 ### 1.3 Actual root cause — test-helper URI-derivation mismatch (codex r1 finding)
@@ -69,7 +69,7 @@ is **real but the root cause is a test bug, not a production
 regression**. Tracing the failing path against current code:
 
 1. **Test fixture setup**:
-   - `apps/ezagent_domain_chat/test/integration/reconciler_test.exs:119` —
+   - `apps/ezagent_domain_instance_message/test/integration/reconciler_test.exs:119` —
      SessionTemplate is created with
      `default_workspace_uri: URI.parse("workspace://team-alpha")`.
    - `reconciler_test.exs:146` —
@@ -134,7 +134,7 @@ After investigating:
 
 2. **Production code at the failing site still returns `:partial`** via
    `retry_after_race/3` →
-   `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:984-986`:
+   `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:984-986`:
 
    ```elixir
    defp do_retry(%URI{} = uri, _owner_uri, _workspace_uri, 0) do
@@ -147,11 +147,11 @@ After investigating:
    %{session_uri, orchestrator_uri, completed, pending, errors}}`.
 
 3. **Multiple production callers branch on `:partial`** (see §3.3 below):
-   - `EzagentDomainChat.create_session/3`'s `ensure_orchestrator_meta/3`
-     facade — `apps/ezagent_domain_chat/lib/ezagent_domain_chat.ex:350`
+   - `EzagentDomainInstanceMessage.create_session/3`'s `ensure_orchestrator_meta/3`
+     facade — `apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message.ex:350`
      maps `{:partial, _}` → `orchestrator_status: :pending`.
    - `Ezagent.Orchestrator.MCPServer.to_mcp_result/2` —
-     `apps/ezagent_domain_chat/lib/ezagent/orchestrator/mcp_server.ex:548`
+     `apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/mcp_server.ex:548`
      renders `:partial` distinctly in MCP tool output.
    - `EzagentPluginLiveview.AdminDashboardLive.cc_seed_badge/1` —
      `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_dashboard_live.ex:233`.
@@ -217,7 +217,7 @@ This is the wrong direction because:
    alternative** (§7-2). Reversing that decision needs new evidence
    the original SPEC missed — there is none.
 
-3. **`EzagentDomainChat.create_session/3`'s meta map** (the public-facing
+3. **`EzagentDomainInstanceMessage.create_session/3`'s meta map** (the public-facing
    `:orchestrator_status` field) has three values: `:ready | :pending |
    :failed`. Removing `:partial` from the reconciler breaks the
    `:pending` source of truth — every `:partial` path in the
@@ -307,7 +307,7 @@ because the test docstring at line 528 directly invokes "`:partial` not
 
 | Caller | Branches on `:partial`? | What it does |
 |---|---|---|
-| `EzagentDomainChat.create_session/3` via `ensure_orchestrator_meta/3` | YES | Maps `{:partial, %{orchestrator_pending: uri}}` to `%{orchestrator_uri: uri, orchestrator_status: :pending}` (line 350-355) |
+| `EzagentDomainInstanceMessage.create_session/3` via `ensure_orchestrator_meta/3` | YES | Maps `{:partial, %{orchestrator_pending: uri}}` to `%{orchestrator_uri: uri, orchestrator_status: :pending}` (line 350-355) |
 | `Ezagent.Orchestrator.MCPServer.to_mcp_result/2` | YES | Renders `:partial` as a distinct MCP result variant (line 548) |
 | `EzagentPluginLiveview.AdminDashboardLive.cc_seed_badge/1` | YES | Renders a "partial" badge (line 233) |
 | `Ezagent.Orchestrator.Tools` | YES (own three-arm protocol) | Tools dispatch their own `:partial` shapes for spawn / update_agent_template / remove |
@@ -353,7 +353,7 @@ keeping it.
 
 **One required test-helper fix** (per §1.3 root-cause analysis):
 
-`apps/ezagent_domain_chat/test/integration/reconciler_test.exs:595-611` —
+`apps/ezagent_domain_instance_message/test/integration/reconciler_test.exs:595-611` —
 `derive_orch_uri_for_test/1` hardcodes `ws_name = "default"`, which
 mismatches the test SessionTemplate's `default_workspace_uri:
 "workspace://team-alpha"`. The limbo process pre-spawn lands at the
@@ -426,7 +426,7 @@ not just the symptom.
 from the `retry_after_race` exhaustion path.*
 
 **Test (add to
-`apps/ezagent_domain_chat/test/integration/reconciler_test.exs` or a
+`apps/ezagent_domain_instance_message/test/integration/reconciler_test.exs` or a
 sibling `reconciler_shape_invariant_test.exs`):**
 
 ```elixir
@@ -462,7 +462,7 @@ describe "return-shape invariant (SPEC 2026-05-27-reconciler-return-shape)" do
     assert match?({:partial, %{orchestrator_pending: ^orch_uri}}, result),
            "ensure_orchestrator_with_meta MUST return :partial on " <>
            "ownership-pending exhaustion; collapsing to :ok would break " <>
-           "EzagentDomainChat.create_session/3 + LV 'Retry instantiation' branching. " <>
+           "EzagentDomainInstanceMessage.create_session/3 + LV 'Retry instantiation' branching. " <>
            "Got: #{inspect(result)}"
   end
 

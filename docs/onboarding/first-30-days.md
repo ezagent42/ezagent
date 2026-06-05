@@ -39,7 +39,7 @@ Open `http://localhost:10042/admin` (or `http://100.64.0.27:10042/admin` if remo
 Best entry points:
 - `apps/ezagent_core/lib/esr/invocation.ex` — the heart. Read `dispatch/1`.
 - `apps/ezagent_core/lib/esr/kind/runtime.ex` — the 9-step dispatch flow + `authz_check/4`.
-- `apps/ezagent_domain_chat/lib/esr/behavior/chat.ex` — most complex Behavior; well-commented.
+- `apps/ezagent_domain_instance_message/lib/esr/behavior/chat.ex` — most complex Behavior; well-commented.
 - `apps/ezagent_plugin_feishu/` — fullest plugin reference.
 - `apps/ezagent_plugin_echo/` — smallest plugin reference.
 
@@ -49,7 +49,7 @@ Try one of:
 
 1. **Read a forensic note** (`docs/notes/phase-6-architecture-closeout.md` or `docs/notes/phase-7-handoff.md`) and ask yourself: would I have caught this issue in review? Reading these is the closest you'll get to "what did Allen pattern-match."
 2. **Write a tiny plugin** following `docs/onboarding/adding-a-plugin.md`. Even an echo-style plugin. Install via `mix ezagent.plugin.install` against running phx.
-3. **Add an invariant test** for an existing pattern you find under-tested. Look at `apps/ezagent_domain_chat/test/integration/workspace_isolation_test.exs` for the canonical pattern.
+3. **Add an invariant test** for an existing pattern you find under-tested. Look at `apps/ezagent_domain_instance_message/test/integration/workspace_isolation_test.exs` for the canonical pattern.
 
 The point of week 2 is to wrap your hands around the dispatch model. Don't try to land features yet.
 
@@ -71,11 +71,11 @@ Pick a deferred PR. Follow the per-PR workflow in `docs/phase-specs/phase7/PLAN.
 Run the SPEC_REVIEW 8-item checklist (see SPEC §SPEC_REVIEW walkthrough) BEFORE requesting review. Run all 8 invariant tests locally before push (CI runs them too, but local first saves a CI cycle):
 
 ```bash
-mix test --include slow apps/ezagent_domain_chat/test/integration/workspace_isolation_test.exs
+mix test --include slow apps/ezagent_domain_instance_message/test/integration/workspace_isolation_test.exs
 mix test apps/ezagent_core/test/esr/capability_test.exs
 mix test apps/ezagent_plugin_feishu/test/sidecar_orphan_reap_test.exs --include slow
 mix test apps/ezagent_cli/test/integration/cli_lv_cap_parity_test.exs
-mix test apps/ezagent_domain_chat/test/esr/behavior/chat_test.exs
+mix test apps/ezagent_domain_instance_message/test/esr/behavior/chat_test.exs
 mix test apps/ezagent_domain_identity/test/esr/entity/user_test.exs
 # Plus the ones your PR adds
 ```

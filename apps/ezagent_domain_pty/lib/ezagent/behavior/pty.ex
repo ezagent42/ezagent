@@ -26,8 +26,8 @@ defmodule Ezagent.Behavior.Pty do
 
   The Behavior MODULE lives in `ezagent_domain_pty`; the
   REGISTRATION (binding Agent Kind → :write → this module) happens
-  in `EzagentDomainChat.Application.start/2` where the
-  `Ezagent.Entity.Agent` Kind is defined. `ezagent_domain_chat`
+  in `EzagentDomainInstanceMessage.Application.start/2` where the
+  `Ezagent.Entity.Agent` Kind is defined. `ezagent_domain_instance_message`
   gains `:ezagent_domain_pty` as an in-umbrella dep so this
   module is loadable at registration time.
 

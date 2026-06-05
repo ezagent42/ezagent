@@ -171,10 +171,26 @@ defmodule EzagentPluginFeishu.InboundChatLookup do
     mention_keys = MapSet.new(mentions, &URI.to_string/1)
     typed_tokens = typed_at_tokens(text)
 
+    candidate_uris = Enum.map(session_uri_strs, &Ezagent.URI.new!/1)
+
+    # §3.8 (codex P2) — disambiguation reads each candidate session's
+    # members/legends, which return EMPTY for a cold session after a node
+    # restart, so a legitimate @mention/@legend would fail to narrow and
+    # the chat would wrongly stay :ambiguous_chat_binding. Rehydrate each
+    # durably-existing candidate FIRST (best-effort, sanctioned
+    # SpawnRegistry.ensure_live) so the reads see real data.
+    #
+    # ONLY when there is a possible narrowing signal — with no resolved
+    # mention and no typed `@` token both predicates short-circuit to no
+    # candidates anyway, so cold-starting every bound session would be
+    # wasted work + post-init side effects for an ordinary message in a
+    # shared/misconfigured chat (codex P2 round 2).
+    if MapSet.size(mention_keys) > 0 or typed_tokens != [] do
+      Enum.each(candidate_uris, fn uri -> _ = Ezagent.SpawnRegistry.ensure_live(uri) end)
+    end
+
     candidates =
-      session_uri_strs
-      |> Enum.map(&Ezagent.URI.new!/1)
-      |> Enum.filter(fn session_uri ->
+      Enum.filter(candidate_uris, fn session_uri ->
         session_has_mentioned_member?(session_uri, mention_keys) or
           session_triggers_a_legend?(session_uri, typed_tokens)
       end)

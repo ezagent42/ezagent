@@ -85,7 +85,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   alias Ezagent.Behavior.ExternalMirrorWorker
   alias Ezagent.Behavior.Identity
   alias Ezagent.Behavior.IdentityAdmin
-  # 2026-05-26 — Publisher.SessionImpl lives in `ezagent_domain_chat`.
+  # 2026-05-26 — Publisher.SessionImpl lives in `ezagent_domain_instance_message`.
   # Like the other Behavior aliases in this block, the module is
   # resolved at runtime (catalog evaluation), not compile time, so
   # core's no-umbrella-dep rule is preserved.
@@ -181,7 +181,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # dispatches `session://...?action=publisher.subscribe_from` to
          # subscribe to its bound session's Publisher (SPEC §8.1).
          # CapBAC step 5.5 needs the cap shape registered against the
-         # Session Kind by `EzagentDomainChat.Application` — see
+         # Session Kind by `EzagentDomainInstanceMessage.Application` — see
          # `CapabilityRegistry.register(Session, action, PublisherSI)`
          # over `PublisherSI.actions()` = `[:subscribe_from, :snapshot,
          # :history]`. Without this cap the worker is stuck in a
@@ -212,7 +212,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          Capability.cap(:user, IdentityAdmin, :grant_cap),
          # 2026-05-31 orchestrator-startup-atomicity §4 step 9
          # (codex-review Q1) — rollback is the symmetric INVERSE of the
-         # materialization grant: `EzagentDomainChat.rollback_session/3`
+         # materialization grant: `EzagentDomainInstanceMessage.rollback_session/3`
          # dispatches `identity.revoke_cap` (owner restart cap +
          # orchestrator scoped caps) under THIS principal. Without the
          # revoke_cap cap those revokes are denied and the owner restart

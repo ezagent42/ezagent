@@ -1,18 +1,18 @@
 defmodule EzagentPluginLiveview.AdminLiveRehydrateFlashTest do
   @moduledoc """
   codex PR #408 review MED-1 — `AdminLive.ensure_main_session/2`'s
-  rehydrate path threads the orchestrator-status meta into the admin
+  rehydrate path threads failed orchestrator-status meta into the admin
   flash banner instead of log-only. Pre-fix the meta tuple was
   `log_orchestrator_status_on_rehydrate`'d (debug log only) and never
-  surfaced to the operator — `:pending` / `:failed` orchestrator-spawn
-  results on rehydrate were invisible.
+  surfaced to the operator.
 
   These tests exercise the meta-translation helper directly. The full
   rehydrate flow runs at LV mount/3 with `@main_session_uri` not yet
   alive — driving that scenario through a real LiveView test would
   require deregistering the boot-seeded session, which is fragile. The
   meta translation is a pure function over the meta map; this unit
-  exercise pins the 3 branches (`:ready` / `:pending` / `:failed`).
+  exercise pins the current 2-state model (`:ready` / `:failed`) and
+  verifies legacy statuses no-op.
   """
 
   use ExUnit.Case, async: true
@@ -44,8 +44,8 @@ defmodule EzagentPluginLiveview.AdminLiveRehydrateFlashTest do
     end
   end
 
-  describe ":pending status — info-style flash" do
-    test "pending meta sets flash_error with the pending text" do
+  describe "legacy :pending status — no flash change" do
+    test "pending meta is ignored under the current 2-state orchestrator model" do
       socket = fresh_socket()
 
       meta = %{
@@ -55,11 +55,8 @@ defmodule EzagentPluginLiveview.AdminLiveRehydrateFlashTest do
       }
 
       out = AdminLive.assign_rehydrate_flash(socket, meta)
-      flash = out.assigns.flash_error
 
-      assert is_binary(flash)
-      assert flash =~ "pending"
-      assert flash =~ "rehydrate"
+      assert is_nil(out.assigns.flash_error) or out.assigns.flash_error == nil
     end
   end
 

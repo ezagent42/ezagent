@@ -89,7 +89,7 @@ defmodule Ezagent.Entity.MyKindTest do
 end
 ```
 
-Reference: `apps/ezagent_domain_chat/lib/esr/entity/agent_template.ex` (Phase 7 PR 37, simplest recent example).
+Reference: `apps/ezagent_domain_instance_message/lib/esr/entity/agent_template.ex` (Phase 7 PR 37, simplest recent example).
 
 ## Add a Behavior
 
@@ -167,7 +167,7 @@ defmodule Ezagent.Behavior.MyBehaviorTest do
 end
 ```
 
-Reference: `apps/ezagent_domain_chat/lib/esr/behavior/chat.ex` (most complex Behavior, well-commented).
+Reference: `apps/ezagent_domain_instance_message/lib/esr/behavior/chat.ex` (most complex Behavior, well-commented).
 
 ## Add a Template Class
 
@@ -262,13 +262,13 @@ defmodule Ezagent.Template.MyClassTest do
 end
 ```
 
-Reference: `apps/ezagent_domain_chat/lib/esr/template/generic_session.ex`.
+Reference: `apps/ezagent_domain_instance_message/lib/esr/template/generic_session.ex`.
 
 ## How to write an invariant test
 
 Invariant tests are CI gates for architectural rules — they FAIL when a future PR re-introduces a violation. They drive the production code path (not direct function calls) and assert via observable side-effects (audit log, message_routings, PubSub broadcast received).
 
-**Canonical pattern** (from `apps/ezagent_domain_chat/test/integration/workspace_isolation_test.exs`):
+**Canonical pattern** (from `apps/ezagent_domain_instance_message/test/integration/workspace_isolation_test.exs`):
 
 1. `use EzagentCore.DataCase, async: false` (persistence + dispatch + sandbox)
 2. Spawn the production setup: `Ezagent.SpawnRegistry.spawn(uri)`, `WorkspaceRegistry.bind`, `RuleStore.add` — NOT mock objects

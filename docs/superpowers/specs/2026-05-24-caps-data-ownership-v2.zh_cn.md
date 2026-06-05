@@ -186,7 +186,7 @@ def data_owner({:within_session, _} = t), do: {:scope, elem(t, 0), elem(t, 1)}
 
 理由：User 的 identity data（cap 集合）由 User 自己拥有；User 可以从自己的持有里把 cap 授予另一个信任的 User。Agent 由 spawn 它的 principal（跑 `Agent.spawn/4` 的人或 orchestrator）拥有，所以 spawner 能给 agent 授予或撤销 cap。lineage 未知时（例如 bootstrap 时的 admin Agent），默认 agent 自己拥有自己的 data（这意味着只有 system-admin 能授予，因为 agent 在 bootstrap 路径里不能合法自授）。
 
-**`Ezagent.Behavior.Chat`**（`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:60`）—— 暴露 `:send`、`:receive`、`:join`、`:leave`、`:set_working_copy`；注册到 Session（前四个 action）和 User/Agent（`:receive`）（`apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:453-461`）：
+**`Ezagent.Behavior.Chat`**（`apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:60`）—— 暴露 `:send`、`:receive`、`:join`、`:leave`、`:set_working_copy`；注册到 Session（前四个 action）和 User/Agent（`:receive`）（`apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/application.ex:453-461`）：
 
 ```elixir
 def data_owner(%URI{scheme: "session"} = uri) do
@@ -219,7 +219,7 @@ def data_owner({:within_workspace, w_uri}), do: {:scope, :within_workspace, w_ur
 
 理由：workspace 是设计上多 admin；任何 workspace admin 都可以授予 workspace 管理 cap。admin 状态本身是 workspace 上的 `Behavior.Workspace` cap，由成员身份 scope（见 OQ-OWN-1 关于是否升级为单 `workspace_owner_uri`）。
 
-**`Ezagent.Behavior.Routing`**（`apps/ezagent_core/lib/ezagent/behavior/routing.ex:62-69`）—— 暴露 `:add_rule`、`:delete_rule`、`:disable_rule`、`:enable_rule`；注册到 Workspace（`apps/ezagent_domain_workspace/lib/ezagent_domain_workspace/application.ex:54-56`）、Session（`apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:471-473`）、System（`apps/ezagent_core/lib/ezagent_core/application.ex:149-152`）：
+**`Ezagent.Behavior.Routing`**（`apps/ezagent_core/lib/ezagent/behavior/routing.ex:62-69`）—— 暴露 `:add_rule`、`:delete_rule`、`:disable_rule`、`:enable_rule`；注册到 Workspace（`apps/ezagent_domain_workspace/lib/ezagent_domain_workspace/application.ex:54-56`）、Session（`apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/application.ex:471-473`）、System（`apps/ezagent_core/lib/ezagent_core/application.ex:149-152`）：
 
 ```elixir
 def data_owner(%URI{scheme: "workspace"}),    do: :any         # workspace admin 授予
@@ -232,7 +232,7 @@ def data_owner({:within_workspace, w}),        do: {:scope, :within_workspace, w
 
 理由：workspace 上的路由规则是 workspace 级 data；session 上的，session-owner 是授予者；`system://routing/default` 上的是 system 级（没有 per-instance 所有者，只有 bootstrap admin 能授予）。
 
-**`Ezagent.Behavior.Template`**（`apps/ezagent_domain_chat/lib/ezagent/behavior/template.ex:128`）—— 暴露 `:read`、`:write`、`:instantiate`、`:fork`；注册到 AgentTemplate + SessionTemplate（`apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:499-502`）：
+**`Ezagent.Behavior.Template`**（`apps/ezagent_domain_instance_message/lib/ezagent/behavior/template.ex:128`）—— 暴露 `:read`、`:write`、`:instantiate`、`:fork`；注册到 AgentTemplate + SessionTemplate（`apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/application.ex:499-502`）：
 
 ```elixir
 def data_owner(%URI{scheme: "template"} = uri) do
@@ -249,11 +249,11 @@ def data_owner({:within_workspace, w}), do: {:scope, :within_workspace, w}
 
 ### 3.4 Session.owner 查询 —— PR-OWN-2 加的是什么
 
-**今天代码库里没有 `Session.owner/1` 函数**（通过对 `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex` 的 `grep` 验证）。Session 在 spawn 时带 `owner_uri`（`apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:121`），但这个值没存进任何可查询的 slice。PR-OWN-2 引入查询，有三种实现选项按优先级排序：
+**今天代码库里没有 `Session.owner/1` 函数**（通过对 `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex` 的 `grep` 验证）。Session 在 spawn 时带 `owner_uri`（`apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:121`），但这个值没存进任何可查询的 slice。PR-OWN-2 引入查询，有三种实现选项按优先级排序：
 
 - **(a)** 在 `Behavior.Chat.init_slice/1` 加 `:owner_uri` 字段（最便宜 —— `Behavior.Chat.init_slice/1` 在每次 Session spawn 时已经运行；一行加）。
 - **(b)** 加一个专用 `Ezagent.Entity.Session` slice 携带 `{owner_uri, created_at}` —— 概念上更干净但要新 Behavior 或扩展现有。
-- **(c)** 从 URI segment 导出（`apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:286-298` 的 `derive_session_uri/3` 把 owner_name 编码进 URI 本身：`session://<class>/<workspace>/<owner_name>-<template_name>`）—— 能用但需要把 owner_name 反查回 `%URI{}`（owner_name 是 display segment，不是完整 URI）。
+- **(c)** 从 URI segment 导出（`apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:286-298` 的 `derive_session_uri/3` 把 owner_name 编码进 URI 本身：`session://<class>/<workspace>/<owner_name>-<template_name>`）—— 能用但需要把 owner_name 反查回 `%URI{}`（owner_name 是 display segment，不是完整 URI）。
 
 PR-OWN-2 选 **(a)** 因为是一行 slice 加，不打架现有 spawn flow。`Session.owner/1` 变成通过 `Ezagent.Kind.Runtime.get_slice/2` 的 Kind state 读（其他查询已经用）。如果未来 SPEC 引入专用 Session entity 模块，查询可以迁移而不破 `Behavior.Chat.data_owner/1`。
 
@@ -452,7 +452,7 @@ SPEC **不**把这些合并成一个入口 —— 那会强制重度迁移。代
 **改：**
 - 给 `Behavior.Chat.init_slice/1` 加 `:owner_uri` 字段（一行 —— `Map.put(slice, :owner_uri, Map.get(args, :owner_uri))`）。
 - 加 `Ezagent.Entity.Session.owner/1` public 函数：`Ezagent.Kind.Runtime.get_slice(session_uri, :chat) |> Map.get(:owner_uri)`。
-- 接 `Session.spawn_from_template/2` 把 `owner_uri` 传到 Chat slice（已有值 —— `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:121`）。
+- 接 `Session.spawn_from_template/2` 把 `owner_uri` 传到 Chat slice（已有值 —— `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:121`）。
 - 按 §3.3 声明 `Behavior.Chat.data_owner/1`（用 `Session.owner/1`）。
 - 接 `Behavior.Identity.invoke(:grant_cap, ...)` 执行 §5.2（结构性规则）—— 但**只**对其 Behavior 有 `data_owner/1` 声明的 needed cap 生效。没 `data_owner/1` 的 Behavior 保持旧 admin-cap 检查直到迁移（增量 rollout）。
 - **r4 修复（codex CRITICAL）**：更新 `Ezagent.Identity.grant_cap/3` 门面在 `apps/ezagent_domain_identity/lib/ezagent/identity.ex:149-164`，传 **granter 的真实 caps** 通过 `Ezagent.Behavior.Identity.list_caps(granter_uri)`，替代当前硬编码的 `Ezagent.Entity.User.admin_caps()`。如果门面总发 admin caps，§5.2 pre-check 毫无意义 —— 任何 grant 都平凡通过，不管 granter 实际持有什么。向后兼容：现有 caller（`mix ezagent.user.create`、Admin LV grant 按钮等，目前都以 `granter_uri = admin_uri` 调用）继续工作因为那个 admin 确实持有 admin caps；新 caller 路径若传非 admin `granter_uri` 现在正确命中 §5.2 wildcard pre-check + data-owner 规则。验收新加测试 (e)。

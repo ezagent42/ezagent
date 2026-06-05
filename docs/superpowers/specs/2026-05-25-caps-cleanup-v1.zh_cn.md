@@ -264,7 +264,7 @@ ezagent 今天的 cap 系统把六个关注点混在一个 `%Ezagent.Capability{
 
 | 类别 | 样本调用点 |
 |---|---|
-| Boot / reconciler | `EzagentDomainIdentity.Application`（admin User spawn）、`EzagentDomainChat.Application`（CC orchestrator seed）、`EzagentDomainWorkspace.Workspace.Loader`（boot loader） |
+| Boot / reconciler | `EzagentDomainIdentity.Application`（admin User spawn）、`EzagentDomainInstanceMessage.Application`（CC orchestrator seed）、`EzagentDomainWorkspace.Workspace.Loader`（boot loader） |
 | Mix task | `mix ezagent.agent.create`、`mix ezagent.demo.seed_cc_agent`、`mix ezagent.demo.seed_cc_sandbox` |
 | Plugin 回复 dispatch | `Plugin.CurlAgent`（LLM 回复 dispatch）、`Plugin.NP`（NP-agent 回复）、`Plugin.CC.Channel`（channel 回复）、`Plugin.Echo`（echo 回复）、`Plugin.Feishu.BindingPolicy` |
 | Chat domain 内部 | `Behavior.Chat`（回复发送、system 消息）、`Behavior.Template`（模板实例化）、`Entity.Session`（成员同步、slice 变更）、`Entity.Agent`（default caps 授权）、`Orchestrator.{MCPServer, Tools, CCSeed}` |

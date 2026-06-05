@@ -5,7 +5,7 @@ defmodule Ezagent.Routing.ResolverTest do
   Each test declares its OWN routing table (unique per test, owned by
   the test process) and configures `Ezagent.Routing.Resolver` to query
   that table via `Application.put_env(:ezagent_core, :routing_tables, ...)`.
-  This avoids conflict with the live `EzagentDomainChat.Application` which
+  This avoids conflict with the live `EzagentDomainInstanceMessage.Application` which
   owns `MentionRouting` and `SessionRouting` for the running app.
   """
 
