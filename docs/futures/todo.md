@@ -698,8 +698,25 @@ baseline worktree (`54df56c9`) chat run for apples-to-apples diff**.
   > disable-not-delete GC option. Confirmed live 2026-06-01: an @-mention to a
   > non-member slot worker silently goes nowhere — that's the (b) gap.
 
+- **✅ `domain.agent` — DONE (verified against origin/main 2026-06-05).** Content
+  audit (not SHA — the stale local `domain-agent-foundation` branch's commits are on
+  main under different SHAs via #539 + unify-uri-query reshaping): PR-1/PR-DR/PR-4 +
+  codex merged via **PR #539**; PR-2 (split `working_directory`→`project_cwd`+`config_dir`)
+  done (only comments reference the old name, no live reads); PR-6 `update_member_template`
+  on main; the 2026-06-03 config_dir promotion (`claude_config_dir`→`config_dir`,
+  fail-loud) merged; PR-3's domain-owns/plugin-materializes architecture landed
+  (domain threads `config_dir`, core `Kind.Template` does `allocated_config_dir`,
+  `Behavior.Sandbox` owns FS lifecycle + invokes `template_class.destroy_config_dir/2`,
+  plugins only materialize). scenario-34 deterministic **8/0** in dev docker; live
+  passed 2026-06-03 (old node). ONLY residual = move per-agent config_dir PATH
+  COMPUTATION (cc_agent/codex_agent `agent_config_dir/1`) fully into the domain — a
+  marginal structural refinement the spec flagged needs compat shims + Allen review;
+  NON-blocking. The scenario-34 live re-run in the NEW #21 docker dev env needs Allen's
+  dev Feishu app (cli_a97ae) event-subscription config. See [[project_domain_agent_spec]].
+
 - **`domain.agent` abstraction — own per-agent identity + filesystem isolation as a
-  structural invariant (Allen 2026-06-02, after E2E acceptance)**: the scenario-34
+  structural invariant (Allen 2026-06-02, after E2E acceptance)** [SUPERSEDED by the ✅
+  entry above — kept for the original problem statement]: the scenario-34
   live tier surfaced that per-agent resource isolation (cwd / config_dir / `.mcp.json`
   / bridge token) is currently SCATTERED — partly from template data
   (`working_directory`, which a mis-seeded template set to the SHARED
