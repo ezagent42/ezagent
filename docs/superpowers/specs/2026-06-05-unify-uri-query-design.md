@@ -1,6 +1,6 @@
-# Unify URI Query — Design Spec (rev 2)
+# Unify URI Query — Design Spec (rev 3)
 
-**Status:** rev 2 — incorporates codex adversarial-review r1 (4 findings) + Allen's locked decisions. Ready for codex r2 → implementation. Authored 2026-06-05 (Claude + Allen, Feishu session). Branch/worktree: `unify-uri-query` (off `main` @ 53f3c48b, post `domain_chat → domain_instance_message` rename).
+**Status:** rev 3 — incorporates codex r1 (4 findings) + r2 (registry-driven flavor inventory incl. `np`) + Allen's locked decisions. Ready for implementation. Authored 2026-06-05 (Claude + Allen, Feishu session). Branch/worktree: `unify-uri-query` (off `main` @ 53f3c48b, post `domain_chat → domain_instance_message` rename).
 
 **Root cause (Allen's framing):** Two coupled defects, not "the cc_ flavor bug":
 1. **URI inconsistency** — URIs encode mutable/secondary/creation-time attributes (agent **flavor** as a name prefix) and the segment order (`<type>/<workspace>`) does not reflect the real scoping hierarchy (type is workspace-scoped).
@@ -82,7 +82,7 @@ Ezagent.UriQuery.resolve(attr :: atom, arg) :: {:ok, term} | :none | {:error, {:
 Resolvers (registered by owning domain):
 | attr | owner | reads |
 |---|---|---|
-| `:flavor` | cc/codex/curl plugins (or domain.agent) | `AgentFlavorRegistry` / stored `AgentTemplate.flavor` (NOT URI) |
+| `:flavor` | every `agent_flavors/0` provider (cc/codex/curl/echo/np) | `AgentFlavorRegistry` / stored `AgentTemplate.flavor` (NOT URI) |
 | `:orchestrator` | instance_message | session's stored `orchestrator_uri` field |
 | `:member_by_role` | instance_message | member `:role_name` facet |
 | `:session_template` | instance_message | session's stored template assoc |
@@ -106,16 +106,16 @@ Resolvers (registered by owning domain):
 
 **This MUST land before dropping the `<flavor>_` prefix.** The prefix is a live Kind/flavor resolution + validation mechanism:
 - `apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/application.ex:1028-1044` resolves an agent's Kind by **splitting the entity-name prefix** (cc has NO cc-specific Kind module — flavor lives only in `entity://agent/<ws>/cc_<name>`).
-- Each plugin's template `check_agent_uri` (cc/codex/curl, e.g. `cc_agent.ex:~363`) **rejects** an `agent_uri` whose name prefix ≠ flavor.
+- **Every** plugin's template `check_agent_uri` **rejects** an `agent_uri` whose name prefix ≠ flavor. This is the FULL set of registered flavor providers, not a hand-list — currently cc/codex/curl/echo **and `np`** (`apps/ezagent_plugin_np/lib/ezagent/template/np_agent.ex:78-103` still `String.split`s `entity_name`, accepts only `flavor == "np"`, returns `:missing_flavor_prefix` for prefixless names; `np` ships — `apps/ezagent_web/mix.exs:102`). codex r2 HIGH: omitting `np` would break it after the prefix drop.
 - On-disk config-dir paths embed it: `cc-agents/<ws>/<flavor>_<name>/` (`sandbox/config_dir.ex`, workspace behavior path builders).
 
 So a prefixless agent currently fails spawn / lifecycle / bridge delivery / template instantiation / config-dir resolution.
 
 **Prerequisite work (own PR(s), before §7 prefix drop):**
 1. Replace name-prefix Kind/flavor resolution with a **stored** lookup — `UriQuery.resolve(:flavor, agent_uri)` reading `AgentTemplate.flavor` / `AgentFlavorRegistry`; the instance_message Kind resolver uses that, not `String.split`.
-2. Update every plugin `check_agent_uri` validator to validate against stored flavor, not the prefix.
+2. **Registry-driven (codex r2):** enumerate EVERY registered flavor provider via the flavor registry (`AgentFlavorRegistry` / each plugin's `agent_flavors/0`) — do NOT hand-list. Convert each provider's `check_agent_uri` to validate against stored flavor, not the prefix. Currently that set is cc/codex/curl/echo/np; a future plugin is covered automatically. The #30 scan (§8) fails on ANY remaining `check_agent_uri` that prefix-splits, so a missed plugin cannot slip through.
 3. Make config-dir / on-disk path builders take flavor from storage (paths may keep flavor as a directory component derived from the stored attr — that's a path, not a URI; acceptable).
-4. Audit + convert: Domain.Agent lifecycle, instance_message Kind resolver, agent_bridge `derive_flavor` (`agent_bridge.ex:211`, `channel.ex:179`), mention_parser, `ezagent.agent.create`, LiveView (agent_detail/extensions/new), cc/echo template validators.
+4. Audit + convert: Domain.Agent lifecycle, instance_message Kind resolver, agent_bridge `derive_flavor` (`agent_bridge.ex:211`, `channel.ex:179`), mention_parser, `ezagent.agent.create`, LiveView (agent_detail/extensions/new), and **all** plugin template validators (cc/codex/curl/echo/np — driven from the flavor registry, step 2).
 5. Only when nothing depends on the prefix for behavior: **drop `<flavor>_` from agent names** (end state: no flavor in any URI). Reseed dev.
 
 ---
@@ -141,7 +141,7 @@ Beyond `String.split`/literals, the scan must catch:
 - all `workspace_of`/tenant-derivation + worker/session URI derivations outside `Ezagent.URI`/`UriQuery`.
 - hand-built `<scheme>://` strings: interpolation `#{}`, `<>` concatenation, sigils, and interpolation **embedded inside larger strings**.
 - URI-as-string map/cap **keys** and routing **receiver** strings built by hand.
-- plugin template `check_agent_uri` validators that parse the name prefix.
+- plugin template `check_agent_uri` validators that parse the name prefix — iterate ALL `agent_flavors/0` providers (cc/codex/curl/echo/np/future); fail on any remaining prefix split.
 - on-disk path builders that parse a URI for flavor/workspace (`Path.join`, config_dir).
 AST matching (`Code.string_to_quoted/1`) strongly preferred over grep for the embedded-interpolation + pattern-match cases.
 
@@ -149,7 +149,7 @@ AST matching (`Code.string_to_quoted/1`) strongly preferred over grep for the em
 
 ## 9. Known offender audit (new-main paths @ 53f3c48b — starting list; scan finds the rest)
 - Orchestrator re-derive → stored `orchestrator_uri`: `instance_message/.../entity/session.ex:369,843,866`; `.../session_creator.ex:470,1167`; `.../orchestrator/health.ex:105`; hardcoded `template://agent/system/cc-orchestrator` pin `session.ex:370`.
-- Flavor parsed/dispatched: `agent_bridge.ex:211`, `agent_bridge/channel.ex:179`; **Kind resolver** `instance_message/application.ex:1028-1044`; plugin `check_agent_uri` (cc/codex/curl); `mention_parser.ex`; `ezagent.agent.create.ex`; LiveView agent_detail/extensions/new; `session_creator.ex:~1530` `"#{flavor}_#{session_unique}"`; config-dir paths `sandbox/config_dir.ex` + workspace path builders.
+- Flavor parsed/dispatched: `agent_bridge.ex:211`, `agent_bridge/channel.ex:179`; **Kind resolver** `instance_message/application.ex:1028-1044`; plugin `check_agent_uri` for ALL flavor providers — cc (`cc_agent.ex:~363`), echo (`echo_agent.ex:~114`), **np (`np_agent.ex:78-103`)**, codex, curl; `mention_parser.ex`; `ezagent.agent.create.ex`; LiveView agent_detail/extensions/new; `session_creator.ex:~1530` `"#{flavor}_#{session_unique}"`; config-dir paths `sandbox/config_dir.ex` + workspace path builders.
 - Positional/tenant parsing (HIGH-1): `capability.ex:581-622`; `external_mirror/worker_spawn.ex`; scattered `%URI{host,path}` matches.
 - Boot-race precedent to mirror: `external_mirror/boot_reconciler.ex:31-48`.
 - Session reconstruction relying on class segment: `instance_message/.../orchestrator/mcp_server.ex` (enumerates snapshots).
