@@ -7,8 +7,11 @@
 #            --build-arg HTTPS_PROXY=http://host.docker.internal:7897
 #   run:   ESR_PROXY=http://host.docker.internal:7897 \
 #            docker compose -f docker/docker-compose.prod.yml up -d
-# PREREQ: stop the host-level cloudflared (~/.cloudflared/ezagent.yml) first —
-# two connectors on tunnel 7339e970 with different ingress mis-route requests.
+# Distinct compose PROJECT name so prod never collides with the dev stack (both
+# compose files live in docker/ → same default project "docker" → prod `up`
+# would clobber the dev container). dev stays project "docker"; prod = ezagent-prod.
+name: ezagent-prod
+
 services:
   esr:
     build:

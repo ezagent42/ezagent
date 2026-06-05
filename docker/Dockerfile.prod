@@ -65,8 +65,10 @@ ENV HTTP_PROXY=${HTTP_PROXY} HTTPS_PROXY=${HTTPS_PROXY} \
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 DEBIAN_FRONTEND=noninteractive
 
 # Runtime libs (ERTS/NIF link targets) + node + agent CLIs (claude/codex/uv).
+# git: the cc plugin's McpConfigWriter shells out to `git rev-parse` (it tolerates
+# "not a repo", but System.cmd RAISES :enoent if git is absent); agents also use git.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl bash openssl libstdc++6 libncurses6 locales procps \
+      ca-certificates curl bash openssl git libstdc++6 libncurses6 locales procps \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && npm i -g @anthropic-ai/claude-code@2.1.162 @openai/codex@0.137.0 \
