@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# ESR PROD image — multi-stage `mix release`. Builder compiles the release;
+# ezagent PROD image — multi-stage `mix release`. Builder compiles the release;
 # the slim runtime carries the release + the CLIs agents shell out to
 # (claude/codex/uv/node) + the feishu WS sidecar's node_modules (bundled into
 # the release's priv at build time). NOT for dev (use Dockerfile.dev + phx.server).

@@ -7,7 +7,7 @@ credentials-file: /etc/cloudflared/cred.json
 
 ingress:
   - hostname: app.ezagent.chat
-    service: http://esr:10042
+    service: http://ezagent:10042
     originRequest:
       connectTimeout: 30s
       tcpKeepAlive: 30s

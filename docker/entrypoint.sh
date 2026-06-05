@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ESR dev/test container entrypoint: bootstrap a BLANK $EZAGENT_HOME on first boot,
+# ezagent dev/test container entrypoint: bootstrap a BLANK $EZAGENT_HOME on first boot,
 # seed the static Feishu credential from the read-only secrets mount, then run the
 # Phoenix server. Per-agent OAuth creds are provisioned by the E2E harness at
 # scenario time (NOT here) — this only handles the static, non-rotated Feishu cred.
@@ -46,5 +46,5 @@ if [ ! -s "${COOKIE_FILE}" ]; then
 fi
 COOKIE="$(cat "${COOKIE_FILE}")"
 
-echo "[entrypoint] starting phx.server on :${PORT:-10042} (node esr@127.0.0.1)"
-exec elixir --name "esr@127.0.0.1" --cookie "${COOKIE}" -S mix phx.server
+echo "[entrypoint] starting phx.server on :${PORT:-10042} (node ezagent@127.0.0.1)"
+exec elixir --name "ezagent@127.0.0.1" --cookie "${COOKIE}" -S mix phx.server

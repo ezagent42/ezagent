@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# ESR dev/test image — runs `mix phx.server` from a BLANK $EZAGENT_HOME, with the
+# ezagent dev/test image — runs `mix phx.server` from a BLANK $EZAGENT_HOME, with the
 # claude/codex/uv CLIs that agents shell out to. NOT a prod release (mix release is
 # a later phase). See docs/superpowers/specs/2026-06-04-dockerized-e2e-harness-design.md.
 FROM hexpm/elixir:1.19.5-erlang-28.4.2-debian-bookworm-20260518

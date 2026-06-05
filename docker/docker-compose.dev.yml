@@ -1,4 +1,4 @@
-# ESR dev/test environment. Brings up a BLANK ESR via `mix phx.server`.
+# ezagent dev/test environment. Brings up a BLANK ezagent via `mix phx.server`.
 #   build:  docker compose -f docker/docker-compose.dev.yml build \
 #             --build-arg HTTP_PROXY=http://host.docker.internal:7897 \
 #             --build-arg HTTPS_PROXY=http://host.docker.internal:7897
@@ -6,7 +6,7 @@
 #             docker compose -f docker/docker-compose.dev.yml up -d
 # Reachable at http://100.64.0.27:10042 (Tailscale) — see docker/README.md.
 services:
-  esr:
+  ezagent:
     build:
       context: ..
       dockerfile: docker/Dockerfile.dev
@@ -14,7 +14,7 @@ services:
         HTTP_PROXY: ${DOCKER_BUILD_PROXY:-}
         HTTPS_PROXY: ${DOCKER_BUILD_PROXY:-}
         NO_PROXY: "localhost,127.0.0.1,::1"
-    image: esr-dev:latest
+    image: ezagent-dev:latest
     ports:
       - "10042:10042"
     environment:
@@ -22,7 +22,7 @@ services:
       SHELL: /bin/bash          # erlexec's exec-port requires SHELL (unset for non-root user)
       EZAGENT_HOME: /data
       EZAGENT_PROFILE: default
-      EZAGENT_COOKIE: esr_dev_cookie
+      EZAGENT_COOKIE: ezagent_dev_cookie
       # Agents' claude/codex subprocesses inherit these to reach Anthropic/OpenAI.
       # Feishu + localhost go direct (NO_PROXY). host.docker.internal = host proxy.
       # Set BOTH upper + lower case (many tools honor lowercase) so the runtime proxy
@@ -49,7 +49,7 @@ services:
 
   # Containerized cloudflared fronting dev.ezagent.chat via the dedicated
   # ezagent-dev tunnel (8fb9e613) — separate tunnel from prod so the two stacks
-  # never share a connector. Reaches the dev app by service name (esr:10042).
+  # never share a connector. Reaches the dev app by service name (ezagent:10042).
   cloudflared:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
@@ -57,13 +57,13 @@ services:
     environment:
       HTTPS_PROXY: ${ESR_PROXY:-}
       https_proxy: ${ESR_PROXY:-}
-      NO_PROXY: "esr,localhost,127.0.0.1,::1"
-      no_proxy: "esr,localhost,127.0.0.1,::1"
+      NO_PROXY: "ezagent,localhost,127.0.0.1,::1"
+      no_proxy: "ezagent,localhost,127.0.0.1,::1"
     volumes:
       - ./cloudflared/dev-config.yml:/etc/cloudflared/config.yml:ro
       - ${HOME}/.cloudflared/8fb9e613-05d6-44b6-a00a-4e44873c4de3.json:/etc/cloudflared/cred.json:ro
     depends_on:
-      esr:
+      ezagent:
         condition: service_healthy
 
 volumes:

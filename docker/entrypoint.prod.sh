@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ESR PROD entrypoint: run migrations via the release's `eval`, then start the
+# ezagent PROD entrypoint: run migrations via the release's `eval`, then start the
 # release in the foreground. Prod data lives in the bind-mounted stable home
 # (EZAGENT_HOME=/data → ~/.ezagent on the host), so creds (incl. the prod
 # feishu app) are already present — NOT seeded here.
