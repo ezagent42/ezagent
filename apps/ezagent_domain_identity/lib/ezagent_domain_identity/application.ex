@@ -116,6 +116,19 @@ defmodule EzagentDomainIdentity.Application do
   # seeded from the read-only /secrets mount by the docker entrypoint, mirroring
   # how feishu.yaml is seeded. Never crashes boot.
   defp maybe_seed_smtp_config do
+    # PR-M pattern (see maybe_ensure_admin_user) — skip the boot DB write in
+    # :test. Otherwise, when a `<credentials>/smtp_config.json` happens to be
+    # present (e.g. inside the docker image's mounted secrets), the seed would
+    # mark smtp as configured in the test DB, flipping the login page's email
+    # form on and breaking tests that assert the default email-disabled state.
+    if test_env?() do
+      :ok
+    else
+      do_seed_smtp_config()
+    end
+  end
+
+  defp do_seed_smtp_config do
     path = Path.join(Ezagent.Home.path(:credentials), "smtp_config.json")
 
     with false <- Ezagent.AppSettings.smtp_configured?(),
