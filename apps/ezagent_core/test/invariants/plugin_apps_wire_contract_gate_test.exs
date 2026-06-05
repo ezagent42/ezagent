@@ -29,7 +29,17 @@ defmodule EzagentCore.Invariants.PluginAppsWireContractGateTest do
   use ExUnit.Case, async: true
 
   defp apps_root do
-    {out, 0} = System.cmd("git", ["rev-parse", "--show-toplevel"])
+    out =
+      case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: true) do
+        {top, 0} ->
+          top
+
+        _ ->
+          # No .git inside the release image (#21 docker) — resolve the
+          # umbrella root from cwd (umbrella root or the app under test).
+          cwd = File.cwd!()
+          if File.dir?(Path.join(cwd, "apps")), do: cwd, else: Path.expand("../..", cwd)
+      end
     Path.join(String.trim(out), "apps")
   end
 
