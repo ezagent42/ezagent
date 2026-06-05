@@ -331,7 +331,7 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
   # Compile-order caveat (the codex HIGH-3 lesson): an agent flavor's
   # `kind` may legitimately be a CORE/domain Kind the plugin REUSES
   # rather than owns — e.g. cc's flavor `kind` is `Ezagent.Entity.Agent`
-  # from `ezagent_domain_chat`, and a plugin cannot depend on a domain
+  # from `ezagent_domain_instance_message`, and a plugin cannot depend on a domain
   # app that already depends on it (cycle). Such a module is simply not
   # on the plugin's codepath at its own compile time. So the gate
   # behaviour-checks only the modules it CAN resolve; an unreachable

@@ -37,7 +37,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
 
   ## Why not auto-seed at boot
 
-  See `EzagentDomainChat.Application` moduledoc. Auto-injecting demo
+  See `EzagentDomainInstanceMessage.Application` moduledoc. Auto-injecting demo
   agents into every boot would pollute production deployments with
   fixture data and make the workspace feel "started by someone else"
   to the first real user. Seed-on-demand respects the deployment as
@@ -56,7 +56,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
   @impl Mix.Task
   def run(_args) do
     {:ok, _} = Application.ensure_all_started(:ezagent_core)
-    {:ok, _} = Application.ensure_all_started(:ezagent_domain_chat)
+    {:ok, _} = Application.ensure_all_started(:ezagent_domain_instance_message)
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_cc)
 
     agent_uri = Ezagent.URI.new!(@agent_uri_str)

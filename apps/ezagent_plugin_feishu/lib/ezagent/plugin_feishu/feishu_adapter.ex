@@ -167,7 +167,7 @@ defmodule EzagentPluginFeishu.FeishuAdapter do
       }
 
   The chat slice carries the three PR-EM-6-PRE fields the rewrite
-  depends on (`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex`
+  depends on (`apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex`
   `init_slice/1`):
 
   - `:last_message_id` — id of the most recent `Chat.send` message

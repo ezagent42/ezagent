@@ -75,8 +75,8 @@ The "right" default cap for chat would be:
 ```
 
 But `Ezagent.Entity.User` lives in `ezagent_domain_identity`, and
-`Ezagent.Behavior.Chat` lives in `ezagent_domain_chat`.
-`ezagent_domain_chat` already depends on `ezagent_domain_identity`
+`Ezagent.Behavior.Chat` lives in `ezagent_domain_instance_message`.
+`ezagent_domain_instance_message` already depends on `ezagent_domain_identity`
 (needs `Ezagent.Entity.User`). Adding the reverse direction
 creates a circular dep at compile time.
 
@@ -109,7 +109,7 @@ a circular dep**, not a design statement.
 reference without creating a circular dep, it should.
 
 **When to revisit:** if the dep graph gets reorganized
-(`ezagent_domain_chat`'s `Ezagent.Behavior.Chat` module moves to
+(`ezagent_domain_instance_message`'s `Ezagent.Behavior.Chat` module moves to
 `ezagent_core` or somewhere upstream of `ezagent_domain_identity`),
 narrow `User.default_caps` to the specific module reference.
 
@@ -172,7 +172,7 @@ JSON line the model can parse) or use a `tools/call` round-trip
 to fetch it explicitly.
 
 **Documentation lock:** Decision #132 + the invariant test in
-`apps/ezagent_domain_chat/test/esr/behavior/chat_test.exs`
+`apps/ezagent_domain_instance_message/test/esr/behavior/chat_test.exs`
 ("to_claude payload meta values are all strings (no list/map
 smuggling)"). The test must fail in CI if anyone re-introduces
 a non-string meta value.
@@ -213,7 +213,7 @@ future PRs cite:
   #132 (meta schema), #133 (User default caps), #134
   (InboundDispatcher mode). Each cross-references this file.
 - **Tests that act as CI gates for the invariants:**
-  - `apps/ezagent_domain_chat/test/esr/behavior/chat_test.exs` —
+  - `apps/ezagent_domain_instance_message/test/esr/behavior/chat_test.exs` —
     meta-string invariant
   - `apps/ezagent_domain_identity/test/esr/entity/user_test.exs` —
     `default_caps/0` shape invariants

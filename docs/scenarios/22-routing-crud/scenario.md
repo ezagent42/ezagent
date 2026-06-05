@@ -72,7 +72,7 @@
   - `apps/ezagent_core/test/integration/routing_boot_test.exs`
   - `apps/ezagent_core/test/integration/routing_cap_test.exs`
   - `apps/ezagent_core/test/integration/chat_routing_test.exs`
-  - `apps/ezagent_domain_chat/test/.../default_rules_migration_test.exs`
+  - `apps/ezagent_domain_instance_message/test/.../default_rules_migration_test.exs`
 - Evidence:
   - `docs/notes/phase-9-demo-2026-05-21.md` — routing screenshots
 

@@ -52,7 +52,7 @@
 - `apps/ezagent_core/lib/ezagent/uri.ex:124-143` — `Ezagent.URI.parse!/1` **已存在** 且**已使用** strict `URI.new/1`。
 - `apps/ezagent_core/lib/ezagent/uri/scheme_registry.ex:16-18` — 6-scheme 允许列表 (`entity, workspace, session, template, resource, system`)。r2 确认:**不存在** `cap://` scheme。
 - `apps/ezagent_core/lib/ezagent/capability.ex:320-348` — `Capability.instance_match?/2` 已通过 `URI.to_string/1` 比较。匹配器路径已免疫。
-- `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:303-307` — 已有的手写 `URI.parse(URI.to_string(uri))` 往返是本 SPEC 形式化规则的局部、未文档化版本。
+- `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:303-307` — 已有的手写 `URI.parse(URI.to_string(uri))` 往返是本 SPEC 形式化规则的局部、未文档化版本。
 - `apps/ezagent_core/lib/ezagent/kind/snapshot.ex:312` — `:erlang.term_to_binary(state)` 按字面写入 `%URI{}` 字段。r2 §9.2 强制 load-path 规范化以处理迁移前 snapshot。
 - `2026-05-27-capability-action-axis.md` — 并发 SPEC,添加 `:action` 字段。独立。
 - `2026-05-27-workspace-cap-based-visibility.md` — 并发 SPEC,基于 cap 的可见性。在 URI 轴独立。
@@ -85,7 +85,7 @@ stdlib `URI.parse/1` 自 Elixir 1.13 起 deprecated,因为它是非严格的 (RF
 4. `has_equiv?` 检查使用 `cap.instance == want.instance` 原始结构相等。差在 `:authority`,所以为 `false`。
 5. grant 进入 `check_grant_authorized/2`,其 `caller == owner` 短路也是原始结构相等。落到 `{:error, :grant_not_owner}`。
 
-`apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:303-307` 的手写 `URI.parse(URI.to_string(uri))` 往返为 `Session.spawn_from_template/2` 路径修补**同一** bug,但**没有**为直接 `EzagentDomainChat.create_session/3` 路径修补。这种 parity 漂移**就是** bug。
+`apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:303-307` 的手写 `URI.parse(URI.to_string(uri))` 往返为 `Session.spawn_from_template/2` 路径修补**同一** bug,但**没有**为直接 `EzagentDomainInstanceMessage.create_session/3` 路径修补。这种 parity 漂移**就是** bug。
 
 ### 1.3 Bug 类别
 
@@ -193,7 +193,7 @@ PR-2: 删除-并-扫除,一次一个生产 app。r2 清单来自 `rg -n "URI\.(p
 |---|---|---|
 | `apps/ezagent_core/` | 28 | 包含 `uri.ex` (allowlisted)、`ecto/uri_type.ex` (§3.7 双 fallback)、`kind/snapshot.ex` (§9.2)、`system_principal/*`、`capability.ex`、`capability_registry.ex`、`presence.ex`、`audit.ex`、`notifications.ex`、`notification_subscriptions.ex`、`persistence.ex`、`agent_lineage.ex`、`entity/system.ex`、`capability/parser.ex`、`runtime/pid_file.ex`、`routing/resolver.ex`、`workspace_registry.ex`。 |
 | `apps/ezagent_domain_identity/` | 15 | `entity/user.ex:29,30` (§3.5 常量)、`identity.ex:45,105,152,161,188,265`、`entity_presenter.ex:61`。 |
-| `apps/ezagent_domain_chat/` | 78 | 重站点。`entity/session.ex` (删除 303-307 手写)、`behavior/chat.ex`、`behavior/template.ex`、`orchestrator/{tools,mcp_registry,mcp_socket,health}.ex`、`chat/read_marker.ex`、`template/generic_session.ex`、`entity/{agent,agent_template,session_template}.ex`。 |
+| `apps/ezagent_domain_instance_message/` | 78 | 重站点。`entity/session.ex` (删除 303-307 手写)、`behavior/chat.ex`、`behavior/template.ex`、`orchestrator/{tools,mcp_registry,mcp_socket,health}.ex`、`chat/read_marker.ex`、`template/generic_session.ex`、`entity/{agent,agent_template,session_template}.ex`。 |
 | `apps/ezagent_domain_workspace/` | 18 | `workspace.ex:261,299,358,446,482,696,744,789,820`、`workspace/loader.ex:262,321`、**`workspace/store.ex:203,212`** (r2 新增)、`entity/workspace.ex:83`、`behavior/workspace.ex:888,930,1225`、加 mix task `agent.create.ex:231` (r2 操作员面对生产)。 |
 | `apps/ezagent_domain_external_mirror/` | 11 | **r2 拒绝 r1 "0 生产更改"**。命中:`adapter_install.ex:197`、`worker_spawn.ex:230`、`external_mirror.ex:209,250,391,550`、`behavior/external_mirror.ex:821`、`behavior/external_mirror_worker.ex:640,676`,加 mix task `ezagent_external_mirror_cli.ex:161,220`。 |
 | `apps/ezagent_domain_agent_bridge/` | 7 | `registry.ex:98,111`、`token_store.ex:55,69`、`socket.ex:21`、`channel.ex:34,80`。 |
@@ -675,7 +675,7 @@ Feishu webhook 事件交付裸字符串,在 plugin 中转为 URI。已经在 cas
 
 **步骤 1.** 还原 impl PR。持久化数据字节相同 (§9.1)。
 
-**步骤 2.** 恢复 `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:303-307` 的手写往返。Bug 2 回归。
+**步骤 2.** 恢复 `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:303-307` 的手写往返。Bug 2 回归。
 
 **步骤 3.** 临时删除不变量测试。
 
@@ -720,9 +720,9 @@ Feishu webhook 事件交付裸字符串,在 plugin 中转为 URI。已经在 cas
 - `ezagent/entity_presenter.ex:61` — `case URI.new(uri_str)` → 迁移到 `parse!/1` rescue。
 - `mix/tasks/ezagent.user.token.ex:75` — `URI.parse(uri_str)` → 迁移到 `parse!/1` (r2 §4.2 操作员面对生产)。
 
-### `apps/ezagent_domain_chat/lib/` (78 个站点)
+### `apps/ezagent_domain_instance_message/lib/` (78 个站点)
 
-- `ezagent_domain_chat.ex:116, 156, 494, 578, 631` — 混合 → 迁移。
+- `ezagent_domain_instance_message.ex:116, 156, 494, 578, 631` — 混合 → 迁移。
 - `ezagent/entity/session.ex` (多个站点,303-307 手写删除)。
 - `ezagent/entity/session_template.ex`、`agent_template.ex`、`agent.ex`、`behavior/chat.ex`、`behavior/template.ex`、`chat/read_marker.ex`、`orchestrator/{tools,mcp_registry,mcp_socket,health}.ex`、`template/generic_session.ex`、`application.ex` — 详见 EN Appendix A。
 

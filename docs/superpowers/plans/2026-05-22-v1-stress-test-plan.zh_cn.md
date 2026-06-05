@@ -53,7 +53,7 @@ Allen 在 V1 验收阶段需要对以下三点给出可度量的答案：
 ### 2.2 派发扇出 —— 一条 `chat.send` 进入有 N 个成员的 session
 
 这是问题 1 的核心。一次 `chat.send`（`Ezagent.Behavior.Chat.invoke(:send, ...)`，
-`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:92`）依次做：
+`apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:92`）依次做：
 
 1. **`MessageStore.write/2`**（`message_store.ex:67`）—— 一个 `Repo.transaction`，
    内含 **2 次 SQLite insert**：`messages`（upsert）+ `message_routings`

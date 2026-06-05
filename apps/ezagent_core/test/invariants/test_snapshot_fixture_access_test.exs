@@ -1,0 +1,94 @@
+defmodule Ezagent.Invariants.TestSnapshotFixtureAccessTest do
+  @moduledoc """
+  Gates #20: ordinary tests seed snapshot rows through
+  `Ezagent.Test.SnapshotFixtures`, not by scattering direct calls to
+  `Ezagent.Kind.Snapshot.save_now/3` or `Ezagent.Ecto.KindSnapshot.upsert/5`.
+
+  Tests that explicitly verify the low-level persistence primitives stay in the
+  allowlist. Everything else should use the fixture helper so future changes to
+  test snapshot seeding have one place to evolve.
+  """
+
+  use ExUnit.Case, async: true
+
+  @direct_snapshot_write ~r/(?:Ezagent\.Kind\.Snapshot|Snapshot)\.save_now\s*\(|(?:Ezagent\.Ecto\.KindSnapshot|KindSnapshot)\.upsert\s*\(/
+
+  @allowlist MapSet.new([
+               # The new fixture helper is the one sanctioned test writer.
+               "apps/ezagent_core/test/support/snapshot_fixtures.ex",
+               # Tests for the low-level snapshot APIs themselves.
+               "apps/ezagent_core/test/ezagent/lifecycle_followup_test.exs",
+               "apps/ezagent_core/test/ezagent/lifecycle_test.exs",
+               "apps/ezagent_core/test/ezagent/kind/snapshot_test.exs",
+               "apps/ezagent_core/test/ezagent/snapshot_store_test.exs",
+               "apps/ezagent_core/test/integration/snapshot_restart_test.exs",
+               "apps/ezagent_core/test/invariants/kind_snapshot_concurrent_upsert_test.exs",
+               "apps/ezagent_core/test/invariants/no_silent_workspace_in_writers_test.exs",
+               "apps/ezagent_core/test/invariants/lifecycle_persistence_access_test.exs",
+               "apps/ezagent_core/test/invariants/test_snapshot_fixture_access_test.exs"
+             ])
+
+  test "ordinary tests use SnapshotFixtures for direct snapshot fixture writes" do
+    apps_root = Path.expand("../../../..", __DIR__)
+
+    violations =
+      apps_root
+      |> list_test_files()
+      |> Enum.map(&Path.relative_to(&1, apps_root))
+      |> Enum.reject(&MapSet.member?(@allowlist, &1))
+      |> Enum.filter(fn rel_path ->
+        @direct_snapshot_write
+        |> Regex.match?(strip_line_comments(Path.join(apps_root, rel_path)))
+      end)
+
+    assert violations == [],
+           """
+           Test snapshot fixture writes must go through Ezagent.Test.SnapshotFixtures.
+
+           Direct low-level snapshot writes found in:
+           #{Enum.map_join(violations, "\n", &"  - #{&1}")}
+
+           If a file is explicitly testing the low-level persistence primitive,
+           add it to this invariant's allowlist with a short justification.
+           Otherwise replace the call with SnapshotFixtures.save_kind_snapshot/3
+           or SnapshotFixtures.upsert_kind_snapshot/5.
+           """
+  end
+
+  defp list_test_files(apps_root) do
+    apps_root
+    |> Path.join("apps")
+    |> File.ls!()
+    |> Enum.flat_map(fn app ->
+      test_dir = Path.join([apps_root, "apps", app, "test"])
+
+      if File.dir?(test_dir) do
+        list_elixir_files(test_dir)
+      else
+        []
+      end
+    end)
+  end
+
+  defp list_elixir_files(dir) do
+    dir
+    |> File.ls!()
+    |> Enum.flat_map(fn entry ->
+      path = Path.join(dir, entry)
+
+      cond do
+        File.dir?(path) -> list_elixir_files(path)
+        String.ends_with?(entry, ".ex") or String.ends_with?(entry, ".exs") -> [path]
+        true -> []
+      end
+    end)
+  end
+
+  defp strip_line_comments(path) do
+    path
+    |> File.read!()
+    |> String.split("\n")
+    |> Enum.reject(&Regex.match?(~r/^\s*#/, &1))
+    |> Enum.join("\n")
+  end
+end

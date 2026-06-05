@@ -48,7 +48,7 @@ defmodule Ezagent.Entity.User do
   Single chokepoint for the `entity://user/*` SpawnRegistry handler
   (registered both in `EzagentDomainIdentity.Application` and — for
   stacks loading chat — overwritten in
-  `EzagentDomainChat.Application`). Both fns delegate here so the
+  `EzagentDomainInstanceMessage.Application`). Both fns delegate here so the
   policy stays in ONE place.
 
   Three cases:
@@ -155,7 +155,7 @@ defmodule Ezagent.Entity.User do
   **Behavior wildcard**: `:any` follows the existing project
   convention. Modeling specific behaviors here would require
   ezagent_domain_identity
-  to depend on ezagent_domain_chat (circular), or runtime
+  to depend on ezagent_domain_instance_message (circular), or runtime
   BehaviorRegistry lookups at user-creation time (boot-order
   fragile). `:any` plus a narrow `:kind` scope is the consistent
   trade-off the codebase already uses.

@@ -36,7 +36,7 @@ Generated ezagent_core app
 ==> ezagent_domain_workspace  Compiling  8 files
 ==> ezagent_plugin_cc         Compiling  9 files
 ==> ezagent_domain_ui         Compiling 17 files
-==> ezagent_domain_chat       Compiling 20 files
+==> ezagent_domain_instance_message       Compiling 20 files
 ==> ezagent_plugin_feishu     Compiling 18 files
 ==> ezagent_plugin_liveview   Compiling 31 files
 ==> ezagent_plugin_echo       Compiling  4 files
@@ -116,7 +116,7 @@ Enumerated every module implementing `@behaviour Ezagent.Behavior`, `@behaviour 
 | Type | Module | Registered at |
 |---|---|---|
 | Behavior | Presence, Routing, Notifications | `ezagent_core/.../application.ex` |
-| Behavior | Sandbox, Lifecycle, Chat, Template | `ezagent_domain_chat/.../application.ex` |
+| Behavior | Sandbox, Lifecycle, Chat, Template | `ezagent_domain_instance_message/.../application.ex` |
 | Behavior | Identity, ApiKeys | `ezagent_domain_identity/.../application.ex` |
 | Behavior | Pty | `ezagent_domain_pty/.../application.ex` |
 | Behavior | Workspace | `ezagent_domain_workspace/.../application.ex` |

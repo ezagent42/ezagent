@@ -67,7 +67,7 @@ equality at the workspace axis).
 the wildcard cap to `users.caps_json` then calls
 `Ezagent.SpawnRegistry.spawn(uri)` to "opportunistically" spawn the User
 Kind. The registered spawn fn (in `EzagentDomainIdentity.Application`
-and — when chat is loaded — overwritten in `EzagentDomainChat.Application`)
+and — when chat is loaded — overwritten in `EzagentDomainInstanceMessage.Application`)
 hard-coded:
 
 ```elixir
@@ -178,7 +178,7 @@ contract intact.
   `initial_caps_for_spawn/1` shared helper.
 - `apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex`
   — entity spawn fn delegates to helper.
-- `apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex` —
+- `apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/application.ex` —
   same.
 - `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex` —
   `post_init/2` + `handle_continue/3` for snapshot-load

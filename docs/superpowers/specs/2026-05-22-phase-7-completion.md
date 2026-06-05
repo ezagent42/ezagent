@@ -15,7 +15,7 @@
 > - **PR-C** (`#260`, commit `526c401`) — `update_agent_template` /
 >   `add_agent_slot` / `remove_agent_slot` rewritten as reconcilers;
 >   the ~6 remaining saga compensation helpers in
->   `apps/ezagent_domain_chat/lib/ezagent/orchestrator/tools.ex`
+>   `apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools.ex`
 >   deleted; net ~800 LOC removed across session.ex + tools.ex.
 > - **Retrospective**: `docs/notes/2026-05-23-generator-reconciler-retrospective.md`
 >   (+ `.zh_cn.md`) — "what we learned: wrong abstraction." The 10
@@ -198,8 +198,8 @@ dispatch table routed `add_agent_slot` to
   `:error` → DLQ-unroutable.
 
 **The fix — a real `Ezagent.Behavior.Template`.** rev 4 defines a
-new Behavior in `ezagent_domain_chat`
-(`apps/ezagent_domain_chat/lib/ezagent/behavior/template.ex`) that
+new Behavior in `ezagent_domain_instance_message`
+(`apps/ezagent_domain_instance_message/lib/ezagent/behavior/template.ex`) that
 follows the house pattern of `Ezagent.Behavior.Identity` /
 `Ezagent.Behavior.Chat` (verified — both implement
 `@behaviour Ezagent.Behavior` with `actions/0`, `state_slice/0`,
@@ -281,7 +281,7 @@ follows the house pattern of `Ezagent.Behavior.Identity` /
     from outside.
 - **`interface/0`** — the `description`/`args`/`returns`/`modes`
   map per `Ezagent.Behavior` contract, all three actions `:call`.
-- **Registration.** `EzagentDomainChat.Application.start/2` extends
+- **Registration.** `EzagentDomainInstanceMessage.Application.start/2` extends
   `register_chat_behaviors/0` (verified — that fn already does
   `BehaviorRegistry.register(Session, :send, Chat)` etc.):
 
@@ -658,7 +658,7 @@ But the lineage + workspace recording that cap #2
 NOT in the plugin Template Class. Verified:
 
 - `Ezagent.Entity.Agent.spawn/4`
-  (`apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex:132`) does
+  (`apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex:132`) does
   `spawn_or_resume` → `Ezagent.WorkspaceRegistry.bind(agent_uri,
   workspace_uri)` → `Ezagent.AgentLineage.record(agent_uri,
   granted_by)`. The lineage record is what makes
@@ -890,7 +890,7 @@ ETS at runtime. `Ezagent.TemplateTags` follows it exactly:
   `expected_hash` — concurrent re-point loses deterministically.
 
 **(d) Restart hydration.** A SessionTemplate Kind is **lazily
-demand-spawned** on reference: `EzagentDomainChat.Application`'s
+demand-spawned** on reference: `EzagentDomainInstanceMessage.Application`'s
 `"template"` `SpawnRegistry` fn switches on `uri.host` and calls
 `Ezagent.Kind.spawn(SessionTemplate, %{uri: uri})`;
 `Ezagent.Kind.Snapshot.load_or_init/3` rehydrates the slice from the
@@ -970,7 +970,7 @@ claim.
   moduledoc-only) become the `Behavior.Template` content shape
   (§1.0); AgentTemplate's content carries `flavor`. URIs 3-segment
   per §1.2.
-- `EzagentDomainChat.Application.register_chat_behaviors/0` registers
+- `EzagentDomainInstanceMessage.Application.register_chat_behaviors/0` registers
   `Behavior.Template`'s 3 actions on both Template Kinds via
   `BehaviorRegistry.register/3` (§1.0) — so `template.read` /
   `template.write` / `template.instantiate` are dispatch-invocable.
@@ -1113,7 +1113,7 @@ PR-5's behavior.
   (§1.7 (e)) grants the owner a `Behavior.Template` SessionTemplate
   cap on it.
 - **The orchestrator MCP server** — a new component in
-  `ezagent_domain_chat`:
+  `ezagent_domain_instance_message`:
   - Tool JSON schemas — one per the 7 tools (§2.1 has the brief
     schema per tool).
   - Caller context — the MCP server runs per-orchestrator-agent; the

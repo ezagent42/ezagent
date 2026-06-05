@@ -55,7 +55,7 @@ Persistence policy per Kind (decides snapshot write cost):
 ### 2.2 The dispatch fan-out — `chat.send` into a session of N members
 
 This is the heart of question 1. One `chat.send` (`Ezagent.Behavior.Chat.invoke(:send, ...)`,
-`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:92`) does, in order:
+`apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:92`) does, in order:
 
 1. **`MessageStore.write/2`** (`message_store.ex:67`) — a `Repo.transaction`
    containing **2 SQLite inserts**: `messages` (upsert) + `message_routings`

@@ -148,7 +148,7 @@ agent URI 的 workspace 段匹配 `workspace_uri`，这就是我们模板的 age
 
 **问题**：我 round-1 用 `raise` 在 `Sandbox.handle_continue/3` 处理
 callback 的 `{:error, _}`。这触发 `Kind.Server` GenServer 崩溃 →
-`EzagentDomainChat.AgentSupervisor` 用 DynamicSupervisor 默认
+`EzagentDomainInstanceMessage.AgentSupervisor` 用 DynamicSupervisor 默认
 intensity 重启（`max_restarts: 3, max_seconds: 5`）。持续失败（claude
 被从 PATH 移除）在毫秒内耗尽 3 次重启 → AgentSupervisor 自己崩溃 →
 **连带杀掉其他正常 agent**。

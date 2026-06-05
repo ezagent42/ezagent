@@ -67,7 +67,7 @@ defmodule EzagentPluginNp.Application do
   # NpAgent Kind so the LV `restart_pty` dispatch (and any other
   # caller using `?action=lifecycle.terminate`) routes through
   # CapBAC + audit + supervisor restart. Matches the cc plugin's
-  # symmetric registration in `EzagentDomainChat.Application` for
+  # symmetric registration in `EzagentDomainInstanceMessage.Application` for
   # the cc Agent Kind.
   alias Ezagent.Behavior.Terminable, as: TerminableBehavior
 

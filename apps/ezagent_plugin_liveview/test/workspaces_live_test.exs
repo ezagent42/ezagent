@@ -18,11 +18,14 @@ defmodule EzagentPluginLiveview.WorkspacesLiveTest do
     {:ok, conn: conn}
   end
 
-  test "GET /workspaces shows empty state when no workspaces", %{conn: conn} do
-    {:ok, _lv, html} = live(conn, "/workspaces")
+  test "GET /workspaces lists the bootstrapped system workspace", %{conn: conn} do
+    {:ok, lv, html} = live(conn, "/workspaces")
+
     assert html =~ "Workspaces"
     assert html =~ "+ New Workspace"
-    assert html =~ "No workspaces yet"
+    assert has_element?(lv, "#workspaces-table")
+    refute has_element?(lv, "#empty")
+    assert html =~ "workspace://system"
   end
 
   test "create form spawns + persists a workspace", %{conn: conn} do

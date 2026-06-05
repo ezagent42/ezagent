@@ -26,7 +26,7 @@ defmodule Ezagent.EventSubscriberTest do
   defmodule AllEventsSubscriber do
     use Ezagent.EventSubscriber
 
-    subscribe to: :all, only: [:message_sent, :binding_created]
+    subscribe(to: :all, only: [:message_sent, :binding_created])
 
     @impl true
     def interested?(%{event_name: "message_sent"}), do: true
@@ -43,7 +43,7 @@ defmodule Ezagent.EventSubscriberTest do
   defmodule AggregateScopedSubscriber do
     use Ezagent.EventSubscriber
 
-    subscribe to: {:aggregate, "entity://agent/team-alpha/test_subscriber"}
+    subscribe(to: {:aggregate, "entity://agent/team-alpha/test_subscriber"})
 
     @impl true
     def interested?(_), do: true
@@ -55,7 +55,7 @@ defmodule Ezagent.EventSubscriberTest do
   defmodule WorkspaceScopedSubscriber do
     use Ezagent.EventSubscriber
 
-    subscribe to: {:workspace, "workspace://team-alpha"}, only: [:binding_created]
+    subscribe(to: {:workspace, "workspace://team-alpha"}, only: [:binding_created])
 
     @impl true
     def interested?(_), do: true

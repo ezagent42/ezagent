@@ -23,7 +23,7 @@ defmodule Ezagent.Entity.Echo do
     pattern: :entity,
     uri_scheme: "entity://agent/",
     type_name: :echo,
-    supervisor: EzagentDomainChat.AgentSupervisor
+    supervisor: EzagentDomainInstanceMessage.AgentSupervisor
 
   @behaviour Ezagent.Kind
 

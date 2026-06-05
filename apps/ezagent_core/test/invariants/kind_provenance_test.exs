@@ -82,10 +82,10 @@ defmodule Ezagent.Invariants.KindProvenanceTest do
       Ezagent.Core.SingletonSupervisor,
       Ezagent.Workspace.Supervisor,
       EzagentDomainIdentity.Application.UserSupervisor,
-      EzagentDomainChat.SessionSupervisor,
-      EzagentDomainChat.AgentSupervisor,
-      EzagentDomainChat.AgentTemplateSupervisor,
-      EzagentDomainChat.SessionTemplateSupervisor,
+      EzagentDomainInstanceMessage.SessionSupervisor,
+      EzagentDomainInstanceMessage.AgentSupervisor,
+      EzagentDomainInstanceMessage.AgentTemplateSupervisor,
+      EzagentDomainInstanceMessage.SessionTemplateSupervisor,
       EzagentPluginCurlAgent.InstanceSupervisor,
       # PR-EM-2: ExternalMirrorWorker Kinds spawn under a two-tier
       # topology (SPEC §6.3) — RootSupervisor's direct children are

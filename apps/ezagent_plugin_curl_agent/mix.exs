@@ -44,7 +44,7 @@ defmodule EzagentPluginCurlAgent.MixProject do
       {:ezagent_domain_workspace, in_umbrella: true},
       # Outbound chat/send dispatch into the originating session uses
       # the Chat behavior (no new outbound wire).
-      {:ezagent_domain_chat, in_umbrella: true}
+      {:ezagent_domain_instance_message, in_umbrella: true}
     ]
   end
 end

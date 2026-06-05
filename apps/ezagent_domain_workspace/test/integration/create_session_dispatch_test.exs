@@ -8,7 +8,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
   Maps to the SPEC's Acceptance Criteria table:
 
     * C1: A dispatch via the `:create_session` action lands on
-      `EzagentDomainChat.create_session/3` and returns the session URI
+      `EzagentDomainInstanceMessage.SessionCreator.create_session/3` and returns the session URI
       shape the LV form produces. (We don't exercise the CLI surface
       because the auto-derived CLI is generated from `interface/0` —
       tested in `cli_lv_cap_parity_test.exs` for general parity.)
@@ -97,6 +97,43 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
 
       assert result.orchestrator_status == :ready
       assert is_nil(result.orchestrator_error)
+    end
+
+    test "creator receives a session-scoped Manage cap after create", %{
+      workspace_uri: workspace_uri,
+      ws_name: ws_name
+    } do
+      creator_uri =
+        URI.new!("entity://user/#{ws_name}/session-creator-#{System.unique_integer([:positive])}")
+
+      create_cap =
+        Ezagent.Capability.cap(
+          :workspace,
+          Ezagent.Behavior.Workspace,
+          :create_session,
+          workspace_uri,
+          workspace_uri
+        )
+
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(User, %{
+          uri: creator_uri,
+          initial_caps:
+            MapSet.new([
+              %{create_cap | granted_by: User.admin_uri(), granted_at: DateTime.utc_now()}
+            ])
+        })
+
+      short = "managed-session-#{System.unique_integer([:positive])}"
+
+      assert {:ok, %{session_uri: session_uri}} =
+               Workspace.create_session(
+                 workspace_uri,
+                 %{short_name: short, template_name: "default"},
+                 %{caller: creator_uri, caps: Ezagent.Identity.list_caps_for(creator_uri)}
+               )
+
+      assert creator_has_manage_cap?(creator_uri, :session, session_uri, workspace_uri)
     end
   end
 
@@ -253,7 +290,10 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
       assert {:error, :unauthorized} =
                Workspace.create_session(
                  workspace_uri,
-                 %{short_name: "pre-add-#{System.unique_integer([:positive])}", template_name: "default"},
+                 %{
+                   short_name: "pre-add-#{System.unique_integer([:positive])}",
+                   template_name: "default"
+                 },
                  pre_ctx
                )
 
@@ -288,9 +328,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
       # dispatch path (no facade call) and asserts the new member has
       # the cap afterwards.
       member_uri =
-        URI.new!(
-          "entity://user/#{ws_name}/med2-disp-#{System.unique_integer([:positive])}"
-        )
+        URI.new!("entity://user/#{ws_name}/med2-disp-#{System.unique_integer([:positive])}")
 
       {:ok, _pid} =
         Ezagent.Kind.spawn(User, %{uri: member_uri, initial_caps: MapSet.new()})
@@ -336,7 +374,8 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
     } do
       # Agents don't drive create_session — the grant is gated on
       # `entity://user/...` URI shape.
-      agent_uri = URI.new!("entity://agent/#{ws_name}/cc_test-#{System.unique_integer([:positive])}")
+      agent_uri =
+        URI.new!("entity://agent/#{ws_name}/cc_test-#{System.unique_integer([:positive])}")
 
       # Spawn the agent first so the lookup doesn't fail.
       _ = Ezagent.SpawnRegistry.spawn(agent_uri)
@@ -352,5 +391,22 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
              end),
              "agent member must NOT receive :create_session cap; got #{inspect(caps)}"
     end
+  end
+
+  defp creator_has_manage_cap?(creator_uri, kind, instance_uri, workspace_uri) do
+    creator_uri
+    |> Ezagent.Identity.list_caps_for()
+    |> Enum.any?(fn
+      %Ezagent.Capability{} = cap ->
+        cap.kind == kind and
+          cap.behavior == Ezagent.Behavior.Manage and
+          cap.action == :any and
+          URI.to_string(cap.instance) == URI.to_string(instance_uri) and
+          URI.to_string(cap.workspace_uri) == URI.to_string(workspace_uri) and
+          URI.to_string(cap.granted_by) == URI.to_string(creator_uri)
+
+      _ ->
+        false
+    end)
   end
 end

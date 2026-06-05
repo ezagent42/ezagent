@@ -59,12 +59,12 @@ CI gates passing as of Phase 7 closeout:
 |---|---|---|
 | `apps/ezagent_core/test/esr/capability_test.exs` | 19 | ✅ pass |
 | `apps/ezagent_core/test/esr/template_caps_test.exs` | 8 | ✅ pass |
-| `apps/ezagent_domain_chat/test/esr/entity/agent_template_test.exs` | 4 | ✅ pass |
-| `apps/ezagent_domain_chat/test/esr/entity/session_template_test.exs` | 9 | ✅ pass |
-| `apps/ezagent_domain_chat/test/esr/entity/session_spawn_from_template_test.exs` | 3 | ✅ pass |
-| `apps/ezagent_domain_chat/test/esr/behavior/chat_test.exs` | 23 | ✅ pass |
-| `apps/ezagent_domain_chat/test/integration/workspace_isolation_test.exs` | 4 | ✅ pass (run from umbrella root) |
-| `apps/ezagent_domain_chat/test/esr/orchestrator/tools_test.exs` | 7 | ✅ pass |
+| `apps/ezagent_domain_instance_message/test/esr/entity/agent_template_test.exs` | 4 | ✅ pass |
+| `apps/ezagent_domain_instance_message/test/esr/entity/session_template_test.exs` | 9 | ✅ pass |
+| `apps/ezagent_domain_instance_message/test/esr/entity/session_spawn_from_template_test.exs` | 3 | ✅ pass |
+| `apps/ezagent_domain_instance_message/test/esr/behavior/chat_test.exs` | 23 | ✅ pass |
+| `apps/ezagent_domain_instance_message/test/integration/workspace_isolation_test.exs` | 4 | ✅ pass (run from umbrella root) |
+| `apps/ezagent_domain_instance_message/test/esr/orchestrator/tools_test.exs` | 7 | ✅ pass |
 | `apps/ezagent_domain_identity/test/esr/entity/user_test.exs` | 11 | ✅ pass |
 | `apps/ezagent_cli/test/integration/cli_lv_cap_parity_test.exs` | 4 | ✅ pass |
 | `apps/ezagent_plugin_feishu/test/sidecar_orphan_reap_test.exs` | 2 | ✅ pass (`--include slow`) |

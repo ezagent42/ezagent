@@ -32,30 +32,30 @@ defmodule EzagentPluginEcho.Application do
     PTY sidecar) via the standard add-template chain.
   - `agent_flavors/0` — flavor `"echo"` → `{Ezagent.Entity.Echo,
     Ezagent.PluginEcho.Template.EchoAgent}`. Consumed by
-    `Ezagent.AgentFlavorRegistry`; PR-3 migrates the domain_chat agent
+    `Ezagent.AgentFlavorRegistry`; PR-3 migrates the domain_instance_message agent
     resolver onto it, replacing the hardcoded `kind_module_from_flavor`
     map.
   - `config_surface/0` — `:flavor` surface. The `/plugins` config icon
     routes to this flavor's agent surface (SPEC §6.1).
   - `children/0` — a per-Kind `DynamicSupervisor`. Kept for future
     per-plugin-supervisor migrations; echo Kinds currently land under
-    `EzagentDomainChat.AgentSupervisor` (chat's flavor-prefix resolver
+    `EzagentDomainInstanceMessage.AgentSupervisor` (chat's flavor-prefix resolver
     routes them there — see `Ezagent.Entity.Echo.supervisor/0`).
 
   ## Default echo agent seeding — `after_boot/0` (PR-5 codex HIGH-2)
 
   Echo's default instance is spawned in this plugin's `after_boot/0`
   (Phase 3 of `Ezagent.Plugin.boot/1`). It was previously seeded from
-  `EzagentDomainChat.Application.start/2`, but that was a boot-order
+  `EzagentDomainInstanceMessage.Application.start/2`, but that was a boot-order
   race: chat's seed needs `Ezagent.AgentFlavorRegistry.lookup("echo")`
-  — published by THIS plugin's `boot/1` — and `ezagent_domain_chat`
+  — published by THIS plugin's `boot/1` — and `ezagent_domain_instance_message`
   does not depend on `ezagent_plugin_echo`, so the seed could fire
   before echo's `agent_flavors/0` was registered and fail with
   `{:no_kind_module_for_agent, ...}`, never retried.
 
   `after_boot/0` runs in Phase 3 — AFTER this plugin's Phase-2
   `publish/1` registered `agent_flavors/0`, so the resolver can map
-  the flavor. This plugin declares a dep on `ezagent_domain_chat` (a
+  the flavor. This plugin declares a dep on `ezagent_domain_instance_message` (a
   pure boot-order constraint — no chat code is referenced), so OTP
   boots chat first and the `entity://` `SpawnRegistry` dispatcher is
   published by the time `after_boot/0` runs. The spawn therefore goes
@@ -135,7 +135,7 @@ defmodule EzagentPluginEcho.Application do
   already maps the `"echo"` flavor → `Ezagent.Entity.Echo`. The seed
   spawns through `Ezagent.SpawnRegistry.spawn/1` — the standard
   `entity://` resolver path — and this plugin's dep on
-  `ezagent_domain_chat` guarantees the `entity://` dispatcher is
+  `ezagent_domain_instance_message` guarantees the `entity://` dispatcher is
   published before this runs.
 
   Idempotent: `SpawnRegistry.spawn/1` returns the existing pid for an

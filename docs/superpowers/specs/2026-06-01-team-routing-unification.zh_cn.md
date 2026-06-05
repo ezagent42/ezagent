@@ -23,7 +23,7 @@
 - **Slot worker**：`template_working_copy.agent_slots` 存 `{slot_name, source_agent_template_uri, live_worker_uri, generation}`（`chat.ex:367/373`）。`update_agent_template`/回滚/重生依赖 **source-template URI + live-worker URI + generation 计数**（`tools.ex:192/647/747`、`agent.ex:272`）。Slot worker 不是成员。
 - **Session 成员**：`:members` = `{URI, %{online: bool}}`——无 provenance、无 creator/owner、无 role-name 别名。
 - **mention 是具体 URI**：`Matcher.mention/1` 匹配 `message.mentions` 里的字符串（`matcher.ex:142`）；LiveView/Feishu 裸 mention 对着活成员/agent URI 解析。**没有 session 内的符号把手**。
-- **SessionTemplate** 内容 = `{agent_slots, routing_rules, orchestrator_template_uri, default_workspace_uri}`（version-hash）。**成员不进模板**；`create_session/3` 只 join `[effective_owner, orchestrator_uri]`（`ezagent_domain_chat.ex:512/604`）。
+- **SessionTemplate** 内容 = `{agent_slots, routing_rules, orchestrator_template_uri, default_workspace_uri}`（version-hash）。**成员不进模板**；`create_session/3` 只 join `[effective_owner, orchestrator_uri]`（`ezagent_domain_instance_message.ex:512/604`）。
 - **`Ezagent.Message` 是普通值 struct**——不是 Kind，无 lifecycle/hook。
 - **Capability action-axis 已实现合并**——`Capability` 有 `:action`（默认 `:any`），`matches?/2` 把它当第 5 维（PR #503/#426）。（rev-1 误写成 pending。）
 

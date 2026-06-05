@@ -168,7 +168,9 @@ defmodule Ezagent.E2E.Scenario25PhxRestartRebuildTest do
       uri_out = URI.parse("entity://user/#{other_ws_name}/scen25-out-#{uniq()}")
 
       {:ok, _} = SnapshotStore.write(uri_in, %{identity: %{caps: MapSet.new()}}, kind_type: :user)
-      {:ok, _} = SnapshotStore.write(uri_out, %{identity: %{caps: MapSet.new()}}, kind_type: :user)
+
+      {:ok, _} =
+        SnapshotStore.write(uri_out, %{identity: %{caps: MapSet.new()}}, kind_type: :user)
 
       workspace = URI.parse("workspace://#{ws_name}")
       result = StateRebuilder.rebuild_all(workspace)
@@ -185,7 +187,7 @@ defmodule Ezagent.E2E.Scenario25PhxRestartRebuildTest do
   describe "Session restart surrogate: workspace binding rebind on re-spawn" do
     # Note: the full chat.join -> on_change -> restart -> member rehydrate
     # path is covered by
-    # `apps/ezagent_domain_chat/test/integration/session_survives_restart_test.exs`.
+    # `apps/ezagent_domain_instance_message/test/integration/session_survives_restart_test.exs`.
     # That test exercises chat-domain machinery (Chat Behavior + Session
     # Behavior wiring) which is currently in Phase 2 migration; pinning
     # the member-rehydrate path again here would just duplicate the
@@ -212,7 +214,7 @@ defmodule Ezagent.E2E.Scenario25PhxRestartRebuildTest do
       #    must restore on re-spawn — production phx restart wipes ETS).
       :ok =
         DynamicSupervisor.terminate_child(
-          EzagentDomainChat.SessionSupervisor,
+          EzagentDomainInstanceMessage.SessionSupervisor,
           session_pid_1
         )
 
@@ -258,7 +260,7 @@ defmodule Ezagent.E2E.Scenario25PhxRestartRebuildTest do
       wait_until(fn -> not is_nil(KindSnapshot.get(uri_str)) end)
 
       # Surrogate restart: terminate the Agent Kind.
-      :ok = DynamicSupervisor.terminate_child(EzagentDomainChat.AgentSupervisor, pid1)
+      :ok = DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.AgentSupervisor, pid1)
       wait_until(fn -> KindRegistry.lookup(agent_uri) == :error end)
 
       # Re-spawn under the SAME URI.

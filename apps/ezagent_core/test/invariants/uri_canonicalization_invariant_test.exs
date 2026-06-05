@@ -81,8 +81,8 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
           # NOT flagged — only bare stdlib `URI.parse(`. Mirrors the §5.2 URI.new! regex.
           # codex P3: ALSO catch the fully-qualified stdlib `Elixir.URI.parse(` (the bare
           # lookbehind would skip it because of the leading `.`); it is never canonical.
-          (Regex.match?(~r/(?<![\w.])URI\.parse\(/, line) or
-             Regex.match?(~r/(?<![\w.])Elixir\.URI\.parse\(/, line)),
+          Regex.match?(~r/(?<![\w.])URI\.parse\(/, line) or
+            Regex.match?(~r/(?<![\w.])Elixir\.URI\.parse\(/, line),
           not String.contains?(line, "# uri-canonical-allow"),
           not in_comment?(line) do
         {relative(path), lineno, String.trim(line)}
@@ -121,8 +121,8 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
           # violation.
           # codex P3 (parity with §5.1): bare stdlib `URI.new!(` OR the fully-qualified
           # `Elixir.URI.new!(`; module-qualified `Ezagent.URI.new!(` stays excluded.
-          (Regex.match?(~r/(?<![\w.])URI\.new!\(/, line) or
-             Regex.match?(~r/(?<![\w.])Elixir\.URI\.new!\(/, line)),
+          Regex.match?(~r/(?<![\w.])URI\.new!\(/, line) or
+            Regex.match?(~r/(?<![\w.])Elixir\.URI\.new!\(/, line),
           not is_module_attribute?(line),
           not String.contains?(line, "# uri-canonical-allow"),
           not in_comment?(line) do
@@ -279,7 +279,8 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
     # site where the legacy form is allowed to appear, and the
     # `# uri-canonical-allow` suppression marks the intent.
     parse_legacy = fn s ->
-      apply(URI, :parse, [s]) # uri-canonical-allow: SPEC §5.5 adversarial fixture
+      # uri-canonical-allow: SPEC §5.5 adversarial fixture
+      apply(URI, :parse, [s])
     end
 
     pre_migration_state = %{
@@ -390,7 +391,8 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
     # into a snapshot (pre-migration, or a fixture built the wrong way).
     # The reload walker must rewrite it so it matches the canonical
     # form a current caller holds.
-    legacy_key = apply(URI, :parse, ["entity://user/team-alpha/m-1"]) # uri-canonical-allow: Task #111 adversarial fixture
+    # uri-canonical-allow: Task #111 adversarial fixture
+    legacy_key = apply(URI, :parse, ["entity://user/team-alpha/m-1"])
     refute legacy_key.authority == nil, "fixture precondition: legacy key carries authority"
 
     held = Ezagent.URI.new!("entity://user/team-alpha/m-1")

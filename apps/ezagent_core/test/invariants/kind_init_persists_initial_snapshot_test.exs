@@ -117,7 +117,7 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
 
       {:ok, _pid} =
         DynamicSupervisor.start_child(
-          EzagentDomainChat.AgentSupervisor,
+          EzagentDomainInstanceMessage.AgentSupervisor,
           {Ezagent.Kind.Server, {Ezagent.Entity.Agent, %{uri: uri, initial_caps: MapSet.new()}}}
         )
 

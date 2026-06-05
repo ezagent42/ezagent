@@ -64,7 +64,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
   alias Ezagent.{Invocation, Kind, Message, ReadyGate, StressMetrics, WorkspaceRegistry}
 
   # Entity Kind modules live in higher-tier umbrella apps
-  # (`ezagent_domain_chat`, `ezagent_domain_identity`, `ezagent_plugin_echo`)
+  # (`ezagent_domain_instance_message`, `ezagent_domain_identity`, `ezagent_plugin_echo`)
   # that depend on `ezagent_core` — `ezagent_core` cannot alias them at
   # compile time without a dependency cycle. They ARE loaded by the time
   # this task runs (`Mix.Task.run("app.start")` boots the whole

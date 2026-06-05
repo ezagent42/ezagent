@@ -62,7 +62,7 @@ PR #442 §1.1–§1.4 已经全面盘点了痛点：没有正式的 event log，
 | Slice schema | Behavior 的 `state_slice/0` atom、slice 内部 shape、对 legacy snapshot 的防御性 `Map.get/3`、snapshot 加载时的 slice 合并（`load_or_init/3` 的 `init_slice` ∪ snapshot） | `state_slice/0`、`init_slice/1`、`invoke/4` 的第 3 个 arg |
 | Snapshot 策略 | 5-enum `persistence/0`（`:ephemeral` / `{:snapshot, :on_change}` / `{:snapshot, :periodic, ms}` / `:on_terminate` / `:external`）、什么被持久化、什么不会、`:not_durable` 是什么意思 | `Kind.persistence/0`、post-init commit 细节、`handle_kind_message/3` 持久化、`terminate/3` slice 不持久化 |
 | 不变式维护 | 跨 Behavior slice 字段（如 `:lifecycle` counter、`:identity` `caps`）、`reads_sibling_slices/0` 声明、对后注册 Behavior 的默认 `Map.update/4` 懒初始化 | `reads_sibling_slices/0`、`Kind.Runtime.maybe_inject_sibling_slices/3` |
-| 从 `invoke/4` 内部跨 Kind dispatch | `Ezagent.Invocation.dispatch/1` 调用、ctx 传递、partial-failure 的 `try/rescue` 清理模式 | `EzagentDomainChat.create_session/3` 是反模式典范：5 个 dispatch 跨 4 个 Kind，加手工编写的补偿 |
+| 从 `invoke/4` 内部跨 Kind dispatch | `Ezagent.Invocation.dispatch/1` 调用、ctx 传递、partial-failure 的 `try/rescue` 清理模式 | `EzagentDomainInstanceMessage.create_session/3` 是反模式典范：5 个 dispatch 跨 4 个 Kind，加手工编写的补偿 |
 | 持久化错误语义 | `commit_and_notify/3` 返回 `{:error, _}` 时的处理 — `commit_post_init/2` 吞掉 + 记日志；`commit_and_notify/3`（dispatch 路径）传播 `{:persistence_failed, _}`；`persist_handle_info_mutation/4` 吞掉 | 3 条不同路径（dispatch / post-init / handle_info）3 种不同策略 |
 | 带 action 轴的 Cap 声明 | `required_caps/0` 返回带 kind+behavior+action 的 `Capability.cap/3`；dispatch 时把 `:any` 替换；`cap_exempt_actions/0`；`workspace_scoped?/0`；`data_owner/1` | 4 个 callback 都和 `Kind.Runtime.handle_dispatch/4` step 5.5 互动 |
 | Boot 顺序生命周期 | `post_init/2` + `handle_continue/3` + `on_ready/2` + `terminate/3` — 各自何时触发、什么被持久化、什么被丢弃 | `behavior.ex` 217-524 行的 4 个 optional callback |
@@ -97,11 +97,11 @@ PR #442 §1.1–§1.4 已经全面盘点了痛点：没有正式的 event log，
 
 | Behavior | LOC | 模式主导者 |
 |---|---:|---|
-| Chat (`domain_chat/.../chat.ex`) | 1343 | invoke/4 + `MessageStore.write` + `Phoenix.PubSub.broadcast` + `Resolver.resolve` + N 个 recipient dispatch |
+| Chat (`domain_instance_message/.../chat.ex`) | 1343 | invoke/4 + `MessageStore.write` + `Phoenix.PubSub.broadcast` + `Resolver.resolve` + N 个 recipient dispatch |
 | Workspace (`domain_workspace/.../workspace.ex`) | 1332 | 跨 Kind 编排（workspace → bindings → sessions → agents）全在一个 invoke/4 |
 | Identity (`domain_identity/.../identity.ex`) | 912 | cap MapSet 管理 + slice 字段 + boot reconcile + 跨 Kind grant 传播 |
 | ExternalMirror (`domain_external_mirror/.../external_mirror.ex`) | 877 | binding 生命周期、per-binding Worker spawn、slice-as-projection-cache |
-| AgentTemplate (`domain_chat/.../template.ex`) | 747 | template 实例化级联 |
+| AgentTemplate (`domain_instance_message/.../template.ex`) | 747 | template 实例化级联 |
 | Sandbox (`core/.../sandbox.ex`) | 746 | config_dir 创建/销毁 + Template Class plugin 契约 |
 | ExternalMirrorWorker (`...external_mirror_worker.ex`) | 692 | publisher cursor + ring + slice reconcile |
 | Publisher.SessionImpl (`...publisher/session_impl.ex`) | 610 | slice-change 观察 + cursor 管理 |
@@ -365,7 +365,7 @@ defmodule Ezagent.Entity.Agent do
   use Ezagent.Kind,
     pattern: :entity,                            # 见 §3
     uri_scheme: "entity://agent/",
-    supervisor: EzagentDomainChat.AgentSupervisor
+    supervisor: EzagentDomainInstanceMessage.AgentSupervisor
 
   # 附加到此 Kind 的 Behavior（以及 cap 限制 shape）
   attach Ezagent.Behavior.Chat,            actions: [:receive]
@@ -512,11 +512,11 @@ Legacy `@behaviour Ezagent.Kind` callback（`type_name/0`、`behaviors/0`、`per
 | 当前 Kind | 模块路径 | 模式 | 边界问题（file:line） |
 |---|---|---|---|
 | `Ezagent.Entity.User` | `apps/ezagent_domain_identity/lib/ezagent/entity/user.ex:1` | Entity | 今天：`MagicLinkToken` 是平行 Kind 但概念上 owned-by-User — 应是 `resource://user/<owner>/magic-link/<id>` |
-| `Ezagent.Entity.Agent` | `apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex:1` | Entity | 今天：`:sandbox` slice 持 `config_dir_path`（行 79：附加 `Ezagent.Behavior.Sandbox`） — 应是 Resource。`:api_keys` slice（行 80：`Ezagent.Behavior.ApiKeys`） — 应是 Resource |
+| `Ezagent.Entity.Agent` | `apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex:1` | Entity | 今天：`:sandbox` slice 持 `config_dir_path`（行 79：附加 `Ezagent.Behavior.Sandbox`） — 应是 Resource。`:api_keys` slice（行 80：`Ezagent.Behavior.ApiKeys`） — 应是 Resource |
 | `Ezagent.Entity.Workspace` | `apps/ezagent_domain_workspace/lib/ezagent/entity/workspace.ex:1` | Entity | 今天：binding 生命周期泄漏到 `Behavior.Workspace` slice — bindings 应是 Workspace 拥有的 Resource |
-| `Ezagent.Entity.AgentTemplate` | `apps/ezagent_domain_chat/lib/ezagent/entity/agent_template.ex:1` | Entity | 干净 — 已是 Entity shape |
-| `Ezagent.Entity.SessionTemplate` | `apps/ezagent_domain_chat/lib/ezagent/entity/session_template.ex:1` | Entity | 干净 |
-| `Ezagent.Entity.Session` | `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:1` | **Session** | 今天唯一的 Session 模式 Kind。误导性 `Entity.` 命名空间 — 迁移后重命名为 `Ezagent.Session.Default` |
+| `Ezagent.Entity.AgentTemplate` | `apps/ezagent_domain_instance_message/lib/ezagent/entity/agent_template.ex:1` | Entity | 干净 — 已是 Entity shape |
+| `Ezagent.Entity.SessionTemplate` | `apps/ezagent_domain_instance_message/lib/ezagent/entity/session_template.ex:1` | Entity | 干净 |
+| `Ezagent.Entity.Session` | `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:1` | **Session** | 今天唯一的 Session 模式 Kind。误导性 `Entity.` 命名空间 — 迁移后重命名为 `Ezagent.Session.Default` |
 | `Ezagent.Entity.ExternalMirrorWorker` | `apps/ezagent_domain_external_mirror/lib/ezagent/entity/external_mirror_worker.ex:1` | **Resource** | 当前命名为 `Entity.` 但概念上由 `(Workspace, Binding)` 拥有。因此有两层 supervisor。URI 应为 `resource://workspace/<ws>/worker/<binding-id>` |
 | `Ezagent.Entity.Token` | `apps/ezagent_domain_identity/lib/ezagent/entity/token.ex:1` | Resource | 已 owned-by-User，只是没 URI-shaped 为 resource |
 | `Ezagent.Entity.MagicLinkToken` | `apps/ezagent_domain_identity/lib/ezagent/entity/magic_link_token.ex:1` | Resource | User 拥有 |
@@ -697,13 +697,13 @@ defmodule Ezagent.Behavior.Lifecycle do
 end
 ```
 
-Resource 级联（User destroy → 撤销所有 caps → 销毁所有 sessions → 销毁所有 agents）不再由 `EzagentDomainChat.create_session/3`-style 命令式代码手工编排。Framework 的 destroy-saga 按声明顺序遍历 `pattern: :entity` 声明的 Resource 集合，任何步骤失败时自动补偿。见 §5.4。
+Resource 级联（User destroy → 撤销所有 caps → 销毁所有 sessions → 销毁所有 agents）不再由 `EzagentDomainInstanceMessage.create_session/3`-style 命令式代码手工编排。Framework 的 destroy-saga 按声明顺序遍历 `pattern: :entity` 声明的 Resource 集合，任何步骤失败时自动补偿。见 §5.4。
 
 **LOC 减少**：243 → ~25（90% 减少）。
 
 #### 例 3：`Behavior.Chat.send`（最大、最复杂的 Behavior）
 
-**重写前**（`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:297-419`，仅 `:send` 占 ~120 LOC）：
+**重写前**（`apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:297-419`，仅 `:send` 占 ~120 LOC）：
 
 预存 handler 做：`MessageStore.write` → `Phoenix.PubSub.broadcast` → `WorkspaceRegistry.lookup` → `Routing.Resolver.resolve` → `notify_dropped_mentions` → 按 recipient `dispatch_receive` / `dispatch_cross_session` → 为 SliceChange 的 3 字段 slice 变更。
 
@@ -1054,7 +1054,7 @@ defstruct steps: [], compensations: [], ctx: %{}, name: nil, command_uuid: nil
 
 **这解决 SPEC #440** 通过对什么可能诚实，**不是** 通过声称假 rollback。codex 在 #440 r4 标记的"User 处于不一致状态"失败模式变成 **declared、observable、repair-tracked** 状态而非静默不一致。operator 有 UI 看到"此 destroy 90% 成功；丢了 1 条消息；这是修复 handle。"
 
-**LOC**：~200（现有 `EzagentDomainChat.create_session/3` 手工 `try/rescue` 清理模式，提升为可复用原语）+ ~50 LOC 用于 partial-restore marker 处理。
+**LOC**：~200（现有 `EzagentDomainInstanceMessage.create_session/3` 手工 `try/rescue` 清理模式，提升为可复用原语）+ ~50 LOC 用于 partial-restore marker 处理。
 
 ### §5.5 — `Ezagent.EventSubscriber`
 
@@ -1149,7 +1149,7 @@ host 每个 Kind 实例的 GenServer（替换今天的 `Ezagent.Kind.Server`，8
 | Phase 2 PR 1 | `ezagent_core` | Lifecycle、Routing、Sandbox、Notifications、Presence | 低 — core 测试基础设施捕获回归 |
 | Phase 2 PR 2 | `ezagent_domain_identity` | Identity、UserCredentials、UserTokens、ApiKeys、WorkspaceUserAdmin | 中 — auth 触及每个 dispatch |
 | Phase 2 PR 3 | `ezagent_domain_workspace` | Workspace | 中 — workspace iso 在每个 dispatch step 5.6 |
-| Phase 2 PR 4 | `ezagent_domain_chat` | Chat、Template、OrchestratorAdmin、Publisher.SessionImpl | 高 — Chat 是最大 Behavior、多 Kind |
+| Phase 2 PR 4 | `ezagent_domain_instance_message` | Chat、Template、OrchestratorAdmin、Publisher.SessionImpl | 高 — Chat 是最大 Behavior、多 Kind |
 | Phase 2 PR 5 | `ezagent_domain_external_mirror` | ExternalMirror、ExternalMirrorWorker、Publisher | 高 — Worker 有两层 supervisor + boot reconciler |
 | Phase 2 PR 6 | `ezagent_domain_pty` | Pty | 低 — 表面小 |
 | Phase 2 PR 7 | Plugin 包 | NpAgent、CurlAgent、Echo | 低 — plugin 隔离 |
@@ -1262,7 +1262,7 @@ host 每个 Kind 实例的 GenServer（替换今天的 `Ezagent.Kind.Server`，8
 - **Phase 2 p90：22 × 4.80 = 106 hr ≈ 3.5 wk**
 - 逐 PR 校验（§6.1 表中 8 个 PR）：
   - PR 1（`ezagent_core`，5 个 Behavior）：5 × 3.46 = 17 hr ≈ 3 天
-  - PR 4（`ezagent_domain_chat`，4 个 Behavior，最大）：4 × 4.80（p90）= 19 hr ≈ 3 天
+  - PR 4（`ezagent_domain_instance_message`，4 个 Behavior，最大）：4 × 4.80（p90）= 19 hr ≈ 3 天
   - PR 5（`ezagent_domain_external_mirror`，3 个 Behavior + Worker Kind）：可比过往 EM 系列 = ~10 hr ≈ 2 天
   - PR 8（Resource 边界修复，schema 迁移）：无过往可比项；单独预算 1 wk
 
@@ -1291,7 +1291,7 @@ host 每个 Kind 实例的 GenServer（替换今天的 `Ezagent.Kind.Server`，8
 #### §6.3.4 — 置信度声明 + 与 r2 的差值
 
 **r3 置信度受限于**：
-1. **N=3 个可比 Behavior 迁移系列**（`phase7-template`、`external-mirror`、`apikeys-flip`）— 小样本；一个 outlier（如 `domain_chat` 迁移浮现一个 HIGH 级结构缺陷）可让 Phase 2 翻倍。
+1. **N=3 个可比 Behavior 迁移系列**（`phase7-template`、`external-mirror`、`apikeys-flip`）— 小样本；一个 outlier（如 `domain_instance_message` 迁移浮现一个 HIGH 级结构缺陷）可让 Phase 2 翻倍。
 2. **LegacyBehaviorAdapter 路径是新颖的** — 过往 ezagent 迁移没有用过运行时 adapter 做后向兼容。~400 LOC 预算来自设计推导，未经实证验证。
 3. **22 个 Behavior 是 SPEC 计数** — 如果 domain-chat 的 "Publisher.SessionImpl" 或 `external_mirror` 的 Worker 有隐藏子-behavior 不能干净 fit 进 macro，计数上升。
 4. **Allen 带宽是约束**，不是自主循环吞吐量。30-hr/wk 持续速率**高于**爆发周外历史持续均值；如某段时间 Allen review 1 PR/wk，Phase 2 拉到 8 wk 挂钟。
@@ -1494,7 +1494,7 @@ echo "DONE — plugin 契约与 framework 内部隔离"
 
 ### AV-1 — Effects vocabulary 覆盖度
 
-走 `Behavior.Chat.invoke(:send)`（`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:297-419`）、`Behavior.ExternalMirror.invoke(:bind_session)`（`apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex`）、`Behavior.Workspace.invoke(:create_session)`（`apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex`）。对每个：每个副作用是否能用 §4.4 语法表达？如不能，缺什么 effect？具体检查：Chat 内的 `MessageStore.write`（Ecto 写 — `{:effect, &fn/N, args}` 覆盖？）。Chat 的 `:join` 内的 `Process.monitor`（运行时原语，非真正 effect — framework 暴露 `{:monitor, target_uri}` effect？）。Worker `post_init` 内的 `Phoenix.PubSub.subscribe`（不通过 effects — 保留为 Kind 生命周期钩子？）。
+走 `Behavior.Chat.invoke(:send)`（`apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:297-419`）、`Behavior.ExternalMirror.invoke(:bind_session)`（`apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex`）、`Behavior.Workspace.invoke(:create_session)`（`apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex`）。对每个：每个副作用是否能用 §4.4 语法表达？如不能，缺什么 effect？具体检查：Chat 内的 `MessageStore.write`（Ecto 写 — `{:effect, &fn/N, args}` 覆盖？）。Chat 的 `:join` 内的 `Process.monitor`（运行时原语，非真正 effect — framework 暴露 `{:monitor, target_uri}` effect？）。Worker `post_init` 内的 `Phoenix.PubSub.subscribe`（不通过 effects — 保留为 Kind 生命周期钩子？）。
 
 ### AV-2 — Framework 管理 snapshot 策略正确性
 

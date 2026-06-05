@@ -66,7 +66,7 @@ This is mostly mechanical text-replace + tests. The biggest source of subtle bug
 - `apps/ezagent_core/lib/ezagent/uri.ex` — parser
 - `apps/ezagent_core/lib/ezagent/invocation.ex` — dispatch (verify it reads behavior_action correctly under new shape)
 - `apps/ezagent_core/lib/ezagent/kind/runtime.ex` — runtime dispatch examples
-- `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex` — chat dispatch targets
+- `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex` — chat dispatch targets
 - `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_live.ex` — Echo button target, manual dispatch placeholder
 - `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin/debug_panel.ex` — manual dispatch placeholder
 - Plus ~37 other files (mostly tests + docstrings)

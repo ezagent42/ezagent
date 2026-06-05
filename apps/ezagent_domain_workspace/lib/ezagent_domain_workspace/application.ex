@@ -18,7 +18,7 @@ defmodule EzagentDomainWorkspace.Application do
 
   Solution: domain_workspace does NOT call load_all here. Instead it
   exposes `EzagentDomainWorkspace.boot_complete/0` which the LAST app to
-  boot (currently ezagent_domain_chat, post-PR-3 ezagent_plugin_liveview)
+  boot (currently ezagent_domain_instance_message, post-PR-3 ezagent_plugin_liveview)
   invokes after all spawn fns are registered. PR 3+ will move this
   call site to an explicit "registry-ready" gate.
   """

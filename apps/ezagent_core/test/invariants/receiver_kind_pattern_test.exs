@@ -45,7 +45,7 @@ defmodule EzagentCore.Invariants.ReceiverKindPatternTest do
   use ExUnit.Case, async: true
 
   @plugin_dirs ~w(
-    apps/ezagent_domain_chat
+    apps/ezagent_domain_instance_message
     apps/ezagent_plugin_cc_bridge_v1_prototype
     apps/ezagent_plugin_cc
     apps/ezagent_plugin_cc

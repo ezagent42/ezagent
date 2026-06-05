@@ -265,7 +265,7 @@ defmodule EzagentCore.Invariants.AgentCreateSinglePathTest do
     # cc channel re-spawn (defensive ensure — see EzagentPluginCc.Channel.join/3).
     "apps/ezagent_plugin_cc/lib/ezagent_plugin_cc/channel.ex",
     # Reconciler / spawn_fresh — orchestrator-spawned workers, not operator-facing.
-    "apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex",
+    "apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex",
     # SpawnRegistry itself.
     "apps/ezagent_core/lib/ezagent/spawn_registry.ex"
   ]

@@ -11,10 +11,10 @@ defmodule EzagentDomainExternalMirror.Application do
 
   The Session-side IMPLEMENTATION (`Ezagent.Behavior.Publisher.SessionImpl`
   + the `subscribe_from/3`/`snapshot/1`/`history/3` module functions
-  on `Ezagent.Entity.Session`) lives in `apps/ezagent_domain_chat/`
+  on `Ezagent.Entity.Session`) lives in `apps/ezagent_domain_instance_message/`
   (chat depends on this Domain for the contract; external_mirror
   has zero reverse references to chat). Kind ↔ Behavior registration
-  for SessionImpl happens in `EzagentDomainChat.Application` (per
+  for SessionImpl happens in `EzagentDomainInstanceMessage.Application` (per
   the existing convention: Kind ↔ Behavior binding lives in the
   app that defines the Kind).
 
@@ -61,7 +61,7 @@ defmodule EzagentDomainExternalMirror.Application do
 
   The bind/unbind Behavior (`Ezagent.Behavior.ExternalMirror`) is
   registered against `Ezagent.Entity.Session` from
-  `EzagentDomainChat.Application` per the convention that
+  `EzagentDomainInstanceMessage.Application` per the convention that
   Kind ↔ Behavior wiring lives in the app that DEFINES the Kind.
   """
 

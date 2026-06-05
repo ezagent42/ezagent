@@ -19,7 +19,7 @@ The three-layer model (core / domain / plugin) makes this concrete:
 ```
 apps/
   ezagent_core/                          ← mechanisms
-  ezagent_domain_chat/                   ← Chat behavior, Session/Agent Kinds
+  ezagent_domain_instance_message/                   ← Chat behavior, Session/Agent Kinds
   ezagent_domain_identity/               ← User Kind, Identity Behavior, bcrypt
   ezagent_domain_workspace/              ← Workspace Kind/Behavior/Loader/Store
   ezagent_domain_ui/                     ← shadcn-like HEEx primitives

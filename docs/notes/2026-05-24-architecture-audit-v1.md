@@ -16,9 +16,9 @@
 
 ### PR #287 (PR1: lift `:fork` to `Behavior.Template`)
 
-Files: `apps/ezagent_domain_chat/lib/ezagent/behavior/template.ex`, `entity/agent_template.ex`, `entity/session_template.ex`, +2 tests.
+Files: `apps/ezagent_domain_instance_message/lib/ezagent/behavior/template.ex`, `entity/agent_template.ex`, `entity/session_template.ex`, +2 tests.
 
-- **Tier compliance**: PASS. All changes inside `ezagent_domain_chat` (Tier 2). New `parent_template_uri` slice field stays in `AgentTemplate` slice; no core change required (slice is opaque blob).
+- **Tier compliance**: PASS. All changes inside `ezagent_domain_instance_message` (Tier 2). New `parent_template_uri` slice field stays in `AgentTemplate` slice; no core change required (slice is opaque blob).
 - **Dispatch & cap (P14, P15)**: PASS. `:fork` action goes through `Ezagent.Invocation.dispatch/1` (caller never imports Behavior). Owner-cap grant uses the documented `{:within_workspace, %URI{}}` shape — module reference for `behavior:` (not atom shorthand). Cap preflight delegated to dispatch CapBAC against parent URI.
 - **Plugin-isolation (P1)**: PASS. The Kind-specific branching (`SessionTemplate` vs `AgentTemplate`) is on `ctx[:kind_module]` — branches keyed off the *core Kind* registered for that Behavior, not plugin identity. A plugin that ships a new Template Kind would extend this with one branch in `behavior/template.ex` — acceptable since `Behavior.Template` IS the generic Template contract owner. (Plugins that just register Behaviors on existing Template Kinds need zero changes.)
 - **Single-source-of-truth (P3)**: PASS. `parent_template_uri` lineage is set in slice ONCE on fork; no parallel store.
@@ -28,7 +28,7 @@ Files: `apps/ezagent_domain_chat/lib/ezagent/behavior/template.ex`, `entity/agen
 
 ### PR #288 (PR2: `Behavior.Sandbox` + `Kind.Template` extension callbacks)
 
-Files: `apps/ezagent_core/lib/ezagent/behavior/sandbox.ex` (new, 389 LOC), `kind/template.ex` (+3 optional callbacks), `domain_chat/lib/ezagent/entity/agent.ex` (adds Sandbox to behaviors), `application.ex` (registers cap rows for `Sandbox` actions), +2 tests + invariant.
+Files: `apps/ezagent_core/lib/ezagent/behavior/sandbox.ex` (new, 389 LOC), `kind/template.ex` (+3 optional callbacks), `domain_instance_message/lib/ezagent/entity/agent.ex` (adds Sandbox to behaviors), `application.ex` (registers cap rows for `Sandbox` actions), +2 tests + invariant.
 
 - **Tier compliance**: PASS. `Behavior.Sandbox` lives in `apps/ezagent_core/lib/ezagent/behavior/` and references ONLY core primitives (`Ezagent.KindRegistry`, `Ezagent.KindSupervisor`, `DynamicSupervisor`) + the optional Template Class callbacks declared on `Ezagent.Kind.Template`. No reach into any domain or plugin. Grep'd for `Ezagent.Entity.`, `ezagent_domain_*` — zero hits. Layer-purity test still 2/2.
 - **Plugin-isolation (P1)**: PASS — exemplary. Sandbox's `:destroy` invokes `template_class.destroy_config_dir/2` via `function_exported?` + try/rescue/catch. Core knows nothing about cc / claude / plugin bundles. Echo / curl / np / generic_session opt out by omission; cc opts in. This is the canonical "plugin extends core via @optional_callbacks" pattern.
@@ -40,7 +40,7 @@ Files: `apps/ezagent_core/lib/ezagent/behavior/sandbox.ex` (new, 389 LOC), `kind
 
 ### PR #289 (PR3: cc plugin extensions + plugin-agnostic LV)
 
-Files: `apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex` (`record_sandbox_state/3`, `cleanup_partial_config_dirs/2`), `orchestrator/tools.ex` (migrate `terminate_worker` from `lifecycle.terminate` → `sandbox.destroy`), `ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex` (+604 LOC: `agent_config_dir/1`, `list_extensions/1`, `toggle_extension/3`, `destroy_config_dir/2`, `create_agent_config_dir/2`), `ezagent_plugin_liveview/lib/.../agent_extensions_live.ex` (new, plugin-agnostic LV), router.
+Files: `apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex` (`record_sandbox_state/3`, `cleanup_partial_config_dirs/2`), `orchestrator/tools.ex` (migrate `terminate_worker` from `lifecycle.terminate` → `sandbox.destroy`), `ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex` (+604 LOC: `agent_config_dir/1`, `list_extensions/1`, `toggle_extension/3`, `destroy_config_dir/2`, `create_agent_config_dir/2`), `ezagent_plugin_liveview/lib/.../agent_extensions_live.ex` (new, plugin-agnostic LV), router.
 
 - **Tier compliance**: PASS.
   - cc plugin's three callback impls live in `apps/ezagent_plugin_cc/` and implement the `@behaviour Ezagent.Kind.Template` contract (Tier 3 → Tier 1 callback).
@@ -100,7 +100,7 @@ Files: `apps/ezagent_domain_identity/lib/ezagent/registration.ex` (`create_princ
 
 ### PR #295 (PR-C: delete `default` workspace + operator seed)
 
-Files: `ezagent_domain_chat/.../application.ex` (drop `ensure_workspace("default")`), `ezagent_domain_identity/.../application.ex` (drop operator seed), `registration.ex` (drop AppSetting fallback), `login_email_test.exs`.
+Files: `ezagent_domain_instance_message/.../application.ex` (drop `ensure_workspace("default")`), `ezagent_domain_identity/.../application.ex` (drop operator seed), `registration.ex` (drop AppSetting fallback), `login_email_test.exs`.
 
 - **Tier compliance**: PASS. Pure deletion of seed code from boot.
 - **Plugin-isolation (P1)**: PASS.

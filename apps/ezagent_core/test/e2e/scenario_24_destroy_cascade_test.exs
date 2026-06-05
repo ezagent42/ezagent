@@ -157,7 +157,7 @@ defmodule Ezagent.E2E.Scenario24DestroyCascadeTest do
             {:ok, pid} ->
               :ok =
                 DynamicSupervisor.terminate_child(
-                  EzagentDomainChat.SessionSupervisor,
+                  EzagentDomainInstanceMessage.SessionSupervisor,
                   pid
                 )
 
@@ -212,7 +212,7 @@ defmodule Ezagent.E2E.Scenario24DestroyCascadeTest do
             {:ok, pid} ->
               :ok =
                 DynamicSupervisor.terminate_child(
-                  EzagentDomainChat.SessionSupervisor,
+                  EzagentDomainInstanceMessage.SessionSupervisor,
                   pid
                 )
 

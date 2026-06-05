@@ -581,7 +581,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
          %{conn: conn} do
       {:ok, lv, _html} = live(conn, "/sessions")
 
-      sessions = EzagentDomainChat.list_sessions()
+      sessions = EzagentDomainInstanceMessage.list_sessions()
 
       assert sessions != [],
              "expected at least one session in the boot list (default/default/main)"

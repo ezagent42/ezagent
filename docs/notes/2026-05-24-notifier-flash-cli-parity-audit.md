@@ -52,7 +52,7 @@ What handles the `:notification` envelope today:
 
 ### What MIGHT have happened (intent reconstruction)
 
-From `apps/ezagent_core/lib/ezagent/notifications.ex:1-18` moduledoc and the PR-C commit context in the prior audit (§1): the helper was added (2026-05-23, "PR #276 / PR #281" per the admin_live comment) intending that "LV subscribes for admin inbox / mention notifications" — explicitly per `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:26-27` doc:
+From `apps/ezagent_core/lib/ezagent/notifications.ex:1-18` moduledoc and the PR-C commit context in the prior audit (§1): the helper was added (2026-05-23, "PR #276 / PR #281" per the admin_live comment) intending that "LV subscribes for admin inbox / mention notifications" — explicitly per `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:26-27` doc:
 
 > `Ezagent.Entity.User` — broadcast to `esr:user:<self_uri>:events`. LV subscribes for admin inbox / mention notifications.
 
@@ -111,7 +111,7 @@ Both LV and CLI dispatch through the same `Ezagent.Invocation.dispatch/1` chokep
 
 ```
 grep -rn "Ezagent\.Notifications\.notify\b" apps --include="*.ex" | grep -v _test.exs
-# → apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:269  (the only call site)
+# → apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:269  (the only call site)
 ```
 
 The single producer is `Behavior.Chat.invoke(:receive, ...)` when `ctx.kind_module == Ezagent.Entity.User` — i.e. a chat message routed TO a user fan-outs through `:receive` which calls `Notifications.notify(user_uri, %{type: :message_received, body: %{msg: msg}, source: __MODULE__}, %{caps: :system})`.
@@ -242,8 +242,8 @@ In priority order:
 - `apps/ezagent_core/lib/ezagent/notifications.ex` — producer helper
 - `apps/ezagent_core/lib/ezagent/behavior/notifications.ex` — cap subject
 - `apps/ezagent_core/lib/ezagent_core/application.ex:166-190` — registration
-- `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:269` — only producer call site
-- `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:215-221` — fan-out (`:send` → `:receive` per recipient)
+- `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:269` — only producer call site
+- `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:215-221` — fan-out (`:send` → `:receive` per recipient)
 - `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_live.ex:245-247` — unreachable no-op handler
 - `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_live.ex:95-103` — actual subscribe list (no user-events topic)
 - `apps/ezagent_domain_ui/lib/ezagent_domain_ui/components.ex:389-411` — canonical `flash_group`

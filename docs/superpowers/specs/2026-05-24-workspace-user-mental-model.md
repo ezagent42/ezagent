@@ -23,7 +23,7 @@ Evaluated against today's code, this is a structurally clean model that subsumes
 
 What Allen says: boot creates `admin` + `system`.
 
-What the code does (`apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:245-255`):
+What the code does (`apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/application.ex:245-255`):
 
 ```elixir
 defp ensure_default_workspace do
@@ -271,7 +271,7 @@ The SPEC document produced by PR-3 is the prerequisite for PR-4 onwards.
 **Files:** ~30+ across the umbrella. This is the big PR.
 
 **Change checklist (preview — actual list lives in the SPEC PR-3 produces):**
-1. `apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:253` — remove `ensure_workspace("default", %{})`.
+1. `apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/application.ex:253` — remove `ensure_workspace("default", %{})`.
 2. `apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex:236` — remove the `entity://user/default/operator` seed (or move it to `entity://user/<some-other-workspace>/operator`).
 3. `apps/ezagent_domain_identity/lib/ezagent/registration.ex:42, 94` — `default` hard-coding gone (already handled by PR-4 if PR-4 lands first).
 4. `apps/ezagent_web/lib/ezagent_web/live_auth.ex:266` — the `Always include default` fallback list deleted.
@@ -321,7 +321,7 @@ To stay on scope:
 - Identity Application bootstrap (admin + operator seeds) — `apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex:104-285`
 - Workspace facade — `apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:259-283`
 - Workspace Store — `apps/ezagent_domain_workspace/lib/ezagent/workspace/store.ex:55-68, 165-191`
-- Chat Application boot-time workspace seeding — `apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:245-300`
+- Chat Application boot-time workspace seeding — `apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/application.ex:245-300`
 - LiveAuth on_mount (workspaces assign) — `apps/ezagent_web/lib/ezagent_web/live_auth.ex:97-274`
 - WorkspacesLive (the leak) — `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/workspaces_live.ex:39-60`
 - workspace_dropdown component — `apps/ezagent_domain_ui/lib/ezagent_domain_ui/ide_shell.ex:160-188, 269-380`

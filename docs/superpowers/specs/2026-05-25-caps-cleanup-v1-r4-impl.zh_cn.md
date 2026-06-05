@@ -554,7 +554,7 @@ PR-CC-2-v2 仅当以下全部成立时合并：
   - `cap_check_only_at_chokepoint_test.exs` —— 12 probe 返零 offender。
   - `no_wildcard_system_principals_test.exs` —— 无非 bootstrap principal 持通配 cap。
   - `dispatch_uses_required_caps_struct_test.exs` —— `Invocation.dispatch/1` 源代码引用 `required_caps/0` + `holds_cap?/2`。
-- (d) baseline 失败不变：`ezagent_core` 657/9 ± 1（允许 incidental flaky clear）；`domain_chat` / `domain_external_mirror` / `domain_identity` / `domain_workspace` baseline 保留。
+- (d) baseline 失败不变：`ezagent_core` 657/9 ± 1（允许 incidental flaky clear）；`domain_instance_message` / `domain_external_mirror` / `domain_identity` / `domain_workspace` baseline 保留。
 - (e) 无代码级对已删散落 cap-check helper 的新引用（§8 Pathology B 清扫完成）。
 - (f) PR body 显式列 14 个 catalog 条目的 before-string → after-struct 转换表，标记跟原 string 语义的偏离。
 - (g) Codex round 1 返干净通过或带 finding（subagent 在 r2 处理或 self-static-review 文档化，按 r3-FINAL codex 历史模式）。

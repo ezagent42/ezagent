@@ -9,11 +9,11 @@
 
 PR #407 delivered the orchestrator-UX redesign (owner-bound restart, HealthCard moved to session view, new SKILL.md created, `OrchestratorAdmin` cap subject), but missed three wire-ups that are necessary for actual e2e validation:
 
-1. **Gap A — `create_session/3` doesn't auto-spawn orchestrator**. The pre-existing `Session.ensure_orchestrator/3` is only invoked from the SessionTemplate.instantiate flow, NOT from `EzagentDomainChat.create_session/3` (the entry point LV / mix bootstrap / future-CLI use). A session created via `create_session/3` lands with no orchestrator — operator must manually instantiate.
+1. **Gap A — `create_session/3` doesn't auto-spawn orchestrator**. The pre-existing `Session.ensure_orchestrator/3` is only invoked from the SessionTemplate.instantiate flow, NOT from `EzagentDomainInstanceMessage.create_session/3` (the entry point LV / mix bootstrap / future-CLI use). A session created via `create_session/3` lands with no orchestrator — operator must manually instantiate.
 
 2. **Gap B — orchestration skill not loaded into orchestrator agent**. PR #407 created `.claude/skills/ezagent-session-orchestrator/SKILL.md` but the cc Template Class doesn't copy it into the spawned orchestrator agent's `<config_dir>/skills/`, nor instruct Claude to load it. The orchestrator agent boots as a vanilla cc agent — unaware of its orchestration role.
 
-3. **Gap C — CLI has no `session create` command**. `EzagentDomainChat.create_session/3` is a module-facade function, not a Behavior action — so the auto-derived CLI surface (per `feedback_goal_human_ergonomic_verification`) doesn't expose it. LV form posts directly to the facade; the same path isn't reachable from `mix ezagent …`.
+3. **Gap C — CLI has no `session create` command**. `EzagentDomainInstanceMessage.create_session/3` is a module-facade function, not a Behavior action — so the auto-derived CLI surface (per `feedback_goal_human_ergonomic_verification`) doesn't expose it. LV form posts directly to the facade; the same path isn't reachable from `mix ezagent …`.
 
 All three are wire-ups of design that's already half-implemented. None of them touch the underlying invariants (CapBAC / dispatch / 3-tier).
 
@@ -23,7 +23,7 @@ All three are wire-ups of design that's already half-implemented. None of them t
 
 **Public API change**: extract `Session.ensure_orchestrator/3` from `defp` to `def` (+ `@spec` + `@doc`). Keep the existing logic intact.
 
-**Wire-up**: in `EzagentDomainChat.create_session/3`, after `grant_owner_orchestrator_admin_cap/3` succeeds, call:
+**Wire-up**: in `EzagentDomainInstanceMessage.create_session/3`, after `grant_owner_orchestrator_admin_cap/3` succeeds, call:
 
 ```elixir
 case Ezagent.Entity.Session.ensure_orchestrator(session_uri, workspace_uri, effective_owner) do
@@ -43,12 +43,12 @@ case Ezagent.Entity.Session.ensure_orchestrator(session_uri, workspace_uri, effe
 end
 ```
 
-The 3 cases above mirror `ensure_orchestrator/3`'s 3-way return shape verified at `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:691-734` (codex rev-4 already enumerates `{:ok, _, :created|:already_present}`, `{:partial, %{orchestrator_pending: uri}}`, `{:error, reason}`).
+The 3 cases above mirror `ensure_orchestrator/3`'s 3-way return shape verified at `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex:691-734` (codex rev-4 already enumerates `{:ok, _, :created|:already_present}`, `{:partial, %{orchestrator_pending: uri}}`, `{:error, reason}`).
 
 **Return shape change**: from `{:ok, URI.t()}` to `{:ok, URI.t(), %{orchestrator_uri: URI.t() | nil, orchestrator_status: :ready | :pending | :failed, orchestrator_error: term | nil}}`.
 
 **Actual caller count (revised after grep)**: 20 real call sites (was estimated as ~12 in earlier draft):
-- 1 application bootstrap (`apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:205`)
+- 1 application bootstrap (`apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/application.ex:205`)
 - 1 presence-fanout test
 - 2 LiveView call sites (`admin_live.ex:709`, `admin_live.ex:2511`)
 - 1 home_live.ex:91 (LV "new session" form)
@@ -60,7 +60,7 @@ The 3 cases above mirror `ensure_orchestrator/3`'s 3-way return shape verified a
 - 1 home_live_test
 - 1 caps_denial_e2e_test
 
-Implementer MUST grep `EzagentDomainChat.create_session(` across the umbrella and update every match. Backward-compat overload is NOT provided (per `feedback_let_it_crash_no_workarounds` — no silent fallbacks).
+Implementer MUST grep `EzagentDomainInstanceMessage.create_session(` across the umbrella and update every match. Backward-compat overload is NOT provided (per `feedback_let_it_crash_no_workarounds` — no silent fallbacks).
 
 **Recommendation**: change the return shape directly. The PR enumerates and updates all callers.
 
@@ -106,7 +106,7 @@ def invoke(:create_session, slice, %{short_name: short_name, template_name: tn},
   caller = ctx[:caller]
   workspace_uri = ctx[:self_uri]
   
-  case EzagentDomainChat.create_session(short_name, caller, [
+  case EzagentDomainInstanceMessage.create_session(short_name, caller, [
     workspace_uri: workspace_uri,
     template_name: tn
   ]) do
@@ -133,13 +133,13 @@ mix ezagent workspace create_session \
   --template-name default
 ```
 
-**LV form path**: existing LV "New session" form continues to use `EzagentDomainChat.create_session/3` (the facade) — same source-of-truth, no duplication. The invariant test verifies CLI + LV produce identical session URIs given identical args.
+**LV form path**: existing LV "New session" form continues to use `EzagentDomainInstanceMessage.create_session/3` (the facade) — same source-of-truth, no duplication. The invariant test verifies CLI + LV produce identical session URIs given identical args.
 
 ## Acceptance criteria
 
 | # | Test | Pass condition |
 |---|---|---|
-| A1 | `EzagentDomainChat.create_session/3` returns 3-tuple `{:ok, uri, %{orchestrator_uri: _, ...}}` | unit test |
+| A1 | `EzagentDomainInstanceMessage.create_session/3` returns 3-tuple `{:ok, uri, %{orchestrator_uri: _, ...}}` | unit test |
 | A2 | After `create_session`, `Ezagent.KindRegistry.lookup(orch_uri)` returns `{:ok, pid}` | unit test |
 | A3 | Orchestrator spawn failure → partial-success return shape with `orchestrator_error` populated | unit test |
 | B1 | Orchestrator agent's `<config_dir>/skills/ezagent-session-orchestrator/SKILL.md` exists after spawn | unit test |
@@ -153,8 +153,8 @@ mix ezagent workspace create_session \
 ## Files affected
 
 **Core / domain**:
-- `apps/ezagent_domain_chat/lib/ezagent_domain_chat.ex` — return shape change + ensure_orchestrator wire-up
-- `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex` — `ensure_orchestrator/3` defp → def + `role: :orchestrator` thread
+- `apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message.ex` — return shape change + ensure_orchestrator wire-up
+- `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex` — `ensure_orchestrator/3` defp → def + `role: :orchestrator` thread
 - `apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex` — `:create_session` action + cap
 - `apps/ezagent_core/lib/ezagent/capability.ex` — (if new cap-subject helper needed)
 
@@ -163,8 +163,8 @@ mix ezagent workspace create_session \
 - `apps/ezagent_plugin_cc/lib/ezagent/template/role.ex` — (if separating role logic for clarity)
 
 **Tests**:
-- `apps/ezagent_domain_chat/test/ezagent_domain_chat_test.exs` — return shape + orchestrator-spawn invariants
-- `apps/ezagent_domain_chat/test/ezagent/entity/session_orchestrator_test.exs` — public ensure_orchestrator + role propagation
+- `apps/ezagent_domain_instance_message/test/ezagent_domain_instance_message_test.exs` — return shape + orchestrator-spawn invariants
+- `apps/ezagent_domain_instance_message/test/ezagent/entity/session_orchestrator_test.exs` — public ensure_orchestrator + role propagation
 - `apps/ezagent_domain_workspace/test/ezagent/behavior/workspace_create_session_test.exs` — new Behavior action
 - `apps/ezagent_plugin_cc/test/ezagent/template/orchestrator_role_test.exs` — skill copy + CLAUDE.md hint
 - `apps/ezagent_cli/test/cli_workspace_create_session_test.exs` — CLI parity
@@ -195,7 +195,7 @@ mix ezagent workspace create_session \
 
 - **Let-it-crash** — no silent fallbacks; orchestrator failure surfaces structurally via partial-success meta
 - **No destructive migrations** — return shape change is in-process API only
-- **Three-tier separation** — Workspace Behavior in domain_workspace, cc Template in plugin_cc, session ensure_orchestrator stays in domain_chat
+- **Three-tier separation** — Workspace Behavior in domain_workspace, cc Template in plugin_cc, session ensure_orchestrator stays in domain_instance_message
 - **CapBAC** — new `:workspace, Workspace, :create_session` cap subject; matches workspace-member cap pattern
 - **Dispatch is only path** — Workspace.invoke(:create_session) is dispatched; LV form continues to use the facade (same source of truth)
 

@@ -293,7 +293,7 @@ open after HIGH-1 (admin fallback hole) closed in PR #298:
   | `dump`, `clear` (snapshots) | ✅ `mix ezagent.snapshot.*` |
   | `add_binding`, `unbind` (ext mirror) | ✅ `mix ezagent.external_mirror.*` |
   | `send_test_email` | ⚠️ semi-covered by `mix ezagent.auth.magic_link` (different intent — operator-debug) |
-  | **`create_session`** | ⏳ DEFERRED. Needs a `:create_session` action on `Behavior.Workspace` (parallels `:create_agent` from PR #344). LV currently calls `EzagentDomainChat.create_session/3` directly — bypasses dispatch in BOTH surfaces. |
+  | **`create_session`** | ✅ **DONE (PR-5 / 2026-06-04).** `Behavior.Workspace :create_session` is the user/operator entry; LV and E2E setup now call `Ezagent.Workspace.create_session/3`, while lower-level instance-message materialization is internal-only. |
   | **`create_user`** | ✅ **DONE (2026-05-26).** `Behavior.Workspace :create_user` (see HIGH-2 table). Auto-derived `mix ezagent workspace create_user`. |
   | **`set_password`** | ✅ **DONE (2026-05-26).** New `Behavior.UserCredentials :set_password` on User Kind (see HIGH-2 table). Auto-derived `mix ezagent user set_password`. |
   | **`save_display_name`** | ⏳ DEFERRED. Needs Behavior on User Kind for `:set_display_name` (Profile slice); LV uses `Ezagent.Entity.Profile.upsert/1` directly. |
@@ -304,8 +304,8 @@ open after HIGH-1 (admin fallback hole) closed in PR #298:
   enumerated in the invariant test's `@event_to_cli` table with
   category `:deferred` and a `docs/futures/todo.md` citation.
   Post-2026-05-26 HIGH-2 completion: `create_user` + `set_password`
-  closed; 4 deferred rows remain (`chat_compose`, `create_session`,
-  `save_display_name`, `save_smtp`).
+  closed; 3 deferred rows remain (`chat_compose`, `save_display_name`,
+  `save_smtp`).
 
 ### ~~`/admin/uploads/:filename` controller route — scope mismatch~~ — RESOLVED 2026-05-25
 Codex PR #305 round-4 HIGH (2026-05-24): the chat-compose-upload
@@ -349,9 +349,9 @@ of `session://<class>/<workspace>/<name>`, not a workspace fallback.
 PR #300 wired AdminLive as the operator subscriber + added notify
 calls to `Workspace.add/remove_member` and `Identity.grant/revoke_cap`.
 ~~Additional producers still silent~~ — all 3 wired in med-batch:
-- ✅ `Chat.join` notifies joinee (`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex` `invoke(:join, …)` — `:session_member_joined`)
+- ✅ `Chat.join` notifies joinee (`apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex` `invoke(:join, …)` — `:session_member_joined`)
 - ✅ `agent.terminate` notifies spawning principal via `AgentLineage.lookup/1` (`apps/ezagent_core/lib/ezagent/behavior/lifecycle.ex` `invoke(:terminate, …)` — `:agent_terminated`)
-- ✅ `agent_template.fork` notifies fork-owner (`apps/ezagent_domain_chat/lib/ezagent/behavior/template.ex` `fork_agent_template/3` — `:agent_template_forked`)
+- ✅ `agent_template.fork` notifies fork-owner (`apps/ezagent_domain_instance_message/lib/ezagent/behavior/template.ex` `fork_agent_template/3` — `:agent_template_forked`)
 
 All gated by `user_uri?/1`. Tests added to `chat_test.exs`,
 `lifecycle_terminate_test.exs`, `template_fork_lineage_test.exs`.
@@ -765,6 +765,79 @@ PR-4 snapshot guard, codex `--last`, table-rename).
   built. No UI for cc/claude login or proxy. Decision needed: each flavor
   inherits one generic UI vs provides its own via the `:form` config_surface
   contract — then build it. Ties to the credential-lifecycle item (login UI).
+
+## domain-agent-handoff parked work ledger (2026-06-04)
+
+Source: `/tmp/handoff-esr-docker-pivot-2026-06-04.md` §4. Scope for the
+parallel handoff branch is all parked work EXCEPT #21 Dockerize. #21 remains in
+the separate cc-openclaw session; this ledger exists so non-#21 work is either
+merged into `domain-agent-handoff` or left with a concrete blocker/decision.
+
+- **#27 ComposerMention/AdminLive default session template seed — DONE.**
+  Allen chose option B: seed a per-workspace `default` SessionTemplate. Merged
+  to `domain-agent-handoff` as PR #559 (`66105e2c`). Targeted tests passed:
+  `default_session_template_seed_test.exs`, `composer_mention_test.exs`, and
+  the affected Admin/Agent LV suites.
+
+- **PR-A2 codex CODEX_HOME per-agent isolation — DONE.** `CodexAgent` now uses
+  ConfigDir namespace `codex`, materializes `auth.json`/`config.toml`, and
+  passes `CODEX_HOME` through app-server, bridge sidecar, and PTY launch
+  parameters. Merged to `domain-agent-handoff` as PR #560 (`4940f33f`).
+
+- **#17 remaining gap: production auto-refresh-on-spawn — DECISION-BLOCKED,
+  do not wire PR-E into production spawn by default.** The current spec
+  (`docs/superpowers/specs/2026-06-03-agent-credential-lifecycle.md`) locks D3
+  as "credential source resolved + cap-checked at agent CREATE time (human
+  caller present), not spawn" and lists "Production runtime auto-refresh (users
+  re-login)" under non-goals. `EzagentPluginCc.CredentialRefresh` is also
+  documented as "#17 PR-E (TEST/E2E ONLY)" and "NOT for production runtime".
+  Therefore the safe handoff status is:
+  - production keeps the explicit `/login` + PR-C owner notification flow;
+  - PR-E remains a non-prod/E2E provisioner;
+  - any spawn-time production refresh/copy needs Allen to approve a new
+    cap-checked credential-source model, not a direct call to the test
+    provisioner from `ensure_subprocess_alive`.
+
+- **#11 / #533 single authorized create path + manage-cap grant — IN PROGRESS
+  IN PR-5 (2026-06-04).** The approved direction is to route user/operator
+  session creation through `Ezagent.Workspace.create_session/3`, keep
+  instance-message materialization as an internal implementation detail, and
+  grant creator Manage caps through the shared create-time grant policy.
+  Relevant docs:
+  `docs/superpowers/specs/2026-06-02-domain-agent-design.md` §3.3/§4 and
+  `docs/superpowers/specs/2026-06-01-unified-kind-creation-via-templates.md`.
+
+- **#24 narrow default user session cap (§3.11) — PROD/#21 ADJACENT BLOCKER.**
+  This gates a production Docker image because `Ezagent.Behavior.Manage` makes
+  session management depend on narrowing the current broad default session cap.
+  Keep it visible for the #21 prod-image review, but do not fold it into
+  Dockerize or merge to `main` from this handoff branch without explicit scope.
+
+- **#20 consolidate test-only snapshot writers — DONE.** Cleanup PR #565 makes
+  ordinary tests seed snapshot rows through `Ezagent.Test.SnapshotFixtures`,
+  with `test_snapshot_fixture_access_test.exs` preventing new direct fixture
+  writes to `Ezagent.Kind.Snapshot.save_now/3` and
+  `Ezagent.Ecto.KindSnapshot.upsert/5`. Low-level lifecycle/snapshot invariant
+  tests remain explicitly allowlisted because they exercise the primitive
+  persistence boundary itself.
+
+- **ExternalMirror flaky tests x3 — RESOLVED.** The flaky publish/rehydration
+  failures were isolated from #21 and fixed as ExternalMirror reliability PRs.
+  Merged to `domain-agent-handoff` as PR #563 (`017b8d2f`) and follow-up PR
+  #566. The fixes make Worker publish tests use unique sessions, wait for the
+  Worker's deferred Publisher subscription before asserting publish delivery,
+  and wait for cold-spawn re-subscription via the Session publisher subscriber
+  map instead of a fixed sleep.
+
+- **#22 harden node RPC/distribution console — GATED SECURITY SCOPE.** Needs
+  Allen to choose the deployment posture (dev node convenience vs production
+  distribution hardening). Naturally relevant to #21 prod image lockdown, but
+  should be a security-scoped PR/spec rather than an incidental Docker change.
+
+- **#25 architecture discussion — PENDING DISCUSSION DELIVERABLE.** The
+  `improve-codebase-architecture` skill was installed in the cc-openclaw
+  environment; the remaining work is a discussion/proposal deliverable, not a
+  code patch in this handoff branch unless Allen asks for a written spec.
 
 ## Architecture clarity (Allen 2026-06-03)
 

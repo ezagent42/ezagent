@@ -26,7 +26,7 @@ Allen Feishu 2026-05-22: *"如果 system default 就是所有人收到所有人�
 所有人吗？"*
 
 Today the `system_default` routing rule (seeded by
-`EzagentDomainChat.DefaultRules.ensure_session_members_default_rule/0`
+`EzagentDomainInstanceMessage.DefaultRules.ensure_session_members_default_rule/0`
 into the `MentionRouting` table) is:
 
 ```

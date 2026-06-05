@@ -1745,7 +1745,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   # The lifecycle topic string. Hard-coded here (NOT a call into
   # `Ezagent.Orchestrator.McpChannel.lifecycle_topic/0`) because
-  # `ezagent_domain_chat` is a `only: :test` dep of this plugin — it is
+  # `ezagent_domain_instance_message` is a `only: :test` dep of this plugin — it is
   # NOT a compile dep in prod. The topic is a stable string contract
   # shared with `McpChannel.join/3`'s broadcast (§5); a drift would be
   # caught by the live e2e (the only validator of the live gate).

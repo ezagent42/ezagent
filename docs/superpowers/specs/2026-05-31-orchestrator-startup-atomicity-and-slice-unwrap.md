@@ -20,7 +20,7 @@ The premise of rev2/rev3 ("unify two live creation paths") was wrong.
 **`Session.spawn_from_template/2` (the Generator) is production-DEAD** — zero
 non-test callers; the `Behavior.Template :instantiate` branch returns
 `{:error, :use_generator}` (template.ex:281) and nothing dispatches to it. The
-live path is `EzagentDomainChat.create_session/3` (home_live.ex:91,
+live path is `EzagentDomainInstanceMessage.create_session/3` (home_live.ex:91,
 admin_live.ex:804/2799, workspace.ex:732). Because the Generator — the only code
 that sets `orchestrator_template_uri` (OTU) + registers the MCP context — is
 never called in production, **no production session ever gets an orchestrator
@@ -43,7 +43,7 @@ So this is NOT a unification. It is:
   `template_working_copy` → `:orchestrator_not_registered`. Same class as Feishu
   bug #502.
 - **No OTU/registration in the live path:** `create_session/3` requires a
-  `template_name` (require_template_name!, ezagent_domain_chat.ex:112) but uses it
+  `template_name` (require_template_name!, ezagent_domain_instance_message.ex:112) but uses it
   only for the URI and spawns the Kind bare (`Kind.spawn(Session,…)`, :157) —
   never instantiating the template, so OTU stays nil + registration never runs.
   (NOT #481 data-loss.)
@@ -92,7 +92,7 @@ owner_uri, template_name)`:
    lineage+bind, so no limbo).
 6. **Grant caps** — scoped orchestrator caps + **one** owner
    `OrchestratorAdmin :restart` grant (delete the duplicate at session.ex:1722;
-   keep ezagent_domain_chat.ex’s, using the named `cap_equal_ignoring_metadata?`).
+   keep ezagent_domain_instance_message.ex’s, using the named `cap_equal_ignoring_metadata?`).
 7. **Register MCP context** (`McpRegistry.register`) — cache-fill; the lazy
    `rebuild_from_durable` (now able to read OTU via A+C2) also reconstructs it on
    JOIN.
@@ -149,7 +149,7 @@ then runs the §5 atomic gate. This is how `main` / `orch-feishu-7429` recover.
   revalidation" (`slot_still_owned?`), and the Generator-only test suites
   (`generator_test`, `reconciler_test`, `session_spawn_from_template_test`,
   `session_reconciler_helpers_test`).
-- **Non-atomicity cruft in `ezagent_domain_chat.ex`:** the `:fresh`/`:adopted`/
+- **Non-atomicity cruft in `ezagent_domain_instance_message.ex`:** the `:fresh`/`:adopted`/
   `:spawn_failed` 3-way branch, `rollback_fresh_session`'s 4-store enumeration
   (→ minimal terminate), the `:pending` + `:failed`-alive meta arms, the duplicate
   cap-grant + inlined `has_equiv?`, one of `safe`/`try_safe`.
@@ -162,14 +162,14 @@ then runs the §5 atomic gate. This is how `main` / `orch-feishu-7429` recover.
 | `…/kind.ex` | A: single-key `%{state}` clause + moduledoc constraint |
 | `…/ecto/kind_snapshot.ex` | C2: normalized accessor (raw decode unchanged) |
 | `…/orchestrator/mcp_server.ex` | `load_chat_slice/1` uses normalized accessor |
-| `…/ezagent_domain_chat.ex` | the §4 atomic flow; remove adoption/`:pending`/`:failed`-alive/dup-cap; add step-4 materialization + step-7 register |
+| `…/ezagent_domain_instance_message.ex` | the §4 atomic flow; remove adoption/`:pending`/`:failed`-alive/dup-cap; add step-4 materialization + step-7 register |
 | `…/entity/session.ex` | DELETE the Generator tree (§7) + dead `ensure_orchestrator/3`; keep+rename `ensure_orchestrator_with_meta` → `ensure_orchestrator/3`; 2-way ownership; one join helper; one cap-grant |
 | `…/orchestrator/mcp_channel.ex` | broadcast `{:orchestrator_ready, uri}` |
 | `…/orchestrator/orchestrator_admin.ex` (+ admin_live) | `repair_orchestrator` re-materializes OTU + gate |
 | `…/template/cc_agent.ex` | `ensure_subprocess_alive` = registration-gated + staggered |
 | `…/plugin_liveview/admin_live.ex` | 2-state orchestrator UI (drop `:pending`/`:degraded`-as-state) |
 | `…/plugin_feishu/feishu_adapter.ex` | fold `slice_state/1` into chokepoint |
-| `…/ezagent_domain_chat/application.ex` | `"default"` SessionTemplate seed = hard boot invariant (prod/dev; `:test` carve-out) |
+| `…/ezagent_domain_instance_message/application.ex` | `"default"` SessionTemplate seed = hard boot invariant (prod/dev; `:test` carve-out) |
 | `…/behavior/template.ex` | remove the `:use_generator` dead-end (or repoint) |
 
 ## 9. Validation
