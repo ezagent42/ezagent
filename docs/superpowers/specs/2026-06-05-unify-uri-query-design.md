@@ -1,6 +1,6 @@
-# Unify URI Query — Design Spec (rev 4)
+# Unify URI Query — Design Spec (rev 5)
 
-**Status:** rev 4 — incorporates codex r1 (4 findings) + r2 (registry-driven flavor inventory incl. `np`) + r3 (prefix-split scan hard-gates PR-B / precondition of PR-E) + Allen's locked decisions. codex r3 confirmed no flavor provider beyond cc/codex/curl/echo/np. Ready for implementation. Authored 2026-06-05 (Claude + Allen, Feishu session). Branch/worktree: `unify-uri-query` (off `main` @ 53f3c48b, post `domain_chat → domain_instance_message` rename).
+**Status:** rev 5 — incorporates codex r1 (4 findings) + r2 (registry-driven flavor inventory incl. `np`) + r3 (prefix-split scan hard-gates PR-B / precondition PR-E) + r4 (per-category gating principle: reorder-sensitive scan hard-gates PR-C / precondition PR-D) + Allen's locked decisions. codex confirmed no flavor provider beyond cc/codex/curl/echo/np. Ready for implementation. Authored 2026-06-05 (Claude + Allen, Feishu session). Branch/worktree: `unify-uri-query` (off `main` @ 53f3c48b, post `domain_chat → domain_instance_message` rename).
 
 **Root cause (Allen's framing):** Two coupled defects, not "the cc_ flavor bug":
 1. **URI inconsistency** — URIs encode mutable/secondary/creation-time attributes (agent **flavor** as a name prefix) and the segment order (`<type>/<workspace>`) does not reflect the real scoping hierarchy (type is workspace-scoped).
@@ -122,13 +122,15 @@ So a prefixless agent currently fails spawn / lifecycle / bridge delivery / temp
 
 ## 7. Phase plan (codex r1: avoid leaving main semantically broken between PRs)
 
-Order matters — each PR keeps main green; the scan ships warn-only first, then hard-fails last.
+Order matters — each PR keeps main green. **Per-category gating principle (codex r3+r4):** the #30 scan is NOT monolithically deferred to PR-F. Each scan CATEGORY hard-fails at the PR that establishes the safety its corresponding breaking change relies on, and that breaking change's PR is explicitly gated on the category being green. PR-F is only the final catch-all that flips any remaining warn-only categories to hard-fail. Concretely:
+- `check_agent_uri` prefix-split category → hard-fails at **PR-B**, gates **PR-E** (prefix drop).
+- reorder-sensitive categories (positional URI reads outside `Ezagent.URI`; raw affected-scheme string construction outside the builder/sigil allowlist; hand-built URI map/cap/routing keys; tenant/worker derivations outside `Ezagent.URI`/`UriQuery`) → hard-fail at **PR-C**, gate **PR-D** (reorder).
 
 - **PR-0 (#30 scan, warn-only):** AST scan enumerating violations (broadened per §8); reports, doesn't fail. Establishes the shrinking allowlist.
 - **PR-A (UriQuery core):** dispatcher + readiness semantics + `:flavor`/`:orchestrator`/`:member_by_role`/`:session_template` resolvers registered. Tests incl. pre-registration + boot-order.
 - **PR-B (flavor prerequisite, §6):** all flavor/Kind resolution + validators + paths read stored flavor. NO prefix drop yet (URIs unchanged) — main stays green. **HARD GATE (codex r3):** PR-B does NOT complete until the registry-driven `check_agent_uri` prefix-split sub-scan returns **zero** across EVERY `agent_flavors/0` provider — this specific rule hard-fails here (not warn-only), even though the broader #30 scan stays warn-only until PR-F. This is the proof PR-E depends on.
-- **PR-C (builders + consolidate positional parsers, §2/§3):** add `Ezagent.URI` builders; consolidate `capability.workspace_of`, worker_spawn derivation, all `%URI{host,path}` matches onto accessors. NO reorder yet.
-- **PR-D (codemod reorder):** flip to workspace-first; codemod ~3800 literals → builders in new order; update accessors. Reseed dev. tier2 E2E re-verify.
+- **PR-C (builders + consolidate positional parsers, §2/§3):** add `Ezagent.URI` builders; consolidate `capability.workspace_of`, worker_spawn derivation, all `%URI{host,path}` matches onto accessors. NO reorder yet. **HARD GATE (codex r4):** PR-C does not complete until the reorder-sensitive scan categories return **zero** — zero positional URI reads outside `Ezagent.URI`, zero raw affected-scheme construction outside the builder/sigil allowlist, zero hand-built URI map/cap/routing keys, zero tenant/worker derivations outside `Ezagent.URI`/`UriQuery`. This is the proof PR-D depends on.
+- **PR-D (codemod reorder):** flip to workspace-first; codemod ~3800 literals → builders in new order; update accessors. **Precondition (codex r4):** PR-C reorder-sensitive categories are green — PR-D must not merge otherwise. Reseed dev. tier2 E2E re-verify.
 - **PR-E (drop flavor prefix):** remove `<flavor>_` from agent names. **Precondition (codex r3):** the PR-B registry-driven `check_agent_uri` prefix-split sub-scan is green (zero across all `agent_flavors/0` providers) — PR-E must not merge otherwise. Reseed dev.
 - **PR-F (#30 hard-fail):** allowlist is empty; scan enforces in CI. Completion gate.
 
