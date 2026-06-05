@@ -27,6 +27,10 @@ services:
     # reaches the app internally via the compose network (ezagent:10042).
     ports:
       - "10043:10042"
+    # Distribution cookie (EZAGENT_COOKIE + RELEASE_COOKIE) lives in a gitignored
+    # env_file — NOT committed (codex #21 review). Generated random per host.
+    env_file:
+      - ./secrets-prod/ezagent.env
     environment:
       PORT: "10042"
       SHELL: /bin/bash
@@ -34,14 +38,15 @@ services:
       EZAGENT_PROFILE: default
       EZAGENT_PUBLIC_HOST: app.ezagent.chat
       EZAGENT_PUBLIC_SCHEME: https
+      # WS check_origin for the Tailscale admin fallback on the published host
+      # port :10043 (the public app.ezagent.chat path is allowed in runtime.exs).
+      EZAGENT_EXTRA_CHECK_ORIGINS: "http://100.64.0.27:10043,http://localhost:10043,http://127.0.0.1:10043"
       # Deterministic distribution so `bin/ezagent rpc` connects out-of-the-box:
-      # release boots as ezagent_runtime@127.0.0.1 (matches Ezagent.Runtime), and
-      # the cookie is fixed — the app's ensure_cookie! prefers EZAGENT_COOKIE, and
-      # RELEASE_COOKIE must equal it so the rpc helper uses the same cookie.
+      # release boots as ezagent_runtime@127.0.0.1 (matches Ezagent.Runtime); the
+      # cookie (from env_file) is read by both ensure_cookie! (EZAGENT_COOKIE) and
+      # the rpc helper (RELEASE_COOKIE).
       RELEASE_DISTRIBUTION: name
       RELEASE_NODE: ezagent_runtime@127.0.0.1
-      EZAGENT_COOKIE: ezagent_prod_cookie
-      RELEASE_COOKIE: ezagent_prod_cookie
       # Agents' claude/codex subprocesses reach providers via the proxy; Feishu
       # + localhost go direct.
       HTTP_PROXY: ${ESR_PROXY:-}

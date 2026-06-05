@@ -17,6 +17,10 @@ services:
     image: ezagent-dev:latest
     ports:
       - "10042:10042"
+    # Distribution cookie (EZAGENT_COOKIE + RELEASE_COOKIE) in a gitignored
+    # env_file — NOT committed (codex #21 review).
+    env_file:
+      - ./secrets/ezagent.env
     environment:
       PORT: "10042"
       SHELL: /bin/bash          # erlexec's exec-port requires SHELL (unset for non-root user)
@@ -24,7 +28,6 @@ services:
       EZAGENT_PROFILE: default
       EZAGENT_PUBLIC_HOST: dev.ezagent.chat   # generated URLs (magic-link) use the DEV host
       EZAGENT_PUBLIC_SCHEME: https
-      EZAGENT_COOKIE: ezagent_dev_cookie
       # Agents' claude/codex subprocesses inherit these to reach Anthropic/OpenAI.
       # Feishu + localhost go direct (NO_PROXY). host.docker.internal = host proxy.
       # Set BOTH upper + lower case (many tools honor lowercase) so the runtime proxy
