@@ -63,8 +63,8 @@ services:
       no_proxy: "esr,localhost,127.0.0.1,::1"
     volumes:
       - ./cloudflared/prod-config.yml:/etc/cloudflared/config.yml:ro
-      # Tunnel 7339e970 credentials (read-only) from the host.
-      - ${HOME}/.cloudflared/7339e970-1a2b-4f03-84c9-a1ea50965eba.json:/etc/cloudflared/cred.json:ro
+      # ezagent-prod tunnel (8e249ea0) credentials (read-only) from the host.
+      - ${HOME}/.cloudflared/8e249ea0-1285-4a86-81fc-eb3733a16cf4.json:/etc/cloudflared/cred.json:ro
     depends_on:
       esr:
         condition: service_healthy

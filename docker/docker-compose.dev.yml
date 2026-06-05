@@ -47,6 +47,25 @@ services:
       retries: 18
       start_period: 30s
 
+  # Containerized cloudflared fronting dev.ezagent.chat via the dedicated
+  # ezagent-dev tunnel (8fb9e613) — separate tunnel from prod so the two stacks
+  # never share a connector. Reaches the dev app by service name (esr:10042).
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: ["tunnel", "--config", "/etc/cloudflared/config.yml", "run"]
+    environment:
+      HTTPS_PROXY: ${ESR_PROXY:-}
+      https_proxy: ${ESR_PROXY:-}
+      NO_PROXY: "esr,localhost,127.0.0.1,::1"
+      no_proxy: "esr,localhost,127.0.0.1,::1"
+    volumes:
+      - ./cloudflared/dev-config.yml:/etc/cloudflared/config.yml:ro
+      - ${HOME}/.cloudflared/8fb9e613-05d6-44b6-a00a-4e44873c4de3.json:/etc/cloudflared/cred.json:ro
+    depends_on:
+      esr:
+        condition: service_healthy
+
 volumes:
   esr_home:
   cred_cc:

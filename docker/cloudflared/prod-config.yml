@@ -1,11 +1,8 @@
-# cloudflared ingress for the PROD compose — reuses the existing tunnel
-# 7339e970 (app.ezagent.chat is already routed to it). The credentials json is
-# mounted read-only from the host (~/.cloudflared/<tunnel>.json). The cloudflared
-# container reaches the prod app by compose service name (esr:10042), NOT a host
-# port. NOTE: the host-level cloudflared (~/.cloudflared/ezagent.yml) must be
-# STOPPED before this container starts — two connectors on one tunnel with
-# different local ingress mis-route requests.
-tunnel: 7339e970-1a2b-4f03-84c9-a1ea50965eba
+# cloudflared ingress for the PROD compose — dedicated tunnel `ezagent-prod`
+# (8e249ea0). The credentials json is mounted read-only from the host
+# (~/.cloudflared/8e249ea0-...json). The cloudflared container reaches the prod
+# app by compose service name (esr:10042), NOT a host port.
+tunnel: 8e249ea0-1285-4a86-81fc-eb3733a16cf4
 credentials-file: /etc/cloudflared/cred.json
 
 ingress:
