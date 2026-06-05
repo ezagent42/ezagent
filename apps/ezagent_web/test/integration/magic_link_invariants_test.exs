@@ -63,15 +63,15 @@ defmodule EzagentWeb.MagicLinkInvariantsTest do
   test "INVARIANT: magic-link login renews the session id (fixation defence)" do
     {:ok, _} =
       Ezagent.Entity.Profile.upsert(%{
-        entity_uri: "entity://user/team-alpha/fix",
+        entity_uri: "entity://team-alpha/user/fix",
         display_name: "Fix",
         email: "fix@good.com"
       })
 
-    {:ok, _} = Ezagent.Users.create("entity://user/team-alpha/fix", nil, [])
+    {:ok, _} = Ezagent.Users.create("entity://team-alpha/user/fix", nil, [])
     {:ok, raw} = MagicLinkToken.mint("fix@good.com")
 
     conn = get(build_conn(), "/auth/magic/#{raw}")
-    assert get_session(conn, :current_entity_uri) == "entity://user/team-alpha/fix"
+    assert get_session(conn, :current_entity_uri) == "entity://team-alpha/user/fix"
   end
 end

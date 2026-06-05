@@ -9,14 +9,14 @@ defmodule Ezagent.URITest do
   # `# uri-canonical-allow` suppression so the lint gate doesn't fight the
   # regression tests it protects.
   @ezagent_scheme_examples [
-    "entity://user/system/admin",
-    "entity://agent/team-alpha/cc_demo",
-    "entity://worker/team-alpha/slot-1",
-    "session://default/system/main",
-    "session://template-x/team-alpha/main?action=chat.send",
-    "template://agent/system/cc-orchestrator",
-    "template://session/team-alpha/code-review",
-    "resource://uploads/team-alpha/file-abc",
+    "entity://system/user/admin",
+    "entity://team-alpha/agent/cc_demo",
+    "entity://team-alpha/worker/slot-1",
+    "session://system/default/main",
+    "session://team-alpha/template-x/main?action=chat.send",
+    "template://system/agent/cc-orchestrator",
+    "template://team-alpha/session/code-review",
+    "resource://team-alpha/uploads/file-abc",
     "workspace://team-alpha",
     "workspace://system",
     "system://routing/default",
@@ -40,10 +40,10 @@ defmodule Ezagent.URITest do
       end
     end
 
-    test "canonical and non-canonical structs are NOT == (the silent mismatch)" do
+    test "canonical and authority-bearing structs are NOT == (the silent mismatch)" do
       for s <- @ezagent_scheme_examples do
         canon = Ezagent.URI.new!(s)
-        legacy = URI.parse(s)
+        legacy = noncanonical_uri(s)
         refute canon == legacy, "canon == legacy for #{s} — would mask the bug"
         # ...but they DO to_string to identical bytes (why it's silent).
         assert URI.to_string(canon) == URI.to_string(legacy)
@@ -51,12 +51,12 @@ defmodule Ezagent.URITest do
     end
 
     test "canonical!/1 returns the URI unchanged when canonical" do
-      uri = Ezagent.URI.new!("entity://user/system/admin")
+      uri = Ezagent.URI.new!("entity://system/user/admin")
       assert Ezagent.URI.canonical!(uri) == uri
     end
 
     test "canonical!/1 RAISES on a non-canonical (authority-bearing) %URI{}" do
-      legacy = URI.parse("entity://user/system/admin")
+      legacy = noncanonical_uri("entity://system/user/admin")
 
       assert_raise ArgumentError, ~r/non-canonical %URI\{\}/, fn ->
         Ezagent.URI.canonical!(legacy)
@@ -64,18 +64,18 @@ defmodule Ezagent.URITest do
     end
 
     test "canonical!/1 error names the divergent authority value (loud, attributable)" do
-      legacy = URI.parse("entity://agent/team-alpha/cc_demo")
+      legacy = noncanonical_uri("entity://team-alpha/agent/cc_demo")
 
       err =
         assert_raise ArgumentError, fn -> Ezagent.URI.canonical!(legacy) end
 
-      assert Exception.message(err) =~ "authority: \"agent\""
+      assert Exception.message(err) =~ "authority: \"team-alpha\""
       assert Exception.message(err) =~ "Ezagent.URI.new!/1"
     end
 
     test "canonical!/1 raises a clear message on non-%URI{} input" do
       assert_raise ArgumentError, ~r/requires a %URI\{\}/, fn ->
-        Ezagent.URI.canonical!("entity://user/system/admin")
+        Ezagent.URI.canonical!("entity://system/user/admin")
       end
     end
 
@@ -107,9 +107,9 @@ defmodule Ezagent.URITest do
     end
 
     test "parse/1 returns {:error, {:invalid_shape, _}} for a 2-segment entity URI" do
-      # NOTE: literal `entity://user/admin` — the rejected 2-seg form.
-      assert {:error, {:invalid_shape, msg}} = Ezagent.URI.parse("entity://user/" <> "admin")
-      assert msg =~ "workspace segment"
+      # NOTE: literal workspace-first 2-seg form — rejected because the type axis is missing.
+      assert {:error, {:invalid_shape, msg}} = Ezagent.URI.parse("entity://system/" <> "admin")
+      assert msg =~ "type and name segments"
     end
 
     test "parse/1 returns {:error, {:malformed, _}} for an unparseable string" do
@@ -117,7 +117,7 @@ defmodule Ezagent.URITest do
     end
 
     test "parse/1 never raises on the inputs new!/1 would reject" do
-      bad = ["/no-scheme", "http://x", "entity://user/" <> "solo", "garbage ::::"]
+      bad = ["/no-scheme", "http://x", "entity://system/" <> "solo", "garbage ::::"]
 
       for s <- bad do
         assert match?({:error, _}, Ezagent.URI.parse(s)), "parse/1 should tag-error on #{s}"
@@ -143,7 +143,7 @@ defmodule Ezagent.URITest do
     end
 
     test "?action= query is preserved through round-trip" do
-      s = "session://template-x/team-alpha/main?action=chat.send"
+      s = "session://team-alpha/template-x/main?action=chat.send"
       canon = Ezagent.URI.new!(s)
       assert canon.query == "action=chat.send"
       {:ok, round} = Ezagent.URI.parse(URI.to_string(canon))
@@ -155,15 +155,15 @@ defmodule Ezagent.URITest do
   describe "Map/MapSet key parity (the actual silent bug — URI hardening 2026-05-30)" do
     test "canonical key built two different ways matches in a Map" do
       # Both halves go through the sanctioned chokepoint -> identical struct.
-      stored_key = Ezagent.URI.new!("entity://user/team-alpha/alice")
-      lookup_key = Ezagent.URI.new!("entity://user/team-alpha/alice")
+      stored_key = Ezagent.URI.new!("entity://team-alpha/user/alice")
+      lookup_key = Ezagent.URI.new!("entity://team-alpha/user/alice")
       m = %{stored_key => :online}
       assert Map.get(m, lookup_key) == :online
     end
 
     test "a NON-canonical lookup key SILENTLY misses a canonical Map key (demonstrates the bug)" do
-      canonical_key = Ezagent.URI.new!("entity://user/team-alpha/alice")
-      legacy_lookup = URI.parse("entity://user/team-alpha/alice")
+      canonical_key = Ezagent.URI.new!("entity://team-alpha/user/alice")
+      legacy_lookup = noncanonical_uri("entity://team-alpha/user/alice")
       m = %{canonical_key => :online}
 
       # This is the EXACT silent failure the guard exists to prevent:
@@ -172,7 +172,7 @@ defmodule Ezagent.URITest do
     end
 
     test "canonical!/1 turns that silent miss into a LOUD crash at the boundary" do
-      legacy_lookup = URI.parse("entity://user/team-alpha/alice")
+      legacy_lookup = noncanonical_uri("entity://team-alpha/user/alice")
 
       # A consumer that asserts canonical form on its inbound key gets a
       # crash (attributable) instead of a silent nil.
@@ -182,30 +182,30 @@ defmodule Ezagent.URITest do
     end
 
     test "MapSet membership matches for canonical peers, misses for non-canonical" do
-      canon = Ezagent.URI.new!("entity://agent/team-alpha/cc_demo")
+      canon = Ezagent.URI.new!("entity://team-alpha/agent/cc_demo")
       set = MapSet.new([canon])
-      assert MapSet.member?(set, Ezagent.URI.new!("entity://agent/team-alpha/cc_demo"))
-      refute MapSet.member?(set, URI.parse("entity://agent/team-alpha/cc_demo"))
+      assert MapSet.member?(set, Ezagent.URI.new!("entity://team-alpha/agent/cc_demo"))
+      refute MapSet.member?(set, noncanonical_uri("entity://team-alpha/agent/cc_demo"))
     end
   end
 
   describe "with_action/3 — canonical dispatch-target constructor (URI hardening 2026-05-30)" do
     test "appends ?action=behavior.action to a canonical instance" do
-      base = Ezagent.URI.new!("entity://agent/team-alpha/cc_demo")
+      base = Ezagent.URI.new!("entity://team-alpha/agent/cc_demo")
       target = Ezagent.URI.with_action(base, :chat, :receive)
-      assert URI.to_string(target) == "entity://agent/team-alpha/cc_demo?action=chat.receive"
+      assert URI.to_string(target) == "entity://team-alpha/agent/cc_demo?action=chat.receive"
       assert Ezagent.URI.canonical?(target)
       assert {:ok, {:chat, :receive}} = Ezagent.URI.behavior_action(target)
     end
 
     test "accepts string behavior/action as well as atoms" do
-      base = Ezagent.URI.new!("session://default/system/main")
+      base = Ezagent.URI.new!("session://system/default/main")
       target = Ezagent.URI.with_action(base, "chat", "send")
       assert {:ok, {:chat, :send}} = Ezagent.URI.behavior_action(target)
     end
 
     test "replaces any stale action already on the base" do
-      base = Ezagent.URI.new!("entity://agent/team-alpha/cc_demo?action=old.verb")
+      base = Ezagent.URI.new!("entity://team-alpha/agent/cc_demo?action=old.verb")
       target = Ezagent.URI.with_action(base, :chat, :send)
       assert {:ok, {:chat, :send}} = Ezagent.URI.behavior_action(target)
     end
@@ -221,7 +221,7 @@ defmodule Ezagent.URITest do
     end
 
     test "RAISES when the base is a non-canonical %URI{}" do
-      legacy = URI.parse("entity://agent/team-alpha/cc_demo")
+      legacy = noncanonical_uri("entity://team-alpha/agent/cc_demo")
 
       assert_raise ArgumentError, ~r/non-canonical/, fn ->
         Ezagent.URI.with_action(legacy, :chat, :send)
@@ -229,73 +229,187 @@ defmodule Ezagent.URITest do
     end
   end
 
+  describe "typed builders — semantic URI construction" do
+    test "constructs per-tenant URIs from workspace/type/name arguments" do
+      assert URI.to_string(Ezagent.URI.entity("team-alpha", :agent, "cc_demo")) ==
+               "entity://team-alpha/agent/cc_demo"
+
+      assert URI.to_string(Ezagent.URI.entity("system", :user, "admin")) ==
+               "entity://system/user/admin"
+
+      assert URI.to_string(Ezagent.URI.session("team-alpha", "code-review", "main")) ==
+               "session://team-alpha/code-review/main"
+
+      assert URI.to_string(Ezagent.URI.template("system", :agent, "cc-orchestrator")) ==
+               "template://system/agent/cc-orchestrator"
+
+      assert URI.to_string(Ezagent.URI.resource("team-alpha", :uploads, "file-abc")) ==
+               "resource://team-alpha/uploads/file-abc"
+    end
+
+    test "constructs cross-cutting URIs" do
+      assert URI.to_string(Ezagent.URI.workspace("team-alpha")) == "workspace://team-alpha"
+      assert URI.to_string(Ezagent.URI.system(:routing, "default")) == "system://routing/default"
+      assert URI.to_string(Ezagent.URI.system_principal(:bootstrap)) == "system://bootstrap"
+    end
+
+    test "rejects empty or slash-bearing segments" do
+      assert_raise ArgumentError, ~r/URI segment must not be empty/, fn ->
+        Ezagent.URI.entity("", :agent, "demo")
+      end
+
+      assert_raise ArgumentError, ~r/URI segment must not contain \//, fn ->
+        Ezagent.URI.session("team-alpha", "code/review", "main")
+      end
+    end
+  end
+
+  describe "workspace_of/1 — centralized workspace accessor" do
+    test "extracts workspaces for per-tenant schemes" do
+      assert Ezagent.URI.workspace_of(Ezagent.URI.entity("team-alpha", :agent, "cc_demo")) ==
+               Ezagent.URI.workspace("team-alpha")
+
+      assert Ezagent.URI.workspace_of(Ezagent.URI.session("system", "default", "main")) ==
+               Ezagent.URI.workspace("system")
+
+      assert Ezagent.URI.workspace_of(Ezagent.URI.template("system", :agent, "cc-orchestrator")) ==
+               Ezagent.URI.workspace("system")
+
+      assert Ezagent.URI.workspace_of(Ezagent.URI.resource("team-alpha", :uploads, "file-abc")) ==
+               Ezagent.URI.workspace("team-alpha")
+    end
+
+    test "returns the workspace URI itself for workspace:// and :any for system://" do
+      workspace = Ezagent.URI.workspace("team-alpha")
+
+      assert Ezagent.URI.workspace_of(workspace) == workspace
+      assert Ezagent.URI.workspace_of(Ezagent.URI.system(:routing, "default")) == :any
+    end
+
+    test "extracts workspace names without external host/path matches" do
+      assert {:ok, "team-alpha"} =
+               Ezagent.URI.workspace_name(Ezagent.URI.entity("team-alpha", :agent, "cc_demo"))
+
+      assert "team-alpha" =
+               Ezagent.URI.workspace_name!(Ezagent.URI.session("team-alpha", "default", "main"))
+    end
+  end
+
+  describe "type!/1 and name!/1 — centralized segment accessors" do
+    test "extracts type and name for per-tenant schemes" do
+      agent = Ezagent.URI.entity("team-alpha", :agent, "cc_demo")
+      session = Ezagent.URI.session("team-alpha", "default", "main")
+
+      assert Ezagent.URI.type!(agent) == "agent"
+      assert Ezagent.URI.name!(agent) == "cc_demo"
+      assert Ezagent.URI.type!(session) == "default"
+      assert Ezagent.URI.name!(session) == "main"
+    end
+
+    test "extracts name for workspace:// and type/name for system://" do
+      assert Ezagent.URI.name!(Ezagent.URI.workspace("team-alpha")) == "team-alpha"
+      assert Ezagent.URI.type!(Ezagent.URI.system(:routing, "default")) == "routing"
+      assert Ezagent.URI.name!(Ezagent.URI.system(:routing, "default")) == "default"
+    end
+
+    test "extracts names from unified path strings for parser consolidation" do
+      assert Ezagent.URI.workspace_name_from_path("agent/cc_demo") == :error
+      assert Ezagent.URI.workspace_name_from_path("/agent/cc_demo") == :error
+      assert Ezagent.URI.workspace_name_from_path("legacy-name") == :error
+      assert Ezagent.URI.name_from_path("agent/cc_demo") == {:ok, "cc_demo"}
+      assert Ezagent.URI.name_from_path("/agent/cc_demo") == {:ok, "cc_demo"}
+      assert Ezagent.URI.name_from_path("legacy-name") == {:ok, "legacy-name"}
+      assert Ezagent.URI.name_from_path("") == :error
+      assert Ezagent.URI.path_segments("type/workspace/name") == ["type", "workspace", "name"]
+    end
+
+    test "matches scheme/type/name predicates without exposing URI positions" do
+      agent = Ezagent.URI.entity("team-alpha", :agent, "cc_demo")
+      workspace = Ezagent.URI.workspace("team-alpha")
+      system = Ezagent.URI.system(:routing, "default")
+
+      assert Ezagent.URI.scheme?(agent, :entity)
+      assert Ezagent.URI.type?(agent, :agent)
+      refute Ezagent.URI.type?(agent, :user)
+      assert Ezagent.URI.name?(agent, "cc_demo")
+
+      assert Ezagent.URI.scheme?(workspace, :workspace)
+      assert Ezagent.URI.name?(workspace, "team-alpha")
+      refute Ezagent.URI.type?(workspace, :workspace)
+
+      assert Ezagent.URI.scheme?(system, :system)
+      assert Ezagent.URI.type?(system, :routing)
+      assert Ezagent.URI.name?(system, :default)
+    end
+  end
+
   describe "parse!/1" do
     test "parses 3-segment entity:// URI (SPEC v3 §3.2)" do
-      uri = Ezagent.URI.new!("entity://user/system/admin")
+      uri = Ezagent.URI.new!("entity://system/user/admin")
       assert uri.scheme == "entity"
-      assert uri.host == "user"
-      assert uri.path == "/system/admin"
+      assert uri.host == "system"
+      assert uri.path == "/user/admin"
     end
 
     test "parses URI with action query (SPEC v2 §5.2, PR #148)" do
-      uri = Ezagent.URI.new!("entity://agent/team-alpha/cc_demo-builder?action=chat.receive")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_demo-builder?action=chat.receive")
       assert uri.scheme == "entity"
-      assert uri.host == "agent"
-      assert uri.path == "/team-alpha/cc_demo-builder"
+      assert uri.host == "team-alpha"
+      assert uri.path == "/agent/cc_demo-builder"
       assert uri.query == "action=chat.receive"
     end
 
     test "parses cross-workspace entity URI" do
-      uri = Ezagent.URI.new!("entity://agent/team-alpha/cc_demo")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_demo")
       assert uri.scheme == "entity"
-      assert uri.host == "agent"
-      assert uri.path == "/team-alpha/cc_demo"
+      assert uri.host == "team-alpha"
+      assert uri.path == "/agent/cc_demo"
     end
 
     test "parses 3-segment session:// URI (SPEC v3 §3.6 PR-7)" do
-      uri = Ezagent.URI.new!("session://default/system/main")
+      uri = Ezagent.URI.new!("session://system/default/main")
       assert uri.scheme == "session"
-      assert uri.host == "default"
-      assert uri.path == "/system/main"
+      assert uri.host == "system"
+      assert uri.path == "/default/main"
     end
 
     test "parses 3-segment template:// URI (SPEC v3 §3.6 PR-7)" do
-      uri = Ezagent.URI.new!("template://agent/system/cc-orchestrator")
+      uri = Ezagent.URI.new!("template://system/agent/cc-orchestrator")
       assert uri.scheme == "template"
-      assert uri.host == "agent"
-      assert uri.path == "/system/cc-orchestrator"
+      assert uri.host == "system"
+      assert uri.path == "/agent/cc-orchestrator"
     end
 
     test "parses 3-segment resource:// URI (SPEC v3 §3.6 PR-7)" do
-      uri = Ezagent.URI.new!("resource://uploads/team-alpha/file-abc")
+      uri = Ezagent.URI.new!("resource://team-alpha/uploads/file-abc")
       assert uri.scheme == "resource"
-      assert uri.host == "uploads"
-      assert uri.path == "/team-alpha/file-abc"
+      assert uri.host == "team-alpha"
+      assert uri.path == "/uploads/file-abc"
     end
 
     test "rejects 2-segment session:// URI (SPEC v3 §3.6 PR-7)" do
-      # NOTE: literal `session://default/system/main` — the rejected 2-seg form is the point.
-      legacy = "session://default/" <> "main"
+      # NOTE: literal workspace-first 2-seg form — rejected because the type axis is missing.
+      legacy = "session://system/" <> "main"
 
-      assert_raise ArgumentError, ~r/workspace segment/, fn ->
+      assert_raise ArgumentError, ~r/type and name segments/, fn ->
         Ezagent.URI.new!(legacy)
       end
     end
 
     test "rejects 2-segment template:// URI (SPEC v3 §3.6 PR-7)" do
-      # NOTE: literal `template://agent/team-alpha/cc-orch` — the rejected 2-seg form is the point.
-      legacy = "template://agent/" <> "cc-orch"
+      # NOTE: literal workspace-first 2-seg form — rejected because the type axis is missing.
+      legacy = "template://system/" <> "cc-orch"
 
-      assert_raise ArgumentError, ~r/workspace segment/, fn ->
+      assert_raise ArgumentError, ~r/type and name segments/, fn ->
         Ezagent.URI.new!(legacy)
       end
     end
 
     test "rejects 2-segment resource:// URI (SPEC v3 §3.6 PR-7)" do
-      # NOTE: literal `resource://uploads/default/abc` — the rejected 2-seg form is the point.
-      legacy = "resource://uploads/" <> "abc"
+      # NOTE: literal workspace-first 2-seg form — rejected because the type axis is missing.
+      legacy = "resource://team-alpha/" <> "abc"
 
-      assert_raise ArgumentError, ~r/workspace segment/, fn ->
+      assert_raise ArgumentError, ~r/type and name segments/, fn ->
         Ezagent.URI.new!(legacy)
       end
     end
@@ -327,83 +441,83 @@ defmodule Ezagent.URITest do
     end
 
     test "rejects 2-segment entity URI (SPEC v3 §3.2)" do
-      # NOTE: literal `entity://user/admin` — the rejected 2-seg form is the point.
-      legacy = "entity://user/" <> "admin"
+      # NOTE: literal workspace-first 2-seg form — rejected because the type axis is missing.
+      legacy = "entity://system/" <> "admin"
 
-      assert_raise ArgumentError, ~r/workspace segment/, fn ->
+      assert_raise ArgumentError, ~r/type and name segments/, fn ->
         Ezagent.URI.new!(legacy)
       end
     end
 
     test "rejects 2-segment entity agent URI (SPEC v3 §3.2)" do
-      # NOTE: literal `entity://agent/cc_demo` — the rejected 2-seg form is the point.
-      legacy = "entity://agent/" <> "cc_demo"
+      # NOTE: literal workspace-first 2-seg form — rejected because the type axis is missing.
+      legacy = "entity://team-alpha/" <> "cc_demo"
 
-      assert_raise ArgumentError, ~r/workspace segment/, fn ->
+      assert_raise ArgumentError, ~r/type and name segments/, fn ->
         Ezagent.URI.new!(legacy)
       end
     end
 
     test "rejects 4+ segment entity URI (sub-resource reserved)" do
       assert_raise ArgumentError, ~r/sub-resource positions are reserved/, fn ->
-        Ezagent.URI.new!("entity://user/system/admin/extra")
+        Ezagent.URI.new!("entity://system/user/admin/extra")
       end
     end
   end
 
   describe "instance/1 — entity:// 3-segment authority (SPEC v3)" do
     test "entity:// strips query (SPEC v2 §5.2 — action lives in query)" do
-      uri = Ezagent.URI.new!("entity://agent/team-alpha/echo_default?action=echo.say")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/echo_default?action=echo.say")
       inst = Ezagent.URI.instance(uri)
       assert inst.scheme == "entity"
-      assert inst.host == "agent"
-      assert inst.path == "/team-alpha/echo_default"
+      assert inst.host == "team-alpha"
+      assert inst.path == "/agent/echo_default"
       assert inst.query == nil
-      assert URI.to_string(inst) == "entity://agent/team-alpha/echo_default"
+      assert URI.to_string(inst) == "entity://team-alpha/agent/echo_default"
     end
 
     test "entity:// already-instance form is unchanged" do
-      uri = Ezagent.URI.new!("entity://agent/team-alpha/cc_demo-builder")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_demo-builder")
       assert Ezagent.URI.instance(uri) == uri
     end
 
-    test "entity://user/system/admin is unchanged" do
-      uri = Ezagent.URI.new!("entity://user/system/admin")
+    test "entity://system/user/admin is unchanged" do
+      uri = Ezagent.URI.new!("entity://system/user/admin")
       assert Ezagent.URI.instance(uri) == uri
     end
 
     test "entity:// agent flavor in name prefix is opaque to parser" do
       # PR #141 SPEC v2 §5.14: <flavor>_<name> is one opaque name string.
-      uri = Ezagent.URI.new!("entity://agent/team-alpha/cc_demo-builder?action=chat.receive")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_demo-builder?action=chat.receive")
       inst = Ezagent.URI.instance(uri)
-      assert URI.to_string(inst) == "entity://agent/team-alpha/cc_demo-builder"
+      assert URI.to_string(inst) == "entity://team-alpha/agent/cc_demo-builder"
     end
   end
 
   describe "instance/1 — unified 3-seg schemes (SPEC v3 §3.6 PR-7)" do
     test "session:// strips query and keeps full 3-segment path" do
-      uri = Ezagent.URI.new!("session://default/system/main?action=chat.send")
+      uri = Ezagent.URI.new!("session://system/default/main?action=chat.send")
       inst = Ezagent.URI.instance(uri)
       assert inst.scheme == "session"
-      assert inst.host == "default"
-      assert inst.path == "/system/main"
+      assert inst.host == "system"
+      assert inst.path == "/default/main"
       assert inst.query == nil
-      assert URI.to_string(inst) == "session://default/system/main"
+      assert URI.to_string(inst) == "session://system/default/main"
     end
 
     test "template:// strips query and keeps full 3-segment path" do
       uri =
-        Ezagent.URI.new!("template://agent/system/cc-orchestrator?action=identity.list_caps")
+        Ezagent.URI.new!("template://system/agent/cc-orchestrator?action=identity.list_caps")
 
       inst = Ezagent.URI.instance(uri)
       assert inst.scheme == "template"
-      assert inst.host == "agent"
-      assert inst.path == "/system/cc-orchestrator"
+      assert inst.host == "system"
+      assert inst.path == "/agent/cc-orchestrator"
       assert inst.query == nil
     end
 
     test "resource:// strips query and keeps full 3-segment path" do
-      uri = Ezagent.URI.new!("resource://uploads/system/file-abc")
+      uri = Ezagent.URI.new!("resource://system/uploads/file-abc")
       assert Ezagent.URI.instance(uri) == uri
     end
 
@@ -415,23 +529,23 @@ defmodule Ezagent.URITest do
 
   describe "entity_workspace_uri/1 (SPEC v3 §3.3)" do
     test "extracts workspace URI from default-workspace user entity" do
-      uri = Ezagent.URI.new!("entity://user/team-alpha/allen")
+      uri = Ezagent.URI.new!("entity://team-alpha/user/allen")
       assert Ezagent.URI.entity_workspace_uri(uri) == URI.new!("workspace://team-alpha")
     end
 
     test "extracts workspace URI from cross-workspace agent entity" do
-      uri = Ezagent.URI.new!("entity://agent/team-alpha/cc_demo")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_demo")
       assert Ezagent.URI.entity_workspace_uri(uri) == URI.new!("workspace://team-alpha")
     end
 
     # Phase 9 PR-8 (SPEC v3 §13): admin lives in workspace://system.
     test "extracts workspace://system URI from admin entity" do
-      uri = Ezagent.URI.new!("entity://user/system/admin")
+      uri = Ezagent.URI.new!("entity://system/user/admin")
       assert Ezagent.URI.entity_workspace_uri(uri) == URI.new!("workspace://system")
     end
 
     test "extracts workspace URI from entity URI with query string" do
-      uri = Ezagent.URI.new!("entity://user/team-alpha/allen?action=identity.list_caps")
+      uri = Ezagent.URI.new!("entity://team-alpha/user/allen?action=identity.list_caps")
       assert Ezagent.URI.entity_workspace_uri(uri) == URI.new!("workspace://team-alpha")
     end
 
@@ -444,7 +558,7 @@ defmodule Ezagent.URITest do
       # Hand-construct the legacy shape — `parse!/1` correctly
       # rejects it at parse time, so we bypass to exercise the
       # defense-in-depth path inside entity_workspace_uri/1.
-      legacy = %URI{scheme: "entity", host: "user", path: "/admin"}
+      legacy = %URI{scheme: "entity", host: "system", path: "/admin"}
 
       assert_raise ArgumentError, ~r/requires a 3-segment URI/, fn ->
         Ezagent.URI.entity_workspace_uri(legacy)
@@ -452,7 +566,7 @@ defmodule Ezagent.URITest do
     end
 
     test "raises ArgumentError mentions sign-in hint for stale cookies" do
-      legacy = %URI{scheme: "entity", host: "agent", path: "/cc_demo"}
+      legacy = %URI{scheme: "entity", host: "team-alpha", path: "/cc_demo"}
 
       assert_raise ArgumentError, ~r/stale session cookie/, fn ->
         Ezagent.URI.entity_workspace_uri(legacy)
@@ -460,7 +574,7 @@ defmodule Ezagent.URITest do
     end
 
     test "raises ArgumentError on non-entity URI struct" do
-      not_entity = URI.parse("session://default/system/main")
+      not_entity = Ezagent.URI.new!("session://system/default/main")
 
       assert_raise ArgumentError, ~r/requires %URI\{scheme: "entity"/, fn ->
         Ezagent.URI.entity_workspace_uri(not_entity)
@@ -469,12 +583,12 @@ defmodule Ezagent.URITest do
 
     test "raises ArgumentError on non-URI input (e.g. plain string)" do
       assert_raise ArgumentError, ~r/requires %URI/, fn ->
-        Ezagent.URI.entity_workspace_uri("entity://user/team-alpha/admin")
+        Ezagent.URI.entity_workspace_uri("entity://team-alpha/user/admin")
       end
     end
 
     test "raises ArgumentError on path-less entity URI" do
-      pathless = %URI{scheme: "entity", host: "user", path: nil}
+      pathless = %URI{scheme: "entity", host: "system", path: nil}
 
       assert_raise ArgumentError, ~r/requires a 3-segment URI/, fn ->
         Ezagent.URI.entity_workspace_uri(pathless)
@@ -484,12 +598,12 @@ defmodule Ezagent.URITest do
 
   describe "subresource/1" do
     test "entity:// without sub-resource returns empty string" do
-      uri = Ezagent.URI.new!("entity://agent/team-alpha/cc_demo-builder")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_demo-builder")
       assert Ezagent.URI.subresource(uri) == ""
     end
 
-    test "entity:// with just /<workspace>/<name> → empty string" do
-      uri = Ezagent.URI.new!("entity://user/system/admin")
+    test "entity:// with just /<type>/<name> → empty string" do
+      uri = Ezagent.URI.new!("entity://system/user/admin")
       assert Ezagent.URI.subresource(uri) == ""
     end
 
@@ -501,12 +615,12 @@ defmodule Ezagent.URITest do
 
   describe "behavior_action/1 — query-string action parser (SPEC v2 §5.2, PR #148)" do
     test "extracts {behavior_atom, action_atom} from entity:// ?action=" do
-      uri = Ezagent.URI.new!("entity://agent/team-alpha/echo_default?action=echo.say")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/echo_default?action=echo.say")
       assert {:ok, {:echo, :say}} = Ezagent.URI.behavior_action(uri)
     end
 
     test "extracts from 3-seg session:// scheme (SPEC v3 §3.6 PR-7)" do
-      uri = Ezagent.URI.new!("session://default/system/main?action=chat.send")
+      uri = Ezagent.URI.new!("session://system/default/main?action=chat.send")
       assert {:ok, {:chat, :send}} = Ezagent.URI.behavior_action(uri)
     end
 
@@ -516,31 +630,36 @@ defmodule Ezagent.URITest do
     end
 
     test "returns :missing_action for URI without query" do
-      uri = Ezagent.URI.new!("entity://agent/team-alpha/echo_default")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/echo_default")
       assert {:error, :missing_action} = Ezagent.URI.behavior_action(uri)
     end
 
     test "returns :missing_action when query lacks action key" do
-      uri = Ezagent.URI.new!("entity://agent/team-alpha/echo_default?foo=bar")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/echo_default?foo=bar")
       assert {:error, :missing_action} = Ezagent.URI.behavior_action(uri)
     end
 
     test "returns :missing_action for empty action value" do
-      uri = Ezagent.URI.new!("entity://agent/team-alpha/echo_default?action=")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/echo_default?action=")
       assert {:error, :missing_action} = Ezagent.URI.behavior_action(uri)
     end
 
     test "returns :malformed_action when action lacks a dot" do
-      uri = Ezagent.URI.new!("entity://agent/team-alpha/echo_default?action=justone")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/echo_default?action=justone")
       assert {:error, :malformed_action} = Ezagent.URI.behavior_action(uri)
     end
 
     test "returns :malformed_action for empty behavior or action half" do
-      uri = Ezagent.URI.new!("entity://agent/team-alpha/echo_default?action=.say")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/echo_default?action=.say")
       assert {:error, :malformed_action} = Ezagent.URI.behavior_action(uri)
 
-      uri = Ezagent.URI.new!("entity://agent/team-alpha/echo_default?action=echo.")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/echo_default?action=echo.")
       assert {:error, :malformed_action} = Ezagent.URI.behavior_action(uri)
     end
+  end
+
+  defp noncanonical_uri(s) when is_binary(s) do
+    uri = Ezagent.URI.new!(s)
+    %{uri | authority: uri.host}
   end
 end

@@ -11,13 +11,13 @@ defmodule Ezagent.SpawnRegistry do
   Each plugin registers a spawn function for the URI schemes it owns:
 
       Ezagent.SpawnRegistry.register("entity", fn uri ->
-        case uri.host do
-          "agent" -> ...
-          "user"  -> ...
+        case Ezagent.URI.type(uri) do
+          {:ok, "agent"} -> ...
+          {:ok, "user"}  -> ...
         end
       end)
 
-  When the Loader sees `entity://agent/team-alpha/cc_builder` it calls
+  When the Loader sees an agent entity URI it calls
   `Ezagent.SpawnRegistry.spawn(uri)` and ezagent_core never has to know
   about `EzagentDomainInstanceMessage.AgentSupervisor`.
 

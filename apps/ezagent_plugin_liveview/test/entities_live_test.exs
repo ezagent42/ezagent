@@ -29,10 +29,10 @@ defmodule EzagentPluginLiveview.EntitiesLiveTest do
   test "GET /admin/registry renders header + filter chips", %{conn: conn} do
     {:ok, _lv, html} = live(conn, "/admin/registry")
     assert html =~ "Entities (live registry)"
-    assert html =~ "entity://user"
-    assert html =~ "entity://agent"
-    assert html =~ "session://"
-    assert html =~ "workspace://"
+    assert html =~ "user"
+    assert html =~ "agent"
+    assert html =~ "session"
+    assert html =~ "workspace"
   end
 
   test "filter=user narrows to entity://user/* rows", %{conn: conn} do
@@ -49,7 +49,9 @@ defmodule EzagentPluginLiveview.EntitiesLiveTest do
 
   test "PTY agent detail route still works at /identities/agents/:uri", %{conn: conn} do
     agent_uri =
-      URI.parse("entity://agent/team-alpha/test_pty-status-test-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!(
+        "entity://team-alpha/agent/test_pty-status-test-#{System.unique_integer([:positive])}"
+      )
 
     {:ok, pid} =
       Ezagent.Domain.Pty.start(agent_uri, %{

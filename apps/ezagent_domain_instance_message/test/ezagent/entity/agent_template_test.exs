@@ -48,7 +48,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
   end
 
   describe "to_template_data/2 (Phase 7 completion PR-1, SPEC §1.5 (b))" do
-    @instance_uri URI.new!("entity://agent/team-alpha/cc_worker-1")
+    @instance_uri URI.new!("entity://team-alpha/agent/cc_worker-1")
 
     test "round-trips a cc-flavored content map to the cc.agent data shape" do
       content = %{
@@ -60,7 +60,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
 
       assert {:ok, data} = AgentTemplate.to_template_data(content, @instance_uri)
       assert data["class"] == "cc.agent"
-      assert data["agent_uri"] == "entity://agent/team-alpha/cc_worker-1"
+      assert data["agent_uri"] == "entity://team-alpha/agent/cc_worker-1"
       assert data["cwd"] == "/tmp/proj"
       # The optional keys are absent when the content sets none —
       # so the legacy 3-key cc.agent form still validates. config_dir is
@@ -142,9 +142,9 @@ defmodule Ezagent.Entity.AgentTemplateTest do
   describe "to_template_data/2 is flavor-generic (SPEC 2026-06-01)" do
     # The agent URI prefix must match the flavor (each flavor's validate/1
     # enforces `<flavor>_<name>`).
-    @curl_uri URI.new!("entity://agent/team-alpha/curl_w-gen")
-    @codex_uri URI.new!("entity://agent/team-alpha/codex_w-gen")
-    @cc_uri URI.new!("entity://agent/team-alpha/cc_w-gen")
+    @curl_uri URI.new!("entity://team-alpha/agent/curl_w-gen")
+    @codex_uri URI.new!("entity://team-alpha/agent/codex_w-gen")
+    @cc_uri URI.new!("entity://team-alpha/agent/cc_w-gen")
 
     test "threads curl provider/api_url/model (pre-fix these were dropped)" do
       content = %{
@@ -235,9 +235,9 @@ defmodule Ezagent.Entity.AgentTemplateTest do
   # are flavor-specific (cc reads it as CLAUDE_CONFIG_DIR; curl/codex/echo
   # may use it per their own format).
   describe "config_dir is UNIVERSAL (Allen 2026-06-03)" do
-    @curl_uri URI.new!("entity://agent/team-alpha/curl_cfg")
-    @echo_uri URI.new!("entity://agent/team-alpha/echo_cfg")
-    @cc_uri URI.new!("entity://agent/team-alpha/cc_cfg")
+    @curl_uri URI.new!("entity://team-alpha/agent/curl_cfg")
+    @echo_uri URI.new!("entity://team-alpha/agent/echo_cfg")
+    @cc_uri URI.new!("entity://team-alpha/agent/cc_cfg")
 
     test "a non-cc (curl) flavor's template ALSO emits the universal config_dir key" do
       content = %{
@@ -332,7 +332,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
   # grant + live re-copy is the re-materialization seam shared with PR-5's
   # reconfigure — see docs/notes/pr6-desired-skills-caps.md.)
   describe "to_template_data/2 threads desired_skills/desired_caps (PR-6)" do
-    @cc_uri URI.new!("entity://agent/team-alpha/cc_w-pr6")
+    @cc_uri URI.new!("entity://team-alpha/agent/cc_w-pr6")
 
     test "threads desired_skills into the data map when present" do
       content = %{
@@ -352,7 +352,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
         action: :any,
         instance: :any,
         workspace_uri: URI.new!("workspace://team-alpha"),
-        granted_by: URI.new!("entity://user/team-alpha/admin"),
+        granted_by: URI.new!("entity://team-alpha/user/admin"),
         granted_at: DateTime.utc_now()
       }
 

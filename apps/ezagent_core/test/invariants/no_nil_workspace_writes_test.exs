@@ -39,7 +39,7 @@ defmodule EzagentCore.Invariants.NoNilWorkspaceWritesTest do
       msg =
         %Ezagent.Message{
           id: "test-no-ws-msg",
-          sender: URI.new!("entity://user/system/admin"),
+          sender: URI.new!("entity://system/user/admin"),
           mentions: [],
           body: %{text: "x", attachments: []},
           inserted_at: DateTime.utc_now()
@@ -53,7 +53,7 @@ defmodule EzagentCore.Invariants.NoNilWorkspaceWritesTest do
     test "kind_snapshots without workspace_uri raises NOT NULL violation" do
       row =
         %Ezagent.Ecto.KindSnapshot{
-          uri: "entity://user/team-alpha/no-ws-snapshot",
+          uri: "entity://team-alpha/user/no-ws-snapshot",
           kind_type: "user",
           state_binary: :erlang.term_to_binary(%{}),
           version: 0,

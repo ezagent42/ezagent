@@ -65,10 +65,10 @@ defmodule EzagentWeb.WorkspaceSwitchController do
        when is_binary(current_entity_uri) do
     caller_uri = Ezagent.URI.new!(current_entity_uri)
     caller_workspace = Ezagent.URI.entity_workspace_uri(caller_uri)
-    target_uri = Ezagent.URI.new!("workspace://" <> workspace.name)
+    target_uri = Ezagent.URI.workspace(workspace.name)
 
     cond do
-      URI.to_string(caller_workspace) == "workspace://system" ->
+      Ezagent.URI.name?(caller_workspace, :system) ->
         # System-member context swap — SPEC §13.2. Keep
         # :current_entity_uri (admin stays admin); swap workspace
         # slot. This is the SECOND sanctioned writer for the

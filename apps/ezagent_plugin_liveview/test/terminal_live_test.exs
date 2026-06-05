@@ -51,7 +51,7 @@ defmodule EzagentPluginLiveview.TerminalLiveTest do
     test "user scheme URI redirects (only entity://agent/... accepted)", %{conn: conn} do
       # User URI is well-formed but wrong host/scheme combo for
       # TerminalLive (which is agent-only).
-      bad = URI.encode_www_form("entity://user/team-alpha/admin")
+      bad = URI.encode_www_form("entity://team-alpha/user/admin")
 
       assert {:error, {:live_redirect, %{to: "/identities"}}} =
                live(conn, "/identities/agents/#{bad}/terminal")
@@ -62,9 +62,7 @@ defmodule EzagentPluginLiveview.TerminalLiveTest do
     test ":not_found render branch for an agent that doesn't exist", %{conn: conn} do
       # Well-formed agent URI but no Kind spawned at it.
       ghost =
-        URI.parse(
-          "entity://agent/team-alpha/cc_ghost-#{System.unique_integer([:positive])}"
-        )
+        Ezagent.URI.new!("entity://team-alpha/agent/cc_ghost-#{System.unique_integer([:positive])}")
 
       encoded = URI.encode_www_form(URI.to_string(ghost))
 
@@ -90,11 +88,9 @@ defmodule EzagentPluginLiveview.TerminalLiveTest do
       # `feedback_ui_no_misleading_buttons` compliant — no terminal UI
       # is offered when there's no PTY behind it.
       agent_uri =
-        URI.parse(
-          "entity://agent/team-alpha/echo_t#{System.unique_integer([:positive])}"
-        )
+        Ezagent.URI.new!("entity://team-alpha/agent/echo_t#{System.unique_integer([:positive])}")
 
-      {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+      {:ok, _pid} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(agent_uri, "echo")
 
       encoded = URI.encode_www_form(URI.to_string(agent_uri))
       {:ok, _lv, html} = live(conn, "/identities/agents/#{encoded}/terminal")
@@ -111,11 +107,10 @@ defmodule EzagentPluginLiveview.TerminalLiveTest do
       # skip :exec.run/2). Matches the pattern used in
       # `apps/ezagent_domain_pty/test/...` server tests.
       agent_uri =
-        URI.parse(
-          "entity://agent/team-alpha/cc_term-#{System.unique_integer([:positive])}"
-        )
+        Ezagent.URI.new!("entity://team-alpha/agent/cc_term-#{System.unique_integer([:positive])}")
 
-      {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+      {:ok, _pid} =
+        Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent_with_flavor(agent_uri, "cc")
 
       {:ok, _pty_pid} =
         Ezagent.Domain.Pty.start(agent_uri, %{cwd: "/tmp", test_mode: true})
@@ -138,11 +133,11 @@ defmodule EzagentPluginLiveview.TerminalLiveTest do
   describe "handle_event/3 — pty_input + pty_resize" do
     test "pty_resize is a no-op (matches admin_live convention)", %{conn: conn} do
       agent_uri =
-        URI.parse(
-          "entity://agent/team-alpha/cc_resize-#{System.unique_integer([:positive])}"
-        )
+        Ezagent.URI.new!("entity://team-alpha/agent/cc_resize-#{System.unique_integer([:positive])}")
 
-      {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+      {:ok, _pid} =
+        Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent_with_flavor(agent_uri, "cc")
+
       {:ok, _pty_pid} = Ezagent.Domain.Pty.start(agent_uri, %{cwd: "/tmp", test_mode: true})
 
       try do

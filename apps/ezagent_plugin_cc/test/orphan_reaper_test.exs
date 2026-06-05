@@ -49,7 +49,7 @@ defmodule EzagentPluginCc.OrphanReaperTest do
     end
 
     test "removes a stale pid file pointing at a dead PID" do
-      uri = URI.parse("entity://agent/team-alpha/cc_dead")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_dead")
       path = PidFile.file_path("cc", uri)
       # Pid 1 is init/launchd — always alive. Use a deliberately-dead
       # large pid (max OS pid is typically 99999 on macOS). We can't
@@ -67,7 +67,7 @@ defmodule EzagentPluginCc.OrphanReaperTest do
     test "removes pid file when start_seconds mismatch (PID recycle)" do
       own_pid = String.to_integer(System.pid())
 
-      uri = URI.parse("entity://agent/team-alpha/cc_recycle")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_recycle")
       path = PidFile.file_path("cc", uri)
       # Deliberately-wrong start time → reaper sees "alive but recycled"
       # → removes file WITHOUT sending kill.
@@ -82,7 +82,7 @@ defmodule EzagentPluginCc.OrphanReaperTest do
     end
 
     test "ignores pid files whose contents don't parse" do
-      uri = URI.parse("entity://agent/team-alpha/cc_garbage")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_garbage")
       path = PidFile.file_path("cc", uri)
       File.write!(path, "this is not a valid pid file\n")
 

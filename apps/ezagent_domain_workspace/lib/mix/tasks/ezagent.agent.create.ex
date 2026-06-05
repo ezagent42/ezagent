@@ -11,7 +11,8 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
 
   ## Usage
 
-      mix ezagent.agent.create entity://agent/<workspace>/<flavor>_<name> \\
+      mix ezagent.agent.create entity://agent/<workspace>/<name> \\
+          --flavor <flavor> \\
           --cwd <dir> \\
           [--with-pty] \\
           [--from <source-agent-uri>] \\
@@ -21,23 +22,26 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
   ## Examples
 
       # cc-flavor agent in the system workspace
-      mix ezagent.agent.create entity://agent/system/cc_demo \\
+      mix ezagent.agent.create entity://agent/system/demo \\
+          --flavor cc \\
           --cwd /Users/you/Workspace/my-project \\
           --caps 'chat.send,workspace.read'
 
       # echo agent without PTY
-      mix ezagent.agent.create entity://agent/system/echo_bot
+      mix ezagent.agent.create entity://agent/system/bot --flavor echo
 
       # echo agent WITH /bin/bash -i sidecar
-      mix ezagent.agent.create entity://agent/system/echo_shell \\
+      mix ezagent.agent.create entity://agent/system/shell \\
+          --flavor echo \\
           --cwd /tmp/echo-sandbox \\
           --with-pty
 
       # curl-flavor agent (no cwd, no PTY)
-      mix ezagent.agent.create entity://agent/system/curl_api
+      mix ezagent.agent.create entity://agent/system/api --flavor curl
 
       # Privileged agent (rare — usually agents have narrow caps)
-      mix ezagent.agent.create entity://agent/system/cc_admin \\
+      mix ezagent.agent.create entity://agent/system/admin \\
+          --flavor cc \\
           --cwd /tmp \\
           --caps '*' --allow-allcaps
 
@@ -45,12 +49,14 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
       # (deep-copy of source's per-agent CLAUDE_CONFIG_DIR — credentials,
       # settings, installed plugins). Chat history is NOT carried over;
       # the new agent starts with a fresh chat slice.
-      mix ezagent.agent.create entity://agent/system/cc_user-alice \\
+      mix ezagent.agent.create entity://agent/system/user-alice \\
+          --flavor cc \\
           --from entity://agent/system/cc_linyilun-default \\
           --cwd /tmp/alice-cwd
 
   ## Flags
 
+  - `--flavor <flavor>` — required stored agent flavor (cc, echo, curl, np, or any registered flavor).
   - `--cwd <dir>` — working directory. Required for `cc` flavor + for
     `echo` when `--with-pty` is passed. Must exist on the host.
   - `--with-pty` — echo opt-in for a `/bin/bash -i` PTY sidecar.
@@ -66,9 +72,9 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
 
   ## URI format
 
-  Agent URIs are `entity://agent/<workspace>/<flavor>_<name>` (SPEC v3
-  §3 / Phase 9 PR-2). The flavor prefix routes the spawn to the
-  correct plugin's Template Class via `Ezagent.AgentFlavorRegistry`.
+  Agent URIs are `entity://agent/<workspace>/<name>`. Flavor is a
+  stored attribute supplied by `--flavor` and routed through
+  `Ezagent.AgentFlavorRegistry`.
 
   ## What this task does NOT do anymore
 
@@ -111,6 +117,7 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
         strict: [
           caps: :string,
           allow_allcaps: :boolean,
+          flavor: :string,
           cwd: :string,
           with_pty: :boolean,
           from: :string
@@ -123,16 +130,16 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
 
       _ ->
         Mix.raise("""
-        usage: mix ezagent.agent.create <agent_uri> [--cwd <dir>] [--with-pty] [--from <source-uri>] [--caps 'kind.behavior,...'] [--allow-allcaps]
+        usage: mix ezagent.agent.create <agent_uri> --flavor <flavor> [--cwd <dir>] [--with-pty] [--from <source-uri>] [--caps 'kind.behavior,...'] [--allow-allcaps]
 
         Example:
-          mix ezagent.agent.create entity://agent/system/cc_demo --cwd /tmp --caps 'chat.send,workspace.read'
+          mix ezagent.agent.create <agent-uri> --flavor cc --cwd /tmp --caps 'chat.send,workspace.read'
 
         Clone an existing cc agent's config_dir:
-          mix ezagent.agent.create entity://agent/system/cc_alice --from entity://agent/system/cc_linyilun-default --cwd /tmp/alice
+          mix ezagent.agent.create <agent-uri> --flavor cc --from <source-agent-uri> --cwd /tmp/alice
 
-        Agent URI format: entity://agent/<workspace>/<flavor>_<name>
-          where <flavor> is one of cc, echo, curl, np (or any registered flavor)
+        Agent URI: an entity agent URI built by Ezagent.URI.agent/2
+          where --flavor is one of cc, echo, curl, np (or any registered flavor)
         """)
     end
   end
@@ -143,6 +150,7 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
     cwd = Keyword.get(opts, :cwd, "")
     with_pty? = Keyword.get(opts, :with_pty, false)
     from_str = Keyword.get(opts, :from)
+    flavor = opts |> Keyword.get(:flavor, "") |> to_string() |> String.trim()
 
     # SPEC caps-cleanup-v1 §4.4 — operator mix task runs under
     # `system://mix-task` (closed Catalog; operator already has shell
@@ -153,11 +161,12 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
 
     admin_ctx = %{
       caller: Ezagent.SystemPrincipal.uri("mix-task"),
-      caps: Ezagent.SystemPrincipal.caps("system://mix-task")
+      caps: "mix-task" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps()
     }
 
     with {:ok, agent_uri} <- parse_uri(agent_uri_str),
-         {:ok, workspace_uri, flavor, name} <- decompose(agent_uri),
+         :ok <- require_flavor(flavor),
+         {:ok, workspace_uri, name} <- decompose(agent_uri),
          {:ok, from_uri} <- parse_from(from_str),
          :ok <- check_allcaps_flag(caps_str, allow_allcaps),
          {:ok, caps} <- Ezagent.Capability.Parser.parse(caps_str, admin_uri),
@@ -182,8 +191,8 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
   end
 
   # `--from` is optional. When omitted → no `:from` key in args.
-  # When present, parse as an entity://agent/<workspace>/<flavor>_<name>
-  # URI; the action body handles cap-check + source resolution.
+  # When present, parse as an entity agent URI; the
+  # action body handles cap-check + source resolution.
   defp parse_from(nil), do: {:ok, nil}
 
   defp parse_from(s) when is_binary(s) do
@@ -203,19 +212,18 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
       uri = Ezagent.URI.new!(s)
 
       case uri do
-        %URI{scheme: "entity", host: "agent", path: "/" <> rest} ->
-          with [_workspace, entity_name] when entity_name != "" <-
-                 String.split(rest, "/", parts: 2),
-               true <- String.contains?(entity_name, "_") do
+        %URI{scheme: "entity"} ->
+          with {:ok, "agent"} <- Ezagent.URI.type(uri),
+               {:ok, _workspace_name} <- Ezagent.URI.workspace_name(uri),
+               {:ok, entity_name} when entity_name != "" <- Ezagent.URI.name(uri) do
             {:ok, uri}
           else
             _ ->
-              {:error,
-               {:bad_agent_uri, s, "agent entity_name must be <flavor>_<name> (e.g. cc_my-bot)"}}
+              {:error, {:bad_agent_uri, s, "expected entity agent URI"}}
           end
 
         _ ->
-          {:error, {:bad_uri, s, "expected entity://agent/<workspace>/<flavor>_<name>"}}
+          {:error, {:bad_uri, s, "expected entity agent URI"}}
       end
     rescue
       e in ArgumentError ->
@@ -223,15 +231,19 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
     end
   end
 
-  # Split entity://agent/<workspace>/<flavor>_<name> into the workspace
-  # URI + flavor + name (the parts the action body expects in `args`).
-  defp decompose(%URI{scheme: "entity", host: "agent", path: "/" <> rest} = _agent_uri) do
-    with [workspace_name, entity_name] <- String.split(rest, "/", parts: 2),
-         [flavor, name] <- String.split(entity_name, "_", parts: 2) do
-      workspace_uri = URI.new!("workspace://#{workspace_name}") # uri-canonical-allow: §3.6 structural derivation from validated entity path
-      {:ok, workspace_uri, flavor, name}
+  defp require_flavor(flavor) when is_binary(flavor) and flavor != "", do: :ok
+  defp require_flavor(_), do: {:error, :flavor_required}
+
+  # Split entity://agent/<workspace>/<name> into the workspace URI +
+  # opaque name. Flavor comes from `--flavor`.
+  defp decompose(%URI{scheme: "entity"} = agent_uri) do
+    with {:ok, "agent"} <- Ezagent.URI.type(agent_uri),
+         {:ok, workspace_name} <- Ezagent.URI.workspace_name(agent_uri),
+         {:ok, name} when name != "" <- Ezagent.URI.name(agent_uri) do
+      workspace_uri = Ezagent.URI.workspace(workspace_name)
+      {:ok, workspace_uri, name}
     else
-      _ -> {:error, {:bad_agent_uri_shape, rest}}
+      _ -> {:error, {:bad_agent_uri_shape, URI.to_string(agent_uri)}}
     end
   end
 

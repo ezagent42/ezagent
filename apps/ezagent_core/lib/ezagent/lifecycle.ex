@@ -401,7 +401,7 @@ defmodule Ezagent.Lifecycle do
     end)
   end
 
-  defp ever_created?(%{uri: %URI{} = uri}), do: ever_created?(URI.to_string(uri))
+  defp ever_created?(%{uri: %URI{} = uri}), do: ever_created?(Ezagent.URI.stable_key(uri))
   defp ever_created?(%{uri: uri}) when is_binary(uri), do: ever_created?(uri)
   defp ever_created?(uri_str) when is_binary(uri_str), do: marker_lookup(uri_str)
   defp ever_created?(_), do: false

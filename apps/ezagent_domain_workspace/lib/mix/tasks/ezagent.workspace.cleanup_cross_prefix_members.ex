@@ -111,7 +111,7 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembers do
       case classify_members(workspace) do
         {[], _kept} ->
           Mix.shell().info(
-            "✓ workspace://#{workspace.name} clean (#{length(workspace.members)} members)"
+            "✓ workspace #{workspace.name} clean (#{length(workspace.members)} members)"
           )
 
           {viol_count, ws_count}
@@ -145,9 +145,9 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembers do
   #     form is required for membership identity (task #55 round-2
   #     codex r2 HIGH-1 follow-up).
   #   - `entity://` URI whose workspace segment doesn't match
-  #     `workspace_name`, including 4+ segment / trailing slash / non
-  #     `user|agent` host shapes that pre-canonicalize parsing
-  #     admitted (HIGH-1 fix).
+  #     `workspace_name`, including malformed or non-`user|agent`
+  #     entity types that pre-canonicalize parsing admitted
+  #     (HIGH-1 fix).
   #
   # Task #55 round-2 codex r2 review HIGH-2 follow-up — keeps the
   # mix task's pre-scan in lockstep with the Behavior's classifier so
@@ -158,9 +158,8 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembers do
     cond do
       member.query != nil -> true
       member.fragment != nil -> true
-      not (is_binary(member.host) and member.host in ["user", "agent"]) -> true
-      not is_binary(member.path) -> true
-      true -> entity_path_cross_prefix?(member.path, workspace_name)
+      not valid_entity_type?(member) -> true
+      true -> entity_workspace_cross_prefix?(member, workspace_name)
     end
   end
 
@@ -168,18 +167,19 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembers do
 
   defp cross_prefix?(_other, _workspace_name), do: true
 
-  defp entity_path_cross_prefix?("/" <> rest, workspace_name) do
-    case String.split(rest, "/") do
-      [^workspace_name, name] when name != "" -> false
+  defp valid_entity_type?(%URI{} = member),
+    do: Ezagent.URI.type(member) in [{:ok, "user"}, {:ok, "agent"}]
+
+  defp entity_workspace_cross_prefix?(%URI{} = member, workspace_name) do
+    case Ezagent.URI.workspace_name(member) do
+      {:ok, ^workspace_name} -> false
       _ -> true
     end
   end
 
-  defp entity_path_cross_prefix?(_, _), do: true
-
   defp report_violators(workspace_name, violators) do
     Mix.shell().info(
-      "⚠ workspace://#{workspace_name} has #{length(violators)} cross-prefix member(s):"
+      "⚠ workspace #{workspace_name} has #{length(violators)} cross-prefix member(s):"
     )
 
     Enum.each(violators, fn %URI{} = member ->
@@ -198,14 +198,16 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembers do
        when is_binary(f) and f != "",
        do: "non-canonical URI (fragment present)"
 
-  defp violation_reason(%URI{scheme: "entity", host: host}, _workspace_name)
-       when is_binary(host) and host not in ["user", "agent"],
-       do: "bad entity type '#{host}' (must be 'user' or 'agent')"
+  defp violation_reason(%URI{scheme: "entity"} = uri, workspace_name) do
+    case Ezagent.URI.type(uri) do
+      {:ok, type} when type not in ["user", "agent"] ->
+        "bad entity type '#{type}' (must be 'user' or 'agent')"
 
-  defp violation_reason(%URI{scheme: "entity", path: "/" <> rest}, workspace_name) do
-    case String.split(rest, "/", parts: 2) do
-      [other_ws, _name] -> "workspace segment '#{other_ws}' ≠ '#{workspace_name}'"
-      _ -> "malformed entity URI (not 3-segment)"
+      _ ->
+        case Ezagent.URI.workspace_name(uri) do
+          {:ok, other_ws} -> "workspace segment '#{other_ws}' ≠ '#{workspace_name}'"
+          :error -> "malformed entity URI (not 3-segment)"
+        end
     end
   end
 
@@ -226,12 +228,12 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembers do
       {:ok, %{removed: removed, kept_count: kept_count}} ->
         Mix.shell().info(
           "  → stripped #{length(removed)} member(s) via dispatch. " <>
-            "workspace://#{workspace_name} now has #{kept_count} member(s)."
+            "workspace #{workspace_name} now has #{kept_count} member(s)."
         )
 
       {:error, reason} ->
         Mix.shell().error(
-          "  ! remove_cross_prefix_members dispatch failed for workspace://" <>
+          "  ! remove_cross_prefix_members dispatch failed for workspace " <>
             "#{workspace_name}: #{inspect(reason)}"
         )
     end

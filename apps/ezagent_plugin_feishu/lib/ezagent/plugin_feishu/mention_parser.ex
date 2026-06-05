@@ -55,7 +55,7 @@ defmodule EzagentPluginFeishu.MentionParser do
   Extract live agent URIs from free text. Returns `[URI.t()]`.
 
       iex> EzagentPluginFeishu.MentionParser.extract_agent_mentions("@architect look")
-      [%URI{scheme: "entity", host: "agent", path: "/cc_architect", ...}]  # if live
+      [%URI{scheme: "entity", ...}]  # if live
 
   Returns `[]` if no `@name` tokens or none of them resolve to a live agent.
   """
@@ -131,7 +131,7 @@ defmodule EzagentPluginFeishu.MentionParser do
 
   def extract_mentions(_, _), do: {[], []}
 
-  # All currently-live `entity://agent/<flavor>_<name>` URIs.
+  # All currently-live `entity://agent/<workspace>/<name>` URIs.
   defp live_agent_uris do
     KindRegistry.list_all()
     |> Enum.flat_map(fn {uri_str, _pid} ->
@@ -139,7 +139,7 @@ defmodule EzagentPluginFeishu.MentionParser do
       # with try/rescue (silent-drop fallback for corrupted registry rows).
       try do
         case Ezagent.URI.new!(uri_str) do
-          %URI{scheme: "entity", host: "agent"} = uri -> [uri]
+          %URI{scheme: "entity"} = uri -> if Ezagent.URI.type?(uri, :agent), do: [uri], else: []
           _ -> []
         end
       rescue
@@ -148,40 +148,13 @@ defmodule EzagentPluginFeishu.MentionParser do
     end)
   end
 
-  # True if the URI's display name matches one of the typed `@<name>`
-  # tokens. The URI has the shape `entity://agent/<workspace>/<flavor>_<suffix>`.
-  # We accept TWO match shapes — both real UX surfaces in Feishu:
-  #
-  #   - Typed `@cc_e2e_final` matches the FULL entity_name `cc_e2e_final`
-  #     (what the operator sees in the LV MemberPanel).
-  #   - Typed `@e2e_final` matches the suffix-after-flavor `e2e_final`
-  #     (the natural-language handle that drops the `cc_` prefix).
-  #
-  # Phase 9 PR-2 (SPEC v3 §3): entity URIs are 3-segment
-  # /<workspace>/<entity_name>; extract entity_name then optionally
-  # split on flavor `_` separator.
-  #
-  # 2026-05-26 (Allen e2e): the suffix-only form was the original
-  # SPEC §5.14 design, but operators copy-paste the full agent name
-  # from MemberPanel into Feishu @ — that lookup must succeed too,
-  # or every Feishu-side @-mention silently fails to route (mentions
-  # = []) and the cc agent never receives the message.
-  defp matches_any_typed_name?(%URI{path: "/" <> rest}, typed_names) when rest != "" do
-    case String.split(rest, "/", parts: 2) do
-      [_workspace, entity_name] when entity_name != "" ->
-        # Match A: full entity_name (operator copies from MemberPanel).
-        if entity_name in typed_names do
-          true
-        else
-          # Match B: suffix after flavor (natural-language handle).
-          case String.split(entity_name, "_", parts: 2) do
-            [_flavor, suffix] when suffix != "" -> suffix in typed_names
-            _ -> false
-          end
-        end
-
-      _ ->
-        false
+  # True if the URI's opaque display name matches one of the typed
+  # `@<name>` tokens. Agent flavor is stored metadata and never parsed
+  # out of the URI name.
+  defp matches_any_typed_name?(%URI{} = uri, typed_names) do
+    case Ezagent.URI.name(uri) do
+      {:ok, entity_name} -> entity_name in typed_names
+      :error -> false
     end
   end
 

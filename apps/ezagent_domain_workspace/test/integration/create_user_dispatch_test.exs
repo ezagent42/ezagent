@@ -50,7 +50,7 @@ defmodule Ezagent.Integration.CreateUserDispatchTest do
   describe "happy path — user is provisioned via dispatch" do
     test "user_uri matching the target workspace inserts a row + returns dispatch payload",
          %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
-      user_uri_str = "entity://user/#{ws_name}/alice"
+      user_uri_str = "entity://#{ws_name}/user/alice"
 
       assert {:ok,
               %{
@@ -89,7 +89,7 @@ defmodule Ezagent.Integration.CreateUserDispatchTest do
       workspace_uri: workspace_uri,
       admin_ctx: admin_ctx
     } do
-      user_uri_str = "entity://user/#{ws_name}/no-pw"
+      user_uri_str = "entity://#{ws_name}/user/no-pw"
 
       assert {:ok, %{password_set: false}} =
                Workspace.create_user(
@@ -108,7 +108,7 @@ defmodule Ezagent.Integration.CreateUserDispatchTest do
       # workspace_uri target is `workspace://create-user-test-N`; the
       # user URI's workspace segment is `other-ws`. The action body's
       # `ensure_user_in_target_workspace/2` must refuse.
-      user_uri_str = "entity://user/other-ws/bob"
+      user_uri_str = "entity://other-ws/user/bob"
 
       assert {:error, {:cross_workspace_user, target_workspace: _, user_workspace: _}} =
                Workspace.create_user(
@@ -160,7 +160,7 @@ defmodule Ezagent.Integration.CreateUserDispatchTest do
                Workspace.create_user(
                  workspace_uri,
                  %{
-                   user_uri: "entity://agent/#{ws_name}/cc_x",
+                   user_uri: "entity://#{ws_name}/agent/cc_x",
                    password: nil,
                    caps: ""
                  },
@@ -172,7 +172,7 @@ defmodule Ezagent.Integration.CreateUserDispatchTest do
   describe "idempotency — duplicate user_uri" do
     test "second create_user on the same URI returns a changeset error + leaves first row intact",
          %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
-      user_uri_str = "entity://user/#{ws_name}/dup"
+      user_uri_str = "entity://#{ws_name}/user/dup"
 
       assert {:ok, _} =
                Workspace.create_user(

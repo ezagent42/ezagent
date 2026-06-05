@@ -55,7 +55,7 @@ defmodule Ezagent.Integration.HomeMigrationTest do
 
     # A User entity snapshot carrying caps — proves general DB content
     # survives migration (queried via the normal read path).
-    user_uri = "entity://user/system/alice"
+    user_uri = "entity://system/user/alice"
 
     user_state = %{
       identity: %{
@@ -82,7 +82,7 @@ defmodule Ezagent.Integration.HomeMigrationTest do
     # under home A's profile dir — the prime portability suspect.
     workspace = "team-alpha"
     agent_name = "cc_demo"
-    agent_uri = "entity://agent/#{workspace}/#{agent_name}"
+    agent_uri = "entity://#{workspace}/agent/#{agent_name}"
     config_dir_a = Path.join([profile_dir_a, "cc-agents", workspace, agent_name])
 
     sandbox_state = %{
@@ -197,7 +197,7 @@ defmodule Ezagent.Integration.HomeMigrationTest do
 
     {:ok, _} =
       SnapshotFixtures.upsert_kind_snapshot(
-        "entity://user/system/bob",
+        "entity://system/user/bob",
         "user",
         :erlang.term_to_binary(%{identity: %{state: %{caps: MapSet.new()}}}),
         0,
@@ -259,7 +259,7 @@ defmodule Ezagent.Integration.HomeMigrationTest do
 
     {:ok, _} =
       SnapshotFixtures.upsert_kind_snapshot(
-        "entity://agent/ws/cc_x",
+        "entity://ws/agent/cc_x",
         "agent",
         blob,
         0,
@@ -275,7 +275,7 @@ defmodule Ezagent.Integration.HomeMigrationTest do
     # Read back the raw blob WITHOUT :safe (as restore does) and confirm the
     # path moved and the exotic atom survived.
     boot_repo!(db)
-    row = KindSnapshot.get("entity://agent/ws/cc_x")
+    row = KindSnapshot.get("entity://ws/agent/cc_x")
     decoded = :erlang.binary_to_term(row.state_binary)
     sb = decoded.sandbox.state
     assert sb.config_dir_path == Path.join([new_profile_dir, "cc-agents", "ws", "cc_x"])

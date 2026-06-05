@@ -435,15 +435,15 @@ defmodule Ezagent.Kind.Snapshot do
         case parsed do
           %URI{scheme: "system"} ->
             # System-tier snapshot — admin's workspace is the
-            # structural sink (SPEC v3 §13.1). Inlined literal.
-            "workspace://system"
+            # structural sink (SPEC v3 §13.1).
+            Ezagent.URI.workspace(:system) |> URI.to_string()
 
           other ->
             raise ArgumentError,
                   "Ezagent.Kind.Snapshot.derive_workspace_uri/1: cannot derive " <>
                     "workspace for URI=#{inspect(other)}. Per SPEC #324 rev 3, only " <>
                     "the 4 per-tenant schemes (entity/workspace/session derive " <>
-                    "structurally) and `system://` (lands in workspace://system) " <>
+                    "structurally) and system scope (lands in the system workspace) " <>
                     "are accepted. Adding this URI to the snapshot path requires " <>
                     "either making its scheme workspace-aware or explicitly " <>
                     "declaring it system-scope at the call site."

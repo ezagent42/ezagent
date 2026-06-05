@@ -125,7 +125,7 @@ defmodule Ezagent.Domain.Pty.E2E.Category07PtyTest do
       # operator-typed byte goes through dispatch (no direct PtyServer
       # writes from LV).
       agent_uri = fresh_uri("dispatch_bytes")
-      {:ok, _kind} = Ezagent.SpawnRegistry.spawn(agent_uri)
+      {:ok, _kind} = EzagentDomainPty.Test.PtyAgentFixture.spawn(agent_uri)
       {:ok, pty} = Pty.start(agent_uri, %{cwd: "/tmp", test_mode: true})
       on_exit(fn -> if Process.alive?(pty), do: :ok = Pty.stop(agent_uri) end)
 
@@ -146,7 +146,7 @@ defmodule Ezagent.Domain.Pty.E2E.Category07PtyTest do
       # mock-not-stub rule.
       {:ok, kind_pid} = Ezagent.KindRegistry.lookup(agent_uri)
       state = :sys.get_state(kind_pid, 500)
-      slice = state.state.pty
+      slice = pty_slice_state(state.state.pty)
 
       assert slice.write_calls >= 100
       assert slice.total_bytes >= 100
@@ -157,7 +157,7 @@ defmodule Ezagent.Domain.Pty.E2E.Category07PtyTest do
       # DON'T start a PtyServer. The Behavior.handle_write must surface
       # `:no_pty_server` rather than silently succeed.
       bare = fresh_uri("no_pty")
-      {:ok, _kind} = Ezagent.SpawnRegistry.spawn(bare)
+      {:ok, _kind} = EzagentDomainPty.Test.PtyAgentFixture.spawn(bare)
 
       target = URI.parse(URI.to_string(bare) <> "?action=pty.write")
 
@@ -261,7 +261,9 @@ defmodule Ezagent.Domain.Pty.E2E.Category07PtyTest do
       # children by walking pid files written here at spawn time.
       # Test_mode doesn't spawn a real OS process, so we exercise
       # PidFile directly to verify the format the reaper consumes.
-      tmp_home = Path.join(System.tmp_dir!(), "ezagent-pty-e2e-#{System.unique_integer([:positive])}")
+      tmp_home =
+        Path.join(System.tmp_dir!(), "ezagent-pty-e2e-#{System.unique_integer([:positive])}")
+
       File.mkdir_p!(tmp_home)
       prev_home = System.get_env("EZAGENT_HOME")
       prev_profile = System.get_env("EZAGENT_PROFILE")
@@ -269,7 +271,9 @@ defmodule Ezagent.Domain.Pty.E2E.Category07PtyTest do
       System.put_env("EZAGENT_PROFILE", "pty-e2e")
 
       on_exit(fn ->
-        if prev_home, do: System.put_env("EZAGENT_HOME", prev_home), else: System.delete_env("EZAGENT_HOME")
+        if prev_home,
+          do: System.put_env("EZAGENT_HOME", prev_home),
+          else: System.delete_env("EZAGENT_HOME")
 
         if prev_profile,
           do: System.put_env("EZAGENT_PROFILE", prev_profile),
@@ -346,9 +350,7 @@ defmodule Ezagent.Domain.Pty.E2E.Category07PtyTest do
   # ============================================================
 
   defp fresh_uri(prefix \\ "test") do
-    URI.new!(
-      "entity://agent/team-alpha/cc_#{prefix}-#{System.unique_integer([:positive])}"
-    )
+    URI.new!("entity://team-alpha/agent/cc_#{prefix}-#{System.unique_integer([:positive])}")
   end
 
   defp admin_ctx do
@@ -358,6 +360,9 @@ defmodule Ezagent.Domain.Pty.E2E.Category07PtyTest do
       reply: {:caller_inbox, self()}
     }
   end
+
+  defp pty_slice_state(%{state: state}) when is_map(state), do: state
+  defp pty_slice_state(slice), do: slice
 
   defp eventually(fun, timeout_ms) when timeout_ms > 0 do
     case fun.() do

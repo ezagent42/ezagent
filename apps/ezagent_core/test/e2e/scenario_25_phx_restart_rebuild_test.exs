@@ -73,7 +73,7 @@ defmodule Ezagent.E2E.Scenario25PhxRestartRebuildTest do
   end
 
   defp dispatch(uri, action, args \\ %{}) do
-    target = URI.parse("#{URI.to_string(uri)}?action=#{action}")
+    target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=#{action}")
 
     Invocation.dispatch(%Invocation{
       target: target,
@@ -103,7 +103,7 @@ defmodule Ezagent.E2E.Scenario25PhxRestartRebuildTest do
       # Mirrors the lazy-spawn path the Router uses on registry miss:
       # write -> kill -> rebuild reads the snapshot -> caller spawns
       # a new Kind seeded with this state.
-      uri = URI.parse("entity://user/team-alpha/scen25-rebuild-#{uniq()}")
+      uri = Ezagent.URI.new!("entity://team-alpha/user/scen25-rebuild-#{uniq()}")
 
       state = %{
         identity: %{
@@ -133,7 +133,7 @@ defmodule Ezagent.E2E.Scenario25PhxRestartRebuildTest do
       # The "first dispatch ever" case — Router treats :not_found as
       # "spawn fresh" not "fail dispatch". This is the lazy-spawn
       # contract per `StateRebuilder` moduledoc.
-      uri = URI.parse("entity://user/team-alpha/scen25-noinit-#{uniq()}")
+      uri = Ezagent.URI.new!("entity://team-alpha/user/scen25-noinit-#{uniq()}")
 
       assert {:error, :not_found} = StateRebuilder.rebuild(uri)
     end
@@ -144,8 +144,8 @@ defmodule Ezagent.E2E.Scenario25PhxRestartRebuildTest do
       # rows.
       initial = StateRebuilder.rebuild_all(:all)
 
-      uri_a = URI.parse("entity://user/team-alpha/scen25-bulk-a-#{uniq()}")
-      uri_b = URI.parse("entity://user/team-alpha/scen25-bulk-b-#{uniq()}")
+      uri_a = Ezagent.URI.new!("entity://team-alpha/user/scen25-bulk-a-#{uniq()}")
+      uri_b = Ezagent.URI.new!("entity://team-alpha/user/scen25-bulk-b-#{uniq()}")
 
       {:ok, _} = SnapshotStore.write(uri_a, %{identity: %{caps: MapSet.new()}}, kind_type: :user)
       {:ok, _} = SnapshotStore.write(uri_b, %{identity: %{caps: MapSet.new()}}, kind_type: :user)
@@ -162,17 +162,17 @@ defmodule Ezagent.E2E.Scenario25PhxRestartRebuildTest do
       # rebuild MUST NOT bleed across workspaces. If StateRebuilder
       # regresses to system-scope walking, this assertion fires.
       ws_name = "scen25-ws-" <> Integer.to_string(uniq())
-      uri_in = URI.parse("entity://user/#{ws_name}/scen25-in-#{uniq()}")
+      uri_in = Ezagent.URI.new!("entity://#{ws_name}/user/scen25-in-#{uniq()}")
 
       other_ws_name = "scen25-other-" <> Integer.to_string(uniq())
-      uri_out = URI.parse("entity://user/#{other_ws_name}/scen25-out-#{uniq()}")
+      uri_out = Ezagent.URI.new!("entity://#{other_ws_name}/user/scen25-out-#{uniq()}")
 
       {:ok, _} = SnapshotStore.write(uri_in, %{identity: %{caps: MapSet.new()}}, kind_type: :user)
 
       {:ok, _} =
         SnapshotStore.write(uri_out, %{identity: %{caps: MapSet.new()}}, kind_type: :user)
 
-      workspace = URI.parse("workspace://#{ws_name}")
+      workspace = Ezagent.URI.new!("workspace://#{ws_name}")
       result = StateRebuilder.rebuild_all(workspace)
 
       # Exactly one row in this workspace.
@@ -197,7 +197,7 @@ defmodule Ezagent.E2E.Scenario25PhxRestartRebuildTest do
     # workspace ETS binding even after the binding has been wiped.
     test "SpawnRegistry.spawn/1 re-binds workspace for an existing session URI after ETS wipe" do
       session_uri =
-        URI.parse("session://default/team-alpha/scen25-rebind-#{uniq()}")
+        Ezagent.URI.new!("session://team-alpha/default/scen25-rebind-#{uniq()}")
 
       uri_str = URI.to_string(session_uri)
       :ok = KindSnapshot.delete(uri_str)
@@ -243,7 +243,7 @@ defmodule Ezagent.E2E.Scenario25PhxRestartRebuildTest do
       # Agent's persistence/0 is {:snapshot, :on_change} per Allen
       # 2026-05-25 CLI persistence fix. This locks the contract:
       # post_restart `sandbox.read` MUST return the pre_restart values.
-      agent_uri = URI.parse("entity://agent/team-alpha/scen25-agent-#{uniq()}")
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/scen25-agent-#{uniq()}")
 
       {:ok, pid1} = Ezagent.Kind.spawn(Agent, %{uri: agent_uri})
       :ok = WorkspaceRegistry.bind(agent_uri, @workspace_uri)
@@ -285,7 +285,7 @@ defmodule Ezagent.E2E.Scenario25PhxRestartRebuildTest do
       # cache; the URI is the source of truth. Post-restart, the cache
       # is empty until the spawn fn re-binds, but `Capability.workspace_of/1`
       # MUST resolve the URI without consulting ETS.
-      agent_uri = URI.parse("entity://agent/team-alpha/scen25-prefix-#{uniq()}")
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/scen25-prefix-#{uniq()}")
 
       # `workspace_of/1` is a pure URI op — wipes / restarts cannot
       # affect its output. Compare via `URI.to_string/1` to avoid the
@@ -319,7 +319,7 @@ defmodule Ezagent.E2E.Scenario25PhxRestartRebuildTest do
       # bulk replay (Decision #115 honesty: log + telemetry + continue
       # instead of crashing the whole boot).
       ws_name = "scen25-corrupt-" <> Integer.to_string(uniq())
-      uri = URI.parse("entity://user/#{ws_name}/scen25-corrupt-#{uniq()}")
+      uri = Ezagent.URI.new!("entity://#{ws_name}/user/scen25-corrupt-#{uniq()}")
       uri_str = URI.to_string(uri)
 
       # First write a real row so the schema is populated, then poison
@@ -336,7 +336,7 @@ defmodule Ezagent.E2E.Scenario25PhxRestartRebuildTest do
           set: [state_binary: <<0, 1, 2, 3>>, state: nil]
         )
 
-      workspace = URI.parse("workspace://#{ws_name}")
+      workspace = Ezagent.URI.new!("workspace://#{ws_name}")
       result = StateRebuilder.rebuild_all(workspace)
 
       # The row appears in :skipped (decode_state returned :error ->
@@ -358,7 +358,7 @@ defmodule Ezagent.E2E.Scenario25PhxRestartRebuildTest do
       # returns a well-formed summary even on an empty workspace
       # (the smallest invariant: shape contract is preserved regardless
       # of the row population).
-      workspace = URI.parse("workspace://scen25-empty-#{uniq()}")
+      workspace = Ezagent.URI.new!("workspace://scen25-empty-#{uniq()}")
 
       assert %{rebuilt: 0, failed: [], skipped: []} = StateRebuilder.rebuild_all(workspace)
     end

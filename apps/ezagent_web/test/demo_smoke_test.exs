@@ -161,17 +161,17 @@ defmodule EzagentCore.Invariants.DemoSmokeTest do
       assert length(instances) > 0,
              """
              EzagentDomainUi.AutoDerive.list_instances(:user) returned []
-             but entity://user/system/admin should be live in the registry. Check
+             but entity://system/user/admin should be live in the registry. Check
              the state-field accessors (:kind vs :kind_module,
              :state vs :slices) in apps/ezagent_domain_ui/lib/.../auto_derive.ex.
              """
 
       uris = Enum.map(instances, &URI.to_string(&1.uri))
-      assert "entity://user/system/admin" in uris
+      assert "entity://system/user/admin" in uris
     end
 
     test "list_instances(:session) finds the seeded default session" do
-      # The `session://default/system/main` seed is a DynamicSupervisor
+      # The `session://system/default/main` seed is a DynamicSupervisor
       # child spawned ONCE at chat-app boot — NOT a permanent static
       # child. Under the full concurrent umbrella run another test can
       # terminate it (or it is mid-respawn) when this assertion reads the
@@ -188,14 +188,14 @@ defmodule EzagentCore.Invariants.DemoSmokeTest do
       # Seed name was renamed from "main" → "default" (#408/#410 era).
       # Accept either to stay robust across the rename, but require at
       # least one of the two well-known seeded sessions to be live.
-      assert "session://default/system/default" in uris or
-               "session://default/system/main" in uris,
+      assert "session://system/default/default" in uris or
+               "session://system/default/main" in uris,
              "expected a seeded system session; got: #{inspect(uris)}"
     end
 
-    test "instance_detail/1 returns a populated map for entity://user/system/admin" do
+    test "instance_detail/1 returns a populated map for entity://system/user/admin" do
       {:ok, detail} =
-        EzagentDomainUi.AutoDerive.instance_detail(URI.parse("entity://user/system/admin"))
+        EzagentDomainUi.AutoDerive.instance_detail(Ezagent.URI.new!("entity://system/user/admin"))
 
       assert detail.kind_module == "Ezagent.Entity.User"
       assert is_map(detail.slices)

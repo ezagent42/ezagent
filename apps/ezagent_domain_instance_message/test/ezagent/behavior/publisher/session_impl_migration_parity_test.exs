@@ -58,7 +58,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplMigrationParityTest do
       %{
         read: fn key, default -> Map.get(slice, key, default) end,
         transients: slice,
-        self_uri: URI.parse("session://default/team-alpha/parity"),
+        self_uri: Ezagent.URI.new!("session://team-alpha/default/parity"),
         caller: nil,
         caps: MapSet.new()
       },
@@ -119,7 +119,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplMigrationParityTest do
     end
 
     test "activate/2 rebuilds subscribers + monitors EMPTY (no stale-handle carry)" do
-      ctx = %{self_uri: URI.parse("session://default/team-alpha/parity")}
+      ctx = %{self_uri: Ezagent.URI.new!("session://team-alpha/default/parity")}
       assert {:ok, transients} = SessionImpl.activate(%{ring: [], cursor: 0, retention: 100}, ctx)
       assert transients.subscribers == %{}
       assert transients.monitors == %{}
@@ -137,7 +137,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplMigrationParityTest do
     test "populated ring returns latest event's payload + current cursor" do
       ev = %Event{
         cursor: 3,
-        publisher_uri: URI.parse("session://x/y/z"),
+        publisher_uri: Ezagent.URI.new!("session://x/y/z"),
         slice_key: :chat,
         event_at: DateTime.utc_now(),
         payload: %{new_slice: %{members: %{}}}
@@ -215,12 +215,12 @@ defmodule Ezagent.Behavior.Publisher.SessionImplMigrationParityTest do
     end
 
     test "within_workspace returns :any (workspace admin grants)" do
-      ws = URI.parse("workspace://team-alpha")
+      ws = Ezagent.URI.new!("workspace://team-alpha")
       assert SessionImpl.data_owner({:within_workspace, ws}) == :any
     end
 
     test "non-session URI returns :no_owner" do
-      assert SessionImpl.data_owner(URI.parse("entity://user/x/y")) == :no_owner
+      assert SessionImpl.data_owner(Ezagent.URI.new!("entity://x/user/y")) == :no_owner
     end
   end
 end

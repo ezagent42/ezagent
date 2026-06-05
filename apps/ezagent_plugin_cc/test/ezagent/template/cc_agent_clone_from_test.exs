@@ -60,7 +60,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCloneFromTest do
       # the universal `config_dir` key — that is the existing "reference
       # dir to copy at spawn" key the cc Template Class reads.
       # config_dir promotion (Allen 2026-06-03): universal neutral key.
-      target_uri = URI.new!("entity://agent/system/cc_clone-target-#{uniq()}")
+      target_uri = URI.new!("entity://system/agent/cc_clone-target-#{uniq()}")
       cleanup_target(target_uri)
       # PR-3: the per-agent TARGET is domain-allocated + provided as
       # "allocated_config_dir"; the plugin materializes the source INTO it.
@@ -96,7 +96,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCloneFromTest do
       source = make_source_dir()
       File.write!(Path.join(source, "user-data.txt"), "before-clone")
 
-      target_uri = URI.new!("entity://agent/system/cc_indep-target-#{uniq()}")
+      target_uri = URI.new!("entity://system/agent/cc_indep-target-#{uniq()}")
       cleanup_target(target_uri)
       # PR-3: the per-agent TARGET is domain-allocated + provided as
       # "allocated_config_dir"; the plugin materializes the source INTO it.

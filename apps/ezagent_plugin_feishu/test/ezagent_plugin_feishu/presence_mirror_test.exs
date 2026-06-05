@@ -14,7 +14,7 @@ defmodule EzagentPluginFeishu.PresenceMirrorTest do
   defp unique_user_uri(suffix),
     do:
       URI.parse(
-        "entity://user/team-alpha/feishu_presence_test_#{suffix}_#{System.unique_integer([:positive])}"
+        "entity://team-alpha/user/feishu_presence_test_#{suffix}_#{System.unique_integer([:positive])}"
       )
 
   defp wait_for(fun, timeout_ms \\ 500) do

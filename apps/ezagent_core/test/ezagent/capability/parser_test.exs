@@ -3,7 +3,7 @@ defmodule Ezagent.Capability.ParserTest do
 
   alias Ezagent.Capability.Parser
 
-  @granter URI.parse("entity://user/system/admin")
+  @granter Ezagent.URI.new!("entity://system/user/admin")
   @now ~U[2026-05-16 00:00:00.000000Z]
 
   describe "parse/3" do

@@ -25,7 +25,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
   alias Ezagent.Entity.{Session, User}
 
   setup do
-    # session://default/system/main is a DynamicSupervisor child spawned
+    # session://system/default/main is a DynamicSupervisor child spawned
     # ONCE at chat-app boot — NOT a permanent static child. Under the full
     # concurrent umbrella run another test can terminate it before these
     # examples run, so the boot-time seed is not guaranteed live (the
@@ -38,7 +38,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
     :ok
   end
 
-  test "admin User landed in session://default/system/main members after boot" do
+  test "admin User landed in session://system/default/main members after boot" do
     {:ok, session_pid} = KindRegistry.lookup(Session.default_uri())
 
     %{state: %{chat: %{state: chat_slice}}} = :sys.get_state(session_pid)
@@ -103,7 +103,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
     session_uri = Session.default_uri()
     {:ok, session_pid} = KindRegistry.lookup(session_uri)
 
-    transient_uri = URI.new!("entity://user/team-alpha/transient-down-#{System.unique_integer([:positive])}")
+    transient_uri = URI.new!("entity://team-alpha/user/transient-down-#{System.unique_integer([:positive])}")
     {:ok, transient_pid} = GenServer.start(__MODULE__.NoopServer, transient_uri)
 
     # Join transient member to session

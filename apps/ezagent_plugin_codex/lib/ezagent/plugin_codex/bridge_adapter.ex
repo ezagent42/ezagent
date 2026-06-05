@@ -25,9 +25,6 @@ defmodule EzagentPluginCodex.BridgeAdapter do
   def flavor, do: "codex"
 
   @impl Ezagent.AgentBridge.Adapter
-  def agent_uri_prefix, do: "codex_"
-
-  @impl Ezagent.AgentBridge.Adapter
   def deliver(%Payload{} = payload, channel_pid) when is_pid(channel_pid) do
     message = %{
       "content" => payload.text,
@@ -113,7 +110,7 @@ defmodule EzagentPluginCodex.BridgeAdapter do
         args: %{message: msg},
         ctx: %{
           caller: agent_uri,
-          caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
+          caps: "chat-reply" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
           reply: :ignore
         }
       })

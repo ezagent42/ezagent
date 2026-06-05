@@ -17,7 +17,7 @@ defmodule Ezagent.Entity.WorkspaceTest do
     end
 
     test "uri_from_args/1 reads args[:uri]" do
-      uri = URI.parse("workspace://test")
+      uri = Ezagent.URI.new!("workspace://test")
       assert WK.uri_from_args(%{uri: uri}) == uri
     end
   end

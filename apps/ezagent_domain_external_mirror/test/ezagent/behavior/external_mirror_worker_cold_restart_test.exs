@@ -63,7 +63,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorkerColdRestartTest do
     # cold-restart proof); in the full EM suite it joins the same
     # pre-existing `system/main` contention cluster as the other worker
     # tests (all of which are flaky together but green individually).
-    {:ok, session_uri: URI.parse("session://default/system/main")}
+    {:ok, session_uri: Ezagent.URI.new!("session://system/default/main")}
   end
 
   test "transports live ONLY in transients; activate/2 rebuilds them live across a brutal restart",
@@ -204,7 +204,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorkerColdRestartTest do
   # :chat slice (chat.join writes members → SliceChange → publisher event).
   defp send_chat_to_session(%URI{} = session_uri) do
     member_uri =
-      URI.parse("entity://user/team-alpha/em-cold-restart-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!("entity://team-alpha/user/em-cold-restart-#{System.unique_integer([:positive])}")
 
     user_module = Module.concat([Ezagent, Entity, User])
 
@@ -213,8 +213,8 @@ defmodule Ezagent.Behavior.ExternalMirrorWorkerColdRestartTest do
       {:error, {:already_started, _pid}} -> :ok
     end
 
-    admin_uri = URI.parse("entity://user/system/admin")
-    target = URI.parse("#{URI.to_string(session_uri)}?action=chat.join")
+    admin_uri = Ezagent.URI.new!("entity://system/user/admin")
+    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
@@ -231,7 +231,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorkerColdRestartTest do
         behavior: :any,
         instance: :any,
         workspace_uri: :any,
-        granted_by: URI.parse("system://bootstrap/default"),
+        granted_by: Ezagent.URI.new!("system://bootstrap/default"),
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
     ])

@@ -28,8 +28,13 @@ defmodule EzagentWeb.Plugs.RequireEntity do
         # (Invariant #9 — graceful surface, not silent crash).
         try do
           case Ezagent.URI.new!(uri_str) do
-            %URI{scheme: "entity", host: host} = uri when host in ["user", "agent"] ->
-              assign(conn, :current_entity_uri, uri)
+            %URI{} = uri ->
+              if Ezagent.URI.scheme?(uri, :entity) and
+                   match?({:ok, kind} when kind in ["user", "agent"], Ezagent.URI.type(uri)) do
+                assign(conn, :current_entity_uri, uri)
+              else
+                bounce(conn)
+              end
 
             _ ->
               bounce(conn)

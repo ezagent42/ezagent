@@ -131,7 +131,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
     end
 
     def handle_forward(%{target: target_str, payload: payload}, _ctx) do
-      target_uri = URI.parse(target_str)
+      target_uri = Ezagent.URI.new!(target_str)
 
       # Inner dispatch runs as :system so the cap check short-circuits
       # (per `Ezagent.Kind.default_holds_cap?/2` :system clause). A
@@ -171,7 +171,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
     # to-end, matching production behaviour.
 
     uri =
-      URI.parse("entity://widget/team-alpha/widget_#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!("entity://team-alpha/widget/widget_#{System.unique_integer([:positive])}")
 
     {:ok, _pid} = Ezagent.Kind.Server.start_link({WidgetKind, %{uri: uri}})
     :ok = wait_until_ready(uri)
@@ -285,8 +285,8 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
       # the Router on this effect (see `Ezagent.Kind.Runtime.execute_dispatches/2`).
       # We assert the SHAPE the framework consumes.
       second_uri =
-        URI.parse(
-          "entity://widget/team-alpha/widget_target_#{System.unique_integer([:positive])}"
+        Ezagent.URI.new!(
+          "entity://team-alpha/widget/widget_target_#{System.unique_integer([:positive])}"
         )
 
       args = %{target: URI.to_string(second_uri), payload: "fwd-payload"}
@@ -294,7 +294,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
       assert {:ok, %{forwarded: true}, effects} = WidgetBehavior.handle_forward(args, %{})
 
       assert [{:dispatch, %Cmd{} = inner_cmd}] = effects
-      assert inner_cmd.target == second_uri
+      assert Ezagent.URI.stable_key(inner_cmd.target) == Ezagent.URI.stable_key(second_uri)
       assert inner_cmd.action == :process
       assert inner_cmd.args == %{input: "fwd-payload"}
     end
@@ -309,7 +309,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
       # return `{:dispatch, %Cmd{}}`) and the framework (which
       # re-enters Router). When this assertion holds, the chained
       # dispatch chain works in production runtime by construction.
-      target_uri = URI.parse("entity://widget/team-alpha/widget_inner_target")
+      target_uri = Ezagent.URI.new!("entity://team-alpha/widget/widget_inner_target")
 
       inner_cmd = Cmd.new(target_uri, :process, %{input: "from-effect"}, %{})
 

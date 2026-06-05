@@ -87,7 +87,7 @@ defmodule Ezagent.Entity.Session do
   # bind flow / mix task that called default_uri/0 wrote the OLD
   # workspace name into the DB, leaving orphan binding rows the
   # boot reconciler couldn't resolve.
-  def default_uri, do: Ezagent.URI.new!("session://default/system/main")
+  def default_uri, do: Ezagent.URI.session(:system, :default, :main)
 
   # ─────────────────────────────────────────────────────────────────────
   # Ezagent.Behavior.Publisher implementation (ExternalMirror PR-EM-0)
@@ -366,9 +366,9 @@ defmodule Ezagent.Entity.Session do
     # NOT positively match us is `:foreign` (real cross-tenant collision
     # / corruption) → fail-loud. The caller
     # (`EzagentDomainInstanceMessage.SessionCreator.create_session/3`) rolls back on `{:error, _}`.
-    candidate_uri = derive_orchestrator_uri(session_uri, workspace_uri)
-    orch_template_uri = Ezagent.URI.new!("template://agent/system/cc-orchestrator")
-    instance_name = derive_orchestrator_instance_name(session_uri)
+    candidate_uri = build_orchestrator_uri_for_create(session_uri, workspace_uri)
+    orch_template_uri = Ezagent.URI.template(:system, :agent, "cc-orchestrator")
+    instance_name = build_orchestrator_instance_name_for_create(session_uri)
 
     case check_orchestrator(candidate_uri, owner_uri, workspace_uri) do
       {:owned, ^candidate_uri} ->
@@ -827,43 +827,44 @@ defmodule Ezagent.Entity.Session do
   end
 
   @doc """
-  Derive the orchestrator agent URI for a session in a workspace.
+  Read the stored orchestrator agent URI for a session.
 
-  Returns an `entity://agent/<workspace>/cc_orchestrator-<session_disc>`
-  URI per SPEC v3 §5 — the deterministic, structural shape every
-  cc-orchestrated session uses. Raises `ArgumentError` when the
-  `workspace_uri` carries no `host` segment (per SPEC #324 rev 3 / PR
-  #335 — there is no silent default-workspace fallback).
-
-  Made public 2026-05-26 so the orchestrator-instance health panel
-  (`/sessions` UI) can derive the URI from the session + workspace
-  without re-implementing the cc-orchestrator naming convention.
+  The orchestrator is a session attribute stored in the Chat working-copy
+  slice and resolved through `Ezagent.UriQuery`; callers must not infer it
+  from URI segment names.
   """
-  @spec derive_orchestrator_uri(URI.t(), URI.t()) :: URI.t()
-  def derive_orchestrator_uri(%URI{} = session_uri, %URI{} = workspace_uri) do
-    instance_name = derive_orchestrator_instance_name(session_uri)
-
-    workspace_name =
-      workspace_uri.host ||
-        raise ArgumentError,
-              "workspace_uri has no host (`workspace://<NAME>`) — got " <>
-                inspect(workspace_uri) <>
-                ". Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
-                "fallback; callers must pass a workspace URI with an explicit name."
-
-    Ezagent.URI.new!("entity://agent/#{workspace_name}/#{instance_name}")
+  @spec orchestrator_uri(URI.t()) :: {:ok, URI.t()} | :none | {:error, term()}
+  def orchestrator_uri(%URI{} = session_uri) do
+    Ezagent.UriQuery.resolve(:orchestrator, session_uri)
   end
 
   @doc """
-  Derive the orchestrator agent's instance-name segment for a session.
-
-  Returns `cc_orchestrator-<session_discriminator>` — the historical
-  shape used by every cc-orchestrated session. Preserved so the
-  `/sessions` UI health panel can look up the orchestrator without
-  re-reading the session's slice.
+  Read the stored orchestrator instance name for a session.
   """
-  @spec derive_orchestrator_instance_name(URI.t()) :: String.t()
-  def derive_orchestrator_instance_name(%URI{} = session_uri) do
+  @spec orchestrator_instance_name(URI.t()) :: {:ok, String.t()} | :none | {:error, term()}
+  def orchestrator_instance_name(%URI{} = session_uri) do
+    case orchestrator_uri(session_uri) do
+      {:ok, %URI{} = orchestrator_uri} -> Ezagent.URI.name(orchestrator_uri)
+      :none -> :none
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc false
+  @spec planned_orchestrator_uri(URI.t(), URI.t()) :: URI.t()
+  def planned_orchestrator_uri(%URI{} = session_uri, %URI{} = workspace_uri) do
+    build_orchestrator_uri_for_create(session_uri, workspace_uri)
+  end
+
+  defp build_orchestrator_uri_for_create(%URI{} = session_uri, %URI{} = workspace_uri) do
+    instance_name = build_orchestrator_instance_name_for_create(session_uri)
+
+    workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
+
+    Ezagent.URI.agent(workspace_name, instance_name)
+  end
+
+  defp build_orchestrator_instance_name_for_create(%URI{} = session_uri) do
     # Preserve the historical "cc_orchestrator-<session_name>" shape.
     "cc_orchestrator-#{session_discriminator(session_uri)}"
   end
@@ -1064,7 +1065,8 @@ defmodule Ezagent.Entity.Session do
     # `owner_uri` stays as caller for provenance.
     ctx = %{
       caller: owner_uri,
-      caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
+      caps:
+        "template-materialize" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
       reply: :ignore
     }
 
@@ -1116,7 +1118,8 @@ defmodule Ezagent.Entity.Session do
 
     ctx = %{
       caller: owner_uri,
-      caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
+      caps:
+        "template-materialize" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
       reply: :ignore
     }
 
@@ -1272,7 +1275,10 @@ defmodule Ezagent.Entity.Session do
            # `system://template-materialize` (closed Catalog).
            ctx: %{
              caller: Ezagent.SystemPrincipal.uri("template-materialize"),
-             caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
+             caps:
+               "template-materialize"
+               |> Ezagent.SystemPrincipal.uri()
+               |> Ezagent.SystemPrincipal.caps(),
              reply: {:caller_inbox, self()}
            }
          }) do
@@ -1285,15 +1291,9 @@ defmodule Ezagent.Entity.Session do
 
   # session discriminator: the session URI's name segment.
   defp session_discriminator(%URI{} = session_uri) do
-    case session_uri.path do
-      "/" <> rest ->
-        case String.split(rest, "/", parts: 2) do
-          [_ws, name] when name != "" -> name
-          _ -> session_uri.host || "session"
-        end
-
-      _ ->
-        session_uri.host || "session"
+    case Ezagent.URI.name(session_uri) do
+      {:ok, name} -> name
+      :error -> session_uri.host || "session"
     end
   end
 
@@ -1304,17 +1304,11 @@ defmodule Ezagent.Entity.Session do
   defp delegable_template_caps(%URI{} = owner_uri, %URI{} = session_workspace) do
     owner_caps = Ezagent.Identity.list_caps_for(owner_uri)
 
-    workspace_name =
-      session_workspace.host ||
-        raise ArgumentError,
-              "session_workspace has no host (`workspace://<NAME>`) — got " <>
-                inspect(session_workspace) <>
-                ". Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
-                "fallback; callers must pass a workspace URI with an explicit name."
+    workspace_name = Ezagent.URI.workspace_name!(session_workspace)
 
     candidates = [
-      {:session_template, Ezagent.URI.new!("template://session/#{workspace_name}/_preflight@_")},
-      {:agent_template, Ezagent.URI.new!("template://agent/#{workspace_name}/_preflight")}
+      {:session_template, Ezagent.URI.template(workspace_name, :session, "_preflight@_")},
+      {:agent_template, Ezagent.URI.template(workspace_name, :agent, :_preflight)}
     ]
 
     candidates

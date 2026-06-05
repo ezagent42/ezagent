@@ -53,12 +53,12 @@ defmodule Ezagent.Workspace.Store do
 
   @primary_key {:id, :id, autogenerate: true}
   schema "workspaces" do
-    field :name, :string
-    field :uri, :string
-    field :member_uris, :string
-    field :session_templates, :string
-    field :routing_rules, :string
-    field :created_by, :string
+    field(:name, :string)
+    field(:uri, :string)
+    field(:member_uris, :string)
+    field(:session_templates, :string)
+    field(:routing_rules, :string)
+    field(:created_by, :string)
     # SPEC 2026-05-27-workspace-cap-based-visibility — the `:visible`
     # boolean was DELETED here. Visibility is now cap-derived via
     # `Ezagent.Workspace.list_workspaces_for/2`. Operator stops phx +
@@ -90,7 +90,7 @@ defmodule Ezagent.Workspace.Store do
   @spec create(String.t(), map()) ::
           {:ok, decoded()} | {:exists, decoded()} | {:error, term()}
   def create(name, attrs \\ %{}) when is_binary(name) and name != "" do
-    uri_str = "workspace://#{name}"
+    uri_str = name |> Ezagent.URI.workspace() |> URI.to_string()
 
     changeset =
       %__MODULE__{}
@@ -195,7 +195,7 @@ defmodule Ezagent.Workspace.Store do
   """
   @spec list_all() :: [decoded()]
   def list_all do
-    Repo.all(from w in __MODULE__, order_by: w.name)
+    Repo.all(from(w in __MODULE__, order_by: w.name))
     |> Enum.map(&decode/1)
   end
 

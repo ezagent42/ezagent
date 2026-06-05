@@ -3,7 +3,7 @@ defmodule Ezagent.PendingDeliveryTest do
   alias Ezagent.PendingDelivery
 
   setup do
-    uri = "entity://agent/team-alpha/test_pending-test-#{System.unique_integer([:positive])}"
+    uri = "entity://team-alpha/agent/test_pending-test-#{System.unique_integer([:positive])}"
     {:ok, uri: uri}
   end
 
@@ -42,7 +42,7 @@ defmodule Ezagent.PendingDeliveryTest do
   end
 
   test "URI struct and string keys interoperate", %{uri: uri_str} do
-    parsed = URI.parse(uri_str)
+    parsed = Ezagent.URI.new!(uri_str)
     :ok = PendingDelivery.buffer(parsed, :via_struct)
     # Same logical URI, look up via string.
     assert PendingDelivery.flush(uri_str) == [:via_struct]

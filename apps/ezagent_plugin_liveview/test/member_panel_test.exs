@@ -10,7 +10,7 @@ defmodule EzagentPluginLiveview.Admin.MemberPanelTest do
   - An Invite button that opens a `<.modal>` carrying the "Add existing"
     `uri_picker` + a "Create new agent" link to `/identities/agents/new`.
   """
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   import Phoenix.Component
   import Phoenix.LiveViewTest
@@ -55,14 +55,24 @@ defmodule EzagentPluginLiveview.Admin.MemberPanelTest do
       # Both rows must be the SAME shape — an entity avatar, the display
       # name, the URI, an online dot. Nothing flags "this one was
       # floating".
+      pty_agent_uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/pty-backed-#{System.unique_integer([:positive])}"
+        )
+
+      {:ok, _pty_pid} = Ezagent.Domain.Pty.start(pty_agent_uri, %{cwd: "/tmp", test_mode: true})
+      on_exit(fn -> Ezagent.Domain.Pty.stop(pty_agent_uri) end)
+
+      pty_agent_uri_str = URI.to_string(pty_agent_uri)
+
       members = [
-        %{uri: "entity://user/team-alpha/admin", online: true, last_seen: nil},
-        %{uri: "entity://agent/team-alpha/cc_demo", online: false, last_seen: nil}
+        %{uri: "entity://team-alpha/user/admin", online: true, last_seen: nil},
+        %{uri: pty_agent_uri_str, online: false, last_seen: nil}
       ]
 
       display_map = %{
-        "entity://user/team-alpha/admin" => "Admin",
-        "entity://agent/team-alpha/cc_demo" => "CC Demo"
+        "entity://team-alpha/user/admin" => "Admin",
+        pty_agent_uri_str => "PTY Agent"
       }
 
       html = render_panel(base_assigns(members: members, display_map: display_map))
@@ -73,9 +83,9 @@ defmodule EzagentPluginLiveview.Admin.MemberPanelTest do
 
       # Both members render — display name + URI.
       assert html =~ "Admin"
-      assert html =~ "entity://user/team-alpha/admin"
-      assert html =~ "CC Demo"
-      assert html =~ "entity://agent/team-alpha/cc_demo"
+      assert html =~ "entity://team-alpha/user/admin"
+      assert html =~ "PTY Agent"
+      assert html =~ pty_agent_uri_str
 
       # Both rows carry a procedural avatar (the `<.avatar>` atom emits
       # a conic-gradient span). Two members → two avatar gradients.
@@ -85,10 +95,11 @@ defmodule EzagentPluginLiveview.Admin.MemberPanelTest do
       assert gradient_count >= 2,
              "expected an <.avatar> per member row (>= 2 conic-gradients), got #{gradient_count}"
 
-      # The cc-agent row keeps its per-row PTY button; the user row
-      # does not get one.
+      # PTY-backed agent rows keep their per-row PTY button; the user
+      # row does not get one. The agent URI deliberately has no flavor
+      # prefix — the component gates on Domain.Pty state, not URI names.
       assert html =~ ~s(phx-click="switch_to_pty_for_agent")
-      assert html =~ ~s(phx-value-agent="entity://agent/team-alpha/cc_demo")
+      assert html =~ ~s(phx-value-agent="#{pty_agent_uri_str}")
     end
 
     test "empty member list shows the placeholder, not the table" do
@@ -102,7 +113,7 @@ defmodule EzagentPluginLiveview.Admin.MemberPanelTest do
 
   describe "FLOATING AGENTS section removed (SPEC §2C.2)" do
     test "no <select> floating-agent picker is rendered" do
-      members = [%{uri: "entity://user/team-alpha/admin", online: true, last_seen: nil}]
+      members = [%{uri: "entity://team-alpha/user/admin", online: true, last_seen: nil}]
       html = render_panel(base_assigns(members: members))
 
       # The old `<select name="agent_uri">` + its "Floating agents"
@@ -141,7 +152,7 @@ defmodule EzagentPluginLiveview.Admin.MemberPanelTest do
 
     test "modal carries the Add-existing uri_picker + Create-new-agent link" do
       options = [
-        %{uri: "entity://agent/team-alpha/cc_pick", label: "CC Pick", kind: :entity, flavor: "cc"}
+        %{uri: "entity://team-alpha/agent/cc_pick", label: "CC Pick", kind: :entity, flavor: "cc"}
       ]
 
       html = render_panel(base_assigns(invite_open: true, invite_options: options))
@@ -152,7 +163,7 @@ defmodule EzagentPluginLiveview.Admin.MemberPanelTest do
       assert html =~ ~s(name="member_uri")
       assert html =~ ~s(phx-hook="UriPicker")
       assert html =~ ~s(data-mode="single")
-      assert html =~ "entity://agent/team-alpha/cc_pick"
+      assert html =~ "entity://team-alpha/agent/cc_pick"
 
       # "Create new agent" — a link to the EXISTING AgentNewLive route,
       # not a rebuilt form.

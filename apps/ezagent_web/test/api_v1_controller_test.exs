@@ -38,7 +38,7 @@ defmodule EzagentWeb.ApiV1ControllerTest do
   end
 
   test "POST with unknown kind returns 404", %{conn: conn} do
-    conn = post(conn, "/api/v1/nope/say", %{"target" => "entity://agent/team-alpha/test_x"})
+    conn = post(conn, "/api/v1/nope/say", %{"target" => "entity://team-alpha/agent/test_x"})
 
     assert conn.status == 404
     body = Jason.decode!(conn.resp_body)
@@ -58,8 +58,8 @@ defmodule EzagentWeb.ApiV1ControllerTest do
     conn =
       conn
       |> put_req_header("authorization", "Bearer esr_pat_garbage_token_value")
-      |> put_req_header("x-ezagent-entity-uri", "entity://user/system/admin")
-      |> post("/api/v1/user/list_caps", %{"target" => "entity://user/system/admin"})
+      |> put_req_header("x-ezagent-entity-uri", "entity://system/user/admin")
+      |> post("/api/v1/user/list_caps", %{"target" => "entity://system/user/admin"})
 
     assert conn.status == 401
     body = Jason.decode!(conn.resp_body)
@@ -71,7 +71,7 @@ defmodule EzagentWeb.ApiV1ControllerTest do
     conn =
       conn
       |> put_req_header("authorization", "Bearer esr_pat_garbage_token_value")
-      |> post("/api/v1/user/list_caps", %{"target" => "entity://user/system/admin"})
+      |> post("/api/v1/user/list_caps", %{"target" => "entity://system/user/admin"})
 
     assert conn.status == 401
     body = Jason.decode!(conn.resp_body)

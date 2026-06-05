@@ -49,7 +49,7 @@ defmodule EzagentPluginLiveview.ComposerMentionTest do
 
   @endpoint EzagentWeb.Endpoint
 
-  # The mentioned agents live in `entity://agent/team-alpha/…`. The
+  # The mentioned agents live in `entity://team-alpha/agent/…`. The
   # Resolver's `valid_member?/3` trust boundary drops any candidate whose
   # workspace segment differs from the session's (check #3), so a
   # team-alpha agent mentioned in a `system` session is rejected and
@@ -57,7 +57,7 @@ defmodule EzagentPluginLiveview.ComposerMentionTest do
   # must therefore be team-alpha so the mention validates in-workspace.
   # (post-lifecycle remediation: the session was pinned to `system` while
   # the agents were team-alpha.)
-  @session URI.new!("session://default/team-alpha/main")
+  @session URI.new!("session://team-alpha/default/main")
 
   # AuditCase's `setup` already checks out + shares the sandbox and
   # starts/allows the Writer; this `setup` only builds the conn.
@@ -157,9 +157,9 @@ defmodule EzagentPluginLiveview.ComposerMentionTest do
     # A real echo agent joined to the default session. valid_member?/2
     # requires the mention to be a registered member, so it MUST join.
     agent =
-      URI.new!("entity://agent/team-alpha/echo_compose-#{System.unique_integer([:positive])}")
+      URI.new!("entity://team-alpha/agent/echo_compose-#{System.unique_integer([:positive])}")
 
-    {:ok, _} = Ezagent.SpawnRegistry.spawn(agent)
+    {:ok, _} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(agent, "echo")
     join(agent)
 
     before = receive_dispatch_count(agent)
@@ -202,8 +202,8 @@ defmodule EzagentPluginLiveview.ComposerMentionTest do
   test "composing plain agent-name text (no @) does NOT actuate the agent", %{conn: conn} do
     # The mention-gated default actuates ONLY on a validated @-mention.
     # Plain prose naming the agent must not.
-    agent = URI.new!("entity://agent/team-alpha/echo_plain-#{System.unique_integer([:positive])}")
-    {:ok, _} = Ezagent.SpawnRegistry.spawn(agent)
+    agent = URI.new!("entity://team-alpha/agent/echo_plain-#{System.unique_integer([:positive])}")
+    {:ok, _} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(agent, "echo")
     join(agent)
 
     before = receive_dispatch_count(agent)

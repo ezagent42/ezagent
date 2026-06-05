@@ -51,7 +51,7 @@ defmodule Ezagent.Invariants.KindSnapshotConcurrentUpsertTest do
       for n <- 1..@parallel_concurrency do
         Task.async(fn ->
           uri =
-            "entity://user/system/concurrent-distinct-#{n}-#{System.unique_integer([:positive])}"
+            "entity://system/user/concurrent-distinct-#{n}-#{System.unique_integer([:positive])}"
 
           KindSnapshot.upsert(
             uri,

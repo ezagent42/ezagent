@@ -16,7 +16,7 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
     identically; this file pins the chokepoint.
 
   Per `feedback_e2e_prefers_non_admin_user`: Alice (a fresh
-  `entity://user/team-alpha/alice_<n>`) is the canonical non-admin
+  `entity://team-alpha/user/alice_<n>`) is the canonical non-admin
   caller.
 
   Verification surface: dispatch chokepoint level (the integration
@@ -45,9 +45,9 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
   defp uniq(prefix), do: "#{prefix}_#{System.unique_integer([:positive])}"
 
   defp spawn_alice(caps \\ []) do
-    uri_str = "entity://user/team-alpha/" <> uniq("alice")
+    uri_str = "entity://team-alpha/user/" <> uniq("alice")
     {:ok, _} = Users.create(uri_str, nil, caps)
-    uri = URI.parse(uri_str)
+    uri = Ezagent.URI.new!(uri_str)
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
     {uri, MapSet.new(caps)}
   end
@@ -306,7 +306,7 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
           kind: :session,
           behavior: Ezagent.Behavior.Chat,
           action: :send,
-          instance: URI.new!("session://default/system/main"),
+          instance: URI.new!("session://system/default/main"),
           workspace_uri: URI.new!("workspace://system")
         )
 

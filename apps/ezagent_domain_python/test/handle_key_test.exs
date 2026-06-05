@@ -13,7 +13,7 @@ defmodule Ezagent.Domain.Python.HandleKeyTest do
 
   describe "positive: round-trip equivalence" do
     test "URI struct and its URI.to_string/1 produce the same key" do
-      uri = URI.parse("system://python/default")
+      uri = Ezagent.URI.new!("system://python/default")
       assert Python.handle_key(uri) == Python.handle_key(URI.to_string(uri))
     end
 

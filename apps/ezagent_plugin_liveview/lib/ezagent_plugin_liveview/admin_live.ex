@@ -67,15 +67,15 @@ defmodule EzagentPluginLiveview.AdminLive do
   # workspace, return the canonical main session URI for it.
   @message_limit 50
 
-  defp default_main_session_uri(%URI{scheme: "workspace", host: ws}) when is_binary(ws) and ws != "",
-    do: Ezagent.URI.new!("session://default/#{ws}/main")
+  defp default_main_session_uri(%URI{scheme: "workspace"} = workspace_uri),
+    do: Ezagent.URI.session(Ezagent.URI.name!(workspace_uri), :default, :main)
 
   defp default_main_session_uri(_),
     # Early-mount / test paths with no workspace assigned — fall back
     # to the system workspace's main. LiveAuth populates the assign
     # for every `:require_entity` mount in production, so this branch
     # fires only when the LV is mounted outside that live_session.
-    do: Ezagent.URI.new!("session://default/system/main")
+    do: Ezagent.URI.session(:system, :default, :main)
 
   @impl true
   def mount(_params, _session, socket) do
@@ -289,7 +289,8 @@ defmodule EzagentPluginLiveview.AdminLive do
           {:noreply, select_session(socket, session_uri)}
 
         _ ->
-          {:noreply, assign(socket, :flash_error, gettext("Bad session URI: %{uri}", uri: encoded))}
+          {:noreply,
+           assign(socket, :flash_error, gettext("Bad session URI: %{uri}", uri: encoded))}
       end
     rescue
       ArgumentError ->
@@ -609,7 +610,7 @@ defmodule EzagentPluginLiveview.AdminLive do
         end
 
       _ ->
-        "New chat update on #{URI.to_string(uri)}"
+        "New chat update on #{Ezagent.URI.stable_key(uri)}"
     end
   end
 
@@ -629,7 +630,7 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   def format_slice_change(%{uri: %URI{} = uri, slice_key: slice_key} = _event)
       when is_atom(slice_key) do
-    "Update on #{URI.to_string(uri)} (#{slice_key})"
+    "Update on #{Ezagent.URI.stable_key(uri)} (#{slice_key})"
   end
 
   def format_slice_change(other), do: "Slice changed: #{inspect(other)}"
@@ -709,8 +710,8 @@ defmodule EzagentPluginLiveview.AdminLive do
     # default/...` would silently orphan the file from any real tenant.
     workspace_name =
       case Ezagent.Capability.workspace_of(socket.assigns.current_entity_uri) do
-        %URI{host: ws_name} when is_binary(ws_name) ->
-          ws_name
+        %URI{} = workspace_uri ->
+          Ezagent.URI.workspace_name!(workspace_uri)
 
         other ->
           raise ArgumentError,
@@ -728,7 +729,7 @@ defmodule EzagentPluginLiveview.AdminLive do
         stored_name = "#{uuid}-#{safe_name}"
         dest = Path.join(Ezagent.Home.path("uploads"), stored_name)
         File.cp!(tmp_path, dest)
-        {:ok, Ezagent.URI.new!("resource://uploads/#{workspace_name}/#{stored_name}")}
+        {:ok, Ezagent.URI.resource(workspace_name, :uploads, stored_name)}
       end)
 
     if String.trim(text) == "" and attachments == [] do
@@ -1416,8 +1417,7 @@ defmodule EzagentPluginLiveview.AdminLive do
   defp dispatch_session_routing(socket, action, args) do
     session_uri = socket.assigns.current_session_uri
 
-    target =
-      Ezagent.URI.new!(URI.to_string(session_uri) <> "?action=routing." <> Atom.to_string(action))
+    target = Ezagent.URI.with_action(session_uri, :routing, action)
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
@@ -1487,9 +1487,7 @@ defmodule EzagentPluginLiveview.AdminLive do
         assign(
           socket,
           :flash_error,
-          gettext(
-            "Cross-workspace denied — that session belongs to a different workspace."
-          )
+          gettext("Cross-workspace denied — that session belongs to a different workspace.")
         )
     end
   end
@@ -1710,7 +1708,7 @@ defmodule EzagentPluginLiveview.AdminLive do
             |> Ezagent.URI.new!()
             |> Ezagent.URI.entity_workspace_uri()
 
-          URI.to_string(caller_workspace) == "workspace://system"
+          Ezagent.URI.name?(caller_workspace, :system)
         rescue
           _ -> false
         end
@@ -2706,12 +2704,8 @@ defmodule EzagentPluginLiveview.AdminLive do
     # with try/rescue (display fallback to nil for malformed input).
     try do
       case Ezagent.URI.new!(uri_str) do
-        %URI{path: "/" <> rest} when rest != "" ->
-          # entity URIs are `/<workspace>/<name>`; bare display is last segment.
-          case String.split(rest, "/", parts: 2) do
-            [_ws, name] -> name
-            [name] -> name
-          end
+        %URI{} = uri ->
+          uri |> Ezagent.URI.name() |> elem_or_nil()
 
         _ ->
           nil
@@ -2723,6 +2717,9 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   defp uri_path_segment(_), do: nil
 
+  defp elem_or_nil({:ok, value}), do: value
+  defp elem_or_nil(:error), do: nil
+
   defp safe_view_id(s) when is_binary(s) do
     {:ok, String.to_existing_atom(s)}
   rescue
@@ -2733,7 +2730,7 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   defp count_alive_agents do
     Ezagent.KindRegistry.list_all()
-    |> Enum.count(fn {uri_str, _pid} -> String.starts_with?(uri_str, "entity://agent/") end)
+    |> Enum.count(fn {uri_str, _pid} -> entity_type?(uri_str, :agent) end)
   end
 
   defp count_connected_bridges do
@@ -2994,9 +2991,16 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   defp sender_kind(uri_str) do
     cond do
-      String.starts_with?(uri_str, "entity://user/") -> :user
-      String.starts_with?(uri_str, "entity://agent/") -> :agent
+      entity_type?(uri_str, :user) -> :user
+      entity_type?(uri_str, :agent) -> :agent
       true -> :other
+    end
+  end
+
+  defp entity_type?(uri_str, type) when is_binary(uri_str) and is_atom(type) do
+    case Ezagent.URI.parse(uri_str) do
+      {:ok, %URI{} = uri} -> Ezagent.URI.scheme?(uri, :entity) and Ezagent.URI.type?(uri, type)
+      {:error, _} -> false
     end
   end
 
@@ -3024,9 +3028,14 @@ defmodule EzagentPluginLiveview.AdminLive do
   # `:filename` route param; this `Path.basename` strips the
   # workspace prefix to match the actual on-disk filename + the
   # new route's single-segment shape).
-  defp att_to_link(%URI{scheme: "resource", host: "uploads", path: "/" <> rest}) do
-    stored_name = Path.basename(rest)
-    {display_name(stored_name), "/files/#{stored_name}"}
+  defp att_to_link(%URI{scheme: "resource"} = uri) do
+    stored_name = if Ezagent.URI.type?(uri, :uploads), do: Ezagent.URI.name!(uri), else: nil
+
+    if is_binary(stored_name) do
+      {display_name(stored_name), "/files/#{stored_name}"}
+    else
+      {URI.to_string(uri), URI.to_string(uri)}
+    end
   end
 
   defp att_to_link(%URI{} = uri),
@@ -3140,16 +3149,21 @@ defmodule EzagentPluginLiveview.AdminLive do
   # helper is the belt-and-suspenders fallback for test paths that
   # mount the LV outside that live_session.
   defp workspace_name_from_uri(nil), do: nil
-  defp workspace_name_from_uri(%URI{host: name}) when is_binary(name) and name != "", do: name
+
+  defp workspace_name_from_uri(%URI{} = uri) do
+    case Ezagent.URI.workspace_name(uri) do
+      {:ok, name} -> name
+      :error -> nil
+    end
+  end
 
   defp workspace_name_from_uri(uri_str) when is_binary(uri_str) do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue (display fallback to nil for malformed input).
     try do
-      case Ezagent.URI.new!(uri_str) do
-        %URI{host: name} when is_binary(name) and name != "" -> name
-        _ -> nil
-      end
+      uri_str
+      |> Ezagent.URI.new!()
+      |> workspace_name_from_uri()
     rescue
       ArgumentError -> nil
     end
@@ -3179,7 +3193,9 @@ defmodule EzagentPluginLiveview.AdminLive do
   # `[]` rather than crashing.
   defp template_class_options_for(assigns) do
     case Map.get(assigns, :current_workspace_uri) do
-      %URI{scheme: "workspace", host: ws_name} when is_binary(ws_name) and ws_name != "" ->
+      %URI{scheme: "workspace"} = workspace_uri ->
+        ws_name = Ezagent.URI.name!(workspace_uri)
+
         case Ezagent.Workspace.Store.get_by_name(ws_name) do
           %{session_templates: tmpls} when is_map(tmpls) ->
             tmpls |> Map.keys() |> Enum.sort()

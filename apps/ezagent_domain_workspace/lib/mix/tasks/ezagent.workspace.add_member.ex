@@ -49,12 +49,12 @@ defmodule Mix.Tasks.Ezagent.Workspace.AddMember do
         case Ezagent.Workspace.add_member(workspace_name, member_uri) do
           :ok ->
             Mix.shell().info(
-              "✓ added #{URI.to_string(member_uri)} to workspace://#{workspace_name}"
+              "✓ added #{URI.to_string(member_uri)} to workspace #{workspace_name}"
             )
 
           {:ok, _} ->
             Mix.shell().info(
-              "✓ added #{URI.to_string(member_uri)} to workspace://#{workspace_name}"
+              "✓ added #{URI.to_string(member_uri)} to workspace #{workspace_name}"
             )
 
           {:error, reason} ->
@@ -69,8 +69,8 @@ defmodule Mix.Tasks.Ezagent.Workspace.AddMember do
           mix ezagent.workspace.add_member <workspace_name> <entity_uri>
 
         Examples:
-          mix ezagent.workspace.add_member system entity://user/system/linyilun
-          mix ezagent.workspace.add_member h2oslabs.com entity://agent/system/cc_main
+          mix ezagent.workspace.add_member system <user-uri>
+          mix ezagent.workspace.add_member h2oslabs.com <agent-uri>
         """)
     end
   end

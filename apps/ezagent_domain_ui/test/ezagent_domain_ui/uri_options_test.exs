@@ -21,6 +21,17 @@ defmodule Ezagent.UI.UriOptionsTest do
   # --- registration helpers --------------------------------------------------
 
   setup do
+    Ezagent.UriQuery.init()
+    previous = :ets.lookup(Ezagent.UriQuery.table(), :flavor)
+
+    on_exit(fn ->
+      :ets.delete(Ezagent.UriQuery.table(), :flavor)
+
+      for entry <- previous do
+        :ets.insert(Ezagent.UriQuery.table(), entry)
+      end
+    end)
+
     {:ok, uniq: System.unique_integer([:positive])}
   end
 
@@ -63,9 +74,9 @@ defmodule Ezagent.UI.UriOptionsTest do
   describe "entities/2 — same-workspace caller" do
     test "lists entity URIs in the caller's own workspace", %{uniq: u} do
       ws = "ws_a_#{u}"
-      caller = "entity://user/#{ws}/admin_#{u}"
-      agent = "entity://agent/#{ws}/cc_demo_#{u}"
-      user = "entity://user/#{ws}/alice_#{u}"
+      caller = "entity://#{ws}/user/admin_#{u}"
+      agent = "entity://#{ws}/agent/cc_demo_#{u}"
+      user = "entity://#{ws}/user/alice_#{u}"
       :ok = register(caller)
       :ok = register(agent)
       :ok = register(user)
@@ -80,8 +91,8 @@ defmodule Ezagent.UI.UriOptionsTest do
 
     test "does not include session URIs", %{uniq: u} do
       ws = "ws_b_#{u}"
-      caller = "entity://user/#{ws}/admin_#{u}"
-      session = "session://default/#{ws}/main_#{u}"
+      caller = "entity://#{ws}/user/admin_#{u}"
+      session = "session://#{ws}/default/main_#{u}"
       :ok = register(caller)
       :ok = register(session)
 
@@ -89,12 +100,13 @@ defmodule Ezagent.UI.UriOptionsTest do
       refute session in Enum.map(opts, & &1.uri)
     end
 
-    test "parses agent flavor from the name prefix", %{uniq: u} do
+    test "reads agent flavor from UriQuery", %{uniq: u} do
       ws = "ws_c_#{u}"
-      caller = "entity://user/#{ws}/admin_#{u}"
-      agent = "entity://agent/#{ws}/cc_xyz_#{u}"
+      caller = "entity://#{ws}/user/admin_#{u}"
+      agent = "entity://#{ws}/agent/xyz_#{u}"
       :ok = register(caller)
       :ok = register(agent)
+      put_flavors(%{agent => "cc"})
 
       opts = UriOptions.entities(caller, "workspace://#{ws}")
       found = Enum.find(opts, &(&1.uri == agent))
@@ -108,8 +120,8 @@ defmodule Ezagent.UI.UriOptionsTest do
     test "a non-system caller asking for ANOTHER workspace gets []", %{uniq: u} do
       caller_ws = "tenant_self_#{u}"
       other_ws = "tenant_other_#{u}"
-      caller = "entity://user/#{caller_ws}/admin_#{u}"
-      other_agent = "entity://agent/#{other_ws}/cc_demo_#{u}"
+      caller = "entity://#{caller_ws}/user/admin_#{u}"
+      other_agent = "entity://#{other_ws}/agent/cc_demo_#{u}"
       :ok = register(caller)
       :ok = register(other_agent)
 
@@ -120,8 +132,8 @@ defmodule Ezagent.UI.UriOptionsTest do
     test "a system member sees ANY workspace's entities", %{uniq: u} do
       other_ws = "tenant_sys_other_#{u}"
       # A caller whose workspace segment is `system` → system member.
-      sys_caller = "entity://user/system/admin_#{u}"
-      other_agent = "entity://agent/#{other_ws}/cc_demo_#{u}"
+      sys_caller = "entity://system/user/admin_#{u}"
+      other_agent = "entity://#{other_ws}/agent/cc_demo_#{u}"
       :ok = register(sys_caller)
       :ok = register(other_agent)
 
@@ -131,8 +143,8 @@ defmodule Ezagent.UI.UriOptionsTest do
 
     test "a non-system caller asking for its OWN workspace still works", %{uniq: u} do
       ws = "tenant_own_#{u}"
-      caller = "entity://user/#{ws}/admin_#{u}"
-      agent = "entity://agent/#{ws}/cc_demo_#{u}"
+      caller = "entity://#{ws}/user/admin_#{u}"
+      agent = "entity://#{ws}/agent/cc_demo_#{u}"
       :ok = register(caller)
       :ok = register(agent)
 
@@ -151,9 +163,9 @@ defmodule Ezagent.UI.UriOptionsTest do
   describe "sessions/2" do
     test "lists only session URIs in the caller's workspace", %{uniq: u} do
       ws = "ws_sess_#{u}"
-      caller = "entity://user/#{ws}/admin_#{u}"
-      session = "session://default/#{ws}/main_#{u}"
-      agent = "entity://agent/#{ws}/cc_demo_#{u}"
+      caller = "entity://#{ws}/user/admin_#{u}"
+      session = "session://#{ws}/default/main_#{u}"
+      agent = "entity://#{ws}/agent/cc_demo_#{u}"
       :ok = register(caller)
       :ok = register(session)
       :ok = register(agent)
@@ -167,8 +179,8 @@ defmodule Ezagent.UI.UriOptionsTest do
     test "non-system caller cannot see another workspace's sessions", %{uniq: u} do
       caller_ws = "ws_sess_self_#{u}"
       other_ws = "ws_sess_other_#{u}"
-      caller = "entity://user/#{caller_ws}/admin_#{u}"
-      session = "session://default/#{other_ws}/main_#{u}"
+      caller = "entity://#{caller_ws}/user/admin_#{u}"
+      session = "session://#{other_ws}/default/main_#{u}"
       :ok = register(caller)
       :ok = register(session)
 
@@ -181,9 +193,9 @@ defmodule Ezagent.UI.UriOptionsTest do
   describe "entities_and_sessions/2" do
     test "unions entities + sessions in the caller's workspace", %{uniq: u} do
       ws = "ws_both_#{u}"
-      caller = "entity://user/#{ws}/admin_#{u}"
-      agent = "entity://agent/#{ws}/cc_demo_#{u}"
-      session = "session://default/#{ws}/main_#{u}"
+      caller = "entity://#{ws}/user/admin_#{u}"
+      agent = "entity://#{ws}/agent/cc_demo_#{u}"
+      session = "session://#{ws}/default/main_#{u}"
       :ok = register(caller)
       :ok = register(agent)
       :ok = register(session)
@@ -199,8 +211,8 @@ defmodule Ezagent.UI.UriOptionsTest do
   describe "valid_for?/4 — the shared validator" do
     test "true for a well-formed in-workspace entity URI", %{uniq: u} do
       ws = "ws_vf_#{u}"
-      caller = "entity://user/#{ws}/admin_#{u}"
-      agent = "entity://agent/#{ws}/cc_demo_#{u}"
+      caller = "entity://#{ws}/user/admin_#{u}"
+      agent = "entity://#{ws}/agent/cc_demo_#{u}"
       :ok = register(caller)
       :ok = register(agent)
 
@@ -210,17 +222,17 @@ defmodule Ezagent.UI.UriOptionsTest do
     test "false for an out-of-workspace URI (tampered hidden input)", %{uniq: u} do
       caller_ws = "ws_vf_self_#{u}"
       other_ws = "ws_vf_other_#{u}"
-      caller = "entity://user/#{caller_ws}/admin_#{u}"
+      caller = "entity://#{caller_ws}/user/admin_#{u}"
       :ok = register(caller)
 
-      tampered = "entity://agent/#{other_ws}/cc_evil_#{u}"
+      tampered = "entity://#{other_ws}/agent/cc_evil_#{u}"
       refute UriOptions.valid_for?(caller, "workspace://#{caller_ws}", tampered, [:entity])
     end
 
     test "false when the scheme is not in kinds", %{uniq: u} do
       ws = "ws_vf_scheme_#{u}"
-      caller = "entity://user/#{ws}/admin_#{u}"
-      session = "session://default/#{ws}/main_#{u}"
+      caller = "entity://#{ws}/user/admin_#{u}"
+      session = "session://#{ws}/default/main_#{u}"
       :ok = register(caller)
       :ok = register(session)
 
@@ -232,7 +244,7 @@ defmodule Ezagent.UI.UriOptionsTest do
 
     test "false for a malformed / non-URI submission", %{uniq: u} do
       ws = "ws_vf_bad_#{u}"
-      caller = "entity://user/#{ws}/admin_#{u}"
+      caller = "entity://#{ws}/user/admin_#{u}"
       :ok = register(caller)
 
       refute UriOptions.valid_for?(caller, "workspace://#{ws}", "garbage", [:entity])
@@ -242,8 +254,8 @@ defmodule Ezagent.UI.UriOptionsTest do
 
     test "a system member may validate URIs in any workspace", %{uniq: u} do
       other_ws = "ws_vf_sys_#{u}"
-      sys_caller = "entity://user/system/admin_#{u}"
-      agent = "entity://agent/#{other_ws}/cc_demo_#{u}"
+      sys_caller = "entity://system/user/admin_#{u}"
+      agent = "entity://#{other_ws}/agent/cc_demo_#{u}"
       :ok = register(sys_caller)
       :ok = register(agent)
 
@@ -253,14 +265,27 @@ defmodule Ezagent.UI.UriOptionsTest do
     test "a non-system caller cannot validate a URI in a workspace not their own", %{uniq: u} do
       caller_ws = "ws_vf_deny_#{u}"
       other_ws = "ws_vf_deny_other_#{u}"
-      caller = "entity://user/#{caller_ws}/admin_#{u}"
-      agent = "entity://agent/#{other_ws}/cc_demo_#{u}"
+      caller = "entity://#{caller_ws}/user/admin_#{u}"
+      agent = "entity://#{other_ws}/agent/cc_demo_#{u}"
       :ok = register(caller)
       :ok = register(agent)
 
       # Even a well-formed live URI in other_ws is rejected — the
       # caller has no authority over other_ws.
       refute UriOptions.valid_for?(caller, "workspace://#{other_ws}", agent, [:entity])
+    end
+  end
+
+  defp put_flavors(flavors) when is_map(flavors) do
+    by_uri = Map.new(flavors)
+
+    :ets.insert(Ezagent.UriQuery.table(), {:flavor, &resolve_test_flavor(&1, by_uri)})
+  end
+
+  defp resolve_test_flavor(%URI{} = uri, by_uri) do
+    case Map.fetch(by_uri, URI.to_string(uri)) do
+      {:ok, flavor} -> {:ok, flavor}
+      :error -> :none
     end
   end
 end

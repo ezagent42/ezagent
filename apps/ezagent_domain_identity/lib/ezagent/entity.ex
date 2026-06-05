@@ -14,9 +14,9 @@ defmodule Ezagent.Entity do
   PR #142 this module is the unified auth path. Dispatches by URI
   shape:
 
-  - `entity://user/<name>` + password → bcrypt path (delegates to
+  - user entity URI + password → bcrypt path (delegates to
     `Ezagent.Users.verify_password/2`)
-  - `entity://agent/<flavor>_<name>` + token → entity_tokens path
+  - agent entity URI + token → entity_tokens path
     (delegates to `Ezagent.Entity.Token.verify/2`)
   - other entity URIs / non-entity schemes → `{:error, {:unsupported_entity_uri, uri}}`
 
@@ -30,10 +30,10 @@ defmodule Ezagent.Entity do
   @type result :: {:ok, %{caps: MapSet.t(Ezagent.Capability.t())}} | {:error, term()}
 
   @doc """
-  Authenticate `uri` with `secret`. Dispatch is by URI host:
+  Authenticate `uri` with `secret`. Dispatch is by URI type axis:
 
-  - `host == "user"` → bcrypt against `users.password_hash`
-  - `host == "agent"` → bearer-token verify against `entity_tokens`
+  - `type == "user"` → bcrypt against `users.password_hash`
+  - `type == "agent"` → bearer-token verify against `entity_tokens`
 
   Returns:
   - `{:ok, %{caps: MapSet.t()}}` on success
@@ -45,8 +45,17 @@ defmodule Ezagent.Entity do
   @spec authenticate(URI.t(), String.t()) :: result()
   def authenticate(uri, secret)
 
-  def authenticate(%URI{scheme: "entity", host: "user", path: "/" <> _name} = uri, secret)
-      when is_binary(secret) do
+  def authenticate(%URI{scheme: "entity"} = uri, secret) when is_binary(secret) do
+    cond do
+      entity_type?(uri, :user) -> authenticate_user(uri, secret)
+      entity_type?(uri, :agent) -> Token.verify(uri, secret)
+      true -> {:error, {:unsupported_entity_uri, uri}}
+    end
+  end
+
+  def authenticate(%URI{} = uri, _secret), do: {:error, {:unsupported_entity_uri, uri}}
+
+  defp authenticate_user(%URI{} = uri, secret) when is_binary(secret) do
     uri_str = URI.to_string(uri)
 
     cond do
@@ -75,12 +84,9 @@ defmodule Ezagent.Entity do
     end
   end
 
-  def authenticate(%URI{scheme: "entity", host: "agent", path: "/" <> _name} = uri, token)
-      when is_binary(token) do
-    Token.verify(uri, token)
+  defp entity_type?(%URI{} = uri, type) do
+    Ezagent.URI.type?(uri, type) and match?({:ok, _name}, Ezagent.URI.name(uri))
   end
-
-  def authenticate(%URI{} = uri, _secret), do: {:error, {:unsupported_entity_uri, uri}}
 
   @doc """
   Idempotently spawn the Kind for `uri`, hydrating its caps from the

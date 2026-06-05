@@ -66,12 +66,13 @@ defmodule Ezagent.PluginNp.Test.FakeCcAgent do
 
   alias Ezagent.{Cmd, Message}
 
-  action :receive,
+  action(:receive,
     args: %{message: :map},
     returns: %{},
     caps: [:receive],
     modes: [:cast],
     description: "Transform inbound text to a LaTeX expression and reply into the session"
+  )
 
   # `create/1` — FIRST-EVER existence; build the PERSISTENT state. The
   # FakeCcAgent is registered against the existing Agent Kind, which
@@ -137,7 +138,7 @@ defmodule Ezagent.PluginNp.Test.FakeCcAgent do
        args: %{message: reply_msg},
        ctx: %{
          caller: agent_uri,
-         caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
+         caps: "chat-reply" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
          reply: :ignore
        }
      }}

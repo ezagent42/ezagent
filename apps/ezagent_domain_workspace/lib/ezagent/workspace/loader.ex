@@ -92,14 +92,10 @@ defmodule Ezagent.Workspace.Loader do
     end
   end
 
-  defp workspace_name(%URI{scheme: "workspace", host: name}) when is_binary(name), do: name
+  defp workspace_name(%URI{scheme: "workspace"} = uri), do: Ezagent.URI.name!(uri)
 
   defp workspace_name(%URI{} = uri) do
-    # Fall back to last path segment for any tolerated future shape.
-    case URI.to_string(uri) do
-      "workspace://" <> rest -> rest |> String.split("/") |> List.first()
-      _ -> raise ArgumentError, "not a workspace:// URI: #{inspect(uri)}"
-    end
+    raise ArgumentError, "not a workspace URI: #{inspect(uri)}"
   end
 
   defp fetch_template(tmpls, tmpl_name) do
@@ -239,9 +235,14 @@ defmodule Ezagent.Workspace.Loader do
   # schemes).
   defp uri_workspace_segment_matches?(%URI{} = uri, %URI{} = workspace_uri) do
     case Ezagent.Capability.workspace_of(uri) do
-      %URI{host: ws} when is_binary(ws) -> ws == workspace_uri.host
-      :any -> true
-      _ -> false
+      %URI{scheme: "workspace"} = uri_workspace ->
+        Ezagent.URI.workspace_name(uri_workspace) == Ezagent.URI.workspace_name(workspace_uri)
+
+      :any ->
+        true
+
+      _ ->
+        false
     end
   rescue
     # `workspace_of/1` raises for a structurally-malformed entity URI
@@ -338,7 +339,10 @@ defmodule Ezagent.Workspace.Loader do
            ctx: %{
              mode: :call,
              caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
-             caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
+             caps:
+               "workspace-loader"
+               |> Ezagent.SystemPrincipal.uri()
+               |> Ezagent.SystemPrincipal.caps(),
              reply: {:caller_inbox, self()}
            }
          }) do

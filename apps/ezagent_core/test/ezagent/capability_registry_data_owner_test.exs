@@ -43,7 +43,7 @@ defmodule Ezagent.CapabilityRegistry.DataOwnerTest do
 
   describe "data_owner_of/2" do
     test "calls Behavior's data_owner/1 when exported" do
-      uri = URI.parse("entity://user/acme/alice")
+      uri = Ezagent.URI.new!("entity://acme/user/alice")
       assert ^uri = CapabilityRegistry.data_owner_of(OwnedBehavior, uri)
     end
 
@@ -62,14 +62,14 @@ defmodule Ezagent.CapabilityRegistry.DataOwnerTest do
         def interface, do: %{noop: %{description: "no-op", args: %{}}}
       end
 
-      uri = URI.parse("entity://user/acme/x")
+      uri = Ezagent.URI.new!("entity://acme/user/x")
       assert :no_owner = CapabilityRegistry.data_owner_of(UnownedBehavior, uri)
     end
   end
 
   describe "default_grants_from_data_owner/2 — basic contract (PR-OWN-1)" do
     test "returns tuple list [{grantee, %Capability{}}]" do
-      target = URI.parse("entity://user/acme/alice")
+      target = Ezagent.URI.new!("entity://acme/user/alice")
       grants = CapabilityRegistry.default_grants_from_data_owner(OwnedKind, target)
 
       # Each entry is a 2-tuple {URI.t, %Capability{}}
@@ -79,7 +79,7 @@ defmodule Ezagent.CapabilityRegistry.DataOwnerTest do
     end
 
     test "grantee is the data owner (== target_uri for OwnedBehavior)" do
-      target = URI.parse("entity://user/acme/alice")
+      target = Ezagent.URI.new!("entity://acme/user/alice")
       grants = CapabilityRegistry.default_grants_from_data_owner(OwnedKind, target)
 
       Enum.each(grants, fn {grantee, _cap} ->
@@ -88,7 +88,7 @@ defmodule Ezagent.CapabilityRegistry.DataOwnerTest do
     end
 
     test "%Capability{} has correct kind + behavior + instance + workspace_uri" do
-      target = URI.parse("entity://user/acme/alice")
+      target = Ezagent.URI.new!("entity://acme/user/alice")
       grants = CapabilityRegistry.default_grants_from_data_owner(OwnedKind, target)
 
       Enum.each(grants, fn {_grantee, cap} ->
@@ -104,7 +104,7 @@ defmodule Ezagent.CapabilityRegistry.DataOwnerTest do
 
   describe "default_grants_from_data_owner/2 — round-5 regression (codex round-4 HIGH)" do
     test "enumerates dispatchable AND cap-only Behaviors (no silent skip)" do
-      target = URI.parse("entity://user/acme/alice")
+      target = Ezagent.URI.new!("entity://acme/user/alice")
       grants = CapabilityRegistry.default_grants_from_data_owner(OwnedKind, target)
 
       behaviors_seen =
@@ -124,7 +124,7 @@ defmodule Ezagent.CapabilityRegistry.DataOwnerTest do
     end
 
     test "multi-action dispatchable Behavior appears ONCE (Enum.uniq on behavior)" do
-      target = URI.parse("entity://user/acme/alice")
+      target = Ezagent.URI.new!("entity://acme/user/alice")
       grants = CapabilityRegistry.default_grants_from_data_owner(OwnedKind, target)
 
       owned_behavior_count =
@@ -141,13 +141,13 @@ defmodule Ezagent.CapabilityRegistry.DataOwnerTest do
   describe "default_grants_from_data_owner/2 — URI canonicalization (codex PR-OWN-1 HIGH)" do
     # Codex PR-OWN-1 HIGH: round-1 stored the raw target_uri in
     # the cap's `:instance` field, so an action-query URI like
-    # `entity://user/acme/alice?action=identity.list_caps` would
+    # `entity://acme/user/alice?action=identity.list_caps` would
     # mint a cap that never matches dispatch's canonical instance
     # (dispatch canonicalizes via `Ezagent.URI.instance/1`).
     # Round-2 fix canonicalizes upfront in the helper.
     test "action-query target URI yields a cap on the canonical bare instance" do
-      action_target = URI.parse("entity://user/acme/alice?action=read")
-      bare_target = URI.parse("entity://user/acme/alice")
+      action_target = Ezagent.URI.new!("entity://acme/user/alice?action=read")
+      bare_target = Ezagent.URI.new!("entity://acme/user/alice")
 
       grants = CapabilityRegistry.default_grants_from_data_owner(OwnedKind, action_target)
 
@@ -168,15 +168,10 @@ defmodule Ezagent.CapabilityRegistry.DataOwnerTest do
       refute cap.instance == action_target
     end
 
-    test "subresource target URI also canonicalizes" do
-      sub_target = URI.parse("entity://user/acme/alice/sessions/foo?action=write")
-      grants = CapabilityRegistry.default_grants_from_data_owner(OwnedKind, sub_target)
-
-      # Even with subresource path, `Ezagent.URI.instance/1` strips
-      # the query — the path is preserved. Assert the cap's instance
-      # has no query.
-      [{_g, cap}] = Enum.filter(grants, fn {_g, c} -> c.behavior == OwnedBehavior end)
-      assert cap.instance.query == nil
+    test "reserved entity subresource target URI is rejected" do
+      assert_raise ArgumentError, ~r/entity URI sub-resource positions are reserved/, fn ->
+        Ezagent.URI.new!("entity://acme/user/alice/sessions/foo?action=write")
+      end
     end
 
     test "match-level regression: generated cap matches dispatch's needed cap (codex round-2 MED)" do
@@ -185,7 +180,7 @@ defmodule Ezagent.CapabilityRegistry.DataOwnerTest do
       # This test asserts the END contract — round-1 + round-2 unit
       # tests only verified URI fields piecewise; this asserts that
       # `Capability.matches?/2` actually succeeds, the real authz gate.
-      target = URI.parse("entity://user/acme/alice?action=read")
+      target = Ezagent.URI.new!("entity://acme/user/alice?action=read")
 
       [{_grantee, granted_cap}] =
         CapabilityRegistry.default_grants_from_data_owner(OwnedKind, target)
@@ -228,7 +223,7 @@ defmodule Ezagent.CapabilityRegistry.DataOwnerTest do
         :ets.delete(CapabilityRegistry.Subjects.table(), {OwnedKind, AnyOwnerBehavior, :do_thing})
       end)
 
-      target = URI.parse("entity://user/acme/x")
+      target = Ezagent.URI.new!("entity://acme/user/x")
       grants = CapabilityRegistry.default_grants_from_data_owner(OwnedKind, target)
 
       # AnyOwnerBehavior should NOT appear in grants (data_owner == :any).

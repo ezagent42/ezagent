@@ -163,6 +163,6 @@ defmodule Mix.Tasks.Ezagent.User.Token do
   # no dispatch alternative yet (the UserTokens Behavior is registered
   # on User Kind only). For agents the legacy task is still the
   # canonical path; notice would be misleading.
-  defp mint_is_user?(%URI{scheme: "entity", host: "user"}), do: true
+  defp mint_is_user?(%URI{scheme: "entity"} = uri), do: Ezagent.URI.type?(uri, :user)
   defp mint_is_user?(_), do: false
 end

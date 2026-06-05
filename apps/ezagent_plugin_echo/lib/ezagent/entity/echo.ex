@@ -21,13 +21,12 @@ defmodule Ezagent.Entity.Echo do
 
   use Ezagent.Kind,
     pattern: :entity,
-    uri_scheme: "entity://agent/",
     type_name: :echo,
     supervisor: EzagentDomainInstanceMessage.AgentSupervisor
 
   @behaviour Ezagent.Kind
 
-  attach Ezagent.Behavior.Echo
+  attach(Ezagent.Behavior.Echo)
 
   # Kind.Server still reads behaviors/0; keep the legacy callback.
   def behaviors, do: [Ezagent.Behavior.Echo]

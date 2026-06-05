@@ -74,7 +74,7 @@ defmodule EzagentWeb.UploadsControllerTest do
 
   defp uniq, do: System.unique_integer([:positive])
 
-  defp user_uri(name), do: URI.new!("entity://user/#{@workspace_name}/#{name}")
+  defp user_uri(name), do: URI.new!("entity://#{@workspace_name}/user/#{name}")
 
   defp session_uri(name) do
     uri = URI.new!("session://#{@workspace_name}/#{@workspace_name}/#{name}")
@@ -91,7 +91,7 @@ defmodule EzagentWeb.UploadsControllerTest do
 
   defp attach_in_message(sender_uri, session_uri, filename) do
     attachment_uri =
-      URI.parse("resource://uploads/#{@workspace_name}/#{filename}")
+      Ezagent.URI.new!("resource://#{@workspace_name}/uploads/#{filename}")
 
     msg = Message.new(sender_uri, %{text: "see attached", attachments: [attachment_uri]})
     {:ok, _} = MessageStore.write(msg, session_uri)
@@ -211,7 +211,7 @@ defmodule EzagentWeb.UploadsControllerTest do
       # Attacker sends a TEXT message (not attachment) referencing the
       # filename in their own, unrelated session.
       attachment_uri =
-        URI.parse("resource://uploads/#{@workspace_name}/#{filename}")
+        Ezagent.URI.new!("resource://#{@workspace_name}/uploads/#{filename}")
 
       bad_msg =
         Message.new(attacker, %{

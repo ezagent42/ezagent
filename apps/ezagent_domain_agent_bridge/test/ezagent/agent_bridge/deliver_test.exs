@@ -10,9 +10,6 @@ defmodule Ezagent.AgentBridge.DeliverTest do
     def flavor, do: "test"
 
     @impl true
-    def agent_uri_prefix, do: "test_"
-
-    @impl true
     def deliver(%Payload{} = payload, channel_pid) do
       send(channel_pid, {:agent_bridge_delivered, payload})
       :ok
@@ -29,9 +26,6 @@ defmodule Ezagent.AgentBridge.DeliverTest do
     def flavor, do: "test"
 
     @impl true
-    def agent_uri_prefix, do: "test_"
-
-    @impl true
     def deliver(%Payload{}, _channel_pid), do: :ok
 
     @impl true
@@ -43,9 +37,6 @@ defmodule Ezagent.AgentBridge.DeliverTest do
 
     @impl true
     def flavor, do: "late"
-
-    @impl true
-    def agent_uri_prefix, do: "late_"
 
     @impl true
     def deliver(%Payload{} = payload, channel_pid) do
@@ -68,10 +59,31 @@ defmodule Ezagent.AgentBridge.DeliverTest do
     :ok
   end
 
+  setup do
+    Ezagent.UriQuery.init()
+    previous = :ets.lookup(Ezagent.UriQuery.table(), :flavor)
+
+    on_exit(fn ->
+      :ets.delete(Ezagent.UriQuery.table(), :flavor)
+
+      for entry <- previous do
+        :ets.insert(Ezagent.UriQuery.table(), entry)
+      end
+    end)
+
+    :ok
+  end
+
   test "deliver/2 resolves adapter by agent flavor and sends to bound channel pid" do
-    agent_uri = URI.new!("entity://agent/team-alpha/test_bridge-#{System.unique_integer([:positive])}")
-    sender_uri = URI.new!("entity://user/system/admin")
-    session_uri = URI.new!("session://default/team-alpha/test-#{System.unique_integer([:positive])}")
+    agent_uri =
+      URI.new!("entity://team-alpha/agent/test_bridge-#{System.unique_integer([:positive])}")
+
+    sender_uri = URI.new!("entity://system/user/admin")
+
+    session_uri =
+      URI.new!("session://team-alpha/default/test-#{System.unique_integer([:positive])}")
+
+    put_flavor(agent_uri, "test")
 
     payload = %Payload{
       message_id: "m1",
@@ -88,13 +100,34 @@ defmodule Ezagent.AgentBridge.DeliverTest do
     assert_receive {:agent_bridge_delivered, ^payload}, 500
   end
 
+  test "deliver/2 resolves adapter flavor through UriQuery for prefixless agent URIs" do
+    agent_uri = URI.new!("entity://team-alpha/agent/bridge-#{System.unique_integer([:positive])}")
+    sender_uri = URI.new!("entity://system/user/admin")
+    put_flavor(agent_uri, "test")
+
+    payload = %Payload{
+      message_id: "m1-prefixless",
+      session_uri: URI.new!("session://team-alpha/default/test-prefixless"),
+      sender_uri: sender_uri,
+      text: "hello",
+      event_type: :chat_send,
+      meta: %{"sender" => URI.to_string(sender_uri)}
+    }
+
+    :ok = Registry.bind(agent_uri, self())
+
+    assert :ok = Ezagent.AgentBridge.deliver(agent_uri, payload)
+    assert_receive {:agent_bridge_delivered, ^payload}, 500
+  end
+
   test "deliver/2 reports no bridge without raising" do
-    agent_uri = URI.new!("entity://agent/team-alpha/test_missing-#{System.unique_integer([:positive])}")
+    agent_uri =
+      URI.new!("entity://team-alpha/agent/test_missing-#{System.unique_integer([:positive])}")
 
     payload = %Payload{
       message_id: "m2",
-      session_uri: URI.new!("session://default/team-alpha/missing"),
-      sender_uri: URI.new!("entity://user/system/admin"),
+      session_uri: URI.new!("session://team-alpha/default/missing"),
+      sender_uri: URI.new!("entity://system/user/admin"),
       text: "hello",
       event_type: :chat_send,
       meta: %{}
@@ -104,12 +137,15 @@ defmodule Ezagent.AgentBridge.DeliverTest do
   end
 
   test "deliver/2 buffers when no adapter is registered yet" do
-    agent_uri = URI.new!("entity://agent/team-alpha/missing_bridge-#{System.unique_integer([:positive])}")
+    agent_uri =
+      URI.new!("entity://team-alpha/agent/missing_bridge-#{System.unique_integer([:positive])}")
+
+    put_flavor(agent_uri, "missing")
 
     payload = %Payload{
       message_id: "m3",
-      session_uri: URI.new!("session://default/team-alpha/no-adapter"),
-      sender_uri: URI.new!("entity://user/system/admin"),
+      session_uri: URI.new!("session://team-alpha/default/no-adapter"),
+      sender_uri: URI.new!("entity://system/user/admin"),
       text: "hello",
       event_type: :chat_send,
       meta: %{}
@@ -122,12 +158,15 @@ defmodule Ezagent.AgentBridge.DeliverTest do
   end
 
   test "deliver/2 drains buffered payloads when adapter registers" do
-    agent_uri = URI.new!("entity://agent/team-alpha/late_bridge-#{System.unique_integer([:positive])}")
+    agent_uri =
+      URI.new!("entity://team-alpha/agent/late_bridge-#{System.unique_integer([:positive])}")
+
+    put_flavor(agent_uri, "late")
 
     payload = %Payload{
       message_id: "m4",
-      session_uri: URI.new!("session://default/team-alpha/late"),
-      sender_uri: URI.new!("entity://user/system/admin"),
+      session_uri: URI.new!("session://team-alpha/default/late"),
+      sender_uri: URI.new!("entity://system/user/admin"),
       text: "hello late",
       event_type: :chat_send,
       meta: %{}
@@ -150,5 +189,9 @@ defmodule Ezagent.AgentBridge.DeliverTest do
              AdapterRegistry.register("test", OtherTestAdapter)
 
     assert {:ok, TestAdapter} = AdapterRegistry.lookup("test")
+  end
+
+  defp put_flavor(agent_uri, flavor) do
+    :ets.insert(Ezagent.UriQuery.table(), {:flavor, fn ^agent_uri -> {:ok, flavor} end})
   end
 end

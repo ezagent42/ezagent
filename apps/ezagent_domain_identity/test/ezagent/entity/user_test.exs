@@ -3,14 +3,14 @@ defmodule Ezagent.Entity.UserTest do
   alias Ezagent.Entity.User
   alias Ezagent.Capability
 
-  test "admin_uri/0 returns entity://user/system/admin" do
+  test "admin_uri/0 returns entity://system/user/admin" do
     uri = User.admin_uri()
     assert %URI{} = uri
     assert uri.scheme == "entity"
-    assert uri.host == "user"
+    assert uri.host == "system"
     # Phase 9 PR-8 (SPEC v3 §13.1): admin lives in workspace://system,
     # not workspace://team-alpha — Keycloak realm-admin model.
-    assert uri.path == "/system/admin"
+    assert uri.path == "/user/admin"
   end
 
   test "admin_caps/0 returns a MapSet containing exactly the structural all-caps cap" do
@@ -37,7 +37,7 @@ defmodule Ezagent.Entity.UserTest do
     assert Capability.matches?(cap, %{
              kind: :random,
              behavior: SomeMod,
-             instance: URI.parse("entity://agent/team-alpha/test_anything"),
+             instance: Ezagent.URI.new!("entity://team-alpha/agent/test_anything"),
              workspace_uri: URI.new!("workspace://anything")
            })
   end

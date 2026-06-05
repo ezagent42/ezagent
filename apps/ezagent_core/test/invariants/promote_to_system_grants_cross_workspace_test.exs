@@ -41,14 +41,14 @@ defmodule Ezagent.Invariants.PromoteToSystemGrantsCrossWorkspaceTest do
       behavior: :any,
       instance: :any,
       workspace_uri: workspace_uri,
-      granted_by: URI.parse("system://bootstrap/default"),
+      granted_by: Ezagent.URI.new!("system://bootstrap/default"),
       granted_at: DateTime.utc_now()
     }
   end
 
   test "promote_to_system → user gains cross-workspace authority via membership" do
-    user_uri = URI.parse("entity://user/acme/promoted-#{uniq()}")
-    user_home_ws = URI.parse("workspace://acme")
+    user_uri = Ezagent.URI.new!("entity://acme/user/promoted-#{uniq()}")
+    user_home_ws = Ezagent.URI.new!("workspace://acme")
     cap = ws_scoped_cap(user_home_ws)
 
     # Before promotion: workspace-scoped cap is NOT cross-workspace
@@ -67,8 +67,8 @@ defmodule Ezagent.Invariants.PromoteToSystemGrantsCrossWorkspaceTest do
   end
 
   test "revoke_system → cross-workspace authority gone" do
-    user_uri = URI.parse("entity://user/acme/revoked-#{uniq()}")
-    cap = ws_scoped_cap(URI.parse("workspace://acme"))
+    user_uri = Ezagent.URI.new!("entity://acme/user/revoked-#{uniq()}")
+    cap = ws_scoped_cap(Ezagent.URI.new!("workspace://acme"))
 
     {:ok, _} = add_to_system_directly(user_uri)
     assert Capability.cross_workspace?(cap, user_uri)
@@ -83,8 +83,8 @@ defmodule Ezagent.Invariants.PromoteToSystemGrantsCrossWorkspaceTest do
     # Sanity: only `system` membership confers cross-workspace
     # authority. Membership in some other workspace (e.g. acme) is
     # tenant-scoped.
-    user_uri = URI.parse("entity://user/acme/regular-#{uniq()}")
-    cap = ws_scoped_cap(URI.parse("workspace://acme"))
+    user_uri = Ezagent.URI.new!("entity://acme/user/regular-#{uniq()}")
+    cap = ws_scoped_cap(Ezagent.URI.new!("workspace://acme"))
 
     ws_name = "acme-#{uniq()}"
     {:ok, _} = Ezagent.Workspace.Store.create(ws_name, %{})

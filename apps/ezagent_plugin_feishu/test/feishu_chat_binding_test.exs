@@ -49,7 +49,7 @@ defmodule EzagentPluginFeishu.FeishuChatBindingTest do
     end
 
     test "carries opts into state for later inspection" do
-      opts = %{bound_by: "entity://user/system/admin", custom: "metadata"}
+      opts = %{bound_by: "entity://system/user/admin", custom: "metadata"}
 
       assert {:ok, state} =
                FeishuChatBinding.init({"oc_test", EzagentPluginFeishu.FeishuAdapter, opts})

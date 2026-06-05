@@ -14,7 +14,7 @@ defmodule EzagentPluginCc.BridgeRegistryTest do
   end
 
   test "bind / lookup / unbind roundtrip" do
-    uri = URI.new!("entity://agent/team-alpha/test_test-bridge-#{System.unique_integer([:positive])}")
+    uri = URI.new!("entity://team-alpha/agent/test_test-bridge-#{System.unique_integer([:positive])}")
     pid = spawn(fn -> Process.sleep(:infinity) end)
 
     assert :ok = BridgeRegistry.bind(uri, pid)
@@ -24,7 +24,7 @@ defmodule EzagentPluginCc.BridgeRegistryTest do
   end
 
   test "deprecated shim bind/3 result matches promoted registry bind/3" do
-    uri = URI.new!("entity://agent/team-alpha/test_shim-bind-#{System.unique_integer([:positive])}")
+    uri = URI.new!("entity://team-alpha/agent/test_shim-bind-#{System.unique_integer([:positive])}")
     pid = spawn(fn -> Process.sleep(:infinity) end)
     info = %{bridge_flavor: "cc", tools: ["reply"]}
 
@@ -35,7 +35,7 @@ defmodule EzagentPluginCc.BridgeRegistryTest do
   end
 
   test "double-bind same pid is idempotent" do
-    uri = URI.new!("entity://agent/team-alpha/test_test-bridge-double")
+    uri = URI.new!("entity://team-alpha/agent/test_test-bridge-double")
     pid = spawn(fn -> Process.sleep(:infinity) end)
 
     :ok = BridgeRegistry.bind(uri, pid)
@@ -43,7 +43,7 @@ defmodule EzagentPluginCc.BridgeRegistryTest do
   end
 
   test "bind on top of live pid returns :already_bound" do
-    uri = URI.new!("entity://agent/team-alpha/test_test-bridge-conflict")
+    uri = URI.new!("entity://team-alpha/agent/test_test-bridge-conflict")
     p1 = spawn(fn -> Process.sleep(:infinity) end)
     p2 = spawn(fn -> Process.sleep(:infinity) end)
 
@@ -52,7 +52,7 @@ defmodule EzagentPluginCc.BridgeRegistryTest do
   end
 
   test "bind replaces a dead pid silently" do
-    uri = URI.new!("entity://agent/team-alpha/test_test-bridge-replace")
+    uri = URI.new!("entity://team-alpha/agent/test_test-bridge-replace")
     p1 = spawn(fn -> :ok end)
     Process.sleep(20)
     refute Process.alive?(p1)
@@ -67,8 +67,8 @@ defmodule EzagentPluginCc.BridgeRegistryTest do
     test "count/0 reflects current bindings" do
       assert BridgeRegistry.count() == 0
 
-      a = URI.new!("entity://agent/team-alpha/test_count-a")
-      b = URI.new!("entity://agent/team-alpha/test_count-b")
+      a = URI.new!("entity://team-alpha/agent/test_count-a")
+      b = URI.new!("entity://team-alpha/agent/test_count-b")
       pid = spawn(fn -> Process.sleep(:infinity) end)
 
       :ok = BridgeRegistry.bind(a, pid)
@@ -84,39 +84,39 @@ defmodule EzagentPluginCc.BridgeRegistryTest do
     test "status/0 reports :no_bridges or {:connected, n}" do
       assert BridgeRegistry.status() == :no_bridges
 
-      uri = URI.new!("entity://agent/team-alpha/test_status-1")
+      uri = URI.new!("entity://team-alpha/agent/test_status-1")
       :ok = BridgeRegistry.bind(uri, spawn(fn -> Process.sleep(:infinity) end))
       assert BridgeRegistry.status() == {:connected, 1}
     end
 
     test "list_connected/0 carries info + connected_at" do
-      uri = URI.new!("entity://agent/team-alpha/test_info-bridge")
+      uri = URI.new!("entity://team-alpha/agent/test_info-bridge")
       pid = spawn(fn -> Process.sleep(:infinity) end)
       info = %{claude_info: %{"version" => "2.1.143"}, tools: ["reply"]}
 
       :ok = BridgeRegistry.bind(uri, pid, info)
 
       [{found_uri, row}] = BridgeRegistry.list_connected()
-      assert URI.to_string(found_uri) == "entity://agent/team-alpha/test_info-bridge"
+      assert URI.to_string(found_uri) == "entity://team-alpha/agent/test_info-bridge"
       assert row.pid == pid
       assert %DateTime{} = row.connected_at
       assert row.info == info
     end
 
     test "list_all/0 keeps {uri, pid} back-compat shape" do
-      uri = URI.new!("entity://agent/team-alpha/test_list-all-bc")
+      uri = URI.new!("entity://team-alpha/agent/test_list-all-bc")
       pid = spawn(fn -> Process.sleep(:infinity) end)
       :ok = BridgeRegistry.bind(uri, pid)
 
       matched =
         BridgeRegistry.list_all()
-        |> Enum.find(fn {u, _} -> URI.to_string(u) == "entity://agent/team-alpha/test_list-all-bc" end)
+        |> Enum.find(fn {u, _} -> URI.to_string(u) == "entity://team-alpha/agent/test_list-all-bc" end)
 
       assert {%URI{}, ^pid} = matched
     end
 
     test "bind/unbind broadcast on topic/0" do
-      uri = URI.new!("entity://agent/team-alpha/test_broadcast-bridge")
+      uri = URI.new!("entity://team-alpha/agent/test_broadcast-bridge")
       :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, BridgeRegistry.topic())
 
       pid = spawn(fn -> Process.sleep(:infinity) end)
@@ -129,7 +129,7 @@ defmodule EzagentPluginCc.BridgeRegistryTest do
     end
 
     test "unbind on absent uri is :ok and silent" do
-      uri = URI.new!("entity://agent/team-alpha/test_never-bound")
+      uri = URI.new!("entity://team-alpha/agent/test_never-bound")
       :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, BridgeRegistry.topic())
 
       assert :ok = BridgeRegistry.unbind(uri)

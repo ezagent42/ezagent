@@ -46,7 +46,7 @@ defmodule Ezagent.Domain.Python do
       identity for test fixtures)
   """
   @spec handle_key(handle()) :: binary()
-  def handle_key(%URI{} = uri), do: URI.to_string(uri)
+  def handle_key(%URI{} = uri), do: Ezagent.URI.stable_key(uri)
 
   def handle_key("test://" <> _ = bin), do: bin
 

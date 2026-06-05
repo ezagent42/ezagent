@@ -87,7 +87,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatMembersSurviveRestartTest
   defp spawn_member do
     member_uri =
       Ezagent.URI.new!(
-        "entity://user/team-alpha/restart-mon-#{System.unique_integer([:positive])}"
+        "entity://team-alpha/user/restart-mon-#{System.unique_integer([:positive])}"
       )
 
     {:ok, member_pid} =
@@ -124,7 +124,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatMembersSurviveRestartTest
     test "members survive cold-load in state; monitors rebuilt LIVE in transients (no stale ref)" do
       session_uri =
         Ezagent.URI.new!(
-          "session://default/team-alpha/chat-restart-#{System.unique_integer([:positive])}"
+          "session://team-alpha/default/chat-restart-#{System.unique_integer([:positive])}"
         )
 
       # Clean slate — no stale snapshot.

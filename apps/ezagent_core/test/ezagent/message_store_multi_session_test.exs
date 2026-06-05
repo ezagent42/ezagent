@@ -20,10 +20,10 @@ defmodule Ezagent.MessageStoreMultiSessionTest do
     default_ws = URI.new!("workspace://team-alpha")
 
     sessions = [
-      URI.new!("session://default/system/main"),
-      URI.new!("session://default/team-alpha/oncall"),
-      URI.new!("session://default/team-alpha/A"),
-      URI.new!("session://default/team-alpha/B")
+      URI.new!("session://system/default/main"),
+      URI.new!("session://team-alpha/default/oncall"),
+      URI.new!("session://team-alpha/default/A"),
+      URI.new!("session://team-alpha/default/B")
     ]
 
     for s <- sessions, do: :ok = Ezagent.WorkspaceRegistry.bind(s, default_ws)
@@ -36,11 +36,11 @@ defmodule Ezagent.MessageStoreMultiSessionTest do
   end
 
   test "same message id written to 2 sessions → messages 1 row + routings 2 rows" do
-    sender = URI.new!("entity://agent/team-alpha/test_cc-builder")
+    sender = URI.new!("entity://team-alpha/agent/test_cc-builder")
     msg = Message.new(sender, %{text: "reply to both", attachments: []})
 
-    session_a = URI.new!("session://default/system/main")
-    session_b = URI.new!("session://default/team-alpha/oncall")
+    session_a = URI.new!("session://system/default/main")
+    session_b = URI.new!("session://team-alpha/default/oncall")
 
     assert {:ok, _} = MessageStore.write(msg, session_a)
     assert {:ok, _} = MessageStore.write(msg, session_b)
@@ -53,13 +53,13 @@ defmodule Ezagent.MessageStoreMultiSessionTest do
     sessions = MessageStore.sessions_for_message(msg.id)
 
     assert MapSet.new(sessions) ==
-             MapSet.new(["session://default/system/main", "session://default/team-alpha/oncall"])
+             MapSet.new(["session://system/default/main", "session://team-alpha/default/oncall"])
   end
 
   test "recent_in_session scoped via JOIN — message in both sessions appears in both queries" do
-    sender = URI.new!("entity://agent/team-alpha/test_cc-builder")
-    session_a = URI.new!("session://default/team-alpha/A")
-    session_b = URI.new!("session://default/team-alpha/B")
+    sender = URI.new!("entity://team-alpha/agent/test_cc-builder")
+    session_a = URI.new!("session://team-alpha/default/A")
+    session_b = URI.new!("session://team-alpha/default/B")
 
     # 3 messages, only msg2 spans both sessions
     {:ok, _} =
@@ -87,13 +87,13 @@ defmodule Ezagent.MessageStoreMultiSessionTest do
   end
 
   test "write is idempotent on (message_id, session_uri) — duplicate write doesn't fail or double-insert routing" do
-    sender = URI.new!("entity://user/system/admin")
+    sender = URI.new!("entity://system/user/admin")
     msg = Message.new(sender, %{text: "once", attachments: []})
-    session = URI.new!("session://default/system/main")
+    session = URI.new!("session://system/default/main")
 
     {:ok, _} = MessageStore.write(msg, session)
     {:ok, _} = MessageStore.write(msg, session)
 
-    assert MessageStore.sessions_for_message(msg.id) == ["session://default/system/main"]
+    assert MessageStore.sessions_for_message(msg.id) == ["session://system/default/main"]
   end
 end

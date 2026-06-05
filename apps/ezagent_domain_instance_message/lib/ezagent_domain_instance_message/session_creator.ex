@@ -143,8 +143,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     template_name = require_template_name!(opts)
     workspace_name = workspace_name_of!(workspace_uri)
 
-    session_uri =
-      Ezagent.URI.new!("session://#{template_name}/#{workspace_name}/#{short_name}")
+    session_uri = Ezagent.URI.session(workspace_name, template_name, short_name)
 
     # 2026-05-31 orchestrator-startup-atomicity §4 — a thin per-URI lock.
     # With adoption gone + spawn idempotent, the `:fresh`-rollback vs
@@ -208,10 +207,11 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   @spec repair_orchestrator(URI.t(), URI.t() | nil) ::
           {:ok, URI.t(), create_session_meta()} | {:error, term()}
   def repair_orchestrator(
-        %URI{scheme: "session", host: template_name} = session_uri,
+        %URI{scheme: "session"} = session_uri,
         %URI{} = workspace_uri
-      )
-      when is_binary(template_name) and template_name != "" do
+      ) do
+    _template_name = Ezagent.URI.type!(session_uri)
+
     # The SAME per-URI lock ResourceId the create flow uses (`:create_session`,
     # NOT a distinct `:repair_orchestrator` id) so a repair and a concurrent
     # create/repair of the same session actually serialize on one lock. (codex Q4.)
@@ -229,7 +229,9 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   def repair_orchestrator(%URI{scheme: "session"}, nil),
     do: {:error, :repair_requires_workspace}
 
-  defp do_repair_orchestrator(%URI{host: template_name} = session_uri, %URI{} = workspace_uri) do
+  defp do_repair_orchestrator(%URI{} = session_uri, %URI{} = workspace_uri) do
+    template_name = Ezagent.URI.type!(session_uri)
+
     # The session OWNER carries the orchestrator ownership obligations; read
     # it from the live/durable session so the re-materialize + ensure use
     # the SAME owner the session was created with (NOT the repairing
@@ -385,7 +387,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
 
       orch_uri =
         if match?(%URI{}, orchestrator_template_uri) do
-          Session.derive_orchestrator_uri(session_uri, workspace_uri)
+          Session.planned_orchestrator_uri(session_uri, workspace_uri)
         else
           nil
         end
@@ -467,28 +469,18 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
 
         orchestrator_ok? =
           if bound? do
-            orch_uri = Session.derive_orchestrator_uri(session_uri, derive_workspace(session_uri))
+            orch_uri = Map.get(wc, :orchestrator_uri)
 
-            match?(
-              {:ok, _},
-              Ezagent.Orchestrator.McpServer.from_orchestrator_uri(orch_uri)
-            )
+            match?(%URI{}, orch_uri) and
+              match?(
+                {:ok, _},
+                Ezagent.Orchestrator.McpServer.from_orchestrator_uri(orch_uri)
+              )
           else
             false
           end
 
         bound? and owner_member? and otu_set? and orchestrator_ok?
-    end
-  end
-
-  # The session's bound workspace (for orchestrator URI derivation in the
-  # completeness check). Falls back to the session URI's own workspace
-  # segment when the binding is absent — but in that case `bound?` is
-  # already false, so the orchestrator check is short-circuited anyway.
-  defp derive_workspace(%URI{} = session_uri) do
-    case Ezagent.WorkspaceRegistry.lookup(session_uri) do
-      {:ok, %URI{} = ws} -> ws
-      :error -> Ezagent.Capability.workspace_of(session_uri)
     end
   end
 
@@ -628,7 +620,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
         {orchestrator_uri, degraded_meta} = decompose_ensure(ensure_ok)
 
         # Steps 6-8.
-        with :ok <-
+        with :ok <- store_session_orchestrator_uri(session_uri, orchestrator_uri),
+             :ok <-
                Session.grant_orchestrator_scoped_caps(
                  orchestrator_uri,
                  session_uri,
@@ -780,7 +773,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   # `KindRegistry` first, then the durable snapshot store (the boot seed
   # writes a snapshot row but the Kind may not be live in this view).
   defp find_session_template_uri(template_name, workspace_name) do
-    prefix = "template://session/#{workspace_name}/#{template_name}@"
+    prefix =
+      workspace_name
+      |> Ezagent.URI.template(:session, "#{template_name}@")
+      |> URI.to_string()
 
     live =
       KindRegistry.list_all()
@@ -850,6 +846,19 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     end
   end
 
+  defp store_session_orchestrator_uri(%URI{} = session_uri, %URI{} = orchestrator_uri) do
+    working_copy =
+      session_uri
+      |> Session.read_template_working_copy()
+      |> Map.put(:orchestrator_uri, orchestrator_uri)
+
+    case Ezagent.Behavior.Chat.system_set_working_copy(session_uri, working_copy) do
+      {:ok, _} -> :ok
+      {:error, _} = err -> err
+      other -> {:error, {:unexpected_set_working_copy_result, other}}
+    end
+  end
+
   # ── Step 6 — owner OrchestratorAdmin :restart cap (the single grant) ──
 
   # 2026-05-31 orchestrator-startup-atomicity §4 step 6 — the SINGLE
@@ -891,7 +900,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
           # runs under `system://template-materialize` (closed Catalog).
           ctx: %{
             caller: owner_uri,
-            caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
+            caps:
+              "template-materialize"
+              |> Ezagent.SystemPrincipal.uri()
+              |> Ezagent.SystemPrincipal.caps(),
             reply: {:caller_inbox, self()}
           }
         })
@@ -930,7 +942,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
           # the `cap(:any, Chat, :any)` cap step 5.5 checks.
           ctx: %{
             caller: Ezagent.SystemPrincipal.uri("session-internal"),
-            caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+            caps:
+              "session-internal"
+              |> Ezagent.SystemPrincipal.uri()
+              |> Ezagent.SystemPrincipal.caps(),
             reply: {:caller_inbox, self()}
           }
         })
@@ -1107,7 +1122,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
         args: %{cap: cap},
         ctx: %{
           caller: owner_uri,
-          caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
+          caps:
+            "template-materialize"
+            |> Ezagent.SystemPrincipal.uri()
+            |> Ezagent.SystemPrincipal.caps(),
           reply: {:caller_inbox, self()}
         }
       })
@@ -1164,7 +1182,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   # already-existing session. We do not re-run setup; we read whether the
   # orchestrator Agent Kind is live.
   defp existing_orchestrator_meta(%URI{} = session_uri, %URI{} = workspace_uri) do
-    orch_uri = Session.derive_orchestrator_uri(session_uri, workspace_uri)
+    orch_uri = stored_or_planned_orchestrator_uri(session_uri, workspace_uri)
 
     case KindRegistry.lookup(orch_uri) do
       {:ok, _pid} ->
@@ -1179,51 +1197,68 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     end
   end
 
+  defp stored_or_planned_orchestrator_uri(%URI{} = session_uri, %URI{} = workspace_uri) do
+    case Session.orchestrator_uri(session_uri) do
+      {:ok, %URI{} = uri} ->
+        uri
+
+      :none ->
+        Session.planned_orchestrator_uri(session_uri, workspace_uri)
+
+      {:error, reason} ->
+        raise ArgumentError, "orchestrator URI lookup failed: #{inspect(reason)}"
+    end
+  end
+
   # codex PR #408 review HIGH-3 — notify the session owner that the
   # orchestrator's role-bootstrap (skill copy / CLAUDE.md hint) failed.
   # The agent itself is alive; the orchestrator-specific UX is degraded.
   # Best-effort: a notify failure logs but never bubbles up.
   defp notify_orchestrator_role_degraded(
-         %URI{scheme: "entity", host: "user"} = owner_uri,
+         %URI{scheme: "entity"} = owner_uri,
          %URI{} = session_uri,
          %URI{} = orch_uri,
          degraded_meta
        ) do
-    reason = Map.get(degraded_meta, :role_degraded_reason)
+    unless Ezagent.URI.type?(owner_uri, :user) do
+      notify_orchestrator_role_degraded(:non_user_owner, session_uri, orch_uri, degraded_meta)
+    else
+      reason = Map.get(degraded_meta, :role_degraded_reason)
 
-    Logger.warning(
-      "EzagentDomainInstanceMessage.SessionCreator.create_session: orchestrator role-bootstrap DEGRADED for " <>
-        "session=#{URI.to_string(session_uri)} orchestrator=#{URI.to_string(orch_uri)} " <>
-        "reason=#{inspect(reason)} — the agent is alive but the " <>
-        "ezagent-session-orchestrator skill / CLAUDE.md hint did not load. " <>
-        "The session owner has been notified (Invariant #9)."
-    )
+      Logger.warning(
+        "EzagentDomainInstanceMessage.SessionCreator.create_session: orchestrator role-bootstrap DEGRADED for " <>
+          "session=#{URI.to_string(session_uri)} orchestrator=#{URI.to_string(orch_uri)} " <>
+          "reason=#{inspect(reason)} — the agent is alive but the " <>
+          "ezagent-session-orchestrator skill / CLAUDE.md hint did not load. " <>
+          "The session owner has been notified (Invariant #9)."
+      )
 
-    try do
-      _ =
-        Ezagent.Notifications.notify(owner_uri, %{
-          type: :orchestrator_role_degraded,
-          body: %{
-            text:
-              "Orchestrator agent started but the orchestrator skill failed to load. " <>
-                "It will behave as a plain claude session. " <>
-                "Reason: #{inspect(reason)}",
-            session_uri: session_uri,
-            orchestrator_uri: orch_uri,
-            reason: inspect(reason)
-          },
-          source: __MODULE__
-        })
-    rescue
-      error ->
-        Logger.warning(
-          "EzagentDomainInstanceMessage.SessionCreator.create_session: notify(:orchestrator_role_degraded) to " <>
-            "#{URI.to_string(owner_uri)} raised #{inspect(error)} — the orchestrator " <>
-            "is still alive; this is the notification path failing, not the spawn."
-        )
+      try do
+        _ =
+          Ezagent.Notifications.notify(owner_uri, %{
+            type: :orchestrator_role_degraded,
+            body: %{
+              text:
+                "Orchestrator agent started but the orchestrator skill failed to load. " <>
+                  "It will behave as a plain claude session. " <>
+                  "Reason: #{inspect(reason)}",
+              session_uri: session_uri,
+              orchestrator_uri: orch_uri,
+              reason: inspect(reason)
+            },
+            source: __MODULE__
+          })
+      rescue
+        error ->
+          Logger.warning(
+            "EzagentDomainInstanceMessage.SessionCreator.create_session: notify(:orchestrator_role_degraded) to " <>
+              "#{URI.to_string(owner_uri)} raised #{inspect(error)} — the orchestrator " <>
+              "is still alive; this is the notification path failing, not the spawn."
+          )
+      end
+
+      :ok
     end
-
-    :ok
   end
 
   # Non-user owner (e.g. system principal or agent) — no inbox to notify.
@@ -1443,10 +1478,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
 
   # SPAWNED member — recreate from its AgentTemplate via the unified spawn
   # path (demand-spawn; idempotent if already live). The instance name is
-  # `<flavor>_<role_name|template_name>` so the spawned Agent URI resolves
-  # to the right flavor Kind module — the flavor is read from the source
-  # AgentTemplate's content (the same `flavor`-keyed field the orchestrator
-  # spawn path reads).
+  # `<flavor>_<role_name|template_name>` during PR-B only; the flavor is read
+  # from the source AgentTemplate's content and passed through
+  # `spawn_from_template_content/4` as the stored launch attribute. The new
+  # Agent URI itself is opaque and is not parsed for flavor.
   #
   # PR-8 SEAM (clearly-marked): the FULL spawn model — flavor-class launch
   # params, generation/live_worker_uri bookkeeping, repoint-on-update — is
@@ -1462,21 +1497,25 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
          role_name,
          %URI{} = session_uri
        ) do
-    with {:ok, flavor} <- source_template_flavor(source_template_uri) do
+    with {:ok, content, flavor} <- source_template_content_and_flavor(source_template_uri) do
       instance_name =
         spawned_member_instance_name(flavor, source_template_uri, role_name, session_uri)
 
-      # `spawn_fresh/4` (not the `spawn/4` shim) so we learn whether THIS
-      # call created the worker (`fresh?: true` → bind + lineage ran → it is
-      # in the rollback set) vs adopted a pre-existing one (`fresh?: false`
-      # → idempotent re-materialize, NOT torn down). codex MAJOR #3 + #4.
-      case Ezagent.Entity.Agent.spawn_fresh(
-             source_template_uri,
-             instance_name,
-             workspace_uri,
-             granted_by
+      workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
+
+      agent_uri = Ezagent.URI.agent(workspace_name, instance_name)
+
+      # Route through the Template Class instantiate chokepoint, not bare
+      # `spawn_fresh/4`: first spawn cannot resolve flavor from the new opaque
+      # Agent URI because its sandbox slice does not exist yet. The source
+      # AgentTemplate content is the stored launch attribute.
+      case Ezagent.Entity.Agent.spawn_from_template_content(
+             content,
+             agent_uri,
+             granted_by,
+             workspace_uri
            ) do
-        {:ok, %{agent_uri: %URI{} = agent_uri, fresh?: fresh?}} -> {:ok, agent_uri, fresh?}
+        {:ok, %{fresh?: fresh?}} -> {:ok, agent_uri, fresh?}
         {:error, _} = err -> err
       end
     end
@@ -1497,14 +1536,15 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     end
   end
 
-  # Read the `flavor` field from a source AgentTemplate's `:template`
-  # content (demand-spawning the template Kind first). The flavor prefixes
-  # the spawned instance name so the Agent URI resolves to a flavor Kind.
-  defp source_template_flavor(%URI{} = source_template_uri) do
+  # Read the source AgentTemplate's `:template` content once (demand-spawning
+  # the template Kind first). The flavor field is a stored template attribute:
+  # it derives the temporary PR-B instance-name prefix and selects the Template
+  # Class inside `Agent.spawn_from_template_content/4`.
+  defp source_template_content_and_flavor(%URI{} = source_template_uri) do
     with {:ok, _pid} <- Session.ensure_template_alive(source_template_uri),
          {:ok, content} <- Session.read_template_content(source_template_uri) do
       case Map.get(content, :flavor) || Map.get(content, "flavor") do
-        flavor when is_binary(flavor) and flavor != "" -> {:ok, flavor}
+        flavor when is_binary(flavor) and flavor != "" -> {:ok, content, flavor}
         _ -> {:error, {:source_template_missing_flavor, source_template_uri}}
       end
     end
@@ -1523,10 +1563,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   #   * a respawn within the SAME session for the SAME role_name → the SAME
   #     name (deterministic, generation 0), so re-materialization is
   #     idempotent (the `{:already_started}` path re-derives the same URI).
-  # The flavor prefix (`<flavor>_…`) is preserved — the AgentFlavorRegistry
-  # parses it (`String.split(name, "_", parts: 2)`) to resolve the Kind
-  # module, so the prefix must stay first and the discriminator rides in the
-  # suffix.
+  # PR-B keeps the historical `<flavor>_...` name shape only so main stays
+  # green before PR-E drops it. Behavior no longer reads that prefix:
+  # AgentFlavorRegistry resolution flows through the stored template flavor via
+  # `Ezagent.UriQuery.resolve(:flavor, agent_uri)`.
   # PR-8 (§3.8): the orchestrator's `add_managed_member` tool spawns a
   # member the SAME way materialization does — so it shares this canonical
   # session-unique, flavor-prefixed instance name (one source of truth for
@@ -1562,9 +1602,9 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     session_unique =
       Ezagent.Entity.Agent.session_instance_name(slot, session_discriminator(session_uri))
 
-    # `<flavor>_<session-unique-slot>` — flavor prefix first so the
-    # AgentFlavorRegistry resolves the Kind module; the session-unique
-    # suffix gives per-(session, role) isolation.
+    # Historical `<flavor>_<session-unique-slot>` shape, retained until PR-E.
+    # The session-unique suffix gives per-(session, role) isolation; runtime
+    # flavor/Kind selection reads stored flavor, not this name.
     "#{flavor}_#{session_unique}"
   end
 
@@ -1614,7 +1654,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
         args: Map.put(facets, :member, member_uri),
         ctx: %{
           caller: Ezagent.SystemPrincipal.uri("session-internal"),
-          caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+          caps:
+            "session-internal"
+            |> Ezagent.SystemPrincipal.uri()
+            |> Ezagent.SystemPrincipal.caps(),
           reply: {:caller_inbox, self()}
         }
       })
@@ -1847,8 +1890,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
-  defp workspace_name_of!(%URI{scheme: "workspace", host: name}) when is_binary(name),
-    do: name
+  defp workspace_name_of!(%URI{scheme: "workspace"} = uri), do: Ezagent.URI.name!(uri)
 
   defp workspace_name_of!(other),
     do: raise(ArgumentError, "expected %URI{scheme: \"workspace\"}, got: #{inspect(other)}")
@@ -1896,8 +1938,12 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   @spec list_sessions :: [URI.t()]
   def list_sessions do
     KindRegistry.list_all()
-    |> Enum.filter(fn {uri_str, _pid} -> String.starts_with?(uri_str, "session://") end)
-    |> Enum.map(fn {uri_str, _pid} -> Ezagent.URI.new!(uri_str) end)
+    |> Enum.flat_map(fn {uri_str, _pid} ->
+      case Ezagent.URI.parse(uri_str) do
+        {:ok, %URI{} = uri} -> if Ezagent.URI.scheme?(uri, :session), do: [uri], else: []
+        {:error, _reason} -> []
+      end
+    end)
     |> Enum.sort_by(&URI.to_string/1)
   end
 
@@ -1912,19 +1958,20 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   sessions across tenants is a cross-workspace display leak.
   """
   @spec list_sessions(URI.t()) :: [URI.t()]
-  def list_sessions(%URI{scheme: "workspace", host: workspace_name})
-      when is_binary(workspace_name) and workspace_name != "" do
+  def list_sessions(%URI{scheme: "workspace"} = workspace_uri) do
+    workspace_name = Ezagent.URI.name!(workspace_uri)
+
     list_sessions()
-    |> Enum.filter(fn %URI{path: path} -> session_in_workspace?(path, workspace_name) end)
+    |> Enum.filter(&session_in_workspace?(&1, workspace_name))
   end
 
   # `session://` URI shape per SPEC v3 §5.15:
   #   `session://<template>/<workspace>/<name>` → URI parsed as
   #   `%URI{scheme: "session", host: <template>, path: "/<workspace>/<name>"}`.
   # The workspace segment is the FIRST path segment (post-leading-slash).
-  defp session_in_workspace?("/" <> rest, workspace_name) do
-    case String.split(rest, "/", parts: 2) do
-      [^workspace_name, _name] -> true
+  defp session_in_workspace?(%URI{} = session_uri, workspace_name) do
+    case Ezagent.URI.workspace_name(session_uri) do
+      {:ok, ^workspace_name} -> true
       _ -> false
     end
   end

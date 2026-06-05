@@ -7,10 +7,10 @@ defmodule Ezagent.Behavior.ChatRenderForDeliveryTest do
   use ExUnit.Case, async: true
   alias Ezagent.{Behavior.Chat, Message}
 
-  @session URI.new!("session://default/system/main")
+  @session URI.new!("session://system/default/main")
 
   defp msg(text) do
-    Message.new(URI.new!("entity://user/system/admin"), %{text: text, attachments: []},
+    Message.new(URI.new!("entity://system/user/admin"), %{text: text, attachments: []},
       mentions: []
     )
   end
@@ -21,9 +21,9 @@ defmodule Ezagent.Behavior.ChatRenderForDeliveryTest do
       ctx = %{rule_id: 1, rule_set: "telephone", prompt_template_ref: "telephone_hop"}
 
       out = Chat.render_for_delivery(msg("山顶的雪化了"), ctx, templates, @session)
-      assert out.body.text == "接龙：山顶的雪化了（by entity://user/system/admin）"
+      assert out.body.text == "接龙：山顶的雪化了（by entity://system/user/admin）"
       # only the body text is rewritten; identity fields are preserved
-      assert out.sender == URI.new!("entity://user/system/admin")
+      assert out.sender == URI.new!("entity://system/user/admin")
     end
 
     test "message is UNCHANGED when ctx has no / unknown / nil template ref" do
@@ -46,9 +46,9 @@ defmodule Ezagent.Behavior.ChatRenderForDeliveryTest do
   describe "message_vars/2" do
     test "extracts sender / body / session" do
       vars = Chat.message_vars(msg("hi there"), @session)
-      assert vars.sender == "entity://user/system/admin"
+      assert vars.sender == "entity://system/user/admin"
       assert vars.body == "hi there"
-      assert vars.session == "session://default/system/main"
+      assert vars.session == "session://system/default/main"
       # sent_at present (Message defaults inserted_at); flavor "" (deferred)
       assert is_binary(vars.sent_at)
       assert vars.flavor == ""

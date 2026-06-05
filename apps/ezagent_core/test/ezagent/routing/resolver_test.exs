@@ -32,70 +32,70 @@ defmodule Ezagent.Routing.ResolverTest do
   end
 
   defp msg(text \\ "hello", mentions \\ []) do
-    Message.new(URI.new!("entity://user/system/admin"), %{text: text, attachments: []},
+    Message.new(URI.new!("entity://system/user/admin"), %{text: text, attachments: []},
       mentions: mentions
     )
   end
 
   describe "resolve/2" do
     test "returns [] when no rule matches → caller falls through to in-session default" do
-      assert [] = Resolver.resolve(msg(), URI.new!("session://default/system/main"))
+      assert [] = Resolver.resolve(msg(), URI.new!("session://system/default/main"))
     end
 
     test "mention(X) rule fires when message mentions X — returns receivers", %{table: t} do
-      target = URI.new!("entity://agent/team-alpha/test_cc-builder")
+      target = URI.new!("entity://team-alpha/agent/test_cc-builder")
 
       :ok =
-        RoutingRegistry.put(t, Matcher.mention(target), ["session://default/team-alpha/oncall"])
+        RoutingRegistry.put(t, Matcher.mention(target), ["session://team-alpha/default/oncall"])
 
-      result = Resolver.resolve(msg("hi", [target]), URI.new!("session://default/system/main"))
-      assert result == [URI.new!("session://default/team-alpha/oncall")]
+      result = Resolver.resolve(msg("hi", [target]), URI.new!("session://system/default/main"))
+      assert result == [URI.new!("session://team-alpha/default/oncall")]
     end
 
     test "additive: multiple rules matching → union receivers, deduplicated", %{table: t} do
-      target = URI.new!("entity://agent/team-alpha/test_X")
+      target = URI.new!("entity://team-alpha/agent/test_X")
 
       :ok =
         RoutingRegistry.put(t, Matcher.mention(target), [
-          "session://default/team-alpha/A",
-          "session://default/team-alpha/B"
+          "session://team-alpha/default/A",
+          "session://team-alpha/default/B"
         ])
 
       :ok =
         RoutingRegistry.put(t, Matcher.always(), [
-          "session://default/team-alpha/B",
-          "session://default/team-alpha/C"
+          "session://team-alpha/default/B",
+          "session://team-alpha/default/C"
         ])
 
-      result = Resolver.resolve(msg("hi", [target]), URI.new!("session://default/system/main"))
+      result = Resolver.resolve(msg("hi", [target]), URI.new!("session://system/default/main"))
       uris = result |> Enum.map(&URI.to_string/1) |> Enum.sort()
 
       assert uris == [
-               "session://default/team-alpha/A",
-               "session://default/team-alpha/B",
-               "session://default/team-alpha/C"
+               "session://team-alpha/default/A",
+               "session://team-alpha/default/B",
+               "session://team-alpha/default/C"
              ]
     end
 
     test "text_contains rule matches body", %{table: t} do
       :ok =
         RoutingRegistry.put(t, Matcher.text_contains("urgent"), [
-          "session://default/team-alpha/oncall"
+          "session://team-alpha/default/oncall"
         ])
 
       assert Resolver.resolve(
                msg("server urgent down"),
-               URI.new!("session://default/system/main")
+               URI.new!("session://system/default/main")
              ) ==
-               [URI.new!("session://default/team-alpha/oncall")]
+               [URI.new!("session://team-alpha/default/oncall")]
 
       # No match if word absent
-      assert Resolver.resolve(msg("all green"), URI.new!("session://default/system/main")) == []
+      assert Resolver.resolve(msg("all green"), URI.new!("session://system/default/main")) == []
     end
 
     test "table not declared in app env → silently skip (returns [])" do
       Application.put_env(:ezagent_core, :routing_tables, [:nonexistent_table])
-      assert [] = Resolver.resolve(msg(), URI.new!("session://default/system/main"))
+      assert [] = Resolver.resolve(msg(), URI.new!("session://system/default/main"))
     end
   end
 
@@ -103,7 +103,7 @@ defmodule Ezagent.Routing.ResolverTest do
     test "returns ctx with the matched rule's prompt_template_ref + rule_id", %{table: t} do
       :ok =
         RoutingRegistry.put(t, Matcher.always(), %{
-          receivers: ["session://default/team-alpha/oncall"],
+          receivers: ["session://team-alpha/default/oncall"],
           applies_to_users: [],
           workspace_uri: nil,
           rule_id: 42,
@@ -112,32 +112,32 @@ defmodule Ezagent.Routing.ResolverTest do
         })
 
       assert [{uri, ctx}] =
-               Resolver.resolve_with_ctx(msg(), URI.new!("session://default/system/main"), [], [])
+               Resolver.resolve_with_ctx(msg(), URI.new!("session://system/default/main"), [], [])
 
-      assert URI.to_string(uri) == "session://default/team-alpha/oncall"
+      assert URI.to_string(uri) == "session://team-alpha/default/oncall"
       assert ctx.prompt_template_ref == "telephone_hop"
       assert ctx.rule_id == 42
       assert ctx.rule_set == "telephone"
     end
 
     test "ctx is nil for a legacy plain-list rule", %{table: t} do
-      :ok = RoutingRegistry.put(t, Matcher.always(), ["session://default/team-alpha/oncall"])
+      :ok = RoutingRegistry.put(t, Matcher.always(), ["session://team-alpha/default/oncall"])
 
       assert [{_uri, nil}] =
-               Resolver.resolve_with_ctx(msg(), URI.new!("session://default/system/main"), [], [])
+               Resolver.resolve_with_ctx(msg(), URI.new!("session://system/default/main"), [], [])
     end
 
     test "resolve/4 still returns bare [URI] (back-compat — delegates to resolve_with_ctx)",
          %{table: t} do
-      :ok = RoutingRegistry.put(t, Matcher.always(), ["session://default/team-alpha/oncall"])
+      :ok = RoutingRegistry.put(t, Matcher.always(), ["session://team-alpha/default/oncall"])
 
-      assert Resolver.resolve(msg(), URI.new!("session://default/system/main"), [], []) ==
-               [URI.new!("session://default/team-alpha/oncall")]
+      assert Resolver.resolve(msg(), URI.new!("session://system/default/main"), [], []) ==
+               [URI.new!("session://team-alpha/default/oncall")]
     end
 
     test "duplicate recipient from two rules → lower rule_id ctx wins (deterministic)",
          %{table: t} do
-      recv = "session://default/team-alpha/oncall"
+      recv = "session://team-alpha/default/oncall"
       base = %{receivers: [recv], applies_to_users: [], workspace_uri: nil}
 
       # Two rules both match "hello" + route to the SAME recipient with
@@ -161,7 +161,7 @@ defmodule Ezagent.Routing.ResolverTest do
       assert [{uri, ctx}] =
                Resolver.resolve_with_ctx(
                  msg("hello"),
-                 URI.new!("session://default/system/main"),
+                 URI.new!("session://system/default/main"),
                  [],
                  []
                )

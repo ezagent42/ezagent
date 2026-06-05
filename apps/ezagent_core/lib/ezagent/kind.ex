@@ -668,7 +668,7 @@ defmodule Ezagent.Kind do
           | {:custom, keyword()}
 
   @doc """
-  `use Ezagent.Kind, pattern: ..., uri_scheme: ..., supervisor: ...`
+  `use Ezagent.Kind, pattern: ..., supervisor: ...`
   — declarative Kind definition per SPEC §2.3.
 
   Required keyword options:
@@ -680,8 +680,6 @@ defmodule Ezagent.Kind do
 
   Optional keyword options:
 
-  - `uri_scheme:` — string scheme prefix (e.g. `"entity://agent/"`).
-    Surfaced via `__uri_scheme__/0`. Default: derived from pattern.
   - `supervisor:` — module ref. Surfaced via the legacy `supervisor/0`
     callback. Default: `Ezagent.KindSupervisor`.
   - `type_name:` — atom for snapshots. Default: derived from module
@@ -695,12 +693,11 @@ defmodule Ezagent.Kind do
   - `@before_compile Ezagent.Kind` to:
     1. Run cross-Behavior action collision check (OQ-5)
     2. Enforce pattern → Behavior compatibility (OQ-2)
-    3. Emit a `__pattern__/0`, `__attached__/0`, `__uri_scheme__/0`
+    3. Emit a `__pattern__/0`, `__attached__/0`
        set of introspection functions
   """
   defmacro __using__(opts) when is_list(opts) do
     pattern = Keyword.get(opts, :pattern)
-    uri_scheme = Keyword.get(opts, :uri_scheme)
     supervisor = Keyword.get(opts, :supervisor)
     type_name = Keyword.get(opts, :type_name)
     workspace_scoped = Keyword.get(opts, :workspace_scoped?, true)
@@ -722,9 +719,6 @@ defmodule Ezagent.Kind do
 
       @doc false
       def __pattern__, do: unquote(Macro.escape(pattern))
-
-      @doc false
-      def __uri_scheme__, do: unquote(uri_scheme)
 
       @doc false
       def __kind_workspace_scoped__?, do: unquote(workspace_scoped)

@@ -22,8 +22,8 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
   alias Ezagent.Capability
 
   @workspace_uri URI.new!("workspace://system")
-  @session_uri URI.new!("session://default/system/main")
-  @granter URI.parse("entity://user/system/admin")
+  @session_uri URI.new!("session://system/default/main")
+  @granter Ezagent.URI.new!("entity://system/user/admin")
 
   # Local test helper that calls the new-contract handler directly
   # (`IdentityAdmin.handle_grant_cap/2`, `handle_revoke_cap/2`) and
@@ -92,7 +92,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
   #
   #   kind:           :session
   #   behavior:       Ezagent.Behavior.ExternalMirror
-  #   instance:       session://default/system/main
+  #   instance:       session://system/default/main
   #   workspace_uri:  workspace://system
   defp shape_struct do
     %Capability{
@@ -121,7 +121,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
     %{
       "kind" => "session",
       "behavior" => "Ezagent.Behavior.ExternalMirror",
-      "instance" => "session://default/system/main",
+      "instance" => "session://system/default/main",
       "workspace_uri" => "workspace://system"
     }
   end
@@ -149,7 +149,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       assert is_struct(stored, Capability)
       assert stored.kind == :session
       assert stored.behavior == Ezagent.Behavior.ExternalMirror
-      assert URI.to_string(stored.instance) == "session://default/system/main"
+      assert URI.to_string(stored.instance) == "session://system/default/main"
       assert URI.to_string(stored.workspace_uri) == "workspace://system"
     end
 
@@ -166,7 +166,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
 
       assert stored.kind == :session
       assert stored.behavior == Ezagent.Behavior.ExternalMirror
-      assert URI.to_string(stored.instance) == "session://default/system/main"
+      assert URI.to_string(stored.instance) == "session://system/default/main"
       assert URI.to_string(stored.workspace_uri) == "workspace://system"
     end
 
@@ -187,7 +187,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
 
       assert stored.kind == :session
       assert stored.behavior == Ezagent.Behavior.ExternalMirror
-      assert URI.to_string(stored.instance) == "session://default/system/main"
+      assert URI.to_string(stored.instance) == "session://system/default/main"
       assert URI.to_string(stored.workspace_uri) == "workspace://system"
     end
 
@@ -300,7 +300,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
         behavior: :any,
         instance: :any,
         workspace_uri: :any,
-        granted_by: URI.parse("system://bootstrap/default"),
+        granted_by: Ezagent.URI.new!("system://bootstrap/default"),
         granted_at: DateTime.utc_now()
       }
 
@@ -396,7 +396,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       bad = %{
         "kind" => "session",
         "behavior" => "Ezagent.Behavior.ExternalMirror",
-        "instance" => "session://default/system/main"
+        "instance" => "session://system/default/main"
       }
 
       assert_raise ArgumentError, ~r/missing required `"workspace_uri"`/, fn ->
@@ -422,7 +422,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       bad = %{
         "kind" => "totally_made_up_kind_that_no_module_uses_99999",
         "behavior" => "Ezagent.Behavior.ExternalMirror",
-        "instance" => "session://default/system/main",
+        "instance" => "session://system/default/main",
         "workspace_uri" => "workspace://system"
       }
 
@@ -435,7 +435,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       bad = %{
         "kind" => "session",
         "behavior" => "Ezagent.Behavior.TotallyMadeUpBehavior999",
-        "instance" => "session://default/system/main",
+        "instance" => "session://system/default/main",
         "workspace_uri" => "workspace://system"
       }
 
@@ -493,7 +493,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
         "kind" => "session",
         "behavior" => "Ezagent.Behavior.ExternalMirror",
         "action" => "bind",
-        "instance" => "session://default/system/main",
+        "instance" => "session://system/default/main",
         "workspace_uri" => "workspace://system"
       }
 
@@ -507,7 +507,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
         "kind" => "session",
         "behavior" => "Ezagent.Behavior.ExternalMirror",
         "action" => "any",
-        "instance" => "session://default/system/main",
+        "instance" => "session://system/default/main",
         "workspace_uri" => "workspace://system"
       }
 
@@ -528,7 +528,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
         "kind" => "session",
         "behavior" => "Ezagent.Behavior.ExternalMirror",
         "action" => "bind",
-        "instance" => "session://default/system/main",
+        "instance" => "session://system/default/main",
         "workspace_uri" => "workspace://system"
       }
 
@@ -563,7 +563,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
 
       cap_at_t2 = %{
         cap_at_t1
-        | granted_by: URI.parse("entity://user/system/other-admin"),
+        | granted_by: Ezagent.URI.new!("entity://system/user/other-admin"),
           granted_at: later
       }
 
@@ -599,7 +599,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
         behavior: :any,
         instance: :any,
         workspace_uri: :any,
-        granted_by: URI.parse("system://bootstrap/default"),
+        granted_by: Ezagent.URI.new!("system://bootstrap/default"),
         granted_at: DateTime.utc_now()
       }
 
@@ -681,7 +681,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
         action: :any,
         instance: :any,
         workspace_uri: :any,
-        granted_by: URI.parse("system://bootstrap"),
+        granted_by: Ezagent.URI.new!("system://bootstrap"),
         granted_at: DateTime.utc_now()
       }
 
@@ -699,7 +699,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
         action: :any,
         instance: :any,
         workspace_uri: :any,
-        granted_by: URI.parse("system://bootstrap"),
+        granted_by: Ezagent.URI.new!("system://bootstrap"),
         granted_at: DateTime.utc_now()
       }
 
@@ -718,7 +718,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
         action: :create_session,
         instance: :any,
         workspace_uri: :any,
-        granted_by: URI.parse("system://bootstrap"),
+        granted_by: Ezagent.URI.new!("system://bootstrap"),
         granted_at: DateTime.utc_now()
       }
 
@@ -733,7 +733,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
         action: :any,
         instance: :any,
         workspace_uri: :any,
-        granted_by: URI.parse("entity://user/system/some-attacker"),
+        granted_by: Ezagent.URI.new!("entity://system/user/some-attacker"),
         granted_at: DateTime.utc_now()
       }
 

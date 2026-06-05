@@ -68,8 +68,6 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
 
   require Logger
 
-  @template_uri "template://agent/system/cc-orchestrator"
-
   # The orchestrator MCP bridge script + its exported schema file, as
   # they ship in this app's priv/ dir.
   @bridge_script "orchestrator_bridge.py"
@@ -102,7 +100,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   """
   @spec seed() :: :ok
   def seed do
-    uri = Ezagent.URI.new!(@template_uri)
+    uri = template_uri_struct()
 
     # `ensure_sandbox_files/0` raises `InstallError` on a bridge/schema
     # install failure — deliberately NOT caught here.
@@ -124,7 +122,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
 
   @doc "The cc-orchestrator AgentTemplate URI string."
   @spec template_uri() :: String.t()
-  def template_uri, do: @template_uri
+  def template_uri, do: template_uri_struct() |> URI.to_string()
 
   @doc """
   Inspect the cc-orchestrator seed status (G-9 fix, audit 2026-05-23).
@@ -146,26 +144,28 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   """
   @spec seed_status() :: {:ok | :partial | :missing, map()}
   def seed_status do
-    uri = Ezagent.URI.new!(@template_uri)
+    uri = template_uri_struct()
 
     case Ezagent.KindRegistry.lookup(uri) do
       :error ->
-        {:missing, %{template_uri: @template_uri}}
+        {:missing, %{template_uri: template_uri()}}
 
       {:ok, pid} ->
         case read_template_slice(pid) do
           %{flavor: f} = content when is_binary(f) and f != "" ->
-            {:ok, %{template_uri: @template_uri, template_content: content}}
+            {:ok, %{template_uri: template_uri(), template_content: content}}
 
           content ->
-            {:partial, %{template_uri: @template_uri, template_content: content}}
+            {:partial, %{template_uri: template_uri(), template_content: content}}
         end
     end
   rescue
     # Reading the slice can race with a restart; treat any error as
     # :missing so the UI shows a degraded-but-actionable badge.
-    _ -> {:missing, %{template_uri: @template_uri}}
+    _ -> {:missing, %{template_uri: template_uri()}}
   end
+
+  defp template_uri_struct, do: Ezagent.URI.template(:system, :agent, "cc-orchestrator")
 
   # The `:template` slice content is the orchestrator's seeded config.
   # `:sys.get_state` returns the Kind.Server state map; slice data lives
@@ -235,8 +235,12 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
     }
 
     if test_env?() do
-      # In :test the slice records the paths but disk writes are skipped
-      # — the deterministic e2e drives the tools directly, no live claude.
+      # In :test the slice records the paths but skips the load-bearing
+      # bridge install — the deterministic e2e drives the tools directly,
+      # no live claude. Still create the reference config dir because
+      # session-create tests instantiate the seeded cc.agent Template Class,
+      # and that path copies the recorded config_dir into a per-agent target.
+      File.mkdir_p!(config_dir)
       {:ok, sandbox}
     else
       with :ok <- write_soft_sandbox_files(config_dir, settings_path, claude_md_path) do
@@ -291,7 +295,16 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   end
 
   defp sandbox_base do
-    Path.join([System.user_home() || "/tmp", ".ezagent", "cc-orchestrator"])
+    cond do
+      base = Application.get_env(:ezagent_domain_instance_message, :cc_orchestrator_sandbox_base) ->
+        base
+
+      test_env?() ->
+        Path.join(System.tmp_dir!(), "ezagent-test-cc-orchestrator")
+
+      true ->
+        Path.join([System.user_home() || "/tmp", ".ezagent", "cc-orchestrator"])
+    end
   end
 
   @doc """
@@ -409,7 +422,10 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
            # (closed Catalog).
            ctx: %{
              caller: Ezagent.SystemPrincipal.uri("template-materialize"),
-             caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
+             caps:
+               "template-materialize"
+               |> Ezagent.SystemPrincipal.uri()
+               |> Ezagent.SystemPrincipal.caps(),
              reply: {:caller_inbox, self()}
            }
          }) do

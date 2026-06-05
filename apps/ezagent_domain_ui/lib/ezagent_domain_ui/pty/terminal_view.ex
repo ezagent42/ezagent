@@ -6,8 +6,8 @@ defmodule EzagentDomainUi.Pty.TerminalView do
   Moved from `EzagentPluginCc.Views.PtyView` (cc plugin, Tier-3) to
   `EzagentDomainUi.Pty.TerminalView` (Tier-2 Domain UI) per SPEC v1
   §3.2 + §5.1 (2026-05-21). Now any PTY-backed agent flavor — current
-  `cc_*`, future `echo_*` with `with_pty: true`, future
-  `curl_*-with-pty`, etc. — gets the terminal view for free.
+  cc, echo with `with_pty: true`, curl with PTY support, etc. — gets the
+  terminal view for free.
 
   Renders the `PtyTerminal` JS hook (xterm.js mount). The active agent
   URI is owned by the wrapping admin_live as `@active_pty_agent_uri`
@@ -17,9 +17,9 @@ defmodule EzagentDomainUi.Pty.TerminalView do
   **Cross-flavor detection** (`applies_to?/1`): query the Session
   Kind's members, for each member URI ask `Ezagent.Domain.Pty.alive?/1`;
   if any returns true the Terminal tab is offered. This replaces the
-  prior cc-flavor name-prefix check (`String.starts_with?(name, "cc_")`)
-  — that was a structural cc-plugin assumption; with PTY promoted to
-  Domain tier the detection is purely behavioral.
+  prior cc-name convention check — that was a structural cc-plugin
+  assumption; with PTY promoted to Domain tier the detection is purely
+  behavioral.
 
   Registered by `EzagentDomainUi.Application.start/2`.
   """

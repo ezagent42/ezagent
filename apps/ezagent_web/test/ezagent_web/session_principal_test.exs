@@ -13,11 +13,11 @@ defmodule EzagentWeb.SessionPrincipalTest do
 
   describe "canonicalize/1" do
     test "full entity URIs pass through unchanged" do
-      assert SessionPrincipal.canonicalize("entity://user/system/admin") ==
-               "entity://user/system/admin"
+      assert SessionPrincipal.canonicalize("entity://system/user/admin") ==
+               "entity://system/user/admin"
 
-      assert SessionPrincipal.canonicalize("entity://agent/team-alpha/echo_default") ==
-               "entity://agent/team-alpha/echo_default"
+      assert SessionPrincipal.canonicalize("entity://team-alpha/agent/echo_default") ==
+               "entity://team-alpha/agent/echo_default"
     end
 
     test "bare handle is normalized to entity://user/<workspace>/<handle> (lowercased)" do
@@ -26,23 +26,23 @@ defmodule EzagentWeb.SessionPrincipalTest do
       # fallback. The tenant login form supplies the tenant's workspace
       # name; admin login passes `workspace: "system"`.
       assert SessionPrincipal.canonicalize("admin", workspace: "team-alpha") ==
-               "entity://user/team-alpha/admin"
+               "entity://team-alpha/user/admin"
 
       assert SessionPrincipal.canonicalize("ADMIN", workspace: "team-alpha") ==
-               "entity://user/team-alpha/admin"
+               "entity://team-alpha/user/admin"
 
       assert SessionPrincipal.canonicalize("  allen  ", workspace: "team-alpha") ==
-               "entity://user/team-alpha/allen"
+               "entity://team-alpha/user/allen"
 
       assert SessionPrincipal.canonicalize("user_123", workspace: "team-alpha") ==
-               "entity://user/team-alpha/user_123"
+               "entity://team-alpha/user/user_123"
     end
 
     test "bare handle with workspace: \"system\" canonicalizes to system workspace" do
       # Phase 9 PR-8 (SPEC v3 §13): admin's only login path is via
       # /login?workspace=system with the bare handle "admin".
       assert SessionPrincipal.canonicalize("admin", workspace: "system") ==
-               "entity://user/system/admin"
+               "entity://system/user/admin"
     end
 
     test "raises ArgumentError on inputs that don't yield a valid entity URI" do
@@ -60,7 +60,9 @@ defmodule EzagentWeb.SessionPrincipalTest do
       assert_raise ArgumentError, ~r/not a valid entity URI/, fn ->
         # Non-user/agent host — workspace URIs are NOT principals.
         # Full entity:// URIs ignore the workspace opt.
-        SessionPrincipal.canonicalize("entity://workspace/default")
+        SessionPrincipal.canonicalize("entity://team-alpha/workspace/default",
+          workspace: "team-alpha"
+        )
       end
 
       assert_raise ArgumentError, ~r/not a valid entity URI/, fn ->
@@ -89,7 +91,7 @@ defmodule EzagentWeb.SessionPrincipalTest do
       # SPEC #324: bare "admin" with workspace: opt → canonical URI.
       # The legacy silent "default" fallback is gone — workspace MUST
       # be supplied for bare-handle input.
-      assert Plug.Conn.get_session(conn, :current_entity_uri) == "entity://user/team-alpha/admin"
+      assert Plug.Conn.get_session(conn, :current_entity_uri) == "entity://team-alpha/user/admin"
     end
 
     test "rotates the session ID (fixation defence)" do
@@ -106,7 +108,7 @@ defmodule EzagentWeb.SessionPrincipalTest do
       # in a test harness, but the operation must succeed and the
       # principal slot is set.
       assert Plug.Conn.get_session(conn_after, :current_entity_uri) ==
-               "entity://user/team-alpha/admin"
+               "entity://team-alpha/user/admin"
     end
 
     test "raises on invalid input — same boundary as canonicalize/1" do
@@ -135,7 +137,7 @@ defmodule EzagentWeb.SessionPrincipalTest do
       # Phase 9 PR-8: bare-handle default workspace stays "default";
       # admin promotion happens via explicit workspace: "system" opt.
       assert Plug.Conn.get_session(conn, :current_entity_uri) ==
-               "entity://user/team-alpha/admin"
+               "entity://team-alpha/user/admin"
 
       assert Plug.Conn.get_session(conn, :current_workspace_uri) ==
                "workspace://team-alpha"
@@ -146,7 +148,7 @@ defmodule EzagentWeb.SessionPrincipalTest do
       conn =
         Plug.Test.conn(:get, "/")
         |> Plug.Test.init_test_session(%{})
-        |> SessionPrincipal.put("entity://user/team-alpha/allen")
+        |> SessionPrincipal.put("entity://team-alpha/user/allen")
 
       entity_str = Plug.Conn.get_session(conn, :current_entity_uri)
       workspace_str = Plug.Conn.get_session(conn, :current_workspace_uri)
@@ -169,7 +171,7 @@ defmodule EzagentWeb.SessionPrincipalTest do
         |> SessionPrincipal.put("allen", workspace: "team-alpha")
 
       assert Plug.Conn.get_session(conn, :current_entity_uri) ==
-               "entity://user/team-alpha/allen"
+               "entity://team-alpha/user/allen"
 
       assert Plug.Conn.get_session(conn, :current_workspace_uri) ==
                "workspace://team-alpha"
@@ -178,14 +180,14 @@ defmodule EzagentWeb.SessionPrincipalTest do
     test "put/3 with workspace opt is ignored for full entity:// URIs" do
       # Full URI already carries its workspace — opts[:workspace] does
       # not get to override the explicit segment. Admin's full URI
-      # `entity://user/system/admin` derives `workspace://system`.
+      # `entity://system/user/admin` derives `workspace://system`.
       conn =
         Plug.Test.conn(:get, "/")
         |> Plug.Test.init_test_session(%{})
-        |> SessionPrincipal.put("entity://user/system/admin", workspace: "team-alpha")
+        |> SessionPrincipal.put("entity://system/user/admin", workspace: "team-alpha")
 
       assert Plug.Conn.get_session(conn, :current_entity_uri) ==
-               "entity://user/system/admin"
+               "entity://system/user/admin"
 
       assert Plug.Conn.get_session(conn, :current_workspace_uri) ==
                "workspace://system"

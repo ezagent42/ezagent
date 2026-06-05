@@ -2,7 +2,7 @@ defmodule Ezagent.MessageTest do
   use ExUnit.Case, async: true
   alias Ezagent.Message
 
-  @sender URI.parse("entity://user/system/admin")
+  @sender Ezagent.URI.new!("entity://system/user/admin")
   @body %{text: "hello", attachments: []}
 
   describe "new/3" do
@@ -31,7 +31,7 @@ defmodule Ezagent.MessageTest do
     end
 
     test ":mentions opt fills mentions field" do
-      mentions = [URI.parse("entity://agent/team-alpha/test_cc-builder")]
+      mentions = [Ezagent.URI.new!("entity://team-alpha/agent/test_cc-builder")]
       msg = Message.new(@sender, @body, mentions: mentions)
       assert msg.mentions == mentions
     end
@@ -68,32 +68,34 @@ defmodule Ezagent.MessageTest do
 
   describe "Jason.Encoder for %URI{}" do
     test "URI struct serializes to its string form" do
-      uri = URI.parse("entity://agent/team-alpha/test_cc-builder")
-      assert Jason.encode!(uri) == ~s("entity://agent/team-alpha/test_cc-builder")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/test_cc-builder")
+      assert Jason.encode!(uri) == ~s("entity://team-alpha/agent/test_cc-builder")
     end
 
     test "URI inside a list (mentions field) serializes as JSON array of strings" do
       uris = [
-        URI.parse("entity://agent/team-alpha/test_cc"),
-        URI.parse("entity://user/system/admin")
+        Ezagent.URI.new!("entity://team-alpha/agent/test_cc"),
+        Ezagent.URI.new!("entity://system/user/admin")
       ]
 
       assert Jason.encode!(uris) ==
-               ~s(["entity://agent/team-alpha/test_cc","entity://user/system/admin"])
+               ~s(["entity://team-alpha/agent/test_cc","entity://system/user/admin"])
     end
   end
 
   describe "Jason.Encoder for %Ezagent.Message{}" do
     test "round-trip — encode + decode keeps logical fields" do
       msg =
-        Message.new(@sender, @body, mentions: [URI.parse("entity://agent/team-alpha/test_cc")])
+        Message.new(@sender, @body,
+          mentions: [Ezagent.URI.new!("entity://team-alpha/agent/test_cc")]
+        )
 
       encoded = Jason.encode!(msg)
       assert is_binary(encoded)
       decoded = Jason.decode!(encoded)
 
-      assert decoded["sender"] == "entity://user/system/admin"
-      assert decoded["mentions"] == ["entity://agent/team-alpha/test_cc"]
+      assert decoded["sender"] == "entity://system/user/admin"
+      assert decoded["mentions"] == ["entity://team-alpha/agent/test_cc"]
       assert decoded["body"]["text"] == "hello"
       assert decoded["body"]["attachments"] == []
       assert is_binary(decoded["inserted_at"])

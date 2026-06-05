@@ -168,7 +168,7 @@ defmodule EzagentPluginFeishu.InboundChatLookup do
   # `@legend` registered in EXACTLY one bound session's registry — that
   # narrows the set to EXACTLY one session.
   defp disambiguate(chat_id, session_uri_strs, mentions, text) do
-    mention_keys = MapSet.new(mentions, &URI.to_string/1)
+    mention_keys = MapSet.new(mentions, &Ezagent.URI.stable_key/1)
     typed_tokens = typed_at_tokens(text)
 
     candidate_uris = Enum.map(session_uri_strs, &Ezagent.URI.new!/1)
@@ -281,12 +281,16 @@ defmodule EzagentPluginFeishu.InboundChatLookup do
   @default_legends_reader {Ezagent.Entity.Session, :session_legends}
   defp session_legends(%URI{} = session_uri) do
     {mod, fun} =
-      Application.get_env(:ezagent_plugin_feishu, :session_legends_reader, @default_legends_reader)
+      Application.get_env(
+        :ezagent_plugin_feishu,
+        :session_legends_reader,
+        @default_legends_reader
+      )
 
     apply(mod, fun, [session_uri])
   end
 
-  defp member_key(%URI{} = uri), do: URI.to_string(uri)
+  defp member_key(%URI{} = uri), do: Ezagent.URI.stable_key(uri)
   defp member_key(uri) when is_binary(uri), do: uri
 
   @doc """

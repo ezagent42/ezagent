@@ -37,7 +37,7 @@ defmodule EzagentPluginLiveview.UsersLiveTest do
   test "GET /identities/users renders existing admin row + create form", %{conn: conn} do
     {:ok, _lv, html} = live(conn, "/identities/users")
     assert html =~ "Users"
-    assert html =~ "entity://user/system/admin"
+    assert html =~ "entity://system/user/admin"
     assert html =~ "Create user"
   end
 
@@ -47,7 +47,7 @@ defmodule EzagentPluginLiveview.UsersLiveTest do
     # Phase 9 PR-3 (SPEC v3 §3): bare handles upgrade to 3-segment
     # `entity://user/<picked-workspace>/<handle>`. Test admin only has
     # the `system` workspace available in the dropdown.
-    uri = "entity://user/system/" <> handle
+    uri = "entity://system/user/" <> handle
 
     # Phase 8c PR-O — bare handle accepted; backend normalizes.
     lv
@@ -71,8 +71,8 @@ defmodule EzagentPluginLiveview.UsersLiveTest do
     {:ok, lv, _html} = live(conn, "/identities/users")
     handle = "lv-allcaps-#{System.unique_integer([:positive])}"
     # Phase 9 PR-3 (SPEC v3 §3): bare handles upgrade to 3-segment
-    # `entity://user/team-alpha/<handle>`.
-    uri = "entity://user/team-alpha/" <> handle
+    # `entity://team-alpha/user/<handle>`.
+    uri = "entity://team-alpha/user/" <> handle
 
     lv
     |> form("#create-user form",
@@ -95,7 +95,7 @@ defmodule EzagentPluginLiveview.UsersLiveTest do
     # Phase 9 PR-3 (SPEC v3 §3): bare handles upgrade to 3-segment
     # `entity://user/<picked-workspace>/<handle>`. Test admin only has
     # the `system` workspace available in the dropdown.
-    expected_uri = "entity://user/system/" <> handle
+    expected_uri = "entity://system/user/" <> handle
 
     lv
     |> form("#create-user form",
@@ -119,7 +119,7 @@ defmodule EzagentPluginLiveview.UsersLiveTest do
     # Phase 9 PR-3 (SPEC v3 §3): bare handles upgrade to 3-segment
     # `entity://user/<picked-workspace>/<handle>`. Test admin only has
     # the `system` workspace available in the dropdown.
-    uri = "entity://user/system/" <> handle
+    uri = "entity://system/user/" <> handle
 
     lv
     |> form("#create-user form",
@@ -141,7 +141,7 @@ defmodule EzagentPluginLiveview.UsersLiveTest do
     # Direct facade test — UI form submission with hidden field is
     # awkward in Phoenix.LiveViewTest; the facade is exercised in
     # PR 4 unit tests + the LV button is plain HTML POST.
-    uri = "entity://user/team-alpha/lv-setpw-#{System.unique_integer([:positive])}"
+    uri = "entity://team-alpha/user/lv-setpw-#{System.unique_integer([:positive])}"
     {:ok, _} = Ezagent.Users.create(uri, nil, [])
     refute Ezagent.Users.verify_password(uri, "anything")
 
@@ -152,7 +152,7 @@ defmodule EzagentPluginLiveview.UsersLiveTest do
   describe "Presence online dot (PR-D of Presence rollout)" do
     test "user tracked in Presence renders the green dot", %{conn: conn} do
       handle = "lv-online-#{System.unique_integer([:positive])}"
-      uri = URI.parse("entity://user/team-alpha/" <> handle)
+      uri = URI.parse("entity://team-alpha/user/" <> handle)
       {:ok, _} = Ezagent.Users.create(URI.to_string(uri), nil, [])
 
       # Track from a separate process so the entry stays alive for
@@ -182,7 +182,7 @@ defmodule EzagentPluginLiveview.UsersLiveTest do
 
     test "untracked user renders the gray dot", %{conn: conn} do
       handle = "lv-offline-#{System.unique_integer([:positive])}"
-      uri = "entity://user/team-alpha/" <> handle
+      uri = "entity://team-alpha/user/" <> handle
       {:ok, _} = Ezagent.Users.create(uri, nil, [])
 
       refute Ezagent.Presence.present?(URI.parse(uri))

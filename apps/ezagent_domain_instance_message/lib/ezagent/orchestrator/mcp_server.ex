@@ -77,7 +77,14 @@ defmodule Ezagent.Orchestrator.McpServer do
   alias Ezagent.Orchestrator.Tools
 
   @enforce_keys [:orchestrator_uri, :session_uri, :workspace_uri, :caps]
-  defstruct [:orchestrator_uri, :session_uri, :workspace_uri, :caps, :owner_uri, :parent_template_uri]
+  defstruct [
+    :orchestrator_uri,
+    :session_uri,
+    :workspace_uri,
+    :caps,
+    :owner_uri,
+    :parent_template_uri
+  ]
 
   @type t :: %__MODULE__{
           orchestrator_uri: URI.t(),
@@ -278,7 +285,7 @@ defmodule Ezagent.Orchestrator.McpServer do
   end
 
   # Enumerate `session`-type snapshot rows in the workspace; return the
-  # Session URI whose derived orchestrator URI equals the target.
+  # Session URI whose stored orchestrator URI equals the target.
   defp find_session_for_orchestrator(%URI{} = orchestrator_uri, %URI{} = workspace_uri) do
     target = URI.to_string(orchestrator_uri)
 
@@ -287,9 +294,8 @@ defmodule Ezagent.Orchestrator.McpServer do
     |> Stream.map(& &1.uri)
     |> Enum.find_value(fn uri_str ->
       with {:ok, session_uri} <- safe_parse(uri_str),
-           %URI{} = derived <-
-             safe_derive_orchestrator_uri(session_uri, workspace_uri),
-           true <- URI.to_string(derived) == target do
+           %URI{} = stored <- stored_orchestrator_uri(session_uri),
+           true <- URI.to_string(stored) == target do
         session_uri
       else
         _ -> nil
@@ -303,10 +309,14 @@ defmodule Ezagent.Orchestrator.McpServer do
     _ -> :error
   end
 
-  defp safe_derive_orchestrator_uri(%URI{} = session_uri, %URI{} = workspace_uri) do
-    Ezagent.Entity.Session.derive_orchestrator_uri(session_uri, workspace_uri)
-  rescue
-    _ -> nil
+  defp stored_orchestrator_uri(%URI{} = session_uri) do
+    with {:ok, chat_slice} <- load_chat_slice(session_uri),
+         {:ok, working_copy} <- orchestrator_working_copy(chat_slice),
+         %URI{} = orchestrator_uri <- Map.get(working_copy, :orchestrator_uri) do
+      orchestrator_uri
+    else
+      _ -> nil
+    end
   end
 
   # Load the Session's durable `:chat` slice from its persisted snapshot.
@@ -413,7 +423,7 @@ defmodule Ezagent.Orchestrator.McpServer do
   # yields an empty set, and every tool then DENIES (no `admin_caps`
   # fallback — SPEC §2 PR-5 HIGH-1).
   defp load_orchestrator_caps(%URI{} = orchestrator_uri) do
-    target = Ezagent.URI.new!("#{URI.to_string(orchestrator_uri)}?action=identity.list_caps")
+    target = Ezagent.URI.with_action(orchestrator_uri, :identity, :list_caps)
 
     case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
            target: target,
@@ -421,7 +431,10 @@ defmodule Ezagent.Orchestrator.McpServer do
            args: %{},
            ctx: %{
              caller: Ezagent.SystemPrincipal.uri("orchestrator-tools"),
-             caps: Ezagent.SystemPrincipal.caps("system://orchestrator-tools"),
+             caps:
+               "orchestrator-tools"
+               |> Ezagent.SystemPrincipal.uri()
+               |> Ezagent.SystemPrincipal.caps(),
              reply: {:caller_inbox, self()}
            }
          }) do
@@ -496,11 +509,12 @@ defmodule Ezagent.Orchestrator.McpServer do
           "properties" => %{
             "source_agent_template_uri" => %{
               "type" => "string",
-              "description" => "template://agent/<workspace>/<name> to spawn the member from."
+              "description" => "AgentTemplate URI to spawn the member from."
             },
             "role_name" => %{
               "type" => "string",
-              "description" => "Stable per-session alias for this member (rules/legends target it)."
+              "description" =>
+                "Stable per-session alias for this member (rules/legends target it)."
             },
             "in_session_template" => %{
               "type" => "boolean",
@@ -530,7 +544,7 @@ defmodule Ezagent.Orchestrator.McpServer do
             "new_source_template_uri" => %{
               "type" => "string",
               "description" =>
-                "template://agent/<workspace>/<name> — the NEW AgentTemplate to " <>
+                "The new AgentTemplate URI to " <>
                   "rebuild the member from."
             }
           },
@@ -547,7 +561,10 @@ defmodule Ezagent.Orchestrator.McpServer do
         "inputSchema" => %{
           "type" => "object",
           "properties" => %{
-            "role_name" => %{"type" => "string", "description" => "The member role_name to remove."}
+            "role_name" => %{
+              "type" => "string",
+              "description" => "The member role_name to remove."
+            }
           },
           "required" => ["role_name"]
         }
@@ -571,7 +588,8 @@ defmodule Ezagent.Orchestrator.McpServer do
             },
             "receiver_role_name" => %{
               "type" => "string",
-              "description" => "The member role_name (or concrete URI) the matched message routes to."
+              "description" =>
+                "The member role_name (or concrete URI) the matched message routes to."
             },
             "rule_set" => %{
               "type" => "string",
@@ -632,7 +650,8 @@ defmodule Ezagent.Orchestrator.McpServer do
             },
             "fold" => %{
               "type" => "boolean",
-              "description" => "Whether the legend collapses (folds) the member set. Defaults to true."
+              "description" =>
+                "Whether the legend collapses (folds) the member set. Defaults to true."
             }
           },
           "required" => ["legend_name", "member_role_names", "bound_rule_set"]
@@ -658,7 +677,10 @@ defmodule Ezagent.Orchestrator.McpServer do
         "inputSchema" => %{
           "type" => "object",
           "properties" => %{
-            "new_name" => %{"type" => "string", "description" => "Name for the new template family."}
+            "new_name" => %{
+              "type" => "string",
+              "description" => "Name for the new template family."
+            }
           },
           "required" => ["new_name"]
         }

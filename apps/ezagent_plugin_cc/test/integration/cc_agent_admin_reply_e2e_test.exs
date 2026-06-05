@@ -91,9 +91,10 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
   defmodule TestEndpoint do
     use Phoenix.Endpoint, otp_app: :ezagent_plugin_cc
 
-    socket "/cc_socket", EzagentPluginCc.Socket,
+    socket("/cc_socket", EzagentPluginCc.Socket,
       websocket: [check_origin: false],
       longpoll: false
+    )
   end
 
   use EzagentCore.DataCase, async: false
@@ -105,7 +106,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
   alias Ezagent.PluginCc.Template.CcAgent
   alias EzagentPluginCc.{BridgeRegistry, McpConfigWriter}
 
-  @workspace_uri URI.parse("workspace://team-alpha")
+  @workspace_uri Ezagent.URI.new!("workspace://team-alpha")
 
   @uv_path System.find_executable("uv")
   @python_path System.find_executable("python3")
@@ -309,8 +310,8 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
         File.rm(status_file)
       end)
 
-      agent_uri_str = "entity://agent/team-alpha/cc_v1signoff-#{uniq()}"
-      agent_uri = URI.parse(agent_uri_str)
+      agent_uri = Ezagent.URI.agent("team-alpha", "cc_v1signoff-#{uniq()}")
+      agent_uri_str = URI.to_string(agent_uri)
 
       # The cc.agent Template Class data — exactly what
       # `AgentTemplate.to_template_data/2` produces from a real
@@ -402,11 +403,11 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
         |> Map.put("FAKE_CLAUDE_GRACE_MS", "2500")
         |> Map.put("FAKE_CLAUDE_TIMEOUT_S", "30")
 
-      # ---- 6. spawn the Agent Kind FIRST (CcAgent.instantiate does this
-      #         in production via SpawnRegistry; we do it here so we own
-      #         the lifecycle without going through CcAgent's
-      #         `test_mode: true` short-circuit in Mix.env() :test).
-      {:ok, _agent_pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+      # ---- 6. materialize the Agent through the template fixture first;
+      #         production reaches the same Agent path from CcAgent.instantiate
+      #         via SpawnRegistry, while this test owns the PtyServer lifecycle.
+      {:ok, _agent_pid} =
+        Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent_with_flavor(agent_uri, "cc")
 
       assert {:ok, _} = KindRegistry.lookup(agent_uri),
              "Agent Kind must be alive before the PtyServer spawns"
@@ -438,10 +439,10 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
       assert is_pid(bridge_bound),
              "the bridge subprocess (uv run --script ezagent_mcp_bridge.py) " <>
                "must connect to /cc_socket and BridgeRegistry must bind it. " <>
-               "Status: #{File.exists?(status_file) && File.read!(status_file) || "(no status file yet)"}"
+               "Status: #{(File.exists?(status_file) && File.read!(status_file)) || "(no status file yet)"}"
 
       # ---- 9. set up a session + admin user, join the agent + admin
-      session_uri = URI.parse("session://default/team-alpha/v1signoff-#{uniq()}")
+      session_uri = Ezagent.URI.new!("session://team-alpha/default/v1signoff-#{uniq()}")
       admin_uri = User.admin_uri()
 
       {:ok, _} = Ezagent.SpawnRegistry.spawn(session_uri)
@@ -469,9 +470,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
       inbound_text = "hello cc agent, please echo this back to me"
 
       inbound_msg =
-        Message.new(admin_uri, %{text: inbound_text, attachments: []},
-          mentions: [agent_uri]
-        )
+        Message.new(admin_uri, %{text: inbound_text, attachments: []}, mentions: [agent_uri])
 
       :ok =
         Invocation.dispatch(%Invocation{

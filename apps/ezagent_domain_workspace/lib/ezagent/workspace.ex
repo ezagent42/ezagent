@@ -193,16 +193,20 @@ defmodule Ezagent.Workspace do
   # tolerant of `:no_spawn_fn` for unit tests) — they converge on
   # the same `SpawnRegistry.spawn/1` chokepoint so a fresh-user
   # add lands the Kind exactly once.
-  defp ensure_member_kind_spawned_at_facade(%URI{scheme: "entity", host: "user"} = uri) do
-    case Ezagent.SpawnRegistry.spawn(uri) do
-      {:ok, _pid} ->
-        :ok
+  defp ensure_member_kind_spawned_at_facade(%URI{scheme: "entity"} = uri) do
+    if Ezagent.URI.type?(uri, :user) do
+      case Ezagent.SpawnRegistry.spawn(uri) do
+        {:ok, _pid} ->
+          :ok
 
-      {:error, {:no_spawn_fn, _scheme}} ->
-        :ok
+        {:error, {:no_spawn_fn, _scheme}} ->
+          :ok
 
-      {:error, reason} ->
-        {:error, {:member_user_spawn_failed, uri, reason}}
+        {:error, reason} ->
+          {:error, {:member_user_spawn_failed, uri, reason}}
+      end
+    else
+      :ok
     end
   end
 
@@ -269,7 +273,9 @@ defmodule Ezagent.Workspace do
 
       _persisted ->
         target =
-          Ezagent.URI.new!("workspace://#{name}?action=workspace.remove_cross_prefix_members")
+          name
+          |> Ezagent.URI.workspace()
+          |> Ezagent.URI.with_action(:workspace, :remove_cross_prefix_members)
 
         case Router.dispatch(%Cmd{
                target: target,
@@ -278,7 +284,10 @@ defmodule Ezagent.Workspace do
                ctx: %{
                  mode: :call,
                  caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
-                 caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
+                 caps:
+                   "workspace-loader"
+                   |> Ezagent.SystemPrincipal.uri()
+                   |> Ezagent.SystemPrincipal.caps(),
                  reply: {:caller_inbox, self()}
                }
              }) do
@@ -308,7 +317,10 @@ defmodule Ezagent.Workspace do
   end
 
   defp list_current_members_for_persist(name) do
-    target = Ezagent.URI.new!("workspace://#{name}?action=workspace.list_members")
+    target =
+      name
+      |> Ezagent.URI.workspace()
+      |> Ezagent.URI.with_action(:workspace, :list_members)
 
     case Router.dispatch(%Cmd{
            target: target,
@@ -317,7 +329,10 @@ defmodule Ezagent.Workspace do
            ctx: %{
              mode: :call,
              caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
-             caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
+             caps:
+               "workspace-loader"
+               |> Ezagent.SystemPrincipal.uri()
+               |> Ezagent.SystemPrincipal.caps(),
              reply: {:caller_inbox, self()}
            }
          }) do
@@ -368,7 +383,7 @@ defmodule Ezagent.Workspace do
   end
 
   defp invoke_template_now(name, tmpl_name) do
-    workspace_uri = Ezagent.URI.new!("workspace://#{name}")
+    workspace_uri = Ezagent.URI.workspace(name)
 
     case Loader.invoke_template(workspace_uri, tmpl_name) do
       {:ok, _uris} -> :ok
@@ -457,7 +472,11 @@ defmodule Ezagent.Workspace do
   # `:call`, a `:cast` dispatch silently drops the error and the facade
   # persists the bad URI regardless.
   defp dispatch_mutation(name, action_str, args, mode) when mode in [:cast, :call] do
-    target = Ezagent.URI.new!("workspace://#{name}?action=workspace.#{action_str}")
+    target =
+      name
+      |> Ezagent.URI.workspace()
+      |> Ezagent.URI.with_action(:workspace, action_str)
+
     # The action verb already lives in the URI's `?action=workspace.<verb>`
     # query (Router preserves a pre-baked `action=` and the registry
     # resolves `{kind_module, action}` from it). `Cmd.action` carries the
@@ -480,7 +499,10 @@ defmodule Ezagent.Workspace do
            ctx: %{
              mode: mode,
              caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
-             caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
+             caps:
+               "workspace-loader"
+               |> Ezagent.SystemPrincipal.uri()
+               |> Ezagent.SystemPrincipal.caps(),
              reply: reply
            }
          }) do
@@ -499,8 +521,8 @@ defmodule Ezagent.Workspace do
   @spec list_workspaces() :: [URI.t()]
   def list_workspaces do
     KindRegistry.list_all()
-    |> Enum.filter(fn {uri_str, _pid} -> String.starts_with?(uri_str, "workspace://") end)
     |> Enum.map(fn {uri_str, _pid} -> Ezagent.URI.new!(uri_str) end)
+    |> Enum.filter(&Ezagent.URI.scheme?(&1, :workspace))
     |> Enum.sort_by(&URI.to_string/1)
   end
 
@@ -674,7 +696,7 @@ defmodule Ezagent.Workspace do
   # only accepts `entity://user/...` URIs (agents don't have inboxes
   # by design). Use this guard at notify call sites where a member
   # URI may be either user or agent.
-  defp user_uri?(%URI{scheme: "entity", host: "user"}), do: true
+  defp user_uri?(%URI{scheme: "entity"} = uri), do: Ezagent.URI.type?(uri, :user)
   defp user_uri?(_), do: false
 
   # --- create_agent (SPEC 2026-05-25-agent-create-cli-gui-parity) -----
@@ -777,8 +799,9 @@ defmodule Ezagent.Workspace do
     end
   end
 
-  defp ensure_workspace_live(%URI{scheme: "workspace", host: name} = workspace_uri)
-       when is_binary(name) and name != "" do
+  defp ensure_workspace_live(%URI{scheme: "workspace"} = workspace_uri) do
+    name = Ezagent.URI.name!(workspace_uri)
+
     case KindRegistry.lookup(workspace_uri) do
       {:ok, _pid} ->
         :ok
@@ -914,7 +937,8 @@ defmodule Ezagent.Workspace do
              ctx: %{
                mode: :call,
                caller: creator_uri,
-               caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+               caps:
+                 "bootstrap" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
                reply: :ignore
              }
            }) do

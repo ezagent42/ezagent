@@ -33,7 +33,7 @@ defmodule Mix.Tasks.Ezagent.Workspace.Create do
 
         case Ezagent.Workspace.create(trimmed, %{}) do
           {:ok, _pid} ->
-            Mix.shell().info("✓ created workspace://#{trimmed}")
+            Mix.shell().info("✓ created workspace #{trimmed}")
 
           {:error, reason} ->
             Mix.raise("create failed: #{inspect(reason)}")

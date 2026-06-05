@@ -18,8 +18,8 @@ defmodule Mix.Tasks.Ezagent.Feishu.Bind do
 
   Phase 6 PR 15 — admin CLI for Feishu identity bindings.
 
-      mix ezagent.feishu.bind ou_6b11faf8e9... entity://user/team-alpha/linyilun
-      mix ezagent.feishu.bind ou_xxx entity://user/team-alpha/linyilun --admin entity://user/system/admin
+      mix ezagent.feishu.bind ou_6b11faf8e9... <user-uri>
+      mix ezagent.feishu.bind ou_xxx <user-uri> --admin <admin-uri>
 
   After binding, `EzagentPluginFeishu.BindingPolicy.apply/2` ensures
   the bound user has `Ezagent.Entity.User.default_caps/0` (the
@@ -41,13 +41,16 @@ defmodule Mix.Tasks.Ezagent.Feishu.Bind do
 
     {open_id, user_uri} =
       case positional do
-        [oid, uri] -> {oid, uri}
-        _ -> Mix.raise("usage: mix ezagent.feishu.bind <open_id> <user_uri> [--admin <admin_uri>]")
+        [oid, uri] ->
+          {oid, uri}
+
+        _ ->
+          Mix.raise("usage: mix ezagent.feishu.bind <open_id> <user_uri> [--admin <admin_uri>]")
       end
 
     Mix.Task.run("app.start")
 
-    admin_uri = opts[:admin] || "entity://user/system/admin"
+    admin_uri = opts[:admin] || Ezagent.URI.stable_key(Ezagent.Entity.User.admin_uri())
 
     case UserBinding.bind(open_id, user_uri, admin_uri) do
       {:ok, _row} ->

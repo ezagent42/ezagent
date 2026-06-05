@@ -63,8 +63,8 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     # The uri_picker hidden inputs are JS-managed (empty in a
     # dead-render). Set form-real fields (table/matcher_type) via
     # form/3; pass the picker-managed URIs via render_submit/2 extras.
-    matcher_arg = "entity://agent/team-alpha/test_lv-test-#{System.unique_integer([:positive])}"
-    receiver = "session://default/team-alpha/lv-rcv-#{System.unique_integer([:positive])}"
+    matcher_arg = "entity://team-alpha/agent/test_lv-test-#{System.unique_integer([:positive])}"
+    receiver = "session://team-alpha/default/lv-rcv-#{System.unique_integer([:positive])}"
 
     lv
     |> form("#add-rule form",
@@ -77,7 +77,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
 
     html = render(lv)
     assert html =~ "mention"
-    assert html =~ "entity://agent/team-alpha/test_lv-test"
+    assert html =~ "entity://team-alpha/agent/test_lv-test"
   end
 
   # 2026-05-25 — `switch_table` regression test removed. With
@@ -95,8 +95,8 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
       Jason.encode!(%{
         "type" => "and",
         "items" => [
-          %{"type" => "mention", "arg" => "entity://agent/team-alpha/test_lv-combo"},
-          %{"type" => "from", "arg" => "entity://user/system/admin"}
+          %{"type" => "mention", "arg" => "entity://team-alpha/agent/test_lv-combo"},
+          %{"type" => "from", "arg" => "entity://system/user/admin"}
         ]
       })
 
@@ -107,7 +107,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
         matcher_json: combinator_json
       }
     )
-    |> render_submit(%{rule: %{receivers: ["session://default/team-alpha/oncall"]}})
+    |> render_submit(%{rule: %{receivers: ["session://team-alpha/default/oncall"]}})
 
     html = render(lv)
     assert html =~ ":and"
@@ -123,7 +123,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
         matcher_type: "mention"
       }
     )
-    |> render_submit(%{rule: %{matcher_arg: "entity://agent/team-alpha/test_x"}})
+    |> render_submit(%{rule: %{matcher_arg: "entity://team-alpha/agent/test_x"}})
 
     html = render(lv)
     assert html =~ "receiver"
@@ -146,8 +146,8 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     )
     |> render_submit(%{
       rule: %{
-        matcher_arg: "entity://agent/other-tenant/cc_evil",
-        receivers: ["session://default/team-alpha/oncall"]
+        matcher_arg: "entity://other-tenant/agent/cc_evil",
+        receivers: ["session://team-alpha/default/oncall"]
       }
     })
 
@@ -167,8 +167,8 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     )
     |> render_submit(%{
       rule: %{
-        matcher_arg: "entity://agent/team-alpha/test_ok",
-        receivers: ["entity://agent/other-tenant/cc_leak"]
+        matcher_arg: "entity://team-alpha/agent/test_ok",
+        receivers: ["entity://other-tenant/agent/cc_leak"]
       }
     })
 
@@ -188,7 +188,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     )
     |> render_submit(%{
       rule: %{
-        matcher_arg: "entity://agent/team-alpha/test_ok",
+        matcher_arg: "entity://team-alpha/agent/test_ok",
         receivers: ["not-a-valid-uri"]
       }
     })
@@ -211,7 +211,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
   test "add_rule accepts the $session_members broadcast token as a receiver", %{conn: conn} do
     {:ok, lv, _html} = live(conn, "/admin/routing")
 
-    matcher_arg = "entity://agent/team-alpha/test_bcast-#{System.unique_integer([:positive])}"
+    matcher_arg = "entity://team-alpha/agent/test_bcast-#{System.unique_integer([:positive])}"
 
     lv
     |> form("#add-rule form",
@@ -232,7 +232,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
   test "add_rule accepts $session_users + $mentions magic tokens as receivers", %{conn: conn} do
     {:ok, lv, _html} = live(conn, "/admin/routing")
 
-    matcher_arg = "entity://agent/team-alpha/test_mg-#{System.unique_integer([:positive])}"
+    matcher_arg = "entity://team-alpha/agent/test_mg-#{System.unique_integer([:positive])}"
 
     lv
     |> form("#add-rule form",

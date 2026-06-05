@@ -109,7 +109,7 @@ defmodule Ezagent.E2E.Manifest do
   defp encode_key(k), do: {:error, {:unencodable_ctx_key, k}}
 
   # %URI{} is a struct (is_map true) — this clause MUST precede the struct/map clauses.
-  defp encode_val(%URI{} = u), do: {:ok, %{"__uri__" => URI.to_string(u)}}
+  defp encode_val(%URI{} = u), do: {:ok, %{"__uri__" => Ezagent.URI.stable_key(u)}}
   # Any OTHER struct (MapSet, DateTime, caps, …) is rejected — it would otherwise be
   # Enum-reduced as a plain map and either crash or lose its type. Store URIs (tagged),
   # ISO8601 strings, or primitives in ctx; rebuild caps from durable principals.
@@ -138,7 +138,9 @@ defmodule Ezagent.E2E.Manifest do
   # Decode the tag ONLY on its EXACT shape (single key, binary value) — a map with
   # `__uri__` plus other keys is NOT our tag, so it's preserved as an ordinary map (its
   # other keys are never dropped). Encode prevents producing such a map anyway (codex review).
-  defp decode_val(%{@uri_tag => s} = m) when map_size(m) == 1 and is_binary(s), do: URI.new!(s)
+  defp decode_val(%{@uri_tag => s} = m) when map_size(m) == 1 and is_binary(s),
+    do: Ezagent.URI.new!(s)
+
   defp decode_val(v) when is_map(v), do: decode_ctx(v)
   defp decode_val(v) when is_list(v), do: Enum.map(v, &decode_val/1)
   defp decode_val(v), do: v

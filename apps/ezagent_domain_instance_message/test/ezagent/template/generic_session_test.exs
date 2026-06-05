@@ -21,7 +21,7 @@ defmodule Ezagent.Template.GenericSessionTest do
                GenericSession.validate(%{
                  "class" => "session.generic",
                  "session_name" => "demo",
-                 "members" => ["entity://user/system/admin", "entity://agent/team-alpha/test_x"]
+                 "members" => ["entity://system/user/admin", "entity://team-alpha/agent/test_x"]
                })
     end
 
@@ -76,20 +76,20 @@ defmodule Ezagent.Template.GenericSessionTest do
   end
 
   describe "instantiate/3" do
-    test "spawns a Session at session://generic/<workspace>/<name> + dispatches join for each member (SPEC v3 §3.6 PR-7)" do
+    test "spawns a Session at session://<workspace>/generic/<name> + dispatches join for each member" do
       session_name = "gs-test-#{System.unique_integer([:positive])}"
-      workspace_uri = URI.parse("workspace://test")
+      workspace_uri = Ezagent.URI.new!("workspace://test")
 
       tmpl = %{
         "class" => "session.generic",
         "session_name" => session_name,
-        "members" => ["entity://user/system/admin"]
+        "members" => ["entity://system/user/admin"]
       }
 
       assert {:ok, [session_uri]} =
                GenericSession.instantiate("main", tmpl, workspace_uri)
 
-      assert URI.to_string(session_uri) == "session://generic/test/#{session_name}"
+      assert URI.to_string(session_uri) == "session://test/generic/#{session_name}"
 
       # Session Kind alive in KindRegistry
       assert {:ok, _pid} = Ezagent.KindRegistry.lookup(session_uri)
@@ -97,7 +97,7 @@ defmodule Ezagent.Template.GenericSessionTest do
 
     test "is idempotent — re-call returns same URI without crash" do
       session_name = "gs-idem-#{System.unique_integer([:positive])}"
-      workspace_uri = URI.parse("workspace://test")
+      workspace_uri = Ezagent.URI.new!("workspace://test")
 
       tmpl = %{
         "class" => "session.generic",

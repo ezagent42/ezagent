@@ -280,7 +280,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
   # live pid to monitor. An agent host (not `entity://user/...`) skips the
   # user-only notify + owner-cap branches in do_join_apply.
   defp register_member do
-    member_uri = URI.new!("entity://agent/team-alpha/relay-#{uniq()}")
+    member_uri = URI.new!("entity://team-alpha/agent/relay-#{uniq()}")
     {member_uri, _pid} = spawn_registered(member_uri)
     member_uri
   end

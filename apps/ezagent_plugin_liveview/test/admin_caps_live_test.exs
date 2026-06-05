@@ -35,7 +35,7 @@ defmodule EzagentPluginLiveview.AdminCapsLiveTest do
   end
 
   defp non_admin_conn do
-    uri = "entity://user/team-alpha/admin_caps_test_user"
+    uri = "entity://team-alpha/user/admin_caps_test_user"
     {:ok, _user} = Ezagent.Users.create(URI.parse(uri), nil, [])
 
     Phoenix.ConnTest.build_conn()

@@ -104,7 +104,7 @@ def main() -> int:
         env = os.environ.copy()
         env.update(
             {
-                "EZAGENT_AGENT_URI": "entity://agent/system/codex_smoke",
+                "EZAGENT_AGENT_URI": "entity://system/agent/codex_smoke",
                 "EZAGENT_AGENT_TOKEN": "smoke",
                 "EZAGENT_BRIDGE_WS_URL": "ws://127.0.0.1:9/agent_bridge/websocket",
                 "EZAGENT_CODEX_APP_SERVER_SOCK": str(socket_path),

@@ -440,10 +440,8 @@ defmodule Ezagent.Routing.Resolver do
 
   defp cross_session?(%URI{}, %URI{}), do: false
 
-  # A User-Kind member is structurally `entity://user/<ws>/<name>`.
-  # parse!/1 guarantees the canonical shape, so the host segment is
-  # the authoritative type axis (no registry lookup needed).
-  defp user_uri?(%URI{} = uri), do: uri.scheme == "entity" and uri.host == "user"
+  # A User-Kind member is structurally an entity URI whose type axis is `user`.
+  defp user_uri?(%URI{} = uri), do: uri.scheme == "entity" and Ezagent.URI.type?(uri, :user)
   defp user_uri?(uri) when is_binary(uri), do: user_uri?(to_uri(uri))
   defp user_uri?(_), do: false
 

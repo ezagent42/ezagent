@@ -97,7 +97,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RepairOrchestratorTest do
       # `repair_orchestrator/2` with nil workspace is an explicit error.
       assert {:error, :repair_requires_workspace} =
                EzagentDomainInstanceMessage.repair_orchestrator(
-                 Ezagent.URI.new!("session://default/system/whatever"),
+                 Ezagent.URI.new!("session://system/default/whatever"),
                  nil
                )
     end
@@ -181,7 +181,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RepairOrchestratorTest do
       description: "orchestrated team for repair-failure test",
       orchestrator_template_uri:
         Ezagent.URI.new!(Ezagent.Orchestrator.CcOrchestratorSeed.template_uri()),
-      default_workspace_uri: URI.parse("workspace://system"),
+      default_workspace_uri: Ezagent.URI.new!("workspace://system"),
       parent_template_uri: nil,
       version_tag: nil,
       created_by: User.admin_uri(),
@@ -213,7 +213,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RepairOrchestratorTest do
   end
 
   defp seed_echo_agent_template(n) do
-    uri = Ezagent.URI.new!("template://agent/system/repair-seed-#{n}")
+    uri = Ezagent.URI.new!("template://system/agent/repair-seed-#{n}")
     {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
     :ok = write_agent_template_content(uri, %{flavor: "echo"})
     uri

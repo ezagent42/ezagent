@@ -89,7 +89,7 @@ defmodule Ezagent.Integration.AddMemberSpawnThenGrantTest do
     # Generate a fresh user URI that is NOT yet in `KindRegistry` —
     # the exact pre-fix race condition.
     user_name = "alice-#{System.unique_integer([:positive])}"
-    user_uri = URI.new!("entity://user/#{ws_name}/#{user_name}")
+    user_uri = URI.new!("entity://#{ws_name}/user/#{user_name}")
 
     refute_user_alive(user_uri)
 

@@ -61,7 +61,7 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
   end
 
   defp read(uri) do
-    target = URI.parse("#{URI.to_string(uri)}?action=template.read")
+    target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=template.read")
 
     Invocation.dispatch(%Invocation{
       target: target,
@@ -83,11 +83,11 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
       name: name,
       description: "a team",
       routing_rules: [],
-      orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
-      default_workspace_uri: URI.parse("workspace://team-alpha"),
+      orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator"),
+      default_workspace_uri: Ezagent.URI.new!("workspace://team-alpha"),
       parent_template_uri: nil,
       version_tag: nil,
-      created_by: URI.parse("entity://user/team-alpha/admin"),
+      created_by: Ezagent.URI.new!("entity://team-alpha/user/admin"),
       created_at: ~U[2026-05-22 00:00:00Z]
     }
   end
@@ -103,7 +103,7 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
       track(uri)
 
       # The URI is the content-addressed template://session/<ws>/<name>@<hash>.
-      assert URI.to_string(uri) == "template://session/team-alpha/#{name}@#{expected_hash}"
+      assert URI.to_string(uri) == "template://team-alpha/session/#{name}@#{expected_hash}"
 
       # The Kind is alive and its :template slice holds the content.
       assert {:ok, %{content: ^content}} = read(uri)
@@ -121,7 +121,7 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
 
       assert {:ok, %URI{} = uri} = SessionTemplate.persist_version(content, "team-alpha")
       track(uri)
-      assert URI.to_string(uri) == "template://session/team-alpha/#{name}@#{hash}"
+      assert URI.to_string(uri) == "template://team-alpha/session/#{name}@#{hash}"
     end
 
     test "missing :name in the content map → {:error, :missing_template_name}" do
@@ -177,7 +177,7 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
       {:ok, _pid} = Ezagent.SpawnRegistry.spawn(wrong_uri)
       track(wrong_uri)
 
-      target = URI.parse("#{URI.to_string(wrong_uri)}?action=template.write")
+      target = Ezagent.URI.new!("#{URI.to_string(wrong_uri)}?action=template.write")
 
       result =
         Invocation.dispatch(%Invocation{

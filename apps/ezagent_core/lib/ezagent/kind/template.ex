@@ -293,7 +293,8 @@ defmodule Ezagent.Kind.Template do
           | {:error, term()}
   def provision_and_instantiate(class_module, tmpl_name, tmpl_data, %URI{} = workspace_uri)
       when is_atom(class_module) and is_map(tmpl_data) do
-    with {:ok, data} <- maybe_allocate_config_dir(class_module, tmpl_data) do
+    with {:ok, data} <- maybe_allocate_config_dir(class_module, tmpl_data),
+         :ok <- maybe_store_agent_flavor(class_module, data) do
       class_module.instantiate(tmpl_name, data, workspace_uri)
     end
   end
@@ -319,6 +320,18 @@ defmodule Ezagent.Kind.Template do
     case Map.get(tmpl_data, "agent_uri") do
       s when is_binary(s) and s != "" -> {:ok, Ezagent.URI.new!(s)}
       _ -> {:error, :config_dir_allocate_missing_agent_uri}
+    end
+  end
+
+  defp maybe_store_agent_flavor(class_module, tmpl_data) do
+    case Map.get(tmpl_data, "agent_uri") do
+      s when is_binary(s) and s != "" ->
+        s
+        |> Ezagent.URI.new!()
+        |> Ezagent.AgentFlavorAttributes.maybe_put_from_template_class(class_module)
+
+      _ ->
+        :ok
     end
   end
 end

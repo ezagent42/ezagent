@@ -36,16 +36,16 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
     # 2026-05-26 (Allen): caller is a `team-alpha` workspace user so the
     # CLI's `promote_to_3seg/4` fills the workspace slot with
     # `team-alpha` — matching the session spawned below at
-    # `session://default/team-alpha/...`. Previously the override
+    # `session://team-alpha/default/...`. Previously the override
     # carried `admin_uri()` (workspace `system`), which made the CLI
-    # promote `--session <bare>` to `session://default/system/<bare>`
+    # promote `--session <bare>` to `session://system/default/<bare>`
     # while the test had spawned in `team-alpha` → "no such actor"
     # mismatch surfaced once PR #362 tightened structural workspace
     # derivation. Holding `*` caps so caps step 5.5 isn't the gate
     # under test here (this test pins the BEAM-isomorphism invariant).
     test_user_uri =
-      URI.parse(
-        "entity://user/team-alpha/cli-lv-isomorphism-tester-#{System.unique_integer([:positive])}"
+      Ezagent.URI.new!(
+        "entity://team-alpha/user/cli-lv-isomorphism-tester-#{System.unique_integer([:positive])}"
       )
 
     Process.put(
@@ -59,21 +59,22 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
   test "CLI server-side exec changes Session.chat.members IN THIS BEAM", ctx do
     session_name = "cli-same-server-test-#{System.unique_integer([:positive])}"
     # SPEC v3 §3.6 (Phase 9 PR-7) — sessions are 3-segment.
-    session_uri = URI.parse("session://default/team-alpha/" <> session_name)
+    session_uri = Ezagent.URI.new!("session://team-alpha/default/" <> session_name)
     # PR-A: agent URIs include a type segment. Use the `test_` flavor
     # (hardcoded in chat → Ezagent.Entity.Agent, no agent-flavor plugin
     # needed) rather than `cc_`: this CLI-same-BEAM invariant only needs
     # a spawnable generic agent member, and the cli suite does not load
     # the cc plugin that registers the `cc` flavor — a `cc_` URI would
     # fail `{:no_kind_module_for_agent, ...}`.
-    member_uri = URI.parse("entity://agent/team-alpha/test_cli-member-#{System.unique_integer([:positive])}")
+    member_uri =
+      Ezagent.URI.new!("entity://team-alpha/agent/test_cli-member-#{System.unique_integer([:positive])}")
 
     # Spawn session in this BEAM
     {:ok, session_pid} = Ezagent.SpawnRegistry.spawn(session_uri)
     Process.sleep(50)
 
     # Spawn the agent so chat/join's lookup succeeds
-    {:ok, _agent_pid} = Ezagent.SpawnRegistry.spawn(member_uri)
+    {:ok, _agent_pid} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(member_uri, "test")
     Process.sleep(50)
 
     member_uri_str = URI.to_string(member_uri)
@@ -122,7 +123,7 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
           session_name,
           # SPEC #366 (Allen 2026-05-26) — `--instance-class` is required
           # for bare-name `--session <name>` promotion. The test spawned
-          # `session://default/team-alpha/<name>` above, so the class slot
+          # `session://team-alpha/default/<name>` above, so the class slot
           # is the literal `"default"` here.
           "--instance-class",
           "default",

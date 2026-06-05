@@ -304,7 +304,8 @@ defmodule EzagentDomainUi.IdeShell do
         id={@menu_id}
         phx-click-away={
           JS.hide(
-            transition: {"ease-in duration-100", "opacity-100 translate-y-0", "opacity-0 -translate-y-1"}
+            transition:
+              {"ease-in duration-100", "opacity-100 translate-y-0", "opacity-0 -translate-y-1"}
           )
         }
         class="hidden absolute left-0 top-full mt-1 w-64 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md shadow-lg z-50 transition transform"
@@ -401,36 +402,45 @@ defmodule EzagentDomainUi.IdeShell do
 
   # Extract the workspace display name from whatever shape the LV passed.
   # Accepts: %{name: "..."} | %{uri: "workspace://name"} |
-  # %{uri: %URI{host: "name"}} | %URI{host: "name"} | "workspace://name" |
+  # %{uri: %URI{}} | %URI{} | "workspace://name" |
   # "name". Robust to whichever source the LV pulls from (Workspace.Store
   # row vs WorkspaceRegistry vs hand-built map).
   defp workspace_item_name(%{name: name}) when is_binary(name) and name != "", do: name
-  defp workspace_item_name(%{uri: %URI{host: host}}) when is_binary(host), do: host
+  defp workspace_item_name(%{uri: %URI{} = uri}), do: workspace_item_name(uri)
+
   defp workspace_item_name(%{uri: uri_str}) when is_binary(uri_str) do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue keeping the display-fallback behaviour (return
     # raw string on parse failure).
     try do
-      case Ezagent.URI.new!(uri_str) do
-        %URI{host: host} when is_binary(host) -> host
-        _ -> uri_str
-      end
+      uri_str
+      |> Ezagent.URI.new!()
+      |> uri_name_or(uri_str)
     rescue
       ArgumentError -> uri_str
     end
   end
-  defp workspace_item_name(%URI{host: host}) when is_binary(host), do: host
+
+  defp workspace_item_name(%URI{} = uri), do: uri_name_or(uri, URI.to_string(uri))
+
   defp workspace_item_name(s) when is_binary(s) do
     try do
-      case Ezagent.URI.new!(s) do
-        %URI{host: host} when is_binary(host) and host != "" -> host
-        _ -> s
-      end
+      s
+      |> Ezagent.URI.new!()
+      |> uri_name_or(s)
     rescue
       ArgumentError -> s
     end
   end
+
   defp workspace_item_name(_), do: "—"
+
+  defp uri_name_or(%URI{} = uri, fallback) do
+    case Ezagent.URI.name(uri) do
+      {:ok, name} -> name
+      :error -> fallback
+    end
+  end
 
   # --- avatar_menu -----------------------------------------------------------
 
@@ -454,9 +464,8 @@ defmodule EzagentDomainUi.IdeShell do
     Bug 6 (Allen 2026-05-26) — the Admin link visibility is gated on
     `is_admin? OR is_system_member?` to match the `:require_admin`
     `live_session` policy in `EzagentWeb.LiveAuth`. Previously the
-    gate matched ONLY the literal seeded admin URI
-    (`entity://user/system/admin`), so other system members (e.g.
-    `entity://user/system/linyilun`) — who CAN access /admin/* via
+    gate matched ONLY the literal seeded admin URI, so other system
+    members — who CAN access /admin/* via
     the live_session gate — saw no Admin link in the avatar menu.
     """
   )
@@ -534,7 +543,7 @@ defmodule EzagentDomainUi.IdeShell do
                 architecture).
                 Bug 6 (Allen 2026-05-26) — widened gate from
                 `is_admin?` alone (which only matched the literal
-                seeded `entity://user/system/admin` URI per
+                seeded admin user URI per
                 `Ezagent.Identity.admin?/1`) to
                 `is_admin? OR is_system_member?`. The router's
                 `:require_admin` live_session lets system members

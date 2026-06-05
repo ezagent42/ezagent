@@ -73,7 +73,7 @@ defmodule EzagentPluginLiveview.WorkspacesLiveTest do
     # workspace; the member URI's workspace segment must match `name`.
     # The hidden input is JS-managed, so pass the value via
     # render_submit/2 extras.
-    member = "entity://agent/#{name}/test_test-add"
+    member = "entity://#{name}/agent/test_test-add"
 
     lv
     |> form("#members form")
@@ -94,7 +94,7 @@ defmodule EzagentPluginLiveview.WorkspacesLiveTest do
 
     lv
     |> form("#members form")
-    |> render_submit(%{add_member: %{member_uri: "entity://agent/other-tenant/cc_leak"}})
+    |> render_submit(%{add_member: %{member_uri: "entity://other-tenant/agent/cc_leak"}})
 
     html = render(lv)
     assert html =~ "Rejected"

@@ -14,7 +14,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentConfigHomeTest do
   alias Ezagent.PluginCc.Template.CcAgent
   alias Ezagent.Sandbox.ConfigDir
 
-  defp agent_uri, do: Ezagent.URI.new!("entity://agent/team-alpha/cc_home-#{System.unique_integer([:positive])}")
+  defp agent_uri, do: Ezagent.URI.new!("entity://team-alpha/agent/cc_home-#{System.unique_integer([:positive])}")
 
   test "realized agent_config_dir wins" do
     uri = agent_uri()

@@ -29,10 +29,10 @@ defmodule Ezagent.Behavior.TemplateTest do
     # the two-container `%{state:, transients:}` shape (no transients —
     # the content is fully persistent). Assert on `.state`.
     test "init_slice/1 defaults content to nil (unpopulated template Kind)" do
-      assert Template.init_slice(%{uri: URI.new!("template://agent/team-alpha/x")}).state ==
+      assert Template.init_slice(%{uri: URI.new!("template://team-alpha/agent/x")}).state ==
                %{content: nil}
 
-      assert Template.create(%{uri: URI.new!("template://agent/team-alpha/x")}) ==
+      assert Template.create(%{uri: URI.new!("template://team-alpha/agent/x")}) ==
                {:ok, %{content: nil}}
     end
 
@@ -95,8 +95,8 @@ defmodule Ezagent.Behavior.TemplateTest do
         description: "team",
         agent_slots: [],
         routing_rules: [],
-        orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
-        default_workspace_uri: URI.parse("workspace://team-alpha")
+        orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator"),
+        default_workspace_uri: Ezagent.URI.new!("workspace://team-alpha")
       }
     end
 
@@ -147,7 +147,7 @@ defmodule Ezagent.Behavior.TemplateTest do
 
   describe "invoke(:instantiate, ...) — SessionTemplate" do
     test "returns {:error, :use_generator} — SessionTemplate instantiation IS the Generator" do
-      ctx = %{kind_module: SessionTemplate, self_uri: URI.new!("template://session/team-alpha/x@h")}
+      ctx = %{kind_module: SessionTemplate, self_uri: URI.new!("template://team-alpha/session/x@h")}
       slice = %{content: %{name: "x"}}
 
       assert {:error, :use_generator} = EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Template, :instantiate, slice, %{}, ctx)
@@ -156,7 +156,7 @@ defmodule Ezagent.Behavior.TemplateTest do
 
   describe "invoke(:instantiate, ...) — AgentTemplate" do
     test "returns {:error, :template_not_populated} for an empty slice" do
-      ctx = %{kind_module: AgentTemplate, self_uri: URI.new!("template://agent/team-alpha/x")}
+      ctx = %{kind_module: AgentTemplate, self_uri: URI.new!("template://team-alpha/agent/x")}
 
       assert {:error, :template_not_populated} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Template, :instantiate, %{content: nil}, %{}, ctx)
@@ -180,7 +180,7 @@ defmodule Ezagent.Behavior.TemplateTest do
     test "a workspace_uri arg pointing at ANOTHER workspace → {:error, :cross_workspace_denied}" do
       # AgentTemplate cap-checked for workspace `alpha`; caller tries
       # to escape into `team-bravo` via the workspace_uri arg.
-      self_uri = URI.new!("template://agent/alpha/cc-orch")
+      self_uri = URI.new!("template://alpha/agent/cc-orch")
       ctx = %{kind_module: AgentTemplate, self_uri: self_uri}
       slice = %{content: agent_template_content()}
 
@@ -203,7 +203,7 @@ defmodule Ezagent.Behavior.TemplateTest do
       # The guard normalizes through `workspace_of/1`, so passing an
       # entity:// URI carrying `team-bravo` is rejected just the same
       # when the self_uri is in `alpha`.
-      self_uri = URI.new!("template://agent/alpha/cc-orch")
+      self_uri = URI.new!("template://alpha/agent/cc-orch")
       ctx = %{kind_module: AgentTemplate, self_uri: self_uri}
       slice = %{content: agent_template_content()}
 
@@ -213,7 +213,7 @@ defmodule Ezagent.Behavior.TemplateTest do
                  slice,
                  %{
                    instance_name: "demo",
-                   workspace_uri: URI.new!("entity://agent/team-bravo/cc_other")
+                   workspace_uri: URI.new!("entity://team-bravo/agent/cc_other")
                  },
                  ctx
                )
@@ -224,7 +224,7 @@ defmodule Ezagent.Behavior.TemplateTest do
       # the cap-checked workspace; the spawn helper would then run (it
       # crashes here only because no real registry/flavor is wired in a
       # pure unit test — the point is the guard did NOT reject).
-      self_uri = URI.new!("template://agent/team-alpha/cc-orch")
+      self_uri = URI.new!("template://team-alpha/agent/cc-orch")
       ctx = %{kind_module: AgentTemplate, self_uri: self_uri}
       slice = %{content: agent_template_content()}
 
@@ -241,7 +241,7 @@ defmodule Ezagent.Behavior.TemplateTest do
     end
 
     test "no workspace_uri arg → destination derived from the AgentTemplate URI, not rejected" do
-      self_uri = URI.new!("template://agent/team-alpha/cc-orch")
+      self_uri = URI.new!("template://team-alpha/agent/cc-orch")
       ctx = %{kind_module: AgentTemplate, self_uri: self_uri}
       slice = %{content: agent_template_content()}
 

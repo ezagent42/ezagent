@@ -8,9 +8,9 @@ defmodule Ezagent.CapabilityTest do
   alias Ezagent.Capability
   import Ezagent.Test.CapHelper
 
-  @user_uri URI.parse("entity://user/team-alpha/alice")
-  @system_uri URI.parse("system://bootstrap")
-  @other_uri URI.parse("system://other")
+  @user_uri Ezagent.URI.new!("entity://team-alpha/user/alice")
+  @system_uri Ezagent.URI.new!("system://bootstrap")
+  @other_uri Ezagent.URI.new!("system://other")
   @now ~U[2026-05-15 00:00:00Z]
   @ws_default URI.new!("workspace://team-alpha")
 
@@ -20,7 +20,7 @@ defmodule Ezagent.CapabilityTest do
         cap(
           kind: :echo,
           behavior: Ezagent.Behavior.Echo,
-          instance: URI.parse("entity://agent/team-alpha/test_echo"),
+          instance: Ezagent.URI.new!("entity://team-alpha/agent/test_echo"),
           granted_by: @user_uri,
           granted_at: @now
         )
@@ -30,7 +30,7 @@ defmodule Ezagent.CapabilityTest do
                needed(
                  kind: :echo,
                  behavior: Ezagent.Behavior.Echo,
-                 instance: URI.parse("entity://agent/team-alpha/test_echo")
+                 instance: Ezagent.URI.new!("entity://team-alpha/agent/test_echo")
                )
              )
     end
@@ -40,7 +40,7 @@ defmodule Ezagent.CapabilityTest do
         cap(
           kind: :any,
           behavior: Ezagent.Behavior.Echo,
-          instance: URI.parse("entity://agent/team-alpha/test_echo"),
+          instance: Ezagent.URI.new!("entity://team-alpha/agent/test_echo"),
           granted_by: @user_uri,
           granted_at: @now
         )
@@ -50,7 +50,7 @@ defmodule Ezagent.CapabilityTest do
                needed(
                  kind: :anything,
                  behavior: Ezagent.Behavior.Echo,
-                 instance: URI.parse("entity://agent/team-alpha/test_echo")
+                 instance: Ezagent.URI.new!("entity://team-alpha/agent/test_echo")
                )
              )
     end
@@ -71,7 +71,7 @@ defmodule Ezagent.CapabilityTest do
                needed(
                  kind: :random_kind,
                  behavior: SomeMod,
-                 instance: URI.parse("entity://agent/team-alpha/test_whatever"),
+                 instance: Ezagent.URI.new!("entity://team-alpha/agent/test_whatever"),
                  workspace_uri: URI.new!("workspace://anything")
                )
              )
@@ -92,7 +92,7 @@ defmodule Ezagent.CapabilityTest do
                needed(
                  kind: :chat,
                  behavior: Mod,
-                 instance: URI.parse("entity://agent/team-alpha/test_x")
+                 instance: Ezagent.URI.new!("entity://team-alpha/agent/test_x")
                )
              )
     end
@@ -113,7 +113,7 @@ defmodule Ezagent.CapabilityTest do
                needed(
                  kind: :session,
                  behavior: :any,
-                 instance: URI.parse("session://default/system/main"),
+                 instance: Ezagent.URI.new!("session://system/default/main"),
                  workspace_uri: URI.new!("workspace://team-beta")
                )
              ),
@@ -137,7 +137,7 @@ defmodule Ezagent.CapabilityTest do
                needed(
                  kind: :session,
                  behavior: :any,
-                 instance: URI.parse("session://default/system/main"),
+                 instance: Ezagent.URI.new!("session://system/default/main"),
                  workspace_uri: URI.new!("workspace://team-alpha")
                )
              )
@@ -167,7 +167,7 @@ defmodule Ezagent.CapabilityTest do
           behavior: :any,
           instance: :any,
           workspace_uri: :any,
-          granted_by: URI.parse("system://bootstrap/default"),
+          granted_by: Ezagent.URI.new!("system://bootstrap/default"),
           granted_at: @now
         )
 
@@ -215,26 +215,26 @@ defmodule Ezagent.CapabilityTest do
   describe "cap_for_action/3 (Phase 3d + Phase 9 PR-3 workspace)" do
     test "entity URI → workspace from entity_workspace_uri/1" do
       # Echo plugin pre-registers BehaviorRegistry at boot
-      target = URI.new!("entity://agent/team-alpha/echo_default?action=echo.say")
+      target = URI.new!("entity://team-alpha/agent/echo_default?action=echo.say")
 
       n = Capability.cap_for_action(Ezagent.Entity.Echo, :say, target)
 
       assert n.kind == :echo
       assert n.behavior == Ezagent.Behavior.Echo
-      assert n.instance == URI.new!("entity://agent/team-alpha/echo_default")
+      assert n.instance == URI.new!("entity://team-alpha/agent/echo_default")
       assert URI.to_string(n.workspace_uri) == "workspace://team-alpha"
     end
 
     test "unknown action returns :unknown behavior" do
-      target = URI.new!("entity://agent/team-alpha/echo_default?action=echo.say")
+      target = URI.new!("entity://team-alpha/agent/echo_default?action=echo.say")
       n = Capability.cap_for_action(Ezagent.Entity.Echo, :nonexistent_action, target)
       assert n.behavior == :unknown
     end
 
-    test "session://default/system/main?action=chat.send → workspace from URI path (SPEC v3 §3.6 PR-7)" do
+    test "session://system/default/main?action=chat.send → workspace from URI path (SPEC v3 §3.6 PR-7)" do
       session_uri =
         URI.new!(
-          "session://default/team-alpha/test-cap-for-action-#{System.unique_integer([:positive])}"
+          "session://team-alpha/default/test-cap-for-action-#{System.unique_integer([:positive])}"
         )
 
       target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
@@ -250,7 +250,7 @@ defmodule Ezagent.CapabilityTest do
       # to structural URI extraction. An unbound session URI is fine —
       # the workspace comes from the path segment.
       unbound =
-        URI.new!("session://default/team-alpha/never-bound-#{System.unique_integer([:positive])}")
+        URI.new!("session://team-alpha/default/never-bound-#{System.unique_integer([:positive])}")
 
       target = URI.new!("#{URI.to_string(unbound)}?action=chat.send")
       n = Capability.cap_for_action(Ezagent.Entity.Session, :send, target)
@@ -283,7 +283,7 @@ defmodule Ezagent.CapabilityTest do
 
       session_uri =
         URI.new!(
-          "session://default/team-alpha/admin-closeloop-#{System.unique_integer([:positive])}"
+          "session://team-alpha/default/admin-closeloop-#{System.unique_integer([:positive])}"
         )
 
       :ok = Ezagent.WorkspaceRegistry.bind(session_uri, "workspace://team-alpha")
@@ -302,7 +302,7 @@ defmodule Ezagent.CapabilityTest do
         behavior: :any,
         instance: instance,
         workspace_uri: URI.new!("workspace://team-alpha"),
-        granted_by: URI.parse("entity://user/system/admin"),
+        granted_by: Ezagent.URI.new!("entity://system/user/admin"),
         granted_at: ~U[2026-05-18 00:00:00Z]
       )
     end
@@ -316,7 +316,7 @@ defmodule Ezagent.CapabilityTest do
 
     test "{:within_session, S} matches needed targeting URI exactly equal to S" do
       session_uri =
-        URI.new!("session://default/team-alpha/main-w1-#{System.unique_integer([:positive])}")
+        URI.new!("session://team-alpha/default/main-w1-#{System.unique_integer([:positive])}")
 
       c = scoped_cap({:within_session, session_uri})
 
@@ -332,7 +332,7 @@ defmodule Ezagent.CapabilityTest do
       # sub-URI test exercises the {:within_session, _} string-prefix
       # check directly via a manually-constructed `needed` map.
       session_uri =
-        URI.new!("session://default/team-alpha/main-w2-#{System.unique_integer([:positive])}")
+        URI.new!("session://team-alpha/default/main-w2-#{System.unique_integer([:positive])}")
 
       c = scoped_cap({:within_session, session_uri})
 
@@ -349,17 +349,17 @@ defmodule Ezagent.CapabilityTest do
 
     test "{:within_session, S} does NOT match needed in a different session (V3.2 scope leak)" do
       uniq = System.unique_integer([:positive])
-      c = scoped_cap({:within_session, URI.new!("session://default/team-alpha/main-w3-#{uniq}")})
+      c = scoped_cap({:within_session, URI.new!("session://team-alpha/default/main-w3-#{uniq}")})
 
       refute Capability.matches?(
                c,
-               needed_session("session://default/team-alpha/other-w3-#{uniq}?action=chat.send")
+               needed_session("session://team-alpha/default/other-w3-#{uniq}?action=chat.send")
              )
     end
 
-    test "{:within_session, session://default/system/main} does NOT false-match session://default/system/main2 (prefix boundary)" do
+    test "{:within_session, session://system/default/main} does NOT false-match session://system/default/main2 (prefix boundary)" do
       session_uri =
-        URI.new!("session://default/team-alpha/main-w4-#{System.unique_integer([:positive])}")
+        URI.new!("session://team-alpha/default/main-w4-#{System.unique_integer([:positive])}")
 
       c = scoped_cap({:within_session, session_uri})
 
@@ -372,7 +372,7 @@ defmodule Ezagent.CapabilityTest do
         )
 
       refute Capability.matches?(c, needed_neighbor),
-             "{:within_session, session://default/team-alpha/main-w4} must not match session://default/team-alpha/main-w42 — " <>
+             "{:within_session, session://team-alpha/default/main-w4} must not match session://team-alpha/default/main-w42 — " <>
                "prefix check requires '/' boundary, not raw startsWith"
     end
 
@@ -383,7 +383,7 @@ defmodule Ezagent.CapabilityTest do
       # ETS lookup that's empty).
       c =
         scoped_cap(
-          {:spawned_by, URI.new!("entity://agent/team-alpha/test_orchestrator-unrecorded")}
+          {:spawned_by, URI.new!("entity://team-alpha/agent/test_orchestrator-unrecorded")}
         )
 
       needed_any_agent =
@@ -392,7 +392,7 @@ defmodule Ezagent.CapabilityTest do
           behavior: :any,
           instance:
             URI.parse(
-              "entity://agent/team-alpha/test_worker-no-lineage-#{System.unique_integer([:positive])}"
+              "entity://team-alpha/agent/test_worker-no-lineage-#{System.unique_integer([:positive])}"
             ),
           workspace_uri: URI.new!("workspace://team-alpha")
         )
@@ -405,11 +405,11 @@ defmodule Ezagent.CapabilityTest do
     test "{:spawned_by, P} matches when lineage IS recorded (PR 40 real impl)" do
       orchestrator =
         URI.new!(
-          "entity://agent/team-alpha/test_orchestrator-#{System.unique_integer([:positive])}"
+          "entity://team-alpha/agent/test_orchestrator-#{System.unique_integer([:positive])}"
         )
 
       worker =
-        URI.new!("entity://agent/team-alpha/test_worker-#{System.unique_integer([:positive])}")
+        URI.new!("entity://team-alpha/agent/test_worker-#{System.unique_integer([:positive])}")
 
       :ok = Ezagent.AgentLineage.record(worker, orchestrator)
 
@@ -430,7 +430,7 @@ defmodule Ezagent.CapabilityTest do
           behavior: :any,
           instance: {:spawned_by, orchestrator},
           workspace_uri: URI.new!("workspace://team-alpha"),
-          granted_by: URI.parse("entity://user/system/admin"),
+          granted_by: Ezagent.URI.new!("entity://system/user/admin"),
           granted_at: ~U[2026-05-18 00:00:00Z]
         )
 
@@ -452,14 +452,14 @@ defmodule Ezagent.CapabilityTest do
 
     test "{:spawned_by, P} does NOT match an unrelated agent (lineage isolation)" do
       orchestrator_a =
-        URI.new!("entity://agent/team-alpha/test_orch-a-#{System.unique_integer([:positive])}")
+        URI.new!("entity://team-alpha/agent/test_orch-a-#{System.unique_integer([:positive])}")
 
       orchestrator_b =
-        URI.new!("entity://agent/team-alpha/test_orch-b-#{System.unique_integer([:positive])}")
+        URI.new!("entity://team-alpha/agent/test_orch-b-#{System.unique_integer([:positive])}")
 
       worker_of_a =
         URI.new!(
-          "entity://agent/team-alpha/test_worker-of-a-#{System.unique_integer([:positive])}"
+          "entity://team-alpha/agent/test_worker-of-a-#{System.unique_integer([:positive])}"
         )
 
       :ok = Ezagent.AgentLineage.record(worker_of_a, orchestrator_a)
@@ -470,7 +470,7 @@ defmodule Ezagent.CapabilityTest do
           behavior: :any,
           instance: {:spawned_by, orchestrator_b},
           workspace_uri: URI.new!("workspace://team-alpha"),
-          granted_by: URI.parse("entity://user/system/admin"),
+          granted_by: Ezagent.URI.new!("entity://system/user/admin"),
           granted_at: ~U[2026-05-18 00:00:00Z]
         )
 
@@ -491,7 +491,7 @@ defmodule Ezagent.CapabilityTest do
 
     test "scope tuple cap with wrong kind does NOT match (scope only narrows, never broadens)" do
       session_uri =
-        URI.new!("session://default/team-alpha/wrong-kind-#{System.unique_integer([:positive])}")
+        URI.new!("session://team-alpha/default/wrong-kind-#{System.unique_integer([:positive])}")
 
       :ok = Ezagent.WorkspaceRegistry.bind(session_uri, "workspace://team-alpha")
 
@@ -501,7 +501,7 @@ defmodule Ezagent.CapabilityTest do
           behavior: :any,
           instance: {:within_session, session_uri},
           workspace_uri: URI.new!("workspace://team-alpha"),
-          granted_by: URI.parse("entity://user/system/admin"),
+          granted_by: Ezagent.URI.new!("entity://system/user/admin"),
           granted_at: ~U[2026-05-18 00:00:00Z]
         )
 
@@ -524,7 +524,7 @@ defmodule Ezagent.CapabilityTest do
         behavior: Ezagent.Behavior.Template,
         instance: {:within_workspace, workspace_uri},
         workspace_uri: :any,
-        granted_by: URI.parse("entity://user/system/admin"),
+        granted_by: Ezagent.URI.new!("entity://system/user/admin"),
         granted_at: ~U[2026-05-22 00:00:00Z]
       )
     end
@@ -537,7 +537,7 @@ defmodule Ezagent.CapabilityTest do
                needed(
                  kind: :agent_template,
                  behavior: Ezagent.Behavior.Template,
-                 instance: URI.new!("template://agent/team-alpha/cc-orch"),
+                 instance: URI.new!("template://team-alpha/agent/cc-orch"),
                  workspace_uri: :any
                )
              )
@@ -551,7 +551,7 @@ defmodule Ezagent.CapabilityTest do
                needed(
                  kind: :agent_template,
                  behavior: Ezagent.Behavior.Template,
-                 instance: URI.new!("template://agent/team-alpha/cc-orch"),
+                 instance: URI.new!("template://team-alpha/agent/cc-orch"),
                  workspace_uri: :any
                )
              ),
@@ -568,7 +568,7 @@ defmodule Ezagent.CapabilityTest do
                  behavior: Ezagent.Behavior.Template,
                  instance:
                    URI.new!(
-                     "template://session/team-alpha/code-review@" <> String.duplicate("a", 64)
+                     "template://team-alpha/session/code-review@" <> String.duplicate("a", 64)
                    ),
                  workspace_uri: :any
                )
@@ -585,7 +585,7 @@ defmodule Ezagent.CapabilityTest do
           behavior: :any,
           instance: {:within_workspace, URI.new!("workspace://team-alpha")},
           workspace_uri: :any,
-          granted_by: URI.parse("entity://user/system/admin"),
+          granted_by: Ezagent.URI.new!("entity://system/user/admin"),
           granted_at: ~U[2026-05-22 00:00:00Z]
         )
 
@@ -641,7 +641,7 @@ defmodule Ezagent.CapabilityTest do
         granted_at: @now
       }
 
-      payload = %{target_uri: "entity://user/team-alpha/alice", cap: cap, at: @now}
+      payload = %{target_uri: "entity://team-alpha/user/alice", cap: cap, at: @now}
       assert {:ok, _json} = Jason.encode(payload)
     end
   end

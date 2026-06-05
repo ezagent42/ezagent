@@ -89,7 +89,7 @@ defmodule EzagentPluginLiveview.PluginsLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(assigns.current_entity_uri || Ezagent.URI.new!("entity://user/system/admin"))
+        Ezagent.URI.stable_key(assigns.current_entity_uri || Ezagent.Entity.User.admin_uri())
       end)
 
     ~H"""
@@ -112,7 +112,9 @@ defmodule EzagentPluginLiveview.PluginsLive do
           <:main_window>
             <div class="flex-1 overflow-auto px-6 py-6">
               <.page_header title={gettext("Plugins")}>
-                <:subtitle>{gettext("Installed ezagent plugins. Each one extends a core capability.")}</:subtitle>
+                <:subtitle>
+                  {gettext("Installed ezagent plugins. Each one extends a core capability.")}
+                </:subtitle>
               </.page_header>
 
               <%!-- 2026-05-26 (Allen): boot diagnostics card moved to

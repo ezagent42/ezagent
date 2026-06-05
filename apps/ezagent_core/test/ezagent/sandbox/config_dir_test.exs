@@ -9,7 +9,7 @@ defmodule Ezagent.Sandbox.ConfigDirTest do
   alias Ezagent.Home
   alias Ezagent.Sandbox.ConfigDir
 
-  defp agent_uri(ws, name), do: Ezagent.URI.new!("entity://agent/#{ws}/#{name}")
+  defp agent_uri(ws, name), do: Ezagent.URI.new!("entity://#{ws}/agent/#{name}")
 
   describe "path/2" do
     test "builds <Home>/<namespace>-agents/<ws>/<name> — byte-identical to the cc layout" do
@@ -27,7 +27,7 @@ defmodule Ezagent.Sandbox.ConfigDirTest do
     end
 
     test "raises on a non-agent URI (defense-in-depth — no silent default)" do
-      not_agent = Ezagent.URI.new!("entity://user/system/admin")
+      not_agent = Ezagent.URI.new!("entity://system/user/admin")
       assert_raise ArgumentError, fn -> ConfigDir.path(not_agent, "cc") end
     end
   end

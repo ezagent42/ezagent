@@ -42,9 +42,6 @@ defmodule Ezagent.Test.CapHelper do
   # `@system_workspace`; tests that need a tenant-scope cap pass
   # `workspace_uri:` explicitly (or use `@tenant_workspace` for a
   # stable tenant name).
-  @system_workspace URI.new!("workspace://system")
-  @tenant_workspace URI.new!("workspace://team-alpha")
-  @default_granter URI.parse("entity://user/system/admin")
   @default_granted_at ~U[2026-05-21 00:00:00Z]
 
   @doc """
@@ -53,7 +50,7 @@ defmodule Ezagent.Test.CapHelper do
   Required key absent → defaults applied:
   - `workspace_uri` → `workspace://system` (admin/system context — see
     SPEC #324 for why tenants must be explicit)
-  - `granted_by` → `entity://user/system/admin`
+  - `granted_by` → `entity://system/user/admin`
   - `granted_at` → `2026-05-21T00:00:00Z`
 
   Pass any subset of keys to override; remaining keys default to
@@ -62,7 +59,7 @@ defmodule Ezagent.Test.CapHelper do
   ## Examples
 
       cap(kind: :session, behavior: Ezagent.Behavior.Chat,
-          instance: URI.new!("session://default/system/main"))
+          instance: URI.new!("session://system/default/main"))
 
       cap(kind: :any, behavior: :any, instance: :any,
           workspace_uri: :any)  # cross-workspace cap (admin pattern)
@@ -80,8 +77,8 @@ defmodule Ezagent.Test.CapHelper do
       behavior: :any,
       action: :any,
       instance: :any,
-      workspace_uri: @system_workspace,
-      granted_by: @default_granter,
+      workspace_uri: system_workspace_uri(),
+      granted_by: default_granter_uri(),
       granted_at: @default_granted_at
     }
 
@@ -101,7 +98,7 @@ defmodule Ezagent.Test.CapHelper do
   ## Examples
 
       needed(kind: :session, behavior: Ezagent.Behavior.Chat,
-             instance: URI.new!("session://default/system/main"))
+             instance: URI.new!("session://system/default/main"))
   """
   @spec needed(keyword() | map()) :: %{
           kind: atom(),
@@ -120,7 +117,7 @@ defmodule Ezagent.Test.CapHelper do
       behavior: :any,
       action: :any,
       instance: :any,
-      workspace_uri: @system_workspace
+      workspace_uri: system_workspace_uri()
     }
 
     Map.merge(defaults, Enum.into(opts, %{}))
@@ -128,9 +125,11 @@ defmodule Ezagent.Test.CapHelper do
 
   @doc "Default test workspace URI: `workspace://system` (admin/system)."
   @spec system_workspace_uri() :: URI.t()
-  def system_workspace_uri, do: @system_workspace
+  def system_workspace_uri, do: Ezagent.URI.workspace(:system)
 
   @doc "Stable tenant test workspace URI: `workspace://team-alpha`."
   @spec tenant_workspace_uri() :: URI.t()
-  def tenant_workspace_uri, do: @tenant_workspace
+  def tenant_workspace_uri, do: Ezagent.URI.workspace("team-alpha")
+
+  defp default_granter_uri, do: Ezagent.URI.user(:system, :admin)
 end

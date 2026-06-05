@@ -866,7 +866,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   URIs directly — the Session Kind holds a scope-bounded delegation
   cap (PR-EM-3 will wire this) per SPEC §7.3 Cap 3.
   """
-  def data_owner(%URI{scheme: "entity", host: "worker"} = _worker_uri), do: :no_owner
+  def data_owner(%URI{}), do: :no_owner
   def data_owner(:any), do: :no_owner
   def data_owner({:scope, :within_session, %URI{}}), do: :no_owner
   def data_owner(_), do: :no_owner
@@ -949,7 +949,8 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
         # under `system://worker-publish` per the closed Catalog.
         %{
           caller: self_uri,
-          caps: Ezagent.SystemPrincipal.caps("system://worker-publish"),
+          caps:
+            "worker-publish" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
           reply: {:caller_inbox, self()},
           # 2026-05-26 (Allen e2e blocker): Session.handle_call queues
           # subscribe_from behind concurrent list_bindings polls, chat
@@ -998,7 +999,8 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
        # under `system://worker-publish` (closed Catalog).
        %{
          caller: self_uri,
-         caps: Ezagent.SystemPrincipal.caps("system://worker-publish"),
+         caps:
+           "worker-publish" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
          reply: :ignore,
          command_uuid: idem,
          idempotency_key: idem

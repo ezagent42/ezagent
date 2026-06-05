@@ -3,7 +3,7 @@ defmodule Ezagent.E2E.ManifestTest do
   alias Ezagent.E2E.Manifest
 
   test "ctx round-trips %URI{} as %URI{}, primitives as-is, across encode→decode" do
-    uri = URI.new!("entity://agent/system/cc_relay")
+    uri = URI.new!("entity://system/agent/cc_relay")
 
     m = %Manifest{
       scenario_id: "s34",
@@ -11,7 +11,14 @@ defmodule Ezagent.E2E.ManifestTest do
       step_name: "seed-relay-cc",
       fp: "abc123",
       assert_passed: true,
-      ctx: %{"relay_cc" => uri, "count" => 3, "name" => "x", "flag" => true, "nested" => %{"u" => uri}, "list" => [uri, "s"]}
+      ctx: %{
+        "relay_cc" => uri,
+        "count" => 3,
+        "name" => "x",
+        "flag" => true,
+        "nested" => %{"u" => uri},
+        "list" => [uri, "s"]
+      }
     }
 
     assert {:ok, json} = Manifest.encode(m)
@@ -57,7 +64,12 @@ defmodule Ezagent.E2E.ManifestTest do
   end
 
   test "decode preserves a multi-key __uri__ map as a MAP, never coercing to URI (no drop)" do
-    json = Jason.encode!(%{"schema_version" => 1, "ctx" => %{"e" => %{"__uri__" => "x", "other" => 1}}})
+    json =
+      Jason.encode!(%{
+        "schema_version" => 1,
+        "ctx" => %{"e" => %{"__uri__" => "x", "other" => 1}}
+      })
+
     assert {:ok, d} = Manifest.decode(json)
     assert d.ctx["e"] == %{"__uri__" => "x", "other" => 1}
   end

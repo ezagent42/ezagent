@@ -31,11 +31,11 @@ defmodule Ezagent.WorkspaceTest do
     test "members in initial args are reachable via :list_members dispatch" do
       name = "members-test-#{System.unique_integer([:positive])}"
       uri = WK.uri_for(name)
-      members = [URI.parse("entity://user/system/admin"), URI.parse("entity://agent/team-alpha/test_x")]
+      members = [Ezagent.URI.new!("entity://system/user/admin"), Ezagent.URI.new!("entity://team-alpha/agent/test_x")]
 
       {:ok, _pid} = Ezagent.Workspace.spawn_workspace(name, %{members: members})
 
-      target = URI.parse("#{URI.to_string(uri)}?action=workspace.list_members")
+      target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=workspace.list_members")
 
       assert {:ok, %{members: listed}} =
                Invocation.dispatch(%Invocation{
@@ -57,11 +57,11 @@ defmodule Ezagent.WorkspaceTest do
     test ":instantiate returns one child per member" do
       name = "inst-test-#{System.unique_integer([:positive])}"
       uri = WK.uri_for(name)
-      members = [URI.parse("entity://user/system/admin"), URI.parse("entity://agent/team-alpha/test_cc-builder")]
+      members = [Ezagent.URI.new!("entity://system/user/admin"), Ezagent.URI.new!("entity://team-alpha/agent/test_cc-builder")]
 
       {:ok, _pid} = Ezagent.Workspace.spawn_workspace(name, %{members: members})
 
-      target = URI.parse("#{URI.to_string(uri)}?action=workspace.instantiate")
+      target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=workspace.instantiate")
 
       assert {:ok, %{children: children}} =
                Invocation.dispatch(%Invocation{
@@ -109,9 +109,9 @@ defmodule Ezagent.WorkspaceTest do
       # Snapshot the persisted member list before the rejected call.
       %{members: members_before} = Ezagent.Workspace.Store.get_by_name(name)
 
-      # Cross-prefix violator — `entity://user/system/linyilun` inside
+      # Cross-prefix violator — `entity://system/user/linyilun` inside
       # workspace `<name>` (whose own URI prefix is `<name>`).
-      bad_uri = URI.parse("entity://user/system/linyilun")
+      bad_uri = Ezagent.URI.new!("entity://system/user/linyilun")
 
       assert {:error, {:cross_workspace_member_not_permitted, ^bad_uri, _workspace_uri}} =
                Ezagent.Workspace.add_member(name, bad_uri)
@@ -127,7 +127,7 @@ defmodule Ezagent.WorkspaceTest do
       name = "crit1-accept-#{System.unique_integer([:positive])}"
       {:ok, _pid} = Ezagent.Workspace.create(name, %{})
 
-      good_uri = URI.parse("entity://user/#{name}/alice")
+      good_uri = Ezagent.URI.new!("entity://#{name}/user/alice")
 
       assert :ok = Ezagent.Workspace.add_member(name, good_uri)
 

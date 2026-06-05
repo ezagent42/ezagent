@@ -20,6 +20,12 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
 
   defp uniq, do: System.unique_integer([:positive])
 
+  defp store_flavor(worker_uri, flavor) do
+    :ok = Ezagent.AgentFlavorAttributes.put(worker_uri, flavor)
+    on_exit(fn -> Ezagent.AgentFlavorAttributes.delete(worker_uri) end)
+    :ok
+  end
+
   describe "cap_equal_ignoring_metadata?/2 — codex rev-2 HIGH-1" do
     defp base_cap(opts) do
       %Capability{
@@ -27,7 +33,8 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
         behavior: Keyword.get(opts, :behavior, :any),
         instance: Keyword.get(opts, :instance, :any),
         workspace_uri: Keyword.get(opts, :workspace_uri, @default_ws),
-        granted_by: Keyword.get(opts, :granted_by, URI.parse("entity://user/team-alpha/alice")),
+        granted_by:
+          Keyword.get(opts, :granted_by, Ezagent.URI.new!("entity://team-alpha/user/alice")),
         granted_at: Keyword.get(opts, :granted_at, DateTime.utc_now())
       }
     end
@@ -40,8 +47,8 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
     end
 
     test "same authority, different granted_by → false (provenance matters)" do
-      a = base_cap(granted_by: URI.parse("entity://user/team-alpha/alice"))
-      b = base_cap(granted_by: URI.parse("entity://user/team-alpha/bob"))
+      a = base_cap(granted_by: Ezagent.URI.new!("entity://team-alpha/user/alice"))
+      b = base_cap(granted_by: Ezagent.URI.new!("entity://team-alpha/user/bob"))
 
       refute Session.cap_equal_ignoring_metadata?(a, b)
     end
@@ -63,8 +70,8 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
 
   describe "worker_already_owned_by_us?/3 — codex rev-3 HIGH-1 ownership predicate" do
     test "dead worker (KindRegistry miss) → false" do
-      worker_uri = URI.parse("entity://agent/team-alpha/dead-worker-#{uniq()}")
-      orch_uri = URI.parse("entity://agent/team-alpha/cc_orchestrator-x")
+      worker_uri = Ezagent.URI.new!("entity://team-alpha/agent/dead-worker-#{uniq()}")
+      orch_uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_orchestrator-x")
 
       refute Session.worker_already_owned_by_us?(worker_uri, orch_uri, @default_ws)
     end
@@ -80,10 +87,11 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
           template_class: nil
         })
 
-      worker_uri = URI.parse("entity://agent/team-alpha/#{flavor}_owned-#{uniq()}")
+      worker_uri = Ezagent.URI.new!("entity://team-alpha/agent/#{flavor}_owned-#{uniq()}")
+      :ok = store_flavor(worker_uri, flavor)
       {:ok, _pid} = Ezagent.SpawnRegistry.spawn(worker_uri)
 
-      orch_uri = URI.parse("entity://agent/team-alpha/cc_orchestrator-ownerpred-#{uniq()}")
+      orch_uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_orchestrator-ownerpred-#{uniq()}")
       :ok = Ezagent.AgentLineage.record(worker_uri, orch_uri)
       :ok = Ezagent.WorkspaceRegistry.bind(worker_uri, @default_ws)
 
@@ -100,11 +108,14 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
           template_class: nil
         })
 
-      worker_uri = URI.parse("entity://agent/team-alpha/#{flavor}_mis-#{uniq()}")
+      worker_uri = Ezagent.URI.new!("entity://team-alpha/agent/#{flavor}_mis-#{uniq()}")
+      :ok = store_flavor(worker_uri, flavor)
       {:ok, _pid} = Ezagent.SpawnRegistry.spawn(worker_uri)
 
-      foreign_orch = URI.parse("entity://agent/team-alpha/cc_orchestrator-foreign-#{uniq()}")
-      our_orch = URI.parse("entity://agent/team-alpha/cc_orchestrator-ours-#{uniq()}")
+      foreign_orch =
+        Ezagent.URI.new!("entity://team-alpha/agent/cc_orchestrator-foreign-#{uniq()}")
+
+      our_orch = Ezagent.URI.new!("entity://team-alpha/agent/cc_orchestrator-ours-#{uniq()}")
 
       :ok = Ezagent.AgentLineage.record(worker_uri, foreign_orch)
       :ok = Ezagent.WorkspaceRegistry.bind(worker_uri, @default_ws)
@@ -123,10 +134,11 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
           template_class: nil
         })
 
-      worker_uri = URI.parse("entity://agent/team-alpha/#{flavor}_wsm-#{uniq()}")
+      worker_uri = Ezagent.URI.new!("entity://team-alpha/agent/#{flavor}_wsm-#{uniq()}")
+      :ok = store_flavor(worker_uri, flavor)
       {:ok, _pid} = Ezagent.SpawnRegistry.spawn(worker_uri)
 
-      orch_uri = URI.parse("entity://agent/team-alpha/cc_orchestrator-wsm-#{uniq()}")
+      orch_uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_orchestrator-wsm-#{uniq()}")
       other_ws = URI.new!("workspace://elsewhere-#{uniq()}")
 
       :ok = Ezagent.AgentLineage.record(worker_uri, orch_uri)

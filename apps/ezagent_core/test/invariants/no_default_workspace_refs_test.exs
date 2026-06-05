@@ -89,42 +89,36 @@ defmodule EzagentCore.Invariants.NoDefaultWorkspaceRefsTest do
 
   defp count_default_refs(tbl, col) do
     # Match ONLY the stale-WORKSPACE URI positions, NOT every
-    # occurrence of the word "default". Per SPEC v2/v3 URI shape:
+    # occurrence of the word "default". Per workspace-first URI shape:
     #
     #   * `workspace://default`                     ← workspace authority, ILLEGAL post-#335
-    #   * `entity://<type>/default/<name>`          ← workspace = 2nd path seg, ILLEGAL
-    #   * `template://<type>/default/<name>`        ← workspace = 2nd path seg, ILLEGAL
-    #   * `session://<authority>/<workspace>/<name>` ← workspace = 2nd path seg
+    #   * `entity://default/<type>/<name>`          ← workspace authority, ILLEGAL
+    #   * `template://default/<type>/<name>`        ← workspace authority, ILLEGAL
+    #   * `resource://default/<type>/<name>`        ← workspace authority, ILLEGAL
+    #   * `session://default/<template>/<name>`     ← workspace authority, ILLEGAL
     #
     # Legitimate non-workspace uses of "default" that must NOT trip:
     #
-    #   * `session://default/system/main`           ← `default` is the
-    #     session AUTHORITY (1st segment); workspace is `system`. This
-    #     is the CANONICAL main session URI, restored by PR #399 after
-    #     #397 over-corrected. Allowed.
-    #   * `session://default/<ws>/<name>` for any non-default ws       ← same shape, allowed.
-    #   * `entity://agent/system/echo_default`      ← `default` as agent NAME suffix.
+    #   * `session://system/default/main`           ← `default` is the
+    #     session template/type segment; workspace is `system`. Allowed.
+    #   * `entity://system/agent/echo_default`      ← `default` as agent NAME suffix.
     #   * `template://agent/<ws>/cc-orchestrator`   ← unrelated.
     #
     # So the only stale shapes to flag are:
     #
     #   * `workspace://default` (whole field OR JSON substring)
-    #   * `<scheme>://<type>/default/...` for entity / template / resource
-    #   * `session://<auth>/default/...` (workspace IS the 2nd path seg)
+    #   * `<scheme>://default/...` for entity / template / resource / session
     sql = """
     SELECT COUNT(*)
       FROM #{tbl}
      WHERE #{col} = 'workspace://default'
         OR #{col} LIKE '%"workspace://default"%'
-        OR #{col} LIKE '%entity://user/default/%'
-        OR #{col} LIKE '%entity://agent/default/%'
-        OR #{col} LIKE '%entity://worker/default/%'
-        OR #{col} LIKE '%template://user/default/%'
-        OR #{col} LIKE '%template://agent/default/%'
-        OR #{col} LIKE '%template://session/default/%'
-        OR #{col} LIKE '%resource://%/default/%'
-        OR #{col} LIKE '%session://default/default/%'
-        OR #{col} LIKE '%session://system/default/%'
+        OR #{col} LIKE '%entity://default/user/%'
+        OR #{col} LIKE '%entity://default/agent/%'
+        OR #{col} LIKE '%entity://default/worker/%'
+        OR #{col} LIKE '%template://default/%'
+        OR #{col} LIKE '%resource://default/%'
+        OR #{col} LIKE '%session://default/%'
     """
 
     case Repo.query(sql) do

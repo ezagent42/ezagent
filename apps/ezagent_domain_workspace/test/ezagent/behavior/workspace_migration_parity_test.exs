@@ -83,10 +83,10 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
 
       # Mirror the real facade's success return: {:ok, session_uri, meta}.
       session_uri =
-        Ezagent.URI.new!("session://default/#{workspace_uri.host}/#{short_name}")
+        Ezagent.URI.new!("session://#{workspace_uri.host}/default/#{short_name}")
 
       orchestrator_uri =
-        Ezagent.URI.new!("entity://agent/#{workspace_uri.host}/cc_orchestrator_#{short_name}")
+        Ezagent.URI.new!("entity://#{workspace_uri.host}/agent/cc_orchestrator_#{short_name}")
 
       meta = %{
         orchestrator_uri: orchestrator_uri,
@@ -153,8 +153,8 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
   # ---------------------------------------------------------------
   describe ":list_members" do
     test "returns the members MapSet as a list" do
-      a = URI.parse("entity://user/system/alice")
-      b = URI.parse("entity://agent/team-alpha/cc_bot")
+      a = Ezagent.URI.new!("entity://system/user/alice")
+      b = Ezagent.URI.new!("entity://team-alpha/agent/cc_bot")
       slice = slice(%{members: [a, b]})
 
       assert {:ok, %{result: %{members: members}, slice: ^slice}} =
@@ -177,7 +177,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
   # ---------------------------------------------------------------
   describe ":add_member" do
     test "emits {:set, :members, MapSet} effect adding the URI" do
-      uri = URI.parse("entity://user/system/admin")
+      uri = Ezagent.URI.new!("entity://system/user/admin")
       slice = slice(%{})
       # ctx without self_uri — bypasses prefix check (legacy unit-test
       # surface preserved in `validate_member_prefix/2`).
@@ -188,8 +188,8 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
     end
 
     test "rejects cross-prefix entity URI WITHOUT mutating slice" do
-      workspace_uri = URI.parse("workspace://team-alpha")
-      member_uri = URI.parse("entity://user/other-ws/leaker")
+      workspace_uri = Ezagent.URI.new!("workspace://team-alpha")
+      member_uri = Ezagent.URI.new!("entity://other-ws/user/leaker")
       slice = slice(%{})
       ctx = %{self_uri: workspace_uri}
 
@@ -198,8 +198,8 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
     end
 
     test "agent member: NO :dispatch effect (only users get the grant)" do
-      workspace_uri = URI.parse("workspace://team-alpha")
-      agent_uri = URI.parse("entity://agent/team-alpha/cc_main")
+      workspace_uri = Ezagent.URI.new!("workspace://team-alpha")
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_main")
       slice = slice(%{})
       ctx = %{self_uri: workspace_uri}
 
@@ -211,8 +211,8 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
     end
 
     test "user member: emits {:dispatch, %Cmd{action: :grant_cap}} effect" do
-      workspace_uri = URI.parse("workspace://team-alpha")
-      user_uri = URI.parse("entity://user/team-alpha/alice")
+      workspace_uri = Ezagent.URI.new!("workspace://team-alpha")
+      user_uri = Ezagent.URI.new!("entity://team-alpha/user/alice")
       # Pre-task-#46 `:add_member` pre-spawns the user Kind via
       # `SpawnRegistry.spawn/1` (idempotent + DB-backed). Seed the
       # user row so the spawn finds its projection (same pattern as
@@ -249,8 +249,8 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
   # ---------------------------------------------------------------
   describe ":remove_member" do
     test "emits {:set, :members, MapSet} effect dropping the URI" do
-      uri = URI.parse("entity://user/system/admin")
-      other = URI.parse("entity://user/system/bob")
+      uri = Ezagent.URI.new!("entity://system/user/admin")
+      other = Ezagent.URI.new!("entity://system/user/bob")
       slice = slice(%{members: [uri, other]})
 
       assert {:ok, %{slice: new_slice}} =
@@ -261,7 +261,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
     end
 
     test "removing a non-member is a no-op" do
-      uri = URI.parse("entity://user/system/ghost")
+      uri = Ezagent.URI.new!("entity://system/user/ghost")
       slice = slice(%{})
 
       assert {:ok, %{slice: new_slice}} =
@@ -276,7 +276,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
   # ---------------------------------------------------------------
   describe ":list_templates" do
     test "returns the session_templates map verbatim" do
-      tmpl = %{"class" => "cc.agent", "agent_uri" => "entity://agent/x/y"}
+      tmpl = %{"class" => "cc.agent", "agent_uri" => "entity://x/agent/y"}
       slice = slice(%{session_templates: %{"cc.agent.demo" => tmpl}})
 
       assert {:ok, %{result: %{templates: tmpls}, slice: ^slice}} =
@@ -292,7 +292,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
   describe ":add_template" do
     test "puts the template into the slice's session_templates" do
       slice = slice(%{})
-      tmpl = %{"class" => "echo.agent", "agent_uri" => "entity://agent/x/y"}
+      tmpl = %{"class" => "echo.agent", "agent_uri" => "entity://x/agent/y"}
 
       assert {:ok, %{slice: new_slice}} =
                dispatch(:add_template, %{name: "echo.demo", template: tmpl}, %{}, slice)
@@ -334,7 +334,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
   # ---------------------------------------------------------------
   describe ":list_routing_rules" do
     test "returns the routing_rules list verbatim" do
-      rules = [%{matcher: %{type: "always"}, receivers: ["session://default/x/x"]}]
+      rules = [%{matcher: %{type: "always"}, receivers: ["session://x/default/x"]}]
       slice = slice(%{routing_rules: rules})
 
       assert {:ok, %{result: %{rules: ^rules}, slice: ^slice}} =
@@ -362,8 +362,8 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
   # ---------------------------------------------------------------
   describe ":instantiate" do
     test "returns one {:member, URI} tuple per member and {:template, name, data} per template" do
-      m1 = URI.parse("entity://user/system/admin")
-      m2 = URI.parse("entity://agent/team-alpha/cc_bot")
+      m1 = Ezagent.URI.new!("entity://system/user/admin")
+      m2 = Ezagent.URI.new!("entity://team-alpha/agent/cc_bot")
       tmpl = %{"class" => "echo.agent"}
 
       slice =
@@ -398,7 +398,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
       workspace_uri = Ezagent.URI.new!("workspace://team-alpha")
 
       caller =
-        Ezagent.URI.new!("entity://user/team-alpha/alice-#{System.unique_integer([:positive])}")
+        Ezagent.URI.new!("entity://team-alpha/user/alice-#{System.unique_integer([:positive])}")
 
       slice = slice(%{})
 
@@ -423,7 +423,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
       # The returned shape matches the legacy contract: session_uri +
       # orchestrator_uri + orchestrator_status + orchestrator_error.
       assert %URI{} = result.session_uri
-      assert URI.to_string(result.session_uri) == "session://default/team-alpha/main"
+      assert URI.to_string(result.session_uri) == "session://team-alpha/default/main"
       assert %URI{} = result.orchestrator_uri
       assert result.orchestrator_status == :spawned
       assert result.orchestrator_error == nil
@@ -432,8 +432,8 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
     test "propagates a facade error as {:error, reason}" do
       Application.put_env(:ezagent_domain_workspace, :session_facade, FakeChatFacadeFailure)
 
-      workspace_uri = URI.parse("workspace://team-alpha")
-      caller = URI.parse("entity://user/team-alpha/alice")
+      workspace_uri = Ezagent.URI.new!("workspace://team-alpha")
+      caller = Ezagent.URI.new!("entity://team-alpha/user/alice")
       slice = slice(%{})
       ctx = %{self_uri: workspace_uri, caller: caller}
 
@@ -452,8 +452,8 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
       # (validate then dispatch) carries forward.
       Application.put_env(:ezagent_domain_workspace, :session_facade, FakeChatFacade)
 
-      workspace_uri = URI.parse("workspace://team-alpha")
-      caller = URI.parse("entity://user/team-alpha/alice")
+      workspace_uri = Ezagent.URI.new!("workspace://team-alpha")
+      caller = Ezagent.URI.new!("entity://team-alpha/user/alice")
       slice = slice(%{})
       ctx = %{self_uri: workspace_uri, caller: caller}
 
@@ -471,8 +471,8 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
     test "rejects missing template_name BEFORE touching the facade" do
       Application.put_env(:ezagent_domain_workspace, :session_facade, FakeChatFacade)
 
-      workspace_uri = URI.parse("workspace://team-alpha")
-      caller = URI.parse("entity://user/team-alpha/alice")
+      workspace_uri = Ezagent.URI.new!("workspace://team-alpha")
+      caller = Ezagent.URI.new!("entity://team-alpha/user/alice")
       slice = slice(%{})
       ctx = %{self_uri: workspace_uri, caller: caller}
 
@@ -485,7 +485,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
     test "rejects missing caller (bad ctx) BEFORE touching the facade" do
       Application.put_env(:ezagent_domain_workspace, :session_facade, FakeChatFacade)
 
-      workspace_uri = URI.parse("workspace://team-alpha")
+      workspace_uri = Ezagent.URI.new!("workspace://team-alpha")
       slice = slice(%{})
       # no :caller key
       ctx = %{self_uri: workspace_uri}
@@ -506,8 +506,8 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
       # safety net `resolve_session_facade/0` in the action body.
       Application.put_env(:ezagent_domain_workspace, :session_facade, ThisModuleDoesNotExist)
 
-      workspace_uri = URI.parse("workspace://team-alpha")
-      caller = URI.parse("entity://user/team-alpha/alice")
+      workspace_uri = Ezagent.URI.new!("workspace://team-alpha")
+      caller = Ezagent.URI.new!("entity://team-alpha/user/alice")
       slice = slice(%{})
       ctx = %{self_uri: workspace_uri, caller: caller}
 
@@ -526,9 +526,9 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
   # ---------------------------------------------------------------
   describe ":remove_cross_prefix_members" do
     test "atomically removes cross-prefix entity members + emits :set effect" do
-      workspace_uri = URI.parse("workspace://team-alpha")
-      violator = URI.parse("entity://user/other-ws/leaker")
-      kept = URI.parse("entity://user/team-alpha/alice")
+      workspace_uri = Ezagent.URI.new!("workspace://team-alpha")
+      violator = Ezagent.URI.new!("entity://other-ws/user/leaker")
+      kept = Ezagent.URI.new!("entity://team-alpha/user/alice")
 
       slice = slice(%{members: [violator, kept]})
       ctx = %{self_uri: workspace_uri}
@@ -543,7 +543,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
     end
 
     test "errors when self_uri is missing" do
-      slice = slice(%{members: [URI.parse("entity://user/x/y")]})
+      slice = slice(%{members: [Ezagent.URI.new!("entity://x/user/y")]})
 
       assert {:error, {:missing_self_uri, nil}} =
                dispatch(:remove_cross_prefix_members, %{}, %{}, slice)
@@ -623,7 +623,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
     end
 
     test "data_owner/1 returns :any (workspace admin grants)" do
-      assert WB.data_owner(URI.parse("workspace://anywhere")) == :any
+      assert WB.data_owner(Ezagent.URI.new!("workspace://anywhere")) == :any
     end
   end
 end

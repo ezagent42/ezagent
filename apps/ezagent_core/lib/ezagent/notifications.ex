@@ -206,16 +206,24 @@ defmodule Ezagent.Notifications do
         needed: needed,
         message:
           "Ezagent.Notifications.#{action}/2: caller does not hold the " <>
-            "required #{inspect(action)} cap on #{URI.to_string(uri)}"
+            "required #{inspect(action)} cap on #{Ezagent.URI.stable_key(uri)}"
     end
   end
 
-  defp kind_module_of!(%URI{scheme: "entity", host: "user"}), do: Ezagent.Entity.User
+  defp kind_module_of!(%URI{scheme: "entity"} = uri) do
+    if Ezagent.URI.type?(uri, :user) do
+      Ezagent.Entity.User
+    else
+      raise_unsupported_kind!(uri)
+    end
+  end
 
-  defp kind_module_of!(%URI{} = uri) do
+  defp kind_module_of!(%URI{} = uri), do: raise_unsupported_kind!(uri)
+
+  defp raise_unsupported_kind!(%URI{} = uri) do
     raise ArgumentError,
-          "Ezagent.Notifications: only entity://user/... URIs are supported, " <>
-            "got #{URI.to_string(uri)}"
+          "Ezagent.Notifications: only entity user URIs are supported, " <>
+            "got #{Ezagent.URI.stable_key(uri)}"
   end
 
   defp any_cap_matches?(caps, needed) when is_struct(caps, MapSet) do

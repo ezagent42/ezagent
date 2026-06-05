@@ -35,8 +35,8 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
 
   @system_ws URI.new!("workspace://system")
   @tenant_ws URI.new!("workspace://team-alpha")
-  @session_a URI.new!("session://default/team-alpha/sess_a")
-  @session_b URI.new!("session://default/team-alpha/sess_b")
+  @session_a URI.new!("session://team-alpha/default/sess_a")
+  @session_b URI.new!("session://team-alpha/default/sess_b")
 
   describe "narrow grant — action axis enforced" do
     test "narrow `:send` cap matches `:send` needed (positive control)" do
@@ -376,7 +376,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
         "behavior" => "Ezagent.Behavior.Chat",
         "instance" => URI.to_string(@session_a),
         "workspace_uri" => URI.to_string(@tenant_ws),
-        "granted_by" => "entity://user/system/admin",
+        "granted_by" => "entity://system/user/admin",
         "granted_at" => "2026-05-01T00:00:00Z"
       }
 

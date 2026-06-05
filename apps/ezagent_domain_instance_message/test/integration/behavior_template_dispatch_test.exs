@@ -33,8 +33,12 @@ defmodule EzagentDomainInstanceMessage.Integration.BehaviorTemplateDispatchTest 
   # Process.exit in on_exit) so the Kind is gone before the next test's
   # sandbox owner is established — otherwise a lingering Kind's snapshot
   # read hits a connection whose owner has exited.
-  defp supervisor_for(%URI{host: "agent"}), do: EzagentDomainInstanceMessage.AgentTemplateSupervisor
-  defp supervisor_for(%URI{host: "session"}), do: EzagentDomainInstanceMessage.SessionTemplateSupervisor
+  defp supervisor_for(%URI{} = uri) do
+    case Ezagent.URI.type(uri) do
+      {:ok, "agent"} -> EzagentDomainInstanceMessage.AgentTemplateSupervisor
+      {:ok, "session"} -> EzagentDomainInstanceMessage.SessionTemplateSupervisor
+    end
+  end
 
   defp spawn_template(uri) do
     {:ok, pid} = Ezagent.SpawnRegistry.spawn(uri)
@@ -89,7 +93,7 @@ defmodule EzagentDomainInstanceMessage.Integration.BehaviorTemplateDispatchTest 
       mcp_config_path: nil,
       api_key_helper: nil,
       default_caps: [],
-      created_by: URI.parse("entity://user/team-alpha/admin"),
+      created_by: Ezagent.URI.new!("entity://team-alpha/user/admin"),
       created_at: ~U[2026-05-22 00:00:00Z]
     }
   end
@@ -100,11 +104,11 @@ defmodule EzagentDomainInstanceMessage.Integration.BehaviorTemplateDispatchTest 
       description: "team",
       agent_slots: [],
       routing_rules: [],
-      orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
-      default_workspace_uri: URI.parse("workspace://team-alpha"),
+      orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator"),
+      default_workspace_uri: Ezagent.URI.new!("workspace://team-alpha"),
       parent_template_uri: nil,
       version_tag: nil,
-      created_by: URI.parse("entity://user/team-alpha/admin"),
+      created_by: Ezagent.URI.new!("entity://team-alpha/user/admin"),
       created_at: ~U[2026-05-22 00:00:00Z]
     }
   end
@@ -120,7 +124,7 @@ defmodule EzagentDomainInstanceMessage.Integration.BehaviorTemplateDispatchTest 
 
   describe "cap_for_action/3" do
     test "AgentTemplate :write derives behavior == Ezagent.Behavior.Template, kind :agent_template" do
-      uri = URI.new!("template://agent/team-alpha/cap-probe-#{uniq()}")
+      uri = URI.new!("template://team-alpha/agent/cap-probe-#{uniq()}")
       needed = Capability.cap_for_action(AgentTemplate, :write, uri)
 
       assert needed.behavior == Ezagent.Behavior.Template
@@ -130,7 +134,7 @@ defmodule EzagentDomainInstanceMessage.Integration.BehaviorTemplateDispatchTest 
 
   describe "AgentTemplate — :write then :read round-trip + snapshot" do
     test "a dispatched :write populates the slice, :read returns it, and a kind_snapshots row exists" do
-      uri = URI.new!("template://agent/team-alpha/at-rt-#{uniq()}")
+      uri = URI.new!("template://team-alpha/agent/at-rt-#{uniq()}")
       uri_str = URI.to_string(uri)
       :ok = KindSnapshot.delete(uri_str)
 
@@ -207,7 +211,7 @@ defmodule EzagentDomainInstanceMessage.Integration.BehaviorTemplateDispatchTest 
 
   describe "3-segment URI round-trip + cross-workspace non-collision (SPEC §1.2)" do
     test "a 3-segment AgentTemplate URI round-trips through the snapshot" do
-      uri = URI.new!("template://agent/team-alpha/3seg-#{uniq()}")
+      uri = URI.new!("template://team-alpha/agent/3seg-#{uniq()}")
       uri_str = URI.to_string(uri)
       :ok = KindSnapshot.delete(uri_str)
 
@@ -227,8 +231,8 @@ defmodule EzagentDomainInstanceMessage.Integration.BehaviorTemplateDispatchTest 
       # separate Kinds. (Both legs previously read `team-alpha`, so
       # `uri_a == uri_b` collapsed to one Kind and the cross-leak the
       # test guards against could never be observed.)
-      uri_a = URI.new!("template://agent/default/#{name}")
-      uri_b = URI.new!("template://agent/team-alpha/#{name}")
+      uri_a = URI.new!("template://default/agent/#{name}")
+      uri_b = URI.new!("template://team-alpha/agent/#{name}")
       :ok = KindSnapshot.delete(URI.to_string(uri_a))
       :ok = KindSnapshot.delete(URI.to_string(uri_b))
 
@@ -242,8 +246,11 @@ defmodule EzagentDomainInstanceMessage.Integration.BehaviorTemplateDispatchTest 
       assert {:ok, _} = dispatch(uri_b, "template.write", %{content: content_b})
 
       # Each workspace's template keeps its OWN content — no cross-leak.
-      assert {:ok, %{content: %{description: "in default"}}} = dispatch(uri_a, "template.read", %{})
-      assert {:ok, %{content: %{description: "in team-alpha"}}} = dispatch(uri_b, "template.read", %{})
+      assert {:ok, %{content: %{description: "in default"}}} =
+               dispatch(uri_a, "template.read", %{})
+
+      assert {:ok, %{content: %{description: "in team-alpha"}}} =
+               dispatch(uri_b, "template.read", %{})
     end
   end
 end

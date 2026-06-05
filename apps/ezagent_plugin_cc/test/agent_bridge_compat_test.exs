@@ -24,6 +24,9 @@ defmodule EzagentPluginCc.AgentBridgeCompatTest do
   end
 
   setup do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
+    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+
     tmp = Path.join(System.tmp_dir!(), "ezagent-cc-agent-bridge-compat-#{u()}")
     profile = "test"
     File.mkdir_p!(Path.join([tmp, profile, "credentials"]))
@@ -44,7 +47,9 @@ defmodule EzagentPluginCc.AgentBridgeCompatTest do
         BridgeRegistry.unbind(uri)
       end
 
-      if prev_home, do: System.put_env("EZAGENT_HOME", prev_home), else: System.delete_env("EZAGENT_HOME")
+      if prev_home,
+        do: System.put_env("EZAGENT_HOME", prev_home),
+        else: System.delete_env("EZAGENT_HOME")
 
       if prev_profile,
         do: System.put_env("EZAGENT_PROFILE", prev_profile),
@@ -57,7 +62,8 @@ defmodule EzagentPluginCc.AgentBridgeCompatTest do
   end
 
   test "legacy cc modules still authenticate and join cc:bridge topics" do
-    agent_uri = URI.new!("entity://agent/team-alpha/cc_compat-#{u()}")
+    agent_uri = URI.new!("entity://team-alpha/agent/cc_compat-#{u()}")
+    {:ok, _pid} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent_with_flavor(agent_uri, "cc")
     {:ok, token} = TokenStore.mint(agent_uri)
 
     assert {:ok, authed_socket} =
@@ -78,7 +84,7 @@ defmodule EzagentPluginCc.AgentBridgeCompatTest do
   end
 
   test "deprecated token shim mint/1 result matches promoted token store mint/1" do
-    agent_uri = URI.new!("entity://agent/team-alpha/cc_token-shim-#{u()}")
+    agent_uri = URI.new!("entity://team-alpha/agent/cc_token-shim-#{u()}")
 
     promoted_result = Ezagent.AgentBridge.TokenStore.mint(agent_uri)
     shim_result = TokenStore.mint(agent_uri)

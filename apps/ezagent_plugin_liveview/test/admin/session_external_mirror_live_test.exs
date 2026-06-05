@@ -38,7 +38,7 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
   alias Ezagent.ExternalMirror, as: Facade
 
   @endpoint EzagentWeb.Endpoint
-  @workspace_uri URI.parse("workspace://team-alpha")
+  @workspace_uri Ezagent.URI.new!("workspace://team-alpha")
 
   setup tags do
     # Use the shared-sandbox OWNER pattern (`start_owner!`) via DataCase
@@ -84,8 +84,8 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
     # mount admin LVs (router gate passes) but doesn't hold Cap 1 on the
     # specific session, so the facade returns `:unauthorized` and the LV
     # bounces with a flash.
-    uri = "entity://user/system/em_pr4_member_#{System.unique_integer([:positive])}"
-    user_uri = URI.parse(uri)
+    uri = "entity://system/user/em_pr4_member_#{System.unique_integer([:positive])}"
+    user_uri = Ezagent.URI.new!(uri)
 
     # spawn user with no caps so list_bindings dispatch denies on this
     # specific session (the user has admin route access but no per-
@@ -188,8 +188,8 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
       # produces []. Per P15 narrow-by-default the form swaps to the
       # empty-state message and no submit is possible.
       caller_uri =
-        URI.parse(
-          "entity://user/system/pr4_cap1_only_#{System.unique_integer([:positive])}"
+        Ezagent.URI.new!(
+          "entity://system/user/pr4_cap1_only_#{System.unique_integer([:positive])}"
         )
 
       caps =
@@ -322,8 +322,8 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
       # admin gate admits via `is_system_member?`. Has Cap 1 so mount's
       # `list_bindings` succeeds.
       caller_uri =
-        URI.parse(
-          "entity://user/system/pr4_revoke_#{System.unique_integer([:positive])}"
+        Ezagent.URI.new!(
+          "entity://system/user/pr4_revoke_#{System.unique_integer([:positive])}"
         )
 
       cap1 = %Capability{
@@ -460,8 +460,8 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
 
       # Caller holds Cap 1 + Cap 2 for pr4_mock ONLY (not pr4_mock_b).
       caller_uri =
-        URI.parse(
-          "entity://user/system/pr4_a_only_#{System.unique_integer([:positive])}"
+        Ezagent.URI.new!(
+          "entity://system/user/pr4_a_only_#{System.unique_integer([:positive])}"
         )
 
       caps =
@@ -612,7 +612,7 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
             behavior: :any,
             instance: :any,
             workspace_uri: :any,
-            granted_by: URI.parse("system://bootstrap/default"),
+            granted_by: Ezagent.URI.new!("system://bootstrap/default"),
             granted_at: ~U[2026-01-01 00:00:00Z]
           }
         ]),
@@ -621,10 +621,10 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
   end
 
   defp unique_user_uri(prefix) do
-    URI.parse("entity://user/team-alpha/#{prefix}-#{System.unique_integer([:positive])}")
+    Ezagent.URI.new!("entity://team-alpha/user/#{prefix}-#{System.unique_integer([:positive])}")
   end
 
   defp unique_session_uri(prefix) do
-    URI.parse("session://default/team-alpha/#{prefix}-#{System.unique_integer([:positive])}")
+    Ezagent.URI.new!("session://team-alpha/default/#{prefix}-#{System.unique_integer([:positive])}")
   end
 end

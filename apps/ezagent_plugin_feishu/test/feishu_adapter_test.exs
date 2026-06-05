@@ -86,7 +86,7 @@ defmodule EzagentPluginFeishu.FeishuAdapterTest do
 
     test "FeishuAllow's data_owner is :any (workspace admin grants)" do
       assert FeishuAllow.data_owner(:any) == :any
-      assert FeishuAllow.data_owner(URI.parse("session://default/system/main")) == :any
+      assert FeishuAllow.data_owner(Ezagent.URI.new!("session://system/default/main")) == :any
     end
   end
 
@@ -102,13 +102,13 @@ defmodule EzagentPluginFeishu.FeishuAdapterTest do
       # shape; the adapter must skip on slice_key regardless of payload.
       event = %Event{
         cursor: 1,
-        publisher_uri: URI.parse("session://default/system/main"),
+        publisher_uri: Ezagent.URI.new!("session://system/default/main"),
         slice_key: :members,
         event_at: DateTime.utc_now(),
         payload: %{
           action: :add_member,
-          caller: URI.parse("entity://user/system/admin"),
-          new_slice: %{joined: ["entity://user/system/alice"]},
+          caller: Ezagent.URI.new!("entity://system/user/admin"),
+          new_slice: %{joined: ["entity://system/user/alice"]},
           old_slice: %{joined: []}
         }
       }
@@ -127,7 +127,7 @@ defmodule EzagentPluginFeishu.FeishuAdapterTest do
       event =
         chat_event(%{
           action: :update_template,
-          caller: URI.parse("entity://user/system/admin"),
+          caller: Ezagent.URI.new!("entity://system/user/admin"),
           # Mutate a different field; last_message_* untouched.
           new_slice: Map.put(common, :template_working_copy, %{x: 1}),
           old_slice: Map.put(common, :template_working_copy, %{x: 0})
@@ -176,7 +176,7 @@ defmodule EzagentPluginFeishu.FeishuAdapterTest do
       assert [{:lark_text, text}] = payloads
       assert text =~ "hello world"
       # Prefix includes session (from msg.session_uri) + sender
-      assert text =~ "session://default/system/main"
+      assert text =~ "session://system/default/main"
       assert text =~ URI.to_string(msg.sender)
     end
 
@@ -317,14 +317,14 @@ defmodule EzagentPluginFeishu.FeishuAdapterTest do
       # The test caller is never bound (no row in feishu_user_bindings).
       # The adapter's caller_open_id/1 returns :no_feishu_identity
       # BEFORE touching the Lark API — no network call.
-      caller = URI.parse("entity://user/system/bob_with_no_feishu_link")
+      caller = Ezagent.URI.new!("entity://system/user/bob_with_no_feishu_link")
 
       assert {:error, :no_feishu_identity} =
                FeishuAdapter.target_ownership_check(caller, "oc_some_chat")
     end
 
     test "returns {:error, :invalid_target} for a non-string target" do
-      caller = URI.parse("entity://user/system/alice")
+      caller = Ezagent.URI.new!("entity://system/user/alice")
       assert {:error, :invalid_target} = FeishuAdapter.target_ownership_check(caller, 42)
     end
   end
@@ -335,8 +335,8 @@ defmodule EzagentPluginFeishu.FeishuAdapterTest do
   # would — the adapter reads source label off `msg.session_uri`, not
   # off the event envelope.
   defp build_msg(body) do
-    sender = URI.parse("entity://user/system/alice")
-    session_uri = URI.parse("session://default/system/main")
+    sender = Ezagent.URI.new!("entity://system/user/alice")
+    session_uri = Ezagent.URI.new!("session://system/default/main")
 
     %Ezagent.Message{
       id: "msg_test_" <> Integer.to_string(System.unique_integer([:positive])),
@@ -355,7 +355,7 @@ defmodule EzagentPluginFeishu.FeishuAdapterTest do
   defp chat_event(payload) when is_map(payload) do
     %Event{
       cursor: 1,
-      publisher_uri: URI.parse("session://default/system/main"),
+      publisher_uri: Ezagent.URI.new!("session://system/default/main"),
       slice_key: :chat,
       event_at: DateTime.utc_now(),
       payload: payload
