@@ -85,12 +85,15 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
 
     saved_workers = Map.get(saved_state, "workers") || []
     worker_themes = worker_themes_from_saved(saved_workers)
+    # 2026-06-05 — 发布物 fork 出的 session 不含 v0(base 冻结,只能 user_schema
+    # 叠加,不能 @v0 重写源码)。原 session.loom 不带此标记 → v0 照常。
+    include_v0? = Map.get(tmpl, "no_v0") != true
 
     with {:ok, _session_pid} <- spawn_session(session_uri),
          :ok <- pre_spawn_orchestrator_if_saved(ws, session_name, saved_orch),
          :ok <- pre_spawn_workers_if_saved(ws, session_name, saved_workers),
          {:ok, %{orchestrator: _orch, workers: _workers}} <-
-           Team.ensure_team(session_uri, worker_themes: worker_themes),
+           Team.ensure_team(session_uri, worker_themes: worker_themes, include_v0: include_v0?),
          :ok <- join_members(session_uri, Map.get(tmpl, "members", [])) do
       # 2026-06-01 redesign: seed a `<span type="page_update">` message into
       # the session so the loom-view bridge has something to render on first

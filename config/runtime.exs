@@ -40,6 +40,20 @@ if config_env() != :prod do
   end
 end
 
+# --- Loom LLM backend select (all envs) ------------------------------------
+# loom 的 agent 走哪个 LLM 后端,在 **启动前** 由 `LOOM_LLM_BACKEND` 决定:
+#   - `claude_code`(默认)= 本地 Claude Code CLI(跟随本机 claude 登录态)
+#   - `deepseek`          = DeepSeek HTTP(需 `DEEPSEEK_KEY`)
+# boot 时读一次,**不支持运行时热切换** —— 改 `.env`(或 export)后重启 phx.server
+# 生效。分发逻辑在 `EzagentPluginLoom.LLM`(behavior 只认 `LLM.chat/2`)。
+loom_backend =
+  case System.get_env("LOOM_LLM_BACKEND") do
+    "deepseek" -> :deepseek
+    _ -> :claude_code
+  end
+
+config :ezagent_plugin_loom, :llm_backend, loom_backend
+
 # Dev DB path comes from EZAGENT_HOME so the working tree stays clean
 # (Phase 6 PR 1). Test keeps its own ephemeral DB in repo root via
 # config/test.exs (Sandbox pool, gitignored). Prod still requires

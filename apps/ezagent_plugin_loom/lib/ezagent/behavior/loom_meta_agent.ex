@@ -37,7 +37,7 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
   require Logger
 
   alias Ezagent.{Cmd, Message}
-  alias EzagentPluginLoom.{ClaudeCode, Prompts, Span}
+  alias EzagentPluginLoom.{LLM, Prompts, Span}
 
   # 预制 worker(用户不能误删 — manager 在 prompt 里就说不能删,但代码也兜底)。
   @builtin_themes ~w(policy company)
@@ -86,7 +86,7 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
       %URI{} = suri ->
         workers_summary = current_workers_summary(suri)
 
-        case ClaudeCode.chat(
+        case LLM.chat(
                [
                  %{"role" => "system", "content" => Prompts.meta_system_prompt(workers_summary)},
                  %{"role" => "user", "content" => text}
@@ -120,7 +120,7 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
   end
 
   # 本地 Claude Code 调用故障的友好回复 — 不出 raw Erlang term。
-  # (错误形状来自 `EzagentPluginLoom.ClaudeCode.chat/2`。)
+  # (错误形状来自 `EzagentPluginLoom.LLM.chat/2`。)
   defp human_friendly_api_error(:claude_not_found),
     do: "本机没找到 claude 命令。让运维确认 Claude Code 已安装且在 PATH 上。"
 

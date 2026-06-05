@@ -34,7 +34,7 @@ defmodule Ezagent.Behavior.LoomV0Worker do
   require Logger
 
   alias Ezagent.{Cmd, Message}
-  alias EzagentPluginLoom.{ClaudeCode, Prompts, Span}
+  alias EzagentPluginLoom.{LLM, Prompts, Span}
 
   action(:receive,
     args: %{message: :map},
@@ -65,7 +65,7 @@ defmodule Ezagent.Behavior.LoomV0Worker do
       subtask = extract_text(msg.body)
       count = ctx[:read].(:count, 0)
 
-      case ClaudeCode.chat(
+      case LLM.chat(
              [
                %{"role" => "system", "content" => Prompts.page_gen_system_prompt()},
                %{"role" => "user", "content" => subtask}
@@ -202,7 +202,7 @@ defmodule Ezagent.Behavior.LoomV0Worker do
       reply =
         Message.new(self_uri, %{text: text, attachments: []},
           ref_id: subtask_msg.id,
-          mentions: [subtask_msg.sender]
+          mentions: reply_mentions(self_uri, subtask_msg.sender)
         )
 
       target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
@@ -217,6 +217,29 @@ defmodule Ezagent.Behavior.LoomV0Worker do
       [{:dispatch, cmd}]
     else
       _ -> []
+    end
+  end
+
+  # 2026-06-05 v0 解耦:v0 可能被**直接 @**(sender=用户),此时编排器收不到这条
+  # page_update → loom_source 不更新 → publish/snapshot 失效。所以回复**始终也 @ 编排器**
+  # (`loomorch_<sid>`,从 self_uri 的 `loomv0_` 推导),保证编排器缓存源。dedupe:
+  # 编排器派发场景 sender 本就是编排器。
+  defp reply_mentions(%URI{} = self_uri, sender) do
+    case orchestrator_uri(self_uri) do
+      %URI{} = orch -> Enum.uniq([sender, orch])
+      _ -> [sender]
+    end
+  end
+
+  defp orchestrator_uri(%URI{} = self_uri) do
+    s = URI.to_string(self_uri)
+
+    if String.contains?(s, "/loomv0_") do
+      try do
+        Ezagent.URI.new!(String.replace(s, "/loomv0_", "/loomorch_"))
+      rescue
+        _ -> nil
+      end
     end
   end
 

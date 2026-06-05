@@ -33,7 +33,7 @@ defmodule Ezagent.Behavior.Loom do
   require Logger
 
   alias Ezagent.{Cmd, Message}
-  alias EzagentPluginLoom.{ClaudeCode, Span, Prompts}
+  alias EzagentPluginLoom.{LLM, Span, Prompts}
 
   action(:say,
     args: %{messages: {:list, :map}, persona: :string, session: :string},
@@ -82,7 +82,7 @@ defmodule Ezagent.Behavior.Loom do
 
     group = group_of(Map.get(args, :session) || Map.get(args, "session"))
 
-    case ClaudeCode.chat(full, temperature: 0.6, thinking_disabled: true, group: group) do
+    case LLM.chat(full, temperature: 0.6, thinking_disabled: true, group: group) do
       {:ok, raw} ->
         {span, _readable} = Span.normalize(raw)
 
@@ -113,7 +113,7 @@ defmodule Ezagent.Behavior.Loom do
         _ -> nil
       end
 
-    case ClaudeCode.chat(
+    case LLM.chat(
            [
              %{"role" => "system", "content" => Prompts.chat_system_prompt()},
              %{"role" => "user", "content" => user_text}
