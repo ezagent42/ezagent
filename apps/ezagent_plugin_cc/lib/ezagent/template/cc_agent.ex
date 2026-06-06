@@ -1914,6 +1914,13 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   #    TOCTOU-safe leased grant (§5.1), then atomic-replace into place (§7).
   defp materialize_config_dir(%URI{} = agent_uri, target, reference_dir, tmpl)
        when is_map(tmpl) do
+    # #17 cascade PR-2 (§7 H3' (b)) — crash-mid-swap self-heal. If a prior atomic_replace
+    # died in the move-aside→rename window, a known-good `<target>.bak-*` is left while
+    # `target` is missing/partial; recover it BEFORE (re)materializing so the agent never
+    # boots with a permanently-absent config_dir. Best-effort: a recovery error does not
+    # block a fresh materialize (which rebuilds the target anyway).
+    _ = Ezagent.Agent.Materializer.recover_orphaned(target)
+
     case Map.get(tmpl, "cascade") do
       %{} = cascade -> materialize_cascade(agent_uri, target, cascade)
       _ -> materialize_single_reference(target, reference_dir)

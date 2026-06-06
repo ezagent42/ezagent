@@ -96,6 +96,83 @@ defmodule Ezagent.Agent.MaterializerTest do
       assert {:error, _} = Materializer.atomic_replace(staging, target, fail_after_move: true)
       refute File.exists?(target)
     end
+
+    # codex H3' (a) — a FAILED rollback must SURFACE, not be swallowed as success. We
+    # simulate a half-completed rename: the injection hook plants a PARTIAL `target` with a
+    # read-only subdir BEFORE the rollback runs, so the rollback's `rm_rf(target)` cannot
+    # clear it and therefore cannot put the prior tree back → the error must say so.
+    test "restore failure SURFACES a rollback-failed error (not silent :ok)", %{base: base} do
+      target = Path.join(base, "target")
+      staging = Path.join(base, "staging")
+      write!(target, ".credentials.json", "PRIOR-SECRET")
+      write!(staging, "settings.json", "NEW")
+
+      plant_unclearable_partial = fn ->
+        # After move-aside, `target` is gone (it's in `.bak`). Plant a partial new target
+        # with a read-only subdir so the rollback's `rm_rf(target)` fails with :eexist.
+        ro_sub = Path.join([target, "sub"])
+        File.mkdir_p!(ro_sub)
+        File.write!(Path.join(ro_sub, "f.txt"), "X")
+        File.chmod!(ro_sub, 0o500)
+      end
+
+      result =
+        Materializer.atomic_replace(staging, target,
+          fail_after_move: true,
+          on_fail_after_move: plant_unclearable_partial
+        )
+
+      assert {:error, {:atomic_replace_rollback_failed, original: _, rollback: _}} = result
+
+      # restore perms so on_exit cleanup can remove the tree, and confirm the `.bak`
+      # (known-good prior tree) is STILL on disk for `recover_orphaned/1` to retry.
+      File.chmod!(Path.join([target, "sub"]), 0o700)
+
+      baks =
+        base |> File.ls!() |> Enum.filter(&String.contains?(&1, ".bak-"))
+
+      assert baks != []
+      assert {:ok, "PRIOR-SECRET"} = read(Path.join(base, List.first(baks)), ".credentials.json")
+    end
+  end
+
+  describe "recover_orphaned/1 — crash-mid-swap self-heal (§7 H3' (b))" do
+    test "restores a leftover .bak when the target is missing", %{base: base} do
+      target = Path.join(base, "cfg")
+      # Simulate a crash AFTER move-aside, BEFORE rename: prior tree sits in a `.bak`, the
+      # target is absent.
+      bak = "#{target}.bak-#{System.unique_integer([:positive])}"
+      write!(bak, ".credentials.json", "PRIOR-SECRET")
+      write!(bak, "settings.json", "PRIOR-CFG")
+      refute File.exists?(target)
+
+      assert {:recovered, ^target} = Materializer.recover_orphaned(target)
+
+      # the known-good prior tree is back in place
+      assert {:ok, "PRIOR-SECRET"} = read(target, ".credentials.json")
+      assert {:ok, "PRIOR-CFG"} = read(target, "settings.json")
+      # the orphan `.bak` is consumed
+      refute File.exists?(bak)
+    end
+
+    test "drops a stale .bak when the target is already present + usable", %{base: base} do
+      target = Path.join(base, "cfg")
+      write!(target, "settings.json", "COMMITTED")
+      bak = "#{target}.bak-#{System.unique_integer([:positive])}"
+      write!(bak, "settings.json", "STALE")
+
+      assert :ok = Materializer.recover_orphaned(target)
+      # the committed target is untouched; the stale `.bak` is dropped
+      assert {:ok, "COMMITTED"} = read(target, "settings.json")
+      refute File.exists?(bak)
+    end
+
+    test "is a no-op when there is no .bak", %{base: base} do
+      target = Path.join(base, "cfg")
+      write!(target, "settings.json", "OK")
+      assert :ok = Materializer.recover_orphaned(target)
+      assert {:ok, "OK"} = read(target, "settings.json")
+    end
   end
 
   # ── layer merge: whole-file-replace + directory-union (§D4.1 / §D4.2) ───────

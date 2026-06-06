@@ -142,6 +142,30 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
     end
   end
 
+  test "crash-mid-swap leftover .bak + missing target is recovered at materialize entry",
+       ctx do
+    # Simulate a prior atomic_replace that died after move-aside, before rename: a
+    # known-good `<target>.bak-*` exists while the target is absent.
+    bak = "#{ctx.target}.bak-#{uniq()}"
+    File.mkdir_p!(bak)
+    File.write!(Path.join(bak, ".credentials.json"), "PRIOR-SECRET")
+    File.write!(Path.join(bak, ".ezagent-config-complete"), "ok\n")
+    on_exit(fn -> File.rm_rf(bak) end)
+    refute File.dir?(ctx.target)
+
+    base = tmp("cc-base")
+    write!(base, "settings.json", "BASE")
+    tmpl = cascade_tmpl(ctx, [%{dir: base}])
+
+    assert {:ok, target} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+    assert target == ctx.target
+    # recovery consumed the orphan `.bak` (entry-point self-heal ran)
+    refute File.exists?(bak)
+    # a complete, fresh tree is in place
+    assert File.exists?(Path.join(target, ".ezagent-config-complete"))
+    assert File.read!(Path.join(target, "settings.json")) == "BASE"
+  end
+
   test "missing mandatory control fails loud (G1)", ctx do
     base = tmp("cc-base")
     write!(base, "settings.json", "BASE")

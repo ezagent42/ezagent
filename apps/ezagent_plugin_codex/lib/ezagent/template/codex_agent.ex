@@ -532,6 +532,11 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   # under the TOCTOU-leased grant (§5.1) + atomic-replace (§7).
   defp materialize_config_dir(%URI{} = agent_uri, target, reference_dir, tmpl)
        when is_map(tmpl) do
+    # #17 cascade PR-2 (§7 H3' (b)) — crash-mid-swap self-heal at materialize entry (see
+    # cc_agent.ex for the rationale). Recover a leftover `<target>.bak-*` with a
+    # missing/partial target before (re)materializing. Best-effort.
+    _ = Ezagent.Agent.Materializer.recover_orphaned(target)
+
     case Map.get(tmpl, "cascade") do
       %{} = cascade -> materialize_cascade(agent_uri, target, cascade)
       _ -> materialize_single_reference(target, reference_dir)

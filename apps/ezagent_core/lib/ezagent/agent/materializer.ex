@@ -15,7 +15,10 @@ defmodule Ezagent.Agent.Materializer do
       the staging dir into place, drop the `.bak` on success / RESTORE it on any failure.
       A failed materialization therefore leaves the PRIOR good config_dir intact — never
       an empty or half-merged dir. A `:fail_after_move` injection hook makes the
-      crash-after-move window directly testable.
+      crash-after-move window directly testable. A failed ROLLBACK is no longer swallowed:
+      `atomic_replace/3` returns `{:error, {:atomic_replace_rollback_failed, ...}}` when the
+      prior config could not be restored, and `recover_orphaned/1` self-heals a leftover
+      `.bak` + missing/partial target at the next (re)spawn so a crash mid-swap is RECOVERABLE.
 
     * `merge_layers/2` (spec §D4.1 + §D4.2) — merge the ordered low→high layer set into a
       staging dir: **whole-file-replace** for same-path config files (higher layer wins),
@@ -52,8 +55,12 @@ defmodule Ezagent.Agent.Materializer do
       crash/failure AFTER the target has been moved aside to `.bak` and (optionally)
       BEFORE/AROUND the staging rename, exercising the rollback path. The prior good
       target MUST be restored intact.
+    * `:on_fail_after_move` — TEST-ONLY 0-arity fn run when `:fail_after_move` fires,
+      AFTER the move-aside but BEFORE the rollback, to plant a partial/un-clearable
+      `target` (simulating a half-completed rename). Lets a test exercise the
+      restore-FAILURE path where rollback cannot put the prior tree back.
   """
-  @type replace_opt :: {:fail_after_move, boolean()}
+  @type replace_opt :: {:fail_after_move, boolean()} | {:on_fail_after_move, (-> any())}
 
   @doc """
   Atomically replace `target` with the fully-built `staging` dir, rolling back to the
@@ -79,7 +86,7 @@ defmodule Ezagent.Agent.Materializer do
           {:ok, String.t()} | {:error, term()}
   def atomic_replace(staging, target, opts \\ [])
       when is_binary(staging) and is_binary(target) do
-    bak = "#{target}.bak-#{System.unique_integer([:positive])}"
+    bak = bak_path(target)
     had_target? = File.exists?(target)
 
     with :ok <- File.mkdir_p(Path.dirname(target)),
@@ -92,9 +99,113 @@ defmodule Ezagent.Agent.Materializer do
     else
       {:error, reason} ->
         # Roll back: restore the prior target (if any), drop the orphaned staging.
-        restore_aside(bak, target, had_target?)
+        # `restore_aside` now PROPAGATES a restore failure (codex H3' fix): if the prior
+        # config could NOT be put back, the caller must NOT claim success — the error
+        # carries both the original failure AND the rollback failure so the operator knows
+        # rollback failed (the `.bak` is left on disk for `recover_orphaned/1` to retry).
         _ = File.rm_rf(staging)
-        {:error, {:atomic_replace_failed, reason}}
+
+        case restore_aside(bak, target, had_target?) do
+          :ok ->
+            {:error, {:atomic_replace_failed, reason}}
+
+          {:error, restore_reason} ->
+            {:error, {:atomic_replace_rollback_failed, original: reason, rollback: restore_reason}}
+        end
+    end
+  end
+
+  @bak_infix ".bak-"
+
+  # The sibling `.bak` path for a target's move-aside. A single, recognizable infix lets
+  # `recover_orphaned/1` find a leftover `.bak` after a crash mid-swap.
+  defp bak_path(target), do: "#{target}#{@bak_infix}#{System.unique_integer([:positive])}"
+
+  @doc """
+  Startup recovery for an `atomic_replace/3` crash-mid-swap (codex H3' (b)).
+
+  `atomic_replace/3` moves the prior `target` aside to a sibling `<target>.bak-<n>` and then
+  renames staging into place. If the VM/host dies in the window AFTER the move-aside and
+  BEFORE/DURING the rename, the next spawn would find `target` missing (or partially
+  written) while the known-good prior tree sits in the orphaned `.bak`. Without recovery
+  the agent is left with a permanently-absent config_dir.
+
+  Call this at agent (re)spawn / materialize ENTRY for the canonical `target`. It scans the
+  parent dir for `<basename>.bak-*` siblings of `target`:
+
+    * if `target` is MISSING (or empty) and a `.bak` exists → RESTORE the newest `.bak`
+      back to `target` (self-heal the crash-mid-swap), then drop any older `.bak`s;
+    * if `target` is PRESENT and non-empty → the swap completed (or never started); the
+      `.bak`(s) are stale leftovers → drop them all;
+    * if no `.bak` exists → nothing to do.
+
+  Best-effort + idempotent: returns `:ok` when there was nothing to recover or recovery
+  succeeded, `{:recovered, bak}` when it restored a `.bak`, or `{:error, reason}` if a
+  detected recovery could NOT be performed (caller decides whether to proceed).
+  """
+  @spec recover_orphaned(String.t()) :: :ok | {:recovered, String.t()} | {:error, term()}
+  def recover_orphaned(target) when is_binary(target) do
+    case orphan_baks(target) do
+      [] ->
+        :ok
+
+      baks ->
+        # newest first (highest unique-integer suffix sorts last lexically only for equal
+        # widths, so sort by mtime to be safe).
+        [newest | older] = Enum.sort_by(baks, &bak_mtime/1, :desc)
+
+        result =
+          if target_usable?(target) do
+            # Swap completed (or never moved aside) — every `.bak` is a stale leftover.
+            :ok
+          else
+            # Crash mid-swap: target absent/partial. Restore the newest known-good `.bak`.
+            _ = File.rm_rf(target)
+
+            case File.rename(newest, target) do
+              :ok -> {:recovered, target}
+              {:error, reason} -> {:error, {:recover_restore_failed, newest, reason}}
+            end
+          end
+
+        # Drop the leftovers we are not restoring (the `older` set always; `newest` too
+        # when the target was already usable).
+        to_drop = if match?({:recovered, _}, result), do: older, else: [newest | older]
+        Enum.each(to_drop, &File.rm_rf/1)
+
+        result
+    end
+  end
+
+  # `target` exists AND is a non-empty dir (a recovered/committed config tree). An empty
+  # dir or a missing target is treated as NOT usable (the swap did not complete).
+  defp target_usable?(target) do
+    case File.ls(target) do
+      {:ok, [_ | _]} -> true
+      _ -> false
+    end
+  end
+
+  defp orphan_baks(target) do
+    parent = Path.dirname(target)
+    prefix = Path.basename(target) <> @bak_infix
+
+    case File.ls(parent) do
+      {:ok, entries} ->
+        entries
+        |> Enum.filter(&String.starts_with?(&1, prefix))
+        |> Enum.map(&Path.join(parent, &1))
+        |> Enum.filter(&File.dir?/1)
+
+      {:error, _} ->
+        []
+    end
+  end
+
+  defp bak_mtime(path) do
+    case File.stat(path, time: :posix) do
+      {:ok, %File.Stat{mtime: m}} -> m
+      _ -> 0
     end
   end
 
@@ -111,19 +222,28 @@ defmodule Ezagent.Agent.Materializer do
 
   # Restore the prior target from the .bak (rollback). If there was no prior target we
   # ensure the partial new target (if the rename half-happened) is removed so we never
-  # leave a half-merged dir.
+  # leave a half-merged dir. Returns `:ok` on a clean rollback or `{:error, reason}` when
+  # the prior config could NOT be restored (codex H3' — restore failures are no longer
+  # swallowed; the caller surfaces them so it never claims success on a failed rollback).
   defp restore_aside(_bak, target, false) do
-    _ = File.rm_rf(target)
-    :ok
+    case File.rm_rf(target) do
+      {:ok, _} -> :ok
+      {:error, reason, path} -> {:error, {:partial_target_cleanup_failed, path, reason}}
+    end
   end
 
   defp restore_aside(bak, target, true) do
     if File.exists?(bak) do
       # The bak is the known-good prior tree. Clear any partial new target, then move
-      # the prior tree back into place.
-      _ = File.rm_rf(target)
-      _ = File.rename(bak, target)
-      :ok
+      # the prior tree back into place. Each step's failure is surfaced — a left-behind
+      # partial target or a failed rename means the prior config is NOT restored.
+      with {:ok, _} <- File.rm_rf(target),
+           :ok <- File.rename(bak, target) do
+        :ok
+      else
+        {:error, reason, path} -> {:error, {:rollback_partial_cleanup_failed, path, reason}}
+        {:error, reason} -> {:error, {:rollback_restore_failed, reason}}
+      end
     else
       # bak was already consumed (rename succeeded then a later step failed) — the new
       # target IS in place; nothing to restore. (Current protocol has no post-rename
@@ -134,6 +254,11 @@ defmodule Ezagent.Agent.Materializer do
 
   defp inject_failure(opts) do
     if Keyword.get(opts, :fail_after_move, false) do
+      case Keyword.get(opts, :on_fail_after_move) do
+        fun when is_function(fun, 0) -> fun.()
+        _ -> :ok
+      end
+
       {:error, :injected_failure_after_move}
     else
       :ok
