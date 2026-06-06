@@ -36,6 +36,49 @@ defmodule EzagentPluginAutoservice.CinnoxAssets do
   def kb_query_expansion_path, do: Path.join([root(), "kb", "query_expansion.py"])
   def fast_prompts_path, do: Path.join([root(), "fast-deepseek-prompt", "prompts.py"])
 
+  # --- Skeleton template paths (Phase 3) ---
+
+  @doc "Root of the skeleton template under `priv/skeleton/`."
+  def skeleton_root do
+    Path.join(:code.priv_dir(@app), "skeleton")
+  end
+
+  def skeleton_soul_path, do: Path.join([skeleton_root(), "soul", "soul.md"])
+  def skeleton_skills_dir, do: Path.join([skeleton_root(), "skills"])
+
+  @doc """
+  Empty default slot values for the skeleton template.
+
+  Each key in the skeleton soul.md has a corresponding empty default here.
+  Admin fills real values during onboarding.
+  """
+  @spec skeleton_default_slot_values() :: %{String.t() => String.t()}
+  def skeleton_default_slot_values do
+    %{
+      "identity.bot_full_name" => "",
+      "identity.host_site_descriptor" => "",
+      "identity.self_intro_zh" => "",
+      "identity.self_intro_en" => "",
+      "brand-structure.parent_company" => "",
+      "purpose.topics_covered" => "",
+      "classification.brand_short_name" => "",
+      "classification.signals_new_strong" => "",
+      "classification.signals_existing_strong" => "",
+      "classification.unknown_type_clarifier_zh" => "",
+      "classification.max_clarify_turns" => "2",
+      "gate.basic_inquiry_examples" => "",
+      "gate.account_detail_examples" => "",
+      "gate.escalation_triggers" => "转人工, 找真人, 我要人工, 投诉",
+      "gate.escalation_phrase" => "",
+      "gate.max_self_resolve_attempts" => "2",
+      "conversation.max_sentences" => "3",
+      "conversation.max_bullets" => "2",
+      "conversation.banned_openings" => "",
+      "conversation.good_examples" => "",
+      "privacy.sensitive_operations" => ""
+    }
+  end
+
   @doc """
   CINNOX CLAUDE.md for the cc slow agent.
 
