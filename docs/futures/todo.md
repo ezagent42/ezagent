@@ -714,6 +714,16 @@ baseline worktree (`54df56c9`) chat run for apples-to-apples diff**.
   > feature needing design (signal shape + false-positive guard for
   > legitimate broadcasts) — NOT a quick patch. Recommend a small
   > brainstorm/spec before implementing.
+  >
+  > **CLOSED 2026-06-06 (Allen).** The remove-side cleanup/observability is
+  > done (remove_member: deleted_rules/repointed_rules + cascade-delete
+  > warnings). The (b) "no worker matched → silent fan-out" case is NOT a bug:
+  > an `@mention` to a non-member is silently dropped by the Resolver's
+  > `valid_member?/2` filter (resolver.ex:336) — IM-consistent (@nonexistent =
+  > no-op) AND a load-bearing SECURITY boundary (chat.receive runs under
+  > `system://chat-router`; delivering to an unvalidated target = privilege
+  > escalation). Allen declined the optional UX hint. **Task closed — no
+  > remaining work.**
 
 - **✅ `domain.agent` — DONE (verified against origin/main 2026-06-05).** Content
   audit (not SHA — the stale local `domain-agent-foundation` branch's commits are on
