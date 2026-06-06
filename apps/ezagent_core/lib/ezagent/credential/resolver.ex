@@ -352,7 +352,9 @@ defmodule Ezagent.Credential.Resolver do
 
   def classify_workspace_shared_result({:ok, %URI{} = src}), do: {:ok, src}
   def classify_workspace_shared_result(:none), do: :absent
-  def classify_workspace_shared_result({:error, {:no_resolver, @workspace_shared_attr}}), do: :absent
+
+  def classify_workspace_shared_result({:error, {:no_resolver, @workspace_shared_attr}}),
+    do: :absent
 
   def classify_workspace_shared_result({:error, reason}),
     do: {:error, {:workspace_source_unavailable, reason}}
@@ -378,6 +380,6 @@ defmodule Ezagent.Credential.Resolver do
   end
 
   defp internal_principal?(%URI{} = uri) do
-    URI.to_string(uri) == "system://agent-internal"
+    uri == Ezagent.SystemPrincipal.uri("agent-internal")
   end
 end

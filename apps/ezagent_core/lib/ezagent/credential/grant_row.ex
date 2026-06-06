@@ -23,6 +23,7 @@ defmodule Ezagent.Credential.GrantRow do
   @timestamps_opts [type: :utc_datetime_usec]
   schema "credential_grants" do
     field(:agent_uri, :string)
+    field(:workspace_uri, :string)
     field(:credential_source_uri, :string)
     field(:approved_by, :string)
     field(:approved_scope, :string)
@@ -37,14 +38,25 @@ defmodule Ezagent.Credential.GrantRow do
   @doc "Insert a new grant (id = agent_uri). Collides if an active grant exists."
   @spec insert(map()) :: {:ok, t()} | {:error, term()}
   def insert(attrs) do
+    attrs = put_workspace_uri(attrs)
+
     %__MODULE__{}
     |> cast(
       Map.put(attrs, :id, attrs.agent_uri),
-      [:id, :agent_uri, :credential_source_uri, :approved_by, :approved_scope, :version]
+      [
+        :id,
+        :agent_uri,
+        :workspace_uri,
+        :credential_source_uri,
+        :approved_by,
+        :approved_scope,
+        :version
+      ]
     )
     |> validate_required([
       :id,
       :agent_uri,
+      :workspace_uri,
       :credential_source_uri,
       :approved_by,
       :approved_scope
@@ -129,6 +141,7 @@ defmodule Ezagent.Credential.GrantRow do
   """
   @spec reapprove(map()) :: {:ok, t()} | {:error, term()}
   def reapprove(attrs) do
+    attrs = put_workspace_uri(attrs)
     prev = get_for_agent(attrs.agent_uri)
     next_version = if prev, do: prev.version + 1, else: 1
 
@@ -138,6 +151,7 @@ defmodule Ezagent.Credential.GrantRow do
       [
         :id,
         :agent_uri,
+        :workspace_uri,
         :credential_source_uri,
         :approved_by,
         :approved_scope,
@@ -148,6 +162,7 @@ defmodule Ezagent.Credential.GrantRow do
     |> validate_required([
       :id,
       :agent_uri,
+      :workspace_uri,
       :credential_source_uri,
       :approved_by,
       :approved_scope
@@ -155,7 +170,15 @@ defmodule Ezagent.Credential.GrantRow do
     |> Repo.insert(
       on_conflict:
         {:replace,
-         [:credential_source_uri, :approved_by, :approved_scope, :version, :revoked_at, :updated_at]},
+         [
+           :workspace_uri,
+           :credential_source_uri,
+           :approved_by,
+           :approved_scope,
+           :version,
+           :revoked_at,
+           :updated_at
+         ]},
       conflict_target: :id
     )
   end
@@ -164,5 +187,19 @@ defmodule Ezagent.Credential.GrantRow do
   # Independent of whether the source Kind is currently running.
   defp source_exists?(source_uri) do
     match?({:ok, _}, Ezagent.SnapshotStore.latest(source_uri))
+  end
+
+  defp put_workspace_uri(%{agent_uri: agent_uri} = attrs) do
+    Map.put(attrs, :workspace_uri, workspace_uri_for!(agent_uri))
+  end
+
+  defp workspace_uri_for!(agent_uri) when is_binary(agent_uri) do
+    agent_uri
+    |> Ezagent.URI.new!()
+    |> Ezagent.Capability.workspace_of()
+    |> case do
+      %URI{} = workspace_uri -> URI.to_string(workspace_uri)
+      :any -> raise ArgumentError, "credential grant agent_uri must be workspace-scoped"
+    end
   end
 end
