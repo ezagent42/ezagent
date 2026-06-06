@@ -54,7 +54,9 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
     {:ok, uri, _meta} =
       EzagentDomainInstanceMessage.SessionCreator.create_session(
         short,
-        Ezagent.Entity.User.admin_uri(), template_name: "default")
+        Ezagent.Entity.User.admin_uri(),
+        template_name: "default"
+      )
 
     uri
   end

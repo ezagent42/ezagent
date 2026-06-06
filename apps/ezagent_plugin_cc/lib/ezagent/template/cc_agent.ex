@@ -249,7 +249,8 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       "operator_settings_path" => content_field(content, :settings_path),
       "operator_mcp_config_path" => content_field(content, :mcp_config_path),
       "api_key_helper" => content_field(content, :api_key_helper),
-      "role" => content_field(content, :role)
+      "role" => content_field(content, :role),
+      "soul_slot_values" => content_field(content, :soul_slot_values) || %{}
     }
   end
 

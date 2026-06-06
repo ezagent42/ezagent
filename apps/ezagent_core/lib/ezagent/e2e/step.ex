@@ -60,8 +60,13 @@ defmodule Ezagent.E2E.Step do
   """
   defmacro step(name, opts) do
     run_ast = assert_inline_fn!(Keyword.fetch!(opts, :run), :run)
-    await_ast = assert_inline_fn!(Keyword.get(opts, :await, quote(do: fn _ctx -> :ok end)), :await)
-    assert_ast = assert_inline_fn!(Keyword.get(opts, :assert, quote(do: fn _ctx -> :ok end)), :assert)
+
+    await_ast =
+      assert_inline_fn!(Keyword.get(opts, :await, quote(do: fn _ctx -> :ok end)), :await)
+
+    assert_ast =
+      assert_inline_fn!(Keyword.get(opts, :assert, quote(do: fn _ctx -> :ok end)), :assert)
+
     layer_inputs = Keyword.get(opts, :layer_inputs, [])
     kind = Keyword.get(opts, :kind, :setup)
     cacheable = Keyword.get(opts, :cacheable, true)

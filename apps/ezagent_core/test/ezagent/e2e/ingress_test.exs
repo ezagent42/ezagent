@@ -23,6 +23,10 @@ defmodule Ezagent.E2E.IngressTest do
 
   test "feishu/1 → clear error when the dispatcher module is not loaded" do
     assert {:error, {:inbound_dispatcher_unavailable, :"Elixir.NoSuchInboundDispatcher"}} =
-             Ingress.feishu(chat_id: "oc_x", sender: %{}, dispatcher: :"Elixir.NoSuchInboundDispatcher")
+             Ingress.feishu(
+               chat_id: "oc_x",
+               sender: %{},
+               dispatcher: :"Elixir.NoSuchInboundDispatcher"
+             )
   end
 end

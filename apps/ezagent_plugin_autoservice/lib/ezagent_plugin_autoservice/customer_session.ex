@@ -68,6 +68,8 @@ defmodule EzagentPluginAutoservice.CustomerSession do
   - `:with_slow` — also spawn a cc (slow) agent (default `false`;
     requires a working claude environment)
   - `:greeting` — opening line posted by the fast agent
+  - `:soul_slot_values` — %{String.t() => String.t()} for rendering
+    {{key}} placeholders (defaults to CinnoxAssets.default_soul_slot_values/0)
   """
   @spec provision(URI.t(), keyword()) ::
           {:ok, %{session_uri: URI.t(), fast_uri: URI.t(), slow_uri: URI.t() | nil}}
@@ -79,14 +81,15 @@ defmodule EzagentPluginAutoservice.CustomerSession do
     system_prompt = Keyword.get(opts, :system_prompt, fast_persona())
     deepseek_key = Keyword.get(opts, :deepseek_key)
     with_slow? = Keyword.get(opts, :with_slow, false)
+    soul_slot_values = Keyword.get(opts, :soul_slot_values, CinnoxAssets.default_soul_slot_values())
 
     session_uri = Uris.session_uri(customer_uri)
     fast_uri = Uris.fast_agent_uri(customer_uri)
 
     with :ok <- ensure_user_alive(customer_uri),
-         {:ok, ^fast_uri} <- ensure_fast_agent(customer_uri, workspace_uri, system_prompt),
+         {:ok, ^fast_uri} <- ensure_fast_agent(customer_uri, workspace_uri, system_prompt, soul_slot_values),
          :ok <- maybe_put_deepseek_key(fast_uri, deepseek_key, ctx),
-         {:ok, slow_uri} <- maybe_slow_agent(customer_uri, workspace_uri, with_slow?, ctx),
+         {:ok, slow_uri} <- maybe_slow_agent(customer_uri, workspace_uri, with_slow?, ctx, soul_slot_values),
          :ok <- ensure_session(session_uri, customer_uri, workspace_uri),
          :ok <- join(session_uri, customer_uri, ctx),
          :ok <- join(session_uri, fast_uri, ctx),
@@ -153,7 +156,7 @@ defmodule EzagentPluginAutoservice.CustomerSession do
   # stores + instantiates immediately (idempotent on re-run). The
   # DeepSeek API key is NOT in the template — it lives in the agent's
   # own `:api_keys` slice, set by `maybe_put_deepseek_key/3`.
-  defp ensure_fast_agent(customer_uri, %URI{scheme: "workspace"} = workspace_uri, system_prompt) do
+  defp ensure_fast_agent(customer_uri, %URI{scheme: "workspace"} = workspace_uri, system_prompt, soul_slot_values \\ %{}) do
     fast_uri = Uris.fast_agent_uri(customer_uri)
     {_ws, name} = Uris.decompose_customer(customer_uri)
     tmpl_name = "autoservice.fast." <> name
@@ -165,7 +168,8 @@ defmodule EzagentPluginAutoservice.CustomerSession do
       "api_url" => @deepseek_api_url,
       "model" => @deepseek_model,
       "system_prompt" => system_prompt,
-      "max_history" => 20
+      "max_history" => 20,
+      "soul_slot_values" => soul_slot_values
     }
 
     case Ezagent.Workspace.add_template(workspace_uri.host, tmpl_name, tmpl) do
@@ -202,9 +206,9 @@ defmodule EzagentPluginAutoservice.CustomerSession do
     end
   end
 
-  defp maybe_slow_agent(_customer_uri, _workspace_uri, false, _ctx), do: {:ok, nil}
+  defp maybe_slow_agent(_customer_uri, _workspace_uri, false, _ctx, _slot_values), do: {:ok, nil}
 
-  defp maybe_slow_agent(customer_uri, workspace_uri, true, ctx) do
+  defp maybe_slow_agent(customer_uri, workspace_uri, true, ctx, soul_slot_values) do
     slow_uri = Uris.slow_agent_uri(customer_uri)
 
     case KindRegistry.lookup(slow_uri) do
@@ -219,6 +223,11 @@ defmodule EzagentPluginAutoservice.CustomerSession do
         base = EzagentPluginAutoservice.CinnoxRuntime.materialize_cinnox_cc!()
         work_dir = Path.join(base, name)
         File.mkdir_p!(work_dir)
+
+        # Write rendered CLAUDE.md with soul slot values + skill index.
+        rendered_claude_md =
+          EzagentPluginAutoservice.CinnoxAssets.build_cc_claude_md_with_slots(soul_slot_values)
+        File.write!(Path.join(work_dir, "CLAUDE.md"), rendered_claude_md)
 
         # Symlink shared assets into per-agent dir (avoids copy bloat).
         for entry <- File.ls!(base) |> Enum.reject(&(&1 in [".mcp.json", name])) do

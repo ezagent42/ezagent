@@ -62,7 +62,8 @@ defmodule Ezagent.PluginCurlAgent.Template do
       "api_url" => content_field(content, :api_url),
       "model" => content_field(content, :model),
       "system_prompt" => content_field(content, :system_prompt),
-      "max_history" => content_field(content, :max_history)
+      "max_history" => content_field(content, :max_history),
+      "soul_slot_values" => content_field(content, :soul_slot_values) || %{}
     }
   end
 
