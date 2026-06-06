@@ -121,4 +121,167 @@ defmodule EzagentPluginAutoservice.CinnoxAssets do
     Output: ONLY the ack text, nothing else.
     """
   end
+
+  # --- Soul slot rendering ---
+
+  @doc """
+  Default soul slot values extracted from the old AutoService customer.yaml.
+
+  For the MVP demo, these are hand-curated from the vendored yaml.
+  Future: parse customer.yaml directly with a YAML library.
+  """
+  @spec default_soul_slot_values() :: %{String.t() => String.t()}
+  def default_soul_slot_values do
+    %{
+      "identity.bot_full_name" => "CINNOX AI Bot",
+      "identity.host_site_descriptor" => "CINNOX/M800",
+      "identity.domain_descriptor" => "CINNOX/M800",
+      "identity.self_intro_en" =>
+        "Hi! I am CINNOX AI, your virtual assistant for CINNOX products and services. How can I help you today?",
+      "identity.self_intro_zh" => "您好，我是 CINNOX 的 AI 助手。请问需要帮您了解哪方面？",
+      "brand-structure.parent_company" => "M800 Limited",
+      "brand-structure.parent_hq" => "Hong Kong",
+      "brand-structure.flagship_product" => "CINNOX",
+      "gate.escalation_phrase" => "这个具体数字我得帮您核实一下，让销售同事直接跟您说",
+      "gate.unknown_type_clarifier_zh" => "很高兴为您服务！请问您是 CINNOX 现有客户，还是第一次了解我们？",
+      "classification.brand_short_name" => "CINNOX",
+      "classification.weak_max_turns" => "2",
+      "purpose.topics_covered" => "CINNOX and M800 products, features, pricing, and integrations"
+    }
+  end
+
+  @doc """
+  Render {{key}} placeholders in a template string with slot values.
+
+  Keys use dotted path grammar: `[a-z][a-z0-9_.-]*`.
+  Unfilled slots retain the raw `{{key}}` as a visible "not configured" signal.
+  """
+  @spec render_slots(String.t(), %{String.t() => String.t()}) :: String.t()
+  def render_slots(template, slot_values) when is_binary(template) do
+    Regex.replace(~r/\{\{([a-z][a-z0-9_.-]*)\}\}/, template, fn _, key ->
+      Map.get(slot_values, key, "{{#{key}}}")
+    end)
+  end
+
+  @doc """
+  Build cc CLAUDE.md with soul slot values rendered.
+
+  Reads the vendored soul template, renders {{key}} placeholders with the
+  given slot_values, and returns the full CLAUDE.md body.
+  """
+  @spec build_cc_claude_md_with_slots(%{String.t() => String.t()}) :: String.t()
+  def build_cc_claude_md_with_slots(slot_values) when is_map(slot_values) do
+    soul_template = File.read!(soul_path())
+    rendered_soul = render_slots(soul_template, slot_values)
+    build_cc_claude_md_preamble() <> rendered_soul
+  end
+
+  @doc """
+  Build a Skill Index by scanning the skills directory.
+
+  Reads each SKILL.md's YAML frontmatter (name + description) and generates
+  a markdown index that the cc agent uses to decide which skill to Read.
+  """
+  @spec build_skill_index() :: String.t()
+  def build_skill_index do
+    skills_dir = Path.join(root(), "skills")
+
+    case File.ls(skills_dir) do
+      {:ok, role_dirs} ->
+        entries =
+          Enum.flat_map(role_dirs, fn role_dir ->
+            role_skills_dir = Path.join([skills_dir, role_dir])
+
+            case File.ls(role_skills_dir) do
+              {:ok, skill_names} ->
+                Enum.map(skill_names, fn name ->
+                  skill_file = Path.join([role_skills_dir, name, "SKILL.md"])
+                  {name, read_skill_metadata(skill_file)}
+                end)
+
+              _ ->
+                []
+            end
+          end)
+
+        build_index_markdown(entries)
+
+      _ ->
+        ""
+    end
+  end
+
+  defp read_skill_metadata(skill_file) do
+    case File.read(skill_file) do
+      {:ok, content} ->
+        name = extract_yaml_field(content, "name") || Path.basename(Path.dirname(skill_file))
+        desc = extract_yaml_field(content, "description") || ""
+        {name, desc}
+
+      _ ->
+        {Path.basename(Path.dirname(skill_file)), ""}
+    end
+  end
+
+  defp extract_yaml_field(content, field) do
+    # Match YAML frontmatter field: `field: value` (handles multiline with |)
+    regex = Regex.compile!("^#{field}:\\s*(.+)", "m")
+
+    case Regex.run(regex, content) do
+      [_, value] -> String.trim(value)
+      nil -> nil
+    end
+  end
+
+  defp build_index_markdown(entries) do
+    header = "\n## Skill Index\n\n需要时 Read 对应文件:\n\n"
+
+    body =
+      Enum.map_join(entries, "\n", fn {name, {display, desc}} ->
+        "  - **#{display}** — `plugins/cinnox/skills/customer/#{name}/SKILL.md`" <>
+          if(desc != "", do: ": #{desc}", else: "")
+      end)
+
+    header <> body <> "\n"
+  end
+
+  defp build_cc_claude_md_preamble do
+    """
+    > **Runtime note (ezagent / cc_slow).** You are the CINNOX customer-service
+    > agent running inside ezagent (claude-code via the esr-bridge channel) —
+    > NOT inside the AutoService PV2 pipeline.
+    >
+    > **KB access — you HAVE a knowledge-base tool:**
+    >   - **`kb_search`** (MCP server `cinnox-kb`): call it with a `query` to
+    >     retrieve CINNOX / M800 product knowledge. Use it where the soul below
+    >     tells you to consult the KB or call `kb_search`.
+    >   - There is **no `<kb_context>` auto-injection** here. When you need
+    >     product facts you must **call `kb_search` yourself**.
+    >
+    > **Skills are local files — use the Read tool:**
+    >   - skills:      `plugins/cinnox/skills/customer/<name>/SKILL.md`
+    >   - flow chunks: `plugins/cinnox/flow_chunks/*.md`
+    >   - references:  `plugins/cinnox/references/*`
+    >   - (no auto skill-loader; Read the SKILL.md yourself when a flow applies)
+    >
+    > **Replying:** the customer only sees text you send through your channel
+    > reply. Once `kb_search` gives you the facts, answer **concisely and
+    > directly** — do NOT loop on clarifying questions when you already have
+    > enough to answer.
+    >
+    > **RESPONSE GATE — check BEFORE every reply:**
+    > - You are in a group chat. You receive the full chat history every time
+    >   ANYONE sends a message. Most messages are NOT for you.
+    > - **ONLY respond when @-mentioned** (`@cc_slow-alice` or
+    >   `@entity://agent/cinnox/cc_slow-alice`). Ignore all other messages.
+    > - **NEVER respond to your own messages.** If the latest message sender
+    >   is yourself (`entity://agent/cinnox/cc_slow-alice`), stay silent.
+    > - **NEVER re-answer a question you already replied to.** If a user asks
+    >   a question you already addressed, say briefly and STOP.
+    > - **If not @-mentioned: stay completely silent.**
+
+    ---
+
+    """
+  end
 end
