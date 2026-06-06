@@ -142,6 +142,59 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
     end
   end
 
+  describe "no whole-target overlay (codex HIGH §D4.2)" do
+    test "a tombstoned file does NOT reappear from the prior target after cascade materialize",
+         ctx do
+      # Prior target already exists with a file that a higher layer now tombstones.
+      File.mkdir_p!(Path.join(ctx.target, "plugins"))
+      File.write!(Path.join(ctx.target, "plugins/old.json"), "STALE-PLUGIN")
+      File.write!(Path.join(ctx.target, ".ezagent-config-complete"), "ok\n")
+
+      base = tmp("cc-base")
+      user = tmp("cc-user")
+      write!(base, "plugins/old.json", "BASE-PLUGIN")
+      # higher layer tombstones the inherited file
+      write!(user, "plugins/old.json.tombstone", "")
+
+      tmpl = cascade_tmpl(ctx, [%{dir: base}, %{dir: user}])
+
+      assert {:ok, target} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+      # the tombstone wins — the file must NOT be resurrected from the prior target.
+      refute File.exists?(Path.join(target, "plugins/old.json"))
+      refute File.exists?(Path.join(target, "plugins/old.json.tombstone"))
+      # secret still copied from the source
+      assert File.read!(Path.join(target, ".credentials.json")) == "ALICE-TOKEN"
+    end
+
+    test "a stale secret in the prior target does NOT survive when the source lacks it", ctx do
+      # Prior target holds an OLD credential (e.g. from a now-revoked/changed source).
+      File.mkdir_p!(ctx.target)
+      File.write!(Path.join(ctx.target, ".credentials.json"), "OLD-STALE-TOKEN")
+      File.write!(Path.join(ctx.target, ".ezagent-config-complete"), "ok\n")
+
+      # Resolved source has NO secret (not logged in / source rotated it away).
+      empty_source = tmp("cc-empty-src")
+
+      base = tmp("cc-base")
+      write!(base, "settings.json", "BASE")
+
+      tmpl = %{
+        "config_dir" => base,
+        "allocated_config_dir" => ctx.target,
+        "cascade" => %{
+          layer_dirs: [%{dir: base}],
+          source_dir_for: fn _ -> {:ok, empty_source} end
+        }
+      }
+
+      assert {:ok, target} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+      # the stale secret from the prior target must NOT survive — the merge tree has no
+      # secret and the source supplied none, so the agent has no credential file.
+      refute File.exists?(Path.join(target, ".credentials.json"))
+      assert File.read!(Path.join(target, "settings.json")) == "BASE"
+    end
+  end
+
   test "crash-mid-swap leftover .bak + missing target is recovered at materialize entry",
        ctx do
     # Simulate a prior atomic_replace that died after move-aside, before rename: a

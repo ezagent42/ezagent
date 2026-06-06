@@ -1947,8 +1947,16 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     source_dir_for = Map.fetch!(cascade, :source_dir_for)
 
     result =
+      # #17 cascade PR-2 (§D4.2 H — codex HIGH) — NO whole-target overlay. The prior code
+      # overlaid the ENTIRE existing target onto the freshly-merged staging, which
+      # resurrected tombstoned files, overrode freshly-merged config, and kept stale
+      # credentials from a revoked/changed source. The layer merge (§D4) is now the SOLE
+      # authority for the config tree; secrets come ONLY from the grant-scoped source copy
+      # below (§D6). No per-agent user-state is preserved across re-materialize in this PR
+      # (none identified — credentials are re-copied from the source, config is re-merged);
+      # if a concrete user-state need is later identified, preserve a NARROW explicit
+      # allowlist (never config/tombstoned/secret relpaths) + re-run mandatory validation.
       with :ok <- Ezagent.Agent.Materializer.merge_layers(staging, layer_dirs),
-           :ok <- maybe_overlay(if(File.dir?(target), do: target), staging),
            :ok <- File.chmod(staging, 0o700),
            :ok <- File.write(Path.join(staging, Path.basename(marker)), "ok\n") do
         # Secret copy + atomic-replace commit, gated by the grant TOCTOU re-check.

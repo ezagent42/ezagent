@@ -552,8 +552,12 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     source_dir_for = Map.fetch!(cascade, :source_dir_for)
 
     result =
+      # #17 cascade PR-2 (§D4.2 H — codex HIGH) — NO whole-target overlay (see cc_agent.ex
+      # for the full rationale). Overlaying the entire existing target resurrected
+      # tombstoned files, overrode freshly-merged config, and kept stale credentials. The
+      # layer merge (§D4) is the sole authority for the config tree; secrets come ONLY from
+      # the grant-scoped source copy (§D6). No user-state preserved across re-materialize.
       with :ok <- Ezagent.Agent.Materializer.merge_layers(staging, layer_dirs),
-           :ok <- maybe_overlay(if(File.dir?(target), do: target), staging),
            :ok <- File.chmod(staging, 0o700),
            :ok <- File.write(Path.join(staging, Path.basename(marker)), "ok\n") do
         Ezagent.Agent.Materializer.materialize_with_grant(%{
