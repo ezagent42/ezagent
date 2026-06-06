@@ -1,7 +1,10 @@
 # SPEC: Multi-level agent provisioning — layered credential/config cascade (domain.agent)
 
-> **Status:** design — Allen-approved in brainstorm 2026-06-06. To be hardened by
-> codex adversarial-review before writing-plans. Builds on and **supersedes the
+> **Status:** design rev 2 — codex adversarial-review (rev 1) folded: 4 HIGH + 1 MED
+> addressed (durable spawn-time authorization §5.1; concrete user credential source
+> §5.2; cold-restart re-resolution §4 + D3; secret-vs-config path split §3 D5/D6;
+> directory tombstones §3 D4). Allen-approved in brainstorm 2026-06-06. Builds on and
+> **supersedes the
 > inheritance half (PR-D / §③) of** `2026-06-03-agent-credential-lifecycle.md`
 > (whose PR-A/B/C/C2/E are already merged: #551/552/553/555/556). Builds on
 > `2026-06-02-domain-agent-design.md` (PR-3 `Ezagent.Sandbox.ConfigDir`) and
@@ -88,22 +91,42 @@ precedence (later overrides earlier)**:
 - **In-process / SDK flavors (curl, "call an API in-VM"):** no subprocess, no file —
   the resolved credential is read **live** from the `:api_keys` slice each invoke; no
   spawn-materialize step.
+- **Every external-CLI process start is a cascade-resolution boundary — including cold
+  restart and sidecar self-heal (H3 fix).** The live guarantee fails if a BEAM restart
+  or self-heal replays persisted `respawn_template_data` (a resolved *snapshot*) and
+  launches the subprocess with stale config/creds after a relogin/rotation. Therefore
+  `respawn_template_data` persists the **resolution INPUTS** (workspace / owner / session
+  / explicit-source URIs + the approved `credential_source_uri`), NOT a resolved config
+  snapshot; on every (re)start the materialize step **re-runs `resolve_layers/…` fresh**
+  (re-walking workspace/user/session + re-validating the credential authorization §5.1).
+  Spawn, cold restart, and self-heal all go through the same resolve→materialize path.
 - A `watch` on an external credential regen (user re-login elsewhere / admin rotation)
-  is **at most a V2 trigger to restart** dependent agents (restart → spawn
-  re-materializes); it never writes into a running agent.
+  is **at most a V2 trigger to restart** dependent agents (restart → re-resolve →
+  materialize); it never writes into a running agent.
 
 ### D4 — Merge rules
-- **Whole-file-replace** (V1): for same-path files (e.g. `settings.json`), the
-  higher layer's file wins entirely. (Deep per-key JSON merge for `.mcp.json` /
-  `settings.json` is V2.)
-- **Directory union** (e.g. `plugins/`, `skills/`): union of files; on a filename
-  collision the higher layer wins.
-- **Single credential source per agent.** Credentials are **not** merged across
-  layers. Exactly one source is chosen by precedence:
-  **explicit (an operator-named source agent) > user (personal login) > workspace
-  (shared service account)**. Default = the user layer. Workspace-shared is opt-in.
-  No silent mixing; a missing/unauthorized source **fails loud** (no silent fallback
-  to an empty or wrong credential), per `feedback_let_it_crash_no_workarounds`.
+Two **disjoint** path classes per flavor (see D6): **config paths** participate in the
+layer merge below; **secret paths** do NOT merge — they come from the single credential
+source (D4.3). A path may be in exactly one class (codex `config.toml` is config, NOT
+secret — H4 fix).
+
+1. **Whole-file-replace** (V1): for same-path **config** files (e.g. `settings.json`),
+   the higher layer's file wins entirely. (Deep per-key JSON merge for `.mcp.json` /
+   `settings.json` is V2.)
+2. **Directory union with tombstones** (e.g. `plugins/`, `skills/`): union of files; on
+   a filename collision the higher layer wins. A higher layer may **remove** a
+   lower-layer file by shipping a **tombstone** for that relpath (a sibling
+   `<name>.tombstone` marker, or an entry in the layer's `deny` manifest). After the
+   union, every tombstoned relpath is deleted from the merged tree. This lets a
+   user/session disable an inherited unsafe/outdated plugin/skill/MCP/hook it does not
+   own (M1 fix). Tombstoning a path it cannot otherwise see is allowed (deny-by-relpath).
+3. **Single credential source per agent.** Secret paths are **not** merged across
+   layers. Exactly one source is chosen by precedence:
+   **explicit (an operator-named source agent) > user (personal credential source,
+   §5.2) > workspace (shared service account)**. Default = the user source.
+   Workspace-shared is opt-in. No silent mixing; a missing/unauthorized/revoked source
+   **fails loud** (no silent fallback to an empty or wrong credential), per
+   `feedback_let_it_crash_no_workarounds`.
 
 ### D5 — Universality: domain resolution + flavor materialization
 - **domain.agent owns RESOLUTION** (universal, flavor-agnostic): given an agent's
@@ -112,11 +135,29 @@ precedence (later overrides earlier)**:
   `sandbox.read` cap seam used by the `--from` path in
   `Ezagent.Behavior.Workspace`).
 - **The flavor's adapter owns MATERIALIZATION** (the plugin-isolation boundary):
-  - cc/codex: write the resolved credential as a **file** in `config_dir`
-    (`Ezagent.Agent.CredentialAdapter`, already defined — `credential_relpaths/0`).
+  - cc/codex: write resolved **config** files (from the merge) + copy **secret** files
+    (from the single credential source) into `config_dir`.
   - curl: resolve the credential (API key) into the **`:api_keys` slice**.
   Whether an in-process flavor uses a slice or a `.env` file is a flavor-local
   adapter detail, NOT a cascade-design decision.
+
+### D6 — Adapter contract splits SECRET paths from CONFIG paths (H4 fix)
+`Ezagent.Agent.CredentialAdapter` (the merged PR-A contract) currently exposes one
+`credential_relpaths/0`. That conflates token material with config: codex declares
+`["auth.json", "config.toml"]`, but `config.toml` is **configuration**, not a secret.
+Copying it from the single credential source would override workspace/session config
+decisions made in the layer merge (importing another source's codex settings).
+
+Split the contract into two disjoint sets:
+- `secret_relpaths/0` — pure token material copied ONLY from the resolved credential
+  source (cc: `[".credentials.json"]`; codex: `["auth.json"]`).
+- config files (codex `config.toml`, cc `settings.json`, etc.) carry **no special
+  treatment** — they are ordinary config paths that participate in the D4.1/D4.2 layer
+  merge like any other file.
+
+A path MUST be in at most one class; an invariant test asserts `secret_relpaths` and the
+merged config paths are disjoint per flavor. This restores the clean "domain resolves
+config (merge) vs selects credential (single source)" split.
 
 ## 4. Resolution algorithm (domain.agent)
 
@@ -138,14 +179,17 @@ resolve_layers(agent_uri, workspace_uri, owner_uri, session_uri, explicit_source
   {config, cred_src}
 ```
 
-- **CREATE-time** (per prior spec D3, retained): resolve + cap-check + persist the
-  approved credential source into the new agent's template (`parent_template_uri` /
-  a stored `credential_source_uri`). No source read under
-  `system://agent-internal` caps (prior codex BLOCKER — privilege-escalation leak).
-- **SPAWN-time:** materialize `config` via the flavor adapter (cc/codex: atomic-staging
-  file copy of `config` + a **filtered** copy of only the credential source's
-  `credential_relpaths` — never the whole source dir; curl: write the resolved key into
-  `:api_keys`).
+- **CREATE-time** (human caller, caps): resolve + cap-check + persist the durable
+  **`CredentialGrant`** (§5.1) and the resolution INPUTS into `respawn_template_data`
+  (§D3) — NOT a resolved snapshot. No source read under `system://agent-internal` caps.
+- **EVERY (re)start (spawn / cold-restart / self-heal):** re-run `resolve_layers/…`
+  fresh, then materialize via the flavor adapter:
+  - cc/codex: atomic-staging copy of the merged **config** paths (D4.1/D4.2, tombstones
+    applied) + a copy of only the credential source's **`secret_relpaths`** (D6) —
+    never the whole source dir, never config paths from the source;
+  - curl: write the resolved key into `:api_keys`.
+  The credential copy runs under the **grant-scoped principal** and re-validates the
+  grant first (§5.1); failure is loud.
 
 ## 5. Cap / management model
 
@@ -161,6 +205,55 @@ resolve_layers(agent_uri, workspace_uri, owner_uri, session_uri, explicit_source
   source (explicit source / workspace-shared) requires the caller to hold `sandbox.read`
   on it. Workspace-shared credentials require the workspace to have explicitly
   authorized the service-account source.
+
+### 5.1 Credential authorization lifecycle — approve at CREATE, re-validate at every materialize (H1 fix)
+
+The hazard: CREATE has a human caller + caps, but SPAWN / boot / cold-restart / self-heal
+have **no human caller**. Using blanket `system://` caps there would let an agent keep
+reading a **revoked or cross-user** source (leak); using no caps would break boot.
+
+Model — a durable **credential grant**, not a re-derived cap check:
+- **At CREATE** (human caller, caps present): authorize `sandbox.read` on the chosen
+  source, then persist a durable **`CredentialGrant`** on the new agent:
+  `{credential_source_uri, approved_by (principal URI), approved_scope (exact source URI
+  + relpaths), granted_at}`. **Never** resolve a source under `system://agent-internal`
+  caps (prior codex BLOCKER — privilege-escalation leak).
+- **At every materialize** (spawn / cold-restart / self-heal — no human caller):
+  the materializer acts under a **grant-scoped principal** derived from the stored
+  `CredentialGrant` (authority bounded to exactly `approved_scope`), NOT blanket system
+  caps. Before copying, it **re-validates** the grant: (a) the source still exists, (b)
+  the grant has not been **revoked**, (c) `approved_scope` still matches the source's
+  identity. Any failure → **fail loud** (agent does not spawn with stale/leaked creds);
+  surface via the PR-C auth-failure notify path so the owner re-approves/re-logins.
+- **Revocation:** deleting the source, or revoking the grant (operator/owner action),
+  invalidates future materializations immediately (checked at next start). A running
+  process keeps its loaded creds until it restarts — restart then fails-or-re-resolves.
+- Tests (design-level): revoked grant, deleted source, cross-user source under a
+  non-owning grant, and boot-time re-materialization all behave per the above.
+
+### 5.2 The user credential source is a concrete Kind+slice — not a naming convention (H2 fix)
+
+The merged lifecycle put `:api_keys` on **Agent** Kinds and cc/codex OAuth files in
+per-agent `config_dir`s; there is **no User-Kind credential store today**, so "user is
+the default source" has no concrete URI to authorize/read. Inferring it from the
+`<username>-default` agent name is rejected (collision / drift → `:no_api_key` or
+cross-agent credential reads).
+
+Define the **user credential source** explicitly and durably:
+- A per-**(owner, workspace, flavor)** credential-holder, addressed by a concrete URI
+  and carrying the credential in its natural form (file flavors: a `config_dir` with the
+  OAuth file; curl: an `:api_keys` slice entry). Candidate realization: the user's base
+  agent for that flavor (e.g. `entity://<workspace>/agent/<owner-handle>-base`) **but
+  referenced by a stored pointer, not by name-parsing** — a registry/attribute
+  `user_default_credential_source(owner_uri, workspace_uri, flavor) -> source_uri`,
+  written when the user first logs in / their base is created, **queried via UriQuery**.
+  Uniqueness enforced on `(owner, workspace, flavor)`.
+- `pick_credential_source/3` reads this stored pointer for the user layer — never a
+  name convention. Absent pointer + required credential → **fail loud** (prompt the user
+  to log in / create their base), never silent `:no_api_key`.
+- **Migration:** existing per-agent `:api_keys` / per-agent OAuth dirs are adopted by
+  registering the appropriate existing agent as the owner's default source for that
+  (workspace, flavor); documented one-time step, no silent guess.
 
 ## 6. Flavor archetypes (informs materialization)
 
@@ -197,33 +290,65 @@ resolve_layers(agent_uri, workspace_uri, owner_uri, session_uri, explicit_source
   the extension-callback contract).
 - **curl inclusion:** an orch-spawned curl worker resolves its key from the
   workspace-shared layer when the user layer has none.
+- **Authorization lifecycle (§5.1):** revoked grant → next start fails loud; deleted
+  source → fails loud; a grant approved for source A cannot read source B; cold-restart
+  re-validates rather than blindly replaying.
+- **Cold-restart re-resolution (H3):** workspace template update OR user relogin
+  **followed by a BEAM restart / self-heal** yields the NEW config/credential (not a
+  stale `respawn_template_data` snapshot) — distinct from the fresh-spawn test.
+- **Secret/config separation (H4):** an explicit credential source whose `config.toml`
+  differs cannot override the workspace/session-merged `config.toml`; only `auth.json`
+  (secret) comes from the source. Invariant: `secret_relpaths` ∩ merged-config-paths = ∅.
+- **Directory tombstone (M1):** a higher layer removes an inherited plugin/skill/MCP/hook
+  via a tombstone; the merged tree omits it.
+- **User-source SoT (§5.2):** the default user source is read from the stored pointer,
+  never name-inferred; absent pointer + required credential → fail loud, no `:no_api_key`.
 
 ## 9. Decomposition (small PRs, each → codex code-review)
 
+- **PR-0 — `CredentialGrant` + user-source SoT (foundations, H1+H2).** The durable
+  grant record (§5.1) + the `user_default_credential_source(owner,ws,flavor)` pointer
+  registry queried via UriQuery (§5.2) + the `secret_relpaths`/config split in the
+  adapter contract (§D6, H4). No cascade behavior change yet; migration step for
+  existing per-agent creds. Invariant tests: grant revoke/delete/scope, disjoint
+  secret∩config, user-source-from-pointer-not-name.
 - **PR-1 — Resolution core (domain.agent).** `resolve_layers/…` + ordered layer
-  enumeration + `pick_credential_source` precedence + cap-checked source authorize;
-  pure resolution returning `{config_layers, cred_src}`, no materialization change yet.
-  Invariant tests for order + precedence + fail-loud.
-- **PR-2 — Layered materialize for file flavors.** Extend PR-B atomic staging from one
-  reference dir to merge layers 1→4 (whole-file-replace + directory-union) + filtered
-  credential copy from the resolved source. cc + codex.
+  enumeration + `pick_credential_source` precedence + grant-scoped authorize/re-validate;
+  pure resolution returning `{config_layers, secret_source}`, no materialization change
+  yet. Invariant tests for order + precedence + fail-loud.
+- **PR-2 — Layered materialize for file flavors, at every (re)start (H3).** Extend PR-B
+  atomic staging from one reference dir to merge layers 1→4 (whole-file-replace +
+  directory-union + tombstones) + `secret_relpaths`-only copy from the resolved source;
+  route spawn AND cold-restart/self-heal through resolve→materialize (respawn stores
+  inputs, not snapshot). cc + codex. Tests: cold-restart re-resolution.
 - **PR-3 — Workspace + user layer scoping.** Workspace-scoped AgentTemplate as layer 2
   (exists; wire as a layer); user-owned template (owner attribute) as layer 3; default
-  resolution (user’s base template / `<username>-default`).
+  resolution via the §5.2 pointer.
 - **PR-4 — curl into the model.** curl’s `:api_keys` resolved through the same layered
   source precedence (workspace-shared key ⇒ user key ⇒ explicit); slice materialization
   adapter; flavor-parity gate.
-- **PR-5 — (optional/V2) eager propagation + deep-merge + pinning** — deferred; tracked.
+- **PR-5 — (optional/V2) eager watch-propagation + deep-merge + pinned references** —
+  deferred; tracked.
 
-## 10. Open items (for codex adversarial-review to pressure-test)
+Sequencing note: PR-0 must land first (it defines the grant + source-of-truth + adapter
+split that PR-1/PR-2 depend on). PR-2 depends on PR-1; PR-3/PR-4 follow.
 
-- Exact storage of the user-level template / owner attribute (new field vs reuse
-  `created_by` + a `role: :user_base` tag) and how "the user's default base" is selected.
-- Where the resolved `credential_source_uri` is persisted on the agent template and how
-  it interacts with `parent_template_uri` (provenance vs credential source may differ).
-- Workspace-shared service-account credential: storage + the authorize step + rotation.
-- Merge determinism across directory-union when two layers ship the same skill at
-  different versions (last-wins is defined; is that always right?).
-- Interaction with #533 creation-unification (single authorized create chokepoint): the
-  resolution must run inside that chokepoint, not as a parallel path.
+## 10. Open items
+
+Resolved in rev 2 (was open in rev 1): user-source storage → §5.2 (stored pointer);
+credential-source vs `parent_template_uri` → §5.1 `CredentialGrant` is distinct from
+provenance; directory-union delete → §D4.2 tombstones; spawn authorization → §5.1;
+cold-restart staleness → D3/§4; codex `config.toml` conflation → §D6.
+
+Still open (for PR-0/PR-1 planning + a second codex pass):
+- **Workspace-shared service-account credential**: concrete storage of the shared
+  source, the workspace-admin authorize step that mints the `CredentialGrant` for member
+  agents, and rotation of the shared secret (re-validate semantics when it rotates).
+- **`CredentialGrant` persistence location**: a slice on the agent Kind vs a dedicated
+  grant store; and whether revocation is push (sweep grants) or pull (check at start).
+- **Interaction with #533 creation-unification**: the resolution + grant minting MUST run
+  inside the single authorized create chokepoint, not as a parallel path.
+- **Migration concreteness**: the one-time adoption of existing per-agent `:api_keys` /
+  OAuth dirs into per-(owner,workspace,flavor) default sources — exact mapping + operator
+  command.
 - Does any in-process flavor besides curl need a non-slice resolver shape?
