@@ -505,7 +505,7 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
 
   @doc false
   @spec create_agent_config_dir(URI.t(), map()) :: {:ok, String.t() | nil} | {:error, term()}
-  def create_agent_config_dir(%URI{} = _agent_uri, tmpl) when is_map(tmpl) do
+  def create_agent_config_dir(%URI{} = agent_uri, tmpl) when is_map(tmpl) do
     case Map.fetch(tmpl, "config_dir") do
       :error ->
         {:ok, nil}
@@ -513,7 +513,7 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
       {:ok, ref} when is_binary(ref) and ref != "" ->
         case Map.fetch(tmpl, "allocated_config_dir") do
           {:ok, target} when is_binary(target) and target != "" ->
-            materialize_config_dir(target, ref)
+            materialize_config_dir(agent_uri, target, ref, tmpl)
 
           _ ->
             {:error, :config_dir_not_allocated}
@@ -526,7 +526,56 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
 
   @config_complete_marker ".ezagent-config-complete"
 
-  defp materialize_config_dir(target, reference_dir) do
+  # #17 cascade PR-2 — dispatch on CASCADE inputs (see cc_agent.ex for the rationale).
+  # NO cascade inputs → byte-for-byte the prior single-reference materialize. WITH
+  # `tmpl["cascade"]` (PR-3 supplies it) → layer-merge (§D4) + secret-only copy (§D6)
+  # under the TOCTOU-leased grant (§5.1) + atomic-replace (§7).
+  defp materialize_config_dir(%URI{} = agent_uri, target, reference_dir, tmpl)
+       when is_map(tmpl) do
+    case Map.get(tmpl, "cascade") do
+      %{} = cascade -> materialize_cascade(agent_uri, target, cascade)
+      _ -> materialize_single_reference(target, reference_dir)
+    end
+  end
+
+  defp materialize_cascade(%URI{} = agent_uri, target, cascade) do
+    marker = Path.join(target, @config_complete_marker)
+    staging = "#{target}.staging-#{System.unique_integer([:positive])}"
+    _ = File.rm_rf(staging)
+
+    layer_dirs = Map.fetch!(cascade, :layer_dirs)
+    source_dir_for = Map.fetch!(cascade, :source_dir_for)
+
+    result =
+      with :ok <- Ezagent.Agent.Materializer.merge_layers(staging, layer_dirs),
+           :ok <- maybe_overlay(if(File.dir?(target), do: target), staging),
+           :ok <- File.chmod(staging, 0o700),
+           :ok <- File.write(Path.join(staging, Path.basename(marker)), "ok\n") do
+        Ezagent.Agent.Materializer.materialize_with_grant(%{
+          agent_uri: URI.to_string(agent_uri),
+          staging: staging,
+          secret_relpaths: secret_relpaths(),
+          source_dir_for: source_dir_for,
+          commit: fn ->
+            with :ok <- chmod_credential_files(staging),
+                 :ok <- swap_into_place(staging, target) do
+              {:ok, target}
+            end
+          end
+        })
+      end
+
+    case result do
+      {:ok, ^target} ->
+        {:ok, target}
+
+      {:error, reason} ->
+        _ = File.rm_rf(staging)
+        {:error, {:cascade_materialize_failed, reason}}
+    end
+  end
+
+  defp materialize_single_reference(target, reference_dir) do
     marker = Path.join(target, @config_complete_marker)
 
     cond do

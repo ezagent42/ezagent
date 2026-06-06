@@ -1832,7 +1832,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   @doc false
   @spec create_agent_config_dir(URI.t(), map()) ::
           {:ok, String.t() | nil} | {:error, term()}
-  def create_agent_config_dir(%URI{} = _agent_uri, tmpl) when is_map(tmpl) do
+  def create_agent_config_dir(%URI{} = agent_uri, tmpl) when is_map(tmpl) do
     # codex P2 closure — fail loud on a stale `"claude_config_dir"` data key
     # (the loader path bypasses `validate/1`). See
     # `reject_stale_config_dir_data_key!/1`.
@@ -1859,7 +1859,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
         # (which would re-introduce the plugin-picks-the-path scatter).
         case Map.fetch(tmpl, "allocated_config_dir") do
           {:ok, target} when is_binary(target) and target != "" ->
-            materialize_config_dir(target, ref)
+            materialize_config_dir(agent_uri, target, ref, tmpl)
 
           _ ->
             {:error, :config_dir_not_allocated}
@@ -1876,7 +1876,74 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # gets fully re-created. Codex PR3 round-1 HIGH-2.
   @config_complete_marker ".ezagent-config-complete"
 
-  defp materialize_config_dir(target, reference_dir) do
+  # #17 cascade PR-2 — dispatch on whether the caller supplied CASCADE inputs.
+  #
+  #  * NO cascade inputs (existing agents + every path until PR-3 wires the workspace/user
+  #    layer dirs + the credential grant): the single-reference materialize below — fully
+  #    backward-compatible, byte-for-byte the prior behavior.
+  #
+  #  * WITH cascade inputs (`tmpl["cascade"]`, supplied by the create chokepoint once PR-3
+  #    enumerates the layer dirs + mints the grant): merge layers 1→4 (§D4) into a staging
+  #    dir + copy ONLY `secret_relpaths` from the resolved credential source under the
+  #    TOCTOU-safe leased grant (§5.1), then atomic-replace into place (§7).
+  defp materialize_config_dir(%URI{} = agent_uri, target, reference_dir, tmpl)
+       when is_map(tmpl) do
+    case Map.get(tmpl, "cascade") do
+      %{} = cascade -> materialize_cascade(agent_uri, target, cascade)
+      _ -> materialize_single_reference(target, reference_dir)
+    end
+  end
+
+  # #17 cascade PR-2 (§D4 + §D6 + §5.1 + §7) — layered materialize for file flavors.
+  # `cascade` carries the resolved layer dirs + the secret-copy plumbing:
+  #
+  #   %{
+  #     layer_dirs: [%{dir: ..., protected: [...], mandatory: [...], mgmt_cap?: bool}],
+  #     source_dir_for: (source_uri -> {:ok, dir} | {:error, reason})  # grant-scoped read
+  #   }
+  #
+  # The secret copy + commit run under `Materializer.materialize_with_grant/2` so the
+  # grant is re-validated immediately before the atomic-replace commit (TOCTOU, §5.1):
+  # a revoke mid-start aborts before the dir is swapped + the subprocess launches.
+  defp materialize_cascade(%URI{} = agent_uri, target, cascade) do
+    marker = Path.join(target, @config_complete_marker)
+    staging = "#{target}.staging-#{System.unique_integer([:positive])}"
+    _ = File.rm_rf(staging)
+
+    layer_dirs = Map.fetch!(cascade, :layer_dirs)
+    source_dir_for = Map.fetch!(cascade, :source_dir_for)
+
+    result =
+      with :ok <- Ezagent.Agent.Materializer.merge_layers(staging, layer_dirs),
+           :ok <- maybe_overlay(if(File.dir?(target), do: target), staging),
+           :ok <- File.chmod(staging, 0o700),
+           :ok <- File.write(Path.join(staging, Path.basename(marker)), "ok\n") do
+        # Secret copy + atomic-replace commit, gated by the grant TOCTOU re-check.
+        Ezagent.Agent.Materializer.materialize_with_grant(%{
+          agent_uri: URI.to_string(agent_uri),
+          staging: staging,
+          secret_relpaths: secret_relpaths(),
+          source_dir_for: source_dir_for,
+          commit: fn ->
+            with :ok <- chmod_credentials(staging),
+                 :ok <- swap_into_place(staging, target) do
+              {:ok, target}
+            end
+          end
+        })
+      end
+
+    case result do
+      {:ok, ^target} ->
+        {:ok, target}
+
+      {:error, reason} ->
+        _ = File.rm_rf(staging)
+        {:error, {:cascade_materialize_failed, reason}}
+    end
+  end
+
+  defp materialize_single_reference(target, reference_dir) do
     marker = Path.join(target, @config_complete_marker)
 
     cond do
