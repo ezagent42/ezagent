@@ -138,7 +138,10 @@ defmodule EzagentPluginEcho.Application do
   """
   @impl Ezagent.Plugin
   def after_boot do
-    with {:ok, _pid} <- Ezagent.SpawnRegistry.spawn(default_uri()) do
+    default_uri = default_uri()
+    :ok = Ezagent.AgentFlavorAttributes.put(default_uri, "echo")
+
+    with {:ok, _pid} <- Ezagent.SpawnRegistry.spawn(default_uri) do
       :ok
     else
       {:error, reason} ->

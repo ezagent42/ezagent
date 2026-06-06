@@ -31,6 +31,13 @@ defmodule EzagentPluginEcho.Integration.PluginContractTest do
     assert template_class == Ezagent.PluginEcho.Template.EchoAgent
   end
 
+  test "default echo agent has stored flavor attributes for boot spawn resolution" do
+    default_uri = EzagentPluginEcho.Application.default_uri()
+
+    assert {:ok, "echo"} = Ezagent.AgentFlavorAttributes.get(default_uri)
+    assert {:ok, _pid} = Ezagent.KindRegistry.lookup(default_uri)
+  end
+
   test "echo's behaviors/0 were published to BehaviorRegistry by boot/1" do
     assert {:ok, Ezagent.Behavior.Echo} =
              Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Echo, :say)
