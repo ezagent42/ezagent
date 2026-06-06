@@ -10,6 +10,14 @@
 
 **Spec:** `docs/superpowers/specs/2026-06-06-agent-provisioning-cascade-design.md` (rev 4). This plan implements PR-0 from §9; §5.1 (grant), §5.2 (user source), §D6 (adapter split). PR-1..PR-4 get their own plans after PR-0 lands.
 
+**Plan rev 3** — codex final-gate round (4 HIGH) folded: GrantCap derives `workspace_uri`
+via `Capability.workspace_of/1` (a `workspace://` URI) so the cap actually matches the
+dispatch + asserts `matches?/2`; Task 6 invariant drops the removed `credential_grant_uri`
+and checks the cataloged `system://credential-materializer` instead; the user-source write
+goes through a cap-checked **Behavior chokepoint** (`:set_default_credential_source`,
+dispatch = cap-check + audit), with `set/4` as the action body (validation only) and
+**adoption dispatching the same action** (no raw setter, no audit placeholder).
+
 **Plan rev 2** — codex adversarial-review of rev 1 (1 CRIT + 2 HIGH + 1 MED) folded:
 - CRIT: user-source write is now the AUTHORIZED, cap-checked + fully-validated path (Task 4 `set/5` takes caller/caps, validates owner/ws/flavor/source-kind/existence, audits) — not punted to the caller.
 - HIGH: grant principal redesigned for the CLOSED Catalog + real `Capability.cap/5` — a cataloged materializer identity + a per-grant narrow derived read cap, NOT a dynamic `system://credential-grant/<id>` URI (Task 3).
@@ -384,13 +392,18 @@ defmodule Ezagent.Credential.GrantCapTest do
   use ExUnit.Case, async: true
   alias Ezagent.Credential.GrantCap
 
-  test "derives a single narrow read cap (cap/5) scoped to the approved source + workspace" do
+  test "derives a narrow read cap that MATCHES the real sandbox.read dispatch needed-cap" do
     source = Ezagent.URI.parse!("entity://team-a/agent/alice-base")
-    cap = GrantCap.read_cap_for(source, "team-a")
-    # exact shape: a cap/5 with instance = the source URI, workspace scoped, action :read
+    cap = GrantCap.read_cap_for(source)
+    # scoped, not wildcard
     assert %Ezagent.Capability{action: :read, instance: ^source} = cap
-    assert cap.workspace_uri != :any        # scoped, not wildcard
-    assert cap.instance != :any
+    assert cap.workspace_uri != :any and cap.instance != :any
+    # the cap the dispatch will check for `sandbox.read` on source — build it the SAME
+    # way the runtime does and assert our derived cap satisfies it (consult kind/runtime.ex
+    # for how the needed-cap is constructed for a :read dispatch).
+    needed = Ezagent.Capability.cap(:agent, Ezagent.Behavior.Sandbox, :read, source,
+               Ezagent.Capability.workspace_of(source))
+    assert Ezagent.Capability.matches?(cap, needed)
   end
 end
 ```
@@ -400,15 +413,24 @@ end
 ```elixir
 defmodule Ezagent.Credential.GrantCap do
   @moduledoc "Derives the least-privilege source-read cap for a validated credential grant (spec §5.1, codex H1). Caller passes this single cap as the dispatch caps for the source read — never a broad set."
-  @doc "A narrow `sandbox`/source read cap scoped to exactly `source_uri` in `workspace_uri`."
-  def read_cap_for(%URI{} = source_uri, workspace_uri) do
+  @doc \"\"\"
+  A narrow source-read cap scoped to exactly `source_uri`. The workspace MUST be derived
+  the SAME way the dispatch derives it — `Ezagent.Capability.workspace_of/1` returns a
+  `workspace://<ws>` URI, and `Capability.matches?/2` requires exact workspace-URI equality
+  (codex: a raw `"team-a"` string would NOT match → read denied).
+  \"\"\"
+  def read_cap_for(%URI{} = source_uri) do
+    ws_uri = Ezagent.Capability.workspace_of(source_uri)   # %URI{scheme: "workspace"}
     # (kind, behavior_module, :read) per the --from source-read dispatch (Step 1 consult).
-    Ezagent.Capability.cap(:agent, Ezagent.Behavior.Sandbox, :read, source_uri, workspace_uri)
+    Ezagent.Capability.cap(:agent, Ezagent.Behavior.Sandbox, :read, source_uri, ws_uri)
   end
 end
 ```
 
-> Confirm the exact `(kind, behavior_module)` for a source `:read` against `resolve_source_config_dir/2`'s dispatch + the BehaviorRegistry entry that serves `:read` on an agent source; the cap MUST match what CapBAC checks for that dispatch or the materialize read will be denied.
+> Confirm the exact `(kind, behavior_module)` for a source `:read` against
+> `resolve_source_config_dir/2`'s dispatch + the BehaviorRegistry entry that serves `:read`.
+> The test (Step 3) MUST assert the derived cap actually `Capability.matches?/2` the
+> needed-cap the dispatch builds for `sandbox.read` on `source_uri` — not just field shape.
 
 - [ ] **Step 5: Run tests to verify they pass**
 
@@ -445,51 +467,53 @@ defmodule Ezagent.Credential.UserDefaultSourceTest do
   # "bob-base"; a codex agent owned by alice: "alice-codex". `owner_caps/0` = alice's
   # own caps; `admin_caps/0` = system admin caps; `stranger_caps/0` = unrelated caps.
 
-  test "owner sets + resolves their default; re-set upserts (unique per owner/ws/flavor)" do
+  # --- set/4 (action BODY: validation + persist), called directly ---
+  test "valid source: sets + resolves; re-set upserts (unique per owner/ws/flavor)" do
     src = "entity://team-a/agent/alice-base"
-    assert {:ok, _} = UDS.set(@owner, @ws, "cc", src, caller: @owner, caps: owner_caps())
+    assert {:ok, _} = UDS.set(@owner, @ws, "cc", src)
     assert UDS.resolve(@owner, @ws, "cc") == src
     src2 = "entity://team-a/agent/alice-base2"
-    assert {:ok, _} = UDS.set(@owner, @ws, "cc", src2, caller: @owner, caps: owner_caps())
+    assert {:ok, _} = UDS.set(@owner, @ws, "cc", src2)
     assert UDS.resolve(@owner, @ws, "cc") == src2
   end
 
-  test "rejects an unauthorized caller (not owner, not admin)" do
-    assert {:error, :unauthorized} =
-             UDS.set(@owner, @ws, "cc", "entity://team-a/agent/alice-base",
-                     caller: "entity://team-a/user/eve", caps: stranger_caps())
-  end
-
   test "rejects a source owned by another user in the same workspace (codex H4)" do
-    assert {:error, :source_owner_mismatch} =
-             UDS.set(@owner, @ws, "cc", "entity://team-a/agent/bob-base",
-                     caller: @owner, caps: owner_caps())
+    assert {:error, :source_owner_mismatch} = UDS.set(@owner, @ws, "cc", "entity://team-a/agent/bob-base")
   end
 
   test "rejects a source of the wrong flavor" do
-    assert {:error, :source_flavor_mismatch} =
-             UDS.set(@owner, @ws, "cc", "entity://team-a/agent/alice-codex",
-                     caller: @owner, caps: owner_caps())
+    assert {:error, :source_flavor_mismatch} = UDS.set(@owner, @ws, "cc", "entity://team-a/agent/alice-codex")
   end
 
   test "rejects a cross-workspace source" do
-    assert {:error, :source_workspace_mismatch} =
-             UDS.set(@owner, @ws, "cc", "entity://team-b/agent/x",
-                     caller: @owner, caps: owner_caps())
+    assert {:error, :source_workspace_mismatch} = UDS.set(@owner, @ws, "cc", "entity://team-b/agent/x")
   end
 
   test "rejects a non-existent source" do
-    assert {:error, :source_not_found} =
-             UDS.set(@owner, @ws, "cc", "entity://team-a/agent/ghost",
-                     caller: @owner, caps: owner_caps())
+    assert {:error, :source_not_found} = UDS.set(@owner, @ws, "cc", "entity://team-a/agent/ghost")
   end
 
   test "absent pointer resolves to nil (caller falls through to workspace-shared, not crash)" do
     assert UDS.resolve(@owner, @ws, "codex") == nil
   end
+end
+```
 
-  test "a successful set emits an audit event" do
-    # assert via the audit log / telemetry the project uses (consult Ezagent.Audit tests)
+And a Behavior/dispatch test (auth + audit — the authorized chokepoint, codex CRIT):
+
+```elixir
+defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
+  use EzagentCore.DataCase, async: false
+  # dispatch the :set_default_credential_source action via Ezagent.Router (consult an
+  # existing WorkspaceUserAdmin dispatch test for the Cmd/ctx + caps fixtures).
+
+  test "owner (or admin) can set; a stranger is denied :unauthorized by CapBAC" do
+    # owner caps → {:ok, _}; stranger caps → {:error, :unauthorized}
+  end
+
+  test "a successful dispatch writes an audit row" do
+    # assert against the project's real audit sink (the dispatch path audits — consult
+    # how WorkspaceUserAdmin :create_user audit is asserted).
   end
 end
 ```
@@ -551,47 +575,54 @@ defmodule Ezagent.Credential.UserDefaultSource do
   defp id(owner, ws, flavor), do: "#{owner}|#{ws}|#{flavor}"
 
   @doc \"\"\"
-  Set/replace the default source. This is the AUTHORIZED write path (codex CRIT) — it
-  cap-checks the caller AND validates the pointed source. `opts` MUST carry `:caller`
-  (principal URI) + `:caps`. Authorization: the caller is the `owner` itself OR holds an
-  admin/manage cap (use the SAME cap seam the user/admin Behaviors use — consult
-  `apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex` for the manage-cap
-  check and `Ezagent.Capability.matches?/2`). Validation (all required, fail loud):
-    1. caller authorized (owner or admin) — else `{:error, :unauthorized}`;
-    2. source exists (KindRegistry/snapshot lookup) — else `{:error, :source_not_found}`;
-    3. source's workspace == `ws` — else `{:error, :source_workspace_mismatch}`;
-    4. source belongs to `owner` (created_by/owner of the source agent == owner) — else
-       `{:error, :source_owner_mismatch}` (blocks redirect to another user's same-ws agent);
-    5. source's flavor == `flavor` (via `Ezagent.UriQuery.resolve(:flavor, source)`) — else
+  Action BODY for setting the default source — VALIDATION + persist only. This is NOT a
+  public unauthenticated setter: the AUTHORIZED entry point is the cap-checked Behavior
+  action `:set_default_credential_source` (see below), dispatched via `Ezagent.Router`,
+  which performs the cap-check AND the audit automatically (the dispatch path writes the
+  audit row — consult `Ezagent.Behavior.WorkspaceUserAdmin` `:create_user` for the
+  cap-check + audit pattern). `set/4` is reachable ONLY from that action body and from the
+  adoption action (Task 5), which also dispatches — there is no raw cap-less call site
+  (closes codex CRIT: single cap-checked + audited chokepoint).
+
+  Validation (all required, fail loud):
+    1. source parses + exists (KindRegistry lookup) — else `{:error, :source_not_found}`;
+    2. source's workspace == `ws` — else `{:error, :source_workspace_mismatch}`;
+    3. source belongs to `owner` (lineage/owner of the source agent == owner, via
+       `Ezagent.AgentLineage` / the source's owner attr) — else `{:error, :source_owner_mismatch}`
+       (blocks redirect to another user's same-workspace agent);
+    4. source's flavor == `flavor` (via `Ezagent.UriQuery.resolve(:flavor, source)`) — else
        `{:error, :source_flavor_mismatch}`.
-  On success: upsert + emit an audit event (`Ezagent.Audit`, same pattern as cap grants).
   \"\"\"
-  def set(owner, ws, flavor, source_uri, opts) do
-    caller = Keyword.fetch!(opts, :caller)
-    caps = Keyword.fetch!(opts, :caps)
-
-    with :ok <- authorize_write(owner, caller, caps),
-         {:ok, source} <- Ezagent.URI.parse(source_uri),
+  def set(owner, ws, flavor, source_uri) do
+    with {:ok, source} <- Ezagent.URI.parse(source_uri),
          :ok <- validate_source(source, owner, ws, flavor) do
-      result =
-        %__MODULE__{}
-        |> cast(%{id: id(owner, ws, flavor), owner_uri: owner, workspace_uri: ws,
-                  flavor: flavor, source_uri: source_uri, set_by: caller},
-                [:id, :owner_uri, :workspace_uri, :flavor, :source_uri, :set_by])
-        |> validate_required([:id, :owner_uri, :workspace_uri, :flavor, :source_uri, :set_by])
-        |> Repo.insert(on_conflict: {:replace, [:source_uri, :set_by, :updated_at]},
-                       conflict_target: :id)
-
-      with {:ok, row} <- result do
-        Ezagent.Audit.emit(:user_default_credential_source_set,
-          %{owner: owner, workspace: ws, flavor: flavor, source: source_uri, by: caller})
-        {:ok, row}
-      end
+      %__MODULE__{}
+      |> cast(%{id: id(owner, ws, flavor), owner_uri: owner, workspace_uri: ws,
+                flavor: flavor, source_uri: source_uri, set_by: owner},
+              [:id, :owner_uri, :workspace_uri, :flavor, :source_uri, :set_by])
+      |> validate_required([:id, :owner_uri, :workspace_uri, :flavor, :source_uri, :set_by])
+      |> Repo.insert(on_conflict: {:replace, [:source_uri, :set_by, :updated_at]},
+                     conflict_target: :id)
     end
   end
 
-  # authorize_write/validate_source/validate_source helpers — implement per the consults
-  # above; each returns :ok | {:error, reason}. Tests below drive them.
+  # validate_source/4 — implements checks 1-4; returns :ok | {:error, reason}. Tests drive it.
+```
+
+**The authorized chokepoint** — add a Behavior action `:set_default_credential_source`
+(on the User Kind, mirroring `Ezagent.Behavior.WorkspaceUserAdmin`): its `invoke/…`
+runs under CapBAC (caller must be the owner OR hold the admin/manage cap) and the
+dispatch path emits the audit row; the action body calls `UserDefaultSource.set/4`. The
+Behavior is the ONLY public way to write the pointer. Tests below exercise it via
+`Ezagent.Router.dispatch` (auth + audit), plus `set/4` directly for the validation cases.
+
+```elixir
+  # (Behavior sketch — place in the User-Kind behavior app; consult WorkspaceUserAdmin)
+  # def invoke(:set_default_credential_source, %{flavor: f, source_uri: s} = args, ctx) do
+  #   # ctx.caller + ctx.caps already cap-checked by the dispatch layer for this action+cap;
+  #   # the action's cap subject = own-user-or-admin. Then:
+  #   UserDefaultSource.set(ctx.self_uri_owner, workspace_of(ctx), f, s)
+  # end
 
   @doc "Resolve the source URI, or nil if unset (caller falls through to workspace-shared)."
   def resolve(owner, ws, flavor) do
@@ -665,11 +696,14 @@ defmodule Ezagent.Credential.AdoptTest do
   use EzagentCore.DataCase, async: false
   alias Ezagent.Credential.{Adopt, UserDefaultSource}
 
-  test "adopts a single unambiguous existing source as the user default" do
-    # given exactly one cc agent owned by alice in team-a carrying credentials:
+  # setup must create cc agent "alice-base" owned by alice in team-a (so validation passes).
+  # admin_caps/0 = operator/admin caps; stranger_caps/0 = unrelated.
+
+  test "adopts a single unambiguous existing source via the authorized dispatch" do
     candidates = ["entity://team-a/agent/alice-base"]
     assert {:ok, "entity://team-a/agent/alice-base"} =
-             Adopt.adopt("entity://team-a/user/alice", "team-a", "cc", candidates)
+             Adopt.adopt("entity://team-a/user/alice", "team-a", "cc", candidates,
+               caller: "system://admin", caps: admin_caps())
     assert UserDefaultSource.resolve("entity://team-a/user/alice", "team-a", "cc") ==
              "entity://team-a/agent/alice-base"
   end
@@ -677,7 +711,15 @@ defmodule Ezagent.Credential.AdoptTest do
   test "REFUSES when multiple candidates are ambiguous (no silent guess)" do
     candidates = ["entity://team-a/agent/a1", "entity://team-a/agent/a2"]
     assert {:error, {:ambiguous, ^candidates}} =
-             Adopt.adopt("entity://team-a/user/alice", "team-a", "cc", candidates)
+             Adopt.adopt("entity://team-a/user/alice", "team-a", "cc", candidates,
+               caller: "system://admin", caps: admin_caps())
+  end
+
+  test "adoption with non-operator caps is denied by the dispatch (no bypass)" do
+    candidates = ["entity://team-a/agent/alice-base"]
+    assert {:error, :unauthorized} =
+             Adopt.adopt("entity://team-a/user/alice", "team-a", "cc", candidates,
+               caller: "entity://team-a/user/eve", caps: stranger_caps())
   end
 end
 ```
@@ -691,17 +733,29 @@ Expected: FAIL — module missing.
 
 ```elixir
 defmodule Ezagent.Credential.Adopt do
-  @moduledoc "One-time migration: adopt an existing per-agent credential as a user's default source (§5.2). Refuses ambiguity rather than guessing."
-  alias Ezagent.Credential.UserDefaultSource
+  @moduledoc "One-time migration: adopt an existing per-agent credential as a user's default source (§5.2). Refuses ambiguity rather than guessing. Writes go through the SAME authorized, cap-checked, audited chokepoint (the :set_default_credential_source Behavior dispatch) — NOT a raw setter (codex CRIT: no unauthenticated side path)."
 
-  @spec adopt(String.t(), String.t(), String.t(), [String.t()]) ::
+  @spec adopt(String.t(), String.t(), String.t(), [String.t()], keyword()) ::
           {:ok, String.t()} | {:error, term()}
-  def adopt(owner, ws, flavor, candidates) do
+  def adopt(owner, ws, flavor, candidates, opts) do
+    operator = Keyword.fetch!(opts, :caller)   # operator/admin principal
+    caps = Keyword.fetch!(opts, :caps)
+
     case candidates do
       [single] ->
-        with {:ok, _} <- UserDefaultSource.set(owner, ws, flavor, single, set_by: owner) do
-          {:ok, single}
+        # dispatch the authorized action (cap-check + audit + validation), as the
+        # operator, targeting `owner`'s default. Consult Router/Cmd shape + the
+        # :set_default_credential_source action's args.
+        cmd = Ezagent.Cmd.new(
+          Ezagent.URI.parse!(owner), :set_default_credential_source,
+          %{flavor: flavor, source_uri: single, workspace: ws},
+          %{caller: operator, caps: caps})
+
+        case Ezagent.Router.dispatch(cmd) do
+          {:ok, _} -> {:ok, single}
+          err -> err
         end
+
       [] -> {:error, :no_candidate}
       many -> {:error, {:ambiguous, many}}
     end
@@ -709,7 +763,7 @@ defmodule Ezagent.Credential.Adopt do
 end
 ```
 
-The Mix task `ezagent.credential.adopt` discovers candidates (existing agents owned by `owner` in `ws` with `flavor` that have credentials) and calls `adopt/4`, printing the `:ambiguous` list for the operator to resolve with an explicit `--source`. (Candidate discovery: reuse the agent listing already used by `mix ezagent` user/agent tasks; keep the task thin.)
+The Mix task `ezagent.credential.adopt` discovers candidates (existing agents owned by `owner` in `ws` with `flavor` that have credentials), builds the operator principal + caps (admin), and calls `adopt/5`, printing the `:ambiguous` list for the operator to resolve with an explicit `--source`. (Candidate discovery: reuse the agent listing already used by `mix ezagent` user/agent tasks; keep the task thin.)
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -736,10 +790,14 @@ git commit -m "feat(#17 cascade PR-0): credential adoption migration — refuses
 defmodule Ezagent.Invariants.CascadePr0FoundationsTest do
   use ExUnit.Case, async: true
 
-  test "grant store, user-source registry, grant principal, adapter split all present" do
+  test "grant store, user-source registry, grant cap, adapter split all present" do
     assert Code.ensure_loaded?(Ezagent.Credential.GrantRow)
     assert Code.ensure_loaded?(Ezagent.Credential.UserDefaultSource)
-    assert function_exported?(Ezagent.SystemPrincipal, :credential_grant_uri, 1)
+    assert function_exported?(Ezagent.Credential.GrantCap, :read_cap_for, 1)
+    # the cataloged materializer identity exists; the REJECTED per-grant dynamic principal does NOT
+    assert Ezagent.SystemPrincipal.Catalog.member?(
+             Ezagent.URI.parse!("system://credential-materializer"))
+    refute function_exported?(Ezagent.SystemPrincipal, :credential_grant_uri, 1)
     assert function_exported?(Ezagent.PluginCc.Template.CcAgent, :secret_relpaths, 0)
     # secret/config disjoint per flavor (H4 invariant)
     assert "config.toml" not in Ezagent.PluginCodex.Template.CodexAgent.secret_relpaths()
