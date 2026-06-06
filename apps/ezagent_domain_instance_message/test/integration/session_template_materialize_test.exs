@@ -752,18 +752,26 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
   test "a spawn-succeeds-but-join-fails member leaves NO orphan (codex cycle-2 MAJOR #2)" do
     n = uniq()
     template_name = "joinfail-team-#{n}"
-    # Two members sharing the SAME role_name but DIFFERENT flavors. role_name
-    # is UNIQUE-per-session (Chat.do_join's role_name_conflict guard), so:
-    #   * member A (echo flavor) spawns to echo_<...> + joins OK → role held;
-    #   * member B (cc flavor) — a DIFFERENT flavor → a DIFFERENT instance URI
-    #     (cc_<...>) — spawns FRESH through `spawn_from_template_content/4`
-    #     (which binds workspace + records lineage), then its faceted
-    #     chat.join is REJECTED with a role_name conflict. That is the genuine
-    #     spawn-succeeds/join-fails orphan case — no production test-hook
-    #     needed.
+    # Two members sharing the SAME role_name but DIFFERENT URIs. role_name is
+    # UNIQUE-per-session (Chat.do_join's role_name_conflict guard), so:
+    #   * member A is a predeclared plain echo agent that joins OK and holds
+    #     the role_name.
+    #   * member B is a cc AgentTemplate member with the SAME role_name; it
+    #     spawns FRESH through `spawn_from_template_content/4` (which binds
+    #     workspace + records lineage), then its faceted chat.join is REJECTED
+    #     with a role_name conflict. That is the genuine spawn-succeeds /
+    #     join-fails orphan case — no production test-hook needed.
+    #
+    # This deliberately does NOT rely on different flavors producing different
+    # materialized URIs. PR-E removed flavor prefixes from agent URI names, so
+    # two spawned members with the same role in the same session are the same
+    # deterministic member URI and rejoin idempotently instead of conflicting.
     role_name = "shared-role-#{n}"
-    echo_source = seed_agent_template(n)
     cc_source = seed_cc_agent_template(n)
+    plain_member_uri = Ezagent.URI.agent("system", "join-holder-#{n}")
+    :ok = Ezagent.AgentFlavorAttributes.put(plain_member_uri, "echo")
+
+    on_exit(fn -> Ezagent.AgentFlavorAttributes.delete(plain_member_uri) end)
 
     content = %{
       name: template_name,
@@ -776,10 +784,10 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
       created_at: ~U[2026-06-01 00:00:00Z],
       members: [
         %{
-          uri: nil,
+          uri: plain_member_uri,
           role_name: role_name,
           in_session_template: true,
-          source_template_uri: echo_source
+          source_template_uri: nil
         },
         %{
           uri: nil,
@@ -800,7 +808,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     disc = EzagentDomainInstanceMessage.session_discriminator(session_uri)
 
     # The cc member's session-unique URI (spawned FRESH, then its join fails).
-    cc_instance = "cc_" <> Ezagent.Entity.Agent.session_instance_name(role_name, disc)
+    cc_instance = Ezagent.Entity.Agent.session_instance_name(role_name, disc)
     cc_member_uri = URI.new!("entity://system/agent/#{cc_instance}")
 
     assert {:error, _reason} =
@@ -820,6 +828,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
            "spawn-succeeds/join-fails must sweep the workspace binding"
 
     cleanup_session(session_uri)
+    cleanup_agent(plain_member_uri)
     cleanup_agent(cc_member_uri)
   end
 
