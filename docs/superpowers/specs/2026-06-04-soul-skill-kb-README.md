@@ -1,4 +1,4 @@
-# Soul / Reference / KB 三层设计 — 方案导览
+# Soul / Skill / KB 三层设计 — 方案导览
 
 **完整 SPEC**: `docs/superpowers/specs/2026-06-04-soul-skill-kb-design.md`
 **架构图**: `docs/superpowers/specs/2026-06-04-soul-skill-kb-diagram.excalidraw`
@@ -9,7 +9,7 @@
 
 ## 一句话
 
-将旧 AutoService 的 soul/skill/flow_chunk/KB 迁移到 ezagent **三层模型** (Soul / Reference / KB)，**不建新 Kind/Behavior/Action/Scheme**，domain/core 零变更。
+将旧 AutoService 的 soul/skill/flow_chunk/KB 迁移到 ezagent **三层模型** (Soul / Skill / KB)，**不建新 Kind/Behavior/Action/Scheme**，domain/core 零变更。
 
 ---
 
@@ -21,7 +21,7 @@
 Soul            始终在 prompt 中       ~15KB 预算   ✅
 (inline)        渲染进 CLAUDE.md                    {{key}} 占位符
 
-Reference       磁盘 .md 文件         无限制        ✅ 可 (Phase 2)
+Skill       磁盘 .md 文件         无限制        ✅ 可 (Phase 2)
 (on-disk)       Read 工具按需加载                   MVP 直接 copy
                 索引注入 soul
 
@@ -32,12 +32,12 @@ KB              MCP tool 查询          无限制        ❌
 
 ### 为什么是三层
 
-旧 AutoService 四层 (soul/skill/flow_chunk/KB) 中 skill 和 flow_chunk 加载方式完全相同 (磁盘文件 + Read on demand)，合并为 Reference。旧 soul 76KB 不是必须 — 解剖后真正 inline 的只有 ~15KB:
+旧 AutoService 四层 (soul/skill/flow_chunk/KB) 中 skill 和 flow_chunk 加载方式完全相同 (磁盘文件 + Read on demand)，合并为 Skill。旧 soul 76KB 不是必须 — 解剖后真正 inline 的只有 ~15KB:
 
 ```
 旧 soul 76KB → 新架构:
-  Soul inline:     ~15KB (身份/安全/分类 + {{slot}} key 引用 + Reference 索引)
-  Reference:       ~12KB (详细流程, Read on demand)
+  Soul inline:     ~15KB (身份/安全/分类 + {{slot}} key 引用 + Skill 索引)
+  Skill:       ~12KB (详细流程, Read on demand)
   KB:              ~80KB (产品术语, MCP query, 不占 prompt)
 ```
 
@@ -86,7 +86,7 @@ Tenant LV:
 | §1 | 核心模型: 三层 + 分离判据 + AutoService 实施经验 | 所有人 |
 | §2 | 模板从哪里来 (迁移/冷启动/三层决策) | 产品/架构 |
 | §3 | 变更清单 (domain 归零的理由) | 架构/开发 |
-| §4 | 文件布局约定 + Reference discovery 机制 | 开发 |
+| §4 | 文件布局约定 + Skill discovery 机制 | 开发 |
 | §5 | 编辑流程 (LV + dispatch + Editor Agent) | 开发 |
 | §6 | 渲染流程 (Template Class instantiate) | 开发 |
 | §7 | 模板更新传播 (re-spawn 约束) | 架构 |

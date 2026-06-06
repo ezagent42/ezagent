@@ -44,8 +44,7 @@ defmodule EzagentPluginAutoservice.CinnoxAssets do
 
   - there *is* a `kb_search` tool (our vendored MCP sidecar)
   - there is *no* `<kb_context>` auto-injection
-  - there is *no* auto skill-loader; the agent must Read local SKILL.md
-    / flow / reference files itself
+  - there is *no* auto skill-loader; the agent must Read local skill files itself
   - the agent must answer through the chat channel directly
   """
   def build_cc_claude_md do
@@ -61,10 +60,10 @@ defmodule EzagentPluginAutoservice.CinnoxAssets do
     >   - There is **no `<kb_context>` auto-injection** here. When you need
     >     product facts you must **call `kb_search` yourself**.
     >
-    > **Flows / skills / references are local files — use the Read tool:**
-    >   - flows:      `plugins/cinnox/flow_chunks/*.md`
-    >   - references: `plugins/cinnox/references/*`
-    >   - skills:     `plugins/cinnox/skills/customer/<name>/SKILL.md`
+    > **Skills are local files — use the Read tool:**
+    >   - skills:      `plugins/cinnox/skills/customer/<name>/SKILL.md`
+    >   - flow chunks: `plugins/cinnox/flow_chunks/*.md`
+    >   - references:  `plugins/cinnox/references/*`
     >   - (no auto skill-loader; Read the SKILL.md yourself when a flow applies)
     >
     > **Replying:** the customer only sees text you send through your channel

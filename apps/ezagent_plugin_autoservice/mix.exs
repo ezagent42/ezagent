@@ -50,7 +50,7 @@ defmodule EzagentPluginAutoservice.MixProject do
       # Session Kind + Chat behavior + EzagentDomainChat facade — the
       # customer-service session is a plain Session with a fixed
       # fast(+slow) agent team.
-      {:ezagent_domain_chat, in_umbrella: true},
+      {:ezagent_domain_instance_message, in_umbrella: true},
       # shadcn-like HEEx primitives shared across plugin UIs (used by the
       # customer + operator chat LiveViews).
       {:ezagent_domain_ui, in_umbrella: true},

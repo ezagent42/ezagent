@@ -1,6 +1,6 @@
 # SPEC — Soul / Skill / KB 设计（最小 domain 变更）
 
-**Status:** r13 — 吸取 AutoService 实施经验: Soul lint gate、Reference discovery 机制、路径权限、Phase 0 实测数据
+**Status:** r13 — 吸取 AutoService 实施经验: Soul lint gate、Skill discovery 机制、路径权限、Phase 0 实测数据
 **Branch:** `autoservice-dev`
 **参考:** AutoService `docs/superpowers/specs/2026-06-05-soul-reference-kb-design.md` (同架构实现版)
 
@@ -33,18 +33,18 @@
   升级策略                  ~1KB   (inline)
   对话风格                  ~2KB   (inline)
   
-  详细流程步骤 (lead/new/bug) ~10KB  → 提取到 Reference (Read on demand)
+  详细流程步骤 (lead/new/bug) ~10KB  → 提取到 Skill (Read on demand)
   tenant 可变文本             ~5KB  → {{slot}} 替代后只剩 ~0.5KB key 引用
-  示例/案例                   ~2KB  → 提取到 Reference
+  示例/案例                   ~2KB  → 提取到 Skill
   
   产品术语/价格/规格         ~80KB  → KB glossary (queryable, 不占 prompt)
 
 → 真正必须在 prompt 中的: ~13.5KB
 ```
 
-**有了 slot 模型 + KB + Reference 分离后，soul 目标预算 ~15KB（迁移场景可达，冷启动需配合提取 gate）。三层足够:**
+**有了 slot 模型 + KB + Skill 分离后，soul 目标预算 ~15KB（迁移场景可达，冷启动需配合提取 gate）。三层足够:**
 
-旧系统的四层（soul/skill/flow_chunk/KB）中，`skill` vs `flow_directive` 标签是历史产物，两者加载方式完全相同（磁盘文件 + Read on demand），合并为 Reference。
+旧系统的四层（soul/skill/flow_chunk/KB）中，`skill` vs `flow_directive` 标签是历史产物，两者加载方式完全相同（磁盘文件 + Read on demand），合并为 Skill。
 
 ```
                 加载方式              大小         有 slot?      
@@ -52,7 +52,7 @@
 Soul           始终在 prompt 中       ~15KB 预算   ✅ {{key}}
 (inline)       渲染进 CLAUDE.md                    
 
-Reference      磁盘文件               无限制        ✅ 可以 (Phase 2)
+Skill          磁盘文件               无限制        ✅ 可以 (Phase 2)
 (on-disk)      Read 工具按需加载                   MVP: 直接 copy, 不渲染 slot
 
 KB             MCP tool 查询          无限制        ❌
@@ -62,13 +62,13 @@ KB             MCP tool 查询          无限制        ❌
 
 **旧系统的分离需要重新审视** — 不要因为旧系统把某个值放在 `customer.yaml` 就认定它是 slot，也不要因为旧系统把某段文本放在 skill 里就认定它不该有 slot。Template Authoring Agent 重新分析，从第一性原则出发。
 
-### 1.4 分离判据：什么进 Soul、什么进 Reference、什么进 KB
+### 1.4 分离判据：什么进 Soul、什么进 Skill、什么进 KB
 
-| 判据 | Soul (inline) | Reference (on-disk) | KB (queryable) |
+| 判据 | Soul (inline) | Skill (on-disk) | KB (queryable) |
 |------|:--:|:--:|:--:|
 | **Agent 每次回复都需要？** | ✅ | ❌ (按场景 Read) | ❌ (按查询 MCP) |
 | **影响 agent 身份/安全？** | ✅ (banned patterns, 身份) | ❌ | ❌ |
-| **体积大 (>2KB)？** | ❌ (提取到 Reference) | ✅ | ✅ |
+| **体积大 (>2KB)？** | ❌ (提取到 Skill) | ✅ | ✅ |
 | **需要结构化查询？** | ❌ | ❌ | ✅ (术语搜索) |
 | **因租户不同而变化？** | → `{{slot}}` | → 分析决定是否 `{{slot}}` | ❌ (system only) |
 | **是 smoke contract？** | ✅ (必须 inline) | ❌ (但不能依赖 Read 成功) | — |
@@ -92,13 +92,13 @@ Template Authoring Agent 分析流程:
   │   输出: "建议 47 个 key 标记为 {{slot}}，18 个锁定为 body（跨租户一致），
   │          35 个进一步分析（数据不足）"
   │
-  ├── Step 2: 识别 Reference 提取候选
+  ├── Step 2: 识别 Skill 提取候选
   │   对于 soul 中 >2KB 的连续段落:
   │     - 是否每次对话都需要？→ 如果是，保持 inline
-  │     - 是否只在特定场景需要？→ 建议提取到 Reference 文件
+  │     - 是否只在特定场景需要？→ 建议提取到 Skill 文件
   │   对于 skills/flow_chunks 中有重复参数的:
   │     - "retry=2" 出现在 3 个地方 → 建议 1 个 {{slot}}，3 个文件引用它
-  │   输出: "建议提取 5 个 section 到 Reference 文件，
+  │   输出: "建议提取 5 个 section 到 Skill 文件，
   │          合并 skills 和 flow_chunks 中的重复参数为 12 个共享 {{slot}}"
   │
   ├── Step 3: 识别 KB 候选
@@ -122,13 +122,13 @@ Template Authoring Agent:
   ├── 从骨架模板开始（6 个通用 section: identity/purpose/gate/escalation/conversation/privacy）
   ├── 分析产品文档 → 预填 soul 内容
   ├── 保守策略: 初始全部标记为 {{slot}}（不确定就先开放）
-  ├── 没有 Reference 文件（等试运行后识别提取候选）
+  ├── 没有 Skill 文件（等试运行后识别提取候选）
   └── 生成 KB 条目（从文档提取术语 → 初始 glossary）
   │
   ▼
 试运行 2-3 周:
   ├── 观察哪些 {{slot}} 从未被改过 → 候选锁定为 body
-  ├── 观察哪些 soul section 在对话中从未被触发 → 候选提取到 Reference
+  ├── 观察哪些 soul section 在对话中从未被触发 → 候选提取到 Skill
   │   (通过 transcript review 或 agent response 引用分析，非 Read 调用计数)
   ├── 观察哪些 KB 条目被频繁查询 → 扩充 KB
   └── Template Authoring Agent 分析数据 → 建议收敛 → 人类 review
@@ -145,8 +145,8 @@ Soul (inline)           AgentTemplate.soul_slot_values       LV → dispatch
   .md 模板文件            (flavor extra — 扩展现有 schema,    template.write
   含 {{key}} 占位符       cc 的 prompt/model 不进 Slice)
 
-Reference (on-disk)     priv/ 下 .md 文件                    直接文件编辑
-  可以含 {{key}}         AgentTemplate.reference_slot_values  或 LV (如果需要 slot)
+Skill (on-disk)     priv/ 下 .md 文件                    直接文件编辑
+  可以含 {{key}}         AgentTemplate.skill_slot_values  或 LV (如果需要 slot)
                          (如果需要 slot，同 soul 模式)
 
 KB (queryable)          kb.db + MCP script                   KBCurator Agent
@@ -163,31 +163,31 @@ AutoService 实测 soul 从 1337 行 (~52KB) 瘦身到 ~440 行 (~20KB) (Phase 0
 
 | Rule | 阈值 | 行为 |
 |------|------|------|
-| Soul size warning | > 25KB | WARNING — 建议分析可提取到 Reference 的内容 |
+| Soul size warning | > 25KB | WARNING — 建议分析可提取到 Skill 的内容 |
 | Soul size error | > 30KB | ERROR — 阻止合入，必须提取或写豁免说明 |
 
 Phase 1 作为 manual check，Phase 3 瘦身后作为 CI gate 加入。
 
-**B. Reference discovery 机制**
+**B. Skill discovery 机制**
 
-AutoService 实现: 加载器扫描 Reference 目录 → 生成索引 → 注入 Soul。ezagent 对应:
+AutoService 实现: 加载器扫描 Skill 目录 → 生成索引 → 注入 Soul。ezagent 对应:
 
 ```elixir
 # cc.agent flavor 的 instantiate/3 内（plugin 层, 非 core 通用步骤）:
 # core 的 provision_and_instantiate/4 只分配 config dir，不感知内容
-reference_index = build_reference_index(reference_dir())
+skill_index = build_skill_index(skills_dir())
 # 输出:
-# ## Reference Index (cc 在需要时 Read 对应文件)
-# - 一般产品咨询 → reference/general-inquiry-flow.md
-# - Lead 收集流程 → reference/lead-collection-flow.md
+# ## Skill Index (cc 在需要时 Read 对应文件)
+# - 一般产品咨询 → skills/general-inquiry-flow.md
+# - Lead 收集流程 → skills/lead-collection-flow.md
 
 # 注入 CLAUDE.md:
-claude_md = rendered_soul <> reference_index
-# NOTE: Reference 文件体不注入 CLAUDE.md，只有索引。
+claude_md = rendered_soul <> skill_index
+# NOTE: Skill 文件体不注入 CLAUDE.md，只有索引。
 # cc 看到索引后按需 Read 对应文件。
 ```
 
-cc 看到索引后按需 Read。新增/删除 Reference 文件 → 需 agent re-spawn（索引在 spawn 时注入）。内容修改 → cc 下次 Read 自动生效。
+cc 看到索引后按需 Read。新增/删除 Skill 文件 → 需 agent re-spawn（索引在 spawn 时注入）。内容修改 → cc 下次 Read 自动生效。
 
 **C. 路径自带权限边界（AutoService 简化）**
 
@@ -197,7 +197,7 @@ AutoService 去掉了 `editable_by` / `locked_by` 字段 — 文件路径本身�
 路径                                      权限
 ────                                      ────
 priv/<tenant>/soul/soul.md                tenant admin (LV dispatch)
-priv/<tenant>/reference/*.md              tenant admin (直接文件编辑)
+priv/<tenant>/skills/*.md              tenant admin (直接文件编辑)
 priv/<tenant>/kb/                         system admin (KBCurator Agent)
 master/templates/ (system 模板源)          system admin (git PR)
 master/kb/escalation_keywords.json        system admin (git PR)
@@ -213,13 +213,13 @@ AutoService 实施中去掉了以下内容，与本 SPEC 的设计一致:
 |------|---------|------|
 | priority.yaml + 跨层 lint | ~120 | 后覆盖前足够 |
 | `_template_version` + drift detection | ~150 | 渲染保留 raw `{{key}}` 作为信号 |
-| `_source_yaml` 间接引用 | ~50 | 直接内联或放 Reference |
+| `_source_yaml` 间接引用 | ~50 | 直接内联或放 Skill |
 | `SOUL_LAYERED_LOADER` 开关 | 2 处 | 已默认 on，退役 |
 | sandbox_locks (section 粒度) | ~200 | slot flat map 无跨资源依赖 |
 | release_snapshot soul 逻辑 | ~300 | 渲染时产出，不 snapshot |
-| skill 概念 | — | 合并入 Reference |
-| flow_directive 概念 | — | 合并入 Reference |
-| open/guarded Reference 区分 | — | Soul 行为约束替代 |
+| skill 概念 | — | 合并入 Skill |
+| flow_directive 概念 | — | 合并入 Skill |
+| open/guarded Skill 区分 | — | Soul 行为约束替代 |
 | **合计** | **~1,027** | |
 
 **E. AutoService vs Ezagent 的关键差异**
@@ -353,8 +353,8 @@ end
 apps/ezagent_plugin_autoservice/priv/<tenant>/
   soul/
     soul.md                    ← Soul 模板（始终 inline, 含 {{key}}）
-  reference/
-    general-inquiry-flow.md    ← Reference（按需 Read, 可选 {{key}}）
+  skills/
+    general-inquiry-flow.md    ← Skill（按需 Read, 可选 {{key}}）
     bug-routing-flow.md
     lead-collection.md         ← 合并旧 flow_chunks + skills
     partner-handoff.md
@@ -375,12 +375,12 @@ apps/ezagent_plugin_autoservice/priv/<tenant>/
 遇到价格问题时: "{{gate.escalation_phrase}}"
 
 ## Skill Index（agent 遇到对应场景时 Read 对应文件）
-- 一般产品咨询 → reference/general-inquiry-flow.md
-- Bug 报告 → reference/bug-routing-flow.md
-- Partner/渠道 → reference/partner-handoff.md
+- 一般产品咨询 → skills/general-inquiry-flow.md
+- Bug 报告 → skills/bug-routing-flow.md
+- Partner/渠道 → skills/partner-handoff.md
 ```
 
-### 4.3 Reference 文件（可选 {{slot}}）
+### 4.3 Skill 文件（可选 {{slot}}）
 
 由模板作者决定是否需要 slot。示例 — 如果分析发现 `retry_limit` 跨租户可变:
 
@@ -413,9 +413,9 @@ separation:
   analyzed_by: "entity://user/system/admin"
   decisions:
     - {item: "retry_limit", from: "customer.yaml:existing-product-pointer", 
-       to: "slot:reference/general-inquiry-flow.retry_limit", reason: "跨租户可变"}
+       to: "slot:skills/general-inquiry-flow.retry_limit", reason: "跨租户可变"}
     - {item: "lead_collection_flow", from: "soul §6 + flow_chunks/cinnox-flow-lead-new.md",
-       to: "reference/lead-collection.md", reason: "体积 >3KB, 仅 new_customer 场景需要"}
+       to: "skills/lead-collection.md", reason: "体积 >3KB, 仅 new_customer 场景需要"}
     - {item: "escalation_phrase", from: "customer.yaml:gate",
        to: "slot:soul.gate.escalation_phrase", reason: "smoke contract, 必须在 inline soul"}
 ```
@@ -483,11 +483,11 @@ def instantiate(template_data, uri, ctx) do
   soul_values = template_data["soul_slot_values"] || %{}
   rendered_soul = render_slots(soul_template, soul_values)
 
-  # 2. Reference 文件 — 直接复制（是否需要 render_slots 取决于有无 {{slot}}）
-  copy_files(reference_dir(), agent_workdir)
+  # 2. Skill 文件 — 直接复制（是否需要 render_slots 取决于有无 {{slot}}）
+  copy_files(skills_dir(), agent_workdir)
 
   # 3. 写入 agent sandbox
-  write_claude_md(rendered_soul, reference_index)
+  write_claude_md(rendered_soul, skill_index)
 end
 ```
 
