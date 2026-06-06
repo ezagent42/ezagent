@@ -371,8 +371,8 @@ defmodule EzagentDomainIdentity.Application do
     # #17 cascade PR-0 (spec §5.2) — the cap-checked + audited chokepoint for the
     # user default-credential-source pointer. Registered on the User Kind with its
     # OWN cap subject (distinct from Identity actions) so a stranger cannot set
-    # another user's source. The action body validates + persists via
-    # `Ezagent.Credential.UserDefaultSource.persist_validated/5` (no auth in it);
+    # another user's source. The handler ITSELF runs the validations + the
+    # `EzagentCore.Repo.insert` (no exported cap-less writer in core, codex H2);
     # dispatch supplies cap-check + audit.
     for action <- UserDefaultCredentialSource.actions() do
       :ok = CapabilityRegistry.register(User, action, UserDefaultCredentialSource)

@@ -3,59 +3,152 @@ defmodule Ezagent.Invariants.UserDefaultSourceSingleWriterTest do
   #17 cascade PR-0 (spec §5.2, codex H2) — structural single-writer invariant for the
   user default credential-source pointer.
 
-  `Ezagent.Credential.UserDefaultSource.persist_validated/5` is the action BODY
-  (validate + persist, NO auth). The ONLY authorized write path is the cap-checked +
-  audited Behavior dispatch (`Ezagent.Behavior.UserDefaultCredentialSource`). If any
-  other lib module could call `persist_validated` directly, an in-VM caller would bypass
-  the cap-check + audit — exactly the public cap-less writer codex flagged.
+  After the H2 fix there is NO exported cap-less mutator anywhere: the validate-and-
+  persist body (including the `EzagentCore.Repo.insert`) lives INSIDE the cap-checked +
+  audited handler `Ezagent.Behavior.UserDefaultCredentialSource`. The core store
+  `Ezagent.Credential.UserDefaultSource` is a pure data + read module (schema,
+  `resolve/3`, a pure `changeset/2` builder, and the `set_via_dispatch/3` dispatch
+  helper — none of which write).
 
-  This gate asserts that the ONLY lib call-site of `persist_validated` is that Behavior
-  (plus the store module itself, where the function is defined). It mirrors
-  `Ezagent.Invariants.SingleSpawnEntryTest`: grep `*.ex` (lib only — test files are
-  exempt, they exercise the validation body in isolation), reject comments/docstrings,
-  and fail loud on any unexpected call-site so "I'll just call persist_validated
-  directly for my new feature" drift is impossible without a conscious test edit.
+  Per codex ("scan for direct writes to the table and same-file wrappers, not just
+  textual call sites") this gate scans `*.ex` lib files for any **mutating Repo
+  operation** (`Repo.insert` / `Repo.update` / `Repo.delete` and their `_all` variants)
+  that targets either:
+
+    * the `Ezagent.Credential.UserDefaultSource` schema module, or
+    * the raw `user_default_credential_sources` table name
+
+  and asserts the ONLY such write-site is the authorized Behavior. It additionally
+  asserts the core store does NOT export any public writer (only `resolve` / `changeset`
+  / `id` / `set_via_dispatch` — the latter dispatches, it does not persist). It mirrors
+  `Ezagent.Invariants.SingleSpawnEntryTest`: grep `*.ex` (lib only — test files exempt),
+  reject comments/docstrings, and fail loud on any unexpected write-site so "I'll just
+  insert a default source directly for my new feature" drift is impossible without a
+  conscious test edit.
   """
   use ExUnit.Case, async: true
 
-  # The store module DEFINES the function; the Behavior is the SOLE caller.
+  alias Ezagent.Credential.UserDefaultSource
+
+  # The cap-checked Behavior is the SOLE module allowed to persist the pointer.
   @allowed_paths [
-    "apps/ezagent_core/lib/ezagent/credential/user_default_source.ex",
     "apps/ezagent_domain_identity/lib/ezagent/behavior/user_default_credential_source.ex"
   ]
 
-  test "persist_validated/5 is called only from the UserDefaultCredentialSource Behavior" do
+  # Mutating Repo ops. (`set_via_dispatch` is a dispatch helper, not a write; `resolve`
+  # uses `Repo.get`, a read.) We only care about table/schema MUTATION.
+  @mutating_ops ~w(Repo.insert Repo.insert! Repo.update Repo.update! Repo.delete Repo.delete! Repo.insert_all Repo.update_all Repo.delete_all)
+
+  test "the user_default_credential_sources table/schema is written ONLY by the cap-checked Behavior" do
     apps_root = apps_root()
 
-    {output, grep_exit} =
+    # Lines that mention the schema module OR the raw table name.
+    {target_lines, grep_exit} =
       System.cmd(
         "grep",
-        ["-rEn", "persist_validated", apps_root, "--include=*.ex"],
+        [
+          "-rEn",
+          "UserDefaultSource|user_default_credential_sources",
+          apps_root,
+          "--include=*.ex"
+        ],
         stderr_to_stdout: false
       )
 
-    # grep exit 0 = matches, 1 = clean (no matches); ≥2 = scan error. Fail loud rather
-    # than silently passing the gate on an empty result.
     if grep_exit > 1, do: raise("grep scan failed (exit #{grep_exit}) for #{apps_root}")
 
-    violations =
-      output
+    # A "write-site" line is one that BOTH references this table/schema AND contains a
+    # mutating Repo op on the same line — i.e. a direct persist. (The validate-and-
+    # persist body pipes the changeset into `Repo.insert`; the schema is named on the
+    # changeset-build line and the `Repo.insert` follows in the pipe, so we also scan
+    # for any mutating Repo op inside files that reference the schema — see below.)
+    schema_referencing_files =
+      target_lines
       |> String.split("\n", trim: true)
-      |> Enum.reject(&allowed_path?/1)
-      |> Enum.reject(&comment_or_docstring?/1)
+      |> Enum.map(&line_path/1)
+      |> Enum.uniq()
+      |> Enum.reject(&is_nil/1)
+      |> Enum.reject(&String.contains?(&1, "/test/"))
+
+    violations =
+      for file <- schema_referencing_files,
+          {:ok, body} = File.read(file),
+          line <- write_op_lines(body),
+          not allowed_file?(file),
+          not comment_line?(line) do
+        Path.relative_to(file, String.trim_trailing(apps_root, "/apps")) <> ": " <> line
+      end
 
     assert violations == [],
            """
-           `persist_validated` called outside the authorized chokepoint:
+           Direct mutating Repo write found in a module that references the
+           user_default_credential_sources table/schema, OUTSIDE the authorized
+           chokepoint:
 
            #{Enum.join(violations, "\n")}
 
-           The user default-source pointer MUST be written ONLY through the cap-checked
-           dispatch `Ezagent.Behavior.UserDefaultCredentialSource`
-           (:set_default_credential_source). Calling `persist_validated/5` directly
-           bypasses the cap-check + audit. If you need to set the pointer, dispatch the
-           action (see `UserDefaultSource.set_via_dispatch/3`).
+           The user default-source pointer MUST be persisted ONLY by the cap-checked +
+           audited Behavior `Ezagent.Behavior.UserDefaultCredentialSource`
+           (:set_default_credential_source). A direct Repo.insert/update/delete here
+           bypasses the cap-check + the {:emit, ...} audit. If you need to set the
+           pointer, dispatch the action (see `UserDefaultSource.set_via_dispatch/3`).
            """
+  end
+
+  test "the core store exports NO public writer (only read + pure changeset + dispatch helper)" do
+    exports = UserDefaultSource.__info__(:functions)
+
+    # `changeset/2` is a PURE builder (no Repo write); `set_via_dispatch/3` dispatches
+    # (no Repo write); `resolve/3` + `id/3` are reads/helpers. Anything that smells like
+    # a persisting setter must NOT exist on this module.
+    forbidden =
+      for {name, _arity} <- exports,
+          n = Atom.to_string(name),
+          n =~ ~r/^(set|persist|insert|update|upsert|delete|put|write|save|store)/,
+          name != :set_via_dispatch do
+        name
+      end
+
+    assert forbidden == [],
+           """
+           The core store `Ezagent.Credential.UserDefaultSource` exports a function that
+           looks like a writer: #{inspect(forbidden)}.
+
+           Core must hold NO cap-less mutator (codex H2). Allowed surface: schema struct,
+           `resolve/3` (read), `changeset/2` (pure builder), `id/3` (key helper),
+           `set_via_dispatch/3` (dispatch helper — does not persist). Persistence lives in
+           the cap-checked Behavior only.
+           """
+
+    # Positive assertion: the read + pure-builder surface is present.
+    assert function_exported?(UserDefaultSource, :resolve, 3)
+    assert function_exported?(UserDefaultSource, :changeset, 2)
+    refute function_exported?(UserDefaultSource, :persist_validated, 5)
+  end
+
+  # ---------------------------------------------------------------------------
+
+  defp write_op_lines(body) do
+    body
+    |> String.split("\n")
+    |> Enum.filter(&actual_write_call?/1)
+  end
+
+  # A real write-site is `Repo.insert(...` / `|> Repo.insert(` etc. — the op immediately
+  # followed by `(` or `!(`. We also reject any line where the op appears inside backticks
+  # (a prose reference inside a `@moduledoc`/`@doc` heredoc) so docstrings don't trip the
+  # gate (mirrors SingleSpawnEntryTest's prose-reference guard).
+  defp actual_write_call?(line) do
+    Enum.any?(@mutating_ops, fn op ->
+      String.contains?(line, op <> "(") and not prose_reference?(line, op)
+    end)
+  end
+
+  defp prose_reference?(line, op) do
+    case String.split(line, op, parts: 2) do
+      [prefix, _suffix] -> String.contains?(prefix, "`")
+      _ -> false
+    end
   end
 
   defp apps_root do
@@ -72,34 +165,18 @@ defmodule Ezagent.Invariants.UserDefaultSourceSingleWriterTest do
     Path.join(String.trim(out), "apps")
   end
 
-  defp allowed_path?(line) do
-    Enum.any?(@allowed_paths, &String.contains?(line, &1))
-  end
-
-  # Lines where `persist_validated` appears as TEXT inside a `#` comment or a
-  # `@moduledoc`/`@doc` heredoc — not a real call. Conservative heuristic (mirrors
-  # SingleSpawnEntryTest): trimmed body starts with `#`, or the substring before the
-  # token contains a backtick / arrow (prose reference inside a doc heredoc).
-  defp comment_or_docstring?(line) do
-    case String.split(line, ":", parts: 3) do
-      [_path, _lineno, body] ->
-        trimmed = String.trim_leading(body)
-
-        cond do
-          String.starts_with?(trimmed, "#") -> true
-          prose_reference?(body) -> true
-          true -> false
-        end
-
-      _ ->
-        false
+  defp line_path(line) do
+    case String.split(line, ":", parts: 2) do
+      [path, _rest] -> path
+      _ -> nil
     end
   end
 
-  defp prose_reference?(body) do
-    case String.split(body, "persist_validated", parts: 2) do
-      [prefix, _suffix] -> String.contains?(prefix, "`") or String.contains?(prefix, "→")
-      _ -> false
-    end
+  defp allowed_file?(file) do
+    Enum.any?(@allowed_paths, &String.contains?(file, &1))
+  end
+
+  defp comment_line?(line) do
+    String.starts_with?(String.trim_leading(line), "#")
   end
 end

@@ -136,6 +136,108 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
     end
   end
 
+  # The four cross-source validations now run INSIDE this cap-checked handler (codex H2 —
+  # they used to live in the core store's `persist_validated/5`). Exercise them through
+  # the AUTHORIZED dispatch path so the validation body is covered where it now lives.
+  test "rejects a source owned by another user in the same workspace (codex H4)", ctx do
+    owner_caps = Ezagent.Identity.list_caps_for(ctx.owner_uri)
+    # A source in the same workspace but owned by someone else.
+    bob_source = seed_agent("entity://#{@ws}/agent/bob-other-#{System.unique_integer([:positive])}",
+      "entity://#{@ws}/user/bob-other", "cc")
+
+    assert {:error, :source_owner_mismatch} =
+             UDS.set_via_dispatch(
+               ctx.owner_uri,
+               %{flavor: "cc", source_uri: bob_source, workspace: @ws},
+               %{caller: ctx.owner_uri, caps: owner_caps}
+             )
+
+    assert UDS.resolve(ctx.owner_str, @ws, "cc") == nil
+  end
+
+  test "rejects a source of the wrong flavor", ctx do
+    owner_caps = Ezagent.Identity.list_caps_for(ctx.owner_uri)
+
+    codex_source =
+      seed_agent(
+        "entity://#{@ws}/agent/alice-codex-#{System.unique_integer([:positive])}",
+        ctx.owner_str,
+        "codex"
+      )
+
+    assert {:error, :source_flavor_mismatch} =
+             UDS.set_via_dispatch(
+               ctx.owner_uri,
+               %{flavor: "cc", source_uri: codex_source, workspace: @ws},
+               %{caller: ctx.owner_uri, caps: owner_caps}
+             )
+
+    assert UDS.resolve(ctx.owner_str, @ws, "cc") == nil
+  end
+
+  test "rejects a cross-workspace source", ctx do
+    owner_caps = Ezagent.Identity.list_caps_for(ctx.owner_uri)
+
+    # Owned by alice but living in a different workspace → workspace check fires.
+    other_ws_source =
+      seed_agent(
+        "entity://team-b/agent/alice-elsewhere-#{System.unique_integer([:positive])}",
+        ctx.owner_str,
+        "cc"
+      )
+
+    assert {:error, :source_workspace_mismatch} =
+             UDS.set_via_dispatch(
+               ctx.owner_uri,
+               %{flavor: "cc", source_uri: other_ws_source, workspace: @ws},
+               %{caller: ctx.owner_uri, caps: owner_caps}
+             )
+
+    assert UDS.resolve(ctx.owner_str, @ws, "cc") == nil
+  end
+
+  test "rejects a non-existent source", ctx do
+    owner_caps = Ezagent.Identity.list_caps_for(ctx.owner_uri)
+
+    assert {:error, :source_not_found} =
+             UDS.set_via_dispatch(
+               ctx.owner_uri,
+               %{flavor: "cc", source_uri: "entity://#{@ws}/agent/ghost", workspace: @ws},
+               %{caller: ctx.owner_uri, caps: owner_caps}
+             )
+
+    assert UDS.resolve(ctx.owner_str, @ws, "cc") == nil
+  end
+
+  test "valid re-set upserts (unique per owner/ws/flavor)", ctx do
+    owner_caps = Ezagent.Identity.list_caps_for(ctx.owner_uri)
+
+    src2 =
+      seed_agent(
+        "entity://#{@ws}/agent/alice-base2-#{System.unique_integer([:positive])}",
+        ctx.owner_str,
+        "cc"
+      )
+
+    {:ok, _} =
+      UDS.set_via_dispatch(
+        ctx.owner_uri,
+        %{flavor: "cc", source_uri: ctx.source, workspace: @ws},
+        %{caller: ctx.owner_uri, caps: owner_caps}
+      )
+
+    assert UDS.resolve(ctx.owner_str, @ws, "cc") == ctx.source
+
+    {:ok, _} =
+      UDS.set_via_dispatch(
+        ctx.owner_uri,
+        %{flavor: "cc", source_uri: src2, workspace: @ws},
+        %{caller: ctx.owner_uri, caps: owner_caps}
+      )
+
+    assert UDS.resolve(ctx.owner_str, @ws, "cc") == src2
+  end
+
   test "a successful dispatch records an audit (invocation) row for the action", ctx do
     owner_caps = Ezagent.Identity.list_caps_for(ctx.owner_uri)
 

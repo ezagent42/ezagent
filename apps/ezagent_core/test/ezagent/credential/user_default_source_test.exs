@@ -1,4 +1,16 @@
 defmodule Ezagent.Credential.UserDefaultSourceTest do
+  @moduledoc """
+  #17 cascade PR-0 (codex H2) — the core store is now a pure data + read module: NO
+  writer. These tests cover the PURE surface only:
+
+    * `changeset/2` — a pure builder (no Repo write);
+    * `id/3` — the deterministic primary key;
+    * `resolve/3` — the read path (returns nil when unset).
+
+  The validate-and-persist body + all four cross-source validations now live in the
+  cap-checked Behavior and are exercised end-to-end through the dispatch path in
+  `Ezagent.Credential.SetDefaultSourceBehaviorTest`.
+  """
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Credential.UserDefaultSource, as: UDS
@@ -6,58 +18,46 @@ defmodule Ezagent.Credential.UserDefaultSourceTest do
   @owner "entity://team-a/user/alice"
   @ws "team-a"
 
-  # Seed a source agent so all four validation checks can pass/fail deterministically:
-  #   - existence: a durable snapshot row (SnapshotStore)
-  #   - owner: spawn lineage (AgentLineage) → owner user
-  #   - flavor: AgentFlavorAttributes ETS
-  defp seed_agent(uri_str, owner, flavor) do
-    {:ok, _} = Ezagent.SnapshotStore.write(uri_str, %{}, kind_type: :agent)
-    uri = Ezagent.URI.new!(uri_str)
-    :ok = Ezagent.AgentLineage.record(uri, owner)
-    :ok = Ezagent.AgentFlavorAttributes.put(uri, flavor)
-    uri_str
+  test "id/3 is a deterministic key over (owner, ws, flavor)" do
+    assert UDS.id(@owner, @ws, "cc") == "#{@owner}|#{@ws}|cc"
+    assert UDS.id(@owner, @ws, "cc") == UDS.id(@owner, @ws, "cc")
+    refute UDS.id(@owner, @ws, "cc") == UDS.id(@owner, @ws, "codex")
   end
 
-  setup do
-    seed_agent("entity://team-a/agent/alice-base", @owner, "cc")
-    seed_agent("entity://team-a/agent/alice-base2", @owner, "cc")
-    seed_agent("entity://team-a/agent/bob-base", "entity://team-a/user/bob", "cc")
-    seed_agent("entity://team-a/agent/alice-codex", @owner, "codex")
-    :ok
-  end
-
-  test "valid source: sets + resolves; re-set upserts (unique per owner/ws/flavor)" do
+  test "changeset/2 is a pure builder: valid attrs → valid changeset (no Repo write)" do
     src = "entity://team-a/agent/alice-base"
-    assert {:ok, _} = UDS.persist_validated(@owner, @ws, "cc", src)
-    assert UDS.resolve(@owner, @ws, "cc") == src
 
-    src2 = "entity://team-a/agent/alice-base2"
-    assert {:ok, _} = UDS.persist_validated(@owner, @ws, "cc", src2)
-    assert UDS.resolve(@owner, @ws, "cc") == src2
+    cs =
+      UDS.changeset(
+        %{owner_uri: @owner, workspace_uri: @ws, flavor: "cc", source_uri: src},
+        @owner
+      )
+
+    assert cs.valid?
+    assert Ecto.Changeset.get_field(cs, :id) == UDS.id(@owner, @ws, "cc")
+    assert Ecto.Changeset.get_field(cs, :source_uri) == src
+    assert Ecto.Changeset.get_field(cs, :set_by) == @owner
+
+    # Pure builder: nothing was persisted.
+    assert UDS.resolve(@owner, @ws, "cc") == nil
   end
 
-  test "rejects a source owned by another user in the same workspace (codex H4)" do
-    assert {:error, :source_owner_mismatch} =
-             UDS.persist_validated(@owner, @ws, "cc", "entity://team-a/agent/bob-base")
+  test "changeset/2 defaults set_by to owner when nil" do
+    cs =
+      UDS.changeset(%{
+        owner_uri: @owner,
+        workspace_uri: @ws,
+        flavor: "cc",
+        source_uri: "entity://team-a/agent/alice-base"
+      })
+
+    assert Ecto.Changeset.get_field(cs, :set_by) == @owner
   end
 
-  test "rejects a source of the wrong flavor" do
-    assert {:error, :source_flavor_mismatch} =
-             UDS.persist_validated(@owner, @ws, "cc", "entity://team-a/agent/alice-codex")
-  end
-
-  test "rejects a cross-workspace source" do
-    # team-b/agent/x doesn't exist → existence check fires first; seed one in team-b
-    # owned by alice but in the wrong workspace to exercise the workspace check.
-    seed_agent("entity://team-b/agent/x", @owner, "cc")
-
-    assert {:error, :source_workspace_mismatch} =
-             UDS.persist_validated(@owner, @ws, "cc", "entity://team-b/agent/x")
-  end
-
-  test "rejects a non-existent source" do
-    assert {:error, :source_not_found} =
-             UDS.persist_validated(@owner, @ws, "cc", "entity://team-a/agent/ghost")
+  test "changeset/2 with a missing source_uri is invalid (required)" do
+    cs = UDS.changeset(%{owner_uri: @owner, workspace_uri: @ws, flavor: "cc"})
+    refute cs.valid?
+    assert %{source_uri: _} = errors_on(cs)
   end
 
   test "absent pointer resolves to nil (caller falls through to workspace-shared, not crash)" do

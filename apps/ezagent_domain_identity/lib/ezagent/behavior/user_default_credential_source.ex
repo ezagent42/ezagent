@@ -14,11 +14,17 @@ defmodule Ezagent.Behavior.UserDefaultCredentialSource do
 
   The OWNER holds this cap on their own User Kind (it is part of their structural
   baseline / can be granted by a workspace admin); a stranger does not, so the dispatch
-  layer denies them with `:unauthorized`. This is the SOLE public write path for the
-  pointer — `Ezagent.Credential.UserDefaultSource.persist_validated/5` is the
-  validation+persist body (NO auth in it), reachable ONLY from this handler (and the
-  adoption action, which also dispatches here). That single-caller invariant is enforced
-  structurally by `Ezagent.Invariants.UserDefaultSourceSingleWriterTest`.
+  layer denies them with `:unauthorized`. This is the SOLE write path for the pointer:
+  the cross-source validations (exists / same workspace / same owner / same flavor) AND
+  the `EzagentCore.Repo.insert` against the core-owned `user_default_credential_sources`
+  table BOTH live in THIS handler — there is NO exported cap-less mutator in core
+  (`Ezagent.Credential.UserDefaultSource` keeps only the schema, `resolve/3`, a pure
+  `changeset/2` builder, and the dispatch helper `set_via_dispatch/3`). This mirrors how
+  `Ezagent.Behavior.ExternalMirror` does the cross-app `Repo.insert` on the core-owned
+  `Ezagent.ExternalMirror.BindingRow` schema. Because the persistence is structurally
+  coupled to this cap-checked + audited dispatch handler, an in-VM caller cannot write a
+  victim's pointer. That single-writer invariant is enforced structurally by
+  `Ezagent.Invariants.UserDefaultSourceSingleWriterTest`.
 
   ## Action
 
@@ -37,6 +43,7 @@ defmodule Ezagent.Behavior.UserDefaultCredentialSource do
   use Ezagent.Lifecycle
 
   alias Ezagent.Credential.UserDefaultSource
+  alias EzagentCore.Repo
 
   action(:set_default_credential_source,
     args: %{
@@ -86,8 +93,7 @@ defmodule Ezagent.Behavior.UserDefaultCredentialSource do
 
     with :ok <- check_owner_arg(Map.get(args, :owner_uri), owner),
          true <- is_binary(flavor) and is_binary(source_uri) and is_binary(workspace),
-         {:ok, _row} <-
-           UserDefaultSource.persist_validated(owner, workspace, flavor, source_uri, set_by) do
+         {:ok, _row} <- persist_validated(owner, workspace, flavor, source_uri, set_by) do
       cur = ctx[:read].(:set_count, 0)
 
       {:ok, %{flavor: flavor, source_uri: source_uri},
@@ -137,6 +143,83 @@ defmodule Ezagent.Behavior.UserDefaultCredentialSource do
       %URI{} = u -> URI.to_string(u)
       s when is_binary(s) -> s
       _ -> nil
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Validate-and-persist — the action BODY, now LIVING INSIDE the cap-checked +
+  # audited handler (codex H2). There is NO exported cap-less writer in core: the
+  # cross-source validations AND the cross-app `EzagentCore.Repo.insert` against the
+  # core-owned `user_default_credential_sources` table both run here, structurally
+  # coupled to the dispatch chokepoint — exactly like `Ezagent.Behavior.ExternalMirror`
+  # writes the core-owned `Ezagent.ExternalMirror.BindingRow`. The core store provides
+  # only the PURE `changeset/2` builder (no Repo write of its own).
+  #
+  # Validation (all required, fail loud):
+  #   1. source parses + exists (durable snapshot) — else {:error, :source_not_found};
+  #   2. source's workspace == ws        — else {:error, :source_workspace_mismatch};
+  #   3. source belongs to owner (spawn lineage) — else {:error, :source_owner_mismatch};
+  #   4. source's flavor == flavor        — else {:error, :source_flavor_mismatch}.
+  defp persist_validated(owner, ws, flavor, source_uri, set_by) do
+    with {:ok, source} <- Ezagent.URI.parse(source_uri),
+         :ok <- validate_source(source, owner, ws, flavor) do
+      %{owner_uri: owner, workspace_uri: ws, flavor: flavor, source_uri: source_uri}
+      |> UserDefaultSource.changeset(set_by || owner)
+      |> Repo.insert(
+        on_conflict: {:replace, [:source_uri, :set_by, :updated_at]},
+        conflict_target: :id
+      )
+    end
+  end
+
+  defp validate_source(%URI{} = source, owner, ws, flavor) do
+    with :ok <- validate_source_exists(source),
+         :ok <- validate_source_workspace(source, ws),
+         :ok <- validate_source_owner(source, owner),
+         :ok <- validate_source_flavor(source, flavor) do
+      :ok
+    end
+  end
+
+  # 1. existence — durable snapshot row (independent of running pid).
+  defp validate_source_exists(%URI{} = source) do
+    if match?({:ok, _}, Ezagent.SnapshotStore.latest(source)) do
+      :ok
+    else
+      {:error, :source_not_found}
+    end
+  end
+
+  # 2. workspace — the pointed source's workspace segment must equal `ws`. Uses the
+  # canonical URI accessor, NOT string parsing.
+  defp validate_source_workspace(%URI{} = source, ws) do
+    if Ezagent.URI.workspace_name!(source) == ws do
+      :ok
+    else
+      {:error, :source_workspace_mismatch}
+    end
+  end
+
+  # 3. owner — the source agent must belong to `owner`. The durable owner signal in
+  # core is the spawn lineage (`spawned_by`), which for a base/`<user>-default` agent is
+  # the owning user.
+  defp validate_source_owner(%URI{} = source, owner) do
+    case Ezagent.AgentLineage.lookup(source) do
+      {:ok, %URI{} = spawned_by} ->
+        if URI.to_string(spawned_by) == owner, do: :ok, else: {:error, :source_owner_mismatch}
+
+      :error ->
+        {:error, :source_owner_mismatch}
+    end
+  end
+
+  # 4. flavor — the source's stored flavor must equal `flavor`.
+  defp validate_source_flavor(%URI{} = source, flavor) do
+    case Ezagent.UriQuery.resolve(:flavor, source) do
+      {:ok, ^flavor} -> :ok
+      {:ok, _other} -> {:error, :source_flavor_mismatch}
+      :none -> {:error, :source_flavor_mismatch}
+      {:error, _} -> {:error, :source_flavor_mismatch}
     end
   end
 end
