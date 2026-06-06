@@ -187,4 +187,68 @@ defmodule Ezagent.Credential.ResolverTest do
     refute Resolver.source_read_authorized?(@explicit, [wrong])
     refute Resolver.source_read_authorized?(@explicit, [])
   end
+
+  # codex H1 (PR-1 re-review): a workspace-shared resolver ERROR must FAIL LOUD, never be
+  # silently collapsed to "absent". The lookup is injected to drive the three outcomes.
+  describe "pick_credential_source/1 — workspace-shared lookup (D4.3 step 3, fail-loud)" do
+    @ws_shared Ezagent.URI.new!("entity://team-a/agent/ws-service")
+
+    defp base_opts(extra) do
+      Map.merge(
+        %{
+          owner_uri: @owner,
+          workspace_uri: @ws,
+          flavor: "cc",
+          user_source_lookup: fn -> :absent end,
+          source_available?: &always_available/1
+        },
+        extra
+      )
+    end
+
+    test "absent user + present+available workspace-shared → uses the shared source" do
+      assert {:ok, @ws_shared} =
+               Resolver.pick_credential_source(
+                 base_opts(%{workspace_shared_lookup: fn -> {:ok, @ws_shared} end})
+               )
+    end
+
+    test "absent user + absent workspace-shared + required → fail loud (no source)" do
+      assert {:error, :no_credential_source} =
+               Resolver.pick_credential_source(
+                 base_opts(%{workspace_shared_lookup: fn -> :absent end})
+               )
+    end
+
+    test "absent user + absent workspace-shared + NOT required → {:ok, nil}" do
+      assert {:ok, nil} =
+               Resolver.pick_credential_source(
+                 base_opts(%{
+                   workspace_shared_lookup: fn -> :absent end,
+                   credential_required?: false
+                 })
+               )
+    end
+
+    test "workspace-shared resolver ERROR → FAIL LOUD, not absent (codex H1)" do
+      assert {:error, {:workspace_source_unavailable, :unauthorized}} =
+               Resolver.pick_credential_source(
+                 base_opts(%{
+                   workspace_shared_lookup: fn ->
+                     {:error, {:workspace_source_unavailable, :unauthorized}}
+                   end
+                 })
+               )
+    end
+
+    test "present-but-unavailable workspace-shared (revoked/deleted) → fail loud" do
+      assert {:error, {:workspace_source_unavailable, @ws_shared}} =
+               Resolver.pick_credential_source(
+                 base_opts(%{
+                   workspace_shared_lookup: fn -> {:ok, @ws_shared} end,
+                   source_available?: &never_available/1
+                 })
+               )
+    end
+  end
 end

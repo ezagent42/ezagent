@@ -154,11 +154,16 @@ defmodule Ezagent.Credential.Resolver do
     user_lookup =
       Map.get(opts, :user_source_lookup, fn -> user_source(owner_uri, workspace_uri, flavor) end)
 
-    do_pick(explicit, user_lookup, workspace_uri, required?, available?)
+    # Injectable like user_source_lookup (pure-testable): returns
+    # `{:ok, uri} | :absent | {:error, reason}`. Default = the UriQuery seam.
+    ws_lookup =
+      Map.get(opts, :workspace_shared_lookup, fn -> workspace_shared_source(workspace_uri) end)
+
+    do_pick(explicit, user_lookup, ws_lookup, required?, available?)
   end
 
   # 1. explicit source named — must be available, else fail loud (no fall-through).
-  defp do_pick(%URI{} = explicit, _user_lookup, _ws, _required?, available?) do
+  defp do_pick(%URI{} = explicit, _user_lookup, _ws_lookup, _required?, available?) do
     if available?.(explicit) do
       {:ok, explicit}
     else
@@ -167,7 +172,7 @@ defmodule Ezagent.Credential.Resolver do
   end
 
   # 2/3/4. no explicit source — consult user pointer, then workspace-shared.
-  defp do_pick(nil, user_lookup, workspace_uri, required?, available?) do
+  defp do_pick(nil, user_lookup, ws_lookup, required?, available?) do
     case user_lookup.() do
       {:ok, %URI{} = user_src} ->
         # PRESENT user pointer: must be available — a revoked/deleted source FAILS LOUD,
@@ -180,13 +185,8 @@ defmodule Ezagent.Credential.Resolver do
 
       :absent ->
         # ABSENT user pointer: fall through to workspace-shared (normal provisioning).
-        workspace_shared(workspace_uri, required?, available?)
+        handle_workspace_shared(ws_lookup.(), required?, available?)
     end
-  end
-
-  # workspace-shared service-account source (D4.3 step 3) → fail-loud (step 4).
-  defp workspace_shared(workspace_uri, required?, available?) do
-    handle_workspace_shared(workspace_shared_source(workspace_uri), required?, available?)
   end
 
   # A PRESENT + available workspace-shared source is used (§D4.3 step 3). PR-1 has no
@@ -204,6 +204,10 @@ defmodule Ezagent.Credential.Resolver do
   defp handle_workspace_shared(:absent, required?, _available?) do
     if required?, do: {:error, :no_credential_source}, else: {:ok, nil}
   end
+
+  # A registered workspace-shared resolver FAILED (revoked / unauthorized / miswired) —
+  # §D4.3 requires fail-loud, NOT a silent collapse to absence/no-source (codex H1).
+  defp handle_workspace_shared({:error, _reason} = err, _required?, _available?), do: err
 
   # ── grant authorize at CREATE (spec §5.1) ──────────────────────────────────
 
@@ -307,17 +311,21 @@ defmodule Ezagent.Credential.Resolver do
   # `{:no_resolver, _}` which we map to `:absent` (→ fall-through / fail-loud per §D4.3).
   # PR-3 registers the resolver and the `{:ok, uri}` branch becomes live with no change
   # here.
-  @spec workspace_shared_source(URI.t() | nil) :: {:ok, URI.t()} | :absent
+  @spec workspace_shared_source(URI.t() | nil) :: {:ok, URI.t()} | :absent | {:error, term()}
   defp workspace_shared_source(nil), do: :absent
 
   defp workspace_shared_source(%URI{} = workspace_uri) do
     case Ezagent.UriQuery.resolve(:workspace_shared_credential_source, workspace_uri) do
       {:ok, src} when is_binary(src) -> {:ok, Ezagent.URI.new!(src)}
       {:ok, %URI{} = src} -> {:ok, src}
+      # `:none` = workspace genuinely has no shared source → absent (fall through / fail-loud
+      # at step 4). `{:no_resolver, _}` = PR-1 hasn't registered the resolver yet → also a
+      # legitimate "no shared source available". Anything else is a REGISTERED resolver
+      # FAILING (revoked / unauthorized / miswired) — per §D4.3 that must FAIL LOUD, not be
+      # silently hidden as absent (codex H1). Propagate it distinctly.
       :none -> :absent
-      # PR-1: resolver not registered yet → treat as no shared source (absent).
       {:error, {:no_resolver, _}} -> :absent
-      {:error, _} -> :absent
+      {:error, reason} -> {:error, {:workspace_source_unavailable, reason}}
     end
   end
 
