@@ -472,15 +472,19 @@ defmodule Ezagent.Agent.Materializer do
       resolves the grant's credential source URI to its on-disk config_dir under the
       grant-scoped read (the §5.1 grant-scoped principal). Injected so core does no
       dispatch.
-    * `:commit` — `(-> {:ok, term} | {:error, term})` the FINAL commit/exec step
-      (atomic-replace + subprocess launch). Called ONLY after the TOCTOU re-check passes.
+    * `:commit` — `(version :: non_neg_integer() -> {:ok, term} | {:error, term})` the
+      FINAL config-swap step (atomic-replace). Called ONLY after the TOCTOU re-check
+      passes. Receives the grant `version` validated at materialize so the caller can
+      thread it to a SECOND re-validation immediately before the (later) subprocess launch
+      — the swap and the launch are separate boundaries (codex CRITICAL §5.1).
   """
   @type grant_inputs :: %{
           required(:agent_uri) => String.t(),
           required(:staging) => String.t(),
           required(:secret_relpaths) => [String.t()],
           required(:source_dir_for) => (String.t() -> {:ok, String.t()} | {:error, term()}),
-          required(:commit) => (-> {:ok, term()} | {:error, term()})
+          required(:commit) =>
+            (non_neg_integer() -> {:ok, term()} | {:error, term()})
         }
 
   @doc """
@@ -496,7 +500,10 @@ defmodule Ezagent.Agent.Materializer do
     4. `GrantRow.revalidate_version!(agent_uri, version)` — re-check the version
        IMMEDIATELY before commit. If it changed (revoked mid-start) → `{:error,
        :grant_changed}`, do NOT commit/exec.
-    5. `commit.()` — the atomic-replace + exec.
+    5. `commit.(version)` — the atomic-replace config swap (NOT the subprocess launch). The
+       validated `version` is handed to the commit so the caller can thread it to a SECOND
+       `revalidate_version!/2` immediately before the LATER subprocess launch (the swap and
+       the launch are distinct boundaries — codex CRITICAL §5.1).
 
   Returns the `commit` result `{:ok, term}` or `{:error, reason}`.
   """
@@ -512,7 +519,7 @@ defmodule Ezagent.Agent.Materializer do
          {:ok, source_dir} <- source_dir_for.(source_uri),
          :ok <- copy_secret_relpaths(source_dir, staging, secret_relpaths),
          :ok <- GrantRow.revalidate_version!(agent_uri, version),
-         {:ok, result} <- commit.() do
+         {:ok, result} <- commit.(version) do
       {:ok, result}
     end
   end

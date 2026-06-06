@@ -363,13 +363,14 @@ defmodule Ezagent.Agent.MaterializerTest do
           staging: ctx.staging,
           secret_relpaths: [".credentials.json"],
           source_dir_for: fn _uri -> {:ok, ctx.source_dir} end,
-          commit: fn ->
+          commit: fn version ->
             :counters.add(committed, 1, 1)
-            {:ok, :launched}
+            {:ok, {:launched, version}}
           end
         })
 
-      assert {:ok, :launched} = result
+      # commit receives the validated grant version (threaded to the later launch re-check)
+      assert {:ok, {:launched, 1}} = result
       assert :counters.get(committed, 1) == 1
       assert {:ok, "TOKEN"} = File.read(Path.join(ctx.staging, ".credentials.json"))
     end
@@ -388,7 +389,7 @@ defmodule Ezagent.Agent.MaterializerTest do
             {:ok, _} = GrantRow.revoke(ctx.agent_uri)
             {:ok, ctx.source_dir}
           end,
-          commit: fn ->
+          commit: fn _version ->
             :counters.add(committed, 1, 1)
             {:ok, :launched}
           end
@@ -408,7 +409,7 @@ defmodule Ezagent.Agent.MaterializerTest do
           staging: ctx.staging,
           secret_relpaths: [".credentials.json"],
           source_dir_for: fn _ -> flunk("should not resolve source for a revoked grant") end,
-          commit: fn -> flunk("should not commit for a revoked grant") end
+          commit: fn _version -> flunk("should not commit for a revoked grant") end
         })
 
       assert {:error, :revoked} = result

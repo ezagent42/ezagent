@@ -515,9 +515,16 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
           # the failure independent of caller wiring. The PTY itself MUST
           # still come up — only role-bootstrap is best-effort, the rest
           # (config_dir, PTY) stays load-bearing.
-          with {:ok, config_dir} <- create_agent_config_dir(agent_uri, tmpl),
+          with {:ok, config_dir, grant_ctx} <- create_agent_config_dir_with_grant(agent_uri, tmpl),
                tmpl_with_dir = put_agent_config_dir(tmpl, config_dir),
                {:ok, role_meta} <- try_role_bootstrap(tmpl_with_dir, config_dir, agent_uri),
+               # #17 cascade PR-2 (codex CRITICAL §5.1) — the config_dir is materialized
+               # but the subprocess launches HERE (ensure_pty_server). A grant revoked
+               # between materialize and launch would otherwise launch with the copied
+               # secret. Re-validate the grant version IMMEDIATELY before launch; on
+               # :grant_changed ABORT + clear the just-materialized config_dir so it is
+               # not left usable for the revoked grant. No-grant agents skip this (nil ctx).
+               :ok <- revalidate_grant_before_launch(grant_ctx),
                :ok <- ensure_pty_server(agent_uri, cwd, tmpl_with_dir) do
             base_meta = %{
               fresh?: true,
@@ -538,6 +545,32 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   defp put_agent_config_dir(tmpl, nil), do: tmpl
   defp put_agent_config_dir(tmpl, dir), do: Map.put(tmpl, "agent_config_dir", dir)
+
+  # #17 cascade PR-2 (codex CRITICAL §5.1) — normalize `create_agent_config_dir/2`'s
+  # backward-compatible 2-tuple (non-cascade, no grant) and 3-tuple (cascade, carrying the
+  # validated grant context) into a single `{:ok, dir, grant_ctx}` for the spawn path.
+  defp create_agent_config_dir_with_grant(agent_uri, tmpl) do
+    case create_agent_config_dir(agent_uri, tmpl) do
+      {:ok, dir, grant_ctx} -> {:ok, dir, grant_ctx}
+      {:ok, dir} -> {:ok, dir, nil}
+      {:error, _} = err -> err
+    end
+  end
+
+  # #17 cascade PR-2 (codex CRITICAL §5.1) — second grant re-validation, run IMMEDIATELY
+  # before the subprocess launch (the config_dir was already swapped at materialize; the
+  # launch is a LATER, distinct boundary). `nil` ctx (no-grant / non-cascade agents) → :ok.
+  # On `:grant_changed` the caller's `else` clause tears down the Kind AND clears the
+  # just-materialized config_dir (rollback_agent_config_dir), so nothing launches with — or
+  # leaves usable — the secret of a now-revoked/changed grant.
+  defp revalidate_grant_before_launch(nil), do: :ok
+
+  defp revalidate_grant_before_launch({:grant, agent_uri_str, version}) do
+    case Ezagent.Credential.GrantRow.revalidate_version!(agent_uri_str, version) do
+      :ok -> :ok
+      {:error, :grant_changed} -> {:error, {:grant_changed_before_launch, agent_uri_str}}
+    end
+  end
 
   # ────────────────────────────────────────────────────────────────────────
   # SPEC `2026-05-26-session-create-orchestrator-unified` Gap B —
@@ -1855,9 +1888,15 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # config_dir TARGET the DOMAIN allocated (`"allocated_config_dir"`, injected by
   # `Ezagent.Kind.Template.provision_and_instantiate/4`). The plugin no longer
   # computes the path; `agent_uri` is retained only for the legacy signature.
+  # Return: `{:ok, dir}` / `{:ok, nil}` on the non-cascade path (backward-compatible), OR
+  # `{:ok, dir, {:grant, agent_uri_str, version}}` on the cascade path — the third element
+  # carries the grant version validated at materialize so `spawn_for_local_pty/3` can
+  # re-validate the grant IMMEDIATELY before the PTY launch (codex CRITICAL §5.1).
   @doc false
   @spec create_agent_config_dir(URI.t(), map()) ::
-          {:ok, String.t() | nil} | {:error, term()}
+          {:ok, String.t() | nil}
+          | {:ok, String.t(), {:grant, String.t(), non_neg_integer()}}
+          | {:error, term()}
   def create_agent_config_dir(%URI{} = agent_uri, tmpl) when is_map(tmpl) do
     # codex P2 closure — fail loud on a stale `"claude_config_dir"` data key
     # (the loader path bypasses `validate/1`). See
@@ -1921,6 +1960,10 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     # block a fresh materialize (which rebuilds the target anyway).
     _ = Ezagent.Agent.Materializer.recover_orphaned(target)
 
+    # Return shape: the cascade path returns `{:ok, target, {:grant, uri, version}}` so the
+    # validated grant version reaches the LATER subprocess launch for a second re-check
+    # (codex CRITICAL §5.1 — config-swap and PTY-launch are distinct boundaries). The
+    # single-reference (non-cascade) path is UNCHANGED — `{:ok, target}` (no grant).
     case Map.get(tmpl, "cascade") do
       %{} = cascade -> materialize_cascade(agent_uri, target, cascade)
       _ -> materialize_single_reference(target, reference_dir)
@@ -1959,24 +2002,26 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       with :ok <- Ezagent.Agent.Materializer.merge_layers(staging, layer_dirs),
            :ok <- File.chmod(staging, 0o700),
            :ok <- File.write(Path.join(staging, Path.basename(marker)), "ok\n") do
-        # Secret copy + atomic-replace commit, gated by the grant TOCTOU re-check.
+        # Secret copy + atomic-replace commit, gated by the grant TOCTOU re-check. The
+        # commit receives the validated grant `version` and threads it out so the LATER
+        # subprocess launch can re-validate it (codex CRITICAL §5.1 — swap ≠ launch).
         Ezagent.Agent.Materializer.materialize_with_grant(%{
           agent_uri: URI.to_string(agent_uri),
           staging: staging,
           secret_relpaths: secret_relpaths(),
           source_dir_for: source_dir_for,
-          commit: fn ->
+          commit: fn version ->
             with :ok <- chmod_credentials(staging),
                  :ok <- swap_into_place(staging, target) do
-              {:ok, target}
+              {:ok, {target, version}}
             end
           end
         })
       end
 
     case result do
-      {:ok, ^target} ->
-        {:ok, target}
+      {:ok, {^target, version}} ->
+        {:ok, target, {:grant, URI.to_string(agent_uri), version}}
 
       {:error, reason} ->
         _ = File.rm_rf(staging)
