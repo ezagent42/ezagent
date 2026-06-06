@@ -207,20 +207,17 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
                     {:error, reason} ->
                       rollback_sidecars(agent_uri)
                       _ = Ezagent.Kind.terminate(agent_uri)
-                      rollback_agent_config_dir(agent_uri)
-                      {:error, reason}
+                      handle_spawn_failure(agent_uri, reason)
                   end
 
                 {:error, reason} ->
                   _ = Ezagent.Kind.terminate(agent_uri)
-                  rollback_agent_config_dir(agent_uri)
-                  {:error, reason}
+                  handle_spawn_failure(agent_uri, reason)
               end
 
             {:error, reason} ->
-              rollback_agent_config_dir(agent_uri)
               _ = Ezagent.Kind.terminate(agent_uri)
-              {:error, reason}
+              handle_spawn_failure(agent_uri, reason)
           end
       end
     end
@@ -366,9 +363,58 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     :ok
   end
 
+  # codex H2 (FINDING 2) — handle a spawn failure AFTER the config_dir was materialized
+  # (mirror of cc_agent.ex). Tear down the just-materialized grant-scoped secret dir, then
+  # SURFACE a cleanup failure as BLOCKING: a grant-revoked-at-launch abort whose cleanup
+  # fails leaves a usable revoked-grant credential dir in the canonical location — reporting
+  # only the grant-change would silently leave it. Return a COMPOSITE
+  # `{:grant_revoked_cleanup_failed, agent_uri, reason}` for that case; for any other failure
+  # where cleanup also fails, attach the cleanup failure too.
+  #
+  # `@doc false` so the contract is directly unit-testable with an injected rm_rf failure.
+  @doc false
+  @spec handle_spawn_failure(URI.t(), term()) :: {:error, term()}
+  def handle_spawn_failure(agent_uri, {:grant_changed_before_launch, _} = reason) do
+    case rollback_agent_config_dir(agent_uri) do
+      :ok ->
+        {:error, reason}
+
+      {:error, cleanup_reason} ->
+        {:error, {:grant_revoked_cleanup_failed, agent_uri, cleanup_reason}}
+    end
+  end
+
+  def handle_spawn_failure(agent_uri, reason) do
+    case rollback_agent_config_dir(agent_uri) do
+      :ok ->
+        {:error, reason}
+
+      {:error, cleanup_reason} ->
+        {:error, {:config_dir_cleanup_failed, agent_uri, reason, cleanup_reason}}
+    end
+  end
+
+  # Roll back a partially-created config dir on spawn failure.
+  #
+  # codex H2 (FINDING 2) — returns `:ok | {:error, reason}` (was an unconditional `:ok` with
+  # NO logging). A failed removal is no longer swallowed: the dir may hold a grant-scoped
+  # secret, so the caller (`handle_spawn_failure/2`) must surface a cleanup failure as
+  # blocking. Adds the warning log cc already had.
   defp rollback_agent_config_dir(agent_uri) do
-    _ = File.rm_rf(agent_config_dir(agent_uri))
-    :ok
+    dir = agent_config_dir(agent_uri)
+
+    case File.rm_rf(dir) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason, _path} ->
+        Logger.warning(
+          "codex.agent: rollback of #{dir} failed: #{inspect(reason)} " <>
+            "(agent_uri=#{URI.to_string(agent_uri)})"
+        )
+
+        {:error, reason}
+    end
   end
 
   defp pty_params(cwd, socket_path, thread_id, tmpl, codex_path, true) do
@@ -606,12 +652,12 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     layer_dirs = Map.fetch!(cascade, :layer_dirs)
     source_dir_for = Map.fetch!(cascade, :source_dir_for)
 
+    # #17 cascade PR-2 (§D4.2 H — codex HIGH) — NO whole-target overlay (see cc_agent.ex
+    # for the full rationale). Overlaying the entire existing target resurrected
+    # tombstoned files, overrode freshly-merged config, and kept stale credentials. The
+    # layer merge (§D4) is the sole authority for the config tree; secrets come ONLY from
+    # the grant-scoped source copy (§D6). No user-state preserved across re-materialize.
     result =
-      # #17 cascade PR-2 (§D4.2 H — codex HIGH) — NO whole-target overlay (see cc_agent.ex
-      # for the full rationale). Overlaying the entire existing target resurrected
-      # tombstoned files, overrode freshly-merged config, and kept stale credentials. The
-      # layer merge (§D4) is the sole authority for the config tree; secrets come ONLY from
-      # the grant-scoped source copy (§D6). No user-state preserved across re-materialize.
       with :ok <- Ezagent.Agent.Materializer.merge_layers(staging, layer_dirs),
            :ok <- File.chmod(staging, 0o700),
            :ok <- File.write(Path.join(staging, Path.basename(marker)), "ok\n") do

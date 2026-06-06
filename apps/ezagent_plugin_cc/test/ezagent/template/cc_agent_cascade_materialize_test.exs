@@ -121,6 +121,45 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
     refute File.exists?(Path.join(ctx.target, ".ezagent-config-complete"))
   end
 
+  describe "grant-revoke rollback surfaces cleanup failure (codex H2 — FINDING 2)" do
+    # On a grant-revoked-at-launch abort, the just-materialized (grant-scoped secret) dir is
+    # removed; the caller gets the grant-change error.
+    test "grant-revoked at launch removes the materialized config_dir", ctx do
+      dir = CcAgent.agent_config_dir(ctx.agent_uri)
+      write!(dir, ".credentials.json", "SECRET")
+      write!(dir, ".ezagent-config-complete", "")
+      assert File.exists?(dir)
+
+      reason = {:grant_changed_before_launch, URI.to_string(ctx.agent_uri)}
+      assert {:error, ^reason} = CcAgent.handle_spawn_failure(ctx.agent_uri, reason)
+
+      # the secret dir is gone — nothing left usable for the revoked grant
+      refute File.exists?(dir)
+    end
+
+    # If the cleanup rm_rf FAILS, the leftover secret dir must be surfaced as BLOCKING — the
+    # caller gets a composite cleanup-failure error, NOT :ok and NOT only the grant-change.
+    test "cleanup failure → composite blocking error (not :ok, not only grant-change)", ctx do
+      dir = CcAgent.agent_config_dir(ctx.agent_uri)
+      # Plant a read-only subdir so rm_rf of the config_dir fails.
+      ro_sub = Path.join(dir, "sub")
+      File.mkdir_p!(ro_sub)
+      File.write!(Path.join(ro_sub, "f"), "X")
+      File.write!(Path.join(dir, ".credentials.json"), "SECRET")
+      File.chmod!(ro_sub, 0o500)
+      on_exit(fn -> File.chmod(ro_sub, 0o700) end)
+
+      reason = {:grant_changed_before_launch, URI.to_string(ctx.agent_uri)}
+      result = CcAgent.handle_spawn_failure(ctx.agent_uri, reason)
+
+      File.chmod!(ro_sub, 0o700)
+
+      agent_uri = ctx.agent_uri
+      assert {:error, {:grant_revoked_cleanup_failed, ^agent_uri, _cleanup_reason}} = result
+      refute match?({:error, {:grant_changed_before_launch, _}}, result)
+    end
+  end
+
   describe "recover_orphaned error at materialize ENTRY (codex H)" do
     # When the crash-mid-swap self-heal (`recover_orphaned/1` at materialize entry) detects a
     # leftover known-good `.bak` + a missing/partial target but CANNOT restore it, the entry

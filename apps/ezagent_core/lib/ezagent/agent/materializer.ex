@@ -110,7 +110,8 @@ defmodule Ezagent.Agent.Materializer do
             {:error, {:atomic_replace_failed, reason}}
 
           {:error, restore_reason} ->
-            {:error, {:atomic_replace_rollback_failed, original: reason, rollback: restore_reason}}
+            {:error,
+             {:atomic_replace_rollback_failed, original: reason, rollback: restore_reason}}
         end
     end
   end
@@ -498,8 +499,7 @@ defmodule Ezagent.Agent.Materializer do
           required(:staging) => String.t(),
           required(:secret_relpaths) => [String.t()],
           required(:source_dir_for) => (String.t() -> {:ok, String.t()} | {:error, term()}),
-          required(:commit) =>
-            (non_neg_integer() -> {:ok, term()} | {:error, term()})
+          required(:commit) => (non_neg_integer() -> {:ok, term()} | {:error, term()})
         }
 
   @doc """

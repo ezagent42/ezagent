@@ -41,6 +41,41 @@ defmodule Ezagent.PluginCodex.Template.CodexAgentGrantRestartTest do
     refute match?({:error, {:credential_grant_revoked, _}}, result)
   end
 
+  describe "grant-revoke rollback surfaces cleanup failure (codex H2 — FINDING 2)" do
+    test "grant-revoked at launch removes the materialized config_dir" do
+      agent_uri = URI.new!("entity://team-a/agent/codex_cleanup-#{uniq()}")
+      dir = CodexAgent.agent_config_dir(agent_uri)
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "auth.json"), "SECRET")
+      on_exit(fn -> File.rm_rf(dir) end)
+      assert File.exists?(dir)
+
+      reason = {:grant_changed_before_launch, URI.to_string(agent_uri)}
+      assert {:error, ^reason} = CodexAgent.handle_spawn_failure(agent_uri, reason)
+
+      refute File.exists?(dir)
+    end
+
+    test "cleanup failure → composite blocking error (not :ok, not only grant-change)" do
+      agent_uri = URI.new!("entity://team-a/agent/codex_cleanupfail-#{uniq()}")
+      dir = CodexAgent.agent_config_dir(agent_uri)
+      ro_sub = Path.join(dir, "sub")
+      File.mkdir_p!(ro_sub)
+      File.write!(Path.join(ro_sub, "f"), "X")
+      File.write!(Path.join(dir, "auth.json"), "SECRET")
+      File.chmod!(ro_sub, 0o500)
+      on_exit(fn -> File.chmod(ro_sub, 0o700) && File.rm_rf(dir) end)
+
+      reason = {:grant_changed_before_launch, URI.to_string(agent_uri)}
+      result = CodexAgent.handle_spawn_failure(agent_uri, reason)
+
+      File.chmod!(ro_sub, 0o700)
+
+      assert {:error, {:grant_revoked_cleanup_failed, ^agent_uri, _cleanup_reason}} = result
+      refute match?({:error, {:grant_changed_before_launch, _}}, result)
+    end
+  end
+
   describe "recover_orphaned error at materialize ENTRY (codex H)" do
     # Mirror of the cc test: when the crash-mid-swap self-heal at materialize entry detects a
     # leftover known-good `.bak` + a missing/partial target but CANNOT restore it, the entry
