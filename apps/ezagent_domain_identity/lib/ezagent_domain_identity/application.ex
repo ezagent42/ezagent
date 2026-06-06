@@ -41,6 +41,7 @@ defmodule EzagentDomainIdentity.Application do
   alias Ezagent.{CapabilityRegistry, SpawnRegistry}
   alias Ezagent.Entity.User
   alias Ezagent.Behavior.{Identity, ApiKeys, UserCredentials, UserTokens, WorkspaceUserAdmin}
+  alias Ezagent.Behavior.UserDefaultCredentialSource
 
   @impl true
   def start(_type, _args) do
@@ -365,6 +366,15 @@ defmodule EzagentDomainIdentity.Application do
     # wraps `Ezagent.Users.create/3` from the identity domain.
     for action <- WorkspaceUserAdmin.actions() do
       :ok = CapabilityRegistry.register(Ezagent.Entity.Workspace, action, WorkspaceUserAdmin)
+    end
+
+    # #17 cascade PR-0 (spec §5.2) — the cap-checked + audited chokepoint for the
+    # user default-credential-source pointer. Registered on the User Kind with its
+    # OWN cap subject (distinct from Identity actions) so a stranger cannot set
+    # another user's source. The action body validates + persists via
+    # `Ezagent.Credential.UserDefaultSource.set/5`; dispatch supplies cap-check + audit.
+    for action <- UserDefaultCredentialSource.actions() do
+      :ok = CapabilityRegistry.register(User, action, UserDefaultCredentialSource)
     end
 
     # CapabilityRegistry SPEC rev 4 §5 — register User.default_caps/1
