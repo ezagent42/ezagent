@@ -1,0 +1,347 @@
+defmodule Ezagent.Credential.Resolver do
+  @moduledoc """
+  #17 agent-provisioning-cascade PR-1 — the **domain.agent resolution core** (spec §4,
+  §D2, §D4.3, §5.1, §5.2). PURE resolution: it enumerates the ordered layer set and
+  selects the single credential source. It performs **NO materialization, NO file ops,
+  NO config merge, and NO filesystem access** — that is PR-2's job. It returns
+  *descriptors* only (which layers contribute, in order, + the chosen secret source).
+
+  Two public entry points:
+
+    * `resolve_layers/1` (spec §4) — given the resolution inputs, return
+      `{:ok, %{config_layers: [...], secret_source: ...}}`. `config_layers` is the
+      ORDERED low→high layer set (flavor-base → workspace → user → session, §D2);
+      `secret_source` is the result of `pick_credential_source/1`.
+
+    * `pick_credential_source/1` (spec §D4.3) — the credential-selection state machine
+      with the **absent-vs-revoked** distinction: explicit > user > workspace-shared >
+      fail-loud, where an *absent* user/workspace pointer FALLS THROUGH but a
+      *present-but-unavailable* (revoked / unauthorized / deleted) selected source
+      FAILS LOUD with a distinct error (no silent privilege downgrade; per
+      `feedback_let_it_crash_no_workarounds`).
+
+  And the create-time grant mint:
+
+    * `authorize_and_mint_grant!/1` (spec §5.1) — at agent CREATE (human caller w/ caps):
+      cap-check the chosen source's `sandbox.read` against the caller's caps (the existing
+      `sandbox.read` seam — see `Ezagent.Behavior.Workspace.resolve_source_config_dir/2`),
+      then mint a durable `Ezagent.Credential.GrantRow` recording
+      `{agent, source, approved_by, approved_scope, version}`. NEVER reads a source under
+      `system://agent-internal` caps (codex H1 — privilege-escalation leak). The
+      materialize-time fetch/revalidate already exist in PR-0; PR-1 only mints the grant.
+
+  ## Why this lives in `Ezagent.Credential.*` (core)
+
+  Resolution is a domain.agent concern (§D5), but the PR-0 cascade primitives
+  (`GrantRow`, `UserDefaultSource`, `GrantCap`) all live under
+  `Ezagent.Credential.*` in `ezagent_core`. Keeping the resolver in the same cohesive
+  namespace + app avoids a cross-app dependency cycle (the workspace domain that drives
+  CREATE depends on core, not vice-versa) and matches PR-0's now-merged placement.
+  """
+
+  alias Ezagent.Capability
+  alias Ezagent.Credential.{GrantRow, UserDefaultSource}
+
+  @typedoc "A single layer descriptor in the ordered config cascade (spec §D2)."
+  @type layer :: %{
+          required(:layer) => :flavor_base | :workspace | :user | :session,
+          required(:present) => boolean(),
+          required(:source) => term()
+        }
+
+  @typedoc "The pure resolved structure returned by `resolve_layers/1` (spec §4)."
+  @type resolved :: %{
+          required(:config_layers) => [layer()],
+          required(:secret_source) => URI.t() | nil
+        }
+
+  @typedoc """
+  Resolution inputs (spec §4). `workspace_uri`/`session_uri`/`explicit_source` may be
+  absent (`nil`). `owner_uri` and `agent_uri` are required.
+  """
+  @type inputs :: %{
+          required(:agent_uri) => URI.t(),
+          required(:owner_uri) => URI.t(),
+          optional(:workspace_uri) => URI.t() | nil,
+          optional(:session_uri) => URI.t() | nil,
+          optional(:explicit_source) => URI.t() | nil,
+          optional(:credential_required?) => boolean(),
+          optional(:source_available?) => (URI.t() -> boolean())
+        }
+
+  # ── resolve_layers ─────────────────────────────────────────────────────────
+
+  @doc """
+  Enumerate the ordered layer set (low→high) and pick the single credential source.
+
+  Returns `{:ok, %{config_layers: [...], secret_source: ...}}` or `{:error, reason}`
+  (propagated from `pick_credential_source/1` when a required credential cannot be
+  resolved). The ORDER of `config_layers` is the cascade precedence (spec §D2):
+  flavor-base (1) → workspace (2) → user (3) → session (4); later overrides earlier.
+  Absent layers (no workspace template / no session) are still ENUMERATED with
+  `present: false` so the order is invariant and the caller (PR-2) can reason about gaps.
+
+  PURE: reads only the flavor attribute (via `UriQuery`) + the user-source pointer (via
+  the PR-0 read path) + the optional injected `source_available?` predicate. No file ops.
+  """
+  @spec resolve_layers(inputs()) :: {:ok, resolved()} | {:error, term()}
+  def resolve_layers(%{agent_uri: %URI{} = agent_uri, owner_uri: %URI{} = owner_uri} = inputs) do
+    workspace_uri = Map.get(inputs, :workspace_uri)
+    session_uri = Map.get(inputs, :session_uri)
+    explicit = Map.get(inputs, :explicit_source)
+
+    config_layers = [
+      %{layer: :flavor_base, present: true, source: {:flavor_base, flavor_of(agent_uri)}},
+      %{layer: :workspace, present: not is_nil(workspace_uri), source: workspace_uri},
+      %{layer: :user, present: true, source: owner_uri},
+      %{layer: :session, present: not is_nil(session_uri), source: session_uri}
+    ]
+
+    case pick_credential_source(%{
+           explicit_source: explicit,
+           owner_uri: owner_uri,
+           workspace_uri: workspace_uri,
+           flavor: Map.get(inputs, :flavor) || flavor_of(agent_uri),
+           credential_required?: Map.get(inputs, :credential_required?, true),
+           source_available?: Map.get(inputs, :source_available?, &default_source_available?/1)
+         }) do
+      {:ok, secret_source} ->
+        {:ok, %{config_layers: config_layers, secret_source: secret_source}}
+
+      {:error, _reason} = err ->
+        err
+    end
+  end
+
+  # ── pick_credential_source (D4.3 state machine) ────────────────────────────
+
+  @doc """
+  D4.3 credential-selection state machine. Precedence: **explicit > user >
+  workspace-shared > fail-loud**, with the **absent-vs-revoked** distinction:
+
+    1. `explicit_source` named → it MUST be available; if revoked/deleted/unauthorized →
+       `{:error, {:explicit_source_unavailable, uri}}` (does NOT fall through).
+    2. else user default source (the §5.2 pointer):
+       * **absent** pointer → fall THROUGH to workspace-shared (normal provisioning);
+       * **present** but the pointed source is unavailable → `{:error,
+         {:user_source_unavailable, uri}}` (FAIL LOUD; no silent downgrade to workspace).
+    3. else workspace-shared source (if present + available) → use it.
+    4. else, when a credential is required → `{:error, :no_credential_source}`; when not
+       required → `{:ok, nil}`.
+
+  `source_available?` is an injected predicate `(URI.t() -> boolean())` — pure-testable
+  and defaulting to the durable existence check (`Ezagent.SnapshotStore.latest/1` via
+  the PR-0 convention). A source is "available" iff it currently exists and is not
+  revoked; "unavailable" captures revoked / deleted / unauthorized uniformly for the
+  fail-loud branch.
+
+  `flavor` keys the §5.2 user-source pointer together with `(owner, workspace)`; when
+  absent the user layer cannot be looked up and resolution falls through to
+  workspace-shared.
+  """
+  @spec pick_credential_source(map()) :: {:ok, URI.t() | nil} | {:error, term()}
+  def pick_credential_source(opts) when is_map(opts) do
+    explicit = Map.get(opts, :explicit_source)
+    owner_uri = Map.fetch!(opts, :owner_uri)
+    workspace_uri = Map.get(opts, :workspace_uri)
+    flavor = Map.get(opts, :flavor)
+    required? = Map.get(opts, :credential_required?, true)
+    available? = Map.get(opts, :source_available?, &default_source_available?/1)
+
+    # The user-source lookup is injectable (returns `{:ok, uri}` | `:absent`) so the
+    # state machine is pure-testable without the §5.2 DB read; defaults to the PR-0
+    # `UserDefaultSource.resolve/3` read path.
+    user_lookup =
+      Map.get(opts, :user_source_lookup, fn -> user_source(owner_uri, workspace_uri, flavor) end)
+
+    do_pick(explicit, user_lookup, workspace_uri, required?, available?)
+  end
+
+  # 1. explicit source named — must be available, else fail loud (no fall-through).
+  defp do_pick(%URI{} = explicit, _user_lookup, _ws, _required?, available?) do
+    if available?.(explicit) do
+      {:ok, explicit}
+    else
+      {:error, {:explicit_source_unavailable, explicit}}
+    end
+  end
+
+  # 2/3/4. no explicit source — consult user pointer, then workspace-shared.
+  defp do_pick(nil, user_lookup, workspace_uri, required?, available?) do
+    case user_lookup.() do
+      {:ok, %URI{} = user_src} ->
+        # PRESENT user pointer: must be available — a revoked/deleted source FAILS LOUD,
+        # it does NOT silently fall through to workspace-shared (§D4.3 absent≠revoked).
+        if available?.(user_src) do
+          {:ok, user_src}
+        else
+          {:error, {:user_source_unavailable, user_src}}
+        end
+
+      :absent ->
+        # ABSENT user pointer: fall through to workspace-shared (normal provisioning).
+        workspace_shared(workspace_uri, required?, available?)
+    end
+  end
+
+  # workspace-shared service-account source (D4.3 step 3) → fail-loud (step 4).
+  defp workspace_shared(workspace_uri, required?, available?) do
+    handle_workspace_shared(workspace_shared_source(workspace_uri), required?, available?)
+  end
+
+  # A PRESENT + available workspace-shared source is used (§D4.3 step 3). PR-1 has no
+  # shared-source registry, so `workspace_shared_source/1` is always `:absent` today;
+  # this clause is the live PR-3 hook (gated by the `@spec` union return).
+  defp handle_workspace_shared({:ok, %URI{} = ws_src}, _required?, available?) do
+    if available?.(ws_src) do
+      {:ok, ws_src}
+    else
+      {:error, {:workspace_source_unavailable, ws_src}}
+    end
+  end
+
+  # Step 4 — no source anywhere: fail loud when a credential is required.
+  defp handle_workspace_shared(:absent, required?, _available?) do
+    if required?, do: {:error, :no_credential_source}, else: {:ok, nil}
+  end
+
+  # ── grant authorize at CREATE (spec §5.1) ──────────────────────────────────
+
+  @doc """
+  Spec §5.1 — at agent CREATE (human caller w/ caps): authorize `sandbox.read` on the
+  chosen credential `source`, then mint a durable `GrantRow` for the new agent.
+
+  Required keys: `:agent_uri`, `:source` (the chosen credential source URI),
+  `:approved_by` (the principal URI minting the grant), `:caller` + `:caps` (the human
+  caller's authority to cap-check the source read against).
+
+  Cap-check: builds the needed `sandbox.read` cap for `source` the SAME way the dispatch
+  does (`Capability.cap_for_action(<AgentKind>, :read, source)`) and asserts at least one
+  of `caps` `matches?/2` it. **Refuses** to mint a grant when the caller is the internal
+  `system://agent-internal` principal (codex H1 — no source read under blanket internal
+  caps). On cap success, persists `GrantRow` with `approved_scope == source` (so the PR-0
+  `fetch_for_materialize/1` scope-identity check holds) and `version: 1`.
+
+  Returns `{:ok, %GrantRow{}}` | `{:error, :unauthorized | {:source_unauthorized, uri} |
+  :internal_principal_forbidden | term()}`. No file ops; no materialization.
+  """
+  @spec authorize_and_mint_grant!(map()) :: {:ok, GrantRow.t()} | {:error, term()}
+  def authorize_and_mint_grant!(%{
+        agent_uri: %URI{} = agent_uri,
+        source: %URI{} = source,
+        approved_by: %URI{} = approved_by,
+        caller: %URI{} = caller,
+        caps: caps
+      })
+      when is_list(caps) do
+    cond do
+      internal_principal?(caller) or internal_principal?(approved_by) ->
+        # codex H1 — never read a source under system://agent-internal caps.
+        {:error, :internal_principal_forbidden}
+
+      not source_read_authorized?(source, caps) ->
+        {:error, {:source_unauthorized, source}}
+
+      true ->
+        GrantRow.insert(%{
+          agent_uri: URI.to_string(agent_uri),
+          credential_source_uri: URI.to_string(source),
+          approved_by: URI.to_string(approved_by),
+          approved_scope: URI.to_string(source),
+          version: 1
+        })
+    end
+  end
+
+  @doc """
+  Cap-check helper (exposed for the create chokepoint + tests): is `sandbox.read` on
+  `source` authorized by `caps`? Builds the needed-cap the SAME way the dispatch does for
+  the `sandbox.read` action on an Agent Kind — `%{kind: :agent, behavior:
+  Ezagent.Behavior.Sandbox, action: :read, instance: <source>, workspace_uri: <ws>}` —
+  mirroring `Ezagent.Credential.GrantCap.read_cap_for/1` (the authoritative derived-cap
+  shape) rather than `cap_for_action/3` (which would force a cross-app reference to
+  `Ezagent.Entity.Agent`, a downstream app from core). Checks any held cap `matches?/2`.
+  Pure (no DB).
+  """
+  @spec source_read_authorized?(URI.t(), [Capability.t()]) :: boolean()
+  def source_read_authorized?(%URI{} = source, caps) when is_list(caps) do
+    needed = %{
+      kind: :agent,
+      behavior: Ezagent.Behavior.Sandbox,
+      action: :read,
+      instance: Ezagent.URI.instance(source),
+      workspace_uri: Capability.workspace_of(source)
+    }
+
+    Enum.any?(caps, fn cap -> Capability.matches?(cap, needed) end)
+  end
+
+  # ── internals ──────────────────────────────────────────────────────────────
+
+  # The user default credential source for (owner, ws, flavor) — the §5.2 stored
+  # pointer, queried via the PR-0 read path (NOT a name convention). `:absent` when
+  # unset (caller falls through); `{:ok, uri}` when present.
+  #
+  # Keyed on (owner, workspace, flavor): without a workspace or a flavor there is no
+  # pointer to look up → `:absent` (fall through to workspace-shared).
+  defp user_source(%URI{} = owner_uri, %URI{} = workspace_uri, flavor) when is_binary(flavor) do
+    case Ezagent.URI.name(workspace_uri) do
+      {:ok, ws_name} ->
+        case UserDefaultSource.resolve(URI.to_string(owner_uri), ws_name, flavor) do
+          nil -> :absent
+          src when is_binary(src) -> {:ok, Ezagent.URI.new!(src)}
+        end
+
+      _ ->
+        :absent
+    end
+  end
+
+  defp user_source(%URI{}, _workspace_uri, _flavor), do: :absent
+
+  # Workspace-shared service-account source (§D4.3 step 3). The concrete shared-source
+  # storage + the workspace-admin authorize step are PR-3 (spec §10 "Workspace-shared
+  # service-account credential"). The lookup goes through `Ezagent.UriQuery` for the
+  # `:workspace_shared_credential_source` attribute — the standard cross-domain query
+  # seam. PR-1 does not register that resolver, so today the query returns
+  # `{:no_resolver, _}` which we map to `:absent` (→ fall-through / fail-loud per §D4.3).
+  # PR-3 registers the resolver and the `{:ok, uri}` branch becomes live with no change
+  # here.
+  @spec workspace_shared_source(URI.t() | nil) :: {:ok, URI.t()} | :absent
+  defp workspace_shared_source(nil), do: :absent
+
+  defp workspace_shared_source(%URI{} = workspace_uri) do
+    case Ezagent.UriQuery.resolve(:workspace_shared_credential_source, workspace_uri) do
+      {:ok, src} when is_binary(src) -> {:ok, Ezagent.URI.new!(src)}
+      {:ok, %URI{} = src} -> {:ok, src}
+      :none -> :absent
+      # PR-1: resolver not registered yet → treat as no shared source (absent).
+      {:error, {:no_resolver, _}} -> :absent
+      {:error, _} -> :absent
+    end
+  end
+
+  defp flavor_of(%URI{} = agent_uri) do
+    case Ezagent.UriQuery.resolve(:flavor, agent_uri) do
+      {:ok, flavor} -> flavor
+      :none -> nil
+      {:error, _} -> nil
+    end
+  end
+
+  # Default availability: a source is available iff it currently exists as a durable
+  # snapshot (the PR-0 `source_exists?` convention) — revoked/deleted sources read as
+  # unavailable, driving the fail-loud branch. PR-2 layers the grant-revocation check on
+  # top at materialize time; at CREATE existence is the availability signal.
+  defp default_source_available?(%URI{} = source) do
+    match?({:ok, _}, Ezagent.SnapshotStore.latest(URI.to_string(source)))
+  end
+
+  defp default_source_available?(source) when is_binary(source) do
+    match?({:ok, _}, Ezagent.SnapshotStore.latest(source))
+  end
+
+  defp internal_principal?(%URI{} = uri) do
+    URI.to_string(uri) == "system://agent-internal"
+  end
+end
