@@ -15,6 +15,7 @@ defmodule EzagentCore.Repo.Migrations.CredentialGrants do
     end
 
     create unique_index(:credential_grants, [:agent_uri],
-             name: :credential_grants_agent_uri_index)
+             name: :credential_grants_agent_uri_index
+           )
   end
 end

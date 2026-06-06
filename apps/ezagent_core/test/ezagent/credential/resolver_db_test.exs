@@ -36,11 +36,7 @@ defmodule Ezagent.Credential.ResolverDbTest do
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(owner_uri)
 
     {:ok,
-     owner_uri: owner_uri,
-     owner_str: owner_str,
-     base: base,
-     new_agent: new_agent,
-     suffix: suffix}
+     owner_uri: owner_uri, owner_str: owner_str, base: base, new_agent: new_agent, suffix: suffix}
   end
 
   # ── (b)+(c) DB: user pointer PRESENT wins; pointer ABSENT falls through ─────

@@ -14,6 +14,7 @@ defmodule EzagentCore.Repo.Migrations.UserDefaultCredentialSources do
     end
 
     create unique_index(:user_default_credential_sources, [:owner_uri, :workspace_uri, :flavor],
-             name: :user_default_credential_sources_natural_key_index)
+             name: :user_default_credential_sources_natural_key_index
+           )
   end
 end

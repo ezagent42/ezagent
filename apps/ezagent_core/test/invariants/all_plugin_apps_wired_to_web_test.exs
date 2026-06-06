@@ -36,6 +36,7 @@ defmodule EzagentCore.Invariants.AllPluginAppsWiredToWebTest do
           cwd = File.cwd!()
           if File.dir?(Path.join(cwd, "apps")), do: cwd, else: Path.expand("../..", cwd)
       end
+
     Path.join(String.trim(out), "apps")
   end
 
