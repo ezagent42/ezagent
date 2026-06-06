@@ -215,6 +215,12 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   @impl Ezagent.Agent.CredentialAdapter
   def credential_relpaths, do: [".credentials.json"]
 
+  # #17 cascade PR-0 (§D6, codex H4) — the SECRET subset, disjoint from config.
+  # For cc the credential home holds only the single token file, so the secret set
+  # equals credential_relpaths/0; codex differs (config.toml is config, not secret).
+  @impl Ezagent.Agent.CredentialAdapter
+  def secret_relpaths, do: [".credentials.json"]
+
   # claude prints these when the OAuth access token is expired/missing (~daily). Pure
   # data — the PR-C PTY observer consumes them to notify the owner to re-`/login`.
   @impl Ezagent.Agent.CredentialAdapter

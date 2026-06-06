@@ -32,6 +32,13 @@ defmodule Ezagent.Agent.CredentialAdapter do
   @callback credential_relpaths() :: [String.t()]
 
   @doc """
+  The subset of files within the credential home that are pure SECRET/token material,
+  copied ONLY from the single resolved credential source (§D6). Disjoint from config
+  paths — codex `config.toml` is config (joins the layer merge), NOT a secret.
+  """
+  @callback secret_relpaths() :: [String.t()]
+
+  @doc """
   PTY-output signatures meaning "auth expired/missing, needs re-login" (for ②). Pure data
   — the detector that consumes them lives in the PTY server (PR-C).
   """
@@ -52,6 +59,7 @@ defmodule Ezagent.Agent.CredentialAdapter do
   @declarative_callbacks [
     {:credential_env_var, 0},
     {:credential_relpaths, 0},
+    {:secret_relpaths, 0},
     {:auth_failure_signals, 0}
   ]
 

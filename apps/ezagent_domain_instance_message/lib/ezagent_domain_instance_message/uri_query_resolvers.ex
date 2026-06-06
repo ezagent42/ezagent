@@ -16,10 +16,29 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolvers do
          :ok <- Ezagent.UriQuery.register(:orchestrator, &__MODULE__.resolve_orchestrator/1),
          :ok <- Ezagent.UriQuery.register(:member_by_role, &__MODULE__.resolve_member_by_role/1),
          :ok <-
+           Ezagent.UriQuery.register(
+             :user_default_credential_source,
+             &__MODULE__.resolve_user_default_source/1
+           ),
+         :ok <-
            Ezagent.UriQuery.register(:session_template, &__MODULE__.resolve_session_template/1) do
       :ok
     end
   end
+
+  @doc false
+  # #17 cascade PR-0 (spec §5.2) — resolve a user's default credential source pointer.
+  # Arg is a `{owner, ws, flavor}` tuple (UriQuery's 1-arg resolver shape).
+  @spec resolve_user_default_source(term()) :: Ezagent.UriQuery.result()
+  def resolve_user_default_source({owner, ws, flavor})
+      when is_binary(owner) and is_binary(ws) and is_binary(flavor) do
+    case Ezagent.Credential.UserDefaultSource.resolve(owner, ws, flavor) do
+      nil -> :none
+      source -> {:ok, source}
+    end
+  end
+
+  def resolve_user_default_source(_), do: :none
 
   @doc false
   @spec resolve_flavor(term()) :: Ezagent.UriQuery.result()

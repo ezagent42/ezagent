@@ -35,6 +35,12 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   @impl Ezagent.Agent.CredentialAdapter
   def credential_relpaths, do: ["auth.json", "config.toml"]
 
+  # #17 cascade PR-0 (§D6, codex H4) — the SECRET subset, disjoint from config.
+  # config.toml is configuration (joins the PR-2 layer merge), NOT a secret —
+  # only auth.json is token material copied from the single resolved source.
+  @impl Ezagent.Agent.CredentialAdapter
+  def secret_relpaths, do: ["auth.json"]
+
   # codex's expiry/missing-auth signatures (confirm against a live expiry in PR-C).
   @impl Ezagent.Agent.CredentialAdapter
   def auth_failure_signals,

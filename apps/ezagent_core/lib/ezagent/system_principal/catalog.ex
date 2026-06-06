@@ -114,8 +114,9 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   end
 
   @doc """
-  The 14-entry closed allowlist mapped from principal URI →
-  `[%Capability{}]` cap list.
+  The closed allowlist mapped from principal URI →
+  `[%Capability{}]` cap list. (#17 cascade PR-0 added
+  `system://credential-materializer` — an empty-cap audit identity.)
 
   Implemented as a function (not a module attribute) so the bootstrap
   wildcard's granted_by/granted_at can use `@bootstrap_granted_by` +
@@ -287,7 +288,15 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # explicit cap.
          Capability.cap(:workspace, Workspace, :any)
        ]},
-      {principal("lv-anon-mount"), []}
+      {principal("lv-anon-mount"), []},
+      # #17 cascade PR-0 (spec §5.1, codex H1) — the credential-materializer
+      # IDENTITY. This is an AUDIT identity only: it holds NO standing caps. The
+      # least-privilege source-read authority is a NARROW `Capability.cap/5`
+      # derived per-grant at materialize time (see `Ezagent.Credential.GrantCap`)
+      # and passed as the dispatch caps for the single `sandbox.read` on the
+      # validated source. A broad standing cap here would defeat the per-source
+      # scoping — so the entry is deliberately empty (like `lv-anon-mount`).
+      {principal("credential-materializer"), []}
     ]
   end
 
