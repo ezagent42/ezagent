@@ -577,9 +577,16 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     end
   end
 
+  # #17 cascade PR-2 (§7) — atomic-replace-with-rollback via the core Materializer:
+  # move the current target aside to a sibling `.bak`, rename staging into place, drop
+  # `.bak` on success / RESTORE it on failure. Replaces the prior `rm_rf(target)` THEN
+  # `rename(staging, target)` which left NO config_dir on a crash between the two. A
+  # failed swap leaves the PRIOR good config_dir intact (never empty / half-merged).
   defp swap_into_place(staging, target) do
-    _ = File.rm_rf(target)
-    File.rename(staging, target)
+    case Ezagent.Agent.Materializer.atomic_replace(staging, target) do
+      {:ok, _target} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   defp chmod_credential_files(dir) do

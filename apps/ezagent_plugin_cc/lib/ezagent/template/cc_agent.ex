@@ -1949,13 +1949,19 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     end
   end
 
-  # Remove a credential-LESS existing target (the only case that reaches here — a
-  # credentialled target is preserved by the `has_user_credentials?` guard above), then
-  # rename the staging dir into place. `rename` is atomic on the same filesystem (staging
-  # is a sibling of target).
+  # #17 cascade PR-2 (§7) — replace the prior `rm_rf(target)` THEN `rename(staging,
+  # target)` (which left NO config_dir on a crash between the two) with the core
+  # atomic-replace-with-rollback: move the current target aside to a sibling `.bak`,
+  # rename staging into place, drop `.bak` on success / RESTORE it on failure. A failed
+  # swap therefore leaves the PRIOR good config_dir intact (never empty / half-merged).
+  # Only a credential-LESS existing target reaches here (a credentialled target is
+  # preserved by the `has_user_credentials?` guard above); the rollback additionally
+  # protects against a partial-rename window.
   defp swap_into_place(staging, target) do
-    if File.dir?(target), do: File.rm_rf(target)
-    File.rename(staging, target)
+    case Ezagent.Agent.Materializer.atomic_replace(staging, target) do
+      {:ok, _target} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   # True iff any of the flavor's declared credential files exist in `dir` (a real login).
