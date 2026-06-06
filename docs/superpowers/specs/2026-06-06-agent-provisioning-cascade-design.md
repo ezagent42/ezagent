@@ -1,7 +1,8 @@
 # SPEC: Multi-level agent provisioning — layered credential/config cascade (domain.agent)
 
-> **Status:** design rev 4 — codex adversarial-review rounds 1+2 (mechanism) + round 3
-> (goal/effect-level) folded. Round 3 closed three GOAL-level gaps: mandatory controls
+> **Status:** design rev 5 — adds §12 Management UI (operator surface, PR-5) + acceptance
+> gate item 8 (Allen 2026-06-06). rev 4 — codex adversarial-review rounds 1+2 (mechanism) +
+> round 3 (goal/effect-level) folded. Round 3 closed three GOAL-level gaps: mandatory controls
 > now survive ALL override modes via post-merge validation (D4.1, G1); explicit
 > credential-selection state machine with workspace-shared fallback (D4.3, G2); relogin
 > = in-place update of a stable per-(owner,ws,flavor) holder (§5.2, G3). §11 now states
@@ -434,11 +435,18 @@ The full end-to-end **acceptance gate** is §11 (the completion criterion).
 - **PR-4 — curl into the model.** curl’s `:api_keys` resolved through the same layered
   source precedence (workspace-shared key ⇒ user key ⇒ explicit); slice materialization
   adapter; flavor-parity gate.
-- **PR-5 — (optional/V2) eager watch-propagation + deep-merge + pinned references** —
+- **PR-5 — Management UI (operator surface, §12).** A LiveView surface (extending the
+  existing `admin_templates_live` / `plugins_live` / `workspace_detail` / `auto_derive_live`
+  pattern) to manage the now-diverse templates + the cascade: list templates by level,
+  show an agent's resolved layer stack + chosen credential source, set/change a user's
+  default credential source, view/revoke credential grants, and curate workspace templates
+  + their mandatory set. Backend-dependent → lands after PR-1..PR-4.
+- **PR-6 — (optional/V2) eager watch-propagation + deep-merge + pinned references** —
   deferred; tracked.
 
 Sequencing note: PR-0 must land first (it defines the grant + source-of-truth + adapter
-split that PR-1/PR-2 depend on). PR-2 depends on PR-1; PR-3/PR-4 follow.
+split that PR-1/PR-2 depend on). PR-2 depends on PR-1; PR-3/PR-4 follow; PR-5 (UI) after
+the backend exists to manage.
 
 ## 10. Open items
 
@@ -493,5 +501,50 @@ conditions (each a test; the gate is the union, per
 7. **Live-update of shared config.** A workspace plugin/config update flows to its agents
    on their next start (cascade re-resolution), without per-agent edits.
 
+8. **Operable via UI.** An operator/user can, through the management UI (§12), see an
+   agent's resolved layer stack + its credential source, set their default source, and
+   revoke a grant — without hand-running mix tasks. (Delivered by PR-5.)
+
 This gate (not "PRs merged + unit tests pass") is the completion criterion; PR-2/PR-3/PR-4
-each move one or more of these from red to green.
+move 1–7 from red to green, PR-5 moves 8.
+
+## 12. Management UI (operator surface — PR-5)
+
+Given the now-diverse templates (flavor-base / workspace / user) + the new cascade
+entities (credential sources, grants), the operator needs a surface to see and manage
+them — the analogue of the existing plugin-management page. This **extends existing
+LiveViews, not a greenfield app**:
+
+- **Reuse / extend:** `admin_templates_live.ex` (template list/manage), `plugins_live.ex`
+  (the management-page pattern), `workspace_detail_live.ex` (workspace template add/remove),
+  `auto_derive_live.ex` (`/plugins/auto/<kind>` generic Kind list/detail — already renders
+  `template://` Kinds). Do not duplicate; add the cascade-specific views to these.
+
+### 12.1 What it shows / does
+1. **Templates by level** — list flavor-base (read-only, system), workspace templates
+   (this workspace's curated set), and the user's own templates; mark which carry a
+   mandatory set.
+2. **Agent → resolved layer stack** — for an agent, show the ordered layers that compose
+   it (flavor-base → workspace → user → session), the final merged config view, and the
+   single **credential source** it resolved to (read via the §4 resolution, read-only).
+3. **User default credential source** — view + set/change the §5.2 pointer for
+   `(owner, workspace, flavor)`; the set action goes through the cap-checked authorized
+   write path (§5.2), surfacing its validation errors (cross-owner / wrong-flavor / etc.)
+   as user-facing messages.
+4. **Grants** — list an agent's credential grant (source, approved_by, version, status);
+   **revoke** action (cap-checked) that drives the §5.1 revoke + forces the bound agent
+   to restart into the fail-loud path.
+5. **Workspace template curation** — workspace admin creates/edits/removes workspace
+   templates and marks the mandatory set; gated by the workspace manage cap.
+
+### 12.2 Cap model
+- Every mutating action dispatches through the SAME cap-checked Behaviors as the CLI
+  (no LV-only bypass — per the CLI↔GUI parity invariant in `docs/futures/todo.md`):
+  user-default-source set → §5.2 authorized write; grant revoke → §5.1; workspace
+  template curation → workspace manage cap. Read views are scoped to what the caller may
+  see (own agents / own workspace; admin sees all).
+
+### 12.3 Out of scope (V1 UI)
+- Editing raw merged files in-browser; live diff of layer overrides (V2).
+- The credential **login** flow itself (the user still logs in via the agent's terminal
+  per the existing flow; the UI manages the *pointer/grant*, not the secret bytes).
