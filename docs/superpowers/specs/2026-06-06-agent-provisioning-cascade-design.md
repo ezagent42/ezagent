@@ -1,9 +1,11 @@
 # SPEC: Multi-level agent provisioning — layered credential/config cascade (domain.agent)
 
-> **Status:** design rev 2 — codex adversarial-review (rev 1) folded: 4 HIGH + 1 MED
-> addressed (durable spawn-time authorization §5.1; concrete user credential source
-> §5.2; cold-restart re-resolution §4 + D3; secret-vs-config path split §3 D5/D6;
-> directory tombstones §3 D4). Allen-approved in brainstorm 2026-06-06. Builds on and
+> **Status:** design rev 3 — codex adversarial-review rounds 1+2 folded. Round 1
+> (4 HIGH + 1 MED) and round 2 (4 deeper HIGH on the rev-2 additions) addressed as
+> design REQUIREMENTS/INVARIANTS, with the concrete mechanism deferred to PR-0/PR-1
+> planning (codex code-review gates the impl): leased/versioned credential grant §5.1;
+> trust-aware tombstones §3 D4.2; real atomic-replace-with-rollback §7; cap-checked
+> user-source registry §5.2. Allen-approved in brainstorm 2026-06-06. Builds on and
 > **supersedes the
 > inheritance half (PR-D / §③) of** `2026-06-03-agent-credential-lifecycle.md`
 > (whose PR-A/B/C/C2/E are already merged: #551/552/553/555/556). Builds on
@@ -117,9 +119,16 @@ secret — H4 fix).
    a filename collision the higher layer wins. A higher layer may **remove** a
    lower-layer file by shipping a **tombstone** for that relpath (a sibling
    `<name>.tombstone` marker, or an entry in the layer's `deny` manifest). After the
-   union, every tombstoned relpath is deleted from the merged tree. This lets a
-   user/session disable an inherited unsafe/outdated plugin/skill/MCP/hook it does not
-   own (M1 fix). Tombstoning a path it cannot otherwise see is allowed (deny-by-relpath).
+   union, every tombstoned relpath is deleted from the merged tree.
+   **Trust policy (round-2 H2' — precedence ≠ trust):** a lower-trust higher-precedence
+   layer must NOT silently erase a higher-trust layer's security controls. Each layer
+   declares a set of **protected/mandatory** relpaths (e.g. workspace policy hooks,
+   required MCP/plugins). A tombstone from layer N can remove a contribution from layer
+   M<N ONLY if that relpath is not in M's protected set; removing a protected path
+   requires an explicit **management cap** at the removing layer (a user/session cannot
+   tombstone a workspace/base mandatory hook). Non-protected inherited files remain
+   freely tombstonable (the M1 use case — disable an inherited *optional* plugin).
+   Mechanism (protected-set declaration + cap gate) deferred to PR-2 planning.
 3. **Single credential source per agent.** Secret paths are **not** merged across
    layers. Exactly one source is chosen by precedence:
    **explicit (an operator-named source agent) > user (personal credential source,
@@ -231,6 +240,26 @@ Model — a durable **credential grant**, not a re-derived cap check:
 - Tests (design-level): revoked grant, deleted source, cross-user source under a
   non-owning grant, and boot-time re-materialization all behave per the above.
 
+**Required invariants (round-2 H1' — mechanism deferred to PR-0/PR-1, gated by codex
+code-review):**
+- **Versioned grant + revocation epoch.** The `CredentialGrant` carries a monotonic
+  `version`/epoch. Revocation bumps it. There is a single durable grant store with a
+  defined read path (PR-0 chooses slice-on-agent vs dedicated table).
+- **Grant-scoped principal is concrete.** The non-human materialize principal is a
+  specific URI scoped to the grant + approved source (e.g.
+  `system://credential-grant/<grant_id>`), holding ONLY `sandbox.read` on
+  `approved_scope` — not blanket `system://` caps. PR-0 defines its encoding + catalog
+  entry.
+- **Leased / TOCTOU-safe materialization.** revalidate → copy secret → exec is a
+  guarded sequence: the grant `version` read at the start is **re-checked immediately
+  before subprocess exec** (and before writing the curl slice). If it changed (revoked
+  mid-start), abort the start — do NOT launch with the stale secret. So a
+  revoke-after-pre-check cannot produce a freshly-started process holding revoked creds.
+- **Revocation cancels in-flight + running.** Revocation both fails future starts AND
+  signals already-running agents bound to that grant to restart (force-kill →
+  re-resolve, which now fails loud) — revocation is not "effective only at the next
+  voluntary restart."
+
 ### 5.2 The user credential source is a concrete Kind+slice — not a naming convention (H2 fix)
 
 The merged lifecycle put `:api_keys` on **Agent** Kinds and cc/codex OAuth files in
@@ -255,6 +284,20 @@ Define the **user credential source** explicitly and durably:
   registering the appropriate existing agent as the owner's default source for that
   (workspace, flavor); documented one-time step, no silent guess.
 
+**Required invariants (round-2 H4' — the pointer IS a credential authority):**
+- **Cap-checked, audited writes.** Only the owner (or an admin) may set/update their
+  `user_default_credential_source`; writes are cap-checked and audited. A DB **uniqueness
+  constraint** on `(owner, workspace, flavor)` (not just app-level).
+- **Pointed-source validation.** On write, the target source MUST be proven to belong to
+  the same `(owner, workspace, flavor)` and be the expected source-Kind — reject a
+  pointer to another user's / another workspace's / wrong-flavor agent (else a bad write
+  redirects a user's default to someone else's credential).
+- **Revoke / staleness.** Deleting the pointed source invalidates the pointer (next
+  resolve fails loud, prompts re-login); explicit delete/revoke supported.
+- **Migration refuses ambiguity.** The one-time adoption command **refuses** when
+  existing per-agent credentials are ambiguous for a `(owner, workspace, flavor)` rather
+  than guessing — operator resolves explicitly.
+
 ## 6. Flavor archetypes (informs materialization)
 
 - **External-CLI / PTY** (cc, codex): config **must** be files (subprocess reads disk
@@ -269,9 +312,15 @@ Define the **user credential source** explicitly and durably:
 - Missing/unauthorized credential source → **raise** (no silent empty credential, no
   default-workspace fallback). The agent fails to create/spawn with a clear reason.
 - A layer that points at a non-existent template → raise at resolution, not a silent skip.
-- Partial materialization is impossible by construction: atomic staging means a target
-  config_dir is either the full merged tree or untouched (supersedes blind stale-wipe;
-  PR-B guarantee, extended to the merged set).
+- **Atomic replace with rollback (round-2 H3' — do NOT rely on the current PR-B impl).**
+  The current cc/codex materializer does `File.rm_rf(target)` THEN `File.rename(staging,
+  target)`; a crash/rename-failure between the two leaves the agent with **no**
+  config_dir (not "untouched"). The cascade materializer MUST use a real replace
+  protocol with rollback — stage → move current target to `<target>.bak` → rename
+  staging into place → on success drop `.bak`, on failure restore `.bak`. A failed
+  materialization leaves the PRIOR good config_dir intact (never an empty/half dir).
+  Mechanism deferred to PR-2; **failure-injection tests required** (crash after the
+  delete/move step, rename failure) before PR-2 ships.
 
 ## 8. Testing strategy
 
@@ -303,24 +352,41 @@ Define the **user credential source** explicitly and durably:
   via a tombstone; the merged tree omits it.
 - **User-source SoT (§5.2):** the default user source is read from the stored pointer,
   never name-inferred; absent pointer + required credential → fail loud, no `:no_api_key`.
+- **Grant TOCTOU (H1'):** revoke the grant AFTER the pre-copy revalidation but BEFORE
+  exec → the start aborts; no process launches with the revoked secret. Revoking a grant
+  bound to a running agent forces its restart.
+- **Atomic-replace rollback (H3'):** inject a crash/failure after the target is moved
+  aside / before rename completes → the agent retains its PRIOR good config_dir (never an
+  empty or half-merged dir).
+- **Tombstone trust (H2'):** a user/session layer cannot tombstone a workspace/base
+  protected path without the management cap; a non-protected inherited plugin can be
+  tombstoned freely.
+- **User-source authz (H4'):** a write pointing at another user's / another workspace's /
+  wrong-flavor agent is rejected; DB uniqueness on `(owner, workspace, flavor)` holds;
+  pointer writes are cap-checked + audited.
 
 ## 9. Decomposition (small PRs, each → codex code-review)
 
-- **PR-0 — `CredentialGrant` + user-source SoT (foundations, H1+H2).** The durable
-  grant record (§5.1) + the `user_default_credential_source(owner,ws,flavor)` pointer
-  registry queried via UriQuery (§5.2) + the `secret_relpaths`/config split in the
-  adapter contract (§D6, H4). No cascade behavior change yet; migration step for
-  existing per-agent creds. Invariant tests: grant revoke/delete/scope, disjoint
-  secret∩config, user-source-from-pointer-not-name.
+- **PR-0 — `CredentialGrant` + user-source SoT (foundations, H1/H1'+H2/H4').** The
+  **versioned** durable grant store (§5.1: epoch, grant-scoped principal URI +
+  catalog entry, read path) + the cap-checked **`user_default_credential_source`**
+  registry with DB uniqueness `(owner,ws,flavor)` + pointed-source validation + audited
+  writes (§5.2) + the `secret_relpaths`/config split in the adapter contract (§D6).
+  No cascade behavior change yet; migration command that refuses ambiguous existing
+  creds. Invariant tests: grant revoke/delete/scope + TOCTOU version re-check, disjoint
+  secret∩config, user-source-from-pointer-not-name + cross-owner-write-rejected.
 - **PR-1 — Resolution core (domain.agent).** `resolve_layers/…` + ordered layer
   enumeration + `pick_credential_source` precedence + grant-scoped authorize/re-validate;
   pure resolution returning `{config_layers, secret_source}`, no materialization change
   yet. Invariant tests for order + precedence + fail-loud.
-- **PR-2 — Layered materialize for file flavors, at every (re)start (H3).** Extend PR-B
-  atomic staging from one reference dir to merge layers 1→4 (whole-file-replace +
-  directory-union + tombstones) + `secret_relpaths`-only copy from the resolved source;
-  route spawn AND cold-restart/self-heal through resolve→materialize (respawn stores
-  inputs, not snapshot). cc + codex. Tests: cold-restart re-resolution.
+- **PR-2 — Layered materialize for file flavors, at every (re)start (H3/H3').** Replace
+  the PR-B `rm_rf`-then-rename with a **real atomic-replace-with-rollback** (§7), then
+  merge layers 1→4 (whole-file-replace + directory-union + **trust-aware tombstones**
+  §D4.2) + `secret_relpaths`-only copy from the resolved source under the **TOCTOU-safe
+  leased** materialization (§5.1); route spawn AND cold-restart/self-heal through
+  resolve→materialize (respawn stores inputs, not snapshot). cc + codex. Tests:
+  cold-restart re-resolution, atomic-replace failure-injection, tombstone-trust, grant
+  TOCTOU.
 - **PR-3 — Workspace + user layer scoping.** Workspace-scoped AgentTemplate as layer 2
   (exists; wire as a layer); user-owned template (owner attribute) as layer 3; default
   resolution via the §5.2 pointer.
@@ -335,20 +401,24 @@ split that PR-1/PR-2 depend on). PR-2 depends on PR-1; PR-3/PR-4 follow.
 
 ## 10. Open items
 
-Resolved in rev 2 (was open in rev 1): user-source storage → §5.2 (stored pointer);
-credential-source vs `parent_template_uri` → §5.1 `CredentialGrant` is distinct from
-provenance; directory-union delete → §D4.2 tombstones; spawn authorization → §5.1;
-cold-restart staleness → D3/§4; codex `config.toml` conflation → §D6.
+Resolved across rev 2 + rev 3 (codex rounds 1+2): user-source storage → §5.2; spawn
+authorization → §5.1 versioned `CredentialGrant`; cold-restart staleness → D3/§4; codex
+`config.toml` conflation → §D6; directory-union delete + trust → §D4.2 trust-aware
+tombstones; grant TOCTOU → §5.1 leased re-check; atomic-materialize falsehood → §7
+replace-with-rollback; user-pointer authz → §5.2 invariants.
 
-Still open (for PR-0/PR-1 planning + a second codex pass):
-- **Workspace-shared service-account credential**: concrete storage of the shared
-  source, the workspace-admin authorize step that mints the `CredentialGrant` for member
-  agents, and rotation of the shared secret (re-validate semantics when it rotates).
-- **`CredentialGrant` persistence location**: a slice on the agent Kind vs a dedicated
-  grant store; and whether revocation is push (sweep grants) or pull (check at start).
-- **Interaction with #533 creation-unification**: the resolution + grant minting MUST run
-  inside the single authorized create chokepoint, not as a parallel path.
-- **Migration concreteness**: the one-time adoption of existing per-agent `:api_keys` /
-  OAuth dirs into per-(owner,workspace,flavor) default sources — exact mapping + operator
-  command.
-- Does any in-process flavor besides curl need a non-slice resolver shape?
+Still open — design-level requirements stated; **concrete mechanism deferred to PR-0/PR-2
+planning** (each gated by codex code-review), NOT unresolved design questions:
+- **`CredentialGrant` store shape** (slice-on-agent vs dedicated table) + revocation
+  push (sweep) vs pull (check-at-start) — PR-0 decides; both must satisfy §5.1 invariants.
+- **Workspace-shared service-account credential**: shared-source storage + the
+  workspace-admin authorize step that mints a member `CredentialGrant` + shared-secret
+  rotation semantics — PR-3/PR-4.
+- **Grant-scoped principal catalog entry** encoding — PR-0.
+- **Migration command** exact mapping (refuses ambiguity) — PR-0.
+
+Genuinely open (needs a decision, not just deferral):
+- **Interaction with #533 creation-unification**: resolution + grant minting MUST run
+  INSIDE the single authorized create chokepoint, not a parallel path — confirm the
+  chokepoint exposes the needed hook before PR-1.
+- Does any in-process flavor besides curl need a non-slice resolver shape? (likely no.)
