@@ -181,3 +181,28 @@ Run the full umbrella suite from the repo root: `MIX_ENV=test mix test` → **0 
 - If any step is too entangled to do safely (e.g. the D3 cold-restart vs #533/#539), implement
   the safe slice, FLAG the rest explicitly with the concrete blocker — honesty over forced
   completion.
+
+## 7. Execution process (REQUIRED — Allen 2026-06-06, loose-audit mode)
+You self-merge, but you operate inside a human-run **post-merge audit loop** that pulls
+`main`, runs the §5 gate, and files GitHub issues labeled **`cascade-audit`** when
+something is red. Follow this process so that loop can steer you:
+
+1. **Worktree per PR.** For each sub-PR, create a FRESH git worktree off the latest
+   `origin/main` (`git fetch origin && git worktree add ../cascade-<pr> origin/main`),
+   implement + test there, and open the PR from that branch. Do NOT develop directly in a
+   shared/long-lived checkout (it tangles `_build`/stash across PRs). Remove the worktree
+   after the PR merges (`git worktree remove ../cascade-<pr>`).
+2. **One PR per sub-PR, self-reviewed to SHIP.** Open a PR, run your adversarial
+   code-review, fix until there is no CRITICAL/HIGH, then squash-merge to `main` and delete
+   the branch. Never bundle sub-PRs.
+3. **Check issues EVERY cycle (and before every merge).** Run
+   `gh issue list --state open --label cascade-audit`. These are the audit loop's findings
+   (gate failures / regressions it caught on `main`). For each: read it, FIX what applies to
+   the current or next PR **before merging that area**, and close the issue with a comment
+   referencing the fixing commit/PR. **Treat an open `cascade-audit` issue as a merge
+   blocker for the part of the cascade it names** — do not merge new work over an unaddressed
+   audit finding in the same area.
+4. **Never regress a green gate item.** Do not merge a PR that turns a previously-green §5
+   G-invariant red; keep the umbrella `mix test` green as you go.
+5. **Boundaries (repeat):** test on the TEST DB only; never run `mix ecto.migrate` against a
+   dev/prod DB; never touch the running dev/prod docker containers or their data.
