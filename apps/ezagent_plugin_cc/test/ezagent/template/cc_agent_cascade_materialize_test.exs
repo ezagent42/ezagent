@@ -121,6 +121,44 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
     refute File.exists?(Path.join(ctx.target, ".ezagent-config-complete"))
   end
 
+  describe "recover_orphaned error at materialize ENTRY (codex H)" do
+    # When the crash-mid-swap self-heal (`recover_orphaned/1` at materialize entry) detects a
+    # leftover known-good `.bak` + a missing/partial target but CANNOT restore it, the entry
+    # MUST FAIL LOUD — proceeding to a fresh materialize could combine with a later
+    # revoked-grant / missing-source failure to leave the agent with NOTHING (the `.bak` is
+    # the only good copy). The recovery error must propagate, not be discarded.
+    test "materialize ENTRY aborts when recover_orphaned cannot restore", ctx do
+      # Own the parent so we can make it read-only without touching the shared config root.
+      parent = tmp("cc-ro-parent")
+      target = Path.join(parent, "cfg")
+
+      # Crash mid-swap: target ABSENT, known-good prior tree in a sibling `.bak`.
+      bak = "#{target}.bak-#{uniq()}"
+      write!(bak, ".credentials.json", "PRIOR-SECRET")
+      refute File.exists?(target)
+
+      ref = tmp("cc-ref")
+      write!(ref, "settings.json", "NEW")
+
+      # Read-only parent → recover_orphaned's restore `File.rename(bak, target)` fails.
+      File.chmod!(parent, 0o500)
+      on_exit(fn -> File.chmod(parent, 0o700) end)
+
+      tmpl = %{"config_dir" => ref, "allocated_config_dir" => target}
+
+      result = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+
+      File.chmod!(parent, 0o700)
+
+      assert {:error, {:config_dir_recover_failed, {:recover_restore_failed, ^bak, _}}} = result
+
+      # CRITICAL: the only known-good prior tree (the `.bak`) is preserved — NOT clobbered by
+      # a fresh materialize that the abort prevented.
+      assert File.exists?(bak)
+      assert File.read!(Path.join(bak, ".credentials.json")) == "PRIOR-SECRET"
+    end
+  end
+
   describe "grant revoked AFTER materialize, BEFORE launch (codex CRITICAL §5.1)" do
     test "create_agent_config_dir returns the materialize-time grant version", ctx do
       base = tmp("cc-base")

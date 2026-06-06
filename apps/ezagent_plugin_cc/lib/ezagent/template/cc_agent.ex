@@ -1956,17 +1956,34 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     # #17 cascade PR-2 (§7 H3' (b)) — crash-mid-swap self-heal. If a prior atomic_replace
     # died in the move-aside→rename window, a known-good `<target>.bak-*` is left while
     # `target` is missing/partial; recover it BEFORE (re)materializing so the agent never
-    # boots with a permanently-absent config_dir. Best-effort: a recovery error does not
-    # block a fresh materialize (which rebuilds the target anyway).
-    _ = Ezagent.Agent.Materializer.recover_orphaned(target)
+    # boots with a permanently-absent config_dir.
+    #
+    # codex H — FAIL LOUD on a recovery error. The recovered `.bak` may be the ONLY good copy
+    # of the prior config (the matching materializer fix preserves it on a restore failure).
+    # If we swallowed the error and proceeded, a subsequent revoked-grant / missing-source
+    # materialize failure could combine to leave the agent with NOTHING. Surface the recovery
+    # error so the caller (spawn_for_local_pty) aborts the spawn with the prior config intact.
+    with :ok <- recover_orphaned_or_fail(target) do
+      # Return shape: the cascade path returns `{:ok, target, {:grant, uri, version}}` so the
+      # validated grant version reaches the LATER subprocess launch for a second re-check
+      # (codex CRITICAL §5.1 — config-swap and PTY-launch are distinct boundaries). The
+      # single-reference (non-cascade) path is UNCHANGED — `{:ok, target}` (no grant).
+      case Map.get(tmpl, "cascade") do
+        %{} = cascade -> materialize_cascade(agent_uri, target, cascade)
+        _ -> materialize_single_reference(target, reference_dir)
+      end
+    end
+  end
 
-    # Return shape: the cascade path returns `{:ok, target, {:grant, uri, version}}` so the
-    # validated grant version reaches the LATER subprocess launch for a second re-check
-    # (codex CRITICAL §5.1 — config-swap and PTY-launch are distinct boundaries). The
-    # single-reference (non-cascade) path is UNCHANGED — `{:ok, target}` (no grant).
-    case Map.get(tmpl, "cascade") do
-      %{} = cascade -> materialize_cascade(agent_uri, target, cascade)
-      _ -> materialize_single_reference(target, reference_dir)
+  # codex H — normalize `recover_orphaned/1` for the `with` chain: `:ok` / `{:recovered, _}`
+  # both mean "safe to materialize"; a `{:error, _}` (a detected recovery that could NOT be
+  # performed) ABORTS the materialize so we never clobber the only good `.bak` with a fresh
+  # build that might itself fail.
+  defp recover_orphaned_or_fail(target) do
+    case Ezagent.Agent.Materializer.recover_orphaned(target) do
+      :ok -> :ok
+      {:recovered, _} -> :ok
+      {:error, reason} -> {:error, {:config_dir_recover_failed, reason}}
     end
   end
 

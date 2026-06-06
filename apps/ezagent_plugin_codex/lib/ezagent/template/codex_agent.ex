@@ -576,12 +576,25 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
        when is_map(tmpl) do
     # #17 cascade PR-2 (§7 H3' (b)) — crash-mid-swap self-heal at materialize entry (see
     # cc_agent.ex for the rationale). Recover a leftover `<target>.bak-*` with a
-    # missing/partial target before (re)materializing. Best-effort.
-    _ = Ezagent.Agent.Materializer.recover_orphaned(target)
+    # missing/partial target before (re)materializing.
+    #
+    # codex H — FAIL LOUD on a recovery error (mirror of cc): the recovered `.bak` may be the
+    # ONLY good copy of the prior config, so we must abort rather than clobber it with a fresh
+    # build that might itself fail.
+    with :ok <- recover_orphaned_or_fail(target) do
+      case Map.get(tmpl, "cascade") do
+        %{} = cascade -> materialize_cascade(agent_uri, target, cascade)
+        _ -> materialize_single_reference(target, reference_dir)
+      end
+    end
+  end
 
-    case Map.get(tmpl, "cascade") do
-      %{} = cascade -> materialize_cascade(agent_uri, target, cascade)
-      _ -> materialize_single_reference(target, reference_dir)
+  # codex H — normalize `recover_orphaned/1` for the `with` chain (see cc_agent.ex).
+  defp recover_orphaned_or_fail(target) do
+    case Ezagent.Agent.Materializer.recover_orphaned(target) do
+      :ok -> :ok
+      {:recovered, _} -> :ok
+      {:error, reason} -> {:error, {:config_dir_recover_failed, reason}}
     end
   end
 

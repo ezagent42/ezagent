@@ -41,6 +41,48 @@ defmodule Ezagent.PluginCodex.Template.CodexAgentGrantRestartTest do
     refute match?({:error, {:credential_grant_revoked, _}}, result)
   end
 
+  describe "recover_orphaned error at materialize ENTRY (codex H)" do
+    # Mirror of the cc test: when the crash-mid-swap self-heal at materialize entry detects a
+    # leftover known-good `.bak` + a missing/partial target but CANNOT restore it, the entry
+    # MUST FAIL LOUD rather than proceed to a fresh materialize (which could clobber the only
+    # good copy).
+    test "materialize ENTRY aborts when recover_orphaned cannot restore" do
+      agent_uri = URI.new!("entity://team-a/agent/codex_recover-#{uniq()}")
+
+      # Own the parent so we can make it read-only without touching the shared config root.
+      parent = Path.join(System.tmp_dir!(), "codex-ro-parent-#{uniq()}")
+      File.mkdir_p!(parent)
+      on_exit(fn -> File.chmod(parent, 0o700) && File.rm_rf(parent) end)
+      target = Path.join(parent, "cfg")
+
+      # Crash mid-swap: target ABSENT, known-good prior tree in a sibling `.bak`.
+      bak = "#{target}.bak-#{uniq()}"
+      File.mkdir_p!(bak)
+      File.write!(Path.join(bak, "auth.json"), "PRIOR-TOKEN")
+      refute File.exists?(target)
+
+      ref = Path.join(System.tmp_dir!(), "codex-ref-#{uniq()}")
+      File.mkdir_p!(ref)
+      File.write!(Path.join(ref, "config.toml"), "NEW")
+      on_exit(fn -> File.rm_rf(ref) end)
+
+      # Read-only parent → recover_orphaned's restore `File.rename(bak, target)` fails.
+      File.chmod!(parent, 0o500)
+
+      tmpl = %{"config_dir" => ref, "allocated_config_dir" => target}
+
+      result = CodexAgent.create_agent_config_dir(agent_uri, tmpl)
+
+      File.chmod!(parent, 0o700)
+
+      assert {:error, {:config_dir_recover_failed, {:recover_restore_failed, ^bak, _}}} = result
+
+      # CRITICAL: the only known-good prior tree (the `.bak`) is preserved.
+      assert File.exists?(bak)
+      assert File.read!(Path.join(bak, "auth.json")) == "PRIOR-TOKEN"
+    end
+  end
+
   describe "grant revoked AFTER materialize, BEFORE launch (codex CRITICAL §5.1)" do
     setup do
       agent_uri = URI.new!("entity://team-a/agent/codex_toctou-#{uniq()}")

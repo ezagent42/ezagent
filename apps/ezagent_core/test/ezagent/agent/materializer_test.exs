@@ -173,6 +173,35 @@ defmodule Ezagent.Agent.MaterializerTest do
       assert :ok = Materializer.recover_orphaned(target)
       assert {:ok, "OK"} = read(target, "settings.json")
     end
+
+    # codex H (recover_orphaned restore-failure) — when the restore (`File.rename`) FAILS,
+    # the selected `.bak` is the ONLY known-good copy of the prior config. The recovery MUST
+    # NOT drop it (a dropped `.bak` + a missing/partial target = agent left with NOTHING).
+    test "restore FAILURE preserves the .bak and returns an error", %{base: base} do
+      # Crash mid-swap: target ABSENT (not usable), the known-good prior tree in a sibling
+      # `.bak`. Make the shared PARENT dir read-only so the restore `File.rename(bak, target)`
+      # FAILS (eacces) — exercising the restore-failure path.
+      parent = Path.join(base, "ro-parent")
+      File.mkdir_p!(parent)
+      target = Path.join(parent, "cfg")
+      bak = "#{target}.bak-#{System.unique_integer([:positive])}"
+      write!(bak, ".credentials.json", "PRIOR-SECRET")
+      refute File.exists?(target)
+
+      File.chmod!(parent, 0o500)
+
+      result = Materializer.recover_orphaned(target)
+
+      # restore perms so on_exit cleanup can remove the tree
+      File.chmod!(parent, 0o700)
+
+      assert {:error, {:recover_restore_failed, ^bak, _reason}} = result
+
+      # CRITICAL: the only known-good prior tree (the `.bak`) MUST still be on disk — the
+      # recovery must NOT drop the very backup it failed to restore.
+      assert File.exists?(bak)
+      assert {:ok, "PRIOR-SECRET"} = read(bak, ".credentials.json")
+    end
   end
 
   # ── layer merge: whole-file-replace + directory-union (§D4.1 / §D4.2) ───────

@@ -168,9 +168,24 @@ defmodule Ezagent.Agent.Materializer do
             end
           end
 
-        # Drop the leftovers we are not restoring (the `older` set always; `newest` too
-        # when the target was already usable).
-        to_drop = if match?({:recovered, _}, result), do: older, else: [newest | older]
+        # Drop ONLY the `.bak`s we have confirmed are no longer needed (codex H —
+        # recover_orphaned restore-failure):
+        #
+        #   * `{:recovered, _}` — the newest was renamed into the now-good target; only the
+        #     `older` set is stale → drop them.
+        #   * `:ok` (target already usable / committed) — every `.bak` is a stale leftover →
+        #     drop them all.
+        #   * `{:error, _}` (restore FAILED) — the selected `.bak` is the ONLY known-good
+        #     copy of the prior config. DROP NOTHING (not even `older`); leaving the full set
+        #     lets the operator / a retried `recover_orphaned/1` self-heal. Dropping the
+        #     newest here would leave the agent with NO target AND NO recoverable backup.
+        to_drop =
+          case result do
+            {:recovered, _} -> older
+            :ok -> [newest | older]
+            {:error, _} -> []
+          end
+
         Enum.each(to_drop, &File.rm_rf/1)
 
         result
