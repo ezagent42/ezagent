@@ -64,10 +64,11 @@ defmodule Mix.Tasks.Ezagent.Credential.Adopt do
         true -> Mix.raise("Provide --source <uri> or --candidates <uri,uri,...>")
       end
 
-    caps = Ezagent.SystemPrincipal.caps("system://mix-task")
+    caller = Ezagent.SystemPrincipal.uri("mix-task")
+    caps = Ezagent.SystemPrincipal.caps(caller)
 
     case Ezagent.Credential.Adopt.adopt(owner, ws, flavor, candidates,
-           caller: "system://mix-task",
+           caller: caller,
            caps: caps
          ) do
       {:ok, src} ->

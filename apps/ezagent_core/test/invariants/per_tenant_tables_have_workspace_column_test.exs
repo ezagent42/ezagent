@@ -52,6 +52,13 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # workspace (a Lark chat bound in ws A must not be readable from
     # ws B).
     {Ezagent.ExternalMirror.BindingRow, "external_mirror_bindings"},
+    # #17 credential/config cascade — grants are scoped to the
+    # workspace of the agent being provisioned; a grant for ws A must
+    # never be queried or reused from ws B.
+    {Ezagent.Credential.GrantRow, "credential_grants"},
+    # #17 credential/config cascade — a user's default source is keyed
+    # by (owner, workspace, flavor), so the pointer is per-tenant.
+    {Ezagent.Credential.UserDefaultSource, "user_default_credential_sources"},
     # SPEC 2026-05-23-read-receipts — read-confidence marker per
     # `(session, user, source)`. Per-tenant: a marker's
     # `last_read_message_uri` is meaningless across workspaces.
