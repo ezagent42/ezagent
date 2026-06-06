@@ -158,6 +158,7 @@ defmodule Ezagent.Agent.MaterializerTest do
     test "drops a stale .bak when the target is already present + usable", %{base: base} do
       target = Path.join(base, "cfg")
       write!(target, "settings.json", "COMMITTED")
+      write!(target, ".ezagent-config-complete", "ok\n")
       bak = "#{target}.bak-#{System.unique_integer([:positive])}"
       write!(bak, "settings.json", "STALE")
 
@@ -201,6 +202,25 @@ defmodule Ezagent.Agent.MaterializerTest do
       # recovery must NOT drop the very backup it failed to restore.
       assert File.exists?(bak)
       assert {:ok, "PRIOR-SECRET"} = read(bak, ".credentials.json")
+    end
+
+    test "markerless non-empty target is partial and restores the .bak", %{base: base} do
+      target = Path.join(base, "cfg")
+      write!(target, "partial.txt", "PARTIAL")
+      refute File.exists?(Path.join(target, ".ezagent-config-complete"))
+
+      bak = "#{target}.bak-#{System.unique_integer([:positive])}"
+      write!(bak, ".credentials.json", "PRIOR-SECRET")
+      write!(bak, "settings.json", "PRIOR-CFG")
+      write!(bak, ".ezagent-config-complete", "ok\n")
+
+      assert {:recovered, ^target} = Materializer.recover_orphaned(target)
+
+      assert {:ok, "PRIOR-SECRET"} = read(target, ".credentials.json")
+      assert {:ok, "PRIOR-CFG"} = read(target, "settings.json")
+      assert {:ok, "ok\n"} = read(target, ".ezagent-config-complete")
+      assert {:error, _} = read(target, "partial.txt")
+      refute File.exists?(bak)
     end
   end
 
@@ -266,6 +286,41 @@ defmodule Ezagent.Agent.MaterializerTest do
                  %{dir: base_l, protected: ["hooks/policy.sh"]},
                  %{dir: user}
                ])
+    end
+
+    test "a user layer CANNOT tombstone an ancestor of a protected path without mgmt cap",
+         %{base: base} do
+      base_l = Path.join(base, "base")
+      user = Path.join(base, "user")
+      staging = Path.join(base, "staging")
+      write!(base_l, "hooks/policy.sh", "PROTECTED")
+      write!(user, "hooks.tombstone", "")
+
+      assert {:error, {:protected_tombstone_denied, "hooks"}} =
+               Materializer.merge_layers(staging, [
+                 %{dir: base_l, protected: ["hooks/policy.sh"]},
+                 %{dir: user}
+               ])
+    end
+
+    test "a tombstone marker does not delete a later higher-layer replacement", %{base: base} do
+      base_l = Path.join(base, "base")
+      user = Path.join(base, "user")
+      session = Path.join(base, "session")
+      staging = Path.join(base, "staging")
+      write!(base_l, "plugins/a.json", "BASE")
+      write!(user, "plugins/a.json.tombstone", "")
+      write!(session, "plugins/a.json", "SESSION")
+
+      assert :ok =
+               Materializer.merge_layers(staging, [
+                 %{dir: base_l},
+                 %{dir: user},
+                 %{dir: session}
+               ])
+
+      assert {:ok, "SESSION"} = read(staging, "plugins/a.json")
+      assert {:error, _} = read(staging, "plugins/a.json.tombstone")
     end
 
     test "a layer WITH the mgmt cap CAN tombstone a protected path", %{base: base} do

@@ -117,6 +117,7 @@ defmodule Ezagent.Agent.Materializer do
   end
 
   @bak_infix ".bak-"
+  @config_complete_marker ".ezagent-config-complete"
 
   # The sibling `.bak` path for a target's move-aside. A single, recognizable infix lets
   # `recover_orphaned/1` find a leftover `.bak` after a crash mid-swap.
@@ -134,10 +135,11 @@ defmodule Ezagent.Agent.Materializer do
   Call this at agent (re)spawn / materialize ENTRY for the canonical `target`. It scans the
   parent dir for `<basename>.bak-*` siblings of `target`:
 
-    * if `target` is MISSING (or empty) and a `.bak` exists → RESTORE the newest `.bak`
-      back to `target` (self-heal the crash-mid-swap), then drop any older `.bak`s;
-    * if `target` is PRESENT and non-empty → the swap completed (or never started); the
-      `.bak`(s) are stale leftovers → drop them all;
+    * if `target` is MISSING or lacks the completion marker and a `.bak` exists → RESTORE
+      the newest `.bak` back to `target` (self-heal the crash-mid-swap), then drop any
+      older `.bak`s;
+    * if `target` is PRESENT with the completion marker → the swap completed (or never
+      started); the `.bak`(s) are stale leftovers → drop them all;
     * if no `.bak` exists → nothing to do.
 
   Best-effort + idempotent: returns `:ok` when there was nothing to recover or recovery
@@ -193,13 +195,11 @@ defmodule Ezagent.Agent.Materializer do
     end
   end
 
-  # `target` exists AND is a non-empty dir (a recovered/committed config tree). An empty
-  # dir or a missing target is treated as NOT usable (the swap did not complete).
+  # `target` is usable only when it carries the same completion marker written by the
+  # flavor `stage_and_swap` helpers. A non-empty markerless target is still a partial
+  # crash artifact and must not cause the known-good `.bak` to be dropped.
   defp target_usable?(target) do
-    case File.ls(target) do
-      {:ok, [_ | _]} -> true
-      _ -> false
-    end
+    File.dir?(target) and File.exists?(Path.join(target, @config_complete_marker))
   end
 
   defp orphan_baks(target) do
@@ -309,8 +309,8 @@ defmodule Ezagent.Agent.Materializer do
   For each layer in order, its files are unioned/overwritten on top of the accumulated
   staging tree (whole-file-replace per §D4.1; directory-union per §D4.2). A
   `<relpath>.tombstone` marker in a layer removes `<relpath>` from the merged tree —
-  trust-gated per §D4.2: a tombstone targeting a relpath PROTECTED by a lower layer is
-  REJECTED unless the tombstoning layer holds the management cap.
+  trust-gated per §D4.2: a tombstone targeting a relpath PROTECTED by a lower layer, or
+  an ancestor of one, is REJECTED unless the tombstoning layer holds the management cap.
 
   After all layers are applied, the **mandatory set** (union of every layer's
   `:mandatory`) is validated present in the staging tree (spec §D4.1 G1). A missing
@@ -322,7 +322,6 @@ defmodule Ezagent.Agent.Materializer do
   def merge_layers(staging, layers) when is_binary(staging) and is_list(layers) do
     with :ok <- File.mkdir_p(staging),
          {:ok, protected_acc, mandatory_acc} <- apply_layers(staging, layers),
-         :ok <- strip_tombstone_markers(staging),
          :ok <- validate_mandatory(staging, mandatory_acc) do
       _ = protected_acc
       :ok
@@ -367,46 +366,46 @@ defmodule Ezagent.Agent.Materializer do
 
   # Apply ONE layer's contribution onto the accumulated staging tree. Two passes:
   #  1. tombstones — for every `<rel>.tombstone` in the layer, REMOVE `<rel>` from
-  #     staging (trust-gated against `protected_acc`).
+  #     staging (trust-gated against `protected_acc`, including protected descendants).
   #  2. union/overwrite — copy every non-tombstone file from the layer into staging
   #     (higher layer wins on collision).
   defp apply_one_layer(staging, dir, layer, protected_acc) do
-    with :ok <- apply_tombstones(staging, dir, layer, protected_acc) do
-      copy_layer_files(staging, dir)
+    tombstone_targets = tombstone_targets(dir)
+
+    with :ok <- apply_tombstones(staging, layer, protected_acc, tombstone_targets) do
+      copy_layer_files(staging, dir, tombstone_targets)
     end
   end
 
-  defp apply_tombstones(staging, dir, layer, protected_acc) do
-    mgmt? = Map.get(layer, :mgmt_cap?, false)
-
+  defp tombstone_targets(dir) do
     dir
     |> list_relpaths()
     |> Enum.filter(&String.ends_with?(&1, @tombstone_suffix))
-    |> Enum.reduce_while(:ok, fn tombstone_rel, :ok ->
-      target_rel = String.replace_suffix(tombstone_rel, @tombstone_suffix, "")
+    |> Enum.map(&String.replace_suffix(&1, @tombstone_suffix, ""))
+  end
 
+  defp apply_tombstones(staging, layer, protected_acc, tombstone_targets) do
+    mgmt? = Map.get(layer, :mgmt_cap?, false)
+
+    Enum.reduce_while(tombstone_targets, :ok, fn target_rel, :ok ->
       cond do
-        # §D4.2 trust gate: removing a protected lower-layer path needs the mgmt cap.
-        MapSet.member?(protected_acc, target_rel) and not mgmt? ->
+        # §D4.2 trust gate: removing a protected lower-layer path, or an ancestor of one,
+        # needs the mgmt cap.
+        protected_tombstone?(protected_acc, target_rel) and not mgmt? ->
           {:halt, {:error, {:protected_tombstone_denied, target_rel}}}
 
         true ->
           _ = File.rm_rf(Path.join(staging, target_rel))
-          # Carry the tombstone marker itself into staging so a later (higher) layer's
-          # union doesn't accidentally undo the removal by re-copying the base file; the
-          # markers are stripped at the end (`strip_tombstone_markers/1`).
-          case copy_one(Path.join(dir, tombstone_rel), Path.join(staging, tombstone_rel)) do
-            :ok -> {:cont, :ok}
-            {:error, _} = err -> {:halt, err}
-          end
+          {:cont, :ok}
       end
     end)
   end
 
-  defp copy_layer_files(staging, dir) do
+  defp copy_layer_files(staging, dir, tombstone_targets) do
     dir
     |> list_relpaths()
     |> Enum.reject(&String.ends_with?(&1, @tombstone_suffix))
+    |> Enum.reject(&tombstoned_by_layer?(&1, tombstone_targets))
     |> Enum.reduce_while(:ok, fn rel, :ok ->
       case copy_one(Path.join(dir, rel), Path.join(staging, rel)) do
         :ok -> {:cont, :ok}
@@ -415,20 +414,20 @@ defmodule Ezagent.Agent.Materializer do
     end)
   end
 
-  # After merging, delete every tombstone marker so they never reach the agent's tree
-  # AND re-apply the removal (a higher layer may have re-introduced the base file via its
-  # union pass — the tombstone wins on a same-layer-or-lower target).
-  defp strip_tombstone_markers(staging) do
-    staging
-    |> list_relpaths()
-    |> Enum.filter(&String.ends_with?(&1, @tombstone_suffix))
-    |> Enum.each(fn tombstone_rel ->
-      target_rel = String.replace_suffix(tombstone_rel, @tombstone_suffix, "")
-      _ = File.rm_rf(Path.join(staging, target_rel))
-      _ = File.rm_rf(Path.join(staging, tombstone_rel))
+  defp protected_tombstone?(protected_acc, target_rel) do
+    Enum.any?(protected_acc, fn protected_rel ->
+      same_or_ancestor_rel?(target_rel, protected_rel)
     end)
+  end
 
-    :ok
+  defp tombstoned_by_layer?(rel, tombstone_targets) do
+    Enum.any?(tombstone_targets, &same_or_ancestor_rel?(&1, rel))
+  end
+
+  defp same_or_ancestor_rel?(candidate, rel) do
+    candidate_parts = Path.split(candidate)
+    rel_parts = Path.split(rel)
+    candidate_parts == Enum.take(rel_parts, length(candidate_parts))
   end
 
   defp validate_mandatory(staging, mandatory_set) do
