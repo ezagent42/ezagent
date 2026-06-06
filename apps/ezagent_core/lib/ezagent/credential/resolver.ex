@@ -311,23 +311,34 @@ defmodule Ezagent.Credential.Resolver do
   # `{:no_resolver, _}` which we map to `:absent` (→ fall-through / fail-loud per §D4.3).
   # PR-3 registers the resolver and the `{:ok, uri}` branch becomes live with no change
   # here.
+  @workspace_shared_attr :workspace_shared_credential_source
+
   @spec workspace_shared_source(URI.t() | nil) :: {:ok, URI.t()} | :absent | {:error, term()}
   defp workspace_shared_source(nil), do: :absent
 
   defp workspace_shared_source(%URI{} = workspace_uri) do
-    case Ezagent.UriQuery.resolve(:workspace_shared_credential_source, workspace_uri) do
-      {:ok, src} when is_binary(src) -> {:ok, Ezagent.URI.new!(src)}
-      {:ok, %URI{} = src} -> {:ok, src}
-      # `:none` = workspace genuinely has no shared source → absent (fall through / fail-loud
-      # at step 4). `{:no_resolver, _}` = PR-1 hasn't registered the resolver yet → also a
-      # legitimate "no shared source available". Anything else is a REGISTERED resolver
-      # FAILING (revoked / unauthorized / miswired) — per §D4.3 that must FAIL LOUD, not be
-      # silently hidden as absent (codex H1). Propagate it distinctly.
-      :none -> :absent
-      {:error, {:no_resolver, _}} -> :absent
-      {:error, reason} -> {:error, {:workspace_source_unavailable, reason}}
-    end
+    Ezagent.UriQuery.resolve(@workspace_shared_attr, workspace_uri)
+    |> classify_workspace_shared_result()
   end
+
+  @doc false
+  # Pure classifier for the `:workspace_shared_credential_source` UriQuery result (exposed
+  # @doc false for direct testing — global UriQuery registration is un-undoable so we can't
+  # register a real resolver in tests). Only the EXACT dispatcher-absence shape
+  # (`{:no_resolver, :workspace_shared_credential_source}` = no resolver registered for THIS
+  # attr) is `:absent`; a registered resolver that reports/propagates ANY other error —
+  # including `{:no_resolver, <some_dependency>}` — must FAIL LOUD per §D4.3 (codex H1),
+  # never be hidden as absent.
+  @spec classify_workspace_shared_result(term()) :: {:ok, URI.t()} | :absent | {:error, term()}
+  def classify_workspace_shared_result({:ok, src}) when is_binary(src),
+    do: {:ok, Ezagent.URI.new!(src)}
+
+  def classify_workspace_shared_result({:ok, %URI{} = src}), do: {:ok, src}
+  def classify_workspace_shared_result(:none), do: :absent
+  def classify_workspace_shared_result({:error, {:no_resolver, @workspace_shared_attr}}), do: :absent
+
+  def classify_workspace_shared_result({:error, reason}),
+    do: {:error, {:workspace_source_unavailable, reason}}
 
   defp flavor_of(%URI{} = agent_uri) do
     case Ezagent.UriQuery.resolve(:flavor, agent_uri) do

@@ -250,5 +250,26 @@ defmodule Ezagent.Credential.ResolverTest do
                  })
                )
     end
+
+    # codex H1 re-review: the DEFAULT lookup's UriQuery-result classifier. Only the EXACT
+    # dispatcher-absence (no resolver for THIS attr) is absent; a registered resolver's own
+    # error — including a DIFFERENT no_resolver attr — must fail loud, not collapse.
+    test "classify_workspace_shared_result: only the exact attr no_resolver is absent" do
+      alias Ezagent.Credential.Resolver, as: R
+      assert {:ok, %URI{}} = R.classify_workspace_shared_result({:ok, "entity://team-a/agent/x"})
+      assert :absent = R.classify_workspace_shared_result(:none)
+
+      assert :absent =
+               R.classify_workspace_shared_result(
+                 {:error, {:no_resolver, :workspace_shared_credential_source}}
+               )
+
+      # a registered resolver propagating a FOREIGN no_resolver → fail loud (codex H1)
+      assert {:error, {:workspace_source_unavailable, {:no_resolver, :some_dependency}}} =
+               R.classify_workspace_shared_result({:error, {:no_resolver, :some_dependency}})
+
+      assert {:error, {:workspace_source_unavailable, :unauthorized}} =
+               R.classify_workspace_shared_result({:error, :unauthorized})
+    end
   end
 end
