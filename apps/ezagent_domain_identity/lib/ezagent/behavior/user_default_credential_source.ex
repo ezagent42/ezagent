@@ -72,12 +72,18 @@ defmodule Ezagent.Behavior.UserDefaultCredentialSource do
     flavor = Map.get(args, :flavor)
     source_uri = Map.get(args, :source_uri)
     workspace = Map.get(args, :workspace)
-    # The owner is the User Kind being targeted (self_uri); the dispatch already
-    # cap-checked the caller for the `:set_default_credential_source` cap on this User.
-    owner = Map.get(args, :owner_uri) || self_uri_str(ctx)
+    # The owner is DERIVED from the dispatched target (`ctx.self_uri`) — the User Kind
+    # this action was cap-checked against (runtime step 5.5). It is NEVER read from args:
+    # the caller's authorization is bound to the target URI, so trusting an args-supplied
+    # `owner_uri` would let a caller authorized for X write victim Y's pointer (codex H1).
+    # A back-compat `owner_uri` arg may still be present (set by `set_via_dispatch/3`),
+    # but ANY value that does not exactly match the ctx self URI is REJECTED — never
+    # silently coerced — so the field can only ever echo the real target.
+    owner = self_uri_str(ctx)
     set_by = caller_str(ctx) || owner
 
-    with true <- is_binary(flavor) and is_binary(source_uri) and is_binary(workspace),
+    with :ok <- check_owner_arg(Map.get(args, :owner_uri), owner),
+         true <- is_binary(flavor) and is_binary(source_uri) and is_binary(workspace),
          {:ok, _row} <- UserDefaultSource.set(owner, workspace, flavor, source_uri, set_by) do
       cur = ctx[:read].(:set_count, 0)
 
@@ -95,14 +101,25 @@ defmodule Ezagent.Behavior.UserDefaultCredentialSource do
           }}
        ]}
     else
-      false -> {:error, {:bad_args, "set_default_credential_source requires {flavor, source_uri, workspace}"}}
-      {:error, _} = err -> err
+      false ->
+        {:error,
+         {:bad_args, "set_default_credential_source requires {flavor, source_uri, workspace}"}}
+
+      {:error, _} = err ->
+        err
     end
   end
 
   def handle_set_default_credential_source(args, _ctx) do
     {:error, {:bad_args, "set_default_credential_source requires a map", args}}
   end
+
+  # The owner is always the dispatched target. An `owner_uri` arg is tolerated ONLY when
+  # it exactly equals that target (the shape `set_via_dispatch/3` produces); any other
+  # value is a tampering attempt and is rejected loud (let-it-crash: no silent coercion).
+  defp check_owner_arg(nil, _self_uri), do: :ok
+  defp check_owner_arg(self_uri, self_uri), do: :ok
+  defp check_owner_arg(other, _self_uri), do: {:error, {:owner_uri_mismatch, other}}
 
   defp self_uri_str(ctx) do
     case Map.get(ctx, :self_uri) do

@@ -83,6 +83,59 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
     assert UDS.resolve(ctx.owner_str, @ws, "cc") == nil
   end
 
+  test "owner_uri arg tampering cannot redirect the write to a victim (codex H1)", ctx do
+    # Caller is authorized for target X (alice). The dispatch crafts an args map that
+    # smuggles owner_uri = Y (bob, a different valid user) — the pre-H1 handler trusted
+    # this arg and would have written Y's pointer using X's authorization.
+    owner_caps = Ezagent.Identity.list_caps_for(ctx.owner_uri)
+
+    victim = Ezagent.URI.new!("entity://#{@ws}/user/bob-victim")
+    victim_str = URI.to_string(victim)
+    # A source legitimately owned by the victim, so a tampered write would otherwise
+    # pass the owner-match validation against Y.
+    victim_source =
+      seed_agent("entity://#{@ws}/agent/bob-victim-base", victim_str, "cc")
+
+    target =
+      Ezagent.URI.with_action(
+        ctx.owner_uri,
+        :user_default_credential_source,
+        :set_default_credential_source
+      )
+
+    cmd =
+      Ezagent.Cmd.new(
+        target,
+        :set_default_credential_source,
+        # Authorization is against X (alice); owner_uri smuggles Y (bob).
+        %{
+          flavor: "cc",
+          source_uri: victim_source,
+          workspace: @ws,
+          owner_uri: victim_str
+        },
+        %{mode: :call, caller: ctx.owner_uri, caps: owner_caps, reply: {:caller_inbox, self()}}
+      )
+
+    result = Ezagent.Router.dispatch(cmd)
+
+    # The victim's pointer MUST be untouched regardless of outcome.
+    assert UDS.resolve(victim_str, @ws, "cc") == nil,
+           "owner_uri arg tampering wrote the victim's pointer — H1 not fixed"
+
+    case result do
+      {:ok, _} ->
+        # If the write is accepted, it MUST have been derived from the dispatched
+        # target X — never the smuggled Y. X's source (alice-base) was not the
+        # victim source, so resolving X for cc must NOT be the victim source.
+        refute UDS.resolve(ctx.owner_str, @ws, "cc") == victim_source
+
+      {:error, _} ->
+        # Rejecting the mismatched owner_uri is also acceptable (and preferred).
+        :ok
+    end
+  end
+
   test "a successful dispatch records an audit (invocation) row for the action", ctx do
     owner_caps = Ezagent.Identity.list_caps_for(ctx.owner_uri)
 
