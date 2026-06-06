@@ -1609,6 +1609,15 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       pty_server_alive?(agent_uri) ->
         :ok
 
+      # #17 cascade PR-2 (§5.1) — a (re)start is a cascade boundary: an agent whose
+      # credential grant was REVOKED must NOT come back up holding stale creds. An agent
+      # with an ACTIVE grant or with NO grant at all (existing pre-cascade agents) is
+      # unaffected. This is the safe, contained slice of the §5.1 "restart then
+      # fails-or-re-resolves" rule; the FULL re-resolve-from-inputs re-materialize is
+      # FLAGGED (see moduledoc / report) as PR-3-coordinated.
+      grant_revoked_for_restart?(agent_uri) ->
+        {:error, {:credential_grant_revoked, agent_uri}}
+
       true ->
         # PtyServer absent — rebuild it from the persisted respawn data.
         # `cwd` is required in respawn_data per `check_cwd/1`; the rest
@@ -1652,6 +1661,23 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   end
 
   def ensure_subprocess_alive(_, _), do: {:error, :invalid_args}
+
+  # #17 cascade PR-2 (§5.1) — true iff this agent has a credential grant that is now
+  # REVOKED. An agent with no grant row (existing pre-cascade agents) or an active grant
+  # returns false (proceed). Defensive: a DB error here must not crash-loop the boot of
+  # an agent whose grant state we can't read — treat as "not provably revoked" and let
+  # the materialize-time TOCTOU gate be the loud authority. (Cold restart does not
+  # re-materialize secrets in this PR, so the running creds stay until a real
+  # re-materialize — see the FLAGGED full-re-resolve note.)
+  defp grant_revoked_for_restart?(%URI{} = agent_uri) do
+    case Ezagent.Credential.GrantRow.get_for_agent(URI.to_string(agent_uri)) do
+      %Ezagent.Credential.GrantRow{revoked_at: nil} -> false
+      %Ezagent.Credential.GrantRow{} -> true
+      nil -> false
+    end
+  rescue
+    _ -> false
+  end
 
   # 2026-05-31 orchestrator-startup-atomicity §5 — orchestrator boot
   # readiness gate. Mirrors `Session.ensure_orchestrator/3`'s create-time

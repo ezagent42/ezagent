@@ -121,6 +121,27 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
     refute File.exists?(Path.join(ctx.target, ".ezagent-config-complete"))
   end
 
+  describe "cold-restart grant re-validation (§5.1)" do
+    test "ensure_subprocess_alive fails loud when the agent's grant is revoked", ctx do
+      {:ok, _} = GrantRow.revoke(URI.to_string(ctx.agent_uri))
+
+      # No PtyServer alive for this fresh test URI → the revocation gate is reached
+      # BEFORE any PTY rebuild → fail loud (does not respawn with stale creds).
+      assert {:error, {:credential_grant_revoked, _}} =
+               CcAgent.ensure_subprocess_alive(ctx.agent_uri, %{"cwd" => "/tmp"})
+    end
+
+    test "an agent with NO grant (pre-cascade) is not blocked by the gate" do
+      # A fresh URI with no grant row + a bogus cwd: the gate must let it THROUGH (returns
+      # false), so the failure that surfaces is the downstream PTY rebuild, NOT the gate.
+      no_grant_uri = URI.new!("entity://team-a/agent/cc_nogrant-#{uniq()}")
+      on_exit(fn -> File.rm_rf(CcAgent.agent_config_dir(no_grant_uri)) end)
+
+      result = CcAgent.ensure_subprocess_alive(no_grant_uri, %{"cwd" => "/nonexistent-cwd"})
+      refute match?({:error, {:credential_grant_revoked, _}}, result)
+    end
+  end
+
   test "missing mandatory control fails loud (G1)", ctx do
     base = tmp("cc-base")
     write!(base, "settings.json", "BASE")

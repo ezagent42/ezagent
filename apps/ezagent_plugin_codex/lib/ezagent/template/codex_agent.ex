@@ -658,6 +658,20 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     Enum.any?(credential_relpaths(), fn relpath -> File.exists?(Path.join(dir, relpath)) end)
   end
 
+  # #17 cascade PR-2 (§5.1) — true iff this agent has a credential grant that is now
+  # REVOKED (no grant / active grant → false → proceed). Defensive: a DB read error must
+  # not crash-loop a boot — treat as "not provably revoked" and let the materialize-time
+  # TOCTOU gate be the loud authority.
+  defp grant_revoked_for_restart?(%URI{} = agent_uri) do
+    case Ezagent.Credential.GrantRow.get_for_agent(URI.to_string(agent_uri)) do
+      %Ezagent.Credential.GrantRow{revoked_at: nil} -> false
+      %Ezagent.Credential.GrantRow{} -> true
+      nil -> false
+    end
+  rescue
+    _ -> false
+  end
+
   defp ensure_agent_kind(agent_uri) do
     case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
       {:ok, :started, _pid} -> {:ok, :started}
@@ -681,6 +695,12 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     cond do
       sidecars_alive?(agent_uri) ->
         :ok
+
+      # #17 cascade PR-2 (§5.1) — a (re)start is a cascade boundary: an agent whose
+      # credential grant was REVOKED must NOT come back up holding stale creds. No grant
+      # / active grant → proceed. Full re-resolve-from-inputs re-materialize is FLAGGED.
+      grant_revoked_for_restart?(agent_uri) ->
+        {:error, {:credential_grant_revoked, agent_uri}}
 
       true ->
         case Map.fetch(respawn_data, "cwd") do
