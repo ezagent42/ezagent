@@ -15,11 +15,13 @@ defmodule Ezagent.Credential.GrantRowTest do
       credential_source_uri: "entity://team-a/agent/alice-base",
       approved_by: "entity://team-a/user/alice",
       approved_scope: "entity://team-a/agent/alice-base",
+      workspace_uri: "workspace://wrong",
       version: 1
     }
 
     assert {:ok, row} = GrantRow.insert(attrs)
     assert row.version == 1
+    assert row.workspace_uri == "workspace://team-a"
     assert GrantRow.get_for_agent("entity://team-a/agent/worker1").id == row.id
     # one active grant per agent → second insert for same agent_uri collides
     assert {:error, _} = GrantRow.insert(attrs)
@@ -120,5 +122,6 @@ defmodule Ezagent.Credential.GrantRowTest do
       })
 
     assert re.revoked_at == nil and re.version >= g.version + 2
+    assert re.workspace_uri == "workspace://team-a"
   end
 end

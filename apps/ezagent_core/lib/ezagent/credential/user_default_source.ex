@@ -122,12 +122,13 @@ defmodule Ezagent.Credential.UserDefaultSource do
 
     caller = Map.fetch!(ctx, :caller)
     caps = Map.fetch!(ctx, :caps)
+    owner_uri_string = URI.to_string(owner)
 
     cmd =
       Ezagent.Cmd.new(
         target,
         :set_default_credential_source,
-        Map.put(args, :owner_uri, URI.to_string(owner)),
+        Map.put(args, :owner_uri, owner_uri_string),
         %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
       )
 
