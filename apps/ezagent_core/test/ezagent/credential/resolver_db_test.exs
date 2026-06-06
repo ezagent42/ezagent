@@ -182,6 +182,42 @@ defmodule Ezagent.Credential.ResolverDbTest do
     refute GrantRow.active?(ctx.new_agent)
   end
 
+  test "rejects a forged approver (approved_by != the cap-checked caller) — no grant (codex)",
+       ctx do
+    source = Ezagent.URI.new!(ctx.base)
+    agent = Ezagent.URI.new!(ctx.new_agent)
+    good_cap = GrantCap.read_cap_for(source)
+
+    assert {:error, :approver_must_be_caller} =
+             Resolver.authorize_and_mint_grant!(%{
+               agent_uri: agent,
+               source: source,
+               approved_by: Ezagent.URI.new!("entity://#{@ws}/user/someone-else"),
+               caller: ctx.owner_uri,
+               caps: [good_cap]
+             })
+
+    refute GrantRow.active?(ctx.new_agent)
+  end
+
+  test "rejects minting a grant for an agent in a DIFFERENT workspace than the source (codex)",
+       ctx do
+    source = Ezagent.URI.new!(ctx.base)
+    foreign_agent = Ezagent.URI.new!("entity://other-ws/agent/x")
+    good_cap = GrantCap.read_cap_for(source)
+
+    assert {:error, :agent_source_workspace_mismatch} =
+             Resolver.authorize_and_mint_grant!(%{
+               agent_uri: foreign_agent,
+               source: source,
+               approved_by: ctx.owner_uri,
+               caller: ctx.owner_uri,
+               caps: [good_cap]
+             })
+
+    refute GrantRow.active?("entity://other-ws/agent/x")
+  end
+
   # ── resolve_layers end-to-end against DB ───────────────────────────────────
 
   test "resolve_layers returns ordered layers + the DB-resolved user source as secret_source",

@@ -230,18 +230,35 @@ defmodule Ezagent.Credential.Resolver do
   :internal_principal_forbidden | term()}`. No file ops; no materialization.
   """
   @spec authorize_and_mint_grant!(map()) :: {:ok, GrantRow.t()} | {:error, term()}
-  def authorize_and_mint_grant!(%{
-        agent_uri: %URI{} = agent_uri,
-        source: %URI{} = source,
-        approved_by: %URI{} = approved_by,
-        caller: %URI{} = caller,
-        caps: caps
-      })
+  def authorize_and_mint_grant!(
+        %{
+          agent_uri: %URI{} = agent_uri,
+          source: %URI{} = source,
+          caller: %URI{} = caller,
+          caps: caps
+        } = args
+      )
       when is_list(caps) do
+    # The approver IS the cap-checked caller. A separately-supplied `approved_by` is only
+    # tolerated when it equals the caller — we do NOT trust a caller-supplied approver
+    # identity (codex: forged-approval / audit corruption). Delegated approval (admin
+    # approves for a user) is a future feature requiring an explicit delegation cap.
+    approved_by = Map.get(args, :approved_by, caller)
+
     cond do
-      internal_principal?(caller) or internal_principal?(approved_by) ->
+      internal_principal?(caller) ->
         # codex H1 — never read a source under system://agent-internal caps.
         {:error, :internal_principal_forbidden}
+
+      URI.to_string(approved_by) != URI.to_string(caller) ->
+        {:error, :approver_must_be_caller}
+
+      # Bind the grant to a SAME-TENANT agent — a grant for a source in workspace W may only
+      # be minted for an agent in W (prevents cross-workspace pre-seeding). Authenticating
+      # that `agent_uri` is the agent actually under creation is the create chokepoint's job
+      # (#533 / PR-5); this primitive enforces the tenant invariant it can verify.
+      Capability.workspace_of(agent_uri) != Capability.workspace_of(source) ->
+        {:error, :agent_source_workspace_mismatch}
 
       not source_read_authorized?(source, caps) ->
         {:error, {:source_unauthorized, source}}
@@ -250,7 +267,7 @@ defmodule Ezagent.Credential.Resolver do
         GrantRow.insert(%{
           agent_uri: URI.to_string(agent_uri),
           credential_source_uri: URI.to_string(source),
-          approved_by: URI.to_string(approved_by),
+          approved_by: URI.to_string(caller),
           approved_scope: URI.to_string(source),
           version: 1
         })
