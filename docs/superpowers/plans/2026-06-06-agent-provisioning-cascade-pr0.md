@@ -10,6 +10,12 @@
 
 **Spec:** `docs/superpowers/specs/2026-06-06-agent-provisioning-cascade-design.md` (rev 4). This plan implements PR-0 from §9; §5.1 (grant), §5.2 (user source), §D6 (adapter split). PR-1..PR-4 get their own plans after PR-0 lands.
 
+**Plan rev 2** — codex adversarial-review of rev 1 (1 CRIT + 2 HIGH + 1 MED) folded:
+- CRIT: user-source write is now the AUTHORIZED, cap-checked + fully-validated path (Task 4 `set/5` takes caller/caps, validates owner/ws/flavor/source-kind/existence, audits) — not punted to the caller.
+- HIGH: grant principal redesigned for the CLOSED Catalog + real `Capability.cap/5` — a cataloged materializer identity + a per-grant narrow derived read cap, NOT a dynamic `system://credential-grant/<id>` URI (Task 3).
+- HIGH: grant lifecycle API added (`fetch_for_materialize/1`, `revalidate_version!/2`, scope/source-exists validation, `reapprove/1`) with revoke/delete/scope/TOCTOU tests (Task 2).
+- MED: real module/API names (`Ezagent.PluginCc.Template.CcAgent`, `Ezagent.PluginCodex.Template.CodexAgent`, `EzagentCore.DataCase`, `Ezagent.URI.parse/1`).
+
 **Conventions to follow (consult before coding):**
 - Ecto schema + store: copy the shape of `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/binding_row.ex` (string PK, `@timestamps_opts utc_datetime_usec`, natural-key unique index, `alias EzagentCore.Repo`).
 - Migrations: `apps/ezagent_core/priv/repo/migrations/<UTC-stamp>_<name>.exs`; latest is `20260617000000_*`, so use a later stamp.
@@ -35,7 +41,7 @@ defmodule Ezagent.Agent.CredentialAdapterSplitTest do
   # Every credentialled flavor must declare secret_relpaths/0, and the secret set
   # must be DISJOINT from the config paths (config.toml is config, not a secret — H4).
   test "cc/codex declare secret_relpaths and secrets are not config files" do
-    for mod <- [EzagentPluginCc.Template.CcAgent, EzagentPluginCodex.Template.CodexAgent] do
+    for mod <- [Ezagent.PluginCc.Template.CcAgent, Ezagent.PluginCodex.Template.CodexAgent] do
       assert function_exported?(mod, :secret_relpaths, 0),
              "#{inspect(mod)} must implement secret_relpaths/0"
       secrets = mod.secret_relpaths()
@@ -46,8 +52,8 @@ defmodule Ezagent.Agent.CredentialAdapterSplitTest do
   end
 
   test "cc secret is the credentials file; codex secret is auth.json only" do
-    assert EzagentPluginCc.Template.CcAgent.secret_relpaths() == [".credentials.json"]
-    assert EzagentPluginCodex.Template.CodexAgent.secret_relpaths() == ["auth.json"]
+    assert Ezagent.PluginCc.Template.CcAgent.secret_relpaths() == [".credentials.json"]
+    assert Ezagent.PluginCodex.Template.CodexAgent.secret_relpaths() == ["auth.json"]
   end
 end
 ```
@@ -115,7 +121,7 @@ git commit -m "feat(#17 cascade PR-0): split secret_relpaths from config in Cred
 
 ```elixir
 defmodule Ezagent.Credential.GrantRowTest do
-  use Ezagent.DataCase, async: false   # consult an existing *_test that uses the Repo sandbox
+  use EzagentCore.DataCase, async: false   # consult an existing *_test that uses the Repo sandbox
   alias Ezagent.Credential.GrantRow
   alias EzagentCore.Repo
 
@@ -236,7 +242,101 @@ defmodule Ezagent.Credential.GrantRow do
       _ -> false
     end
   end
+
+  @doc \"\"\"
+  Materialize-facing fetch (codex H3'): returns `{:ok, source_uri, version}` ONLY for an
+  active, non-revoked grant whose `approved_scope` still matches the source's identity AND
+  whose source still exists; else `{:error, reason}` (`:revoked` | `:no_grant` |
+  `:source_not_found` | `:scope_mismatch`). The returned `version` is the value to
+  re-check immediately before exec (revalidate_version!/2).
+  \"\"\"
+  def fetch_for_materialize(agent_uri) do
+    case get_for_agent(agent_uri) do
+      nil -> {:error, :no_grant}
+      %__MODULE__{revoked_at: r} when not is_nil(r) -> {:error, :revoked}
+      %__MODULE__{} = g ->
+        cond do
+          g.approved_scope != g.credential_source_uri -> {:error, :scope_mismatch}
+          not source_exists?(g.credential_source_uri) -> {:error, :source_not_found}
+          true -> {:ok, g.credential_source_uri, g.version}
+        end
+    end
+  end
+
+  @doc \"\"\"
+  TOCTOU re-check (codex H1'): call immediately before subprocess exec / curl-slice write
+  with the `version` from fetch_for_materialize/2. Returns :ok iff the grant is still
+  present, not revoked, AND its version is unchanged; else `{:error, :grant_changed}` —
+  the caller MUST abort the start (do NOT launch with the now-stale secret).
+  \"\"\"
+  def revalidate_version!(agent_uri, version) do
+    case get_for_agent(agent_uri) do
+      %__MODULE__{revoked_at: nil, version: ^version} -> :ok
+      _ -> {:error, :grant_changed}
+    end
+  end
+
+  @doc \"\"\"
+  Re-approve / replace a grant for an agent (e.g. after revoke, owner re-approves a
+  source). Upsert by agent_uri, bumping version so any in-flight start re-validating the
+  OLD version aborts. Cap-check the re-approval at the calling Behavior (same as insert).
+  \"\"\"
+  def reapprove(attrs) do
+    prev = get_for_agent(attrs.agent_uri)
+    next_version = if prev, do: prev.version + 1, else: 1
+
+    %__MODULE__{}
+    |> cast(Map.merge(attrs, %{id: attrs.agent_uri, version: next_version, revoked_at: nil}),
+         [:id, :agent_uri, :credential_source_uri, :approved_by, :approved_scope, :version, :revoked_at])
+    |> validate_required([:id, :agent_uri, :credential_source_uri, :approved_by, :approved_scope])
+    |> Repo.insert(on_conflict: {:replace, [:credential_source_uri, :approved_by,
+         :approved_scope, :version, :revoked_at, :updated_at]}, conflict_target: :id)
+  end
+
+  # source_exists?/1 — KindRegistry.lookup(uri) != :error OR a snapshot row exists.
+  # Consult `Ezagent.KindRegistry` / the snapshot store for the canonical existence check.
+  defp source_exists?(source_uri) do
+    match?({:ok, _}, Ezagent.KindRegistry.lookup(Ezagent.URI.parse!(source_uri)))
+  end
 end
+```
+
+Add these tests to `grant_row_test.exs` (the H1'/H3' lifecycle invariants):
+
+```elixir
+  test "fetch_for_materialize fails for a revoked grant, returns source+version when active" do
+    {:ok, g} = GrantRow.insert(%{agent_uri: "entity://team-a/agent/m1",
+      credential_source_uri: "entity://team-a/agent/alice-base",
+      approved_by: "u", approved_scope: "entity://team-a/agent/alice-base", version: 1})
+    # alice-base must exist as a Kind in setup for source_exists? to pass
+    assert {:ok, "entity://team-a/agent/alice-base", 1} = GrantRow.fetch_for_materialize(g.agent_uri)
+    {:ok, _} = GrantRow.revoke(g.agent_uri)
+    assert {:error, :revoked} = GrantRow.fetch_for_materialize(g.agent_uri)
+  end
+
+  test "fetch_for_materialize fails when approved_scope != the source (grant for A used for B)" do
+    {:ok, g} = GrantRow.insert(%{agent_uri: "entity://team-a/agent/m2",
+      credential_source_uri: "entity://team-a/agent/B", approved_by: "u",
+      approved_scope: "entity://team-a/agent/A", version: 1})
+    assert {:error, :scope_mismatch} = GrantRow.fetch_for_materialize(g.agent_uri)
+  end
+
+  test "revalidate_version! aborts when revoked AFTER the precheck (TOCTOU)" do
+    {:ok, g} = GrantRow.insert(%{agent_uri: "entity://team-a/agent/m3",
+      credential_source_uri: "s", approved_by: "u", approved_scope: "s", version: 1})
+    assert :ok = GrantRow.revalidate_version!(g.agent_uri, 1)
+    {:ok, _} = GrantRow.revoke(g.agent_uri)              # revoke bumps version + stamps
+    assert {:error, :grant_changed} = GrantRow.revalidate_version!(g.agent_uri, 1)
+  end
+
+  test "reapprove replaces a revoked grant and bumps version" do
+    {:ok, g} = GrantRow.insert(%{agent_uri: "entity://team-a/agent/m4",
+      credential_source_uri: "s", approved_by: "u", approved_scope: "s", version: 1})
+    {:ok, _} = GrantRow.revoke(g.agent_uri)
+    {:ok, re} = GrantRow.reapprove(%{agent_uri: g.agent_uri,
+      credential_source_uri: "s2", approved_by: "u", approved_scope: "s2"})
+    assert re.revoked_at == nil and re.version >= g.version + 2
+  end
 ```
 
 > NOTE: `DateTime.utc_now()` is fine in lib code (the no-`Date.now()` rule is a workflow-script constraint, not an app-code one). Confirm `Ezagent.DataCase` exists (search `test/support`); if the project uses a different Repo-sandbox case template, use that.
@@ -262,49 +362,58 @@ git commit -m "feat(#17 cascade PR-0): versioned credential_grants store (spec �
 - Modify: `apps/ezagent_core/lib/ezagent/system_principal/catalog.ex`
 - Test: `apps/ezagent_core/test/ezagent/system_principal/grant_scoped_test.exs`
 
-- [ ] **Step 1: Read the catalog first.** Open `catalog.ex` and the `Ezagent.SystemPrincipal` module to learn how a principal URI maps to a closed cap set (`SystemPrincipal.caps/1`) and how `system://bootstrap` is defined. The grant-scoped principal must hold ONLY `sandbox.read` on the grant's `approved_scope` — not a blanket catalog entry.
+> **Codex H1 redesign.** `SystemPrincipal` is a CLOSED allowlist: `Catalog.caps_for!/1`
+> RAISES for unknown `system://` URIs, so a per-grant dynamic URI like
+> `system://credential-grant/<id>` CANNOT be ad-hoc. And `Capability.cap/3` is
+> `(kind, behavior, action)` (wildcards instance+workspace) — the narrow, source-scoped
+> form is `Capability.cap/5` `(kind, behavior, action, instance, workspace_uri)`.
+> So: a SINGLE cataloged materializer IDENTITY (for audit), and least-privilege enforced
+> by a **narrow `cap/5` derived per-grant at call time** and passed as the dispatch caps —
+> NOT a per-grant catalog entry, NOT a broad standing cap.
 
-- [ ] **Step 2: Write the failing test**
+- [ ] **Step 1: Read the contracts first.** `apps/ezagent_core/lib/ezagent/system_principal/catalog.ex` (closed allowlist; `caps_for!/1` raises, `member?/1`), `apps/ezagent_core/lib/ezagent/capability.ex:118,138` (`cap/3` vs `cap/5`), and `apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex` `resolve_source_config_dir/2` (the existing `--from` source `:read` dispatch — gives the exact `(kind, behavior_module, :read)` triple that authorizes a source read).
+
+- [ ] **Step 2: Add the materializer identity to the Catalog**
+
+In `catalog.ex`, add a cataloged identity `system://credential-materializer` with a MINIMAL standing cap set (audit identity only — it does NOT hold broad sandbox.read; the per-source authority comes from the derived cap in Step 4). Add a test that `Catalog.member?(parse("system://credential-materializer"))` is true and `caps_for!/1` does not raise for it.
+
+- [ ] **Step 3: Write the failing test** (`grant_scoped_test.exs`)
 
 ```elixir
-defmodule Ezagent.SystemPrincipal.GrantScopedTest do
+defmodule Ezagent.Credential.GrantCapTest do
   use ExUnit.Case, async: true
-  alias Ezagent.SystemPrincipal
+  alias Ezagent.Credential.GrantCap
 
-  test "grant-scoped principal holds only sandbox.read on the approved source" do
-    source = "entity://team-a/agent/alice-base"
-    uri = SystemPrincipal.credential_grant_uri("grant-123")
-    caps = SystemPrincipal.grant_caps(uri, source)
-    # exactly one cap: sandbox.read on `source`
-    assert Enum.count(caps) == 1
-    cap = Enum.at(caps, 0)
-    assert cap.behavior == :sandbox or cap.action == :read   # match the real Capability shape
-    refute Enum.any?(caps, fn c -> c.action == :write end)
+  test "derives a single narrow read cap (cap/5) scoped to the approved source + workspace" do
+    source = Ezagent.URI.parse!("entity://team-a/agent/alice-base")
+    cap = GrantCap.read_cap_for(source, "team-a")
+    # exact shape: a cap/5 with instance = the source URI, workspace scoped, action :read
+    assert %Ezagent.Capability{action: :read, instance: ^source} = cap
+    assert cap.workspace_uri != :any        # scoped, not wildcard
+    assert cap.instance != :any
   end
 end
 ```
 
-- [ ] **Step 3: Implement** — add to `SystemPrincipal` (and a catalog note):
+- [ ] **Step 4: Implement `Ezagent.Credential.GrantCap`** (derive the narrow cap; use the real `(kind, behavior_module, :read)` from Step 1)
 
 ```elixir
-  @doc "URI for the principal that materializes under a specific credential grant."
-  def credential_grant_uri(grant_id), do: "system://credential-grant/#{grant_id}"
-
-  @doc \"\"\"
-  The closed cap set for a grant-scoped materialize principal: ONLY `sandbox.read`
-  on the grant's approved source URI. Never blanket system caps (spec §5.1 / codex H1).
-  \"\"\"
-  def grant_caps(_grant_uri, approved_source_uri) do
-    [Ezagent.Capability.cap(:sandbox, :read, approved_source_uri)]   # confirm cap/3 arity+shape
+defmodule Ezagent.Credential.GrantCap do
+  @moduledoc "Derives the least-privilege source-read cap for a validated credential grant (spec §5.1, codex H1). Caller passes this single cap as the dispatch caps for the source read — never a broad set."
+  @doc "A narrow `sandbox`/source read cap scoped to exactly `source_uri` in `workspace_uri`."
+  def read_cap_for(%URI{} = source_uri, workspace_uri) do
+    # (kind, behavior_module, :read) per the --from source-read dispatch (Step 1 consult).
+    Ezagent.Capability.cap(:agent, Ezagent.Behavior.Sandbox, :read, source_uri, workspace_uri)
   end
+end
 ```
 
-> Consult `apps/ezagent_core/lib/ezagent/capability.ex` for the exact `cap/…` builder (it has a kind/behavior/instance/workspace + the new action axis per docs/futures/todo). Build a cap that authorizes `:read` on `approved_source_uri` and NOTHING else.
+> Confirm the exact `(kind, behavior_module)` for a source `:read` against `resolve_source_config_dir/2`'s dispatch + the BehaviorRegistry entry that serves `:read` on an agent source; the cap MUST match what CapBAC checks for that dispatch or the materialize read will be denied.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 5: Run tests to verify they pass**
 
-Run: `mix test apps/ezagent_core/test/ezagent/system_principal/grant_scoped_test.exs`
-Expected: PASS. Adjust the assertion fields to the real `%Capability{}` shape.
+Run: `mix test apps/ezagent_core/test/ezagent/credential/grant_scoped_test.exs apps/ezagent_core/test/ezagent/system_principal/`
+Expected: PASS. Adjust assertion fields to the real `%Capability{}` shape (`kind/behavior/action/instance/workspace_uri`).
 
 - [ ] **Step 5: Commit**
 
@@ -326,30 +435,61 @@ git commit -m "feat(#17 cascade PR-0): grant-scoped materialize principal (sandb
 
 ```elixir
 defmodule Ezagent.Credential.UserDefaultSourceTest do
-  use Ezagent.DataCase, async: false
+  use EzagentCore.DataCase, async: false
   alias Ezagent.Credential.UserDefaultSource, as: UDS
 
   @owner "entity://team-a/user/alice"
   @ws "team-a"
+  # setup/0 (consult an existing agent-fixture helper) must create cc-flavor agents
+  # owned by alice in team-a: "alice-base" + "alice-base2"; a cc agent owned by BOB:
+  # "bob-base"; a codex agent owned by alice: "alice-codex". `owner_caps/0` = alice's
+  # own caps; `admin_caps/0` = system admin caps; `stranger_caps/0` = unrelated caps.
 
-  test "set + resolve a default source; unique per (owner, workspace, flavor)" do
+  test "owner sets + resolves their default; re-set upserts (unique per owner/ws/flavor)" do
     src = "entity://team-a/agent/alice-base"
-    assert {:ok, _} = UDS.set(@owner, @ws, "cc", src, set_by: @owner)
+    assert {:ok, _} = UDS.set(@owner, @ws, "cc", src, caller: @owner, caps: owner_caps())
     assert UDS.resolve(@owner, @ws, "cc") == src
-    # uniqueness: re-set updates (upsert), does not duplicate
     src2 = "entity://team-a/agent/alice-base2"
-    assert {:ok, _} = UDS.set(@owner, @ws, "cc", src2, set_by: @owner)
+    assert {:ok, _} = UDS.set(@owner, @ws, "cc", src2, caller: @owner, caps: owner_caps())
     assert UDS.resolve(@owner, @ws, "cc") == src2
   end
 
-  test "rejects a pointer to a source in another workspace" do
-    cross = "entity://team-b/agent/x"
-    assert {:error, :source_workspace_mismatch} =
-             UDS.set(@owner, @ws, "cc", cross, set_by: @owner)
+  test "rejects an unauthorized caller (not owner, not admin)" do
+    assert {:error, :unauthorized} =
+             UDS.set(@owner, @ws, "cc", "entity://team-a/agent/alice-base",
+                     caller: "entity://team-a/user/eve", caps: stranger_caps())
   end
 
-  test "absent pointer resolves to nil (caller decides fall-through, not crash)" do
+  test "rejects a source owned by another user in the same workspace (codex H4)" do
+    assert {:error, :source_owner_mismatch} =
+             UDS.set(@owner, @ws, "cc", "entity://team-a/agent/bob-base",
+                     caller: @owner, caps: owner_caps())
+  end
+
+  test "rejects a source of the wrong flavor" do
+    assert {:error, :source_flavor_mismatch} =
+             UDS.set(@owner, @ws, "cc", "entity://team-a/agent/alice-codex",
+                     caller: @owner, caps: owner_caps())
+  end
+
+  test "rejects a cross-workspace source" do
+    assert {:error, :source_workspace_mismatch} =
+             UDS.set(@owner, @ws, "cc", "entity://team-b/agent/x",
+                     caller: @owner, caps: owner_caps())
+  end
+
+  test "rejects a non-existent source" do
+    assert {:error, :source_not_found} =
+             UDS.set(@owner, @ws, "cc", "entity://team-a/agent/ghost",
+                     caller: @owner, caps: owner_caps())
+  end
+
+  test "absent pointer resolves to nil (caller falls through to workspace-shared, not crash)" do
     assert UDS.resolve(@owner, @ws, "codex") == nil
+  end
+
+  test "a successful set emits an audit event" do
+    # assert via the audit log / telemetry the project uses (consult Ezagent.Audit tests)
   end
 end
 ```
@@ -411,24 +551,47 @@ defmodule Ezagent.Credential.UserDefaultSource do
   defp id(owner, ws, flavor), do: "#{owner}|#{ws}|#{flavor}"
 
   @doc \"\"\"
-  Set/replace the default source. Validates the pointed source's workspace matches `ws`
-  (reject cross-workspace redirect — codex H4). CALLER must have already cap-checked that
-  `set_by` may write this owner's default (owner or admin) — assert that upstream in the
-  Behavior that calls this; this module enforces the data invariants.
+  Set/replace the default source. This is the AUTHORIZED write path (codex CRIT) — it
+  cap-checks the caller AND validates the pointed source. `opts` MUST carry `:caller`
+  (principal URI) + `:caps`. Authorization: the caller is the `owner` itself OR holds an
+  admin/manage cap (use the SAME cap seam the user/admin Behaviors use — consult
+  `apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex` for the manage-cap
+  check and `Ezagent.Capability.matches?/2`). Validation (all required, fail loud):
+    1. caller authorized (owner or admin) — else `{:error, :unauthorized}`;
+    2. source exists (KindRegistry/snapshot lookup) — else `{:error, :source_not_found}`;
+    3. source's workspace == `ws` — else `{:error, :source_workspace_mismatch}`;
+    4. source belongs to `owner` (created_by/owner of the source agent == owner) — else
+       `{:error, :source_owner_mismatch}` (blocks redirect to another user's same-ws agent);
+    5. source's flavor == `flavor` (via `Ezagent.UriQuery.resolve(:flavor, source)`) — else
+       `{:error, :source_flavor_mismatch}`.
+  On success: upsert + emit an audit event (`Ezagent.Audit`, same pattern as cap grants).
   \"\"\"
   def set(owner, ws, flavor, source_uri, opts) do
-    set_by = Keyword.fetch!(opts, :set_by)
+    caller = Keyword.fetch!(opts, :caller)
+    caps = Keyword.fetch!(opts, :caps)
 
-    with :ok <- validate_source_workspace(source_uri, ws) do
-      %__MODULE__{}
-      |> cast(%{id: id(owner, ws, flavor), owner_uri: owner, workspace_uri: ws,
-                flavor: flavor, source_uri: source_uri, set_by: set_by},
-              [:id, :owner_uri, :workspace_uri, :flavor, :source_uri, :set_by])
-      |> validate_required([:id, :owner_uri, :workspace_uri, :flavor, :source_uri, :set_by])
-      |> Repo.insert(on_conflict: {:replace, [:source_uri, :set_by, :updated_at]},
-                     conflict_target: :id)
+    with :ok <- authorize_write(owner, caller, caps),
+         {:ok, source} <- Ezagent.URI.parse(source_uri),
+         :ok <- validate_source(source, owner, ws, flavor) do
+      result =
+        %__MODULE__{}
+        |> cast(%{id: id(owner, ws, flavor), owner_uri: owner, workspace_uri: ws,
+                  flavor: flavor, source_uri: source_uri, set_by: caller},
+                [:id, :owner_uri, :workspace_uri, :flavor, :source_uri, :set_by])
+        |> validate_required([:id, :owner_uri, :workspace_uri, :flavor, :source_uri, :set_by])
+        |> Repo.insert(on_conflict: {:replace, [:source_uri, :set_by, :updated_at]},
+                       conflict_target: :id)
+
+      with {:ok, row} <- result do
+        Ezagent.Audit.emit(:user_default_credential_source_set,
+          %{owner: owner, workspace: ws, flavor: flavor, source: source_uri, by: caller})
+        {:ok, row}
+      end
     end
   end
+
+  # authorize_write/validate_source/validate_source helpers — implement per the consults
+  # above; each returns :ok | {:error, reason}. Tests below drive them.
 
   @doc "Resolve the source URI, or nil if unset (caller falls through to workspace-shared)."
   def resolve(owner, ws, flavor) do
@@ -441,7 +604,7 @@ defmodule Ezagent.Credential.UserDefaultSource do
   # The pointed source's workspace segment must equal `ws` (use the canonical URI accessor,
   # NOT string parsing — Ezagent.URI.workspace_name!/1).
   defp validate_source_workspace(source_uri, ws) do
-    case Ezagent.URI.new(source_uri) do
+    case Ezagent.URI.parse(source_uri) do
       {:ok, u} ->
         if Ezagent.URI.workspace_name!(u) == ws, do: :ok, else: {:error, :source_workspace_mismatch}
       _ -> {:error, :bad_source_uri}
@@ -499,7 +662,7 @@ git commit -m "feat(#17 cascade PR-0): cap-checked user_default_credential_sourc
 
 ```elixir
 defmodule Ezagent.Credential.AdoptTest do
-  use Ezagent.DataCase, async: false
+  use EzagentCore.DataCase, async: false
   alias Ezagent.Credential.{Adopt, UserDefaultSource}
 
   test "adopts a single unambiguous existing source as the user default" do
@@ -577,9 +740,9 @@ defmodule Ezagent.Invariants.CascadePr0FoundationsTest do
     assert Code.ensure_loaded?(Ezagent.Credential.GrantRow)
     assert Code.ensure_loaded?(Ezagent.Credential.UserDefaultSource)
     assert function_exported?(Ezagent.SystemPrincipal, :credential_grant_uri, 1)
-    assert function_exported?(EzagentPluginCc.Template.CcAgent, :secret_relpaths, 0)
+    assert function_exported?(Ezagent.PluginCc.Template.CcAgent, :secret_relpaths, 0)
     # secret/config disjoint per flavor (H4 invariant)
-    assert "config.toml" not in EzagentPluginCodex.Template.CodexAgent.secret_relpaths()
+    assert "config.toml" not in Ezagent.PluginCodex.Template.CodexAgent.secret_relpaths()
   end
 
   test ":user_default_credential_source is a registered UriQuery attribute" do
