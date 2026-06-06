@@ -372,7 +372,8 @@ defmodule EzagentDomainIdentity.Application do
     # user default-credential-source pointer. Registered on the User Kind with its
     # OWN cap subject (distinct from Identity actions) so a stranger cannot set
     # another user's source. The action body validates + persists via
-    # `Ezagent.Credential.UserDefaultSource.set/5`; dispatch supplies cap-check + audit.
+    # `Ezagent.Credential.UserDefaultSource.persist_validated/5` (no auth in it);
+    # dispatch supplies cap-check + audit.
     for action <- UserDefaultCredentialSource.actions() do
       :ok = CapabilityRegistry.register(User, action, UserDefaultCredentialSource)
     end

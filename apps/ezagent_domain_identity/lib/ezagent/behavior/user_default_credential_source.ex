@@ -15,8 +15,10 @@ defmodule Ezagent.Behavior.UserDefaultCredentialSource do
   The OWNER holds this cap on their own User Kind (it is part of their structural
   baseline / can be granted by a workspace admin); a stranger does not, so the dispatch
   layer denies them with `:unauthorized`. This is the SOLE public write path for the
-  pointer — `Ezagent.Credential.UserDefaultSource.set/5` is the validation+persist body,
-  reachable only from this handler (and the adoption action, which also dispatches here).
+  pointer — `Ezagent.Credential.UserDefaultSource.persist_validated/5` is the
+  validation+persist body (NO auth in it), reachable ONLY from this handler (and the
+  adoption action, which also dispatches here). That single-caller invariant is enforced
+  structurally by `Ezagent.Invariants.UserDefaultSourceSingleWriterTest`.
 
   ## Action
 
@@ -84,7 +86,8 @@ defmodule Ezagent.Behavior.UserDefaultCredentialSource do
 
     with :ok <- check_owner_arg(Map.get(args, :owner_uri), owner),
          true <- is_binary(flavor) and is_binary(source_uri) and is_binary(workspace),
-         {:ok, _row} <- UserDefaultSource.set(owner, workspace, flavor, source_uri, set_by) do
+         {:ok, _row} <-
+           UserDefaultSource.persist_validated(owner, workspace, flavor, source_uri, set_by) do
       cur = ctx[:read].(:set_count, 0)
 
       {:ok, %{flavor: flavor, source_uri: source_uri},

@@ -6,14 +6,24 @@ defmodule Ezagent.Credential.UserDefaultSource do
 
   ## Authorized write path
 
-  `set/4` is the action BODY — VALIDATION + persist only. It is NOT a public
-  unauthenticated setter. The AUTHORIZED entry point is the cap-checked Behavior action
-  `:set_default_credential_source` (`Ezagent.Behavior.UserDefaultCredentialSource`,
-  registered on the User Kind), dispatched via `Ezagent.Router`, which performs the
-  cap-check AND emits the audit row (the `{:emit, ...}` effect) automatically — mirroring
-  `Ezagent.Behavior.WorkspaceUserAdmin` `:create_user`. `set/4` is reached ONLY from that
-  action handler and from the adoption action (Task 5), which also dispatches — there is
-  no raw cap-less call site (closes codex CRIT: single cap-checked + audited chokepoint).
+  `persist_validated/5` is the action BODY — VALIDATION + persist only. It is NOT a
+  public unauthenticated setter, and its name reflects that: it does NOT authorize. The
+  AUTHORIZED entry point is the cap-checked Behavior action `:set_default_credential_source`
+  (`Ezagent.Behavior.UserDefaultCredentialSource`, registered on the User Kind),
+  dispatched via `Ezagent.Router`, which performs the cap-check AND emits the audit row
+  (the `{:emit, ...}` effect) automatically — mirroring `Ezagent.Behavior.WorkspaceUserAdmin`
+  `:create_user`.
+
+  ### Single-caller invariant (structural, codex H2)
+
+  `persist_validated/5` has exactly ONE lib call-site: the
+  `Ezagent.Behavior.UserDefaultCredentialSource` handler. The adoption migration reaches
+  it the same way — through `set_via_dispatch/3` → `Ezagent.Router.dispatch` → that
+  handler. There is NO other in-VM mutator on this store (no public cap-less setter). The
+  grep invariant test `Ezagent.Invariants.UserDefaultSourceSingleWriterTest` HARD-fails
+  CI if any lib module other than that Behavior calls `persist_validated`, mirroring
+  `Ezagent.Invariants.SingleSpawnEntryTest`. Tests may call it directly to exercise the
+  validation logic in isolation (the gate scans `*.ex` only).
 
   Queried via `Ezagent.UriQuery` (`:user_default_credential_source`) and by
   `pick_credential_source` in PR-1.
@@ -41,10 +51,11 @@ defmodule Ezagent.Credential.UserDefaultSource do
   defp id(owner, ws, flavor), do: "#{owner}|#{ws}|#{flavor}"
 
   @doc """
-  Action BODY for setting the default source — VALIDATION + persist only. See the
-  moduledoc for why this is NOT a public setter (the cap-check + audit live in the
-  dispatched Behavior action). `set_by` defaults to `owner`; the dispatched action
-  passes the real caller.
+  Action BODY for setting the default source — VALIDATION + persist only, NO auth. The
+  name says it: this persists an already-authorized request; it does NOT authorize. See
+  the moduledoc for why this is NOT a public setter (the cap-check + audit live in the
+  dispatched Behavior action) and the single-caller invariant. `set_by` defaults to
+  `owner`; the dispatched action passes the real caller.
 
   Validation (all required, fail loud):
     1. source parses + exists (durable snapshot) — else `{:error, :source_not_found}`;
@@ -53,9 +64,9 @@ defmodule Ezagent.Credential.UserDefaultSource do
     4. source's flavor == `flavor` (`UriQuery.resolve(:flavor, source)`) — else
        `{:error, :source_flavor_mismatch}`.
   """
-  @spec set(String.t(), String.t(), String.t(), String.t()) ::
+  @spec persist_validated(String.t(), String.t(), String.t(), String.t(), String.t() | nil) ::
           {:ok, t()} | {:error, term()}
-  def set(owner, ws, flavor, source_uri, set_by \\ nil) do
+  def persist_validated(owner, ws, flavor, source_uri, set_by \\ nil) do
     with {:ok, source} <- Ezagent.URI.parse(source_uri),
          :ok <- validate_source(source, owner, ws, flavor) do
       %__MODULE__{}
