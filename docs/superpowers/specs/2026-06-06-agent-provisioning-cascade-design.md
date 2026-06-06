@@ -1,11 +1,13 @@
 # SPEC: Multi-level agent provisioning — layered credential/config cascade (domain.agent)
 
-> **Status:** design rev 3 — codex adversarial-review rounds 1+2 folded. Round 1
-> (4 HIGH + 1 MED) and round 2 (4 deeper HIGH on the rev-2 additions) addressed as
-> design REQUIREMENTS/INVARIANTS, with the concrete mechanism deferred to PR-0/PR-1
-> planning (codex code-review gates the impl): leased/versioned credential grant §5.1;
-> trust-aware tombstones §3 D4.2; real atomic-replace-with-rollback §7; cap-checked
-> user-source registry §5.2. Allen-approved in brainstorm 2026-06-06. Builds on and
+> **Status:** design rev 4 — codex adversarial-review rounds 1+2 (mechanism) + round 3
+> (goal/effect-level) folded. Round 3 closed three GOAL-level gaps: mandatory controls
+> now survive ALL override modes via post-merge validation (D4.1, G1); explicit
+> credential-selection state machine with workspace-shared fallback (D4.3, G2); relogin
+> = in-place update of a stable per-(owner,ws,flavor) holder (§5.2, G3). §11 now states
+> the end-to-end **acceptance gate**. Rounds 1+2 (mechanism) addressed as
+> requirements/invariants, concrete mechanism deferred to PR-0/PR-1 (codex code-review
+> gates the impl). Allen-approved in brainstorm 2026-06-06. Builds on and
 > **supersedes the
 > inheritance half (PR-D / §③) of** `2026-06-03-agent-credential-lifecycle.md`
 > (whose PR-A/B/C/C2/E are already merged: #551/552/553/555/556). Builds on
@@ -115,6 +117,17 @@ secret — H4 fix).
 1. **Whole-file-replace** (V1): for same-path **config** files (e.g. `settings.json`),
    the higher layer's file wins entirely. (Deep per-key JSON merge for `.mcp.json` /
    `settings.json` is V2.)
+   **Mandatory controls survive ALL override modes (round-3 G1 — precedence ≠ trust,
+   for overwrite too).** A higher layer must not be able to drop a workspace/base
+   security control by *replacing* a policy-bearing file with one that omits it (not
+   just by tombstoning it). Therefore workspace/base layers declare a **mandatory set**
+   (specific hooks / MCP servers / plugins / settings keys that MUST be present), and
+   after the full cascade merge the materializer **validates the mandatory set is
+   present and intact in the final tree** (a post-merge invariant). A lower-trust layer
+   cannot remove OR replace-to-omit a mandatory control without the management cap; if
+   the merged result is missing a mandatory control, materialization **fails loud** (or
+   re-injects it, per the mandatory entry's policy). This makes "workspace mandatory
+   config applies to every agent" hold regardless of how a higher layer tried to bypass.
 2. **Directory union with tombstones** (e.g. `plugins/`, `skills/`): union of files; on
    a filename collision the higher layer wins. A higher layer may **remove** a
    lower-layer file by shipping a **tombstone** for that relpath (a sibling
@@ -129,12 +142,21 @@ secret — H4 fix).
    tombstone a workspace/base mandatory hook). Non-protected inherited files remain
    freely tombstonable (the M1 use case — disable an inherited *optional* plugin).
    Mechanism (protected-set declaration + cap gate) deferred to PR-2 planning.
-3. **Single credential source per agent.** Secret paths are **not** merged across
-   layers. Exactly one source is chosen by precedence:
-   **explicit (an operator-named source agent) > user (personal credential source,
-   §5.2) > workspace (shared service account)**. Default = the user source.
-   Workspace-shared is opt-in. No silent mixing; a missing/unauthorized/revoked source
-   **fails loud** (no silent fallback to an empty or wrong credential), per
+3. **Single credential source per agent — explicit selection state machine (round-3
+   G2).** Secret paths are **not** merged across layers; exactly one source is chosen.
+   The "default user / fail-loud" rule and the "workspace-shared service account" goal
+   are reconciled by an explicit order with a clear absent-vs-revoked distinction:
+   1. **explicit** source named at create (cap-checked) → use it.
+   2. else **user** default source (the §5.2 pointer) **if present** → use it.
+   3. else **workspace** authorized shared service-account source **if present** →
+      use it. (This is the "no personal login, workspace provisions the agent" goal.)
+   4. else (a credential is required but none of the above exists) → **fail loud**.
+
+   **absent ≠ revoked.** A *missing* user pointer falls THROUGH to workspace-shared
+   (step 2→3) — normal provisioning. A source that WAS selected but is now
+   **revoked / unauthorized / deleted fails loud and does NOT silently fall through**
+   to a different source (no surprise privilege downgrade/upgrade; the operator must
+   re-approve or explicitly choose). No silent mixing; per
    `feedback_let_it_crash_no_workarounds`.
 
 ### D5 — Universality: domain resolution + flavor materialization
@@ -278,8 +300,17 @@ Define the **user credential source** explicitly and durably:
   written when the user first logs in / their base is created, **queried via UriQuery**.
   Uniqueness enforced on `(owner, workspace, flavor)`.
 - `pick_credential_source/3` reads this stored pointer for the user layer — never a
-  name convention. Absent pointer + required credential → **fail loud** (prompt the user
-  to log in / create their base), never silent `:no_api_key`.
+  name convention. Absent pointer → fall through to workspace-shared (D4.3 step 3);
+  only when NO source at all exists and a credential is required → **fail loud**, never
+  silent `:no_api_key`.
+- **Relogin = in-place update of a STABLE holder (round-3 G3 — makes "login once /
+  re-login propagates" hold).** The user's default source is a **stable** holder with a
+  fixed URI for a given `(owner, workspace, flavor)`; re-login writes the fresh
+  credential **into that same holder (same URI)**, NOT into a new one. Existing agents
+  bound to that `credential_source_uri` therefore pick up the new credential at their
+  next start with **no rebinding** — propagation is automatic. Pointing a user's default
+  at a *different* holder is an explicit, audited **rebind** (which must update existing
+  agents' grants) and is V2; V1 keeps the holder stable.
 - **Migration:** existing per-agent `:api_keys` / per-agent OAuth dirs are adopted by
   registering the appropriate existing agent as the owner's default source for that
   (workspace, flavor); documented one-time step, no silent guess.
@@ -364,6 +395,16 @@ Define the **user credential source** explicitly and durably:
 - **User-source authz (H4'):** a write pointing at another user's / another workspace's /
   wrong-flavor agent is rejected; DB uniqueness on `(owner, workspace, flavor)` holds;
   pointer writes are cap-checked + audited.
+- **Mandatory-control overwrite (G1):** a higher layer that *replaces* a policy file to
+  omit a mandatory hook/MCP/plugin still yields an agent WITH that control (post-merge
+  validation), not just the tombstone case.
+- **Selection state machine (G2):** absent user pointer falls through to an authorized
+  workspace-shared source; a revoked selected source fails loud and does NOT fall
+  through; precedence explicit > user > workspace holds.
+- **Relogin in-place (G3):** re-login updates the stable holder's contents; an existing
+  agent bound to that source URI uses the new credential at next start with no rebind.
+
+The full end-to-end **acceptance gate** is §11 (the completion criterion).
 
 ## 9. Decomposition (small PRs, each → codex code-review)
 
@@ -422,3 +463,35 @@ Genuinely open (needs a decision, not just deferral):
   INSIDE the single authorized create chokepoint, not a parallel path — confirm the
   chokepoint exposes the needed hook before PR-1.
 - Does any in-process flavor besides curl need a non-slice resolver shape? (likely no.)
+
+## 11. Acceptance gate (end-to-end observable effect)
+
+The design is "done" when an automated end-to-end gate proves these user-observable
+conditions (each a test; the gate is the union, per
+`feedback_completion_requires_invariant_test`):
+
+1. **Login once → N agents work.** A user logs in once for a flavor, then creates N
+   agents (≥1 each of cc, codex, curl) in their workspace; **all N authenticate and
+   complete a real round-trip** with no per-agent login.
+2. **Re-login propagates.** After the user re-logs in (in-place holder update), each
+   existing agent, on its **next start (incl. cold restart / self-heal)**, uses the new
+   credential — verified by a workspace-template change + re-login THEN a BEAM restart,
+   not just a fresh spawn.
+3. **Workspace shared provisioning.** With NO personal user credential but an authorized
+   workspace shared service-account source, cc + codex + curl agents **start and work**
+   from the workspace-shared credential (D4.3 step 3).
+4. **Revocation actually stops access.** Revoking a credential grant: a subsequent start
+   **fails loud** (no launch with revoked creds, incl. the revoke-after-precheck TOCTOU
+   case), and a running bound agent is restarted into the fail-loud path.
+5. **Mandatory config cannot be bypassed.** A user/session layer that omits or replaces
+   a workspace mandatory control (hook/MCP/plugin) does **not** yield an agent missing
+   that control — the post-merge mandatory-set validation enforces it (overwrite AND
+   tombstone paths).
+6. **No cross-boundary credential.** A credential never reaches an agent of another
+   owner or another workspace; an unauthorized source pointer/grant is rejected; a
+   materialized agent dir contains only its own resolved secrets.
+7. **Live-update of shared config.** A workspace plugin/config update flows to its agents
+   on their next start (cascade re-resolution), without per-agent edits.
+
+This gate (not "PRs merged + unit tests pass") is the completion criterion; PR-2/PR-3/PR-4
+each move one or more of these from red to green.
