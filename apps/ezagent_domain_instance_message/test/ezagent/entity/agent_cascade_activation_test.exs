@@ -345,6 +345,58 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
            "a failed spawn must leave no orphaned credential grant"
   end
 
+  test "a mint-conflict (concurrent duplicate) does NOT delete the winner's existing grant (codex r6)" do
+    flavor = "cascade_conflict_#{uniq()}"
+
+    :ok =
+      AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Ezagent.Entity.Agent,
+        template_class: FailingInstantiateTemplate
+      })
+
+    {:ok, _} = Ezagent.SnapshotStore.write(URI.to_string(@source_uri), %{}, kind_type: :agent)
+
+    agent_uri = Ezagent.URI.agent("team-alpha", "cascade-conflict-#{uniq()}")
+
+    # Simulate the WINNER having already minted the grant for this agent_uri.
+    {:ok, _winner} =
+      GrantRow.insert(%{
+        agent_uri: URI.to_string(agent_uri),
+        credential_source_uri: URI.to_string(@source_uri),
+        approved_by: URI.to_string(@owner_uri),
+        approved_scope: URI.to_string(@source_uri),
+        version: 1
+      })
+
+    content = %{
+      flavor: flavor,
+      project_cwd: "/tmp/project",
+      cascade_resolution: %{
+        owner_uri: @owner_uri,
+        workspace_uri: @workspace_uri,
+        explicit_source: @source_uri,
+        layer_dir_for: fn _ -> :skip end,
+        source_dir_for: fn _ -> {:ok, "/tmp/source"} end
+      }
+    }
+
+    caps = [GrantCap.read_cap_for(@source_uri)]
+
+    # The LOSER's spawn: its grant mint conflicts on the unique agent_uri (the
+    # winner already inserted), so resolve_cascade_content fails BEFORE
+    # spawn_after_cascade — the loser must NOT delete the winner's grant.
+    assert {:error, _} =
+             Agent.spawn_from_template_content(content, agent_uri, @owner_uri, @workspace_uri,
+               caller: @owner_uri,
+               caps: caps
+             )
+
+    # The winner's grant survives the loser's failed spawn.
+    assert %GrantRow{approved_by: approved_by} = GrantRow.get_for_agent(URI.to_string(agent_uri))
+    assert approved_by == URI.to_string(@owner_uri)
+  end
+
   test "rehydrate_respawn_data re-resolves layer dirs from durable URI inputs" do
     template_uri = URI.new!("template://team-alpha/agent/ws-cc")
     agent_uri = Ezagent.URI.agent("team-alpha", "cascade-restart-#{uniq()}")

@@ -551,6 +551,12 @@ defmodule Ezagent.Entity.Agent do
              template_content_map
            ),
          {:ok, flavor} <- template_content_flavor(template_content_map),
+         # `resolve_cascade_content` is the grant-MINT boundary. Its own failures
+         # (incl. a unique-constraint insert conflict from a concurrent duplicate
+         # create — where the WINNER owns the row, not this call) must NOT trigger
+         # the grant cleanup below: this call did not successfully mint, so deleting
+         # would erase the winner's grant (codex r6 HIGH — race). So it stays in the
+         # OUTER `with`, whose `else` returns the error WITHOUT deleting any grant.
          {:ok, template_content_map} <-
            resolve_cascade_content(
              template_content_map,
@@ -561,7 +567,35 @@ defmodule Ezagent.Entity.Agent do
              flavor,
              opts
            ),
-         {:ok, data} <-
+         # Past the mint boundary: from here, ANY failure is owned by THIS call
+         # (this call minted the grant, if any), so the grant cleanup is safe. The
+         # nested `with` scopes the grant-delete to exactly these post-mint steps.
+         {:ok, result} <-
+           spawn_after_cascade(
+             template_class,
+             template_content_map,
+             instance_uri,
+             spawned_by_uri,
+             workspace_uri,
+             flavor
+           ) do
+      {:ok, result}
+    end
+  end
+
+  # Post-grant-mint spawn steps. ANY failure here is owned by THIS call (the grant
+  # was just minted by this call's `resolve_cascade_content`), so on failure we
+  # HARD-delete the grant — leaving zero residue — via `revoke_cascade_grant_best_effort/1`.
+  # This is the ONLY grant-cleanup site (the pre-mint outer `with` must not delete).
+  defp spawn_after_cascade(
+         template_class,
+         template_content_map,
+         instance_uri,
+         spawned_by_uri,
+         workspace_uri,
+         flavor
+       ) do
+    with {:ok, data} <-
            Ezagent.Entity.AgentTemplate.to_template_data(template_content_map, instance_uri),
          :ok <- Ezagent.AgentFlavorAttributes.put(instance_uri, flavor),
          {:ok, workers, fresh?, instantiate_meta} <-
@@ -654,12 +688,13 @@ defmodule Ezagent.Entity.Agent do
         {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
       end
     else
-      # codex r5 HIGH — a failure of `to_template_data` / `AgentFlavorAttributes.put`
-      # / `instantiate_workers` short-circuits the outer `with` AFTER
-      # `resolve_cascade_content` already minted the #17 grant. Revoke it so no
-      # orphaned GrantRow survives for an agent that never instantiated. (Steps
-      # BEFORE the mint — `resolve_template_class` / `template_content_flavor` /
-      # `resolve_cascade_content` itself — minted nothing, so revoke is a no-op.)
+      # codex r5/r6 HIGH — a failure of `to_template_data` /
+      # `AgentFlavorAttributes.put` / `instantiate_workers` here is ALWAYS owned by
+      # THIS call: `spawn_after_cascade/6` only runs AFTER `resolve_cascade_content`
+      # succeeded (which is where this call minted the #17 grant, if any). So
+      # hard-deleting the grant is safe — it cannot erase a concurrent winner's row
+      # (a mint-CONFLICT fails inside `resolve_cascade_content`, which is in the
+      # caller's OUTER `with` that does NOT delete). No-op when no grant was minted.
       {:error, _reason} = err ->
         revoke_cascade_grant_best_effort(instance_uri)
         err

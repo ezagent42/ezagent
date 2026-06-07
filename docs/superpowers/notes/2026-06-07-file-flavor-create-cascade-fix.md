@@ -2,9 +2,12 @@
 
 **Date:** 2026-06-07
 **Branch:** `fix/file-flavor-create-cascade`
-**Status:** IMPLEMENTED (TDD). Codex adversarial approach-review run (verdict
-`needs-attention`, approach SOUND, three under-specifications folded in — see §7). Failing
-test → green; affected suites + create-path/parity invariants pass. PR open, not merged.
+**Status:** IMPLEMENTED (TDD). SEVEN codex adversarial-review rounds (approach + 6 diff
+rounds) — approach SOUND throughout; each round's findings verified + fixed (see §7–§7g).
+Failing test → green; affected suites (cc 186 / codex 44 / workspace 165[*] / cascade 9) +
+create-path/parity invariants pass. PR open, not merged. [*] workspace shows 3 PRE-EXISTING
+env-isolation failures (identical on origin/main; need the instance_message app, unbuildable
+in the workspace app's isolated test env).
 
 ## 1. The bug (confirmed by code trace)
 
@@ -390,3 +393,24 @@ A fresh spawn now either fully succeeds or leaves ZERO residue — workers termi
 dirs cleaned, lineage forgotten, AND the grant deleted. Regression test added
 (`spawn_from_template_content` that mints a grant then fails at instantiate → no orphaned
 grant). This hardens the orchestrator/fork/session callers too (they shared the same gap).
+
+### 7g. Codex round 7 — grant cleanup must be ownership-scoped (race)
+
+**Verdict: `needs-attention`** (static-only) — the round-6 cleanup was placed in the outer
+`with` `else`, which also caught a `resolve_cascade_content` **mint-conflict** from a
+concurrent duplicate create (where the WINNER owns the row). The loser would then hard-delete
+the winner's grant. **VERIFIED — a race I introduced in round 6.**
+
+**Resolution:** scope the grant cleanup to ONLY post-mint failures owned by this call. Split
+the spawn into the outer `with` (`resolve_template_class` / `template_content_flavor` /
+`resolve_cascade_content` — the grant-MINT boundary; NO `else`, so a mint-conflict returns the
+error WITHOUT deleting) and a new `spawn_after_cascade/6` (`to_template_data` / `put` /
+`instantiate_workers` + the fresh/adopt body). `spawn_after_cascade` runs ONLY after the mint
+succeeded, so ANY failure there is owned by this call → its `else` (and the inner fresh-spawn
+failure branch) hard-delete the grant safely. A mint-conflict can no longer erase the winner's
+row. Regression test added (a loser whose mint conflicts must NOT delete the winner's grant).
+
+This is the final round — the diff is internally consistent: create / cold-boot replay /
+add_template all fail loud rather than share operator home; a failed fresh spawn leaves zero
+residue (workers / config-dir / lineage / grant); grant cleanup is ownership-scoped (no race);
+the single create-chokepoint + LV/CLI parity invariants pass; echo/np/curl untouched.
