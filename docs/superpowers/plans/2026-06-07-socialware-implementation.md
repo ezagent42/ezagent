@@ -477,11 +477,13 @@ declares the six slots, and the SW-USE E2E proving one turn drives both customer
     the `:operator_only` assist never appears on the customer feed (route-level);
   - ③ second-viewer + cold-restart: both read `versions[approved]`, never an unapproved version;
   - ④ cross-session/cross-workspace/expired token denied.
-- [ ] **P5.3 author-side live SW-USE E2E (post-merge, author-owned)** — agent-browser on the real
-  ESR UI at `http://100.64.0.27:10042` (operator LiveView) + the customer SPA route: screenshots
-  ①②③ (chat bubble + live page side-by-side in one customer viewport from one turn; copilot draft
-  visible to operator, absent from customer until approve). Fresh disposable seed; production
-  topology; every distinct bug earns a fast regression test before the fix.
+- [ ] **P5.3 author-side live SW-USE E2E (post-merge, author-owned)** — agent-browser on an
+  **isolated, fresh-seeded disposable stack** (its OWN ports, reachable for review via the
+  Tailscale IP `100.64.0.27:<disposable-port>` — **NOT** the shared dev node at `:10042`):
+  operator LiveView + the customer SPA route; screenshots ①②③ (chat bubble + live page
+  side-by-side in one customer viewport from one turn; copilot draft visible to operator, absent
+  from customer until approve). Every E2E run brings up a fresh seed and is torn down after;
+  every distinct bug earns a fast regression test before the fix.
 
 **P5 acceptance gate:** Codex PR gate = P5.1 + P5.2 green in isolation (no shared dev/prod, no
 `100.64.0.27`). Author gate (post-merge) = P5.3 live agent-browser screenshots. SW-DEV proves
@@ -537,10 +539,13 @@ green.
   without a failing test first.
 - **Test DB only** (`MIX_ENV=test`). NEVER `mix ecto.migrate` against dev/prod. NEVER touch
   running dev/prod docker.
-- **ESR E2E standards** (P5): non-admin customer primary caller; operator-cap-grant is itself a
-  step; fresh docker seed each run; production topology; agent-browser screenshots on the real
-  ESR UI at `http://100.64.0.27:10042` (operator) + the customer SPA route (Tailscale IP, not
-  localhost); every distinct E2E bug earns a fast regression test before the fix.
+- **ESR E2E standards** (P5): **all E2E runs on an isolated, fresh-seeded, disposable stack —
+  never the shared dev/prod node** (dev/prod state is polluted/non-reproducible and unsafe to
+  mutate). Non-admin customer primary caller; operator-cap-grant is itself a step; fresh seed
+  brought up + torn down each run; agent-browser screenshots on the disposable stack's own ports
+  (reachable for review via the Tailscale IP `100.64.0.27:<disposable-port>`, NOT the shared dev
+  node `:10042`, NOT localhost); every distinct E2E bug earns a fast regression test before the
+  fix.
 - **No silent defaults / shims / whitelists.** Let-it-crash; structural fixes.
 - **Migration ordering:** P3's `Message` migration must not collide with the #17 cascade
   migrations — coordinate the sequence at PR time.
