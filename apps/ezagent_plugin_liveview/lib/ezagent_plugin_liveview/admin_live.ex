@@ -45,7 +45,16 @@ defmodule EzagentPluginLiveview.AdminLive do
   # than an in-function require.
   require Logger
 
-  alias EzagentPluginLiveview.Admin.{SessionEditor, MemberPanel, SessionContext, RehydrateFlash}
+  alias EzagentPluginLiveview.Admin.{
+    Compose,
+    Invite,
+    MemberPanel,
+    RehydrateFlash,
+    RoutingRules,
+    SessionContext,
+    SessionEditor
+  }
+
   # RFC #402 (Allen 2026-05-26) — OrchestratorHealthCard moved out of
   # the `Admin.*` namespace and into `Session.*` because the
   # orchestrator is 1:1 bound to its session (not an admin-only
@@ -430,64 +439,17 @@ defmodule EzagentPluginLiveview.AdminLive do
   def handle_event("validate_compose", _params, socket), do: {:noreply, socket}
 
   def handle_event("cancel_upload", %{"ref" => ref}, socket) do
-    {:noreply, cancel_upload(socket, :attachments, ref)}
+    Compose.cancel_upload(socket, ref)
   end
 
-  def handle_event("chat_compose", %{"chat" => %{"text" => text}}, socket)
-      when is_binary(text) do
-    {mentions, legend_triggers} =
-      parse_mentions(
-        text,
-        socket.assigns[:member_options] || [],
-        socket.assigns[:session_legends] || %{}
-      )
+  def handle_event("chat_compose", params, socket) do
+    case params do
+      %{"chat" => %{"text" => text}} when is_binary(text) ->
+        Compose.submit(socket, text)
 
-    File.mkdir_p!(Ezagent.Home.path("uploads"))
-
-    # Upload resources must be tenant-scoped to the caller's workspace.
-    workspace_name =
-      case Ezagent.Capability.workspace_of(socket.assigns.current_entity_uri) do
-        %URI{} = workspace_uri ->
-          Ezagent.URI.workspace_name!(workspace_uri)
-
-        other ->
-          raise ArgumentError,
-                "current_entity_uri does not yield a workspace URI with a binary host " <>
-                  "— got #{inspect(other)} for current_entity_uri=" <>
-                  "#{inspect(socket.assigns.current_entity_uri)}. Per SPEC #324 rev 3 / " <>
-                  "PR #362, there is NO silent default workspace fallback; the " <>
-                  "authenticated caller must carry a workspace structurally."
-      end
-
-    attachments =
-      consume_uploaded_entries(socket, :attachments, fn %{path: tmp_path}, entry ->
-        uuid = Ecto.UUID.generate()
-        safe_name = sanitize_filename(entry.client_name)
-        stored_name = "#{uuid}-#{safe_name}"
-        dest = Path.join(Ezagent.Home.path("uploads"), stored_name)
-        File.cp!(tmp_path, dest)
-        {:ok, Ezagent.URI.resource(workspace_name, :uploads, stored_name)}
-      end)
-
-    if String.trim(text) == "" and attachments == [] do
-      {:noreply,
-       assign(
-         socket,
-         :flash_error,
-         gettext("Message text or at least one attachment is required.")
-       )}
-    else
-      send_chat_message(socket, text, attachments, mentions, legend_triggers)
+      _ ->
+        Compose.missing(socket)
     end
-  end
-
-  def handle_event("chat_compose", _params, socket) do
-    {:noreply,
-     assign(
-       socket,
-       :flash_error,
-       gettext("Message text or at least one attachment is required.")
-     )}
   end
 
   # Fire-and-forget display marker from the viewport hook.
@@ -661,13 +623,9 @@ defmodule EzagentPluginLiveview.AdminLive do
   end
 
   # V1 UI SPEC §2C.3 — MemberPanel's Invite modal open/close.
-  def handle_event("open_invite_modal", _params, socket) do
-    {:noreply, assign(socket, :invite_open, true)}
-  end
+  def handle_event("open_invite_modal", _params, socket), do: Invite.open(socket)
 
-  def handle_event("close_invite_modal", _params, socket) do
-    {:noreply, assign(socket, :invite_open, false)}
-  end
+  def handle_event("close_invite_modal", _params, socket), do: Invite.close(socket)
 
   # V1 UI SPEC §2C.4 (Codex adversarial review rev-4 fix) — the
   # dedicated Invite handler. It REPLACES the deleted `add_floating_agent`
@@ -688,91 +646,14 @@ defmodule EzagentPluginLiveview.AdminLive do
   #   3. Decompose the `:call` result and surface every failure mode
   #      as a distinct flash.
   #   4. Refresh the members list ONLY on confirmed `:ok`.
-  def handle_event("invite_member", %{"member_uri" => uri_str}, socket)
-      when is_binary(uri_str) and uri_str != "" do
-    trimmed = String.trim(uri_str)
-    caller_uri = socket.assigns.current_entity_uri
-    session_uri = socket.assigns.current_session_uri
-    workspace_uri = SessionContext.invite_workspace_uri(socket)
+  def handle_event("invite_member", params, socket) do
+    case params do
+      %{"member_uri" => uri_str} when is_binary(uri_str) and uri_str != "" ->
+        Invite.submit(socket, uri_str)
 
-    cond do
-      not match?(%URI{}, caller_uri) ->
-        {:noreply, assign(socket, :flash_error, gettext("Not signed in."))}
-
-      # SPEC §1.6 / §2C.4 step 1 — server-side revalidation. The
-      # submitted URI must be a well-formed entity URI inside the
-      # session's workspace (or the caller holds cross-workspace
-      # authority). Reject without dispatching.
-      not Ezagent.UI.UriOptions.valid_for?(caller_uri, workspace_uri, trimmed, [:entity]) ->
-        {:noreply,
-         assign(
-           socket,
-           :flash_error,
-           gettext(
-             "Rejected %{uri} — must be an entity URI in this session's workspace (%{workspace}). Pick from the list.",
-             uri: inspect(trimmed),
-             workspace: URI.to_string(workspace_uri)
-           )
-         )}
-
-      true ->
-        target = Ezagent.URI.with_action(session_uri, :chat, :join)
-
-        # SPEC §2C.4 step 2 — dispatch as `:call` so the result is
-        # observable; `:caller_inbox` is irrelevant for `:call` (the
-        # GenServer.call return is the result) — keep `reply: :ignore`.
-        result =
-          Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-            target: target,
-            mode: :call,
-            args: %{member: Ezagent.URI.new!(trimmed)},
-            ctx: %{
-              caller: socket.assigns.caller_uri,
-              caps: socket.assigns.caller_caps,
-              reply: :ignore
-            }
-          })
-
-        # SPEC §2C.4 step 3 + 4 — decompose; refresh members only on :ok.
-        case result do
-          :ok ->
-            SessionContext.invite_ok(socket, session_uri)
-
-          {:ok, _members} ->
-            SessionContext.invite_ok(socket, session_uri)
-
-          {:error, :unauthorized} ->
-            {:noreply,
-             assign(
-               socket,
-               :flash_error,
-               gettext("Unauthorized — you may not add members to this session.")
-             )}
-
-          {:error, :cross_workspace_denied} ->
-            {:noreply,
-             assign(
-               socket,
-               :flash_error,
-               gettext(
-                 "Cross-workspace denied — this session lives in workspace %{workspace}, different from yours. Ask admin for a cross-workspace cap.",
-                 workspace: URI.to_string(workspace_uri)
-               )
-             )}
-
-          {:error, reason} ->
-            {:noreply,
-             assign(
-               socket,
-               :flash_error,
-               gettext("Invite failed: %{reason}", reason: inspect(reason))
-             )}
-        end
+      _ ->
+        Invite.missing(socket)
     end
-  end
-
-  def handle_event("invite_member", _params, socket) do
-    {:noreply, assign(socket, :flash_error, gettext("Pick an entity to invite."))}
   end
 
   # 2026-05-26 — Restart orchestrator from the per-session health card.
@@ -958,126 +839,9 @@ defmodule EzagentPluginLiveview.AdminLive do
   # §5.7 to the Session Kind's Routing Behavior at
   # `<session_uri>?action=routing.{disable_rule,enable_rule}`. The
   # Session Kind is the scope-owning Kind for session-scoped rules.
-  def handle_event(
-        "routing_rule_toggle",
-        %{"id" => id_str, "enabled" => enabled_str, "table" => table_str},
-        socket
-      ) do
-    with {id, ""} <- Integer.parse(id_str),
-         {:ok, table} <- SessionContext.safe_table_atom(table_str) do
-      action = if enabled_str == "true", do: :disable_rule, else: :enable_rule
-
-      case SessionContext.dispatch_session_routing(socket, action, %{id: id, table: table}) do
-        {:ok, _} ->
-          {:noreply,
-           socket
-           |> assign(
-             :session_routing_rules,
-             SessionContext.list_session_scoped_rules(socket.assigns.current_session_uri)
-           )
-           |> assign(:flash_error, nil)}
-
-        {:error, :unauthorized} ->
-          {:noreply,
-           assign(
-             socket,
-             :flash_error,
-             gettext("Unauthorized — need routing cap on this session.")
-           )}
-
-        {:error, :cross_workspace_denied} ->
-          {:noreply,
-           assign(
-             socket,
-             :flash_error,
-             gettext("Cross-workspace denied — this session lives in a different workspace.")
-           )}
-
-        {:error, reason} ->
-          {:noreply,
-           assign(
-             socket,
-             :flash_error,
-             gettext("Toggle failed: %{reason}", reason: inspect(reason))
-           )}
-      end
-    else
-      _ ->
-        {:noreply,
-         assign(
-           socket,
-           :flash_error,
-           gettext("Bad routing rule id or table: %{id}", id: id_str)
-         )}
-    end
-  end
-
-  # Add a session-scoped rule. The matcher is wrapped with an
-  # `:in_session` constraint targeting the current session so the rule
-  # only fires for this session (SPEC v2 §5.4).
-  def handle_event("routing_rule_add_session", %{"rule" => params}, socket) do
-    session_uri = socket.assigns.current_session_uri
-
-    with {:ok, leaf_matcher} <- SessionContext.build_session_form_matcher(params),
-         receivers when is_list(receivers) and receivers != [] <-
-           SessionContext.parse_session_receivers(Map.get(params, "receivers", "")),
-         # SPEC §1.6 — revalidate every uri_picker submission
-         # server-side before dispatch. Hidden inputs are untrusted.
-         :ok <- SessionContext.revalidate_session_matcher_arg(socket, params),
-         :ok <- SessionContext.revalidate_session_receivers(socket, receivers),
-         matcher = SessionContext.wrap_in_session(leaf_matcher, session_uri),
-         {:ok, _} <-
-           SessionContext.dispatch_session_routing(socket, :add_rule, %{
-             table: EzagentDomainInstanceMessage.Routing.MentionRouting,
-             matcher_json: Ezagent.Routing.Matcher.to_json(matcher),
-             receivers: receivers
-           }) do
-      {:noreply,
-       socket
-       |> assign(:session_routing_rules, SessionContext.list_session_scoped_rules(session_uri))
-       |> assign(:flash_error, nil)}
-    else
-      {:error, {:invalid_uri, bad}} ->
-        # SPEC §1.6 — a submitted URI failed revalidation. Flash, no
-        # dispatch.
-        {:noreply,
-         assign(
-           socket,
-           :flash_error,
-           gettext(
-             "Rejected URI %{uri} — not a valid in-workspace entity/session.",
-             uri: inspect(bad)
-           )
-         )}
-
-      {:error, :unauthorized} ->
-        {:noreply,
-         assign(
-           socket,
-           :flash_error,
-           gettext("Unauthorized — need routing cap on this session.")
-         )}
-
-      {:error, :cross_workspace_denied} ->
-        {:noreply,
-         assign(
-           socket,
-           :flash_error,
-           gettext("Cross-workspace denied — this session lives in a different workspace.")
-         )}
-
-      [] ->
-        {:noreply,
-         assign(socket, :flash_error, gettext("At least one receiver URI is required."))}
-
-      {:error, reason} ->
-        {:noreply,
-         assign(
-           socket,
-           :flash_error,
-           gettext("Add rule failed: %{reason}", reason: inspect(reason))
-         )}
-    end
+  def handle_event(event, params, socket)
+      when event in ["routing_rule_toggle", "routing_rule_add_session"] do
+    RoutingRules.handle_event(event, params, socket)
   end
 
   # Phase 5 PR 5 — paginate history backwards. Kept here so all
@@ -1383,77 +1147,6 @@ defmodule EzagentPluginLiveview.AdminLive do
       reply: :ignore
     }
   end
-
-  defp sanitize_filename(name) when is_binary(name) do
-    name
-    |> Path.basename()
-    |> String.replace(~r/[^\w\.\-]+/, "_")
-    |> String.slice(0, 200)
-    |> case do
-      "" -> "file"
-      s -> s
-    end
-  end
-
-  defp sanitize_filename(_), do: "file"
-
-  defp send_chat_message(socket, text, attachments, mentions, legend_triggers) do
-    msg =
-      Ezagent.Message.new(
-        socket.assigns.caller_uri,
-        %{text: text, attachments: attachments},
-        mentions: mentions,
-        legend_triggers: legend_triggers
-      )
-
-    target = Ezagent.URI.with_action(socket.assigns.current_session_uri, :chat, :send)
-
-    inv = %Ezagent.Invocation{
-      target: target,
-      mode: :cast,
-      args: %{message: msg},
-      ctx: ctx(socket)
-    }
-
-    case Ezagent.Invocation.dispatch(inv) do
-      :ok ->
-        clear_compose(socket)
-
-      {:ok, _} ->
-        clear_compose(socket)
-
-      {:error, reason} ->
-        {:noreply, assign(socket, :flash_error, friendly_error(gettext("Send"), reason))}
-    end
-  end
-
-  defp clear_compose(socket) do
-    # Phase 8c follow-up (Allen 2026-05-20) — Phoenix's DOM patcher
-    # leaves phx-hook-owned inputs alone, so the form-state reset
-    # below doesn't clear the browser DOM. Push an LV event the
-    # MentionAutocomplete hook listens for to do the actual clear.
-    {:noreply,
-     socket
-     |> assign(:flash_error, nil)
-     |> assign(:compose_form, to_form(%{"text" => ""}, as: "chat"))
-     |> Phoenix.LiveView.push_event("clear_compose", %{})}
-  end
-
-  defp friendly_error(_action, :unauthorized) do
-    gettext("You don't have permission for this action. Contact admin for cap grant.")
-  end
-
-  # Phase 9 PR-4 (SPEC v3 §5) — distinct from :unauthorized so users
-  # see "wrong workspace" vs "missing cap" as separate failure modes
-  # (invariant 9).
-  defp friendly_error(_action, :cross_workspace_denied) do
-    gettext(
-      "Cross-workspace denied — your workspace differs from the target's workspace. Contact admin for a cross-workspace cap."
-    )
-  end
-
-  defp friendly_error(action, reason),
-    do: gettext("%{action} failed: %{reason}", action: action, reason: inspect(reason))
 
   # Bug 3 (Allen 2026-05-26) — top-left `ezagent / <name>` label
   # data source. Reads the host of the user's session-cookie-bound
