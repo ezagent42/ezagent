@@ -37,6 +37,7 @@ defmodule EzagentCore.Umbrella.MixProject do
           ezagent_plugin_cc: :permanent,
           ezagent_plugin_codex: :permanent,
           ezagent_plugin_curl_agent: :permanent,
+          ezagent_plugin_advisor: :permanent,
           ezagent_plugin_echo: :permanent,
           ezagent_plugin_np: :permanent,
           ezagent_plugin_feishu: :permanent,

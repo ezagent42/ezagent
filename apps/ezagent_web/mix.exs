@@ -100,6 +100,9 @@ defmodule EzagentWeb.MixProject do
       # `all_plugin_apps_wired_to_web_test` invariant in
       # ezagent_core/test/invariants/ locks this in.
       {:ezagent_plugin_np, in_umbrella: true},
+      # SW5: advisor socialware vertical. Web boot must start the plugin
+      # so `session.advisor` is registered in TemplateRegistry.
+      {:ezagent_plugin_advisor, in_umbrella: true},
       {:jason, "~> 1.2"},
       {:bandit, "~> 1.5"}
     ]
