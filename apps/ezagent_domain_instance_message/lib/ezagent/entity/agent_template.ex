@@ -252,6 +252,10 @@ defmodule Ezagent.Entity.AgentTemplate do
         # The cc/codex Template Classes consume `"cascade"` when present and
         # otherwise keep the existing single-reference materialize path.
         |> put_cascade(cascade)
+        # #17 PR-4 - in-process flavors (curl) materialize the selected
+        # credential into a slice, not files. They need the selected
+        # credential source URI from the domain-resolved cascade resolution.
+        |> put_cascade_resolution(content)
         # PR-6 (domain.agent) — DOMAIN-owned desired skills/caps. UNIVERSAL
         # (flavor-agnostic) content fields the DOMAIN declares for a member built
         # from this template; they ride into the Template-Class data map so a
@@ -285,7 +289,7 @@ defmodule Ezagent.Entity.AgentTemplate do
   # Reserved universal keys core owns — a flavor's template_data_extra/1
   # must never override these. `config_dir` is universal (Allen
   # 2026-06-03), so a flavor extra can't shadow it either.
-  @reserved_template_data_keys ~w(class agent_uri cwd config_dir)
+  @reserved_template_data_keys ~w(class agent_uri cwd config_dir cascade cascade_resolution)
 
   # config_dir promotion (Allen 2026-06-03): validate the universal config
   # home dir.
@@ -342,6 +346,13 @@ defmodule Ezagent.Entity.AgentTemplate do
 
   defp put_cascade(base, nil), do: base
   defp put_cascade(base, cascade) when is_map(cascade), do: Map.put(base, "cascade", cascade)
+
+  defp put_cascade_resolution(base, content) do
+    case content_get(content, :cascade_resolution) do
+      resolution when is_map(resolution) -> Map.put(base, "cascade_resolution", resolution)
+      _ -> base
+    end
+  end
 
   # Merge the flavor's extras onto the base: stringify keys, drop nil
   # values, and refuse reserved-key overrides (defensive — the callback

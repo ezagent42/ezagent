@@ -43,11 +43,40 @@ defmodule Ezagent.PluginCurlAgent.Template do
 
   @behaviour Ezagent.Kind.Template
   @behaviour Ezagent.UI.Form
+  @behaviour Ezagent.Agent.CredentialSliceAdapter
 
   require Logger
 
+  alias Ezagent.Credential.GrantRow
+  alias Ezagent.Invocation
+
   @impl Ezagent.Kind.Template
   def template_name, do: "curl.agent"
+
+  @impl Ezagent.Agent.CredentialSliceAdapter
+  def credential_slice, do: :api_keys
+
+  @impl Ezagent.Agent.CredentialSliceAdapter
+  def materialize_credential_slice(%URI{} = agent_uri, tmpl) when is_map(tmpl) do
+    case selected_credential_source(tmpl) do
+      :skip ->
+        :ok
+
+      {:ok, selected_source} ->
+        with {:ok, provider} <- selected_provider(tmpl),
+             {:ok, granted_source, version} <-
+               GrantRow.fetch_for_materialize(URI.to_string(agent_uri)),
+             :ok <- assert_grant_source(selected_source, granted_source),
+             {:ok, key} <- source_api_key(selected_source, provider),
+             :ok <- GrantRow.revalidate_version!(URI.to_string(agent_uri), version),
+             {:ok, _result} <- put_target_api_key(agent_uri, provider, key) do
+          :ok
+        end
+    end
+  end
+
+  def materialize_credential_slice(_agent_uri, _tmpl),
+    do: {:error, :invalid_curl_slice_materialize_args}
 
   # SPEC 2026-06-01-flavor-generic-template-data (approach B): curl's
   # template_data fields, so an orchestrator-spawned curl worker LEARNS
@@ -165,10 +194,20 @@ defmodule Ezagent.PluginCurlAgent.Template do
     # swap can refuse adopting a worker it did not create.
     case Ezagent.Kind.spawn(Ezagent.Entity.CurlAgent, init_args) do
       {:ok, _pid} ->
-        {:ok, [agent_uri], %{fresh?: true}}
+        case materialize_credential_slice(agent_uri, tmpl) do
+          :ok ->
+            {:ok, [agent_uri], %{fresh?: true}}
+
+          {:error, reason} ->
+            Ezagent.Kind.terminate(agent_uri)
+            {:error, reason}
+        end
 
       {:error, {:already_started, _pid}} ->
-        {:ok, [agent_uri], %{fresh?: false}}
+        case materialize_credential_slice(agent_uri, tmpl) do
+          :ok -> {:ok, [agent_uri], %{fresh?: false}}
+          {:error, reason} -> {:error, reason}
+        end
 
       {:error, reason} ->
         Logger.warning(
@@ -181,6 +220,105 @@ defmodule Ezagent.PluginCurlAgent.Template do
   end
 
   def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
+
+  defp selected_credential_source(tmpl) do
+    case Map.get(tmpl, "cascade_resolution") || Map.get(tmpl, :cascade_resolution) do
+      %{} = resolution ->
+        case Map.get(resolution, "credential_source_uri") ||
+               Map.get(resolution, :credential_source_uri) do
+          %URI{} = source ->
+            {:ok, source}
+
+          source when is_binary(source) and source != "" ->
+            {:ok, Ezagent.URI.new!(source)}
+
+          _ ->
+            :skip
+        end
+
+      _ ->
+        :skip
+    end
+  end
+
+  defp selected_provider(tmpl) do
+    case Map.get(tmpl, "provider") || Map.get(tmpl, :provider) do
+      provider when is_binary(provider) and provider != "" -> {:ok, provider}
+      _ -> {:error, :missing_provider}
+    end
+  end
+
+  defp assert_grant_source(%URI{} = selected, granted_source) when is_binary(granted_source) do
+    if URI.to_string(selected) == granted_source do
+      :ok
+    else
+      {:error, {:credential_grant_source_mismatch, selected, granted_source}}
+    end
+  end
+
+  defp source_api_key(%URI{} = source, provider) do
+    with {:ok, slice} <- source_api_keys_slice(source),
+         {:ok, key} <- fetch_provider_key(source, slice, provider) do
+      {:ok, key}
+    end
+  end
+
+  defp source_api_keys_slice(%URI{} = source) do
+    case Ezagent.Kind.get_slice(source, :api_keys) do
+      {:ok, slice} when is_map(slice) ->
+        {:ok, slice}
+
+      _ ->
+        source_snapshot_api_keys_slice(source)
+    end
+  end
+
+  defp source_snapshot_api_keys_slice(%URI{} = source) do
+    case Ezagent.SnapshotStore.latest(source) do
+      {:ok, %{state: state}} when is_map(state) ->
+        case Map.get(state, :api_keys) do
+          slice when is_map(slice) -> {:ok, Ezagent.Kind.normalize_slice_view(slice)}
+          _ -> {:error, {:cascade_api_keys_slice_missing, source}}
+        end
+
+      {:error, reason} ->
+        {:error, {:cascade_source_snapshot_missing, source, reason}}
+    end
+  end
+
+  defp fetch_provider_key(%URI{} = source, slice, provider) do
+    keys = Map.get(slice, :keys, %{})
+
+    case Map.fetch(keys, provider) do
+      {:ok, key} when is_binary(key) and key != "" -> {:ok, key}
+      _ -> {:error, {:cascade_api_key_missing, provider, source}}
+    end
+  end
+
+  defp put_target_api_key(%URI{} = agent_uri, provider, key) do
+    caps = [target_put_api_key_cap(agent_uri)]
+
+    Invocation.dispatch(%Invocation{
+      target: Ezagent.URI.with_action(agent_uri, :api_keys, :put_api_key),
+      mode: :call,
+      args: %{provider: provider, key: key},
+      ctx: %{
+        caller: Ezagent.SystemPrincipal.uri("credential-materializer"),
+        caps: caps,
+        reply: {:caller_inbox, self()}
+      }
+    })
+  end
+
+  defp target_put_api_key_cap(%URI{} = agent_uri) do
+    Ezagent.Capability.cap(
+      :any,
+      Ezagent.Behavior.ApiKeys,
+      :put_api_key,
+      Ezagent.URI.instance(agent_uri),
+      Ezagent.Capability.workspace_of(agent_uri)
+    )
+  end
 
   defp nil_if_empty(nil), do: nil
   defp nil_if_empty(""), do: nil
