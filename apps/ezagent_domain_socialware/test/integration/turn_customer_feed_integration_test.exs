@@ -1,0 +1,129 @@
+defmodule EzagentDomainSocialware.Integration.TurnCustomerFeedIntegrationTest do
+  use EzagentCore.DataCase, async: false
+
+  alias Ezagent.{Invocation, MessageStore}
+  alias Ezagent.Entity.{SocialwareSession, User}
+  alias Ezagent.Socialware.{CustomerAuth, CustomerFeed}
+
+  defp session_uri do
+    Ezagent.URI.session(
+      :team_alpha,
+      :socialware,
+      "turn-feed-#{System.unique_integer([:positive])}"
+    )
+  end
+
+  defp target(session_uri, behavior, action) do
+    Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=#{behavior}.#{action}")
+  end
+
+  defp dispatch(session_uri, behavior, action, args) do
+    Invocation.dispatch(%Invocation{
+      target: target(session_uri, behavior, action),
+      mode: :call,
+      args: args,
+      ctx: %{
+        caller: User.admin_uri(),
+        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        reply: {:caller_inbox, self()}
+      }
+    })
+  end
+
+  defp wait_until(fun, attempts \\ 100)
+  defp wait_until(_fun, 0), do: flunk("wait_until: condition never became true")
+
+  defp wait_until(fun, attempts) do
+    if fun.() do
+      :ok
+    else
+      Process.sleep(20)
+      wait_until(fun, attempts - 1)
+    end
+  end
+
+  setup do
+    session = session_uri()
+    workspace = Ezagent.Capability.workspace_of(session)
+    {:ok, _pid} = Ezagent.Kind.spawn(SocialwareSession, %{uri: session})
+    :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
+    token = CustomerAuth.issue_token(session, workspace)
+    :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, CustomerFeed.topic(session))
+
+    %{session: session, token: token}
+  end
+
+  test "turn.settle commits customer-visible chat and approved page together", ctx do
+    page_tree = %{type: "text", props: %{text: "settled page"}}
+
+    assert {:ok, %{turn_id: turn_id}} =
+             dispatch(ctx.session, :turn, :open, %{trigger: %{message_id: "m1"}, opened_at: 1})
+
+    assert {:ok, %{status: :composing, version: version, message_ids: [message_id]}} =
+             dispatch(ctx.session, :turn, :compose, %{
+               turn_id: turn_id,
+               result_refs: [
+                 %{kind: :chat, text: "settled answer"},
+                 %{kind: :page, tree: page_tree}
+               ]
+             })
+
+    wait_until(fn ->
+      {:ok, surface} = Ezagent.Kind.get_slice(ctx.session, :surface)
+      Map.has_key?(surface.versions, version)
+    end)
+
+    assert {:ok, snapshot} = CustomerFeed.snapshot(ctx.session, ctx.token)
+    assert snapshot.messages == []
+    assert snapshot.page == nil
+
+    assert {:ok, %{status: :settled}} = dispatch(ctx.session, :turn, :settle, %{turn_id: turn_id})
+
+    assert_receive {:customer_delivery, %{message_ids: [^message_id]}}, 500
+
+    assert {:ok, snapshot} = CustomerFeed.snapshot(ctx.session, ctx.token)
+    assert Enum.any?(snapshot.messages, &message_text?(&1, "settled answer"))
+    assert snapshot.page == page_tree
+  end
+
+  test "copilot draft stays operator-only until settle approval", ctx do
+    page_tree = %{type: "text", props: %{text: "held page"}}
+
+    assert {:ok, %{turn_id: turn_id}} =
+             dispatch(ctx.session, :turn, :open, %{trigger: %{message_id: "m1"}, opened_at: 1})
+
+    assert {:ok, %{message_ids: [message_id]}} =
+             dispatch(ctx.session, :turn, :compose, %{
+               turn_id: turn_id,
+               result_refs: [
+                 %{kind: :chat, text: "draft answer"},
+                 %{kind: :page, tree: page_tree}
+               ]
+             })
+
+    assert {:ok, %{status: :awaiting_human}} =
+             dispatch(ctx.session, :turn, :claim, %{
+               turn_id: turn_id,
+               by: Ezagent.URI.entity(:team_alpha, :user, "operator")
+             })
+
+    assert {:ok, loaded} = MessageStore.by_id(message_id)
+    assert loaded.visibility == :operator_only
+
+    assert {:ok, snapshot} = CustomerFeed.snapshot(ctx.session, ctx.token)
+    assert snapshot.messages == []
+    assert snapshot.page == nil
+
+    assert {:ok, %{status: :settled}} = dispatch(ctx.session, :turn, :settle, %{turn_id: turn_id})
+
+    assert_receive {:customer_delivery, %{message_ids: [^message_id]}}, 500
+
+    assert {:ok, snapshot} = CustomerFeed.snapshot(ctx.session, ctx.token)
+    assert Enum.any?(snapshot.messages, &message_text?(&1, "draft answer"))
+    assert snapshot.page == page_tree
+  end
+
+  defp message_text?(message, text) do
+    Map.get(message.body, "text") == text or Map.get(message.body, :text) == text
+  end
+end
