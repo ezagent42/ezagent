@@ -2,7 +2,8 @@
 
 **Date:** 2026-06-07
 **Branch:** `fix/file-flavor-create-cascade`
-**Status:** design note — pending codex adversarial approach-review before implementation.
+**Status:** design note — codex adversarial approach-review run (verdict `needs-attention`,
+approach SOUND, three concrete under-specifications folded in below — see §7).
 
 ## 1. The bug (confirmed by code trace)
 
@@ -107,43 +108,81 @@ The unified create already IS the cap-checked chokepoint (`Behavior.Workspace.:c
 guarded by the `agent_create_single_path_test.exs` invariant). The fix **converges the
 file-flavor branch of that one chokepoint onto the cascade chokepoint** rather than forking.
 
-### 4a. Minimal-but-complete change
+### 4a. The change (REVISED — folds in codex §7 findings 1+2)
 
 For **file-flavors only** (decided by `Ezagent.Agent.CredentialAdapter.credentialled?(class_module)`
 — the same predicate the cascade uses — NOT a hardcoded `"cc"`/`"codex"` list), the unified
-create's `do_create_agent` for cc/codex:
+create's `do_create_agent("cc"|"codex", …)`:
 
-1. **Always inline a `"config_dir"` reference into the per-agent template content**
-   (today it is added only by `maybe_put_clone_source` on `--from`). The reference value
-   for a non-`--from` create is the per-agent TARGET derived from the agent URI +
-   the class namespace (`Ezagent.Sandbox.ConfigDir.path/2`), exactly what
-   `CcAgent.resolve_config_home/2` clause 3 already derives. This makes config_dir
-   allocation **unconditional** for file-flavors and satisfies
-   `default_cascade_configured?(:file, content, _)` via the content branch.
+1. **Build the AgentTemplate CONTENT schema, not the Template-Class DATA schema.**
+   (codex Finding 1.) `spawn_from_template_content/5` consumes the *content* schema and
+   runs it through `Ezagent.Entity.AgentTemplate.to_template_data/2`, which requires
+   `flavor` + `project_cwd` (NOT `class` + `cwd`) and reads `config_dir` + `cascade` +
+   `cascade_resolution`. The current unified template is data-shape
+   (`%{"class","agent_uri","cwd"}`) → handing it straight to `spawn_from_template_content`
+   fails `:missing_flavor` / `:missing_project_cwd`. So the file-flavor branch builds:
+   ```
+   %{
+     "flavor"      => flavor,            # "cc" | "codex"
+     "project_cwd" => Path.expand(cwd),  # was "cwd"
+     "config_dir"  => per_agent_target,  # ALWAYS present (step 2)
+   }
+   ```
+   `to_template_data` then emits the `"class"`/`"agent_uri"`/`"cwd"` data shape + flavor
+   extras the plugin `instantiate/3` expects. The flavor's `to_template_data` path is the
+   exact one the orchestrator already exercises — no new conversion code, we reuse it.
 
-2. **Route the file-flavor instantiate through `Agent.spawn_from_template_content/5`**
-   instead of `Loader.invoke_template/2 → provision_and_instantiate` directly, threading
-   `caller` + `caps` (from `ctx`) so the cascade can mint the grant, and
-   `source_template_uri: <the per-agent template URI>` so the cascade's
-   `source_template_uri`-branch is *also* available (defence in depth — the content
-   branch is the primary trigger). Non-file flavors (echo / np / curl-as-slice) keep
-   the existing behavior unchanged.
+2. **`"config_dir"` reference is ALWAYS present for file-flavors** (today added only by
+   `maybe_put_clone_source` on `--from`). Non-`--from` create derives the per-agent TARGET
+   from the agent URI + the class namespace (`Ezagent.Sandbox.ConfigDir.path/2`), exactly
+   what `CcAgent.resolve_config_home/2` clause 3 derives. This makes allocation
+   unconditional AND satisfies `default_cascade_configured?(:file, content, _)` via the
+   content branch (so the cascade fires even with no `source_template_uri`).
 
-   The cleanest seam: introduce a file-flavor branch in `invoke_or_rollback` /
-   `invoke_template_now` (or a sibling) that, for a credentialled class, calls
-   `Agent.spawn_from_template_content/5` with the template content; non-credentialled
-   classes keep `Loader.invoke_template`. The Store write + rollback wrapper
-   (`register_and_invoke_template`) is preserved verbatim around it — we are swapping
-   only the *instantiate* call, keeping persistence + rollback + cap-grant intact.
+3. **Route the file-flavor instantiate through `Agent.spawn_from_template_content/5`**,
+   threading `caller` + `caps` (from `ctx`) so the cascade mints the grant, and
+   `explicit_source` (see step 5 / codex Finding 3). Non-file flavors (echo / np /
+   curl-as-slice) keep the existing `Loader.invoke_template` path untouched.
 
-3. **Fail loud, no shared fallback.** A file-flavor that cannot resolve a config home
-   must return `{:error, …}` rather than spawn with `CLAUDE_CONFIG_DIR` unset. Because
-   step 1 makes the config_dir reference unconditional for file-flavors, the only way
-   `resolve_config_home` returns nil for a file-flavor is a genuine bug (missing
-   `agent_uri`, allocation failure), which already surfaces as an error from
-   `Sandbox.ConfigDir.allocate/2` (`template.ex:309-311`). We add a guard so that a
-   file-flavor reaching the consume path with a nil config home raises/`{:error}`
-   instead of silently proceeding — converting the silent-degrade into a loud failure.
+4. **Persist the CONTENT (with cascade inputs) in `session_templates`, and converge the
+   boot loader.** (codex Finding 2 — the critical one.) The boot loader
+   (`load_one → instantiate_via_dispatch → :instantiate action → spawn_child({:template,…})
+   → Loader.invoke_template/4 → provision_and_instantiate`) re-instantiates persisted
+   `session_templates` on cold restart and would BYPASS the cascade for a data-shape
+   template. Two coupled requirements:
+   - The persisted template for a file-flavor stores the **content schema** (`flavor`,
+     `project_cwd`, `config_dir`, plus the cascade-resolution INPUTS — all JSON-safe
+     string URIs, since `Store.update_templates` Jason-encodes). It MUST still carry a
+     `"class"` key (the boot loader's `extract_class_name` + `TemplateRegistry.lookup`
+     and `validate_template_class` require it) — so the stored map is content-schema
+     PLUS `"class"`.
+   - The boot loader's file-flavor template branch (`Loader.invoke_template/4` for a
+     credentialled class) ALSO routes through `Agent.spawn_from_template_content/5`
+     (re-resolving the cascade from the persisted inputs), not bare
+     `provision_and_instantiate`. Non-credentialled classes keep the direct path. This is
+     the single convergence point that makes runtime-create and boot-replay use ONE
+     cascade-aware seam — satisfying the single-writer intent for cold restart too.
+
+   This re-resolution-from-inputs mirrors the orchestrator worker's cold-restart path
+   (`Ezagent.Credential.CascadeRuntime.rehydrate_respawn_data/2`, driven from the agent's
+   persisted Sandbox `respawn_template_data[:cascade_resolution]`): inputs persist, secrets
+   are re-resolved live. Same philosophy, applied to the workspace-template seam.
+
+5. **`--from` preserves single-reference clone semantics.** (codex Finding 3.) When
+   `--from <source>` is given, thread the source as `explicit_source` into
+   `spawn_from_template_content/5`. The cascade's `Resolver.resolve_layers` honours
+   `explicit_source` over the user-default, so a `--from` clone copies from the requested
+   source — NOT silently from a configured user-default. (Today `--from` sets the
+   `config_dir` reference to the source's dir; under the cascade, `explicit_source` is the
+   correct lever — the cascade resolves the source layer, the materializer copies its
+   secrets.) A test covers `--from` + a conflicting user-default both present.
+
+6. **Fail loud, no shared fallback.** A file-flavor that cannot resolve a config home
+   returns `{:error, …}` rather than spawning with `CLAUDE_CONFIG_DIR` unset. Step 2 makes
+   the reference unconditional, so a nil config home for a file-flavor is a genuine bug
+   (missing `agent_uri` / allocation failure) — already an error from
+   `Sandbox.ConfigDir.allocate/2` (`template.ex:309-311`). We add a guard converting any
+   residual silent-nil into a loud failure for credentialled flavors.
 
 ### 4b. Why not the alternative "just force a config_dir, skip the cascade"
 
@@ -173,3 +212,43 @@ path runs) and is what the goal explicitly asks for. So the fuller fix is warran
   (per memory `project_username_default_agent`) to be the canonical cascade layer source,
   that is a follow-up — this fix is correct for the current topology and forward-compatible
   (the cascade reads layers from the resolved source, which a base template would extend).
+
+## 7. Codex adversarial approach-review (2026-06-07) — verdict + resolution
+
+**Verdict: `needs-attention`** — "the design note proposes the right chokepoint in spirit,
+but the written plan still leaves concrete create/boot paths that either fail outright or
+bypass the cascade." The *approach* (converge file-flavor create onto the cascade
+chokepoint) was NOT challenged as wrong or too risky — three concrete seam
+under-specifications were flagged, all foldable. Each verified against the code and folded
+into §4a:
+
+1. **[HIGH] data-shape mismatch** — feeding Template-Class *data* (`class`/`agent_uri`/`cwd`)
+   to `spawn_from_template_content/5`, which requires *content* (`flavor`/`project_cwd`),
+   would fail `:missing_flavor` / `:missing_project_cwd`. VERIFIED against
+   `AgentTemplate.to_template_data/2` (`fetch_project_cwd` requires `project_cwd`;
+   `resolve_template_class` requires `flavor`). → Folded into §4a step 1 (build content
+   schema; reuse the orchestrator's existing `to_template_data` conversion).
+
+2. **[HIGH] boot loader is a second non-cascade spawn path** — `Workspace.Loader` walks
+   persisted `session_templates` at boot and calls `provision_and_instantiate/4` directly;
+   a persisted cc/codex template would cold-start bypassing the cascade. VERIFIED
+   (`loader.ex` `load_one → instantiate_via_dispatch → spawn_child → invoke_template/4 →
+   provision_and_instantiate`; persisted templates are data-shape). → Folded into §4a
+   step 4: persist content + cascade INPUTS (JSON-safe, keep `"class"` key) AND route the
+   loader's credentialled-flavor branch through the same cascade wrapper. This was the
+   most important finding — my original "cold restart re-runs spawn_from_template_content"
+   claim was wrong for the workspace-template seam.
+
+3. **[MEDIUM] `--from` clone semantics not preserved** — under cascade materialization,
+   threading only `config_dir` (not `explicit_source`) lets a configured user-default
+   override the requested `--from` source, silently changing clone semantics. VERIFIED
+   (`Resolver.resolve_layers` honours `explicit_source`; cc/codex materializers prefer the
+   cascade source when `cascade` data is present). → Folded into §4a step 5: thread
+   `from_uri` as `explicit_source`; test `--from` + conflicting user-default.
+
+**Disposition:** approach sound; proceed to TDD implementation with the three fixes folded
+in (per the task's "IF codex's approach review is sound (fold in its fixes), TDD-implement").
+The scope is larger than the original minimal sketch — it now changes the persisted
+workspace-template schema for file-flavors AND converges the boot loader — so the
+single-path / boot-replay invariant is preserved by ONE cascade-aware seam used by both
+create and boot, rather than two divergent seams.
