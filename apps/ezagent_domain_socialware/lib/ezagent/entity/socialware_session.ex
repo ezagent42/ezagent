@@ -15,7 +15,8 @@ defmodule Ezagent.Entity.SocialwareSession do
   def behaviors do
     [
       Ezagent.Behavior.Chat,
-      Ezagent.Behavior.Turn
+      Ezagent.Behavior.Turn,
+      Ezagent.Behavior.Surface
     ]
   end
 

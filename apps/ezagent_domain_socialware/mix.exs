@@ -30,7 +30,10 @@ defmodule EzagentDomainSocialware.MixProject do
     [
       {:ezagent_core, in_umbrella: true},
       {:ezagent_domain_identity, in_umbrella: true},
-      {:ezagent_domain_instance_message, in_umbrella: true}
+      {:ezagent_domain_instance_message, in_umbrella: true},
+      {:ezagent_domain_ui, in_umbrella: true},
+      {:phoenix_live_view, ">= 0.0.0"},
+      {:phoenix_html, "~> 4.1"}
     ]
   end
 end

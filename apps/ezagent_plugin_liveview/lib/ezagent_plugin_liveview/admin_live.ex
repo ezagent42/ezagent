@@ -93,6 +93,7 @@ defmodule EzagentPluginLiveview.AdminLive do
     # pollution).
     :ok = SessionViewRegistry.init()
     :ok = SessionViewRegistry.register(ConversationView)
+    :ok = SessionViewRegistry.register(EzagentDomainSocialware.PageView)
     :ok = SessionViewRegistry.register(EzagentDomainUi.Pty.TerminalView)
     # V1 Allen #2 (Feishu 2026-05-21) — Routing view as a peer of Chat.
     # Primary registration is in `EzagentDomainUi.Application.start/2`;
@@ -2282,13 +2283,13 @@ defmodule EzagentPluginLiveview.AdminLive do
   end
 
   # V1 Allen #2 — explicit display order for the Session view-switcher.
-  # Chat (`:conversation`) first, Routing (`:routing`) second,
-  # ExternalMirror Bindings (`:external_mirror`) third, Terminal
-  # (`:pty`) last. Unknown ids (future plugin views) fall to the end in
+  # Chat (`:conversation`) first, Page (`:page`) second, Routing
+  # (`:routing`) third, ExternalMirror Bindings (`:external_mirror`)
+  # fourth, Terminal (`:pty`) last. Unknown ids (future plugin views) fall to the end in
   # registration order so adding a new view doesn't silently disappear.
   # 2026-05-25 — `:external_mirror` slot added between routing + pty
   # per Allen's "Routing-rules + ExternalMirror-bindings tabs" intent.
-  @view_display_order [:conversation, :routing, :external_mirror, :pty]
+  @view_display_order [:conversation, :page, :routing, :external_mirror, :pty]
   defp sort_views(views) do
     Enum.sort_by(views, fn %{id: id} ->
       case Enum.find_index(@view_display_order, &(&1 == id)) do
