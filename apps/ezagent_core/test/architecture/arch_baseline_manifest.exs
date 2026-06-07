@@ -1,5 +1,5 @@
 %{
-  oversized_modules_gt_1500: 4,
+  oversized_modules_gt_1500: 3,
   oversized_modules_gt_1000: 16,
   def_count_admin_live: 69,
   def_count_cc_agent: 103,

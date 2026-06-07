@@ -54,7 +54,7 @@ defmodule Ezagent.Invariants.CascadePr0FoundationsTest do
   end
 
   test "session-template spawned members enter the cascade create chokepoint" do
-    source =
+    creator_source =
       File.read!(
         Path.expand(
           "../../../ezagent_domain_instance_message/lib/ezagent_domain_instance_message/session_creator.ex",
@@ -62,9 +62,19 @@ defmodule Ezagent.Invariants.CascadePr0FoundationsTest do
         )
       )
 
-    assert source =~ "source_template_uri: source_template_uri"
-    assert source =~ "caller: granted_by"
-    assert source =~ "caps: Ezagent.Identity.list_caps_for(granted_by)"
+    team_source =
+      File.read!(
+        Path.expand(
+          "../../../ezagent_domain_instance_message/lib/ezagent_domain_instance_message/session_creator/template_team.ex",
+          __DIR__
+        )
+      )
+
+    assert creator_source =~ "def list_caps_for_materialization(%URI{} = actor_uri),"
+    assert creator_source =~ "do: Ezagent.Identity.list_caps_for(actor_uri)"
+    assert team_source =~ "source_template_uri: source_template_uri"
+    assert team_source =~ "caller: granted_by"
+    assert team_source =~ "list_caps_for_materialization("
   end
 
   test "session orchestrator spawn enters the cascade create chokepoint" do
