@@ -86,10 +86,12 @@ A phase is not "done" until its invariant test passes (not on compile/merge alon
   tests only (ExUnit + LiveViewTest + JS render test) on a **disposable seeded stack** proving the
   invariant LOGIC (one turn → customer-visible chat + advanced approved version; copilot hides
   from customer until approve; second-viewer/restart read `versions[approved]`; cross-scope token
-  denied). **Codex must NOT touch shared dev/prod docker or `100.64.0.27`.** The **author** runs
-  the **live agent-browser SW-USE E2E** (screenshots ①②③: chat + page side-by-side in one customer
-  viewport from one turn; copilot draft visible to operator, absent from customer) on the real
-  Tailscale UI **after merge**. A vertical author makes **zero core-code change** (SW-DEV).
+  denied). **Codex must NOT touch the shared dev/prod node at `100.64.0.27:10042`.** The
+  **author** runs the **live agent-browser SW-USE E2E** (screenshots ①②③: chat + page
+  side-by-side in one customer viewport from one turn; copilot draft visible to operator, absent
+  from customer) **on an isolated, fresh-seeded disposable stack** (its own ports, reachable for
+  review via the Tailscale IP — never the shared dev node) **after merge**. A vertical author
+  makes **zero core-code change** (SW-DEV).
 - **P6 (SW-UPD):** config changes via the flow + observable in a later turn; rollback = repoint
   reverts deterministically, surviving restart.
 
@@ -97,6 +99,10 @@ A phase is not "done" until its invariant test passes (not on compile/merge alon
 
 - **Test DB only** (`MIX_ENV=test`). **NEVER** `mix ecto.migrate` against dev/prod. **NEVER**
   touch running dev/prod docker containers or their data.
+- **All E2E runs on an isolated, fresh-seeded, disposable stack — never the shared dev/prod
+  node** (dev/prod state is polluted/non-reproducible and unsafe to mutate; principle set by
+  Allen 2026-06-07). The disposable stack's UI is reachable for review via the Tailscale IP on
+  its OWN port, not the shared dev node's `:10042`.
 - Admin-merge authorized in this repo. Secrets never committed. Remote URLs use the Tailscale IP
   `100.64.0.27`, not localhost.
 - **No silent defaults / shims / whitelists.** Let-it-crash; structural fixes.
