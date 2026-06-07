@@ -166,6 +166,7 @@ defmodule Ezagent.Behavior.Turn do
     update_turn(ctx, turn_id, fn turn ->
       case transition(turn.status, :awaiting_human) do
         :ok ->
+          :ok = hold_visibility(turn)
           updated = %{turn | owner: by, mode: :copilot, status: :awaiting_human}
           {:ok, updated, %{status: :awaiting_human}, []}
 
@@ -180,8 +181,14 @@ defmodule Ezagent.Behavior.Turn do
     update_turn(ctx, turn_id, fn turn ->
       case transition(turn.status, :settled) do
         :ok ->
-          updated = %{turn | status: :settled}
-          {:ok, updated, %{status: :settled}, approve_effects(turn, ctx)}
+          case prepare_settlement(turn_id, turn, ctx) do
+            :ok ->
+              updated = %{turn | status: :settled}
+              {:ok, updated, %{status: :settled}, settle_commit_effects(turn_id, turn, ctx)}
+
+            {:error, reason} ->
+              {:error, reason}
+          end
 
         {:error, reason} ->
           {:error, reason}
@@ -250,33 +257,106 @@ defmodule Ezagent.Behavior.Turn do
   end
 
   defp compose_result_and_effects(turn, turn_id, result_refs, ctx) do
-    case page_tree_for(turn, result_refs) do
-      nil ->
-        {result_refs, %{status: :composing}, []}
+    message_ids = write_chat_messages(turn, result_refs, ctx)
+    expected_prior_approved = current_surface_approved(ctx)
 
-      page_tree ->
-        version = next_surface_version(ctx)
-        result = %{refs: result_refs, version: version}
+    {version, page_effects} =
+      case page_tree_for(turn, result_refs) do
+        nil ->
+          {nil, []}
 
-        effect =
-          {:dispatch,
-           Cmd.new(
-             ctx.self_uri,
-             :put_version,
-             %{turn_id: turn_id, tree: page_tree},
-             dispatch_ctx(ctx)
-           )}
+        page_tree ->
+          version = next_surface_version(ctx)
 
-        {result, %{status: :composing, version: version}, [effect]}
+          effect =
+            {:dispatch,
+             Cmd.new(
+               ctx.self_uri,
+               :put_version,
+               %{turn_id: turn_id, tree: page_tree},
+               dispatch_ctx(ctx)
+             )}
+
+          {version, [effect]}
+      end
+
+    result = %{
+      refs: result_refs,
+      message_ids: message_ids,
+      version: version,
+      expected_prior_approved: expected_prior_approved
+    }
+
+    reply =
+      %{status: :composing}
+      |> maybe_put(:version, version)
+      |> maybe_put(:message_ids, message_ids)
+
+    {result, reply, page_effects}
+  end
+
+  defp hold_visibility(%{result: %{message_ids: message_ids}})
+       when is_list(message_ids) and message_ids != [] do
+    {:ok, _count} = Ezagent.MessageStore.mark_visibility(message_ids, :operator_only)
+    :ok
+  end
+
+  defp hold_visibility(_turn), do: :ok
+
+  defp approve_and_commit_effects(turn_id, %{result: %{version: version}}, ctx)
+       when is_integer(version) do
+    [
+      {:dispatch, Cmd.new(ctx.self_uri, :approve, %{version: version}, dispatch_ctx(ctx))},
+      {:dispatch,
+       Cmd.new(ctx.self_uri, :commit_settlement, %{turn_id: turn_id}, dispatch_ctx(ctx))}
+    ]
+  end
+
+  defp approve_and_commit_effects(turn_id, _turn, ctx) do
+    [
+      {:dispatch,
+       Cmd.new(ctx.self_uri, :commit_settlement, %{turn_id: turn_id}, dispatch_ctx(ctx))}
+    ]
+  end
+
+  defp settle_commit_effects(turn_id, turn, ctx) do
+    if settlement_needed?(turn) do
+      approve_and_commit_effects(turn_id, turn, ctx)
+    else
+      []
     end
   end
 
-  defp approve_effects(%{mode: :auto, result: %{version: version}}, ctx)
-       when is_integer(version) do
-    [{:dispatch, Cmd.new(ctx.self_uri, :approve, %{version: version}, dispatch_ctx(ctx))}]
+  defp settlement_attrs(turn_id, turn, ctx) do
+    result = Map.get(turn, :result, %{})
+
+    %{
+      turn_id: turn_id,
+      session_uri: ctx.self_uri,
+      workspace_uri: Ezagent.Persistence.workspace_uri_for!(ctx.self_uri),
+      target_message_ids: Map.get(result, :message_ids, []),
+      target_surface_version: Map.get(result, :version),
+      expected_prior_approved: Map.get(result, :expected_prior_approved)
+    }
   end
 
-  defp approve_effects(_turn, _ctx), do: []
+  defp prepare_settlement(turn_id, turn, ctx) do
+    if settlement_needed?(turn) do
+      with {:ok, _settlement} <-
+             Ezagent.Socialware.Settlement.begin(settlement_attrs(turn_id, turn, ctx)),
+           {:ok, _settlement} <- Ezagent.Socialware.Settlement.flip_visibility(turn_id) do
+        :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  defp settlement_needed?(%{result: %{message_ids: message_ids, version: version}}) do
+    (is_list(message_ids) and message_ids != []) or is_integer(version)
+  end
+
+  defp settlement_needed?(_turn), do: false
 
   defp page_tree_for(turn, result_refs) do
     turn.collected
@@ -296,6 +376,39 @@ defmodule Ezagent.Behavior.Turn do
 
   defp page_tree_from_ref(_ref), do: nil
 
+  defp write_chat_messages(turn, result_refs, ctx) do
+    result_refs
+    |> Enum.flat_map(&write_chat_message_from_ref(&1, turn, ctx))
+  end
+
+  defp write_chat_message_from_ref(ref, turn, ctx) when is_map(ref) do
+    kind =
+      Map.get(ref, :kind) || Map.get(ref, "kind") || Map.get(ref, :type) || Map.get(ref, "type")
+
+    text = Map.get(ref, :text) || Map.get(ref, "text")
+
+    if kind in [:chat, "chat", :message, "message"] and is_binary(text) do
+      message =
+        Message.new(
+          ctx.caller,
+          %{text: text, attachments: Map.get(ref, :attachments, Map.get(ref, "attachments", []))},
+          visibility: initial_visibility(turn)
+        )
+
+      case Ezagent.MessageStore.write(message, ctx.self_uri) do
+        {:ok, written} -> [written.id]
+        {:error, reason} -> raise "socialware turn chat write failed: #{inspect(reason)}"
+      end
+    else
+      []
+    end
+  end
+
+  defp write_chat_message_from_ref(_ref, _turn, _ctx), do: []
+
+  defp initial_visibility(%{mode: :auto}), do: :customer_visible
+  defp initial_visibility(_turn), do: :operator_only
+
   defp next_surface_version(ctx) do
     ctx
     |> Map.get(:siblings, %{})
@@ -303,6 +416,17 @@ defmodule Ezagent.Behavior.Turn do
     |> Map.get(:version_seq, 0)
     |> Kernel.+(1)
   end
+
+  defp current_surface_approved(ctx) do
+    ctx
+    |> Map.get(:siblings, %{})
+    |> Map.get(:surface, %{})
+    |> Map.get(:approved)
+  end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, _key, []), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp dispatch_ctx(ctx) do
     %{

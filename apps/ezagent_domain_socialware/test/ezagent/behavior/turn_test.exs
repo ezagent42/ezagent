@@ -243,7 +243,8 @@ defmodule EzagentDomainSocialware.Behavior.TurnTest do
                ctx()
              )
 
-    assert slice.turns[turn_id].result == [%{kind: "text"}]
+    assert slice.turns[turn_id].result.refs == [%{kind: "text"}]
+    assert slice.turns[turn_id].result.message_ids == []
 
     assert {:ok, slice, %{status: :awaiting_human}, _effects} =
              Invoker.invoke_with_effects(

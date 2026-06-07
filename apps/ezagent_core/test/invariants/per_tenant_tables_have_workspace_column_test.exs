@@ -69,7 +69,12 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # SPEC 2026-05-24-magic-link-rules-v2 PR-A — per-workspace
     # magic-link acceptance rules. Per-tenant by definition (a
     # `domain` rule for ws A must never authorise a login into ws B).
-    {Ezagent.Workspace.MagicLinkRule, "workspace_magic_link_rules"}
+    {Ezagent.Workspace.MagicLinkRule, "workspace_magic_link_rules"},
+    # Socialware P3 — committed settlement rows gate the external customer
+    # projection per workspace; no row is cross-tenant.
+    {Ezagent.Socialware.SettlementRecord, "socialware_settlements"},
+    {Ezagent.Socialware.SettlementMessage, "socialware_settlement_messages"},
+    {Ezagent.Socialware.CustomerOutbox, "socialware_customer_outbox"}
   ]
 
   # Per-tenant tables that have NO schema module (raw `Repo.insert_all`

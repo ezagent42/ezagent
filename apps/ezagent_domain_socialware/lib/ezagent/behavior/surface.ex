@@ -25,6 +25,14 @@ defmodule Ezagent.Behavior.Surface do
     description: "Advance the approved page pointer"
   )
 
+  action(:commit_settlement,
+    args: %{turn_id: :string},
+    returns: %{status: :atom},
+    caps: [:commit_settlement],
+    modes: [:call],
+    description: "Commit a prepared socialware settlement after the approved pointer advances"
+  )
+
   @impl Ezagent.Lifecycle
   def create(_args), do: {:ok, %{versions: %{}, approved: nil, version_seq: 0}}
 
@@ -65,6 +73,19 @@ defmodule Ezagent.Behavior.Surface do
       {:ok, %{approved: version}, [{:set, :approved, version}]}
     else
       {:error, :no_such_version}
+    end
+  end
+
+  @spec handle_commit_settlement(map(), map()) :: {:ok, map(), [term()]} | {:error, term()}
+  def handle_commit_settlement(%{turn_id: turn_id}, ctx) do
+    approved = ctx.read.(:approved, nil)
+
+    case Ezagent.Socialware.Settlement.commit_after_pointer(turn_id, approved) do
+      {:ok, %{status: :committed}} ->
+        {:ok, %{status: :committed}, []}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
