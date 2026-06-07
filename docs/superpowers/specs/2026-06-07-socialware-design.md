@@ -45,10 +45,13 @@ things (§4); everything else (§3) already exists.
 
 ## 4. Net-new components (the entire delta)
 
-The net-new is exactly **two new components** — `Behavior.Turn` + `:turns` slice (§4.1) and
-`:surface` slice + `PageView` (§4.2). §4.3 is not a new component: it is the decision that
-auto/copilot/takeover require **no new behavior**, only wiring over the existing
-`Behavior.Routing`.
+Net-new is two component groups: **`Behavior.Turn` + `:turns` slice** (§4.1, which also owns
+the customer-facing commit gate) and **the render stack** (§4.2: `:surface` slice + `PageView`
++ a composite `SocialwareView`). §4.3 adds **no new behavior**: auto/copilot/takeover are the
+turn's settle-gate plus *additive* routing over the existing `Behavior.Routing` — see the
+correction there. (Codex review 2026-06-07 found the earlier "mode = routing replacement" and
+"two registered Views = fusion" claims unsound on main's additive-only routing and
+exclusive-tab view-switcher; §4.2/§4.3 reflect the corrected design.)
 
 ### 4.1 `Behavior.Turn` + the `:turns` slice — the orchestration state machine
 
@@ -66,8 +69,10 @@ convention `Behavior.<noun>` owning `:<noun>` (matching `Behavior.Chat`/`:chat`)
     trigger:       message_ref,        # the input message that opened the turn
     owner:         uri,                # agent_uri (auto) | user_uri (after claim)
     expected:      MapSet.t(subtask_id),
-    collected:     %{subtask_id => card_ref},
-    result:        [card_ref],         # composed deliverables
+    collected:     %{subtask_id => card_ref},   # staged in-turn, NOT yet on :surface
+    result:        [card_ref],         # composed deliverables (still staged)
+    draft_surface: ui_node | nil,      # composed page tree, pending; committed only at settle
+    mode:          :auto | :copilot | :takeover,
     status:        :open | :delegating | :aggregating | :composing
                    | :awaiting_human | :settled | :cancelled,
     turn_no:       integer,
@@ -80,18 +85,29 @@ convention `Behavior.<noun>` owning `:<noun>` (matching `Behavior.Chat`/`:chat`)
 - `turn.open(trigger)` → `:open`
 - `turn.dispatch(turn_id, subtasks)` — record `expected`; the actual `@mention chat.send`
   fan-out is a `Chat` action → `:delegating`
-- `turn.deliver(turn_id, subtask_id, card_ref)` — collect one worker deliverable →
+- `turn.deliver(turn_id, subtask_id, card_ref)` — **stage** one worker deliverable into the
+  turn (`collected`/`draft_surface`); **nothing is committed to `:surface` yet** →
   `:aggregating`
-- `turn.compose(turn_id, result_refs)` — orchestrator composes → `:composing`
-- `turn.claim(turn_id, by: user_uri)` — human takeover: set `owner`, reconfigure routing
-  (§4.3) → `:awaiting_human`
-- `turn.settle(turn_id)` — finalize, commit, trigger projection → `:settled`
-- `turn.cancel(turn_id)` / timeout → `:cancelled`
+- `turn.compose(turn_id, result_refs)` — orchestrator composes the staged result/draft →
+  `:composing`
+- `turn.claim(turn_id, by: user_uri)` — human takeover: set `owner`, `mode`; route the
+  draft to the operator (additive rule, §4.3) and **hold settle** → `:awaiting_human`
+- `turn.settle(turn_id)` — **the single customer-facing commit point**: write `draft_surface`
+  as a new `:surface` version AND release the chat result to the customer. In
+  `:copilot`/`:takeover` this runs **only after the operator approves/edits** → `:settled`
+- `turn.cancel(turn_id)` / timeout — discard staged draft, no `:surface` commit → `:cancelled`
+
+Partial worker failure / timeout: a `deliver` that never arrives leaves `expected ⊅ collected`;
+on timeout the orchestrator either composes with what arrived (degraded) or `turn.cancel`s —
+either way nothing reaches `:surface` or the customer until `settle`, so a failed turn cannot
+leak a half-built page.
 
 **State machine:** `open → delegating → aggregating → composing → [awaiting_human] →
 settled`; `cancel`/timeout reachable from any non-terminal state. The human-in-the-loop
-gate is the **composing → (settle | awaiting_human)** branch, decided by the active routing
-configuration (§4.3), not by a mode field.
+gate is the **composing → (settle | awaiting_human)** branch, decided by the turn's `mode`
+(§4.3). The customer never sees a turn's output — neither the chat bubble nor the `:surface`
+page — until `turn.settle`; that single commit point is what makes the human-in-the-loop gate
+safe (codex HIGH-1: the page must not become visible/durable before approval).
 
 The degenerate single-bot case (no orchestration) is a turn with zero `expected` subtasks:
 open → compose(bot reply) → settle. So the same machinery covers plain chat replies.
@@ -102,11 +118,18 @@ The chat log is append-only in `MessageStore`; a **page** is mutable state that 
 a conversation, so it is modeled as a durable slice, not a message.
 
 **`:surface` slice** on the session, `{:snapshot, :on_change}`, holding the current
-authoritative **UI tree** + a version number:
+**committed, approved** authoritative **UI tree** + a version number:
 
 ```
 %{ version: integer, tree: ui_node, updated_by: turn_id }
 ```
+
+The `:surface` slice only ever holds **committed** state. A turn's in-progress page lives in
+the turn's `draft_surface` (§4.1) and is written here **only at `turn.settle`** — so an
+unapproved copilot/takeover draft is never in `:surface`, never rendered to the customer, never
+persisted across restart (closes codex HIGH-1). The operator, while a turn is `:awaiting_human`,
+sees the *pending draft* via an operator-only preview (the draft routed to the operator, §4.3),
+not via the customer's `:surface`.
 
 **UI tree = an implementation-agnostic, json-render-style declarative node** (Allen cited
 `vercel-labs/json-render`): a recursive `%{type, props, children}`. The client renders it via
@@ -118,34 +141,55 @@ the orchestrator composes fragments into the surface tree. Two node tiers:
   generated JSX/HTML (loom's codegen strength, preserved).
 
 **`PageView`** is a new `Ezagent.UI.SessionView` (registered in the same
-`SessionViewRegistry`). Its `render/1` is a **generic interpreter over the `:surface` UI
-tree + the component registry**. `applies_to?/1` = "session has a `:surface` slice." The
-existing view-switcher then shows **both** `ConversationView` and `PageView` for a socialware
-session — *this is the loom+autoservice fusion, expressed as two registered Views on one
-session, with zero new top-level abstraction.*
+`SessionViewRegistry`). Its `render/1` is a **generic interpreter over the committed
+`:surface` UI tree + the component registry**. `applies_to?/1` = "session has a `:surface`
+slice."
 
-Granularity note: `SessionView` selects the **outer** surface (which panel); the json-render
-component registry selects the **inner** node renderer (how one element draws). They compose;
-only the inner needs json-render.
+**`SocialwareView` (the fusion needs a composite, not two tabs).** Codex MEDIUM-3: main's
+`AdminLive` resolves a single `current_view` into one `:main_view` slot, so registering
+`ConversationView` + `PageView` only yields two *tabs* in the exclusive view-switcher — not one
+screen with chat and page simultaneously visible. The fusion therefore needs a **composite
+`SocialwareView`** (itself a `SessionView`) whose `render/1` lays out the chat stream and the
+`:surface` page **side-by-side in one viewport**, each with its own subscription/state. This is
+the one extra render-stack component beyond `PageView`; it is what SW-USE asserts against
+(both surfaces visible/updating together, §9), so a passing screenshot cannot be faked by
+switching tabs.
 
-### 4.3 Mode = routing configuration + `turn.status` (no `Behavior.Mode`)
+Granularity note: a `SessionView` selects the **outer** layout (which panels are mounted);
+the json-render component registry selects the **inner** node renderer (how one element draws).
+They compose; only the inner needs json-render.
 
-auto/copilot/takeover are **not** a behavior and **not** a turn field. They are three
-**routing configurations** (expressed with the existing `Behavior.Routing`) plus the turn's
-`status`:
-- **`:auto`** — orchestrator → customer (default fan-out).
-- **`:copilot`** — replace the *agent → customer* edge with *agent → operator*; the operator
-  forwards/edits → customer (operator is a mandatory relay). Turn-granular for free, because
-  the orchestrator emits exactly one composed result per turn.
-- **`:takeover`** — customer → operator direct; the agent is off the delivery path (optionally
-  still routed to the operator as a suggestion only).
+### 4.3 Mode = the `turn.settle` gate + additive operator-draft routing (no `Behavior.Mode`)
 
-`turn.claim` inserts the operator-relay rules via `Behavior.Routing` and sets
-`owner=operator`, `status=awaiting_human`; `turn.settle`/`release` restores the auto rules.
-This matches the AutoService team's own phase-2 decision (`235a2e96`: takeover via
-Mode-suppression *now*, copilot via *routing-reconfig later*) — the greenfield rewrite goes
-straight to the routing-reconfig end-state and skips the Mode-suppression interim. We do not
-port #511.
+Codex HIGH-2 corrected the earlier "mode = routing replacement" claim. Main's routing is
+**additive**: `Behavior.Routing` exposes `add/delete/disable/enable` by rule id, the
+`system_default` rule always fans out to `$session_users` + `$mentions` and is **protected
+from plain delete**. So a session containing both customer and operator still delivers
+agent messages to the customer via the default rule — *adding* relay rules cannot *suppress*
+that. Routing alone therefore cannot implement copilot/takeover suppression.
+
+The fix: the human gate is **`turn.settle`**, not routing. The turn is the single
+customer-facing chokepoint (§4.1, §4.2): nothing — chat bubble or `:surface` page — reaches
+the customer until `settle`. Mode is then a small, well-bounded split of responsibility:
+- **`turn.settle` decides the customer-facing commit** (the gate). `:auto` settles
+  automatically at compose; `:copilot`/`:takeover` hold at `:awaiting_human` until the operator
+  approves/edits, then settle.
+- **Routing (additive, unchanged) delivers the *pending draft* to the operator** so they can
+  see/edit it — an `@mention`-style additive rule to the operator, no suppression of any
+  existing rule.
+- The three modes:
+  - **`:auto`** — compose → settle → project to customer.
+  - **`:copilot`** — draft routed to operator (additive); settle held; operator approves/edits
+    → settle → project. Turn-granular because the orchestrator emits one composed result/turn.
+  - **`:takeover`** — `owner` is the operator (from `turn.claim`); the operator authors the
+    result directly; the agents' composed draft is shown as a suggestion (additive route to
+    operator). settle commits the operator's content.
+
+So mode adds **no new behavior and no routing-replacement primitive** — it is `turn.mode` +
+the `settle` gate + one additive operator-draft route. The protected `system_default` rule
+is left intact; correctness comes from the turn withholding the customer commit, not from
+deleting/replacing routes. (This supersedes the AutoService phase-2 `235a2e96` framing, which
+assumed route-suppression; we do not port `Behavior.Mode`/#511.)
 
 ## 5. Developer authoring surface (what a vertical declares)
 
@@ -163,8 +207,30 @@ Building a vertical is declaration over reuse — **zero core code**:
 5. **Orchestration policy** — the turn's decompose (which `expected` subtasks) and compose
    (how deliverables merge). Usually prompt-driven in the orchestrator's AgentTemplate; a
    small policy function only when hard logic is required.
-6. **(optional) Mode policy** — the predicate that flips routing to copilot/takeover (e.g.
+6. **(optional) Mode policy** — the predicate that flips the turn to copilot/takeover (e.g.
    "confidence < X → operator copilot"). Default: all-auto, operator may `claim` any time.
+
+**Where the authoring surface physically lives.** A vertical is **its own ezagent plugin app**
+(`apps/ezagent_vertical_<name>/`), mirroring how `ezagent_plugin_liveview` already registers
+views in its `Application.start/2`. socialware itself ships as a base app
+(`apps/ezagent_socialware/`) providing the reusable pieces — `Behavior.Turn`, the `:surface`
+slice contract, `PageView` + `SocialwareView`, the json-render component-registry contract, and
+a `session.socialware` base SessionTemplate. A vertical plugin then supplies the six slots as
+**declarations/assets, not core code**:
+- slots 1–2 (SessionTemplate + AgentTemplates) → **template content seeds** the plugin
+  installs (the existing `Entity.SessionTemplate`/`Entity.AgentTemplate` + `template.write`),
+  with orchestrator/worker prompts as AgentTemplate content;
+- slot 3 (node types + schema) → a small Elixir module declaring the vertical's node types;
+- slot 4 (renderers) → client components shipped in the plugin's `assets/`, registered into the
+  component registry + the view mounted, both from the plugin's `Application.start/2` (same hook
+  `SessionViewRegistry.register/1` uses today);
+- slot 5 (orchestration policy) → primarily the orchestrator AgentTemplate's prompt; an optional
+  small policy module only when hard logic is needed;
+- slot 6 (mode policy) → an optional config value / tiny predicate module.
+
+So "the authoring surface" = a plugin app's `Application.start/2` (registrations) + its template
+seeds + its `assets/` renderers — no edits to `ezagent_core` or `ezagent_socialware`. This is
+the framework-vs-app resolution made concrete (§10).
 
 The two canonical verticals are just different fills of the same slots:
 - **AutoService** = node types `{text}`, renderer = chat bubble, orchestration = zero-subtask
@@ -180,17 +246,20 @@ The two canonical verticals are just different fills of the same slots:
    orchestrator.
 2. Orchestrator `turn.open` + `turn.dispatch([nl, page])` → `:delegating`; `@mention
    chat.send` to each worker.
-3. Workers deliver: nl-worker → a `text` node; page-worker → a UI-tree fragment written via
-   `turn.deliver`; the composed tree lands in the `:surface` slice (new version).
-4. Orchestrator `turn.compose` → `:composing`.
-5. Routing-gate at compose→settle:
-   - auto → `turn.settle` → projection.
-   - copilot/takeover (operator-relay rules active, from a prior `turn.claim`) →
-     `:awaiting_human`; the operator approves/edits → `turn.settle`.
-6. Projection (the existing View layer):
-   - `ConversationView` renders the `text` node as a **chat bubble**.
-   - `PageView` interprets the `:surface` UI tree and renders the **live page**.
-   - Both surfaces update from the **same turn** — the fusion.
+3. Workers deliver via `turn.deliver`: nl-worker → a `text` node; page-worker → a UI-tree
+   fragment. Both are **staged in the turn** (`collected`/`draft_surface`) — **nothing is
+   written to `:surface` yet**.
+4. Orchestrator `turn.compose` → `:composing` (assembles the staged `result` + `draft_surface`).
+5. Mode gate at compose→settle (§4.3):
+   - `:auto` → `turn.settle`.
+   - `:copilot`/`:takeover` → `:awaiting_human`; the pending draft is shown to the operator
+     (additive operator route); the operator approves/edits → `turn.settle`.
+6. `turn.settle` is the commit point — it writes `draft_surface` as a new `:surface` version
+   **and** releases the chat result to the customer. Projection (the `SocialwareView` composite)
+   then renders, in one viewport, from the **same settled turn**:
+   - the chat pane renders the `text` node as a **chat bubble**;
+   - the page pane interprets the committed `:surface` UI tree as the **live page**.
+   Both panes update together — the fusion. Before `settle`, the customer sees neither.
 
 ## 7. Self-evolve (SW-UPD) on the #17 cascade
 
@@ -200,16 +269,24 @@ Self-evolve reuses the same turn/UI-tree/projection/copilot machinery, pointed a
    (messages + outcomes + **the operator's takeover edits — the gold supervised signal**).
 2. The optimizer emits a **config-delta** as a UI-tree card (a new skill entry / soul
    refinement / kb addition).
-3. The operator **copilot-approves** the delta — *the same routing-relay mechanism as SW-USE*
-   (operator is the mandatory relay on the optimizer → cascade edge). Human-in-the-loop is the
-   safety gate on self-evolve.
-4. The approved delta is written to the agent's **high cascade layer** (user/workspace), which
-   is **versioned and reversible** (#17 grant/materialize write path).
-5. On the next spawn, the cascade **re-materializes** the improved config; a later customer
+3. The operator **copilot-approves** the delta via the **same `turn.settle` gate as SW-USE**
+   (the optimizer turn holds at `:awaiting_human`; the delta is the draft; the operator
+   approves/edits before settle). Human-in-the-loop is the safety gate on self-evolve.
+4. The approved delta is written to the agent's **high cascade layer** (user/workspace).
+   **Caveat (codex MEDIUM-4):** #17 V1 does *not* provide a versioned/reversible config layer
+   — it writes the user/workspace `AgentTemplate` layer as a **mutable replace** (versioned
+   layer references are an explicit #17-V2 non-goal; only the credential *grant epoch* is
+   versioned). So self-evolve's write today is a replace, and "rollback" means re-applying the
+   prior value (best-effort), not restoring from a version history.
+5. On the next spawn, the cascade **re-materializes** the resolved config; a later customer
    turn exhibits the changed behavior.
 
+A **real versioned/reversible config artifact** (config-layer history + a rollback path) is a
+named follow-up — owned by either socialware (a versioned config-delta log in P5) or #17-V2.
+SW-UPD's acceptance invariant is scoped to current #17 accordingly (§9).
+
 Reuse highlight: the operator's copilot-approval path is identical in SW-USE (approve a
-customer reply) and SW-UPD (approve a config delta) — one routing mechanism serves both the
+customer reply) and SW-UPD (approve a config delta) — one `turn.settle` gate serves both the
 interaction phase and the update phase.
 
 ## 8. Multi-user & persistence
@@ -231,29 +308,37 @@ Each phase locks one architectural invariant; together they are the completion g
 is not "done" until its invariant test passes — not on merge/tests-pass alone).
 
 **SW-DEV (development phase)** — *the authoring/framework surface works.*
-A developer authors a vertical from the template (SessionTemplate `Chat+Turn+surface`;
-orchestrator/nl/page AgentTemplates via cascade; register `ConversationView`+`PageView`;
-routing rules). Instantiate it.
-- **Invariant:** with **zero core-code change**, the new session boots; the view-switcher
-  shows both views; the agents are spawned and credential-materialized.
-- Artifact: agent-browser screenshot of the new session with both views + agents present.
+A developer authors a vertical plugin (§5: SessionTemplate `Chat+Turn+surface`;
+orchestrator/nl/page AgentTemplates via cascade; register `SocialwareView`; node types +
+renderers; routing rules) — all in the plugin, no edits to `ezagent_core`/`ezagent_socialware`.
+Instantiate it.
+- **Invariant:** with **zero core-code change**, the new session boots; `SocialwareView` mounts
+  with both chat + page panes; the agents are spawned and credential-materialized.
+- Artifact: agent-browser screenshot of the new session showing the composite view + agents.
 
 **SW-USE (user-interaction phase)** — *the fusion + takeover.*
 Non-admin customer + operator. Customer asks for "a comparison page + a recommendation."
-- **Invariant:** a **single turn drives both surfaces** — fails if only one updates.
-  Plus: an operator `turn.claim` (routing-reconfig) reaches the customer with the operator's
-  output.
-- Artifacts: screenshot ① chat bubble, ② live page (same turn), ③ operator takeover reaching
-  the customer; plus a multi-user/cold-restart check (second viewer sees the same `:surface`
-  version; restart re-renders).
+- **Invariant:** a single `turn.settle` drives **both panes of `SocialwareView` simultaneously
+  in one viewport** — fails if only one updates, and (anti-tab-fake) fails if the two are only
+  reachable as separate tabs. Plus: in `:copilot`/`:takeover`, the customer sees **nothing**
+  (no bubble, no page) until the operator approves at `settle`, and what arrives is the
+  operator's output.
+- Artifacts: one screenshot showing ① chat bubble and ② live page side-by-side from the same
+  settled turn; ③ a copilot turn where the unapproved draft is visible to the operator but
+  absent from the customer view until approval; plus a multi-user/cold-restart check (second
+  viewer sees the same committed `:surface` version; restart re-renders; **no pending draft
+  survives restart**).
 
 **SW-UPD (update phase)** — *the self-evolve loop closes.*
 Optimizer agent + operator. Optimization session reads SW-USE traces (incl. operator edits)
-→ config-delta card → operator copilot-approves → delta written to the agent's cascade high
-layer → respawn re-materializes → a later customer turn shows changed behavior.
-- **Invariant:** the agent's **resolved config changed via the flow (not hand-edit), is
-  versioned/reversible, and is observable in a later turn.**
-- Artifact: screenshot of the delta card + approval + the changed behavior.
+→ config-delta card → operator approves at the `turn.settle` gate → delta written to the
+agent's cascade high layer → respawn re-materializes → a later customer turn shows changed
+behavior.
+- **Invariant (scoped to current #17, per §7):** the agent's **resolved config changed via the
+  flow (not hand-edit) and is observable in a later turn**; **rollback** = re-applying the prior
+  value reverts the behavior. (Version-history-based reversibility is the named follow-up, not
+  asserted here.)
+- Artifact: screenshot of the delta card + approval + the changed behavior, then the revert.
 
 **E2E standards (all three):** non-admin customer is the primary caller; granting the operator
 its cap is itself a step; **fresh docker seed each run**; faces **production topology** (real
@@ -278,18 +363,26 @@ registrations + template fills**, not separate apps. Remaining:
 4. **`{:within_workspace}` cap shape** — needed for tenant-admin/customer isolation; block
    SW-DEV on it or introduce alongside? (Lean: introduce with SW-DEV, since templates are
    workspace-scoped.)
+5. **`SocialwareView` layout** — the composite mounts chat + page side-by-side (§4.2). Fixed
+   split, or a per-vertical declarable layout (which panes, what ratio)? (Lean: a fixed
+   chat|page split for the first vertical; declarable layout is a follow-up.)
+6. **Versioned/reversible config artifact** — #17 V1 has no config-layer history (§7). Build a
+   versioned config-delta log in socialware P5, or wait for #17-V2? (Lean: a thin append-only
+   config-delta log in P5 so rollback has real history, without blocking on #17-V2.)
 
 ## 11. Phasing
 
 - **P1 — `Behavior.Turn` + `:turns` slice** (the orchestration state machine; TDD; the
   degenerate single-bot turn first, then fan-out/compose).
-- **P2 — `:surface` slice + `PageView`** (the UI-tree contract + the generic interpreter View;
-  declarative tier first, `code`-node deferred per §10.2).
-- **P3 — routing-as-mode** (`turn.claim`/`release` reconfiguring rules via `Behavior.Routing`;
-  copilot relay).
-- **P4 — first fused vertical + SW-USE E2E** (orchestrator + nl + page workers; both views;
-  the fusion invariant test).
-- **P5 — self-evolve (SW-UPD)** on the #17 cascade write path + the SW-UPD invariant test.
+- **P2 — `:surface` slice + `PageView` + `SocialwareView`** (the UI-tree contract + the generic
+  interpreter View + the composite side-by-side view; declarative tier first, `code`-node
+  deferred per §10.2). Draft staging (commit only at settle) lands here.
+- **P3 — mode = settle-gate + operator-draft route** (`turn.claim`/approve/`settle`; the
+  copilot/takeover hold; the additive operator-draft route — no routing-replacement primitive).
+- **P4 — first fused vertical + SW-USE E2E** (orchestrator + nl + page workers; the composite
+  view; the simultaneous-surfaces + approval-gate invariant tests).
+- **P5 — self-evolve (SW-UPD)** on the #17 cascade write path + a thin versioned config-delta
+  log (§10.6) + the SW-UPD invariant test.
 - **SW-DEV** authoring E2E rides alongside P4 (it proves the template surface that P1–P3
   expose).
 
