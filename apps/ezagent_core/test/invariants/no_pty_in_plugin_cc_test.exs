@@ -115,6 +115,7 @@ defmodule EzagentCore.Invariants.NoPtyInPluginCcTest do
           cwd = File.cwd!()
           if File.dir?(Path.join(cwd, "apps")), do: cwd, else: Path.expand("../..", cwd)
       end
+
     String.trim(out)
   end
 end

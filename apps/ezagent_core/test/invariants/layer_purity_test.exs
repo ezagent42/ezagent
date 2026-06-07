@@ -42,6 +42,7 @@ defmodule EzagentCore.Invariants.LayerPurityTest do
           cwd = File.cwd!()
           if File.dir?(Path.join(cwd, "apps")), do: cwd, else: Path.expand("../..", cwd)
       end
+
     Path.join(String.trim(out), "apps")
   end
 
@@ -164,6 +165,7 @@ defmodule EzagentCore.Invariants.LayerPurityTest do
           cwd = File.cwd!()
           if File.dir?(Path.join(cwd, "apps")), do: cwd, else: Path.expand("../..", cwd)
       end
+
     String.trim(out)
   end
 end
