@@ -2,12 +2,23 @@
 
 **Date:** 2026-06-07
 **Branch:** `fix/file-flavor-create-cascade`
-**Status:** IMPLEMENTED (TDD). SEVEN codex adversarial-review rounds (approach + 6 diff
-rounds) — approach SOUND throughout; each round's findings verified + fixed (see §7–§7g).
+**Status:** IMPLEMENTED (TDD). EIGHT codex adversarial-review rounds (approach + 7 diff
+rounds) — approach SOUND throughout; each round's findings verified + fixed (see §7–§7h).
 Failing test → green; affected suites (cc 186 / codex 44 / workspace 165[*] / cascade 9) +
-create-path/parity invariants pass. PR open, not merged. [*] workspace shows 3 PRE-EXISTING
-env-isolation failures (identical on origin/main; need the instance_message app, unbuildable
-in the workspace app's isolated test env).
+create-path/parity invariants pass. PR #641 open (base main, MERGEABLE), not merged. [*]
+workspace shows 3 PRE-EXISTING env-isolation failures (identical on origin/main; they need
+the instance_message app, unbuildable in the workspace app's isolated test env). The
+invariant gates (`check_invariants` / `.lifecycle`) show only pre-existing violations
+(identical with/without this change; untouched files + a stale grep path).
+
+The later codex rounds (§7e–§7h) hardened the credential-grant lifecycle around FAILED /
+CONCURRENT file-flavor creates (orphan-grant delete; ownership-scoped to avoid a
+mint-conflict race; adopt-rejection cleanup). Several of these (the orphan-grant delete on a
+shared `spawn_from_template_content` failure path) ALSO harden the pre-existing
+orchestrator/fork/session callers, which shared the gap. For reviewer: confirm the
+`GrantRow.delete/1` (hard) vs `revoke/1` (soft) choice for compensating cleanup is the
+intended semantics (delete frees the unique `agent_uri` key for retry; revoke would keep a
+tombstone that still conflicts on re-insert).
 
 ## 1. The bug (confirmed by code trace)
 
