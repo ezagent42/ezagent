@@ -518,10 +518,15 @@ is lower-risk; the cascade is already URI-addressed, D4.)*
   `Ezagent.URI.resource(ws, :uploads, name)` (workspace-first; see §5.1 and the
   doc-drift fix below), NOT a `resource://uploads/<ws>/<name>` type-first form
   (which the resolver would mis-parse as workspace=`uploads`, type=`<ws>`,
-  causing an allowlist miss + wrong authority check — codex HIGH). Mechanism:
-  e.g. route `GET /files/:ws/:name` or a signed token encoding the full URI;
-  exact form decided in the PR (OI-1), but it MUST carry the `<ws>` segment in
-  workspace-first order.
+  causing an allowlist miss + wrong authority check — codex HIGH). **Mechanism
+  (OI-1 DECIDED): a signed capability token encoding the full ws-scoped URI** —
+  short TTL, bound to the one `resource://<ws>/uploads/<name>` URI, minted only
+  after authorization (internal: live cap-check at mint; external customer-feed:
+  gated by approved-only visibility), and re-validated at serve time for the feed.
+  NOT plain route segments — the external React customer-feed (#601/#603) serves
+  attachments to viewers with no session/caps, so a bearer capability token is the
+  necessary unifying mechanism (see §10 OI-1). The token MUST carry the `<ws>`
+  segment in workspace-first order.
 - **Move authorization** to operate on that exact URI's `<ws>` segment via the
   resolver's `authority/2` for the `uploads` type — called as
   `authority.(uri, %{workspace: request_scope_workspace})` where the request
@@ -650,23 +655,45 @@ Resource.FsResolver.resolve(uri = resource://<ws>/<type>/<name>, scope):   # §5
 
 ---
 
-## 10. Open items needing the user's decision
+## 10. Decisions on the open items (resolved with Allen 2026-06-07)
 
-- **OI-1 (download contract form, P2a).** Route-shape change
-  (`GET /files/:ws/:name`) vs. a signed-token-carrying-the-full-URI approach.
-  Both satisfy "the request carries the `<ws>` segment"; the spec mandates the
-  property, not the mechanism. Recommendation: explicit route segments (simplest,
-  inspectable, no token-signing surface). **Decision deferred to the P2 PR**, but
-  flag if Allen has a preference.
-- **OI-2 (uploads streaming return, P2b).** Path vs. IO-device resolver return
-  for large uploads. Default = path (uploads are already on-disk files). Revisit
-  only on a large-upload requirement.
-- **OI-3 (P3 scope of "remaining population-3 callers").** Some callers
-  (feishu client, python server, agent_bridge token_store, identity application)
-  may be tenant-scoped content (→ migrate) or sanctioned infra (→ exact-anchor
-  exception). Each is adjudicated in P3 per the D2 test ("is it content
-  addressable by `<ws>`?"). No blanket rule; flagged so the P3 PR enumerates each
-  with its verdict.
+- **OI-1 (download contract form, P2a) — DECIDED: unified signed token + ws-scoped
+  URI.** Not explicit route segments. Rationale: socialware's customer-feed
+  already exists (#601 settlement gate, #603 React feed) and the external React
+  SPA serves attachments to viewers who have **no session/caps**, so a live
+  CapBAC check cannot authorize them — a signed capability token (S3-presigned-URL
+  style) is the necessary mechanism, and it unifies the internal + external cases
+  and is CDN-offloadable. The security properties a live check would have given
+  are preserved by design, all REQUIRED:
+  1. **short TTL** (bounds the bearer-leak window);
+  2. the token is **bound to one specific `resource://<ws>/uploads/<name>` URI**
+     (cannot be replayed against another ws/file);
+  3. **minted only after authorization** — internal: a live cap-check at mint
+     time; external: gated by the customer-feed **approved-only** visibility (a
+     token is issued only for an approved item);
+  4. **serve-time re-validation for the feed** — on download, re-confirm the item
+     is still approved (a revocation lever beyond TTL; aligns naturally with the
+     customer-feed approved-only semantics).
+  The resolver returns the ws-scoped URI; a thin signer/verifier wraps it for the
+  HTTP surface. (The old `GET /files/:filename` participation-based route is
+  replaced; a back-compat window per §6 P2.)
+- **OI-2 (uploads streaming return, P2b) — DECIDED: path.** Resolver returns the
+  on-disk path (uploads are already files). Revisit only if a large-upload
+  streaming requirement appears.
+- **OI-3 (P3 scope of remaining callers) — DECIDED: no broad exemptions; the only
+  exemption axis is boot-order, not "no `<ws>`".** A caller is exempt ONLY if it
+  runs **before the SchemeRegistry/UriQuery ETS tables exist** (config-eval /
+  pre-`Application.start` — i.e. `config/runtime.exs` reading db + cookie). Every
+  other caller goes **through UriQuery**: tenant-scoped content (agent_bridge
+  per-agent token, python per-agent log, cc/codex tenant config writes) →
+  `resource://<ws>/<type>/<name>`; system-level/global artifacts (feishu global
+  app cred, etc.) → **`system://<type>`** (the reused system scheme — still
+  resolved via UriQuery, just a different scheme; NOT an exemption). The one item
+  to verify in the P3 PR is whether the **identity application** reads its
+  credential inside `Application.start/2` *before* registry seeding (if so it is a
+  genuine boot-order exemption; otherwise it migrates). population-3 is therefore
+  almost entirely migrated, with the boot-order exemption list kept minimal and
+  exact-anchored.
 
 > **User-assist steps flagged** (per `feedback_flag_user_assist_steps`): none of
 > P0–P3 requires a human action to *implement*; the E2E acceptance for P2
