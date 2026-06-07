@@ -52,6 +52,15 @@ defmodule Ezagent.Behavior.ConfigUpdate do
 
   @spec handle_apply_delta(map(), map()) :: {:ok, map(), [term()]} | {:error, term()}
   def handle_apply_delta(%{turn_id: turn_id}, ctx) do
+    # #607 codex CRITICAL — pointer-advance + cascade-repoint must be ATOMIC. The
+    # agent's user cascade layer is repointed at the pointer's STABLE resource
+    # URI (`ConfigProjection.pointer_uri/4`), which keys the POINTER, not a
+    # specific object — so the repoint is INDEPENDENT of which immutable object
+    # the pointer points at, and can therefore run BEFORE `write_and_point`.
+    # Doing the repoint first means a repoint failure (no cascade_resolution /
+    # no_such_actor / authz / write error) returns error WITHOUT ever advancing
+    # the mutable config pointer. A later spawn can never consume a config whose
+    # repoint was rejected, because the pointer was never moved.
     with {:ok, turn} <- settled_turn(ctx, turn_id),
          {:ok, delta} <- config_delta(turn),
          attrs <- attrs_from_delta(delta, turn_id, ctx),
@@ -63,8 +72,8 @@ defmodule Ezagent.Behavior.ConfigUpdate do
              attrs.key,
              attrs.patch
            ),
-         {:ok, result} <- ConfigStore.write_and_point(Map.put(attrs, :body, body)),
-         {:ok, repoint_status} <- repoint_agent_layer(attrs, ctx) do
+         {:ok, repoint_status} <- repoint_agent_layer(attrs, ctx),
+         {:ok, result} <- ConfigStore.write_and_point(Map.put(attrs, :body, body)) do
       applied = ctx.read.(:applied, %{})
 
       reply = %{
@@ -81,11 +90,21 @@ defmodule Ezagent.Behavior.ConfigUpdate do
   # at the immutable config pointer's stable resource URI, so the next spawn
   # re-materializes the new soul. `subject_uri` IS the target agent.
   #
-  # A live agent with a cascade is repointed (`:repointed`). When the agent has no
-  # live sandbox yet / no cascade_resolution, the pointer URI is already durable
-  # and deterministic — the agent picks it up at its own next spawn once its layer
-  # references the pointer — so this is `:deferred`, not a failure. Any OTHER
-  # dispatch/write error FAILS LOUD (no silent default).
+  # `CascadeRepoint.repoint_user_layer/6` writes the pointer URI into the agent's
+  # DURABLE spawn source (its Sandbox `respawn_template_data.cascade_resolution`,
+  # snapshot-persisted), so a cold next-spawn resolves it — this is what makes
+  # the consume real, not write-only (#607 codex HIGH). Success → `:repointed`.
+  #
+  # Every error FAILS LOUD (no silent `:deferred`):
+  #
+  #   * `:no_cascade_resolution` — the agent has a sandbox but NO
+  #     `cascade_resolution` map (a pre-cascade / non-credentialled agent). It
+  #     STRUCTURALLY cannot consume a `user_layer_uri`, and inventing one would
+  #     diverge from #17's create-time resolution. There is no durable place to
+  #     record the pointer, so returning success would be a silent no-op that
+  #     falsely reports the config as applied — surface it as an error instead.
+  #   * any other dispatch/write error (`:no_such_actor` for a never-spawned
+  #     agent, cap denial, write failure) — likewise loud.
   defp repoint_agent_layer(attrs, ctx) do
     case CascadeRepoint.repoint_user_layer(
            attrs.subject_uri,
@@ -96,8 +115,6 @@ defmodule Ezagent.Behavior.ConfigUpdate do
            ctx
          ) do
       :ok -> {:ok, :repointed}
-      {:error, :no_cascade_resolution} -> {:ok, :deferred}
-      {:error, :not_found} -> {:ok, :deferred}
       {:error, _reason} = err -> err
     end
   end

@@ -93,6 +93,18 @@ defmodule Ezagent.Socialware.ConfigProjection do
   Recover the `{layer, workspace, subject, key}` a `pointer_uri/4` encodes.
 
   Returns `{:ok, key}` for a socialware-config resource URI, `:error` otherwise.
+
+  ## Workspace-segment authority (#607 codex MEDIUM)
+
+  The `<workspace>` encoded in the base64 payload is NOT authoritative on its
+  own — the `resource://` URI is authorable, so a caller could mint a URI whose
+  STRUCTURAL `<workspace>` segment is tenant A while the payload encodes tenant
+  B, and resolve B's pointer from inside A (a cross-tenant boundary hole). The
+  outer URI's structural workspace segment is the cap-checked authority (it is
+  what `Ezagent.URI.workspace_of/1` / WorkspaceRegistry scope the URI by), so it
+  MUST agree with the decoded workspace. A mismatch is a forged URI — raise
+  LOUDLY (let-it-crash; never a silent `:error` that would be swallowed as
+  "not mine" by `resolve_config_dir/1`).
   """
   @spec pointer_key_from_uri(URI.t()) :: {:ok, pointer_key()} | :error
   def pointer_key_from_uri(%URI{scheme: "resource"} = uri) do
@@ -100,6 +112,7 @@ defmodule Ezagent.Socialware.ConfigProjection do
          {:ok, name} <- Ezagent.URI.name(uri),
          {:ok, decoded} <- Base.url_decode64(name, padding: false),
          [layer, workspace, subject, key] <- String.split(decoded, "|", parts: 4) do
+      :ok = assert_workspace_authority!(uri, workspace)
       {:ok, {layer, workspace, subject, key}}
     else
       _ -> :error
@@ -107,6 +120,41 @@ defmodule Ezagent.Socialware.ConfigProjection do
   end
 
   def pointer_key_from_uri(_), do: :error
+
+  # The structural `<workspace>` segment of the outer resource URI is the
+  # cap-checked authority; the decoded payload's `workspace` must derive the
+  # SAME workspace name. A divergence means the URI was forged to read another
+  # tenant's pointer — fail loud (#607 codex MEDIUM).
+  defp assert_workspace_authority!(%URI{} = uri, encoded_workspace) do
+    structural =
+      case Ezagent.URI.workspace_name(uri) do
+        {:ok, name} ->
+          name
+
+        :error ->
+          raise ArgumentError,
+                "socialware config pointer URI has no workspace segment: #{URI.to_string(uri)}"
+      end
+
+    encoded =
+      case Ezagent.URI.workspace_name(Ezagent.URI.new!(encoded_workspace)) do
+        {:ok, name} ->
+          name
+
+        :error ->
+          raise ArgumentError,
+                "socialware config pointer payload has no workspace: #{encoded_workspace}"
+      end
+
+    if structural == encoded do
+      :ok
+    else
+      raise ArgumentError,
+            "socialware config pointer workspace mismatch: structural segment " <>
+              "#{inspect(structural)} (#{URI.to_string(uri)}) != encoded workspace " <>
+              "#{inspect(encoded)} (#{encoded_workspace}) — cross-tenant boundary violation"
+    end
+  end
 
   @doc """
   `:socialware_config_dir` resolver — materialize the CURRENT pointed-at config

@@ -28,10 +28,12 @@ defmodule Ezagent.Socialware.CascadeRepoint do
   pointer. `ctx` is the invoking behavior context (supplies caller + caps).
 
   Returns `:ok` on success, `{:error, reason}` otherwise (fail loud — no silent
-  default). A no-op when the agent has no `cascade_resolution` yet
-  (`{:error, :no_cascade_resolution}`): a pre-cascade / non-credentialled agent
-  cannot consume the layer, and silently inventing one would diverge from #17's
-  create-time resolution.
+  default). `{:error, :no_cascade_resolution}` when the agent has no
+  `cascade_resolution` yet: a pre-cascade / non-credentialled agent cannot
+  consume the layer, and silently inventing one would diverge from #17's
+  create-time resolution. The caller (`Ezagent.Behavior.ConfigUpdate`) surfaces
+  this as an error (NOT a silent `:deferred`), because there is no durable place
+  to record the pointer for such an agent (#607 codex HIGH).
   """
   @spec repoint_user_layer(URI.t(), atom() | String.t(), URI.t(), URI.t(), String.t(), map()) ::
           :ok | {:error, term()}
