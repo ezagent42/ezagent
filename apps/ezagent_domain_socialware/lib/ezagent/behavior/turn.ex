@@ -280,12 +280,14 @@ defmodule Ezagent.Behavior.Turn do
           {version, [effect]}
       end
 
-    result = %{
-      refs: result_refs,
-      message_ids: message_ids,
-      version: version,
-      expected_prior_approved: expected_prior_approved
-    }
+    result =
+      %{
+        refs: result_refs,
+        message_ids: message_ids,
+        version: version,
+        expected_prior_approved: expected_prior_approved
+      }
+      |> maybe_put(:config_delta, config_delta_for(result_refs))
 
     reply =
       %{status: :composing}
@@ -320,11 +322,14 @@ defmodule Ezagent.Behavior.Turn do
   end
 
   defp settle_commit_effects(turn_id, turn, ctx) do
-    if settlement_needed?(turn) do
-      approve_and_commit_effects(turn_id, turn, ctx)
-    else
-      []
-    end
+    settlement_effects =
+      if settlement_needed?(turn) do
+        approve_and_commit_effects(turn_id, turn, ctx)
+      else
+        []
+      end
+
+    settlement_effects ++ config_update_effects(turn_id, turn, ctx)
   end
 
   defp settlement_attrs(turn_id, turn, ctx) do
@@ -376,6 +381,19 @@ defmodule Ezagent.Behavior.Turn do
 
   defp page_tree_from_ref(_ref), do: nil
 
+  defp config_delta_for(result_refs) do
+    Enum.find_value(result_refs, &config_delta_from_ref/1)
+  end
+
+  defp config_delta_from_ref(ref) when is_map(ref) do
+    kind =
+      Map.get(ref, :kind) || Map.get(ref, "kind") || Map.get(ref, :type) || Map.get(ref, "type")
+
+    if kind in [:config_delta, "config_delta"], do: ref
+  end
+
+  defp config_delta_from_ref(_ref), do: nil
+
   defp write_chat_messages(turn, result_refs, ctx) do
     result_refs
     |> Enum.flat_map(&write_chat_message_from_ref(&1, turn, ctx))
@@ -423,6 +441,15 @@ defmodule Ezagent.Behavior.Turn do
     |> Map.get(:surface, %{})
     |> Map.get(:approved)
   end
+
+  defp config_update_effects(turn_id, %{result: %{config_delta: delta}}, ctx)
+       when is_map(delta) do
+    [
+      {:dispatch, Cmd.new(ctx.self_uri, :apply_delta, %{turn_id: turn_id}, dispatch_ctx(ctx))}
+    ]
+  end
+
+  defp config_update_effects(_turn_id, _turn, _ctx), do: []
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, _key, []), do: map
