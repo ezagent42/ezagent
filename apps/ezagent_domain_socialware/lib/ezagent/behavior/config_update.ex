@@ -164,7 +164,16 @@ defmodule Ezagent.Behavior.ConfigUpdate do
     # `workspace_uri`/`subject_uri` here are caller-supplied action args; the
     # repoint runs under `system://agent-internal`, so validate the target is
     # within the caller's authority BEFORE the repoint / pointer write.
+    #
+    # #607 codex round-4 HIGH — the caller-supplied `config_id` is ALSO untrusted
+    # and names an EXISTING immutable object. Fetch + validate it BEFORE any side
+    # effect: a nonexistent config_id would otherwise repoint the sandbox at a
+    # missing object URI (next materialization fails loud) and a config_id naming
+    # ANOTHER workspace/subject's object would persist a mismatched pointer —
+    # both BEFORE put_pointer's own `Repo.get`. Only a validated, in-scope object
+    # proceeds to repoint + pointer write (no partial write on rejection).
     with :ok <- authorize_target(attrs, ctx),
+         {:ok, _object} <- ConfigStore.fetch_matching_object(attrs),
          {:ok, :repointed} <- repoint_agent_layer(attrs, attrs.config_id),
          {:ok, %{previous_config_id: previous}} <- ConfigStore.put_pointer(attrs) do
       {:ok, %{config_id: attrs.config_id, previous_config_id: previous}, []}

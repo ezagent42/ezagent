@@ -128,6 +128,59 @@ defmodule Ezagent.Socialware.ConfigStore do
     end
   end
 
+  @doc """
+  Fetch the immutable config object named by `attrs.config_id` and validate it
+  is in scope for the authorized target.
+
+  This is the pre-side-effect guard for the `repoint`/rollback path (#607 codex
+  round-4 HIGH): `handle_repoint` authorizes the caller-supplied
+  `workspace_uri`/`subject_uri`, but the `config_id` is also caller-supplied and
+  names an EXISTING immutable object. Without this check the agent's sandbox could
+  be repointed at a nonexistent object URI (next materialization fails loud) or at
+  an object belonging to ANOTHER workspace/subject (a mismatched pointer) BEFORE
+  `put_pointer` ever runs `Repo.get`. Validate the object exists and its
+  `workspace_uri`, `subject_uri`, AND `key` match the authorized attrs BEFORE any
+  side effect (repoint + pointer write).
+
+  Returns:
+    * `{:ok, object}` — the object exists and is in scope.
+    * `{:error, :config_not_found}` — no object with that id.
+    * `{:error, {:cross_tenant_target, details}}` — the object exists but its
+      workspace/subject/key do not match the authorized attrs (loud).
+  """
+  @spec fetch_matching_object(map()) ::
+          {:ok, ConfigObject.t()}
+          | {:error, :config_not_found}
+          | {:error, {:cross_tenant_target, map()}}
+  def fetch_matching_object(attrs) when is_map(attrs) do
+    config_id = Map.fetch!(attrs, :config_id)
+    workspace = attrs |> Map.fetch!(:workspace_uri) |> uri_string!()
+    subject = attrs |> Map.fetch!(:subject_uri) |> uri_string!()
+    key = Map.fetch!(attrs, :key)
+
+    case Repo.get(ConfigObject, config_id) do
+      nil ->
+        {:error, :config_not_found}
+
+      %ConfigObject{workspace_uri: ^workspace, subject_uri: ^subject, key: ^key} = object ->
+        {:ok, object}
+
+      %ConfigObject{} = object ->
+        {:error,
+         {:cross_tenant_target,
+          %{
+            field: :config_id,
+            config_id: config_id,
+            expected: %{workspace_uri: workspace, subject_uri: subject, key: key},
+            got: %{
+              workspace_uri: object.workspace_uri,
+              subject_uri: object.subject_uri,
+              key: object.key
+            }
+          }}}
+    end
+  end
+
   @spec merge_delta(
           atom() | String.t(),
           URI.t() | String.t(),

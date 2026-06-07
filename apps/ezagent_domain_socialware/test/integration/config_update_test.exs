@@ -539,6 +539,73 @@ defmodule EzagentDomainSocialware.Integration.ConfigUpdateTest do
              unmanaged_seed.config_id
   end
 
+  # #607 codex round-4 HIGH — the `repoint`/rollback path repointed the agent
+  # BEFORE validating the caller-supplied `config_id`. A NONEXISTENT config_id
+  # must be rejected `{:error, :config_not_found}` with NO side effect: the target
+  # agent's sandbox `user_layer_uri` MUST be unchanged (no partial write).
+  test "repoint rejects a nonexistent config_id and leaves the sandbox unchanged", ctx do
+    spawn_agent_with_cascade(ctx.agent, ctx.workspace, ctx.session)
+
+    before_uri = sandbox_user_layer_uri(ctx.agent)
+    # The cascade seed sets user_layer_uri to the admin URI (NOT a config object).
+    assert before_uri == URI.to_string(User.admin_uri())
+
+    missing_config_id = Ecto.UUID.generate()
+
+    assert {:error, :config_not_found} =
+             dispatch(ctx.session, :config_update, :repoint, %{
+               layer: :workspace,
+               workspace_uri: ctx.workspace,
+               subject_uri: ctx.agent,
+               key: "advisor.behavior",
+               config_id: missing_config_id
+             })
+
+    # No partial write: the sandbox layer was never repointed at the missing object.
+    assert sandbox_user_layer_uri(ctx.agent) == before_uri
+  end
+
+  # #607 codex round-4 HIGH — a config_id whose object belongs to ANOTHER
+  # workspace/subject must be rejected loudly BEFORE any side effect; the target
+  # agent's sandbox MUST be unchanged (no mismatched pointer persisted).
+  test "repoint rejects a config_id for another workspace/subject and leaves the sandbox unchanged",
+       ctx do
+    spawn_agent_with_cascade(ctx.agent, ctx.workspace, ctx.session)
+
+    before_uri = sandbox_user_layer_uri(ctx.agent)
+    assert before_uri == URI.to_string(User.admin_uri())
+
+    # An immutable object owned by a DIFFERENT tenant (team_beta).
+    foreign_workspace = Ezagent.URI.workspace(:team_beta)
+
+    foreign_agent =
+      Ezagent.URI.entity(:team_beta, :agent, "foreign-obj-#{System.unique_integer([:positive])}")
+
+    {:ok, foreign_object} =
+      ConfigStore.write_config(%{
+        workspace_uri: foreign_workspace,
+        subject_uri: foreign_agent,
+        key: "advisor.behavior",
+        body: %{"tone" => "foreign"},
+        actor_uri: User.admin_uri(),
+        source_turn_id: "foreign-obj-seed"
+      })
+
+    # Caller names AUTHORIZED workspace/subject (passes authorize_target) but a
+    # config_id whose object is owned by tenant B → loud cross_tenant_target.
+    assert {:error, {:cross_tenant_target, %{field: :config_id}}} =
+             dispatch(ctx.session, :config_update, :repoint, %{
+               layer: :workspace,
+               workspace_uri: ctx.workspace,
+               subject_uri: ctx.agent,
+               key: "advisor.behavior",
+               config_id: foreign_object.id
+             })
+
+    # No partial write: the sandbox layer was never repointed at the foreign object.
+    assert sandbox_user_layer_uri(ctx.agent) == before_uri
+  end
+
   test "two writes retain two distinct immutable config objects", ctx do
     {:ok, first} =
       ConfigStore.write_config(%{
@@ -617,6 +684,34 @@ defmodule EzagentDomainSocialware.Integration.ConfigUpdateTest do
       })
 
     :ok
+  end
+
+  # Read the target agent's persisted `cascade_resolution.user_layer_uri` so a
+  # test can assert the sandbox was (or was not) repointed. Returns nil when no
+  # cascade_resolution / user_layer_uri is present.
+  defp sandbox_user_layer_uri(agent_uri) do
+    {:ok, sandbox} =
+      Invocation.dispatch(%Invocation{
+        target: Ezagent.URI.new!("#{URI.to_string(agent_uri)}?action=sandbox.read"),
+        mode: :call,
+        args: %{},
+        ctx: %{
+          caller: User.admin_uri(),
+          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+          reply: {:caller_inbox, self()}
+        }
+      })
+
+    resolution =
+      case Map.get(sandbox, :respawn_template_data) do
+        %{} = rtd -> rtd["cascade_resolution"] || rtd[:cascade_resolution]
+        _ -> nil
+      end
+
+    case resolution do
+      %{} = res -> res["user_layer_uri"] || res[:user_layer_uri]
+      _ -> nil
+    end
   end
 
   defp restart_session(session_uri) do
