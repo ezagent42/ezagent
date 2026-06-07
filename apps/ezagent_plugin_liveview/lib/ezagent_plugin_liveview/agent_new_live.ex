@@ -202,6 +202,14 @@ defmodule EzagentPluginLiveview.AgentNewLive do
   defp validate_cwd_for_flavor("cc", _with_pty?, ""), do: {:error, :cwd_required_for_cc}
   defp validate_cwd_for_flavor("cc", _with_pty?, cwd), do: validate_cwd_dir(cwd)
 
+  # codex always needs a cwd (the codex PtyServer runs there), same as cc. The
+  # backend (Ezagent.Behavior.Workspace.validate_cwd_for_flavor/3) already
+  # rejects an empty cwd for codex with :cwd_required_for_codex; without this
+  # clause + the form field rendering for codex, the operator had no way to
+  # supply it and create always failed (#598).
+  defp validate_cwd_for_flavor("codex", _with_pty?, ""), do: {:error, :cwd_required_for_codex}
+  defp validate_cwd_for_flavor("codex", _with_pty?, cwd), do: validate_cwd_dir(cwd)
+
   defp validate_cwd_for_flavor("echo", true, ""), do: {:error, :cwd_required_for_echo_with_pty}
   defp validate_cwd_for_flavor("echo", true, cwd), do: validate_cwd_dir(cwd)
   defp validate_cwd_for_flavor("echo", false, _cwd), do: :ok
@@ -325,6 +333,9 @@ defmodule EzagentPluginLiveview.AgentNewLive do
 
   defp friendly_error(:cwd_required_for_cc),
     do: gettext("Working directory is required for cc agents (claude-code runs there).")
+
+  defp friendly_error(:cwd_required_for_codex),
+    do: gettext("Working directory is required for codex agents (the codex PtyServer runs there).")
 
   defp friendly_error(:cwd_required_for_echo_with_pty),
     do:
@@ -547,7 +558,7 @@ defmodule EzagentPluginLiveview.AgentNewLive do
                   </label>
 
                   <label
-                    :if={@flavor == "cc" or (@flavor == "echo" and @with_pty?)}
+                    :if={@flavor in ["cc", "codex"] or (@flavor == "echo" and @with_pty?)}
                     class="flex flex-col gap-1"
                   >
                     <span class="text-xs uppercase tracking-wide text-zinc-500">

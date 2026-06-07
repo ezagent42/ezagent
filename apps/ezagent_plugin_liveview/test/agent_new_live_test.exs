@@ -461,4 +461,50 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
       assert Process.alive?(pty_pid)
     end
   end
+
+  # #598: the new-agent form rendered the WORKING DIRECTORY field only for
+  # cc / echo-with-pty, but the backend requires a cwd for codex too, so codex
+  # create always failed with :cwd_required_for_codex and the operator had no
+  # field to supply it. Found by the cascade §5.B E2E.
+  describe "codex flavor — cwd field + validation (#598 regression)" do
+    setup do
+      ensure_default_workspace()
+      :ok
+    end
+
+    test "codex flavor → cwd field rendered (was omitted, #598)", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, "/identities/agents/new")
+
+      html =
+        lv
+        |> render_change("preview", %{
+          "agent" => %{"flavor" => "codex", "name" => "cdx", "caps" => ""}
+        })
+
+      assert html =~ ~s(name="agent[cwd]")
+    end
+
+    test "codex + no cwd → friendly error, stays on page (#598)", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, "/identities/agents/new")
+
+      _ =
+        lv
+        |> render_change("preview", %{
+          "agent" => %{"flavor" => "codex", "name" => "cdx", "caps" => ""}
+        })
+
+      html =
+        lv
+        |> render_submit("create_agent", %{
+          "agent" => %{
+            "flavor" => "codex",
+            "name" => "needs-cwd-#{System.unique_integer([:positive])}",
+            "cwd" => "",
+            "caps" => ""
+          }
+        })
+
+      assert html =~ "Working directory is required for codex"
+    end
+  end
 end
