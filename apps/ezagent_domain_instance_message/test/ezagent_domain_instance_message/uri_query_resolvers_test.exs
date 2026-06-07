@@ -2,8 +2,10 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
   use ExUnit.Case, async: false
 
   alias Ezagent.Behavior.Chat
+  alias Ezagent.Credential.WorkspaceSharedSource
   alias Ezagent.Entity.{Session, User}
   alias Ezagent.{AgentFlavorAttributes, Invocation, Kind, UriQuery}
+  alias EzagentCore.Repo
 
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
@@ -22,6 +24,7 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
     assert :none = UriQuery.resolve(:orchestrator, session_uri)
     assert :none = UriQuery.resolve(:session_template, session_uri)
     assert :none = UriQuery.resolve(:member_by_role, {session_uri, "missing"})
+    assert :none = UriQuery.resolve(:config_dir, agent_uri)
   end
 
   test "flavor resolves from stored launch attributes before the Agent Kind exists" do
@@ -32,6 +35,59 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
     :ok = AgentFlavorAttributes.put(agent_uri, "cc")
 
     assert {:ok, "cc"} = UriQuery.resolve(:flavor, agent_uri)
+  end
+
+  test "workspace_shared_credential_source resolves from workspace/flavor storage" do
+    workspace_uri = URI.new!("workspace://system")
+    source_uri = URI.new!("entity://system/agent/ws-service")
+
+    assert :none =
+             EzagentDomainInstanceMessage.UriQueryResolvers.resolve_workspace_shared_source(
+               {workspace_uri, "cc"}
+             )
+
+    assert {:ok, _row} =
+             %{
+               workspace_uri: URI.to_string(workspace_uri),
+               flavor: "cc",
+               source_uri: URI.to_string(source_uri),
+               set_by: URI.to_string(User.admin_uri())
+             }
+             |> WorkspaceSharedSource.changeset()
+             |> Repo.insert()
+
+    assert {:ok, ^source_uri} =
+             EzagentDomainInstanceMessage.UriQueryResolvers.resolve_workspace_shared_source(
+               {workspace_uri, "cc"}
+             )
+  end
+
+  test "config_dir resolves AgentTemplate content from durable snapshot" do
+    template_uri = URI.new!("template://system/agent/ws-cc")
+
+    assert {:ok, _} =
+             Ezagent.SnapshotStore.write(
+               template_uri,
+               %{template: %{state: %{content: %{config_dir: "/tmp/ws-template-v2"}}}},
+               kind_type: :agent_template
+             )
+
+    assert {:ok, "/tmp/ws-template-v2"} =
+             EzagentDomainInstanceMessage.UriQueryResolvers.resolve_config_dir(template_uri)
+  end
+
+  test "config_dir resolves Agent sandbox config_dir_path from durable snapshot" do
+    agent_uri = URI.new!("entity://system/agent/alice-source")
+
+    assert {:ok, _} =
+             Ezagent.SnapshotStore.write(
+               agent_uri,
+               %{sandbox: %{state: %{config_dir_path: "/tmp/source-v2"}}},
+               kind_type: :agent
+             )
+
+    assert {:ok, "/tmp/source-v2"} =
+             EzagentDomainInstanceMessage.UriQueryResolvers.resolve_config_dir(agent_uri)
   end
 
   test "sandbox respawn class wins when multiple flavors share one template class" do

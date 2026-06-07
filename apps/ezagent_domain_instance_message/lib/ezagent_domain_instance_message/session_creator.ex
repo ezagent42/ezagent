@@ -1513,7 +1513,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
              content,
              agent_uri,
              granted_by,
-             workspace_uri
+             workspace_uri,
+             caller: granted_by,
+             caps: Ezagent.Identity.list_caps_for(granted_by),
+             source_template_uri: source_template_uri
            ) do
         {:ok, %{fresh?: fresh?}} -> {:ok, agent_uri, fresh?}
         {:error, _} = err -> err

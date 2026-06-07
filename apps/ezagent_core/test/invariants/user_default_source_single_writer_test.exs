@@ -28,11 +28,15 @@ defmodule Ezagent.Invariants.UserDefaultSourceSingleWriterTest do
   """
   use ExUnit.Case, async: true
 
-  alias Ezagent.Credential.UserDefaultSource
+  alias Ezagent.Credential.{UserDefaultSource, WorkspaceSharedSource}
 
   # The cap-checked Behavior is the SOLE module allowed to persist the pointer.
   @allowed_paths [
     "apps/ezagent_domain_identity/lib/ezagent/behavior/user_default_credential_source.ex"
+  ]
+
+  @workspace_shared_allowed_paths [
+    "apps/ezagent_domain_identity/lib/ezagent/behavior/workspace_shared_credential_source.ex"
   ]
 
   # Mutating Repo ops. (`set_via_dispatch` is a dispatch helper, not a write; `resolve`
@@ -74,7 +78,7 @@ defmodule Ezagent.Invariants.UserDefaultSourceSingleWriterTest do
       for file <- schema_referencing_files,
           {:ok, body} = File.read(file),
           line <- write_op_lines(body),
-          not allowed_file?(file),
+          not allowed_file?(file, @allowed_paths),
           not comment_line?(line) do
         Path.relative_to(file, String.trim_trailing(apps_root, "/apps")) <> ": " <> line
       end
@@ -126,6 +130,82 @@ defmodule Ezagent.Invariants.UserDefaultSourceSingleWriterTest do
     refute function_exported?(UserDefaultSource, :persist_validated, 5)
   end
 
+  test "the workspace_shared_credential_sources table/schema is written ONLY by the cap-checked Behavior" do
+    apps_root = apps_root()
+
+    {target_lines, grep_exit} =
+      System.cmd(
+        "grep",
+        [
+          "-rEn",
+          "WorkspaceSharedSource|workspace_shared_credential_sources",
+          apps_root,
+          "--include=*.ex"
+        ],
+        stderr_to_stdout: false
+      )
+
+    if grep_exit > 1, do: raise("grep scan failed (exit #{grep_exit}) for #{apps_root}")
+
+    schema_referencing_files =
+      target_lines
+      |> String.split("\n", trim: true)
+      |> Enum.map(&line_path/1)
+      |> Enum.uniq()
+      |> Enum.reject(&is_nil/1)
+      |> Enum.reject(&String.contains?(&1, "/test/"))
+
+    violations =
+      for file <- schema_referencing_files,
+          {:ok, body} = File.read(file),
+          line <- write_op_lines(body),
+          not allowed_file?(file, @workspace_shared_allowed_paths),
+          not comment_line?(line) do
+        Path.relative_to(file, String.trim_trailing(apps_root, "/apps")) <> ": " <> line
+      end
+
+    assert violations == [],
+           """
+           Direct mutating Repo write found in a module that references the
+           workspace_shared_credential_sources table/schema, OUTSIDE the authorized
+           chokepoint:
+
+           #{Enum.join(violations, "\n")}
+
+           The workspace-shared source pointer MUST be persisted ONLY by the
+           cap-checked + audited Behavior
+           `Ezagent.Behavior.WorkspaceSharedCredentialSource`
+           (:set_workspace_shared_credential_source). A direct Repo.insert/update/delete
+           here bypasses the workspace-admin cap-check and audit effect.
+           """
+  end
+
+  test "the workspace-shared core store exports NO public writer" do
+    exports = WorkspaceSharedSource.__info__(:functions)
+
+    forbidden =
+      for {name, _arity} <- exports,
+          n = Atom.to_string(name),
+          n =~ ~r/^(set|persist|insert|update|upsert|delete|put|write|save|store)/ do
+        name
+      end
+
+    assert forbidden == [],
+           """
+           The core store `Ezagent.Credential.WorkspaceSharedSource` exports a function
+           that looks like a writer: #{inspect(forbidden)}.
+
+           Core must hold NO cap-less mutator. Allowed surface: schema struct,
+           `resolve/2` / `get/2` (reads), `changeset/1` (pure builder), and `id/2`
+           (key helper). Persistence lives in the cap-checked workspace Behavior only.
+           """
+
+    assert function_exported?(WorkspaceSharedSource, :resolve, 2)
+    assert function_exported?(WorkspaceSharedSource, :get, 2)
+    assert function_exported?(WorkspaceSharedSource, :changeset, 1)
+    refute function_exported?(WorkspaceSharedSource, :persist_validated, 4)
+  end
+
   # ---------------------------------------------------------------------------
 
   defp write_op_lines(body) do
@@ -172,8 +252,8 @@ defmodule Ezagent.Invariants.UserDefaultSourceSingleWriterTest do
     end
   end
 
-  defp allowed_file?(file) do
-    Enum.any?(@allowed_paths, &String.contains?(file, &1))
+  defp allowed_file?(file, allowed_paths) do
+    Enum.any?(allowed_paths, &String.contains?(file, &1))
   end
 
   defp comment_line?(line) do

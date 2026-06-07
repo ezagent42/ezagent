@@ -89,19 +89,28 @@ defmodule Ezagent.Credential.Resolver do
     workspace_uri = Map.get(inputs, :workspace_uri)
     session_uri = Map.get(inputs, :session_uri)
     explicit = Map.get(inputs, :explicit_source)
+    flavor = Map.get(inputs, :flavor) || flavor_of(agent_uri)
 
     config_layers = [
-      %{layer: :flavor_base, present: true, source: {:flavor_base, flavor_of(agent_uri)}},
-      %{layer: :workspace, present: not is_nil(workspace_uri), source: workspace_uri},
-      %{layer: :user, present: true, source: owner_uri},
-      %{layer: :session, present: not is_nil(session_uri), source: session_uri}
+      %{layer: :flavor_base, present: true, source: {:flavor_base, flavor}},
+      %{
+        layer: :workspace,
+        present: not is_nil(workspace_uri),
+        source: Map.get(inputs, :workspace_layer_uri) || workspace_uri
+      },
+      %{layer: :user, present: true, source: Map.get(inputs, :user_layer_uri) || owner_uri},
+      %{
+        layer: :session,
+        present: not is_nil(session_uri),
+        source: Map.get(inputs, :session_layer_uri) || session_uri
+      }
     ]
 
     case pick_credential_source(%{
            explicit_source: explicit,
            owner_uri: owner_uri,
            workspace_uri: workspace_uri,
-           flavor: Map.get(inputs, :flavor) || flavor_of(agent_uri),
+           flavor: flavor,
            credential_required?: Map.get(inputs, :credential_required?, true),
            source_available?: Map.get(inputs, :source_available?, &default_source_available?/1)
          }) do
@@ -157,7 +166,9 @@ defmodule Ezagent.Credential.Resolver do
     # Injectable like user_source_lookup (pure-testable): returns
     # `{:ok, uri} | :absent | {:error, reason}`. Default = the UriQuery seam.
     ws_lookup =
-      Map.get(opts, :workspace_shared_lookup, fn -> workspace_shared_source(workspace_uri) end)
+      Map.get(opts, :workspace_shared_lookup, fn ->
+        workspace_shared_source(workspace_uri, flavor)
+      end)
 
     do_pick(explicit, user_lookup, ws_lookup, required?, available?)
   end
@@ -320,21 +331,19 @@ defmodule Ezagent.Credential.Resolver do
 
   defp user_source(%URI{}, _workspace_uri, _flavor), do: :absent
 
-  # Workspace-shared service-account source (§D4.3 step 3). The concrete shared-source
-  # storage + the workspace-admin authorize step are PR-3 (spec §10 "Workspace-shared
-  # service-account credential"). The lookup goes through `Ezagent.UriQuery` for the
-  # `:workspace_shared_credential_source` attribute — the standard cross-domain query
-  # seam. PR-1 does not register that resolver, so today the query returns
-  # `{:no_resolver, _}` which we map to `:absent` (→ fall-through / fail-loud per §D4.3).
-  # PR-3 registers the resolver and the `{:ok, uri}` branch becomes live with no change
-  # here.
+  # Workspace-shared service-account source (§D4.3 step 3). The lookup goes through
+  # `Ezagent.UriQuery` for the `:workspace_shared_credential_source` attribute — the
+  # standard cross-domain query seam. Workspace-shared sources are flavor-specific, so
+  # the resolver arg is `{workspace_uri, flavor}`.
   @workspace_shared_attr :workspace_shared_credential_source
 
-  @spec workspace_shared_source(URI.t() | nil) :: {:ok, URI.t()} | :absent | {:error, term()}
-  defp workspace_shared_source(nil), do: :absent
+  @spec workspace_shared_source(URI.t() | nil, String.t() | nil) ::
+          {:ok, URI.t()} | :absent | {:error, term()}
+  defp workspace_shared_source(nil, _flavor), do: :absent
+  defp workspace_shared_source(%URI{}, nil), do: :absent
 
-  defp workspace_shared_source(%URI{} = workspace_uri) do
-    Ezagent.UriQuery.resolve(@workspace_shared_attr, workspace_uri)
+  defp workspace_shared_source(%URI{} = workspace_uri, flavor) when is_binary(flavor) do
+    Ezagent.UriQuery.resolve(@workspace_shared_attr, {workspace_uri, flavor})
     |> classify_workspace_shared_result()
   end
 

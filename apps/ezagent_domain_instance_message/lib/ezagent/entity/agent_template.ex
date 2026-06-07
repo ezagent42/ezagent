@@ -234,7 +234,8 @@ defmodule Ezagent.Entity.AgentTemplate do
     # orchestrator-spawned curl/codex workers had nil provider/model.)
     with {:ok, tc} <- resolve_template_class(content),
          {:ok, cwd} <- fetch_project_cwd(content),
-         {:ok, config_dir} <- fetch_config_dir(content) do
+         {:ok, config_dir} <- fetch_config_dir(content),
+         {:ok, cascade} <- fetch_cascade(content) do
       # config_dir promotion (PR-2, Allen 2026-06-03): config_dir is UNIVERSAL —
       # every flavor's config-home dir is emitted here under the neutral
       # `"config_dir"` data key. nil ⇒ dropped. The cc Template Class reads this
@@ -246,6 +247,11 @@ defmodule Ezagent.Entity.AgentTemplate do
           "cwd" => cwd
         }
         |> put_config_dir(config_dir)
+        # #17 cascade PR-3 — activate the PR-2 materializer by threading the
+        # domain-resolved cascade inputs into the flavor Template Class data.
+        # The cc/codex Template Classes consume `"cascade"` when present and
+        # otherwise keep the existing single-reference materialize path.
+        |> put_cascade(cascade)
         # PR-6 (domain.agent) — DOMAIN-owned desired skills/caps. UNIVERSAL
         # (flavor-agnostic) content fields the DOMAIN declares for a member built
         # from this template; they ride into the Template-Class data map so a
@@ -325,6 +331,17 @@ defmodule Ezagent.Entity.AgentTemplate do
   # Emit the neutral `"config_dir"` data key only when a config home is set.
   defp put_config_dir(base, nil), do: base
   defp put_config_dir(base, dir) when is_binary(dir), do: Map.put(base, "config_dir", dir)
+
+  defp fetch_cascade(content) do
+    case content_get(content, :cascade) do
+      nil -> {:ok, nil}
+      cascade when is_map(cascade) -> {:ok, cascade}
+      bad -> {:error, {:invalid_cascade, bad}}
+    end
+  end
+
+  defp put_cascade(base, nil), do: base
+  defp put_cascade(base, cascade) when is_map(cascade), do: Map.put(base, "cascade", cascade)
 
   # Merge the flavor's extras onto the base: stringify keys, drop nil
   # values, and refuse reserved-key overrides (defensive — the callback

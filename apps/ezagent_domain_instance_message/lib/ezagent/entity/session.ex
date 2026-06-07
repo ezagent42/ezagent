@@ -675,9 +675,13 @@ defmodule Ezagent.Entity.Session do
   # → `test_mode: true`), so no live claude exists to JOIN the MCP bridge
   # and signal readiness — the gate would always time out. The synchronous
   # `register_orchestrator_mcp_context` is the test's readiness instead.
-  # Only PRODUCTION (real PTY) awaits the live join. Compile-time attr
-  # (not runtime Mix.env()) for release-safety. (codex final-review Q1.)
-  defp orchestrator_gate_test_mode?, do: @compile_env == :test
+  # Only PRODUCTION (real PTY) awaits the live join. Keep the compile-time
+  # check for release-safety, and fall back to guarded runtime Mix detection
+  # for precommit/app-start paths that may recompile this module outside the
+  # test app context before running tests.
+  defp orchestrator_gate_test_mode? do
+    @compile_env == :test or (Code.ensure_loaded?(Mix) and Mix.env() == :test)
+  end
 
   # codex PR #408 review CRIT — call `Agent.spawn_from_template_content/4`
   # directly after reading the cc-orchestrator AgentTemplate's content
@@ -707,7 +711,10 @@ defmodule Ezagent.Entity.Session do
              content,
              candidate_uri,
              owner_uri,
-             workspace_uri
+             workspace_uri,
+             caller: owner_uri,
+             caps: Ezagent.Identity.list_caps_for(owner_uri),
+             source_template_uri: orch_template_uri
            ) do
       # codex PR #408 review CRIT — return `candidate_uri` (URI.new!'d
       # form) as the canonical orchestrator URI, NOT `result.workers`'s

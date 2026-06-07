@@ -160,7 +160,14 @@ defmodule Ezagent.Orchestrator.Tools do
          # caller never spawns.
          :ok <- preflight_within_session_cap(caps, session_uri),
          {:ok, %URI{} = member_uri} <-
-           spawn_member(source_agent_template_uri, role_name, session_uri, workspace_uri, caller) do
+           spawn_member(
+             source_agent_template_uri,
+             role_name,
+             session_uri,
+             workspace_uri,
+             caller,
+             caps
+           ) do
       facets =
         %{
           in_session_template: in_session_template,
@@ -194,7 +201,8 @@ defmodule Ezagent.Orchestrator.Tools do
          role_name,
          %URI{} = session_uri,
          %URI{} = workspace_uri,
-         %URI{} = caller
+         %URI{} = caller,
+         caps
        ) do
     # codex review P2 (2026-06-03) — read the source template content ONCE and
     # derive BOTH the flavor (→ member URI) and the spawn content from that
@@ -215,7 +223,8 @@ defmodule Ezagent.Orchestrator.Tools do
         role_name,
         session_uri,
         workspace_uri,
-        caller
+        caller,
+        caps
       )
     end
   end
@@ -227,7 +236,8 @@ defmodule Ezagent.Orchestrator.Tools do
          role_name,
          %URI{} = session_uri,
          %URI{} = workspace_uri,
-         %URI{} = caller
+         %URI{} = caller,
+         caps
        )
        when is_map(content) and is_binary(flavor) do
     instance_name =
@@ -262,7 +272,10 @@ defmodule Ezagent.Orchestrator.Tools do
              content,
              member_uri,
              caller,
-             workspace_uri
+             workspace_uri,
+             caller: caller,
+             caps: caps,
+             source_template_uri: source_template_uri
            ) do
       {:ok, member_uri}
     end
@@ -284,7 +297,8 @@ defmodule Ezagent.Orchestrator.Tools do
          role_name,
          %URI{} = session_uri,
          %URI{} = workspace_uri,
-         %URI{} = caller
+         %URI{} = caller,
+         caps
        )
        when is_map(content) and is_binary(flavor) do
     instance_name =
@@ -303,7 +317,10 @@ defmodule Ezagent.Orchestrator.Tools do
            content,
            member_uri,
            caller,
-           workspace_uri
+           workspace_uri,
+           caller: caller,
+           caps: caps,
+           source_template_uri: source_template_uri
          ) do
       {:ok, %{fresh?: true}} ->
         {:ok, member_uri}
@@ -551,7 +568,8 @@ defmodule Ezagent.Orchestrator.Tools do
              role_name,
              session_uri,
              workspace_uri,
-             caller
+             caller,
+             caps
            ) do
       regenerate_finish(
         session_uri,

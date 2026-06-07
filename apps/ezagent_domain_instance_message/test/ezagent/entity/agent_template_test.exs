@@ -18,6 +18,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
 
   test "behaviors/0 includes Identity (caps + grant policy live on slice)" do
     behaviors = AgentTemplate.behaviors()
+
     assert Ezagent.Behavior.Identity in behaviors,
            "AgentTemplate must carry Identity behavior so default_caps + slice " <>
              "edit can use the existing identity dispatch path"
@@ -93,6 +94,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
 
     test "errors when project_cwd is missing" do
       content = %{name: "w", flavor: "cc"}
+
       assert {:error, :missing_project_cwd} =
                AgentTemplate.to_template_data(content, @instance_uri)
     end
@@ -123,6 +125,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
 
     test "errors when flavor is missing" do
       content = %{name: "w", project_cwd: "/tmp"}
+
       assert {:error, :missing_flavor} =
                AgentTemplate.to_template_data(content, @instance_uri)
     end
@@ -276,8 +279,14 @@ defmodule Ezagent.Entity.AgentTemplateTest do
 
     test "config_dir is dropped (not emitted) when nil — for cc AND non-cc flavors" do
       cc = %{flavor: "cc", project_cwd: "/tmp/p"}
-      curl = %{flavor: "curl", project_cwd: "/tmp/c", provider: "deepseek",
-               api_url: "https://x", model: "m"}
+
+      curl = %{
+        flavor: "curl",
+        project_cwd: "/tmp/c",
+        provider: "deepseek",
+        api_url: "https://x",
+        model: "m"
+      }
 
       assert {:ok, cc_data} = AgentTemplate.to_template_data(cc, @cc_uri)
       assert {:ok, curl_data} = AgentTemplate.to_template_data(curl, @curl_uri)
@@ -304,8 +313,12 @@ defmodule Ezagent.Entity.AgentTemplateTest do
       # claude_config_dir content field must fail loud — NOT be silently
       # ignored (which would spawn the cc agent without its CLAUDE_CONFIG_DIR).
       stale_atom = %{flavor: "cc", project_cwd: "/tmp/p", claude_config_dir: "/old/.claude"}
-      stale_str = %{"flavor" => "cc", "project_cwd" => "/tmp/p",
-                    "claude_config_dir" => "/old/.claude"}
+
+      stale_str = %{
+        "flavor" => "cc",
+        "project_cwd" => "/tmp/p",
+        "claude_config_dir" => "/old/.claude"
+      }
 
       assert {:error, {:stale_config_dir_field, :claude_config_dir, _}} =
                AgentTemplate.to_template_data(stale_atom, @cc_uri)
@@ -325,6 +338,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
       assert :ok = Ezagent.PluginCc.Template.CcAgent.validate(data)
     end
   end
+
   # PR-6 (domain.agent) — DOMAIN-owned desired skills/caps. These are
   # universal (flavor-agnostic) content fields the DOMAIN declares; they
   # ride into the Template-Class data map so a flavor's instantiate/3 can
@@ -383,6 +397,45 @@ defmodule Ezagent.Entity.AgentTemplateTest do
 
       assert {:ok, data} = AgentTemplate.to_template_data(content, @cc_uri)
       assert data["desired_skills"] == ["s1"]
+    end
+  end
+
+  describe "to_template_data/2 activates cascade materialization inputs (#17 PR-3)" do
+    @cc_uri URI.new!("entity://team-alpha/agent/cc_cascade-pr3")
+
+    test "threads explicit cascade layer_dirs and source_dir_for into Template Class data" do
+      source_dir_for = fn
+        "entity://team-alpha/agent/alice-source" -> {:ok, "/tmp/alice-source"}
+      end
+
+      content = %{
+        flavor: "cc",
+        project_cwd: "/tmp/proj",
+        config_dir: "/tmp/reference-config",
+        cascade: %{
+          layer_dirs: [
+            %{dir: "/tmp/workspace-layer", protected: ["hooks/policy.sh"], mandatory: []},
+            %{dir: "/tmp/user-layer", protected: [], mandatory: []}
+          ],
+          source_dir_for: source_dir_for
+        }
+      }
+
+      assert {:ok, data} = AgentTemplate.to_template_data(content, @cc_uri)
+      assert %{} = cascade = data["cascade"]
+      assert cascade.layer_dirs == content.cascade.layer_dirs
+      assert cascade.source_dir_for == source_dir_for
+    end
+
+    test "malformed cascade content fails loud instead of reaching the Template Class" do
+      content = %{
+        flavor: "cc",
+        project_cwd: "/tmp/proj",
+        cascade: "not-a-map"
+      }
+
+      assert {:error, {:invalid_cascade, "not-a-map"}} =
+               AgentTemplate.to_template_data(content, @cc_uri)
     end
   end
 end
