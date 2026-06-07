@@ -253,7 +253,18 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # bootstrap-wildcard bridge masked this dependency). The cap
          # is narrowed to the exact Behavior + action; the runtime
          # dispatch path substitutes the per-agent instance + workspace.
-         Capability.cap(:agent, Sandbox, :write_path)
+         Capability.cap(:agent, Sandbox, :write_path),
+         # #607 self-evolve (SW-UPD) — Socialware.CascadeRepoint repoints a
+         # target agent's user cascade layer at the new immutable config
+         # object by reading its sandbox (cascade_resolution) and writing it
+         # back. The user-facing `config_update.apply_delta`/`repoint` action
+         # is gated by the CALLER's caps; the downstream sandbox read/write is
+         # an agent-internal effect that runs under THIS principal (the
+         # caller's session-scoped grant is not Sandbox-on-the-target-agent).
+         # `:write_path` is shared with record_sandbox_state above; `:read`
+         # is added because CascadeRepoint must read-modify-write the
+         # cascade_resolution.
+         Capability.cap(:agent, Sandbox, :read)
          # Allen 2026-05-26 — `cap(:user, ApiKeys, :get_api_key)` was
          # part of `system://agent-internal` pre ApiKeys-to-Agent flip.
          # Post-flip, ApiKeys lives on the agent's own Kind and the

@@ -52,15 +52,25 @@ defmodule Ezagent.Behavior.ConfigUpdate do
 
   @spec handle_apply_delta(map(), map()) :: {:ok, map(), [term()]} | {:error, term()}
   def handle_apply_delta(%{turn_id: turn_id}, ctx) do
-    # #607 codex CRITICAL — pointer-advance + cascade-repoint must be ATOMIC. The
-    # agent's user cascade layer is repointed at the pointer's STABLE resource
-    # URI (`ConfigProjection.pointer_uri/4`), which keys the POINTER, not a
-    # specific object — so the repoint is INDEPENDENT of which immutable object
-    # the pointer points at, and can therefore run BEFORE `write_and_point`.
-    # Doing the repoint first means a repoint failure (no cascade_resolution /
-    # no_such_actor / authz / write error) returns error WITHOUT ever advancing
-    # the mutable config pointer. A later spawn can never consume a config whose
-    # repoint was rejected, because the pointer was never moved.
+    # #607 codex CRITICAL — OBJECT-KEYED, so apply_delta is ATOMIC-by-ordering
+    # across the two durable stores with no shared transaction (spec section 7.4:
+    # repoint the agent's high cascade layer "at it" — the new IMMUTABLE config
+    # object). The agent's user cascade layer URI names a SPECIFIC immutable
+    # object (`ConfigProjection.object_uri/2`), NOT the mutable pointer. The
+    # three steps are ordered so no single-step failure leaves harmful
+    # uncompensated state:
+    #
+    #   1. `ConfigStore.write_config` — write the immutable object (fallible,
+    #      atomic within itself). On failure NOTHING else has happened.
+    #   2. repoint the agent's user cascade layer at the NEW OBJECT's URI. The
+    #      object already exists + is immutable, so the layer can never resolve
+    #      stale/:none. On failure the object is an orphan (unreferenced row in an
+    #      append-only store) and NO pointer moved — non-harmful; a retry writes a
+    #      new object and repoints again.
+    #   3. `ConfigStore.put_pointer` — current+previous bookkeeping for rollback,
+    #      LAST. On failure the agent is already correctly repointed to the new
+    #      object (the consume is real); only the rollback-target bookkeeping is
+    #      stale — non-harmful (a fresh apply_delta re-establishes it).
     with {:ok, turn} <- settled_turn(ctx, turn_id),
          {:ok, delta} <- config_delta(turn),
          attrs <- attrs_from_delta(delta, turn_id, ctx),
@@ -72,13 +82,15 @@ defmodule Ezagent.Behavior.ConfigUpdate do
              attrs.key,
              attrs.patch
            ),
-         {:ok, repoint_status} <- repoint_agent_layer(attrs, ctx),
-         {:ok, result} <- ConfigStore.write_and_point(Map.put(attrs, :body, body)) do
+         {:ok, object} <- ConfigStore.write_config(Map.put(attrs, :body, body)),
+         {:ok, repoint_status} <- repoint_agent_layer(attrs, object.id),
+         {:ok, %{previous_config_id: previous}} <-
+           ConfigStore.put_pointer(Map.put(attrs, :config_id, object.id)) do
       applied = ctx.read.(:applied, %{})
 
       reply = %{
-        config_id: result.config_id,
-        previous_config_id: result.previous_config_id,
+        config_id: object.id,
+        previous_config_id: previous,
         repoint_status: repoint_status
       }
 
@@ -87,13 +99,15 @@ defmodule Ezagent.Behavior.ConfigUpdate do
   end
 
   # #607 — consume seam: repoint the subject agent's #17 high (user) cascade layer
-  # at the immutable config pointer's stable resource URI, so the next spawn
+  # at the IMMUTABLE config object's stable resource URI, so the next spawn
   # re-materializes the new soul. `subject_uri` IS the target agent.
   #
-  # `CascadeRepoint.repoint_user_layer/6` writes the pointer URI into the agent's
+  # `CascadeRepoint.repoint_user_layer/3` writes the object URI into the agent's
   # DURABLE spawn source (its Sandbox `respawn_template_data.cascade_resolution`,
   # snapshot-persisted), so a cold next-spawn resolves it — this is what makes
-  # the consume real, not write-only (#607 codex HIGH). Success → `:repointed`.
+  # the consume real, not write-only (#607 codex HIGH). The sandbox read/write
+  # runs under `system://agent-internal` (the user's caps already gated the
+  # action; the sandbox effect is agent-internal). Success -> `:repointed`.
   #
   # Every error FAILS LOUD (no silent `:deferred`):
   #
@@ -105,14 +119,11 @@ defmodule Ezagent.Behavior.ConfigUpdate do
   #     falsely reports the config as applied — surface it as an error instead.
   #   * any other dispatch/write error (`:no_such_actor` for a never-spawned
   #     agent, cap denial, write failure) — likewise loud.
-  defp repoint_agent_layer(attrs, ctx) do
+  defp repoint_agent_layer(attrs, object_id) do
     case CascadeRepoint.repoint_user_layer(
            attrs.subject_uri,
-           attrs.layer,
            attrs.workspace_uri,
-           attrs.subject_uri,
-           attrs.key,
-           ctx
+           object_id
          ) do
       :ok -> {:ok, :repointed}
       {:error, _reason} = err -> err
@@ -121,6 +132,11 @@ defmodule Ezagent.Behavior.ConfigUpdate do
 
   @spec handle_repoint(map(), map()) :: {:ok, map(), [term()]} | {:error, term()}
   def handle_repoint(args, ctx) do
+    # Rollback / explicit advance: repoint the agent's user cascade layer at the
+    # TARGET immutable object (`config_id`), then update the pointer bookkeeping.
+    # Same object-keyed ordering as apply_delta: the target object already exists
+    # + is immutable, so the layer can never resolve stale; the bookkeeping write
+    # is LAST so a failure there leaves the agent correctly repointed.
     attrs = %{
       layer: Map.fetch!(args, :layer),
       workspace_uri: Map.fetch!(args, :workspace_uri),
@@ -131,12 +147,9 @@ defmodule Ezagent.Behavior.ConfigUpdate do
       source_turn_id: "repoint:#{URI.to_string(ctx.self_uri)}"
     }
 
-    case ConfigStore.put_pointer(attrs) do
-      {:ok, %{previous_config_id: previous}} ->
-        {:ok, %{config_id: attrs.config_id, previous_config_id: previous}, []}
-
-      {:error, _reason} = error ->
-        error
+    with {:ok, :repointed} <- repoint_agent_layer(attrs, attrs.config_id),
+         {:ok, %{previous_config_id: previous}} <- ConfigStore.put_pointer(attrs) do
+      {:ok, %{config_id: attrs.config_id, previous_config_id: previous}, []}
     end
   end
 

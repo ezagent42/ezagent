@@ -113,6 +113,21 @@ defmodule Ezagent.Socialware.ConfigStore do
   @spec get!(String.t()) :: ConfigObject.t()
   def get!(config_id), do: Repo.get!(ConfigObject, config_id)
 
+  @doc """
+  Fetch an immutable config object by id.
+
+  Returns `{:ok, object}` or `:none` (no such object). Used by
+  `Ezagent.Socialware.ConfigProjection.resolve_config_dir/1` to materialize the
+  SPECIFIC immutable object an object-keyed cascade-layer URI names.
+  """
+  @spec fetch_object(String.t()) :: {:ok, ConfigObject.t()} | :none
+  def fetch_object(object_id) when is_binary(object_id) do
+    case Repo.get(ConfigObject, object_id) do
+      %ConfigObject{} = object -> {:ok, object}
+      nil -> :none
+    end
+  end
+
   @spec merge_delta(
           atom() | String.t(),
           URI.t() | String.t(),

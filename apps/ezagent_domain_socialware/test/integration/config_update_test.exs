@@ -26,13 +26,25 @@ defmodule EzagentDomainSocialware.Integration.ConfigUpdateTest do
   end
 
   defp dispatch(session_uri, behavior, action, args) do
+    dispatch_as(
+      session_uri,
+      behavior,
+      action,
+      args,
+      Ezagent.SystemPrincipal.caps("system://bootstrap")
+    )
+  end
+
+  # Dispatch with an explicit caller cap set (#607 round-2 HIGH — exercise the
+  # ordinary session-scoped user path, not the bootstrap wildcard).
+  defp dispatch_as(session_uri, behavior, action, args, caps) do
     Invocation.dispatch(%Invocation{
       target: target(session_uri, behavior, action),
       mode: :call,
       args: args,
       ctx: %{
         caller: User.admin_uri(),
-        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        caps: caps,
         reply: {:caller_inbox, self()}
       }
     })
@@ -60,10 +72,10 @@ defmodule EzagentDomainSocialware.Integration.ConfigUpdateTest do
   end
 
   test "immutable config changes via settled turn and rollback repoints deterministically", ctx do
-    # #607 codex CRITICAL — apply_delta repoints the subject agent's user
-    # cascade layer BEFORE advancing the config pointer, so the agent must be
-    # live with a cascade_resolution for the repoint (and thus the config
-    # change) to succeed.
+    # #607 codex CRITICAL — apply_delta is object-keyed: write the immutable
+    # object, repoint the subject agent's user cascade layer at it, THEN advance
+    # the bookkeeping pointer. The agent must be live with a cascade_resolution
+    # for the repoint (and thus the config change) to succeed.
     spawn_agent_with_cascade(ctx.agent, ctx.workspace)
 
     before = ConfigStore.resolve!(:workspace, ctx.workspace, ctx.agent, "advisor.behavior")
@@ -181,12 +193,11 @@ defmodule EzagentDomainSocialware.Integration.ConfigUpdateTest do
              (is_tuple(reason) and elem(reason, 0) == :no_cascade_resolution)
   end
 
-  # #607 codex CRITICAL — pointer-advance and cascade-repoint must be ATOMIC.
-  # `write_and_point` advances the mutable pointer; if the subsequent repoint
-  # fails (here: subject agent has no cascade_resolution → loud error), the
-  # action returns error but the pointer MUST NOT be left advanced — otherwise a
-  # later spawn consumes a config the repoint rejected. Assert the pointer still
-  # resolves to the PRIOR object after a failed repoint.
+  # #607 codex CRITICAL — object-keyed apply_delta is ATOMIC by ordering:
+  # write immutable object → repoint agent layer → put_pointer (bookkeeping) LAST.
+  # If the repoint fails (here: subject agent has no cascade_resolution → loud
+  # error), put_pointer never runs, so the pointer MUST still resolve to the PRIOR
+  # object (only an unreferenced orphan object was written — non-harmful).
   test "a failed repoint leaves the config pointer unchanged (atomic)", ctx do
     # Seed a USER-layer pointer (distinct key from the :workspace seed) and an
     # agent with a sandbox but NO cascade_resolution so the repoint fails loud.
@@ -245,11 +256,142 @@ defmodule EzagentDomainSocialware.Integration.ConfigUpdateTest do
 
     assert {:error, _} = dispatch(ctx.session, :config_update, :apply_delta, %{turn_id: turn_id})
 
-    # The repoint failed — the pointer MUST still resolve to the prior object.
+    # The repoint failed (step 2) → put_pointer (step 3) never ran. BOTH durable
+    # stores are consistent (no partial):
+    #
+    #   * ConfigStore — the pointer MUST still resolve to the prior object (the
+    #     only residue is an unreferenced immutable orphan object from step 1,
+    #     which is non-harmful in an append-only store).
     after_fail = ConfigStore.resolve!(:user, ctx.workspace, ctx.agent, "advisor.behavior")
     assert after_fail.id == before.id
     assert after_fail.body == %{"tone" => "neutral"}
     refute after_fail.body["tone"] == "decisive"
+
+    #   * agent sandbox — the user cascade layer MUST NOT have been advanced
+    #     (the agent had no cascade_resolution, so the read failed before any
+    #     write; the layer is absent, never pointing at the new object).
+    {:ok, sandbox} =
+      Invocation.dispatch(%Invocation{
+        target: Ezagent.URI.new!("#{URI.to_string(ctx.agent)}?action=sandbox.read"),
+        mode: :call,
+        args: %{},
+        ctx: %{
+          caller: User.admin_uri(),
+          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+          reply: {:caller_inbox, self()}
+        }
+      })
+
+    refute Map.has_key?(sandbox.respawn_template_data || %{}, "cascade_resolution")
+  end
+
+  # #607 codex round-2 HIGH — the legit approved-turn SW-UPD flow must succeed
+  # for a NON-admin caller holding only ordinary session-scoped caps. The
+  # downstream sandbox read/write on the target agent run under
+  # `system://agent-internal`; if CascadeRepoint forwarded the caller's caps the
+  # repoint would fail `:unauthorized` because `User.default_caps/1` is
+  # session-scoped, NOT Sandbox-on-the-target-agent. Drive the full settle →
+  # apply_delta via dispatch with `User.default_caps(workspace)` and assert the
+  # live-agent repoint SUCCEEDS (the config actually changes).
+  test "apply_delta succeeds under ordinary session-scoped user caps (non-bootstrap)", ctx do
+    spawn_agent_with_cascade(ctx.agent, ctx.workspace)
+    user_caps = MapSet.new(User.default_caps(ctx.workspace))
+
+    {:ok, %{turn_id: turn_id}} =
+      dispatch_as(
+        ctx.session,
+        :turn,
+        :open,
+        %{trigger: %{message_id: "ud"}, opened_at: 1},
+        user_caps
+      )
+
+    {:ok, _} =
+      dispatch_as(
+        ctx.session,
+        :turn,
+        :compose,
+        %{
+          turn_id: turn_id,
+          result_refs: [
+            %{
+              kind: :config_delta,
+              layer: :workspace,
+              workspace_uri: ctx.workspace,
+              subject_uri: ctx.agent,
+              key: "advisor.behavior",
+              patch: %{"tone" => "decisive"}
+            }
+          ]
+        },
+        user_caps
+      )
+
+    {:ok, _} =
+      dispatch_as(
+        ctx.session,
+        :turn,
+        :claim,
+        %{turn_id: turn_id, by: User.admin_uri()},
+        user_caps
+      )
+
+    {:ok, _} = dispatch_as(ctx.session, :turn, :settle, %{turn_id: turn_id}, user_caps)
+
+    # Drive apply_delta synchronously under ordinary session-scoped caps. The
+    # sandbox repoint (agent-internal effect) MUST succeed — proving the
+    # internal-principal path, not the caller's caps.
+    assert {:ok, %{config_id: config_id, repoint_status: :repointed}} =
+             dispatch_as(
+               ctx.session,
+               :config_update,
+               :apply_delta,
+               %{turn_id: turn_id},
+               user_caps
+             )
+
+    changed = ConfigStore.resolve!(:workspace, ctx.workspace, ctx.agent, "advisor.behavior")
+    assert changed.id == config_id
+    assert changed.body["tone"] == "decisive"
+  end
+
+  # #607 codex round-2 HIGH (companion) — widening did NOT happen: an apply_delta
+  # whose CALLER holds NO caps for the action is still rejected at the dispatch
+  # gate (the action itself is cap-checked; only the downstream agent-internal
+  # sandbox effect runs under the system principal).
+  test "apply_delta itself is rejected when the caller lacks the action cap", ctx do
+    spawn_agent_with_cascade(ctx.agent, ctx.workspace)
+
+    {:ok, %{turn_id: turn_id}} =
+      dispatch(ctx.session, :turn, :open, %{trigger: %{message_id: "unauth"}, opened_at: 1})
+
+    {:ok, _} =
+      dispatch(ctx.session, :turn, :compose, %{
+        turn_id: turn_id,
+        result_refs: [
+          %{
+            kind: :config_delta,
+            layer: :workspace,
+            workspace_uri: ctx.workspace,
+            subject_uri: ctx.agent,
+            key: "advisor.behavior",
+            patch: %{"tone" => "decisive"}
+          }
+        ]
+      })
+
+    {:ok, _} = dispatch(ctx.session, :turn, :claim, %{turn_id: turn_id, by: User.admin_uri()})
+    {:ok, _} = dispatch(ctx.session, :turn, :settle, %{turn_id: turn_id})
+
+    # Empty caps → the apply_delta action gate rejects before any effect runs.
+    assert {:error, _} =
+             dispatch_as(
+               ctx.session,
+               :config_update,
+               :apply_delta,
+               %{turn_id: turn_id},
+               MapSet.new()
+             )
   end
 
   test "two writes retain two distinct immutable config objects", ctx do
