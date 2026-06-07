@@ -4,7 +4,7 @@
   def_count_admin_live: 69,
   def_count_cc_agent: 103,
   def_count_orchestrator_tools: 83,
-  def_count_session_creator: 78,
+  def_count_session_creator: 67,
   def_count_capability: 22,
   spawn_registry_call_sites: 38,
   spawn_registry_modules: 32,
