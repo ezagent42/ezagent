@@ -76,6 +76,9 @@ defmodule Ezagent.Behavior.Turn do
   @impl Ezagent.Lifecycle
   def activate(_state, _ctx), do: {:ok, %{}}
 
+  @spec reads_siblings() :: [:surface]
+  def reads_siblings, do: [:surface]
+
   @spec data_owner(URI.t() | :any | term()) :: URI.t() | :any | :no_owner
   def data_owner(%URI{scheme: "session"} = session_uri) do
     Ezagent.Behavior.Chat.data_owner(session_uri)
@@ -148,8 +151,9 @@ defmodule Ezagent.Behavior.Turn do
     update_turn(ctx, turn_id, fn turn ->
       case compose_allowed?(turn) do
         :ok ->
-          updated = %{turn | result: result_refs, status: :composing}
-          {:ok, updated, %{status: :composing}, []}
+          {result, reply, effects} = compose_result_and_effects(turn, turn_id, result_refs, ctx)
+          updated = %{turn | result: result, status: :composing}
+          {:ok, updated, reply, effects}
 
         {:error, reason} ->
           {:error, reason}
@@ -177,7 +181,7 @@ defmodule Ezagent.Behavior.Turn do
       case transition(turn.status, :settled) do
         :ok ->
           updated = %{turn | status: :settled}
-          {:ok, updated, %{status: :settled}, []}
+          {:ok, updated, %{status: :settled}, approve_effects(turn, ctx)}
 
         {:error, reason} ->
           {:error, reason}
@@ -243,6 +247,61 @@ defmodule Ezagent.Behavior.Turn do
       )
 
     {:dispatch, Cmd.new(ctx.self_uri, :send, %{message: message}, dispatch_ctx(ctx))}
+  end
+
+  defp compose_result_and_effects(turn, turn_id, result_refs, ctx) do
+    case page_tree_for(turn, result_refs) do
+      nil ->
+        {result_refs, %{status: :composing}, []}
+
+      page_tree ->
+        version = next_surface_version(ctx)
+        result = %{refs: result_refs, version: version}
+
+        effect =
+          {:dispatch,
+           Cmd.new(
+             ctx.self_uri,
+             :put_version,
+             %{turn_id: turn_id, tree: page_tree},
+             dispatch_ctx(ctx)
+           )}
+
+        {result, %{status: :composing, version: version}, [effect]}
+    end
+  end
+
+  defp approve_effects(%{mode: :auto, result: %{version: version}}, ctx)
+       when is_integer(version) do
+    [{:dispatch, Cmd.new(ctx.self_uri, :approve, %{version: version}, dispatch_ctx(ctx))}]
+  end
+
+  defp approve_effects(_turn, _ctx), do: []
+
+  defp page_tree_for(turn, result_refs) do
+    turn.collected
+    |> Map.values()
+    |> Kernel.++(result_refs)
+    |> Enum.find_value(&page_tree_from_ref/1)
+  end
+
+  defp page_tree_from_ref(ref) when is_map(ref) do
+    kind =
+      Map.get(ref, :kind) || Map.get(ref, "kind") || Map.get(ref, :type) || Map.get(ref, "type")
+
+    tree = Map.get(ref, :tree) || Map.get(ref, "tree")
+
+    if kind in [:page, "page"] and is_map(tree), do: tree
+  end
+
+  defp page_tree_from_ref(_ref), do: nil
+
+  defp next_surface_version(ctx) do
+    ctx
+    |> Map.get(:siblings, %{})
+    |> Map.get(:surface, %{})
+    |> Map.get(:version_seq, 0)
+    |> Kernel.+(1)
   end
 
   defp dispatch_ctx(ctx) do

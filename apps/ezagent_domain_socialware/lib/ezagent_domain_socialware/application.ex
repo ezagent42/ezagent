@@ -9,7 +9,7 @@ defmodule EzagentDomainSocialware.Application do
   use Application
 
   alias Ezagent.CapabilityRegistry
-  alias Ezagent.Behavior.{Chat, Turn}
+  alias Ezagent.Behavior.{Chat, Surface, Turn}
   alias Ezagent.Entity.SocialwareSession
 
   @impl true
@@ -34,6 +34,10 @@ defmodule EzagentDomainSocialware.Application do
 
     Enum.each(Turn.actions(), fn action ->
       :ok = CapabilityRegistry.register(SocialwareSession, action, Turn)
+    end)
+
+    Enum.each(Surface.actions(), fn action ->
+      :ok = CapabilityRegistry.register(SocialwareSession, action, Surface)
     end)
 
     :ok
