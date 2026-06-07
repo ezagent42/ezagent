@@ -252,18 +252,42 @@ naming a stored dir).
 explicitly registered with:
 
 ```elixir
+@type scope :: %{
+        # the authenticated workspace the caller is acting within (URI or name).
+        # For config-dir, the agent's authoritative workspace; for uploads, the
+        # caller's request-scoped workspace from the controller/LiveView mount.
+        required(:workspace) => URI.t() | String.t(),
+        # optional principal for richer per-type checks (socialware re-loads the
+        # object and compares its workspace_uri; it may ignore this field).
+        optional(:principal) => URI.t() | nil
+      }
+
 @type type_spec :: %{
         # the Home component the bytes live under, e.g. "uploads" or "cc-agents"
         backend_component: String.t(),
-        # per-type authority check: given the resolved URI, assert the caller's
-        # structural <ws> segment is authoritative for this artifact. The
-        # socialware template re-loads the object and compares workspace_uri;
-        # config-dir/uploads compare the URI's <ws> against the request scope.
-        authority: (URI.t() -> :ok | {:error, term()})
+        # per-type authority check: receives BOTH the URI AND the caller's
+        # authenticated scope, and asserts the URI's structural <ws> segment is
+        # authoritative for THIS caller. A pure `(URI.t() -> ...)` is insufficient
+        # (codex HIGH): a resolver with no caller context cannot tell who is
+        # asking, so anyone able to mint resource://victim/uploads/name would get
+        # a path. The scope is the authorization context.
+        authority: (URI.t(), scope() -> :ok | {:error, term()})
       }
 ```
 
-**Resolution algorithm** for `resolve(uri)` where `uri = resource://<ws>/<type>/<name>`:
+**The resolver is authorization-bearing, not authorization-optional.**
+`resolve/2` takes the caller's authenticated `scope` as a required argument and
+runs the per-`<type>` `authority/2` against it BEFORE any backend resolve. There
+is no `resolve/1` that skips authz. Call sites obtain `scope.workspace` from
+their authenticated context (the agent's workspace for config-dir; the
+controller/LiveView-mount workspace for uploads) — never from the URI being
+resolved (that would be circular). This is what makes "move upload authz to the
+resolver" sound: the URI's `<ws>` segment must EQUAL `scope.workspace`, so a
+forged `resource://victim/uploads/name` resolved under scope `attacker` fails
+authority.
+
+**Resolution algorithm** for `resolve(uri, scope)` where
+`uri = resource://<ws>/<type>/<name>`:
 
 1. **Reject malformed:** `uri.scheme == "resource"` and the URI parses to a
    3-segment `<ws>/<type>/<name>` via `Ezagent.URI.workspace_name/1`,
@@ -280,10 +304,11 @@ explicitly registered with:
    `segment!/1` would have produced. `Path.join` is never reached with an
    unsafe segment. (Closes the codex-HIGH gap: `segment!/1` does not reject
    `.`/`..`.)
-4. **Authority check:** run the `type_spec.authority` function for `<type>`. On
-   `{:error, reason}` → `{:error, reason}` (fail loud — the socialware template's
-   cross-tenant mismatch is `raise`; config-dir/uploads compare the structural
-   `<ws>` against the request's authoritative workspace).
+4. **Authority check:** run the `type_spec.authority` function for `<type>` as
+   `authority.(uri, scope)`. It compares the URI's structural `<ws>` segment
+   against `scope.workspace` (and, for socialware, re-loads the object and
+   compares its `workspace_uri`). On `{:error, reason}` → `{:error, reason}`
+   (fail loud; a cross-tenant mismatch is fatal, never a silent `:none`).
 5. **Backend resolve:** `{:ok, Path.join([Ezagent.Home.path(backend_component),
    <ws>, <name>])}`. (Home is the *backend*, reached only after 1–4.)
 
@@ -296,15 +321,31 @@ first (config-dir types), falling through to socialware for
 `socialware-config-object`. Ordering is explicit and total — every `resource`
 config-dir URI matches exactly one registered owner or fails loud.
 
+**Threading `scope` through the `:config_dir` UriQuery attribute.** The
+`UriQuery` resolver shape is 1-arg (`resolver/1`), and the cascade calls
+`UriQuery.resolve(:config_dir, uri)` today. To carry the caller's authenticated
+scope without breaking that shape, the `:config_dir` `resource` clause passes
+`{uri, scope}` as the resolver arg when delegating to the generic FS resolver,
+and `scope.workspace` for config-dir is the **agent's authoritative workspace**
+(derived from the agent/template URI the cascade is materializing, which IS the
+authenticated subject of the cascade — not attacker-supplied). The socialware
+delegation is unchanged: socialware re-loads the immutable object and compares
+its stored `workspace_uri`, so it is self-authorizing and ignores `scope`.
+Uploads (P2) call the generic resolver directly with the request-mount scope, so
+they do not depend on the `:config_dir` attribute at all. (Exact arg-tuple shape
+pinned in P1; the invariant is: the generic resolver always receives a scope and
+always runs `authority/2`.)
+
 **Properties (acceptance invariants for the resolver):**
 
 - **R-1.** No `resource://` URI with an unregistered `<type>` ever resolves to a
   filesystem path (returns `:none`).
 - **R-2.** No `<ws>`/`<type>`/`<name>` segment equal to `.`/`..` or containing a
   separator/NUL ever reaches `Path.join` (returns `{:error,_}` before resolve).
-- **R-3.** Every registered `<type>` has a non-trivial `authority/1`; a
-  workspace-segment mismatch fails loud (no silent `:none` that would be
-  swallowed as "not mine").
+- **R-3.** Every registered `<type>` has a non-trivial `authority/2`; resolution
+  always runs it with the caller's `scope`; a workspace-segment mismatch
+  (`uri.<ws> != scope.workspace`) fails loud (no silent `:none` swallowed as
+  "not mine"). There is no `resolve/1` that bypasses authority.
 - **R-4.** `Home.path` is called only on the success path *after* R-1..R-3 pass,
   and only with the registered `backend_component`.
 
@@ -326,22 +367,42 @@ the exact-anchor exception list AND **not** on the line-anchored baseline.
 warn-then-flip. A new or moved runtime `Home.path` call that is neither
 exempt-by-anchor nor on the baseline fails CI on the PR that introduces it.
 
-**Exact module/function (or line) anchor exceptions — NOT a directory
-allowlist.** A directory-shaped allowlist (e.g. "all of `lib/mix/tasks/`") could
-let an OS-handle file become a broad raw-path escape hatch. Exceptions are exact
-anchors, each carrying a stated reason:
+**Exact module/function/line anchor exceptions — NO globs, NO directory
+allowlist.** A directory-shaped or glob exception (e.g. "all of
+`lib/mix/tasks/`" or `ezagent.home.*`) could let an OS-handle file or a newly
+added task become a broad raw-path escape hatch — a NEW `Home.path` call added
+under a globbed task file would evade the hard-fail-new gate (codex MEDIUM).
+Therefore every exception is a concrete `Module.function/arity` + line anchor,
+each carrying a stated reason. The full enumerated set (no `*`, no prefix
+match) — pinned here, not "to be pinned later":
 
-| Anchor | Reason |
+| Anchor (exact `Module.function/arity` @ line) | Reason |
 |---|---|
-| `config/runtime.exs` (`:14,17`) | db path at config-eval — `UriQuery` ETS absent (D1) |
-| `config/dev.exs` (`:22`) | deliberately inlines env logic at config-eval |
-| `apps/ezagent_core/lib/ezagent/runtime.ex` (`cookie_path/0`, node-name) | early boot, pre-supervision |
-| `apps/ezagent_core/lib/ezagent/runtime/pid_file.ex` | OS pid-file handle, pre/independent of registry |
-| `apps/ezagent_core/lib/mix/tasks/ezagent.home.*` | operator mix-tasks, often app-not-started |
-| `apps/ezagent_core/lib/mix/tasks/ezagent.bootstrap*` | operator mix-task |
-| `apps/ezagent_core/lib/ezagent/home/migration.ex` | operator migration tooling |
-| `apps/ezagent_plugin_codex/lib/ezagent/template/codex_agent.ex` `default_app_server_socket_path/1` (`:880-892`) | OS-handle socket, SUN_LEN short-path, not URI-addressable (D2) |
-| pty-pid OS-handle site (exact module/function to be pinned in P0.5) | OS pid-file handle (D2) |
+| `config/runtime.exs` (lines 14, 17) | db path at config-eval — `UriQuery` ETS absent (D1) |
+| `config/dev.exs` (line 22) | deliberately inlines env logic at config-eval |
+| `Ezagent.Runtime.cookie_path/0` (`runtime.ex:28-29`) + node-name fn | early boot, pre-supervision |
+| `EzagentRuntime.PidFile.dir/1` (`runtime/pid_file.ex:95-98`, `Home.profile_dir/0`) | OS pid-file (the "pty-pids" handle) — node/agent pid files, registry-independent (D2) |
+| `Mix.Tasks.Ezagent.Home.Init.run/1` + its `Home.path`/`profile_dir` helpers (`ezagent.home.init.ex:30,32,33,36,49,79,145,159`) | operator mix-task, app-not-started |
+| `Mix.Tasks.Ezagent.Home.Backup.run/1` (`ezagent.home.backup.ex:62`) | operator mix-task |
+| `Mix.Tasks.Ezagent.Home.Restore.run/1` (`ezagent.home.restore.ex`, `Home.*` call sites) | operator mix-task |
+| `Mix.Tasks.Ezagent.Home.AdoptDb.run/1` (`ezagent.home.adopt_db.ex:61`) | operator mix-task |
+| `Mix.Tasks.Ezagent.Bootstrap.run/1` (`ezagent.bootstrap.ex:89,90,91,92`) | operator mix-task |
+| `Ezagent.Home.Migration` `Home.*` call sites (`home/migration.ex`) | operator migration tooling |
+| `EzagentPluginCodex` `Ezagent.Template.CodexAgent.default_app_server_socket_path/1` (`codex_agent.ex:880-892`) | OS-handle socket, SUN_LEN short-path, not URI-addressable (D2) |
+
+> **P0.5 implementation note:** the exact line numbers above are a snapshot
+> against `origin/main` at spec time; P0.5 pins each as a `Module.function/arity`
+> anchor (line as secondary), and the scanner test (S-2) asserts every exception
+> entry is a concrete module+function — **rejecting any entry that contains a
+> glob (`*`) or a bare path prefix**. Adding a new exception requires a new
+> concrete anchor + stated reason, reviewed in its PR.
+
+> The config files (`config/runtime.exs`, `config/dev.exs`) are outside
+> `apps/**/*.ex`, so the scanner does not see them today. P0.5's category is
+> defined over the `apps/` globs; the config-file callers are listed here for
+> completeness of the sanctioned surface and need no scanner exception. If the
+> scanner globs are ever widened to include `config/`, these become exact
+> anchors with the stated reason.
 
 > The config files (`config/runtime.exs`, `config/dev.exs`) are outside
 > `apps/**/*.ex`, so the scanner does not see them today. P0.5's category is
@@ -364,8 +425,10 @@ family migrates. When the baseline is empty the lockdown is complete.
 
 - **S-1.** A *new* runtime `Home.path` call (not exempt, not baselined) fails
   `mix ezagent.uri_query.scan --fail-category home_path_in_runtime_code`.
-- **S-2.** Every exception is an exact module/function/line anchor with a stated
-  reason; there is no directory-shaped allowlist.
+- **S-2.** Every exception is an exact `Module.function/arity` + line anchor
+  with a stated reason; a scanner test **rejects any exception entry containing a
+  glob (`*`) or a bare path/directory prefix**, mechanically enforcing the
+  exact-anchor guarantee.
 - **S-3.** The baseline only ever shrinks (P3); the exception surface is never
   widened.
 
@@ -380,7 +443,7 @@ each carries `/codex:adversarial-review` per `feedback_codex_review_every_pr`.
 
 - **Build** `Ezagent.Resource.FsResolver` per §5.1 (registration-only, closed
   per-`<type>` allowlist, `.`/`..`/separator/NUL rejection before `Path.join`,
-  per-type `authority/1`). Register **zero** types initially (or only a test
+  per-type `authority/2`). Register **zero** types initially (or only a test
   type) — this PR introduces the mechanism, not a migration.
 - **Do NOT** rewire `:config_dir` yet; socialware delegation is untouched.
 - **Tests (TDD):** unit tests for R-1..R-4 — unregistered type → `:none`;
@@ -416,7 +479,7 @@ the cascade — the cascade calls `UriQuery.resolve(:config_dir, …)` today —
 is lower-risk; the cascade is already URI-addressed, D4.)*
 
 - **Register** a config-dir `<type>` (e.g. the existing `"<ns>-agents"`
-  component, generalized) on the P0 resolver, with an `authority/1` that asserts
+  component, generalized) on the P0 resolver, with an `authority/2` that asserts
   the URI's `<ws>` segment against the agent's workspace.
 - **Re-express** `Sandbox.ConfigDir.path/2` (`config_dir.ex:30-36`) to build a
   `resource://<ws>/<ns>-agents/<name>` URI and resolve it through the seam, with
@@ -451,12 +514,20 @@ is lower-risk; the cascade is already URI-addressed, D4.)*
 **P2a — Download contract + workspace-segment authorization (no byte move yet):**
 
 - **Change the download contract** so the request carries/recovers the full
-  `resource://uploads/<ws>/<name>` URI (e.g. route `GET /files/:ws/:name` or a
-  signed token encoding the full URI; exact form decided in the PR, but it MUST
-  carry the `<ws>` segment).
-- **Move authorization** to operate on that exact URI's `<ws>` segment (the
-  resolver's `authority/1` for the `uploads` type), replacing / augmenting
-  `caller_in_attaching_messages?/2`.
+  **workspace-first** `resource://<ws>/uploads/<name>` URI — constructed via
+  `Ezagent.URI.resource(ws, :uploads, name)` (workspace-first; see §5.1 and the
+  doc-drift fix below), NOT a `resource://uploads/<ws>/<name>` type-first form
+  (which the resolver would mis-parse as workspace=`uploads`, type=`<ws>`,
+  causing an allowlist miss + wrong authority check — codex HIGH). Mechanism:
+  e.g. route `GET /files/:ws/:name` or a signed token encoding the full URI;
+  exact form decided in the PR (OI-1), but it MUST carry the `<ws>` segment in
+  workspace-first order.
+- **Move authorization** to operate on that exact URI's `<ws>` segment via the
+  resolver's `authority/2` for the `uploads` type — called as
+  `authority.(uri, %{workspace: request_scope_workspace})` where the request
+  scope comes from the authenticated controller/LiveView mount, NOT from the URI
+  — replacing / augmenting `caller_in_attaching_messages?/2`. The check is
+  `uri.<ws> == scope.workspace`.
 - **Back-compat window:** keep `GET /files/:filename` resolving for already-
   minted filename-only links during a stated deprecation window (the ONE
   sanctioned shim, N6), with a regression test for the **same filename in two
@@ -470,7 +541,7 @@ is lower-risk; the cascade is already URI-addressed, D4.)*
 **P2b — Move the bytes through the resolver:**
 
 - **Register** the `uploads` `<type>` on the P0 resolver (backend component
-  `"uploads"`, `authority/1` = workspace-segment check).
+  `"uploads"`, `authority/2` = workspace-segment check).
 - **Write** uploads via the resolver
   (`resolve(resource://<ws>/uploads/<name>)` → `Home.path("uploads")/<ws>/<name>`),
   replacing `admin_live.ex:701,731`.
@@ -479,7 +550,7 @@ is lower-risk; the cascade is already URI-addressed, D4.)*
 - **Remove** the uploads `Home.path("uploads")` calls from the P0.5 baseline.
 - **Tests:** same-filename-two-workspaces (write + read isolation); foreign-`<ws>`
   download denied; back-compat link still resolves within the window;
-  upload→download round-trip; resolver `authority/1` enforced.
+  upload→download round-trip; resolver `authority/2` enforced.
 - **Acceptance gate:** all upload/download tests green; authz is by `<ws>`
   segment; bytes live at `…/uploads/<ws>/<name>`; baseline shrinks by the
   uploads entries.
@@ -514,20 +585,25 @@ db / runtime cookie / codex socket / pty-pids stay on **sanctioned raw `Home`**
 ## 7. Resolution algorithm (consolidated reference)
 
 ```
-resolve(:config_dir, uri):                       # single owner, uri_query_resolvers.ex
+resolve(:config_dir, {uri, scope}):              # single owner, uri_query_resolvers.ex
   case uri.scheme:
-    "template" | "entity" -> stored config_dir string         # unchanged
-    "resource"            -> Resource.FsResolver.resolve(uri)  # P1: generic first
+    "template" | "entity" -> stored config_dir string                # unchanged
+    "resource"            -> Resource.FsResolver.resolve(uri, scope)  # P1: generic first
                              |> on :none -> resolve(:socialware_config_dir, uri)
     _                     -> :none
+  # scope.workspace for config-dir = the agent's authoritative workspace
+  # (the cascade's authenticated subject), NOT attacker-supplied.
 
-Resource.FsResolver.resolve(uri = resource://<ws>/<type>/<name>):   # §5.1
-  1. parse 3 segments         -> else :none / {:error, :malformed_resource_uri}
-  2. <type> in allowlist?     -> else :none                  # R-1, NO Home catch-all
-  3. segments safe?           -> else {:error, _}            # R-2, before Path.join
+Resource.FsResolver.resolve(uri = resource://<ws>/<type>/<name>, scope):   # §5.1
+  1. parse 3 segments               -> else :none / {:error, :malformed_resource_uri}
+  2. <type> in allowlist?           -> else :none              # R-1, NO Home catch-all
+  3. segments safe?                 -> else {:error, _}        # R-2, before Path.join
        (reject ".", "..", separator, NUL; must equal segment!/1 output)
-  4. type_spec.authority(uri) -> else {:error, _}            # R-3, fail loud
+  4. type_spec.authority(uri, scope) -> else {:error, _}       # R-3, uri.<ws> == scope.workspace
   5. {:ok, Path.join([Home.path(backend_component), <ws>, <name>])}  # R-4
+
+# uploads (P2) call Resource.FsResolver.resolve(uri, %{workspace: mount_ws})
+# directly from the controller/LiveView — request-scoped, not via :config_dir.
 ```
 
 ---
@@ -540,7 +616,7 @@ Resource.FsResolver.resolve(uri = resource://<ws>/<type>/<name>):   # §5.1
 - **Invariant tests (the gates that fail when the architectural goal is unmet,
   per `feedback_completion_requires_invariant_test`):**
   - *Resolver completeness:* a test that enumerates every registered `<type>`
-    and asserts (a) it has an `authority/1`, (b) an unregistered type returns
+    and asserts (a) it has an `authority/2`, (b) an unregistered type returns
     `:none`, (c) `.`/`..`/separator segments never reach `Path.join`. This fails
     if anyone adds an implicit catch-all or a type without authority.
   - *Lockdown:* the `home_path_in_runtime_code` category is GREEN on the tree

@@ -195,13 +195,28 @@ socialware 对 `socialware-config-object` 保留其自身的*投影式* resolver
 **仅注册式 + 封闭 per-`<type>` 白名单。** 每个 `<type>` 显式注册：
 
 ```elixir
+@type scope :: %{
+        required(:workspace) => URI.t() | String.t(),  # 调用方所处的已认证 workspace
+        optional(:principal) => URI.t() | nil
+      }
+
 @type type_spec :: %{
         backend_component: String.t(),            # 字节所在 Home 组件，如 "uploads" / "cc-agents"
-        authority: (URI.t() -> :ok | {:error, term()})  # per-type 鉴权：以 URI 的结构性 <ws> 段断言
+        # per-type 鉴权：同时接收 URI 与调用方已认证 scope，断言 URI 的结构性 <ws> 段
+        # 对此调用方有权威。纯 `(URI.t() -> ...)` 不够（codex HIGH）：无调用方上下文的
+        # resolver 无从知道是谁在请求。
+        authority: (URI.t(), scope() -> :ok | {:error, term()})
       }
 ```
 
-**解析算法** `resolve(uri)`，其中 `uri = resource://<ws>/<type>/<name>`：
+**resolver 是带鉴权的，而非鉴权可选的。** `resolve/2` 把调用方已认证 `scope` 作为必备参数，并在
+任何后端解析之前以它跑 per-`<type>` `authority/2`。不存在跳过鉴权的 `resolve/1`。调用点从其已认证
+上下文取 `scope.workspace`（config-dir 取代理 workspace；uploads 取 controller/LiveView mount 的
+workspace）——绝不从被解析的 URI 取（那是循环）。这正是「把 uploads 鉴权移入 resolver」成立的原因：
+URI 的 `<ws>` 段须等于 `scope.workspace`，故以 scope `attacker` 解析伪造的
+`resource://victim/uploads/name` 会鉴权失败。
+
+**解析算法** `resolve(uri, scope)`，其中 `uri = resource://<ws>/<type>/<name>`：
 
 1. **拒绝畸形：** `scheme == "resource"` 且经 `Ezagent.URI.workspace_name/1`、`type/1`、
    `name/1` 解析为三段。无法识别形态 → `:none`（不属于我）；结构为 `resource` 但缺段 →
@@ -211,9 +226,9 @@ socialware 对 `socialware-config-object` 保留其自身的*投影式* resolver
 3. **不安全段拒绝（在任何 `Path.join` 之前）：** 若 `<ws>`/`<type>`/`<name>` 任一等于 `"."`/
    `".."`、含路径分隔符、含 NUL，或（纵深防御）不等于 `segment!/1` 会产出的精确段字符串，则拒绝。
    `Path.join` 绝不携带不安全段执行。（堵 codex-HIGH 缺口：`segment!/1` 不拒 `.`/`..`。）
-4. **鉴权检查：** 跑该 `<type>` 的 `type_spec.authority`。`{:error, reason}` → `{:error, reason}`
-   （硬失败——socialware 模板的跨租户不匹配是 `raise`；config-dir/uploads 比对结构 `<ws>` 与请求的
-   权威 workspace）。
+4. **鉴权检查：** 以 `authority.(uri, scope)` 跑该 `<type>` 的 `type_spec.authority`，比对 URI 的
+   结构性 `<ws>` 段与 `scope.workspace`（socialware 另重载对象比对 `workspace_uri`）。
+   `{:error, reason}` → `{:error, reason}`（硬失败；跨租户不匹配致命，绝非静默 `:none`）。
 5. **后端解析：** `{:ok, Path.join([Ezagent.Home.path(backend_component), <ws>, <name>])}`。
    （Home 是*后端*，仅在 1–4 通过后到达。）
 
@@ -223,12 +238,22 @@ socialware 对 `socialware-config-object` 保留其自身的*投影式* resolver
 P1 把 `resource` 子句改为先试通用 resolver 已注册类型（config-dir 类型），未命中再落到 socialware。
 顺序显式且完备——每个 `resource` config-dir URI 恰好匹配一个已注册 owner 或硬失败。
 
+**经 `:config_dir` UriQuery attribute 穿入 `scope`。** `UriQuery` resolver 形态是 1 参
+（`resolver/1`），级联今天调 `UriQuery.resolve(:config_dir, uri)`。为在不破坏该形态下携带调用方
+已认证 scope，`:config_dir` 的 `resource` 子句在委派给通用 FS resolver 时把 `{uri, scope}` 作为
+resolver 参数传入；config-dir 的 `scope.workspace` 即**代理的权威 workspace**（由级联正在物化的
+代理/模板 URI 推出，是级联的已认证主体——非攻击者提供）。socialware 委派不变：它重载不可变对象比对其
+存储的 `workspace_uri`，自鉴权且忽略 scope。uploads（P2）以请求 mount scope 直接调通用 resolver，
+完全不依赖 `:config_dir` attribute。（精确参数元组形态于 P1 钉定；不变量为：通用 resolver 始终收到
+scope 且始终跑 `authority/2`。）
+
 **属性（resolver 验收不变量）：**
 
 - **R-1.** 任何带未注册 `<type>` 的 `resource://` URI 都不解析为文件系统路径（返回 `:none`）。
 - **R-2.** 任何等于 `.`/`..` 或含分隔符/NUL 的段都不到达 `Path.join`（解析前返回 `{:error,_}`）。
-- **R-3.** 每个已注册 `<type>` 都有非平凡 `authority/1`；workspace 段不匹配硬失败（不存在会被当作
-  「不属于我」吞掉的静默 `:none`）。
+- **R-3.** 每个已注册 `<type>` 都有非平凡 `authority/2`；解析始终以调用方 `scope` 跑它；workspace
+  段不匹配（`uri.<ws> != scope.workspace`）硬失败（不存在被当作「不属于我」吞掉的静默 `:none`）。
+  不存在绕过鉴权的 `resolve/1`。
 - **R-4.** `Home.path` 仅在 R-1..R-3 通过后的成功路径调用，且只用已注册 `backend_component`。
 
 ### 5.2 scan 闸门类别 `home_path_in_runtime_code`（P0.5）
@@ -244,20 +269,28 @@ P1 把 `resource` 子句改为先试通用 resolver 已注册类型（config-dir
 warn-then-flip。既非锚点豁免、又不在基线的运行期 `Home.path` 新增/移动调用，在引入它的 PR 上即令
 CI 失败。
 
-**精确模块/函数（或行）锚点豁免——非目录白名单。** 目录形白名单会让某个 OS 句柄文件变成宽泛裸路径
-逃逸口。豁免须为精确锚点，各附理由：
+**精确 模块/函数/行 锚点豁免——无 glob、无目录白名单。** 目录形或 glob 豁免（如「整个
+`lib/mix/tasks/`」或 `ezagent.home.*`）会让某 OS 句柄文件或新加 task 成为宽泛裸路径逃逸口——某个
+globbed task 文件下新加的 `Home.path` 调用会绕过对新增硬失败的闸门（codex MEDIUM）。故每条豁免都是
+具体 `Module.function/arity` + 行锚点，各附理由。完整枚举集（无 `*`、无前缀匹配）——此处钉定，非「日后再钉」：
 
-| 锚点 | 理由 |
+| 锚点（精确 `Module.function/arity` @ 行） | 理由 |
 |---|---|
-| `config/runtime.exs`（`:14,17`） | config-eval 取 db 路径——`UriQuery` ETS 不存在（D1） |
-| `config/dev.exs`（`:22`） | config-eval 故意内联 env 逻辑 |
-| `apps/ezagent_core/lib/ezagent/runtime.ex`（`cookie_path/0`、node-name） | early boot，supervision 之前 |
-| `apps/ezagent_core/lib/ezagent/runtime/pid_file.ex` | OS pid 文件句柄，独立于注册表 |
-| `apps/ezagent_core/lib/mix/tasks/ezagent.home.*` | 运维 mix-task，常 app 未启动 |
-| `apps/ezagent_core/lib/mix/tasks/ezagent.bootstrap*` | 运维 mix-task |
-| `apps/ezagent_core/lib/ezagent/home/migration.ex` | 运维迁移工具 |
-| `apps/ezagent_plugin_codex/.../codex_agent.ex` `default_app_server_socket_path/1`（`:880-892`） | OS 句柄 socket，SUN_LEN 短路径，不可 URI 寻址（D2） |
-| pty-pid OS 句柄点（精确模块/函数于 P0.5 钉定） | OS pid 文件句柄（D2） |
+| `config/runtime.exs`（行 14、17） | config-eval 取 db 路径——`UriQuery` ETS 不存在（D1） |
+| `config/dev.exs`（行 22） | config-eval 故意内联 env 逻辑 |
+| `Ezagent.Runtime.cookie_path/0`（`runtime.ex:28-29`）+ node-name 函数 | early boot，supervision 之前 |
+| `EzagentRuntime.PidFile.dir/1`（`runtime/pid_file.ex:95-98`，`Home.profile_dir/0`） | OS pid 文件（即「pty-pids」句柄）——节点/代理 pid 文件，独立于注册表（D2） |
+| `Mix.Tasks.Ezagent.Home.Init.run/1` 及其 `Home.path`/`profile_dir` 辅助（`ezagent.home.init.ex:30,32,33,36,49,79,145,159`） | 运维 mix-task，app 未启动 |
+| `Mix.Tasks.Ezagent.Home.Backup.run/1`（`ezagent.home.backup.ex:62`） | 运维 mix-task |
+| `Mix.Tasks.Ezagent.Home.Restore.run/1`（`ezagent.home.restore.ex` 各 `Home.*` 点） | 运维 mix-task |
+| `Mix.Tasks.Ezagent.Home.AdoptDb.run/1`（`ezagent.home.adopt_db.ex:61`） | 运维 mix-task |
+| `Mix.Tasks.Ezagent.Bootstrap.run/1`（`ezagent.bootstrap.ex:89,90,91,92`） | 运维 mix-task |
+| `Ezagent.Home.Migration` 各 `Home.*` 点（`home/migration.ex`） | 运维迁移工具 |
+| `EzagentPluginCodex` `Ezagent.Template.CodexAgent.default_app_server_socket_path/1`（`codex_agent.ex:880-892`） | OS 句柄 socket，SUN_LEN 短路径，不可 URI 寻址（D2） |
+
+> **P0.5 实现注：** 上表精确行号是 spec 时对 `origin/main` 的快照；P0.5 将各项钉为
+> `Module.function/arity` 锚点（行号为次），扫描器测试（S-2）断言每条豁免都是具体 模块+函数——
+> **拒绝任何含 glob（`*`）或裸路径前缀的条目**。新增豁免须新具体锚点 + 理由，在其 PR 中评审。
 
 > 配置文件（`config/runtime.exs`、`config/dev.exs`）不在 `apps/**/*.ex`，故扫描器今天看不到它们。
 > P0.5 的类别定义在 `apps/` glob 上；此处列出配置文件调用者只为补全受认可面，无需扫描器豁免。若扫描
@@ -273,7 +306,8 @@ feishu 客户端、python server、agent_bridge token_store、identity applicati
 
 - **S-1.** 一个*新增*运行期 `Home.path` 调用（非豁免、非基线）令
   `mix ezagent.uri_query.scan --fail-category home_path_in_runtime_code` 失败。
-- **S-2.** 每条豁免都是带理由的精确模块/函数/行锚点；无目录形白名单。
+- **S-2.** 每条豁免都是带理由的精确 `Module.function/arity` + 行锚点；扫描器测试**拒绝任何含
+  glob（`*`）或裸路径/目录前缀的豁免条目**，机械化地强制「精确锚点」保证。
 - **S-3.** 基线只缩不增（P3）；豁免面永不扩大。
 
 ---
@@ -286,7 +320,7 @@ feishu 客户端、python server、agent_bridge token_store、identity applicati
 ### P0 — 强化通用 `resource://` FS resolver（仅注册式）
 
 - 按 §5.1 **构建** `Ezagent.Resource.FsResolver`（仅注册式、封闭 per-`<type>` 白名单、
-  `Path.join` 前拒 `.`/`..`/分隔符/NUL、per-type `authority/1`）。初始注册**零**类型（或仅一个
+  `Path.join` 前拒 `.`/`..`/分隔符/NUL、per-type `authority/2`）。初始注册**零**类型（或仅一个
   测试类型）——本 PR 引入机制，不做迁移。
 - **暂不**重接 `:config_dir`；socialware 委派不动。
 - **测试（TDD）：** R-1..R-4 单测——未注册类型 → `:none`；`.`/`..`/`a/b`/NUL 段 → `{:error,_}`
@@ -310,7 +344,7 @@ feishu 客户端、python server、agent_bridge token_store、identity applicati
 `UriQuery.resolve(:config_dir, …)`——风险更低；级联已是 URI 寻址，D4。）*
 
 - 在 P0 resolver 上**注册**一个 config-dir `<type>`（如把现有 `"<ns>-agents"` 组件推广），其
-  `authority/1` 以 URI 的 `<ws>` 段断言代理所属 workspace。
+  `authority/2` 以 URI 的 `<ws>` 段断言代理所属 workspace。
 - 把 `Sandbox.ConfigDir.path/2`（`config_dir.ex:30-36`）**改写**为构造
   `resource://<ws>/<ns>-agents/<name>` URI 并经接缝解析，以 `Home.path("<ns>-agents")` 为已注册
   后端。解析结果与今天布局字节一致（`config_dir.ex` docstring 对 `"cc"` 保证字节一致）。
@@ -334,10 +368,16 @@ feishu 客户端、python server、agent_bridge token_store、identity applicati
 
 **P2a — 下载契约 + workspace 段鉴权（暂不迁字节）：**
 
-- **改下载契约**，使请求携带/恢复完整 `resource://uploads/<ws>/<name>` URI（如路由
-  `GET /files/:ws/:name`，或编码完整 URI 的签名 token；具体形态在 PR 决定，但必须携带 `<ws>` 段）。
-- **把鉴权**改为基于该精确 URI 的 `<ws>` 段（resolver 对 `uploads` 类型的 `authority/1`），替代/
-  增强 `caller_in_attaching_messages?/2`。
+- **改下载契约**，使请求携带/恢复完整的 **workspace-first** `resource://<ws>/uploads/<name>` URI
+  ——经 `Ezagent.URI.resource(ws, :uploads, name)` 构造（workspace-first，见 §5.1 及下方文档漂移修正），
+  **不是** `resource://uploads/<ws>/<name>` 的 type-first 形态（resolver 会把它误解析为 workspace=`uploads`、
+  type=`<ws>`，导致白名单未命中 + 鉴权检查错误 + 下载失败——codex HIGH）。机制如路由
+  `GET /files/:ws/:name`，或编码完整 URI 的签名 token；具体形态在 PR 决定（OI-1），但必须以 workspace-first
+  顺序携带 `<ws>` 段。
+- **把鉴权**改为经 resolver 对 `uploads` 类型的 `authority/2` 基于该精确 URI 的 `<ws>` 段——以
+  `authority.(uri, %{workspace: request_scope_workspace})` 调用，其中 request scope 来自已认证的
+  controller/LiveView mount，**非来自 URI**——替代/增强 `caller_in_attaching_messages?/2`。检查为
+  `uri.<ws> == scope.workspace`。
 - **向后兼容窗口：** 在声明的弃用窗口内，对已生成的仅文件名链接保留 `GET /files/:filename` 可解析
   （唯一受认可 shim，N6），并附**同名两 workspace** 回归测试，证明新契约消歧、旧契约今天仅因 UUID
   前缀文件名而无歧义。
@@ -347,13 +387,13 @@ feishu 客户端、python server、agent_bridge token_store、identity applicati
 
 **P2b — 把字节迁到 resolver：**
 
-- 在 P0 resolver 上**注册** `uploads` `<type>`（后端组件 `"uploads"`，`authority/1` = workspace 段检查）。
+- 在 P0 resolver 上**注册** `uploads` `<type>`（后端组件 `"uploads"`，`authority/2` = workspace 段检查）。
 - 经 resolver **写** uploads（`resolve(resource://<ws>/uploads/<name>)` → `Home.path("uploads")/<ws>/<name>`），
   替代 `admin_live.ex:701,731`。
 - 在 controller 中经 resolver **读** uploads，替代 `uploads_controller.ex:108`。
 - 从 P0.5 基线**移除** uploads 的 `Home.path("uploads")` 调用。
 - **测试：** 同名两 workspace（写 + 读隔离）；外来 `<ws>` 下载被拒；窗口内向后兼容链接仍可解析；
-  上传→下载往返；resolver `authority/1` 生效。
+  上传→下载往返；resolver `authority/2` 生效。
 - **验收闸门：** 全部上传/下载测试通过；鉴权按 `<ws>` 段；字节落在 `…/uploads/<ws>/<name>`；
   基线缩去 uploads 项。
 - **遗留子问题（自讨论带入，于 P2b 决定）：** uploads 是否需要*流式友好*的 resolver 返回（path vs
@@ -379,20 +419,24 @@ db / runtime cookie / codex socket / pty-pids 留在**受认可裸 `Home`**（D2
 ## 7. 解析算法（合并参考）
 
 ```
-resolve(:config_dir, uri):                       # 单 owner，uri_query_resolvers.ex
+resolve(:config_dir, {uri, scope}):             # 单 owner，uri_query_resolvers.ex
   case uri.scheme:
-    "template" | "entity" -> 已存 config_dir 字符串            # 不变
-    "resource"            -> Resource.FsResolver.resolve(uri)  # P1：先试通用
+    "template" | "entity" -> 已存 config_dir 字符串                   # 不变
+    "resource"            -> Resource.FsResolver.resolve(uri, scope)  # P1：先试通用
                              |> 命中 :none -> resolve(:socialware_config_dir, uri)
     _                     -> :none
+  # config-dir 的 scope.workspace = 代理的权威 workspace（级联的已认证主体），非攻击者提供。
 
-Resource.FsResolver.resolve(uri = resource://<ws>/<type>/<name>):   # §5.1
-  1. 解析三段                 -> 否则 :none / {:error, :malformed_resource_uri}
-  2. <type> 在白名单？         -> 否则 :none                  # R-1，无 Home 兜底
-  3. 各段安全？               -> 否则 {:error, _}            # R-2，在 Path.join 之前
+Resource.FsResolver.resolve(uri = resource://<ws>/<type>/<name>, scope):   # §5.1
+  1. 解析三段                       -> 否则 :none / {:error, :malformed_resource_uri}
+  2. <type> 在白名单？               -> 否则 :none              # R-1，无 Home 兜底
+  3. 各段安全？                     -> 否则 {:error, _}        # R-2，在 Path.join 之前
        （拒 ".", "..", 分隔符, NUL；须等于 segment!/1 输出）
-  4. type_spec.authority(uri) -> 否则 {:error, _}            # R-3，硬失败
+  4. type_spec.authority(uri, scope) -> 否则 {:error, _}       # R-3，uri.<ws> == scope.workspace
   5. {:ok, Path.join([Home.path(backend_component), <ws>, <name>])}  # R-4
+
+# uploads（P2）从 controller/LiveView 直接以 Resource.FsResolver.resolve(uri, %{workspace: mount_ws})
+# 调用——请求作用域，不经 :config_dir。
 ```
 
 ---
@@ -402,7 +446,7 @@ Resource.FsResolver.resolve(uri = resource://<ws>/<type>/<name>):   # §5.1
 - **单测（每阶段 TDD）：** resolver R-1..R-4（P0）；scan 类别 S-1..S-3（P0.5）；config-dir 字节
   一致 parity + 鉴权（P1）；uploads 同名两 workspace + workspace 段鉴权 + 向后兼容（P2）。
 - **不变量测试**（架构目标未达即失败的闸门，依 `feedback_completion_requires_invariant_test`）：
-  - *resolver 完备性：* 枚举每个已注册 `<type>`，断言 (a) 有 `authority/1`，(b) 未注册类型返回
+  - *resolver 完备性：* 枚举每个已注册 `<type>`，断言 (a) 有 `authority/2`，(b) 未注册类型返回
     `:none`，(c) `.`/`..`/分隔符段绝不到达 `Path.join`。若有人加隐式兜底或无鉴权类型即失败。
   - *锁定：* `home_path_in_runtime_code` 类别在树上为 GREEN，含一个未基线运行期 `Home.path` 调用的
     fixture 为 RED——开发者重引旁路即失败的闸门。
