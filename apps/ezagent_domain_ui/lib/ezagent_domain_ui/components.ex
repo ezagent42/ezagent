@@ -86,6 +86,58 @@ defmodule EzagentDomainUi.Components do
       "bg-transparent border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900"
 
   @doc """
+  Text input for plugin/domain UI forms.
+
+      <.input field={@form[:name]} label="Name" />
+  """
+  attr(:field, Phoenix.HTML.FormField, default: nil)
+  attr(:type, :string, default: "text")
+  attr(:label, :string, default: nil)
+  attr(:id, :string, default: nil)
+  attr(:name, :string, default: nil)
+  attr(:value, :any, default: nil)
+  attr(:class, :string, default: "")
+
+  attr(:rest, :global,
+    include:
+      ~w(autocomplete disabled max maxlength min minlength pattern placeholder readonly required size step)
+  )
+
+  def input(%{field: %Phoenix.HTML.FormField{} = field} = assigns) do
+    assigns
+    |> assign(field: nil)
+    |> assign(:id, assigns[:id] || field.id)
+    |> assign(:name, assigns[:name] || field.name)
+    |> assign(:value, assigns[:value] || field.value)
+    |> input()
+  end
+
+  def input(%{type: "hidden"} = assigns) do
+    ~H"""
+    <input type="hidden" id={@id} name={@name} value={@value} {@rest} />
+    """
+  end
+
+  def input(assigns) do
+    ~H"""
+    <label class="grid gap-1 text-xs">
+      <span :if={@label} class="text-zinc-500">{@label}</span>
+      <input
+        type={@type}
+        id={@id}
+        name={@name}
+        value={@value}
+        class={[
+          "px-2 py-1 rounded border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950",
+          @class
+        ]}
+        {@rest}
+      />
+    </label>
+    """
+  end
+
+  @doc """
   Card — container with subtle border + shadow.
 
       <.card>

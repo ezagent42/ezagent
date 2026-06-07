@@ -87,6 +87,8 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
     # restart is auto-derived from Behavior.Terminable :terminate +
     # supervisor restart policy.
     "restart" => {:cli, "mix ezagent agent terminate --agent <uri>"},
+    "revoke_credential_grant" =>
+      {:cli, "mix ezagent agent revoke_credential_grant --agent <uri>"},
     # restart_pty (PTY-phase-state-machine 2026-05-26 follow-up b) —
     # operator clicks the "Dead — Restart" phase badge in TerminalLive.
     # Dispatches `?action=lifecycle.terminate` on the agent URI, same
@@ -155,6 +157,9 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
     # auto-derives `put_api_key` / `delete_api_key` against `agent`.
     "put" => {:cli, "mix ezagent agent put_api_key --agent <uri> --provider <p> --key <k>"},
     "delete" => {:cli, "mix ezagent agent delete_api_key --agent <uri> --provider <p>"},
+    "set_default_source" =>
+      {:cli,
+       "mix ezagent user set_default_credential_source --user <uri> --workspace <name> --flavor <flavor> --source-uri <uri>"},
 
     # --- Feishu plugin ---
     "bind" => {:cli, "mix ezagent.feishu.bind <open-id> <user-uri>"},

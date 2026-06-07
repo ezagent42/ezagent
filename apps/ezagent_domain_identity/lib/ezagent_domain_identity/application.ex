@@ -47,7 +47,8 @@ defmodule EzagentDomainIdentity.Application do
     UserCredentials,
     UserTokens,
     WorkspaceUserAdmin,
-    WorkspaceSharedCredentialSource
+    WorkspaceSharedCredentialSource,
+    CredentialGrant
   }
 
   alias Ezagent.Behavior.UserDefaultCredentialSource
@@ -397,6 +398,10 @@ defmodule EzagentDomainIdentity.Application do
           action,
           WorkspaceSharedCredentialSource
         )
+    end
+
+    for action <- CredentialGrant.actions() do
+      :ok = CapabilityRegistry.register(Ezagent.Entity.Agent, action, CredentialGrant)
     end
 
     # CapabilityRegistry SPEC rev 4 §5 — register User.default_caps/1
