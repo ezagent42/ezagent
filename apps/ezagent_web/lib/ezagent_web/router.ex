@@ -48,6 +48,8 @@ defmodule EzagentWeb.Router do
     post "/onboarding/workspace", OnboardingController, :submit
     get "/register/complete", RegistrationController, :complete_new
     post "/register/complete", RegistrationController, :complete_create
+
+    get "/socialware/customer", Socialware.CustomerController, :show
   end
 
   # /admin* requires login (Phase 4-completion Spec 05 §A.2.3 +
