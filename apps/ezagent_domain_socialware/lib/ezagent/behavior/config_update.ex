@@ -325,17 +325,19 @@ defmodule Ezagent.Behavior.ConfigUpdate do
                 field: label,
                 expected_workspace: authoritative_ws,
                 got_workspace: other,
-                uri: URI.to_string(candidate)
+                uri: error_uri_string(candidate)
               }}}
 
           :error ->
-            {:error, {:target_without_workspace, %{field: label, uri: URI.to_string(candidate)}}}
+            {:error, {:target_without_workspace, %{field: label, uri: error_uri_string(candidate)}}}
         end
 
       :any ->
-        {:error, {:target_without_workspace, %{field: label, uri: URI.to_string(candidate)}}}
+        {:error, {:target_without_workspace, %{field: label, uri: error_uri_string(candidate)}}}
     end
   end
+
+  defp error_uri_string(%URI{} = uri), do: URI.to_string(uri)
 
   # The subject agent must be one this session may manage: a current session
   # member OR an agent in this session's spawn lineage. An in-workspace agent

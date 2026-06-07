@@ -129,6 +129,11 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
     echo_agent_uri = EchoApp.default_uri()
     admin_uri = Ezagent.Entity.User.admin_uri()
 
+    assert {:ok, ^session_uri, _meta} =
+             EzagentDomainInstanceMessage.SessionCreator.create_session("main", admin_uri,
+               template_name: "default"
+             )
+
     # Ensure echo agent is in the session.
     join_target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
 
