@@ -398,3 +398,110 @@ end
 PR-0 集（目标 0，绝不可回退）：effect 纪律、单写入方 + 创建唯一入口、冷重启往返、
 Kind.Runtime 次序、两个关卡绿。揭示债务的计数器（由第三阶段及以后逐步拧低）：超大模块、
 def 计数、裸 Home.path、重复解析、cc/codex 合计 LOC。
+
+---
+
+## A. 第三阶段及以后重构路线图（初步计划）
+
+本节是**初步规划**，不属于第二阶段交付物。第二阶段（套件 + 清单，§1–§4）先落地、基线即绿。
+下列计划是有序的第三阶段及以后行为保持重构 PR 集，每个 PR 由**它降低哪个（哪些）适应度函数上限、降多少**来定义。
+「PR 完成」= 所命名的计数及其 `arch_baseline_manifest.exs` 上限双双达到所述目标，**且**两个不变式关卡 +
+完整 arch 套件保持绿（GitHub 机制见 §B）。每行给出与 codex 第一阶段 PR-A…PR-L 的血缘（`= 第一阶段 PR-X`）。
+
+### A.0 已采纳的调整（来自第一阶段评审）
+
+1. **PR-A 是第一个重构。** AdminLive 抽出 `SessionContext` + `RehydrateFlash` —— 最大文件、不变式风险最低、纯机械。
+2. **Capability 拆分（`Normalize`/`Match`/`Scope`）排在 cc/codex 共享运行时 PR 之前。**
+   cc/codex PR 中的凭据授予抽取必须构建在*已审计的 capability seam* 之上，而非仍然单体的 `capability.ex`。
+3. **两个最高风险项** —— SessionCreator 核心（Materializer/Rollback/Team）与
+   cc/codex 级联（ConfigHome/SpawnPlan/凭据授予）—— 各自**要求**行为保持 diff 评审，
+   **外加**同一 PR 中 respawn 往返测试（C6）与单写入方测试（A1/A2）全绿。
+
+### A.1 有序 PR 计划
+
+| # | 第三阶段及以后 PR | = 第一阶段 PR | 驱动（适应度函数） | 计数变化 | 范围（行为保持） | 风险 | 依赖 |
+|--:|---|---|---|---|---|---|---|
+| 1 | **PR-3A** AdminLive 抽出 `SessionContext` + `RehydrateFlash` | PR-A | C1 `gt_1500`（admin_live 3217）、C2 def 计数（186） | `gt_1500` **5→4**；admin_live def 计数降 | 把 session 选择 + flash 重水合状态从 `admin_live.ex` 抽到内部模块；路由模块 + render 不变 | 低（UI，不碰 CapBAC 核心） | `main` 上的第二阶段基线 |
+| 2 | **PR-3B** AdminLive compose / invite / routing-form 抽取 | PR-B | C2 admin_live def 计数 | def 计数继续降（`gt_1500` 不变） | 把 compose/upload、invite、routing-form、订阅状态移到小的 state/event 模块后 | 低 | PR-3A |
+| 3 | **PR-3U** 上传走 UriQuery seam | （新增；PR-B 的 UI 边缘） | B1 core 外裸 Home.path | **12→9**（admin_live 701/731 + uploads_controller 108） | 把 3 个上传调用点改走解析后的 UriQuery seam | 中低（动 `uploads_controller`） | PR-3B |
+| 4 | **PR-3K** Capability 拆分 `Normalize` / `Match` / `Scope` | PR-K（提前） | C1 `gt_1000`（capability 1023）、C2 capability def 计数（65） | capability 退出 `gt_1000`；def 计数降 | 把 `capability.ex` 拆为 Normalize/Match/Scope 子模块，公共 API 不变 | 中（CapBAC 文法 —— 需评审，但行为不变） | PR-3B |
+| 5 | **PR-3C** SessionCreator 抽出 `Listing` + `TemplateResolver` | PR-C | （预备；A3 部分）—— 暂无上限变化 | —（为 A3 + D/E 铺路） | 把 listing + 模板类解析从 `session_creator.ex` 抽出（低风险边缘） | 中 | PR-3K |
+| 6 | **PR-3R** 合并 `resolve_template_class/1` | （并入 PR-C/J） | A3 重复解析 | **3→1** | `entity/agent.ex` + `agent_extensions_live.ex` 委派给 PR-3C 落地的单一解析器 | 中（3 个调用点须一致） | PR-3C |
+| 7 | **PR-3D/E** SessionCreator `Materializer` / `Rollback` / `TemplateTeam` —— **高风险** | PR-D、PR-E | C1 `gt_1500`（session_creator 1983） | `gt_1500` **4→3** | 把物化 + 回滚 + 团队物化内部抽到**同一个** `create_session/3` 单写入方之后 | **高**（回滚 + CapBAC + 凭据安全） | PR-3C、PR-3R |
+| 8 | **PR-3F/G** Orchestrator `Mcp` / `Tools` 拆分 | PR-F、PR-G | C1 `gt_1500`（tools 1886）、`gt_1000`（mcp_server 1071） | `gt_1500` **3→2**；mcp_server 退出 `gt_1000` | 抽 McpServer catalog/context/codec；Tools team/routing/template 模块 | 中高 | PR-3D/E |
+| 9 | **PR-3H** cc/codex `ConfigHome` + `SpawnPlan` + 凭据授予 —— **高风险** | PR-H | A4 合计 LOC、C1 `gt_1500`（cc_agent 2222）、B1（codex_agent 892） | `gt_1500` **2→1**；A4 合计 LOC 降；B1 **9→8** | 抽出共享 `Ezagent.Agent.ConfigHome` / `SpawnPlan` / `TemplateData`；cc + codex Template Class 委派；凭据授予构建在 PR-3K 的 capability seam 上 | **高**（config-home 拷贝、secret relpaths、授予铸造） | PR-3K、PR-3F/G |
+| 10 | **PR-3I** Behavior.Chat helper 抽取 | PR-I | C1 `gt_1500`（chat 1798） | `gt_1500` **1→0** | 抽出 Behavior.Chat helpers；handler 不变 | 中 | PR-3H |
+| 11 | **PR-3L** 核心文法拆分（`behavior.ex` 1422、kind.ex/runtime.ex） | PR-L | C1 `gt_1000`（behavior 1422、kind.ex 1076、runtime.ex 1459） | `gt_1000` 棘轮（入列项退出） | 拆核心文法/策略模块；PR-0 次序测试（C5）须保持绿 | 中高（核心；紧邻 PR-0） | PR-3I |
+| 12 | **PR-3J** Agent / Session facade 抽取 | PR-J | C1 `gt_1000`（agent 1363、session 1351） | `gt_1000` 棘轮 | SessionCreator + Tools 稳定后，在 spawn/orchestrator 内部之上加 facade | 中 | PR-3F/G、PR-3H |
+
+整条计划的 `gt_1500` 棘轮：**5 → 4（PR-3A）→ 3（PR-3D/E）→ 2（PR-3F/G）→ 1（PR-3H）→ 0（PR-3I）**。
+`gt_1000` 是观察计数器；PR-3K / PR-3L / PR-3J 把其入列项逐个拉出，没有单一头条目标（每退出一个上限降 1）。
+external-mirror 文件（`external_mirror{,_worker}.ex`，1004/1010）与 `application.ex`（1117）/ `workspace.ex`（1395）
+留在 `gt_1000` 观察集，作为本计划之外的候选后续（开 `arch-deepening` issue）。
+
+### A.2 两个高风险 PR —— 强制额外关卡
+
+PR-3D/E（SessionCreator 核心）与 PR-3H（cc/codex 级联）是仅有的触及回滚、CapBAC、凭据安全、config-home 拷贝的 PR。
+每个 PR 都**必须**在同一 PR 中：
+
+- 包含一次**行为保持 diff 评审**（Claude 对照真实代码评审完整 diff；codex `/codex:adversarial-review` 仅静态，
+  依 `feedback_codex_companion_no_mix`）—— 评审显式断言没有任何公共调用点、effect 文法或授予 relpath 发生改变；
+- 保持 **C6 冷重启 respawn 往返**绿（spawn → 快照 → 冷重启 → 级联重新解析 cap + 成员集合完全一致）；
+- 保持**单写入方适应度函数（A1 `SpawnRegistry.spawn*` 白名单、A2 `create_session/3` 调用方）**绿 —— 重构不得引入第二个写入方。
+
+高风险 PR **不得**仅凭绿就自合并；只有在 PR 上记录了行为保持评审后才合并（见 §B 评审握手）。
+
+---
+
+## B. Claude⇄codex GitHub 协作协议（用于 #25）
+
+本节精确定义人类作者（Claude，编排者）与 codex（自主执行者）如何通过 GitHub 协作完成 #25 架构深化工作。
+它沿用 2026-06-07 socialware 交接与 2026-06-06 凭据级联交接的**loose-audit 模型**：
+**codex 拥有执行权并逐 PR 自合并，只要自己的关卡绿即可；Claude 拥有 issue 提示、PR 评审（codex 对抗 + 人类）、
+E2E，并定期拉 `main` 审计，对合并后发现的任何问题开后续 issue。**
+
+### B.1 跟踪 issue —— 每个适应度函数（或每个第三阶段 PR）一个
+
+- codex **开并更新**每个适应度函数一个 GitHub 跟踪 issue（第二阶段）—— 第三阶段及以后则每个重构 PR 一个。
+- 每个 issue 写明**当前计数**、**目标**、以及**验收**：*计数命中目标且 `arch_baseline_manifest.exs` 中上限匹配*。
+  标题示例：`arch-fitness: oversized_modules_gt_1500 (cap 5 → 0)`。
+- 每个跟踪 issue 打 **`arch-deepening`** 标签。issue 链回本交接文档及相关 §2 适应度函数。
+- 第三阶段及以后的 PR issue 额外写明其声称的**计数变化**（取自 §A.1 表，如「`gt_1500` 5→4」）及对应的 §A.1 行号。
+
+### B.2 PR —— 每个重构一个，base `main`
+
+- **每个重构一个 PR**，base 分支 `main`，标签 **`arch-deepening`**。
+- 标题约定：`refactor(arch-deepening): PR-3<x> <简述> [gt_1500 5→4]`
+  （方括号里的声称计数变化让验收一目了然）。
+- 每个 PR **必须**：
+  1. **只下调它所声称的那个（些）适应度函数上限** `arch_baseline_manifest.exs`（不动其他 —— 每次声称只改一处上限）；
+  2. 保持**两个不变式关卡绿**：`mix ezagent.check_invariants` 与 `mix ezagent.check_invariants.lifecycle`；
+  3. 保持**完整 arch 套件绿**：`mix test apps/ezagent_core/test/architecture/`。
+- 上限**只能**凭该行上显式的 `# arch-cap-bump: <理由>` 才能**抬高**，并在 PR 描述中点明。
+  裸抬高上限而无 `arch-cap-bump:` 注释属于阻塞评审的缺陷。
+
+### B.3 评审握手（loose-audit）
+
+- 每个 PR 都做 **`/codex:adversarial-review`**，Elixir 仅静态（`feedback_codex_companion_no_mix`：
+  companion 无 `mix deps`；评审读源码，不跑 `mix`）。
+- **Claude 在合并前对照真实代码评审 codex 的 PR**（并为 §A.2 两个高风险 PR 撰写行为保持评审）。
+- **loose-audit 合并**：codex **逐 PR 自合并，只要自己的关卡绿且评审意见已处理** —— 不等 Claude 审计就合并
+  （`gh pr merge --admin --squash --delete-branch`；本仓库授权 admin-merge，也是 `REVIEW_REQUIRED` 阻塞时的路径）。
+  Claude 随后拉 `main`、审计，对合并后发现的任何问题**开 `arch-deepening` 后续 issue**，由 codex 接手。
+- **例外 —— 两个高风险 PR（PR-3D/E、PR-3H）不得仅凭绿自合并**：只有在 PR 上记录了 Claude 的行为保持评审后才合并。
+
+### B.4 阶段门控
+
+- **第二阶段先落地、基线即绿。** 在**基线清单（`arch_baseline_manifest.exs`）进入 `main`** 之前，
+  不得开任何第三阶段及以后重构 PR —— 它是每个第三阶段及以后 PR 编辑的唯一真相源。
+- 第三阶段及以后 PR 按 §A.1 次序开；**依赖列门控每个 PR 的启动**
+  （如 PR-3H 在 PR-3K 与 PR-3F/G 进 `main` 之前不得启动）。
+- 若 PR 之间 `main` 有变动，用 §2 命令重测；某个上限不再匹配实测基线，本身就是一个 `arch-deepening` issue。
+
+### B.5 状态汇报
+
+- **codex 在跟踪 issue 上评论进度**（计数移动、上限编辑、关卡绿），在每个 PR 合并时。
+- **Claude 把里程碑转达给用户**（飞书）：每一步 `gt_1500` 棘轮（5→4→3→2→1→0）、每个高风险 PR 落地、
+  以及任何出现的 `arch-cap-bump:`。
+- 第三阶段里程碑「完成」仅当其跟踪 issue 因计数命中目标而关闭 —— 绝不仅凭 PR 合并
+  （`feedback_completion_requires_invariant_test`）。

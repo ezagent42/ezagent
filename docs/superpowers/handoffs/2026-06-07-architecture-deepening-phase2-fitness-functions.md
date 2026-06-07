@@ -463,3 +463,148 @@ PR-0 set (target 0, must-never-regress): effect-discipline, single-writer +
 create-chokepoint, cold-restart round-trip, Kind.Runtime ordering, both gates
 green. Debt-revealing counters (ratcheted down by Phase 3+): oversized modules,
 def-counts, raw-Home.path, duplicated resolution, cc/codex combined LOC.
+
+---
+
+## A. Phase-3+ refactor roadmap (preliminary plan)
+
+This section is **preliminary planning**, not part of the Phase-2 deliverable.
+Phase 2 (the suite + manifest, §1–§4) lands first and green-at-baseline. The
+plan below is the ordered set of Phase-3+ behavior-preserving refactor PRs, each
+defined by **which fitness-function cap(s) it drives down and by how much**.
+"PR done" = the named count and its `arch_baseline_manifest.exs` cap both reach
+the stated target AND both invariant gates + the full arch suite stay green
+(§B for the GitHub mechanics). Lineage to codex's Phase-1 PR-A…PR-L is given per
+row (`= Phase-1 PR-X`).
+
+### A.0 Honored adjustments (from the Phase-1 review)
+
+1. **PR-A is the FIRST refactor.** AdminLive `SessionContext` + `RehydrateFlash`
+   extraction — biggest file, lowest invariant risk, purely mechanical.
+2. **The Capability split (`Normalize`/`Match`/`Scope`) is sequenced BEFORE the
+   cc/codex shared-runtime PR.** The credential-grant extraction in the
+   cc/codex PR must build on an *audited capability seam*, not on a still-
+   monolithic `capability.ex`.
+3. **Two highest-risk items** — SessionCreator-core (Materializer/Rollback/Team)
+   and the cc/codex-cascade (ConfigHome/SpawnPlan/credential-grant) — each
+   REQUIRE a behavior-preservation diff review PLUS the respawn round-trip test
+   (C6) and the single-writer test (A1/A2) green in the same PR.
+
+### A.1 Ordered PR plan
+
+| # | Phase-3+ PR | = Phase-1 PR | Drives (fitness fn) | Count delta | Scope (behavior-preserving) | Risk | Depends on |
+|--:|---|---|---|---|---|---|---|
+| 1 | **PR-3A** AdminLive `SessionContext` + `RehydrateFlash` extraction | PR-A | C1 `gt_1500` (admin_live 3217), C2 def-count (186) | `gt_1500` **5→4**; admin_live def-count drops | Extract session-selection + flash-rehydrate state out of `admin_live.ex` into internal modules; route module + render unchanged | Low (UI, no CapBAC core) | Phase-2 baseline on `main` |
+| 2 | **PR-3B** AdminLive compose / invite / routing-form extraction | PR-B | C2 admin_live def-count | def-count further drop (no `gt_1500` change) | Move compose/upload, invite, routing-form, subscription state behind small state/event modules | Low | PR-3A |
+| 3 | **PR-3U** Uploads via UriQuery seam | (new; UI edge of PR-B) | B1 raw-Home.path-outside-core | **12→9** (admin_live 701/731 + uploads_controller 108) | Route the 3 upload call sites through the resolved UriQuery seam | Low-med (touches `uploads_controller`) | PR-3B |
+| 4 | **PR-3K** Capability split `Normalize` / `Match` / `Scope` | PR-K (pulled earlier) | C1 `gt_1000` (capability 1023), C2 capability def-count (65) | capability exits `gt_1000`; def-count drops | Split `capability.ex` into Normalize/Match/Scope submodules behind the same public API | Medium (CapBAC grammar — needs review, but no behavior change) | PR-3B |
+| 5 | **PR-3C** SessionCreator `Listing` + `TemplateResolver` extraction | PR-C | (prep; A3 partial) — no cap delta yet | — (sets up A3 + D/E) | Extract listing + template-class resolution out of `session_creator.ex` (low-risk edges) | Medium | PR-3K |
+| 6 | **PR-3R** Consolidate `resolve_template_class/1` | (folds into PR-C/J) | A3 duplicated-resolution | **3→1** | `entity/agent.ex` + `agent_extensions_live.ex` delegate to the single resolver landed in PR-3C | Medium (3 call sites must agree) | PR-3C |
+| 7 | **PR-3D/E** SessionCreator `Materializer` / `Rollback` / `TemplateTeam` — **HIGH-RISK** | PR-D, PR-E | C1 `gt_1500` (session_creator 1983) | `gt_1500` **4→3** | Extract materialization + rollback + team-materialization internals behind the SAME single `create_session/3` writer | **High** (rollback + CapBAC + credential safety) | PR-3C, PR-3R |
+| 8 | **PR-3F/G** Orchestrator `Mcp` / `Tools` split | PR-F, PR-G | C1 `gt_1500` (tools 1886), `gt_1000` (mcp_server 1071) | `gt_1500` **3→2**; mcp_server exits `gt_1000` | Extract McpServer catalog/context/codec; Tools team/routing/template modules | Medium-high | PR-3D/E |
+| 9 | **PR-3H** cc/codex `ConfigHome` + `SpawnPlan` + credential-grant — **HIGH-RISK** | PR-H | A4 combined-LOC, C1 `gt_1500` (cc_agent 2222), B1 (codex_agent 892) | `gt_1500` **2→1**; A4 combined-LOC drops; B1 **9→8** | Extract shared `Ezagent.Agent.ConfigHome` / `SpawnPlan` / `TemplateData`; cc + codex Template Classes delegate; credential-grant built on the PR-3K capability seam | **High** (config-home copy, secret relpaths, grant minting) | PR-3K, PR-3F/G |
+| 10 | **PR-3I** Behavior.Chat helper extraction | PR-I | C1 `gt_1500` (chat 1798) | `gt_1500` **1→0** | Extract Behavior.Chat helpers; handlers unchanged | Medium | PR-3H |
+| 11 | **PR-3L** Core grammar split (`behavior.ex` 1422, kind.ex/runtime.ex) | PR-L | C1 `gt_1000` (behavior 1422, kind.ex 1076, runtime.ex 1459) | `gt_1000` ratchet (entrants exit) | Split core grammar/policy modules; PR-0 ordering test (C5) must stay green | Medium-high (core; PR-0 adjacent) | PR-3I |
+| 12 | **PR-3J** Agent / Session facade extraction | PR-J | C1 `gt_1000` (agent 1363, session 1351) | `gt_1000` ratchet | Facade over spawn/orchestrator internals after SessionCreator + Tools settle | Medium | PR-3F/G, PR-3H |
+
+`gt_1500` ratchet across the plan: **5 → 4 (PR-3A) → 3 (PR-3D/E) → 2 (PR-3F/G) →
+1 (PR-3H) → 0 (PR-3I)**. `gt_1000` is a watch counter; PR-3K / PR-3L / PR-3J pull
+its entrants out without a single headline target (each exit lowers the cap by
+one). External-mirror files (`external_mirror{,_worker}.ex`, 1004/1010) and
+`application.ex` (1117) / `workspace.ex` (1395) remain in the `gt_1000` watch set
+and are candidate follow-ups beyond this plan (file `arch-deepening` issues).
+
+### A.2 The two HIGH-RISK PRs — mandatory extra gate
+
+PR-3D/E (SessionCreator-core) and PR-3H (cc/codex-cascade) are the only PRs that
+touch rollback, CapBAC, credential safety, and config-home copying. Each one
+MUST, in the same PR:
+
+- include a **behavior-preservation diff review** (Claude reviews the full diff
+  against real code; codex `/codex:adversarial-review` static-only per
+  `feedback_codex_companion_no_mix`) — the review explicitly asserts no public
+  callsite, effect grammar, or grant relpath changed;
+- keep **C6 cold-restart respawn round-trip** green (spawn → snapshot →
+  cold-restart → cascade re-resolves caps + member set identically);
+- keep the **single-writer fitness functions (A1 `SpawnRegistry.spawn*`
+  allowlist, A2 `create_session/3` callers)** green — the refactor must not
+  introduce a second writer.
+
+A HIGH-RISK PR may NOT self-merge on green alone; it merges only after the
+behavior-preservation review is recorded on the PR (see §B review handshake).
+
+---
+
+## B. Claude⇄codex GitHub collaboration protocol (for #25)
+
+This defines exactly how the human-author (Claude, the orchestrator) and codex
+(the autonomous executor) coordinate via GitHub for the #25 architecture-
+deepening work. It mirrors the **loose-audit model** of the 2026-06-07 socialware
+handoff and the 2026-06-06 credential-cascade handoff: **codex owns execution and
+self-merges PR-by-PR once its own gate is green; Claude owns issue prompts, PR
+review (codex adversarial + human), E2E, and periodically pulls `main` to audit,
+filing follow-up issues for anything found post-merge.**
+
+### B.1 Tracking issues — ONE per fitness function (or per Phase-3 PR)
+
+- Codex **opens and updates** one GitHub tracking issue per fitness function
+  (Phase 2) — and, in Phase 3+, one per refactor PR.
+- Each issue states **current count**, **target**, and the **acceptance**:
+  *the count hits target and the cap in `arch_baseline_manifest.exs` matches*.
+  Example title: `arch-fitness: oversized_modules_gt_1500 (cap 5 → 0)`.
+- Label every tracking issue **`arch-deepening`**. Issues link back to this
+  handoff and to the relevant §2 fitness function.
+- Phase-3+ PR issues additionally state the **count delta** they claim (from the
+  §A.1 table, e.g. "`gt_1500` 5→4") and which §A.1 row they are.
+
+### B.2 PRs — ONE per refactor, base `main`
+
+- **One PR per refactor**, base branch `main`, label **`arch-deepening`**.
+- Title convention: `refactor(arch-deepening): PR-3<x> <short> [gt_1500 5→4]`
+  (the claimed count delta in brackets makes the acceptance scannable).
+- Every PR MUST:
+  1. **lower exactly the fitness-function cap(s) it claims** in
+     `arch_baseline_manifest.exs` (and no others — a single cap edit per claim);
+  2. keep **both invariant gates green**: `mix ezagent.check_invariants` and
+     `mix ezagent.check_invariants.lifecycle`;
+  3. keep the **full arch suite green**:
+     `mix test apps/ezagent_core/test/architecture/`.
+- A cap may **only be RAISED** via an explicit `# arch-cap-bump: <justification>`
+  on the manifest line, called out in the PR description. A bare cap raise with
+  no `arch-cap-bump:` comment is a review-blocking defect.
+
+### B.3 Review handshake (loose-audit)
+
+- Every PR gets **`/codex:adversarial-review`**, static-only for Elixir
+  (`feedback_codex_companion_no_mix`: the companion has no `mix deps`; review
+  reads source, does not run `mix`).
+- **Claude reviews codex's PRs against real code before merge** (and authors the
+  behavior-preservation review on the two HIGH-RISK PRs per §A.2).
+- **Loose-audit merge**: codex **self-merges PR-by-PR once its own gate is green
+  and review comments are addressed** — it does NOT wait for Claude's audit to
+  merge (`gh pr merge --admin --squash --delete-branch`; admin-merge is
+  authorized in this repo, and is the path when `REVIEW_REQUIRED` blocks). Claude
+  then pulls `main`, audits, and **files `arch-deepening` follow-up issues** for
+  anything found post-merge, which codex picks up.
+- **Exception — the two HIGH-RISK PRs (PR-3D/E, PR-3H) do NOT self-merge on green
+  alone**: they merge only after Claude's behavior-preservation review is
+  recorded on the PR.
+
+### B.4 Phase gating
+
+- **Phase 2 lands FIRST and green-at-baseline.** No Phase-3+ refactor PR may be
+  opened until the **baseline manifest (`arch_baseline_manifest.exs`) is on
+  `main`** — it is the source of truth every Phase-3+ PR edits.
+- Phase-3+ PRs are opened in the §A.1 order; the **dependency column gates each
+  PR's start** (e.g. PR-3H may not start until PR-3K and PR-3F/G are on `main`).
+- Re-measure with the §2 commands if `main` has moved between PRs; a cap that no
+  longer matches the measured baseline is itself an `arch-deepening` issue.
+
+### B.5 Status reporting
+
+- **Codex comments progress on the tracking issues** (count moved, cap edited,
+  gates green) at each PR merge.
+- **Claude relays milestones to the user** (Feishu): each `gt_1500` ratchet step
+  (5→4→3→2→1→0), each HIGH-RISK PR landing, and any `arch-cap-bump:` that appears.
+- A Phase-3 milestone is "done" only when its tracking issue is closed by the
+  count hitting target — never on PR-merge alone (`feedback_completion_requires_invariant_test`).
