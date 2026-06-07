@@ -59,21 +59,37 @@ A phase is not "done" until its invariant test passes (not on compile/merge alon
   turn survives cold restart (snapshot).
 - **P2:** `:surface` versions immutable + retained; `approved` recoverable after a newer version
   + across cold restart; operator PageView renders latest.
-- **P3 (leak-safety, mandatory):**
-  - an `:operator_only` (takeover-assist) message **NEVER** reaches the customer feed via ANY
-    path — live, history/snapshot, raw `MessageStore.recent_in_session`, session PubSub, raw
-    `Publisher`, or an unfiltered `ExternalMirror` binding;
-  - **crash matrix** — a crash after any single settle sub-write leaves the settlement
-    `!= :committed`, so the customer sees neither chat nor page for that turn (no partial);
-    replay re-drives to `:committed`;
+- **P3 (leak-safety, mandatory — ROUTE-LEVEL):**
+  - the invariant is **route-level, not "make raw feeds customer-safe"**: raw internal feeds
+    (`MessageStore.recent_in_session`, session PubSub, raw `Publisher`, unfiltered `ExternalMirror`)
+    MAY contain `:operator_only` data — that's correct, the **operator** surface needs them. The
+    rule: **every CUSTOMER route authenticates, then uses ONLY `CustomerFeed` gated queries /
+    outbox refetches**; no customer route calls a raw feed. Operator/admin routes keep full
+    visibility. Test that an `:operator_only` message is absent from every CUSTOMER route and
+    present on the operator route.
+  - **crash matrix** — settlement is a durable record keyed by `turn_id` with per-sub-write
+    completion markers + an approved-pointer CAS; `:committed` is set last; replay completes a
+    partial settlement idempotently. Test crash after EACH sub-write (visibility flip, pointer
+    advance, outbox), replay idempotency (no double-emit), and CAS-conflict (a concurrent turn
+    moved the pointer → conflict, not clobber). A crash before `:committed` ⇒ customer sees
+    neither chat nor page for that turn.
   - customer-feed authz — a session-binding token scoped to (session A, workspace A) is **denied**
-    session B, workspace B, and when expired/revoked; visibility-gating is applied AFTER the scope
-    check, never instead of it;
-  - backward-compat migration — legacy messages default `:customer_visible`.
-- **P5 (SW-DEV + SW-USE):** a vertical author makes **zero core-code change**; **one settled turn
-  drives both customer panes simultaneously in one viewport** (not separate tabs); in
-  copilot/takeover the customer sees nothing until the operator approves; agent-browser
-  screenshots ①②③ + restart + cross-scope denial.
+    session B, workspace B, and when expired/revoked; the scope check runs on EVERY request BEFORE
+    visibility-gating.
+  - backward-compat migration — legacy messages default `:customer_visible`; PR-SW3 migration
+    ordering coordinated with #17.
+  - surface ownership — `:surface` is owned by `Behavior.Surface`; `Behavior.Turn` writes it by
+    DISPATCHING (`surface.put_version`/`surface.approve`), never `{:set, :surface}` (siblings are
+    read-only). An integration test through `Invocation.dispatch` proves compose+settle actually
+    update the runtime `:surface` slice.
+- **P5 (SW-DEV + SW-USE) — E2E ownership split:** Codex's PR gate = **isolated** integration
+  tests only (ExUnit + LiveViewTest + JS render test) on a **disposable seeded stack** proving the
+  invariant LOGIC (one turn → customer-visible chat + advanced approved version; copilot hides
+  from customer until approve; second-viewer/restart read `versions[approved]`; cross-scope token
+  denied). **Codex must NOT touch shared dev/prod docker or `100.64.0.27`.** The **author** runs
+  the **live agent-browser SW-USE E2E** (screenshots ①②③: chat + page side-by-side in one customer
+  viewport from one turn; copilot draft visible to operator, absent from customer) on the real
+  Tailscale UI **after merge**. A vertical author makes **zero core-code change** (SW-DEV).
 - **P6 (SW-UPD):** config changes via the flow + observable in a later turn; rollback = repoint
   reverts deterministically, surviving restart.
 

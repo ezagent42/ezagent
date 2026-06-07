@@ -40,8 +40,13 @@ cascade pointer. Dual-surface: operator/admin = LiveView; customer = React + jso
 3. **Settlement** — a record keyed by `turn_id` goes `:committed` LAST (after the MessageStore
    visibility flip + the `:surface` pointer advance). **Customer reads + the outbox derive from
    `:committed`.** No cross-DB transaction; the committed-gate is the atomicity.
-4. **`:surface`** = `%{versions: %{version => %{tree, by_turn}}, approved: version | nil}`;
-   customer renders `versions[approved]`, operator renders latest.
+4. **`:surface`** is owned by a dedicated **`Behavior.Surface`** (`use Ezagent.Lifecycle,
+   state_slice: :surface`) = `%{versions: %{version => %{tree, by_turn}}, approved: version | nil}`;
+   customer renders `versions[approved]`, operator renders latest. **`Behavior.Turn` writes the
+   surface by DISPATCHING to `Behavior.Surface` actions** (`surface.put_version` /
+   `surface.approve`) via `{:dispatch, %Cmd{}}` — NOT via `{:set, :surface}` (on main, Lifecycle
+   `{:set, k, v}` mutates only the dispatching Behavior's OWN slice; sibling slices are read-only
+   in `ctx`). Both behaviors live on the SocialwareSession Kind's `behaviors/0`.
 5. **Customer feed** = the rich external-adapter: committed-`:customer_visible` gated query
    (snapshot/history) + transactional-outbox signal (ids only, after commit, endpoint refetches
    filtered) + **per-request session-binding authz** (token → (session, workspace); denial
@@ -83,7 +88,7 @@ apps/ezagent_domain_socialware/
   lib/ezagent_domain_socialware/application.ex         # P1 (registers behaviors)
   lib/ezagent/behavior/turn.ex                         # P1  Ezagent.Behavior.Turn (:turns slice)
   lib/ezagent/entity/socialware_session.ex             # P1  the session.socialware base Kind
-  lib/ezagent/socialware/surface.ex                    # P2  :surface slice contract + helpers
+  lib/ezagent/behavior/surface.ex                      # P2  Ezagent.Behavior.Surface (owns :surface slice)
   lib/ezagent/behavior/page_view.ex (or under domain_ui) # P2  operator HEEx PageView (SessionView)
   lib/ezagent/socialware/settlement.ex                 # P3  settlement record + outbox
   lib/ezagent/socialware/customer_feed.ex              # P3  the gated query + delivery topic
@@ -180,33 +185,49 @@ end
   `Date.now` — `opened_at` is passed in.) Register the action in `application.ex`.
 - [ ] Run → PASS. Commit: `feat(socialware): turn.open`.
 
-### Task P1.4: `turn.dispatch` (record expected + emit @mention chat.send) (TDD)
-- [ ] **Failing test:** dispatch with `[%{id: :nl, mention: worker_a}, %{id: :page, mention: worker_b}]`
-  → turn status `:delegating`, `expected == MapSet.new([:nl, :page])`, and **two `{:dispatch, %Cmd{}}`
-  effects targeting `chat.send` with the worker mentions** (assert via `invoke_with_effects` effect list).
-- [ ] Run → FAIL.
-- [ ] Implement `action(:dispatch, args: %{subtasks: {:list, :map}}, ...)` +
-  `handle_dispatch/2`: set `expected`, status `:delegating`, and for each subtask emit
-  `{:dispatch, %Ezagent.Cmd{target: session_uri, action: :send, args: %{message: %Ezagent.Message{
-  sender: orchestrator_uri, mentions: [subtask.mention], body: subtask.prompt, ...}}, ctx: ...}}`
-  (Chat's existing `:send` fan-out + Resolver deliver `chat.receive` to each worker — do NOT
-  re-implement fan-out). Correlate via a `ref_id`/subtask id stamped on the message (read
-  `apps/ezagent_core/lib/ezagent/message.ex` for the exact correlation field; use `msg.id` keyed
-  to subtask id in the turn's `collected` map).
-- [ ] Run → PASS. Commit: `feat(socialware): turn.dispatch (record expected + @mention fan-out)`.
+> **All Turn actions take an explicit `turn_id`** (codex plan-review HIGH) so concurrent/retried
+> turns never cross. `turn.open` returns the `turn_id`; `dispatch`/`deliver`/`compose`/`settle`/
+> `claim`/`cancel` all take `turn_id` as their first arg and `{:error, :unknown_turn}` if absent.
 
-### Task P1.5: `turn.deliver` + auto-advance to `:composing` (TDD)
-- [ ] **Failing tests:** (a) `deliver(:nl, card)` with `expected={:nl,:page}` → `collected[:nl]=card`,
-  status `:aggregating`; (b) delivering the LAST expected subtask → status auto-advances to
-  `:aggregating` (compose is a separate explicit action) and `collected` is complete; (c) a
-  `deliver` for an unknown subtask id → `{:error, :unexpected_subtask}`.
+### Task P1.4: `turn.dispatch(turn_id, subtasks)` (record expected + emit @mention chat.send) (TDD)
+- [ ] **Failing test:** `dispatch(turn_id, [%{id: :nl, mention: worker_a, prompt: ...}, %{id: :page,
+  mention: worker_b, prompt: ...}])` → turn status `:delegating`, `expected == MapSet.new([:nl,
+  :page])`, and **two `{:dispatch, %Cmd{}}` effects** targeting `chat.send`, **each carrying a
+  durable correlation `%{turn_id: turn_id, subtask_id: :nl|:page}` on the message** (assert the
+  effect list + that the correlation is present on each message). Also: `dispatch` on an unknown
+  `turn_id` → `{:error, :unknown_turn}`.
 - [ ] Run → FAIL.
-- [ ] Implement `action(:deliver, args: %{subtask_id: :atom, card_ref: :map}, ...)` +
-  `handle_deliver/2`: reject if `subtask_id ∉ expected`; put into `collected`; status `:aggregating`.
-- [ ] Run → PASS. Commit: `feat(socialware): turn.deliver`.
+- [ ] Implement `action(:dispatch, args: %{turn_id: :string, subtasks: {:list, :map}}, ...)` +
+  `handle_dispatch/2`: look up the turn (error if missing); set `expected`, status `:delegating`;
+  for each subtask emit `{:dispatch, %Ezagent.Cmd{target: session_uri, action: :send, args:
+  %{message: %Ezagent.Message{sender: orchestrator_uri, mentions: [subtask.mention], body:
+  subtask.prompt, correlation: %{turn_id: turn_id, subtask_id: subtask.id}}}, ctx: ...}}`. Chat's
+  existing `:send` fan-out + Resolver deliver `chat.receive` to each worker — do NOT re-implement
+  fan-out. **Correlation is an explicit `{turn_id, subtask_id}` payload on the message** — do NOT
+  reuse `Message.ref_id` (on main that means reply-to-another-message-id, not turn/subtask
+  correlation). If `Ezagent.Message` lacks a correlation field, add one in this PR (a small
+  optional `field :correlation, :map` — note: a `Message` field touches `ezagent_core`; if you
+  prefer to keep P1 core-free, carry the correlation inside `body`/`metadata` and migrate to a
+  field in PR-SW3; pick one and state it in the PR).
+- [ ] Run → PASS. Commit: `feat(socialware): turn.dispatch (turn_id + worker correlation)`.
+
+### Task P1.5: `turn.deliver(turn_id, subtask_id, card_ref)` + auto-advance (TDD)
+- [ ] **Failing tests:** (a) `deliver(turn_id, :nl, card)` with `expected={:nl,:page}` →
+  `collected[:nl]=card`, status `:aggregating`; (b) delivering the LAST expected subtask → status
+  stays `:aggregating` with `collected` complete (compose is a separate explicit action); (c) a
+  `deliver` for an unknown subtask id → `{:error, :unexpected_subtask}`; (d) a `deliver` for an
+  unknown `turn_id` → `{:error, :unknown_turn}`; **(e) concurrency: two simultaneously-open turns
+  + out-of-order worker replies each land in the correct turn's `collected` (keyed by
+  `turn_id`)**.
+- [ ] Run → FAIL.
+- [ ] Implement `action(:deliver, args: %{turn_id: :string, subtask_id: :atom, card_ref: :map},
+  ...)` + `handle_deliver/2`: look up the turn by `turn_id` (error if missing); reject if
+  `subtask_id ∉ expected`; put into `collected`; status `:aggregating`.
+- [ ] Run → PASS. Commit: `feat(socialware): turn.deliver (turn_id-keyed, concurrent-safe)`.
 
 ### Task P1.6: `turn.compose` / `turn.settle` / `turn.cancel` + state-machine guards (TDD)
-- [ ] **Failing tests:** (a) `compose` only legal from `:aggregating` (or `:open` for the
+> All three take `turn_id` as the first arg (`{:error, :unknown_turn}` if missing).
+- [ ] **Failing tests:** (a) `compose(turn_id, ...)` only legal from `:aggregating` (or `:open` for the
   degenerate zero-expected single-bot turn) → status `:composing`, `result` set; illegal-state
   compose → `{:error, {:illegal_transition, from}}`; (b) `settle` from `:composing` (mode `:auto`)
   → status `:settled`; (c) `cancel` from any non-terminal → `:cancelled`; (d) `settle`/`compose`
@@ -221,7 +242,8 @@ end
 ### Task P1.7: `session.socialware` base Kind + restart survival (TDD)
 - [ ] Create `lib/ezagent/entity/socialware_session.ex`: `@behaviour Ezagent.Kind`, `type_name,
   do: :session`, `behaviors, do: [Ezagent.Behavior.Chat, Ezagent.Behavior.Turn,
-  Ezagent.Behavior.Publisher.SessionImpl]`, `persistence, do: {:snapshot, :on_change}`.
+  Ezagent.Behavior.Surface, Ezagent.Behavior.Publisher.SessionImpl]` (Surface is added in P2;
+  list it from the start or add in P2 — state which), `persistence, do: {:snapshot, :on_change}`.
 - [ ] **Failing cold-restart test** (`turn_survives_restart_test.exs`, `use Ezagent.LifecycleCase`):
   spawn a SocialwareSession, `turn.open` + `turn.dispatch` via `Invocation.dispatch`
   (`?action=turn.open`), kill the process, respawn, assert the `:turns` slice (the open turn +
@@ -243,29 +265,41 @@ survives cold restart (snapshot). No core-schema change yet.
 **Goal:** the page as **immutable versions + an `approved` pointer**, mutated by the turn, and a
 thin **operator** HEEx render so backend E2E can run before the React SPA exists.
 
-**Files:** Create `lib/ezagent/socialware/surface.ex` (slice contract + helpers), a `PageView`
-(`@behaviour Ezagent.UI.SessionView`, registered in the liveview admin like `ConversationView`);
-add `:surface` to the SocialwareSession; Test `surface_test.exs` + `page_view_test.exs`.
+**Files:** Create `lib/ezagent/behavior/surface.ex` (`Ezagent.Behavior.Surface`, owns
+`:surface`), a `PageView` (`@behaviour Ezagent.UI.SessionView`, registered in the liveview admin
+like `ConversationView`); add `Behavior.Surface` to `SocialwareSession.behaviors/0`; register
+its actions in `application.ex`; Test `surface_test.exs` + `surface_dispatch_integration_test.exs`
++ `page_view_test.exs`.
 
 ### Tasks (TDD)
-- [ ] **P2.1 `:surface` slice shape** — add `:surface` as a Turn-owned (or a sibling Behavior)
-  slice: `%{versions: %{}, approved: nil}`. Test: `create` → empty; `put_version(tree, turn_id)`
-  appends an immutable version with a monotonic id and returns it; versions are never mutated.
-- [ ] **P2.2 compose writes a version** — extend `turn.compose` so a page deliverable appends a
-  `:surface` version (`{:set, :surface, ...}` via the surface helper) tagged `by_turn`. Test: a
-  turn with a page card → a new `:surface` version exists, `approved` still `nil` (auto advances
-  at settle in P3-wired form; in P2 wire auto-advance-at-settle directly).
-- [ ] **P2.3 settle advances `approved` (auto)** — `turn.settle` sets `approved = this turn's
-  version`. Test: after auto settle, `approved` points at the composed version; **operator read
-  returns latest, customer-side read (helper) returns `versions[approved]`** (the read split,
-  even though the customer feed proper lands in P3).
+- [ ] **P2.1 `Behavior.Surface` owns `:surface`** — `use Ezagent.Lifecycle, state_slice: :surface`
+  (with the `# lifecycle:state_slice_override` marker); `create/1 → {:ok, %{versions: %{},
+  approved: nil, version_seq: 0}}`. Actions: `surface.put_version` (`args: %{turn_id: :string,
+  tree: :map}`, appends an immutable version `%{tree, by_turn: turn_id}` at `version_seq+1`,
+  returns `%{version: n}`) and `surface.approve` (`args: %{version: :integer}`, sets `approved`).
+  Test (via `BehaviorInvoker`): put_version appends + bumps seq + returns the version; versions
+  are never mutated; approve sets the pointer; approve on a non-existent version → `{:error,
+  :no_such_version}`.
+- [ ] **P2.2 `turn.compose` DISPATCHES `surface.put_version`** — a page deliverable makes
+  `turn.compose` emit `{:dispatch, %Ezagent.Cmd{target: session_uri, action: :put_version, args:
+  %{turn_id: turn_id, tree: page_tree}, ctx: ...}}` (cross-slice write via dispatch — NOT `{:set,
+  :surface}`, which would fail since `:surface` is a sibling slice). The composed version id is
+  recorded in the turn's `result`. **Integration test** (`surface_dispatch_integration_test.exs`,
+  `use EzagentCore.DataCase`, real `Invocation.dispatch`): spawn a SocialwareSession, run
+  `turn.open`→`dispatch`→`deliver`→`compose` over the dispatch surface, then assert the
+  **runtime-visible `:surface` slice** has the new version (proves the cross-slice dispatch
+  actually lands, per codex plan-review CRITICAL). `approved` still `nil`.
+- [ ] **P2.3 `turn.settle` DISPATCHES `surface.approve` (auto mode)** — `turn.settle` emits
+  `{:dispatch, %Cmd{action: :approve, args: %{version: turn.result.version}}}`. Integration test:
+  after auto settle, `:surface.approved` = the composed version; **operator read returns the
+  latest version; a customer-side read helper returns `versions[approved]`** (the read split; the
+  full gated customer feed lands in P3).
 - [ ] **P2.4 operator `PageView`** — implement `@impl Ezagent.UI.SessionView` (`id: :page`,
   `applies_to?(session)` = "has a `:surface` slice", `render/1` = a recursive HEEx interpreter
-  over `versions[latest]` using a small server-side component registry: a `text`/`container`/
-  `table` node set is enough for the first vertical; the `code` node is deferred to P4 Sandpack).
-  Register it in the liveview admin app's `Application.start/2` next to `ConversationView`. Test:
-  `render/1` over a sample tree produces the expected HEEx; `applies_to?` true only with a
-  `:surface` slice.
+  over `versions[latest]` using a small server-side component registry: `text`/`container`/
+  `table` is enough for the first vertical; the `code` node is deferred to P4 Sandpack). Register
+  in the liveview admin app's `Application.start/2` next to `ConversationView`. Test: `render/1`
+  over a sample tree produces the expected HEEx; `applies_to?` true only with a `:surface` slice.
 
 **P2 acceptance gate:** `:surface` versions are immutable + retained; `approved` recoverable
 after a newer version (cold-restart test: render `versions[approved]`, not latest); operator
@@ -297,10 +331,22 @@ customer_auth.ex}`; Tests incl. `customer_leak_test.exs` (the CRITICAL regressio
   migration adds the column with default `:customer_visible` (so **legacy rows stay
   customer-visible** — backward compat). Test: an existing-style message defaults
   `:customer_visible`; `MessageStore.write` round-trips an `:operator_only` message.
-- [ ] **P3.2 settlement record + `:committed`-last** — `Settlement` (keyed by `turn_id`) with a
-  `status` set `:committed` only after the visibility flip(s) + the `:surface` pointer advance.
-  `turn.settle` writes the settlement and (auto) commits. Test: a partial settle (visibility
-  flipped, pointer NOT advanced — simulate a crash) leaves `status != :committed`.
+- [ ] **P3.2 settlement record + `:committed`-last + replay algorithm** (codex plan-review HIGH —
+  specify the durable schema + replay, don't leave it to a happy-path flag). `Settlement` is a
+  **durable record keyed by `turn_id`** with the explicit schema:
+  `%{turn_id, target_message_ids: [..], target_surface_version: n, expected_prior_approved: m|nil,
+  subwrites_done: MapSet (e.g. :visibility_flipped, :pointer_advanced, :outbox_emitted),
+  status: :pending | :committed, committed_at: int|nil}`. `turn.settle` runs the sub-writes,
+  marking each in `subwrites_done`, and sets `status: :committed` **last** (only when all required
+  sub-writes are done). The `:surface` pointer advance is a **CAS** on `expected_prior_approved`
+  (reject + record conflict if another turn moved it). **Replay algorithm** (on restart / retry):
+  read the settlement; for each sub-write NOT in `subwrites_done`, perform it idempotently (a
+  re-flip of an already-`:customer_visible` message is a no-op; a re-advance to an already-current
+  pointer is a no-op); then set `:committed`. Tests: (a) partial — visibility flipped, pointer
+  NOT advanced → `status != :committed`; (b) replay completes a partial settlement to `:committed`
+  idempotently; (c) CAS — a settle whose `expected_prior_approved` no longer matches (a concurrent
+  turn advanced the pointer) → conflict, not a silent clobber; (d) the outbox emission is itself a
+  recorded sub-write so replay does not double-emit.
 - [ ] **P3.3 committed-gated customer read** — `CustomerFeed.snapshot(session, token)` returns a
   message ONLY when `visibility == :customer_visible AND its turn's settlement is :committed`;
   same gate for history. The page read returns `versions[approved]`. **Invariant test (HIGH-2 /
@@ -316,17 +362,23 @@ test "customer never sees chat without its page, or an uncommitted turn (crash m
   assert snap.messages != [] and snap.page != nil  # both appear together, atomically
 end
 ```
-- [ ] **P3.4 operator-only never reaches the customer (CRITICAL regression)** —
+- [ ] **P3.4 operator-only never reaches the customer (CRITICAL regression — ROUTE-LEVEL).**
+  *(codex plan-review MED: the invariant is route-level, NOT "make raw feeds customer-safe". Raw
+  internal feeds MAY contain `:operator_only` — that's correct, the OPERATOR surface needs them.
+  The rule is: every CUSTOMER route authenticates then uses ONLY `CustomerFeed` gated queries /
+  outbox refetches; no customer route calls a raw feed. Operator/admin routes keep full
+  visibility.)*
 ```elixir
-test "an :operator_only takeover-assist message never reaches the customer feed via ANY path" do
+test "operator-only never reaches a CUSTOMER route; operator route still sees it" do
   send_operator_only_message(session, agent_uri(), "draft suggestion")
-  # the customer feed gated query
+  # CUSTOMER routes (the only customer-facing API) exclude it:
   refute_any_message(CustomerFeed.snapshot(session, customer_token), "draft suggestion")
   refute_any_message(CustomerFeed.history(session, customer_token), "draft suggestion")
-  # raw-feed denial: the customer route must NOT expose recent_in_session / session PubSub / Publisher / unfiltered ExternalMirror
-  assert CustomerFeed.snapshot(session, customer_token) == filtered_only(session)
-  # operator surface DOES see it (full Publisher stream)
-  assert operator_sees?(session, "draft suggestion")
+  # the customer feed's ONLY inputs are the gated query + outbox (a customer route that called
+  # MessageStore.recent_in_session / session PubSub / raw Publisher / an unfiltered ExternalMirror
+  # binding would be a defect — assert no such call path exists on the customer endpoint)
+  # OPERATOR route DOES see it (full Publisher stream is correct for the trusted operator):
+  assert operator_route_sees?(session, "draft suggestion")
 end
 ```
 - [ ] **P3.5 transactional outbox** — on settle-commit, emit a customer-delivery signal carrying
@@ -400,30 +452,40 @@ in the appropriate web app).
 declares the six slots, and the SW-USE E2E proving one turn drives both customer panes + takeover
 + leak-safety. **SW-DEV** (the zero-core authoring proof) rides here.
 
+> **E2E ownership split (codex plan-review MED).** Codex's PR gate runs **isolated
+> test/integration** checks only (ExUnit + LiveViewTest + a JS render test) against a **disposable
+> seeded test stack** — Codex **must NOT** touch shared dev/prod docker or `100.64.0.27`. The
+> **author** (Claude/Allen side) runs the **live agent-browser SW-USE E2E** on the real Tailscale
+> UI **after merge**. So Codex's gate proves the logic in isolation; the author owns the live
+> visual proof.
+
 ### Tasks
 - [ ] **P5.1 vertical plugin scaffold** — `apps/ezagent_plugin_advisor/` with `Application.start/2`
-  registering: a `session.advisor` SessionTemplate seed (compose Chat+Turn+surface; roster
+  registering: a `session.advisor` SessionTemplate seed (compose Chat+Turn+Surface; roster
   orchestrator/nl-worker/page-worker/operator; routing `{:from customer}→orchestrator`,
   `{:from orchestrator @worker}→worker`); AgentTemplate seeds (cc orchestrator + nl + page
   workers, config via #17 cascade); a node-type module; React components in `assets/`. **SW-DEV
-  invariant test:** instantiating the template boots the session with **zero edits to
-  `ezagent_core`/`ezagent_domain_socialware`**, both views mount, agents spawn + credential-materialize.
-- [ ] **P5.2 SW-USE E2E (the fusion invariant)** — non-admin customer + operator; customer asks
-  "compare your two plans + recommend". Assert (agent-browser, real ESR UI at
-  `http://100.64.0.27:10042` operator + the customer SPA route):
-  - ① a single settled turn → chat bubble AND ② live page **side-by-side in one customer
-    viewport** (fails if only one updates, or if they're only separate tabs);
-  - ③ a copilot turn: the draft shows on the **operator** surface but is **absent from the
-    customer page** until the operator approves; the agent's `:operator_only` assist never reaches
-    the customer;
-  - multi-user/cold-restart: a second customer viewer sees the same `versions[approved]`; restart
-    re-renders; no unapproved draft ever shown.
-- [ ] **P5.3 E2E regression harness** — each distinct bug found earns a fast regression unit test
-  before the fix (per ESR E2E standards). Fresh docker seed each run; production topology.
+  invariant test (Codex, isolated):** instantiating the template boots the session with **zero
+  edits to `ezagent_core`/`ezagent_domain_socialware`**, both views mount, agents spawn +
+  credential-materialize.
+- [ ] **P5.2 SW-USE integration test (Codex, isolated, no shared infra)** — drive the fused flow
+  through `Invocation.dispatch` + LiveViewTest + the customer-feed API on a disposable seeded
+  stack, asserting the LOGIC of the invariants:
+  - ① one settled turn yields BOTH a `:customer_visible` chat message AND an advanced
+    `:surface.approved` version from the SAME turn (the fusion, at the data layer);
+  - ② in `:copilot`, the customer feed returns nothing for the held turn until operator approve;
+    the `:operator_only` assist never appears on the customer feed (route-level);
+  - ③ second-viewer + cold-restart: both read `versions[approved]`, never an unapproved version;
+  - ④ cross-session/cross-workspace/expired token denied.
+- [ ] **P5.3 author-side live SW-USE E2E (post-merge, author-owned)** — agent-browser on the real
+  ESR UI at `http://100.64.0.27:10042` (operator LiveView) + the customer SPA route: screenshots
+  ①②③ (chat bubble + live page side-by-side in one customer viewport from one turn; copilot draft
+  visible to operator, absent from customer until approve). Fresh disposable seed; production
+  topology; every distinct bug earns a fast regression test before the fix.
 
-**P5 acceptance gate:** the SW-USE invariants pass with agent-browser screenshots (①②③ + restart
-+ cross-scope denial); SW-DEV proves zero-core authoring. This is the architectural completion
-gate for the interaction surface.
+**P5 acceptance gate:** Codex PR gate = P5.1 + P5.2 green in isolation (no shared dev/prod, no
+`100.64.0.27`). Author gate (post-merge) = P5.3 live agent-browser screenshots. SW-DEV proves
+zero-core authoring. Architectural completion gate for the interaction surface = both.
 
 **Dependencies:** P1–P4.
 
