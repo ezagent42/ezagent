@@ -95,6 +95,17 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolvers do
     end
   end
 
+  # #607 — a `resource://<ws>/socialware-config/<id>` layer URI is a self-evolve
+  # config pointer owned by the socialware domain. `:config_dir` has one owner
+  # (this module), so delegate the projection to socialware's own
+  # `:socialware_config_dir` resolver via the runtime UriQuery table — no
+  # compile-time dependency on socialware (which depends on THIS app), so no
+  # cycle. A non-socialware resource URI falls through to `:none` because the
+  # socialware resolver returns `:none` for any URI it does not own.
+  def resolve_config_dir(%URI{scheme: "resource"} = resource_uri) do
+    Ezagent.UriQuery.resolve(:socialware_config_dir, resource_uri)
+  end
+
   def resolve_config_dir(_), do: :none
 
   @doc false

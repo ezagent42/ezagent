@@ -10,7 +10,7 @@ defmodule Ezagent.Behavior.ConfigUpdate do
   # lifecycle:state_slice_override
   use Ezagent.Lifecycle, state_slice: :config_updates
 
-  alias Ezagent.Socialware.ConfigStore
+  alias Ezagent.Socialware.{CascadeRepoint, ConfigStore}
 
   reads_siblings([:turns])
 
@@ -63,15 +63,42 @@ defmodule Ezagent.Behavior.ConfigUpdate do
              attrs.key,
              attrs.patch
            ),
-         {:ok, result} <- ConfigStore.write_and_point(Map.put(attrs, :body, body)) do
+         {:ok, result} <- ConfigStore.write_and_point(Map.put(attrs, :body, body)),
+         {:ok, repoint_status} <- repoint_agent_layer(attrs, ctx) do
       applied = ctx.read.(:applied, %{})
 
       reply = %{
         config_id: result.config_id,
-        previous_config_id: result.previous_config_id
+        previous_config_id: result.previous_config_id,
+        repoint_status: repoint_status
       }
 
       {:ok, reply, [{:set, :applied, Map.put(applied, turn_id, reply)}]}
+    end
+  end
+
+  # #607 — consume seam: repoint the subject agent's #17 high (user) cascade layer
+  # at the immutable config pointer's stable resource URI, so the next spawn
+  # re-materializes the new soul. `subject_uri` IS the target agent.
+  #
+  # A live agent with a cascade is repointed (`:repointed`). When the agent has no
+  # live sandbox yet / no cascade_resolution, the pointer URI is already durable
+  # and deterministic — the agent picks it up at its own next spawn once its layer
+  # references the pointer — so this is `:deferred`, not a failure. Any OTHER
+  # dispatch/write error FAILS LOUD (no silent default).
+  defp repoint_agent_layer(attrs, ctx) do
+    case CascadeRepoint.repoint_user_layer(
+           attrs.subject_uri,
+           attrs.layer,
+           attrs.workspace_uri,
+           attrs.subject_uri,
+           attrs.key,
+           ctx
+         ) do
+      :ok -> {:ok, :repointed}
+      {:error, :no_cascade_resolution} -> {:ok, :deferred}
+      {:error, :not_found} -> {:ok, :deferred}
+      {:error, _reason} = err -> err
     end
   end
 
