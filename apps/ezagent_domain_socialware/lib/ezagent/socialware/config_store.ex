@@ -79,6 +79,54 @@ defmodule Ezagent.Socialware.ConfigStore do
     end
   end
 
+  @doc """
+  Non-raising layer validation/normalization (#607 round-5 — single source of
+  truth for the allow-list). Returns `{:ok, canonical_string}` for any of the
+  allowed layers (atom or string), or `{:error, {:invalid_layer, details}}`.
+
+  Both this and the raising `normalize_layer!/1` (used at the write boundary in
+  `pointer_attrs/1`) draw from the SAME `@layers` allow-list, so an upfront
+  caller cannot pass a value that is accepted here yet rejected at the write
+  (and vice versa). The upfront validator (`ConfigUpdate.validate_and_normalize/2`)
+  uses this so an invalid `layer` is rejected loud BEFORE any side effect rather
+  than raising inside `put_pointer` after the sandbox has already been mutated.
+  """
+  @spec normalize_layer(atom() | String.t() | term()) ::
+          {:ok, String.t()} | {:error, {:invalid_layer, map()}}
+  def normalize_layer(layer) when is_atom(layer) and not is_nil(layer),
+    do: layer |> Atom.to_string() |> normalize_layer()
+
+  def normalize_layer(layer) when is_binary(layer) and layer in @layers, do: {:ok, layer}
+
+  def normalize_layer(other),
+    do: {:error, {:invalid_layer, %{got: inspect(other), allowed: @layers}}}
+
+  @doc """
+  Non-raising key validation (#607 round-5). `key` reaches both the immutable
+  object changeset (`validate_required`) and the pointer key/id. Reject a
+  missing/blank/non-string key upfront, loud, BEFORE any side effect.
+  """
+  @spec validate_key(term()) :: {:ok, String.t()} | {:error, {:invalid_key, map()}}
+  def validate_key(key) when is_binary(key) and key != "", do: {:ok, key}
+
+  def validate_key(other),
+    do: {:error, {:invalid_key, %{got: inspect(other)}}}
+
+  @doc """
+  Non-raising URI validation/normalization (#607 round-5). A `%URI{}` or non-empty
+  string is accepted and canonicalized to a `%URI{}` (the canonical form the
+  downstream consumers want: `CascadeRepoint.repoint_user_layer/3` requires a
+  `%URI{}` subject, and `uri_string!/1` at the ConfigStore write boundary accepts
+  either). Anything else is rejected loud BEFORE any side effect, mirroring the
+  raising `uri_string!/1`.
+  """
+  @spec normalize_uri(term(), atom()) :: {:ok, URI.t()} | {:error, {:invalid_uri, map()}}
+  def normalize_uri(%URI{} = uri, _field), do: {:ok, uri}
+  def normalize_uri(uri, _field) when is_binary(uri) and uri != "", do: {:ok, Ezagent.URI.new!(uri)}
+
+  def normalize_uri(other, field),
+    do: {:error, {:invalid_uri, %{field: field, got: inspect(other)}}}
+
   @spec resolve(atom() | String.t(), URI.t() | String.t(), URI.t() | String.t(), String.t()) ::
           {:ok, ConfigObject.t()} | :none
   def resolve(layer, workspace_uri, subject_uri, key) do

@@ -5,6 +5,37 @@ defmodule Ezagent.Behavior.ConfigUpdate do
   `apply_delta` accepts only a `turn_id`; the delta itself must already be in
   the settled Turn result. This keeps SW-UPD on the same approval path as
   customer-facing turn output.
+
+  ## No partial cross-store write on caller input (#607 round-5)
+
+  Both `apply_delta` and `repoint` touch TWO durable stores with no shared
+  transaction: the target agent's Sandbox (`cascade_resolution.user_layer_uri`)
+  and the ConfigStore (immutable object + pointer). The recurring bug class
+  (five codex rounds) was a caller-controlled field reaching a store write
+  before it was validated, so a later validation failure left ONE store mutated
+  and the other not. `validate_and_normalize/2` is the single upfront chokepoint:
+  it validates AND normalizes EVERY caller-controlled field (layer, workspace_uri,
+  subject_uri, key — plus the confused-deputy authority guard) and `repoint`
+  additionally validates `config_id` via `ConfigStore.fetch_matching_object/1`,
+  ALL before any side effect. The side effects therefore run only on
+  already-validated/normalized values and can fail ONLY on infrastructure (DB
+  down / process dead), never on caller input.
+
+  ## Residual non-atomic window (documented, NOT a caller-input bug)
+
+  After the upfront validation, the only remaining non-atomic window is an
+  INFRASTRUCTURE failure (DB crash / process death) STRICTLY BETWEEN the sandbox
+  repoint and the ConfigStore pointer write. These two writes span two stores
+  (a cross-process dispatch to the agent Sandbox, and a `Repo` insert) with no
+  shared transaction, and the object-keyed ordering (object → repoint → pointer)
+  is deliberately interleaved so the sandbox repoint sits BETWEEN the two
+  ConfigStore writes — it cannot be enclosed in a single `Repo.transaction`
+  without pulling a cross-process dispatch inside a DB txn (wrong) or reordering
+  away the object-keyed atomicity. The ordering already makes every infra-failure
+  outcome non-harmful (orphan immutable object, or stale rollback bookkeeping; the
+  pointer never resolves stale because each layer URI names a specific immutable
+  object). A full 2PC is explicitly out of scope (#607). No caller-supplied value
+  can trigger this window — it is reachable only by infrastructure failure.
   """
 
   # lifecycle:state_slice_override
@@ -77,16 +108,18 @@ defmodule Ezagent.Behavior.ConfigUpdate do
     #      stale — non-harmful (a fresh apply_delta re-establishes it).
     with {:ok, turn} <- settled_turn(ctx, turn_id),
          {:ok, delta} <- config_delta(turn),
-         attrs <- attrs_from_delta(delta, turn_id, ctx),
-         # #607 codex CRITICAL — confused-deputy guard. The dispatch gate only
-         # proved the caller may invoke `apply_delta` on THIS session; it did
-         # NOT prove the settled delta's `subject_uri` belongs to this session's
-         # workspace or is an agent this session manages. The repoint below runs
-         # under `system://agent-internal`, so without this check a
-         # session-scoped caller could settle a delta naming another tenant's
-         # agent and overwrite its cascade layer. Validate the target is within
-         # the caller's authority BEFORE writing the object / repointing.
-         :ok <- authorize_target(attrs, ctx),
+         raw_attrs <- attrs_from_delta(delta, turn_id, ctx),
+         # #607 round-5 STRUCTURAL — validate AND normalize EVERY caller-controlled
+         # input (layer / workspace_uri / subject_uri / key / patch, plus the
+         # confused-deputy authority guard) BEFORE any side effect. The five codex
+         # rounds were all the same class: a caller-controlled field reaching a
+         # store write before it was validated, so a later validation failure (in
+         # `put_pointer` / a changeset) left one store mutated and the other not —
+         # a partial cross-store write. `validate_and_normalize/2` is the single
+         # chokepoint: it returns fully-normalized attrs, so the side effects below
+         # run only on already-validated values and can fail ONLY on infrastructure
+         # (DB down / process dead), never on caller input.
+         {:ok, attrs} <- validate_and_normalize(raw_attrs, ctx),
          body <-
            ConfigStore.merge_delta(
              attrs.layer,
@@ -150,7 +183,7 @@ defmodule Ezagent.Behavior.ConfigUpdate do
     # Same object-keyed ordering as apply_delta: the target object already exists
     # + is immutable, so the layer can never resolve stale; the bookkeeping write
     # is LAST so a failure there leaves the agent correctly repointed.
-    attrs = %{
+    raw_attrs = %{
       layer: Map.fetch!(args, :layer),
       workspace_uri: Map.fetch!(args, :workspace_uri),
       subject_uri: Map.fetch!(args, :subject_uri),
@@ -160,19 +193,21 @@ defmodule Ezagent.Behavior.ConfigUpdate do
       source_turn_id: "repoint:#{URI.to_string(ctx.self_uri)}"
     }
 
-    # #607 codex CRITICAL — same confused-deputy guard as apply_delta. The
-    # `workspace_uri`/`subject_uri` here are caller-supplied action args; the
-    # repoint runs under `system://agent-internal`, so validate the target is
-    # within the caller's authority BEFORE the repoint / pointer write.
+    # #607 round-5 STRUCTURAL — same single upfront chokepoint as apply_delta.
+    # `validate_and_normalize/2` runs the confused-deputy authority guard AND
+    # validates+normalizes EVERY caller-controlled field (layer / workspace_uri /
+    # subject_uri / key) BEFORE any side effect. Round-5 specifically: `layer`
+    # was only validated inside `put_pointer` (`normalize_layer!`), which runs
+    # AFTER the sandbox repoint — so `layer: :bogus` with a valid config_id
+    # repointed the sandbox, then raised in put_pointer, leaving a partial
+    # cross-store write. It is now rejected loud upfront.
     #
     # #607 codex round-4 HIGH — the caller-supplied `config_id` is ALSO untrusted
-    # and names an EXISTING immutable object. Fetch + validate it BEFORE any side
-    # effect: a nonexistent config_id would otherwise repoint the sandbox at a
-    # missing object URI (next materialization fails loud) and a config_id naming
-    # ANOTHER workspace/subject's object would persist a mismatched pointer —
-    # both BEFORE put_pointer's own `Repo.get`. Only a validated, in-scope object
-    # proceeds to repoint + pointer write (no partial write on rejection).
-    with :ok <- authorize_target(attrs, ctx),
+    # and names an EXISTING immutable object. `fetch_matching_object` (still
+    # BEFORE any side effect) rejects a nonexistent id or one whose
+    # workspace/subject/key belong to another tenant. Only a validated, in-scope
+    # object proceeds to repoint + pointer write (no partial write on rejection).
+    with {:ok, attrs} <- validate_and_normalize(raw_attrs, ctx),
          {:ok, _object} <- ConfigStore.fetch_matching_object(attrs),
          {:ok, :repointed} <- repoint_agent_layer(attrs, attrs.config_id),
          {:ok, %{previous_config_id: previous}} <- ConfigStore.put_pointer(attrs) do
@@ -197,34 +232,56 @@ defmodule Ezagent.Behavior.ConfigUpdate do
   defp config_delta(%{result: %{config_delta: delta}}) when is_map(delta), do: {:ok, delta}
   defp config_delta(_turn), do: {:error, :missing_config_delta}
 
-  # #607 codex CRITICAL — confused-deputy guard for the agent-internal repoint.
+  # #607 round-5 STRUCTURAL — the SINGLE upfront chokepoint. Validate AND
+  # normalize EVERY caller-controlled input BEFORE any side effect, in BOTH
+  # `handle_apply_delta` and `handle_repoint`. Returns `{:ok, normalized_attrs}`
+  # or `{:error, reason}`; the caller threads it into the `with` BEFORE
+  # `ConfigStore.write_config` / the agent-internal repoint / `put_pointer`, so an
+  # invalid OR unauthorized input changes nothing in either durable store.
+  #
+  # The five codex rounds were one bug class: a caller-controlled field reaching a
+  # store write before validation, so a later validation failure (in `put_pointer`
+  # via `normalize_layer!`, or in a changeset) left the agent sandbox mutated but
+  # the ConfigStore pointer not — a partial cross-store write with no shared txn.
+  # Per-field patching (round 4 = config_id, round 5 = layer) did not converge.
+  # This validates the WHOLE caller surface upfront and returns normalized values
+  # so the side effects can fail ONLY on infrastructure, never on caller input.
+  #
+  # Fields validated/normalized (every caller-controlled value `put_pointer`,
+  # `write_config`, the changesets, or `CascadeRepoint` could reject):
+  #
+  #   * `layer`        — `ConfigStore.normalize_layer/1` (SAME `@layers` allow-list
+  #                      `normalize_layer!` enforces at the write boundary). An
+  #                      invalid layer can NO LONGER reach a write. [round-5]
+  #   * `workspace_uri`— `ConfigStore.normalize_uri/2` (URI-shape) THEN the
+  #                      confused-deputy `assert_workspace` (must resolve to the
+  #                      authoritative workspace derived from `ctx.self_uri`).
+  #   * `subject_uri`  — `ConfigStore.normalize_uri/2` THEN `assert_workspace` AND
+  #                      `assert_session_manages` (membership OR spawn-lineage).
+  #   * `key`          — `ConfigStore.validate_key/1` (non-empty string; the
+  #                      object changeset `validate_required` + pointer key/id).
   #
   # The authoritative workspace is derived from `ctx.self_uri` (THIS Socialware
-  # session being acted on) — NEVER from the caller-supplied delta/args. Two
-  # facts must hold before any object write or repoint:
-  #
-  #   1. The delta/repoint `workspace_uri` AND the target `subject_uri` both
-  #      resolve to that authoritative workspace. A mismatch means the caller is
-  #      naming another tenant's workspace/agent → reject loud.
-  #   2. The `subject_uri` agent is one this session is authorized to manage —
-  #      proven by EITHER session membership (it is in the `:chat` slice's
-  #      `members` map) OR spawn-lineage (`AgentLineage.spawned_in_lineage?/2`
-  #      walks the spawned-by chain from the agent up to this session). Neither
-  #      → reject loud (the session has no authority over an arbitrary agent
-  #      that merely happens to sit in the same workspace).
-  #
-  # Returns `:ok` or `{:error, reason}`; the caller threads it into the `with`
-  # BEFORE `ConfigStore.write_config` / the repoint, so an unauthorized target
-  # changes nothing.
-  @spec authorize_target(map(), map()) :: :ok | {:error, term()}
-  defp authorize_target(attrs, ctx) do
+  # session being acted on) — NEVER from the caller-supplied delta/args.
+  # `config_id` (repoint only) is validated by `ConfigStore.fetch_matching_object`
+  # which the caller runs immediately after this, still before any side effect.
+  @spec validate_and_normalize(map(), map()) :: {:ok, map()} | {:error, term()}
+  defp validate_and_normalize(attrs, ctx) do
     authoritative_ws = session_workspace_name!(ctx.self_uri)
-    subject_uri = as_uri(attrs.subject_uri)
 
-    with :ok <- assert_workspace(authoritative_ws, attrs.workspace_uri, :workspace_uri),
+    with {:ok, layer} <- ConfigStore.normalize_layer(attrs.layer),
+         {:ok, workspace_uri} <- ConfigStore.normalize_uri(attrs.workspace_uri, :workspace_uri),
+         {:ok, subject_uri} <- ConfigStore.normalize_uri(attrs.subject_uri, :subject_uri),
+         {:ok, key} <- ConfigStore.validate_key(attrs.key),
+         :ok <- assert_workspace(authoritative_ws, workspace_uri, :workspace_uri),
          :ok <- assert_workspace(authoritative_ws, subject_uri, :subject_uri),
-         :ok <- assert_session_manages(subject_uri, ctx) do
-      :ok
+         :ok <- assert_session_manages(as_uri(subject_uri), ctx) do
+      {:ok,
+       attrs
+       |> Map.put(:layer, layer)
+       |> Map.put(:workspace_uri, workspace_uri)
+       |> Map.put(:subject_uri, subject_uri)
+       |> Map.put(:key, key)}
     end
   end
 

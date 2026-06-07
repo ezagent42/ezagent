@@ -606,6 +606,151 @@ defmodule EzagentDomainSocialware.Integration.ConfigUpdateTest do
     assert sandbox_user_layer_uri(ctx.agent) == before_uri
   end
 
+  # #607 round-5 — THE CLASS-CLOSING TEST. For EACH caller-controlled field, an
+  # invalid value must produce a LOUD error AND leave BOTH durable stores
+  # unchanged: the agent sandbox `user_layer_uri` AND the ConfigStore pointer.
+  # Table-driven (`for`) so adding a new caller field later forces a new case —
+  # the structural defence against the per-field whack-a-mole that produced five
+  # codex rounds. RED-verified for at least `layer: :bogus` and a second field.
+  #
+  # The harness drives `repoint` (args are caller-supplied directly, exercising
+  # every field) over an otherwise-VALID, in-scope baseline; each case mutates
+  # exactly ONE field to an invalid value. The companion below additionally
+  # drives `apply_delta` for the round-5 headline (`layer`) so the consume path
+  # is covered too.
+  @no_partial_write_cases [
+    # round-5 headline: invalid layer only reached put_pointer's normalize_layer!
+    # AFTER the sandbox repoint → was a partial cross-store write.
+    {:layer, :invalid_layer},
+    {:key, :invalid_key},
+    {:workspace_uri, :cross_tenant_or_not_found},
+    {:subject_uri, :cross_tenant_or_not_managed},
+    {:config_id, :config_not_found}
+  ]
+
+  for {field, marker} <- @no_partial_write_cases do
+    @field field
+    @marker marker
+    test "no partial write — invalid #{field} leaves sandbox AND pointer unchanged", ctx do
+      spawn_agent_with_cascade(ctx.agent, ctx.workspace, ctx.session)
+
+      # An in-scope USER-layer object+pointer to repoint at (the valid baseline).
+      {:ok, seed} =
+        ConfigStore.write_and_point(%{
+          layer: :user,
+          workspace_uri: ctx.workspace,
+          subject_uri: ctx.agent,
+          key: "advisor.behavior",
+          body: %{"tone" => "baseline"},
+          actor_uri: User.admin_uri(),
+          source_turn_id: "no-partial-seed"
+        })
+
+      # A second in-scope object to actually repoint AT (the valid config_id arg).
+      {:ok, target_object} =
+        ConfigStore.write_config(%{
+          workspace_uri: ctx.workspace,
+          subject_uri: ctx.agent,
+          key: "advisor.behavior",
+          body: %{"tone" => "target"},
+          actor_uri: User.admin_uri(),
+          source_turn_id: "no-partial-target"
+        })
+
+      # Snapshot BOTH stores before the invalid call.
+      before_sandbox_uri = sandbox_user_layer_uri(ctx.agent)
+      before_pointer = ConfigStore.resolve!(:user, ctx.workspace, ctx.agent, "advisor.behavior")
+      assert before_pointer.id == seed.config_id
+
+      valid_args = %{
+        layer: :user,
+        workspace_uri: ctx.workspace,
+        subject_uri: ctx.agent,
+        key: "advisor.behavior",
+        config_id: target_object.id
+      }
+
+      args = Map.put(valid_args, @field, invalid_value(@marker, ctx))
+
+      # LOUD error (not :ok) — the action rejects the invalid field.
+      assert {:error, _reason} = dispatch(ctx.session, :config_update, :repoint, args)
+
+      # NO PARTIAL WRITE — both durable stores are exactly as before.
+      assert sandbox_user_layer_uri(ctx.agent) == before_sandbox_uri,
+             "#{@field}: sandbox user_layer_uri must be unchanged"
+
+      after_pointer = ConfigStore.resolve!(:user, ctx.workspace, ctx.agent, "advisor.behavior")
+
+      assert after_pointer.id == before_pointer.id,
+             "#{@field}: ConfigStore pointer must be unchanged"
+
+      assert after_pointer.body == %{"tone" => "baseline"}
+    end
+  end
+
+  # #607 round-5 headline on the CONSUME path: an invalid `layer` carried by a
+  # settled delta must fail loud in apply_delta with NO partial write either.
+  test "no partial write — apply_delta with invalid layer leaves sandbox AND pointer unchanged",
+       ctx do
+    spawn_agent_with_cascade(ctx.agent, ctx.workspace, ctx.session)
+
+    {:ok, seed} =
+      ConfigStore.write_and_point(%{
+        layer: :user,
+        workspace_uri: ctx.workspace,
+        subject_uri: ctx.agent,
+        key: "advisor.behavior",
+        body: %{"tone" => "baseline"},
+        actor_uri: User.admin_uri(),
+        source_turn_id: "apply-bogus-seed"
+      })
+
+    before_sandbox_uri = sandbox_user_layer_uri(ctx.agent)
+
+    {:ok, %{turn_id: turn_id}} =
+      dispatch(ctx.session, :turn, :open, %{trigger: %{message_id: "apply-bogus"}, opened_at: 1})
+
+    {:ok, _} =
+      dispatch(ctx.session, :turn, :compose, %{
+        turn_id: turn_id,
+        result_refs: [
+          %{
+            kind: :config_delta,
+            layer: :bogus,
+            workspace_uri: ctx.workspace,
+            subject_uri: ctx.agent,
+            key: "advisor.behavior",
+            patch: %{"tone" => "decisive"}
+          }
+        ]
+      })
+
+    {:ok, _} = dispatch(ctx.session, :turn, :claim, %{turn_id: turn_id, by: User.admin_uri()})
+    {:ok, _} = dispatch(ctx.session, :turn, :settle, %{turn_id: turn_id})
+
+    assert {:error, _reason} =
+             dispatch(ctx.session, :config_update, :apply_delta, %{turn_id: turn_id})
+
+    assert sandbox_user_layer_uri(ctx.agent) == before_sandbox_uri
+    after_pointer = ConfigStore.resolve!(:user, ctx.workspace, ctx.agent, "advisor.behavior")
+    assert after_pointer.id == seed.config_id
+    assert after_pointer.body == %{"tone" => "baseline"}
+  end
+
+  # Per-field invalid value constructors for the table above. Each returns a value
+  # that the upfront `validate_and_normalize/2` (or `fetch_matching_object`) must
+  # reject BEFORE any side effect.
+  defp invalid_value(:invalid_layer, _ctx), do: :bogus
+  defp invalid_value(:invalid_key, _ctx), do: ""
+
+  defp invalid_value(:cross_tenant_or_not_found, _ctx),
+    do: Ezagent.URI.workspace(:team_beta)
+
+  defp invalid_value(:cross_tenant_or_not_managed, _ctx),
+    do: Ezagent.URI.entity(:team_beta, :agent, "foreign-np-#{System.unique_integer([:positive])}")
+
+  defp invalid_value(:config_not_found, _ctx), do: Ecto.UUID.generate()
+
   test "two writes retain two distinct immutable config objects", ctx do
     {:ok, first} =
       ConfigStore.write_config(%{
