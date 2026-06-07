@@ -712,8 +712,13 @@ defmodule Ezagent.Entity.Agent do
     credential_adapter = credential_adapter_kind(template_class)
 
     if credential_adapter != :none and
-         match?(%URI{}, source_template_uri) and
          default_cascade_configured?(credential_adapter, content, source_template_uri) do
+      # 2026-06-07 file-flavor-create-cascade — `workspace_layer_uri` is the
+      # source_template_uri ONLY when one is threaded (orchestrator/fork path).
+      # The unified-create path resolves a config home from the content's own
+      # `config_dir` (no shared workspace base template exists), so it passes
+      # NO source_template_uri; the workspace config layer is then simply absent
+      # (`default_layer_dir_for(nil) → :skip`) rather than a dead persisted URI.
       resolution = %{
         owner_uri: spawned_by_uri,
         workspace_uri: workspace_uri,
@@ -785,16 +790,26 @@ defmodule Ezagent.Entity.Agent do
   defp credential_required_by_default?(:file), do: false
 
   defp default_cascade_configured?(:slice, _content, %URI{}), do: true
+  defp default_cascade_configured?(:slice, _content, _), do: false
 
-  defp default_cascade_configured?(:file, content, %URI{} = source_template_uri) do
+  # A file-flavor has a resolvable config home iff the content carries a
+  # `config_dir` (the unified-create path — no source template needed) OR a
+  # threaded `source_template_uri` resolves one (the orchestrator/fork path).
+  defp default_cascade_configured?(:file, content, source_template_uri) do
     case content_field(content, :config_dir) do
       dir when is_binary(dir) and dir != "" ->
         true
 
       _ ->
-        case Ezagent.UriQuery.resolve(:config_dir, source_template_uri) do
-          {:ok, dir} when is_binary(dir) and dir != "" -> true
-          _ -> false
+        case source_template_uri do
+          %URI{} = uri ->
+            case Ezagent.UriQuery.resolve(:config_dir, uri) do
+              {:ok, dir} when is_binary(dir) and dir != "" -> true
+              _ -> false
+            end
+
+          _ ->
+            false
         end
     end
   end

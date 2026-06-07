@@ -264,3 +264,36 @@ The scope is larger than the original minimal sketch — it now changes the pers
 workspace-template schema for file-flavors AND converges the boot loader — so the
 single-path / boot-replay invariant is preserved by ONE cascade-aware seam used by both
 create and boot, rather than two divergent seams.
+
+### 7b. Codex adversarial review of the FINAL diff (round 2) — verdict + resolution
+
+**Verdict: `needs-attention`** (static-only). Two findings, both about the boot/cold-restart
+seam, both addressed by ONE clean generalization rather than the fabrication the first
+implementation used:
+
+1. **[HIGH] boot replay didn't enable the default cascade** — the loader's
+   `spawn_file_flavor_via_cascade/2` passed no `source_template_uri`, and the cascade's
+   default branch was gated on `match?(%URI{}, source_template_uri)`, so loader replay
+   skipped the cascade. **VERIFIED.**
+2. **[MEDIUM] runtime create used a fabricated `source_template_uri`** —
+   `template://<ws>/agent/<name>` does not name a real Template Kind, so its config_dir
+   never resolves and a dead `workspace_layer_uri` gets persisted into `cascade_resolution`.
+   **VERIFIED.**
+
+**Single resolution (supersedes the fabrication):** generalize
+`maybe_resolve_default_cascade_content` / `default_cascade_configured?(:file, …)` so the
+default cascade fires whenever the **content carries a `config_dir`**, with or without a
+`source_template_uri` (`apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex`).
+When no `source_template_uri` is threaded (the unified-create + loader-replay case),
+`workspace_layer_uri` is simply `nil` → `default_layer_dir_for(nil) → :skip` (no dead URI
+persisted), and the user/source layers + secret-source pick (user-default / workspace-shared)
+resolve normally. This fixes BOTH findings: the loader now fires the default cascade (F1)
+and the create path no longer fabricates a dead URI (F2). The orchestrator/fork path that
+DOES thread a real `source_template_uri` is unchanged (its config layer still resolves).
+Cold-restart owner-provenance remains the Sandbox-slice `cascade_resolution.owner_uri` re-
+resolved by `CascadeRuntime` (the loader's boot cascade runs under the workspace-loader
+principal as a best-effort initial materialize; the Sandbox `activate` self-heal is
+authoritative and uses the original owner).
+
+Existing cascade behavior preserved: `agent_cascade_activation_test.exs` (incl. "default
+cascade skipped for legacy source templates without config_dir") still passes.

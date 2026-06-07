@@ -1443,7 +1443,7 @@ defmodule Ezagent.Behavior.Workspace do
          {:ok, spawner} <- resolve_agent_spawn_facade(),
          {:ok, content} <- to_cascade_content(tmpl),
          caps <- Map.get(spawn_opts, :caps),
-         opts <- build_spawn_opts(caller, caps, agent_uri, workspace_uri, spawn_opts) do
+         opts <- build_spawn_opts(caller, caps, spawn_opts) do
       case spawner.spawn_from_template_content(content, agent_uri, caller, workspace_uri, opts) do
         {:ok, result} when is_map(result) ->
           :ok
@@ -1459,14 +1459,14 @@ defmodule Ezagent.Behavior.Workspace do
 
   # Build the CONTENT map the cascade consumes. `flavor`/`project_cwd`/`config_dir`
   # come straight from the persisted template. The #17 cascade fires via the
-  # DEFAULT branch (`maybe_resolve_default_cascade_content`), triggered by
-  # `source_template_uri` (threaded in opts) + the content's `config_dir`
-  # satisfying `default_cascade_configured?(:file, content, _)`. The default
-  # branch correctly SKIPS materializing a `cascade` when no credential source
-  # resolves (`put_default_cascade_if_source_present` — single-reference path),
-  # and resolves + mints a grant when a user-default / workspace-shared source
-  # IS present. (Using an explicit `:cascade_resolution` instead would force a
-  # grant-requiring materialize even with no source → `:no_grant`.)
+  # DEFAULT branch (`maybe_resolve_default_cascade_content`), triggered by the
+  # content's `config_dir` satisfying `default_cascade_configured?(:file, content,
+  # _)` — NO `source_template_uri` is needed (the unified-create path has no
+  # shared workspace base template). The default branch correctly SKIPS
+  # materializing a `cascade` when no credential source resolves
+  # (`put_default_cascade_if_source_present` — single-reference path), and
+  # resolves + mints a grant when a user-default / workspace-shared source IS
+  # present.
   #
   # No-silent-fallback: a file-flavor whose template lacks a `config_dir`
   # reference FAILS LOUD here rather than spawning with `CLAUDE_CONFIG_DIR`
@@ -1498,33 +1498,15 @@ defmodule Ezagent.Behavior.Workspace do
     end
   end
 
-  # `source_template_uri` is the per-agent template URI (a `template://` URI in
-  # this workspace) — it gates the cascade DEFAULT branch + names the workspace
-  # config layer. `--from` → `explicit_source` so a configured user-default does
-  # NOT silently override the requested clone source (codex Finding 3).
-  defp build_spawn_opts(caller, caps, %URI{} = agent_uri, %URI{} = workspace_uri, spawn_opts) do
-    base = [
-      caller: caller,
-      caps: caps,
-      source_template_uri: per_agent_template_uri(agent_uri, workspace_uri)
-    ]
+  # `--from` → `explicit_source` so a configured user-default does NOT silently
+  # override the requested clone source (codex Finding 3).
+  defp build_spawn_opts(caller, caps, spawn_opts) do
+    base = [caller: caller, caps: caps]
 
     case Map.get(spawn_opts, :from_uri) do
       %URI{} = from -> Keyword.put(base, :explicit_source, from)
       _ -> base
     end
-  end
-
-  # A stable per-agent `template://` URI used as the cascade's
-  # `source_template_uri` (workspace layer source + default-branch gate). It need
-  # not resolve a `config_dir` itself — the content's `config_dir` satisfies the
-  # gate; an unresolvable workspace layer is simply skipped.
-  defp per_agent_template_uri(%URI{} = agent_uri, %URI{} = workspace_uri) do
-    Ezagent.URI.template(
-      Ezagent.URI.workspace_name!(workspace_uri),
-      :agent,
-      agent_name(agent_uri)
-    )
   end
 
   # Runtime DI for the agent-spawn facade (mirrors `resolve_session_facade/0`).
