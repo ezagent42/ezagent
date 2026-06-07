@@ -186,6 +186,43 @@ defmodule Ezagent.PluginCc.Template.CcUnifiedCreateCascadeTest do
     end
   end
 
+  describe "boot-loader replay (cold restart) — cascade-free content→data + isolated dir" do
+    test "Loader.invoke_template replays a persisted file-flavor CONTENT template into a live, isolated agent",
+         %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx, cwd: cwd} do
+      # Create via the unified path (persists a CONTENT-shape file-flavor template
+      # in session_templates), then drive the boot Loader's single-template
+      # replay path on the SAME persisted template. The Loader must convert
+      # content→data + spawn the Kind with the isolated per-agent config_dir,
+      # WITHOUT re-running the cascade under the workspace-loader principal
+      # (codex r2 HIGH-1) and WITHOUT clobbering the fresh?/adoption gate
+      # (codex r2 HIGH-2).
+      name = "replay-#{System.unique_integer([:positive])}"
+
+      {:ok, %{agent_uri: agent_uri, template_name: tmpl_name}} =
+        Workspace.create_agent(
+          workspace_uri,
+          %{flavor: "cc", name: name, cwd: cwd, with_pty: false},
+          admin_ctx
+        )
+
+      on_exit(fn -> File.rm_rf(CcAgent.agent_config_dir(agent_uri)) end)
+
+      # Re-invoke the Loader on the persisted CONTENT-shape template (the cold-
+      # restart replay seam). It is idempotent — the agent is already live — and
+      # must succeed (content→data conversion works) rather than crash on the
+      # CONTENT shape (which the plugin instantiate/3 could not read directly).
+      assert {:ok, uris} = Ezagent.Workspace.Loader.invoke_template(workspace_uri, tmpl_name)
+      assert agent_uri in uris
+
+      # The persisted template is CONTENT shape (project_cwd), proving the
+      # Loader's content→data conversion path was exercised.
+      %{session_templates: tmpls} = Store.get_by_name(ws_name)
+      tmpl = Map.fetch!(tmpls, tmpl_name)
+      assert is_binary(Map.get(tmpl, "project_cwd"))
+      assert is_binary(Map.get(tmpl, "config_dir"))
+    end
+  end
+
   describe "fail-loud — no silent operator ~/.claude fallback" do
     test "a file-flavor whose persisted template lacks config_dir fails the cascade spawn (no nil home)",
          %{workspace_uri: workspace_uri} do

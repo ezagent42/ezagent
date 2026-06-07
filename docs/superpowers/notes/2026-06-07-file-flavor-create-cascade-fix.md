@@ -297,3 +297,30 @@ authoritative and uses the original owner).
 
 Existing cascade behavior preserved: `agent_cascade_activation_test.exs` (incl. "default
 cascade skipped for legacy source templates without config_dir") still passes.
+
+### 7c. Codex adversarial review of the complete diff (round 3) — verdict + resolution
+
+**Verdict: `needs-attention`** (static-only). Two findings, both on the BOOT-LOADER replay
+path (the create-time path is settled), both fixed:
+
+1. **[HIGH] boot replay resolved the cascade under the wrong principal** — the loader called
+   `spawn_from_template_content/5` with `caller`/`spawned_by` = `system://workspace-loader`;
+   the cascade keys `owner_uri` off `spawned_by`, so a user-default would be (mis)resolved /
+   a grant (mis)minted under the loader, not the human owner. **VERIFIED.**
+2. **[HIGH] boot replay erased `fresh?`** — `cascade_or_provision` hardcoded
+   `%{fresh?: true}`, defeating `gated_load_bind/3`'s adopt-only-if-owned ownership gate
+   (round-9 invariant) → a pre-existing foreign worker could be rebound. **VERIFIED — a real
+   regression I introduced.**
+
+**Resolution — the boot loader does NOT run the cascade at all:** added
+`Ezagent.Entity.Agent.content_to_template_data/2` (a cascade-FREE content→data conversion,
+delegating to `AgentTemplate.to_template_data/2`); the loader's `cascade_or_provision/4` now
+converts the persisted CONTENT template to DATA and calls `provision_and_instantiate/4`
+(single-reference materialize → isolated config_dir), preserving the REAL `fresh?` from its
+meta. This fixes both findings: no wrong-owner cascade resolution at boot (F1), and the
+`fresh?`/adoption gate is intact (F2). Cold-restart credential re-resolution remains the
+Agent Kind's `Sandbox.activate → ensure_subprocess_alive → CascadeRuntime` self-heal, which
+reads the ORIGINAL owner from the persisted Sandbox-slice `cascade_resolution` — the correct
+single authority for boot creds. The create-time path is unchanged (full cascade under the
+real creator). Added a boot-replay regression test
+(`Loader.invoke_template` on a persisted CONTENT-shape file-flavor template).

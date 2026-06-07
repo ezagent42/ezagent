@@ -157,31 +157,48 @@ defmodule Ezagent.Workspace.Loader do
     end
   end
 
-  # FILE-FLAVOR (credentialled) templates route through the #17 cascade
-  # chokepoint `Agent.spawn_from_template_content/5`; everything else keeps the
-  # core `provision_and_instantiate/4` seam.
+  # FILE-FLAVOR (credentialled) templates are persisted as the AgentTemplate
+  # CONTENT schema (`flavor`/`project_cwd`/`config_dir`); they need a content→data
+  # conversion before `provision_and_instantiate/4` (which reads the DATA `cwd`
+  # key + allocates the per-agent config_dir from the `config_dir` reference).
+  # Non-credentialled templates (echo) are already DATA shape — passed straight
+  # through.
   #
-  # For the boot replay the cascade re-resolves from the persisted CONTENT
-  # inputs (`flavor`/`project_cwd`/`config_dir`); the spawned-by principal is
-  # the system workspace-loader (a cold-boot has no live operator). The
-  # subprocess respawn + cred re-resolution then flows through the Agent Kind's
-  # `Sandbox.activate → ensure_subprocess_alive → CascadeRuntime` self-heal,
-  # which reads the original `owner_uri` from the persisted Sandbox-slice
-  # `cascade_resolution`.
+  # The boot Loader does the conversion CASCADE-FREE (`content_to_template_data/2`,
+  # NOT `spawn_from_template_content/5`). The credential cascade keys off the
+  # agent OWNER; at cold boot the only principal is the workspace-loader, NOT the
+  # human who created the agent — re-resolving a user-default under that wrong
+  # owner (and minting/persisting a grant for it) would be incorrect. Credential
+  # re-resolution at cold restart is the Agent Kind's `Sandbox.activate →
+  # ensure_subprocess_alive → CascadeRuntime` self-heal, which reads the ORIGINAL
+  # owner from the persisted Sandbox-slice `cascade_resolution`. So the Loader
+  # only re-spawns the Kind (isolated config_dir via single-reference
+  # materialize); the self-heal corrects credentials with the right owner.
+  #
+  # The real `fresh?` from `provision_and_instantiate` is PRESERVED (codex r2
+  # HIGH) — `gated_load_bind/3`'s adopt-only-if-owned ownership gate depends on
+  # it; hardcoding `fresh?: true` would rebind a pre-existing foreign worker.
   defp cascade_or_provision(class_module, tmpl_name, tmpl_data, %URI{} = workspace_uri) do
-    if file_flavor_class?(class_module) do
-      case spawn_file_flavor_via_cascade(tmpl_data, workspace_uri) do
-        {:ok, %{workers: workers}} -> {:ok, workers, %{fresh?: true}}
-        {:error, {:already_started, _}} = err -> err
-        {:error, reason} -> {:error, {:cascade_spawn_failed, reason}}
-      end
-    else
+    with {:ok, data} <- file_flavor_to_data(class_module, tmpl_data) do
       Ezagent.Kind.Template.provision_and_instantiate(
         class_module,
         tmpl_name,
-        tmpl_data,
+        data,
         workspace_uri
       )
+    end
+  end
+
+  # Convert a persisted file-flavor CONTENT template to the DATA shape (cascade-
+  # free). Non-file-flavor templates are already DATA shape — returned as-is.
+  defp file_flavor_to_data(class_module, tmpl_data) do
+    if file_flavor_class?(class_module) and content_shape?(tmpl_data) do
+      with {:ok, facade} <- resolve_agent_spawn_facade(),
+           {:ok, agent_uri} <- fetch_agent_uri(tmpl_data) do
+        facade.content_to_template_data(to_content(tmpl_data), agent_uri)
+      end
+    else
+      {:ok, tmpl_data}
     end
   end
 
@@ -189,21 +206,11 @@ defmodule Ezagent.Workspace.Loader do
     Ezagent.Agent.CredentialAdapter.credentialled?(class_module)
   end
 
-  # Boot-replay routing of a file-flavor template through the cascade. The
-  # CONTENT inputs come from the persisted template; the spawned-by principal
-  # is the system workspace-loader.
-  defp spawn_file_flavor_via_cascade(tmpl_data, %URI{} = workspace_uri) do
-    with {:ok, spawner} <- resolve_agent_spawn_facade(),
-         {:ok, agent_uri} <- fetch_agent_uri(tmpl_data),
-         {:ok, content} <- to_cascade_content(tmpl_data) do
-      loader = Ezagent.SystemPrincipal.uri("workspace-loader")
-      caps = Ezagent.SystemPrincipal.caps(loader)
-
-      spawner.spawn_from_template_content(content, agent_uri, loader, workspace_uri,
-        caller: loader,
-        caps: caps
-      )
-    end
+  # A CONTENT-shape template carries `project_cwd` (the input key); a DATA-shape
+  # template carries `cwd`. (Old DATA-shape persisted file-flavor templates from
+  # before this change stay on the pass-through path.)
+  defp content_shape?(tmpl_data) when is_map(tmpl_data) do
+    is_binary(Map.get(tmpl_data, "project_cwd") || Map.get(tmpl_data, :project_cwd))
   end
 
   defp fetch_agent_uri(tmpl_data) do
@@ -213,25 +220,21 @@ defmodule Ezagent.Workspace.Loader do
     end
   end
 
-  defp to_cascade_content(tmpl_data) when is_map(tmpl_data) do
-    flavor = Map.get(tmpl_data, "flavor") || Map.get(tmpl_data, :flavor)
-    project_cwd = Map.get(tmpl_data, "project_cwd") || Map.get(tmpl_data, :project_cwd)
-    config_dir = Map.get(tmpl_data, "config_dir") || Map.get(tmpl_data, :config_dir)
-
-    cond do
-      not (is_binary(flavor) and flavor != "") -> {:error, :missing_flavor}
-      not (is_binary(project_cwd) and project_cwd != "") -> {:error, :missing_project_cwd}
-      not (is_binary(config_dir) and config_dir != "") -> {:error, :missing_config_dir}
-      true -> {:ok, %{flavor: flavor, project_cwd: project_cwd, config_dir: config_dir}}
-    end
+  defp to_content(tmpl_data) do
+    %{
+      flavor: Map.get(tmpl_data, "flavor") || Map.get(tmpl_data, :flavor),
+      project_cwd: Map.get(tmpl_data, "project_cwd") || Map.get(tmpl_data, :project_cwd),
+      config_dir: Map.get(tmpl_data, "config_dir") || Map.get(tmpl_data, :config_dir)
+    }
   end
 
-  # Runtime DI for the agent-spawn facade (mirrors the Behavior.Workspace seam).
+  # Runtime DI for the agent facade (mirrors the Behavior.Workspace seam) —
+  # `content_to_template_data/2` is the cascade-free content→data conversion.
   defp resolve_agent_spawn_facade do
     facade =
       Application.get_env(:ezagent_domain_workspace, :agent_spawn_facade, Ezagent.Entity.Agent)
 
-    if Code.ensure_loaded?(facade) and function_exported?(facade, :spawn_from_template_content, 5) do
+    if Code.ensure_loaded?(facade) and function_exported?(facade, :content_to_template_data, 2) do
       {:ok, facade}
     else
       {:error, {:agent_spawn_facade_unavailable, facade}}

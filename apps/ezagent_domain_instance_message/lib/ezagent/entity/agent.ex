@@ -507,6 +507,27 @@ defmodule Ezagent.Entity.Agent do
     {:error, :invalid_spawn_from_template_content_args}
   end
 
+  @doc """
+  2026-06-07 file-flavor-create-cascade — content→data conversion ONLY, with NO
+  cascade resolution. Used by the Workspace boot Loader to replay a persisted
+  file-flavor CONTENT template (`flavor`/`project_cwd`/`config_dir`) into the
+  Template-Class DATA shape so `provision_and_instantiate/4` can allocate the
+  isolated config_dir + spawn the Kind.
+
+  The boot Loader MUST NOT run the credential cascade: the cascade keys off the
+  agent OWNER, and at cold boot the only available principal is the
+  workspace-loader, NOT the human who originally created the agent — resolving a
+  user-default under the wrong owner would be incorrect. Credential
+  re-resolution at cold restart is the Agent Kind's `Sandbox.activate →
+  ensure_subprocess_alive → CascadeRuntime` self-heal, which reads the ORIGINAL
+  owner from the persisted Sandbox-slice `cascade_resolution`. This function is
+  the cascade-free conversion the Loader uses instead.
+  """
+  @spec content_to_template_data(map(), URI.t()) :: {:ok, map()} | {:error, term()}
+  def content_to_template_data(content, %URI{} = instance_uri) when is_map(content) do
+    Ezagent.Entity.AgentTemplate.to_template_data(content, instance_uri)
+  end
+
   @doc false
   @spec spawn_from_template_content(map(), URI.t(), URI.t(), URI.t(), keyword()) ::
           {:ok,
