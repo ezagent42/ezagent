@@ -106,7 +106,10 @@ defmodule EzagentPluginLiveview.E2E.Category17AdminLvTest do
     @describetag scenario: "29-admin-lv-smoke"
 
     test "header renders + freshly persisted snapshot appears", %{conn: conn} do
-      uri = Ezagent.URI.new!("entity://team-alpha/user/snap_cat17_#{System.unique_integer([:positive])}")
+      uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/user/snap_cat17_#{System.unique_integer([:positive])}"
+        )
 
       :ok =
         SnapshotFixtures.save_kind_snapshot(
@@ -173,6 +176,39 @@ defmodule EzagentPluginLiveview.E2E.Category17AdminLvTest do
     test "filter=agent_template narrows the URL params + page still renders", %{conn: conn} do
       {:ok, _lv, html} = live(conn, "/admin/templates?type=agent_template")
       assert html =~ "Templates"
+    end
+
+    test "agent template rows expose layer level and mandatory set", %{conn: conn} do
+      alias Ezagent.Test.SnapshotFixtures
+
+      template_uri = Ezagent.URI.new!("template://system/agent/cascade-ui-template")
+
+      :ok =
+        SnapshotFixtures.save_kind_snapshot(
+          template_uri,
+          Ezagent.Entity.AgentTemplate,
+          %{
+            template: %{
+              state: %{
+                content: %{
+                  "name" => "cascade-ui-template",
+                  "level" => "workspace",
+                  "mandatory" => ["hooks/policy.sh"],
+                  "cascade_resolution" => %{
+                    "workspace_layer_uri" => URI.to_string(template_uri)
+                  }
+                }
+              }
+            }
+          }
+        )
+
+      {:ok, _lv, html} = live(conn, "/admin/templates?type=agent_template")
+
+      assert html =~ ~s(id="template-level-column")
+      assert html =~ ~s(id="template-mandatory-column")
+      assert html =~ "workspace"
+      assert html =~ "hooks/policy.sh"
     end
   end
 

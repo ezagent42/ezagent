@@ -77,7 +77,8 @@ defmodule Ezagent.Entity.Agent do
       Ezagent.Behavior.Chat,
       Ezagent.Behavior.Identity,
       Ezagent.Behavior.Sandbox,
-      Ezagent.Behavior.ApiKeys
+      Ezagent.Behavior.ApiKeys,
+      Ezagent.Behavior.CredentialGrant
     ]
 
   # Allen 2026-05-25 — bumped from `:on_terminate` to `{:snapshot, :on_change}`
