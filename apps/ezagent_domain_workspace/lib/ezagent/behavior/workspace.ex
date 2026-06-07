@@ -711,7 +711,14 @@ defmodule Ezagent.Behavior.Workspace do
         # URI through so the SpawnRegistry direct-spawn catch-all can
         # record lineage (`Ezagent.AgentLineage.record/2`) for the
         # newly-created agent.
-        caller: Map.get(ctx, :caller)
+        caller: Map.get(ctx, :caller),
+        # 2026-06-07 file-flavor-create-cascade — the caller's caps + the
+        # `--from` source URI are threaded to the #17 cascade chokepoint
+        # (`Agent.spawn_from_template_content/5`) for grant-mint authorization
+        # (`caps`) and to preserve single-reference clone semantics under the
+        # cascade (`from_uri` → `explicit_source`).
+        caps: Map.get(ctx, :caps),
+        from_uri: from_uri
       })
     end
   end
@@ -1060,23 +1067,30 @@ defmodule Ezagent.Behavior.Workspace do
   end
 
   # cc / echo / codex → register a Workspace-scoped template + persist + invoke.
+  #
+  # cc / codex are FILE-FLAVORS (their Template Class implements
+  # `Ezagent.Agent.CredentialAdapter`). 2026-06-07 file-flavor-create-cascade
+  # fix (design note `docs/superpowers/notes/2026-06-07-file-flavor-create-cascade-fix.md`):
+  # the persisted template is the AgentTemplate CONTENT schema
+  # (`flavor` + `project_cwd` + an ALWAYS-present `config_dir` reference),
+  # not the bare Template-Class DATA schema. `register_and_invoke_template/7`
+  # detects a credentialled flavor and routes the instantiate through the
+  # #17 credential-cascade chokepoint (`Agent.spawn_from_template_content/5`),
+  # so a unified-create cc/codex agent gets (1) an isolated per-agent
+  # config_dir (never the operator's shared `~/.claude`) and (2) the #17
+  # user-default credential cascade — exactly like the orchestrator/fork
+  # path. `--from` is threaded as `explicit_source` so a configured
+  # user-default does NOT silently override the requested clone source.
   defp do_create_agent("cc", agent_uri, session_templates, params) do
     %{
       cwd: cwd,
       workspace_name: workspace_name,
-      workspace_uri: workspace_uri,
-      source_config_dir: source_config_dir
+      workspace_uri: workspace_uri
     } = params
 
     tmpl_name = "cc.agent." <> agent_name(agent_uri)
 
-    tmpl =
-      %{
-        "class" => "cc.agent",
-        "agent_uri" => agent_uri_string(agent_uri),
-        "cwd" => Path.expand(cwd)
-      }
-      |> maybe_put_clone_source(source_config_dir)
+    tmpl = file_flavor_template("cc", "cc.agent", agent_uri, cwd)
 
     register_and_invoke_template(
       session_templates,
@@ -1085,7 +1099,9 @@ defmodule Ezagent.Behavior.Workspace do
       tmpl_name,
       tmpl,
       agent_uri,
-      Map.get(params, :caller)
+      Map.get(params, :caller),
+      Map.get(params, :caps),
+      Map.get(params, :from_uri)
     )
   end
 
@@ -1106,6 +1122,8 @@ defmodule Ezagent.Behavior.Workspace do
       "cwd" => if(with_pty?, do: Path.expand(cwd), else: cwd)
     }
 
+    # echo is NOT a file-flavor (no CredentialAdapter, no config home) —
+    # nil caps/from keep it on the existing non-cascade Loader path.
     register_and_invoke_template(
       session_templates,
       workspace_name,
@@ -1113,7 +1131,9 @@ defmodule Ezagent.Behavior.Workspace do
       tmpl_name,
       tmpl,
       agent_uri,
-      Map.get(params, :caller)
+      Map.get(params, :caller),
+      nil,
+      nil
     )
   end
 
@@ -1126,11 +1146,7 @@ defmodule Ezagent.Behavior.Workspace do
 
     tmpl_name = "codex.agent." <> agent_name(agent_uri)
 
-    tmpl = %{
-      "class" => "codex.agent",
-      "agent_uri" => agent_uri_string(agent_uri),
-      "cwd" => Path.expand(cwd)
-    }
+    tmpl = file_flavor_template("codex", "codex.agent", agent_uri, cwd)
 
     register_and_invoke_template(
       session_templates,
@@ -1139,7 +1155,9 @@ defmodule Ezagent.Behavior.Workspace do
       tmpl_name,
       tmpl,
       agent_uri,
-      Map.get(params, :caller)
+      Map.get(params, :caller),
+      Map.get(params, :caps),
+      Map.get(params, :from_uri)
     )
   end
 
@@ -1186,28 +1204,69 @@ defmodule Ezagent.Behavior.Workspace do
     end
   end
 
-  # `--from` cloning works by overriding the template's universal
-  # `config_dir` data key with the SOURCE agent's per-agent dir.
-  # config_dir promotion (Allen 2026-06-03): the per-agent config-home is
-  # the universal, flavor-neutral `"config_dir"` key (was the cc-named
-  # `"claude_config_dir"`); the cc Template Class reads it and applies
-  # claude semantics.
-  defp maybe_put_clone_source(tmpl, nil), do: tmpl
+  # 2026-06-07 file-flavor-create-cascade — build the persisted template for a
+  # FILE-FLAVOR (cc/codex) in the AgentTemplate CONTENT schema
+  # (`flavor` + `project_cwd` + an ALWAYS-present per-agent `config_dir`
+  # reference), PLUS the `"class"` key the boot Loader's `extract_class_name`
+  # + `TemplateRegistry.lookup` + `validate_template_class` require. The
+  # instantiate routes this content through `Agent.spawn_from_template_content/5`
+  # (the #17 cascade chokepoint), which runs it through
+  # `Ezagent.Entity.AgentTemplate.to_template_data/2` to emit the Template-Class
+  # DATA shape (`cwd`/`agent_uri`/…) the plugin `instantiate/3` consumes.
+  #
+  # `config_dir` is ALWAYS present (was `--from`-only): the per-agent TARGET
+  # derived from the agent URI + the class namespace — the same dir
+  # `Ezagent.Sandbox.ConfigDir.allocate/2` / `CcAgent.resolve_config_home/2`
+  # clause 3 would derive. Unconditional presence (a) makes config_dir
+  # allocation unconditional for file-flavors (never the operator's shared
+  # `~/.claude`) and (b) satisfies `default_cascade_configured?(:file, content, _)`
+  # via the content branch so the cascade fires with no `source_template_uri`.
+  @doc false
+  # Test-only accessor — the persisted file-flavor template ALWAYS carries a
+  # config_dir reference (the no-silent-fallback structural guarantee).
+  def __file_flavor_template_for_test__(flavor, class_name, agent_uri, cwd),
+    do: file_flavor_template(flavor, class_name, agent_uri, cwd)
 
-  defp maybe_put_clone_source(tmpl, source_config_dir)
-       when is_binary(source_config_dir) do
-    Map.put(tmpl, "config_dir", source_config_dir)
+  @doc false
+  # Test-only accessor — the cascade-content builder's no-silent-fallback
+  # guard (a file-flavor content missing config_dir is rejected, never spawned).
+  def __cascade_content_for_test__(tmpl), do: to_cascade_content(tmpl)
+
+  defp file_flavor_template(flavor, class_name, agent_uri, cwd)
+       when is_binary(flavor) and is_binary(class_name) do
+    %{
+      "class" => class_name,
+      "flavor" => flavor,
+      "agent_uri" => agent_uri_string(agent_uri),
+      "project_cwd" => Path.expand(cwd),
+      "config_dir" => per_agent_config_dir(class_name, agent_uri)
+    }
+  end
+
+  # The per-agent config_dir TARGET — core authority (`Ezagent.Sandbox.ConfigDir`),
+  # keyed by the agent URI + the class's namespace. NOT a plugin path builder.
+  defp per_agent_config_dir(class_name, %URI{} = agent_uri) do
+    {:ok, class_module} = Ezagent.TemplateRegistry.lookup(class_name)
+    Ezagent.Sandbox.ConfigDir.path(agent_uri, Ezagent.Kind.Template.namespace_of(class_module))
   end
 
   # Register the template in the Workspace's session_templates slice +
-  # persist via Store, then call Loader.invoke_template to bring the
-  # Agent Kind (+ sidecars) live.
+  # persist via Store, then instantiate to bring the Agent Kind (+ sidecars)
+  # live.
   #
-  # Codex PR #330 r1 HIGH-1 fix: if invoke_template_now fails, roll
-  # back the Store write so the DB doesn't carry a template the caller
-  # was told failed. Without rollback, the next boot's
-  # Loader.load_all/0 would silently instantiate the failed template
-  # (no CapBAC re-check, no operator visibility).
+  # FILE-FLAVOR routing (2026-06-07): a credentialled flavor (its Template
+  # Class implements `Ezagent.Agent.CredentialAdapter`) instantiates via
+  # `Agent.spawn_from_template_content/5` (the #17 cascade chokepoint) so the
+  # agent gets an isolated config_dir AND the #17 user-default cascade. A
+  # non-credentialled flavor (echo) keeps the existing
+  # `Loader.invoke_template` path. The Store write + rollback wrapper is
+  # IDENTICAL for both — only the instantiate call differs (convergence, not
+  # a forked spawn path).
+  #
+  # Codex PR #330 r1 HIGH-1 fix: if the instantiate fails, roll back the
+  # Store write so the DB doesn't carry a template the caller was told failed.
+  # Without rollback, the next boot's Loader.load_all/0 would silently
+  # instantiate the failed template (no CapBAC re-check, no operator visibility).
   defp register_and_invoke_template(
          session_templates,
          workspace_name,
@@ -1215,7 +1274,9 @@ defmodule Ezagent.Behavior.Workspace do
          tmpl_name,
          tmpl,
          agent_uri,
-         creator_uri
+         creator_uri,
+         caller_caps,
+         from_uri
        ) do
     new_templates = Map.put(session_templates, tmpl_name, tmpl)
 
@@ -1227,7 +1288,10 @@ defmodule Ezagent.Behavior.Workspace do
              workspace_uri,
              workspace_name,
              tmpl_name,
-             session_templates
+             tmpl,
+             agent_uri,
+             session_templates,
+             %{caller: creator_uri, caps: caller_caps, from_uri: from_uri}
            ) do
       with :ok <-
              grant_agent_creator_manage_cap(agent_uri, workspace_uri, %{caller: creator_uri}) do
@@ -1247,11 +1311,19 @@ defmodule Ezagent.Behavior.Workspace do
 
   defp grant_agent_creator_manage_cap(_agent_uri, _workspace_uri, _params), do: :ok
 
-  # Codex PR #330 r1 HIGH-1 — call invoke_template_now; on failure,
-  # roll back the Store.update_templates write so the DB matches the
-  # (uncommitted) starting state.
-  defp invoke_or_rollback(workspace_uri, workspace_name, tmpl_name, original_templates) do
-    case invoke_template_now(workspace_uri, tmpl_name) do
+  # Codex PR #330 r1 HIGH-1 — call the instantiate; on failure, roll back
+  # the Store.update_templates write so the DB matches the (uncommitted)
+  # starting state.
+  defp invoke_or_rollback(
+         workspace_uri,
+         workspace_name,
+         tmpl_name,
+         tmpl,
+         agent_uri,
+         original_templates,
+         spawn_opts
+       ) do
+    case instantiate_template_now(workspace_uri, tmpl_name, tmpl, agent_uri, spawn_opts) do
       :ok ->
         :ok
 
@@ -1279,6 +1351,14 @@ defmodule Ezagent.Behavior.Workspace do
 
   # Same validator pattern as `Ezagent.Workspace.add_template/3` uses
   # — defer to the Template Class's `validate/1` if defined.
+  #
+  # 2026-06-07 file-flavor-create-cascade — a file-flavor template is the
+  # AgentTemplate CONTENT schema (`project_cwd`, not the `cwd` DATA key the
+  # plugin `validate/1` checks). The cascade path validates the DATA shape
+  # via `AgentTemplate.to_template_data/2`'s `validate_for_flavor`, so we
+  # skip the plugin's DATA-shape `validate/1` here for credentialled flavors
+  # (calling it would spuriously fail `:missing_cwd`). We still verify the
+  # class is registered.
   defp validate_template_class(tmpl) do
     case extract_class_name(tmpl) do
       nil ->
@@ -1290,18 +1370,51 @@ defmodule Ezagent.Behavior.Workspace do
             {:error, {:no_template_class, class_name}}
 
           {:ok, class_module} ->
-            if function_exported?(class_module, :validate, 1) do
-              class_module.validate(tmpl)
-            else
-              :ok
+            cond do
+              file_flavor_class?(class_module) ->
+                # Content-schema template — validated downstream in the
+                # cascade path (`to_template_data` → `validate_for_flavor`).
+                :ok
+
+              function_exported?(class_module, :validate, 1) ->
+                class_module.validate(tmpl)
+
+              true ->
+                :ok
             end
         end
     end
   end
 
+  # A flavor whose Template Class implements `Ezagent.Agent.CredentialAdapter`
+  # (cc/codex) — it has a per-agent credential home, so unified-create routes
+  # it through the #17 cascade chokepoint.
+  defp file_flavor_class?(class_module) when is_atom(class_module) do
+    Ezagent.Agent.CredentialAdapter.credentialled?(class_module)
+  end
+
   defp extract_class_name(%{"class" => name}) when is_binary(name) and name != "", do: name
   defp extract_class_name(%{class: name}) when is_binary(name) and name != "", do: name
   defp extract_class_name(_), do: nil
+
+  # Instantiate the just-registered template. A FILE-FLAVOR (credentialled)
+  # template routes through `Agent.spawn_from_template_content/5` (the #17
+  # cascade chokepoint) so the agent gets an isolated config_dir + the #17
+  # user-default credential cascade; a non-credentialled flavor (echo) keeps
+  # the existing `Loader.invoke_template` path.
+  defp instantiate_template_now(%URI{} = workspace_uri, tmpl_name, tmpl, agent_uri, spawn_opts) do
+    case Ezagent.TemplateRegistry.lookup(extract_class_name(tmpl)) do
+      {:ok, class_module} ->
+        if file_flavor_class?(class_module) do
+          spawn_file_flavor_via_cascade(workspace_uri, tmpl, agent_uri, spawn_opts)
+        else
+          invoke_template_now(workspace_uri, tmpl_name)
+        end
+
+      :error ->
+        {:error, {:no_template_class, extract_class_name(tmpl)}}
+    end
+  end
 
   defp invoke_template_now(%URI{} = workspace_uri, tmpl_name) do
     case Ezagent.Workspace.Loader.invoke_template(workspace_uri, tmpl_name) do
@@ -1309,6 +1422,129 @@ defmodule Ezagent.Behavior.Workspace do
       # Idempotent — already running.
       {:error, {:already_started, _pid}} -> :ok
       {:error, _reason} = err -> err
+    end
+  end
+
+  # Route a file-flavor (cc/codex) create through the #17 credential-cascade
+  # chokepoint `Agent.spawn_from_template_content/5` — the SOLE site that runs
+  # `resolve_cascade_content` (isolated config_dir allocation + #17 user-default
+  # resolution + grant mint + Sandbox-slice `cascade_resolution` persistence
+  # for cold-restart re-resolution). Reached via runtime DI because
+  # `ezagent_domain_workspace` cannot compile-time depend on
+  # `ezagent_domain_instance_message` (which depends on workspace; boots later).
+  #
+  # `source_template_uri` is the per-agent template URI (its content carries a
+  # `config_dir` reference, so the cascade's source_template_uri branch also
+  # resolves); the content branch is the primary trigger.
+  # `explicit_source` carries `--from` so a configured user-default does NOT
+  # silently override the requested clone source.
+  defp spawn_file_flavor_via_cascade(%URI{} = workspace_uri, tmpl, %URI{} = agent_uri, spawn_opts) do
+    with {:ok, caller} <- require_spawn_caller(spawn_opts),
+         {:ok, spawner} <- resolve_agent_spawn_facade(),
+         {:ok, content} <- to_cascade_content(tmpl),
+         caps <- Map.get(spawn_opts, :caps),
+         opts <- build_spawn_opts(caller, caps, agent_uri, workspace_uri, spawn_opts) do
+      case spawner.spawn_from_template_content(content, agent_uri, caller, workspace_uri, opts) do
+        {:ok, result} when is_map(result) ->
+          :ok
+
+        {:error, {:already_started, _}} ->
+          :ok
+
+        {:error, reason} ->
+          {:error, {:cascade_spawn_failed, reason}}
+      end
+    end
+  end
+
+  # Build the CONTENT map the cascade consumes. `flavor`/`project_cwd`/`config_dir`
+  # come straight from the persisted template. The #17 cascade fires via the
+  # DEFAULT branch (`maybe_resolve_default_cascade_content`), triggered by
+  # `source_template_uri` (threaded in opts) + the content's `config_dir`
+  # satisfying `default_cascade_configured?(:file, content, _)`. The default
+  # branch correctly SKIPS materializing a `cascade` when no credential source
+  # resolves (`put_default_cascade_if_source_present` — single-reference path),
+  # and resolves + mints a grant when a user-default / workspace-shared source
+  # IS present. (Using an explicit `:cascade_resolution` instead would force a
+  # grant-requiring materialize even with no source → `:no_grant`.)
+  #
+  # No-silent-fallback: a file-flavor whose template lacks a `config_dir`
+  # reference FAILS LOUD here rather than spawning with `CLAUDE_CONFIG_DIR`
+  # unset (which would silently share the operator's `~/.claude`).
+  defp to_cascade_content(tmpl) when is_map(tmpl) do
+    flavor = Map.get(tmpl, "flavor") || Map.get(tmpl, :flavor)
+    project_cwd = Map.get(tmpl, "project_cwd") || Map.get(tmpl, :project_cwd)
+    config_dir = Map.get(tmpl, "config_dir") || Map.get(tmpl, :config_dir)
+
+    cond do
+      not (is_binary(flavor) and flavor != "") ->
+        {:error, :missing_flavor}
+
+      not (is_binary(project_cwd) and project_cwd != "") ->
+        {:error, :missing_project_cwd}
+
+      not (is_binary(config_dir) and config_dir != "") ->
+        {:error, :missing_config_dir}
+
+      true ->
+        {:ok, %{flavor: flavor, project_cwd: project_cwd, config_dir: config_dir}}
+    end
+  end
+
+  defp require_spawn_caller(spawn_opts) do
+    case Map.get(spawn_opts, :caller) do
+      %URI{} = caller -> {:ok, caller}
+      _ -> {:error, :missing_caller_for_cascade_spawn}
+    end
+  end
+
+  # `source_template_uri` is the per-agent template URI (a `template://` URI in
+  # this workspace) — it gates the cascade DEFAULT branch + names the workspace
+  # config layer. `--from` → `explicit_source` so a configured user-default does
+  # NOT silently override the requested clone source (codex Finding 3).
+  defp build_spawn_opts(caller, caps, %URI{} = agent_uri, %URI{} = workspace_uri, spawn_opts) do
+    base = [
+      caller: caller,
+      caps: caps,
+      source_template_uri: per_agent_template_uri(agent_uri, workspace_uri)
+    ]
+
+    case Map.get(spawn_opts, :from_uri) do
+      %URI{} = from -> Keyword.put(base, :explicit_source, from)
+      _ -> base
+    end
+  end
+
+  # A stable per-agent `template://` URI used as the cascade's
+  # `source_template_uri` (workspace layer source + default-branch gate). It need
+  # not resolve a `config_dir` itself — the content's `config_dir` satisfies the
+  # gate; an unresolvable workspace layer is simply skipped.
+  defp per_agent_template_uri(%URI{} = agent_uri, %URI{} = workspace_uri) do
+    Ezagent.URI.template(
+      Ezagent.URI.workspace_name!(workspace_uri),
+      :agent,
+      agent_name(agent_uri)
+    )
+  end
+
+  # Runtime DI for the agent-spawn facade (mirrors `resolve_session_facade/0`).
+  # `ezagent_domain_instance_message` owns `Ezagent.Entity.Agent.spawn_from_template_content/5`
+  # and boots AFTER workspace, so a compile-time alias would invert the dep
+  # graph. Tests can override via
+  # `Application.put_env(:ezagent_domain_workspace, :agent_spawn_facade, Fake)`.
+  defp resolve_agent_spawn_facade do
+    facade =
+      Application.get_env(
+        :ezagent_domain_workspace,
+        :agent_spawn_facade,
+        Ezagent.Entity.Agent
+      )
+
+    if Code.ensure_loaded?(facade) and
+         function_exported?(facade, :spawn_from_template_content, 5) do
+      {:ok, facade}
+    else
+      {:error, {:agent_spawn_facade_unavailable, facade}}
     end
   end
 

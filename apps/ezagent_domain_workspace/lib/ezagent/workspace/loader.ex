@@ -127,12 +127,12 @@ defmodule Ezagent.Workspace.Loader do
     # PR-3 (domain.agent D2) — route through the core contract-boundary wrapper so
     # boot/loader seams allocate the per-agent config_dir TARGET uniformly (this
     # was the rev-1 codex BLOCKER: the loader bypassed single-seam allocation).
-    case Ezagent.Kind.Template.provision_and_instantiate(
-           class_module,
-           tmpl_name,
-           tmpl_data,
-           workspace_uri
-         ) do
+    #
+    # 2026-06-07 file-flavor-create-cascade — a FILE-FLAVOR (cc/codex) template
+    # is the AgentTemplate CONTENT schema and routes through the #17 cascade
+    # chokepoint so cold restart re-resolves the cascade (and so the content→data
+    # conversion runs). See `cascade_or_provision/4`.
+    case cascade_or_provision(class_module, tmpl_name, tmpl_data, workspace_uri) do
       {:ok, uris} when is_list(uris) ->
         gated_load_bind(uris, workspace_uri, true)
 
@@ -154,6 +154,87 @@ defmodule Ezagent.Workspace.Loader do
 
       other ->
         {:error, {:bad_template_return, other}}
+    end
+  end
+
+  # FILE-FLAVOR (credentialled) templates route through the #17 cascade
+  # chokepoint `Agent.spawn_from_template_content/5`; everything else keeps the
+  # core `provision_and_instantiate/4` seam.
+  #
+  # For the boot replay the cascade re-resolves from the persisted CONTENT
+  # inputs (`flavor`/`project_cwd`/`config_dir`); the spawned-by principal is
+  # the system workspace-loader (a cold-boot has no live operator). The
+  # subprocess respawn + cred re-resolution then flows through the Agent Kind's
+  # `Sandbox.activate → ensure_subprocess_alive → CascadeRuntime` self-heal,
+  # which reads the original `owner_uri` from the persisted Sandbox-slice
+  # `cascade_resolution`.
+  defp cascade_or_provision(class_module, tmpl_name, tmpl_data, %URI{} = workspace_uri) do
+    if file_flavor_class?(class_module) do
+      case spawn_file_flavor_via_cascade(tmpl_data, workspace_uri) do
+        {:ok, %{workers: workers}} -> {:ok, workers, %{fresh?: true}}
+        {:error, {:already_started, _}} = err -> err
+        {:error, reason} -> {:error, {:cascade_spawn_failed, reason}}
+      end
+    else
+      Ezagent.Kind.Template.provision_and_instantiate(
+        class_module,
+        tmpl_name,
+        tmpl_data,
+        workspace_uri
+      )
+    end
+  end
+
+  defp file_flavor_class?(class_module) when is_atom(class_module) do
+    Ezagent.Agent.CredentialAdapter.credentialled?(class_module)
+  end
+
+  # Boot-replay routing of a file-flavor template through the cascade. The
+  # CONTENT inputs come from the persisted template; the spawned-by principal
+  # is the system workspace-loader.
+  defp spawn_file_flavor_via_cascade(tmpl_data, %URI{} = workspace_uri) do
+    with {:ok, spawner} <- resolve_agent_spawn_facade(),
+         {:ok, agent_uri} <- fetch_agent_uri(tmpl_data),
+         {:ok, content} <- to_cascade_content(tmpl_data) do
+      loader = Ezagent.SystemPrincipal.uri("workspace-loader")
+      caps = Ezagent.SystemPrincipal.caps(loader)
+
+      spawner.spawn_from_template_content(content, agent_uri, loader, workspace_uri,
+        caller: loader,
+        caps: caps
+      )
+    end
+  end
+
+  defp fetch_agent_uri(tmpl_data) do
+    case Map.get(tmpl_data, "agent_uri") || Map.get(tmpl_data, :agent_uri) do
+      s when is_binary(s) and s != "" -> {:ok, Ezagent.URI.new!(s)}
+      _ -> {:error, :missing_agent_uri}
+    end
+  end
+
+  defp to_cascade_content(tmpl_data) when is_map(tmpl_data) do
+    flavor = Map.get(tmpl_data, "flavor") || Map.get(tmpl_data, :flavor)
+    project_cwd = Map.get(tmpl_data, "project_cwd") || Map.get(tmpl_data, :project_cwd)
+    config_dir = Map.get(tmpl_data, "config_dir") || Map.get(tmpl_data, :config_dir)
+
+    cond do
+      not (is_binary(flavor) and flavor != "") -> {:error, :missing_flavor}
+      not (is_binary(project_cwd) and project_cwd != "") -> {:error, :missing_project_cwd}
+      not (is_binary(config_dir) and config_dir != "") -> {:error, :missing_config_dir}
+      true -> {:ok, %{flavor: flavor, project_cwd: project_cwd, config_dir: config_dir}}
+    end
+  end
+
+  # Runtime DI for the agent-spawn facade (mirrors the Behavior.Workspace seam).
+  defp resolve_agent_spawn_facade do
+    facade =
+      Application.get_env(:ezagent_domain_workspace, :agent_spawn_facade, Ezagent.Entity.Agent)
+
+    if Code.ensure_loaded?(facade) and function_exported?(facade, :spawn_from_template_content, 5) do
+      {:ok, facade}
+    else
+      {:error, {:agent_spawn_facade_unavailable, facade}}
     end
   end
 
@@ -401,12 +482,11 @@ defmodule Ezagent.Workspace.Loader do
     # PR-3 (domain.agent D2) — route through the core contract-boundary wrapper so
     # boot/loader seams allocate the per-agent config_dir TARGET uniformly (this
     # was the rev-1 codex BLOCKER: the loader bypassed single-seam allocation).
-    case Ezagent.Kind.Template.provision_and_instantiate(
-           class_module,
-           tmpl_name,
-           tmpl_data,
-           workspace_uri
-         ) do
+    #
+    # 2026-06-07 file-flavor-create-cascade — a FILE-FLAVOR (cc/codex) template
+    # routes through the #17 cascade chokepoint (same seam as the runtime
+    # `do_invoke/4`). See `cascade_or_provision/4`.
+    case cascade_or_provision(class_module, tmpl_name, tmpl_data, workspace_uri) do
       # codex round-6 HIGH-1 — accept both the 2-element `{:ok, uris}`
       # and the 3-element `{:ok, uris, meta}` form (meta carries
       # `fresh?`).

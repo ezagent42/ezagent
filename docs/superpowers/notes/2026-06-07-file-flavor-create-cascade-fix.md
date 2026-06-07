@@ -2,8 +2,9 @@
 
 **Date:** 2026-06-07
 **Branch:** `fix/file-flavor-create-cascade`
-**Status:** design note — codex adversarial approach-review run (verdict `needs-attention`,
-approach SOUND, three concrete under-specifications folded in below — see §7).
+**Status:** IMPLEMENTED (TDD). Codex adversarial approach-review run (verdict
+`needs-attention`, approach SOUND, three under-specifications folded in — see §7). Failing
+test → green; affected suites + create-path/parity invariants pass. PR open, not merged.
 
 ## 1. The bug (confirmed by code trace)
 
@@ -144,29 +145,40 @@ create's `do_create_agent("cc"|"codex", …)`:
    `explicit_source` (see step 5 / codex Finding 3). Non-file flavors (echo / np /
    curl-as-slice) keep the existing `Loader.invoke_template` path untouched.
 
-4. **Persist the CONTENT (with cascade inputs) in `session_templates`, and converge the
-   boot loader.** (codex Finding 2 — the critical one.) The boot loader
-   (`load_one → instantiate_via_dispatch → :instantiate action → spawn_child({:template,…})
-   → Loader.invoke_template/4 → provision_and_instantiate`) re-instantiates persisted
-   `session_templates` on cold restart and would BYPASS the cascade for a data-shape
-   template. Two coupled requirements:
-   - The persisted template for a file-flavor stores the **content schema** (`flavor`,
-     `project_cwd`, `config_dir`, plus the cascade-resolution INPUTS — all JSON-safe
-     string URIs, since `Store.update_templates` Jason-encodes). It MUST still carry a
-     `"class"` key (the boot loader's `extract_class_name` + `TemplateRegistry.lookup`
-     and `validate_template_class` require it) — so the stored map is content-schema
-     PLUS `"class"`.
-   - The boot loader's file-flavor template branch (`Loader.invoke_template/4` for a
-     credentialled class) ALSO routes through `Agent.spawn_from_template_content/5`
-     (re-resolving the cascade from the persisted inputs), not bare
-     `provision_and_instantiate`. Non-credentialled classes keep the direct path. This is
-     the single convergence point that makes runtime-create and boot-replay use ONE
-     cascade-aware seam — satisfying the single-writer intent for cold restart too.
+4. **Persist the CONTENT in `session_templates`; cold-restart cascade re-resolution is
+   handled by the EXISTING Sandbox-slice self-heal — NOT a boot-loader change.**
+   (Resolves codex Finding 2 — see the runtime trace below that supersedes codex's
+   static-only conclusion.)
 
-   This re-resolution-from-inputs mirrors the orchestrator worker's cold-restart path
-   (`Ezagent.Credential.CascadeRuntime.rehydrate_respawn_data/2`, driven from the agent's
-   persisted Sandbox `respawn_template_data[:cascade_resolution]`): inputs persist, secrets
-   are re-resolved live. Same philosophy, applied to the workspace-template seam.
+   The persisted file-flavor template stores the **content schema** (`flavor`,
+   `project_cwd`, `config_dir`, + `explicit_source` when `--from`), PLUS a `"class"` key
+   (the boot loader's `extract_class_name` + `TemplateRegistry.lookup` require it). All
+   JSON-safe (`Store.update_templates` Jason-encodes — no functions/structs).
+
+   **The boot loader MUST route file-flavor templates through the cascade too (codex
+   Finding 2 confirmed, with two reinforcing reasons):**
+
+   - *Shape:* the persisted file-flavor template is CONTENT schema (`project_cwd`), but the
+     plugin `instantiate/3` the boot loader reaches via `provision_and_instantiate` reads
+     the DATA key `cwd` (`Map.fetch!(tmpl, "cwd")`). Only `spawn_from_template_content →
+     to_template_data` performs the content→data conversion. So the boot loader's
+     file-flavor branch routes through the same spawn facade (which converts + re-resolves
+     the cascade from the persisted `config_dir`/`flavor` inputs). Non-credentialled
+     classes (echo) keep the direct `provision_and_instantiate` path (DATA shape).
+   - *Ordering:* persisting DATA shape and leaving the loader unchanged was considered and
+     REJECTED — the loader's fresh-boot `:started` branch materializes single-reference
+     (no cascade) and the Agent Kind's `Sandbox.activate/2` self-heal then re-resolves the
+     cascade AFTER, a backwards ordering (single-ref then cascade) that races. Routing the
+     loader through the cascade gives ONE materialization path with no race.
+
+   Cold-restart owner-provenance is still preserved by the Sandbox slice: `owner_uri` lives
+   in the persisted `cascade_resolution` (populated by `record_sandbox_state` at create),
+   and `Ezagent.Credential.CascadeRuntime.rehydrate_respawn_data/2` (driven by
+   `Sandbox.activate → ensure_subprocess_alive`) reads it from there. The boot loader's
+   cascade routing handles the FRESH Kind spawn + content→data conversion; the Sandbox-slice
+   self-heal handles the subprocess respawn — both re-resolve from persisted inputs, never
+   from stored secrets. ONE cascade-aware seam (`spawn_from_template_content`) is used by
+   create, boot loader, and (transitively) the Sandbox self-heal.
 
 5. **`--from` preserves single-reference clone semantics.** (codex Finding 3.) When
    `--from <source>` is given, thread the source as `explicit_source` into
