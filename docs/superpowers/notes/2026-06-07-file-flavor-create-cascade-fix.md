@@ -410,7 +410,24 @@ succeeded, so ANY failure there is owned by this call → its `else` (and the in
 failure branch) hard-delete the grant safely. A mint-conflict can no longer erase the winner's
 row. Regression test added (a loser whose mint conflicts must NOT delete the winner's grant).
 
-This is the final round — the diff is internally consistent: create / cold-boot replay /
+create / cold-boot replay /
 add_template all fail loud rather than share operator home; a failed fresh spawn leaves zero
 residue (workers / config-dir / lineage / grant); grant cleanup is ownership-scoped (no race);
 the single create-chokepoint + LV/CLI parity invariants pass; echo/np/curl untouched.
+
+### 7h. Codex round 8 — adopt-rejection must clean up the grant THIS create minted
+
+**Verdict: `needs-attention`** (static-only) — round-7 ownership-scoping confirmed correct;
+one residual: `spawn_after_cascade`'s `fresh?: false` branch returns SUCCESS (the orchestrator
+legitimately accepts an adopted worker + its grant). But the UNIFIED CREATE wrapper REJECTS
+`fresh?: false` (→ `:already_exists` + Store rollback), so a grant THIS create minted before
+the adopt would remain attached to an agent it refused to own. **VERIFIED.**
+
+**Resolution (caller-specific — the shared spawn cannot know create rejects adoption):** the
+create wrapper's `fresh?: false` branch now `GrantRow.delete/1`s the grant for `agent_uri`
+before returning `:already_exists`. Reaching `fresh?: false` implies THIS call's mint
+SUCCEEDED (a concurrent winner's prior mint would have made THIS call's mint CONFLICT, failing
+earlier in `resolve_cascade_content` — the no-delete path), so the only grant row is this
+call's, and deleting it is correct + frees the unique key for the real owner / a retry. Idempotent
+(`{:ok, :no_grant}` when no source was resolved). The orchestrator/fork path is unchanged (it
+keeps the grant for the worker it adopts).

@@ -1454,7 +1454,15 @@ defmodule Ezagent.Behavior.Workspace do
         # template or grant creator-manage caps for a worker owned by the other
         # creator. Surface `:already_exists` → `invoke_or_rollback` rolls back this
         # call's Store write.
+        #
+        # codex r7 HIGH — the cascade may have MINTED a grant for `agent_uri` before
+        # adopting. Because UNIFIED CREATE rejects the adoption (unlike the
+        # orchestrator, which accepts `fresh?: false`), the grant this call minted
+        # for an agent it refuses to own must be cleaned up here (caller-specific —
+        # the shared `spawn_from_template_content` cannot know the create rejects
+        # adoption). HARD-delete frees the unique key for the real owner / a retry.
         {:ok, %{fresh?: false}} ->
+          _ = Ezagent.Credential.GrantRow.delete(URI.to_string(agent_uri))
           {:error, {:already_exists, URI.to_string(agent_uri)}}
 
         {:error, {:already_started, _}} ->
