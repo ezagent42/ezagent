@@ -1,14 +1,15 @@
 # Design: socialware — fused backend-agent + real-time-render sessions on existing ezagent primitives
 
-> **Status:** buildable design, rev7 (Allen 2026-06-07). Supersedes the synthesis + rev1–rev6.
+> **Status:** buildable design, rev8 (Allen 2026-06-07). Supersedes the synthesis + rev1–rev7.
 > Direction: **rewrite directly, reuse `main`, do NOT base on the loom/autoservice branches.**
-> Verified against `origin/main` (sha `5661964c`). rev7 reflects Allen's review + four codex
+> Verified against `origin/main` (sha `5661964c`). rev8 reflects Allen's review + five codex
 > rounds and converges on a small, unified model:
 > - **immutable artifact + pointer** for both **agent config** and the **page (`:surface`)** —
 >   update = new immutable version; rollback / approval = move a pointer;
-> - **append-only chat + a `visibility` field on `Ezagent.Message`**, with the **customer served
->   by a dedicated visibility-gated feed** (serves only `:customer_visible` messages) — *not* an
->   `ExternalMirror`/Publisher binding, which is routing-blind and would leak `:operator_only`
+> - **append-only chat + a `visibility` field on `Ezagent.Message`**, consumed by a
+>   **visibility-aware external-adapter family**: `ExternalMirror` is the simple trusted-mirror
+>   member; the **customer SPA feed is the rich member** (filters by `visibility`, gates on a
+>   committed settlement, authenticates per request) — never the raw routing-blind Publisher tap
 >   (codex rev5-CRITICAL);
 > - **dual-surface**: operator/admin = LiveView; customer = React + json-render SPA.
 >
@@ -41,8 +42,10 @@ Two constraints:
 
 Net-new: `Behavior.Turn` + `:turns` slice; the `:surface` slice (immutable page versions +
 approved pointer); a **`visibility` field on `Ezagent.Message`**; and the **customer frontend**
-(a React + json-render SPA fed by a **dedicated visibility-gated customer feed** — *not* an
-ExternalMirror/Publisher tap, see §4.3). The operator/admin surface reuses the existing LiveView
+(a React + json-render SPA fed by the **rich member of a visibility-aware external-adapter
+family**: it filters by `visibility`, gates on a committed settlement, and authenticates per
+request — *not* a raw Publisher tap, see §4.3; `ExternalMirror` is the simple trusted-mirror
+member of the same family). The operator/admin surface reuses the existing LiveView
 `SessionView`. Agent **config** uses an immutable-config object + a cascade pointer.
 
 **Scope note (codex rev6):** the `Message.visibility` field is a **core `ezagent_core` schema
@@ -59,7 +62,7 @@ with migration/backward-compat acceptance. The "zero core code" property (§5, S
 | Message persistence (append-only) | `Ezagent.MessageStore` (separate `messages`+`message_routings` DB; PubSub fan-out) | `apps/ezagent_core/lib/ezagent/message_store.ex` |
 | **The View abstraction** + view-switcher | `Ezagent.UI.SessionView` (`id/label/icon/applies_to?/render`) + `SessionViewRegistry` — domain tier, render contract is LiveView | `apps/ezagent_domain_ui/lib/ezagent_domain_ui/session_view.ex` |
 | Shipped views | `ConversationView` (chat), `Pty.TerminalView`, `RoutingView`, `ExternalMirror.View` | `apps/ezagent_plugin_liveview/.../views/conversation_view.ex` et al. |
-| External projection **pattern reference** (NOT the customer gate) | `Behavior.ExternalMirror` projects a session to a non-member — **but `ExternalMirrorWorker` subscribes to the Session Publisher slice-change stream (every `:chat` change, routing-blind)**, so it would mirror `:operator_only` messages. It is a *pattern reference only*; the customer feed is purpose-built + visibility-gated (§4.3), **not** an ExternalMirror binding. | `apps/ezagent_domain_external_mirror/lib/ezagent/entity/external_mirror_worker.ex` |
+| External-adapter family — **simple trusted-mirror member** | `Behavior.ExternalMirror` projects a session to a non-member external target. Today `ExternalMirrorWorker` taps the Session Publisher slice-change stream (every `:chat` change, routing-blind), so it must **gain an optional `visibility` filter** to be customer-safe. It is the *simple, trusted-target* member of the visibility-aware external-adapter family; the customer feed is the *rich* member (§4.3). | `apps/ezagent_domain_external_mirror/lib/ezagent/entity/external_mirror_worker.ex` |
 | Routing (runtime-mutable, per-session, cap-checked) | `Ezagent.Behavior.Routing` → `RuleStore.{add,delete,disable,enable}`; matchers in `routing/matcher.ex`; `system_default` (`$session_users`+`$mentions`) is delete-protected | `apps/ezagent_core/lib/ezagent/behavior/routing.ex`, `.../routing/{rule_store,resolver,matcher}.ex` |
 | Agent provisioning + per-agent config/credentials | the #17 **credential/config cascade** (flavor-base → workspace → user → session) | `apps/ezagent_core/lib/ezagent/credential/*`, `.../agent/materializer.ex` |
 | Session/Agent templates | `Entity.SessionTemplate`, `Entity.AgentTemplate`, `template.read/write` | `apps/ezagent_domain_chat/lib/ezagent/entity/{session_template,agent_template}.ex` |
@@ -103,16 +106,18 @@ A **turn** is one atomic interaction cycle. `Behavior.<noun>` owning `:<noun>` (
   written as a **new immutable `:surface` version** (§4.2). → `:composing`
 - `turn.claim(turn_id, by: user_uri)` — human takeover: set `owner`, `mode`; the agent's
   ongoing messages are written `:operator_only` → `:awaiting_human`
-- `turn.settle(turn_id)` — close the turn **atomically** via a single durable, idempotent
-  **settlement record keyed by `turn_id`** that captures and commits *together*: the message
-  `visibility` flips to `:customer_visible` and the `:surface` approved-pointer target
-  (compare-and-set on the expected current pointer). A **transactional outbox** then emits the
-  customer-delivery signal — **message ids only, after the commit** — and the customer endpoint
-  refetches via the `visibility == :customer_visible` query before sending payloads (§4.3). A
-  crash/retry between writes is safe: the settlement record is the source of truth and replays
-  idempotently, so the customer can never see chat without its page, a page without its chat, or
-  a duplicate/stale delivery (codex rev6). In `:copilot`/`:takeover` settle runs **only after the
-  operator approves/edits** → `:settled`
+- `turn.settle(turn_id)` — close the turn via a durable, idempotent **settlement record keyed
+  by `turn_id`** whose `status` becomes **`:committed` last** — only after *both* the
+  `MessageStore` `visibility` flips to `:customer_visible` *and* the `:surface` approved-pointer
+  advance (compare-and-set on the expected pointer) are written. Chat and page are **separate
+  stores** (no single cross-DB transaction is possible), so **customer-visibility derives from
+  the settlement status, not from the raw flag/pointer**: the customer feed (§4.3) serves a
+  turn's chat *and* page **only when its settlement is `:committed`**, and the **transactional
+  outbox** emits the customer-delivery signal (ids only) **only after `:committed`**. A crash
+  after a partial sub-write leaves `status != :committed`, so the customer sees nothing for that
+  turn (no chat-without-page, no page-without-chat, no duplicate/stale delivery); replay is
+  idempotent and re-drives to `:committed` (codex rev6/rev7). In `:copilot`/`:takeover` settle
+  runs **only after the operator approves/edits** → `:settled`
 - `turn.cancel(turn_id)` / timeout → `:cancelled` (its page version is never pointed-to; its
   messages stay `:operator_only` — the customer never sees them)
 
@@ -166,21 +171,26 @@ authoritative gate** — it must be a `Message` field (not a `message_routings`-
 on main `Routing.Matcher.match?/2` and any stream payload only see `%Ezagent.Message{}`; a
 `message_routings` tag would be invisible to every enforcement path (codex rev5-HIGH).
 
-The **customer feed is a purpose-built, visibility-gated endpoint** (§4.4): snapshot/history via
-a `visibility == :customer_visible` `MessageStore` query, live via a **transactional-outbox
-customer-delivery signal carrying message ids only, emitted after the visibility commit** (on
-`compose` in `:auto`, on `settle` for held copilot/takeover messages). The endpoint **refetches
-through the filtered query before sending any payload**, so the filtered query is the *single*
-privacy enforcement and the signal cannot race a payload ahead of the persisted flip (codex
-rev6). It is **NOT** an `ExternalMirror`/Publisher binding: on main
-`ExternalMirrorWorker` subscribes to the **Session Publisher slice-change stream** — every
-`:chat` change regardless of routing — so an `:operator_only` `Chat.send` would still surface
-there (codex rev5-CRITICAL). A routing rule cannot fix this because ExternalMirror bypasses
-routing. Therefore the customer feed does **not** reuse the ExternalMirror/Publisher path at all;
-the `visibility` field + this dedicated endpoint are the only gate. The agent's takeover/copilot
-drafts are `:operator_only`, so they are absent from the customer feed **by construction** (the
-query excludes them; no delivery event is emitted); they reach only the operator's LiveView,
-which reads the full Publisher stream.
+Both the customer feed and `ExternalMirror` are members of **one visibility-aware
+external-adapter family** (the unification, Allen): each is an outward projection that **filters
+by `visibility`**. They differ by trust + capability:
+- **`ExternalMirror` = the simple, trusted-target mirror** (Feishu/Slack). On main it taps the
+  **Session Publisher slice-change stream** (every `:chat` change, routing-blind), so it
+  currently mirrors `:operator_only` too — it must **gain an optional `visibility` filter** to be
+  safe for any customer-facing mirror (codex rev5-CRITICAL: a routing rule can't fix this, since
+  ExternalMirror bypasses routing).
+- **The customer SPA feed = the rich, untrusted-client adapter** in the same family. It does
+  **not** tap the raw Publisher; it serves snapshot/history via a query returning a message only
+  when **`visibility == :customer_visible` AND its turn's settlement is `:committed`** (the
+  cross-store consistency rule, §4.1), and live via a **transactional-outbox signal (ids only,
+  after the settlement commits)** that the endpoint **refetches through the same gated query
+  before sending any payload**. So the gated query is the *single* privacy + consistency
+  enforcement; the signal cannot race a payload ahead of a committed settlement (codex
+  rev6/rev7). It also authenticates per request (§4.4).
+
+The agent's takeover/copilot drafts are `:operator_only`, so they are absent from the customer
+feed **by construction** (the gated query excludes them; no delivery event fires); they reach
+only the operator's LiveView, which reads the full Publisher stream.
 
 **Page — the approved pointer (§4.2).** `:auto` advances `approved` at compose; `:copilot`/
 `:takeover` advance it only on operator approval. The customer renders `approved`; an unapproved
@@ -194,31 +204,46 @@ output stays `:operator_only` (suggestion); the operator-authored message is `:c
 and its page edits become the approved version on settle.
 
 **Enforceable, not a convention** (codex rev5). The customer feed's **only inputs are the
-`visibility == :customer_visible` query + the customer-delivery event**. Customer routes must
-**not** be wired to `MessageStore.recent_in_session`, the session PubSub topic, the `Publisher`,
-or an `ExternalMirror` binding — all of those carry `:operator_only` content. Raw-feed denial
-(explicitly including the Publisher/ExternalMirror path) is an acceptance invariant covering
-**both live and replay/catch-up** (§9). So mode adds **no new behavior, no routing suppression,
-no core write-gate** — a `Message.visibility` field + a dedicated visibility-gated customer feed
-+ the approved page pointer. (We do not port `Behavior.Mode`/#511.)
+committed-`:customer_visible` gated query + the customer-delivery event**. The customer adapter
+must **not** fall back to `MessageStore.recent_in_session`, the session PubSub topic, the raw
+`Publisher`, or an **unfiltered** `ExternalMirror` binding — all of those carry `:operator_only`
+content. Raw-feed denial (explicitly including the raw Publisher/unfiltered-ExternalMirror path)
+is an acceptance invariant covering **both live and replay/catch-up** (§9). So mode adds **no new
+behavior, no routing suppression, no core write-gate** — a `Message.visibility` field + the
+visibility-aware external-adapter family + the approved page pointer. (We do not port
+`Behavior.Mode`/#511.)
 
-### 4.4 Customer frontend — React + json-render SPA fed by the dedicated visibility-gated feed (the loom frontend half)
+### 4.4 Customer frontend — React + json-render SPA fed by the rich external-adapter (the loom frontend half)
 
 The customer surface is a **React SPA** rendering the session via **json-render** (UI tree →
-React component registry) over a **dedicated visibility-gated streaming endpoint** (§4.3): it
-serves the customer's `:customer_visible` chat (a `visibility` query for snapshot/history + the
-customer-delivery event for live) + `:surface.versions[approved]`, and **nothing else** —
-**not** the raw `MessageStore`/PubSub/`Publisher` feed and **not** an `ExternalMirror` binding
-(which, being Publisher-driven, would leak `:operator_only`). This is a one-time frontend
-foundation: once built, frontend devs extend a React component registry and the backend emits
-json-render trees (a standard, scalable frontend story; unlocks arbitrary generated UI, which
-LiveView cannot). loom (#480) implements much of the *rendering* half (Next.js SPA + Sandpack)
-and is **ported/adapted**; its SSE-from-Publisher transport is **not** reused for the customer
-gate — the endpoint reads the visibility-gated feed instead.
+React component registry) over the **rich member of the visibility-aware external-adapter family**
+(§4.3): it serves the customer's committed-`:customer_visible` chat (the gated query for
+snapshot/history + the customer-delivery event for live) + `:surface.versions[approved]`, and
+**nothing else** — **not** the raw `MessageStore`/PubSub/`Publisher` feed and **not** an
+*unfiltered* `ExternalMirror` binding (which, being Publisher-driven, would leak
+`:operator_only`). This is a one-time frontend foundation: once built, frontend devs extend a
+React component registry and the backend emits json-render trees (a standard, scalable frontend
+story; unlocks arbitrary generated UI, which LiveView cannot). loom (#480) implements much of the
+*rendering* half (Next.js SPA + Sandpack) and is **ported/adapted**; its SSE-from-Publisher
+transport is **not** reused for the customer gate — the adapter reads the gated feed instead.
 
-Pieces: the visibility-gated streaming endpoint (visibility-query chat + customer-delivery
-events + approved page); the React SPA + json-render runtime + component registry; Sandpack for
-the `code` node; external/anonymous customer auth + session binding.
+Pieces: the visibility-gated streaming endpoint (gated-query chat + customer-delivery events +
+approved page); the React SPA + json-render runtime + component registry; Sandpack for the
+`code` node; external/anonymous customer auth + session binding.
+
+**Customer-feed authorization contract (locked, codex rev7).** Visibility separates
+`:operator_only` from `:customer_visible`; it does **not** bind a caller to a session/workspace —
+that is a separate authorization the feed MUST enforce. Contract:
+- the customer SPA presents a **session-binding token** (a capability bound to exactly one
+  `session://` + its `workspace://`);
+- **every** feed request (snapshot, history, live subscribe) **authorizes the token → (this
+  session, this workspace)** before returning any row — visibility-gating is applied *after* this
+  scope check, never instead of it;
+- **denials** (each an acceptance test, §9): a token for another session, a token for another
+  workspace, an expired/revoked binding, and any raw-feed attempt (§4.3) all return nothing.
+The customer **identity model** (anonymous/synthetic vs a seeded user) is a sub-decision (§10);
+the **binding + scoped-authz contract above is fixed** regardless of which identity model backs
+the token.
 
 The backend (§4.1–4.3) is **frontend-agnostic**: the LiveView operator surface and the React
 customer SPA can both drive it. Backend E2E can run against a thin LiveView render before the
@@ -338,10 +363,16 @@ Non-admin customer (external) + operator. Customer asks for "a comparison page +
   `ExternalMirror` binding returns no `:operator_only` content (only the
   `visibility == :customer_visible` query + delivery events + approved pointer feed the
   customer); (d) **cold restart / second viewer** — the customer renders `versions[approved]`,
-  never an in-flight unapproved version.
+  never an in-flight unapproved version; (e) **crash matrix** — a crash after *any* single settle
+  sub-write (visibility flip, pointer advance, outbox) leaves the turn's settlement
+  `!= :committed`, so the customer sees neither chat nor page for it (no partial); replay
+  re-drives to `:committed`; (f) **feed authorization** (§4.4) — a session-binding token scoped
+  to session A/workspace A is **denied** customer-visible chat/page for session B, for workspace
+  B, and when expired/revoked.
 - Artifacts: customer-page screenshot with ① bubble + ② live page side-by-side from one turn;
   ③ a copilot turn where the draft shows on the operator surface but is absent from the customer
-  page until approval; restart + second-viewer checks.
+  page until approval; restart + second-viewer checks; the crash-matrix + cross-session/
+  cross-workspace/expired-binding denial tests.
 
 **SW-UPD (update)** — *self-evolve, with real rollback.*
 Optimizer + operator. Traces → config-delta → operator approves → new immutable config + repoint
@@ -366,16 +397,19 @@ would leak `:operator_only`, codex rev5-CRITICAL); visibility lives on `Ezagent.
 rev5-HIGH); frontend (React + json-render, dual-surface); config (immutable + pointer, real
 rollback); **customer-delivery contract** (transactional outbox: persist `:customer_visible`,
 emit message-ids-after-commit on a customer-delivery topic, endpoint refetches via the filtered
-query — the filtered query is the single enforcement, §4.3); **settle atomicity** (one durable
-idempotent settlement record keyed by `turn_id` committing visibility + approved-pointer CAS,
-with the outbox; crash-replayable, §4.1). Remaining:
+query — the filtered query is the single enforcement, §4.3); **settle/two-store consistency**
+(a settlement record keyed by `turn_id` goes `:committed` last; customer reads + outbox derive
+from `:committed`, so a partial cross-store replay is never visible, §4.1); **customer-feed
+authorization contract** (session-binding token → scoped (session, workspace) check on every
+request, before visibility-gating, with mandatory denial tests, §4.4). Remaining:
 1. **Streaming-endpoint transport** — WS vs SSE for the customer feed; reuse loom's SPA shape but
    over the visibility-gated source. (Lean: match loom's transport to minimize port risk.)
-2. **Anonymous/synthetic customer identity** — for the external customer feed; build the
-   anon model in the frontend phase, or seed a test user for the first E2E? (Lean: seeded user
-   for the first SW-USE E2E; anon model in/after the frontend phase.)
-3. **`{:within_workspace}` cap shape** — for tenant-admin/customer isolation; introduce with
-   SW-DEV (templates are workspace-scoped). (Lean: yes, with SW-DEV.)
+2. **Customer identity model only** (the binding+authz *contract* is locked, §4.4) — does the
+   session-binding token back onto an anonymous/synthetic identity or a seeded user? (Lean:
+   seeded user for the first SW-USE E2E; anon model in/after the frontend phase. Either way the
+   §4.4 contract + denial tests are unchanged.)
+3. **`{:within_workspace}` cap shape** — the concrete cap form behind the §4.4 scoped-authz
+   check; introduce with SW-DEV (templates are workspace-scoped). (Lean: yes, with SW-DEV.)
 4. **Immutable-config store location** — config objects in `ezagent_domain_socialware` vs a #17
    sub-store; the cascade high layer holds the pointer either way. (Lean: a small socialware
    config store now; converge with #17-V2 later.)
