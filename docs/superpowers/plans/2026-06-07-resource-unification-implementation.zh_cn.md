@@ -115,6 +115,15 @@ docs/superpowers/plans/2026-06-07-resource-unification-implementation{,.zh_cn}.m
 
 ---
 
+## Codex 对抗式评审发现(2026-06-07)+ 处置
+
+本计划经 `/codex:adversarial-review`(static-only)评审,结论 `needs-attention`;所有发现已折入:
+
+- **[CRITICAL] config-dir 权威对 resource URI 循环。** 原 P1.4 从被授权的同一 `resource_uri` 推导 `scope.workspace` → 检查自证(伪造 `resource://victim/cc-agents/x` 会在 scope `victim` 下解析)。**处置:** (a) `Sandbox.ConfigDir.path/2` 从 **agent_uri**(已认证主体)推导 `auth_ws` 并由其**构造** resource URI(P1.3);(b) `:config_dir` attr **拒绝裸 config-dir `resource://` URI**(`{:error, :config_dir_resource_requires_scope}`)——仅自授权的 socialware-config-object 允许裸传;config-dir 作用域解析必须经外部 `{uri, scope}` 载荷(P1.4)。已加负向回归测试。
+- **[HIGH] 签名 token 以 `max_age: :infinity` 校验。** **处置:** 钉死 TTL —— verify 绝不用 `:infinity`;铸造时拒绝非正 TTL(除测试专用 override);24h 硬上限;加默认 token 过期测试证明正常 token 不会永久有效(P2a.1/P2a.2)。
+- **[HIGH] 解析器白名单可被任意运行时代码改写。** **处置:** 类型表 `:protected`,由 `FsResolver.Registry` GenServer(唯一写者)拥有;`register_type/2` 仅启动期;`unregister_type/1` 仅测试(`:prod` 编译排除)。已加可变性测试(P0.2/P0.4)。
+- **[MEDIUM] 精确锚点门不够机械精确。** **处置:** S-2 现校验严格 `Module.function/arity`(正则)、正行号、真实 `.ex` 路径;并加交叉校验测试(`home_call_anchor_matches?/3`)断言每个锚点恰好映射到一个由命名函数包裹的活 Home 调用——锚点扣减按包裹函数身份而非仅 `{path, line}`(P0.5.1/P0.5.4/P0.5.5)。
+
 ## Codex 协同(对齐 #25 unify-uri-query 协议)
 
 - **每阶段一个 `resource-unification` tracking issue**(`gh issue create`,标签 `resource-unification`):
@@ -137,9 +146,8 @@ docs/superpowers/plans/2026-06-07-resource-unification-implementation{,.zh_cn}.m
 
 - [ ] **P0.1** 失败测试:未注册类型 → `:none`(R-1)。新建 `fs_resolver_test.exs`(英文版含完整测试代码)。
   跑 `cd apps/ezagent_core && MIX_ENV=test mix test test/ezagent/resource/fs_resolver_test.exs` → **预期失败**(模块不存在)。
-- [ ] **P0.2** 最小实现:`fs_resolver.ex`(ETS per-`<type>` 注册表 + SPEC §5.1 解析算法 1–5 步;
-  英文版含完整源码)。跑测试 → R-1 通过。`mix format`。
-  > Codex 注:P0 用懒建 ETS 即可(休眠+测试驱动);P1 注册真实类型时把建表移到 `EzagentCore.EtsOwner`(标为 P1 子任务)。
+- [ ] **P0.2** 最小实现:`fs_resolver.ex`(SPEC §5.1 解析算法 1–5 步;英文版含完整源码)。跑测试 → R-1 通过。`mix format`。
+  > Codex 注(注册表可变性,HIGH):类型表 `:protected`,由 `FsResolver.Registry` GenServer(唯一写者)拥有——任意运行时代码无法插改删类型规格;`register_type/2` 仅启动期(`boot_phase?/0` 守卫),`unregister_type/1` 仅测试(`:prod` 编译排除)。Registry 在 `application.ex` 启动期、任何注册之前加入监督树。
 - [ ] **P0.3** 失败测试:R-2 遍历/NUL/分隔符在任何 FS 触达前拒绝(用裸 `%URI{}` 构造,绕过 `segment!`)。**预期全绿。**
 - [ ] **P0.4** 失败测试:R-3 权威(`uri.<ws> != scope.workspace` 大声失败,非 `:none`;`refute resolve/1 存在`)+ R-4 成功路径 +
   完整性不变量(每个已注册类型都有 `authority/2`)。**预期全绿。** 提交:`feat(resource): hardened registration-only resource:// FS resolver (P0)`。
@@ -176,8 +184,8 @@ docs/superpowers/plans/2026-06-07-resource-unification-implementation{,.zh_cn}.m
 - [ ] **P1.1** 失败测试:字节一致 parity(钉住当前精确输出 `Home.path("cc-agents")/<ws>/<name>`)+ foreign-`<ws>` 权威大声失败。
   parity 在当前实现上**应通过**(基线);权威测试**失败**(类型未注册)。
 - [ ] **P1.2** 注册 config-dir 类型 + 把 `FsResolver` 建表移到 `EzagentCore.EtsOwner`;在 `application.ex` 启动期为在用命名空间(`cc`、`codex`…)注册 `"<ns>-agents"`,`backend_component` = `"<ns>-agents"`(保字节一致)。
-- [ ] **P1.3** 重写 `config_dir.ex:30-36` 经接缝构造+解析;`scope.workspace` = agent 自身权威 workspace(cascade 的已认证主体,非攻击者提供)。**字节一致 → parity 保持绿。**
-- [ ] **P1.4** 重指 `uri_query_resolvers.ex:105-107` 的 `resource` 子句:先试通用 `FsResolver`,`:none` 回落到 `:socialware_config_dir`;`{:error,_}` 传播不吞。
+- [ ] **P1.3**(codex CRITICAL)重写 `config_dir.ex:30-36`:`scope.workspace` 必须来自与被解析 URI **不同**的已认证主体,否则 `uri.<ws> == scope.workspace` 自证。从 **agent_uri**(主体)推导 `auth_ws`,再由其**构造** resource URI,再解析——攻击者无法伪造跨 `<ws>`。**字节一致 → parity 绿。**
+- [ ] **P1.4**(codex CRITICAL)`uri_query_resolvers.ex:105-107`:`:config_dir` attr 拒绝裸 config-dir `resource://` URI(`{:error, :config_dir_resource_requires_scope}`,无 scope-from-URI 兜底);仅自授权的 socialware-config-object 允许裸传(委派 `:socialware_config_dir`);config-dir 类型经外部 `{uri, scope}` 载荷子句解析。加负向回归测试。`{:error,_}` 传播不吞。
   > Codex 注(D4 守卫):不改 `cascade_runtime.ex` / `materializer.ex`;PR 清单断言这两文件 0 改动行。
 - [ ] 从基线移除 `config_dir.ex:32`;把 `fs_resolver.ex` 加入扫描器 `@default_excluded_paths`(它是解析器本体)。
 - [ ] **P1.5** 跑 parity + resolver + 既有 config_dir/cascade 测试 + 扫描门(基线已缩)。提交:`feat(resource): per-agent config-dir resolves via resource:// seam, byte-identical (P1)`。
@@ -197,8 +205,7 @@ docs/superpowers/plans/2026-06-07-resource-unification-implementation{,.zh_cn}.m
 ### P2a — 下载契约 + workspace 段授权(暂不搬字节)
 
 - [ ] **P2a.1** 失败测试:签名 token 的 TTL/绑定/重放/过期(`upload_token_test.exs`,英文版含完整代码)。**预期失败**(模块不存在)。
-- [ ] **P2a.2** 实现 `upload_token.ex`:`Phoenix.Token.sign/verify`,`max_age` = TTL,载荷 = URI stable key;短 TTL(默认 5 分钟),绑定单一 URI,授权后才铸造,MAC 签名。**预期通过。**
-  > Codex 注 TTL:让 `mint!(ttl: -1)` 的过期测试确定性通过;记录所选方案。
+- [ ] **P2a.2**(codex HIGH)实现 `upload_token.ex`:`Phoenix.Token.sign/verify`,verify **绝不用 `max_age: :infinity`**;铸造时拒绝非正 TTL(除测试 override);24h 硬外层上限;短 TTL(默认 5 分钟),绑定单一 URI,授权后才铸造,MAC 签名。加默认 token 过期测试(证明正常 token 不永久有效)。**预期通过。**
 - [ ] **P2a.3** 在 `FsResolver` 注册 `uploads` 类型(后端 `"uploads"`,`authority/2` = `uri.<ws> == scope.workspace`)。
 - [ ] **P2a.4** 铸造时授权 + serve 时重校验:内部(operator/session)铸造时活 cap 检查;外部 customer-feed(#601/#603,无 session/caps 的访客)按 **approved-only** 可见性把关;serve 时(a)校 token(MAC+TTL),(b)取出绑定 URI,(c)以 request-mount scope 跑 `authority/2`,(d)feed 重确认仍 approved(TTL 之外的撤销杠杆)。
   并修文档漂移(SPEC §6 P2a):`capability.ex:556` / `admin_live.ex` 注释把 `resource://<type>/<workspace>/<name>` 改为 workspace-first。

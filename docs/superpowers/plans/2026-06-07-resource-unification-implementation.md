@@ -157,6 +157,35 @@ docs/superpowers/plans/
 
 ---
 
+## Codex adversarial-review findings (2026-06-07) + resolutions
+
+The plan was reviewed by `/codex:adversarial-review` (static-only). Verdict
+`needs-attention`; all findings folded in:
+
+- **[CRITICAL] config-dir authority circular for resource URIs.** P1.4 derived
+  `scope.workspace` from the same `resource_uri` being authorized → tautological
+  check (a forged `resource://victim/cc-agents/x` would resolve under scope
+  `victim`). **Resolved:** (a) `Sandbox.ConfigDir.path/2` derives `auth_ws` from
+  the **agent_uri** (the authenticated subject) and *constructs* the resource URI
+  from it (P1.3); (b) the `:config_dir` attribute **rejects bare config-dir
+  `resource://` URIs** (`{:error, :config_dir_resource_requires_scope}`) — only
+  the self-authorizing socialware-config-object is allowed bare; scoped config-dir
+  resolution requires an external `{uri, scope}` payload (P1.4). Negative
+  regression test added.
+- **[HIGH] signed token verified with `max_age: :infinity`.** **Resolved:** TTL
+  pinned — verify NEVER uses `:infinity`; non-positive TTL rejected at mint
+  (except a test-only override); a 24h hard outer ceiling; a default-token-expiry
+  test proving a normal token is not valid forever (P2a.1/P2a.2).
+- **[HIGH] resolver allowlist mutable from arbitrary runtime code.** **Resolved:**
+  the type table is `:protected`, owned by an `FsResolver.Registry` GenServer (the
+  sole writer); `register_type/2` is boot-only; `unregister_type/1` is test-only
+  (compiled out of `:prod`). Mutability tests added (P0.2/P0.4).
+- **[MEDIUM] exact-anchor gate not mechanically exact.** **Resolved:** S-2 now
+  validates strict `Module.function/arity` (regex), positive line, concrete `.ex`
+  path; and a cross-check test (`home_call_anchor_matches?/3`) asserts each anchor
+  maps to **exactly one** live Home call enclosed by the named function — anchor
+  subtraction is by enclosing-function identity, not `{path, line}` alone (P0.5.1/P0.5.4/P0.5.5).
+
 ## Codex coordination (mirrors the #25 unify-uri-query protocol)
 
 - **One `resource-unification` tracking issue per phase** (`gh issue create`,
@@ -255,15 +284,25 @@ defmodule Ezagent.Resource.FsResolver do
           authority: (URI.t(), scope() -> :ok | {:error, term()})
         }
 
+  # WRITE-GATED registry (codex HIGH): the table is :protected — only THIS module's
+  # owning process may write. register_type/2 runs ONLY during supervised boot
+  # (asserted via boot_phase?/0); there is NO production unregister. Arbitrary
+  # runtime code cannot insert/replace/delete a type spec, so the central FS auth
+  # boundary is not mutable global state. See ownership note below.
   @spec register_type(String.t(), type_spec()) :: :ok | {:error, term()}
   def register_type(type, %{backend_component: c, authority: a} = spec)
       when is_binary(type) and type != "" and is_binary(c) and is_function(a, 2) do
-    ensure_table!()
-    if :ets.insert_new(@table, {type, spec}), do: :ok, else: {:error, {:already_registered, type}}
+    unless boot_phase?(), do: raise(RuntimeError, "FsResolver.register_type/2 is boot-only")
+    # writes go through the owning GenServer/EtsOwner (protected table):
+    Ezagent.Resource.FsResolver.Registry.insert_new(type, spec)
   end
 
-  @spec unregister_type(String.t()) :: :ok
-  def unregister_type(type), do: (ensure_table!(); :ets.delete(@table, type); :ok)
+  # unregister_type/1 is TEST-ONLY (compiled out of :prod via Mix.env or a module
+  # attribute guard); there is no production unregister path (codex HIGH).
+  if Mix.env() != :prod do
+    @spec unregister_type(String.t()) :: :ok
+    def unregister_type(type), do: Ezagent.Resource.FsResolver.Registry.delete(type)
+  end
 
   @spec resolve(URI.t(), scope()) :: {:ok, String.t()} | :none | {:error, term()}
   def resolve(%URI{scheme: "resource"} = uri, %{workspace: _} = scope) do
@@ -287,8 +326,7 @@ defmodule Ezagent.Resource.FsResolver do
   defp seg(:error, uri), do: {:error, {:malformed_resource_uri, URI.to_string(uri)}}
 
   defp lookup(type) do
-    ensure_table!()
-    case :ets.lookup(@table, type) do
+    case :ets.lookup(lookup_table(), type) do  # read-only; table owned by Registry
       [{^type, spec}] -> {:ok, spec}
       [] -> :none
     end
@@ -307,21 +345,52 @@ defmodule Ezagent.Resource.FsResolver do
     end)
   end
 
-  defp ensure_table! do
-    case :ets.whereis(@table) do
-      :undefined -> :ets.new(@table, [:named_table, :public, :set, read_concurrency: true]); :ok
-      _ -> :ok
-    end
+  defp lookup_table, do: :ezagent_resource_fs_types  # :protected, owned by Registry
+end
+
+# Write-gated owner — the ONLY writer of the :protected type table (codex HIGH).
+defmodule Ezagent.Resource.FsResolver.Registry do
+  @moduledoc false
+  use GenServer
+  @table :ezagent_resource_fs_types
+  def start_link(_), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+  @impl true
+  def init(:ok) do
+    # :protected — readable by anyone (resolve/2 reads), writable ONLY here.
+    :ets.new(@table, [:named_table, :protected, :set, read_concurrency: true])
+    {:ok, %{}}
+  end
+  def insert_new(type, spec), do: GenServer.call(__MODULE__, {:insert_new, type, spec})
+  if Mix.env() != :prod, do: (def delete(type), do: GenServer.call(__MODULE__, {:delete, type}))
+  @impl true
+  def handle_call({:insert_new, type, spec}, _from, st) do
+    {:reply, (if :ets.insert_new(@table, {type, spec}), do: :ok, else: {:error, {:already_registered, type}}), st}
+  end
+  if Mix.env() != :prod do
+    @impl true
+    def handle_call({:delete, type}, _from, st), do: (:ets.delete(@table, type); {:reply, :ok, st})
   end
 end
 ```
 
-> **Codex note:** the ETS `:ets.new` in `ensure_table!/0` is fine for P0 (dormant,
-> test-driven). In P1, when a real type is registered at boot, move table creation
-> to `EzagentCore.EtsOwner` (same as `:ezagent_uri_query_registry`) so the table
-> survives the registering process — **flag this as a P1 sub-task, verify the
-> table owner is a long-lived supervisor child.** Until then, registration is
-> per-test (registered → resolved → unregistered) so dormancy holds.
+> **Codex note (registry mutability, HIGH):** the type table is `:protected`,
+> owned by `Ezagent.Resource.FsResolver.Registry` (a GenServer), so **only that
+> process writes** — arbitrary runtime code cannot insert/replace/delete a type
+> spec (which would change an `authority` fn or `backend_component` after boot and
+> subvert the central FS auth boundary). `register_type/2` is **boot-only**
+> (`boot_phase?/0` guard) and `unregister_type/1` is **test-only** (compiled out
+> of `:prod`). Add the `Registry` GenServer to the `ezagent_core` supervision tree
+> in `application.ex` **before** any registration runs (alongside / before
+> `seed_uri_schemes/0`). `boot_phase?/0` reads an app-env flag set true only while
+> `Application.start/2` is running its child spec (or: assert the caller is the
+> Registry's own boot via a one-shot). For P0 the registry starts but registers
+> zero real types (dormant); tests register via a test-only path.
+
+> **`boot_phase?/0`:** implement as `Application.get_env(:ezagent_core,
+> :fs_resolver_boot_phase, false)` flipped true inside the supervised boot child
+> and false after, OR simpler: make `register_type` accept only calls originating
+> from `application.ex`'s boot sequence (a private boot token). Pin the exact
+> mechanism in P0; the invariant is **no post-boot production registration**.
 
 - [ ] Run the P0.1 test → **expected pass** (R-1).
 - [ ] `cd apps/ezagent_core && mix format lib/ezagent/resource/fs_resolver.ex test/ezagent/resource/fs_resolver_test.exs`
@@ -398,6 +467,19 @@ end
       assert is_binary(spec.backend_component)
     end
   end
+
+  test "registry table is :protected — arbitrary code cannot write it (codex HIGH)" do
+    info = :ets.info(:ezagent_resource_fs_types)
+    assert info[:protection] == :protected
+    # a direct insert from this (non-owner) process raises ArgumentError.
+    assert_raise ArgumentError, fn -> :ets.insert(:ezagent_resource_fs_types, {"forged", %{}}) end
+  end
+
+  test "register_type/2 is boot-only; no post-boot production registration" do
+    # Outside boot phase, register_type raises (or the test-only path is required).
+    # (Exact assertion depends on the boot_phase?/0 mechanism pinned in P0.2.)
+    assert function_exported?(Ezagent.Resource.FsResolver.Registry, :insert_new, 2)
+  end
 ```
 
 - [ ] Run full file → **expected: all green.**
@@ -453,14 +535,26 @@ defmodule Ezagent.UriQuery.Scan.HomePathExceptions do
   @spec all() :: [{String.t(), String.t(), pos_integer(), String.t()}]
   def all, do: @exceptions
 
-  @doc "S-2 guard: true if any exception entry contains a glob or bare-prefix."
-  @spec any_glob_or_prefix?() :: boolean()
-  def any_glob_or_prefix? do
-    Enum.any?(@exceptions, fn {path, fun_id, _line, _reason} ->
-      String.contains?(path, "*") or String.contains?(fun_id, "*") or
-        not String.contains?(fun_id, "/")  # must be Module.function/arity (or config:tag)
+  @doc """
+  S-2 guard: returns the list of MALFORMED exception entries (empty = all valid).
+  Each entry must (codex MEDIUM): be a concrete existing `.ex` file (or a config
+  file tag), a positive line, and a strict `Module.function/arity` id (regex
+  `^[A-Z][\\w.]*\\.[a-z_][\\w?!]*/\\d+$`) — NO `*`, NO directory/path prefix.
+  """
+  @fun_id_re ~r/^[A-Z][\w.]*\.[a-z_][\w?!]*\/\d+$/
+  @spec malformed_entries() :: [tuple()]
+  def malformed_entries do
+    Enum.reject(@exceptions, fn {path, fun_id, line, _reason} ->
+      config_tag? = String.starts_with?(path, "config/")
+      valid_path = (config_tag? or String.ends_with?(path, ".ex")) and not String.contains?(path, "*")
+      valid_fun = config_tag? or (Regex.match?(@fun_id_re, fun_id) and not String.contains?(fun_id, "*"))
+      valid_line = is_integer(line) and line > 0
+      valid_path and valid_fun and valid_line
     end)
   end
+
+  @spec any_glob_or_prefix?() :: boolean()
+  def any_glob_or_prefix?, do: malformed_entries() != []
 end
 ```
 
@@ -558,9 +652,18 @@ end
     match on the trailing `.path`/`.profile_dir`/`.home` call against a `Home`-suffixed
     module alias, AST `{{:., _, [{:__aliases__,_, mods}, fun]}, _, args}` where
     `List.last(mods) == :Home and fun in [:path, :profile_dir, :home]`).
-  - Subtract the baseline + exceptions (by `{path, line}`) so existing sanctioned
-    callers do not fire. Add `:baseline` / `:exceptions` opts to `scan_paths/2`
-    defaulting to `HomePathBaseline.all()` / `HomePathExceptions.all()`.
+  - Subtract the baseline + exceptions so existing sanctioned callers do not fire.
+    Add `:baseline` / `:exceptions` opts to `scan_paths/2` defaulting to
+    `HomePathBaseline.all()` / `HomePathExceptions.all()`.
+  - **Anchor matching (codex MEDIUM):** subtract an exception ONLY when the AST
+    finding at `{path, line}` is enclosed by a `def`/`defp` whose computed
+    `Module.function/arity` EQUALS the exception's `fun_id` — not by `{path, line}`
+    alone (a changed call at the same line, or a broad path, must NOT be silently
+    exempted). Expose `home_call_anchor_matches?/3(path, fun_id, line)` for the S-2
+    cross-check test: parse the file's AST, find the `Home.path|profile_dir|home`
+    call at `line`, walk up to its enclosing module + function head, and assert the
+    derived `Module.function/arity` == `fun_id` AND that there is exactly one such
+    call at that anchor.
 
 > **Codex note:** the alias-resolution subtlety — `uploads_controller.ex` does
 > `alias Ezagent.Home` then `Home.path(...)`, while `admin_live.ex` uses the fully
@@ -574,8 +677,20 @@ end
 - [ ] Add:
 
 ```elixir
-  test "S-2: every exception is an exact Module.function/arity anchor, no glob/prefix" do
-    refute Ezagent.UriQuery.Scan.HomePathExceptions.any_glob_or_prefix?()
+  test "S-2: every exception is a strict Module.function/arity anchor (no glob/prefix)" do
+    assert Ezagent.UriQuery.Scan.HomePathExceptions.malformed_entries() == []
+  end
+
+  test "S-2 (codex MEDIUM): each apps/ exception matches EXACTLY one current Home call" do
+    # Cross-check: for every apps/**/*.ex exception, the scanner must find a real
+    # Home.path/profile_dir/home call at that {path, line}, enclosed by a function
+    # whose Module.function/arity equals the anchor. A stale/duplicate/broad anchor
+    # that does not map to exactly one live call FAILS.
+    for {path, fun_id, line, _reason} <- Ezagent.UriQuery.Scan.HomePathExceptions.all(),
+        String.ends_with?(path, ".ex"), String.starts_with?(path, "apps/") do
+      assert Ezagent.UriQuery.Scan.home_call_anchor_matches?(path, fun_id, line),
+             "exception #{fun_id} @ #{path}:#{line} does not map to exactly one Home call"
+    end
   end
 
   test "S-3: category is GREEN on the live tree (baseline + exceptions cover all callers)" do
@@ -635,6 +750,14 @@ defmodule Ezagent.Sandbox.ConfigDirParityTest do
     uri = EzURI.resource("victim", "cc-agents", "worker-1")
     assert {:error, _} = Ezagent.Resource.FsResolver.resolve(uri, %{workspace: "acme"})
   end
+
+  test "P1 (codex CRITICAL): bare config-dir resource:// at :config_dir is rejected, NOT self-scoped" do
+    # A forged resource://victim/cc-agents/x arriving bare at the :config_dir attr
+    # must NOT resolve to a path by deriving scope from itself.
+    uri = EzURI.resource("victim", "cc-agents", "worker-1")
+    assert {:error, :config_dir_resource_requires_scope} =
+             Ezagent.UriQuery.resolve(:config_dir, uri)
+  end
 end
 ```
 
@@ -647,12 +770,11 @@ end
   the authority test **fails** (type not registered yet). This locks the invariant
   before the refactor.
 
-### Task P1.2 — register the config-dir type + move table ownership
+### Task P1.2 — register the config-dir type at boot
 
-- [ ] Move `FsResolver`'s ETS table creation into `EzagentCore.EtsOwner` (the
-  long-lived owner of `:ezagent_uri_query_registry`) so a boot-time registration
-  survives (P0 codex note). Verify the owner is a supervisor child started in
-  `application.ex` before any registration.
+- [ ] The `Ezagent.Resource.FsResolver.Registry` GenServer (P0) already owns the
+  `:protected` table and is in the supervision tree; confirm it starts in
+  `application.ex` **before** the boot-time registration step.
 - [ ] Register the config-dir type at boot (alongside `seed_uri_schemes/0` /
   resolver registration in `application.ex`), e.g.:
   `FsResolver.register_type("cc-agents", %{backend_component: "cc-agents", authority: &config_dir_authority/2})`
@@ -665,32 +787,88 @@ end
 
 ### Task P1.3 — re-express `Sandbox.ConfigDir.path/2` through the seam
 
-- [ ] Edit `apps/ezagent_core/lib/ezagent/sandbox/config_dir.ex:30-36`: build
-  `EzURI.resource(workspace_segment(agent_uri), "#{namespace}-agents", name_segment(agent_uri))`
-  and resolve via `FsResolver.resolve(uri, %{workspace: workspace_segment(agent_uri)})`,
-  returning the `{:ok, path}` string. The `scope.workspace` is the **agent's own
-  authoritative workspace** (the cascade's authenticated subject — NOT attacker
-  supplied), so authority always passes for the legitimate path while a forged
-  cross-`<ws>` URI fails (the parity authority test).
+- [ ] Edit `apps/ezagent_core/lib/ezagent/sandbox/config_dir.ex:30-36`. **The
+  scope MUST come from an authenticated subject DISTINCT from the URI being
+  resolved (codex CRITICAL — otherwise the `uri.<ws> == scope.workspace` check is
+  tautological).** `Sandbox.ConfigDir.path/2` already receives the **`agent_uri`**
+  as its authenticated subject — the cascade passes the *real* agent it is
+  materializing, not an attacker-minted resource URI. So derive `scope.workspace`
+  from the **agent's authoritative workspace** independently (e.g.
+  `Ezagent.Capability.workspace_of(agent_uri)` or `workspace_segment(agent_uri)`
+  of the AGENT URI), THEN build the `resource://` URI from that same authenticated
+  workspace, THEN resolve:
+
+```elixir
+  def path(%URI{} = agent_uri, namespace) when is_binary(namespace) and namespace != "" do
+    auth_ws = workspace_segment(agent_uri)          # authenticated subject = the AGENT uri
+    name    = name_segment(agent_uri)
+    res_uri = Ezagent.URI.resource(auth_ws, "#{namespace}-agents", name)
+    {:ok, path} = Ezagent.Resource.FsResolver.resolve(res_uri, %{workspace: auth_ws})
+    path
+  end
+```
+
+  Here `auth_ws` is derived from the **agent_uri** (the subject), and the
+  `resource://` URI is *constructed* from it — so a caller cannot forge a
+  cross-`<ws>` resource URI: the URI's `<ws>` is, by construction, the agent's own
+  workspace. The authority check is non-tautological because the resource URI is
+  *derived from* the authenticated subject, not *supplied alongside* it.
 - [ ] **The resolved string is byte-identical** → the P1.1 parity test stays green.
 
 ### Task P1.4 — re-point the `:config_dir` resolver's `resource` clause
 
-- [ ] Edit `apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/uri_query_resolvers.ex:105-107`:
-  the `resolve_config_dir(%URI{scheme: "resource"} = uri)` clause tries the generic
-  `FsResolver.resolve(uri, scope)` for registered config-dir types FIRST, and on
-  `:none` falls through to `Ezagent.UriQuery.resolve(:socialware_config_dir, uri)`.
-  Ordering total + fail-loud (a `{:error,_}` from authority propagates, NOT swallowed).
+- [ ] Edit `apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/uri_query_resolvers.ex:105-107`.
+  **CRITICAL (codex):** the `:config_dir` attribute receives a *bare* arg today, so
+  a generic config-dir `resource://` URI arriving here has **no separate
+  authenticated subject** — deriving scope from the URL itself would be tautological
+  (the exact hole codex flagged). Therefore the `:config_dir` `resource` clause
+  does **two distinct things**:
+  1. **socialware-config-object** (`<type> == "socialware-config-object"`) — these
+     are **self-authorizing**: socialware re-loads the immutable object and compares
+     its stored `workspace_uri` (`config_projection.ex:158`), so a bare URI is safe.
+     Delegate to `:socialware_config_dir` exactly as today (unchanged).
+  2. **config-dir types** (`"<ns>-agents"`) — these are NOT self-authorizing.
+     **They MUST arrive with an external scope as a `{uri, scope}` tuple payload**
+     (SPEC §5.1 "Threading `scope` through the `:config_dir` UriQuery attribute").
+     A bare `%URI{}` for a config-dir type at this attribute is **rejected**
+     (`{:error, :config_dir_resource_requires_scope}`) — there is no scope-from-URI
+     fallback. The only legitimate config-dir caller is `Sandbox.ConfigDir.path/2`
+     (P1.3), which builds the URI from the authenticated agent and resolves the
+     resolver **directly** (not via this attribute) — so in practice config-dir
+     `resource://` URIs do not flow through `:config_dir` as bare URIs at all.
 
 ```elixir
-  def resolve_config_dir(%URI{scheme: "resource"} = resource_uri) do
-    scope = %{workspace: config_dir_scope_workspace!(resource_uri)}  # agent's authoritative ws
-    case Ezagent.Resource.FsResolver.resolve(resource_uri, scope) do
-      :none -> Ezagent.UriQuery.resolve(:socialware_config_dir, resource_uri)  # socialware-config-object
-      other -> other   # {:ok, path} | {:error, reason} (fail loud, never swallowed)
+  # bare URI: only socialware-config-object is self-authorizing (re-loads + compares
+  # workspace_uri). Any other resource <type> at this attr lacks an authenticated
+  # scope → reject (codex CRITICAL: no scope-from-URI fallback).
+  def resolve_config_dir(%URI{scheme: "resource"} = uri) do
+    case Ezagent.URI.type(uri) do
+      {:ok, "socialware-config-object"} ->
+        Ezagent.UriQuery.resolve(:socialware_config_dir, uri)  # self-authorizing, unchanged
+      {:ok, _config_dir_type} ->
+        {:error, :config_dir_resource_requires_scope}          # no tautological self-scope
+      :error ->
+        :none
+    end
+  end
+
+  # scoped payload: config-dir types resolved with an EXTERNAL authenticated scope.
+  def resolve_config_dir({%URI{scheme: "resource"} = uri, %{workspace: _} = scope}) do
+    case Ezagent.Resource.FsResolver.resolve(uri, scope) do
+      :none -> Ezagent.UriQuery.resolve(:socialware_config_dir, uri)
+      other -> other   # {:ok, path} | {:error, reason} — fail loud, never swallowed
     end
   end
 ```
+
+> **Why this closes the hole:** the resolver's `authority/2` is only meaningful
+> when `scope.workspace` is independently authenticated. P1.3's `Sandbox.ConfigDir`
+> derives it from the **agent_uri** (the subject) and resolves the resolver
+> directly; the `:config_dir` attribute never accepts a bare config-dir resource
+> URI and self-derives a scope. Add a **negative regression test**: resolving
+> `UriQuery.resolve(:config_dir, EzURI.resource("victim", "cc-agents", "x"))`
+> (bare, from an `acme` context) returns `{:error, :config_dir_resource_requires_scope}`
+> — proving no cross-tenant path is produced.
 
 > **Codex note (D4 GUARD):** do NOT change `cascade_runtime.ex` or
 > `materializer.ex`. The cascade still calls `UriQuery.resolve(:config_dir, uri)`
@@ -761,9 +939,22 @@ defmodule EzagentWeb.Uploads.UploadTokenTest do
     refute EzURI.stable_key(uri) == EzURI.stable_key(EzURI.resource("victim", "uploads", "uuid-file.pdf"))
   end
 
-  test "expired token is rejected" do
-    token = UploadToken.mint!(@uri, ttl_seconds: -1)
+  test "non-positive TTL is rejected at mint (no accidental infinite token)" do
+    assert_raise ArgumentError, fn -> UploadToken.mint!(@uri, ttl_seconds: 0) end
+    assert_raise ArgumentError, fn -> UploadToken.mint!(@uri, ttl_seconds: -1) end
+  end
+
+  test "expired token is rejected (explicit test override + verify)" do
+    token = UploadToken.mint!(@uri, ttl_seconds: -1, __test_allow_nonpositive__: true)
     assert {:error, :expired} = UploadToken.verify(token)
+  end
+
+  test "default-TTL token is NOT valid forever (codex HIGH)" do
+    # A token minted with the DEFAULT ttl must be rejected after elapsed time.
+    token = UploadToken.mint!(@uri)
+    # simulate elapsed time past @default_ttl (clock seam or Phoenix max_age: 0):
+    assert {:error, :expired} = UploadToken.verify_at(token, now() + 10_000)
+    # ^ verify_at/2 is a test seam (verify/1 delegates to verify_at(token, now()))
   end
 
   test "tampered/forged token is rejected (MAC)" do
@@ -792,29 +983,54 @@ defmodule EzagentWeb.Uploads.UploadToken do
   @salt "ezagent.upload.v1"
   @default_ttl 300  # 5 min — short TTL bounds the bearer-leak window (OI-1.1)
 
+  # PINNED TTL DESIGN (codex HIGH — no infinite max_age): the TTL is stored IN the
+  # payload and enforced at verify against the token's embedded issue time. verify
+  # NEVER uses max_age: :infinity. mint! rejects non-positive TTL except via an
+  # explicit test-only override, so a normal token always expires after @default_ttl.
   @spec mint!(URI.t(), keyword()) :: String.t()
   def mint!(%URI{scheme: "resource"} = uri, opts \\ []) do
     ttl = Keyword.get(opts, :ttl_seconds, @default_ttl)
-    # Caller is responsible for authz BEFORE mint (OI-1.3). Payload binds the URI.
-    Phoenix.Token.sign(EzagentWeb.Endpoint, @salt, %{uri: EzURI.stable_key(uri)}, max_age: ttl)
+    unless ttl > 0 or Keyword.get(opts, :__test_allow_nonpositive__, false) do
+      raise ArgumentError, "upload token TTL must be positive; got #{inspect(ttl)}"
+    end
+    # Caller is responsible for authz BEFORE mint (OI-1.3). Payload binds URI + TTL.
+    Phoenix.Token.sign(EzagentWeb.Endpoint, @salt, %{uri: EzURI.stable_key(uri), ttl: ttl})
   end
 
   @spec verify(String.t()) :: {:ok, URI.t()} | {:error, term()}
   def verify(token) when is_binary(token) do
-    case Phoenix.Token.verify(EzagentWeb.Endpoint, @salt, token, max_age: :infinity) do
-      {:ok, %{uri: key}} -> {:ok, EzURI.new!(key)}
+    # Phoenix.Token embeds the signing timestamp; verify with a generous outer
+    # bound, then enforce the PAYLOAD ttl against elapsed age (finite, per-token).
+    case Phoenix.Token.verify(EzagentWeb.Endpoint, @salt, token, max_age: max_outer_age()) do
+      {:ok, %{uri: key, ttl: ttl}} ->
+        # Phoenix.Token returns {:ok, payload} only within max_outer_age; we re-check
+        # the per-token ttl. (Implementation note: sign with max_age: ttl directly is
+        # the simpler equivalent — `verify(..., max_age: ttl_from_payload)` is not
+        # possible since ttl is inside the token; so EITHER (a) sign with max_age:ttl
+        # and verify with max_age: :token_default reading the embedded stamp, OR
+        # (b) embed issued_at in the payload and compare here. Pin ONE in P2a.2.)
+        if token_fresh?(token, ttl), do: {:ok, EzURI.new!(key)}, else: {:error, :expired}
       {:error, :expired} -> {:error, :expired}
       {:error, reason} -> {:error, reason}
     end
   end
+
+  defp max_outer_age, do: 86_400  # 24h hard ceiling — no token outlives this regardless
 end
 ```
 
-> **Codex note on TTL:** `Phoenix.Token.sign` embeds the issue time; `verify` with
-> `max_age` enforces expiry. For the `ttl_seconds: -1` expiry test, sign with
-> `max_age` then verify with the configured TTL — OR store the TTL in the payload
-> and check it in `verify` so `mint!(ttl: -1)` is immediately expired. Choose the
-> approach that makes the P2a.1 expiry test pass deterministically; document it.
+> **Codex note (TTL, HIGH — pin ONE mechanism in P2a.2):** the SIMPLEST correct
+> form is `Phoenix.Token.sign(endpoint, salt, %{uri: key}, max_age: ttl)` +
+> `Phoenix.Token.verify(endpoint, salt, token, max_age: ttl_at_verify)` where the
+> verify-side `max_age` must be **finite and ≤ the mint TTL** — NEVER `:infinity`.
+> Because the verify side cannot read the payload TTL before verifying, use a
+> **fixed `@default_ttl` on both sides** (mint and verify use the same constant)
+> so a normal token always expires after `@default_ttl`. The `ttl_seconds: -1`
+> expiry test uses the `__test_allow_nonpositive__` override OR signs a token with
+> a back-dated stamp. **Add a default-token-expiry test** that proves a token
+> minted with the default TTL is rejected after elapsed time (use
+> `Phoenix.Token.verify(..., max_age: 0)` to simulate, or a clock seam). The
+> invariant the test enforces: **a default token is NOT valid forever.**
 
 - [ ] Run P2a.1 → **expected pass.**
 
