@@ -11,7 +11,8 @@ defmodule Ezagent.Invariants.CredentialAdapterContractTest do
   """
   use ExUnit.Case, async: true
 
-  @callbacks Ezagent.Agent.CredentialAdapter.declarative_callbacks()
+  @file_callbacks Ezagent.Agent.CredentialAdapter.declarative_callbacks()
+  @slice_callbacks Ezagent.Agent.CredentialSliceAdapter.declarative_callbacks()
 
   test "every Template Class implements all-or-none of the credential-adapter callbacks" do
     classes = template_class_modules()
@@ -24,17 +25,42 @@ defmodule Ezagent.Invariants.CredentialAdapterContractTest do
         Code.ensure_loaded(mod)
 
         implemented =
-          Enum.filter(@callbacks, fn {name, arity} -> function_exported?(mod, name, arity) end)
+          Enum.filter(@file_callbacks, fn {name, arity} ->
+            function_exported?(mod, name, arity)
+          end)
 
         cond do
           implemented == [] -> []
-          length(implemented) == length(@callbacks) -> []
-          true -> [{mod, implemented, @callbacks -- implemented}]
+          length(implemented) == length(@file_callbacks) -> []
+          true -> [{mod, implemented, @file_callbacks -- implemented}]
         end
       end)
 
     assert violations == [],
            "Template Classes with PARTIAL credential-adapter opt-in: #{inspect(violations)}"
+  end
+
+  test "every Template Class implements all-or-none of the slice credential callbacks" do
+    classes = template_class_modules()
+
+    violations =
+      Enum.flat_map(classes, fn mod ->
+        Code.ensure_loaded(mod)
+
+        implemented =
+          Enum.filter(@slice_callbacks, fn {name, arity} ->
+            function_exported?(mod, name, arity)
+          end)
+
+        cond do
+          implemented == [] -> []
+          length(implemented) == length(@slice_callbacks) -> []
+          true -> [{mod, implemented, @slice_callbacks -- implemented}]
+        end
+      end)
+
+    assert violations == [],
+           "Template Classes with PARTIAL slice credential opt-in: #{inspect(violations)}"
   end
 
   test "cc + codex DO declare a full credential adapter (non-vacuous)" do
@@ -47,6 +73,12 @@ defmodule Ezagent.Invariants.CredentialAdapterContractTest do
     assert Ezagent.PluginCc.Template.CcAgent.credential_relpaths() == [".credentials.json"]
     assert Ezagent.PluginCodex.Template.CodexAgent.credential_env_var() == "CODEX_HOME"
     assert "auth.json" in Ezagent.PluginCodex.Template.CodexAgent.credential_relpaths()
+  end
+
+  test "curl declares the slice credential adapter instead of a file adapter" do
+    refute Ezagent.Agent.CredentialAdapter.credentialled?(Ezagent.PluginCurlAgent.Template)
+    assert Ezagent.Agent.CredentialSliceAdapter.credentialled?(Ezagent.PluginCurlAgent.Template)
+    assert Ezagent.PluginCurlAgent.Template.credential_slice() == :api_keys
   end
 
   defp template_class_modules do

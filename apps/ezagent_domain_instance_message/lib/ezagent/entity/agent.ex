@@ -705,16 +705,17 @@ defmodule Ezagent.Entity.Agent do
          opts
        ) do
     source_template_uri = Keyword.get(opts, :source_template_uri)
+    credential_adapter = credential_adapter_kind(template_class)
 
-    if Ezagent.Agent.CredentialAdapter.credentialled?(template_class) and
+    if credential_adapter != :none and
          match?(%URI{}, source_template_uri) and
-         default_cascade_configured?(content, source_template_uri) do
+         default_cascade_configured?(credential_adapter, content, source_template_uri) do
       resolution = %{
         owner_uri: spawned_by_uri,
         workspace_uri: workspace_uri,
         workspace_layer_uri: source_template_uri,
         flavor: flavor,
-        credential_required?: false,
+        credential_required?: credential_required_by_default?(credential_adapter),
         explicit_source: Keyword.get(opts, :explicit_source)
       }
 
@@ -768,7 +769,20 @@ defmodule Ezagent.Entity.Agent do
     end
   end
 
-  defp default_cascade_configured?(content, %URI{} = source_template_uri) do
+  defp credential_adapter_kind(template_class) do
+    cond do
+      Ezagent.Agent.CredentialAdapter.credentialled?(template_class) -> :file
+      Ezagent.Agent.CredentialSliceAdapter.credentialled?(template_class) -> :slice
+      true -> :none
+    end
+  end
+
+  defp credential_required_by_default?(:slice), do: true
+  defp credential_required_by_default?(:file), do: false
+
+  defp default_cascade_configured?(:slice, _content, %URI{}), do: true
+
+  defp default_cascade_configured?(:file, content, %URI{} = source_template_uri) do
     case content_field(content, :config_dir) do
       dir when is_binary(dir) and dir != "" ->
         true
