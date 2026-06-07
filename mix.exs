@@ -28,6 +28,7 @@ defmodule EzagentCore.Umbrella.MixProject do
           ezagent_domain_identity: :permanent,
           ezagent_domain_workspace: :permanent,
           ezagent_domain_instance_message: :permanent,
+          ezagent_domain_socialware: :permanent,
           ezagent_domain_agent_bridge: :permanent,
           ezagent_domain_external_mirror: :permanent,
           ezagent_domain_pty: :permanent,
