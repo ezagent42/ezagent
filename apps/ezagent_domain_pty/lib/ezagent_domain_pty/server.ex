@@ -429,11 +429,24 @@ defmodule Ezagent.Domain.Pty.Server do
         # appears BEFORE the dev-channels / trust-folder dialogs, so an
         # unanswered theme picker hangs the spawn here and the scanner never
         # reaches the dialogs it already handles — the fresh-stack failure seen
-        # in the §5.B credential-cascade live E2E (2026-06-07). The picker is a
-        # static radio menu (no animated banner), so words are not fragmented;
-        # anchor on two stable, dialog-specific phrases. Bare Enter confirms the
-        # highlighted default (claude auto-detects e.g. "Dark mode ✔").
-        match: ["text style", "Dark mode"],
+        # in the §5.B credential-cascade live E2E (2026-06-07). Bare Enter
+        # confirms the highlighted default (claude auto-detects e.g. "Dark mode").
+        #
+        # Match the FULL menu shape, not just two words: an auto-prompt that does
+        # not fire at startup (e.g. theme already persisted) stays armed for the
+        # whole session, so a loose match like ["text style", "Dark mode"] would
+        # later false-positive on ordinary claude output and inject a spurious
+        # Enter (codex review of PR #611). Requiring the header + `/theme` hint +
+        # three distinct option labels makes the match specific to this exact
+        # dialog — ordinary prose cannot satisfy all five. The radio menu is
+        # static (no animated banner), so these labels are not fragmented.
+        match: [
+          "Choose the text style",
+          "/theme",
+          "Auto (match terminal)",
+          "Dark mode",
+          "Light mode"
+        ],
         send: "\r",
         fired?: false
       },

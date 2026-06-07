@@ -63,6 +63,25 @@ defmodule Ezagent.Domain.Pty.Server.AutoPromptsTest do
     refute PtyServer.matches?(p.match, AnsiStrip.strip(@trust_buffer))
   end
 
+  test ":theme_dialog stays armed all session but does NOT fire on ordinary output mentioning the words" do
+    # An auto-prompt that never fires at startup (e.g. the theme was already
+    # persisted, so the picker never appears) remains armed for the whole
+    # session and is matched against the live buffer on every scan. A loose
+    # match would then inject a spurious Enter when normal claude output happens
+    # to contain the words — codex review of PR #611. The full-menu-shape match
+    # must reject ordinary prose that merely mentions "text style"/"Dark mode".
+    p = spec(:theme_dialog)
+
+    ordinary =
+      AnsiStrip.strip(
+        "\e[1CSure!\e[1CHere's\e[1Chow\e[1Cto\e[1Cset\e[1Cthe\e[1Ctext\e[1Cstyle\e[1Cto\e[1CDark\e[1Cmode\r\r\n" <>
+          "\e[1Cin\e[1Cyour\e[1Ceditor\e[1Csettings.\e[1CRun\e[1C/theme\e[1Cto\e[1Cchange\e[1Cit\e[1Clater."
+      )
+
+    refute PtyServer.matches?(p.match, ordinary),
+           "theme_dialog must not fire on ordinary output that merely mentions the words + /theme"
+  end
+
   test ":trust_folder_dialog fires on the real folder-trust buffer and sends \"1\\r\"" do
     p = spec(:trust_folder_dialog)
     assert p, "trust_folder_dialog must be in default_auto_prompts/0"
