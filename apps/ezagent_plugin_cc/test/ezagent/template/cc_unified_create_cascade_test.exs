@@ -221,6 +221,27 @@ defmodule Ezagent.PluginCc.Template.CcUnifiedCreateCascadeTest do
       assert is_binary(Map.get(tmpl, "project_cwd"))
       assert is_binary(Map.get(tmpl, "config_dir"))
     end
+
+    test "an OLD DATA-shape file-flavor template lacking config_dir FAILS LOUD on replay (no operator-home boot)",
+         %{ws_name: ws_name, workspace_uri: workspace_uri} do
+      # Simulate a stale pre-change persisted cc template: DATA shape (cwd) with
+      # NO config_dir — the exact shape that used to silently boot sharing the
+      # operator ~/.claude. The Loader must FAIL LOUD, not degrade.
+      tmpl_name = "cc.agent.stale-#{System.unique_integer([:positive])}"
+
+      stale = %{
+        "class" => "cc.agent",
+        "agent_uri" => URI.to_string(Ezagent.URI.agent(ws_name, "stale-agent")),
+        "cwd" => System.tmp_dir!()
+        # deliberately NO "config_dir"
+      }
+
+      {:ok, _} =
+        Store.update_templates(ws_name, %{tmpl_name => stale})
+
+      assert {:error, {:file_flavor_missing_config_dir, _}} =
+               Ezagent.Workspace.Loader.invoke_template(workspace_uri, tmpl_name)
+    end
   end
 
   describe "fail-loud — no silent operator ~/.claude fallback" do

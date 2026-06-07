@@ -324,3 +324,21 @@ reads the ORIGINAL owner from the persisted Sandbox-slice `cascade_resolution` �
 single authority for boot creds. The create-time path is unchanged (full cascade under the
 real creator). Added a boot-replay regression test
 (`Loader.invoke_template` on a persisted CONTENT-shape file-flavor template).
+
+### 7d. Codex round 4 — old DATA-shape replay no-silent-fallback
+
+**Verdict: `needs-attention`** (static-only) — round-3 fixes confirmed correct (`fresh?`
+preserved; no wrong-owner cascade), but ONE residual: a stale **pre-change DATA-shape**
+file-flavor template (with `cwd` but NO `config_dir`) would pass through the loader
+unchanged → `provision_and_instantiate` skips allocation → cc/codex leaves the cred env var
+unset → silent operator-home boot. The new fail-loud guard lived only in the CONTENT/create
+path, not the DATA replay path. **VERIFIED.**
+
+**Resolution:** the loader's `file_flavor_to_data/2` now FAILS LOUD
+(`{:error, {:file_flavor_missing_config_dir, _}}`) for ANY credentialled file-flavor
+template (CONTENT or DATA shape) lacking a non-empty `config_dir`, before
+`provision_and_instantiate`. echo/np/curl (non-credentialled) still pass through unchanged.
+Added a regression test (stale DATA-shape cc template with `cwd` + no `config_dir` →
+`invoke_template` fails loud). (Per `feedback_let_it_crash_no_workarounds` + the repo's
+wipe-and-rebuild-on-migration policy, such a stale template shouldn't survive a real deploy;
+the guard surfaces it rather than degrading.)

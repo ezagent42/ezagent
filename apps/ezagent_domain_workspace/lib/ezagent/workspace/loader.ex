@@ -189,16 +189,37 @@ defmodule Ezagent.Workspace.Loader do
     end
   end
 
-  # Convert a persisted file-flavor CONTENT template to the DATA shape (cascade-
-  # free). Non-file-flavor templates are already DATA shape — returned as-is.
+  # Convert a persisted file-flavor template to the DATA shape (cascade-free).
+  # Non-file-flavor templates are already DATA shape — returned as-is.
+  #
+  # No-silent-fallback (codex r3 follow-up): a credentialled file-flavor template
+  # — whether new CONTENT shape or an old DATA shape — MUST carry a non-empty
+  # `config_dir` reference. Without it, `provision_and_instantiate/4` skips
+  # allocation and the cc/codex consume path leaves `CLAUDE_CONFIG_DIR`/`CODEX_HOME`
+  # unset → the process silently shares the operator's home. A file-flavor that
+  # reaches the loader without a resolvable config home FAILS LOUD
+  # (`:file_flavor_missing_config_dir`) rather than booting un-isolated. (The DB
+  # is wiped+rebuilt on migration per feedback_let_it_crash_no_workarounds, so a
+  # stale pre-change DATA template without config_dir should not persist across a
+  # real deploy; if one does, this surfaces it instead of degrading.)
   defp file_flavor_to_data(class_module, tmpl_data) do
-    if file_flavor_class?(class_module) and content_shape?(tmpl_data) do
-      with {:ok, facade} <- resolve_agent_spawn_facade(),
-           {:ok, agent_uri} <- fetch_agent_uri(tmpl_data) do
-        facade.content_to_template_data(to_content(tmpl_data), agent_uri)
-      end
-    else
-      {:ok, tmpl_data}
+    cond do
+      not file_flavor_class?(class_module) ->
+        # echo / curl / np — no credential home; pass through unchanged.
+        {:ok, tmpl_data}
+
+      not has_config_dir?(tmpl_data) ->
+        {:error, {:file_flavor_missing_config_dir, Map.get(tmpl_data, "agent_uri")}}
+
+      content_shape?(tmpl_data) ->
+        with {:ok, facade} <- resolve_agent_spawn_facade(),
+             {:ok, agent_uri} <- fetch_agent_uri(tmpl_data) do
+          facade.content_to_template_data(to_content(tmpl_data), agent_uri)
+        end
+
+      true ->
+        # Already DATA shape WITH a config_dir — pass through.
+        {:ok, tmpl_data}
     end
   end
 
@@ -206,9 +227,15 @@ defmodule Ezagent.Workspace.Loader do
     Ezagent.Agent.CredentialAdapter.credentialled?(class_module)
   end
 
+  defp has_config_dir?(tmpl_data) when is_map(tmpl_data) do
+    case Map.get(tmpl_data, "config_dir") || Map.get(tmpl_data, :config_dir) do
+      dir when is_binary(dir) and dir != "" -> true
+      _ -> false
+    end
+  end
+
   # A CONTENT-shape template carries `project_cwd` (the input key); a DATA-shape
-  # template carries `cwd`. (Old DATA-shape persisted file-flavor templates from
-  # before this change stay on the pass-through path.)
+  # template carries `cwd`.
   defp content_shape?(tmpl_data) when is_map(tmpl_data) do
     is_binary(Map.get(tmpl_data, "project_cwd") || Map.get(tmpl_data, :project_cwd))
   end
