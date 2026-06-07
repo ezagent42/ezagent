@@ -232,7 +232,10 @@ defmodule Ezagent.Entity.AgentTemplate do
     # set — curl's provider/api_url/model + codex's model/sandbox/… are
     # owned by their plugins. (Pre-fix this dropped curl/codex fields, so
     # orchestrator-spawned curl/codex workers had nil provider/model.)
-    with {:ok, tc} <- resolve_template_class(content),
+    with {:ok, tc} <-
+           EzagentDomainInstanceMessage.SessionCreator.TemplateResolver.resolve_template_class(
+             content
+           ),
          {:ok, cwd} <- fetch_project_cwd(content),
          {:ok, config_dir} <- fetch_config_dir(content),
          {:ok, cascade} <- fetch_cascade(content) do
@@ -373,22 +376,6 @@ defmodule Ezagent.Entity.AgentTemplate do
 
   defp validate_for_flavor(tc, data) do
     if function_exported?(tc, :validate, 1), do: tc.validate(data), else: :ok
-  end
-
-  # Resolve the flavor's Template Class MODULE from content (ONE registry
-  # lookup — reused for `class`, `template_data_extra/1`, and `validate/1`;
-  # codex review LOW: no double lookup).
-  defp resolve_template_class(content) do
-    case content_get(content, :flavor) do
-      flavor when is_binary(flavor) and flavor != "" ->
-        case Ezagent.AgentFlavorRegistry.lookup(flavor) do
-          {:ok, %{template_class: tc}} -> {:ok, tc}
-          :error -> {:error, {:unknown_flavor, flavor}}
-        end
-
-      _ ->
-        {:error, :missing_flavor}
-    end
   end
 
   # PR-2 (domain.agent): `project_cwd` is the universal "where the agent works /

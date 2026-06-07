@@ -11,7 +11,7 @@
   spawn_registry_off_chokepoint_modules: 25,
   create_session_call_sites: 6,
   create_session_modules: 5,
-  duplicated_resolve_template_class: 3,
+  duplicated_resolve_template_class: 1,
   cc_codex_template_class_combined_loc: 3231,
   raw_home_path_outside_core: 9,
   path_expand_home: 2,

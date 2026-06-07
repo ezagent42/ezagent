@@ -34,7 +34,7 @@ defmodule EzagentPluginLiveview.AgentExtensionsLive do
   use Phoenix.LiveView
   use Gettext, backend: EzagentPluginLiveview.Gettext
 
-  alias Ezagent.AgentFlavorRegistry
+  alias EzagentDomainInstanceMessage.SessionCreator.TemplateResolver
   use EzagentDomainUi.Components
   import Phoenix.Component
 
@@ -51,7 +51,7 @@ defmodule EzagentPluginLiveview.AgentExtensionsLive do
 
     case parse_agent_uri(encoded_uri) do
       {:ok, agent_uri} ->
-        case resolve_template_class(agent_uri) do
+        case TemplateResolver.resolve_agent_template_class(agent_uri) do
           {:ok, template_class} ->
             socket =
               socket
@@ -121,28 +121,6 @@ defmodule EzagentPluginLiveview.AgentExtensionsLive do
       ArgumentError -> :error
     end
   end
-
-  # Agent flavor is stored metadata. URI names are opaque.
-  defp resolve_template_class(%URI{} = agent_uri) do
-    case Ezagent.UriQuery.resolve(:flavor, agent_uri) do
-      {:ok, flavor} when is_binary(flavor) and flavor != "" ->
-        case AgentFlavorRegistry.lookup(flavor) do
-          {:ok, %{template_class: tc}} -> {:ok, tc}
-          :error -> {:error, :unknown_flavor}
-        end
-
-      :none ->
-        {:error, :unknown_flavor}
-
-      {:ok, _other} ->
-        {:error, :bad_agent_flavor}
-
-      {:error, reason} ->
-        {:error, {:flavor_lookup_failed, reason}}
-    end
-  end
-
-  defp resolve_template_class(_), do: {:error, :bad_agent_uri}
 
   # Dispatch `sandbox.read` to fetch the agent's `:sandbox` slice
   # (config_dir_path + template_class), then call `list_extensions/1`

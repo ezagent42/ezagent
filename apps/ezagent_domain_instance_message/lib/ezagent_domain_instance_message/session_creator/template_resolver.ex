@@ -4,6 +4,42 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateResolver do
   alias Ezagent.Entity.Session
   alias Ezagent.KindRegistry
 
+  @spec resolve_template_class(map()) :: {:ok, module()} | {:error, term()}
+  def resolve_template_class(content) when is_map(content) do
+    case content_get(content, :flavor) do
+      flavor when is_binary(flavor) and flavor != "" ->
+        case Ezagent.AgentFlavorRegistry.lookup(flavor) do
+          {:ok, %{template_class: tc}} -> {:ok, tc}
+          :error -> {:error, {:unknown_flavor, flavor}}
+        end
+
+      _ ->
+        {:error, :missing_flavor}
+    end
+  end
+
+  @spec resolve_agent_template_class(URI.t()) :: {:ok, module()} | {:error, term()}
+  def resolve_agent_template_class(%URI{} = agent_uri) do
+    case Ezagent.UriQuery.resolve(:flavor, agent_uri) do
+      {:ok, flavor} when is_binary(flavor) and flavor != "" ->
+        case Ezagent.AgentFlavorRegistry.lookup(flavor) do
+          {:ok, %{template_class: tc}} -> {:ok, tc}
+          :error -> {:error, :unknown_flavor}
+        end
+
+      :none ->
+        {:error, :unknown_flavor}
+
+      {:ok, _other} ->
+        {:error, :bad_agent_flavor}
+
+      {:error, reason} ->
+        {:error, {:flavor_lookup_failed, reason}}
+    end
+  end
+
+  def resolve_agent_template_class(_), do: {:error, :bad_agent_uri}
+
   @spec require_template_name!(keyword()) :: String.t()
   def require_template_name!(opts) do
     case Keyword.fetch(opts, :template_name) do
@@ -148,4 +184,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateResolver do
 
   defp workspace_name_of!(other),
     do: raise(ArgumentError, "expected %URI{scheme: \"workspace\"}, got: #{inspect(other)}")
+
+  defp content_get(content, key) when is_map(content) do
+    Map.get(content, key) || Map.get(content, Atom.to_string(key))
+  end
 end

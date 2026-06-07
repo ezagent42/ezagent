@@ -525,7 +525,10 @@ defmodule Ezagent.Entity.Agent do
         opts
       )
       when is_map(template_content_map) and is_list(opts) do
-    with {:ok, template_class} <- resolve_template_class(template_content_map),
+    with {:ok, template_class} <-
+           EzagentDomainInstanceMessage.SessionCreator.TemplateResolver.resolve_template_class(
+             template_content_map
+           ),
          {:ok, flavor} <- template_content_flavor(template_content_map),
          {:ok, template_content_map} <-
            resolve_cascade_content(
@@ -1265,21 +1268,6 @@ defmodule Ezagent.Entity.Agent do
           dir = Ezagent.Sandbox.ConfigDir.path(worker_uri, namespace)
           _ = template_class.destroy_config_dir(worker_uri, dir)
         end)
-    end
-  end
-
-  defp resolve_template_class(content) do
-    flavor = Map.get(content, :flavor) || Map.get(content, "flavor")
-
-    case flavor do
-      f when is_binary(f) and f != "" ->
-        case Ezagent.AgentFlavorRegistry.lookup(f) do
-          {:ok, %{template_class: tc}} -> {:ok, tc}
-          :error -> {:error, {:unknown_flavor, f}}
-        end
-
-      _ ->
-        {:error, :missing_flavor}
     end
   end
 
