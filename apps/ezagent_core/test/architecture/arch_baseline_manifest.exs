@@ -1,7 +1,7 @@
 %{
-  oversized_modules_gt_1500: 5,
+  oversized_modules_gt_1500: 4,
   oversized_modules_gt_1000: 17,
-  def_count_admin_live: 186,
+  def_count_admin_live: 79,
   def_count_cc_agent: 103,
   def_count_orchestrator_tools: 83,
   def_count_session_creator: 78,
