@@ -371,9 +371,11 @@ feishu 客户端、python server、agent_bridge token_store、identity applicati
 - **改下载契约**，使请求携带/恢复完整的 **workspace-first** `resource://<ws>/uploads/<name>` URI
   ——经 `Ezagent.URI.resource(ws, :uploads, name)` 构造（workspace-first，见 §5.1 及下方文档漂移修正），
   **不是** `resource://uploads/<ws>/<name>` 的 type-first 形态（resolver 会把它误解析为 workspace=`uploads`、
-  type=`<ws>`，导致白名单未命中 + 鉴权检查错误 + 下载失败——codex HIGH）。机制如路由
-  `GET /files/:ws/:name`，或编码完整 URI 的签名 token；具体形态在 PR 决定（OI-1），但必须以 workspace-first
-  顺序携带 `<ws>` 段。
+  type=`<ws>`，导致白名单未命中 + 鉴权检查错误 + 下载失败——codex HIGH）。**机制（OI-1 已定）：编码完整
+  ws 作用域 URI 的签名能力 token**——短 TTL、绑定到唯一 `resource://<ws>/uploads/<name>`、仅在授权后签发
+  （内部：mint 时实时 cap-check；外部 customer-feed：由 approved-only 可见性门控）、对 feed 在 serve 时再校验。
+  **不用**纯路由段——外部 React customer-feed（#601/#603）给无 session/caps 的观众供附件，故 bearer 能力
+  token 是必要的统一机制（见 §10 OI-1）。token 必须以 workspace-first 顺序携带 `<ws>` 段。
 - **把鉴权**改为经 resolver 对 `uploads` 类型的 `authority/2` 基于该精确 URI 的 `<ws>` 段——以
   `authority.(uri, %{workspace: request_scope_workspace})` 调用，其中 request scope 来自已认证的
   controller/LiveView mount，**非来自 URI**——替代/增强 `caller_in_attaching_messages?/2`。检查为
@@ -470,17 +472,26 @@ Resource.FsResolver.resolve(uri = resource://<ws>/<type>/<name>, scope):   # §5
 
 ---
 
-## 10. 待用户拍板的遗留项
+## 10. 遗留项的决定（2026-06-07 与 Allen 敲定）
 
-- **OI-1（下载契约形态，P2a）。** 路由段改动（`GET /files/:ws/:name`）vs 携带完整 URI 的签名 token。
-  二者都满足「请求携带 `<ws>` 段」；规格要求的是属性而非机制。建议：显式路由段（最简、可检视、无 token
-  签名面）。**决定推到 P2 PR**，但若 Allen 有偏好请示意。
-- **OI-2（uploads 流式返回，P2b）。** 大上传返回 path vs IO 设备。默认 = path（uploads 本就是磁盘文件）。
-  仅在出现大上传需求时复议。
-- **OI-3（P3「其余 population-3 调用者」范围）。** 部分调用者（feishu 客户端、python server、
-  agent_bridge token_store、identity application）可能是租户作用域内容（→ 迁移）或受认可基础设施
-  （→ 精确锚点豁免）。每个在 P3 按 D2 判据（「能否按 `<ws>` 内容寻址？」）裁定。无一刀切；此处标记以便
-  P3 PR 逐项列出裁定。
+- **OI-1（下载契约形态，P2a）——已定：统一签名 token + ws 作用域 URI。** 不用显式路由段。依据：
+  socialware 的 customer-feed 已存在（#601 结算闸门、#603 React feed），外部 React SPA 给**无 session/caps**
+  的观众供附件，无法做实时 CapBAC 检查——签名能力 token（S3 presigned-URL 风格）是必要机制，且统一了
+  内部+外部、可 CDN 卸载。实时检查本应提供的安全属性用设计兜回（全部**必须**）：
+  ①**短 TTL**（压缩 bearer 泄漏窗口）；②token **绑定到唯一的 `resource://<ws>/uploads/<name>` URI**（不能
+  平移到别的 ws/文件）；③**仅在授权后签发**——内部：mint 时实时 cap-check；外部：由 customer-feed 的
+  **approved-only** 可见性门控（仅为已批准项签 token）；④**feed 的 serve 时再校验**——下载时复查该项仍
+  approved（超过 TTL 的撤销杠杆，与 customer-feed approved-only 语义天然对齐）。resolver 返回 ws 作用域 URI，
+  一层薄签名/验签包装 HTTP 面。（旧的 `GET /files/:filename` 按会话参与的路由被替换；§6 P2 有兼容窗口。）
+- **OI-2（uploads 流式返回，P2b）——已定：path。** resolver 返回磁盘路径（uploads 本就是文件）。仅在出现
+  大上传流式需求时复议。
+- **OI-3（P3 其余调用者范围）——已定：不做广泛豁免；唯一的豁免维度是 boot 顺序，而非「没有 `<ws>`」。**
+  仅当调用者运行在 **SchemeRegistry/UriQuery ETS 表存在之前**（config-eval / `Application.start` 之前——即
+  `config/runtime.exs` 读 db + cookie）才豁免。其余一律**走 UriQuery**：租户作用域内容（agent_bridge per-agent
+  token、python per-agent log、cc/codex 租户配置写）→ `resource://<ws>/<type>/<name>`；系统级/全局件（feishu
+  全局 app cred 等）→ **`system://<type>`**（复用的 system scheme——仍过 UriQuery，只是 scheme 不同，**不是豁免**）。
+  P3 PR 唯一要现场核的是 **identity application** 是否在 `Application.start/2` 里**早于** registry seeding 读凭据
+  （若是则为真正的 boot-order 豁免，否则也迁移）。故 population-3 几乎全部迁移，boot-order 豁免清单保持最小且精确锚点。
 
 > **已标记需人工协助步骤**（依 `feedback_flag_user_assist_steps`）：P0–P3 的*实现*均不需人工动作；
 > P2 的 E2E 验收（uploads 经真实路由往返）可在可丢弃/docker E2E 栈以已 seed 用户运行——无需运维供凭据。
