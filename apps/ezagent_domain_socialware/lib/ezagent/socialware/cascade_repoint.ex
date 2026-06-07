@@ -94,8 +94,10 @@ defmodule Ezagent.Socialware.CascadeRepoint do
     key =
       if Map.has_key?(resolution, :user_layer_uri), do: :user_layer_uri, else: "user_layer_uri"
 
-    Map.put(resolution, key, URI.to_string(object_uri))
+    Map.put(resolution, key, cascade_uri_string(object_uri))
   end
+
+  defp cascade_uri_string(%URI{} = uri), do: URI.to_string(uri)
 
   defp put_resolution(rtd, resolution) do
     key =
