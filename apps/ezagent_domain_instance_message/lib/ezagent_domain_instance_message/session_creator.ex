@@ -47,6 +47,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
 
   alias Ezagent.{Invocation, KindRegistry}
   alias Ezagent.Entity.{Session, User}
+  alias EzagentDomainInstanceMessage.SessionCreator.{Listing, TemplateResolver}
 
   require Logger
 
@@ -140,7 +141,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
           end
       end
 
-    template_name = require_template_name!(opts)
+    template_name = TemplateResolver.require_template_name!(opts)
     workspace_name = workspace_name_of!(workspace_uri)
 
     session_uri = Ezagent.URI.session(workspace_name, template_name, short_name)
@@ -242,12 +243,13 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
         _ -> User.admin_uri()
       end
 
-    case resolve_repair_template(session_uri, template_name, workspace_uri) do
+    case TemplateResolver.resolve_for_repair(session_uri, template_name, workspace_uri) do
       {:error, _} = err ->
         err
 
       {:ok, session_template_uri, template_content} ->
-        orchestrator_template_uri = orchestrator_template_uri_of(template_content)
+        orchestrator_template_uri =
+          TemplateResolver.orchestrator_template_uri_of(template_content)
 
         with :ok <-
                materialize_orchestrator_working_copy(
@@ -299,7 +301,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
 
     # Step 1b — resolve `template_name` → a real SessionTemplate in the
     # session's workspace, fail-loud if absent (SPEC §4 step 1).
-    case resolve_session_template!(template_name, workspace_uri) do
+    case TemplateResolver.resolve_session_template!(template_name, workspace_uri) do
       {:error, _} = err ->
         err
 
@@ -373,7 +375,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
          %URI{} = session_template_uri,
          template_content
        ) do
-    orchestrator_template_uri = orchestrator_template_uri_of(template_content)
+    orchestrator_template_uri = TemplateResolver.orchestrator_template_uri_of(template_content)
 
     if session_complete?(session_uri, workspace_uri, effective_owner, orchestrator_template_uri) do
       {:ok, session_uri, existing_orchestrator_meta(session_uri, workspace_uri)}
@@ -515,7 +517,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
          session_template_uri,
          template_content
        ) do
-    orchestrator_template_uri = orchestrator_template_uri_of(template_content)
+    orchestrator_template_uri = TemplateResolver.orchestrator_template_uri_of(template_content)
 
     result =
       with :ok <- Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri),
@@ -680,142 +682,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
 
             {:error, reason}
         end
-    end
-  end
-
-  # ── Step 1b — SessionTemplate resolution ─────────────────────────────
-
-  # Resolve `template_name` → a live SessionTemplate Kind in
-  # `workspace_uri`, then read its content. SessionTemplates are
-  # content-addressed (`template://session/<ws>/<name>@<hash>`); we find
-  # the live Kind whose name segment equals `template_name`. Fail-loud
-  # (SPEC §4 step 1) — the boot seed (`"default"` under `workspace://system`)
-  # + tenant `add_template` are the population paths.
-  # Repair-time template resolution: prefer the EXACT content-addressed
-  # SessionTemplate version the session already recorded in its working copy
-  # (`:session_template_uri`) over a bare-name lookup, which could pick a
-  # different/newer version and re-materialize OTU + parent context from the
-  # wrong template. Falls back to name resolution when the session has no
-  # recorded version (old/never-materialized session) or it's unreadable.
-  # (codex final-review Q4.)
-  defp resolve_repair_template(%URI{} = session_uri, template_name, %URI{} = workspace_uri) do
-    wc = Session.read_template_working_copy(session_uri)
-
-    case Map.get(wc, :session_template_uri) do
-      %URI{} = recorded ->
-        with {:ok, _pid} <- Session.ensure_template_alive(recorded),
-             {:ok, content} <- Session.read_template_content(recorded) do
-          {:ok, recorded, content}
-        else
-          _ -> resolve_session_template!(template_name, workspace_uri)
-        end
-
-      _ ->
-        resolve_session_template!(template_name, workspace_uri)
-    end
-  end
-
-  defp resolve_session_template!(template_name, %URI{} = workspace_uri)
-       when is_binary(template_name) do
-    workspace_name = workspace_name_of!(workspace_uri)
-
-    case find_session_template_uri(template_name, workspace_name) do
-      {:ok, %URI{} = session_template_uri} ->
-        # Demand-spawn the SessionTemplate Kind (it may have been seeded
-        # at boot but not be live in this process's KindRegistry view —
-        # e.g. resolved via the snapshot store). `ensure_template_alive`
-        # is the kept helper for this.
-        with {:ok, _pid} <- Session.ensure_template_alive(session_template_uri),
-             {:ok, content} <- Session.read_template_content(session_template_uri) do
-          {:ok, session_template_uri, content}
-        else
-          {:error, reason} ->
-            {:error, {:session_template_not_readable, template_name, reason}}
-        end
-
-      :error when template_name == "default" ->
-        ensure_and_resolve_default_session_template(template_name, workspace_uri, workspace_name)
-
-      :error ->
-        {:error, {:session_template_not_found, template_name, workspace_name}}
-    end
-  end
-
-  defp ensure_and_resolve_default_session_template(
-         template_name,
-         %URI{} = workspace_uri,
-         workspace_name
-       ) do
-    case EzagentDomainInstanceMessage.Application.ensure_default_session_template(workspace_uri) do
-      :ok ->
-        case find_session_template_uri(template_name, workspace_name) do
-          {:ok, %URI{} = session_template_uri} ->
-            with {:ok, _pid} <- Session.ensure_template_alive(session_template_uri),
-                 {:ok, content} <- Session.read_template_content(session_template_uri) do
-              {:ok, session_template_uri, content}
-            else
-              {:error, reason} ->
-                {:error, {:session_template_not_readable, template_name, reason}}
-            end
-
-          :error ->
-            {:error, {:session_template_not_found, template_name, workspace_name}}
-        end
-
-      {:error, reason} ->
-        {:error, {:session_template_seed_failed, template_name, workspace_name, reason}}
-    end
-  end
-
-  # Resolve `template://session/<ws>/<name>@<hash>` (any hash) whose
-  # `<name>` matches. SessionTemplates are content-addressed (a given
-  # name+content is one URI); any match is returned. Checks the live
-  # `KindRegistry` first, then the durable snapshot store (the boot seed
-  # writes a snapshot row but the Kind may not be live in this view).
-  defp find_session_template_uri(template_name, workspace_name) do
-    prefix =
-      workspace_name
-      |> Ezagent.URI.template(:session, "#{template_name}@")
-      |> URI.to_string()
-
-    live =
-      KindRegistry.list_all()
-      |> Enum.find_value(false, fn {uri_str, _pid} ->
-        if String.starts_with?(uri_str, prefix), do: {:ok, Ezagent.URI.new!(uri_str)}, else: false
-      end)
-
-    cond do
-      live != false -> live
-      true -> find_session_template_uri_in_snapshots(prefix)
-    end
-  end
-
-  defp find_session_template_uri_in_snapshots(prefix) do
-    Ezagent.Ecto.KindSnapshot.list_all()
-    |> Enum.find_value(:error, fn %{uri: uri_str} ->
-      if is_binary(uri_str) and String.starts_with?(uri_str, prefix) do
-        {:ok, Ezagent.URI.new!(uri_str)}
-      else
-        false
-      end
-    end)
-  rescue
-    # DB unavailable — the live registry was already checked; treat as
-    # not-found so the caller fails loud.
-    _ -> :error
-  end
-
-  defp orchestrator_template_uri_of(template_content) when is_map(template_content) do
-    case Map.get(template_content, :orchestrator_template_uri) ||
-           Map.get(template_content, "orchestrator_template_uri") do
-      %URI{} = uri ->
-        uri
-
-      uri_str when is_binary(uri_str) and uri_str != "" ->
-        Ezagent.URI.new!(uri_str)
-
-      _ ->
-        nil
     end
   end
 
@@ -1898,33 +1764,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   defp workspace_name_of!(other),
     do: raise(ArgumentError, "expected %URI{scheme: \"workspace\"}, got: #{inspect(other)}")
 
-  # SPEC #366 (Allen 2026-05-26) — eliminate the silent `"default"`
-  # template-class fallback. Callers MUST pass `:template_name` in opts.
-  defp require_template_name!(opts) do
-    case Keyword.fetch(opts, :template_name) do
-      {:ok, name} when is_binary(name) and name != "" ->
-        name
-
-      {:ok, other} ->
-        raise ArgumentError,
-              "EzagentDomainInstanceMessage.SessionCreator.create_session/3 requires opts[:template_name] to be " <>
-                "a non-empty String, got: #{inspect(other)}. Per SPEC #366 the silent " <>
-                "`\"default\"` fallback was removed; pick a class explicitly from the " <>
-                "workspace's `session_templates` map (or use `\"default\"` literally " <>
-                "for the bootstrap session-naming convention)."
-
-      :error ->
-        raise ArgumentError,
-              "EzagentDomainInstanceMessage.SessionCreator.create_session/3 requires opts[:template_name] " <>
-                "(SPEC #366, Allen 2026-05-26). The previous silent `\"default\"` " <>
-                "fallback was removed. Callers — LV forms, CLI tasks, test seeds, " <>
-                "bootstrap — must choose a template class explicitly. Examples:\n" <>
-                "  * Bootstrap / preserve existing URI shape: `template_name: \"default\"`\n" <>
-                "  * Tenant flows: `template_name: <key from workspace.session_templates>`\n" <>
-                "Got: opts=#{inspect(opts)}."
-    end
-  end
-
   @doc """
   Return all known Session URIs (KindRegistry session:// entries),
   including main + all dynamically-created sessions. Used by LV
@@ -1939,16 +1778,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   enumeration across tenants.
   """
   @spec list_sessions :: [URI.t()]
-  def list_sessions do
-    KindRegistry.list_all()
-    |> Enum.flat_map(fn {uri_str, _pid} ->
-      case Ezagent.URI.parse(uri_str) do
-        {:ok, %URI{} = uri} -> if Ezagent.URI.scheme?(uri, :session), do: [uri], else: []
-        {:error, _reason} -> []
-      end
-    end)
-    |> Enum.sort_by(&URI.to_string/1)
-  end
+  defdelegate list_sessions, to: Listing
 
   @doc """
   Return Session URIs whose workspace segment matches
@@ -1961,23 +1791,5 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   sessions across tenants is a cross-workspace display leak.
   """
   @spec list_sessions(URI.t()) :: [URI.t()]
-  def list_sessions(%URI{scheme: "workspace"} = workspace_uri) do
-    workspace_name = Ezagent.URI.name!(workspace_uri)
-
-    list_sessions()
-    |> Enum.filter(&session_in_workspace?(&1, workspace_name))
-  end
-
-  # `session://` URI shape per SPEC v3 §5.15:
-  #   `session://<template>/<workspace>/<name>` → URI parsed as
-  #   `%URI{scheme: "session", host: <template>, path: "/<workspace>/<name>"}`.
-  # The workspace segment is the FIRST path segment (post-leading-slash).
-  defp session_in_workspace?(%URI{} = session_uri, workspace_name) do
-    case Ezagent.URI.workspace_name(session_uri) do
-      {:ok, ^workspace_name} -> true
-      _ -> false
-    end
-  end
-
-  defp session_in_workspace?(_, _), do: false
+  defdelegate list_sessions(workspace_uri), to: Listing
 end
