@@ -120,13 +120,21 @@ The chat log is append-only in `MessageStore`; a **page** is mutable, evolving s
 a durable slice:
 
 ```
-%{ latest: %{version, tree, by_turn}, approved_version: integer }
+%{
+  approved: %{version, tree, by_turn},        # last settled tree — what the customer renders
+  pending:  %{version, tree, by_turn} | nil   # latest unapproved draft — operator-only; nil in :auto
+}
 ```
 
-`:surface` holds the **full** version stream (transparent backend). `approved_version` tracks
-the highest version whose turn is `settled`/approved. Rendering splits by audience:
-- **operator/admin** renders `latest` (sees unapproved drafts — transparency);
-- **customer** renders `tree @ approved_version` (the filter, §4.3).
+`:surface` stores the **approved tree explicitly** (so it survives cold restart / a
+second-viewer mount even when a newer unapproved draft exists) plus an optional `pending`
+draft. `turn.compose` writes `pending` (or directly `approved` in `:auto`); `turn.settle`
+promotes `pending → approved` (advancing its version). Rendering splits by audience:
+- **operator/admin** renders `pending || approved` (sees drafts — transparency);
+- **customer** renders `approved` only — **never `pending`/latest** (the filter, §4.3).
+
+(Codex rev3-HIGH-2: a `latest`+`approved_version` pointer alone could not retrieve the approved
+tree once a newer draft existed; the explicit `approved` slot is the durable contract.)
 
 **UI tree = an implementation-agnostic, json-render declarative node** (`vercel-labs/json-render`,
 used directly on the React side, §4.4): recursive `%{type, props, children}`, rendered via a
@@ -154,7 +162,7 @@ customer, so routing cannot cleanly suppress customer delivery; and (Allen) the 
 
 - **The customer filter is the external view's job.** The customer SPA's streaming endpoint
   (§4.4) is an `ExternalMirror`-style projection that emits only **approved** content: chat
-  messages whose turn is settled/forwarded, and `:surface` at `approved_version`. Unapproved
+  messages whose turn is settled/forwarded, and `:surface.approved`. Unapproved
   drafts exist in the backend but are never projected to the customer.
 - **`turn.mode` + the approval marker** drive that filter: `:auto` approves at compose (customer
   sees immediately); `:copilot`/`:takeover` hold approval until the operator acts.
@@ -170,6 +178,20 @@ So mode adds **no new behavior, no routing-replacement primitive, and no core wr
 is `turn.mode` + the approval marker + the external view filtering on it. (Supersedes the
 AutoService `235a2e96` route-suppression framing; we do not port `Behavior.Mode`/#511.)
 
+**The filter is a concrete, enforced backend API — not a convention** (codex rev3-HIGH-1).
+Because the backend now writes drafts freely, "approved-only" must be enforced at the read
+boundary or a draft leaks:
+- every customer-eligible chat message **persists its `turn_id` + approval state**
+  (`:approved | :pending`), set/advanced by the turn (a small field on the `message_routings`
+  side, not a new store);
+- the customer SPA is served **only** by a dedicated **approved-only read API** —
+  `approved_chat_snapshot/2`, `approved_chat_history/2`, `approved_chat_stream/2`, and
+  `:surface.approved` — each of which returns approved rows exclusively;
+- customer routes are **forbidden** from the raw feeds: `MessageStore.recent_in_session`, the
+  session PubSub topic, and the generic `Publisher`/`ExternalMirror` feeds are operator/internal
+  only. A customer endpoint built on a raw feed is a defect, and **raw-feed denial is an
+  acceptance invariant** (§9).
+
 ### 4.4 Customer frontend — React + json-render SPA + a streaming endpoint (the loom frontend half)
 
 The customer-facing surface is a **React SPA** that renders the session via **json-render** (UI
@@ -181,8 +203,9 @@ implements much of this (Next.js SPA + Sandpack + SSE bridge) and is **ported/ad
 built from zero.
 
 Pieces:
-- **streaming endpoint** — a backend WS/SSE endpoint exposing a session's approved chat +
-  `:surface @ approved_version` to external clients (the `ExternalMirror`-style filter, §4.3);
+- **streaming endpoint** — a backend WS/SSE endpoint built **exclusively on the approved-only
+  read API** (§4.3): it serves approved chat + `:surface.approved`, never a raw
+  `MessageStore`/PubSub/`Publisher` feed;
 - **React SPA + json-render runtime + component registry** — the reusable extension point;
 - **Sandpack** — the `code`-node sandbox for arbitrary generated UI;
 - **external/anonymous customer auth + session binding** — gates external access (overlaps the
@@ -246,8 +269,8 @@ page workers → one turn drives both customer panes.
 5. Mode (§4.3): `:auto` → `turn.settle` (approved). `:copilot`/`:takeover` → `:awaiting_human`;
    the draft is visible to the operator only; operator approves/edits → `turn.settle`.
 6. The customer React SPA's streaming endpoint emits only approved content; on approval it
-   renders, **in one viewport**, the `text` node as a **chat bubble** and `:surface @
-   approved_version` as the **live page** — both from the same turn (the fusion). Before
+   renders, **in one viewport**, the `text` node as a **chat bubble** and `:surface.approved`
+   as the **live page** — both from the same turn (the fusion). Before
    approval the customer sees neither; the operator LiveView surface saw the draft throughout.
 
 ## 7. Self-evolve (SW-UPD) on the #17 cascade
@@ -260,9 +283,14 @@ own config**, writing to the cascade:
 3. The operator approves it via the **same approval gate as SW-USE** (the optimizer turn holds
    at `:awaiting_human`; operator approves/edits before settle).
 4. The approved delta is written to the agent's **high cascade layer** (user/workspace) as a
-   **mutable overwrite** — matching current #17 (config-layer versioning is out of scope now;
-   "rollback" = re-applying the prior value, best-effort). Versioned/reversible config is a
-   future item to do together with #17, **not built here**.
+   **mutable overwrite** — matching current #17 (config-layer *versioning* stays out of scope).
+   But rollback must be deterministic, so (codex rev3-MEDIUM-3) the approving update turn
+   **captures `before_value`** (the prior target-layer/key value) **and writes via
+   compare-and-set** on `(layer, key, expected = before_value)`. Rollback = CAS-restore
+   `before_value`; concurrent optimizer approvals / operator edits / post-overwrite restarts are
+   handled because the CAS detects a changed target and the captured `before_value` is the
+   single source for the revert. (This is one prior value + a CAS, **not** a version history —
+   versioned/reversible config remains a future item to do together with #17.)
 5. Next spawn re-materializes the config; a later customer turn shows the changed behavior.
 
 Reuse highlight: the operator's approval path is identical in SW-USE and SW-UPD — one gate for
@@ -270,8 +298,9 @@ both the interaction and the update phase.
 
 ## 8. Multi-user & persistence
 
-- **Durable by construction**: `:surface` persists `{:snapshot, :on_change}` (versioned, with
-  `approved_version`). Cold restart re-renders; the customer always sees `approved_version`.
+- **Durable by construction**: `:surface` persists `{:snapshot, :on_change}` with the explicit
+  `approved` tree (+ optional `pending`). Cold restart re-renders; the customer always reads
+  `approved`, **never `pending`** — even if a `pending` draft was in flight at crash time.
 - **Same-session, two users** = one shared page. Concurrency: **`Behavior.Turn` serializes**
   surface mutation (a turn is the unit; the state machine orders turns), so a later turn sees
   the earlier's committed state — **no CRDT for the common case**.
@@ -300,18 +329,25 @@ Non-admin customer + operator. Customer asks for "a comparison page + a recommen
   what reaches the customer is the operator's output.
 - Artifacts: one customer-page screenshot showing ① chat bubble + ② live page side-by-side from
   the same turn; ③ a copilot turn where the draft is visible on the operator surface but absent
-  from the customer page until approval; plus multi-user/cold-restart (second viewer sees the
-  same `approved_version`; restart re-renders; **no unapproved draft is ever shown to the
-  customer**).
+  from the customer page until approval.
+- **Leak/restart invariants (codex rev3):** (a) **raw-feed denial** — a customer-route attempt
+  to read `MessageStore.recent_in_session` / the session PubSub topic / the generic `Publisher`
+  feed is rejected (only the approved-only API returns data); (b) **cold restart with an
+  unapproved `pending`** — after a crash mid-copilot, the customer still sees `approved`, not the
+  in-flight `pending`; (c) **second-viewer approved replay** — a second customer mount renders
+  the same `approved` tree, never a peer's unapproved draft.
 
 **SW-UPD (update)** — *the self-evolve loop closes.*
 Optimizer + operator. Optimization session reads SW-USE traces → config-delta card → operator
 approves → overwrite the agent's cascade high layer → respawn re-materializes → a later customer
 turn shows changed behavior.
 - **Invariant (scoped to current #17, §7):** the agent's **resolved config changed via the flow
-  (not hand-edit) and is observable in a later turn**; **rollback** = re-applying the prior value
-  reverts the behavior. (Version-history reversibility is a future item, not asserted here.)
-- Artifact: screenshot of the delta card + approval + the changed behavior, then the revert.
+  (not hand-edit) and is observable in a later turn**; **rollback is deterministic** — the
+  CAS-restore of the captured `before_value` reverts the behavior **even after a restart or a
+  concurrent overwrite** (the CAS detects the conflict rather than silently clobbering).
+  (Version-history reversibility is a future item, not asserted here.)
+- Artifact: screenshot of the delta card + approval + the changed behavior, then the revert;
+  plus a test that a concurrent second overwrite is rejected by the CAS.
 
 **E2E standards (all three):** non-admin customer is the primary caller; granting the operator
 its cap is itself a step; **fresh docker seed each run**; faces **production topology** (real
@@ -340,7 +376,7 @@ frontend (React + json-render, dual-surface with LiveView for operator); config 
 Backend first (frontend-agnostic), then the React customer frontend as its own phase.
 - **P1 — `Behavior.Turn` + `:turns` slice** (state machine; TDD; degenerate single-bot turn
   first, then fan-out/compose).
-- **P2 — `:surface` slice + operator LiveView render** (`approved_version`; a thin `PageView`
+- **P2 — `:surface` slice + operator LiveView render** (the `approved`/`pending` shape; a thin `PageView`
   HEEx interpreter so backend E2E can run before the SPA exists).
 - **P3 — mode = approval + external filter** (`turn.claim`/approve/`settle`; the additive
   operator-draft route; the approved-only projection logic — no routing-replacement primitive).
