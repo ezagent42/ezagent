@@ -1,7 +1,7 @@
 defmodule EzagentDomainSocialware.Integration.ConfigUpdateTest do
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Invocation
+  alias Ezagent.{AgentLineage, Invocation}
   alias Ezagent.Entity.{Agent, SocialwareSession, User}
   alias Ezagent.Socialware.ConfigStore
 
@@ -76,7 +76,7 @@ defmodule EzagentDomainSocialware.Integration.ConfigUpdateTest do
     # object, repoint the subject agent's user cascade layer at it, THEN advance
     # the bookkeeping pointer. The agent must be live with a cascade_resolution
     # for the repoint (and thus the config change) to succeed.
-    spawn_agent_with_cascade(ctx.agent, ctx.workspace)
+    spawn_agent_with_cascade(ctx.agent, ctx.workspace, ctx.session)
 
     before = ConfigStore.resolve!(:workspace, ctx.workspace, ctx.agent, "advisor.behavior")
 
@@ -144,6 +144,9 @@ defmodule EzagentDomainSocialware.Integration.ConfigUpdateTest do
   test "apply_delta fails loud when the subject agent has no cascade_resolution", ctx do
     # A subject agent with a live sandbox but no cascade_resolution.
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: ctx.agent})
+    # #607 confused-deputy guard — make this session manage the subject so the
+    # test exercises the no-cascade failure, not the authority rejection.
+    :ok = AgentLineage.record(ctx.agent, ctx.session)
 
     {:ok, _} =
       Invocation.dispatch(%Invocation{
@@ -202,6 +205,9 @@ defmodule EzagentDomainSocialware.Integration.ConfigUpdateTest do
     # Seed a USER-layer pointer (distinct key from the :workspace seed) and an
     # agent with a sandbox but NO cascade_resolution so the repoint fails loud.
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: ctx.agent})
+    # #607 confused-deputy guard — make this session manage the subject so the
+    # test exercises the repoint-failure ordering, not the authority rejection.
+    :ok = AgentLineage.record(ctx.agent, ctx.session)
 
     {:ok, _} =
       Invocation.dispatch(%Invocation{
@@ -294,7 +300,7 @@ defmodule EzagentDomainSocialware.Integration.ConfigUpdateTest do
   # apply_delta via dispatch with `User.default_caps(workspace)` and assert the
   # live-agent repoint SUCCEEDS (the config actually changes).
   test "apply_delta succeeds under ordinary session-scoped user caps (non-bootstrap)", ctx do
-    spawn_agent_with_cascade(ctx.agent, ctx.workspace)
+    spawn_agent_with_cascade(ctx.agent, ctx.workspace, ctx.session)
     user_caps = MapSet.new(User.default_caps(ctx.workspace))
 
     {:ok, %{turn_id: turn_id}} =
@@ -360,7 +366,7 @@ defmodule EzagentDomainSocialware.Integration.ConfigUpdateTest do
   # gate (the action itself is cap-checked; only the downstream agent-internal
   # sandbox effect runs under the system principal).
   test "apply_delta itself is rejected when the caller lacks the action cap", ctx do
-    spawn_agent_with_cascade(ctx.agent, ctx.workspace)
+    spawn_agent_with_cascade(ctx.agent, ctx.workspace, ctx.session)
 
     {:ok, %{turn_id: turn_id}} =
       dispatch(ctx.session, :turn, :open, %{trigger: %{message_id: "unauth"}, opened_at: 1})
@@ -392,6 +398,145 @@ defmodule EzagentDomainSocialware.Integration.ConfigUpdateTest do
                %{turn_id: turn_id},
                MapSet.new()
              )
+  end
+
+  # #607 codex CRITICAL — confused-deputy: a session-scoped caller settles a
+  # delta whose `subject_uri` is an agent in ANOTHER workspace (tenant B). The
+  # authoritative workspace is derived from `ctx.self_uri` (this session, in
+  # team_alpha), NOT from the caller-supplied delta, so apply_delta MUST reject
+  # before any object is written or any repoint occurs — agent B is untouched.
+  test "apply_delta rejects a delta whose subject_uri is an agent in another workspace", ctx do
+    spawn_agent_with_cascade(ctx.agent, ctx.workspace, ctx.session)
+
+    # An agent + workspace in a DIFFERENT tenant (team_beta).
+    foreign_workspace = Ezagent.URI.workspace(:team_beta)
+
+    foreign_agent =
+      Ezagent.URI.entity(:team_beta, :agent, "foreign-#{System.unique_integer([:positive])}")
+
+    {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: foreign_agent})
+
+    {:ok, foreign_seed} =
+      ConfigStore.write_and_point(%{
+        layer: :workspace,
+        workspace_uri: foreign_workspace,
+        subject_uri: foreign_agent,
+        key: "advisor.behavior",
+        body: %{"tone" => "foreign-original"},
+        actor_uri: User.admin_uri(),
+        source_turn_id: "foreign-seed"
+      })
+
+    {:ok, %{turn_id: turn_id}} =
+      dispatch(ctx.session, :turn, :open, %{trigger: %{message_id: "xtenant"}, opened_at: 1})
+
+    {:ok, _} =
+      dispatch(ctx.session, :turn, :compose, %{
+        turn_id: turn_id,
+        result_refs: [
+          %{
+            kind: :config_delta,
+            layer: :workspace,
+            workspace_uri: foreign_workspace,
+            subject_uri: foreign_agent,
+            key: "advisor.behavior",
+            patch: %{"tone" => "injected"}
+          }
+        ]
+      })
+
+    {:ok, _} = dispatch(ctx.session, :turn, :claim, %{turn_id: turn_id, by: User.admin_uri()})
+    {:ok, _} = dispatch(ctx.session, :turn, :settle, %{turn_id: turn_id})
+
+    assert {:error, {:cross_tenant_target, _}} =
+             dispatch(ctx.session, :config_update, :apply_delta, %{turn_id: turn_id})
+
+    # Tenant B's config is unchanged + no new object was written for it.
+    assert ConfigStore.resolve!(:workspace, foreign_workspace, foreign_agent, "advisor.behavior").id ==
+             foreign_seed.config_id
+
+    assert ConfigStore.resolve!(:workspace, foreign_workspace, foreign_agent, "advisor.behavior").body ==
+             %{"tone" => "foreign-original"}
+  end
+
+  # #607 codex CRITICAL — the `repoint` action carries caller-supplied
+  # workspace_uri/subject_uri/config_id. Same guard: a repoint naming a
+  # cross-tenant agent is rejected before the agent-internal repoint runs.
+  test "repoint rejects a cross-tenant subject_uri", ctx do
+    foreign_workspace = Ezagent.URI.workspace(:team_beta)
+
+    foreign_agent =
+      Ezagent.URI.entity(:team_beta, :agent, "foreign-rp-#{System.unique_integer([:positive])}")
+
+    {:ok, foreign_seed} =
+      ConfigStore.write_and_point(%{
+        layer: :workspace,
+        workspace_uri: foreign_workspace,
+        subject_uri: foreign_agent,
+        key: "advisor.behavior",
+        body: %{"tone" => "foreign-original"},
+        actor_uri: User.admin_uri(),
+        source_turn_id: "foreign-rp-seed"
+      })
+
+    assert {:error, {:cross_tenant_target, _}} =
+             dispatch(ctx.session, :config_update, :repoint, %{
+               layer: :workspace,
+               workspace_uri: foreign_workspace,
+               subject_uri: foreign_agent,
+               key: "advisor.behavior",
+               config_id: foreign_seed.config_id
+             })
+  end
+
+  # #607 codex CRITICAL — a subject agent in THIS session's workspace but NOT
+  # managed by this session (no membership, no spawn-lineage) is rejected.
+  # Same-workspace co-residence is not authority.
+  test "apply_delta rejects an in-workspace agent not managed by this session", ctx do
+    # An agent in team_alpha (same workspace) with a live cascade'd sandbox, but
+    # NOT spawned by / joined to this session.
+    unmanaged = agent_uri()
+    {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: unmanaged})
+    # Deliberately NO AgentLineage.record(unmanaged, ctx.session) and no join.
+
+    {:ok, unmanaged_seed} =
+      ConfigStore.write_and_point(%{
+        layer: :workspace,
+        workspace_uri: ctx.workspace,
+        subject_uri: unmanaged,
+        key: "advisor.behavior",
+        body: %{"tone" => "unmanaged-original"},
+        actor_uri: User.admin_uri(),
+        source_turn_id: "unmanaged-seed"
+      })
+
+    {:ok, %{turn_id: turn_id}} =
+      dispatch(ctx.session, :turn, :open, %{trigger: %{message_id: "unmanaged"}, opened_at: 1})
+
+    {:ok, _} =
+      dispatch(ctx.session, :turn, :compose, %{
+        turn_id: turn_id,
+        result_refs: [
+          %{
+            kind: :config_delta,
+            layer: :workspace,
+            workspace_uri: ctx.workspace,
+            subject_uri: unmanaged,
+            key: "advisor.behavior",
+            patch: %{"tone" => "injected"}
+          }
+        ]
+      })
+
+    {:ok, _} = dispatch(ctx.session, :turn, :claim, %{turn_id: turn_id, by: User.admin_uri()})
+    {:ok, _} = dispatch(ctx.session, :turn, :settle, %{turn_id: turn_id})
+
+    assert {:error, {:subject_not_managed_by_session, _}} =
+             dispatch(ctx.session, :config_update, :apply_delta, %{turn_id: turn_id})
+
+    # The unmanaged agent's config is unchanged.
+    assert ConfigStore.resolve!(:workspace, ctx.workspace, unmanaged, "advisor.behavior").id ==
+             unmanaged_seed.config_id
   end
 
   test "two writes retain two distinct immutable config objects", ctx do
@@ -439,8 +584,14 @@ defmodule EzagentDomainSocialware.Integration.ConfigUpdateTest do
   # Spawn the subject Agent Kind and seed its sandbox with a cascade_resolution
   # (the shape #17 stores at create) so CascadeRepoint can read + rewrite the
   # user layer — the precondition the atomic apply_delta now enforces.
-  defp spawn_agent_with_cascade(agent_uri, workspace_uri) do
+  #
+  # #607 codex CRITICAL — also record agent←session spawn lineage so the
+  # confused-deputy guard recognizes this session as managing the subject agent
+  # (the production reality: the optimizer's subject agent is one the session
+  # spawned/manages). Without this the legit apply_delta is correctly rejected.
+  defp spawn_agent_with_cascade(agent_uri, workspace_uri, session_uri) do
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: agent_uri})
+    :ok = AgentLineage.record(agent_uri, session_uri)
 
     {:ok, _} =
       Invocation.dispatch(%Invocation{
