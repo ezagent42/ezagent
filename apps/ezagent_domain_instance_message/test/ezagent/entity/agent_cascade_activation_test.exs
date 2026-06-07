@@ -280,6 +280,71 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
     assert row.approved_by == URI.to_string(admin_uri)
   end
 
+  defmodule FailingInstantiateTemplate do
+    @behaviour Ezagent.Kind.Template
+
+    @impl Ezagent.Kind.Template
+    def template_name, do: "cascade.failing"
+
+    @impl Ezagent.Kind.Template
+    def validate(_), do: :ok
+
+    # Fail AFTER the cascade grant has already been minted upstream, so the
+    # compensating grant-delete is exercised.
+    @impl Ezagent.Kind.Template
+    def instantiate(_name, _data, _workspace_uri), do: {:error, :boom_after_grant}
+
+    @behaviour Ezagent.Agent.CredentialAdapter
+    @impl Ezagent.Agent.CredentialAdapter
+    def credential_env_var, do: "CAPTURE_HOME"
+    @impl Ezagent.Agent.CredentialAdapter
+    def credential_relpaths, do: ["token.json"]
+    @impl Ezagent.Agent.CredentialAdapter
+    def secret_relpaths, do: ["token.json"]
+    @impl Ezagent.Agent.CredentialAdapter
+    def auth_failure_signals, do: ["capture auth failed"]
+  end
+
+  test "a spawn that mints a grant then fails at instantiate leaves NO orphaned grant (codex r5)" do
+    flavor = "cascade_orphan_#{uniq()}"
+
+    :ok =
+      AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Ezagent.Entity.Agent,
+        template_class: FailingInstantiateTemplate
+      })
+
+    {:ok, _} = Ezagent.SnapshotStore.write(URI.to_string(@source_uri), %{}, kind_type: :agent)
+
+    content = %{
+      flavor: flavor,
+      project_cwd: "/tmp/project",
+      cascade_resolution: %{
+        owner_uri: @owner_uri,
+        workspace_uri: @workspace_uri,
+        explicit_source: @source_uri,
+        layer_dir_for: fn _ -> :skip end,
+        source_dir_for: fn _ -> {:ok, "/tmp/source"} end
+      }
+    }
+
+    agent_uri = Ezagent.URI.agent("team-alpha", "cascade-orphan-#{uniq()}")
+    caps = [GrantCap.read_cap_for(@source_uri)]
+
+    # The spawn fails at instantiate (AFTER the grant was minted).
+    assert {:error, :boom_after_grant} =
+             Agent.spawn_from_template_content(content, agent_uri, @owner_uri, @workspace_uri,
+               caller: @owner_uri,
+               caps: caps
+             )
+
+    # The compensating cleanup HARD-deleted the grant — no orphan, so a retry's
+    # GrantRow.insert won't conflict.
+    refute GrantRow.get_for_agent(URI.to_string(agent_uri)),
+           "a failed spawn must leave no orphaned credential grant"
+  end
+
   test "rehydrate_respawn_data re-resolves layer dirs from durable URI inputs" do
     template_uri = URI.new!("template://team-alpha/agent/ws-cc")
     agent_uri = Ezagent.URI.agent("team-alpha", "cascade-restart-#{uniq()}")

@@ -638,6 +638,11 @@ defmodule Ezagent.Entity.Agent do
           {:error, reason} ->
             undo_fresh_workers(workers)
             cleanup_partial_config_dirs(workers, template_class)
+            # codex r5 HIGH — the #17 grant was minted in `resolve_cascade_content`
+            # BEFORE instantiate; a post-spawn failure must not leave an orphaned
+            # GrantRow (unique by agent_uri → would poison retries + leave a stale
+            # authorization/audit row for an agent that never came up).
+            revoke_cascade_grant_best_effort(instance_uri)
             {:error, reason}
         end
       else
@@ -648,7 +653,30 @@ defmodule Ezagent.Entity.Agent do
         _ = record_sandbox_state(workers, instantiate_meta, template_class)
         {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
       end
+    else
+      # codex r5 HIGH — a failure of `to_template_data` / `AgentFlavorAttributes.put`
+      # / `instantiate_workers` short-circuits the outer `with` AFTER
+      # `resolve_cascade_content` already minted the #17 grant. Revoke it so no
+      # orphaned GrantRow survives for an agent that never instantiated. (Steps
+      # BEFORE the mint — `resolve_template_class` / `template_content_flavor` /
+      # `resolve_cascade_content` itself — minted nothing, so revoke is a no-op.)
+      {:error, _reason} = err ->
+        revoke_cascade_grant_best_effort(instance_uri)
+        err
     end
+  end
+
+  # codex r5 HIGH — best-effort HARD-delete of the #17 credential grant for an
+  # agent whose fresh spawn failed after the grant was minted. Delete (not soft
+  # `revoke`) so the unique `agent_uri` key is freed and a later retry's
+  # `GrantRow.insert/1` does not conflict (the agent never came up — no row should
+  # survive). Idempotent: a no-op when no grant exists (e.g. no credential source
+  # was resolved).
+  defp revoke_cascade_grant_best_effort(%URI{} = agent_uri) do
+    _ = Ezagent.Credential.GrantRow.delete(URI.to_string(agent_uri))
+    :ok
+  rescue
+    _ -> :ok
   end
 
   def spawn_from_template_content(_content, _instance, _spawned_by, _workspace, _opts) do

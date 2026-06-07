@@ -365,3 +365,28 @@ edge cases fixed:
 After round 5 there is no remaining path (create / cold-boot replay / `add_template`) where a
 cc/codex agent comes up with its credential env var unset, and adopt-as-create cannot grant
 manage authority to the wrong creator.
+
+### 7f. Codex round 6 — orphaned credential grant on failed spawn
+
+**Verdict: `needs-attention`** (static-only) — confirmed the operator-home fallback is fully
+blocked + the create-chokepoint preserved; ONE remaining HIGH (a **pre-existing** cascade
+cleanup gap my new caller makes reachable):
+
+**[HIGH] a failed cc/codex spawn could leave a durable `GrantRow`** — the #17 grant is minted
+in `resolve_cascade_content` (start of `spawn_from_template_content`) BEFORE
+instantiate/materialize. If a later step fails (config-dir materialize / PTY launch /
+sandbox.write_path / instantiate), the existing cleanup (`undo_fresh_workers` /
+`cleanup_partial_config_dirs`) + my Store rollback do NOT touch the grant → an orphaned row
+(unique by `agent_uri`) poisons retries + leaves a stale authorization/audit record.
+
+**Resolution (systematic — fixes ALL callers of the shared cascade, not just unified
+create):** added grant compensation to `spawn_from_template_content/5` itself:
+- a new `Ezagent.Credential.GrantRow.delete/1` (HARD delete — distinct from the soft
+  `revoke/1`, which keeps the row and would still poison the unique-key retry),
+- called via `revoke_cascade_grant_best_effort/1` on BOTH failure paths after the mint: the
+  fresh-spawn post-instantiate failure branch AND a new outer-`with` `else` that catches
+  `to_template_data` / `AgentFlavorAttributes.put` / `instantiate_workers` failures.
+A fresh spawn now either fully succeeds or leaves ZERO residue — workers terminated, config
+dirs cleaned, lineage forgotten, AND the grant deleted. Regression test added
+(`spawn_from_template_content` that mints a grant then fails at instantiate → no orphaned
+grant). This hardens the orchestrator/fork/session callers too (they shared the same gap).
