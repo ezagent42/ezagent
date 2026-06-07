@@ -37,6 +37,10 @@ defmodule EzagentWeb.Endpoint do
     websocket: [check_origin: false],
     longpoll: false
 
+  socket "/socialware_socket", EzagentWeb.Socialware.CustomerSocket,
+    websocket: [check_origin: false],
+    longpoll: false
+
   # Serve at "/" the static files from "priv/static" directory.
   #
   # When code reloading is disabled (e.g., in production),
