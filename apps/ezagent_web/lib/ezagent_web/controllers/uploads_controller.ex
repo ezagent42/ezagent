@@ -77,7 +77,7 @@ defmodule EzagentWeb.UploadsController do
 
   import Ecto.Query
 
-  alias Ezagent.{Home, Message, MessageRouting, MessageStore}
+  alias Ezagent.{Message, MessageRouting, MessageStore, Uploads}
   alias EzagentCore.Repo
 
   # Cap on the number of candidate Message rows we'll fully load +
@@ -105,7 +105,7 @@ defmodule EzagentWeb.UploadsController do
         # Authorize BEFORE looking at the disk so the response can't
         # leak file existence to an unauthorized caller (codex r1 LOW).
         if authorized?(caller_uri, safe) do
-          full = Path.join(Home.path("uploads"), safe)
+          full = Uploads.path!(safe)
 
           if File.regular?(full) do
             send_download(conn, {:file, full}, filename: original_name(safe))

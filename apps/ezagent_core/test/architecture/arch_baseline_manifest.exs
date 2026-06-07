@@ -13,7 +13,7 @@
   create_session_modules: 5,
   duplicated_resolve_template_class: 3,
   cc_codex_template_class_combined_loc: 3231,
-  raw_home_path_outside_core: 12,
+  raw_home_path_outside_core: 9,
   path_expand_home: 2,
   spawn_fresh_audit_references: 5,
   spawn_fresh_unsanctioned: 0,

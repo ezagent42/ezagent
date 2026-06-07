@@ -19,7 +19,7 @@ defmodule EzagentPluginLiveview.Admin.Compose do
         socket.assigns[:session_legends] || %{}
       )
 
-    File.mkdir_p!(Ezagent.Home.path("uploads"))
+    Ezagent.Uploads.ensure_dir!()
 
     attachments =
       consume_attachments(socket, upload_workspace_name!(socket))
@@ -60,9 +60,7 @@ defmodule EzagentPluginLiveview.Admin.Compose do
       uuid = Ecto.UUID.generate()
       safe_name = sanitize_filename(entry.client_name)
       stored_name = "#{uuid}-#{safe_name}"
-      dest = Path.join(Ezagent.Home.path("uploads"), stored_name)
-      File.cp!(tmp_path, dest)
-      {:ok, Ezagent.URI.resource(workspace_name, :uploads, stored_name)}
+      {:ok, Ezagent.Uploads.store!(workspace_name, stored_name, tmp_path)}
     end)
   end
 
