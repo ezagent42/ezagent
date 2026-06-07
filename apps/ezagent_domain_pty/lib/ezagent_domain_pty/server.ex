@@ -423,6 +423,21 @@ defmodule Ezagent.Domain.Pty.Server do
   def default_auto_prompts do
     [
       %{
+        name: :theme_dialog,
+        # claude v2.1.x shows a first-run THEME picker the very first time it
+        # runs against a fresh CLAUDE_CONFIG_DIR (no onboarding flags). It
+        # appears BEFORE the dev-channels / trust-folder dialogs, so an
+        # unanswered theme picker hangs the spawn here and the scanner never
+        # reaches the dialogs it already handles — the fresh-stack failure seen
+        # in the §5.B credential-cascade live E2E (2026-06-07). The picker is a
+        # static radio menu (no animated banner), so words are not fragmented;
+        # anchor on two stable, dialog-specific phrases. Bare Enter confirms the
+        # highlighted default (claude auto-detects e.g. "Dark mode ✔").
+        match: ["text style", "Dark mode"],
+        send: "\r",
+        fired?: false
+      },
+      %{
         name: :dev_channels_dialog,
         # Anchor on the menu OPTION label, not the WARNING prose: claude's
         # TUI animates/redraws the banner ("Loading…") with cursor-move
