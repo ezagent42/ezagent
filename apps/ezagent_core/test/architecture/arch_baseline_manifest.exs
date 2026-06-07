@@ -1,11 +1,11 @@
 %{
   oversized_modules_gt_1500: 4,
-  oversized_modules_gt_1000: 17,
+  oversized_modules_gt_1000: 16,
   def_count_admin_live: 69,
   def_count_cc_agent: 103,
   def_count_orchestrator_tools: 83,
   def_count_session_creator: 78,
-  def_count_capability: 65,
+  def_count_capability: 22,
   spawn_registry_call_sites: 38,
   spawn_registry_modules: 32,
   spawn_registry_off_chokepoint_modules: 25,

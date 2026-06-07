@@ -66,6 +66,8 @@ defmodule Ezagent.Capability do
   @plugin_declared_granter :plugin_declared
   @compile_time_granted_at :compile_time
 
+  alias Ezagent.Capability.{Match, Normalize, Scope}
+
   @doc """
   Action atom for cap declarations: `:any` action axis.
 
@@ -148,60 +150,7 @@ defmodule Ezagent.Capability do
     }
   end
 
-  @doc """
-  Does this capability authorize the given invocation?
-
-  Matches kind (Kind type atom, e.g. `:echo`), behavior (module, e.g.
-  `Ezagent.Behavior.Echo`), instance (the target URI), and
-  `workspace_uri` (the workspace scope the action targets, derived
-  via `cap_for_action/3`). `:any` matches everything in that
-  position.
-
-  ## Scope-bounded instance shapes (Phase 7 PR 42 / D7-3)
-
-  The `instance` field may also be one of three tuple shapes that
-  express bounded delegation:
-
-  - `{:within_session, %URI{} = session_uri}` — matches when the
-    needed cap's instance URI is `session_uri` itself or a sub-URI
-    of it (prefix match on `URI.to_string/1`). Used by the
-    orchestrator's scope-bounded delegation cap so it can act
-    within its own session without becoming a full admin.
-
-  - `{:within_workspace, %URI{} = workspace_uri}` — Phase 7
-    completion PR-1 (SPEC §1.4). Matches when the needed cap's
-    instance URI's workspace segment equals `workspace_uri`. Used
-    by the orchestrator's delegated `Behavior.Template` caps (#3/#4)
-    so it can read/write/instantiate templates in its OWN workspace
-    without a per-name cap. NARROWER than `:any`, MORE specific than
-    a URI cap — cross-workspace template access is denied (two-tenant
-    isolation holds). The needed URI's workspace is derived via the
-    same `workspace_of/1` `cap_for_action/3` uses, so the two sides
-    stay structurally aligned.
-
-  - `{:spawned_by, %URI{} = principal_uri}` — matches when the
-    needed cap's instance URI is in the lineage spawned by
-    `principal_uri`. **PR 42 ships a structurally compliant
-    placeholder that returns false** — actual lineage tracking
-    arrives with PR 40 (`Ezagent.Entity.Agent.spawn/4` populates an
-    `Agent.spawned_by` slice field) + a registry lookup wired
-    here. Until PR 40, holding a `{:spawned_by, _}` cap matches
-    nothing — denial defaults are correct.
-
-  Both shapes preserve the existing CapBAC contract: the cap is
-  more specific, not more permissive. Any cap with a scope tuple
-  is bounded by the scope; `:any` remains the only true wildcard.
-
-  ## Workspace dimension (Phase 9 PR-3 / SPEC v3 §4)
-
-  Adds workspace scoping as a fourth match dimension. Concrete
-  `workspace://X` cap matches only `workspace://X` needed; `:any`
-  cap is cross-workspace (reserved for admin + explicit
-  cross-workspace grants). Without this dimension, a cap granted in
-  workspace A would silently authorize action on workspace B's
-  entities sharing the same name (e.g. both workspaces have a
-  `demo` session).
-  """
+  @doc "Does this capability authorize the given needed-cap shape?"
   @spec matches?(t(), %{
           required(:kind) => atom(),
           required(:behavior) => module(),
@@ -209,54 +158,7 @@ defmodule Ezagent.Capability do
           required(:instance) => URI.t(),
           required(:workspace_uri) => URI.t() | :any
         }) :: boolean()
-  def matches?(%__MODULE__{} = cap, %{
-        kind: k,
-        behavior: b,
-        action: a,
-        instance: i,
-        workspace_uri: w
-      }) do
-    # SPEC 2026-05-27 capability-action-axis §3.3 — action becomes the
-    # fifth match dimension. Read via `action_of/1` so deserialized
-    # OLD caps (struct without the `:action` key) match transparently
-    # as wildcard. This removes the hard dependency on normalize-on-load:
-    # an in-flight Kind running new code on old in-memory structs works
-    # correctly without a save-side normalize step.
-    field_match?(cap.kind, k) and
-      field_match?(cap.behavior, b) and
-      field_match?(action_of(cap), a) and
-      instance_match?(cap.instance, i) and
-      workspace_match?(cap.workspace_uri, w)
-  end
-
-  # SPEC 2026-05-27 capability-action-axis — TRANSITIONAL TOLERANCE
-  # CLAUSE for needed maps that pre-date the action axis (e.g. test
-  # fixtures, plugin code that hasn't been swept yet, snapshot-restored
-  # callers that still build 4-field needed shapes). A missing `:action`
-  # key in the needed map is treated as `:any` (wildcard), preserving
-  # pre-SPEC matcher semantics for unmigrated call sites. Symmetric
-  # to the held-cap missing-key tolerance via `action_of/1`.
-  #
-  # This is NOT an escape hatch — code that GENUINELY needs to narrow
-  # by action must pass `:action` explicitly. The clause exists so a
-  # phased migration (this PR sweeps core + obvious call sites; test
-  # fixtures and downstream plugin code can migrate in follow-up PRs)
-  # doesn't break unrelated callers. After all call sites converge,
-  # this clause can be REMOVED (and the matcher will require `:action`
-  # at the type-spec level, enforcing structural narrowing across the
-  # umbrella).
-  def matches?(
-        %__MODULE__{} = cap,
-        %{
-          kind: _,
-          behavior: _,
-          instance: _,
-          workspace_uri: _
-        } = needed
-      )
-      when not is_map_key(needed, :action) do
-    matches?(cap, Map.put(needed, :action, :any))
-  end
+  def matches?(%__MODULE__{} = cap, needed), do: Match.matches?(cap, needed)
 
   @doc """
   Read the action axis of a cap, defaulting to `:any` for caps loaded
@@ -273,95 +175,7 @@ defmodule Ezagent.Capability do
   snapshots in one expression.
   """
   @spec action_of(t() | map()) :: atom()
-  def action_of(cap), do: Map.get(cap, :action, :any)
-
-  # Kind + behavior fields use plain `:any` or exact equality.
-  defp field_match?(:any, _), do: true
-  defp field_match?(same, same), do: true
-  defp field_match?(_, _), do: false
-
-  # Instance field additionally honors the two scope tuples (D7-3).
-  defp instance_match?(:any, _), do: true
-
-  defp instance_match?({:within_session, %URI{} = session_uri}, %URI{} = needed_instance) do
-    needed_str = URI.to_string(needed_instance)
-    session_str = URI.to_string(session_uri)
-
-    # Match if needed URI is the session URI itself, or a sub-URI of
-    # it (e.g. `session://default/team-alpha/main?action=chat.send` is within
-    # `session://default/team-alpha/main`). String prefix is sufficient given URI
-    # canonical form; we add a `/` boundary check to avoid false
-    # positives like `session://default/team-alpha/main2` matching `{:within_session,
-    # session://default/team-alpha/main}`.
-    needed_str == session_str or
-      String.starts_with?(needed_str, session_str <> "/")
-  end
-
-  defp instance_match?({:within_workspace, %URI{} = workspace_uri}, %URI{} = needed_instance) do
-    # Phase 7 completion PR-1 (SPEC §1.4) — a `{:within_workspace, W}`
-    # cap matches a needed action on a per-tenant URI iff the URI's
-    # workspace segment equals `W`. `workspace_of/1` does the structural
-    # extraction (and returns `:any` for cross-cutting schemes like
-    # `system://`, which a workspace-bounded cap must NOT match — only
-    # `:any` is the true wildcard, never `{:within_workspace, _}`).
-    case workspace_of(needed_instance) do
-      %URI{} = needed_ws -> URI.to_string(needed_ws) == URI.to_string(workspace_uri)
-      :any -> false
-    end
-  end
-
-  defp instance_match?({:spawned_by, %URI{} = principal_uri}, %URI{} = needed_instance) do
-    # PR 40 ships the Ezagent.AgentLineage ETS registry that
-    # `Ezagent.Entity.Agent.spawn/4` populates. CapBAC step 5.5 reads
-    # it here — O(1) ETS lookup, no dispatch. Walks the lineage
-    # chain from needed_instance up to a depth bound to check if
-    # principal_uri appears in the chain (inclusive — a principal
-    # is in its own lineage).
-    Ezagent.AgentLineage.spawned_in_lineage?(needed_instance, principal_uri)
-  end
-
-  # Two concrete `%URI{}` instances — compare by canonical string form
-  # rather than struct equality.
-  #
-  # WHY this is the correct equality:
-  #
-  #   URI.parse/1 (deprecated since Elixir 1.13) sets the legacy
-  #   `authority` field; URI.new/1 (which `Ezagent.URI.new!/1` uses)
-  #   leaves `authority: nil`. Both yield identical canonical strings
-  #   for the same URI, but as structs they differ. Held caps are
-  #   deserialized from `users.caps_json` / `kind_snapshots` via
-  #   `Capability.from_map/1` which currently routes through
-  #   `URI.parse/1`; needed-cap instances at dispatch time come from
-  #   `Ezagent.URI.instance/1` operating on `URI.new!/1`-produced
-  #   structs. The two halves disagree on the `authority` field, so
-  #   the prior `defp instance_match?(same, same)` clause silently
-  #   denied every narrow cap with a concrete URI instance — the
-  #   precise regression unmasked by PR-CC-2-v2 (#354) + #358 (the
-  #   transitional wildcard bridge that previously masked all narrow
-  #   denials was removed; see SPEC
-  #   `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md`
-  #   §3 + the wildcard-cap-fix forensic note).
-  #
-  # By comparing `URI.to_string/1` outputs we match the
-  # `workspace_match?/2` clause directly above — same canonical-string
-  # semantic across both axes — and we accept whichever parser the
-  # producer happened to use without introducing a back-compat shim
-  # for `authority: "x"` ↔ `authority: nil` on the struct level.
-  defp instance_match?(%URI{} = held, %URI{} = needed),
-    do: URI.to_string(held) == URI.to_string(needed)
-
-  defp instance_match?(same, same), do: true
-  defp instance_match?(_, _), do: false
-
-  # Workspace field — concrete URI must equal-string-match;
-  # `:any` on either side is the cross-workspace marker.
-  defp workspace_match?(:any, _), do: true
-  defp workspace_match?(_, :any), do: true
-
-  defp workspace_match?(%URI{} = held, %URI{} = needed),
-    do: URI.to_string(held) == URI.to_string(needed)
-
-  defp workspace_match?(_, _), do: false
+  def action_of(cap), do: Match.action_of(cap)
 
   @doc """
   Remove a capability from a MapSet of caps.
@@ -448,8 +262,7 @@ defmodule Ezagent.Capability do
   membership-based bypass per SPEC v3 §13.3.
   """
   @spec cross_workspace?(t()) :: boolean()
-  def cross_workspace?(%__MODULE__{workspace_uri: :any}), do: true
-  def cross_workspace?(%__MODULE__{}), do: false
+  def cross_workspace?(%__MODULE__{} = cap), do: Scope.cross_workspace?(cap)
 
   @doc """
   Is `cap` a cross-workspace cap OR is the caller a member of
@@ -466,17 +279,8 @@ defmodule Ezagent.Capability do
   override workspace isolation when caller and target differ.
   """
   @spec cross_workspace?(t(), URI.t() | :system | nil) :: boolean()
-  def cross_workspace?(%__MODULE__{workspace_uri: :any}, _caller_uri), do: true
-
-  def cross_workspace?(%__MODULE__{}, %URI{} = caller_uri) do
-    home_is_system?(caller_uri) or member_of_system?(caller_uri)
-  end
-
-  # `:system` (atom) caller + `nil` caller paths: degraded — cannot
-  # derive a workspace, so no membership-based bypass. The runtime's
-  # step 5.6 has its own `:system` short-circuit before calling here,
-  # so this branch fires only for unusual callers (test fixtures).
-  def cross_workspace?(%__MODULE__{}, _), do: false
+  def cross_workspace?(%__MODULE__{} = cap, caller_uri),
+    do: Scope.cross_workspace?(cap, caller_uri)
 
   @doc """
   Caller's HOME workspace IS `workspace://system` (admin's
@@ -490,14 +294,7 @@ defmodule Ezagent.Capability do
   `Ezagent.URI.entity_workspace_uri/1` raise).
   """
   @spec home_is_system?(URI.t()) :: boolean()
-  def home_is_system?(%URI{} = caller_uri) do
-    case workspace_of_caller_safe(caller_uri) do
-      %URI{} = workspace -> Ezagent.URI.name?(workspace, :system)
-      _ -> false
-    end
-  end
-
-  def home_is_system?(_), do: false
+  def home_is_system?(caller_uri), do: Scope.home_is_system?(caller_uri)
 
   @doc """
   Caller is listed in `workspace://system`'s `members`. SPEC v2 PR-D
@@ -513,31 +310,7 @@ defmodule Ezagent.Capability do
   `ezagent_domain_workspace` circular dep.
   """
   @spec member_of_system?(URI.t()) :: boolean()
-  def member_of_system?(%URI{} = caller_uri) do
-    if Code.ensure_loaded?(Ezagent.Workspace.Store) and
-         function_exported?(Ezagent.Workspace.Store, :get_by_name, 1) do
-      case apply(Ezagent.Workspace.Store, :get_by_name, ["system"]) do
-        %{members: members} when is_list(members) ->
-          caller_str = URI.to_string(caller_uri)
-          Enum.any?(members, fn m -> URI.to_string(m) == caller_str end)
-
-        _ ->
-          false
-      end
-    else
-      false
-    end
-  end
-
-  def member_of_system?(_), do: false
-
-  defp workspace_of_caller_safe(%URI{} = uri) do
-    try do
-      workspace_of(uri)
-    rescue
-      _ -> :any
-    end
-  end
+  def member_of_system?(caller_uri), do: Scope.member_of_system?(caller_uri)
 
   @doc """
   Derive the workspace scope of a target URI.
@@ -574,7 +347,7 @@ defmodule Ezagent.Capability do
   for — guarded by `all_per_tenant_uris_have_workspace_test.exs`.
   """
   @spec workspace_of(URI.t()) :: URI.t() | :any
-  def workspace_of(%URI{} = uri), do: Ezagent.URI.workspace_of(uri)
+  def workspace_of(%URI{} = uri), do: Scope.workspace_of(uri)
 
   @doc """
   Serialize a Capability to a JSON-safe map (for `users.caps_json`
@@ -585,20 +358,7 @@ defmodule Ezagent.Capability do
   §4 — `:any` round-trips as `"any"`). Inverse of `from_map/1`.
   """
   @spec to_map(t()) :: map()
-  def to_map(%__MODULE__{} = cap) do
-    %{
-      "kind" => atom_or_module_to_string(cap.kind),
-      "behavior" => atom_or_module_to_string(cap.behavior),
-      # SPEC 2026-05-27 capability-action-axis §3.3.1 — route through
-      # `action_of/1` so older caps without `:action` serialize as
-      # `"any"` instead of crashing.
-      "action" => atom_or_module_to_string(action_of(cap)),
-      "instance" => uri_or_any_to_string(cap.instance),
-      "workspace_uri" => uri_or_any_to_string(cap.workspace_uri),
-      "granted_by" => uri_or_any_to_string(cap.granted_by),
-      "granted_at" => DateTime.to_iso8601(cap.granted_at)
-    }
-  end
+  def to_map(%__MODULE__{} = cap), do: Normalize.to_map(cap)
 
   @doc """
   Deserialize a Capability from a JSON-decoded map.
@@ -612,25 +372,7 @@ defmodule Ezagent.Capability do
   in any post-PR-3 code path).
   """
   @spec from_map(map()) :: t()
-  def from_map(%{} = m) do
-    # SPEC 2026-05-27 capability-action-axis §3.4 — old `caps_json` rows
-    # (pre-action-axis) lack the `"action"` field; per the SPEC's
-    # canonical-interpretation rule, a 6-field cap was always
-    # semantically "any action on this Behavior", and `:any` is
-    # precisely how the new shape spells that. `Map.put_new` injects
-    # the default before atomization.
-    m = Map.put_new(m, "action", "any")
-
-    %__MODULE__{
-      kind: string_to_atom_or_module(Map.get(m, "kind")),
-      behavior: string_to_atom_or_module(Map.get(m, "behavior")),
-      action: string_to_atom_or_module(Map.get(m, "action")),
-      instance: string_to_uri_or_any(Map.get(m, "instance")),
-      workspace_uri: string_to_uri_or_any(Map.get(m, "workspace_uri", "any")),
-      granted_by: string_to_uri_or_any(Map.get(m, "granted_by")),
-      granted_at: parse_datetime(Map.get(m, "granted_at"))
-    }
-  end
+  def from_map(%{} = m), do: Normalize.from_map(m)
 
   @doc """
   Coerce any of the three accepted grant-cap input shapes to a
@@ -667,195 +409,7 @@ defmodule Ezagent.Capability do
   invocation the cap was supposed to authorize.
   """
   @spec normalize!(t() | map(), URI.t() | String.t()) :: t()
-  def normalize!(%__MODULE__{} = cap, _granter), do: cap
-
-  def normalize!(%{} = m, granter) when is_map_key(m, "kind") or is_map_key(m, "behavior") do
-    # String-keyed (JSON) shape — CLI / API surface. Strict per
-    # `feedback_let_it_crash_no_workarounds`: each field is decoded
-    # in-line WITHOUT routing through `from_map/1` (which retains
-    # silent-fallback semantics for the existing `caps_json` /
-    # snapshot round-trip path — those defaults are explicitly
-    # NOT what we want on the grant chokepoint, see codex review
-    # HIGH-2). Unknown atom strings / missing `"workspace_uri"` /
-    # missing required axes raise; the operator gets a clear error
-    # at the CLI boundary instead of a quietly-widened cap.
-    granter_uri = parse_granter(granter)
-
-    kind = decode_atom_or_module_strict!(m, "kind")
-    behavior = decode_atom_or_module_strict!(m, "behavior")
-
-    # SPEC 2026-05-27 capability-action-axis §3.4 — action axis on the
-    # JSON grant chokepoint. Missing `"action"` defaults to `"any"` for
-    # back-compat with pre-SPEC CLI payloads; strict atom decoding
-    # otherwise (typos raise rather than silently widen).
-    action =
-      case Map.fetch(m, "action") do
-        {:ok, _} -> decode_atom_or_module_strict!(m, "action")
-        :error -> :any
-      end
-
-    workspace_uri =
-      case Map.fetch(m, "workspace_uri") do
-        {:ok, ws} ->
-          decode_uri_or_any_strict!(ws, "workspace_uri")
-
-        :error ->
-          raise ArgumentError,
-                "Ezagent.Capability.normalize!/2: string-keyed input map is missing " <>
-                  "required `\"workspace_uri\"` field — per SPEC v3 §4 + " <>
-                  "`feedback_let_it_crash_no_workarounds`, workspace_uri has no " <>
-                  "silent default at the grant chokepoint. Pass either `\"any\"` " <>
-                  "(cross-workspace) or a concrete workspace URI. " <>
-                  "Got: #{inspect(m)}"
-      end
-
-    instance =
-      case Map.fetch(m, "instance") do
-        {:ok, i} ->
-          decode_uri_or_any_strict!(i, "instance")
-
-        # `instance` is optional in declarative caps (defaults to
-        # `:any`), but if the caller did NOT pass it explicitly we
-        # require they understand the shape — for the CLI grant
-        # surface, raising on missing-instance is the let-it-crash
-        # path (operators must say what they're granting on).
-        :error ->
-          raise ArgumentError,
-                "Ezagent.Capability.normalize!/2: string-keyed input map is missing " <>
-                  "required `\"instance\"` field. Pass `\"any\"` for a wildcard " <>
-                  "instance or a concrete target URI. Got: #{inspect(m)}"
-      end
-
-    %__MODULE__{
-      kind: kind,
-      behavior: behavior,
-      action: action,
-      instance: instance,
-      workspace_uri: workspace_uri,
-      granted_by: granter_uri,
-      granted_at: DateTime.utc_now()
-    }
-  end
-
-  def normalize!(%{} = m, granter) when is_map_key(m, :kind) or is_map_key(m, :behavior) do
-    # Atom-keyed shape (Elixir caller). Per `feedback_let_it_crash_no_workarounds`:
-    # `workspace_uri` is REQUIRED — there is no silent default. Other
-    # field axes (kind/behavior/instance) default to `:any` matching
-    # the `cap/3` constructor's declarative shape; the granter-stamping
-    # metadata is filled in here.
-    workspace_uri =
-      case Map.fetch(m, :workspace_uri) do
-        {:ok, ws} ->
-          ws
-
-        :error ->
-          raise ArgumentError,
-                "Ezagent.Capability.normalize!/2: atom-keyed input map is missing " <>
-                  "required `:workspace_uri` field — per SPEC v3 §4 + " <>
-                  "`feedback_let_it_crash_no_workarounds`, workspace_uri has no " <>
-                  "silent default. Pass either `:any` (cross-workspace) or a " <>
-                  "concrete `%URI{}` workspace URI. Got: #{inspect(m)}"
-      end
-
-    %__MODULE__{
-      kind: Map.get(m, :kind, :any),
-      behavior: Map.get(m, :behavior, :any),
-      # SPEC 2026-05-27 capability-action-axis — propagate atom-keyed
-      # `:action` (default `:any` for declarative caps where omission
-      # means wildcard).
-      action: Map.get(m, :action, :any),
-      instance: Map.get(m, :instance, :any),
-      workspace_uri: workspace_uri,
-      granted_by: Map.get_lazy(m, :granted_by, fn -> parse_granter(granter) end),
-      granted_at: Map.get(m, :granted_at, DateTime.utc_now())
-    }
-  end
-
-  def normalize!(other, _granter) do
-    raise ArgumentError,
-          "Ezagent.Capability.normalize!/2: unrecognized cap shape — expected " <>
-            "a `%Ezagent.Capability{}` struct, a string-keyed JSON-decoded map " <>
-            "(e.g. `%{\"kind\" => \"session\", \"behavior\" => \"...\"}`), or an " <>
-            "atom-keyed Elixir map (e.g. `%{kind: :session, behavior: ..., " <>
-            "workspace_uri: ...}`). Got: #{inspect(other)}"
-  end
-
-  defp parse_granter(%URI{} = uri), do: uri
-  defp parse_granter(s) when is_binary(s), do: Ezagent.URI.new!(s)
-
-  defp parse_granter(other) do
-    raise ArgumentError,
-          "Ezagent.Capability.normalize!/2: granter must be a `%URI{}` or " <>
-            "URI string. Got: #{inspect(other)}"
-  end
-
-  # Strict variant of `string_to_atom_or_module/1` — used by
-  # `normalize!/2` for the JSON grant chokepoint. Unknown atom /
-  # unknown module strings RAISE rather than rescue to `:any`, so a
-  # typo in a CLI payload doesn't silently broaden the cap.
-  # Missing field raises. `"any"` round-trips to `:any`.
-  defp decode_atom_or_module_strict!(m, key) do
-    case Map.fetch(m, key) do
-      {:ok, "any"} ->
-        :any
-
-      {:ok, s} when is_binary(s) ->
-        cond do
-          String.starts_with?(s, "Elixir.") ->
-            String.to_existing_atom(s)
-
-          Regex.match?(~r/^[a-z_][a-z0-9_]*$/, s) ->
-            String.to_existing_atom(s)
-
-          true ->
-            String.to_existing_atom("Elixir." <> s)
-        end
-
-      {:ok, other} ->
-        raise ArgumentError,
-              "Ezagent.Capability.normalize!/2: `\"#{key}\"` field must be a " <>
-                "string (atom name like `\"session\"` or module name like " <>
-                "`\"Ezagent.Behavior.Chat\"`) or `\"any\"`. Got: #{inspect(other)}"
-
-      :error ->
-        raise ArgumentError,
-              "Ezagent.Capability.normalize!/2: string-keyed input map is missing " <>
-                "required `\"#{key}\"` field — per `feedback_let_it_crash_no_workarounds`, " <>
-                "the grant chokepoint has no silent default. Got map: #{inspect(m)}"
-    end
-  rescue
-    e in ArgumentError ->
-      # `String.to_existing_atom/1` raises ArgumentError on unknown
-      # atoms — re-raise with operator-friendly context. We do NOT
-      # rescue to `:any` (that's the codex HIGH-2 silent-widening bug).
-      case e do
-        %ArgumentError{message: "Ezagent.Capability.normalize!/2:" <> _} ->
-          # Already our own raise — re-raise without wrapping.
-          reraise e, __STACKTRACE__
-
-        _ ->
-          raise ArgumentError,
-                "Ezagent.Capability.normalize!/2: `\"#{key}\"` field references an " <>
-                  "unknown atom or module — `#{inspect(Map.get(m, key))}` did not " <>
-                  "resolve. Check the module is loaded / the atom is spelled " <>
-                  "correctly. Per `feedback_let_it_crash_no_workarounds`, unknown " <>
-                  "names are NOT silently widened to `:any`."
-      end
-  end
-
-  # Strict variant of `string_to_uri_or_any/1`. `"any"` → `:any`,
-  # binary URI string → `%URI{}` via `URI.parse/1`. Non-binaries
-  # raise (no nil tolerance — `from_map/1`'s pattern misses on nil
-  # and crashes anyway; we raise with context).
-  defp decode_uri_or_any_strict!("any", _field), do: :any
-
-  defp decode_uri_or_any_strict!(s, _field) when is_binary(s), do: Ezagent.URI.new!(s)
-
-  defp decode_uri_or_any_strict!(other, field) do
-    raise ArgumentError,
-          "Ezagent.Capability.normalize!/2: `\"#{field}\"` field must be a URI " <>
-            "string or `\"any\"`. Got: #{inspect(other)}"
-  end
+  def normalize!(cap_or_map, granter), do: Normalize.normalize!(cap_or_map, granter)
 
   @doc """
   Identity-tuple key of a capability — `{kind, behavior, action, instance,
@@ -891,53 +445,8 @@ defmodule Ezagent.Capability do
   @spec identity_key(t()) ::
           {atom() | :any, module() | :any, atom() | :any, URI.t() | :any | scope_tuple(),
            URI.t() | :any}
-  def identity_key(
-        %__MODULE__{
-          kind: k,
-          behavior: b,
-          instance: i,
-          workspace_uri: w
-        } = cap
-      ),
-      do: {k, b, action_of(cap), normalize_uri_for_key(i), normalize_uri_for_key(w)}
-
-  defp normalize_uri_for_key(%URI{} = u), do: Ezagent.URI.stable_key(u)
-  defp normalize_uri_for_key(other), do: other
-
-  defp atom_or_module_to_string(:any), do: "any"
-  defp atom_or_module_to_string(value) when is_atom(value), do: Atom.to_string(value)
-
-  defp string_to_atom_or_module("any"), do: :any
-
-  defp string_to_atom_or_module(s) when is_binary(s) do
-    cond do
-      String.starts_with?(s, "Elixir.") ->
-        String.to_existing_atom(s)
-
-      Regex.match?(~r/^[a-z_][a-z0-9_]*$/, s) ->
-        String.to_existing_atom(s)
-
-      true ->
-        String.to_existing_atom("Elixir." <> s)
-    end
-  rescue
-    ArgumentError -> :any
-  end
-
-  defp uri_or_any_to_string(:any), do: "any"
-  defp uri_or_any_to_string(%URI{} = u), do: URI.to_string(u)
-
-  defp string_to_uri_or_any("any"), do: :any
-  defp string_to_uri_or_any(s) when is_binary(s), do: Ezagent.URI.new!(s)
-
-  defp parse_datetime(nil), do: DateTime.utc_now()
-
-  defp parse_datetime(s) when is_binary(s) do
-    case DateTime.from_iso8601(s) do
-      {:ok, dt, _offset} -> dt
-      _ -> DateTime.utc_now()
-    end
-  end
+  def identity_key(%__MODULE__{} = cap),
+    do: Match.identity_key(cap)
 
   @doc """
   Compute the `needed` cap shape for a given (Kind module, action,
@@ -970,25 +479,8 @@ defmodule Ezagent.Capability do
           instance: URI.t(),
           workspace_uri: URI.t() | :any
         }
-  def cap_for_action(kind_module, action, %URI{} = target_uri)
-      when is_atom(kind_module) and is_atom(action) do
-    behavior =
-      case Ezagent.BehaviorRegistry.lookup(kind_module, action) do
-        {:ok, behavior_module} -> behavior_module
-        :error -> :unknown
-      end
-
-    %{
-      kind: kind_module.type_name(),
-      behavior: behavior,
-      # SPEC 2026-05-27 capability-action-axis — the needed-cap shape
-      # carries the concrete action; matcher checks `action_of(cap) ==
-      # a OR :any`.
-      action: action,
-      instance: Ezagent.URI.instance(target_uri),
-      workspace_uri: workspace_of(target_uri)
-    }
-  end
+  def cap_for_action(kind_module, action, %URI{} = target_uri),
+    do: Match.cap_for_action(kind_module, action, target_uri)
 end
 
 # Remediation SPEC 2026-05-30 C-C: make %Capability{} JSON-encodable so the
