@@ -1,397 +1,363 @@
 # Design: socialware — fused backend-agent + real-time-render sessions on existing ezagent primitives
 
-> **Status:** buildable design, rev3 (Allen 2026-06-07). Supersedes the synthesis revision and
-> rev1/rev2. Direction: **rewrite directly, reuse `main`, do NOT base on the loom/autoservice
-> branches.** Verified against `origin/main` (sha `5661964c`). rev3 incorporates Allen's
-> review + two rounds of codex adversarial review: the customer-visibility **filter lives in
-> the external View, not the core** (the core stays thin); the customer surface is a **React +
-> json-render SPA** (the loom frontend half), with **LiveView kept for the admin/operator
-> surface** (dual-surface). The earlier AutoService/loom summary is retained only where it
-> informs a reuse decision; the design is greenfield-on-main.
+> **Status:** buildable design, rev5 (Allen 2026-06-07). Supersedes the synthesis + rev1–rev4.
+> Direction: **rewrite directly, reuse `main`, do NOT base on the loom/autoservice branches.**
+> Verified against `origin/main` (sha `5661964c`). rev5 reflects Allen's review + two codex
+> rounds and converges on a small, unified model:
+> - **immutable artifact + pointer** for both **agent config** and the **page (`:surface`)** —
+>   update = new immutable version; rollback / approval = move a pointer;
+> - **append-only chat + a per-message visibility tag**, with the **customer as a non-member
+>   `ExternalMirror`-style external receiver** and a **tag-aware routing rule** delivering only
+>   `customer-visible` messages to it;
+> - **dual-surface**: operator/admin = LiveView; customer = React + json-render SPA.
+>
+> The earlier AutoService/loom summary is retained only where it informs a reuse decision; the
+> design is greenfield-on-main.
 
 ## 1. What socialware is
 
 socialware is the pattern where **one session simultaneously drives a conversational surface
-(chat) and a live-rendered surface (a web page), produced by the same agent orchestration,
-with a human able to take over.** "AutoService" (customer ↔ bot ↔ operator chat with takeover)
-and "loom" (orchestrator → workers → live-rendered page) are not two apps — they are **two
+(chat) and a live-rendered surface (a web page), produced by the same agent orchestration, with
+a human able to take over.** "AutoService" (customer ↔ bot ↔ operator chat with takeover) and
+"loom" (orchestrator → workers → live-rendered page) are not two apps — they are **two
 interaction surfaces over one session**.
 
 ezagent is the **backend**; the product is the **external customer page**. The backend holds
 everything (all messages, all page versions, including unapproved drafts — operator
-transparency); the **customer-facing external view is a filtered projection** that shows only
-approved content. A developer builds a new vertical by **declaring**, not by writing core code.
+transparency); the **customer sees only an approved projection** — for chat, the messages a
+routing rule delivers to the customer's external receiver; for the page, the version the
+approved pointer points at. A developer builds a vertical by **declaring**, not by writing core
+code.
 
-## 2. Design principle: reuse `main`, thin core, filter at the edge
+## 2. Design principle: reuse `main`, thin core, one unifying shape
 
-Two constraints organize the design:
-1. **Reuse `main`; keep net-new minimal and well-bounded** (§3 lists what already exists).
-2. **The core is transparent; the customer filter lives in the external View** (Allen's
-   correction, §4.3). ezagent showing all messages/page-states in the backend is correct; the
-   approved-only filter is a property of the customer-facing projection, like `ExternalMirror`.
+Two constraints:
+1. **Reuse `main`; keep net-new minimal** (§3 lists what exists).
+2. **One unifying shape:** *immutable artifact + a pointer* (config, page) and *append-only +
+   a tag* (chat). The customer's view is defined entirely by **which pointer it follows** and
+   **which tagged messages a routing rule delivers to it** — never by mutating or withholding
+   backend state.
 
-Net-new is two groups: the **backend** (`Behavior.Turn` + `:turns` slice; `:surface` slice;
-§4.1–4.2) and the **customer frontend** (a React + json-render SPA + a streaming endpoint;
-§4.4). The admin/operator surface reuses the existing LiveView `SessionView` (§4.2).
+Net-new: `Behavior.Turn` + `:turns` slice; the `:surface` slice (immutable page versions +
+approved pointer); a **routing tag-matcher** (small extension); and the **customer frontend**
+(a React + json-render SPA fed by an `ExternalMirror`-style external receiver). The
+operator/admin surface reuses the existing LiveView `SessionView`. Agent **config** uses an
+immutable-config object + a cascade pointer.
 
 ## 3. Reused-from-`main` components (verified on `origin/main` @ `5661964c`)
 
 | Concern | Existing component | Path |
 |---|---|---|
 | Session as a Kind | `Ezagent.Entity.Session` (+ `:chat` slice, `Behavior.Chat`) | `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex`, `.../behavior/chat.ex` |
-| Message persistence | `Ezagent.MessageStore` (separate `messages`+`message_routings` DB; PubSub fan-out) | `apps/ezagent_core/lib/ezagent/message_store.ex` |
-| **The View abstraction** (per-session render surface + view-switcher) | `Ezagent.UI.SessionView` behaviour (`id/label/icon/applies_to?/render`) + `Ezagent.UI.SessionViewRegistry` — lives in the domain tier (`ezagent_domain_ui`), reusable by any plugin; render contract is LiveView (`render/1 :: Phoenix.LiveView.Rendered.t()`) | `apps/ezagent_domain_ui/lib/ezagent_domain_ui/session_view.ex`, `.../session_view_registry.ex` |
+| Message persistence (append-only) | `Ezagent.MessageStore` (separate `messages`+`message_routings` DB; PubSub fan-out) | `apps/ezagent_core/lib/ezagent/message_store.ex` |
+| **The View abstraction** + view-switcher | `Ezagent.UI.SessionView` (`id/label/icon/applies_to?/render`) + `SessionViewRegistry` — domain tier, render contract is LiveView | `apps/ezagent_domain_ui/lib/ezagent_domain_ui/session_view.ex` |
 | Shipped views | `ConversationView` (chat), `Pty.TerminalView`, `RoutingView`, `ExternalMirror.View` | `apps/ezagent_plugin_liveview/.../views/conversation_view.ex` et al. |
-| **Selective external projection** (the filter pattern) | `Behavior.ExternalMirror` + `ExternalMirror.View` — projecting a session outward with a per-binding filter | `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex` |
-| Routing (runtime-mutable, per-session, cap-checked) | `Ezagent.Behavior.Routing` → `RuleStore.{add,delete,disable,enable}` by rule id; `system_default` rule (`$session_users`+`$mentions`) is delete-protected but **disable-able** | `apps/ezagent_core/lib/ezagent/behavior/routing.ex`, `.../routing/{rule_store,resolver,matcher}.ex` |
-| Agent provisioning + per-agent config/credentials | the #17 **credential/config cascade** (flavor-base → workspace → user → session; resolver + grant + materializer) | `apps/ezagent_core/lib/ezagent/credential/*`, `.../agent/materializer.ex` |
+| **External projection to a non-member receiver** (the customer-surface pattern) | `Behavior.ExternalMirror` + bindings — project a session outward to a receiver that is **not a `$session_user`** | `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex` |
+| Routing (runtime-mutable, per-session, cap-checked) | `Ezagent.Behavior.Routing` → `RuleStore.{add,delete,disable,enable}`; matchers in `routing/matcher.ex`; `system_default` (`$session_users`+`$mentions`) is delete-protected | `apps/ezagent_core/lib/ezagent/behavior/routing.ex`, `.../routing/{rule_store,resolver,matcher}.ex` |
+| Agent provisioning + per-agent config/credentials | the #17 **credential/config cascade** (flavor-base → workspace → user → session) | `apps/ezagent_core/lib/ezagent/credential/*`, `.../agent/materializer.ex` |
 | Session/Agent templates | `Entity.SessionTemplate`, `Entity.AgentTemplate`, `template.read/write` | `apps/ezagent_domain_chat/lib/ezagent/entity/{session_template,agent_template}.ex` |
 
-**Two facts that shaped this design (correct the synthesis revision):**
-- `Behavior.Mode` (#511 takeover/copilot) is **NOT on `main`** — it lives on
-  `origin/feat/cs-operator`. We do **not** port it; mode is a turn property + the external
-  filter (§4.3).
-- loom (`page_update` / typed-card / Next.js SPA / Sandpack / SSE bridge) is **not in esr-ng**
-  — it is separate/external code. The customer frontend (§4.4) is built here, **porting loom's
-  frontend** where useful.
+**Two facts that shaped this design:** `Behavior.Mode` (#511) is **NOT on `main`** (it is on
+`origin/feat/cs-operator`) — not ported. loom (Next.js SPA / Sandpack / SSE bridge) is **not in
+esr-ng** — the customer frontend (§4.4) is built here, porting loom's frontend.
 
 ## 4. Net-new components
 
 ### 4.1 `Behavior.Turn` + the `:turns` slice — the orchestration state machine
 
-A **turn** is one atomic interaction cycle: a triggering input, the fan-out it caused, the
-deliverables collected, the composed result, and its lifecycle status. It is a noun;
-`Behavior.<noun>` owning `:<noun>` (matching `Behavior.Chat`/`:chat`) gives `Behavior.Turn`
-owning `:turns`.
-
-**`:turns` slice** — `turn_id => turn record` (small; `{:snapshot, :on_change}`; message
-bodies stay in `MessageStore`, page trees in `:surface`, the slice holds references + status):
+A **turn** is one atomic interaction cycle. `Behavior.<noun>` owning `:<noun>` (cf.
+`Behavior.Chat`/`:chat`) gives `Behavior.Turn` owning `:turns`:
 
 ```
 %{
-  turn_id     => %{
-    trigger:     message_ref,        # the input message that opened the turn
-    owner:       uri,                # agent_uri (auto) | user_uri (after claim)
-    mode:        :auto | :copilot | :takeover,
-    expected:    MapSet.t(subtask_id),
-    collected:   %{subtask_id => card_ref},
-    result:      [card_ref],         # composed deliverables (chat refs + surface version)
-    status:      :open | :delegating | :aggregating | :composing
-                 | :awaiting_human | :settled | :cancelled,
-    approved:    boolean,            # auto ⇒ true at compose; copilot/takeover ⇒ on operator approve
-    turn_no:     integer,
-    opened_at:   integer             # passed in; no Date.now in core
+  turn_id   => %{
+    trigger:    message_ref,
+    owner:      uri,                 # agent_uri (auto) | user_uri (after claim)
+    mode:       :auto | :copilot | :takeover,
+    expected:   MapSet.t(subtask_id),
+    collected:  %{subtask_id => card_ref},
+    result:     [card_ref],          # chat message refs + a page version id
+    status:     :open | :delegating | :aggregating | :composing
+                | :awaiting_human | :settled | :cancelled,
+    turn_no:    integer,
+    opened_at:  integer              # passed in; no Date.now in core
   }
 }
 ```
 
-**Action set** (Behavior actions, cap-checked via the dispatch surface):
+**Action set** (cap-checked Behavior actions):
 - `turn.open(trigger)` → `:open`
-- `turn.dispatch(turn_id, subtasks)` — record `expected`; the `@mention chat.send` fan-out is
-  a `Chat` action → `:delegating`
-- `turn.deliver(turn_id, subtask_id, card_ref)` — collect one worker deliverable → `:aggregating`
-- `turn.compose(turn_id, result_refs)` — orchestrator composes; writes the chat result to
-  `MessageStore` and the page tree as a new `:surface` version. **Writes happen freely (the
-  backend is transparent); they carry `approved = mode == :auto`.** → `:composing`
-- `turn.claim(turn_id, by: user_uri)` — human takeover: set `owner`, `mode`; an additive route
-  delivers the draft to the operator (§4.3) → `:awaiting_human`
-- `turn.settle(turn_id)` — close the turn and **mark its output approved** (auto: at compose;
-  copilot/takeover: when the operator approves/edits). This is *not* a write-gate — it flips
-  the approval marker the external view filters on (§4.3) → `:settled`
-- `turn.cancel(turn_id)` / timeout → `:cancelled` (its unapproved output is never approved, so
-  the customer never sees it)
+- `turn.dispatch(turn_id, subtasks)` — record `expected`; the `@mention chat.send` fan-out is a
+  `Chat` action → `:delegating`
+- `turn.deliver(turn_id, subtask_id, card_ref)` — collect a worker deliverable → `:aggregating`
+- `turn.compose(turn_id, result_refs)` — orchestrator composes. Chat messages are written to
+  `MessageStore` **with a visibility tag** (`:customer_visible` in `:auto`; `:operator_only`
+  while a copilot/takeover turn is unapproved). A page deliverable is written as a **new
+  immutable `:surface` version** (§4.2). → `:composing`
+- `turn.claim(turn_id, by: user_uri)` — human takeover: set `owner`, `mode`; the agent's
+  ongoing messages are tagged `:operator_only` → `:awaiting_human`
+- `turn.settle(turn_id)` — close the turn and **publish its output to the customer**: advance
+  the `:surface` **approved pointer** to this turn's page version, and (for held copilot/takeover
+  messages) flip the operator-forwarded message(s) to `:customer_visible`. In
+  `:copilot`/`:takeover` this runs **only after the operator approves/edits** → `:settled`
+- `turn.cancel(turn_id)` / timeout → `:cancelled` (its page version is never pointed-to; its
+  messages stay `:operator_only` — the customer never sees them)
 
 Partial worker failure / timeout: a missing `deliver` leaves `expected ⊅ collected`; the
-orchestrator composes degraded or `turn.cancel`s. An un-`settle`d turn's output stays
-`approved = false`, so the customer never sees a half-built result regardless.
+orchestrator composes degraded or `turn.cancel`s. An un-`settle`d turn never advances the
+approved pointer and its messages never become `:customer_visible`, so a failed turn cannot
+leak.
 
 **State machine:** `open → delegating → aggregating → composing → [awaiting_human] → settled`;
 `cancel`/timeout from any non-terminal state. The human-in-the-loop branch is **composing →
-(settle | awaiting_human)**, decided by `mode`. **Customer visibility is governed downstream
-by the external view's approved-only filter (§4.3), not by withholding backend writes** — the
-core stays thin.
+(settle | awaiting_human)**, decided by `mode`. **Customer visibility is governed by the
+pointer (page) and the tag/routing (chat) — never by withholding backend writes** (the core
+stays thin).
 
-The degenerate single-bot case (no orchestration) is a turn with zero `expected`: open →
-compose(bot reply) → settle. Same machinery covers plain chat replies.
+The degenerate single-bot case is a turn with zero `expected`: open → compose(reply, tagged
+`:customer_visible` in auto) → settle.
 
-### 4.2 `:surface` slice — the page state (rendered by two surfaces)
+### 4.2 `:surface` slice — the page as immutable versions + an approved pointer
 
-The chat log is append-only in `MessageStore`; a **page** is mutable, evolving state, so it is
-a durable slice:
+The chat is append-only in `MessageStore`; a **page** is a mutable, evolving document, modeled
+as **immutable versions + a pointer** (the same shape as config, §7):
 
 ```
 %{
-  approved: %{version, tree, by_turn},        # last settled tree — what the customer renders
-  pending:  %{version, tree, by_turn} | nil   # latest unapproved draft — operator-only; nil in :auto
+  versions: %{version => %{tree, by_turn}},   # immutable; never mutated/overwritten
+  approved: version | nil                      # the pointer the customer follows
 }
 ```
 
-`:surface` stores the **approved tree explicitly** (so it survives cold restart / a
-second-viewer mount even when a newer unapproved draft exists) plus an optional `pending`
-draft. `turn.compose` writes `pending` (or directly `approved` in `:auto`); `turn.settle`
-promotes `pending → approved` (advancing its version). Rendering splits by audience:
-- **operator/admin** renders `pending || approved` (sees drafts — transparency);
-- **customer** renders `approved` only — **never `pending`/latest** (the filter, §4.3).
-
-(Codex rev3-HIGH-2: a `latest`+`approved_version` pointer alone could not retrieve the approved
-tree once a newer draft existed; the explicit `approved` slot is the durable contract.)
+- `turn.compose` appends a **new immutable version**; `turn.settle` advances `approved` to it
+  (auto: at compose-time settle; copilot/takeover: at operator approval).
+- **customer** renders `versions[approved]`; **operator/admin** renders the latest version
+  (drafts included — transparency). Because every version is retained, the approved tree is
+  always recoverable after a newer draft, a cold restart, or a second-viewer mount (this is the
+  durable contract; a `latest`+pointer-only shape could not do this).
 
 **UI tree = an implementation-agnostic, json-render declarative node** (`vercel-labs/json-render`,
-used directly on the React side, §4.4): recursive `%{type, props, children}`, rendered via a
-**component registry** (`type => component`). A worker deliverable is a UI-tree fragment; the
-orchestrator composes fragments into the page tree. Tiers:
-- **declarative nodes** — registry components (bubble, comparison-table, form, …);
-- **`code` node** — sandboxed arbitrary generated JSX/HTML (Sandpack) — in scope now that the
-  customer frontend is React (§4.4), porting loom's renderer.
+used on the React side, §4.4): recursive `%{type, props, children}`, rendered via a **component
+registry** (`type => component`). A worker deliverable is a UI-tree fragment; the orchestrator
+composes fragments into a version. Tiers: **declarative nodes** (registry components) and a
+**`code` node** (Sandpack-sandboxed arbitrary generated JSX/HTML — in scope, porting loom).
 
-**Two render surfaces (dual-surface, Allen-approved):**
-- **operator/admin = LiveView.** Reuse the existing `Ezagent.UI.SessionView` — a `PageView`
-  (`SessionView` rendering `:surface.latest` via a server-side HEEx interpretation of the tree)
-  alongside the existing `ConversationView`. Admin tabs may stay exclusive (acceptable for the
-  backend); a small operator composite is optional. This surface shows drafts for review.
-- **customer = React + json-render SPA** (§4.4). This is the rich product surface and the home
-  of genuine same-screen multi-view (chat pane + page pane in one React layout) and of the
-  approved-only filter.
+### 4.3 Mode = a per-message visibility tag + the page approved-pointer (no `Behavior.Mode`, no routing suppression)
 
-### 4.3 Mode = turn approval status + the external view's filter (no `Behavior.Mode`, no routing replacement)
+auto/copilot/takeover are **not** a behavior. They decide two things, both expressed with
+existing primitives:
 
-Two codex findings drove this: (HIGH) main routing is runtime-mutable but *additive in
-practice* — the delete-protected `system_default` rule keeps delivering agent messages to the
-customer, so routing cannot cleanly suppress customer delivery; and (Allen) the suppression
-**belongs in the external view**, not the core. So:
+**Chat — a per-message visibility tag + tag-aware routing.** Every chat message carries a
+visibility tag (`:customer_visible | :operator_only`), a small attribute on the
+`message_routings` side, set by the turn/mode. The **customer is a non-member
+`ExternalMirror`-style external receiver** (not a `$session_user`), and a routing rule delivers
+**only `:customer_visible`-tagged messages** to it. Because the customer receiver is *not* a
+`$session_user`, the delete-protected `system_default` fan-out **never reaches it** — so there
+is nothing to suppress (this is why routing now works cleanly for the filter, unlike the
+member-model we rejected). Implementation = **a tag matcher added to `routing/matcher.ex`** + a
+rule `{tag: :customer_visible} → customer_receiver`. The agent's takeover/copilot drafts are
+tagged `:operator_only`, so **no rule routes them to the customer** — they reach the operator
+(a member) only.
 
-- **The customer filter is the external view's job.** The customer SPA's streaming endpoint
-  (§4.4) is an `ExternalMirror`-style projection that emits only **approved** content: chat
-  messages whose turn is settled/forwarded, and `:surface.approved`. Unapproved
-  drafts exist in the backend but are never projected to the customer.
-- **`turn.mode` + the approval marker** drive that filter: `:auto` approves at compose (customer
-  sees immediately); `:copilot`/`:takeover` hold approval until the operator acts.
-- **Routing (unchanged) does internal fan-out + delivering the draft to the operator** (an
-  additive `@mention`-style rule). It is *not* the gate; the `system_default` rule is left
-  intact.
-- The three modes: **`:auto`** compose→settle→approved→customer sees it; **`:copilot`** draft
-  visible to operator only; operator approves/edits → approved → customer sees it; **`:takeover`**
-  `owner` = operator (from `claim`); operator authors the result; the agents' draft is a
-  suggestion to the operator; operator's content is approved on settle.
+**Page — the approved pointer (§4.2).** `:auto` advances `approved` at compose; `:copilot`/
+`:takeover` advance it only on operator approval. The customer renders `approved`; an unapproved
+newer version is simply not pointed-to.
 
-So mode adds **no new behavior, no routing-replacement primitive, and no core write-gate** — it
-is `turn.mode` + the approval marker + the external view filtering on it. (Supersedes the
-AutoService `235a2e96` route-suppression framing; we do not port `Behavior.Mode`/#511.)
+The three modes: **`:auto`** — messages `:customer_visible`, pointer advances at compose;
+**`:copilot`** — agent messages/page version held (`:operator_only` / pointer not advanced) and
+shown to the operator; on operator approve/edit → settle flips the forwarded message to
+`:customer_visible` and advances the pointer; **`:takeover`** — `owner` = operator; agent output
+stays `:operator_only` as a suggestion; the operator-authored message is `:customer_visible` and
+its page edits become the approved version on settle.
 
-**The filter is a concrete, enforced backend API — not a convention** (codex rev3-HIGH-1).
-Because the backend now writes drafts freely, "approved-only" must be enforced at the read
-boundary or a draft leaks:
-- every customer-eligible chat message **persists its `turn_id` + approval state**
-  (`:approved | :pending`), set/advanced by the turn (a small field on the `message_routings`
-  side, not a new store);
-- the customer SPA is served **only** by a dedicated **approved-only read API** —
-  `approved_chat_snapshot/2`, `approved_chat_history/2`, `approved_chat_stream/2`, and
-  `:surface.approved` — each of which returns approved rows exclusively;
-- customer routes are **forbidden** from the raw feeds: `MessageStore.recent_in_session`, the
-  session PubSub topic, and the generic `Publisher`/`ExternalMirror` feeds are operator/internal
-  only. A customer endpoint built on a raw feed is a defect, and **raw-feed denial is an
-  acceptance invariant** (§9).
+**Enforceable, not a convention.** The customer receiver's **only inbound is the tag rule** —
+customer routes must **not** be wired to the raw `MessageStore.recent_in_session`, the session
+PubSub topic, or the generic `Publisher` feed (those are operator/internal). Raw-feed denial is
+an acceptance invariant (§9). So mode adds **no new behavior, no routing suppression, no core
+write-gate** — a tag attribute + a tag matcher + the approved pointer. (We do not port
+`Behavior.Mode`/#511.)
 
-### 4.4 Customer frontend — React + json-render SPA + a streaming endpoint (the loom frontend half)
+### 4.4 Customer frontend — React + json-render SPA fed by the external receiver (the loom frontend half)
 
-The customer-facing surface is a **React SPA** that renders the session via **json-render** (UI
-tree → React component registry) plus a **streaming endpoint** on the backend. This is a real,
-one-time frontend foundation: once built, frontend devs extend a **React component registry**
-and the backend emits json-render trees — a standard, scalable frontend story (LiveView's UI
-ecosystem is comparatively limited; this unlocks arbitrary generated UI). loom (#480) already
-implements much of this (Next.js SPA + Sandpack + SSE bridge) and is **ported/adapted**, not
-built from zero.
+The customer surface is a **React SPA** rendering the session via **json-render** (UI tree →
+React component registry) over a **streaming endpoint**. The streaming endpoint **is** the
+`ExternalMirror`-style external receiver of §4.3: it carries the customer's
+`:customer_visible` chat stream + `:surface.versions[approved]`, and **nothing else** (no raw
+feed). This is a one-time frontend foundation: once built, frontend devs extend a React
+component registry and the backend emits json-render trees (a standard, scalable frontend story;
+unlocks arbitrary generated UI, which LiveView cannot). loom (#480) implements much of this
+(Next.js SPA + Sandpack + SSE bridge) and is **ported/adapted**, not built from zero.
 
-Pieces:
-- **streaming endpoint** — a backend WS/SSE endpoint built **exclusively on the approved-only
-  read API** (§4.3): it serves approved chat + `:surface.approved`, never a raw
-  `MessageStore`/PubSub/`Publisher` feed;
-- **React SPA + json-render runtime + component registry** — the reusable extension point;
-- **Sandpack** — the `code`-node sandbox for arbitrary generated UI;
-- **external/anonymous customer auth + session binding** — gates external access (overlaps the
-  known anon-customer-identity prerequisite).
+Pieces: the external-receiver streaming endpoint (tag-filtered chat + approved page); the React
+SPA + json-render runtime + component registry; Sandpack for the `code` node; external/anonymous
+customer auth + session binding.
 
-The backend (§4.1–4.3) is **frontend-agnostic**: it can be driven by the LiveView operator
-surface and the React customer SPA at once. This lets backend E2E run against a thin LiveView
-render first, with the React SPA landing as its own phase (§11).
+The backend (§4.1–4.3) is **frontend-agnostic**: the LiveView operator surface and the React
+customer SPA can both drive it. Backend E2E can run against a thin LiveView render before the
+SPA lands (§11).
 
 ## 5. Developer authoring surface (what a vertical declares)
 
-A vertical declares over reuse — **zero core code**. The six slots:
+A vertical declares over reuse — **zero core code**. Six slots:
 1. **SessionTemplate** — compose `Behavior.Chat + Behavior.Turn` (+ `:surface` if it has a
-   page); member roster (orchestrator / N workers / customer-user / operator-user); routing
-   rules (`{:from customer} → orchestrator`, `{:from orchestrator @worker} → worker`).
+   page); roster (orchestrator / N workers / operator-user; the customer is the external
+   receiver, not a roster member); routing rules (`{:from customer} → orchestrator`,
+   `{:from orchestrator @worker} → worker`, `{tag: :customer_visible} → customer_receiver`).
 2. **AgentTemplate × role** — orchestrator + workers: flavor (cc/codex/curl), soul/skill/kb
-   prompt config (resolved through the #17 cascade), credential source.
-3. **UI node types + schema** — the declarative node types this vertical emits (base + domain
-   nodes, e.g. `quote_comparison`).
-4. **Renderers** — a **React component** per node type registered in the json-render registry
-   (customer surface); optionally a HEEx component for the operator `PageView`.
+   config (resolved through the #17 cascade), credential source.
+3. **UI node types + schema** — the declarative node types this vertical emits.
+4. **Renderers** — a **React component** per node type in the json-render registry (customer);
+   optionally a HEEx component for the operator `PageView`.
 5. **Orchestration policy** — the turn's decompose/compose; usually prompt-driven in the
-   orchestrator AgentTemplate; a small policy module only when hard logic is needed.
+   orchestrator AgentTemplate; a small policy module only for hard logic.
 6. **(optional) Mode policy** — the predicate that flips a turn to copilot/takeover. Default:
    all-auto; operator may `claim` any time.
 
-**Where it physically lives (naming locked).** The base ships as the domain app
-**`ezagent_domain_socialware`** (introducing `Behavior.Turn` + the `:surface` contract; beside
-`ezagent_domain_chat`/`ezagent_domain_ui`), plus the customer-frontend foundation (§4.4). Each
-vertical is its **own plugin app `ezagent_plugin_<name>`** (consistent with `ezagent_plugin_cc`/
-`ezagent_plugin_feishu`), registering via `Application.start/2`. The six slots land as
-declarations/assets:
-- slots 1–2 → **template content seeds** (`Entity.SessionTemplate`/`AgentTemplate` +
-  `template.write`), with orchestrator/worker prompts as AgentTemplate content;
-- slot 3 → a small Elixir module declaring node types;
-- slot 4 → React components in the plugin's `assets/`, registered into the json-render registry
-  (+ optional HEEx for the operator view), from `Application.start/2`;
-- slots 5–6 → prompts + optional tiny policy modules.
+**Where it lives (naming locked).** Base = domain app **`ezagent_domain_socialware`** (ships
+`Behavior.Turn`, the `:surface` contract, the routing tag-matcher, the customer-frontend
+foundation, the customer external-receiver wiring, and a base `session.socialware`
+SessionTemplate). Each vertical = its **own plugin app `ezagent_plugin_<name>`** (consistent
+with `ezagent_plugin_cc`/`_feishu`), registering via `Application.start/2`: template-content
+seeds (slots 1–2, prompts as AgentTemplate content), a node-type module (slot 3), React
+components in `assets/` (slot 4), prompts + optional tiny policy modules (slots 5–6) — **no
+edits to `ezagent_core`/`ezagent_domain_socialware`**.
 
-So "the authoring surface" = a plugin app's `Application.start/2` + its template seeds + its
-`assets/` React components — **no edits to `ezagent_core`/`ezagent_domain_socialware`**.
+> A "plugin **bundle**" (VS-Code-style one-shot multi-plugin install) is a possible future
+> convenience; no use case yet, not implemented. A vertical is just a normal plugin app.
 
-> A "plugin **bundle**" (VS-Code-style one-shot install of several plugins together) is a
-> possible future convenience; there is no use case yet and it is not implemented. A vertical
-> is just a normal plugin app for now.
-
-The canonical verticals are different fills of the same slots: **AutoService** = `{text}` node
-+ bubble renderer + zero-subtask direct answer; **loom** = `{page_update/code}` node + Sandpack
-renderer + page-worker fan-out; **fused vertical** = both node families + both renderers + NL +
-page workers → one turn drives both customer panes.
+Canonical verticals are different fills: **AutoService** = `{text}` node + bubble + zero-subtask
+answer; **loom** = `{page_update/code}` node + Sandpack + page-worker fan-out; **fused** = both
+node families + both renderers + NL + page workers → one turn drives both customer surfaces.
 
 ## 6. Runtime data flow (SW-USE, the fused path)
 
-1. Customer message → `Chat` persists to `MessageStore` → routing `{:from customer}` →
-   orchestrator.
+1. Customer message (from the external SPA) enters the session → `Chat` persists to
+   `MessageStore` → routing `{:from customer} → orchestrator`.
 2. `turn.open` + `turn.dispatch([nl, page])` → `:delegating`; `@mention chat.send` to workers.
-3. Workers `turn.deliver`: nl-worker → a `text` node; page-worker → a UI-tree fragment →
+3. Workers `turn.deliver`: nl-worker → a `text` message; page-worker → a UI-tree fragment →
    `:aggregating`.
-4. `turn.compose` → writes the chat result to `MessageStore` and a new `:surface` version;
-   both marked `approved = (mode == :auto)` → `:composing`.
-5. Mode (§4.3): `:auto` → `turn.settle` (approved). `:copilot`/`:takeover` → `:awaiting_human`;
-   the draft is visible to the operator only; operator approves/edits → `turn.settle`.
-6. The customer React SPA's streaming endpoint emits only approved content; on approval it
-   renders, **in one viewport**, the `text` node as a **chat bubble** and `:surface.approved`
-   as the **live page** — both from the same turn (the fusion). Before
-   approval the customer sees neither; the operator LiveView surface saw the draft throughout.
+4. `turn.compose` → writes the chat reply (tagged by mode) + a **new immutable `:surface`
+   version** → `:composing`.
+5. Mode (§4.3): `:auto` → `turn.settle` (message `:customer_visible`, pointer advances).
+   `:copilot`/`:takeover` → `:awaiting_human`; agent output is `:operator_only` / pointer not
+   advanced; operator approves/edits → `turn.settle`.
+6. On settle: the `:customer_visible` chat message routes to the customer external receiver, and
+   `:surface.approved` points at this version. The customer React SPA — fed only by that
+   receiver — renders, **in one viewport**, the **chat bubble** and the **live page** from the
+   same turn (the fusion). Before settle the customer sees neither; the operator LiveView saw
+   the draft throughout.
 
-## 7. Self-evolve (SW-UPD) on the #17 cascade
+## 7. Self-evolve (SW-UPD) — immutable config + a cascade pointer
 
-Self-evolve reuses the turn/UI-tree/projection/approval machinery, pointed at the **agent's
-own config**, writing to the cascade:
+Self-evolve reuses the turn/approval machinery, pointed at the **agent's own config**, using the
+**immutable-artifact-+-pointer** shape (the same as the page):
 1. An optimization session's **optimizer agent** reads service-session traces (messages +
    outcomes + **the operator's takeover edits — the gold supervised signal**).
 2. It emits a **config-delta** as a UI-tree card.
-3. The operator approves it via the **same approval gate as SW-USE** (the optimizer turn holds
-   at `:awaiting_human`; operator approves/edits before settle).
-4. The approved delta is written to the agent's **high cascade layer** (user/workspace) as a
-   **mutable overwrite** — matching current #17 (config-layer *versioning* stays out of scope).
-   But rollback must be deterministic, so (codex rev3-MEDIUM-3) the approving update turn
-   **captures `before_value`** (the prior target-layer/key value) **and writes via
-   compare-and-set** on `(layer, key, expected = before_value)`. Rollback = CAS-restore
-   `before_value`; concurrent optimizer approvals / operator edits / post-overwrite restarts are
-   handled because the CAS detects a changed target and the captured `before_value` is the
-   single source for the revert. (This is one prior value + a CAS, **not** a version history —
-   versioned/reversible config remains a future item to do together with #17.)
-5. Next spawn re-materializes the config; a later customer turn shows the changed behavior.
+3. The operator approves via the **same `turn.settle` gate** (the optimizer turn holds at
+   `:awaiting_human`; operator approves/edits before settle).
+4. Approval writes a **new immutable config object** and **repoints** the agent's #17 high
+   cascade layer at it (the layer value is a pointer/id, not inline content — no #17 change
+   needed). **Rollback = repoint to the prior config object** (it is immutable and retained), so
+   rollback is real and deterministic with no overwrite, no CAS, no version-diffing.
+5. Next spawn re-materializes the pointed-at config; a later customer turn shows the change.
 
-Reuse highlight: the operator's approval path is identical in SW-USE and SW-UPD — one gate for
-both the interaction and the update phase.
+Reuse highlight: one approval gate (SW-USE reply / SW-UPD config) and one immutable+pointer shape
+(page / config).
 
 ## 8. Multi-user & persistence
 
-- **Durable by construction**: `:surface` persists `{:snapshot, :on_change}` with the explicit
-  `approved` tree (+ optional `pending`). Cold restart re-renders; the customer always reads
-  `approved`, **never `pending`** — even if a `pending` draft was in flight at crash time.
-- **Same-session, two users** = one shared page. Concurrency: **`Behavior.Turn` serializes**
-  surface mutation (a turn is the unit; the state machine orders turns), so a later turn sees
-  the earlier's committed state — **no CRDT for the common case**.
-- **Separate pages** = fork the SessionTemplate into separate sessions; each owns its `:surface`.
-- chat (`MessageStore`, append-only) and page (`:surface`, mutable versioned) are two stores
-  with different semantics under one session; both are filtered to approved for the customer.
+- **Durable by construction**: `:surface` persists `{:snapshot, :on_change}` — all versions +
+  the `approved` pointer. Cold restart re-renders; the customer always reads `versions[approved]`,
+  never an unapproved newer version, even if a draft was in flight at crash time.
+- **Same-session, two users** = one shared page; `Behavior.Turn` serializes surface mutation, so
+  a later turn sees the earlier's approved state — **no CRDT for the common case**.
+- **Separate pages** = fork the SessionTemplate into separate sessions.
+- chat (`MessageStore`, append-only + visibility tag) and page (`:surface`, immutable versions +
+  pointer) are two stores; both project to the customer only what the tag-rule / pointer allow.
 
 ## 9. Acceptance: three-phase E2E
 
-Each phase locks one architectural invariant; together they are the completion gate (a phase is
-not "done" until its invariant test passes — not on merge/tests-pass alone).
+Each phase locks one invariant; together they are the completion gate (not "done" on
+merge/tests-pass alone).
 
-**SW-DEV (development)** — *the authoring/framework surface works.*
+**SW-DEV (development)** — *the authoring surface works.*
 A developer authors a vertical plugin (§5) — all in the plugin, no edits to
 `ezagent_core`/`ezagent_domain_socialware`. Instantiate it.
-- **Invariant:** with **zero core-code change**, the session boots; the operator LiveView
-  surface mounts; the customer SPA mounts with both panes; agents spawned + credential-materialized.
-- Artifact: agent-browser screenshot of the operator surface + the customer page + agents present.
+- **Invariant:** **zero core-code change**; the session boots; the operator LiveView surface
+  mounts; the customer SPA mounts with both panes; agents spawned + credential-materialized.
+- Artifact: agent-browser screenshot of operator surface + customer page + agents.
 
-**SW-USE (user-interaction)** — *the fusion + takeover.*
-Non-admin customer + operator. Customer asks for "a comparison page + a recommendation."
-- **Invariant:** a single approved turn drives **both panes of the customer React SPA
-  simultaneously in one viewport** (fails if only one updates, or if they are only separate
-  tabs). Plus: in `:copilot`/`:takeover` the **customer sees nothing** (no bubble, no page)
-  until the operator approves — while the **operator LiveView surface shows the draft** — and
-  what reaches the customer is the operator's output.
-- Artifacts: one customer-page screenshot showing ① chat bubble + ② live page side-by-side from
-  the same turn; ③ a copilot turn where the draft is visible on the operator surface but absent
-  from the customer page until approval.
-- **Leak/restart invariants (codex rev3):** (a) **raw-feed denial** — a customer-route attempt
-  to read `MessageStore.recent_in_session` / the session PubSub topic / the generic `Publisher`
-  feed is rejected (only the approved-only API returns data); (b) **cold restart with an
-  unapproved `pending`** — after a crash mid-copilot, the customer still sees `approved`, not the
-  in-flight `pending`; (c) **second-viewer approved replay** — a second customer mount renders
-  the same `approved` tree, never a peer's unapproved draft.
+**SW-USE (user-interaction)** — *the fusion + takeover, leak-safe.*
+Non-admin customer (external) + operator. Customer asks for "a comparison page + a recommendation."
+- **Invariants:** (a) a single settled turn drives **both customer panes simultaneously in one
+  viewport**; (b) in `:copilot`/`:takeover` the **customer sees nothing** until the operator
+  approves, and the agent's `:operator_only` takeover-assist messages **never reach the customer
+  receiver** (only the operator sees them); (c) **raw-feed denial** — a customer route reading
+  `MessageStore.recent_in_session` / session PubSub / `Publisher` returns nothing (only the
+  tag-rule + approved pointer feed the customer); (d) **cold restart / second viewer** — the
+  customer renders `versions[approved]`, never an in-flight unapproved version.
+- Artifacts: customer-page screenshot with ① bubble + ② live page side-by-side from one turn;
+  ③ a copilot turn where the draft shows on the operator surface but is absent from the customer
+  page until approval; restart + second-viewer checks.
 
-**SW-UPD (update)** — *the self-evolve loop closes.*
-Optimizer + operator. Optimization session reads SW-USE traces → config-delta card → operator
-approves → overwrite the agent's cascade high layer → respawn re-materializes → a later customer
-turn shows changed behavior.
-- **Invariant (scoped to current #17, §7):** the agent's **resolved config changed via the flow
-  (not hand-edit) and is observable in a later turn**; **rollback is deterministic** — the
-  CAS-restore of the captured `before_value` reverts the behavior **even after a restart or a
-  concurrent overwrite** (the CAS detects the conflict rather than silently clobbering).
-  (Version-history reversibility is a future item, not asserted here.)
-- Artifact: screenshot of the delta card + approval + the changed behavior, then the revert;
-  plus a test that a concurrent second overwrite is rejected by the CAS.
+**SW-UPD (update)** — *self-evolve, with real rollback.*
+Optimizer + operator. Traces → config-delta → operator approves → new immutable config + repoint
+→ respawn re-materializes → later customer turn shows changed behavior.
+- **Invariant:** the agent's resolved config changed via the flow (not hand-edit), observable in
+  a later turn; **rollback = repoint to the prior config object reverts the behavior** (real and
+  deterministic, surviving restart, because configs are immutable + retained).
+- Artifact: screenshot of the delta card + approval + changed behavior, then the repoint-revert.
 
 **E2E standards (all three):** non-admin customer is the primary caller; granting the operator
-its cap is itself a step; **fresh docker seed each run**; faces **production topology** (real
+its cap is itself a step; **fresh docker seed each run**; **production topology** (real
 routing/spawn/MessageStore, no test-harness shortcuts); **agent-browser screenshots on the real
-ESR UI at `http://100.64.0.27:10042`** (operator LiveView) and the customer SPA's external route
-(Tailscale IP, not localhost); every distinct bug earns a fast regression test before the fix.
+ESR UI at `http://100.64.0.27:10042`** (operator LiveView) and the customer SPA route (Tailscale
+IP, not localhost); every distinct bug earns a fast regression test before the fix.
 
 ## 10. Open decisions (reduced)
 
-Resolved: framework-vs-app (one substrate + plugins; verticals are `ezagent_plugin_<name>`);
-mode (turn approval + external filter, no `Behavior.Mode`); filter placement (external view);
-frontend (React + json-render, dual-surface with LiveView for operator); config versioning
-(out of scope now, overwrite). Remaining:
-1. **Streaming endpoint transport** — WS vs SSE for the customer SPA; reuse/port loom's bridge
-   shape. (Lean: match loom's to minimize port risk.)
-2. **Anonymous/synthetic customer identity** — needed for the external customer page; build the
+Resolved: framework-vs-app (substrate + `ezagent_plugin_<name>` verticals); mode (tag + pointer,
+no `Behavior.Mode`); customer = external `ExternalMirror`-style receiver (so routing needs no
+suppression); frontend (React + json-render, dual-surface); config (immutable + pointer, real
+rollback). Remaining:
+1. **Tag-matcher shape** — how the visibility tag is stored (a `message_routings` column vs a
+   message attribute) and matched in `routing/matcher.ex`. (Lean: a `message_routings` field +
+   a `{tag: _}` matcher.)
+2. **Streaming-endpoint transport** — WS vs SSE for the customer receiver; reuse loom's shape.
+   (Lean: match loom's to minimize port risk.)
+3. **Anonymous/synthetic customer identity** — for the external customer receiver; build the
    anon model in the frontend phase, or seed a test user for the first E2E? (Lean: seeded user
    for the first SW-USE E2E; anon model in/after the frontend phase.)
-3. **`{:within_workspace}` cap shape** — for tenant-admin/customer isolation; introduce with
+4. **`{:within_workspace}` cap shape** — for tenant-admin/customer isolation; introduce with
    SW-DEV (templates are workspace-scoped). (Lean: yes, with SW-DEV.)
-4. **Operator surface composition** — keep exclusive admin tabs (chat / page), or add a small
-   operator composite? (Lean: exclusive tabs first; the real same-screen is the customer SPA.)
+5. **Immutable-config store location** — config objects in `ezagent_domain_socialware` vs a #17
+   sub-store; the cascade high layer holds the pointer either way. (Lean: a small socialware
+   config store now; converge with #17-V2 later.)
 
 ## 11. Phasing
 
 Backend first (frontend-agnostic), then the React customer frontend as its own phase.
 - **P1 — `Behavior.Turn` + `:turns` slice** (state machine; TDD; degenerate single-bot turn
   first, then fan-out/compose).
-- **P2 — `:surface` slice + operator LiveView render** (the `approved`/`pending` shape; a thin `PageView`
-  HEEx interpreter so backend E2E can run before the SPA exists).
-- **P3 — mode = approval + external filter** (`turn.claim`/approve/`settle`; the additive
-  operator-draft route; the approved-only projection logic — no routing-replacement primitive).
-- **P4 — customer frontend foundation** (streaming endpoint + React SPA + json-render runtime +
-  component registry + Sandpack + external/anon auth) — porting loom's frontend; the one-time
-  React foundation.
+- **P2 — `:surface` slice + operator LiveView render** (immutable versions + approved pointer;
+  a thin HEEx `PageView` so backend E2E runs before the SPA exists).
+- **P3 — chat visibility tag + routing tag-matcher + customer external receiver** (the
+  `{tag: :customer_visible} → customer_receiver` rule; `turn.settle` advancing the pointer +
+  flipping tags; operator-only takeover-assist).
+- **P4 — customer frontend foundation** (external-receiver streaming endpoint + React SPA +
+  json-render runtime + component registry + Sandpack + external/anon auth) — porting loom; the
+  one-time React foundation.
 - **P5 — first fused vertical + SW-USE E2E** (orchestrator + nl + page workers; the
-  simultaneous-surfaces + approval-filter invariant tests on the customer SPA).
-- **P6 — self-evolve (SW-UPD)** on the #17 cascade write path + the SW-UPD invariant test.
-- **SW-DEV** authoring E2E rides alongside P5 (it proves the template surface P1–P4 expose).
+  simultaneous-surfaces + leak-safety invariants on the customer SPA).
+- **P6 — self-evolve (SW-UPD)** — immutable-config store + cascade pointer + repoint-rollback +
+  the SW-UPD invariant; consumes the #17 write path.
+- **SW-DEV** authoring E2E rides alongside P5.
 
 ## 12. Dependency on #17
 
-socialware's update phase (§7) is the **first major consumer** of the #17 cascade write path
-(config-delta → high layer → re-materialize), so #17 is a **prerequisite for P6**, not P1–P5.
-The two workstreams are parallel and non-conflicting: socialware adds new files
-(`ezagent_domain_socialware`, the vertical plugins, the React frontend) and touches none of the
+socialware's update phase (§7) consumes the #17 cascade (it repoints the high layer at an
+immutable config object), so #17 is a **prerequisite for P6**, not P1–P5. The two workstreams
+are parallel and non-conflicting: socialware adds new files (`ezagent_domain_socialware`, the
+vertical plugins, the React frontend, the routing tag-matcher) and touches none of the
 `credential/`/`materializer`/`resolver`/`grant` files the cascade work owns.
