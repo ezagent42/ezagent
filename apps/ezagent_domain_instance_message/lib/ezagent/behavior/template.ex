@@ -385,7 +385,11 @@ defmodule Ezagent.Behavior.Template do
                  content,
                  instance_uri,
                  spawned_by,
-                 workspace_uri
+                 workspace_uri,
+                 caller: Map.get(ctx, :caller),
+                 caps: Map.get(ctx, :caps),
+                 source_template_uri: self_uri,
+                 explicit_source: Map.get(args, :explicit_source)
                ) do
           # codex PR #408 review HIGH-3 — pass through role_degraded
           # keys (if any) so callers (Session.ensure_orchestrator) can

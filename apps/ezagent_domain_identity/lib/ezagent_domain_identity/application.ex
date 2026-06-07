@@ -40,7 +40,16 @@ defmodule EzagentDomainIdentity.Application do
 
   alias Ezagent.{CapabilityRegistry, SpawnRegistry}
   alias Ezagent.Entity.User
-  alias Ezagent.Behavior.{Identity, ApiKeys, UserCredentials, UserTokens, WorkspaceUserAdmin}
+
+  alias Ezagent.Behavior.{
+    Identity,
+    ApiKeys,
+    UserCredentials,
+    UserTokens,
+    WorkspaceUserAdmin,
+    WorkspaceSharedCredentialSource
+  }
+
   alias Ezagent.Behavior.UserDefaultCredentialSource
 
   @impl true
@@ -376,6 +385,18 @@ defmodule EzagentDomainIdentity.Application do
     # dispatch supplies cap-check + audit.
     for action <- UserDefaultCredentialSource.actions() do
       :ok = CapabilityRegistry.register(User, action, UserDefaultCredentialSource)
+    end
+
+    # #17 cascade PR-3 — workspace-admin chokepoint for authorizing a shared
+    # service-account credential source. Registered on Workspace Kind with its
+    # own cap subject; the handler validates + writes the core-owned pointer.
+    for action <- WorkspaceSharedCredentialSource.actions() do
+      :ok =
+        CapabilityRegistry.register(
+          Ezagent.Entity.Workspace,
+          action,
+          WorkspaceSharedCredentialSource
+        )
     end
 
     # CapabilityRegistry SPEC rev 4 §5 — register User.default_caps/1

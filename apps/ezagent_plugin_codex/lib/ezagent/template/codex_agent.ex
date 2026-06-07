@@ -808,35 +808,41 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
       sidecars_alive?(agent_uri) ->
         :ok
 
-      # #17 cascade PR-2 (§5.1) — a (re)start is a cascade boundary: an agent whose
-      # credential grant was REVOKED must NOT come back up holding stale creds. No grant
-      # / active grant → proceed. Full re-resolve-from-inputs re-materialize is FLAGGED.
-      grant_revoked_for_restart?(agent_uri) ->
-        {:error, {:credential_grant_revoked, agent_uri}}
-
       true ->
-        case Map.fetch(respawn_data, "cwd") do
-          {:ok, cwd} when is_binary(cwd) and cwd != "" ->
-            case ensure_sidecars(agent_uri, respawn_data) do
-              {:ok, _meta} ->
-                Logger.info(
-                  "codex.agent.ensure_subprocess_alive: respawned sidecars for " <>
-                    URI.to_string(agent_uri)
-                )
+        with {:ok, respawn_data} <-
+               Ezagent.Credential.CascadeRuntime.rehydrate_respawn_data(agent_uri, respawn_data) do
+          cond do
+            # #17 cascade PR-2 (§5.1) — a (re)start is a cascade boundary: an agent whose
+            # credential grant was REVOKED must NOT come back up holding stale creds. No grant
+            # / active grant → proceed. Full re-resolve-from-inputs re-materialize is FLAGGED.
+            grant_revoked_for_restart?(agent_uri) ->
+              {:error, {:credential_grant_revoked, agent_uri}}
 
-                :ok
+            true ->
+              case Map.fetch(respawn_data, "cwd") do
+                {:ok, cwd} when is_binary(cwd) and cwd != "" ->
+                  case ensure_sidecars(agent_uri, respawn_data) do
+                    {:ok, _meta} ->
+                      Logger.info(
+                        "codex.agent.ensure_subprocess_alive: respawned sidecars for " <>
+                          URI.to_string(agent_uri)
+                      )
 
-              {:error, reason} ->
-                Logger.error(
-                  "codex.agent.ensure_subprocess_alive: failed to respawn sidecars for " <>
-                    "#{URI.to_string(agent_uri)}: #{inspect(reason)}"
-                )
+                      :ok
 
-                {:error, reason}
-            end
+                    {:error, reason} ->
+                      Logger.error(
+                        "codex.agent.ensure_subprocess_alive: failed to respawn sidecars for " <>
+                          "#{URI.to_string(agent_uri)}: #{inspect(reason)}"
+                      )
 
-          _ ->
-            {:error, {:missing_cwd_in_respawn_data, agent_uri}}
+                      {:error, reason}
+                  end
+
+                _ ->
+                  {:error, {:missing_cwd_in_respawn_data, agent_uri}}
+              end
+          end
         end
     end
   end

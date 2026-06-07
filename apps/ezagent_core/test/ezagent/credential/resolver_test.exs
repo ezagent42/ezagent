@@ -29,6 +29,7 @@ defmodule Ezagent.Credential.ResolverTest do
         workspace_uri: @ws,
         session_uri: @session,
         explicit_source: @explicit,
+        flavor: "cc",
         source_available?: &always_available/1
       })
 
@@ -42,6 +43,7 @@ defmodule Ezagent.Credential.ResolverTest do
         owner_uri: @owner,
         # no workspace, no session
         explicit_source: @explicit,
+        flavor: "cc",
         source_available?: &always_available/1
       })
 
@@ -62,6 +64,7 @@ defmodule Ezagent.Credential.ResolverTest do
         owner_uri: @owner,
         workspace_uri: @ws,
         explicit_source: @explicit,
+        flavor: "cc",
         source_available?: &always_available/1
       })
 
@@ -91,6 +94,7 @@ defmodule Ezagent.Credential.ResolverTest do
                flavor: "cc",
                credential_required?: true,
                user_source_lookup: fn -> :absent end,
+               workspace_shared_lookup: fn -> :absent end,
                source_available?: &always_available/1
              })
   end
@@ -104,6 +108,7 @@ defmodule Ezagent.Credential.ResolverTest do
                flavor: "cc",
                credential_required?: false,
                user_source_lookup: fn -> :absent end,
+               workspace_shared_lookup: fn -> :absent end,
                source_available?: &always_available/1
              })
   end
@@ -120,6 +125,7 @@ defmodule Ezagent.Credential.ResolverTest do
                workspace_uri: @ws,
                flavor: "cc",
                user_source_lookup: fn -> :absent end,
+               workspace_shared_lookup: fn -> :absent end,
                source_available?: &always_available/1
              })
   end

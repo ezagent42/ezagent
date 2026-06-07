@@ -59,6 +59,9 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # #17 credential/config cascade — a user's default source is keyed
     # by (owner, workspace, flavor), so the pointer is per-tenant.
     {Ezagent.Credential.UserDefaultSource, "user_default_credential_sources"},
+    # #17 credential/config cascade PR-3 — a workspace-shared source is keyed
+    # by (workspace, flavor), so the pointer is per-tenant.
+    {Ezagent.Credential.WorkspaceSharedSource, "workspace_shared_credential_sources"},
     # SPEC 2026-05-23-read-receipts — read-confidence marker per
     # `(session, user, source)`. Per-tenant: a marker's
     # `last_read_message_uri` is meaningless across workspaces.

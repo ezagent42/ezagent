@@ -21,6 +21,12 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolvers do
              &__MODULE__.resolve_user_default_source/1
            ),
          :ok <-
+           Ezagent.UriQuery.register(
+             :workspace_shared_credential_source,
+             &__MODULE__.resolve_workspace_shared_source/1
+           ),
+         :ok <- Ezagent.UriQuery.register(:config_dir, &__MODULE__.resolve_config_dir/1),
+         :ok <-
            Ezagent.UriQuery.register(:session_template, &__MODULE__.resolve_session_template/1) do
       :ok
     end
@@ -39,6 +45,57 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolvers do
   end
 
   def resolve_user_default_source(_), do: :none
+
+  @doc false
+  # #17 cascade PR-3 — resolve a workspace-shared service-account source pointer.
+  # Arg is `{workspace_uri, flavor}` because shared credentials are flavor-specific.
+  @spec resolve_workspace_shared_source(term()) :: Ezagent.UriQuery.result()
+  def resolve_workspace_shared_source({%URI{} = workspace_uri, flavor})
+      when is_binary(flavor) do
+    case Ezagent.Credential.WorkspaceSharedSource.resolve(URI.to_string(workspace_uri), flavor) do
+      nil -> :none
+      source -> {:ok, Ezagent.URI.new!(source)}
+    end
+  end
+
+  def resolve_workspace_shared_source({workspace_uri, flavor})
+      when is_binary(workspace_uri) and is_binary(flavor) do
+    case Ezagent.Credential.WorkspaceSharedSource.resolve(workspace_uri, flavor) do
+      nil -> :none
+      source -> {:ok, Ezagent.URI.new!(source)}
+    end
+  end
+
+  def resolve_workspace_shared_source(_), do: :none
+
+  @doc false
+  @spec resolve_config_dir(term()) :: Ezagent.UriQuery.result()
+  def resolve_config_dir(%URI{scheme: "template"} = template_uri) do
+    with {:ok, template_slice} <- kind_slice_with_snapshot(template_uri, :template),
+         content when is_map(content) <- Map.get(template_slice, :content),
+         dir when is_binary(dir) and dir != "" <- content_field(content, :config_dir) do
+      {:ok, dir}
+    else
+      nil -> :none
+      :none -> :none
+      {:error, _} = err -> err
+      _ -> :none
+    end
+  end
+
+  def resolve_config_dir(%URI{scheme: "entity"} = agent_uri) do
+    with {:ok, sandbox_slice} <- kind_slice_with_snapshot(agent_uri, :sandbox),
+         dir when is_binary(dir) and dir != "" <- Map.get(sandbox_slice, :config_dir_path) do
+      {:ok, dir}
+    else
+      nil -> :none
+      :none -> :none
+      {:error, _} = err -> err
+      _ -> :none
+    end
+  end
+
+  def resolve_config_dir(_), do: :none
 
   @doc false
   @spec resolve_flavor(term()) :: Ezagent.UriQuery.result()
@@ -104,6 +161,33 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolvers do
       {:error, :not_found} -> :none
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  defp kind_slice_with_snapshot(%URI{} = uri, slice_key) when is_atom(slice_key) do
+    case kind_slice(uri, slice_key) do
+      :none -> snapshot_slice(uri, slice_key)
+      other -> other
+    end
+  end
+
+  defp snapshot_slice(%URI{} = uri, slice_key) do
+    case Ezagent.SnapshotStore.latest(uri) do
+      {:ok, %{state: state}} when is_map(state) ->
+        case Map.get(state, slice_key) do
+          slice when is_map(slice) -> {:ok, Ezagent.Kind.normalize_slice_view(slice)}
+          _ -> :none
+        end
+
+      {:error, :not_found} ->
+        :none
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp content_field(content, key) when is_atom(key) do
+    Map.get(content, key) || Map.get(content, Atom.to_string(key))
   end
 
   defp uri_result(%URI{} = uri), do: {:ok, uri}

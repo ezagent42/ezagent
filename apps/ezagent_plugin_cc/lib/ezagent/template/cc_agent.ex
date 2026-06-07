@@ -1679,53 +1679,59 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       pty_server_alive?(agent_uri) ->
         :ok
 
-      # #17 cascade PR-2 (§5.1) — a (re)start is a cascade boundary: an agent whose
-      # credential grant was REVOKED must NOT come back up holding stale creds. An agent
-      # with an ACTIVE grant or with NO grant at all (existing pre-cascade agents) is
-      # unaffected. This is the safe, contained slice of the §5.1 "restart then
-      # fails-or-re-resolves" rule; the FULL re-resolve-from-inputs re-materialize is
-      # FLAGGED (see moduledoc / report) as PR-3-coordinated.
-      grant_revoked_for_restart?(agent_uri) ->
-        {:error, {:credential_grant_revoked, agent_uri}}
-
       true ->
-        # PtyServer absent — rebuild it from the persisted respawn data.
-        # `cwd` is required in respawn_data per `check_cwd/1`; the rest
-        # of the keys are optional and may carry the agent_config_dir
-        # added at spawn-time (so we don't recreate the config dir
-        # here — the snapshot is the source of truth for it).
-        case Map.fetch(respawn_data, "cwd") do
-          {:ok, cwd} when is_binary(cwd) and cwd != "" ->
-            case ensure_pty_server(agent_uri, cwd, respawn_data) do
-              :ok ->
-                Logger.info(
-                  "cc.agent.ensure_subprocess_alive: respawned PtyServer for " <>
-                    URI.to_string(agent_uri)
-                )
+        with {:ok, respawn_data} <-
+               Ezagent.Credential.CascadeRuntime.rehydrate_respawn_data(agent_uri, respawn_data) do
+          cond do
+            # #17 cascade PR-2 (§5.1) — a (re)start is a cascade boundary: an agent whose
+            # credential grant was REVOKED must NOT come back up holding stale creds. An agent
+            # with an ACTIVE grant or with NO grant at all (existing pre-cascade agents) is
+            # unaffected. This is the safe, contained slice of the §5.1 "restart then
+            # fails-or-re-resolves" rule; the FULL re-resolve-from-inputs re-materialize is
+            # FLAGGED (see moduledoc / report) as PR-3-coordinated.
+            grant_revoked_for_restart?(agent_uri) ->
+              {:error, {:credential_grant_revoked, agent_uri}}
 
-                # 2026-05-31 orchestrator-startup-atomicity §5 — for an
-                # ORCHESTRATOR boot respawn, readiness = REGISTERED, not
-                # process-alive. Await the same live-join gate (staggered
-                # so N orchestrators don't each block 30s simultaneously);
-                # on timeout fail-loud (returns `{:error, _}` → Sandbox
-                # logs + telemetry `:subprocess_unhealthy` + stops the
-                # respawn — the operator restarts via /admin). Test-mode
-                # skips the live wait (no real claude to JOIN). A non-
-                # orchestrator cc agent has no registration gate (out of
-                # scope per SPEC §10) → `:ok` immediately.
-                await_orchestrator_boot_readiness(agent_uri, respawn_data)
+            true ->
+              # PtyServer absent — rebuild it from the persisted respawn data.
+              # `cwd` is required in respawn_data per `check_cwd/1`; the rest
+              # of the keys are optional and may carry the agent_config_dir
+              # added at spawn-time (so we don't recreate the config dir
+              # here — the snapshot is the source of truth for it).
+              case Map.fetch(respawn_data, "cwd") do
+                {:ok, cwd} when is_binary(cwd) and cwd != "" ->
+                  case ensure_pty_server(agent_uri, cwd, respawn_data) do
+                    :ok ->
+                      Logger.info(
+                        "cc.agent.ensure_subprocess_alive: respawned PtyServer for " <>
+                          URI.to_string(agent_uri)
+                      )
 
-              {:error, reason} = err ->
-                Logger.error(
-                  "cc.agent.ensure_subprocess_alive: failed to respawn PtyServer for " <>
-                    "#{URI.to_string(agent_uri)}: #{inspect(reason)}"
-                )
+                      # 2026-05-31 orchestrator-startup-atomicity §5 — for an
+                      # ORCHESTRATOR boot respawn, readiness = REGISTERED, not
+                      # process-alive. Await the same live-join gate (staggered
+                      # so N orchestrators don't each block 30s simultaneously);
+                      # on timeout fail-loud (returns `{:error, _}` → Sandbox
+                      # logs + telemetry `:subprocess_unhealthy` + stops the
+                      # respawn — the operator restarts via /admin). Test-mode
+                      # skips the live wait (no real claude to JOIN). A non-
+                      # orchestrator cc agent has no registration gate (out of
+                      # scope per SPEC §10) → `:ok` immediately.
+                      await_orchestrator_boot_readiness(agent_uri, respawn_data)
 
-                err
-            end
+                    {:error, reason} = err ->
+                      Logger.error(
+                        "cc.agent.ensure_subprocess_alive: failed to respawn PtyServer for " <>
+                          "#{URI.to_string(agent_uri)}: #{inspect(reason)}"
+                      )
 
-          _ ->
-            {:error, {:missing_cwd_in_respawn_data, agent_uri}}
+                      err
+                  end
+
+                _ ->
+                  {:error, {:missing_cwd_in_respawn_data, agent_uri}}
+              end
+          end
         end
     end
   end
@@ -1858,9 +1864,12 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   end
 
   # test_mode = compile-time `:test` — same rationale as the create-time
-  # gate (cc PtyServer short-circuits real claude in `:test`). Compile-time
-  # attr (not runtime Mix.env()) for release-safety. (codex final-review Q1.)
-  defp orchestrator_gate_test_mode?, do: @compile_env == :test
+  # gate (cc PtyServer short-circuits real claude in `:test`). Keep the
+  # compile-time check for release-safety, with a guarded runtime fallback
+  # for precommit/app-start paths that can recompile before tests run.
+  defp orchestrator_gate_test_mode? do
+    @compile_env == :test or (Code.ensure_loaded?(Mix) and Mix.env() == :test)
+  end
 
   # Cross-workspace adoption gate (codex round-2 finding #1). We only
   # bring up a PTY for an already-started Kind when the agent URI's

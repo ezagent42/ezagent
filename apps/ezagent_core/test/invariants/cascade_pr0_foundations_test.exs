@@ -35,4 +35,49 @@ defmodule Ezagent.Invariants.CascadePr0FoundationsTest do
              )
            )
   end
+
+  test ":workspace_shared_credential_source is a registered UriQuery attribute" do
+    refute match?(
+             {:error, {:no_resolver, _}},
+             Ezagent.UriQuery.resolve(
+               :workspace_shared_credential_source,
+               {URI.new!("workspace://team-a"), "cc"}
+             )
+           )
+  end
+
+  test ":config_dir is a registered UriQuery attribute" do
+    refute match?(
+             {:error, {:no_resolver, _}},
+             Ezagent.UriQuery.resolve(:config_dir, URI.new!("entity://team-a/agent/unconfigured"))
+           )
+  end
+
+  test "session-template spawned members enter the cascade create chokepoint" do
+    source =
+      File.read!(
+        Path.expand(
+          "../../../ezagent_domain_instance_message/lib/ezagent_domain_instance_message/session_creator.ex",
+          __DIR__
+        )
+      )
+
+    assert source =~ "source_template_uri: source_template_uri"
+    assert source =~ "caller: granted_by"
+    assert source =~ "caps: Ezagent.Identity.list_caps_for(granted_by)"
+  end
+
+  test "session orchestrator spawn enters the cascade create chokepoint" do
+    source =
+      File.read!(
+        Path.expand(
+          "../../../ezagent_domain_instance_message/lib/ezagent/entity/session.ex",
+          __DIR__
+        )
+      )
+
+    assert source =~ "source_template_uri: orch_template_uri"
+    assert source =~ "caller: owner_uri"
+    assert source =~ "caps: Ezagent.Identity.list_caps_for(owner_uri)"
+  end
 end
