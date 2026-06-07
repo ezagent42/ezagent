@@ -105,6 +105,7 @@ defmodule EzagentCore.Application do
     # `Ezagent.SpawnRegistry.register/2` (which now co-registers schemes).
     # EtsOwner already created the table; this populates the 6 core schemes.
     :ok = seed_uri_schemes()
+    :ok = Ezagent.Uploads.register()
 
     # PR #146 (SPEC v2 §5.7) — synthetic singleton `routing-admin://default`
     # dissolved. `Ezagent.Behavior.Routing` is registered against the
