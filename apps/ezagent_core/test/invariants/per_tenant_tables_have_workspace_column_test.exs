@@ -74,7 +74,12 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # projection per workspace; no row is cross-tenant.
     {Ezagent.Socialware.SettlementRecord, "socialware_settlements"},
     {Ezagent.Socialware.SettlementMessage, "socialware_settlement_messages"},
-    {Ezagent.Socialware.CustomerOutbox, "socialware_customer_outbox"}
+    {Ezagent.Socialware.CustomerOutbox, "socialware_customer_outbox"},
+    # Socialware P6 — immutable self-evolve config objects and mutable
+    # pointers are scoped by workspace; a config object for ws A must never
+    # be resolved from ws B.
+    {Ezagent.Socialware.ConfigObject, "socialware_config_objects"},
+    {Ezagent.Socialware.ConfigPointer, "socialware_config_pointers"}
   ]
 
   # Per-tenant tables that have NO schema module (raw `Repo.insert_all`

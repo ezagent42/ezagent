@@ -16,7 +16,8 @@ defmodule Ezagent.Entity.SocialwareSession do
     [
       Ezagent.Behavior.Chat,
       Ezagent.Behavior.Turn,
-      Ezagent.Behavior.Surface
+      Ezagent.Behavior.Surface,
+      Ezagent.Behavior.ConfigUpdate
     ]
   end
 
