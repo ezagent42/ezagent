@@ -242,6 +242,28 @@ defmodule Ezagent.PluginCc.Template.CcUnifiedCreateCascadeTest do
       assert {:error, {:file_flavor_missing_config_dir, _}} =
                Ezagent.Workspace.Loader.invoke_template(workspace_uri, tmpl_name)
     end
+
+    test "Workspace.add_template rejects a credentialled file-flavor template lacking config_dir BEFORE persisting",
+         %{ws_name: ws_name} do
+      # codex r5 MED — add_template/3 has no post-instantiate rollback, so a
+      # config-dir-less cc template must be rejected BEFORE the Store write
+      # (else it persists + poisons every boot). Assert fail-loud AND that
+      # nothing was persisted.
+      tmpl_name = "cc.agent.no-config-#{System.unique_integer([:positive])}"
+
+      bad = %{
+        "class" => "cc.agent",
+        "agent_uri" => URI.to_string(Ezagent.URI.agent(ws_name, "no-config-agent")),
+        "cwd" => System.tmp_dir!()
+        # NO config_dir
+      }
+
+      assert {:error, {:file_flavor_missing_config_dir, _}} =
+               Ezagent.Workspace.add_template(ws_name, tmpl_name, bad)
+
+      %{session_templates: tmpls} = Store.get_by_name(ws_name)
+      refute Map.has_key?(tmpls, tmpl_name), "bad template must NOT be persisted"
+    end
   end
 
   describe "fail-loud — no silent operator ~/.claude fallback" do

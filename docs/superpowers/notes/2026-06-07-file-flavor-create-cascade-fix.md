@@ -342,3 +342,26 @@ Added a regression test (stale DATA-shape cc template with `cwd` + no `config_di
 `invoke_template` fails loud). (Per `feedback_let_it_crash_no_workarounds` + the repo's
 wipe-and-rebuild-on-migration policy, such a stale template shouldn't survive a real deploy;
 the guard surfaces it rather than degrading.)
+
+### 7e. Codex round 5 — adopt-as-create + add_template persist-without-rollback
+
+**Verdict: `needs-attention`** (static-only) — operator-home fallback confirmed blocked; two
+edge cases fixed:
+
+1. **[HIGH] create accepted `fresh?: false` as success** — `spawn_file_flavor_via_cascade`
+   collapsed any `{:ok, result}` into `:ok`. A concurrent create racing past
+   `refuse_if_exists/1` could ADOPT a pre-existing worker (`fresh?: false`) and still proceed
+   to persist the template + grant creator-manage caps for a worker it didn't create.
+   **Fixed:** the create wrapper now requires `%{fresh?: true}`; `fresh?: false` (and
+   `{:already_started, _}`) → `{:error, {:already_exists, …}}` → `invoke_or_rollback` rolls
+   back this call's Store write + skips the cap grant.
+2. **[MEDIUM] `Workspace.add_template/3` persisted a poison template on fail-loud** — that
+   generic API writes the Store BEFORE invoking the loader and has no rollback, so my new
+   loader fail-loud (missing config_dir) would leave the bad template in the DB to re-fail
+   every boot. **Fixed:** `validate_template` now rejects a credentialled file-flavor
+   template lacking a non-empty `config_dir` BEFORE the Store write (mirrors the loader
+   guard). Regression tests added for both.
+
+After round 5 there is no remaining path (create / cold-boot replay / `add_template`) where a
+cc/codex agent comes up with its credential env var unset, and adopt-as-create cannot grant
+manage authority to the wrong creator.

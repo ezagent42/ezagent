@@ -1445,11 +1445,20 @@ defmodule Ezagent.Behavior.Workspace do
          caps <- Map.get(spawn_opts, :caps),
          opts <- build_spawn_opts(caller, caps, spawn_opts) do
       case spawner.spawn_from_template_content(content, agent_uri, caller, workspace_uri, opts) do
-        {:ok, result} when is_map(result) ->
+        {:ok, %{fresh?: true}} ->
           :ok
 
+        # codex r5 HIGH-1 — `fresh?: false` means the spawn ADOPTED a pre-existing
+        # live worker (a concurrent create won the race past `refuse_if_exists/1`).
+        # This call did NOT create the agent, so it must NOT proceed to persist the
+        # template or grant creator-manage caps for a worker owned by the other
+        # creator. Surface `:already_exists` → `invoke_or_rollback` rolls back this
+        # call's Store write.
+        {:ok, %{fresh?: false}} ->
+          {:error, {:already_exists, URI.to_string(agent_uri)}}
+
         {:error, {:already_started, _}} ->
-          :ok
+          {:error, {:already_exists, URI.to_string(agent_uri)}}
 
         {:error, reason} ->
           {:error, {:cascade_spawn_failed, reason}}
