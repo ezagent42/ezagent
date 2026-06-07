@@ -1,8 +1,8 @@
 # Design: socialware — fused backend-agent + real-time-render sessions on existing ezagent primitives
 
-> **Status:** buildable design, rev6 (Allen 2026-06-07). Supersedes the synthesis + rev1–rev5.
+> **Status:** buildable design, rev7 (Allen 2026-06-07). Supersedes the synthesis + rev1–rev6.
 > Direction: **rewrite directly, reuse `main`, do NOT base on the loom/autoservice branches.**
-> Verified against `origin/main` (sha `5661964c`). rev6 reflects Allen's review + three codex
+> Verified against `origin/main` (sha `5661964c`). rev7 reflects Allen's review + four codex
 > rounds and converges on a small, unified model:
 > - **immutable artifact + pointer** for both **agent config** and the **page (`:surface`)** —
 >   update = new immutable version; rollback / approval = move a pointer;
@@ -44,6 +44,12 @@ approved pointer); a **`visibility` field on `Ezagent.Message`**; and the **cust
 (a React + json-render SPA fed by a **dedicated visibility-gated customer feed** — *not* an
 ExternalMirror/Publisher tap, see §4.3). The operator/admin surface reuses the existing LiveView
 `SessionView`. Agent **config** uses an immutable-config object + a cascade pointer.
+
+**Scope note (codex rev6):** the `Message.visibility` field is a **core `ezagent_core` schema
+change** (migration + default + filtered `MessageStore` read/write APIs), so building the
+socialware *base* (P1–P4) **does touch core once** — it is an explicit core-schema PR (§11)
+with migration/backward-compat acceptance. The "zero core code" property (§5, SW-DEV) is about
+**vertical authors**: once the base exists, authoring a new vertical adds no core code.
 
 ## 3. Reused-from-`main` components (verified on `origin/main` @ `5661964c`)
 
@@ -97,12 +103,16 @@ A **turn** is one atomic interaction cycle. `Behavior.<noun>` owning `:<noun>` (
   written as a **new immutable `:surface` version** (§4.2). → `:composing`
 - `turn.claim(turn_id, by: user_uri)` — human takeover: set `owner`, `mode`; the agent's
   ongoing messages are written `:operator_only` → `:awaiting_human`
-- `turn.settle(turn_id)` — close the turn and **publish its output to the customer**: advance
-  the `:surface` **approved pointer** to this turn's page version, flip the
-  operator-forwarded/authored message(s) to `:customer_visible`, **and emit an explicit
-  customer-delivery event** for them (a `visibility` flip alone does not deliver — the customer
-  feed is event-driven on customer-visible deliveries, §4.3). In `:copilot`/`:takeover` this runs
-  **only after the operator approves/edits** → `:settled`
+- `turn.settle(turn_id)` — close the turn **atomically** via a single durable, idempotent
+  **settlement record keyed by `turn_id`** that captures and commits *together*: the message
+  `visibility` flips to `:customer_visible` and the `:surface` approved-pointer target
+  (compare-and-set on the expected current pointer). A **transactional outbox** then emits the
+  customer-delivery signal — **message ids only, after the commit** — and the customer endpoint
+  refetches via the `visibility == :customer_visible` query before sending payloads (§4.3). A
+  crash/retry between writes is safe: the settlement record is the source of truth and replays
+  idempotently, so the customer can never see chat without its page, a page without its chat, or
+  a duplicate/stale delivery (codex rev6). In `:copilot`/`:takeover` settle runs **only after the
+  operator approves/edits** → `:settled`
 - `turn.cancel(turn_id)` / timeout → `:cancelled` (its page version is never pointed-to; its
   messages stay `:operator_only` — the customer never sees them)
 
@@ -157,9 +167,12 @@ on main `Routing.Matcher.match?/2` and any stream payload only see `%Ezagent.Mes
 `message_routings` tag would be invisible to every enforcement path (codex rev5-HIGH).
 
 The **customer feed is a purpose-built, visibility-gated endpoint** (§4.4): snapshot/history via
-a `visibility == :customer_visible` `MessageStore` query, live via an explicit **customer-delivery
-event** emitted only for customer-visible messages (on `compose` in `:auto`, on `settle` for
-held copilot/takeover messages). It is **NOT** an `ExternalMirror`/Publisher binding: on main
+a `visibility == :customer_visible` `MessageStore` query, live via a **transactional-outbox
+customer-delivery signal carrying message ids only, emitted after the visibility commit** (on
+`compose` in `:auto`, on `settle` for held copilot/takeover messages). The endpoint **refetches
+through the filtered query before sending any payload**, so the filtered query is the *single*
+privacy enforcement and the signal cannot race a payload ahead of the persisted flip (codex
+rev6). It is **NOT** an `ExternalMirror`/Publisher binding: on main
 `ExternalMirrorWorker` subscribes to the **Session Publisher slice-change stream** — every
 `:chat` change regardless of routing — so an `:operator_only` `Chat.send` would still surface
 there (codex rev5-CRITICAL). A routing rule cannot fix this because ExternalMirror bypasses
@@ -300,10 +313,19 @@ merge/tests-pass alone).
 
 **SW-DEV (development)** — *the authoring surface works.*
 A developer authors a vertical plugin (§5) — all in the plugin, no edits to
-`ezagent_core`/`ezagent_domain_socialware`. Instantiate it.
-- **Invariant:** **zero core-code change**; the session boots; the operator LiveView surface
-  mounts; the customer SPA mounts with both panes; agents spawned + credential-materialized.
+`ezagent_core`/`ezagent_domain_socialware`. Instantiate it. (This tests the **vertical author's**
+zero-core property, which holds *after* the base exists; building the base itself includes a
+core-schema PR — see the P-core acceptance below.)
+- **Invariant:** a vertical author makes **zero core-code change**; the session boots; the
+  operator LiveView surface mounts; the customer SPA mounts with both panes; agents spawned +
+  credential-materialized.
 - Artifact: agent-browser screenshot of operator surface + customer page + agents.
+
+**P-core acceptance (base build, codex rev6)** — *the `Message.visibility` migration is safe.*
+The `ezagent_core` `Message`/`MessageStore` schema change (add `visibility`, default
+`:customer_visible`, filtered read/write APIs) ships with: a migration + **backward-compat for
+existing messages** (default makes legacy rows customer-visible), and a **branch-conflict check
+vs the #17 cascade work** (both add `ezagent_core` migrations → coordinate ordering).
 
 **SW-USE (user-interaction)** — *the fusion + takeover, leak-safe.*
 Non-admin customer (external) + operator. Customer asks for "a comparison page + a recommendation."
@@ -342,19 +364,19 @@ Resolved: framework-vs-app (substrate + `ezagent_plugin_<name>` verticals); mode
 visibility-gated feed** (NOT an ExternalMirror/Publisher binding — that path is routing-blind and
 would leak `:operator_only`, codex rev5-CRITICAL); visibility lives on `Ezagent.Message` (codex
 rev5-HIGH); frontend (React + json-render, dual-surface); config (immutable + pointer, real
-rollback). Remaining:
-1. **Customer-delivery event shape** — how the live customer feed receives a `:customer_visible`
-   message/flip (a dedicated PubSub topic the endpoint subscribes to, emitted on
-   compose-auto/settle) vs polling the visibility query. (Lean: a dedicated customer-delivery
-   PubSub topic carrying only `:customer_visible` messages.)
-2. **Streaming-endpoint transport** — WS vs SSE for the customer feed; reuse loom's SPA shape but
+rollback); **customer-delivery contract** (transactional outbox: persist `:customer_visible`,
+emit message-ids-after-commit on a customer-delivery topic, endpoint refetches via the filtered
+query — the filtered query is the single enforcement, §4.3); **settle atomicity** (one durable
+idempotent settlement record keyed by `turn_id` committing visibility + approved-pointer CAS,
+with the outbox; crash-replayable, §4.1). Remaining:
+1. **Streaming-endpoint transport** — WS vs SSE for the customer feed; reuse loom's SPA shape but
    over the visibility-gated source. (Lean: match loom's transport to minimize port risk.)
-3. **Anonymous/synthetic customer identity** — for the external customer receiver; build the
+2. **Anonymous/synthetic customer identity** — for the external customer feed; build the
    anon model in the frontend phase, or seed a test user for the first E2E? (Lean: seeded user
    for the first SW-USE E2E; anon model in/after the frontend phase.)
-4. **`{:within_workspace}` cap shape** — for tenant-admin/customer isolation; introduce with
+3. **`{:within_workspace}` cap shape** — for tenant-admin/customer isolation; introduce with
    SW-DEV (templates are workspace-scoped). (Lean: yes, with SW-DEV.)
-5. **Immutable-config store location** — config objects in `ezagent_domain_socialware` vs a #17
+4. **Immutable-config store location** — config objects in `ezagent_domain_socialware` vs a #17
    sub-store; the cascade high layer holds the pointer either way. (Lean: a small socialware
    config store now; converge with #17-V2 later.)
 
@@ -365,11 +387,14 @@ Backend first (frontend-agnostic), then the React customer frontend as its own p
   first, then fan-out/compose).
 - **P2 — `:surface` slice + operator LiveView render** (immutable versions + approved pointer;
   a thin HEEx `PageView` so backend E2E runs before the SPA exists).
-- **P3 — `Message.visibility` field + the dedicated visibility-gated customer feed** (the
-  `visibility == :customer_visible` snapshot query + the customer-delivery event/topic;
-  `turn.settle` advancing the pointer + flipping visibility + emitting the delivery event;
-  operator-only takeover-assist; **the operator-only-never-on-customer-feed regression incl. the
-  Publisher/ExternalMirror path**).
+- **P3 — core-schema PR: `Message.visibility` + the visibility-gated customer feed + atomic
+  settle** (this PR **touches `ezagent_core`**: the `Message.visibility` field + migration +
+  default `:customer_visible` + filtered `MessageStore` read/write APIs; the customer-delivery
+  **transactional outbox** (ids-after-commit) + topic; `turn.settle` as a **durable idempotent
+  settlement record** (visibility flip + approved-pointer CAS, crash-replayable); operator-only
+  takeover-assist). Acceptance: **backward-compat migration** (legacy rows default visible) +
+  **branch-conflict/migration-ordering check vs #17** + **the operator-only-never-on-customer-feed
+  regression incl. the Publisher/ExternalMirror path** + a **crash-mid-settle replay test**.
 - **P4 — customer frontend foundation** (visibility-gated streaming endpoint + React SPA +
   json-render runtime + component registry + Sandpack + external/anon auth) — porting loom's
   rendering half; the one-time React foundation.
@@ -382,7 +407,11 @@ Backend first (frontend-agnostic), then the React customer frontend as its own p
 ## 12. Dependency on #17
 
 socialware's update phase (§7) consumes the #17 cascade (it repoints the high layer at an
-immutable config object), so #17 is a **prerequisite for P6**, not P1–P5. The two workstreams
-are parallel and non-conflicting: socialware adds new files (`ezagent_domain_socialware`, the
-vertical plugins, the React frontend) + a `Message.visibility` field, and touches none of the
-`credential/`/`materializer`/`resolver`/`grant` files the cascade work owns.
+immutable config object), so #17 is a **prerequisite for P6**, not P1–P5. The workstreams are
+**mostly** parallel: socialware adds new files (`ezagent_domain_socialware`, the vertical
+plugins, the React frontend) and touches **none** of the
+`credential/`/`materializer`/`resolver`/`grant` files the cascade owns. The **one shared
+surface** (codex rev6) is `ezagent_core` **migrations**: socialware's P3 adds a `Message`-schema
+migration while #17 adds credential-table migrations — different tables, but **migration
+ordering must be coordinated** to avoid a merge/sequence conflict. P3 lists that coordination as
+acceptance; otherwise the two do not conflict.
