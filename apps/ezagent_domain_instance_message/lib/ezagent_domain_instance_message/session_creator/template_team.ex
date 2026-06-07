@@ -1,0 +1,417 @@
+defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
+  @moduledoc false
+
+  alias Ezagent.Invocation
+  alias Ezagent.Entity.Session
+  alias EzagentDomainInstanceMessage.SessionCreator.Rollback
+
+  @spec materialize_template_team(URI.t(), URI.t(), URI.t(), map()) :: :ok | {:error, term()}
+  def materialize_template_team(
+        %URI{} = session_uri,
+        %URI{} = workspace_uri,
+        %URI{} = granted_by,
+        template_content
+      )
+      when is_map(template_content) do
+    case materialize_template_members(session_uri, workspace_uri, granted_by, template_content) do
+      {:error, reason} ->
+        {:error, reason}
+
+      {:ok, role_to_uri, spawned_uris} ->
+        result =
+          with :ok <- install_template_prompt_templates(session_uri, template_content),
+               :ok <- install_template_legends(session_uri, template_content),
+               {:ok, _rule_ids} <-
+                 install_template_rule_sets(
+                   session_uri,
+                   workspace_uri,
+                   template_content,
+                   role_to_uri
+                 ) do
+            :ok
+          end
+
+        case result do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            Rollback.compensate_spawned_members(spawned_uris)
+            {:error, reason}
+        end
+    end
+  end
+
+  def materialize_template_team(_session, _ws, _granted_by, _content), do: :ok
+
+  defp materialize_template_members(
+         %URI{} = session_uri,
+         %URI{} = workspace_uri,
+         %URI{} = granted_by,
+         template_content
+       ) do
+    members = template_members_of(template_content)
+
+    result =
+      Enum.reduce_while(members, {:ok, %{}, []}, fn member, {:ok, acc, spawned} ->
+        case materialize_one_member(session_uri, workspace_uri, granted_by, member) do
+          {:ok, %URI{} = member_uri, role_name, fresh?} ->
+            acc = if is_binary(role_name), do: Map.put(acc, role_name, member_uri), else: acc
+            spawned = if fresh?, do: [member_uri | spawned], else: spawned
+            {:cont, {:ok, acc, spawned}}
+
+          {:error, reason, %URI{} = orphan_uri} ->
+            {:halt,
+             {:error, {:member_materialize_failed, member, reason}, [orphan_uri | spawned]}}
+
+          {:error, reason} ->
+            {:halt, {:error, {:member_materialize_failed, member, reason}, spawned}}
+        end
+      end)
+
+    case result do
+      {:ok, role_to_uri, spawned} ->
+        {:ok, role_to_uri, spawned}
+
+      {:error, reason, spawned} ->
+        Rollback.compensate_spawned_members(spawned)
+        {:error, reason}
+    end
+  end
+
+  defp materialize_one_member(
+         %URI{} = session_uri,
+         %URI{} = workspace_uri,
+         %URI{} = granted_by,
+         member
+       )
+       when is_map(member) do
+    role_name = member_field(member, :role_name)
+    source_template_uri = member_uri_field(member, :source_template_uri)
+
+    with {:ok, %URI{} = member_uri, fresh?} <-
+           ensure_member_present(
+             member,
+             workspace_uri,
+             granted_by,
+             source_template_uri,
+             role_name,
+             session_uri
+           ) do
+      facets =
+        %{in_session_template: true}
+        |> maybe_put(:role_name, role_name)
+        |> maybe_put(:source_template_uri, source_template_uri)
+
+      case join_member_with_facets(session_uri, member_uri, facets) do
+        :ok -> {:ok, member_uri, role_name, fresh?}
+        {:error, reason} when fresh? -> {:error, reason, member_uri}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  defp ensure_member_present(
+         _member,
+         %URI{} = workspace_uri,
+         %URI{} = granted_by,
+         %URI{} = source_template_uri,
+         role_name,
+         %URI{} = session_uri
+       ) do
+    with {:ok, content, flavor} <- source_template_content_and_flavor(source_template_uri) do
+      instance_name =
+        spawned_member_instance_name(flavor, source_template_uri, role_name, session_uri)
+
+      workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
+      agent_uri = Ezagent.URI.agent(workspace_name, instance_name)
+
+      case Ezagent.Entity.Agent.spawn_from_template_content(
+             content,
+             agent_uri,
+             granted_by,
+             workspace_uri,
+             caller: granted_by,
+             caps:
+               EzagentDomainInstanceMessage.SessionCreator.list_caps_for_materialization(
+                 granted_by
+               ),
+             source_template_uri: source_template_uri
+           ) do
+        {:ok, %{fresh?: fresh?}} -> {:ok, agent_uri, fresh?}
+        {:error, _} = err -> err
+      end
+    end
+  end
+
+  defp ensure_member_present(member, _workspace_uri, _granted_by, nil, _role_name, _session_uri) do
+    case member_uri_field(member, :uri) do
+      %URI{} = member_uri ->
+        _ = EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(member_uri)
+        {:ok, member_uri, false}
+
+      _ ->
+        {:error, :member_missing_uri}
+    end
+  end
+
+  defp source_template_content_and_flavor(%URI{} = source_template_uri) do
+    with {:ok, _pid} <- Session.ensure_template_alive(source_template_uri),
+         {:ok, content} <- Session.read_template_content(source_template_uri) do
+      case Map.get(content, :flavor) || Map.get(content, "flavor") do
+        flavor when is_binary(flavor) and flavor != "" -> {:ok, content, flavor}
+        _ -> {:error, {:source_template_missing_flavor, source_template_uri}}
+      end
+    end
+  end
+
+  @doc false
+  def spawned_member_instance_name_public(
+        flavor,
+        %URI{} = source_template_uri,
+        role_name,
+        %URI{} = session_uri
+      ),
+      do: spawned_member_instance_name(flavor, source_template_uri, role_name, session_uri)
+
+  defp spawned_member_instance_name(
+         flavor,
+         %URI{} = source_template_uri,
+         role_name,
+         %URI{} = session_uri
+       )
+       when is_binary(flavor) do
+    slot =
+      if is_binary(role_name) and role_name != "" do
+        role_name
+      else
+        source_template_uri.path
+        |> to_string()
+        |> String.split("/", trim: true)
+        |> List.last() || "member"
+      end
+
+    Ezagent.Entity.Agent.session_instance_name(slot, session_discriminator(session_uri))
+  end
+
+  @doc false
+  def session_discriminator(%URI{} = session_uri) do
+    :crypto.hash(:sha256, URI.to_string(session_uri))
+    |> Base.encode16(case: :lower)
+    |> binary_part(0, 32)
+  end
+
+  defp join_member_with_facets(%URI{} = session_uri, %URI{} = member_uri, facets)
+       when is_map(facets) do
+    target = Ezagent.URI.with_action(session_uri, :chat, :join)
+
+    result =
+      Invocation.dispatch(%Invocation{
+        target: target,
+        mode: :call,
+        args: Map.put(facets, :member, member_uri),
+        ctx: %{
+          caller: Ezagent.SystemPrincipal.uri("session-internal"),
+          caps:
+            "session-internal"
+            |> Ezagent.SystemPrincipal.uri()
+            |> Ezagent.SystemPrincipal.caps(),
+          reply: {:caller_inbox, self()}
+        }
+      })
+
+    case result do
+      :ok -> :ok
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, {:member_join_failed, member_uri, reason}}
+      other -> {:error, {:member_join_unexpected, member_uri, other}}
+    end
+  end
+
+  defp install_template_prompt_templates(%URI{} = session_uri, template_content) do
+    case template_map_field(template_content, :prompt_templates) do
+      pts when map_size(pts) == 0 ->
+        :ok
+
+      pts ->
+        case Ezagent.Behavior.Chat.system_set_prompt_templates(session_uri, pts) do
+          {:ok, _} -> :ok
+          {:error, reason} -> {:error, {:install_prompt_templates_failed, reason}}
+        end
+    end
+  end
+
+  defp install_template_legends(%URI{} = session_uri, template_content) do
+    case template_map_field(template_content, :legends) do
+      legends when map_size(legends) == 0 ->
+        :ok
+
+      legends ->
+        case Ezagent.Behavior.Chat.system_set_legends(session_uri, legends) do
+          {:ok, _} -> :ok
+          {:error, reason} -> {:error, {:install_legends_failed, reason}}
+        end
+    end
+  end
+
+  defp install_template_rule_sets(
+         %URI{} = session_uri,
+         %URI{} = workspace_uri,
+         template_content,
+         role_to_uri
+       )
+       when is_map(role_to_uri) do
+    rules = template_routing_rules_of(template_content)
+
+    if rules == [] do
+      {:ok, []}
+    else
+      table = Ezagent.Routing.Resolver.default_routing_table()
+
+      result =
+        Enum.reduce_while(rules, {:ok, []}, fn rule, {:ok, inserted_ids} ->
+          case install_one_rule(table, session_uri, workspace_uri, role_to_uri, rule) do
+            {:ok, :exists} ->
+              {:cont, {:ok, inserted_ids}}
+
+            {:ok, {:inserted, id}} ->
+              {:cont, {:ok, [id | inserted_ids]}}
+
+            {:error, reason} ->
+              delete_rule_rows(inserted_ids)
+              {:halt, {:error, {:install_rule_failed, rule, reason}}}
+          end
+        end)
+
+      with {:ok, inserted_ids} <- result do
+        :ok = Ezagent.Routing.RuleStore.load_into_registry(table)
+        {:ok, inserted_ids}
+      end
+    end
+  end
+
+  defp install_one_rule(table, %URI{} = session_uri, %URI{} = workspace_uri, role_to_uri, rule)
+       when is_map(rule) do
+    matcher = Map.get(rule, :matcher) || Map.get(rule, "matcher")
+    rule_set = Map.get(rule, :rule_set) || Map.get(rule, "rule_set")
+    position = Map.get(rule, :position) || Map.get(rule, "position") || 0
+
+    case Ezagent.Routing.RuleStore.find_by_identity(table, session_uri, rule_set, position) do
+      %Ezagent.Routing.RuleStore{} ->
+        {:ok, :exists}
+
+      nil ->
+        with {:ok, receivers} <-
+               resolve_rule_receivers(
+                 Map.get(rule, :receivers) || Map.get(rule, "receivers") || [],
+                 role_to_uri
+               ) do
+          add_result =
+            Ezagent.Routing.RuleStore.add(
+              table,
+              matcher,
+              receivers,
+              session_uri,
+              source: Ezagent.Routing.RuleStore.system_default_source(),
+              workspace_uri: workspace_uri,
+              rule_set: rule_set,
+              position: position,
+              prompt_template_ref:
+                Map.get(rule, :prompt_template_ref) || Map.get(rule, "prompt_template_ref")
+            )
+
+          case add_result do
+            {:ok, %Ezagent.Routing.RuleStore{id: id}} -> {:ok, {:inserted, id}}
+            {:error, _} = err -> err
+          end
+        end
+    end
+  end
+
+  defp delete_rule_rows(ids) when is_list(ids) do
+    Enum.each(ids, fn id ->
+      safe(fn -> Ezagent.Routing.RuleStore.delete(id, force: true) end)
+    end)
+
+    :ok
+  end
+
+  defp resolve_rule_receivers(receivers, role_to_uri) when is_list(receivers) do
+    Enum.reduce_while(receivers, {:ok, []}, fn receiver, {:ok, acc} ->
+      case resolve_one_receiver(receiver, role_to_uri) do
+        {:ok, resolved} -> {:cont, {:ok, acc ++ [resolved]}}
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+  end
+
+  defp resolve_one_receiver(%URI{} = uri, _role_to_uri), do: {:ok, uri}
+
+  defp resolve_one_receiver(r, role_to_uri) when is_binary(r) do
+    cond do
+      Ezagent.Routing.Resolver.magic_token?(r) ->
+        {:ok, r}
+
+      Map.has_key?(role_to_uri, r) ->
+        {:ok, Map.fetch!(role_to_uri, r)}
+
+      true ->
+        case Ezagent.URI.parse(r) do
+          {:ok, %URI{} = uri} -> {:ok, uri}
+          {:error, _} -> {:error, {:unknown_rule_receiver, r}}
+        end
+    end
+  end
+
+  defp resolve_one_receiver(other, _role_to_uri),
+    do: {:error, {:unknown_rule_receiver, other}}
+
+  defp template_members_of(content) when is_map(content) do
+    case Map.get(content, :members) || Map.get(content, "members") do
+      list when is_list(list) -> Enum.filter(list, &member_in_session_template?/1)
+      _ -> []
+    end
+  end
+
+  defp member_in_session_template?(member) when is_map(member),
+    do: member_field(member, :in_session_template) == true
+
+  defp member_in_session_template?(_), do: false
+
+  defp template_routing_rules_of(content) when is_map(content) do
+    case Map.get(content, :routing_rules) || Map.get(content, "routing_rules") do
+      list when is_list(list) -> list
+      _ -> []
+    end
+  end
+
+  defp template_map_field(content, key) when is_map(content) do
+    case Map.get(content, key) || Map.get(content, Atom.to_string(key)) do
+      m when is_map(m) -> m
+      _ -> %{}
+    end
+  end
+
+  defp member_field(member, key) when is_map(member) do
+    Map.get(member, key) || Map.get(member, Atom.to_string(key))
+  end
+
+  defp member_uri_field(member, key) when is_map(member) do
+    case member_field(member, key) do
+      %URI{} = uri -> uri
+      s when is_binary(s) and s != "" -> Ezagent.URI.new!(s)
+      _ -> nil
+    end
+  end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp safe(fun) do
+    fun.()
+  rescue
+    _ -> :error
+  catch
+    _, _ -> :error
+  end
+end
