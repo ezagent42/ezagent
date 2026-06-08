@@ -1,5 +1,5 @@
 %{
-  oversized_modules_gt_1500: 3,
+  oversized_modules_gt_1500: 4, # arch-cap-bump: PR #641 file-flavor create cascade adds the per-agent config_dir + #17-cascade instantiate block to Behavior.Workspace (1630 LOC). The block is interwoven with register_and_invoke_template's :set-effect handler (not an isolable leaf like #657's listing/resolver split), so extraction is deferred; cap returns to its pre-#657 value of 4.
   oversized_modules_gt_1000: 16,
   def_count_admin_live: 69,
   def_count_cc_agent: 103,
