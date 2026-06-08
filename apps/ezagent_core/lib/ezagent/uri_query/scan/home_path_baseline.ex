@@ -22,9 +22,12 @@ defmodule Ezagent.UriQuery.Scan.HomePathBaseline do
   """
 
   @baseline [
-    # → removed in P1 (per-agent config-dir via resource:// resolver)
-    {"apps/ezagent_core/lib/ezagent/sandbox/config_dir.ex", 32,
-     "Home.path(\"\#{namespace}-agents\")"},
+    # P1 (DONE) — the per-agent config-dir now resolves through
+    # `Ezagent.Resource.FsResolver` (`resource://<ws>/<ns>-agents/<name>`), whose
+    # backend `Home.path/1` call is the sanctioned R-4 chokepoint exempted in
+    # `HomePathExceptions`. The raw `Home.path("<ns>-agents")` call is gone from
+    # `config_dir.ex`, so its baseline entry is removed (the baseline only ever
+    # shrinks, S-3).
 
     # → removed in P2b (uploads via resource:// resolver; #648 moved these into core)
     {"apps/ezagent_core/lib/ezagent/uploads.ex", 40, "Home.path(:uploads)"},

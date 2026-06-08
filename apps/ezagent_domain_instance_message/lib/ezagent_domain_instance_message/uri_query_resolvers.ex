@@ -100,10 +100,60 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolvers do
   # `:config_dir` has one owner (this module), so delegate the projection to
   # socialware's own `:socialware_config_dir` resolver via the runtime UriQuery
   # table — no compile-time dependency on socialware (which depends on THIS app),
-  # so no cycle. A non-socialware resource URI falls through to `:none` because
-  # the socialware resolver returns `:none` for any URI it does not own.
+  # so no cycle.
+  #
+  # Resource-unification P1 (codex CRITICAL): a *bare* `resource://` URI carries
+  # no separate authenticated subject, so deriving a scope from the URL itself
+  # would be tautological (a forged `resource://victim/cc-agents/x` would resolve
+  # under `victim`). Therefore the bare clause splits by `<type>`:
+  #
+  #   * `socialware-config-object` — SELF-authorizing: socialware re-loads the
+  #     immutable object and compares its stored `workspace_uri`, so a bare URI is
+  #     safe. Delegate to `:socialware_config_dir` exactly as before (unchanged).
+  #   * config-dir types (the registered `<ns>-agents` family) — NOT
+  #     self-authorizing. A bare URI lacks an authenticated scope → REJECT
+  #     (`:config_dir_resource_requires_scope`). There is NO scope-from-URI
+  #     fallback. The only legitimate config-dir caller is
+  #     `Ezagent.Sandbox.ConfigDir.path/2` (P1.3), which constructs the URI from
+  #     the authenticated agent and resolves the FsResolver DIRECTLY — config-dir
+  #     `resource://` URIs do not flow through `:config_dir` as bare URIs.
+  #   * ANY OTHER resource type — not this attribute's concern → `:none`. The
+  #     credential cascade (`CascadeRuntime.layer_dirs/1`,
+  #     `Agent.default_layer_dir_for/1`) treats `:none` as "skip this layer" but
+  #     `{:error, _}` as a FATAL cascade abort, so a non-config-dir resource layer
+  #     (e.g. a future `resource://<ws>/uploads/<f>`) MUST fall through to `:none`
+  #     here — exactly as pre-P1, when the socialware resolver returned `:none` for
+  #     every type it did not own (codex P1 round-5 HIGH: do not regress unrelated
+  #     resource layers into a hard cascade failure).
   def resolve_config_dir(%URI{scheme: "resource"} = resource_uri) do
-    Ezagent.UriQuery.resolve(:socialware_config_dir, resource_uri)
+    case Ezagent.URI.type(resource_uri) do
+      {:ok, "socialware-config-object"} ->
+        Ezagent.UriQuery.resolve(:socialware_config_dir, resource_uri)
+
+      {:ok, type} ->
+        if Ezagent.Resource.FsResolver.config_dir_type?(type) do
+          {:error, :config_dir_resource_requires_scope}
+        else
+          :none
+        end
+
+      :error ->
+        :none
+    end
+  end
+
+  # Scoped payload — config-dir resource types resolved with an EXTERNAL
+  # authenticated `scope` (Resource-unification P1, SPEC §5.1). The
+  # `FsResolver.authority/2` is meaningful only when `scope.workspace` is
+  # independently authenticated; this is the threaded-scope entry point. A
+  # `:none` (not an FsResolver-owned type) falls back to the self-authorizing
+  # socialware resolver; `{:ok, _}` / `{:error, _}` are returned verbatim
+  # (fail loud, never swallowed).
+  def resolve_config_dir({%URI{scheme: "resource"} = resource_uri, %{workspace: _} = scope}) do
+    case Ezagent.Resource.FsResolver.resolve(resource_uri, scope) do
+      :none -> Ezagent.UriQuery.resolve(:socialware_config_dir, resource_uri)
+      other -> other
+    end
   end
 
   def resolve_config_dir(_), do: :none

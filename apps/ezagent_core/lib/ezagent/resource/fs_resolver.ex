@@ -211,4 +211,71 @@ defmodule Ezagent.Resource.FsResolver do
   @doc false
   @spec table() :: atom()
   def table, do: @table
+
+  @doc """
+  Authority for per-agent config-dir `<ns>-agents` types (Resource-unification
+  P1). Asserts the URI's structural `<ws>` segment equals the caller's
+  authenticated `scope.workspace` — the workspace-isolation boundary for the
+  per-agent config-home.
+
+  `scope.workspace` is the AUTHENTICATED subject (e.g. derived from the agent URI
+  in `Ezagent.Sandbox.ConfigDir.path/2`), NEVER taken from `uri` — so a forged
+  `resource://victim/<ns>-agents/x` resolved under scope `acme` fails loud
+  (codex CRITICAL: the check is non-tautological precisely because the two `<ws>`
+  values come from independent sources).
+  """
+  @spec config_dir_authority(URI.t(), scope()) :: :ok | {:error, term()}
+  def config_dir_authority(%URI{} = uri, %{workspace: scope_ws}) do
+    with {:ok, uri_ws} <- EzURI.workspace_name(uri),
+         {:ok, scope_ws_name} <- workspace_name_of(scope_ws) do
+      if uri_ws == scope_ws_name do
+        :ok
+      else
+        {:error, {:foreign_workspace, %{uri: uri_ws, scope: scope_ws_name}}}
+      end
+    else
+      :error -> {:error, {:malformed_resource_uri, URI.to_string(uri)}}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Whether `type` is a registered per-agent config-dir family type (one of the
+  `<ns>-agents` types whose `authority/2` is `config_dir_authority/2`).
+
+  The `:config_dir` UriQuery owner uses this to scope its fail-loud /
+  scoped-resolve behavior to the config-dir family ONLY (Resource-unification P1,
+  codex round-5 HIGH): a bare `resource://` URI of a config-dir type must fail
+  loud (`:config_dir_resource_requires_scope`, no tautological self-scope), but a
+  bare `resource://` URI of ANY OTHER resource family (e.g. a future
+  `resource://<ws>/uploads/<f>` layer) is **not** this attribute's concern and
+  must fall through to `:none` so the credential cascade skips it as a
+  not-a-config-dir layer — exactly as it did pre-P1 (when the socialware resolver
+  returned `:none` for non-socialware types). Membership is keyed on the
+  registered `authority` identity, NOT a `<type>` string suffix, so it cannot
+  accidentally claim a future non-config type whose name happens to end in
+  `-agents`.
+  """
+  @spec config_dir_type?(String.t()) :: boolean()
+  def config_dir_type?(type) when is_binary(type) do
+    case lookup(type) do
+      {:ok, %{authority: authority}} -> authority == (&__MODULE__.config_dir_authority/2)
+      :none -> false
+    end
+  end
+
+  def config_dir_type?(_), do: false
+
+  # scope.workspace may be a plain workspace-name string OR a workspace URI; both
+  # normalize to the name for comparison against the URI's `<ws>` segment.
+  defp workspace_name_of(ws) when is_binary(ws) and ws != "", do: {:ok, ws}
+
+  defp workspace_name_of(%URI{} = ws_uri) do
+    case EzURI.workspace_name(ws_uri) do
+      {:ok, name} -> {:ok, name}
+      :error -> {:error, {:malformed_scope_workspace, URI.to_string(ws_uri)}}
+    end
+  end
+
+  defp workspace_name_of(other), do: {:error, {:malformed_scope_workspace, other}}
 end

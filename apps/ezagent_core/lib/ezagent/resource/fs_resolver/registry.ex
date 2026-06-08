@@ -81,11 +81,31 @@ defmodule Ezagent.Resource.FsResolver.Registry do
   end
 
   # Boot-defined registration source — a pure, NOT-runtime-mutable list of
-  # `{type, spec}`. P0 is dormant (empty). P1/P2 extend this (config-dir,
-  # uploads). Kept as a function so future phases add entries here, never via a
-  # runtime call.
+  # `{type, spec}`. P1 adds the per-agent config-dir families (one `<ns>-agents`
+  # type per config-dir namespace in use). P2 extends with uploads. Kept as a
+  # function so future phases add entries here, never via a runtime call.
+  #
+  # Resource-unification P1 — config-dir types. Each `<ns>-agents` type's
+  # `backend_component` is the SAME `"<ns>-agents"` string, so the resolver joins
+  # `Home.path("<ns>-agents")/<ws>/<name>` — BYTE-IDENTICAL to the pre-P1
+  # `Ezagent.Sandbox.ConfigDir.path/2` layout (Locked-contract #7). The namespaces
+  # are the catalog declared by Template classes' `config_dir_namespace/0` (cc,
+  # codex); listed here statically because the resolver allowlist is immutable at
+  # boot and must not depend on plugin Application start ordering.
+  @config_dir_namespaces ["cc", "codex"]
+
   @spec boot_registrations() :: [{String.t(), map()}]
-  defp boot_registrations, do: []
+  defp boot_registrations do
+    Enum.map(@config_dir_namespaces, fn namespace ->
+      type = "#{namespace}-agents"
+
+      {type,
+       %{
+         backend_component: type,
+         authority: &FsResolver.config_dir_authority/2
+       }}
+    end)
+  end
 
   if Mix.env() != :prod do
     @doc """
