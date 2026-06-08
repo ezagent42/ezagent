@@ -507,6 +507,27 @@ defmodule Ezagent.Entity.Agent do
     {:error, :invalid_spawn_from_template_content_args}
   end
 
+  @doc """
+  2026-06-07 file-flavor-create-cascade — content→data conversion ONLY, with NO
+  cascade resolution. Used by the Workspace boot Loader to replay a persisted
+  file-flavor CONTENT template (`flavor`/`project_cwd`/`config_dir`) into the
+  Template-Class DATA shape so `provision_and_instantiate/4` can allocate the
+  isolated config_dir + spawn the Kind.
+
+  The boot Loader MUST NOT run the credential cascade: the cascade keys off the
+  agent OWNER, and at cold boot the only available principal is the
+  workspace-loader, NOT the human who originally created the agent — resolving a
+  user-default under the wrong owner would be incorrect. Credential
+  re-resolution at cold restart is the Agent Kind's `Sandbox.activate →
+  ensure_subprocess_alive → CascadeRuntime` self-heal, which reads the ORIGINAL
+  owner from the persisted Sandbox-slice `cascade_resolution`. This function is
+  the cascade-free conversion the Loader uses instead.
+  """
+  @spec content_to_template_data(map(), URI.t()) :: {:ok, map()} | {:error, term()}
+  def content_to_template_data(content, %URI{} = instance_uri) when is_map(content) do
+    Ezagent.Entity.AgentTemplate.to_template_data(content, instance_uri)
+  end
+
   @doc false
   @spec spawn_from_template_content(map(), URI.t(), URI.t(), URI.t(), keyword()) ::
           {:ok,
@@ -530,6 +551,12 @@ defmodule Ezagent.Entity.Agent do
              template_content_map
            ),
          {:ok, flavor} <- template_content_flavor(template_content_map),
+         # `resolve_cascade_content` is the grant-MINT boundary. Its own failures
+         # (incl. a unique-constraint insert conflict from a concurrent duplicate
+         # create — where the WINNER owns the row, not this call) must NOT trigger
+         # the grant cleanup below: this call did not successfully mint, so deleting
+         # would erase the winner's grant (codex r6 HIGH — race). So it stays in the
+         # OUTER `with`, whose `else` returns the error WITHOUT deleting any grant.
          {:ok, template_content_map} <-
            resolve_cascade_content(
              template_content_map,
@@ -540,7 +567,35 @@ defmodule Ezagent.Entity.Agent do
              flavor,
              opts
            ),
-         {:ok, data} <-
+         # Past the mint boundary: from here, ANY failure is owned by THIS call
+         # (this call minted the grant, if any), so the grant cleanup is safe. The
+         # nested `with` scopes the grant-delete to exactly these post-mint steps.
+         {:ok, result} <-
+           spawn_after_cascade(
+             template_class,
+             template_content_map,
+             instance_uri,
+             spawned_by_uri,
+             workspace_uri,
+             flavor
+           ) do
+      {:ok, result}
+    end
+  end
+
+  # Post-grant-mint spawn steps. ANY failure here is owned by THIS call (the grant
+  # was just minted by this call's `resolve_cascade_content`), so on failure we
+  # HARD-delete the grant — leaving zero residue — via `revoke_cascade_grant_best_effort/1`.
+  # This is the ONLY grant-cleanup site (the pre-mint outer `with` must not delete).
+  defp spawn_after_cascade(
+         template_class,
+         template_content_map,
+         instance_uri,
+         spawned_by_uri,
+         workspace_uri,
+         flavor
+       ) do
+    with {:ok, data} <-
            Ezagent.Entity.AgentTemplate.to_template_data(template_content_map, instance_uri),
          :ok <- Ezagent.AgentFlavorAttributes.put(instance_uri, flavor),
          {:ok, workers, fresh?, instantiate_meta} <-
@@ -617,6 +672,11 @@ defmodule Ezagent.Entity.Agent do
           {:error, reason} ->
             undo_fresh_workers(workers)
             cleanup_partial_config_dirs(workers, template_class)
+            # codex r5 HIGH — the #17 grant was minted in `resolve_cascade_content`
+            # BEFORE instantiate; a post-spawn failure must not leave an orphaned
+            # GrantRow (unique by agent_uri → would poison retries + leave a stale
+            # authorization/audit row for an agent that never came up).
+            revoke_cascade_grant_best_effort(instance_uri)
             {:error, reason}
         end
       else
@@ -627,7 +687,31 @@ defmodule Ezagent.Entity.Agent do
         _ = record_sandbox_state(workers, instantiate_meta, template_class)
         {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
       end
+    else
+      # codex r5/r6 HIGH — a failure of `to_template_data` /
+      # `AgentFlavorAttributes.put` / `instantiate_workers` here is ALWAYS owned by
+      # THIS call: `spawn_after_cascade/6` only runs AFTER `resolve_cascade_content`
+      # succeeded (which is where this call minted the #17 grant, if any). So
+      # hard-deleting the grant is safe — it cannot erase a concurrent winner's row
+      # (a mint-CONFLICT fails inside `resolve_cascade_content`, which is in the
+      # caller's OUTER `with` that does NOT delete). No-op when no grant was minted.
+      {:error, _reason} = err ->
+        revoke_cascade_grant_best_effort(instance_uri)
+        err
     end
+  end
+
+  # codex r5 HIGH — best-effort HARD-delete of the #17 credential grant for an
+  # agent whose fresh spawn failed after the grant was minted. Delete (not soft
+  # `revoke`) so the unique `agent_uri` key is freed and a later retry's
+  # `GrantRow.insert/1` does not conflict (the agent never came up — no row should
+  # survive). Idempotent: a no-op when no grant exists (e.g. no credential source
+  # was resolved).
+  defp revoke_cascade_grant_best_effort(%URI{} = agent_uri) do
+    _ = Ezagent.Credential.GrantRow.delete(URI.to_string(agent_uri))
+    :ok
+  rescue
+    _ -> :ok
   end
 
   def spawn_from_template_content(_content, _instance, _spawned_by, _workspace, _opts) do
@@ -712,8 +796,13 @@ defmodule Ezagent.Entity.Agent do
     credential_adapter = credential_adapter_kind(template_class)
 
     if credential_adapter != :none and
-         match?(%URI{}, source_template_uri) and
          default_cascade_configured?(credential_adapter, content, source_template_uri) do
+      # 2026-06-07 file-flavor-create-cascade — `workspace_layer_uri` is the
+      # source_template_uri ONLY when one is threaded (orchestrator/fork path).
+      # The unified-create path resolves a config home from the content's own
+      # `config_dir` (no shared workspace base template exists), so it passes
+      # NO source_template_uri; the workspace config layer is then simply absent
+      # (`default_layer_dir_for(nil) → :skip`) rather than a dead persisted URI.
       resolution = %{
         owner_uri: spawned_by_uri,
         workspace_uri: workspace_uri,
@@ -785,16 +874,26 @@ defmodule Ezagent.Entity.Agent do
   defp credential_required_by_default?(:file), do: false
 
   defp default_cascade_configured?(:slice, _content, %URI{}), do: true
+  defp default_cascade_configured?(:slice, _content, _), do: false
 
-  defp default_cascade_configured?(:file, content, %URI{} = source_template_uri) do
+  # A file-flavor has a resolvable config home iff the content carries a
+  # `config_dir` (the unified-create path — no source template needed) OR a
+  # threaded `source_template_uri` resolves one (the orchestrator/fork path).
+  defp default_cascade_configured?(:file, content, source_template_uri) do
     case content_field(content, :config_dir) do
       dir when is_binary(dir) and dir != "" ->
         true
 
       _ ->
-        case Ezagent.UriQuery.resolve(:config_dir, source_template_uri) do
-          {:ok, dir} when is_binary(dir) and dir != "" -> true
-          _ -> false
+        case source_template_uri do
+          %URI{} = uri ->
+            case Ezagent.UriQuery.resolve(:config_dir, uri) do
+              {:ok, dir} when is_binary(dir) and dir != "" -> true
+              _ -> false
+            end
+
+          _ ->
+            false
         end
     end
   end

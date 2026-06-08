@@ -413,8 +413,30 @@ defmodule Ezagent.Workspace do
             {:error, {:no_template_class, class_name}}
 
           {:ok, class_module} ->
-            invoke_validate(class_module, tmpl)
+            with :ok <- validate_file_flavor_config_dir(class_module, tmpl) do
+              invoke_validate(class_module, tmpl)
+            end
         end
+    end
+  end
+
+  # 2026-06-07 file-flavor-create-cascade — a credentialled file-flavor (cc/codex)
+  # template MUST carry a non-empty `config_dir` reference. Validated BEFORE the
+  # Store write (this `add_template/3` path has no post-instantiate rollback), so
+  # a config-dir-less file-flavor template never persists + poisons every boot.
+  # Mirrors the Loader's `file_flavor_to_data/2` fail-loud guard (no-silent
+  # operator-home fallback). echo/np/curl have no credential home → exempt.
+  defp validate_file_flavor_config_dir(class_module, tmpl) do
+    if Ezagent.Agent.CredentialAdapter.credentialled?(class_module) do
+      case Map.get(tmpl, "config_dir") || Map.get(tmpl, :config_dir) do
+        dir when is_binary(dir) and dir != "" ->
+          :ok
+
+        _ ->
+          {:error, {:file_flavor_missing_config_dir, Map.get(tmpl, "class")}}
+      end
+    else
+      :ok
     end
   end
 

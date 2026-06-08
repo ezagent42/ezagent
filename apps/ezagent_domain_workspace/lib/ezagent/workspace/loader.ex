@@ -127,12 +127,12 @@ defmodule Ezagent.Workspace.Loader do
     # PR-3 (domain.agent D2) — route through the core contract-boundary wrapper so
     # boot/loader seams allocate the per-agent config_dir TARGET uniformly (this
     # was the rev-1 codex BLOCKER: the loader bypassed single-seam allocation).
-    case Ezagent.Kind.Template.provision_and_instantiate(
-           class_module,
-           tmpl_name,
-           tmpl_data,
-           workspace_uri
-         ) do
+    #
+    # 2026-06-07 file-flavor-create-cascade — a FILE-FLAVOR (cc/codex) template
+    # is the AgentTemplate CONTENT schema and routes through the #17 cascade
+    # chokepoint so cold restart re-resolves the cascade (and so the content→data
+    # conversion runs). See `cascade_or_provision/4`.
+    case cascade_or_provision(class_module, tmpl_name, tmpl_data, workspace_uri) do
       {:ok, uris} when is_list(uris) ->
         gated_load_bind(uris, workspace_uri, true)
 
@@ -154,6 +154,117 @@ defmodule Ezagent.Workspace.Loader do
 
       other ->
         {:error, {:bad_template_return, other}}
+    end
+  end
+
+  # FILE-FLAVOR (credentialled) templates are persisted as the AgentTemplate
+  # CONTENT schema (`flavor`/`project_cwd`/`config_dir`); they need a content→data
+  # conversion before `provision_and_instantiate/4` (which reads the DATA `cwd`
+  # key + allocates the per-agent config_dir from the `config_dir` reference).
+  # Non-credentialled templates (echo) are already DATA shape — passed straight
+  # through.
+  #
+  # The boot Loader does the conversion CASCADE-FREE (`content_to_template_data/2`,
+  # NOT `spawn_from_template_content/5`). The credential cascade keys off the
+  # agent OWNER; at cold boot the only principal is the workspace-loader, NOT the
+  # human who created the agent — re-resolving a user-default under that wrong
+  # owner (and minting/persisting a grant for it) would be incorrect. Credential
+  # re-resolution at cold restart is the Agent Kind's `Sandbox.activate →
+  # ensure_subprocess_alive → CascadeRuntime` self-heal, which reads the ORIGINAL
+  # owner from the persisted Sandbox-slice `cascade_resolution`. So the Loader
+  # only re-spawns the Kind (isolated config_dir via single-reference
+  # materialize); the self-heal corrects credentials with the right owner.
+  #
+  # The real `fresh?` from `provision_and_instantiate` is PRESERVED (codex r2
+  # HIGH) — `gated_load_bind/3`'s adopt-only-if-owned ownership gate depends on
+  # it; hardcoding `fresh?: true` would rebind a pre-existing foreign worker.
+  defp cascade_or_provision(class_module, tmpl_name, tmpl_data, %URI{} = workspace_uri) do
+    with {:ok, data} <- file_flavor_to_data(class_module, tmpl_data) do
+      Ezagent.Kind.Template.provision_and_instantiate(
+        class_module,
+        tmpl_name,
+        data,
+        workspace_uri
+      )
+    end
+  end
+
+  # Convert a persisted file-flavor template to the DATA shape (cascade-free).
+  # Non-file-flavor templates are already DATA shape — returned as-is.
+  #
+  # No-silent-fallback (codex r3 follow-up): a credentialled file-flavor template
+  # — whether new CONTENT shape or an old DATA shape — MUST carry a non-empty
+  # `config_dir` reference. Without it, `provision_and_instantiate/4` skips
+  # allocation and the cc/codex consume path leaves `CLAUDE_CONFIG_DIR`/`CODEX_HOME`
+  # unset → the process silently shares the operator's home. A file-flavor that
+  # reaches the loader without a resolvable config home FAILS LOUD
+  # (`:file_flavor_missing_config_dir`) rather than booting un-isolated. (The DB
+  # is wiped+rebuilt on migration per feedback_let_it_crash_no_workarounds, so a
+  # stale pre-change DATA template without config_dir should not persist across a
+  # real deploy; if one does, this surfaces it instead of degrading.)
+  defp file_flavor_to_data(class_module, tmpl_data) do
+    cond do
+      not file_flavor_class?(class_module) ->
+        # echo / curl / np — no credential home; pass through unchanged.
+        {:ok, tmpl_data}
+
+      not has_config_dir?(tmpl_data) ->
+        {:error, {:file_flavor_missing_config_dir, Map.get(tmpl_data, "agent_uri")}}
+
+      content_shape?(tmpl_data) ->
+        with {:ok, facade} <- resolve_agent_spawn_facade(),
+             {:ok, agent_uri} <- fetch_agent_uri(tmpl_data) do
+          facade.content_to_template_data(to_content(tmpl_data), agent_uri)
+        end
+
+      true ->
+        # Already DATA shape WITH a config_dir — pass through.
+        {:ok, tmpl_data}
+    end
+  end
+
+  defp file_flavor_class?(class_module) when is_atom(class_module) do
+    Ezagent.Agent.CredentialAdapter.credentialled?(class_module)
+  end
+
+  defp has_config_dir?(tmpl_data) when is_map(tmpl_data) do
+    case Map.get(tmpl_data, "config_dir") || Map.get(tmpl_data, :config_dir) do
+      dir when is_binary(dir) and dir != "" -> true
+      _ -> false
+    end
+  end
+
+  # A CONTENT-shape template carries `project_cwd` (the input key); a DATA-shape
+  # template carries `cwd`.
+  defp content_shape?(tmpl_data) when is_map(tmpl_data) do
+    is_binary(Map.get(tmpl_data, "project_cwd") || Map.get(tmpl_data, :project_cwd))
+  end
+
+  defp fetch_agent_uri(tmpl_data) do
+    case Map.get(tmpl_data, "agent_uri") || Map.get(tmpl_data, :agent_uri) do
+      s when is_binary(s) and s != "" -> {:ok, Ezagent.URI.new!(s)}
+      _ -> {:error, :missing_agent_uri}
+    end
+  end
+
+  defp to_content(tmpl_data) do
+    %{
+      flavor: Map.get(tmpl_data, "flavor") || Map.get(tmpl_data, :flavor),
+      project_cwd: Map.get(tmpl_data, "project_cwd") || Map.get(tmpl_data, :project_cwd),
+      config_dir: Map.get(tmpl_data, "config_dir") || Map.get(tmpl_data, :config_dir)
+    }
+  end
+
+  # Runtime DI for the agent facade (mirrors the Behavior.Workspace seam) —
+  # `content_to_template_data/2` is the cascade-free content→data conversion.
+  defp resolve_agent_spawn_facade do
+    facade =
+      Application.get_env(:ezagent_domain_workspace, :agent_spawn_facade, Ezagent.Entity.Agent)
+
+    if Code.ensure_loaded?(facade) and function_exported?(facade, :content_to_template_data, 2) do
+      {:ok, facade}
+    else
+      {:error, {:agent_spawn_facade_unavailable, facade}}
     end
   end
 
@@ -401,12 +512,11 @@ defmodule Ezagent.Workspace.Loader do
     # PR-3 (domain.agent D2) — route through the core contract-boundary wrapper so
     # boot/loader seams allocate the per-agent config_dir TARGET uniformly (this
     # was the rev-1 codex BLOCKER: the loader bypassed single-seam allocation).
-    case Ezagent.Kind.Template.provision_and_instantiate(
-           class_module,
-           tmpl_name,
-           tmpl_data,
-           workspace_uri
-         ) do
+    #
+    # 2026-06-07 file-flavor-create-cascade — a FILE-FLAVOR (cc/codex) template
+    # routes through the #17 cascade chokepoint (same seam as the runtime
+    # `do_invoke/4`). See `cascade_or_provision/4`.
+    case cascade_or_provision(class_module, tmpl_name, tmpl_data, workspace_uri) do
       # codex round-6 HIGH-1 — accept both the 2-element `{:ok, uris}`
       # and the 3-element `{:ok, uris, meta}` form (meta carries
       # `fresh?`).

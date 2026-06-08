@@ -70,6 +70,23 @@ defmodule Ezagent.Credential.GrantRow do
   @spec get_for_agent(String.t()) :: t() | nil
   def get_for_agent(agent_uri), do: Repo.get(__MODULE__, agent_uri)
 
+  @doc """
+  HARD-delete the grant row for an agent (compensating cleanup). Distinct from
+  `revoke/1` (soft — bumps version + stamps `revoked_at`, KEEPS the row): a
+  delete frees the unique `agent_uri` key so a later retry's `insert/1` does not
+  conflict. Used when a fresh agent spawn fails AFTER the grant was minted but
+  BEFORE the agent came up (2026-06-07 file-flavor-create-cascade, codex r5) —
+  the grant must leave NO orphaned row for an agent that never existed.
+  Idempotent: `{:ok, :no_grant}` when absent.
+  """
+  @spec delete(String.t()) :: {:ok, t()} | {:ok, :no_grant} | {:error, term()}
+  def delete(agent_uri) do
+    case Repo.get(__MODULE__, agent_uri) do
+      nil -> {:ok, :no_grant}
+      row -> Repo.delete(row)
+    end
+  end
+
   @doc "Revoke: bump version, stamp revoked_at. Returns {:error, :no_grant} if absent."
   @spec revoke(String.t()) :: {:ok, t()} | {:error, term()}
   def revoke(agent_uri) do
