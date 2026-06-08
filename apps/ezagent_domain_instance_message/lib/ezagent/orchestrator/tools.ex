@@ -93,29 +93,17 @@ defmodule Ezagent.Orchestrator.Tools do
   require Logger
 
   alias Ezagent.Behavior.Chat
-  alias Ezagent.Entity.SessionTemplate
   alias Ezagent.Invocation
+  alias Ezagent.Orchestrator.Tools.Templates
+  alias Ezagent.Orchestrator.Tools.ToolCatalog
 
   @doc "The orchestration tool names."
   @spec tool_names() :: [atom()]
-  def tool_names do
-    [
-      :add_managed_member,
-      :update_member_template,
-      :remove_member,
-      :define_rule_set_rule,
-      :define_prompt_template,
-      :define_legend,
-      :update_template,
-      :save_template_as,
-      :list_templates
-    ]
-  end
+  defdelegate tool_names(), to: ToolCatalog
 
   @doc "True iff `name` is one of the declared orchestration tools."
   @spec tool?(atom()) :: boolean()
-  def tool?(name) when is_atom(name), do: name in tool_names()
-  def tool?(_), do: false
+  defdelegate tool?(name), to: ToolCatalog
 
   # === add_managed_member ================================================
 
@@ -1389,227 +1377,19 @@ defmodule Ezagent.Orchestrator.Tools do
     _, reason -> {:error, {:registry_reload_failed, reason}}
   end
 
-  # === update_template ===================================================
-
-  @doc """
-  Snapshot the live session as a NEW VERSION of the current parent
-  SessionTemplate, persisting it via
-  `Ezagent.Entity.SessionTemplate.persist_version/3` (SPEC §2.1 row 5).
-
-  ## CapBAC — HIGH-9 hardening
-
-  The tool runs `check_template_write_cap/2` (cap #3, `:session_template`,
-  `{:within_workspace, ws}`) at the boundary, AND threads the
-  orchestrator's `{caller, caps}` into `persist_version/3` so the
-  decisive `template.write` dispatch is CapBAC-checked against the
-  ORCHESTRATOR's real authority — NOT `admin_caps`.
-
-  Required `opts`: `:caller`, `:caps`, `:session_uri`, `:workspace_uri`,
-  `:parent_template_uri`.
-
-  Returns `{:ok, new_template_uri}`. If the parent SessionTemplate hash has
-  been deleted, returns `{:error, :parent_template_deleted}` (use
-  `save_template_as`).
-  """
+  @doc "Snapshot the live session as a new version of the current parent SessionTemplate."
   @spec update_template(keyword()) :: {:ok, URI.t()} | {:error, term()}
-  def update_template(opts \\ []) do
-    with {:ok, session_uri} <- require_opt(opts, :session_uri),
-         {:ok, workspace_uri} <- require_opt(opts, :workspace_uri),
-         {:ok, caller_uri} <- require_opt(opts, :caller),
-         {:ok, caps} <- require_opt(opts, :caps),
-         {:ok, %URI{} = parent_uri} <- require_opt(opts, :parent_template_uri),
-         :ok <- check_template_write_cap(caps, workspace_uri),
-         :ok <- check_parent_alive(parent_uri),
-         {:ok, parent_name} <- extract_template_name(parent_uri),
-         {:ok, slice} <- build_working_copy(session_uri, workspace_uri, caller_uri, parent_uri) do
-      content =
-        slice
-        |> Map.put(:name, parent_name)
-        |> Map.put(:created_by, caller_uri)
-        |> Map.put(:created_at, DateTime.utc_now())
+  defdelegate update_template(opts \\ []), to: Templates
 
-      SessionTemplate.persist_version(content, workspace_uri,
-        caller: caller_uri,
-        caps: caps
-      )
-    end
-  end
-
-  # Phase 7 PR 48 + HIGH-8 hardening — parent-template-deletion check
-  # against the durable store.
-  defp check_parent_alive(%URI{} = parent_uri) do
-    cond do
-      match?({:ok, _pid}, Ezagent.KindRegistry.lookup(parent_uri)) ->
-        :ok
-
-      durable_snapshot_exists?(parent_uri) ->
-        :ok
-
-      true ->
-        {:error, :parent_template_deleted}
-    end
-  end
-
-  defp durable_snapshot_exists?(%URI{} = uri) do
-    case Ezagent.Ecto.KindSnapshot.get(URI.to_string(uri)) do
-      %Ezagent.Ecto.KindSnapshot{} -> true
-      nil -> false
-    end
-  rescue
-    _ -> false
-  end
-
-  # === save_template_as ==================================================
-
-  @doc """
-  Snapshot the live session as the FIRST VERSION of a NEW SessionTemplate
-  named `new_name`, persisting it via
-  `Ezagent.Entity.SessionTemplate.persist_version/3` (SPEC §2.1 row 6).
-
-  HIGH-9 — the `template.write` persistence dispatch runs under the
-  orchestrator's threaded `{caller, caps}`, NOT `admin_caps`.
-
-  Required `opts`: same as `update_template/1` except
-  `:parent_template_uri` is optional (the new template records it as
-  lineage when present). `:owner` — the principal who should receive the
-  template-create cap (defaults to `:caller` when absent).
-
-  Returns `{:ok, new_template_uri}`.
-  """
+  @doc "Snapshot the live session as the first version of a new SessionTemplate."
   @spec save_template_as(String.t(), keyword()) :: {:ok, URI.t()} | {:error, term()}
-  def save_template_as(new_name, opts \\ []) when is_binary(new_name) and new_name != "" do
-    parent_uri =
-      case Keyword.get(opts, :parent_template_uri) do
-        %URI{} = u -> u
-        _ -> nil
-      end
+  defdelegate save_template_as(new_name, opts \\ []), to: Templates
 
-    with {:ok, session_uri} <- require_opt(opts, :session_uri),
-         {:ok, workspace_uri} <- require_opt(opts, :workspace_uri),
-         {:ok, caller_uri} <- require_opt(opts, :caller),
-         {:ok, caps} <- require_opt(opts, :caps),
-         :ok <- check_template_write_cap(caps, workspace_uri),
-         {:ok, slice} <- build_working_copy(session_uri, workspace_uri, caller_uri, parent_uri) do
-      content =
-        slice
-        |> Map.put(:name, new_name)
-        |> Map.put(:created_by, caller_uri)
-        |> Map.put(:created_at, DateTime.utc_now())
-
-      case SessionTemplate.persist_version(content, workspace_uri,
-             caller: caller_uri,
-             caps: caps
-           ) do
-        {:ok, new_uri} ->
-          owner_uri = Keyword.get(opts, :owner, caller_uri)
-          :ok = grant_owner_template_cap(owner_uri, new_uri, workspace_uri)
-          {:ok, new_uri}
-
-        {:error, _} = err ->
-          err
-      end
-    end
-  end
-
-  # SPEC §1.7 (e) — after creating a new SessionTemplate, grant the
-  # owner a `Behavior.Template` cap on `:session_template` for the
-  # workspace so they may later instantiate it.
-  defp grant_owner_template_cap(
-         %URI{} = owner_uri,
-         %URI{} = _new_template_uri,
-         %URI{} = workspace_uri
-       ) do
-    cap = %Ezagent.Capability{
-      kind: :session_template,
-      behavior: Ezagent.Behavior.Template,
-      action: :any,
-      instance: {:within_workspace, workspace_uri},
-      workspace_uri: workspace_uri,
-      granted_by: owner_uri,
-      granted_at: DateTime.utc_now()
-    }
-
-    target = Ezagent.URI.with_action(owner_uri, :identity, :grant_cap)
-
-    case Invocation.dispatch(%Invocation{
-           target: target,
-           mode: :call,
-           args: %{cap: cap},
-           ctx: %{
-             caller: Ezagent.SystemPrincipal.uri("template-materialize"),
-             caps:
-               "template-materialize"
-               |> Ezagent.SystemPrincipal.uri()
-               |> Ezagent.SystemPrincipal.caps(),
-             reply: :ignore
-           }
-         }) do
-      {:ok, _} ->
-        :ok
-
-      other ->
-        Logger.warning(
-          "save_template_as: owner template-cap grant failed: #{inspect(other)} — " <>
-            "template persisted; owner may need a re-grant to instantiate it"
-        )
-
-        :ok
-    end
-  end
-
-  # === list_templates ====================================================
-
-  @doc """
-  List visible templates as
-  `%{agent_templates: [URI.t()], session_templates: [URI.t()]}`,
-  per-kind cap-gated (SPEC §2.1 row 7 / §1.7 (b)).
-
-  Required `opts`: `:caps`, `:workspace_uri`.
-
-  Optional `name_filter` — substring restricts results.
-  """
+  @doc "List visible AgentTemplate and SessionTemplate URIs, per-kind cap-gated."
   @spec list_templates(String.t() | nil, keyword()) ::
           {:ok, %{agent_templates: [URI.t()], session_templates: [URI.t()]}}
           | {:error, term()}
-  def list_templates(name_filter \\ nil, opts \\ []) do
-    with {:ok, caps} <- require_opt(opts, :caps),
-         {:ok, workspace_uri} <- require_opt(opts, :workspace_uri) do
-      agent_allowed? = has_template_cap?(caps, :agent_template, workspace_uri)
-      session_allowed? = has_template_cap?(caps, :session_template, workspace_uri)
-
-      if not agent_allowed? and not session_allowed? do
-        {:error, :unauthorized}
-      else
-        rows = snapshot_rows_in_workspace(workspace_uri)
-
-        agents =
-          if agent_allowed?,
-            do: filter_rows(rows, "agent_template", "agent", name_filter),
-            else: []
-
-        sessions =
-          if session_allowed?,
-            do: filter_rows(rows, "session_template", "session", name_filter),
-            else: []
-
-        {:ok, %{agent_templates: agents, session_templates: sessions}}
-      end
-    end
-  end
-
-  defp snapshot_rows_in_workspace(%URI{} = workspace_uri) do
-    Ezagent.Ecto.KindSnapshot.list_in_workspace(workspace_uri)
-  rescue
-    _ -> []
-  end
-
-  defp filter_rows(rows, kind_type, expected_host, name_filter) do
-    rows
-    |> Enum.filter(fn row -> row.kind_type == kind_type end)
-    |> Enum.map(fn row -> Ezagent.URI.new!(row.uri) end)
-    |> Enum.filter(&template_match?(&1, expected_host, name_filter))
-    |> Enum.sort_by(&URI.to_string/1)
-  end
+  defdelegate list_templates(name_filter \\ nil, opts \\ []), to: Templates
 
   # === generic invoke ====================================================
 
@@ -1683,74 +1463,6 @@ defmodule Ezagent.Orchestrator.Tools do
     end
   end
 
-  defp has_template_cap?(caps, kind, %URI{} = workspace_uri) do
-    workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
-
-    representative =
-      case kind do
-        :agent_template -> Ezagent.URI.template(workspace_name, :agent, :_catalog)
-        :session_template -> Ezagent.URI.template(workspace_name, :session, "_catalog@_")
-      end
-
-    needed = %{
-      kind: kind,
-      behavior: Ezagent.Behavior.Template,
-      action: :any,
-      instance: representative,
-      workspace_uri: workspace_uri
-    }
-
-    caps
-    |> to_cap_set()
-    |> Enum.any?(&Ezagent.Capability.matches?(&1, needed))
-  end
-
-  defp check_template_write_cap(caps, %URI{} = workspace_uri) do
-    if has_template_cap?(caps, :session_template, workspace_uri) do
-      :ok
-    else
-      {:error, :unauthorized}
-    end
-  end
-
-  defp template_match?(%URI{scheme: "template"} = uri, expected_host, nil) do
-    Ezagent.URI.type?(uri, expected_host) and match?({:ok, _name}, Ezagent.URI.name(uri))
-  end
-
-  defp template_match?(
-         %URI{scheme: "template"} = uri,
-         expected_host,
-         filter
-       )
-       when is_binary(filter) do
-    template_match?(uri, expected_host, nil) and
-      uri |> Ezagent.URI.name!() |> String.contains?(filter)
-  end
-
-  defp template_match?(_, _, _), do: false
-
-  defp extract_template_name(%URI{scheme: "template"} = uri) do
-    if not Ezagent.URI.type?(uri, :session) do
-      {:error, {:not_a_session_template_uri, uri}}
-    else
-      case Ezagent.URI.name(uri) do
-        {:ok, name_with_hash} ->
-          name = name_with_hash |> String.split("@") |> hd()
-
-          if name == "" do
-            {:error, :template_name_empty}
-          else
-            {:ok, name}
-          end
-
-        _ ->
-          {:error, :template_name_empty}
-      end
-    end
-  end
-
-  defp extract_template_name(other), do: {:error, {:not_a_session_template_uri, other}}
-
   # --- live session-slice reads ------------------------------------------
 
   # Read the live Session Kind's :chat slice (two-container — unwrap to its
@@ -1782,105 +1494,5 @@ defmodule Ezagent.Orchestrator.Tools do
 
   defp member_uri_for_role(%URI{} = session_uri, role_name) when is_binary(role_name) do
     Chat.role_name_to_uri(read_members(session_uri), role_name)
-  end
-
-  # Build the template-shaped working-copy slice from the live session for
-  # update_template / save_template_as. The slot-era `agent_slots` is GONE
-  # (§3.8) — a SessionTemplate snapshots `members` (those with
-  # `in_session_template: true`), `prompt_templates`, `legends`, and the
-  # session's rule-set routing rows (PR-7 SessionTemplate content shape).
-  defp build_working_copy(
-         %URI{} = session_uri,
-         %URI{} = workspace_uri,
-         %URI{} = _caller_uri,
-         parent_uri
-       ) do
-    slice = read_chat_slice(session_uri)
-
-    orchestrator_template_uri =
-      Map.get(slice, :orchestrator_template_uri) ||
-        get_in(slice, [:template_working_copy, :orchestrator_template_uri]) ||
-        Ezagent.URI.template(:system, :agent, "cc-orchestrator")
-
-    members = Map.get(slice, :members, %{})
-
-    template_members =
-      members
-      |> Enum.filter(fn {_uri, meta} -> Map.get(meta, :in_session_template) == true end)
-      |> Enum.map(fn {uri, meta} ->
-        %{
-          uri: uri,
-          role_name: Map.get(meta, :role_name),
-          in_session_template: true,
-          source_template_uri: Map.get(meta, :source_template_uri)
-        }
-      end)
-      |> Enum.sort_by(&inspect/1)
-
-    content = %{
-      description: Map.get(slice, :description, ""),
-      members: template_members,
-      prompt_templates: Map.get(slice, :prompt_templates, %{}),
-      legends: Map.get(slice, :legends, %{}),
-      routing_rules: session_rule_set_rules(session_uri, workspace_uri),
-      orchestrator_template_uri: orchestrator_template_uri,
-      default_workspace_uri: workspace_uri,
-      parent_template_uri: parent_uri
-    }
-
-    {:ok, content}
-  end
-
-  # Snapshot the session's rule-set routing rows (the rules this session
-  # created, keyed by `created_by = session_uri`) into the template-shaped
-  # `routing_rules` list materialization re-installs. Receivers that map to
-  # an `in_session_template: true` member are rewritten back to that
-  # member's role_name (so the snapshot is URI-independent + re-resolves on
-  # instantiate); other receivers pass through as concrete URI strings.
-  defp session_rule_set_rules(%URI{} = session_uri, %URI{} = _workspace_uri) do
-    table = EzagentDomainInstanceMessage.Routing.MentionRouting
-    session_str = URI.to_string(session_uri)
-    uri_to_role = uri_to_role_map(session_uri)
-
-    table
-    |> safe_rule_list()
-    |> Enum.filter(fn r -> r.created_by == session_str and not is_nil(r.rule_set) end)
-    |> Enum.flat_map(fn r ->
-      case Ezagent.Routing.Matcher.from_json(r.matcher_data) do
-        {:ok, matcher} ->
-          [
-            %{
-              matcher: matcher,
-              receivers:
-                Enum.map(r.receivers || [], fn rec -> Map.get(uri_to_role, rec, rec) end),
-              rule_set: r.rule_set,
-              position: r.position,
-              prompt_template_ref: r.prompt_template_ref
-            }
-          ]
-
-        _ ->
-          []
-      end
-    end)
-    |> Enum.sort_by(fn r -> {r.rule_set, r.position} end)
-  end
-
-  defp uri_to_role_map(%URI{} = session_uri) do
-    read_members(session_uri)
-    |> Enum.flat_map(fn
-      {%URI{} = uri, %{role_name: role}} when is_binary(role) ->
-        [{Ezagent.URI.stable_key(uri), role}]
-
-      _ ->
-        []
-    end)
-    |> Map.new()
-  end
-
-  defp safe_rule_list(table) do
-    Ezagent.Routing.RuleStore.list(table)
-  rescue
-    _ -> []
   end
 end
