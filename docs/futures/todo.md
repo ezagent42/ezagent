@@ -892,3 +892,21 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
   seams, RBK / Kind / Behavior / Template / domain.agent layering friction — and
   discuss how to make the codebase deeper, more testable, more AI-navigable. The
   discussion + proposals are the deliverable.
+
+- **cc/codex agent interactive-login + clean authenticated-terminal screenshot
+  (§5.B follow-up; Allen to co-handle).** §5.B cascade credential INHERITANCE is
+  proven at the mechanism level (#641 `cb49a7e3`: unified create routes file-flavor
+  agents through the #17 cascade → grant minted, source `.credentials.json`
+  materialized into the agent's ISOLATED `CLAUDE_CONFIG_DIR` (not operator
+  `~/.claude`), headless `claude --print` returns AUTHENTICATED exit 0 with no
+  per-agent `/login`; the management-UI Credential-cascade panel confirms the
+  resolved layer stack + source + active grant). REMAINING GAP vs the E2E bar:
+  claude v2.1.162's INTERACTIVE PTY still shows "Select login method" despite a
+  valid materialized cred — a claude-TUI-version + PtyServer theme/login dialog
+  scanner-timing artifact (relates to the #39 `:theme_dialog` auto-prompt). To do
+  together: (a) get a clean agent-browser screenshot of an authenticated cc
+  terminal (no /login, no theme dialog); (b) fix the theme/login-dialog scanner
+  timing so interactive cc agents reach the authenticated prompt; (c) the
+  source-agent `config_dir` cred is non-durable across the source's own respawns
+  (re-provision needed) — an E2E-provisioning durability gap to close. Needs
+  Allen's cooperation (interactive login + judgment).
