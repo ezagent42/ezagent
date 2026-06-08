@@ -161,7 +161,9 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
   end
 
   defp put_claude_config_dir(base_env, config_home, tmpl) do
-    reject_stale_config_dir_data_key!(tmpl)
+    # Cleanup-2: single cc-plugin definition lives on CcAgent; delegate
+    # (was a byte-identical fork in this module).
+    CcAgent.reject_stale_config_dir_data_key!(tmpl)
 
     cond do
       is_binary(config_home) and config_home != "" ->
@@ -177,20 +179,6 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
         base_env
     end
   end
-
-  defp reject_stale_config_dir_data_key!(tmpl) when is_map(tmpl) do
-    if Map.has_key?(tmpl, "claude_config_dir") do
-      raise ArgumentError,
-            "cc.agent: stale `claude_config_dir` data key — config_dir is now the " <>
-              "universal, flavor-neutral `config_dir` key (Allen 2026-06-03). Rename " <>
-              "`claude_config_dir` → `config_dir`. No back-compat shim " <>
-              "(feedback_let_it_crash_no_workarounds)."
-    else
-      :ok
-    end
-  end
-
-  defp reject_stale_config_dir_data_key!(_), do: :ok
 
   defp mandatory_settings_path do
     :code.priv_dir(:ezagent_plugin_cc)

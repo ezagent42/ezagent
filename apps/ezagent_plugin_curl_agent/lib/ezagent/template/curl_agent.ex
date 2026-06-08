@@ -97,12 +97,8 @@ defmodule Ezagent.PluginCurlAgent.Template do
 
   def template_data_extra(_), do: %{}
 
-  defp content_field(content, key) when is_atom(key) do
-    case Map.get(content, key) do
-      nil -> Map.get(content, Atom.to_string(key))
-      v -> v
-    end
-  end
+  # Cleanup-2: shared tolerant content reader lives in core.
+  defp content_field(content, key), do: Ezagent.Kind.Template.content_field(content, key)
 
   @impl Ezagent.Kind.Template
   def validate(tmpl) when is_map(tmpl) do
@@ -121,31 +117,9 @@ defmodule Ezagent.PluginCurlAgent.Template do
   defp check_class(%{"class" => other}), do: {:error, {:wrong_class, other}}
   defp check_class(_), do: {:error, :missing_class_field}
 
-  defp check_agent_uri(%{"agent_uri" => uri_str}) when is_binary(uri_str) and uri_str != "" do
-    # PR-B unify-uri-query: the URI is an opaque identifier. This validator
-    # checks only the structural entity-agent shape; flavor is stored in the
-    # Template Class/content, never parsed from the URI name prefix.
-    try do
-      case Ezagent.URI.new!(uri_str) do
-        %URI{scheme: "entity"} = uri ->
-          if Ezagent.URI.type?(uri, :agent) do
-            :ok
-          else
-            {:error, {:invalid_agent_uri, uri_str, "agent URI must be an entity agent URI"}}
-          end
-
-        %URI{} ->
-          {:error, {:invalid_agent_uri, uri_str, "agent URI must be an entity agent URI"}}
-
-        _ ->
-          {:error, {:bad_agent_uri, uri_str}}
-      end
-    rescue
-      ArgumentError -> {:error, {:bad_agent_uri, uri_str}}
-    end
-  end
-
-  defp check_agent_uri(_), do: {:error, :missing_agent_uri}
+  # Cleanup-2: shared entity-agent-URI validator lives in core
+  # (Ezagent.Kind.Template) — byte-identical across every flavor.
+  defp check_agent_uri(tmpl), do: Ezagent.Kind.Template.check_agent_uri(tmpl)
 
   defp check_provider(%{"provider" => p}) when is_binary(p) and p != "", do: :ok
   defp check_provider(_), do: {:error, :missing_provider}

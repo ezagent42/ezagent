@@ -262,13 +262,8 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   def template_data_extra(_), do: %{}
 
   # AgentTemplate `content` may carry atom (fresh) or string (post-JSON)
-  # keys — read tolerantly.
-  defp content_field(content, key) when is_atom(key) do
-    case Map.get(content, key) do
-      nil -> Map.get(content, Atom.to_string(key))
-      v -> v
-    end
-  end
+  # keys — read tolerantly. Cleanup-2: shared tolerant reader lives in core.
+  defp content_field(content, key), do: Ezagent.Kind.Template.content_field(content, key)
 
   @impl Ezagent.Kind.Template
   def validate(tmpl) when is_map(tmpl) do
@@ -357,31 +352,9 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   defp check_class(%{"class" => other}), do: {:error, {:wrong_class, other}}
   defp check_class(_), do: {:error, :missing_class_field}
 
-  defp check_agent_uri(%{"agent_uri" => uri_str}) when is_binary(uri_str) and uri_str != "" do
-    # PR-B unify-uri-query: the URI is an opaque identifier. This validator
-    # checks only the structural entity-agent shape; flavor is stored in the
-    # Template Class/content, never parsed from the URI name prefix.
-    try do
-      case Ezagent.URI.new!(uri_str) do
-        %URI{scheme: "entity"} = uri ->
-          if Ezagent.URI.type?(uri, :agent) do
-            :ok
-          else
-            {:error, {:invalid_agent_uri, uri_str, "agent URI must be an entity agent URI"}}
-          end
-
-        %URI{} ->
-          {:error, {:invalid_agent_uri, uri_str, "agent URI must be an entity agent URI"}}
-
-        _ ->
-          {:error, {:bad_agent_uri, uri_str}}
-      end
-    rescue
-      ArgumentError -> {:error, {:bad_agent_uri, uri_str}}
-    end
-  end
-
-  defp check_agent_uri(_), do: {:error, :missing_agent_uri}
+  # Cleanup-2: shared entity-agent-URI validator lives in core
+  # (Ezagent.Kind.Template) — byte-identical across every flavor.
+  defp check_agent_uri(tmpl), do: Ezagent.Kind.Template.check_agent_uri(tmpl)
 
   defp check_cwd(%{"cwd" => cwd}) when is_binary(cwd) and cwd != "", do: :ok
   defp check_cwd(_), do: {:error, :missing_cwd}
@@ -770,7 +743,11 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # isolated config dir / `CLAUDE_CONFIG_DIR`. No back-compat shim
   # (`feedback_let_it_crash_no_workarounds`) — raise so the misconfiguration
   # is visible.
-  defp reject_stale_config_dir_data_key!(tmpl) when is_map(tmpl) do
+  # Cleanup-2: single cc-plugin-internal definition; `SpawnPlan` delegates here
+  # (was a byte-identical fork). Public so the sibling SpawnPlan can reuse it.
+  @doc false
+  @spec reject_stale_config_dir_data_key!(map()) :: :ok
+  def reject_stale_config_dir_data_key!(tmpl) when is_map(tmpl) do
     if Map.has_key?(tmpl, "claude_config_dir") do
       raise ArgumentError,
             "cc.agent: stale `claude_config_dir` data key — config_dir is now the " <>
@@ -782,7 +759,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     end
   end
 
-  defp reject_stale_config_dir_data_key!(_), do: :ok
+  def reject_stale_config_dir_data_key!(_), do: :ok
 
   # config_dir promotion (Allen 2026-06-03) — PR-F lazy FORWARD migration.
   # `reject_stale_config_dir_data_key!/1` correctly fail-louds on a stale
