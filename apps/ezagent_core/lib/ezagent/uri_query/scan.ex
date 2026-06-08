@@ -27,6 +27,7 @@ defmodule Ezagent.UriQuery.Scan do
   @agent_flavor_prefixes ~w(cc_ codex_ curl_ echo_ np_)
   @known_categories [
     :flavor_prefix_dependency,
+    :home_path_in_runtime_code,
     :orchestrator_derivation,
     :parse_error,
     :positional_uri_read,
@@ -36,6 +37,8 @@ defmodule Ezagent.UriQuery.Scan do
     :uri_string_key
   ]
 
+  @home_functions [:path, :profile_dir, :home]
+
   @default_globs [
     "apps/**/*.ex"
   ]
@@ -43,6 +46,11 @@ defmodule Ezagent.UriQuery.Scan do
   @default_excluded_paths [
     "apps/ezagent_core/lib/ezagent/uri.ex",
     "apps/ezagent_core/lib/ezagent/uri_query/scan.ex",
+    # The scan's own data/anchor modules: they embed literal `resource://` and
+    # `Home.path` text in moduledocs + anchor/baseline tables, which would
+    # otherwise self-trip the raw-URI and home-path categories.
+    "apps/ezagent_core/lib/ezagent/uri_query/scan/home_path_exceptions.ex",
+    "apps/ezagent_core/lib/ezagent/uri_query/scan/home_path_baseline.ex",
     "apps/ezagent_core/lib/mix/tasks/ezagent.uri_query.scan.ex"
   ]
 
@@ -54,14 +62,30 @@ defmodule Ezagent.UriQuery.Scan do
     |> scan_paths(opts)
   end
 
-  @doc "Scan the given paths and return sorted findings."
+  @doc """
+  Scan the given paths and return sorted findings.
+
+  Options:
+
+    * `:exclude` — paths to skip (defaults to `@default_excluded_paths`).
+    * `:baseline` — line-anchored burn-down list of tolerated raw `Home`
+      callers (defaults to `HomePathBaseline.all/0`). A `home_path_in_runtime_code`
+      finding is dropped only when a baseline entry matches its `{path, line}`.
+    * `:exceptions` — exact `Module.function/arity` + line anchors for permanently
+      sanctioned raw `Home` callers (defaults to `HomePathExceptions.all/0`).
+      An exception is honored only when the finding's enclosing function id
+      EQUALS the anchor's `fun_id` at the recorded line (codex MEDIUM:
+      enclosing-function identity, not `{path, line}` alone).
+  """
   @spec scan_paths([Path.t()], keyword()) :: [Violation.t()]
   def scan_paths(paths, opts \\ []) when is_list(paths) do
     excluded = MapSet.new(Keyword.get(opts, :exclude, @default_excluded_paths))
+    baseline = Keyword.get(opts, :baseline, Ezagent.UriQuery.Scan.HomePathBaseline.all())
+    exceptions = Keyword.get(opts, :exceptions, Ezagent.UriQuery.Scan.HomePathExceptions.all())
 
     paths
     |> Enum.reject(&MapSet.member?(excluded, normalize_path(&1)))
-    |> Enum.flat_map(&scan_path/1)
+    |> Enum.flat_map(&scan_path(&1, baseline, exceptions))
     |> Enum.sort_by(&{&1.path, &1.line, to_string(&1.category), &1.rule})
   end
 
@@ -87,14 +111,15 @@ defmodule Ezagent.UriQuery.Scan do
     |> Enum.sort()
   end
 
-  defp scan_path(path) do
+  defp scan_path(path, baseline, exceptions) do
     source = File.read!(path)
     line_snippets = line_snippets(source)
 
     ast_violations =
       case Code.string_to_quoted(source, columns: true, token_metadata: true) do
         {:ok, ast} ->
-          ast_findings(ast, path, line_snippets)
+          ast_findings(ast, path, line_snippets) ++
+            home_path_findings(ast, path, line_snippets, baseline, exceptions)
 
         {:error, {line, error, token}} ->
           [
@@ -129,6 +154,317 @@ defmodule Ezagent.UriQuery.Scan do
     ]
     |> List.flatten()
     |> Enum.reject(&is_nil/1)
+  end
+
+  # ----------------------------------------------------------------------------
+  # home_path_in_runtime_code (Resource-unification P0.5)
+  #
+  # Flags every `Ezagent.Home.path/1` / `Home.profile_dir/0` / `Home.home/0` call
+  # in runtime app code, MINUS the line-anchored baseline (burn-down) and MINUS
+  # the exact `Module.function/arity` exceptions. Anchor subtraction is by
+  # enclosing-function identity (codex MEDIUM), never `{path, line}` alone.
+  # ----------------------------------------------------------------------------
+
+  defp home_path_findings(ast, path, snippets, baseline, exceptions) do
+    rel_path = normalize_path(path)
+    fun_index = function_anchor_index(ast)
+    # Burn-down baseline tolerates AT MOST the recorded number of Home calls per
+    # anchored line (codex MEDIUM): a second call added on a baselined line is a
+    # NEW caller and must fire. Track remaining budget per line.
+    baseline_budget = baseline_budget_for(baseline, rel_path)
+
+    {findings, _budget} =
+      ast
+      |> home_call_sites()
+      |> Enum.reduce({[], baseline_budget}, fn {line, fun}, {acc, budget} ->
+        cond do
+          exception_matches?(exceptions, rel_path, fun_index, line) ->
+            {acc, budget}
+
+          Map.get(budget, line, 0) > 0 ->
+            {acc, Map.update!(budget, line, &(&1 - 1))}
+
+          true ->
+            {[home_violation(path, line, fun, snippets) | acc], budget}
+        end
+      end)
+
+    Enum.reverse(findings)
+  end
+
+  defp home_violation(path, line, fun, snippets) do
+    violation(
+      :home_path_in_runtime_code,
+      path,
+      line,
+      "new raw Ezagent.Home.#{fun} call in runtime app code — resolve via resource:// " <>
+        "(add an exact Module.function/arity exception only for boot/operator/OS-handle callers)",
+      snippet(snippets, line: line)
+    )
+  end
+
+  # All Home.{path,profile_dir,home} call sites in the AST as [{line, fun_atom}].
+  # Matches the fully-qualified `Ezagent.Home.path(...)`, the plain
+  # `alias Ezagent.Home` (→ `Home.path(...)`), AND a renamed
+  # `alias Ezagent.Home, as: H` (→ `H.path(...)`) — codex HIGH: a renamed alias
+  # must not bypass the gate. An `import Ezagent.Home` (bare `path(...)`) is also
+  # caught. Never matches a local `home.path` variable/struct field access.
+  defp home_call_sites(ast) do
+    aliases = home_alias_names(ast)
+    imported = home_imported_functions(ast)
+
+    {_ast, sites} =
+      Macro.prewalk(ast, [], fn node, acc ->
+        case home_call(node, aliases, imported) do
+          {line, fun} -> {node, [{line, fun} | acc]}
+          nil -> {node, acc}
+        end
+      end)
+
+    Enum.sort(sites)
+  end
+
+  # Remote call on a module alias that resolves to Ezagent.Home. `List.last(mods)`
+  # also catches the `__MODULE__.Home.path(...)` shape (mods ends in `:Home`).
+  defp home_call({{:., meta, [{:__aliases__, _, mods}, fun]}, _call_meta, _args}, aliases, _imp)
+       when is_list(mods) and fun in @home_functions do
+    last = List.last(mods)
+
+    cond do
+      # fully-qualified Ezagent.Home.path / plain `alias Ezagent.Home` /
+      # `__MODULE__.Home.path` → trailing segment is `:Home`
+      last == :Home -> {line(meta), fun}
+      # `alias Ezagent.Home, as: H` → single-segment module H
+      mods == [last] and MapSet.member?(aliases, last) -> {line(meta), fun}
+      true -> nil
+    end
+  end
+
+  # Bare local call to a function imported from Ezagent.Home (respecting the
+  # `only:`/`except:` narrowing — `imported` is the set actually in scope).
+  defp home_call({fun, meta, args}, _aliases, imported)
+       when fun in @home_functions and is_list(args) do
+    if MapSet.member?(imported, fun), do: {line(meta), fun}, else: nil
+  end
+
+  defp home_call(_node, _aliases, _imported), do: nil
+
+  # Collect every alias name (last/renamed segment) that points to Ezagent.Home.
+  # Handles `alias Ezagent.Home`, `alias Ezagent.Home, as: H`, and the
+  # multi-alias `alias Ezagent.{Home, Foo}` form.
+  defp home_alias_names(ast) do
+    {_ast, names} =
+      Macro.prewalk(ast, [], fn node, acc -> {node, alias_names(node) ++ acc} end)
+
+    MapSet.new(names)
+  end
+
+  # `alias Ezagent.Home, as: H`
+  defp alias_names({:alias, _, [{:__aliases__, _, mods}, [{:as, {:__aliases__, _, [as]}}]]})
+       when is_list(mods) do
+    if List.last(mods) == :Home, do: [as], else: []
+  end
+
+  # `alias Ezagent.Home` (no `:as`) → bound as `Home`
+  defp alias_names({:alias, _, [{:__aliases__, _, mods}]}) when is_list(mods) do
+    if List.last(mods) == :Home, do: [:Home], else: []
+  end
+
+  # `alias Ezagent.{Home, Foo}` → each child bound as its own last segment
+  defp alias_names({:alias, _, [{{:., _, [{:__aliases__, _, base}, :{}]}, _, children}]})
+       when is_list(base) and is_list(children) do
+    for {:__aliases__, _, child} <- children,
+        List.last(base ++ child) == :Home,
+        do: List.last(child)
+  end
+
+  defp alias_names(_node), do: []
+
+  # The set of Home functions brought into scope by an `import Ezagent.Home`,
+  # respecting `only: [...]` / `except: [...]` narrowing. A plain
+  # `import Ezagent.Home` imports all of `@home_functions`; `only:` restricts to
+  # the listed names; `except:` removes the listed names. (Lexical per-scope
+  # narrowing is out of scope — a file-level union is conservative for a gate;
+  # only/except is the realistic false-positive source codex flagged.)
+  defp home_imported_functions(ast) do
+    {_ast, imported} =
+      Macro.prewalk(ast, MapSet.new(), fn
+        {:import, _, [{:__aliases__, _, mods} | rest]} = node, acc when is_list(mods) ->
+          if List.last(mods) == :Home do
+            {node, MapSet.union(acc, imported_home_set(rest))}
+          else
+            {node, acc}
+          end
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    imported
+  end
+
+  @home_function_set MapSet.new(@home_functions)
+
+  defp imported_home_set([opts | _]) when is_list(opts) do
+    cond do
+      only = keyword_fun_names(opts, :only) ->
+        MapSet.intersection(@home_function_set, only)
+
+      except = keyword_fun_names(opts, :except) ->
+        MapSet.difference(@home_function_set, except)
+
+      true ->
+        @home_function_set
+    end
+  end
+
+  defp imported_home_set(_no_opts), do: @home_function_set
+
+  # Extract the function-name set from `only:`/`except:` keyword list value, e.g.
+  # `[path: 1, profile_dir: 0]` → MapSet.new([:path, :profile_dir]).
+  defp keyword_fun_names(opts, key) do
+    case Keyword.fetch(opts, key) do
+      {:ok, list} when is_list(list) ->
+        for({name, _arity} when is_atom(name) <- list, do: name) |> MapSet.new()
+
+      _ ->
+        nil
+    end
+  end
+
+  # Per-line tolerance budget = how many baselined Home calls are recorded at
+  # each line for this path. Suppress at most that many; extras fire.
+  defp baseline_budget_for(baseline, rel_path) do
+    baseline
+    |> Enum.flat_map(fn
+      {^rel_path, line, _call} -> [line]
+      _ -> []
+    end)
+    |> Enum.frequencies()
+  end
+
+  # An exception is honored only when there is a function anchor enclosing `line`
+  # whose computed Module.function/arity == the recorded fun_id for THIS path.
+  defp exception_matches?(exceptions, rel_path, fun_index, line) do
+    Enum.any?(exceptions, fn
+      {^rel_path, fun_id, ^line, _reason} ->
+        enclosing_function_id(fun_index, line) == fun_id
+
+      _ ->
+        false
+    end)
+  end
+
+  @doc """
+  S-2 cross-check (codex MEDIUM): true when `path` has EXACTLY one
+  `Home.{path,profile_dir,home}` call at `line`, enclosed by a function whose
+  computed `Module.function/arity` equals `fun_id`.
+  """
+  @spec home_call_anchor_matches?(Path.t(), String.t(), pos_integer()) :: boolean()
+  def home_call_anchor_matches?(rel_path, fun_id, line) do
+    abs_path = Path.join(repo_root!(), rel_path)
+
+    with true <- File.exists?(abs_path),
+         {:ok, ast} <- Code.string_to_quoted(File.read!(abs_path)) do
+      calls_at_line = ast |> home_call_sites() |> Enum.filter(fn {l, _f} -> l == line end)
+      fun_index = function_anchor_index(ast)
+
+      length(calls_at_line) == 1 and enclosing_function_id(fun_index, line) == fun_id
+    else
+      _ -> false
+    end
+  end
+
+  @doc "True when `path` has at least one Home.{path,profile_dir,home} call at `line`."
+  @spec home_call_at_line?(Path.t(), pos_integer()) :: boolean()
+  def home_call_at_line?(rel_path, line) do
+    abs_path = Path.join(repo_root!(), rel_path)
+
+    with true <- File.exists?(abs_path),
+         {:ok, ast} <- Code.string_to_quoted(File.read!(abs_path)) do
+      ast |> home_call_sites() |> Enum.any?(fn {l, _f} -> l == line end)
+    else
+      _ -> false
+    end
+  end
+
+  # Build a list of {start_line, end_line, "Module.function/arity"} function
+  # anchors from the AST, so a call at `line` can be mapped to its enclosing fn.
+  defp function_anchor_index(ast) do
+    {_ast, anchors} =
+      Macro.prewalk(ast, {[], []}, fn node, {mod_stack, anchors} = acc ->
+        case node do
+          {:defmodule, _, [{:__aliases__, _, mods} | _]} ->
+            {node, {[Module.concat(mods) | mod_stack], anchors}}
+
+          {def_kw, meta, [head | _]} when def_kw in [:def, :defp] ->
+            case function_name_arity(head) do
+              {name, arity} ->
+                mod = List.first(mod_stack) || nil
+                fun_id = format_fun_id(mod, name, arity)
+                start = line(meta)
+                {node, {mod_stack, [{start, end_line(node, meta), fun_id} | anchors]}}
+
+              nil ->
+                {node, acc}
+            end
+
+          _ ->
+            {node, acc}
+        end
+      end)
+      |> then(fn {_n, {_stack, anchors}} -> {ast, anchors} end)
+
+    Enum.sort_by(anchors, fn {start, _end, _id} -> start end)
+  end
+
+  defp enclosing_function_id(fun_index, line) do
+    fun_index
+    |> Enum.filter(fn {start, finish, _id} -> start <= line and line <= finish end)
+    # innermost / nearest-preceding function head wins
+    |> Enum.max_by(fn {start, _finish, _id} -> start end, fn -> nil end)
+    |> case do
+      {_start, _finish, id} -> id
+      nil -> nil
+    end
+  end
+
+  # function head AST → {name, arity}. Handles `name(args)`, bare `name`,
+  # and guarded `name(args) when guard`.
+  defp function_name_arity({:when, _, [head | _guards]}), do: function_name_arity(head)
+
+  defp function_name_arity({name, _meta, args})
+       when is_atom(name) and is_list(args),
+       do: {name, length(args)}
+
+  defp function_name_arity({name, _meta, nil}) when is_atom(name), do: {name, 0}
+
+  defp function_name_arity(_head), do: nil
+
+  defp format_fun_id(nil, name, arity), do: "#{name}/#{arity}"
+  defp format_fun_id(mod, name, arity), do: "#{inspect(mod)}.#{name}/#{arity}"
+
+  # End line of a def block: the largest line number appearing in its metadata
+  # subtree. `:end` metadata (token_metadata) is most precise; fall back to the
+  # deepest line in the node.
+  defp end_line(node, meta) do
+    case Keyword.get(meta, :end) do
+      end_meta when is_list(end_meta) -> Keyword.get(end_meta, :line, max_line(node))
+      _ -> max_line(node)
+    end
+  end
+
+  defp max_line(node) do
+    {_node, max} =
+      Macro.prewalk(node, 0, fn
+        {_form, meta, _args} = n, acc when is_list(meta) ->
+          {n, max(acc, Keyword.get(meta, :line, 0))}
+
+        n, acc ->
+          {n, acc}
+      end)
+
+    max
   end
 
   defp positional_uri_read_finding(
