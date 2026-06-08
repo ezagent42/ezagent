@@ -573,7 +573,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
        when is_list(mods) do
     not line_allowed?(meta, allowed_lines) and
       (MapSet.member?(shim_set, mods) or
-         (match?([single], mods) and MapSet.member?(aliases, List.first(mods))))
+         (match?([_single], mods) and MapSet.member?(aliases, List.first(mods))))
   end
 
   defp shim_node?(_node, _shim_set, _aliases, _allowed_lines), do: false
