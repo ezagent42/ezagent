@@ -95,6 +95,14 @@ defmodule Ezagent.UploadsTest do
     end
   end
 
+  test "a REGISTERED non-uploads type (cc-agents) is still :none via Uploads (codex MEDIUM)" do
+    # Even though `cc-agents` is a registered FsResolver type, the uploads
+    # download boundary must NOT serve it — defense in depth so a token carrying a
+    # config-dir URI cannot be resolved through the uploads surface.
+    uri = Ezagent.URI.resource("team-alpha", "cc-agents", "config")
+    assert Uploads.resolve(uri, %{workspace: "team-alpha"}) == :none
+  end
+
   test "a traversal name segment is rejected before any byte is written" do
     uri = Ezagent.URI.resource("team-alpha", "uploads", "..")
 

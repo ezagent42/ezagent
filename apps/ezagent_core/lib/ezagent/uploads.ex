@@ -55,7 +55,17 @@ defmodule Ezagent.Uploads do
   """
   @spec resolve(URI.t(), scope()) :: {:ok, String.t()} | :none | {:error, term()}
   def resolve(%URI{} = uri, %{workspace: _} = scope) do
-    FsResolver.resolve(uri, scope)
+    # Enforce the uploads `<type>` at THIS boundary (codex MEDIUM): the generic
+    # `FsResolver` would happily resolve any registered type (e.g. a config-dir
+    # `<ns>-agents` URI in the same workspace), and `UploadToken` could in
+    # principle carry such a URI. The uploads download surface must only ever
+    # serve uploads bytes, so a non-uploads resource URI is `:none` here —
+    # defense in depth that does not depend on the minting caller being honest.
+    if EzURI.type?(uri, @type_segment) do
+      FsResolver.resolve(uri, scope)
+    else
+      :none
+    end
   end
 
   @doc """

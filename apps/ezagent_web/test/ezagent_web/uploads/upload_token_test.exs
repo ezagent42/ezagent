@@ -54,6 +54,14 @@ defmodule EzagentWeb.Uploads.UploadTokenTest do
       end
     end
 
+    test "a non-uploads resource type is rejected at mint (codex MEDIUM)" do
+      # A token must never name a config-dir / other FsResolver type, so the
+      # uploads download surface cannot be turned into a generic file reader.
+      assert_raise ArgumentError, ~r/uploads resource/, fn ->
+        UploadToken.mint!(EzURI.resource("acme", "cc-agents", "secret"), ttl_seconds: 60)
+      end
+    end
+
     test "tampered / forged token is rejected (MAC)" do
       assert {:error, _} = UploadToken.verify("not-a-real-token")
     end

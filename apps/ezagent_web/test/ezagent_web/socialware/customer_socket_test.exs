@@ -149,4 +149,94 @@ defmodule EzagentWeb.Socialware.CustomerSocketTest do
       "customer-socket-#{System.unique_integer([:positive])}"
     )
   end
+
+  describe "GET /socialware/customer/download — external bearer attachment (P2a, codex HIGH)" do
+    setup ctx do
+      home =
+        Path.join(System.tmp_dir!(), "ezagent_cust_dl_#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(home)
+      prior = System.get_env("EZAGENT_HOME")
+      System.put_env("EZAGENT_HOME", home)
+
+      on_exit(fn ->
+        if prior,
+          do: System.put_env("EZAGENT_HOME", prior),
+          else: System.delete_env("EZAGENT_HOME")
+
+        File.rm_rf(home)
+      end)
+
+      ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
+      %{ws_name: ws_name}
+    end
+
+    # Store bytes via the production uploads path + attach the upload in a
+    # committed customer-visible message so it is "approved".
+    defp store_approved_attachment(ctx, content) do
+      filename = "#{Ecto.UUID.generate()}-feed.pdf"
+      tmp = Path.join(System.tmp_dir!(), "tmp-#{System.unique_integer([:positive])}")
+      File.write!(tmp, content)
+      upload_uri = Ezagent.Uploads.store!(ctx.ws_name, filename, tmp)
+      File.rm(tmp)
+
+      msg =
+        Message.new(
+          Ezagent.URI.entity(:team_alpha, :agent, "orchestrator"),
+          %{text: "see attached", attachments: [upload_uri]},
+          visibility: :customer_visible
+        )
+
+      {:ok, written} = MessageStore.write(msg, ctx.session)
+      commit_message(ctx, "turn-feed-#{System.unique_integer([:positive])}", written.id)
+      {upload_uri, written}
+    end
+
+    defp dl_path(session, token, file_token) do
+      "/socialware/customer/download?session_uri=#{URI.encode_www_form(URI.to_string(session))}" <>
+        "&token=#{URI.encode_www_form(token)}&file_token=#{URI.encode_www_form(file_token)}"
+    end
+
+    test "anonymous viewer with valid customer + file tokens downloads an approved file", ctx do
+      {upload_uri, _} = store_approved_attachment(ctx, "feed-bytes")
+      file_token = EzagentWeb.Uploads.UploadToken.mint!(upload_uri, ttl_seconds: 60)
+
+      # No sign_in — the route is PUBLIC; authorization is purely token-based.
+      conn = get(build_conn(), dl_path(ctx.session, ctx.token, file_token))
+
+      assert conn.status == 200
+      assert conn.resp_body == "feed-bytes"
+    end
+
+    test "403 when the customer session token is forged", ctx do
+      {upload_uri, _} = store_approved_attachment(ctx, "feed-bytes")
+      file_token = EzagentWeb.Uploads.UploadToken.mint!(upload_uri, ttl_seconds: 60)
+
+      conn = get(build_conn(), dl_path(ctx.session, "forged", file_token))
+      assert conn.status == 403
+    end
+
+    test "403 after approval is revoked (serve-time re-validation)", ctx do
+      {upload_uri, written} = store_approved_attachment(ctx, "feed-bytes")
+      file_token = EzagentWeb.Uploads.UploadToken.mint!(upload_uri, ttl_seconds: 60)
+
+      # Works first.
+      assert get(build_conn(), dl_path(ctx.session, ctx.token, file_token)).status == 200
+
+      # Operator flips visibility back — the already-minted token must stop working.
+      {:ok, _} = MessageStore.mark_visibility([written.id], :operator_only)
+      assert get(build_conn(), dl_path(ctx.session, ctx.token, file_token)).status == 403
+    end
+
+    test "403 when the file token names a non-approved attachment", ctx do
+      # A token bound to an upload URI that is NOT an approved attachment in the
+      # session — minting succeeds (it's a valid uploads URI) but serve-time
+      # approval recheck denies it.
+      bogus = Ezagent.URI.resource(ctx.ws_name, "uploads", "#{Ecto.UUID.generate()}-x.pdf")
+      file_token = EzagentWeb.Uploads.UploadToken.mint!(bogus, ttl_seconds: 60)
+
+      conn = get(build_conn(), dl_path(ctx.session, ctx.token, file_token))
+      assert conn.status == 403
+    end
+  end
 end

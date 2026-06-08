@@ -120,4 +120,82 @@ defmodule Ezagent.Socialware.CustomerFeedApprovedAttachmentTest do
     {:ok, _} = MessageStore.mark_visibility([written.id], :operator_only)
     refute CustomerFeed.approved_attachment?(ctx.session, upload)
   end
+
+  describe "authorized_attachment_path/4 (external bearer path, codex HIGH)" do
+    # A fake resolver that returns a deterministic path for the upload URI under
+    # the given scope — stands in for `Ezagent.Uploads.resolve/2` so the test
+    # focuses on the AUTHORIZATION wiring (session-token + approved recheck +
+    # session-workspace scope), not the FS layout.
+    defp fake_resolve(uri, %{workspace: ws}) do
+      {:ok, "/fake/#{ws}/" <> Ezagent.URI.name!(uri)}
+    end
+
+    test "valid customer token + approved attachment resolves under the session ws", ctx do
+      ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
+      upload = upload_uri(ws_name, "uuid-ok.pdf")
+      _ = commit_message_with_attachment(ctx, upload, :customer_visible)
+
+      assert {:ok, path} =
+               CustomerFeed.authorized_attachment_path(
+                 ctx.session,
+                 ctx.token,
+                 upload,
+                 &fake_resolve/2
+               )
+
+      assert path == "/fake/#{ws_name}/uuid-ok.pdf"
+    end
+
+    test "an invalid / forged customer token is unauthorized", ctx do
+      ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
+      upload = upload_uri(ws_name, "uuid-ok.pdf")
+      _ = commit_message_with_attachment(ctx, upload, :customer_visible)
+
+      assert {:error, :unauthorized} =
+               CustomerFeed.authorized_attachment_path(
+                 ctx.session,
+                 "forged-token",
+                 upload,
+                 &fake_resolve/2
+               )
+    end
+
+    test "a not-approved attachment is unauthorized even with a valid customer token", ctx do
+      ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
+      upload = upload_uri(ws_name, "uuid-secret.pdf")
+      _ = commit_message_with_attachment(ctx, upload, :operator_only)
+
+      assert {:error, :unauthorized} =
+               CustomerFeed.authorized_attachment_path(
+                 ctx.session,
+                 ctx.token,
+                 upload,
+                 &fake_resolve/2
+               )
+    end
+
+    test "serve-time revocation: flipping to operator_only denies a previously-OK path", ctx do
+      ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
+      upload = upload_uri(ws_name, "uuid-revoke.pdf")
+      written = commit_message_with_attachment(ctx, upload, :customer_visible)
+
+      assert {:ok, _} =
+               CustomerFeed.authorized_attachment_path(
+                 ctx.session,
+                 ctx.token,
+                 upload,
+                 &fake_resolve/2
+               )
+
+      {:ok, _} = MessageStore.mark_visibility([written.id], :operator_only)
+
+      assert {:error, :unauthorized} =
+               CustomerFeed.authorized_attachment_path(
+                 ctx.session,
+                 ctx.token,
+                 upload,
+                 &fake_resolve/2
+               )
+    end
+  end
 end

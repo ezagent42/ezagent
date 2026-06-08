@@ -86,6 +86,45 @@ defmodule Ezagent.Socialware.CustomerFeed do
     end
   end
 
+  @doc """
+  Resolve a customer-feed attachment download to its on-disk path, doing ALL
+  feed-side authorization (Resource-unification P2a / OI-1) — the external bearer
+  path for viewers with NO session/caps:
+
+    1. **session auth** — `CustomerAuth.authorize/3` proves the caller holds a
+       valid token for `session_uri` + its workspace (the customer-feed token);
+    2. **file binding** — `upload_uri` is the URI the signed `UploadToken` was
+       bound to (passed in already-verified by the caller);
+    3. **serve-time approved-only re-validation** — `approved_attachment?/2`
+       re-confirms the attachment is STILL a committed customer-visible item in
+       this session (a revocation lever beyond the upload-token TTL);
+    4. **resolve** — under the SESSION's workspace (the authenticated subject for
+       the feed, derived from the session binding, NOT from the upload URI), via
+       the hardened uploads resolver (ws-segment authority + R-2 traversal guard).
+
+  Returns `{:ok, path}` | `{:error, :unauthorized}` (fail closed on any step).
+  `resolve_fun` is injected so the socialware domain does not depend on the web
+  uploads module — pass `&Ezagent.Uploads.resolve/2`.
+  """
+  @spec authorized_attachment_path(
+          URI.t(),
+          String.t(),
+          URI.t(),
+          (URI.t(), map() -> {:ok, String.t()} | :none | {:error, term()})
+        ) :: {:ok, String.t()} | {:error, :unauthorized}
+  def authorized_attachment_path(%URI{} = session_uri, token, %URI{} = upload_uri, resolve_fun)
+      when is_binary(token) and is_function(resolve_fun, 2) do
+    with {:ok, workspace_uri} <- workspace(session_uri),
+         :ok <- CustomerAuth.authorize(token, session_uri, workspace_uri),
+         true <- approved_attachment?(session_uri, upload_uri),
+         {:ok, ws_name} <- EzURI.workspace_name(workspace_uri),
+         {:ok, path} <- resolve_fun.(upload_uri, %{workspace: ws_name}) do
+      {:ok, path}
+    else
+      _ -> {:error, :unauthorized}
+    end
+  end
+
   defp message_attaches?(message, %URI{} = upload_uri) do
     target = EzURI.stable_key(upload_uri)
 

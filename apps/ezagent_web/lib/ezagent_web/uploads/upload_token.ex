@@ -70,6 +70,16 @@ defmodule EzagentWeb.Uploads.UploadToken do
   """
   @spec mint!(URI.t(), keyword()) :: String.t()
   def mint!(%URI{scheme: "resource"} = uri, opts \\ []) do
+    # Defense in depth (codex MEDIUM): a download token must only ever name an
+    # uploads resource — never a config-dir / other registered FsResolver type —
+    # so the uploads download surface cannot be turned into a generic file reader
+    # by a confused minting caller.
+    unless EzURI.type?(uri, "uploads") do
+      raise ArgumentError,
+            "upload token URI must be a workspace-scoped uploads resource " <>
+              "(type segment \"uploads\"); got #{inspect(uri)}"
+    end
+
     ttl = Keyword.get(opts, :ttl_seconds, @default_ttl)
     allow_nonpositive = Keyword.get(opts, :__test_allow_nonpositive__, false)
 

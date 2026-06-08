@@ -9,23 +9,29 @@ defmodule EzagentWeb.UploadsController do
   with a **signed capability token** (OI-1 DECISION) + a ws-segment authority
   check, and a ws-partitioned on-disk layout (`…/uploads/<ws>/<name>`).
 
-  ### Primary route — `GET /uploads/download?token=<token>`
+  ### Internal route — `GET /uploads/download?token=<token>` (authenticated)
 
-  The token (`EzagentWeb.Uploads.UploadToken`) is a MAC-signed bearer capability
-  encoding the FULL ws-scoped `resource://<ws>/uploads/<name>` URI + a short TTL.
-  It is **minted only after authorization** at the issuing surface:
-
-    * internal (operator/session): a live cap-check before minting;
-    * external customer-feed (#601/#603, viewers with no session/caps): gated by
-      the feed's approved-only visibility — a token is issued only for an approved
-      item, and serve-time re-validation re-confirms approval (a revocation lever
-      beyond TTL).
-
-  On download the controller (a) verifies the token (MAC + finite TTL — NEVER
-  `:infinity`), (b) extracts the bound URI, (c) runs the `FsResolver` `uploads`
-  `authority/2` with the **request-mount workspace** (derived from the
+  This route is the **internal operator/session** download path — it sits under
+  `RequireEntity`, so the caller is an authenticated Ezagent entity. The token
+  (`EzagentWeb.Uploads.UploadToken`) is a MAC-signed capability encoding the FULL
+  ws-scoped `resource://<ws>/uploads/<name>` URI + a short TTL, minted only after
+  the issuing surface authorized (the LiveView mount is a live in-workspace
+  session). On download the controller (a) verifies the token (MAC + finite TTL —
+  NEVER `:infinity`), (b) extracts the bound URI, (c) runs the `FsResolver`
+  `uploads` `authority/2` with the **request-mount workspace** (derived from the
   authenticated entity, NOT from the URI) so `uri.<ws> == mount.workspace`. A
-  token bound to another workspace cannot be served to a foreign mount.
+  token bound to another workspace cannot be served to a foreign mount, and a
+  token naming a non-uploads resource type is rejected by `Ezagent.Uploads`.
+
+  ### External customer-feed downloads live ELSEWHERE (codex P2 round-1 HIGH)
+
+  The **external** customer-feed (#601/#603, viewers with NO session/caps) is
+  served by the PUBLIC `GET /socialware/customer/download` route on
+  `EzagentWeb.Socialware.CustomerController`, NOT this authenticated route —
+  because a feed viewer would be bounced by `RequireEntity` here. That path
+  authorizes purely by capability (customer-feed session token + signed
+  `UploadToken`) and re-validates approved-only visibility at serve time via
+  `Ezagent.Socialware.CustomerFeed.authorized_attachment_path/4`.
 
   ### Back-compat shim — `GET /files/:filename` (the ONE sanctioned shim, N6)
 

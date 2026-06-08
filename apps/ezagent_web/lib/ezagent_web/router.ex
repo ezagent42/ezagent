@@ -50,6 +50,13 @@ defmodule EzagentWeb.Router do
     post "/register/complete", RegistrationController, :complete_create
 
     get "/socialware/customer", Socialware.CustomerController, :show
+
+    # Resource-unification P2a / OI-1 — PUBLIC external customer-feed attachment
+    # download (no RequireEntity; feed viewers have no session/caps). Authorized
+    # purely by capability: the customer-feed session token (CustomerAuth) + the
+    # signed UploadToken bound to the upload URI, with serve-time approved-only
+    # re-validation in CustomerFeed.authorized_attachment_path/4.
+    get "/socialware/customer/download", Socialware.CustomerController, :download
   end
 
   # /admin* requires login (Phase 4-completion Spec 05 §A.2.3 +
