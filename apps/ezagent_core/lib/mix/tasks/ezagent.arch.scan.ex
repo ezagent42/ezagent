@@ -64,6 +64,83 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
   @runtime_file "apps/ezagent_core/lib/ezagent/kind/runtime.ex"
   @measure_cache_key {__MODULE__, :measure}
 
+  # FF-1 — cross_file_duplicate_fn_groups.
+  #
+  # A function body is NOT counted as a fork when its `{name, arity}` is a
+  # framework behaviour callback AND the *enclosing module* actually declares the
+  # owning behaviour (via `use` / `@behaviour`). An identical callback body across
+  # two modules that both `use GenServer` is a contract obligation, not a
+  # copy-paste fork. Crucially the exemption is behaviour-SCOPED (codex r1 HIGH):
+  # a plain production helper coincidentally named `update`/`render`/`init`/
+  # `changeset` in a module that does NOT use the owning behaviour is still
+  # counted, so a new fork cannot hide behind a callback-shaped name.
+  #
+  # `@dup_callback_owners` maps an owner's LAST module segment (matched exactly,
+  # not as a substring — codex r2: a `use My.FancyComponents` must NOT match the
+  # `Component` owner) against the `{name, arity}` callbacks that behaviour owns.
+  # The marker must come from a `use X` / `@behaviour X` declared in the same
+  # enclosing module.
+  @dup_callback_owners %{
+    "GenServer" => [
+      {:init, 1},
+      {:terminate, 2},
+      {:handle_call, 3},
+      {:handle_cast, 2},
+      {:handle_info, 2},
+      {:handle_continue, 2},
+      {:code_change, 3},
+      {:format_status, 1},
+      {:format_status, 2}
+    ],
+    "Supervisor" => [{:init, 1}],
+    "Application" => [{:start, 2}, {:stop, 1}],
+    "LiveView" => [
+      {:mount, 3},
+      {:render, 1},
+      {:handle_event, 3},
+      {:handle_params, 3},
+      {:handle_info, 2},
+      {:terminate, 2}
+    ],
+    "LiveComponent" => [{:mount, 1}, {:render, 1}, {:update, 2}, {:handle_event, 3}],
+    "Component" => [{:render, 1}],
+    "Channel" => [{:join, 3}, {:handle_in, 3}, {:handle_info, 2}, {:terminate, 2}],
+    "Schema" => [{:changeset, 2}],
+    "Ecto" => [{:changeset, 2}],
+    "Lifecycle" => [{:create, 1}, {:activate, 2}, {:deactivate, 2}, {:destroy, 1}],
+    "Behavior" => [{:required_caps, 0}]
+  }
+
+  # `{name, arity}` exempt in EVERY module — universal OTP child-spec boilerplate
+  # that is mechanically identical by design and not behaviour-gated.
+  @dup_always_exempt MapSet.new([{:child_spec, 1}, {:start_link, 1}])
+
+  # FF-1 — only bodies at least this many normalized chars are considered, so a
+  # one-liner shared by coincidence (`do: :ok`) is not a "fork".
+  @dup_fn_min_body_chars 120
+
+  # FF-4 — the `/cc_socket` deprecation shim modules (promoted to the
+  # `ezagent_domain_agent_bridge` domain). A non-`agent_bridge`/non-test lib file
+  # that still references one — fully-qualified, via a grouped `alias` (codex r1
+  # MEDIUM), or a renamed `alias ..., as: X` — is a caller of the shim. Cleanup-3
+  # migrates these to the `Ezagent.AgentBridge.*` modules + deletes the shims,
+  # ratcheting this to 0.
+  @cc_bridge_shim_modules [
+    [:EzagentPluginCc, :BridgeRegistry],
+    [:EzagentPluginCc, :Socket],
+    [:EzagentPluginCc, :Channel],
+    [:EzagentPluginCc, :TokenStore]
+  ]
+
+  # The shim DEFINITION files themselves — a shim module referencing its own name
+  # (its `defmodule`) is not a "caller".
+  @cc_bridge_shim_files [
+    "apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/bridge_registry.ex",
+    "apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/socket.ex",
+    "apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/channel.ex",
+    "apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/token_store.ex"
+  ]
+
   @impl Mix.Task
   def run(_args) do
     Mix.shell().info("ezagent.arch.scan — architecture fitness functions")
@@ -137,6 +214,13 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
       create_session_call_sites: length(create_session_hits),
       create_session_modules: create_session_hits |> unique_files() |> length(),
       duplicated_resolve_template_class: duplicated_resolve_template_class(),
+      # FF-1: generalizes duplicated_resolve_template_class (which counts ONE
+      # known forked function by name) to the whole tree — every group of ≥2 lib
+      # files sharing a byte-identical (whitespace-normalized) function body.
+      # `duplicated_resolve_template_class` stays as the targeted ratchet for that
+      # specific fork; FF-1 is the broad fitness function for fork accretion.
+      cross_file_duplicate_fn_groups: cross_file_duplicate_fn_groups(),
+      cc_bridge_shim_callers: cc_bridge_shim_callers(),
       cc_codex_template_class_combined_loc:
         @template_class_files |> Enum.map(&line_count/1) |> Enum.sum(),
       raw_home_path_outside_core: raw_home_path_outside_core(),
@@ -240,6 +324,276 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
       Regex.match?(~r/resolve_template_class\(_\)/, line)
     end)
     |> length()
+  end
+
+  # FF-1 — count groups of cross-file duplicate function bodies.
+  #
+  # A "group" is a set of ≥2 DISTINCT lib files that each define a `def`/`defp`
+  # whose body — extracted via the real Elixir parser (so brace/`do`/`end`
+  # nesting is exact, not a line heuristic) and whitespace-normalized — is
+  # byte-identical and at least `@dup_fn_min_body_chars` chars. A
+  # behaviour-callback `{name, arity}` is excluded ONLY when its enclosing module
+  # declares the owning behaviour (codex r1 HIGH — name-only exemption let a new
+  # fork hide behind a callback-shaped name); `# arch-allow:` on the `def`/`defp`
+  # line suppresses one specific leg.
+  defp cross_file_duplicate_fn_groups do
+    lib_files()
+    |> Enum.flat_map(&duplicate_candidate_functions/1)
+    |> Enum.group_by(fn {_key, norm, _file} -> norm end)
+    |> Enum.count(fn {_norm, occurrences} ->
+      occurrences
+      |> Enum.map(fn {_key, _norm, file} -> file end)
+      |> Enum.uniq()
+      |> length() >= 2
+    end)
+  end
+
+  # Countable functions in `file` as `[{{name, arity}, normalized_fn, file}]`.
+  #
+  # Per ENCLOSING module (codex r2 MEDIUM — exemptions/markers are scoped to the
+  # module that owns the function, never file-wide), with all clauses of a
+  # `{name, arity}` AGGREGATED into one normalized representation BEFORE the
+  # length threshold (codex r2 MEDIUM — a copied multi-clause fork whose
+  # individual clauses are each <120 chars is still counted on its aggregate).
+  defp duplicate_candidate_functions(file) do
+    case Code.string_to_quoted(read!(file)) do
+      {:ok, ast} ->
+        allowed_lines = arch_allowed_lines(file)
+
+        ast
+        |> modules_with_functions()
+        |> Enum.flat_map(fn {markers, clauses} ->
+          exempt = exempt_callbacks(markers)
+
+          clauses
+          # aggregate clauses by {name, arity} → one normalized fn + its min line
+          |> Enum.group_by(fn {key, _norm, _line} -> key end)
+          |> Enum.map(fn {key, group} ->
+            agg = group |> Enum.map(fn {_k, norm, _l} -> norm end) |> Enum.join(" ; ")
+
+            all_allowed? =
+              Enum.all?(group, fn {_k, _n, line} -> MapSet.member?(allowed_lines, line) end)
+
+            {key, agg, all_allowed?}
+          end)
+          |> Enum.reject(fn {key, agg, all_allowed?} ->
+            MapSet.member?(@dup_always_exempt, key) or
+              MapSet.member?(exempt, key) or
+              String.length(agg) < @dup_fn_min_body_chars or
+              all_allowed?
+          end)
+          |> Enum.map(fn {key, agg, _allowed?} -> {key, agg, file} end)
+        end)
+
+      {:error, _} ->
+        []
+    end
+  end
+
+  # Each `defmodule` in the AST as `{behaviour_markers, [{key, norm, line}]}` —
+  # the module's OWN `use`/`@behaviour` markers paired with the `def`/`defp`
+  # clauses lexically inside THAT module's body (nested modules are returned as
+  # their own entries via the recursive walk). A non-`defmodule` top form
+  # (rare in lib) contributes its bare functions under empty markers.
+  defp modules_with_functions(ast) do
+    Macro.prewalk(ast, [], fn node, acc ->
+      case node do
+        {:defmodule, _meta, [_name, [{:do, body} | _]]} ->
+          {node, [{module_own_markers(body), module_own_clauses(body)} | acc]}
+
+        _ ->
+          {node, acc}
+      end
+    end)
+    |> elem(1)
+  end
+
+  # `use X` / `@behaviour X` markers declared DIRECTLY in this module body
+  # (stops at a nested `defmodule`, whose markers belong to it, not the parent).
+  defp module_own_markers(body) do
+    body
+    |> top_level_forms()
+    |> Enum.flat_map(fn
+      {:use, _m, [{:__aliases__, _, mods} | _]} when is_list(mods) -> [dotted(mods)]
+      {:@, _m, [{:behaviour, _, [{:__aliases__, _, mods}]}]} when is_list(mods) -> [dotted(mods)]
+      _ -> []
+    end)
+  end
+
+  # `def`/`defp` clauses declared DIRECTLY in this module body (not inside a
+  # nested defmodule) as `[{{name, arity}, normalized_body, line}]`.
+  defp module_own_clauses(body) do
+    body
+    |> top_level_forms()
+    |> Enum.flat_map(fn
+      {kw, meta, [head, [{:do, fbody} | _]]} when kw in [:def, :defp] ->
+        case fn_key(head) do
+          nil -> []
+          key -> [{key, normalize_body(fbody), Keyword.get(meta, :line, 0)}]
+        end
+
+      _ ->
+        []
+    end)
+  end
+
+  # The direct child forms of a module/`do` body: a `{:__block__, _, forms}`
+  # holds many; a single-statement body is the lone form.
+  defp top_level_forms({:__block__, _meta, forms}) when is_list(forms), do: forms
+  defp top_level_forms(form), do: [form]
+
+  # The `{name, arity}` callbacks exempt in a module with these markers: the
+  # union of callback sets whose owning behaviour's LAST module segment matches a
+  # marker's last segment (exact-segment, not substring — codex r2 MEDIUM: a
+  # `*Components` use must not match the `Component` owner). A module that does
+  # not declare the owner does NOT get its callbacks exempted.
+  defp exempt_callbacks(markers) do
+    marker_segments = MapSet.new(markers, &last_segment/1)
+
+    @dup_callback_owners
+    |> Enum.flat_map(fn {owner, callbacks} ->
+      if MapSet.member?(marker_segments, owner), do: callbacks, else: []
+    end)
+    |> MapSet.new()
+  end
+
+  defp last_segment(dotted), do: dotted |> String.split(".") |> List.last()
+
+  defp dotted(mods), do: Enum.map_join(mods, ".", &Atom.to_string/1)
+
+  defp fn_key({:when, _meta, [head | _]}), do: fn_key(head)
+  defp fn_key({name, _meta, args}) when is_atom(name) and is_list(args), do: {name, length(args)}
+  defp fn_key({name, _meta, nil}) when is_atom(name), do: {name, 0}
+  defp fn_key(_), do: nil
+
+  defp normalize_body(body) do
+    body
+    |> Macro.to_string()
+    |> String.replace(~r/\s+/, " ")
+    |> String.trim()
+  end
+
+  # FF-4 — count distinct non-`agent_bridge`/non-test lib files that still
+  # reference a `/cc_socket` deprecation-shim module. Counts caller FILES (the
+  # goal is "how many modules are coupled to the shim", which Cleanup-3 ratchets
+  # to 0). AST-based so a grouped `alias EzagentPluginCc.{BridgeRegistry, ...}` or
+  # a renamed `alias EzagentPluginCc.BridgeRegistry, as: X` is caught too (codex
+  # r1 MEDIUM) — a raw fully-qualified-string regex misses both.
+  defp cc_bridge_shim_callers do
+    shim_set = MapSet.new(@cc_bridge_shim_modules)
+
+    lib_files()
+    |> Enum.reject(fn file ->
+      file in @cc_bridge_shim_files or String.contains?(file, "/ezagent_domain_agent_bridge/")
+    end)
+    |> Enum.count(&file_references_shim?(&1, shim_set))
+  end
+
+  # True iff `file` references any shim module, whether fully-qualified, via a
+  # plain/grouped `alias`, or a renamed `alias ..., as: X` whose alias is then
+  # used as a remote-call/reference target. `# arch-allow:` on the line suppresses.
+  defp file_references_shim?(file, shim_set) do
+    case Code.string_to_quoted(read!(file)) do
+      {:ok, ast} ->
+        allowed_lines = arch_allowed_lines(file)
+        aliases = shim_alias_names(ast, shim_set)
+        shim_reference?(ast, shim_set, aliases, allowed_lines)
+
+      {:error, _} ->
+        # Parse failure: fall back to a conservative fully-qualified text scan so
+        # an unparseable file still can't silently hide a shim caller.
+        regex = cc_bridge_shim_fqn_regex()
+
+        file
+        |> file_lines()
+        |> Enum.any?(fn {line, _no} ->
+          not String.contains?(line, "# arch-allow:") and Regex.match?(regex, line)
+        end)
+    end
+  end
+
+  # Set of single-segment alias atoms that resolve to a shim module:
+  # `alias EzagentPluginCc.BridgeRegistry` → :BridgeRegistry;
+  # `alias EzagentPluginCc.{Socket, Channel}` → :Socket, :Channel;
+  # `alias EzagentPluginCc.TokenStore, as: TS` → :TS.
+  defp shim_alias_names(ast, shim_set) do
+    {_ast, names} =
+      Macro.prewalk(ast, [], fn node, acc ->
+        case node do
+          # alias A.B.C, as: X
+          {:alias, _m, [{:__aliases__, _, mods}, opts]} when is_list(mods) and is_list(opts) ->
+            if MapSet.member?(shim_set, mods) do
+              case Keyword.get(opts, :as) do
+                {:__aliases__, _, [as_atom]} -> {node, [as_atom | acc]}
+                _ -> {node, [List.last(mods) | acc]}
+              end
+            else
+              {node, acc}
+            end
+
+          # alias A.B.C  (plain)
+          {:alias, _m, [{:__aliases__, _, mods}]} when is_list(mods) ->
+            if MapSet.member?(shim_set, mods),
+              do: {node, [List.last(mods) | acc]},
+              else: {node, acc}
+
+          # alias A.B.{C, D}  (grouped)
+          {:alias, _m, [{{:., _, [{:__aliases__, _, base}, :{}]}, _, children}]} ->
+            grouped =
+              for {:__aliases__, _, child_mods} <- children,
+                  MapSet.member?(shim_set, base ++ child_mods),
+                  do: List.last(child_mods)
+
+            {node, grouped ++ acc}
+
+          _ ->
+            {node, acc}
+        end
+      end)
+
+    MapSet.new(names)
+  end
+
+  # True iff the AST contains a fully-qualified shim module reference OR a use of
+  # one of the resolved single-segment shim aliases.
+  defp shim_reference?(ast, shim_set, aliases, allowed_lines) do
+    {_ast, hit?} =
+      Macro.prewalk(ast, false, fn node, acc ->
+        if acc do
+          {node, acc}
+        else
+          {node, acc or shim_node?(node, shim_set, aliases, allowed_lines)}
+        end
+      end)
+
+    hit?
+  end
+
+  defp shim_node?({:__aliases__, meta, mods}, shim_set, aliases, allowed_lines)
+       when is_list(mods) do
+    not line_allowed?(meta, allowed_lines) and
+      (MapSet.member?(shim_set, mods) or
+         (match?([single], mods) and MapSet.member?(aliases, List.first(mods))))
+  end
+
+  defp shim_node?(_node, _shim_set, _aliases, _allowed_lines), do: false
+
+  defp line_allowed?(meta, allowed_lines) do
+    MapSet.member?(allowed_lines, Keyword.get(meta, :line, 0))
+  end
+
+  defp arch_allowed_lines(file) do
+    file
+    |> file_lines()
+    |> Enum.filter(fn {line, _no} -> String.contains?(line, "# arch-allow:") end)
+    |> Enum.map(fn {_line, no} -> no end)
+    |> MapSet.new()
+  end
+
+  # Conservative fully-qualified fallback regex (parse-failure path only).
+  defp cc_bridge_shim_fqn_regex do
+    alternation = Enum.map_join(@cc_bridge_shim_modules, "|", &dotted/1)
+    Regex.compile!("(#{alternation})(?![A-Za-z0-9_])")
   end
 
   defp raw_home_path_outside_core do

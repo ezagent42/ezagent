@@ -37,9 +37,9 @@ defmodule Ezagent.Routing.ResolverTest do
     )
   end
 
-  describe "resolve/2" do
+  describe "resolve/3" do
     test "returns [] when no rule matches → caller falls through to in-session default" do
-      assert [] = Resolver.resolve(msg(), URI.new!("session://system/default/main"))
+      assert [] = Resolver.resolve(msg(), URI.new!("session://system/default/main"), [])
     end
 
     test "mention(X) rule fires when message mentions X — returns receivers", %{table: t} do
@@ -48,7 +48,9 @@ defmodule Ezagent.Routing.ResolverTest do
       :ok =
         RoutingRegistry.put(t, Matcher.mention(target), ["session://team-alpha/default/oncall"])
 
-      result = Resolver.resolve(msg("hi", [target]), URI.new!("session://system/default/main"))
+      result =
+        Resolver.resolve(msg("hi", [target]), URI.new!("session://system/default/main"), [])
+
       assert result == [URI.new!("session://team-alpha/default/oncall")]
     end
 
@@ -67,7 +69,9 @@ defmodule Ezagent.Routing.ResolverTest do
           "session://team-alpha/default/C"
         ])
 
-      result = Resolver.resolve(msg("hi", [target]), URI.new!("session://system/default/main"))
+      result =
+        Resolver.resolve(msg("hi", [target]), URI.new!("session://system/default/main"), [])
+
       uris = result |> Enum.map(&URI.to_string/1) |> Enum.sort()
 
       assert uris == [
@@ -85,17 +89,19 @@ defmodule Ezagent.Routing.ResolverTest do
 
       assert Resolver.resolve(
                msg("server urgent down"),
-               URI.new!("session://system/default/main")
+               URI.new!("session://system/default/main"),
+               []
              ) ==
                [URI.new!("session://team-alpha/default/oncall")]
 
       # No match if word absent
-      assert Resolver.resolve(msg("all green"), URI.new!("session://system/default/main")) == []
+      assert Resolver.resolve(msg("all green"), URI.new!("session://system/default/main"), []) ==
+               []
     end
 
     test "table not declared in app env → silently skip (returns [])" do
       Application.put_env(:ezagent_core, :routing_tables, [:nonexistent_table])
-      assert [] = Resolver.resolve(msg(), URI.new!("session://system/default/main"))
+      assert [] = Resolver.resolve(msg(), URI.new!("session://system/default/main"), [])
     end
   end
 

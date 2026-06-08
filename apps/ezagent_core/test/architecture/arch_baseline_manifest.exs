@@ -12,6 +12,24 @@
   create_session_call_sites: 6,
   create_session_modules: 5,
   duplicated_resolve_template_class: 1,
+  # FF-1 (cleanup-1): groups of ≥2 lib files sharing a byte-identical
+  # (whitespace-normalized, ≥120-char) function. Functions are extracted per
+  # ENCLOSING module with all clauses of a `{name, arity}` AGGREGATED before the
+  # length threshold (codex r2 MEDIUM — module-scoped markers + multi-clause
+  # forks), and a callback `{name, arity}` is exempt ONLY when its enclosing
+  # module declares the owning behaviour by exact last-segment match (codex r1/r2
+  # — not name-only, not substring). Measured baseline 2026-06-08 = 32. The
+  # largest group is `check_agent_uri/1` (5 plugin template files) — Cleanup-2's
+  # dedup target, which will ratchet this down. Generalizes
+  # `duplicated_resolve_template_class`.
+  cross_file_duplicate_fn_groups: 32,
+  # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
+  # referencing a `/cc_socket` deprecation-shim module
+  # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Measured
+  # baseline 2026-06-08 = 3 (three liveview files calling BridgeRegistry).
+  # Cleanup-3 migrates those callers to Ezagent.AgentBridge.* + deletes the
+  # shims, ratcheting this to 0.
+  cc_bridge_shim_callers: 3,
   cc_codex_template_class_combined_loc: 2141,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
@@ -24,7 +42,13 @@
   # `HomePathExceptions`. Reconciles with the uri_query.scan
   # `home_path_in_runtime_code` baseline (see scan_home_path_reconcile_test.exs).
   raw_home_path_outside_core: 1,
-  path_expand_home: 2,
+  # Cleanup-1 FF-5 fix: `mcp_config_writer.ex` no longer hardcodes
+  # `Path.expand("~/.ezagent")` — its default dir now resolves through the
+  # post-Resource-unification `system://` seam (Ezagent.System.FsResolver). The
+  # only remaining non-exempt `Path.expand("~")` is the `~/.claude/.credentials`
+  # path printed in the `ezagent.demo.seed_cc_sandbox` operator help text.
+  # Lowered 2→1.
+  path_expand_home: 1,
   spawn_fresh_audit_references: 5,
   spawn_fresh_unsanctioned: 0,
   all_slices_occurrences: 3,

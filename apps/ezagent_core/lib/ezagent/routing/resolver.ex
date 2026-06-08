@@ -142,14 +142,6 @@ defmodule Ezagent.Routing.Resolver do
     resolve(message, current_session_uri, members, [])
   end
 
-  # Backward-compat shim: old 2-arg form, members default to []. Phase 4
-  # callers must pass members explicitly; this clause exists for
-  # transitional callers + tests that don't need member fan-out.
-  @spec resolve(Message.t(), URI.t()) :: [URI.t()]
-  def resolve(%Message{} = message, %URI{} = current_session_uri) do
-    resolve(message, current_session_uri, [], [])
-  end
-
   @doc """
   Phase 6 PR 8: 4-arg form with workspace-scope context.
 
