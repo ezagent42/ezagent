@@ -707,7 +707,7 @@ defmodule Ezagent.Orchestrator.McpServer do
   defp to_mcp_result(_tool, {:ok, value}) do
     %{
       "content" => [%{"type" => "text", "text" => describe_success(value)}],
-      "structuredContent" => as_struct_content(value),
+      "structuredContent" => stringify(value),
       "isError" => false
     }
   end
@@ -721,21 +721,9 @@ defmodule Ezagent.Orchestrator.McpServer do
   defp to_mcp_result(_tool, other) do
     %{
       "content" => [%{"type" => "text", "text" => describe_success(other)}],
-      "structuredContent" => as_struct_content(other),
+      "structuredContent" => stringify(other),
       "isError" => false
     }
-  end
-
-  # MCP `structuredContent` MUST be an object/record. A tool that returns a
-  # bare URI/string (e.g. add_managed_member → member URI) would otherwise
-  # serialize to a JSON string and the client rejects it with
-  # "expected record, received string". Wrap non-map results in `{result: …}`.
-  # (Same fix as PR #538 G-mcp; applied here so add_managed_member works on this branch.)
-  defp as_struct_content(value) do
-    case stringify(value) do
-      m when is_map(m) -> m
-      other -> %{"result" => other}
-    end
   end
 
   defp mcp_error(code, message) do

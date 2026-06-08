@@ -139,9 +139,17 @@ AI 两步都答对(库存 7 件 + 订单 O-1001 已发货/顺丰)。
 建了 agent template `template://agent/system/cc-presale-inventory`(`content.mcp_config_path` → `operator_mcp_config_path`,
 即外部 inventory MCP;role=default)。经编排器 `add_managed_member` 在 csdemo 真 session 里 spawn 出 worker
 `cc_presale_inv-6077…`。证据链:
-- **add_managed_member 成功**(需先补 PR #538 的 G-mcp `structuredContent` 修复 —— 本分支 off main 缺它,
-  会报 `expected record, received string`;已在本分支 re-apply,Allen 已认可该修复可独立 land)。编排器确认
+- **add_managed_member 成功**(当时本分支 off main #546 缺 G-mcp `structuredContent` 处理,
+  会报 `expected record, received string`;曾在本分支 re-apply 了一个 `as_struct_content` 包装修复)。编排器确认
   "售前客服坐席已就绪 … in_session_template:true"。
+
+  > **2026-06-08 更新(rebase 到 main 后的验证 — 记录 gap)**:rebase 到 `origin/main` @ `e6d372ec` 后,
+  > 该 `as_struct_content` 补丁**已被证伪并剔除**。证据:带补丁时 `orchestrator_mcp_e2e_test` + `scenario_33_full_star_test`
+  > 共 **6 个测试转红**;去掉补丁的对照组 **0 红**。根因:main 契约 = 单值 tool 结果是**裸 URI 字符串**,
+  > 内部消费者(`RuleStore.uri_to_string/1` / `KindSnapshot.get/1` / `URI.new!/1`)依赖裸串,一刀切包成
+  > `%{"result" => …}` 砸了它们。**未决 gap**:"live claude 是否仍拒裸串 `structuredContent`" 是 **client 侧**行为
+  > (repo 内无该错误串、bridge verbatim 转发、tool 无 outputSchema),只有真实 claude 能复现 —— 留作独立协议 smoke 探针,
+  > 见 spec `docs/superpowers/specs/2026-06-08-autoservice-socialware-migration-direction.md` §4。
 - **inventory MCP 确实挂上了**:worker 的 claude argv 实测含 `--mcp-config …/inventory.mcp.json`(在强制 chat bridge 之后,additive)。配置层完全打通。
 - **但 worker 不处理 chat**:客户 @mention → `AgentBridge deliver dropped: :timeout`,worker 零回复,inventory_mcp.py 始终没被拉起(claude 没走到处理消息那步)。chat esr-bridge 进程在跑,但 worker claude 没 join channel / 没消费消息。
 
