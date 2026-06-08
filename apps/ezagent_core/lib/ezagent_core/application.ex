@@ -14,6 +14,13 @@ defmodule EzagentCore.Application do
         # See DECISIONS impl-time §ETS+Application children.
         EzagentCore.EtsOwner,
 
+        # ①·5 Resource FS-resolver allowlist owner — Resource-unification SPEC
+        # §5.1 (codex round-1 HIGH). Owns the `:protected`
+        # `:ezagent_resource_fs_types` table (sole writer). Must start before any
+        # boot-time `Ezagent.Resource.FsResolver.register_type/2`. For P0 it is
+        # dormant (zero real types registered).
+        Ezagent.Resource.FsResolver.Registry,
+
         # ② stdlib Registry for URI → pid (Ezagent.KindRegistry wraps this).
         {Registry, keys: :unique, name: Ezagent.KindRegistry},
 
@@ -106,6 +113,12 @@ defmodule EzagentCore.Application do
     # EtsOwner already created the table; this populates the 6 core schemes.
     :ok = seed_uri_schemes()
     :ok = Ezagent.Uploads.register()
+
+    # Resource-unification P0 — the generic `resource://` FS-resolver allowlist is
+    # applied immutably inside `Ezagent.Resource.FsResolver.Registry.init/1` from
+    # its compile/config-time `boot_registrations/0` source (child ①·5); there is
+    # no runtime registration call here (codex round-4: no externally-mutable
+    # reopen window). P0 is DORMANT — that source is empty; P1/P2 extend it.
 
     # PR #146 (SPEC v2 §5.7) — synthetic singleton `routing-admin://default`
     # dissolved. `Ezagent.Behavior.Routing` is registered against the
