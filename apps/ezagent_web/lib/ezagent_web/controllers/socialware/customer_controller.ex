@@ -9,7 +9,7 @@ defmodule EzagentWeb.Socialware.CustomerController do
   use EzagentWeb, :controller
 
   alias Ezagent.Socialware.CustomerFeed
-  alias EzagentWeb.Uploads.UploadToken
+  alias Ezagent.Uploads.DownloadToken
 
   @doc """
   External customer-feed attachment download (Resource-unification P2a / OI-1).
@@ -19,7 +19,7 @@ defmodule EzagentWeb.Socialware.CustomerController do
 
     * `token` — the customer-feed session token (`CustomerAuth`), proving access
       to `session_uri`;
-    * `file_token` — the signed `UploadToken`, binding the exact ws-scoped
+    * `file_token` — the signed `DownloadToken`, binding the exact ws-scoped
       `resource://<ws>/uploads/<name>` URI;
 
   and `CustomerFeed.authorized_attachment_path/4` re-validates that the attachment
@@ -35,7 +35,7 @@ defmodule EzagentWeb.Socialware.CustomerController do
       })
       when is_binary(token) and is_binary(file_token) do
     with {:ok, session_uri} <- parse_session(session_str),
-         {:ok, upload_uri} <- UploadToken.verify(file_token),
+         {:ok, upload_uri} <- DownloadToken.verify(file_token),
          {:ok, path} <-
            CustomerFeed.authorized_attachment_path(
              session_uri,

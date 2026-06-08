@@ -199,7 +199,7 @@ defmodule EzagentWeb.Socialware.CustomerSocketTest do
 
     test "anonymous viewer with valid customer + file tokens downloads an approved file", ctx do
       {upload_uri, _} = store_approved_attachment(ctx, "feed-bytes")
-      file_token = EzagentWeb.Uploads.UploadToken.mint!(upload_uri, ttl_seconds: 60)
+      file_token = Ezagent.Uploads.DownloadToken.mint!(upload_uri, ttl_seconds: 60)
 
       # No sign_in — the route is PUBLIC; authorization is purely token-based.
       conn = get(build_conn(), dl_path(ctx.session, ctx.token, file_token))
@@ -210,7 +210,7 @@ defmodule EzagentWeb.Socialware.CustomerSocketTest do
 
     test "403 when the customer session token is forged", ctx do
       {upload_uri, _} = store_approved_attachment(ctx, "feed-bytes")
-      file_token = EzagentWeb.Uploads.UploadToken.mint!(upload_uri, ttl_seconds: 60)
+      file_token = Ezagent.Uploads.DownloadToken.mint!(upload_uri, ttl_seconds: 60)
 
       conn = get(build_conn(), dl_path(ctx.session, "forged", file_token))
       assert conn.status == 403
@@ -218,7 +218,7 @@ defmodule EzagentWeb.Socialware.CustomerSocketTest do
 
     test "403 after approval is revoked (serve-time re-validation)", ctx do
       {upload_uri, written} = store_approved_attachment(ctx, "feed-bytes")
-      file_token = EzagentWeb.Uploads.UploadToken.mint!(upload_uri, ttl_seconds: 60)
+      file_token = Ezagent.Uploads.DownloadToken.mint!(upload_uri, ttl_seconds: 60)
 
       # Works first.
       assert get(build_conn(), dl_path(ctx.session, ctx.token, file_token)).status == 200
@@ -233,7 +233,7 @@ defmodule EzagentWeb.Socialware.CustomerSocketTest do
       # session — minting succeeds (it's a valid uploads URI) but serve-time
       # approval recheck denies it.
       bogus = Ezagent.URI.resource(ctx.ws_name, "uploads", "#{Ecto.UUID.generate()}-x.pdf")
-      file_token = EzagentWeb.Uploads.UploadToken.mint!(bogus, ttl_seconds: 60)
+      file_token = Ezagent.Uploads.DownloadToken.mint!(bogus, ttl_seconds: 60)
 
       conn = get(build_conn(), dl_path(ctx.session, ctx.token, file_token))
       assert conn.status == 403

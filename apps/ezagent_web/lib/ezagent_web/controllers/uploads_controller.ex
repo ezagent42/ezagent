@@ -9,19 +9,26 @@ defmodule EzagentWeb.UploadsController do
   with a **signed capability token** (OI-1 DECISION) + a ws-segment authority
   check, and a ws-partitioned on-disk layout (`…/uploads/<ws>/<name>`).
 
+  The legacy `GET /files/:filename` route is **fully retired** (Allen-approved,
+  2026-06-08) — no back-compat shim. The internal LiveView download links now
+  mint the SAME signed token (`Ezagent.Uploads.DownloadToken`, a core module both
+  `ezagent_web` and `ezagent_plugin_liveview` may depend on), so there is exactly
+  one authorization carrier for every download surface.
+
   ### Internal route — `GET /uploads/download?token=<token>` (authenticated)
 
   This route is the **internal operator/session** download path — it sits under
   `RequireEntity`, so the caller is an authenticated Ezagent entity. The token
-  (`EzagentWeb.Uploads.UploadToken`) is a MAC-signed capability encoding the FULL
+  (`Ezagent.Uploads.DownloadToken`) is a MAC-signed capability encoding the FULL
   ws-scoped `resource://<ws>/uploads/<name>` URI + a short TTL, minted only after
-  the issuing surface authorized (the LiveView mount is a live in-workspace
-  session). On download the controller (a) verifies the token (MAC + finite TTL —
-  NEVER `:infinity`), (b) extracts the bound URI, (c) runs the `FsResolver`
-  `uploads` `authority/2` with the **request-mount workspace** (derived from the
-  authenticated entity, NOT from the URI) so `uri.<ws> == mount.workspace`. A
-  token bound to another workspace cannot be served to a foreign mount, and a
-  token naming a non-uploads resource type is rejected by `Ezagent.Uploads`.
+  the issuing surface authorized (the LiveView mint happens at render time, after
+  the LiveView's in-workspace mount cap-check). On download the controller (a)
+  verifies the token (MAC + finite TTL — NEVER `:infinity`), (b) extracts the
+  bound URI, (c) runs the `FsResolver` `uploads` `authority/2` with the
+  **request-mount workspace** (derived from the authenticated entity, NOT from
+  the URI) so `uri.<ws> == mount.workspace`. A token bound to another workspace
+  cannot be served to a foreign mount, and a token naming a non-uploads resource
+  type is rejected by `Ezagent.Uploads`.
 
   ### External customer-feed downloads live ELSEWHERE (codex P2 round-1 HIGH)
 
@@ -30,59 +37,64 @@ defmodule EzagentWeb.UploadsController do
   `EzagentWeb.Socialware.CustomerController`, NOT this authenticated route —
   because a feed viewer would be bounced by `RequireEntity` here. That path
   authorizes purely by capability (customer-feed session token + signed
-  `UploadToken`) and re-validates approved-only visibility at serve time via
+  `DownloadToken`) and re-validates approved-only visibility at serve time via
   `Ezagent.Socialware.CustomerFeed.authorized_attachment_path/4`.
 
-  ### Back-compat shim — `GET /files/:filename` (the ONE sanctioned shim, N6)
+  ## No auth-widening — serve-time participant re-check (codex P2-revision HIGH)
 
-  Already-minted filename-only links keep working during a stated deprecation
-  window. With no `<ws>` in the URL, the shim resolves the filename under the
-  caller's authenticated **mount workspace** — it serves the caller's OWN
-  workspace copy. This is the disambiguation the new contract makes explicit;
-  today's filenames are UUID-prefixed so a cross-workspace filename collision is
-  effectively impossible. Cross-workspace reads are still impossible (the resolver
-  `authority/2` denies a foreign `<ws>`).
+  The signed token is a CONVENIENCE carrier (it names the file + bounds the
+  leak window), NOT the sole authorization. Because the in-session LiveView
+  renders a token link for everyone who can VIEW the session (workspace-level
+  view authority, which includes observe-only callers without `chat.join`),
+  minting alone would WIDEN access vs. the retired `/files` route — and a leaked
+  token could be replayed by any same-workspace caller within its TTL. To keep
+  the access decision identical to the pre-P2 contract, `download/2` ALSO runs
+  the independent participant authorization at serve time: the authenticated
+  caller must be an **admin**, the **uploader** of an attaching message, or a
+  **session participant** (has sent a message into a session the attachment was
+  routed to). A leaked/observer token is therefore useless to a non-participant.
 
-  > 🔒 **ALLEN-REVIEW — scope widening within a workspace (codex round-2 HIGH).**
-  > The shim authorizes by *workspace membership* only, which is BROADER than the
-  > pre-P2 participation-based authz (admin / uploader / session-participant): any
-  > authenticated entity in workspace W that learns a stored UUID filename can
-  > fetch it via `/files/:filename` without a signed token. This is an accepted,
-  > deliberate part of the contract change for the deprecation window (filenames
-  > are unguessable `<uuid>-` names; cross-workspace is still denied). The
-  > internal LiveView still renders `/files/` links (the liveview plugin cannot
-  > depend on the web token module), so removing the shim now would break the live
-  > UI. Tighten/retire this shim — and switch the LiveView render path to signed
-  > tokens — once the deprecation window closes. **This is the headline item for
-  > Allen's review.**
-
-  ## Why the controller is now thin
+  ## Why the controller is thin
 
   Workspace isolation, traversal rejection (R-2), and the `Home.path` chokepoint
   (R-4) all live in `Ezagent.Resource.FsResolver` (via `Ezagent.Uploads`). The
-  controller is a transport adapter: derive the authenticated mount workspace,
-  resolve, serve. Authorization decisions happen BEFORE inspecting the disk so an
-  unauthorized caller cannot use the 404/403 distinction as a file-existence
-  oracle.
+  controller derives the authenticated mount workspace, verifies the token, runs
+  the participant authz, resolves, serves. Authorization decisions happen BEFORE
+  inspecting the disk so an unauthorized caller cannot use the 404/403
+  distinction as a file-existence oracle.
   """
 
   use EzagentWeb, :controller
 
-  alias Ezagent.Uploads
+  import Ecto.Query
+
+  alias Ezagent.{Message, MessageRouting, MessageStore, Uploads}
+  alias Ezagent.Uploads.DownloadToken
   alias Ezagent.URI, as: EzURI
-  alias EzagentWeb.Uploads.UploadToken
+  alias EzagentCore.Repo
+
+  # Cap on the number of candidate Message rows we'll fully load + decode to
+  # verify an attachment match (defense against a session that text-quoted the
+  # filename many times). Exceeding it falls through to deny; admin bypass
+  # remains the operator escape hatch.
+  @candidate_cap 256
 
   @doc """
   Primary download route — `GET /uploads/download?token=<token>`.
 
-  Verifies the signed capability token, then authorizes by ws-segment against the
-  caller's authenticated mount workspace via the resolver's `authority/2`.
+  Verifies the signed capability token, runs the participant authorization (admin
+  / uploader / session-participant — the pre-P2 contract, so the token does NOT
+  widen access), then authorizes by ws-segment against the caller's authenticated
+  mount workspace via the resolver's `authority/2`.
   """
   def download(conn, %{"token" => token}) when is_binary(token) do
-    with {:ok, uri} <- UploadToken.verify(token),
+    with {:ok, uri} <- DownloadToken.verify(token),
+         caller_uri = conn.assigns[:current_entity_uri],
+         {:ok, filename} <- EzURI.name(uri),
+         true <- authorized?(caller_uri, filename),
          {:ok, mount_ws} <- mount_workspace(conn),
          {:ok, full} <- wrap_resolve(Uploads.resolve(uri, %{workspace: mount_ws})) do
-      serve(conn, full, EzURI.name(uri))
+      serve(conn, full, {:ok, filename})
     else
       _ -> forbidden(conn)
     end
@@ -90,34 +102,128 @@ defmodule EzagentWeb.UploadsController do
 
   def download(conn, _params), do: forbidden(conn)
 
-  @doc """
-  Back-compat shim — `GET /files/:filename`. Resolves a filename-only link under
-  the caller's authenticated mount workspace (the ONE sanctioned shim, N6).
-  """
-  def show(conn, %{"filename" => filename}) do
-    safe = Path.basename(filename)
+  # --- Authorization (pre-P2 contract — admin / uploader / participant) ------
 
+  # RequireEntity should have bounced an anon caller; defensive nil clause stays
+  # false rather than crashing.
+  defp authorized?(nil, _filename), do: false
+
+  defp authorized?(%URI{} = caller_uri, filename) do
     cond do
-      safe == "" or safe == "." or safe == ".." or safe != filename ->
-        conn
-        |> put_status(:bad_request)
-        |> text("invalid filename")
+      admin?(caller_uri) -> true
+      caller_in_attaching_messages?(caller_uri, filename) -> true
+      true -> false
+    end
+  end
 
-      true ->
-        case mount_workspace(conn) do
-          {:ok, mount_ws} ->
-            uri = Uploads.resource_uri(mount_ws, safe)
+  defp authorized?(_caller, _filename), do: false
 
-            case wrap_resolve(Uploads.resolve(uri, %{workspace: mount_ws})) do
-              {:ok, full} -> serve(conn, full, {:ok, safe})
-              :error -> forbidden(conn)
-            end
+  defp admin?(%URI{} = uri) do
+    if Code.ensure_loaded?(Ezagent.Identity) and
+         function_exported?(Ezagent.Identity, :admin?, 1) do
+      Ezagent.Identity.admin?(uri)
+    else
+      false
+    end
+  end
 
-          :error ->
-            forbidden(conn)
+  # Combined uploader + session-participant check. Loads candidate Message rows
+  # (narrowed by SQL LIKE on body), decodes each row's `body.attachments` in
+  # Elixir, and confirms the filename is in the ACTUAL attachment URI list —
+  # NOT just substring-present in the body JSON.
+  defp caller_in_attaching_messages?(%URI{} = caller_uri, filename) do
+    candidates = load_candidate_messages(filename)
+    attaching = Enum.filter(candidates, &message_attaches?(&1, filename))
+
+    case attaching do
+      [] ->
+        false
+
+      msgs ->
+        caller_str = URI.to_string(caller_uri)
+
+        uploader? = Enum.any?(msgs, fn m -> URI.to_string(m.sender) == caller_str end)
+
+        if uploader? do
+          true
+        else
+          attaching_session_uris =
+            msgs
+            |> Enum.flat_map(fn m -> MessageStore.sessions_for_message(m.id) end)
+            |> Enum.uniq()
+
+          caller_sent_in_any_session?(caller_str, attaching_session_uris)
         end
     end
   end
+
+  defp load_candidate_messages(filename) do
+    pattern = like_pattern(filename)
+    escape = like_escape_char()
+
+    from(m in Message,
+      where:
+        fragment(
+          "CAST(? AS TEXT) LIKE ? ESCAPE ?",
+          m.body,
+          ^pattern,
+          ^escape
+        ),
+      limit: @candidate_cap
+    )
+    |> Repo.all()
+  end
+
+  defp message_attaches?(%Message{body: body}, filename) do
+    attachments =
+      case body do
+        %{attachments: list} when is_list(list) -> list
+        %{"attachments" => list} when is_list(list) -> list
+        _ -> []
+      end
+
+    Enum.any?(attachments, &attachment_matches?(&1, filename))
+  end
+
+  defp attachment_matches?(%URI{scheme: "resource"} = uri, filename) do
+    EzURI.type?(uri, :uploads) and EzURI.name?(uri, filename)
+  end
+
+  defp attachment_matches?(s, filename) when is_binary(s) do
+    attachment_matches?(EzURI.new!(s), filename)
+  rescue
+    ArgumentError -> false
+  end
+
+  defp attachment_matches?(_, _), do: false
+
+  defp caller_sent_in_any_session?(_caller_str, []), do: false
+
+  defp caller_sent_in_any_session?(caller_str, session_uris) when is_list(session_uris) do
+    from(m in Message,
+      join: r in MessageRouting,
+      on: r.message_id == m.id,
+      where: m.sender == ^caller_str and r.session_uri in ^session_uris,
+      select: 1,
+      limit: 1
+    )
+    |> Repo.exists?()
+  end
+
+  # SQL LIKE pattern matching the filename anywhere in CAST(body AS TEXT). We
+  # escape `%`, `_`, `\` with `\` as the escape char (paired with an explicit
+  # `ESCAPE '\'` in load_candidate_messages/1).
+  defp like_pattern(filename) do
+    escaped =
+      filename
+      |> String.replace("\\", "\\\\")
+      |> String.replace("%", "\\%")
+      |> String.replace("_", "\\_")
+
+    "%" <> escaped <> "%"
+  end
+
+  defp like_escape_char, do: "\\"
 
   # --- internals -------------------------------------------------------------
 

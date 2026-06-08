@@ -307,28 +307,25 @@ defmodule Ezagent.UriQuery.ScanHomePathTest do
       end
     end
 
-    # P3 completion invariant (feedback_completion_requires_invariant_test): the
-    # entire population-3 runtime caller set (agent_bridge token registry,
-    # identity smtp_config, feishu app-cred + inbox + plugin config, python log)
-    # has migrated behind the `UriQuery` seam, so the burn-down baseline holds
-    # ONLY the still-pending P2 uploads entries. When P2 lands (Allen-gated) and
-    # removes those, the baseline reaches the fully-empty terminal state.
-    test "P3 completion: only the P2-pending uploads entries remain in the baseline" do
+    # P2 completion invariant (feedback_completion_requires_invariant_test): with
+    # P3 done (agent_bridge token registry, identity smtp_config, feishu app-cred
+    # + inbox + plugin config, python log all migrated behind the `UriQuery` seam)
+    # AND P2 done (uploads now store + read through `Ezagent.Resource.FsResolver`,
+    # so `Ezagent.Uploads` no longer calls raw `Home.path(:uploads)`), the
+    # burn-down baseline reaches its fully-empty terminal state. The lockdown is
+    # complete: every runtime caller resolves through `resource://` / `system://`,
+    # and only the sanctioned exempt-only callers remain (boot / config-eval /
+    # operator mix-tasks / the R-4 resolver backend chokepoint).
+    test "P2/P3 completion: the home_path baseline is fully empty (lockdown complete)" do
       remaining = MapSet.new(HomePathBaseline.all(), fn {p, l, _c} -> {p, l} end)
 
-      expected_pending =
-        MapSet.new([
-          {"apps/ezagent_core/lib/ezagent/uploads.ex", 40},
-          {"apps/ezagent_core/lib/ezagent/uploads.ex", 75}
-        ])
-
-      assert remaining == expected_pending,
+      assert remaining == MapSet.new([]),
              """
-             After P3, the home_path_in_runtime_code baseline must contain ONLY \
-             the P2-pending uploads entries (every population-3 caller migrated to \
-             the system:// / resource:// UriQuery seam). Drift:
-               unexpected: #{inspect(MapSet.difference(remaining, expected_pending) |> MapSet.to_list())}
-               missing:    #{inspect(MapSet.difference(expected_pending, remaining) |> MapSet.to_list())}
+             After P2+P3, the home_path_in_runtime_code burn-down baseline must be \
+             EMPTY — every runtime Home caller has migrated to the UriQuery seam \
+             (resource:// / system://) and only the HomePathExceptions exempt-only \
+             callers remain. Drift (unexpected surviving baseline entries):
+               #{inspect(MapSet.to_list(remaining))}
              """
     end
 

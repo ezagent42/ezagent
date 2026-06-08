@@ -62,34 +62,27 @@ defmodule EzagentWeb.Router do
   # /admin* requires login (Phase 4-completion Spec 05 §A.2.3 +
   # PR #123 hardening: live_session on_mount gates the WS reconnect
   # path that bypasses the HTTP Plug pipeline).
-  # PR-B: file download route for chat compose uploads. Mounted in the
-  # EzagentWeb scope (so the controller resolves correctly), under the
-  # same RequireEntity plug as the LV scope below.
+  # Authenticated chat-compose upload download. Mounted in the EzagentWeb
+  # scope (so the controller resolves correctly), under the same
+  # RequireEntity plug as the LV scope below.
   #
-  # 2026-05-25 fix (PR #305 r4 HIGH — uploads-route scope mismatch):
-  # the chat-compose upload download was at `/admin/uploads/:filename`,
-  # which made it LOOK admin-gated (the `/admin/*` URL prefix is) but
-  # it's a controller route — `live_session :require_admin` (below)
-  # ONLY gates LiveView mounts. Moved to `/files/:filename` so the
-  # URL reflects the actual scope (user-scope, not admin-scope), and
-  # UploadsController now enforces per-user authz directly (caller
-  # must be admin, the uploading user, OR a participant in any
-  # session the file is attached to — see UploadsController.show/2).
+  # Resource-unification P2 (🔒 auth-contract change, Allen-approved
+  # 2026-06-08): the legacy `/files/:filename` route is FULLY RETIRED — no
+  # back-compat shim. There is exactly ONE download surface for internal
+  # callers — `/uploads/download?token=` — authorized by a signed capability
+  # token. The internal LiveView mints the SAME token at render time (via the
+  # core `Ezagent.Uploads.DownloadToken` module), so the UI never builds a
+  # `/files/...` link.
   scope "/", EzagentWeb do
     pipe_through [:browser, EzagentWeb.Plugs.RequireEntity]
 
-    # Resource-unification P2 (🔒 auth-contract change) — primary upload
-    # download route: a signed capability token (EzagentWeb.Uploads.UploadToken)
-    # bound to the ws-scoped resource://<ws>/uploads/<name> URI, authorized by
-    # ws-segment against the authenticated mount workspace via the FsResolver
-    # `uploads` authority/2. Replaces the participation-based authz that the
-    # back-compat /files/:filename shim below used pre-P2.
+    # Resource-unification P2 (🔒 auth-contract change) — the SOLE internal
+    # upload download route: a signed capability token
+    # (`Ezagent.Uploads.DownloadToken`) bound to the ws-scoped
+    # resource://<ws>/uploads/<name> URI, authorized by ws-segment against the
+    # authenticated mount workspace via the FsResolver `uploads` authority/2.
+    # Replaces the retired participation-based `/files/:filename` route.
     get "/uploads/download", UploadsController, :download
-
-    # Back-compat shim (the ONE sanctioned window, N6) — already-minted
-    # filename-only links; resolved under the caller's authenticated mount
-    # workspace. Remove when the deprecation window closes.
-    get "/files/:filename", UploadsController, :show
 
     # Phase 9 PR-5 (SPEC v3 §6.4 amended): workspace switcher endpoint.
     # Logged-in users POST here from the top-left workspace dropdown;
@@ -175,9 +168,11 @@ defmodule EzagentWeb.Router do
     # under `/admin/*` MUST be a `live` route declared inside this
     # `live_session :require_admin` block. The previous outlier —
     # `get "/admin/uploads/:filename"` (a plain controller route that
-    # `live_session` does NOT gate) — has been moved to
-    # `/files/:filename` above, with per-user authz in
-    # UploadsController. If a future PR adds another controller-style
+    # `live_session` does NOT gate) — was moved out of `/admin/*` and
+    # has since been retired entirely (Resource-unification P2): upload
+    # downloads now go through the token-authorized `/uploads/download`
+    # controller route in the EzagentWeb scope above.
+    # If a future PR adds another controller-style
     # route at `/admin/*`, that PR is wrong: either lift it to a LV
     # (and put it here), or rename the URL out of `/admin/*` and
     # gate it with an explicit plug. By inspection of this file

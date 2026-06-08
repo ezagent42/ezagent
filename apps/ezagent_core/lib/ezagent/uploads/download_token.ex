@@ -1,14 +1,25 @@
-defmodule EzagentWeb.Uploads.UploadToken do
+defmodule Ezagent.Uploads.DownloadToken do
   @moduledoc """
   Signed capability download token for chat uploads (Resource-unification
   SPEC §6 P2a / OI-1 DECISION).
 
   S3-presigned-URL style: a MAC-signed bearer token that encodes the **full
   ws-scoped** `resource://<ws>/uploads/<name>` URI plus its issue time and TTL.
-  It replaces the participation-based `GET /files/:filename` authorization so the
-  external React customer-feed (#601/#603) — whose viewers have NO session/caps —
-  can be served attachments via a capability the operator/feed minted, while the
-  internal operator/session path mints the same token after a live cap-check.
+  It is the SOLE authorization carrier for the `GET /uploads/download?token=`
+  internal route, the public `GET /socialware/customer/download` feed route, and
+  the internal LiveView download links — replacing the retired participation-based
+  `/files/:filename` route (no back-compat shim).
+
+  ## Why this lives in `ezagent_core`
+
+  Both `ezagent_web` (the download controllers) AND `ezagent_plugin_liveview`
+  (which renders the in-session attachment download links) must mint/verify the
+  SAME token. Per the three-tier boundary (`references/three-tier-structure.md`),
+  a plugin MAY depend on `core` but MUST NOT depend on `ezagent_web` nor reach
+  into web internals (Allen's north-star: plugin authors stay out of core/web).
+  `core` already depends on `:phoenix` (for `Phoenix.Presence`/`Phoenix.Token`),
+  so the mint/verify primitive is a legitimate shared `core` capability — the
+  LiveView obtains it via a plain `core` call, never via a web module.
 
   ## Security properties (all REQUIRED by OI-1)
 
@@ -19,10 +30,13 @@ defmodule EzagentWeb.Uploads.UploadToken do
       a token minted for `resource://acme/uploads/f.pdf` verifies to *exactly*
       that URI and cannot be replayed against `resource://victim/uploads/f.pdf`
       (workspace isolation) or any other file.
+    * **type-locked to `uploads`** — `mint!/2` refuses any URI whose type segment
+      is not `uploads`, so a confused caller cannot turn the download surface into
+      a generic file reader for config-dir / other registered FsResolver types.
     * **minted only after authorization** — this module does NOT itself authorize;
-      the caller (controller mint endpoint / customer-feed) MUST authorize before
-      calling `mint!/2`. See `EzagentWeb.UploadsController` (internal cap-check)
-      and the customer-feed approved-only gate.
+      every caller (the internal controller mint endpoint, the LiveView render
+      after its in-workspace mount cap-check, the customer-feed approved-only
+      gate) MUST authorize before calling `mint!/2`. This module is a pure signer.
     * **verify NEVER uses `:infinity`** — `verify/1` enforces the per-token TTL
       against the embedded `issued_at`, under a finite 24h outer `Phoenix.Token`
       `max_age` ceiling. A token is rejected the moment `now > issued_at + ttl`.
@@ -31,6 +45,14 @@ defmodule EzagentWeb.Uploads.UploadToken do
   rather than via `Phoenix.Token`'s own `max_age` (which cannot read the per-token
   TTL before verifying). `Phoenix.Token`'s `max_age` is used only as the coarse
   24h outer bound so no token — whatever its embedded TTL — outlives the ceiling.
+
+  ## Signing secret
+
+  The MAC key is the application `secret_key_base`, read at runtime from
+  `config :ezagent_core, #{inspect(__MODULE__)}, secret_key_base: <string>`
+  (wired in `config/{dev,test,runtime}.exs` to the same value the web endpoint
+  uses). `core` owns this config key, so the module names neither `:ezagent_web`
+  nor `EzagentWeb.Endpoint` — keeping the layer boundary clean.
   """
 
   alias Ezagent.URI, as: EzURI
@@ -101,7 +123,7 @@ defmodule EzagentWeb.Uploads.UploadToken do
         # Phoenix.Token signs (HMAC) over the payload + its own timestamp; we read
         # back our embedded issued_at/ttl at verify, so the signing timestamp is
         # only the coarse 24h outer bound.
-        Phoenix.Token.sign(EzagentWeb.Endpoint, @salt, payload)
+        Phoenix.Token.sign(key_base(), @salt, payload)
     end
   end
 
@@ -124,7 +146,7 @@ defmodule EzagentWeb.Uploads.UploadToken do
   """
   @spec verify_at(String.t(), integer()) :: {:ok, URI.t()} | {:error, term()}
   def verify_at(token, now) when is_binary(token) and is_integer(now) do
-    case Phoenix.Token.verify(EzagentWeb.Endpoint, @salt, token, max_age: @max_ttl) do
+    case Phoenix.Token.verify(key_base(), @salt, token, max_age: @max_ttl) do
       {:ok, %{uri: key, issued_at: issued_at, ttl: ttl}}
       when is_binary(key) and is_integer(issued_at) and is_integer(ttl) ->
         if now <= issued_at + ttl do
@@ -145,5 +167,25 @@ defmodule EzagentWeb.Uploads.UploadToken do
     {:ok, EzURI.new!(key)}
   rescue
     ArgumentError -> {:error, :malformed_uri}
+  end
+
+  # The MAC key base — the application `secret_key_base`, owned by core config.
+  # A `Phoenix.Token` context can be a binary `secret_key_base` (>= 20 bytes),
+  # which keeps this module free of any `EzagentWeb.Endpoint` reference.
+  defp key_base do
+    case Application.get_env(:ezagent_core, __MODULE__, []) |> Keyword.get(:secret_key_base) do
+      base when is_binary(base) and byte_size(base) >= 20 ->
+        base
+
+      _ ->
+        raise """
+        no :secret_key_base configured for #{inspect(__MODULE__)}.
+
+        Add to config (wired to the same value as the web endpoint):
+
+            config :ezagent_core, #{inspect(__MODULE__)},
+              secret_key_base: System.fetch_env!("SECRET_KEY_BASE")
+        """
+    end
   end
 end

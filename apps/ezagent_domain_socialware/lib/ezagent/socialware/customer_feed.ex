@@ -71,9 +71,9 @@ defmodule Ezagent.Socialware.CustomerFeed do
   @doc """
   Mint a signed download token for `upload_uri` ONLY if it is an approved
   attachment in `session_uri` (the approved-only gate). Returns
-  `{:ok, token}` | `{:error, :not_approved}`. The `mint_fun` is injected (the
-  socialware domain does not depend on the web token module) — pass
-  `&EzagentWeb.Uploads.UploadToken.mint!/1` (or `/2` partially applied).
+  `{:ok, token}` | `{:error, :not_approved}`. The `mint_fun` is injected so the
+  authorization gate stays decoupled from the signer — pass
+  `&Ezagent.Uploads.DownloadToken.mint!/1` (or `/2` partially applied).
   """
   @spec mint_approved_token(URI.t(), URI.t(), (URI.t() -> String.t())) ::
           {:ok, String.t()} | {:error, :not_approved}
@@ -93,7 +93,7 @@ defmodule Ezagent.Socialware.CustomerFeed do
 
     1. **session auth** — `CustomerAuth.authorize/3` proves the caller holds a
        valid token for `session_uri` + its workspace (the customer-feed token);
-    2. **file binding** — `upload_uri` is the URI the signed `UploadToken` was
+    2. **file binding** — `upload_uri` is the URI the signed `DownloadToken` was
        bound to (passed in already-verified by the caller);
     3. **serve-time approved-only re-validation** — `approved_attachment?/2`
        re-confirms the attachment is STILL a committed customer-visible item in
