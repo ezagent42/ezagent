@@ -31,6 +31,11 @@ config :ezagent_web, EzagentWeb.Endpoint,
   secret_key_base: "3v32NqyJT1oDLVf9Qcg2pz9caQu68+W737xqtaGSUPsaw6dDqwqXIC8VCQCSGLpy",
   server: false
 
+# Resource-unification P2 — upload download-token signing secret (core-owned
+# config key), wired to the same value as the web endpoint's secret_key_base.
+config :ezagent_core, Ezagent.Uploads.DownloadToken,
+  secret_key_base: "3v32NqyJT1oDLVf9Qcg2pz9caQu68+W737xqtaGSUPsaw6dDqwqXIC8VCQCSGLpy"
+
 # Print only warnings and errors during test
 config :logger, level: :warning
 

@@ -19,8 +19,8 @@ defmodule EzagentPluginLiveview.Admin.Compose do
         socket.assigns[:session_legends] || %{}
       )
 
-    Ezagent.Uploads.ensure_dir!()
-
+    # P2b — uploads are ws-partitioned; `Ezagent.Uploads.store!/3` creates the
+    # per-workspace destination dir on write, so no global `ensure_dir!/0` here.
     attachments =
       consume_attachments(socket, upload_workspace_name!(socket))
 
@@ -40,18 +40,28 @@ defmodule EzagentPluginLiveview.Admin.Compose do
      )}
   end
 
+  # The upload's storage workspace is the workspace of the TARGET SESSION the
+  # attachment is being sent to — NOT the entity's home workspace
+  # (codex P2 round-3 HIGH). A system member context-switched into tenant W sends
+  # the message to a session bound to W, so the attachment must live under W:
+  # otherwise it would be stored as `resource://system/uploads/...` while the
+  # download authority (which uses the selected `:current_workspace_uri` = W)
+  # would reject or miss it. Deriving from the session keeps store-ws and
+  # download-ws structurally identical by construction.
   defp upload_workspace_name!(socket) do
-    case Ezagent.Capability.workspace_of(socket.assigns.current_entity_uri) do
+    session_uri = socket.assigns.current_session_uri
+
+    case Ezagent.Capability.workspace_of(session_uri) do
       %URI{} = workspace_uri ->
         Ezagent.URI.workspace_name!(workspace_uri)
 
       other ->
         raise ArgumentError,
-              "current_entity_uri does not yield a workspace URI with a binary host " <>
-                "— got #{inspect(other)} for current_entity_uri=" <>
-                "#{inspect(socket.assigns.current_entity_uri)}. Per SPEC #324 rev 3 / " <>
-                "PR #362, there is NO silent default workspace fallback; the " <>
-                "authenticated caller must carry a workspace structurally."
+              "current_session_uri does not yield a workspace URI with a binary host " <>
+                "— got #{inspect(other)} for current_session_uri=" <>
+                "#{inspect(session_uri)}. Per SPEC #324 rev 3 / PR #362 there is NO " <>
+                "silent default workspace fallback; the target session must carry a " <>
+                "workspace structurally."
     end
   end
 

@@ -112,7 +112,6 @@ defmodule EzagentCore.Application do
     # `Ezagent.SpawnRegistry.register/2` (which now co-registers schemes).
     # EtsOwner already created the table; this populates the 6 core schemes.
     :ok = seed_uri_schemes()
-    :ok = Ezagent.Uploads.register()
 
     # Resource-unification P3 (SPEC §10 OI-3) — the `system://<type>[/<name>]`
     # resolution seam for node-global artifacts (global app creds, plugin config,
@@ -122,11 +121,18 @@ defmodule EzagentCore.Application do
     # UriQuery attr (no `:protected` registry — no per-type authority fn).
     :ok = Ezagent.System.FsResolver.register()
 
-    # Resource-unification P0 — the generic `resource://` FS-resolver allowlist is
-    # applied immutably inside `Ezagent.Resource.FsResolver.Registry.init/1` from
-    # its compile/config-time `boot_registrations/0` source (child ①·5); there is
-    # no runtime registration call here (codex round-4: no externally-mutable
-    # reopen window). P0 is DORMANT — that source is empty; P1/P2 extend it.
+    # Resource-unification P2b — uploads are stored + read through the generic
+    # `resource://` FS-resolver `uploads` type (registered immutably in
+    # `Ezagent.Resource.FsResolver.Registry.boot_registrations/0`, child ①·5), so
+    # `Ezagent.Uploads` no longer owns a separate `UriQuery` resolver — its old
+    # boot `Ezagent.Uploads.register()` call is gone.
+
+    # Resource-unification P0/P1/P2 — the generic `resource://` FS-resolver
+    # allowlist (config-dir `<ns>-agents` types + uploads) is applied immutably
+    # inside `Ezagent.Resource.FsResolver.Registry.init/1` from its
+    # compile/config-time `boot_registrations/0` source (child ①·5); there is no
+    # runtime registration call here (codex round-4: no externally-mutable reopen
+    # window).
 
     # PR #146 (SPEC v2 §5.7) — synthetic singleton `routing-admin://default`
     # dissolved. `Ezagent.Behavior.Routing` is registered against the

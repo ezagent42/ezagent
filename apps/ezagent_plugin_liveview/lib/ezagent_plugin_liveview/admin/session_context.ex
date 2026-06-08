@@ -773,11 +773,18 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
 
   defp body_attachments(_), do: []
 
+  # Resource-unification P2 — render the download link as a signed capability
+  # token (`Ezagent.Uploads.DownloadToken`, a core module both ezagent_web and
+  # this plugin may depend on) pointing at the SOLE internal download route
+  # `/uploads/download?token=`. The legacy `/files/<name>` route is retired (no
+  # shim). Minting is safe here: the LiveView already authorized the caller for
+  # this session at mount (it would not have loaded these messages otherwise), so
+  # rendering its attachments' tokens does not widen access; the short-TTL token
+  # is then re-checked at download time by the controller's ws-segment authority.
   defp att_to_link(%URI{scheme: "resource"} = uri) do
-    stored_name = if Ezagent.URI.type?(uri, :uploads), do: Ezagent.URI.name!(uri), else: nil
-
-    if is_binary(stored_name) do
-      {display_name(stored_name), "/files/#{stored_name}"}
+    if Ezagent.URI.type?(uri, :uploads) do
+      token = Ezagent.Uploads.DownloadToken.mint!(uri)
+      {display_name(Ezagent.URI.name!(uri)), "/uploads/download?token=#{token}"}
     else
       {URI.to_string(uri), URI.to_string(uri)}
     end

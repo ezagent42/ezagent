@@ -226,6 +226,37 @@ defmodule Ezagent.Resource.FsResolver do
   """
   @spec config_dir_authority(URI.t(), scope()) :: :ok | {:error, term()}
   def config_dir_authority(%URI{} = uri, %{workspace: scope_ws}) do
+    assert_workspace_segment(uri, scope_ws)
+  end
+
+  @doc """
+  Authority for the `uploads` type (Resource-unification P2b). Asserts the URI's
+  structural `<ws>` segment equals the caller's authenticated `scope.workspace` —
+  the workspace-isolation boundary for chat-attachment downloads.
+
+  This is the structural replacement for the participation-based
+  `EzagentWeb.UploadsController` `caller_in_attaching_messages?/2` check: a
+  download is authorized iff the request-mount workspace matches the upload's
+  `<ws>` segment. `scope.workspace` is the AUTHENTICATED subject (the
+  controller/LiveView mount), NEVER taken from `uri` — so a signed token bound to
+  `resource://victim/uploads/f` cannot be served to a caller mounted in workspace
+  `acme` (the check is non-tautological because the two `<ws>` values come from
+  independent sources: the signed token vs. the authenticated mount).
+
+  A distinct named fn from `config_dir_authority/2` so the registry — which keys
+  family membership on `authority` IDENTITY (`config_dir_type?/1`) — never claims
+  uploads as a config-dir layer.
+  """
+  @spec uploads_authority(URI.t(), scope()) :: :ok | {:error, term()}
+  def uploads_authority(%URI{} = uri, %{workspace: scope_ws}) do
+    assert_workspace_segment(uri, scope_ws)
+  end
+
+  # Shared `uri.<ws> == scope.workspace` workspace-isolation check used by every
+  # per-tenant type's authority/2. Private so each type keeps its OWN named
+  # authority fn (the registry keys behaviour on authority identity, so families
+  # must NOT share one fn reference).
+  defp assert_workspace_segment(%URI{} = uri, scope_ws) do
     with {:ok, uri_ws} <- EzURI.workspace_name(uri),
          {:ok, scope_ws_name} <- workspace_name_of(scope_ws) do
       if uri_ws == scope_ws_name do
