@@ -569,6 +569,13 @@ defmodule Ezagent.Plugin do
     :ok
   end
 
+  defp assert_adapter_decl!(plugin_module, decl) do
+    raise ArgumentError,
+          "#{inspect(plugin_module)} declared a malformed adapters/0 entry: " <>
+            "#{inspect(decl)}. Each entry must be " <>
+            "`{adapter_module :: module(), binding_module :: module()}`."
+  end
+
   defp check_bidirectional!(plugin_module, adapter, binding, src) do
     declared_binding = adapter.binding_module()
     declared_adapter = binding.adapter_module()
@@ -593,13 +600,6 @@ defmodule Ezagent.Plugin do
       true ->
         :ok
     end
-  end
-
-  defp assert_adapter_decl!(plugin_module, decl) do
-    raise ArgumentError,
-          "#{inspect(plugin_module)} declared a malformed adapters/0 entry: " <>
-            "#{inspect(decl)}. Each entry must be " <>
-            "`{adapter_module :: module(), binding_module :: module()}`."
   end
 
   # ExternalMirror PR-EM-1 (codex r1 HIGH-1) — all-or-nothing

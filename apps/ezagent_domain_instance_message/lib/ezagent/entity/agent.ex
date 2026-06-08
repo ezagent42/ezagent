@@ -583,6 +583,10 @@ defmodule Ezagent.Entity.Agent do
     end
   end
 
+  def spawn_from_template_content(_content, _instance, _spawned_by, _workspace, _opts) do
+    {:error, :invalid_spawn_from_template_content_args}
+  end
+
   # Post-grant-mint spawn steps. ANY failure here is owned by THIS call (the grant
   # was just minted by this call's `resolve_cascade_content`), so on failure we
   # HARD-delete the grant — leaving zero residue — via `revoke_cascade_grant_best_effort/1`.
@@ -712,10 +716,6 @@ defmodule Ezagent.Entity.Agent do
     :ok
   rescue
     _ -> :ok
-  end
-
-  def spawn_from_template_content(_content, _instance, _spawned_by, _workspace, _opts) do
-    {:error, :invalid_spawn_from_template_content_args}
   end
 
   defp template_content_flavor(template_content_map) when is_map(template_content_map) do

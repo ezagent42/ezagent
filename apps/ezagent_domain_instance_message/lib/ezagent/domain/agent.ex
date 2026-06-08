@@ -123,8 +123,18 @@ defmodule Ezagent.Domain.Agent do
         end
 
       "np" ->
-        if Code.ensure_loaded?(Ezagent.Domain.Python.Server) do
-          Ezagent.Domain.Python.Server.phase(agent_uri)
+        # `Ezagent.Domain.Python.Server` lives in `ezagent_domain_python`,
+        # which is downstream of this app (only `ezagent_plugin_np` depends
+        # on it — this flavor facade must NOT depend on a plugin's runtime).
+        # A direct call would emit a "module not available" warning at
+        # compile time even though the `Code.ensure_loaded?/1` guard makes
+        # the call runtime-safe. `apply/3` defers resolution to runtime —
+        # same convention as `Ezagent.Plugin.publish_adapters!/2`'s
+        # cross-app calls into the ExternalMirror registries.
+        python_server = Ezagent.Domain.Python.Server
+
+        if Code.ensure_loaded?(python_server) do
+          apply(python_server, :phase, [agent_uri])
         else
           :dead
         end

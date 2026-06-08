@@ -218,7 +218,10 @@ open after HIGH-1 (admin fallback hole) closed in PR #298:
 
   - ✅ `routing.add_rule` — already deprecated in PR #302 (Behavior
     `Ezagent.Behavior.Routing` exists; `mix ezagent routing add_rule`
-    dispatches against `system://routing/default`).
+    dispatches against `system://routing/default`). **DELETED in
+    cleanup-4 (2026-06-08)** — the deprecation stub was a pure
+    `Mix.raise` no-op with no remaining function; its replacement has
+    shipped, so the stub was retired.
   - ⏳ **deferred to follow-up PRs** — each below needs a real
     `Behavior` action reached via `Ezagent.Invocation.dispatch/1`
     (NOT a bare FacadeRegistry op) BEFORE its legacy task can be

@@ -172,6 +172,11 @@ defmodule EzagentWeb.SessionPrincipal do
     end
   end
 
+  def canonicalize(other, _opts) do
+    raise ArgumentError,
+          "EzagentWeb.SessionPrincipal.canonicalize/1 expects a String, got: #{inspect(other)}"
+  end
+
   defp valid_entity_type?(%URI{} = uri) do
     case Ezagent.URI.type(uri) do
       {:ok, type} -> type in @valid_hosts
@@ -183,11 +188,6 @@ defmodule EzagentWeb.SessionPrincipal do
     raise ArgumentError,
           "EzagentWeb.SessionPrincipal: not a valid entity URI: #{inspect(raw)} " <>
             "(normalized to #{inspect(candidate)}). Expected entity user or entity agent URI."
-  end
-
-  def canonicalize(other, _opts) do
-    raise ArgumentError,
-          "EzagentWeb.SessionPrincipal.canonicalize/1 expects a String, got: #{inspect(other)}"
   end
 
   # Phase 9 PR-5 (SPEC v3 §6.4 amended): bare-handle workspace is

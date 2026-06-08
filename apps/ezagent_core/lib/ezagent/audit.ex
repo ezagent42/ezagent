@@ -243,15 +243,6 @@ defmodule Ezagent.Audit do
     }
   end
 
-  # r2 codex tightening: structured synthetic target for persistence-
-  # telemetry rows that lack a `meta[:uri]`. The component name is the
-  # path segment so operators can grep audit rows by source emitter
-  # (e.g. `system://audit-writer/flush`).
-  defp synthetic_persistence_target(meta) do
-    component = Map.get(meta, :component) || :persistence
-    component |> Ezagent.URI.system(:flush) |> URI.to_string()
-  end
-
   # Phase 4-plus follow-up: CC bridge hook reports persist as audit
   # rows so an operator can grep history beyond the LV in-memory buffer.
   defp build_row([:ezagent, :cc_bridge, :event], _measurements, meta) do
@@ -320,6 +311,15 @@ defmodule Ezagent.Audit do
       workspace_uri: derive_workspace(Map.get(meta, :sender), Map.get(meta, :recipient)),
       inserted_at: DateTime.utc_now()
     }
+  end
+
+  # r2 codex tightening: structured synthetic target for persistence-
+  # telemetry rows that lack a `meta[:uri]`. The component name is the
+  # path segment so operators can grep audit rows by source emitter
+  # (e.g. `system://audit-writer/flush`).
+  defp synthetic_persistence_target(meta) do
+    component = Map.get(meta, :component) || :persistence
+    component |> Ezagent.URI.system(:flush) |> URI.to_string()
   end
 
   defp uri_to_string_or_nil(%URI{} = u), do: URI.to_string(u)

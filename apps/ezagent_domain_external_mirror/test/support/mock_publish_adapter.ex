@@ -33,6 +33,10 @@ defmodule Ezagent.ExternalMirror.TestSupport.MockPublishAdapter.Allow do
   @impl true
   def interface, do: %{}
 
+  @impl true
+  def required_caps,
+    do: %{allow_mock_publish: Ezagent.Capability.cap(:session, __MODULE__, :allow_mock_publish)}
+
   # `:any` → workspace admin grants per caps-data-ownership §3.3.
   @impl true
   def data_owner(_), do: :any
