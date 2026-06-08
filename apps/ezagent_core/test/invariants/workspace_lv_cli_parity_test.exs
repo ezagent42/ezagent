@@ -70,7 +70,16 @@ defmodule EzagentCore.Invariants.WorkspaceLvCliParityTest do
     # `mix ezagent.agent.create` with-chain after `create_agent`
     # returns; it is not operator-facing in isolation. The LV's
     # AgentNewLive composes the same chain.
-    "grant_initial_caps" => "chain-internal, composed inside agent.create"
+    "grant_initial_caps" => "chain-internal, composed inside agent.create",
+    # `Workspace.create_user` dispatches `:create_user` on
+    # `Behavior.WorkspaceUserAdmin`; the operator CLI is the AUTO-DERIVED
+    # `mix ezagent workspace create_user` (from Behavior.interface/0),
+    # NOT a standalone `ezagent.workspace.create_user.ex` task file.
+    # HIGH-4 (SPEC 2026-05-27-capability-action-axis §7): UsersLive now
+    # routes create through this same dispatch facade — the LV and CLI
+    # share one cap-checked source-of-truth, which is exactly the parity
+    # this invariant protects (the auto-derived command IS the task).
+    "create_user" => "mix ezagent workspace create_user (auto-derived from WorkspaceUserAdmin)"
   }
 
   test "every LV-driven Workspace mutation has a corresponding mix task" do

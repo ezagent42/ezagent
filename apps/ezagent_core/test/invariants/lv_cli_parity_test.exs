@@ -152,6 +152,10 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
     # used by entity_caps_live via dispatch. mix ezagent auto-derives.
     "grant" => {:cli, "mix ezagent user grant_cap --user <uri> --cap <json>"},
     "revoke" => {:cli, "mix ezagent user revoke_cap --user <uri> --cap <json>"},
+    # grant_changed (entity_caps_live) — pure UI state: recomputes the
+    # action-selector options from the typed behavior's actions/0 on
+    # phx-change. No backend mutation; the grant itself is "grant" above.
+    "grant_changed" => {:ui_only, "entity_caps action-selector recompute on behavior change"},
     # agent_api_keys_live dispatches via Behavior.ApiKeys which Allen
     # 2026-05-26 FLIPPED from User Kind to Agent Kind. mix ezagent
     # auto-derives `put_api_key` / `delete_api_key` against `agent`.

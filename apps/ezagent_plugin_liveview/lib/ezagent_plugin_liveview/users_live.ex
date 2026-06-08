@@ -20,8 +20,23 @@ defmodule EzagentPluginLiveview.UsersLive do
 
   @impl true
   def mount(_params, _session, socket) do
+    # HIGH-4 (SPEC 2026-05-27-capability-action-axis §7): the caller is
+    # the logged-in entity (set by `EzagentWeb.LiveAuth.on_mount(:require_entity)`),
+    # NOT a hardcoded admin. `create_user` / `set_password` now dispatch
+    # with THIS caller's caps so CapBAC step 5.5 runs — identical to the
+    # CLI. The `/identities/users` route is gated by `:require_entity`
+    # only (no `:require_admin`), so without the cap-check a non-admin
+    # could mint users / reset passwords from the GUI.
+    #
+    # codex review HIGH: caps are recomputed FRESH at each mutation
+    # (`current_caller_caps/1`), NOT cached at mount — a cap revoked
+    # after mount must NOT keep authorizing privileged mutations until
+    # the socket remounts.
+    caller_uri = socket.assigns.current_entity_uri
+
     {:ok,
      socket
+     |> assign(:caller_uri, caller_uri)
      |> assign(:users, list_users())
      |> assign(:editing_uri, nil)
      |> assign(:flash_error, nil)
@@ -131,12 +146,24 @@ defmodule EzagentPluginLiveview.UsersLive do
          )}
 
       true ->
+        # HIGH-4: route through the cap-checked dispatch chokepoint
+        # (`Ezagent.Workspace.create_user/3` → `Invocation.dispatch` →
+        # step 5.5 CapBAC on `(:workspace, Behavior.WorkspaceUserAdmin,
+        # :create_user)`), NOT the legacy direct `Ezagent.Users.create/3`
+        # call. The facade also performs URI/caps parsing, the structural
+        # cross-workspace check, and the opportunistic User-Kind spawn —
+        # identical to `mix ezagent workspace create_user`.
         with {:ok, parsed_uri} <- parse_user_uri(uri),
-             {:ok, caps} <-
-               Ezagent.Capability.Parser.parse(caps_str, Ezagent.Entity.User.admin_uri()),
              pw = if(password == "", do: nil, else: password),
-             {:ok, _decoded} <- Ezagent.Users.create(uri, pw, caps) do
-          _ = maybe_spawn_kind(uri)
+             {:ok, result} <-
+               Ezagent.Workspace.create_user(
+                 Ezagent.URI.workspace(workspace),
+                 %{user_uri: uri, password: pw, caps: caps_str},
+                 %{
+                   caller: socket.assigns.caller_uri,
+                   caps: current_caller_caps(socket)
+                 }
+               ) do
           _ = maybe_upsert_display_name(parsed_uri, display_name)
 
           {:noreply,
@@ -144,7 +171,10 @@ defmodule EzagentPluginLiveview.UsersLive do
            |> assign(:users, list_users())
            |> assign(
              :flash_info,
-             gettext("✓ created %{uri} (%{count} caps)", uri: uri, count: length(caps))
+             gettext("✓ created %{uri} (%{count} caps)",
+               uri: uri,
+               count: Map.get(result, :caps_granted, 0)
+             )
            )
            |> assign(:flash_error, nil)
            |> assign(:create_form, to_form(create_form_defaults(), as: "user"))}
@@ -200,7 +230,12 @@ defmodule EzagentPluginLiveview.UsersLive do
 
   def handle_event("set_password", %{"uri" => uri, "password" => password}, socket)
       when is_binary(password) and password != "" do
-    case Ezagent.Users.set_password(uri, password) do
+    # HIGH-4: route through the cap-checked dispatch chokepoint — the
+    # `:set_password` action on `Behavior.UserCredentials`, the SAME
+    # path `mix ezagent user set_password` uses (step 5.5 CapBAC + step
+    # 5.6 cross-workspace iso) — NOT the legacy direct
+    # `Ezagent.Users.set_password/2` call.
+    case dispatch_set_password(uri, password, socket) do
       {:ok, _} ->
         {:noreply,
          socket
@@ -287,14 +322,33 @@ defmodule EzagentPluginLiveview.UsersLive do
     end
   end
 
-  defp maybe_spawn_kind(uri_str) do
-    uri = Ezagent.URI.new!(uri_str)
+  # HIGH-4: dispatch `:set_password` on `Behavior.UserCredentials` with
+  # the caller's caps. The dispatch target's URI (`ctx.self_uri`) is the
+  # user being mutated; CapBAC step 5.5 admits admin's `:any`-instance
+  # cap (cross-user reset) and a user's own instance-scoped self-cap,
+  # and rejects everyone else.
+  defp dispatch_set_password(uri_str, password, socket) do
+    with {:ok, user_uri} <- parse_user_uri(uri_str) do
+      target = Ezagent.URI.with_action(user_uri, :user_credentials, :set_password)
 
-    if Code.ensure_loaded?(Ezagent.SpawnRegistry) do
-      _ = Ezagent.SpawnRegistry.spawn(uri)
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        target: target,
+        mode: :call,
+        args: %{password: password},
+        ctx: %{
+          caller: socket.assigns.caller_uri,
+          caps: current_caller_caps(socket),
+          reply: :sync
+        }
+      })
     end
+  end
 
-    :ok
+  # codex review HIGH: resolve the caller's caps FRESH at mutation time
+  # (not the mount-time snapshot) so a cap revoked after the LV mounted
+  # can no longer authorize a privileged create/set_password.
+  defp current_caller_caps(socket) do
+    Ezagent.Identity.list_caps_for(socket.assigns.caller_uri)
   end
 
   # Task 3 — bare handle (`allen`) or full user URI.
@@ -529,7 +583,11 @@ defmodule EzagentPluginLiveview.UsersLive do
                           <% end %>
                         </td>
                         <td>
-                          <form phx-submit="set_password" class="flex gap-1">
+                          <form
+                            phx-submit="set_password"
+                            data-uri={URI.to_string(u.uri)}
+                            class="flex gap-1"
+                          >
                             <input type="hidden" name="uri" value={URI.to_string(u.uri)} />
                             <input
                               type="password"
