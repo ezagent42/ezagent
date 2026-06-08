@@ -90,6 +90,9 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
     # - `audit.ex`: legitimate view fan-out to esr:audit:stream (§5.7.6)
     # - `invocation.ex`: reply path :phoenix_pubsub (caller chose this
     #   reply target explicitly — not an inbound message broadcast)
+    # - `kind/runtime/effects.ex`: Kind.Runtime `:notify` effect fan-out
+    #   (the dispatch path already entered Runtime; this is not an inbound
+    #   message broadcast)
     # - `behavior/chat.ex`: session/user :events fan-out from Chat.invoke
     #   (Phase 2b-step 2 — fan-out to LV stream subscribers, NOT an
     #   inbound message; inbound side is the dispatch that fired invoke)
@@ -109,6 +112,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
             "| grep -v 'apps/ezagent_core/lib/ezagent/audit.ex' " <>
             "| grep -v 'apps/ezagent_core/lib/ezagent/invocation.ex' " <>
             "| grep -v 'apps/ezagent_core/lib/ezagent/kind/runtime.ex' " <>
+            "| grep -v 'apps/ezagent_core/lib/ezagent/kind/runtime/effects.ex' " <>
             "| grep -v 'apps/ezagent_core/lib/ezagent/slice_change.ex' " <>
             "| grep -v 'apps/ezagent_core/lib/ezagent/cc_events.ex' " <>
             "| grep -v 'apps/ezagent_core/lib/ezagent/publisher_lifecycle.ex' " <>
