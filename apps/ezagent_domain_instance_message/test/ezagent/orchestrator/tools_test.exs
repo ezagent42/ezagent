@@ -277,7 +277,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
     end
 
     test "save_template_as does NOT call check_parent_alive (design lock)" do
-      source = File.read!("lib/ezagent/orchestrator/tools.ex")
+      source = File.read!("lib/ezagent/orchestrator/tools/templates.ex")
 
       [save_block | _] =
         Regex.scan(~r/def save_template_as.*?\n  end/s, source)

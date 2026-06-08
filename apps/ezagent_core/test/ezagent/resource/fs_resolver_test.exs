@@ -76,7 +76,13 @@ defmodule Ezagent.Resource.FsResolverTest do
         uri2 = %URI{scheme: "resource", host: "acme", path: "/t-uploads/.", port: nil}
         assert {:error, {:unsafe_segment, "."}} = FsResolver.resolve(uri2, scope("acme"))
 
-        uri3 = %URI{scheme: "resource", host: "acme", path: "/t-uploads/a" <> <<0>> <> "b", port: nil}
+        uri3 = %URI{
+          scheme: "resource",
+          host: "acme",
+          path: "/t-uploads/a" <> <<0>> <> "b",
+          port: nil
+        }
+
         assert {:error, {:unsafe_segment, _}} = FsResolver.resolve(uri3, scope("acme"))
       end)
     end
@@ -206,7 +212,9 @@ defmodule Ezagent.Resource.FsResolverTest do
 
       new_pid = wait_for_restart(Registry, pid)
       assert new_pid != pid
-      assert registered_types() == [], "a restarted Registry must reproduce only the boot allowlist"
+
+      assert registered_types() == [],
+             "a restarted Registry must reproduce only the boot allowlist"
 
       # …and a forged type still does not resolve.
       uri = EzURI.resource("victim", "t-forged", "secret.pdf")

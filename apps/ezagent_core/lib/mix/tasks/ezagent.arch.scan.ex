@@ -51,8 +51,8 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 182},
     {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 221},
     {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 223},
-    {"apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools.ex", 293},
-    {"apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools.ex", 564}
+    {"apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools.ex", 281},
+    {"apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools.ex", 552}
   ]
 
   @all_slices_sanctioned [
