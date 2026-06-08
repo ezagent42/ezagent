@@ -41,6 +41,12 @@ defmodule Ezagent.UriQuery.Scan.HomePathExceptions do
     {"apps/ezagent_core/lib/ezagent/resource/fs_resolver.ex",
      "Ezagent.Resource.FsResolver.resolve/2", 150,
      "resource:// resolver backend — R-4 sanctioned single Home.path chokepoint"},
+    # the system:// resolver backend (Resource-unification P3, SPEC §10 OI-3) —
+    # the sanctioned SINGLE Home.path chokepoint every node-global system artifact
+    # routes through. Not migratable (it IS the migration target); not boot/operator.
+    {"apps/ezagent_core/lib/ezagent/system/fs_resolver.ex",
+     "Ezagent.System.FsResolver.resolve/1", 118,
+     "system:// resolver backend — R-4 sanctioned single Home.path chokepoint (P3)"},
     # early boot, pre-supervision (cookie file read before the registry exists)
     {"apps/ezagent_core/lib/ezagent/runtime.ex", "Ezagent.Runtime.cookie_path/0", 29,
      "early boot, pre-supervision (D2)"},

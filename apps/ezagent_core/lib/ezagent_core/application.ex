@@ -114,6 +114,14 @@ defmodule EzagentCore.Application do
     :ok = seed_uri_schemes()
     :ok = Ezagent.Uploads.register()
 
+    # Resource-unification P3 (SPEC §10 OI-3) — the `system://<type>[/<name>]`
+    # resolution seam for node-global artifacts (global app creds, plugin config,
+    # diagnostic logs). System artifacts have no `<ws>`, but per OI-3 that is NOT
+    # an exemption: they route through `UriQuery` via the already-allowlisted
+    # `system://` scheme instead of `resource://`. Stateless + global, so a plain
+    # UriQuery attr (no `:protected` registry — no per-type authority fn).
+    :ok = Ezagent.System.FsResolver.register()
+
     # Resource-unification P0 — the generic `resource://` FS-resolver allowlist is
     # applied immutably inside `Ezagent.Resource.FsResolver.Registry.init/1` from
     # its compile/config-time `boot_registrations/0` source (child ①·5); there is

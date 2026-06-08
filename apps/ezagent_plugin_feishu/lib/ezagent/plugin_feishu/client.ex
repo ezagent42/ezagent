@@ -11,7 +11,8 @@ defmodule EzagentPluginFeishu.Client do
   this plugin is the only HTTP client in the codebase and zero-dep is
   cleaner per memory feedback_let_it_crash_no_workarounds).
 
-  Credentials read from `Ezagent.Home.read_credentials("feishu")` at boot.
+  Credentials read from `system://credentials/feishu.yaml` via
+  `Ezagent.System.FsResolver.read_yaml/1` at boot (Resource-unification OI-3).
   If the feishu.yaml is the empty template (`app_id: cli_REPLACE_ME`),
   the plugin still starts but client calls return `{:error,
   :credentials_not_configured}` — operator gets a clear error rather
@@ -152,7 +153,7 @@ defmodule EzagentPluginFeishu.Client do
   @impl true
   def init(_) do
     state =
-      case Ezagent.Home.read_credentials("feishu") do
+      case Ezagent.System.FsResolver.read_yaml(feishu_cred_uri()) do
         {:ok, %{"app_id" => app_id, "app_secret" => app_secret} = creds}
         when is_binary(app_id) and is_binary(app_secret) ->
           # Template-stubs have `cli_REPLACE_ME` — flag as un-configured so
@@ -161,7 +162,7 @@ defmodule EzagentPluginFeishu.Client do
           if String.contains?(app_id, "REPLACE_ME") or String.contains?(app_secret, "REPLACE_ME") do
             Logger.warning(
               "EzagentPluginFeishu.Client: credentials file present but unfilled (cli_REPLACE_ME). " <>
-                "Edit #{Path.join(Ezagent.Home.path(:credentials), "feishu.yaml")} to enable."
+                "Edit #{feishu_cred_path()} to enable."
             )
 
             %__MODULE__{app_id: nil, app_secret: nil}
@@ -173,7 +174,7 @@ defmodule EzagentPluginFeishu.Client do
 
         {:error, :not_found} ->
           Logger.warning(
-            "EzagentPluginFeishu.Client: no feishu.yaml at #{Path.join(Ezagent.Home.path(:credentials), "feishu.yaml")}. " <>
+            "EzagentPluginFeishu.Client: no feishu.yaml at #{feishu_cred_path()}. " <>
               "Run `mix ezagent.home.init` then fill credentials."
           )
 
@@ -410,15 +411,42 @@ defmodule EzagentPluginFeishu.Client do
 
   # --- inbox helpers (Phase 6 PR 14) -----------------------------------
 
+  # Resource-unification P3 (SPEC §10 OI-3): the feishu inbox is a node-global
+  # plugin spool under the profile (no `<ws>`) → `system://inbox` via `UriQuery`,
+  # then the constant `feishu/` subdir + sanitized filename joined on.
+  # Byte-identical to the legacy `profile_dir()/inbox/feishu/<name>` (the `inbox`
+  # system type resolves to the profile-level `inbox` Home component).
   defp inbox_path(filename) do
-    Path.join([Ezagent.Home.profile_dir(), "inbox", "feishu", safe_name(filename)])
+    inbox_dir = Ezagent.System.FsResolver.path!(Ezagent.URI.system_principal("inbox"))
+    Path.join([inbox_dir, "feishu", safe_name(filename)])
   end
 
-  # Strip any path-separator chars Feishu might send and cap length.
+  # Resource-unification P3 (SPEC §10 OI-3): the global feishu app credential
+  # is a node-global system artifact → `system://credentials/feishu.yaml`. BOTH
+  # the operational read (`read_yaml/1` above) and the operator-facing path
+  # string flow through the `system://` seam — no raw `Ezagent.Home` /
+  # `Home.read_credentials` dependency remains in this caller.
+  defp feishu_cred_uri, do: Ezagent.URI.system("credentials", "feishu.yaml")
+
+  defp feishu_cred_path do
+    Ezagent.System.FsResolver.path!(feishu_cred_uri())
+  end
+
+  # Sanitize a caller-controlled (inbound Feishu attachment) filename into a
+  # single safe path component before it is joined under the resolved
+  # `system://inbox` dir and written. Strips separators/`..`, caps length, then
+  # enforces the SAME segment guarantee the `system://` resolver applies to its
+  # own segments (`Ezagent.System.FsResolver.safe_component?/1` — rejects `.`,
+  # `..`, empty, NUL, separators); anything that still fails degrades to a fixed
+  # safe name rather than targeting the directory itself or crashing the write
+  # (codex P3 MEDIUM: validate every appended segment, not just the resolver base).
   defp safe_name(name) when is_binary(name) do
-    name
-    |> String.replace(["/", "\\", ".."], "_")
-    |> String.slice(0, 200)
+    candidate =
+      name
+      |> String.replace(["/", "\\", ".."], "_")
+      |> String.slice(0, 200)
+
+    if Ezagent.System.FsResolver.safe_component?(candidate), do: candidate, else: "unnamed"
   end
 
   defp safe_name(_), do: "unnamed"

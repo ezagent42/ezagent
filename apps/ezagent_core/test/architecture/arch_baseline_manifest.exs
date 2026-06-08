@@ -14,12 +14,17 @@
   create_session_modules: 5,
   duplicated_resolve_template_class: 1,
   cc_codex_template_class_combined_loc: 2141,
-  # P0.5 (resource-unification): the cc_agent.ex:1460 *doc comment* (not a call)
-  # now carries `# arch-allow:`, so the real outside-core Home.path() call count
-  # is 8. Tightened 9→8 to keep the ratchet honest and to reconcile with the
-  # uri_query.scan `home_path_in_runtime_code` baseline (one source of truth for
-  # which raw Home.path calls exist — see scan_home_path_reconcile_test.exs).
-  raw_home_path_outside_core: 8,
+  # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
+  # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
+  # inbox + plugin config, python log) migrated behind the `UriQuery` seam
+  # (`system://<type>` via `Ezagent.System.FsResolver`), removing their raw
+  # `Home.path(`/`profile_dir(` calls. Lowered 8→1: the ONLY remaining
+  # outside-core `Home.path(` call is the codex app-server socket
+  # (`codex_agent.ex:661`) — the SUN_LEN short-path OS handle that stays on
+  # sanctioned raw `Home` (Decision D2), and is an exact-anchor exception in
+  # `HomePathExceptions`. Reconciles with the uri_query.scan
+  # `home_path_in_runtime_code` baseline (see scan_home_path_reconcile_test.exs).
+  raw_home_path_outside_core: 1,
   path_expand_home: 2,
   spawn_fresh_audit_references: 5,
   spawn_fresh_unsanctioned: 0,
