@@ -110,7 +110,20 @@ defmodule EzagentCore.Umbrella.MixProject do
     [
       # run `mix setup` in all child apps
       setup: ["cmd mix setup"],
-      precommit: ["compile --warning-as-errors", "deps.unlock --unused", "format", "test"]
+      # FF-3 (cleanup-4) — the compiler dead-code gate. `--warnings-as-errors`
+      # is the ONLY reliable detector of unused private functions + unreachable
+      # / mis-grouped clauses (the cleanup audit proved grep-based dead-code
+      # detection is ~100% false-positive for this class). `--force` makes the
+      # gate sound: an incremental compile silently skips unchanged modules, so
+      # a warning re-introduced in an otherwise-untouched file would slip past.
+      # Mirrored by the architecture test
+      # `compiler_dead_code_gate_test.exs`. Keep these flags in sync.
+      precommit: [
+        "compile --warnings-as-errors --force",
+        "deps.unlock --unused",
+        "format",
+        "test"
+      ]
     ]
   end
 end

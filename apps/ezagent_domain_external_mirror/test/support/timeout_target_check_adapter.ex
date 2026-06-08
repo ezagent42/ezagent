@@ -29,6 +29,10 @@ defmodule Ezagent.ExternalMirror.TestSupport.TimeoutAdapter.Allow do
   def interface, do: %{}
 
   @impl true
+  def required_caps,
+    do: %{allow_em_timeout: Ezagent.Capability.cap(:session, __MODULE__, :allow_em_timeout)}
+
+  @impl true
   def data_owner(_), do: :any
 end
 

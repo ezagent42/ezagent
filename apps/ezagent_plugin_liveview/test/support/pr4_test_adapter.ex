@@ -38,6 +38,10 @@ defmodule EzagentPluginLiveview.PR4TestAdapter.Allow do
   def interface, do: %{}
 
   @impl true
+  def required_caps,
+    do: %{allow_pr4_mock: Ezagent.Capability.cap(:session, __MODULE__, :allow_pr4_mock)}
+
+  @impl true
   def data_owner(_), do: :any
 end
 
@@ -133,6 +137,10 @@ defmodule EzagentPluginLiveview.PR4TestAdapterB.Allow do
 
   @impl true
   def interface, do: %{}
+
+  @impl true
+  def required_caps,
+    do: %{allow_pr4_mock_b: Ezagent.Capability.cap(:session, __MODULE__, :allow_pr4_mock_b)}
 
   @impl true
   def data_owner(_), do: :any

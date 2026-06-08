@@ -41,6 +41,14 @@ defmodule Ezagent.TestSupport.OwnedBehavior do
   end
 
   @impl true
+  def required_caps do
+    %{
+      read: Ezagent.Capability.cap(:owned_test_kind, __MODULE__, :read),
+      write: Ezagent.Capability.cap(:owned_test_kind, __MODULE__, :write)
+    }
+  end
+
+  @impl true
   def data_owner(%URI{} = target_uri), do: target_uri
   def data_owner(_), do: :no_owner
 end
@@ -72,6 +80,11 @@ defmodule Ezagent.TestSupport.OwnedCapOnlyBehavior do
 
   @impl true
   def interface, do: %{subscribe: %{description: "subscribe gate", args: %{}}}
+
+  @impl true
+  def required_caps do
+    %{subscribe: Ezagent.Capability.cap(:owned_test_kind, __MODULE__, :subscribe)}
+  end
 
   @impl true
   def dispatchable?, do: false

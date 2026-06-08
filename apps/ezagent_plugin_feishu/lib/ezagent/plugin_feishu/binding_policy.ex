@@ -126,18 +126,16 @@ defmodule EzagentPluginFeishu.BindingPolicy do
   @session_chat_actions [:send, :join, :leave]
   @session_publisher_actions [:subscribe_from, :snapshot, :history]
 
-  @doc """
-  Returns the per-action cap list `apply/2` will grant for a user
-  scoped to `workspace_uri`.
-
-  **`@doc false` — exposed for the regression test in
-  `apps/ezagent_plugin_feishu/test/binding_policy_test.exs` so a
-  contributor reverting the grant list directly drives a test
-  failure (codex r1 HIGH-1: parallel fixture vs production drift).**
-
-  Do not call from production code — `apply/2` is the public
-  side-effecting surface.
-  """
+  # Returns the per-action cap list `apply/2` will grant for a user
+  # scoped to `workspace_uri`.
+  #
+  # `@doc false` — exposed for the regression test in
+  # `apps/ezagent_plugin_feishu/test/binding_policy_test.exs` so a
+  # contributor reverting the grant list directly drives a test
+  # failure (codex r1 HIGH-1: parallel fixture vs production drift).
+  #
+  # Do not call from production code — `apply/2` is the public
+  # side-effecting surface.
   @doc false
   @spec caps_for_apply(URI.t()) :: [Capability.t()]
   def caps_for_apply(%URI{scheme: "workspace"} = workspace_uri) do

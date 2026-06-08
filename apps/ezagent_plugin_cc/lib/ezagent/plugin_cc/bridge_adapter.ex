@@ -74,14 +74,14 @@ defmodule EzagentPluginCc.BridgeAdapter do
     end
   end
 
-  defp maybe_put(map, _key, []), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
-
   def handle_client_event("reply", _other, socket) do
     {:reply, {:error, %{reason: "reply requires text + session_uris"}}, socket}
   end
 
   def handle_client_event(_event, _params, socket), do: {:noreply, socket}
+
+  defp maybe_put(map, _key, []), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   @impl Ezagent.AgentBridge.Adapter
   def socket_path, do: "/agent_bridge"

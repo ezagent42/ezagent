@@ -265,17 +265,6 @@ defmodule EzagentPluginLiveview.AdminLive do
     {:noreply, socket}
   end
 
-  # Task #55 round-2 codex MEDIUM — workspace guard for inbound session
-  # events. Returns true when the caller's `current_workspace_uri`
-  # equals the target session's workspace OR the caller holds
-  # cross-workspace authority (same predicate `select_session/2`'s
-  # gate uses, kept in sync).
-  defp session_in_caller_workspace?(%URI{} = session_uri, socket) do
-    SessionContext.authorize_session_view(socket, session_uri) == :ok
-  end
-
-  defp session_in_caller_workspace?(_, _), do: false
-
   # Refresh the member panel when presence changes.
   def handle_info({:member_presence, _session_uri, _user_uri, %{online?: _}}, socket) do
     {:noreply, SessionContext.assign_session_context(socket, socket.assigns.current_session_uri)}
@@ -307,6 +296,17 @@ defmodule EzagentPluginLiveview.AdminLive do
       {:noreply, socket}
     end
   end
+
+  # Task #55 round-2 codex MEDIUM — workspace guard for inbound session
+  # events. Returns true when the caller's `current_workspace_uri`
+  # equals the target session's workspace OR the caller holds
+  # cross-workspace authority (same predicate `select_session/2`'s
+  # gate uses, kept in sync).
+  defp session_in_caller_workspace?(%URI{} = session_uri, socket) do
+    SessionContext.authorize_session_view(socket, session_uri) == :ok
+  end
+
+  defp session_in_caller_workspace?(_, _), do: false
 
   # Today AdminLive subscribes to the caller URI only.
   defp event_uri_authorized?(%{uri: %URI{} = event_uri}, %{assigns: assigns}) do
@@ -526,31 +526,6 @@ defmodule EzagentPluginLiveview.AdminLive do
     end
   end
 
-  # Surface failed orchestrator creation while suppressing plain sessions.
-  defp orchestrator_flash_text(meta) when is_map(meta) do
-    case Map.get(meta, :orchestrator_status) do
-      :ready ->
-        nil
-
-      :failed ->
-        reason = Map.get(meta, :orchestrator_error)
-
-        # `:no_orchestrator` (plain session) is NOT an error — suppress.
-        if reason == :no_orchestrator do
-          nil
-        else
-          gettext("Orchestrator failed: %{reason}; click Restart to retry.",
-            reason: inspect(reason)
-          )
-        end
-
-      _ ->
-        nil
-    end
-  end
-
-  defp orchestrator_flash_text(_), do: nil
-
   # SPEC `2026-05-26-session-create-orchestrator-unified` Gap A —
   # rehydrate path's status is debug-level (operator's on admin page
   # already; OrchestratorHealthCard surfaces it visually).
@@ -734,56 +709,6 @@ defmodule EzagentPluginLiveview.AdminLive do
      )}
   end
 
-  defp do_restart_orchestrator(socket, health, session_uri) do
-    # 2026-05-31 orchestrator-startup-atomicity §6 — Restart is now a
-    # REPAIR. The old path dispatched `template.instantiate` + respawned
-    # the PTY but NEVER set `orchestrator_template_uri` (OTU), so it could
-    # not fix the nil-OTU sessions (`main`, `orch-feishu-7429`) that were
-    # the whole reason for the SPEC. `EzagentDomainInstanceMessage.repair_orchestrator/2`
-    # RE-MATERIALIZES the OTU from the session's template THEN runs the §5
-    # atomic readiness gate (cap grants + MCP registration + member join).
-    # The OrchestratorAdmin :restart cap was already checked in the
-    # `handle_event` clause above.
-    result = EzagentDomainInstanceMessage.repair_orchestrator(session_uri, health.workspace_uri)
-
-    case result do
-      {:ok, ^session_uri, _meta} ->
-        # Re-classify; success path lands `:alive` (or a new `:crashed`
-        # if the fresh worker died immediately — itself a useful signal).
-        {:noreply,
-         socket
-         |> SessionContext.assign_session_context(session_uri)
-         |> assign(:orchestrator_flash_error, nil)}
-
-      {:error, :unauthorized} ->
-        {:noreply,
-         assign(
-           socket,
-           :orchestrator_flash_error,
-           gettext("Unauthorized — you may not restart this orchestrator.")
-         )}
-
-      {:error, :cross_workspace_denied} ->
-        {:noreply,
-         assign(
-           socket,
-           :orchestrator_flash_error,
-           gettext(
-             "Cross-workspace denied — orchestrator lives in workspace %{workspace}.",
-             workspace: URI.to_string(health.workspace_uri)
-           )
-         )}
-
-      {:error, reason} ->
-        {:noreply,
-         assign(
-           socket,
-           :orchestrator_flash_error,
-           gettext("Restart failed: %{reason}", reason: inspect(reason))
-         )}
-    end
-  end
-
   # Phase 8b §1.6 — Debug events toggle in setting dropdown.
   def handle_event("toggle_debug_panel", _params, socket) do
     {:noreply, assign(socket, :debug_open, not socket.assigns.debug_open)}
@@ -864,6 +789,81 @@ defmodule EzagentPluginLiveview.AdminLive do
           end)
 
         {:noreply, assign(socket, :oldest_cursor, SessionContext.oldest_cursor(older) || cursor)}
+    end
+  end
+
+  # Surface failed orchestrator creation while suppressing plain sessions.
+  defp orchestrator_flash_text(meta) when is_map(meta) do
+    case Map.get(meta, :orchestrator_status) do
+      :ready ->
+        nil
+
+      :failed ->
+        reason = Map.get(meta, :orchestrator_error)
+
+        # `:no_orchestrator` (plain session) is NOT an error — suppress.
+        if reason == :no_orchestrator do
+          nil
+        else
+          gettext("Orchestrator failed: %{reason}; click Restart to retry.",
+            reason: inspect(reason)
+          )
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp orchestrator_flash_text(_), do: nil
+
+  defp do_restart_orchestrator(socket, health, session_uri) do
+    # 2026-05-31 orchestrator-startup-atomicity §6 — Restart is now a
+    # REPAIR. The old path dispatched `template.instantiate` + respawned
+    # the PTY but NEVER set `orchestrator_template_uri` (OTU), so it could
+    # not fix the nil-OTU sessions (`main`, `orch-feishu-7429`) that were
+    # the whole reason for the SPEC. `EzagentDomainInstanceMessage.repair_orchestrator/2`
+    # RE-MATERIALIZES the OTU from the session's template THEN runs the §5
+    # atomic readiness gate (cap grants + MCP registration + member join).
+    # The OrchestratorAdmin :restart cap was already checked in the
+    # `handle_event` clause above.
+    result = EzagentDomainInstanceMessage.repair_orchestrator(session_uri, health.workspace_uri)
+
+    case result do
+      {:ok, ^session_uri, _meta} ->
+        # Re-classify; success path lands `:alive` (or a new `:crashed`
+        # if the fresh worker died immediately — itself a useful signal).
+        {:noreply,
+         socket
+         |> SessionContext.assign_session_context(session_uri)
+         |> assign(:orchestrator_flash_error, nil)}
+
+      {:error, :unauthorized} ->
+        {:noreply,
+         assign(
+           socket,
+           :orchestrator_flash_error,
+           gettext("Unauthorized — you may not restart this orchestrator.")
+         )}
+
+      {:error, :cross_workspace_denied} ->
+        {:noreply,
+         assign(
+           socket,
+           :orchestrator_flash_error,
+           gettext(
+             "Cross-workspace denied — orchestrator lives in workspace %{workspace}.",
+             workspace: URI.to_string(health.workspace_uri)
+           )
+         )}
+
+      {:error, reason} ->
+        {:noreply,
+         assign(
+           socket,
+           :orchestrator_flash_error,
+           gettext("Restart failed: %{reason}", reason: inspect(reason))
+         )}
     end
   end
 
