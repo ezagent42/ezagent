@@ -66,7 +66,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
   defmodule TestEndpoint do
     use Phoenix.Endpoint, otp_app: :ezagent_plugin_cc
 
-    socket("/cc_socket", EzagentPluginCc.Socket,
+    socket("/agent_bridge", Ezagent.AgentBridge.Socket,
       websocket: [check_origin: false],
       longpoll: false
     )
@@ -78,7 +78,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
 
   alias Ezagent.{Invocation, KindRegistry, Message}
   alias Ezagent.Entity.User
-  alias EzagentPluginCc.BridgeRegistry
+  alias Ezagent.AgentBridge.Registry, as: BridgeRegistry
 
   @workspace_uri Ezagent.URI.new!("workspace://team-alpha")
 
@@ -162,7 +162,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
 
   setup_all do
     port = free_tcp_port()
-    ws_url = "ws://127.0.0.1:#{port}/cc_socket/websocket"
+    ws_url = "ws://127.0.0.1:#{port}/agent_bridge/websocket"
 
     prev_url = System.get_env("EZAGENT_BRIDGE_WS_URL")
     System.put_env("EZAGENT_BRIDGE_WS_URL", ws_url)
@@ -334,7 +334,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
         )
 
       assert is_pid(bridge_bound),
-             "the bridge subprocess must connect to /cc_socket and bind. " <>
+             "the bridge subprocess must connect to /agent_bridge and bind. " <>
                "Status: #{(File.exists?(status_file) && File.read!(status_file)) || "(no status file yet)"}"
 
       # ---- 9. session + admin, join both

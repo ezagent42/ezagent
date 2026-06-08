@@ -9,13 +9,14 @@ defmodule EzagentCore.Invariants.NoPtyInPluginCcTest do
   `ezagent_domain_ui` (Tier-2 UI primitives). The cc plugin is reduced
   to genuinely CC-specific surfaces:
 
-    * `EzagentPluginCc.Channel` — Phoenix Channel for claude TUI WS
-    * `EzagentPluginCc.BridgeRegistry` — agent_uri → channel pid
     * `EzagentPluginCc.McpConfigWriter` — `.mcp.json` writer
-    * `EzagentPluginCc.TokenStore` — bridge auth tokens
-    * `EzagentPluginCc.Socket` — WS endpoint
     * `Ezagent.PluginCc.Template.CcAgent` — template class (consumes
       `Ezagent.Domain.Pty.start/2`)
+
+  The cc-named bridge shims (`EzagentPluginCc.Channel` / `BridgeRegistry` /
+  `TokenStore` / `Socket`) were promoted to the `Ezagent.AgentBridge.*`
+  domain and the cc-named shims were removed in Cleanup-3 (FF-4 3→0); the
+  bridge surface now lives entirely in `ezagent_domain_agent_bridge`.
 
   This grep gate fails if a future PR resurrects any of the pre-
   migration module names inside `apps/ezagent_plugin_cc/lib/`.

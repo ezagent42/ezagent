@@ -79,8 +79,9 @@ defmodule EzagentCore.Invariants.NoV1BridgeAfterCutoverTest do
 
            Decision #144: after Phase 7 PR 32c the v1 prototype is
            deleted; no production code may name it. If you need
-           bridge surface, use EzagentPluginCc.{Channel,
-           BridgeRegistry, McpConfigWriter, TokenStore}.
+           bridge surface, use Ezagent.AgentBridge.{Channel,
+           Registry, Socket, TokenStore} (the cc-named shims were removed
+           in Cleanup-3) plus EzagentPluginCc.McpConfigWriter.
            """
   end
 

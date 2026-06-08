@@ -66,8 +66,8 @@ defmodule EzagentPluginLiveview.ObservabilityLive do
     do: {:scoped, Ezagent.URI.workspace(:__none__) |> Ezagent.URI.stable_key()}
 
   defp list_bridges do
-    if Code.ensure_loaded?(EzagentPluginCc.BridgeRegistry) do
-      EzagentPluginCc.BridgeRegistry.list_all()
+    if Code.ensure_loaded?(Ezagent.AgentBridge.Registry) do
+      Ezagent.AgentBridge.Registry.list_all()
     else
       []
     end

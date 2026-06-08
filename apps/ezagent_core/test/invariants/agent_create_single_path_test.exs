@@ -46,9 +46,6 @@ defmodule EzagentCore.Invariants.AgentCreateSinglePathTest do
     # The unified create_agent action body — the ONE operator-facing
     # legitimate create path.
     "apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex",
-    # cc Channel re-spawn (defensive ensure — bridge re-announce). See
-    # `EzagentPluginCc.Channel.join/3` moduledoc.
-    "apps/ezagent_plugin_cc/lib/ezagent_plugin_cc/channel.ex",
     # Reconciler / spawn_fresh path (orchestrator-spawned workers).
     "apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex",
     # The reconciler module itself.

@@ -24,18 +24,18 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
         spawns the fake `claude` via execve (NO shell — codex HIGH-2)
       → fake `claude` parses `--mcp-config <bridge.mcp.json>`, spawns
         `uv run --script ezagent_mcp_bridge.py` as the MCP server
-      → bridge opens the WS Channel back to ezagent (`/cc_socket`)
-      → BridgeRegistry binds the channel pid to the agent_uri
+      → bridge opens the WS Channel back to ezagent (`/agent_bridge`)
+      → AgentBridge.Registry binds the channel pid to the agent_uri
       → admin sends `chat.send` to the session (mentioning the agent —
         mention-gated routing per PR #226)
       → Session fans out to the agent → `chat.receive` →
-        `BridgeRegistry.lookup` → cc BridgeAdapter →
+        `AgentBridge.Registry.lookup` → cc BridgeAdapter →
         `{:agent_bridge_push, "to_claude", payload}` → channel pushes
         `to_claude` to the bridge → bridge emits
         `notifications/claude/channel` on its stdout
       → fake claude sees the notification, calls
         `tools/call name="reply"` → bridge sends a WS `"reply"` event
-      → `EzagentPluginCc.Channel.handle_in("reply", _, _)` dispatches a
+      → `Ezagent.AgentBridge.Channel.handle_in("reply", _, _)` dispatches a
         new `chat.send` from the agent to the session
       → the session's PubSub `:events` topic broadcasts the reply.
 
@@ -60,7 +60,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
   domain code; the integration that PROVES them wires through cc's
   PtyServer + Channel + MCP-bridge sits in Tier 3 (this app), where
   cc-only test fixtures (the fake_claude.py + the in-test endpoint
-  hosting `/cc_socket`) live without bleeding into domain tests.
+  hosting `/agent_bridge`) live without bleeding into domain tests.
 
   ## Tooling preconditions
 
@@ -72,7 +72,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
       `websockets` resolves on first run.
     * `python3` — runs the fake claude.
     * a TCP listener — the test binds a free port for the in-test
-      Phoenix endpoint hosting `/cc_socket`.
+      Phoenix endpoint hosting `/agent_bridge`.
 
   ## Tagging
 
@@ -84,14 +84,14 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
   """
 
   # The in-test Phoenix endpoint mirrors the production EzagentWeb
-  # one (just the `/cc_socket` mount and a `pubsub_server`). It MUST be
+  # one (just the `/agent_bridge` mount and a `pubsub_server`). It MUST be
   # defined at the top level of the file (not nested in the test
   # module) so the `socket/3` macro is unambiguous against
   # Phoenix.ChannelTest's `socket/3` import.
   defmodule TestEndpoint do
     use Phoenix.Endpoint, otp_app: :ezagent_plugin_cc
 
-    socket("/cc_socket", EzagentPluginCc.Socket,
+    socket("/agent_bridge", Ezagent.AgentBridge.Socket,
       websocket: [check_origin: false],
       longpoll: false
     )
@@ -104,7 +104,8 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
   alias Ezagent.{Invocation, KindRegistry, Message}
   alias Ezagent.Entity.User
   alias Ezagent.PluginCc.Template.CcAgent
-  alias EzagentPluginCc.{BridgeRegistry, McpConfigWriter}
+  alias Ezagent.AgentBridge.Registry, as: BridgeRegistry
+  alias EzagentPluginCc.McpConfigWriter
 
   @workspace_uri Ezagent.URI.new!("workspace://team-alpha")
 
@@ -226,7 +227,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
     # endpoint binds 10042). The TestEndpoint config below uses the
     # same port.
     port = free_tcp_port()
-    ws_url = "ws://127.0.0.1:#{port}/cc_socket/websocket"
+    ws_url = "ws://127.0.0.1:#{port}/agent_bridge/websocket"
 
     prev_url = System.get_env("EZAGENT_BRIDGE_WS_URL")
     System.put_env("EZAGENT_BRIDGE_WS_URL", ws_url)
@@ -438,7 +439,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
 
       assert is_pid(bridge_bound),
              "the bridge subprocess (uv run --script ezagent_mcp_bridge.py) " <>
-               "must connect to /cc_socket and BridgeRegistry must bind it. " <>
+               "must connect to /agent_bridge and the AgentBridge registry must bind it. " <>
                "Status: #{(File.exists?(status_file) && File.read!(status_file)) || "(no status file yet)"}"
 
       # ---- 9. set up a session + admin user, join the agent + admin
