@@ -634,8 +634,8 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
   end
 
   def count_connected_bridges do
-    if Code.ensure_loaded?(EzagentPluginCc.BridgeRegistry) do
-      length(EzagentPluginCc.BridgeRegistry.list_connected())
+    if Code.ensure_loaded?(Ezagent.AgentBridge.Registry) do
+      length(Ezagent.AgentBridge.Registry.list_connected())
     else
       0
     end
@@ -711,7 +711,13 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     end
   end
 
-  def bridge_topic_safely, do: EzagentPluginCc.BridgeRegistry.topic()
+  # NOTE: maps to the LEGACY topic (`esr:cc_channel:bridges`), not the
+  # generic AgentBridge topic. admin_live subscribes here and only handles
+  # the `{:cc_connected, _, _}` / `{:cc_disconnected, _}` messages, which
+  # are broadcast solely on the legacy topic. The deprecated shim's
+  # `BridgeRegistry.topic/0` delegated to `legacy_topic/0`, so this call
+  # preserves that behavior after removing the shim.
+  def bridge_topic_safely, do: Ezagent.AgentBridge.Registry.legacy_topic()
 
   def message_to_row(%Ezagent.Message{} = msg) do
     sender_str = URI.to_string(msg.sender)

@@ -2,10 +2,11 @@ defmodule Ezagent.AgentBridge.Socket do
   @moduledoc """
   Phoenix.Socket entry point for bridge-backed agent sidecars.
 
-  New sidecars connect to `/agent_bridge` and join
-  `agent_bridge:<flavor>:<agent_uri>`. During the cc deprecation
-  window, the same socket is also mounted at `/cc_socket` and accepts
-  legacy `cc:bridge:<agent_uri>` topics.
+  Sidecars connect to `/agent_bridge` and join
+  `agent_bridge:<flavor>:<agent_uri>`. The legacy `/cc_socket` mount was
+  removed in Cleanup-3 (FF-4 3→0); the legacy `cc:bridge:<agent_uri>`
+  topic is still accepted on the `/agent_bridge` mount for any in-flight
+  sidecar configured with `EZAGENT_BRIDGE_TOPIC`.
   """
   use Phoenix.Socket
 

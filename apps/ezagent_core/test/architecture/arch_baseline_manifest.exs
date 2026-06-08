@@ -33,11 +33,12 @@
   cross_file_duplicate_fn_groups: 29,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
-  # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Measured
-  # baseline 2026-06-08 = 3 (three liveview files calling BridgeRegistry).
-  # Cleanup-3 migrates those callers to Ezagent.AgentBridge.* + deletes the
-  # shims, ratcheting this to 0.
-  cc_bridge_shim_callers: 3,
+  # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3
+  # (2026-06-08) migrated the three liveview callers to
+  # Ezagent.AgentBridge.Registry, deleted all four shim modules, and removed
+  # the `/cc_socket` endpoint mount — ratcheting this to 0. This cap MUST
+  # stay at 0: the shim layer is gone and no lib file may reintroduce it.
+  cc_bridge_shim_callers: 0,
   cc_codex_template_class_combined_loc: 2141,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +

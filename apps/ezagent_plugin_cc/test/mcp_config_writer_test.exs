@@ -2,7 +2,7 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
   use ExUnit.Case, async: false
 
   alias EzagentPluginCc.McpConfigWriter
-  alias EzagentPluginCc.TokenStore
+  alias Ezagent.AgentBridge.TokenStore
 
   setup do
     # Isolated $EZAGENT_HOME so TokenStore writes a real but throwaway

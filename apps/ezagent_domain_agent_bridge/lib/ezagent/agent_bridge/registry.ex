@@ -3,8 +3,9 @@ defmodule Ezagent.AgentBridge.Registry do
   `agent_uri -> channel_pid` lookup table for bridge-backed agents.
 
   This is the unified registry for all bridge-backed agent kinds (cc,
-  codex, ...). The deprecated cc-named shim `EzagentPluginCc.BridgeRegistry`
-  delegates here for the `/cc_socket` deprecation window.
+  codex, ...). The deprecated cc-named shim (`EzagentPluginCc.BridgeRegistry`)
+  and the `/cc_socket` mount were removed in Cleanup-3 (FF-4 3→0); all
+  callers now use this module directly.
   """
 
   @table :ezagent_plugin_agent_bridges
