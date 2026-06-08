@@ -1,9 +1,9 @@
 %{
   # arch-cap-bump: PR #641 file-flavor create cascade adds the per-agent config_dir + #17-cascade instantiate block to Behavior.Workspace (1630 LOC). The block is interwoven with register_and_invoke_template's :set-effect handler (not an isolable leaf like #657's listing/resolver split), so extraction is deferred; PR-3F/G then removes orchestrator tools from >1500.
-  oversized_modules_gt_1500: 3,
-  oversized_modules_gt_1000: 14,
+  oversized_modules_gt_1500: 2,
+  oversized_modules_gt_1000: 13,
   def_count_admin_live: 69,
-  def_count_cc_agent: 103,
+  def_count_cc_agent: 76,
   def_count_orchestrator_tools: 61,
   def_count_session_creator: 67,
   def_count_capability: 22,
@@ -13,7 +13,7 @@
   create_session_call_sites: 6,
   create_session_modules: 5,
   duplicated_resolve_template_class: 1,
-  cc_codex_template_class_combined_loc: 3231,
+  cc_codex_template_class_combined_loc: 2141,
   # P0.5 (resource-unification): the cc_agent.ex:1460 *doc comment* (not a call)
   # now carries `# arch-allow:`, so the real outside-core Home.path() call count
   # is 8. Tightened 9→8 to keep the ratchet honest and to reconcile with the
