@@ -1,6 +1,6 @@
 %{
   oversized_modules_gt_1500: 0,
-  oversized_modules_gt_1000: 10,
+  oversized_modules_gt_1000: 8,
   def_count_admin_live: 69,
   def_count_cc_agent: 76,
   def_count_orchestrator_tools: 61,
