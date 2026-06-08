@@ -149,6 +149,180 @@ defmodule EzagentPluginLiveview.UsersLiveTest do
     assert Ezagent.Users.verify_password(uri, "new-pw")
   end
 
+  describe "CapBAC parity (HIGH-4 — close LV create/set_password dispatch bypass)" do
+    # SPEC 2026-05-27-capability-action-axis §7 / todo.md HIGH-4 GUI
+    # side. The `/identities/users` route is gated by `:require_entity`
+    # (NOT `:require_admin`), so any logged-in entity reaches these
+    # handlers. Before this PR the handlers called `Ezagent.Users.create/3`
+    # and `Ezagent.Users.set_password/2` DIRECTLY, bypassing the
+    # cap-checked dispatch chokepoint — a non-admin could mint users and
+    # reset passwords from the GUI. After this PR both route through
+    # `Ezagent.Invocation.dispatch/1` (step 5.5 CapBAC), so an
+    # under-privileged caller is REJECTED — identical to the CLI.
+
+    # Build a session whose caller is an under-privileged (non-admin)
+    # user living in `team-alpha`. `Ezagent.Users.create/3` grants only
+    # the structural workspace-scoped default caps — none of which
+    # satisfy `:create_user` (kind `:workspace`) or another user's
+    # `:set_password` (admin's `:any`-instance cap).
+    defp underprivileged_conn(handle) do
+      uri = "entity://team-alpha/user/#{handle}-#{System.unique_integer([:positive])}"
+      {:ok, _} = Ezagent.Users.create(uri, "pw", [])
+      # Spawn the User Kind so `Ezagent.Identity.list_caps_for/1`
+      # resolves the caller's real (non-admin) caps via dispatch.
+      if Code.ensure_loaded?(Ezagent.SpawnRegistry) do
+        _ = Ezagent.SpawnRegistry.spawn(Ezagent.URI.new!(uri))
+      end
+
+      conn =
+        Phoenix.ConnTest.build_conn()
+        |> Plug.Test.init_test_session(%{
+          "current_entity_uri" => uri,
+          "current_workspace_uri" => "workspace://team-alpha"
+        })
+
+      {conn, uri}
+    end
+
+    test "create_user is REJECTED for an under-privileged LV caller (no row minted)" do
+      {conn, _caller} = underprivileged_conn("create")
+      {:ok, lv, _html} = live(conn, "/identities/users")
+
+      handle = "lv-denied-create-#{System.unique_integer([:positive])}"
+      target_uri = "entity://team-alpha/user/" <> handle
+
+      lv
+      |> form("#create-user form",
+        user: %{
+          handle: handle,
+          password: "pw",
+          caps: "",
+          workspace: "team-alpha"
+        }
+      )
+      |> render_submit()
+
+      html = render(lv)
+      # The cap-check fired and denied — surfaced as a flash error, and
+      # NO row was minted (the structural proof the bypass is closed).
+      assert html =~ "failed" or html =~ "unauthorized"
+      assert nil == Ezagent.Users.get_by_uri(target_uri)
+    end
+
+    test "create_user SUCCEEDS for an admin LV caller (authorized path preserved)", %{conn: conn} do
+      # `conn` (admin session from `setup`) holds wildcard caps via the
+      # bootstrap catalog — dispatch step 5.5 admits it.
+      {:ok, lv, _html} = live(conn, "/identities/users")
+
+      handle = "lv-admin-create-#{System.unique_integer([:positive])}"
+      uri = "entity://system/user/" <> handle
+
+      lv
+      |> form("#create-user form",
+        user: %{handle: handle, password: "pw", caps: "", workspace: "system"}
+      )
+      |> render_submit()
+
+      html = render(lv)
+      assert html =~ uri
+      assert %{} = Ezagent.Users.get_by_uri(uri)
+    end
+
+    test "set_password is REJECTED for an under-privileged LV caller (hash unchanged)" do
+      {conn, _caller} = underprivileged_conn("setpw")
+
+      # A victim user the caller must NOT be able to reset.
+      victim = "entity://team-alpha/user/lv-victim-#{System.unique_integer([:positive])}"
+      {:ok, _} = Ezagent.Users.create(victim, "orig-pw", [])
+
+      if Code.ensure_loaded?(Ezagent.SpawnRegistry) do
+        _ = Ezagent.SpawnRegistry.spawn(Ezagent.URI.new!(victim))
+      end
+
+      {:ok, lv, _html} = live(conn, "/identities/users")
+
+      render_submit(element(lv, ~s|form[phx-submit="set_password"][data-uri="#{victim}"]|), %{
+        "uri" => victim,
+        "password" => "attacker-pw"
+      })
+
+      html = render(lv)
+      assert html =~ "failed" or html =~ "unauthorized"
+      # The original password still verifies; the attacker's does not.
+      assert Ezagent.Users.verify_password(victim, "orig-pw")
+      refute Ezagent.Users.verify_password(victim, "attacker-pw")
+    end
+
+    test "caps are read FRESH at mutation time, not cached at mount (codex HIGH)" do
+      # Mount as an under-privileged caller (no :create_user cap), THEN
+      # grant the cap after mount. If caps were cached at mount the
+      # create would still be denied; because they are re-fetched at
+      # mutation time, the post-mount grant takes effect immediately.
+      # The dispatch target (`workspace://team-alpha`) must be a LIVE
+      # Workspace Kind for `:create_user` to route — spawn it.
+      _ =
+        case Ezagent.Workspace.spawn_workspace("team-alpha") do
+          {:ok, _pid} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
+          other -> other
+        end
+
+      {conn, caller} = underprivileged_conn("freshcaps")
+      {:ok, lv, _html} = live(conn, "/identities/users")
+
+      caller_uri = Ezagent.URI.new!(caller)
+      ws_uri = Ezagent.URI.workspace("team-alpha")
+
+      # Grant the caller the workspace-user-admin :create_user cap AFTER
+      # the LV has already mounted (so any mount-time snapshot is stale).
+      :ok =
+        Ezagent.Identity.grant_cap(
+          caller_uri,
+          %Ezagent.Capability{
+            kind: :workspace,
+            behavior: Ezagent.Behavior.WorkspaceUserAdmin,
+            action: :create_user,
+            instance: ws_uri,
+            workspace_uri: ws_uri,
+            granted_by: Ezagent.Entity.User.admin_uri(),
+            granted_at: DateTime.utc_now()
+          },
+          Ezagent.Entity.User.admin_uri()
+        )
+
+      handle = "lv-fresh-#{System.unique_integer([:positive])}"
+      target_uri = "entity://team-alpha/user/" <> handle
+
+      lv
+      |> form("#create-user form",
+        user: %{handle: handle, password: "pw", caps: "", workspace: "team-alpha"}
+      )
+      |> render_submit()
+
+      # The freshly-granted cap authorized the create — proving caps are
+      # NOT frozen at mount.
+      assert %{} = Ezagent.Users.get_by_uri(target_uri)
+    end
+
+    test "set_password SUCCEEDS for an admin LV caller (authorized path preserved)", %{conn: conn} do
+      target = "entity://team-alpha/user/lv-admin-setpw-#{System.unique_integer([:positive])}"
+      {:ok, _} = Ezagent.Users.create(target, nil, [])
+
+      if Code.ensure_loaded?(Ezagent.SpawnRegistry) do
+        _ = Ezagent.SpawnRegistry.spawn(Ezagent.URI.new!(target))
+      end
+
+      {:ok, lv, _html} = live(conn, "/identities/users")
+
+      render_submit(element(lv, ~s|form[phx-submit="set_password"][data-uri="#{target}"]|), %{
+        "uri" => target,
+        "password" => "fresh-pw"
+      })
+
+      assert Ezagent.Users.verify_password(target, "fresh-pw")
+    end
+  end
+
   describe "Presence online dot (PR-D of Presence rollout)" do
     test "user tracked in Presence renders the green dot", %{conn: conn} do
       handle = "lv-online-#{System.unique_integer([:positive])}"
