@@ -165,8 +165,36 @@ defmodule Ezagent.Resource.FsResolverTest do
   end
 
   describe "registry — dormant + immutable-after-boot allowlist (codex HIGH/CRITICAL)" do
-    test "P0 ships dormant: boot_registrations is empty (zero real types)" do
-      assert registered_types() == []
+    test "P1 boot allowlist: config-dir <ns>-agents types registered (was P0-dormant)" do
+      # P0 shipped dormant (empty); P1 registers the per-agent config-dir families
+      # from Registry.boot_registrations/0. Each <ns>-agents type's backend equals
+      # its own name → byte-identical Home.path("<ns>-agents")/<ws>/<name>.
+      types = Map.new(registered_types())
+
+      for ns <- ["cc", "codex"] do
+        type = "#{ns}-agents"
+        assert %{backend_component: ^type, authority: authority} = types[type]
+        assert is_function(authority, 2)
+      end
+    end
+
+    test "config_dir_type?/1 is true for the registered <ns>-agents family, false otherwise" do
+      # Keyed on authority IDENTITY (config_dir_authority/2), not a string suffix —
+      # so it claims the real config-dir family but NOT a future non-config type
+      # (e.g. uploads) nor an unregistered type. This is what scopes the
+      # :config_dir attr's fail-loud behavior so unrelated resource layers fall
+      # through to :none (codex P1 round-5 HIGH).
+      assert FsResolver.config_dir_type?("cc-agents")
+      assert FsResolver.config_dir_type?("codex-agents")
+      refute FsResolver.config_dir_type?("uploads")
+      refute FsResolver.config_dir_type?("never-registered")
+
+      # A registered type with a DIFFERENT authority is NOT a config-dir type.
+      type_spec = %{backend_component: "t-uploads", authority: &ok_authority/2}
+
+      with_type("t-uploads", type_spec, fn ->
+        refute FsResolver.config_dir_type?("t-uploads")
+      end)
     end
 
     test "completeness invariant: every registered type has authority/2 + binary backend" do
@@ -198,11 +226,11 @@ defmodule Ezagent.Resource.FsResolverTest do
       refute function_exported?(Ezagent.Resource.FsResolver.Registry, :unseal, 0)
     end
 
-    test "a restarted Registry reproduces ONLY the (empty) boot allowlist (codex round-4)" do
+    test "a restarted Registry reproduces ONLY the boot allowlist (codex round-4)" do
       # The reopen class is killed by construction: a Registry crash + supervised
-      # restart re-runs init/1, which re-applies the SAME boot source — for P0 that
-      # is empty, so a restart cannot leave a forged type registered. No
-      # externally-mutable flag participates.
+      # restart re-runs init/1, which re-applies the SAME boot source — the
+      # config-dir <ns>-agents types and nothing else. No externally-mutable flag
+      # participates, and a forged type cannot survive a restart.
       alias Ezagent.Resource.FsResolver.Registry
 
       pid = Process.whereis(Registry)
@@ -213,8 +241,9 @@ defmodule Ezagent.Resource.FsResolverTest do
       new_pid = wait_for_restart(Registry, pid)
       assert new_pid != pid
 
-      assert registered_types() == [],
-             "a restarted Registry must reproduce only the boot allowlist"
+      assert MapSet.new(registered_types(), fn {t, _} -> t end) ==
+               MapSet.new(["cc-agents", "codex-agents"]),
+             "a restarted Registry must reproduce exactly the boot allowlist"
 
       # …and a forged type still does not resolve.
       uri = EzURI.resource("victim", "t-forged", "secret.pdf")
