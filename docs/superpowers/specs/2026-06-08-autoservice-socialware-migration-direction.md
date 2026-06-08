@@ -8,6 +8,19 @@
 
 ---
 
+## TL;DR(先读这段拿全貌,再下钻细节)
+
+- **背景**:ezagent 主干这周大变(socialware 基座 + #17 credential cascade + arch-deepening 重构),需要重新校准"迁移 AutoService"这件事。
+- **方向(不变)**:把 AutoService 的 CS 产品迁过来。**socialware 是 Allen 加的新基座**(domain 层、declare-not-code),**不是新目标**;迁移 = **在 socialware 上重写**,`origin/autoservice` 分支只当**内容/参考**,不基于它(Allen rev8)。
+- **现在在哪**:基座(`Turn` / `:surface` / settlement / customer-feed / #17 cascade / 多租户持久层)**已在 `main` 上跑且测绿**;cinnox 产品内容(souls/skills/KB + operator 控制台)**只在 `origin/autoservice`**。
+- **下一阶段(本 spec 选定)**:**垂直跑通 E2E** —— 一条 cinnox 流在 socialware 上端到端跑通、能录视频,是调优 / admin / 多租户管理面的**前置门**。
+- **头号风险(G1)**:socialware `Turn` 经 `@mention` 把回复委派给 cc-worker → E1b 的 cc-worker chat-reply 生命周期堵点在 E2E 关键路径上。
+- **要 Allen 定**:① 方向 OK 否;② G1 归属(main 上是否已解决)。
+
+下文:§1 现状地图 · §2 方向原则 · §3 选定阶段 · §4 开放项处置 · §5 风险 · §7 本轮验证记录。
+
+---
+
 ## 1. 现状地图(已核实)
 
 | 线 | 层 / 位置 | 内容 | 相对 main |
