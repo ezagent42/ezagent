@@ -334,4 +334,66 @@ defmodule Ezagent.Kind.Template do
         :ok
     end
   end
+
+  # --- shared Template-Class validation helpers (Cleanup-2 dedup) ----------
+  #
+  # These two helpers were copy-pasted, byte-identical, across every flavor
+  # Template Class (cc / codex / curl / echo / np). They are pure functions
+  # with no flavor-specific semantics, so they live here in core — the module
+  # every flavor Template Class already `@behaviour`s — and each flavor
+  # delegates. Placing the shared helper in core (not in one plugin imported
+  # by the others) preserves plugin isolation: flavors depend on core, never
+  # on a sibling plugin.
+
+  @doc """
+  Validate that a template's `"agent_uri"` is a well-formed entity-agent URI.
+
+  PR-B unify-uri-query: the URI is an opaque identifier. This validator
+  checks only the structural entity-agent shape; flavor is stored in the
+  Template Class/content, never parsed from the URI name prefix.
+
+  Returns `:ok`, or a tagged error:
+
+  - `{:error, :missing_agent_uri}` — no non-empty `"agent_uri"` string.
+  - `{:error, {:invalid_agent_uri, uri_str, reason}}` — parses to a URI
+    that is not an `entity://` agent URI.
+  - `{:error, {:bad_agent_uri, uri_str}}` — does not parse as a URI.
+  """
+  @spec check_agent_uri(map()) :: :ok | {:error, term()}
+  def check_agent_uri(%{"agent_uri" => uri_str}) when is_binary(uri_str) and uri_str != "" do
+    try do
+      case Ezagent.URI.new!(uri_str) do
+        %URI{scheme: "entity"} = uri ->
+          if Ezagent.URI.type?(uri, :agent) do
+            :ok
+          else
+            {:error, {:invalid_agent_uri, uri_str, "agent URI must be an entity agent URI"}}
+          end
+
+        %URI{} ->
+          {:error, {:invalid_agent_uri, uri_str, "agent URI must be an entity agent URI"}}
+
+        _ ->
+          {:error, {:bad_agent_uri, uri_str}}
+      end
+    rescue
+      ArgumentError -> {:error, {:bad_agent_uri, uri_str}}
+    end
+  end
+
+  def check_agent_uri(_), do: {:error, :missing_agent_uri}
+
+  @doc """
+  Read `key` from a Template Class `content` map tolerantly.
+
+  AgentTemplate `content` may carry atom (fresh) or string (post-JSON)
+  keys; this reads the atom key first, then falls back to the string form.
+  """
+  @spec content_field(map(), atom()) :: term()
+  def content_field(content, key) when is_atom(key) do
+    case Map.get(content, key) do
+      nil -> Map.get(content, Atom.to_string(key))
+      v -> v
+    end
+  end
 end

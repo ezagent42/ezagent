@@ -72,31 +72,9 @@ defmodule Ezagent.PluginNp.Template.NpAgent do
   defp check_class(%{"class" => other}), do: {:error, {:wrong_class, other}}
   defp check_class(_), do: {:error, :missing_class_field}
 
-  defp check_agent_uri(%{"agent_uri" => uri_str}) when is_binary(uri_str) and uri_str != "" do
-    # PR-B unify-uri-query: the URI is an opaque identifier. This validator
-    # checks only the structural entity-agent shape; flavor is stored in the
-    # Template Class/content, never parsed from the URI name prefix.
-    try do
-      case Ezagent.URI.new!(uri_str) do
-        %URI{scheme: "entity"} = uri ->
-          if Ezagent.URI.type?(uri, :agent) do
-            :ok
-          else
-            {:error, {:invalid_agent_uri, uri_str, "agent URI must be an entity agent URI"}}
-          end
-
-        %URI{} ->
-          {:error, {:invalid_agent_uri, uri_str, "agent URI must be an entity agent URI"}}
-
-        _ ->
-          {:error, {:bad_agent_uri, uri_str}}
-      end
-    rescue
-      ArgumentError -> {:error, {:bad_agent_uri, uri_str}}
-    end
-  end
-
-  defp check_agent_uri(_), do: {:error, :missing_agent_uri}
+  # Cleanup-2: shared entity-agent-URI validator lives in core
+  # (Ezagent.Kind.Template) — byte-identical across every flavor.
+  defp check_agent_uri(tmpl), do: Ezagent.Kind.Template.check_agent_uri(tmpl)
 
   defp check_cwd(%{"cwd" => cwd}) when is_binary(cwd) and cwd != "" do
     if File.dir?(cwd), do: :ok, else: {:error, {:bad_cwd, cwd}}

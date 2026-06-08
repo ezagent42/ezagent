@@ -18,11 +18,19 @@
   # length threshold (codex r2 MEDIUM — module-scoped markers + multi-clause
   # forks), and a callback `{name, arity}` is exempt ONLY when its enclosing
   # module declares the owning behaviour by exact last-segment match (codex r1/r2
-  # — not name-only, not substring). Measured baseline 2026-06-08 = 32. The
-  # largest group is `check_agent_uri/1` (5 plugin template files) — Cleanup-2's
-  # dedup target, which will ratchet this down. Generalizes
-  # `duplicated_resolve_template_class`.
-  cross_file_duplicate_fn_groups: 32,
+  # — not name-only, not substring). Cleanup-1 baseline = 32; Cleanup-2 deduped
+  # the audit-confirmed pure forks — `check_agent_uri/1` (5 plugin template
+  # files → one shared `Ezagent.Kind.Template.check_agent_uri/1`),
+  # `content_field/2` (cc/codex/curl templates → the same core helper),
+  # `reject_stale_config_dir_data_key!/1` (cc `CcAgent` + `SpawnPlan` → one
+  # definition on `CcAgent`), and the bridge `normalize_attachments` /
+  # `normalize_attachment_keys` (cc + codex `BridgeAdapter` → shared
+  # `Ezagent.AgentBridge.AttachmentNormalizer`). The cc/codex
+  # `handle_client_event/3` + `dispatch_reply` were INTENTIONALLY kept separate
+  # (cc carries the Invariant-#9 empty-`session_uris` rejection + three-bucket
+  # ACK + telemetry that codex does not). Measured 2026-06-08 = 29.
+  # Generalizes `duplicated_resolve_template_class`.
+  cross_file_duplicate_fn_groups: 29,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Measured
