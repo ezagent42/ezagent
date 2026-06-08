@@ -30,7 +30,10 @@ defmodule EzagentCore.Architecture.CompilerDeadCodeGateTest do
   Wiring: the same gate runs in the root `precommit` alias
   (`mix.exs` → `compile --warnings-as-errors --force`). This test is the
   ExUnit-discoverable companion so the gate is exercised by the normal
-  `mix test` run, not only by precommit.
+  `mix test` run, not only by precommit. It runs the IDENTICAL command
+  (`--warnings-as-errors --force`) — an incremental compile would skip
+  already-compiled modules and could let a warning in an untouched module
+  evade a test-only CI path, so the in-suite check uses `--force` too.
 
   Allowlist policy: there is NO allowlist. A warning is either fixed at the
   root cause (group the clauses / delete the dead fn / implement the
@@ -53,15 +56,18 @@ defmodule EzagentCore.Architecture.CompilerDeadCodeGateTest do
 
   @tag :compiler_gate
   @tag timeout: 300_000
-  test "umbrella compiles with --warnings-as-errors (FF-3 dead-code gate)" do
-    # Incremental (NOT --force): fast, and sufficient to catch a warning in
-    # any module the current change touched. The precommit alias uses
-    # --force for the full-tree guarantee; this in-suite check keeps the
-    # dev loop tight while still failing on a fresh warning.
+  test "umbrella compiles with --warnings-as-errors --force (FF-3 dead-code gate)" do
+    # --force matches the hard precommit gate EXACTLY (codex
+    # adversarial-review MEDIUM): an incremental compile silently skips
+    # already-compiled modules, so a warning in an untouched module could
+    # evade a CI path that only runs `mix test`. --force recompiles the
+    # full tree so this in-suite check is as sound as the precommit alias —
+    # the two are intentionally identical (`compile --warnings-as-errors
+    # --force`); keep them in sync.
     {output, status} =
       System.cmd(
         "mix",
-        ["compile", "--warnings-as-errors", "--all-warnings"],
+        ["compile", "--warnings-as-errors", "--force", "--all-warnings"],
         cd: umbrella_root(),
         env: [{"MIX_ENV", "test"}],
         stderr_to_stdout: true
