@@ -242,7 +242,7 @@ defmodule Ezagent.Resource.FsResolverTest do
       assert new_pid != pid
 
       assert MapSet.new(registered_types(), fn {t, _} -> t end) ==
-               MapSet.new(["cc-agents", "codex-agents"]),
+               MapSet.new(["cc-agents", "codex-agents", "uploads"]),
              "a restarted Registry must reproduce exactly the boot allowlist"
 
       # …and a forged type still does not resolve.
@@ -299,6 +299,35 @@ defmodule Ezagent.Resource.FsResolverTest do
 
       assert {:error, {:invalid_type_spec, {:unsafe_type, _}}} =
                Registry.register_for_test("a/b", spec)
+    end
+  end
+
+  describe "uploads type (Resource-unification P2b)" do
+    test "the `uploads` type is registered at boot with backend \"uploads\"" do
+      types = Map.new(registered_types())
+      assert %{backend_component: "uploads", authority: authority} = types["uploads"]
+      assert is_function(authority, 2)
+    end
+
+    test "uploads is NOT a config-dir type (distinct authority)" do
+      refute FsResolver.config_dir_type?("uploads")
+    end
+
+    test "resolve of a same-workspace uploads URI joins …/uploads/<ws>/<name>" do
+      uri = EzURI.resource("acme", "uploads", "f.pdf")
+      assert {:ok, path} = FsResolver.resolve(uri, scope("acme"))
+      assert path == Path.join([Ezagent.Home.path("uploads"), "acme", "f.pdf"])
+    end
+
+    test "resolve of a FOREIGN-workspace uploads URI is denied (authority/2)" do
+      uri = EzURI.resource("victim", "uploads", "f.pdf")
+      assert {:error, {:foreign_workspace, _}} = FsResolver.resolve(uri, scope("acme"))
+    end
+
+    test "uploads_authority/2 enforces uri.<ws> == scope.workspace" do
+      uri = EzURI.resource("acme", "uploads", "f.pdf")
+      assert :ok = FsResolver.uploads_authority(uri, scope("acme"))
+      assert {:error, {:foreign_workspace, _}} = FsResolver.uploads_authority(uri, scope("beta"))
     end
   end
 end

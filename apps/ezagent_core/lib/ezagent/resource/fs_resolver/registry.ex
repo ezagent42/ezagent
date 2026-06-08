@@ -94,17 +94,35 @@ defmodule Ezagent.Resource.FsResolver.Registry do
   # boot and must not depend on plugin Application start ordering.
   @config_dir_namespaces ["cc", "codex"]
 
+  # Resource-unification P2b — uploads type. Chat attachments live at
+  # `Home.path("uploads")/<ws>/<name>` (ws-partitioned). `uploads_authority/2`
+  # asserts `uri.<ws> == scope.workspace`, the structural replacement for the old
+  # participation-based controller authz. A DISTINCT authority fn from
+  # config-dir's so `config_dir_type?/1` (which keys on authority identity) never
+  # claims uploads.
+  @uploads_type "uploads"
+
   @spec boot_registrations() :: [{String.t(), map()}]
   defp boot_registrations do
-    Enum.map(@config_dir_namespaces, fn namespace ->
-      type = "#{namespace}-agents"
+    config_dir =
+      Enum.map(@config_dir_namespaces, fn namespace ->
+        type = "#{namespace}-agents"
 
-      {type,
+        {type,
+         %{
+           backend_component: type,
+           authority: &FsResolver.config_dir_authority/2
+         }}
+      end)
+
+    uploads =
+      {@uploads_type,
        %{
-         backend_component: type,
-         authority: &FsResolver.config_dir_authority/2
+         backend_component: @uploads_type,
+         authority: &FsResolver.uploads_authority/2
        }}
-    end)
+
+    config_dir ++ [uploads]
   end
 
   if Mix.env() != :prod do

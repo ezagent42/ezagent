@@ -320,13 +320,13 @@ defmodule Ezagent.Capability do
   derivation that `cap_for_action/3` uses for the `needed` map —
   keeping the two sides in lock-step structurally.
 
-  - `entity://<type>/<workspace>/<name>` →
+  - `entity://<workspace>/<type>/<name>` →
     `Ezagent.URI.entity_workspace_uri/1` (PR-2 — structural)
-  - `session://<template>/<workspace>/<name>` →
+  - `session://<workspace>/<template>/<name>` →
     workspace path segment (PR-7 — structural, no registry lookup)
-  - `template://<type>/<workspace>/<name>` →
+  - `template://<workspace>/<type>/<name>` →
     workspace path segment (PR-7)
-  - `resource://<type>/<workspace>/<name>` →
+  - `resource://<workspace>/<type>/<name>` →
     workspace path segment (PR-7)
   - `workspace://<name>` → the URI itself
   - `system://`, unknown schemes → `:any`
@@ -462,8 +462,8 @@ defmodule Ezagent.Capability do
 
   `workspace_uri` is derived from the target URI:
 
-  - `entity://<type>/<workspace>/<name>` — `Ezagent.URI.entity_workspace_uri/1`
-  - `session://<template>/<name>` — `Ezagent.WorkspaceRegistry.lookup/1`
+  - `entity://<workspace>/<type>/<name>` — `Ezagent.URI.entity_workspace_uri/1`
+  - `session://<workspace>/<template>/<name>` — `Ezagent.WorkspaceRegistry.lookup/1`
     (raises if unbound — invariant 4)
   - `workspace://<name>` — the URI itself IS the workspace
   - `system://`, `template://`, `resource://` — `:any`

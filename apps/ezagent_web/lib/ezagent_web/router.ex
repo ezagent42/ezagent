@@ -71,6 +71,17 @@ defmodule EzagentWeb.Router do
   scope "/", EzagentWeb do
     pipe_through [:browser, EzagentWeb.Plugs.RequireEntity]
 
+    # Resource-unification P2 (🔒 auth-contract change) — primary upload
+    # download route: a signed capability token (EzagentWeb.Uploads.UploadToken)
+    # bound to the ws-scoped resource://<ws>/uploads/<name> URI, authorized by
+    # ws-segment against the authenticated mount workspace via the FsResolver
+    # `uploads` authority/2. Replaces the participation-based authz that the
+    # back-compat /files/:filename shim below used pre-P2.
+    get "/uploads/download", UploadsController, :download
+
+    # Back-compat shim (the ONE sanctioned window, N6) — already-minted
+    # filename-only links; resolved under the caller's authenticated mount
+    # workspace. Remove when the deprecation window closes.
     get "/files/:filename", UploadsController, :show
 
     # Phase 9 PR-5 (SPEC v3 §6.4 amended): workspace switcher endpoint.

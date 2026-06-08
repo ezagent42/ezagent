@@ -35,13 +35,12 @@ defmodule Ezagent.UriQuery.Scan.HomePathBaseline do
     # `config_dir.ex`, so its baseline entry is removed (the baseline only ever
     # shrinks, S-3).
 
-    # → still pending P2b (uploads via resource:// resolver; #648 moved these into
-    # core). P2 is Allen-gated and NOT yet merged, so these raw `Home.path(:uploads)`
-    # callers remain in `apps/ezagent_core/lib/ezagent/uploads.ex` and stay
-    # baselined until P2 lands and removes them. They are the ONLY remaining
-    # burn-down entries after P3.
-    {"apps/ezagent_core/lib/ezagent/uploads.ex", 40, "Home.path(:uploads)"},
-    {"apps/ezagent_core/lib/ezagent/uploads.ex", 75, "Home.path(:uploads)"}
+    # P2b (DONE) — uploads now store + read through `Ezagent.Resource.FsResolver`
+    # (`resource://<ws>/uploads/<name>`, ws-partitioned), whose backend
+    # `Home.path/1` call is the sanctioned R-4 chokepoint in `HomePathExceptions`.
+    # `Ezagent.Uploads` no longer calls `Home.path(:uploads)`, so its two baseline
+    # entries are removed (the baseline only ever shrinks, S-3). The baseline is
+    # now empty — lockdown complete (P3 acceptance gate).
 
     # → P3 (DONE) — the population-3 credential/log/plugin callers (agent_bridge
     # token registry, identity smtp_config, feishu app-cred + inbox + plugin

@@ -19,8 +19,8 @@ defmodule EzagentPluginLiveview.Admin.Compose do
         socket.assigns[:session_legends] || %{}
       )
 
-    Ezagent.Uploads.ensure_dir!()
-
+    # P2b — uploads are ws-partitioned; `Ezagent.Uploads.store!/3` creates the
+    # per-workspace destination dir on write, so no global `ensure_dir!/0` here.
     attachments =
       consume_attachments(socket, upload_workspace_name!(socket))
 

@@ -1,98 +1,97 @@
 defmodule Ezagent.Uploads do
   @moduledoc """
-  Upload resource path resolver.
+  Chat-attachment upload store, workspace-partitioned behind the hardened
+  `Ezagent.Resource.FsResolver` (Resource-unification P2b).
 
-  Chat attachments are addressed as `resource://<workspace>/uploads/<name>`.
-  This module owns the filesystem projection for that resource type so callers
-  do not reach into `Ezagent.Home` directly.
+  Attachments are addressed as `resource://<ws>/uploads/<name>` (workspace-first,
+  SPEC v3 3-segment authority) and their bytes live at
+  `Home.path("uploads")/<ws>/<name>` — **ws-partitioned**, so the same filename in
+  two workspaces is isolated on disk.
+
+  ## Why this changed (P2b)
+
+  Pre-P2 this module resolved uploads by *basename* under a single
+  `Home.path("uploads")/<name>` directory (no `<ws>` partition) and owned its own
+  `Ezagent.UriQuery` `:upload_path` resolver. That made the on-disk layout
+  flat-namespaced and the download authorization participation-based at the
+  controller. P2b routes store + read through the generic, authorization-bearing
+  `FsResolver` `uploads` type (`authority/2` = `uri.<ws> == scope.workspace`), so
+  the workspace boundary is structural and `Ezagent.Home.path/1` is reached only
+  at the resolver's sanctioned R-4 chokepoint — this module no longer calls
+  `Home.path/1`.
+
+  Resolution is **authorization-bearing**: `resolve/2` and `path!/2` REQUIRE a
+  `scope` whose `:workspace` comes from the caller's authenticated context, never
+  from the URI being resolved.
   """
 
-  @attr :upload_path
+  alias Ezagent.Resource.FsResolver
+  alias Ezagent.URI, as: EzURI
+
   @type_segment "uploads"
 
-  @doc "The `Ezagent.UriQuery` attribute this module owns."
-  @spec attr() :: atom()
-  def attr, do: @attr
+  @typedoc "The caller's authenticated workspace scope (see `FsResolver.scope/0`)."
+  @type scope :: FsResolver.scope()
 
   @doc "The `resource://` type segment for chat uploads."
   @spec type_segment() :: String.t()
   def type_segment, do: @type_segment
 
-  @doc "Register the upload path UriQuery resolver."
-  @spec register() :: :ok | {:error, term()}
-  def register do
-    case Ezagent.UriQuery.register(@attr, &__MODULE__.resolve_path/1) do
-      :ok -> :ok
-      {:error, {:already_registered, @attr}} -> :ok
-      {:error, _} = err -> err
-    end
-  end
-
-  @doc "Ensure the active profile's uploads directory exists."
-  @spec ensure_dir!() :: :ok
-  def ensure_dir! do
-    File.mkdir_p!(dir!())
-  end
-
-  @doc "Return the active profile's uploads directory."
-  @spec dir!() :: String.t()
-  def dir! do
-    Ezagent.Home.path(:uploads)
-  end
-
-  @doc "Build a resource URI for a stored upload name."
+  @doc """
+  Build a `resource://<ws>/uploads/<name>` URI for a stored upload name.
+  """
   @spec resource_uri(String.t(), String.t()) :: URI.t()
   def resource_uri(workspace_name, stored_name)
       when is_binary(workspace_name) and is_binary(stored_name) do
-    Ezagent.URI.resource(workspace_name, @type_segment, stored_name)
+    EzURI.resource(workspace_name, @type_segment, stored_name)
   end
 
-  @doc "Resolve a stored upload filename or upload resource URI into its filesystem path."
-  @spec path!(String.t() | URI.t()) :: String.t()
-  def path!(stored_name) when is_binary(stored_name) do
-    resolve!(Ezagent.URI.resource("system", @type_segment, Path.basename(stored_name)))
+  @doc """
+  Resolve an upload `resource://<ws>/uploads/<name>` URI to its on-disk path
+  under the caller's authenticated `scope`, via the hardened `FsResolver`.
+
+  Returns `{:ok, path}` | `:none` (not an uploads URI) | `{:error, reason}`
+  (unsafe segment / foreign-workspace authority failure).
+  """
+  @spec resolve(URI.t(), scope()) :: {:ok, String.t()} | :none | {:error, term()}
+  def resolve(%URI{} = uri, %{workspace: _} = scope) do
+    FsResolver.resolve(uri, scope)
   end
 
-  def path!(%URI{} = resource_uri) do
-    resolve!(resource_uri)
-  end
+  @doc """
+  Resolve an upload URI to its path, raising on `:none` / `{:error, _}`.
 
-  @doc "Copy a LiveView upload temp file into the upload store and return its resource URI."
-  @spec store!(String.t(), String.t(), String.t()) :: URI.t()
-  def store!(workspace_name, stored_name, tmp_path)
-      when is_binary(workspace_name) and is_binary(stored_name) and is_binary(tmp_path) do
-    :ok = ensure_dir!()
-    resource_uri = resource_uri(workspace_name, stored_name)
-    File.cp!(tmp_path, path!(resource_uri))
-    resource_uri
-  end
-
-  @doc false
-  @spec resolve_path(term()) :: Ezagent.UriQuery.result()
-  def resolve_path(%URI{scheme: "resource"} = uri) do
-    with true <- Ezagent.URI.type?(uri, @type_segment),
-         {:ok, name} <- Ezagent.URI.name(uri) do
-      {:ok, Path.join(Ezagent.Home.path(:uploads), Path.basename(name))}
-    else
-      false -> :none
-      :error -> :none
-    end
-  end
-
-  def resolve_path(_), do: :none
-
-  defp resolve!(arg) do
-    :ok = register()
-
-    case Ezagent.UriQuery.resolve(@attr, arg) do
+  `scope` is the caller's authenticated workspace context.
+  """
+  @spec path!(URI.t(), scope()) :: String.t()
+  def path!(%URI{} = uri, %{workspace: _} = scope) do
+    case resolve(uri, scope) do
       {:ok, path} when is_binary(path) ->
         path
 
       :none ->
-        raise ArgumentError, "not an upload resource: #{inspect(arg)}"
+        raise ArgumentError, "not an upload resource: #{inspect(uri)}"
 
       {:error, reason} ->
         raise ArgumentError, "could not resolve upload path: #{inspect(reason)}"
     end
+  end
+
+  @doc """
+  Copy a LiveView upload temp file into the ws-partitioned upload store and
+  return its `resource://<ws>/uploads/<name>` URI.
+
+  The destination is resolved through `FsResolver` under a scope derived from the
+  same `workspace_name` (the authenticated upload workspace), so a malformed /
+  unsafe `stored_name` is rejected before any byte is written.
+  """
+  @spec store!(String.t(), String.t(), String.t()) :: URI.t()
+  def store!(workspace_name, stored_name, tmp_path)
+      when is_binary(workspace_name) and is_binary(stored_name) and is_binary(tmp_path) do
+    uri = resource_uri(workspace_name, stored_name)
+    dest = path!(uri, %{workspace: workspace_name})
+    File.mkdir_p!(Path.dirname(dest))
+    File.cp!(tmp_path, dest)
+    uri
   end
 end
