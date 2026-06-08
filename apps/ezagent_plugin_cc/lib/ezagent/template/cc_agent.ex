@@ -542,18 +542,21 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     end
   end
 
-  defp put_agent_config_dir(tmpl, nil), do: tmpl
-  defp put_agent_config_dir(tmpl, dir), do: Map.put(tmpl, "agent_config_dir", dir)
+  defp put_agent_config_dir(tmpl, dir),
+    do: Ezagent.Credential.HomeRuntime.put_agent_config_dir(tmpl, dir)
 
   # #17 cascade PR-2 (codex CRITICAL §5.1) — normalize `create_agent_config_dir/2`'s
   # backward-compatible 2-tuple (non-cascade, no grant) and 3-tuple (cascade, carrying the
   # validated grant context) into a single `{:ok, dir, grant_ctx}` for the spawn path.
   defp create_agent_config_dir_with_grant(agent_uri, tmpl) do
-    case create_agent_config_dir(agent_uri, tmpl) do
-      {:ok, dir, grant_ctx} -> {:ok, dir, grant_ctx}
-      {:ok, dir} -> {:ok, dir, nil}
-      {:error, _} = err -> err
-    end
+    reject_stale_config_dir_data_key!(tmpl)
+
+    Ezagent.Credential.HomeRuntime.create_agent_config_dir_with_grant(
+      agent_uri,
+      tmpl,
+      __MODULE__,
+      config_home_opts()
+    )
   end
 
   # #17 cascade PR-2 (codex CRITICAL §5.1) — second grant re-validation, run IMMEDIATELY
@@ -562,14 +565,8 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # On `:grant_changed` the caller's `else` clause tears down the Kind AND clears the
   # just-materialized config_dir (rollback_agent_config_dir), so nothing launches with — or
   # leaves usable — the secret of a now-revoked/changed grant.
-  defp revalidate_grant_before_launch(nil), do: :ok
-
-  defp revalidate_grant_before_launch({:grant, agent_uri_str, version}) do
-    case Ezagent.Credential.GrantRow.revalidate_version!(agent_uri_str, version) do
-      :ok -> :ok
-      {:error, :grant_changed} -> {:error, {:grant_changed_before_launch, agent_uri_str}}
-    end
-  end
+  defp revalidate_grant_before_launch(grant_ctx),
+    do: Ezagent.Credential.HomeRuntime.revalidate_grant_before_launch(grant_ctx)
 
   # ────────────────────────────────────────────────────────────────────────
   # SPEC `2026-05-26-session-create-orchestrator-unified` Gap B —
@@ -606,19 +603,8 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   @doc false
   @spec apply_orchestrator_role_bootstrap(map(), String.t() | nil) ::
           :ok | {:error, term()}
-  def apply_orchestrator_role_bootstrap(_tmpl, nil), do: :ok
-
-  def apply_orchestrator_role_bootstrap(tmpl, config_dir)
-      when is_map(tmpl) and is_binary(config_dir) do
-    if orchestrator_role?(tmpl) do
-      with {:ok, source} <- resolve_orchestrator_skill_source(),
-           :ok <- copy_orchestrator_skill(source, config_dir),
-           :ok <- append_orchestrator_claude_md_hint(config_dir) do
-        :ok
-      end
-    else
-      :ok
-    end
+  def apply_orchestrator_role_bootstrap(tmpl, config_dir) do
+    Ezagent.PluginCc.Template.OrchestratorBootstrap.bootstrap(tmpl, config_dir)
   end
 
   # codex PR #408 review HIGH-3 — wrap `apply_orchestrator_role_bootstrap/2`
@@ -638,49 +624,13 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   @doc false
   @spec try_role_bootstrap(map(), String.t() | nil, URI.t()) :: {:ok, map()}
   def try_role_bootstrap(tmpl, config_dir, %URI{} = agent_uri) do
-    case apply_orchestrator_role_bootstrap(tmpl, config_dir) do
-      :ok ->
-        {:ok, %{}}
-
-      {:error, reason} ->
-        Logger.warning(
-          "cc.agent: orchestrator role-bootstrap failed for " <>
-            "#{URI.to_string(agent_uri)}: #{inspect(reason)} — " <>
-            "the agent will spawn as a plain cc agent (best-effort UX, " <>
-            "SPEC 2026-05-26-session-create-orchestrator-unified Gap B); " <>
-            "caller MUST surface the degraded status to the owner."
-        )
-
-        :telemetry.execute(
-          [:ezagent, :cc, :role_bootstrap, :failed],
-          %{count: 1},
-          %{agent_uri: agent_uri, reason: reason, config_dir: config_dir}
-        )
-
-        {:ok,
-         %{
-           role_degraded: true,
-           role_degraded_reason: reason
-         }}
-    end
+    Ezagent.PluginCc.Template.OrchestratorBootstrap.try_apply(tmpl, config_dir, agent_uri)
   end
 
   @doc false
   @spec orchestrator_role?(map()) :: boolean()
-  def orchestrator_role?(tmpl) when is_map(tmpl) do
-    # codex PR #408 review LOW — accept both string and atom forms so
-    # an atom-literal call site (`%{"role" => :orchestrator}`) reads the
-    # same as the canonical string form (`%{"role" => "orchestrator"}`).
-    # On-disk / snapshot-roundtripped templates carry the string; this
-    # check is generous on ingress.
-    case Map.get(tmpl, "role") do
-      "orchestrator" -> true
-      :orchestrator -> true
-      _ -> false
-    end
-  end
-
-  def orchestrator_role?(_), do: false
+  def orchestrator_role?(tmpl),
+    do: Ezagent.PluginCc.Template.OrchestratorBootstrap.orchestrator_role?(tmpl)
 
   # Resolve the on-disk source of the `ezagent-session-orchestrator`
   # skill. Defaults to walking upward from this plugin's priv_dir looking
@@ -701,148 +651,16 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   @doc false
   @spec resolve_orchestrator_skill_source() :: {:ok, String.t()} | {:error, term()}
   def resolve_orchestrator_skill_source do
-    override = Application.get_env(:ezagent_plugin_cc, :orchestrator_skill_source)
-
-    cond do
-      is_binary(override) and override != "" ->
-        if File.dir?(override) do
-          {:ok, override}
-        else
-          {:error, {:skill_source_missing, override}}
-        end
-
-      true ->
-        search_orchestrator_skill_source()
-    end
+    Ezagent.PluginCc.Template.OrchestratorBootstrap.resolve_orchestrator_skill_source()
   end
 
-  @orchestrator_skill_relpath ".claude/skills/ezagent-session-orchestrator"
-  @orchestrator_skill_marker_relpath "SKILL.md"
-
-  # Walk upward from this plugin's priv_dir, searching for the first
-  # ancestor that holds `.claude/skills/ezagent-session-orchestrator/SKILL.md`.
-  # Returns `{:ok, abs_skill_dir}` or `{:error, {:skill_source_not_found,
-  # attempted_paths}}` so the operator can see which dirs were probed.
-  defp search_orchestrator_skill_source do
-    case :code.priv_dir(:ezagent_plugin_cc) do
-      priv when is_list(priv) ->
-        start = Path.expand(to_string(priv))
-        search_orchestrator_skill_source_from(start)
-
-      _ ->
-        # Plugin not loaded — should be unreachable from a running
-        # template, but guard anyway.
-        {:error, {:skill_source_not_found, []}}
-    end
-  end
-
-  @doc """
-  Walk upward from `start_dir`, searching for the first ancestor that
-  holds `.claude/skills/ezagent-session-orchestrator/SKILL.md`.
-
-  Public (`@doc false`) so tests can force the exhausted-walk branch
-  without monkey-patching `:code.priv_dir/1`. Production callers use
-  `resolve_orchestrator_skill_source/0` which threads in the plugin's
-  real priv-dir.
-
-  Returns `{:ok, abs_skill_dir}` when found, or
-  `{:error, {:skill_source_not_found, attempted_paths}}` on exhaust
-  (parent == self at filesystem root).
-
-  codex PR #408 r2 WARN HIGH-2 — the post-r1 walk-fallback's
-  `:skill_source_not_found` tag was structurally reachable only via
-  `:code.priv_dir` returning a non-list (unreachable from a loaded
-  plugin). Extracting this public-for-test helper lets the
-  exhausted-walk path be exercised directly.
-  """
   @doc false
   @spec search_orchestrator_skill_source_from(String.t()) ::
           {:ok, String.t()} | {:error, {:skill_source_not_found, [String.t()]}}
   def search_orchestrator_skill_source_from(start_dir) when is_binary(start_dir) do
-    walk_for_skill(start_dir, [])
-  end
-
-  # Bound the walk at the filesystem root. `Path.dirname/1` of `/` is `/`
-  # on POSIX, so a parent-equals-self check is the loop termination.
-  defp walk_for_skill(dir, attempted) do
-    candidate = Path.join(dir, @orchestrator_skill_relpath)
-    marker = Path.join(candidate, @orchestrator_skill_marker_relpath)
-    attempted = [candidate | attempted]
-
-    cond do
-      File.regular?(marker) ->
-        {:ok, candidate}
-
-      true ->
-        parent = Path.dirname(dir)
-
-        if parent == dir do
-          {:error, {:skill_source_not_found, Enum.reverse(attempted)}}
-        else
-          walk_for_skill(parent, attempted)
-        end
-    end
-  end
-
-  # Copy the skill tree into `<config_dir>/skills/ezagent-session-orchestrator/`.
-  # Idempotent: when the destination dir already exists, return `:ok`
-  # without re-copying. Per the SPEC's "Idempotence" rule, a re-spawn
-  # MUST NOT re-copy the skill.
-  defp copy_orchestrator_skill(source_dir, config_dir) do
-    skills_root = Path.join(config_dir, "skills")
-    dest_dir = Path.join(skills_root, "ezagent-session-orchestrator")
-
-    cond do
-      File.dir?(dest_dir) ->
-        :ok
-
-      true ->
-        with :ok <- File.mkdir_p(skills_root),
-             {:ok, _} <- File.cp_r(source_dir, dest_dir) do
-          :ok
-        else
-          {:error, reason} -> {:error, {:skill_copy_failed, reason}}
-          err -> {:error, {:skill_copy_failed, err}}
-        end
-    end
-  end
-
-  @orchestrator_hint_line "## Use the ezagent-session-orchestrator skill for all session coordination work."
-
-  # Append the orchestrator-skill hint to `<config_dir>/CLAUDE.md`,
-  # creating the file if missing. Idempotent: greps for the marker
-  # line first; only appends when absent.
-  defp append_orchestrator_claude_md_hint(config_dir) do
-    claude_md = Path.join(config_dir, "CLAUDE.md")
-
-    existing =
-      case File.read(claude_md) do
-        {:ok, content} -> content
-        {:error, :enoent} -> ""
-        {:error, reason} -> {:error, reason}
-      end
-
-    case existing do
-      {:error, reason} ->
-        {:error, {:claude_md_hint_failed, reason}}
-
-      content when is_binary(content) ->
-        if String.contains?(content, @orchestrator_hint_line) do
-          :ok
-        else
-          new_content =
-            if content == "" or String.ends_with?(content, "\n") do
-              content <> @orchestrator_hint_line <> "\n"
-            else
-              content <> "\n" <> @orchestrator_hint_line <> "\n"
-            end
-
-          case File.write(claude_md, new_content) do
-            :ok -> :ok
-            {:error, reason} -> {:error, {:claude_md_hint_failed, reason}}
-          end
-        end
-    end
+    Ezagent.PluginCc.Template.OrchestratorBootstrap.search_orchestrator_skill_source_from(
+      start_dir
+    )
   end
 
   @doc """
@@ -850,7 +668,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   Public so tests can assert exact content (SPEC Gap B B2 / B4).
   """
   @spec orchestrator_hint_line() :: String.t()
-  def orchestrator_hint_line, do: @orchestrator_hint_line
+  def orchestrator_hint_line, do: Ezagent.PluginCc.Template.OrchestratorBootstrap.hint_line()
 
   # codex H2 (FINDING 2) — handle a spawn failure AFTER the config_dir was materialized:
   # tear down the just-materialized config_dir, then SURFACE a cleanup failure as BLOCKING.
@@ -868,47 +686,8 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # unit-testable with an injected rm_rf failure.
   @doc false
   @spec handle_spawn_failure(URI.t(), term()) :: {:error, term()}
-  def handle_spawn_failure(agent_uri, {:grant_changed_before_launch, _} = reason) do
-    case rollback_agent_config_dir(agent_uri) do
-      :ok ->
-        {:error, reason}
-
-      {:error, cleanup_reason} ->
-        {:error, {:grant_revoked_cleanup_failed, agent_uri, cleanup_reason}}
-    end
-  end
-
   def handle_spawn_failure(agent_uri, reason) do
-    case rollback_agent_config_dir(agent_uri) do
-      :ok ->
-        {:error, reason}
-
-      {:error, cleanup_reason} ->
-        {:error, {:config_dir_cleanup_failed, agent_uri, reason, cleanup_reason}}
-    end
-  end
-
-  # Roll back a partially-created config dir on PTY-startup failure.
-  #
-  # codex H2 (FINDING 2) — returns `:ok | {:error, reason}`. A failed removal is no longer
-  # swallowed as `:ok`: the dir may hold a grant-scoped secret, so the caller
-  # (`handle_spawn_failure/2`) must be able to surface a cleanup failure as BLOCKING rather
-  # than report only the primary error while a usable secret dir is left on disk.
-  defp rollback_agent_config_dir(agent_uri) do
-    dir = agent_config_dir(agent_uri)
-
-    case File.rm_rf(dir) do
-      {:ok, _} ->
-        :ok
-
-      {:error, reason, _path} ->
-        Logger.warning(
-          "cc.agent: rollback of #{dir} failed: #{inspect(reason)} " <>
-            "(agent_uri=#{URI.to_string(agent_uri)})"
-        )
-
-        {:error, reason}
-    end
+    Ezagent.Credential.HomeRuntime.handle_spawn_failure(agent_uri, reason, __MODULE__, "cc.agent")
   end
 
   # codex round-6 HIGH-1 — `SpawnRegistry.spawn_detailed/1` preserves
@@ -939,304 +718,29 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   end
 
   defp ensure_pty_server(agent_uri, cwd, tmpl) do
-    # Domain.Pty PR-A: route through the facade instead of
-    # DynamicSupervisor.start_child on EzagentPluginCc.PtyServerSupervisor.
-    # The claude invocation (argv list + cmd_env) is built here in the
-    # cc plugin and handed to Server as :cmd_override / :cmd_env,
-    # keeping ezagent_domain_pty Tier-2.
-    #
-    # In `:test` env we deliberately SKIP the McpConfigWriter side
-    # effect — the Server short-circuits `:exec.run/2` via `test_mode:
-    # true` (Mix.env() default), so the invocation is never spawned;
-    # building it would write `~/.ezagent/bridge.mcp.json` to disk on
-    # every test, which the pre-Domain.Pty-PR-A path also avoided.
-    #
-    # `build_claude_cmd/3` may fail with `{:error, :claude_not_found}`
-    # when `claude` is not on `PATH` — argv element 0 must be an
-    # absolute path because erlexec's list-form `:exec.run/2` runs
-    # `execve(3)` with NO shell and NO PATH search (see its docstring).
-    # The `with` propagates that error so instantiate/3 fails clearly
-    # rather than spawning a PtyServer whose `claude` will never start.
-    with {:ok, params} <- build_pty_params(agent_uri, cwd, tmpl),
-         {:ok, _pid} <- start_pty(agent_uri, params) do
-      :ok
-    end
+    Ezagent.PluginCc.Template.SpawnPlan.ensure_pty_server(agent_uri, cwd, tmpl, @compile_env)
   end
 
-  # Exposed (`@doc false`) so the spawn-path invariant test (added
-  # 2026-05-26 alongside the mention-parser regression fix) can
-  # exercise the production param-building path without spawning a
-  # real PTY. Test:
-  # `apps/ezagent_plugin_cc/test/ezagent/template/cc_agent_spawn_invariant_test.exs`.
   @doc false
   def build_pty_params(agent_uri, cwd, tmpl) do
-    build_pty_params_for_env(agent_uri, cwd, tmpl, @compile_env)
+    Ezagent.PluginCc.Template.SpawnPlan.build_pty_params(agent_uri, cwd, tmpl, @compile_env)
   end
 
-  # Codex 2026-05-26 MEDIUM — splitting the env axis out lets the
-  # invariant test pass `:dev` directly to assert the production Map
-  # shape (key name `:cmd_override` is the Domain.Pty.Server boundary
-  # contract — a future refactor that renames it would silently leave
-  # the Server without a child program → no claude → no bridge).
   @doc false
   def build_pty_params_for_env(agent_uri, cwd, tmpl, env) do
-    case env do
-      :test ->
-        {:ok, %{cwd: cwd, test_mode: true}}
-
-      _ ->
-        with {:ok, {argv, cmd_env}} <- build_claude_cmd(agent_uri, cwd, tmpl) do
-          {:ok,
-           %{
-             cwd: cwd,
-             cmd_override: argv,
-             cmd_env: cmd_env,
-             # #17 PR-C — surface an expired/missing claude login as an emit-only
-             # auth-failure signal (no silent mute) from this flavor's adapter.
-             auth_observers: credential_auth_observers()
-           }}
-        end
-    end
+    Ezagent.PluginCc.Template.SpawnPlan.build_pty_params_for_env(agent_uri, cwd, tmpl, env)
   end
 
-  # #17 PR-C — build the PTY auth-failure observers from the cc credential adapter's
-  # declared signals (one named observer per signal).
-  defp credential_auth_observers do
-    auth_failure_signals()
-    |> Enum.with_index()
-    |> Enum.map(fn {sig, i} -> %{name: :"cc_auth_failure_#{i}", match: sig} end)
-  end
-
-  defp start_pty(agent_uri, params) do
-    case Ezagent.Domain.Pty.start(agent_uri, params) do
-      {:ok, pid} ->
-        {:ok, pid}
-
-      {:error, {:already_started, pid}} ->
-        # Atomic dedup at supervisor layer (PtyServer's :via Registry
-        # name made this happen). Treat as success.
-        {:ok, pid}
-
-      {:error, reason} ->
-        Logger.warning(
-          "cc.agent: PtyServer start failed for #{URI.to_string(agent_uri)}: " <>
-            inspect(reason)
-        )
-
-        {:error, {:pty_server_spawn_failed, reason}}
-    end
-  end
-
-  # Phase 6 PR 23 + Domain.Pty PR-A (2026-05-21): build the full
-  # claude invocation cc agents run under PTY. Moved here from
-  # `Ezagent.PluginCc.PtyServer.spawn_claude_directly/1` so the Server
-  # module (now `Ezagent.Domain.Pty.Server`) stays Tier-2 — no
-  # dependency on cc-plugin modules like `McpConfigWriter`.
-  # `agent_cwd` is always supplied by the sole caller
-  # (ensure_pty_server/3) — no default, per dead-code audit 2026-05-21.
-  #
-  # Phase 7 completion PR-1 (SPEC §1.5 (c)): `tmpl` may carry the four
-  # optional sandbox keys.
-  #
-  # codex HIGH-2 — the invocation is built as an **argv list**, NOT a
-  # shell string. `Ezagent.Domain.Pty` runs a list-form `cmd_override`
-  # via `execve` with NO shell, so each element is exactly one
-  # `argv[]` entry. An operator-controlled sandbox path
-  # (`operator_settings_path` / `operator_mcp_config_path`) is one list
-  # element — it can neither split into extra arguments (defeating the
-  # rev-5 "mandatory `--settings` last-wins" guarantee) nor smuggle a
-  # shell command. The universal `config_dir` is returned as a structured env
-  # var (`CLAUDE_CONFIG_DIR`), NOT a `VAR=val` shell prefix (a prefix
-  # is meaningless in argv form and was shell-injectable in string
-  # form).
-  #
-  # codex review of the PR-1 hardening (#233) — argv element 0 MUST be
-  # an ABSOLUTE PATH. erlexec's list-form `:exec.run/2` goes straight
-  # to `execve(3)` (no shell, no `$PATH` search), so a bare `"claude"`
-  # would only resolve if it happened to live in `cwd`. The pre-#233
-  # shell-string path resolved `claude` via `$PATH`; the no-shell argv
-  # refactor regressed that. We restore PATH resolution here by calling
-  # `System.find_executable("claude")` — and if `claude` is not on
-  # `PATH` we return `{:error, :claude_not_found}` (NO silent shell
-  # fallback) so the caller fails loudly rather than spawning a PTY
-  # whose child can never start.
-  #
-  # Returns `{:ok, {argv_list, env_map}}` or `{:error, :claude_not_found}`.
-  #
-  # Exposed (`@doc false`) so the spawn-path invariant test
-  # (`cc_agent_spawn_invariant_test.exs`, 2026-05-26) can assert the
-  # full production argv shape — `claude` (resolved abs path) as
-  # element 0, the safety `--settings` LAST, the bridge `--mcp-config`
-  # present, `CLAUDE_CONFIG_DIR` in cmd_env when configured — without
-  # rebuilding the assembly in the test (the rebuild-in-test pattern
-  # used by `cc_agent_sandbox_credentials_test.exs` line 521 is fragile
-  # — a divergence between the test's rebuild and the production
-  # builder passes the test while production breaks).
   @doc false
   def build_claude_cmd(agent_uri, agent_cwd, tmpl) do
-    with {:ok, claude_path} <- resolve_claude_executable(agent_uri) do
-      # `write_with_token!/1` returns the per-instance connect token in
-      # addition to the esr-bridge mcp.json path. Exporting the agent
-      # URI + that token into the `claude` PROCESS env (`cmd_env`)
-      # means every MCP server `claude` launches — including the
-      # orchestrator MCP transport bridge (`orchestrator_bridge.py`),
-      # which an operator `--mcp-config` adds — inherits the same
-      # per-instance identity and can authenticate its own WS Channel
-      # join. Minting is idempotent per agent URI, so this is the SAME
-      # token baked into the esr-bridge config: one credential, no
-      # spoofing surface (Phase 7 completion PR-5).
-      # PR-3 (DD-6): the AUTHORITATIVE per-agent .mcp.json lives in the
-      # domain-allocated per-agent config home (sandbox-owned), which
-      # `--mcp-config` points at below. nil ⇒ agent has no config home (the cwd
-      # copy is used). The cwd/git-root/~/.ezagent copies remain as compat.
-      config_home = resolve_config_home(agent_uri, tmpl)
-
-      {:ok, _global_mcp_path, agent_token} =
-        EzagentPluginCc.McpConfigWriter.write_with_token!(
-          agent_uri: URI.to_string(agent_uri),
-          agent_cwd: agent_cwd,
-          config_dir: config_home
-        )
-
-      # 2026-05-26 (Allen e2e Bug 4): the writer writes THREE copies of
-      # the bridge mcp.json:
-      #   (a) `~/.ezagent/bridge.mcp.json` — shared/global, LATEST-WRITE-WINS
-      #   (b) `<git toplevel>/.mcp.json`  — shared/global, LATEST-WRITE-WINS
-      #   (c) `<agent_cwd>/.mcp.json`     — per-agent, isolated
-      #
-      # Pre-fix, `--mcp-config` pointed at (a). When two cc agents were
-      # spawned in succession, agent N's TUI would read (a) which had
-      # been clobbered by agent M's later spawn — claude's python bridge
-      # subprocess would authenticate as M, never connect for N. The
-      # observable symptom: only ONE cc agent ever has an active
-      # `cc:bridge:<URI>` channel (the last one spawned), and every
-      # other agent's inbound `chat.receive` audits as `:no_bridge`
-      # → silent drop.
-      #
-      # Per-agent isolation: claude's `--mcp-config` now points at the
-      # per-agent `<cwd>/.mcp.json` (write site (c)). That file's lifetime
-      # is bound to the agent's cwd; no other agent overwrites it.
-      # Files (a) + (b) are now diagnostic surfaces only (operator can
-      # eyeball the last-spawned agent's creds; they no longer gate
-      # the runtime claude → bridge handshake).
-      # PR-3 (DD-6): point claude's `--mcp-config` at the sandbox-owned per-agent
-      # .mcp.json in the config home (the authoritative copy). Agents with no
-      # config home keep the cwd copy (codex DD-6 — repoint, don't leave claude
-      # reading the old path).
-      per_agent_mcp_path =
-        if is_binary(config_home) and config_home != "",
-          do: Path.join(config_home, ".mcp.json"),
-          else: Path.join(agent_cwd, ".mcp.json")
-
-      settings_mcp_args =
-        assemble_settings_mcp_args(mandatory_settings_path(), per_agent_mcp_path, tmpl)
-
-      # argv element 0 is the resolved ABSOLUTE path (not bare
-      # "claude"); the rest is the hardening's safe arg assembly.
-      #
-      # 2026-06-01 — headless startup-dialog fix (verified via tmux +
-      # live orchestrator round-trip; see
-      # [[project_cc_channel_reply_unverified]]).
-      #
-      # `--permission-mode bypassPermissions` shows a "Bypass Permissions
-      # mode … Yes, I accept" CONFIRMATION dialog at startup that a
-      # headless PTY can't answer → claude parks pre-REPL → never loads
-      # the esr-bridge channel → inbound `notifications/claude/channel`
-      # are SILENTLY DROPPED (per the channels-reference) → the agent
-      # receives mentions but never replies. Critically this dialog
-      # appears BEFORE the `--dangerously-load-development-channels`
-      # prompt, so the PtyServer auto-prompt scanner
-      # (`default_auto_prompts/0`, which already answers the dev-channels
-      # dialog with "1\r") never saw its trigger text.
-      #
-      # `--dangerously-skip-permissions` runs in the SAME bypass mode
-      # WITHOUT that confirmation (verified: REPL still reports "bypass
-      # permissions on"; the `--settings` safety file is unchanged). With
-      # the bypass dialog gone, claude reaches the dev-channels prompt,
-      # which the EXISTING PtyServer scanner auto-confirms — the channel
-      # loads and the agent replies. No extra dialog-clearing code here.
-      argv =
-        [
-          claude_path,
-          "--dangerously-skip-permissions",
-          "--dangerously-load-development-channels",
-          "server:esr-bridge"
-        ] ++ settings_mcp_args
-
-      base_env = %{
-        # Inherited by every MCP-server subprocess `claude` spawns.
-        "EZAGENT_AGENT_URI" => Ezagent.URI.stable_key(agent_uri),
-        "EZAGENT_AGENT_TOKEN" => agent_token
-      }
-
-      # PR3 2026-05-24 + codex round-1 MEDIUM-1 — the per-agent dir
-      # takes precedence over the template's reference dir. Both are
-      # validated as non-empty binaries up-front (a previous `cond`
-      # binding form silently let `""` win the branch and DROP
-      # CLAUDE_CONFIG_DIR — hiding template misconfiguration).
-      #
-      # If BOTH keys are present but `agent_config_dir` is invalid,
-      # we raise rather than fall back — a freshly-spawned agent
-      # whose per-agent dir was misset would otherwise silently use
-      # the SHARED template ref dir (cross-agent credential leak).
-      cmd_env =
-        base_env
-        |> put_claude_config_dir(config_home, tmpl)
-        |> maybe_put_orchestrator_role_env(tmpl)
-
-      {:ok, {argv, cmd_env}}
-    end
+    Ezagent.PluginCc.Template.SpawnPlan.build_claude_cmd(agent_uri, agent_cwd, tmpl)
   end
 
-  # SPEC `2026-05-26-session-create-orchestrator-unified` Gap B —
-  # when role is `"orchestrator"`, surface it to the claude process
-  # via `EZAGENT_AGENT_ROLE`. The MCP bridge subprocesses claude
-  # spawns inherit env from claude, so the orchestrator-MCP server
-  # gets the same signal.
-  defp maybe_put_orchestrator_role_env(env, tmpl) when is_map(env) do
-    if orchestrator_role?(tmpl) do
-      Map.put(env, "EZAGENT_AGENT_ROLE", "orchestrator")
-    else
-      env
-    end
+  @doc false
+  @spec resolve_claude_executable(URI.t()) :: {:ok, String.t()} | {:error, :claude_not_found}
+  def resolve_claude_executable(agent_uri) do
+    Ezagent.PluginCc.Template.SpawnPlan.resolve_claude_executable(agent_uri)
   end
-
-  # PR-3 (DD-6 + codex review P2) — set `CLAUDE_CONFIG_DIR` to the SAME resolved
-  # per-agent config home used for the `.mcp.json` (`resolve_config_home/2`), so
-  # both always agree and NEITHER ever points at the shared template reference
-  # dir. `config_home` is the resolver output (realized > allocated >
-  # derived-from-URI > nil).
-  #
-  # config_dir promotion (Allen 2026-06-03): the template's reference config-home
-  # arrives under the UNIVERSAL, flavor-neutral `"config_dir"` data key.
-  defp put_claude_config_dir(base_env, config_home, tmpl) do
-    # codex P2 closure — fail loud on a STALE `"claude_config_dir"` data key.
-    # `Workspace.Loader.invoke_template/2` calls `instantiate/3` directly WITHOUT
-    # running `validate/1`, so a persisted template carrying the old key would
-    # bypass the validator-level check. This is the PTY-env chokepoint on BOTH
-    # the fresh and respawn paths.
-    reject_stale_config_dir_data_key!(tmpl)
-
-    cond do
-      is_binary(config_home) and config_home != "" ->
-        Map.put(base_env, "CLAUDE_CONFIG_DIR", config_home)
-
-      # A PRESENT-but-malformed `"config_dir"` (`""` / non-binary) must FAIL LOUD
-      # rather than silently spawn without `CLAUDE_CONFIG_DIR` (operator home).
-      # An ABSENT key is the only legitimate "no config home".
-      config_dir_present_but_malformed?(tmpl) ->
-        raise ArgumentError,
-              "cc.agent: invalid config_dir #{inspect(Map.get(tmpl, "config_dir"))} — must " <>
-                "be a non-empty string (or absent for no config home). No silent fallback " <>
-                "to the operator home (feedback_let_it_crash_no_workarounds)."
-
-      true ->
-        base_env
-    end
-  end
-
-  defp valid_dir?(d) when is_binary(d) and d != "", do: true
-  defp valid_dir?(_), do: false
 
   # PR-3 (DD-6 + codex review P2) — the resolved per-agent config home: the single
   # value used for BOTH `CLAUDE_CONFIG_DIR` and the authoritative `--mcp-config`
@@ -1253,28 +757,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   #   4. no reference → nil (no config home; claude uses ~/.claude).
   @doc false
   def resolve_config_home(%URI{} = agent_uri, tmpl) do
-    cond do
-      valid_dir?(Map.get(tmpl, "agent_config_dir")) ->
-        Map.get(tmpl, "agent_config_dir")
-
-      valid_dir?(Map.get(tmpl, "allocated_config_dir")) ->
-        Map.get(tmpl, "allocated_config_dir")
-
-      valid_dir?(Map.get(tmpl, "config_dir")) ->
-        Ezagent.Sandbox.ConfigDir.path(agent_uri, Ezagent.Kind.Template.namespace_of(__MODULE__))
-
-      true ->
-        nil
-    end
-  end
-
-  # `"config_dir"` key is PRESENT but not a valid dir (`""` / non-binary /
-  # `nil`-value). An absent key is NOT malformed (legitimate "no config home").
-  defp config_dir_present_but_malformed?(tmpl) do
-    case Map.fetch(tmpl, "config_dir") do
-      :error -> false
-      {:ok, v} -> not valid_dir?(v)
-    end
+    Ezagent.Credential.HomeRuntime.resolve_config_home(agent_uri, tmpl, __MODULE__)
   end
 
   # config_dir promotion (Allen 2026-06-03) — FAIL LOUD on a stale
@@ -1328,107 +811,14 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   end
 
   @doc false
-  # codex review of the PR-1 hardening (#233) — resolve the `claude`
-  # executable to an ABSOLUTE PATH via `System.find_executable/1`.
-  #
-  # erlexec's list-form `:exec.run/2` (the no-shell argv path the
-  # hardening adopted) runs `execve(3)` directly: there is no shell, so
-  # no `$PATH` lookup. A bare `"claude"` as argv element 0 only
-  # resolves if `claude` happens to live in `cwd`. `System.find_executable/1`
-  # reproduces the `$PATH` search the pre-#233 shell-string path got
-  # for free, so the resolved absolute path can be handed to `execve`.
-  #
-  # Returns `{:ok, absolute_path}` or `{:error, :claude_not_found}`.
-  # The not-found case is a clear, propagated error — there is NO
-  # silent fall back to a shell-resolved invocation.
-  #
-  # Exposed (`@doc false`) so the regression test can drive PATH
-  # resolution + the no-claude error path directly.
-  @spec resolve_claude_executable(URI.t()) :: {:ok, String.t()} | {:error, :claude_not_found}
-  def resolve_claude_executable(agent_uri) do
-    case System.find_executable("claude") do
-      nil ->
-        Logger.error(
-          "cc.agent: `claude` executable not found on PATH for " <>
-            "#{URI.to_string(agent_uri)} — cannot build the argv invocation. " <>
-            "erlexec list-form exec runs execve(3) with no PATH search, so " <>
-            "argv element 0 must be an absolute path. Install `claude` on the " <>
-            "PATH of the process running `mix phx.server`."
-        )
-
-        {:error, :claude_not_found}
-
-      claude_path ->
-        {:ok, claude_path}
-    end
-  end
-
-  # The plugin-shipped mandatory safety settings file. Phase 6 PR 23:
-  # operator's `~/.claude/settings.json` may set `remoteControlAtStartup:
-  # true` (cc-openclaw + others enable it) — that redirects interactive
-  # I/O to claude.ai cloud + makes the local PTY a passive observer.
-  # This file forces `remoteControlAtStartup: false`.
-  defp mandatory_settings_path do
-    :code.priv_dir(:ezagent_plugin_cc)
-    |> Path.join("claude-pty-settings.json")
-  end
-
-  @doc false
-  # Phase 7 completion PR-1 (SPEC §1.5 (c)) — pure assembly of the
-  # `--settings` / `--mcp-config` argv sequence. Exposed (`@doc false`)
-  # so the adversarial-path test can assert the ordering + injection
-  # invariants without the McpConfigWriter side effect.
-  #
-  # codex HIGH-2 — returns an **argv LIST** where every flag and every
-  # path is a SEPARATE element (`["--settings", "/a/b", ...]`), NOT a
-  # space-joined string. The list is handed verbatim to
-  # `:exec.run/2`'s argv form (no shell). Consequences:
-  #
-  #   * An operator `operator_settings_path` / `operator_mcp_config_path`
-  #     is ONE element. A value like `/tmp/x.json --settings /tmp/evil`
-  #     stays a single `argv[]` entry — claude receives it as one
-  #     (nonsense) file path; it CANNOT introduce a later `--settings`
-  #     flag, so the rev-5 "mandatory `--settings` last-wins" guarantee
-  #     holds for every possible operator value.
-  #   * Spaces, `;`, `$(...)`, backticks, `&&` in an operator value are
-  #     inert — there is no shell to interpret them.
-  #
-  # SAFETY INVARIANT — the mandatory plugin `--settings` is emitted
-  # LAST. claude's `--settings` is last-wins, so a hostile operator
-  # `operator_settings_path` setting `remoteControlAtStartup: true`
-  # cannot win: the mandatory file (forcing `false`) is layered after
-  # it. An operator `--settings` is emitted FIRST (it may layer
-  # non-conflicting keys; conflicting safety keys lose).
-  #
-  # The trusted esr-bridge `--mcp-config` is ALWAYS emitted; an
-  # operator `--mcp-config` is an ADDITIONAL flag, never a replacement
-  # (claude merges MCP configs additively — an operator config adds
-  # servers but cannot delete the bridge server).
   @spec assemble_settings_mcp_args(String.t(), String.t(), map()) :: [String.t()]
   def assemble_settings_mcp_args(mandatory_settings_path, bridge_mcp_path, tmpl)
       when is_binary(mandatory_settings_path) and is_binary(bridge_mcp_path) and is_map(tmpl) do
-    operator_settings =
-      case Map.get(tmpl, "operator_settings_path") do
-        p when is_binary(p) and p != "" -> ["--settings", p]
-        _ -> []
-      end
-
-    operator_mcp =
-      case Map.get(tmpl, "operator_mcp_config_path") do
-        p when is_binary(p) and p != "" -> ["--mcp-config", p]
-        _ -> []
-      end
-
-    # Order: operator --settings FIRST, mandatory --settings LAST
-    # (last-wins ⇒ safety non-bypassable). The trusted bridge
-    # --mcp-config is always present; an operator --mcp-config is
-    # additive (listed after the bridge). Each flag + each path is its
-    # OWN list element — an operator value is never split or able to
-    # become a new flag (codex HIGH-2).
-    operator_settings ++
-      ["--settings", mandatory_settings_path] ++
-      ["--mcp-config", bridge_mcp_path] ++
-      operator_mcp
+    Ezagent.PluginCc.Template.SpawnPlan.assemble_settings_mcp_args(
+      mandatory_settings_path,
+      bridge_mcp_path,
+      tmpl
+    )
   end
 
   defp agent_kind_alive?(agent_uri) do
@@ -1474,7 +864,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # contract working; the scheme itself no longer lives in the plugin.
   @doc false
   def agent_config_dir(%URI{} = agent_uri) do
-    Ezagent.Sandbox.ConfigDir.path(agent_uri, Ezagent.Kind.Template.namespace_of(__MODULE__))
+    Ezagent.Credential.HomeRuntime.agent_config_dir(agent_uri, __MODULE__)
   end
 
   # `list_extensions/1` — scan `<config_dir>/.claude/plugins/*` for
@@ -1745,15 +1135,8 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # the materialize-time TOCTOU gate be the loud authority. (Cold restart does not
   # re-materialize secrets in this PR, so the running creds stay until a real
   # re-materialize — see the FLAGGED full-re-resolve note.)
-  defp grant_revoked_for_restart?(%URI{} = agent_uri) do
-    case Ezagent.Credential.GrantRow.get_for_agent(URI.to_string(agent_uri)) do
-      %Ezagent.Credential.GrantRow{revoked_at: nil} -> false
-      %Ezagent.Credential.GrantRow{} -> true
-      nil -> false
-    end
-  rescue
-    _ -> false
-  end
+  defp grant_revoked_for_restart?(%URI{} = agent_uri),
+    do: Ezagent.Credential.HomeRuntime.grant_revoked_for_restart?(agent_uri)
 
   # 2026-05-31 orchestrator-startup-atomicity §5 — orchestrator boot
   # readiness gate. Mirrors `Session.ensure_orchestrator/3`'s create-time
@@ -1944,259 +1327,17 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
           | {:ok, String.t(), {:grant, String.t(), non_neg_integer()}}
           | {:error, term()}
   def create_agent_config_dir(%URI{} = agent_uri, tmpl) when is_map(tmpl) do
-    # codex P2 closure — fail loud on a stale `"claude_config_dir"` data key
-    # (the loader path bypasses `validate/1`). See
-    # `reject_stale_config_dir_data_key!/1`.
     reject_stale_config_dir_data_key!(tmpl)
 
-    # codex P2 closure — distinguish ABSENT/nil (legitimate: no config home)
-    # from PRESENT-but-malformed (`""` / non-binary → FAIL LOUD). The loader
-    # path bypasses `validate/1`, so a malformed `"config_dir"` must be
-    # rejected here rather than silently treated as absent (which would spawn
-    # without `CLAUDE_CONFIG_DIR`, falling back to the operator home). Use
-    # `Map.fetch/2` so a present `nil` is also rejected as malformed (an
-    # absent key is the only legitimate "no config home").
-    case Map.fetch(tmpl, "config_dir") do
-      :error ->
-        # Key absent — the agent runs without a config home (legacy: claude
-        # reads from `~/.claude`). The Sandbox slice's config_dir_path is nil.
-        {:ok, nil}
-
-      {:ok, ref} when is_binary(ref) and ref != "" ->
-        # PR-3: the TARGET is domain-allocated + provided as
-        # "allocated_config_dir". Every spawn seam routes through
-        # `provision_and_instantiate/4`, so an absent target means an
-        # un-provisioned / direct caller — FAIL LOUD rather than self-allocate
-        # (which would re-introduce the plugin-picks-the-path scatter).
-        case Map.fetch(tmpl, "allocated_config_dir") do
-          {:ok, target} when is_binary(target) and target != "" ->
-            materialize_config_dir(agent_uri, target, ref, tmpl)
-
-          _ ->
-            {:error, :config_dir_not_allocated}
-        end
-
-      {:ok, bad} ->
-        {:error, {:invalid_config_dir, bad}}
-    end
+    Ezagent.Credential.HomeRuntime.create_agent_config_dir(
+      agent_uri,
+      tmpl,
+      __MODULE__,
+      config_home_opts()
+    )
   end
 
-  # Marker file written at the END of a successful copy. The dir is
-  # considered "valid" ONLY if the marker exists — a half-copied dir
-  # (process killed mid-cp_r) or stale leftover lacks the marker and
-  # gets fully re-created. Codex PR3 round-1 HIGH-2.
-  @config_complete_marker ".ezagent-config-complete"
-
-  # #17 cascade PR-2 — dispatch on whether the caller supplied CASCADE inputs.
-  #
-  #  * NO cascade inputs (existing agents + every path until PR-3 wires the workspace/user
-  #    layer dirs + the credential grant): the single-reference materialize below — fully
-  #    backward-compatible, byte-for-byte the prior behavior.
-  #
-  #  * WITH cascade inputs (`tmpl["cascade"]`, supplied by the create chokepoint once PR-3
-  #    enumerates the layer dirs + mints the grant): merge layers 1→4 (§D4) into a staging
-  #    dir + copy ONLY `secret_relpaths` from the resolved credential source under the
-  #    TOCTOU-safe leased grant (§5.1), then atomic-replace into place (§7).
-  defp materialize_config_dir(%URI{} = agent_uri, target, reference_dir, tmpl)
-       when is_map(tmpl) do
-    # #17 cascade PR-2 (§7 H3' (b)) — crash-mid-swap self-heal. If a prior atomic_replace
-    # died in the move-aside→rename window, a known-good `<target>.bak-*` is left while
-    # `target` is missing/partial; recover it BEFORE (re)materializing so the agent never
-    # boots with a permanently-absent config_dir.
-    #
-    # codex H — FAIL LOUD on a recovery error. The recovered `.bak` may be the ONLY good copy
-    # of the prior config (the matching materializer fix preserves it on a restore failure).
-    # If we swallowed the error and proceeded, a subsequent revoked-grant / missing-source
-    # materialize failure could combine to leave the agent with NOTHING. Surface the recovery
-    # error so the caller (spawn_for_local_pty) aborts the spawn with the prior config intact.
-    with :ok <- recover_orphaned_or_fail(target) do
-      # Return shape: the cascade path returns `{:ok, target, {:grant, uri, version}}` so the
-      # validated grant version reaches the LATER subprocess launch for a second re-check
-      # (codex CRITICAL §5.1 — config-swap and PTY-launch are distinct boundaries). The
-      # single-reference (non-cascade) path is UNCHANGED — `{:ok, target}` (no grant).
-      case Map.get(tmpl, "cascade") do
-        %{} = cascade -> materialize_cascade(agent_uri, target, cascade)
-        _ -> materialize_single_reference(target, reference_dir)
-      end
-    end
-  end
-
-  # codex H — normalize `recover_orphaned/1` for the `with` chain: `:ok` / `{:recovered, _}`
-  # both mean "safe to materialize"; a `{:error, _}` (a detected recovery that could NOT be
-  # performed) ABORTS the materialize so we never clobber the only good `.bak` with a fresh
-  # build that might itself fail.
-  defp recover_orphaned_or_fail(target) do
-    case Ezagent.Agent.Materializer.recover_orphaned(target) do
-      :ok -> :ok
-      {:recovered, _} -> :ok
-      {:error, reason} -> {:error, {:config_dir_recover_failed, reason}}
-    end
-  end
-
-  # #17 cascade PR-2 (§D4 + §D6 + §5.1 + §7) — layered materialize for file flavors.
-  # `cascade` carries the resolved layer dirs + the secret-copy plumbing:
-  #
-  #   %{
-  #     layer_dirs: [%{dir: ..., protected: [...], mandatory: [...], mgmt_cap?: bool}],
-  #     source_dir_for: (source_uri -> {:ok, dir} | {:error, reason})  # grant-scoped read
-  #   }
-  #
-  # The secret copy + commit run under `Materializer.materialize_with_grant/2` so the
-  # grant is re-validated immediately before the atomic-replace commit (TOCTOU, §5.1):
-  # a revoke mid-start aborts before the dir is swapped + the subprocess launches.
-  defp materialize_cascade(%URI{} = agent_uri, target, cascade) do
-    marker = Path.join(target, @config_complete_marker)
-    staging = "#{target}.staging-#{System.unique_integer([:positive])}"
-    _ = File.rm_rf(staging)
-
-    layer_dirs = Map.fetch!(cascade, :layer_dirs)
-    source_dir_for = Map.fetch!(cascade, :source_dir_for)
-
-    # #17 cascade PR-2 (§D4.2 H — codex HIGH) — NO whole-target overlay. The prior code
-    # overlaid the ENTIRE existing target onto the freshly-merged staging, which
-    # resurrected tombstoned files, overrode freshly-merged config, and kept stale
-    # credentials from a revoked/changed source. The layer merge (§D4) is now the SOLE
-    # authority for the config tree; secrets come ONLY from the grant-scoped source copy
-    # below (§D6). No per-agent user-state is preserved across re-materialize in this PR
-    # (none identified — credentials are re-copied from the source, config is re-merged);
-    # if a concrete user-state need is later identified, preserve a NARROW explicit
-    # allowlist (never config/tombstoned/secret relpaths) + re-run mandatory validation.
-    result =
-      with :ok <- Ezagent.Agent.Materializer.merge_layers(staging, layer_dirs),
-           :ok <- File.chmod(staging, 0o700),
-           :ok <- File.write(Path.join(staging, Path.basename(marker)), "ok\n") do
-        # Secret copy + atomic-replace commit, gated by the grant TOCTOU re-check. The
-        # commit receives the validated grant `version` and threads it out so the LATER
-        # subprocess launch can re-validate it (codex CRITICAL §5.1 — swap ≠ launch).
-        Ezagent.Agent.Materializer.materialize_with_grant(%{
-          agent_uri: URI.to_string(agent_uri),
-          staging: staging,
-          secret_relpaths: secret_relpaths(),
-          source_dir_for: source_dir_for,
-          commit: fn version ->
-            with :ok <- chmod_credentials(staging),
-                 :ok <- swap_into_place(staging, target) do
-              {:ok, {target, version}}
-            end
-          end
-        })
-      end
-
-    case result do
-      {:ok, {^target, version}} ->
-        {:ok, target, {:grant, URI.to_string(agent_uri), version}}
-
-      {:error, reason} ->
-        _ = File.rm_rf(staging)
-        {:error, {:cascade_materialize_failed, reason}}
-    end
-  end
-
-  defp materialize_single_reference(target, reference_dir) do
-    marker = Path.join(target, @config_complete_marker)
-
-    cond do
-      not File.dir?(reference_dir) ->
-        {:error, {:reference_dir_missing, reference_dir}}
-
-      File.dir?(target) and File.exists?(marker) ->
-        # Already exists AND marker present → completed copy from a
-        # prior spawn. Idempotent — preserve (incl. any user `/login` creds).
-        {:ok, target}
-
-      File.dir?(target) and has_user_credentials?(target) ->
-        # #17 PR-B — marker absent BUT the agent's login credential files are present.
-        # This is either a real interactive `/login` OR a pre-atomic interrupted copy
-        # that got as far as the creds. Either way we must (a) NEVER lose the user's
-        # creds and (b) NOT bless a possibly-incomplete tree (codex review P2). So:
-        # stage the reference, OVERLAY the existing (user) files on top (user wins),
-        # stamp, atomic-swap → the result is COMPLETE reference content + all user
-        # state + marker.
-        stage_and_swap(reference_dir, target, marker, overlay: target)
-
-      true ->
-        # target absent, OR a credential-LESS dir (freshly-allocated empty dir from
-        # `ConfigDir.allocate/2`, or a partial copy with no user creds). Safe to
-        # (re)materialize via atomic staging.
-        stage_and_swap(reference_dir, target, marker)
-    end
-  end
-
-  # #17 PR-B — ATOMIC STAGING: build the full copy in a sibling staging dir, write the
-  # completion marker INSIDE it, then swap it into place with an atomic `rename`. The
-  # target therefore only ever appears fully-formed (marker present) or absent — never a
-  # partial copy — so a marker-absent target is unambiguous (it is a user `/login`, never
-  # our half-done copy). Supersedes the old blind stale-wipe (codex review HIGH-3).
-  defp stage_and_swap(reference_dir, target, marker, opts \\ []) do
-    staging = "#{target}.staging-#{System.unique_integer([:positive])}"
-    marker_name = Path.basename(marker)
-    _ = File.rm_rf(staging)
-
-    with :ok <- File.mkdir_p(Path.dirname(target)),
-         {:ok, _} <- File.cp_r(reference_dir, staging),
-         # Optional overlay (codex P2): copy an existing dir's files ON TOP of the
-         # reference (overlay source wins) so a user `/login` (or other user state) is
-         # preserved while the reference fills any missing content → complete tree.
-         :ok <- maybe_overlay(Keyword.get(opts, :overlay), staging),
-         :ok <- File.chmod(staging, 0o700),
-         :ok <- chmod_credentials(staging),
-         :ok <- File.write(Path.join(staging, marker_name), "ok\n"),
-         :ok <- swap_into_place(staging, target) do
-      {:ok, target}
-    else
-      {:error, reason} ->
-        _ = File.rm_rf(staging)
-        {:error, {:copy_reference_dir_failed, reason}}
-
-      err ->
-        _ = File.rm_rf(staging)
-        {:error, {:copy_reference_dir_failed, err}}
-    end
-  end
-
-  defp maybe_overlay(nil, _staging), do: :ok
-
-  defp maybe_overlay(src, staging) when is_binary(src) do
-    # Don't overlay the in-progress completion marker (it's written fresh below); the
-    # overlay carries the user's credential + config files over the reference defaults.
-    case File.cp_r(src, staging) do
-      {:ok, _} -> :ok
-      {:error, reason, _} -> {:error, reason}
-    end
-  end
-
-  # #17 cascade PR-2 (§7) — replace the prior `rm_rf(target)` THEN `rename(staging,
-  # target)` (which left NO config_dir on a crash between the two) with the core
-  # atomic-replace-with-rollback: move the current target aside to a sibling `.bak`,
-  # rename staging into place, drop `.bak` on success / RESTORE it on failure. A failed
-  # swap therefore leaves the PRIOR good config_dir intact (never empty / half-merged).
-  # Only a credential-LESS existing target reaches here (a credentialled target is
-  # preserved by the `has_user_credentials?` guard above); the rollback additionally
-  # protects against a partial-rename window.
-  defp swap_into_place(staging, target) do
-    case Ezagent.Agent.Materializer.atomic_replace(staging, target) do
-      {:ok, _target} -> :ok
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  # True iff any of the flavor's declared credential files exist in `dir` (a real login).
-  defp has_user_credentials?(dir) do
-    Enum.any?(credential_relpaths(), fn rel -> File.exists?(Path.join(dir, rel)) end)
-  end
-
-  # The seed convention chmods `.credentials.json` to 0600 (file
-  # contains the Anthropic API key). Mirror that here so a copy
-  # preserves the convention even if the operator's reference dir
-  # had laxer perms.
-  defp chmod_credentials(dir) do
-    creds = Path.join(dir, ".credentials.json")
-
-    case File.exists?(creds) do
-      true -> File.chmod(creds, 0o600)
-      false -> :ok
-    end
-  end
+  defp config_home_opts, do: [stage_error_tag: :copy_reference_dir_failed, chmod_error: :bare]
 
   # --- Ezagent.UI.Form ---------------------------------------------------------
 
