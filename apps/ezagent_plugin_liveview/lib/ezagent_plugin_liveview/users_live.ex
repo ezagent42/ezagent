@@ -264,8 +264,19 @@ defmodule EzagentPluginLiveview.UsersLive do
   # (capability.ex:221-238). NO new cap rows are created — membership
   # IS the cap.
   def handle_event("promote_to_system", %{"uri" => uri_str}, socket) do
+    # SPEC 2026-05-27-capability-action-axis §7 (admin-promotion CapBAC
+    # bypass): route through the cap-checked `add_member/3` carrying the
+    # logged-in caller's FRESH caps so dispatch step 5.5 runs against
+    # THIS caller — identical to `mix ezagent.workspace.add_member system
+    # <uri>`. The `/2` programmatic variant dispatches under
+    # `system://workspace-loader` (no caller cap-check); reaching it from
+    # this `:require_entity`-only route let a non-admin promote to system.
     with {:ok, user_uri} <- parse_user_uri(uri_str),
-         :ok <- Ezagent.Workspace.add_member("system", user_uri) do
+         :ok <-
+           Ezagent.Workspace.add_member("system", user_uri, %{
+             caller: socket.assigns.caller_uri,
+             caps: current_caller_caps(socket)
+           }) do
       {:noreply,
        socket
        |> assign(:users, list_users())
@@ -282,8 +293,17 @@ defmodule EzagentPluginLiveview.UsersLive do
   end
 
   def handle_event("revoke_system", %{"uri" => uri_str}, socket) do
+    # SPEC 2026-05-27-capability-action-axis §7: cap-checked `remove_member/3`
+    # under the caller's fresh caps (parity with `mix ezagent.workspace.
+    # remove_member system <uri>`). Part B: the dispatch also sweeps the
+    # `:create_session` cap `:add_member` granted on `workspace://system`,
+    # so a demoted user does NOT keep create_session authority there.
     with {:ok, user_uri} <- parse_user_uri(uri_str),
-         :ok <- Ezagent.Workspace.remove_member("system", user_uri) do
+         :ok <-
+           Ezagent.Workspace.remove_member("system", user_uri, %{
+             caller: socket.assigns.caller_uri,
+             caps: current_caller_caps(socket)
+           }) do
       {:noreply,
        socket
        |> assign(:users, list_users())

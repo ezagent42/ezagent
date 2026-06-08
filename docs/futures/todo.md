@@ -98,28 +98,59 @@
 - **Priority:** MED — admin-role exemption is fine in the short term;
   the proper fix is structural narrowing of admin-issued grants.
 
-### Admin promotion cap-lifecycle cleanup (pre-existing, codex PR #408 review surface) — STILL OPEN (HIGH-prod / LOW-today)
+### Workspace dispatch∧persist atomicity (codex MEDIUM, feat/admin-promote-capbac) — OPEN (LOW, fail-safe)
 
-> **Status 2026-06-08: STILL OPEN.** `users_live.ex` has `promote_to_system`
-> (~:231) and `revoke_system` (~:249) but no granted_at / `within_promotion`
-> cap-sweep on demotion — wildcard caps minted during a promotion window
-> still survive demotion. Priority unchanged (HIGH for production, LOW today:
-> only persistent admins exist, no temp-promotions yet).
+- **What:** `Ezagent.Workspace.add_member/remove_member` dispatch the live
+  Kind mutation (slice + cap grant/revoke effect) FIRST, then write the
+  member set to `Store.update_members/2`. A crash between the two leaves a
+  one-process-lifetime drift; Loader resyncs from the DB on next boot.
+- **codex MEDIUM (remove path):** the Part B synchronous `revoke_cap`
+  commits before the DB write — if the DB write fails, the member can
+  reappear from the DB WITHOUT the create_session cap. This is the
+  fail-SAFE direction (under-privilege, never over-privilege; the
+  dangerous "cap survives without membership" case is what Part B
+  closes). Documented inline at `workspace.ex` `do_remove_member`.
+- **Fix shape:** Phase 5 cross-DB transaction / saga with compensation
+  so the membership row + the cap state commit (or roll back) atomically.
+- **Priority:** LOW — pre-existing drift class, fail-safe direction, needs
+  the broader transactional persistence work.
+
+### Admin promotion cap-lifecycle cleanup (pre-existing, codex PR #408 review surface) — DONE (PR feat/admin-promote-capbac, 2026-06-09)
+
+> **Status 2026-06-09: DONE.** Closed in `feat/admin-promote-capbac`
+> (title `feat(caps): close admin promote/revoke CapBAC bypass`).
 
 - **Trigger:** SPEC `2026-05-27-capability-action-axis.md` §7;
   PR #408 codex r3 HIGH-C.
-- **What:** `users_live.ex "Promote to system"` adds workspace membership
-  (`:224-229`); demotion (`:248-250`) removes membership but does NOT
-  sweep caps that were granted DURING the promotion window. Wildcard
-  caps survive demotion → durable authority leak.
-- **Fix shape:** record granted_at timestamp + promotion-window marker
-  on caps issued during promotion; on demotion, revoke any cap with
-  granted_by indicating promotion + granted_at within the window.
-  Alternative: scope all promotion-window grants to a
-  `{:within_promotion, principal_uri, until: <demote_time>}` scope-
-  tuple shape (extends existing scope-bounded delegation patterns).
-- **Priority:** HIGH for production; LOW today (only Allen + seeded admin
-  are persistently admin; no real temp-promotions yet).
+- **What:** `users_live.ex "Promote to system"` / `"Revoke"` called
+  `Ezagent.Workspace.add_member/remove_member/2`, which dispatch under
+  `system://workspace-loader` (NO caller cap-check). The
+  `/identities/users` route is `:require_entity` (not `:require_admin`),
+  so a non-admin LV user could promote/revoke without a CapBAC check —
+  AND demotion did not sweep the cap `:add_member` granted.
+- **Resolution (Part A — CapBAC bypass):** added cap-checked
+  `Ezagent.Workspace.add_member/3` + `remove_member/3` (mirroring
+  `create_user/3`) that dispatch the `Behavior.Workspace`
+  `:add_member` / `:remove_member` actions carrying the logged-in
+  caller's FRESH caps (`current_caller_caps/1`). Step 5.5 CapBAC now
+  runs against the caller — identical to `mix ezagent.workspace.*`. The
+  `/2` programmatic variants are UNCHANGED (legitimate `workspace-loader`
+  use for in-VM CLI / mix-task / Loader callers; mix tasks +
+  `workspace_detail_live.ex` keep using them).
+- **Resolution (Part B — cap-lifecycle sweep):** system authority is
+  membership-based (`Capability.cross_workspace?/2`), so promotion grants
+  no system-wide cap rows — revoking membership removes that authority by
+  construction. The one durable cap `:add_member` grants is the
+  workspace-scoped `:create_session` cap; `handle_remove_member/2` now
+  emits a symmetric `revoke_cap` effect (matched by 4-tuple
+  `identity_key`, invariant #19), so a demoted member loses
+  create_session authority in the workspace they were removed from —
+  and only that cap (instance axis scopes it; caps in OTHER workspaces
+  are untouched).
+- **Tests:** under-privileged LV promote/revoke REJECTED (membership
+  unchanged); admin succeeds; fresh-caps post-mount grant takes effect;
+  add grants + remove sweeps the create_session cap. All TDD-confirmed
+  to fail against the pre-fix code.
 
 ### Codex PR #356 r1 HIGH/MED deferred — PARTIALLY RESOLVED 2026-06-08
 
