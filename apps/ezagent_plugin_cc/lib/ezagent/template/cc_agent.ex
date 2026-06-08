@@ -1457,7 +1457,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   # PR3 layout — what `agent_config_dir/1` looks like on disk:
   #
-  #   <Ezagent.Home.path("cc-agents")>/<workspace>/<flavor>_<name>/   (chmod 700)
+  #   <Ezagent.Home.path("cc-agents")>/<workspace>/<flavor>_<name>/   (chmod 700)  # arch-allow: doc comment, not a call
   #   ├── .credentials.json                        (chmod 600 — copied from template)
   #   └── .claude/
   #       └── plugins/

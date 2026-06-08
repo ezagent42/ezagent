@@ -14,7 +14,12 @@
   create_session_modules: 5,
   duplicated_resolve_template_class: 1,
   cc_codex_template_class_combined_loc: 3231,
-  raw_home_path_outside_core: 9,
+  # P0.5 (resource-unification): the cc_agent.ex:1460 *doc comment* (not a call)
+  # now carries `# arch-allow:`, so the real outside-core Home.path() call count
+  # is 8. Tightened 9→8 to keep the ratchet honest and to reconcile with the
+  # uri_query.scan `home_path_in_runtime_code` baseline (one source of truth for
+  # which raw Home.path calls exist — see scan_home_path_reconcile_test.exs).
+  raw_home_path_outside_core: 8,
   path_expand_home: 2,
   spawn_fresh_audit_references: 5,
   spawn_fresh_unsanctioned: 0,
