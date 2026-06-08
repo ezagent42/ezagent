@@ -1,6 +1,10 @@
 %{
   oversized_modules_gt_1500: 0,
-  oversized_modules_gt_1000: 8,
+  # `Ezagent.Workspace` crossed 1000 lines (was 974) gaining the cap-checked
+  # add_member/3 + remove_member/3 variants that close the admin-promotion
+  # CapBAC bypass (SPEC 2026-05-27-capability-action-axis §7) — a security
+  # fix, not incidental bloat.
+  oversized_modules_gt_1000: 9, # arch-cap-bump: SPEC §7
   def_count_admin_live: 69,
   def_count_cc_agent: 76,
   def_count_orchestrator_tools: 61,

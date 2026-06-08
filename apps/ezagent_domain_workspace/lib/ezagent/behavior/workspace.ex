@@ -406,8 +406,21 @@ defmodule Ezagent.Behavior.Workspace do
   end
 
   def handle_remove_member(%{member: %URI{} = uri}, ctx) do
+    # SPEC §7 Part B (cap-lifecycle sweep): `:add_member` grants the
+    # member a `:create_session` cap scoped to THIS workspace; pre-fix,
+    # `:remove_member` left it dangling (a user demoted from
+    # `workspace://system` kept create_session there). The symmetric
+    # `revoke_cap` effect sweeps EXACTLY that cap — matched by 4-tuple
+    # identity_key, so caps in other workspaces / unrelated caps are
+    # untouched.
+    workspace_uri = Map.get(ctx, :self_uri)
     members = ctx[:read].(:members, MapSet.new())
-    {:ok, %{}, [{:set, :members, MapSet.delete(members, uri)}]}
+
+    effects =
+      [{:set, :members, MapSet.delete(members, uri)}] ++
+        revoke_member_create_session_cap_effects(workspace_uri, uri)
+
+    {:ok, %{}, effects}
   end
 
   # Task #55 round-2 codex HIGH-2 (2026-05-27) — dispatch-owned cleanup
@@ -1415,34 +1428,71 @@ defmodule Ezagent.Behavior.Workspace do
     unless Ezagent.URI.type?(member_uri, :user) do
       []
     else
-      cap = %Ezagent.Capability{
-        kind: :workspace,
-        behavior: __MODULE__,
-        action: :create_session,
-        instance: workspace_uri,
-        workspace_uri: workspace_uri,
-        granted_by: Ezagent.SystemPrincipal.uri("template-materialize"),
-        granted_at: DateTime.utc_now()
-      }
-
-      cmd = %Ezagent.Cmd{
-        target: member_uri,
-        action: :grant_cap,
-        args: %{cap: cap},
-        ctx: %{
-          caller: Ezagent.SystemPrincipal.uri("template-materialize"),
-          caps:
-            "template-materialize"
-            |> Ezagent.SystemPrincipal.uri()
-            |> Ezagent.SystemPrincipal.caps(),
-          reply: :ignore
-        }
-      }
-
-      [{:dispatch, cmd}]
+      [{:dispatch, member_create_session_cap_cmd(:grant_cap, workspace_uri, member_uri)}]
     end
   end
 
   # Non-user member (agent) or missing workspace URI — no grant.
   defp grant_member_create_session_cap_effects(_workspace_uri, _member_uri), do: []
+
+  # SPEC §7 Part B — symmetric sweep of the cap `:add_member` granted.
+  # codex review HIGH: a SECURITY revoke must be synchronous +
+  # failure-propagating (NOT the grant's buffered cast).
+  # `:dispatch_returning` runs `:revoke_cap` inline and short-circuits
+  # `handle_remove_member/2` on error, so the slice mutation (and the
+  # facade's `Store.update_members/2`) does NOT commit while the cap is
+  # still live. The member's User Kind is already alive at remove time,
+  # so the `:call` reply can't stall on a not-ready gate.
+  defp revoke_member_create_session_cap_effects(
+         %URI{scheme: "workspace"} = workspace_uri,
+         %URI{scheme: "entity"} = member_uri
+       ) do
+    if Ezagent.URI.type?(member_uri, :user) do
+      cmd = member_create_session_cap_cmd(:revoke_cap, workspace_uri, member_uri, :sync)
+      [{:dispatch_returning, cmd, bind_as: :member_create_session_revoke}]
+    else
+      []
+    end
+  end
+
+  defp revoke_member_create_session_cap_effects(_workspace_uri, _member_uri), do: []
+
+  # Shared cap shape + dispatch envelope for the add/remove pair. The
+  # cap is the workspace-scoped `:create_session` grant; `granted_at`
+  # is only load-bearing on the grant (revoke matches by identity_key,
+  # which excludes `granted_at`/`granted_by`). `reply_mode` is `:async`
+  # (buffered cast — the add-time grant, member Kind may be not-ready) or
+  # `:sync` (call — the remove-time revoke, member Kind is live).
+  defp member_create_session_cap_cmd(action, workspace_uri, member_uri, reply_mode \\ :async)
+       when action in [:grant_cap, :revoke_cap] do
+    cap = %Ezagent.Capability{
+      kind: :workspace,
+      behavior: __MODULE__,
+      action: :create_session,
+      instance: workspace_uri,
+      workspace_uri: workspace_uri,
+      granted_by: Ezagent.SystemPrincipal.uri("template-materialize"),
+      granted_at: DateTime.utc_now()
+    }
+
+    reply =
+      case reply_mode do
+        :sync -> {:caller_inbox, self()}
+        :async -> :ignore
+      end
+
+    %Ezagent.Cmd{
+      target: member_uri,
+      action: action,
+      args: %{cap: cap},
+      ctx: %{
+        caller: Ezagent.SystemPrincipal.uri("template-materialize"),
+        caps:
+          "template-materialize"
+          |> Ezagent.SystemPrincipal.uri()
+          |> Ezagent.SystemPrincipal.caps(),
+        reply: reply
+      }
+    }
+  end
 end

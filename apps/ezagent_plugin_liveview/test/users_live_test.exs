@@ -323,6 +323,229 @@ defmodule EzagentPluginLiveview.UsersLiveTest do
     end
   end
 
+  describe "CapBAC parity — promote_to_system / revoke_system (admin-promotion bypass)" do
+    # SPEC 2026-05-27-capability-action-axis §7 / todo.md "Admin promotion
+    # cap-lifecycle cleanup". The `/identities/users` route is gated by
+    # `:require_entity` (NOT `:require_admin`). Before this PR the
+    # `promote_to_system` / `revoke_system` handlers called
+    # `Ezagent.Workspace.add_member/remove_member("system", ...)` — the
+    # `/2` programmatic facade that dispatches under
+    # `system://workspace-loader`, so NO caller cap-check ran. A non-admin
+    # entity could promote ANYONE (including themself) to system-workspace
+    # membership — which confers cross-workspace authority — and revoke it.
+    # After this PR both route through the cap-checked `/3` variants
+    # carrying the caller's FRESH caps, so an under-privileged caller is
+    # REJECTED (membership unchanged) — identical to the CLI.
+
+    defp underprivileged_promote_conn(handle, workspace \\ "team-alpha") do
+      uri = "entity://#{workspace}/user/#{handle}-#{System.unique_integer([:positive])}"
+      {:ok, _} = Ezagent.Users.create(uri, "pw", [])
+
+      if Code.ensure_loaded?(Ezagent.SpawnRegistry) do
+        _ = Ezagent.SpawnRegistry.spawn(Ezagent.URI.new!(uri))
+      end
+
+      conn =
+        Phoenix.ConnTest.build_conn()
+        |> Plug.Test.init_test_session(%{
+          "current_entity_uri" => uri,
+          "current_workspace_uri" => "workspace://#{workspace}"
+        })
+
+      {conn, uri}
+    end
+
+    defp system_members do
+      case Ezagent.Workspace.Store.get_by_name("system") do
+        nil -> []
+        %{members: members} -> Enum.map(members, &URI.to_string/1)
+      end
+    end
+
+    test "promote_to_system is REJECTED for an under-privileged LV caller (membership unchanged)" do
+      # Live system Workspace Kind so the `:add_member` dispatch routes.
+      _ =
+        case Ezagent.Workspace.spawn_workspace("system") do
+          {:ok, _pid} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
+          other -> other
+        end
+
+      {conn, caller} = underprivileged_promote_conn("promote-denied")
+      {:ok, lv, _html} = live(conn, "/identities/users")
+
+      victim = "entity://system/user/lv-promote-victim-#{System.unique_integer([:positive])}"
+      {:ok, _} = Ezagent.Users.create(victim, "pw", [])
+
+      before = system_members()
+      render_click(lv, "promote_to_system", %{"uri" => victim})
+
+      html = render(lv)
+      # Cap-check fired and denied — surfaced as a flash error, and the
+      # system member set is UNCHANGED (the structural proof the bypass
+      # is closed). The caller must also not have escalated themself.
+      assert html =~ "failed" or html =~ "unauthorized"
+      assert system_members() == before
+      refute victim in system_members()
+      refute caller in system_members()
+    end
+
+    test "revoke_system is REJECTED for an under-privileged LV caller (membership unchanged)" do
+      _ =
+        case Ezagent.Workspace.spawn_workspace("system") do
+          {:ok, _pid} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
+          other -> other
+        end
+
+      # Seed a genuine system member (added by the trusted `/2` path) so
+      # there is something to (fail to) revoke.
+      member = "entity://system/user/lv-revoke-target-#{System.unique_integer([:positive])}"
+      {:ok, _} = Ezagent.Users.create(member, "pw", [])
+      _ = Ezagent.SpawnRegistry.spawn(Ezagent.URI.new!(member))
+      :ok = Ezagent.Workspace.add_member("system", Ezagent.URI.new!(member))
+
+      {conn, _caller} = underprivileged_promote_conn("revoke-denied")
+      {:ok, lv, _html} = live(conn, "/identities/users")
+
+      assert member in system_members()
+      render_click(lv, "revoke_system", %{"uri" => member})
+
+      html = render(lv)
+      assert html =~ "failed" or html =~ "unauthorized"
+      # The under-privileged caller could NOT strip the member's
+      # system authority.
+      assert member in system_members()
+    end
+
+    test "promote_to_system SUCCEEDS for an admin LV caller (authorized path preserved)", %{
+      conn: conn
+    } do
+      _ =
+        case Ezagent.Workspace.spawn_workspace("system") do
+          {:ok, _pid} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
+          other -> other
+        end
+
+      target = "entity://system/user/lv-admin-promote-#{System.unique_integer([:positive])}"
+      {:ok, _} = Ezagent.Users.create(target, "pw", [])
+      _ = Ezagent.SpawnRegistry.spawn(Ezagent.URI.new!(target))
+
+      {:ok, lv, _html} = live(conn, "/identities/users")
+      render_click(lv, "promote_to_system", %{"uri" => target})
+
+      # The admin's wildcard caps (bootstrap catalog) admit the cap-check.
+      assert target in system_members()
+    end
+
+    test "caps are read FRESH at mutation time, not cached at mount (post-mount grant takes effect)" do
+      _ =
+        case Ezagent.Workspace.spawn_workspace("system") do
+          {:ok, _pid} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
+          other -> other
+        end
+
+      # A system-home caller (so the post-grant promote is not blocked by
+      # the cross-workspace isolation step) that still starts WITHOUT the
+      # `:add_member` cap — proving the FRESH re-fetch (not a cap cached
+      # at mount) is what authorizes the promote.
+      {conn, caller} = underprivileged_promote_conn("promote-fresh", "system")
+      {:ok, lv, _html} = live(conn, "/identities/users")
+
+      caller_uri = Ezagent.URI.new!(caller)
+      system_ws = Ezagent.URI.workspace("system")
+
+      target = "entity://system/user/lv-fresh-promote-#{System.unique_integer([:positive])}"
+      {:ok, _} = Ezagent.Users.create(target, "pw", [])
+      _ = Ezagent.SpawnRegistry.spawn(Ezagent.URI.new!(target))
+
+      # Grant the caller the `:add_member` cap on workspace://system AFTER
+      # the LV mounted. If caps were cached at mount the promote would be
+      # denied; because `current_caller_caps/1` re-fetches, it succeeds.
+      :ok =
+        Ezagent.Identity.grant_cap(
+          caller_uri,
+          %Ezagent.Capability{
+            kind: :workspace,
+            behavior: Ezagent.Behavior.Workspace,
+            action: :add_member,
+            instance: system_ws,
+            workspace_uri: system_ws,
+            granted_by: Ezagent.Entity.User.admin_uri(),
+            granted_at: DateTime.utc_now()
+          },
+          Ezagent.Entity.User.admin_uri()
+        )
+
+      render_click(lv, "promote_to_system", %{"uri" => target})
+
+      assert target in system_members()
+    end
+  end
+
+  describe "Part B — revoke_system sweeps the create_session cap granted on promotion" do
+    # SPEC 2026-05-27-capability-action-axis §7 Part B (cap-lifecycle).
+    # `:add_member` grants the new member a workspace-scoped
+    # `:create_session` cap. Pre-fix `:remove_member` left it dangling, so
+    # a demoted member retained create_session authority in the workspace.
+    # The symmetric `revoke_cap` effect on `:remove_member` sweeps exactly
+    # that cap.
+
+    test "the create_session cap is granted on add and swept on remove (system workspace)" do
+      _ =
+        case Ezagent.Workspace.spawn_workspace("system") do
+          {:ok, _pid} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
+          other -> other
+        end
+
+      member = "entity://system/user/lv-sweep-#{System.unique_integer([:positive])}"
+      {:ok, _} = Ezagent.Users.create(member, "pw", [])
+      member_uri = Ezagent.URI.new!(member)
+      _ = Ezagent.SpawnRegistry.spawn(member_uri)
+
+      system_ws = Ezagent.URI.workspace("system")
+
+      held_create_session_cap? = fn ->
+        member_uri
+        |> Ezagent.Identity.list_caps_for()
+        |> Enum.any?(fn cap ->
+          cap.behavior == Ezagent.Behavior.Workspace and
+            Ezagent.Capability.action_of(cap) == :create_session and
+            URI.to_string(cap.instance) == URI.to_string(system_ws)
+        end)
+      end
+
+      :ok = Ezagent.Workspace.add_member("system", member_uri)
+      # Grant lands via a buffered `:cast` effect on the member's ready
+      # transition — give it a moment to settle.
+      wait_until(fn -> held_create_session_cap?.() end)
+      assert held_create_session_cap?.(), "add_member should grant the create_session cap"
+
+      :ok = Ezagent.Workspace.remove_member("system", member_uri)
+      wait_until(fn -> not held_create_session_cap?.() end)
+
+      refute held_create_session_cap?.(),
+             "remove_member (Part B sweep) should revoke the create_session cap"
+    end
+  end
+
+  # Poll a predicate up to ~2s — the cap grant/revoke effects dispatch
+  # via buffered `:cast`, so the slice write is eventually-consistent.
+  defp wait_until(fun, attempts \\ 40)
+  defp wait_until(_fun, 0), do: :ok
+
+  defp wait_until(fun, attempts) do
+    if fun.() do
+      :ok
+    else
+      Process.sleep(50)
+      wait_until(fun, attempts - 1)
+    end
+  end
+
   describe "Presence online dot (PR-D of Presence rollout)" do
     test "user tracked in Presence renders the green dot", %{conn: conn} do
       handle = "lv-online-#{System.unique_integer([:positive])}"

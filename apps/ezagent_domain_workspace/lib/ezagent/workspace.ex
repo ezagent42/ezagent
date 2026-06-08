@@ -111,6 +111,25 @@ defmodule Ezagent.Workspace do
   """
   @spec add_member(String.t(), URI.t()) :: :ok | {:error, term()}
   def add_member(name, %URI{} = member_uri) do
+    do_add_member(name, member_uri, system_loader_ctx())
+  end
+
+  @doc """
+  Cap-checked variant of `add_member/2`: dispatches `:add_member` under
+  the CALLER's caps (`ctx` is `%{caller: URI.t(), caps: Enumerable.t()}`)
+  so step 5.5 CapBAC runs against the logged-in entity, NOT
+  `system://workspace-loader`. Web surfaces (LiveView) MUST use this; the
+  `/2` variant is for trusted in-VM CLI / mix-task / Loader callers.
+  SPEC 2026-05-27-capability-action-axis §7. Mirrors `create_user/3`.
+  """
+  @spec add_member(String.t(), URI.t(), map()) :: :ok | {:error, term()}
+  def add_member(name, %URI{} = member_uri, ctx) when is_map(ctx) do
+    with {:ok, dispatch_ctx} <- caller_ctx(ctx) do
+      do_add_member(name, member_uri, dispatch_ctx)
+    end
+  end
+
+  defp do_add_member(name, %URI{} = member_uri, dispatch_ctx) do
     case Store.get_by_name(name) do
       nil ->
         {:error, :not_found}
@@ -141,7 +160,8 @@ defmodule Ezagent.Workspace do
         # divergence window for paths where the Behavior would
         # otherwise be the only pre-spawner.
         with :ok <- ensure_member_kind_spawned_at_facade(member_uri),
-             :ok <- dispatch_mutation(name, "add_member", %{member: member_uri}, :call),
+             :ok <-
+               dispatch_mutation(name, "add_member", %{member: member_uri}, :call, dispatch_ctx),
              {:ok, _} <- Store.update_members(name, new_members) do
           # Task #46 (Allen 2026-05-27) — the facade-local
           # `grant_member_create_session_cap/2` call was REMOVED. The
@@ -214,6 +234,22 @@ defmodule Ezagent.Workspace do
 
   @spec remove_member(String.t(), URI.t()) :: :ok | {:error, term()}
   def remove_member(name, %URI{} = member_uri) do
+    do_remove_member(name, member_uri, system_loader_ctx())
+  end
+
+  @doc """
+  Cap-checked variant of `remove_member/2`: dispatches `:remove_member`
+  under the CALLER's caps (step 5.5 CapBAC against the logged-in entity).
+  Web surfaces MUST use this; see `add_member/3`. SPEC §7.
+  """
+  @spec remove_member(String.t(), URI.t(), map()) :: :ok | {:error, term()}
+  def remove_member(name, %URI{} = member_uri, ctx) when is_map(ctx) do
+    with {:ok, dispatch_ctx} <- caller_ctx(ctx) do
+      do_remove_member(name, member_uri, dispatch_ctx)
+    end
+  end
+
+  defp do_remove_member(name, %URI{} = member_uri, dispatch_ctx) do
     case Store.get_by_name(name) do
       nil ->
         {:error, :not_found}
@@ -221,8 +257,31 @@ defmodule Ezagent.Workspace do
       %{members: existing} ->
         new_members = Enum.reject(existing, &(URI.to_string(&1) == URI.to_string(member_uri)))
 
-        with {:ok, _} <- Store.update_members(name, new_members),
-             :ok <- dispatch_mutation(name, "remove_member", %{member: member_uri}) do
+        # SPEC §7 Part B: dispatch FIRST (mirroring `add_member`) so an
+        # unauthorized caller is rejected BEFORE the DB write, and the
+        # action body's `revoke_cap` effect sweeps the `:create_session`
+        # cap `:add_member` granted on this workspace (no dangling cap on
+        # demotion).
+        #
+        # codex MEDIUM (drift window, fail-SAFE direction): the synchronous
+        # revoke commits in the action body before `Store.update_members/2`.
+        # If that DB write then fails, the member can reappear from the DB
+        # on next boot WITHOUT the create_session cap — strictly LESS
+        # privilege than intended, never more (the dangerous direction —
+        # cap surviving without membership — is exactly what Part B closes).
+        # This is the same one-process-lifetime dispatch∧persist drift the
+        # `add_member/2` moduledoc documents; a true atomic fix needs the
+        # Phase 5 cross-DB transaction/saga (tracked in docs/futures/todo.md
+        # "Workspace dispatch∧persist atomicity"). NOT a security regression.
+        with :ok <-
+               dispatch_mutation(
+                 name,
+                 "remove_member",
+                 %{member: member_uri},
+                 :call,
+                 dispatch_ctx
+               ),
+             {:ok, _} <- Store.update_members(name, new_members) do
           # Skip for agent members (Notifications is user-only by design —
           # agents don't have inboxes); mirrors the `add_member` guard.
           if user_uri?(member_uri) do
@@ -486,14 +545,19 @@ defmodule Ezagent.Workspace do
   # remove_template, remove_member, set_routing_rules) that are
   # validator-free and don't need synchronous error propagation.
   defp dispatch_mutation(name, action_str, args),
-    do: dispatch_mutation(name, action_str, args, :cast)
+    do: dispatch_mutation(name, action_str, args, :cast, system_loader_ctx())
 
   # Task #55 round-2 codex CRIT-1 — `:call` mode for add_member so the
   # facade can see the Behavior validator's rejection (cross-prefix
   # member) and SKIP the subsequent `Store.update_members/2`. Without
   # `:call`, a `:cast` dispatch silently drops the error and the facade
   # persists the bad URI regardless.
-  defp dispatch_mutation(name, action_str, args, mode) when mode in [:cast, :call] do
+  #
+  # SPEC §7 — `auth_ctx` carries the `:caller` + `:caps` step 5.5 CapBAC
+  # checks against: `system_loader_ctx/0` for the `/2` programmatic
+  # variants, the logged-in caller's caps for the `/3` cap-checked ones.
+  defp dispatch_mutation(name, action_str, args, mode, auth_ctx)
+       when mode in [:cast, :call] and is_map(auth_ctx) do
     target =
       name
       |> Ezagent.URI.workspace()
@@ -516,22 +580,39 @@ defmodule Ezagent.Workspace do
            target: target,
            action: action,
            args: args,
-           # SPEC caps-cleanup-v1 §4.4 — Workspace mutation runs under
-           # `system://workspace-loader` (closed Catalog).
-           ctx: %{
-             mode: mode,
-             caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
-             caps:
-               "workspace-loader"
-               |> Ezagent.SystemPrincipal.uri()
-               |> Ezagent.SystemPrincipal.caps(),
-             reply: reply
-           }
+           ctx: Map.merge(auth_ctx, %{mode: mode, reply: reply})
          }) do
       :ok -> :ok
       {:ok, _} -> :ok
       err -> err
     end
+  end
+
+  # SPEC §7 (codex review HIGH — fail-closed caller ctx). The cap-checked
+  # `/3` path carries the caller's fresh caps. REQUIRE a concrete
+  # `%URI{}` caller + a list/MapSet of caps; REJECT the ambient-authority
+  # shapes (`:system`, nil, atom, string) so a programmatic caller that
+  # accidentally reaches `/3` cannot slip past step 5.5 via Runtime's
+  # `default_holds_cap?(:system)` all-caps bypass. Trusted ambient callers
+  # MUST use the explicit `/2` path (`system_loader_ctx/0`).
+  defp caller_ctx(%{caller: %URI{} = caller, caps: caps}) when is_list(caps),
+    do: {:ok, %{caller: caller, caps: caps}}
+
+  defp caller_ctx(%{caller: %URI{} = caller, caps: %MapSet{} = caps}),
+    do: {:ok, %{caller: caller, caps: caps}}
+
+  defp caller_ctx(_other), do: {:error, :invalid_caller_ctx}
+
+  # SPEC caps-cleanup-v1 §4.4 — programmatic mutations run under the
+  # closed `system://workspace-loader` Catalog principal.
+  defp system_loader_ctx do
+    %{
+      caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
+      caps:
+        "workspace-loader"
+        |> Ezagent.SystemPrincipal.uri()
+        |> Ezagent.SystemPrincipal.caps()
+    }
   end
 
   # --- listing -------------------------------------------------------

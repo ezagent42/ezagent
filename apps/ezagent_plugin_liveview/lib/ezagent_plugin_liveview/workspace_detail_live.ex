@@ -8,9 +8,11 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
   3. Session templates (Phase 4d: read-only; Phase 5 editor)
   4. Routing rules (Phase 4d: read-only; Phase 5 editor)
 
-  Member mutations go through `Ezagent.Workspace.add_member/2` and
-  `remove_member/2` — both persist (Store) + dispatch (live Kind) so
-  the UI shows the new state immediately AND restart-safe.
+  Member mutations go through the cap-checked `Ezagent.Workspace.add_member/3`
+  and `remove_member/3` (the logged-in caller's caps drive step 5.5 CapBAC,
+  SPEC 2026-05-27-capability-action-axis §7 — this route is `:require_entity`)
+  — both persist (Store) + dispatch (live Kind) so the UI shows the new
+  state immediately AND restart-safe.
 
   Phase 8c PR-H — inline `style=""` violations replaced with
   `EzagentDomainUi` atoms + Tailwind tokens (Allen 2026-05-20 audit).
@@ -151,7 +153,16 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
          )}
 
       true ->
-        case Ezagent.Workspace.add_member(socket.assigns.name, Ezagent.URI.new!(trimmed)) do
+        # SPEC 2026-05-27-capability-action-axis §7 (codex follow-up): the
+        # `/workspaces/:name` route is `:require_entity`, so route through
+        # the cap-checked `add_member/3` with the caller's FRESH caps —
+        # NOT the `/2` system-loader path (which would authorize the
+        # mutation as the trusted loader, bypassing the caller's CapBAC).
+        case Ezagent.Workspace.add_member(
+               socket.assigns.name,
+               Ezagent.URI.new!(trimmed),
+               %{caller: caller_uri, caps: Ezagent.Identity.list_caps_for(caller_uri)}
+             ) do
           :ok ->
             ws = Ezagent.Workspace.Store.get_by_name(socket.assigns.name)
 
@@ -272,7 +283,13 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
             ArgumentError -> :error
           end) do
       {:ok, uri} ->
-        case Ezagent.Workspace.remove_member(socket.assigns.name, uri) do
+        # SPEC §7 (codex follow-up): cap-checked `remove_member/3` with the
+        # caller's fresh caps — the `:require_entity` route must not strip
+        # membership via the `/2` system-loader path. Also sweeps the
+        # create_session cap (Part B).
+        caller_uri = Map.get(socket.assigns, :current_entity_uri)
+
+        case remove_member_cap_checked(socket.assigns.name, uri, caller_uri) do
           :ok ->
             {:noreply,
              socket
@@ -292,6 +309,18 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
         {:noreply, assign(socket, :flash_error, gettext("Bad URI"))}
     end
   end
+
+  # SPEC §7 — cap-checked remove with a fail-closed caller guard. A
+  # missing / non-URI caller is rejected rather than silently falling
+  # back to the trusted `/2` loader path.
+  defp remove_member_cap_checked(name, %URI{} = uri, %URI{} = caller_uri) do
+    Ezagent.Workspace.remove_member(name, uri, %{
+      caller: caller_uri,
+      caps: Ezagent.Identity.list_caps_for(caller_uri)
+    })
+  end
+
+  defp remove_member_cap_checked(_name, _uri, _caller), do: {:error, :unauthorized}
 
   # Helpers for handle_event("add_template", ...) — kept below the
   # handle_event/3 clauses so they group contiguously (clause-grouping
