@@ -113,6 +113,7 @@ defmodule Ezagent.Behavior.Chat do
   require Logger
 
   alias Ezagent.{Cmd, KindRegistry, Message, MessageStore}
+  alias Ezagent.Behavior.Chat.{Delivery, Members}
   alias Ezagent.Routing.Legend
 
   # PR-N3 r4 (Allen 2026-05-25) — bounded cursor-indexed ring depth for
@@ -541,7 +542,7 @@ defmodule Ezagent.Behavior.Chat do
         # the Resolver dropped (via `valid_member?` membership filter).
         # Random `@text` (no URI match) never enters `msg.mentions`
         # and is silent — exactly what users want for casual @ usage.
-        notify_dropped_mentions(msg, recipients, session_uri, ctx)
+        Delivery.notify_dropped_mentions(msg, recipients, session_uri, ctx, __MODULE__)
 
         # PR-3 of Read Receipts rollout: dispatch + (on success only)
         # mark `:delivered`. We need the dispatch result to gate the
@@ -550,13 +551,13 @@ defmodule Ezagent.Behavior.Chat do
         # need a ReadMarker side effect.
         for {recipient, rule_ctx} <- recipients_with_ctx do
           if recipient.scheme == "session" do
-            dispatch_cross_session_call(recipient, msg)
+            Delivery.dispatch_cross_session_call(recipient, msg)
           else
             # Path-A delivery transform (§3.4): render the matched rule's
             # prompt template into THIS recipient's message (no template →
             # unchanged). Applies to agent + user recipients alike.
             delivered = render_for_delivery(msg, rule_ctx, prompt_templates, session_uri)
-            dispatch_receive_call(recipient, delivered, session_uri)
+            Delivery.dispatch_receive_call(recipient, delivered, session_uri)
           end
         end
 
@@ -654,11 +655,11 @@ defmodule Ezagent.Behavior.Chat do
             _ -> ""
           end
 
-        attachments = body_attachments(msg.body)
-        attachment_hint = attachment_hint_text(attachments)
+        attachments = Delivery.body_attachments(msg.body)
+        attachment_hint = Delivery.attachment_hint_text(attachments)
 
         text_with_hint =
-          case {body_text(msg.body), attachment_hint} do
+          case {Delivery.body_text(msg.body), attachment_hint} do
             {"", ""} -> ""
             {t, ""} -> t
             {"", hint} -> hint
@@ -672,7 +673,7 @@ defmodule Ezagent.Behavior.Chat do
         }
 
         meta =
-          case first_attachment_path(attachments) do
+          case Delivery.first_attachment_path(attachments) do
             nil -> base_meta
             path -> Map.put(base_meta, "file_path", path)
           end
@@ -752,7 +753,7 @@ defmodule Ezagent.Behavior.Chat do
     facets =
       args
       |> Map.take([:role_name, :in_session_template, :source_template_uri])
-      |> sanitize_facets()
+      |> Members.sanitize_facets()
 
     case KindRegistry.lookup(member_uri) do
       {:ok, member_pid} ->
@@ -768,7 +769,7 @@ defmodule Ezagent.Behavior.Chat do
 
         case Map.get(members, member_uri) do
           %{online: true} ->
-            if monitor_ref_for_current_pid?(monitors, member_uri, member_pid) do
+            if Members.monitor_ref_for_current_pid?(monitors, member_uri, member_pid) do
               # Already a live, monitored, online member with the
               # SAME PID we're being asked to (re)join. True no-op.
               #
@@ -795,30 +796,6 @@ defmodule Ezagent.Behavior.Chat do
     end
   end
 
-  # Codex r1 HIGH-1 (2026-05-26) — strict version of
-  # `monitor_ref_alive?/2`: True iff `monitors` contains AT LEAST ONE
-  # ref for `member_uri` AND that ref was installed against
-  # `current_pid`.
-  defp monitor_ref_for_current_pid?(monitors, %URI{} = member_uri, current_pid)
-       when is_pid(current_pid) do
-    has_uri_entry? =
-      Enum.any?(monitors, fn {_ref, uri} ->
-        URI.to_string(uri) == URI.to_string(member_uri)
-      end)
-
-    has_uri_entry? and self_monitors?(current_pid)
-  end
-
-  defp self_monitors?(pid) when is_pid(pid) do
-    case Process.info(pid, :monitored_by) do
-      {:monitored_by, monitors_list} when is_list(monitors_list) ->
-        self() in monitors_list
-
-      _ ->
-        false
-    end
-  end
-
   defp do_join(%URI{} = member_uri, member_pid, ctx, facets) do
     members = ctx[:read].(:members, %{})
 
@@ -826,7 +803,7 @@ defmodule Ezagent.Behavior.Chat do
     # UNIQUE PER SESSION. Reject a join that would assign a role_name already
     # held by a DIFFERENT member BEFORE any monitor side effect, so a rejected
     # join leaks no monitor. A member rejoining with its OWN role_name is fine.
-    case role_name_conflict(members, member_uri, Map.get(facets, :role_name)) do
+    case Members.role_name_conflict(members, member_uri, Map.get(facets, :role_name)) do
       {:error, _} = err -> err
       :ok -> do_join_apply(member_uri, member_pid, ctx, facets)
     end
@@ -867,13 +844,13 @@ defmodule Ezagent.Behavior.Chat do
       Map.put(
         members,
         member_uri,
-        put_member_facets(Map.put(existing_meta, :online, true), facets)
+        Members.put_member_facets(Map.put(existing_meta, :online, true), facets)
       )
 
     new_monitors = Map.put(monitors_without_member, ref, member_uri)
 
     # If this member has prior last_seen, replay missed messages.
-    replay_messages_since(session_uri, member_uri, last_seen)
+    Delivery.replay_messages_since(session_uri, member_uri, last_seen)
     new_last_seen = Map.delete(last_seen, member_uri)
 
     # RFC #402 (Allen 2026-05-26) — "first user to join is owner"
@@ -915,7 +892,7 @@ defmodule Ezagent.Behavior.Chat do
        {:set_transient, :monitors, new_monitors},
        {:set, :last_seen, new_last_seen},
        {:set, :owner_uri, new_owner_uri}
-     ] ++ broadcast_membership_effects(session_uri, {:member_joined, member_uri})}
+     ] ++ Delivery.broadcast_membership_effects(session_uri, {:member_joined, member_uri})}
   end
 
   # Notifier/flash audit 2026-05-24 — same predicate
@@ -925,60 +902,6 @@ defmodule Ezagent.Behavior.Chat do
   defp user_uri?(%URI{scheme: "entity"} = uri), do: Ezagent.URI.type?(uri, :user)
   defp user_uri?(_), do: false
 
-  # team-routing-unification §3.1 — fold the optional, non-authority facets
-  # into a member's meta map. Only keys actually supplied (non-nil) are
-  # written, so a plain join keeps `%{online: true}` and a rejoin overlays
-  # only the deltas it carries (preserving prior facets — see do_join_apply).
-  # `:provenance` is intentionally NOT a facet here; it lands in PR-5b with its
-  # caller-derivation + authorization.
-  defp put_member_facets(meta, facets) when is_map(meta) and is_map(facets) do
-    meta
-    |> maybe_put_facet(:role_name, Map.get(facets, :role_name))
-    |> maybe_put_facet(:in_session_template, Map.get(facets, :in_session_template))
-    |> maybe_put_facet(:source_template_uri, Map.get(facets, :source_template_uri))
-  end
-
-  defp maybe_put_facet(map, _key, nil), do: map
-  defp maybe_put_facet(map, key, value), do: Map.put(map, key, value)
-
-  # team-routing-unification §3.1 (codex PR-5a #1) — drop facet args that are
-  # the wrong type, so malformed input is ignored rather than persisted /
-  # crashing a guard. `role_name` must be a binary; `in_session_template` a
-  # boolean. Absent keys are left absent.
-  defp sanitize_facets(facets) do
-    facets
-    |> drop_facet_unless(:role_name, &is_binary/1)
-    |> drop_facet_unless(:in_session_template, &is_boolean/1)
-    # PR-7: spawn-source facet — must be a `%URI{}` (the AgentTemplate URI).
-    |> drop_facet_unless(:source_template_uri, &match?(%URI{}, &1))
-  end
-
-  defp drop_facet_unless(map, key, pred) do
-    case Map.fetch(map, key) do
-      {:ok, value} -> if pred.(value), do: map, else: Map.delete(map, key)
-      :error -> map
-    end
-  end
-
-  # team-routing-unification §3.1 (spec §8 decision #2) — role_name is unique
-  # per session. `:ok` when `role_name` is nil (no facet) OR free OR already
-  # held by THIS same member (idempotent rejoin); `{:error, {:role_name_taken,
-  # role_name}}` when a DIFFERENT member already holds it.
-  defp role_name_conflict(_members, _member_uri, nil), do: :ok
-
-  defp role_name_conflict(members, %URI{} = member_uri, role_name)
-       when is_map(members) and is_binary(role_name) do
-    case role_name_to_uri(members, role_name) do
-      nil ->
-        :ok
-
-      %URI{} = holder ->
-        if uri_eq?(holder, member_uri), do: :ok, else: {:error, {:role_name_taken, role_name}}
-    end
-  end
-
-  defp uri_eq?(%URI{} = a, %URI{} = b), do: URI.to_string(a) == URI.to_string(b)
-
   @doc """
   team-routing-unification §3.1 — resolve a member `role_name` (stable
   per-session alias) to its member URI within a `members` map, or `nil` when
@@ -987,10 +910,7 @@ defmodule Ezagent.Behavior.Chat do
   """
   @spec role_name_to_uri(map(), String.t()) :: URI.t() | nil
   def role_name_to_uri(members, role_name) when is_map(members) and is_binary(role_name) do
-    Enum.find_value(members, nil, fn
-      {%URI{} = uri, %{role_name: ^role_name}} -> uri
-      _ -> nil
-    end)
+    Members.role_name_to_uri(members, role_name)
   end
 
   # RFC #402 (codex r1 HIGH 2026-05-26) — companion to the
@@ -1082,7 +1002,7 @@ defmodule Ezagent.Behavior.Chat do
     monitors = (ctx[:transients] || %{})[:monitors] || %{}
     last_seen = ctx[:read].(:last_seen, %{})
 
-    {ref_to_remove, new_monitors} = pop_monitor_ref(monitors, member_uri)
+    {ref_to_remove, new_monitors} = Delivery.pop_monitor_ref(monitors, member_uri)
 
     if ref_to_remove, do: Process.demonitor(ref_to_remove, [:flush])
 
@@ -1095,7 +1015,7 @@ defmodule Ezagent.Behavior.Chat do
        # `:monitors` is a TRANSIENT (SPEC §2.3C / §7 OQ-2).
        {:set_transient, :monitors, new_monitors},
        {:set, :last_seen, new_last_seen}
-     ] ++ broadcast_membership_effects(ctx[:self_uri], {:member_left, member_uri})}
+     ] ++ Delivery.broadcast_membership_effects(ctx[:self_uri], {:member_left, member_uri})}
   end
 
   # --- :set_working_copy -------------------------------------------------
@@ -1276,7 +1196,7 @@ defmodule Ezagent.Behavior.Chat do
   """
   @spec legends_of(map()) :: Legend.registry()
   def legends_of(chat_slice) when is_map(chat_slice) do
-    Map.get(chat_slice, :legends, %{})
+    Members.legends_of(chat_slice)
   end
 
   @doc """
@@ -1288,7 +1208,7 @@ defmodule Ezagent.Behavior.Chat do
   """
   @spec resolve_legend(map(), String.t()) :: {:ok, Legend.entry()} | :error
   def resolve_legend(chat_slice, name) when is_map(chat_slice) and is_binary(name) do
-    Legend.resolve(legends_of(chat_slice), name)
+    Members.resolve_legend(chat_slice, name)
   end
 
   @doc """
@@ -1305,9 +1225,7 @@ defmodule Ezagent.Behavior.Chat do
           {:legend, String.t(), [URI.t()]} | {:member, URI.t(), map()}
         ]
   def fold_members(chat_slice) when is_map(chat_slice) do
-    members = Map.get(chat_slice, :members, %{})
-    legends = legends_of(chat_slice)
-    Legend.fold_members(members, legends, fn role -> role_name_to_uri(members, role) end)
+    Members.fold_members(chat_slice)
   end
 
   @doc """
@@ -1432,7 +1350,7 @@ defmodule Ezagent.Behavior.Chat do
         # at the Kind.Server commit level) emits the membership mutation
         # downstream. Signals in Phase A only execute container mutations
         # (not :notify), so we DON'T emit a :notify effect here.
-        broadcast_membership_direct(ctx[:self_uri], {:member_offline, member_uri, now})
+        Delivery.broadcast_membership_direct(ctx[:self_uri], {:member_offline, member_uri, now})
 
         {:ok,
          [
@@ -1476,109 +1394,15 @@ defmodule Ezagent.Behavior.Chat do
   @doc "PubSub topic for in-session events (chat stream feed)."
   @spec session_events_topic(URI.t() | String.t()) :: String.t()
   def session_events_topic(%URI{} = uri), do: session_events_topic(URI.to_string(uri))
-  def session_events_topic(uri_str) when is_binary(uri_str), do: "esr:session:#{uri_str}:events"
+  def session_events_topic(uri_str) when is_binary(uri_str),
+    do: Delivery.session_events_topic(uri_str)
 
   @doc "PubSub topic for a User's personal receive notifications."
   @spec user_events_topic(URI.t() | String.t()) :: String.t()
   def user_events_topic(%URI{} = uri), do: user_events_topic(URI.to_string(uri))
-  def user_events_topic(uri_str) when is_binary(uri_str), do: "esr:user:#{uri_str}:events"
+  def user_events_topic(uri_str) when is_binary(uri_str), do: Delivery.user_events_topic(uri_str)
 
-  # --- Internals ---------------------------------------------------------
-
-  # Allen 2026-05-26: detect mentions that didn't make it to recipients
-  # (because the mentioned URI isn't a session member) and emit a
-  # `:mention_failed` notification to the sender. This closes the
-  # silent-drop UX gap where `@curl_test_alpha hello` produced no
-  # response and no error when curl_test_alpha was not a session
-  # member.
-  defp notify_dropped_mentions(%Message{} = msg, recipients, session_uri, ctx) do
-    mention_uris = msg.mentions || []
-
-    if mention_uris == [] do
-      :ok
-    else
-      recipients = MapSet.new(recipients, &Ezagent.URI.instance/1)
-
-      dropped =
-        mention_uris
-        |> Enum.map(&to_uri_struct/1)
-        |> Enum.reject(&is_nil/1)
-        |> Enum.reject(fn uri -> MapSet.member?(recipients, Ezagent.URI.instance(uri)) end)
-
-      sender_uri = msg.sender
-
-      _ = ctx
-
-      Enum.each(dropped, fn dropped_uri ->
-        try do
-          # System-level emit — the session Kind is delivering an
-          # advisory UX notification about the sender's own message
-          # processing; no caller-cap gate needed (default ctx
-          # `%{caps: :system}` bypasses `:notify` cap check, which
-          # would otherwise require the sender to hold a self-notify
-          # cap — too punitive for advisory UX).
-          Ezagent.Notifications.notify(
-            sender_uri,
-            %{
-              type: :mention_failed,
-              body: %{
-                message: "Your @-mention was not delivered (target is not a session member).",
-                mentioned_uri: URI.to_string(dropped_uri),
-                session_uri: URI.to_string(session_uri)
-              },
-              source: __MODULE__
-            }
-          )
-        rescue
-          e ->
-            Logger.warning(
-              "Ezagent.Behavior.Chat: notify mention_failed raised for " <>
-                "#{URI.to_string(dropped_uri)}: #{Exception.message(e)}"
-            )
-        end
-      end)
-
-      :ok
-    end
-  end
-
-  defp to_uri_struct(%URI{} = uri), do: uri
-
-  defp to_uri_struct(s) when is_binary(s) do
-    Ezagent.URI.new!(s)
-  rescue
-    _ -> nil
-  end
-
-  defp to_uri_struct(_), do: nil
-
-  # Cross-session forwarding — fire-and-forget Router.dispatch with
-  # :cast (reply :ignore). The target session handles its own member
-  # fan-out + further routing rules.
-  defp dispatch_cross_session_call(target_session_uri, %Message{} = msg) do
-    # Pre-bake `chat.send` so the audit `target` carries the real
-    # behavior name (see `dispatch_receive_call/3` — a bare
-    # `action: :send` yields the `_.send` Router sentinel).
-    send_target =
-      Ezagent.URI.with_action(target_session_uri, :chat, :send)
-
-    Ezagent.Router.dispatch(%Cmd{
-      target: send_target,
-      action: :send,
-      args: %{message: msg},
-      ctx: %{
-        caller: msg.sender,
-        # SPEC caps-cleanup-v1 §4.4 — cross-session forwarding is
-        # system-routed; `system://chat-router` per Catalog.
-        caps: system_caps("chat-router"),
-        reply: :ignore
-      }
-    })
-  end
-
-  # Per-recipient receive dispatch — :cast for Session→member fan-out.
-  # On success, mark :delivered on the read marker (PR-3 of Read Receipts
-  # rollout — fire-and-forget, must not block message fan-out).
+  # --- Delivery helpers --------------------------------------------------
   @doc false
   # team-routing-unification §3.4 (PR-4b): render the matched rule's prompt
   # template (carried in `ctx.prompt_template_ref` from
@@ -1588,18 +1412,7 @@ defmodule Ezagent.Behavior.Chat do
   @spec render_for_delivery(Message.t(), map() | nil, map(), URI.t()) :: Message.t()
   def render_for_delivery(%Message{} = msg, ctx, templates, %URI{} = session_uri)
       when is_map(templates) do
-    ref = ctx && Map.get(ctx, :prompt_template_ref)
-
-    case ref && Map.get(templates, ref) do
-      template when is_binary(template) ->
-        rendered =
-          Ezagent.Routing.PromptTemplate.render(template, message_vars(msg, session_uri))
-
-        %{msg | body: put_rendered_text(msg.body, rendered)}
-
-      _ ->
-        msg
-    end
+    Delivery.render_for_delivery(msg, ctx, templates, session_uri)
   end
 
   @doc false
@@ -1608,179 +1421,13 @@ defmodule Ezagent.Behavior.Chat do
   # now (the sender's agent flavor needs a lookup — deferred).
   @spec message_vars(Message.t(), URI.t()) :: map()
   def message_vars(%Message{} = msg, %URI{} = session_uri) do
-    %{
-      sender: msg.sender && URI.to_string(msg.sender),
-      # reuse the existing body-map `body_text/1` helper (defined later in
-      # this module) — do NOT define a Message-taking clause here: its
-      # catch-all would shadow the body-map clauses + break the :receive
-      # Agent-branch payload path (regression caught 2026-06-01).
-      body: body_text(msg.body),
-      session: URI.to_string(session_uri),
-      sent_at: msg.inserted_at && DateTime.to_iso8601(msg.inserted_at),
-      flavor: ""
-    }
+    Delivery.message_vars(msg, session_uri)
   end
-
-  defp put_rendered_text(%{text: _} = body, text), do: %{body | text: text}
-  defp put_rendered_text(%{"text" => _} = body, text), do: Map.put(body, "text", text)
-  defp put_rendered_text(body, text) when is_map(body), do: Map.put(body, :text, text)
-  defp put_rendered_text(_body, text), do: %{text: text}
 
   defp system_caps(name) when is_binary(name) do
     name
     |> Ezagent.SystemPrincipal.uri()
     |> Ezagent.SystemPrincipal.caps()
-  end
-
-  defp dispatch_receive_call(recipient_uri, %Message{} = msg, session_uri) do
-    # Canonicalize the session URI before it crosses into the recipient's
-    # `chat.receive` — it becomes `ctx.caller`, which the recipient behavior
-    # feeds to `Ezagent.URI.with_action/3` (e.g. Echo's reply path), and it
-    # keys the ReadMarker below. `ctx[:self_uri]` carries the deprecated
-    # `:authority` field when the inbound target was built via stdlib
-    # `URI.parse/1`; both the `with_action/3` canonical guard and every
-    # canonical MapSet/ETS comparison require the RFC-3986 `authority: nil`
-    # shape. (Sibling of the broadcast-site canonicalization in `handle_send`.)
-    session_uri = Ezagent.URI.new!(URI.to_string(session_uri))
-
-    # SPEC caps-cleanup-v1 §4.4 — Session fan-out is system-routed
-    # message delivery; runs under `system://chat-router` (closed
-    # Catalog). The session URI stays as caller for provenance.
-    #
-    # Pre-bake the FULL `chat.receive` action onto the target so the
-    # telemetry/audit `target` carries the real behavior name. A bare
-    # `action: :receive` makes the Router synthesise the `_.receive`
-    # sentinel (it can't infer the behavior from a `%Cmd{}` alone), which
-    # erases `chat.receive` from the `invocations` audit log — breaking
-    # the operator query (and the routing-fanout tests) that filter on
-    # `?action=chat.receive`. Router's `annotate_target_with_action/2`
-    # leaves a pre-baked `action=` query untouched.
-    receive_target =
-      Ezagent.URI.with_action(recipient_uri, :chat, :receive)
-
-    result =
-      Ezagent.Router.dispatch(%Cmd{
-        target: receive_target,
-        action: :receive,
-        args: %{message: msg},
-        ctx: %{
-          caller: session_uri,
-          caps: system_caps("chat-router"),
-          reply: :ignore
-        }
-      })
-
-    if result == :ok do
-      _ = Ezagent.Chat.ReadMarker.mark(session_uri, recipient_uri, msg.id, :delivered)
-    end
-
-    result
-  end
-
-  defp replay_messages_since(_session_uri, _member_uri, last_seen) when last_seen == %{}, do: :ok
-
-  defp replay_messages_since(session_uri, member_uri, last_seen) do
-    case Map.get(last_seen, member_uri) do
-      nil ->
-        :ok
-
-      last_seen_at ->
-        for msg <- MessageStore.in_session_since(session_uri, last_seen_at) do
-          dispatch_receive_call(member_uri, msg, session_uri)
-        end
-
-        :ok
-    end
-  end
-
-  # broadcast_membership returns two :notify effects (per-session +
-  # global membership-changes feed). Used by handle_join/handle_leave.
-  defp broadcast_membership_effects(session_uri, event) do
-    [
-      # Per-session fan-out — the LV chat stream subscribes here for
-      # its own session's events.
-      {:notify, session_events_topic(session_uri), event},
-      # Global fan-out — `EzagentDomainInstanceMessage.PresenceFanout` subscribes
-      # to maintain the `user_uri → MapSet(session_uri)` reverse index
-      # without coupling back to this module. Wrapper carries the
-      # session_uri the inner `event` lacks.
-      {:notify, "esr:session_membership:changes",
-       {:session_membership_change, session_uri, event}}
-    ]
-  end
-
-  # handle_kind_message can't return :notify effects (different
-  # contract — it returns {:ok, new_slice} or :ignore). For the
-  # :DOWN-path member-offline broadcasts, dispatch through the
-  # Router via a self-:notify... but Router doesn't broadcast.
-  # The cleanest path is the EventLog-bus shim: there is no such
-  # thing in the codebase, so we keep the direct PubSub broadcast
-  # here, gated behind a helper whose name signals it's the
-  # one-call-from-handle_info path (not a generic broadcast).
-  #
-  # `defp` keeps it private; the `:notify` grep gate is on the raw
-  # PubSub broadcast — we use the `Ezagent.Notifications` facade via
-  # the broadcast layer instead. There is no such facade for raw
-  # membership broadcasts in this codebase; the only legal
-  # alternative is to plumb the broadcast through `Ezagent.SliceChange`,
-  # which already fires for slice mutations made by handle_kind_message
-  # (it's hooked at the Kind.Server level — see commit_and_notify).
-  # The slice change to :members/:monitors/:last_seen IS the
-  # observable signal subscribers consume; we therefore DROP the
-  # explicit :member_offline broadcast — SliceChange replaces it.
-  defp broadcast_membership_direct(_session_uri, _event) do
-    # SliceChange emits the membership mutation downstream as part of
-    # the Kind.Server commit_and_notify pipeline. No additional
-    # broadcast required (and the raw PubSub broadcast is gated by
-    # the migration sweep).
-    :ok
-  end
-
-  defp pop_monitor_ref(monitors, member_uri) do
-    Enum.reduce(monitors, {nil, %{}}, fn
-      {ref, ^member_uri}, {nil, acc} -> {ref, acc}
-      {ref, uri}, {found_ref, acc} -> {found_ref, Map.put(acc, ref, uri)}
-    end)
-  end
-
-  # Body comes back from MessageStore.load with string keys (Ecto :map
-  # column → JSON-decoded via ecto_sqlite3); freshly-constructed bodies
-  # in-flight have atom keys. Accept either to be safe across the
-  # dispatch boundary.
-  defp body_text(%{text: t}) when is_binary(t), do: t
-  defp body_text(%{"text" => t}) when is_binary(t), do: t
-  defp body_text(_), do: ""
-
-  # Phase 6 PR 14 — attachment helpers for bridge payload.
-  defp body_attachments(%{attachments: list}) when is_list(list), do: list
-  defp body_attachments(%{"attachments" => list}) when is_list(list), do: list
-  defp body_attachments(_), do: []
-
-  # Mirror cc-openclaw channel_server convention: at most one `file_path`
-  # string in meta per notification; multi-attachment context lives in the
-  # text hint already concatenated to `content`.
-  defp first_attachment_path([]), do: nil
-
-  defp first_attachment_path([att | _]) do
-    case att[:local_path] || att["local_path"] do
-      p when is_binary(p) and p != "" -> p
-      _ -> nil
-    end
-  end
-
-  defp first_attachment_path(_), do: nil
-
-  defp attachment_hint_text([]), do: ""
-
-  defp attachment_hint_text(list) do
-    parts =
-      Enum.map(list, fn att ->
-        type = att[:type] || att["type"] || "unknown"
-        name = att[:name] || att["name"] || "?"
-        "[attachment: type=#{type} name=#{name}]"
-      end)
-
-    Enum.join(parts, " ")
   end
 
   # PR-OWN-2 (caps-data-ownership SPEC #306 §3.3 + §7) — data_owner
