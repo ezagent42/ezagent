@@ -40,7 +40,21 @@ defmodule EzagentWeb.UploadsController do
   caller's authenticated **mount workspace** — it serves the caller's OWN
   workspace copy. This is the disambiguation the new contract makes explicit;
   today's filenames are UUID-prefixed so a cross-workspace filename collision is
-  effectively impossible. Remove this route + its handling when the window closes.
+  effectively impossible. Cross-workspace reads are still impossible (the resolver
+  `authority/2` denies a foreign `<ws>`).
+
+  > 🔒 **ALLEN-REVIEW — scope widening within a workspace (codex round-2 HIGH).**
+  > The shim authorizes by *workspace membership* only, which is BROADER than the
+  > pre-P2 participation-based authz (admin / uploader / session-participant): any
+  > authenticated entity in workspace W that learns a stored UUID filename can
+  > fetch it via `/files/:filename` without a signed token. This is an accepted,
+  > deliberate part of the contract change for the deprecation window (filenames
+  > are unguessable `<uuid>-` names; cross-workspace is still denied). The
+  > internal LiveView still renders `/files/` links (the liveview plugin cannot
+  > depend on the web token module), so removing the shim now would break the live
+  > UI. Tighten/retire this shim — and switch the LiveView render path to signed
+  > tokens — once the deprecation window closes. **This is the headline item for
+  > Allen's review.**
 
   ## Why the controller is now thin
 
@@ -110,7 +124,38 @@ defmodule EzagentWeb.UploadsController do
   # The authenticated mount workspace — the AUTHORITATIVE subject. Derived from
   # the signed-in entity (NOT from the URI being resolved), so the ws-segment
   # authority check is non-tautological.
+  #
+  # The mount workspace is the SELECTED workspace (`:current_workspace_uri`
+  # session slot), NOT the entity's home workspace — a system member can
+  # context-switch (`WorkspaceSwitchController` / `SessionPrincipal`) into another
+  # workspace while keeping `current_entity_uri` as `entity://.../system/…`.
+  # Deriving from the entity (codex round-2 HIGH) would (a) deny a system member
+  # the selected workspace's tokens and (b) still serve the entity's home-ws
+  # files even when mounted elsewhere. Legacy sessions without the slot fall back
+  # to the entity's home workspace (the pre-switcher invariant
+  # `current_workspace_uri == entity_workspace_uri(current_entity_uri)`).
   defp mount_workspace(conn) do
+    case get_session(conn, :current_workspace_uri) do
+      ws_str when is_binary(ws_str) and ws_str != "" ->
+        workspace_name_of(ws_str)
+
+      _ ->
+        entity_home_workspace(conn)
+    end
+  end
+
+  defp workspace_name_of(ws_str) do
+    with %URI{} = ws_uri <- EzURI.new!(ws_str),
+         {:ok, name} <- EzURI.workspace_name(ws_uri) do
+      {:ok, name}
+    else
+      _ -> :error
+    end
+  rescue
+    ArgumentError -> :error
+  end
+
+  defp entity_home_workspace(conn) do
     with %URI{} = entity_uri <- conn.assigns[:current_entity_uri],
          %URI{} = ws_uri <- Ezagent.Capability.workspace_of(entity_uri),
          {:ok, name} <- EzURI.workspace_name(ws_uri) do

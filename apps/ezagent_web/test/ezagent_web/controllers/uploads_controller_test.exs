@@ -104,6 +104,25 @@ defmodule EzagentWeb.UploadsControllerTest do
       assert conn.resp_body == content
     end
 
+    test "mount workspace is the SELECTED current_workspace_uri, not the entity home (codex r2)",
+         %{conn: conn} do
+      # A system entity (home = system) context-switched into team-other reads
+      # team-other's file — proving authority uses the selected workspace slot,
+      # not the entity's home workspace.
+      {uri, content} = store_upload(@other_workspace, uploaded_filename())
+      token = UploadToken.mint!(uri, ttl_seconds: 60)
+
+      system_entity = EzURI.new!("entity://system/user/op-#{uniq()}")
+
+      conn =
+        conn
+        |> sign_in(@other_workspace, system_entity)
+        |> get(~p"/uploads/download?token=#{token}")
+
+      assert conn.status == 200
+      assert conn.resp_body == content
+    end
+
     test "403 for a token bound to a FOREIGN workspace (authority/2)", %{conn: conn} do
       # The token is minted for team-other but the caller is mounted in
       # team-uploads — workspace isolation must deny it.
