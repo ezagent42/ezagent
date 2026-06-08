@@ -22,6 +22,12 @@ defmodule Ezagent.UriQuery.Scan.HomePathBaseline do
   """
 
   @baseline [
+    # P3 (DONE) — the population-3 credential/log/plugin callers all migrated to
+    # the `UriQuery` seam (node-global system artifacts → `system://<type>` via
+    # `Ezagent.System.FsResolver`, SPEC §10 OI-3). Only the P2-pending uploads
+    # entries remain below; when P2 (Allen-gated) lands they too are removed and
+    # the baseline reaches the empty terminal state (lockdown complete).
+    #
     # P1 (DONE) — the per-agent config-dir now resolves through
     # `Ezagent.Resource.FsResolver` (`resource://<ws>/<ns>-agents/<name>`), whose
     # backend `Home.path/1` call is the sanctioned R-4 chokepoint exempted in
@@ -29,25 +35,23 @@ defmodule Ezagent.UriQuery.Scan.HomePathBaseline do
     # `config_dir.ex`, so its baseline entry is removed (the baseline only ever
     # shrinks, S-3).
 
-    # → removed in P2b (uploads via resource:// resolver; #648 moved these into core)
+    # → still pending P2b (uploads via resource:// resolver; #648 moved these into
+    # core). P2 is Allen-gated and NOT yet merged, so these raw `Home.path(:uploads)`
+    # callers remain in `apps/ezagent_core/lib/ezagent/uploads.ex` and stay
+    # baselined until P2 lands and removes them. They are the ONLY remaining
+    # burn-down entries after P3.
     {"apps/ezagent_core/lib/ezagent/uploads.ex", 40, "Home.path(:uploads)"},
-    {"apps/ezagent_core/lib/ezagent/uploads.ex", 75, "Home.path(:uploads)"},
+    {"apps/ezagent_core/lib/ezagent/uploads.ex", 75, "Home.path(:uploads)"}
 
-    # → migrated/exempted in P3 (population-3 credential/log/plugin callers)
-    {"apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/token_store.ex", 120,
-     "Home.path(:credentials)"},
-    {"apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex", 143,
-     "Home.path(:credentials)"},
-    {"apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/client.ex", 164,
-     "Home.path(:credentials)"},
-    {"apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/client.ex", 176,
-     "Home.path(:credentials)"},
-    {"apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/client.ex", 414, "Home.profile_dir()"},
-    {"apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/ws_client.ex", 165,
-     "Home.path(:credentials)"},
-    {"apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/application.ex", 176,
-     "Home.path(:plugins)"},
-    {"apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex", 708, "Home.path(:logs)"}
+    # → P3 (DONE) — the population-3 credential/log/plugin callers (agent_bridge
+    # token registry, identity smtp_config, feishu app-cred + inbox + plugin
+    # config, python diagnostic log) all migrated to the `UriQuery` seam:
+    # node-global system artifacts → `system://<type>` (`Ezagent.System.FsResolver`)
+    # per SPEC §10 OI-3. None was a genuine boot-order caller (the one item OI-3
+    # flagged — identity's smtp read — runs inside `Application.start/2` AFTER
+    # `ezagent_core` seeds the UriQuery tables, so it migrated, not exempted).
+    # Their raw `Home` calls are gone, so their baseline entries are removed (the
+    # baseline only ever shrinks, S-3).
   ]
 
   @typedoc "A baseline anchor: `{path, line, call_snippet}`."

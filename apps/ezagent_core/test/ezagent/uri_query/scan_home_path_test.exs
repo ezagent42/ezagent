@@ -306,6 +306,90 @@ defmodule Ezagent.UriQuery.ScanHomePathTest do
                "baseline #{path}:#{line} no longer maps to a Home call (stale anchor)"
       end
     end
+
+    # P3 completion invariant (feedback_completion_requires_invariant_test): the
+    # entire population-3 runtime caller set (agent_bridge token registry,
+    # identity smtp_config, feishu app-cred + inbox + plugin config, python log)
+    # has migrated behind the `UriQuery` seam, so the burn-down baseline holds
+    # ONLY the still-pending P2 uploads entries. When P2 lands (Allen-gated) and
+    # removes those, the baseline reaches the fully-empty terminal state.
+    test "P3 completion: only the P2-pending uploads entries remain in the baseline" do
+      remaining = MapSet.new(HomePathBaseline.all(), fn {p, l, _c} -> {p, l} end)
+
+      expected_pending =
+        MapSet.new([
+          {"apps/ezagent_core/lib/ezagent/uploads.ex", 40},
+          {"apps/ezagent_core/lib/ezagent/uploads.ex", 75}
+        ])
+
+      assert remaining == expected_pending,
+             """
+             After P3, the home_path_in_runtime_code baseline must contain ONLY \
+             the P2-pending uploads entries (every population-3 caller migrated to \
+             the system:// / resource:// UriQuery seam). Drift:
+               unexpected: #{inspect(MapSet.difference(remaining, expected_pending) |> MapSet.to_list())}
+               missing:    #{inspect(MapSet.difference(expected_pending, remaining) |> MapSet.to_list())}
+             """
+    end
+
+    # The migrated population-3 callers must no longer hold raw Home.{path,
+    # profile_dir} calls — the burn-down is real, not just a baseline edit.
+    test "P3 migrated callers hold no raw Home.path/profile_dir call" do
+      repo_root = Path.expand("../../../../..", __DIR__)
+
+      migrated =
+        Enum.map(
+          [
+            "apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/token_store.ex",
+            "apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex",
+            "apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex",
+            "apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/client.ex",
+            "apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/ws_client.ex",
+            "apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/application.ex"
+          ],
+          &Path.join(repo_root, &1)
+        )
+
+      violations =
+        Scan.scan_paths(migrated, baseline: [], exceptions: [])
+        |> Enum.filter(&(&1.category == :home_path_in_runtime_code))
+
+      assert violations == [],
+             "P3-migrated callers still hold raw Home calls: #{inspect(violations)}"
+    end
+
+    # codex P3 HIGH: the migration must move the OPERATIONAL credential access
+    # (not just the operator-facing log string) onto the system:// seam. The
+    # feishu callers must no longer reach raw `Ezagent.Home.read_credentials/1`.
+    test "P3 feishu callers do not reach raw Home.read_credentials/1" do
+      repo_root = Path.expand("../../../../..", __DIR__)
+
+      feishu_callers = [
+        "apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/client.ex",
+        "apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/ws_client.ex"
+      ]
+
+      offenders =
+        feishu_callers
+        |> Enum.flat_map(fn rel ->
+          repo_root
+          |> Path.join(rel)
+          |> File.read!()
+          |> String.split("\n")
+          |> Enum.with_index(1)
+          |> Enum.filter(fn {line, _no} ->
+            trimmed = String.trim_leading(line)
+
+            String.contains?(line, "Home.read_credentials(") and
+              not String.starts_with?(trimmed, "#")
+          end)
+          |> Enum.map(fn {_line, no} -> "#{rel}:#{no}" end)
+        end)
+
+      assert offenders == [],
+             "feishu callers still read creds via raw Home.read_credentials/1 " <>
+               "(must go through Ezagent.System.FsResolver.read_yaml/1): #{inspect(offenders)}"
+    end
   end
 
   defp fixture!(name, source) do

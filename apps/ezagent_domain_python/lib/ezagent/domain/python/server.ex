@@ -705,7 +705,11 @@ defmodule Ezagent.Domain.Python.Server do
       |> String.replace("://", "-")
       |> String.replace("/", "_")
 
-    base = Ezagent.Home.path(:logs)
+    # Resource-unification P3 (SPEC §10 OI-3): the diagnostic stderr log lives in
+    # the per-deployment `logs/` tree (flat, no `<ws>` — the handle may be a
+    # `test://` fixture, not a tenant URI) → a node-global artifact addressed
+    # `system://logs` and resolved through `UriQuery`.
+    base = Ezagent.System.FsResolver.path!(Ezagent.URI.system_principal("logs"))
     File.mkdir_p(base)
     Path.join(base, "python-" <> slug <> ".log")
   end

@@ -140,7 +140,16 @@ defmodule EzagentDomainIdentity.Application do
   end
 
   defp do_seed_smtp_config do
-    path = Path.join(Ezagent.Home.path(:credentials), "smtp_config.json")
+    # Resource-unification P3 (SPEC §10 OI-3): smtp_config is a node-global app
+    # credential (no `<ws>`) → `system://credentials/...` via `UriQuery`.
+    #
+    # Boot-order (the one item OI-3 flagged to verify): this read runs inside
+    # `EzagentDomainIdentity.Application.start/2`, and identity depends on
+    # `ezagent_core` (mix.exs `{:ezagent_core, in_umbrella: true}`), so core's
+    # `seed_uri_schemes/0` + the UriQuery ETS tables are already up before this
+    # runs. It is therefore NOT a genuine boot-order caller (those run at
+    # config-eval / before `Application.start`) and correctly migrates.
+    path = Ezagent.System.FsResolver.path!(Ezagent.URI.system("credentials", "smtp_config.json"))
 
     with false <- Ezagent.AppSettings.smtp_configured?(),
          {:ok, body} <- File.read(path),
