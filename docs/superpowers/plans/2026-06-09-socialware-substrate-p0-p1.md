@@ -4,7 +4,7 @@
 
 **Goal:** Make `Behavior.Publisher` a base behavior every session composes (P0), then make the Kind runtime *per-instance-behavior-set-aware* — persisting each instance's behavior set and routing every behavior enumeration + callback entry point through it so an out-of-set behavior can never run a callback, process a signal, run a cleanup hook, or create/mutate its slice, even when one Kind module registers a superset (P1).
 
-**Architecture:** A new core base behavior `Ezagent.Behavior.KindBase` (slice key `:kind_base`, `use Ezagent.Lifecycle`) snapshots the instance's behavior-module list at spawn into its persistent `:state` so it survives restart/reconcile via the existing `kind_snapshots` path. A new pure resolver `Ezagent.Kind.BehaviorSet` exposes (a) `init_set/2` — the FIRST-spawn set from spawn args (`args[:behaviors]` ∩ declared) PLUS the always-on base behaviors (`KindBase` + `Ezagent.UniversalBehaviors.all()`), consumed by `init_fresh` so an out-of-set behavior NEVER runs `create`/`init_slice` nor persists a slice even on the very first spawn; (b) `effective_set/2` — the post-load set from the persisted `:kind_base` slice (∩ declared) + base behaviors, or the full declared list when no per-instance override exists (preserving today's two static Kinds); (c) a required/optional `reads_siblings` closure against a slice-owner map (fails loud only on a missing *required* sibling). Every runtime call site that today calls `Ezagent.Kind.behaviors_of(kind_module)` or resolves dispatch by `{kind_module, action}` is re-pointed at the instance set; dispatch gains a membership gate that denies an out-of-set behavior with `{:error, :behavior_not_in_instance_set}` while EXEMPTING universal behaviors (e.g. `Manage`), which are always reachable and gated only by the normal cap check.
+**Architecture:** A new core base behavior `Ezagent.Behavior.KindBase` (slice key `:kind_base`, `use Ezagent.Lifecycle`) snapshots the instance's behavior-module list at spawn into its persistent `:state` so it survives restart/reconcile via the existing `kind_snapshots` path. The captured value uses an explicit **legacy sentinel** (`nil`) to distinguish a Kind spawned with NO `:behaviors` arg (legacy static Kind → expand to the full declared list) from a Kind spawned with a PRESENT list (including the empty list `[]` → exactly that list, never the declared superset) — so an explicit `%{behaviors: []}` can never be confused with omitted args and re-open the §3.1 hole under empty/malformed args. A new pure resolver `Ezagent.Kind.BehaviorSet` exposes (a) `init_set/2` — the FIRST-spawn set from spawn args: when `:behaviors` is ABSENT → the full declared list (legacy), when PRESENT (even `[]`) → `(list ∩ declared)`, in both cases PLUS the always-on base behaviors (`KindBase` + `Ezagent.UniversalBehaviors.all()`), consumed by `init_fresh` so an out-of-set behavior NEVER runs `create`/`init_slice` nor persists a slice even on the very first spawn; (b) `effective_set/2` — the post-load set from the persisted `:kind_base` slice: legacy sentinel (`nil`) → full declared list (preserving today's two static Kinds), an explicit captured list (even `[]`) → `(list ∩ declared)`, in both cases + base behaviors; (c) a required/optional `reads_siblings` closure against a slice-owner map (fails loud only on a missing *required* sibling). `init_set` and `effective_set` are symmetric: absent-at-spawn ⇒ sentinel-at-reload ⇒ declared; present-list-at-spawn ⇒ same-list-at-reload ⇒ that list. Every runtime call site that today calls `Ezagent.Kind.behaviors_of(kind_module)` or resolves dispatch by `{kind_module, action}` is re-pointed at the instance set; dispatch gains a membership gate that denies an out-of-set behavior with `{:error, :behavior_not_in_instance_set}` while EXEMPTING universal behaviors (e.g. `Manage`), which are always reachable and gated only by the normal cap check.
 
 **Tech Stack:** Elixir 1.19 / OTP 27, umbrella (`apps/ezagent_core`, `apps/ezagent_domain_instance_message`, `apps/ezagent_domain_socialware`, `apps/ezagent_domain_external_mirror`), `use Ezagent.Lifecycle` behavior contract, `Ezagent.Kind.Server` (single GenServer host), `Ezagent.Kind.Snapshot` persistence, ExUnit. Run mix from the umbrella root with `MIX_ENV=test`.
 
@@ -55,7 +55,7 @@ The slice-owner map lives as a single source of truth in `Ezagent.Kind.BehaviorS
 |---|---|---|
 | `apps/ezagent_domain_socialware/lib/ezagent/entity/socialware_session.ex` | Modify | P0: add `Publisher.SessionImpl` to `behaviors/0`; add `@behaviour Ezagent.Behavior.Publisher` + the 4 façade callbacks (mirroring `Ezagent.Entity.Session`). |
 | `apps/ezagent_domain_socialware/test/ezagent/entity/socialware_session_publisher_test.exs` | Create | P0: assert `SocialwareSession` composes `:publisher`, subscribe_from works, slice changes emit publisher events. |
-| `apps/ezagent_core/lib/ezagent/behavior/kind_base.ex` | Create | P1: base behavior owning slice `:kind_base`; `create/1` snapshots the instance behavior-module list from spawn args; exposes no actions (data-only base). |
+| `apps/ezagent_core/lib/ezagent/behavior/kind_base.ex` | Create | P1: base behavior owning slice `:kind_base`; `create/1` snapshots the instance behavior-module list from spawn args, persisting the legacy sentinel `nil` when `:behaviors` is ABSENT and the exact list (even `[]`) when PRESENT; exposes no actions (data-only base). |
 | `apps/ezagent_core/test/ezagent/behavior/kind_base_test.exs` | Create | P1: assert the slice captures the behavior set and survives a restart round-trip. |
 | `apps/ezagent_core/lib/ezagent/kind/behavior_set.ex` | Create | P1: pure resolver — `base_behaviors/0` (KindBase + UniversalBehaviors.all), `init_set/2` (first-spawn set from args), `effective_set/2` (post-load instance set), slice-owner map, `resolve_closure/1` (required/optional fail-loud), `member?/2`. |
 | `apps/ezagent_core/test/ezagent/kind/behavior_set_test.exs` | Create | P1: unit tests for init_set (first-spawn scoping + universal base), effective_set, closure (required fail / optional soft), member?. |
@@ -312,24 +312,43 @@ defmodule Ezagent.Behavior.KindBaseTest do
     assert KindBase.state_slice() == :kind_base
   end
 
-  test "create/1 captures the instance behavior set from :behaviors arg" do
+  test "create/1 captures the instance behavior set from a PRESENT :behaviors arg" do
     behaviors = [Ezagent.Behavior.Chat, Ezagent.Behavior.Surface]
     assert {:ok, %{behaviors: ^behaviors}} = KindBase.create(%{behaviors: behaviors})
   end
 
-  test "create/1 with no :behaviors arg yields an empty list (module-static fallback)" do
-    assert {:ok, %{behaviors: []}} = KindBase.create(%{})
+  test "create/1 with NO :behaviors arg yields the legacy sentinel nil (NOT [])" do
+    # ABSENT key → legacy static Kind → sentinel nil, so effective_set later
+    # expands to the FULL declared list. It must NOT be persisted as [] (which
+    # is a PRESENT empty list = base-behaviors-only).
+    assert {:ok, %{behaviors: nil}} = KindBase.create(%{})
   end
 
-  test "behaviors_in_slice/1 reads the captured set from a two-container slice" do
+  test "create/1 with an EXPLICIT empty list persists [] (distinct from the absent/nil case)" do
+    # PRESENT empty list → the instance deliberately carries ONLY base behaviors.
+    # This MUST be distinguishable from the absent case above (codex CRITICAL).
+    assert {:ok, %{behaviors: []}} = KindBase.create(%{behaviors: []})
+  end
+
+  test "behaviors_in_slice/1 reads the captured PRESENT set from a two-container slice" do
     {:ok, st} = KindBase.create(%{behaviors: [Ezagent.Behavior.Chat]})
     slice = %{state: st, transients: %{}}
     assert KindBase.behaviors_in_slice(slice) == [Ezagent.Behavior.Chat]
   end
 
-  test "behaviors_in_slice/1 returns [] for a missing/empty slice" do
-    assert KindBase.behaviors_in_slice(nil) == []
-    assert KindBase.behaviors_in_slice(%{state: %{}, transients: %{}}) == []
+  test "behaviors_in_slice/1 reads back the EXPLICIT empty list as [] (present, not sentinel)" do
+    {:ok, st} = KindBase.create(%{behaviors: []})
+    slice = %{state: st, transients: %{}}
+    assert KindBase.behaviors_in_slice(slice) == []
+  end
+
+  test "behaviors_in_slice/1 returns the legacy sentinel nil for the absent-args slice and missing slices" do
+    # The legacy sentinel survives the round-trip: an absent-args Kind reads
+    # back nil so effective_set falls back to the declared list.
+    {:ok, st} = KindBase.create(%{})
+    assert KindBase.behaviors_in_slice(%{state: st, transients: %{}}) == nil
+    assert KindBase.behaviors_in_slice(nil) == nil
+    assert KindBase.behaviors_in_slice(%{state: %{}, transients: %{}}) == nil
   end
 end
 ```
@@ -353,6 +372,23 @@ defmodule Ezagent.Behavior.KindBase do
   Data-only: it declares no actions. The captured set is read via
   `behaviors_in_slice/1` by `Ezagent.Kind.BehaviorSet.effective_set/2`.
 
+  ## Legacy sentinel (codex CRITICAL)
+
+  The captured value distinguishes two cases that MUST NOT collapse:
+
+    * `:behaviors` ABSENT from spawn args → a legacy static Kind. We persist
+      the sentinel `nil`, which `effective_set/2` expands to the FULL declared
+      list (today's two static Kinds, unchanged).
+    * `:behaviors` PRESENT (a list, INCLUDING the empty list `[]`) → the
+      instance deliberately carries exactly that subset. We persist the list
+      verbatim. An explicit `%{behaviors: []}` therefore yields ONLY the base
+      behaviors — never the declared superset.
+
+  Persisting `[]` for the absent case (the old behavior) would make an
+  empty/malformed `%{behaviors: []}` indistinguishable from omitted args and,
+  on a superset Kind, expand back to the full declared list — re-opening the
+  §3.1 hole on first spawn AND on every reload. The `nil` sentinel closes it.
+
   The set is snapshotted via the standard `kind_snapshots` path, so it
   survives restart/reconcile exactly like any other slice.
   """
@@ -361,15 +397,29 @@ defmodule Ezagent.Behavior.KindBase do
 
   @impl Ezagent.Lifecycle
   def create(args) do
-    behaviors = Map.get(args, :behaviors, [])
+    # ABSENT key → legacy sentinel nil (full-declared expansion downstream).
+    # PRESENT list (even []) → persist it exactly.
+    behaviors =
+      case Map.fetch(args, :behaviors) do
+        :error -> nil
+        {:ok, list} when is_list(list) -> list
+      end
+
     {:ok, %{behaviors: behaviors}}
   end
 
-  @doc "Read the captured instance behavior set from this Kind's :kind_base slice."
-  @spec behaviors_in_slice(map() | nil) :: [module()]
+  @doc """
+  Read the captured instance behavior set from this Kind's :kind_base slice.
+  Returns the captured list (possibly `[]`) for an instance spawned with a
+  PRESENT `:behaviors` arg, or the legacy sentinel `nil` for an absent-args
+  (legacy static) instance and for missing/empty slices.
+  """
+  @spec behaviors_in_slice(map() | nil) :: [module()] | nil
   def behaviors_in_slice(%{state: %{behaviors: behaviors}}) when is_list(behaviors), do: behaviors
+  def behaviors_in_slice(%{state: %{behaviors: nil}}), do: nil
   def behaviors_in_slice(%{behaviors: behaviors}) when is_list(behaviors), do: behaviors
-  def behaviors_in_slice(_), do: []
+  def behaviors_in_slice(%{behaviors: nil}), do: nil
+  def behaviors_in_slice(_), do: nil
 end
 ```
 
@@ -421,7 +471,9 @@ This proves the set persists via `kind_snapshots`. Re-use the existing snapshot 
       fresh = Ezagent.Kind.Snapshot.load_or_init(uri, KBTestKind, %{behaviors: behaviors})
       :ok = Ezagent.Kind.Snapshot.save_now(uri, KBTestKind, fresh)
 
-      reloaded = Ezagent.Kind.Snapshot.load_or_init(uri, KBTestKind, %{behaviors: []})
+      # The persisted snapshot wins on reload; the args here are the unused
+      # cold-init fallback (a snapshot already exists for this uri).
+      reloaded = Ezagent.Kind.Snapshot.load_or_init(uri, KBTestKind, %{behaviors: behaviors})
       assert Ezagent.Behavior.KindBase.behaviors_in_slice(reloaded[:kind_base]) == behaviors
     end
   end
@@ -454,12 +506,12 @@ git commit -m "test(kind): P1 — KindBase instance set survives snapshot round-
 
 This task introduces THREE pure functions plus a `base_behaviors/0` helper:
 
-- `init_set/2` — computes the FIRST-spawn set from the SPAWN ARGS (`args[:behaviors]` ∩ declared), PLUS the always-on `base_behaviors/0`. Used by `init_fresh/2` (Task 9) so an out-of-set behavior's `create`/`init_slice` never runs and its slice is never created/persisted at first spawn (SPEC §3.1, codex CRITICAL finding 1).
-- `effective_set/2` — computes the POST-load set from the persisted `:kind_base` slice (captured ∩ declared), PLUS `base_behaviors/0`. Used by every runtime enumeration after load (Tasks 9–14).
+- `init_set/2` — computes the FIRST-spawn set from the SPAWN ARGS, PLUS the always-on `base_behaviors/0`. It distinguishes ABSENT `:behaviors` from a PRESENT list via the same legacy sentinel rule `KindBase.create/1` uses: when `:behaviors` is ABSENT → the FULL declared list (legacy static Kind); when PRESENT (even `[]`) → `(list ∩ declared)`. So `%{behaviors: []}` on a superset Kind yields ONLY `base_behaviors`, never the declared superset. Used by `init_fresh/2` (Task 9) so an out-of-set behavior's `create`/`init_slice` never runs and its slice is never created/persisted at first spawn (SPEC §3.1, codex CRITICAL finding 1).
+- `effective_set/2` — computes the POST-load set from the persisted `:kind_base` slice, PLUS `base_behaviors/0`. It reads the captured value back via `KindBase.behaviors_in_slice/1`: the legacy sentinel `nil` → the FULL declared list; a PRESENT captured list (even `[]`) → `(list ∩ declared)`. Used by every runtime enumeration after load (Tasks 9–14). Symmetric with `init_set`: absent-at-spawn ⇒ sentinel `nil`-at-reload ⇒ declared; present-list-at-spawn ⇒ same-list-at-reload ⇒ that list.
 - `member?/2` — set membership for the dispatch gate (Task 10).
 - `base_behaviors/0` — `KindBase` + every `Ezagent.UniversalBehaviors.all/0` entry (today `Manage`); these are ALWAYS in the set so the universal `Manage` actions (`delete`/`reconfigure`) stay reachable on every instance even though `Manage` is not in any Kind's `behaviors/0` (SPEC §3.1 universal-behavior fallback policy, codex HIGH finding 2).
 
-`init_set` and `effective_set` are kept consistent by appending the same `base_behaviors/0` at both ends: whatever `init_set` materializes at spawn is exactly what `effective_set` re-derives after reload. When the instance carries no spawn-args subset (today's two static Kinds), both fall back to the full declared list (+ base behaviors), preserving current runtime exactly.
+`init_set` and `effective_set` are kept consistent by (a) appending the same `base_behaviors/0` at both ends and (b) treating ABSENT-args (sentinel `nil`) identically as "full declared list" — so whatever `init_set` materializes at spawn is exactly what `effective_set` re-derives after reload. **Crucially, an explicit empty list `%{behaviors: []}` is NOT treated as "absent": it is a PRESENT list that intersects to nothing declared, yielding base behaviors only.** When the instance carries no `:behaviors` arg at all (today's two static Kinds), both fall back to the full declared list (+ base behaviors), preserving current runtime exactly.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -481,14 +533,28 @@ defmodule Ezagent.Kind.BehaviorSetTest do
     def supervisor, do: Ezagent.Kind.Server
   end
 
-  test "no captured set → full declared list + base behaviors (static-Kind preservation)" do
-    slice_state = %{kind_base: %{state: %{behaviors: []}, transients: %{}}}
+  test "LEGACY sentinel (nil captured) → full declared list + base behaviors (static-Kind preservation)" do
+    # ABSENT-args instance: KindBase persisted the sentinel nil.
+    slice_state = %{kind_base: %{state: %{behaviors: nil}, transients: %{}}}
 
-    # No spawn-args subset → every declared behavior stays, in declaration
-    # order, then the always-on base behaviors (Manage from
-    # UniversalBehaviors; KindBase already declared so deduped).
+    # Sentinel nil → every declared behavior stays, in declaration order, then
+    # the always-on base behaviors (Manage from UniversalBehaviors; KindBase
+    # already declared so deduped).
     assert BehaviorSet.effective_set(SupersetKind, slice_state) ==
              Ezagent.Kind.behaviors_of(SupersetKind) ++ [Ezagent.Behavior.Manage]
+  end
+
+  test "EXPLICIT empty captured list ([]) → base behaviors ONLY, NOT the declared superset (codex CRITICAL)" do
+    # A PRESENT empty list is NOT the legacy sentinel: it intersects to nothing
+    # declared, so the effective set is exactly base_behaviors — Chat/Surface
+    # (declared) must be absent.
+    slice_state = %{kind_base: %{state: %{behaviors: []}, transients: %{}}}
+
+    assert BehaviorSet.effective_set(SupersetKind, slice_state) == BehaviorSet.base_behaviors()
+    refute Ezagent.Behavior.Chat in BehaviorSet.effective_set(SupersetKind, slice_state)
+    refute Ezagent.Behavior.Surface in BehaviorSet.effective_set(SupersetKind, slice_state)
+    assert Ezagent.Behavior.KindBase in BehaviorSet.effective_set(SupersetKind, slice_state)
+    assert Ezagent.Behavior.Manage in BehaviorSet.effective_set(SupersetKind, slice_state)
   end
 
   test "captured subset → (declared ∩ captured) + base behaviors, declaration order preserved" do
@@ -528,11 +594,25 @@ defmodule Ezagent.Kind.BehaviorSetTest do
       refute Ezagent.Behavior.Surface in set
     end
 
-    test "no :behaviors arg → full declared list, PLUS base behaviors (static-Kind preservation)" do
+    test "ABSENT :behaviors arg → full declared list, PLUS base behaviors (legacy static-Kind preservation)" do
+      # No :behaviors KEY at all → legacy path → full declared list.
       set = BehaviorSet.init_set(SupersetKind, %{})
       declared = Ezagent.Kind.behaviors_of(SupersetKind)
 
       assert Enum.all?(declared, &(&1 in set))
+      assert Ezagent.Behavior.KindBase in set
+      assert Ezagent.Behavior.Manage in set
+    end
+
+    test "EXPLICIT empty list on a SUPERSET Kind → base behaviors ONLY, never the declared superset (codex CRITICAL)" do
+      # %{behaviors: []} is PRESENT-but-empty. It must NOT expand to the declared
+      # superset (the bug the sentinel fixes). On first spawn this guarantees
+      # Chat/Surface's create/init_slice never run.
+      set = BehaviorSet.init_set(SupersetKind, %{behaviors: []})
+
+      assert set == BehaviorSet.base_behaviors()
+      refute Ezagent.Behavior.Chat in set
+      refute Ezagent.Behavior.Surface in set
       assert Ezagent.Behavior.KindBase in set
       assert Ezagent.Behavior.Manage in set
     end
@@ -573,25 +653,31 @@ defmodule Ezagent.Kind.BehaviorSet do
 
   * `init_set/2` is called by `Snapshot.init_fresh/2` at FIRST spawn,
     BEFORE any slice (and thus any `:kind_base` slice) exists. It derives
-    the set from the SPAWN ARGS (`args[:behaviors]`), intersected with the
-    declared list, PLUS the always-on base behaviors (`base_behaviors/0`).
-    `init_fresh` enumerates ONLY this set, so an out-of-set behavior's
-    `create`/`init_slice` NEVER runs and its slice is NEVER created or
-    persisted on first spawn (SPEC §3.1 — no "prune on next load" reliance
-    for the security property).
+    the set from the SPAWN ARGS, PLUS the always-on base behaviors
+    (`base_behaviors/0`), using the SAME legacy-sentinel rule as
+    `KindBase.create/1`: when `:behaviors` is ABSENT → the full declared
+    list (legacy static Kind); when PRESENT (even the empty list `[]`) →
+    `(list ∩ declared)`. So `%{behaviors: []}` on a superset Kind admits
+    ONLY base behaviors, never the declared superset. `init_fresh`
+    enumerates ONLY this set, so an out-of-set behavior's `create`/
+    `init_slice` NEVER runs and its slice is NEVER created or persisted on
+    first spawn (SPEC §3.1 — no "prune on next load" reliance for the
+    security property).
   * `effective_set/2` is the single function every POST-LOAD runtime
     behavior enumeration calls instead of `Ezagent.Kind.behaviors_of/1`. It
-    returns the host Kind module's declared behaviors INTERSECTED with the
-    set the instance was spawned with (now read back from the persisted
-    `:kind_base` slice), in the module's declaration order. When the
-    instance captured no set (the two legacy static Kinds, which spawn
-    without a `:behaviors` arg), it returns the full declared list — so
-    existing Kinds are byte-for-byte unchanged.
+    reads the captured value back from the persisted `:kind_base` slice via
+    `KindBase.behaviors_in_slice/1`: the legacy sentinel `nil` (an absent-
+    args instance, i.e. the two legacy static Kinds) → the FULL declared
+    list (so existing Kinds are byte-for-byte unchanged); a PRESENT captured
+    list (even `[]`) → the host Kind's declared behaviors INTERSECTED with
+    that list, in declaration order.
 
-  Both entry points include `base_behaviors/0` so the two are consistent:
-  whatever `init_set` materializes at spawn is exactly what `effective_set`
-  re-derives after reload (KindBase persisted the spawn-args subset; the
-  base behaviors are re-added at both ends).
+  Both entry points include `base_behaviors/0` AND apply the identical
+  absent-vs-present-empty distinction, so the two are symmetric: whatever
+  `init_set` materializes at spawn is exactly what `effective_set` re-derives
+  after reload. **An explicit `%{behaviors: []}` is NOT "absent" — it is a
+  present empty list, so it can never be confused with omitted args and
+  expand to the declared superset (codex CRITICAL).**
   """
 
   alias Ezagent.Behavior.KindBase
@@ -618,17 +704,23 @@ defmodule Ezagent.Kind.BehaviorSet do
   The set `init_fresh/2` enumerates at FIRST spawn, computed from spawn
   args (no slice state yet). Declaration order preserved; base behaviors
   appended (deduped).
+
+  Legacy-sentinel rule (codex CRITICAL): an ABSENT `:behaviors` key →
+  full declared list; a PRESENT list (even `[]`) → `(list ∩ declared)`. So
+  an explicit `%{behaviors: []}` is NEVER expanded to the declared superset.
   """
   @spec init_set(module(), map()) :: [module()]
   def init_set(kind_module, args) when is_atom(kind_module) and is_map(args) do
     declared = Ezagent.Kind.behaviors_of(kind_module)
 
     chosen =
-      case Map.get(args, :behaviors, []) do
-        [] ->
+      case Map.fetch(args, :behaviors) do
+        # ABSENT key → legacy static Kind → full declared list.
+        :error ->
           declared
 
-        list when is_list(list) ->
+        # PRESENT list (INCLUDING []) → intersect with declared, order-preserved.
+        {:ok, list} when is_list(list) ->
           requested = MapSet.new(list)
           Enum.filter(declared, &MapSet.member?(requested, &1))
       end
@@ -636,7 +728,15 @@ defmodule Ezagent.Kind.BehaviorSet do
     Enum.uniq(chosen ++ base_behaviors())
   end
 
-  @doc "The effective behavior set for this instance, declaration order preserved."
+  @doc """
+  The effective behavior set for this instance, declaration order preserved.
+
+  Legacy-sentinel rule (codex CRITICAL), symmetric with `init_set/2`: the
+  captured value read back from `:kind_base` is the sentinel `nil` for an
+  absent-args (legacy static) instance → full declared list; a PRESENT
+  captured list (even `[]`) → `(list ∩ declared)`. An explicit captured `[]`
+  is NEVER expanded to the declared superset.
+  """
   @spec effective_set(module(), %{atom() => map()}) :: [module()]
   def effective_set(kind_module, slice_state) when is_atom(kind_module) and is_map(slice_state) do
     declared = Ezagent.Kind.behaviors_of(kind_module)
@@ -644,9 +744,11 @@ defmodule Ezagent.Kind.BehaviorSet do
 
     chosen =
       case captured do
-        [] ->
+        # Legacy sentinel (absent-args instance, or missing slice) → declared.
+        nil ->
           declared
 
+        # PRESENT captured list (INCLUDING []) → intersect with declared.
         list when is_list(list) ->
           captured_set = MapSet.new(list)
           Enum.filter(declared, &MapSet.member?(captured_set, &1))
@@ -882,7 +984,7 @@ git commit -m "test(kind): P1 — superset Kind + observable probe behavior supp
 
 **The security-critical fix (codex CRITICAL finding 1).** `init_fresh/2` runs at the very START of `load_with_fallback/3` (`snapshot.ex:70`) — and on a `:not_found` first spawn its result is returned directly (`snapshot.ex:111`) and persisted by `Kind.Server.persist_initial_snapshot/3` BEFORE any restart. So if `init_fresh` enumerated the module's *declared superset*, a first spawn of a chat-only instance on a superset Kind would run Surface/Probe `create`/`init_slice` AND persist `:surface`/`:probe` slices — violating SPEC §3.1 ("an out-of-set behavior must never run a callback nor create its slice, even if the Kind module registers a superset"). The earlier "materialize all, prune on NEXT load" approach is therefore WRONG for the security property.
 
-The fix: `init_fresh/2` enumerates **only `BehaviorSet.init_set(kind_module, args)`** — the spawn-args subset (∩ declared) PLUS the always-on base behaviors. KindBase is in `base_behaviors/0`, so the captured set is always written; the universal `Manage` is always present; out-of-set behaviors NEVER appear, so neither their `create`/`init_slice` runs nor their slice is created or persisted — even on the very first spawn with no prior snapshot.
+The fix: `init_fresh/2` enumerates **only `BehaviorSet.init_set(kind_module, args)`** — for a PRESENT `:behaviors` list the spawn-args subset (∩ declared), for an ABSENT key the full declared list (legacy), in both cases PLUS the always-on base behaviors. KindBase is in `base_behaviors/0`, so the captured set is always written; the universal `Manage` is always present; out-of-set behaviors NEVER appear, so neither their `create`/`init_slice` runs nor their slice is created or persisted — even on the very first spawn with no prior snapshot. Critically, the sentinel rule means an explicit `%{behaviors: []}` on a superset Kind admits ONLY base behaviors at first spawn — it is NOT mistaken for omitted args and expanded to the declared superset (codex CRITICAL); the same holds after reload because `KindBase.create/1` persisted `[]` (a present list), not the legacy `nil`.
 
 `prune_orphan_slices` and `reconcile_after_load_behaviors` run AFTER the snapshot load merged `:kind_base` into state, so they use `effective_set/2` (which reads the persisted set back). They are a defense-in-depth + cross-version-migration layer (drop a slice whose behavior left the set between two boots), NOT the primary first-spawn guard — which is `init_fresh` itself.
 
@@ -931,12 +1033,54 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
     fresh = Ezagent.Kind.Snapshot.load_or_init(uri, SupersetSessionKind, %{behaviors: chat_only})
     :ok = Ezagent.Kind.Snapshot.save_now(uri, SupersetSessionKind, fresh)
 
-    reloaded = Ezagent.Kind.Snapshot.load_or_init(uri, SupersetSessionKind, %{behaviors: []})
+    # NOTE: the captured set persisted by save_now wins on reload; the args
+    # here are only the cold-init fallback (unused because a snapshot exists).
+    reloaded = Ezagent.Kind.Snapshot.load_or_init(uri, SupersetSessionKind, %{behaviors: chat_only})
 
     refute Map.has_key?(reloaded, :probe)
     refute Map.has_key?(reloaded, :surface)
     assert Map.has_key?(reloaded, :chat)
     assert Map.has_key?(reloaded, :kind_base)
+  end
+
+  test "FIRST spawn with EXPLICIT empty list: NO declared behavior runs create/init_slice, ONLY base slices materialize (E8, codex CRITICAL)" do
+    uri = Ezagent.URI.session(:system, :default, :"isd-emptyinit-#{System.unique_integer([:positive])}")
+
+    # %{behaviors: []} is PRESENT-but-empty. The sentinel rule means init_set
+    # must NOT expand it to the declared superset — so Chat/Surface/Probe
+    # create/init_slice must NEVER run, and ONLY base behaviors (KindBase +
+    # Manage) materialize. This is the exact hole codex flagged.
+    fresh = Ezagent.Kind.Snapshot.load_or_init(uri, SupersetSessionKind, %{behaviors: []})
+
+    refute Map.has_key?(fresh, :probe)
+    refute Map.has_key?(fresh, :surface)
+    refute Map.has_key?(fresh, :chat)
+    refute_received {:probe, :init_slice}
+    # KindBase (base behavior) is always present and captured the explicit [].
+    assert Map.has_key?(fresh, :kind_base)
+    assert Ezagent.Behavior.KindBase.behaviors_in_slice(fresh[:kind_base]) == []
+  end
+
+  test "RELOAD with EXPLICIT empty list: the captured [] is read back as base-only, NOT re-expanded to declared (E8 reload, codex CRITICAL)" do
+    uri = Ezagent.URI.session(:system, :default, :"isd-emptyreload-#{System.unique_integer([:positive])}")
+
+    # First spawn with %{behaviors: []}, persist, then reload — the round-trip
+    # must keep the instance at base-only. KindBase persisted [] (a PRESENT
+    # list), NOT the legacy nil sentinel, so effective_set re-derives base-only,
+    # never the declared superset.
+    fresh = Ezagent.Kind.Snapshot.load_or_init(uri, SupersetSessionKind, %{behaviors: []})
+    :ok = Ezagent.Kind.Snapshot.save_now(uri, SupersetSessionKind, fresh)
+
+    reloaded = Ezagent.Kind.Snapshot.load_or_init(uri, SupersetSessionKind, %{behaviors: []})
+
+    refute Map.has_key?(reloaded, :probe)
+    refute Map.has_key?(reloaded, :surface)
+    refute Map.has_key?(reloaded, :chat)
+    assert Map.has_key?(reloaded, :kind_base)
+    assert Ezagent.Behavior.KindBase.behaviors_in_slice(reloaded[:kind_base]) == []
+    # The effective set re-derived after reload is exactly base behaviors.
+    assert Ezagent.Kind.BehaviorSet.effective_set(SupersetSessionKind, reloaded) ==
+             Ezagent.Kind.BehaviorSet.base_behaviors()
   end
 end
 ```
@@ -1333,9 +1477,14 @@ defmodule Ezagent.LifecycleHostsTest do
     lc_set = %{kind_base: %{state: %{behaviors: [Ezagent.Behavior.KindBase]}, transients: %{}}}
     assert Ezagent.Lifecycle.hosts_lifecycle?(SupersetSessionKind, lc_set)
 
-    # Instance set captured as empty list → falls back to declared list (still has Lifecycle).
-    full = %{kind_base: %{state: %{behaviors: []}, transients: %{}}}
+    # Legacy sentinel (nil captured) → falls back to declared list (still has Lifecycle).
+    full = %{kind_base: %{state: %{behaviors: nil}, transients: %{}}}
     assert Ezagent.Lifecycle.hosts_lifecycle?(SupersetSessionKind, full)
+
+    # Explicit empty list → base-only, but KindBase (base) is a Lifecycle
+    # behavior, so hosts_lifecycle? is STILL true (correct, not a fallback).
+    base_only = %{kind_base: %{state: %{behaviors: []}, transients: %{}}}
+    assert Ezagent.Lifecycle.hosts_lifecycle?(SupersetSessionKind, base_only)
   end
 
   test "hosts_lifecycle?/1 unchanged for static callers" do
@@ -1396,7 +1545,7 @@ git commit -m "feat(kind): P1 (E10) — hosts_lifecycle? is instance-set-aware"
 - Test: `apps/ezagent_domain_instance_message/test/ezagent_domain_instance_message/session_instance_set_test.exs`
 - Read first: `apps/ezagent_domain_instance_message/test/integration/chat_routing_test.exs` — this task's chat send + join flow is copied/adapted from it (the live-dispatch path through the boot-time `session://system/default/main` Session).
 
-Proves the two legacy Kinds (which spawn without a `:behaviors` arg → empty captured set → declared-list fallback) behave identically: the effective set is the full declared list (+ universal base behaviors), and a REAL `chat.send` + `chat.join` round-trip through `Ezagent.Invocation.dispatch` (the same path the new instance-set gate sits on) is unchanged. This is the behavior-preservation gate for the static Kind — it must EXERCISE chat, not assert a placeholder.
+Proves the two legacy Kinds (which spawn without a `:behaviors` arg → legacy sentinel `nil` captured → declared-list fallback) behave identically: the effective set is the full declared list (+ universal base behaviors), and a REAL `chat.send` + `chat.join` round-trip through `Ezagent.Invocation.dispatch` (the same path the new instance-set gate sits on) is unchanged. This is the behavior-preservation gate for the static Kind — it must EXERCISE chat, not assert a placeholder.
 
 - [ ] **Step 1: Write the test (real dispatch flow — no placeholders)**
 
@@ -1581,12 +1730,13 @@ Each is its own plan doc under `docs/superpowers/plans/`.
 
 ## Self-review (per writing-plans skill)
 
-**Spec coverage of §6 P0 + P1 and §3.1 (rev2 — covers first-spawn + universal behaviors):**
+**Spec coverage of §6 P0 + P1 and §3.1 (rev3 — covers first-spawn + universal behaviors + absent-vs-present-empty sentinel):**
 - P0 "Publisher as base behavior on SocialwareSession / every session composes it" → Task 1 (+ Task 2 caps, Task 3 gate). ✓
 - P0 "no consumer change; chat/socialware/Feishu unchanged" → Task 3 regression gate. ✓
 - P1.1 "reclassify each reads_siblings as required/optional + slice-owner map + resolver failing loud only on missing required" → Tasks 6–7 (slice-owner map, required/optional table, `resolve_closure`, optional soft default preserved for `Chat → :sandbox`). ✓
 - P1.2 HARD INVARIANT "persist instance set + route EVERY enumeration/callback entry point through it" → KindBase persistence (Tasks 4–5) + every entry point E1–E10 (Tasks 9–14). ✓
 - §3.1 "an out-of-set behavior must NEVER run a callback nor create its slice — even on FIRST spawn before any restart" → **Task 9 `init_fresh` now enumerates only `BehaviorSet.init_set/2` (spawn-args subset + base behaviors), so out-of-set `create`/`init_slice` never run and out-of-set slices are never created or persisted at first spawn** — proven by the first-spawn denial test (no prior snapshot). No "prune on next load" reliance for the security property. ✓ (codex CRITICAL finding 1)
+- §3.1 "empty/malformed args must not re-open the hole" → **legacy sentinel** (`nil`): `KindBase.create/1` persists `nil` ONLY when `:behaviors` is ABSENT, and the exact list (including `[]`) when PRESENT; `init_set/2` + `effective_set/2` map sentinel `nil` → full declared list but a PRESENT `[]` → base-behaviors-only. So an explicit `%{behaviors: []}` on a superset Kind can NEVER be confused with omitted args and expand to the declared superset — at first spawn OR on reload (KindBase persisted `[]`, a present list, not `nil`). Tests: Task 4 (`create(%{})` → `nil`, `create(%{behaviors: []})` → `[]`); Task 6 (`init_set`/`effective_set` of `%{behaviors: []}`/captured `[]` on SupersetKind == `base_behaviors` only); Task 9 (first-spawn AND reload of `%{behaviors: []}` on the superset → NO `:surface`/`:probe` slice, `create`/`init_slice` never fire); Task 15 (absent-args static Session still → full declared list). ✓ (codex CRITICAL re-review)
 - §3.1 "universal-behavior fallback policy" → **`base_behaviors/0` (KindBase + `UniversalBehaviors.all()`) is always in init_set/effective_set, AND the E9 dispatch gate explicitly EXEMPTS `UniversalBehaviors.all()` from the membership check while still cap-checking them** (Tasks 6 + 10). Tests: `manage.delete` dispatches on a chat-only instance; a non-universal `probe.poke` is denied. ✓ (codex HIGH finding 2)
 - §3.1 denial requirements (a dispatch, b slice init/reconcile, c handle_signal, d terminate/destroy) → denial suite Tasks 9 (b + first-spawn), 10 (a + universal exemption), 11 (c), 12 (d), 13 (on_ready/post_init/init). ✓
 - "instance set survives restart/reconcile" → Task 5 (snapshot round-trip) + Task 9 (prune/reconcile use effective set). ✓
@@ -1594,13 +1744,14 @@ Each is its own plan doc under `docs/superpowers/plans/`.
 - "a deliberately required-broken set fails loud in a test" → Task 7 (Turn-without-Surface). ✓
 - §7 E2E gate per phase (arch gates + regression suites + author-owned SPA E2E) → Task 3 (P0), Task 16 (P1). ✓
 
-**Placeholder scan (rev2 — full re-scan):** ONE intentional, clearly-flagged implementer bind-point remains (not a silent placeholder): Task 2's `Ezagent.Identity.production_caps()` accessor — flagged "bind to the exact accessor `binding_policy_test` uses" — because that exact catalog-accessor symbol must be read from the live suite at execution time (binding it blind is a worse failure mode). Task 10's `admin_caps/0` is given the documented bootstrap shape with a bind-note + an explicit "assert NOT `:behavior_not_in_instance_set`" fallback so the test is robust to the exact cap shape. **Task 15's `assert true` placeholder is GONE** — replaced with the full real chat send/join dispatch flow + an explicit "reject any `assert true` / placeholder" acceptance clause. No "TODO / implement later / handle edge cases / add validation / similar to Task N / write tests for the above" anywhere in the plan.
+**Placeholder scan (rev3 — full re-scan):** ONE intentional, clearly-flagged implementer bind-point remains (not a silent placeholder): Task 2's `Ezagent.Identity.production_caps()` accessor — flagged "bind to the exact accessor `binding_policy_test` uses" — because that exact catalog-accessor symbol must be read from the live suite at execution time (binding it blind is a worse failure mode). Task 10's `admin_caps/0` is given the documented bootstrap shape with a bind-note + an explicit "assert NOT `:behavior_not_in_instance_set`" fallback so the test is robust to the exact cap shape. **Task 15's `assert true` placeholder is GONE** — replaced with the full real chat send/join dispatch flow + an explicit "reject any `assert true` / placeholder" acceptance clause. No "TODO / implement later / handle edge cases / add validation / similar to Task N / write tests for the above" anywhere in the plan.
 
-**Type/signature consistency (rev2):** `init_set/2` (kind_module, args) used in Task 6 def + Task 9 `init_fresh`. `effective_set/2` (kind_module, slice_state) used identically in Tasks 9–14. `base_behaviors/0` defined in Task 6, referenced by init_set/effective_set + Task 10 exemption note + Task 14 note. `member?/2` (behavior, effective_set) consistent (Tasks 6, 10). `behaviors_in_slice/1` consistent (Tasks 4, 6, 9). `resolve_closure/1` returns `:ok | {:error, {:missing_required_siblings, [{module(), atom()}]}}` consistent (Task 7). `instance_set_gate/3` (Task 10) uses `UniversalBehaviors.all/0` (verified to exist + contain `Manage`) and `effective_set/2`/`member?/2`. `hosts_lifecycle?/1` and `/2` both defined (Task 14). KindBase `state_slice == :kind_base` consistent across owner map + init_set/effective_set + prune-exclusion.
+**Type/signature consistency (rev3):** `init_set/2` (kind_module, args) used in Task 6 def + Task 9 `init_fresh`; both use the legacy-sentinel rule via `Map.fetch(args, :behaviors)` (`:error` → declared, `{:ok, list}` → ∩). `effective_set/2` (kind_module, slice_state) used identically in Tasks 9–14; reads back via `behaviors_in_slice/1` and maps `nil` → declared, present-list → ∩. `behaviors_in_slice/1` returns `[module()] | nil` (sentinel `nil`, NOT `[]`) — consistent across Task 4 def + Task 6 effective_set + Task 9 assertions + Task 14 test slices (all use `behaviors: nil` for the legacy/declared case and `behaviors: []` for the base-only case). `base_behaviors/0` defined in Task 6, referenced by init_set/effective_set + the `%{behaviors: []}` tests (Tasks 6, 9) + Task 10 exemption note + Task 14 note. `member?/2` (behavior, effective_set) consistent (Tasks 6, 10). `resolve_closure/1` returns `:ok | {:error, {:missing_required_siblings, [{module(), atom()}]}}` consistent (Task 7). `instance_set_gate/3` (Task 10) uses `UniversalBehaviors.all/0` (verified to exist + contain `Manage`) and `effective_set/2`/`member?/2`. `hosts_lifecycle?/1` and `/2` both defined (Task 14). KindBase `state_slice == :kind_base` consistent across owner map + init_set/effective_set + prune-exclusion.
 
 **Spec ambiguity resolved (flagged for orchestrator):**
 - **Where the instance set is persisted:** chosen a dedicated base behavior `KindBase` owning a `:kind_base` slice (not a raw spawn-arg-only field), because the spec's §3.1 explicitly requires the set to "survive restart/reconcile" and only slice state goes through `kind_snapshots` load/merge/prune. A spawn-arg-only value would be lost on cold restart (args aren't re-supplied on rehydrate). Justification matches the spec's own parenthetical "(in the spawn args / template / a base slice)".
-- **Static-Kind fallback semantics:** the spec keeps the two Kind modules "thin: each = a fixed instance behavior set." This plan implements that as: a static Kind that spawns without a `:behaviors` arg captures an empty set → `init_set`/`effective_set` fall back to the declared list (+ base behaviors). This preserves today's runtime exactly while making the per-instance path live everywhere. If the orchestrator prefers the static Kinds to ALSO capture their full declared list explicitly at spawn (so there is never a "fallback"), that is a one-line change at each Kind's spawn site — flagged as a design choice, not a blocker.
+- **Static-Kind fallback semantics:** the spec keeps the two Kind modules "thin: each = a fixed instance behavior set." This plan implements that as: a static Kind that spawns without a `:behaviors` arg captures the legacy sentinel `nil` → `init_set`/`effective_set` fall back to the declared list (+ base behaviors). This preserves today's runtime exactly while making the per-instance path live everywhere. The sentinel is `nil` (NOT `[]`) precisely so that an explicit `%{behaviors: []}` — a deliberately base-only instance — is never confused with the absent-args legacy case (codex CRITICAL re-review). If the orchestrator prefers the static Kinds to ALSO capture their full declared list explicitly at spawn (so there is never a "fallback"), that is a one-line change at each Kind's spawn site — flagged as a design choice, not a blocker.
 - **Universal-behavior policy (rev2, codex finding 2):** `base_behaviors/0` = `KindBase` + `UniversalBehaviors.all()` (today `Manage`). These are ALWAYS in the instance set AND the E9 dispatch gate explicitly exempts `UniversalBehaviors.all()` from the membership check (still cap-checked by `authz_check`). Implemented entirely in the plan (Tasks 6 + 10) — NO spec change needed: SPEC §3.1 already names "any universal-behavior fallback policy" as part of the HARD INVARIANT; this plan makes that policy concrete. KindBase being a universal base also means `hosts_lifecycle?/2` is always true for any composed instance (KindBase + Manage both `use Ezagent.Lifecycle`); this is correct, not a mis-classification (Task 14 note).
 - **First-spawn scoping (rev2, codex finding 1):** moved the §3.1 security guard INTO `init_fresh` (via `init_set/2`) rather than relying on a post-restart prune. NO spec change needed — this strengthens the implementation toward the existing §3.1 invariant ("even on first spawn"). Defense-in-depth prune/reconcile retained on reload.
+- **Absent-vs-present-empty sentinel (rev3, codex CRITICAL re-review):** the resolver no longer treats `[]` as the "no subset" marker. `KindBase.create/1` persists the legacy sentinel `nil` for ABSENT `:behaviors` and the exact list (including `[]`) for PRESENT; `init_set/2` uses `Map.fetch` and `effective_set/2` reads back `nil`-vs-list, so an explicit `%{behaviors: []}` admits ONLY base behaviors and is never expanded to the declared superset (at first spawn or on reload). NO spec change needed — this hardens the existing §3.1 invariant against empty/malformed args; the sentinel is an implementation detail of "the per-instance set persists across restart." If the orchestrator wants a named atom (e.g. `:legacy_static`) instead of `nil`, that is a mechanical rename across `KindBase` + `BehaviorSet` + the tests — flagged as a cosmetic choice, not a blocker.
 - **E11 (`auto_derive.ex`) scoped to P2:** it is the View/display surface, not a P1 security gate. Flagged so it is not mistaken for a P1 coverage gap.
