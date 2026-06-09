@@ -366,8 +366,15 @@ defmodule Ezagent.ExternalMirror.BindingRow do
     e -> {:error, e}
   end
 
-  defp stringify_target(t) when is_binary(t), do: t
-  defp stringify_target(t) when is_atom(t), do: Atom.to_string(t)
-  defp stringify_target(t) when is_integer(t), do: Integer.to_string(t)
-  defp stringify_target(t), do: inspect(t)
+  @doc """
+  Canonical stringifier for an adapter target id (binary | atom |
+  integer | other). Public so `Ezagent.Behavior.ExternalMirror` reuses
+  this one copy instead of carrying a byte-identical fork (#25 Phase-3
+  FF-1 dedup, PR-3N).
+  """
+  @spec stringify_target(term()) :: String.t()
+  def stringify_target(t) when is_binary(t), do: t
+  def stringify_target(t) when is_atom(t), do: Atom.to_string(t)
+  def stringify_target(t) when is_integer(t), do: Integer.to_string(t)
+  def stringify_target(t), do: inspect(t)
 end

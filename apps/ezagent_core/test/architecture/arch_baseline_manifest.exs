@@ -1,10 +1,11 @@
 %{
   oversized_modules_gt_1500: 0,
-  # `Ezagent.Workspace` crossed 1000 lines (was 974) gaining the cap-checked
-  # add_member/3 + remove_member/3 variants that close the admin-promotion
-  # CapBAC bypass (SPEC 2026-05-27-capability-action-axis §7) — a security
-  # fix, not incidental bloat.
-  oversized_modules_gt_1000: 9, # arch-cap-bump: SPEC §7
+  # #25 Phase-3 burn-down: 9 → 8 (PR-3N extracted
+  # `Ezagent.Behavior.ExternalMirror.Codec` from external_mirror.ex,
+  # 1004 → 936). Remaining entrants include `Ezagent.Workspace` (1055,
+  # bloated by the #685 CapBAC security fix, SPEC §7) which is a later
+  # burn-down target. Ratchets DOWN toward 0.
+  oversized_modules_gt_1000: 8,
   def_count_admin_live: 69,
   def_count_cc_agent: 76,
   def_count_orchestrator_tools: 61,
