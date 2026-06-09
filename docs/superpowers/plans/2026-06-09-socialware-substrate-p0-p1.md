@@ -448,7 +448,7 @@ This proves the set persists via `kind_snapshots`. Re-use the existing snapshot 
 ```elixir
   describe "snapshot round-trip" do
     setup do
-      Ecto.Adapters.SQL.Sandbox.checkout(Ezagent.Repo)
+      Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
     end
 
     test "kind_base slice survives load_or_init after save_now" do
@@ -1227,7 +1227,7 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
   alias Ezagent.Kind.InstanceSetSupport.{SupersetSessionKind, ProbeBehavior}
 
   setup do
-    Ecto.Adapters.SQL.Sandbox.checkout(Ezagent.Repo)
+    Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
     :persistent_term.put({ProbeBehavior, :probe_pid}, self())
     on_exit(fn -> :persistent_term.erase({ProbeBehavior, :probe_pid}) end)
     :ok
@@ -1434,7 +1434,7 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
     # DB write). `kind_snapshots`' primary key IS the URI string
     # (`@primary_key {:uri, :string}` — kind_snapshot.ex:24), so a direct
     # `Repo.get/2` by URI must return nil.
-    assert is_nil(Ezagent.Repo.get(Ezagent.Ecto.KindSnapshot, uri_str))
+    assert is_nil(EzagentCore.Repo.get(Ezagent.Ecto.KindSnapshot, uri_str))
   end
 
   test "FIRST spawn with an OPTIONAL read missing still SUCCEEDS (Chat without Sandbox → soft %{})" do
