@@ -25,7 +25,12 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
   end
 
   setup do
-    Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
+    # Spawn-based tests (E9/E4/E5/E3/E2) start the Kind GenServer in the gate
+    # DynamicSupervisor — a SEPARATE process that touches the snapshot DB.
+    # `async: false` + shared mode lets that process use this test's checked-out
+    # connection (same pattern as audit_case.ex:56).
+    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
 
     # codex HIGH finding 3: SupersetSessionKind.supervisor/0 returns the
     # dedicated test DynamicSupervisor `Ezagent.LifecycleCase.gate_supervisor()`.
@@ -34,7 +39,21 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
     Ezagent.LifecycleCase.ensure_gate_supervisor!()
 
     :persistent_term.put({ProbeBehavior, :probe_pid}, self())
-    on_exit(fn -> :persistent_term.erase({ProbeBehavior, :probe_pid}) end)
+
+    on_exit(fn ->
+      :persistent_term.erase({ProbeBehavior, :probe_pid})
+
+      # Drain any Kind GenServers this test spawned into the gate supervisor so
+      # they don't touch the snapshot DB after the sandbox connection is
+      # reclaimed (best-effort; mirrors the cold-restart suites' isolation).
+      sup = Ezagent.LifecycleCase.gate_supervisor()
+
+      for {_, child_pid, _, _} <- DynamicSupervisor.which_children(sup),
+          is_pid(child_pid) do
+        _ = DynamicSupervisor.terminate_child(sup, child_pid)
+      end
+    end)
+
     :ok
   end
 
@@ -245,5 +264,128 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
 
     assert Map.has_key?(fresh, :chat)
     assert Map.has_key?(fresh, :kind_base)
+  end
+
+  # === Task 10 (E9): dispatch + caps gate through the instance set ===
+
+  # STEP (a) — BEFORE relying on the gate: prove the registry wiring is REAL by
+  # dispatching :poke on an instance whose set INCLUDES ProbeBehavior; it must
+  # REACH the handler. Guards against a false-green denial test that would
+  # "pass" only because :poke was never registered (codex MEDIUM finding 2).
+  test "dispatch wiring is real: :poke REACHES the handler on a full-set instance (E9 control)" do
+    uri =
+      Ezagent.URI.session(:system, :default, :"isd-probe-ok-#{System.unique_integer([:positive])}")
+
+    full = [Ezagent.Behavior.Chat, ProbeBehavior, Ezagent.Behavior.KindBase]
+
+    {:ok, _pid} = Ezagent.Kind.spawn(SupersetSessionKind, %{uri: uri, behaviors: full})
+
+    target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=probe.poke")
+
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      target: target,
+      mode: :call,
+      args: %{},
+      ctx: %{caller: Ezagent.Entity.User.admin_uri(), caps: admin_caps(), reply: :ignore}
+    })
+
+    assert_received {:probe, :handle_poke}
+  end
+
+  # STEP (b) — the actual gate: same registered :poke, but on a chat-only
+  # instance (ProbeBehavior NOT in the set, and NOT universal) → DENIED.
+  test "dispatch: a NON-universal out-of-set behavior action is DENIED (E9)" do
+    uri = Ezagent.URI.session(:system, :default, :"isd-disp-#{System.unique_integer([:positive])}")
+    chat_only = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
+
+    {:ok, _pid} = Ezagent.Kind.spawn(SupersetSessionKind, %{uri: uri, behaviors: chat_only})
+
+    target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=probe.poke")
+
+    result =
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        target: target,
+        mode: :call,
+        args: %{},
+        ctx: %{caller: Ezagent.Entity.User.admin_uri(), caps: admin_caps(), reply: :ignore}
+      })
+
+    assert {:error, :behavior_not_in_instance_set} = result
+    refute_received {:probe, :handle_poke}
+  end
+
+  test "dispatch: the UNIVERSAL Manage behavior still dispatches on a subset instance (E9 exemption)" do
+    uri = Ezagent.URI.session(:system, :default, :"isd-mng-#{System.unique_integer([:positive])}")
+    chat_only = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
+
+    {:ok, _pid} = Ezagent.Kind.spawn(SupersetSessionKind, %{uri: uri, behaviors: chat_only})
+
+    target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=manage.delete")
+
+    result =
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        target: target,
+        mode: :call,
+        args: %{},
+        ctx: %{caller: Ezagent.Entity.User.admin_uri(), caps: admin_caps(), reply: :ignore}
+      })
+
+    # The exact success/error shape is owned by Manage + authz; the ONLY thing
+    # this test asserts is that the instance-set gate did NOT short-circuit it.
+    refute match?({:error, :behavior_not_in_instance_set}, result)
+  end
+
+  defp admin_caps, do: Ezagent.SystemPrincipal.caps("system://bootstrap")
+
+  # === Task 11 (E4): mailbox handle_signal path through the instance set ===
+
+  test "signal: an out-of-set behavior does NOT run handle_signal/handle_kind_message (E4)" do
+    uri = Ezagent.URI.session(:system, :default, :"isd-sig-#{System.unique_integer([:positive])}")
+    chat_only = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
+
+    {:ok, pid} = Ezagent.Kind.spawn(SupersetSessionKind, %{uri: uri, behaviors: chat_only})
+
+    send(pid, {:some_signal, :payload})
+    _ = :sys.get_state(pid)
+
+    refute_received {:probe, :handle_signal}
+  end
+
+  # === Task 12 (E5 + E3): terminate + lifecycle-destroy through the instance set ===
+
+  test "terminate: an out-of-set behavior does NOT run its terminate hook (E5)" do
+    uri = Ezagent.URI.session(:system, :default, :"isd-term-#{System.unique_integer([:positive])}")
+    chat_only = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
+
+    {:ok, pid} = Ezagent.Kind.spawn(SupersetSessionKind, %{uri: uri, behaviors: chat_only})
+    ref = Process.monitor(pid)
+    GenServer.stop(pid, :normal)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _}, 2_000
+
+    refute_received {:probe, :terminate}
+  end
+
+  test "destroy: an out-of-set behavior does NOT run its destroy hook (E3)" do
+    uri = Ezagent.URI.session(:system, :default, :"isd-dstr-#{System.unique_integer([:positive])}")
+    chat_only = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
+
+    {:ok, pid} = Ezagent.Kind.spawn(SupersetSessionKind, %{uri: uri, behaviors: chat_only})
+    :ok = GenServer.call(pid, {:ezagent_lifecycle_destroy, :test})
+
+    refute_received {:probe, :destroy}
+  end
+
+  # === Task 13 (E1 + E2): post_init, on_ready through the instance set ===
+
+  test "on_ready: an out-of-set behavior does NOT run on_ready (E2)" do
+    uri = Ezagent.URI.session(:system, :default, :"isd-ready-#{System.unique_integer([:positive])}")
+    chat_only = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
+
+    {:ok, pid} = Ezagent.Kind.spawn(SupersetSessionKind, %{uri: uri, behaviors: chat_only})
+    _ = :sys.get_state(pid)
+
+    refute_received {:probe, :on_ready}
+    # init_slice ran for in-set behaviors only — ProbeBehavior must not have init'd.
+    refute_received {:probe, :init_slice}
   end
 end

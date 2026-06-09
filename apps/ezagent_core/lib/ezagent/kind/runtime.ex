@@ -171,6 +171,7 @@ defmodule Ezagent.Kind.Runtime do
 
     with {:ok, {behavior_name_atom, action}} <- Ezagent.URI.behavior_action(target),
          {:ok, behavior_module} <- lookup_behavior(kind_module, action),
+         :ok <- instance_set_gate(behavior_module, kind_module, state),
          :ok <- authz_check(kind_module, behavior_module, action, target, enriched_ctx),
          :ok <- workspace_isolation_check(behavior_module, target, enriched_ctx),
          :ok <- validate_args(behavior_module, action, args),
@@ -285,6 +286,38 @@ defmodule Ezagent.Kind.Runtime do
     case Ezagent.BehaviorRegistry.lookup(kind_module, action) do
       {:ok, behavior_module} -> {:ok, behavior_module}
       :error -> {:error, {:unknown_action, action}}
+    end
+  end
+
+  # P1 (SPEC §3.1, E9) — even though the BehaviorRegistry resolves an action by
+  # {kind_module, action} (module-keyed), a NON-universal behavior must be in
+  # THIS INSTANCE's effective set to act. A chat instance on a superset
+  # SessionKind cannot dispatch a Surface/ProbeBehavior action.
+  #
+  # Universal-behavior fallback policy (SPEC §3.1): behaviors in
+  # `Ezagent.UniversalBehaviors.all/0` (today `Ezagent.Behavior.Manage`) resolve
+  # for EVERY Kind by construction and are intentionally NOT in any Kind's
+  # `behaviors/0`. They are ALWAYS reachable, so the membership gate EXEMPTS them
+  # — the subsequent `authz_check` still cap-gates them.
+  defp instance_set_gate(behavior_module, kind_module, state) do
+    cond do
+      behavior_module in Ezagent.UniversalBehaviors.all() ->
+        :ok
+
+      Ezagent.Kind.BehaviorSet.member?(
+        behavior_module,
+        Ezagent.Kind.BehaviorSet.effective_set(kind_module, state)
+      ) ->
+        :ok
+
+      true ->
+        :telemetry.execute([:ezagent, :authz, :denied], %{}, %{
+          kind_module: kind_module,
+          behavior_module: behavior_module,
+          reason: :behavior_not_in_instance_set
+        })
+
+        {:error, :behavior_not_in_instance_set}
     end
   end
 
