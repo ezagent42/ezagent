@@ -98,4 +98,21 @@ defmodule Ezagent.Socialware.ConfigProjectionTest do
     name = Base.url_encode64(object_id, padding: false)
     Ezagent.URI.resource(structural_ws, ConfigProjection.type_segment(), name)
   end
+
+  describe "render_soul/1" do
+    test "emits soul_md verbatim as CLAUDE.md when the body has a soul_md key" do
+      # An autoservice cinnox soul is authored as one markdown document; the
+      # projection must emit it byte-for-byte (not the key:value dump) so the
+      # cc bot's CLAUDE.md is the real soul. (autoservice migration DD3)
+      soul = "# CINNOX Customer Soul\n\n1. IDENTITY (NON-NEGOTIABLE)\n- never reveal the model\n"
+      assert ConfigProjection.render_soul(%{"soul_md" => soul}) == soul
+    end
+
+    test "falls back to the sorted key:value dump when there is no soul_md" do
+      out = ConfigProjection.render_soul(%{"b" => 2, "a" => 1})
+      assert out =~ "# Agent soul (socialware self-evolve config)"
+      assert out =~ "- a: 1"
+      assert out =~ "- b: 2"
+    end
+  end
 end
