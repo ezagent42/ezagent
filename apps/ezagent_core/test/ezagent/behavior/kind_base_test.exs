@@ -52,7 +52,9 @@ defmodule Ezagent.Behavior.KindBaseTest do
     end
 
     test "kind_base slice survives load_or_init after save_now" do
-      uri = Ezagent.URI.session(:system, :default, :"kbtest-#{System.unique_integer([:positive])}")
+      uri =
+        Ezagent.URI.session(:system, :default, :"kbtest-#{System.unique_integer([:positive])}")
+
       behaviors = [Ezagent.Behavior.Chat, Ezagent.Behavior.Surface]
 
       # A throwaway Kind module composing only KindBase, on_change persistence.

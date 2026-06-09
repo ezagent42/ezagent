@@ -8,7 +8,9 @@ defmodule Ezagent.Kind.BehaviorSetTest do
     @impl true
     def type_name, do: :session
     @impl true
-    def behaviors, do: [Ezagent.Behavior.Chat, Ezagent.Behavior.Surface, Ezagent.Behavior.KindBase]
+    def behaviors,
+      do: [Ezagent.Behavior.Chat, Ezagent.Behavior.Surface, Ezagent.Behavior.KindBase]
+
     @impl true
     def persistence, do: :ephemeral
     @impl true
@@ -55,8 +57,15 @@ defmodule Ezagent.Kind.BehaviorSetTest do
     captured = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
     slice_state = %{kind_base: %{state: %{behaviors: captured}, transients: %{}}}
 
-    assert BehaviorSet.member?(Ezagent.Behavior.Chat, BehaviorSet.effective_set(SupersetKind, slice_state))
-    refute BehaviorSet.member?(Ezagent.Behavior.Surface, BehaviorSet.effective_set(SupersetKind, slice_state))
+    assert BehaviorSet.member?(
+             Ezagent.Behavior.Chat,
+             BehaviorSet.effective_set(SupersetKind, slice_state)
+           )
+
+    refute BehaviorSet.member?(
+             Ezagent.Behavior.Surface,
+             BehaviorSet.effective_set(SupersetKind, slice_state)
+           )
   end
 
   describe "init_set/2 (first-spawn scoping, BEFORE any slice exists)" do
@@ -134,6 +143,7 @@ defmodule Ezagent.Kind.BehaviorSetTest do
         Ezagent.Behavior.ConfigUpdate,
         Ezagent.Behavior.KindBase
       ]
+
       assert BehaviorSet.resolve_closure(set) == :ok
     end
 
