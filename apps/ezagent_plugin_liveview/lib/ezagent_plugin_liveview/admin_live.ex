@@ -47,8 +47,10 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   alias EzagentPluginLiveview.Admin.{
     Compose,
+    EventFormat,
     Invite,
     MemberPanel,
+    OrchestratorRestart,
     RehydrateFlash,
     RoutingRules,
     SessionContext,
@@ -234,7 +236,7 @@ defmodule EzagentPluginLiveview.AdminLive do
       # transitional period where mount-time list_sessions_for/1 hasn't
       # caught up to the latest workspace switch). Belt-and-suspenders
       # over the mount-time subscription filter.
-      not session_in_caller_workspace?(source_session_uri, socket) ->
+      not EventFormat.session_in_caller_workspace?(source_session_uri, socket) ->
         {:noreply, socket}
 
       URI.to_string(source_session_uri) == URI.to_string(socket.assigns.current_session_uri) ->
@@ -277,14 +279,14 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   # Bridge plugin-defined notification maps to a best-effort flash summary.
   def handle_info({:notification, _user_uri, payload}, socket) do
-    {:noreply, put_flash(socket, :info, format_notification(payload))}
+    {:noreply, put_flash(socket, :info, EventFormat.format_notification(payload))}
   end
 
   # Slice-change envelopes are security-minimal; re-fetch only for an
   # authorized event URI and bound formatting time to keep the LV responsive.
   def handle_info({:slice_changed, %{} = event}, socket) do
-    if event_uri_authorized?(event, socket) do
-      flash = format_slice_change_bounded(event, 250)
+    if EventFormat.event_uri_authorized?(event, socket) do
+      flash = EventFormat.format_slice_change_bounded(event, 250)
       {:noreply, put_flash(socket, :info, flash)}
     else
       :telemetry.execute(
@@ -302,136 +304,9 @@ defmodule EzagentPluginLiveview.AdminLive do
   # equals the target session's workspace OR the caller holds
   # cross-workspace authority (same predicate `select_session/2`'s
   # gate uses, kept in sync).
-  defp session_in_caller_workspace?(%URI{} = session_uri, socket) do
-    SessionContext.authorize_session_view(socket, session_uri) == :ok
-  end
-
-  defp session_in_caller_workspace?(_, _), do: false
-
-  # Today AdminLive subscribes to the caller URI only.
-  defp event_uri_authorized?(%{uri: %URI{} = event_uri}, %{assigns: assigns}) do
-    case assigns[:caller_uri] do
-      %URI{} = caller_uri -> URI.to_string(event_uri) == URI.to_string(caller_uri)
-      _ -> false
-    end
-  end
-
-  defp event_uri_authorized?(_, _), do: false
-
-  # Bound slice-change formatting so a slow Kind/Repo cannot stall the LV.
-  defp format_slice_change_bounded(event, timeout_ms) do
-    task = Task.async(fn -> format_slice_change(event) end)
-
-    case Task.yield(task, timeout_ms) || Task.shutdown(task, :brutal_kill) do
-      {:ok, flash} when is_binary(flash) ->
-        flash
-
-      _ ->
-        # Timeout or crash. Generic fallback — the flash still
-        # fires, just without the message preview.
-        case Map.get(event, :uri) do
-          %URI{} = uri -> "Update on #{URI.to_string(uri)}"
-          _ -> "Update received"
-        end
-    end
-  end
-
-  @doc false
-  # Public for tests. Prefer body text/summary, then outer legacy keys.
-  def format_notification(%{body: %{} = body} = payload) do
-    cond do
-      is_binary(body[:text]) -> body[:text]
-      is_binary(body["text"]) -> body["text"]
-      is_binary(body[:summary]) -> body[:summary]
-      is_binary(body["summary"]) -> body["summary"]
-      true -> format_notification_legacy(payload)
-    end
-  end
-
-  def format_notification(%{} = payload), do: format_notification_legacy(payload)
-  def format_notification(other), do: "Notification: #{inspect(other)}"
-
-  defp format_notification_legacy(%{} = payload) do
-    cond do
-      is_binary(payload[:text]) -> payload[:text]
-      is_binary(payload["text"]) -> payload["text"]
-      is_binary(payload[:summary]) -> payload[:summary]
-      is_binary(payload["summary"]) -> payload["summary"]
-      true -> "Notification: #{inspect(payload)}"
-    end
-  end
-
-  defp format_notification_legacy(other), do: "Notification: #{inspect(other)}"
-
-  @doc false
-  # Public for tests. Chat changes use the cursor-indexed message ring;
-  # unreadable or non-chat slices degrade to a generic flash.
-  def format_slice_change(%{uri: %URI{} = uri, slice_key: :chat, cursor: cursor} = _event)
-      when is_integer(cursor) do
-    case Ezagent.Kind.get_slice(uri, :chat) do
-      {:ok, %{} = slice} ->
-        case chat_msg_id_for_cursor(slice, cursor) do
-          {:ok, msg_id} -> chat_flash_for(msg_id)
-          :not_found -> "New chat update on #{URI.to_string(uri)}"
-        end
-
-      _ ->
-        "New chat update on #{Ezagent.URI.stable_key(uri)}"
-    end
-  end
-
-  # Legacy/synthetic event without a cursor.
-  def format_slice_change(%{uri: %URI{} = uri, slice_key: :chat} = _event) do
-    case Ezagent.Kind.get_slice(uri, :chat) do
-      {:ok, %{last_received: %{message_id: msg_id}}} when is_binary(msg_id) ->
-        chat_flash_for(msg_id)
-
-      _ ->
-        "New chat update on #{URI.to_string(uri)}"
-    end
-  end
-
-  def format_slice_change(%{uri: %URI{} = uri, slice_key: slice_key} = _event)
-      when is_atom(slice_key) do
-    "Update on #{Ezagent.URI.stable_key(uri)} (#{slice_key})"
-  end
-
-  def format_slice_change(other), do: "Slice changed: #{inspect(other)}"
-
-  # Look up the message id for a broadcast cursor in the recent-message ring.
-  defp chat_msg_id_for_cursor(slice, cursor) when is_map(slice) and is_integer(cursor) do
-    ring = Map.get(slice, :recent_messages, [])
-
-    case List.keyfind(ring, cursor, 0) do
-      {^cursor, msg_id} when is_binary(msg_id) -> {:ok, msg_id}
-      _ -> :not_found
-    end
-  end
-
-  # Build the chat-style flash from a persisted message id. Splitting
-  # this out makes the `:chat` clause a single match-and-render so the
-  # re-fetch failure path stays readable.
-  defp chat_flash_for(msg_id) when is_binary(msg_id) do
-    case Ezagent.MessageStore.by_id(msg_id) do
-      {:ok, %Ezagent.Message{sender: sender, body: body}} ->
-        "New message from #{URI.to_string(sender)}: #{message_preview(body)}"
-
-      _ ->
-        "New chat message (id #{msg_id})"
-    end
-  end
-
-  # Best-effort preview from atom-keyed or string-keyed Message bodies.
-  defp message_preview(%{text: t}) when is_binary(t), do: truncate_preview(t)
-  defp message_preview(%{"text" => t}) when is_binary(t), do: truncate_preview(t)
-  defp message_preview(_), do: "(attachment-only message)"
-
-  defp truncate_preview(text) when is_binary(text) do
-    case String.length(text) do
-      n when n <= 80 -> text
-      _ -> String.slice(text, 0, 77) <> "..."
-    end
-  end
+  # Incoming-event presentation (slice-change / notification flash +
+  # caller-workspace / event-URI auth predicates) lives in
+  # `EzagentPluginLiveview.Admin.EventFormat` (#25 Phase-3 PR-3Q).
 
   # --- User actions -----------------------------------------------------
 
@@ -514,7 +389,7 @@ defmodule EzagentPluginLiveview.AdminLive do
            :new_session_form,
            to_form(%{"short_name" => "", "template_class" => ""}, as: "new_session")
          )
-         |> assign(:flash_error, orchestrator_flash_text(meta))}
+         |> assign(:flash_error, OrchestratorRestart.flash_text(meta))}
 
       {:error, reason} ->
         {:noreply,
@@ -695,7 +570,7 @@ defmodule EzagentPluginLiveview.AdminLive do
              gettext("Unauthorized — only the session owner may restart the orchestrator.")
            )}
         else
-          do_restart_orchestrator(socket, health, session_uri)
+          OrchestratorRestart.restart(socket, health, session_uri)
         end
     end
   end
@@ -793,79 +668,8 @@ defmodule EzagentPluginLiveview.AdminLive do
   end
 
   # Surface failed orchestrator creation while suppressing plain sessions.
-  defp orchestrator_flash_text(meta) when is_map(meta) do
-    case Map.get(meta, :orchestrator_status) do
-      :ready ->
-        nil
-
-      :failed ->
-        reason = Map.get(meta, :orchestrator_error)
-
-        # `:no_orchestrator` (plain session) is NOT an error — suppress.
-        if reason == :no_orchestrator do
-          nil
-        else
-          gettext("Orchestrator failed: %{reason}; click Restart to retry.",
-            reason: inspect(reason)
-          )
-        end
-
-      _ ->
-        nil
-    end
-  end
-
-  defp orchestrator_flash_text(_), do: nil
-
-  defp do_restart_orchestrator(socket, health, session_uri) do
-    # 2026-05-31 orchestrator-startup-atomicity §6 — Restart is now a
-    # REPAIR. The old path dispatched `template.instantiate` + respawned
-    # the PTY but NEVER set `orchestrator_template_uri` (OTU), so it could
-    # not fix the nil-OTU sessions (`main`, `orch-feishu-7429`) that were
-    # the whole reason for the SPEC. `EzagentDomainInstanceMessage.repair_orchestrator/2`
-    # RE-MATERIALIZES the OTU from the session's template THEN runs the §5
-    # atomic readiness gate (cap grants + MCP registration + member join).
-    # The OrchestratorAdmin :restart cap was already checked in the
-    # `handle_event` clause above.
-    result = EzagentDomainInstanceMessage.repair_orchestrator(session_uri, health.workspace_uri)
-
-    case result do
-      {:ok, ^session_uri, _meta} ->
-        # Re-classify; success path lands `:alive` (or a new `:crashed`
-        # if the fresh worker died immediately — itself a useful signal).
-        {:noreply,
-         socket
-         |> SessionContext.assign_session_context(session_uri)
-         |> assign(:orchestrator_flash_error, nil)}
-
-      {:error, :unauthorized} ->
-        {:noreply,
-         assign(
-           socket,
-           :orchestrator_flash_error,
-           gettext("Unauthorized — you may not restart this orchestrator.")
-         )}
-
-      {:error, :cross_workspace_denied} ->
-        {:noreply,
-         assign(
-           socket,
-           :orchestrator_flash_error,
-           gettext(
-             "Cross-workspace denied — orchestrator lives in workspace %{workspace}.",
-             workspace: URI.to_string(health.workspace_uri)
-           )
-         )}
-
-      {:error, reason} ->
-        {:noreply,
-         assign(
-           socket,
-           :orchestrator_flash_error,
-           gettext("Restart failed: %{reason}", reason: inspect(reason))
-         )}
-    end
-  end
+  # Orchestrator restart action + flash text live in
+  # `EzagentPluginLiveview.Admin.OrchestratorRestart` (#25 Phase-3 PR-3Q).
 
   # --- Render -----------------------------------------------------------
 

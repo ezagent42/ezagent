@@ -675,7 +675,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         source: Ezagent.Behavior.IdentityAdmin
       }
 
-      assert EzagentPluginLiveview.AdminLive.format_notification(payload) ==
+      assert EzagentPluginLiveview.Admin.EventFormat.format_notification(payload) ==
                "A new capability was granted to you."
     end
 
@@ -686,18 +686,18 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         source: Ezagent.Workspace
       }
 
-      assert EzagentPluginLiveview.AdminLive.format_notification(payload) ==
+      assert EzagentPluginLiveview.Admin.EventFormat.format_notification(payload) ==
                "Added to workspace acme."
     end
 
     test "format_notification/1 falls back to top-level :text for legacy payloads" do
       # Stragglers from any not-yet-migrated producers during transition.
-      assert EzagentPluginLiveview.AdminLive.format_notification(%{text: "legacy text"}) ==
+      assert EzagentPluginLiveview.Admin.EventFormat.format_notification(%{text: "legacy text"}) ==
                "legacy text"
     end
 
     test "format_notification/1 inspects unknown shapes (last-resort branch)" do
-      assert EzagentPluginLiveview.AdminLive.format_notification(%{
+      assert EzagentPluginLiveview.Admin.EventFormat.format_notification(%{
                type: :x,
                body: %{},
                source: __MODULE__
@@ -719,7 +719,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         summary: "rendered from top-level summary fallback"
       }
 
-      assert EzagentPluginLiveview.AdminLive.format_notification(mixed) ==
+      assert EzagentPluginLiveview.Admin.EventFormat.format_notification(mixed) ==
                "rendered from top-level summary fallback"
     end
 
@@ -731,7 +731,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         text: "rendered from top-level text fallback"
       }
 
-      assert EzagentPluginLiveview.AdminLive.format_notification(mixed) ==
+      assert EzagentPluginLiveview.Admin.EventFormat.format_notification(mixed) ==
                "rendered from top-level text fallback"
     end
 
@@ -782,7 +782,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         result_summary: :ok
       }
 
-      assert EzagentPluginLiveview.AdminLive.format_slice_change(event) ==
+      assert EzagentPluginLiveview.Admin.EventFormat.format_slice_change(event) ==
                "New message from #{URI.to_string(sender)}: n3 preview text"
     end
 
@@ -835,7 +835,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         result_summary: :ok
       }
 
-      assert EzagentPluginLiveview.AdminLive.format_slice_change(event) ==
+      assert EzagentPluginLiveview.Admin.EventFormat.format_slice_change(event) ==
                "New chat message (id msg-does-not-exist)"
     end
 
@@ -851,7 +851,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         result_summary: :ok
       }
 
-      assert EzagentPluginLiveview.AdminLive.format_slice_change(generic_event) ==
+      assert EzagentPluginLiveview.Admin.EventFormat.format_slice_change(generic_event) ==
                "Update on workspace://acme (workspace)"
     end
 
@@ -869,12 +869,13 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         result_summary: :ok
       }
 
-      assert EzagentPluginLiveview.AdminLive.format_slice_change(event) ==
+      assert EzagentPluginLiveview.Admin.EventFormat.format_slice_change(event) ==
                "New chat update on #{URI.to_string(missing_uri)}"
     end
 
     test "format_slice_change/1 inspects unknown shapes (last-resort branch)" do
-      assert EzagentPluginLiveview.AdminLive.format_slice_change(:not_a_map) =~ "Slice changed:"
+      assert EzagentPluginLiveview.Admin.EventFormat.format_slice_change(:not_a_map) =~
+               "Slice changed:"
     end
 
     test "slice_change handler puts a flash on AdminLive (end-to-end)", %{conn: conn} do
@@ -1013,9 +1014,9 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         }
       end
 
-      flash_for_c1 = EzagentPluginLiveview.AdminLive.format_slice_change(event_for.(c1))
-      flash_for_c2 = EzagentPluginLiveview.AdminLive.format_slice_change(event_for.(c2))
-      flash_for_c3 = EzagentPluginLiveview.AdminLive.format_slice_change(event_for.(c3))
+      flash_for_c1 = EzagentPluginLiveview.Admin.EventFormat.format_slice_change(event_for.(c1))
+      flash_for_c2 = EzagentPluginLiveview.Admin.EventFormat.format_slice_change(event_for.(c2))
+      flash_for_c3 = EzagentPluginLiveview.Admin.EventFormat.format_slice_change(event_for.(c3))
 
       # The pre-r4 bug: all 3 returned the latest message's text.
       # Post-r4: each returns its OWN message's text.
@@ -1079,7 +1080,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         result_summary: :ok
       }
 
-      flash = EzagentPluginLiveview.AdminLive.format_slice_change(event)
+      flash = EzagentPluginLiveview.Admin.EventFormat.format_slice_change(event)
       assert flash == "New chat update on #{URI.to_string(receiver)}"
     end
 
