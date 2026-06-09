@@ -3,9 +3,10 @@
   # #25 Phase-3 burn-down (ratchets DOWN toward 0):
   #   PR-3N: 9 → 8 (extracted ExternalMirror.Codec, external_mirror.ex 1004 → 936)
   #   PR-3O: 8 → 7 (extracted ExternalMirrorWorker.SendKey, worker 1010 → 963)
+  #   PR-3P: 7 → 6 (extracted AgentModuleResolver, application.ex 1117 → 985)
   # Remaining entrants include `Ezagent.Workspace` (1055, bloated by the
   # #685 CapBAC security fix, SPEC §7) — a later burn-down target.
-  oversized_modules_gt_1000: 7,
+  oversized_modules_gt_1000: 6,
   def_count_admin_live: 69,
   def_count_cc_agent: 76,
   def_count_orchestrator_tools: 61,
