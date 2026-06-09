@@ -31,6 +31,11 @@ defmodule EzagentPluginAutoservice.SocialwareCSTurnAdapter do
       `turn.open` and returns the open-turn handle.
     * `bot_reply/4` — GIVEN "a (coalesced) bot reply text", drives
       `turn.compose` then `turn.settle` on the open turn.
+    * `operator_claim/5` — GIVEN "an operator takes over with an edited reply",
+      drives `turn.compose` then `turn.claim` so the draft is **held**
+      `:operator_only` (not shown to the customer) while awaiting the human.
+    * `operator_settle/3` — settles an operator-claimed turn, flipping the held
+      draft to `:customer_visible` so the customer sees the operator's version.
 
   `start_link/1` + the `GenServer` callbacks are the thin process: one adapter
   per session that subscribes to the chat session-events topic, distinguishes
@@ -93,6 +98,61 @@ defmodule EzagentPluginAutoservice.SocialwareCSTurnAdapter do
            dispatch(session_uri, :turn, :settle, %{turn_id: turn_id}, ctx) do
       :ok
     else
+      {:ok, other} -> {:error, {:unexpected_turn_status, other}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # ------------------------------------------------------------------
+  # Operator takeover (Task 6) — claim -> operator_only -> edit -> settle
+  # ------------------------------------------------------------------
+
+  @doc """
+  An operator takes over an open turn with their own (edited) reply.
+
+  `turn` is the handle from `customer_message/3`. `operator_text` is the
+  operator's edited reply; `operator_uri` is the human operator stepping in.
+
+  The reply is composed as the in-flight draft (`turn.compose`) and the turn is
+  then `turn.claim`ed by `operator_uri` — which moves it to `:awaiting_human`,
+  sets mode `:copilot`, and **holds visibility**: the composed draft is marked
+  `:operator_only`, so `CustomerFeed.snapshot/2` does NOT return it. Settle the
+  returned handle with `operator_settle/3` to flip it `:customer_visible`.
+
+  `turn.claim` only transitions from `:composing`, so compose runs first.
+  """
+  @spec operator_claim(URI.t(), turn(), String.t(), URI.t(), ctx()) ::
+          {:ok, turn()} | {:error, term()}
+  def operator_claim(
+        %URI{} = session_uri,
+        %{turn_id: turn_id},
+        operator_text,
+        %URI{} = operator_uri,
+        ctx
+      )
+      when is_binary(operator_text) do
+    with {:ok, %{status: :composing}} <-
+           compose(session_uri, turn_id, operator_text, ctx),
+         {:ok, %{status: :awaiting_human}} <-
+           dispatch(session_uri, :turn, :claim, %{turn_id: turn_id, by: operator_uri}, ctx) do
+      {:ok, %{turn_id: turn_id}}
+    else
+      {:ok, other} -> {:error, {:unexpected_turn_status, other}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc """
+  Settle an operator-claimed turn → flip the held draft to `:customer_visible`.
+
+  `turn` is the handle from `operator_claim/5`. `turn.settle` transitions the
+  `:awaiting_human` turn to `:settled`, drives `Settlement` (`flip_visibility/1`),
+  and the async commit surfaces the operator's reply in `CustomerFeed.snapshot/2`.
+  """
+  @spec operator_settle(URI.t(), turn(), ctx()) :: :ok | {:error, term()}
+  def operator_settle(%URI{} = session_uri, %{turn_id: turn_id}, ctx) do
+    case dispatch(session_uri, :turn, :settle, %{turn_id: turn_id}, ctx) do
+      {:ok, %{status: :settled}} -> :ok
       {:ok, other} -> {:error, {:unexpected_turn_status, other}}
       {:error, reason} -> {:error, reason}
     end
