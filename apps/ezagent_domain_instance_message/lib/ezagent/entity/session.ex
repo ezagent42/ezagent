@@ -21,8 +21,6 @@ defmodule Ezagent.Entity.Session do
   @behaviour Ezagent.Kind
   @behaviour Ezagent.Behavior.Publisher
 
-  alias Ezagent.Behavior.Publisher.SessionFacade
-
   # Compile-time env capture (release-safe; Mix is not loaded in releases).
   # Used by the orchestrator-readiness gate's test-mode bypass. (codex Q1.)
 
@@ -114,7 +112,7 @@ defmodule Ezagent.Entity.Session do
   @impl Ezagent.Behavior.Publisher
   def subscribe_from(%URI{} = _publisher_uri, subscriber_pid, _cursor)
       when is_pid(subscriber_pid) do
-    SessionFacade.raise_no_ambient_caps!(__MODULE__, :subscribe_from, 4)
+    raise_no_ambient_caps!(:subscribe_from, 4)
   end
 
   @doc """
@@ -124,7 +122,7 @@ defmodule Ezagent.Entity.Session do
   """
   @impl Ezagent.Behavior.Publisher
   def snapshot(%URI{} = _publisher_uri) do
-    SessionFacade.raise_no_ambient_caps!(__MODULE__, :snapshot, 2)
+    raise_no_ambient_caps!(:snapshot, 2)
   end
 
   @doc """
@@ -134,7 +132,7 @@ defmodule Ezagent.Entity.Session do
   """
   @impl Ezagent.Behavior.Publisher
   def history(%URI{} = _publisher_uri, _from, _to) do
-    SessionFacade.raise_no_ambient_caps!(__MODULE__, :history, 4)
+    raise_no_ambient_caps!(:history, 4)
   end
 
   @doc """
@@ -154,17 +152,24 @@ defmodule Ezagent.Entity.Session do
   retained event; other `{:error, _}` shapes per the standard
   dispatch envelope.
   """
-  # The caller-facing publisher façade (4-ary subscribe_from / 2-ary snapshot /
-  # 4-ary history + the dispatch wrapper) is shared with every other session
-  # Kind via `Ezagent.Behavior.Publisher.SessionFacade` so there is a single
-  # implementation (no cross-file fork). See that module for the full docs.
   @spec subscribe_from(URI.t(), pid(), Ezagent.Behavior.Publisher.cursor(), map()) ::
           {:ok, non_neg_integer()} | {:error, term()}
-  defdelegate subscribe_from(publisher_uri, subscriber_pid, cursor, ctx), to: SessionFacade
+  def subscribe_from(%URI{} = publisher_uri, subscriber_pid, cursor, ctx)
+      when is_pid(subscriber_pid) and is_map(ctx) do
+    publisher_uri
+    |> dispatch_publisher_action(
+      :subscribe_from,
+      %{subscriber_pid: subscriber_pid, cursor: cursor},
+      ctx
+    )
+    |> unwrap_cursor()
+  end
 
   @doc "2-ary `snapshot` with explicit caller ctx — see `subscribe_from/4`."
   @spec snapshot(URI.t(), map()) :: {:ok, map()} | {:error, term()}
-  defdelegate snapshot(publisher_uri, ctx), to: SessionFacade
+  def snapshot(%URI{} = publisher_uri, ctx) when is_map(ctx) do
+    dispatch_publisher_action(publisher_uri, :snapshot, %{}, ctx)
+  end
 
   @doc "4-ary `history` with explicit caller ctx — see `subscribe_from/4`."
   @spec history(
@@ -174,7 +179,50 @@ defmodule Ezagent.Entity.Session do
           map()
         ) ::
           {:ok, [Ezagent.Publisher.Event.t()]} | {:error, term()}
-  defdelegate history(publisher_uri, from, to, ctx), to: SessionFacade
+  def history(%URI{} = publisher_uri, from, to, ctx) when is_map(ctx) do
+    publisher_uri
+    |> dispatch_publisher_action(:history, %{from: from, to: to}, ctx)
+    |> unwrap_events()
+  end
+
+  # Build + dispatch a publisher action against the publisher URI
+  # using the caller-supplied `ctx`. The ctx MUST carry `:caller` +
+  # `:caps`; if it doesn't, CapBAC step 5.5 will deny with
+  # `{:error, :unauthorized}` (the let-it-crash posture — no default
+  # caps, no implicit admin elevation).
+  defp dispatch_publisher_action(%URI{} = publisher_uri, action, args, ctx) do
+    target = Ezagent.URI.new!("#{URI.to_string(publisher_uri)}?action=publisher.#{action}")
+
+    # Normalise the reply field: callers that didn't supply it get
+    # `:ignore` (we still return the result via the synchronous dispatch
+    # tuple — the reply field is only consumed by :cast mode + outbound
+    # transports).
+    normalised_ctx = Map.put_new(ctx, :reply, :ignore)
+
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      target: target,
+      mode: :call,
+      args: args,
+      ctx: normalised_ctx
+    })
+  end
+
+  defp unwrap_cursor({:ok, %{cursor: cursor}}), do: {:ok, cursor}
+  defp unwrap_cursor({:error, _} = err), do: err
+
+  defp unwrap_events({:ok, %{events: events}}), do: {:ok, events}
+  defp unwrap_events({:error, _} = err), do: err
+
+  defp raise_no_ambient_caps!(action, arity) do
+    raise ArgumentError,
+          "Ezagent.Entity.Session.#{action}/#{arity - 1} (the @behaviour " <>
+            "Ezagent.Behavior.Publisher 3-ary contract callback) requires an " <>
+            "explicit caller ctx — use Ezagent.Entity.Session.#{action}/#{arity} " <>
+            "with `ctx: %{caller: %URI{...}, caps: MapSet.new([...])}` instead. " <>
+            "The V1 codebase has no ambient-caps mechanism; every dispatch " <>
+            "must declare its caller + caps so CapBAC step 5.5 can gate " <>
+            "non-Worker access (codex round-1 CRITICAL, 2026-05-25)."
+  end
 
   @doc """
   PR-OWN-2 (caps-data-ownership SPEC #306 §7) — return the URI of the
@@ -228,9 +276,7 @@ defmodule Ezagent.Entity.Session do
 
   defdelegate orchestrator_uri(session_uri), to: Ezagent.Entity.Session.Orchestrator
   defdelegate orchestrator_instance_name(session_uri), to: Ezagent.Entity.Session.Orchestrator
-
-  defdelegate planned_orchestrator_uri(session_uri, workspace_uri),
-    to: Ezagent.Entity.Session.Orchestrator
+  defdelegate planned_orchestrator_uri(session_uri, workspace_uri), to: Ezagent.Entity.Session.Orchestrator
 
   defdelegate worker_already_owned_by_us?(candidate_uri, session_uri, owner_uri),
     to: Ezagent.Entity.Session.Orchestrator
@@ -242,13 +288,8 @@ defmodule Ezagent.Entity.Session do
   defdelegate grant_orchestrator_scoped_caps(orchestrator_uri, session_uri, owner_uri),
     to: Ezagent.Entity.Session.Orchestrator
 
-  defdelegate revoke_orchestrator_scoped_caps(
-                orchestrator_uri,
-                session_uri,
-                owner_uri,
-                workspace_uri
-              ),
-              to: Ezagent.Entity.Session.Orchestrator
+  defdelegate revoke_orchestrator_scoped_caps(orchestrator_uri, session_uri, owner_uri, workspace_uri),
+    to: Ezagent.Entity.Session.Orchestrator
 
   defdelegate cap_equal_ignoring_metadata?(left, right),
     to: Ezagent.Entity.Session.Orchestrator

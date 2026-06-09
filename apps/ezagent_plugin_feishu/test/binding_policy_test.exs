@@ -168,31 +168,6 @@ defmodule EzagentPluginFeishu.BindingPolicyTest do
                inspect(publisher_actions)
     end
 
-    test "Publisher caps cover SocialwareSession too (keyed by :session type, not Kind module)" do
-      # P0 socialware substrate: `Ezagent.Entity.SocialwareSession` now also
-      # composes `Publisher.SessionImpl`. Its publisher actions are authorized
-      # by the SAME caps as `Ezagent.Entity.Session` because both Kinds share
-      # `type_name :session` and the grant is keyed `kind: :session` (the type
-      # atom), not the Kind module. This guard fails if the grant ever drifts
-      # to a module-keyed shape, which would silently deny SocialwareSession's
-      # publisher actions with `:unauthorized`.
-      publisher_caps =
-        Enum.filter(production_caps(), &(&1.behavior == Ezagent.Behavior.Publisher.SessionImpl))
-
-      assert publisher_caps != []
-
-      assert Enum.all?(publisher_caps, &(&1.kind == :session)),
-             "Publisher caps must be keyed by `:session` (type atom) so they cover " <>
-               "both Ezagent.Entity.Session AND Ezagent.Entity.SocialwareSession; got: " <>
-               inspect(Enum.map(publisher_caps, & &1.kind))
-
-      granted_actions = publisher_caps |> Enum.map(& &1.action) |> MapSet.new()
-
-      assert MapSet.subset?(MapSet.new([:subscribe_from, :snapshot, :history]), granted_actions),
-             "the 3 publisher actions must be granted on the :session kind for SocialwareSession; " <>
-               "got: #{inspect(MapSet.to_list(granted_actions))}"
-    end
-
     test "Chat :set_working_copy is NOT granted (orchestrator-only)" do
       chat_actions =
         production_caps()

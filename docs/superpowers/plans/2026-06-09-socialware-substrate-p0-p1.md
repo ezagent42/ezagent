@@ -71,6 +71,32 @@ The slice-owner map lives as a single source of truth in `Ezagent.Kind.BehaviorS
 
 ## P0 — Publisher as a base behavior on every session
 
+> **SCOPE CORRECTION (codex review of PR #711, 2026-06-09).** P0 is the
+> Publisher **trunk only**: `SocialwareSession` composes
+> `Publisher.SessionImpl` in `behaviors/0` so every session gets a
+> `:publisher` slice that **records** every non-publisher slice change.
+> P0 does **NOT** add a dispatchable publisher READ API to
+> `SocialwareSession` (no `@behaviour Ezagent.Behavior.Publisher`, no
+> `subscribe_from`/`snapshot`/`history` façade callbacks). Two codex
+> findings drove this:
+> 1. Adding the read façade without registering the read actions in
+>    `EzagentDomainSocialware.Application.register_behaviors/0` would make
+>    those calls dispatch `{:unknown_action, _}` (dead API).
+> 2. Making those read actions dispatchable under the **shared** broad
+>    `kind: :session` publisher cap (both `Session` and `SocialwareSession`
+>    share `type_name :session`) would let a chat/Feishu workspace
+>    publisher cap read `SocialwareSession`'s INTERNAL
+>    `:turns`/`:surface`/`:config_updates` payloads via the publisher ring
+>    — an authz **widening** from chat participation to socialware
+>    internal-state read.
+>
+> **DEFERRED TO P3 (ExternalAdapter consumer):** the socialware publisher
+> READ API (`snapshot`/`history`/`subscribe_from` dispatch) **and** its cap
+> boundary. **P3 MUST NOT reuse the broad `kind: :session` chat publisher
+> cap** — it must scope socialware publisher-read authz to the concrete
+> session/member/owner boundary (else it re-introduces codex's HIGH authz
+> widening above). See SPEC §6 P3 for the binding requirement.
+
 ### Task 1: SocialwareSession composes the Publisher slice (failing test first)
 
 **Files:**
