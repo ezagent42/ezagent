@@ -41,32 +41,88 @@ function CustomerApp({sessionUri, token}) {
   }, [sessionUri, token])
 
   if (unauthorized) {
-    return React.createElement("p", {"data-state": "unauthorized"}, "Unauthorized")
+    return React.createElement(
+      "div",
+      {
+        className: "mx-auto max-w-md py-16 text-center",
+        "data-state": "unauthorized",
+      },
+      React.createElement(
+        "div",
+        {className: "alert alert-error justify-center"},
+        React.createElement("span", {className: "font-medium"}, "Unauthorized")
+      )
+    )
   }
 
   if (!snapshot) {
-    return React.createElement("p", {"data-state": "loading"}, "Loading")
+    return React.createElement(
+      "div",
+      {
+        className: "flex flex-col items-center gap-3 py-24 text-base-content/60",
+        "data-state": "loading",
+      },
+      React.createElement("span", {className: "loading loading-dots loading-lg"}),
+      React.createElement("span", {className: "text-sm"}, "Loading")
+    )
   }
 
+  // Centered single-column reading width. The sw-customer-shell contract class
+  // is kept (E2E asserts on it); Tailwind layout classes sit alongside.
   return React.createElement(
     "div",
-    {className: "sw-customer-shell"},
+    {className: "sw-customer-shell mx-auto flex w-full max-w-2xl flex-col gap-6"},
+    React.createElement(
+      "header",
+      {className: "flex flex-col gap-1"},
+      React.createElement(
+        "h1",
+        {className: "text-xl font-semibold tracking-tight text-base-content"},
+        "Your conversation"
+      ),
+      React.createElement(
+        "p",
+        {className: "text-sm text-base-content/60"},
+        "Live updates appear here automatically."
+      )
+    ),
     React.createElement(ChatPane, {messages: snapshot.messages || []}),
     renderJsonNode(React, snapshot.page || emptyPage(), registry)
   )
 }
 
 function ChatPane({messages}) {
+  // daisyUI chat bubbles. Customer-visible messages render as left-aligned
+  // (`chat-start`) incoming bubbles. The sw-chat-pane / sw-chat-bubble
+  // contract classes are preserved (E2E + data-message-id markers kept).
   return React.createElement(
     "section",
-    {className: "sw-chat-pane", "data-pane": "chat"},
-    messages.map((message) =>
-      React.createElement(
-        "article",
-        {className: "sw-chat-bubble", "data-message-id": message.id, key: message.id},
-        React.createElement("p", {}, message.text || "")
-      )
-    )
+    {
+      className:
+        "sw-chat-pane card border border-base-300 bg-base-100 px-4 py-3 shadow-sm",
+      "data-pane": "chat",
+    },
+    messages.length === 0
+      ? React.createElement(
+          "p",
+          {className: "py-6 text-center text-sm italic text-base-content/50"},
+          "No messages yet."
+        )
+      : messages.map((message) =>
+          React.createElement(
+            "article",
+            {
+              className: "sw-chat-bubble chat chat-start",
+              "data-message-id": message.id,
+              key: message.id,
+            },
+            React.createElement(
+              "p",
+              {className: "chat-bubble chat-bubble-primary text-sm"},
+              message.text || ""
+            )
+          )
+        )
   )
 }
 
