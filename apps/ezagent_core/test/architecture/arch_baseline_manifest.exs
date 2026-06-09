@@ -13,11 +13,12 @@
   #   PR-3U: 2 → 1 (extracted Workspace.Listing, workspace.ex facade 1055 → 938)
   # Final remaining entrant: `Ezagent.Behavior.Workspace` (1498) — the
   # #685 CapBAC membership Behavior, the last burn-down target (PR-3V).
-  oversized_modules_gt_1000: 1,
+  #   PR-3V: 1 → 0 (extracted Behavior.Workspace.AgentCreate, behavior/workspace.ex 1498 → 786) — CAMPAIGN COMPLETE
+  oversized_modules_gt_1000: 0,
   def_count_admin_live: 46,
   def_count_cc_agent: 50,
   def_count_orchestrator_tools: 35,
-  def_count_session_creator: 67,
+  def_count_session_creator: 29,
   def_count_capability: 22,
   spawn_registry_call_sites: 38,
   spawn_registry_modules: 32,
