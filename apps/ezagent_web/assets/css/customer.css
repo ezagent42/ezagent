@@ -1,0 +1,88 @@
+/* Socialware customer SPA stylesheet.
+
+   The customer page (apps/ezagent_web/lib/ezagent_web/controllers/socialware/
+   customer_controller.ex) is a standalone, public, controller-rendered HTML
+   shell that boots the React app in apps/ezagent_domain_socialware/assets/js/.
+   It does NOT load app.css (that's the operator LiveView surface), so this is
+   its own small Tailwind v4 + daisyUI build.
+
+   The `@source` directives below point Tailwind at the React SPA's JS so the
+   utility classes it emits at runtime are scanned and NOT purged. The paths
+   are relative to THIS file (apps/ezagent_web/assets/css/customer.css). */
+
+@import "tailwindcss" source(none);
+
+/* Scan the React SPA sources for utility classes (resolved relative to this
+   file). The renderer registry + the shell/chat live in the socialware domain
+   app, not under ezagent_web/assets, so they must be listed explicitly. */
+@source "../../../ezagent_domain_socialware/assets/js/json_render.mjs";
+@source "../../../ezagent_domain_socialware/assets/js/customer_app.js";
+/* The customer page's root shell (<body>/<main>) Tailwind utilities live in the
+   controller-rendered HTML — scan the socialware controllers too, else those
+   utilities (min-h-screen / px-4 / py-8 / antialiased / …) are purged from this
+   bundle (codex #709 review). */
+@source "../../lib/ezagent_web/controllers/socialware";
+
+/* daisyUI plugin (mirrors app.css's setup). `themes: false` — we declare the
+   single theme we want below. */
+@plugin "../vendor/daisyui" {
+  themes: false;
+}
+
+/* A clean light daisyUI theme inspired by the operator-side "light" theme so
+   the customer surface reads as part of the same product. */
+@plugin "../vendor/daisyui-theme" {
+  name: "customer";
+  default: true;
+  prefersdark: false;
+  color-scheme: "light";
+  --color-base-100: oklch(99% 0 0);
+  --color-base-200: oklch(96% 0.001 286.375);
+  --color-base-300: oklch(92% 0.004 286.32);
+  --color-base-content: oklch(21% 0.006 285.885);
+  --color-primary: oklch(58% 0.233 277.117);
+  --color-primary-content: oklch(96% 0.018 272.314);
+  --color-secondary: oklch(55% 0.027 264.364);
+  --color-secondary-content: oklch(98% 0.002 247.839);
+  --color-accent: oklch(60% 0.25 292.717);
+  --color-accent-content: oklch(96% 0.016 293.756);
+  --color-neutral: oklch(44% 0.017 285.786);
+  --color-neutral-content: oklch(98% 0 0);
+  --color-info: oklch(62% 0.214 259.815);
+  --color-info-content: oklch(97% 0.014 254.604);
+  --color-success: oklch(70% 0.14 182.503);
+  --color-success-content: oklch(98% 0.014 180.72);
+  --color-warning: oklch(66% 0.179 58.318);
+  --color-warning-content: oklch(98% 0.022 95.277);
+  --color-error: oklch(58% 0.253 17.585);
+  --color-error-content: oklch(96% 0.015 12.422);
+  --radius-selector: 0.5rem;
+  --radius-field: 0.375rem;
+  --radius-box: 0.75rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 1;
+  --noise: 0;
+}
+
+:root {
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    "Liberation Mono", "Courier New", monospace;
+}
+
+html,
+body {
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+}
+
+code,
+kbd,
+pre,
+samp,
+.font-mono {
+  font-family: var(--font-mono);
+}

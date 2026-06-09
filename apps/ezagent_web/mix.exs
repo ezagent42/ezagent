@@ -120,9 +120,14 @@ defmodule EzagentWeb.MixProject do
         "tailwind.install --if-missing",
         "esbuild.install --if-missing"
       ],
-      "assets.build": ["tailwind ezagent_web", "esbuild ezagent_web"],
+      "assets.build": [
+        "tailwind ezagent_web",
+        "tailwind ezagent_web_customer",
+        "esbuild ezagent_web"
+      ],
       "assets.deploy": [
         "tailwind ezagent_web --minify",
+        "tailwind ezagent_web_customer --minify",
         "esbuild ezagent_web --minify",
         "phx.digest"
       ]
