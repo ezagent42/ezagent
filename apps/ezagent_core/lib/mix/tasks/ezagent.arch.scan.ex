@@ -59,7 +59,10 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
   ]
 
   @all_slices_sanctioned [
-    {"apps/ezagent_core/lib/ezagent/kind/runtime.ex", 182},
+    # P1 (socialware substrate) — shifted 182→183 by the `instance_set_gate`
+    # insertion into `handle_dispatch`'s `with` chain (runtime.ex E9). Same
+    # sanctioned `:all_slices` comment, one line lower.
+    {"apps/ezagent_core/lib/ezagent/kind/runtime.ex", 183},
     {"apps/ezagent_core/lib/ezagent/behavior.ex", 454},
     {"apps/ezagent_core/lib/ezagent/system_principal/catalog.ex", 271}
   ]
