@@ -43,36 +43,30 @@ defmodule Ezagent.Entity.SocialwareSession do
   # bookkeeping lives in `Ezagent.Behavior.Publisher.SessionImpl`.
   # ─────────────────────────────────────────────────────────────────────
 
+  alias Ezagent.Behavior.Publisher.SessionFacade
+
   @impl Ezagent.Behavior.Publisher
   def history_retention, do: 100
 
   @impl Ezagent.Behavior.Publisher
   def subscribe_from(%URI{} = _publisher_uri, subscriber_pid, _cursor)
       when is_pid(subscriber_pid),
-      do: raise_no_ambient_caps!(:subscribe_from, 4)
+      do: SessionFacade.raise_no_ambient_caps!(__MODULE__, :subscribe_from, 4)
 
   @impl Ezagent.Behavior.Publisher
-  def snapshot(%URI{} = _publisher_uri), do: raise_no_ambient_caps!(:snapshot, 2)
+  def snapshot(%URI{} = _publisher_uri),
+    do: SessionFacade.raise_no_ambient_caps!(__MODULE__, :snapshot, 2)
 
   @impl Ezagent.Behavior.Publisher
-  def history(%URI{} = _publisher_uri, _from, _to), do: raise_no_ambient_caps!(:history, 4)
+  def history(%URI{} = _publisher_uri, _from, _to),
+    do: SessionFacade.raise_no_ambient_caps!(__MODULE__, :history, 4)
 
   @spec subscribe_from(URI.t(), pid(), Ezagent.Behavior.Publisher.cursor(), map()) ::
           {:ok, non_neg_integer()} | {:error, term()}
-  def subscribe_from(%URI{} = publisher_uri, subscriber_pid, cursor, ctx)
-      when is_pid(subscriber_pid) and is_map(ctx) do
-    publisher_uri
-    |> dispatch_publisher_action(
-      :subscribe_from,
-      %{subscriber_pid: subscriber_pid, cursor: cursor},
-      ctx
-    )
-    |> unwrap_cursor()
-  end
+  defdelegate subscribe_from(publisher_uri, subscriber_pid, cursor, ctx), to: SessionFacade
 
   @spec snapshot(URI.t(), map()) :: {:ok, map()} | {:error, term()}
-  def snapshot(%URI{} = publisher_uri, ctx) when is_map(ctx),
-    do: dispatch_publisher_action(publisher_uri, :snapshot, %{}, ctx)
+  defdelegate snapshot(publisher_uri, ctx), to: SessionFacade
 
   @spec history(
           URI.t(),
@@ -81,33 +75,5 @@ defmodule Ezagent.Entity.SocialwareSession do
           map()
         ) ::
           {:ok, [Ezagent.Publisher.Event.t()]} | {:error, term()}
-  def history(%URI{} = publisher_uri, from, to, ctx) when is_map(ctx) do
-    publisher_uri
-    |> dispatch_publisher_action(:history, %{from: from, to: to}, ctx)
-    |> unwrap_events()
-  end
-
-  defp dispatch_publisher_action(%URI{} = publisher_uri, action, args, ctx) do
-    target = Ezagent.URI.new!("#{URI.to_string(publisher_uri)}?action=publisher.#{action}")
-    normalised_ctx = Map.put_new(ctx, :reply, :ignore)
-
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: target,
-      mode: :call,
-      args: args,
-      ctx: normalised_ctx
-    })
-  end
-
-  defp unwrap_cursor({:ok, %{cursor: cursor}}), do: {:ok, cursor}
-  defp unwrap_cursor({:error, _} = err), do: err
-  defp unwrap_events({:ok, %{events: events}}), do: {:ok, events}
-  defp unwrap_events({:error, _} = err), do: err
-
-  defp raise_no_ambient_caps!(action, arity) do
-    raise ArgumentError,
-          "Ezagent.Entity.SocialwareSession.#{action}/#{arity - 1} requires an explicit " <>
-            "caller ctx — use #{action}/#{arity} with `ctx: %{caller: %URI{...}, " <>
-            "caps: MapSet.new([...])}`. The V1 codebase has no ambient-caps mechanism."
-  end
+  defdelegate history(publisher_uri, from, to, ctx), to: SessionFacade
 end
