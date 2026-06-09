@@ -83,13 +83,13 @@ defmodule EzagentPluginLiveview.E2E.Category17AdminLvTest do
     test "GET /admin/registry renders header + scheme filter chips", %{conn: conn} do
       {:ok, _lv, html} = live(conn, "/admin/registry")
       assert html =~ "Entities (live registry)"
-      assert html =~ "entity://user"
-      assert html =~ "entity://agent"
-      assert html =~ "session://"
-      assert html =~ "workspace://"
+      assert html =~ "user"
+      assert html =~ "agent"
+      assert html =~ "session"
+      assert html =~ "workspace"
     end
 
-    test "filter=user narrows to entity://user/* rows", %{conn: conn} do
+    test "filter=user narrows to entity user rows", %{conn: conn} do
       {:ok, _lv, html} = live(conn, "/admin/registry?filter=user")
       # admin User Kind is spawned at boot — should appear under filter=user
       assert html =~ "entity"
@@ -106,7 +106,10 @@ defmodule EzagentPluginLiveview.E2E.Category17AdminLvTest do
     @describetag scenario: "29-admin-lv-smoke"
 
     test "header renders + freshly persisted snapshot appears", %{conn: conn} do
-      uri = URI.parse("entity://user/team-alpha/snap_cat17_#{System.unique_integer([:positive])}")
+      uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/user/snap_cat17_#{System.unique_integer([:positive])}"
+        )
 
       :ok =
         SnapshotFixtures.save_kind_snapshot(
@@ -123,7 +126,7 @@ defmodule EzagentPluginLiveview.E2E.Category17AdminLvTest do
     test "clear button deletes the persisted snapshot row", %{conn: conn} do
       uri =
         URI.parse(
-          "entity://user/team-alpha/snap_clear_cat17_#{System.unique_integer([:positive])}"
+          "entity://team-alpha/user/snap_clear_cat17_#{System.unique_integer([:positive])}"
         )
 
       uri_str = URI.to_string(uri)
@@ -174,6 +177,39 @@ defmodule EzagentPluginLiveview.E2E.Category17AdminLvTest do
       {:ok, _lv, html} = live(conn, "/admin/templates?type=agent_template")
       assert html =~ "Templates"
     end
+
+    test "agent template rows expose layer level and mandatory set", %{conn: conn} do
+      alias Ezagent.Test.SnapshotFixtures
+
+      template_uri = Ezagent.URI.new!("template://system/agent/cascade-ui-template")
+
+      :ok =
+        SnapshotFixtures.save_kind_snapshot(
+          template_uri,
+          Ezagent.Entity.AgentTemplate,
+          %{
+            template: %{
+              state: %{
+                content: %{
+                  "name" => "cascade-ui-template",
+                  "level" => "workspace",
+                  "mandatory" => ["hooks/policy.sh"],
+                  "cascade_resolution" => %{
+                    "workspace_layer_uri" => URI.to_string(template_uri)
+                  }
+                }
+              }
+            }
+          }
+        )
+
+      {:ok, _lv, html} = live(conn, "/admin/templates?type=agent_template")
+
+      assert html =~ ~s(id="template-level-column")
+      assert html =~ ~s(id="template-mandatory-column")
+      assert html =~ "workspace"
+      assert html =~ "hooks/policy.sh"
+    end
   end
 
   # ============================================================
@@ -212,8 +248,8 @@ defmodule EzagentPluginLiveview.E2E.Category17AdminLvTest do
       {:ok, lv, _html} = live(conn, "/admin/routing")
 
       uniq = System.unique_integer([:positive])
-      matcher_arg = "entity://agent/team-alpha/test_e2e_d-#{uniq}"
-      receiver = "session://default/team-alpha/cat17-rcv-#{uniq}"
+      matcher_arg = "entity://team-alpha/agent/test_e2e_d-#{uniq}"
+      receiver = "session://team-alpha/default/cat17-rcv-#{uniq}"
 
       lv
       |> form("#add-rule form",

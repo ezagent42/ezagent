@@ -15,7 +15,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
   alias Ezagent.Capability
 
   @workspace_uri URI.new!("workspace://team-alpha")
-  @granter URI.parse("entity://user/system/admin")
+  @granter Ezagent.URI.new!("entity://system/user/admin")
 
   defp echo_cap do
     %Capability{
@@ -32,7 +32,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
     %{
       caller: @granter,
       caps: caller_caps,
-      self_uri: URI.parse("entity://user/team-alpha/target"),
+      self_uri: Ezagent.URI.new!("entity://team-alpha/user/target"),
       reply: :sync,
       read: fn key, default ->
         case key do
@@ -88,7 +88,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
 
   describe "notify_cap_change — `Notifications.notify` shape (regression: E2E 2026-05-25)" do
     test "grant_cap with `:self_uri` user ctx does NOT raise ArgumentError" do
-      user_uri = URI.parse("entity://user/team-alpha/notify_shape_grant")
+      user_uri = Ezagent.URI.new!("entity://team-alpha/user/notify_shape_grant")
       :ok = Ezagent.Notifications.subscribe(user_uri, %{caps: :system})
 
       ctx = %{
@@ -120,7 +120,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
     end
 
     test "revoke_cap with `:self_uri` user ctx does NOT raise ArgumentError" do
-      user_uri = URI.parse("entity://user/team-alpha/notify_shape_revoke")
+      user_uri = Ezagent.URI.new!("entity://team-alpha/user/notify_shape_revoke")
       :ok = Ezagent.Notifications.subscribe(user_uri, %{caps: :system})
 
       cap = echo_cap()
@@ -151,7 +151,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
 
   describe "§5.2 admin predicate (codex PR-OWN-2 round-2 HIGH-1 regression)" do
     test "instance-scoped wildcard cap does NOT count as bootstrap admin" do
-      target_uri = URI.parse("entity://user/acme/victim-x")
+      target_uri = Ezagent.URI.new!("entity://acme/user/victim-x")
 
       delegated_wildcard = %Capability{
         kind: :any,

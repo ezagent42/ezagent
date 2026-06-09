@@ -37,12 +37,16 @@ defmodule Ezagent.ExternalMirror.Invariants.NoStringToAtomOnUserInputTest do
   test "no String.to_atom callsites in apps/ezagent_domain_external_mirror/lib/ outside the allowlist" do
     domain_lib = Path.join(apps_root(), "ezagent_domain_external_mirror/lib")
 
-    {output, _exit} =
+    {output, grep_exit} =
       System.cmd(
         "grep",
         ["-rEn", @pattern, domain_lib, "--include=*.ex"],
-        stderr_to_stdout: true
+        stderr_to_stdout: false
       )
+
+    # grep exit 0 = matches, 1 = clean (no matches); ≥2 = scan error. Fail loud
+    # rather than silently passing the gate on an empty result.
+    if grep_exit > 1, do: raise("grep scan failed (exit #{grep_exit}) for #{domain_lib}")
 
     violations =
       output
@@ -124,7 +128,17 @@ defmodule Ezagent.ExternalMirror.Invariants.NoStringToAtomOnUserInputTest do
   end
 
   defp apps_root do
-    {out, 0} = System.cmd("git", ["rev-parse", "--show-toplevel"])
+    out =
+      case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: false) do
+        {top, 0} ->
+          top
+
+        _ ->
+          # No .git inside the release image (#21 docker) — resolve the
+          # umbrella root from cwd (umbrella root or the app under test).
+          cwd = File.cwd!()
+          if File.dir?(Path.join(cwd, "apps")), do: cwd, else: Path.expand("../..", cwd)
+      end
     Path.join(String.trim(out), "apps")
   end
 end

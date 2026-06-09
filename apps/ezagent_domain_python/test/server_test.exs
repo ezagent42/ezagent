@@ -166,7 +166,7 @@ defmodule Ezagent.Domain.Python.ServerTest do
   end
 
   test "call canonicalizes binary handle to the same Registry key as the URI struct" do
-    uri = URI.parse("system://python/canonical-test")
+    uri = Ezagent.URI.new!("system://python/canonical-test")
     spec = test_spec(uri)
 
     {:ok, _pid} = Python.start_subprocess(spec)

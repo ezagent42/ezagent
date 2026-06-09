@@ -25,8 +25,8 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
   describe "run/1 dry-run (default)" do
     test "reports cross-prefix violator without stripping" do
       workspace_name = "task55-dry-#{System.unique_integer([:positive])}"
-      violator = Ezagent.URI.new!("entity://user/system/linyilun")
-      legit = Ezagent.URI.new!("entity://user/#{workspace_name}/alice")
+      violator = Ezagent.URI.new!("entity://system/user/linyilun")
+      legit = Ezagent.URI.new!("entity://#{workspace_name}/user/alice")
 
       {:ok, _} = Store.create(workspace_name, %{members: [violator, legit]})
 
@@ -35,8 +35,8 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
           assert :ok = CleanupCrossPrefixMembers.run([])
         end)
 
-      assert output =~ "workspace://#{workspace_name}"
-      assert output =~ "entity://user/system/linyilun"
+      assert output =~ "workspace #{workspace_name}"
+      assert output =~ "entity://system/user/linyilun"
       assert output =~ "Run with --apply to strip"
 
       # DB row unchanged.
@@ -47,7 +47,7 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
 
     test "explicit --dry-run flag behaves same as default" do
       workspace_name = "task55-explicit-dry-#{System.unique_integer([:positive])}"
-      violator = Ezagent.URI.new!("entity://user/system/linyilun")
+      violator = Ezagent.URI.new!("entity://system/user/linyilun")
 
       {:ok, _} = Store.create(workspace_name, %{members: [violator]})
 
@@ -56,7 +56,7 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
           assert :ok = CleanupCrossPrefixMembers.run(["--dry-run"])
         end)
 
-      assert output =~ "entity://user/system/linyilun"
+      assert output =~ "entity://system/user/linyilun"
 
       %{members: members_after} = Store.get_by_name(workspace_name)
       assert violator in members_after
@@ -64,7 +64,7 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
 
     test "clean workspace prints check mark + summary line" do
       workspace_name = "task55-clean-#{System.unique_integer([:positive])}"
-      legit = Ezagent.URI.new!("entity://user/#{workspace_name}/alice")
+      legit = Ezagent.URI.new!("entity://#{workspace_name}/user/alice")
 
       {:ok, _} = Store.create(workspace_name, %{members: [legit]})
 
@@ -73,7 +73,7 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
           assert :ok = CleanupCrossPrefixMembers.run([])
         end)
 
-      assert output =~ "workspace://#{workspace_name} clean"
+      assert output =~ "workspace #{workspace_name} clean"
     end
   end
 
@@ -87,8 +87,8 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
 
     test "strips cross-prefix violator from DB via dispatch + slice atomic update" do
       workspace_name = "task55-apply-#{System.unique_integer([:positive])}"
-      violator = Ezagent.URI.new!("entity://user/system/linyilun")
-      legit = Ezagent.URI.new!("entity://user/#{workspace_name}/alice")
+      violator = Ezagent.URI.new!("entity://system/user/linyilun")
+      legit = Ezagent.URI.new!("entity://#{workspace_name}/user/alice")
 
       {:ok, _pid} = Ezagent.Workspace.create(workspace_name, %{members: [violator, legit]})
 
@@ -107,11 +107,11 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
       # Slice is the live read source — must ALSO reflect the strip
       # (NO restart needed). This is the round-2 invariant: pre-fix the
       # direct-Store path left the slice stale until SIGHUP/restart.
-      ws_uri = URI.parse("workspace://#{workspace_name}")
+      ws_uri = Ezagent.URI.new!("workspace://#{workspace_name}")
 
       {:ok, %{members: live_members}} =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-          target: URI.parse("workspace://#{workspace_name}?action=workspace.list_members"),
+          target: Ezagent.URI.new!("workspace://#{workspace_name}?action=workspace.list_members"),
           mode: :call,
           args: %{},
           ctx: %{
@@ -129,10 +129,10 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
 
     test "strips multiple violators + keeps multiple legits" do
       workspace_name = "task55-mixed-#{System.unique_integer([:positive])}"
-      violator_a = Ezagent.URI.new!("entity://user/system/v_a")
-      violator_b = Ezagent.URI.new!("entity://agent/other-ws/cc_v_b")
-      legit_a = Ezagent.URI.new!("entity://user/#{workspace_name}/legit_a")
-      legit_b = Ezagent.URI.new!("entity://agent/#{workspace_name}/cc_legit_b")
+      violator_a = Ezagent.URI.new!("entity://system/user/v_a")
+      violator_b = Ezagent.URI.new!("entity://other-ws/agent/cc_v_b")
+      legit_a = Ezagent.URI.new!("entity://#{workspace_name}/user/legit_a")
+      legit_b = Ezagent.URI.new!("entity://#{workspace_name}/agent/cc_legit_b")
 
       {:ok, _pid} =
         Ezagent.Workspace.create(workspace_name, %{
@@ -142,6 +142,7 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
       capture_io(fn -> CleanupCrossPrefixMembers.run(["--apply"]) end)
 
       %{members: members_after} = Store.get_by_name(workspace_name)
+
       assert Enum.sort(Enum.map(members_after, &URI.to_string/1)) ==
                Enum.sort(Enum.map([legit_a, legit_b], &URI.to_string/1))
     end

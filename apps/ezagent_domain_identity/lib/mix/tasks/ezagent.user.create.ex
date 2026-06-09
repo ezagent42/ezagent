@@ -74,7 +74,7 @@ defmodule Mix.Tasks.Ezagent.User.Create do
 
         mix ezagent workspace create_user \\
             --workspace <name> \\
-            --user-uri entity://user/<name>/<handle> \\
+            --user-uri <user-uri> \\
             --password '<pw>' \\
             --caps '<cap1,cap2,...>'
 
@@ -106,7 +106,7 @@ defmodule Mix.Tasks.Ezagent.User.Create do
         usage: mix ezagent.user.create <user_uri> [--password X] [--caps 'kind.behavior,...'] [--allow-allcaps]
 
         Example:
-          mix ezagent.user.create entity://user/team-alpha/allen --password 'pw' --caps 'workspace.read,chat.send'
+          mix ezagent.user.create <user-uri> --password 'pw' --caps 'workspace.read,chat.send'
         """)
     end
   end
@@ -125,8 +125,15 @@ defmodule Mix.Tasks.Ezagent.User.Create do
          :ok <- maybe_set_email(user_uri, email, display_name_opt) do
       Mix.shell().info("✓ created #{user_uri_str}")
       Mix.shell().info("  caps: #{length(caps)}")
-      Mix.shell().info("  password: #{if password, do: "set", else: "NOT SET (use mix ezagent.user.set_password)"}")
-      Mix.shell().info("  email: #{email || "NOT SET (magic-link login unavailable until mix ezagent.user.set_email)"}")
+
+      Mix.shell().info(
+        "  password: #{if password, do: "set", else: "NOT SET (use mix ezagent.user.set_password)"}"
+      )
+
+      Mix.shell().info(
+        "  email: #{email || "NOT SET (magic-link login unavailable until mix ezagent.user.set_email)"}"
+      )
+
       _ = maybe_spawn_user_kind(user_uri, caps)
       Mix.shell().info("  uri: #{URI.to_string(decoded.uri)}")
     else
@@ -145,9 +152,7 @@ defmodule Mix.Tasks.Ezagent.User.Create do
   defp maybe_set_email(_user_uri, nil, _display_name_opt), do: :ok
 
   defp maybe_set_email(user_uri, email, display_name_opt) when is_binary(email) do
-    %URI{path: "/" <> path_rest} = user_uri
-    [_workspace_segment, name_segment] = String.split(path_rest, "/", parts: 2)
-    display_name = display_name_opt || name_segment
+    display_name = display_name_opt || Ezagent.URI.name!(user_uri)
 
     profile_attrs = %{
       entity_uri: URI.to_string(user_uri),
@@ -168,18 +173,20 @@ defmodule Mix.Tasks.Ezagent.User.Create do
     try do
       uri = Ezagent.URI.new!(s)
 
-      case uri do
-        %URI{scheme: "entity", host: "user", path: "/" <> _rest} ->
-          {:ok, uri}
-
-        _ ->
-          {:error, {:bad_uri, s, "expected entity://user/<workspace>/<name>"}}
-      end
+      if user_entity_uri?(uri),
+        do: {:ok, uri},
+        else: {:error, {:bad_uri, s, "expected entity user URI"}}
     rescue
       e in ArgumentError ->
         {:error, {:bad_uri, s, Exception.message(e)}}
     end
   end
+
+  defp user_entity_uri?(%URI{scheme: "entity"} = uri) do
+    Ezagent.URI.type?(uri, :user) and match?({:ok, _name}, Ezagent.URI.name(uri))
+  end
+
+  defp user_entity_uri?(_), do: false
 
   defp check_allcaps_flag(caps_str, allow_allcaps) do
     if String.contains?(caps_str, "*") and not allow_allcaps do

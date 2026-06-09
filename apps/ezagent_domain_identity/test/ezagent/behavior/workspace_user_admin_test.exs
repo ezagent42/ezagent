@@ -19,7 +19,7 @@ defmodule Ezagent.Behavior.WorkspaceUserAdminTest do
     %{
       caller: nil,
       caps: MapSet.new(),
-      self_uri: URI.parse("workspace://x"),
+      self_uri: Ezagent.URI.new!("workspace://x"),
       reply: :sync,
       read: fn _key, default -> default end
     }
@@ -95,10 +95,10 @@ defmodule Ezagent.Behavior.WorkspaceUserAdminTest do
     end
 
     test "bad self_uri (not a workspace scheme) returns :bad_workspace_uri" do
-      ctx = %{empty_ctx() | self_uri: URI.parse("entity://user/x/y")}
+      ctx = %{empty_ctx() | self_uri: Ezagent.URI.new!("entity://x/user/y")}
 
       assert {:error, {:bad_workspace_uri, _}} =
-               WUA.handle_create_user(%{user_uri: "entity://user/x/y"}, ctx)
+               WUA.handle_create_user(%{user_uri: "entity://x/user/y"}, ctx)
     end
   end
 end

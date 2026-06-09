@@ -16,7 +16,7 @@ defmodule Ezagent.Kind.ServerCreateContextTest do
   end
 
   test "init records created_by and create_freshness=:created on a fresh spawn" do
-    creator = URI.new!("entity://user/team-alpha/registrar-#{System.unique_integer([:positive])}")
+    creator = URI.new!("entity://team-alpha/user/registrar-#{System.unique_integer([:positive])}")
     uri = fixture_uri()
 
     {:ok, pid} =

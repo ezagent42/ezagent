@@ -536,7 +536,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
   # to seed a prior publish.
   defp dedupe_ctx(opts) do
     state = %{
-      session_uri: URI.parse("session://default/system/main"),
+      session_uri: Ezagent.URI.new!("session://system/default/main"),
       adapter_id: "stub",
       target_id: "tgt-dedupe",
       opts: %{},
@@ -556,7 +556,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
         binding_state: 0,
         subscription_state: :active
       },
-      self_uri: URI.parse("entity://worker/default/stub_tgt-dedupe")
+      self_uri: Ezagent.URI.new!("entity://default/worker/stub_tgt-dedupe")
     }
   end
 
@@ -565,7 +565,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
   defp chat_event(%Ezagent.Message{} = msg, opts) do
     %Ezagent.Publisher.Event{
       cursor: Keyword.fetch!(opts, :cursor),
-      publisher_uri: URI.parse("session://default/system/main"),
+      publisher_uri: Ezagent.URI.new!("session://system/default/main"),
       slice_key: :chat,
       event_at: DateTime.utc_now(),
       payload: %{
@@ -585,7 +585,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
   defp chat_event_wrapped(%Ezagent.Message{} = msg, opts) do
     %Ezagent.Publisher.Event{
       cursor: Keyword.fetch!(opts, :cursor),
-      publisher_uri: URI.parse("session://default/system/main"),
+      publisher_uri: Ezagent.URI.new!("session://system/default/main"),
       slice_key: :chat,
       event_at: DateTime.utc_now(),
       payload: %{
@@ -740,9 +740,9 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
     member_uri = unique_user_uri("em-pub-test")
     :ok = spawn_user(member_uri, MapSet.new())
 
-    admin_uri = URI.parse("entity://user/system/admin")
+    admin_uri = Ezagent.URI.new!("entity://system/user/admin")
 
-    target = URI.parse("#{URI.to_string(session_uri)}?action=chat.join")
+    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
@@ -759,19 +759,19 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
         behavior: :any,
         instance: :any,
         workspace_uri: :any,
-        granted_by: URI.parse("system://bootstrap/default"),
+        granted_by: Ezagent.URI.new!("system://bootstrap/default"),
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
     ])
   end
 
   defp unique_user_uri(prefix) do
-    URI.parse("entity://user/team-alpha/#{prefix}-#{System.unique_integer([:positive])}")
+    Ezagent.URI.new!("entity://team-alpha/user/#{prefix}-#{System.unique_integer([:positive])}")
   end
 
   defp unique_session_uri(prefix) do
     Ezagent.URI.new!(
-      "session://default/team-alpha/#{prefix}-#{System.unique_integer([:positive])}"
+      "session://team-alpha/default/#{prefix}-#{System.unique_integer([:positive])}"
     )
   end
 

@@ -44,7 +44,7 @@ defmodule Ezagent.Kind.StateRebuilderTest do
   end
 
   defp uniq, do: System.unique_integer([:positive])
-  defp entity_uri, do: URI.parse("entity://user/team-alpha/rb-#{uniq()}")
+  defp entity_uri, do: Ezagent.URI.new!("entity://team-alpha/user/rb-#{uniq()}")
 
   defp write!(uri, state, opts \\ [kind_type: :user]) do
     {:ok, _} = SnapshotStore.write(uri, state, opts)
@@ -115,17 +115,17 @@ defmodule Ezagent.Kind.StateRebuilderTest do
 
   test "rebuild_all/1 with a workspace URI scopes to that tenant" do
     ws_name = "rbws-#{uniq()}"
-    uri = URI.parse("entity://user/#{ws_name}/scoped-#{uniq()}")
+    uri = Ezagent.URI.new!("entity://#{ws_name}/user/scoped-#{uniq()}")
     :ok = write!(uri, %{x: 1})
 
     # Other-workspace row should NOT show up.
     # NOTE: split the literal so the legacy-URI grep gate doesn't
     # see "entity://user/otherws-" as a 2-segment match.
     other_ws = "otherws-" <> Integer.to_string(uniq())
-    other_uri = URI.parse("entity://user/" <> other_ws <> "/scoped-#{uniq()}")
+    other_uri = URI.parse("entity://" <> other_ws <> "/user/scoped-#{uniq()}")
     :ok = write!(other_uri, %{x: 2})
 
-    workspace = URI.parse("workspace://#{ws_name}")
+    workspace = Ezagent.URI.new!("workspace://#{ws_name}")
     result = StateRebuilder.rebuild_all(workspace)
 
     # Exactly one row in this workspace.
@@ -153,7 +153,7 @@ defmodule Ezagent.Kind.StateRebuilderTest do
   end
 
   test "rebuild_all/1 returns a valid summary shape even when DB is empty for that workspace" do
-    workspace = URI.parse("workspace://nonexistent-#{uniq()}")
+    workspace = Ezagent.URI.new!("workspace://nonexistent-#{uniq()}")
 
     assert %{rebuilt: 0, failed: [], skipped: []} = StateRebuilder.rebuild_all(workspace)
   end

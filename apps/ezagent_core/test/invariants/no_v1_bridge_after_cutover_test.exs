@@ -27,7 +27,18 @@ defmodule EzagentCore.Invariants.NoV1BridgeAfterCutoverTest do
   @forbidden_app ~c"ezagent_plugin_cc_bridge_v1_prototype"
 
   defp apps_root do
-    {out, 0} = System.cmd("git", ["rev-parse", "--show-toplevel"])
+    out =
+      case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: false) do
+        {top, 0} ->
+          top
+
+        _ ->
+          # No .git inside the release image (#21 docker) — resolve the
+          # umbrella root from cwd (umbrella root or the app under test).
+          cwd = File.cwd!()
+          if File.dir?(Path.join(cwd, "apps")), do: cwd, else: Path.expand("../..", cwd)
+      end
+
     Path.join(String.trim(out), "apps")
   end
 
@@ -68,8 +79,9 @@ defmodule EzagentCore.Invariants.NoV1BridgeAfterCutoverTest do
 
            Decision #144: after Phase 7 PR 32c the v1 prototype is
            deleted; no production code may name it. If you need
-           bridge surface, use EzagentPluginCc.{Channel,
-           BridgeRegistry, McpConfigWriter, TokenStore}.
+           bridge surface, use Ezagent.AgentBridge.{Channel,
+           Registry, Socket, TokenStore} (the cc-named shims were removed
+           in Cleanup-3) plus EzagentPluginCc.McpConfigWriter.
            """
   end
 

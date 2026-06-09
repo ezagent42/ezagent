@@ -160,13 +160,13 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
 
   describe "handle_receive/2 — loop guard" do
     test "self-message returns identity result tuple with NO effects" do
-      agent_uri = Ezagent.URI.new!("entity://agent/team-alpha/curl_self")
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/curl_self")
       msg = Ezagent.Message.new(agent_uri, %{text: "self-loop"})
 
       ctx = %{
         read: fn _k, d -> d end,
         self_uri: agent_uri,
-        caller: Ezagent.URI.new!("session://default/team-alpha/main"),
+        caller: Ezagent.URI.new!("session://team-alpha/default/main"),
         siblings: %{api_keys: %{keys: %{}}}
       }
 
@@ -177,9 +177,9 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
 
   describe "handle_receive/2 — missing API key path" do
     test "emits :set last_error + dispatches operator-help reply" do
-      agent_uri = Ezagent.URI.new!("entity://agent/team-alpha/curl_x")
-      session_uri = Ezagent.URI.new!("session://default/team-alpha/main")
-      sender_uri = Ezagent.URI.new!("entity://user/team-alpha/alice")
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/curl_x")
+      session_uri = Ezagent.URI.new!("session://team-alpha/default/main")
+      sender_uri = Ezagent.URI.new!("entity://team-alpha/user/alice")
       msg = Ezagent.Message.new(sender_uri, %{text: "hi"})
 
       ctx = %{
@@ -231,7 +231,7 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
     end
 
     test "returns :no_owner for a non-agent URI" do
-      assert CurlAgent.data_owner(Ezagent.URI.new!("session://default/team-alpha/x")) == :no_owner
+      assert CurlAgent.data_owner(Ezagent.URI.new!("session://team-alpha/default/x")) == :no_owner
     end
 
     test "returns :no_owner when the api_keys slice has no creator_uri" do
@@ -240,7 +240,7 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
       # :no_owner per the post-#326 caps-data-ownership contract.
       agent_uri =
         Ezagent.URI.new!(
-          "entity://agent/team-alpha/curl_no_creator_#{System.unique_integer([:positive])}"
+          "entity://team-alpha/agent/curl_no_creator_#{System.unique_integer([:positive])}"
         )
 
       assert CurlAgent.data_owner(agent_uri) == :no_owner
@@ -276,7 +276,7 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
       # 2. Open `/admin/users/<U>/api-keys`; add `provider: deepseek`,
       #    `key: sk-deepseek-...`.
       # 3. Open `/admin/templates`; create curl.agent template with
-      #    `owner_uri = entity://user/system/<U>`.
+      #    `owner_uri = entity://system/user/<U>`.
       # 4. Open `/admin/routing`; add `{:always} -> ["curl-agent://..."]`.
       # 5. In `/admin/sessions/<uri>`, send: "DeepSeek say hello".
       # 6. agent-browser screenshots the LV showing the agent reply.

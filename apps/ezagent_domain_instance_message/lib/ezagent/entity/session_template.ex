@@ -226,7 +226,7 @@ defmodule Ezagent.Entity.SessionTemplate do
             "(e.g. \"system\" for admin templates, \"team-alpha\" for tenant)."
         )
 
-    Ezagent.URI.new!("template://session/#{workspace}/#{name}@#{version_hash}")
+    Ezagent.URI.template(workspace, :session, "#{name}@#{version_hash}")
   end
 
   @doc """
@@ -397,7 +397,10 @@ defmodule Ezagent.Entity.SessionTemplate do
     # provenance per HIGH-9.
     %{
       caller: Ezagent.SystemPrincipal.uri("template-materialize"),
-      caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
+      caps:
+        "template-materialize"
+        |> Ezagent.SystemPrincipal.uri()
+        |> Ezagent.SystemPrincipal.caps(),
       reply: {:caller_inbox, self()}
     }
   end
@@ -612,13 +615,7 @@ defmodule Ezagent.Entity.SessionTemplate do
   defp require_session_template_cap(caps, workspace) do
     case workspace_uri(workspace) do
       {:ok, %URI{} = workspace_uri} ->
-        workspace_name =
-          workspace_uri.host ||
-            raise ArgumentError,
-                  "workspace_uri has no host (`workspace://<NAME>`) — got " <>
-                    inspect(workspace_uri) <>
-                    ". Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
-                    "fallback; callers must pass a workspace URI with an explicit name."
+        workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
 
         needed = %{
           kind: :session_template,
@@ -629,7 +626,7 @@ defmodule Ezagent.Entity.SessionTemplate do
           # Action `:any` preserves the pre-SPEC predicate semantics;
           # a granular per-action gate is a future PR.
           action: :any,
-          instance: Ezagent.URI.new!("template://session/#{workspace_name}/_preflight@_"),
+          instance: Ezagent.URI.template(workspace_name, :session, "_preflight@_"),
           workspace_uri: workspace_uri
         }
 
@@ -671,7 +668,7 @@ defmodule Ezagent.Entity.SessionTemplate do
         granted_at: DateTime.utc_now()
       }
 
-      target = Ezagent.URI.new!("#{URI.to_string(owner_uri)}?action=identity.grant_cap")
+      target = Ezagent.URI.with_action(owner_uri, :identity, :grant_cap)
 
       case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
              target: target,
@@ -683,7 +680,10 @@ defmodule Ezagent.Entity.SessionTemplate do
              # `system://template-materialize` (closed Catalog).
              ctx: %{
                caller: Ezagent.SystemPrincipal.uri("template-materialize"),
-               caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
+               caps:
+                 "template-materialize"
+                 |> Ezagent.SystemPrincipal.uri()
+                 |> Ezagent.SystemPrincipal.caps(),
                reply: {:caller_inbox, self()}
              }
            }) do
@@ -736,7 +736,7 @@ defmodule Ezagent.Entity.SessionTemplate do
 
   defp workspace_uri(other) do
     case workspace_segment(other) do
-      name when is_binary(name) -> {:ok, Ezagent.URI.new!("workspace://#{name}")}
+      name when is_binary(name) -> {:ok, Ezagent.URI.workspace(name)}
       nil -> :error
     end
   end
@@ -768,7 +768,7 @@ defmodule Ezagent.Entity.SessionTemplate do
   # CapBAC-checked against the caller's real authority. Only
   # `persist_version_as_system/2` passes a system (`admin`) ctx.
   defp dispatch_write(uri, content, ctx) do
-    target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=template.write")
+    target = Ezagent.URI.with_action(uri, :template, :write)
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
@@ -779,15 +779,20 @@ defmodule Ezagent.Entity.SessionTemplate do
   end
 
   # The workspace path segment (no scheme prefix) for `build_uri/3`.
-  defp workspace_segment(%URI{scheme: "workspace", host: host})
-       when is_binary(host) and host != "",
-       do: host
-
-  defp workspace_segment("workspace://" <> rest) when rest != "", do: rest
+  defp workspace_segment(%URI{scheme: "workspace"} = uri), do: Ezagent.URI.name!(uri)
 
   defp workspace_segment(name) when is_binary(name) and name != "" do
-    # Bare workspace name (no scheme) — accept it directly.
-    if String.contains?(name, "/"), do: nil, else: name
+    case Ezagent.URI.parse(name) do
+      {:ok, %URI{scheme: "workspace"} = uri} ->
+        Ezagent.URI.name!(uri)
+
+      {:ok, %URI{}} ->
+        nil
+
+      {:error, _} ->
+        # Bare workspace name (no scheme) — accept it directly.
+        if String.contains?(name, "/"), do: nil, else: name
+    end
   end
 
   defp workspace_segment(_), do: nil

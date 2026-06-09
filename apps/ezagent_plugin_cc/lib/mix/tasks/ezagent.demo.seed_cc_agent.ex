@@ -50,17 +50,14 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
   """
   use Mix.Task
 
-  @agent_uri_str "entity://agent/system/cc_demo"
-  @session_uri_str "session://default/system/main"
-
   @impl Mix.Task
   def run(_args) do
     {:ok, _} = Application.ensure_all_started(:ezagent_core)
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_instance_message)
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_cc)
 
-    agent_uri = Ezagent.URI.new!(@agent_uri_str)
-    session_uri = Ezagent.URI.new!(@session_uri_str)
+    agent_uri = agent_uri()
+    session_uri = session_uri()
 
     with :ok <- spawn_agent_if_absent(agent_uri),
          :ok <- ensure_session_alive(session_uri),
@@ -69,17 +66,17 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
 
       ✓ cc demo agent seeded.
 
-        agent:   #{@agent_uri_str}
-        session: #{@session_uri_str}
+        agent:   #{URI.to_string(agent_uri)}
+        session: #{URI.to_string(session_uri)}
 
-      The cc_demo agent now appears in session://default/system/main members. Open the
+      The cc_demo agent now appears in the default session members. Open the
       web UI and visit /sessions to interact.
       """)
     else
       {:error, {:session_missing, _uri}} ->
         Mix.shell().info("""
 
-        session://default/system/main has not been created yet.
+        The default session has not been created yet.
 
         Visit `/` in the web UI and complete the first-login wizard to
         create the default session, then re-run `mix ezagent.demo.seed_cc_agent`.
@@ -150,11 +147,14 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
       args: %{member: agent_uri},
       ctx: %{
         caller: Ezagent.SystemPrincipal.uri("mix-task"),
-        caps: Ezagent.SystemPrincipal.caps("system://mix-task"),
+        caps: "mix-task" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
         reply: :ignore
       }
     })
 
     :ok
   end
+
+  defp agent_uri, do: Ezagent.URI.agent(:system, :cc_demo)
+  defp session_uri, do: Ezagent.URI.session(:system, :default, :main)
 end

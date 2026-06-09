@@ -3,12 +3,12 @@ defmodule Ezagent.PluginCurlAgent.TemplateTest do
 
   alias Ezagent.PluginCurlAgent.Template
 
-  describe "validate/1 — PR #141 strict entity://agent/team-alpha/curl_<name> shape" do
+  describe "validate/1 — PR #141 strict entity://team-alpha/agent/curl_<name> shape" do
     test "happy path" do
       assert :ok =
                Template.validate(%{
                  "class" => "curl.agent",
-                 "agent_uri" => "entity://agent/team-alpha/curl_my-deepseek",
+                 "agent_uri" => "entity://team-alpha/agent/curl_my-deepseek",
                  "provider" => "deepseek",
                  "api_url" => "https://api.deepseek.com/chat/completions",
                  "model" => "deepseek-chat"
@@ -19,18 +19,18 @@ defmodule Ezagent.PluginCurlAgent.TemplateTest do
       assert {:error, {:wrong_class, "cc.pty"}} =
                Template.validate(%{
                  "class" => "cc.pty",
-                 "agent_uri" => "entity://agent/team-alpha/curl_x",
+                 "agent_uri" => "entity://team-alpha/agent/curl_x",
                  "provider" => "deepseek",
                  "api_url" => "https://x.test/chat",
                  "model" => "x"
                })
     end
 
-    test "rejects entity://agent/<name> without flavor prefix (PR #141)" do
-      assert {:error, {:missing_flavor_prefix, _, _}} =
+    test "accepts entity://agent/<name> without flavor prefix" do
+      assert :ok =
                Template.validate(%{
                  "class" => "curl.agent",
-                 "agent_uri" => "entity://agent/team-alpha/just-a-name",
+                 "agent_uri" => "entity://team-alpha/agent/just-a-name",
                  "provider" => "deepseek",
                  "api_url" => "https://x.test/chat",
                  "model" => "x"
@@ -48,11 +48,11 @@ defmodule Ezagent.PluginCurlAgent.TemplateTest do
                })
     end
 
-    test "rejects entity:// with wrong agent flavor in name prefix" do
-      assert {:error, {:wrong_agent_flavor, "cc", expected: "curl"}} =
+    test "ignores legacy name prefix when validating stored flavor" do
+      assert :ok =
                Template.validate(%{
                  "class" => "curl.agent",
-                 "agent_uri" => "entity://agent/team-alpha/cc_wrong-flavor",
+                 "agent_uri" => "entity://team-alpha/agent/cc_wrong-flavor",
                  "provider" => "deepseek",
                  "api_url" => "https://x.test/chat",
                  "model" => "x"
@@ -63,7 +63,7 @@ defmodule Ezagent.PluginCurlAgent.TemplateTest do
       assert {:error, {:bad_api_url, "ftp://nope"}} =
                Template.validate(%{
                  "class" => "curl.agent",
-                 "agent_uri" => "entity://agent/team-alpha/curl_x",
+                 "agent_uri" => "entity://team-alpha/agent/curl_x",
                  "provider" => "deepseek",
                  "api_url" => "ftp://nope",
                  "model" => "x"
@@ -74,7 +74,7 @@ defmodule Ezagent.PluginCurlAgent.TemplateTest do
       assert {:error, :missing_model} =
                Template.validate(%{
                  "class" => "curl.agent",
-                 "agent_uri" => "entity://agent/team-alpha/curl_x",
+                 "agent_uri" => "entity://team-alpha/agent/curl_x",
                  "provider" => "deepseek",
                  "api_url" => "https://x.test/chat"
                })

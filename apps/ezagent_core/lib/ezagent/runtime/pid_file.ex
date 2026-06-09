@@ -38,8 +38,8 @@ defmodule Ezagent.Runtime.PidFile do
     `<node>|<cwd>`; both can contain `/`).
   - `plugin` = caller-supplied subdir name, e.g. `"cc"` or `"np"`.
   - `sanitized_uri` = `URI.to_string(agent_uri)` with `://` and `/`
-    replaced by `_`; e.g. `entity://agent/team-alpha/cc_demo` →
-    `entity_agent_team-alpha_cc_demo`.
+    replaced by `_`; e.g. `entity://team-alpha/agent/cc_demo` →
+    `entity_team-alpha_agent_cc_demo`.
 
   ## File format
 
@@ -264,18 +264,18 @@ defmodule Ezagent.Runtime.PidFile do
   # `_` becomes `/` (best-effort — URIs we sanitized don't contain
   # other `_` in the structural positions, but `entity_name` segments
   # can. So we use a positional reconstruction:
-  # `entity_agent_<workspace>_<entity_name>` →
-  # `entity://agent/<workspace>/<entity_name>`.
+  # `entity_<workspace>_agent_<entity_name>` →
+  # `entity://<workspace>/agent/<entity_name>`.
   defp agent_uri_from_filename(path) do
     base = Path.basename(path, ".pid")
 
     case String.split(base, "_", parts: 4) do
-      ["entity", "agent", workspace, entity_name] ->
+      ["entity", workspace, "agent", entity_name] ->
         # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
         # for any URI string entering the system. Try/rescue keeps the
         # `{:ok, _} | {:error, _}` contract of this private helper.
         try do
-          {:ok, Ezagent.URI.new!("entity://agent/#{workspace}/#{entity_name}")}
+          {:ok, Ezagent.URI.agent(workspace, entity_name)}
         rescue
           ArgumentError -> {:error, :bad_filename}
         end

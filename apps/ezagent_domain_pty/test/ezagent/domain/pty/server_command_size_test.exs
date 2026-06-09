@@ -20,7 +20,7 @@ defmodule Ezagent.Domain.Pty.Server.CommandSizeTest do
 
   test "a normal claude command estimates well under the {packet,2} limit" do
     cmd = [~c"/Users/x/.local/bin/claude", ~c"--permission-mode", ~c"bypassPermissions"]
-    env = [{~c"EZAGENT_AGENT_URI", ~c"entity://agent/team-alpha/x"}]
+    env = [{~c"EZAGENT_AGENT_URI", ~c"entity://team-alpha/agent/x"}]
 
     assert PtyServer.estimated_command_size(cmd, env) < 4_096
   end
@@ -31,7 +31,7 @@ defmodule Ezagent.Domain.Pty.Server.CommandSizeTest do
     # must catch it so the guard rejects this one spawn.
     huge_arg = String.to_charlist(String.duplicate("A", 100_000))
     cmd = [~c"/Users/x/.local/bin/claude", ~c"--append-system-prompt", huge_arg]
-    env = [{~c"EZAGENT_AGENT_URI", ~c"entity://agent/team-alpha/x"}]
+    env = [{~c"EZAGENT_AGENT_URI", ~c"entity://team-alpha/agent/x"}]
 
     assert PtyServer.estimated_command_size(cmd, env) > @packet2_max
   end

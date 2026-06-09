@@ -32,8 +32,55 @@ defmodule Ezagent.Domain.Pty.Server.AutoPromptsTest do
                          "\e[2B \x{276F} 1. I am using\e[1Cthis\e[1Cfor\e[1Clocal\e[1Cdevelopment\r\e[4C\e[1B2.\e[1CExit\r" <>
                          "\e[1BEnter to confirm\e[1C\x{00B7}\e[1CEsc\e[1Cto\e[1Ccancel"
 
+  # Real first-run THEME picker, shown by claude v2.1.x the very first time it
+  # runs against a fresh CLAUDE_CONFIG_DIR (no onboarding flags). It appears
+  # BEFORE the dev-channels / trust-folder dialogs, so if it is not answered the
+  # spawn hangs here and never reaches the dialogs the scanner already handles —
+  # the fresh-stack failure observed in the §5.B live E2E (2026-06-07). The menu
+  # is a static radio list (no animated banner), so words are not fragmented; we
+  # still anchor on two stable, dialog-specific phrases. The default-highlighted
+  # option (claude auto-detects "Dark mode ✔"); bare Enter confirms the highlight.
+  @theme_buffer "\e[1CLet's\e[1Cget\e[1Cstarted.\r\r\n" <>
+                  "\e[1CChoose\e[1Cthe\e[1Ctext\e[1Cstyle\e[1Cthat\e[1Clooks\e[1Cbest\e[1Cwith\e[1Cyour\e[1Cterminal\r\r\n" <>
+                  "\e[1CTo\e[1Cchange\e[1Cthis\e[1Clater,\e[1Crun\e[1C/theme\r\r\n" <>
+                  "\e[1C1.\e[1CAuto\e[1C(match\e[1Cterminal)\r\r\n" <>
+                  "\e[1C\x{276F}\e[1C2.\e[1CDark\e[1Cmode\e[1C\x{2714}\r\r\n" <>
+                  "\e[3C3.\e[1CLight\e[1Cmode\r\r\n"
+
   defp spec(name),
     do: Enum.find(PtyServer.default_auto_prompts(), &(&1.name == name))
+
+  test ":theme_dialog fires on the real first-run theme picker and sends \"\\r\" to confirm the highlighted default" do
+    p = spec(:theme_dialog)
+    assert p, "theme_dialog must be in default_auto_prompts/0"
+    assert PtyServer.matches?(p.match, AnsiStrip.strip(@theme_buffer))
+    assert p.send == "\r"
+  end
+
+  test ":theme_dialog does not match the dev-channels or trust-folder buffers (no cross-fire)" do
+    p = spec(:theme_dialog)
+    refute PtyServer.matches?(p.match, AnsiStrip.strip(@dev_channels_buffer))
+    refute PtyServer.matches?(p.match, AnsiStrip.strip(@trust_buffer))
+  end
+
+  test ":theme_dialog stays armed all session but does NOT fire on ordinary output mentioning the words" do
+    # An auto-prompt that never fires at startup (e.g. the theme was already
+    # persisted, so the picker never appears) remains armed for the whole
+    # session and is matched against the live buffer on every scan. A loose
+    # match would then inject a spurious Enter when normal claude output happens
+    # to contain the words — codex review of PR #611. The full-menu-shape match
+    # must reject ordinary prose that merely mentions "text style"/"Dark mode".
+    p = spec(:theme_dialog)
+
+    ordinary =
+      AnsiStrip.strip(
+        "\e[1CSure!\e[1CHere's\e[1Chow\e[1Cto\e[1Cset\e[1Cthe\e[1Ctext\e[1Cstyle\e[1Cto\e[1CDark\e[1Cmode\r\r\n" <>
+          "\e[1Cin\e[1Cyour\e[1Ceditor\e[1Csettings.\e[1CRun\e[1C/theme\e[1Cto\e[1Cchange\e[1Cit\e[1Clater."
+      )
+
+    refute PtyServer.matches?(p.match, ordinary),
+           "theme_dialog must not fire on ordinary output that merely mentions the words + /theme"
+  end
 
   test ":trust_folder_dialog fires on the real folder-trust buffer and sends \"1\\r\"" do
     p = spec(:trust_folder_dialog)

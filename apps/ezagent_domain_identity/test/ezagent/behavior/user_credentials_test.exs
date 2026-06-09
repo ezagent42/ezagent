@@ -84,7 +84,7 @@ defmodule Ezagent.Behavior.UserCredentialsTest do
     end
 
     test "data_owner/1 mirrors Identity (self-owned for concrete URIs, :any wildcard)" do
-      user_uri = URI.parse("entity://user/team-alpha/alice")
+      user_uri = Ezagent.URI.new!("entity://team-alpha/user/alice")
       assert UC.data_owner(user_uri) == user_uri
       assert UC.data_owner(:any) == :any
       assert UC.data_owner(:set_password) == :no_owner
@@ -96,7 +96,7 @@ defmodule Ezagent.Behavior.UserCredentialsTest do
       # Each test gets a unique user URI so DB isolation is clean.
       n = System.unique_integer([:positive])
       ws_name = "uc-test-#{n}"
-      user_uri = URI.parse("entity://user/#{ws_name}/alice")
+      user_uri = Ezagent.URI.new!("entity://#{ws_name}/user/alice")
 
       {:ok, _decoded} = Users.create(user_uri, "initial-password", [])
 
@@ -164,7 +164,7 @@ defmodule Ezagent.Behavior.UserCredentialsTest do
     end
 
     test "non-existent user URI returns {:error, :not_found}", %{ctx: ctx} do
-      ghost_uri = URI.parse("entity://user/uc-test-ghost/no-such-user")
+      ghost_uri = Ezagent.URI.new!("entity://uc-test-ghost/user/no-such-user")
       ghost_ctx = %{ctx | self_uri: ghost_uri}
 
       assert {:error, :not_found} =
@@ -172,7 +172,7 @@ defmodule Ezagent.Behavior.UserCredentialsTest do
     end
 
     test "bad self_uri (wrong scheme) is refused with :bad_target_uri", %{ctx: ctx} do
-      bad_ctx = %{ctx | self_uri: URI.parse("workspace://x")}
+      bad_ctx = %{ctx | self_uri: Ezagent.URI.new!("workspace://x")}
 
       assert {:error, {:bad_target_uri, _}} =
                UC.handle_set_password(%{password: "x"}, bad_ctx)
@@ -180,7 +180,7 @@ defmodule Ezagent.Behavior.UserCredentialsTest do
 
     test "bad self_uri (agent entity, not user) is refused with :bad_target_uri",
          %{ctx: ctx} do
-      agent_ctx = %{ctx | self_uri: URI.parse("entity://agent/x/cc_x")}
+      agent_ctx = %{ctx | self_uri: Ezagent.URI.new!("entity://x/agent/cc_x")}
 
       assert {:error, {:bad_target_uri, _}} =
                UC.handle_set_password(%{password: "x"}, agent_ctx)

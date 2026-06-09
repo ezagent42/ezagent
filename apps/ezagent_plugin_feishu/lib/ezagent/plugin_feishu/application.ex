@@ -155,7 +155,7 @@ defmodule EzagentPluginFeishu.Application do
   # --- internals ------------------------------------------------------
 
   defp maybe_ws_client_spec do
-    if Mix.env() == :test do
+    if Code.ensure_loaded?(Mix) and Mix.env() == :test do
       nil
     else
       EzagentPluginFeishu.WsClient
@@ -165,7 +165,7 @@ defmodule EzagentPluginFeishu.Application do
   defp seed_initial_user_bindings do
     # Skip in test env so the test suite doesn't leak real network
     # calls to Feishu via boot-seeded subscribers.
-    if Mix.env() == :test do
+    if Code.ensure_loaded?(Mix) and Mix.env() == :test do
       :ok
     else
       do_seed_initial_user_bindings()
@@ -173,7 +173,15 @@ defmodule EzagentPluginFeishu.Application do
   end
 
   defp do_seed_initial_user_bindings do
-    file = Path.join([Ezagent.Home.path(:plugins), "feishu", "initial_user_bindings.yaml"])
+    # Resource-unification P3 (SPEC §10 OI-3): a node-global plugin config file
+    # (no `<ws>`) → `system://plugins` via `UriQuery`, then the constant nested
+    # `feishu/...` relpath joined on. (A URI `<name>` segment cannot carry a `/`,
+    # so the nested layout is expressed as a join under the resolved component —
+    # byte-identical to the legacy plugins/feishu/... layout.) Runs in the
+    # feishu plugin Application, which depends on `ezagent_core`, so the UriQuery
+    # seam is up (NOT a boot-order exemption).
+    plugins_dir = Ezagent.System.FsResolver.path!(Ezagent.URI.system_principal("plugins"))
+    file = Path.join([plugins_dir, "feishu", "initial_user_bindings.yaml"])
 
     case File.read(file) do
       {:ok, body} ->
@@ -191,7 +199,7 @@ defmodule EzagentPluginFeishu.Application do
   end
 
   defp seed_each_user_binding(bindings) do
-    admin_uri = "entity://user/system/admin"
+    admin_uri = Ezagent.Entity.User.admin_uri() |> URI.to_string()
 
     Enum.each(bindings, fn binding ->
       open_id = Map.get(binding, "open_id")

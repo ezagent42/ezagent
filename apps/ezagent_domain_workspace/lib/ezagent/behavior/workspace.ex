@@ -150,6 +150,8 @@ defmodule Ezagent.Behavior.Workspace do
 
   use Ezagent.Lifecycle
 
+  alias Ezagent.Behavior.Workspace.Members
+
   # ---------------------------------------------------------------
   # Action declarations (SPEC §4.3 — per-action grammar)
   # ---------------------------------------------------------------
@@ -303,7 +305,7 @@ defmodule Ezagent.Behavior.Workspace do
   def create(args) do
     {:ok,
      %{
-       members: read_members(args),
+       members: Members.read_members(args),
        session_templates: Map.get(args, :session_templates, %{}),
        routing_rules: Map.get(args, :routing_rules, [])
      }}
@@ -312,14 +314,6 @@ defmodule Ezagent.Behavior.Workspace do
   # NO `activate/2` override — Workspace holds no transient and its SoT
   # load lives in `create/1`-from-args (see moduledoc "SoT load happens in
   # create/1"). The macro-injected no-op `activate/2` default applies.
-
-  defp read_members(args) do
-    case Map.get(args, :members) do
-      nil -> MapSet.new()
-      %MapSet{} = set -> set
-      list when is_list(list) -> MapSet.new(list)
-    end
-  end
 
   # PR-OWN-4 (caps-data-ownership SPEC #306 §6): workspace-scoped
   # Behavior — workspace admin grants. `:any` return signals
@@ -399,8 +393,8 @@ defmodule Ezagent.Behavior.Workspace do
     workspace_uri = Map.get(ctx, :self_uri)
     members = ctx[:read].(:members, MapSet.new())
 
-    with :ok <- validate_member_prefix(uri, workspace_uri),
-         :ok <- ensure_member_kind_spawned(uri) do
+    with :ok <- Members.validate_member_prefix(uri, workspace_uri),
+         :ok <- Members.ensure_member_kind_spawned(uri) do
       new_members = MapSet.put(members, uri)
 
       effects =
@@ -411,152 +405,22 @@ defmodule Ezagent.Behavior.Workspace do
     end
   end
 
-  # Task #55 — workspace prefix validator. Confirms the member URI's
-  # workspace segment matches the workspace URI's host. Non-entity
-  # members are rejected outright — `system://`/`workspace://`/
-  # `session://` URIs have no business in a workspace's member set
-  # (membership models "who lives in this workspace", and only
-  # entities live).
-  #
-  # When `workspace_uri` is missing (`ctx.self_uri == nil`), we let it
-  # through to preserve the existing test surface for unit tests that
-  # drive the handler directly with an empty ctx. The structural call
-  # site (`Ezagent.Kind.Server`) always populates `self_uri`, so
-  # production paths get the check; tests that intentionally want to
-  # bypass it can keep ctx empty.
-  #
-  # Task #55 round-2 codex HIGH-1 (2026-05-27) — canonicalize via
-  # `Ezagent.URI.new!/1` + `Ezagent.URI.instance/1` to reject ALL
-  # non-canonical shapes that the pre-fix `String.split(rest, "/",
-  # parts: 2)` accepted as a side-effect of the `parts: 2` limit:
-  #
-  #   - `entity://user/ws/name/extra` (4-segment — parts=2 globbed
-  #     "name/extra" into entity_name)
-  #   - `entity://user/ws/name/` (trailing slash — same glob)
-  #   - `entity://user/ws/alice?action=x` (query string — not stripped)
-  #   - `entity://something/ws/name` (no host allowlist on user|agent)
-  #
-  # `Ezagent.URI.new!/1` enforces the 3-segment shape + scheme
-  # registry; `Ezagent.URI.instance/1` strips query + fragment.
-  # Together they fully canonicalize before the prefix comparison.
-  defp validate_member_prefix(_member_uri, nil), do: :ok
-
-  defp validate_member_prefix(
-         %URI{scheme: "entity"} = member_uri,
-         %URI{scheme: "workspace", host: workspace_name} = workspace_uri
-       )
-       when is_binary(workspace_name) and workspace_name != "" do
-    # Task #55 round-2 codex r2 review HIGH-1 follow-up — explicitly
-    # reject query + fragment on the ORIGINAL member URI. Pre-fix
-    # `Ezagent.URI.new!/1` accepts URIs with query strings (they're
-    # not malformed per the parser); `instance/1` strips them for the
-    # workspace-prefix check, so a same-workspace URI with a query
-    # passed the prefix gate AND landed durable in the slice/Store
-    # with its query attached. Member URIs are identities — they must
-    # be in instance form (no query, no fragment) to participate in
-    # the structural invariants.
-    cond do
-      member_uri.query != nil ->
-        {:error, {:bad_member_uri, member_uri}}
-
-      member_uri.fragment != nil ->
-        {:error, {:bad_member_uri, member_uri}}
-
-      true ->
-        validate_member_prefix_canonical(member_uri, workspace_uri, workspace_name)
-    end
-  end
-
-  defp validate_member_prefix(%URI{} = member_uri, %URI{} = workspace_uri) do
-    # Non-entity member (system://, workspace://, …) — refuse. Only
-    # `entity://user/...` / `entity://agent/...` are valid workspace
-    # members per the prefix invariant.
-    {:error, {:non_entity_member, member_uri, workspace_uri}}
-  end
-
-  defp validate_member_prefix_canonical(member_uri, workspace_uri, workspace_name) do
-    with {:ok, canonical} <- canonicalize_entity_uri(member_uri),
-         %URI{host: host, path: "/" <> rest} = canonical,
-         true <- host in ["user", "agent"] or {:bad_host, host} do
-      # parse!/instance guarantees rest splits cleanly into [ws, name].
-      case String.split(rest, "/") do
-        [^workspace_name, entity_name] when entity_name != "" ->
-          :ok
-
-        [_other_workspace, _entity_name] ->
-          {:error, {:cross_workspace_member_not_permitted, member_uri, workspace_uri}}
-
-        _ ->
-          # Defense in depth — `Ezagent.URI.new!/1` already rejects
-          # non-3-segment forms, so this branch is structurally
-          # unreachable in production. Kept so a future change to
-          # `parse!/1` can't silently widen acceptance.
-          {:error, {:bad_member_uri, member_uri}}
-      end
-    else
-      {:bad_host, _host} ->
-        # `entity://something_weird/ws/name` — host axis must be
-        # exactly `user` or `agent` (the two allowed entity types
-        # per SPEC v3 §3). Anything else is malformed.
-        {:error, {:bad_member_uri, member_uri}}
-
-      {:error, _} = err ->
-        err
-    end
-  end
-
-  # Canonicalize via `Ezagent.URI.new!/1` (3-segment shape gate +
-  # scheme registry) and `Ezagent.URI.instance/1` (strip query +
-  # fragment). A `parse!`-rejecting URI (4-segment, trailing slash,
-  # missing workspace) raises ArgumentError → we catch and return
-  # `{:bad_member_uri, ...}` so the caller gets a structured error
-  # instead of a crash.
-  defp canonicalize_entity_uri(%URI{} = member_uri) do
-    canonical =
-      member_uri
-      |> URI.to_string()
-      |> Ezagent.URI.new!()
-      |> Ezagent.URI.instance()
-
-    {:ok, canonical}
-  rescue
-    ArgumentError ->
-      {:error, {:bad_member_uri, member_uri}}
-  end
-
-  # Task #46 (Allen 2026-05-27) — pre-spawn the member's User Kind so
-  # the `identity.grant_cap` dispatch in `grant_member_create_session_cap_effects/2`
-  # doesn't race the `KindRegistry` registration. Idempotent: an
-  # already-alive Kind returns `{:ok, _pid}` (no-op).
-  #
-  # Only user URIs are pre-spawned — agents don't drive `:create_session`
-  # so the grant skips them, and agent lifecycle is owned elsewhere
-  # (Template Class spawn, LV agent creation).
-  #
-  # `:no_spawn_fn` tolerance — unit tests that drive the handler directly
-  # (without booting the chat plugin) have no `entity://` spawn fn
-  # registered. Treating that as `:ok` keeps the unit-test surface
-  # working; production never reaches this branch because
-  # `EzagentDomainInstanceMessage.Application.start/2` registers the `entity://`
-  # spawn fn before any workspace dispatch can fire.
-  defp ensure_member_kind_spawned(%URI{scheme: "entity", host: "user"} = uri) do
-    case Ezagent.SpawnRegistry.spawn(uri) do
-      {:ok, _pid} ->
-        :ok
-
-      {:error, {:no_spawn_fn, _scheme}} ->
-        :ok
-
-      {:error, reason} ->
-        {:error, {:member_user_spawn_failed, uri, reason}}
-    end
-  end
-
-  defp ensure_member_kind_spawned(_other), do: :ok
-
   def handle_remove_member(%{member: %URI{} = uri}, ctx) do
+    # SPEC §7 Part B (cap-lifecycle sweep): `:add_member` grants the
+    # member a `:create_session` cap scoped to THIS workspace; pre-fix,
+    # `:remove_member` left it dangling (a user demoted from
+    # `workspace://system` kept create_session there). The symmetric
+    # `revoke_cap` effect sweeps EXACTLY that cap — matched by 4-tuple
+    # identity_key, so caps in other workspaces / unrelated caps are
+    # untouched.
+    workspace_uri = Map.get(ctx, :self_uri)
     members = ctx[:read].(:members, MapSet.new())
-    {:ok, %{}, [{:set, :members, MapSet.delete(members, uri)}]}
+
+    effects =
+      [{:set, :members, MapSet.delete(members, uri)}] ++
+        revoke_member_create_session_cap_effects(workspace_uri, uri)
+
+    {:ok, %{}, effects}
   end
 
   # Task #55 round-2 codex HIGH-2 (2026-05-27) — dispatch-owned cleanup
@@ -585,12 +449,13 @@ defmodule Ezagent.Behavior.Workspace do
     members = ctx[:read].(:members, MapSet.new())
 
     case workspace_uri do
-      %URI{scheme: "workspace", host: workspace_name}
-      when is_binary(workspace_name) and workspace_name != "" ->
+      %URI{scheme: "workspace"} = workspace_uri ->
+        workspace_name = Ezagent.URI.name!(workspace_uri)
+
         {violators, kept} =
           members
           |> MapSet.to_list()
-          |> Enum.split_with(&cross_prefix_violator?(&1, workspace_name))
+          |> Enum.split_with(&Members.cross_prefix_violator?(&1, workspace_name))
 
         {:ok, %{removed: violators, kept_count: length(kept)},
          [{:set, :members, MapSet.new(kept)}]}
@@ -603,35 +468,6 @@ defmodule Ezagent.Behavior.Workspace do
         {:error, {:missing_self_uri, workspace_uri}}
     end
   end
-
-  # Task #55 round-2 codex r2 review HIGH-2 follow-up — cleanup
-  # classification MUST share the validator's canonicalization. A
-  # member URI counts as a violator under any of:
-  #
-  #   - non-entity scheme (`system://`, `workspace://`, …);
-  #   - entity URI with `?query` or `#fragment` set (those URIs would
-  #     be rejected by `:add_member` per the HIGH-1 follow-up;
-  #     classifying them as violators is the natural cleanup);
-  #   - entity URI whose canonicalized workspace segment doesn't match
-  #     `workspace_name`;
-  #   - entity URI whose host axis isn't `user`/`agent`;
-  #   - entity URI that `Ezagent.URI.new!/1` raises on (4-segment,
-  #     trailing slash, missing workspace).
-  #
-  # Implemented by reusing `validate_member_prefix/2` with a
-  # synthesized `workspace_uri` — `:ok` means clean, any `{:error, _}`
-  # means violator.
-  defp cross_prefix_violator?(%URI{} = member_uri, workspace_name) do
-    case validate_member_prefix(
-           member_uri,
-           %URI{scheme: "workspace", host: workspace_name, path: nil}
-         ) do
-      :ok -> false
-      {:error, _} -> true
-    end
-  end
-
-  defp cross_prefix_violator?(_, _), do: true
 
   # --- session templates ----------------------------------------------
 
@@ -682,34 +518,12 @@ defmodule Ezagent.Behavior.Workspace do
   # curl / other: direct SpawnRegistry.spawn (the only allowlisted call
   #             site for `entity://agent/` URIs per the invariant test
   #             `agent_create_single_path_test.exs`).
-  def handle_create_agent(args, ctx) when is_map(args) do
-    raw_workspace_uri = Map.get(ctx, :self_uri)
-    session_templates = ctx[:read].(:session_templates, %{})
-
-    with {:ok, flavor, name, cwd, with_pty?, from_uri} <- coerce_create_args(args),
-         :ok <- validate_flavor(flavor),
-         :ok <- validate_name(name),
-         :ok <- validate_cwd_for_flavor(flavor, with_pty?, cwd),
-         :ok <- validate_from_for_flavor(flavor, from_uri),
-         {:ok, workspace_uri} <- require_workspace_uri(raw_workspace_uri),
-         workspace_name = workspace_uri.host,
-         {:ok, agent_uri} <- compose_agent_uri(flavor, name, workspace_name),
-         :ok <- refuse_if_exists(agent_uri),
-         {:ok, source_config_dir} <- resolve_source_config_dir(from_uri, ctx) do
-      do_create_agent(flavor, agent_uri, session_templates, %{
-        cwd: cwd,
-        with_pty?: with_pty?,
-        workspace_name: workspace_name,
-        workspace_uri: workspace_uri,
-        source_config_dir: source_config_dir,
-        # Allen 2026-05-26 (codex HIGH-1 closure) — thread the caller
-        # URI through so the SpawnRegistry direct-spawn catch-all can
-        # record lineage (`Ezagent.AgentLineage.record/2`) for the
-        # newly-created agent.
-        caller: Map.get(ctx, :caller)
-      })
-    end
-  end
+  # PR-3V (gt_1000 burn-down): the `:create_agent` provisioning machinery
+  # was extracted VERBATIM to `Ezagent.Behavior.Workspace.AgentCreate`
+  # (a separate concern from the #685 member-CapBAC handlers). This engine
+  # callback stays here (the runtime dispatches by module) and delegates the
+  # full `with` chain body to `AgentCreate.handle_create_agent/2`.
+  defdelegate handle_create_agent(args, ctx), to: Ezagent.Behavior.Workspace.AgentCreate
 
   # --- create_session (unified CLI/LV session provisioning) -----------
   #
@@ -807,9 +621,12 @@ defmodule Ezagent.Behavior.Workspace do
     end
   end
 
-  defp require_session_workspace_uri(%URI{scheme: "workspace", host: host} = uri)
-       when is_binary(host) and host != "",
-       do: {:ok, uri}
+  defp require_session_workspace_uri(%URI{scheme: "workspace"} = uri) do
+    case Ezagent.URI.name(uri) do
+      {:ok, _name} -> {:ok, uri}
+      :error -> {:error, {:bad_workspace_uri, uri}}
+    end
+  end
 
   defp require_session_workspace_uri(other),
     do: {:error, {:bad_workspace_uri, other}}
@@ -847,459 +664,17 @@ defmodule Ezagent.Behavior.Workspace do
     {:ok, %{children: member_children ++ template_children}, []}
   end
 
-  # =================================================================
-  # `:create_agent` helpers (SPEC 2026-05-25-agent-create-cli-gui-parity)
-  # =================================================================
-  # These mirror what was previously in
-  # `EzagentPluginLiveview.AgentNewLive` so the CLI and LV share one
-  # code path.
-
-  # CLI builds atom-keyed maps. The current dispatch path (local-
-  # in-process for the mix task + LV) preserves atom keys end-to-end.
-  defp coerce_create_args(args) do
-    flavor = Map.get(args, :flavor)
-    name = Map.get(args, :name)
-    cwd = Map.get(args, :cwd, "")
-    with_pty = Map.get(args, :with_pty, false)
-    from = Map.get(args, :from)
-
-    cond do
-      not is_binary(flavor) ->
-        {:error, :flavor_required}
-
-      not is_binary(name) ->
-        {:error, :name_required}
-
-      not is_binary(cwd) ->
-        {:error, {:bad_cwd, cwd}}
-
-      not is_boolean(with_pty) ->
-        {:error, {:bad_with_pty, with_pty}}
-
-      not valid_from?(from) ->
-        {:error, {:bad_from, from}}
-
-      true ->
-        {:ok, String.trim(flavor), String.trim(name), String.trim(cwd), with_pty, from}
-    end
-  end
-
-  defp valid_from?(nil), do: true
-
-  defp valid_from?(%URI{scheme: "entity", host: "agent", path: "/" <> _}), do: true
-
-  defp valid_from?(_), do: false
-
-  defp require_workspace_uri(%URI{scheme: "workspace", host: host} = uri)
-       when is_binary(host) and host != "",
-       do: {:ok, uri}
-
-  defp require_workspace_uri(other), do: {:error, {:bad_workspace_uri, other}}
-
-  # Flavor validation: must be registered in AgentFlavorRegistry. Empty
-  # registry (test bootstrap) falls back to the well-known names so a
-  # unit test that doesn't boot plugins can still drive the handler.
-  defp validate_flavor(""), do: {:error, :flavor_required}
-
-  defp validate_flavor(flavor) when is_binary(flavor) do
-    case Ezagent.AgentFlavorRegistry.list_all() do
-      [] ->
-        if flavor in ~w(cc echo curl np codex),
-          do: :ok,
-          else: {:error, {:bad_flavor, flavor}}
-
-      entries ->
-        names = Enum.map(entries, fn {f, _} -> f end)
-
-        if flavor in names,
-          do: :ok,
-          else: {:error, {:bad_flavor, flavor}}
-    end
-  end
-
-  defp validate_name(""), do: {:error, :name_required}
-
-  defp validate_name(name) when is_binary(name) do
-    # Same regex as the LV's `validate_name/1`: alnum start, then
-    # alnum + dash + underscore (URI-path-safe).
-    if name =~ ~r/\A[A-Za-z0-9][A-Za-z0-9_\-]*\z/ do
-      :ok
-    else
-      {:error, {:bad_name, name}}
-    end
-  end
-
-  # cwd is required for cc, and for echo when `with_pty: true`.
-  # curl + echo-without-PTY tolerate an empty cwd.
-  defp validate_cwd_for_flavor("cc", _with_pty?, ""), do: {:error, :cwd_required_for_cc}
-  defp validate_cwd_for_flavor("cc", _with_pty?, cwd), do: validate_cwd_dir(cwd)
-
-  defp validate_cwd_for_flavor("echo", true, ""), do: {:error, :cwd_required_for_echo_with_pty}
-  defp validate_cwd_for_flavor("echo", true, cwd), do: validate_cwd_dir(cwd)
-  defp validate_cwd_for_flavor("echo", false, _cwd), do: :ok
-
-  defp validate_cwd_for_flavor("codex", _with_pty?, ""),
-    do: {:error, :cwd_required_for_codex}
-
-  defp validate_cwd_for_flavor("codex", _with_pty?, cwd), do: validate_cwd_dir(cwd)
-
-  defp validate_cwd_for_flavor("curl", _with_pty?, _cwd), do: :ok
-  defp validate_cwd_for_flavor(_, _, _), do: :ok
-
-  defp validate_cwd_dir(cwd) when is_binary(cwd) do
-    expanded = Path.expand(cwd)
-
-    if File.dir?(expanded) do
-      :ok
-    else
-      {:error, {:cwd_not_a_dir, cwd}}
-    end
-  end
-
-  # `--from` only meaningful for flavors that have a per-agent
-  # config_dir to clone. Today that's `cc` only — echo/curl/np have no
-  # CLAUDE_CONFIG_DIR concept.
-  defp validate_from_for_flavor(_flavor, nil), do: :ok
-  defp validate_from_for_flavor("cc", %URI{}), do: :ok
-
-  defp validate_from_for_flavor(other_flavor, %URI{}),
-    do: {:error, {:from_unsupported_for_flavor, other_flavor}}
-
-  # Resolve the source agent's per-agent config_dir by dispatching
-  # `sandbox.read` on the source URI WITH THE CALLER'S CAPS. This:
-  #
-  #  - Enforces `sandbox.read` on source via standard CapBAC (no new
-  #    cap subject, no parallel auth path).
-  #  - Returns `{:error, :source_not_found}` when the source Agent
-  #    Kind isn't alive (ReadyGate :no_such_actor).
-  #  - On success returns the source's `config_dir_path` (or nil if
-  #    the source has no per-agent dir — e.g. an echo agent).
-  #
-  # ORDER MATTERS — this step is in the main `with` chain BEFORE
-  # `do_create_agent`. A `{:error, _}` here short-circuits BEFORE any
-  # template registration, Store write, or filesystem op.
-  #
-  # NOTE: this is a SYNCHRONOUS sub-dispatch — the handler's `with`
-  # chain needs the return value to map per-flavor error atoms
-  # (`:source_not_found`, `:source_not_readable`, etc.) BEFORE
-  # `do_create_agent/4` runs. The `:dispatch_returning` effect
-  # (SPEC `2026-05-29-dispatch-returning-effect.md`) binds a value
-  # for DOWNSTREAM EFFECT references — it does NOT push the value
-  # back into the handler's `with` chain (effects run AFTER the
-  # handler returns).
-  #
-  # So we use `Ezagent.Router.dispatch/1` (the modern sanctioned
-  # entry-point) instead of the legacy Invocation entry-point.
-  # The §11 Gate 3 grep gate fires on the legacy Invocation dispatch
-  # in plugin Behaviors specifically; `Router.dispatch` is the
-  # public author-facing surface and is fine for this sub-dispatch
-  # pattern.
-  defp resolve_source_config_dir(nil, _ctx), do: {:ok, nil}
-
-  defp resolve_source_config_dir(%URI{} = source_uri, ctx) do
-    caller = Map.fetch!(ctx, :caller)
-    caps = Map.fetch!(ctx, :caps)
-
-    cmd =
-      Ezagent.Cmd.new(
-        source_uri,
-        :read,
-        %{},
-        %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
-      )
-
-    case Ezagent.Router.dispatch(cmd) do
-      {:ok, %{config_dir_path: path}} when is_binary(path) and path != "" ->
-        {:ok, path}
-
-      {:ok, %{config_dir_path: nil}} ->
-        {:error, :source_has_no_config_dir}
-
-      {:ok, other} ->
-        {:error, {:source_read_unexpected_shape, other}}
-
-      {:error, :unauthorized} ->
-        {:error, :source_not_readable}
-
-      {:error, :no_such_actor} ->
-        {:error, :source_not_found}
-
-      {:error, reason} ->
-        {:error, {:source_read_failed, reason}}
-    end
-  end
-
-  # Per SPEC v3 §3 / Phase 9 PR-2 — entity URI is
-  # `entity://agent/<workspace>/<flavor>_<name>`.
-  defp compose_agent_uri(flavor, name, workspace_name)
-       when is_binary(flavor) and is_binary(name) and is_binary(workspace_name) do
-    full = "entity://agent/#{workspace_name}/#{flavor}_#{name}"
-
-    try do
-      {:ok, Ezagent.URI.new!(full)}
-    rescue
-      ArgumentError -> {:error, {:bad_uri, full}}
-    end
-  end
-
-  defp refuse_if_exists(%URI{} = uri) do
-    case Ezagent.KindRegistry.lookup(uri) do
-      :error -> :ok
-      {:ok, _pid} -> {:error, {:already_exists, URI.to_string(uri)}}
-    end
-  end
-
-  # cc / echo / codex → register a Workspace-scoped template + persist + invoke.
-  defp do_create_agent("cc", agent_uri, session_templates, params) do
-    %{
-      cwd: cwd,
-      workspace_name: workspace_name,
-      workspace_uri: workspace_uri,
-      source_config_dir: source_config_dir
-    } = params
-
-    tmpl_name = "cc.agent." <> agent_name(agent_uri)
-
-    tmpl =
-      %{
-        "class" => "cc.agent",
-        "agent_uri" => URI.to_string(agent_uri),
-        "cwd" => Path.expand(cwd)
-      }
-      |> maybe_put_clone_source(source_config_dir)
-
-    register_and_invoke_template(
-      session_templates,
-      workspace_name,
-      workspace_uri,
-      tmpl_name,
-      tmpl,
-      agent_uri,
-      Map.get(params, :caller)
-    )
-  end
-
-  defp do_create_agent("echo", agent_uri, session_templates, params) do
-    %{
-      cwd: cwd,
-      with_pty?: with_pty?,
-      workspace_name: workspace_name,
-      workspace_uri: workspace_uri
-    } = params
-
-    tmpl_name = "echo.agent." <> agent_name(agent_uri)
-
-    tmpl = %{
-      "class" => "echo.agent",
-      "agent_uri" => URI.to_string(agent_uri),
-      "with_pty" => with_pty?,
-      "cwd" => if(with_pty?, do: Path.expand(cwd), else: cwd)
-    }
-
-    register_and_invoke_template(
-      session_templates,
-      workspace_name,
-      workspace_uri,
-      tmpl_name,
-      tmpl,
-      agent_uri,
-      Map.get(params, :caller)
-    )
-  end
-
-  defp do_create_agent("codex", agent_uri, session_templates, params) do
-    %{
-      cwd: cwd,
-      workspace_name: workspace_name,
-      workspace_uri: workspace_uri
-    } = params
-
-    tmpl_name = "codex.agent." <> agent_name(agent_uri)
-
-    tmpl = %{
-      "class" => "codex.agent",
-      "agent_uri" => URI.to_string(agent_uri),
-      "cwd" => Path.expand(cwd)
-    }
-
-    register_and_invoke_template(
-      session_templates,
-      workspace_name,
-      workspace_uri,
-      tmpl_name,
-      tmpl,
-      agent_uri,
-      Map.get(params, :caller)
-    )
-  end
-
-  # Any other flavor (curl / np / future) — direct SpawnRegistry.spawn.
-  defp do_create_agent(_other_flavor, agent_uri, _session_templates, params) do
-    case Ezagent.SpawnRegistry.spawn(agent_uri) do
-      {:ok, _pid} ->
-        record_creator_lineage(agent_uri, params)
-
-        with :ok <-
-               grant_agent_creator_manage_cap(agent_uri, Map.get(params, :workspace_uri), params) do
-          # No slice mutation (no template registered for curl/np).
-          {:ok, %{agent_uri: agent_uri, template_name: nil}, []}
-        end
-
-      {:error, {:already_started, _pid}} ->
-        # Idempotent re-create — do NOT re-record lineage.
-        {:ok, %{agent_uri: agent_uri, template_name: nil}, []}
-
-      {:error, reason} ->
-        {:error, {:spawn_failed, reason}}
-    end
-  end
-
-  # Allen 2026-05-26 (codex HIGH-1 closure) — record `agent_uri → caller`
-  # in `Ezagent.AgentLineage`. Best-effort: a missing caller (system-internal
-  # spawn) leaves no lineage row.
-  defp record_creator_lineage(agent_uri, params) do
-    case Map.get(params, :caller) do
-      %URI{} = caller ->
-        Ezagent.AgentLineage.record(agent_uri, caller)
-
-      _ ->
-        :ok
-    end
-  end
-
-  # `--from` cloning works by overriding the template's universal
-  # `config_dir` data key with the SOURCE agent's per-agent dir.
-  # config_dir promotion (Allen 2026-06-03): the per-agent config-home is
-  # the universal, flavor-neutral `"config_dir"` key (was the cc-named
-  # `"claude_config_dir"`); the cc Template Class reads it and applies
-  # claude semantics.
-  defp maybe_put_clone_source(tmpl, nil), do: tmpl
-
-  defp maybe_put_clone_source(tmpl, source_config_dir)
-       when is_binary(source_config_dir) do
-    Map.put(tmpl, "config_dir", source_config_dir)
-  end
-
-  # Register the template in the Workspace's session_templates slice +
-  # persist via Store, then call Loader.invoke_template to bring the
-  # Agent Kind (+ sidecars) live.
-  #
-  # Codex PR #330 r1 HIGH-1 fix: if invoke_template_now fails, roll
-  # back the Store write so the DB doesn't carry a template the caller
-  # was told failed. Without rollback, the next boot's
-  # Loader.load_all/0 would silently instantiate the failed template
-  # (no CapBAC re-check, no operator visibility).
-  defp register_and_invoke_template(
-         session_templates,
-         workspace_name,
-         workspace_uri,
-         tmpl_name,
-         tmpl,
-         agent_uri,
-         creator_uri
-       ) do
-    new_templates = Map.put(session_templates, tmpl_name, tmpl)
-
-    with :ok <- validate_template_class(tmpl),
-         {:ok, _decoded} <-
-           Ezagent.Workspace.Store.update_templates(workspace_name, new_templates),
-         :ok <-
-           invoke_or_rollback(
-             workspace_uri,
-             workspace_name,
-             tmpl_name,
-             session_templates
-           ) do
-      with :ok <-
-             grant_agent_creator_manage_cap(agent_uri, workspace_uri, %{caller: creator_uri}) do
-        # On success: emit slice mutation as a `:set` effect and return
-        # the template + agent URIs to the caller.
-        {:ok, %{agent_uri: agent_uri, template_name: tmpl_name},
-         [{:set, :session_templates, new_templates}]}
-      end
-    end
-  end
-
-  defp grant_agent_creator_manage_cap(%URI{} = agent_uri, %URI{} = workspace_uri, %{
-         caller: %URI{} = creator_uri
-       }) do
-    Ezagent.Workspace.grant_creator_manage_cap(:agent, agent_uri, workspace_uri, creator_uri)
-  end
-
-  defp grant_agent_creator_manage_cap(_agent_uri, _workspace_uri, _params), do: :ok
-
-  # Codex PR #330 r1 HIGH-1 — call invoke_template_now; on failure,
-  # roll back the Store.update_templates write so the DB matches the
-  # (uncommitted) starting state.
-  defp invoke_or_rollback(workspace_uri, workspace_name, tmpl_name, original_templates) do
-    case invoke_template_now(workspace_uri, tmpl_name) do
-      :ok ->
-        :ok
-
-      {:error, _} = err ->
-        rollback_store_templates(workspace_name, original_templates, tmpl_name, err)
-        err
-    end
-  end
-
-  defp rollback_store_templates(workspace_name, original_templates, tmpl_name, original_err) do
-    case Ezagent.Workspace.Store.update_templates(workspace_name, original_templates) do
-      {:ok, _} ->
-        :ok
-
-      {:error, rollback_reason} ->
-        require Logger
-
-        Logger.error(
-          "Behavior.Workspace.:create_agent: Store rollback failed for " <>
-            "workspace=#{workspace_name} tmpl=#{tmpl_name}: " <>
-            "#{inspect(rollback_reason)} (original error: #{inspect(original_err)})"
-        )
-    end
-  end
-
-  # Same validator pattern as `Ezagent.Workspace.add_template/3` uses
-  # — defer to the Template Class's `validate/1` if defined.
-  defp validate_template_class(tmpl) do
-    case extract_class_name(tmpl) do
-      nil ->
-        {:error, :missing_class_field}
-
-      class_name ->
-        case Ezagent.TemplateRegistry.lookup(class_name) do
-          :error ->
-            {:error, {:no_template_class, class_name}}
-
-          {:ok, class_module} ->
-            if function_exported?(class_module, :validate, 1) do
-              class_module.validate(tmpl)
-            else
-              :ok
-            end
-        end
-    end
-  end
-
-  defp extract_class_name(%{"class" => name}) when is_binary(name) and name != "", do: name
-  defp extract_class_name(%{class: name}) when is_binary(name) and name != "", do: name
-  defp extract_class_name(_), do: nil
-
-  defp invoke_template_now(%URI{} = workspace_uri, tmpl_name) do
-    case Ezagent.Workspace.Loader.invoke_template(workspace_uri, tmpl_name) do
-      {:ok, _uris} -> :ok
-      # Idempotent — already running.
-      {:error, {:already_started, _pid}} -> :ok
-      {:error, _reason} = err -> err
-    end
-  end
-
-  # Per SPEC v3 §3, entity URI path is `/<workspace>/<entity_name>`.
-  defp agent_name(%URI{path: "/" <> rest}) do
-    case String.split(rest, "/", parts: 2) do
-      [_workspace, entity_name] -> entity_name
-      [name] -> name
-    end
-  end
+  # PR-3V (gt_1000 burn-down) — test-only accessors into the extracted
+  # `:create_agent` machinery. The provisioning helpers moved VERBATIM to
+  # `Ezagent.Behavior.Workspace.AgentCreate`; these `@doc false` delegates
+  # preserve the public `Ezagent.Behavior.Workspace.__*_for_test__` surface
+  # the cc unified-create cascade test calls (no test ref change needed).
+  @doc false
+  defdelegate __file_flavor_template_for_test__(flavor, class_name, agent_uri, cwd),
+    to: Ezagent.Behavior.Workspace.AgentCreate
+
+  @doc false
+  defdelegate __cascade_content_for_test__(tmpl), to: Ezagent.Behavior.Workspace.AgentCreate
 
   # codex PR #408 review round-2 MED-2 — grant the workspace
   # `:create_session` cap to a newly-added user member via a
@@ -1336,8 +711,48 @@ defmodule Ezagent.Behavior.Workspace do
   # `docs/futures/todo.md` for the full discussion + planned fix).
   defp grant_member_create_session_cap_effects(
          %URI{scheme: "workspace"} = workspace_uri,
-         %URI{scheme: "entity", host: "user"} = member_uri
+         %URI{scheme: "entity"} = member_uri
        ) do
+    unless Ezagent.URI.type?(member_uri, :user) do
+      []
+    else
+      [{:dispatch, member_create_session_cap_cmd(:grant_cap, workspace_uri, member_uri)}]
+    end
+  end
+
+  # Non-user member (agent) or missing workspace URI — no grant.
+  defp grant_member_create_session_cap_effects(_workspace_uri, _member_uri), do: []
+
+  # SPEC §7 Part B — symmetric sweep of the cap `:add_member` granted.
+  # codex review HIGH: a SECURITY revoke must be synchronous +
+  # failure-propagating (NOT the grant's buffered cast).
+  # `:dispatch_returning` runs `:revoke_cap` inline and short-circuits
+  # `handle_remove_member/2` on error, so the slice mutation (and the
+  # facade's `Store.update_members/2`) does NOT commit while the cap is
+  # still live. The member's User Kind is already alive at remove time,
+  # so the `:call` reply can't stall on a not-ready gate.
+  defp revoke_member_create_session_cap_effects(
+         %URI{scheme: "workspace"} = workspace_uri,
+         %URI{scheme: "entity"} = member_uri
+       ) do
+    if Ezagent.URI.type?(member_uri, :user) do
+      cmd = member_create_session_cap_cmd(:revoke_cap, workspace_uri, member_uri, :sync)
+      [{:dispatch_returning, cmd, bind_as: :member_create_session_revoke}]
+    else
+      []
+    end
+  end
+
+  defp revoke_member_create_session_cap_effects(_workspace_uri, _member_uri), do: []
+
+  # Shared cap shape + dispatch envelope for the add/remove pair. The
+  # cap is the workspace-scoped `:create_session` grant; `granted_at`
+  # is only load-bearing on the grant (revoke matches by identity_key,
+  # which excludes `granted_at`/`granted_by`). `reply_mode` is `:async`
+  # (buffered cast — the add-time grant, member Kind may be not-ready) or
+  # `:sync` (call — the remove-time revoke, member Kind is live).
+  defp member_create_session_cap_cmd(action, workspace_uri, member_uri, reply_mode \\ :async)
+       when action in [:grant_cap, :revoke_cap] do
     cap = %Ezagent.Capability{
       kind: :workspace,
       behavior: __MODULE__,
@@ -1348,20 +763,24 @@ defmodule Ezagent.Behavior.Workspace do
       granted_at: DateTime.utc_now()
     }
 
-    cmd = %Ezagent.Cmd{
+    reply =
+      case reply_mode do
+        :sync -> {:caller_inbox, self()}
+        :async -> :ignore
+      end
+
+    %Ezagent.Cmd{
       target: member_uri,
-      action: :grant_cap,
+      action: action,
       args: %{cap: cap},
       ctx: %{
         caller: Ezagent.SystemPrincipal.uri("template-materialize"),
-        caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
-        reply: :ignore
+        caps:
+          "template-materialize"
+          |> Ezagent.SystemPrincipal.uri()
+          |> Ezagent.SystemPrincipal.caps(),
+        reply: reply
       }
     }
-
-    [{:dispatch, cmd}]
   end
-
-  # Non-user member (agent) or missing workspace URI — no grant.
-  defp grant_member_create_session_cap_effects(_workspace_uri, _member_uri), do: []
 end

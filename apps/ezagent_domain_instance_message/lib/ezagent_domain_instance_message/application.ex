@@ -56,6 +56,7 @@ defmodule EzagentDomainInstanceMessage.Application do
   alias Ezagent.Entity.{Agent, AgentTemplate, Session, SessionTemplate, User}
   alias Ezagent.Behavior.Chat
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
+  alias EzagentDomainInstanceMessage.AgentModuleResolver
 
   @impl true
   def start(_type, _args) do
@@ -140,6 +141,12 @@ defmodule EzagentDomainInstanceMessage.Application do
 
         # Phase 4-completion: register Template Classes this plugin provides.
         :ok = register_template_classes()
+
+        # PR-A unify-uri-query — publish storage-backed attribute resolvers
+        # as soon as the owning domain is booted. Callers distinguish this
+        # readiness from "resolver ran and found no value" via
+        # `{:error, {:no_resolver, attr}}` vs `:none`.
+        :ok = EzagentDomainInstanceMessage.UriQueryResolvers.register()
 
         # Phase 4c: load persisted Workspaces — runs here because chat is
         # the last domain app to boot, so all spawn fns are registered.
@@ -246,11 +253,11 @@ defmodule EzagentDomainInstanceMessage.Application do
       result =
         with :ok <- ensure_system_workspace_seeded_for_tests() do
           Ezagent.Workspace.create_session(
-            Ezagent.URI.new!("workspace://system"),
+            Ezagent.URI.workspace(:system),
             %{short_name: "main", template_name: "default"},
             %{
               caller: User.admin_uri(),
-              caps: Ezagent.SystemPrincipal.caps("system://bootstrap")
+              caps: "bootstrap" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps()
             }
           )
         end
@@ -272,7 +279,7 @@ defmodule EzagentDomainInstanceMessage.Application do
           require Logger
 
           Logger.warning(
-            "test seed of session://default/system/main failed: #{inspect(reason)}; tests asserting on boot-time main may fail"
+            "test seed of #{URI.to_string(Ezagent.Entity.Session.default_uri())} failed: #{inspect(reason)}; tests asserting on boot-time main may fail"
           )
 
           :ok
@@ -463,7 +470,7 @@ defmodule EzagentDomainInstanceMessage.Application do
   # checkout. A hard crash here would break the whole suite's boot.
   defp seed_default_session_template do
     if test_env?() do
-      _ = do_seed_default_session_template(Ezagent.URI.new!("workspace://system"))
+      _ = do_seed_default_session_template(Ezagent.URI.workspace(:system))
       :ok
     else
       case seed_default_session_templates_for_existing_workspaces() do
@@ -494,7 +501,7 @@ defmodule EzagentDomainInstanceMessage.Application do
   """
   @spec seed_default_session_template_now() :: :ok | {:error, :test_only}
   def seed_default_session_template_now do
-    seed_default_session_template_now(Ezagent.URI.new!("workspace://system"))
+    seed_default_session_template_now(Ezagent.URI.workspace(:system))
   end
 
   @doc """
@@ -547,12 +554,12 @@ defmodule EzagentDomainInstanceMessage.Application do
   end
 
   defp existing_workspace_uris do
-    system = Ezagent.URI.new!("workspace://system")
+    system = Ezagent.URI.workspace(:system)
 
     workspaces =
       try do
         Ezagent.Workspace.Store.list_all()
-        |> Enum.map(fn ws -> Ezagent.URI.new!("workspace://#{ws.name}") end)
+        |> Enum.map(fn ws -> Ezagent.URI.workspace(ws.name) end)
       rescue
         _ -> []
       end
@@ -562,7 +569,7 @@ defmodule EzagentDomainInstanceMessage.Application do
   end
 
   defp do_seed_default_session_template(%URI{scheme: "workspace"} = workspace_uri) do
-    workspace_name = workspace_uri.host
+    workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
     orchestrator_uri = Ezagent.URI.new!(Ezagent.Orchestrator.CcOrchestratorSeed.template_uri())
 
     content = %{
@@ -570,7 +577,7 @@ defmodule EzagentDomainInstanceMessage.Application do
       description:
         "Default session template — orchestrator-only team. Compose " <>
           "the team via the orchestrator's member + rule-set tools. " <>
-          "Seeded under `workspace://#{workspace_name}` so " <>
+          "Seeded under `#{URI.to_string(Ezagent.URI.workspace(workspace_name))}` so " <>
           "`mix ezagent workspace create_session --template-name default` " <>
           "and the LV New-session form resolve without operator setup.",
       # team-routing-unification §3.7 (PR-7) — SessionTemplate content carries
@@ -626,36 +633,39 @@ defmodule EzagentDomainInstanceMessage.Application do
   defp workspace_uri!(%URI{scheme: "workspace"} = workspace_uri), do: workspace_uri
 
   defp workspace_uri!(workspace) when is_binary(workspace) do
-    if String.starts_with?(workspace, "workspace://") do
-      Ezagent.URI.new!(workspace)
-    else
-      Ezagent.URI.new!("workspace://#{workspace}")
+    case Ezagent.URI.parse(workspace) do
+      {:ok, %URI{} = uri} ->
+        if Ezagent.URI.scheme?(uri, :workspace), do: uri, else: Ezagent.URI.workspace(workspace)
+
+      {:error, _reason} ->
+        Ezagent.URI.workspace(workspace)
     end
   end
 
   defp register_spawn_fns do
     # PR #141 (SPEC v2): `user://` + `agent://` schemes are deleted;
     # both merge into `entity://`. The chat plugin owns the unified
-    # `entity://` spawn fn — dispatch by `uri.host`:
+    # `entity://` spawn fn — dispatch by `Ezagent.URI.type/1`:
     #
     # - `entity://user/<name>` → spawn `Ezagent.Entity.User` under
     #   `EzagentDomainIdentity.Application.UserSupervisor` (identity
     #   domain owns User Kind; chat references its supervisor by
     #   module name per task spec).
-    # - `entity://agent/<flavor>_<name>` → resolve the backing
+    # - `entity://agent/<workspace>/<name>` → resolve the backing
     #   `kind_module` via `lookup_kind_module_for_agent/1` (snapshot →
-    #   workspace-template → flavor-prefix fallback) and spawn under
+    #   workspace-template → stored flavor) and spawn under
     #   `EzagentDomainInstanceMessage.AgentSupervisor`.
     #
     # PR #149 (SPEC v2 §5.14): `Ezagent.AgentTypeRegistry` deleted.
     # Per-flavor lookup table replaced by snapshot-first /
-    # template-second / prefix-fallback resolution. Plugins no longer
-    # register flavor → spawn fn pairs; Template Class registration is
-    # the declarative channel for new agent flavors.
+    # template-second / stored-flavor resolution. Plugins no longer
+    # register flavor → spawn fn pairs; Template Class registration
+    # and stored agent flavor are the declarative channel for new
+    # agent flavors.
     :ok =
       Ezagent.SpawnRegistry.register("entity", fn uri ->
-        case uri.host do
-          "user" ->
+        case Ezagent.URI.type(uri) do
+          {:ok, "user"} ->
             # PR-M (2026-05-20): special-case admin URI to seed the
             # bootstrap caps. SPEC caps-cleanup-v1 §4.4 (PR-CC-1):
             # admin's caps are conceptually granted by
@@ -683,7 +693,7 @@ defmodule EzagentDomainInstanceMessage.Application do
             # plugin no longer needs to name a sibling domain's supervisor.
             Ezagent.Kind.spawn(User, %{uri: uri, initial_caps: initial_caps})
 
-          "agent" ->
+          {:ok, "agent"} ->
             spawn_agent(uri)
 
           other ->
@@ -719,20 +729,20 @@ defmodule EzagentDomainInstanceMessage.Application do
         result
       end)
 
-    # Phase 7 PR 37: template:// scheme dispatches on host segment.
-    # `template://agent/<name>` → AgentTemplate Kind.
-    # `template://session/<name>@<hash>` → SessionTemplate Kind (PR 38).
-    # The single spawn fn for the scheme switches on URI.host so
+    # Phase 7 PR 37: template:// scheme dispatches on type segment.
+    # `template://<workspace>/agent/<name>` → AgentTemplate Kind.
+    # `template://<workspace>/session/<name>@<hash>` → SessionTemplate Kind (PR 38).
+    # The single spawn fn for the scheme switches on Ezagent.URI.type/1 so
     # both Template Kinds share the same scheme namespace without
     # colliding on the registry.
     :ok =
       Ezagent.SpawnRegistry.register("template", fn uri ->
-        case uri.host do
-          "agent" ->
+        case Ezagent.URI.type(uri) do
+          {:ok, "agent"} ->
             # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
             Ezagent.Kind.spawn(AgentTemplate, %{uri: uri})
 
-          "session" ->
+          {:ok, "session"} ->
             # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
             Ezagent.Kind.spawn(SessionTemplate, %{uri: uri})
 
@@ -933,8 +943,9 @@ defmodule EzagentDomainInstanceMessage.Application do
   # bind + admin join in one place — same code path for every session,
   # including the default.
 
-  # PR #149 (SPEC v2 §5.14) — agent flavor resolution without
-  # `Ezagent.AgentTypeRegistry`. Three-step lookup:
+  # PR #149 (SPEC v2 §5.14) + unify-uri-query PR-B — agent flavor
+  # resolution without `Ezagent.AgentTypeRegistry` or URI-name parsing.
+  # Three-step lookup:
   #
   # 1. Snapshot — restart case. KindSnapshot stores `kind_type` for
   #    every persisted Kind; the chat plugin maps it back to the Kind
@@ -944,14 +955,14 @@ defmodule EzagentDomainInstanceMessage.Application do
   #    session_template whose `agent_uri` matches; the template's
   #    `class` string ("cc.agent" / "curl.agent" / ...) maps to a Kind
   #    module.
-  # 3. Flavor prefix — boot-time auto-spawn / CLI-driven spawn case.
-  #    The URI's name segment is `<flavor>_<name>`; the flavor is
-  #    resolved via `Ezagent.AgentFlavorRegistry` (plugin authoring
-  #    contract SPEC §6.3 / codex MEDIUM-5 — each agent-flavor plugin
-  #    declares `agent_flavors/0`, `Ezagent.Plugin.boot/1` registers
-  #    it). The `test` fixture flavor is the one non-plugin exception.
+  # 3. Stored flavor — boot-time auto-spawn / CLI-driven spawn case.
+  #    The owning domain resolves `:flavor` through `Ezagent.UriQuery`,
+  #    then maps the stored flavor through `Ezagent.AgentFlavorRegistry`
+  #    (plugin authoring contract SPEC §6.3 / codex MEDIUM-5 — each
+  #    agent-flavor plugin declares `agent_flavors/0`,
+  #    `Ezagent.Plugin.boot/1` registers it).
   defp spawn_agent(%URI{} = uri) do
-    case lookup_kind_module_for_agent(uri) do
+    case AgentModuleResolver.lookup_kind_module_for_agent(uri) do
       {:ok, kind_module} ->
         # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
         # Each agent Kind (Agent / CurlAgent / Echo) declares its own
@@ -960,152 +971,15 @@ defmodule EzagentDomainInstanceMessage.Application do
         # has its own InstanceSupervisor under the curl_agent plugin).
         Ezagent.Kind.spawn(kind_module, %{uri: uri})
 
+      {:error, reason} ->
+        {:error, reason}
+
       :error ->
         {:error, {:no_kind_module_for_agent, URI.to_string(uri)}}
     end
   end
 
-  defp lookup_kind_module_for_agent(%URI{} = uri) do
-    uri_str = URI.to_string(uri)
-
-    with :error <- lookup_via_snapshot(uri_str),
-         :error <- lookup_via_workspace_template(uri_str),
-         :error <- lookup_via_flavor_prefix(uri) do
-      :error
-    else
-      {:ok, _mod} = ok -> ok
-    end
-  end
-
-  defp lookup_via_snapshot(uri_str) do
-    case Ezagent.Ecto.KindSnapshot.get(uri_str) do
-      %Ezagent.Ecto.KindSnapshot{kind_type: kt} when is_binary(kt) and kt != "" ->
-        case kind_module_from_kind_type(kt) do
-          nil -> :error
-          mod -> {:ok, mod}
-        end
-
-      _ ->
-        :error
-    end
-  rescue
-    # DB unavailable at boot — fall through to next resolver step. The
-    # snapshot is an optimization; missing it just means we hit step 2/3.
-    _ -> :error
-  end
-
-  defp lookup_via_workspace_template(uri_str) do
-    if Code.ensure_loaded?(Ezagent.Workspace.Store) do
-      Ezagent.Workspace.Store.list_all()
-      |> Enum.find_value(fn ws ->
-        ws.session_templates
-        |> Map.values()
-        |> Enum.find_value(fn tmpl ->
-          case tmpl do
-            %{"agent_uri" => ^uri_str, "class" => class} when is_binary(class) ->
-              kind_module_from_class(class)
-
-            %{"agent_uri" => ^uri_str, class: class} when is_binary(class) ->
-              kind_module_from_class(class)
-
-            _ ->
-              nil
-          end
-        end)
-      end)
-      |> case do
-        nil -> :error
-        mod -> {:ok, mod}
-      end
-    else
-      :error
-    end
-  rescue
-    # Same boot-time DB unavailability tolerance as step 1.
-    _ -> :error
-  end
-
-  defp lookup_via_flavor_prefix(%URI{host: "agent", path: "/" <> rest}) when rest != "" do
-    # Phase 9 PR-2 (SPEC v3 §3): entity URI is 3-segment
-    # `/<workspace>/<entity_name>`; flavor lives in entity_name prefix.
-    with [_workspace, entity_name] when entity_name != "" <-
-           String.split(rest, "/", parts: 2),
-         [flavor, suffix] when flavor != "" and suffix != "" <-
-           String.split(entity_name, "_", parts: 2) do
-      case kind_module_from_flavor(flavor) do
-        nil -> :error
-        mod -> {:ok, mod}
-      end
-    else
-      _ -> :error
-    end
-  end
-
-  defp lookup_via_flavor_prefix(_), do: :error
-
-  # KindSnapshot.kind_type is `to_string(kind_module.type_name())` per
-  # the Snapshot writer (kind/snapshot.ex). Map back to the Kind module.
-  defp kind_module_from_kind_type("agent"), do: Ezagent.Entity.Agent
-  defp kind_module_from_kind_type("curl_agent"), do: Ezagent.Entity.CurlAgent
-  defp kind_module_from_kind_type("echo"), do: Ezagent.Entity.Echo
-  defp kind_module_from_kind_type(_), do: nil
-
-  # Template Class names (e.g. "cc.agent" registered by the cc plugin;
-  # "curl.agent" by ezagent_plugin_curl_agent; "echo.agent" by
-  # ezagent_plugin_echo) map to Kind modules.
-  #
-  # Plugin authoring contract SPEC §6.3 + codex MEDIUM-5: the
-  # flavor→{kind, template_class} mapping is no longer hardcoded here —
-  # each agent-flavor plugin declares `agent_flavors/0` and
-  # `Ezagent.Plugin.boot/1` registers it in
-  # `Ezagent.AgentFlavorRegistry`. This resolver consults that registry
-  # instead. Adding a 6th agent-flavor plugin now touches only that
-  # plugin's own dir. The decl carries the `template_class` module, so
-  # a Template Class NAME (e.g. "cc.agent") is matched against
-  # `template_class.template_name/0`.
-  defp kind_module_from_class(class) when is_binary(class) do
-    Enum.find_value(Ezagent.AgentFlavorRegistry.list_all(), fn
-      {_flavor, %{kind: kind, template_class: tc}} ->
-        if class_name(tc) == class, do: kind, else: nil
-    end)
-  end
-
-  defp kind_module_from_class(_), do: nil
-
-  defp class_name(template_class) do
-    template_class.template_name()
-  rescue
-    # A declared template_class module that does not (yet) export
-    # `template_name/0` — tolerate it (the snapshot / flavor-prefix
-    # resolver steps still cover the spawn).
-    _ -> nil
-  end
-
-  # Flavor prefix (`cc_` / `curl_` / `echo_` / `test_`) → Kind module.
-  #
-  # Plugin authoring contract SPEC §6.3 + codex MEDIUM-5: real agent
-  # flavors (cc / curl / echo) resolve via `Ezagent.AgentFlavorRegistry`
-  # — populated by each plugin's `agent_flavors/0` declaration through
-  # `Ezagent.Plugin.boot/1`. The registry is published before this
-  # resolver runs at dispatch time (the plugin apps boot, and
-  # `boot/1`'s Phase 2 registers the flavor, well before any
-  # `entity://agent/...` dispatch); a not-yet-registered flavor returns
-  # `:error` from `lookup/1` and this fn returns `nil` — the caller
-  # then yields `{:error, {:no_kind_module_for_agent, _}}` rather than
-  # crashing (graceful boot-ordering tolerance).
-  #
-  # `test` is NOT a plugin flavor — `test_*` agents are mention/routing
-  # test fixtures with no owning plugin; they map to the shared
-  # `Ezagent.Entity.Agent` Kind so the SpawnRegistry round-trip works
-  # in tests. It is kept as an explicit non-registry fallback.
-  defp kind_module_from_flavor("test"), do: Ezagent.Entity.Agent
-
-  defp kind_module_from_flavor(flavor) when is_binary(flavor) do
-    case Ezagent.AgentFlavorRegistry.lookup(flavor) do
-      {:ok, %{kind: kind}} -> kind
-      :error -> nil
-    end
-  end
-
-  defp kind_module_from_flavor(_), do: nil
+  # Agent-URI → Kind-module resolution lives in
+  # `EzagentDomainInstanceMessage.AgentModuleResolver` (#25 Phase-3
+  # PR-3P); `spawn_agent/1` above delegates to it then spawns.
 end

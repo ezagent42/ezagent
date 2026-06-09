@@ -44,7 +44,7 @@ defmodule Ezagent.Registration do
   """
   @spec slug_available?(String.t(), String.t()) :: boolean()
   def slug_available?(slug, workspace) when is_binary(slug) and is_binary(workspace) do
-    is_nil(Users.get_by_uri("entity://user/#{workspace}/" <> slug))
+    is_nil(Users.get_by_uri(Ezagent.URI.user(workspace, slug)))
   end
 
   @doc "Return the first free `<slug>`, `<slug>-2`, `<slug>-3`, ... variant in the workspace."
@@ -112,8 +112,7 @@ defmodule Ezagent.Registration do
   def create_principal(slug, display_name, email, workspace)
       when is_binary(slug) and is_binary(display_name) and is_binary(email) and
              is_binary(workspace) do
-    uri_str = "entity://user/#{workspace}/" <> slug
-    uri = Ezagent.URI.new!(uri_str)
+    uri = Ezagent.URI.user(workspace, slug)
 
     cond do
       not slug_available?(slug, workspace) ->
@@ -129,7 +128,7 @@ defmodule Ezagent.Registration do
             with {:ok, _user} <- Users.create(uri, nil, []),
                  {:ok, _profile} <-
                    Profile.upsert(%{
-                     entity_uri: uri_str,
+                     entity_uri: Ezagent.URI.stable_key(uri),
                      display_name: String.trim(display_name),
                      email: email
                    }) do

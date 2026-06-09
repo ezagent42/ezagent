@@ -28,13 +28,13 @@ defmodule Ezagent.Chat.ReadMarkerTest do
   # the assert_receive pin would never match.
   defp unique_session_uri(suffix) do
     Ezagent.URI.new!(
-      "session://default/team-alpha/read_marker_#{suffix}_#{System.unique_integer([:positive])}"
+      "session://team-alpha/default/read_marker_#{suffix}_#{System.unique_integer([:positive])}"
     )
   end
 
   defp unique_user_uri(suffix) do
     Ezagent.URI.new!(
-      "entity://user/team-alpha/read_marker_user_#{suffix}_#{System.unique_integer([:positive])}"
+      "entity://team-alpha/user/read_marker_user_#{suffix}_#{System.unique_integer([:positive])}"
     )
   end
 

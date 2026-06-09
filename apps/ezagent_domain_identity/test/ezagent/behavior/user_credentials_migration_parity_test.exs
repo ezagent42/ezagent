@@ -28,11 +28,7 @@ defmodule Ezagent.Behavior.UserCredentialsMigrationParityTest do
   alias Ezagent.Users
 
   defp build_invocation(user_uri, action, args) do
-    target =
-      user_uri
-      |> URI.to_string()
-      |> Kernel.<>("?action=user_credentials.#{action}")
-      |> URI.parse()
+    target = Ezagent.URI.with_action(user_uri, :user_credentials, action)
 
     %Invocation{
       target: target,
@@ -48,7 +44,7 @@ defmodule Ezagent.Behavior.UserCredentialsMigrationParityTest do
 
   setup do
     n = System.unique_integer([:positive])
-    user_uri = URI.parse("entity://user/uc-parity-#{n}/alice")
+    user_uri = Ezagent.URI.new!("entity://uc-parity-#{n}/user/alice")
     {:ok, _decoded} = Users.create(user_uri, "initial-pw", [])
 
     state = %{
@@ -110,7 +106,7 @@ defmodule Ezagent.Behavior.UserCredentialsMigrationParityTest do
 
     test "missing target user (ghost URI) propagates :not_found from Users.set_password",
          %{state: state} do
-      ghost_uri = URI.parse("entity://user/uc-parity-ghost/no-such-user")
+      ghost_uri = Ezagent.URI.new!("entity://uc-parity-ghost/user/no-such-user")
       inv = build_invocation(ghost_uri, :set_password, %{password: "x"})
 
       assert {:error, :not_found} =

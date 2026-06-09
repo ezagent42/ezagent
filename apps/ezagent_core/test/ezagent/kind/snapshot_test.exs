@@ -7,7 +7,9 @@ defmodule Ezagent.Kind.SnapshotTest do
 
   test "load_or_init for :ephemeral returns fresh slices" do
     uri =
-      URI.parse("entity://agent/team-alpha/test_snap-eph-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!(
+        "entity://team-alpha/agent/test_snap-eph-#{System.unique_integer([:positive])}"
+      )
 
     state = Snapshot.load_or_init(uri, TestKind, %{uri: uri})
 
@@ -15,7 +17,11 @@ defmodule Ezagent.Kind.SnapshotTest do
   end
 
   test "load_or_init for :on_change Kind without prior snapshot init_fresh" do
-    uri = URI.parse("entity://user/team-alpha/snap-noprior-#{System.unique_integer([:positive])}")
+    uri =
+      Ezagent.URI.new!(
+        "entity://team-alpha/user/snap-noprior-#{System.unique_integer([:positive])}"
+      )
+
     state = Snapshot.load_or_init(uri, Ezagent.Entity.User, %{uri: uri})
 
     # Allen 2026-05-26 — PR #126 originally added ApiKeys to User; the
@@ -39,7 +45,9 @@ defmodule Ezagent.Kind.SnapshotTest do
 
   test "maybe_save no-op for :ephemeral" do
     uri =
-      URI.parse("entity://agent/team-alpha/test_snap-eph-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!(
+        "entity://team-alpha/agent/test_snap-eph-#{System.unique_integer([:positive])}"
+      )
 
     assert :ok = Snapshot.maybe_save(uri, TestKind, %{}, %{test: %{count: 1}})
   end
@@ -48,7 +56,9 @@ defmodule Ezagent.Kind.SnapshotTest do
     state = %{identity: %{caps: MapSet.new()}}
 
     uri =
-      URI.parse("entity://user/team-alpha/snap-nochange-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!(
+        "entity://team-alpha/user/snap-nochange-#{System.unique_integer([:positive])}"
+      )
 
     assert :ok = Snapshot.maybe_save(uri, Ezagent.Entity.User, state, state)
     # No row written
@@ -67,7 +77,11 @@ defmodule Ezagent.Kind.SnapshotTest do
       nil
     )
 
-    uri = URI.parse("entity://user/team-alpha/snap-written-#{System.unique_integer([:positive])}")
+    uri =
+      Ezagent.URI.new!(
+        "entity://team-alpha/user/snap-written-#{System.unique_integer([:positive])}"
+      )
+
     uri_str = URI.to_string(uri)
 
     assert :ok =
@@ -94,7 +108,10 @@ defmodule Ezagent.Kind.SnapshotTest do
     # Save a synthetic User snapshot carrying the LEGACY `:api_keys`
     # slice content (the pre-flip shape) AND the post-flip slices,
     # then re-load and assert the orphan is gone.
-    uri = URI.parse("entity://user/team-alpha/snap-orphan-#{System.unique_integer([:positive])}")
+    uri =
+      Ezagent.URI.new!(
+        "entity://team-alpha/user/snap-orphan-#{System.unique_integer([:positive])}"
+      )
 
     pre_flip_state = %{
       identity: %{caps: MapSet.new()},
@@ -126,7 +143,9 @@ defmodule Ezagent.Kind.SnapshotTest do
   end
 
   test "load_or_init restores from DB if snapshot present (round-trip)" do
-    uri = URI.parse("entity://user/team-alpha/snap-rt-#{System.unique_integer([:positive])}")
+    uri =
+      Ezagent.URI.new!("entity://team-alpha/user/snap-rt-#{System.unique_integer([:positive])}")
+
     caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
 
     :ok = Snapshot.save_now(uri, Ezagent.Entity.User, %{identity: %{caps: caps}})
@@ -151,7 +170,11 @@ defmodule Ezagent.Kind.SnapshotTest do
   end
 
   test "term_to_binary survives MapSet round-trip (Q1: lossless encoding)" do
-    uri = URI.parse("entity://user/team-alpha/snap-mapset-#{System.unique_integer([:positive])}")
+    uri =
+      Ezagent.URI.new!(
+        "entity://team-alpha/user/snap-mapset-#{System.unique_integer([:positive])}"
+      )
+
     caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
 
     :ok = Snapshot.save_now(uri, Ezagent.Entity.User, %{identity: %{caps: caps}})
@@ -166,7 +189,11 @@ defmodule Ezagent.Kind.SnapshotTest do
 
   test "load_or_init merges fresh init with loaded state (Q5: new Behavior path)" do
     # Persist a state that's MISSING a slice the Kind would normally init
-    uri = URI.parse("entity://user/team-alpha/snap-merge-#{System.unique_integer([:positive])}")
+    uri =
+      Ezagent.URI.new!(
+        "entity://team-alpha/user/snap-merge-#{System.unique_integer([:positive])}"
+      )
+
     # Save an empty map (simulates a snapshot from when no Behaviors existed)
     :ok = Snapshot.save_now(uri, Ezagent.Entity.User, %{})
 
@@ -178,7 +205,9 @@ defmodule Ezagent.Kind.SnapshotTest do
 
   test "load_or_init FAILS LOUD when a row is PRESENT but unloadable — never resets to fresh (PR-4 blocker #2: empty-over-good wipe)" do
     uri =
-      URI.parse("entity://user/team-alpha/snap-unloadable-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!(
+        "entity://team-alpha/user/snap-unloadable-#{System.unique_integer([:positive])}"
+      )
 
     uri_str = URI.to_string(uri)
     caps = Ezagent.SystemPrincipal.caps("system://bootstrap")

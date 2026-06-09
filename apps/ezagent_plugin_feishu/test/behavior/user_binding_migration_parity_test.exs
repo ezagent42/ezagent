@@ -29,14 +29,14 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingMigrationParityTest do
 
   alias EzagentPluginFeishu.Behavior.UserBinding, as: BV
 
-  @admin_uri URI.parse("entity://user/system/admin")
-  @user_uri URI.parse("entity://user/team-alpha/alice")
+  @admin_uri Ezagent.URI.new!("entity://system/user/admin")
+  @user_uri Ezagent.URI.new!("entity://team-alpha/user/alice")
 
   defp ctx(slice \\ %{bind_count: 0}) do
     %{
       caller: @admin_uri,
       caps: MapSet.new(),
-      self_uri: URI.parse("workspace://team-alpha"),
+      self_uri: Ezagent.URI.new!("workspace://team-alpha"),
       reply: :sync,
       read: fn key, default -> Map.get(slice, key, default) end
     }

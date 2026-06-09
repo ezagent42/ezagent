@@ -42,17 +42,16 @@ defmodule Ezagent.Entity.NpAgent do
 
   use Ezagent.Kind,
     pattern: :entity,
-    uri_scheme: "entity://agent/",
     type_name: :np_agent,
     supervisor: EzagentPluginNp.InstanceSupervisor
 
   @behaviour Ezagent.Kind
 
-  attach Ezagent.Behavior.NpAgent
+  attach(Ezagent.Behavior.NpAgent)
   # PTY-phase-state-machine 2026-05-26 follow-up (b) codex HIGH-1
   # fix: Terminable attached so `lifecycle.terminate` dispatches reach
   # np-agents (Dead-Restart badge in LV).
-  attach Ezagent.Behavior.Terminable
+  attach(Ezagent.Behavior.Terminable)
 
   # Kind.Server still reads behaviors/0; keep the legacy callback.
   def behaviors, do: [Ezagent.Behavior.NpAgent, Ezagent.Behavior.Terminable]

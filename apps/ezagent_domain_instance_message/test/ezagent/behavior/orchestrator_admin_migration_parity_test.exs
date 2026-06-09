@@ -80,7 +80,7 @@ defmodule Ezagent.Behavior.OrchestratorAdminMigrationParityTest do
     end
 
     test "non-session URI returns :no_owner" do
-      assert OrchestratorAdmin.data_owner(URI.parse("entity://user/team-alpha/u")) ==
+      assert OrchestratorAdmin.data_owner(Ezagent.URI.new!("entity://team-alpha/user/u")) ==
                :no_owner
     end
   end

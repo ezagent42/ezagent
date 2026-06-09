@@ -16,12 +16,12 @@ defmodule EzagentDomainInstanceMessage.Integration.DynamicSessionTest do
     short = "dyn-#{System.unique_integer([:positive])}"
     admin_uri = User.admin_uri()
     # SPEC #324: workspace is derived structurally from the creator URI.
-    # Admin's URI is `entity://user/system/admin` → workspace `system`.
+    # Admin's URI is `entity://system/user/admin` → workspace `system`.
     # SPEC #366 (Allen 2026-05-26) — `:template_name` is now required.
     assert {:ok, session_uri, _meta} =
              EzagentDomainInstanceMessage.SessionCreator.create_session(short, admin_uri, template_name: "default")
 
-    assert URI.to_string(session_uri) == "session://default/system/#{short}"
+    assert URI.to_string(session_uri) == "session://system/default/#{short}"
 
     # KindRegistry has it
     assert {:ok, pid} = KindRegistry.lookup(session_uri)
@@ -63,8 +63,8 @@ defmodule EzagentDomainInstanceMessage.Integration.DynamicSessionTest do
       EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(), template_name: "default")
 
     uris = EzagentDomainInstanceMessage.list_sessions() |> Enum.map(&URI.to_string/1)
-    assert "session://default/system/main" in uris
-    assert "session://default/system/#{short}" in uris
+    assert "session://system/default/main" in uris
+    assert "session://system/default/#{short}" in uris
   end
 
   # Task #55 (Allen 2026-05-27) — workspace-scoped session listing
@@ -88,8 +88,8 @@ defmodule EzagentDomainInstanceMessage.Integration.DynamicSessionTest do
       |> EzagentDomainInstanceMessage.list_sessions()
       |> Enum.map(&URI.to_string/1)
 
-    assert "session://default/system/#{short}" in system_uris
-    refute "session://default/system/#{short}" in other_uris
+    assert "session://system/default/#{short}" in system_uris
+    refute "session://system/default/#{short}" in other_uris
   end
 
   defp wait_until(fun, retries \\ 50) do

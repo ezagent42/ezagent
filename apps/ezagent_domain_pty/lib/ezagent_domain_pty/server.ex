@@ -387,7 +387,7 @@ defmodule Ezagent.Domain.Pty.Server do
   def init(args) do
     agent_uri = Map.fetch!(args, :agent_uri)
     cwd = Map.get(args, :cwd, File.cwd!())
-    test_mode = Map.get(args, :test_mode, Mix.env() == :test)
+    test_mode = Map.get(args, :test_mode, Code.ensure_loaded?(Mix) and Mix.env() == :test)
     cmd_override = Map.get(args, :cmd_override)
     cmd_env = Map.get(args, :cmd_env, %{})
 
@@ -422,6 +422,34 @@ defmodule Ezagent.Domain.Pty.Server do
   @doc false
   def default_auto_prompts do
     [
+      %{
+        name: :theme_dialog,
+        # claude v2.1.x shows a first-run THEME picker the very first time it
+        # runs against a fresh CLAUDE_CONFIG_DIR (no onboarding flags). It
+        # appears BEFORE the dev-channels / trust-folder dialogs, so an
+        # unanswered theme picker hangs the spawn here and the scanner never
+        # reaches the dialogs it already handles — the fresh-stack failure seen
+        # in the §5.B credential-cascade live E2E (2026-06-07). Bare Enter
+        # confirms the highlighted default (claude auto-detects e.g. "Dark mode").
+        #
+        # Match the FULL menu shape, not just two words: an auto-prompt that does
+        # not fire at startup (e.g. theme already persisted) stays armed for the
+        # whole session, so a loose match like ["text style", "Dark mode"] would
+        # later false-positive on ordinary claude output and inject a spurious
+        # Enter (codex review of PR #611). Requiring the header + `/theme` hint +
+        # three distinct option labels makes the match specific to this exact
+        # dialog — ordinary prose cannot satisfy all five. The radio menu is
+        # static (no animated banner), so these labels are not fragmented.
+        match: [
+          "Choose the text style",
+          "/theme",
+          "Auto (match terminal)",
+          "Dark mode",
+          "Light mode"
+        ],
+        send: "\r",
+        fired?: false
+      },
       %{
         name: :dev_channels_dialog,
         # Anchor on the menu OPTION label, not the WARNING prose: claude's

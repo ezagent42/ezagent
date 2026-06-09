@@ -19,8 +19,8 @@ defmodule EzagentPluginLiveview.ProfileLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    entity_uri = socket.assigns.current_entity_uri || Ezagent.URI.new!("entity://user/system/admin")
-    entity_uri_str = URI.to_string(entity_uri)
+    entity_uri = socket.assigns.current_entity_uri || Ezagent.Entity.User.admin_uri()
+    entity_uri_str = Ezagent.URI.stable_key(entity_uri)
 
     {:ok,
      socket
@@ -102,83 +102,101 @@ defmodule EzagentPluginLiveview.ProfileLive do
           current_path="/profile"
           status={%{agents_alive: 0, bridges: 0, debug_events: 0, version: "dev"}}
         >
-      <:main_window>
-        <div class="flex-1 overflow-auto px-6 py-6 max-w-3xl">
-          <.page_header title={gettext("Profile")}>
-            <:subtitle>{gettext("Your entity URI and access summary.")}</:subtitle>
-          </.page_header>
+          <:main_window>
+            <div class="flex-1 overflow-auto px-6 py-6 max-w-3xl">
+              <.page_header title={gettext("Profile")}>
+                <:subtitle>{gettext("Your entity URI and access summary.")}</:subtitle>
+              </.page_header>
 
-          <.card class="mt-4">
-            <div class="flex items-center gap-4">
-              <.avatar uri={@entity_uri_str} size="md" />
-              <div class="flex-1">
-                <div class="text-xs text-zinc-500">{gettext("Display name")}</div>
-                <%= if @editing_display_name? do %>
-                  <form phx-submit="save_display_name" phx-click-away="cancel_edit_display_name" class="flex gap-1 items-center mt-0.5">
-                    <input
-                      type="text"
-                      name="display_name"
-                      value={@display_name}
-                      autofocus
-                      phx-key="escape"
-                      phx-keydown="cancel_edit_display_name"
-                      class="flex-1 px-2 py-1 text-sm border border-blue-400 dark:border-blue-600 rounded bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
-                    />
-                    <button type="submit" class="p-1 text-emerald-600 hover:text-emerald-700 dark:text-emerald-400" aria-label={gettext("Save")}>
-                      <.icon name="check" size="sm" />
-                    </button>
-                    <button type="button" phx-click="cancel_edit_display_name" class="p-1 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300" aria-label={gettext("Cancel")}>
-                      <.icon name="x" size="sm" />
-                    </button>
-                  </form>
-                <% else %>
-                  <div class="flex items-center gap-1">
-                    <span class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{@display_name}</span>
-                    <button
-                      type="button"
-                      phx-click="edit_display_name"
-                      aria-label={gettext("Edit display name")}
-                      class="p-1 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded"
-                    >
-                      <.icon name="pencil" size="xs" />
-                    </button>
+              <.card class="mt-4">
+                <div class="flex items-center gap-4">
+                  <.avatar uri={@entity_uri_str} size="md" />
+                  <div class="flex-1">
+                    <div class="text-xs text-zinc-500">{gettext("Display name")}</div>
+                    <%= if @editing_display_name? do %>
+                      <form
+                        phx-submit="save_display_name"
+                        phx-click-away="cancel_edit_display_name"
+                        class="flex gap-1 items-center mt-0.5"
+                      >
+                        <input
+                          type="text"
+                          name="display_name"
+                          value={@display_name}
+                          autofocus
+                          phx-key="escape"
+                          phx-keydown="cancel_edit_display_name"
+                          class="flex-1 px-2 py-1 text-sm border border-blue-400 dark:border-blue-600 rounded bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+                        />
+                        <button
+                          type="submit"
+                          class="p-1 text-emerald-600 hover:text-emerald-700 dark:text-emerald-400"
+                          aria-label={gettext("Save")}
+                        >
+                          <.icon name="check" size="sm" />
+                        </button>
+                        <button
+                          type="button"
+                          phx-click="cancel_edit_display_name"
+                          class="p-1 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                          aria-label={gettext("Cancel")}
+                        >
+                          <.icon name="x" size="sm" />
+                        </button>
+                      </form>
+                    <% else %>
+                      <div class="flex items-center gap-1">
+                        <span class="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                          {@display_name}
+                        </span>
+                        <button
+                          type="button"
+                          phx-click="edit_display_name"
+                          aria-label={gettext("Edit display name")}
+                          class="p-1 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded"
+                        >
+                          <.icon name="pencil" size="xs" />
+                        </button>
+                      </div>
+                    <% end %>
+                    <div class="mt-2 text-xs text-zinc-500">{gettext("Entity URI")}</div>
+                    <.uri_chip uri={@entity_uri_str} />
+                    <p :if={@flash_error} class="text-rose-600 dark:text-rose-400 text-xs mt-2">
+                      {@flash_error}
+                    </p>
+                    <p :if={@flash_info} class="text-emerald-600 dark:text-emerald-400 text-xs mt-2">
+                      {@flash_info}
+                    </p>
                   </div>
-                <% end %>
-                <div class="mt-2 text-xs text-zinc-500">{gettext("Entity URI")}</div>
-                <.uri_chip uri={@entity_uri_str} />
-                <p :if={@flash_error} class="text-rose-600 dark:text-rose-400 text-xs mt-2">{@flash_error}</p>
-                <p :if={@flash_info} class="text-emerald-600 dark:text-emerald-400 text-xs mt-2">{@flash_info}</p>
-              </div>
-            </div>
-          </.card>
-
-          <div class="grid grid-cols-1 gap-3 mt-4">
-            <a
-              href={"/identities/users/" <> URI.encode_www_form(@entity_uri_str) <> "/caps"}
-              class="block"
-            >
-              <.card>
-                <div class="font-medium text-sm">{gettext("Capabilities")}</div>
-                <div class="text-2xl font-mono mt-1">{@caps_count}</div>
-                <div class="text-xs text-zinc-500 mt-1">→ {gettext("Manage")}</div>
+                </div>
               </.card>
-            </a>
-          </div>
-          <%!--
+
+              <div class="grid grid-cols-1 gap-3 mt-4">
+                <a
+                  href={"/identities/users/" <> URI.encode_www_form(@entity_uri_str) <> "/caps"}
+                  class="block"
+                >
+                  <.card>
+                    <div class="font-medium text-sm">{gettext("Capabilities")}</div>
+                    <div class="text-2xl font-mono mt-1">{@caps_count}</div>
+                    <div class="text-xs text-zinc-500 mt-1">→ {gettext("Manage")}</div>
+                  </.card>
+                </a>
+              </div>
+              <%!--
             Allen 2026-05-26 — the "API Keys" card was removed from the
             profile page along with the ApiKeys-to-Agent flip. Users no
             longer hold api_keys; each agent does. See
             /identities/agents/<uri>/api-keys for the per-agent UI.
           --%>
 
-          <div class="mt-6 text-right">
-            <form action="/logout" method="post">
-              <.button variant="ghost" type="submit">{gettext("Sign out")}</.button>
-            </form>
-          </div>
-        </div>
-      </:main_window>
-
+              <div class="mt-6 text-right">
+                <form action="/logout" method="post">
+                  <.button variant="ghost" type="submit">{gettext("Sign out")}</.button>
+                </form>
+              </div>
+            </div>
+          </:main_window>
         </WorkspaceShell.workspace_shell>
       </:body>
     </AppShell.app_shell>

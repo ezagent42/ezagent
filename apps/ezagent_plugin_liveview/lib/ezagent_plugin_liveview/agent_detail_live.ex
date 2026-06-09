@@ -76,9 +76,12 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
     # with try/rescue keeping the `:error` failure contract.
     try do
       case Ezagent.URI.new!(decoded) do
-        %URI{scheme: "entity", host: "agent", path: "/" <> name} = uri
-        when is_binary(name) and name != "" ->
-          {:ok, uri}
+        %URI{scheme: "entity"} = uri ->
+          if Ezagent.URI.type?(uri, :agent) and match?({:ok, _name}, Ezagent.URI.name(uri)) do
+            {:ok, uri}
+          else
+            :error
+          end
 
         _ ->
           :error
@@ -110,12 +113,12 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
   # Phase 8b §1.10 — CC Bridges (v2) panel moved here from admin_live.
   # Per-agent so the operator can see "is this agent's WS bridge live?"
   # while looking at the agent's other status data. Returns `nil` if
-  # the BridgeRegistry has no entry for this agent (most likely cause:
+  # the AgentBridge.Registry has no entry for this agent (most likely cause:
   # PtyServer is running but the Python MCP bridge inside claude
   # hasn't connected back via `/cc_socket` yet, or has disconnected).
   defp load_bridge_entry(agent_uri) do
-    if Code.ensure_loaded?(EzagentPluginCc.BridgeRegistry) do
-      EzagentPluginCc.BridgeRegistry.list_connected()
+    if Code.ensure_loaded?(Ezagent.AgentBridge.Registry) do
+      Ezagent.AgentBridge.Registry.list_connected()
       |> Enum.find(fn {uri, _entry} ->
         URI.to_string(uri) == URI.to_string(agent_uri)
       end)
@@ -240,8 +243,8 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
   defp resolve_caller(socket) do
     case socket.assigns[:current_entity_uri] do
       nil ->
-        {Ezagent.SystemPrincipal.uri("lv-anon-mount"),
-         Ezagent.SystemPrincipal.caps("system://lv-anon-mount")}
+        uri = Ezagent.SystemPrincipal.uri("lv-anon-mount")
+        {uri, Ezagent.SystemPrincipal.caps(uri)}
 
       caller ->
         {caller, Ezagent.Identity.list_caps_for(caller)}
@@ -261,7 +264,9 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
   def render(%{not_found: true} = assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(Map.get(assigns, :current_entity_uri) || Ezagent.URI.new!("entity://user/system/admin"))
+        Ezagent.URI.stable_key(
+          Map.get(assigns, :current_entity_uri) || Ezagent.Entity.User.admin_uri()
+        )
       end)
 
     ~H"""
@@ -281,20 +286,22 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
           current_path="/identities/agents"
           status={%{agents_alive: 0, bridges: 0, debug_events: 0, version: "dev"}}
         >
-      <:main_window>
-        <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-          <.page_header title={gettext("Agent URI invalid")} />
-          <p>
-            <code>{@bad_uri}</code>
-          </p>
-          <p>
-            <a href="/identities/agents" class="text-blue-600 dark:text-blue-400 hover:text-blue-700">
-              ← {gettext("Agents")}
-            </a>
-          </p>
-        </div>
-      </:main_window>
-
+          <:main_window>
+            <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
+              <.page_header title={gettext("Agent URI invalid")} />
+              <p>
+                <code>{@bad_uri}</code>
+              </p>
+              <p>
+                <a
+                  href="/identities/agents"
+                  class="text-blue-600 dark:text-blue-400 hover:text-blue-700"
+                >
+                  ← {gettext("Agents")}
+                </a>
+              </p>
+            </div>
+          </:main_window>
         </WorkspaceShell.workspace_shell>
       </:body>
     </AppShell.app_shell>
@@ -304,7 +311,9 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(Map.get(assigns, :current_entity_uri) || Ezagent.URI.new!("entity://user/system/admin"))
+        Ezagent.URI.stable_key(
+          Map.get(assigns, :current_entity_uri) || Ezagent.Entity.User.admin_uri()
+        )
       end)
 
     ~H"""
@@ -324,100 +333,109 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
           current_path="/identities/agents"
           status={%{agents_alive: 0, bridges: 0, debug_events: 0, version: "dev"}}
         >
-      <:main_window>
-        <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-          <.page_header title={gettext("Agent: %{uri}", uri: URI.to_string(@agent_uri))}>
-            <:subtitle>
-              <a href="/identities/agents" class="text-blue-600 dark:text-blue-400 hover:text-blue-700">
-                ← {gettext("Agents")}
-              </a>
-              <span class="ml-4 text-zinc-500">{gettext("auto-refresh every 2s")}</span>
-            </:subtitle>
-          </.page_header>
+          <:main_window>
+            <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
+              <.page_header title={gettext("Agent: %{uri}", uri: Ezagent.URI.stable_key(@agent_uri))}>
+                <:subtitle>
+                  <a
+                    href="/identities/agents"
+                    class="text-blue-600 dark:text-blue-400 hover:text-blue-700"
+                  >
+                    ← {gettext("Agents")}
+                  </a>
+                  <span class="ml-4 text-zinc-500">{gettext("auto-refresh every 2s")}</span>
+                </:subtitle>
+              </.page_header>
 
-          <p :if={@flash_error} class="text-rose-600 dark:text-rose-400 text-xs mt-3">
-            {@flash_error}
-          </p>
+              <p :if={@flash_error} class="text-rose-600 dark:text-rose-400 text-xs mt-3">
+                {@flash_error}
+              </p>
 
-          <%!-- V1 acceptance fix (2026-05-21) — new status shape:
+              <%!-- V1 acceptance fix (2026-05-21) — new status shape:
                %{phase: :alive | :registered | :not_found | :error,
                  flavor: String.t() | nil, detail: map() | nil}
                per Ezagent.Domain.Agent. --%>
-          <%= cond do %>
-            <% @status.phase in [:not_found, :registered] -> %>
-              <.card class="mt-6">
-                <h2 class="text-sm text-rose-600 dark:text-rose-400 font-medium mb-2">
-                  {phase_header(@status.phase)}
-                </h2>
-                <p class="text-xs">
-                  {phase_help_text(@status, @agent_uri)}
-                </p>
-              </.card>
-            <% status_has_pty_detail?(@status) -> %>
-              <% s = @status.detail %>
-              <.card class="mt-6">
-                <h2 class="text-sm font-medium mb-3 text-zinc-900 dark:text-zinc-100">
-                  {gettext("Running (%{flavor})", flavor: @status.flavor || gettext("unknown flavor"))}
-                </h2>
-                <table class="w-full text-xs">
-                  <tbody>
-                    <tr>
-                      <td class="py-0.5 w-52 text-zinc-500">os_pid</td>
-                      <td class="font-mono">{s.os_pid || "—"}</td>
-                    </tr>
-                    <tr>
-                      <td class="py-0.5 text-zinc-500">cwd</td>
-                      <td class="font-mono text-[11px]">{s.cwd}</td>
-                    </tr>
-                    <tr>
-                      <td class="py-0.5 text-zinc-500">running</td>
-                      <td class={
-                        if s.running,
-                          do: "text-emerald-600 dark:text-emerald-400 font-semibold",
-                          else: "text-rose-600 dark:text-rose-400"
-                      }>
-                        {if s.running, do: gettext("yes"), else: gettext("no")}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td class="py-0.5 text-zinc-500">test_mode</td>
-                      <td>{s.test_mode}</td>
-                    </tr>
-                    <tr>
-                      <td class="py-0.5 text-zinc-500">auto_prompts</td>
-                      <td>
-                        <%= for p <- s.auto_prompts || [] do %>
-                          <span class={
-                            if p.fired?,
-                              do: "text-emerald-600 dark:text-emerald-400 mr-2",
-                              else: "text-zinc-500 mr-2"
+              <%= cond do %>
+                <% @status.phase in [:not_found, :registered] -> %>
+                  <.card class="mt-6">
+                    <h2 class="text-sm text-rose-600 dark:text-rose-400 font-medium mb-2">
+                      {phase_header(@status.phase)}
+                    </h2>
+                    <p class="text-xs">
+                      {phase_help_text(@status, @agent_uri)}
+                    </p>
+                  </.card>
+                <% status_has_pty_detail?(@status) -> %>
+                  <% s = @status.detail %>
+                  <.card class="mt-6">
+                    <h2 class="text-sm font-medium mb-3 text-zinc-900 dark:text-zinc-100">
+                      {gettext("Running (%{flavor})",
+                        flavor: @status.flavor || gettext("unknown flavor")
+                      )}
+                    </h2>
+                    <table class="w-full text-xs">
+                      <tbody>
+                        <tr>
+                          <td class="py-0.5 w-52 text-zinc-500">os_pid</td>
+                          <td class="font-mono">{s.os_pid || "—"}</td>
+                        </tr>
+                        <tr>
+                          <td class="py-0.5 text-zinc-500">cwd</td>
+                          <td class="font-mono text-[11px]">{s.cwd}</td>
+                        </tr>
+                        <tr>
+                          <td class="py-0.5 text-zinc-500">running</td>
+                          <td class={
+                            if s.running,
+                              do: "text-emerald-600 dark:text-emerald-400 font-semibold",
+                              else: "text-rose-600 dark:text-rose-400"
                           }>
-                            {p.name}: {if p.fired?, do: gettext("fired"), else: gettext("waiting")}
-                          </span>
-                        <% end %>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td class="py-0.5 text-zinc-500">buffer_bytes</td>
-                      <td>{s.buffer_bytes}</td>
-                    </tr>
-                  </tbody>
-                </table>
+                            {if s.running, do: gettext("yes"), else: gettext("no")}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="py-0.5 text-zinc-500">test_mode</td>
+                          <td>{s.test_mode}</td>
+                        </tr>
+                        <tr>
+                          <td class="py-0.5 text-zinc-500">auto_prompts</td>
+                          <td>
+                            <%= for p <- s.auto_prompts || [] do %>
+                              <span class={
+                                if p.fired?,
+                                  do: "text-emerald-600 dark:text-emerald-400 mr-2",
+                                  else: "text-zinc-500 mr-2"
+                              }>
+                                {p.name}: {if p.fired?, do: gettext("fired"), else: gettext("waiting")}
+                              </span>
+                            <% end %>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="py-0.5 text-zinc-500">buffer_bytes</td>
+                          <td>{s.buffer_bytes}</td>
+                        </tr>
+                      </tbody>
+                    </table>
 
-                <div class="mt-3 flex gap-2">
-                  <.button
-                    variant="outline"
-                    size="sm"
-                    type="button"
-                    phx-click="restart"
-                    id="restart-btn"
-                    class="text-rose-600 dark:text-rose-400 border-rose-600 dark:border-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950"
-                    data-confirm={gettext("Restart PtyServer for this agent? (supervisor will respawn)")}
-                  >{gettext("Restart")}</.button>
-                </div>
-              </.card>
+                    <div class="mt-3 flex gap-2">
+                      <.button
+                        variant="outline"
+                        size="sm"
+                        type="button"
+                        phx-click="restart"
+                        id="restart-btn"
+                        class="text-rose-600 dark:text-rose-400 border-rose-600 dark:border-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950"
+                        data-confirm={
+                          gettext("Restart PtyServer for this agent? (supervisor will respawn)")
+                        }
+                      >
+                        {gettext("Restart")}
+                      </.button>
+                    </div>
+                  </.card>
 
-              <%!-- Domain.Pty PR-D (2026-05-21) — inline terminal panel.
+                  <%!-- Domain.Pty PR-D (2026-05-21) — inline terminal panel.
                    Replaces the previous "Open terminal (in Sessions)"
                    jump (kludgy — chat panel competing for focus). Only
                    rendered when PTY is alive (per `feedback_ui_no_misleading_buttons`
@@ -425,88 +443,106 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
                    behind it). Collapsed `<details>` so the terminal
                    doesn't take focus when the operator just wanted to
                    eyeball status. --%>
-              <.card :if={Ezagent.Domain.Pty.alive?(@agent_uri)} id="agent-inline-terminal" class="mt-6">
-                <details class="text-zinc-900 dark:text-zinc-100">
-                  <summary class="cursor-pointer text-sm font-medium select-none">
-                    {gettext("Terminal")}
-                    <span class="ml-2 text-xs text-zinc-500 dark:text-zinc-400">
-                      {gettext("(click to expand · live PTY)")}
-                    </span>
-                  </summary>
-                  <div class="mt-3 space-y-2">
-                    <div class="text-xs">
-                      <a
-                        href={"/identities/agents/" <> URI.encode_www_form(URI.to_string(@agent_uri)) <> "/terminal"}
-                        class="text-blue-600 dark:text-blue-400 hover:text-blue-700 no-underline"
-                      >
-                        {gettext("Open in full page")} →
-                      </a>
-                    </div>
-                    <%!-- The ONE unified terminal panel — same component
+                  <.card
+                    :if={Ezagent.Domain.Pty.alive?(@agent_uri)}
+                    id="agent-inline-terminal"
+                    class="mt-6"
+                  >
+                    <details class="text-zinc-900 dark:text-zinc-100">
+                      <summary class="cursor-pointer text-sm font-medium select-none">
+                        {gettext("Terminal")}
+                        <span class="ml-2 text-xs text-zinc-500 dark:text-zinc-400">
+                          {gettext("(click to expand · live PTY)")}
+                        </span>
+                      </summary>
+                      <div class="mt-3 space-y-2">
+                        <div class="text-xs">
+                          <a
+                            href={"/identities/agents/" <> URI.encode_www_form(URI.to_string(@agent_uri)) <> "/terminal"}
+                            class="text-blue-600 dark:text-blue-400 hover:text-blue-700 no-underline"
+                          >
+                            {gettext("Open in full page")} →
+                          </a>
+                        </div>
+                        <%!-- The ONE unified terminal panel — same component
                          the standalone TerminalLive page and the :pty
                          SessionView render. Inline surface → header
                          omitted (the `<details>` summary already labels
                          it) + a fixed height so it sits in the card. --%>
-                    <div class="rounded-md overflow-hidden">
-                      <Terminal.panel agent_uri={@agent_uri} header={:none} class="h-[420px]" />
-                    </div>
-                  </div>
-                </details>
-              </.card>
+                        <div class="rounded-md overflow-hidden">
+                          <Terminal.panel agent_uri={@agent_uri} header={:none} class="h-[420px]" />
+                        </div>
+                      </div>
+                    </details>
+                  </.card>
 
-              <%!-- Phase 8b §1.10 — CC Bridges (v2) panel relocated from admin_live --%>
-              <.card id="cc-bridge-panel" class="mt-6">
-                <h2 class="text-sm font-medium mb-3 text-zinc-900 dark:text-zinc-100">{gettext("CC Bridge (v2)")}</h2>
-                <p :if={is_nil(@bridge_entry)} class="text-xs text-zinc-500">
-                  {gettext(
-                    "No WS bridge connected for this agent. Local-pty agents only need a bridge if the Python sidecar is configured to mount /cc_socket."
-                  )}
-                </p>
-                <table :if={@bridge_entry} class="w-full text-xs">
-                  <tbody>
-                    <tr>
-                      <td class="py-0.5 w-52 text-zinc-500">status</td>
-                      <td class="text-emerald-600 dark:text-emerald-400 font-semibold">{gettext("connected")}</td>
-                    </tr>
-                    <tr>
-                      <td class="py-0.5 text-zinc-500">connected_at</td>
-                      <td class="text-zinc-500">{DateTime.to_iso8601(@bridge_entry.connected_at)}</td>
-                    </tr>
-                    <tr>
-                      <td class="py-0.5 text-zinc-500">client</td>
-                      <td class="font-mono text-[11px]">{client_label(@bridge_entry)}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </.card>
+                  <%!-- Phase 8b §1.10 — CC Bridges (v2) panel relocated from admin_live --%>
+                  <.card id="cc-bridge-panel" class="mt-6">
+                    <h2 class="text-sm font-medium mb-3 text-zinc-900 dark:text-zinc-100">
+                      {gettext("CC Bridge (v2)")}
+                    </h2>
+                    <p :if={is_nil(@bridge_entry)} class="text-xs text-zinc-500">
+                      {gettext(
+                        "No WS bridge connected for this agent. Local-pty agents only need a bridge if the Python sidecar is configured to mount /cc_socket."
+                      )}
+                    </p>
+                    <table :if={@bridge_entry} class="w-full text-xs">
+                      <tbody>
+                        <tr>
+                          <td class="py-0.5 w-52 text-zinc-500">status</td>
+                          <td class="text-emerald-600 dark:text-emerald-400 font-semibold">
+                            {gettext("connected")}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="py-0.5 text-zinc-500">connected_at</td>
+                          <td class="text-zinc-500">
+                            {DateTime.to_iso8601(@bridge_entry.connected_at)}
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="py-0.5 text-zinc-500">client</td>
+                          <td class="font-mono text-[11px]">{client_label(@bridge_entry)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </.card>
 
-              <.card :if={is_map(s) and Map.get(s, :recent_output, []) != []} class="mt-6 bg-zinc-900 dark:bg-zinc-950 border-zinc-700 dark:border-zinc-800">
-                <h2 class="text-sm font-medium mb-2 text-zinc-200">{gettext("Recent PTY output (last 50 lines)")}</h2>
-                <pre class="font-mono text-[11px] whitespace-pre-wrap m-0 max-h-[360px] overflow-y-auto text-zinc-200">{Enum.join(s.recent_output, "\n")}</pre>
-              </.card>
-            <% @status.phase == :alive -> %>
-              <%!-- echo / curl / other flavors — Kind alive, no
+                  <.card
+                    :if={is_map(s) and Map.get(s, :recent_output, []) != []}
+                    class="mt-6 bg-zinc-900 dark:bg-zinc-950 border-zinc-700 dark:border-zinc-800"
+                  >
+                    <h2 class="text-sm font-medium mb-2 text-zinc-200">
+                      {gettext("Recent PTY output (last 50 lines)")}
+                    </h2>
+                    <pre class="font-mono text-[11px] whitespace-pre-wrap m-0 max-h-[360px] overflow-y-auto text-zinc-200">{Enum.join(s.recent_output, "\n")}</pre>
+                  </.card>
+                <% @status.phase == :alive -> %>
+                  <%!-- echo / curl / other flavors — Kind alive, no
                    PTY/bridge layer to introspect. --%>
-              <.card class="mt-6">
-                <h2 class="text-sm font-medium mb-2 text-emerald-600 dark:text-emerald-400">
-                  {gettext("Running (%{flavor})", flavor: @status.flavor || gettext("unknown flavor"))}
-                </h2>
-                <p class="text-xs text-zinc-500">
-                  {gettext("Agent Kind is alive. This flavor has no PTY/bridge layer to introspect.")}
-                </p>
-              </.card>
-            <% true -> %>
-              <%!-- :error or any other phase --%>
-              <.card class="mt-6">
-                <h2 class="text-sm font-medium mb-2 text-rose-600 dark:text-rose-400">
-                  {gettext("Status error")}
-                </h2>
-                <p class="text-xs">{inspect(@status.detail)}</p>
-              </.card>
-          <% end %>
-        </div>
-      </:main_window>
-
+                  <.card class="mt-6">
+                    <h2 class="text-sm font-medium mb-2 text-emerald-600 dark:text-emerald-400">
+                      {gettext("Running (%{flavor})",
+                        flavor: @status.flavor || gettext("unknown flavor")
+                      )}
+                    </h2>
+                    <p class="text-xs text-zinc-500">
+                      {gettext(
+                        "Agent Kind is alive. This flavor has no PTY/bridge layer to introspect."
+                      )}
+                    </p>
+                  </.card>
+                <% true -> %>
+                  <%!-- :error or any other phase --%>
+                  <.card class="mt-6">
+                    <h2 class="text-sm font-medium mb-2 text-rose-600 dark:text-rose-400">
+                      {gettext("Status error")}
+                    </h2>
+                    <p class="text-xs">{inspect(@status.detail)}</p>
+                  </.card>
+              <% end %>
+            </div>
+          </:main_window>
         </WorkspaceShell.workspace_shell>
       </:body>
     </AppShell.app_shell>

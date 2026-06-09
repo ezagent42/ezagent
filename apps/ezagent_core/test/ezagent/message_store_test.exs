@@ -14,10 +14,10 @@ defmodule Ezagent.MessageStoreTest do
   alias Ezagent.{Message, MessageStore}
   alias EzagentCore.Repo
 
-  @session_a URI.new!("session://default/system/main")
-  @session_b URI.new!("session://default/team-alpha/other")
-  @admin URI.new!("entity://user/system/admin")
-  @bot URI.new!("entity://agent/team-alpha/test_cc-builder")
+  @session_a URI.new!("session://system/default/main")
+  @session_b URI.new!("session://team-alpha/default/other")
+  @admin URI.new!("entity://system/user/admin")
+  @bot URI.new!("entity://team-alpha/agent/test_cc-builder")
 
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
@@ -59,7 +59,7 @@ defmodule Ezagent.MessageStoreTest do
     end
 
     test "preserves the Message envelope identity (Decision #40)" do
-      mention = URI.new!("entity://agent/team-alpha/test_cc-builder")
+      mention = URI.new!("entity://team-alpha/agent/test_cc-builder")
       ref_id = "aabbccdd00000000"
 
       msg =
@@ -91,6 +91,21 @@ defmodule Ezagent.MessageStoreTest do
       # by checking the values via the shape helpers.
       assert written.body["text"] == "carry-through"
       assert written.body["attachments"] == []
+    end
+
+    test "defaults visibility to customer_visible and round-trips operator_only" do
+      default_msg = Message.new(@admin, %{text: "default visible", attachments: []})
+      {:ok, default_written} = MessageStore.write(default_msg, @session_a)
+      assert default_written.visibility == :customer_visible
+
+      draft =
+        Message.new(@bot, %{text: "operator draft", attachments: []}, visibility: :operator_only)
+
+      {:ok, draft_written} = MessageStore.write(draft, @session_a)
+      assert draft_written.visibility == :operator_only
+
+      assert {:ok, loaded} = MessageStore.by_id(draft.id)
+      assert loaded.visibility == :operator_only
     end
   end
 

@@ -1,0 +1,491 @@
+defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
+  @moduledoc false
+
+  # #17 cascade PR-3 — activate PR-2's layered file materializer at the domain spawn
+  # bridge. Callers may provide the durable resolution INPUTS under `cascade_resolution`;
+  # this bridge resolves them immediately before the Template Class sees data, so normal
+  # spawn paths do not need to hand-author `tmpl["cascade"]`.
+  def resolve_content(
+         content,
+         template_class,
+         agent_uri,
+         spawned_by_uri,
+         workspace_uri,
+         flavor,
+         opts
+       )
+       when is_map(content) do
+    cond do
+      is_map(content_field(content, :cascade)) ->
+        {:ok, content}
+
+      is_map(content_field(content, :cascade_resolution)) ->
+        with {:ok, cascade, resolved} <-
+               build_cascade(
+                 content_field(content, :cascade_resolution),
+                 agent_uri,
+                 spawned_by_uri,
+                 workspace_uri,
+                 flavor
+               ),
+             {:ok, _grant} <-
+               maybe_mint_cascade_grant(
+                 agent_uri,
+                 resolved.secret_source,
+                 opts,
+                 content_field(content, :cascade_resolution)
+               ) do
+          content =
+            content
+            |> Map.put(:cascade, cascade)
+            |> put_selected_credential_source(resolved.secret_source)
+
+          {:ok, content}
+        end
+
+      is_nil(content_field(content, :cascade_resolution)) ->
+        maybe_resolve_default_cascade_content(
+          content,
+          template_class,
+          agent_uri,
+          spawned_by_uri,
+          workspace_uri,
+          flavor,
+          opts
+        )
+
+      true ->
+        {:error, {:invalid_cascade_resolution, content_field(content, :cascade_resolution)}}
+    end
+  end
+
+  defp maybe_resolve_default_cascade_content(
+         content,
+         template_class,
+         agent_uri,
+         spawned_by_uri,
+         workspace_uri,
+         flavor,
+         opts
+       ) do
+    source_template_uri = Keyword.get(opts, :source_template_uri)
+    credential_adapter = credential_adapter_kind(template_class)
+
+    if credential_adapter != :none and
+         default_cascade_configured?(credential_adapter, content, source_template_uri) do
+      # 2026-06-07 file-flavor-create-cascade — `workspace_layer_uri` is the
+      # source_template_uri ONLY when one is threaded (orchestrator/fork path).
+      # The unified-create path resolves a config home from the content's own
+      # `config_dir` (no shared workspace base template exists), so it passes
+      # NO source_template_uri; the workspace config layer is then simply absent
+      # (`default_layer_dir_for(nil) → :skip`) rather than a dead persisted URI.
+      resolution = %{
+        owner_uri: spawned_by_uri,
+        workspace_uri: workspace_uri,
+        workspace_layer_uri: source_template_uri,
+        flavor: flavor,
+        credential_required?: credential_required_by_default?(credential_adapter),
+        explicit_source: Keyword.get(opts, :explicit_source)
+      }
+
+      with {:ok, cascade, resolved} <-
+             build_cascade(resolution, agent_uri, spawned_by_uri, workspace_uri, flavor),
+           {:ok, content} <-
+             put_default_cascade_if_source_present(
+               content,
+               cascade,
+               resolved,
+               agent_uri,
+               opts,
+               resolution
+             ) do
+        {:ok, content}
+      end
+    else
+      {:ok, content}
+    end
+  end
+
+  defp put_default_cascade_if_source_present(
+         content,
+         _cascade,
+         %{secret_source: nil},
+         _agent,
+         _opts,
+         _resolution
+       ) do
+    {:ok, content}
+  end
+
+  defp put_default_cascade_if_source_present(
+         content,
+         cascade,
+         %{secret_source: source},
+         agent_uri,
+         opts,
+         resolution
+       ) do
+    with {:ok, _grant} <- maybe_mint_cascade_grant(agent_uri, source, opts, resolution) do
+      content =
+        content
+        |> Map.put(
+          :cascade_resolution,
+          Map.put(resolution, :credential_source_uri, source)
+        )
+        |> Map.put(:cascade, cascade)
+
+      {:ok, content}
+    end
+  end
+
+  defp credential_adapter_kind(template_class) do
+    cond do
+      Ezagent.Agent.CredentialAdapter.credentialled?(template_class) -> :file
+      Ezagent.Agent.CredentialSliceAdapter.credentialled?(template_class) -> :slice
+      true -> :none
+    end
+  end
+
+  defp credential_required_by_default?(:slice), do: true
+  defp credential_required_by_default?(:file), do: false
+
+  defp default_cascade_configured?(:slice, _content, %URI{}), do: true
+  defp default_cascade_configured?(:slice, _content, _), do: false
+
+  # A file-flavor has a resolvable config home iff the content carries a
+  # `config_dir` (the unified-create path — no source template needed) OR a
+  # threaded `source_template_uri` resolves one (the orchestrator/fork path).
+  defp default_cascade_configured?(:file, content, source_template_uri) do
+    case content_field(content, :config_dir) do
+      dir when is_binary(dir) and dir != "" ->
+        true
+
+      _ ->
+        case source_template_uri do
+          %URI{} = uri ->
+            case Ezagent.UriQuery.resolve(:config_dir, uri) do
+              {:ok, dir} when is_binary(dir) and dir != "" -> true
+              _ -> false
+            end
+
+          _ ->
+            false
+        end
+    end
+  end
+
+  defp build_cascade(resolution, agent_uri, spawned_by_uri, workspace_uri, flavor) do
+    with {:ok, layer_dir_for} <-
+           cascade_function(resolution, :layer_dir_for, &default_layer_dir_for/1),
+         {:ok, source_dir_for} <-
+           cascade_function(resolution, :source_dir_for, &default_source_dir_for/1),
+         {:ok, owner_uri} <-
+           cascade_uri(resolution, :owner_uri, spawned_by_uri, required?: true),
+         {:ok, resolved_workspace_uri} <-
+           cascade_uri(resolution, :workspace_uri, workspace_uri, required?: false),
+         {:ok, session_uri} <- cascade_uri(resolution, :session_uri, nil, required?: false),
+         {:ok, explicit_source} <-
+           cascade_uri(resolution, :explicit_source, nil, required?: false),
+         {:ok, resolved} <-
+           Ezagent.Credential.Resolver.resolve_layers(
+             resolver_inputs(
+               resolution,
+               agent_uri,
+               owner_uri,
+               resolved_workspace_uri,
+               session_uri,
+               explicit_source,
+               flavor
+             )
+           ),
+         {:ok, layer_dirs} <- materializer_layer_dirs(resolved.config_layers, layer_dir_for) do
+      {:ok, %{layer_dirs: layer_dirs, source_dir_for: source_dir_for}, resolved}
+    end
+  end
+
+  defp cascade_function(resolution, key, default) do
+    case Map.get(resolution, key) || Map.get(resolution, Atom.to_string(key)) do
+      nil -> {:ok, default}
+      fun when is_function(fun, 1) -> {:ok, fun}
+      _ -> {:error, {:missing_cascade_resolution_function, key}}
+    end
+  end
+
+  defp default_layer_dir_for(%{source: %URI{} = uri}) do
+    case Ezagent.UriQuery.resolve(:config_dir, uri) do
+      {:ok, dir} when is_binary(dir) -> {:ok, %{dir: dir, protected: [], mandatory: []}}
+      :none -> :skip
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp default_layer_dir_for(_layer), do: :skip
+
+  defp default_source_dir_for(%URI{} = source), do: default_config_dir_for_source(source)
+
+  defp default_source_dir_for(source) when is_binary(source) do
+    source
+    |> Ezagent.URI.new!()
+    |> default_config_dir_for_source()
+  end
+
+  defp default_config_dir_for_source(%URI{} = source) do
+    case Ezagent.UriQuery.resolve(:config_dir, source) do
+      {:ok, dir} when is_binary(dir) and dir != "" -> {:ok, dir}
+      :none -> {:error, {:source_config_dir_absent, source}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp maybe_mint_cascade_grant(_agent_uri, nil, _opts, _resolution), do: {:ok, nil}
+
+  defp maybe_mint_cascade_grant(%URI{} = agent_uri, %URI{} = source, opts, resolution) do
+    caller = Keyword.get(opts, :caller)
+    caps = Keyword.get(opts, :caps)
+
+    result =
+      cond do
+        match?(%URI{}, caller) and is_list(caps) ->
+          Ezagent.Credential.Resolver.authorize_and_mint_grant!(%{
+            agent_uri: agent_uri,
+            source: source,
+            caller: caller,
+            caps: caps
+          })
+
+        match?(%URI{}, caller) and match?(%MapSet{}, caps) ->
+          Ezagent.Credential.Resolver.authorize_and_mint_grant!(%{
+            agent_uri: agent_uri,
+            source: source,
+            caller: caller,
+            caps: MapSet.to_list(caps)
+          })
+
+        true ->
+          {:error, :missing_cascade_authorization}
+      end
+
+    case result do
+      {:error, :missing_cascade_authorization} ->
+        maybe_mint_workspace_shared_grant(agent_uri, source, caller, resolution)
+
+      {:error, {:source_unauthorized, ^source}} ->
+        maybe_mint_workspace_shared_grant(agent_uri, source, caller, resolution)
+
+      other ->
+        other
+    end
+  end
+
+  defp maybe_mint_workspace_shared_grant(
+         %URI{} = agent_uri,
+         %URI{} = source,
+         %URI{} = _caller,
+         resolution
+       ) do
+    with nil <- Map.get(resolution, :explicit_source) || Map.get(resolution, "explicit_source"),
+         {:ok, workspace_uri} <- cascade_uri(resolution, :workspace_uri, nil, required?: true),
+         flavor when is_binary(flavor) <-
+           Map.get(resolution, :flavor) || Map.get(resolution, "flavor"),
+         true <-
+           Ezagent.Capability.workspace_of(agent_uri) == Ezagent.Capability.workspace_of(source),
+         %Ezagent.Credential.WorkspaceSharedSource{} = row <-
+           Ezagent.Credential.WorkspaceSharedSource.get(URI.to_string(workspace_uri), flavor),
+         true <- row.source_uri == URI.to_string(source),
+         set_by when is_binary(set_by) and set_by != "" <- row.set_by do
+      Ezagent.Credential.GrantRow.insert(%{
+        agent_uri: URI.to_string(agent_uri),
+        credential_source_uri: URI.to_string(source),
+        approved_by: set_by,
+        approved_scope: URI.to_string(source),
+        version: 1
+      })
+    else
+      _ -> {:error, {:source_unauthorized, source}}
+    end
+  end
+
+  defp maybe_mint_workspace_shared_grant(_agent_uri, source, _caller, _resolution) do
+    {:error, {:source_unauthorized, source}}
+  end
+
+  defp put_selected_credential_source(content, nil), do: content
+
+  defp put_selected_credential_source(content, %URI{} = source) do
+    key =
+      if Map.has_key?(content, :cascade_resolution) do
+        :cascade_resolution
+      else
+        "cascade_resolution"
+      end
+
+    case Map.get(content, key) do
+      resolution when is_map(resolution) ->
+        Map.put(content, key, Map.put(resolution, :credential_source_uri, source))
+
+      _ ->
+        content
+    end
+  end
+
+  defp resolver_inputs(
+         resolution,
+         agent_uri,
+         owner_uri,
+         workspace_uri,
+         session_uri,
+         explicit_source,
+         flavor
+       ) do
+    %{
+      agent_uri: agent_uri,
+      owner_uri: owner_uri,
+      workspace_uri: workspace_uri,
+      session_uri: session_uri,
+      explicit_source: explicit_source,
+      flavor: Map.get(resolution, :flavor) || Map.get(resolution, "flavor") || flavor,
+      credential_required?: Map.get(resolution, :credential_required?, true)
+    }
+    |> maybe_put_uri_input(resolution, :workspace_layer_uri)
+    |> maybe_put_uri_input(resolution, :user_layer_uri)
+    |> maybe_put_uri_input(resolution, :session_layer_uri)
+    |> maybe_put_resolver_fun(resolution, :source_available?)
+    |> maybe_put_resolver_fun(resolution, :user_source_lookup)
+    |> maybe_put_resolver_fun(resolution, :workspace_shared_lookup)
+  end
+
+  defp maybe_put_uri_input(inputs, resolution, key) do
+    case Map.get(resolution, key) || Map.get(resolution, Atom.to_string(key)) do
+      %URI{} = uri -> Map.put(inputs, key, uri)
+      value when is_binary(value) and value != "" -> Map.put(inputs, key, Ezagent.URI.new!(value))
+      _ -> inputs
+    end
+  end
+
+  defp maybe_put_resolver_fun(inputs, resolution, key) do
+    case Map.get(resolution, key) || Map.get(resolution, Atom.to_string(key)) do
+      fun when is_function(fun) -> Map.put(inputs, key, fun)
+      _ -> inputs
+    end
+  end
+
+  defp materializer_layer_dirs(config_layers, layer_dir_for) do
+    config_layers
+    |> Enum.reduce_while({:ok, []}, fn layer, {:ok, acc} ->
+      case layer_dir_for.(layer) do
+        :skip ->
+          {:cont, {:ok, acc}}
+
+        nil ->
+          {:cont, {:ok, acc}}
+
+        {:ok, nil} ->
+          {:cont, {:ok, acc}}
+
+        {:ok, dir} when is_binary(dir) ->
+          {:cont, {:ok, acc ++ [%{dir: dir, protected: [], mandatory: []}]}}
+
+        {:ok, %{dir: dir} = layer_dir} when is_binary(dir) ->
+          {:cont, {:ok, acc ++ [normalize_layer_dir(layer_dir)]}}
+
+        {:error, reason} ->
+          {:halt, {:error, {:cascade_layer_dir_failed, layer, reason}}}
+
+        other ->
+          {:halt, {:error, {:invalid_cascade_layer_dir, layer, other}}}
+      end
+    end)
+  end
+
+  defp normalize_layer_dir(layer_dir) do
+    layer_dir
+    |> Map.put_new(:protected, [])
+    |> Map.put_new(:mandatory, [])
+  end
+
+  defp cascade_uri(resolution, key, default, required?: required?) do
+    case Map.get(resolution, key) || Map.get(resolution, Atom.to_string(key)) || default do
+      %URI{} = uri -> {:ok, uri}
+      s when is_binary(s) and s != "" -> {:ok, Ezagent.URI.new!(s)}
+      nil when not required? -> {:ok, nil}
+      nil -> {:error, {:missing_cascade_resolution_uri, key}}
+    end
+  end
+
+  defp content_field(content, key) when is_atom(key) do
+    case Map.get(content, key) do
+      nil -> Map.get(content, Atom.to_string(key))
+      v -> v
+    end
+  end
+
+  @doc false
+  def sanitize_respawn_template_data(respawn_data, template_content)
+      when is_map(respawn_data) and is_map(template_content) do
+    respawn_data
+    |> Map.drop(["cascade", :cascade])
+    |> put_respawn_cascade_resolution(template_content)
+  end
+
+  def sanitize_respawn_template_data(respawn_data, _template_content), do: respawn_data
+
+  defp put_respawn_cascade_resolution(respawn_data, template_content) do
+    case content_field(template_content, :cascade_resolution) do
+      resolution when is_map(resolution) ->
+        case cascade_resolution_snapshot(resolution) do
+          snapshot when map_size(snapshot) > 0 ->
+            Map.put(respawn_data, "cascade_resolution", snapshot)
+
+          _ ->
+            respawn_data
+        end
+
+      _ ->
+        respawn_data
+    end
+  end
+
+  defp cascade_resolution_snapshot(resolution) do
+    [
+      :owner_uri,
+      :workspace_uri,
+      :session_uri,
+      :explicit_source,
+      :credential_source_uri,
+      :workspace_layer_uri,
+      :user_layer_uri,
+      :session_layer_uri
+    ]
+    |> Enum.reduce(%{}, fn key, acc ->
+      case Map.get(resolution, key) || Map.get(resolution, Atom.to_string(key)) do
+        %URI{} = uri -> Map.put(acc, Atom.to_string(key), uri_to_respawn_value(uri))
+        value when is_binary(value) and value != "" -> Map.put(acc, Atom.to_string(key), value)
+        _ -> acc
+      end
+    end)
+  end
+
+  defp uri_to_respawn_value(%URI{} = uri), do: URI.to_string(uri)
+
+  def put_respawn_flavor(meta, template_content_map) when is_map(meta) do
+    case Map.get(template_content_map, :flavor) || Map.get(template_content_map, "flavor") do
+      flavor when is_binary(flavor) and flavor != "" ->
+        case Map.get(meta, :respawn_template_data) do
+          data when is_map(data) ->
+            respawn_data =
+              data
+              |> sanitize_respawn_template_data(template_content_map)
+              |> Map.put_new("flavor", flavor)
+
+            Map.put(meta, :respawn_template_data, respawn_data)
+
+          _ ->
+            meta
+        end
+
+      _ ->
+        meta
+    end
+  end
+
+end

@@ -25,7 +25,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       assert :ok =
                CcAgent.validate(%{
                  "class" => "cc.agent",
-                 "agent_uri" => "entity://agent/team-alpha/cc_cc-architect",
+                 "agent_uri" => "entity://team-alpha/agent/cc_cc-architect",
                  "cwd" => "/tmp"
                })
     end
@@ -39,7 +39,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       assert :ok =
                CcAgent.validate(%{
                  "class" => "cc.agent",
-                 "agent_uri" => "entity://agent/team-alpha/cc_legacy",
+                 "agent_uri" => "entity://team-alpha/agent/cc_legacy",
                  "mode" => "local-pty",
                  "cwd" => "/tmp"
                })
@@ -47,14 +47,17 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
 
     test "rejects missing class" do
       assert {:error, :missing_class_field} =
-               CcAgent.validate(%{"agent_uri" => "entity://agent/team-alpha/cc_x", "cwd" => "/tmp"})
+               CcAgent.validate(%{
+                 "agent_uri" => "entity://team-alpha/agent/cc_x",
+                 "cwd" => "/tmp"
+               })
     end
 
     test "rejects wrong class" do
       assert {:error, {:wrong_class, "cc.pty"}} =
                CcAgent.validate(%{
                  "class" => "cc.pty",
-                 "agent_uri" => "entity://agent/team-alpha/cc_x",
+                 "agent_uri" => "entity://team-alpha/agent/cc_x",
                  "cwd" => "/tmp"
                })
     end
@@ -64,38 +67,38 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
                CcAgent.validate(%{"class" => "cc.agent", "cwd" => "/tmp"})
     end
 
-    test "rejects entity://user/team-alpha/X (wrong entity type — must be agent)" do
+    test "rejects entity://team-alpha/user/X (wrong entity type — must be agent)" do
       assert {:error, {:invalid_agent_uri, _, _}} =
                CcAgent.validate(%{
                  "class" => "cc.agent",
-                 "agent_uri" => "entity://user/team-alpha/x",
+                 "agent_uri" => "entity://team-alpha/user/x",
                  "cwd" => "/tmp"
                })
     end
 
     test "rejects non-entity scheme entirely" do
-      assert {:error, {:bad_agent_uri, _}} =
+      assert {:error, {:invalid_agent_uri, _, "agent URI must be an entity agent URI"}} =
                CcAgent.validate(%{
                  "class" => "cc.agent",
-                 "agent_uri" => "session://default/system/main",
+                 "agent_uri" => "session://system/default/main",
                  "cwd" => "/tmp"
                })
     end
 
-    test "rejects entity://agent/<name> without flavor prefix (PR #141)" do
-      assert {:error, {:missing_flavor_prefix, _, _}} =
+    test "accepts entity://agent/<name> without flavor prefix" do
+      assert :ok =
                CcAgent.validate(%{
                  "class" => "cc.agent",
-                 "agent_uri" => "entity://agent/team-alpha/just-a-name",
+                 "agent_uri" => "entity://team-alpha/agent/just-a-name",
                  "cwd" => "/tmp"
                })
     end
 
-    test "rejects wrong agent flavor in name prefix" do
-      assert {:error, {:wrong_agent_flavor, "curl", expected: "cc"}} =
+    test "ignores legacy name prefix when validating stored flavor" do
+      assert :ok =
                CcAgent.validate(%{
                  "class" => "cc.agent",
-                 "agent_uri" => "entity://agent/team-alpha/curl_my-deepseek",
+                 "agent_uri" => "entity://team-alpha/agent/curl_my-deepseek",
                  "cwd" => "/tmp"
                })
     end
@@ -104,14 +107,14 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       assert {:error, :missing_cwd} =
                CcAgent.validate(%{
                  "class" => "cc.agent",
-                 "agent_uri" => "entity://agent/team-alpha/cc_x"
+                 "agent_uri" => "entity://team-alpha/agent/cc_x"
                })
     end
   end
 
   describe "instantiate/3" do
     test "spawns a PtyServer for the declared agent" do
-      agent_uri_str = "entity://agent/team-alpha/cc_test-#{System.unique_integer([:positive])}"
+      agent_uri_str = "entity://team-alpha/agent/cc_test-#{System.unique_integer([:positive])}"
 
       tmpl = %{
         "class" => "cc.agent",
@@ -134,7 +137,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       # the cc agent's runtime resources. After it returns:
       # 1. KindRegistry.lookup(agent_uri) must succeed — Agent Kind alive
       # 2. PtyServer.find_by_agent_uri(agent_uri) must succeed — PTY alive
-      agent_uri_str = "entity://agent/team-alpha/cc_v1fix-#{System.unique_integer([:positive])}"
+      agent_uri_str = "entity://team-alpha/agent/cc_v1fix-#{System.unique_integer([:positive])}"
       agent_uri = Ezagent.URI.new!(agent_uri_str)
 
       tmpl = %{
@@ -163,7 +166,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
     end
 
     test "is idempotent — second call returns same URI without spawning a second PtyServer" do
-      agent_uri_str = "entity://agent/team-alpha/cc_idem-#{System.unique_integer([:positive])}"
+      agent_uri_str = "entity://team-alpha/agent/cc_idem-#{System.unique_integer([:positive])}"
       uri = Ezagent.URI.new!(agent_uri_str)
 
       tmpl = %{
@@ -195,14 +198,14 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
     # attach a sidecar to it.
     test "an already-started Agent Kind returns fresh?: false and starts NO PtyServer" do
       agent_uri_str =
-        "entity://agent/team-alpha/cc_already-#{System.unique_integer([:positive])}"
+        "entity://team-alpha/agent/cc_already-#{System.unique_integer([:positive])}"
 
       agent_uri = Ezagent.URI.new!(agent_uri_str)
 
-      # Bring up ONLY the Agent Kind — directly, NOT via the template.
-      # This is the "worker this call did not create" state: Kind alive,
-      # no PtyServer.
-      assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+      # Bring up ONLY the Agent Kind — directly, NOT via the template or
+      # URI-derived flavor dispatch. This is the "worker this call did
+      # not create" state: Kind alive, no PtyServer.
+      assert {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri})
       assert {:ok, _} = Ezagent.KindRegistry.lookup(agent_uri)
 
       refute Ezagent.Domain.Pty.alive?(agent_uri),
@@ -243,7 +246,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       assert :ok =
                CcAgent.validate(%{
                  "class" => "cc.agent",
-                 "agent_uri" => "entity://agent/team-alpha/cc_legacy",
+                 "agent_uri" => "entity://team-alpha/agent/cc_legacy",
                  "cwd" => "/tmp"
                })
     end
@@ -252,7 +255,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       assert :ok =
                CcAgent.validate(%{
                  "class" => "cc.agent",
-                 "agent_uri" => "entity://agent/team-alpha/cc_extended",
+                 "agent_uri" => "entity://team-alpha/agent/cc_extended",
                  "cwd" => "/tmp",
                  "operator_settings_path" => "/sandbox/settings.json",
                  "operator_mcp_config_path" => "/sandbox/mcp.json",
@@ -267,7 +270,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       assert {:error, {:invalid_sandbox_key, "config_dir", _}} =
                CcAgent.validate(%{
                  "class" => "cc.agent",
-                 "agent_uri" => "entity://agent/team-alpha/cc_bad",
+                 "agent_uri" => "entity://team-alpha/agent/cc_bad",
                  "cwd" => "/tmp",
                  "config_dir" => 123
                })
@@ -282,7 +285,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       assert {:error, {:stale_config_dir_key, "claude_config_dir", _}} =
                CcAgent.validate(%{
                  "class" => "cc.agent",
-                 "agent_uri" => "entity://agent/team-alpha/cc_stale",
+                 "agent_uri" => "entity://team-alpha/agent/cc_stale",
                  "cwd" => "/tmp",
                  "claude_config_dir" => "/sandbox/.claude"
                })
@@ -347,7 +350,11 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       # A space in a shell string would split into two arguments. In
       # the argv list it must remain a single, intact element.
       spacey = "/tmp/my settings.json"
-      argv = CcAgent.assemble_settings_mcp_args(@mandatory, @bridge, %{"operator_settings_path" => spacey})
+
+      argv =
+        CcAgent.assemble_settings_mcp_args(@mandatory, @bridge, %{
+          "operator_settings_path" => spacey
+        })
 
       assert spacey in argv,
              "the spaced operator path must survive intact as one argv element"
@@ -362,6 +369,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       # introduce a LATER --settings and defeat the last-wins safety
       # guarantee. In argv form the whole string is ONE element.
       injected = "/tmp/mcp.json --settings /tmp/hostile-settings.json"
+
       argv =
         CcAgent.assemble_settings_mcp_args(@mandatory, @bridge, %{
           "operator_mcp_config_path" => injected
@@ -388,6 +396,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
 
     test "(b') a --settings injection via operator_settings_path still cannot win over safety" do
       injected = "/tmp/op.json --settings /tmp/evil.json"
+
       argv =
         CcAgent.assemble_settings_mcp_args(@mandatory, @bridge, %{
           "operator_settings_path" => injected
@@ -466,13 +475,17 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
 
       uri =
         URI.new!(
-          "entity://agent/#{ws_uri.host}/cc_eternal_#{:erlang.unique_integer([:positive, :monotonic])}"
+          "entity://#{ws_uri.host}/agent/cc_eternal_#{:erlang.unique_integer([:positive, :monotonic])}"
         )
 
       %{uri: uri, workspace_uri: ws_uri, cwd: cwd}
     end
 
-    test "returns :ok immediately when PtyServer is already alive", %{uri: uri, cwd: cwd, workspace_uri: ws} do
+    test "returns :ok immediately when PtyServer is already alive", %{
+      uri: uri,
+      cwd: cwd,
+      workspace_uri: ws
+    } do
       tmpl = %{
         "class" => "cc.agent",
         "agent_uri" => URI.to_string(uri),
@@ -489,7 +502,9 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       _ = Ezagent.Kind.terminate(uri)
     end
 
-    test "returns {:error, :missing_cwd_in_respawn_data} when respawn_data has no cwd", %{uri: uri} do
+    test "returns {:error, :missing_cwd_in_respawn_data} when respawn_data has no cwd", %{
+      uri: uri
+    } do
       # The cwd-less path is the structural failure case; an agent
       # whose sandbox slice was corrupted should NOT silently use a
       # default cwd.
@@ -499,7 +514,9 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
 
     test "rejects invalid args" do
       assert {:error, :invalid_args} = CcAgent.ensure_subprocess_alive("not a URI", %{})
-      assert {:error, :invalid_args} = CcAgent.ensure_subprocess_alive(URI.new!("entity://agent/x/cc_y"), "not a map")
+
+      assert {:error, :invalid_args} =
+               CcAgent.ensure_subprocess_alive(URI.new!("entity://x/agent/cc_y"), "not a map")
     end
   end
 
@@ -515,7 +532,8 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
   # (feedback_e2e_failure_earns_unit_test) for the pure migrator.
   describe "migrate_legacy_config_dir_key/1 — PR-F cold-restart forward migration" do
     test "renames a lone legacy claude_config_dir → config_dir (and drops the legacy key)" do
-      migrated = CcAgent.migrate_legacy_config_dir_key(%{"claude_config_dir" => "/sandbox/.claude"})
+      migrated =
+        CcAgent.migrate_legacy_config_dir_key(%{"claude_config_dir" => "/sandbox/.claude"})
 
       assert migrated == %{"config_dir" => "/sandbox/.claude"}
       # the migrated map must NOT trip the stale-key fail-loud reject.
@@ -571,7 +589,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       # own this agent" case — Workspace.Loader path).
       uri =
         URI.new!(
-          "entity://agent/#{ws_uri.host}/cc_demand_#{:erlang.unique_integer([:positive, :monotonic])}"
+          "entity://#{ws_uri.host}/agent/cc_demand_#{:erlang.unique_integer([:positive, :monotonic])}"
         )
 
       %{uri: uri, workspace_uri: ws_uri, cwd: cwd}
@@ -583,7 +601,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       cwd: cwd
     } do
       # Simulate the demand-spawn: bring up only the Agent Kind, no PTY.
-      assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+      assert {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri})
       assert {:ok, _} = Ezagent.KindRegistry.lookup(agent_uri)
       refute Ezagent.Domain.Pty.alive?(agent_uri), "precondition: no PtyServer"
 

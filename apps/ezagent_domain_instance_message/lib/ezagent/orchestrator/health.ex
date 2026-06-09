@@ -12,7 +12,7 @@ defmodule Ezagent.Orchestrator.Health do
   state, dispatch any action, or hold a process. It is a thin composition
   of:
 
-    * `Ezagent.Entity.Session.derive_orchestrator_uri/2` — structural URI
+  * `Ezagent.Entity.Session.orchestrator_uri/1` — stored session attribute
     * `Ezagent.KindRegistry.lookup/1` — live process lookup
     * `Process.alive?/1` — defensive liveness double-check (Registry
       auto-removes dead pids asynchronously, so a stale match is briefly
@@ -29,9 +29,8 @@ defmodule Ezagent.Orchestrator.Health do
     * `:not_spawned` — no live process AND no snapshot row. This session
       has not yet needed (or never used) cc orchestration.
 
-  Workspace derivation: the orchestrator URI is `entity://agent/<ws>/
-  cc_orchestrator-<session_disc>` where `<ws>` MUST equal the session's
-  bound workspace. We read the workspace from
+  Workspace binding: the orchestrator URI is stored on the session working
+  copy. We read the workspace from
   `Ezagent.WorkspaceRegistry.lookup/1`. If the session is not bound
   (e.g. test fixture missing the `WorkspaceRegistry.bind/2` call) the
   caller gets `{:error, :session_not_workspace_bound}` — there is no
@@ -102,8 +101,8 @@ defmodule Ezagent.Orchestrator.Health do
   """
   @spec classify_in_workspace(URI.t(), URI.t()) :: t()
   def classify_in_workspace(%URI{} = session_uri, %URI{} = workspace_uri) do
-    orch_uri = Session.derive_orchestrator_uri(session_uri, workspace_uri)
-    instance_name = Session.derive_orchestrator_instance_name(session_uri)
+    orch_uri = stored_or_planned_orchestrator_uri(session_uri, workspace_uri)
+    instance_name = Ezagent.URI.name!(orch_uri)
     template_uri = orchestrator_template_uri(workspace_uri)
 
     {status, pid} = lookup_status(orch_uri)
@@ -141,7 +140,20 @@ defmodule Ezagent.Orchestrator.Health do
   # Restart for any session outside `workspace://system` dispatched at
   # a non-existent template Kind. Aligned with the seed location now.
   defp orchestrator_template_uri(%URI{} = _workspace_uri) do
-    Ezagent.URI.new!("template://agent/system/cc-orchestrator")
+    Ezagent.URI.template(:system, :agent, "cc-orchestrator")
+  end
+
+  defp stored_or_planned_orchestrator_uri(%URI{} = session_uri, %URI{} = workspace_uri) do
+    case Session.orchestrator_uri(session_uri) do
+      {:ok, %URI{} = uri} ->
+        uri
+
+      :none ->
+        Session.planned_orchestrator_uri(session_uri, workspace_uri)
+
+      {:error, reason} ->
+        raise ArgumentError, "orchestrator URI lookup failed: #{inspect(reason)}"
+    end
   end
 
   # KindRegistry.lookup returns `{:ok, pid}` for a registered URI. We

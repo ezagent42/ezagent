@@ -122,7 +122,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   # Action declarations (SPEC §2.2 + §4.3)
   # ===================================================================
 
-  action :bind,
+  action(:bind,
     args: %{open_id: :string, user_uri: :uri},
     returns: %{open_id: :string, user_uri: :string},
     caps: [:bind],
@@ -131,15 +131,17 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
         "applies the default session-participation cap (idempotent) so " <>
         "the bound user can dispatch chat messages.",
     modes: [:call]
+  )
 
-  action :unbind,
+  action(:unbind,
     args: %{open_id: :string},
     returns: %{unbound: :string},
     caps: [:unbind],
     description: "Remove a Feishu open_id binding.",
     modes: [:call]
+  )
 
-  action :list_feishu_bindings,
+  action(:list_feishu_bindings,
     args: %{},
     returns: %{bindings: {:list, :map}},
     caps: [:list_feishu_bindings],
@@ -147,6 +149,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
       "List all Feishu open_id → user URI bindings (read-only). " <>
         "Returns a list of %{open_id, user_uri, bound_by, bound_at}.",
     modes: [:call]
+  )
 
   # ===================================================================
   # Legacy callbacks retained for framework wiring
@@ -158,8 +161,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
     %{
       bind: Ezagent.Capability.cap(:workspace, __MODULE__, :bind),
       unbind: Ezagent.Capability.cap(:workspace, __MODULE__, :unbind),
-      list_feishu_bindings:
-        Ezagent.Capability.cap(:workspace, __MODULE__, :list_feishu_bindings)
+      list_feishu_bindings: Ezagent.Capability.cap(:workspace, __MODULE__, :list_feishu_bindings)
     }
   end
 
@@ -273,8 +275,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
       # effect; the framework's `apply_effects` builds the new slice.
       cur = ctx[:read].(:bind_count, 0)
 
-      {:ok, %{open_id: open_id, user_uri: user_uri_str},
-       [{:set, :bind_count, cur + 1}]}
+      {:ok, %{open_id: open_id, user_uri: user_uri_str}, [{:set, :bind_count, cur + 1}]}
     else
       {:error, _} = err ->
         err
@@ -355,7 +356,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
     if function_exported?(Ezagent.Entity.User, :admin_uri, 0) do
       URI.to_string(Ezagent.Entity.User.admin_uri())
     else
-      "entity://user/system/admin"
+      Ezagent.URI.user(:system, :admin) |> URI.to_string()
     end
   end
 

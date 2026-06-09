@@ -29,7 +29,7 @@ defmodule Ezagent.TemplateTagsTest do
       name = "code-review-#{uniq()}"
       hash = hexhash("v1")
 
-      assert :ok = TemplateTags.put(ws, name, "stable", hash, "entity://user/team-alpha/admin")
+      assert :ok = TemplateTags.put(ws, name, "stable", hash, "entity://team-alpha/user/admin")
       assert {:ok, ^hash} = TemplateTags.resolve(ws, name, "stable")
     end
 

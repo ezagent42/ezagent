@@ -14,6 +14,13 @@ defmodule EzagentCore.Application do
         # See DECISIONS impl-time §ETS+Application children.
         EzagentCore.EtsOwner,
 
+        # ①·5 Resource FS-resolver allowlist owner — Resource-unification SPEC
+        # §5.1 (codex round-1 HIGH). Owns the `:protected`
+        # `:ezagent_resource_fs_types` table (sole writer). Must start before any
+        # boot-time `Ezagent.Resource.FsResolver.register_type/2`. For P0 it is
+        # dormant (zero real types registered).
+        Ezagent.Resource.FsResolver.Registry,
+
         # ② stdlib Registry for URI → pid (Ezagent.KindRegistry wraps this).
         {Registry, keys: :unique, name: Ezagent.KindRegistry},
 
@@ -105,6 +112,27 @@ defmodule EzagentCore.Application do
     # `Ezagent.SpawnRegistry.register/2` (which now co-registers schemes).
     # EtsOwner already created the table; this populates the 6 core schemes.
     :ok = seed_uri_schemes()
+
+    # Resource-unification P3 (SPEC §10 OI-3) — the `system://<type>[/<name>]`
+    # resolution seam for node-global artifacts (global app creds, plugin config,
+    # diagnostic logs). System artifacts have no `<ws>`, but per OI-3 that is NOT
+    # an exemption: they route through `UriQuery` via the already-allowlisted
+    # `system://` scheme instead of `resource://`. Stateless + global, so a plain
+    # UriQuery attr (no `:protected` registry — no per-type authority fn).
+    :ok = Ezagent.System.FsResolver.register()
+
+    # Resource-unification P2b — uploads are stored + read through the generic
+    # `resource://` FS-resolver `uploads` type (registered immutably in
+    # `Ezagent.Resource.FsResolver.Registry.boot_registrations/0`, child ①·5), so
+    # `Ezagent.Uploads` no longer owns a separate `UriQuery` resolver — its old
+    # boot `Ezagent.Uploads.register()` call is gone.
+
+    # Resource-unification P0/P1/P2 — the generic `resource://` FS-resolver
+    # allowlist (config-dir `<ns>-agents` types + uploads) is applied immutably
+    # inside `Ezagent.Resource.FsResolver.Registry.init/1` from its
+    # compile/config-time `boot_registrations/0` source (child ①·5); there is no
+    # runtime registration call here (codex round-4: no externally-mutable reopen
+    # window).
 
     # PR #146 (SPEC v2 §5.7) — synthetic singleton `routing-admin://default`
     # dissolved. `Ezagent.Behavior.Routing` is registered against the

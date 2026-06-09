@@ -197,15 +197,14 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_instance_message)
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_cc)
 
-    uri_str = "template://agent/system/cc-#{template_name}"
-    uri = Ezagent.URI.new!(uri_str)
+    uri = Ezagent.URI.template(:system, :agent, "cc-#{template_name}")
 
     with {:ok, _pid} <- ensure_template_kind(uri),
          :ok <- write_template_slice(uri, sandbox_dir, template_name) do
       :ok
     else
       {:error, reason} ->
-        Mix.raise("AgentTemplate seed failed for #{uri_str}: #{inspect(reason)}")
+        Mix.raise("AgentTemplate seed failed for #{URI.to_string(uri)}: #{inspect(reason)}")
     end
   end
 
@@ -250,7 +249,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
       # `system://mix-task` (closed Catalog).
       ctx: %{
         caller: Ezagent.SystemPrincipal.uri("mix-task"),
-        caps: Ezagent.SystemPrincipal.caps("system://mix-task"),
+        caps: "mix-task" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
         reply: {:caller_inbox, self()}
       }
     })
@@ -270,7 +269,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
           "  (no AgentTemplate seeded — pass --seed-template <name> to also create one)"
 
         s ->
-          "  template URI:    template://agent/system/cc-#{s}"
+          "  template URI:    #{Ezagent.URI.template(:system, :agent, "cc-#{s}")}"
       end
 
     Mix.shell().info("""

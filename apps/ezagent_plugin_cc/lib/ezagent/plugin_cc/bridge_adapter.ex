@@ -7,26 +7,11 @@ defmodule EzagentPluginCc.BridgeAdapter do
 
   require Logger
 
+  alias Ezagent.AgentBridge.AttachmentNormalizer
   alias Ezagent.AgentBridge.Payload
-
-  @attachment_key_atoms %{
-    "type" => :type,
-    "local_path" => :local_path,
-    "name" => :name
-  }
-  @attachment_type_atoms %{
-    "image" => :image,
-    "file" => :file,
-    "audio" => :audio,
-    "video" => :video,
-    "media" => :media
-  }
 
   @impl Ezagent.AgentBridge.Adapter
   def flavor, do: "cc"
-
-  @impl Ezagent.AgentBridge.Adapter
-  def agent_uri_prefix, do: "cc_"
 
   @impl Ezagent.AgentBridge.Adapter
   def deliver(%Payload{} = payload, channel_pid) when is_pid(channel_pid) do
@@ -89,14 +74,14 @@ defmodule EzagentPluginCc.BridgeAdapter do
     end
   end
 
-  defp maybe_put(map, _key, []), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
-
   def handle_client_event("reply", _other, socket) do
     {:reply, {:error, %{reason: "reply requires text + session_uris"}}, socket}
   end
 
   def handle_client_event(_event, _params, socket), do: {:noreply, socket}
+
+  defp maybe_put(map, _key, []), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   @impl Ezagent.AgentBridge.Adapter
   def socket_path, do: "/agent_bridge"
@@ -157,7 +142,7 @@ defmodule EzagentPluginCc.BridgeAdapter do
         s when is_binary(s) -> s
       end
 
-    body = %{text: text, attachments: normalize_attachments(attachments)}
+    body = %{text: text, attachments: AttachmentNormalizer.normalize_attachments(attachments)}
     msg = Ezagent.Message.new(agent_uri, body, ref_id: ref_id)
 
     classified =
@@ -178,7 +163,10 @@ defmodule EzagentPluginCc.BridgeAdapter do
                 args: %{message: msg},
                 ctx: %{
                   caller: agent_uri,
-                  caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
+                  caps:
+                    "chat-reply"
+                    |> Ezagent.SystemPrincipal.uri()
+                    |> Ezagent.SystemPrincipal.caps(),
                   reply: :ignore
                 }
               })
@@ -208,28 +196,28 @@ defmodule EzagentPluginCc.BridgeAdapter do
     if skipped != [] do
       Logger.warning(
         "EzagentPluginCc.BridgeAdapter: dropped #{length(skipped)} malformed " <>
-          "session URI(s) from cc bridge reply (agent=#{URI.to_string(agent_uri)}): " <>
+          "session URI(s) from cc bridge reply (agent=#{Ezagent.URI.stable_key(agent_uri)}): " <>
           "#{inspect(skipped)}"
       )
 
       :telemetry.execute(
         [:ezagent, :plugin_cc, :bridge_adapter, :reply_skipped],
         %{count: length(skipped)},
-        %{agent_uri: URI.to_string(agent_uri), skipped: skipped}
+        %{agent_uri: Ezagent.URI.stable_key(agent_uri), skipped: skipped}
       )
     end
 
     if failed != [] do
       Logger.warning(
         "EzagentPluginCc.BridgeAdapter: dispatch failed for #{length(failed)} " <>
-          "session URI(s) from cc bridge reply (agent=#{URI.to_string(agent_uri)}): " <>
+          "session URI(s) from cc bridge reply (agent=#{Ezagent.URI.stable_key(agent_uri)}): " <>
           "#{inspect(failed)}"
       )
 
       :telemetry.execute(
         [:ezagent, :plugin_cc, :bridge_adapter, :reply_failed],
         %{count: length(failed)},
-        %{agent_uri: URI.to_string(agent_uri), failed: failed}
+        %{agent_uri: Ezagent.URI.stable_key(agent_uri), failed: failed}
       )
     end
 
@@ -243,26 +231,4 @@ defmodule EzagentPluginCc.BridgeAdapter do
   end
 
   defp safe_parse_session(_), do: :error
-
-  defp normalize_attachments(list) when is_list(list) do
-    Enum.map(list, fn
-      %{} = m -> normalize_attachment_keys(m)
-      other -> other
-    end)
-  end
-
-  defp normalize_attachment_keys(m) do
-    Enum.into(m, %{}, fn
-      {k, v} when is_binary(k) ->
-        {Map.get(@attachment_key_atoms, k, k), normalize_attachment_value(k, v)}
-
-      {k, v} ->
-        {k, v}
-    end)
-  end
-
-  defp normalize_attachment_value("type", v) when is_binary(v),
-    do: Map.get(@attachment_type_atoms, v, v)
-
-  defp normalize_attachment_value(_, v), do: v
 end

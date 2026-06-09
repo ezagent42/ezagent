@@ -13,11 +13,11 @@ defmodule Ezagent.Routing.AppliesToUsersTest do
   alias Ezagent.{Message, RoutingRegistry}
   alias Ezagent.Routing.{Matcher, Resolver, RuleStore}
 
-  @session_uri URI.new!("session://default/team-alpha/test")
-  @user_a URI.new!("entity://user/team-alpha/alice")
-  @user_b URI.new!("entity://user/team-alpha/bob")
-  @recv_a URI.new!("entity://user/team-alpha/recv-a")
-  @recv_b URI.new!("entity://user/team-alpha/recv-b")
+  @session_uri URI.new!("session://team-alpha/default/test")
+  @user_a URI.new!("entity://team-alpha/user/alice")
+  @user_b URI.new!("entity://team-alpha/user/bob")
+  @recv_a URI.new!("entity://team-alpha/user/recv-a")
+  @recv_b URI.new!("entity://team-alpha/user/recv-b")
 
   # Per-test unique table — declared by the test pid (owner), so puts
   # in this test succeed. Table dies with test pid — no cross-test
@@ -75,7 +75,7 @@ defmodule Ezagent.Routing.AppliesToUsersTest do
 
     msg_alice = Message.new(@user_a, %{text: "hi"})
     msg_bob = Message.new(@user_b, %{text: "hi"})
-    msg_other = Message.new(URI.new!("entity://user/team-alpha/carol"), %{text: "hi"})
+    msg_other = Message.new(URI.new!("entity://team-alpha/user/carol"), %{text: "hi"})
 
     assert Resolver.resolve(msg_alice, @session_uri, []) != []
     assert Resolver.resolve(msg_bob, @session_uri, []) != []

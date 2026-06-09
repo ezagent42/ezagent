@@ -31,11 +31,15 @@ defmodule Ezagent.WorkspaceTest do
     test "members in initial args are reachable via :list_members dispatch" do
       name = "members-test-#{System.unique_integer([:positive])}"
       uri = WK.uri_for(name)
-      members = [URI.parse("entity://user/system/admin"), URI.parse("entity://agent/team-alpha/test_x")]
+
+      members = [
+        Ezagent.URI.new!("entity://system/user/admin"),
+        Ezagent.URI.new!("entity://team-alpha/agent/test_x")
+      ]
 
       {:ok, _pid} = Ezagent.Workspace.spawn_workspace(name, %{members: members})
 
-      target = URI.parse("#{URI.to_string(uri)}?action=workspace.list_members")
+      target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=workspace.list_members")
 
       assert {:ok, %{members: listed}} =
                Invocation.dispatch(%Invocation{
@@ -57,11 +61,15 @@ defmodule Ezagent.WorkspaceTest do
     test ":instantiate returns one child per member" do
       name = "inst-test-#{System.unique_integer([:positive])}"
       uri = WK.uri_for(name)
-      members = [URI.parse("entity://user/system/admin"), URI.parse("entity://agent/team-alpha/test_cc-builder")]
+
+      members = [
+        Ezagent.URI.new!("entity://system/user/admin"),
+        Ezagent.URI.new!("entity://team-alpha/agent/test_cc-builder")
+      ]
 
       {:ok, _pid} = Ezagent.Workspace.spawn_workspace(name, %{members: members})
 
-      target = URI.parse("#{URI.to_string(uri)}?action=workspace.instantiate")
+      target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=workspace.instantiate")
 
       assert {:ok, %{children: children}} =
                Invocation.dispatch(%Invocation{
@@ -109,9 +117,9 @@ defmodule Ezagent.WorkspaceTest do
       # Snapshot the persisted member list before the rejected call.
       %{members: members_before} = Ezagent.Workspace.Store.get_by_name(name)
 
-      # Cross-prefix violator — `entity://user/system/linyilun` inside
+      # Cross-prefix violator — `entity://system/user/linyilun` inside
       # workspace `<name>` (whose own URI prefix is `<name>`).
-      bad_uri = URI.parse("entity://user/system/linyilun")
+      bad_uri = Ezagent.URI.new!("entity://system/user/linyilun")
 
       assert {:error, {:cross_workspace_member_not_permitted, ^bad_uri, _workspace_uri}} =
                Ezagent.Workspace.add_member(name, bad_uri)
@@ -120,14 +128,17 @@ defmodule Ezagent.WorkspaceTest do
       # persisted member list.
       %{members: members_after} = Ezagent.Workspace.Store.get_by_name(name)
       assert members_after == members_before
-      refute Enum.any?(members_after, fn %URI{} = u -> URI.to_string(u) == URI.to_string(bad_uri) end)
+
+      refute Enum.any?(members_after, fn %URI{} = u ->
+               URI.to_string(u) == URI.to_string(bad_uri)
+             end)
     end
 
     test "happy-path same-prefix member IS persisted" do
       name = "crit1-accept-#{System.unique_integer([:positive])}"
       {:ok, _pid} = Ezagent.Workspace.create(name, %{})
 
-      good_uri = URI.parse("entity://user/#{name}/alice")
+      good_uri = Ezagent.URI.new!("entity://#{name}/user/alice")
 
       assert :ok = Ezagent.Workspace.add_member(name, good_uri)
 
@@ -136,6 +147,61 @@ defmodule Ezagent.WorkspaceTest do
       assert Enum.any?(members_after, fn %URI{} = u ->
                URI.to_string(u) == URI.to_string(good_uri)
              end)
+    end
+  end
+
+  describe "add_member/3 + remove_member/3 caller-ctx fail-closed (SPEC §7, codex HIGH)" do
+    # The cap-checked `/3` variants must REJECT ambient-authority caller
+    # shapes (`:system`, nil, atom, string, missing caps) BEFORE any
+    # dispatch — so a programmatic caller that accidentally reaches `/3`
+    # cannot slip past step 5.5 via Runtime's `default_holds_cap?(:system)`
+    # all-caps bypass. Trusted ambient callers MUST use `/2`.
+
+    test "add_member/3 with caller: :system is rejected (no membership change)" do
+      name = "ctx-sys-#{System.unique_integer([:positive])}"
+      {:ok, _pid} = Ezagent.Workspace.create(name, %{})
+      member = Ezagent.URI.new!("entity://#{name}/user/mallory")
+
+      before = Ezagent.Workspace.Store.get_by_name(name).members
+
+      assert {:error, :invalid_caller_ctx} =
+               Ezagent.Workspace.add_member(name, member, %{caller: :system, caps: []})
+
+      assert Ezagent.Workspace.Store.get_by_name(name).members == before
+    end
+
+    test "add_member/3 / remove_member/3 reject malformed ctx shapes" do
+      name = "ctx-bad-#{System.unique_integer([:positive])}"
+      {:ok, _pid} = Ezagent.Workspace.create(name, %{})
+      member = Ezagent.URI.new!("entity://#{name}/user/bob")
+
+      for bad <- [
+            %{caller: "entity://#{name}/user/x", caps: []},
+            %{caller: nil, caps: []},
+            %{caller: Ezagent.URI.new!("entity://#{name}/user/x"), caps: :nope},
+            %{caps: []},
+            %{}
+          ] do
+        assert {:error, :invalid_caller_ctx} =
+                 Ezagent.Workspace.add_member(name, member, bad)
+
+        assert {:error, :invalid_caller_ctx} =
+                 Ezagent.Workspace.remove_member(name, member, bad)
+      end
+    end
+
+    test "add_member/3 with a well-formed %URI{} caller + list caps passes the ctx guard" do
+      # A concrete URI caller carrying (empty) list caps passes the ctx
+      # guard and proceeds to the real cap-check (which then DENIES on
+      # caps) — proving the guard admits the legitimate shape, not that
+      # the dispatch authorizes.
+      name = "ctx-ok-#{System.unique_integer([:positive])}"
+      {:ok, _pid} = Ezagent.Workspace.create(name, %{})
+      member = Ezagent.URI.new!("entity://#{name}/user/carol")
+      caller = Ezagent.URI.new!("entity://#{name}/user/nonadmin")
+
+      assert Ezagent.Workspace.add_member(name, member, %{caller: caller, caps: []}) !=
+               {:error, :invalid_caller_ctx}
     end
   end
 end

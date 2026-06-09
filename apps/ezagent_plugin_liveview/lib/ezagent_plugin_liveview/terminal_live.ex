@@ -123,9 +123,12 @@ defmodule EzagentPluginLiveview.TerminalLive do
     # with try/rescue keeping the `:error` failure contract.
     try do
       case Ezagent.URI.new!(decoded) do
-        %URI{scheme: "entity", host: "agent", path: "/" <> rest} = uri
-        when is_binary(rest) and rest != "" ->
-          {:ok, uri}
+        %URI{scheme: "entity"} = uri ->
+          if Ezagent.URI.type?(uri, :agent) and match?({:ok, _name}, Ezagent.URI.name(uri)) do
+            {:ok, uri}
+          else
+            :error
+          end
 
         _ ->
           :error
@@ -234,7 +237,8 @@ defmodule EzagentPluginLiveview.TerminalLive do
       nil ->
         %{
           caller: Ezagent.SystemPrincipal.uri("lv-anon-mount"),
-          caps: Ezagent.SystemPrincipal.caps("system://lv-anon-mount"),
+          caps:
+            "lv-anon-mount" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
           reply: :ignore
         }
 
@@ -251,8 +255,8 @@ defmodule EzagentPluginLiveview.TerminalLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(
-          Map.get(assigns, :current_entity_uri) || Ezagent.URI.new!("entity://user/system/admin")
+        Ezagent.URI.stable_key(
+          Map.get(assigns, :current_entity_uri) || Ezagent.Entity.User.admin_uri()
         )
       end)
 
@@ -273,22 +277,22 @@ defmodule EzagentPluginLiveview.TerminalLive do
           current_path={current_path(@agent_uri)}
           status={%{agents_alive: 0, bridges: 0, debug_events: 0, version: "dev"}}
         >
-      <:main_window>
-        <div class="h-full flex flex-col bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100">
-          <div class="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between shrink-0">
-            <div class="flex items-center gap-3 min-w-0">
-              <a
-                href={"/identities/agents/" <> URI.encode_www_form(URI.to_string(@agent_uri))}
-                class="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-700 no-underline shrink-0"
-              >
-                ← {gettext("Agent")}
-              </a>
-              <span class="text-sm font-mono text-zinc-700 dark:text-zinc-300 truncate">
-                {URI.to_string(@agent_uri)}
-              </span>
-            </div>
-            <div class="flex items-center gap-3 shrink-0">
-              <%!-- PTY-phase-state-machine 2026-05-26 follow-up (b):
+          <:main_window>
+            <div class="h-full flex flex-col bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100">
+              <div class="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between shrink-0">
+                <div class="flex items-center gap-3 min-w-0">
+                  <a
+                    href={"/identities/agents/" <> URI.encode_www_form(URI.to_string(@agent_uri))}
+                    class="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-700 no-underline shrink-0"
+                  >
+                    ← {gettext("Agent")}
+                  </a>
+                  <span class="text-sm font-mono text-zinc-700 dark:text-zinc-300 truncate">
+                    {URI.to_string(@agent_uri)}
+                  </span>
+                </div>
+                <div class="flex items-center gap-3 shrink-0">
+                  <%!-- PTY-phase-state-machine 2026-05-26 follow-up (b):
                    subprocess phase badge (separate from the agent
                    Kind's `@status.phase` which describes the Kind's
                    lifecycle, not the PTY/Python subprocess). The
@@ -296,81 +300,82 @@ defmodule EzagentPluginLiveview.TerminalLive do
                    the PubSub subscription set up in mount/3. When
                    the phase is `:dead`, the badge becomes a Restart
                    button. --%>
-              <%= case @pty_phase do %>
-                <% :starting -> %>
-                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300 border border-amber-200 dark:border-amber-900">
-                    <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
-                    {gettext("Starting…")}
-                  </span>
-                <% :running -> %>
-                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900">
-                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                    {gettext("Ready")}
-                  </span>
-                <% :dead -> %>
-                  <button
-                    phx-click="restart_pty"
-                    id="restart-pty-btn"
-                    class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300 border border-rose-200 dark:border-rose-900 hover:bg-rose-100 dark:hover:bg-rose-900 cursor-pointer"
-                  >
-                    <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                    {gettext("Dead — Restart")}
-                  </button>
-                <% _ -> %>
-                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700">
-                    <span class="w-1.5 h-1.5 rounded-full bg-zinc-400"></span>
-                    {gettext("Unknown")}
-                  </span>
-              <% end %>
-              <div class="text-xs text-zinc-500 dark:text-zinc-400">
-                {gettext("Phase:")}
-                <span class={phase_class(@status.phase)}>
-                  <span class="font-mono">{@status.phase}</span>
-                </span>
+                  <%= case @pty_phase do %>
+                    <% :starting -> %>
+                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300 border border-amber-200 dark:border-amber-900">
+                        <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                        {gettext("Starting…")}
+                      </span>
+                    <% :running -> %>
+                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                        {gettext("Ready")}
+                      </span>
+                    <% :dead -> %>
+                      <button
+                        phx-click="restart_pty"
+                        id="restart-pty-btn"
+                        class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300 border border-rose-200 dark:border-rose-900 hover:bg-rose-100 dark:hover:bg-rose-900 cursor-pointer"
+                      >
+                        <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                        {gettext("Dead — Restart")}
+                      </button>
+                    <% _ -> %>
+                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700">
+                        <span class="w-1.5 h-1.5 rounded-full bg-zinc-400"></span>
+                        {gettext("Unknown")}
+                      </span>
+                  <% end %>
+                  <div class="text-xs text-zinc-500 dark:text-zinc-400">
+                    {gettext("Phase:")}
+                    <span class={phase_class(@status.phase)}>
+                      <span class="font-mono">{@status.phase}</span>
+                    </span>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
 
-          <%= cond do %>
-            <% @status.phase == :alive and @pty_alive? -> %>
-              <%!-- The ONE unified terminal panel — same component
+              <%= cond do %>
+                <% @status.phase == :alive and @pty_alive? -> %>
+                  <%!-- The ONE unified terminal panel — same component
                    the inline AgentDetailLive panel and the :pty
                    SessionView render. Full-page surface → header
                    omitted (this LV already shows the agent URI in its
                    own toolbar above) + `flex-1` to fill the window. --%>
-              <Terminal.panel agent_uri={@agent_uri} header={:none} class="flex-1 min-h-0" />
-            <% @status.phase in [:registered, :alive] -> %>
-              <%!-- :registered = cc kind alive but PtyServer not yet
+                  <Terminal.panel agent_uri={@agent_uri} header={:none} class="flex-1 min-h-0" />
+                <% @status.phase in [:registered, :alive] -> %>
+                  <%!-- :registered = cc kind alive but PtyServer not yet
                    up; :alive without pty = echo/curl/etc. — Kind is up
                    but there's no PTY for this flavor. Both surface the
                    same "no terminal here" UX rather than showing a
                    misleading empty xterm. --%>
-              <div class="flex-1 flex items-center justify-center p-8">
-                <div class="text-center max-w-md">
-                  <h2 class="text-base font-medium text-zinc-700 dark:text-zinc-200 mb-2">
-                    {gettext("Terminal not available")}
-                  </h2>
-                  <p class="text-sm text-zinc-500 dark:text-zinc-400">
-                    {pty_unavailable_help(@status.flavor)}
-                    {gettext("Auto-refreshing every %{seconds}s.", seconds: @refresh_seconds)}
-                  </p>
-                </div>
-              </div>
-            <% true -> %>
-              <div class="flex-1 flex items-center justify-center p-8">
-                <div class="text-center max-w-md">
-                  <h2 class="text-base font-medium text-zinc-700 dark:text-zinc-200 mb-2">
-                    {gettext("Agent not found")}
-                  </h2>
-                  <p class="text-sm text-zinc-500 dark:text-zinc-400">
-                    {gettext("No Kind registered at this URI. Check that the agent URI is correct or instantiate the agent's template first.")}
-                  </p>
-                </div>
-              </div>
-          <% end %>
-        </div>
-      </:main_window>
-
+                  <div class="flex-1 flex items-center justify-center p-8">
+                    <div class="text-center max-w-md">
+                      <h2 class="text-base font-medium text-zinc-700 dark:text-zinc-200 mb-2">
+                        {gettext("Terminal not available")}
+                      </h2>
+                      <p class="text-sm text-zinc-500 dark:text-zinc-400">
+                        {pty_unavailable_help(@status.flavor)}
+                        {gettext("Auto-refreshing every %{seconds}s.", seconds: @refresh_seconds)}
+                      </p>
+                    </div>
+                  </div>
+                <% true -> %>
+                  <div class="flex-1 flex items-center justify-center p-8">
+                    <div class="text-center max-w-md">
+                      <h2 class="text-base font-medium text-zinc-700 dark:text-zinc-200 mb-2">
+                        {gettext("Agent not found")}
+                      </h2>
+                      <p class="text-sm text-zinc-500 dark:text-zinc-400">
+                        {gettext(
+                          "No Kind registered at this URI. Check that the agent URI is correct or instantiate the agent's template first."
+                        )}
+                      </p>
+                    </div>
+                  </div>
+              <% end %>
+            </div>
+          </:main_window>
         </WorkspaceShell.workspace_shell>
       </:body>
     </AppShell.app_shell>

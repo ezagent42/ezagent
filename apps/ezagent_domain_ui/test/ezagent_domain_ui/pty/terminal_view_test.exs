@@ -29,7 +29,7 @@ defmodule EzagentDomainUi.Pty.TerminalViewTest do
   describe "applies_to?/1" do
     test "returns false for non-URI input" do
       refute TerminalView.applies_to?(nil)
-      refute TerminalView.applies_to?("entity://agent/team-alpha/cc_demo")
+      refute TerminalView.applies_to?("entity://team-alpha/agent/cc_demo")
       refute TerminalView.applies_to?(:atom)
     end
 
@@ -37,7 +37,9 @@ defmodule EzagentDomainUi.Pty.TerminalViewTest do
       # No real session spawned — KindRegistry.lookup/1 returns :error,
       # which the impl converts to `false` (safe-default failure mode:
       # the Terminal tab simply doesn't show up).
-      missing = URI.new!("session://default/team-alpha/missing-#{System.unique_integer([:positive])}")
+      missing =
+        URI.new!("session://team-alpha/default/missing-#{System.unique_integer([:positive])}")
+
       refute TerminalView.applies_to?(missing)
     end
   end
@@ -57,7 +59,7 @@ defmodule EzagentDomainUi.Pty.TerminalViewTest do
     end
 
     test "renders xterm mount when active_pty_agent_uri is set" do
-      uri_str = "entity://agent/team-alpha/cc_demo"
+      uri_str = "entity://team-alpha/agent/cc_demo"
       html = render_component(&TerminalView.render/1, active_pty_agent_uri: uri_str)
 
       assert html =~ "Terminal —"
@@ -86,8 +88,8 @@ defmodule EzagentDomainUi.Pty.TerminalViewTest do
       assert src =~ "Ezagent.Domain.Pty.alive?",
              "TerminalView.applies_to? must consult Ezagent.Domain.Pty.alive?/1 for cross-flavor detection"
 
-      refute src =~ ~S|String.starts_with?(entity_name, "cc_")|,
-             "TerminalView must NOT hard-code the cc_ flavor prefix — that was the old PtyView shape"
+      refute src =~ "starts_with?",
+             "TerminalView must NOT hard-code flavor-name prefix checks — that was the old PtyView shape"
     end
   end
 end

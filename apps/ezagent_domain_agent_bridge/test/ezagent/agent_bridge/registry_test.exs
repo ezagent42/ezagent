@@ -14,7 +14,7 @@ defmodule Ezagent.AgentBridge.RegistryTest do
   end
 
   test "bind / lookup / unbind roundtrip" do
-    uri = URI.new!("entity://agent/team-alpha/test_bridge-#{System.unique_integer([:positive])}")
+    uri = URI.new!("entity://team-alpha/agent/test_bridge-#{System.unique_integer([:positive])}")
     pid = spawn(fn -> Process.sleep(:infinity) end)
 
     assert :ok = Registry.bind(uri, pid)
@@ -30,7 +30,7 @@ defmodule Ezagent.AgentBridge.RegistryTest do
     # live channel just wrote → the agent vanished from the registry despite a
     # connected bridge → AgentBridge.deliver returned :no_bridge.
     uri =
-      URI.new!("entity://agent/team-alpha/test_bridge-race-#{System.unique_integer([:positive])}")
+      URI.new!("entity://team-alpha/agent/test_bridge-race-#{System.unique_integer([:positive])}")
 
     live = spawn(fn -> Process.sleep(:infinity) end)
     sibling = spawn(fn -> Process.sleep(:infinity) end)
@@ -48,7 +48,7 @@ defmodule Ezagent.AgentBridge.RegistryTest do
   end
 
   test "double-bind same pid is idempotent" do
-    uri = URI.new!("entity://agent/team-alpha/test_bridge-double")
+    uri = URI.new!("entity://team-alpha/agent/test_bridge-double")
     pid = spawn(fn -> Process.sleep(:infinity) end)
 
     :ok = Registry.bind(uri, pid)
@@ -56,7 +56,7 @@ defmodule Ezagent.AgentBridge.RegistryTest do
   end
 
   test "bind on top of live pid returns :already_bound" do
-    uri = URI.new!("entity://agent/team-alpha/test_bridge-conflict")
+    uri = URI.new!("entity://team-alpha/agent/test_bridge-conflict")
     p1 = spawn(fn -> Process.sleep(:infinity) end)
     p2 = spawn(fn -> Process.sleep(:infinity) end)
 
@@ -65,7 +65,7 @@ defmodule Ezagent.AgentBridge.RegistryTest do
   end
 
   test "bind replaces a dead pid" do
-    uri = URI.new!("entity://agent/team-alpha/test_bridge-replace")
+    uri = URI.new!("entity://team-alpha/agent/test_bridge-replace")
     p1 = spawn(fn -> :ok end)
     Process.sleep(20)
     refute Process.alive?(p1)
@@ -77,14 +77,14 @@ defmodule Ezagent.AgentBridge.RegistryTest do
   end
 
   test "list_connected/0 carries info + connected_at" do
-    uri = URI.new!("entity://agent/team-alpha/test_bridge-info")
+    uri = URI.new!("entity://team-alpha/agent/test_bridge-info")
     pid = spawn(fn -> Process.sleep(:infinity) end)
     info = %{agent_info: %{"version" => "2.1.143"}, tools: ["reply"]}
 
     :ok = Registry.bind(uri, pid, info)
 
     [{found_uri, row}] = Registry.list_connected()
-    assert URI.to_string(found_uri) == "entity://agent/team-alpha/test_bridge-info"
+    assert URI.to_string(found_uri) == "entity://team-alpha/agent/test_bridge-info"
     assert row.pid == pid
     assert %DateTime{} = row.connected_at
     assert row.info == info
@@ -94,7 +94,7 @@ defmodule Ezagent.AgentBridge.RegistryTest do
     assert Registry.count() == 0
     assert Registry.status() == :no_bridges
 
-    uri = URI.new!("entity://agent/team-alpha/test_bridge-count")
+    uri = URI.new!("entity://team-alpha/agent/test_bridge-count")
     :ok = Registry.bind(uri, spawn(fn -> Process.sleep(:infinity) end))
 
     assert Registry.count() == 1
@@ -102,7 +102,7 @@ defmodule Ezagent.AgentBridge.RegistryTest do
   end
 
   test "bind/unbind broadcast generic and legacy events" do
-    uri = URI.new!("entity://agent/team-alpha/test_bridge-broadcast")
+    uri = URI.new!("entity://team-alpha/agent/test_bridge-broadcast")
     :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, Registry.topic())
     :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, Registry.legacy_topic())
 

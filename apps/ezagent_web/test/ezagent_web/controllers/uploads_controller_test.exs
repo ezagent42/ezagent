@@ -1,51 +1,44 @@
 defmodule EzagentWeb.UploadsControllerTest do
   @moduledoc """
-  Regression test for PR #305 r4 HIGH — uploads-route scope mismatch.
+  Resource-unification P2 — the uploads download contract change.
 
-  Pins the cross-user isolation invariant that
-  `EzagentWeb.UploadsController` enforces:
+  ## What changed (🔒 AUTH-CONTRACT CHANGE — Allen-gated)
 
-  - A signed-in user who is NEITHER the uploader NOR a participant
-    in any session the file is attached to gets `403 Forbidden`
-    when guessing another user's upload filename. This is THE
-    invariant the route move + per-user authz was designed to
-    establish — without it, `RequireEntity` would prove only
-    "some signed-in entity", which is too weak.
+  P2 replaces the participation-based `GET /files/:filename` route with a
+  **signed capability token** (OI-1 DECISION) and a ws-partitioned on-disk layout
+  (`…/uploads/<ws>/<name>`). The legacy `/files/:filename` route is FULLY RETIRED
+  (Allen-approved 2026-06-08) — NO back-compat shim. The SOLE internal route is:
 
-  - The uploading user (sender of a message attaching the file)
-    gets `200` + the file body.
+      GET /uploads/download?token=<signed-token>
 
-  - A session participant (sent at least one message in a session
-    that contains a message attaching the file) gets `200` — even
-    if they didn't upload the file themselves.
+  The token encodes the full ws-scoped `resource://<ws>/uploads/<name>` URI; the
+  controller verifies it (MAC + TTL), then runs the `FsResolver` `uploads`
+  `authority/2` against the **request-mount workspace** (derived from the
+  authenticated entity, NOT from the URI) — `uri.<ws> == mount.workspace`.
 
-  - Admin entities (`Ezagent.Entity.User.admin_uri/0`) bypass the
-    relationship check entirely (operator/debugging powers).
+  Invariants pinned:
 
-  - Path-traversal attempts (`..`, empty, `.`) get `400`.
-
-  - Anonymous callers (no `:current_entity_uri` in session) are
-    bounced to `/login` by the `RequireEntity` plug BEFORE reaching
-    the controller.
-
-  Files live under `$EZAGENT_HOME/<profile>/uploads/`. Each test
-  redirects `EZAGENT_HOME` to a per-test tmp dir to keep test runs
-  hermetic.
+    * token round-trip upload→download (real route);
+    * foreign-`<ws>` download denied (403) — workspace isolation via authority/2;
+    * same filename in two workspaces isolated on disk + on read;
+    * expired / tampered token rejected;
+    * unauthorized callers get a uniform response (no file-existence oracle);
+    * anon callers bounced by RequireEntity before the controller;
+    * the retired `/files/:filename` route is GONE (404) — no shim.
   """
 
   use EzagentWeb.ConnCase
 
-  alias Ezagent.{Message, MessageStore}
+  alias Ezagent.Uploads.DownloadToken
+  alias Ezagent.URI, as: EzURI
 
   @workspace_name "team-uploads"
+  @other_workspace "team-other"
 
-  setup tags do
-    # Per-test isolated EZAGENT_HOME so the uploads dir doesn't
-    # leak across tests or into developer state.
+  setup do
     home =
       Path.join(System.tmp_dir!(), "ezagent_uploads_test_#{System.unique_integer([:positive])}")
 
-    File.mkdir_p!(Path.join([home, Ezagent.Home.profile(), "uploads"]))
     prior_home = System.get_env("EZAGENT_HOME")
     System.put_env("EZAGENT_HOME", home)
 
@@ -57,276 +50,312 @@ defmodule EzagentWeb.UploadsControllerTest do
       _ = File.rm_rf(home)
     end)
 
-    # Workspace binding for the session URIs used below — MessageStore.write/2
-    # calls `Ezagent.Persistence.workspace_uri_for!/1` which raises if the
-    # session isn't bound.
-    workspace_uri = URI.new!("workspace://" <> @workspace_name)
-
-    # Ensure the workspace row exists (some default-workspace tests
-    # depend on this — defensive create_if_missing).
-    case Ezagent.Workspace.Store.get_by_name(@workspace_name) do
-      nil -> {:ok, _} = Ezagent.Workspace.Store.create(@workspace_name, %{})
-      _ -> :ok
+    for ws <- [@workspace_name, @other_workspace] do
+      case Ezagent.Workspace.Store.get_by_name(ws) do
+        nil -> {:ok, _} = Ezagent.Workspace.Store.create(ws, %{})
+        _ -> :ok
+      end
     end
 
-    %{home: home, workspace_uri: workspace_uri, workspace_name: @workspace_name, tags: tags}
+    %{home: home}
   end
 
+  alias Ezagent.{Message, MessageStore}
+
   defp uniq, do: System.unique_integer([:positive])
+  defp uploaded_filename, do: "#{Ecto.UUID.generate()}-doc.txt"
 
-  defp user_uri(name), do: URI.new!("entity://user/#{@workspace_name}/#{name}")
+  defp user_uri(ws, name), do: EzURI.new!("entity://#{ws}/user/#{name}")
 
-  defp session_uri(name) do
-    uri = URI.new!("session://#{@workspace_name}/#{@workspace_name}/#{name}")
-    workspace = URI.new!("workspace://" <> @workspace_name)
-    :ok = Ezagent.WorkspaceRegistry.bind(uri, workspace)
+  defp session_uri(ws, name) do
+    uri = EzURI.new!("session://#{ws}/#{ws}/#{name}")
+    :ok = Ezagent.WorkspaceRegistry.bind(uri, EzURI.new!("workspace://" <> ws))
     uri
   end
 
-  defp write_upload(filename, content \\ "payload-#{:rand.uniform(999_999)}") do
-    full = Path.join(Ezagent.Home.path("uploads"), filename)
-    File.write!(full, content)
-    {filename, content, full}
+  # Write bytes into the ws-partitioned upload store via the production path
+  # (Ezagent.Uploads.store!/3), returning the resource URI + content.
+  defp store_upload(ws, filename, content \\ nil) do
+    content = content || "payload-#{:rand.uniform(999_999)}"
+    tmp = Path.join(System.tmp_dir!(), "tmp-#{System.unique_integer([:positive])}")
+    File.write!(tmp, content)
+    uri = Ezagent.Uploads.store!(ws, filename, tmp)
+    File.rm(tmp)
+    {uri, content}
   end
 
-  defp attach_in_message(sender_uri, session_uri, filename) do
-    attachment_uri =
-      URI.parse("resource://uploads/#{@workspace_name}/#{filename}")
+  # Persist a message in `session` whose attachments include the upload — this is
+  # what makes `sender` an "uploader" (and lets later senders be participants).
+  # The token download path runs the SAME admin/uploader/participant authz the
+  # retired /files route used, so a stored file alone is NOT downloadable.
+  defp attach_in_message(sender, ws, session, filename) do
+    msg =
+      Message.new(sender, %{
+        text: "see attached",
+        attachments: [EzURI.resource(ws, "uploads", filename)]
+      })
 
-    msg = Message.new(sender_uri, %{text: "see attached", attachments: [attachment_uri]})
-    {:ok, _} = MessageStore.write(msg, session_uri)
+    {:ok, _} = MessageStore.write(msg, session)
     :ok
   end
 
-  defp sent_text_message(sender_uri, session_uri) do
-    msg = Message.new(sender_uri, %{text: "hello", attachments: []})
-    {:ok, _} = MessageStore.write(msg, session_uri)
+  defp sent_text_message(sender, session) do
+    msg = Message.new(sender, %{text: "hello", attachments: []})
+    {:ok, _} = MessageStore.write(msg, session)
     :ok
   end
 
-  defp sign_in(conn, %URI{} = entity_uri) do
+  # Store bytes + attach them in a fresh session sent by `uploader`, returning
+  # everything the happy-path tests need (the upload URI, content, session).
+  defp upload_and_attach(ws, uploader, filename, content \\ nil) do
+    {uri, content} = store_upload(ws, filename, content)
+    session = session_uri(ws, "s-#{uniq()}")
+    :ok = attach_in_message(uploader, ws, session, filename)
+    {uri, content, session}
+  end
+
+  defp sign_in(conn, ws, %URI{} = entity_uri) do
     Plug.Test.init_test_session(conn, %{
       "current_entity_uri" => URI.to_string(entity_uri),
-      "current_workspace_uri" => "workspace://" <> @workspace_name
+      "current_workspace_uri" => "workspace://" <> ws
     })
   end
 
-  defp uploaded_filename, do: "#{Ecto.UUID.generate()}-doc.txt"
-
-  describe "GET /files/:filename — authz" do
-    test "200 + body when caller is the uploading user", %{conn: conn} do
-      uploader = user_uri("alice-#{uniq()}")
-      session = session_uri("s-#{uniq()}")
-      filename = uploaded_filename()
-      {_, content, _} = write_upload(filename)
-      :ok = attach_in_message(uploader, session, filename)
-
-      conn = conn |> sign_in(uploader) |> get("/files/" <> filename)
-
-      assert conn.status == 200
-      assert conn.resp_body == content
-    end
-
-    test "200 when caller is a session participant (uploader is someone else)",
+  describe "GET /uploads/download?token= — signed-token contract" do
+    test "200 + body for the UPLOADER with a valid token under the matching mount workspace",
          %{conn: conn} do
-      uploader = user_uri("alice-#{uniq()}")
-      participant = user_uri("bob-#{uniq()}")
-      session = session_uri("s-#{uniq()}")
       filename = uploaded_filename()
-      {_, content, _} = write_upload(filename)
-
-      # Alice uploads + attaches.
-      :ok = attach_in_message(uploader, session, filename)
-      # Bob participated in the same session (sent his own text).
-      :ok = sent_text_message(participant, session)
-
-      conn = conn |> sign_in(participant) |> get("/files/" <> filename)
-
-      assert conn.status == 200
-      assert conn.resp_body == content
-    end
-
-    test "403 when caller has no relationship to the file (cross-user guessing)",
-         %{conn: conn} do
-      uploader = user_uri("alice-#{uniq()}")
-      stranger = user_uri("eve-#{uniq()}")
-      session = session_uri("s-#{uniq()}")
-      filename = uploaded_filename()
-      {_, _content, _} = write_upload(filename)
-      :ok = attach_in_message(uploader, session, filename)
-
-      # Eve is signed in but has NEVER touched this file or its session.
-      conn = conn |> sign_in(stranger) |> get("/files/" <> filename)
-
-      assert conn.status == 403
-      assert conn.resp_body == "forbidden"
-    end
-
-    test "403 even if file exists on disk but is referenced by no message",
-         %{conn: conn} do
-      # Orphan file — uploaded but never attached. Without an attachment
-      # record there's no way to prove ANYONE owns it, so non-admin
-      # callers must be rejected.
-      stranger = user_uri("eve-#{uniq()}")
-      filename = uploaded_filename()
-      {_, _content, _} = write_upload(filename)
-
-      conn = conn |> sign_in(stranger) |> get("/files/" <> filename)
-
-      assert conn.status == 403
-    end
-
-    test "200 when caller is admin (operator bypass)", %{conn: conn} do
-      uploader = user_uri("alice-#{uniq()}")
-      session = session_uri("s-#{uniq()}")
-      filename = uploaded_filename()
-      {_, content, _} = write_upload(filename)
-      :ok = attach_in_message(uploader, session, filename)
-
-      admin_uri = Ezagent.Entity.User.admin_uri()
-      conn = conn |> sign_in(admin_uri) |> get("/files/" <> filename)
-
-      assert conn.status == 200
-      assert conn.resp_body == content
-    end
-  end
-
-  describe "GET /files/:filename — bypass attempts (codex r1 HIGH)" do
-    test "403 when caller sent a message whose TEXT mentions the filename (not attachments)",
-         %{conn: conn} do
-      # The pre-codex-r1 implementation matched a SQL LIKE against the
-      # whole `CAST(body AS TEXT)` — so an attacker could put the
-      # victim's filename in `body.text` (with `attachments: []`) and
-      # the LIKE pattern `%/<filename>"%` would hit the JSON-quoted
-      # text. Authoritative check now verifies the resource URI is
-      # actually in the decoded attachments list.
-      uploader = user_uri("alice-#{uniq()}")
-      attacker = user_uri("eve-#{uniq()}")
-      uploader_session = session_uri("alice-s-#{uniq()}")
-      attacker_session = session_uri("eve-s-#{uniq()}")
-      filename = uploaded_filename()
-      {_, _content, _} = write_upload(filename)
-      :ok = attach_in_message(uploader, uploader_session, filename)
-
-      # Attacker sends a TEXT message (not attachment) referencing the
-      # filename in their own, unrelated session.
-      attachment_uri =
-        URI.parse("resource://uploads/#{@workspace_name}/#{filename}")
-
-      bad_msg =
-        Message.new(attacker, %{
-          text: "please fetch #{URI.to_string(attachment_uri)}",
-          attachments: []
-        })
-
-      {:ok, _} = MessageStore.write(bad_msg, attacker_session)
-
-      # Attacker must still be denied — they have no attachment record
-      # for `filename` and aren't a participant in uploader's session.
-      conn = conn |> sign_in(attacker) |> get("/files/" <> filename)
-
-      assert conn.status == 403
-      assert conn.resp_body == "forbidden"
-    end
-
-    test "filenames with `_` still authz-match for the real uploader (SQLite LIKE ESCAPE)",
-         %{conn: conn} do
-      # The pre-codex-r1 implementation built a LIKE pattern with `\_`
-      # but never passed `ESCAPE '\'` to SQLite, so legitimate filenames
-      # containing `_` (e.g. `my_file.txt` — sanitize_filename allows
-      # underscores) silently failed the participant search. Fix uses
-      # an explicit `ESCAPE '\'` clause. Pin the legitimate path so a
-      # future refactor can't silently re-break it.
-      uploader = user_uri("alice-#{uniq()}")
-      session = session_uri("s-#{uniq()}")
-      filename = "#{Ecto.UUID.generate()}-my_file_with_underscores.txt"
-      {_, content, _} = write_upload(filename)
-      :ok = attach_in_message(uploader, session, filename)
-
-      conn = conn |> sign_in(uploader) |> get("/files/" <> filename)
-
-      assert conn.status == 200
-      assert conn.resp_body == content
-    end
-  end
-
-  describe "GET /files/:filename — input validation" do
-    test "400 on empty filename slug", %{conn: conn} do
-      uploader = user_uri("alice-#{uniq()}")
-
-      # Phoenix's `:filename` segment can't actually match ""; the
-      # invalid-name branch handles the `"."` / `".."` edge.
-      conn = conn |> sign_in(uploader) |> get("/files/.")
-      assert conn.status == 400
-
-      conn = build_conn() |> sign_in(uploader) |> get("/files/..")
-      assert conn.status == 400
-    end
-
-    test "404 for valid-shaped filename that doesn't exist on disk (authorized caller)",
-         %{conn: conn} do
-      # Filename never written but caller is admin to bypass authz
-      # (so we can isolate the "not on disk" branch). Authorized
-      # callers get a precise signal — file existence is INFORMATION
-      # they're allowed to learn (codex r1 LOW oracle fix applies
-      # only to UNAUTHORIZED callers).
-      admin = Ezagent.Entity.User.admin_uri()
+      uploader = user_uri(@workspace_name, "alice-#{uniq()}")
+      {uri, content, _session} = upload_and_attach(@workspace_name, uploader, filename)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60)
 
       conn =
         conn
-        |> sign_in(admin)
-        |> get("/files/" <> uploaded_filename())
+        |> sign_in(@workspace_name, uploader)
+        |> get(~p"/uploads/download?token=#{token}")
 
-      assert conn.status == 404
-      assert conn.resp_body == "upload not found"
+      assert conn.status == 200
+      assert conn.resp_body == content
     end
 
-    test "403 (not 404) when unauthorized caller asks for a non-existent file (no existence oracle)",
-         %{conn: conn} do
-      # Codex r1 LOW: previously, an unauthorized caller could probe
-      # whether a filename existed on disk by comparing 403 (exists,
-      # forbidden) vs 404 (not found). Fix: authorize BEFORE checking
-      # disk, so unauthorized callers ALWAYS get 403 regardless of
-      # whether the file is present.
-      stranger = user_uri("eve-#{uniq()}")
-      bogus_filename = uploaded_filename()
-      # Do NOT write the file to disk.
+    test "200 for a SESSION PARTICIPANT who is not the uploader", %{conn: conn} do
+      filename = uploaded_filename()
+      uploader = user_uri(@workspace_name, "alice-#{uniq()}")
+      participant = user_uri(@workspace_name, "bob-#{uniq()}")
+      {uri, content, session} = upload_and_attach(@workspace_name, uploader, filename)
+      # bob becomes a participant by sending into the same session.
+      :ok = sent_text_message(participant, session)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60)
 
-      conn = conn |> sign_in(stranger) |> get("/files/" <> bogus_filename)
+      conn =
+        conn
+        |> sign_in(@workspace_name, participant)
+        |> get(~p"/uploads/download?token=#{token}")
+
+      assert conn.status == 200
+      assert conn.resp_body == content
+    end
+
+    test "403 for a same-workspace OBSERVER who never participated (NO auth widening, codex HIGH)",
+         %{conn: conn} do
+      # The crux of the P2 revision: an authenticated same-workspace caller who
+      # can VIEW the session (and thus could be handed a rendered token link) but
+      # is neither uploader, participant, nor admin must NOT be able to download.
+      # A leaked/observer token is useless — serve-time authz matches pre-P2.
+      filename = uploaded_filename()
+      uploader = user_uri(@workspace_name, "alice-#{uniq()}")
+      observer = user_uri(@workspace_name, "eve-#{uniq()}")
+      {uri, _content, _session} = upload_and_attach(@workspace_name, uploader, filename)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60)
+
+      conn =
+        conn
+        |> sign_in(@workspace_name, observer)
+        |> get(~p"/uploads/download?token=#{token}")
 
       assert conn.status == 403
-      assert conn.resp_body == "forbidden"
     end
-  end
 
-  describe "GET /files/:filename — auth pipeline" do
-    test "redirects to /login when there's no signed-in entity",
+    test "200 for ADMIN (operator bypass)", %{conn: conn} do
+      filename = uploaded_filename()
+      uploader = user_uri(@workspace_name, "alice-#{uniq()}")
+      {uri, content, _session} = upload_and_attach(@workspace_name, uploader, filename)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60)
+
+      conn =
+        conn
+        |> sign_in(@workspace_name, Ezagent.Entity.User.admin_uri())
+        |> get(~p"/uploads/download?token=#{token}")
+
+      assert conn.status == 200
+      assert conn.resp_body == content
+    end
+
+    test "mount workspace is the SELECTED current_workspace_uri, not the entity home (codex r2)",
+         %{conn: conn} do
+      # A system entity (home = system) context-switched into team-other reads
+      # team-other's file — proving authority uses the selected workspace slot,
+      # not the entity's home workspace. (Admin bypasses the participant gate so
+      # this test isolates the workspace-derivation behavior.)
+      filename = uploaded_filename()
+      uploader = user_uri(@other_workspace, "carol-#{uniq()}")
+      {uri, content, _session} = upload_and_attach(@other_workspace, uploader, filename)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60)
+
+      conn =
+        conn
+        |> sign_in(@other_workspace, Ezagent.Entity.User.admin_uri())
+        |> get(~p"/uploads/download?token=#{token}")
+
+      assert conn.status == 200
+      assert conn.resp_body == content
+    end
+
+    test "403 for a token bound to a FOREIGN workspace (authority/2)", %{conn: conn} do
+      # The token is minted for team-other but the caller is mounted in
+      # team-uploads. Even an admin (who clears the participant gate) is denied —
+      # workspace isolation via authority/2 still applies.
+      filename = uploaded_filename()
+      uploader = user_uri(@other_workspace, "carol-#{uniq()}")
+      {uri, _content, _session} = upload_and_attach(@other_workspace, uploader, filename)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60)
+
+      conn =
+        conn
+        |> sign_in(@workspace_name, Ezagent.Entity.User.admin_uri())
+        |> get(~p"/uploads/download?token=#{token}")
+
+      assert conn.status == 403
+    end
+
+    test "403 for an expired token (TTL elapsed, no infinite tokens)", %{conn: conn} do
+      filename = uploaded_filename()
+      uploader = user_uri(@workspace_name, "alice-#{uniq()}")
+      {uri, _content, _session} = upload_and_attach(@workspace_name, uploader, filename)
+      token = DownloadToken.mint!(uri, ttl_seconds: -1, __test_allow_nonpositive__: true)
+
+      conn =
+        conn
+        |> sign_in(@workspace_name, uploader)
+        |> get(~p"/uploads/download?token=#{token}")
+
+      assert conn.status == 403
+    end
+
+    test "403 for a tampered / forged token (MAC)", %{conn: conn} do
+      conn =
+        conn
+        |> sign_in(@workspace_name, user_uri(@workspace_name, "alice-#{uniq()}"))
+        |> get(~p"/uploads/download?token=#{"not-a-real-token"}")
+
+      assert conn.status == 403
+    end
+
+    test "404 for an AUTHORIZED token whose bytes are not on disk (no oracle leak)",
+         %{conn: conn} do
+      # Uploader-authorized for a filename that was attached in a message but
+      # whose bytes were never written — authorized caller gets a precise 404.
+      filename = uploaded_filename()
+      uploader = user_uri(@workspace_name, "alice-#{uniq()}")
+      session = session_uri(@workspace_name, "s-#{uniq()}")
+      :ok = attach_in_message(uploader, @workspace_name, session, filename)
+      uri = EzURI.resource(@workspace_name, "uploads", filename)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60)
+
+      conn =
+        conn
+        |> sign_in(@workspace_name, uploader)
+        |> get(~p"/uploads/download?token=#{token}")
+
+      assert conn.status == 404
+    end
+
+    test "redirects anon callers to /login (RequireEntity) before the controller",
          %{conn: conn} do
       filename = uploaded_filename()
-      {_, _content, _} = write_upload(filename)
+      uploader = user_uri(@workspace_name, "alice-#{uniq()}")
+      {uri, _content, _session} = upload_and_attach(@workspace_name, uploader, filename)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60)
 
-      # No sign_in/2 — RequireEntity should bounce before the
-      # controller runs.
-      conn = get(conn, "/files/" <> filename)
+      conn = get(conn, ~p"/uploads/download?token=#{token}")
       assert redirected_to(conn) == "/login"
     end
   end
 
-  describe "GET /admin/uploads/:filename — legacy route removed" do
-    test "404 on the old admin-prefixed URL", %{conn: conn} do
+  describe "ws-partitioned isolation" do
+    test "same filename in two workspaces is isolated on disk and on read", %{conn: conn} do
+      # Admin caller clears the participant gate so this test isolates the
+      # ws-partition behavior (same filename, two workspaces, two bodies).
       filename = uploaded_filename()
-      uploader = user_uri("alice-#{uniq()}")
+      uploader_a = user_uri(@workspace_name, "alice-#{uniq()}")
+      uploader_b = user_uri(@other_workspace, "carol-#{uniq()}")
 
-      # The pre-2026-05-25 path is gone — falls into the catch-all
-      # `/*path → FallbackController :not_found`.
+      {uri_a, content_a, _sa} =
+        upload_and_attach(@workspace_name, uploader_a, filename, "acme-bytes")
+
+      {uri_b, content_b, _sb} =
+        upload_and_attach(@other_workspace, uploader_b, filename, "beta-bytes")
+
+      refute content_a == content_b
+
+      token_a = DownloadToken.mint!(uri_a, ttl_seconds: 60)
+      token_b = DownloadToken.mint!(uri_b, ttl_seconds: 60)
+
+      admin = Ezagent.Entity.User.admin_uri()
+
+      # Admin mounted in team-uploads downloads team-uploads' copy.
+      conn_a =
+        conn
+        |> sign_in(@workspace_name, admin)
+        |> get(~p"/uploads/download?token=#{token_a}")
+
+      assert conn_a.status == 200
+      assert conn_a.resp_body == "acme-bytes"
+
+      # The team-uploads mount cannot use team-other's token (ws isolation).
+      conn_cross =
+        build_conn()
+        |> sign_in(@workspace_name, admin)
+        |> get(~p"/uploads/download?token=#{token_b}")
+
+      assert conn_cross.status == 403
+    end
+  end
+
+  describe "GET /files/:filename — RETIRED (no back-compat shim, Allen-approved 2026-06-08)" do
+    test "the legacy filename route is GONE — a stored file is NOT served via /files", %{
+      conn: conn
+    } do
+      # Even with a real stored file AND an authenticated caller in its workspace,
+      # `/files/<name>` must NOT resolve to the bytes — the route no longer exists,
+      # so it falls through to the catch-all 404 (never 200, never the file body).
+      filename = uploaded_filename()
+      {_uri, content} = store_upload(@workspace_name, filename)
+
       conn =
         conn
-        |> sign_in(uploader)
-        |> get("/admin/uploads/" <> filename)
+        |> sign_in(@workspace_name, user_uri(@workspace_name, "alice-#{uniq()}"))
+        |> get("/files/" <> filename)
 
-      # FallbackController renders the branded 404 — status 404,
-      # body contains the i18n'd message; we just assert on status
-      # to keep the test resilient to copy changes.
+      assert conn.status == 404
+      refute conn.resp_body == content
+    end
+
+    test "the /files route is absent from the router (no controller action bound)" do
+      refute Enum.any?(EzagentWeb.Router.__routes__(), fn route ->
+               String.starts_with?(route.path, "/files")
+             end),
+             "expected ZERO /files routes after P2 retirement; the back-compat shim must be gone"
+    end
+  end
+
+  describe "GET /admin/uploads/:filename — legacy admin route still removed" do
+    test "404 on the old admin-prefixed URL", %{conn: conn} do
+      conn =
+        conn
+        |> sign_in(@workspace_name, user_uri(@workspace_name, "alice-#{uniq()}"))
+        |> get("/admin/uploads/" <> uploaded_filename())
+
       assert conn.status == 404
     end
   end

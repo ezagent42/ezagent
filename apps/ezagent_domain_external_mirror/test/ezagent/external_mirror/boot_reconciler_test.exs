@@ -20,7 +20,7 @@ defmodule Ezagent.ExternalMirror.BootReconcilerTest do
 
   alias Ezagent.ExternalMirror.{BindingRow, BootReconciler}
 
-  @workspace_uri URI.parse("workspace://team-alpha")
+  @workspace_uri Ezagent.URI.new!("workspace://team-alpha")
   @session_scheme "session"
 
   setup do
@@ -109,7 +109,7 @@ defmodule Ezagent.ExternalMirror.BootReconcilerTest do
   # ----- helpers -----------------------------------------------------------
 
   defp fresh_session_uri(prefix) do
-    URI.parse("session://default/team-alpha/#{prefix}-#{System.unique_integer([:positive])}")
+    Ezagent.URI.new!("session://team-alpha/default/#{prefix}-#{System.unique_integer([:positive])}")
   end
 
   defp insert_binding_row(%URI{} = session_uri, adapter_id, target_id) do
@@ -119,7 +119,7 @@ defmodule Ezagent.ExternalMirror.BootReconcilerTest do
       adapter_id: adapter_id,
       target_id: target_id,
       opts_json: "{}",
-      bound_by: "entity://user/team-alpha/boot-recon-test",
+      bound_by: "entity://team-alpha/user/boot-recon-test",
       bound_at: DateTime.utc_now(),
       workspace_uri: URI.to_string(@workspace_uri)
     }

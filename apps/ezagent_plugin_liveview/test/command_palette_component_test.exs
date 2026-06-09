@@ -123,7 +123,7 @@ defmodule EzagentPluginLiveview.CommandPaletteComponentTest do
 
   describe "AdminLive handle_params(?session=) — the CmdK session landing (SPEC §2.2)" do
     test "/sessions?session=<encoded> selects that session", %{conn: conn} do
-      session_uri = "session://default/system/main"
+      session_uri = "session://system/default/main"
       encoded = URI.encode_www_form(session_uri)
 
       {:ok, _lv, html} = live(conn, "/sessions?session=#{encoded}")
@@ -135,7 +135,7 @@ defmodule EzagentPluginLiveview.CommandPaletteComponentTest do
 
     test "/sessions with no session param mounts normally (no-op clause)", %{conn: conn} do
       {:ok, _lv, html} = live(conn, "/sessions")
-      assert html =~ "session://default/system/main"
+      assert html =~ "session://system/default/main"
     end
 
     test "a malformed ?session= value does not crash the LV", %{conn: conn} do

@@ -51,11 +51,11 @@ defmodule Ezagent.ExternalMirror.AuthModelTestHelpers do
   def setup_caller(profile, opts \\ []) do
     caller_uri =
       Keyword.get_lazy(opts, :caller_uri, fn ->
-        URI.parse("entity://user/default/inv-#{System.unique_integer([:positive])}")
+        Ezagent.URI.user(:default, "inv-#{System.unique_integer([:positive])}")
       end)
 
     session_uri = Keyword.get(opts, :session_uri)
-    workspace_uri = Keyword.get(opts, :workspace_uri, URI.parse("workspace://default"))
+    workspace_uri = Keyword.get(opts, :workspace_uri, Ezagent.URI.workspace(:default))
     adapter_allow_module = Keyword.get(opts, :adapter_allow, MockPublishAdapter.Allow)
 
     caps = caps_for_profile(profile, session_uri, workspace_uri, adapter_allow_module)
@@ -70,7 +70,7 @@ defmodule Ezagent.ExternalMirror.AuthModelTestHelpers do
         behavior: :any,
         instance: :any,
         workspace_uri: :any,
-        granted_by: URI.parse("system://bootstrap/default"),
+        granted_by: Ezagent.URI.system(:bootstrap, :default),
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
     ])
@@ -130,7 +130,11 @@ defmodule Ezagent.ExternalMirror.AuthModelTestHelpers do
   the session to its workspace in WorkspaceRegistry.
   """
   def spawn_owner_and_session(%URI{} = owner_uri, %URI{} = session_uri) do
-    :ok = spawn_user(owner_uri, Ezagent.SystemPrincipal.caps("system://bootstrap"))
+    :ok =
+      spawn_user(
+        owner_uri,
+        "bootstrap" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps()
+      )
 
     case Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: owner_uri}) do
       {:ok, _pid} -> :ok
@@ -200,7 +204,7 @@ defmodule Ezagent.ExternalMirror.AuthModelTestHelpers do
   """
   def bypass_facade_dispatch(session_uri, adapter_id, target_id, args_overrides, ctx) do
     target =
-      URI.parse("#{URI.to_string(session_uri)}?action=external_mirror.bind")
+      Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=external_mirror.bind")
 
     base_args = %{
       adapter_id: adapter_id,
@@ -282,11 +286,11 @@ defmodule Ezagent.ExternalMirror.AuthModelTestHelpers do
   `workspace://default`).
   """
   def unique_session_uri(prefix, workspace \\ "default") do
-    URI.parse("session://default/#{workspace}/#{prefix}-#{System.unique_integer([:positive])}")
+    Ezagent.URI.session(workspace, :default, "#{prefix}-#{System.unique_integer([:positive])}")
   end
 
   @doc "Returns a unique caller URI under the given workspace."
   def unique_user_uri(prefix, workspace \\ "default") do
-    URI.parse("entity://user/#{workspace}/#{prefix}-#{System.unique_integer([:positive])}")
+    Ezagent.URI.user(workspace, "#{prefix}-#{System.unique_integer([:positive])}")
   end
 end

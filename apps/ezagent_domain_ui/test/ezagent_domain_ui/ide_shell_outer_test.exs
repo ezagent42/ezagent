@@ -23,7 +23,7 @@ defmodule EzagentDomainUi.IdeShellOuterTest do
   describe "ide_shell_outer/1 — :workspace perspective" do
     test "renders header + body + command_palette; workspace dropdown when workspaces given" do
       assigns = %{
-        current_entity_uri: "entity://user/system/admin",
+        current_entity_uri: "entity://system/user/admin",
         workspace_name: "default",
         workspaces: [
           %{name: "default", uri: "workspace://team-alpha"},
@@ -67,7 +67,7 @@ defmodule EzagentDomainUi.IdeShellOuterTest do
       # tile in PR-L. Allen reported this regression in Feishu on
       # 2026-05-25.
       assigns = %{
-        current_entity_uri: "entity://user/system/admin",
+        current_entity_uri: "entity://system/user/admin",
         workspace_name: nil
       }
 
@@ -103,7 +103,7 @@ defmodule EzagentDomainUi.IdeShellOuterTest do
     # a workspace switcher (the only way out was the avatar menu).
     test "shows the workspace dropdown (same as :workspace perspective)" do
       assigns = %{
-        current_entity_uri: "entity://user/system/admin",
+        current_entity_uri: "entity://system/user/admin",
         workspace_name: "system",
         workspaces: [%{name: "team-alpha", uri: "workspace://team-alpha"}]
       }
@@ -144,7 +144,7 @@ defmodule EzagentDomainUi.IdeShellOuterTest do
     # downgrading the class is caught by CI.
     test "workspace-menu element carries z-50 (above z-40 chrome)" do
       assigns = %{
-        current_entity_uri: "entity://user/system/admin",
+        current_entity_uri: "entity://system/user/admin",
         workspace_name: "default",
         workspaces: [%{name: "default", uri: "workspace://system"}]
       }
@@ -192,7 +192,7 @@ defmodule EzagentDomainUi.IdeShellOuterTest do
     # listener writes localStorage and sets data-theme to the OS
     # preferred value). The bug was purely the label.
     test "avatar menu has 3 parallel theme buttons (Light / Dark / System) — all click-wired" do
-      assigns = %{current_entity_uri: "entity://user/system/admin", is_admin?: true}
+      assigns = %{current_entity_uri: "entity://system/user/admin", is_admin?: true}
 
       html =
         rendered_to_string(~H"""
@@ -233,7 +233,7 @@ defmodule EzagentDomainUi.IdeShellOuterTest do
       Gettext.put_locale(EzagentDomainUi.Gettext, "zh_CN")
 
       try do
-        assigns = %{current_entity_uri: "entity://user/system/admin", is_admin?: true}
+        assigns = %{current_entity_uri: "entity://system/user/admin", is_admin?: true}
 
         html =
           rendered_to_string(~H"""
@@ -260,13 +260,13 @@ defmodule EzagentDomainUi.IdeShellOuterTest do
     # Allen 2026-05-26 — the Admin link in the avatar dropdown was
     # gated on `is_admin?` alone, which matches ONLY the literal
     # seeded admin URI per `Ezagent.Identity.admin?/1`. Other system
-    # members (e.g. `entity://user/system/linyilun`) — who CAN
+    # members (e.g. `entity://system/user/linyilun`) — who CAN
     # access `/admin/*` via the `:require_admin` `live_session` —
     # saw no Admin link. The gate is widened to
     # `is_admin? OR is_system_member?` to match the route gate.
     test "Admin link visible when is_admin? is true (literal admin URI)" do
       assigns = %{
-        current_entity_uri: "entity://user/system/admin",
+        current_entity_uri: "entity://system/user/admin",
         is_admin?: true,
         is_system_member?: true
       }
@@ -287,7 +287,7 @@ defmodule EzagentDomainUi.IdeShellOuterTest do
       # Bug 6 regression — without the widened gate this case would
       # hide the Admin link even though the user can reach /admin/*.
       assigns = %{
-        current_entity_uri: "entity://user/system/linyilun",
+        current_entity_uri: "entity://system/user/linyilun",
         is_admin?: false,
         is_system_member?: true
       }
@@ -307,7 +307,7 @@ defmodule EzagentDomainUi.IdeShellOuterTest do
 
     test "Admin link HIDDEN for regular users (neither admin nor system member)" do
       assigns = %{
-        current_entity_uri: "entity://user/h2oslabs/alice",
+        current_entity_uri: "entity://h2oslabs/user/alice",
         is_admin?: false,
         is_system_member?: false
       }

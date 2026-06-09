@@ -37,7 +37,7 @@ defmodule Ezagent.AgentBridge.TokenStoreTest do
     tmp: tmp,
     profile: profile
   } do
-    agent_uri = URI.new!("entity://agent/team-alpha/test_token-store")
+    agent_uri = URI.new!("entity://team-alpha/agent/test_token-store")
 
     assert {:ok, token} = TokenStore.mint(agent_uri)
     assert String.starts_with?(token, "tok_")
@@ -50,7 +50,7 @@ defmodule Ezagent.AgentBridge.TokenStoreTest do
   end
 
   test "mint/1 is idempotent and lookup_by_token/1 returns the agent URI" do
-    agent_uri = URI.new!("entity://agent/team-alpha/test_token-idempotent")
+    agent_uri = URI.new!("entity://team-alpha/agent/test_token-idempotent")
 
     assert {:ok, token1} = TokenStore.mint(agent_uri)
     assert {:ok, token2} = TokenStore.mint(agent_uri)
@@ -61,7 +61,7 @@ defmodule Ezagent.AgentBridge.TokenStoreTest do
   end
 
   test "list_all/0 returns URI keys and token metadata" do
-    agent_uri = URI.new!("entity://agent/team-alpha/test_token-list")
+    agent_uri = URI.new!("entity://team-alpha/agent/test_token-list")
     assert {:ok, token} = TokenStore.mint(agent_uri)
 
     assert [{found_uri, %{"token" => ^token, "minted_at" => minted_at}}] = TokenStore.list_all()

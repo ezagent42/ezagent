@@ -43,15 +43,15 @@ defmodule Ezagent.Kind.RuntimePhase3dTest do
   end
 
   test "dispatch with empty caps → {:error, :unauthorized} + :denied telemetry" do
-    # Echo plugin pre-spawns entity://agent/system/echo_default at boot; use it as the target.
-    target = URI.new!("entity://agent/system/echo_default?action=echo.say")
+    # Echo plugin pre-spawns entity://system/agent/echo_default at boot; use it as the target.
+    target = URI.new!("entity://system/agent/echo_default?action=echo.say")
 
     inv = %Invocation{
       target: target,
       mode: :call,
       args: %{msg: "should be denied"},
       ctx: %{
-        caller: URI.new!("entity://user/team-alpha/nobody"),
+        caller: URI.new!("entity://team-alpha/user/nobody"),
         caps: MapSet.new(),
         reply: :ignore
       }
@@ -66,7 +66,7 @@ defmodule Ezagent.Kind.RuntimePhase3dTest do
   end
 
   test "dispatch with admin caps → success + :granted telemetry" do
-    target = URI.new!("entity://agent/system/echo_default?action=echo.say")
+    target = URI.new!("entity://system/agent/echo_default?action=echo.say")
 
     inv = %Invocation{
       target: target,
@@ -84,7 +84,7 @@ defmodule Ezagent.Kind.RuntimePhase3dTest do
     assert_receive {:authz_event, [:ezagent, :authz, :granted], _meta}, 500
   end
 
-  test "KindRegistry still has entity://agent/system/echo_default (sanity — dispatch path live)" do
-    assert {:ok, _pid} = KindRegistry.lookup(URI.new!("entity://agent/system/echo_default"))
+  test "KindRegistry still has entity://system/agent/echo_default (sanity — dispatch path live)" do
+    assert {:ok, _pid} = KindRegistry.lookup(URI.new!("entity://system/agent/echo_default"))
   end
 end

@@ -58,7 +58,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
 
     @impl true
     def instantiate(_tmpl_name, %{"agent_uri" => uri_str}, _workspace_uri) do
-      agent_uri = URI.parse(uri_str)
+      agent_uri = Ezagent.URI.new!(uri_str)
 
       case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
         {:ok, :started, _pid} -> {:ok, [agent_uri], %{fresh?: true}}
@@ -78,12 +78,19 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
   # prefix the worker URI carries.
   defp register_stub_flavor(label) do
     flavor = "s33#{label}#{uniq()}"
-    :ok = AgentFlavorRegistry.register(%{flavor: flavor, kind: Agent, template_class: StubFlavorClass})
+
+    :ok =
+      AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Agent,
+        template_class: StubFlavorClass
+      })
+
     flavor
   end
 
   defp dispatch(uri, action, args) do
-    target = URI.parse("#{URI.to_string(uri)}?action=#{action}")
+    target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=#{action}")
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
@@ -149,18 +156,30 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
       }
     ]
 
-    MapSet.new(base ++ [template_cap(:agent_template, workspace_uri), template_cap(:session_template, workspace_uri)])
+    MapSet.new(
+      base ++
+        [
+          template_cap(:agent_template, workspace_uri),
+          template_cap(:session_template, workspace_uri)
+        ]
+    )
   end
 
   defp spawn_session do
-    session_uri = URI.parse("session://generic/team-alpha/s33-#{uniq()}")
+    session_uri = Ezagent.URI.session("team-alpha", "generic", "s33-#{uniq()}")
     {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, @workspace_uri)
     session_uri
   end
 
   defp spawn_orchestrator do
-    orchestrator_uri = URI.parse("entity://agent/team-alpha/cc_orch-s33-#{uniq()}")
+    orchestrator_uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch-s33-#{uniq()}")
+    :ok = Ezagent.AgentFlavorAttributes.put(orchestrator_uri, "cc")
+
+    on_exit(fn ->
+      Ezagent.AgentFlavorAttributes.delete(orchestrator_uri)
+    end)
+
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri})
     :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
     orchestrator_uri
@@ -195,7 +214,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
 
       templates =
         Map.new(flavors, fn {label, flavor} ->
-          uri = URI.new!("template://agent/team-alpha/s33-#{label}-#{uniq()}")
+          uri = URI.new!("template://team-alpha/agent/s33-#{label}-#{uniq()}")
           :ok = create_agent_template(uri, flavor, "worker-#{label}")
           {label, uri}
         end)
@@ -205,11 +224,21 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
       caps = orchestrator_caps(session_uri, orchestrator_uri, @workspace_uri)
       mcp = mcp_server(session_uri, orchestrator_uri, caps)
 
-      %{mcp: mcp, session_uri: session_uri, orchestrator_uri: orchestrator_uri, templates: templates}
+      %{
+        mcp: mcp,
+        session_uri: session_uri,
+        orchestrator_uri: orchestrator_uri,
+        templates: templates
+      }
     end
 
-    test "add_managed_member spawns one member per flavor, each under the orchestrator lineage", ctx do
-      members = [{"worker-cc", ctx.templates.cc}, {"worker-codex", ctx.templates.codex}, {"worker-ds", ctx.templates.curl}]
+    test "add_managed_member spawns one member per flavor, each under the orchestrator lineage",
+         ctx do
+      members = [
+        {"worker-cc", ctx.templates.cc},
+        {"worker-codex", ctx.templates.codex},
+        {"worker-ds", ctx.templates.curl}
+      ]
 
       member_uris =
         for {role_name, tmpl_uri} <- members do
@@ -220,7 +249,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
             })
 
           refute result["isError"], "add_managed_member #{role_name} failed: #{inspect(result)}"
-          member_uri = URI.parse(result["structuredContent"])
+          member_uri = Ezagent.URI.new!(result["structuredContent"])
 
           assert AgentLineage.spawned_in_lineage?(member_uri, ctx.orchestrator_uri),
                  "#{role_name} member must be recorded under the orchestrator lineage (cap #2)"
@@ -239,11 +268,17 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
 
       # The three members are distinct entities.
       uris = Enum.map(member_uris, fn {_, u} -> URI.to_string(u) end)
-      assert length(Enum.uniq(uris)) == 3, "the three flavor members must be distinct: #{inspect(uris)}"
+
+      assert length(Enum.uniq(uris)) == 3,
+             "the three flavor members must be distinct: #{inspect(uris)}"
     end
 
     test "define_rule_set_rule routes to each flavor member independently", ctx do
-      for {role_name, tmpl_uri} <- [{"wm-cc", ctx.templates.cc}, {"wm-codex", ctx.templates.codex}, {"wm-ds", ctx.templates.curl}] do
+      for {role_name, tmpl_uri} <- [
+            {"wm-cc", ctx.templates.cc},
+            {"wm-codex", ctx.templates.codex},
+            {"wm-ds", ctx.templates.curl}
+          ] do
         add =
           McpServer.handle_tool_call(ctx.mcp, "add_managed_member", %{
             "source_agent_template_uri" => URI.to_string(tmpl_uri),

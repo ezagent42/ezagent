@@ -42,7 +42,7 @@ defmodule Ezagent.Identity do
         # `mix ezagent.stress.await_ready!/1`).
         await_ready(user_uri)
 
-        target = Ezagent.URI.new!("#{URI.to_string(user_uri)}?action=identity.list_caps")
+        target = Ezagent.URI.with_action(user_uri, :identity, :list_caps)
 
         case Router.dispatch(%Cmd{
                target: target,
@@ -110,7 +110,7 @@ defmodule Ezagent.Identity do
         action: :list_caps,
         instance: user_uri,
         workspace_uri: workspace_uri,
-        granted_by: Ezagent.URI.new!("system://bootstrap"),
+        granted_by: Ezagent.SystemPrincipal.uri("bootstrap"),
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
     ])
@@ -119,7 +119,10 @@ defmodule Ezagent.Identity do
   # Identity is hosted on both the User and Agent Kind; the self-cap's
   # kind axis must match the target Kind's `type_name/0` so it satisfies
   # the runtime-substituted needed cap.
-  defp self_cap_kind(%URI{scheme: "entity", host: "agent"}), do: :agent
+  defp self_cap_kind(%URI{scheme: "entity"} = uri) do
+    if Ezagent.URI.type?(uri, :agent), do: :agent, else: :user
+  end
+
   defp self_cap_kind(_), do: :user
 
   @doc """

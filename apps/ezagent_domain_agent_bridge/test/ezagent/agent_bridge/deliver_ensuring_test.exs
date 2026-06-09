@@ -19,9 +19,6 @@ defmodule Ezagent.AgentBridge.DeliverEnsuringTest do
     def flavor, do: "drt"
 
     @impl true
-    def agent_uri_prefix, do: "drt_"
-
-    @impl true
     def deliver(%Payload{} = payload, channel_pid) do
       send(channel_pid, {:agent_bridge_delivered, payload})
       :ok
@@ -35,11 +32,20 @@ defmodule Ezagent.AgentBridge.DeliverEnsuringTest do
     Registry.init()
     for {uri, _pid} <- Registry.list_all(), do: Registry.unbind(uri)
     _ = AdapterRegistry.register("drt", TestAdapter)
+    Ezagent.UriQuery.init()
+    previous_flavor_resolver = :ets.lookup(Ezagent.UriQuery.table(), :flavor)
+    :ets.insert(Ezagent.UriQuery.table(), {:flavor, fn _agent_uri -> {:ok, "drt"} end})
 
     prev = Application.get_env(:ezagent_domain_agent_bridge, :bridge_heal_fn)
     prev_t = Application.get_env(:ezagent_domain_agent_bridge, :bridge_ready_timeout_ms)
 
     on_exit(fn ->
+      :ets.delete(Ezagent.UriQuery.table(), :flavor)
+
+      for entry <- previous_flavor_resolver do
+        :ets.insert(Ezagent.UriQuery.table(), entry)
+      end
+
       if prev,
         do: Application.put_env(:ezagent_domain_agent_bridge, :bridge_heal_fn, prev),
         else: Application.delete_env(:ezagent_domain_agent_bridge, :bridge_heal_fn)
@@ -53,13 +59,13 @@ defmodule Ezagent.AgentBridge.DeliverEnsuringTest do
   end
 
   defp uri(name),
-    do: URI.new!("entity://agent/team-alpha/drt_#{name}-#{System.unique_integer([:positive])}")
+    do: URI.new!("entity://team-alpha/agent/drt_#{name}-#{System.unique_integer([:positive])}")
 
   defp payload(),
     do: %Payload{
       message_id: "m-#{System.unique_integer([:positive])}",
-      session_uri: URI.new!("session://default/team-alpha/s"),
-      sender_uri: URI.new!("entity://user/system/admin"),
+      session_uri: URI.new!("session://team-alpha/default/s"),
+      sender_uri: URI.new!("entity://system/user/admin"),
       text: "hello",
       event_type: :chat_send,
       meta: %{}

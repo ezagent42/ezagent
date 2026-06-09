@@ -107,11 +107,11 @@ defmodule Ezagent.SystemPrincipal do
   """
   @spec uri(String.t()) :: URI.t()
   def uri(service) when is_binary(service) do
-    parsed = Ezagent.URI.new!("system://" <> service)
+    parsed = Ezagent.URI.system_principal(service)
 
     unless Catalog.member?(parsed) do
       raise ArgumentError,
-            "system://#{service} is not in Ezagent.SystemPrincipal.Catalog " <>
+            "#{URI.to_string(parsed)} is not in Ezagent.SystemPrincipal.Catalog " <>
               "(SPEC caps-cleanup-v1 §4.1)."
     end
 
@@ -172,7 +172,7 @@ defmodule Ezagent.SystemPrincipal do
 
   defp enforce_system_scheme!(%URI{} = uri) do
     raise ArgumentError,
-          "Ezagent.SystemPrincipal expects a system:// URI, got: " <>
-            inspect(URI.to_string(uri))
+          "Ezagent.SystemPrincipal expects a system URI, got: " <>
+            inspect(Ezagent.URI.stable_key(uri))
   end
 end

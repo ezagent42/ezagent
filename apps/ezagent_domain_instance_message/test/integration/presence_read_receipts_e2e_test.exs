@@ -7,7 +7,7 @@ defmodule EzagentDomainInstanceMessage.Integration.PresenceReadReceiptsE2ETest d
 
   Scenario:
 
-  1. Spawn `entity://agent/team-alpha/cc_demo_<unique>` Agent Kind
+  1. Spawn `entity://team-alpha/agent/cc_demo_<unique>` Agent Kind
   2. Spawn a fresh Session (so PresenceFanout sees `:member_joined`
      events and subscribes to admin + cc-demo's Presence)
   3. Admin sends a chat message → Chat.invoke(:send) fan-out
@@ -87,12 +87,18 @@ defmodule EzagentDomainInstanceMessage.Integration.PresenceReadReceiptsE2ETest d
     suffix = unique_suffix()
     short_name = "cc_demo_e2e_#{suffix}"
     # `create_session/3` derives the session's workspace structurally from
-    # the creator (admin = entity://user/system/admin → workspace://system).
+    # the creator (admin = entity://system/user/admin → workspace://system).
     # cc_demo MUST live in that SAME workspace, or `Resolver.valid_member?/2`
     # drops it as cross-workspace and the @cc-demo mention never fans out
     # (no chat.receive → no :delivered mark). Build it in `system`, not
     # `team-alpha`.
-    cc_demo_uri = URI.new!("entity://agent/system/cc_demo_#{suffix}")
+    cc_demo_uri = URI.new!("entity://system/agent/cc_demo_#{suffix}")
+
+    :ok = Ezagent.AgentFlavorAttributes.put(cc_demo_uri, "cc")
+
+    on_exit(fn ->
+      Ezagent.AgentFlavorAttributes.delete(cc_demo_uri)
+    end)
 
     # Spawn the agent (live in KindRegistry — :member_joined can find it)
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(cc_demo_uri)
@@ -100,8 +106,11 @@ defmodule EzagentDomainInstanceMessage.Integration.PresenceReadReceiptsE2ETest d
     # Create the session — uses the canonical chat-domain create_session
     # facade so PresenceFanout sees member_joined events
     admin_uri = ensure_admin_spawned()
+
     {:ok, session_uri, _meta} =
-      EzagentDomainInstanceMessage.SessionCreator.create_session(short_name, admin_uri, template_name: "default")
+      EzagentDomainInstanceMessage.SessionCreator.create_session(short_name, admin_uri,
+        template_name: "default"
+      )
 
     # Join the cc_demo agent so the session has two members; admin was
     # joined by create_session

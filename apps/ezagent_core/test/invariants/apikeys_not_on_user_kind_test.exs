@@ -6,7 +6,7 @@ defmodule EzagentCore.Invariants.ApiKeysNotOnUserKindTest do
   users do NOT. Re-introducing `Ezagent.Behavior.ApiKeys` on the User
   Kind would resurrect the per-user credential bag the flip
   dismantled — every CurlAgent would again default to
-  `entity://user/system/admin`'s key, every workspace clone would
+  `entity://system/user/admin`'s key, every workspace clone would
   leak the operator's secrets, and the per-agent permission model
   (creator + admin) would collapse back into "whoever owns this user
   can mint outbound calls anywhere".

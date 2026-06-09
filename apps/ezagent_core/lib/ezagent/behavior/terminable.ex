@@ -234,7 +234,7 @@ defmodule Ezagent.Behavior.Terminable do
 
   def notify_spawning_principal(_), do: :ok
 
-  defp user_uri?(%URI{scheme: "entity", host: "user"}), do: true
+  defp user_uri?(%URI{scheme: "entity"} = uri), do: Ezagent.URI.type?(uri, :user)
   defp user_uri?(_), do: false
 
   # Schedule the supervised-child termination AFTER the dispatch reply

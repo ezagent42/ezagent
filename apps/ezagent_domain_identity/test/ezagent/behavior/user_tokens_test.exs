@@ -75,7 +75,7 @@ defmodule Ezagent.Behavior.UserTokensTest do
     end
 
     test "data_owner/1 mirrors Identity (self-owned for concrete URIs, :any wildcard)" do
-      user_uri = URI.parse("entity://user/team-alpha/alice")
+      user_uri = Ezagent.URI.new!("entity://team-alpha/user/alice")
       assert UT.data_owner(user_uri) == user_uri
       assert UT.data_owner(:any) == :any
       assert UT.data_owner(:mint_token) == :no_owner
@@ -124,7 +124,7 @@ defmodule Ezagent.Behavior.UserTokensTest do
     end
 
     test "bad self_uri (wrong scheme) returns :bad_target_uri", %{ctx: ctx} do
-      bad_ctx = %{ctx | self_uri: URI.parse("workspace://x")}
+      bad_ctx = %{ctx | self_uri: Ezagent.URI.new!("workspace://x")}
 
       assert {:error, {:bad_target_uri, _}} = UT.handle_mint_token(%{}, bad_ctx)
     end
@@ -188,7 +188,7 @@ defmodule Ezagent.Behavior.UserTokensTest do
     end
 
     test "bad self_uri returns :bad_target_uri", %{ctx: ctx} do
-      bad_ctx = %{ctx | self_uri: URI.parse("entity://agent/x/cc_x")}
+      bad_ctx = %{ctx | self_uri: Ezagent.URI.new!("entity://x/agent/cc_x")}
 
       assert {:error, {:bad_target_uri, _}} = UT.handle_list_tokens(%{}, bad_ctx)
     end
@@ -222,7 +222,7 @@ defmodule Ezagent.Behavior.UserTokensTest do
          %{user_uri: user_uri, ctx: ctx} do
       n = System.unique_integer([:positive])
       other_workspace = "ut-other-" <> Integer.to_string(n)
-      other_uri = URI.parse("entity://user/" <> other_workspace <> "/bob")
+      other_uri = URI.parse("entity://" <> other_workspace <> "/user/bob")
       {:ok, _decoded} = Ezagent.Users.create(other_uri, nil, [])
       {_plain, other_row} = Ezagent.Entity.Token.mint(other_uri, label: "bob-token")
 
@@ -245,7 +245,7 @@ defmodule Ezagent.Behavior.UserTokensTest do
   defp setup_user(_ctx) do
     n = System.unique_integer([:positive])
     ws_name = "ut-test-#{n}"
-    user_uri = URI.parse("entity://user/#{ws_name}/alice")
+    user_uri = Ezagent.URI.new!("entity://#{ws_name}/user/alice")
 
     {:ok, _decoded} = Users.create(user_uri, nil, [])
 

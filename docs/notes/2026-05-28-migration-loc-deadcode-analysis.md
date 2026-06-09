@@ -30,7 +30,7 @@ Borderline-but-justified examples checked individually:
 |---|---|---|---|
 | `Ezagent.MessageRouting` | 44 | Ecto schema; referenced via `MessageRouting` short name in 2 query files | keep |
 | `Ezagent.StressMetrics` | 237 | Started explicitly by `mix ezagent.stress`; intentionally outside supervision per moduledoc | keep |
-| `Ezagent.Telemetry` | (small) | Re-exported with short alias from `ezagent_web/lib/.../telemetry.ex` | keep |
+| ~~`Ezagent.Telemetry`~~ | (small) | ~~Re-exported with short alias from `ezagent_web/lib/.../telemetry.ex`~~ — **CORRECTION (cleanup-4, 2026-06-08):** the re-export never existed (`EzagentWeb.Telemetry` is the stock Phoenix telemetry supervisor and does not reference `Ezagent.Telemetry`). `all_events/0` had ZERO callers in all of git history, the module was never supervised/attached, and its event catalogue had drifted stale (missing the `:persistence` / `:cc_bridge` / `:notification` / `:chat,:receive,:dropped` events that `Ezagent.Audit` actually handles). A sound auto-enforced catalogue is not achievable because several event suffixes are dynamic (`[:ezagent, :persistence, phase]`, `[:ezagent, :authz, decision]`). | **DELETED** |
 | `EzagentDomainAgentBridge` | 13 | Doc-only umbrella module (just `@moduledoc`); minimal anchor — could fold into `application.ex` | optional refactor (-13 LOC) |
 | `EzagentDomainPython.FrameBuffer` | 114 | Used via group-alias `alias EzagentDomainPython.{FrameBuffer, JsonRpc}` in `server.ex` | keep |
 | `EzagentPluginFeishu.SenderResolver` | (small) | Short-name used by 5 sibling files | keep |

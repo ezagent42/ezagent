@@ -5,27 +5,11 @@ defmodule EzagentPluginCodex.BridgeAdapter do
 
   @behaviour Ezagent.AgentBridge.Adapter
 
+  alias Ezagent.AgentBridge.AttachmentNormalizer
   alias Ezagent.AgentBridge.Payload
-
-  @attachment_key_atoms %{
-    "type" => :type,
-    "local_path" => :local_path,
-    "name" => :name
-  }
-
-  @attachment_type_atoms %{
-    "image" => :image,
-    "file" => :file,
-    "audio" => :audio,
-    "video" => :video,
-    "media" => :media
-  }
 
   @impl Ezagent.AgentBridge.Adapter
   def flavor, do: "codex"
-
-  @impl Ezagent.AgentBridge.Adapter
-  def agent_uri_prefix, do: "codex_"
 
   @impl Ezagent.AgentBridge.Adapter
   def deliver(%Payload{} = payload, channel_pid) when is_pid(channel_pid) do
@@ -96,7 +80,7 @@ defmodule EzagentPluginCodex.BridgeAdapter do
         s when is_binary(s) -> s
       end
 
-    body = %{text: text, attachments: normalize_attachments(attachments)}
+    body = %{text: text, attachments: AttachmentNormalizer.normalize_attachments(attachments)}
     msg = Ezagent.Message.new(agent_uri, body, ref_id: ref_id)
 
     for session_uri_str <- sessions do
@@ -113,7 +97,7 @@ defmodule EzagentPluginCodex.BridgeAdapter do
         args: %{message: msg},
         ctx: %{
           caller: agent_uri,
-          caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
+          caps: "chat-reply" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
           reply: :ignore
         }
       })
@@ -121,28 +105,6 @@ defmodule EzagentPluginCodex.BridgeAdapter do
 
     :ok
   end
-
-  defp normalize_attachments(list) when is_list(list) do
-    Enum.map(list, fn
-      %{} = m -> normalize_attachment_keys(m)
-      other -> other
-    end)
-  end
-
-  defp normalize_attachment_keys(m) do
-    Enum.into(m, %{}, fn
-      {k, v} when is_binary(k) ->
-        {Map.get(@attachment_key_atoms, k, k), normalize_attachment_value(k, v)}
-
-      {k, v} ->
-        {k, v}
-    end)
-  end
-
-  defp normalize_attachment_value("type", v) when is_binary(v),
-    do: Map.get(@attachment_type_atoms, v, v)
-
-  defp normalize_attachment_value(_, v), do: v
 
   defp uri_string(%URI{} = uri), do: URI.to_string(uri)
   defp uri_string(nil), do: nil

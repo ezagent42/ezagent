@@ -33,12 +33,12 @@ defmodule Mix.Tasks.Ezagent.Workspace.RemoveMember do
         case Ezagent.Workspace.remove_member(workspace_name, member_uri) do
           :ok ->
             Mix.shell().info(
-              "✓ removed #{URI.to_string(member_uri)} from workspace://#{workspace_name}"
+              "✓ removed #{URI.to_string(member_uri)} from workspace #{workspace_name}"
             )
 
           {:ok, _} ->
             Mix.shell().info(
-              "✓ removed #{URI.to_string(member_uri)} from workspace://#{workspace_name}"
+              "✓ removed #{URI.to_string(member_uri)} from workspace #{workspace_name}"
             )
 
           {:error, reason} ->

@@ -311,7 +311,7 @@ defmodule Ezagent.Behavior.CurlAgent do
             caller: self_uri,
             # SPEC caps-cleanup-v1 §4.4 — agent reply path uses
             # `system://chat-reply` per Catalog.
-            caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
+            caps: "chat-reply" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
             reply: :ignore
           })
 
@@ -357,10 +357,14 @@ defmodule Ezagent.Behavior.CurlAgent do
   # (post ApiKeys-to-Agent flip). CurlAgent caps now follow the
   # standard agent-creator model: the data owner is the entity URI
   # recorded in the `:api_keys` slice's `:creator_uri`.
-  def data_owner(%URI{scheme: "entity", host: "agent"} = agent_uri) do
-    case Ezagent.Kind.get_slice(agent_uri, :api_keys) do
-      {:ok, %{creator_uri: %URI{} = creator}} -> creator
-      _ -> :no_owner
+  def data_owner(%URI{scheme: "entity"} = agent_uri) do
+    if Ezagent.URI.type?(agent_uri, :agent) do
+      case Ezagent.Kind.get_slice(agent_uri, :api_keys) do
+        {:ok, %{creator_uri: %URI{} = creator}} -> creator
+        _ -> :no_owner
+      end
+    else
+      :no_owner
     end
   end
 

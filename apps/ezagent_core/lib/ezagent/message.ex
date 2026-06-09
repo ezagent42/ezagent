@@ -17,6 +17,7 @@ defmodule Ezagent.Message do
       body:        %{text: String.t(), attachments: [%URI{}]}  # 结构化
       ref_id:      String.t() | nil     # ^reply-to 另一条 message id
       inserted_at: DateTime.t()
+      visibility: :customer_visible | :operator_only
 
   Message is session-internal data, not a dispatchable Kind. The previous
   `message://<uuid>` URI shape was retired in PR #149 / SPEC v2 §5.13 — the
@@ -35,6 +36,7 @@ defmodule Ezagent.Message do
     being replied to)
   - `:inserted_at` — `DateTime.t()`,默认 `DateTime.utc_now()`
   - `:id` — 重写 id(测试 / replay 用,正常不传)
+  - `:visibility` — `:customer_visible | :operator_only`, default `:customer_visible`
 
   ## Phase 2 边界
 
@@ -67,7 +69,8 @@ defmodule Ezagent.Message do
           legend_triggers: [String.t()],
           body: body_shape(),
           ref_id: String.t() | nil,
-          inserted_at: DateTime.t()
+          inserted_at: DateTime.t(),
+          visibility: :customer_visible | :operator_only
         }
 
   # `id` is the primary key (plain UUID hex); ecto_sqlite3 stores it as TEXT.
@@ -111,6 +114,10 @@ defmodule Ezagent.Message do
     # per SPEC v2 §5.13 — message ids are not URIs).
     field :ref_id, :string
     field :inserted_at, :utc_datetime_usec
+
+    field :visibility, Ecto.Enum,
+      values: [:customer_visible, :operator_only],
+      default: :customer_visible
   end
 
   @doc """
@@ -129,7 +136,8 @@ defmodule Ezagent.Message do
       legend_triggers: Keyword.get(opts, :legend_triggers, []),
       body: Map.put_new(body, :attachments, []),
       ref_id: Keyword.get(opts, :ref_id),
-      inserted_at: Keyword.get(opts, :inserted_at, DateTime.utc_now())
+      inserted_at: Keyword.get(opts, :inserted_at, DateTime.utc_now()),
+      visibility: Keyword.get(opts, :visibility, :customer_visible)
     }
   end
 

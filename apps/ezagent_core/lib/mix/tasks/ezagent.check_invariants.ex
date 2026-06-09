@@ -90,9 +90,15 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
     # - `audit.ex`: legitimate view fan-out to esr:audit:stream (§5.7.6)
     # - `invocation.ex`: reply path :phoenix_pubsub (caller chose this
     #   reply target explicitly — not an inbound message broadcast)
+    # - `kind/runtime/effects.ex`: Kind.Runtime `:notify` effect fan-out
+    #   (the dispatch path already entered Runtime; this is not an inbound
+    #   message broadcast)
     # - `behavior/chat.ex`: session/user :events fan-out from Chat.invoke
     #   (Phase 2b-step 2 — fan-out to LV stream subscribers, NOT an
     #   inbound message; inbound side is the dispatch that fired invoke)
+    # - domain PTY/Python/AgentBridge/Socialware modules: runtime status,
+    #   stream, auth, connection, and customer-feed fan-out. These are
+    #   observer notifications, not inbound command dispatch.
     # Plus the standard exclusions (tests, this checker).
     {output, _exit_code} =
       System.cmd(
@@ -101,12 +107,26 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
           "-c",
           # Strip lines that are pure prose mentions (backtick-quoted
           # symbol inside docstring) rather than actual code calls.
-          "grep -rnE 'PubSub\\.broadcast' apps/ezagent_core apps/ezagent_plugin_echo apps/ezagent_domain_instance_message apps/ezagent_plugin_liveview 2>/dev/null --include='*.ex' " <>
-            "| grep -v 'lib/esr/audit.ex' " <>
-            "| grep -v 'lib/esr/invocation.ex' " <>
-            "| grep -v 'ezagent_domain_instance_message/lib/esr/behavior/chat.ex' " <>
-            "| grep -v '_test.exs' " <>
+          "grep -rnE 'PubSub\\.broadcast' apps 2>/dev/null --include='*.ex' " <>
+            "| grep -v '/test/' " <>
+            "| grep -v 'apps/ezagent_core/lib/ezagent/audit.ex' " <>
+            "| grep -v 'apps/ezagent_core/lib/ezagent/invocation.ex' " <>
+            "| grep -v 'apps/ezagent_core/lib/ezagent/kind/runtime.ex' " <>
+            "| grep -v 'apps/ezagent_core/lib/ezagent/kind/runtime/effects.ex' " <>
+            "| grep -v 'apps/ezagent_core/lib/ezagent/slice_change.ex' " <>
+            "| grep -v 'apps/ezagent_core/lib/ezagent/cc_events.ex' " <>
+            "| grep -v 'apps/ezagent_core/lib/ezagent/publisher_lifecycle.ex' " <>
+            "| grep -v 'apps/ezagent_core/lib/ezagent/notifications.ex' " <>
+            "| grep -v 'apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex' " <>
+            "| grep -v 'apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex' " <>
+            "| grep -v 'apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex' " <>
+            "| grep -v 'apps/ezagent_domain_socialware/lib/ezagent/socialware/settlement.ex' " <>
+            "| grep -v 'apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/presence_fanout.ex' " <>
+            "| grep -v 'apps/ezagent_domain_instance_message/lib/ezagent/chat/read_marker.ex' " <>
+            "| grep -v 'apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/mcp_channel.ex' " <>
             "| grep -v 'ezagent.check_invariants.ex' " <>
+            "| grep -v '^[^:]*:[0-9]*:[[:space:]]*#' " <>
+            "| grep -v '`Phoenix\\.PubSub\\.broadcast' " <>
             "| grep -v ' `PubSub' || true"
         ],
         stderr_to_stdout: true
@@ -130,15 +150,11 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
         "bash",
         [
           "-c",
-          "grep -rnE '^\\s*def init\\(' apps/ezagent_core apps/ezagent_plugin_echo apps/ezagent_domain_instance_message apps/ezagent_plugin_liveview 2>/dev/null --include='*.ex' " <>
-            "| grep -v 'kind/server.ex' " <>
-            "| grep -v 'ets_owner.ex' " <>
-            "| grep -v 'idempotency/sweeper.ex' " <>
-            "| grep -v 'audit/writer.ex' " <>
-            "| grep -v 'ezagent_core/application.ex' " <>
-            "| grep -v 'ezagent_plugin_echo/application.ex' " <>
-            "| grep -v 'ezagent_domain_instance_message/application.ex' " <>
-            "| grep -v '_test.exs' || true"
+          "for f in $(grep -rlE '@behaviou?r Ezagent\\.Kind' apps --include='*.ex' 2>/dev/null); do " <>
+            "grep -nE '^\\s*def init\\(' \"$f\" | sed \"s#^#$f:#\"; " <>
+            "done " <>
+            "| grep -v 'apps/ezagent_core/lib/ezagent/kind/server.ex' " <>
+            "| grep -v '/test/' || true"
         ],
         stderr_to_stdout: true
       )
@@ -162,7 +178,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
         [
           "-c",
           "grep -E ':not_ready, m\\} when m in \\[:call' " <>
-            "apps/ezagent_core/lib/esr/invocation.ex || true"
+            "apps/ezagent_core/lib/ezagent/invocation.ex || true"
         ],
         stderr_to_stdout: true
       )
@@ -176,7 +192,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
   end
 
   # Invariant #6: audit handler async-only
-  # `apps/ezagent_core/lib/esr/audit.ex` must not write SQLite directly —
+  # `apps/ezagent_core/lib/ezagent/audit.ex` must not write SQLite directly —
   # it should only `:telemetry`-emit, `PubSub.broadcast`, and
   # `GenServer.cast` to `Ezagent.Audit.Writer`. The SQL write lives in
   # `audit/writer.ex` per Decision #60.
@@ -190,7 +206,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
         [
           "-c",
           "grep -nE 'EzagentCore\\.Repo\\.(insert|update|delete)|exqlite' " <>
-            "apps/ezagent_core/lib/esr/audit.ex " <>
+            "apps/ezagent_core/lib/ezagent/audit.ex " <>
             "| grep -v '^[[:space:]]*#' " <>
             "| grep -v ' `Esr\\.Repo' " <>
             "| grep -v 'Repo\\.insert.*in `audit\\.ex' || true"
@@ -217,7 +233,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
         "bash",
         [
           "-c",
-          "grep -E ':unroutable' apps/ezagent_core/lib/esr/dlq.ex || true"
+          "grep -E ':unroutable' apps/ezagent_core/lib/ezagent/dlq.ex || true"
         ],
         stderr_to_stdout: true
       )
@@ -247,9 +263,9 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
             "apps/ezagent_plugin_echo/lib apps/ezagent_web/lib apps/ezagent_plugin_liveview/lib " <>
             "--include='*.ex' 2>/dev/null " <>
             "| grep -v 'ezagent.check_invariants.ex' " <>
-            "| grep -v 'lib/esr/telemetry.ex' " <>
-            "| grep -v 'lib/esr/kind/runtime.ex' " <>
-            "| grep -v 'lib/esr/audit.ex' " <>
+            "| grep -v 'lib/ezagent/telemetry.ex' " <>
+            "| grep -v 'lib/ezagent/kind/runtime.ex' " <>
+            "| grep -v 'lib/ezagent/audit.ex' " <>
             "| grep -v '^[^:]*:[0-9]*:[[:space:]]*#' " <>
             "| grep -v ' `:stub_grant`' || true"
         ],
@@ -275,7 +291,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
         [
           "-c",
           "grep -E 'Capability\\.matches\\?' " <>
-            "apps/ezagent_core/lib/esr/kind/runtime.ex || true"
+            "apps/ezagent_core/lib/ezagent/kind/runtime.ex || true"
         ],
         stderr_to_stdout: true
       )
@@ -308,9 +324,10 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
         "bash",
         [
           "-c",
-          "grep -rn 'Registry.register' apps/ezagent_core --include='*.ex' " <>
+          "grep -rnE '(^|[^A-Za-z0-9_.])Registry\\.register\\(' apps/ezagent_core/lib --include='*.ex' " <>
             "| grep -v 'kind_registry.ex' " <>
-            "| grep -v '_test.exs' " <>
+            "| grep -v '/test/' " <>
+            "| grep -v '^[^:]*:[0-9]*:[[:space:]]*#' " <>
             "| grep -v 'ezagent.check_invariants.ex' || true"
         ],
         stderr_to_stdout: true

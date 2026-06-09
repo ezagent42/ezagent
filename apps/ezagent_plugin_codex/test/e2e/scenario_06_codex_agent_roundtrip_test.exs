@@ -50,11 +50,11 @@ defmodule EzagentPluginCodex.E2E.Scenario06CodexAgentRoundtripTest do
     test "converts an inbound chat payload into a `codex_turn` channel frame" do
       payload = %Payload{
         message_id: "m-#{System.unique_integer([:positive])}",
-        session_uri: URI.new!("session://default/team-alpha/scenario06"),
-        sender_uri: URI.new!("entity://user/system/admin"),
+        session_uri: URI.new!("session://team-alpha/default/scenario06"),
+        sender_uri: URI.new!("entity://system/user/admin"),
         text: "write a haiku about Erlang",
         event_type: :chat_send,
-        meta: %{"sender" => "entity://user/system/admin"}
+        meta: %{"sender" => "entity://system/user/admin"}
       }
 
       assert :ok = BridgeAdapter.deliver(payload, self())
@@ -65,18 +65,18 @@ defmodule EzagentPluginCodex.E2E.Scenario06CodexAgentRoundtripTest do
       # uses for thread correlation (PR #441 invariant) — unlike cc's
       # minimal {content, meta} frame.
       assert frame["content"] == "write a haiku about Erlang"
-      assert frame["session_uri"] == "session://default/team-alpha/scenario06"
-      assert frame["sender_uri"] == "entity://user/system/admin"
+      assert frame["session_uri"] == "session://team-alpha/default/scenario06"
+      assert frame["sender_uri"] == "entity://system/user/admin"
       assert frame["event_type"] == "chat_send"
       assert frame["message_id"] == payload.message_id
-      assert frame["meta"] == %{"sender" => "entity://user/system/admin"}
+      assert frame["meta"] == %{"sender" => "entity://system/user/admin"}
     end
 
     test "deliver/2 handles nil session_uri (system-broadcast payload)" do
       payload = %Payload{
         message_id: "m-sys",
         session_uri: nil,
-        sender_uri: URI.new!("entity://user/system/admin"),
+        sender_uri: URI.new!("entity://system/user/admin"),
         text: "broadcast",
         event_type: :system
       }
@@ -95,7 +95,7 @@ defmodule EzagentPluginCodex.E2E.Scenario06CodexAgentRoundtripTest do
   describe "BridgeAdapter.handle_client_event/3 — inbound reply" do
     test "rejects a reply without text + session_uris" do
       socket = %Phoenix.Socket{
-        assigns: %{agent_uri: URI.new!("entity://agent/team-alpha/codex_alpha")}
+        assigns: %{agent_uri: URI.new!("entity://team-alpha/agent/codex_alpha")}
       }
 
       assert {:reply, {:error, %{reason: msg}}, ^socket} =
@@ -110,7 +110,7 @@ defmodule EzagentPluginCodex.E2E.Scenario06CodexAgentRoundtripTest do
 
     test "rejects a reply with non-list attachments" do
       socket = %Phoenix.Socket{
-        assigns: %{agent_uri: URI.new!("entity://agent/team-alpha/codex_alpha")}
+        assigns: %{agent_uri: URI.new!("entity://team-alpha/agent/codex_alpha")}
       }
 
       assert {:reply, {:error, %{reason: msg}}, ^socket} =
@@ -118,7 +118,7 @@ defmodule EzagentPluginCodex.E2E.Scenario06CodexAgentRoundtripTest do
                  "reply",
                  %{
                    "text" => "x",
-                   "session_uris" => ["session://default/team-alpha/x"],
+                   "session_uris" => ["session://team-alpha/default/x"],
                    "attachments" => %{"oops" => true}
                  },
                  socket
@@ -129,7 +129,7 @@ defmodule EzagentPluginCodex.E2E.Scenario06CodexAgentRoundtripTest do
 
     test "non-reply events are passed-through with {:noreply, socket}" do
       socket = %Phoenix.Socket{
-        assigns: %{agent_uri: URI.new!("entity://agent/team-alpha/codex_alpha")}
+        assigns: %{agent_uri: URI.new!("entity://team-alpha/agent/codex_alpha")}
       }
 
       assert {:noreply, ^socket} =
@@ -146,7 +146,7 @@ defmodule EzagentPluginCodex.E2E.Scenario06CodexAgentRoundtripTest do
       # Verify the attachment-key + attachment-type normalisation
       # (string → atom maps) — the codex bridge ships JSON with
       # string keys, the dispatched Message expects atoms.
-      agent_uri = URI.new!("entity://agent/team-alpha/codex_alpha")
+      agent_uri = URI.new!("entity://team-alpha/agent/codex_alpha")
 
       attachments = [
         %{"type" => "image", "local_path" => "/tmp/img.png", "name" => "img"},
@@ -159,7 +159,9 @@ defmodule EzagentPluginCodex.E2E.Scenario06CodexAgentRoundtripTest do
       result =
         BridgeAdapter.dispatch_reply(
           agent_uri,
-          ["session://default/team-alpha/never_spawned_codex_#{System.unique_integer([:positive])}"],
+          [
+            "session://team-alpha/default/never_spawned_codex_#{System.unique_integer([:positive])}"
+          ],
           "with attachments",
           "ref-abc-123",
           attachments
@@ -169,12 +171,12 @@ defmodule EzagentPluginCodex.E2E.Scenario06CodexAgentRoundtripTest do
     end
 
     test "tolerates ref id absence (`nil` ref → no Message ref_id)" do
-      agent_uri = URI.new!("entity://agent/team-alpha/codex_alpha")
+      agent_uri = URI.new!("entity://team-alpha/agent/codex_alpha")
 
       assert :ok =
                BridgeAdapter.dispatch_reply(
                  agent_uri,
-                 ["session://default/team-alpha/never_spawned_codex_x"],
+                 ["session://team-alpha/default/never_spawned_codex_x"],
                  "no ref",
                  nil,
                  []
@@ -214,8 +216,8 @@ defmodule EzagentPluginCodex.E2E.Scenario06CodexAgentRoundtripTest do
       assert BridgeAdapter.flavor() == "codex"
     end
 
-    test "agent_uri_prefix is \"codex_\" (PR #141 SPEC v2 flavor prefix)" do
-      assert BridgeAdapter.agent_uri_prefix() == "codex_"
+    test "agent_uri_prefix callback is removed; flavor is stored, not URI-derived" do
+      refute function_exported?(BridgeAdapter, :agent_uri_prefix, 0)
     end
 
     test "channel_topic_prefix routes to the codex agent_bridge sub-channel" do

@@ -20,13 +20,13 @@ The spec is multi-subsystem → decomposed into **9 dependency-ordered PRs**, ea
 |---|---|
 | Matcher / dynamic vars | `apps/ezagent_core/lib/ezagent/routing/matcher.ex`, `resolver.ex` |
 | Rule store / schema | `apps/ezagent_core/lib/ezagent/routing/rule_store.ex`, a migration, `behavior/routing.ex` |
-| Delivery / threading | `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex`, `apps/ezagent_plugin_cc/.../bridge_adapter.ex` (+ other flavor delivery) |
+| Delivery / threading | `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex`, `apps/ezagent_plugin_cc/.../bridge_adapter.ex` (+ other flavor delivery) |
 | Prompt templates | new `apps/ezagent_core/lib/ezagent/routing/prompt_template.ex` (render) + session-slice `prompt_templates` map |
-| Member facets / caps | `apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex` (members slice), `apps/ezagent_core/lib/ezagent/capability.ex` + `capability_registry.ex`, relevant Behaviors' `actions/0` |
+| Member facets / caps | `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex` (members slice), `apps/ezagent_core/lib/ezagent/capability.ex` + `capability_registry.ex`, relevant Behaviors' `actions/0` |
 | Legend | new legend registry (session-scoped) + `apps/ezagent_plugin_liveview/.../mention` + `apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/mention_parser.ex` |
-| Template persistence | `apps/ezagent_domain_instance_message/lib/ezagent/entity/session_template.ex`, `apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message.ex` (`create_session/3`) |
-| Slot retirement | `apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/{tools.ex,mcp_server.ex}` |
-| E2E | `apps/ezagent_domain_instance_message/test/e2e/scenario_34_*.exs` + docs/scenarios/34 |
+| Template persistence | `apps/ezagent_domain_chat/lib/ezagent/entity/session_template.ex`, `apps/ezagent_domain_chat/lib/ezagent_domain_chat.ex` (`create_session/3`) |
+| Slot retirement | `apps/ezagent_domain_chat/lib/ezagent/orchestrator/{tools.ex,mcp_server.ex}` |
+| E2E | `apps/ezagent_domain_chat/test/e2e/scenario_34_*.exs` + docs/scenarios/34 |
 
 ---
 
@@ -72,7 +72,7 @@ The original PR-1 added a `$sender` RECEIVER routing token (route a message back
 
 ### PR-7 — SessionTemplate members/templates/legends + create_session materialization  (spec §3.7)
 - **Scope:** extend `SessionTemplate` content with `members` (`in_session_template: true`), `prompt_templates`, `legends`; extend version-hash; remove `agent_slots` from the content; change `create_session/3` to **materialize template members** (rebuild spawned members from `source_template_uri` + register provenance/role_name, install rule-sets + prompt_templates + legends) — not just join owner+orchestrator.
-- **Files:** `session_template.ex` (content + hash), `ezagent_domain_instance_message.ex` (`create_session/3`).
+- **Files:** `session_template.ex` (content + hash), `ezagent_domain_chat.ex` (`create_session/3`).
 - **Key interfaces:** template content keys; `create_session/3` materialization step.
 - **Deps:** PR-3, PR-4, PR-5, PR-6 (it persists/rehydrates all of them).
 - **Test gate:** snapshot round-trip (members/templates/legends); **instantiate/fork a template → the team actually appears + routes** (the load-bearing contract codex flagged).

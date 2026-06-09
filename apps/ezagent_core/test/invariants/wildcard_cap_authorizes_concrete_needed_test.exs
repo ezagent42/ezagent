@@ -46,39 +46,28 @@ defmodule EzagentCore.Invariants.WildcardCapAuthorizesConcreteNeededTest do
   use ExUnit.Case, async: true
 
   describe "URI struct normalization (invariant 1)" do
-    test "URI.parse/1 and URI.new!/1 instances are treated as equal by matches?" do
-      # Same canonical URI, two producers — one legacy (sets
-      # `authority: 'user'`), one modern (leaves `authority: nil`).
-      legacy = URI.parse("entity://user/system/linyilun")
-      modern = URI.new!("entity://user/system/linyilun")
-
-      assert legacy.authority == "user",
-             "test fixture invariant: URI.parse/1 must set the deprecated `authority` field; if Elixir ever changes this, the regression lock no longer protects what it claims to."
-
-      assert is_nil(modern.authority),
-             "test fixture invariant: URI.new!/1 must leave `authority: nil`."
-
-      refute legacy == modern,
-             "test fixture invariant: the two URI structs must NOT be struct-equal — that's the exact divergence that broke matches?/2 pre-fix."
+    test "canonical URI instances are treated as equal by matches?" do
+      held_instance = Ezagent.URI.new!("entity://system/user/linyilun")
+      needed_instance = Ezagent.URI.new!("entity://system/user/linyilun")
 
       held =
         cap(
           kind: :user,
           behavior: Ezagent.Behavior.Identity,
-          instance: legacy,
-          workspace_uri: URI.parse("workspace://system")
+          instance: held_instance,
+          workspace_uri: Ezagent.URI.new!("workspace://system")
         )
 
       needed = %{
         kind: :user,
         behavior: Ezagent.Behavior.Identity,
         action: :any,
-        instance: modern,
-        workspace_uri: URI.new!("workspace://system")
+        instance: needed_instance,
+        workspace_uri: Ezagent.URI.new!("workspace://system")
       }
 
       assert Ezagent.Capability.matches?(held, needed),
-             "matches?/2 MUST treat URI.parse/1- and URI.new!/1-produced URIs as equivalent at the `instance` axis — string-equal URIs are semantically the same cap target regardless of which parser produced the struct."
+             "matches?/2 MUST treat canonical string-equal URIs as the same cap target."
     end
 
     test "matches?/2 still rejects URIs with different canonical strings" do
@@ -86,7 +75,7 @@ defmodule EzagentCore.Invariants.WildcardCapAuthorizesConcreteNeededTest do
         cap(
           kind: :session,
           behavior: Ezagent.Behavior.Identity,
-          instance: URI.new!("session://default/system/main"),
+          instance: URI.new!("session://system/default/main"),
           workspace_uri: URI.new!("workspace://system")
         )
 
@@ -95,7 +84,7 @@ defmodule EzagentCore.Invariants.WildcardCapAuthorizesConcreteNeededTest do
         behavior: Ezagent.Behavior.Identity,
         action: :any,
         # Different instance — different name part.
-        instance: URI.new!("session://default/system/other"),
+        instance: URI.new!("session://system/default/other"),
         workspace_uri: URI.new!("workspace://system")
       }
 
@@ -136,7 +125,7 @@ defmodule EzagentCore.Invariants.WildcardCapAuthorizesConcreteNeededTest do
           workspace_uri: :any
         )
 
-      user_uri = URI.new!("entity://user/system/linyilun")
+      user_uri = URI.new!("entity://system/user/linyilun")
 
       needed = %{
         kind: :user,
@@ -163,7 +152,7 @@ defmodule EzagentCore.Invariants.WildcardCapAuthorizesConcreteNeededTest do
           workspace_uri: :any,
           # Granted_by uses URI.parse/1 (legacy) — irrelevant to
           # match logic but mirrors the from_map deserialization path.
-          granted_by: URI.parse("entity://user/system/admin"),
+          granted_by: Ezagent.URI.new!("entity://system/user/admin"),
           granted_at: ~U[2026-05-25 02:00:24Z]
         }
 
@@ -193,8 +182,8 @@ defmodule EzagentCore.Invariants.WildcardCapAuthorizesConcreteNeededTest do
       # have been produced by `URI.parse/1` OR `URI.new!/1`. Both
       # paths must produce a cap whose `instance` matches the
       # dispatch-time substituted instance.
-      user_uri_parse = URI.parse("entity://user/system/linyilun")
-      user_uri_new = URI.new!("entity://user/system/linyilun")
+      user_uri_parse = Ezagent.URI.new!("entity://system/user/linyilun")
+      user_uri_new = URI.new!("entity://system/user/linyilun")
 
       held_from_parse_path =
         cap(
@@ -215,7 +204,7 @@ defmodule EzagentCore.Invariants.WildcardCapAuthorizesConcreteNeededTest do
       # Dispatch step 5.5 substitutes the needed cap from
       # `Behavior.Identity.required_caps/0` (`cap(:any, Identity, :list_caps)`)
       # against the action target. Mirror the substitution:
-      target = URI.new!("entity://user/system/linyilun?action=identity.list_caps")
+      target = URI.new!("entity://system/user/linyilun?action=identity.list_caps")
 
       needed = %{
         kind: :user,

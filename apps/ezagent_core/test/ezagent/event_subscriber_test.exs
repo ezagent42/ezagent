@@ -43,7 +43,7 @@ defmodule Ezagent.EventSubscriberTest do
   defmodule AggregateScopedSubscriber do
     use Ezagent.EventSubscriber
 
-    subscribe(to: {:aggregate, "entity://agent/team-alpha/test_subscriber"})
+    subscribe(to: {:aggregate, "entity://team-alpha/agent/test_subscriber"})
 
     @impl true
     def interested?(_), do: true
@@ -94,7 +94,7 @@ defmodule Ezagent.EventSubscriberTest do
     end
 
     test "supports {:aggregate, uri} scope" do
-      assert %{to: {:aggregate, "entity://agent/team-alpha/test_subscriber"}} =
+      assert %{to: {:aggregate, "entity://team-alpha/agent/test_subscriber"}} =
                AggregateScopedSubscriber.__ezagent_event_subscription__()
     end
 
@@ -172,7 +172,7 @@ defmodule Ezagent.EventSubscriberTest do
     test "interested?/1 + handle_event/2 are callable and route through state" do
       event = %{
         event_id: 42,
-        aggregate_uri: "entity://agent/team-alpha/x",
+        aggregate_uri: "entity://team-alpha/agent/x",
         event_name: "message_sent",
         payload: %{},
         caller: nil,

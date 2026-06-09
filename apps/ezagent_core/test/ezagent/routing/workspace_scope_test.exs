@@ -7,9 +7,9 @@ defmodule Ezagent.Routing.WorkspaceScopeTest do
   alias Ezagent.{Message, RoutingRegistry}
   alias Ezagent.Routing.{Matcher, Resolver, RuleStore}
 
-  @session_uri URI.new!("session://default/team-alpha/test")
-  @user_a URI.new!("entity://user/team-alpha/alice")
-  @recv URI.new!("entity://user/team-alpha/recv")
+  @session_uri URI.new!("session://team-alpha/default/test")
+  @user_a URI.new!("entity://team-alpha/user/alice")
+  @recv URI.new!("entity://team-alpha/user/recv")
   @ws_alpha URI.new!("workspace://alpha")
   @ws_beta URI.new!("workspace://beta")
 
@@ -61,7 +61,7 @@ defmodule Ezagent.Routing.WorkspaceScopeTest do
       RuleStore.add(
         table,
         Matcher.always(),
-        [URI.new!("entity://user/team-alpha/recv-global")],
+        [URI.new!("entity://team-alpha/user/recv-global")],
         @user_a,
         workspace_uri: nil
       )
@@ -71,7 +71,7 @@ defmodule Ezagent.Routing.WorkspaceScopeTest do
       RuleStore.add(
         table,
         Matcher.always(),
-        [URI.new!("entity://user/team-alpha/recv-alpha")],
+        [URI.new!("entity://team-alpha/user/recv-alpha")],
         @user_a,
         workspace_uri: @ws_alpha
       )
@@ -83,13 +83,13 @@ defmodule Ezagent.Routing.WorkspaceScopeTest do
     in_alpha = Resolver.resolve(msg, @session_uri, [], workspace_uri: @ws_alpha)
     in_alpha_strs = Enum.map(in_alpha, &URI.to_string/1)
 
-    assert "entity://user/team-alpha/recv-global" in in_alpha_strs
-    assert "entity://user/team-alpha/recv-alpha" in in_alpha_strs
+    assert "entity://team-alpha/user/recv-global" in in_alpha_strs
+    assert "entity://team-alpha/user/recv-alpha" in in_alpha_strs
 
     in_no_ws = Resolver.resolve(msg, @session_uri, [], [])
     in_no_ws_strs = Enum.map(in_no_ws, &URI.to_string/1)
 
-    assert "entity://user/team-alpha/recv-global" in in_no_ws_strs
-    refute "entity://user/team-alpha/recv-alpha" in in_no_ws_strs
+    assert "entity://team-alpha/user/recv-global" in in_no_ws_strs
+    refute "entity://team-alpha/user/recv-alpha" in in_no_ws_strs
   end
 end

@@ -3,7 +3,7 @@ defmodule Ezagent.E2E.ManifestTest do
   alias Ezagent.E2E.Manifest
 
   test "ctx round-trips %URI{} as %URI{}, primitives as-is, across encode→decode" do
-    uri = URI.new!("entity://agent/system/cc_relay")
+    uri = URI.new!("entity://system/agent/cc_relay")
 
     m = %Manifest{
       scenario_id: "s34",

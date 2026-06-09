@@ -9,8 +9,13 @@ css_path = Path.expand("../priv/static/assets/css/app.css", __DIR__)
 
 unless File.exists?(css_path) do
   IO.puts(:stderr, "[ezagent_web test setup] building tailwind+esbuild bundle (missing app.css)")
-  {_out, 0} = System.cmd("mix", ["tailwind", "ezagent_web"], cd: Path.expand("..", __DIR__))
-  {_out, 0} = System.cmd("mix", ["esbuild", "ezagent_web"], cd: Path.expand("..", __DIR__))
+  test_env = [{"MIX_ENV", "test"}]
+
+  {_out, 0} =
+    System.cmd("mix", ["tailwind", "ezagent_web"], cd: Path.expand("..", __DIR__), env: test_env)
+
+  {_out, 0} =
+    System.cmd("mix", ["esbuild", "ezagent_web"], cd: Path.expand("..", __DIR__), env: test_env)
 end
 
 ExUnit.start()

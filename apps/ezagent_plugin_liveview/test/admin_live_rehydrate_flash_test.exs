@@ -32,7 +32,7 @@ defmodule EzagentPluginLiveview.AdminLiveRehydrateFlashTest do
       socket = fresh_socket()
 
       meta = %{
-        orchestrator_uri: URI.new!("entity://agent/system/cc_orchestrator-main"),
+        orchestrator_uri: URI.new!("entity://system/agent/cc_orchestrator-main"),
         orchestrator_status: :ready,
         orchestrator_error: nil
       }
@@ -49,7 +49,7 @@ defmodule EzagentPluginLiveview.AdminLiveRehydrateFlashTest do
       socket = fresh_socket()
 
       meta = %{
-        orchestrator_uri: URI.new!("entity://agent/system/cc_orchestrator-main"),
+        orchestrator_uri: URI.new!("entity://system/agent/cc_orchestrator-main"),
         orchestrator_status: :pending,
         orchestrator_error: nil
       }

@@ -12,7 +12,7 @@ defmodule EzagentWeb.RegistrationControllerTest do
     # SPEC #335 (PR #335) renamed the seed workspace `default → system`
     # AND deleted all silent "default" fallbacks. Tests now use
     # `team-alpha` as the generic non-system test workspace — matches
-    # the assertion shape `entity://user/team-alpha/<handle>`.
+    # the assertion shape `entity://team-alpha/user/<handle>`.
     ensure_rule(workspace, email)
 
     Plug.Test.init_test_session(conn, %{
@@ -58,11 +58,11 @@ defmodule EzagentWeb.RegistrationControllerTest do
       |> post("/register/complete", %{"handle" => "newbie", "display_name" => "New Bie"})
 
     assert redirected_to(conn) == "/sessions"
-    assert get_session(conn, :current_entity_uri) == "entity://user/team-alpha/newbie"
+    assert get_session(conn, :current_entity_uri) == "entity://team-alpha/user/newbie"
     assert get_session(conn, :pending_registration_email) == nil
 
     assert Ezagent.Entity.Profile.by_email("newbie@good.com").entity_uri ==
-             "entity://user/team-alpha/newbie"
+             "entity://team-alpha/user/newbie"
   end
 
   test "POST /register/complete in a CUSTOM workspace creates entity://user/<ws>/<slug>", %{
@@ -75,11 +75,11 @@ defmodule EzagentWeb.RegistrationControllerTest do
       |> post("/register/complete", %{"handle" => "alice", "display_name" => "Alice"})
 
     assert redirected_to(conn) == "/sessions"
-    assert get_session(conn, :current_entity_uri) == "entity://user/acme/alice"
+    assert get_session(conn, :current_entity_uri) == "entity://acme/user/alice"
   end
 
   test "POST with a taken handle re-renders the form with a suggestion", %{conn: conn} do
-    {:ok, _} = Ezagent.Users.create("entity://user/team-alpha/taken", nil, [])
+    {:ok, _} = Ezagent.Users.create("entity://team-alpha/user/taken", nil, [])
 
     conn =
       conn

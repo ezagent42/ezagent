@@ -49,7 +49,7 @@ defmodule Ezagent.Behavior.NpAgentTest do
   # (the chat reference precedent).
   describe "create/1 (PERSISTENT state)" do
     test "captures python_handle (via :python_handle or fallback :uri)" do
-      uri = URI.parse("entity://agent/team-alpha/np_test")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/np_test")
       s1 = NpAgent.init_slice(%{python_handle: uri}).state
       assert s1.python_handle == uri
 
@@ -58,7 +58,7 @@ defmodule Ezagent.Behavior.NpAgentTest do
     end
 
     test "defaults timeout_ms to 10s" do
-      s = NpAgent.init_slice(%{uri: URI.parse("entity://agent/team-alpha/np_test")}).state
+      s = NpAgent.init_slice(%{uri: Ezagent.URI.new!("entity://team-alpha/agent/np_test")}).state
       assert s.timeout_ms == 10_000
       assert s.last_input == nil
       assert s.last_result == nil
@@ -67,13 +67,13 @@ defmodule Ezagent.Behavior.NpAgentTest do
 
     test "accepts timeout_ms override" do
       s =
-        NpAgent.init_slice(%{uri: URI.parse("entity://agent/team-alpha/np_x"), timeout_ms: 5_000}).state
+        NpAgent.init_slice(%{uri: Ezagent.URI.new!("entity://team-alpha/agent/np_x"), timeout_ms: 5_000}).state
 
       assert s.timeout_ms == 5_000
     end
 
     test "init_slice/1 starts with an EMPTY transients container" do
-      slice = NpAgent.init_slice(%{uri: URI.parse("entity://agent/team-alpha/np_x")})
+      slice = NpAgent.init_slice(%{uri: Ezagent.URI.new!("entity://team-alpha/agent/np_x")})
       assert slice.transients == %{}
     end
   end
@@ -108,12 +108,12 @@ defmodule Ezagent.Behavior.NpAgentTest do
 
   describe "loop safety on :receive" do
     test "ignores messages whose sender is self_uri (no effects beyond identity result)" do
-      agent_uri = URI.parse("entity://agent/team-alpha/np_self")
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/np_self")
       msg = Ezagent.Message.new(agent_uri, %{text: "should_not_run"})
       ctx = %{
         read: fn _k, d -> d end,
         self_uri: agent_uri,
-        caller: URI.parse("session://default/team-alpha/x")
+        caller: Ezagent.URI.new!("session://team-alpha/default/x")
       }
 
       assert {:ok, %{ok: true, ignored: :self_message}, []} =
@@ -130,13 +130,13 @@ defmodule Ezagent.Behavior.NpAgentTest do
   # phase-subscription transient.
   describe "activate/2 (PTY-phase-state-machine — unified start hook)" do
     test "post_init/2 ALWAYS schedules the engine activate continuation" do
-      slice = NpAgent.init_slice(%{uri: URI.parse("entity://agent/team-alpha/np_x")})
+      slice = NpAgent.init_slice(%{uri: Ezagent.URI.new!("entity://team-alpha/agent/np_x")})
 
       assert {:continue, :ezagent_activate} = NpAgent.post_init(%{}, slice)
     end
 
     test "activate/2 rebuilds the phase-subscription transient (subscriber = self)" do
-      uri = URI.parse("entity://agent/team-alpha/np_demand")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/np_demand")
       %{state: state} = NpAgent.init_slice(%{uri: uri})
       assert state.cwd == nil
 
@@ -160,14 +160,14 @@ defmodule Ezagent.Behavior.NpAgentTest do
   # phase}]` (the macro reduces it into the two-container slice).
   describe "create/1 / handle_signal/2 — python_phase" do
     test "init_slice/1 defaults python_phase to nil" do
-      slice = NpAgent.init_slice(%{uri: URI.parse("entity://agent/team-alpha/np_x")}).state
+      slice = NpAgent.init_slice(%{uri: Ezagent.URI.new!("entity://team-alpha/agent/np_x")}).state
       assert slice.python_phase == nil
     end
 
     test "init_slice/1 accepts python_phase from rehydrated args" do
       slice =
         NpAgent.init_slice(%{
-          uri: URI.parse("entity://agent/team-alpha/np_x"),
+          uri: Ezagent.URI.new!("entity://team-alpha/agent/np_x"),
           python_phase: :running
         }).state
 
@@ -177,7 +177,7 @@ defmodule Ezagent.Behavior.NpAgentTest do
     test "init_slice/1 normalizes invalid python_phase values to nil" do
       slice =
         NpAgent.init_slice(%{
-          uri: URI.parse("entity://agent/team-alpha/np_x"),
+          uri: Ezagent.URI.new!("entity://team-alpha/agent/np_x"),
           python_phase: :bogus_atom
         }).state
 
@@ -185,7 +185,7 @@ defmodule Ezagent.Behavior.NpAgentTest do
     end
 
     test "handle_signal/2 emits {:set, :python_phase, phase} for a matching :pty_phase" do
-      uri = URI.parse("entity://agent/team-alpha/np_x")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/np_x")
       ctx = %{self_uri: uri}
 
       meta = %{os_pid: 999, reason: nil, at: System.os_time(:millisecond)}
@@ -197,7 +197,7 @@ defmodule Ezagent.Behavior.NpAgentTest do
     end
 
     test "handle_signal/2 ignores non-phase messages" do
-      uri = URI.parse("entity://agent/team-alpha/np_x")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/np_x")
       ctx = %{self_uri: uri}
 
       assert :ignore = NpAgent.handle_signal(:other, ctx)
@@ -205,15 +205,15 @@ defmodule Ezagent.Behavior.NpAgentTest do
     end
 
     test "handle_signal/2 ignores invalid phase atoms (defensive)" do
-      uri = URI.parse("entity://agent/team-alpha/np_x")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/np_x")
       ctx = %{self_uri: uri}
 
       assert :ignore = NpAgent.handle_signal({:pty_phase, uri, :totally_bogus, %{}}, ctx)
     end
 
     test "handle_signal/2 ignores phase events whose agent_uri ≠ ctx.self_uri" do
-      self_uri = URI.parse("entity://agent/team-alpha/np_self")
-      foreign_uri = URI.parse("entity://agent/team-alpha/np_other")
+      self_uri = Ezagent.URI.new!("entity://team-alpha/agent/np_self")
+      foreign_uri = Ezagent.URI.new!("entity://team-alpha/agent/np_other")
       ctx = %{self_uri: self_uri}
 
       assert :ignore = NpAgent.handle_signal({:pty_phase, foreign_uri, :dead, %{}}, ctx)
@@ -223,7 +223,7 @@ defmodule Ezagent.Behavior.NpAgentTest do
   describe "data_owner/1" do
     test "returns :no_owner (admin-only Behavior)" do
       assert NpAgent.data_owner(:any) == :no_owner
-      assert NpAgent.data_owner(URI.parse("entity://agent/x/y")) == :no_owner
+      assert NpAgent.data_owner(Ezagent.URI.new!("entity://x/agent/y")) == :no_owner
     end
   end
 end

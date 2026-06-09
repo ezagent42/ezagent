@@ -41,16 +41,16 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
     # Composer input wired up with the autocomplete hook.
     assert html =~ ~s(phx-hook="MentionAutocomplete")
     # Caller URI shown somewhere in the IDE shell chrome.
-    assert html =~ "entity://user/system/admin"
+    assert html =~ "entity://system/user/admin"
   end
 
   test "Session members section shows admin User as online (Phase 2 boot)", %{conn: conn} do
     {:ok, _lv, html} = live(conn, "/sessions")
 
     # Section header
-    assert html =~ "session://default/system/main"
+    assert html =~ "session://system/default/main"
     # admin URI listed
-    assert html =~ "entity://user/system/admin"
+    assert html =~ "entity://system/user/admin"
     # admin is online (boot post-spawn dispatched chat/join)
     assert html =~ "online"
     # The members table id is rendered (not the empty-state placeholder)
@@ -71,7 +71,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
     html = render(lv)
 
     assert html =~ text
-    assert html =~ "entity://user/system/admin"
+    assert html =~ "entity://system/user/admin"
   end
 
   test "Chat row shape identical for admin vs agent senders (CSS-level diff only)", %{conn: conn} do
@@ -86,13 +86,15 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
     assert wait_until_html(lv, admin_text)
 
     # Simulate an agent reply landing via the chat_message broadcast.
-    agent_uri = URI.new!("entity://agent/team-alpha/test_test-#{System.unique_integer([:positive])}")
+    agent_uri =
+      URI.new!("entity://team-alpha/agent/test_test-#{System.unique_integer([:positive])}")
+
     agent_msg = Ezagent.Message.new(agent_uri, %{text: "agent reply test", attachments: []})
 
     Phoenix.PubSub.broadcast(
       EzagentCore.PubSub,
-      Ezagent.Behavior.Chat.session_events_topic(URI.new!("session://default/system/main")),
-      {:chat_message, URI.new!("session://default/system/main"), agent_msg}
+      Ezagent.Behavior.Chat.session_events_topic(URI.new!("session://system/default/main")),
+      {:chat_message, URI.new!("session://system/default/main"), agent_msg}
     )
 
     assert wait_until_html(lv, "agent reply test")
@@ -116,13 +118,13 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
   end
 
   test "Load older button paginates history (Phase 5 PR 5 invariant)", %{conn: conn} do
-    session_uri = URI.new!("session://default/system/main")
+    session_uri = URI.new!("session://system/default/main")
     base = ~U[2026-05-17 09:00:00.000000Z]
 
     for i <- 1..100 do
       msg =
         Ezagent.Message.new(
-          URI.new!("entity://user/system/admin"),
+          URI.new!("entity://system/user/admin"),
           %{text: "histmsg-#{i}", attachments: []},
           inserted_at: DateTime.add(base, i, :second)
         )
@@ -187,7 +189,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       {:ok, lv, _html} = live(conn, "/sessions")
 
       render_hook(lv, "switch_to_pty_for_agent", %{
-        "agent" => "entity://agent/team-alpha/cc_demo"
+        "agent" => "entity://team-alpha/agent/cc_demo"
       })
 
       html = render(lv)
@@ -214,13 +216,16 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
     # is cross-flavor — `Ezagent.Domain.Pty.alive?/1` for ANY member —
     # so we explicitly start a Domain.Pty.Server in test_mode below.
     test "terminal icon click flips the rendered view to TerminalView (V1 UI fix)", %{conn: conn} do
-      session_uri = URI.new!("session://default/system/main")
+      session_uri = URI.new!("session://system/default/main")
 
       # Spawn a real cc agent + start its PTY sidecar + join it as a
       # member so TerminalView applies.
       name = "cc_demo-uifix-#{System.unique_integer([:positive])}"
-      agent_uri = URI.parse("entity://agent/team-alpha/#{name}")
-      {:ok, _kind_pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/#{name}")
+
+      {:ok, _kind_pid} =
+        Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent_with_flavor(agent_uri, "cc")
+
       {:ok, _pty_pid} = Ezagent.Domain.Pty.start(agent_uri, %{cwd: "/tmp", test_mode: true})
       on_exit(fn -> Ezagent.Domain.Pty.stop(agent_uri) end)
 
@@ -277,10 +282,13 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
     # "Chat"; clicking it MUST also re-resolve `:view_module`, not
     # just flip `:current_view`.
     test "switch_view to :pty flips the rendered view to TerminalView", %{conn: conn} do
-      session_uri = URI.new!("session://default/system/main")
+      session_uri = URI.new!("session://system/default/main")
       name = "cc_demo-switchview-#{System.unique_integer([:positive])}"
-      agent_uri = URI.parse("entity://agent/team-alpha/#{name}")
-      {:ok, _kind_pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/#{name}")
+
+      {:ok, _kind_pid} =
+        Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent_with_flavor(agent_uri, "cc")
+
       {:ok, _pty_pid} = Ezagent.Domain.Pty.start(agent_uri, %{cwd: "/tmp", test_mode: true})
       on_exit(fn -> Ezagent.Domain.Pty.stop(agent_uri) end)
 
@@ -413,8 +421,13 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       # lives in workspace `system`. The agent URI must therefore also
       # be in `system` for the `valid_for?/4` workspace check to pass.
       name = "cc_demo-invite-#{System.unique_integer([:positive])}"
-      agent_uri = URI.parse("entity://agent/system/#{name}")
-      {:ok, _kind_pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+      agent_uri = Ezagent.URI.new!("entity://system/agent/#{name}")
+
+      {:ok, _kind_pid} =
+        Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent_with_flavor(agent_uri, "cc")
+
+      {:ok, pty_pid} = Ezagent.Domain.Pty.start(agent_uri, %{cwd: "/tmp", test_mode: true})
+      on_exit(fn -> if Process.alive?(pty_pid), do: :ok = Ezagent.Domain.Pty.stop(agent_uri) end)
 
       {:ok, lv, _html} = live(conn, "/sessions")
 
@@ -441,11 +454,11 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
     # A hand-tampered out-of-workspace URI is rejected with a flash and
     # is NEVER dispatched (the entity does not become a member).
     test "invite_member with an out-of-workspace URI → flash, NOT dispatched", %{conn: conn} do
-      # session://default/system/main lives in workspace `default`; a
+      # session://system/default/main lives in workspace `default`; a
       # URI whose workspace segment is `otherws` fails the shared
       # `UriOptions.valid_for?/4` workspace check even for a system
       # caller (a picker field is scoped to ONE workspace).
-      bad_uri = "entity://agent/otherws/cc_intruder-#{System.unique_integer([:positive])}"
+      bad_uri = "entity://otherws/agent/cc_intruder-#{System.unique_integer([:positive])}"
 
       {:ok, lv, _html} = live(conn, "/sessions")
       render_hook(lv, "open_invite_modal", %{})
@@ -473,15 +486,17 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       # being short-circuited by the `valid_for?/4` cross-workspace
       # check in `handle_event("invite_member", ...)`).
       name = "cc_demo-unauth-#{System.unique_integer([:positive])}"
-      agent_uri = URI.parse("entity://agent/system/#{name}")
-      {:ok, _kind_pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+      agent_uri = Ezagent.URI.new!("entity://system/agent/#{name}")
+
+      {:ok, _kind_pid} =
+        Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent_with_flavor(agent_uri, "cc")
 
       # A non-admin caller in workspace `system` (same workspace as
-      # session://default/system/main, so the denial is :unauthorized,
+      # session://system/default/main, so the denial is :unauthorized,
       # not :cross_workspace_denied) with NO caps — `non_admin`'s
       # User Kind is never spawned, so `Identity.list_caps_for/1`
       # returns an empty MapSet at dispatch step 5.5.
-      non_admin = "entity://user/system/tester-#{System.unique_integer([:positive])}"
+      non_admin = "entity://system/user/tester-#{System.unique_integer([:positive])}"
 
       conn =
         Phoenix.ConnTest.build_conn()
@@ -660,7 +675,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         source: Ezagent.Behavior.IdentityAdmin
       }
 
-      assert EzagentPluginLiveview.AdminLive.format_notification(payload) ==
+      assert EzagentPluginLiveview.Admin.EventFormat.format_notification(payload) ==
                "A new capability was granted to you."
     end
 
@@ -671,18 +686,18 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         source: Ezagent.Workspace
       }
 
-      assert EzagentPluginLiveview.AdminLive.format_notification(payload) ==
+      assert EzagentPluginLiveview.Admin.EventFormat.format_notification(payload) ==
                "Added to workspace acme."
     end
 
     test "format_notification/1 falls back to top-level :text for legacy payloads" do
       # Stragglers from any not-yet-migrated producers during transition.
-      assert EzagentPluginLiveview.AdminLive.format_notification(%{text: "legacy text"}) ==
+      assert EzagentPluginLiveview.Admin.EventFormat.format_notification(%{text: "legacy text"}) ==
                "legacy text"
     end
 
     test "format_notification/1 inspects unknown shapes (last-resort branch)" do
-      assert EzagentPluginLiveview.AdminLive.format_notification(%{
+      assert EzagentPluginLiveview.Admin.EventFormat.format_notification(%{
                type: :x,
                body: %{},
                source: __MODULE__
@@ -704,7 +719,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         summary: "rendered from top-level summary fallback"
       }
 
-      assert EzagentPluginLiveview.AdminLive.format_notification(mixed) ==
+      assert EzagentPluginLiveview.Admin.EventFormat.format_notification(mixed) ==
                "rendered from top-level summary fallback"
     end
 
@@ -716,7 +731,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         text: "rendered from top-level text fallback"
       }
 
-      assert EzagentPluginLiveview.AdminLive.format_notification(mixed) ==
+      assert EzagentPluginLiveview.Admin.EventFormat.format_notification(mixed) ==
                "rendered from top-level text fallback"
     end
 
@@ -730,14 +745,14 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       # envelope. The flash bridge re-fetches the receiver's `:chat`
       # slice via `Kind.get_slice/2`; assertions drive a real spawned
       # User so the lookup hits the production path.
-      sender = URI.new!("entity://user/system/n3-fmt-#{System.unique_integer([:positive])}")
-      receiver = URI.new!("entity://user/system/n3-rcv-#{System.unique_integer([:positive])}")
+      sender = URI.new!("entity://system/user/n3-fmt-#{System.unique_integer([:positive])}")
+      receiver = URI.new!("entity://system/user/n3-rcv-#{System.unique_integer([:positive])}")
 
       {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
       {:ok, _} = Ezagent.SpawnRegistry.spawn(receiver)
 
       session_uri =
-        URI.new!("session://default/system/n3-fmt-#{System.unique_integer([:positive])}")
+        URI.new!("session://system/default/n3-fmt-#{System.unique_integer([:positive])}")
 
       msg = Ezagent.Message.new(sender, %{text: "n3 preview text", attachments: []})
       {:ok, stored} = Ezagent.MessageStore.write(msg, session_uri)
@@ -767,7 +782,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         result_summary: :ok
       }
 
-      assert EzagentPluginLiveview.AdminLive.format_slice_change(event) ==
+      assert EzagentPluginLiveview.Admin.EventFormat.format_slice_change(event) ==
                "New message from #{URI.to_string(sender)}: n3 preview text"
     end
 
@@ -776,7 +791,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       # message_id that MessageStore won't find. Production path:
       # message was deleted between :receive and the flash bridge
       # waking up.
-      receiver = URI.new!("entity://user/system/n3-miss-#{System.unique_integer([:positive])}")
+      receiver = URI.new!("entity://system/user/n3-miss-#{System.unique_integer([:positive])}")
       {:ok, _} = Ezagent.SpawnRegistry.spawn(receiver)
 
       # Drive a synthetic chat.receive with a sender + a fake
@@ -788,7 +803,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       # by overwriting the slice via a synthetic chat.receive whose
       # message-id we don't persist.
       sender =
-        URI.new!("entity://user/system/n3-miss-snd-#{System.unique_integer([:positive])}")
+        URI.new!("entity://system/user/n3-miss-snd-#{System.unique_integer([:positive])}")
 
       {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
 
@@ -796,9 +811,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       # MessageStore — the :receive dispatch reads `args.message`
       # directly and just stores the message_id in the slice.
       ghost_msg =
-        Ezagent.Message.new(sender, %{text: "ghost", attachments: []},
-          id: "msg-does-not-exist"
-        )
+        Ezagent.Message.new(sender, %{text: "ghost", attachments: []}, id: "msg-does-not-exist")
 
       :ok =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{
@@ -822,7 +835,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         result_summary: :ok
       }
 
-      assert EzagentPluginLiveview.AdminLive.format_slice_change(event) ==
+      assert EzagentPluginLiveview.Admin.EventFormat.format_slice_change(event) ==
                "New chat message (id msg-does-not-exist)"
     end
 
@@ -838,7 +851,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         result_summary: :ok
       }
 
-      assert EzagentPluginLiveview.AdminLive.format_slice_change(generic_event) ==
+      assert EzagentPluginLiveview.Admin.EventFormat.format_slice_change(generic_event) ==
                "Update on workspace://acme (workspace)"
     end
 
@@ -846,7 +859,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       # The Kind isn't alive — `Kind.get_slice/2` returns
       # `{:error, :not_found}`. The bridge MUST still surface a flash.
       missing_uri =
-        URI.new!("entity://user/system/n3-none-#{System.unique_integer([:positive])}")
+        URI.new!("entity://system/user/n3-none-#{System.unique_integer([:positive])}")
 
       event = %{
         uri: missing_uri,
@@ -856,12 +869,13 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         result_summary: :ok
       }
 
-      assert EzagentPluginLiveview.AdminLive.format_slice_change(event) ==
+      assert EzagentPluginLiveview.Admin.EventFormat.format_slice_change(event) ==
                "New chat update on #{URI.to_string(missing_uri)}"
     end
 
     test "format_slice_change/1 inspects unknown shapes (last-resort branch)" do
-      assert EzagentPluginLiveview.AdminLive.format_slice_change(:not_a_map) =~ "Slice changed:"
+      assert EzagentPluginLiveview.Admin.EventFormat.format_slice_change(:not_a_map) =~
+               "Slice changed:"
     end
 
     test "slice_change handler puts a flash on AdminLive (end-to-end)", %{conn: conn} do
@@ -926,16 +940,16 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       # (race on `:last_received`); post-r4 each ring lookup by
       # cursor returns the correct msg_id.
       receiver =
-        URI.new!("entity://user/system/n3-race-#{System.unique_integer([:positive])}")
+        URI.new!("entity://system/user/n3-race-#{System.unique_integer([:positive])}")
 
       sender =
-        URI.new!("entity://user/system/n3-race-snd-#{System.unique_integer([:positive])}")
+        URI.new!("entity://system/user/n3-race-snd-#{System.unique_integer([:positive])}")
 
       {:ok, _} = Ezagent.SpawnRegistry.spawn(receiver)
       {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
 
       session_uri =
-        URI.new!("session://default/system/n3-race-#{System.unique_integer([:positive])}")
+        URI.new!("session://system/default/n3-race-#{System.unique_integer([:positive])}")
 
       # Send 3 distinct messages in succession through the real
       # dispatch path. Each :receive bumps the cursor + pushes the
@@ -1000,9 +1014,9 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         }
       end
 
-      flash_for_c1 = EzagentPluginLiveview.AdminLive.format_slice_change(event_for.(c1))
-      flash_for_c2 = EzagentPluginLiveview.AdminLive.format_slice_change(event_for.(c2))
-      flash_for_c3 = EzagentPluginLiveview.AdminLive.format_slice_change(event_for.(c3))
+      flash_for_c1 = EzagentPluginLiveview.Admin.EventFormat.format_slice_change(event_for.(c1))
+      flash_for_c2 = EzagentPluginLiveview.Admin.EventFormat.format_slice_change(event_for.(c2))
+      flash_for_c3 = EzagentPluginLiveview.Admin.EventFormat.format_slice_change(event_for.(c3))
 
       # The pre-r4 bug: all 3 returned the latest message's text.
       # Post-r4: each returns its OWN message's text.
@@ -1030,12 +1044,12 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       # Older-than-ring-depth cursor: ring trimmed it out. Bridge
       # MUST still render a flash (generic line).
       receiver =
-        URI.new!("entity://user/system/n3-stale-#{System.unique_integer([:positive])}")
+        URI.new!("entity://system/user/n3-stale-#{System.unique_integer([:positive])}")
 
       {:ok, _} = Ezagent.SpawnRegistry.spawn(receiver)
 
       sender =
-        URI.new!("entity://user/system/n3-stale-snd-#{System.unique_integer([:positive])}")
+        URI.new!("entity://system/user/n3-stale-snd-#{System.unique_integer([:positive])}")
 
       {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
 
@@ -1066,7 +1080,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         result_summary: :ok
       }
 
-      flash = EzagentPluginLiveview.AdminLive.format_slice_change(event)
+      flash = EzagentPluginLiveview.Admin.EventFormat.format_slice_change(event)
       assert flash == "New chat update on #{URI.to_string(receiver)}"
     end
 
@@ -1084,7 +1098,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
 
       # Foreign URI in the event — NOT the admin's URI.
       foreign_uri =
-        URI.new!("entity://user/system/some-other-#{System.unique_integer([:positive])}")
+        URI.new!("entity://system/user/some-other-#{System.unique_integer([:positive])}")
 
       :ok =
         Phoenix.PubSub.broadcast(

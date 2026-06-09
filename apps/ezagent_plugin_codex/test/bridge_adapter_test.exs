@@ -7,11 +7,11 @@ defmodule EzagentPluginCodex.BridgeAdapterTest do
   test "deliver/2 converts generic payload to codex_turn channel frame" do
     payload = %Payload{
       message_id: "m1",
-      session_uri: URI.new!("session://default/team-alpha/s1"),
-      sender_uri: URI.new!("entity://user/system/admin"),
+      session_uri: URI.new!("session://team-alpha/default/s1"),
+      sender_uri: URI.new!("entity://system/user/admin"),
       text: "hello codex",
       event_type: :chat_send,
-      meta: %{"sender" => "entity://user/system/admin"}
+      meta: %{"sender" => "entity://system/user/admin"}
     }
 
     assert :ok = BridgeAdapter.deliver(payload, self())
@@ -21,9 +21,9 @@ defmodule EzagentPluginCodex.BridgeAdapterTest do
                       "content" => "hello codex",
                       "event_type" => "chat_send",
                       "message_id" => "m1",
-                      "meta" => %{"sender" => "entity://user/system/admin"},
-                      "session_uri" => "session://default/team-alpha/s1",
-                      "sender_uri" => "entity://user/system/admin"
+                      "meta" => %{"sender" => "entity://system/user/admin"},
+                      "session_uri" => "session://team-alpha/default/s1",
+                      "sender_uri" => "entity://system/user/admin"
                     }}
   end
 
@@ -38,7 +38,7 @@ defmodule EzagentPluginCodex.BridgeAdapterTest do
   end
 
   test "handle_client_event/3 validates reply payload shape" do
-    socket = %Phoenix.Socket{assigns: %{agent_uri: URI.new!("entity://agent/team-alpha/codex_test")}}
+    socket = %Phoenix.Socket{assigns: %{agent_uri: URI.new!("entity://team-alpha/agent/codex_test")}}
 
     assert {:reply, {:error, %{reason: "reply requires text + session_uris"}}, ^socket} =
              BridgeAdapter.handle_client_event("reply", %{"text" => "missing sessions"}, socket)

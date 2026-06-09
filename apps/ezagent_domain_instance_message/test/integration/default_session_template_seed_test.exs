@@ -56,9 +56,9 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
 
     assert Enum.any?(snapshots, fn snap ->
              is_binary(snap.uri) and
-               String.starts_with?(snap.uri, "template://session/team-alpha/default@")
+               String.starts_with?(snap.uri, "template://team-alpha/session/default@")
            end),
-           "expected a per-workspace `template://session/team-alpha/default@<hash>` " <>
+           "expected a per-workspace `template://team-alpha/session/default@<hash>` " <>
              "SessionTemplate seed; found #{inspect(Enum.map(snapshots, & &1.uri))}"
   end
 
@@ -75,7 +75,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
                template_name: "default"
              )
 
-    assert URI.to_string(session_uri) == "session://default/#{workspace_name}/#{short}"
+    assert URI.to_string(session_uri) == "session://#{workspace_name}/default/#{short}"
 
     assert workspace_name
            |> default_template_uri_prefix()
@@ -88,11 +88,11 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
     default_template =
       Enum.find(snapshots, fn snap ->
         is_binary(snap.uri) and
-          String.starts_with?(snap.uri, "template://session/system/default@")
+          String.starts_with?(snap.uri, "template://system/session/default@")
       end)
 
     assert default_template != nil,
-           "expected a `template://session/system/default@<hash>` SessionTemplate " <>
+           "expected a `template://system/session/default@<hash>` SessionTemplate " <>
              "Kind seeded by `seed_default_session_template/0`; found " <>
              "#{inspect(Enum.map(snapshots, & &1.uri))}"
   end
@@ -103,7 +103,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
     default_template =
       Enum.find(snapshots, fn snap ->
         is_binary(snap.uri) and
-          String.starts_with?(snap.uri, "template://session/system/default@")
+          String.starts_with?(snap.uri, "template://system/session/default@")
       end)
 
     assert default_template != nil
@@ -189,7 +189,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
   end
 
   defp default_template_uri_prefix(workspace_name),
-    do: "template://session/#{workspace_name}/default@"
+    do: "template://#{workspace_name}/session/default@"
 
   defp snapshot_exists?(prefix) do
     KindSnapshot.list_all()

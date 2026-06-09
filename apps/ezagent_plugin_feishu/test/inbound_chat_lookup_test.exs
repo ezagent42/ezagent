@@ -37,7 +37,7 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
 
     test "returns {:ok, session_uri} for a feishu-adapter row" do
       chat_id = "oc_lookup_test_" <> uniq()
-      session_uri = "session://default/system/main"
+      session_uri = "session://system/default/main"
 
       insert_row(session_uri, "feishu", chat_id)
 
@@ -49,7 +49,7 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
       # A hypothetical Slack adapter binding the same string as target_id.
       # The Feishu inbound lookup must filter on adapter_id="feishu".
       chat_id = "oc_disambiguation_" <> uniq()
-      session_uri = "session://default/system/main"
+      session_uri = "session://system/default/main"
 
       insert_row(session_uri, "slack_hypothetical", chat_id)
 
@@ -64,8 +64,8 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
     # + the correct rebind could never win. Post-fix: hard error.
     test "returns {:error, :ambiguous_chat_binding} when 2+ sessions are bound to the same chat_id" do
       chat_id = "oc_dup_" <> uniq()
-      insert_row("session://default/system/team_a_" <> uniq(), "feishu", chat_id)
-      insert_row("session://default/system/team_b_" <> uniq(), "feishu", chat_id)
+      insert_row("session://system/default/team_a_" <> uniq(), "feishu", chat_id)
+      insert_row("session://system/default/team_b_" <> uniq(), "feishu", chat_id)
 
       assert {:error, :ambiguous_chat_binding} = InboundChatLookup.resolve(chat_id)
     end
@@ -97,10 +97,10 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
     # (a) single binding is unchanged — mentions are ignored, no ambiguity.
     test "single binding returns {:ok, uri} regardless of mentions" do
       chat_id = "oc_one_" <> uniq()
-      session_uri = "session://default/system/solo_" <> uniq()
+      session_uri = "session://system/default/solo_" <> uniq()
       insert_row(session_uri, "feishu", chat_id)
 
-      mention = URI.parse("entity://agent/default/cc_architect")
+      mention = Ezagent.URI.new!("entity://default/agent/cc_architect")
 
       assert {:ok, %URI{} = parsed} = InboundChatLookup.resolve(chat_id, [mention])
       assert URI.to_string(parsed) == session_uri
@@ -110,19 +110,19 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
     # session → route to that session.
     test "2 bindings + mention in exactly one session → routes there" do
       chat_id = "oc_disambig_" <> uniq()
-      sess_a = "session://default/system/team_a_" <> uniq()
-      sess_b = "session://default/system/team_b_" <> uniq()
+      sess_a = "session://system/default/team_a_" <> uniq()
+      sess_b = "session://system/default/team_b_" <> uniq()
 
       insert_row(sess_a, "feishu", chat_id)
       insert_row(sess_b, "feishu", chat_id)
 
       # @architect is a member of session A only.
       set_members(%{
-        sess_a => ["entity://agent/default/cc_architect"],
-        sess_b => ["entity://agent/default/cc_reviewer"]
+        sess_a => ["entity://default/agent/cc_architect"],
+        sess_b => ["entity://default/agent/cc_reviewer"]
       })
 
-      mention = URI.parse("entity://agent/default/cc_architect")
+      mention = Ezagent.URI.new!("entity://default/agent/cc_architect")
 
       assert {:ok, %URI{} = parsed} = InboundChatLookup.resolve(chat_id, [mention])
       assert URI.to_string(parsed) == sess_a
@@ -131,15 +131,15 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
     # (c) 2 bindings + NO mention → still fails closed.
     test "2 bindings + no mention → :ambiguous_chat_binding" do
       chat_id = "oc_nomention_" <> uniq()
-      sess_a = "session://default/system/team_a_" <> uniq()
-      sess_b = "session://default/system/team_b_" <> uniq()
+      sess_a = "session://system/default/team_a_" <> uniq()
+      sess_b = "session://system/default/team_b_" <> uniq()
 
       insert_row(sess_a, "feishu", chat_id)
       insert_row(sess_b, "feishu", chat_id)
 
       set_members(%{
-        sess_a => ["entity://agent/default/cc_architect"],
-        sess_b => ["entity://agent/default/cc_reviewer"]
+        sess_a => ["entity://default/agent/cc_architect"],
+        sess_b => ["entity://default/agent/cc_reviewer"]
       })
 
       assert {:error, :ambiguous_chat_binding} = InboundChatLookup.resolve(chat_id, [])
@@ -149,19 +149,19 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
     # sessions → cannot narrow to one → still fails closed.
     test "2 bindings + mention in two of them → :ambiguous_chat_binding" do
       chat_id = "oc_shared_" <> uniq()
-      sess_a = "session://default/system/team_a_" <> uniq()
-      sess_b = "session://default/system/team_b_" <> uniq()
+      sess_a = "session://system/default/team_a_" <> uniq()
+      sess_b = "session://system/default/team_b_" <> uniq()
 
       insert_row(sess_a, "feishu", chat_id)
       insert_row(sess_b, "feishu", chat_id)
 
       # @shared is a member of BOTH bound sessions → 2 candidates → fail closed.
       set_members(%{
-        sess_a => ["entity://agent/default/cc_shared"],
-        sess_b => ["entity://agent/default/cc_shared"]
+        sess_a => ["entity://default/agent/cc_shared"],
+        sess_b => ["entity://default/agent/cc_shared"]
       })
 
-      mention = URI.parse("entity://agent/default/cc_shared")
+      mention = Ezagent.URI.new!("entity://default/agent/cc_shared")
 
       assert {:error, :ambiguous_chat_binding} =
                InboundChatLookup.resolve(chat_id, [mention])
@@ -172,18 +172,18 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
     # that lives in some other chat).
     test "2 bindings + mention in neither → :ambiguous_chat_binding" do
       chat_id = "oc_miss_" <> uniq()
-      sess_a = "session://default/system/team_a_" <> uniq()
-      sess_b = "session://default/system/team_b_" <> uniq()
+      sess_a = "session://system/default/team_a_" <> uniq()
+      sess_b = "session://system/default/team_b_" <> uniq()
 
       insert_row(sess_a, "feishu", chat_id)
       insert_row(sess_b, "feishu", chat_id)
 
       set_members(%{
-        sess_a => ["entity://agent/default/cc_architect"],
-        sess_b => ["entity://agent/default/cc_reviewer"]
+        sess_a => ["entity://default/agent/cc_architect"],
+        sess_b => ["entity://default/agent/cc_reviewer"]
       })
 
-      mention = URI.parse("entity://agent/default/cc_stranger")
+      mention = Ezagent.URI.new!("entity://default/agent/cc_stranger")
 
       assert {:error, :ambiguous_chat_binding} =
                InboundChatLookup.resolve(chat_id, [mention])
@@ -191,7 +191,7 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
 
     test "resolve/1 delegates to resolve(chat_id, []) — back-compat" do
       chat_id = "oc_backcompat_" <> uniq()
-      session_uri = "session://default/system/backcompat_" <> uniq()
+      session_uri = "session://system/default/backcompat_" <> uniq()
       insert_row(session_uri, "feishu", chat_id)
 
       assert {:ok, %URI{} = parsed} = InboundChatLookup.resolve(chat_id)
@@ -235,8 +235,8 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
 
     test "2 bindings + ONLY @legend that is registered in exactly ONE session → routes there" do
       chat_id = "oc_legend_disambig_" <> uniq()
-      sess_a = "session://default/system/team_a_" <> uniq()
-      sess_b = "session://default/system/team_b_" <> uniq()
+      sess_a = "session://system/default/team_a_" <> uniq()
+      sess_b = "session://system/default/team_b_" <> uniq()
 
       insert_row(sess_a, "feishu", chat_id)
       insert_row(sess_b, "feishu", chat_id)
@@ -255,8 +255,8 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
 
     test "2 bindings + @legend registered in BOTH → fail closed" do
       chat_id = "oc_legend_both_" <> uniq()
-      sess_a = "session://default/system/team_a_" <> uniq()
-      sess_b = "session://default/system/team_b_" <> uniq()
+      sess_a = "session://system/default/team_a_" <> uniq()
+      sess_b = "session://system/default/team_b_" <> uniq()
 
       insert_row(sess_a, "feishu", chat_id)
       insert_row(sess_b, "feishu", chat_id)
@@ -272,8 +272,8 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
 
     test "2 bindings + @legend registered in NEITHER → fail closed" do
       chat_id = "oc_legend_neither_" <> uniq()
-      sess_a = "session://default/system/team_a_" <> uniq()
-      sess_b = "session://default/system/team_b_" <> uniq()
+      sess_a = "session://system/default/team_a_" <> uniq()
+      sess_b = "session://system/default/team_b_" <> uniq()
 
       insert_row(sess_a, "feishu", chat_id)
       insert_row(sess_b, "feishu", chat_id)
@@ -287,16 +287,16 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
 
     test "legend AND mention both narrow to the same single session → routes there" do
       chat_id = "oc_legend_plus_mention_" <> uniq()
-      sess_a = "session://default/system/team_a_" <> uniq()
-      sess_b = "session://default/system/team_b_" <> uniq()
+      sess_a = "session://system/default/team_a_" <> uniq()
+      sess_b = "session://system/default/team_b_" <> uniq()
 
       insert_row(sess_a, "feishu", chat_id)
       insert_row(sess_b, "feishu", chat_id)
 
-      set_members(%{sess_a => ["entity://agent/default/cc_relay"]})
+      set_members(%{sess_a => ["entity://default/agent/cc_relay"]})
       set_legends(%{sess_a => Ezagent.Routing.Legend.put(%{}, "传话游戏", bound_rule_set: "rs")})
 
-      mention = URI.parse("entity://agent/default/cc_relay")
+      mention = Ezagent.URI.new!("entity://default/agent/cc_relay")
 
       assert {:ok, %URI{} = parsed} =
                InboundChatLookup.resolve(chat_id, [mention], "@传话游戏 @cc_relay go")
@@ -321,17 +321,17 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
   def stub_member_uris(%URI{} = session_uri) do
     :persistent_term.get({__MODULE__, :members}, %{})
     |> Map.get(URI.to_string(session_uri), [])
-    |> Enum.map(&URI.parse/1)
+    |> Enum.map(&Ezagent.URI.new!/1)
   end
 
   describe "chat_ids_for/1" do
     test "returns [] for a session with no feishu bindings" do
-      uri = URI.parse("session://default/system/nobindings_" <> uniq())
+      uri = URI.parse("session://system/default/nobindings_" <> uniq())
       assert [] = InboundChatLookup.chat_ids_for(uri)
     end
 
     test "returns all feishu chat_ids bound to the session" do
-      session_uri = "session://default/system/multi_" <> uniq()
+      session_uri = "session://system/default/multi_" <> uniq()
       insert_row(session_uri, "feishu", "oc_a_" <> uniq())
       insert_row(session_uri, "feishu", "oc_b_" <> uniq())
       insert_row(session_uri, "feishu", "oc_c_" <> uniq())
@@ -342,7 +342,7 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
     end
 
     test "filters out non-feishu adapter rows on the same session" do
-      session_uri = "session://default/system/mixed_" <> uniq()
+      session_uri = "session://system/default/mixed_" <> uniq()
       insert_row(session_uri, "feishu", "oc_keep_" <> uniq())
       insert_row(session_uri, "slack_hypothetical", "C_drop_" <> uniq())
 
@@ -356,7 +356,7 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
   # ----- helpers -----------------------------------------------------------
 
   defp insert_row(session_uri_str, adapter_id, target_id) do
-    session_uri = URI.parse(session_uri_str)
+    session_uri = Ezagent.URI.new!(session_uri_str)
     workspace_uri = Ezagent.Persistence.workspace_uri_for!(session_uri)
 
     attrs = %{
@@ -365,7 +365,7 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
       adapter_id: adapter_id,
       target_id: target_id,
       opts_json: "{}",
-      bound_by: "entity://user/system/admin",
+      bound_by: "entity://system/user/admin",
       bound_at: DateTime.utc_now(),
       workspace_uri: workspace_uri
     }

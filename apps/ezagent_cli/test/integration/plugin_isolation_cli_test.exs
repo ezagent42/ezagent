@@ -101,7 +101,7 @@ defmodule EzagentCli.Integration.PluginIsolationCLITest do
 
     # 3. Spawn an instance + dispatch via CLI Dispatch — operator UX
     instance_name = "test-#{System.unique_integer([:positive])}"
-    uri = URI.parse("probecli://#{instance_name}")
+    uri = URI.new!("probecli://#{instance_name}")
 
     {:ok, _pid} =
       DynamicSupervisor.start_child(

@@ -4,9 +4,31 @@
 > TaskCreate is session-scoped; this file is the source of truth for
 > in-flight + future work that crosses sessions.
 
+> **2026-06-08 verification pass** (`chore/cleanup-todo-refresh`): every
+> OPEN item below was re-checked against `origin/main` @ `88d608f2`
+> (cleanup-4 #678). Items proven resolved are marked `RESOLVED 2026-06-08
+> (evidence: …)` inline + summarized in **"## Resolved 2026-06-08
+> verification batch"** at the bottom. Items still open carry an updated
+> one-line status. Conservative rule applied: RESOLVED only with concrete
+> code/PR/test evidence; otherwise left open.
+
 ## Active follow-ups (post-2026-05-24 batch)
 
-### Capability struct lacks an action axis (codex PR #356 r1 CRIT)
+### ~~Capability struct lacks an action axis (codex PR #356 r1 CRIT)~~ — RESOLVED 2026-06-08
+
+> **RESOLVED 2026-06-08** (evidence: SPEC `2026-05-27-capability-action-axis.md`
+> implemented). `Ezagent.Capability` now carries an `:action` field
+> (`atom() | :any`, defstruct default `:any`, NOT in `@enforce_keys`) and
+> `matches?/2` checks the action dimension — confirmed in
+> `apps/ezagent_core/lib/ezagent/capability.ex` (defstruct line ~40
+> `action: :any`; moduledoc §"SPEC 2026-05-27 capability-action-axis"; the
+> action grant-time enforcement rejecting `:any` grants from non-privileged
+> principals). The multi-action-Behavior escalation surface this CRIT
+> described is closed structurally. Residual UI-only follow-up
+> (action-selector dropdown in the admin LV form) is tracked as its own
+> OPEN item below ("Entity-caps LV grant form…").
+>
+> Original entry retained below for history.
 
 - **Where:** `apps/ezagent_core/lib/ezagent/capability.ex:90` (struct
   has no `action` field; `cap/3` ignores its third arg);
@@ -54,7 +76,14 @@
   `apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex`
   (Behavior helper, lifted from the facade in PR #408 round-2 fix).
 
-### Entity-caps LV grant form needs action-selector dropdown (post action-axis PR)
+### Entity-caps LV grant form needs action-selector dropdown (post action-axis PR) — STILL OPEN (MED)
+
+> **Status 2026-06-08: STILL OPEN.** Verified the form still has no action
+> selector — `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/entity_caps_live.ex:195-201`
+> explicitly comments "the admin LV form does NOT yet expose an action
+> selector; admins implicitly mint" and `build_cap/2` reads
+> `Map.get(params, "action", "any")` (defaults to `:any`). The action-axis
+> struct change landed, but this UI dropdown did not. Priority MED.
 
 - **Trigger:** SPEC `2026-05-27-capability-action-axis.md` §3.6.1(b)
   runtime-check; r4 codex review HIGH-2; admin-role exemption is the
@@ -69,24 +98,69 @@
 - **Priority:** MED — admin-role exemption is fine in the short term;
   the proper fix is structural narrowing of admin-issued grants.
 
-### Admin promotion cap-lifecycle cleanup (pre-existing, codex PR #408 review surface)
+### Workspace dispatch∧persist atomicity (codex MEDIUM, feat/admin-promote-capbac) — OPEN (LOW, fail-safe)
+
+- **What:** `Ezagent.Workspace.add_member/remove_member` dispatch the live
+  Kind mutation (slice + cap grant/revoke effect) FIRST, then write the
+  member set to `Store.update_members/2`. A crash between the two leaves a
+  one-process-lifetime drift; Loader resyncs from the DB on next boot.
+- **codex MEDIUM (remove path):** the Part B synchronous `revoke_cap`
+  commits before the DB write — if the DB write fails, the member can
+  reappear from the DB WITHOUT the create_session cap. This is the
+  fail-SAFE direction (under-privilege, never over-privilege; the
+  dangerous "cap survives without membership" case is what Part B
+  closes). Documented inline at `workspace.ex` `do_remove_member`.
+- **Fix shape:** Phase 5 cross-DB transaction / saga with compensation
+  so the membership row + the cap state commit (or roll back) atomically.
+- **Priority:** LOW — pre-existing drift class, fail-safe direction, needs
+  the broader transactional persistence work.
+
+### Admin promotion cap-lifecycle cleanup (pre-existing, codex PR #408 review surface) — DONE (PR feat/admin-promote-capbac, 2026-06-09)
+
+> **Status 2026-06-09: DONE.** Closed in `feat/admin-promote-capbac`
+> (title `feat(caps): close admin promote/revoke CapBAC bypass`).
 
 - **Trigger:** SPEC `2026-05-27-capability-action-axis.md` §7;
   PR #408 codex r3 HIGH-C.
-- **What:** `users_live.ex "Promote to system"` adds workspace membership
-  (`:224-229`); demotion (`:248-250`) removes membership but does NOT
-  sweep caps that were granted DURING the promotion window. Wildcard
-  caps survive demotion → durable authority leak.
-- **Fix shape:** record granted_at timestamp + promotion-window marker
-  on caps issued during promotion; on demotion, revoke any cap with
-  granted_by indicating promotion + granted_at within the window.
-  Alternative: scope all promotion-window grants to a
-  `{:within_promotion, principal_uri, until: <demote_time>}` scope-
-  tuple shape (extends existing scope-bounded delegation patterns).
-- **Priority:** HIGH for production; LOW today (only Allen + seeded admin
-  are persistently admin; no real temp-promotions yet).
+- **What:** `users_live.ex "Promote to system"` / `"Revoke"` called
+  `Ezagent.Workspace.add_member/remove_member/2`, which dispatch under
+  `system://workspace-loader` (NO caller cap-check). The
+  `/identities/users` route is `:require_entity` (not `:require_admin`),
+  so a non-admin LV user could promote/revoke without a CapBAC check —
+  AND demotion did not sweep the cap `:add_member` granted.
+- **Resolution (Part A — CapBAC bypass):** added cap-checked
+  `Ezagent.Workspace.add_member/3` + `remove_member/3` (mirroring
+  `create_user/3`) that dispatch the `Behavior.Workspace`
+  `:add_member` / `:remove_member` actions carrying the logged-in
+  caller's FRESH caps (`current_caller_caps/1`). Step 5.5 CapBAC now
+  runs against the caller — identical to `mix ezagent.workspace.*`. The
+  `/2` programmatic variants are UNCHANGED (legitimate `workspace-loader`
+  use for in-VM CLI / mix-task / Loader callers; mix tasks +
+  `workspace_detail_live.ex` keep using them).
+- **Resolution (Part B — cap-lifecycle sweep):** system authority is
+  membership-based (`Capability.cross_workspace?/2`), so promotion grants
+  no system-wide cap rows — revoking membership removes that authority by
+  construction. The one durable cap `:add_member` grants is the
+  workspace-scoped `:create_session` cap; `handle_remove_member/2` now
+  emits a symmetric `revoke_cap` effect (matched by 4-tuple
+  `identity_key`, invariant #19), so a demoted member loses
+  create_session authority in the workspace they were removed from —
+  and only that cap (instance axis scopes it; caps in OTHER workspaces
+  are untouched).
+- **Tests:** under-privileged LV promote/revoke REJECTED (membership
+  unchanged); admin succeeds; fresh-caps post-mount grant takes effect;
+  add grants + remove sweeps the create_session cap. All TDD-confirmed
+  to fail against the pre-fix code.
 
-### Codex PR #356 r1 HIGH/MED deferred
+### Codex PR #356 r1 HIGH/MED deferred — PARTIALLY RESOLVED 2026-06-08
+
+> **Status 2026-06-08:** HIGH-2 (combined-Behavior shared-cap-subject) is
+> RESOLVED — the action-axis landed (see resolved entry at top), so
+> mint/list/revoke on `UserTokens` are now distinguishable per-action.
+> HIGH-1 (CLI integration test for User-Kind ops) and HIGH-4 (LV bypass for
+> create/set_password) remain STILL OPEN — verified `users_live.ex:138` still
+> calls `Ezagent.Users.create/3` and `:203` `Ezagent.Users.set_password/2`
+> directly (no dispatch).
 
 - **HIGH-1 (CLI scheme mismatch for non-bare URIs):** PR #356 fix
   partial — added a parsed-URI passthrough in
@@ -164,7 +238,13 @@
      verified-unique-constraint collisions as idempotent (return/raise
      all other Repo failures).
 
-### `Ezagent.Invocation.dispatch/1` ReadyGate ↔ PendingDelivery TOCTOU
+### `Ezagent.Invocation.dispatch/1` ReadyGate ↔ PendingDelivery TOCTOU — STILL OPEN (MED)
+
+> **Status 2026-06-08: STILL OPEN.** No atomic `ReadyGate.status_and_buffer/1`
+> exists; the two-read race is unaddressed. (NB: the separate `:not_ready`
+> readiness regression from the lifecycle migration WAS fixed in #493 — that
+> is a different bug. This microsecond TOCTOU window remains.) Priority MED.
+
 - **Where:** `apps/ezagent_core/lib/ezagent/invocation.ex` `dispatch/1`
   reads `Ezagent.Kind.ReadyGate.status/1` then
   `Ezagent.Kind.PendingDelivery.buffer/...` as two non-atomic
@@ -218,7 +298,10 @@ open after HIGH-1 (admin fallback hole) closed in PR #298:
 
   - ✅ `routing.add_rule` — already deprecated in PR #302 (Behavior
     `Ezagent.Behavior.Routing` exists; `mix ezagent routing add_rule`
-    dispatches against `system://routing/default`).
+    dispatches against `system://routing/default`). **DELETED in
+    cleanup-4 (2026-06-08)** — the deprecation stub was a pure
+    `Mix.raise` no-op with no remaining function; its replacement has
+    shipped, so the stub was retired.
   - ⏳ **deferred to follow-up PRs** — each below needs a real
     `Behavior` action reached via `Ezagent.Invocation.dispatch/1`
     (NOT a bare FacadeRegistry op) BEFORE its legacy task can be
@@ -551,6 +634,23 @@ From `docs/notes/2026-05-24-architecture-audit-v1.md` (5 LOW):
 > Still OPEN from below: the home-portability **durable** profile-relative path
 > fix (CLI shipped in #497; structural fix deferred — see
 > `docs/notes/home-portability-audit.md`). Findings retained verbatim below.
+>
+> **Re-verified 2026-06-08:** the (B) migration findings + Jason.Encoder (A)
+> remain RESOLVED on `origin/main` — `defimpl Jason.Encoder, for:
+> Ezagent.Capability` present in `capability.ex:494`; `ReadyGate` +
+> `PendingDelivery.flush` present in `kind/server.ex`. The home-portability
+> **durable** fix is STILL OPEN but now NARROWED: the per-agent FS-addressing
+> bug class was largely closed by the resource-unification batch P0–P3
+> (#658/#664/#665/#669/#670) — all runtime-app-code FS now routes through the
+> `resource://` resolver / UriQuery seam (`Ezagent.Resource.FsResolver`),
+> `raw_home_path_outside_core` ratcheted to **1**, and the
+> `home_path_in_runtime_code` scan gate (#664) hard-fails NEW occurrences.
+> The Sandbox slice's `config_dir_path` is, however, still stored ABSOLUTE
+> (`apps/ezagent_core/lib/ezagent/behavior/sandbox.ex:31` — "absolute path")
+> rather than profile-relative, so backup/restore still relies on the
+> rewrite-on-restore path; the "approach 2" structural fix in
+> `home-portability-audit.md` is NOT done. STILL OPEN (LOW — backup/restore
+> CLI works; structural refinement).
 
 Methodology: phx restarted on complete `d46bd2d2`; live agent-browser + full
 umbrella `mix test` (407 files) + isolated chat re-runs + **pre-lifecycle
@@ -614,7 +714,14 @@ baseline worktree (`54df56c9`) chat run for apples-to-apples diff**.
   `reconcile_after_load`, + a data migration of existing rows. See
   `docs/notes/home-portability-audit.md` §"Conclusion" approach 2.
 
-- **cc-agent claude credential durability (2026-06-01)**: cc agents
+- **cc-agent claude credential durability (2026-06-01)** — STILL OPEN (2026-06-08):
+  the daily-OAuth-expiry → silent-mute problem persists; durable fix
+  (api_key_helper / auto-refresh / spawn-time freshness preflight) not yet
+  implemented. Related but DISTINCT from the #17 credential CASCADE (which
+  materializes a source cred into the agent's isolated CLAUDE_CONFIG_DIR at
+  CREATE time — landed via #592/#641); the EXPIRY/refresh lifecycle is the
+  open gap. See also the §5.B follow-up at the bottom (Allen to co-handle).
+  cc agents
   (orchestrators + workers) authenticate to Anthropic via the Claude Max
   OAuth token in `<CLAUDE_CONFIG_DIR>/.claude/.credentials.json`, which
   EXPIRES ~daily. When it expires, claude receives channel messages but
@@ -697,9 +804,53 @@ baseline worktree (`54df56c9`) chat run for apples-to-apples diff**.
   > receiver" observable signal (the silent default-fan-out half), (c) the
   > disable-not-delete GC option. Confirmed live 2026-06-01: an @-mention to a
   > non-member slot worker silently goes nowhere — that's the (b) gap.
+  >
+  > **Update 2026-06-05 (verified vs origin/main):** `remove_agent_slot` was
+  > RETIRED → replaced by member-model `remove_member` (tools.ex §3.8), which
+  > SUBSUMES the #519 observability half — its result reports
+  > `deleted_rules` (cascade-deleted, routing LOST + Logger.warning'd) vs
+  > `repointed_rules`. So the remove-side observability (a-partial) is done.
+  > **Genuine residual = (b)**: the "message matched no worker receiver →
+  > silent default fan-out" signal lives in the ROUTING layer, not remove.
+  > `Ezagent.Routing.Resolver.resolve_with_ctx/4`
+  > (`apps/ezagent_core/lib/ezagent/routing/resolver.ex:190`) treats
+  > `system_default` (`$session_users`/`$mentions`) as just another matched
+  > rule; there is no signal distinguishing "matched a real worker/member
+  > rule" from "only matched system_default" when a message carried
+  > `@mentions` that resolved to no member. (b) is a NEW observability
+  > feature needing design (signal shape + false-positive guard for
+  > legitimate broadcasts) — NOT a quick patch. Recommend a small
+  > brainstorm/spec before implementing.
+  >
+  > **CLOSED 2026-06-06 (Allen).** The remove-side cleanup/observability is
+  > done (remove_member: deleted_rules/repointed_rules + cascade-delete
+  > warnings). The (b) "no worker matched → silent fan-out" case is NOT a bug:
+  > an `@mention` to a non-member is silently dropped by the Resolver's
+  > `valid_member?/2` filter (resolver.ex:336) — IM-consistent (@nonexistent =
+  > no-op) AND a load-bearing SECURITY boundary (chat.receive runs under
+  > `system://chat-router`; delivering to an unvalidated target = privilege
+  > escalation). Allen declined the optional UX hint. **Task closed — no
+  > remaining work.**
+
+- **✅ `domain.agent` — DONE (verified against origin/main 2026-06-05).** Content
+  audit (not SHA — the stale local `domain-agent-foundation` branch's commits are on
+  main under different SHAs via #539 + unify-uri-query reshaping): PR-1/PR-DR/PR-4 +
+  codex merged via **PR #539**; PR-2 (split `working_directory`→`project_cwd`+`config_dir`)
+  done (only comments reference the old name, no live reads); PR-6 `update_member_template`
+  on main; the 2026-06-03 config_dir promotion (`claude_config_dir`→`config_dir`,
+  fail-loud) merged; PR-3's domain-owns/plugin-materializes architecture landed
+  (domain threads `config_dir`, core `Kind.Template` does `allocated_config_dir`,
+  `Behavior.Sandbox` owns FS lifecycle + invokes `template_class.destroy_config_dir/2`,
+  plugins only materialize). scenario-34 deterministic **8/0** in dev docker; live
+  passed 2026-06-03 (old node). ONLY residual = move per-agent config_dir PATH
+  COMPUTATION (cc_agent/codex_agent `agent_config_dir/1`) fully into the domain — a
+  marginal structural refinement the spec flagged needs compat shims + Allen review;
+  NON-blocking. The scenario-34 live re-run in the NEW #21 docker dev env needs Allen's
+  dev Feishu app (cli_a97ae) event-subscription config. See [[project_domain_agent_spec]].
 
 - **`domain.agent` abstraction — own per-agent identity + filesystem isolation as a
-  structural invariant (Allen 2026-06-02, after E2E acceptance)**: the scenario-34
+  structural invariant (Allen 2026-06-02, after E2E acceptance)** [SUPERSEDED by the ✅
+  entry above — kept for the original problem statement]: the scenario-34
   live tier surfaced that per-agent resource isolation (cwd / config_dir / `.mcp.json`
   / bridge token) is currently SCATTERED — partly from template data
   (`working_directory`, which a mis-seeded template set to the SHARED
@@ -834,12 +985,26 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
   distribution hardening). Naturally relevant to #21 prod image lockdown, but
   should be a security-scoped PR/spec rather than an incidental Docker change.
 
-- **#25 architecture discussion — PENDING DISCUSSION DELIVERABLE.** The
-  `improve-codebase-architecture` skill was installed in the cc-openclaw
-  environment; the remaining work is a discussion/proposal deliverable, not a
-  code patch in this handoff branch unless Allen asks for a written spec.
+- **#25 architecture discussion — DELIVERABLE SHIPPED; refactors IN PROGRESS
+  (2026-06-08).** The discussion/proposal deliverable shipped (#610/#613); the
+  Phase-2 fitness suite (#640) + Phase-3 deepening refactors (#644-#675, gt_1500
+  5→0, gt_1000 17→10) are the follow-on. See the "Architecture clarity" section
+  below for the consolidated status.
 
-## Architecture clarity (Allen 2026-06-03)
+## Architecture clarity (Allen 2026-06-03) — IN PROGRESS (substantial, 2026-06-08)
+
+> **Status 2026-06-08: SUBSTANTIALLY IN PROGRESS** (#25 architecture-deepening).
+> What's DONE: discovery deliverable (`docs/notes/2026-06-07-architecture-deepening-v1.md`
+> + `.zh_cn.md`, #610/#613); **Phase-2 fitness suite landed** (#640 —
+> `apps/ezagent_core/test/architecture/{oversized_modules,cross_file_duplicate_fn,raw_home_path}_test.exs`
+> + `arch_baseline_manifest.exs` ratchet); **Phase-3 refactors in progress** —
+> `oversized_modules_gt_1500` driven **5→0** (#644/#657/#660/#663/#667/#672),
+> `oversized_modules_gt_1000` **17→10 and counting** (#651/#660/#663/#675),
+> plus seam splits (Capability, SessionCreator, Orchestrator MCP/Tools, Chat,
+> Workspace membership, template-class resolver). REMAINING: continue
+> `gt_1000` burn-down (10 modules left) + any further deepening passes; the
+> written discussion/proposal deliverable is shipped, ongoing work is the
+> Phase-3 refactor sequence. Tracked under label `arch-deepening`.
 
 - **Install + run `improve-codebase-architecture` skill to clarify the ESR
   architecture.** Skill installed at `.claude/skills/improve-codebase-architecture/`
@@ -847,4 +1012,70 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
   decisions log) to surface "deepening opportunities" — shallow modules, leaky
   seams, RBK / Kind / Behavior / Template / domain.agent layering friction — and
   discuss how to make the codebase deeper, more testable, more AI-navigable. The
-  discussion + proposals are the deliverable.
+  discussion + proposals are the deliverable. ✅ Done as #610/#613/#640 +
+  Phase-3 (#644-#675); see status note above.
+
+- **cc/codex agent interactive-login + clean authenticated-terminal screenshot
+  (§5.B follow-up; Allen to co-handle).** STILL OPEN (confirmed 2026-06-08 —
+  deferred by PR #661; Allen to co-handle, needs interactive login + judgment).
+  §5.B cascade credential INHERITANCE is
+  proven at the mechanism level (#641 `cb49a7e3`: unified create routes file-flavor
+  agents through the #17 cascade → grant minted, source `.credentials.json`
+  materialized into the agent's ISOLATED `CLAUDE_CONFIG_DIR` (not operator
+  `~/.claude`), headless `claude --print` returns AUTHENTICATED exit 0 with no
+  per-agent `/login`; the management-UI Credential-cascade panel confirms the
+  resolved layer stack + source + active grant). REMAINING GAP vs the E2E bar:
+  claude v2.1.162's INTERACTIVE PTY still shows "Select login method" despite a
+  valid materialized cred — a claude-TUI-version + PtyServer theme/login dialog
+  scanner-timing artifact (relates to the #39 `:theme_dialog` auto-prompt). To do
+  together: (a) get a clean agent-browser screenshot of an authenticated cc
+  terminal (no /login, no theme dialog); (b) fix the theme/login-dialog scanner
+  timing so interactive cc agents reach the authenticated prompt; (c) the
+  source-agent `config_dir` cred is non-durable across the source's own respawns
+  (re-provision needed) — an E2E-provisioning durability gap to close. Needs
+  Allen's cooperation (interactive login + judgment).
+
+---
+
+## Resolved 2026-06-08 verification batch
+
+> Consolidated index of items VERIFIED-RESOLVED in the 2026-06-08 verification
+> pass (`chore/cleanup-todo-refresh`, checked vs `origin/main` @ `88d608f2`).
+> Each is also tagged inline above.
+
+- **Capability struct action-axis (codex PR #356 r1 CRIT)** — RESOLVED.
+  Evidence: SPEC `2026-05-27-capability-action-axis.md` implemented;
+  `Ezagent.Capability` defstruct has `action: :any`; `matches?/2` checks the
+  action dimension (`apps/ezagent_core/lib/ezagent/capability.ex`).
+- **Codex PR #356 HIGH-2 (UserTokens combined-Behavior shared cap subject)** —
+  RESOLVED by the action-axis (mint/list/revoke now per-action distinguishable).
+- **#25 architecture-clarity discovery deliverable + Phase-2 fitness suite** —
+  RESOLVED. Evidence: #610/#613 (deepening v1 docs), #640
+  (`apps/ezagent_core/test/architecture/*` fitness tests +
+  `arch_baseline_manifest.exs`). Phase-3 refactor sequence is IN PROGRESS
+  (gt_1500 5→0 done; gt_1000 17→10 in progress).
+- **Resource/FS-addressing unification (P0–P3)** — RESOLVED for runtime-app-code.
+  Evidence: #658/#664/#665/#669/#670; `Ezagent.Resource.FsResolver` resolver;
+  `raw_home_path_outside_core` baseline = **1**; `home_path_in_runtime_code`
+  scan gate (#664) hard-fails new occurrences; uploads via resolver + signed-
+  token download contract (#669). (Durable profile-relative Sandbox
+  `config_dir_path` is a NARROWED residual — see home-portability item, OPEN.)
+- **Back-compat / dead-code / fork cleanup batch (#673/#676/#677/#678)** — RESOLVED.
+  Evidence: `routing.add_rule` deprecation stub DELETED (no routing mix task
+  remains); forked fns deduped — `check_agent_uri/1`, `content_field/2`,
+  `reject_stale_config_dir_data_key!/1`, bridge-adapter (#676,
+  `arch_baseline_manifest.exs`); `/cc_socket` shim layer removed, all 4 shim
+  modules deleted + endpoint unmounted, `cc_bridge_shim_callers: 0` gate
+  (#677, `cc_bridge_shim_test.exs`); compile warnings fixed + FF-3
+  `--warnings-as-errors --force` dead-code gate added (#678, `mix.exs:122` +
+  `compiler_dead_code_gate_test.exs`). NOTE: deprecated `mix esr` / CLI↔GUI
+  tasks were KEPT on their own timeline (NOT removed by this batch).
+- **E2E findings: Jason.Encoder for Capability (HIGH) + `:not_ready` regression
+  + destroy-gate/AgentLineage durability** — RESOLVED (#493 et al, re-verified
+  2026-06-08). Evidence: `defimpl Jason.Encoder, for: Ezagent.Capability`
+  (`capability.ex:494`); `ReadyGate` + `PendingDelivery.flush` in
+  `kind/server.ex`. (Sandbox-isolation flakiness = pre-existing test-infra, not
+  a code bug.)
+- **ExternalMirrorWorker dedupe composite key (#516)** — RESOLVED.
+  Evidence: `last_published_send_key: {term(), non_neg_integer()}` composite in
+  `external_mirror_worker.ex` (was already ✅; re-confirmed).

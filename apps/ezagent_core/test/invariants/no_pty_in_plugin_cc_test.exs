@@ -9,13 +9,14 @@ defmodule EzagentCore.Invariants.NoPtyInPluginCcTest do
   `ezagent_domain_ui` (Tier-2 UI primitives). The cc plugin is reduced
   to genuinely CC-specific surfaces:
 
-    * `EzagentPluginCc.Channel` — Phoenix Channel for claude TUI WS
-    * `EzagentPluginCc.BridgeRegistry` — agent_uri → channel pid
     * `EzagentPluginCc.McpConfigWriter` — `.mcp.json` writer
-    * `EzagentPluginCc.TokenStore` — bridge auth tokens
-    * `EzagentPluginCc.Socket` — WS endpoint
     * `Ezagent.PluginCc.Template.CcAgent` — template class (consumes
       `Ezagent.Domain.Pty.start/2`)
+
+  The cc-named bridge shims (`EzagentPluginCc.Channel` / `BridgeRegistry` /
+  `TokenStore` / `Socket`) were promoted to the `Ezagent.AgentBridge.*`
+  domain and the cc-named shims were removed in Cleanup-3 (FF-4 3→0); the
+  bridge surface now lives entirely in `ezagent_domain_agent_bridge`.
 
   This grep gate fails if a future PR resurrects any of the pre-
   migration module names inside `apps/ezagent_plugin_cc/lib/`.
@@ -59,7 +60,7 @@ defmodule EzagentCore.Invariants.NoPtyInPluginCcTest do
     violations =
       @forbidden
       |> Enum.flat_map(fn name ->
-        case System.cmd("grep", ["-rn", name, cc_lib, "--include=*.ex"], stderr_to_stdout: true) do
+        case System.cmd("grep", ["-rn", name, cc_lib, "--include=*.ex"], stderr_to_stdout: false) do
           {output, 0} ->
             String.split(output, "\n", trim: true)
 
@@ -104,7 +105,18 @@ defmodule EzagentCore.Invariants.NoPtyInPluginCcTest do
   end
 
   defp repo_root do
-    {out, 0} = System.cmd("git", ["rev-parse", "--show-toplevel"])
+    out =
+      case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: false) do
+        {top, 0} ->
+          top
+
+        _ ->
+          # No .git inside the release image (#21 docker) — resolve the
+          # umbrella root from cwd (umbrella root or the app under test).
+          cwd = File.cwd!()
+          if File.dir?(Path.join(cwd, "apps")), do: cwd, else: Path.expand("../..", cwd)
+      end
+
     String.trim(out)
   end
 end

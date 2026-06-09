@@ -22,8 +22,8 @@ defmodule EzagentPluginLiveview.AdminLiveOrchestratorHealthTest do
   alias Ezagent.Test.SnapshotFixtures
 
   @endpoint EzagentWeb.Endpoint
-  @main_session_uri URI.new!("session://default/system/main")
-  @main_workspace_uri URI.new!("workspace://system")
+  @main_session_uri Ezagent.URI.new!("session://system/default/main")
+  @main_workspace_uri Ezagent.URI.new!("workspace://system")
 
   defp create_session_via_workspace(short_name, creator_uri, opts) do
     template_name = Keyword.fetch!(opts, :template_name)
@@ -58,7 +58,7 @@ defmodule EzagentPluginLiveview.AdminLiveOrchestratorHealthTest do
         "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri())
       })
 
-    # The boot path binds session://default/system/main to workspace://system; the
+    # The boot path binds session://system/default/main to workspace://system; the
     # orchestrator URI derives from that pair. Sanity-check the binding
     # so any boot-order regression surfaces here rather than as a
     # confusing :session_not_workspace_bound failure deeper down.
@@ -91,7 +91,7 @@ defmodule EzagentPluginLiveview.AdminLiveOrchestratorHealthTest do
     end
 
     orch_uri =
-      Ezagent.Entity.Session.derive_orchestrator_uri(
+      Ezagent.Entity.Session.planned_orchestrator_uri(
         @main_session_uri,
         @main_workspace_uri
       )
@@ -200,7 +200,7 @@ defmodule EzagentPluginLiveview.AdminLiveOrchestratorHealthTest do
       # consults `caller_caps` directly, so the simplest way to
       # exercise the gate is to mount as a fresh entity with no caps.
       non_owner_uri =
-        URI.new!("entity://user/system/non-owner-#{System.unique_integer([:positive])}")
+        URI.new!("entity://system/user/non-owner-#{System.unique_integer([:positive])}")
 
       # Spawn the User Kind so AdminLive's `assign_session_context`
       # can resolve `caller_caps` from its Identity slice. Without a
@@ -282,7 +282,7 @@ defmodule EzagentPluginLiveview.AdminLiveOrchestratorHealthTest do
   # same Repo connection — Registry.unregister via the owner process,
   # plus snapshot row delete. Used as a defensive prelude to each
   # describe-block test (the boot path doesn't spawn an orchestrator
-  # for session://default/system/main in test env, but other tests in this file may
+  # for session://system/default/main in test env, but other tests in this file may
   # have).
   defp ensure_no_orchestrator(%URI{} = orch_uri) do
     # Snapshot rows leak across tests sharing the sandbox connection;

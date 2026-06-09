@@ -44,7 +44,7 @@ defmodule EzagentPluginLiveview.WorkspaceAddTemplateLiveTest do
       add_template: %{
         tmpl_name: "main",
         session_name: session_name,
-        members_csv: "entity://user/system/admin"
+        members_csv: "entity://system/user/admin"
       }
     )
     |> render_submit()
@@ -58,10 +58,8 @@ defmodule EzagentPluginLiveview.WorkspaceAddTemplateLiveTest do
 
     # Wait for the Session Kind to be alive in KindRegistry. SPEC v3
     # §3.6 (Phase 9 PR-7) — sessions live at
-    # `session://generic/<workspace>/<session_name>` (the
-    # GenericSession Class places its instances under its own
-    # `generic` template segment).
-    session_uri = URI.parse("session://generic/#{ws_name}/#{session_name}")
+    # `session://<workspace>/generic/<session_name>`.
+    session_uri = Ezagent.URI.session(ws_name, :generic, session_name)
     Process.sleep(100)
     assert {:ok, _pid} = Ezagent.KindRegistry.lookup(session_uri)
   end

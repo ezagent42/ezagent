@@ -2,7 +2,7 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
   use ExUnit.Case, async: false
 
   alias EzagentPluginCc.McpConfigWriter
-  alias EzagentPluginCc.TokenStore
+  alias Ezagent.AgentBridge.TokenStore
 
   setup do
     # Isolated $EZAGENT_HOME so TokenStore writes a real but throwaway
@@ -41,7 +41,7 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
     # written to SHARED locations (~/.ezagent, git toplevel, cwd), so it must
     # NOT carry per-agent identity — that flows via claude's process env
     # (cmd_env) instead. See docs/superpowers/specs/2026-06-02-domain-agent-design.md.
-    agent_uri = "entity://agent/team-alpha/test_writer-test-#{System.unique_integer([:positive])}"
+    agent_uri = "entity://team-alpha/agent/test_writer-test-#{System.unique_integer([:positive])}"
 
     {:ok, path} =
       McpConfigWriter.write!(
@@ -73,7 +73,7 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
     out_dir: out_dir
   } do
     agent_uri =
-      "entity://agent/team-alpha/test_writer-idempotent-#{System.unique_integer([:positive])}"
+      "entity://team-alpha/agent/test_writer-idempotent-#{System.unique_integer([:positive])}"
 
     # The token is no longer written into the .mcp.json env block (clobber-safe);
     # read it from the RETURN value instead (which `build_claude_cmd/3` uses for
@@ -141,7 +141,7 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
 
       {:ok, _path} =
         McpConfigWriter.write!(
-          agent_uri: "entity://agent/team-alpha/cc_cwdtest",
+          agent_uri: "entity://team-alpha/agent/cc_cwdtest",
           dir: out_dir,
           agent_cwd: agent_cwd
         )
@@ -162,7 +162,7 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
 
       {:ok, _path} =
         McpConfigWriter.write!(
-          agent_uri: "entity://agent/team-alpha/cc_mkdir",
+          agent_uri: "entity://team-alpha/agent/cc_mkdir",
           dir: out_dir,
           agent_cwd: agent_cwd
         )
@@ -187,7 +187,7 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
 
       {:ok, _path, _token} =
         McpConfigWriter.write_with_token!(
-          agent_uri: "entity://agent/team-alpha/cc_cfgdir",
+          agent_uri: "entity://team-alpha/agent/cc_cfgdir",
           dir: out_dir,
           agent_cwd: agent_cwd,
           config_dir: config_dir
@@ -206,7 +206,7 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
       # No agent_cwd → only ~/.ezagent + git-root copies, no crash.
       {:ok, path} =
         McpConfigWriter.write!(
-          agent_uri: "entity://agent/team-alpha/cc_nocwd",
+          agent_uri: "entity://team-alpha/agent/cc_nocwd",
           dir: out_dir
         )
 

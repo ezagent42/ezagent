@@ -1,0 +1,613 @@
+defmodule Ezagent.Entity.Agent.TemplateSpawn do
+  @moduledoc false
+
+  @doc """
+  Phase 7 completion PR-1 (SPEC §1.6a) — spawn a worker agent from an
+  AgentTemplate's `:template` slice CONTENT, delegating the launch to
+  the flavor's plugin Template Class and re-establishing the post-spawn
+  obligations (lineage + workspace binding) the Class does not perform.
+
+  This is the **content-taking** spawn helper. It takes the template
+  content as an ARGUMENT — it does NOT dispatch `:read` (the
+  `Ezagent.Behavior.Template` `:instantiate` action that calls it is
+  ALREADY running inside the AgentTemplate Kind process with the slice
+  in hand; a `:read` self-dispatch would be a `GenServer.call(self)`
+  deadlock — codex rev-5 HIGH-2).
+
+  ## Contract (SPEC §1.6a)
+
+  1. **Look up the Class** — from `content.flavor`,
+     `Ezagent.AgentFlavorRegistry.lookup/1` → `%{template_class: tc}`.
+  2. **Build the Class data map** — `AgentTemplate.to_template_data/2`
+     (§1.5 adapter) from the content + `instance_uri`.
+  3. **Delegate the launch** — `tc.instantiate(tc.template_name(),
+     data, workspace_uri)` → `{:ok, [worker_uri]}` (the plugin owns
+     exactly this — the Agent Kind + PTY).
+  4. **Record lineage (helper-owned, fresh-only)** — for each returned
+     `worker_uri`, `Ezagent.AgentLineage.record(worker_uri,
+     spawned_by_uri)`. The plugin Template Class does NOT do this, so
+     cap #2 (`{:spawned_by, orchestrator}`) would never resolve without
+     this step. Runs ONLY when `fresh?: true` (see codex round-7 below).
+  5. **Bind workspace (helper-owned, fresh-only)** — for each
+     `worker_uri`, `Ezagent.WorkspaceRegistry.bind(worker_uri,
+     workspace_uri)` (invariant 4 — workspace-scoped routing rules must
+     fire). Runs ONLY when `fresh?: true` (see codex round-7 below).
+
+  NO `:read` dispatch anywhere.
+
+  ## Args
+
+  - `template_content_map` — the AgentTemplate `:template` slice content
+    (carries `flavor`, `project_cwd`, the sandbox keys incl. `config_dir`).
+  - `instance_uri` — the per-instance agent URI the caller built.
+  - `spawned_by_uri` — `%URI{}` of the principal authorizing the spawn
+    (the owner for the orchestrator agent; the orchestrator's own URI
+    for `add_agent_slot` workers, so cap #2 resolves).
+  - `workspace_uri` — `%URI{}` scope the worker belongs to.
+
+  ## Return — the fresh-vs-adopted signal (codex round-5 MEDIUM-3, round-6 HIGH-1)
+
+  `{:ok, %{workers: [worker_uri], fresh?: boolean()}}` on success,
+  `{:error, reason}` otherwise.
+
+  Every plugin `Ezagent.Kind.Template` `instantiate/3` is documented as
+  IDEMPOTENT — re-calling after the Kinds are alive is a no-op that
+  returns the SAME URIs. That idempotency is correct for the
+  Workspace.Loader boot path, but it must not ERASE a signal
+  `update_agent_template` needs: did THIS call freshly create the
+  worker, or did it adopt a pre-existing one? (A concurrent spawn
+  registering the candidate URI → `instantiate` silently adopts a
+  worker the swap did NOT create; `record_lineage`/`bind_workspace`
+  then mutate ownership for an adopted worker.)
+
+  ## codex round-6 HIGH-1 — `fresh?` comes from the ATOMIC spawn result
+
+  Round 5 reconstructed `fresh?` by probing `KindRegistry` for
+  `instance_uri` BEFORE delegating to `template_class.instantiate/3`.
+  That probe is a TOCTOU window: a concurrent registration BETWEEN the
+  probe and the plugin's spawn makes an adopted worker read as fresh.
+
+  Round 6 removes the window structurally. `Ezagent.Kind.Template`
+  `instantiate/3` now returns the 3-element `{:ok, [URI.t()], %{fresh?:
+  boolean()}}` form, where `fresh?` is derived from the ATOMIC
+  `DynamicSupervisor.start_child` outcome (`SpawnRegistry.spawn_detailed/1`
+  preserves `:started` vs `:already_started`) — exactly one concurrent
+  caller wins the start. `spawn_from_template_content/4` reads `fresh?`
+  from THAT result. No pre-probe; the check+spawn is atomic, so the
+  window is removed, not narrowed.
+
+  A Template Class returning the legacy 2-element `{:ok, [URI.t()]}`
+  form supplies no `fresh?` — it is treated conservatively as `false`
+  (the swap then errs on the side of refusing a possible adoption).
+
+  ## codex round-7 HIGH-1 — side effects gated on `fresh?: true`
+
+  Round 6 made `fresh?` an ATOMIC signal but still recorded lineage and
+  bound the workspace for EVERY returned worker, BEFORE the caller saw
+  `fresh?`. `AgentLineage.record/2` is an ETS set insert that OVERWRITES
+  the worker's `spawned_by`, and `WorkspaceRegistry.bind/2` OVERWRITES
+  the binding. So a `fresh?: false` worker — one created by some other
+  operation, which `instantiate` merely ADOPTED — got re-parented under
+  THIS orchestrator (its `{:spawned_by, orchestrator}` cap then matched!)
+  and workspace-rebound, even though `update_agent_template` then
+  correctly refused the adoption (`:candidate_uri_already_live`). The
+  "safe-degraded" abort was not actually side-effect-free.
+
+  Round 7 gates the post-spawn obligations on `fresh?: true` — a worker
+  THIS call created. A `fresh?: false` result is returned with the
+  worker URI and ZERO side effects: the pre-existing worker's lineage +
+  workspace binding are left exactly as they were. The swap's
+  `:candidate_uri_already_live` abort is now genuinely side-effect-free.
+
+  ## codex round-10 HIGH-2 — a post-spawn failure undoes the fresh spawn
+
+  Round 7 ran the post-spawn obligations as `:ok = record_lineage(...)`
+  / `:ok = bind_workspace(...)`. A `bind_workspace/2` failure AFTER a
+  successful `record_lineage/2` would (a) RAISE on the `:ok =` match —
+  an exception, not a clean `{:error, _}` — and (b) leave the freshly
+  created worker with a lineage row but no workspace binding: residue
+  the caller could not see or clean.
+
+  Round 10 makes this helper own its own partial-spawn teardown. The
+  obligations run as a CHECKED step (`establish_post_spawn_obligations/3`);
+  on ANY failure after the plugin Template Class freshly created the
+  worker, this helper undoes everything IT established for that worker —
+  terminate the Kind, forget the lineage row, unbind the workspace
+  (`undo_fresh_workers/1`) — and returns a clean `{:error, reason}`. A
+  fresh `spawn_from_template_content/4` therefore either fully succeeds
+  or leaves ZERO residue: combined with the plugin Template Class
+  cleaning up its own freshly-started-then-failed Kind (cc/echo round
+  10), a per-slot instantiate is all-or-nothing, so the Generator's
+  `instantiate_agent_slots/4` `acc`-only accumulator (round 9) is
+  correct — a failed slot has already self-cleaned.
+  """
+  @spec spawn_from_template_content(map(), URI.t(), URI.t(), URI.t()) ::
+          {:ok,
+           %{
+             :workers => [URI.t()],
+             :fresh? => boolean(),
+             optional(:role_degraded) => boolean(),
+             optional(:role_degraded_reason) => term()
+           }}
+          | {:error, term()}
+  def spawn_from_template_content(
+        template_content_map,
+        %URI{} = instance_uri,
+        %URI{} = spawned_by_uri,
+        %URI{} = workspace_uri
+      ) do
+    spawn_from_template_content(
+      template_content_map,
+      instance_uri,
+      spawned_by_uri,
+      workspace_uri,
+      []
+    )
+  end
+
+  def spawn_from_template_content(_content, _instance, _spawned_by, _workspace) do
+    {:error, :invalid_spawn_from_template_content_args}
+  end
+
+  @doc """
+  2026-06-07 file-flavor-create-cascade — content→data conversion ONLY, with NO
+  cascade resolution. Used by the Workspace boot Loader to replay a persisted
+  file-flavor CONTENT template (`flavor`/`project_cwd`/`config_dir`) into the
+  Template-Class DATA shape so `provision_and_instantiate/4` can allocate the
+  isolated config_dir + spawn the Kind.
+
+  The boot Loader MUST NOT run the credential cascade: the cascade keys off the
+  agent OWNER, and at cold boot the only available principal is the
+  workspace-loader, NOT the human who originally created the agent — resolving a
+  user-default under the wrong owner would be incorrect. Credential
+  re-resolution at cold restart is the Agent Kind's `Sandbox.activate →
+  ensure_subprocess_alive → CascadeRuntime` self-heal, which reads the ORIGINAL
+  owner from the persisted Sandbox-slice `cascade_resolution`. This function is
+  the cascade-free conversion the Loader uses instead.
+  """
+  @spec content_to_template_data(map(), URI.t()) :: {:ok, map()} | {:error, term()}
+  def content_to_template_data(content, %URI{} = instance_uri) when is_map(content) do
+    Ezagent.Entity.AgentTemplate.to_template_data(content, instance_uri)
+  end
+
+  @doc false
+  @spec spawn_from_template_content(map(), URI.t(), URI.t(), URI.t(), keyword()) ::
+          {:ok,
+           %{
+             :workers => [URI.t()],
+             :fresh? => boolean(),
+             optional(:role_degraded) => boolean(),
+             optional(:role_degraded_reason) => term()
+           }}
+          | {:error, term()}
+  def spawn_from_template_content(
+        template_content_map,
+        %URI{} = instance_uri,
+        %URI{} = spawned_by_uri,
+        %URI{} = workspace_uri,
+        opts
+      )
+      when is_map(template_content_map) and is_list(opts) do
+    with {:ok, template_class} <-
+           EzagentDomainInstanceMessage.SessionCreator.TemplateResolver.resolve_template_class(
+             template_content_map
+           ),
+         {:ok, flavor} <- template_content_flavor(template_content_map),
+         # `resolve_cascade_content` is the grant-MINT boundary. Its own failures
+         # (incl. a unique-constraint insert conflict from a concurrent duplicate
+         # create — where the WINNER owns the row, not this call) must NOT trigger
+         # the grant cleanup below: this call did not successfully mint, so deleting
+         # would erase the winner's grant (codex r6 HIGH — race). So it stays in the
+         # OUTER `with`, whose `else` returns the error WITHOUT deleting any grant.
+         {:ok, template_content_map} <-
+           resolve_cascade_content(
+             template_content_map,
+             template_class,
+             instance_uri,
+             spawned_by_uri,
+             workspace_uri,
+             flavor,
+             opts
+           ),
+         # Past the mint boundary: from here, ANY failure is owned by THIS call
+         # (this call minted the grant, if any), so the grant cleanup is safe. The
+         # nested `with` scopes the grant-delete to exactly these post-mint steps.
+         {:ok, result} <-
+           spawn_after_cascade(
+             template_class,
+             template_content_map,
+             instance_uri,
+             spawned_by_uri,
+             workspace_uri,
+             flavor
+           ) do
+      {:ok, result}
+    end
+  end
+
+  def spawn_from_template_content(_content, _instance, _spawned_by, _workspace, _opts) do
+    {:error, :invalid_spawn_from_template_content_args}
+  end
+
+  # Post-grant-mint spawn steps. ANY failure here is owned by THIS call (the grant
+  # was just minted by this call's `resolve_cascade_content`), so on failure we
+  # HARD-delete the grant — leaving zero residue — via `revoke_cascade_grant_best_effort/1`.
+  # This is the ONLY grant-cleanup site (the pre-mint outer `with` must not delete).
+  defp spawn_after_cascade(
+         template_class,
+         template_content_map,
+         instance_uri,
+         spawned_by_uri,
+         workspace_uri,
+         flavor
+       ) do
+    with {:ok, data} <-
+           Ezagent.Entity.AgentTemplate.to_template_data(template_content_map, instance_uri),
+         :ok <- Ezagent.AgentFlavorAttributes.put(instance_uri, flavor),
+         {:ok, workers, fresh?, instantiate_meta} <-
+           instantiate_workers(template_class, data, workspace_uri) do
+      instantiate_meta = put_respawn_flavor(instantiate_meta, template_content_map)
+
+      # codex PR #408 review HIGH-3 — surface role-bootstrap degradation
+      # from the plugin Template Class's instantiate meta. The plugin
+      # (cc) attaches `:role_degraded` + `:role_degraded_reason` keys to
+      # its meta when an orchestrator skill-bootstrap step failed but
+      # the agent itself was still spawned successfully. We propagate
+      # them so the orchestrator-aware caller (Session.ensure_orchestrator)
+      # can notify the session owner per Invariant #9.
+      role_degraded_passthrough =
+        instantiate_meta
+        |> Map.take([:role_degraded, :role_degraded_reason])
+        |> case do
+          map when map_size(map) == 0 -> %{}
+          map -> map
+        end
+
+      # codex round-7 HIGH-1 — the post-spawn obligations (lineage +
+      # workspace binding) are side effects that OVERWRITE existing rows:
+      # `AgentLineage.record/2` is an ETS set insert (re-parents the
+      # worker under `spawned_by_uri`) and `WorkspaceRegistry.bind/2`
+      # overwrites the binding. They must run ONLY for a worker THIS call
+      # actually created — `fresh?: true`.
+      #
+      # When `fresh?: false`, the instantiate ADOPTED a pre-existing
+      # worker (one created by some other operation — e.g. a concurrent
+      # spawn). Recording lineage / binding workspace for it would
+      # re-parent a worker this call did NOT create. `update_agent_template`
+      # then correctly refuses the adoption (`require_fresh_candidate/1` →
+      # `:candidate_uri_already_live`), but the damage would already be
+      # done. So a `fresh?: false` result returns the worker URI with
+      # ZERO side effects — the pre-existing worker's lineage + workspace
+      # binding are left exactly as they were, making the swap's abort
+      # genuinely side-effect-free.
+      # codex round-10 HIGH-2 — the post-spawn obligations are now a
+      # CHECKED step that self-cleans on failure. Pre-round-10 this was
+      # `:ok = record_lineage(...)` / `:ok = bind_workspace(...)` — if
+      # `bind_workspace/2` failed AFTER `record_lineage/2` succeeded, the
+      # `:ok =` match RAISED (an exception, not a clean `{:error, _}`)
+      # and left a worker that the plugin Template Class freshly created
+      # WITH a lineage row but WITHOUT a workspace binding — a residue
+      # the caller could not see. Now: if a step AFTER the fresh spawn
+      # fails, `spawn_from_template_content/4` undoes everything IT
+      # established for the worker it created — terminate the Kind
+      # (`Ezagent.Kind.terminate/1`), forget the lineage row, unbind the
+      # workspace — and returns a clean `{:error, reason}`. A fresh
+      # instantiate therefore either fully succeeds or leaves ZERO
+      # residue. (`fresh?: false` adopts a pre-existing worker — no
+      # obligations run, nothing to undo — round 7.)
+      if fresh? do
+        # PR3 2026-05-24 — `record_sandbox_state/3` is a NEW CHECKED step
+        # after post-spawn obligations: dispatches `sandbox.write_path`
+        # on each worker so its `:sandbox` slice carries the per-agent
+        # config_dir + template_class. Without this, a destroy_config_dir
+        # callback later cannot know what to clean up.
+        #
+        # A failure here triggers `undo_fresh_workers/1` (same Round-10
+        # rollback as a post-spawn-obligation failure): terminate the
+        # worker, unbind workspace, forget lineage, AND (cc-specific)
+        # the plugin's own `rollback_agent_config_dir` already ran
+        # inside `instantiate/3` if PTY failed there. Here we additionally
+        # delete the dir we just created if the write_path dispatch
+        # itself fails — otherwise the agent terminates but the dir
+        # leaks because `Sandbox.invoke(:destroy, ...)` would never run
+        # (the agent never even came up).
+        with :ok <- establish_post_spawn_obligations(workers, spawned_by_uri, workspace_uri),
+             :ok <- record_sandbox_state(workers, instantiate_meta, template_class) do
+          {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
+        else
+          {:error, reason} ->
+            undo_fresh_workers(workers)
+            cleanup_partial_config_dirs(workers, template_class)
+            # codex r5 HIGH — the #17 grant was minted in `resolve_cascade_content`
+            # BEFORE instantiate; a post-spawn failure must not leave an orphaned
+            # GrantRow (unique by agent_uri → would poison retries + leave a stale
+            # authorization/audit row for an agent that never came up).
+            revoke_cascade_grant_best_effort(instance_uri)
+            {:error, reason}
+        end
+      else
+        # `fresh?: false` — adopted a pre-existing worker. Still
+        # write_path so its slice reflects the (already-existing)
+        # config_dir, but don't roll back on failure (we didn't create
+        # the worker).
+        _ = record_sandbox_state(workers, instantiate_meta, template_class)
+        {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
+      end
+    else
+      # codex r5/r6 HIGH — a failure of `to_template_data` /
+      # `AgentFlavorAttributes.put` / `instantiate_workers` here is ALWAYS owned by
+      # THIS call: `spawn_after_cascade/6` only runs AFTER `resolve_cascade_content`
+      # succeeded (which is where this call minted the #17 grant, if any). So
+      # hard-deleting the grant is safe — it cannot erase a concurrent winner's row
+      # (a mint-CONFLICT fails inside `resolve_cascade_content`, which is in the
+      # caller's OUTER `with` that does NOT delete). No-op when no grant was minted.
+      {:error, _reason} = err ->
+        revoke_cascade_grant_best_effort(instance_uri)
+        err
+    end
+  end
+
+  # codex r5 HIGH — best-effort HARD-delete of the #17 credential grant for an
+  # agent whose fresh spawn failed after the grant was minted. Delete (not soft
+  # `revoke`) so the unique `agent_uri` key is freed and a later retry's
+  # `GrantRow.insert/1` does not conflict (the agent never came up — no row should
+  # survive). Idempotent: a no-op when no grant exists (e.g. no credential source
+  # was resolved).
+  defp revoke_cascade_grant_best_effort(%URI{} = agent_uri) do
+    _ = Ezagent.Credential.GrantRow.delete(URI.to_string(agent_uri))
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  defp template_content_flavor(template_content_map) when is_map(template_content_map) do
+    case Map.get(template_content_map, :flavor) || Map.get(template_content_map, "flavor") do
+      flavor when is_binary(flavor) and flavor != "" -> {:ok, flavor}
+      _ -> {:error, :missing_flavor}
+    end
+  end
+
+defp resolve_cascade_content(
+       content,
+       template_class,
+       agent_uri,
+       spawned_by_uri,
+       workspace_uri,
+       flavor,
+       opts
+     ) do
+  Ezagent.Entity.Agent.TemplateSpawn.Cascade.resolve_content(
+    content,
+    template_class,
+    agent_uri,
+    spawned_by_uri,
+    workspace_uri,
+    flavor,
+    opts
+  )
+end
+
+@doc false
+def sanitize_respawn_template_data(respawn_data, template_content) do
+  Ezagent.Entity.Agent.TemplateSpawn.Cascade.sanitize_respawn_template_data(
+    respawn_data,
+    template_content
+  )
+end
+
+defp put_respawn_flavor(meta, template_content_map) do
+  Ezagent.Entity.Agent.TemplateSpawn.Cascade.put_respawn_flavor(meta, template_content_map)
+end
+
+  # codex round-6 HIGH-1 + PR3 2026-05-24 — call the plugin Template
+  # Class's `instantiate/3` and normalize its return to `{:ok, workers,
+  # fresh?, meta}`. The 3-element `{:ok, workers, %{fresh?:, ...}}`
+  # form carries the atomic fresh-vs-adopted signal AND any
+  # plugin-supplied PR3-style per-spawn metadata (e.g.
+  # `:config_dir_path` for cc). The legacy 2-element `{:ok, workers}`
+  # form has no signal — `fresh?` defaults conservatively to `false`
+  # and meta is an empty map.
+  defp instantiate_workers(template_class, data, %URI{} = workspace_uri) do
+    # PR-3 (domain.agent D2) — route through the core contract-boundary wrapper so
+    # the per-agent config_dir TARGET is domain-allocated + provided as data
+    # (`"allocated_config_dir"`) before the plugin materializes into it.
+    case Ezagent.Kind.Template.provision_and_instantiate(
+           template_class,
+           template_class.template_name(),
+           data,
+           workspace_uri
+         ) do
+      {:ok, workers, meta} when is_list(workers) and is_map(meta) ->
+        {:ok, workers, Map.get(meta, :fresh?, false) == true, meta}
+
+      {:ok, workers} when is_list(workers) ->
+        {:ok, workers, false, %{}}
+
+      {:error, _} = err ->
+        err
+
+      other ->
+        {:error, {:unexpected_instantiate_result, other}}
+    end
+  end
+
+  # PR3 2026-05-24 — dispatch `sandbox.write_path` on each worker URI
+  # so the agent's `:sandbox` slice carries the per-agent
+  # `config_dir_path` + `template_class`. Both fields are needed by
+  # `Sandbox.invoke(:destroy, ...)` to invoke the right cleanup callback
+  # with the right path.
+  #
+  # Codex PR3 round-2 HIGH-1 — SKIP dispatch entirely when meta lacks
+  # `:config_dir_path`. The :already_started loser path returns no
+  # config_dir_path; if we still dispatched, we'd write `nil` into the
+  # slice and CLOBBER the live state the :started winner just populated.
+  # The result would be a slice with no path → destroy_config_dir would
+  # never run → credential dir leaks.
+  #
+  # When meta carries :config_dir_path = nil EXPLICITLY (a plugin that
+  # opted out of per-agent dirs, e.g. echo template returning
+  # %{config_dir_path: nil}), we DO dispatch — recording that the
+  # template_class manages no dir is a meaningful state. The "missing
+  # key" vs "explicit nil" distinction is the gate.
+  defp record_sandbox_state(workers, meta, template_class) do
+    if Map.has_key?(meta, :config_dir_path) do
+      do_record_sandbox_state(
+        workers,
+        Map.get(meta, :config_dir_path),
+        template_class,
+        # PTY-orphan-restart 2026-05-26 — the plugin Template Class
+        # may also emit `:respawn_template_data` in meta (cc does;
+        # echo doesn't). Passed through to `sandbox.write_path` so
+        # the slice carries enough state for `Sandbox.post_init/2` to
+        # respawn the subprocess on a phx restart. Absent in meta →
+        # `nil` here → not written into the slice.
+        Map.get(meta, :respawn_template_data)
+      )
+    else
+      # Loser/short-circuit path: meta has no :config_dir_path → don't
+      # touch the slice (it was populated by the winner OR was already
+      # in the right state). No-op = safe.
+      :ok
+    end
+  end
+
+  defp do_record_sandbox_state(workers, config_dir, template_class, respawn_data) do
+    Enum.reduce_while(workers, :ok, fn worker_uri, :ok ->
+      target = Ezagent.URI.new!("#{URI.to_string(worker_uri)}?action=sandbox.write_path")
+
+      # codex E2E fix v2 Bug A (2026-05-29) — the Agent Kind was just
+      # spawned by `template_class.instantiate/3`. `Kind.Server.init/1`
+      # registers `:not_ready` synchronously and returns
+      # `{:continue, :announce_ready}`; the `:ready` flip happens
+      # asynchronously in `handle_continue` after the post-init Behavior
+      # chain runs. The orchestrator-spawn path
+      # (`Session.ensure_orchestrator` → `spawn_from_template_content` →
+      # `record_sandbox_state`) hits this dispatch microseconds after
+      # `start_link` returns — typically before the GenServer's
+      # `handle_continue(:announce_ready, ...)` message has been
+      # processed. A `:call` dispatch in that window fails fast with
+      # `{:error, :not_ready}` (hard invariant #3, so the synchronous
+      # caller doesn't block on `deadline_ms`), and the Sandbox slice's
+      # `respawn_template_data` never gets written — which means
+      # `Sandbox.post_init/2` cannot re-spawn the PTY subprocess on the
+      # next phx restart. Allen e2e symptom 2026-05-28 was
+      # `{:sandbox_write_path_failed, %URI{cc_orchestrator-main},
+      # :not_ready}`.
+      #
+      # `ReadyGate.await/2` is the structural fix — a bounded poll
+      # (5s test-tolerance bound; production typically resolves in
+      # 1-2ms once the post-init chain completes). The wait is only
+      # "best-effort accelerate the success path"; if the bound is
+      # exhausted (impossible in practice except under DBConnection
+      # contention) the dispatch is still attempted and the original
+      # `:not_ready` shape is preserved for callers' error handling.
+      _ = Ezagent.ReadyGate.await(worker_uri, 5_000)
+
+      case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+             target: target,
+             mode: :call,
+             args: %{
+               config_dir_path: config_dir,
+               template_class: template_class,
+               respawn_template_data: respawn_data
+             },
+             # SPEC caps-cleanup-v1 §4.4 — Agent sandbox-state record
+             # is an agent-internal action; runs under
+             # `system://agent-internal` (closed Catalog).
+             ctx: %{
+               caller: Ezagent.SystemPrincipal.uri("agent-internal"),
+               caps:
+                 "agent-internal"
+                 |> Ezagent.SystemPrincipal.uri()
+                 |> Ezagent.SystemPrincipal.caps(),
+               reply: {:caller_inbox, self()}
+             }
+           }) do
+        {:ok, _} -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {:sandbox_write_path_failed, worker_uri, reason}}}
+      end
+    end)
+  end
+
+  # PR3 2026-05-24 — additional rollback (beyond `undo_fresh_workers/1`)
+  # for the case where `record_sandbox_state/3` itself fails: the per-
+  # agent config_dir was created by the plugin's `instantiate/3` but
+  # the slice was never populated, so `Sandbox.invoke(:destroy, ...)`
+  # would never know to clean it up. Call the plugin's
+  # `destroy_config_dir/2` directly with the path we know
+  # PR-3 (domain.agent D2/DD-1) — the per-agent config_dir path authority is core
+  # (`Ezagent.Sandbox.ConfigDir`), NOT the plugin. The domain derives the dir from
+  # the agent URI + the class's namespace (no dependency on a plugin path builder)
+  # and asks the plugin only to MATERIALIZE-cleanup it via `destroy_config_dir/2`.
+  defp cleanup_partial_config_dirs(workers, template_class) do
+    cond do
+      not is_atom(template_class) ->
+        :ok
+
+      not function_exported?(template_class, :destroy_config_dir, 2) ->
+        :ok
+
+      true ->
+        namespace = Ezagent.Kind.Template.namespace_of(template_class)
+
+        Enum.each(workers, fn worker_uri ->
+          dir = Ezagent.Sandbox.ConfigDir.path(worker_uri, namespace)
+          _ = template_class.destroy_config_dir(worker_uri, dir)
+        end)
+    end
+  end
+
+  # codex round-10 HIGH-2 — establish lineage + workspace binding for
+  # each freshly-created worker as a CHECKED step. `record_lineage/2`
+  # always returns `:ok`; `bind_workspace/2` may not — a failure here is
+  # returned as `{:error, {:post_spawn_obligation_failed, _}}` (NOT
+  # raised) so the caller can self-clean. `Enum.reduce_while/3` stops at
+  # the first failure.
+  defp establish_post_spawn_obligations(workers, spawned_by_uri, workspace_uri) do
+    Enum.reduce_while(workers, :ok, fn worker_uri, :ok ->
+      with :ok <- record_lineage(worker_uri, spawned_by_uri),
+           :ok <- bind_workspace(worker_uri, workspace_uri) do
+        {:cont, :ok}
+      else
+        other ->
+          {:halt, {:error, {:post_spawn_obligation_failed, worker_uri, other}}}
+      end
+    end)
+  rescue
+    error ->
+      {:error, {:post_spawn_obligation_failed, :exception, error}}
+  end
+
+  # codex round-10 HIGH-2 — undo everything `spawn_from_template_content/4`
+  # established for the workers IT freshly created, when a post-spawn
+  # step fails: terminate the Kind process, forget the lineage row,
+  # unbind the workspace. Best-effort + idempotent — a worker for which
+  # the obligation never ran (binding/lineage absent) just no-ops.
+  # `Ezagent.Kind.terminate/1` is the tier-clean Kind-process teardown;
+  # `AgentLineage`/`WorkspaceRegistry` are ESR-domain registries this
+  # ESR-layer helper legitimately owns (it is the layer that recorded
+  # them — unlike the plugin Template Class, which must not touch them).
+  defp undo_fresh_workers(workers) do
+    Enum.each(workers, fn worker_uri ->
+      _ = Ezagent.Kind.terminate(worker_uri)
+      Ezagent.Entity.Agent.SpawnObligations.safe(fn ->
+        Ezagent.WorkspaceRegistry.unbind(worker_uri)
+      end)
+
+      if Code.ensure_loaded?(Ezagent.AgentLineage) and
+           function_exported?(Ezagent.AgentLineage, :forget, 1) do
+        Ezagent.Entity.Agent.SpawnObligations.safe(fn ->
+          Ezagent.AgentLineage.forget(worker_uri)
+        end)
+      end
+    end)
+
+    :ok
+  end
+
+  defp bind_workspace(worker_uri, workspace_uri),
+    do: Ezagent.Entity.Agent.SpawnObligations.bind_workspace(worker_uri, workspace_uri)
+
+  defp record_lineage(agent_uri, granted_by),
+    do: Ezagent.Entity.Agent.SpawnObligations.record_lineage(agent_uri, granted_by)
+end

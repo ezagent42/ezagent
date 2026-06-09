@@ -96,10 +96,6 @@ defmodule Ezagent.SystemPrincipal.Catalog do
 
   # The bootstrap structural sentinel — granted_by/granted_at on the
   # generated wildcard cap so `admin_invariant?/1` recognises it.
-  # SPEC 2026-05-27-uri-canonicalization §3.5: compile-time constant
-  # — ETS-backed SchemeRegistry not available at compile time, so
-  # `URI.new!/1` is the canonical form for hard-coded constants.
-  @bootstrap_granted_by URI.new!("system://bootstrap/default")
   @bootstrap_granted_at ~U[2026-01-01 00:00:00Z]
 
   defp bootstrap_wildcard do
@@ -112,14 +108,15 @@ defmodule Ezagent.SystemPrincipal.Catalog do
       action: :any,
       instance: :any,
       workspace_uri: :any,
-      granted_by: @bootstrap_granted_by,
+      granted_by: Ezagent.URI.system(:bootstrap, :default),
       granted_at: @bootstrap_granted_at
     }
   end
 
   @doc """
-  The 14-entry closed allowlist mapped from principal URI →
-  `[%Capability{}]` cap list.
+  The closed allowlist mapped from principal URI →
+  `[%Capability{}]` cap list. (#17 cascade PR-0 added
+  `system://credential-materializer` — an empty-cap audit identity.)
 
   Implemented as a function (not a module attribute) so the bootstrap
   wildcard's granted_by/granted_at can use `@bootstrap_granted_by` +
@@ -133,8 +130,8 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   @spec entries() :: [{String.t(), [%Ezagent.Capability{}]}]
   def entries do
     [
-      {"system://bootstrap", [bootstrap_wildcard()]},
-      {"system://boot-reconciler",
+      {principal(:bootstrap), [bootstrap_wildcard()]},
+      {principal("boot-reconciler"),
        [
          # boot reconciler dispatches against external_mirror Behavior
          # on Session Kind (bind/unbind/list_bindings) — matches the
@@ -142,13 +139,13 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # behavior-wildcard pattern.
          Capability.cap(:session, ExternalMirror, :any)
        ]},
-      {"system://adapter-install",
+      {principal("adapter-install"),
        [
          # adapter-install fires session.<flavor>.bind — the bind action
          # is the ExternalMirror Behavior's gate. Narrowed to bind.
          Capability.cap(:session, ExternalMirror, :bind)
        ]},
-      {"system://chat-router",
+      {principal("chat-router"),
        [
          # `cap(:any, Chat, :any)` covers Chat-registered receivers
          # (Session, User). But chat fan-out also dispatches
@@ -166,7 +163,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # cap set.
          bootstrap_wildcard()
        ]},
-      {"system://chat-reply",
+      {principal("chat-reply"),
        [
          # Same rationale as chat-router — Plugin CC's channel
          # dispatches `chat.send` AND `chat.receive` across plugin
@@ -174,7 +171,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # right shape for an open-plugin fan-out principal.
          bootstrap_wildcard()
        ]},
-      {"system://worker-publish",
+      {principal("worker-publish"),
        [
          Capability.cap(:external_mirror_worker, ExternalMirrorWorker, :publish),
          # 2026-05-26 (Allen e2e blocker): Worker.subscribe_to_session_publisher/2
@@ -189,7 +186,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # outbound external_mirror never delivers a single event.
          Capability.cap(:session, PublisherSI, :subscribe_from)
        ]},
-      {"system://template-materialize",
+      {principal("template-materialize"),
        [
          # Deviation: original `workspace.template.*` doesn't structurally
          # map (Template lives on AgentTemplate/SessionTemplate). Mapped
@@ -221,7 +218,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          Capability.cap(:user, IdentityAdmin, :revoke_cap),
          Capability.cap(:workspace, Workspace, :any)
        ]},
-      {"system://orchestrator-tools",
+      {principal("orchestrator-tools"),
        [
          # `session.*` → Chat behavior on Session (orchestrator tools
          # write into the session's chat slice).
@@ -236,7 +233,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # orchestrator tool runs cap-less → unauthorized.
          Capability.cap(:agent, Identity, :list_caps)
        ]},
-      {"system://session-internal",
+      {principal("session-internal"),
        [
          # Deviation: original `workspace.workspace.read` mapped to a
          # Workspace Behavior wildcard cap so session-internal can read
@@ -247,7 +244,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          Capability.cap(:any, Chat, :any),
          Capability.cap(:workspace, Workspace, :any)
        ]},
-      {"system://agent-internal",
+      {principal("agent-internal"),
        [
          # `user.identity.grant_cap` → IdentityAdmin Behavior on User Kind.
          Capability.cap(:user, IdentityAdmin, :grant_cap),
@@ -256,7 +253,18 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # bootstrap-wildcard bridge masked this dependency). The cap
          # is narrowed to the exact Behavior + action; the runtime
          # dispatch path substitutes the per-agent instance + workspace.
-         Capability.cap(:agent, Sandbox, :write_path)
+         Capability.cap(:agent, Sandbox, :write_path),
+         # #607 self-evolve (SW-UPD) — Socialware.CascadeRepoint repoints a
+         # target agent's user cascade layer at the new immutable config
+         # object by reading its sandbox (cascade_resolution) and writing it
+         # back. The user-facing `config_update.apply_delta`/`repoint` action
+         # is gated by the CALLER's caps; the downstream sandbox read/write is
+         # an agent-internal effect that runs under THIS principal (the
+         # caller's session-scoped grant is not Sandbox-on-the-target-agent).
+         # `:write_path` is shared with record_sandbox_state above; `:read`
+         # is added because CascadeRepoint must read-modify-write the
+         # cascade_resolution.
+         Capability.cap(:agent, Sandbox, :read)
          # Allen 2026-05-26 — `cap(:user, ApiKeys, :get_api_key)` was
          # part of `system://agent-internal` pre ApiKeys-to-Agent flip.
          # Post-flip, ApiKeys lives on the agent's own Kind and the
@@ -264,19 +272,19 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # IN-PROCESS (the deadlock-free path) — no dispatch, hence no
          # cap required. The entry is dropped from this principal.
        ]},
-      {"system://workspace-loader",
+      {principal("workspace-loader"),
        [
          # `workspace.workspace.*` → Workspace Behavior on Workspace Kind.
          Capability.cap(:workspace, Workspace, :any)
        ]},
-      {"system://mix-task",
+      {principal("mix-task"),
        [
          # Operator-driven; same authority as admin User by deployment
          # contract (in-VM trust model §10.5). Wildcard cap is
          # explicitly exempted from the no-wildcard invariant test.
          bootstrap_wildcard()
        ]},
-      {"system://feishu-binding-policy",
+      {principal("feishu-binding-policy"),
        [
          # `user.identity.grant_cap` → IdentityAdmin Behavior on User.
          Capability.cap(:user, IdentityAdmin, :grant_cap),
@@ -291,7 +299,15 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # explicit cap.
          Capability.cap(:workspace, Workspace, :any)
        ]},
-      {"system://lv-anon-mount", []}
+      {principal("lv-anon-mount"), []},
+      # #17 cascade PR-0 (spec §5.1, codex H1) — the credential-materializer
+      # IDENTITY. This is an AUDIT identity only: it holds NO standing caps. The
+      # least-privilege source-read authority is a NARROW `Capability.cap/5`
+      # derived per-grant at materialize time (see `Ezagent.Credential.GrantCap`)
+      # and passed as the dispatch caps for the single `sandbox.read` on the
+      # validated source. A broad standing cap here would defeat the per-source
+      # scoping — so the entry is deliberately empty (like `lv-anon-mount`).
+      {principal("credential-materializer"), []}
     ]
   end
 
@@ -329,6 +345,8 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   @doc "List every catalog URI (for invariant test §9.5)."
   @spec uris() :: [String.t()]
   def uris, do: Enum.map(entries(), fn {uri, _caps} -> uri end)
+
+  defp principal(name), do: name |> Ezagent.URI.system_principal() |> URI.to_string()
 
   defp normalize(%URI{} = u), do: URI.to_string(u)
   defp normalize(s) when is_binary(s), do: s

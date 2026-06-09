@@ -26,7 +26,7 @@ defmodule Mix.Tasks.Ezagent.Workspace.RemoveTemplate do
         case Ezagent.Workspace.remove_template(workspace_name, tmpl_name) do
           :ok ->
             Mix.shell().info(
-              "✓ removed template #{inspect(tmpl_name)} from workspace://#{workspace_name}"
+              "✓ removed template #{inspect(tmpl_name)} from workspace #{workspace_name}"
             )
 
           {:error, reason} ->

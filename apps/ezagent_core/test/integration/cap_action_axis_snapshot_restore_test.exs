@@ -31,7 +31,7 @@ defmodule Ezagent.Integration.CapActionAxisSnapshotRestoreTest do
         action: :any,
         instance: :any,
         workspace_uri: :any,
-        granted_by: URI.parse("entity://user/system/admin"),
+        granted_by: Ezagent.URI.new!("entity://system/user/admin"),
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
 
@@ -55,7 +55,7 @@ defmodule Ezagent.Integration.CapActionAxisSnapshotRestoreTest do
       kind: :chat,
       behavior: Ezagent.Behavior.Chat,
       action: :send,
-      instance: URI.new!("session://default/team-alpha/main"),
+      instance: URI.new!("session://team-alpha/default/main"),
       workspace_uri: URI.new!("workspace://team-alpha")
     }
 
@@ -87,7 +87,7 @@ defmodule Ezagent.Integration.CapActionAxisSnapshotRestoreTest do
         action: :any,
         instance: :any,
         workspace_uri: :any,
-        granted_by: URI.parse("entity://user/system/admin"),
+        granted_by: Ezagent.URI.new!("entity://system/user/admin"),
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
       |> Map.delete(:action)
@@ -110,7 +110,7 @@ defmodule Ezagent.Integration.CapActionAxisSnapshotRestoreTest do
         action: :any,
         instance: :any,
         workspace_uri: URI.new!("workspace://team-alpha"),
-        granted_by: URI.parse("entity://user/system/admin"),
+        granted_by: Ezagent.URI.new!("entity://system/user/admin"),
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
       |> Map.delete(:action)

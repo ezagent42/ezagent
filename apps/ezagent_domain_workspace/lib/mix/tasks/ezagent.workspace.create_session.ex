@@ -48,11 +48,11 @@ defmodule Mix.Tasks.Ezagent.Workspace.CreateSession do
   end
 
   defp create_session(workspace_name, short_name, template_name) do
-    workspace_uri = Ezagent.URI.new!("workspace://#{String.trim(workspace_name)}")
+    workspace_uri = workspace_name |> String.trim() |> Ezagent.URI.workspace()
 
     ctx = %{
       caller: Ezagent.Entity.User.admin_uri(),
-      caps: Ezagent.SystemPrincipal.caps("system://mix-task")
+      caps: "mix-task" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps()
     }
 
     case Ezagent.Workspace.create_session(

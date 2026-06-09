@@ -57,7 +57,7 @@ defmodule Ezagent.Behavior.SandboxTest do
     test "init_slice/1 defaults all state fields to nil for an unconfigured agent" do
       # Lifecycle two-container shape (SPEC §2.1): durable fields under
       # `:state`, `:transients` empty (activate/2 fills it).
-      assert Sandbox.init_slice(%{uri: URI.new!("entity://agent/team-alpha/x")}) ==
+      assert Sandbox.init_slice(%{uri: URI.new!("entity://team-alpha/agent/x")}) ==
                %{
                  state: %{
                    config_dir_path: nil,
@@ -418,8 +418,8 @@ defmodule Ezagent.Behavior.SandboxTest do
       # publisher or topic collision could deliver a `{:pty_phase, X, ...}`
       # to a Kind whose self_uri is Y. Verify identity BEFORE emitting an
       # effect.
-      self_uri = URI.new!("entity://agent/system/cc_self")
-      foreign_uri = URI.new!("entity://agent/system/cc_other")
+      self_uri = URI.new!("entity://system/agent/cc_self")
+      foreign_uri = URI.new!("entity://system/agent/cc_other")
       ctx = %{self_uri: self_uri}
 
       assert :ignore = Sandbox.handle_signal({:pty_phase, foreign_uri, :dead, %{}}, ctx)
@@ -430,5 +430,5 @@ defmodule Ezagent.Behavior.SandboxTest do
   # PubSub topic (the test process subscribes; distinct topics avoid
   # cross-test interference under async).
   defp uniq_uri,
-    do: URI.new!("entity://agent/system/cc_x-#{System.unique_integer([:positive])}")
+    do: URI.new!("entity://system/agent/cc_x-#{System.unique_integer([:positive])}")
 end

@@ -101,14 +101,14 @@ defmodule Ezagent.InvocationLazySpawnTest do
 
       # 3. Dispatch. Pre-fix this returned `{:error, :no_such_actor}`.
       #    Post-fix it triggers the lazy spawn + retry.
-      target = URI.parse("#{URI.to_string(uri)}?action=test.noop")
+      target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop")
 
       inv = %Invocation{
         target: target,
         mode: :call,
         args: %{msg: "lazy-spawn-test"},
         ctx: %{
-          caller: URI.parse("entity://user/system/admin"),
+          caller: Ezagent.URI.new!("entity://system/user/admin"),
           caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
           reply: {:caller_inbox, self()}
         }
@@ -144,10 +144,10 @@ defmodule Ezagent.InvocationLazySpawnTest do
           version: 0
         )
 
-      target = URI.parse("#{URI.to_string(uri)}?action=test.noop")
+      target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop")
 
       ctx = %{
-        caller: URI.parse("entity://user/system/admin"),
+        caller: Ezagent.URI.new!("entity://system/user/admin"),
         caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
         reply: {:caller_inbox, self()}
       }
@@ -185,14 +185,14 @@ defmodule Ezagent.InvocationLazySpawnTest do
           version: 0
         )
 
-      target = URI.parse("#{URI.to_string(uri)}?action=test.noop")
+      target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop")
 
       inv = %Invocation{
         target: target,
         mode: :cast,
         args: %{msg: "cast-lazy"},
         ctx: %{
-          caller: URI.parse("entity://user/system/admin"),
+          caller: Ezagent.URI.new!("entity://system/user/admin"),
           caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
           reply: {:caller_inbox, self()}
         }
@@ -214,14 +214,14 @@ defmodule Ezagent.InvocationLazySpawnTest do
       assert KindRegistry.lookup(uri) == :error
       assert ReadyGate.status(uri) == :unknown
 
-      target = URI.parse("#{URI.to_string(uri)}?action=test.noop")
+      target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop")
 
       inv = %Invocation{
         target: target,
         mode: :call,
         args: %{msg: "x"},
         ctx: %{
-          caller: URI.parse("entity://user/system/admin"),
+          caller: Ezagent.URI.new!("entity://system/user/admin"),
           caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
           reply: {:caller_inbox, self()}
         }

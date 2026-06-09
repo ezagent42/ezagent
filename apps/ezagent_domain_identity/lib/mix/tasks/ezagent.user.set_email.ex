@@ -82,7 +82,7 @@ defmodule Mix.Tasks.Ezagent.User.SetEmail do
         usage: mix ezagent.user.set_email <user_uri> --email <addr> [--display-name <name>]
 
         Example:
-          mix ezagent.user.set_email entity://user/system/linyilun \\
+          mix ezagent.user.set_email <user-uri> \\
               --email allen@example.com
         """)
     end
@@ -103,7 +103,11 @@ defmodule Mix.Tasks.Ezagent.User.SetEmail do
       Mix.shell().info("  display_name: #{profile.display_name}")
       Mix.shell().info("  workspace_uri: #{profile.workspace_uri}")
       Mix.shell().info("")
-      Mix.shell().info("Magic-link login should now resolve this email to the existing principal.")
+
+      Mix.shell().info(
+        "Magic-link login should now resolve this email to the existing principal."
+      )
+
       Mix.shell().info("Verify with: mix ezagent.auth.magic_link #{profile.email}")
     else
       {:error, %Ecto.Changeset{} = cs} ->
@@ -120,18 +124,20 @@ defmodule Mix.Tasks.Ezagent.User.SetEmail do
     try do
       uri = Ezagent.URI.new!(s)
 
-      case uri do
-        %URI{scheme: "entity", host: "user", path: "/" <> _rest} ->
-          {:ok, uri}
-
-        _ ->
-          {:error, {:bad_uri, s, "expected entity://user/<workspace>/<name>"}}
-      end
+      if user_entity_uri?(uri),
+        do: {:ok, uri},
+        else: {:error, {:bad_uri, s, "expected entity user URI"}}
     rescue
       e in ArgumentError ->
         {:error, {:bad_uri, s, Exception.message(e)}}
     end
   end
+
+  defp user_entity_uri?(%URI{scheme: "entity"} = uri) do
+    Ezagent.URI.type?(uri, :user) and match?({:ok, _name}, Ezagent.URI.name(uri))
+  end
+
+  defp user_entity_uri?(_), do: false
 
   defp check_user_exists(%URI{} = uri) do
     case Users.get_by_uri(URI.to_string(uri)) do

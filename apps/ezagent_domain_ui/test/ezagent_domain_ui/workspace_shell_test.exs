@@ -17,7 +17,7 @@ defmodule EzagentDomainUi.WorkspaceShellTest do
   describe "workspace_shell/1" do
     test "renders Activity Bar + Main Window + Status Bar, no universal header" do
       assigns = %{
-        current_entity_uri: "entity://user/system/admin",
+        current_entity_uri: "entity://system/user/admin",
         current_path: "/sessions",
         status: %{agents_alive: 0, bridges: 0, debug_events: 0, version: "test"}
       }
@@ -55,7 +55,7 @@ defmodule EzagentDomainUi.WorkspaceShellTest do
 
     test "renders the resource_panel slot when given" do
       assigns = %{
-        current_entity_uri: "entity://user/system/admin",
+        current_entity_uri: "entity://system/user/admin",
         current_path: "/sessions",
         status: %{}
       }
@@ -78,7 +78,7 @@ defmodule EzagentDomainUi.WorkspaceShellTest do
 
     test "renders the right_sidebar slot + Members toggle when given" do
       assigns = %{
-        current_entity_uri: "entity://user/system/admin",
+        current_entity_uri: "entity://system/user/admin",
         current_path: "/sessions",
         status: %{}
       }
@@ -104,7 +104,7 @@ defmodule EzagentDomainUi.WorkspaceShellTest do
 
     test "no resource panel / right sidebar → no orphan toggles" do
       assigns = %{
-        current_entity_uri: "entity://user/system/admin",
+        current_entity_uri: "entity://system/user/admin",
         current_path: "/sessions",
         status: %{}
       }

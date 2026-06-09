@@ -59,11 +59,11 @@ defmodule EzagentWeb.LoginEmailTest do
     # workspace's domain rule. If the registration `email_allowed?/1`
     # gate were the only path, this would silently drop. The existing-
     # principal short-circuit in `send_allowed?/1` is what saves it.
-    {:ok, _} = Ezagent.Users.create("entity://user/system/bound-user", nil, [])
+    {:ok, _} = Ezagent.Users.create("entity://system/user/bound-user", nil, [])
 
     {:ok, _} =
       Ezagent.Entity.Profile.upsert(%{
-        entity_uri: "entity://user/system/bound-user",
+        entity_uri: "entity://system/user/bound-user",
         display_name: "Bound User",
         email: "bound@bad.com"
       })

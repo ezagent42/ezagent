@@ -1,6 +1,6 @@
-# ESR dev/test docker environment (#21)
+# ezagent dev/test docker environment (#21)
 
-A blank, isolated ESR for deterministic E2E (see
+A blank, isolated ezagent for deterministic E2E (see
 `docs/superpowers/specs/2026-06-04-dockerized-e2e-harness-design.md`). Dev only
 (`mix phx.server`); the prod `mix release` image is a later phase.
 
@@ -26,7 +26,7 @@ export ESR_PROXY=http://host.docker.internal:7897
 
 docker compose -f docker/docker-compose.dev.yml build
 docker compose -f docker/docker-compose.dev.yml up -d
-docker compose -f docker/docker-compose.dev.yml logs -f esr   # watch WSS connect
+docker compose -f docker/docker-compose.dev.yml logs -f ezagent   # watch WSS connect
 ```
 
 Reachable at `http://100.64.0.27:10042` (Tailscale — `feedback_remote_browser_ip`).

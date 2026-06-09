@@ -87,7 +87,11 @@ defmodule EzagentPluginLiveview.WorkspacesLive do
 
       {:error, reason} ->
         {:noreply,
-         assign(socket, :flash_error, gettext("create failed: %{reason}", reason: inspect(reason)))}
+         assign(
+           socket,
+           :flash_error,
+           gettext("create failed: %{reason}", reason: inspect(reason))
+         )}
     end
   end
 
@@ -103,7 +107,7 @@ defmodule EzagentPluginLiveview.WorkspacesLive do
     # universal chrome (avatar / notifications / search / ⌘K).
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(assigns.current_entity_uri || Ezagent.URI.new!("entity://user/system/admin"))
+        Ezagent.URI.stable_key(assigns.current_entity_uri || Ezagent.Entity.User.admin_uri())
       end)
 
     ~H"""
@@ -121,67 +125,76 @@ defmodule EzagentPluginLiveview.WorkspacesLive do
         <AdminShell.admin_shell current_path="/workspaces" active_section={:workspaces}>
           <:main>
             <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-          <.page_header title={gettext("Workspaces")}>
-            <:subtitle>
-              {gettext("Persisted cluster configurations — members + session templates + routing rules.")}
-            </:subtitle>
-          </.page_header>
+              <.page_header title={gettext("Workspaces")}>
+                <:subtitle>
+                  {gettext(
+                    "Persisted cluster configurations — members + session templates + routing rules."
+                  )}
+                </:subtitle>
+              </.page_header>
 
-          <.card id="create-workspace" class="mb-6">
-            <:header>{gettext("+ New Workspace")}</:header>
-            <.form for={@new_form} phx-submit="create_workspace" class="flex gap-2 items-center">
-              <input
-                type="text"
-                name="new_workspace[name]"
-                id="new_workspace_name"
-                placeholder="architect-review"
-                class="flex-1 px-3 py-1.5 text-sm border border-zinc-300 dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-zinc-500"
-              />
-              <.button type="submit" variant="primary" size="sm">{gettext("Create")}</.button>
-            </.form>
-            <p :if={@flash_error} class="text-rose-600 dark:text-rose-400 text-xs mt-2">{@flash_error}</p>
-          </.card>
+              <.card id="create-workspace" class="mb-6">
+                <:header>{gettext("+ New Workspace")}</:header>
+                <.form for={@new_form} phx-submit="create_workspace" class="flex gap-2 items-center">
+                  <input
+                    type="text"
+                    name="new_workspace[name]"
+                    id="new_workspace_name"
+                    placeholder="architect-review"
+                    class="flex-1 px-3 py-1.5 text-sm border border-zinc-300 dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-zinc-500"
+                  />
+                  <.button type="submit" variant="primary" size="sm">{gettext("Create")}</.button>
+                </.form>
+                <p :if={@flash_error} class="text-rose-600 dark:text-rose-400 text-xs mt-2">
+                  {@flash_error}
+                </p>
+              </.card>
 
-          <section id="workspaces-list">
-            <p :if={@workspaces == []} id="empty" class="text-zinc-500 italic text-sm">
-              {gettext("No workspaces yet. Use the form above to create the first one.")}
-            </p>
+              <section id="workspaces-list">
+                <p :if={@workspaces == []} id="empty" class="text-zinc-500 italic text-sm">
+                  {gettext("No workspaces yet. Use the form above to create the first one.")}
+                </p>
 
-            <.card :if={@workspaces != []} class="p-0">
-              <table id="workspaces-table" class="w-full text-sm">
-                <thead class="bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800">
-                  <tr class="text-left text-xs uppercase tracking-wide text-zinc-500">
-                    <th class="px-4 py-2">{gettext("Name")}</th>
-                    <th class="py-2">{gettext("URI")}</th>
-                    <th class="py-2">{gettext("Members")}</th>
-                    <th class="py-2">{gettext("Templates")}</th>
-                    <th class="py-2">{gettext("Rules")}</th>
-                    <th class="py-2">{gettext("Live")}</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr :for={ws <- @workspaces} class="border-b border-zinc-100 dark:border-zinc-900 last:border-0">
-                    <td class="px-4 py-2 font-medium">{ws.name}</td>
-                    <td class="py-2 font-mono text-xs text-zinc-500">{URI.to_string(ws.uri)}</td>
-                    <td class="py-2 tabular-nums">{length(ws.members)}</td>
-                    <td class="py-2 tabular-nums">{map_size(ws.session_templates)}</td>
-                    <td class="py-2 tabular-nums">{length(ws.routing_rules)}</td>
-                    <td class="py-2">
-                      <.badge :if={ws.live_pid} variant="success">{gettext("live")}</.badge>
-                      <.badge :if={!ws.live_pid} variant="danger">{gettext("down")}</.badge>
-                    </td>
-                    <td class="py-2 pr-4 text-right">
-                      <a
-                        href={"/workspaces/#{ws.name}"}
-                        class="text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 text-xs"
-                      >{gettext("detail")} →</a>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </.card>
-          </section>
+                <.card :if={@workspaces != []} class="p-0">
+                  <table id="workspaces-table" class="w-full text-sm">
+                    <thead class="bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800">
+                      <tr class="text-left text-xs uppercase tracking-wide text-zinc-500">
+                        <th class="px-4 py-2">{gettext("Name")}</th>
+                        <th class="py-2">{gettext("URI")}</th>
+                        <th class="py-2">{gettext("Members")}</th>
+                        <th class="py-2">{gettext("Templates")}</th>
+                        <th class="py-2">{gettext("Rules")}</th>
+                        <th class="py-2">{gettext("Live")}</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        :for={ws <- @workspaces}
+                        class="border-b border-zinc-100 dark:border-zinc-900 last:border-0"
+                      >
+                        <td class="px-4 py-2 font-medium">{ws.name}</td>
+                        <td class="py-2 font-mono text-xs text-zinc-500">{URI.to_string(ws.uri)}</td>
+                        <td class="py-2 tabular-nums">{length(ws.members)}</td>
+                        <td class="py-2 tabular-nums">{map_size(ws.session_templates)}</td>
+                        <td class="py-2 tabular-nums">{length(ws.routing_rules)}</td>
+                        <td class="py-2">
+                          <.badge :if={ws.live_pid} variant="success">{gettext("live")}</.badge>
+                          <.badge :if={!ws.live_pid} variant="danger">{gettext("down")}</.badge>
+                        </td>
+                        <td class="py-2 pr-4 text-right">
+                          <a
+                            href={"/workspaces/#{ws.name}"}
+                            class="text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 text-xs"
+                          >
+                            {gettext("detail")} →
+                          </a>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </.card>
+              </section>
             </div>
           </:main>
         </AdminShell.admin_shell>

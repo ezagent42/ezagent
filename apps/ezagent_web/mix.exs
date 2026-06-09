@@ -100,6 +100,9 @@ defmodule EzagentWeb.MixProject do
       # `all_plugin_apps_wired_to_web_test` invariant in
       # ezagent_core/test/invariants/ locks this in.
       {:ezagent_plugin_np, in_umbrella: true},
+      # SW5: advisor socialware vertical. Web boot must start the plugin
+      # so `session.advisor` is registered in TemplateRegistry.
+      {:ezagent_plugin_advisor, in_umbrella: true},
       {:jason, "~> 1.2"},
       {:bandit, "~> 1.5"}
     ]
@@ -112,7 +115,11 @@ defmodule EzagentWeb.MixProject do
     [
       setup: ["deps.get", "assets.setup", "assets.build"],
       test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"],
-      "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
+      "assets.setup": [
+        "cmd --cd assets npm install",
+        "tailwind.install --if-missing",
+        "esbuild.install --if-missing"
+      ],
       "assets.build": ["tailwind ezagent_web", "esbuild ezagent_web"],
       "assets.deploy": [
         "tailwind ezagent_web --minify",

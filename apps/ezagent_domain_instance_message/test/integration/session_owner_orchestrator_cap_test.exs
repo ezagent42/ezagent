@@ -42,7 +42,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
       creator = User.admin_uri()
 
       {:ok, session_uri, _meta} =
-        EzagentDomainInstanceMessage.SessionCreator.create_session(short_name, creator, template_name: "default")
+        EzagentDomainInstanceMessage.SessionCreator.create_session(short_name, creator,
+          template_name: "default"
+        )
 
       assert {:ok, ^creator} = Session.owner(session_uri)
     end
@@ -53,7 +55,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
       workspace_uri = Ezagent.URI.entity_workspace_uri(creator)
 
       {:ok, session_uri, _meta} =
-        EzagentDomainInstanceMessage.SessionCreator.create_session(short_name, creator, template_name: "default")
+        EzagentDomainInstanceMessage.SessionCreator.create_session(short_name, creator,
+          template_name: "default"
+        )
 
       caps = Ezagent.Identity.list_caps_for(creator)
 
@@ -77,10 +81,14 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
       creator = User.admin_uri()
 
       {:ok, session_uri_1, _meta_1} =
-        EzagentDomainInstanceMessage.SessionCreator.create_session(short_name, creator, template_name: "default")
+        EzagentDomainInstanceMessage.SessionCreator.create_session(short_name, creator,
+          template_name: "default"
+        )
 
       {:ok, session_uri_2, _meta_2} =
-        EzagentDomainInstanceMessage.SessionCreator.create_session(short_name, creator, template_name: "default")
+        EzagentDomainInstanceMessage.SessionCreator.create_session(short_name, creator,
+          template_name: "default"
+        )
 
       assert session_uri_1 == session_uri_2
 
@@ -116,7 +124,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
       workspace_uri = Ezagent.URI.new!("workspace://system")
 
       session_uri =
-        URI.new!("session://default/system/#{short_name}")
+        URI.new!("session://system/default/#{short_name}")
 
       # Spawn the Session Kind directly with NO owner_uri — emulates
       # a legacy snapshot rehydration / system-internal spawn.
@@ -172,8 +180,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
       # OrchestratorAdmin grants to every joiner. The cap is
       # SINGLY-bound to the session owner.
       short_name = "rfc402-second-join-#{System.unique_integer([:positive])}"
-      workspace_uri = URI.parse("workspace://system")
-      session_uri = URI.new!("session://default/system/#{short_name}")
+      workspace_uri = Ezagent.URI.new!("workspace://system")
+      session_uri = URI.new!("session://system/default/#{short_name}")
 
       # Spawn legacy session.
       {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
@@ -200,7 +208,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
 
       # Now a SECOND user joins (synthetic non-admin URI).
       second_user =
-        URI.new!("entity://user/system/second-#{System.unique_integer([:positive])}")
+        URI.new!("entity://system/user/second-#{System.unique_integer([:positive])}")
 
       _ = Ezagent.SpawnRegistry.spawn(second_user)
 
@@ -239,15 +247,15 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
       # the agent URI MUST NOT become owner — only entity://user URIs
       # qualify.
       short_name = "rfc402-agent-no-claim-#{System.unique_integer([:positive])}"
-      workspace_uri = URI.parse("workspace://system")
-      session_uri = URI.new!("session://default/system/#{short_name}")
+      workspace_uri = Ezagent.URI.new!("workspace://system")
+      session_uri = URI.new!("session://system/default/#{short_name}")
 
       {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
       :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
 
       # An agent URI (cc-orchestrator naming convention).
       agent_uri =
-        URI.new!("entity://agent/system/cc_orchestrator-#{short_name}")
+        URI.new!("entity://system/agent/cc_orchestrator-#{short_name}")
 
       _ = Ezagent.SpawnRegistry.spawn(agent_uri)
 
@@ -270,21 +278,18 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
     end
   end
 
-  describe "Session.derive_orchestrator_uri/2 — URI workspace segment" do
+  describe "Session.planned_orchestrator_uri/2 — URI workspace segment" do
     test "orchestrator URI's workspace segment matches the session's workspace segment" do
-      # RFC #402 (Allen-confirmed): the orchestrator agent URI is
-      # `entity://agent/<workspace>/cc_orchestrator-<disc>` — the
-      # workspace segment matches the session's workspace per SPEC v3
-      # 3-segment authority.
-      session_uri = URI.parse("session://default/team-alpha/some-session")
-      workspace_uri = URI.parse("workspace://team-alpha")
+      # The orchestrator agent URI is workspace-first:
+      # `entity://<workspace>/agent/cc_orchestrator-<disc>`.
+      session_uri = Ezagent.URI.new!("session://team-alpha/default/some-session")
+      workspace_uri = Ezagent.URI.new!("workspace://team-alpha")
 
-      orch_uri = Session.derive_orchestrator_uri(session_uri, workspace_uri)
+      orch_uri = Session.planned_orchestrator_uri(session_uri, workspace_uri)
 
       assert orch_uri.scheme == "entity"
-      assert orch_uri.host == "agent"
-      # The path segment after host is /<workspace>/<name>
-      assert orch_uri.path =~ ~r{^/team-alpha/}
+      assert orch_uri.host == "team-alpha"
+      assert orch_uri.path =~ ~r{^/agent/}
       assert orch_uri.path =~ ~r{cc_orchestrator-}
     end
   end

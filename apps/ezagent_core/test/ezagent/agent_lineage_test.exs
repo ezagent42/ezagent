@@ -14,10 +14,11 @@ defmodule Ezagent.AgentLineageTest do
   alias Ezagent.AgentLineage
 
   defp agent_uri(name),
-    do: URI.parse("entity://agent/team-alpha/#{name}-#{System.unique_integer([:positive])}")
+    do:
+      Ezagent.URI.new!("entity://team-alpha/agent/#{name}-#{System.unique_integer([:positive])}")
 
   defp principal_uri(name),
-    do: URI.parse("entity://user/team-alpha/#{name}-#{System.unique_integer([:positive])}")
+    do: Ezagent.URI.new!("entity://team-alpha/user/#{name}-#{System.unique_integer([:positive])}")
 
   describe "record/2 + lookup/1 (fast ETS read path)" do
     test "record then lookup round-trips" do

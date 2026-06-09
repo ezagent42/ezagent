@@ -40,7 +40,7 @@ defmodule EzagentWeb.SessionControllerTest do
 
   describe "POST /login/credentials" do
     test "happy path: valid creds → session set + redirect to /sessions" do
-      uri = "entity://user/team-alpha/login-happy-#{System.unique_integer([:positive])}"
+      uri = "entity://team-alpha/user/login-happy-#{System.unique_integer([:positive])}"
       {:ok, _} = Ezagent.Users.create(uri, "right-pw", [])
 
       conn =
@@ -53,7 +53,7 @@ defmodule EzagentWeb.SessionControllerTest do
     end
 
     test "bad password: renders unified page with inline cred error (no redirect)" do
-      uri = "entity://user/team-alpha/login-bad-#{System.unique_integer([:positive])}"
+      uri = "entity://team-alpha/user/login-bad-#{System.unique_integer([:positive])}"
       {:ok, _} = Ezagent.Users.create(uri, "right-pw", [])
 
       conn =
@@ -74,7 +74,7 @@ defmodule EzagentWeb.SessionControllerTest do
         build_conn()
         |> Plug.Test.init_test_session(%{})
         |> post("/login/credentials", %{
-          "entity_uri" => "entity://user/team-alpha/never-existed",
+          "entity_uri" => "entity://team-alpha/user/never-existed",
           "secret" => "x"
         })
 
@@ -86,12 +86,12 @@ defmodule EzagentWeb.SessionControllerTest do
     # auth but the RAW input was put into the session as :current_entity_uri.
     # On the next request RequireEntity called URI.parse("admin") → no
     # scheme → bounced to /login. Login appeared to fail to the user.
-    # Fix: store canonical "entity://user/system/admin", not raw "admin".
+    # Fix: store canonical "entity://system/user/admin", not raw "admin".
     test "bare handle stores CANONICAL entity:// URI in session (regression)" do
       handle = "barehandle#{System.unique_integer([:positive])}"
       # Phase 9 PR-2 (SPEC v3 §3): entity URIs carry workspace segment.
       # SPEC #324: tenant login passes explicit workspace param.
-      uri = "entity://user/team-alpha/" <> handle
+      uri = "entity://team-alpha/user/" <> handle
       {:ok, _} = Ezagent.Users.create(uri, "pw", [])
 
       conn =
@@ -113,10 +113,10 @@ defmodule EzagentWeb.SessionControllerTest do
       # SPEC #324: workspace must be passed explicitly for bare-handle
       # tenant logins (admin login fills it with "system" via the form
       # default).
-      uri = "entity://user/team-alpha/admincase#{System.unique_integer([:positive])}"
+      uri = "entity://team-alpha/user/admincase#{System.unique_integer([:positive])}"
       {:ok, _} = Ezagent.Users.create(uri, "pw", [])
 
-      handle = uri |> String.replace_prefix("entity://user/team-alpha/", "") |> String.upcase()
+      handle = uri |> String.replace_prefix("entity://team-alpha/user/", "") |> String.upcase()
 
       conn =
         build_conn()
@@ -143,7 +143,7 @@ defmodule EzagentWeb.SessionControllerTest do
       # Phase 9 PR-2 (SPEC v3 §3): entity URIs carry workspace segment.
       # SPEC #324 rev 3: bare handles REQUIRE explicit workspace param —
       # no silent default. Test passes it via the form.
-      uri = "entity://user/team-alpha/" <> handle
+      uri = "entity://team-alpha/user/" <> handle
       {:ok, _} = Ezagent.Users.create(uri, "pw", [])
 
       login_conn =
@@ -168,7 +168,8 @@ defmodule EzagentWeb.SessionControllerTest do
 
       refute next_conn.halted, "RequireEntity should pass through; saw bounce — login is broken"
       assert next_conn.assigns.current_entity_uri.scheme == "entity"
-      assert next_conn.assigns.current_entity_uri.host == "user"
+      assert next_conn.assigns.current_entity_uri.host == "team-alpha"
+      assert next_conn.assigns.current_entity_uri.path =~ "/user/"
     end
   end
 
@@ -186,12 +187,12 @@ defmodule EzagentWeb.SessionControllerTest do
     end
 
     # Regression: Allen 2026-05-20 — bare handle "admin" must be accepted as
-    # shortcut for "entity://user/system/admin"; session stores canonical URI.
-    test "bare handle: 'foo' → authenticates as entity://user/team-alpha/foo, session stores canonical URI" do
+    # shortcut for "entity://system/user/admin"; session stores canonical URI.
+    test "bare handle: 'foo' → authenticates as entity://team-alpha/user/foo, session stores canonical URI" do
       handle = "barehandle#{System.unique_integer([:positive])}"
       # Phase 9 PR-2 (SPEC v3 §3): entity URIs carry workspace segment.
       # SPEC #324 rev 3: workspace param REQUIRED for bare handles.
-      uri = "entity://user/team-alpha/" <> handle
+      uri = "entity://team-alpha/user/" <> handle
       {:ok, _} = Ezagent.Users.create(uri, "pw", [])
 
       conn =
@@ -212,12 +213,12 @@ defmodule EzagentWeb.SessionControllerTest do
       # SPEC #324 rev 3: workspace REQUIRED for bare handles (no
       # silent default). Test creates a user in team-alpha and passes
       # workspace via form param.
-      uri = "entity://user/team-alpha/admincase#{System.unique_integer([:positive])}"
+      uri = "entity://team-alpha/user/admincase#{System.unique_integer([:positive])}"
       {:ok, _} = Ezagent.Users.create(uri, "pw", [])
 
       # Compose the mixed-case handle the user might type. Phase 9 PR-2
       # (SPEC v3 §3): canonical URI carries workspace segment.
-      handle = uri |> String.replace_prefix("entity://user/team-alpha/", "") |> String.upcase()
+      handle = uri |> String.replace_prefix("entity://team-alpha/user/", "") |> String.upcase()
 
       conn =
         build_conn()
@@ -252,7 +253,7 @@ defmodule EzagentWeb.SessionControllerTest do
       conn =
         build_conn()
         |> Plug.Test.init_test_session(%{
-          "current_entity_uri" => "entity://user/team-alpha/allen"
+          "current_entity_uri" => "entity://team-alpha/user/allen"
         })
         |> delete("/logout")
 

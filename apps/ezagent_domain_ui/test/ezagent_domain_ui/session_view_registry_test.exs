@@ -108,7 +108,7 @@ defmodule Ezagent.UI.SessionViewRegistryTest do
       :ok = SessionViewRegistry.register(StubChatView)
       :ok = SessionViewRegistry.register(StubPtyView)
 
-      uri = URI.new!("session://default/system/main")
+      uri = URI.new!("session://system/default/main")
       views = SessionViewRegistry.applicable_views(uri)
 
       ids = Enum.map(views, & &1.id)
@@ -120,7 +120,7 @@ defmodule Ezagent.UI.SessionViewRegistryTest do
       :ok = SessionViewRegistry.register(StubChatView)
       :ok = SessionViewRegistry.register(StubPtyView)
 
-      uri = URI.new!("session://default/team-alpha/pty-friendly")
+      uri = URI.new!("session://team-alpha/default/pty-friendly")
       views = SessionViewRegistry.applicable_views(uri)
 
       ids = Enum.map(views, & &1.id)
@@ -132,7 +132,7 @@ defmodule Ezagent.UI.SessionViewRegistryTest do
       :ok = SessionViewRegistry.register(StubPtyView)
       :ok = SessionViewRegistry.register(StubChatView)
 
-      uri = URI.new!("session://default/team-alpha/pty-friendly")
+      uri = URI.new!("session://team-alpha/default/pty-friendly")
       views = SessionViewRegistry.applicable_views(uri)
       ids = Enum.map(views, & &1.id)
 
@@ -143,7 +143,7 @@ defmodule Ezagent.UI.SessionViewRegistryTest do
       :ok = SessionViewRegistry.register(StubChatView)
       :ok = SessionViewRegistry.register(CrashyView)
 
-      uri = URI.new!("session://default/system/main")
+      uri = URI.new!("session://system/default/main")
       views = SessionViewRegistry.applicable_views(uri)
       ids = Enum.map(views, & &1.id)
 
@@ -153,7 +153,7 @@ defmodule Ezagent.UI.SessionViewRegistryTest do
 
     test "each returned view has id, label, icon, module keys" do
       :ok = SessionViewRegistry.register(StubChatView)
-      uri = URI.new!("session://default/system/main")
+      uri = URI.new!("session://system/default/main")
       [view] = SessionViewRegistry.applicable_views(uri)
 
       assert %{id: :stub_chat, label: "Chat", icon: "message-square", module: StubChatView} = view

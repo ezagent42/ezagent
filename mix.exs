@@ -10,7 +10,43 @@ defmodule EzagentCore.Umbrella.MixProject do
       deps: deps(),
       aliases: aliases(),
       docs: docs(),
+      releases: releases(),
       listeners: [Phoenix.CodeReloader]
+    ]
+  end
+
+  # OTP release for prod docker (mix release). An umbrella release only starts
+  # the apps listed here (plus their deps) — the plugins are NOT in ezagent_web's
+  # dep tree (they're started as sibling apps), so EVERY runnable app must be
+  # listed explicitly or it silently won't boot in the release.
+  # `ezagent_cli` is task-only → :load (available, not started).
+  defp releases do
+    [
+      ezagent: [
+        applications: [
+          ezagent_core: :permanent,
+          ezagent_domain_identity: :permanent,
+          ezagent_domain_workspace: :permanent,
+          ezagent_domain_instance_message: :permanent,
+          ezagent_domain_socialware: :permanent,
+          ezagent_domain_agent_bridge: :permanent,
+          ezagent_domain_external_mirror: :permanent,
+          ezagent_domain_pty: :permanent,
+          ezagent_domain_python: :permanent,
+          ezagent_domain_ui: :permanent,
+          ezagent_plugin_cc: :permanent,
+          ezagent_plugin_codex: :permanent,
+          ezagent_plugin_curl_agent: :permanent,
+          ezagent_plugin_advisor: :permanent,
+          ezagent_plugin_echo: :permanent,
+          ezagent_plugin_np: :permanent,
+          ezagent_plugin_feishu: :permanent,
+          ezagent_plugin_liveview: :permanent,
+          ezagent_web: :permanent,
+          ezagent_cli: :load
+        ],
+        include_executables_for: [:unix]
+      ]
     ]
   end
 
@@ -74,7 +110,20 @@ defmodule EzagentCore.Umbrella.MixProject do
     [
       # run `mix setup` in all child apps
       setup: ["cmd mix setup"],
-      precommit: ["compile --warning-as-errors", "deps.unlock --unused", "format", "test"]
+      # FF-3 (cleanup-4) — the compiler dead-code gate. `--warnings-as-errors`
+      # is the ONLY reliable detector of unused private functions + unreachable
+      # / mis-grouped clauses (the cleanup audit proved grep-based dead-code
+      # detection is ~100% false-positive for this class). `--force` makes the
+      # gate sound: an incremental compile silently skips unchanged modules, so
+      # a warning re-introduced in an otherwise-untouched file would slip past.
+      # Mirrored by the architecture test
+      # `compiler_dead_code_gate_test.exs`. Keep these flags in sync.
+      precommit: [
+        "compile --warnings-as-errors --force",
+        "deps.unlock --unused",
+        "format",
+        "test"
+      ]
     ]
   end
 end

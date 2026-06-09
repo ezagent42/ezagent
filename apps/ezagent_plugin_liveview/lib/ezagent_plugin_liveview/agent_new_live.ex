@@ -9,9 +9,9 @@ defmodule EzagentPluginLiveview.AgentNewLive do
     `Ezagent.AgentFlavorRegistry.list_all/0` at mount, so a new
     flavor plugin (e.g. `np` from #258) auto-appears without editing
     this LV. Plugin isolation (P11) restored.
-  - **name** — short identifier; UI composes the full URI
-    `entity://agent/<flavor>_<name>`. A live preview line shows the
-    composed URI as the user types (phx-change "preview").
+  - **name** — short identifier; UI composes the full stable agent URI.
+    Flavor is stored template metadata, not part of the URI. A live preview
+    line shows the composed URI as the user types (phx-change "preview").
   - **caps** — comma-separated cap specs in the
     `Ezagent.Capability.Parser` grammar (e.g. `chat.send, workspace.read`).
     Empty is fine — agents can be created with no caps and have caps
@@ -125,7 +125,7 @@ defmodule EzagentPluginLiveview.AgentNewLive do
     with_pty? = parse_checkbox(Map.get(params, "with_pty"))
 
     workspace_name = workspace_name(socket)
-    workspace_uri = Ezagent.URI.new!("workspace://#{workspace_name}")
+    workspace_uri = Ezagent.URI.workspace(workspace_name)
     caller_ctx = %{caller: caller_uri(socket), caps: caller_caps(socket)}
 
     # SPEC 2026-05-25-agent-create-cli-gui-parity — the LV keeps its
@@ -202,6 +202,14 @@ defmodule EzagentPluginLiveview.AgentNewLive do
   defp validate_cwd_for_flavor("cc", _with_pty?, ""), do: {:error, :cwd_required_for_cc}
   defp validate_cwd_for_flavor("cc", _with_pty?, cwd), do: validate_cwd_dir(cwd)
 
+  # codex always needs a cwd (the codex PtyServer runs there), same as cc. The
+  # backend (Ezagent.Behavior.Workspace.validate_cwd_for_flavor/3) already
+  # rejects an empty cwd for codex with :cwd_required_for_codex; without this
+  # clause + the form field rendering for codex, the operator had no way to
+  # supply it and create always failed (#598).
+  defp validate_cwd_for_flavor("codex", _with_pty?, ""), do: {:error, :cwd_required_for_codex}
+  defp validate_cwd_for_flavor("codex", _with_pty?, cwd), do: validate_cwd_dir(cwd)
+
   defp validate_cwd_for_flavor("echo", true, ""), do: {:error, :cwd_required_for_echo_with_pty}
   defp validate_cwd_for_flavor("echo", true, cwd), do: validate_cwd_dir(cwd)
   defp validate_cwd_for_flavor("echo", false, _cwd), do: :ok
@@ -231,12 +239,14 @@ defmodule EzagentPluginLiveview.AgentNewLive do
   # `validate_cwd_for_flavor/3`) for early UX feedback; the action
   # body re-runs them as a safety net.
 
-  defp preview_uri(flavor, name, workspace_name)
-       when is_binary(flavor) and is_binary(name) and is_binary(workspace_name) do
+  defp preview_uri(_flavor, name, workspace_name)
+       when is_binary(name) and is_binary(workspace_name) do
     cond do
-      flavor == "" or name == "" -> "entity://agent/#{workspace_name}/<flavor>_<name>"
-      true -> "entity://agent/#{workspace_name}/#{flavor}_#{name}"
+      name == "" -> "<agent-uri>"
+      true -> workspace_name |> Ezagent.URI.agent(name) |> URI.to_string()
     end
+  rescue
+    ArgumentError -> "<agent-uri>"
   end
 
   # V-6 fix — extract workspace name from socket's
@@ -245,16 +255,22 @@ defmodule EzagentPluginLiveview.AgentNewLive do
   # shouldn't happen post-Phase-9 but kept as belt-and-suspenders).
   defp workspace_name(socket) do
     case Map.get(socket.assigns, :current_workspace_uri) do
-      %URI{scheme: "workspace", path: nil, host: name} when is_binary(name) and name != "" ->
-        name
+      %URI{scheme: "workspace"} = uri ->
+        case Ezagent.URI.name(uri) do
+          {:ok, name} -> name
+          :error -> @fallback_workspace_name
+        end
 
       uri_str when is_binary(uri_str) ->
         # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
         # with try/rescue keeping the fallback workspace name semantics.
         try do
           case Ezagent.URI.new!(uri_str) do
-            %URI{scheme: "workspace", host: name} when is_binary(name) and name != "" ->
-              name
+            %URI{scheme: "workspace"} = uri ->
+              case Ezagent.URI.name(uri) do
+                {:ok, name} -> name
+                :error -> @fallback_workspace_name
+              end
 
             _ ->
               @fallback_workspace_name
@@ -280,7 +296,7 @@ defmodule EzagentPluginLiveview.AgentNewLive do
 
   defp caller_caps(socket) do
     case Map.get(socket.assigns, :current_entity_uri) do
-      nil -> Ezagent.SystemPrincipal.caps("system://lv-anon-mount")
+      nil -> "lv-anon-mount" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps()
       caller -> Ezagent.Identity.list_caps_for(caller)
     end
   end
@@ -317,6 +333,9 @@ defmodule EzagentPluginLiveview.AgentNewLive do
 
   defp friendly_error(:cwd_required_for_cc),
     do: gettext("Working directory is required for cc agents (claude-code runs there).")
+
+  defp friendly_error(:cwd_required_for_codex),
+    do: gettext("Working directory is required for codex agents (the codex PtyServer runs there).")
 
   defp friendly_error(:cwd_required_for_echo_with_pty),
     do:
@@ -418,9 +437,10 @@ defmodule EzagentPluginLiveview.AgentNewLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(
-          Map.get(assigns, :current_entity_uri) || Ezagent.URI.new!("entity://user/system/admin")
-        )
+        assigns
+        |> Map.get(:current_entity_uri)
+        |> Kernel.||(Ezagent.Entity.User.admin_uri())
+        |> Ezagent.URI.stable_key()
       end)
 
     ~H"""
@@ -538,7 +558,7 @@ defmodule EzagentPluginLiveview.AgentNewLive do
                   </label>
 
                   <label
-                    :if={@flavor == "cc" or (@flavor == "echo" and @with_pty?)}
+                    :if={@flavor in ["cc", "codex"] or (@flavor == "echo" and @with_pty?)}
                     class="flex flex-col gap-1"
                   >
                     <span class="text-xs uppercase tracking-wide text-zinc-500">

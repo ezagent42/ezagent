@@ -134,14 +134,21 @@ defmodule Ezagent.Presence do
   defp parse_uri!(%URI{} = uri), do: uri
   defp parse_uri!(s) when is_binary(s), do: Ezagent.URI.new!(s)
 
-  defp kind_module_of!(%URI{scheme: "entity", host: "user"}), do: Ezagent.Entity.User
-  defp kind_module_of!(%URI{scheme: "entity", host: "agent"}), do: Ezagent.Entity.Agent
+  defp kind_module_of!(%URI{scheme: "entity"} = uri) do
+    cond do
+      Ezagent.URI.type?(uri, :user) -> Ezagent.Entity.User
+      Ezagent.URI.type?(uri, :agent) -> Ezagent.Entity.Agent
+      true -> raise_unsupported_kind!(uri)
+    end
+  end
 
-  defp kind_module_of!(%URI{} = uri) do
+  defp kind_module_of!(%URI{} = uri), do: raise_unsupported_kind!(uri)
+
+  defp raise_unsupported_kind!(%URI{} = uri) do
     raise ArgumentError,
           "Ezagent.Presence.subscribe/2: no Presence Behavior registered for " <>
-            "URI #{inspect(URI.to_string(uri))}. Only entity://user/... and " <>
-            "entity://agent/... are supported in V1."
+            "URI #{inspect(Ezagent.URI.stable_key(uri))}. Only entity user and " <>
+            "entity agent URIs are supported in V1."
   end
 
   defp check_subscribe_cap!(%{caps: :system}, _kind, _uri), do: :ok

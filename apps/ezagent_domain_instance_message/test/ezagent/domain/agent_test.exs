@@ -31,22 +31,36 @@ defmodule Ezagent.Domain.AgentTest do
     PTY detail (os_pid, cwd, etc.)
   - any flavor + alive Kind without PtyServer → `:alive` with empty
     detail map
-  - Unregistered URI → `:not_found` with flavor still derived
-    from the URI name prefix (so UI can render "echo agent does
-    not exist" vs just "agent does not exist")
+  - Unregistered URI with stored flavor → `:not_found` with that
+    stored flavor (so UI can render "echo agent does not exist"
+    vs just "agent does not exist")
   """
 
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Domain.Agent, SpawnRegistry}
 
-  describe "lifecycle_status/1 — flavor derivation" do
-    test "derives flavor from agent name prefix (cc_*, echo_*, curl_*)" do
-      # The URI doesn't need to be registered; derive_flavor just
-      # parses the name. :not_found still carries the derived flavor.
-      cc_uri = URI.parse("entity://agent/team-alpha/cc_unregistered-#{u()}")
-      echo_uri = URI.parse("entity://agent/team-alpha/echo_unregistered-#{u()}")
-      curl_uri = URI.parse("entity://agent/team-alpha/curl_unregistered-#{u()}")
+  setup do
+    Ezagent.UriQuery.init()
+    previous = :ets.lookup(Ezagent.UriQuery.table(), :flavor)
+
+    on_exit(fn ->
+      :ets.delete(Ezagent.UriQuery.table(), :flavor)
+
+      for entry <- previous do
+        :ets.insert(Ezagent.UriQuery.table(), entry)
+      end
+    end)
+
+    :ok
+  end
+
+  describe "lifecycle_status/1 — stored flavor lookup" do
+    test "reads flavor from UriQuery for prefixless agent URIs" do
+      cc_uri = Ezagent.URI.new!("entity://team-alpha/agent/unregistered-cc-#{u()}")
+      echo_uri = Ezagent.URI.new!("entity://team-alpha/agent/unregistered-echo-#{u()}")
+      curl_uri = Ezagent.URI.new!("entity://team-alpha/agent/unregistered-curl-#{u()}")
+      put_flavors(%{cc_uri => "cc", echo_uri => "echo", curl_uri => "curl"})
 
       assert %{phase: :not_found, flavor: "cc", detail: nil} =
                Agent.lifecycle_status(cc_uri)
@@ -58,9 +72,9 @@ defmodule Ezagent.Domain.AgentTest do
                Agent.lifecycle_status(curl_uri)
     end
 
-    test "returns nil flavor for unrecognized URI shape" do
-      not_an_agent = URI.parse("entity://user/team-alpha/admin")
-      workspace = URI.parse("workspace://team-alpha")
+    test "returns nil flavor when UriQuery has no stored flavor" do
+      not_an_agent = Ezagent.URI.new!("entity://team-alpha/user/admin")
+      workspace = Ezagent.URI.new!("workspace://team-alpha")
 
       assert %{phase: :not_found, flavor: nil, detail: nil} =
                Agent.lifecycle_status(not_an_agent)
@@ -72,7 +86,8 @@ defmodule Ezagent.Domain.AgentTest do
 
   describe "lifecycle_status/1 — echo flavor (alive Kind, no PTY layer)" do
     test "alive echo Kind returns %{phase: :alive, flavor: \"echo\", detail: %{}}" do
-      echo_uri = URI.parse("entity://agent/team-alpha/echo_lifecycle-#{u()}")
+      echo_uri = Ezagent.URI.new!("entity://team-alpha/agent/echo_lifecycle-#{u()}")
+      put_flavors(%{echo_uri => "echo"})
 
       # Spawn the echo Kind via the standardized SpawnRegistry path
       # (chat's entity:// spawn fn → spawn_agent/1 → flavor-prefix
@@ -87,7 +102,9 @@ defmodule Ezagent.Domain.AgentTest do
 
   describe "lifecycle_status/1 — PTY detection is flavor-agnostic" do
     test "alive cc Kind without PtyServer returns :alive with empty detail" do
-      cc_uri = URI.parse("entity://agent/team-alpha/cc_lifecycle-#{u()}")
+      cc_uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_lifecycle-#{u()}")
+      put_flavors(%{cc_uri => "cc"})
+
       {:ok, pid} = SpawnRegistry.spawn(cc_uri)
       assert is_pid(pid) and Process.alive?(pid)
 
@@ -96,8 +113,9 @@ defmodule Ezagent.Domain.AgentTest do
     end
 
     test "alive curl and future-flavor Kinds without PtyServer return :alive with empty detail" do
-      curl_uri = URI.parse("entity://agent/team-alpha/curl_lifecycle-#{u()}")
-      future_uri = URI.parse("entity://agent/team-alpha/future_lifecycle-#{u()}")
+      curl_uri = Ezagent.URI.new!("entity://team-alpha/agent/curl_lifecycle-#{u()}")
+      future_uri = Ezagent.URI.new!("entity://team-alpha/agent/future_lifecycle-#{u()}")
+      put_flavors(%{curl_uri => "curl", future_uri => "future"})
 
       {:ok, curl_pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: curl_uri})
       {:ok, future_pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: future_uri})
@@ -113,7 +131,8 @@ defmodule Ezagent.Domain.AgentTest do
     end
 
     test "codex-flavored Kind with live PtyServer returns PTY detail without a codex clause" do
-      codex_uri = URI.parse("entity://agent/team-alpha/codex_lifecycle-#{u()}")
+      codex_uri = Ezagent.URI.new!("entity://team-alpha/agent/codex_lifecycle-#{u()}")
+      put_flavors(%{codex_uri => "codex"})
 
       {:ok, agent_pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: codex_uri})
       {:ok, pty_pid} = Ezagent.Domain.Pty.start(codex_uri, %{cwd: "/tmp", test_mode: true})
@@ -139,11 +158,28 @@ defmodule Ezagent.Domain.AgentTest do
   end
 
   describe "lifecycle_status/1 — unregistered URI" do
-    test "non-existent agent URI returns :not_found with derived flavor" do
-      cc_uri = URI.parse("entity://agent/team-alpha/cc_does-not-exist-#{u()}")
+    test "non-existent agent URI returns :not_found with stored flavor" do
+      cc_uri = Ezagent.URI.new!("entity://team-alpha/agent/does-not-exist-#{u()}")
+      put_flavors(%{cc_uri => "cc"})
 
       assert %{phase: :not_found, flavor: "cc", detail: nil} =
                Agent.lifecycle_status(cc_uri)
+    end
+  end
+
+  defp put_flavors(flavors) when is_map(flavors) do
+    by_uri =
+      Map.new(flavors, fn {uri, flavor} ->
+        {URI.to_string(uri), flavor}
+      end)
+
+    :ets.insert(Ezagent.UriQuery.table(), {:flavor, &resolve_test_flavor(&1, by_uri)})
+  end
+
+  defp resolve_test_flavor(%URI{} = uri, by_uri) do
+    case Map.fetch(by_uri, URI.to_string(uri)) do
+      {:ok, flavor} -> {:ok, flavor}
+      :error -> :none
     end
   end
 

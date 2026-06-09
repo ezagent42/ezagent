@@ -20,8 +20,23 @@ defmodule EzagentPluginLiveview.UsersLive do
 
   @impl true
   def mount(_params, _session, socket) do
+    # HIGH-4 (SPEC 2026-05-27-capability-action-axis §7): the caller is
+    # the logged-in entity (set by `EzagentWeb.LiveAuth.on_mount(:require_entity)`),
+    # NOT a hardcoded admin. `create_user` / `set_password` now dispatch
+    # with THIS caller's caps so CapBAC step 5.5 runs — identical to the
+    # CLI. The `/identities/users` route is gated by `:require_entity`
+    # only (no `:require_admin`), so without the cap-check a non-admin
+    # could mint users / reset passwords from the GUI.
+    #
+    # codex review HIGH: caps are recomputed FRESH at each mutation
+    # (`current_caller_caps/1`), NOT cached at mount — a cap revoked
+    # after mount must NOT keep authorizing privileged mutations until
+    # the socket remounts.
+    caller_uri = socket.assigns.current_entity_uri
+
     {:ok,
      socket
+     |> assign(:caller_uri, caller_uri)
      |> assign(:users, list_users())
      |> assign(:editing_uri, nil)
      |> assign(:flash_error, nil)
@@ -48,13 +63,13 @@ defmodule EzagentPluginLiveview.UsersLive do
 
   defp list_users do
     # PR-D (SPEC v2, Allen 2026-05-24) — `system_members` is the set
-    # of URIs that have membership in `workspace://system`. Used to
+    # of URIs that have membership in the system workspace. Used to
     # render the "Promote to system" / "Revoke" toggle per row, and
     # to gate cross-workspace authority via the existing
     # `Ezagent.Capability.cross_workspace?/2` membership path.
     system_members =
       case Ezagent.Workspace.Store.get_by_name("system") do
-        %{members: members} -> MapSet.new(members, &URI.to_string/1)
+        %{members: members} -> MapSet.new(members, &Ezagent.URI.stable_key/1)
         _ -> MapSet.new()
       end
 
@@ -71,7 +86,7 @@ defmodule EzagentPluginLiveview.UsersLive do
           # can subscribe to `esr:presence:<uri>` for live update.
           online?: Ezagent.Presence.present?(u.uri),
           transports: u.uri |> Ezagent.Presence.list() |> transports_summary(),
-          system_member?: MapSet.member?(system_members, URI.to_string(u.uri))
+          system_member?: MapSet.member?(system_members, Ezagent.URI.stable_key(u.uri))
         })
       end)
 
@@ -116,7 +131,8 @@ defmodule EzagentPluginLiveview.UsersLive do
 
     cond do
       workspace == "" ->
-        {:noreply, assign(socket, :flash_error, gettext("Workspace required (pick from dropdown)"))}
+        {:noreply,
+         assign(socket, :flash_error, gettext("Workspace required (pick from dropdown)"))}
 
       uri == "" ->
         {:noreply, assign(socket, :flash_error, gettext("Username required (e.g. allen)"))}
@@ -130,12 +146,24 @@ defmodule EzagentPluginLiveview.UsersLive do
          )}
 
       true ->
+        # HIGH-4: route through the cap-checked dispatch chokepoint
+        # (`Ezagent.Workspace.create_user/3` → `Invocation.dispatch` →
+        # step 5.5 CapBAC on `(:workspace, Behavior.WorkspaceUserAdmin,
+        # :create_user)`), NOT the legacy direct `Ezagent.Users.create/3`
+        # call. The facade also performs URI/caps parsing, the structural
+        # cross-workspace check, and the opportunistic User-Kind spawn —
+        # identical to `mix ezagent workspace create_user`.
         with {:ok, parsed_uri} <- parse_user_uri(uri),
-             {:ok, caps} <-
-               Ezagent.Capability.Parser.parse(caps_str, Ezagent.Entity.User.admin_uri()),
              pw = if(password == "", do: nil, else: password),
-             {:ok, _decoded} <- Ezagent.Users.create(uri, pw, caps) do
-          _ = maybe_spawn_kind(uri)
+             {:ok, result} <-
+               Ezagent.Workspace.create_user(
+                 Ezagent.URI.workspace(workspace),
+                 %{user_uri: uri, password: pw, caps: caps_str},
+                 %{
+                   caller: socket.assigns.caller_uri,
+                   caps: current_caller_caps(socket)
+                 }
+               ) do
           _ = maybe_upsert_display_name(parsed_uri, display_name)
 
           {:noreply,
@@ -143,7 +171,10 @@ defmodule EzagentPluginLiveview.UsersLive do
            |> assign(:users, list_users())
            |> assign(
              :flash_info,
-             gettext("✓ created %{uri} (%{count} caps)", uri: uri, count: length(caps))
+             gettext("✓ created %{uri} (%{count} caps)",
+               uri: uri,
+               count: Map.get(result, :caps_granted, 0)
+             )
            )
            |> assign(:flash_error, nil)
            |> assign(:create_form, to_form(create_form_defaults(), as: "user"))}
@@ -199,7 +230,12 @@ defmodule EzagentPluginLiveview.UsersLive do
 
   def handle_event("set_password", %{"uri" => uri, "password" => password}, socket)
       when is_binary(password) and password != "" do
-    case Ezagent.Users.set_password(uri, password) do
+    # HIGH-4: route through the cap-checked dispatch chokepoint — the
+    # `:set_password` action on `Behavior.UserCredentials`, the SAME
+    # path `mix ezagent user set_password` uses (step 5.5 CapBAC + step
+    # 5.6 cross-workspace iso) — NOT the legacy direct
+    # `Ezagent.Users.set_password/2` call.
+    case dispatch_set_password(uri, password, socket) do
       {:ok, _} ->
         {:noreply,
          socket
@@ -228,8 +264,19 @@ defmodule EzagentPluginLiveview.UsersLive do
   # (capability.ex:221-238). NO new cap rows are created — membership
   # IS the cap.
   def handle_event("promote_to_system", %{"uri" => uri_str}, socket) do
+    # SPEC 2026-05-27-capability-action-axis §7 (admin-promotion CapBAC
+    # bypass): route through the cap-checked `add_member/3` carrying the
+    # logged-in caller's FRESH caps so dispatch step 5.5 runs against
+    # THIS caller — identical to `mix ezagent.workspace.add_member system
+    # <uri>`. The `/2` programmatic variant dispatches under
+    # `system://workspace-loader` (no caller cap-check); reaching it from
+    # this `:require_entity`-only route let a non-admin promote to system.
     with {:ok, user_uri} <- parse_user_uri(uri_str),
-         :ok <- Ezagent.Workspace.add_member("system", user_uri) do
+         :ok <-
+           Ezagent.Workspace.add_member("system", user_uri, %{
+             caller: socket.assigns.caller_uri,
+             caps: current_caller_caps(socket)
+           }) do
       {:noreply,
        socket
        |> assign(:users, list_users())
@@ -246,8 +293,17 @@ defmodule EzagentPluginLiveview.UsersLive do
   end
 
   def handle_event("revoke_system", %{"uri" => uri_str}, socket) do
+    # SPEC 2026-05-27-capability-action-axis §7: cap-checked `remove_member/3`
+    # under the caller's fresh caps (parity with `mix ezagent.workspace.
+    # remove_member system <uri>`). Part B: the dispatch also sweeps the
+    # `:create_session` cap `:add_member` granted on `workspace://system`,
+    # so a demoted user does NOT keep create_session authority there.
     with {:ok, user_uri} <- parse_user_uri(uri_str),
-         :ok <- Ezagent.Workspace.remove_member("system", user_uri) do
+         :ok <-
+           Ezagent.Workspace.remove_member("system", user_uri, %{
+             caller: socket.assigns.caller_uri,
+             caps: current_caller_caps(socket)
+           }) do
       {:noreply,
        socket
        |> assign(:users, list_users())
@@ -263,18 +319,20 @@ defmodule EzagentPluginLiveview.UsersLive do
     end
   end
 
-  # PR #141 + #145: entity:// scheme; user URIs are entity://user/<name>.
-  # Phase 9 PR-3 (SPEC v3 §3): now 3-segment
-  # entity://user/<workspace>/<name>. Accepts both shapes — 2-segment
-  # is auto-upgraded by normalize_handle_to_uri/1 above.
+  # Phase 9 PR-3 (SPEC v3 §3): user entity URIs are workspace scoped.
+  # Full URI input must already be valid; bare handles are built via
+  # `Ezagent.URI.user/2` in the selected workspace.
   defp parse_user_uri(s) do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue keeping the `{:error, {:bad_user_uri, _}}` contract.
     try do
       case Ezagent.URI.new!(s) do
-        %URI{scheme: "entity", host: "user", path: "/" <> rest} = uri
-        when is_binary(rest) and rest != "" ->
-          {:ok, uri}
+        %URI{scheme: "entity"} = uri ->
+          if Ezagent.URI.type?(uri, :user) and match?({:ok, _name}, Ezagent.URI.name(uri)) do
+            {:ok, uri}
+          else
+            {:error, {:bad_user_uri, s}}
+          end
 
         _ ->
           {:error, {:bad_user_uri, s}}
@@ -284,51 +342,64 @@ defmodule EzagentPluginLiveview.UsersLive do
     end
   end
 
-  defp maybe_spawn_kind(uri_str) do
-    uri = Ezagent.URI.new!(uri_str)
+  # HIGH-4: dispatch `:set_password` on `Behavior.UserCredentials` with
+  # the caller's caps. The dispatch target's URI (`ctx.self_uri`) is the
+  # user being mutated; CapBAC step 5.5 admits admin's `:any`-instance
+  # cap (cross-user reset) and a user's own instance-scoped self-cap,
+  # and rejects everyone else.
+  defp dispatch_set_password(uri_str, password, socket) do
+    with {:ok, user_uri} <- parse_user_uri(uri_str) do
+      target = Ezagent.URI.with_action(user_uri, :user_credentials, :set_password)
 
-    if Code.ensure_loaded?(Ezagent.SpawnRegistry) do
-      _ = Ezagent.SpawnRegistry.spawn(uri)
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        target: target,
+        mode: :call,
+        args: %{password: password},
+        ctx: %{
+          caller: socket.assigns.caller_uri,
+          caps: current_caller_caps(socket),
+          reply: :sync
+        }
+      })
     end
-
-    :ok
   end
 
-  # Task 3 — bare handle (`allen`) or full URI (`entity://user/<ws>/allen`).
+  # codex review HIGH: resolve the caller's caps FRESH at mutation time
+  # (not the mount-time snapshot) so a cap revoked after the LV mounted
+  # can no longer authorize a privileged create/set_password.
+  defp current_caller_caps(socket) do
+    Ezagent.Identity.list_caps_for(socket.assigns.caller_uri)
+  end
+
+  # Task 3 — bare handle (`allen`) or full user URI.
   # Anything else falls through and parse_user_uri rejects with a
   # helpful error.
   #
-  # Phase 9 PR-3 (SPEC v3 §3): entity URIs are 3-segment
-  # `entity://user/<workspace>/<name>`. Bare handles + legacy
-  # 2-segment URIs are upgraded into the workspace string passed in.
+  # Phase 9 PR-3 (SPEC v3 §3): user entity URIs are workspace scoped.
+  # Bare handles are built under the form-selected workspace; full URI
+  # input must already satisfy `Ezagent.URI`.
   #
   # SPEC #324: workspace is supplied by the form (no silent
   # `"default"`). The form defaults to `"system"` for admin's typical
   # flow, but admin can pick any workspace from the dropdown.
   defp normalize_handle_to_uri("", _workspace), do: ""
 
-  defp normalize_handle_to_uri("entity://user/" <> rest = full, workspace) do
-    if String.contains?(rest, "/") do
-      # Already has workspace segment — trust the URI's segment over
-      # the form workspace (admin explicitly typed a different ws).
-      full
-    else
-      # Legacy 2-segment shape — upgrade to 3-segment under the
-      # form-selected workspace.
-      "entity://user/#{workspace}/" <> rest
-    end
-  end
-
   defp normalize_handle_to_uri(handle, workspace) do
-    # Strip leading "@" if user typed `@allen`. Slug whitespace is invalid.
-    handle = String.trim_leading(handle, "@") |> String.trim()
-    "entity://user/#{workspace}/" <> handle
+    case Ezagent.URI.parse(handle) do
+      {:ok, %URI{} = uri} ->
+        Ezagent.URI.stable_key(uri)
+
+      {:error, _} ->
+        # Strip leading "@" if user typed `@allen`. Slug whitespace is invalid.
+        handle = String.trim_leading(handle, "@") |> String.trim()
+        workspace |> Ezagent.URI.user(handle) |> Ezagent.URI.stable_key()
+    end
   end
 
   # SPEC 2026-05-27-workspace-cap-based-visibility — `@workspaces`
   # from LiveAuth uses `Ezagent.Workspace.list_workspaces_for/2`. For
   # an admin caller (one of the 4-predicate admin-shortcut UNION),
-  # the result already INCLUDES `workspace://system` (admins see all).
+  # the result already INCLUDES the system workspace (admins see all).
   # No manual prepend or de-duplication needed; the picker shows
   # what the admin can see, structurally.
   #
@@ -346,7 +417,12 @@ defmodule EzagentPluginLiveview.UsersLive do
   defp maybe_upsert_display_name(_uri, ""), do: :ok
 
   defp maybe_upsert_display_name(%URI{} = uri, name) do
-    _ = Ezagent.Entity.Profile.upsert(%{entity_uri: URI.to_string(uri), display_name: name})
+    _ =
+      Ezagent.Entity.Profile.upsert(%{
+        entity_uri: Ezagent.URI.stable_key(uri),
+        display_name: name
+      })
+
     :ok
   end
 
@@ -359,7 +435,9 @@ defmodule EzagentPluginLiveview.UsersLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(assigns.current_entity_uri || Ezagent.URI.new!("entity://user/system/admin"))
+        assigns.current_entity_uri
+        |> Kernel.||(Ezagent.Entity.User.admin_uri())
+        |> Ezagent.URI.stable_key()
       end)
 
     ~H"""
@@ -488,7 +566,7 @@ defmodule EzagentPluginLiveview.UsersLive do
                         <td class="text-xs">{u.cap_count}</td>
                         <td class="text-xs">
                           <%!-- PR-D (SPEC v2, Allen 2026-05-24) — system membership
-                            toggle. Members of `workspace://system` get cross-workspace
+                            toggle. Members of the system workspace get cross-workspace
                             authority via Ezagent.Capability.cross_workspace?/2
                             membership path. No new cap rows — membership IS the cap. --%>
                           <%= if u.system_member? do %>
@@ -525,7 +603,11 @@ defmodule EzagentPluginLiveview.UsersLive do
                           <% end %>
                         </td>
                         <td>
-                          <form phx-submit="set_password" class="flex gap-1">
+                          <form
+                            phx-submit="set_password"
+                            data-uri={URI.to_string(u.uri)}
+                            class="flex gap-1"
+                          >
                             <input type="hidden" name="uri" value={URI.to_string(u.uri)} />
                             <input
                               type="password"
@@ -545,8 +627,8 @@ defmodule EzagentPluginLiveview.UsersLive do
               </section>
 
               <%!-- Username & Auth UI Task 3 — bare-handle input. Type
-                "allen" → backend creates entity://user/allen. Full URI
-                still accepted. --%>
+                "allen" and the backend creates the workspace-scoped user URI.
+                Full URI input is still accepted. --%>
               <section id="create-user" class="mt-6">
                 <.card>
                   <h2 class="text-sm font-medium mb-3 text-zinc-900 dark:text-zinc-100">
@@ -602,9 +684,8 @@ defmodule EzagentPluginLiveview.UsersLive do
                           class="w-full px-2 py-1.5 text-xs border border-zinc-300 dark:border-zinc-700 rounded font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
                         />
                         <p class="mt-1 text-[11px] text-zinc-500">
-                          {gettext("Accepts bare handle (%{handle}) or full URI (%{uri}).",
-                            handle: "allen",
-                            uri: "entity://user/system/allen"
+                          {gettext("Accepts bare handle (%{handle}) or a full user URI.",
+                            handle: "allen"
                           )}
                         </p>
                       </div>

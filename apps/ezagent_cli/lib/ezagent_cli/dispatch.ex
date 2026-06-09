@@ -7,7 +7,7 @@ defmodule EzagentCli.Dispatch do
   caller mailbox for `:call` mode.
   """
 
-  alias Ezagent.{Invocation, KindRegistry}
+  alias Ezagent.Invocation
 
   @default_deadline_ms 5000
 
@@ -63,7 +63,7 @@ defmodule EzagentCli.Dispatch do
             # legacy silent `"default"` default.
             #
             # SPEC #366 (Allen 2026-05-26): the template-class slot of
-            # `session://<class>/<workspace>/<name>` (and `template://`
+            # `session://<workspace>/<class>/<name>` (and `template://`
             # / `resource://`) must also be explicit — `options` flows
             # through to `promote_to_3seg/4` which reads `:instance_class`
             # and raises if absent for bare-name promotions.
@@ -127,7 +127,7 @@ defmodule EzagentCli.Dispatch do
     # as the instance, use it AS-IS and only append the action query
     # string. Without this, the CLI would build
     # `user://entity://user/...` which is malformed — the User Kind's
-    # actual URIs are `entity://user/...` (3-segment per SPEC v3 §3),
+    # actual URIs are `entity://<workspace>/user/...`,
     # not `user://...`.
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue: a full Ezagent URI is parsed canonical + action
@@ -155,25 +155,26 @@ defmodule EzagentCli.Dispatch do
   # caller URI structurally. Per Allen's directive — "如果没有提供 workspace
   # name，应该直接 crash. 现在已经没有了默认 workspace 这个概念" — any
   # non-entity caller raises rather than silently falling through to a
-  # "system" workspace. Production callers always carry an `entity://`
+  # "system" workspace. Production callers always carry an entity
   # URI from the CLI bearer-token auth path; non-entity callers are
   # operator-error and must be visible.
   defp workspace_name_from_caller(%URI{scheme: "entity"} = uri) do
-    %URI{host: name} = Ezagent.URI.entity_workspace_uri(uri)
-    name
+    uri
+    |> Ezagent.URI.entity_workspace_uri()
+    |> Ezagent.URI.name!()
   end
 
   defp workspace_name_from_caller(other) do
     raise ArgumentError,
-          "caller URI is not an `entity://...` URI — got #{inspect(other)}. " <>
+          "caller URI is not an entity URI — got #{inspect(other)}. " <>
             "Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
             "fallback; the caller must carry a structural workspace. Production " <>
-            "callers always have an entity:// URI from CLI bearer-token auth — a " <>
+            "callers always have an entity URI from CLI bearer-token auth — a " <>
             "non-entity caller indicates a misconfigured token / --as flag."
   end
 
   # SPEC v3 §3.6 (Phase 9 PR-7) + SPEC #324 — fill in missing
-  # template/workspace segments for the unified per-tenant schemes when
+  # workspace/template segments for the unified per-tenant schemes when
   # the operator passed a bare name on the CLI. Workspace is taken from
   # the caller URI structurally rather than the silent `"default"`
   # legacy default.
@@ -185,7 +186,7 @@ defmodule EzagentCli.Dispatch do
   # `resource`). Missing class on a bare name = `ArgumentError` with a
   # message that names the missing flag.
   #
-  # Fully-typed instances (e.g. `--session generic/team-alpha/foo` or
+  # Fully-typed instances (e.g. `--session team-alpha/generic/foo` or
   # `--session generic/foo`) skip the class fill and the explicit-class
   # check — the operator supplied the class inline.
   defp promote_to_3seg("session", instance, workspace, template_class),
@@ -203,13 +204,13 @@ defmodule EzagentCli.Dispatch do
   # raise. Two-segment (`<class>/<name>`) and three-segment forms
   # already carry the class inline and are accepted as-is.
   defp fill_caller_workspace_strict(scheme, workspace, instance, template_class) do
-    case String.split(instance, "/") do
+    case Ezagent.URI.path_segments(instance) do
       [bare] ->
         class = require_template_class!(scheme, bare, template_class)
-        "#{class}/#{workspace}/#{bare}"
+        "#{workspace}/#{class}/#{bare}"
 
       [type, bare] ->
-        "#{type}/#{workspace}/#{bare}"
+        "#{workspace}/#{type}/#{bare}"
 
       [_type, _ws, _name | _rest] ->
         instance
@@ -227,7 +228,7 @@ defmodule EzagentCli.Dispatch do
     raise ArgumentError,
           "missing required `--instance-class <class>` for `#{scheme}://` bare-name " <>
             "promotion. Got bare instance #{inspect(bare)}; promotion to the 3-segment " <>
-            "`#{scheme}://<class>/<workspace>/<name>` URI requires an explicit class. " <>
+            "`#{scheme}://<workspace>/<class>/<name>` URI requires an explicit class. " <>
             "Add `--instance-class <class>` to your CLI invocation, or pass the " <>
             "fully-qualified instance (e.g. `--#{scheme} <class>/<name>`). Per SPEC " <>
             "#366 / `feedback_let_it_crash_no_workarounds` — there is no silent " <>

@@ -28,7 +28,7 @@ defmodule Ezagent.PluginCodex.Template.CodexAgentHomeIsolationTest do
 
     test "copies source codex auth/config into the allocated target home" do
       source = source_codex_home()
-      agent_uri = URI.new!("entity://agent/system/codex_home-#{uniq()}")
+      agent_uri = URI.new!("entity://system/agent/codex_home-#{uniq()}")
       target = target_codex_home(agent_uri)
 
       tmpl = %{
@@ -48,7 +48,7 @@ defmodule Ezagent.PluginCodex.Template.CodexAgentHomeIsolationTest do
 
   describe "CODEX_HOME env wiring" do
     test "all three codex subprocess paths receive the same per-agent CODEX_HOME" do
-      agent_uri = URI.new!("entity://agent/system/codex_env-#{uniq()}")
+      agent_uri = URI.new!("entity://system/agent/codex_env-#{uniq()}")
       codex_home = target_codex_home(agent_uri)
 
       tmpl = %{

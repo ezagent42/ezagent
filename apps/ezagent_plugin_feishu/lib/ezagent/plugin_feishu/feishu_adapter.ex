@@ -222,6 +222,7 @@ defmodule EzagentPluginFeishu.FeishuAdapter do
           "FeishuAdapter.event_to_payload: SKIP (new_slice not a map) — chat slice-change " <>
             "dropped from mirror. new_slice=#{inspect(new_slice, limit: 5)}"
         )
+
         :skip
 
       not chat_send_occurred?(new_slice, old_slice) ->
@@ -230,6 +231,7 @@ defmodule EzagentPluginFeishu.FeishuAdapter do
             "NOT mirrored to external. new_slice keys=#{inspect(slice_diag(new_slice))} " <>
             "old_slice keys=#{inspect(slice_diag(old_slice))}"
         )
+
         :skip
 
       true ->
@@ -244,8 +246,12 @@ defmodule EzagentPluginFeishu.FeishuAdapter do
                   Logger.warning(
                     "FeishuAdapter.event_to_payload: SKIP (build_lark_payloads = []) — " <>
                       "no renderable payload for msg id=#{inspect(Map.get(msg, :id))} " <>
-                      "body_keys=#{inspect(msg.body |> case do m when is_map(m) -> Map.keys(m); _ -> :not_map end)}"
+                      "body_keys=#{inspect(msg.body |> case do
+                        m when is_map(m) -> Map.keys(m)
+                        _ -> :not_map
+                      end)}"
                   )
+
                   :skip
 
                 list ->
@@ -258,10 +264,13 @@ defmodule EzagentPluginFeishu.FeishuAdapter do
               "FeishuAdapter.event_to_payload: SKIP (extract_last_message :error) — " <>
                 "no :last_message in slice. new_slice keys=#{inspect(slice_diag(new_slice))}"
             )
+
             :skip
         end
     end
   end
+
+  def event_to_payload(%Event{}), do: :skip
 
   # Diagnostic helper: surface a slice's shape (top-level keys) without dumping
   # full content, so a silent mirror-skip is traceable (Allen 2026-05-31:
@@ -288,8 +297,6 @@ defmodule EzagentPluginFeishu.FeishuAdapter do
   # could wrongly unwrap an unrelated map).
   defp slice_state(%{"state" => %{} = inner}), do: Ezagent.Kind.normalize_slice_view(inner)
   defp slice_state(other), do: Ezagent.Kind.normalize_slice_view(other)
-
-  def event_to_payload(%Event{}), do: :skip
 
   # ----- internals: caller → open_id ----------------------------------------
 

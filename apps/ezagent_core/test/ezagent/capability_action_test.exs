@@ -24,7 +24,7 @@ defmodule Ezagent.CapabilityActionTest do
     end
 
     test "Capability.cap/5 stores the action atom" do
-      session_uri = URI.new!("session://default/team-alpha/main")
+      session_uri = URI.new!("session://team-alpha/default/main")
       workspace_uri = URI.new!("workspace://team-alpha")
 
       cap =
@@ -93,7 +93,7 @@ defmodule Ezagent.CapabilityActionTest do
         "behavior" => "Ezagent.Behavior.Chat",
         "instance" => "any",
         "workspace_uri" => "workspace://team-alpha",
-        "granted_by" => "entity://user/system/admin",
+        "granted_by" => "entity://system/user/admin",
         "granted_at" => "2026-01-01T00:00:00Z"
       }
 
@@ -133,7 +133,7 @@ defmodule Ezagent.CapabilityActionTest do
         action: :any,
         instance: :any,
         workspace_uri: :any,
-        granted_by: URI.parse("system://bootstrap/default"),
+        granted_by: Ezagent.URI.new!("system://bootstrap/default"),
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
 
@@ -150,7 +150,7 @@ defmodule Ezagent.CapabilityActionTest do
         action: :any,
         instance: :any,
         workspace_uri: :any,
-        granted_by: URI.parse("system://bootstrap/default"),
+        granted_by: Ezagent.URI.new!("system://bootstrap/default"),
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
 
@@ -177,7 +177,7 @@ defmodule Ezagent.CapabilityActionTest do
             action: :any,
             instance: :any,
             workspace_uri: :any,
-            granted_by: URI.parse("system://bootstrap/default"),
+            granted_by: Ezagent.URI.new!("system://bootstrap/default"),
             granted_at: ~U[2026-01-01 00:00:00Z]
           },
           :action
@@ -200,7 +200,7 @@ defmodule Ezagent.CapabilityActionTest do
       action: action,
       instance: :any,
       workspace_uri: :any,
-      granted_by: URI.parse("entity://user/system/admin"),
+      granted_by: Ezagent.URI.new!("entity://system/user/admin"),
       granted_at: ~U[2026-01-01 00:00:00Z]
     }
   end
@@ -210,7 +210,7 @@ defmodule Ezagent.CapabilityActionTest do
       kind: :session,
       behavior: Ezagent.Behavior.Chat,
       action: action,
-      instance: URI.new!("session://default/team-alpha/main"),
+      instance: URI.new!("session://team-alpha/default/main"),
       workspace_uri: URI.new!("workspace://team-alpha")
     }
   end

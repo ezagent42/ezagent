@@ -87,6 +87,8 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
     # restart is auto-derived from Behavior.Terminable :terminate +
     # supervisor restart policy.
     "restart" => {:cli, "mix ezagent agent terminate --agent <uri>"},
+    "revoke_credential_grant" =>
+      {:cli, "mix ezagent agent revoke_credential_grant --agent <uri>"},
     # restart_pty (PTY-phase-state-machine 2026-05-26 follow-up b) —
     # operator clicks the "Dead — Restart" phase badge in TerminalLive.
     # Dispatches `?action=lifecycle.terminate` on the agent URI, same
@@ -150,11 +152,18 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
     # used by entity_caps_live via dispatch. mix ezagent auto-derives.
     "grant" => {:cli, "mix ezagent user grant_cap --user <uri> --cap <json>"},
     "revoke" => {:cli, "mix ezagent user revoke_cap --user <uri> --cap <json>"},
+    # grant_changed (entity_caps_live) — pure UI state: recomputes the
+    # action-selector options from the typed behavior's actions/0 on
+    # phx-change. No backend mutation; the grant itself is "grant" above.
+    "grant_changed" => {:ui_only, "entity_caps action-selector recompute on behavior change"},
     # agent_api_keys_live dispatches via Behavior.ApiKeys which Allen
     # 2026-05-26 FLIPPED from User Kind to Agent Kind. mix ezagent
     # auto-derives `put_api_key` / `delete_api_key` against `agent`.
     "put" => {:cli, "mix ezagent agent put_api_key --agent <uri> --provider <p> --key <k>"},
     "delete" => {:cli, "mix ezagent agent delete_api_key --agent <uri> --provider <p>"},
+    "set_default_source" =>
+      {:cli,
+       "mix ezagent user set_default_credential_source --user <uri> --workspace <name> --flavor <flavor> --source-uri <uri>"},
 
     # --- Feishu plugin ---
     "bind" => {:cli, "mix ezagent.feishu.bind <open-id> <user-uri>"},

@@ -219,7 +219,7 @@ defmodule Ezagent.Routing.Legend do
   # subset of live member URIs. role_names go through the resolver; URI strings
   # are matched against the live members map. Unresolvable entries drop.
   defp resolve_member_set(entry, members, role_resolver) do
-    member_strs = members |> Map.keys() |> MapSet.new(&URI.to_string/1)
+    member_strs = members |> Map.keys() |> MapSet.new(&Ezagent.URI.stable_key/1)
 
     entry
     |> Map.get(:member_set, [])
@@ -241,7 +241,7 @@ defmodule Ezagent.Routing.Legend do
       end
     end)
     |> Enum.reject(&is_nil/1)
-    |> Enum.uniq_by(&URI.to_string/1)
+    |> Enum.uniq_by(&Ezagent.URI.stable_key/1)
   end
 
   defp safe_uri(s) do

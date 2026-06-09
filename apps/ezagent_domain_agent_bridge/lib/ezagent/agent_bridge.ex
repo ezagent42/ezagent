@@ -10,7 +10,27 @@ defmodule Ezagent.AgentBridge do
   @spec deliver(URI.t(), Payload.t()) :: :ok | {:error, term()}
   def deliver(%URI{} = agent_uri, %Payload{} = payload) do
     with {:ok, channel_pid} <- lookup_channel(agent_uri),
-         {:ok, flavor} <- derive_flavor(agent_uri),
+         {:ok, flavor} <- resolve_flavor(agent_uri),
+         :ok <- AdapterRegistry.deliver_or_buffer(flavor, payload, channel_pid) do
+      :ok
+    else
+      {:error, reason} -> drop(agent_uri, payload, reason)
+    end
+  end
+
+  @doc """
+  Deliver when the caller already resolved the bridge flavor from trusted
+  stored agent state.
+
+  This exists for in-Kind `chat.receive`: the handler is already executing
+  inside the target Agent Kind and can receive the `:sandbox` sibling slice
+  from the runtime. Re-reading the same slice through `Kind.get_slice/2`
+  would be a `GenServer.call(self)`.
+  """
+  @spec deliver_with_flavor(URI.t(), Payload.t(), String.t()) :: :ok | {:error, term()}
+  def deliver_with_flavor(%URI{} = agent_uri, %Payload{} = payload, flavor)
+      when is_binary(flavor) and flavor != "" do
+    with {:ok, channel_pid} <- lookup_channel(agent_uri),
          :ok <- AdapterRegistry.deliver_or_buffer(flavor, payload, channel_pid) do
       :ok
     else
@@ -48,6 +68,35 @@ defmodule Ezagent.AgentBridge do
       :error ->
         case ensure_ready(agent_uri, heal_fn) do
           :ok -> deliver(agent_uri, payload)
+          {:error, reason} -> drop(agent_uri, payload, reason)
+        end
+    end
+  end
+
+  @doc """
+  `deliver_ensuring/3` variant for callers that already resolved flavor from
+  stored state.
+  """
+  @spec deliver_ensuring_with_flavor(
+          URI.t(),
+          Payload.t(),
+          String.t(),
+          (URI.t() -> :ok | {:error, term()})
+        ) :: :ok | {:error, term()}
+  def deliver_ensuring_with_flavor(
+        %URI{} = agent_uri,
+        %Payload{} = payload,
+        flavor,
+        heal_fn \\ resolve_heal_fn()
+      )
+      when is_binary(flavor) and flavor != "" and is_function(heal_fn, 1) do
+    case Registry.lookup(agent_uri) do
+      {:ok, _pid} ->
+        deliver_with_flavor(agent_uri, payload, flavor)
+
+      :error ->
+        case ensure_ready(agent_uri, heal_fn) do
+          :ok -> deliver_with_flavor(agent_uri, payload, flavor)
           {:error, reason} -> drop(agent_uri, payload, reason)
         end
     end
@@ -208,17 +257,12 @@ defmodule Ezagent.AgentBridge do
     {:error, reason}
   end
 
-  defp derive_flavor(%URI{scheme: "entity", host: "agent", path: "/" <> rest})
-       when rest != "" do
-    with [_workspace, entity_name] when entity_name != "" <-
-           String.split(rest, "/", parts: 2),
-         [flavor, suffix] when flavor != "" and suffix != "" <-
-           String.split(entity_name, "_", parts: 2) do
-      {:ok, flavor}
-    else
-      _ -> {:error, :unknown_agent_flavor}
+  defp resolve_flavor(%URI{} = agent_uri) do
+    case Ezagent.UriQuery.resolve(:flavor, agent_uri) do
+      {:ok, flavor} when is_binary(flavor) and flavor != "" -> {:ok, flavor}
+      :none -> {:error, :unknown_agent_flavor}
+      {:error, reason} -> {:error, reason}
+      {:ok, other} -> {:error, {:invalid_agent_flavor, other}}
     end
   end
-
-  defp derive_flavor(_), do: {:error, :unknown_agent_flavor}
 end

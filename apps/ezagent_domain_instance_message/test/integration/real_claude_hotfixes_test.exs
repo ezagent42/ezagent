@@ -46,16 +46,16 @@ defmodule EzagentDomainInstanceMessage.Integration.RealClaudeHotfixesTest do
 
   describe "fix #1: to_claude payload meta includes source session" do
     test "EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Chat, :receive) on Agent sends {:agent_bridge_push, \"to_claude\", %{meta}} to bound channel pid with session key" do
-      agent_uri = URI.new!("entity://agent/team-alpha/cc_meta-test-#{System.unique_integer([:positive])}")
-      session_uri = URI.new!("session://default/team-alpha/meta-source-#{System.unique_integer([:positive])}")
+      agent_uri =
+        URI.new!("entity://team-alpha/agent/cc_meta-test-#{System.unique_integer([:positive])}")
 
-      # Spawn the Agent Kind (mirrors what Channel.join/3 does via
-      # SpawnRegistry.spawn at bridge join time).
-      {:ok, agent_pid} =
-        DynamicSupervisor.start_child(
-          EzagentDomainInstanceMessage.AgentSupervisor,
-          {Ezagent.Kind.Server, {Ezagent.Entity.Agent, %{uri: agent_uri}}}
-        )
+      session_uri =
+        URI.new!("session://team-alpha/default/meta-source-#{System.unique_integer([:positive])}")
+
+      # Spawn the Agent Kind with stored flavor metadata so AgentBridge
+      # resolves the adapter through UriQuery, not the URI name prefix.
+      {:ok, _agent_pid} =
+        Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent_with_flavor(agent_uri, "cc")
 
       # Bind the *test process* as the "channel pid" for this agent.
       # AgentBridge.deliver/2 resolves the cc adapter, which sends
@@ -65,7 +65,10 @@ defmodule EzagentDomainInstanceMessage.Integration.RealClaudeHotfixesTest do
       :ok = Ezagent.AgentBridge.Registry.bind(agent_uri, self())
 
       msg =
-        Message.new(URI.new!("entity://user/system/admin"), %{text: "hi cc-builder", attachments: []})
+        Message.new(URI.new!("entity://system/user/admin"), %{
+          text: "hi cc-builder",
+          attachments: []
+        })
 
       ctx = %{
         caller: session_uri,
@@ -75,15 +78,22 @@ defmodule EzagentDomainInstanceMessage.Integration.RealClaudeHotfixesTest do
         self_uri: agent_uri
       }
 
-      assert {:ok, _} = EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Chat, :receive, %{}, %{message: msg}, ctx)
+      assert {:ok, _} =
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+                 Ezagent.Behavior.Chat,
+                 :receive,
+                 %{},
+                 %{message: msg},
+                 ctx
+               )
 
       assert_receive {:agent_bridge_push, "to_claude", %{"meta" => meta}}, 500
       assert meta["session"] == URI.to_string(session_uri)
-      assert meta["sender"] == "entity://user/system/admin"
+      assert meta["sender"] == "entity://system/user/admin"
       assert meta["message_id"] == msg.id
 
       Ezagent.AgentBridge.Registry.unbind(agent_uri)
-      DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.AgentSupervisor, agent_pid)
+      Ezagent.Kind.terminate(agent_uri)
     end
   end
 end

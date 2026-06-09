@@ -19,7 +19,9 @@ defmodule Ezagent.RouterTest do
   setup do
     # Registry the test fixture Behavior + a fresh instance.
     uri =
-      URI.parse("entity://agent/team-alpha/test_router-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!(
+        "entity://team-alpha/agent/test_router-#{System.unique_integer([:positive])}"
+      )
 
     :ok = Ezagent.BehaviorRegistry.register(TestKind, :noop, TestBehavior)
     :ok = Ezagent.BehaviorRegistry.register(TestKind, :fail, TestBehavior)
@@ -62,7 +64,7 @@ defmodule Ezagent.RouterTest do
     test "no_such_actor for unknown URI" do
       cmd =
         Cmd.new(
-          URI.parse("entity://agent/team-alpha/test_nope-not-exist"),
+          Ezagent.URI.new!("entity://team-alpha/agent/test_nope-not-exist"),
           :noop,
           %{msg: "x"},
           %{reply: {:caller_inbox, self()}, caps: MapSet.new()}
@@ -118,7 +120,7 @@ defmodule Ezagent.RouterTest do
 
   describe "Cmd construction" do
     test "Cmd.new/4 fills ctx defaults" do
-      cmd = Cmd.new("entity://agent/x/y", :ping, %{}, %{})
+      cmd = Cmd.new("entity://x/agent/y", :ping, %{}, %{})
       assert cmd.action == :ping
       assert cmd.ctx.caller == :system
       assert cmd.ctx.reply == :ignore
@@ -126,7 +128,7 @@ defmodule Ezagent.RouterTest do
     end
 
     test "Cmd.new/4 accepts %URI{} target unchanged" do
-      uri = URI.parse("entity://agent/x/y")
+      uri = Ezagent.URI.new!("entity://x/agent/y")
       cmd = Cmd.new(uri, :ping, %{}, %{})
       assert cmd.target == uri
     end
@@ -134,7 +136,7 @@ defmodule Ezagent.RouterTest do
     test "Cmd.new/4 raises on missing required key (via @enforce_keys)" do
       # Directly building the struct without args raises ArgumentError.
       assert_raise ArgumentError, fn ->
-        struct!(Cmd, %{target: URI.parse("entity://x/y/z")})
+        struct!(Cmd, %{target: Ezagent.URI.new!("entity://x/y/z")})
       end
     end
   end

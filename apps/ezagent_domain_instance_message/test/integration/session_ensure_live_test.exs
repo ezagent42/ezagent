@@ -18,7 +18,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionEnsureLiveTest do
   alias Ezagent.Entity.Session
 
   defp session_uri do
-    Ezagent.URI.new!("session://default/team-alpha/ensure-live-#{System.unique_integer([:positive])}")
+    Ezagent.URI.new!("session://team-alpha/default/ensure-live-#{System.unique_integer([:positive])}")
   end
 
   defp wait_until(fun, tries \\ 50)

@@ -66,4 +66,12 @@ defmodule EzagentPluginLiveview.Application do
   # config_surface/0 keeps the `use Ezagent.Plugin` default `nil` — the
   # liveview plugin IS the web UI; it has no separate config surface
   # (SPEC §6.1).
+
+  @impl Ezagent.Plugin
+  def after_boot do
+    :ok = Ezagent.UI.SessionViewRegistry.init()
+    :ok = Ezagent.UI.SessionViewRegistry.register(EzagentPluginLiveview.Views.ConversationView)
+    :ok = Ezagent.UI.SessionViewRegistry.register(EzagentDomainSocialware.PageView)
+    :ok
+  end
 end
