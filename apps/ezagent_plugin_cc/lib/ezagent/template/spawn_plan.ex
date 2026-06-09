@@ -1,18 +1,16 @@
 defmodule Ezagent.PluginCc.Template.SpawnPlan do
   @moduledoc false
+  # BUILD-ONLY (#701 chokepoint hardening). This module assembles cc PTY
+  # launch params + the claude command; it does NOT launch. The actual
+  # `Ezagent.Domain.Pty.start/2` launch lives behind the grant-gated
+  # private `CcAgent.Spawn.ensure_pty_server/3`, so a cc PTY can never be
+  # started without first passing the create/respawn credential-grant gate
+  # (codex PR-3T review). No public function here both builds cc launch
+  # params AND starts a PTY.
 
   require Logger
 
   alias Ezagent.PluginCc.Template.CcAgent
-
-  @spec ensure_pty_server(URI.t(), String.t(), map(), atom()) :: :ok | {:error, term()}
-  def ensure_pty_server(%URI{} = agent_uri, cwd, tmpl, compile_env)
-      when is_binary(cwd) and is_map(tmpl) do
-    with {:ok, params} <- build_pty_params(agent_uri, cwd, tmpl, compile_env),
-         {:ok, _pid} <- start_pty(agent_uri, params) do
-      :ok
-    end
-  end
 
   @doc false
   @spec build_pty_params(URI.t(), String.t(), map(), atom()) :: {:ok, map()} | {:error, term()}
@@ -132,24 +130,6 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
     CcAgent.auth_failure_signals()
     |> Enum.with_index()
     |> Enum.map(fn {sig, i} -> %{name: :"cc_auth_failure_#{i}", match: sig} end)
-  end
-
-  defp start_pty(agent_uri, params) do
-    case Ezagent.Domain.Pty.start(agent_uri, params) do
-      {:ok, pid} ->
-        {:ok, pid}
-
-      {:error, {:already_started, pid}} ->
-        {:ok, pid}
-
-      {:error, reason} ->
-        Logger.warning(
-          "cc.agent: PtyServer start failed for #{URI.to_string(agent_uri)}: " <>
-            inspect(reason)
-        )
-
-        {:error, {:pty_server_spawn_failed, reason}}
-    end
   end
 
   defp maybe_put_orchestrator_role_env(env, tmpl) when is_map(env) do
