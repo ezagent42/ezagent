@@ -4,7 +4,7 @@
 
 **Goal:** Make `Behavior.Publisher` a base behavior every session composes (P0), then make the Kind runtime *per-instance-behavior-set-aware* — persisting each instance's behavior set and routing every behavior enumeration + callback entry point through it so an out-of-set behavior can never run a callback, process a signal, run a cleanup hook, or create/mutate its slice, even when one Kind module registers a superset (P1).
 
-**Architecture:** A new core base behavior `Ezagent.Behavior.KindBase` (slice key `:kind_base`, `use Ezagent.Lifecycle`) snapshots the instance's behavior-module list at spawn into its persistent `:state` so it survives restart/reconcile via the existing `kind_snapshots` path. A new pure resolver `Ezagent.Kind.BehaviorSet` (a) computes the *effective instance set* (declared `behaviors_of/1` ∩ the persisted set, or the full declared list when no per-instance override exists — preserving today's two static Kinds), (b) classifies each `reads_siblings` entry `:required`/`:optional` against a slice-owner map and fails loud only on a missing *required* sibling. Every runtime call site that today calls `Ezagent.Kind.behaviors_of(kind_module)` or resolves dispatch by `{kind_module, action}` is re-pointed at the instance set; dispatch gains a membership gate that denies an out-of-set behavior with `{:error, :behavior_not_in_instance_set}`.
+**Architecture:** A new core base behavior `Ezagent.Behavior.KindBase` (slice key `:kind_base`, `use Ezagent.Lifecycle`) snapshots the instance's behavior-module list at spawn into its persistent `:state` so it survives restart/reconcile via the existing `kind_snapshots` path. A new pure resolver `Ezagent.Kind.BehaviorSet` exposes (a) `init_set/2` — the FIRST-spawn set from spawn args (`args[:behaviors]` ∩ declared) PLUS the always-on base behaviors (`KindBase` + `Ezagent.UniversalBehaviors.all()`), consumed by `init_fresh` so an out-of-set behavior NEVER runs `create`/`init_slice` nor persists a slice even on the very first spawn; (b) `effective_set/2` — the post-load set from the persisted `:kind_base` slice (∩ declared) + base behaviors, or the full declared list when no per-instance override exists (preserving today's two static Kinds); (c) a required/optional `reads_siblings` closure against a slice-owner map (fails loud only on a missing *required* sibling). Every runtime call site that today calls `Ezagent.Kind.behaviors_of(kind_module)` or resolves dispatch by `{kind_module, action}` is re-pointed at the instance set; dispatch gains a membership gate that denies an out-of-set behavior with `{:error, :behavior_not_in_instance_set}` while EXEMPTING universal behaviors (e.g. `Manage`), which are always reachable and gated only by the normal cap check.
 
 **Tech Stack:** Elixir 1.19 / OTP 27, umbrella (`apps/ezagent_core`, `apps/ezagent_domain_instance_message`, `apps/ezagent_domain_socialware`, `apps/ezagent_domain_external_mirror`), `use Ezagent.Lifecycle` behavior contract, `Ezagent.Kind.Server` (single GenServer host), `Ezagent.Kind.Snapshot` persistence, ExUnit. Run mix from the umbrella root with `MIX_ENV=test`.
 
@@ -29,7 +29,7 @@ P1's HARD INVARIANT is "every behavior enumeration + every callback entry point 
 | E11 | `build_detail/3` (operator UI introspection) | `apps/ezagent_domain_ui/lib/ezagent_domain_ui/auto_derive.ex:107` | display only | DEFERRED to P2 (see note) |
 
 Notes:
-- **E9 is the security-critical one.** Dispatch resolves a behavior via `Ezagent.BehaviorRegistry.lookup(kind_module, action)` (`runtime.ex:284-289`), which is keyed by `kind_module` — NOT by instance. Caps are also registered per `{kind_module, action}` (`Ezagent.CapabilityRegistry.register(kind, action, behavior)`, `capability_registry.ex:82`). So with one `SessionKind` carrying a superset, ANY instance could resolve+dispatch ANY registered action. P1 inserts an instance-set membership gate AFTER `lookup_behavior` and BEFORE `authz_check`.
+- **E8 + E9 are the two security-critical sites.** **E8 (`init_fresh`)** runs at the START of `load_with_fallback` (`snapshot.ex:70`) and its result is returned + persisted on first spawn (`snapshot.ex:111` → `Kind.Server.persist_initial_snapshot`), BEFORE any restart — so it must itself scope to the instance set (`BehaviorSet.init_set/2`), or an out-of-set behavior's `create`/`init_slice` runs and its slice persists on first spawn (codex CRITICAL). **E9 (dispatch)** resolves a behavior via `Ezagent.BehaviorRegistry.lookup(kind_module, action)` (`runtime.ex:284-289`), keyed by `kind_module` — NOT by instance — and FALLS BACK to `Ezagent.UniversalBehaviors.behavior_for_action/1` (`behavior_registry.ex:58`) for actions with no per-Kind registration (today: `Manage`'s `:delete`/`:reconfigure`). Caps are also registered per `{kind_module, action}` (`Ezagent.CapabilityRegistry.register(kind, action, behavior)`, `capability_registry.ex:82`). So with one `SessionKind` carrying a superset, ANY instance could resolve+dispatch ANY registered action. P1 inserts an instance-set membership gate AFTER `lookup_behavior` and BEFORE `authz_check` — gating NON-universal behaviors by instance-set membership while EXEMPTING `UniversalBehaviors.all()` (still cap-checked) so universal `Manage` is never wrongly denied (codex HIGH).
 - **E10** (`hosts_lifecycle?/1`) decides the create/activate marker semantics from the module's behavior list. It is metadata, not a callback gate. We re-point it at the instance set for correctness (a superset Kind would otherwise mark every instance as Lifecycle-hosting even when its instance set has no Lifecycle behavior). Verified by a parity assertion, not a security-denial test.
 - **E11** (`auto_derive.ex`) is operator-AdminLive *display* of a Kind's behaviors. It is the View surface, owned by **P2 (Unified View contract)**, not P1. Left untouched here; flagged so the orchestrator does not treat it as a P1 gap.
 
@@ -57,11 +57,11 @@ The slice-owner map lives as a single source of truth in `Ezagent.Kind.BehaviorS
 | `apps/ezagent_domain_socialware/test/ezagent/entity/socialware_session_publisher_test.exs` | Create | P0: assert `SocialwareSession` composes `:publisher`, subscribe_from works, slice changes emit publisher events. |
 | `apps/ezagent_core/lib/ezagent/behavior/kind_base.ex` | Create | P1: base behavior owning slice `:kind_base`; `create/1` snapshots the instance behavior-module list from spawn args; exposes no actions (data-only base). |
 | `apps/ezagent_core/test/ezagent/behavior/kind_base_test.exs` | Create | P1: assert the slice captures the behavior set and survives a restart round-trip. |
-| `apps/ezagent_core/lib/ezagent/kind/behavior_set.ex` | Create | P1: pure resolver — `effective_set/3` (instance set), slice-owner map, `resolve_closure/1` (required/optional fail-loud), `member?/2`. |
-| `apps/ezagent_core/test/ezagent/kind/behavior_set_test.exs` | Create | P1: unit tests for effective_set, closure (required fail / optional soft), member?. |
+| `apps/ezagent_core/lib/ezagent/kind/behavior_set.ex` | Create | P1: pure resolver — `base_behaviors/0` (KindBase + UniversalBehaviors.all), `init_set/2` (first-spawn set from args), `effective_set/2` (post-load instance set), slice-owner map, `resolve_closure/1` (required/optional fail-loud), `member?/2`. |
+| `apps/ezagent_core/test/ezagent/kind/behavior_set_test.exs` | Create | P1: unit tests for init_set (first-spawn scoping + universal base), effective_set, closure (required fail / optional soft), member?. |
 | `apps/ezagent_core/lib/ezagent/kind/server.ex` | Modify | P1: thread the instance set into state; re-point E1–E5 enumerations through it. |
-| `apps/ezagent_core/lib/ezagent/kind/snapshot.ex` | Modify | P1: re-point E6–E8 (init_fresh / prune / reconcile) through the instance set; KindBase always in fresh init. |
-| `apps/ezagent_core/lib/ezagent/kind/runtime.ex` | Modify | P1 (E9): instance-set membership gate after `lookup_behavior`, denying out-of-set behaviors. |
+| `apps/ezagent_core/lib/ezagent/kind/snapshot.ex` | Modify | P1: `init_fresh` scopes to `init_set/2` (first-spawn §3.1 guard — no out-of-set create/slice); prune/reconcile re-pointed through `effective_set/2`; KindBase always present via base behaviors. |
+| `apps/ezagent_core/lib/ezagent/kind/runtime.ex` | Modify | P1 (E9): instance-set membership gate after `lookup_behavior`, denying out-of-set behaviors; EXEMPTS `UniversalBehaviors.all()` (still cap-checked). |
 | `apps/ezagent_core/lib/ezagent/lifecycle.ex` | Modify | P1 (E10): `hosts_lifecycle?/2` instance-aware variant; keep `/1` for static callers. |
 | `apps/ezagent_core/test/ezagent/kind/instance_set_denial_test.exs` | Create | P1: the cross-entry-point denial suite (dispatch / slice-init / signal / terminate-destroy / on_ready / reconcile). |
 | `apps/ezagent_core/test/ezagent/kind/instance_set_support.ex` | Create | P1: a test-support `SupersetSessionKind` whose module registers `[Chat, Surface, …]` but is spawned with a chat-only instance set, plus a probe behavior with observable signal/terminate. |
@@ -351,7 +351,7 @@ defmodule Ezagent.Behavior.KindBase do
   instance's set (not the host Kind module's static superset).
 
   Data-only: it declares no actions. The captured set is read via
-  `behaviors_in_slice/1` by `Ezagent.Kind.BehaviorSet.effective_set/3`.
+  `behaviors_in_slice/1` by `Ezagent.Kind.BehaviorSet.effective_set/2`.
 
   The set is snapshotted via the standard `kind_snapshots` path, so it
   survives restart/reconcile exactly like any other slice.
@@ -446,13 +446,20 @@ git add apps/ezagent_core/test/ezagent/behavior/kind_base_test.exs
 git commit -m "test(kind): P1 — KindBase instance set survives snapshot round-trip"
 ```
 
-### Task 6: `BehaviorSet.effective_set/3` (failing test first)
+### Task 6: `BehaviorSet.init_set/2` + `effective_set/2` + `member?/2` (failing test first)
 
 **Files:**
 - Create: `apps/ezagent_core/lib/ezagent/kind/behavior_set.ex`
 - Test: `apps/ezagent_core/test/ezagent/kind/behavior_set_test.exs`
 
-The effective set = the host module's declared `behaviors_of/1` intersected with the persisted set when a per-instance override exists; otherwise the full declared list (preserving today's two static Kinds, which spawn with no `:behaviors` arg → empty captured set → fall back to declared list).
+This task introduces THREE pure functions plus a `base_behaviors/0` helper:
+
+- `init_set/2` — computes the FIRST-spawn set from the SPAWN ARGS (`args[:behaviors]` ∩ declared), PLUS the always-on `base_behaviors/0`. Used by `init_fresh/2` (Task 9) so an out-of-set behavior's `create`/`init_slice` never runs and its slice is never created/persisted at first spawn (SPEC §3.1, codex CRITICAL finding 1).
+- `effective_set/2` — computes the POST-load set from the persisted `:kind_base` slice (captured ∩ declared), PLUS `base_behaviors/0`. Used by every runtime enumeration after load (Tasks 9–14).
+- `member?/2` — set membership for the dispatch gate (Task 10).
+- `base_behaviors/0` — `KindBase` + every `Ezagent.UniversalBehaviors.all/0` entry (today `Manage`); these are ALWAYS in the set so the universal `Manage` actions (`delete`/`reconfigure`) stay reachable on every instance even though `Manage` is not in any Kind's `behaviors/0` (SPEC §3.1 universal-behavior fallback policy, codex HIGH finding 2).
+
+`init_set` and `effective_set` are kept consistent by appending the same `base_behaviors/0` at both ends: whatever `init_set` materializes at spawn is exactly what `effective_set` re-derives after reload. When the instance carries no spawn-args subset (today's two static Kinds), both fall back to the full declared list (+ base behaviors), preserving current runtime exactly.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -474,18 +481,24 @@ defmodule Ezagent.Kind.BehaviorSetTest do
     def supervisor, do: Ezagent.Kind.Server
   end
 
-  test "no captured set → full declared list (static-Kind preservation)" do
+  test "no captured set → full declared list + base behaviors (static-Kind preservation)" do
     slice_state = %{kind_base: %{state: %{behaviors: []}, transients: %{}}}
+
+    # No spawn-args subset → every declared behavior stays, in declaration
+    # order, then the always-on base behaviors (Manage from
+    # UniversalBehaviors; KindBase already declared so deduped).
     assert BehaviorSet.effective_set(SupersetKind, slice_state) ==
-             Ezagent.Kind.behaviors_of(SupersetKind)
+             Ezagent.Kind.behaviors_of(SupersetKind) ++ [Ezagent.Behavior.Manage]
   end
 
-  test "captured subset → declared ∩ captured, declaration order preserved" do
+  test "captured subset → (declared ∩ captured) + base behaviors, declaration order preserved" do
     captured = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
     slice_state = %{kind_base: %{state: %{behaviors: captured}, transients: %{}}}
 
+    # Surface is dropped (out of captured set); Chat + KindBase kept in
+    # declaration order; Manage appended as a universal base behavior.
     assert BehaviorSet.effective_set(SupersetKind, slice_state) ==
-             [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
+             [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase, Ezagent.Behavior.Manage]
 
     refute Ezagent.Behavior.Surface in BehaviorSet.effective_set(SupersetKind, slice_state)
   end
@@ -497,6 +510,49 @@ defmodule Ezagent.Kind.BehaviorSetTest do
     assert BehaviorSet.member?(Ezagent.Behavior.Chat, BehaviorSet.effective_set(SupersetKind, slice_state))
     refute BehaviorSet.member?(Ezagent.Behavior.Surface, BehaviorSet.effective_set(SupersetKind, slice_state))
   end
+
+  describe "init_set/2 (first-spawn scoping, BEFORE any slice exists)" do
+    test "args :behaviors subset → declared ∩ subset, PLUS the base behaviors" do
+      # A chat-only spawn on the superset Kind. init_set is what `init_fresh`
+      # enumerates on FIRST spawn (no :kind_base slice yet), so Surface's
+      # create/init_slice must NEVER appear here.
+      set = BehaviorSet.init_set(SupersetKind, %{behaviors: [Ezagent.Behavior.Chat]})
+
+      assert Ezagent.Behavior.Chat in set
+      # base behaviors are always present so KindBase can persist the set and
+      # Manage stays reachable (universal-by-construction).
+      assert Ezagent.Behavior.KindBase in set
+      assert Ezagent.Behavior.Manage in set
+      # out-of-set declared behavior is EXCLUDED — its create/init_slice must
+      # not run on first spawn.
+      refute Ezagent.Behavior.Surface in set
+    end
+
+    test "no :behaviors arg → full declared list, PLUS base behaviors (static-Kind preservation)" do
+      set = BehaviorSet.init_set(SupersetKind, %{})
+      declared = Ezagent.Kind.behaviors_of(SupersetKind)
+
+      assert Enum.all?(declared, &(&1 in set))
+      assert Ezagent.Behavior.KindBase in set
+      assert Ezagent.Behavior.Manage in set
+    end
+
+    test "args :behaviors are intersected with declared (an undeclared module is ignored)" do
+      set =
+        BehaviorSet.init_set(SupersetKind, %{
+          behaviors: [Ezagent.Behavior.Chat, Ezagent.Behavior.ApiKeys]
+        })
+
+      assert Ezagent.Behavior.Chat in set
+      # ApiKeys is NOT declared by SupersetKind → must not be admitted.
+      refute Ezagent.Behavior.ApiKeys in set
+    end
+
+    test "base behaviors with their own slice are NOT double-counted" do
+      set = BehaviorSet.init_set(SupersetKind, %{behaviors: [Ezagent.Behavior.KindBase]})
+      assert Enum.count(set, &(&1 == Ezagent.Behavior.KindBase)) == 1
+    end
+  end
 end
 ```
 
@@ -505,7 +561,7 @@ end
 Run: `MIX_ENV=test mix test apps/ezagent_core/test/ezagent/kind/behavior_set_test.exs`
 Expected: FAIL — `Ezagent.Kind.BehaviorSet` undefined.
 
-- [ ] **Step 3: Write the resolver (effective_set + member? only for this task)**
+- [ ] **Step 3: Write the resolver (base_behaviors + init_set + effective_set + member? for this task)**
 
 ```elixir
 defmodule Ezagent.Kind.BehaviorSet do
@@ -513,17 +569,72 @@ defmodule Ezagent.Kind.BehaviorSet do
   Per-instance behavior-set resolution + required/optional sibling
   closure for the unified socialware substrate (SPEC §3.1).
 
-  `effective_set/2` is the single function every runtime behavior
-  enumeration calls instead of `Ezagent.Kind.behaviors_of/1`. It returns
-  the host Kind module's declared behaviors INTERSECTED with the set the
-  instance was spawned with (captured in the `:kind_base` slice), in the
-  module's declaration order. When the instance captured no set (the two
-  legacy static Kinds, which spawn without a `:behaviors` arg), it
-  returns the full declared list — so existing Kinds are byte-for-byte
-  unchanged.
+  Two entry points compute the instance set at different lifecycle moments:
+
+  * `init_set/2` is called by `Snapshot.init_fresh/2` at FIRST spawn,
+    BEFORE any slice (and thus any `:kind_base` slice) exists. It derives
+    the set from the SPAWN ARGS (`args[:behaviors]`), intersected with the
+    declared list, PLUS the always-on base behaviors (`base_behaviors/0`).
+    `init_fresh` enumerates ONLY this set, so an out-of-set behavior's
+    `create`/`init_slice` NEVER runs and its slice is NEVER created or
+    persisted on first spawn (SPEC §3.1 — no "prune on next load" reliance
+    for the security property).
+  * `effective_set/2` is the single function every POST-LOAD runtime
+    behavior enumeration calls instead of `Ezagent.Kind.behaviors_of/1`. It
+    returns the host Kind module's declared behaviors INTERSECTED with the
+    set the instance was spawned with (now read back from the persisted
+    `:kind_base` slice), in the module's declaration order. When the
+    instance captured no set (the two legacy static Kinds, which spawn
+    without a `:behaviors` arg), it returns the full declared list — so
+    existing Kinds are byte-for-byte unchanged.
+
+  Both entry points include `base_behaviors/0` so the two are consistent:
+  whatever `init_set` materializes at spawn is exactly what `effective_set`
+  re-derives after reload (KindBase persisted the spawn-args subset; the
+  base behaviors are re-added at both ends).
   """
 
   alias Ezagent.Behavior.KindBase
+
+  # SPEC §3.1 "universal-behavior fallback policy" — behaviors that are
+  # ALWAYS in the instance set regardless of the spawn-args subset:
+  #
+  #   * `KindBase` — owns the `:kind_base` slice that PERSISTS the set; the
+  #     instance cannot record its own set without it.
+  #   * every `Ezagent.UniversalBehaviors.all/0` entry (today: `Manage`) —
+  #     these resolve for EVERY Kind by construction (`BehaviorRegistry`
+  #     falls back to them on a per-Kind miss) and are intentionally NOT in
+  #     any Kind's `behaviors/0`. They must stay reachable on every instance
+  #     so `manage.delete`/`manage.reconfigure` are never denied as
+  #     out-of-set (E9 finding). They are exempt from the membership gate
+  #     (Task 10) AND always part of the init/effective set here.
+  @doc "Behaviors always present on every instance (KindBase + UniversalBehaviors.all/0)."
+  @spec base_behaviors() :: [module()]
+  def base_behaviors do
+    Enum.uniq([KindBase | Ezagent.UniversalBehaviors.all()])
+  end
+
+  @doc """
+  The set `init_fresh/2` enumerates at FIRST spawn, computed from spawn
+  args (no slice state yet). Declaration order preserved; base behaviors
+  appended (deduped).
+  """
+  @spec init_set(module(), map()) :: [module()]
+  def init_set(kind_module, args) when is_atom(kind_module) and is_map(args) do
+    declared = Ezagent.Kind.behaviors_of(kind_module)
+
+    chosen =
+      case Map.get(args, :behaviors, []) do
+        [] ->
+          declared
+
+        list when is_list(list) ->
+          requested = MapSet.new(list)
+          Enum.filter(declared, &MapSet.member?(requested, &1))
+      end
+
+    Enum.uniq(chosen ++ base_behaviors())
+  end
 
   @doc "The effective behavior set for this instance, declaration order preserved."
   @spec effective_set(module(), %{atom() => map()}) :: [module()]
@@ -531,14 +642,17 @@ defmodule Ezagent.Kind.BehaviorSet do
     declared = Ezagent.Kind.behaviors_of(kind_module)
     captured = KindBase.behaviors_in_slice(Map.get(slice_state, :kind_base))
 
-    case captured do
-      [] ->
-        declared
+    chosen =
+      case captured do
+        [] ->
+          declared
 
-      list when is_list(list) ->
-        captured_set = MapSet.new(list)
-        Enum.filter(declared, &MapSet.member?(captured_set, &1))
-    end
+        list when is_list(list) ->
+          captured_set = MapSet.new(list)
+          Enum.filter(declared, &MapSet.member?(captured_set, &1))
+      end
+
+    Enum.uniq(chosen ++ base_behaviors())
   end
 
   @doc "Is `behavior` a member of `effective_set`?"
@@ -559,7 +673,7 @@ Expected: PASS.
 ```bash
 git add apps/ezagent_core/lib/ezagent/kind/behavior_set.ex \
         apps/ezagent_core/test/ezagent/kind/behavior_set_test.exs
-git commit -m "feat(kind): P1 — BehaviorSet.effective_set resolves the per-instance set"
+git commit -m "feat(kind): P1 — BehaviorSet.init_set/effective_set/member? resolve the per-instance set (+ universal base behaviors)"
 ```
 
 ### Task 7: Required/optional sibling closure resolver (failing test first)
@@ -761,14 +875,18 @@ git add apps/ezagent_core/test/ezagent/kind/instance_set_support.ex
 git commit -m "test(kind): P1 — superset Kind + observable probe behavior support"
 ```
 
-### Task 9 (E8 + E6 + E7): Snapshot init/prune/reconcile through the instance set
+### Task 9 (E8 + E6 + E7): Snapshot init/prune/reconcile through the instance set — FIRST-spawn scoped
 
 **Files:**
 - Modify: `apps/ezagent_core/lib/ezagent/kind/snapshot.ex:135-144` (`prune_orphan_slices`), `:162-174` (`reconcile_after_load_behaviors`), `:532-538` (`init_fresh`).
 
-KindBase must ALWAYS be in fresh init (so the captured set is written even when the spawn-args set is the full list). But once an instance set is captured, prune/reconcile must operate on the effective set. Because `init_fresh` runs BEFORE the snapshot is loaded (no slice state yet), it uses the *declared* list PLUS KindBase. Prune/reconcile run AFTER load (slice state present), so they use `effective_set`.
+**The security-critical fix (codex CRITICAL finding 1).** `init_fresh/2` runs at the very START of `load_with_fallback/3` (`snapshot.ex:70`) — and on a `:not_found` first spawn its result is returned directly (`snapshot.ex:111`) and persisted by `Kind.Server.persist_initial_snapshot/3` BEFORE any restart. So if `init_fresh` enumerated the module's *declared superset*, a first spawn of a chat-only instance on a superset Kind would run Surface/Probe `create`/`init_slice` AND persist `:surface`/`:probe` slices — violating SPEC §3.1 ("an out-of-set behavior must never run a callback nor create its slice, even if the Kind module registers a superset"). The earlier "materialize all, prune on NEXT load" approach is therefore WRONG for the security property.
 
-- [ ] **Step 1: Write the failing test**
+The fix: `init_fresh/2` enumerates **only `BehaviorSet.init_set(kind_module, args)`** — the spawn-args subset (∩ declared) PLUS the always-on base behaviors. KindBase is in `base_behaviors/0`, so the captured set is always written; the universal `Manage` is always present; out-of-set behaviors NEVER appear, so neither their `create`/`init_slice` runs nor their slice is created or persisted — even on the very first spawn with no prior snapshot.
+
+`prune_orphan_slices` and `reconcile_after_load_behaviors` run AFTER the snapshot load merged `:kind_base` into state, so they use `effective_set/2` (which reads the persisted set back). They are a defense-in-depth + cross-version-migration layer (drop a slice whose behavior left the set between two boots), NOT the primary first-spawn guard — which is `init_fresh` itself.
+
+- [ ] **Step 1: Write the failing tests (first-spawn denial + reload prune)**
 
 ```elixir
 # in apps/ezagent_core/test/ezagent/kind/instance_set_denial_test.exs (created here, extended in Task 14)
@@ -784,38 +902,67 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
     :ok
   end
 
-  test "slice-init: an out-of-set behavior does NOT init its slice (E8)" do
+  test "FIRST spawn: out-of-set behavior NEVER runs create/init_slice and NEVER creates its slice (E8, no prior snapshot)" do
+    uri = Ezagent.URI.session(:system, :default, :"isd-firstinit-#{System.unique_integer([:positive])}")
+    chat_only = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
+
+    # No save_now first — this is the cold, never-before-seen instance.
+    # init_fresh must scope to init_set(args) so ProbeBehavior is absent
+    # from the materialized state BEFORE any restart/prune.
+    fresh = Ezagent.Kind.Snapshot.load_or_init(uri, SupersetSessionKind, %{behaviors: chat_only})
+
+    # ProbeBehavior's create/init_slice must NOT have run (no :probe slice,
+    # and its `notify(:init_slice)` never fired).
+    refute Map.has_key?(fresh, :probe)
+    refute_received {:probe, :init_slice}
+    # Surface is out of set → no :surface slice on first spawn.
+    refute Map.has_key?(fresh, :surface)
+    # Chat (in set) IS present; KindBase (base behavior) carries the set.
+    assert Map.has_key?(fresh, :chat)
+    assert Map.has_key?(fresh, :kind_base)
+    assert Ezagent.Behavior.KindBase.behaviors_in_slice(fresh[:kind_base]) == chat_only
+  end
+
+  test "reload prune: a slice for a now-out-of-set behavior is dropped on load (E6/E7 defense-in-depth)" do
     uri = Ezagent.URI.session(:system, :default, :"isd-init-#{System.unique_integer([:positive])}")
     chat_only = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
 
-    # First materialize the captured set (save_now), then reload.
+    # Materialize the captured set (save_now), then reload.
     fresh = Ezagent.Kind.Snapshot.load_or_init(uri, SupersetSessionKind, %{behaviors: chat_only})
     :ok = Ezagent.Kind.Snapshot.save_now(uri, SupersetSessionKind, fresh)
 
     reloaded = Ezagent.Kind.Snapshot.load_or_init(uri, SupersetSessionKind, %{behaviors: []})
 
-    # ProbeBehavior is out of the instance set → its :probe slice must be pruned.
     refute Map.has_key?(reloaded, :probe)
-    # Surface is also out of set → no :surface slice.
     refute Map.has_key?(reloaded, :surface)
-    # Chat (in set) IS present.
     assert Map.has_key?(reloaded, :chat)
+    assert Map.has_key?(reloaded, :kind_base)
   end
 end
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Run tests to verify they fail**
 
-Run: `MIX_ENV=test mix test apps/ezagent_core/test/ezagent/kind/instance_set_denial_test.exs:LINE`
-Expected: FAIL — `prune_orphan_slices` currently prunes against the MODULE's declared list (keeps `:surface` and `:probe`).
+Run: `MIX_ENV=test mix test apps/ezagent_core/test/ezagent/kind/instance_set_denial_test.exs`
+Expected: FAIL — the first-spawn test fails because today's `init_fresh` enumerates the declared superset, so `:probe`/`:surface` slices are created and `notify(:init_slice)` fires. The reload-prune test fails because `prune_orphan_slices` prunes against the MODULE's declared list (keeps `:surface`/`:probe`).
 
-- [ ] **Step 3: Re-point prune/reconcile at the effective set; keep init_fresh declared+KindBase**
+- [ ] **Step 3: Scope init_fresh to init_set; re-point prune/reconcile at the effective set**
 
-In `prune_orphan_slices/2` (`snapshot.ex:135`), change the declared-set computation to the effective set:
+In `init_fresh/2` (`snapshot.ex:532`), enumerate ONLY the first-spawn instance set (spawn-args subset ∩ declared, + base behaviors). This is the primary §3.1 guard — out-of-set behaviors are never materialized, even on first spawn:
+
+```elixir
+  defp init_fresh(kind_module, args) do
+    Ezagent.Kind.BehaviorSet.init_set(kind_module, args)
+    |> Enum.map(fn behavior -> {behavior.state_slice(), behavior.init_slice(args)} end)
+    |> Map.new()
+  end
+```
+
+In `prune_orphan_slices/2` (`snapshot.ex:135`), change the kept-set computation to the effective set (defense-in-depth on reload):
 
 ```elixir
   defp prune_orphan_slices(state, kind_module) do
-    declared =
+    kept =
       Ezagent.Kind.BehaviorSet.effective_set(kind_module, state)
       |> Enum.map(& &1.state_slice())
       |> MapSet.new()
@@ -823,7 +970,7 @@ In `prune_orphan_slices/2` (`snapshot.ex:135`), change the declared-set computat
       |> MapSet.put(:kind_base)
 
     state
-    |> Enum.filter(fn {key, _} -> MapSet.member?(declared, key) end)
+    |> Enum.filter(fn {key, _} -> MapSet.member?(kept, key) end)
     |> Map.new()
   end
 ```
@@ -845,49 +992,42 @@ In `reconcile_after_load_behaviors/3` (`snapshot.ex:163`), iterate the effective
   end
 ```
 
-In `init_fresh/2` (`snapshot.ex:532`), ensure KindBase is always initialized so the captured set lands even before the first snapshot exists:
+NOTE TO IMPLEMENTER: `init_set/2` works at first spawn with NO slice state (it reads `args[:behaviors]`, not `:kind_base`). `effective_set/2` works after load (it reads the persisted `:kind_base`). Both append the same `base_behaviors/0`, so the first-spawn materialized set and the post-reload set are identical for a given spawn-args subset — the prune step is therefore a no-op on the happy path and only drops slices when the *declared* set shrinks across a code deploy (a real orphan). KindBase is always present in both, so `:kind_base` is never pruned and the captured set always survives.
 
-```elixir
-  defp init_fresh(kind_module, args) do
-    (Ezagent.Kind.behaviors_of(kind_module) ++ [Ezagent.Behavior.KindBase])
-    |> Enum.uniq()
-    |> Enum.map(fn behavior -> {behavior.state_slice(), behavior.init_slice(args)} end)
-    |> Map.new()
-  end
-```
-
-NOTE TO IMPLEMENTER: `effective_set/2` reads `:kind_base` from the *loaded* state, which is present by the time prune/reconcile run (load merged it). For the very first `init_fresh` there's no captured set yet, so init uses the declared list + KindBase — correct: a fresh instance materializes ALL declared slices, then on the NEXT load (after the set is captured) prune drops the out-of-set slices. The denial test above exercises exactly that two-load sequence.
-
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Run tests to verify they pass**
 
 Run: `MIX_ENV=test mix test apps/ezagent_core/test/ezagent/kind/instance_set_denial_test.exs`
-Expected: PASS.
+Expected: PASS (both the first-spawn denial test and the reload-prune test).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add apps/ezagent_core/lib/ezagent/kind/snapshot.ex \
         apps/ezagent_core/test/ezagent/kind/instance_set_denial_test.exs
-git commit -m "feat(kind): P1 (E6/E7/E8) — snapshot prune/reconcile use the instance set; KindBase always init'd"
+git commit -m "feat(kind): P1 (E6/E7/E8) — init_fresh scopes to init_set at FIRST spawn (no out-of-set create/slice); prune/reconcile use the effective set"
 ```
 
-### Task 10 (E9): Dispatch + caps gate through the instance set
+### Task 10 (E9): Dispatch + caps gate through the instance set — with universal-behavior exemption
 
 **Files:**
 - Modify: `apps/ezagent_core/lib/ezagent/kind/runtime.ex:172-189` (insert a membership gate in the `with` chain).
 
-- [ ] **Step 1: Write the failing test**
+**The exemption (codex HIGH finding 2).** `lookup_behavior/2` falls back to `Ezagent.UniversalBehaviors.behavior_for_action/1` (`behavior_registry.ex:58`) for any `{kind, action}` with no per-Kind registration. `UniversalBehaviors.all/0` = `[Ezagent.Behavior.Manage]` — intentionally NOT in any Kind's `behaviors/0` (it resolves for every Kind by construction, #533 §3.4). So `manage.delete`/`manage.reconfigure` resolve to `Manage`, which would NOT be a member of any per-Kind instance set — and a naive membership gate would wrongly deny them as `:behavior_not_in_instance_set`. The gate must therefore **exempt every `UniversalBehaviors.all/0` entry from the membership check** (they are always reachable on every instance) while STILL leaving the normal cap check (`authz_check`) to gate them. Only NON-universal behaviors are subject to instance-set membership.
+
+NOTE: `base_behaviors/0` already folds `UniversalBehaviors.all()` into `effective_set/2`, so membership alone would pass for `Manage` today. The explicit exemption below is the load-bearing contract per SPEC §3.1's "universal-behavior fallback policy" — it makes the policy robust independent of whether `base_behaviors/0` happens to include them, and self-documents WHY `Manage` bypasses the gate. Do NOT rely on the implicit `base_behaviors/0` inclusion alone.
+
+- [ ] **Step 1: Write the failing tests (deny non-universal, allow universal)**
 
 ```elixir
 # append to instance_set_denial_test.exs
-  test "dispatch: an out-of-set behavior action is DENIED (E9)" do
+  test "dispatch: a NON-universal out-of-set behavior action is DENIED (E9)" do
     uri = Ezagent.URI.session(:system, :default, :"isd-disp-#{System.unique_integer([:positive])}")
     chat_only = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
 
     {:ok, _pid} = Ezagent.Kind.spawn(SupersetSessionKind, %{uri: uri, behaviors: chat_only})
 
     # ProbeBehavior.:poke is registered on SupersetSessionKind (module superset),
-    # but this instance's set is chat-only → must be denied.
+    # but this instance's set is chat-only and ProbeBehavior is NOT universal → denied.
     target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=probe.poke")
 
     result =
@@ -903,17 +1043,42 @@ git commit -m "feat(kind): P1 (E6/E7/E8) — snapshot prune/reconcile use the in
     refute_received {:probe, :handle_poke}
   end
 
+  test "dispatch: the UNIVERSAL Manage behavior still dispatches on a subset instance (E9 exemption)" do
+    uri = Ezagent.URI.session(:system, :default, :"isd-mng-#{System.unique_integer([:positive])}")
+    chat_only = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
+
+    {:ok, _pid} = Ezagent.Kind.spawn(SupersetSessionKind, %{uri: uri, behaviors: chat_only})
+
+    # Manage is universal-by-construction (not in any Kind's behaviors/0). It
+    # resolves via the BehaviorRegistry universal fallback. The membership gate
+    # must EXEMPT it — so dispatch reaches authz_check, NOT the
+    # :behavior_not_in_instance_set denial.
+    target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=manage.delete")
+
+    result =
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        target: target,
+        mode: :call,
+        args: %{},
+        ctx: %{caller: Ezagent.Entity.User.admin_uri(), caps: admin_caps(), reply: :ignore}
+      })
+
+    # The exact success/error shape is owned by Manage + authz; the ONLY thing
+    # this test asserts is that the instance-set gate did NOT short-circuit it.
+    refute match?({:error, :behavior_not_in_instance_set}, result)
+  end
+
   defp admin_caps, do: Ezagent.SystemPrincipal.caps("system://bootstrap")
 ```
 
-NOTE TO IMPLEMENTER: bind `admin_caps/0` to whatever the existing dispatch tests in `apps/ezagent_core/test` use to construct admin caps; the helper above is the documented bootstrap shape (`kind.ex:288`).
+NOTE TO IMPLEMENTER: bind `admin_caps/0` to whatever the existing dispatch tests in `apps/ezagent_core/test` use to construct admin caps; the helper above is the documented bootstrap shape (`kind.ex:288`). For the Manage test, `admin_caps()` must be a principal that holds the `Manage`/`:delete` cap for this instance — read an existing `manage.delete` dispatch test (e.g. `apps/ezagent_domain_instance_message/test/integration/manage_behavior_test.exs`) for the exact cap shape; if the bootstrap caps don't cover `manage.delete`, assert on the gate by checking the result is NOT `:behavior_not_in_instance_set` (an `:unauthorized` from authz still proves the gate let it through, which is the property under test) — the `refute match?(...)` above is written to allow exactly that.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Run tests to verify they fail**
 
-Run: `MIX_ENV=test mix test apps/ezagent_core/test/ezagent/kind/instance_set_denial_test.exs:LINE`
-Expected: FAIL — currently `:poke` resolves via the registry (keyed by module) and runs, returning `:ok`.
+Run: `MIX_ENV=test mix test apps/ezagent_core/test/ezagent/kind/instance_set_denial_test.exs`
+Expected: the NON-universal test FAILS — currently `:poke` resolves via the registry (module-keyed) and runs, returning `:ok` (no gate yet). The Manage exemption test passes trivially today (no gate), but is the regression that locks the exemption once the gate exists.
 
-- [ ] **Step 3: Insert the instance-set membership gate**
+- [ ] **Step 3: Insert the instance-set membership gate (with universal exemption)**
 
 In `handle_dispatch/4` (`runtime.ex:172`), add a gate immediately after `lookup_behavior` and before `authz_check`. The `with` chain becomes:
 
@@ -929,37 +1094,49 @@ Add the private gate:
 
 ```elixir
   # P1 (SPEC §3.1, E9) — even though the BehaviorRegistry resolves an
-  # action by {kind_module, action} (module-keyed), the behavior must be
-  # in THIS INSTANCE's effective set to act. A chat instance on a
+  # action by {kind_module, action} (module-keyed), a NON-universal behavior
+  # must be in THIS INSTANCE's effective set to act. A chat instance on a
   # superset SessionKind cannot dispatch a Surface/ProbeBehavior action.
+  #
+  # Universal-behavior fallback policy (SPEC §3.1): behaviors in
+  # `Ezagent.UniversalBehaviors.all/0` (today `Ezagent.Behavior.Manage`)
+  # resolve for EVERY Kind by construction and are intentionally NOT in any
+  # Kind's `behaviors/0`. They are ALWAYS reachable, so the membership gate
+  # EXEMPTS them — the subsequent `authz_check` still cap-gates them.
   defp instance_set_gate(behavior_module, kind_module, state) do
-    effective = Ezagent.Kind.BehaviorSet.effective_set(kind_module, state)
+    cond do
+      behavior_module in Ezagent.UniversalBehaviors.all() ->
+        :ok
 
-    if Ezagent.Kind.BehaviorSet.member?(behavior_module, effective) do
-      :ok
-    else
-      :telemetry.execute([:ezagent, :authz, :denied], %{}, %{
-        kind_module: kind_module,
-        behavior_module: behavior_module,
-        reason: :behavior_not_in_instance_set
-      })
+      Ezagent.Kind.BehaviorSet.member?(
+        behavior_module,
+        Ezagent.Kind.BehaviorSet.effective_set(kind_module, state)
+      ) ->
+        :ok
 
-      {:error, :behavior_not_in_instance_set}
+      true ->
+        :telemetry.execute([:ezagent, :authz, :denied], %{}, %{
+          kind_module: kind_module,
+          behavior_module: behavior_module,
+          reason: :behavior_not_in_instance_set
+        })
+
+        {:error, :behavior_not_in_instance_set}
     end
   end
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Run tests to verify they pass**
 
 Run: `MIX_ENV=test mix test apps/ezagent_core/test/ezagent/kind/instance_set_denial_test.exs`
-Expected: PASS.
+Expected: PASS — the non-universal `:poke` is denied; `manage.delete` is NOT denied by the gate (reaches authz).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add apps/ezagent_core/lib/ezagent/kind/runtime.ex \
         apps/ezagent_core/test/ezagent/kind/instance_set_denial_test.exs
-git commit -m "feat(kind): P1 (E9) — dispatch denies out-of-instance-set behaviors"
+git commit -m "feat(kind): P1 (E9) — dispatch denies out-of-set behaviors; exempts universal Manage"
 ```
 
 ### Task 11 (E4): Mailbox `handle_signal` path through the instance set
@@ -1106,7 +1283,7 @@ git commit -m "feat(kind): P1 (E3/E5) — terminate + destroy hooks use the inst
   end
 ```
 
-NOTE TO IMPLEMENTER: `init_slice` for ProbeBehavior runs in `init_fresh` ONLY on the FIRST load (before the set is captured) — see Task 9's two-load note. To make the `refute_received {:probe, :init_slice}` assertion deterministic, register the probe pid AFTER the first materializing load, OR materialize the captured set via `save_now` in setup before `spawn` (so spawn's `init/1` load already sees the captured set and prunes ProbeBehavior). Use the save_now-first pattern from Task 9's E8 test for determinism.
+NOTE TO IMPLEMENTER: after the Task 9 fix, `init_fresh` enumerates ONLY `BehaviorSet.init_set/2` (the spawn-args subset + base behaviors), so ProbeBehavior's `init_slice`/`create` NEVER runs — even on this FIRST spawn with no prior snapshot. The `refute_received {:probe, :init_slice}` assertion is therefore deterministic with no save_now-first dance: the probe pid is registered in `setup` (before `spawn`) and the in-line spawn here is the instance's only load. (This is the runtime counterpart of Task 9's first-spawn denial test — same guarantee, exercised through the live `Kind.spawn` → `Kind.Server.init/1` path.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1139,6 +1316,8 @@ git commit -m "feat(kind): P1 (E1/E2) — post_init + on_ready use the instance 
 - Read first: `apps/ezagent_core/lib/ezagent/kind/server.ex:148-154` (the `init/1` caller of `hosts_lifecycle?/1`).
 
 `init/1` calls `hosts_lifecycle?(kind_module)` to set `create_freshness`. With a superset Kind, an instance whose set has no Lifecycle behavior would be mis-classified. Add an arity-2 variant taking the slice_state; keep `/1` for callers without slice context.
+
+NOTE ON BASE BEHAVIORS: `effective_set/2` always appends `base_behaviors/0` = `KindBase` + `UniversalBehaviors.all()` (`Manage`). BOTH `use Ezagent.Lifecycle`, so they export `__ezagent_lifecycle_destroy__/3`. Therefore `hosts_lifecycle?/2` returns `true` for ANY composed instance — which is correct: every instance carries KindBase (a Lifecycle behavior), so every instance genuinely hosts a Lifecycle and has the create/activate marker semantics. This is not a mis-classification; it is the consequence of KindBase being a universal base. The arity-2 variant exists so the metadata is computed from the instance set (not the raw module list) for symmetry with every other E1–E9 entry point, not because a real instance could ever be non-Lifecycle.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1211,47 +1390,143 @@ git add apps/ezagent_core/lib/ezagent/lifecycle.ex apps/ezagent_core/lib/ezagent
 git commit -m "feat(kind): P1 (E10) — hosts_lifecycle? is instance-set-aware"
 ```
 
-### Task 15: Static-Kind parity — chat Session unchanged at runtime under the new path
+### Task 15: Static-Kind parity — chat Session unchanged at runtime under the new path (REAL chat send + join)
 
 **Files:**
 - Test: `apps/ezagent_domain_instance_message/test/ezagent_domain_instance_message/session_instance_set_test.exs`
+- Read first: `apps/ezagent_domain_instance_message/test/integration/chat_routing_test.exs` — this task's chat send + join flow is copied/adapted from it (the live-dispatch path through the boot-time `session://system/default/main` Session).
 
-Proves the two legacy Kinds (which spawn without a `:behaviors` arg → empty captured set → declared-list fallback) behave identically: all declared behaviors still init, dispatch, and run their hooks.
+Proves the two legacy Kinds (which spawn without a `:behaviors` arg → empty captured set → declared-list fallback) behave identically: the effective set is the full declared list (+ universal base behaviors), and a REAL `chat.send` + `chat.join` round-trip through `Ezagent.Invocation.dispatch` (the same path the new instance-set gate sits on) is unchanged. This is the behavior-preservation gate for the static Kind — it must EXERCISE chat, not assert a placeholder.
 
-- [ ] **Step 1: Write the test**
+- [ ] **Step 1: Write the test (real dispatch flow — no placeholders)**
+
+The second test is adapted directly from `chat_routing_test.exs` (`use EzagentCore.DataCase`, the idempotent `SessionCreator.create_session` setup, the bootstrap caps, the `chat.join` then `chat.send` dispatch, and the `:chat_message` broadcast + `MessageStore` assertions). It joins a transient member, sends a message, and asserts BOTH the session-level broadcast and the slice mutation landed — proving dispatch + join are unchanged under the instance-set path.
 
 ```elixir
 defmodule Ezagent.SessionInstanceSetTest do
-  use ExUnit.Case, async: false
+  # Non-async + EzagentCore.DataCase: shares the live boot-time Session
+  # GenServer + EzagentCore.Repo (the P6 drain-live-kinds teardown applies),
+  # mirroring chat_routing_test.exs which drives the same Session.
+  use EzagentCore.DataCase, async: false
 
-  test "chat Session's effective set equals its full declared list (no :behaviors arg)" do
-    slice_state = %{}  # no :kind_base captured → fallback
-    assert Ezagent.Kind.BehaviorSet.effective_set(Ezagent.Entity.Session, slice_state) ==
-             Ezagent.Kind.behaviors_of(Ezagent.Entity.Session)
+  alias Ezagent.{Invocation, KindRegistry, Message, MessageStore}
+  alias Ezagent.Behavior.Chat
+  alias Ezagent.Entity.{Session, User}
+
+  setup do
+    # session://system/default/main is a DynamicSupervisor child spawned once
+    # at chat-app boot; ensure it via the idempotent facade (adopts the live
+    # Session if already running) — same pattern as chat_routing_test.exs.
+    _ =
+      EzagentDomainInstanceMessage.SessionCreator.create_session(
+        "main",
+        User.admin_uri(),
+        template_name: "default"
+      )
+
+    :ok
   end
 
-  test "chat send/join still works end-to-end on the default Session" do
-    # Re-use the existing chat send/join helper from the instance_message
-    # suite (read send_receive_test for the exact setup) and assert a
-    # message reaches a joined member — proving dispatch is unchanged.
-    # IMPLEMENTER: bind to the existing test helper; do not hand-roll caps.
-    assert true  # placeholder line REMOVED by implementer: wire to real helper
+  test "chat Session's effective set = full declared list + universal base behaviors (no :behaviors arg)" do
+    slice_state = %{}  # no :kind_base captured → fallback to declared (+ base)
+    declared = Ezagent.Kind.behaviors_of(Ezagent.Entity.Session)
+
+    effective = Ezagent.Kind.BehaviorSet.effective_set(Ezagent.Entity.Session, slice_state)
+
+    # Every declared behavior is preserved, in declaration order.
+    assert Enum.take(effective, length(declared)) == declared
+    # The universal Manage (not in behaviors/0) is appended as a base behavior.
+    assert Ezagent.Behavior.Manage in effective
+  end
+
+  test "REAL chat join + send round-trips through dispatch on the default Session (unchanged)" do
+    session_uri = Session.default_uri()
+    sender = User.admin_uri()
+    bootstrap_caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+
+    # --- chat.join: add a transient member through dispatch ---
+    member_uri =
+      URI.new!("entity://team-alpha/user/parity-#{System.unique_integer([:positive])}")
+
+    {:ok, member_pid} = GenServer.start(__MODULE__.NoopMember, member_uri)
+    on_exit(fn -> if Process.alive?(member_pid), do: GenServer.stop(member_pid) end)
+
+    :ok =
+      Invocation.dispatch(%Invocation{
+        target: URI.new!("#{URI.to_string(session_uri)}?action=chat.join"),
+        mode: :cast,
+        args: %{member: member_uri},
+        ctx: %{caller: member_uri, caps: bootstrap_caps, reply: :ignore}
+      })
+
+    {:ok, session_pid} = KindRegistry.lookup(session_uri)
+    %{state: %{chat: %{state: joined_slice}}} = :sys.get_state(session_pid)
+    assert joined_slice.members[member_uri].online == true
+
+    # --- chat.send: broadcast + store + slice mutation ---
+    session_topic = Chat.session_events_topic(session_uri)
+    :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, session_topic)
+
+    msg =
+      Message.new(sender, %{text: "parity-send #{System.unique_integer()}", attachments: []})
+
+    :ok =
+      Invocation.dispatch(%Invocation{
+        target: URI.new!("#{URI.to_string(session_uri)}?action=chat.send"),
+        mode: :cast,
+        args: %{message: msg},
+        ctx: %{caller: sender, caps: bootstrap_caps, reply: :ignore}
+      })
+
+    # Session-level broadcast fired (LV chat stream path).
+    assert_receive {:chat_message, _session_uri, %Message{id: received_id}}, 500
+    assert received_id == msg.id
+
+    # Message landed in the store.
+    assert {:ok, loaded} = MessageStore.by_id(msg.id)
+    assert loaded.session_uri == session_uri
+
+    # Slice mutation persisted (serialize through the GenServer to drain the commit).
+    %{state: %{chat: %{state: post_send_slice}}} = :sys.get_state(session_pid)
+    assert post_send_slice.last_message_id == msg.id
+
+    # Cleanup — leave the transient member.
+    :ok =
+      Invocation.dispatch(%Invocation{
+        target: URI.new!("#{URI.to_string(session_uri)}?action=chat.leave"),
+        mode: :cast,
+        args: %{member: member_uri},
+        ctx: %{caller: member_uri, caps: bootstrap_caps, reply: :ignore}
+      })
+  end
+
+  defmodule NoopMember do
+    @moduledoc false
+    use GenServer
+
+    @impl true
+    def init(uri) do
+      # Self-register so KindRegistry.lookup returns OUR pid (Registry registers
+      # the calling process as owner) — mirrors chat_routing_test.exs's NoopServer.
+      :ok = Ezagent.KindRegistry.put_new(uri)
+      {:ok, %{}}
+    end
   end
 end
 ```
 
-NOTE TO IMPLEMENTER: replace the second test body with the project's existing chat send/join flow (copy the setup from `apps/ezagent_domain_instance_message/test/.../send_*` or `join_*` test). Do NOT ship the `assert true` placeholder — it exists only to mark where the real flow goes. The first test is complete as-is.
+ACCEPTANCE: reject any `assert true` / placeholder in this file. The second test MUST drive `chat.join` + `chat.send` (+ `chat.leave` cleanup) through `Ezagent.Invocation.dispatch` and assert the `:chat_message` broadcast, the `MessageStore` row, and the slice `last_message_id` — exactly as `chat_routing_test.exs` does. If any symbol drifted (`session_events_topic/1`, `MessageStore.by_id/1`, `SessionCreator.create_session/3`), bind to the live name read from `chat_routing_test.exs` rather than inventing one.
 
 - [ ] **Step 2: Run test to verify it passes**
 
 Run: `MIX_ENV=test mix test apps/ezagent_domain_instance_message/test/ezagent_domain_instance_message/session_instance_set_test.exs`
-Expected: PASS.
+Expected: PASS (both tests).
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add apps/ezagent_domain_instance_message/test/ezagent_domain_instance_message/session_instance_set_test.exs
-git commit -m "test(kind): P1 — static chat Session unchanged under instance-set path"
+git commit -m "test(kind): P1 — static chat Session unchanged under instance-set path (real chat send+join)"
 ```
 
 ### Task 16: P1 acceptance gate (arch fitness + full regression suites + denial suite)
@@ -1306,22 +1581,26 @@ Each is its own plan doc under `docs/superpowers/plans/`.
 
 ## Self-review (per writing-plans skill)
 
-**Spec coverage of §6 P0 + P1 and §3.1:**
+**Spec coverage of §6 P0 + P1 and §3.1 (rev2 — covers first-spawn + universal behaviors):**
 - P0 "Publisher as base behavior on SocialwareSession / every session composes it" → Task 1 (+ Task 2 caps, Task 3 gate). ✓
 - P0 "no consumer change; chat/socialware/Feishu unchanged" → Task 3 regression gate. ✓
 - P1.1 "reclassify each reads_siblings as required/optional + slice-owner map + resolver failing loud only on missing required" → Tasks 6–7 (slice-owner map, required/optional table, `resolve_closure`, optional soft default preserved for `Chat → :sandbox`). ✓
 - P1.2 HARD INVARIANT "persist instance set + route EVERY enumeration/callback entry point through it" → KindBase persistence (Tasks 4–5) + every entry point E1–E10 (Tasks 9–14). ✓
-- §3.1 denial requirements (a dispatch, b slice init/reconcile, c handle_signal, d terminate/destroy) → denial suite Tasks 9 (b), 10 (a), 11 (c), 12 (d), 13 (on_ready/post_init/init). ✓
+- §3.1 "an out-of-set behavior must NEVER run a callback nor create its slice — even on FIRST spawn before any restart" → **Task 9 `init_fresh` now enumerates only `BehaviorSet.init_set/2` (spawn-args subset + base behaviors), so out-of-set `create`/`init_slice` never run and out-of-set slices are never created or persisted at first spawn** — proven by the first-spawn denial test (no prior snapshot). No "prune on next load" reliance for the security property. ✓ (codex CRITICAL finding 1)
+- §3.1 "universal-behavior fallback policy" → **`base_behaviors/0` (KindBase + `UniversalBehaviors.all()`) is always in init_set/effective_set, AND the E9 dispatch gate explicitly EXEMPTS `UniversalBehaviors.all()` from the membership check while still cap-checking them** (Tasks 6 + 10). Tests: `manage.delete` dispatches on a chat-only instance; a non-universal `probe.poke` is denied. ✓ (codex HIGH finding 2)
+- §3.1 denial requirements (a dispatch, b slice init/reconcile, c handle_signal, d terminate/destroy) → denial suite Tasks 9 (b + first-spawn), 10 (a + universal exemption), 11 (c), 12 (d), 13 (on_ready/post_init/init). ✓
 - "instance set survives restart/reconcile" → Task 5 (snapshot round-trip) + Task 9 (prune/reconcile use effective set). ✓
-- "valid sets unchanged at runtime (static Kinds)" → Task 15 parity. ✓
+- "valid sets unchanged at runtime (static Kinds)" → Task 15 parity — now a REAL `chat.join` + `chat.send` + `chat.leave` round-trip through `Invocation.dispatch` (copied from `chat_routing_test.exs`), no placeholder. ✓ (codex MEDIUM finding 3)
 - "a deliberately required-broken set fails loud in a test" → Task 7 (Turn-without-Surface). ✓
 - §7 E2E gate per phase (arch gates + regression suites + author-owned SPA E2E) → Task 3 (P0), Task 16 (P1). ✓
 
-**Placeholder scan:** Two intentional, clearly-flagged implementer bind-points remain (not silent placeholders): (1) Task 2's `Ezagent.Identity.production_caps()` accessor — flagged "bind to the exact accessor binding_policy_test uses"; (2) Task 15's second test body — flagged "REMOVED by implementer; wire to real helper." Both are because the exact existing test-helper symbols must be read from the live suite at execution time (binding them blind would be a worse failure mode than an explicit, scoped instruction). Task 10's `admin_caps/0` is given the documented bootstrap shape with a bind-note. No "TODO/handle edge cases/add validation" placeholders.
+**Placeholder scan (rev2 — full re-scan):** ONE intentional, clearly-flagged implementer bind-point remains (not a silent placeholder): Task 2's `Ezagent.Identity.production_caps()` accessor — flagged "bind to the exact accessor `binding_policy_test` uses" — because that exact catalog-accessor symbol must be read from the live suite at execution time (binding it blind is a worse failure mode). Task 10's `admin_caps/0` is given the documented bootstrap shape with a bind-note + an explicit "assert NOT `:behavior_not_in_instance_set`" fallback so the test is robust to the exact cap shape. **Task 15's `assert true` placeholder is GONE** — replaced with the full real chat send/join dispatch flow + an explicit "reject any `assert true` / placeholder" acceptance clause. No "TODO / implement later / handle edge cases / add validation / similar to Task N / write tests for the above" anywhere in the plan.
 
-**Type/signature consistency:** `effective_set/2` (kind_module, slice_state) used identically in Tasks 9–14. `member?/2` (behavior, effective_set) consistent. `behaviors_in_slice/1` consistent (Tasks 4, 6). `resolve_closure/1` returns `:ok | {:error, {:missing_required_siblings, [{module(), atom()}]}}` consistent (Task 7). `hosts_lifecycle?/1` and `/2` both defined (Task 14). KindBase `state_slice == :kind_base` consistent across owner map + effective_set + prune-exclusion.
+**Type/signature consistency (rev2):** `init_set/2` (kind_module, args) used in Task 6 def + Task 9 `init_fresh`. `effective_set/2` (kind_module, slice_state) used identically in Tasks 9–14. `base_behaviors/0` defined in Task 6, referenced by init_set/effective_set + Task 10 exemption note + Task 14 note. `member?/2` (behavior, effective_set) consistent (Tasks 6, 10). `behaviors_in_slice/1` consistent (Tasks 4, 6, 9). `resolve_closure/1` returns `:ok | {:error, {:missing_required_siblings, [{module(), atom()}]}}` consistent (Task 7). `instance_set_gate/3` (Task 10) uses `UniversalBehaviors.all/0` (verified to exist + contain `Manage`) and `effective_set/2`/`member?/2`. `hosts_lifecycle?/1` and `/2` both defined (Task 14). KindBase `state_slice == :kind_base` consistent across owner map + init_set/effective_set + prune-exclusion.
 
 **Spec ambiguity resolved (flagged for orchestrator):**
 - **Where the instance set is persisted:** chosen a dedicated base behavior `KindBase` owning a `:kind_base` slice (not a raw spawn-arg-only field), because the spec's §3.1 explicitly requires the set to "survive restart/reconcile" and only slice state goes through `kind_snapshots` load/merge/prune. A spawn-arg-only value would be lost on cold restart (args aren't re-supplied on rehydrate). Justification matches the spec's own parenthetical "(in the spawn args / template / a base slice)".
-- **Static-Kind fallback semantics:** the spec keeps the two Kind modules "thin: each = a fixed instance behavior set." This plan implements that as: a static Kind that spawns without a `:behaviors` arg captures an empty set → `effective_set` falls back to the declared list. This preserves today's runtime exactly while making the per-instance path live everywhere. If the orchestrator prefers the static Kinds to ALSO capture their full declared list explicitly at spawn (so there is never a "fallback"), that is a one-line change at each Kind's spawn site — flagged as a design choice, not a blocker.
+- **Static-Kind fallback semantics:** the spec keeps the two Kind modules "thin: each = a fixed instance behavior set." This plan implements that as: a static Kind that spawns without a `:behaviors` arg captures an empty set → `init_set`/`effective_set` fall back to the declared list (+ base behaviors). This preserves today's runtime exactly while making the per-instance path live everywhere. If the orchestrator prefers the static Kinds to ALSO capture their full declared list explicitly at spawn (so there is never a "fallback"), that is a one-line change at each Kind's spawn site — flagged as a design choice, not a blocker.
+- **Universal-behavior policy (rev2, codex finding 2):** `base_behaviors/0` = `KindBase` + `UniversalBehaviors.all()` (today `Manage`). These are ALWAYS in the instance set AND the E9 dispatch gate explicitly exempts `UniversalBehaviors.all()` from the membership check (still cap-checked by `authz_check`). Implemented entirely in the plan (Tasks 6 + 10) — NO spec change needed: SPEC §3.1 already names "any universal-behavior fallback policy" as part of the HARD INVARIANT; this plan makes that policy concrete. KindBase being a universal base also means `hosts_lifecycle?/2` is always true for any composed instance (KindBase + Manage both `use Ezagent.Lifecycle`); this is correct, not a mis-classification (Task 14 note).
+- **First-spawn scoping (rev2, codex finding 1):** moved the §3.1 security guard INTO `init_fresh` (via `init_set/2`) rather than relying on a post-restart prune. NO spec change needed — this strengthens the implementation toward the existing §3.1 invariant ("even on first spawn"). Defense-in-depth prune/reconcile retained on reload.
 - **E11 (`auto_derive.ex`) scoped to P2:** it is the View/display surface, not a P1 security gate. Flagged so it is not mistaken for a P1 coverage gap.
