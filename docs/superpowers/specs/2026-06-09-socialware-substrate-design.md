@@ -30,24 +30,31 @@ The substrate is ~90% present; this design *promotes and generalizes existing el
 
 ### 3.1 One session Kind; behaviors composed per app/template
 
-A single session Kind whose **behavior set is supplied by the app/template**, not hardcoded per Kind module. The engine **resolves the dependency closure** over `reads_siblings` and **fails loudly** (let-it-crash) if the declared set is not closed (missing a required sibling slice) — no silent defaulting.
+A single session Kind whose **behavior set is supplied by the app/template**, not hardcoded per Kind module.
 
-- chat-app = `{Chat, Publisher, ExternalAdapter(...)}` + internal view (+ optionally an external SPA view).
-- page-app = `{Chat, Turn, Surface, Publisher, ConfigUpdate}` + internal view + external SPA view.
-- A behavior is an orthogonal capability with declared slice deps; an app picks a closed subset.
+**`reads_siblings` is required-vs-optional — NOT a naive fail-loud closure** (codex spec-review HIGH). Today every `reads_siblings` is effectively *optional*: the runtime injects `%{}` for a missing sibling slice (`kind/runtime/context.ex`), which is why `Chat` declares `reads_siblings([:sandbox])` yet both current session Kinds run **without** `Behavior.Sandbox`. A naive "fail if not closed" resolver would break existing chat/socialware. So:
+
+- **P1 reclassifies each sibling read as `:required` or `:optional`.** A *required* read (e.g. `Turn → :surface` — Turn cannot compute versions without it) must have an **owning behavior in the set**; the resolver **fails loud** only on a missing *required* slice. An *optional* read (e.g. today's `Chat → :sandbox`) keeps the **soft `%{}` default** — preserving current behavior. This is a slice-owner mapping + a required-closure check, not "no defaults."
+- chat-app = `{Chat, Publisher, ExternalAdapter(...)}` + internal view (+ optionally an external SPA view) — `:sandbox` optional, so no `Sandbox` required.
+- page-app = `{Chat, Turn, Surface, Publisher, ConfigUpdate}` + internal view + external SPA view — `Surface` present satisfies Turn's *required* `:surface` read.
+- A behavior is an orthogonal capability with declared slice deps; an app picks a **required-closed** subset.
 
 ### 3.2 The trunk = `Behavior.Publisher`, elevated to a base behavior
 
-Promote `Publisher` to a **base behavior every session composes** (today it is only on chat `Session`). It becomes **the canonical session event spine** — the "full event log" (live stream + bounded history; deep replay backed by the durable stores `kind_snapshots` + `MessageStore`).
+Promote `Publisher` to a **base behavior every session composes** (today it is only on chat `Session`). It becomes the canonical session event **spine**.
 
-- **Internal view** = a **direct consumer of the trunk** (subscribe from `:earliest` for the full log / `:latest` for live), full fidelity.
+**Honest framing of what Publisher is today (codex spec-review): a bounded slice-change SIGNAL, not yet a full-fidelity semantic log.** Its event payload is only `%{new_slice}` (the affected slice), `:action`/`:caller` are no longer in the envelope, and consumers must **dedupe** (ExternalMirror already does — unrelated chat-slice mutations can carry the same `last_message`). History is **retention-bounded**. Therefore:
+
+- The trunk is a **live change-signal**; **consumers JOIN it with the durable stores** (`kind_snapshots[uri]` slice state + `MessageStore`) for content + deep replay. It is NOT the system of record.
+- A true full-fidelity **semantic event log** (explicit event types + required metadata, versioned envelope) is the **wire-schema regularization (#44)** — which is therefore **sequenced BEFORE any consumer migration that needs a trustworthy event** (notably the customer-feed move, §6).
+- **Internal view** = consumes the trunk as a live signal + reads the durable stores (≈ today's pattern, re-pointed at the trunk for the live wake-up rather than ad-hoc PubSub).
 - **External views** = **ExternalAdapters** (§3.3).
 
 ### 3.3 ExternalAdapter — the unified outbound projection (the internal/external fork)
 
 The **fork between internal and external views is the ExternalAdapter, not routing.** An `ExternalAdapter` = `subscribe(trunk) → visibility-filter → render-to-surface`. It **generalizes `ExternalMirror` and folds in `CustomerFeed`** (the "externalmirror + feed unification" Allen described):
 
-- **browser/json-render adapter** = today's `CustomerFeed` + `CustomerChannel` + `customer_app.js`, recast as an adapter (filter = `customer_visible` + approved-surface; render = `customer_tree` json-render over a Phoenix Channel). **Migrated off the Settlement broadcast onto the Publisher trunk.**
+- **browser/json-render adapter** = today's `CustomerFeed` + `CustomerChannel` + `customer_app.js`, recast as an adapter (render = `customer_tree` json-render over a Phoenix Channel). **CRITICAL — the trigger is the settlement-COMMIT boundary, not just visibility** (codex spec-review HIGH): today `Settlement.commit_after_pointer` confirms the approved pointer, emits the outbox idempotently, marks `status: :committed`, THEN broadcasts `{:customer_delivery, …}`, and the gated query requires BOTH `visibility == :customer_visible` AND `status == "committed"`. A naive move onto the Publisher trunk breaks this: `Surface.handle_commit_settlement` returns **no slice effects**, so there is **no Publisher event after the row is committed** — the adapter would either fire early (leak after `flip_visibility` but before commit) or miss the update until an unrelated later slice change. So the browser adapter **must not drop the committed-status gate + outbox idempotency**; the customer-delivery event must be **ordered + durable + after `status:committed`** (see §6 P3 for how the commit is made to produce a trunk event before the feed is re-platformed).
 - **Feishu adapter** = today's `ExternalMirror` + Feishu adapter (filter + Feishu format).
 - Future surfaces (Slack, email, …) = additional adapters. No new pipeline each time.
 
@@ -94,12 +101,14 @@ Routing operates *before/around* this — deciding which in-session members/agen
 Ordered by dependency + risk. **No phase merges unless §7 E2E acceptance is green.** Each is a behavior-preserving step for existing scenarios.
 
 - **P0 — Publisher as base behavior.** Add `Publisher` to `SocialwareSession` (and ensure every session composes it). No consumer change yet. Gate: chat + socialware + Feishu scenarios unchanged.
-- **P1 — Behavior-closure resolver.** Introduce per-app behavior composition + the `reads_siblings` closure validation (fail-loud). Keep the two Kind modules but route their `behaviors/0` through the resolver. Gate: invalid composition fails loudly in a test; valid sets unchanged at runtime.
+- **P1 — Required/optional sibling reads + required-closure resolver.** Reclassify each `reads_siblings` entry as `:required` or `:optional` (preserving today's soft `%{}` default for optional, e.g. `Chat → :sandbox`); add a slice-owner mapping + a resolver that **fails loud only on a missing *required* sibling**. Keep the two Kind modules but route `behaviors/0` through the resolver. Gate: the two current sets + the proposed chat/page sets all pass; a deliberately required-broken set fails loudly in a test; valid sets unchanged at runtime (chat/socialware/Feishu scenarios green).
 - **P2 — Unified View contract.** Extend the View contract to declare internal-LV and/or external render targets; register existing views through it. Gate: operator AdminLive renders all current views identically.
-- **P3 — ExternalAdapter (generalize ExternalMirror + fold CustomerFeed).** Define `Behavior.ExternalAdapter`; reimplement the Feishu mirror + the customer feed as adapters subscribing the **Publisher trunk** (customer feed moves off the Settlement broadcast; visibility-gate becomes the adapter filter). Gate: Feishu mirror E2E + customer SPA render/deny E2E both green on the new path.
+- **P2.5 — Wire-schema regularization + a committed customer-delivery trunk event (subsumes #44; MUST precede P3).** Two coupled pieces codex flagged as prerequisites for P3:
+  1. **Standardize the event wire form** — versioned `Publisher.Event` (+ `Message`, + slice snapshot) with enough metadata that a consumer can act on it without the current ad-hoc dedupe hacks. (This is the #44 work, pulled earlier because P3 depends on a trustworthy trunk event.)
+  2. **Make the settlement commit produce an ordered, durable trunk event AFTER `status:committed`** — fold the settlement-commit boundary into a session-slice mutation (so `Surface.handle_commit_settlement` emits a slice effect → a Publisher event) carrying the committed customer-delivery signal, preserving the **committed-status gate + outbox idempotency**. Gate: the existing `:customer_delivery` semantics (fires only post-commit, idempotent) are reproducible via the trunk; no early-leak / no missed-update in test.
+- **P3 — ExternalAdapter (generalize ExternalMirror + fold CustomerFeed).** Define `Behavior.ExternalAdapter`; reimplement the Feishu mirror + the customer feed as adapters subscribing the **Publisher trunk**. The customer adapter consumes the **committed customer-delivery trunk event from P2.5** (NOT a raw visibility flip) and keeps the committed-status gate + outbox idempotency. Gate: Feishu mirror E2E + customer SPA render/deny E2E both green on the new path, AND a leak test (no customer_visible data before commit).
 - **P4 — chat external SPA view.** Give chat an external SPA view = a `customer_tree`/json-render projection of the chat slice, served by the browser adapter. Gate: a chat session is viewable via the external SPA with the same auth/visibility model; chat operator view unchanged.
 - **P5 — collapse to one session Kind.** Merge `Session` + `SocialwareSession` into the single parameterized Kind; chat + page + advisor become Templates over it. Gate: all scenarios green; only Templates differ. (Highest risk — do last, may stay deferred if E2E risk is high.)
-- **#44 overlap — wire-schema regularization.** Standardize `Publisher.Event` + `Message` + slice snapshot wire form (versioned). Folds the protocol-thin-formalization task into this substrate (one trunk to regularize).
 
 ## 7. Acceptance & testing — **E2E is the final gate** (Allen, 2026-06-09)
 
@@ -115,7 +124,8 @@ Per-phase: run the affected suites + the arch fitness gates (`arch.scan`, `check
 ## 8. Risks & mitigations
 
 - **Touching core chat** → phase incrementally; each phase behavior-preserving + E2E-gated (§7); P5 (Kind collapse) last and optional.
-- **Behavior dependency closure** → fail-loud resolver + a closure invariant test; no silent slice defaulting (let-it-crash).
+- **Behavior dependency closure** → required-vs-optional sibling classification + a required-closure resolver (fail-loud only on a missing *required* slice) + a closure invariant test. Optional reads keep the existing soft `%{}` default (so today's `Chat → :sandbox`-without-`Sandbox` keeps working) — this is NOT "no defaults," it's "no missing *required* slice."
+- **Trunk is a lossy signal, not a log** → P2.5 regularizes the event wire form + adds the committed customer-delivery trunk event BEFORE P3 consumes it; consumers join durable stores for content. Do not migrate a consumer onto the trunk before its needed event exists.
 - **Customer feed re-platforming (Settlement → Publisher)** → P3 keeps the same visibility filter + the same Channel contract; E2E (render + deny) is the gate; can ship behind a flag if needed.
 - **Publisher history is retention-bounded** → deep replay reads the durable stores (`kind_snapshots` + `MessageStore`); the trunk is live + bounded-history, not the system of record.
 - **Codex-review every phase** (spec + each PR) per project policy.
@@ -129,5 +139,5 @@ Per-phase: run the affected suites + the arch fitness gates (`arch.scan`, `check
 
 ## 10. Relationship to other tasks
 
-- **#44 (protocol thin-formalization)** is **subsumed** here: the trunk (Publisher.Event) + Message + slice snapshot become the one wire form to version. #44 stays the "regularize the contract" slice of this substrate work.
+- **#44 (protocol thin-formalization)** is **subsumed + sequenced as P2.5** (pulled before P3 per codex review): the trunk (`Publisher.Event`) + `Message` + slice snapshot become the one versioned wire form. It is now a *prerequisite* of the customer-feed migration, not a trailing nicety.
 - **#36 / #45 (customer SPA)** are the first external-adapter + view consumers; this design generalizes them.
