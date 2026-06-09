@@ -1,11 +1,11 @@
 %{
   oversized_modules_gt_1500: 0,
-  # #25 Phase-3 burn-down: 9 → 8 (PR-3N extracted
-  # `Ezagent.Behavior.ExternalMirror.Codec` from external_mirror.ex,
-  # 1004 → 936). Remaining entrants include `Ezagent.Workspace` (1055,
-  # bloated by the #685 CapBAC security fix, SPEC §7) which is a later
-  # burn-down target. Ratchets DOWN toward 0.
-  oversized_modules_gt_1000: 8,
+  # #25 Phase-3 burn-down (ratchets DOWN toward 0):
+  #   PR-3N: 9 → 8 (extracted ExternalMirror.Codec, external_mirror.ex 1004 → 936)
+  #   PR-3O: 8 → 7 (extracted ExternalMirrorWorker.SendKey, worker 1010 → 963)
+  # Remaining entrants include `Ezagent.Workspace` (1055, bloated by the
+  # #685 CapBAC security fix, SPEC §7) — a later burn-down target.
+  oversized_modules_gt_1000: 7,
   def_count_admin_live: 69,
   def_count_cc_agent: 76,
   def_count_orchestrator_tools: 61,
