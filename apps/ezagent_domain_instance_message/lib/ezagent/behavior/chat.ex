@@ -112,8 +112,8 @@ defmodule Ezagent.Behavior.Chat do
 
   require Logger
 
-  alias Ezagent.{Cmd, KindRegistry, Message, MessageStore}
-  alias Ezagent.Behavior.Chat.{Delivery, Members}
+  alias Ezagent.{KindRegistry, Message, MessageStore}
+  alias Ezagent.Behavior.Chat.{ConfigActions, Delivery, Legends, Members, Membership}
   alias Ezagent.Routing.Legend
 
   # PR-N3 r4 (Allen 2026-05-25) — bounded cursor-indexed ring depth for
@@ -409,60 +409,20 @@ defmodule Ezagent.Behavior.Chat do
 
   @doc """
   The empty/default `template_working_copy` shape (Phase 7 completion
-  SPEC §1.3 / §1.6).
-
-  Used by `init_slice/1` for fresh Sessions and as the safe default
-  when reading a pre-PR-2 Session snapshot whose `:chat` slice has no
-  `template_working_copy` key.
+  SPEC §1.3 / §1.6). Thin delegator to
+  `Ezagent.Behavior.Chat.ConfigActions.default_template_working_copy/0`.
   """
   @spec default_template_working_copy() :: map()
-  def default_template_working_copy do
-    %{
-      # team-routing-unification §3.8 (PR-8) — `agent_slots` is REMOVED
-      # (clean cutover, no shim). A "slot" was a member with extra facets
-      # (§3.1); the orchestrator now builds a team via session MEMBERS +
-      # RULE-SETS (see `Ezagent.Orchestrator.Tools.add_managed_member` +
-      # `define_rule_set_rule`). Spawn-source state (`source_template_uri`)
-      # lives on the member's `:members` meta, NOT a slot tuple.
-      #
-      # [{matcher_ast :: term(), [role_name :: String.t()]}]
-      # rule-set routing rows (receivers are role_names / URIs, resolved on
-      # instantiate). Kept for SessionTemplate snapshot compatibility.
-      routing_rules: [],
-      # URI.t() | nil — the orchestrator agent's AgentTemplate
-      orchestrator_template_uri: nil,
-      # URI.t() | nil — the orchestrator Agent Kind chosen for this
-      # Session. Stored once at create and read through Ezagent.UriQuery;
-      # callers must not re-derive it from URI shape.
-      orchestrator_uri: nil,
-      # URI.t() | nil — the SessionTemplate this Session was
-      # instantiated from (the Generator's `parent_template_uri`,
-      # Task #110). Durable because Session is `{:snapshot, :on_change}`,
-      # so it survives a phx restart. It is the canonical source the
-      # lazy rebuild in
-      # `Ezagent.Orchestrator.McpServer.from_orchestrator_uri/1` prefers
-      # for the `:parent_template_uri` the `update_template` MCP tool
-      # requires — NOT derivable from the session URI in the general case
-      # (the `<owner>-<template>` path segment can be ambiguous). `nil`
-      # for sessions that never went through the Generator (plain system
-      # sessions) — those have no orchestrator.
-      session_template_uri: nil,
-      # URI.t() | nil — workspace newly-instantiated sessions land in
-      default_workspace_uri: nil,
-      # String.t() — human description of the team
-      description: ""
-    }
-  end
+  defdelegate default_template_working_copy, to: ConfigActions
 
   @doc """
   Read the durable `template_working_copy` field from a `:chat` slice,
   defaulting to `default_template_working_copy/0` when the key is
-  absent (a pre-PR-2 Session snapshot — see `init_slice/1`).
+  absent. Thin delegator to
+  `Ezagent.Behavior.Chat.ConfigActions.template_working_copy/1`.
   """
   @spec template_working_copy(map()) :: map()
-  def template_working_copy(chat_slice) when is_map(chat_slice) do
-    Map.get(chat_slice, :template_working_copy, default_template_working_copy())
-  end
+  defdelegate template_working_copy(chat_slice), to: ConfigActions
 
   # --- :send -------------------------------------------------------------
 
@@ -644,84 +604,16 @@ defmodule Ezagent.Behavior.Chat do
          ]}
 
       Ezagent.Entity.Agent ->
-        # AgentBridge PR-D: keep chat receive flavor-neutral. The
-        # bridge domain resolves the bound channel and adapter for the
-        # agent URI; missing bridge/adapter remains best-effort for
-        # this cast receive path but is logged by AgentBridge.deliver/2.
-        source_session =
-          case Map.get(ctx, :caller) do
-            %URI{} = u -> URI.to_string(u)
-            s when is_binary(s) -> s
-            _ -> ""
-          end
-
-        attachments = Delivery.body_attachments(msg.body)
-        attachment_hint = Delivery.attachment_hint_text(attachments)
-
-        text_with_hint =
-          case {Delivery.body_text(msg.body), attachment_hint} do
-            {"", ""} -> ""
-            {t, ""} -> t
-            {"", hint} -> hint
-            {t, hint} -> t <> "\n" <> hint
-          end
-
-        base_meta = %{
-          "sender" => Ezagent.URI.stable_key(msg.sender),
-          "message_id" => msg.id,
-          "session" => source_session
-        }
-
-        meta =
-          case Delivery.first_attachment_path(attachments) do
-            nil -> base_meta
-            path -> Map.put(base_meta, "file_path", path)
-          end
-
-        session_uri =
-          case msg.session_uri do
-            %URI{} = uri -> uri
-            s when is_binary(s) and s != "" -> Ezagent.URI.new!(s)
-            _ when source_session != "" -> Ezagent.URI.new!(source_session)
-            _ -> nil
-          end
-
-        payload = %Ezagent.AgentBridge.Payload{
-          message_id: msg.id,
-          session_uri: session_uri,
-          sender_uri: msg.sender,
-          text: text_with_hint,
-          event_type: :chat_send,
-          attachments: attachments,
-          meta: meta
-        }
-
-        # PR-DR (blocker #1): self-heal a vanished bridge before dropping. If
-        # the agent's claude/python subprocess exited (its WS Channel.terminate
-        # unbound the Registry row), `deliver_ensuring/2` relaunches it
-        # (snapshot-sourced, flavor-neutral) + awaits the rebind, then retries
-        # once — instead of silently `:no_bridge`-dropping the routed message.
-        _ =
-          case resolve_agent_flavor_from_ctx(ctx) do
-            {:ok, flavor} ->
-              Ezagent.AgentBridge.deliver_ensuring_with_flavor(ctx[:self_uri], payload, flavor)
-
-            :none ->
-              Ezagent.AgentBridge.deliver_ensuring(ctx[:self_uri], payload)
-          end
-
+        # AgentBridge PR-D: keep chat receive flavor-neutral. Payload build
+        # + self-healing bridge delivery live in `Chat.Delivery` (PR-3R) —
+        # same-process side-effect, the handler emits no effects here.
+        _ = Delivery.deliver_agent_receive(msg, ctx)
         {:ok, %{}, []}
 
       _other ->
         # Should not happen — :receive is only registered for User/Agent.
         {:error, {:receive_unsupported_for_kind, ctx[:kind_module]}}
     end
-  end
-
-  defp resolve_agent_flavor_from_ctx(ctx) do
-    ctx
-    |> get_in([:siblings, :sandbox])
-    |> EzagentDomainInstanceMessage.UriQueryResolvers.resolve_flavor_from_sandbox()
   end
 
   # --- :join -------------------------------------------------------------
@@ -784,123 +676,17 @@ defmodule Ezagent.Behavior.Chat do
             else
               # Stale ref (different/dead PID) or no ref — drop any
               # stale entries + install a fresh monitor.
-              do_join(member_uri, member_pid, ctx, facets)
+              Membership.do_join(member_uri, member_pid, ctx, facets, __MODULE__)
             end
 
           _ ->
-            do_join(member_uri, member_pid, ctx, facets)
+            Membership.do_join(member_uri, member_pid, ctx, facets, __MODULE__)
         end
 
       :error ->
         {:error, {:member_not_registered, member_uri}}
     end
   end
-
-  defp do_join(%URI{} = member_uri, member_pid, ctx, facets) do
-    members = ctx[:read].(:members, %{})
-
-    # team-routing-unification §3.1 (spec §8 decision #2) — `role_name` is
-    # UNIQUE PER SESSION. Reject a join that would assign a role_name already
-    # held by a DIFFERENT member BEFORE any monitor side effect, so a rejected
-    # join leaks no monitor. A member rejoining with its OWN role_name is fine.
-    case Members.role_name_conflict(members, member_uri, Map.get(facets, :role_name)) do
-      {:error, _} = err -> err
-      :ok -> do_join_apply(member_uri, member_pid, ctx, facets)
-    end
-  end
-
-  defp do_join_apply(%URI{} = member_uri, member_pid, ctx, facets) do
-    session_uri = ctx[:self_uri]
-    members = ctx[:read].(:members, %{})
-    # `:monitors` is a TRANSIENT (SPEC §2.3C) — read from ctx.transients.
-    monitors = (ctx[:transients] || %{})[:monitors] || %{}
-    last_seen = ctx[:read].(:last_seen, %{})
-    prior_owner = ctx[:read].(:owner_uri, nil)
-
-    # Drop ALL stale monitor entries for this member URI and DEMONITOR
-    # each ref (Codex r1 MEDIUM-3, 2026-05-26).
-    {old_refs_for_member, monitors_without_member} =
-      Enum.split_with(monitors, fn {_ref, uri} ->
-        URI.to_string(uri) == URI.to_string(member_uri)
-      end)
-
-    for {ref, _uri} <- old_refs_for_member do
-      _ = Process.demonitor(ref, [:flush])
-    end
-
-    monitors_without_member = Map.new(monitors_without_member)
-
-    ref = Process.monitor(member_pid)
-
-    # team-routing-unification §3.1 (codex PR-5a HIGH #2) — PRESERVE any
-    # facets a faceted member already carries when it rejoins through the
-    # stale-monitor / offline path. Start from the EXISTING meta (not a fresh
-    # `%{online: true}`), force `online: true`, then overlay only the non-nil
-    # facets this join supplied. Durable management/snapshot facets therefore
-    # survive reconnect/repair instead of being silently dropped.
-    existing_meta = Map.get(members, member_uri, %{})
-
-    new_members =
-      Map.put(
-        members,
-        member_uri,
-        Members.put_member_facets(Map.put(existing_meta, :online, true), facets)
-      )
-
-    new_monitors = Map.put(monitors_without_member, ref, member_uri)
-
-    # If this member has prior last_seen, replay missed messages.
-    Delivery.replay_messages_since(session_uri, member_uri, last_seen)
-    new_last_seen = Map.delete(last_seen, member_uri)
-
-    # RFC #402 (Allen 2026-05-26) — "first user to join is owner"
-    # fallback.
-    new_owner_uri =
-      if is_nil(prior_owner) and user_uri?(member_uri) do
-        member_uri
-      else
-        prior_owner
-      end
-
-    # RFC #402 (codex r1 HIGH 2026-05-26) — when this join transitions
-    # `owner_uri` from `nil` to a real user, ALSO grant that user the
-    # `OrchestratorAdmin :restart` cap on this session.
-    if is_nil(prior_owner) and user_uri?(member_uri) do
-      grant_first_join_owner_cap(session_uri, member_uri)
-    end
-
-    # Notifier/flash audit 2026-05-24 — todo.md "Notifications consumer
-    # coverage" — surface the join to the joinee's notification stream
-    # so a freshly-added member sees they were added to a session.
-    if user_uri?(member_uri) do
-      _ =
-        Ezagent.Notifications.notify(member_uri, %{
-          type: :session_member_joined,
-          body: %{
-            text: "You joined session #{URI.to_string(session_uri)}.",
-            session_uri: session_uri
-          },
-          source: __MODULE__
-        })
-    end
-
-    {:ok, %{members: Map.keys(new_members)},
-     [
-       {:set, :members, new_members},
-       # `:monitors` is a TRANSIENT (SPEC §2.3C / §7 OQ-2) — written via
-       # `:set_transient`, never persisted.
-       {:set_transient, :monitors, new_monitors},
-       {:set, :last_seen, new_last_seen},
-       {:set, :owner_uri, new_owner_uri}
-     ] ++ Delivery.broadcast_membership_effects(session_uri, {:member_joined, member_uri})}
-  end
-
-  # Notifier/flash audit 2026-05-24 — same predicate
-  # `Ezagent.Domain.Workspace.user_uri?/1` uses. Keeps the agent-target
-  # silence guarantee local to Chat without crossing the
-  # workspace-domain boundary.
-  defp user_uri?(%URI{scheme: "entity"} = uri), do: Ezagent.URI.type?(uri, :user)
-  defp user_uri?(_), do: false
 
   @doc """
   team-routing-unification §3.1 — resolve a member `role_name` (stable
@@ -911,87 +697,6 @@ defmodule Ezagent.Behavior.Chat do
   @spec role_name_to_uri(map(), String.t()) :: URI.t() | nil
   def role_name_to_uri(members, role_name) when is_map(members) and is_binary(role_name) do
     Members.role_name_to_uri(members, role_name)
-  end
-
-  # RFC #402 (codex r1 HIGH 2026-05-26) — companion to the
-  # first-USER-join owner claim. Dispatches `identity.grant_cap` on
-  # the new owner so they hold the specific
-  # `cap(:session, OrchestratorAdmin, :restart, session_uri, ws)`
-  # cap the LV's restart gate consults.
-  #
-  # `mode: :cast` is REQUIRED here (NOT :call). We're currently
-  # executing inside the Session Kind's `GenServer.call` (the
-  # `chat.join` invocation), and `identity.grant_cap` dispatches
-  # to the IdentityAdmin Behavior which runs
-  # `check_grant_authorized` → `data_owner_of(OrchestratorAdmin,
-  # session_uri)` → `OrchestratorAdmin.data_owner` →
-  # `Chat.data_owner` → `Session.owner(session_uri)` →
-  # `Ezagent.Kind.get_slice(session_uri, :chat)` which is itself
-  # a `GenServer.call` to this very Session. A `:call`-mode
-  # grant_cap dispatch therefore deadlocks (5-sec timeout, then
-  # `:join` crashes with `:exit`).
-  #
-  # `:cast` enqueues the grant_cap dispatch to the User Kind's
-  # mailbox and returns immediately; by the time IdentityAdmin
-  # gets around to calling `Session.owner`, this Session has
-  # already returned from `chat.join` and is ready for the next
-  # message. Eventually-consistent: a tight LV remount + restart
-  # within the cast latency window MIGHT see the cap not yet
-  # granted; the gap is bounded by the User Kind mailbox queue
-  # depth + one `get_slice` round-trip (sub-ms in practice).
-  # Acceptable per RFC #402 — the legacy fallback path is rare.
-  defp grant_first_join_owner_cap(%URI{} = session_uri, %URI{} = owner_uri) do
-    case Ezagent.WorkspaceRegistry.lookup(session_uri) do
-      {:ok, %URI{} = workspace_uri} ->
-        want = %Ezagent.Capability{
-          kind: :session,
-          behavior: Ezagent.Behavior.OrchestratorAdmin,
-          # SPEC 2026-05-27 capability-action-axis — OrchestratorAdmin
-          # actions/0 == [:restart].
-          action: :restart,
-          instance: session_uri,
-          workspace_uri: workspace_uri,
-          granted_by: owner_uri,
-          granted_at: DateTime.utc_now()
-        }
-
-        case Ezagent.Router.dispatch(%Cmd{
-               target: owner_uri,
-               action: :grant_cap,
-               args: %{cap: want},
-               ctx: %{
-                 caller: owner_uri,
-                 caps: system_caps("template-materialize"),
-                 reply: :ignore
-               }
-             }) do
-          :ok ->
-            :ok
-
-          {:ok, _} ->
-            :ok
-
-          {:error, reason} ->
-            Logger.warning(
-              "Chat.grant_first_join_owner_cap: cast dispatch failed for " <>
-                "owner=#{URI.to_string(owner_uri)} on session=" <>
-                "#{URI.to_string(session_uri)}: #{inspect(reason)}. " <>
-                "Restart UX will be re-attempted on the next navigation."
-            )
-
-            :telemetry.execute(
-              [:ezagent, :chat, :first_join_owner_cap, :failed],
-              %{count: 1},
-              %{session_uri: session_uri, owner_uri: owner_uri, reason: reason}
-            )
-
-            :ok
-        end
-
-      :error ->
-        # Session not workspace-bound.
-        :ok
-    end
   end
 
   # --- :leave ------------------------------------------------------------
@@ -1043,84 +748,20 @@ defmodule Ezagent.Behavior.Chat do
   #   `system_set_working_copy/2`, never reachable from a user dispatch.
   def handle_set_working_copy(%{template_working_copy: wc}, ctx)
       when is_map(wc) do
-    if working_copy_write_authorized?(ctx) do
+    if ConfigActions.working_copy_write_authorized?(ctx) do
       {:ok, %{template_working_copy: wc}, [{:set, :template_working_copy, wc}]}
     else
       {:error, :unauthorized}
     end
   end
 
-  # The HIGH-2 orchestrator-only gate. `ctx.self_uri` is the Session
-  # Kind's own URI (injected by `Kind.Runtime` step 5).
-  defp working_copy_write_authorized?(ctx) do
-    Map.get(ctx, :system_internal) == true or
-      orchestrator_cap_present?(ctx)
-  end
-
-  # True iff `ctx.caps` carries a `{:within_session, self_uri}` cap on
-  # the `:session` kind — i.e. the caller IS this session's orchestrator
-  # (cap #1, granted only by the Generator to the orchestrator agent).
-  defp orchestrator_cap_present?(ctx) do
-    self_uri = Map.get(ctx, :self_uri)
-    caps = Map.get(ctx, :caps, MapSet.new())
-
-    case self_uri do
-      %URI{} = sess_uri ->
-        self_str = URI.to_string(sess_uri)
-
-        Enum.any?(caps, fn
-          %Ezagent.Capability{kind: :session, instance: {:within_session, %URI{} = s}} ->
-            URI.to_string(s) == self_str
-
-          _ ->
-            false
-        end)
-
-      _ ->
-        false
-    end
-  end
-
   @doc """
   System-internal path to write the durable `template_working_copy`
-  field (HIGH-2 hardening).
-
-  `EzagentDomainInstanceMessage.SessionCreator.create_session/3` (the atomic single writer — the
-  dead `Session.spawn_from_template/2` Generator was deleted in the
-  2026-05-31 orchestrator-startup-atomicity pass) does the FIRST
-  `template_working_copy` write in step 4
-  (`materialize_orchestrator_working_copy/3`), before any orchestrator
-  cap exists. It cannot hold the orchestrator's `{:within_session, _}`
-  cap (the session is brand-new), so it uses this path: a
-  `chat.set_working_copy` dispatch carrying `ctx[:system_internal] =
-  true`. That marker is honored ONLY here and by
-  `handle_set_working_copy/2`'s `working_copy_write_authorized?/1` — it
-  is NOT settable from any user-facing dispatch (the MCP tool path
-  supplies `caps`, never `system_internal`).
-
-  Returns the dispatch result.
+  field (HIGH-2 hardening). Thin delegator to
+  `Ezagent.Behavior.Chat.ConfigActions.system_set_working_copy/2`.
   """
   @spec system_set_working_copy(URI.t(), map()) :: {:ok, map()} | {:error, term()}
-  def system_set_working_copy(%URI{} = session_uri, working_copy) when is_map(working_copy) do
-    case Ezagent.Router.dispatch(%Cmd{
-           target: session_uri,
-           action: :set_working_copy,
-           args: %{template_working_copy: working_copy},
-           # SPEC caps-cleanup-v1 §4.4 — Session slice-internal write
-           # of the durable template working_copy runs under
-           # `system://session-internal` (closed Catalog).
-           ctx: %{
-             caller: Ezagent.SystemPrincipal.uri("session-internal"),
-             caps: system_caps("session-internal"),
-             system_internal: true,
-             reply: {:caller_inbox, self()}
-           }
-         }) do
-      {:ok, %{template_working_copy: _} = ok} -> {:ok, ok}
-      {:error, _} = err -> err
-      other -> {:error, {:unexpected_set_working_copy_result, other}}
-    end
-  end
+  defdelegate system_set_working_copy(session_uri, working_copy), to: ConfigActions
 
   # --- :set_legends (team-routing-unification §3.6, PR-6) ----------------
 
@@ -1150,113 +791,43 @@ defmodule Ezagent.Behavior.Chat do
   #
   # The `system_internal`-ctx-flag is NO LONGER consulted for legends.
   def handle_set_legends(%{legends: legends}, ctx) when is_map(legends) do
-    if legends_write_authorized?(ctx) do
+    if Legends.legends_write_authorized?(ctx) do
       {:ok, %{legends: legends}, [{:set, :legends, legends}]}
     else
       {:error, :unauthorized}
     end
   end
 
-  # The trusted-principal allowlist for `set_legends` — installing a legend is
-  # orchestrator/system config (a legend fronts a team + rule-set). Mirrors the
-  # provenance-setting trusted-principal pattern. `set_working_copy` STILL uses
-  # the older `system_internal`-flag gate (`working_copy_write_authorized?/1`) —
-  # codex flagged it shares the same flaw; tracked separately (see report), this
-  # PR fixes `set_legends` properly.
-  @legends_trusted_principals ["session-internal", "orchestrator-tools"]
-
-  defp legends_write_authorized?(ctx) do
-    trusted_legends_principal?(ctx) or orchestrator_cap_present?(ctx)
-  end
-
-  # True iff `ctx.caller` is one of the trusted system principals allowed to
-  # install legends. The caller is set by the dispatch path, NOT freely by an
-  # arbitrary user dispatch (a user dispatch carries the user's own
-  # `entity://user/...` caller), so unlike the old `system_internal` boolean
-  # this cannot be spoofed by setting a ctx field.
-  defp trusted_legends_principal?(ctx) do
-    case Map.get(ctx, :caller) do
-      %URI{} = caller -> trusted_principal?(caller)
-      caller when is_binary(caller) -> caller |> Ezagent.URI.new!() |> trusted_principal?()
-      _ -> false
-    end
-  end
-
-  defp trusted_principal?(%URI{} = caller) do
-    caller = caller |> Ezagent.URI.instance() |> URI.to_string()
-
-    Enum.any?(@legends_trusted_principals, fn name ->
-      name |> Ezagent.SystemPrincipal.uri() |> URI.to_string() == caller
-    end)
-  end
-
   @doc """
-  Read the session-scoped legend registry from a `:chat` slice, defaulting to
-  `%{}` when the key is absent (a pre-PR-6 Session snapshot — see `create/1`).
+  Read the session-scoped legend registry from a `:chat` slice. Thin
+  delegator to `Ezagent.Behavior.Chat.Legends.legends_of/1`.
   """
   @spec legends_of(map()) :: Legend.registry()
-  def legends_of(chat_slice) when is_map(chat_slice) do
-    Members.legends_of(chat_slice)
-  end
+  defdelegate legends_of(chat_slice), to: Legends
 
   @doc """
-  Resolve a legend NAME against a `:chat` slice's registry to its entry (the
-  bound rule-set handle). Delegates to `Ezagent.Routing.Legend.resolve/2`.
-
-  `{:ok, entry}` (carrying `:bound_rule_set` + `:name`) for a registered
-  legend, `:error` otherwise. team-routing-unification §3.6 (PR-6, GATE a).
+  Resolve a legend NAME against a `:chat` slice's registry to its entry. Thin
+  delegator to `Ezagent.Behavior.Chat.Legends.resolve_legend/2`.
   """
   @spec resolve_legend(map(), String.t()) :: {:ok, Legend.entry()} | :error
-  def resolve_legend(chat_slice, name) when is_map(chat_slice) and is_binary(name) do
-    Members.resolve_legend(chat_slice, name)
-  end
+  defdelegate resolve_legend(chat_slice, name), to: Legends
 
   @doc """
   Member-list rows with folded legends collapsed (team-routing-unification
-  §3.6 fold, PR-6, GATE c). Wires this Behavior's `role_name_to_uri/2` into
-  `Ezagent.Routing.Legend.fold_members/3` so a legend's `member_set`
-  role_names resolve to live member URIs. Pure presentation transform — the
-  slice `:members` map is untouched, so every collapsed member stays
-  individually `@`-able.
-
-  Returns `[{:legend, name, [URI.t()]} | {:member, URI.t(), meta}]`.
+  §3.6 fold, PR-6, GATE c). Thin delegator to
+  `Ezagent.Behavior.Chat.Legends.fold_members/1`.
   """
   @spec fold_members(map()) :: [
           {:legend, String.t(), [URI.t()]} | {:member, URI.t(), map()}
         ]
-  def fold_members(chat_slice) when is_map(chat_slice) do
-    Members.fold_members(chat_slice)
-  end
+  defdelegate fold_members(chat_slice), to: Legends
 
   @doc """
-  System-internal path to install the legend registry (team-routing-unification
-  §3.6, PR-6). Mirrors `system_set_working_copy/2`: a `chat.set_legends`
-  dispatch under the `system://session-internal` principal. Used by tests and
-  by the PR-7 template materialization path (which installs a template's
-  legends at create_session time, before any orchestrator cap exists).
-
-  Authorization rides the TRUSTED `caller` (`system://session-internal` ∈ the
-  `set_legends` allowlist), NOT a ctx flag (codex 2026-06-01 HIGH #2). The old
-  `system_internal: true` marker is no longer consulted for legends — it is
-  omitted here.
+  System-internal path to install the legend registry. Thin delegator to
+  `Ezagent.Behavior.Chat.Legends.system_set_legends/2`.
   """
   @spec system_set_legends(URI.t(), Legend.registry()) :: {:ok, map()} | {:error, term()}
-  def system_set_legends(%URI{} = session_uri, legends) when is_map(legends) do
-    case Ezagent.Router.dispatch(%Cmd{
-           target: session_uri,
-           action: :set_legends,
-           args: %{legends: legends},
-           ctx: %{
-             caller: Ezagent.SystemPrincipal.uri("session-internal"),
-             caps: system_caps("session-internal"),
-             reply: {:caller_inbox, self()}
-           }
-         }) do
-      {:ok, %{legends: _} = ok} -> {:ok, ok}
-      {:error, _} = err -> err
-      other -> {:error, {:unexpected_set_legends_result, other}}
-    end
-  end
+  defdelegate system_set_legends(session_uri, legends), to: Legends
 
   # --- :set_prompt_templates (team-routing-unification §3.4/§3.7, PR-7) ---
 
@@ -1268,7 +839,7 @@ defmodule Ezagent.Behavior.Chat do
   # prompt-template fronts a team's delivery transform — the same
   # orchestrator/system-config authority class a legend has.
   def handle_set_prompt_templates(%{prompt_templates: pts}, ctx) when is_map(pts) do
-    if legends_write_authorized?(ctx) do
+    if Legends.legends_write_authorized?(ctx) do
       {:ok, %{prompt_templates: pts}, [{:set, :prompt_templates, pts}]}
     else
       {:error, :unauthorized}
@@ -1276,34 +847,12 @@ defmodule Ezagent.Behavior.Chat do
   end
 
   @doc """
-  System-internal path to install the session-scoped named prompt-template map
-  (team-routing-unification §3.4/§3.7, PR-7). Mirrors `system_set_legends/2`: a
-  `chat.set_prompt_templates` dispatch under the `system://session-internal`
-  principal. Used by tests and by the PR-7 SessionTemplate materialization path
-  (which installs a template's `prompt_templates` at create_session time,
-  before any orchestrator cap exists).
-
-  Authorization rides the TRUSTED `caller` (`system://session-internal` ∈ the
-  `set_legends`/`set_prompt_templates` allowlist), NOT a ctx flag.
+  System-internal path to install the session-scoped named prompt-template map.
+  Thin delegator to
+  `Ezagent.Behavior.Chat.ConfigActions.system_set_prompt_templates/2`.
   """
   @spec system_set_prompt_templates(URI.t(), map()) :: {:ok, map()} | {:error, term()}
-  def system_set_prompt_templates(%URI{} = session_uri, prompt_templates)
-      when is_map(prompt_templates) do
-    case Ezagent.Router.dispatch(%Cmd{
-           target: session_uri,
-           action: :set_prompt_templates,
-           args: %{prompt_templates: prompt_templates},
-           ctx: %{
-             caller: Ezagent.SystemPrincipal.uri("session-internal"),
-             caps: system_caps("session-internal"),
-             reply: {:caller_inbox, self()}
-           }
-         }) do
-      {:ok, %{prompt_templates: _} = ok} -> {:ok, ok}
-      {:error, _} = err -> err
-      other -> {:error, {:unexpected_set_prompt_templates_result, other}}
-    end
-  end
+  defdelegate system_set_prompt_templates(session_uri, prompt_templates), to: ConfigActions
 
   # --- Signal hook (non-action GenServer messages) -----------------------
 
@@ -1394,6 +943,7 @@ defmodule Ezagent.Behavior.Chat do
   @doc "PubSub topic for in-session events (chat stream feed)."
   @spec session_events_topic(URI.t() | String.t()) :: String.t()
   def session_events_topic(%URI{} = uri), do: session_events_topic(URI.to_string(uri))
+
   def session_events_topic(uri_str) when is_binary(uri_str),
     do: Delivery.session_events_topic(uri_str)
 
@@ -1422,12 +972,6 @@ defmodule Ezagent.Behavior.Chat do
   @spec message_vars(Message.t(), URI.t()) :: map()
   def message_vars(%Message{} = msg, %URI{} = session_uri) do
     Delivery.message_vars(msg, session_uri)
-  end
-
-  defp system_caps(name) when is_binary(name) do
-    name
-    |> Ezagent.SystemPrincipal.uri()
-    |> Ezagent.SystemPrincipal.caps()
   end
 
   # PR-OWN-2 (caps-data-ownership SPEC #306 §3.3 + §7) — data_owner

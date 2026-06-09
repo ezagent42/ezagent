@@ -6,9 +6,11 @@
   #   PR-3P: 7 → 6 (extracted AgentModuleResolver, application.ex 1117 → 985)
   #   PR-3Q: 6 → 5 (extracted Admin.EventFormat + Admin.OrchestratorRestart,
   #          admin_live.ex 1170 → 974)
+  #   PR-3R: 5 → 4 (extracted Chat.Membership + Chat.Legends + Chat.ConfigActions,
+  #          chat.ex 1445 → 988)
   # Remaining entrants include `Ezagent.Workspace` (1055, bloated by the
   # #685 CapBAC security fix, SPEC §7) — a later burn-down target.
-  oversized_modules_gt_1000: 5,
+  oversized_modules_gt_1000: 4,
   def_count_admin_live: 46,
   def_count_cc_agent: 76,
   def_count_orchestrator_tools: 61,
