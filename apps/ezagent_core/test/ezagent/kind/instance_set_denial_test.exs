@@ -59,7 +59,11 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
 
   test "FIRST spawn: out-of-set behavior NEVER runs create/init_slice and NEVER creates its slice (E8, no prior snapshot)" do
     uri =
-      Ezagent.URI.session(:system, :default, :"isd-firstinit-#{System.unique_integer([:positive])}")
+      Ezagent.URI.session(
+        :system,
+        :default,
+        :"isd-firstinit-#{System.unique_integer([:positive])}"
+      )
 
     chat_only = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
 
@@ -74,7 +78,9 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
   end
 
   test "reload prune: a slice for a now-out-of-set behavior is dropped on load (E6/E7 defense-in-depth)" do
-    uri = Ezagent.URI.session(:system, :default, :"isd-init-#{System.unique_integer([:positive])}")
+    uri =
+      Ezagent.URI.session(:system, :default, :"isd-init-#{System.unique_integer([:positive])}")
+
     chat_only = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
 
     fresh = Ezagent.Kind.Snapshot.load_or_init(uri, SupersetSessionKind, %{behaviors: chat_only})
@@ -192,7 +198,11 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
 
   test "FIRST spawn with EXPLICIT empty list: NO declared behavior runs create/init_slice, ONLY base slices materialize (E8, codex CRITICAL)" do
     uri =
-      Ezagent.URI.session(:system, :default, :"isd-emptyinit-#{System.unique_integer([:positive])}")
+      Ezagent.URI.session(
+        :system,
+        :default,
+        :"isd-emptyinit-#{System.unique_integer([:positive])}"
+      )
 
     fresh = Ezagent.Kind.Snapshot.load_or_init(uri, SupersetSessionKind, %{behaviors: []})
 
@@ -229,7 +239,11 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
 
   test "FIRST spawn with an UNCLOSED set (Turn without Surface) FAILS LOUD and persists NO partial slice (P1.1, codex CRITICAL/HIGH)" do
     uri =
-      Ezagent.URI.session(:system, :default, :"isd-unclosed-#{System.unique_integer([:positive])}")
+      Ezagent.URI.session(
+        :system,
+        :default,
+        :"isd-unclosed-#{System.unique_integer([:positive])}"
+      )
 
     uri_str = URI.to_string(uri)
 
@@ -256,7 +270,11 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
 
   test "FIRST spawn with an OPTIONAL read missing still SUCCEEDS (Chat without Sandbox → soft %{})" do
     uri =
-      Ezagent.URI.session(:system, :default, :"isd-optclosed-#{System.unique_integer([:positive])}")
+      Ezagent.URI.session(
+        :system,
+        :default,
+        :"isd-optclosed-#{System.unique_integer([:positive])}"
+      )
 
     set = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
 
@@ -274,7 +292,11 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
   # "pass" only because :poke was never registered (codex MEDIUM finding 2).
   test "dispatch wiring is real: :poke REACHES the handler on a full-set instance (E9 control)" do
     uri =
-      Ezagent.URI.session(:system, :default, :"isd-probe-ok-#{System.unique_integer([:positive])}")
+      Ezagent.URI.session(
+        :system,
+        :default,
+        :"isd-probe-ok-#{System.unique_integer([:positive])}"
+      )
 
     full = [Ezagent.Behavior.Chat, ProbeBehavior, Ezagent.Behavior.KindBase]
 
@@ -295,7 +317,9 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
   # STEP (b) — the actual gate: same registered :poke, but on a chat-only
   # instance (ProbeBehavior NOT in the set, and NOT universal) → DENIED.
   test "dispatch: a NON-universal out-of-set behavior action is DENIED (E9)" do
-    uri = Ezagent.URI.session(:system, :default, :"isd-disp-#{System.unique_integer([:positive])}")
+    uri =
+      Ezagent.URI.session(:system, :default, :"isd-disp-#{System.unique_integer([:positive])}")
+
     chat_only = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
 
     {:ok, _pid} = Ezagent.Kind.spawn(SupersetSessionKind, %{uri: uri, behaviors: chat_only})
@@ -354,7 +378,9 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
   # === Task 12 (E5 + E3): terminate + lifecycle-destroy through the instance set ===
 
   test "terminate: an out-of-set behavior does NOT run its terminate hook (E5)" do
-    uri = Ezagent.URI.session(:system, :default, :"isd-term-#{System.unique_integer([:positive])}")
+    uri =
+      Ezagent.URI.session(:system, :default, :"isd-term-#{System.unique_integer([:positive])}")
+
     chat_only = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
 
     {:ok, pid} = Ezagent.Kind.spawn(SupersetSessionKind, %{uri: uri, behaviors: chat_only})
@@ -366,7 +392,9 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
   end
 
   test "destroy: an out-of-set behavior does NOT run its destroy hook (E3)" do
-    uri = Ezagent.URI.session(:system, :default, :"isd-dstr-#{System.unique_integer([:positive])}")
+    uri =
+      Ezagent.URI.session(:system, :default, :"isd-dstr-#{System.unique_integer([:positive])}")
+
     chat_only = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
 
     {:ok, pid} = Ezagent.Kind.spawn(SupersetSessionKind, %{uri: uri, behaviors: chat_only})
@@ -378,7 +406,9 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
   # === Task 13 (E1 + E2): post_init, on_ready through the instance set ===
 
   test "on_ready: an out-of-set behavior does NOT run on_ready (E2)" do
-    uri = Ezagent.URI.session(:system, :default, :"isd-ready-#{System.unique_integer([:positive])}")
+    uri =
+      Ezagent.URI.session(:system, :default, :"isd-ready-#{System.unique_integer([:positive])}")
+
     chat_only = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
 
     {:ok, pid} = Ezagent.Kind.spawn(SupersetSessionKind, %{uri: uri, behaviors: chat_only})

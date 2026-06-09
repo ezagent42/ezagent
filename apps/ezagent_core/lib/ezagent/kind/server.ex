@@ -742,10 +742,10 @@ defmodule Ezagent.Kind.Server do
   end
 
   def handle_info(message, %{kind: kind_module, uri: self_uri, state: slice_state} = wrapper) do
+    # P1 (SPEC §3.1, E4) — only the INSTANCE effective set sees the mailbox
+    # message, so an out-of-set behavior's handle_signal/handle_kind_message
+    # never runs.
     new_slice_state =
-      # P1 (SPEC §3.1, E4) — only the INSTANCE effective set sees the mailbox
-      # message, so an out-of-set behavior's handle_signal/handle_kind_message
-      # never runs.
       Ezagent.Kind.BehaviorSet.effective_set(kind_module, slice_state)
       |> Enum.reduce(slice_state, fn behavior, acc_state ->
         forward_to_behavior(behavior, message, acc_state, kind_module, self_uri)
