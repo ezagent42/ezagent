@@ -789,6 +789,14 @@ git commit -m "feat(kind): P1 — BehaviorSet.init_set/effective_set/member? res
 - [ ] **Step 1: Write the failing test**
 
 ```elixir
+  # A behavior that DECLARES the `:surface` slice key but is NOT the
+  # registered owner (`Ezagent.Behavior.Surface`). Used to prove closure
+  # is owner-MODULE based, not slice-key-presence based: a key collision
+  # must NOT falsely satisfy Turn's required `:surface` dependency.
+  defmodule FakeSurfaceOwner do
+    use Ezagent.Lifecycle, state_slice: :surface
+  end
+
   describe "resolve_closure/1 (required/optional siblings)" do
     test "passes when every required sibling owner is present" do
       set = [
@@ -808,6 +816,20 @@ git commit -m "feat(kind): P1 — BehaviorSet.init_set/effective_set/member? res
       assert {Ezagent.Behavior.Turn, :surface} in missing
     end
 
+    test "a slice-key COLLISION does NOT close the set (owner-module check, not key presence)" do
+      # FakeSurfaceOwner declares state_slice :surface but is NOT
+      # Ezagent.Behavior.Surface — Turn's required :surface owner is still
+      # ABSENT, so closure must FAIL. (Pre-fix this passed because the set
+      # contributed a behavior whose state_slice/0 == :surface.)
+      set = [Ezagent.Behavior.Turn, FakeSurfaceOwner, Ezagent.Behavior.KindBase]
+
+      assert {:error, {:missing_required_siblings, missing}} = BehaviorSet.resolve_closure(set)
+      assert {Ezagent.Behavior.Turn, :surface} in missing
+      # The REAL owner closes it.
+      ok_set = [Ezagent.Behavior.Turn, Ezagent.Behavior.Surface, Ezagent.Behavior.KindBase]
+      assert BehaviorSet.resolve_closure(ok_set) == :ok
+    end
+
     test "OPTIONAL sibling absent is OK (Chat without Sandbox — today's behavior)" do
       set = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
       assert BehaviorSet.resolve_closure(set) == :ok
@@ -820,20 +842,65 @@ git commit -m "feat(kind): P1 — BehaviorSet.init_set/effective_set/member? res
       assert BehaviorSet.validate_closure!(set) == set
     end
 
-    test "RAISES Ezagent.Kind.BehaviorSet.UnclosedSetError when a required sibling is missing" do
+    test "RAISES UnclosedSetError when a required sibling OWNER is missing" do
       set = [Ezagent.Behavior.Chat, Ezagent.Behavior.Turn, Ezagent.Behavior.KindBase]
 
-      assert_raise Ezagent.Kind.BehaviorSet.UnclosedSetError,
-                   ~r/missing required sibling/,
-                   fn -> BehaviorSet.validate_closure!(set) end
+      err =
+        assert_raise Ezagent.Kind.BehaviorSet.UnclosedSetError,
+                     ~r/missing required sibling/,
+                     fn -> BehaviorSet.validate_closure!(set) end
+
+      assert {Ezagent.Behavior.Turn, :surface} in err.missing
     end
+
+    test "RAISES UnclosedSetError on a slice-key collision (FakeSurfaceOwner ≠ Surface)" do
+      set = [Ezagent.Behavior.Turn, FakeSurfaceOwner, Ezagent.Behavior.KindBase]
+
+      err =
+        assert_raise Ezagent.Kind.BehaviorSet.UnclosedSetError,
+                     ~r/missing required sibling/,
+                     fn -> BehaviorSet.validate_closure!(set) end
+
+      assert err.missing == [{Ezagent.Behavior.Turn, :surface}]
+    end
+  end
+
+  describe "resolve_closure/1 (unknown required slice owner — fail loud)" do
+    test "a REQUIRED key with no @slice_owners entry fails loud (resolve_closure)" do
+      # Drive an unknown required key through a reader registered in
+      # @required_reads with a required key absent from @slice_owners. We
+      # synthesize this via a local reader so the test is independent of
+      # the production maps: assert the contract on the resolver directly.
+      assert {:error, {:unknown_required_slice_owner, :nonexistent_slice}} =
+               BehaviorSet.resolve_closure_for(
+                 [UnknownKeyReader],
+                 %{UnknownKeyReader => %{nonexistent_slice: :required}},
+                 %{}
+               )
+    end
+
+    test "validate_closure! RAISES on an unknown required slice owner" do
+      assert_raise Ezagent.Kind.BehaviorSet.UnclosedSetError,
+                   ~r/no owner module registered/,
+                   fn ->
+                     BehaviorSet.validate_closure_for!(
+                       [UnknownKeyReader],
+                       %{UnknownKeyReader => %{nonexistent_slice: :required}},
+                       %{}
+                     )
+                   end
+    end
+  end
+
+  defmodule UnknownKeyReader do
+    use Ezagent.Lifecycle, state_slice: :unknown_key_reader
   end
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `MIX_ENV=test mix test apps/ezagent_core/test/ezagent/kind/behavior_set_test.exs`
-Expected: FAIL — `resolve_closure/1` undefined.
+Expected: FAIL — `resolve_closure/1` / `resolve_closure_for/3` / `validate_closure!/1` / `validate_closure_for!/3` undefined (and the slice-key-collision + unknown-required-key tests cannot resolve the new owner-module rule yet).
 
 - [ ] **Step 3: Add the slice-owner map + closure resolver**
 
@@ -866,27 +933,78 @@ Append to `Ezagent.Kind.BehaviorSet`:
     Ezagent.Behavior.CurlAgent => %{api_keys: :optional}
   }
 
+  @type closure_error ::
+          {:missing_required_siblings, [{module(), atom()}]}
+          | {:unknown_required_slice_owner, atom()}
+
   @doc """
   Validate a behavior set is closed under its REQUIRED sibling reads.
-  Fails loud ONLY on a missing required sibling owner; optional reads
-  keep the soft `%{}` default (no failure).
-  """
-  @spec resolve_closure([module()]) :: :ok | {:error, {:missing_required_siblings, [{module(), atom()}]}}
-  def resolve_closure(set) when is_list(set) do
-    present_slices =
-      set
-      |> Enum.map(& &1.state_slice())
-      |> MapSet.new()
 
-    missing =
+  Closure is checked by OWNER MODULE, not by slice-key presence: for each
+  reader's REQUIRED `reads_siblings` key we look up the key's OWNING
+  behavior module in `@slice_owners` and require THAT EXACT MODULE to be a
+  member of the set. A different behavior that merely happens to declare
+  the same `state_slice/0` key does NOT satisfy the dependency — a
+  slice-key collision must never falsely close the set (otherwise a reader
+  like `Turn` could initialize/dispatch against a fake/incompatible
+  `:surface` owner, defeating the dependency-closed invariant).
+
+  Fails loud ONLY on a missing required sibling OWNER; optional reads keep
+  the soft `%{}` default (no failure). A required key with NO entry in
+  `@slice_owners` is a programming error (a new required dep added without
+  registering its owner) and fails loud with
+  `{:error, {:unknown_required_slice_owner, key}}` so it can never silently
+  pass closure.
+
+  Returns `:ok` on success, or
+  `{:error, {:missing_required_siblings, [{reader, key}]}}` /
+  `{:error, {:unknown_required_slice_owner, key}}` on failure.
+  """
+  @spec resolve_closure([module()]) :: :ok | {:error, closure_error()}
+  def resolve_closure(set) when is_list(set),
+    do: resolve_closure_for(set, @required_reads, @slice_owners)
+
+  @doc """
+  Map-injectable core of `resolve_closure/1`. The production call passes the
+  module's `@required_reads` and `@slice_owners`; tests pass synthetic maps
+  to exercise the unknown-required-key branch deterministically without
+  mutating the production maps. Closure is OWNER-MODULE based: a required
+  key's owner module (per `slice_owners`) MUST be a set member — a mere
+  slice-key collision never closes it.
+  """
+  @spec resolve_closure_for([module()], map(), map()) :: :ok | {:error, closure_error()}
+  def resolve_closure_for(set, required_reads, slice_owners)
+      when is_list(set) and is_map(required_reads) and is_map(slice_owners) do
+    members = MapSet.new(set)
+
+    required_pairs =
       for reader <- set,
-          {key, :required} <- Map.get(@required_reads, reader, %{}) |> Map.to_list(),
-          not MapSet.member?(present_slices, key),
+          {key, :required} <- Map.to_list(Map.get(required_reads, reader, %{})),
           do: {reader, key}
 
-    case missing do
-      [] -> :ok
-      _ -> {:error, {:missing_required_siblings, missing}}
+    # Fail loud on a required key whose owner module is not registered in
+    # slice_owners — a new required dep must declare its owner.
+    unknown =
+      Enum.find(required_pairs, fn {_reader, key} ->
+        not Map.has_key?(slice_owners, key)
+      end)
+
+    cond do
+      unknown != nil ->
+        {_reader, key} = unknown
+        {:error, {:unknown_required_slice_owner, key}}
+
+      true ->
+        missing =
+          for {reader, key} <- required_pairs,
+              owner = Map.fetch!(slice_owners, key),
+              not MapSet.member?(members, owner),
+              do: {reader, key}
+
+        case missing do
+          [] -> :ok
+          _ -> {:error, {:missing_required_siblings, missing}}
+        end
     end
   end
 
@@ -904,8 +1022,19 @@ Append to `Ezagent.Kind.BehaviorSet`:
   persists a partial snapshot.
   """
   @spec validate_closure!([module()]) :: [module()]
-  def validate_closure!(set) when is_list(set) do
-    case resolve_closure(set) do
+  def validate_closure!(set) when is_list(set),
+    do: validate_closure_for!(set, @required_reads, @slice_owners)
+
+  @doc """
+  Map-injectable raising form (production passes the module's
+  `@required_reads`/`@slice_owners`; tests inject synthetic maps to drive
+  the unknown-required-key branch). Raises `UnclosedSetError` on a missing
+  required sibling OWNER or an unknown required slice key.
+  """
+  @spec validate_closure_for!([module()], map(), map()) :: [module()]
+  def validate_closure_for!(set, required_reads, slice_owners)
+      when is_list(set) and is_map(required_reads) and is_map(slice_owners) do
+    case resolve_closure_for(set, required_reads, slice_owners) do
       :ok ->
         set
 
@@ -915,9 +1044,20 @@ Append to `Ezagent.Kind.BehaviorSet`:
             "behavior set is not closed under required sibling reads — " <>
               "missing required sibling owner(s): " <>
               Enum.map_join(missing, ", ", fn {reader, key} ->
-                "#{inspect(reader)} requires slice :#{key}"
+                owner = Map.fetch!(slice_owners, key)
+                "#{inspect(reader)} requires slice :#{key} (owner #{inspect(owner)})"
               end),
           missing: missing
+
+      {:error, {:unknown_required_slice_owner, key}} ->
+        # A REQUIRED reads_siblings key with no slice_owners entry is a
+        # programming error (new required dep added without registering its
+        # owner module). Fail loud so it can never silently pass closure.
+        raise Ezagent.Kind.BehaviorSet.UnclosedSetError,
+          message:
+            "behavior set closure cannot be resolved — required slice " <>
+              ":#{key} has no owner module registered in @slice_owners",
+          missing: [{:unknown_required_slice_owner, key}]
     end
   end
 
@@ -2125,7 +2265,7 @@ Each is its own plan doc under `docs/superpowers/plans/`.
 **Spec coverage of §6 P0 + P1 and §3.1 (rev5 — covers first-spawn + universal behaviors + absent-vs-present-empty sentinel + closure ENFORCED on init path + LOAD-ORDER fix (fetch persisted set before init on reload) + closure fixture DECLARES Turn + real E9 registry setup):**
 - P0 "Publisher as base behavior on SocialwareSession / every session composes it" → Task 1 (+ Task 2 caps, Task 3 gate). ✓
 - P0 "no consumer change; chat/socialware/Feishu unchanged" → Task 3 regression gate. ✓
-- P1.1 "reclassify each reads_siblings as required/optional + slice-owner map + resolver failing loud only on missing required" → Tasks 6–7 (slice-owner map, required/optional table, `resolve_closure`, optional soft default preserved for `Chat → :sandbox`). ✓
+- P1.1 "reclassify each reads_siblings as required/optional + slice-owner map + resolver failing loud only on missing required" → Tasks 6–7 (slice-owner map, required/optional table, `resolve_closure`, optional soft default preserved for `Chat → :sandbox`). **Closure is OWNER-MODULE based (codex HIGH): each required `reads_siblings` key resolves its OWNING behavior module via `@slice_owners` and requires THAT EXACT module to be a set member — a slice-key collision (a non-owner behavior declaring the same `state_slice/0` key) does NOT falsely close the set; a required key with no `@slice_owners` entry fails loud (`{:error, {:unknown_required_slice_owner, key}}`) so a new required dep can never silently pass.** ✓
 - P1.1 "the closure is ENFORCED on the spawn/init path, not just a pure helper" → **Task 7 adds `validate_closure!/1` (raising passthrough) + `UnclosedSetError`; Task 9 wires it INTO `init_fresh_first_spawn/2` (the `:not_found` branch) BEFORE any `init_slice`/`create` runs and strictly before `persist_initial_snapshot/3`, and validates the PERSISTED effective set on reload** — so a requested set like `[Turn]` without `Surface` (Turn `reads_siblings :surface :required`) FAILS LOUD at first spawn and persists NO partial slice, while a valid persisted instance is never crashed by bogus reload args. **The closure-denial FIXTURE (Task 8) now DECLARES `Turn` in `SupersetSessionKind.behaviors/0`** so the requested `Turn` survives `init_set/2`'s ∩-declared intersection and the closure path is genuinely exercised (codex HIGH — previously Turn was dropped by the intersection and the test was vacuous). Integration denial test in Task 9 asserts the raise, `err.missing == [{Turn, :surface}]`, the observable `refute_received {:probe, :init_slice}` (ProbeBehavior is IN the requested set), AND `is_nil(Repo.get(KindSnapshot, uri_str))` (no row), plus an optional-read positive test (`Chat` without `Sandbox` succeeds, soft `%{}`). ✓ (codex CRITICAL finding 1 — closure now wired + load-order fixed; codex HIGH finding — fixture declares Turn so the test exercises closure)
 - P1.2 HARD INVARIANT "persist instance set + route EVERY enumeration/callback entry point through it" → KindBase persistence (Tasks 4–5) + every entry point E1–E10 (Tasks 9–14). ✓
 - §3.1 "an out-of-set behavior must NEVER run a callback nor create its slice — even on FIRST spawn before any restart, AND across restart/reconcile" → **Task 9 RESTRUCTURES `load_with_fallback/3` to fetch the persisted snapshot FIRST, then branch: `:not_found` → `init_fresh_first_spawn/2` (init_set from spawn args + validate_closure! + init_slice); `{:ok, loaded}` → effective set from the PERSISTED `:kind_base` (`effective_set/2`, NOT spawn args), closure-validate THAT set, init only its members (`init_fresh_for_set/2`).** So out-of-set `create`/`init_slice` never run and out-of-set slices are never created or persisted — at first spawn OR on reload — and a closed-but-wrong / unclosed SPAWN-ARGS fallback can no longer drive slice creation or crash a valid persisted instance. Proven by the first-spawn denial test (no prior snapshot), the reload-scoping test (set derived from persisted `:kind_base`, not broader args), and the bogus-reload-survives test (unclosed `[Turn]` args don't crash a valid chat-only persisted instance). No "prune on next load" reliance for the security property. ✓ (codex CRITICAL finding 1 — was a load-ORDER defect: `init_fresh` ran from spawn args before `fetch_snapshot` read the persisted set)
@@ -2140,7 +2280,7 @@ Each is its own plan doc under `docs/superpowers/plans/`.
 
 **Placeholder scan (rev5 — full re-scan):** the intentional, clearly-flagged implementer bind-points remain (none are silent placeholders): Task 2's `Ezagent.Identity.production_caps()` accessor — flagged "bind to the exact accessor `binding_policy_test` uses" — because that exact catalog-accessor symbol must be read from the live suite at execution time (binding it blind is a worse failure mode); Task 9's no-partial-persist assertion is bound to the VERIFIED `KindSnapshot` primary key `:uri` (kind_snapshot.ex:24) with a one-line "update if schema keying changes" note; Task 10's `admin_caps/0` is given the documented bootstrap shape with a bind-note + an explicit "assert NOT `:behavior_not_in_instance_set`" fallback so the test is robust to the exact cap shape, and a bind-note for the probe-control test's cap coverage. The Task 8/10 E9 registration uses the VERIFIED canonical signature `Ezagent.CapabilityRegistry.register/3` (capability_registry.ex:82) — no assumption. **Task 15's `assert true` placeholder is GONE** — replaced with the full real chat send/join dispatch flow + an explicit "reject any `assert true` / placeholder" acceptance clause. No "TODO / implement later / handle edge cases / add validation / similar to Task N / write tests for the above" anywhere in the plan.
 
-**Type/signature consistency (rev5):** `init_set/2` (kind_module, args) used in Task 6 def + Task 9 `init_fresh_first_spawn/2` (called as `kind_module |> BehaviorSet.init_set(args)`); both use the legacy-sentinel rule via `Map.fetch(args, :behaviors)` (`:error` → declared, `{:ok, list}` → ∩). `init_fresh_first_spawn/2` (Task 9) is reachable ONLY from `load_with_fallback/3`'s `:not_found` branch and `load_or_init/3`'s `:ephemeral`/`:external` arms; `init_fresh_for_set/2` (Task 9) is the closure-already-validated worker shared by the first-spawn path (after `validate_closure!`) and the reload branch (on the persisted effective set). The legacy `init_fresh/2` name is fully removed (renamed) — no caller references it. `effective_set/2` (kind_module, slice_state) used identically in the reload branch (Task 9) + Tasks 10–14; reads back via `behaviors_in_slice/1` and maps `nil` → declared, present-list → ∩. The reload branch of `load_with_fallback/3` calls `effective_set/2` on the canonicalized loaded state, then `validate_closure!/1` on the result, then `init_fresh_for_set/2`, then `coerce_loaded_to_fresh_shape/2`, `prune_orphan_slices/2`, `reconcile_after_load_behaviors/3` — all consistent with their Task 6/7/9 signatures. `behaviors_in_slice/1` returns `[module()] | nil` (sentinel `nil`, NOT `[]`) — consistent across Task 4 def + Task 6 effective_set + Task 9 assertions + Task 14 test slices (all use `behaviors: nil` for the legacy/declared case and `behaviors: []` for the base-only case). `base_behaviors/0` defined in Task 6, referenced by init_set/effective_set + the `%{behaviors: []}` tests (Tasks 6, 9) + Task 10 exemption note + Task 14 note. `member?/2` (behavior, effective_set) consistent (Tasks 6, 10). `resolve_closure/1` returns `:ok | {:error, {:missing_required_siblings, [{module(), atom()}]}}` consistent (Task 7); `validate_closure!/1` (Task 7) is the raising passthrough returning `[module()]` (the unchanged set) on success and raising `Ezagent.Kind.BehaviorSet.UnclosedSetError` (exception carries `:missing`) on failure — called in `init_fresh_first_spawn/2` (first-spawn) AND on the persisted effective set in the reload branch (Task 9), and asserted via `assert_raise UnclosedSetError` + `err.missing == [{Turn, :surface}]` in both Task 7 unit tests and the Task 9 first-spawn integration test (consistent module name across def + tests). The Task 9 closure fixture relies on `SupersetSessionKind` DECLARING `Turn` (Task 8) so the requested `Turn` survives `init_set/2`'s ∩-declared intersection. `instance_set_gate/3` (Task 10) uses `UniversalBehaviors.all/0` (verified to exist + contain `Manage`) and `effective_set/2`/`member?/2`. `hosts_lifecycle?/1` and `/2` both defined (Task 14). KindBase `state_slice == :kind_base` consistent across owner map + init_set/effective_set + prune-exclusion.
+**Type/signature consistency (rev5):** `init_set/2` (kind_module, args) used in Task 6 def + Task 9 `init_fresh_first_spawn/2` (called as `kind_module |> BehaviorSet.init_set(args)`); both use the legacy-sentinel rule via `Map.fetch(args, :behaviors)` (`:error` → declared, `{:ok, list}` → ∩). `init_fresh_first_spawn/2` (Task 9) is reachable ONLY from `load_with_fallback/3`'s `:not_found` branch and `load_or_init/3`'s `:ephemeral`/`:external` arms; `init_fresh_for_set/2` (Task 9) is the closure-already-validated worker shared by the first-spawn path (after `validate_closure!`) and the reload branch (on the persisted effective set). The legacy `init_fresh/2` name is fully removed (renamed) — no caller references it. `effective_set/2` (kind_module, slice_state) used identically in the reload branch (Task 9) + Tasks 10–14; reads back via `behaviors_in_slice/1` and maps `nil` → declared, present-list → ∩. The reload branch of `load_with_fallback/3` calls `effective_set/2` on the canonicalized loaded state, then `validate_closure!/1` on the result, then `init_fresh_for_set/2`, then `coerce_loaded_to_fresh_shape/2`, `prune_orphan_slices/2`, `reconcile_after_load_behaviors/3` — all consistent with their Task 6/7/9 signatures. `behaviors_in_slice/1` returns `[module()] | nil` (sentinel `nil`, NOT `[]`) — consistent across Task 4 def + Task 6 effective_set + Task 9 assertions + Task 14 test slices (all use `behaviors: nil` for the legacy/declared case and `behaviors: []` for the base-only case). `base_behaviors/0` defined in Task 6, referenced by init_set/effective_set + the `%{behaviors: []}` tests (Tasks 6, 9) + Task 10 exemption note + Task 14 note. `member?/2` (behavior, effective_set) consistent (Tasks 6, 10). `resolve_closure/1` returns `:ok | {:error, {:missing_required_siblings, [{module(), atom()}]}} | {:error, {:unknown_required_slice_owner, atom()}}` consistent (Task 7); it delegates to the map-injectable `resolve_closure_for/3` (set, required_reads, slice_owners) — the production arity-1 passes `@required_reads`/`@slice_owners`, and the Task 7 unknown-required-key tests pass synthetic maps to drive the `:unknown_required_slice_owner` branch deterministically without mutating the production maps. Closure is OWNER-MODULE based: each required key resolves its owner via `@slice_owners` and that exact owner module must be a `MapSet.member?` of the set (a slice-key collision does NOT close it). `validate_closure!/1` (Task 7) delegates to `validate_closure_for!/3` and is the raising passthrough returning `[module()]` (the unchanged set) on success and raising `Ezagent.Kind.BehaviorSet.UnclosedSetError` (exception carries `:missing`) on a missing required OWNER OR an unknown required key — called in `init_fresh_first_spawn/2` (first-spawn) AND on the persisted effective set in the reload branch (Task 9), and asserted via `assert_raise UnclosedSetError` + `err.missing == [{Turn, :surface}]` in both Task 7 unit tests and the Task 9 first-spawn integration test (consistent module name across def + tests). The Task 9 closure fixture relies on `SupersetSessionKind` DECLARING `Turn` (Task 8) so the requested `Turn` survives `init_set/2`'s ∩-declared intersection. `instance_set_gate/3` (Task 10) uses `UniversalBehaviors.all/0` (verified to exist + contain `Manage`) and `effective_set/2`/`member?/2`. `hosts_lifecycle?/1` and `/2` both defined (Task 14). KindBase `state_slice == :kind_base` consistent across owner map + init_set/effective_set + prune-exclusion.
 
 **Spec ambiguity resolved (flagged for orchestrator):**
 - **Where the instance set is persisted:** chosen a dedicated base behavior `KindBase` owning a `:kind_base` slice (not a raw spawn-arg-only field), because the spec's §3.1 explicitly requires the set to "survive restart/reconcile" and only slice state goes through `kind_snapshots` load/merge/prune. A spawn-arg-only value would be lost on cold restart (args aren't re-supplied on rehydrate). Justification matches the spec's own parenthetical "(in the spawn args / template / a base slice)".
