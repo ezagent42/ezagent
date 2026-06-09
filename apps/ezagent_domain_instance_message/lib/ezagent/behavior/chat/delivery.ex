@@ -196,6 +196,91 @@ defmodule Ezagent.Behavior.Chat.Delivery do
 
   def first_attachment_path(_), do: nil
 
+  @doc """
+  Agent-branch `:receive` delivery (extracted VERBATIM from
+  `Ezagent.Behavior.Chat.handle_receive/2`, PR-3R). Builds a
+  flavor-neutral `Ezagent.AgentBridge.Payload` from the message + ctx and
+  delivers it via `Ezagent.AgentBridge`, self-healing a vanished bridge.
+  Runs in the same Agent Kind process as the handler; returns `:ok`
+  (the handler emits its own `{:ok, %{}, []}`).
+  """
+  @spec deliver_agent_receive(Message.t(), map()) :: :ok
+  def deliver_agent_receive(%Message{} = msg, ctx) do
+    # AgentBridge PR-D: keep chat receive flavor-neutral. The
+    # bridge domain resolves the bound channel and adapter for the
+    # agent URI; missing bridge/adapter remains best-effort for
+    # this cast receive path but is logged by AgentBridge.deliver/2.
+    source_session =
+      case Map.get(ctx, :caller) do
+        %URI{} = u -> URI.to_string(u)
+        s when is_binary(s) -> s
+        _ -> ""
+      end
+
+    attachments = body_attachments(msg.body)
+    attachment_hint = attachment_hint_text(attachments)
+
+    text_with_hint =
+      case {body_text(msg.body), attachment_hint} do
+        {"", ""} -> ""
+        {t, ""} -> t
+        {"", hint} -> hint
+        {t, hint} -> t <> "\n" <> hint
+      end
+
+    base_meta = %{
+      "sender" => Ezagent.URI.stable_key(msg.sender),
+      "message_id" => msg.id,
+      "session" => source_session
+    }
+
+    meta =
+      case first_attachment_path(attachments) do
+        nil -> base_meta
+        path -> Map.put(base_meta, "file_path", path)
+      end
+
+    session_uri =
+      case msg.session_uri do
+        %URI{} = uri -> uri
+        s when is_binary(s) and s != "" -> Ezagent.URI.new!(s)
+        _ when source_session != "" -> Ezagent.URI.new!(source_session)
+        _ -> nil
+      end
+
+    payload = %Ezagent.AgentBridge.Payload{
+      message_id: msg.id,
+      session_uri: session_uri,
+      sender_uri: msg.sender,
+      text: text_with_hint,
+      event_type: :chat_send,
+      attachments: attachments,
+      meta: meta
+    }
+
+    # PR-DR (blocker #1): self-heal a vanished bridge before dropping. If
+    # the agent's claude/python subprocess exited (its WS Channel.terminate
+    # unbound the Registry row), `deliver_ensuring/2` relaunches it
+    # (snapshot-sourced, flavor-neutral) + awaits the rebind, then retries
+    # once — instead of silently `:no_bridge`-dropping the routed message.
+    _ =
+      case resolve_agent_flavor_from_ctx(ctx) do
+        {:ok, flavor} ->
+          Ezagent.AgentBridge.deliver_ensuring_with_flavor(ctx[:self_uri], payload, flavor)
+
+        :none ->
+          Ezagent.AgentBridge.deliver_ensuring(ctx[:self_uri], payload)
+      end
+
+    :ok
+  end
+
+  defp resolve_agent_flavor_from_ctx(ctx) do
+    ctx
+    |> get_in([:siblings, :sandbox])
+    |> EzagentDomainInstanceMessage.UriQueryResolvers.resolve_flavor_from_sandbox()
+  end
+
   def attachment_hint_text([]), do: ""
 
   def attachment_hint_text(list) do
