@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Any subagent touching `.ex` MUST load `ezagent-developer` + `elixir-phoenix-helper` skills first.
 >
-> **rev2 (2026-06-09)** — incorporates @gagameow's review of #690: ① DD3 `render_soul` change lands as an **independent PR to `main` first**, then rebases in; ② **DD1 turn-end policy** added (per-turn idle-window + conversation-end "anything else?"); ③ **reject** the "keep raw subscription as fallback" suggestion (it leaks `:operator_only` — see Task 7); ④ DD5-b/DD6/DD4 **cleared** by the corrected review (no 🔶 / no Allen decision); ⑤ fast+slow stays deferred — **measure latency first, then pick the lightest mitigation** (not a presumed problem).
+> **rev2 (2026-06-09)** — incorporates @gagameow's review of #690: ① DD3 `render_soul` change handled per the dev-inline→extract flow (see rev3); ② **DD1 turn-end policy** added (per-turn idle-window + conversation-end "anything else?"); ③ **reject** the "keep raw subscription as fallback" suggestion (it leaks `:operator_only` — see Task 7); ④ DD5-b/DD6/DD4 **cleared** by the corrected review (no 🔶 / no Allen decision); ⑤ fast+slow stays deferred — **measure latency first, then pick the lightest mitigation** (not a presumed problem).
+>
+> **rev3 (2026-06-09)** — @gagameow APPROVED #690. Execution updates: **Prereq B = `git merge` main into autoservice** (PR #707, verified 0-conflict/compiles — merge not rebase). **DD3 = dev-inline then extract** (per his process note): Task 1 `render_soul` DONE on autoservice (`3542651e`, green); extracted to `main` as a focused PR after Task 2–3 (steps in §5). Build Tasks 1–7 proceed autonomously; live Tasks 0/8/9 await the isolated stack + token.
 
 **Goal:** Stand up the thinnest provable slice of the AutoService CS vertical on the socialware base (`SocialwareSession`) — one cinnox-soul-driven cc bot answering a customer through the visibility-gated `CustomerFeed`, with an operator takeover that flips visibility — recordable E2E on an isolated stack.
 
@@ -115,8 +117,8 @@ DD1 is the design centerpiece (review approved the direction; turn-end policy is
 - [ ] **Step 2:** Run `SCENARIO_34_LIVE=1 mix test apps/ezagent_domain_instance_message/test/e2e/scenario_34_sender_locked_relay_live_test.exs`. Expected: the `add_managed_member`-built relay member delivers `chat.receive` and replies (assert reads `Ezagent.MessageStore`).
 - [ ] **Step 3:** Record in `docs/notes/2026-06-09-g1-live-confirmation.md` (PASS → G1 retired; FAIL → STOP, file the gap, escalate to Allen).
 
-### Task 1: `render_soul/1` projects raw soul markdown (DD3) — **independent PR → `main`**
-> This task ships as its own PR onto `main`, then reaches `autoservice` via the §5 rebase. Do NOT commit it on the `autoservice` branch.
+### Task 1: `render_soul/1` projects raw soul markdown (DD3) — ✅ DONE inline on autoservice
+> **Status: implemented + unit-validated on `autoservice` (commit `3542651e`, 7 tests / 0 failures).** Per @gagameow's DD3 process note (#690): developed inline on the autoservice base during dev; **extracted to `main` as its own focused PR after Task 2–3 validate the soul→ConfigObject→render_soul chain in use** (extraction steps in §5). The change is one additive `soul_md` pattern-match branch; the original key:value clause is preserved as the fallback.
 
 **Files:**
 - Modify: `apps/ezagent_domain_socialware/lib/ezagent/socialware/config_projection.ex:217-229`
@@ -218,8 +220,15 @@ end
 
 ## 5. Dependencies / sequencing
 
-- **Prereq A — DD3 to `main`:** Task 1 (`render_soul` soul_md branch) merges to `main` as its own PR.
-- **Prereq B — autoservice rebases `main`:** rebase `origin/autoservice` onto `main` (gets socialware base **and** Prereq A; currently 68 behind). We do it, colleague reviews. The autoservice-vertical tasks assume this.
-- **Task 0 gates everything** — if G1 live confirmation fails, stop and escalate.
-- Tasks 2–4 are foundation (parallelizable after Task 0 + the rebase).
+- **Prereq B — autoservice gets the socialware base (DONE, in review):** **`git merge origin/main` into `autoservice`** (PR [#707](https://github.com/ezagent42/ezagent/pull/707)) — verified 0 conflicts, core untouched, compiles. **Merge, not rebase** (autoservice carries a format-churn+revert pair that a rebase reintroduces; see the #690 scouting comment). The autoservice-vertical tasks build on this reconciled base.
+- **DD3 dev-inline → extract to `main` (replaces the old "Prereq A blocking PR"):** `render_soul` is developed inline on autoservice (Task 1 ✅) and **extracted to `main` as a focused PR after Task 2–3 validate it in use**:
+  ```bash
+  git checkout -b feat/socialware-render-soul-md origin/main
+  git cherry-pick 3542651e        # isolated: config_projection.ex + its test → clean onto main
+  mix test apps/ezagent_domain_socialware/test/ezagent/socialware/config_projection_test.exs   # green
+  git push -u origin feat/socialware-render-soul-md   # → PR to main (DD3, soul_md branch, fallback preserved)
+  ```
+  After it merges to `main`, the autoservice dev commit holds identical content → the next `main` merge is a no-op for that file (no conflict). The brief double-commit (autoservice dev + main) is the expected shape of the dev-inline→extract flow.
+- **Task 0 gates the live E2E** — if G1 live confirmation fails, stop and escalate. (Build Tasks 1–7 may proceed ahead of it given the strong #539 evidence G1 is fixed; Task 0/8/9 run when the isolated stack + token are available.)
+- Tasks 2–4 are foundation (after Prereq B).
 - Tasks 5–6 build the turn adapter + takeover; Task 7 the customer feed; Tasks 8–9 close + record the E2E.
