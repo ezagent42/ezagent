@@ -45,4 +45,36 @@ defmodule Ezagent.Behavior.KindBaseTest do
     assert KindBase.behaviors_in_slice(nil) == nil
     assert KindBase.behaviors_in_slice(%{state: %{}, transients: %{}}) == nil
   end
+
+  describe "snapshot round-trip" do
+    setup do
+      Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
+    end
+
+    test "kind_base slice survives load_or_init after save_now" do
+      uri = Ezagent.URI.session(:system, :default, :"kbtest-#{System.unique_integer([:positive])}")
+      behaviors = [Ezagent.Behavior.Chat, Ezagent.Behavior.Surface]
+
+      # A throwaway Kind module composing only KindBase, on_change persistence.
+      defmodule KBTestKind do
+        @behaviour Ezagent.Kind
+        @impl true
+        def type_name, do: :session
+        @impl true
+        def behaviors, do: [Ezagent.Behavior.KindBase]
+        @impl true
+        def persistence, do: {:snapshot, :on_change}
+        @impl true
+        def supervisor, do: Ezagent.Kind.Server
+      end
+
+      fresh = Ezagent.Kind.Snapshot.load_or_init(uri, KBTestKind, %{behaviors: behaviors})
+      :ok = Ezagent.Kind.Snapshot.save_now(uri, KBTestKind, fresh)
+
+      # The persisted snapshot wins on reload; the args here are the unused
+      # cold-init fallback (a snapshot already exists for this uri).
+      reloaded = Ezagent.Kind.Snapshot.load_or_init(uri, KBTestKind, %{behaviors: behaviors})
+      assert Ezagent.Behavior.KindBase.behaviors_in_slice(reloaded[:kind_base]) == behaviors
+    end
+  end
 end
