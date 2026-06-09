@@ -51,8 +51,11 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 182},
     {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 221},
     {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 223},
-    {"apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools.ex", 281},
-    {"apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools.ex", 552}
+    # PR-3S — `spawn_fresh_member/8` (def) + its single call site moved VERBATIM
+    # from `Orchestrator.Tools` to `Orchestrator.Tools.MemberTemplate` along with
+    # the `update_member_template` regenerate cluster (gt_1000 4→3 extraction).
+    {"apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools/member_template.ex", 190},
+    {"apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools/member_template.ex", 223}
   ]
 
   @all_slices_sanctioned [
