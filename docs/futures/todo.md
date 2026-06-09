@@ -14,6 +14,17 @@
 
 ## Active follow-ups (post-2026-05-24 batch)
 
+### Autoservice / SW-UPD: customer-serving agent update mechanism — verify doc + tests (Allen 2026-06-09)
+
+> **OPEN.** In the prior `autoservice` work, how does one **update the agent that
+> serves a customer** (the SW-UPD / self-evolve loop — operator/agent revises the
+> running customer-facing app)? Check: (1) is there documentation for this
+> mechanism? (2) was it actually tested (E2E)? After the **socialware-substrate**
+> task (#46) lands, review whether this mechanism's implementation is complete /
+> sound on the new substrate. Likely relates to `Behavior.ConfigUpdate` +
+> `set_working_copy` + template re-materialization; confirm against the
+> autoservice/loom migration docs.
+
 ### ~~Capability struct lacks an action axis (codex PR #356 r1 CRIT)~~ — RESOLVED 2026-06-08
 
 > **RESOLVED 2026-06-08** (evidence: SPEC `2026-05-27-capability-action-axis.md`
