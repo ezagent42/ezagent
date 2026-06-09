@@ -1,3 +1,16 @@
+defmodule Ezagent.Kind.BehaviorSet.UnclosedSetError do
+  @moduledoc """
+  Raised at `Snapshot.init_fresh_first_spawn/2` (first spawn) — and on the
+  persisted effective set in the reload branch of `load_with_fallback/3` — when
+  a requested/persisted instance behavior set is NOT closed under its required
+  sibling reads (P1.1). Carries the `:missing` list of
+  `{reader_module, missing_slice_key}` tuples. Because it is raised at the init
+  chokepoint BEFORE any `init_slice`/`create` runs, the spawn aborts and NO
+  partial slice is persisted.
+  """
+  defexception [:message, missing: []]
+end
+
 defmodule Ezagent.Kind.BehaviorSet do
   @moduledoc """
   Per-instance behavior-set resolution + required/optional sibling
@@ -117,4 +130,162 @@ defmodule Ezagent.Kind.BehaviorSet do
   def member?(behavior, effective_set) when is_atom(behavior) and is_list(effective_set) do
     behavior in effective_set
   end
+
+  # Slice-owner map: which Behavior module OWNS each slice key. Single
+  # source of truth for the closure resolver. Derived from each
+  # session-relevant Behavior's `state_slice/0`.
+  @slice_owners %{
+    chat: Ezagent.Behavior.Chat,
+    turns: Ezagent.Behavior.Turn,
+    surface: Ezagent.Behavior.Surface,
+    config_updates: Ezagent.Behavior.ConfigUpdate,
+    publisher: Ezagent.Behavior.Publisher.SessionImpl,
+    sandbox: Ezagent.Behavior.Sandbox,
+    api_keys: Ezagent.Behavior.ApiKeys,
+    external_mirror: Ezagent.Behavior.ExternalMirror,
+    kind_base: Ezagent.Behavior.KindBase
+  }
+
+  # Per-reader required-vs-optional classification of each `reads_siblings`
+  # key. A key absent from a reader's entry defaults to :optional (preserves
+  # the soft `%{}` default the runtime injects today — `context.ex`).
+  @required_reads %{
+    Ezagent.Behavior.Turn => %{surface: :required},
+    Ezagent.Behavior.ConfigUpdate => %{turns: :required, chat: :required},
+    Ezagent.Behavior.ExternalMirror => %{publisher: :required},
+    Ezagent.Behavior.Chat => %{sandbox: :optional},
+    Ezagent.Behavior.CurlAgent => %{api_keys: :optional}
+  }
+
+  @type closure_error ::
+          {:missing_required_siblings, [{module(), atom()}]}
+          | {:unknown_required_slice_owner, atom()}
+
+  @doc """
+  Validate a behavior set is closed under its REQUIRED sibling reads.
+
+  Closure is checked by OWNER MODULE, not by slice-key presence: for each
+  reader's REQUIRED `reads_siblings` key we look up the key's OWNING
+  behavior module in `@slice_owners` and require THAT EXACT MODULE to be a
+  member of the set. A different behavior that merely happens to declare
+  the same `state_slice/0` key does NOT satisfy the dependency — a
+  slice-key collision must never falsely close the set (otherwise a reader
+  like `Turn` could initialize/dispatch against a fake/incompatible
+  `:surface` owner, defeating the dependency-closed invariant).
+
+  Fails loud ONLY on a missing required sibling OWNER; optional reads keep
+  the soft `%{}` default (no failure). A required key with NO entry in
+  `@slice_owners` is a programming error (a new required dep added without
+  registering its owner) and fails loud with
+  `{:error, {:unknown_required_slice_owner, key}}` so it can never silently
+  pass closure.
+
+  Returns `:ok` on success, or
+  `{:error, {:missing_required_siblings, [{reader, key}]}}` /
+  `{:error, {:unknown_required_slice_owner, key}}` on failure.
+  """
+  @spec resolve_closure([module()]) :: :ok | {:error, closure_error()}
+  def resolve_closure(set) when is_list(set),
+    do: resolve_closure_for(set, @required_reads, @slice_owners)
+
+  @doc """
+  Map-injectable core of `resolve_closure/1`. The production call passes the
+  module's `@required_reads` and `@slice_owners`; tests pass synthetic maps
+  to exercise the unknown-required-key branch deterministically without
+  mutating the production maps. Closure is OWNER-MODULE based: a required
+  key's owner module (per `slice_owners`) MUST be a set member — a mere
+  slice-key collision never closes it.
+  """
+  @spec resolve_closure_for([module()], map(), map()) :: :ok | {:error, closure_error()}
+  def resolve_closure_for(set, required_reads, slice_owners)
+      when is_list(set) and is_map(required_reads) and is_map(slice_owners) do
+    members = MapSet.new(set)
+
+    required_pairs =
+      for reader <- set,
+          {key, :required} <- Map.to_list(Map.get(required_reads, reader, %{})),
+          do: {reader, key}
+
+    # Fail loud on a required key whose owner module is not registered in
+    # slice_owners — a new required dep must declare its owner.
+    unknown =
+      Enum.find(required_pairs, fn {_reader, key} ->
+        not Map.has_key?(slice_owners, key)
+      end)
+
+    cond do
+      unknown != nil ->
+        {_reader, key} = unknown
+        {:error, {:unknown_required_slice_owner, key}}
+
+      true ->
+        missing =
+          for {reader, key} <- required_pairs,
+              owner = Map.fetch!(slice_owners, key),
+              not MapSet.member?(members, owner),
+              do: {reader, key}
+
+        case missing do
+          [] -> :ok
+          _ -> {:error, {:missing_required_siblings, missing}}
+        end
+    end
+  end
+
+  @doc """
+  Raising form of `resolve_closure/1`, returning the set unchanged on
+  success so it can sit inline in a pipe at the init chokepoint
+  (`Snapshot.init_fresh_first_spawn/2` at first spawn; also on the persisted
+  effective set in the reload branch of `load_with_fallback/3`). RAISES
+  `UnclosedSetError` (which aborts the spawn before any `create`/`init_slice`
+  runs) when a required sibling owner is missing.
+
+  This is the load-bearing enforcement of P1.1 (codex CRITICAL finding 1):
+  the closure is checked at the SAME point the slices are about to be
+  materialized, so an unclosed set NEVER reaches `init_slice` and NEVER
+  persists a partial snapshot.
+  """
+  @spec validate_closure!([module()]) :: [module()]
+  def validate_closure!(set) when is_list(set),
+    do: validate_closure_for!(set, @required_reads, @slice_owners)
+
+  @doc """
+  Map-injectable raising form (production passes the module's
+  `@required_reads`/`@slice_owners`; tests inject synthetic maps to drive
+  the unknown-required-key branch). Raises `UnclosedSetError` on a missing
+  required sibling OWNER or an unknown required slice key.
+  """
+  @spec validate_closure_for!([module()], map(), map()) :: [module()]
+  def validate_closure_for!(set, required_reads, slice_owners)
+      when is_list(set) and is_map(required_reads) and is_map(slice_owners) do
+    case resolve_closure_for(set, required_reads, slice_owners) do
+      :ok ->
+        set
+
+      {:error, {:missing_required_siblings, missing}} ->
+        raise Ezagent.Kind.BehaviorSet.UnclosedSetError,
+          message:
+            "behavior set is not closed under required sibling reads — " <>
+              "missing required sibling owner(s): " <>
+              Enum.map_join(missing, ", ", fn {reader, key} ->
+                owner = Map.fetch!(slice_owners, key)
+                "#{inspect(reader)} requires slice :#{key} (owner #{inspect(owner)})"
+              end),
+          missing: missing
+
+      {:error, {:unknown_required_slice_owner, key}} ->
+        # A REQUIRED reads_siblings key with no slice_owners entry is a
+        # programming error (new required dep added without registering its
+        # owner module). Fail loud so it can never silently pass closure.
+        raise Ezagent.Kind.BehaviorSet.UnclosedSetError,
+          message:
+            "behavior set closure cannot be resolved — required slice " <>
+              ":#{key} has no owner module registered in @slice_owners",
+          missing: [{:unknown_required_slice_owner, key}]
+    end
+  end
+
+  @doc "The owning Behavior module for a slice key (or nil)."
+  @spec owner_of(atom()) :: module() | nil
+  def owner_of(slice_key) when is_atom(slice_key), do: Map.get(@slice_owners, slice_key)
 end
