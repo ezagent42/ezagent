@@ -215,6 +215,11 @@ defmodule Ezagent.Socialware.ConfigProjection do
   determinism. Public so tests can assert the exact projection.
   """
   @spec render_soul(map()) :: String.t()
+  # An autoservice cinnox soul is one authored markdown document; emit it
+  # verbatim as CLAUDE.md. (autoservice migration DD3) The key:value clause
+  # below stays as the fallback for self-evolve config bodies without a soul_md.
+  def render_soul(%{"soul_md" => soul_md}) when is_binary(soul_md), do: soul_md
+
   def render_soul(body) when is_map(body) do
     lines =
       body
