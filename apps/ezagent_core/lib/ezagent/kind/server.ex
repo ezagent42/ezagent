@@ -146,7 +146,7 @@ defmodule Ezagent.Kind.Server do
         # as :unknown instead of :existed (codex review P2). Non-Lifecycle
         # Kinds have no create/activate distinction → :unknown.
         state =
-          if Ezagent.Lifecycle.hosts_lifecycle?(kind_module) do
+          if Ezagent.Lifecycle.hosts_lifecycle?(kind_module, slice_state) do
             freshness = if Ezagent.Lifecycle.fresh_create?(uri), do: :created, else: :existed
             %{state | create_freshness: freshness}
           else
