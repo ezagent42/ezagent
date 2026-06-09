@@ -95,6 +95,7 @@ defmodule Ezagent.Behavior.ExternalMirror do
   require Logger
 
   alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRow, FacadeNonceTable, WorkerSpawn}
+  alias Ezagent.Behavior.ExternalMirror.Codec
 
   # ----- Ezagent.Lifecycle contract (Phase B lifecycle migration) ---------
   #
@@ -143,26 +144,29 @@ defmodule Ezagent.Behavior.ExternalMirror do
   # in our explicit `required_caps/0` override below (the macro's
   # auto-derived version defaults to `kind: :any` and would lose the
   # `:session` scoping the dispatcher enforces at step 5.5).
-  action :bind,
+  action(:bind,
     args: %{adapter_id: :string, target_id: :string, opts: :map},
     returns: %{ok: :boolean, binding_id: :string, worker_uri: :uri},
     caps: [:bind],
     modes: [:call],
     description: "Bind this session's slice changes to an external adapter target."
+  )
 
-  action :unbind,
+  action(:unbind,
     args: %{adapter_id: :string, target_id: :string},
     returns: %{ok: :boolean, unbound: :boolean},
     caps: [:unbind],
     modes: [:call],
     description: "Remove an (adapter_id, target_id) binding from this session."
+  )
 
-  action :list_bindings,
+  action(:list_bindings,
     args: %{},
     returns: %{bindings: {:list, :map}},
     caps: [:list_bindings],
     modes: [:call],
     description: "List all external-mirror bindings on this session."
+  )
 
   # Remediation SPEC 2026-05-30 (C-A): `:bind` reads the SESSION's
   # `:publisher` sibling slice to capture its CURRENT cursor at bind time,
@@ -174,7 +178,7 @@ defmodule Ezagent.Behavior.ExternalMirror do
   # bind-point cursor REPLAYS exactly that window (cursor-based catch-up) —
   # no first-event loss. `ctx.siblings[:publisher][:cursor]` is the
   # T3-normalized persistent cursor (invariant 18 — declared key only).
-  reads_siblings [:publisher]
+  reads_siblings([:publisher])
 
   # Explicit override — the macro's auto-derived `required_caps/0` would
   # use `kind: :any` per `build_required_cap_ast/3`. ExternalMirror is
@@ -204,7 +208,7 @@ defmodule Ezagent.Behavior.ExternalMirror do
     bindings =
       session_uri
       |> BindingRow.list_for_session()
-      |> Enum.map(&row_to_slice_binding/1)
+      |> Enum.map(&Codec.row_to_slice_binding/1)
 
     {:ok, %{bindings: bindings}}
   rescue
@@ -276,7 +280,7 @@ defmodule Ezagent.Behavior.ExternalMirror do
     db_bindings =
       session_uri
       |> BindingRow.list_for_session()
-      |> Enum.map(&row_to_slice_binding/1)
+      |> Enum.map(&Codec.row_to_slice_binding/1)
 
     existing_ids = MapSet.new(existing, & &1.binding_id)
 
@@ -528,7 +532,15 @@ defmodule Ezagent.Behavior.ExternalMirror do
         #     "binding row but no worker" state).
         case insert_binding_row(session_uri, binding) do
           {:ok, :persisted} ->
-            do_spawn_after_persist(session_uri, binding, slice, aid, tid, binding_id, initial_cursor)
+            do_spawn_after_persist(
+              session_uri,
+              binding,
+              slice,
+              aid,
+              tid,
+              binding_id,
+              initial_cursor
+            )
 
           {:ok, :idempotent_unique_conflict} ->
             # Concurrent :bind from another caller for the SAME triple
@@ -538,7 +550,15 @@ defmodule Ezagent.Behavior.ExternalMirror do
             # an idempotent spawn here so this caller also returns
             # success; `{:already_started, _}` from the racing winner
             # is the expected path.
-            do_spawn_after_persist(session_uri, binding, slice, aid, tid, binding_id, initial_cursor)
+            do_spawn_after_persist(
+              session_uri,
+              binding,
+              slice,
+              aid,
+              tid,
+              binding_id,
+              initial_cursor
+            )
 
           {:error, {:db_insert_failed, _cs}} = err ->
             # Real DB error (NOT NULL / FK / etc.) — NOT an
@@ -861,7 +881,7 @@ defmodule Ezagent.Behavior.ExternalMirror do
   #     are NOT mutated.
   defp insert_binding_row(%URI{} = session_uri, %{} = binding) do
     workspace_uri = Ezagent.Persistence.workspace_uri_for!(session_uri)
-    opts_json = encode_opts(binding.opts)
+    opts_json = Codec.encode_opts(binding.opts)
 
     # codex r1 CRIT fix (2026-05-25): use `BindingRow.row_id/3` (which
     # hashes session_uri + adapter_id + target_id) NOT the in-memory
@@ -875,7 +895,7 @@ defmodule Ezagent.Behavior.ExternalMirror do
       id: db_id,
       session_uri: URI.to_string(session_uri),
       adapter_id: binding.adapter_id,
-      target_id: stringify_target(binding.target_id),
+      target_id: BindingRow.stringify_target(binding.target_id),
       opts_json: opts_json,
       bound_by: URI.to_string(binding.bound_by),
       bound_at: binding.bound_at,
@@ -887,7 +907,7 @@ defmodule Ezagent.Behavior.ExternalMirror do
         {:ok, :persisted}
 
       {:error, %Ecto.Changeset{} = cs} ->
-        if unique_constraint_violation?(cs) do
+        if Codec.unique_constraint_violation?(cs) do
           Logger.debug(
             "external_mirror_bindings.insert idempotent unique-conflict for " <>
               "#{URI.to_string(session_uri)}/#{binding.adapter_id}/" <>
@@ -911,79 +931,10 @@ defmodule Ezagent.Behavior.ExternalMirror do
     end
   end
 
-  # codex r5 HIGH-B: discriminate "unique-constraint violation"
-  # (idempotency success path) from every other changeset error
-  # (real failure). The changeset shape from `BindingRow.insert/1`
-  # carries the constraint metadata in the error opts list:
-  #
-  #   {:adapter_id, {"binding already exists",
-  #     [constraint: :unique, constraint_name: "..."]}}
-  #
-  # Match on `constraint: :unique` ANYWHERE in the changeset errors —
-  # the same triple can fire either the PK constraint OR the
-  # natural-key unique index depending on race timing; both are
-  # idempotency cases.
-  defp unique_constraint_violation?(%Ecto.Changeset{errors: errors}) do
-    Enum.any?(errors, fn
-      {_field, {_msg, opts}} when is_list(opts) ->
-        Keyword.get(opts, :constraint) == :unique
-
-      _ ->
-        false
-    end)
-  end
-
-  defp row_to_slice_binding(%BindingRow{} = row) do
-    # codex r1 CRIT fix detail: the slice's `binding_id` is the
-    # session-local human-readable key (`"<adapter>/<target>"`) —
-    # NOT the DB row's `:id` (which is the session-scoped hash).
-    # `:unbind` action body looks up by the human-readable key, so
-    # rehydration must reconstruct it from (adapter_id, target_id)
-    # rather than reading row.id (the hash is opaque to the slice).
-    %{
-      binding_id: BindingRow.binding_id(row.adapter_id, row.target_id),
-      adapter_id: row.adapter_id,
-      target_id: row.target_id,
-      opts: decode_opts(row.opts_json),
-      bound_by: Ezagent.URI.new!(row.bound_by),
-      bound_at: row.bound_at
-    }
-  end
-
-  defp encode_opts(opts) when is_map(opts) do
-    case Jason.encode(opts) do
-      {:ok, json} -> json
-      {:error, _} -> "{}"
-    end
-  end
-
-  defp encode_opts(_), do: "{}"
-
-  # codex r1 HIGH fix (2026-05-25): NO `String.to_atom/1` on
-  # JSON-decoded caller-controlled data. The previous `atomize_keys`
-  # was an unbounded atom-generation DoS vector — a caller with
-  # bind permission could submit `opts: %{<random key>: _}` and
-  # leak unique atoms on every restart/rehydrate. Atoms are not
-  # garbage collected; this would eventually exhaust the VM's
-  # atom table.
-  #
-  # Adapters that need to read `opts` get a string-keyed map. If
-  # they want atom keys they MUST convert via `String.to_existing_atom/1`
-  # against a fixed allowlist of expected option keys (see SPEC
-  # §6 adapter contract — adapters own this layer of validation).
-  defp decode_opts(json) when is_binary(json) do
-    case Jason.decode(json) do
-      {:ok, map} when is_map(map) -> map
-      _ -> %{}
-    end
-  end
-
-  defp decode_opts(_), do: %{}
-
-  defp stringify_target(t) when is_binary(t), do: t
-  defp stringify_target(t) when is_atom(t), do: Atom.to_string(t)
-  defp stringify_target(t) when is_integer(t), do: Integer.to_string(t)
-  defp stringify_target(t), do: inspect(t)
+  # Pure data-mapping / opts-codec helpers (row_to_slice_binding,
+  # encode_opts, decode_opts, unique_constraint_violation?) live in
+  # `Ezagent.Behavior.ExternalMirror.Codec`; `stringify_target` is the
+  # canonical copy on `BindingRow` (#25 Phase-3 PR-3N extraction/dedup).
 
   @doc false
   # Used by `Ezagent.ExternalMirror.list_adapters_for/1` (PR-EM-3
