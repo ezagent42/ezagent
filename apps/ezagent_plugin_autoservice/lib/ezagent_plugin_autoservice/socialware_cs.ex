@@ -43,9 +43,15 @@ defmodule EzagentPluginAutoservice.SocialwareCS do
 
   alias Ezagent.{Invocation, KindRegistry, SpawnRegistry, WorkspaceRegistry}
   alias Ezagent.Socialware.CascadeRepoint
-  alias EzagentPluginAutoservice.CinnoxSoulSeed
+  alias EzagentPluginAutoservice.{CinnoxAssets, CinnoxSoulSeed}
 
   require Logger
+
+  # The Stage-1 cinnox flow whose skill the bot must be able to Read. Its
+  # vendored package lives at `priv/cinnox/skills/customer/<name>/`; the soul's
+  # skill-index references it at the in-workdir path
+  # `plugins/cinnox/skills/customer/<name>/SKILL.md` (see CinnoxAssets).
+  @stage1_skill "customer-type-clarifier"
 
   # The routing table the chat fan-out / Turn adapter consults
   # (`Ezagent.Routing.Resolver` default — the single declared table). Declared
@@ -106,6 +112,39 @@ defmodule EzagentPluginAutoservice.SocialwareCS do
   def bot_uri(%URI{} = customer_uri) do
     {ws, name} = decompose(customer_uri)
     Ezagent.URI.agent(ws, "#{@bot_flavor}_#{@bot_create_prefix}#{name}")
+  end
+
+  @doc """
+  Materialize a vendored customer-role cinnox skill package into a bot's
+  working directory so the cc bot can Read it.
+
+  Copies `priv/cinnox/skills/customer/<skill>/` to the in-workdir path the
+  soul's skill-index references: `<work_dir>/plugins/cinnox/skills/customer/<skill>/`.
+  Reuses the `priv/cinnox` asset layout from `CinnoxAssets` — no new asset
+  copy machinery is invented (mirrors `CinnoxRuntime.materialize_cinnox_cc!`).
+
+  Idempotent: the destination is replaced in place, `priv/` is the source of
+  truth (same overwrite semantics as `CinnoxRuntime`).
+  """
+  @spec materialize_skill(Path.t(), String.t()) :: :ok | {:error, term()}
+  def materialize_skill(work_dir, skill_name \\ @stage1_skill)
+      when is_binary(work_dir) and is_binary(skill_name) do
+    src = CinnoxAssets.customer_skill_dir(skill_name)
+
+    if File.dir?(src) do
+      dst =
+        Path.join([work_dir, "plugins", "cinnox", "skills", "customer", skill_name])
+
+      File.rm_rf!(dst)
+      File.mkdir_p!(Path.dirname(dst))
+
+      case File.cp_r(src, dst) do
+        {:ok, _} -> :ok
+        {:error, reason, _} -> {:error, {:skill_materialize_failed, reason}}
+      end
+    else
+      {:error, {:skill_source_missing, skill_name}}
+    end
   end
 
   # --- internals ------------------------------------------------------
@@ -184,13 +223,22 @@ defmodule EzagentPluginAutoservice.SocialwareCS do
       :error ->
         {_ws, name} = decompose(customer_uri)
 
+        # The real cc bot reads skills from its working dir. Give it a per-bot
+        # dir and materialize the Stage-1 flow's skill into it (the soul's
+        # skill-index references `plugins/cinnox/skills/customer/<skill>/`).
+        work_dir = bot_work_dir(name)
+        File.mkdir_p!(work_dir)
+
         case Ezagent.Workspace.create_agent(
                workspace_uri,
-               %{flavor: @bot_flavor, name: "#{@bot_create_prefix}#{name}"},
+               %{flavor: @bot_flavor, name: "#{@bot_create_prefix}#{name}", cwd: work_dir},
                ctx
              ) do
           {:ok, %{agent_uri: %URI{} = uri}} ->
-            with :ok <- repoint(uri, workspace_uri, config_id), do: {:ok, uri}
+            with :ok <- materialize_skill(work_dir, @stage1_skill),
+                 :ok <- repoint(uri, workspace_uri, config_id) do
+              {:ok, uri}
+            end
 
           {:error, reason} ->
             # Idempotent re-run / tight race — a now-alive bot is success.
@@ -218,6 +266,12 @@ defmodule EzagentPluginAutoservice.SocialwareCS do
           {:error, reason} -> {:error, {:bot_spawn_failed, reason}}
         end
     end
+  end
+
+  # Persistent per-bot working dir under the ezagent profile (same
+  # cc-agents/cinnox tree CinnoxRuntime uses).
+  defp bot_work_dir(name) do
+    Path.join([Ezagent.Home.profile_dir(), "cc-agents", "cinnox", "#{@bot_create_prefix}#{name}"])
   end
 
   defp repoint(%URI{} = bot_uri, %URI{} = workspace_uri, config_id) do

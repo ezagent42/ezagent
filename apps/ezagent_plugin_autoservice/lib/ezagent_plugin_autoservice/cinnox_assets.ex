@@ -30,6 +30,16 @@ defmodule EzagentPluginAutoservice.CinnoxAssets do
   def flow_chunks_dir, do: Path.join(root(), "flow_chunks")
   def references_dir, do: Path.join(root(), "references")
   def skills_dir, do: Path.join(root(), "skills")
+
+  @doc """
+  Vendored source path of a customer-role skill package directory:
+  `priv/cinnox/skills/customer/<name>/`.
+  """
+  @spec customer_skill_dir(String.t()) :: String.t()
+  def customer_skill_dir(name) when is_binary(name) do
+    Path.join([skills_dir(), "customer", name])
+  end
+
   def skill_packages_dir, do: Path.join(root(), "skill-packages")
   def kb_db_path, do: Path.join([root(), "kb", "kb.db"])
   def kb_mcp_script_path, do: Path.join([root(), "kb", "kb_search_mcp.py"])

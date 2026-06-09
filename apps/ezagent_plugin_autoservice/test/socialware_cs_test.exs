@@ -76,4 +76,44 @@ defmodule EzagentPluginAutoservice.SocialwareCSTest do
              session_str in (r.receivers || [])
            end)
   end
+
+  describe "materialize_skill/2 (Task 4)" do
+    @stage1_skill "customer-type-clarifier"
+
+    test "writes the Stage-1 SKILL.md into the bot working dir at the expected skills path" do
+      work_dir =
+        Path.join(System.tmp_dir!(), "cs-skill-test-#{System.unique_integer([:positive])}")
+
+      on_exit(fn -> File.rm_rf!(work_dir) end)
+
+      assert :ok = SocialwareCS.materialize_skill(work_dir, @stage1_skill)
+
+      skill_file =
+        Path.join([
+          work_dir,
+          "plugins",
+          "cinnox",
+          "skills",
+          "customer",
+          @stage1_skill,
+          "SKILL.md"
+        ])
+
+      assert File.exists?(skill_file)
+
+      # Real vendored content materialized (stable phrase from the SKILL body).
+      content = File.read!(skill_file)
+      assert content =~ "Weak-Signal Customer-Type Clarifier"
+    end
+
+    test "is idempotent — re-materializing converges, no error" do
+      work_dir =
+        Path.join(System.tmp_dir!(), "cs-skill-test-#{System.unique_integer([:positive])}")
+
+      on_exit(fn -> File.rm_rf!(work_dir) end)
+
+      assert :ok = SocialwareCS.materialize_skill(work_dir, @stage1_skill)
+      assert :ok = SocialwareCS.materialize_skill(work_dir, @stage1_skill)
+    end
+  end
 end
