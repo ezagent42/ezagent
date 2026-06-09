@@ -53,8 +53,8 @@ The slice-owner map lives as a single source of truth in `Ezagent.Kind.BehaviorS
 
 | File | Create/Modify | Responsibility |
 |---|---|---|
-| `apps/ezagent_domain_socialware/lib/ezagent/entity/socialware_session.ex` | Modify | P0: add `Publisher.SessionImpl` to `behaviors/0`; add `@behaviour Ezagent.Behavior.Publisher` + the 4 façade callbacks (mirroring `Ezagent.Entity.Session`). |
-| `apps/ezagent_domain_socialware/test/ezagent/entity/socialware_session_publisher_test.exs` | Create | P0: assert `SocialwareSession` composes `:publisher`, subscribe_from works, slice changes emit publisher events. |
+| `apps/ezagent_domain_socialware/lib/ezagent/entity/socialware_session.ex` | Modify | P0: append `Publisher.SessionImpl` to `behaviors/0` (trunk slice records; NO `@behaviour`, NO read-API). |
+| `apps/ezagent_domain_socialware/test/ezagent/entity/socialware_session_publisher_test.exs` | Create | P0: assert `SocialwareSession` composes `Publisher.SessionImpl` + has a `:publisher` slice + a non-publisher slice change records into the ring (NO read-API call). |
 | `apps/ezagent_core/lib/ezagent/behavior/kind_base.ex` | Create | P1: base behavior owning slice `:kind_base`; `create/1` snapshots the instance behavior-module list from spawn args, persisting the legacy sentinel `nil` when `:behaviors` is ABSENT and the exact list (even `[]`) when PRESENT; exposes no actions (data-only base). |
 | `apps/ezagent_core/test/ezagent/behavior/kind_base_test.exs` | Create | P1: assert the slice captures the behavior set and survives a restart round-trip. |
 | `apps/ezagent_core/lib/ezagent/kind/behavior_set.ex` | Create | P1: pure resolver — `base_behaviors/0` (KindBase + UniversalBehaviors.all), `init_set/2` (first-spawn set from args), `effective_set/2` (post-load instance set), slice-owner map, `resolve_closure/1` (required/optional fail-loud), `member?/2`. |
@@ -71,47 +71,139 @@ The slice-owner map lives as a single source of truth in `Ezagent.Kind.BehaviorS
 
 ## P0 — Publisher as a base behavior on every session
 
-> **SCOPE CORRECTION (codex review of PR #711, 2026-06-09).** P0 is the
-> Publisher **trunk only**: `SocialwareSession` composes
-> `Publisher.SessionImpl` in `behaviors/0` so every session gets a
-> `:publisher` slice that **records** every non-publisher slice change.
-> P0 does **NOT** add a dispatchable publisher READ API to
-> `SocialwareSession` (no `@behaviour Ezagent.Behavior.Publisher`, no
-> `subscribe_from`/`snapshot`/`history` façade callbacks). Two codex
-> findings drove this:
-> 1. Adding the read façade without registering the read actions in
->    `EzagentDomainSocialware.Application.register_behaviors/0` would make
->    those calls dispatch `{:unknown_action, _}` (dead API).
-> 2. Making those read actions dispatchable under the **shared** broad
->    `kind: :session` publisher cap (both `Session` and `SocialwareSession`
->    share `type_name :session`) would let a chat/Feishu workspace
->    publisher cap read `SocialwareSession`'s INTERNAL
->    `:turns`/`:surface`/`:config_updates` payloads via the publisher ring
->    — an authz **widening** from chat participation to socialware
->    internal-state read.
->
-> **DEFERRED TO P3 (ExternalAdapter consumer):** the socialware publisher
-> READ API (`snapshot`/`history`/`subscribe_from` dispatch) **and** its cap
-> boundary. **P3 MUST NOT reuse the broad `kind: :session` chat publisher
-> cap** — it must scope socialware publisher-read authz to the concrete
-> session/member/owner boundary (else it re-introduces codex's HIGH authz
-> widening above). See SPEC §6 P3 for the binding requirement.
+**P0 scope = the Publisher TRUNK only.** `SocialwareSession` composes
+`Ezagent.Behavior.Publisher.SessionImpl` in `behaviors/0` so every session gets a
+`:publisher` slice that **records** every non-publisher slice change into its
+ring. That is the entire production change: one module appended to the
+`behaviors/0` list. P0 deliberately does **NOT** add a dispatchable publisher
+READ API to `SocialwareSession` — there is no `@behaviour
+Ezagent.Behavior.Publisher`, no `subscribe_from`/`snapshot`/`history` façade
+callbacks, and no publisher cap grant. Those are **deferred to P3** (see
+"Deferred to P3" below) because (a) a read façade whose actions are not
+registered would dispatch `{:unknown_action, _}` (dead API), and (b) making the
+read actions dispatchable under the **shared** broad `kind: :session` publisher
+cap (both `Session` and `SocialwareSession` share `type_name :session`) would
+let a chat/Feishu workspace publisher cap read `SocialwareSession`'s INTERNAL
+`:turns`/`:surface`/`:config_updates` payloads via the publisher ring — an authz
+**widening** from chat participation to socialware internal-state read.
 
-### Task 1: SocialwareSession composes the Publisher slice (failing test first)
+### Task 1: SocialwareSession composes the Publisher trunk slice (failing test first)
 
 **Files:**
 - Test: `apps/ezagent_domain_socialware/test/ezagent/entity/socialware_session_publisher_test.exs`
-- Modify: `apps/ezagent_domain_socialware/lib/ezagent/entity/socialware_session.ex:15-22`
+- Modify: `apps/ezagent_domain_socialware/lib/ezagent/entity/socialware_session.ex:14-29`
+
+This is the trunk-only change: a failing test that asserts (a) `behaviors/0`
+includes `Publisher.SessionImpl`, (b) a spawned `SocialwareSession` has a
+`:publisher` slice, and (c) a REAL non-publisher dispatch (`surface.put_version`)
+records into the publisher ring (cursor advances, `slice_key` recorded); then the
+implementation step is ONLY appending `Publisher.SessionImpl` to `behaviors/0`.
+NO `@behaviour Ezagent.Behavior.Publisher`, NO `subscribe_from`/`snapshot`/
+`history` callbacks, NO cap grant.
 
 - [ ] **Step 1: Write the failing test**
 
 ```elixir
 defmodule Ezagent.Entity.SocialwareSessionPublisherTest do
-  use ExUnit.Case, async: false
+  @moduledoc """
+  P0 (socialware substrate) — minimal trunk-only test.
 
-  alias Ezagent.Entity.SocialwareSession
+  Proves the Publisher TRUNK is composed onto `SocialwareSession`:
+  the `:publisher` slice exists on a spawned session AND a slice change
+  to a NON-publisher slice (`:surface`, via a real `surface.put_version`
+  dispatch) RECORDS into the publisher ring.
 
-  test "SocialwareSession composes Publisher.SessionImpl (owns the :publisher slice)" do
+  It deliberately does NOT exercise any dispatchable publisher READ API
+  (snapshot / history / subscribe_from). That read API + its cap boundary
+  are P3 (ExternalAdapter consumer) work — see the spec/plan deferral note.
+  """
+
+  use EzagentCore.DataCase, async: false
+
+  alias Ezagent.Ecto.KindSnapshot
+  alias Ezagent.Entity.{SocialwareSession, User}
+  alias Ezagent.Invocation
+
+  # `Ezagent.Kind.behaviors_of/1` gates on `function_exported?/3`, which under
+  # Elixir 1.19 does NOT auto-load the target module. Force it loaded so the
+  # introspection sees the `behaviors/0` callback (test-harness bind-point).
+  setup_all do
+    Code.ensure_loaded!(SocialwareSession)
+    :ok
+  end
+
+  setup do
+    # The SliceChange hook is OFF by default — enable it for this suite so
+    # the non-publisher slice change propagates to the Publisher trunk.
+    original = Application.get_env(:ezagent_core, :slice_change_hook)
+    Application.put_env(:ezagent_core, :slice_change_hook, true)
+
+    on_exit(fn ->
+      if is_nil(original) do
+        Application.delete_env(:ezagent_core, :slice_change_hook)
+      else
+        Application.put_env(:ezagent_core, :slice_change_hook, original)
+      end
+    end)
+
+    :ok
+  end
+
+  defp spawn_session do
+    session_uri =
+      Ezagent.URI.session(
+        :team_alpha,
+        :socialware,
+        "publisher-trunk-#{System.unique_integer([:positive])}"
+      )
+
+    :ok = KindSnapshot.delete(URI.to_string(session_uri))
+    {:ok, _pid} = Ezagent.Kind.spawn(SocialwareSession, %{uri: session_uri})
+
+    :ok =
+      Ezagent.WorkspaceRegistry.bind(session_uri, Ezagent.Capability.workspace_of(session_uri))
+
+    session_uri
+  end
+
+  # Mutate the NON-publisher `:surface` slice via the real `surface.put_version`
+  # dispatch path. Each call appends a new version → the slice ALWAYS differs
+  # from prior → SliceChange fires → the publisher trunk records it.
+  defp mutate_surface_slice(session_uri, turn_id) do
+    Invocation.dispatch(%Invocation{
+      target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=surface.put_version"),
+      mode: :call,
+      args: %{turn_id: turn_id, tree: %{type: "text", props: %{text: turn_id}}},
+      ctx: %{
+        caller: User.admin_uri(),
+        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        reply: {:caller_inbox, self()}
+      }
+    })
+  end
+
+  defp publisher_slice(session_uri) do
+    {:ok, slice} = Ezagent.Kind.get_slice(session_uri, :publisher)
+    slice
+  end
+
+  defp wait_until_cursor(session_uri, target, attempts \\ 50)
+
+  defp wait_until_cursor(_session_uri, _target, 0),
+    do: flunk("publisher cursor never reached target")
+
+  defp wait_until_cursor(session_uri, target, attempts) when attempts > 0 do
+    case publisher_slice(session_uri) do
+      %{cursor: c} when c >= target ->
+        :ok
+
+      _ ->
+        Process.sleep(20)
+        wait_until_cursor(session_uri, target, attempts - 1)
+    end
+  end
+
+  test "SocialwareSession composes Publisher.SessionImpl (the trunk)" do
     behaviors = Ezagent.Kind.behaviors_of(SocialwareSession)
     assert Ezagent.Behavior.Publisher.SessionImpl in behaviors
 
@@ -119,12 +211,21 @@ defmodule Ezagent.Entity.SocialwareSessionPublisherTest do
     assert :publisher in slice_keys
   end
 
-  test "SocialwareSession declares the Publisher behaviour contract" do
-    assert Ezagent.Behavior.Publisher in (SocialwareSession.module_info(:attributes)[:behaviour] || [])
-    assert function_exported?(SocialwareSession, :subscribe_from, 4)
-    assert function_exported?(SocialwareSession, :snapshot, 2)
-    assert function_exported?(SocialwareSession, :history, 4)
-    assert SocialwareSession.history_retention() == 100
+  test "a spawned SocialwareSession has a :publisher slice" do
+    session_uri = spawn_session()
+
+    assert {:ok, %{ring: [], cursor: 0}} = Ezagent.Kind.get_slice(session_uri, :publisher)
+  end
+
+  test "a non-publisher slice change records into the publisher ring (trunk works)" do
+    session_uri = spawn_session()
+
+    assert {:ok, %{version: 1}} = mutate_surface_slice(session_uri, "t1")
+    wait_until_cursor(session_uri, 1)
+
+    slice = publisher_slice(session_uri)
+    assert slice.cursor == 1
+    assert [%{cursor: 1, slice_key: :surface}] = slice.ring
   end
 end
 ```
@@ -132,15 +233,16 @@ end
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `MIX_ENV=test mix test apps/ezagent_domain_socialware/test/ezagent/entity/socialware_session_publisher_test.exs`
-Expected: FAIL — `Ezagent.Behavior.Publisher.SessionImpl` not in behaviors; `subscribe_from/4` not exported.
+Expected: FAIL — `Ezagent.Behavior.Publisher.SessionImpl` not in `behaviors/0`, so the `:publisher` slice never exists and the surface change records nothing.
 
-- [ ] **Step 3: Add Publisher.SessionImpl to behaviors/0 and the façade callbacks**
+- [ ] **Step 3: Append Publisher.SessionImpl to behaviors/0 (the ONLY production change)**
 
-Replace `behaviors/0` (`socialware_session.ex:15-22`) with:
+Append `Ezagent.Behavior.Publisher.SessionImpl` to `behaviors/0` in
+`socialware_session.ex`. Do NOT add `@behaviour Ezagent.Behavior.Publisher` and
+do NOT add any façade callback — the trunk records via the SliceChange hook, no
+read API is involved in P0. The final `behaviors/0` is:
 
 ```elixir
-  @behaviour Ezagent.Behavior.Publisher
-
   @impl Ezagent.Kind
   def behaviors do
     [
@@ -148,145 +250,36 @@ Replace `behaviors/0` (`socialware_session.ex:15-22`) with:
       Ezagent.Behavior.Turn,
       Ezagent.Behavior.Surface,
       Ezagent.Behavior.ConfigUpdate,
-      # P0 (socialware substrate) — every session composes the Publisher
-      # trunk. SessionImpl owns the `:publisher` slice + the 3 publisher
-      # actions. No consumer change: the slice simply exists now.
+      # P0 (socialware substrate) — every SocialwareSession composes the
+      # Publisher trunk. `SessionImpl` owns the `:publisher` slice and the
+      # slice-change recording. NO consumer change in P0: the slice simply
+      # exists + records now. The publisher READ API (snapshot/history/
+      # subscribe_from dispatch) and its cap boundary are wired in P3
+      # (ExternalAdapter consumer) — see the spec/plan deferral note.
       Ezagent.Behavior.Publisher.SessionImpl
     ]
-  end
-```
-
-Then add the Publisher façade callbacks. Re-use the proven implementation in `Ezagent.Entity.Session` (`session.ex:83-225`): the 4 `@impl Ezagent.Behavior.Publisher` callbacks (`history_retention/0`, the 3-ary `subscribe_from`/`snapshot`/`history` that raise `raise_no_ambient_caps!`), the 4-ary/2-ary public variants that route through `dispatch_publisher_action/4`, and the private `dispatch_publisher_action`/`unwrap_cursor`/`unwrap_events`/`raise_no_ambient_caps!`. Add to `socialware_session.ex`:
-
-```elixir
-  @impl Ezagent.Behavior.Publisher
-  def history_retention, do: 100
-
-  @impl Ezagent.Behavior.Publisher
-  def subscribe_from(%URI{} = _publisher_uri, subscriber_pid, _cursor)
-      when is_pid(subscriber_pid),
-      do: raise_no_ambient_caps!(:subscribe_from, 4)
-
-  @impl Ezagent.Behavior.Publisher
-  def snapshot(%URI{} = _publisher_uri), do: raise_no_ambient_caps!(:snapshot, 2)
-
-  @impl Ezagent.Behavior.Publisher
-  def history(%URI{} = _publisher_uri, _from, _to), do: raise_no_ambient_caps!(:history, 4)
-
-  @spec subscribe_from(URI.t(), pid(), Ezagent.Behavior.Publisher.cursor(), map()) ::
-          {:ok, non_neg_integer()} | {:error, term()}
-  def subscribe_from(%URI{} = publisher_uri, subscriber_pid, cursor, ctx)
-      when is_pid(subscriber_pid) and is_map(ctx) do
-    publisher_uri
-    |> dispatch_publisher_action(
-      :subscribe_from,
-      %{subscriber_pid: subscriber_pid, cursor: cursor},
-      ctx
-    )
-    |> unwrap_cursor()
-  end
-
-  @spec snapshot(URI.t(), map()) :: {:ok, map()} | {:error, term()}
-  def snapshot(%URI{} = publisher_uri, ctx) when is_map(ctx),
-    do: dispatch_publisher_action(publisher_uri, :snapshot, %{}, ctx)
-
-  @spec history(URI.t(), Ezagent.Behavior.Publisher.cursor(), Ezagent.Behavior.Publisher.cursor(), map()) ::
-          {:ok, [Ezagent.Publisher.Event.t()]} | {:error, term()}
-  def history(%URI{} = publisher_uri, from, to, ctx) when is_map(ctx) do
-    publisher_uri
-    |> dispatch_publisher_action(:history, %{from: from, to: to}, ctx)
-    |> unwrap_events()
-  end
-
-  defp dispatch_publisher_action(%URI{} = publisher_uri, action, args, ctx) do
-    target = Ezagent.URI.new!("#{URI.to_string(publisher_uri)}?action=publisher.#{action}")
-    normalised_ctx = Map.put_new(ctx, :reply, :ignore)
-
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: target,
-      mode: :call,
-      args: args,
-      ctx: normalised_ctx
-    })
-  end
-
-  defp unwrap_cursor({:ok, %{cursor: cursor}}), do: {:ok, cursor}
-  defp unwrap_cursor({:error, _} = err), do: err
-  defp unwrap_events({:ok, %{events: events}}), do: {:ok, events}
-  defp unwrap_events({:error, _} = err), do: err
-
-  defp raise_no_ambient_caps!(action, arity) do
-    raise ArgumentError,
-          "Ezagent.Entity.SocialwareSession.#{action}/#{arity - 1} requires an explicit " <>
-            "caller ctx — use #{action}/#{arity} with `ctx: %{caller: %URI{...}, " <>
-            "caps: MapSet.new([...])}`. The V1 codebase has no ambient-caps mechanism."
   end
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `MIX_ENV=test mix test apps/ezagent_domain_socialware/test/ezagent/entity/socialware_session_publisher_test.exs`
-Expected: PASS (both tests).
+Expected: PASS (all three tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add apps/ezagent_domain_socialware/lib/ezagent/entity/socialware_session.ex \
         apps/ezagent_domain_socialware/test/ezagent/entity/socialware_session_publisher_test.exs
-git commit -m "feat(socialware): P0 — Publisher base behavior on SocialwareSession"
+git commit -m "feat(socialware): P0 — Publisher trunk on SocialwareSession (records every slice change)"
 ```
 
-### Task 2: Publisher caps registered for SocialwareSession (failing test first)
+> **Publisher-read caps are a P3 concern, not P0.** P0 grants NO publisher cap
+> and adds NO dispatchable read action, so there is nothing to authorize at this
+> phase. The publisher READ API and its cap boundary are deferred to P3 — see
+> "Deferred to P3" below.
 
-The publisher actions are cap-gated per `{kind_module, action}`. Adding `Publisher.SessionImpl` to a NEW Kind module requires the cap catalog to grant the 3 publisher actions on `SocialwareSession` too, or `subscribe_from/4` denies with `:unauthorized`.
-
-**Files:**
-- Test: append to `apps/ezagent_domain_socialware/test/ezagent/entity/socialware_session_publisher_test.exs`
-- Modify: the production cap catalog that registers publisher caps (locate with the grep in Step 1).
-
-- [ ] **Step 1: Locate the cap catalog + write the failing test**
-
-Run `rg -n "Publisher.SessionImpl" apps/*/lib` to find where the publisher cap grant is declared for `Ezagent.Entity.Session` (the catalog that `apps/ezagent_plugin_feishu/test/binding_policy_test.exs` asserts against). Add a test asserting the same 3 actions are granted on `SocialwareSession`:
-
-```elixir
-  test "publisher caps cover SocialwareSession's 3 publisher actions" do
-    caps = Ezagent.Identity.production_caps()  # use the same accessor binding_policy_test uses
-
-    sw_pub_caps =
-      Enum.filter(caps, fn c ->
-        c.behavior == Ezagent.Behavior.Publisher.SessionImpl and
-          c.kind == :session
-      end)
-
-    actions = sw_pub_caps |> Enum.map(& &1.action) |> MapSet.new()
-    assert MapSet.subset?(MapSet.new([:subscribe_from, :snapshot, :history]), actions)
-  end
-```
-
-NOTE TO IMPLEMENTER: `Ezagent.Identity.production_caps()` is a placeholder — bind it to the exact accessor `binding_policy_test.exs` uses (read that test first). If the catalog already keys publisher caps by `kind: :session` (both Kinds share `type_name :session`), this test may pass immediately — in which case keep it as a regression guard and skip Step 3.
-
-- [ ] **Step 2: Run test to verify it fails (or passes — see note)**
-
-Run: `MIX_ENV=test mix test apps/ezagent_domain_socialware/test/ezagent/entity/socialware_session_publisher_test.exs:LINE`
-Expected: FAIL with the publisher actions missing for SocialwareSession — UNLESS caps are `kind: :session`-keyed (then PASS; record that finding in the commit message and proceed to Task 3).
-
-- [ ] **Step 3: Grant the publisher caps for SocialwareSession (only if Step 2 failed)**
-
-Add `SocialwareSession` to the catalog entry that grants `subscribe_from`/`snapshot`/`history` on the publisher behavior, mirroring the existing `Ezagent.Entity.Session` grant. Follow the catalog's existing shape exactly (read the neighbouring `Ezagent.Entity.Session` grant block).
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `MIX_ENV=test mix test apps/ezagent_domain_socialware/test/ezagent/entity/socialware_session_publisher_test.exs`
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add apps/ezagent_domain_socialware apps/ezagent_core apps/ezagent_plugin_feishu
-git commit -m "feat(socialware): P0 — publisher caps for SocialwareSession's publisher slice"
-```
-
-### Task 3: P0 acceptance gate (arch fitness + regression suites)
+### Task 2: P0 acceptance gate (arch fitness + regression suites)
 
 **Files:** none (verification task).
 
@@ -315,6 +308,38 @@ Expected: all green. Behavior-preserving — adding a slice must not change chat
 ```bash
 git commit -am "test(socialware): P0 acceptance — arch gates + session/publisher/Feishu suites green"
 ```
+
+### Deferred to P3 — socialware publisher READ API + its cap boundary
+
+This plan implements P0 (Publisher trunk) and P1 (per-instance behavior set).
+The socialware publisher **READ API** and its **cap boundary** are intentionally
+NOT in this plan — they belong to P3 (ExternalAdapter consumer). Capturing the
+binding requirements here so they are not lost:
+
+- **Read API.** P3 adds the dispatchable publisher read surface on
+  `SocialwareSession` — `subscribe_from` / `snapshot` / `history` dispatch (the
+  façade callbacks + the corresponding action registrations in
+  `EzagentDomainSocialware.Application.register_behaviors/0` so the actions are
+  not dead `{:unknown_action, _}` dispatches). P0 deliberately ships NONE of
+  this; the trunk only RECORDS into the ring.
+- **Cap boundary (codex HIGH — binding).** **P3 MUST NOT reuse the broad
+  `kind: :session` chat publisher cap.** `Ezagent.Entity.Session` and
+  `Ezagent.Entity.SocialwareSession` share `type_name :session`, so granting
+  socialware publisher-read under the existing `kind: :session` publisher cap
+  would let any chat/Feishu workspace publisher cap read `SocialwareSession`'s
+  INTERNAL `:turns`/`:surface`/`:config_updates` payloads via the publisher ring
+  — an authz **widening** from chat participation to socialware internal-state
+  read. P3 must instead scope socialware publisher-read authz to the concrete
+  **session / member / owner** boundary.
+- **Authz-boundary gate test (P3 acceptance).** P3 must include a denial test
+  proving a holder of ONLY the chat `kind: :session` publisher cap is DENIED a
+  `SocialwareSession` publisher read, while a holder of the
+  socialware-scoped session/member/owner cap is ALLOWED — the test that fails if
+  the cap boundary widens.
+
+See SPEC §6 P3 for the authoritative requirement; if §6 P3 already states this
+cap-boundary constraint + gate test, treat this subsection as the cross-reference
+that keeps it visible from the plan.
 
 ---
 
