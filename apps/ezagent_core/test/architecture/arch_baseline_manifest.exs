@@ -9,11 +9,12 @@
   #   PR-3R: 5 → 4 (extracted Chat.Membership + Chat.Legends + Chat.ConfigActions,
   #          chat.ex 1445 → 988)
   #   PR-3S: 4 → 3 (extracted Orchestrator.Tools.MemberTemplate, tools.ex 1498 → 938)
+  #   PR-3T: 3 → 2 (extracted CcAgent.Spawn, cc_agent.ex 1340 → 968)
   # Remaining entrants include `Ezagent.Workspace` (1055, bloated by the
   # #685 CapBAC security fix, SPEC §7) — a later burn-down target.
-  oversized_modules_gt_1000: 3,
+  oversized_modules_gt_1000: 2,
   def_count_admin_live: 46,
-  def_count_cc_agent: 76,
+  def_count_cc_agent: 50,
   def_count_orchestrator_tools: 35,
   def_count_session_creator: 67,
   def_count_capability: 22,
@@ -50,7 +51,7 @@
   # the `/cc_socket` endpoint mount — ratcheting this to 0. This cap MUST
   # stay at 0: the shim layer is gone and no lib file may reintroduce it.
   cc_bridge_shim_callers: 0,
-  cc_codex_template_class_combined_loc: 2141,
+  cc_codex_template_class_combined_loc: 1669,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam
