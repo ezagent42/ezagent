@@ -6,7 +6,7 @@ export function renderJsonNode(React, node, registry) {
   const type = typeof node.type === "string" ? node.type : "invalid"
   const component = registry[type] || registry.__unknown
   return React.createElement(component, {
-    key: node.key || undefined,
+    key: node.key ?? undefined,
     nodeType: type,
     props: node.props || {},
     children: node.children || [],
@@ -35,7 +35,7 @@ function Container(React) {
     return React.createElement(
       "section",
       {className: `sw-container sw-container-${layout}`},
-      children.map((child, index) => renderJsonNode(React, {...child, key: child.key || index}, registry))
+      children.map((child, index) => renderJsonNode(React, {...child, key: child.key ?? index}, registry))
     )
   }
 }

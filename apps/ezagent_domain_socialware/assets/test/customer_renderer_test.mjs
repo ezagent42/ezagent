@@ -46,6 +46,19 @@ assert.equal(textNode.children[0], "hello")
 const tableNode = renderedContainer.children[1].type(renderedContainer.children[1].props)
 assert.equal(tableNode.type, "table")
 
+// #36 regression: keyless container children get a STABLE, UNIQUE key from their
+// index — incl. index 0. Pre-fix `child.key || index` / `node.key || undefined`
+// coerced the falsy index 0 to `undefined`, dropping the first child's key and
+// triggering React's "unique key" warning. The `??` fix keeps 0.
+assert.equal(renderedContainer.children[0].props.key, 0)
+assert.equal(renderedContainer.children[1].props.key, 1)
+const childKeys = renderedContainer.children.map((c) => c.props.key)
+assert.equal(new Set(childKeys).size, childKeys.length, "container child keys must be unique")
+assert.ok(
+  childKeys.every((k) => k !== undefined),
+  "no container child key may be undefined"
+)
+
 const unknown = renderJsonNode(React, {type: "chart", props: {title: "x"}}, registry)
 const unknownNode = unknown.type(unknown.props)
 assert.equal(unknownNode.type, "div")
