@@ -9,10 +9,11 @@
   #   PR-3R: 5 → 4 (extracted Chat.Membership + Chat.Legends + Chat.ConfigActions,
   #          chat.ex 1445 → 988)
   #   PR-3S: 4 → 3 (extracted Orchestrator.Tools.MemberTemplate, tools.ex 1498 → 938)
-  #   PR-3T: 3 → 2 (extracted CcAgent.Spawn, cc_agent.ex 1340 → 968)
-  # Remaining entrants include `Ezagent.Workspace` (1055, bloated by the
-  # #685 CapBAC security fix, SPEC §7) — a later burn-down target.
-  oversized_modules_gt_1000: 2,
+  #   PR-3T: 3 → 2 (extracted CcAgent.Spawn, cc_agent.ex 1340 → 917)
+  #   PR-3U: 2 → 1 (extracted Workspace.Listing, workspace.ex facade 1055 → 938)
+  # Final remaining entrant: `Ezagent.Behavior.Workspace` (1498) — the
+  # #685 CapBAC membership Behavior, the last burn-down target (PR-3V).
+  oversized_modules_gt_1000: 1,
   def_count_admin_live: 46,
   def_count_cc_agent: 50,
   def_count_orchestrator_tools: 35,
