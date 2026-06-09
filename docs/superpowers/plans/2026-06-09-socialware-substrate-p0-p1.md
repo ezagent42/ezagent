@@ -29,7 +29,7 @@ P1's HARD INVARIANT is "every behavior enumeration + every callback entry point 
 | E11 | `build_detail/3` (operator UI introspection) | `apps/ezagent_domain_ui/lib/ezagent_domain_ui/auto_derive.ex:107` | display only | DEFERRED to P2 (see note) |
 
 Notes:
-- **E8 + E9 are the two security-critical sites.** **E8 (slice init)** is the load path's first-spawn slice-creation point. In the CURRENT source, `load_with_fallback` runs `fresh = init_fresh(args)` at its START (`snapshot.ex:70`) BEFORE `fetch_snapshot` reads the persisted row, and on `:not_found` that fresh result is returned + persisted on first spawn (`snapshot.ex:111` → `Kind.Server.persist_initial_snapshot`), BEFORE any restart. P1 RESTRUCTURES this (Task 9): fetch the persisted row FIRST, then branch — `:not_found` → `init_fresh_first_spawn/2` (scoped to `BehaviorSet.init_set/2` + closure-validated) so an out-of-set behavior's `create`/`init_slice` never runs and its slice never persists on first spawn; reload → derive the set from the PERSISTED `:kind_base` (`effective_set/2`, NOT spawn args) so a closed-but-wrong or unclosed spawn-args fallback can't create out-of-set slices or crash a valid persisted instance (codex CRITICAL). **E9 (dispatch)** resolves a behavior via `Ezagent.BehaviorRegistry.lookup(kind_module, action)` (`runtime.ex:284-289`), keyed by `kind_module` — NOT by instance — and FALLS BACK to `Ezagent.UniversalBehaviors.behavior_for_action/1` (`behavior_registry.ex:58`) for actions with no per-Kind registration (today: `Manage`'s `:delete`/`:reconfigure`). Caps are also registered per `{kind_module, action}` (`Ezagent.CapabilityRegistry.register(kind, action, behavior)`, `capability_registry.ex:82`). So with one `SessionKind` carrying a superset, ANY instance could resolve+dispatch ANY registered action. P1 inserts an instance-set membership gate AFTER `lookup_behavior` and BEFORE `authz_check` — gating NON-universal behaviors by instance-set membership while EXEMPTING `UniversalBehaviors.all()` (still cap-checked) so universal `Manage` is never wrongly denied (codex HIGH).
+- **E8 + E9 are the two security-critical sites.** **E8 (slice init)** is the load path's first-spawn slice-creation point. In the CURRENT source, `load_with_fallback` runs `fresh = init_fresh(args)` at its START (`snapshot.ex:70`) BEFORE `fetch_snapshot` reads the persisted row, and on `:not_found` that fresh result is returned + persisted on first spawn (`snapshot.ex:111` → `Kind.Server.persist_initial_snapshot`), BEFORE any restart. P1 RESTRUCTURES this (Task 9): fetch the persisted row FIRST, then branch — `:not_found` → `init_fresh_first_spawn/2` (scoped to `BehaviorSet.init_set/2` + closure-validated) so an out-of-set behavior's `create`/`init_slice` never runs and its slice never persists on first spawn; reload → SEED the legacy sentinel `nil` into `:kind_base` when the loaded snapshot lacks it (pre-P1 row, codex CRITICAL data-loss fix — INDEPENDENT of reload args), then derive the set from the PERSISTED `:kind_base` (`effective_set/2`, NOT spawn args) so a closed-but-wrong or unclosed spawn-args fallback can't create out-of-set slices, crash a valid persisted instance, or let reload args re-drive a legacy instance and prune its persisted declared slices (codex CRITICAL). **E9 (dispatch)** resolves a behavior via `Ezagent.BehaviorRegistry.lookup(kind_module, action)` (`runtime.ex:284-289`), keyed by `kind_module` — NOT by instance — and FALLS BACK to `Ezagent.UniversalBehaviors.behavior_for_action/1` (`behavior_registry.ex:58`) for actions with no per-Kind registration (today: `Manage`'s `:delete`/`:reconfigure`). Caps are also registered per `{kind_module, action}` (`Ezagent.CapabilityRegistry.register(kind, action, behavior)`, `capability_registry.ex:82`). So with one `SessionKind` carrying a superset, ANY instance could resolve+dispatch ANY registered action. P1 inserts an instance-set membership gate AFTER `lookup_behavior` and BEFORE `authz_check` — gating NON-universal behaviors by instance-set membership while EXEMPTING `UniversalBehaviors.all()` (still cap-checked) so universal `Manage` is never wrongly denied (codex HIGH).
 - **E10** (`hosts_lifecycle?/1`) decides the create/activate marker semantics from the module's behavior list. It is metadata, not a callback gate. We re-point it at the instance set for correctness (a superset Kind would otherwise mark every instance as Lifecycle-hosting even when its instance set has no Lifecycle behavior). Verified by a parity assertion, not a security-denial test.
 - **E11** (`auto_derive.ex`) is operator-AdminLive *display* of a Kind's behaviors. It is the View surface, owned by **P2 (Unified View contract)**, not P1. Left untouched here; flagged so the orchestrator does not treat it as a P1 gap.
 
@@ -60,7 +60,7 @@ The slice-owner map lives as a single source of truth in `Ezagent.Kind.BehaviorS
 | `apps/ezagent_core/lib/ezagent/kind/behavior_set.ex` | Create | P1: pure resolver — `base_behaviors/0` (KindBase + UniversalBehaviors.all), `init_set/2` (first-spawn set from args), `effective_set/2` (post-load instance set), slice-owner map, `resolve_closure/1` (required/optional fail-loud), `member?/2`. |
 | `apps/ezagent_core/test/ezagent/kind/behavior_set_test.exs` | Create | P1: unit tests for init_set (first-spawn scoping + universal base), effective_set, closure (required fail / optional soft), member?. |
 | `apps/ezagent_core/lib/ezagent/kind/server.ex` | Modify | P1: thread the instance set into state; re-point E1–E5 enumerations through it. |
-| `apps/ezagent_core/lib/ezagent/kind/snapshot.ex` | Modify | P1: RESTRUCTURE `load_with_fallback/3` — fetch persisted snapshot FIRST, then branch: `:not_found` → `init_fresh_first_spawn/2` (init_set from args + validate_closure! — first-spawn §3.1 guard, no out-of-set create/slice); reload → `effective_set/2` from persisted `:kind_base` + validate + `init_fresh_for_set/2` (spawn args never re-drive reload slice creation). prune/reconcile re-pointed through `effective_set/2`; KindBase always present via base behaviors. |
+| `apps/ezagent_core/lib/ezagent/kind/snapshot.ex` | Modify | P1: RESTRUCTURE `load_with_fallback/3` — fetch persisted snapshot FIRST, then branch: `:not_found` → `init_fresh_first_spawn/2` (init_set from args + validate_closure! — first-spawn §3.1 guard, no out-of-set create/slice); reload → `seed_legacy_kind_base/1` (pre-P1 row with NO `:kind_base` → seed legacy sentinel `nil` INDEPENDENT of args, no data loss) then `effective_set/2` from persisted `:kind_base` + validate + `init_fresh_for_set/2` (spawn args never re-drive reload slice creation). prune/reconcile re-pointed through `effective_set/2`; KindBase always present via base behaviors. |
 | `apps/ezagent_core/lib/ezagent/kind/runtime.ex` | Modify | P1 (E9): instance-set membership gate after `lookup_behavior`, denying out-of-set behaviors; EXEMPTS `UniversalBehaviors.all()` (still cap-checked). |
 | `apps/ezagent_core/lib/ezagent/lifecycle.ex` | Modify | P1 (E10): `hosts_lifecycle?/2` instance-aware variant; keep `/1` for static callers. |
 | `apps/ezagent_core/test/ezagent/kind/instance_set_denial_test.exs` | Create | P1: the cross-entry-point denial suite (dispatch / slice-init / signal / terminate-destroy / on_ready / reconcile). |
@@ -1101,7 +1101,7 @@ git commit -m "feat(kind): P1 — required/optional sibling closure resolver + v
 **Files:**
 - Create: `apps/ezagent_core/test/ezagent/kind/instance_set_support.ex`
 
-This module is shared by the denial suite (Task 14). It defines a Kind whose MODULE registers a superset (`[Chat, Turn, Surface, ProbeBehavior, KindBase]`) but is spawned with a chat-only instance set, plus a `ProbeBehavior` that records when its `handle_signal`/`terminate`/`destroy`/`on_ready`/`init_slice` run (via a test pid registered in `:persistent_term` or an Agent).
+This module is shared by the denial suite (Task 14). It defines a Kind whose MODULE registers a superset (`[Chat, Turn, Surface, ProbeBehavior, KindBase]`) but is spawned with a chat-only instance set, plus a `ProbeBehavior` that records when its lifecycle moments run (via a test pid registered in `:persistent_term`). **Each observable moment is hooked through the REAL overridable developer hook the `use Ezagent.Lifecycle` macro exposes — `create/1` (init/slice), `handle_signal/2` (signal), `activated/2` (on-ready), `deactivate/2` (graceful terminate), `destroy/2` (destroy) — NOT through the macro-EMITTED engine callbacks (`on_ready/2`, `terminate/3`, `__ezagent_lifecycle_destroy__/3`, …), which are not overridable and would not compile if redefined (codex HIGH finding 2; verified against lifecycle.ex:288-302 — the `defoverridable` list is exactly `create:1, activate:2, deactivate:2, destroy:2, activated:2, handle_signal:2`).**
 
 **Why the superset declares `Turn` (codex HIGH finding — closure-denial fixture).** The closure-denial test in Task 9 requests an UNCLOSED set (`Turn` without `Surface`). Because `init_set/2` intersects the requested list with the Kind's DECLARED list (`Enum.filter(declared, …)`), the requested `Turn` is dropped BEFORE `validate_closure!/1` runs unless the host Kind ALSO declares `Turn`. If `Turn` is dropped, the residual set (`[Chat, KindBase]`) is trivially closed (`Chat → :sandbox` is OPTIONAL), so `UnclosedSetError` would NEVER be raised and the closure path would never be exercised (the `refute_received {:probe, :init_slice}` would be vacuous). Declaring `Turn` here makes the requested `Turn` survive the ∩-declared intersection so the closure genuinely fails on Turn's REQUIRED `:surface` sibling. We use the REAL `Ezagent.Behavior.Turn` (`use Ezagent.Lifecycle, state_slice: :turns`; `reads_siblings, do: [:surface]` — verified at `apps/ezagent_domain_socialware/lib/ezagent/behavior/turn.ex:11,80`), and `@required_reads` (Task 7) already classifies `Turn => %{surface: :required}`.
 
@@ -1128,6 +1128,25 @@ defmodule Ezagent.Kind.InstanceSetSupport do
       description: "test-only probe action that records when it is dispatched"
     )
 
+    # IMPORTANT (codex HIGH finding 2): `use Ezagent.Lifecycle` EMITS the
+    # engine callbacks `on_ready/2`, `terminate/3`, `post_init/2`,
+    # `handle_continue/3`, `handle_kind_message/3` and
+    # `__ezagent_lifecycle_destroy__/3` — these are NOT in the macro's
+    # `defoverridable` list (verified lifecycle.ex:288-302), so DEFINING
+    # them directly is a compile error ("def ... already defined") and the
+    # probe would never wire. The ONLY overridable developer hooks are
+    # `create/1`, `activate/2`, `deactivate/2`, `destroy/2`, `activated/2`,
+    # `handle_signal/2` (lifecycle.ex:290-302). We therefore observe each
+    # lifecycle moment through its REAL developer hook, which the macro
+    # routes to the corresponding engine callback (mapping table,
+    # lifecycle.ex:24-33):
+    #
+    #   * on-ready observation → `activated/2`  (→ engine `on_ready/2`)
+    #   * terminate observation → `deactivate/2` (→ engine graceful `terminate/3`)
+    #   * destroy observation  → `destroy/2`    (→ engine `__ezagent_lifecycle_destroy__/3`)
+    #   * signal observation   → `handle_signal/2` (→ engine `handle_kind_message/3`)
+    #   * init/create observation → `create/1`   (→ engine `init_slice/1`)
+
     @impl Ezagent.Lifecycle
     def create(_args) do
       notify(:init_slice)
@@ -1145,9 +1164,31 @@ defmodule Ezagent.Kind.InstanceSetSupport do
       :ignore
     end
 
-    def on_ready(_slice, _ctx), do: notify(:on_ready)
-    def terminate(_reason, _slice, _ctx), do: notify(:terminate)
-    def reconcile_after_load(_uri, slice), do: notify(:reconcile) && slice
+    # on_ready observation via the OVERRIDABLE `activated/2` developer hook
+    # (the macro emits engine `on_ready/2`, which calls this — lifecycle.ex:31,284).
+    @impl Ezagent.Lifecycle
+    def activated(_state, _ctx) do
+      notify(:on_ready)
+      :ok
+    end
+
+    # terminate observation via the OVERRIDABLE `deactivate/2` developer hook
+    # (the macro emits engine `terminate/3`, which calls this on the graceful
+    # path — lifecycle.ex:29,258).
+    @impl Ezagent.Lifecycle
+    def deactivate(_reason, _ctx) do
+      notify(:terminate)
+      :ok
+    end
+
+    # destroy observation via the OVERRIDABLE `destroy/2` developer hook
+    # (the macro emits engine `__ezagent_lifecycle_destroy__/3`, which calls
+    # this on the explicit-destroy path — lifecycle.ex:30,267).
+    @impl Ezagent.Lifecycle
+    def destroy(_reason, _ctx) do
+      notify(:destroy)
+      :ok
+    end
 
     defp notify(event) do
       case :persistent_term.get({__MODULE__, :probe_pid}, nil) do
@@ -1181,8 +1222,23 @@ defmodule Ezagent.Kind.InstanceSetSupport do
     end
     @impl true
     def persistence, do: {:snapshot, :on_change}
+
+    # CRITICAL (codex HIGH finding 3): `supervisor/0` must return a RUNNING
+    # DynamicSupervisor, because `Ezagent.Kind.spawn/2` passes
+    # `kind_module.supervisor()` straight into
+    # `DynamicSupervisor.start_child(supervisor, {Ezagent.Kind.Server, ...})`
+    # (verified kind.ex:300-301 + resolve_supervisor/1 kind.ex:635-641).
+    # Returning `Ezagent.Kind.Server` here (the CHILD module, not a
+    # supervisor) makes EVERY `Kind.spawn(SupersetSessionKind, ...)` in
+    # Tasks 10-13 fail before the gate is ever exercised. Reuse the existing
+    # dedicated test DynamicSupervisor `Ezagent.LifecycleCase.gate_supervisor()`
+    # (a named singleton started idempotently by
+    # `Ezagent.LifecycleCase.ensure_gate_supervisor!/0`, verified
+    # lifecycle_case.ex:47-48,117-151) — the SAME opt-in pattern the
+    # cold-restart GATE Kinds use. The denial suite calls
+    # `ensure_gate_supervisor!/0` in its setup (Task 9) before any spawn.
     @impl true
-    def supervisor, do: Ezagent.Kind.Server
+    def supervisor, do: Ezagent.LifecycleCase.gate_supervisor()
   end
 end
 ```
@@ -1206,7 +1262,9 @@ git commit -m "test(kind): P1 — superset Kind + observable probe behavior supp
 ### Task 9 (E8 + E6 + E7 + P1.1 closure): Snapshot init/prune/reconcile through the instance set — FIRST-spawn scoped + closure-enforced
 
 **Files:**
-- Modify: `apps/ezagent_core/lib/ezagent/kind/snapshot.ex:52-66` (`load_or_init` `:ephemeral`/`:external` arms → `init_fresh_first_spawn`), `:68-127` (`load_with_fallback` — RESTRUCTURE: fetch FIRST, branch first-spawn vs reload), `:135-144` (`prune_orphan_slices`), `:162-174` (`reconcile_after_load_behaviors`), `:532-538` (`init_fresh` → `init_fresh_first_spawn` + new `init_fresh_for_set`).
+- Modify: `apps/ezagent_core/lib/ezagent/kind/snapshot.ex:52-66` (`load_or_init` `:ephemeral`/`:external` arms → `init_fresh_first_spawn`), `:68-127` (`load_with_fallback` — RESTRUCTURE: fetch FIRST, branch first-spawn vs reload, SEED legacy `:kind_base` on reload), `:135-144` (`prune_orphan_slices`), `:162-174` (`reconcile_after_load_behaviors`), `:532-538` (`init_fresh` → `init_fresh_first_spawn` + new `init_fresh_for_set` + new `seed_legacy_kind_base`).
+
+**The deploy-safety fix (codex CRITICAL — legacy-snapshot data loss).** A snapshot WRITTEN BEFORE P1 has NO `:kind_base` slice (KindBase did not exist), but DOES carry real persisted declared slices (e.g. `:chat`, `:surface`). On reload, the effective-set derivation reads `:kind_base` back — for a legacy row that key is ABSENT. If the reload branch let the args-driven `init_fresh_for_set(effective, args)` create a `:kind_base` recording the CURRENT reload `args[:behaviors]` (which it could whenever `ever_created?(args)` resolves false for the supplied args — e.g. args lacking or carrying a mismatched `:uri`), a narrower reload (`%{behaviors: []}` or a subset) would persist that subset as the captured set; the very NEXT reload would read it back and `prune_orphan_slices/2` would DROP every previously-persisted declared slice not in those args — silent data loss / version skew for live prod sessions. The fix SEEDS `:kind_base` with the LEGACY SENTINEL `nil`, INDEPENDENT of reload args, the instant a `:kind_base`-less (pre-P1) snapshot is loaded — so a legacy instance behaves exactly like a legacy static Kind (sentinel nil → full DECLARED list, nothing pruned), and reload args can NEVER re-drive it. Only a snapshot that ALREADY has `:kind_base` (post-P1) lets its persisted captured set drive the effective set.
 
 **The security-critical fix (codex CRITICAL finding 1) — TWO coupled defects, one structural cause.** In the REAL source `load_with_fallback/3` computes `fresh = init_fresh(kind_module, args)` at its FIRST line (`snapshot.ex:70`), BEFORE `fetch_snapshot/2` reads the persisted row (`snapshot.ex:72`). Putting `init_set/2` + `validate_closure!/1` + slice creation inside `init_fresh/2` would therefore run the SPAWN-ARGS set's closure + `init_slice`/`create` on EVERY restart of an already-persisted instance, BEFORE the persisted `:kind_base` is ever read:
 
@@ -1228,6 +1286,16 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
 
   setup do
     Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
+
+    # codex HIGH finding 3: SupersetSessionKind.supervisor/0 returns the
+    # dedicated test DynamicSupervisor `Ezagent.LifecycleCase.gate_supervisor()`.
+    # It must be RUNNING before any `Ezagent.Kind.spawn(SupersetSessionKind, …)`
+    # in Tasks 10-13 (spawn does `DynamicSupervisor.start_child(supervisor, …)`
+    # — kind.ex:300-301). `ensure_gate_supervisor!/0` is idempotent: it starts
+    # the named singleton once per BEAM and is a no-op thereafter
+    # (lifecycle_case.ex:117-151).
+    Ezagent.LifecycleCase.ensure_gate_supervisor!()
+
     :persistent_term.put({ProbeBehavior, :probe_pid}, self())
     on_exit(fn -> :persistent_term.erase({ProbeBehavior, :probe_pid}) end)
     :ok
@@ -1341,6 +1409,59 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
     refute Map.has_key?(reloaded, :turns)
     refute Map.has_key?(reloaded, :surface)
     assert Ezagent.Behavior.KindBase.behaviors_in_slice(reloaded[:kind_base]) == chat_only
+  end
+
+  test "LEGACY (pre-P1) snapshot reload: a :kind_base-less row keeps ALL declared slices; reload args do NOT prune; :kind_base seeded as legacy sentinel (codex CRITICAL — data-loss hole)" do
+    uri =
+      Ezagent.URI.session(:system, :default, :"isd-legacy-#{System.unique_integer([:positive])}")
+
+    # Hand-write a LEGACY snapshot row: real declared slices (chat + surface),
+    # NO :kind_base slice — exactly the shape a snapshot written BEFORE P1 has
+    # (KindBase did not exist then). save_now persists this state verbatim
+    # (after stripping transients); mark_ever_created mirrors a real legacy row.
+    legacy_state = %{
+      chat: %{state: %{members: %{}, last_message_id: nil}, transients: %{}},
+      surface: %{state: %{versions: []}, transients: %{}}
+    }
+
+    :ok =
+      Ezagent.Kind.Snapshot.save_now(uri, SupersetSessionKind, legacy_state,
+        mark_ever_created: true
+      )
+
+    # Reload with a NARROWER present arg (%{behaviors: [Chat]}). The OLD (buggy)
+    # path could let these args drive a :kind_base recording [Chat], so the NEXT
+    # reload would prune :surface — silent data loss. The fix seeds :kind_base
+    # with the legacy sentinel nil INDEPENDENT of args → effective_set = full
+    # declared list → nothing pruned.
+    reloaded =
+      Ezagent.Kind.Snapshot.load_or_init(uri, SupersetSessionKind, %{
+        behaviors: [Ezagent.Behavior.Chat]
+      })
+
+    # BOTH legacy declared slices survive (NOT pruned by the narrower arg).
+    assert Map.has_key?(reloaded, :chat)
+    assert Map.has_key?(reloaded, :surface)
+
+    # :kind_base was seeded as the LEGACY sentinel (nil), so the effective set
+    # is the FULL declared list (+ base behaviors), NOT the [Chat] arg subset.
+    assert Ezagent.Behavior.KindBase.behaviors_in_slice(reloaded[:kind_base]) == nil
+
+    declared = Ezagent.Kind.behaviors_of(SupersetSessionKind)
+    effective = Ezagent.Kind.BehaviorSet.effective_set(SupersetSessionKind, reloaded)
+    assert Enum.take(effective, length(declared)) == declared
+
+    # Re-persist (the legacy row now carries the seeded sentinel :kind_base) and
+    # reload AGAIN — the declared slices STILL survive and :kind_base reads back
+    # as sentinel nil (the migration is durable, never re-drives off args).
+    :ok = Ezagent.Kind.Snapshot.save_now(uri, SupersetSessionKind, reloaded)
+
+    reloaded2 =
+      Ezagent.Kind.Snapshot.load_or_init(uri, SupersetSessionKind, %{behaviors: []})
+
+    assert Map.has_key?(reloaded2, :chat)
+    assert Map.has_key?(reloaded2, :surface)
+    assert Ezagent.Behavior.KindBase.behaviors_in_slice(reloaded2[:kind_base]) == nil
   end
 
   test "FIRST spawn with EXPLICIT empty list: NO declared behavior runs create/init_slice, ONLY base slices materialize (E8, codex CRITICAL)" do
@@ -1458,7 +1579,7 @@ NOTE TO IMPLEMENTER: the no-partial-persist assertion is written against `KindSn
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `MIX_ENV=test mix test apps/ezagent_core/test/ezagent/kind/instance_set_denial_test.exs`
-Expected: FAIL — the first-spawn test fails because today's `init_fresh` enumerates the declared superset, so `:probe`/`:surface` slices are created and `notify(:init_slice)` fires. The reload-prune test fails because `prune_orphan_slices` prunes against the MODULE's declared list (keeps `:surface`/`:probe`). The reload-scoping test (derive set from persisted `:kind_base`, not args) fails because today's load path materializes `fresh` from spawn-args up front. The bogus-reload-survives test fails (or never gets a chance to assert) because the up-front `init_fresh` would run `validate_closure!` on the bogus `[Turn]` args and crash a valid persisted instance. The unclosed-set FIRST-spawn test fails because today's `init_fresh` never calls `validate_closure!/1` — so a `[Turn]`-without-`Surface` set is materialized (no raise) and a partial snapshot persists. The optional-read test currently passes trivially (no closure gate yet) and locks the "optional missing is OK" property once the gate exists.
+Expected: FAIL — the first-spawn test fails because today's `init_fresh` enumerates the declared superset, so `:probe`/`:surface` slices are created and `notify(:init_slice)` fires. The reload-prune test fails because `prune_orphan_slices` prunes against the MODULE's declared list (keeps `:surface`/`:probe`). The reload-scoping test (derive set from persisted `:kind_base`, not args) fails because today's load path materializes `fresh` from spawn-args up front. The bogus-reload-survives test fails (or never gets a chance to assert) because the up-front `init_fresh` would run `validate_closure!` on the bogus `[Turn]` args and crash a valid persisted instance. The LEGACY-snapshot migration test fails because today there is no `seed_legacy_kind_base/1` (and no `BehaviorSet`/`KindBase` at all) — the `:kind_base`-less legacy row has nowhere to read the set from, and once P1's resolver exists without the seeding, the narrower reload arg drives a captured set that prunes `:surface` on the second reload. The unclosed-set FIRST-spawn test fails because today's `init_fresh` never calls `validate_closure!/1` — so a `[Turn]`-without-`Surface` set is materialized (no raise) and a partial snapshot persists. The optional-read test currently passes trivially (no closure gate yet) and locks the "optional missing is OK" property once the gate exists.
 
 - [ ] **Step 3: Restructure the load path — fetch the persisted set FIRST; scope first-spawn vs reload; re-point prune/reconcile at the effective set**
 
@@ -1492,11 +1613,32 @@ Rewrite `load_with_fallback/3` (`snapshot.ex:68-127`) so the fetch is FIRST and 
         # canonicalize embedded %URI{} structs BEFORE the merge.
         canonicalized = canonicalize_uris(loaded_state)
 
+        # LEGACY-SNAPSHOT MIGRATION (codex CRITICAL — data-loss hole). A
+        # snapshot WRITTEN BEFORE P1 has NO `:kind_base` slice (KindBase did
+        # not exist). We MUST seed `:kind_base` with the LEGACY SENTINEL `nil`
+        # — INDEPENDENT of the reload args — BEFORE deriving the effective set,
+        # so a pre-P1 instance behaves exactly like a legacy static Kind
+        # (sentinel nil → full DECLARED list) and the reload args can NEVER
+        # re-drive its set. Without this seeding, the args-driven
+        # `init_fresh_for_set(effective, args)` below could (depending on
+        # whether `ever_created?(args)` resolves false for the supplied args —
+        # e.g. args without/with a mismatched `:uri`) run `KindBase.create/1`
+        # against the CURRENT reload args and persist a `:kind_base` recording
+        # `args[:behaviors]`; the very NEXT reload would then read that
+        # captured set back and `prune_orphan_slices/2` would DROP every
+        # previously-persisted declared slice not in those args — silent
+        # data loss / version skew for existing prod sessions. Seeding the
+        # sentinel here makes the legacy path deterministic and arg-free.
+        canonicalized = seed_legacy_kind_base(canonicalized)
+
         # Reload scoping (codex finding 1): the effective set is derived from
-        # the PERSISTED :kind_base slice, NOT the spawn args. Validate THAT set
-        # (a persisted set that was closed at first spawn stays closed; if a
+        # the PERSISTED :kind_base slice (now ALWAYS present — either the real
+        # post-P1 captured value, or the legacy sentinel seeded just above),
+        # NOT the spawn args. Validate THAT set (a persisted set that was
+        # closed at first spawn stays closed; a legacy sentinel → full declared
+        # list, which is closed by construction since the Kind compiled — if a
         # code deploy made a previously-closed persisted set unclosed, failing
-        # loud here is correct — operator must fix the Kind), then build the
+        # loud here is correct, operator must fix the Kind), then build the
         # `fresh` baseline by init_slice'ing ONLY that set's members (NOT the
         # module superset, NOT a spawn-args set). For members the snapshot
         # already owns, the fresh value is immediately overwritten by the
@@ -1558,6 +1700,35 @@ Replace `init_fresh/2` (`snapshot.ex:532`) with the renamed first-spawn function
     |> Enum.map(fn behavior -> {behavior.state_slice(), behavior.init_slice(args)} end)
     |> Map.new()
   end
+
+  # LEGACY-SNAPSHOT MIGRATION (codex CRITICAL — data-loss hole). Called on the
+  # reload branch BEFORE deriving the effective set. A snapshot WRITTEN BEFORE
+  # P1 has NO `:kind_base` slice (KindBase did not exist). Seed it with the
+  # LEGACY SENTINEL `nil` — INDEPENDENT of the reload args — so:
+  #
+  #   * `effective_set/2` reads the seeded slice back via
+  #     `KindBase.behaviors_in_slice/1` as the sentinel `nil` (the
+  #     `%{state: %{behaviors: nil}}` clause, kind_base.ex), → the FULL
+  #     DECLARED list, so NO previously-persisted declared slice is pruned;
+  #   * the seeded slice carries the two-container shape KindBase persists, so
+  #     the next `:on_change` save (`save_now` strips transients) writes
+  #     `%{behaviors: nil}` back, and every future reload re-reads sentinel nil
+  #     — the legacy instance stays "full declared", arg-free, forever.
+  #
+  # A snapshot that ALREADY has `:kind_base` (written post-P1) is returned
+  # UNCHANGED — its real captured value (a present list, including `[]`, or a
+  # sentinel nil) drives the effective set. This is the deploy-safety guarantee
+  # for existing prod sessions: reload args can NEVER re-drive a legacy
+  # instance's behavior set.
+  defp seed_legacy_kind_base(loaded_state) do
+    kind_base_key = Ezagent.Behavior.KindBase.state_slice()
+
+    if Map.has_key?(loaded_state, kind_base_key) do
+      loaded_state
+    else
+      Map.put(loaded_state, kind_base_key, %{state: %{behaviors: nil}, transients: %{}})
+    end
+  end
 ```
 
 Update `load_or_init/3`'s `:ephemeral` and `:external` arms (`snapshot.ex:54,58`) to call `init_fresh_first_spawn/2` (the rename — these paths have no persistence and are first-spawn-every-time, so the spawn-args set + closure is correct):
@@ -1607,7 +1778,7 @@ In `reconcile_after_load_behaviors/3` (`snapshot.ex:163`), iterate the effective
   end
 ```
 
-NOTE TO IMPLEMENTER: `init_set/2` works at FIRST spawn with NO slice state (it reads `args[:behaviors]`, not `:kind_base`) and is called ONLY from `init_fresh_first_spawn/2` in the `:not_found` (+ `:ephemeral`/`:external`) paths. `effective_set/2` works after load (it reads the persisted `:kind_base`) and drives the ENTIRE reload branch: effective-set derivation, closure re-validation, `init_fresh_for_set/2`, prune, and reconcile. Both append the same `base_behaviors/0`, so for a given spawn-args subset the first-spawn materialized set and the post-reload effective set are identical — the prune step is therefore a no-op on the happy path and only drops slices when the persisted set shrinks (e.g. a code deploy removed a declared behavior — a real orphan). KindBase is always present in both, so `:kind_base` is never pruned and the captured set always survives. CRITICAL: do NOT reintroduce an up-front `fresh = init_fresh(args)` at the top of `load_with_fallback/3` — the fetch MUST come first so spawn-args never drive slice creation/validation on reload (codex finding 1).
+NOTE TO IMPLEMENTER: `init_set/2` works at FIRST spawn with NO slice state (it reads `args[:behaviors]`, not `:kind_base`) and is called ONLY from `init_fresh_first_spawn/2` in the `:not_found` (+ `:ephemeral`/`:external`) paths. `effective_set/2` works after load (it reads the persisted `:kind_base`) and drives the ENTIRE reload branch: effective-set derivation, closure re-validation, `init_fresh_for_set/2`, prune, and reconcile. Both append the same `base_behaviors/0`, so for a given spawn-args subset the first-spawn materialized set and the post-reload effective set are identical — the prune step is therefore a no-op on the happy path and only drops slices when the persisted set shrinks (e.g. a code deploy removed a declared behavior — a real orphan). KindBase is always present in both, so `:kind_base` is never pruned and the captured set always survives. CRITICAL: do NOT reintroduce an up-front `fresh = init_fresh(args)` at the top of `load_with_fallback/3` — the fetch MUST come first so spawn-args never drive slice creation/validation on reload (codex finding 1). EQUALLY CRITICAL (codex CRITICAL legacy-data-loss): `seed_legacy_kind_base/1` MUST run on the reload branch BEFORE `effective_set/2`, so a pre-P1 snapshot (no `:kind_base`) gets the legacy sentinel `nil` seeded INDEPENDENT of reload args — otherwise the args-driven `init_fresh_for_set` could materialize a `:kind_base` from `args[:behaviors]` (whenever `ever_created?(args)` is false for the supplied args) and the next reload would prune the legacy declared slices. The seed runs on the ALREADY-canonicalized loaded state; a snapshot that already has `:kind_base` (post-P1) is returned unchanged.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1619,7 +1790,7 @@ Expected: PASS (both the first-spawn denial test and the reload-prune test).
 ```bash
 git add apps/ezagent_core/lib/ezagent/kind/snapshot.ex \
         apps/ezagent_core/test/ezagent/kind/instance_set_denial_test.exs
-git commit -m "feat(kind): P1 (E6/E7/E8 + closure) — init_fresh scopes to init_set AND validate_closure! at FIRST spawn (no out-of-set create/slice, unclosed set fails loud with no partial persist); prune/reconcile use the effective set"
+git commit -m "feat(kind): P1 (E6/E7/E8 + closure) — init_fresh scopes to init_set AND validate_closure! at FIRST spawn (no out-of-set create/slice, unclosed set fails loud with no partial persist); reload seeds legacy :kind_base sentinel (no data loss for pre-P1 snapshots); prune/reconcile use the effective set"
 ```
 
 ### Task 10 (E9): Dispatch + caps gate through the instance set — with universal-behavior exemption
@@ -1908,7 +2079,7 @@ git commit -m "feat(kind): P1 (E4) — mailbox handle_signal path uses the insta
   end
 ```
 
-NOTE TO IMPLEMENTER: ProbeBehavior needs a `__ezagent_lifecycle_destroy__/3` to be probed by E3 (the Lifecycle macro injects it). If the macro auto-injects it, add a `notify(:destroy)` path; if not, add a manual `def __ezagent_lifecycle_destroy__(_r,_s,_c), do: notify(:destroy)` to ProbeBehavior in Task 8's support module (update Task 8 accordingly).
+NOTE TO IMPLEMENTER (codex HIGH finding 2): do NOT define the macro-emitted engine callbacks (`terminate/3`, `__ezagent_lifecycle_destroy__/3`) on ProbeBehavior — they are emitted by `use Ezagent.Lifecycle` and are NOT overridable (lifecycle.ex:288-302), so redefining them fails to compile. ProbeBehavior already observes both moments through its OVERRIDABLE developer hooks (Task 8): the E5 graceful-stop path (`GenServer.stop(pid, :normal)` → engine `terminate/3` → `__run_deactivate__` → `deactivate/2`, lifecycle.ex:258-260) fires `notify(:terminate)` from `deactivate/2`; the E3 explicit-destroy path (`{:ezagent_lifecycle_destroy, :test}` → engine `__ezagent_lifecycle_destroy__/3` → `__run_destroy__` → `destroy/2`, lifecycle.ex:267-269) fires `notify(:destroy)` from `destroy/2`. The denial assertions `refute_received {:probe, :terminate}` / `{:probe, :destroy}` therefore observe through the real hooks, no extra wiring in Task 8 needed.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -2262,13 +2433,14 @@ Each is its own plan doc under `docs/superpowers/plans/`.
 
 ## Self-review (per writing-plans skill)
 
-**Spec coverage of §6 P0 + P1 and §3.1 (rev5 — covers first-spawn + universal behaviors + absent-vs-present-empty sentinel + closure ENFORCED on init path + LOAD-ORDER fix (fetch persisted set before init on reload) + closure fixture DECLARES Turn + real E9 registry setup):**
+**Spec coverage of §6 P0 + P1 and §3.1 (rev8 — covers first-spawn + universal behaviors + absent-vs-present-empty sentinel + closure ENFORCED on init path + LOAD-ORDER fix (fetch persisted set before init on reload) + closure fixture DECLARES Turn + real E9 registry setup + LEGACY-snapshot reload migration (no data loss) + ProbeBehavior real Lifecycle developer hooks + real test DynamicSupervisor):**
 - P0 "Publisher as base behavior on SocialwareSession / every session composes it" → Task 1 (+ Task 2 caps, Task 3 gate). ✓
 - P0 "no consumer change; chat/socialware/Feishu unchanged" → Task 3 regression gate. ✓
 - P1.1 "reclassify each reads_siblings as required/optional + slice-owner map + resolver failing loud only on missing required" → Tasks 6–7 (slice-owner map, required/optional table, `resolve_closure`, optional soft default preserved for `Chat → :sandbox`). **Closure is OWNER-MODULE based (codex HIGH): each required `reads_siblings` key resolves its OWNING behavior module via `@slice_owners` and requires THAT EXACT module to be a set member — a slice-key collision (a non-owner behavior declaring the same `state_slice/0` key) does NOT falsely close the set; a required key with no `@slice_owners` entry fails loud (`{:error, {:unknown_required_slice_owner, key}}`) so a new required dep can never silently pass.** ✓
 - P1.1 "the closure is ENFORCED on the spawn/init path, not just a pure helper" → **Task 7 adds `validate_closure!/1` (raising passthrough) + `UnclosedSetError`; Task 9 wires it INTO `init_fresh_first_spawn/2` (the `:not_found` branch) BEFORE any `init_slice`/`create` runs and strictly before `persist_initial_snapshot/3`, and validates the PERSISTED effective set on reload** — so a requested set like `[Turn]` without `Surface` (Turn `reads_siblings :surface :required`) FAILS LOUD at first spawn and persists NO partial slice, while a valid persisted instance is never crashed by bogus reload args. **The closure-denial FIXTURE (Task 8) now DECLARES `Turn` in `SupersetSessionKind.behaviors/0`** so the requested `Turn` survives `init_set/2`'s ∩-declared intersection and the closure path is genuinely exercised (codex HIGH — previously Turn was dropped by the intersection and the test was vacuous). Integration denial test in Task 9 asserts the raise, `err.missing == [{Turn, :surface}]`, the observable `refute_received {:probe, :init_slice}` (ProbeBehavior is IN the requested set), AND `is_nil(Repo.get(KindSnapshot, uri_str))` (no row), plus an optional-read positive test (`Chat` without `Sandbox` succeeds, soft `%{}`). ✓ (codex CRITICAL finding 1 — closure now wired + load-order fixed; codex HIGH finding — fixture declares Turn so the test exercises closure)
 - P1.2 HARD INVARIANT "persist instance set + route EVERY enumeration/callback entry point through it" → KindBase persistence (Tasks 4–5) + every entry point E1–E10 (Tasks 9–14). ✓
 - §3.1 "an out-of-set behavior must NEVER run a callback nor create its slice — even on FIRST spawn before any restart, AND across restart/reconcile" → **Task 9 RESTRUCTURES `load_with_fallback/3` to fetch the persisted snapshot FIRST, then branch: `:not_found` → `init_fresh_first_spawn/2` (init_set from spawn args + validate_closure! + init_slice); `{:ok, loaded}` → effective set from the PERSISTED `:kind_base` (`effective_set/2`, NOT spawn args), closure-validate THAT set, init only its members (`init_fresh_for_set/2`).** So out-of-set `create`/`init_slice` never run and out-of-set slices are never created or persisted — at first spawn OR on reload — and a closed-but-wrong / unclosed SPAWN-ARGS fallback can no longer drive slice creation or crash a valid persisted instance. Proven by the first-spawn denial test (no prior snapshot), the reload-scoping test (set derived from persisted `:kind_base`, not broader args), and the bogus-reload-survives test (unclosed `[Turn]` args don't crash a valid chat-only persisted instance). No "prune on next load" reliance for the security property. ✓ (codex CRITICAL finding 1 — was a load-ORDER defect: `init_fresh` ran from spawn args before `fetch_snapshot` read the persisted set)
+- **Deploy safety: LEGACY (pre-P1) snapshot reload must not lose data (codex CRITICAL)** → **Task 9 `seed_legacy_kind_base/1`**: on the reload branch, a snapshot WRITTEN BEFORE P1 has NO `:kind_base` slice; we seed it with the legacy sentinel `nil` INDEPENDENT of reload args BEFORE `effective_set/2`, so the instance resolves to the FULL DECLARED list (nothing pruned) and reload args can NEVER re-drive its set. Without this, the args-driven `init_fresh_for_set` could (when `ever_created?(args)` is false for the supplied args — e.g. no/mismatched `:uri`) persist a `:kind_base` recording `args[:behaviors]`, and the next reload's `prune_orphan_slices/2` would drop the legacy declared slices. Migration regression test (Task 9): hand-write a `:kind_base`-less legacy row with real `:chat` + `:surface` slices, reload with a NARROWER `%{behaviors: [Chat]}` arg, assert BOTH slices survive, `:kind_base` reads back as sentinel `nil`, the effective set is the full declared list, and the re-persisted+re-reloaded row STILL keeps them. ✓ (codex CRITICAL — legacy-snapshot data-loss hole)
 - §3.1 "empty/malformed args must not re-open the hole" → **legacy sentinel** (`nil`): `KindBase.create/1` persists `nil` ONLY when `:behaviors` is ABSENT, and the exact list (including `[]`) when PRESENT; `init_set/2` + `effective_set/2` map sentinel `nil` → full declared list but a PRESENT `[]` → base-behaviors-only. So an explicit `%{behaviors: []}` on a superset Kind can NEVER be confused with omitted args and expand to the declared superset — at first spawn OR on reload (KindBase persisted `[]`, a present list, not `nil`). Tests: Task 4 (`create(%{})` → `nil`, `create(%{behaviors: []})` → `[]`); Task 6 (`init_set`/`effective_set` of `%{behaviors: []}`/captured `[]` on SupersetKind == `base_behaviors` only); Task 9 (first-spawn AND reload of `%{behaviors: []}` on the superset → NO `:surface`/`:probe` slice, `create`/`init_slice` never fire); Task 15 (absent-args static Session still → full declared list). ✓ (codex CRITICAL re-review)
 - §3.1 "universal-behavior fallback policy" → **`base_behaviors/0` (KindBase + `UniversalBehaviors.all()`) is always in init_set/effective_set, AND the E9 dispatch gate explicitly EXEMPTS `UniversalBehaviors.all()` from the membership check while still cap-checking them** (Tasks 6 + 10). Tests: `manage.delete` dispatches on a chat-only instance; a non-universal `probe.poke` is denied. ✓ (codex HIGH finding 2)
 - E9 test wiring is REAL, not assumed → **Task 8 + Task 10 register `{SupersetSessionKind, :poke} → ProbeBehavior` via the canonical chokepoint `Ezagent.CapabilityRegistry.register/3` in a `setup_all` (guarded by `BehaviorRegistry.lookup/2 == :error`, modeled on `lifecycle_test.exs:36-39`); the E9 suite is two-step — (a) a CONTROL test dispatches `:poke` on a FULL-set instance and asserts it REACHES the handler (proving registration), (b) the denial test on a chat-only instance asserts `:behavior_not_in_instance_set`. `manage.delete` uses its REAL universal registration (`BehaviorRegistry.lookup/2` fallback to `UniversalBehaviors.behavior_for_action/1`), not an assumed per-Kind entry.** ✓ (codex MEDIUM finding 2 — dispatch resolves by registry, NOT by scanning `behaviors/0`)
@@ -2278,9 +2450,9 @@ Each is its own plan doc under `docs/superpowers/plans/`.
 - "a deliberately required-broken set fails loud in a test" → Task 7 (Turn-without-Surface). ✓
 - §7 E2E gate per phase (arch gates + regression suites + author-owned SPA E2E) → Task 3 (P0), Task 16 (P1). ✓
 
-**Placeholder scan (rev5 — full re-scan):** the intentional, clearly-flagged implementer bind-points remain (none are silent placeholders): Task 2's `Ezagent.Identity.production_caps()` accessor — flagged "bind to the exact accessor `binding_policy_test` uses" — because that exact catalog-accessor symbol must be read from the live suite at execution time (binding it blind is a worse failure mode); Task 9's no-partial-persist assertion is bound to the VERIFIED `KindSnapshot` primary key `:uri` (kind_snapshot.ex:24) with a one-line "update if schema keying changes" note; Task 10's `admin_caps/0` is given the documented bootstrap shape with a bind-note + an explicit "assert NOT `:behavior_not_in_instance_set`" fallback so the test is robust to the exact cap shape, and a bind-note for the probe-control test's cap coverage. The Task 8/10 E9 registration uses the VERIFIED canonical signature `Ezagent.CapabilityRegistry.register/3` (capability_registry.ex:82) — no assumption. **Task 15's `assert true` placeholder is GONE** — replaced with the full real chat send/join dispatch flow + an explicit "reject any `assert true` / placeholder" acceptance clause. No "TODO / implement later / handle edge cases / add validation / similar to Task N / write tests for the above" anywhere in the plan.
+**Placeholder scan (rev8 — full re-scan):** the intentional, clearly-flagged implementer bind-points remain (none are silent placeholders): Task 2's `Ezagent.Identity.production_caps()` accessor — flagged "bind to the exact accessor `binding_policy_test` uses" — because that exact catalog-accessor symbol must be read from the live suite at execution time (binding it blind is a worse failure mode); Task 9's no-partial-persist assertion is bound to the VERIFIED `KindSnapshot` primary key `:uri` (kind_snapshot.ex:24) with a one-line "update if schema keying changes" note; Task 10's `admin_caps/0` is given the documented bootstrap shape with a bind-note + an explicit "assert NOT `:behavior_not_in_instance_set`" fallback so the test is robust to the exact cap shape, and a bind-note for the probe-control test's cap coverage. The Task 8/10 E9 registration uses the VERIFIED canonical signature `Ezagent.CapabilityRegistry.register/3` (capability_registry.ex:82) — no assumption. **Task 15's `assert true` placeholder is GONE** — replaced with the full real chat send/join dispatch flow + an explicit "reject any `assert true` / placeholder" acceptance clause. No "TODO / implement later / handle edge cases / add validation / similar to Task N / write tests for the above" anywhere in the plan.
 
-**Type/signature consistency (rev5):** `init_set/2` (kind_module, args) used in Task 6 def + Task 9 `init_fresh_first_spawn/2` (called as `kind_module |> BehaviorSet.init_set(args)`); both use the legacy-sentinel rule via `Map.fetch(args, :behaviors)` (`:error` → declared, `{:ok, list}` → ∩). `init_fresh_first_spawn/2` (Task 9) is reachable ONLY from `load_with_fallback/3`'s `:not_found` branch and `load_or_init/3`'s `:ephemeral`/`:external` arms; `init_fresh_for_set/2` (Task 9) is the closure-already-validated worker shared by the first-spawn path (after `validate_closure!`) and the reload branch (on the persisted effective set). The legacy `init_fresh/2` name is fully removed (renamed) — no caller references it. `effective_set/2` (kind_module, slice_state) used identically in the reload branch (Task 9) + Tasks 10–14; reads back via `behaviors_in_slice/1` and maps `nil` → declared, present-list → ∩. The reload branch of `load_with_fallback/3` calls `effective_set/2` on the canonicalized loaded state, then `validate_closure!/1` on the result, then `init_fresh_for_set/2`, then `coerce_loaded_to_fresh_shape/2`, `prune_orphan_slices/2`, `reconcile_after_load_behaviors/3` — all consistent with their Task 6/7/9 signatures. `behaviors_in_slice/1` returns `[module()] | nil` (sentinel `nil`, NOT `[]`) — consistent across Task 4 def + Task 6 effective_set + Task 9 assertions + Task 14 test slices (all use `behaviors: nil` for the legacy/declared case and `behaviors: []` for the base-only case). `base_behaviors/0` defined in Task 6, referenced by init_set/effective_set + the `%{behaviors: []}` tests (Tasks 6, 9) + Task 10 exemption note + Task 14 note. `member?/2` (behavior, effective_set) consistent (Tasks 6, 10). `resolve_closure/1` returns `:ok | {:error, {:missing_required_siblings, [{module(), atom()}]}} | {:error, {:unknown_required_slice_owner, atom()}}` consistent (Task 7); it delegates to the map-injectable `resolve_closure_for/3` (set, required_reads, slice_owners) — the production arity-1 passes `@required_reads`/`@slice_owners`, and the Task 7 unknown-required-key tests pass synthetic maps to drive the `:unknown_required_slice_owner` branch deterministically without mutating the production maps. Closure is OWNER-MODULE based: each required key resolves its owner via `@slice_owners` and that exact owner module must be a `MapSet.member?` of the set (a slice-key collision does NOT close it). `validate_closure!/1` (Task 7) delegates to `validate_closure_for!/3` and is the raising passthrough returning `[module()]` (the unchanged set) on success and raising `Ezagent.Kind.BehaviorSet.UnclosedSetError` (exception carries `:missing`) on a missing required OWNER OR an unknown required key — called in `init_fresh_first_spawn/2` (first-spawn) AND on the persisted effective set in the reload branch (Task 9), and asserted via `assert_raise UnclosedSetError` + `err.missing == [{Turn, :surface}]` in both Task 7 unit tests and the Task 9 first-spawn integration test (consistent module name across def + tests). The Task 9 closure fixture relies on `SupersetSessionKind` DECLARING `Turn` (Task 8) so the requested `Turn` survives `init_set/2`'s ∩-declared intersection. `instance_set_gate/3` (Task 10) uses `UniversalBehaviors.all/0` (verified to exist + contain `Manage`) and `effective_set/2`/`member?/2`. `hosts_lifecycle?/1` and `/2` both defined (Task 14). KindBase `state_slice == :kind_base` consistent across owner map + init_set/effective_set + prune-exclusion.
+**Type/signature consistency (rev8):** `seed_legacy_kind_base/1` (Task 9) takes the canonicalized loaded-state map and returns it with `:kind_base` (= `Ezagent.Behavior.KindBase.state_slice()`) present — either unchanged (post-P1 row) or seeded `%{state: %{behaviors: nil}, transients: %{}}` (legacy row); its output feeds `effective_set/2`, whose `behaviors_in_slice/1` reads the seeded value back as the sentinel `nil` (the `%{state: %{behaviors: nil}}` clause, Task 4) → declared list, consistent with the absent-args path. The denial suite's `setup` (Task 9) calls `Ezagent.LifecycleCase.ensure_gate_supervisor!/0` and `SupersetSessionKind.supervisor/0` (Task 8) returns `Ezagent.LifecycleCase.gate_supervisor()` — the same named singleton, consistent across def + setup. `ProbeBehavior` (Task 8) defines ONLY the overridable developer hooks `create/1`, `handle_signal/2`, `activated/2`, `deactivate/2`, `destroy/2` (verified against the `defoverridable` list lifecycle.ex:288-302) — never the macro-emitted `on_ready/2`/`terminate/3`/`__ezagent_lifecycle_destroy__/3`; the denial-test probe symbols (`:probe, :on_ready` / `:terminate` / `:destroy` / `:handle_signal` / `:init_slice`) are produced by those hooks and consumed by `refute_received`/`assert_received` in Tasks 9-13 — names consistent across the support module + tests. `init_set/2` (kind_module, args) used in Task 6 def + Task 9 `init_fresh_first_spawn/2` (called as `kind_module |> BehaviorSet.init_set(args)`); both use the legacy-sentinel rule via `Map.fetch(args, :behaviors)` (`:error` → declared, `{:ok, list}` → ∩). `init_fresh_first_spawn/2` (Task 9) is reachable ONLY from `load_with_fallback/3`'s `:not_found` branch and `load_or_init/3`'s `:ephemeral`/`:external` arms; `init_fresh_for_set/2` (Task 9) is the closure-already-validated worker shared by the first-spawn path (after `validate_closure!`) and the reload branch (on the persisted effective set). The legacy `init_fresh/2` name is fully removed (renamed) — no caller references it. `effective_set/2` (kind_module, slice_state) used identically in the reload branch (Task 9) + Tasks 10–14; reads back via `behaviors_in_slice/1` and maps `nil` → declared, present-list → ∩. The reload branch of `load_with_fallback/3` calls `effective_set/2` on the canonicalized loaded state, then `validate_closure!/1` on the result, then `init_fresh_for_set/2`, then `coerce_loaded_to_fresh_shape/2`, `prune_orphan_slices/2`, `reconcile_after_load_behaviors/3` — all consistent with their Task 6/7/9 signatures. `behaviors_in_slice/1` returns `[module()] | nil` (sentinel `nil`, NOT `[]`) — consistent across Task 4 def + Task 6 effective_set + Task 9 assertions + Task 14 test slices (all use `behaviors: nil` for the legacy/declared case and `behaviors: []` for the base-only case). `base_behaviors/0` defined in Task 6, referenced by init_set/effective_set + the `%{behaviors: []}` tests (Tasks 6, 9) + Task 10 exemption note + Task 14 note. `member?/2` (behavior, effective_set) consistent (Tasks 6, 10). `resolve_closure/1` returns `:ok | {:error, {:missing_required_siblings, [{module(), atom()}]}} | {:error, {:unknown_required_slice_owner, atom()}}` consistent (Task 7); it delegates to the map-injectable `resolve_closure_for/3` (set, required_reads, slice_owners) — the production arity-1 passes `@required_reads`/`@slice_owners`, and the Task 7 unknown-required-key tests pass synthetic maps to drive the `:unknown_required_slice_owner` branch deterministically without mutating the production maps. Closure is OWNER-MODULE based: each required key resolves its owner via `@slice_owners` and that exact owner module must be a `MapSet.member?` of the set (a slice-key collision does NOT close it). `validate_closure!/1` (Task 7) delegates to `validate_closure_for!/3` and is the raising passthrough returning `[module()]` (the unchanged set) on success and raising `Ezagent.Kind.BehaviorSet.UnclosedSetError` (exception carries `:missing`) on a missing required OWNER OR an unknown required key — called in `init_fresh_first_spawn/2` (first-spawn) AND on the persisted effective set in the reload branch (Task 9), and asserted via `assert_raise UnclosedSetError` + `err.missing == [{Turn, :surface}]` in both Task 7 unit tests and the Task 9 first-spawn integration test (consistent module name across def + tests). The Task 9 closure fixture relies on `SupersetSessionKind` DECLARING `Turn` (Task 8) so the requested `Turn` survives `init_set/2`'s ∩-declared intersection. `instance_set_gate/3` (Task 10) uses `UniversalBehaviors.all/0` (verified to exist + contain `Manage`) and `effective_set/2`/`member?/2`. `hosts_lifecycle?/1` and `/2` both defined (Task 14). KindBase `state_slice == :kind_base` consistent across owner map + init_set/effective_set + prune-exclusion.
 
 **Spec ambiguity resolved (flagged for orchestrator):**
 - **Where the instance set is persisted:** chosen a dedicated base behavior `KindBase` owning a `:kind_base` slice (not a raw spawn-arg-only field), because the spec's §3.1 explicitly requires the set to "survive restart/reconcile" and only slice state goes through `kind_snapshots` load/merge/prune. A spawn-arg-only value would be lost on cold restart (args aren't re-supplied on rehydrate). Justification matches the spec's own parenthetical "(in the spawn args / template / a base slice)".
@@ -2290,4 +2462,7 @@ Each is its own plan doc under `docs/superpowers/plans/`.
 - **Closure enforcement on the (first-spawn) init path (rev5, codex CRITICAL finding 1):** `resolve_closure/1` was previously a pure helper with unit tests but NEVER called from the spawn/init path — so an unclosed set (e.g. `[Turn]` without `Surface`) would still materialize and run `Turn.init_slice` with a missing required sibling. FIXED by adding `validate_closure!/1` (raising passthrough) + `UnclosedSetError` (Task 7) and calling it INSIDE `init_fresh_first_spawn/2` (the `:not_found` branch, Task 9) BEFORE any `init_slice`/`create` and strictly before `persist_initial_snapshot/3`; on reload, closure is validated on the PERSISTED effective set (a persisted set closed at first spawn stays closed; a bogus reload-args set can NOT crash a valid persisted instance). The first-spawn raise propagates `init_fresh_first_spawn → load_with_fallback → load_or_init → Kind.Server.init/1` → `{:stop, ...}`, so no partial snapshot lands. Integration denial test asserts the raise + `is_nil(Repo.get(KindSnapshot, uri_str))`; the bogus-reload test asserts a valid persisted instance survives. NO spec change needed — this enforces the existing §3.1/P1.1 invariant at the real chokepoints. Verified call sites: first-spawn slice creation = the `:not_found` branch of `load_with_fallback/3` (snapshot.ex:68-127) + the no-DB `:ephemeral`/`:external` arms of `load_or_init/3`; persist on first spawn = server.ex:110,156.
 - **E9 registry setup is real (rev4, codex MEDIUM finding 2):** dispatch resolves `{kind, action}` via `BehaviorRegistry.lookup/2` (behavior_registry.ex:48), NOT by scanning `behaviors/0`. The prior E9 test assumed `{SupersetSessionKind, :poke}` was registered but the support module only defined `behaviors/0` — so the denial test could have failed as unroutable before reaching the gate. FIXED: a `setup_all` registers it through the canonical `CapabilityRegistry.register/3` (verified signature, capability_registry.ex:82), and the suite is two-step (control test proves `:poke` reaches the handler in-set; denial test proves out-of-set is gated). `Manage` uses its real universal-fallback registration. NO spec change needed.
 - **Absent-vs-present-empty sentinel (rev3, codex CRITICAL re-review):** the resolver no longer treats `[]` as the "no subset" marker. `KindBase.create/1` persists the legacy sentinel `nil` for ABSENT `:behaviors` and the exact list (including `[]`) for PRESENT; `init_set/2` uses `Map.fetch` and `effective_set/2` reads back `nil`-vs-list, so an explicit `%{behaviors: []}` admits ONLY base behaviors and is never expanded to the declared superset (at first spawn or on reload). NO spec change needed — this hardens the existing §3.1 invariant against empty/malformed args; the sentinel is an implementation detail of "the per-instance set persists across restart." If the orchestrator wants a named atom (e.g. `:legacy_static`) instead of `nil`, that is a mechanical rename across `KindBase` + `BehaviorSet` + the tests — flagged as a cosmetic choice, not a blocker.
+- **Legacy-snapshot reload migration (rev8, codex CRITICAL — data loss):** a snapshot written BEFORE P1 has NO `:kind_base` slice but carries real persisted declared slices. The reload branch derives the effective set from `:kind_base`; for a legacy row that key is absent. If the args-driven `init_fresh_for_set(effective, args)` were allowed to create a `:kind_base` from `args[:behaviors]` (it can whenever `ever_created?(args)` resolves false for the supplied args — e.g. args without/with a mismatched `:uri`, verified `ever_created?/1` reads `args[:uri]`, lifecycle.ex:404-407), a narrower reload would persist that subset and the next reload's `prune_orphan_slices/2` would DROP the legacy declared slices — silent data loss for prod sessions. FIXED by `seed_legacy_kind_base/1` (Task 9): on reload, if the loaded snapshot lacks `:kind_base`, seed it with the legacy sentinel `nil` (two-container shape `%{state: %{behaviors: nil}, transients: %{}}`) INDEPENDENT of args, BEFORE `effective_set/2` — so a legacy instance resolves to the full declared list (nothing pruned) and the seeded slice persists going forward as legacy-nil. A snapshot that already has `:kind_base` (post-P1) is returned unchanged. Migration regression test added (Task 9). NO spec change needed — this realizes §3.1's "set survives restart/reconcile" for snapshots that predate the set's existence (the deploy-safety case the spec implies but did not enumerate).
+- **ProbeBehavior uses OVERRIDABLE developer hooks, not macro-emitted engine callbacks (rev8, codex HIGH):** the prior support module defined `on_ready/2` + `terminate/3` directly, but `use Ezagent.Lifecycle` EMITS those engine callbacks and they are NOT in the macro's `defoverridable` list (verified lifecycle.ex:288-302: the overridable set is exactly `create:1, activate:2, deactivate:2, destroy:2, activated:2, handle_signal:2`), so redefining them is a compile error and the destroy probe was unwired. FIXED (Task 8): observe each lifecycle moment through its REAL developer hook per the macro's mapping table (lifecycle.ex:24-33) — on-ready via `activated/2`, terminate via `deactivate/2`, destroy via `destroy/2`, signal via `handle_signal/2`, init via `create/1`. The E2/E3/E5 denial tests (Tasks 11-13) assert through those entry points (graceful `GenServer.stop` → `deactivate`; explicit `{:ezagent_lifecycle_destroy, …}` → `destroy`; mailbox signal → `handle_signal`). NO spec change needed.
+- **SupersetSessionKind.supervisor/0 returns a RUNNING test DynamicSupervisor (rev8, codex HIGH):** the prior support Kind returned `Ezagent.Kind.Server` (the CHILD module) from `supervisor/0`, but `Ezagent.Kind.spawn/2` passes `kind_module.supervisor()` straight into `DynamicSupervisor.start_child(supervisor, {Ezagent.Kind.Server, …})` (verified kind.ex:300-301 + `resolve_supervisor/1` kind.ex:635-641) — so every `Kind.spawn(SupersetSessionKind, …)` in Tasks 10-13 would crash before the gate ran. FIXED (Task 8): `supervisor/0` returns the existing dedicated test supervisor `Ezagent.LifecycleCase.gate_supervisor()` (a named singleton started idempotently by `Ezagent.LifecycleCase.ensure_gate_supervisor!/0`, verified lifecycle_case.ex:47-48,117-151 — the same opt-in pattern the cold-restart GATE Kinds use, kind_provenance_test.exs:97-103). The denial suite's `setup` (Task 9) calls `ensure_gate_supervisor!/0` before any spawn. NO spec change needed.
 - **E11 (`auto_derive.ex`) scoped to P2:** it is the View/display surface, not a P1 security gate. Flagged so it is not mistaken for a P1 coverage gap.
