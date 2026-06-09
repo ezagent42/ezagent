@@ -270,11 +270,43 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
     end
   end
 
-  # Raw PTY launcher — PRIVATE (codex PR-3T HIGH): reachable only via the
-  # grant-gated `spawn_for_local_pty/3` (fresh spawn) and `respawn_subprocess/2`
-  # (cold restart), never directly, so the cc create-chokepoint holds.
+  # Raw cc PTY launcher — PRIVATE (codex PR-3T/#701 chokepoint): reachable
+  # only via the grant-gated `spawn_for_local_pty/3` (fresh spawn) and
+  # `respawn_subprocess/2` (cold restart), never directly. It builds the cc
+  # launch params (SpawnPlan, build-only) THEN starts the PTY — the
+  # `Ezagent.Domain.Pty.start/2` launch lives HERE behind the gate, not in
+  # the public SpawnPlan builder, so a cc PTY can never start without the
+  # credential-grant gate (#701 hardening of the SpawnPlan public-launcher
+  # bypass).
   defp ensure_pty_server(agent_uri, cwd, tmpl) do
-    Ezagent.PluginCc.Template.SpawnPlan.ensure_pty_server(agent_uri, cwd, tmpl, @compile_env)
+    with {:ok, params} <-
+           Ezagent.PluginCc.Template.SpawnPlan.build_pty_params(
+             agent_uri,
+             cwd,
+             tmpl,
+             @compile_env
+           ),
+         {:ok, _pid} <- start_pty(agent_uri, params) do
+      :ok
+    end
+  end
+
+  defp start_pty(agent_uri, params) do
+    case Ezagent.Domain.Pty.start(agent_uri, params) do
+      {:ok, pid} ->
+        {:ok, pid}
+
+      {:error, {:already_started, pid}} ->
+        {:ok, pid}
+
+      {:error, reason} ->
+        Logger.warning(
+          "cc.agent: PtyServer start failed for #{URI.to_string(agent_uri)}: " <>
+            inspect(reason)
+        )
+
+        {:error, {:pty_server_spawn_failed, reason}}
+    end
   end
 
   @doc false
