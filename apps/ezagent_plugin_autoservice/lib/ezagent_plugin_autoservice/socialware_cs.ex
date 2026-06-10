@@ -287,7 +287,16 @@ defmodule EzagentPluginAutoservice.SocialwareCS do
 
         case Ezagent.Workspace.create_agent(
                workspace_uri,
-               %{flavor: @bot_flavor, name: "#{@bot_create_prefix}#{name}", cwd: work_dir},
+               # with_pty: false — headless cc bot replying via the esr
+               # bridge (same as the legacy slow agent); :with_pty is a
+               # REQUIRED create_agent arg (found live: {:invalid_args,
+               # [{[:with_pty], :missing}]}).
+               %{
+                 flavor: @bot_flavor,
+                 name: "#{@bot_create_prefix}#{name}",
+                 cwd: work_dir,
+                 with_pty: false
+               },
                ctx
              ) do
           {:ok, %{agent_uri: %URI{} = uri}} ->
@@ -296,8 +305,19 @@ defmodule EzagentPluginAutoservice.SocialwareCS do
               {:ok, uri}
             end
 
+          {:error, {:already_exists, _}} ->
+            # Idempotent re-run: the bot exists DURABLY (DB/snapshot) even when
+            # its Kind isn't alive in THIS BEAM (e.g. a fresh seed VM after an
+            # earlier seed created it — found live, Stage-1 seed run 4). The
+            # server rehydrates it on demand; re-materialize the skill and
+            # re-point the cascade, both idempotent.
+            with :ok <- materialize_skill(work_dir, @stage1_skill),
+                 :ok <- repoint(bot_uri, workspace_uri, config_id) do
+              {:ok, bot_uri}
+            end
+
           {:error, reason} ->
-            # Idempotent re-run / tight race — a now-alive bot is success.
+            # Tight race — a now-alive bot is success.
             case KindRegistry.lookup(bot_uri) do
               {:ok, _pid} -> repoint(bot_uri, workspace_uri, config_id)
               :error -> {:error, {:bot_agent_create_failed, reason}}

@@ -10,7 +10,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoserviceSocialware do
   Seeds the Stage-1 **socialware** customer-service demo end to end:
 
   1. `workspace://cinnox`
-  2. one customer user `entity://user/cinnox/alice` (password `alice`)
+  2. one customer user `entity://cinnox/user/alice` (password `alice`)
      with the `:customer` role cap-bundle,
   3. `EzagentPluginAutoservice.SocialwareCS.provision/2` — the LIVE
      branch: a `SocialwareSession` (`session://cs/cinnox/alice`), the
@@ -73,6 +73,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoserviceSocialware do
 
     Mix.shell().info("Seeding Stage-1 socialware CS demo (`#{@workspace_name}`) …")
 
+    :ok = ensure_admin_alive()
     :ok = ensure_workspace()
     :ok = seed_customer(@customer_short, workspace_uri)
 
@@ -170,13 +171,38 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoserviceSocialware do
 
   # --- helpers --------------------------------------------------------
 
-  defp user_uri(short), do: Ezagent.URI.new!("entity://user/#{@workspace_name}/#{short}")
+  # SPEC v3 3-segment shape: entity://<workspace>/user/<name> (the legacy
+  # seeder's entity://user/<ws>/<name> shape fails user spawn with
+  # :unknown_entity_host on current main — found live, Stage-1 seed run 1).
+  defp user_uri(short), do: Ezagent.URI.user(@workspace_name, short)
 
+  # Caller must be a REAL entity (not a system principal): create_agent's
+  # authorize-at-create grants the CREATOR a Manage cap by dispatching
+  # identity.grant_cap to the creator's own Kind — a system:// principal has
+  # no Kind and fails with {:creator_manage_cap_grant_failed, :no_such_actor}
+  # (found live, Stage-1 seed run 3). Use the bootstrap admin user, spawned
+  # in this seed BEAM via ensure_admin_alive/0.
   defp mix_task_ctx do
     %{
-      caller: Ezagent.SystemPrincipal.uri("mix-task"),
+      caller: Ezagent.Entity.User.admin_uri(),
       caps: Ezagent.SystemPrincipal.caps("system://mix-task")
     }
+  end
+
+  defp ensure_admin_alive do
+    uri = Ezagent.Entity.User.admin_uri()
+
+    case Ezagent.KindRegistry.lookup(uri) do
+      {:ok, _pid} ->
+        :ok
+
+      :error ->
+        case Ezagent.SpawnRegistry.spawn(uri) do
+          {:ok, _pid} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
+          {:error, reason} -> Mix.raise("admin user spawn failed: #{inspect(reason)}")
+        end
+    end
   end
 
   defp print_summary(session_uri, bot_uri, create_bot?) do
