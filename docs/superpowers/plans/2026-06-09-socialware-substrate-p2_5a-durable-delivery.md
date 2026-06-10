@@ -1,35 +1,35 @@
-# Socialware Substrate P2.5a — Durable Customer-Delivery (outbox cursor + page commit-gating) Implementation Plan
+# Socialware Substrate P2.5a — Customer Page Commit-Gating Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Every subagent that touches `apps/**/*.ex` MUST load `Skill: ezagent-developer` + `Skill: elixir-phoenix-helper` (project invariant `feedback_subagent_must_load_project_skills`).
 
-**Goal:** Make the socialware customer delivery a durable, cursor-addressable, commit-gated source of truth: the committed outbox records BOTH the committed message ids AND the committed surface (page) version, is addressable by a monotonic cursor for replay, and the customer PAGE is rendered from the committed surface version — never the live approved-but-not-committed `:surface` slice.
+**Goal:** Close the customer **page leak**: render the customer page from the **committed** surface version (recorded in the outbox and gated on `settlement.status == :committed`), never from the live `:surface.approved` pointer — which `turn.settle` advances via `:approve` BEFORE `:commit_settlement`, so a refetch in that window leaks an approved-but-uncommitted page.
 
-**Architecture:** This is the **socialware/web-local** half of spec §6 P2.5 (the durable-source + page commit-gating + cursor-replay contract). It does NOT touch `ezagent_core` — the post-parent-turn-commit ordering fix (rev4 HIGH) is the separate **P2.5b** plan. Here: extend `socialware_customer_outbox` with a surrogate monotonic `id` cursor + a `surface_version` column; `Settlement.commit_after_pointer` writes the committed surface version transactionally with the outbox row; `CustomerFeed.customer_page/1` renders the committed surface version (looked up from the outbox) instead of the live `:surface` approved pointer; add `CustomerFeed.committed_deliveries_since/2` as the cursor-addressable durable replay primitive (P3's ExternalAdapter consumes it). The CustomerChannel keeps its existing full-gated-snapshot-on-signal shape (which is already durable-replay for messages); the page now rides the same commit gate.
+**Architecture:** The narrowest correct slice of spec §6 P2.5 — **page commit-gating**, symmetric with the message gate that already works (`MessageStore.committed_customer_visible/2` joins `socialware_settlements` WHERE `status == "committed"`). The outbox gains a `surface_version` column recording WHICH surface version the settlement committed; `CustomerFeed.customer_page/1` reads the latest committed delivery's `surface_version` (outbox JOIN settlements WHERE committed) and renders THAT version's tree from the immutable `:surface.versions` map. No `ezagent_core` library change. **The cursor-addressable replay primitive (`committed_deliveries_since`) is explicitly DEFERRED to P2.5b** — its correctness depends on commit-ordering: an `id` cursor allocated at insert (pre-commit) can permanently skip an out-of-order-committed row (codex P2.5a rev2 CRITICAL). P2.5b makes the outbox insert + status flip atomic (id == commit order) and is where the correct commit-order cursor is introduced. Building the cursor here, before commit-ordering is sound, is the "don't migrate a consumer onto a signal before its correct form exists" anti-pattern (spec ANTI-PATTERNS).
 
-**Tech Stack:** Elixir 1.19 / OTP 27, umbrella (`apps/ezagent_domain_socialware`, `apps/ezagent_web`, `apps/ezagent_core` migrations only), Ecto (PostgreSQL + SQLite via exqlite — migration uses a portable surrogate `:id` PK), ExUnit. Run mix from the umbrella root with `MIX_ENV=test`.
+**Tech Stack:** Elixir 1.19 / OTP 27, umbrella (`apps/ezagent_domain_socialware`, `apps/ezagent_core` migration only), Ecto (PostgreSQL + SQLite via exqlite — plain `add` column, portable), ExUnit. Run mix from the umbrella root with `MIX_ENV=test`.
 
-**SAFETY (project invariants):** Migrations run ONLY against the **test DB** in this plan (`MIX_ENV=test mix ecto.migrate`). NEVER run `mix ecto.migrate` against the live dev/prod DB (`feedback_destructive_migration_anti_pattern`). The outbox table rebuild (PK change) drops + recreates `socialware_customer_outbox`; this is acceptable because the outbox is an ephemeral delivery-staging table on a pre-production feature, and all E2E runs on a fresh-seeded disposable stack (`feedback_e2e_in_docker_fresh_seed`). Flag this rebuild to the operator before any non-test environment migration.
+**SAFETY (project invariants):** Migrations run ONLY against the **test DB** here (`MIX_ENV=test mix ecto.migrate`). NEVER run `mix ecto.migrate` against the live dev/prod DB (`feedback_destructive_migration_anti_pattern`). This migration is a non-destructive `add :surface_version` column (no table rebuild, no PK change, no data loss) — safe, but still flag any non-test migration to the operator.
 
 ---
 
 ## Background — grounded current state
 
 **Current delivery pipeline (read before touching):**
-- `Ezagent.Socialware.Settlement.commit_after_pointer/2` (`apps/ezagent_domain_socialware/lib/ezagent/socialware/settlement.ex:96-129`) — confirms the approved pointer, calls `emit_outbox_once/1` (idempotent `Repo.insert_all` on `CustomerOutbox`, `on_conflict: :nothing, conflict_target: :turn_id`), marks `status: :committed`, then `Phoenix.PubSub.broadcast({:customer_delivery, %{message_ids: ...}})`.
+- `Ezagent.Socialware.Settlement.commit_after_pointer/2` (`apps/ezagent_domain_socialware/lib/ezagent/socialware/settlement.ex:96-129`) — confirms the approved pointer, calls `emit_outbox_once/1` (idempotent `Repo.insert_all` on `CustomerOutbox`, `on_conflict: :nothing, conflict_target: :turn_id`) **then** `Repo.update_all(set: [status: :committed])`, **then** broadcasts `{:customer_delivery, …}`. NOTE: the outbox row is inserted BEFORE the status flip — so an outbox row can exist while its settlement is still `:pending` (partial-commit window). Any committed read MUST gate on `status == :committed`, not the mere existence of the outbox row.
 - `emit_outbox_once/1` (`settlement.ex:161-190`) writes `%{turn_id, session_uri, workspace_uri, message_ids, emitted_at}` — **no surface version**.
-- `Ezagent.Socialware.CustomerOutbox` (`apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_outbox.ex`) — `@primary_key {:turn_id, :string, []}`, fields `session_uri, workspace_uri, message_ids, emitted_at`. **No cursor, no surface_version.**
+- `Ezagent.Socialware.CustomerOutbox` (`apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_outbox.ex`) — `@primary_key {:turn_id, :string, []}`, fields `session_uri, workspace_uri, message_ids, emitted_at`.
+- `Ezagent.Socialware.SettlementRecord` (`.../settlement_record.ex`) — `socialware_settlements`, PK `turn_id`, `target_surface_version :integer`, `status` is `Ecto.Enum, values: [:pending, :committed]`, `committed_at :utc_datetime_usec`.
 - `Ezagent.Socialware.CustomerFeed.snapshot/2` (`customer_feed.ex:19-31`) → `%{messages: MessageStore.committed_customer_visible(session, 100), page: customer_page(session)}`.
-- `CustomerFeed.customer_page/1` (`customer_feed.ex:157-162`) → `Surface.customer_tree(live :surface slice)` — **THE PAGE LEAK**: `Surface.customer_tree/1` renders `surface.approved`'s tree, but Turn settle dispatches `:approve` BEFORE `:commit_settlement`, so a refetch between them exposes the approved-but-not-committed page.
-- `MessageStore.committed_customer_visible/2` (`apps/ezagent_core/lib/ezagent/message_store.ex:220-240`) — already commit-gated: joins `socialware_settlements` with `s.status == "committed"` AND `m.visibility == :customer_visible`. **Messages are already correct.**
-- `EzagentWeb.Socialware.CustomerChannel` (`apps/ezagent_web/lib/ezagent_web/socialware/customer_channel.ex`) — on join: full gated `snapshot`; on `{:customer_delivery, _}`: re-fetches the full gated `snapshot` and pushes `"snapshot"`. This full-snapshot-on-signal IS durable replay for messages (it reads the committed store, not the lost event payload).
-- `Ezagent.Behavior.Surface` (`apps/ezagent_domain_socialware/lib/ezagent/behavior/surface.ex`) — `customer_tree(%{approved: nil}) -> nil`; `customer_tree(%{approved: v} = s) -> version_tree(v, s)`; `latest_version/1`; private `version_tree/2`. The `:surface` slice retains ALL versions in `surface.versions` (immutable append; `create/1 -> %{versions: %{}, approved: nil, version_seq: 0}`).
-- Outbox migration shape: `apps/ezagent_core/priv/repo/migrations/20260618000400_add_message_visibility_and_socialware_settlements.exs` (the `socialware_customer_outbox` block, PK = turn_id referencing settlements).
+- `CustomerFeed.customer_page/1` (`customer_feed.ex:157-162`) → `Surface.customer_tree(live :surface slice)` — **THE PAGE LEAK**: renders `surface.approved`'s tree, which `turn.settle` advances (`:approve`) before `:commit_settlement`.
+- `MessageStore.committed_customer_visible/2` (`apps/ezagent_core/lib/ezagent/message_store.ex:220-240`) — already commit-gated: joins `socialware_settlements` WHERE `s.status == "committed"` AND `m.visibility == :customer_visible`. **Messages are already correct.**
+- `Ezagent.Behavior.Surface` (`apps/ezagent_domain_socialware/lib/ezagent/behavior/surface.ex`) — `customer_tree(%{approved: nil}) -> nil`; `customer_tree(%{approved: v} = s) -> version_tree(v, s)`; private `version_tree/2`. The `:surface` slice retains ALL versions in `surface.versions` (immutable append; `create/1 -> %{versions: %{}, approved: nil, version_seq: 0}`), so an older committed version is still renderable.
+- `Turn.settlement_attrs/3` (`turn.ex:335-346`) sets `target_surface_version: result.version`; `Settlement.begin/1` persists it on the record. So `settlement.target_surface_version` is non-nil exactly when the turn produced a page version, nil when only messages settle.
 
-**The two gaps P2.5a closes:**
-1. **Page leak** — `customer_page/1` reads the live approved pointer, not the committed version. Fix: record the committed surface version in the outbox at commit, and render the page from THAT version.
-2. **No cursor-addressable durable source** — the outbox is keyed only by turn_id with no total order. Fix: surrogate monotonic `id` PK (portable autoincrement) + a `committed_deliveries_since/2` replay primitive.
+**The gap P2.5a closes:** the page leak. Fix: record the committed surface version in the outbox, and render the page from the latest COMMITTED delivery's version (status-gated), not the live approved pointer.
 
-**Out of scope (P2.5b — separate plan):** the post-parent-turn-commit ordering fix in `Ezagent.Kind.Server` (settlement casts firing before the parent Turn slice durably commits) + the parent-commit-rollback test + wire-schema regularization (#44). P2.5a makes the customer feed correct w.r.t. the EXISTING commit path; P2.5b hardens WHEN the commit path runs relative to the parent turn.
+**Out of scope (deferred):**
+- **Cursor-addressable replay (`committed_deliveries_since`, monotonic delivery cursor)** → **P2.5b**, after the commit-ordering fix makes a commit-order cursor correct (codex rev2 CRITICAL: a pre-commit-allocated id cursor can skip an out-of-order-committed row forever).
+- **Post-parent-turn-commit ordering** (settlement casts firing before the parent Turn slice durably commits; rev4 HIGH) + **atomic outbox/commit** + **parent-commit-rollback test** + **wire-schema #44** → **P2.5b**.
 
 ---
 
@@ -37,82 +37,37 @@
 
 | File | Status | Responsibility |
 |---|---|---|
-| `apps/ezagent_core/priv/repo/migrations/20260618000600_socialware_outbox_cursor_and_surface_version.exs` | Create | Rebuild `socialware_customer_outbox` with surrogate `:id` bigserial PK (the cursor) + `turn_id` unique index + new `surface_version :integer` column. |
-| `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_outbox.ex` | Modify | Default `:id` PK (cursor); `turn_id` becomes a plain field (unique index); add `surface_version :integer`. |
+| `apps/ezagent_core/priv/repo/migrations/20260618000600_socialware_outbox_surface_version.exs` | Create | `alter table(:socialware_customer_outbox) add :surface_version, :integer` (non-destructive). |
+| `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_outbox.ex` | Modify | Add `surface_version :integer` field (PK stays `turn_id`). |
 | `apps/ezagent_domain_socialware/lib/ezagent/behavior/surface.ex` | Modify | Add `tree_for_version/2` (public) — render a SPECIFIC version's tree (not the live `approved` pointer). |
-| `apps/ezagent_domain_socialware/lib/ezagent/socialware/settlement.ex` | Modify | `emit_outbox_once/1` writes `surface_version: settlement.target_surface_version` transactionally with the outbox row. |
-| `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed.ex` | Modify | `customer_page/1` renders the committed surface version (outbox JOIN settlements WHERE status==:committed, not the live approved pointer); add `committed_deliveries_since/2` + `latest_cursor/1` (both status-gated). |
-| `apps/ezagent_domain_socialware/test/ezagent/socialware/customer_delivery_durable_test.exs` | Create | Leak test (approve, no commit) + partial-commit gate test (outbox row present, settlement pending) + wake-up-loss test + cursor-replay test + committed-page test. |
+| `apps/ezagent_domain_socialware/lib/ezagent/socialware/settlement.ex` | Modify | `emit_outbox_once/1` writes `surface_version: settlement.target_surface_version`. |
+| `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed.ex` | Modify | `customer_page/1` renders the latest COMMITTED delivery's `surface_version` (outbox JOIN settlements WHERE status==:committed), not the live approved pointer. |
+| `apps/ezagent_domain_socialware/test/ezagent/socialware/customer_delivery_durable_test.exs` | Create | committed-page test + leak test (approve, no commit) + partial-commit gate test (outbox row present, settlement pending) + wake-up-loss test (commit, no broadcast → snapshot still has page). |
 
 No `ezagent_core` library changes (migration only).
 
 ---
 
-## Task 1: Migration — outbox surrogate cursor + surface_version
+## Task 1: Migration — outbox `surface_version` column
 
 **Files:**
-- Create: `apps/ezagent_core/priv/repo/migrations/20260618000600_socialware_outbox_cursor_and_surface_version.exs`
+- Create: `apps/ezagent_core/priv/repo/migrations/20260618000600_socialware_outbox_surface_version.exs`
 
 - [ ] **Step 1: Write the migration**
 
-Create the file with this content. The rebuild is portable across PostgreSQL + SQLite (both autoincrement the default integer `:id` PK). `turn_id` keeps a unique index so `Settlement`'s `on_conflict: :nothing, conflict_target: :turn_id` idempotency is preserved.
+The version `20260618000600` is AFTER `20260618000400` (which creates the table). Non-destructive `add`.
 
 ```elixir
-defmodule EzagentCore.Repo.Migrations.SocialwareOutboxCursorAndSurfaceVersion do
+defmodule EzagentCore.Repo.Migrations.SocialwareOutboxSurfaceVersion do
   use Ecto.Migration
 
-  # P2.5a — give the customer-delivery outbox a monotonic cursor (the default
-  # `:id` bigserial PK, portable across PG + SQLite) for durable replay, and a
-  # `surface_version` column so the COMMITTED page version is recorded
-  # transactionally with the delivery (closes the page-leak). The old table was
-  # keyed by turn_id only; we rebuild it (drop + create) — the outbox is an
-  # ephemeral delivery-staging table on a pre-production feature, so no data is
-  # preserved. Nothing references this table (the FK direction is
-  # outbox -> settlements), so the drop is safe.
-  def up do
-    drop table(:socialware_customer_outbox)
-
-    create table(:socialware_customer_outbox) do
-      add :turn_id,
-          references(:socialware_settlements,
-            column: :turn_id,
-            type: :string,
-            on_delete: :delete_all
-          ),
-          null: false
-
-      add :session_uri, :string, null: false
-      add :workspace_uri, :string, null: false
-      add :message_ids, {:array, :string}, null: false
+  # P2.5a — record the COMMITTED surface (page) version on each customer-delivery
+  # outbox row so the customer page is rendered from the committed version, never
+  # the live approved-but-uncommitted :surface pointer. Non-destructive add;
+  # nil for deliveries that settle messages only (no page version).
+  def change do
+    alter table(:socialware_customer_outbox) do
       add :surface_version, :integer
-      add :emitted_at, :utc_datetime_usec, null: false
-    end
-
-    create unique_index(:socialware_customer_outbox, [:turn_id],
-             name: :socialware_customer_outbox_turn_id_index
-           )
-
-    create index(:socialware_customer_outbox, [:session_uri, :id],
-             name: :socialware_customer_outbox_session_cursor_index
-           )
-  end
-
-  def down do
-    drop table(:socialware_customer_outbox)
-
-    create table(:socialware_customer_outbox, primary_key: false) do
-      add :turn_id,
-          references(:socialware_settlements,
-            column: :turn_id,
-            type: :string,
-            on_delete: :delete_all
-          ),
-          primary_key: true
-
-      add :session_uri, :string, null: false
-      add :workspace_uri, :string, null: false
-      add :message_ids, {:array, :string}, null: false
-      add :emitted_at, :utc_datetime_usec, null: false
     end
   end
 end
@@ -120,43 +75,42 @@ end
 
 - [ ] **Step 2: Run the migration against the TEST DB only**
 
-Run: `MIX_ENV=test mix ecto.migrate 2>&1 | tail -15`
-Expected: migration applies cleanly; `socialware_customer_outbox` rebuilt with an `id` PK. (NEVER run against dev/prod — `feedback_destructive_migration_anti_pattern`.)
+Run: `MIX_ENV=test mix ecto.migrate 2>&1 | tail -10`
+Expected: applies cleanly; `socialware_customer_outbox` gains a nullable `surface_version` column. (NEVER run against dev/prod — `feedback_destructive_migration_anti_pattern`.)
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add apps/ezagent_core/priv/repo/migrations/20260618000600_socialware_outbox_cursor_and_surface_version.exs
-git commit -m "feat(socialware/p2.5a): outbox surrogate cursor + surface_version migration
+git add apps/ezagent_core/priv/repo/migrations/20260618000600_socialware_outbox_surface_version.exs
+git commit -m "feat(socialware/p2.5a): outbox surface_version column migration
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
 
-## Task 2: `CustomerOutbox` schema — cursor PK + surface_version
+## Task 2: `CustomerOutbox` schema — `surface_version` field
 
 **Files:**
 - Modify: `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_outbox.ex`
 
-- [ ] **Step 1: Rewrite the schema**
+- [ ] **Step 1: Add the field**
 
-Replace the whole file with:
+Edit the file to add `surface_version`:
 
 ```elixir
 defmodule Ezagent.Socialware.CustomerOutbox do
   use Ecto.Schema
 
-  # P2.5a — the default `:id` integer PK is the monotonic delivery CURSOR used
-  # for durable replay (CustomerFeed.committed_deliveries_since/2). `turn_id` is
-  # a unique index (idempotency key for emit_outbox_once/1). `surface_version`
-  # is the COMMITTED page version, recorded transactionally with the delivery so
-  # the customer page is never read from the live approved-but-uncommitted slice.
+  @primary_key {:turn_id, :string, []}
+
   schema "socialware_customer_outbox" do
-    field(:turn_id, :string)
     field(:session_uri, :string)
     field(:workspace_uri, :string)
     field(:message_ids, {:array, :string}, default: [])
+    # P2.5a — the COMMITTED page version this delivery carries (nil = no page,
+    # messages only). Read back via CustomerFeed only when the owning settlement
+    # is :committed (the outbox row is written BEFORE the status flip).
     field(:surface_version, :integer)
     field(:emitted_at, :utc_datetime_usec)
   end
@@ -166,13 +120,13 @@ end
 - [ ] **Step 2: Compile**
 
 Run: `MIX_ENV=test mix compile --warnings-as-errors 2>&1 | tail -10`
-Expected: compiles clean. (`@primary_key` default is `{:id, :id, autogenerate: true}` — no explicit declaration needed.)
+Expected: compiles clean.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_outbox.ex
-git commit -m "feat(socialware/p2.5a): CustomerOutbox surrogate id cursor + surface_version field
+git commit -m "feat(socialware/p2.5a): CustomerOutbox surface_version field
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -187,7 +141,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `apps/ezagent_domain_socialware/test/ezagent/behavior/surface_test.exs`, inside the top-level `describe` area (after the last existing test, before the final `end`):
+Add to `apps/ezagent_domain_socialware/test/ezagent/behavior/surface_test.exs`, after the last existing test, before the final `end`:
 
 ```elixir
   describe "tree_for_version/2" do
@@ -223,7 +177,7 @@ Expected: FAIL — `function Ezagent.Behavior.Surface.tree_for_version/2 is unde
 
 - [ ] **Step 3: Implement `tree_for_version/2`**
 
-Edit `apps/ezagent_domain_socialware/lib/ezagent/behavior/surface.ex`. After the `customer_tree/1` clauses (the `def customer_tree(_surface), do: nil` line) and before `@spec latest_version`, insert:
+Edit `apps/ezagent_domain_socialware/lib/ezagent/behavior/surface.ex`. After the `def customer_tree(_surface), do: nil` line and before `@spec latest_version`, insert:
 
 ```elixir
   @doc """
@@ -248,7 +202,7 @@ Edit `apps/ezagent_domain_socialware/lib/ezagent/behavior/surface.ex`. After the
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `MIX_ENV=test mix test apps/ezagent_domain_socialware/test/ezagent/behavior/surface_test.exs -v 2>&1 | tail -15`
-Expected: PASS — all existing Surface tests + the two new `tree_for_version/2` tests.
+Expected: PASS — existing Surface tests + the two new ones.
 
 - [ ] **Step 5: Commit**
 
@@ -265,18 +219,17 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `apps/ezagent_domain_socialware/lib/ezagent/socialware/settlement.ex`
+- Test: `apps/ezagent_domain_socialware/test/ezagent/socialware/customer_delivery_durable_test.exs` (create; expanded in Task 5)
 
-- [ ] **Step 1: Write the failing test (in the durable-delivery test, created here, expanded in Task 6)**
-
-Create `apps/ezagent_domain_socialware/test/ezagent/socialware/customer_delivery_durable_test.exs` with the seeding harness + the first test. (Tasks 5/6 add more `test` blocks to this same file.)
+- [ ] **Step 1: Create the durable-delivery test file with the seeding harness + first test**
 
 ```elixir
 defmodule Ezagent.Socialware.CustomerDeliveryDurableTest do
   @moduledoc """
-  P2.5a — the customer delivery is a durable, cursor-addressable, commit-gated
-  source: the outbox records the committed surface version; the customer page is
-  rendered from the committed version (never the live approved-but-uncommitted
-  slice); replay works by cursor; dropping the wake-up still delivers.
+  P2.5a — the customer PAGE is commit-gated: the outbox records the committed
+  surface version; the page is rendered from the committed version (never the
+  live approved-but-uncommitted slice); a pending settlement's outbox row is not
+  exposed; dropping the wake-up still delivers via the durable snapshot.
   """
   use EzagentCore.DataCase, async: false
 
@@ -333,8 +286,16 @@ defmodule Ezagent.Socialware.CustomerDeliveryDurableTest do
     uri
   end
 
-  # Run a full turn: open -> dispatch -> deliver(page) -> compose -> settle
-  # (auto-approve + commit). Returns the turn_id.
+  # Issue a valid customer-feed token (Phoenix.Token-signed over
+  # {session_uri, workspace_uri}; CustomerFeed.snapshot/2 -> authorize/3 accepts
+  # it — verified against customer_auth.ex:12-42).
+  defp test_token(session_uri) do
+    {:ok, workspace_uri} = Ezagent.WorkspaceRegistry.lookup(session_uri)
+    Ezagent.Socialware.CustomerAuth.issue_token(session_uri, workspace_uri)
+  end
+
+  # Full turn: open -> dispatch -> deliver(page) -> compose -> settle
+  # (auto-approve + commit). Returns the turn_id; waits for the outbox row.
   defp run_turn(session_uri, page_tree) do
     {:ok, %{turn_id: turn_id}} =
       dispatch(session_uri, :turn, :open, %{trigger: %{message_id: "m1"}, opened_at: 1})
@@ -358,22 +319,17 @@ defmodule Ezagent.Socialware.CustomerDeliveryDurableTest do
     {:ok, %{status: :settled}} =
       dispatch(session_uri, :turn, :settle, %{turn_id: turn_id})
 
-    wait_until(fn ->
-      Repo.get_by(CustomerOutbox, turn_id: turn_id) != nil
-    end)
-
+    wait_until(fn -> Repo.get_by(CustomerOutbox, turn_id: turn_id) != nil end)
     turn_id
   end
 
   describe "outbox records the committed surface version" do
     test "the outbox row carries the surface_version that was approved+committed" do
-      page_tree = %{type: "text", props: %{text: "committed page"}}
       uri = spawn_session()
-      turn_id = run_turn(uri, page_tree)
+      turn_id = run_turn(uri, %{type: "text", props: %{text: "committed page"}})
 
       outbox = Repo.get_by(CustomerOutbox, turn_id: turn_id)
       assert outbox.surface_version == 1
-      assert is_integer(outbox.id)
     end
   end
 end
@@ -382,11 +338,11 @@ end
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `MIX_ENV=test mix test apps/ezagent_domain_socialware/test/ezagent/socialware/customer_delivery_durable_test.exs -v 2>&1 | tail -20`
-Expected: FAIL — `outbox.surface_version == 1` fails because `emit_outbox_once/1` does not yet write `surface_version` (it is `nil`).
+Expected: FAIL — `outbox.surface_version == 1` fails (currently `nil`; `emit_outbox_once/1` does not write it).
 
 - [ ] **Step 3: Write the surface_version into the outbox**
 
-Edit `apps/ezagent_domain_socialware/lib/ezagent/socialware/settlement.ex`. In `emit_outbox_once/1` (line ~161-190), add `surface_version` to the inserted map:
+Edit `apps/ezagent_domain_socialware/lib/ezagent/socialware/settlement.ex`. In `emit_outbox_once/1`, add `surface_version` to the inserted map:
 
 ```elixir
   defp emit_outbox_once(%SettlementRecord{} = settlement) do
@@ -421,12 +377,10 @@ Edit `apps/ezagent_domain_socialware/lib/ezagent/socialware/settlement.ex`. In `
   end
 ```
 
-(`settlement.target_surface_version` is already populated by `Turn.settlement_attrs/3` → `target_surface_version: result.version` and persisted on `begin/1`.)
-
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `MIX_ENV=test mix test apps/ezagent_domain_socialware/test/ezagent/socialware/customer_delivery_durable_test.exs -v 2>&1 | tail -15`
-Expected: PASS — `outbox.surface_version == 1` and `outbox.id` is an integer.
+Expected: PASS — `outbox.surface_version == 1`.
 
 - [ ] **Step 5: Commit**
 
@@ -439,24 +393,37 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Task 5: Page commit-gating + cursor-replay primitives in `CustomerFeed`
+## Task 5: Commit-gate the customer page
 
 **Files:**
 - Modify: `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed.ex`
+- Test: `apps/ezagent_domain_socialware/test/ezagent/socialware/customer_delivery_durable_test.exs`
 
 - [ ] **Step 1: Write the failing tests**
 
-Add these `describe` blocks to `apps/ezagent_domain_socialware/test/ezagent/socialware/customer_delivery_durable_test.exs` (the file created in Task 4), before the final `end`:
+Add these `describe` blocks to the durable-delivery test (created in Task 4), before the final `end`:
 
 ```elixir
+  describe "committed page is rendered from the committed version" do
+    test "after commit, snapshot.page is the committed surface version tree" do
+      page_tree = %{type: "text", props: %{text: "committed page"}}
+      uri = spawn_session()
+      token = test_token(uri)
+      _turn_id = run_turn(uri, page_tree)
+
+      {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
+      assert snapshot.page == page_tree
+    end
+  end
+
   describe "page commit-gating (leak test)" do
-    test "snapshot exposes NEITHER page NOR messages until the settlement commits" do
+    test "snapshot exposes NEITHER page NOR messages when surface is approved but settlement not committed" do
       page_tree = %{type: "text", props: %{text: "draft page"}}
       uri = spawn_session()
       token = test_token(uri)
 
-      # Drive open -> dispatch -> deliver -> compose, then APPROVE the surface
-      # WITHOUT committing the settlement (skip turn.settle's commit path).
+      # open -> dispatch -> deliver -> compose, then APPROVE the surface WITHOUT
+      # committing the settlement (the pre-fix leak path).
       {:ok, %{turn_id: turn_id}} =
         dispatch(uri, :turn, :open, %{trigger: %{message_id: "m1"}, opened_at: 1})
 
@@ -476,8 +443,6 @@ Add these `describe` blocks to `apps/ezagent_domain_socialware/test/ezagent/soci
       {:ok, %{version: version}} =
         dispatch(uri, :turn, :compose, %{turn_id: turn_id, result_refs: []})
 
-      # Approve the surface directly (advances the LIVE :surface.approved pointer)
-      # but do NOT commit the settlement — the pre-fix leak path.
       {:ok, _} = dispatch(uri, :surface, :approve, %{version: version})
 
       wait_until(fn ->
@@ -485,7 +450,6 @@ Add these `describe` blocks to `apps/ezagent_domain_socialware/test/ezagent/soci
         surface.approved == version
       end)
 
-      # No committed outbox row -> no committed delivery.
       assert Repo.get_by(CustomerOutbox, turn_id: turn_id) == nil
 
       {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
@@ -494,54 +458,8 @@ Add these `describe` blocks to `apps/ezagent_domain_socialware/test/ezagent/soci
     end
   end
 
-  describe "committed page is rendered from the committed version" do
-    test "after commit, snapshot.page is the committed surface version tree" do
-      page_tree = %{type: "text", props: %{text: "committed page"}}
-      uri = spawn_session()
-      token = test_token(uri)
-      _turn_id = run_turn(uri, page_tree)
-
-      {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
-      assert snapshot.page == page_tree
-    end
-  end
-
-  describe "committed_deliveries_since/2 + wake-up-loss" do
-    test "replays committed deliveries by cursor; later commits have higher cursors" do
-      uri = spawn_session()
-      t1 = run_turn(uri, %{type: "text", props: %{text: "page-1"}})
-      t2 = run_turn(uri, %{type: "text", props: %{text: "page-2"}})
-
-      all = CustomerFeed.committed_deliveries_since(uri, 0)
-      assert length(all) == 2
-      [d1, d2] = all
-      assert d1.turn_id == t1
-      assert d2.turn_id == t2
-      assert d1.cursor < d2.cursor
-      assert d2.surface_version == 2
-
-      # Replay from after the first delivery returns only the second.
-      after_first = CustomerFeed.committed_deliveries_since(uri, d1.cursor)
-      assert Enum.map(after_first, & &1.turn_id) == [t2]
-    end
-
-    test "wake-up loss: a committed delivery is visible via the durable snapshot even if no PubSub event was delivered" do
-      page_tree = %{type: "text", props: %{text: "delivered despite lost wake-up"}}
-      uri = spawn_session()
-      token = test_token(uri)
-
-      # run_turn commits the settlement; we never subscribe to / deliver the
-      # {:customer_delivery} PubSub event — i.e. the wake-up is "lost".
-      _turn_id = run_turn(uri, page_tree)
-
-      # A fresh snapshot (== reconnect) still returns the committed page.
-      {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
-      assert snapshot.page == page_tree
-    end
-  end
-
   describe "partial-commit gate (codex CRITICAL): outbox row present but settlement pending" do
-    test "a PENDING settlement's outbox row is exposed by NEITHER page NOR replay" do
+    test "a PENDING settlement's outbox row is NOT rendered as the page" do
       page_tree = %{type: "text", props: %{text: "pending page"}}
       uri = spawn_session()
       token = test_token(uri)
@@ -570,9 +488,8 @@ Add these `describe` blocks to `apps/ezagent_domain_socialware/test/ezagent/soci
 
       {:ok, _} = dispatch(uri, :surface, :approve, %{version: version})
 
-      # Create a PENDING settlement + an outbox row referencing it — the
-      # partial-commit window: emit_outbox_once has run but the status flip to
-      # :committed has NOT.
+      # PENDING settlement + an outbox row referencing it — the partial-commit
+      # window (emit_outbox_once ran, status flip to :committed has NOT).
       {:ok, _} =
         Ezagent.Socialware.Settlement.begin(%{
           turn_id: turn_id,
@@ -592,38 +509,38 @@ Add these `describe` blocks to `apps/ezagent_domain_socialware/test/ezagent/soci
           emitted_at: DateTime.utc_now()
         })
 
-      # Settlement is still :pending -> the join-on-status==:committed gate must
-      # hide BOTH the page AND the replay row (else the leak is back).
+      # Settlement still :pending -> the join-on-status==:committed gate hides it.
       {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
       assert snapshot.page == nil
-      assert CustomerFeed.committed_deliveries_since(uri, 0) == []
-      assert CustomerFeed.latest_cursor(uri) == 0
     end
   end
-```
 
-Add this private helper to the test module (near `spawn_session`): a customer token for the session, issued via the exact path `CustomerFeed.snapshot/2`'s `CustomerAuth.authorize/3` verifies (`CustomerAuth.issue_token/3` signs the same `{session_uri, workspace_uri}` payload `authorize/3` checks — verified against `customer_auth.ex:12-42`):
+  describe "wake-up loss" do
+    test "a committed page is visible via the durable snapshot even if no PubSub event was delivered" do
+      page_tree = %{type: "text", props: %{text: "delivered despite lost wake-up"}}
+      uri = spawn_session()
+      token = test_token(uri)
 
-```elixir
-  # Issue a valid customer-feed token for `session_uri` (Phoenix.Token-signed
-  # over {session_uri, workspace_uri}; CustomerFeed.snapshot/2 -> authorize/3
-  # accepts it).
-  defp test_token(session_uri) do
-    {:ok, workspace_uri} = Ezagent.WorkspaceRegistry.lookup(session_uri)
-    Ezagent.Socialware.CustomerAuth.issue_token(session_uri, workspace_uri)
+      # run_turn commits; we never subscribe to / receive the {:customer_delivery}
+      # event — the wake-up is "lost". A fresh snapshot (== reconnect) still has it.
+      _turn_id = run_turn(uri, page_tree)
+
+      {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
+      assert snapshot.page == page_tree
+    end
   end
 ```
 
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `MIX_ENV=test mix test apps/ezagent_domain_socialware/test/ezagent/socialware/customer_delivery_durable_test.exs -v 2>&1 | tail -25`
-Expected: FAIL — `committed_deliveries_since/2` undefined; the leak test fails because `customer_page/1` currently reads the live approved pointer (returns the page even with no committed outbox).
+Expected: FAIL — the leak test + partial-commit test fail because `customer_page/1` reads the live approved pointer (renders the page with no committed settlement).
 
-- [ ] **Step 3: Implement page commit-gating + the replay primitive**
+- [ ] **Step 3: Commit-gate `customer_page/1`**
 
 Edit `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed.ex`:
 
-(a) Add `import Ecto.Query` + `alias EzagentCore.Repo` + `alias Ezagent.Socialware.CustomerOutbox` at the top (after the existing aliases):
+(a) Add at the top, after the existing aliases:
 
 ```elixir
   import Ecto.Query
@@ -631,16 +548,16 @@ Edit `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed.ex`:
   alias EzagentCore.Repo
 ```
 
-> **codex P2.5a review CRITICAL — the outbox row is written BEFORE the settlement is marked committed.** `Settlement.commit_after_pointer/2` calls `emit_outbox_once/1` (inserts the outbox row) and only THEN `Repo.update_all(set: [status: :committed])` (`settlement.ex:99-108`). So an outbox row can exist while its settlement is still `:pending` (partial-commit / crash window). The committed reads below therefore MUST join `SettlementRecord` and require `s.status == :committed` — exactly as `MessageStore.committed_customer_visible/2` already does for messages. Reading the outbox alone would re-introduce the leak. (`status` is `Ecto.Enum [:pending, :committed]` — compare with the `:committed` atom.)
-
-(b) Replace `customer_page/1` (currently `customer_feed.ex:157-162`) with the committed-version render:
+(b) Replace `customer_page/1` (currently `customer_feed.ex:157-162`):
 
 ```elixir
-  # P2.5a — render the customer page from the COMMITTED surface version recorded
-  # in the outbox, NOT the live `:surface.approved` pointer. `turn.settle`
-  # dispatches `:approve` (advancing the live pointer) BEFORE `:commit_settlement`
-  # writes the outbox, so reading the live pointer would leak an
-  # approved-but-uncommitted page. With no committed delivery, the page is nil.
+  # P2.5a — render the customer page from the COMMITTED surface version, NOT the
+  # live `:surface.approved` pointer. `turn.settle` dispatches `:approve`
+  # (advancing the live pointer) BEFORE `:commit_settlement` writes the outbox +
+  # flips status, so reading the live pointer leaks an approved-but-uncommitted
+  # page. The committed version is the latest outbox delivery whose settlement is
+  # :committed (the outbox row is written BEFORE the status flip — codex
+  # CRITICAL — so we MUST gate on status, mirroring committed_customer_visible).
   defp customer_page(session_uri) do
     case committed_surface_version(session_uri) do
       nil ->
@@ -654,10 +571,10 @@ Edit `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed.ex`:
     end
   end
 
-  # The surface_version of the most-recent COMMITTED outbox delivery that
-  # actually carries a page (surface_version not null). Joins SettlementRecord
-  # and requires status == :committed (the outbox row exists pre-commit — codex
-  # CRITICAL). nil → no committed page.
+  # The surface_version of the most-recently-COMMITTED outbox delivery that
+  # carries a page (surface_version not null). Joins SettlementRecord and
+  # requires status == :committed. Ordered by the settlement commit time
+  # (committed_at) descending. nil → no committed page.
   defp committed_surface_version(session_uri) do
     session_str = URI.to_string(session_uri)
 
@@ -667,7 +584,7 @@ Edit `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed.ex`:
       where:
         o.session_uri == ^session_str and s.status == :committed and
           not is_nil(o.surface_version),
-      order_by: [desc: o.id],
+      order_by: [desc: s.committed_at, desc: o.turn_id],
       limit: 1,
       select: o.surface_version
     )
@@ -675,67 +592,16 @@ Edit `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed.ex`:
   end
 ```
 
-(c) Add the public cursor-replay primitive + `latest_cursor/1` (after `history/2`, before `approved_attachment?/2`):
-
-```elixir
-  @doc """
-  P2.5a — durable, cursor-addressable replay of committed customer deliveries.
-  Returns committed outbox rows with `id > cursor` (ascending), each as
-  `%{cursor, turn_id, message_ids, surface_version}`. This is the durable source
-  the P3 ExternalAdapter replays from; the PubSub `{:customer_delivery}` event
-  is only an advisory wake-up that triggers a replay — losing it never loses a
-  delivery (the next replay/reconnect catches up).
-
-  Authorization is the caller's responsibility for the gated routes; this is the
-  raw durable read (used by adapters that have already established the session).
-  """
-  @spec committed_deliveries_since(URI.t(), integer()) :: [
-          %{cursor: integer(), turn_id: String.t(), message_ids: [String.t()], surface_version: integer() | nil}
-        ]
-  def committed_deliveries_since(%URI{} = session_uri, cursor) when is_integer(cursor) do
-    session_str = URI.to_string(session_uri)
-
-    from(o in CustomerOutbox,
-      join: s in SettlementRecord,
-      on: s.turn_id == o.turn_id,
-      where: o.session_uri == ^session_str and o.id > ^cursor and s.status == :committed,
-      order_by: [asc: o.id],
-      select: %{
-        cursor: o.id,
-        turn_id: o.turn_id,
-        message_ids: o.message_ids,
-        surface_version: o.surface_version
-      }
-    )
-    |> Repo.all()
-  end
-
-  @doc "P2.5a — the highest COMMITTED-delivery cursor for a session (0 if none)."
-  @spec latest_cursor(URI.t()) :: integer()
-  def latest_cursor(%URI{} = session_uri) do
-    session_str = URI.to_string(session_uri)
-
-    from(o in CustomerOutbox,
-      join: s in SettlementRecord,
-      on: s.turn_id == o.turn_id,
-      where: o.session_uri == ^session_str and s.status == :committed,
-      select: max(o.id)
-    )
-    |> Repo.one()
-    |> Kernel.||(0)
-  end
-```
-
 - [ ] **Step 4: Run to verify they pass**
 
 Run: `MIX_ENV=test mix test apps/ezagent_domain_socialware/test/ezagent/socialware/customer_delivery_durable_test.exs -v 2>&1 | tail -20`
-Expected: PASS — leak test (no page/messages pre-commit), committed-page test (page == committed tree), cursor-replay test, wake-up-loss test.
+Expected: PASS — committed-page, leak, partial-commit, wake-up-loss tests all green.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed.ex apps/ezagent_domain_socialware/test/ezagent/socialware/customer_delivery_durable_test.exs
-git commit -m "feat(socialware/p2.5a): commit-gate the customer page + cursor-replay primitive
+git commit -m "feat(socialware/p2.5a): commit-gate the customer page (render committed surface version)
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -744,7 +610,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ## Task 6: Regression + arch gate
 
-**Files:** none (verification-only). Per `feedback_completion_requires_invariant_test`, the leak + wake-up-loss + cursor-replay tests above are the architectural gate that proves P2.5a's durable-delivery goal; this task confirms no regression.
+**Files:** none (verification-only). Per `feedback_completion_requires_invariant_test`, the leak + partial-commit + wake-up-loss tests are the architectural gate proving P2.5a's page-commit-gating goal; this task confirms no regression.
 
 - [ ] **Step 1: Full socialware + web + core message suites**
 
@@ -754,7 +620,7 @@ MIX_ENV=test mix test apps/ezagent_domain_socialware/test 2>&1 | tail -8
 MIX_ENV=test mix test apps/ezagent_web/test 2>&1 | tail -8
 MIX_ENV=test mix test apps/ezagent_core/test/ezagent/message_store_test.exs 2>&1 | tail -8
 ```
-Expected: all green. The existing socialware surface/settlement/customer-feed tests must still pass (the page now reads the committed version — confirm no existing test relied on the live-approved-pointer leak; if one does, it was asserting the buggy behavior and must be updated to the committed-gate semantics, with a comment).
+Expected: all green. If an EXISTING socialware test asserted the old live-approved-pointer page (the leak), it was asserting buggy behavior — update it to the committed-gate semantics with a comment (and note it in the commit). Confirm `turn_customer_feed_integration_test.exs` (the turn→feed integration) still passes; its turns go through full settle+commit so the committed page should match.
 
 - [ ] **Step 2: Arch fitness gates**
 
@@ -766,7 +632,7 @@ MIX_ENV=test mix ezagent.check_invariants 2>&1 | tail -4
 ```
 Expected: no FAIL; `oversized_modules_gt_1000: count=0`; invariants clean.
 
-- [ ] **Step 3: Final commit (if any test-fixture updates were needed)**
+- [ ] **Step 3: Final commit (only if test-fixture updates were needed)**
 
 ```bash
 git add -A
@@ -779,7 +645,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ## Self-Review (run before handing to codex)
 
-1. **Spec coverage:** P2.5a covers the spec §6 P2.5 sub-points that are socialware/web-local: durable outbox covering BOTH message ids AND committed surface version (Task 4); page commit-gating (Task 5); cursor-addressable replay + advisory-wake-up-loss resilience (Task 5). The post-parent-turn-commit ordering (rev4 HIGH) + wire-schema (#44) are explicitly deferred to **P2.5b** — flagged here so coverage is intentional, not a gap.
-2. **Placeholder scan:** the only "confirm the real API" note is `test_token/1` (CustomerAuth mint) — the implementer MUST read `customer_auth.ex` for the exact mint signature before finalizing (the gated `snapshot/2` authorize path must accept the token). Everything else is concrete.
-3. **Type consistency:** outbox `id` (integer cursor) used consistently in `committed_deliveries_since/2` (`o.id > cursor`), `latest_cursor/1` (`max(o.id)`), and the migration (`[:session_uri, :id]` index). `surface_version` integer-or-nil consistent across migration, schema, settlement write, and `committed_surface_version/1`.
-4. **Ambiguity — page version selection:** `committed_surface_version/1` picks the MAX-id committed outbox row WITH a non-nil surface_version (a turn may commit messages without a page version → null surface_version → must not clear the page). Made explicit in the query (`not is_nil(o.surface_version)`).
+1. **Spec coverage:** P2.5a covers the socialware-local **page commit-gating** sub-point of spec §6 P2.5 (record committed surface version + render the page from it, status-gated). The **cursor-addressable replay** and **post-parent-turn-commit ordering** + **#44 wire-schema** are explicitly DEFERRED to **P2.5b** — intentional, because the cursor's correctness depends on the commit-ordering fix (codex rev2 CRITICAL: a pre-commit id cursor can skip an out-of-order-committed row).
+2. **Placeholder scan:** none. `test_token/1` uses the verified real API `CustomerAuth.issue_token/3`.
+3. **Type consistency:** `surface_version` integer-or-nil across migration, schema, settlement write (`settlement.target_surface_version`), and `committed_surface_version/1` (`not is_nil(o.surface_version)`). `status == :committed` compares the `Ecto.Enum` atom (consistent with the schema's `values: [:pending, :committed]`).
+4. **Ambiguity — page version selection:** `committed_surface_version/1` picks the committed delivery with the latest `committed_at` (tiebreak by turn_id), filtered to `surface_version not null` (a messages-only commit must not clear a previously-committed page). Made explicit in the query.
+5. **No core change:** only `ezagent_core/priv/repo/migrations` (a column add) — no `ezagent_core` library code, keeping the blast radius inside socialware.
