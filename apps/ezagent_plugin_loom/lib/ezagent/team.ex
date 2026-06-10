@@ -19,7 +19,7 @@ defmodule EzagentPluginLoom.Team do
 
   No custom routing rules are installed: the default mention-gated
   `system_default` rule (`{:always} → [$session_users, $mentions]`,
-  `EzagentDomainChat.DefaultRules`) already delivers each message only
+  `EzagentDomainInstanceMessage.DefaultRules`) already delivers each message only
   to its `@mention`ed agent + the session's User members — so worker↔
   worker cross-talk is structurally impossible as long as every message
   @mentions its recipient (which the orchestrator + workers do). The

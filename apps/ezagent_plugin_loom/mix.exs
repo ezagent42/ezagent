@@ -48,11 +48,11 @@ defmodule EzagentPluginLoom.MixProject do
       # Boot-order constraint only (no code referenced): the default
       # `loom_agent` instance is seeded in this plugin's `after_boot/0`
       # via the `entity://` SpawnRegistry dispatcher, which
-      # `ezagent_domain_chat` registers in its `start/2`. Loom Kinds
-      # also live under `EzagentDomainChat.AgentSupervisor`
+      # `ezagent_domain_instance_message` registers in its `start/2`. Loom Kinds
+      # also live under `EzagentDomainInstanceMessage.AgentSupervisor`
       # (`Ezagent.Entity.Loom.supervisor/0`). Declaring the dep makes
       # OTP boot domain_chat BEFORE this plugin.
-      {:ezagent_domain_chat, in_umbrella: true},
+      {:ezagent_domain_instance_message, in_umbrella: true},
       # loom v0.2 — `EzagentPluginLoom.Feishu` binds bootstrapped
       # sessions to the demo Feishu group via `Ezagent.ExternalMirror.BindingRow`
       # + spawns `Ezagent.Entity.ExternalMirrorWorker` (one-way mirror, PRD §5.4).

@@ -34,5 +34,5 @@ defmodule Ezagent.Entity.LoomMetaAgent do
   def persistence, do: :ephemeral
 
   @impl Ezagent.Kind
-  def supervisor, do: EzagentDomainChat.AgentSupervisor
+  def supervisor, do: EzagentDomainInstanceMessage.AgentSupervisor
 end

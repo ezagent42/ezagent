@@ -26,5 +26,5 @@ defmodule Ezagent.Entity.LoomOrchestrator do
   def persistence, do: {:snapshot, :on_change}
 
   @impl Ezagent.Kind
-  def supervisor, do: EzagentDomainChat.AgentSupervisor
+  def supervisor, do: EzagentDomainInstanceMessage.AgentSupervisor
 end

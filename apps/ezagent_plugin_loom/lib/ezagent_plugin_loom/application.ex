@@ -36,7 +36,7 @@ defmodule EzagentPluginLoom.Application do
   The default instance `entity://agent/system/loom_agent` is spawned in
   Phase 3 (`after_boot/0`), AFTER Phase-2 `publish/1` registered
   `agent_flavors/0` so the resolver can map the flavor. This plugin's
-  dep on `ezagent_domain_chat` makes OTP boot chat first, so the
+  dep on `ezagent_domain_instance_message` makes OTP boot chat first, so the
   `entity://` SpawnRegistry dispatcher is published by the time this
   runs. Idempotent: re-spawning an already-alive Kind is a no-op.
   """

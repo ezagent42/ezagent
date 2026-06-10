@@ -15,7 +15,7 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
   — instead of getting a bare session (the question "why no orchestrator
   in my UI-created session" was exactly this gap).
 
-  Uses `SpawnRegistry.spawn/1` directly (NOT `EzagentDomainChat.create_session/3`),
+  Uses `SpawnRegistry.spawn/1` directly (NOT `EzagentDomainInstanceMessage.create_session/3`),
   so it does NOT also spin up the generic `cc` auto-orchestrator — the
   loom team is the only crew in the room.
 
@@ -176,9 +176,7 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
     for uri <- all_uris do
       result = safe_destroy(uri)
 
-      Logger.debug(
-        "LoomSession.cleanup: #{URI.to_string(uri)} destroy=#{inspect(result)}"
-      )
+      Logger.debug("LoomSession.cleanup: #{URI.to_string(uri)} destroy=#{inspect(result)}")
     end
 
     _ = safe_unbind_feishu(session_uri)
@@ -381,7 +379,7 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
   # so `LoomOrchestrator.init_slice/1` picks up `persona` + `initial_loom_source`
   # (both honored by the existing init_slice signature). `Ezagent.Kind.spawn/2`
   # routes to the right supervisor (LoomOrchestrator declares
-  # `EzagentDomainChat.AgentSupervisor`). 后到的 Team.ensure_team 因 SpawnRegistry
+  # `EzagentDomainInstanceMessage.AgentSupervisor`). 后到的 Team.ensure_team 因 SpawnRegistry
   # 的幂等性,看到 orchestrator 已经在,返回 :already_started → 不覆盖。
   # 没 saved snapshot → 跳过,让 Team.ensure_team 自己启默认 orchestrator。
   # 2026-06-01 Phase 2 — 把 saved_workers 数组转成 theme 列表传给 Team.ensure_team。
