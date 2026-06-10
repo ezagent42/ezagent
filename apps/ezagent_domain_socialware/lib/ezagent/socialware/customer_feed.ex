@@ -9,7 +9,7 @@ defmodule Ezagent.Socialware.CustomerFeed do
   import Ecto.Query
 
   alias Ezagent.{Behavior.Surface, MessageStore}
-  alias Ezagent.Socialware.{CustomerAuth, SettlementRecord}
+  alias Ezagent.Socialware.{CustomerAuth, CustomerOutbox}
   alias Ezagent.URI, as: EzURI
   alias EzagentCore.Repo
 
@@ -41,6 +41,53 @@ defmodule Ezagent.Socialware.CustomerFeed do
     else
       _ -> {:error, :unauthorized}
     end
+  end
+
+  @doc """
+  P2.5b — durable, cursor-addressable replay of committed customer deliveries.
+  Returns committed outbox rows with `committed_seq > cursor` (ascending), each
+  `%{cursor, turn_id, message_ids, surface_version}`. `committed_seq` is assigned
+  at the commit boundary in commit order, so this never skips a late
+  out-of-order commit. The durable source the P3 ExternalAdapter replays from;
+  the PubSub `{:customer_delivery}` event is only an advisory wake-up.
+  """
+  @spec committed_deliveries_since(URI.t(), integer()) :: [
+          %{
+            cursor: integer(),
+            turn_id: String.t(),
+            message_ids: [String.t()],
+            surface_version: integer() | nil
+          }
+        ]
+  def committed_deliveries_since(%URI{} = session_uri, cursor) when is_integer(cursor) do
+    session_str = URI.to_string(session_uri)
+
+    from(o in CustomerOutbox,
+      where:
+        o.session_uri == ^session_str and not is_nil(o.committed_seq) and
+          o.committed_seq > ^cursor,
+      order_by: [asc: o.committed_seq],
+      select: %{
+        cursor: o.committed_seq,
+        turn_id: o.turn_id,
+        message_ids: o.message_ids,
+        surface_version: o.surface_version
+      }
+    )
+    |> Repo.all()
+  end
+
+  @doc "P2.5b — the highest committed-delivery cursor for a session (0 if none)."
+  @spec latest_cursor(URI.t()) :: integer()
+  def latest_cursor(%URI{} = session_uri) do
+    session_str = URI.to_string(session_uri)
+
+    from(o in CustomerOutbox,
+      where: o.session_uri == ^session_str and not is_nil(o.committed_seq),
+      select: max(o.committed_seq)
+    )
+    |> Repo.one()
+    |> Kernel.||(0)
   end
 
   @doc """
@@ -183,16 +230,23 @@ defmodule Ezagent.Socialware.CustomerFeed do
 
   # The target_surface_version of the most-recently-COMMITTED settlement that
   # carries a page (target_surface_version not null). nil → no committed page.
+  # P2.5b — the committed page version = the surface_version of the latest
+  # page-bearing COMMITTED delivery, ordered by committed_seq (the commit-order
+  # cursor — the SAME order committed_deliveries_since/2 replays). Commit-order
+  # (not max(version)) so a ROLLBACK (a later commit re-approving an older
+  # retained version) correctly makes that older version the page; and
+  # committed_seq is a total order so a committed_at tie can't pick an older turn.
+  # nil when no committed page (messages-only commits have surface_version nil).
   defp committed_surface_version(session_uri) do
     session_str = URI.to_string(session_uri)
 
-    from(s in SettlementRecord,
+    from(o in CustomerOutbox,
       where:
-        s.session_uri == ^session_str and s.status == :committed and
-          not is_nil(s.target_surface_version),
-      order_by: [desc: s.committed_at, desc: s.turn_id],
+        o.session_uri == ^session_str and not is_nil(o.committed_seq) and
+          not is_nil(o.surface_version),
+      order_by: [desc: o.committed_seq],
       limit: 1,
-      select: s.target_surface_version
+      select: o.surface_version
     )
     |> Repo.one()
   end
