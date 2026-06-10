@@ -587,8 +587,26 @@ defmodule Ezagent.Kind.Snapshot do
   # semantics); newly-added behaviors keep their fresh value (the Q5 contract).
   # An out-of-set behavior is never in `set`, so its init_slice/create NEVER
   # runs — at first spawn OR on reload.
+  #
+  # BEHAVIOR-PRESERVING EXCLUSION (codex CRITICAL — universal-behavior policy).
+  # `set` includes `BehaviorSet.base_behaviors/0` = `KindBase` +
+  # `UniversalBehaviors.all/0` (Manage). `Manage` is DISPATCH-ONLY: it is
+  # universal-by-construction, resolves via the registry fallback, its handlers
+  # read NO slice (`handle_delete/2`/`handle_reconfigure/2` take `_ctx` only),
+  # and pre-P1 it was NEVER in any Kind's `behaviors_of/0` so its `:manage`
+  # slice was NEVER materialized or persisted. Materializing it now would (a)
+  # add a vestigial `:manage` slice to EVERY instance's persisted shape (a
+  # behavior change), and (b) run `Manage`'s Lifecycle `__init_slice__` →
+  # `ever_created?` on every spawn. We therefore EXCLUDE universal behaviors
+  # from slice materialization — they stay MEMBERS of `effective_set` (so the
+  # E9 dispatch gate + membership semantics are unchanged) but get no slice.
+  # `KindBase` IS materialized: it owns the persisted `:kind_base` slice that
+  # carries the instance set (the whole point of P1).
   defp init_fresh_for_set(set, args) do
+    universal = MapSet.new(Ezagent.UniversalBehaviors.all())
+
     set
+    |> Enum.reject(&MapSet.member?(universal, &1))
     |> Enum.map(fn behavior -> {behavior.state_slice(), behavior.init_slice(args)} end)
     |> Map.new()
   end
