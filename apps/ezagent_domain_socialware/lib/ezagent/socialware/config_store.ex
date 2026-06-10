@@ -162,6 +162,20 @@ defmodule Ezagent.Socialware.ConfigStore do
   def get!(config_id), do: Repo.get!(ConfigObject, config_id)
 
   @doc """
+  P2.5c — durable idempotency marker for `apply_delta` recovery.
+
+  `apply_delta` writes a NEW immutable `ConfigObject` whose `source_turn_id`
+  records the originating turn. `apply_delta` is therefore NOT idempotent
+  (re-running mints a fresh object UUID + repoints). `Turn.activated/2`'s
+  crash-recovery uses this to decide whether a settled turn's config delta
+  still needs replaying: `true` once any object exists for the turn.
+  """
+  @spec applied_for_turn?(String.t()) :: boolean()
+  def applied_for_turn?(turn_id) when is_binary(turn_id) do
+    Repo.exists?(from(o in ConfigObject, where: o.source_turn_id == ^turn_id))
+  end
+
+  @doc """
   Fetch an immutable config object by id.
 
   Returns `{:ok, object}` or `:none` (no such object). Used by

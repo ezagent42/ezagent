@@ -10,6 +10,13 @@ defmodule Ezagent.Behavior.Effects do
           | {:set_transient, atom(), term()}
           | {:emit, atom(), map()}
           | {:dispatch, Ezagent.Cmd.t()}
+          # P2.5c — a re-entrant dispatch the runtime COLLECTS + resolves
+          # (substitute_refs + enrich) but does NOT execute during the
+          # handler. `Kind.Server` runs it via `Router.dispatch` ONLY after
+          # the parent slice durably commits (and SKIPS it on a commit
+          # failure). Closes the rev4 ordering bug: a settlement/delivery
+          # must not outlive a failed parent-turn commit.
+          | {:dispatch_after_commit, Ezagent.Cmd.t()}
           | {:dispatch_returning, Ezagent.Cmd.t(), keyword()}
           | {:notify, String.t(), term()}
           | {:effect, mfa_or_fun(), [term()]}
@@ -24,6 +31,7 @@ defmodule Ezagent.Behavior.Effects do
              state: map(),
              events: list(),
              dispatches: list(),
+             dispatches_after_commit: list(),
              dispatches_returning: list(),
              notifies: list(),
              terminations: list(),
@@ -36,6 +44,10 @@ defmodule Ezagent.Behavior.Effects do
       state: state,
       events: [],
       dispatches: [],
+      # P2.5c — post-parent-commit dispatches. Collected here, NOT
+      # executed; `Kind.Server` runs them after the parent slice durably
+      # commits. See the `{:dispatch_after_commit, _}` effect type.
+      dispatches_after_commit: [],
       notifies: [],
       terminations: [],
       effects: [],
@@ -104,6 +116,14 @@ defmodule Ezagent.Behavior.Effects do
       {:dispatch, %Ezagent.Cmd{}} = e ->
         bucket_by_phase(rest, Map.update!(acc, :dispatches, &[e | &1]))
 
+      # P2.5c — collect a post-parent-commit dispatch into its own bucket.
+      # NOT executed here (this module is pure — no Router dependency) and
+      # NOT executed by `execute_buckets/2` either; the runtime resolves it
+      # (same substitute_refs + enrich as `:dispatch`) and returns it so
+      # `Kind.Server` can run it AFTER the parent slice durably commits.
+      {:dispatch_after_commit, %Ezagent.Cmd{}} = e ->
+        bucket_by_phase(rest, bucket_dispatch_after_commit(acc, e))
+
       # 2026-05-29 dispatch_returning SPEC §3 — `:dispatch_returning`
       # MUST carry a Cmd struct + a `bind_as:` atom. Validate shape
       # at bucket time so a malformed effect surfaces with a clear
@@ -148,6 +168,13 @@ defmodule Ezagent.Behavior.Effects do
     %{acc | state: put_state_field(acc.state, key, value)}
   end
 
+  # P2.5c — accumulate a `{:dispatch_after_commit, cmd}` effect (the Cmd,
+  # unwrapped) into its own bucket, prepended for O(1) collection and
+  # reversed to declared order in `apply_buckets/1`.
+  defp bucket_dispatch_after_commit(acc, {:dispatch_after_commit, %Ezagent.Cmd{} = cmd}) do
+    %{acc | dispatches_after_commit: [cmd | acc.dispatches_after_commit]}
+  end
+
   # Lifecycle Phase A (SPEC 2026-05-29 §9 OQ-2 + §10-R2) — apply a
   # `{:set_transient, key, value}` into the slice's `:transients`
   # sub-map. Only valid on a Lifecycle two-container slice; a
@@ -188,6 +215,10 @@ defmodule Ezagent.Behavior.Effects do
       |> Enum.reject(&match?({:__set__, _}, &1))
 
     dispatches = Enum.reverse(acc.dispatches)
+    # P2.5c — restore declared order; the runtime resolves + returns these
+    # for `Kind.Server` to run post-commit (they hold raw `%Cmd{}` structs,
+    # NOT `{:dispatch_after_commit, _}` tuples — unwrapped at bucket time).
+    dispatches_after_commit = Enum.reverse(acc.dispatches_after_commit)
     notifies = Enum.reverse(acc.notifies)
     terminations = Enum.reverse(acc.terminations)
     effects = Enum.reverse(acc.effects)
@@ -235,6 +266,11 @@ defmodule Ezagent.Behavior.Effects do
     # against `returning`.
     events = Enum.map(events, &substitute_refs(&1, returning))
     dispatches = Enum.map(dispatches, &substitute_refs(&1, returning))
+    # P2.5c — first-pass ref substitution (effect_returning bindings),
+    # mirroring `:dispatch`. The runtime's `execute_buckets/2` does the
+    # second pass (dispatch_returning bindings) + enrichment before returning
+    # these to `Kind.Server`.
+    dispatches_after_commit = Enum.map(dispatches_after_commit, &substitute_refs(&1, returning))
     notifies = Enum.map(notifies, &substitute_refs(&1, returning))
 
     {:ok,
@@ -242,6 +278,9 @@ defmodule Ezagent.Behavior.Effects do
        state: acc.state,
        events: events,
        dispatches: dispatches,
+       # P2.5c — raw `%Cmd{}` structs to be run post-parent-commit by
+       # `Kind.Server`. `apply_effects/2` does NOT execute them.
+       dispatches_after_commit: dispatches_after_commit,
        # 2026-05-29 dispatch_returning SPEC §4a — surface the
        # collected `:dispatch_returning` effects to the executor.
        # `apply_effects/2` does NOT run them itself (that would

@@ -92,15 +92,12 @@ defmodule Ezagent.Kind.Runtime do
   require Logger
 
   @type slice_state :: %{atom() => map()}
-  # PR-N1 round-2 MEDIUM: success branches now carry a 4th element —
-  # the optional `slice_change_event` for `Kind.Server` to fire
-  # AFTER `Snapshot.maybe_save/4`. Was a 2-tuple `{:ok, state}` and
-  # 3-tuple `{:ok, state, result}`. Backwards-compatible: legacy
-  # callers that only matched the success atom + state still work
-  # because the new shape extends, not replaces.
+  # PR-N1 round-2 MEDIUM: 4th element = optional `slice_change_event` for
+  # `Kind.Server` to fire AFTER `Snapshot.maybe_save/4` (was 2-/3-tuple).
+  # P2.5c — 5th element: resolved+enriched `deferred` post-commit dispatches.
   @type result ::
-          {:ok, slice_state(), term(), slice_change_event() | nil}
-          | {:ok, slice_state(), nil, slice_change_event() | nil}
+          {:ok, slice_state(), term(), slice_change_event() | nil, [Ezagent.Cmd.t()]}
+          | {:ok, slice_state(), nil, slice_change_event() | nil, [Ezagent.Cmd.t()]}
           | {:error, term()}
   @type slice_change_event :: %{
           required(:self_uri) => URI.t(),
@@ -186,7 +183,8 @@ defmodule Ezagent.Kind.Runtime do
          # (e.g. CurlAgent reading `:api_keys` to fetch its outbound
          # credential, deadlock-free) declares it explicitly.
          invoke_ctx <- maybe_inject_sibling_slices(enriched_ctx, behavior_module, state),
-         {:ok, new_slice, result_or_nil} <-
+         # P2.5c — 4-tuple; `deferred` threaded out as a 5-tuple to Kind.Server.
+         {:ok, new_slice, result_or_nil, deferred} <-
            invoke_behavior(behavior_module, action, slice, args, invoke_ctx) do
       # Step 9 — put_in state. Snapshot wiring is Phase 1 step 3.
       new_state = Map.put(state, slice_key, new_slice)
@@ -246,9 +244,10 @@ defmodule Ezagent.Kind.Runtime do
       # for `Kind.Server` to fire after snapshot persistence. `nil`
       # means no slice mutation happened (Behavior was read-only or
       # the new slice equalled the old). Codex PR-N1 round-2 MEDIUM.
+      # P2.5c — 5-tuple: server runs `deferred` only after commit succeeds.
       case result_or_nil do
-        nil -> {:ok, new_state, nil, slice_change_event}
-        result -> {:ok, new_state, result, slice_change_event}
+        nil -> {:ok, new_state, nil, slice_change_event, deferred}
+        result -> {:ok, new_state, result, slice_change_event, deferred}
       end
     else
       {:error, reason} = err ->
@@ -835,8 +834,8 @@ defmodule Ezagent.Kind.Runtime do
     case run_pre_handle(behavior_module, action, args, handler_ctx) do
       {:halt, result} ->
         # pre_handle short-circuited — skip the handler, no effects, slice
-        # unchanged. (A pre_handle authz gate returning {:halt, result}.)
-        {:ok, slice, result}
+        # unchanged. P2.5c 4th element `[]`: no effects → no deferred dispatches.
+        {:ok, slice, result, []}
 
       {:error, _reason} = err ->
         err
@@ -877,8 +876,9 @@ defmodule Ezagent.Kind.Runtime do
         # post_handle hook may still INJECT effects (audit/mirror).
         {result, effects} = run_post_handle(behavior_module, action, result, [], handler_ctx)
 
+        # P2.5c — 4-tuple: `[]` for no-effects; else from apply_new_contract_effects/4.
         case effects do
-          [] -> {:ok, slice, result}
+          [] -> {:ok, slice, result, []}
           _ -> apply_new_contract_effects(slice, result, effects, ctx)
         end
 

@@ -436,7 +436,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
          %{state: state, self_uri: self_uri} do
       inv = invocation(self_uri, :bump, %{})
 
-      assert {:ok, new_state, result, slice_change_event} =
+      assert {:ok, new_state, result, slice_change_event, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, MixedKind, self_uri)
 
       assert result == %{count: 1}
@@ -453,7 +453,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
          %{state: state, self_uri: self_uri} do
       inv = invocation(self_uri, :record, %{value: "hello"})
 
-      assert {:ok, new_state, result, _evt} =
+      assert {:ok, new_state, result, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, MixedKind, self_uri)
 
       assert result == %{stored: true}
@@ -482,7 +482,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
          %{state: state, self_uri: self_uri} do
       inv = invocation(self_uri, :emit_only, %{})
 
-      assert {:ok, new_state, _result, slice_change_event} =
+      assert {:ok, new_state, _result, slice_change_event, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, MixedKind, self_uri)
 
       # Slice unchanged because no :set effect.
@@ -533,7 +533,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
 
       inv = invocation(self_uri, :notify_topic, %{topic: topic, payload: %{hello: :world}})
 
-      assert {:ok, _new_state, _result, _evt} =
+      assert {:ok, _new_state, _result, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, MixedKind, self_uri)
 
       assert_receive %{hello: :world}, 500
@@ -546,7 +546,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
       topic = "test:notify-silent:#{System.unique_integer([:positive])}"
       inv = invocation(self_uri, :notify_topic, %{topic: topic, payload: %{ignored: true}})
 
-      assert {:ok, _new_state, _result, _evt} =
+      assert {:ok, _new_state, _result, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, MixedKind, self_uri)
     end
   end
@@ -565,7 +565,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
 
       inv = invocation(self_uri, :emit_event, %{event: event_name, payload: payload})
 
-      assert {:ok, _new_state, _result, _evt} =
+      assert {:ok, _new_state, _result, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, MixedKind, self_uri)
 
       rows = Ezagent.EventLog.stream_by_aggregate(self_uri)
@@ -588,7 +588,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
           payload: %{pid: self()}
         })
 
-      assert {:ok, _new_state, _result, _evt} =
+      assert {:ok, _new_state, _result, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, MixedKind, self_uri)
     end
   end
@@ -644,7 +644,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
           test_token: token
         })
 
-      assert {:ok, _new_state, _result, _evt} =
+      assert {:ok, _new_state, _result, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, MixedKind, self_uri)
 
       # The saga's forward step send/2's to test_pid with the token.
@@ -686,7 +686,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
 
       inv = invocation(self_uri, :terminate_target, %{target: target_str})
 
-      assert {:ok, _new_state, _result, _evt} =
+      assert {:ok, _new_state, _result, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, MixedKind, self_uri)
     end
   end
@@ -704,7 +704,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
 
       inv = invocation(self_uri, :multi_effect, %{})
 
-      assert {:ok, new_state, _result, slice_change_event} =
+      assert {:ok, new_state, _result, slice_change_event, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, MixedKind, self_uri)
 
       # :set ran (state mutated).
@@ -725,7 +725,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
 
       inv = invocation(self_uri, :order_trace, %{})
 
-      assert {:ok, _new_state, _result, _evt} =
+      assert {:ok, _new_state, _result, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, MixedKind, self_uri)
 
       # PubSub broadcasts within a single dispatch arrive in

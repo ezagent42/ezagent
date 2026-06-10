@@ -76,6 +76,101 @@ defmodule Ezagent.Behavior.Turn do
   @impl Ezagent.Lifecycle
   def activate(_state, _ctx), do: {:ok, %{}}
 
+  # P2.5c crash-window recovery (codex rev2 HIGH). `activated/2` runs
+  # post-`:ready` on every start, in the host GenServer process, and may
+  # side-effect (its return is ignored — `Ezagent.Lifecycle.__run_activated__`).
+  # The deferred settlement dispatch (the fast path) is an in-memory cast; a
+  # crash AFTER the parent `:turns` commit marked the turn `:settled` but
+  # BEFORE that cast ran would lose the customer delivery. So on every start we
+  # self-signal a recovery scan — `handle_signal({:ezagent_recover_settlements},
+  # _)` re-emits approve + commit_settlement (+ apply_delta) as NORMAL
+  # `:dispatch` for any `:settled` turn whose durable side effect is still
+  # outstanding. The two-step seam is required because ONLY `handle_signal/2`
+  # emits an EXECUTED effect list (lifecycle.ex: `__run_signal__` →
+  # `apply_signal_effects` → `Router.dispatch`); `activated/2` itself cannot.
+  @impl Ezagent.Lifecycle
+  def activated(_state, _ctx) do
+    send(self(), {:ezagent_recover_settlements})
+    :ok
+  end
+
+  # The recovery scan. `signal_ctx` (built by `Lifecycle.__run_signal__`)
+  # exposes `:read` over the `:turns` slice + `:self_uri` — everything
+  # `settle_commit_effects/4` needs. We re-emit NORMAL `{:dispatch, …}` (NOT
+  # `:dispatch_after_commit`): the turn is ALREADY durably `:settled`, there is
+  # no parent-commit-in-flight to gate against, and the signal path has no
+  # deferred-effect consumer. Replay is gated per durable side effect so a
+  # clean start (or already-applied turn) emits nothing:
+  #   * settlement replay (approve + commit_settlement) ONLY when a `:pending`
+  #     SettlementRecord exists for the turn;
+  #   * config replay (apply_delta) ONLY when no ConfigObject was yet written
+  #     for the turn (`source_turn_id` — apply_delta writes a NEW immutable
+  #     config-object UUID, so it is NOT idempotent and must not re-run every
+  #     restart).
+  @impl Ezagent.Lifecycle
+  @spec handle_signal(term(), map()) :: {:ok, [term()]} | :ignore
+  def handle_signal({:ezagent_recover_settlements}, ctx) do
+    turns = ctx.read.(:turns, %{})
+
+    effects =
+      turns
+      |> Enum.filter(fn {_turn_id, turn} -> turn.status == :settled end)
+      |> Enum.flat_map(fn {turn_id, turn} -> recovery_effects(turn_id, turn, ctx) end)
+
+    {:ok, effects}
+  end
+
+  def handle_signal(_message, _ctx), do: :ignore
+
+  # Per-turn recovery effects, each side effect independently gated on its own
+  # durable not-yet-done marker so replay is idempotent + minimal.
+  defp recovery_effects(turn_id, turn, ctx) do
+    # The recovery signal ctx carries NO caller caps (unlike the action path,
+    # where the settling caller's caps ride on the dispatch). These replays are
+    # the session legitimately re-performing its OWN settlement side effects, so
+    # authorize them with the system bootstrap caps (same authority a system
+    # principal driving the session would hold). Without this the self-dispatch
+    # is denied at authz and the settlement stays pending.
+    bootstrap_caps =
+      "bootstrap" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps()
+
+    ctx = Map.put(ctx, :caps, bootstrap_caps)
+
+    settlement_effects =
+      if settlement_pending?(turn_id) do
+        approve_and_commit_effects(turn_id, turn, ctx, :now)
+      else
+        []
+      end
+
+    config_effects =
+      if config_replay_needed?(turn_id, turn) do
+        config_update_effects(turn_id, turn, ctx, :now)
+      else
+        []
+      end
+
+    settlement_effects ++ config_effects
+  end
+
+  defp settlement_pending?(turn_id) do
+    case Ezagent.Socialware.Settlement.get(turn_id) do
+      {:ok, %{status: :pending}} -> true
+      _ -> false
+    end
+  end
+
+  # Config replay is needed when the settled turn carries a `config_delta` but
+  # no ConfigObject was yet durably written for it (`source_turn_id`). This is
+  # the apply_delta idempotency marker: apply_delta writes a NEW immutable
+  # config object keyed by `source_turn_id`, so once a row exists the delta was
+  # applied and must NOT re-run.
+  defp config_replay_needed?(turn_id, %{result: %{config_delta: delta}}) when is_map(delta) do
+    not Ezagent.Socialware.ConfigStore.applied_for_turn?(turn_id)
+  end
+
+  defp config_replay_needed?(_turn_id, _turn), do: false
+
   @spec reads_siblings() :: [:surface]
   def reads_siblings, do: [:surface]
 
@@ -184,7 +279,12 @@ defmodule Ezagent.Behavior.Turn do
           case prepare_settlement(turn_id, turn, ctx) do
             :ok ->
               updated = %{turn | status: :settled}
-              {:ok, updated, %{status: :settled}, settle_commit_effects(turn_id, turn, ctx)}
+
+              # P2.5c — settle FAST PATH: emit settlement/config dispatches as
+              # `:dispatch_after_commit` so they run only after the parent
+              # `:turns` slice durably commits.
+              {:ok, updated, %{status: :settled},
+               settle_commit_effects(turn_id, turn, ctx, :after_commit)}
 
             {:error, reason} ->
               {:error, reason}
@@ -305,32 +405,56 @@ defmodule Ezagent.Behavior.Turn do
 
   defp hold_visibility(_turn), do: :ok
 
-  defp approve_and_commit_effects(turn_id, %{result: %{version: version}}, ctx)
+  defp approve_and_commit_effects(turn_id, %{result: %{version: version}}, ctx, dispatch_kind)
        when is_integer(version) do
     [
-      {:dispatch, Cmd.new(ctx.self_uri, :approve, %{version: version}, dispatch_ctx(ctx))},
-      {:dispatch,
-       Cmd.new(ctx.self_uri, :commit_settlement, %{turn_id: turn_id}, dispatch_ctx(ctx))}
+      effect(dispatch_kind, Cmd.new(ctx.self_uri, :approve, %{version: version}, dispatch_ctx(ctx))),
+      effect(
+        dispatch_kind,
+        Cmd.new(ctx.self_uri, :commit_settlement, %{turn_id: turn_id}, dispatch_ctx(ctx))
+      )
     ]
   end
 
-  defp approve_and_commit_effects(turn_id, _turn, ctx) do
+  defp approve_and_commit_effects(turn_id, _turn, ctx, dispatch_kind) do
     [
-      {:dispatch,
-       Cmd.new(ctx.self_uri, :commit_settlement, %{turn_id: turn_id}, dispatch_ctx(ctx))}
+      effect(
+        dispatch_kind,
+        Cmd.new(ctx.self_uri, :commit_settlement, %{turn_id: turn_id}, dispatch_ctx(ctx))
+      )
     ]
   end
 
-  defp settle_commit_effects(turn_id, turn, ctx) do
+  # P2.5c — the settle-time settlement/config dispatches (approve /
+  # commit_settlement / apply_delta) are the durable customer-facing side
+  # effects that MUST NOT outlive a failed parent `:turns` commit.
+  #
+  # `dispatch_kind` parameterizes WHEN they run:
+  #   * `:after_commit` (the settle FAST PATH, `handle_settle`) emits
+  #     `{:dispatch_after_commit, …}` — the runtime defers them so
+  #     `Kind.Server` runs them only after the parent `:turns` slice durably
+  #     commits (closes the rev4 orphan-delivery bug).
+  #   * `:now` (the CRASH-RECOVERY path, `activated/2` → self-signal →
+  #     `handle_signal/2`) emits normal `{:dispatch, …}` — the turn is
+  #     ALREADY durably `:settled`, there is no parent-commit-in-flight to
+  #     gate against, and the signal path has no deferred-effect consumer.
+  #     Replay is idempotent (re-approve same version; commit_after_pointer
+  #     no-ops when already committed).
+  defp settle_commit_effects(turn_id, turn, ctx, dispatch_kind) do
     settlement_effects =
       if settlement_needed?(turn) do
-        approve_and_commit_effects(turn_id, turn, ctx)
+        approve_and_commit_effects(turn_id, turn, ctx, dispatch_kind)
       else
         []
       end
 
-    settlement_effects ++ config_update_effects(turn_id, turn, ctx)
+    settlement_effects ++ config_update_effects(turn_id, turn, ctx, dispatch_kind)
   end
+
+  # P2.5c — wrap a `%Cmd{}` in the effect tuple matching the requested
+  # dispatch timing.
+  defp effect(:after_commit, %Cmd{} = cmd), do: {:dispatch_after_commit, cmd}
+  defp effect(:now, %Cmd{} = cmd), do: {:dispatch, cmd}
 
   defp settlement_attrs(turn_id, turn, ctx) do
     result = Map.get(turn, :result, %{})
@@ -442,14 +566,17 @@ defmodule Ezagent.Behavior.Turn do
     |> Map.get(:approved)
   end
 
-  defp config_update_effects(turn_id, %{result: %{config_delta: delta}}, ctx)
+  defp config_update_effects(turn_id, %{result: %{config_delta: delta}}, ctx, dispatch_kind)
        when is_map(delta) do
     [
-      {:dispatch, Cmd.new(ctx.self_uri, :apply_delta, %{turn_id: turn_id}, dispatch_ctx(ctx))}
+      effect(
+        dispatch_kind,
+        Cmd.new(ctx.self_uri, :apply_delta, %{turn_id: turn_id}, dispatch_ctx(ctx))
+      )
     ]
   end
 
-  defp config_update_effects(_turn_id, _turn, _ctx), do: []
+  defp config_update_effects(_turn_id, _turn, _ctx, _dispatch_kind), do: []
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, _key, []), do: map
@@ -457,7 +584,12 @@ defmodule Ezagent.Behavior.Turn do
 
   defp dispatch_ctx(ctx) do
     %{
-      caller: ctx.caller,
+      # P2.5c — the action path always carries `:caller`; the recovery signal
+      # path (`handle_signal({:ezagent_recover_settlements}, _)`) does NOT, so
+      # default to the session's own `:self_uri` (these are self-dispatches the
+      # session makes to itself — the same identity the runtime's
+      # `enrich_dispatch_cmd` would default to anyway).
+      caller: Map.get(ctx, :caller) || Map.get(ctx, :self_uri),
       caps: Map.get(ctx, :caps, MapSet.new()),
       reply: :ignore,
       trace_id: Map.get(ctx, :trace_id),

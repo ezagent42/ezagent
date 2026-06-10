@@ -74,7 +74,7 @@ defmodule Ezagent.Behavior.WorkspaceUserAdminMigrationParityTest do
                 caps_granted: _,
                 password_set: true,
                 spawned: _
-              }, _evt} =
+              }, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(
                  inv,
                  state,

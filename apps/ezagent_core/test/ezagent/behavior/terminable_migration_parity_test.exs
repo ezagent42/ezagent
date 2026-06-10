@@ -104,7 +104,7 @@ defmodule Ezagent.Behavior.TerminableMigrationParityTest do
       #   - Result lift back to legacy 3-tuple shape
       inv = build_invocation(agent_uri, admin_caps)
 
-      assert {:ok, new_state, {:ok, :terminated}, _slice_change_event} =
+      assert {:ok, new_state, {:ok, :terminated}, _slice_change_event, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
 
       # Counter bumped via {:set, :terminations, prev+1} effect
@@ -126,7 +126,7 @@ defmodule Ezagent.Behavior.TerminableMigrationParityTest do
       # break the LV "Terminate" button.
       inv = build_invocation(agent_uri, admin_caps)
 
-      assert {:ok, _new_state, result, _evt} =
+      assert {:ok, _new_state, result, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
 
       assert result == {:ok, :terminated}
@@ -139,7 +139,7 @@ defmodule Ezagent.Behavior.TerminableMigrationParityTest do
       state = %{lifecycle: %{terminations: 5}}
       inv = build_invocation(agent_uri, admin_caps)
 
-      assert {:ok, new_state, _result, _evt} =
+      assert {:ok, new_state, _result, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
 
       assert new_state.lifecycle.terminations == 6
@@ -153,7 +153,7 @@ defmodule Ezagent.Behavior.TerminableMigrationParityTest do
       state = %{lifecycle: %{}}
       inv = build_invocation(agent_uri, admin_caps)
 
-      assert {:ok, new_state, _result, _evt} =
+      assert {:ok, new_state, _result, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
 
       assert new_state.lifecycle.terminations == 1

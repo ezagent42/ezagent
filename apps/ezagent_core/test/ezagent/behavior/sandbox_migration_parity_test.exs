@@ -118,7 +118,7 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
 
       inv = build_invocation(agent_uri, :read, %{}, admin_caps)
 
-      assert {:ok, new_state, result, _slice_change_event} =
+      assert {:ok, new_state, result, _slice_change_event, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
 
       # Read-only: slice unchanged.
@@ -155,7 +155,7 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
 
       inv = build_invocation(agent_uri, :read, %{}, admin_caps)
 
-      assert {:ok, _new_state, result, _evt} =
+      assert {:ok, _new_state, result, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, cleared, StubAgentKind, agent_uri)
 
       assert result.config_dir_path == nil
@@ -172,7 +172,7 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
 
       inv = build_invocation(agent_uri, :write_path, args, admin_caps)
 
-      assert {:ok, new_state, result, _evt} =
+      assert {:ok, new_state, result, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
 
       # Slice mutated through the {:set, key, value} effects — the
@@ -196,7 +196,7 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
       args = %{config_dir_path: "/new/path", template_class: NewMod}
       inv = build_invocation(agent_uri, :write_path, args, admin_caps)
 
-      assert {:ok, new_state, _result, _evt} =
+      assert {:ok, new_state, _result, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
 
       assert new_state.sandbox.state.config_dir_path == "/new/path"
@@ -238,7 +238,7 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
       args = %{config_dir_path: "/tmp/x", template_class: MyClass}
       inv = build_invocation(agent_uri, :write_path, args, admin_caps)
 
-      assert {:ok, new_state, _result, _evt} =
+      assert {:ok, new_state, _result, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
 
       # Prior respawn_template_data preserved.

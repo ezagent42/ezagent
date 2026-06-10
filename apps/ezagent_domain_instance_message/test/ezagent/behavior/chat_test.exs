@@ -679,7 +679,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # slices to %{}, so we only need to seed this one.
       initial_state = %{chat: slice}
 
-      assert {:ok, new_state, _result, slice_change_event} =
+      assert {:ok, new_state, _result, slice_change_event, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(
                  inv,
                  initial_state,

@@ -165,7 +165,7 @@ defmodule Ezagent.Behavior.RoutingMigrationParityTest do
           admin_caps
         )
 
-      assert {:ok, new_state, %{id: id}, _slice_change_event} =
+      assert {:ok, new_state, %{id: id}, _slice_change_event, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubRoutingKind, self_uri)
 
       assert is_integer(id) and id > 0
@@ -188,7 +188,7 @@ defmodule Ezagent.Behavior.RoutingMigrationParityTest do
       inv =
         build_invocation(self_uri, :delete_rule, %{table: table, id: row.id}, admin_caps)
 
-      assert {:ok, new_state, %{deleted: deleted_id}, _evt} =
+      assert {:ok, new_state, %{deleted: deleted_id}, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubRoutingKind, self_uri)
 
       assert deleted_id == row.id
@@ -204,7 +204,7 @@ defmodule Ezagent.Behavior.RoutingMigrationParityTest do
       inv =
         build_invocation(self_uri, :disable_rule, %{table: table, id: row.id}, admin_caps)
 
-      assert {:ok, new_state, %{disabled: disabled_id}, _evt} =
+      assert {:ok, new_state, %{disabled: disabled_id}, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubRoutingKind, self_uri)
 
       assert disabled_id == row.id
@@ -223,7 +223,7 @@ defmodule Ezagent.Behavior.RoutingMigrationParityTest do
       inv =
         build_invocation(self_uri, :enable_rule, %{table: table, id: row.id}, admin_caps)
 
-      assert {:ok, new_state, %{enabled: enabled_id}, _evt} =
+      assert {:ok, new_state, %{enabled: enabled_id}, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubRoutingKind, self_uri)
 
       assert enabled_id == row.id
