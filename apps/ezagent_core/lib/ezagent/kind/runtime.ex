@@ -171,6 +171,7 @@ defmodule Ezagent.Kind.Runtime do
 
     with {:ok, {behavior_name_atom, action}} <- Ezagent.URI.behavior_action(target),
          {:ok, behavior_module} <- lookup_behavior(kind_module, action),
+         :ok <- instance_set_gate(behavior_module, kind_module, state),
          :ok <- authz_check(kind_module, behavior_module, action, target, enriched_ctx),
          :ok <- workspace_isolation_check(behavior_module, target, enriched_ctx),
          :ok <- validate_args(behavior_module, action, args),
@@ -285,6 +286,52 @@ defmodule Ezagent.Kind.Runtime do
     case Ezagent.BehaviorRegistry.lookup(kind_module, action) do
       {:ok, behavior_module} -> {:ok, behavior_module}
       :error -> {:error, {:unknown_action, action}}
+    end
+  end
+
+  # P1 (SPEC §3.1, E9) — the per-instance subset gate. The §3.1 threat is a
+  # SUPERSET Kind: one Kind module DECLARES `behaviors/0 = [Chat, Surface, …]`
+  # but a per-instance subset (the persisted `:kind_base` set) excludes some of
+  # them — an excluded DECLARED behavior must not act on that instance.
+  #
+  # So the gate denies iff the behavior is BOTH (a) in the Kind's DECLARED set
+  # (`behaviors_of/1` — the subset-able superset) AND (b) NOT in this instance's
+  # `effective_set/2`. A behavior outside `behaviors_of/1` is not part of the
+  # subset mechanism at all and is NOT gated here:
+  #
+  #   * Universal behaviors (`UniversalBehaviors.all/0`, today `Manage`) resolve
+  #     for every Kind by construction and are never in `behaviors/0`.
+  #   * Registry-only behaviors — privileged / cross-domain Behaviors registered
+  #     for a Kind at app boot WITHOUT being in its `behaviors/0` (codex
+  #     register/lookup-parity class): `Ezagent.Behavior.IdentityAdmin`
+  #     (`identity.grant_cap`/`revoke_cap`), `UserDefaultCredentialSource`
+  #     (`set_default_credential_source`), etc. These are a separate, always-
+  #     available dispatch surface, orthogonal to the per-instance subset; they
+  #     stay reachable (cap-gated by the following `authz_check`). A module-or-
+  #     slice membership gate would wrongly deny them on every real User/Agent.
+  #
+  # This precisely targets the subset threat (a DECLARED-but-scoped-out behavior
+  # like ProbeBehavior/Surface on a chat-only superset instance → DENIED) while
+  # leaving every legitimate non-declared dispatch surface untouched.
+  defp instance_set_gate(behavior_module, kind_module, state) do
+    declared? = behavior_module in Ezagent.Kind.behaviors_of(kind_module)
+
+    in_instance? =
+      Ezagent.Kind.BehaviorSet.member?(
+        behavior_module,
+        Ezagent.Kind.BehaviorSet.effective_set(kind_module, state)
+      )
+
+    if not declared? or in_instance? do
+      :ok
+    else
+      :telemetry.execute([:ezagent, :authz, :denied], %{}, %{
+        kind_module: kind_module,
+        behavior_module: behavior_module,
+        reason: :behavior_not_in_instance_set
+      })
+
+      {:error, :behavior_not_in_instance_set}
     end
   end
 
