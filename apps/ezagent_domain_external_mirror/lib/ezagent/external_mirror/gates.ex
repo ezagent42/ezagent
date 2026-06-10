@@ -94,6 +94,7 @@ defmodule Ezagent.ExternalMirror.Gates do
              :unknown_adapter
              | :unauthorized
              | :adapter_not_authorized
+             | :not_bindable
              | :cross_workspace_denied
              | :target_check_timeout
              | {:target_ownership_denied, term()}
@@ -102,11 +103,37 @@ defmodule Ezagent.ExternalMirror.Gates do
       when is_binary(adapter_id) and is_map(ctx) do
     with :ok <- check_session_bind_cap(ctx, session_uri),
          {:ok, adapter_module} <- lookup_adapter(adapter_id),
+         # P3-1 Finding 2 — only `:push` adapters are bindable. A `:pull`
+         # adapter has no per-binding transport (no `target_ownership_check/2`,
+         # no Binding/Worker); submitting it to the bind flow must be
+         # rejected cleanly here, BEFORE `run_target_ownership_check/3`
+         # (which would otherwise crash on the missing callback). Placed
+         # AFTER Gate 1 (`check_session_bind_cap`) + `lookup_adapter` so a
+         # no-cap caller is still rejected by Gate 1 first (the enumeration
+         # property of Gate 0/1 is preserved — bindability is a structural
+         # property of the adapter, not a per-caller authorization).
+         :ok <- check_adapter_bindable(adapter_module),
          :ok <- check_adapter_allow_cap(ctx, session_uri, adapter_module),
          :ok <- check_workspace_iso(ctx, session_uri),
          caller_uri = Map.fetch!(ctx, :caller),
          :ok <- run_target_ownership_check(adapter_module, caller_uri, target_id) do
       {:ok, adapter_module}
+    end
+  end
+
+  # ----- Push-only bind guard (P3-1 Finding 2) ------------------------------
+
+  @doc """
+  Gate (P3-1) — only `:push` adapters may enter the bind flow. A `:pull`
+  adapter (served on demand by its caller's Phoenix channel, P3-2) has no
+  per-binding transport, so binding it is a structural error. Returns
+  `{:error, :not_bindable}` for a pull adapter; `:ok` for a push adapter.
+  """
+  @spec check_adapter_bindable(module()) :: :ok | {:error, :not_bindable}
+  def check_adapter_bindable(adapter_module) when is_atom(adapter_module) do
+    case Ezagent.ExternalMirror.Adapter.kind_of(adapter_module) do
+      :push -> :ok
+      :pull -> {:error, :not_bindable}
     end
   end
 

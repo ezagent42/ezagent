@@ -83,7 +83,15 @@ defmodule Ezagent.ExternalMirror.AdapterInstall do
     adapter_id = adapter_module.adapter_id()
 
     :ok = register_cap_subject(adapter_module, adapter_id)
-    :ok = reconcile_persisted_bindings(adapter_id)
+
+    # P3-1: binding/Worker startup is gated on the adapter KIND. A `:pull`
+    # adapter (the socialware customer feed, P3-2) has NO per-binding
+    # external transport — it is served by its caller's Phoenix channel —
+    # so it spawns NO Worker and has no persisted bindings to reconcile.
+    # Only `:push` adapters walk `external_mirror_bindings` + spawn Workers.
+    if Ezagent.ExternalMirror.Adapter.kind_of(adapter_module) == :push do
+      :ok = reconcile_persisted_bindings(adapter_id)
+    end
 
     :ok
   end
@@ -111,9 +119,29 @@ defmodule Ezagent.ExternalMirror.AdapterInstall do
   symmetric pair with a single call through the core primitive.
   """
   @spec ensure_install_hook_registered(String.t(), module()) :: :ok
-  def ensure_install_hook_registered(adapter_id, _adapter_module)
-      when is_binary(adapter_id) do
-    register_install_hook(adapter_id)
+  def ensure_install_hook_registered(adapter_id, adapter_module)
+      when is_binary(adapter_id) and is_atom(adapter_module) do
+    register_install_hook(adapter_id, install_hook_deps(adapter_id, adapter_module))
+  end
+
+  # P3-1 — the install hook's dependency set is KIND-dependent:
+  #
+  # - `:push` adapters carry a paired Binding; their hook waits on BOTH
+  #   `{AdapterRegistry, id}` AND `{BindingRegistry, id}` so `install/1`
+  #   (which reconciles persisted binding rows + spawns Workers) only fires
+  #   after the binding side has landed — preserving the original ordering.
+  # - `:pull` adapters (P3-1) have NO binding module, so a `{BindingRegistry,
+  #   id}` notification would NEVER arrive and `install/1` would never run —
+  #   skipping `register_cap_subject/2` and leaving the adapter's `allow_<id>`
+  #   cap unregistered (codex P3-1 HIGH). So a pull adapter's hook waits on
+  #   `{AdapterRegistry, id}` ONLY; `register/1` notifies that side right
+  #   after registering the hook, firing `install/1` (cap-subject only — the
+  #   worker-spawn step is itself gated to `:push` in `install/1`).
+  defp install_hook_deps(adapter_id, adapter_module) do
+    case Ezagent.ExternalMirror.Adapter.kind_of(adapter_module) do
+      :pull -> [{AdapterRegistry, adapter_id}]
+      _push -> [{AdapterRegistry, adapter_id}, {BindingRegistry, adapter_id}]
+    end
   end
 
   @doc """
@@ -127,15 +155,18 @@ defmodule Ezagent.ExternalMirror.AdapterInstall do
   """
   @spec ensure_install_hook_registered_for_adapter_id(String.t()) :: :ok
   def ensure_install_hook_registered_for_adapter_id(adapter_id) when is_binary(adapter_id) do
-    register_install_hook(adapter_id)
+    # The BindingRegistry side is only ever exercised by `:push` adapters (a
+    # `:pull` adapter registers no binding), so this counterpart always waits
+    # on BOTH registries — the push hook shape.
+    register_install_hook(adapter_id, [
+      {AdapterRegistry, adapter_id},
+      {BindingRegistry, adapter_id}
+    ])
   end
 
-  defp register_install_hook(adapter_id) do
+  defp register_install_hook(adapter_id, deps) when is_list(deps) do
     Ezagent.Plugin.publish_after_all_registered(
-      [
-        {AdapterRegistry, adapter_id},
-        {BindingRegistry, adapter_id}
-      ],
+      deps,
       fn ->
         # Resolve adapter module at fire time — both sides delegate
         # here, so we cannot rely on a captured module. By the time the

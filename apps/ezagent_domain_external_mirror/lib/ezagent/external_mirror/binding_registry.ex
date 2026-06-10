@@ -86,7 +86,17 @@ defmodule Ezagent.ExternalMirror.BindingRegistry do
     assert_behaviour!(binding_module)
     assert_required_callbacks!(binding_module)
 
-    if :ets.insert_new(@table, {adapter_id, binding_module}) do
+    # P3-1 (codex r4 HIGH) — the no-binding-for-pull check + the insert run under
+    # ONE node-local lock keyed by adapter_id, shared with
+    # AdapterRegistry.register/1, so a concurrent :pull-adapter registration for
+    # the same id cannot interleave between the check and the insert.
+    inserted? =
+      Ezagent.ExternalMirror.RegistryLock.with_lock(adapter_id, fn ->
+        assert_not_pull_adapter!(adapter_id, binding_module)
+        :ets.insert_new(@table, {adapter_id, binding_module})
+      end)
+
+    if inserted? do
       # SPEC docs/superpowers/specs/2026-05-25-external-mirror-auth-model-audit.md
       # §5 / §4.5: the historical r5 HIGH-A symmetric maybe_install_by_adapter_id
       # path is now expressed via the core
@@ -152,6 +162,32 @@ defmodule Ezagent.ExternalMirror.BindingRegistry do
             "BindingRegistry: #{inspect(binding_module)} declares " <>
               "@behaviour Ezagent.ExternalMirror.Binding but does not " <>
               "implement: #{missing_str} (codex r2 MEDIUM)."
+    end
+  end
+
+  # P3-1 (codex r3 HIGH) — the "a `:pull` adapter NEVER has a BindingRegistry
+  # row" invariant must hold at the REGISTRY layer for EVERY caller path, not
+  # just plugin boot / bind. If the `adapter_id` already resolves through
+  # AdapterRegistry to a `:pull` adapter, a binding for it is a structural
+  # error (a pull adapter is served by its caller's channel — it has no
+  # transport binding). Adapter-first ordering is closed here; the
+  # binding-first ordering is closed symmetrically in
+  # `AdapterRegistry.register/1` (it rejects a `:pull` adapter whose id already
+  # has a binding row).
+  defp assert_not_pull_adapter!(adapter_id, binding_module) do
+    case Ezagent.ExternalMirror.AdapterRegistry.lookup(adapter_id) do
+      {:ok, adapter_module} ->
+        if Ezagent.ExternalMirror.Adapter.kind_of(adapter_module) == :pull do
+          raise ArgumentError,
+                "BindingRegistry: adapter_id #{inspect(adapter_id)} resolves to " <>
+                  "the :pull adapter #{inspect(adapter_module)}; a pull adapter " <>
+                  "has no transport binding and MUST NOT have a BindingRegistry " <>
+                  "row (#{inspect(binding_module)} rejected). Pull adapters are " <>
+                  "served by their caller's channel (P3-1)."
+        end
+
+      :error ->
+        :ok
     end
   end
 

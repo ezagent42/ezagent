@@ -137,16 +137,30 @@ defmodule Ezagent.Plugin do
         }
 
   @typedoc """
-  An ExternalMirror `{adapter_module, binding_module}` pair (SPEC
+  An ExternalMirror adapter declaration (SPEC
   `docs/superpowers/specs/2026-05-24-external-mirror-domain.md` §5.1).
 
-  Grill-5 enforces bidirectional 1:1 — `adapter.binding_module() ==
-  binding` AND `binding.adapter_module() == adapter` AND
-  `adapter != binding`. Verified at compile time by the
-  `:ezagent_plugin_check` Mix compiler; re-verified defensively at
-  boot by `Ezagent.Plugin.boot/1`.
+  The declaration shape is keyed off the adapter's KIND
+  (`Ezagent.ExternalMirror.Adapter.kind_of/1`, P3-1):
+
+  - **`:push`** (the default) — a `{adapter_module, binding_module}`
+    PAIR. Grill-5 enforces bidirectional 1:1: `adapter.binding_module()
+    == binding` AND `binding.adapter_module() == adapter` AND `adapter
+    != binding`. Both registries (`AdapterRegistry` + `BindingRegistry`)
+    are written. UNCHANGED from PR-EM-1.
+
+  - **`:pull`** (P3-1) — a BARE adapter module (a single `module()`,
+    NOT a tuple). A pull adapter has NO per-binding transport, so it
+    declares no binding and only `AdapterRegistry` is written (no
+    `BindingRegistry` row — the no-binding invariant). The socialware
+    customer feed (P3-2) is the first real pull adapter.
+
+  Verified at compile time by the `:ezagent_plugin_check` Mix compiler;
+  re-verified defensively at boot by `Ezagent.Plugin.boot/1`.
   """
-  @type adapter_decl :: {adapter_module :: module(), binding_module :: module()}
+  @type adapter_decl ::
+          {adapter_module :: module(), binding_module :: module()}
+          | (pull_adapter_module :: module())
 
   @typedoc """
   What the `/plugins` config icon opens. V1 is `:route | :flavor | nil`
@@ -175,15 +189,22 @@ defmodule Ezagent.Plugin do
   @callback agent_flavors() :: [agent_flavor_decl()]
 
   @doc """
-  ExternalMirror adapter+binding pairs (SPEC
+  ExternalMirror adapter declarations (SPEC
   `docs/superpowers/specs/2026-05-24-external-mirror-domain.md` §5.1).
 
-  Each entry is `{adapter_module, binding_module}`. `Ezagent.Plugin.boot/1`
-  verifies Grill-5 (both implement their behaviour, bidirectional
-  `binding_module/0` / `adapter_module/0` match, distinct modules)
-  then registers each pair via `AdapterRegistry.register/1` +
-  `BindingRegistry.register_module/2`. Default `[]` via
-  `use Ezagent.Plugin`.
+  Each entry is either (P3-1):
+
+  - a `{adapter_module, binding_module}` PAIR for a `:push` adapter —
+    `Ezagent.Plugin.boot/1` verifies Grill-5 (both implement their
+    behaviour, bidirectional `binding_module/0` / `adapter_module/0`
+    match, distinct modules) then registers via
+    `AdapterRegistry.register/1` + `BindingRegistry.register_module/2`;
+    OR
+  - a BARE `adapter_module` for a `:pull` adapter — registered via
+    `AdapterRegistry.register/1` ONLY (no binding; pull adapters have
+    no per-binding transport).
+
+  Default `[]` via `use Ezagent.Plugin`.
   """
   @callback adapters() :: [adapter_decl()]
   @callback routing_tables() :: [routing_decl()]
@@ -532,6 +553,21 @@ defmodule Ezagent.Plugin do
        when is_atom(adapter) and is_atom(binding) do
     src = "adapters/0 entry #{inspect({adapter, binding})}"
 
+    # P3-1 — the `{adapter, binding}` tuple is the `:push` shape. A
+    # `:pull` adapter has no binding and MUST be declared bare (the
+    # `is_atom/1` clause below). Reject a pull adapter wrapped in a tuple
+    # so a plugin can't smuggle a dummy binding past the no-binding
+    # invariant (which would write a BindingRegistry row for a pull
+    # adapter at boot).
+    if adapter_kind_of(adapter) == :pull do
+      raise ArgumentError,
+            "#{inspect(plugin_module)} #{src}: #{inspect(adapter)} is a :pull " <>
+              "adapter (adapter_kind/0 == :pull) but is declared as a " <>
+              "`{adapter, binding}` tuple. A pull adapter has NO binding — " <>
+              "declare it as a BARE module (P3-1). Supplying a dummy binding " <>
+              "would violate the no-binding invariant."
+    end
+
     if adapter == binding do
       raise ArgumentError,
             "#{inspect(plugin_module)} #{src}: adapter and binding must be " <>
@@ -569,11 +605,69 @@ defmodule Ezagent.Plugin do
     :ok
   end
 
+  # P3-1 — a BARE adapter module is the `:pull` declaration shape.
+  # A pull adapter has no binding (no per-binding transport), so it is
+  # declared as a single module rather than a tuple. Validate it is a
+  # genuine `:pull` adapter implementing the pull contract; a bare
+  # `:push` module is malformed (push needs the `{adapter, binding}`
+  # tuple). `AdapterRegistry.register/1` enforces the per-kind required
+  # callbacks (`render/2` + `cap_subject/0` for pull) at registration.
+  defp assert_adapter_decl!(plugin_module, adapter)
+       when is_atom(adapter) and not is_nil(adapter) and not is_boolean(adapter) do
+    src = "adapters/0 entry #{inspect(adapter)}"
+
+    # Only a loadable module implementing `@behaviour
+    # Ezagent.ExternalMirror.Adapter` is a valid bare (:pull) declaration.
+    # A bogus atom (`:not_a_tuple`) or a module that isn't an adapter is
+    # MALFORMED — delegate to the catch-all clause for a clear message.
+    if bare_pull_candidate?(adapter) do
+      assert_implements!(plugin_module, adapter, Ezagent.ExternalMirror.Adapter, src)
+
+      case adapter_kind_of(adapter) do
+        :pull ->
+          :ok
+
+        :push ->
+          raise ArgumentError,
+                "#{inspect(plugin_module)} #{src}: #{inspect(adapter)} is a :push " <>
+                  "adapter (adapter_kind/0 defaults to :push) declared as a BARE " <>
+                  "module. The bare-module shape is reserved for :pull adapters; a " <>
+                  ":push adapter MUST be declared as a `{adapter_module, " <>
+                  "binding_module}` tuple (P3-1 / SPEC §5.1)."
+      end
+    else
+      raise_malformed_adapter_decl!(plugin_module, adapter)
+    end
+  end
+
   defp assert_adapter_decl!(plugin_module, decl) do
+    raise_malformed_adapter_decl!(plugin_module, decl)
+  end
+
+  defp raise_malformed_adapter_decl!(plugin_module, decl) do
     raise ArgumentError,
           "#{inspect(plugin_module)} declared a malformed adapters/0 entry: " <>
-            "#{inspect(decl)}. Each entry must be " <>
-            "`{adapter_module :: module(), binding_module :: module()}`."
+            "#{inspect(decl)}. Each entry must be a `{adapter_module :: " <>
+            "module(), binding_module :: module()}` tuple (:push) or a bare " <>
+            "`adapter_module :: module()` (:pull)."
+  end
+
+  # A bare atom is a (pull) adapter-declaration CANDIDATE only when it is
+  # a loadable module that implements `@behaviour
+  # Ezagent.ExternalMirror.Adapter`. Anything else (a stray atom like
+  # `:not_a_tuple`, or a module that isn't an adapter) is malformed.
+  defp bare_pull_candidate?(adapter) when is_atom(adapter) do
+    match?({:module, ^adapter}, Code.ensure_compiled(adapter)) and
+      behaviour_present?(adapter, Ezagent.ExternalMirror.Adapter)
+  end
+
+  # Resolve an adapter's kind via `Ezagent.ExternalMirror.Adapter.kind_of/1`.
+  # Uses `apply/3` because `Ezagent.ExternalMirror.Adapter` lives in
+  # `ezagent_domain_external_mirror`, downstream of `ezagent_core` — a
+  # direct call would emit "module not available" at core compile (same
+  # rationale as the `apply/3` registry calls in `publish_adapters!/2`).
+  defp adapter_kind_of(adapter) when is_atom(adapter) do
+    apply(Ezagent.ExternalMirror.Adapter, :kind_of, [adapter])
   end
 
   defp check_bidirectional!(plugin_module, adapter, binding, src) do
@@ -648,21 +742,36 @@ defmodule Ezagent.Plugin do
     Process.put({:em_pr1_receipts, receipts_ref}, [])
 
     try do
-      Enum.each(decls, fn {adapter_module, binding_module} ->
-        adapter_id = adapter_module.adapter_id()
+      Enum.each(decls, fn decl ->
+        # P3-1 — branch the registry writes by declaration shape:
+        #   {adapter, binding}  → :push: write BOTH registries.
+        #   bare adapter module → :pull: write AdapterRegistry ONLY (no
+        #                         binding — the no-binding invariant).
+        case decl do
+          {adapter_module, binding_module} ->
+            adapter_id = adapter_module.adapter_id()
 
-        adapter_result =
-          apply(Ezagent.ExternalMirror.AdapterRegistry, :register, [adapter_module])
+            adapter_result =
+              apply(Ezagent.ExternalMirror.AdapterRegistry, :register, [adapter_module])
 
-        record_receipt!(receipts_ref, {:adapter, adapter_id, adapter_module, adapter_result})
+            record_receipt!(receipts_ref, {:adapter, adapter_id, adapter_module, adapter_result})
 
-        binding_result =
-          apply(Ezagent.ExternalMirror.BindingRegistry, :register_module, [
-            adapter_id,
-            binding_module
-          ])
+            binding_result =
+              apply(Ezagent.ExternalMirror.BindingRegistry, :register_module, [
+                adapter_id,
+                binding_module
+              ])
 
-        record_receipt!(receipts_ref, {:binding, adapter_id, binding_module, binding_result})
+            record_receipt!(receipts_ref, {:binding, adapter_id, binding_module, binding_result})
+
+          adapter_module when is_atom(adapter_module) ->
+            adapter_id = adapter_module.adapter_id()
+
+            adapter_result =
+              apply(Ezagent.ExternalMirror.AdapterRegistry, :register, [adapter_module])
+
+            record_receipt!(receipts_ref, {:adapter, adapter_id, adapter_module, adapter_result})
+        end
       end)
 
       :ok
@@ -689,7 +798,14 @@ defmodule Ezagent.Plugin do
   # case. Defense in depth.)
   defp intra_batch_dup_check!(plugin_module, decls) do
     ids =
-      Enum.map(decls, fn {adapter_module, _binding} ->
+      Enum.map(decls, fn decl ->
+        # P3-1 — extract the adapter module from either declaration shape.
+        adapter_module =
+          case decl do
+            {adapter_module, _binding} -> adapter_module
+            adapter_module when is_atom(adapter_module) -> adapter_module
+          end
+
         {adapter_module.adapter_id(), adapter_module}
       end)
 

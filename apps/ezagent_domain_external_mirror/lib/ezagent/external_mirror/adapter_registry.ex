@@ -89,7 +89,17 @@ defmodule Ezagent.ExternalMirror.AdapterRegistry do
     assert_required_callbacks!(adapter_module)
     adapter_id = adapter_module.adapter_id()
 
-    if :ets.insert_new(@table, {adapter_id, adapter_module}) do
+    # P3-1 (codex r4 HIGH) — the no-binding-for-pull check + the insert run under
+    # ONE node-local lock keyed by adapter_id, shared with
+    # BindingRegistry.register_module/2, so a concurrent binding registration for
+    # the same id cannot interleave between the check and the insert.
+    inserted? =
+      Ezagent.ExternalMirror.RegistryLock.with_lock(adapter_id, fn ->
+        assert_no_binding_for_pull!(adapter_id, adapter_module)
+        :ets.insert_new(@table, {adapter_id, adapter_module})
+      end)
+
+    if inserted? do
       # SPEC docs/superpowers/specs/2026-05-25-external-mirror-auth-model-audit.md
       # §5 / §4.5: the historical r5 HIGH-A symmetric maybe_install pattern
       # is now expressed via the core `Ezagent.Plugin.publish_after_all_registered/2`
@@ -151,22 +161,28 @@ defmodule Ezagent.ExternalMirror.AdapterRegistry do
   # arity BEFORE inserting. (PR-EM-2's added callbacks get checked
   # then.)
   defp assert_required_callbacks!(adapter_module) do
-    # PR-EM-2 expands the required-callback set per SPEC §2.2. The
-    # PR-EM-2 callbacks (`cap_subject/0`, `target_ownership_check/2`,
-    # `event_to_payload/1`) are now required so a plugin that ships
-    # only the PR-EM-1 stub set is rejected at registration time —
-    # `list_adapters/0` + the Worker dispatch path can rely on the
-    # full contract being present.
-    required = [
-      adapter_id: 0,
-      display_name: 0,
-      description: 0,
-      binding_module: 0,
-      # PR-EM-2 additions:
-      cap_subject: 0,
-      target_ownership_check: 2,
-      event_to_payload: 1
-    ]
+    # PR-EM-2 expands the required-callback set per SPEC §2.2. P3-1 splits
+    # the required set by the adapter KIND axis (`Adapter.kind_of/1`):
+    #
+    # - `:push` (the default) keeps the full PR-EM-2 contract —
+    #   `binding_module/0`, `cap_subject/0`, `target_ownership_check/2`,
+    #   `event_to_payload/1` (a push adapter still has a paired Binding +
+    #   Worker). A push adapter missing any of these is rejected exactly
+    #   as before — push registration is byte-identical.
+    #
+    # - `:pull` (the socialware customer feed, P3-2) has NO per-binding
+    #   external transport, so it MUST NOT be required to declare
+    #   `binding_module/0` / `target_ownership_check/2` / `event_to_payload/1`.
+    #   It requires `render/2` (the on-demand json render) + `cap_subject/0`.
+    #
+    # Both kinds share the PR-EM-1 id/name/description trio.
+    required =
+      [
+        adapter_id: 0,
+        display_name: 0,
+        description: 0,
+        cap_subject: 0
+      ] ++ kind_specific_required(Ezagent.ExternalMirror.Adapter.kind_of(adapter_module))
 
     missing =
       Enum.reject(required, fn {fun, arity} ->
@@ -186,6 +202,43 @@ defmodule Ezagent.ExternalMirror.AdapterRegistry do
               "missing callbacks as compiler warnings — the registry " <>
               "checks at insert time so `list_adapters/0` can never crash " <>
               "(codex r2 MEDIUM)."
+    end
+  end
+
+  # P3-1 — the required callbacks that differ by adapter KIND.
+  # `:push` keeps the full PR-EM-2 transport contract; `:pull` requires
+  # only `render/2` (no binding / ownership-check / event-to-payload).
+  defp kind_specific_required(:push) do
+    [
+      binding_module: 0,
+      target_ownership_check: 2,
+      event_to_payload: 1
+    ]
+  end
+
+  defp kind_specific_required(:pull) do
+    [render: 2]
+  end
+
+  # P3-1 (codex r3 HIGH) — close the binding-FIRST ordering of the
+  # "a `:pull` adapter NEVER has a BindingRegistry row" invariant. If a binding
+  # row already exists for this `adapter_id` (registered before the adapter),
+  # a `:pull` adapter claiming that id is a structural error. The adapter-first
+  # ordering is closed symmetrically in `BindingRegistry.register_module/2`.
+  defp assert_no_binding_for_pull!(adapter_id, adapter_module) do
+    if Ezagent.ExternalMirror.Adapter.kind_of(adapter_module) == :pull do
+      case Ezagent.ExternalMirror.BindingRegistry.lookup(adapter_id) do
+        {:ok, binding_module} ->
+          raise ArgumentError,
+                "AdapterRegistry: :pull adapter #{inspect(adapter_module)} " <>
+                  "(adapter_id #{inspect(adapter_id)}) cannot register — a " <>
+                  "BindingRegistry row already binds it to " <>
+                  "#{inspect(binding_module)}. A pull adapter has no transport " <>
+                  "binding (P3-1)."
+
+        :error ->
+          :ok
+      end
     end
   end
 

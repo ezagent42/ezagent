@@ -15,8 +15,15 @@ defmodule Ezagent.ExternalMirror.AdapterRegistryTest do
 
   use ExUnit.Case, async: false
 
-  alias Ezagent.ExternalMirror.AdapterRegistry
-  alias Ezagent.ExternalMirror.TestSupport.{MockAdapter, OtherAdapter}
+  alias Ezagent.ExternalMirror.{Adapter, AdapterRegistry, WorkerRegistry}
+
+  alias Ezagent.ExternalMirror.TestSupport.{
+    MockAdapter,
+    OtherAdapter,
+    PullAdapter,
+    PushAdapterMissingBinding
+  }
+
   alias Ezagent.ExternalMirror.TestSupport.RegistrySnapshot
 
   setup do
@@ -85,6 +92,131 @@ defmodule Ezagent.ExternalMirror.AdapterRegistryTest do
 
     test "returns an empty list when no adapters registered" do
       assert AdapterRegistry.list() == []
+    end
+  end
+
+  describe "adapter KIND axis (P3-1)" do
+    test "kind_of/1 defaults to :push for an adapter that does not export adapter_kind/0" do
+      # MockAdapter is an existing :push adapter and does NOT export
+      # adapter_kind/0 — back-compat default per P3-1.
+      refute function_exported?(MockAdapter, :adapter_kind, 0)
+      assert Adapter.kind_of(MockAdapter) == :push
+    end
+
+    test "kind_of/1 returns :pull for an adapter that declares adapter_kind :pull" do
+      assert Adapter.kind_of(PullAdapter) == :pull
+    end
+
+    test "a :pull adapter registers WITHOUT a binding_module" do
+      refute function_exported?(PullAdapter, :binding_module, 0)
+      assert :ok = AdapterRegistry.register(PullAdapter)
+      assert {:ok, PullAdapter} = AdapterRegistry.lookup("pull_em")
+    end
+
+    test "a :pull adapter does NOT spawn a Worker on registration" do
+      before = WorkerRegistry.list_all()
+      assert :ok = AdapterRegistry.register(PullAdapter)
+      # No per-binding Worker/supervisor is started for a pull adapter —
+      # it is served by its caller's Phoenix channel (P3-2), not a Worker.
+      assert WorkerRegistry.list_all() == before
+    end
+
+    test "a :pull adapter's install hook FIRES on AdapterRegistry alone — cap subject registered, no binding (codex P3-1 HIGH)" do
+      # The install hook for a binding-less pull adapter must NOT wait on a
+      # BindingRegistry entry (which never arrives) — otherwise install/1 never
+      # runs and the per-adapter allow cap is never registered, leaving the
+      # adapter unusable for grant/validate flows.
+      assert :ok = AdapterRegistry.register(PullAdapter)
+
+      # install/1 ran register_cap_subject/2 → the allow_<id> subject exists
+      # on Ezagent.Entity.Session, even though no Worker/binding exists.
+      assert {:ok, %{behavior: Ezagent.ExternalMirror.TestSupport.PullAdapter.Allow}} =
+               Ezagent.CapabilityRegistry.lookup_subject(
+                 Ezagent.Entity.Session,
+                 :allow_pull_em
+               )
+
+      # ...and NO BindingRegistry row was ever created for the pull adapter.
+      assert :error = Ezagent.ExternalMirror.BindingRegistry.lookup("pull_em")
+    end
+
+    test "adapter-first: a binding for an already-registered :pull adapter is REJECTED (codex P3-1 r3 HIGH)" do
+      # The "a :pull adapter NEVER has a BindingRegistry row" invariant holds at
+      # the registry layer for the DIRECT path too — not just plugin boot.
+      assert :ok = AdapterRegistry.register(PullAdapter)
+
+      assert_raise ArgumentError, ~r/pull adapter|no transport binding/, fn ->
+        Ezagent.ExternalMirror.BindingRegistry.register_module(
+          "pull_em",
+          Ezagent.ExternalMirror.TestSupport.MockBinding
+        )
+      end
+
+      assert :error = Ezagent.ExternalMirror.BindingRegistry.lookup("pull_em")
+    end
+
+    test "binding-first: registering a :pull adapter whose id already has a binding row is REJECTED (codex P3-1 r3 HIGH)" do
+      # The symmetric ordering: a binding row landed first (id not yet an
+      # adapter, so allowed), then a :pull adapter claims that id → rejected.
+      assert :ok =
+               Ezagent.ExternalMirror.BindingRegistry.register_module(
+                 "pull_em",
+                 Ezagent.ExternalMirror.TestSupport.MockBinding
+               )
+
+      assert_raise ArgumentError, ~r/BindingRegistry row already binds|no transport binding/, fn ->
+        AdapterRegistry.register(PullAdapter)
+      end
+
+      assert :error = AdapterRegistry.lookup("pull_em")
+    end
+
+    test "concurrent: racing AdapterRegistry.register(pull) vs BindingRegistry.register_module never lands the forbidden state (codex P3-1 r4 HIGH)" do
+      # The cross-registry check+insert is serialized by RegistryLock, so under a
+      # concurrent race exactly one side wins and the other is rejected — the
+      # forbidden "pull adapter id WITH a binding row" state never occurs.
+      a =
+        Task.async(fn ->
+          try do
+            AdapterRegistry.register(PullAdapter)
+          rescue
+            ArgumentError -> :rejected
+          end
+        end)
+
+      b =
+        Task.async(fn ->
+          try do
+            Ezagent.ExternalMirror.BindingRegistry.register_module(
+              "pull_em",
+              Ezagent.ExternalMirror.TestSupport.MockBinding
+            )
+          rescue
+            ArgumentError -> :rejected
+          end
+        end)
+
+      Task.await(a)
+      Task.await(b)
+
+      # The invariant: NOT (id resolves to a :pull adapter AND a binding row
+      # exists). At least one side was rejected by the locked cross-check.
+      adapter_is_pull? = match?({:ok, PullAdapter}, AdapterRegistry.lookup("pull_em"))
+      has_binding? = match?({:ok, _}, Ezagent.ExternalMirror.BindingRegistry.lookup("pull_em"))
+
+      refute adapter_is_pull? and has_binding?,
+             "forbidden state: :pull adapter pull_em coexisting with a binding row"
+    end
+
+    test "a :push adapter missing binding_module/0 still RAISES (push contract unchanged)" do
+      assert Adapter.kind_of(PushAdapterMissingBinding) == :push
+
+      err =
+        assert_raise ArgumentError, fn ->
+          AdapterRegistry.register(PushAdapterMissingBinding)
+        end
+
+      assert err.message =~ "binding_module/0"
     end
   end
 end

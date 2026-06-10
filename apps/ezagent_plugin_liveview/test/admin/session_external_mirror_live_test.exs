@@ -178,6 +178,24 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
       refute html =~ "per-adapter allow caps"
     end
 
+    test "a :pull adapter is EXCLUDED from the bind dropdown even for an admin (P3-1 Finding 2)",
+         %{session_uri: session_uri, owner_uri: owner_uri} do
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+      # Register a binding-less :pull adapter. Even though the admin holds
+      # the `:any/:any/:any` cap (so Cap 2 is satisfied), the bind picker
+      # must NOT list it — a pull adapter is not bindable (Gates returns
+      # :not_bindable). The push adapter (pr4_mock) still appears.
+      alias Ezagent.ExternalMirror.TestSupport.PullAdapter
+      _ = AdapterRegistry.register(PullAdapter)
+      on_exit(fn -> AdapterRegistry.__delete__("pull_em") end)
+
+      {:ok, _lv, html} = live(admin_conn(), path_for(session_uri))
+
+      assert html =~ "pr4_mock", "the :push adapter must still appear in the bind dropdown"
+      refute html =~ "pull_em", "the :pull adapter must NOT appear in the bind dropdown"
+    end
+
     test "caller with NO per-adapter allow cap sees the empty-state message",
          %{session_uri: session_uri, owner_uri: owner_uri} do
       :ok = spawn_owner_and_session(owner_uri, session_uri)
