@@ -44,18 +44,39 @@ says to STOP + escalate at.
 
 ## The two remaining blockers — G1 / 地基 (need Allen)
 
-### G1-a — cc bot esr-bridge does not join → deliver timeout
+### G1-a — cc bot esr-bridge does not join → deliver timeout (ROOT CAUSE: #512 EagerBridge not merged)
 On the first run the customer message routed to the bot, but:
 ```
 [warning] AgentBridge deliver dropped for entity://cinnox/agent/cs-bot-alice: :timeout
 invocation chat.receive → cs-bot-alice  duration_us=15004961   # = deliver_ensuring 15s ready-timeout
 ```
-claude is running, the `.mcp.json` bridge config is present, but the esr-bridge
-MCP never joins `agent_bridge:cc:<uri>` within the 15 s window. (One contributing
-env artifact was a port mismatch — the bridge WS URL derives from the **public
-port** (default `10042`) while the test ran on `10052`; running on `10042` is
-required but did not by itself produce an observed bridge join.) This is the same
-cc-worker chat-reply lifecycle class as the original E1b finding and #539's scope.
+**Root cause (confirmed — this is the documented G-live / PoC-G1 blocker):** a
+freshly-spawned cc agent's claude **does not auto-join the `agent_bridge:cc:<uri>`
+WS channel** on startup — it sits idle (historically stuck at claude's first-run
+onboarding) and never starts/announces its esr-bridge MCP, so `AgentBridge.deliver`
+has nothing to deliver to and times out at the 15 s ready window. See
+`docs/notes/2026-06-…demo-script` G-live: *"spawn 的 cc agent 卡 onboarding,不
+自动 JOIN esr-bridge … 修复 PR #512 `EagerBridge` 未合并进 main"*.
+
+**The fix exists but is NOT on this line.** `EzagentPluginCc.EagerBridge.ensure_bound!/2`
+("programmatic MCP bridge init" — the bridge-kick) lives on branches
+`feat/eager-bridge` / `fix/cc-bridge-join-2026-06-01`, NOT on `main`/`autoservice`.
+So every fresh stack built on main/autoservice lacks the eager bridge-kick → the
+bot's bridge never joins → deliver timeout. **This is why the bug recurs across
+sessions: the fix never landed on the tested line.**
+
+**Ruled out (so the diagnosis is precise):**
+- Identity is correct: the bot's claude process has `EZAGENT_AGENT_URI` +
+  `EZAGENT_AGENT_TOKEN` (via `CcAgent.build_claude_cmd/3` `cmd_env`, the #539 path)
+  + `CLAUDE_CODE_OAUTH_TOKEN`; the v2 `AgentBridge.TokenStore` WS-join gate is
+  satisfied. `.mcp.json` (shared, ws_url only) + `CLAUDE.md` (soul) are present.
+- One env artifact compounded it during testing: the bridge WS URL derives from
+  the **public port** (default `10042`); a run on `PORT=10052` dialed a dead
+  `10042`. Run on `10042` — but even then, without EagerBridge the join is lazy.
+
+**Fix path:** land #512 `EagerBridge` on `main` → flows to `autoservice`; then
+`SocialwareCS` provisioning calls (or relies on) `EagerBridge.ensure_bound!/2`
+after `create_agent` so the bot's bridge joins eagerly before the first message.
 
 ### G1-b — routing registry not rehydrated on server boot
 After a server restart, the seed's `{:from customer, :in_session} → bot` rule is
