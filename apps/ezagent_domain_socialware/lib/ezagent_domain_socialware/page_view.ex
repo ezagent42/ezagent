@@ -59,6 +59,18 @@ defmodule EzagentDomainSocialware.PageView do
     """
   end
 
+  @impl true
+  def external_render?, do: true
+
+  @impl true
+  def external_render(%URI{} = session_uri) do
+    session_uri
+    |> load_surface()
+    |> Surface.customer_tree()
+  end
+
+  def external_render(_), do: nil
+
   defp render_node(assigns) do
     assigns = assign(assigns, :node_type, node_type(assigns.node))
 
