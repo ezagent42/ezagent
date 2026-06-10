@@ -96,6 +96,20 @@ defmodule Ezagent.Socialware.Settlement do
   @spec commit_after_pointer(String.t(), integer() | nil) ::
           {:ok, map()} | {:error, term()}
   def commit_after_pointer(turn_id, approved_version) do
+    case get(turn_id) do
+      {:ok, %SettlementRecord{status: :committed}} ->
+        # Already committed — FULL no-op (codex P2.5b HIGH). Preserve committed_at
+        # + committed_seq so the durable cursor order and the page projection
+        # never disagree; a delayed re-commit of an older turn must NOT bump its
+        # commit metadata. No re-broadcast.
+        {:ok, %{status: :committed, message_ids: message_ids(turn_id), emitted?: false}}
+
+      _ ->
+        commit_pending_after_pointer(turn_id, approved_version)
+    end
+  end
+
+  defp commit_pending_after_pointer(turn_id, approved_version) do
     with {:ok, settlement} <- confirm_pointer_advanced(turn_id, approved_version),
          {:ok, emitted?} <- emit_outbox_once(settlement),
          {:ok, settlement} <- get(turn_id),
@@ -103,9 +117,16 @@ defmodule Ezagent.Socialware.Settlement do
       committed_at = DateTime.utc_now()
       message_ids = message_ids(turn_id)
 
-      {1, _} =
-        from(s in SettlementRecord, where: s.turn_id == ^turn_id)
-        |> Repo.update_all(set: [status: :committed, committed_at: committed_at])
+      {:ok, _} =
+        Repo.transaction(fn ->
+          # `settlement` carries target_surface_version; assign the commit-order
+          # cursor + surface_version atomically with the status flip.
+          assign_committed_seq(settlement)
+
+          {1, _} =
+            from(s in SettlementRecord, where: s.turn_id == ^turn_id)
+            |> Repo.update_all(set: [status: :committed, committed_at: committed_at])
+        end)
 
       if emitted? do
         Phoenix.PubSub.broadcast(
@@ -133,13 +154,109 @@ defmodule Ezagent.Socialware.Settlement do
     with {:ok, settlement} <- get(turn_id),
          {:ok, settlement} <- mark_subwrite(settlement, @visibility_flipped),
          {:ok, settlement} <- mark_subwrite(settlement, @pointer_advanced),
-         {:ok, _settlement} <- mark_subwrite(settlement, @outbox_emitted) do
+         {:ok, settlement} <- mark_subwrite(settlement, @outbox_emitted) do
+      # P2.5b — faithful to the real commit boundary: assign the commit-order
+      # cursor + surface_version (if an outbox row exists) alongside the status
+      # flip. Tolerates settlements with no outbox row.
+      assign_committed_seq(settlement)
+
       {1, _} =
         from(s in SettlementRecord, where: s.turn_id == ^turn_id)
         |> Repo.update_all(set: [status: :committed, committed_at: DateTime.utc_now()])
 
       get(turn_id)
     end
+  end
+
+  # P2.5b — assign the per-session monotonic COMMIT-ORDER cursor to this turn's
+  # outbox row, IF not already assigned (idempotent re-commit). ALSO (re)writes
+  # surface_version from the settlement — covers an UPGRADE-pending row inserted
+  # before this migration with surface_version == NULL. Runs inside the
+  # SocialwareSession GenServer (per-session serialized), so max+1 has no
+  # concurrent writer; the (session_uri, committed_seq) unique index is a
+  # let-it-crash backstop. Tolerates a missing outbox row (no MatchError).
+  defp assign_committed_seq(%SettlementRecord{turn_id: turn_id, session_uri: session_uri} = settlement) do
+    case Repo.get_by(CustomerOutbox, turn_id: turn_id) do
+      nil ->
+        :ok
+
+      %CustomerOutbox{committed_seq: seq} when is_integer(seq) ->
+        :ok
+
+      %CustomerOutbox{} ->
+        next =
+          (Repo.one(
+             from(o in CustomerOutbox,
+               where: o.session_uri == ^session_uri and not is_nil(o.committed_seq),
+               select: max(o.committed_seq)
+             )
+           ) || 0) + 1
+
+        {1, _} =
+          from(o in CustomerOutbox, where: o.turn_id == ^turn_id)
+          |> Repo.update_all(
+            set: [committed_seq: next, surface_version: settlement.target_surface_version]
+          )
+
+        :ok
+    end
+  end
+
+  @doc """
+  P2.5b — idempotent backfill: assign committed_seq + surface_version to EXISTING
+  committed outbox rows whose committed_seq IS NULL. Per session, numbers rows in
+  commit order: committed_at, then `target_surface_version` (page-version order —
+  a tied committed_at resolves so the HIGHER version gets the HIGHER seq, so the
+  committed_seq page read picks it), then turn_id. Continues from any committed_seq
+  already present. Safe to re-run (touches only NULL-seq committed rows).
+
+  RUNTIME/TEST helper. The actual deploy backfill is a SELF-CONTAINED copy inside
+  migration `20260618000600` (an `ezagent_core` migration must not call up-layer
+  `Ezagent.Socialware.*`; codex P2.5b impl HIGH). This function mirrors that
+  algorithm for unit tests / ad-hoc repair via the app runtime.
+  """
+  @spec backfill_committed_seq!() :: :ok
+  def backfill_committed_seq! do
+    rows =
+      from(o in CustomerOutbox,
+        join: s in SettlementRecord,
+        on: s.turn_id == o.turn_id,
+        where: s.status == :committed and is_nil(o.committed_seq),
+        order_by: [
+          asc: o.session_uri,
+          asc: s.committed_at,
+          asc: coalesce(s.target_surface_version, 0),
+          asc: o.turn_id
+        ],
+        select: %{
+          turn_id: o.turn_id,
+          session_uri: o.session_uri,
+          target_surface_version: s.target_surface_version
+        }
+      )
+      |> Repo.all()
+
+    rows
+    |> Enum.group_by(& &1.session_uri)
+    |> Enum.each(fn {session_uri, session_rows} ->
+      start =
+        Repo.one(
+          from(o in CustomerOutbox,
+            where: o.session_uri == ^session_uri and not is_nil(o.committed_seq),
+            select: max(o.committed_seq)
+          )
+        ) || 0
+
+      session_rows
+      |> Enum.with_index(start + 1)
+      |> Enum.each(fn {row, seq} ->
+        {1, _} =
+          from(o in CustomerOutbox, where: o.turn_id == ^row.turn_id)
+          |> Repo.update_all(set: [committed_seq: seq, surface_version: row.target_surface_version])
+      end)
+    end)
+
+    :ok
   end
 
   defp mark_subwrite(%SettlementRecord{} = settlement, subwrite) do
@@ -170,6 +287,7 @@ defmodule Ezagent.Socialware.Settlement do
             session_uri: settlement.session_uri,
             workspace_uri: settlement.workspace_uri,
             message_ids: message_ids,
+            surface_version: settlement.target_surface_version,
             emitted_at: DateTime.utc_now()
           }
         ],
