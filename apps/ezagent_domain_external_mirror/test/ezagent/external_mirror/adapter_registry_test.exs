@@ -171,6 +171,43 @@ defmodule Ezagent.ExternalMirror.AdapterRegistryTest do
       assert :error = AdapterRegistry.lookup("pull_em")
     end
 
+    test "concurrent: racing AdapterRegistry.register(pull) vs BindingRegistry.register_module never lands the forbidden state (codex P3-1 r4 HIGH)" do
+      # The cross-registry check+insert is serialized by RegistryLock, so under a
+      # concurrent race exactly one side wins and the other is rejected — the
+      # forbidden "pull adapter id WITH a binding row" state never occurs.
+      a =
+        Task.async(fn ->
+          try do
+            AdapterRegistry.register(PullAdapter)
+          rescue
+            ArgumentError -> :rejected
+          end
+        end)
+
+      b =
+        Task.async(fn ->
+          try do
+            Ezagent.ExternalMirror.BindingRegistry.register_module(
+              "pull_em",
+              Ezagent.ExternalMirror.TestSupport.MockBinding
+            )
+          rescue
+            ArgumentError -> :rejected
+          end
+        end)
+
+      Task.await(a)
+      Task.await(b)
+
+      # The invariant: NOT (id resolves to a :pull adapter AND a binding row
+      # exists). At least one side was rejected by the locked cross-check.
+      adapter_is_pull? = match?({:ok, PullAdapter}, AdapterRegistry.lookup("pull_em"))
+      has_binding? = match?({:ok, _}, Ezagent.ExternalMirror.BindingRegistry.lookup("pull_em"))
+
+      refute adapter_is_pull? and has_binding?,
+             "forbidden state: :pull adapter pull_em coexisting with a binding row"
+    end
+
     test "a :push adapter missing binding_module/0 still RAISES (push contract unchanged)" do
       assert Adapter.kind_of(PushAdapterMissingBinding) == :push
 

@@ -88,9 +88,18 @@ defmodule Ezagent.ExternalMirror.AdapterRegistry do
     assert_behaviour!(adapter_module)
     assert_required_callbacks!(adapter_module)
     adapter_id = adapter_module.adapter_id()
-    assert_no_binding_for_pull!(adapter_id, adapter_module)
 
-    if :ets.insert_new(@table, {adapter_id, adapter_module}) do
+    # P3-1 (codex r4 HIGH) — the no-binding-for-pull check + the insert run under
+    # ONE node-local lock keyed by adapter_id, shared with
+    # BindingRegistry.register_module/2, so a concurrent binding registration for
+    # the same id cannot interleave between the check and the insert.
+    inserted? =
+      Ezagent.ExternalMirror.RegistryLock.with_lock(adapter_id, fn ->
+        assert_no_binding_for_pull!(adapter_id, adapter_module)
+        :ets.insert_new(@table, {adapter_id, adapter_module})
+      end)
+
+    if inserted? do
       # SPEC docs/superpowers/specs/2026-05-25-external-mirror-auth-model-audit.md
       # §5 / §4.5: the historical r5 HIGH-A symmetric maybe_install pattern
       # is now expressed via the core `Ezagent.Plugin.publish_after_all_registered/2`
