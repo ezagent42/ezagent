@@ -346,10 +346,99 @@ defmodule EzagentDomainSocialware.PageViewExternalRenderTest do
   SAME projection the customer feed already uses (Surface.customer_tree/1).
   Internal render (operator_tree) is unaffected.
   """
-  use ExUnit.Case, async: true
+  # Spawns a real SocialwareSession Kind (touches KindSnapshot/Repo), so this
+  # MUST use the Repo-sandbox case and run non-async (codex P2 review).
+  use EzagentCore.DataCase, async: false
 
+  alias Ezagent.Invocation
+  alias Ezagent.Ecto.KindSnapshot
+  alias Ezagent.Entity.{SocialwareSession, User}
   alias Ezagent.Behavior.Surface
   alias EzagentDomainSocialware.PageView
+
+  defp session_uri do
+    Ezagent.URI.session(
+      :team_alpha,
+      :socialware,
+      "page-ext-render-#{System.unique_integer([:positive])}"
+    )
+  end
+
+  defp agent_uri(name), do: Ezagent.URI.entity(:team_alpha, :agent, name)
+
+  defp target(session_uri, behavior, action) do
+    Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=#{behavior}.#{action}")
+  end
+
+  defp dispatch(session_uri, behavior, action, args) do
+    Invocation.dispatch(%Invocation{
+      target: target(session_uri, behavior, action),
+      mode: :call,
+      args: args,
+      ctx: %{
+        caller: User.admin_uri(),
+        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        reply: {:caller_inbox, self()}
+      }
+    })
+  end
+
+  defp wait_until(fun, attempts \\ 100)
+  defp wait_until(_fun, 0), do: flunk("wait_until: condition never became true")
+
+  defp wait_until(fun, attempts) do
+    if fun.() do
+      :ok
+    else
+      Process.sleep(20)
+      wait_until(fun, attempts - 1)
+    end
+  end
+
+  # Spawn a fresh socialware session. `Surface.create/1` seeds
+  # %{versions: %{}, approved: nil, version_seq: 0}, so there is NO approved
+  # version yet — `customer_tree` returns nil.
+  defp spawn_session do
+    uri = session_uri()
+    :ok = KindSnapshot.delete(URI.to_string(uri))
+    {:ok, _pid} = Ezagent.Kind.spawn(SocialwareSession, %{uri: uri})
+
+    :ok = Ezagent.WorkspaceRegistry.bind(uri, Ezagent.Capability.workspace_of(uri))
+    uri
+  end
+
+  # Drive a full turn to APPROVE a page version (auto-approve on settle) — the
+  # exact seeding path the surface dispatch integration test exercises.
+  defp approve_page(session_uri, page_tree) do
+    {:ok, %{turn_id: turn_id}} =
+      dispatch(session_uri, :turn, :open, %{trigger: %{message_id: "m1"}, opened_at: 1})
+
+    {:ok, _} =
+      dispatch(session_uri, :turn, :dispatch, %{
+        turn_id: turn_id,
+        subtasks: [%{id: :page, mention: agent_uri("page"), prompt: "render"}]
+      })
+
+    {:ok, _} =
+      dispatch(session_uri, :turn, :deliver, %{
+        turn_id: turn_id,
+        subtask_id: :page,
+        card_ref: %{kind: :page, tree: page_tree}
+      })
+
+    {:ok, %{version: version}} =
+      dispatch(session_uri, :turn, :compose, %{turn_id: turn_id, result_refs: []})
+
+    {:ok, %{status: :settled}} =
+      dispatch(session_uri, :turn, :settle, %{turn_id: turn_id})
+
+    wait_until(fn ->
+      {:ok, surface} = Ezagent.Kind.get_slice(session_uri, :surface)
+      surface.approved == version
+    end)
+
+    version
+  end
 
   describe "external_render?/0" do
     test "PageView declares an external render target" do
@@ -359,38 +448,28 @@ defmodule EzagentDomainSocialware.PageViewExternalRenderTest do
 
   describe "external_render/1" do
     test "returns nil when there is no approved version" do
-      # Build a session with a surface slice that has versions but none approved.
-      uri = put_surface(%{versions: %{1 => %{tree: %{type: "text", props: %{text: "draft"}}}}, approved: nil})
-
+      uri = spawn_session()
       assert PageView.external_render(uri) == nil
     end
 
     test "returns the APPROVED version tree (== Surface.customer_tree/1)" do
-      tree = %{type: "text", props: %{text: "live page"}}
-      surface = %{versions: %{1 => %{tree: tree}}, approved: 1}
-      uri = put_surface(surface)
+      page_tree = %{type: "text", props: %{text: "live page"}}
+      uri = spawn_session()
+      _version = approve_page(uri, page_tree)
 
+      {:ok, surface} = Ezagent.Kind.get_slice(uri, :surface)
       assert PageView.external_render(uri) == Surface.customer_tree(surface)
-      refute is_nil(PageView.external_render(uri))
+      assert PageView.external_render(uri) == page_tree
     end
-  end
 
-  # Spawn a real socialware session and put the given surface slice on it so
-  # PageView.external_render/1 reads it via Ezagent.Kind.get_slice/2 — the same
-  # path PageView.render/1 uses for operator_tree.
-  defp put_surface(surface) do
-    uri = URI.new!("session://test-ext-render/default/" <> Ecto.UUID.generate())
-
-    {:ok, _pid} =
-      Ezagent.Kind.spawn(Ezagent.Entity.SocialwareSession, %{uri: uri})
-
-    :ok = Ezagent.Kind.put_slice(uri, :surface, surface)
-    uri
+    test "returns nil for a non-URI argument (clause fallback)" do
+      assert PageView.external_render(:not_a_uri) == nil
+    end
   end
 end
 ```
 
-> **Bind-point note:** the test uses `Ezagent.Kind.spawn/2` (same call the existing socialware integration tests use to create a `SocialwareSession`) + `Ezagent.Kind.put_slice/3` + `Ezagent.Kind.get_slice/2` (the exact accessor PageView already calls in `load_surface/1` and `applies_to?/1`). If `put_slice/3` is not the available test-seeding accessor in this tree, fall back to dispatching `Ezagent.Behavior.Surface`'s `put_version`/`approve` actions via `Ezagent.Kind.dispatch/3` to reach `approved: 1` — confirm by reading `apps/ezagent_domain_socialware/test/integration/surface_dispatch_integration_test.exs` for the exact seeding idiom used there before writing the helper.
+> **Bind-point note (codex P2 review — `put_slice/3` does NOT exist):** `Ezagent.Kind` exposes only `spawn/2` and `get_slice/2` — there is **no** `put_slice/3` writer. The `:surface` slice can only be mutated by dispatching `turn`/`surface` actions through the runtime. This test therefore seeds an approved surface the SAME way the live pipeline does: `turn.open → turn.dispatch → turn.deliver → turn.compose → turn.settle` (auto-approve), copied verbatim from `apps/ezagent_domain_socialware/test/integration/surface_dispatch_integration_test.exs` (which is the authoritative seeding idiom — re-read it if any action arg shape drifts). `Surface.create/1` (`surface.ex`) seeds `%{versions: %{}, approved: nil, version_seq: 0}` on spawn, so a freshly-spawned session already satisfies the "no approved version → `external_render/1` returns nil" case without any extra dispatch.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -453,27 +532,60 @@ Create `apps/ezagent_plugin_liveview/test/ezagent_plugin_liveview/session_view_r
 
 ```elixir
 defmodule EzagentPluginLiveview.SessionViewRegistryIntegrationTest do
-  use ExUnit.Case, async: false
+  @moduledoc """
+  P2 — end-to-end contract with the REAL registered views, in the one app that
+  may legally depend on BOTH the registry (ezagent_domain_ui) and the concrete
+  views (PageView in ezagent_domain_socialware; ConversationView here). Spawns a
+  real SocialwareSession so PageView.applies_to?/1 is true and the registry's
+  external_renderers/1 discovery — the exact registration point the P3
+  ExternalAdapter will consult — is actually exercised.
+  """
+  # Spawns a real SocialwareSession Kind (touches KindSnapshot/Repo).
+  use EzagentCore.DataCase, async: false
 
+  alias Ezagent.Ecto.KindSnapshot
+  alias Ezagent.Entity.SocialwareSession
   alias Ezagent.UI.SessionViewRegistry
+  alias EzagentDomainSocialware.PageView
+  alias EzagentPluginLiveview.Views.ConversationView
+
+  # Spawn a real socialware session. Surface.create/1 seeds a `:surface` map on
+  # spawn, so PageView.applies_to?/1 (which checks for the slice) returns true.
+  defp spawn_socialware_session do
+    uri =
+      Ezagent.URI.session(
+        :team_alpha,
+        :socialware,
+        "view-contract-#{System.unique_integer([:positive])}"
+      )
+
+    :ok = KindSnapshot.delete(URI.to_string(uri))
+    {:ok, _pid} = Ezagent.Kind.spawn(SocialwareSession, %{uri: uri})
+    :ok = Ezagent.WorkspaceRegistry.bind(uri, Ezagent.Capability.workspace_of(uri))
+    uri
+  end
 
   describe "P2 contract — real views" do
     test "PageView is an external renderer; ConversationView is internal-only" do
-      assert SessionViewRegistry.external_render?(EzagentDomainSocialware.PageView) == true
-
-      assert SessionViewRegistry.external_render?(
-               EzagentPluginLiveview.Views.ConversationView
-             ) == false
+      assert SessionViewRegistry.external_render?(PageView) == true
+      assert SessionViewRegistry.external_render?(ConversationView) == false
     end
 
-    test "registering both — applicable_views still lists both (internal switcher unchanged)" do
-      :ok = SessionViewRegistry.register(EzagentPluginLiveview.Views.ConversationView)
-      :ok = SessionViewRegistry.register(EzagentDomainSocialware.PageView)
+    test "external_renderers/1 discovers PageView (excludes ConversationView) on a real session" do
+      :ok = SessionViewRegistry.register(ConversationView)
+      :ok = SessionViewRegistry.register(PageView)
 
-      uri = URI.new!("session://system/default/main")
+      uri = spawn_socialware_session()
+
+      # The P3 registration point: PageView is discovered as an external
+      # renderer for this session; ConversationView (internal-only) is NOT.
+      external_ids = Enum.map(SessionViewRegistry.external_renderers(uri), & &1.id)
+      assert :page in external_ids
+      refute :conversation in external_ids
+
+      # The internal switcher is unchanged: BOTH still appear in applicable_views.
       internal_ids = Enum.map(SessionViewRegistry.applicable_views(uri), & &1.id)
-
-      # ConversationView applies to every session; it must still appear.
+      assert :page in internal_ids
       assert :conversation in internal_ids
     end
   end
