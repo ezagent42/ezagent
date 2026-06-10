@@ -182,7 +182,12 @@ defmodule EzagentDomainSocialware.Integration.SettlementRecoveryOnRestartTest do
     new_turns_slice = %{turns_slice | state: new_inner}
     new_slice_state = Map.put(slice_state, :turns, new_turns_slice)
 
-    :ok = Ezagent.Kind.Snapshot.save_now(uri_str, SocialwareSession, new_slice_state)
+    :ok =
+      Ezagent.Test.SnapshotFixtures.save_kind_snapshot(
+        uri_str,
+        SocialwareSession,
+        new_slice_state
+      )
   end
 
   test "recovery emits NORMAL :dispatch effects, not :dispatch_after_commit", ctx do
