@@ -88,6 +88,7 @@ defmodule Ezagent.ExternalMirror.AdapterRegistry do
     assert_behaviour!(adapter_module)
     assert_required_callbacks!(adapter_module)
     adapter_id = adapter_module.adapter_id()
+    assert_no_binding_for_pull!(adapter_id, adapter_module)
 
     if :ets.insert_new(@table, {adapter_id, adapter_module}) do
       # SPEC docs/superpowers/specs/2026-05-25-external-mirror-auth-model-audit.md
@@ -208,6 +209,28 @@ defmodule Ezagent.ExternalMirror.AdapterRegistry do
 
   defp kind_specific_required(:pull) do
     [render: 2]
+  end
+
+  # P3-1 (codex r3 HIGH) — close the binding-FIRST ordering of the
+  # "a `:pull` adapter NEVER has a BindingRegistry row" invariant. If a binding
+  # row already exists for this `adapter_id` (registered before the adapter),
+  # a `:pull` adapter claiming that id is a structural error. The adapter-first
+  # ordering is closed symmetrically in `BindingRegistry.register_module/2`.
+  defp assert_no_binding_for_pull!(adapter_id, adapter_module) do
+    if Ezagent.ExternalMirror.Adapter.kind_of(adapter_module) == :pull do
+      case Ezagent.ExternalMirror.BindingRegistry.lookup(adapter_id) do
+        {:ok, binding_module} ->
+          raise ArgumentError,
+                "AdapterRegistry: :pull adapter #{inspect(adapter_module)} " <>
+                  "(adapter_id #{inspect(adapter_id)}) cannot register — a " <>
+                  "BindingRegistry row already binds it to " <>
+                  "#{inspect(binding_module)}. A pull adapter has no transport " <>
+                  "binding (P3-1)."
+
+        :error ->
+          :ok
+      end
+    end
   end
 
   # codex r1 MEDIUM-1 — even a direct caller (bypassing the source-

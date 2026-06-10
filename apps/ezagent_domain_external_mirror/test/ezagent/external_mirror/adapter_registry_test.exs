@@ -140,6 +140,37 @@ defmodule Ezagent.ExternalMirror.AdapterRegistryTest do
       assert :error = Ezagent.ExternalMirror.BindingRegistry.lookup("pull_em")
     end
 
+    test "adapter-first: a binding for an already-registered :pull adapter is REJECTED (codex P3-1 r3 HIGH)" do
+      # The "a :pull adapter NEVER has a BindingRegistry row" invariant holds at
+      # the registry layer for the DIRECT path too — not just plugin boot.
+      assert :ok = AdapterRegistry.register(PullAdapter)
+
+      assert_raise ArgumentError, ~r/pull adapter|no transport binding/, fn ->
+        Ezagent.ExternalMirror.BindingRegistry.register_module(
+          "pull_em",
+          Ezagent.ExternalMirror.TestSupport.MockBinding
+        )
+      end
+
+      assert :error = Ezagent.ExternalMirror.BindingRegistry.lookup("pull_em")
+    end
+
+    test "binding-first: registering a :pull adapter whose id already has a binding row is REJECTED (codex P3-1 r3 HIGH)" do
+      # The symmetric ordering: a binding row landed first (id not yet an
+      # adapter, so allowed), then a :pull adapter claims that id → rejected.
+      assert :ok =
+               Ezagent.ExternalMirror.BindingRegistry.register_module(
+                 "pull_em",
+                 Ezagent.ExternalMirror.TestSupport.MockBinding
+               )
+
+      assert_raise ArgumentError, ~r/BindingRegistry row already binds|no transport binding/, fn ->
+        AdapterRegistry.register(PullAdapter)
+      end
+
+      assert :error = AdapterRegistry.lookup("pull_em")
+    end
+
     test "a :push adapter missing binding_module/0 still RAISES (push contract unchanged)" do
       assert Adapter.kind_of(PushAdapterMissingBinding) == :push
 
