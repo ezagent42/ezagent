@@ -390,6 +390,21 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
+## OPEN — Crash-window recovery (codex rev2 HIGH — MUST resolve before implementation)
+
+codex rev2 found the dual of the bug we're fixing: deferring the settlement dispatch to a post-commit IN-MEMORY self-cast means a BEAM/process crash AFTER `commit_and_notify` durably marks the turn `:settled` but BEFORE the deferred `:approve`/`:commit_settlement` run leaves a **settled turn whose settlement never commits** — a permanently lost delivery. The happy-path deferral + `Router.dispatch` error logging do NOT cover crash-window loss.
+
+**The recovery is tractable because the durable invariant is already there:** `Turn.prepare_settlement` creates a `:pending` `SettlementRecord` (`Settlement.begin`) + flips visibility BEFORE the parent commit. So after a successful parent commit, the durable truth is: *turn `:settled` ⟺ a `SettlementRecord` exists; if it is still `:pending`, the deferred approve/commit was lost and MUST be replayed.* And replay is safe: `Surface.handle_approve` is idempotent (sets `approved = version`), and `Settlement.commit_after_pointer` is idempotent (P2.5b full no-op when already `:committed`; `emit_outbox_once` `on_conflict: :nothing`; `assign_committed_seq` no-ops when seq present).
+
+**Recovery design to add as a task (needs the real Lifecycle `activate` contract confirmed first):** on `SocialwareSession` load/activate, find every `:pending` `SettlementRecord` for the session whose turn is `:settled` in the `:turns` slice, and re-run the settle commit (re-dispatch `:approve` + `:commit_settlement`, or call `Settlement.commit_after_pointer/2` directly — idempotent). Open questions to resolve in the next plan iteration:
+- Can a Lifecycle `activate/2` emit re-entrant `:dispatch` effects, or must recovery run via a different seam (a post-activate sweep, or lazily on the next dispatch to the session)? Confirm against `Ezagent.Lifecycle` + how `Surface.activate/2` / `Turn` activate are wired.
+- What `approved_version` does recovery pass to `commit_after_pointer/2` (the settlement's `target_surface_version` + `expected_prior_approved` are durable on the record) — and does it need to re-`approve` the surface first (if the deferred `:approve` was also lost, `surface.approved` was not advanced)?
+- **Crash-window acceptance test:** drive `turn.settle` so the parent `:turns` slice commits `:settled`, then SIMULATE the crash (drop/skip the deferred casts + terminate the session via `SocialwareSessionSupervisor`), respawn, and assert recovery commits the settlement → the committed delivery (outbox `committed_seq` + customer page + messages) appears. This is the load-bearing gate for the durability claim — NOT just the Router.dispatch forced-error test.
+
+Until this recovery contract is designed + tested, P2.5c is NOT shippable: it would trade the rev4 orphan-delivery for a crash-window lost-delivery. (Alternative considered + rejected as too invasive for now: make the Kind snapshot commit and the settlement Repo writes ONE transaction — requires Kind.Server to wrap behavior-emitted Repo writes in the snapshot transaction, a much larger core change.)
+
+---
+
 ## Self-Review (run before handing to codex)
 
 1. **Additive + default-safe:** a handler emitting no `:dispatch_after_commit` gets an empty bucket; `run_deferred_dispatches([])` is a no-op; the invoke-chain 4th element is `[]`; behavior is byte-for-byte unchanged for every existing Kind. The return-shape change is the only ripple — verified by FULL-repo regression.
