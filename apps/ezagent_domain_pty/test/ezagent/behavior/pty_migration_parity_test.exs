@@ -109,7 +109,7 @@ defmodule Ezagent.Behavior.PtyMigrationParityTest do
 
       inv = build_invocation(agent_uri, bytes, admin_caps)
 
-      assert {:ok, new_state, %{bytes_written: bytes_written}, _slice_change_event} =
+      assert {:ok, new_state, %{bytes_written: bytes_written}, _slice_change_event, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
 
       assert bytes_written == byte_size(bytes)
@@ -127,7 +127,7 @@ defmodule Ezagent.Behavior.PtyMigrationParityTest do
       Enum.reduce(payloads, %{pty: %{write_calls: 0, total_bytes: 0}}, fn payload, state ->
         inv = build_invocation(agent_uri, payload, admin_caps)
 
-        assert {:ok, new_state, _result, _evt} =
+        assert {:ok, new_state, _result, _evt, _deferred} =
                  Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
 
         assert new_state.pty.write_calls == state.pty.write_calls + 1
@@ -147,7 +147,7 @@ defmodule Ezagent.Behavior.PtyMigrationParityTest do
 
       inv = build_invocation(agent_uri, "x", admin_caps)
 
-      assert {:ok, new_state, _result, _evt} =
+      assert {:ok, new_state, _result, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
 
       # Counter lazy-seeded to base + 1.

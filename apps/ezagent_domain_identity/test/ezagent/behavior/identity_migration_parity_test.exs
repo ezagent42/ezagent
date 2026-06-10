@@ -70,7 +70,7 @@ defmodule Ezagent.Behavior.IdentityMigrationParityTest do
          %{user_uri: user_uri, state: state, admin_caps: admin_caps} do
       inv = build_invocation(user_uri, :list_caps, %{}, admin_caps)
 
-      assert {:ok, new_state, %{caps: caps_list}, nil} =
+      assert {:ok, new_state, %{caps: caps_list}, nil, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubUserKind, user_uri)
 
       # No slice mutation — read-only action.
@@ -89,7 +89,7 @@ defmodule Ezagent.Behavior.IdentityMigrationParityTest do
 
       inv = build_invocation(user_uri, :has_cap?, %{cap: needed}, admin_caps)
 
-      assert {:ok, _new_state, %{has: true}, _evt} =
+      assert {:ok, _new_state, %{has: true}, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubUserKind, user_uri)
     end
 
@@ -106,7 +106,7 @@ defmodule Ezagent.Behavior.IdentityMigrationParityTest do
 
       inv = build_invocation(user_uri, :has_cap?, %{cap: needed}, admin_caps)
 
-      assert {:ok, _new_state, %{has: false}, _evt} =
+      assert {:ok, _new_state, %{has: false}, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, empty_state, StubUserKind, user_uri)
     end
   end
@@ -128,7 +128,7 @@ defmodule Ezagent.Behavior.IdentityMigrationParityTest do
 
       inv = build_invocation(user_uri, :grant_cap, %{cap: new_cap}, admin_caps)
 
-      assert {:ok, new_state, %{caps: cap_list}, _evt} =
+      assert {:ok, new_state, %{caps: cap_list}, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubUserKind, user_uri)
 
       # Slice gained one cap.
@@ -151,7 +151,7 @@ defmodule Ezagent.Behavior.IdentityMigrationParityTest do
 
       inv = build_invocation(user_uri, :revoke_cap, %{cap: cap}, admin_caps)
 
-      assert {:ok, new_state, %{caps: _cap_list}, _evt} =
+      assert {:ok, new_state, %{caps: _cap_list}, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubUserKind, user_uri)
 
       assert MapSet.size(new_state.identity.caps) == MapSet.size(admin_caps)

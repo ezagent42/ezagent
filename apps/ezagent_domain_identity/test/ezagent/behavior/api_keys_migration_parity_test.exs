@@ -67,7 +67,7 @@ defmodule Ezagent.Behavior.ApiKeysMigrationParityTest do
           key: "sk-aaaabbbbccccdddd"
         })
 
-      assert {:ok, new_state, %{ok: true, provider: "deepseek"}, slice_change_event} =
+      assert {:ok, new_state, %{ok: true, provider: "deepseek"}, slice_change_event, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
 
       # Phase B: two-container slice — persistent fields live under `.state`.
@@ -82,7 +82,7 @@ defmodule Ezagent.Behavior.ApiKeysMigrationParityTest do
 
       inv = build_invocation(agent_uri, :list_api_keys, %{})
 
-      assert {:ok, new_state, %{api_keys: [%{provider: "openai", masked: masked}]}, nil} =
+      assert {:ok, new_state, %{api_keys: [%{provider: "openai", masked: masked}]}, nil, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
 
       assert new_state == state
@@ -95,7 +95,7 @@ defmodule Ezagent.Behavior.ApiKeysMigrationParityTest do
 
       inv = build_invocation(agent_uri, :delete_api_key, %{provider: "deepseek"})
 
-      assert {:ok, new_state, %{ok: true, provider: "deepseek"}, _evt} =
+      assert {:ok, new_state, %{ok: true, provider: "deepseek"}, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
 
       assert new_state.api_keys.keys == %{"openai" => "sk-y"}
@@ -107,7 +107,7 @@ defmodule Ezagent.Behavior.ApiKeysMigrationParityTest do
 
       inv = build_invocation(agent_uri, :get_api_key, %{provider: "deepseek"})
 
-      assert {:ok, new_state, %{key: "sk-secret-plain", provider: "deepseek"}, nil} =
+      assert {:ok, new_state, %{key: "sk-secret-plain", provider: "deepseek"}, nil, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
 
       assert new_state == state

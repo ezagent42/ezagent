@@ -52,7 +52,7 @@ defmodule Ezagent.Behavior.UserTokensMigrationParityTest do
          %{user_uri: user_uri, state: state} do
       inv = build_invocation(user_uri, :mint_token, %{label: "parity-mint"})
 
-      assert {:ok, new_state, %{token_id: token_id, plain: plain, label: "parity-mint"}, _evt} =
+      assert {:ok, new_state, %{token_id: token_id, plain: plain, label: "parity-mint"}, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, User, user_uri)
 
       # Phase B: two-container slice — persistent counter lives under `.state`.
@@ -71,7 +71,7 @@ defmodule Ezagent.Behavior.UserTokensMigrationParityTest do
 
       inv = build_invocation(user_uri, :list_tokens, %{})
 
-      assert {:ok, new_state, %{tokens: [token]}, slice_change_event} =
+      assert {:ok, new_state, %{tokens: [token]}, slice_change_event, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, User, user_uri)
 
       # No slice mutation — read-only action.
@@ -87,7 +87,7 @@ defmodule Ezagent.Behavior.UserTokensMigrationParityTest do
 
       inv = build_invocation(user_uri, :revoke_token, %{token_id: row.id})
 
-      assert {:ok, new_state, %{revoked: revoked_id}, _evt} =
+      assert {:ok, new_state, %{revoked: revoked_id}, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, User, user_uri)
 
       assert revoked_id == row.id

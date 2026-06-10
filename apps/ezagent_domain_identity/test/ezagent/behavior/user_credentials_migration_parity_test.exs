@@ -59,7 +59,7 @@ defmodule Ezagent.Behavior.UserCredentialsMigrationParityTest do
          %{user_uri: user_uri, state: state} do
       inv = build_invocation(user_uri, :set_password, %{password: "rotated-via-dispatch"})
 
-      assert {:ok, new_state, result, slice_change_event} =
+      assert {:ok, new_state, result, slice_change_event, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, User, user_uri)
 
       # Result shape preserved from legacy invoke/4 days.
@@ -82,14 +82,14 @@ defmodule Ezagent.Behavior.UserCredentialsMigrationParityTest do
          %{user_uri: user_uri, state: state} do
       inv1 = build_invocation(user_uri, :set_password, %{password: "step1"})
 
-      assert {:ok, state_after_1, _r1, _e1} =
+      assert {:ok, state_after_1, _r1, _e1, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv1, state, User, user_uri)
 
       assert state_after_1.user_credentials.state.set_password_count == 1
 
       inv2 = build_invocation(user_uri, :set_password, %{password: "step2"})
 
-      assert {:ok, state_after_2, _r2, _e2} =
+      assert {:ok, state_after_2, _r2, _e2, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv2, state_after_1, User, user_uri)
 
       assert state_after_2.user_credentials.state.set_password_count == 2

@@ -62,7 +62,10 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # P1 (socialware substrate) — shifted 182→183 by the `instance_set_gate`
     # insertion into `handle_dispatch`'s `with` chain (runtime.ex E9). Same
     # sanctioned `:all_slices` comment, one line lower.
-    {"apps/ezagent_core/lib/ezagent/kind/runtime.ex", 183},
+    # P2.5c — shifted 183→180: net comment trim in `handle_dispatch` (the
+    # `deferred` 4-tuple bind added, but verbose @type/comment blocks
+    # condensed to keep runtime.ex under the gt_1000 LOC gate).
+    {"apps/ezagent_core/lib/ezagent/kind/runtime.ex", 180},
     {"apps/ezagent_core/lib/ezagent/behavior.ex", 454},
     {"apps/ezagent_core/lib/ezagent/system_principal/catalog.ex", 271}
   ]
