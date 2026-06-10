@@ -42,7 +42,15 @@ defmodule Ezagent.Kind.Runtime.Effects do
     case Ezagent.Behavior.apply_effects(effects, slice) do
       {:ok, buckets} ->
         case execute_buckets(buckets, ctx) do
-          :ok ->
+          # P2.5c — `execute_buckets/2` now returns the resolved
+          # post-commit dispatches (`{:ok, deferred}`). The signal path is
+          # NOT in a parent-commit context (there is no `commit_and_notify`
+          # gate after a `handle_signal`), so it has nowhere to run deferred
+          # dispatches — they are DROPPED here. The crash-recovery signal
+          # (`Turn.handle_signal({:ezagent_recover_settlements}, _)`)
+          # deliberately emits NORMAL `:dispatch` effects (run inline by
+          # `execute_dispatches`), so its deferred list is always empty.
+          {:ok, _deferred} ->
             {:ok, buckets.state}
 
           {:error, reason} ->
@@ -83,8 +91,13 @@ defmodule Ezagent.Kind.Runtime.Effects do
     case Ezagent.Behavior.apply_effects(effects, slice) do
       {:ok, buckets} ->
         case execute_buckets(buckets, ctx) do
-          :ok ->
-            {:ok, buckets.state, result}
+          # P2.5c — `execute_buckets/2` returns the RESOLVED + ENRICHED
+          # post-commit dispatches as the 4th element. `Kind.Server` runs
+          # them via `Router.dispatch` ONLY after `commit_and_notify`
+          # durably persists the parent slice. A handler that emits no
+          # `:dispatch_after_commit` gets `[]` — byte-for-byte unchanged.
+          {:ok, deferred} ->
+            {:ok, buckets.state, result, deferred}
 
           {:error, _} = err ->
             err
@@ -144,7 +157,23 @@ defmodule Ezagent.Kind.Runtime.Effects do
         execute_notifies(notifies)
         execute_events(events, ctx)
         execute_terminations(buckets.terminations, ctx)
-        :ok
+
+        # P2.5c — RESOLVE (don't run) the post-commit dispatches with the
+        # EXACT same treatment as the normal `:dispatch` bucket: second-pass
+        # ref substitution against the full `returning2` map (effect_returning
+        # + dispatch_returning bindings) THEN `enrich_dispatch_cmd/2` so a
+        # handler-supplied Cmd without an explicit caller inherits the
+        # emitting Kind's `self_uri` (NOT `:system` — codex HIGH: a raw
+        # deferred Cmd would default to `caller: :system` and be authorized
+        # as system). Return them resolved; `Kind.Server` runs them after the
+        # parent slice durably commits.
+        deferred =
+          buckets
+          |> Map.get(:dispatches_after_commit, [])
+          |> Enum.map(&Ezagent.Behavior.substitute_refs(&1, returning2))
+          |> Enum.map(&enrich_dispatch_cmd(&1, ctx))
+
+        {:ok, deferred}
       end
     end
   end

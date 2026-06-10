@@ -98,9 +98,13 @@ defmodule Ezagent.Kind.Runtime do
   # 3-tuple `{:ok, state, result}`. Backwards-compatible: legacy
   # callers that only matched the success atom + state still work
   # because the new shape extends, not replaces.
+  # P2.5c — success branches carry a 5th element: the resolved+enriched
+  # `deferred` post-commit dispatches (`[%Ezagent.Cmd{}]`, `[]` when the
+  # handler emitted no `:dispatch_after_commit`). `Kind.Server` runs them
+  # AFTER `commit_and_notify` durably commits the parent slice.
   @type result ::
-          {:ok, slice_state(), term(), slice_change_event() | nil}
-          | {:ok, slice_state(), nil, slice_change_event() | nil}
+          {:ok, slice_state(), term(), slice_change_event() | nil, [Ezagent.Cmd.t()]}
+          | {:ok, slice_state(), nil, slice_change_event() | nil, [Ezagent.Cmd.t()]}
           | {:error, term()}
   @type slice_change_event :: %{
           required(:self_uri) => URI.t(),
@@ -186,7 +190,12 @@ defmodule Ezagent.Kind.Runtime do
          # (e.g. CurlAgent reading `:api_keys` to fetch its outbound
          # credential, deadlock-free) declares it explicitly.
          invoke_ctx <- maybe_inject_sibling_slices(enriched_ctx, behavior_module, state),
-         {:ok, new_slice, result_or_nil} <-
+         # P2.5c — `invoke_behavior` now returns a 4-tuple; `deferred` is the
+         # resolved+enriched list of post-commit dispatches (`[]` for any
+         # handler that emits no `:dispatch_after_commit`). It is threaded out
+         # of `handle_dispatch/4` as a 5-tuple for `Kind.Server` to run after
+         # the parent slice durably commits.
+         {:ok, new_slice, result_or_nil, deferred} <-
            invoke_behavior(behavior_module, action, slice, args, invoke_ctx) do
       # Step 9 — put_in state. Snapshot wiring is Phase 1 step 3.
       new_state = Map.put(state, slice_key, new_slice)
@@ -246,9 +255,13 @@ defmodule Ezagent.Kind.Runtime do
       # for `Kind.Server` to fire after snapshot persistence. `nil`
       # means no slice mutation happened (Behavior was read-only or
       # the new slice equalled the old). Codex PR-N1 round-2 MEDIUM.
+      # P2.5c — 5-tuple to `Kind.Server`: the `deferred` post-commit
+      # dispatches ride alongside the slice_change_event so the server can
+      # run them via `Router.dispatch` ONLY after `commit_and_notify`
+      # succeeds (and SKIP them on a commit failure).
       case result_or_nil do
-        nil -> {:ok, new_state, nil, slice_change_event}
-        result -> {:ok, new_state, result, slice_change_event}
+        nil -> {:ok, new_state, nil, slice_change_event, deferred}
+        result -> {:ok, new_state, result, slice_change_event, deferred}
       end
     else
       {:error, reason} = err ->
@@ -836,7 +849,8 @@ defmodule Ezagent.Kind.Runtime do
       {:halt, result} ->
         # pre_handle short-circuited — skip the handler, no effects, slice
         # unchanged. (A pre_handle authz gate returning {:halt, result}.)
-        {:ok, slice, result}
+        # P2.5c — 4th element `[]`: no effects ran, so no deferred dispatches.
+        {:ok, slice, result, []}
 
       {:error, _reason} = err ->
         err
@@ -877,8 +891,12 @@ defmodule Ezagent.Kind.Runtime do
         # post_handle hook may still INJECT effects (audit/mirror).
         {result, effects} = run_post_handle(behavior_module, action, result, [], handler_ctx)
 
+        # P2.5c — both branches return the 4-tuple `{:ok, slice, result,
+        # deferred}`. The no-effects branch has no deferred dispatches (`[]`);
+        # the post_handle-injected-effects branch threads the 4-tuple from
+        # `apply_new_contract_effects/4`.
         case effects do
-          [] -> {:ok, slice, result}
+          [] -> {:ok, slice, result, []}
           _ -> apply_new_contract_effects(slice, result, effects, ctx)
         end
 
