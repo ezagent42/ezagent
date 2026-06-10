@@ -47,6 +47,25 @@ defmodule Ezagent.Domain.Pty.Server.AutoPromptsTest do
                   "\e[1C\x{276F}\e[1C2.\e[1CDark\e[1Cmode\e[1C\x{2714}\r\r\n" <>
                   "\e[3C3.\e[1CLight\e[1Cmode\r\r\n"
 
+  # Real first-run LOGIN-METHOD picker, shown by claude v2.1.x when it starts a
+  # first-run flow (no onboarding-completion marker yet) — EVEN when a valid
+  # `.credentials.json` is present in `CLAUDE_CONFIG_DIR`. It appears AFTER the
+  # theme picker in the same onboarding sequence (the §5.B credential-cascade
+  # live finding 2026-06-07: a materialized cred is NOT enough — claude still
+  # shows "Select login method" until onboarding is marked complete). A headless
+  # PTY cannot answer it, so the spawn hangs here and the bridge never binds.
+  #
+  # Option 1 ("Claude account with subscription") is the OAuth/subscription path
+  # that USES the materialized `.credentials.json`; it is the highlighted default
+  # on a Claude Max login. Bare Enter confirms the highlighted default → claude
+  # proceeds with the materialized OAuth token (no Console/API-key prompt). The
+  # menu is a static radio list (no animated banner), so words are not fragmented.
+  @login_method_buffer "\e[1CSelect\e[1Clogin\e[1Cmethod:\r\r\n" <>
+                          "\e[1CUse\e[1Cyour\e[1Csubscription\e[1Cor\e[1CAPI\e[1Caccount\r\r\n" <>
+                          "\e[1C\x{276F}\e[1C1.\e[1CClaude\e[1Caccount\e[1Cwith\e[1Csubscription\r\r\n" <>
+                          "\e[3C2.\e[1CAnthropic\e[1CConsole\e[1Caccount\r\r\n" <>
+                          "\e[1CEnter\e[1Cto\e[1Cconfirm\e[1C\x{00B7}\e[1CEsc\e[1Cto\e[1Cexit"
+
   defp spec(name),
     do: Enum.find(PtyServer.default_auto_prompts(), &(&1.name == name))
 
@@ -80,6 +99,41 @@ defmodule Ezagent.Domain.Pty.Server.AutoPromptsTest do
 
     refute PtyServer.matches?(p.match, ordinary),
            "theme_dialog must not fire on ordinary output that merely mentions the words + /theme"
+  end
+
+  test ":login_method_dialog fires on the real login-method picker and sends \"\\r\" to confirm the highlighted subscription default" do
+    p = spec(:login_method_dialog)
+    assert p, "login_method_dialog must be in default_auto_prompts/0"
+    assert PtyServer.matches?(p.match, AnsiStrip.strip(@login_method_buffer))
+
+    # Bare Enter confirms the highlighted default (option 1 = Claude account with
+    # subscription), which is the path that USES the materialized OAuth credential.
+    assert p.send == "\r"
+  end
+
+  test ":login_method_dialog does not cross-fire on the theme / dev-channels / trust buffers" do
+    p = spec(:login_method_dialog)
+    refute PtyServer.matches?(p.match, AnsiStrip.strip(@theme_buffer))
+    refute PtyServer.matches?(p.match, AnsiStrip.strip(@dev_channels_buffer))
+    refute PtyServer.matches?(p.match, AnsiStrip.strip(@trust_buffer))
+  end
+
+  test ":login_method_dialog stays armed all session but does NOT fire on ordinary output mentioning the words" do
+    # Same armed-all-session hazard as :theme_dialog (codex PR #611): if the
+    # login picker never appears (onboarding already complete) the prompt stays
+    # armed; a loose match would inject a spurious Enter on ordinary claude prose
+    # that happens to say "login" / "subscription". The full-menu-shape match
+    # (header + both option labels) rejects ordinary prose.
+    p = spec(:login_method_dialog)
+
+    ordinary =
+      AnsiStrip.strip(
+        "\e[1CTo\e[1Cswitch\e[1Caccounts,\e[1Crun\e[1C/login\e[1Cand\e[1Cpick\e[1Cyour\r\r\n" <>
+          "\e[1CClaude\e[1Caccount\e[1Cwith\e[1Csubscription\e[1Cor\e[1Cthe\e[1CConsole."
+      )
+
+    refute PtyServer.matches?(p.match, ordinary),
+           "login_method_dialog must not fire on ordinary output that merely mentions the words"
   end
 
   test ":trust_folder_dialog fires on the real folder-trust buffer and sends \"1\\r\"" do

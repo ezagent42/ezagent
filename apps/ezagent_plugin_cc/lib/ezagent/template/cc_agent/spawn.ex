@@ -279,6 +279,18 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
   # credential-grant gate (#701 hardening of the SpawnPlan public-launcher
   # bypass).
   defp ensure_pty_server(agent_uri, cwd, tmpl) do
+    # §5.B follow-up (b) — DURABLE first-run-dialog suppression. claude shows its
+    # theme / "Select login method" dialogs on first run against an un-onboarded
+    # config home EVEN with a valid materialized `.credentials.json`; a headless
+    # PTY can't answer them and the bridge never binds. Mark onboarding complete in
+    # the resolved per-agent config home BEFORE launch so the first-run flow never
+    # starts. Runs on BOTH the fresh-spawn AND respawn paths (this is the single
+    # chokepoint both reach) so the marker survives the agent's own restarts. The
+    # PtyServer `:theme_dialog` / `:login_method_dialog` auto-prompts remain the
+    # fallback; best-effort (never tears the agent down — see try_ensure/2).
+    config_home = resolve_config_home(agent_uri, tmpl)
+    _ = Ezagent.PluginCc.Template.OnboardingBootstrap.try_ensure(config_home, agent_uri)
+
     with {:ok, params} <-
            Ezagent.PluginCc.Template.SpawnPlan.build_pty_params(
              agent_uri,

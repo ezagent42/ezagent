@@ -451,6 +451,38 @@ defmodule Ezagent.Domain.Pty.Server do
         fired?: false
       },
       %{
+        name: :login_method_dialog,
+        # claude v2.1.x shows a "Select login method" picker as part of the SAME
+        # first-run onboarding flow as the theme picker — EVEN when a valid
+        # `.credentials.json` is already materialized into CLAUDE_CONFIG_DIR. The
+        # §5.B credential-cascade live finding (2026-06-07): a materialized cred is
+        # NOT sufficient to skip this dialog; claude still asks until onboarding is
+        # marked complete. A headless PTY cannot answer it, so the spawn hangs here
+        # and the bridge never binds. The durable fix is to mark onboarding complete
+        # in the per-agent config (cc plugin's OnboardingBootstrap), so this dialog
+        # never appears; this scanner entry is the SAFETY NET for any claude version
+        # / config-state that still surfaces it.
+        #
+        # Option 1 ("Claude account with subscription") is the OAuth/subscription
+        # path that USES the materialized credential and is the highlighted default
+        # on a Claude Max login; bare Enter confirms it (NOT "2\r", which would pick
+        # the Console/API-key path and ignore the materialized OAuth token).
+        #
+        # Match the FULL menu shape (header + BOTH option labels), not a loose
+        # ["login", "subscription"]: an auto-prompt that doesn't fire at startup
+        # (onboarding already complete) stays armed all session, so a loose match
+        # would later false-positive on ordinary claude prose and inject a spurious
+        # Enter (codex review of PR #611 / theme_dialog). The radio menu is static
+        # (no animated banner), so these labels are not fragmented.
+        match: [
+          "Select login method",
+          "Claude account with subscription",
+          "Anthropic Console account"
+        ],
+        send: "\r",
+        fired?: false
+      },
+      %{
         name: :dev_channels_dialog,
         # Anchor on the menu OPTION label, not the WARNING prose: claude's
         # TUI animates/redraws the banner ("Loading…") with cursor-move
