@@ -95,24 +95,55 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Task 2: `apply_new_contract_effects` returns the deferred list; `execute_buckets` ignores it
+## Task 2: `execute_buckets` RESOLVES + ENRICHES the deferred dispatches and returns them; `apply_new_contract_effects` propagates the list
 
 **Files:**
 - Modify: `apps/ezagent_core/lib/ezagent/kind/runtime/effects.ex`
 
-- [ ] **Step 1: Return the deferred dispatches as a 4th element**
+> **codex P2.5c review HIGH — deferred dispatches must reuse the EXACT `:dispatch` resolution, not be passed raw to `Kind.Server`.** Normal `:dispatch` effects are (a) `substitute_refs`'d with the post-`dispatch_returning` `returning2` map and (b) enriched by `enrich_dispatch_cmd/2` (caller defaulted to the emitting Kind's `self_uri`, `trace_id` propagated) BEFORE `Router.dispatch`. A raw deferred `Cmd.new(...)` defaults `caller: :system` → it would be authorized as **system** (authority escalation) and would miss ref substitution. So resolve+enrich the deferred cmds HERE (where `ctx` + `returning2` live) and return the RESOLVED list; `Kind.Server` runs already-correct cmds.
 
-In `runtime/effects.ex`, `apply_new_contract_effects/4` (`:82`): change the success return from `{:ok, buckets.state, result}` to `{:ok, buckets.state, result, buckets.dispatches_after_commit}`. Keep `execute_buckets/2` UNCHANGED w.r.t. the other buckets — it must NOT run `dispatches_after_commit` (it already only runs saga/dispatches_returning/dispatches/notifies/events/terminations, so simply not referencing the new bucket is correct; add a one-line comment that `dispatches_after_commit` is intentionally deferred to `Kind.Server`).
+- [ ] **Step 1: `execute_buckets` returns the resolved deferred list**
+
+In `runtime/effects.ex`, `execute_buckets/2` (`:124`): after the normal dispatch/notify/event/termination handling, substitute_refs + `enrich_dispatch_cmd/2` each `dispatches_after_commit` cmd (using the SAME `returning2` + `ctx` as the normal dispatches), and return `{:ok, resolved_deferred}` instead of `:ok`:
+
+```elixir
+  defp execute_buckets(buckets, ctx) do
+    with :ok <- execute_saga(buckets.saga, ctx),
+         {:ok, returning2} <-
+           execute_dispatches_returning(Map.get(buckets, :dispatches_returning, []), buckets.returning, ctx) do
+      dispatches = Enum.map(buckets.dispatches, &Ezagent.Behavior.substitute_refs(&1, returning2))
+      notifies = Enum.map(buckets.notifies, &Ezagent.Behavior.substitute_refs(&1, returning2))
+      events = Enum.map(buckets.events, &Ezagent.Behavior.substitute_refs(&1, returning2))
+
+      with :ok <- execute_dispatches(dispatches, ctx) do
+        execute_notifies(notifies)
+        execute_events(events, ctx)
+        execute_terminations(buckets.terminations, ctx)
+
+        # P2.5c — RESOLVE the post-commit dispatches with the SAME ref-substitution
+        # + enrichment as normal :dispatch effects, but DO NOT run them here. Return
+        # them resolved; Kind.Server runs them after the parent slice durably commits.
+        deferred =
+          buckets
+          |> Map.get(:dispatches_after_commit, [])
+          |> Enum.map(&Ezagent.Behavior.substitute_refs(&1, returning2))
+          |> Enum.map(&enrich_dispatch_cmd(&1, ctx))
+
+        {:ok, deferred}
+      end
+    end
+  end
+```
+
+- [ ] **Step 2: `apply_new_contract_effects` returns the resolved list as a 4th element**
 
 ```elixir
   def apply_new_contract_effects(slice, result, effects, ctx) do
     case Ezagent.Behavior.apply_effects(effects, slice) do
       {:ok, buckets} ->
         case execute_buckets(buckets, ctx) do
-          :ok ->
-            # dispatches_after_commit is intentionally NOT run here — Kind.Server
-            # runs it only after the parent slice durably commits (P2.5c).
-            {:ok, buckets.state, result, buckets.dispatches_after_commit}
+          {:ok, deferred} ->
+            {:ok, buckets.state, result, deferred}
 
           {:error, _} = err ->
             err
@@ -124,7 +155,9 @@ In `runtime/effects.ex`, `apply_new_contract_effects/4` (`:82`): change the succ
   end
 ```
 
-- [ ] **Step 2: Compile (will surface the callers to update in Task 3)**
+(`enrich_dispatch_cmd/2` is already a private fn in this module — reuse it; no new helper.)
+
+- [ ] **Step 3: Compile (will surface the callers to update in Task 3)**
 
 Run: `MIX_ENV=test mix compile 2>&1 | tail -15`
 Expected: compiles, but the callers in `runtime.ex` still expect the 3-tuple — Task 3 updates them. (If the compiler errors on arity here, that's expected; proceed to Task 3 and re-compile.)
@@ -185,6 +218,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 Create `apps/ezagent_core/test/ezagent/kind/dispatch_after_commit_test.exs` — a minimal Kind whose handler emits `{:dispatch_after_commit, cmd}` to a probe, asserting the probe fires after a successful commit, and (with a forced commit failure) does NOT fire. Use the existing core test scaffolding for an in-line Kind + a stubbed `Snapshot.commit` failure path — READ `apps/ezagent_core/test/**` for the established pattern (e.g. how `issue #342` / persistence-failure is already tested) before writing; mirror it. Assert:
   - success: the deferred command is dispatched exactly once, AFTER the slice is persisted (observe via the probe + a `Kind.get_slice` showing the committed slice).
   - failure: when `commit_and_notify` returns `{:error, _}`, the deferred command is NOT dispatched and the call returns `{:error, {:persistence_failed, _}}`.
+  - **enrichment (codex HIGH):** a deferred `Cmd` emitted with NO `caller` (default) is dispatched with `caller` = the emitting Kind's `self_uri`, NOT `:system` — assert the probe/target observes the emitting-Kind caller (proving `enrich_dispatch_cmd` ran via `execute_buckets`, not a raw `Router.dispatch`).
+  - **observable failure (codex MEDIUM):** a deferred `Cmd` aimed at an unavailable/unauthorized target (so `Router.dispatch` returns `{:error, _}`) AFTER a successful parent commit → the parent slice IS committed AND the failure is logged at `:error` (capture with `ExUnit.CaptureLog`), not silently dropped; the other deferred cmds in the same batch still run.
 
 (If a forced-commit-failure seam does not exist in core test support, the parent-commit-rollback integration test in Task 6 is the load-bearing gate; keep this unit test to the success-path + ordering and note the failure-path is covered at the socialware integration level.)
 
@@ -224,26 +259,48 @@ In `kind/server.ex`, update BOTH `handle_call({:ezagent_dispatch, …})` (`:616`
 
 ```elixir
   # P2.5c — run deferred (post-commit) re-entrant dispatches. Runs ONLY after the
-  # parent slice durably committed. Each is a fire-and-forget Router.dispatch
-  # (same path :dispatch effects used) — a failure is logged, not raised (the
-  # parent commit already succeeded; mirror the notify/event post-commit posture).
+  # parent slice durably committed. The cmds are ALREADY ref-substituted +
+  # enriched (caller=self_uri, trace_id) by Runtime.Effects.execute_buckets — so
+  # they dispatch with the emitting Kind's authority, NOT :system. The parent
+  # commit already succeeded, so a failure here is observational: log BOTH a
+  # {:error, reason} Router return AND a raised exception (codex P2.5c MEDIUM:
+  # never silently drop a post-commit dispatch — that is the orphan-in-the-other-
+  # direction). All cmds run regardless of an individual failure.
   defp run_deferred_dispatches([]), do: :ok
 
   defp run_deferred_dispatches(cmds) when is_list(cmds) do
+    require Logger
+
     Enum.each(cmds, fn %Ezagent.Cmd{} = cmd ->
       try do
-        Ezagent.Router.dispatch(cmd)
+        case Ezagent.Router.dispatch(cmd) do
+          :ok ->
+            :ok
+
+          {:ok, _result} ->
+            :ok
+
+          {:error, reason} ->
+            Logger.error(
+              "Kind.Server.run_deferred_dispatches: post-commit dispatch FAILED " <>
+                "target=#{inspect(cmd.target)} action=#{inspect(cmd.action)} " <>
+                "reason=#{inspect(reason)} — parent slice committed but this side " <>
+                "effect did not run"
+            )
+        end
       catch
         kind, reason ->
-          require Logger
-          Logger.warning(
-            "Kind.Server.run_deferred_dispatches: #{inspect(cmd.action)} raised " <>
-              "#{inspect({kind, reason})} — post-commit dispatch dropped"
+          Logger.error(
+            "Kind.Server.run_deferred_dispatches: post-commit dispatch RAISED " <>
+              "target=#{inspect(cmd.target)} action=#{inspect(cmd.action)} " <>
+              "#{inspect({kind, reason})}"
           )
       end
     end)
   end
 ```
+
+> **codex P2.5c MEDIUM (observability):** every `{:error, reason}` from `Router.dispatch` is now logged at `:error` (an operator-visible signal that a settled turn's post-commit side effect did not run), not silently discarded. A DLQ is out of scope for P2.5c (the existing `:dispatch` path also logs-and-aborts rather than DLQ-ing); if a durable retry is needed it belongs with the P3 ExternalAdapter's outbox-replay (the committed_seq cursor already makes the delivery itself replayable — a dropped advisory dispatch is recovered by the next replay).
 
 > **Ordering note:** deferred dispatches run AFTER `commit_and_notify` (which also fires `SliceChange.emit`). That is correct — the parent slice + its notification are durable before any settlement re-dispatch. The deferred dispatch re-enters `Router.dispatch` on the SAME Kind instance (a `:call` would deadlock the GenServer — confirm Turn's settlement Cmds are built with `reply: :ignore` → `:cast`, as they are today in `dispatch_ctx/1`; a post-commit `:cast` self-send is enqueued to the mailbox, NOT a synchronous self-call). VERIFY `dispatch_ctx/1` still yields `reply: :ignore` so these are casts.
 
@@ -337,6 +394,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 1. **Additive + default-safe:** a handler emitting no `:dispatch_after_commit` gets an empty bucket; `run_deferred_dispatches([])` is a no-op; the invoke-chain 4th element is `[]`; behavior is byte-for-byte unchanged for every existing Kind. The return-shape change is the only ripple — verified by FULL-repo regression.
 2. **Correct gate:** deferred dispatches run ONLY on `commit_and_notify in [:ok, :not_durable]` (same gate as `SliceChange.emit`); on `{:error, _}` they are skipped + `{:persistence_failed, _}` propagates — closing the rev4 HIGH (no settlement/delivery for a non-durable turn).
+2b. **Same authority + resolution as `:dispatch` (codex HIGH):** deferred cmds are `substitute_refs`'d + `enrich_dispatch_cmd`'d inside `execute_buckets` (caller defaulted to the emitting Kind's `self_uri`, not `:system`) BEFORE being returned — `Kind.Server` runs already-resolved cmds, never raw. A deferred cmd is NOT an authority-escalation path.
+2c. **Post-commit failures observable (codex MEDIUM):** `run_deferred_dispatches` logs every `Router.dispatch` `{:error, reason}` AND exception at `:error`; it does not silently drop a post-commit side effect for a settled turn. (Durable retry is P3's outbox-replay concern; the committed_seq cursor makes the delivery itself replayable.)
 3. **No self-deadlock:** Turn's settlement Cmds use `reply: :ignore` → `:cast`; a post-commit self-`cast` is mailbox-enqueued (the GenServer is mid-`handle_call`/`handle_cast` and will process it next) — NOT a synchronous self-`call`. Verified against `dispatch_ctx/1`.
 4. **Ordering vs notify:** deferred dispatches run after `commit_and_notify` (which emits `SliceChange`), so the parent slice + its notification are durable before any settlement re-dispatch — the intended order.
 5. **Scope:** only `turn.settle`'s approve/commit/apply_delta move post-commit; `turn.dispatch`'s subtask `:send` stays a normal `:dispatch` (it is not a settle-time durable side effect). #44 wire-schema is P3 prep; the P2.5b cursor is already on main.
