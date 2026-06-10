@@ -4,7 +4,9 @@
 
 **Goal:** Close the rev4-HIGH ordering bug: a Kind's `{:dispatch, …}` effects run **synchronously inside the handler** (`Router.dispatch` in `invoke_behavior`), which is **before** `Kind.Server.commit_and_notify` durably persists the parent slice. For `turn.settle`, that means the settlement `:approve` + `:commit_settlement` (which write the outbox, flip status to `:committed`, and broadcast a committed customer delivery) execute **before** the parent `:turns` slice commits. If that parent commit then fails (`{:error, {:persistence_failed, _}}` — issue #342), the Turn never durably settled, yet a committed customer delivery already exists: an **orphan delivery for a turn that didn't happen**.
 
-**Architecture:** Add a new, general effect category `{:dispatch_after_commit, %Ezagent.Cmd{}}` that the runtime collects but does NOT execute during the handler; `Kind.Server` runs it via `Router.dispatch` **only after `commit_and_notify` returns `:ok`/`:not_durable`** (parent slice durably persisted), and SKIPS it on `{:error, _}`. `Ezagent.Behavior.Turn` switches its settlement `:approve`/`:commit_settlement` (and `config_update`'s `:apply_delta`) effects from `{:dispatch, …}` to `{:dispatch_after_commit, …}`. This is symmetric with the existing post-commit `SliceChange.emit` ordering (codex PR-N1: emit only after durable persist) — extended from notifications to re-entrant dispatches. General-purpose: any Behavior whose side-effect dispatch must not outlive a failed parent commit uses it.
+**Architecture (two halves — fast path + crash safety net):**
+- **(a) Deferred dispatch (fast path):** a new general effect `{:dispatch_after_commit, %Ezagent.Cmd{}}` the runtime collects (resolved+enriched like a normal `:dispatch`) but does NOT execute during the handler; `Kind.Server` runs it via `Router.dispatch` **only after `commit_and_notify` returns `:ok`/`:not_durable`**, SKIPS on `{:error, _}`. `Behavior.Turn` switches its settlement `:approve`/`:commit_settlement` (+ `config_update`'s `:apply_delta`) to `{:dispatch_after_commit, …}`. Symmetric with the existing post-commit `SliceChange.emit` gate (codex PR-N1) — extended from notifications to re-entrant dispatches.
+- **(b) `Turn.activated/2` recovery (crash safety net):** because the deferred cast is in-memory, a crash AFTER the parent commit but BEFORE the cast would lose the delivery. `prepare_settlement` durably creates the `:pending` SettlementRecord BEFORE the parent commit, so `activated/2` (runs post-`:ready` on every start) replays approve+commit for any `:settled` turn whose settlement is still `:pending`. Both paths are idempotent (re-approve same version; `commit_after_pointer` no-ops when committed — P2.5b), so (a) and (b) converge to the same end state: no orphan delivery (rev4) AND no lost delivery (crash-window).
 
 **Tech Stack:** Elixir 1.19 / OTP 27, `ezagent_core` (`Behavior.Effects`, `Kind.Runtime`, `Kind.Runtime.Effects`, `Kind.Server`) + `ezagent_domain_socialware` (`Behavior.Turn`). ExUnit. Run mix from the umbrella root with `MIX_ENV=test`.
 
@@ -390,18 +392,71 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## OPEN — Crash-window recovery (codex rev2 HIGH — MUST resolve before implementation)
+## Task 7: Crash-window recovery — `Turn.activated/2` replays settled-but-pending settlements
 
-codex rev2 found the dual of the bug we're fixing: deferring the settlement dispatch to a post-commit IN-MEMORY self-cast means a BEAM/process crash AFTER `commit_and_notify` durably marks the turn `:settled` but BEFORE the deferred `:approve`/`:commit_settlement` run leaves a **settled turn whose settlement never commits** — a permanently lost delivery. The happy-path deferral + `Router.dispatch` error logging do NOT cover crash-window loss.
+**Files:**
+- Modify: `apps/ezagent_domain_socialware/lib/ezagent/behavior/turn.ex`
+- Test: `apps/ezagent_domain_socialware/test/integration/settlement_recovery_on_restart_test.exs` (create)
 
-**The recovery is tractable because the durable invariant is already there:** `Turn.prepare_settlement` creates a `:pending` `SettlementRecord` (`Settlement.begin`) + flips visibility BEFORE the parent commit. So after a successful parent commit, the durable truth is: *turn `:settled` ⟺ a `SettlementRecord` exists; if it is still `:pending`, the deferred approve/commit was lost and MUST be replayed.* And replay is safe: `Surface.handle_approve` is idempotent (sets `approved = version`), and `Settlement.commit_after_pointer` is idempotent (P2.5b full no-op when already `:committed`; `emit_outbox_once` `on_conflict: :nothing`; `assign_committed_seq` no-ops when seq present).
+> **Why (codex rev2 HIGH):** deferring the settlement dispatch (Task 5) fixes the rev4 orphan-delivery, but a BEAM crash AFTER `commit_and_notify` durably marks the turn `:settled` but BEFORE the deferred `:approve`/`:commit_settlement` run would leave a **settled turn whose settlement never commits** — a permanently lost delivery. The deferred dispatch is the FAST path; this recovery is the crash-safety NET. Both are needed.
 
-**Recovery design to add as a task (needs the real Lifecycle `activate` contract confirmed first):** on `SocialwareSession` load/activate, find every `:pending` `SettlementRecord` for the session whose turn is `:settled` in the `:turns` slice, and re-run the settle commit (re-dispatch `:approve` + `:commit_settlement`, or call `Settlement.commit_after_pointer/2` directly — idempotent). Open questions to resolve in the next plan iteration:
-- Can a Lifecycle `activate/2` emit re-entrant `:dispatch` effects, or must recovery run via a different seam (a post-activate sweep, or lazily on the next dispatch to the session)? Confirm against `Ezagent.Lifecycle` + how `Surface.activate/2` / `Turn` activate are wired.
-- What `approved_version` does recovery pass to `commit_after_pointer/2` (the settlement's `target_surface_version` + `expected_prior_approved` are durable on the record) — and does it need to re-`approve` the surface first (if the deferred `:approve` was also lost, `surface.approved` was not advanced)?
-- **Crash-window acceptance test:** drive `turn.settle` so the parent `:turns` slice commits `:settled`, then SIMULATE the crash (drop/skip the deferred casts + terminate the session via `SocialwareSessionSupervisor`), respawn, and assert recovery commits the settlement → the committed delivery (outbox `committed_seq` + customer page + messages) appears. This is the load-bearing gate for the durability claim — NOT just the Router.dispatch forced-error test.
+> **Why it is safe + tractable:** `Turn.prepare_settlement` creates the `:pending` `SettlementRecord` (`Settlement.begin`) BEFORE the parent commit, so after a successful parent commit the durable truth is *turn `:settled` ⟹ a `SettlementRecord` exists; if still `:pending`, the deferred commit was lost → replay it.* Replay is idempotent: `Surface.handle_approve` sets `approved = version` (idempotent); `Settlement.commit_after_pointer` is a full no-op when already `:committed` (P2.5b). `Ezagent.Lifecycle`'s `activated/2` hook (engine `on_ready/2`) runs POST-`:ready` on EVERY session start incl. restart, and **returns the same effect list as a `handle_<action>/2`** (lifecycle.ex:121-132) — so it can emit the replay dispatches. On a clean start it finds no settled-but-pending settlement and emits nothing.
 
-Until this recovery contract is designed + tested, P2.5c is NOT shippable: it would trade the rev4 orphan-delivery for a crash-window lost-delivery. (Alternative considered + rejected as too invasive for now: make the Kind snapshot commit and the settlement Repo writes ONE transaction — requires Kind.Server to wrap behavior-emitted Repo writes in the snapshot transaction, a much larger core change.)
+- [ ] **Step 1: Write the failing recovery test**
+
+Create `apps/ezagent_domain_socialware/test/integration/settlement_recovery_on_restart_test.exs`. DETERMINISTIC crash simulation (don't race the deferred cast): set up the durable post-parent-commit-but-pre-deferred state directly, then spawn the session so `activated/2` runs:
+  1. Spawn a SocialwareSession; drive `turn.open → dispatch → deliver(page) → compose` so the `:surface` has version N and the `:turns` slice has the turn.
+  2. Put the turn into `:settled` in the `:turns` slice + create a `:pending` `Settlement.begin` for it (mirroring what `handle_settle` + `prepare_settlement` durably leave) — WITHOUT running the deferred approve/commit (the "crash lost the deferred casts" state). Persist (the snapshot of `:turns` + the pending SettlementRecord are durable).
+  3. Terminate the session via `DynamicSupervisor.terminate_child(EzagentDomainSocialware.SocialwareSessionSupervisor, pid)`; `wait_until KindRegistry.lookup == :error`.
+  4. Re-spawn the session (→ `activated/2` runs).
+  5. Assert recovery committed the settlement: `Settlement.get(turn_id)` is `:committed`; the committed delivery appears (outbox `committed_seq` set; `CustomerFeed.snapshot` returns the page + committed messages).
+
+Expected (pre-Step-3 impl): FAIL — `activated/2` does not recover, settlement stays `:pending`.
+
+- [ ] **Step 2: Implement `Turn.activated/2` recovery**
+
+Add `activated/2` to `Behavior.Turn`. For each turn in the `:turns` slice with `status: :settled`, check `Settlement.get(turn_id)`; if NOT `:committed`, emit that turn's `settle_commit_effects/3` (the SAME approve + commit_settlement [+ apply_delta] effects `handle_settle` builds). Use NORMAL `{:dispatch, …}` here (NOT `:dispatch_after_commit`): on activate the turn is ALREADY durably `:settled`, there is no parent-commit-in-flight to gate against. The dispatches are idempotent (re-approve same version; commit no-op if already committed). Emit nothing when no settled-but-pending turn exists.
+
+```elixir
+  @impl true
+  def activated(_state, ctx) do
+    turns = ctx.read.(:turns, %{})
+
+    effects =
+      turns
+      |> Enum.filter(fn {turn_id, turn} ->
+        turn.status == :settled and not settlement_committed?(turn_id)
+      end)
+      |> Enum.flat_map(fn {turn_id, turn} -> settle_commit_effects(turn_id, turn, ctx) end)
+
+    {:ok, effects}
+  end
+
+  defp settlement_committed?(turn_id) do
+    case Ezagent.Socialware.Settlement.get(turn_id) do
+      {:ok, %{status: :committed}} -> true
+      _ -> false
+    end
+  end
+```
+
+(Confirm `activated/2`'s ctx exposes `read/2` + the dispatch-ctx the effects need — read `Ezagent.Lifecycle.__run_activated__` + how `handle_settle`'s ctx is built; if `activated` ctx lacks `self_uri`/`caller` for `Cmd.new`/`dispatch_ctx`, thread them the same way the dispatch path enriches, or build the Cmds with the recovery caller. The deferred-dispatch enrichment from Task 2 also applies if these go through the same path.)
+
+- [ ] **Step 3: Run to verify it passes**
+
+Run: `MIX_ENV=test mix test apps/ezagent_domain_socialware/test/integration/settlement_recovery_on_restart_test.exs -v 2>&1 | tail -20`
+Expected: PASS — recovery commits the settled-but-pending settlement on respawn; the delivery appears.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add apps/ezagent_domain_socialware/lib/ezagent/behavior/turn.ex apps/ezagent_domain_socialware/test/integration/settlement_recovery_on_restart_test.exs
+git commit -m "feat(socialware/p2.5c): Turn.activated/2 recovers settled-but-pending settlements on restart
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+```
+
+> **Alternative considered + rejected (too invasive for now):** make the Kind snapshot commit and the settlement Repo writes ONE transaction (Kind.Server wrapping behavior-emitted Repo writes in the snapshot txn) — a much larger core change. The deferred-dispatch + `activated` recovery pair gives the same end-state guarantee (no orphan delivery, no lost delivery) via idempotent replay off the already-durable pending-settlement marker.
 
 ---
 
@@ -415,3 +470,4 @@ Until this recovery contract is designed + tested, P2.5c is NOT shippable: it wo
 4. **Ordering vs notify:** deferred dispatches run after `commit_and_notify` (which emits `SliceChange`), so the parent slice + its notification are durable before any settlement re-dispatch — the intended order.
 5. **Scope:** only `turn.settle`'s approve/commit/apply_delta move post-commit; `turn.dispatch`'s subtask `:send` stays a normal `:dispatch` (it is not a settle-time durable side effect). #44 wire-schema is P3 prep; the P2.5b cursor is already on main.
 6. **Legacy branch:** if a legacy (non-new-contract) invoke clause exists, it returns `{:ok, slice, result, []}` — confirmed by grep before editing.
+7. **Crash-window closed (codex rev2 HIGH):** the deferred dispatch is the fast path; `Turn.activated/2` (Task 7) is the crash safety net — on every restart it idempotently replays approve+commit for any `:settled` turn whose settlement is `:pending` (off the durable pre-parent-commit `SettlementRecord`). So (a)+(b) give no-orphan AND no-lost delivery. `activated/2` legitimately emits the same effect list as a handler (lifecycle.ex:121-132). Recovery dispatches are normal `:dispatch` (turn already durably `:settled`, no parent-commit to gate).
