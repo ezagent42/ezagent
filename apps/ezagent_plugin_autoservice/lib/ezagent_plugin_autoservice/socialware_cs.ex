@@ -134,11 +134,16 @@ defmodule EzagentPluginAutoservice.SocialwareCS do
     Ezagent.URI.session(ws, "cs", name)
   end
 
-  @doc "The cc bot agent URI for a customer: `entity://agent/<ws>/cc_cs-bot-<name>` (no side effects)."
+  @doc "The cc bot agent URI for a customer: `entity://<ws>/agent/cs-bot-<name>` (no side effects)."
   @spec bot_uri(URI.t()) :: URI.t()
   def bot_uri(%URI{} = customer_uri) do
     {ws, name} = decompose(customer_uri)
-    Ezagent.URI.agent(ws, "#{@bot_flavor}_#{@bot_create_prefix}#{name}")
+    # `Workspace.create_agent` composes the agent URI from `name` AS-IS — the
+    # flavor is NOT prefixed (workspace/agent_create.ex compose_agent_uri/3,
+    # found live: `agent/cs-bot-alice`, not `agent/cc_cs-bot-alice`). bot_uri/1
+    # must match what create_agent produces (it's known before create, for
+    # seed_soul + routing).
+    Ezagent.URI.agent(ws, "#{@bot_create_prefix}#{name}")
   end
 
   @doc """
@@ -317,6 +322,15 @@ defmodule EzagentPluginAutoservice.SocialwareCS do
         work_dir = bot_work_dir(name)
         File.mkdir_p!(work_dir)
 
+        # Write the cinnox soul as the bot's CLAUDE.md so the cc agent is
+        # soul-driven from create-time (legacy autoservice path; the cc agent
+        # reads CLAUDE.md from its cwd). The soul is ALSO a versioned
+        # ConfigObject (DD3) — but the #17 cascade *projection* of it needs a
+        # create-time cascade_resolution the minimal create_agent doesn't yet
+        # produce (see repoint/3 GAP). Direct CLAUDE.md is the Stage-1 demo
+        # source of truth.
+        File.write!(Path.join(work_dir, "CLAUDE.md"), CinnoxAssets.build_cc_claude_md())
+
         case Ezagent.Workspace.create_agent(
                workspace_uri,
                # with_pty: false — headless cc bot replying via the esr
@@ -382,10 +396,30 @@ defmodule EzagentPluginAutoservice.SocialwareCS do
     Path.join([Ezagent.Home.profile_dir(), "cc-agents", "cinnox", "#{@bot_create_prefix}#{name}"])
   end
 
+  # Repoint the bot's #17 user-cascade layer at the soul ConfigObject (the
+  # socialware self-evolve *projection* path). NON-FATAL: a freshly cc-created
+  # agent has no create-time cascade_resolution yet (#17 writes it only when an
+  # agent is provisioned through the credential cascade), so this returns
+  # {:error, :no_cascade_resolution} for the Stage-1 bot. The bot is already
+  # soul-driven via the directly-written CLAUDE.md, so we log + continue.
+  # GAP (found live): wiring the soul ConfigObject through the #17 create-time
+  # cascade — so self-evolve config updates re-project the CLAUDE.md — is a
+  # follow-up; Stage-1 serves the soul as a static CLAUDE.md.
   defp repoint(%URI{} = bot_uri, %URI{} = workspace_uri, config_id) do
     case CascadeRepoint.repoint_user_layer(bot_uri, workspace_uri, config_id) do
-      :ok -> {:ok, bot_uri}
-      {:error, reason} -> {:error, {:cascade_repoint_failed, reason}}
+      :ok ->
+        {:ok, bot_uri}
+
+      {:error, :no_cascade_resolution} ->
+        Logger.warning(
+          "SocialwareCS: bot #{URI.to_string(bot_uri)} has no #17 cascade_resolution; " <>
+            "soul served via direct CLAUDE.md (self-evolve projection deferred)."
+        )
+
+        {:ok, bot_uri}
+
+      {:error, reason} ->
+        {:error, {:cascade_repoint_failed, reason}}
     end
   end
 
