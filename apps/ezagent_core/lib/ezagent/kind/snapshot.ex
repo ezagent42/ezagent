@@ -324,20 +324,32 @@ defmodule Ezagent.Kind.Snapshot do
     end
   end
 
-  defp maybe_forced_commit_failure(uri) do
-    case Application.get_env(:ezagent_core, :p2_5c_force_commit_failure_uris) do
-      nil ->
-        :proceed
+  # COMPILE-TIME test gate (codex P2.5c impl MEDIUM): the force-fail seam is
+  # compiled IN only for `MIX_ENV=test`. In a dev/prod/release build this is a
+  # literal `false`, so `maybe_forced_commit_failure/1` is a dead `:proceed`
+  # branch that NEVER reads the app env — the seam is provably unreachable
+  # outside tests, regardless of any stray `:p2_5c_force_commit_failure_uris`
+  # config or runtime set.
+  @p2_5c_commit_failure_seam_enabled Mix.env() == :test
 
-      uris ->
-        uri_str = uri_to_str(uri)
-
-        if uri_str in uris do
-          {:error, {:p2_5c_forced_commit_failure, uri_str}}
-        else
+  if @p2_5c_commit_failure_seam_enabled do
+    defp maybe_forced_commit_failure(uri) do
+      case Application.get_env(:ezagent_core, :p2_5c_force_commit_failure_uris) do
+        nil ->
           :proceed
-        end
+
+        uris ->
+          uri_str = uri_to_str(uri)
+
+          if uri_str in uris do
+            {:error, {:p2_5c_forced_commit_failure, uri_str}}
+          else
+            :proceed
+          end
+      end
     end
+  else
+    defp maybe_forced_commit_failure(_uri), do: :proceed
   end
 
   defp do_commit(uri, kind_module, old_state, new_state) do

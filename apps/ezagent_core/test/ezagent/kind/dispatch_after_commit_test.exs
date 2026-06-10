@@ -269,7 +269,7 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
     assert marker == :committed_bad
 
     # The failed post-commit dispatch was logged at :error.
-    assert log =~ "run_deferred_dispatches"
+    assert log =~ "DeferredDispatch.run"
     assert log =~ "post-commit dispatch FAILED"
   end
 end

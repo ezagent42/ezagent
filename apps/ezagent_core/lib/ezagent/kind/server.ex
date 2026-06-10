@@ -622,7 +622,7 @@ defmodule Ezagent.Kind.Server do
             # durability promise). NOW run the deferred post-commit
             # dispatches. They are already ref-substituted + enriched
             # (caller=self_uri) by Runtime.Effects.execute_buckets.
-            run_deferred_dispatches(deferred)
+            Ezagent.Kind.DeferredDispatch.enqueue(deferred)
             reply = if is_nil(result), do: :ok, else: {:ok, result}
             {:reply, reply, %{state | state: new_slice_state}}
 
@@ -653,7 +653,7 @@ defmodule Ezagent.Kind.Server do
             # P2.5c — run the deferred post-commit dispatches AFTER the
             # parent slice durably committed (before replying to the caller,
             # mirroring the handle_call ordering).
-            run_deferred_dispatches(deferred)
+            Ezagent.Kind.DeferredDispatch.enqueue(deferred)
             # cast still replies via ctx.reply if set (e.g. caller_inbox).
             Ezagent.Invocation.reply(inv.ctx, {:ok, result})
             {:noreply, %{state | state: new_slice_state}}
@@ -703,59 +703,6 @@ defmodule Ezagent.Kind.Server do
     commit_result
   end
 
-  # P2.5c — run deferred (post-commit) re-entrant dispatches. Called ONLY
-  # after the parent slice durably committed (or has no durability promise),
-  # at the SAME gate as `SliceChange.emit` — so the parent slice + its
-  # notification are durable before any settlement re-dispatch fires (closes
-  # the rev4 ordering bug: a settlement/customer-delivery must not outlive a
-  # failed parent-turn commit).
-  #
-  # The cmds are ALREADY ref-substituted + enriched (caller=self_uri,
-  # trace_id) by `Runtime.Effects.execute_buckets` — so they dispatch with
-  # the EMITTING Kind's authority, NOT `:system`. Turn's settlement Cmds use
-  # `reply: :ignore` → `:cast`; a post-commit self-`cast` is enqueued to this
-  # GenServer's mailbox (we are mid-`handle_call`/`handle_cast`, the cast is
-  # processed next) — NOT a synchronous self-`call`, so no deadlock.
-  #
-  # The parent commit already succeeded, so a failure here is OBSERVATIONAL:
-  # we log BOTH a `{:error, reason}` Router return AND a raised exception at
-  # `:error` (codex P2.5c MEDIUM: never silently drop a post-commit dispatch
-  # — that is the orphan-in-the-other-direction). All cmds run regardless of
-  # an individual failure. Durable retry is P3's outbox-replay concern (the
-  # committed_seq cursor makes the delivery itself replayable).
-  defp run_deferred_dispatches([]), do: :ok
-
-  defp run_deferred_dispatches(cmds) when is_list(cmds) do
-    require Logger
-
-    Enum.each(cmds, fn %Ezagent.Cmd{} = cmd ->
-      try do
-        case Ezagent.Router.dispatch(cmd) do
-          :ok ->
-            :ok
-
-          {:ok, _result} ->
-            :ok
-
-          {:error, reason} ->
-            Logger.error(
-              "Kind.Server.run_deferred_dispatches: post-commit dispatch FAILED " <>
-                "target=#{inspect(cmd.target)} action=#{inspect(cmd.action)} " <>
-                "reason=#{inspect(reason)} — parent slice committed but this side " <>
-                "effect did not run"
-            )
-        end
-      catch
-        kind, reason ->
-          Logger.error(
-            "Kind.Server.run_deferred_dispatches: post-commit dispatch RAISED " <>
-              "target=#{inspect(cmd.target)} action=#{inspect(cmd.action)} " <>
-              "#{inspect({kind, reason})}"
-          )
-      end
-    end)
-  end
-
   # Unified forwarder: any GenServer message a Kind's Behaviors might want
   # to react to (currently only `:DOWN` from Process.monitor; Phase 3+ may
   # add timer ticks etc) routes through `handle_kind_message/3` on each
@@ -771,7 +718,17 @@ defmodule Ezagent.Kind.Server do
   # multi-Behavior Kinds share one mailbox without each Behavior shadowing
   # everything (P2-D2 K-path principle: one Behavior, multiple Kinds —
   # not a Kind-wide message bus).
+  # P2.5c (codex impl HIGH) — run the post-commit deferred dispatches on a
+  # SEPARATE mailbox turn (enqueued via `DeferredDispatch.enqueue/1` AFTER the
+  # parent slice committed), NOT inline in the dispatch `handle_call`/`handle_cast`
+  # callback. See `Ezagent.Kind.DeferredDispatch` for the full ordering /
+  # no-deadlock / failure-handling contract.
   @impl true
+  def handle_info({:ezagent_run_deferred, cmds}, state) when is_list(cmds) do
+    Ezagent.Kind.DeferredDispatch.run(cmds)
+    {:noreply, state}
+  end
+
   def handle_info(:snapshot_tick, %{kind: kind_module, uri: uri, state: slice_state} = wrapper) do
     # Phase 4-completion: periodic strategy — write via Writer (async)
     # then re-schedule. If Writer isn't running (e.g. test envs without
