@@ -435,9 +435,7 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
 
         with {:ok, class_module} <- Ezagent.TemplateRegistry.lookup(class_name),
              true <- function_exported?(class_module, :cleanup, 3) do
-          Logger.info(
-            "remove_template[#{tmpl_name}] calling #{inspect(class_module)}.cleanup/3"
-          )
+          Logger.info("remove_template[#{tmpl_name}] calling #{inspect(class_module)}.cleanup/3")
 
           ws_uri = Ezagent.URI.new!("workspace://#{ws_name}")
 

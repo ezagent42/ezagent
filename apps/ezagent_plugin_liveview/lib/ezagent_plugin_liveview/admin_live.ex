@@ -1046,6 +1046,7 @@ defmodule EzagentPluginLiveview.AdminLive do
   end
 
   defp well_known_session?(_), do: false
+
   defp ensure_main_session(%URI{} = uri, socket) do
     case Ezagent.KindRegistry.lookup(uri) do
       {:ok, _pid} ->
