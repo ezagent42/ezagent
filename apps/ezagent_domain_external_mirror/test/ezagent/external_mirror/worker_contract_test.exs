@@ -85,22 +85,27 @@ defmodule Ezagent.ExternalMirror.WorkerContractTest do
     end
   end
 
-  describe "Adapter behaviour callback set (PR-EM-2 expansion)" do
-    test "declares the full SPEC §2.2 required callback set" do
+  describe "Adapter behaviour callback set (PR-EM-2 expansion + P3-1 kind axis)" do
+    test "declares the full SPEC §2.2 + P3-1 callback set" do
       callbacks =
         Ezagent.ExternalMirror.Adapter.behaviour_info(:callbacks)
         |> Enum.sort()
 
-      # Required (PR-EM-1 + PR-EM-2). target_ownership_check_timeout
-      # is optional — checked separately below.
+      # PR-EM-1 + PR-EM-2 + P3-1. `target_ownership_check_timeout` was
+      # already optional; P3-1 adds `adapter_kind/0` (optional, default
+      # `:push`) and `render/2` (optional at the behaviour level, required
+      # only for `:pull` — enforced in the registry). Optionality is
+      # asserted separately below.
       expected =
         [
           adapter_id: 0,
+          adapter_kind: 0,
           binding_module: 0,
           cap_subject: 0,
           description: 0,
           display_name: 0,
           event_to_payload: 1,
+          render: 2,
           target_ownership_check: 2,
           target_ownership_check_timeout: 0
         ]
@@ -112,6 +117,29 @@ defmodule Ezagent.ExternalMirror.WorkerContractTest do
     test "target_ownership_check_timeout/0 is optional" do
       optional = Ezagent.ExternalMirror.Adapter.behaviour_info(:optional_callbacks)
       assert :target_ownership_check_timeout in Keyword.keys(optional)
+    end
+
+    test "P3-1: adapter_kind/0 + render/2 are optional at the behaviour level" do
+      # Compiler-level optionality so a :pull adapter can omit the push
+      # transport callbacks (and a :push adapter can omit render/2)
+      # without a warning. The per-kind REQUIRED set is enforced at
+      # runtime by AdapterRegistry.assert_required_callbacks!/1.
+      optional =
+        Ezagent.ExternalMirror.Adapter.behaviour_info(:optional_callbacks)
+        |> Keyword.keys()
+
+      assert :adapter_kind in optional
+      assert :render in optional
+    end
+
+    test "P3-1: the push transport callbacks are compiler-optional (per-kind, runtime-enforced)" do
+      optional =
+        Ezagent.ExternalMirror.Adapter.behaviour_info(:optional_callbacks)
+        |> Keyword.keys()
+
+      assert :binding_module in optional
+      assert :target_ownership_check in optional
+      assert :event_to_payload in optional
     end
   end
 

@@ -151,22 +151,28 @@ defmodule Ezagent.ExternalMirror.AdapterRegistry do
   # arity BEFORE inserting. (PR-EM-2's added callbacks get checked
   # then.)
   defp assert_required_callbacks!(adapter_module) do
-    # PR-EM-2 expands the required-callback set per SPEC §2.2. The
-    # PR-EM-2 callbacks (`cap_subject/0`, `target_ownership_check/2`,
-    # `event_to_payload/1`) are now required so a plugin that ships
-    # only the PR-EM-1 stub set is rejected at registration time —
-    # `list_adapters/0` + the Worker dispatch path can rely on the
-    # full contract being present.
-    required = [
-      adapter_id: 0,
-      display_name: 0,
-      description: 0,
-      binding_module: 0,
-      # PR-EM-2 additions:
-      cap_subject: 0,
-      target_ownership_check: 2,
-      event_to_payload: 1
-    ]
+    # PR-EM-2 expands the required-callback set per SPEC §2.2. P3-1 splits
+    # the required set by the adapter KIND axis (`Adapter.kind_of/1`):
+    #
+    # - `:push` (the default) keeps the full PR-EM-2 contract —
+    #   `binding_module/0`, `cap_subject/0`, `target_ownership_check/2`,
+    #   `event_to_payload/1` (a push adapter still has a paired Binding +
+    #   Worker). A push adapter missing any of these is rejected exactly
+    #   as before — push registration is byte-identical.
+    #
+    # - `:pull` (the socialware customer feed, P3-2) has NO per-binding
+    #   external transport, so it MUST NOT be required to declare
+    #   `binding_module/0` / `target_ownership_check/2` / `event_to_payload/1`.
+    #   It requires `render/2` (the on-demand json render) + `cap_subject/0`.
+    #
+    # Both kinds share the PR-EM-1 id/name/description trio.
+    required =
+      [
+        adapter_id: 0,
+        display_name: 0,
+        description: 0,
+        cap_subject: 0
+      ] ++ kind_specific_required(Ezagent.ExternalMirror.Adapter.kind_of(adapter_module))
 
     missing =
       Enum.reject(required, fn {fun, arity} ->
@@ -187,6 +193,21 @@ defmodule Ezagent.ExternalMirror.AdapterRegistry do
               "checks at insert time so `list_adapters/0` can never crash " <>
               "(codex r2 MEDIUM)."
     end
+  end
+
+  # P3-1 — the required callbacks that differ by adapter KIND.
+  # `:push` keeps the full PR-EM-2 transport contract; `:pull` requires
+  # only `render/2` (no binding / ownership-check / event-to-payload).
+  defp kind_specific_required(:push) do
+    [
+      binding_module: 0,
+      target_ownership_check: 2,
+      event_to_payload: 1
+    ]
+  end
+
+  defp kind_specific_required(:pull) do
+    [render: 2]
   end
 
   # codex r1 MEDIUM-1 — even a direct caller (bypassing the source-

@@ -83,7 +83,15 @@ defmodule Ezagent.ExternalMirror.AdapterInstall do
     adapter_id = adapter_module.adapter_id()
 
     :ok = register_cap_subject(adapter_module, adapter_id)
-    :ok = reconcile_persisted_bindings(adapter_id)
+
+    # P3-1: binding/Worker startup is gated on the adapter KIND. A `:pull`
+    # adapter (the socialware customer feed, P3-2) has NO per-binding
+    # external transport — it is served by its caller's Phoenix channel —
+    # so it spawns NO Worker and has no persisted bindings to reconcile.
+    # Only `:push` adapters walk `external_mirror_bindings` + spawn Workers.
+    if Ezagent.ExternalMirror.Adapter.kind_of(adapter_module) == :push do
+      :ok = reconcile_persisted_bindings(adapter_id)
+    end
 
     :ok
   end

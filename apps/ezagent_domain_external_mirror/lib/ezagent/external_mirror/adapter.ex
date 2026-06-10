@@ -65,10 +65,46 @@ defmodule Ezagent.ExternalMirror.Adapter do
   (directly or transitively) — re-entering ezagent dispatch from
   inside this callback creates a dispatch-during-dispatch deadlock
   because `:bind` is itself a dispatched action.
+
+  ## P3-1 adapter KIND axis — `:push` vs `:pull`
+
+  Every adapter has a **kind** (`adapter_kind/0`), resolved via
+  `kind_of/1`:
+
+  - `:push` (the DEFAULT) — the original external-mirror shape. A push
+    adapter has a paired `Ezagent.ExternalMirror.Binding` GenServer that
+    owns the per-binding external transport; on `:bind` the Domain spawns
+    a Worker that calls `binding_module.init/1` then `publish/2` for each
+    event. Required callbacks: `binding_module/0`, `cap_subject/0`,
+    `target_ownership_check/2`, `event_to_payload/1` (plus the PR-EM-1
+    id/name/description trio).
+
+  - `:pull` — a feed served on demand by its CALLER's Phoenix channel
+    (the socialware customer feed, built in P3-2). A pull adapter has NO
+    per-binding external transport: no `binding_module/0`, no
+    `target_ownership_check/2`, no `event_to_payload/1`, and registering
+    one spawns NO Worker. Instead it implements `render/2`, which returns
+    the json-render map for a session on demand. Required callbacks:
+    `render/2` + `cap_subject/0` (plus the id/name/description trio).
+
+  `adapter_kind/0` is an OPTIONAL callback with a back-compat default of
+  `:push` (resolved through `kind_of/1`), so EXISTING adapters (Feishu
+  mirror, the test adapters) remain valid WITHOUT declaring it. The
+  registry's required-callback enforcement
+  (`Ezagent.ExternalMirror.AdapterRegistry`) branches on `kind_of/1`, and
+  the binding/Worker-startup path (`Ezagent.ExternalMirror.AdapterInstall`)
+  is gated on `kind_of(adapter) == :push`.
   """
 
   @typedoc "Stable string id for the AdapterRegistry."
   @type adapter_id :: String.t()
+
+  @typedoc """
+  Adapter kind axis (P3-1). `:push` (the default) has a paired Binding +
+  Worker; `:pull` is served on demand by its caller's Phoenix channel and
+  has no per-binding transport.
+  """
+  @type adapter_kind :: :push | :pull
 
   @typedoc """
   Per-adapter cap subject shape returned from `cap_subject/0`. The
@@ -101,7 +137,7 @@ defmodule Ezagent.ExternalMirror.Adapter do
           :ok
           | {:error, :not_a_member | :target_check_timeout | term()}
 
-  # ----- Required callbacks --------------------------------------------------
+  # ----- Required callbacks (both kinds) -------------------------------------
 
   @doc "Stable string key — the AdapterRegistry's lookup key."
   @callback adapter_id() :: adapter_id()
@@ -112,11 +148,24 @@ defmodule Ezagent.ExternalMirror.Adapter do
   @doc "Operator-facing description (1-2 sentences)."
   @callback description() :: String.t()
 
+  # ----- Push-required callbacks ---------------------------------------------
+  #
+  # P3-1: `binding_module/0`, `target_ownership_check/2`, and
+  # `event_to_payload/1` are REQUIRED only for `:push` adapters. They are
+  # listed in `@optional_callbacks` so the compiler does not flag a `:pull`
+  # adapter (which legitimately omits them) — the per-kind requirement is
+  # enforced at runtime by `Ezagent.ExternalMirror.AdapterRegistry`'s
+  # `assert_required_callbacks!/1` (the registry has always been the
+  # authoritative gate; see that module's moduledoc).
+
   @doc """
   The Binding module paired with this Adapter (Grill-5 bidirectional
   declaration; the compiler asserts
   `adapter.binding_module() == binding` AND
   `binding.adapter_module() == adapter`).
+
+  REQUIRED for `:push` adapters; a `:pull` adapter has no per-binding
+  transport and omits it (P3-1).
   """
   @callback binding_module() :: module()
 
@@ -196,5 +245,72 @@ defmodule Ezagent.ExternalMirror.Adapter do
   """
   @callback target_ownership_check_timeout() :: pos_integer()
 
-  @optional_callbacks [target_ownership_check_timeout: 0]
+  @doc """
+  The adapter's KIND (P3-1). `:push` (default) or `:pull`. Optional with a
+  back-compat default of `:push` resolved via `kind_of/1` — EXISTING
+  adapters need not declare it.
+  """
+  @callback adapter_kind() :: adapter_kind()
+
+  @doc """
+  Render the on-demand json view of `session_uri` for a `:pull` adapter
+  (P3-1). REQUIRED for `:pull` adapters (enforced by
+  `Ezagent.ExternalMirror.AdapterRegistry`), unused by `:push` adapters.
+
+  `ctx` carries caller/request context (shape defined by the pull
+  transport in P3-2). Returns the json-render map served by the caller's
+  Phoenix channel.
+  """
+  @callback render(session_uri :: URI.t(), ctx :: map()) :: map()
+
+  # `@optional_callbacks` here means "the COMPILER won't warn if absent".
+  # Push-required callbacks (`binding_module/0`, `target_ownership_check/2`,
+  # `event_to_payload/1`) live here so a `:pull` adapter can omit them
+  # warning-free; their per-kind requirement is enforced at runtime by
+  # `Ezagent.ExternalMirror.AdapterRegistry.assert_required_callbacks!/1`.
+  @optional_callbacks [
+    target_ownership_check_timeout: 0,
+    adapter_kind: 0,
+    render: 2,
+    binding_module: 0,
+    target_ownership_check: 2,
+    event_to_payload: 1
+  ]
+
+  @doc """
+  Resolve an adapter module's KIND with the back-compat default.
+
+  Returns `module.adapter_kind()` when the module exports
+  `adapter_kind/0`, else `:push` — so adapters predating the P3-1 kind
+  axis (Feishu mirror, test adapters) resolve to `:push` without editing.
+  """
+  @spec kind_of(module()) :: adapter_kind()
+  def kind_of(adapter_module) when is_atom(adapter_module) do
+    # `Code.ensure_loaded?/1` first: `function_exported?/3` returns false
+    # for a not-yet-loaded module (which would mis-default a genuine `:pull`
+    # adapter to `:push`). Same guard as `Gates.adapter_allow_action/1`.
+    if Code.ensure_loaded?(adapter_module) and
+         function_exported?(adapter_module, :adapter_kind, 0) do
+      adapter_module.adapter_kind()
+    else
+      :push
+    end
+  end
+
+  @doc """
+  Invoke a `:pull` adapter's `render/2`. Thin helper so callers (the P3-2
+  pull transport) have one chokepoint; raises with a clear message if the
+  module is not a `:pull` adapter exporting `render/2`.
+  """
+  @spec render(module(), URI.t(), map()) :: map()
+  def render(adapter_module, %URI{} = session_uri, ctx)
+      when is_atom(adapter_module) and is_map(ctx) do
+    unless function_exported?(adapter_module, :render, 2) do
+      raise ArgumentError,
+            "#{inspect(adapter_module)} does not export render/2 — only :pull " <>
+              "adapters implement render/2 (P3-1). kind_of/1 == #{inspect(kind_of(adapter_module))}."
+    end
+
+    adapter_module.render(session_uri, ctx)
+  end
 end

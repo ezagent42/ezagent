@@ -15,8 +15,15 @@ defmodule Ezagent.ExternalMirror.AdapterRegistryTest do
 
   use ExUnit.Case, async: false
 
-  alias Ezagent.ExternalMirror.AdapterRegistry
-  alias Ezagent.ExternalMirror.TestSupport.{MockAdapter, OtherAdapter}
+  alias Ezagent.ExternalMirror.{Adapter, AdapterRegistry, WorkerRegistry}
+
+  alias Ezagent.ExternalMirror.TestSupport.{
+    MockAdapter,
+    OtherAdapter,
+    PullAdapter,
+    PushAdapterMissingBinding
+  }
+
   alias Ezagent.ExternalMirror.TestSupport.RegistrySnapshot
 
   setup do
@@ -85,6 +92,44 @@ defmodule Ezagent.ExternalMirror.AdapterRegistryTest do
 
     test "returns an empty list when no adapters registered" do
       assert AdapterRegistry.list() == []
+    end
+  end
+
+  describe "adapter KIND axis (P3-1)" do
+    test "kind_of/1 defaults to :push for an adapter that does not export adapter_kind/0" do
+      # MockAdapter is an existing :push adapter and does NOT export
+      # adapter_kind/0 — back-compat default per P3-1.
+      refute function_exported?(MockAdapter, :adapter_kind, 0)
+      assert Adapter.kind_of(MockAdapter) == :push
+    end
+
+    test "kind_of/1 returns :pull for an adapter that declares adapter_kind :pull" do
+      assert Adapter.kind_of(PullAdapter) == :pull
+    end
+
+    test "a :pull adapter registers WITHOUT a binding_module" do
+      refute function_exported?(PullAdapter, :binding_module, 0)
+      assert :ok = AdapterRegistry.register(PullAdapter)
+      assert {:ok, PullAdapter} = AdapterRegistry.lookup("pull_em")
+    end
+
+    test "a :pull adapter does NOT spawn a Worker on registration" do
+      before = WorkerRegistry.list_all()
+      assert :ok = AdapterRegistry.register(PullAdapter)
+      # No per-binding Worker/supervisor is started for a pull adapter —
+      # it is served by its caller's Phoenix channel (P3-2), not a Worker.
+      assert WorkerRegistry.list_all() == before
+    end
+
+    test "a :push adapter missing binding_module/0 still RAISES (push contract unchanged)" do
+      assert Adapter.kind_of(PushAdapterMissingBinding) == :push
+
+      err =
+        assert_raise ArgumentError, fn ->
+          AdapterRegistry.register(PushAdapterMissingBinding)
+        end
+
+      assert err.message =~ "binding_module/0"
     end
   end
 end

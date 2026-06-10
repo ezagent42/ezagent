@@ -198,3 +198,118 @@ defmodule Ezagent.ExternalMirror.TestSupport.OtherBinding do
   @impl true
   def terminate(_reason, _state), do: :ok
 end
+
+defmodule Ezagent.ExternalMirror.TestSupport.PullAdapter.Allow do
+  @moduledoc """
+  Per-adapter Allow Behavior for the P3-1 `:pull` test adapter. Cap-only
+  (`dispatchable?/0 == false`), mirroring `MockAdapter.Allow`. A `:pull`
+  adapter still declares a `cap_subject/0` so the per-adapter authorization
+  cap shape exists.
+  """
+  @behaviour Ezagent.Behavior
+
+  @impl true
+  def actions, do: [:allow_pull_em]
+
+  @impl true
+  def cap_subjects,
+    do: [{:allow_pull_em, "Authorize the `pull_em` pull adapter on this session."}]
+
+  @impl true
+  def dispatchable?, do: false
+
+  @impl true
+  def state_slice, do: :external_adapter_pull_em
+
+  @impl true
+  def init_slice(_args), do: %{}
+
+  @impl true
+  def invoke(_action, _slice, _args, _ctx) do
+    raise "PullAdapter.Allow is cap-only."
+  end
+
+  @impl true
+  def interface, do: %{}
+
+  @impl true
+  def required_caps,
+    do: %{allow_pull_em: Ezagent.Capability.cap(:session, __MODULE__, :allow_pull_em)}
+
+  @impl true
+  def data_owner(_), do: :any
+end
+
+defmodule Ezagent.ExternalMirror.TestSupport.PullAdapter do
+  @moduledoc """
+  P3-1 `:pull` test adapter. A pull adapter has NO per-binding external
+  transport — it is served by its caller's Phoenix channel (P3-2), so it
+  declares NO `binding_module/0`, NO `target_ownership_check/2`, and NO
+  `event_to_payload/1`. It declares `adapter_kind/0 == :pull` plus the
+  pull-only `render/2` callback and the shared `cap_subject/0`.
+
+  Asserts the P3-1 contract: a `:pull` adapter registers without a binding
+  and without spawning a Worker.
+  """
+  @behaviour Ezagent.ExternalMirror.Adapter
+
+  @impl true
+  def adapter_id, do: "pull_em"
+
+  @impl true
+  def display_name, do: "Pull EM Adapter"
+
+  @impl true
+  def description, do: "Test-only pull adapter for P3-1 (Phoenix-channel feed)."
+
+  @impl true
+  def adapter_kind, do: :pull
+
+  @impl true
+  def cap_subject do
+    %{
+      behavior_module: Ezagent.ExternalMirror.TestSupport.PullAdapter.Allow,
+      description: "Test-only pull-adapter-allow cap (P3-1)."
+    }
+  end
+
+  @impl true
+  def render(%URI{} = session_uri, ctx) when is_map(ctx) do
+    %{session_uri: URI.to_string(session_uri), ctx: ctx}
+  end
+end
+
+defmodule Ezagent.ExternalMirror.TestSupport.PushAdapterMissingBinding do
+  @moduledoc """
+  A `:push` adapter (the back-compat default kind — it does NOT export
+  `adapter_kind/0`) that is MISSING `binding_module/0`. P3-1 asserts the
+  registry still rejects it: a push adapter without a binding is a
+  structural error.
+  """
+  @behaviour Ezagent.ExternalMirror.Adapter
+
+  @impl true
+  def adapter_id, do: "push_missing_binding_em"
+
+  @impl true
+  def display_name, do: "Push Adapter Missing Binding"
+
+  @impl true
+  def description, do: "Test-only push adapter with no binding — must be rejected."
+
+  @impl true
+  def cap_subject do
+    %{
+      behavior_module: Ezagent.ExternalMirror.TestSupport.MockAdapter.Allow,
+      description: "Reused cap subject for the missing-binding push test."
+    }
+  end
+
+  @impl true
+  def target_ownership_check(_caller, _target_id), do: :ok
+
+  @impl true
+  def event_to_payload(%Ezagent.Publisher.Event{} = event), do: {:publish, %{echo: event}}
+
+  # Intentionally NO `binding_module/0`.
+end
