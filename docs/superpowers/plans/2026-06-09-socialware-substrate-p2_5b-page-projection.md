@@ -74,12 +74,16 @@ defmodule EzagentCore.Repo.Migrations.SocialwareOutboxSurfaceVersionAndCommitted
 
     # Backfill existing committed rows so committed_seq is dense from deploy
     # (else legacy committed pages would vanish — the page read is committed_seq
-    # based). Delegated to a PERMANENT idempotent helper (only touches committed
-    # rows whose committed_seq IS NULL), so it is unit-testable and safe to keep
-    # across future refactors (a re-run on a fresh DB finds no NULL-seq committed
-    # rows and no-ops).
+    # based). SELF-CONTAINED inside the migration via migration-local Ecto queries
+    # over RAW table names — an ezagent_core migration must NOT call up-layer
+    # Ezagent.Socialware.* (core doesn't depend on socialware; release/core-only
+    # migration contexts may not have it loaded; replay must not depend on app
+    # shape — codex P2.5b impl HIGH). The numbering mirrors the runtime/test helper
+    # Settlement.backfill_committed_seq!/0. See the actual migration file for the
+    # private backfill_committed_seq/0 (committed_at, then coalesce(target_surface_version,0),
+    # then turn_id; continues from per-session max).
     flush()
-    Ezagent.Socialware.Settlement.backfill_committed_seq!()
+    backfill_committed_seq()
 
     # A per-session unique index — a backstop against a committed_seq collision
     # (per-session commits are serialized by the single SocialwareSession

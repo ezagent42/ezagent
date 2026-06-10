@@ -203,14 +203,17 @@ defmodule Ezagent.Socialware.Settlement do
   end
 
   @doc """
-  P2.5b — one-time idempotent backfill (called by the migration): assign
-  committed_seq + surface_version to EXISTING committed outbox rows whose
-  committed_seq IS NULL. Per session, numbers rows in commit order: committed_at,
-  then `target_surface_version` (page-version order — a tied committed_at resolves
-  so the HIGHER version gets the HIGHER seq, so the committed_seq page read picks
-  it), then turn_id. Continues from any committed_seq already present. Safe to
-  re-run (touches only NULL-seq committed rows). Permanent helper (kept so the
-  historical migration replays on fresh DBs).
+  P2.5b — idempotent backfill: assign committed_seq + surface_version to EXISTING
+  committed outbox rows whose committed_seq IS NULL. Per session, numbers rows in
+  commit order: committed_at, then `target_surface_version` (page-version order —
+  a tied committed_at resolves so the HIGHER version gets the HIGHER seq, so the
+  committed_seq page read picks it), then turn_id. Continues from any committed_seq
+  already present. Safe to re-run (touches only NULL-seq committed rows).
+
+  RUNTIME/TEST helper. The actual deploy backfill is a SELF-CONTAINED copy inside
+  migration `20260618000600` (an `ezagent_core` migration must not call up-layer
+  `Ezagent.Socialware.*`; codex P2.5b impl HIGH). This function mirrors that
+  algorithm for unit tests / ad-hoc repair via the app runtime.
   """
   @spec backfill_committed_seq!() :: :ok
   def backfill_committed_seq! do
