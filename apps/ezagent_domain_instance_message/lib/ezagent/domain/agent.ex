@@ -32,9 +32,9 @@ defmodule Ezagent.Domain.Agent do
   auto-trigger from URI registration to associated template
   instantiate): the V2 path is a generic `Ezagent.Behavior.Terminable`
   contract carried by every "running" Kind, dispatched via
-  `?action=lifecycle.phase`. For V1 the facade derives flavor only for
-  display and detects PTY-backed runtime by behavior. The response
-  shape is forward-compatible.
+  `?action=lifecycle.phase`. For V1 the facade reads flavor through
+  `Ezagent.UriQuery`; flavor is stored agent metadata, not a URI name
+  convention. The response shape is forward-compatible.
   """
 
   @type phase :: :registered | :instantiated | :alive | :error | :not_found
@@ -48,7 +48,7 @@ defmodule Ezagent.Domain.Agent do
   @doc """
   Return the unified lifecycle status of `agent_uri`.
 
-  Returns `%{phase: :not_found, flavor: <derived>, detail: nil}` if
+  Returns `%{phase: :not_found, flavor: <stored>, detail: nil}` if
   no Kind is registered at the URI.
 
   ## Phases
@@ -64,7 +64,7 @@ defmodule Ezagent.Domain.Agent do
   """
   @spec lifecycle_status(URI.t()) :: status()
   def lifecycle_status(%URI{} = agent_uri) do
-    flavor = derive_flavor(agent_uri)
+    flavor = resolve_flavor!(agent_uri)
 
     case Ezagent.KindRegistry.lookup(agent_uri) do
       {:ok, _pid} ->
@@ -114,7 +114,7 @@ defmodule Ezagent.Domain.Agent do
   """
   @spec subprocess_phase(URI.t()) :: :starting | :running | :dead
   def subprocess_phase(%URI{} = agent_uri) do
-    case derive_flavor(agent_uri) do
+    case resolve_flavor!(agent_uri) do
       "cc" ->
         if Code.ensure_loaded?(Ezagent.Domain.Pty.Server) do
           Ezagent.Domain.Pty.Server.phase(agent_uri)
@@ -123,8 +123,18 @@ defmodule Ezagent.Domain.Agent do
         end
 
       "np" ->
-        if Code.ensure_loaded?(Ezagent.Domain.Python.Server) do
-          Ezagent.Domain.Python.Server.phase(agent_uri)
+        # `Ezagent.Domain.Python.Server` lives in `ezagent_domain_python`,
+        # which is downstream of this app (only `ezagent_plugin_np` depends
+        # on it — this flavor facade must NOT depend on a plugin's runtime).
+        # A direct call would emit a "module not available" warning at
+        # compile time even though the `Code.ensure_loaded?/1` guard makes
+        # the call runtime-safe. `apply/3` defers resolution to runtime —
+        # same convention as `Ezagent.Plugin.publish_adapters!/2`'s
+        # cross-app calls into the ExternalMirror registries.
+        python_server = Ezagent.Domain.Python.Server
+
+        if Code.ensure_loaded?(python_server) do
+          apply(python_server, :phase, [agent_uri])
         else
           :dead
         end
@@ -139,22 +149,14 @@ defmodule Ezagent.Domain.Agent do
     end
   end
 
-  # ── flavor derivation ────────────────────────────────────────────
+  # ── stored flavor lookup ─────────────────────────────────────────
 
-  # Agent URIs are `entity://agent/<workspace>/<flavor>_<name>` per
-  # SPEC v3 §3 (3-segment authority) + SPEC v2 §5.14 (flavor lives in
-  # name prefix). Workspace URIs / non-agent URIs return nil flavor.
-  defp derive_flavor(%URI{scheme: "entity", host: "agent", path: "/" <> rest})
-       when rest != "" do
-    with [_workspace, entity_name] when entity_name != "" <-
-           String.split(rest, "/", parts: 2),
-         [flavor, suffix] when flavor != "" and suffix != "" <-
-           String.split(entity_name, "_", parts: 2) do
-      flavor
-    else
-      _ -> nil
+  defp resolve_flavor!(%URI{} = agent_uri) do
+    case Ezagent.UriQuery.resolve(:flavor, agent_uri) do
+      {:ok, flavor} when is_binary(flavor) and flavor != "" -> flavor
+      :none -> nil
+      {:ok, other} -> raise ArgumentError, "invalid stored agent flavor: #{inspect(other)}"
+      {:error, reason} -> raise ArgumentError, "agent flavor resolver failed: #{inspect(reason)}"
     end
   end
-
-  defp derive_flavor(_), do: nil
 end

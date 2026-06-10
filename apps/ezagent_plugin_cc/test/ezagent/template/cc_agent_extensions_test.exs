@@ -138,7 +138,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
 
   describe "destroy_config_dir/2 — path lock" do
     test "rm -rf's the dir when path matches agent_config_dir/1" do
-      agent_uri = URI.new!("entity://agent/team-alpha/cc_destroy-test-#{uniq()}")
+      agent_uri = URI.new!("entity://team-alpha/agent/cc_destroy-test-#{uniq()}")
       canonical = CcAgent.agent_config_dir(agent_uri)
       File.mkdir_p!(canonical)
       File.write!(Path.join(canonical, "marker"), "x")
@@ -150,7 +150,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
     end
 
     test "REJECTS mismatched paths (e.g. someone passes / or /etc)" do
-      agent_uri = URI.new!("entity://agent/team-alpha/cc_lock-test-#{uniq()}")
+      agent_uri = URI.new!("entity://team-alpha/agent/cc_lock-test-#{uniq()}")
 
       assert {:error, {:path_mismatch, _}} =
                CcAgent.destroy_config_dir(agent_uri, "/etc")
@@ -171,7 +171,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
       File.write!(Path.join(reference, ".credentials.json"), "{}")
       File.write!(Path.join(reference, "settings.json"), "{}")
 
-      agent_uri = URI.new!("entity://agent/team-alpha/cc_create-test-#{uniq()}")
+      agent_uri = URI.new!("entity://team-alpha/agent/cc_create-test-#{uniq()}")
       # config_dir promotion (Allen 2026-06-03): cc reads the universal,
       # flavor-neutral "config_dir" data key (was "claude_config_dir").
       # PR-3: the per-agent TARGET is domain-allocated + provided as
@@ -201,7 +201,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
       reference = make_tmpdir("cc-idem-ref")
       File.write!(Path.join(reference, ".credentials.json"), "{}")
 
-      agent_uri = URI.new!("entity://agent/team-alpha/cc_idem-test-#{uniq()}")
+      agent_uri = URI.new!("entity://team-alpha/agent/cc_idem-test-#{uniq()}")
       tmpl = %{
         "config_dir" => reference,
         "allocated_config_dir" => CcAgent.agent_config_dir(agent_uri)
@@ -220,7 +220,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
     end
 
     test "returns {:ok, nil} when template has no config_dir" do
-      agent_uri = URI.new!("entity://agent/team-alpha/cc_no-ref-#{uniq()}")
+      agent_uri = URI.new!("entity://team-alpha/agent/cc_no-ref-#{uniq()}")
       tmpl = %{"agent_uri" => URI.to_string(agent_uri), "cwd" => "/tmp", "class" => "cc.agent"}
 
       assert {:ok, nil} = CcAgent.create_agent_config_dir(agent_uri, tmpl)
@@ -231,7 +231,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
       # create_agent_config_dir/2) WITHOUT running validate/1, so a stale
       # data key must fail loud HERE too, not silently spawn without the
       # isolated config dir. feedback_let_it_crash_no_workarounds.
-      agent_uri = URI.new!("entity://agent/team-alpha/cc_stale-key-#{uniq()}")
+      agent_uri = URI.new!("entity://team-alpha/agent/cc_stale-key-#{uniq()}")
       tmpl = %{"claude_config_dir" => "/old/.claude"}
 
       assert_raise ArgumentError, ~r/stale `claude_config_dir` data key/, fn ->
@@ -243,7 +243,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
       # The loader path bypasses validate/1; a present `""`/non-binary
       # config_dir must fail loud here rather than be treated as absent
       # (which would spawn without CLAUDE_CONFIG_DIR on the operator home).
-      agent_uri = URI.new!("entity://agent/team-alpha/cc_malformed-#{uniq()}")
+      agent_uri = URI.new!("entity://team-alpha/agent/cc_malformed-#{uniq()}")
 
       assert {:error, {:invalid_config_dir, ""}} =
                CcAgent.create_agent_config_dir(agent_uri, %{"config_dir" => ""})
@@ -253,7 +253,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
     end
 
     test "returns error if reference dir doesn't exist" do
-      agent_uri = URI.new!("entity://agent/team-alpha/cc_missing-ref-#{uniq()}")
+      agent_uri = URI.new!("entity://team-alpha/agent/cc_missing-ref-#{uniq()}")
 
       tmpl = %{
         "config_dir" => "/nonexistent/path/123",
@@ -269,7 +269,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
       # "allocated_config_dir". An absent target means an un-provisioned/direct
       # caller — the plugin must NOT self-allocate a path (that scatter is the bug
       # PR-3 removes). feedback_let_it_crash_no_workarounds.
-      agent_uri = URI.new!("entity://agent/team-alpha/cc_unallocated-#{uniq()}")
+      agent_uri = URI.new!("entity://team-alpha/agent/cc_unallocated-#{uniq()}")
       reference = make_tmpdir("cc-unalloc-ref")
 
       assert {:error, :config_dir_not_allocated} =
@@ -282,7 +282,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
       reference = make_tmpdir("cc-prealloc-ref")
       File.write!(Path.join(reference, ".credentials.json"), "{}")
 
-      agent_uri = URI.new!("entity://agent/team-alpha/cc_prealloc-#{uniq()}")
+      agent_uri = URI.new!("entity://team-alpha/agent/cc_prealloc-#{uniq()}")
       target = CcAgent.agent_config_dir(agent_uri)
       File.mkdir_p!(target)
       File.chmod!(target, 0o700)
@@ -308,7 +308,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
       File.mkdir_p!(plugin_dir)
       File.write!(Path.join(plugin_dir, "plugin.json"), ~s/{"name":"demo"}/)
 
-      agent_uri = URI.new!("entity://agent/team-alpha/cc_login-preserve-#{uniq()}")
+      agent_uri = URI.new!("entity://team-alpha/agent/cc_login-preserve-#{uniq()}")
       target = CcAgent.agent_config_dir(agent_uri)
       File.mkdir_p!(target)
       # the user's real login — present, but NO completion marker + NO other content
@@ -332,14 +332,14 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
 
   describe "agent_config_dir/1 — canonical path builder" do
     test "produces a workspace-scoped per-agent path" do
-      uri = URI.new!("entity://agent/team-alpha/cc_foo")
+      uri = URI.new!("entity://team-alpha/agent/cc_foo")
       dir = CcAgent.agent_config_dir(uri)
       assert String.ends_with?(dir, "/team-alpha/cc_foo")
       assert String.contains?(dir, "cc-agents")
     end
 
     test "extracts workspace + name correctly from team-alpha workspace" do
-      uri = URI.new!("entity://agent/team-alpha/cc_bar")
+      uri = URI.new!("entity://team-alpha/agent/cc_bar")
       dir = CcAgent.agent_config_dir(uri)
       assert String.ends_with?(dir, "/team-alpha/cc_bar")
     end

@@ -56,7 +56,7 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
     :ok = BehaviorRegistry.register(StubAgentKind, :destroy, Sandbox)
 
     agent_uri =
-      URI.parse("entity://agent/parity/cc_sandbox-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!("entity://parity/agent/cc_sandbox-#{System.unique_integer([:positive])}")
 
     admin_caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
 
@@ -70,13 +70,13 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
   end
 
   defp build_invocation(agent_uri, action, args, caps) do
-    target = URI.parse("#{URI.to_string(agent_uri)}?action=sandbox.#{action}")
+    target = Ezagent.URI.new!("#{URI.to_string(agent_uri)}?action=sandbox.#{action}")
 
     %Invocation{
       target: target,
       mode: :call,
       args: args,
-      ctx: %{caller: URI.parse("entity://user/system/admin"), caps: caps, reply: :sync}
+      ctx: %{caller: Ezagent.URI.new!("entity://system/user/admin"), caps: caps, reply: :sync}
     }
   end
 
@@ -274,7 +274,7 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
 
       ctx = %{
         self_uri:
-          URI.parse("entity://agent/parity/cc_gate-#{System.unique_integer([:positive])}"),
+          Ezagent.URI.new!("entity://parity/agent/cc_gate-#{System.unique_integer([:positive])}"),
         kind_module: SuccessTC,
         read: read
       }
@@ -317,7 +317,9 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
 
       ctx = %{
         self_uri:
-          URI.parse("entity://agent/parity/cc_failing-#{System.unique_integer([:positive])}"),
+          Ezagent.URI.new!(
+            "entity://parity/agent/cc_failing-#{System.unique_integer([:positive])}"
+          ),
         kind_module: FailingTC,
         read: read
       }
@@ -387,7 +389,7 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
     end
 
     test "data_owner/1 — entity URI returns the canonical instance URI" do
-      uri = URI.parse("entity://agent/team-alpha/cc_x")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_x")
       assert %URI{} = Sandbox.data_owner(uri)
     end
   end
@@ -412,7 +414,8 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
       }
 
       ctx = %{
-        self_uri: URI.parse("entity://agent/parity/cc_x-#{System.unique_integer([:positive])}"),
+        self_uri:
+          Ezagent.URI.new!("entity://parity/agent/cc_x-#{System.unique_integer([:positive])}"),
         kind_module: StubAgentKind
       }
 

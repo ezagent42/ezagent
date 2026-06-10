@@ -33,11 +33,11 @@ defmodule Ezagent.Routing.PromptTemplateTest do
     test "stringifies a %URI{} sender" do
       out =
         PromptTemplate.render("from {sender}: {body}", %{
-          sender: URI.new!("entity://user/system/admin"),
+          sender: URI.new!("entity://system/user/admin"),
           body: "hi"
         })
 
-      assert out == "from entity://user/system/admin: hi"
+      assert out == "from entity://system/user/admin: hi"
     end
 
     test "leaves unknown placeholders untouched + nil → empty" do

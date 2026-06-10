@@ -12,7 +12,7 @@ defmodule Ezagent.Behavior.ApiKeysTest do
     %{
       caller: :system,
       caps: MapSet.new(),
-      self_uri: URI.parse("entity://agent/team-alpha/curl_test"),
+      self_uri: Ezagent.URI.new!("entity://team-alpha/agent/curl_test"),
       reply: :sync,
       read: fn key, default ->
         case key do
@@ -30,7 +30,7 @@ defmodule Ezagent.Behavior.ApiKeysTest do
     end
 
     test "captures creator_uri when provided" do
-      creator = URI.parse("entity://user/system/admin")
+      creator = Ezagent.URI.new!("entity://system/user/admin")
       assert ApiKeys.create(%{creator_uri: creator}) == {:ok, %{keys: %{}, creator_uri: creator}}
     end
   end
@@ -147,7 +147,7 @@ defmodule Ezagent.Behavior.ApiKeysTest do
 
   describe "data_owner/1 (Allen 2026-05-26)" do
     test "non-agent URI → :no_owner" do
-      assert ApiKeys.data_owner(URI.parse("entity://user/system/admin")) == :no_owner
+      assert ApiKeys.data_owner(Ezagent.URI.new!("entity://system/user/admin")) == :no_owner
     end
 
     test ":any sentinel passes through" do
@@ -157,7 +157,7 @@ defmodule Ezagent.Behavior.ApiKeysTest do
     test "agent URI whose Kind isn't live → :no_owner" do
       assert ApiKeys.data_owner(
                URI.parse(
-                 "entity://agent/team-alpha/curl_no-such-#{System.unique_integer([:positive])}"
+                 "entity://team-alpha/agent/curl_no-such-#{System.unique_integer([:positive])}"
                )
              ) == :no_owner
     end

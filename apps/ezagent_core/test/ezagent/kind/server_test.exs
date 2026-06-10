@@ -5,9 +5,14 @@ defmodule Ezagent.Kind.ServerTest do
   setup do
     # Each test gets a unique URI so registry state doesn't leak.
     # PR #141: agent URIs are entity://agent/<flavor>_<name>; use "test" flavor.
+    # P1 (socialware substrate): every Kind now composes `KindBase`
+    # (a Lifecycle behavior), so spawn runs the Lifecycle `__init_slice__` →
+    # `ever_created?` → canonical-URI guard. The CANONICAL constructor
+    # `Ezagent.URI.new!/1` is required (the deprecated `URI.parse/1` builds a
+    # non-canonical struct the guard rejects — its own error message says so).
     uri =
-      URI.parse(
-        "entity://agent/team-alpha/test_kind-server-#{System.unique_integer([:positive])}"
+      Ezagent.URI.new!(
+        "entity://team-alpha/agent/test_kind-server-#{System.unique_integer([:positive])}"
       )
 
     # Wire TestKind/TestBehavior into the BehaviorRegistry for this test —
@@ -38,11 +43,11 @@ defmodule Ezagent.Kind.ServerTest do
     :ok = wait_until_ready(uri, 500)
 
     inv = %Ezagent.Invocation{
-      target: URI.parse("#{URI.to_string(uri)}?action=test.noop"),
+      target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop"),
       mode: :call,
       args: %{msg: "hello"},
       ctx: %{
-        caller: URI.parse("entity://user/system/admin"),
+        caller: Ezagent.URI.new!("entity://system/user/admin"),
         caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
         reply: :ignore
       }
@@ -56,11 +61,11 @@ defmodule Ezagent.Kind.ServerTest do
     :ok = wait_until_ready(uri, 500)
 
     inv = %Ezagent.Invocation{
-      target: URI.parse("#{URI.to_string(uri)}?action=test.noop"),
+      target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop"),
       mode: :cast,
       args: %{msg: "via-cast"},
       ctx: %{
-        caller: URI.parse("entity://user/system/admin"),
+        caller: Ezagent.URI.new!("entity://system/user/admin"),
         caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
         reply: {:caller_inbox, self()}
       }
@@ -75,11 +80,11 @@ defmodule Ezagent.Kind.ServerTest do
     # Buffer a message *before* the server exists, then start the server —
     # the message should be drained during announce_ready.
     pre_inv = %Ezagent.Invocation{
-      target: URI.parse("#{URI.to_string(uri)}?action=test.noop"),
+      target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop"),
       mode: :cast,
       args: %{msg: "pre-ready"},
       ctx: %{
-        caller: URI.parse("entity://user/system/admin"),
+        caller: Ezagent.URI.new!("entity://system/user/admin"),
         caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
         reply: {:caller_inbox, self()}
       }

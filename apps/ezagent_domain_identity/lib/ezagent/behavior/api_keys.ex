@@ -71,33 +71,37 @@ defmodule Ezagent.Behavior.ApiKeys do
 
   use Ezagent.Lifecycle
 
-  action :list_api_keys,
+  action(:list_api_keys,
     args: %{},
     returns: %{api_keys: {:list, :map}},
     caps: [{:list_api_keys, kind: :any}],
     description: "List the agent's stored API keys with masked values",
     modes: [:call]
+  )
 
-  action :put_api_key,
+  action(:put_api_key,
     args: %{provider: :string, key: :string},
     returns: %{ok: :boolean, provider: :string},
     caps: [{:put_api_key, kind: :any}],
     description: "Store or replace the agent's API key for a provider",
     modes: [:call]
+  )
 
-  action :delete_api_key,
+  action(:delete_api_key,
     args: %{provider: :string},
     returns: %{ok: :boolean, provider: :string},
     caps: [{:delete_api_key, kind: :any}],
     description: "Delete the agent's API key for a provider",
     modes: [:call]
+  )
 
-  action :get_api_key,
+  action(:get_api_key,
     args: %{provider: :string},
     returns: %{key: :string, provider: :string},
     caps: [{:get_api_key, kind: :any}],
     description: "Fetch the agent's plaintext API key for a provider",
     modes: [:call]
+  )
 
   # =================================================================
   # Explicit `required_caps/0` — preserved as `kind: :any` (ApiKeys
@@ -225,16 +229,20 @@ defmodule Ezagent.Behavior.ApiKeys do
   #     Kind's `{:snapshot, :on_change}` persistence.
   #  2. `Ezagent.AgentLineage.lookup/1` fallback (codex HIGH-1 closure).
   #  3. `:no_owner` — neither source has a record.
-  def data_owner(%URI{scheme: "entity", host: "agent"} = agent_uri) do
-    case Ezagent.Kind.get_slice(agent_uri, :api_keys) do
-      {:ok, %{creator_uri: %URI{} = creator}} ->
-        creator
+  def data_owner(%URI{scheme: "entity"} = agent_uri) do
+    if Ezagent.URI.type?(agent_uri, :agent) do
+      case Ezagent.Kind.get_slice(agent_uri, :api_keys) do
+        {:ok, %{creator_uri: %URI{} = creator}} ->
+          creator
 
-      _ ->
-        case lineage_lookup(agent_uri) do
-          {:ok, %URI{} = creator} -> creator
-          _ -> :no_owner
-        end
+        _ ->
+          case lineage_lookup(agent_uri) do
+            {:ok, %URI{} = creator} -> creator
+            _ -> :no_owner
+          end
+      end
+    else
+      :no_owner
     end
   end
 

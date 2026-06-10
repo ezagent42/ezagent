@@ -61,7 +61,7 @@ defmodule Ezagent.Entity.SessionTemplateMembersTest do
   end
 
   defp read(uri) do
-    target = URI.parse("#{URI.to_string(uri)}?action=template.read")
+    target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=template.read")
 
     Invocation.dispatch(%Invocation{
       target: target,
@@ -80,8 +80,8 @@ defmodule Ezagent.Entity.SessionTemplateMembersTest do
     %{
       name: name,
       description: "a relay team",
-      orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
-      default_workspace_uri: URI.parse("workspace://team-alpha"),
+      orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator"),
+      default_workspace_uri: Ezagent.URI.new!("workspace://team-alpha"),
       parent_template_uri: nil,
       version_tag: nil,
       created_by: User.admin_uri(),
@@ -90,13 +90,13 @@ defmodule Ezagent.Entity.SessionTemplateMembersTest do
       # ── PR-7 extended content ───────────────────────────────────────
       members: [
         %{
-          uri: URI.parse("entity://agent/team-alpha/cc_relay"),
+          uri: Ezagent.URI.new!("entity://team-alpha/agent/cc_relay"),
           role_name: "relay-cc",
           in_session_template: true,
-          source_template_uri: URI.parse("template://agent/system/cc")
+          source_template_uri: Ezagent.URI.new!("template://system/agent/cc")
         },
         %{
-          uri: URI.parse("entity://user/team-alpha/watcher"),
+          uri: Ezagent.URI.new!("entity://team-alpha/user/watcher"),
           role_name: "watcher",
           in_session_template: true,
           source_template_uri: nil
@@ -170,7 +170,7 @@ defmodule Ezagent.Entity.SessionTemplateMembersTest do
 
       # Content-addressed URI carries the hash computed over the extended
       # content (so a member/template/legend change yields a new version).
-      assert URI.to_string(uri) == "template://session/team-alpha/#{name}@#{hash}"
+      assert URI.to_string(uri) == "template://team-alpha/session/#{name}@#{hash}"
 
       # Round-trip: the extended fields come back byte-identical.
       assert {:ok, %{content: read_back}} = read(uri)

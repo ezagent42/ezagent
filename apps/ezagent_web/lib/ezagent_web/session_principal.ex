@@ -134,7 +134,7 @@ defmodule EzagentWeb.SessionPrincipal do
     workspace =
       cond do
         # Full URI: workspace is encoded structurally — no opts needed.
-        String.starts_with?(trimmed, "entity://") ->
+        entity_uri_input?(trimmed) ->
           nil
 
         # Bare handle: workspace must be supplied (SPEC #324 — no
@@ -146,7 +146,7 @@ defmodule EzagentWeb.SessionPrincipal do
               "EzagentWeb.SessionPrincipal.canonicalize/2 requires opts[:workspace] " <>
                 "for bare-handle input (SPEC #324 — no silent \"default\" fallback). " <>
                 "Admin login passes \"system\"; tenant login passes the tenant's " <>
-                "workspace name; full entity:// URIs ignore the opt."
+                "workspace name; full entity URIs ignore the opt."
             )
       end
 
@@ -160,19 +160,34 @@ defmodule EzagentWeb.SessionPrincipal do
           rescue
             ArgumentError -> :error
           end) do
-      %URI{scheme: "entity", host: host} when host in @valid_hosts ->
-        candidate
+      %URI{} = uri ->
+        if Ezagent.URI.scheme?(uri, :entity) and valid_entity_type?(uri) do
+          candidate
+        else
+          raise_invalid_entity_uri!(raw, candidate)
+        end
 
       _ ->
-        raise ArgumentError,
-              "EzagentWeb.SessionPrincipal: not a valid entity URI: #{inspect(raw)} " <>
-                "(normalized to #{inspect(candidate)}). Expected entity://user/... or entity://agent/..."
+        raise_invalid_entity_uri!(raw, candidate)
     end
   end
 
   def canonicalize(other, _opts) do
     raise ArgumentError,
           "EzagentWeb.SessionPrincipal.canonicalize/1 expects a String, got: #{inspect(other)}"
+  end
+
+  defp valid_entity_type?(%URI{} = uri) do
+    case Ezagent.URI.type(uri) do
+      {:ok, type} -> type in @valid_hosts
+      :error -> false
+    end
+  end
+
+  defp raise_invalid_entity_uri!(raw, candidate) do
+    raise ArgumentError,
+          "EzagentWeb.SessionPrincipal: not a valid entity URI: #{inspect(raw)} " <>
+            "(normalized to #{inspect(candidate)}). Expected entity user or entity agent URI."
   end
 
   # Phase 9 PR-5 (SPEC v3 §6.4 amended): bare-handle workspace is
@@ -186,14 +201,23 @@ defmodule EzagentWeb.SessionPrincipal do
     trimmed = String.trim(input)
 
     cond do
-      String.starts_with?(trimmed, "entity://") ->
-        trimmed
+      entity_uri_input?(trimmed) ->
+        trimmed |> Ezagent.URI.new!() |> Ezagent.URI.stable_key()
 
       String.match?(trimmed, ~r/^[a-zA-Z0-9_-]+$/) ->
-        "entity://user/" <> workspace <> "/" <> String.downcase(trimmed)
+        workspace
+        |> Ezagent.URI.user(String.downcase(trimmed))
+        |> Ezagent.URI.stable_key()
 
       true ->
         trimmed
+    end
+  end
+
+  defp entity_uri_input?(input) when is_binary(input) do
+    case Ezagent.URI.parse(input) do
+      {:ok, %URI{} = uri} -> Ezagent.URI.scheme?(uri, :entity)
+      {:error, _} -> false
     end
   end
 end

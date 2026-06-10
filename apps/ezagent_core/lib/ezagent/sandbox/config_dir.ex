@@ -16,7 +16,25 @@ defmodule Ezagent.Sandbox.ConfigDir do
 
   The `namespace` (e.g. `"cc"`) is resolved from the agent's Template Class, not
   from template data — see `Ezagent.Kind.Template` `config_dir_namespace/0`.
+
+  ## Resolution seam (Resource-unification P1)
+
+  `path/2` no longer builds the raw `Home.path("<ns>-agents")/<ws>/<name>` string
+  directly. It now resolves through the hardened
+  `Ezagent.Resource.FsResolver` via `resource://<ws>/<ns>-agents/<name>`, which is
+  the sanctioned single `Home.path` chokepoint for tenant-scoped artifacts. The
+  resolved string is **byte-identical** to the pre-P1 layout (Locked-contract #7,
+  pinned by `ConfigDirParityTest`).
+
+  The authenticated `scope.workspace` is derived from the **agent URI** (the
+  subject this function is materializing) and the `resource://` URI is
+  *constructed* from that same workspace — so a caller cannot forge a
+  cross-`<ws>` resource URI here; the resolver's `authority/2` is therefore
+  non-tautological (codex CRITICAL).
   """
+
+  alias Ezagent.Resource.FsResolver
+  alias Ezagent.URI, as: EzURI
 
   @config_dir_mode 0o700
 
@@ -28,11 +46,25 @@ defmodule Ezagent.Sandbox.ConfigDir do
   """
   @spec path(URI.t(), String.t()) :: String.t()
   def path(%URI{} = agent_uri, namespace) when is_binary(namespace) and namespace != "" do
-    Path.join([
-      Ezagent.Home.path("#{namespace}-agents"),
-      workspace_segment(agent_uri),
-      name_segment(agent_uri)
-    ])
+    # The authenticated subject = the AGENT uri. Derive its authoritative
+    # workspace + name independently, then *construct* the resource:// URI from
+    # that same authenticated workspace (so the resolver's authority/2 is not
+    # tautological — the URI's <ws> is, by construction, the agent's own ws).
+    auth_ws = workspace_segment(agent_uri)
+    name = name_segment(agent_uri)
+    res_uri = EzURI.resource(auth_ws, "#{namespace}-agents", name)
+
+    case FsResolver.resolve(res_uri, %{workspace: auth_ws}) do
+      {:ok, path} ->
+        path
+
+      other ->
+        # The config-dir type is registered at boot and the URI is constructed
+        # from the agent's own ws, so this is unreachable in a correctly-booted
+        # node — fail loud rather than silently mis-locate per-agent state.
+        raise RuntimeError,
+              "config-dir resolution failed for #{URI.to_string(res_uri)}: #{inspect(other)}"
+    end
   end
 
   @doc """
@@ -68,32 +100,30 @@ defmodule Ezagent.Sandbox.ConfigDir do
   # ── URI segments (relocated verbatim from EzagentPluginCc.CcAgent — PR-3 moves
   #    the path authority to core) ──────────────────────────────────────────────
 
-  defp workspace_segment(%URI{host: "agent", path: "/" <> rest} = agent_uri) do
-    case String.split(rest, "/", parts: 2) do
-      [workspace, _name] when workspace != "" ->
-        workspace
-
-      _ ->
-        raise ArgumentError,
-              "agent URI is not canonical 3-segment `entity://agent/<workspace>/<name>` " <>
-                "— got #{inspect(agent_uri)}. Per SPEC #324 rev 3 / PR #335, there is NO " <>
-                "silent default workspace fallback; callers must pass a fully-formed URI."
+  defp workspace_segment(%URI{} = agent_uri) do
+    case Ezagent.URI.type(agent_uri) do
+      {:ok, "agent"} -> Ezagent.URI.workspace_name!(agent_uri)
+      _ -> raise_agent_uri!(agent_uri)
     end
   end
 
-  defp workspace_segment(other) do
-    raise ArgumentError,
-          "agent URI is not an `entity://agent/...` URI — got #{inspect(other)}. " <>
-            "Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace fallback; " <>
-            "callers must pass a fully-formed URI."
-  end
+  defp workspace_segment(other), do: raise_agent_uri!(other)
 
-  defp name_segment(%URI{host: "agent", path: "/" <> rest}) do
-    case String.split(rest, "/", parts: 2) do
-      [_workspace, name] when name != "" -> name
+  defp name_segment(%URI{} = agent_uri) do
+    case Ezagent.URI.type(agent_uri) do
+      {:ok, "agent"} -> Ezagent.URI.name!(agent_uri)
       _ -> "unknown"
     end
+  rescue
+    ArgumentError -> "unknown"
   end
 
   defp name_segment(_), do: "unknown"
+
+  defp raise_agent_uri!(other) do
+    raise ArgumentError,
+          "agent URI is not an entity agent URI — got #{inspect(other)}. " <>
+            "Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace fallback; " <>
+            "callers must pass a fully-formed URI."
+  end
 end

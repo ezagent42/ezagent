@@ -26,14 +26,14 @@ defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
   @workspace_uri URI.new!("workspace://team-alpha")
 
   defp spawn_agent_kind do
-    uri = URI.parse("entity://agent/team-alpha/test_sandbox-#{uniq()}")
+    uri = Ezagent.URI.new!("entity://team-alpha/agent/test_sandbox-#{uniq()}")
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: uri})
     :ok = Ezagent.WorkspaceRegistry.bind(uri, @workspace_uri)
     uri
   end
 
   defp dispatch(uri, action, args) do
-    target = URI.parse("#{URI.to_string(uri)}?action=sandbox.#{action}")
+    target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=sandbox.#{action}")
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,

@@ -56,8 +56,6 @@ defmodule Ezagent.UI.UriOptions do
 
   alias Ezagent.{Capability, EntityPresenter, KindRegistry}
 
-  @system_workspace "workspace://system"
-
   @type option :: %{
           uri: String.t(),
           label: String.t(),
@@ -212,7 +210,9 @@ defmodule Ezagent.UI.UriOptions do
   end
 
   defp system_member?(%URI{} = workspace_uri),
-    do: URI.to_string(workspace_uri) == @system_workspace
+    do: Ezagent.URI.stable_key(workspace_uri) == system_workspace_key()
+
+  defp system_workspace_key, do: :system |> Ezagent.URI.workspace() |> Ezagent.URI.stable_key()
 
   # Derive the caller's workspace via the SAME mechanism dispatch step
   # 5.6 / `Ezagent.Capability.cross_workspace?/2` use:
@@ -252,20 +252,17 @@ defmodule Ezagent.UI.UriOptions do
 
   defp scheme_strings(kinds), do: Enum.map(kinds, &Atom.to_string/1)
 
-  # The flavor is the underscore-prefix of an agent's name segment
-  # (`entity://agent/<ws>/cc_demo` → `"cc"`). Users have no flavor;
-  # sessions carry their template in the type segment but the picker
-  # treats that as kind-level, so flavor is nil for non-agent URIs.
-  defp flavor_of(%URI{scheme: "entity", host: "agent", path: "/" <> rest}) do
-    case String.split(rest, "/", parts: 2) do
-      [_ws, name] ->
-        case String.split(name, "_", parts: 2) do
-          [flavor, _suffix] when flavor != "" -> flavor
-          _ -> nil
-        end
-
-      _ ->
-        nil
+  # Agent flavor is stored metadata. URI names are opaque to UI code.
+  defp flavor_of(%URI{scheme: "entity"} = uri) do
+    if Ezagent.URI.type?(uri, :agent) do
+      case Ezagent.UriQuery.resolve(:flavor, uri) do
+        {:ok, flavor} when is_binary(flavor) and flavor != "" -> flavor
+        :none -> nil
+        {:ok, _other} -> nil
+        {:error, _reason} -> nil
+      end
+    else
+      nil
     end
   end
 

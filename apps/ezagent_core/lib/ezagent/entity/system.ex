@@ -44,11 +44,5 @@ defmodule Ezagent.Entity.System do
   `system://routing/default` (SPEC §5.10).
   """
   @spec routing_default_uri() :: URI.t()
-  # SPEC 2026-05-27-uri-canonicalization §3.5 — this function is called
-  # at compile time from `@global_routing_uri` in `routing_live.ex` (ETS
-  # not yet started). `URI.new!/1` is the canonical form for hard-coded
-  # constants (compile-time carve-out).
-  @routing_default_uri URI.new!("system://routing/default")
-
-  def routing_default_uri, do: @routing_default_uri
+  def routing_default_uri, do: Ezagent.URI.system(:routing, :default)
 end

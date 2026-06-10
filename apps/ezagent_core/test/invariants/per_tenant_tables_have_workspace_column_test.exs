@@ -52,6 +52,16 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # workspace (a Lark chat bound in ws A must not be readable from
     # ws B).
     {Ezagent.ExternalMirror.BindingRow, "external_mirror_bindings"},
+    # #17 credential/config cascade — grants are scoped to the
+    # workspace of the agent being provisioned; a grant for ws A must
+    # never be queried or reused from ws B.
+    {Ezagent.Credential.GrantRow, "credential_grants"},
+    # #17 credential/config cascade — a user's default source is keyed
+    # by (owner, workspace, flavor), so the pointer is per-tenant.
+    {Ezagent.Credential.UserDefaultSource, "user_default_credential_sources"},
+    # #17 credential/config cascade PR-3 — a workspace-shared source is keyed
+    # by (workspace, flavor), so the pointer is per-tenant.
+    {Ezagent.Credential.WorkspaceSharedSource, "workspace_shared_credential_sources"},
     # SPEC 2026-05-23-read-receipts — read-confidence marker per
     # `(session, user, source)`. Per-tenant: a marker's
     # `last_read_message_uri` is meaningless across workspaces.
@@ -59,7 +69,17 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # SPEC 2026-05-24-magic-link-rules-v2 PR-A — per-workspace
     # magic-link acceptance rules. Per-tenant by definition (a
     # `domain` rule for ws A must never authorise a login into ws B).
-    {Ezagent.Workspace.MagicLinkRule, "workspace_magic_link_rules"}
+    {Ezagent.Workspace.MagicLinkRule, "workspace_magic_link_rules"},
+    # Socialware P3 — committed settlement rows gate the external customer
+    # projection per workspace; no row is cross-tenant.
+    {Ezagent.Socialware.SettlementRecord, "socialware_settlements"},
+    {Ezagent.Socialware.SettlementMessage, "socialware_settlement_messages"},
+    {Ezagent.Socialware.CustomerOutbox, "socialware_customer_outbox"},
+    # Socialware P6 — immutable self-evolve config objects and mutable
+    # pointers are scoped by workspace; a config object for ws A must never
+    # be resolved from ws B.
+    {Ezagent.Socialware.ConfigObject, "socialware_config_objects"},
+    {Ezagent.Socialware.ConfigPointer, "socialware_config_pointers"}
   ]
 
   # Per-tenant tables that have NO schema module (raw `Repo.insert_all`

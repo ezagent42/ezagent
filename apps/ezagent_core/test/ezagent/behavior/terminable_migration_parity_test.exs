@@ -51,7 +51,9 @@ defmodule Ezagent.Behavior.TerminableMigrationParityTest do
     :ok = BehaviorRegistry.register(StubAgentKind, :terminate, Terminable)
 
     agent_uri =
-      URI.parse("entity://agent/parity/cc_terminable-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!(
+        "entity://parity/agent/cc_terminable-#{System.unique_integer([:positive])}"
+      )
 
     # Bootstrap-admin caps satisfy the dispatch's CapBAC gate at step
     # 5.5 — the `cap(:agent, Terminable, :terminate)` shape is covered
@@ -67,13 +69,13 @@ defmodule Ezagent.Behavior.TerminableMigrationParityTest do
     # Action namespace stays `lifecycle.terminate` post-rename — a cosmetic
     # dispatch label; the runtime resolves the handler by the `:terminate`
     # action atom (via BehaviorRegistry), not by the `lifecycle.` prefix.
-    target = URI.parse("#{URI.to_string(agent_uri)}?action=lifecycle.terminate")
+    target = Ezagent.URI.new!("#{URI.to_string(agent_uri)}?action=lifecycle.terminate")
 
     %Invocation{
       target: target,
       mode: :call,
       args: %{},
-      ctx: %{caller: URI.parse("entity://user/system/admin"), caps: caps, reply: :sync}
+      ctx: %{caller: Ezagent.URI.new!("entity://system/user/admin"), caps: caps, reply: :sync}
     }
   end
 
@@ -192,7 +194,7 @@ defmodule Ezagent.Behavior.TerminableMigrationParityTest do
     end
 
     test "data_owner/1 returns :no_owner (admin-only Behavior)" do
-      uri = URI.parse("entity://agent/team-alpha/cc_x")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_x")
       assert Terminable.data_owner(uri) == :no_owner
       assert Terminable.data_owner(:any) == :no_owner
     end

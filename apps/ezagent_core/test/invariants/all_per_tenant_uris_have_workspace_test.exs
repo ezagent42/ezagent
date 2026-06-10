@@ -3,10 +3,10 @@ defmodule Ezagent.Invariants.AllPerTenantURIsHaveWorkspaceTest do
   Phase 9 PR-7 (SPEC v3 §3.6) — architectural invariant test.
 
   Per Amendment 2 (Allen 2026-05-21): every per-tenant URI scheme
-  carries its workspace as the second authority segment. After PR-7,
+  carries its workspace as the authority. After this refactor,
   the unified shape is
 
-      <scheme>://<type>/<workspace>/<name>
+      <scheme>://<workspace>/<type>/<name>
 
   for `entity://`, `session://`, `template://`, `resource://`.
   Cross-cutting schemes (`workspace://`, `system://`) keep their
@@ -32,7 +32,7 @@ defmodule Ezagent.Invariants.AllPerTenantURIsHaveWorkspaceTest do
       # bulk-rewrite tool doesn't silently 3-segment it.
       legacy = "session://default/" <> "main"
 
-      assert_raise ArgumentError, ~r/workspace segment/, fn ->
+      assert_raise ArgumentError, ~r/type and name segments/, fn ->
         Ezagent.URI.new!(legacy)
       end
     end
@@ -40,7 +40,7 @@ defmodule Ezagent.Invariants.AllPerTenantURIsHaveWorkspaceTest do
     test "rejects 2-segment template URI" do
       legacy = "template://agent/" <> "cc-orch"
 
-      assert_raise ArgumentError, ~r/workspace segment/, fn ->
+      assert_raise ArgumentError, ~r/type and name segments/, fn ->
         Ezagent.URI.new!(legacy)
       end
     end
@@ -48,33 +48,33 @@ defmodule Ezagent.Invariants.AllPerTenantURIsHaveWorkspaceTest do
     test "rejects 2-segment resource URI" do
       legacy = "resource://uploads/" <> "abc"
 
-      assert_raise ArgumentError, ~r/workspace segment/, fn ->
+      assert_raise ArgumentError, ~r/type and name segments/, fn ->
         Ezagent.URI.new!(legacy)
       end
     end
 
     test "accepts 3-segment session URI" do
-      uri = Ezagent.URI.new!("session://default/system/main")
+      uri = Ezagent.URI.new!("session://system/default/main")
       assert uri.scheme == "session"
-      assert uri.host == "default"
-      assert uri.path == "/system/main"
+      assert uri.host == "system"
+      assert uri.path == "/default/main"
 
       assert Ezagent.Capability.workspace_of(uri) |> URI.to_string() ==
                "workspace://system"
     end
 
     test "accepts 3-segment template URI" do
-      uri = Ezagent.URI.new!("template://agent/team-alpha/cc-orchestrator")
+      uri = Ezagent.URI.new!("template://team-alpha/agent/cc-orchestrator")
       assert uri.scheme == "template"
-      assert uri.host == "agent"
-      assert uri.path == "/team-alpha/cc-orchestrator"
+      assert uri.host == "team-alpha"
+      assert uri.path == "/agent/cc-orchestrator"
 
       assert Ezagent.Capability.workspace_of(uri) |> URI.to_string() ==
                "workspace://team-alpha"
     end
 
     test "accepts 3-segment resource URI" do
-      uri = Ezagent.URI.new!("resource://uploads/team-alpha/file-abc")
+      uri = Ezagent.URI.new!("resource://team-alpha/uploads/file-abc")
 
       assert Ezagent.Capability.workspace_of(uri) |> URI.to_string() ==
                "workspace://team-alpha"
@@ -99,13 +99,13 @@ defmodule Ezagent.Invariants.AllPerTenantURIsHaveWorkspaceTest do
   describe "WorkspaceRegistry consistency (SPEC v3 §3.6 PR-7)" do
     test "binding equals URI workspace segment" do
       session_uri =
-        "session://default/team-alpha/all-per-tenant-#{System.unique_integer([:positive])}"
+        "session://team-alpha/default/all-per-tenant-#{System.unique_integer([:positive])}"
 
       Ezagent.WorkspaceRegistry.bind(session_uri, "workspace://team-alpha")
 
-      {:ok, bound} = Ezagent.WorkspaceRegistry.lookup(URI.parse(session_uri))
+      {:ok, bound} = Ezagent.WorkspaceRegistry.lookup(Ezagent.URI.new!(session_uri))
 
-      uri_workspace = Ezagent.Capability.workspace_of(URI.parse(session_uri))
+      uri_workspace = Ezagent.Capability.workspace_of(Ezagent.URI.new!(session_uri))
 
       assert URI.to_string(uri_workspace) == URI.to_string(bound),
              "WorkspaceRegistry cache must agree with URI workspace segment"
@@ -115,7 +115,9 @@ defmodule Ezagent.Invariants.AllPerTenantURIsHaveWorkspaceTest do
       # PR-7 SoT-to-cache demotion: an unbound session still resolves to
       # the workspace in its URI path.
       session_uri =
-        URI.parse("session://default/team-beta/unbound-#{System.unique_integer([:positive])}")
+        Ezagent.URI.new!(
+          "session://team-beta/default/unbound-#{System.unique_integer([:positive])}"
+        )
 
       # Deliberately NO WorkspaceRegistry.bind.
       ws = Ezagent.Capability.workspace_of(session_uri)
@@ -134,7 +136,7 @@ defmodule Ezagent.Invariants.AllPerTenantURIsHaveWorkspaceTest do
              #{Enum.map_join(offenders, "\n", &format_offender/1)}
 
              Phase 9 PR-7 (SPEC v3 §3.6): every `session://<X>` literal
-             must be `session://<template>/<workspace>/<name>`. Tests
+             must be `session://<workspace>/<type>/<name>`. Tests
              that intentionally exercise the 2-segment rejection path
              must construct the URI via string concatenation:
 

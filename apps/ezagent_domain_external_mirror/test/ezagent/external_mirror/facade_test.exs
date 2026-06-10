@@ -39,7 +39,7 @@ defmodule Ezagent.ExternalMirrorTest do
   # Admin-shape ctx for "bare unit tests don't care about caps" cases.
   defp admin_ctx do
     %{
-      caller: URI.parse("system://bootstrap/default"),
+      caller: Ezagent.URI.new!("system://bootstrap/default"),
       caps:
         MapSet.new([
           %Capability{
@@ -47,7 +47,7 @@ defmodule Ezagent.ExternalMirrorTest do
             behavior: :any,
             instance: :any,
             workspace_uri: :any,
-            granted_by: URI.parse("system://bootstrap/default"),
+            granted_by: Ezagent.URI.new!("system://bootstrap/default"),
             granted_at: ~U[2026-01-01 00:00:00Z]
           }
         ]),
@@ -82,7 +82,7 @@ defmodule Ezagent.ExternalMirrorTest do
 
   describe "list_bindings/2 (PR-EM-3 r3 — dispatch-gated lookup)" do
     test "returns {:error, _} for a session URI that isn't live" do
-      uri = URI.parse("session://workspace/test/session_123")
+      uri = Ezagent.URI.new!("session://workspace/test/session_123")
       assert {:error, _} = ExternalMirror.list_bindings(uri, admin_ctx())
     end
   end

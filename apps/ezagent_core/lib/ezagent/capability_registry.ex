@@ -443,7 +443,7 @@ defmodule Ezagent.CapabilityRegistry do
          function_exported?(Ezagent.Entity.User, :admin_uri, 0) do
       apply(Ezagent.Entity.User, :admin_uri, [])
     else
-      Ezagent.URI.new!("system://bootstrap/pr-own-1")
+      Ezagent.URI.system(:bootstrap, "pr-own-1")
     end
   end
 

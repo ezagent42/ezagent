@@ -85,9 +85,9 @@ defmodule Ezagent.Behavior.WorkspaceSotReconcileTest do
     name = "ws-cold-restart-#{System.unique_integer([:positive])}"
     workspace_uri = URI.new!("workspace://#{name}")
 
-    member = URI.new!("entity://user/#{name}/alice")
-    tmpl = %{"class" => "echo.agent", "agent_uri" => "entity://agent/#{name}/echo_x"}
-    rule = %{"matcher" => %{"type" => "always"}, "receivers" => ["session://default/x/x"]}
+    member = URI.new!("entity://#{name}/user/alice")
+    tmpl = %{"class" => "echo.agent", "agent_uri" => "entity://#{name}/agent/echo_x"}
+    rule = %{"matcher" => %{"type" => "always"}, "receivers" => ["session://x/default/x"]}
 
     # Loader-equivalent spawn: the decoded SoT cluster shape threaded as
     # args. (The production Loader reads the `workspaces` row and passes
@@ -148,7 +148,7 @@ defmodule Ezagent.Behavior.WorkspaceSotReconcileTest do
 
   test "create/1 loads the cluster shape from the (Loader-threaded) SoT args" do
     name = "ws-create-#{System.unique_integer([:positive])}"
-    member = URI.new!("entity://user/#{name}/seed")
+    member = URI.new!("entity://#{name}/user/seed")
     tmpl = %{"class" => "echo.agent"}
 
     assert {:ok, state} =

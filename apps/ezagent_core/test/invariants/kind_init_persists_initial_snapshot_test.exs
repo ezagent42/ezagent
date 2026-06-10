@@ -21,7 +21,7 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
   persistence; the test asserts no row appears for those (regression
   guard: the init-time write MUST respect the policy).
 
-  Bug: `mix ezagent.agent.create entity://agent/system/cc_*` produced
+  Bug: `mix ezagent.agent.create entity://system/agent/cc_*` produced
   an `Ezagent.Entity.Agent` (`:on_terminate` policy) that was lost on
   mix BEAM exit — the agent was visible in the spawning BEAM but
   invisible to any subsequent BEAM lookup.
@@ -38,8 +38,8 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
   describe "init writes initial snapshot for non-ephemeral Kinds" do
     test "{:snapshot, :on_change} — row exists immediately after spawn" do
       uri =
-        URI.parse(
-          "entity://agent/team-alpha/test_init-snap-onchange-#{System.unique_integer([:positive])}"
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/test_init-snap-onchange-#{System.unique_integer([:positive])}"
         )
 
       uri_str = URI.to_string(uri)
@@ -59,8 +59,8 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
 
     test ":on_terminate — row exists immediately after spawn" do
       uri =
-        URI.parse(
-          "entity://agent/team-alpha/test_init-snap-onterm-#{System.unique_integer([:positive])}"
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/test_init-snap-onterm-#{System.unique_integer([:positive])}"
         )
 
       uri_str = URI.to_string(uri)
@@ -83,8 +83,8 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
   describe "init does NOT write for ephemeral / external Kinds" do
     test ":ephemeral — no row after spawn (regression guard)" do
       uri =
-        URI.parse(
-          "entity://agent/team-alpha/test_init-snap-eph-#{System.unique_integer([:positive])}"
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/test_init-snap-eph-#{System.unique_integer([:positive])}"
         )
 
       uri_str = URI.to_string(uri)
@@ -112,7 +112,7 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
       # Spawn a real Agent Kind directly under its supervisor (same
       # entry as `Ezagent.SpawnRegistry.spawn/1`).
       suffix = System.unique_integer([:positive])
-      uri = URI.parse("entity://agent/team-alpha/test_cli-cap-persist-#{suffix}")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/test_cli-cap-persist-#{suffix}")
       uri_str = URI.to_string(uri)
 
       {:ok, _pid} =

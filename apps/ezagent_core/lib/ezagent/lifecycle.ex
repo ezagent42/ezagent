@@ -395,13 +395,38 @@ defmodule Ezagent.Lifecycle do
   def hosts_lifecycle?(kind_module) when is_atom(kind_module) do
     kind_module
     |> Ezagent.Kind.behaviors_of()
-    |> Enum.any?(fn behaviour ->
+    |> any_lifecycle?()
+  end
+
+  @doc """
+  P1 (SPEC §3.1, E10) — instance-set-aware variant. Computes the
+  create/activate metadata from THIS INSTANCE's effective set (the persisted
+  `:kind_base`-derived set), not the module's declared superset, so a superset
+  Kind whose instance carries no Lifecycle behavior is not mis-classified.
+
+  In practice every composed instance carries `KindBase` (a base Lifecycle
+  behavior) via `BehaviorSet.base_behaviors/0`, so this returns `true` for any
+  composed instance — which is correct: every instance genuinely hosts a
+  Lifecycle. The arity-2 variant exists for symmetry with every other E1–E9
+  entry point (compute from the instance set), not because a real instance
+  could ever be non-Lifecycle.
+  """
+  @spec hosts_lifecycle?(module(), %{atom() => map()}) :: boolean()
+  def hosts_lifecycle?(kind_module, slice_state)
+      when is_atom(kind_module) and is_map(slice_state) do
+    kind_module
+    |> Ezagent.Kind.BehaviorSet.effective_set(slice_state)
+    |> any_lifecycle?()
+  end
+
+  defp any_lifecycle?(behaviors) do
+    Enum.any?(behaviors, fn behaviour ->
       Code.ensure_loaded?(behaviour) and
         function_exported?(behaviour, :__ezagent_lifecycle_destroy__, 3)
     end)
   end
 
-  defp ever_created?(%{uri: %URI{} = uri}), do: ever_created?(URI.to_string(uri))
+  defp ever_created?(%{uri: %URI{} = uri}), do: ever_created?(Ezagent.URI.stable_key(uri))
   defp ever_created?(%{uri: uri}) when is_binary(uri), do: ever_created?(uri)
   defp ever_created?(uri_str) when is_binary(uri_str), do: marker_lookup(uri_str)
   defp ever_created?(_), do: false

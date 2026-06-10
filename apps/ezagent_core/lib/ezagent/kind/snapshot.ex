@@ -51,11 +51,11 @@ defmodule Ezagent.Kind.Snapshot do
   def load_or_init(uri, kind_module, args) do
     case Ezagent.Kind.persistence_of(kind_module) do
       :ephemeral ->
-        init_fresh(kind_module, args)
+        init_fresh_first_spawn(kind_module, args)
 
       :external ->
         # Plugin author's init_slice/1 reads from foreign system; don't touch DB.
-        init_fresh(kind_module, args)
+        init_fresh_first_spawn(kind_module, args)
 
       :on_terminate ->
         load_with_fallback(uri, kind_module, args)
@@ -67,9 +67,20 @@ defmodule Ezagent.Kind.Snapshot do
 
   defp load_with_fallback(uri, kind_module, args) do
     uri_str = uri_to_str(uri)
-    fresh = init_fresh(kind_module, args)
 
+    # P1 (SPEC §3.1, codex CRITICAL finding 1): fetch the persisted row FIRST.
+    # We do NOT compute `init_fresh` up-front any more — running init_set /
+    # validate_closure! / init_slice from SPAWN ARGS before the persisted
+    # `:kind_base` is read would let a fallback-args set create out-of-set
+    # slices (or crash a valid persisted instance with an unclosed fallback
+    # set) on every restart.
     case fetch_snapshot(uri_str, kind_module) do
+      :not_found ->
+        # TRUE first spawn — no persisted row. The set is driven by spawn args
+        # (init_set/2), closure-validated, and ONLY that set's slices are
+        # created. This is the §3.1 first-spawn guard.
+        init_fresh_first_spawn(kind_module, args)
+
       {:ok, loaded_state} ->
         emit_restored(uri_str, loaded_state)
         # SPEC 2026-05-27-uri-canonicalization §9.2.1 (OQ-4 option b)
@@ -82,33 +93,47 @@ defmodule Ezagent.Kind.Snapshot do
         #
         # Merge so newly-added Behaviors get fresh init values (Q5).
         # Allen 2026-05-26 (codex HIGH-2 closure) — also PRUNE slice
-        # keys for Behaviors the Kind no longer declares. A Behavior
-        # that USED to live on this Kind (e.g. `Behavior.ApiKeys` on
-        # `User` pre 2026-05-26 flip) leaves orphan slice content in
-        # `state_binary` that no Behavior reads anymore. Without
-        # pruning, AutoDerive LV would render that data (e.g.
-        # plaintext API keys) verbatim because it walks the raw
-        # slice map. Pruning at load drops the orphan from the live
-        # state immediately; the next `:on_change` persistence then
-        # writes the pruned shape back to disk, so the orphan is
-        # also evicted from the DB on first mutation post-flip.
+        # keys for Behaviors the Kind no longer declares. Pruning at
+        # load drops the orphan from the live state immediately; the
+        # next `:on_change` persistence then writes the pruned shape
+        # back to disk.
         #
         # Allen 2026-05-26 task #34 — also RECONCILE each Behavior
         # with its DB projection (if it declares
-        # `reconcile_after_load/2`). This catches DB rows inserted
-        # AFTER the last snapshot but BEFORE the next Kind restart
-        # — e.g. ExternalMirror bindings written outside dispatch
-        # OR a snapshot/DB write race. Idempotent for normal-path
-        # callers.
+        # `reconcile_after_load/2`). Idempotent for normal-path callers.
         canonicalized = canonicalize_uris(loaded_state)
+
+        # P1 LEGACY-SNAPSHOT MIGRATION (codex CRITICAL — data-loss hole). A
+        # snapshot WRITTEN BEFORE P1 has NO `:kind_base` slice (KindBase did
+        # not exist). Seed `:kind_base` with the LEGACY SENTINEL `nil`
+        # — INDEPENDENT of the reload args — BEFORE deriving the effective set,
+        # so a pre-P1 instance behaves exactly like a legacy static Kind
+        # (sentinel nil → full DECLARED list) and the reload args can NEVER
+        # re-drive its set. Without this, an args-driven `init_fresh_for_set`
+        # could persist a `:kind_base` recording `args[:behaviors]`; the very
+        # NEXT reload would read that captured set back and `prune_orphan_slices`
+        # would DROP every previously-persisted declared slice not in those
+        # args — silent data loss for existing prod sessions. A post-P1 row
+        # (already has `:kind_base`) is returned unchanged.
+        canonicalized = seed_legacy_kind_base(canonicalized)
+
+        # P1 reload scoping (codex finding 1): the effective set is derived
+        # from the PERSISTED `:kind_base` slice (now ALWAYS present — either
+        # the real post-P1 captured value, or the legacy sentinel seeded just
+        # above), NOT the spawn args. Validate THAT set, then build the
+        # `fresh` baseline by init_slice'ing ONLY that set's members (NOT the
+        # module superset, NOT a spawn-args set). For members the snapshot
+        # already owns, the fresh value is immediately overwritten by the
+        # Map.merge(loaded) below (loaded wins — same as the original code);
+        # for newly-added behaviors the fresh value is kept (the Q5 contract).
+        effective = Ezagent.Kind.BehaviorSet.effective_set(kind_module, canonicalized)
+        _ = Ezagent.Kind.BehaviorSet.validate_closure!(effective)
+        fresh = init_fresh_for_set(effective, args)
 
         fresh
         |> Map.merge(coerce_loaded_to_fresh_shape(fresh, canonicalized))
         |> prune_orphan_slices(kind_module)
         |> reconcile_after_load_behaviors(uri, kind_module)
-
-      :not_found ->
-        fresh
 
       {:error, reason} ->
         # PR-4 (blocker #2). A row EXISTS but is unloadable (version mismatch /
@@ -133,13 +158,21 @@ defmodule Ezagent.Kind.Snapshot do
   # above: merge gives fresh init for NEW slices, prune drops orphans
   # for REMOVED slices.
   defp prune_orphan_slices(state, kind_module) do
-    declared =
-      Ezagent.Kind.behaviors_of(kind_module)
+    # P1 (SPEC §3.1, E6) — keep only the INSTANCE slice-bearing set's slices
+    # (defense-in-depth on reload over the persisted `:kind_base`-derived set),
+    # not the module's declared superset. `materialized_set/2` excludes universal
+    # behaviors (Manage — dispatch-only, no slice); `:kind_base` is in the set
+    # (KindBase is slice-bearing) but we also keep it explicitly as belt-and-
+    # suspenders since it carries the instance set.
+    kept =
+      Ezagent.Kind.BehaviorSet.materialized_set(kind_module, state)
       |> Enum.map(& &1.state_slice())
       |> MapSet.new()
+      # KindBase's own slice must never be pruned — it carries the set.
+      |> MapSet.put(:kind_base)
 
     state
-    |> Enum.filter(fn {key, _} -> MapSet.member?(declared, key) end)
+    |> Enum.filter(fn {key, _} -> MapSet.member?(kept, key) end)
     |> Map.new()
   end
 
@@ -160,7 +193,12 @@ defmodule Ezagent.Kind.Snapshot do
   # supervisor restarts the Kind. Persistent reconcile failure =
   # Kind stays down = correct (operator must fix the DB).
   defp reconcile_after_load_behaviors(state, %URI{} = uri, kind_module) do
-    Enum.reduce(Ezagent.Kind.behaviors_of(kind_module), state, fn behavior, acc ->
+    # P1 (SPEC §3.1, E7) — iterate the INSTANCE slice-bearing set
+    # (`materialized_set/2`, excludes the slice-less universal Manage), not the
+    # module superset, so an out-of-set behavior's `reconcile_after_load` never
+    # runs.
+    Enum.reduce(Ezagent.Kind.BehaviorSet.materialized_set(kind_module, state), state, fn behavior,
+                                                                                         acc ->
       slice_key = behavior.state_slice()
       slice_value = Map.get(acc, slice_key)
 
@@ -435,15 +473,15 @@ defmodule Ezagent.Kind.Snapshot do
         case parsed do
           %URI{scheme: "system"} ->
             # System-tier snapshot — admin's workspace is the
-            # structural sink (SPEC v3 §13.1). Inlined literal.
-            "workspace://system"
+            # structural sink (SPEC v3 §13.1).
+            Ezagent.URI.workspace(:system) |> URI.to_string()
 
           other ->
             raise ArgumentError,
                   "Ezagent.Kind.Snapshot.derive_workspace_uri/1: cannot derive " <>
                     "workspace for URI=#{inspect(other)}. Per SPEC #324 rev 3, only " <>
                     "the 4 per-tenant schemes (entity/workspace/session derive " <>
-                    "structurally) and `system://` (lands in workspace://system) " <>
+                    "structurally) and system scope (lands in the system workspace) " <>
                     "are accepted. Adding this URI to the snapshot path requires " <>
                     "either making its scheme workspace-aware or explicitly " <>
                     "declaring it system-scope at the call site."
@@ -529,12 +567,80 @@ defmodule Ezagent.Kind.Snapshot do
   # non-map loaded value) → unchanged.
   defp coerce_one_slice(_fresh_slice, loaded_slice), do: loaded_slice
 
-  defp init_fresh(kind_module, args) do
-    Ezagent.Kind.behaviors_of(kind_module)
-    |> Enum.map(fn behavior ->
-      {behavior.state_slice(), behavior.init_slice(args)}
-    end)
+  # P1 FIRST-spawn slice materialization. Reachable ONLY from
+  # `load_with_fallback/3`'s `:not_found` branch and from `load_or_init/3`'s
+  # no-DB `:ephemeral`/`:external` arms (first-spawn-every-time by
+  # construction). Enumerates ONLY `BehaviorSet.init_set/2` (spawn-args subset
+  # ∩ declared, + base behaviors) and FAILS LOUD on an unclosed set BEFORE any
+  # init_slice/create runs or any slice is persisted (P1.1, codex CRITICAL).
+  # `validate_closure!/1` returns the (unchanged) set on success so the pipe
+  # continues; on a missing REQUIRED sibling it raises `UnclosedSetError` →
+  # load_or_init → Kind.Server.init/1 returns `{:stop, …}` →
+  # persist_initial_snapshot/3 is NEVER reached → no partial slice row lands.
+  defp init_fresh_first_spawn(kind_module, args) do
+    kind_module
+    |> Ezagent.Kind.BehaviorSet.init_set(args)
+    |> Ezagent.Kind.BehaviorSet.validate_closure!()
+    |> init_fresh_for_set(args)
+  end
+
+  # P1 init_slice exactly `set` (already closure-validated by the caller). Used
+  # on BOTH the first-spawn path (after init_set + validate) AND the reload
+  # path (on the PERSISTED effective set). On reload, members the snapshot
+  # already owns get a fresh value here that the caller's Map.merge(loaded)
+  # immediately overwrites (loaded wins — identical to the original merge
+  # semantics); newly-added behaviors keep their fresh value (the Q5 contract).
+  # An out-of-set behavior is never in `set`, so its init_slice/create NEVER
+  # runs — at first spawn OR on reload.
+  #
+  # BEHAVIOR-PRESERVING EXCLUSION (codex CRITICAL — universal-behavior policy).
+  # `set` includes `BehaviorSet.base_behaviors/0` = `KindBase` +
+  # `UniversalBehaviors.all/0` (Manage). `Manage` is DISPATCH-ONLY: it is
+  # universal-by-construction, resolves via the registry fallback, its handlers
+  # read NO slice (`handle_delete/2`/`handle_reconfigure/2` take `_ctx` only),
+  # and pre-P1 it was NEVER in any Kind's `behaviors_of/0` so its `:manage`
+  # slice was NEVER materialized or persisted. Materializing it now would (a)
+  # add a vestigial `:manage` slice to EVERY instance's persisted shape (a
+  # behavior change), and (b) run `Manage`'s Lifecycle `__init_slice__` →
+  # `ever_created?` on every spawn. We therefore EXCLUDE universal behaviors
+  # from slice materialization — they stay MEMBERS of `effective_set` (so the
+  # E9 dispatch gate + membership semantics are unchanged) but get no slice.
+  # `KindBase` IS materialized: it owns the persisted `:kind_base` slice that
+  # carries the instance set (the whole point of P1).
+  defp init_fresh_for_set(set, args) do
+    universal = MapSet.new(Ezagent.UniversalBehaviors.all())
+
+    set
+    |> Enum.reject(&MapSet.member?(universal, &1))
+    |> Enum.map(fn behavior -> {behavior.state_slice(), behavior.init_slice(args)} end)
     |> Map.new()
+  end
+
+  # P1 LEGACY-SNAPSHOT MIGRATION (codex CRITICAL — data-loss hole). Called on
+  # the reload branch BEFORE deriving the effective set. A snapshot WRITTEN
+  # BEFORE P1 has NO `:kind_base` slice (KindBase did not exist). Seed it with
+  # the LEGACY SENTINEL `nil` — INDEPENDENT of the reload args — so:
+  #
+  #   * `effective_set/2` reads the seeded slice back via
+  #     `KindBase.behaviors_in_slice/1` as the sentinel `nil` → the FULL
+  #     DECLARED list, so NO previously-persisted declared slice is pruned;
+  #   * the seeded slice carries the two-container shape KindBase persists, so
+  #     the next `:on_change` save writes `%{behaviors: nil}` back, and every
+  #     future reload re-reads sentinel nil — the legacy instance stays "full
+  #     declared", arg-free, forever.
+  #
+  # A snapshot that ALREADY has `:kind_base` (written post-P1) is returned
+  # UNCHANGED — its real captured value (a present list, including `[]`, or a
+  # sentinel nil) drives the effective set. This is the deploy-safety
+  # guarantee: reload args can NEVER re-drive a legacy instance's behavior set.
+  defp seed_legacy_kind_base(loaded_state) do
+    kind_base_key = Ezagent.Behavior.KindBase.state_slice()
+
+    if Map.has_key?(loaded_state, kind_base_key) do
+      loaded_state
+    else
+      Map.put(loaded_state, kind_base_key, %{state: %{behaviors: nil}, transients: %{}})
+    end
   end
 
   @doc """

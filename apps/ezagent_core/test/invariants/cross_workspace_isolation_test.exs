@@ -128,10 +128,10 @@ defmodule EzagentCore.Invariants.CrossWorkspaceIsolationTest do
     # workspace as the second path segment. The first segment is the
     # template; we use `default` here since these test sessions don't
     # spawn from a template class.
-    default_session_uri = URI.new!("session://default/#{tenant_beta_name}/#{suffix}-main")
+    default_session_uri = URI.new!("session://#{tenant_beta_name}/default/#{suffix}-main")
 
     team_alpha_session_uri =
-      URI.new!("session://default/#{team_alpha_name}/#{suffix}-main")
+      URI.new!("session://#{team_alpha_name}/default/#{suffix}-main")
 
     {:ok, _} = SpawnRegistry.spawn(default_session_uri)
     {:ok, _} = SpawnRegistry.spawn(team_alpha_session_uri)
@@ -145,7 +145,7 @@ defmodule EzagentCore.Invariants.CrossWorkspaceIsolationTest do
     # caps from ctx — but spawning so the URI is a "real" entity in
     # case future invariants assert principal existence.
     default_user_name = unique("user-default")
-    default_user_uri = URI.new!("entity://user/#{tenant_beta_name}/#{default_user_name}")
+    default_user_uri = URI.new!("entity://#{tenant_beta_name}/user/#{default_user_name}")
     {:ok, _} = SpawnRegistry.spawn(default_user_uri)
 
     # team-alpha user — spawn after the workspace exists so its
@@ -153,7 +153,7 @@ defmodule EzagentCore.Invariants.CrossWorkspaceIsolationTest do
     team_alpha_user_name = unique("user-alpha")
 
     team_alpha_user_uri =
-      URI.new!("entity://user/#{team_alpha_name}/#{team_alpha_user_name}")
+      URI.new!("entity://#{team_alpha_name}/user/#{team_alpha_user_name}")
 
     {:ok, _} = SpawnRegistry.spawn(team_alpha_user_uri)
 

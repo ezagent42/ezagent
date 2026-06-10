@@ -26,13 +26,6 @@ defmodule Ezagent.Entity.User do
   # members hold cross-workspace authority by membership (see
   # `Ezagent.Capability.cross_workspace?/2`); the structural admin cap
   # keeps `workspace_uri: :any` for defence in depth.
-  # SPEC 2026-05-27-uri-canonicalization §3.5: compile-time constants
-  # — ETS-backed SchemeRegistry not available at compile time, so
-  # `URI.new!/1` (RFC 3986 strict) is the canonical form. Module
-  # attributes are the §3.5 carve-out from the URI.new! ban.
-  @admin_uri URI.new!("entity://user/system/admin")
-  @system_bootstrap_uri URI.new!("system://bootstrap/default")
-
   # Static granted_at — admin capability is a structural bootstrap, not
   # a time-varying grant. Same value across boots so tests/fixtures stay
   # deterministic.
@@ -40,7 +33,7 @@ defmodule Ezagent.Entity.User do
 
   @doc "Bootstrap admin principal URI: `entity://user/system/admin`."
   @spec admin_uri() :: URI.t()
-  def admin_uri, do: @admin_uri
+  def admin_uri, do: Ezagent.URI.user(:system, :admin)
 
   @doc """
   Bootstrap caps the User Kind for `uri` should be spawned with.
@@ -91,8 +84,8 @@ defmodule Ezagent.Entity.User do
   """
   @spec initial_caps_for_spawn(URI.t()) :: MapSet.t(Ezagent.Capability.t())
   def initial_caps_for_spawn(%URI{} = uri) do
-    if uri == @admin_uri do
-      Ezagent.SystemPrincipal.caps("system://bootstrap")
+    if uri == admin_uri() do
+      "bootstrap" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps()
     else
       hydrate_from_caps_json(uri)
     end
@@ -130,9 +123,10 @@ defmodule Ezagent.Entity.User do
   # invariant test `no_admin_caps_fallback_test.exs` is the gate
   # against re-introduction.
   #
-  # `@system_bootstrap_uri` + `@admin_granted_at` constants kept
-  # because `default_caps/1` (below) still uses them as the cap's
-  # `granted_by` / `granted_at` attribution.
+  # `@admin_granted_at` stays static because `default_caps/1` uses it as
+  # deterministic grant attribution.
+
+  defp system_bootstrap_uri, do: Ezagent.URI.system(:bootstrap, :default)
 
   @doc """
   Default caps every non-admin User starts life with.
@@ -186,7 +180,7 @@ defmodule Ezagent.Entity.User do
         action: :any,
         instance: :any,
         workspace_uri: workspace_uri,
-        granted_by: @system_bootstrap_uri,
+        granted_by: system_bootstrap_uri(),
         granted_at: @admin_granted_at
       }
     ]

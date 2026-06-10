@@ -12,7 +12,8 @@ defmodule EzagentPluginFeishu.WsClient do
 
   ## Flow
 
-  1. Read credentials from `Ezagent.Home.read_credentials("feishu")`
+  1. Read credentials from `system://credentials/feishu.yaml` via
+     `Ezagent.System.FsResolver.read_yaml/1`
   2. Spawn `node priv/ws_sidecar/main.js` via Port with FEISHU_APP_ID
      + FEISHU_APP_SECRET in the env
   3. Read newline-delimited JSON events from stdout
@@ -162,9 +163,14 @@ defmodule EzagentPluginFeishu.WsClient do
   end
 
   defp load_credentials do
-    cred_path = Path.join(Ezagent.Home.path(:credentials), "feishu.yaml")
+    # Resource-unification P3 (SPEC §10 OI-3): the global feishu app credential is
+    # a node-global system artifact → `system://credentials/feishu.yaml`. BOTH the
+    # operational read and the operator-facing error path flow through the
+    # `system://` seam — no raw `Ezagent.Home` dependency remains in this caller.
+    cred_uri = Ezagent.URI.system("credentials", "feishu.yaml")
+    cred_path = Ezagent.System.FsResolver.path!(cred_uri)
 
-    case Ezagent.Home.read_credentials("feishu") do
+    case Ezagent.System.FsResolver.read_yaml(cred_uri) do
       {:ok, %{"app_id" => app_id, "app_secret" => app_secret} = creds}
       when is_binary(app_id) and is_binary(app_secret) ->
         if String.contains?(app_id, "REPLACE_ME") or String.contains?(app_secret, "REPLACE_ME") do

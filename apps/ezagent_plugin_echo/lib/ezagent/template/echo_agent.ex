@@ -108,47 +108,9 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
   defp check_class(%{"class" => other}), do: {:error, {:wrong_class, other}}
   defp check_class(_), do: {:error, :missing_class_field}
 
-  # Mirrors `Ezagent.PluginCc.Template.CcAgent.check_agent_uri/1` shape
-  # (Phase 9 PR-2 / SPEC v3 §3) — entity URIs are 3-segment
-  # `/<workspace>/<entity_name>`, flavor lives in the entity_name
-  # prefix as `<flavor>_<rest>` (SPEC v2 §5.14). echo.agent requires
-  # flavor=echo.
-  defp check_agent_uri(%{"agent_uri" => uri_str}) when is_binary(uri_str) and uri_str != "" do
-    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
-    # with try/rescue keeping the structured `{:error, _}` contract.
-    try do
-      case Ezagent.URI.new!(uri_str) do
-        %URI{scheme: "entity", host: "agent", path: "/" <> rest} when rest != "" ->
-          with [_workspace, entity_name] when entity_name != "" <-
-                 String.split(rest, "/", parts: 2),
-               [flavor, suffix] when flavor != "" and suffix != "" <-
-                 String.split(entity_name, "_", parts: 2) do
-            if flavor == "echo" do
-              :ok
-            else
-              {:error, {:wrong_agent_flavor, flavor, expected: "echo"}}
-            end
-          else
-            _ ->
-              {:error,
-               {:missing_flavor_prefix, uri_str,
-                "agent URIs must be `entity://agent/<workspace>/echo_<name>` (Phase 9 PR-2)"}}
-          end
-
-        %URI{scheme: "entity"} ->
-          {:error,
-           {:invalid_agent_uri, uri_str,
-            "agent URIs must be `entity://agent/<workspace>/echo_<name>` (Phase 9 PR-2)"}}
-
-        _ ->
-          {:error, {:bad_agent_uri, uri_str}}
-      end
-    rescue
-      ArgumentError -> {:error, {:bad_agent_uri, uri_str}}
-    end
-  end
-
-  defp check_agent_uri(_), do: {:error, :missing_agent_uri}
+  # Cleanup-2: shared entity-agent-URI validator lives in core
+  # (Ezagent.Kind.Template) — byte-identical across every flavor.
+  defp check_agent_uri(tmpl), do: Ezagent.Kind.Template.check_agent_uri(tmpl)
 
   # `cwd` is required ONLY when the operator opts into PTY. Without
   # PTY the echo agent has no filesystem context (it's a pure
@@ -164,58 +126,60 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
   def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, _workspace_uri) do
     agent_uri = Ezagent.URI.new!(uri_str)
 
-    # codex round-6 HIGH-1 — the 3-element `{:ok, uris, %{fresh?: _}}`
-    # return carries whether THIS call STARTED the Agent Kind worker.
-    # The idempotency short-circuit means the worker pre-existed →
-    # `fresh?: false`.
-    #
-    # codex round-8 HIGH-1 — the fresh-check gates the PTY sidecar.
-    # When `ensure_agent_kind/1` reports `:already_started` (a worker
-    # this call did NOT create), return `fresh?: false` IMMEDIATELY
-    # WITHOUT calling `maybe_start_pty/2`. Starting a `/bin/bash` PTY
-    # sidecar for a pre-existing (possibly foreign or orphaned) worker
-    # would make a rejected adoption non-zero-side-effect. The Template
-    # Class only brings up a sidecar for a worker IT freshly started;
-    # whether to adopt a pre-existing worker is the caller's decision.
-    # Mirrors `Ezagent.PluginCc.Template.CcAgent.spawn_for_local_pty/2`.
-    cond do
-      agent_kind_alive?(agent_uri) and pty_ok?(tmpl, agent_uri) ->
-        {:ok, [agent_uri], %{fresh?: false}}
+    with :ok <- Ezagent.AgentFlavorAttributes.put_from_template_class(agent_uri, __MODULE__) do
+      # codex round-6 HIGH-1 — the 3-element `{:ok, uris, %{fresh?: _}}`
+      # return carries whether THIS call STARTED the Agent Kind worker.
+      # The idempotency short-circuit means the worker pre-existed →
+      # `fresh?: false`.
+      #
+      # codex round-8 HIGH-1 — the fresh-check gates the PTY sidecar.
+      # When `ensure_agent_kind/1` reports `:already_started` (a worker
+      # this call did NOT create), return `fresh?: false` IMMEDIATELY
+      # WITHOUT calling `maybe_start_pty/2`. Starting a `/bin/bash` PTY
+      # sidecar for a pre-existing (possibly foreign or orphaned) worker
+      # would make a rejected adoption non-zero-side-effect. The Template
+      # Class only brings up a sidecar for a worker IT freshly started;
+      # whether to adopt a pre-existing worker is the caller's decision.
+      # Mirrors `Ezagent.PluginCc.Template.CcAgent.spawn_for_local_pty/2`.
+      cond do
+        agent_kind_alive?(agent_uri) and pty_ok?(tmpl, agent_uri) ->
+          {:ok, [agent_uri], %{fresh?: false}}
 
-      true ->
-        with {:ok, started_or_adopted} <- ensure_agent_kind(agent_uri) do
-          case started_or_adopted do
-            :already_started ->
-              {:ok, [agent_uri], %{fresh?: false}}
+        true ->
+          with {:ok, started_or_adopted} <- ensure_agent_kind(agent_uri) do
+            case started_or_adopted do
+              :already_started ->
+                {:ok, [agent_uri], %{fresh?: false}}
 
-            :started ->
-              # codex round-10 HIGH-2 — the Template Class owns its OWN
-              # partial-spawn teardown. `ensure_agent_kind/1` FRESHLY
-              # started the Agent Kind on this call; if `maybe_start_pty/2`
-              # (the `/bin/bash -i` PTY sidecar) now fails, the
-              # just-started Agent Kind would leak — a live orphan a
-              # Generator slot's `cleanup_partial/1` cannot see (the slot
-              # returned a bare `{:error, _}` with no worker URI). So if a
-              # step AFTER the fresh Kind start fails, terminate the Kind
-              # this call itself started BEFORE returning the error. An
-              # `:already_started` Kind is never terminated — this call
-              # did not create it (that branch returned early above).
-              # Mirrors `Ezagent.PluginCc.Template.CcAgent.spawn_for_local_pty/2`.
-              # Only the Kind PROCESS is terminated; lineage / workspace
-              # binding are ESR-domain registries the plugin must not
-              # touch (3-tier) — `spawn_from_template_content/4` had not
-              # recorded either (it gates them on a `fresh?: true`
-              # success this path never returns).
-              case maybe_start_pty(tmpl, agent_uri) do
-                :ok ->
-                  {:ok, [agent_uri], %{fresh?: true}}
+              :started ->
+                # codex round-10 HIGH-2 — the Template Class owns its OWN
+                # partial-spawn teardown. `ensure_agent_kind/1` FRESHLY
+                # started the Agent Kind on this call; if `maybe_start_pty/2`
+                # (the `/bin/bash -i` PTY sidecar) now fails, the
+                # just-started Agent Kind would leak — a live orphan a
+                # Generator slot's `cleanup_partial/1` cannot see (the slot
+                # returned a bare `{:error, _}` with no worker URI). So if a
+                # step AFTER the fresh Kind start fails, terminate the Kind
+                # this call itself started BEFORE returning the error. An
+                # `:already_started` Kind is never terminated — this call
+                # did not create it (that branch returned early above).
+                # Mirrors `Ezagent.PluginCc.Template.CcAgent.spawn_for_local_pty/2`.
+                # Only the Kind PROCESS is terminated; lineage / workspace
+                # binding are ESR-domain registries the plugin must not
+                # touch (3-tier) — `spawn_from_template_content/4` had not
+                # recorded either (it gates them on a `fresh?: true`
+                # success this path never returns).
+                case maybe_start_pty(tmpl, agent_uri) do
+                  :ok ->
+                    {:ok, [agent_uri], %{fresh?: true}}
 
-                {:error, reason} ->
-                  _ = Ezagent.Kind.terminate(agent_uri)
-                  {:error, reason}
-              end
+                  {:error, reason} ->
+                    _ = Ezagent.Kind.terminate(agent_uri)
+                    {:error, reason}
+                end
+            end
           end
-        end
+      end
     end
   end
 
@@ -255,9 +219,10 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
   defp maybe_start_pty(%{"with_pty" => true, "cwd" => cwd}, agent_uri)
        when is_binary(cwd) and cwd != "" do
     params =
-      case Mix.env() do
-        :test -> %{cwd: cwd, test_mode: true}
-        _ -> %{cwd: cwd, cmd_override: "/bin/bash -i"}
+      if Code.ensure_loaded?(Mix) and Mix.env() == :test do
+        %{cwd: cwd, test_mode: true}
+      else
+        %{cwd: cwd, cmd_override: "/bin/bash -i"}
       end
 
     case Ezagent.Domain.Pty.start(agent_uri, params) do
@@ -320,9 +285,9 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
       %{
         name: "agent_uri",
         type: :uri,
-        label: "Agent URI (entity://agent/<workspace>/echo_<name>)",
+        label: "Agent URI",
         required: true,
-        placeholder: "entity://agent/team-alpha/echo_my-bot"
+        placeholder: "echo_my-bot"
       },
       %{
         name: "with_pty",
@@ -366,10 +331,18 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
     params
     |> Map.drop(["tmpl_name"])
     |> Map.new(fn
-      {"with_pty", "true"} -> {"with_pty", true}
-      {"with_pty", "false"} -> {"with_pty", false}
-      {"with_pty", other} -> raise ArgumentError, "echo.agent: with_pty must be \"true\" or \"false\", got: #{inspect(other)}"
-      kv -> kv
+      {"with_pty", "true"} ->
+        {"with_pty", true}
+
+      {"with_pty", "false"} ->
+        {"with_pty", false}
+
+      {"with_pty", other} ->
+        raise ArgumentError,
+              "echo.agent: with_pty must be \"true\" or \"false\", got: #{inspect(other)}"
+
+      kv ->
+        kv
     end)
     |> Map.put("class", template_name())
   end

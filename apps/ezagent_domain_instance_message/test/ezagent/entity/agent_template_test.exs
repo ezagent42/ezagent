@@ -18,6 +18,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
 
   test "behaviors/0 includes Identity (caps + grant policy live on slice)" do
     behaviors = AgentTemplate.behaviors()
+
     assert Ezagent.Behavior.Identity in behaviors,
            "AgentTemplate must carry Identity behavior so default_caps + slice " <>
              "edit can use the existing identity dispatch path"
@@ -48,7 +49,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
   end
 
   describe "to_template_data/2 (Phase 7 completion PR-1, SPEC §1.5 (b))" do
-    @instance_uri URI.new!("entity://agent/team-alpha/cc_worker-1")
+    @instance_uri URI.new!("entity://team-alpha/agent/cc_worker-1")
 
     test "round-trips a cc-flavored content map to the cc.agent data shape" do
       content = %{
@@ -60,7 +61,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
 
       assert {:ok, data} = AgentTemplate.to_template_data(content, @instance_uri)
       assert data["class"] == "cc.agent"
-      assert data["agent_uri"] == "entity://agent/team-alpha/cc_worker-1"
+      assert data["agent_uri"] == "entity://team-alpha/agent/cc_worker-1"
       assert data["cwd"] == "/tmp/proj"
       # The optional keys are absent when the content sets none —
       # so the legacy 3-key cc.agent form still validates. config_dir is
@@ -93,6 +94,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
 
     test "errors when project_cwd is missing" do
       content = %{name: "w", flavor: "cc"}
+
       assert {:error, :missing_project_cwd} =
                AgentTemplate.to_template_data(content, @instance_uri)
     end
@@ -123,6 +125,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
 
     test "errors when flavor is missing" do
       content = %{name: "w", project_cwd: "/tmp"}
+
       assert {:error, :missing_flavor} =
                AgentTemplate.to_template_data(content, @instance_uri)
     end
@@ -142,9 +145,9 @@ defmodule Ezagent.Entity.AgentTemplateTest do
   describe "to_template_data/2 is flavor-generic (SPEC 2026-06-01)" do
     # The agent URI prefix must match the flavor (each flavor's validate/1
     # enforces `<flavor>_<name>`).
-    @curl_uri URI.new!("entity://agent/team-alpha/curl_w-gen")
-    @codex_uri URI.new!("entity://agent/team-alpha/codex_w-gen")
-    @cc_uri URI.new!("entity://agent/team-alpha/cc_w-gen")
+    @curl_uri URI.new!("entity://team-alpha/agent/curl_w-gen")
+    @codex_uri URI.new!("entity://team-alpha/agent/codex_w-gen")
+    @cc_uri URI.new!("entity://team-alpha/agent/cc_w-gen")
 
     test "threads curl provider/api_url/model (pre-fix these were dropped)" do
       content = %{
@@ -235,9 +238,9 @@ defmodule Ezagent.Entity.AgentTemplateTest do
   # are flavor-specific (cc reads it as CLAUDE_CONFIG_DIR; curl/codex/echo
   # may use it per their own format).
   describe "config_dir is UNIVERSAL (Allen 2026-06-03)" do
-    @curl_uri URI.new!("entity://agent/team-alpha/curl_cfg")
-    @echo_uri URI.new!("entity://agent/team-alpha/echo_cfg")
-    @cc_uri URI.new!("entity://agent/team-alpha/cc_cfg")
+    @curl_uri URI.new!("entity://team-alpha/agent/curl_cfg")
+    @echo_uri URI.new!("entity://team-alpha/agent/echo_cfg")
+    @cc_uri URI.new!("entity://team-alpha/agent/cc_cfg")
 
     test "a non-cc (curl) flavor's template ALSO emits the universal config_dir key" do
       content = %{
@@ -276,8 +279,14 @@ defmodule Ezagent.Entity.AgentTemplateTest do
 
     test "config_dir is dropped (not emitted) when nil — for cc AND non-cc flavors" do
       cc = %{flavor: "cc", project_cwd: "/tmp/p"}
-      curl = %{flavor: "curl", project_cwd: "/tmp/c", provider: "deepseek",
-               api_url: "https://x", model: "m"}
+
+      curl = %{
+        flavor: "curl",
+        project_cwd: "/tmp/c",
+        provider: "deepseek",
+        api_url: "https://x",
+        model: "m"
+      }
 
       assert {:ok, cc_data} = AgentTemplate.to_template_data(cc, @cc_uri)
       assert {:ok, curl_data} = AgentTemplate.to_template_data(curl, @curl_uri)
@@ -304,8 +313,12 @@ defmodule Ezagent.Entity.AgentTemplateTest do
       # claude_config_dir content field must fail loud — NOT be silently
       # ignored (which would spawn the cc agent without its CLAUDE_CONFIG_DIR).
       stale_atom = %{flavor: "cc", project_cwd: "/tmp/p", claude_config_dir: "/old/.claude"}
-      stale_str = %{"flavor" => "cc", "project_cwd" => "/tmp/p",
-                    "claude_config_dir" => "/old/.claude"}
+
+      stale_str = %{
+        "flavor" => "cc",
+        "project_cwd" => "/tmp/p",
+        "claude_config_dir" => "/old/.claude"
+      }
 
       assert {:error, {:stale_config_dir_field, :claude_config_dir, _}} =
                AgentTemplate.to_template_data(stale_atom, @cc_uri)
@@ -325,6 +338,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
       assert :ok = Ezagent.PluginCc.Template.CcAgent.validate(data)
     end
   end
+
   # PR-6 (domain.agent) — DOMAIN-owned desired skills/caps. These are
   # universal (flavor-agnostic) content fields the DOMAIN declares; they
   # ride into the Template-Class data map so a flavor's instantiate/3 can
@@ -332,7 +346,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
   # grant + live re-copy is the re-materialization seam shared with PR-5's
   # reconfigure — see docs/notes/pr6-desired-skills-caps.md.)
   describe "to_template_data/2 threads desired_skills/desired_caps (PR-6)" do
-    @cc_uri URI.new!("entity://agent/team-alpha/cc_w-pr6")
+    @cc_uri URI.new!("entity://team-alpha/agent/cc_w-pr6")
 
     test "threads desired_skills into the data map when present" do
       content = %{
@@ -352,7 +366,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
         action: :any,
         instance: :any,
         workspace_uri: URI.new!("workspace://team-alpha"),
-        granted_by: URI.new!("entity://user/team-alpha/admin"),
+        granted_by: URI.new!("entity://team-alpha/user/admin"),
         granted_at: DateTime.utc_now()
       }
 
@@ -383,6 +397,45 @@ defmodule Ezagent.Entity.AgentTemplateTest do
 
       assert {:ok, data} = AgentTemplate.to_template_data(content, @cc_uri)
       assert data["desired_skills"] == ["s1"]
+    end
+  end
+
+  describe "to_template_data/2 activates cascade materialization inputs (#17 PR-3)" do
+    @cc_uri URI.new!("entity://team-alpha/agent/cc_cascade-pr3")
+
+    test "threads explicit cascade layer_dirs and source_dir_for into Template Class data" do
+      source_dir_for = fn
+        "entity://team-alpha/agent/alice-source" -> {:ok, "/tmp/alice-source"}
+      end
+
+      content = %{
+        flavor: "cc",
+        project_cwd: "/tmp/proj",
+        config_dir: "/tmp/reference-config",
+        cascade: %{
+          layer_dirs: [
+            %{dir: "/tmp/workspace-layer", protected: ["hooks/policy.sh"], mandatory: []},
+            %{dir: "/tmp/user-layer", protected: [], mandatory: []}
+          ],
+          source_dir_for: source_dir_for
+        }
+      }
+
+      assert {:ok, data} = AgentTemplate.to_template_data(content, @cc_uri)
+      assert %{} = cascade = data["cascade"]
+      assert cascade.layer_dirs == content.cascade.layer_dirs
+      assert cascade.source_dir_for == source_dir_for
+    end
+
+    test "malformed cascade content fails loud instead of reaching the Template Class" do
+      content = %{
+        flavor: "cc",
+        project_cwd: "/tmp/proj",
+        cascade: "not-a-map"
+      }
+
+      assert {:error, {:invalid_cascade, "not-a-map"}} =
+               AgentTemplate.to_template_data(content, @cc_uri)
     end
   end
 end

@@ -10,8 +10,12 @@ defmodule EzagentPluginCc.McpConfigWriter do
 
   ## Output
 
-  - **Primary:** `~/.ezagent/bridge.mcp.json` (configurable
+  - **Primary:** `<system://plugins>/bridge.mcp.json` (configurable
     via `Application.get_env(:ezagent_plugin_cc, :mcp_config_dir)`).
+    The default dir resolves through the post-Resource-unification
+    `system://` seam (`Ezagent.System.FsResolver` — the sanctioned home
+    resolver for node-global plugin artifacts, SPEC §10 OI-3), NOT a
+    hardcoded tilde-expand of the home dir.
   - **Project root copy:** `<git toplevel>/.mcp.json` — Claude's
     `--dangerously-load-development-channels` flag looks up the server
     name in project/user MCP configs **before** reading
@@ -43,7 +47,6 @@ defmodule EzagentPluginCc.McpConfigWriter do
 
   alias Ezagent.AgentBridge.TokenStore
 
-  @default_dir Path.expand("~/.ezagent")
   @config_filename "bridge.mcp.json"
 
   @doc """
@@ -108,7 +111,7 @@ defmodule EzagentPluginCc.McpConfigWriter do
       Keyword.get(
         opts,
         :dir,
-        Application.get_env(:ezagent_plugin_cc, :mcp_config_dir, @default_dir)
+        Application.get_env(:ezagent_plugin_cc, :mcp_config_dir, default_dir())
       )
 
     File.mkdir_p!(dir)
@@ -231,6 +234,17 @@ defmodule EzagentPluginCc.McpConfigWriter do
     System.get_env("EZAGENT_BRIDGE_WS_URL") ||
       Application.get_env(:ezagent_plugin_cc, :ws_url) ||
       "ws://127.0.0.1:10042/agent_bridge/websocket"
+  end
+
+  # Default output dir for the shared bridge config. Resolves through the
+  # post-Resource-unification `system://` seam (the same idiom
+  # `EzagentPluginFeishu.Application` uses for its plugins dir) instead of a
+  # hardcoded tilde-expand of the home dir — node-global plugin artifacts route
+  # through `Ezagent.System.FsResolver`, the sanctioned single `Ezagent.Home`
+  # chokepoint (SPEC §10 OI-3). Resolved at call time (not a compile-time module
+  # attr) so `EZAGENT_HOME`/`EZAGENT_PROFILE` are honored per run.
+  defp default_dir do
+    Ezagent.System.FsResolver.path!(Ezagent.URI.system_principal("plugins"))
   end
 
   defp mint_token!(agent_uri_str) when is_binary(agent_uri_str) do

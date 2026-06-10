@@ -36,7 +36,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ManageBehaviorTest do
     end
 
     test "handle_delete returns a deferred schedule_delete effect carrying self_uri" do
-      uri = Ezagent.URI.new!("session://default/system/mg-#{System.unique_integer([:positive])}")
+      uri = Ezagent.URI.new!("session://system/default/mg-#{System.unique_integer([:positive])}")
 
       assert {:ok, {:ok, :deleted}, effects} = Manage.handle_delete(%{}, %{self_uri: uri})
       assert {:effect, {Manage, :schedule_delete}, [^uri]} = Enum.find(effects, &match?({:effect, {Manage, :schedule_delete}, _}, &1))
@@ -84,7 +84,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ManageBehaviorTest do
   describe ":delete tears the Kind down (via Lifecycle.destroy)" do
     test "schedule_delete destroys a live durable Session (process gone + snapshot cleared)" do
       uri =
-        Ezagent.URI.new!("session://default/team-alpha/mg-del-#{System.unique_integer([:positive])}")
+        Ezagent.URI.new!("session://team-alpha/default/mg-del-#{System.unique_integer([:positive])}")
 
       uri_str = URI.to_string(uri)
       {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: uri})

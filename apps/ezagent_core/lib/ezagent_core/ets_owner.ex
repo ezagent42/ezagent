@@ -66,6 +66,15 @@ defmodule EzagentCore.EtsOwner do
     #   template_class} map; populated by `boot/1` per `agent_flavors/0`.
     {Ezagent.PluginRegistry, :set},
     {Ezagent.AgentFlavorRegistry, :set},
+    # Unify URI Query PR-B/PR-E: launch-time agent_uri → stored flavor
+    # attributes. Template classes seed this before first spawn so
+    # SpawnRegistry can resolve the Kind module through UriQuery without
+    # parsing a flavor prefix from the URI name.
+    {Ezagent.AgentFlavorAttributes, :set},
+    # Unify URI Query PR-A: attr → resolver function dispatcher. Domain
+    # and plugin owners register query resolvers at boot; core callers use
+    # `Ezagent.UriQuery.resolve/2` without depending on downstream apps.
+    {Ezagent.UriQuery, :set},
     # Phase 7 completion PR-3 (SPEC §1.7 (c)): TemplateTags read cache.
     # `Ezagent.TemplateTags` persists `(workspace, name, tag) → hash`
     # rows in SQLite (the CAS source of truth) and mirrors them into

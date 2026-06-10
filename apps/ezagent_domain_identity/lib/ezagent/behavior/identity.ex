@@ -76,19 +76,21 @@ defmodule Ezagent.Behavior.Identity do
   # keeps only the safe read actions (`:list_caps`, `:has_cap?`).
   # Privileged write actions (`:grant_cap`, `:revoke_cap`) live on
   # `Ezagent.Behavior.IdentityAdmin` (below in this file).
-  action :list_caps,
+  action(:list_caps,
     args: %{},
     returns: %{caps: {:list, :map}},
     caps: [{:list_caps, kind: :any}],
     description: "List the principal's capability set",
     modes: [:call]
+  )
 
-  action :has_cap?,
+  action(:has_cap?,
     args: %{cap: :map},
     returns: %{has: :boolean},
     caps: [{:has_cap?, kind: :any}],
     description: "Check whether the principal holds a capability matching the needed shape",
     modes: [:call]
+  )
 
   # =================================================================
   # Explicit `required_caps/0` — preserved as `kind: :any` (Identity
@@ -147,15 +149,17 @@ defmodule Ezagent.Behavior.Identity do
     MapSet.put(caps, self_identity_cap)
   end
 
-  defp kind_for_uri(%URI{scheme: "entity", host: "user"}), do: :user
-  defp kind_for_uri(%URI{scheme: "entity", host: "agent"}), do: :agent
+  defp kind_for_uri(%URI{scheme: "entity"} = uri) do
+    if Ezagent.URI.type?(uri, :agent), do: :agent, else: :user
+  end
+
   defp kind_for_uri(_), do: :user
 
   defp bootstrap_granter do
     if function_exported?(Ezagent.Entity.User, :admin_uri, 0) do
       Ezagent.Entity.User.admin_uri()
     else
-      Ezagent.URI.new!("system://bootstrap/pr-own-3")
+      Ezagent.URI.system(:bootstrap, :"pr-own-3")
     end
   end
 
@@ -174,19 +178,23 @@ defmodule Ezagent.Behavior.Identity do
   # returned when there is no reconcile (non-user URI, empty caps_json,
   # or the union is a no-op).
   @impl Ezagent.Lifecycle
-  def activate(%{caps: existing_caps} = state, %{self_uri: %URI{scheme: "entity", host: "user"} = uri}) do
-    case caps_from_caps_json(uri) do
-      [] ->
-        {:ok, %{}}
-
-      caps_list when is_list(caps_list) ->
-        merged = MapSet.union(existing_caps, MapSet.new(caps_list))
-
-        if MapSet.size(merged) == MapSet.size(existing_caps) do
+  def activate(%{caps: existing_caps} = state, %{self_uri: %URI{scheme: "entity"} = uri}) do
+    if Ezagent.URI.type?(uri, :user) do
+      case caps_from_caps_json(uri) do
+        [] ->
           {:ok, %{}}
-        else
-          {:ok, %{}, %{state | caps: merged}}
-        end
+
+        caps_list when is_list(caps_list) ->
+          merged = MapSet.union(existing_caps, MapSet.new(caps_list))
+
+          if MapSet.size(merged) == MapSet.size(existing_caps) do
+            {:ok, %{}}
+          else
+            {:ok, %{}, %{state | caps: merged}}
+          end
+      end
+    else
+      {:ok, %{}}
     end
   end
 
@@ -277,19 +285,21 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   # lifecycle:state_slice_override
   use Ezagent.Lifecycle, state_slice: :identity
 
-  action :grant_cap,
+  action(:grant_cap,
     args: %{cap: :map},
     returns: %{caps: {:list, :map}},
     caps: [{:grant_cap, kind: :user, workspace_scoped?: false}],
     description: "grant a new capability to this principal (admin)",
     modes: [:call]
+  )
 
-  action :revoke_cap,
+  action(:revoke_cap,
     args: %{cap: :map},
     returns: %{caps: {:list, :map}},
     caps: [{:revoke_cap, kind: :user, workspace_scoped?: false}],
     description: "revoke a capability from this principal (admin)",
     modes: [:call]
+  )
 
   # =================================================================
   # Explicit `required_caps/0` — preserved `kind: :user` axis.
@@ -411,14 +421,14 @@ defmodule Ezagent.Behavior.IdentityAdmin do
     if function_exported?(Ezagent.Entity.User, :admin_uri, 0) do
       Ezagent.Entity.User.admin_uri()
     else
-      Ezagent.URI.new!("system://bootstrap/grant_cap")
+      Ezagent.URI.system(:bootstrap, :grant_cap)
     end
   end
 
   defp notify_cap_change(ctx, kind, text, cap) do
     target_uri = Map.get(ctx, :self_uri)
 
-    if match?(%URI{scheme: "entity", host: "user"}, target_uri) do
+    if match?(%URI{scheme: "entity"}, target_uri) and Ezagent.URI.type?(target_uri, :user) do
       _ =
         Ezagent.Notifications.notify(target_uri, %{
           type: kind,

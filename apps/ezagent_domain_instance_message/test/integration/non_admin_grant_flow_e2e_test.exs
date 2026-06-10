@@ -35,10 +35,10 @@ defmodule EzagentDomainInstanceMessage.Integration.NonAdminGrantFlowE2ETest do
   end
 
   defp setup_non_admin(handle, caps \\ []) do
-    uri_str = "entity://user/team-alpha/" <> handle <> "_#{System.unique_integer([:positive])}"
+    uri_str = "entity://team-alpha/user/" <> handle <> "_#{System.unique_integer([:positive])}"
     {:ok, _} = Users.create(uri_str, nil, caps)
 
-    uri = URI.parse(uri_str)
+    uri = Ezagent.URI.new!(uri_str)
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
     {uri, MapSet.new(caps)}
   end
@@ -49,7 +49,7 @@ defmodule EzagentDomainInstanceMessage.Integration.NonAdminGrantFlowE2ETest do
   # NO cap for a system-workspace session. That's what makes Step 1's
   # denial real and the grant meaningful. The granted cap below is therefore
   # scoped to workspace://system to match the session's workspace.
-  @session_workspace_uri URI.parse("workspace://system")
+  @session_workspace_uri Ezagent.URI.new!("workspace://system")
 
   defp default_session do
     short = "non_admin_e2e_#{System.unique_integer([:positive])}"

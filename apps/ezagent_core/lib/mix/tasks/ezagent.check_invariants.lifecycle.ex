@@ -86,7 +86,24 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants.Lifecycle do
     "apps/ezagent_core/lib/ezagent/agent_lineage.ex",
     # AgentFlavorRegistry — the agent-flavor declaration registry; holds
     # flavor decls as data registered by plugins via Plugin.boot/1.
-    "apps/ezagent_core/lib/ezagent/agent_flavor_registry.ex"
+    "apps/ezagent_core/lib/ezagent/agent_flavor_registry.ex",
+    # AgentFlavorAttributes — shared data-shape normalizer for agent
+    # flavor declarations; holds attributes as data, not Agent runtime
+    # composition.
+    "apps/ezagent_core/lib/ezagent/agent_flavor_attributes.ex",
+    # Agent.Materializer — core provisioning helper for template
+    # materialization; this is cross-cutting infrastructure used by
+    # plugin template classes, not a concrete upper-layer Agent Kind.
+    "apps/ezagent_core/lib/ezagent/agent/materializer.ex",
+    # Agent credential adapters — core credential cascade seam. They
+    # adapt persisted credential facts into template materialization
+    # data; they do not own Agent runtime behavior.
+    "apps/ezagent_core/lib/ezagent/agent/credential_adapter.ex",
+    "apps/ezagent_core/lib/ezagent/agent/credential_slice_adapter.ex",
+    # WorkspaceSharedSource — core credential source row schema for
+    # workspace-scoped sharing; this is data vocabulary, not Workspace
+    # behavior ownership.
+    "apps/ezagent_core/lib/ezagent/credential/workspace_shared_source.ex"
   ]
 
   # NP-3 width lint: a generic lifecycle/admin/manager module name that
@@ -256,7 +273,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants.Lifecycle do
   # ----------------------------------------------------------------------
   defp gate_no_engine_internals(files) do
     re =
-      ~r/Ezagent\.Invocation\.dispatch\(|Ezagent\.SnapshotStore\.|Ezagent\.EventLog\.append\(/
+      ~r/Ezagent\.Invocation\.dispatch\(|Ezagent\.EventLog\.append\(|Ezagent\.SnapshotStore\.(write|delete|save_now|upsert)\(/
 
     files
     |> Enum.filter(&lifecycle_module?/1)

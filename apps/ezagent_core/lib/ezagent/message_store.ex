@@ -211,6 +211,49 @@ defmodule Ezagent.MessageStore do
   end
 
   @doc """
+  Customer-visible messages whose owning socialware turn has committed.
+
+  This is the route-level customer query primitive for socialware. It
+  intentionally does not make raw feeds customer-safe; operator/admin
+  reads continue to use the full internal feeds.
+  """
+  @spec committed_customer_visible(URI.t(), pos_integer()) :: [Message.t()]
+  def committed_customer_visible(%URI{} = session_uri, limit)
+      when is_integer(limit) and limit > 0 do
+    session_str = URI.to_string(session_uri)
+    workspace_str = Ezagent.Persistence.workspace_uri_for!(session_uri)
+
+    from(m in Message,
+      join: r in MessageRouting,
+      on: r.message_id == m.id,
+      join: sm in "socialware_settlement_messages",
+      on: sm.message_id == m.id,
+      join: s in "socialware_settlements",
+      on: s.turn_id == sm.turn_id,
+      where:
+        r.session_uri == ^session_str and m.workspace_uri == ^workspace_str and
+          m.visibility == :customer_visible and s.status == "committed",
+      order_by: [desc: r.inserted_at],
+      limit: ^limit
+    )
+    |> Repo.all()
+  end
+
+  @doc """
+  Idempotently set visibility for a fixed message-id set.
+  """
+  @spec mark_visibility([String.t()], :customer_visible | :operator_only) ::
+          {:ok, non_neg_integer()}
+  def mark_visibility(message_ids, visibility)
+      when is_list(message_ids) and visibility in [:customer_visible, :operator_only] do
+    {count, _} =
+      from(m in Message, where: m.id in ^message_ids)
+      |> Repo.update_all(set: [visibility: visibility])
+
+    {:ok, count}
+  end
+
+  @doc """
   Single Message lookup by id. Returns `{:ok, message}` or `:error`.
 
   Used for `ref_id` chain following — if `msg.ref_id == "<id>"` and

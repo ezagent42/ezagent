@@ -360,12 +360,12 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
   # fresh member each call guarantees a new event.
   defp send_chat_to_session(%URI{} = session_uri) do
     member_uri =
-      URI.parse("entity://user/team-alpha/em-pub-test-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!("entity://team-alpha/user/em-pub-test-#{System.unique_integer([:positive])}")
 
     :ok = spawn_user_with_retry(member_uri, 20)
 
-    admin_uri = URI.parse("entity://user/system/admin")
-    target = URI.parse("#{URI.to_string(session_uri)}?action=chat.join")
+    admin_uri = Ezagent.URI.new!("entity://system/user/admin")
+    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
 
     dispatch_chat_join_with_retry(target, member_uri, admin_uri, 20)
   end
@@ -429,19 +429,19 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
         behavior: :any,
         instance: :any,
         workspace_uri: :any,
-        granted_by: URI.parse("system://bootstrap/default"),
+        granted_by: Ezagent.URI.new!("system://bootstrap/default"),
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
     ])
   end
 
   defp unique_user_uri(prefix) do
-    URI.parse("entity://user/team-alpha/#{prefix}-#{System.unique_integer([:positive])}")
+    Ezagent.URI.new!("entity://team-alpha/user/#{prefix}-#{System.unique_integer([:positive])}")
   end
 
   defp unique_session_uri(prefix) do
     Ezagent.URI.new!(
-      "session://default/team-alpha/#{prefix}-#{System.unique_integer([:positive])}"
+      "session://team-alpha/default/#{prefix}-#{System.unique_integer([:positive])}"
     )
   end
 

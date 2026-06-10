@@ -25,7 +25,7 @@ defmodule Ezagent.Domain.Pty.Server.PhaseTest do
 
   defp fresh_uri do
     URI.new!(
-      "entity://agent/team-alpha/test_phase-#{System.unique_integer([:positive])}"
+      "entity://team-alpha/agent/test_phase-#{System.unique_integer([:positive])}"
     )
   end
 
@@ -43,8 +43,8 @@ defmodule Ezagent.Domain.Pty.Server.PhaseTest do
 
   describe "phase_topic/1" do
     test "returns a stable topic string per agent_uri" do
-      uri = URI.new!("entity://agent/team-alpha/test_topic")
-      assert PtyServer.phase_topic(uri) == "pty:phase:entity://agent/team-alpha/test_topic"
+      uri = URI.new!("entity://team-alpha/agent/test_topic")
+      assert PtyServer.phase_topic(uri) == "pty:phase:entity://team-alpha/agent/test_topic"
     end
   end
 
@@ -78,7 +78,7 @@ defmodule Ezagent.Domain.Pty.Server.PhaseTest do
     end
 
     test "phase/1 returns :dead when no server exists for the URI" do
-      ghost = URI.new!("entity://agent/team-alpha/test_phase-nonexistent-#{System.unique_integer([:positive])}")
+      ghost = URI.new!("entity://team-alpha/agent/test_phase-nonexistent-#{System.unique_integer([:positive])}")
       assert :dead = PtyServer.phase(ghost)
     end
   end

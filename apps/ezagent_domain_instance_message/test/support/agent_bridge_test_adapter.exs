@@ -14,9 +14,6 @@ defmodule EzagentDomainInstanceMessage.AgentBridgeTestAdapter do
   def flavor, do: "cc"
 
   @impl true
-  def agent_uri_prefix, do: "cc_"
-
-  @impl true
   def deliver(payload, channel_pid) when is_pid(channel_pid) do
     send(channel_pid, {:to_claude, %{"content" => payload.text, "meta" => payload.meta}})
     :ok

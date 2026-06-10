@@ -26,7 +26,7 @@ defmodule EzagentPluginLiveview.SnapshotsLiveTest do
   end
 
   test "snapshot list shows persisted rows", %{conn: conn} do
-    uri = URI.parse("entity://user/team-alpha/snap-lv-#{System.unique_integer([:positive])}")
+    uri = Ezagent.URI.new!("entity://team-alpha/user/snap-lv-#{System.unique_integer([:positive])}")
 
     :ok =
       SnapshotFixtures.save_kind_snapshot(uri, Ezagent.Entity.User, %{
@@ -38,7 +38,7 @@ defmodule EzagentPluginLiveview.SnapshotsLiveTest do
   end
 
   test "clear deletes the snapshot row", %{conn: conn} do
-    uri = URI.parse("entity://user/team-alpha/snap-clear-#{System.unique_integer([:positive])}")
+    uri = Ezagent.URI.new!("entity://team-alpha/user/snap-clear-#{System.unique_integer([:positive])}")
     uri_str = URI.to_string(uri)
 
     :ok =

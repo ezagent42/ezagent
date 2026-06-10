@@ -243,15 +243,6 @@ defmodule Ezagent.Audit do
     }
   end
 
-  # r2 codex tightening: structured synthetic target for persistence-
-  # telemetry rows that lack a `meta[:uri]`. The component name is the
-  # path segment so operators can grep audit rows by source emitter
-  # (e.g. `system://audit-writer/flush`).
-  defp synthetic_persistence_target(meta) do
-    component = Map.get(meta, :component) || :persistence
-    "system://#{component}/flush"
-  end
-
   # Phase 4-plus follow-up: CC bridge hook reports persist as audit
   # rows so an operator can grep history beyond the LV in-memory buffer.
   defp build_row([:ezagent, :cc_bridge, :event], _measurements, meta) do
@@ -274,7 +265,7 @@ defmodule Ezagent.Audit do
       # workspace://system (the admin workspace) is structurally
       # correct: a `system://`-shaped audit event for the admin tier.
       # Inlined literal — no global default function per Allen 2026-05-25.
-      workspace_uri: "workspace://system",
+      workspace_uri: system_workspace_uri_string(),
       inserted_at: DateTime.utc_now()
     }
   end
@@ -320,6 +311,15 @@ defmodule Ezagent.Audit do
       workspace_uri: derive_workspace(Map.get(meta, :sender), Map.get(meta, :recipient)),
       inserted_at: DateTime.utc_now()
     }
+  end
+
+  # r2 codex tightening: structured synthetic target for persistence-
+  # telemetry rows that lack a `meta[:uri]`. The component name is the
+  # path segment so operators can grep audit rows by source emitter
+  # (e.g. `system://audit-writer/flush`).
+  defp synthetic_persistence_target(meta) do
+    component = Map.get(meta, :component) || :persistence
+    component |> Ezagent.URI.system(:flush) |> URI.to_string()
   end
 
   defp uri_to_string_or_nil(%URI{} = u), do: URI.to_string(u)
@@ -368,15 +368,15 @@ defmodule Ezagent.Audit do
       # know who/what triggered it), so the underlying assertion that
       # there is at least one URI is enforced by build_row.
       uris != [] and Enum.all?(uris, &system_scoped_uri?/1) ->
-        "workspace://system"
+        system_workspace_uri_string()
 
       true ->
         raise ArgumentError,
               "Ezagent.Audit.derive_workspace/2: no workspace could be derived from " <>
                 "caller=#{inspect(caller)}, target=#{inspect(target)}. Per SPEC #324 " <>
                 "rev 3, audit emitters MUST pass entity / workspace / session URIs " <>
-                "(which carry workspace structurally), or `system://` URIs (admin- " <>
-                "scope). Unknown / synthetic schemes (cc-bridge:// etc.) must inline " <>
+                "(which carry workspace structurally), or system-scheme URIs " <>
+                "(admin-scope). Unknown / synthetic schemes must inline " <>
                 "the workspace at the build_row clause — never rely on a fallback " <>
                 "predicate, because that's the silent-default bug class Allen deleted " <>
                 "on 2026-05-25."
@@ -439,9 +439,11 @@ defmodule Ezagent.Audit do
   # for the rest of the node lifetime, and the audit log silently goes
   # missing (see scenario_30_plugin_greenfield_test.exs's pre-detach
   # workaround at line 169 — removed once this clause lands).
-  defp uri_to_str(:system), do: "system://anonymous"
-  defp uri_to_str(a) when is_atom(a), do: "system://#{a}"
+  defp uri_to_str(:system), do: :anonymous |> Ezagent.URI.system_principal() |> URI.to_string()
+  defp uri_to_str(a) when is_atom(a), do: a |> Ezagent.URI.system_principal() |> URI.to_string()
   defp stringify(nil), do: nil
   defp stringify(a) when is_atom(a), do: Atom.to_string(a)
   defp stringify(s) when is_binary(s), do: s
+
+  defp system_workspace_uri_string, do: :system |> Ezagent.URI.workspace() |> URI.to_string()
 end

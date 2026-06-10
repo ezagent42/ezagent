@@ -33,7 +33,7 @@ defmodule Ezagent.Behavior.IdentityMigrationParityTest do
   end
 
   @workspace_uri URI.new!("workspace://identity-parity")
-  @granter URI.parse("entity://user/system/admin")
+  @granter Ezagent.URI.new!("entity://system/user/admin")
 
   setup do
     :ok = BehaviorRegistry.register(StubUserKind, :list_caps, Identity)
@@ -42,7 +42,7 @@ defmodule Ezagent.Behavior.IdentityMigrationParityTest do
     :ok = BehaviorRegistry.register(StubUserKind, :revoke_cap, IdentityAdmin)
 
     n = System.unique_integer([:positive])
-    user_uri = URI.parse("entity://user/identity-parity/alice-#{n}")
+    user_uri = Ezagent.URI.new!("entity://identity-parity/user/alice-#{n}")
 
     admin_caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
     state = %{identity: %{caps: admin_caps}}
@@ -83,7 +83,7 @@ defmodule Ezagent.Behavior.IdentityMigrationParityTest do
       needed = %{
         kind: :session,
         behavior: Ezagent.Behavior.Chat,
-        instance: URI.new!("session://default/system/main"),
+        instance: URI.new!("session://system/default/main"),
         workspace_uri: @workspace_uri
       }
 
@@ -100,7 +100,7 @@ defmodule Ezagent.Behavior.IdentityMigrationParityTest do
       needed = %{
         kind: :session,
         behavior: Ezagent.Behavior.Chat,
-        instance: URI.new!("session://default/system/main"),
+        instance: URI.new!("session://system/default/main"),
         workspace_uri: @workspace_uri
       }
 

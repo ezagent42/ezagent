@@ -33,12 +33,12 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenarios10_11_MentionRout
   alias Ezagent.{Message, RoutingRegistry, Routing.Matcher, Routing.Resolver}
 
   @workspace URI.new!("workspace://team-alpha")
-  @session_a URI.new!("session://default/team-alpha/sess_a")
-  @session_b URI.new!("session://default/team-alpha/sess_b")
-  @admin URI.new!("entity://user/team-alpha/admin")
-  @alice URI.new!("entity://user/team-alpha/alice")
-  @echo_1 URI.new!("entity://agent/team-alpha/echo_1")
-  @echo_2 URI.new!("entity://agent/team-alpha/echo_2")
+  @session_a URI.new!("session://team-alpha/default/sess_a")
+  @session_b URI.new!("session://team-alpha/default/sess_b")
+  @admin URI.new!("entity://team-alpha/user/admin")
+  @alice URI.new!("entity://team-alpha/user/alice")
+  @echo_1 URI.new!("entity://team-alpha/agent/echo_1")
+  @echo_2 URI.new!("entity://team-alpha/agent/echo_2")
 
   defp uniq(prefix), do: "#{prefix}_#{System.unique_integer([:positive])}"
 
@@ -200,7 +200,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenarios10_11_MentionRout
 
       # Echo from another workspace — even if (incorrectly) listed in members,
       # the workspace-segment match in valid_member?/2 must reject.
-      other_ws_echo = URI.new!("entity://agent/other-workspace/echo_evil")
+      other_ws_echo = URI.new!("entity://other-workspace/agent/echo_evil")
       sess_a_members = [@admin, other_ws_echo]
       msg = build_msg(@admin, "@evil cross", [other_ws_echo])
 

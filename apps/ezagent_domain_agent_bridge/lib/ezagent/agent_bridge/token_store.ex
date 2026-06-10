@@ -116,8 +116,13 @@ defmodule Ezagent.AgentBridge.TokenStore do
     end
   end
 
+  # Resource-unification P3 (SPEC §10 OI-3): the bridge-token registry is a
+  # SINGLE node-global YAML file holding every agent's connect token (keyed by
+  # agent URI INSIDE the file) — there is no `<ws>` in its on-disk path, so it is
+  # a system-level artifact, addressed `system://credentials/<file>` and resolved
+  # through `UriQuery` (NOT a faked `resource://<ws>/...`).
   defp file_path do
-    Path.join(Ezagent.Home.path(:credentials), @file_name)
+    Ezagent.System.FsResolver.path!(Ezagent.URI.system("credentials", @file_name))
   end
 
   defp generate_token do

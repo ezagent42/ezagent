@@ -41,13 +41,13 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
     # Echo agent (boot-spawned at `EzagentPluginEcho.Application` start)
     # can be missing if a prior test rolled back the sandbox or its
     # Kind.Server crashed. Re-spawn idempotently so each test starts
-    # with a live `entity://agent/system/echo_default`. SpawnRegistry
+    # with a live `entity://system/agent/echo_default`. SpawnRegistry
     # tolerates an already-running instance (returns the existing pid).
     _ = Ezagent.SpawnRegistry.spawn(EchoApp.default_uri())
     :ok
   end
 
-  test "F1: dispatch :say to entity://agent/system/echo_default, get reply, see audit event + SQLite row" do
+  test "F1: dispatch :say to entity://system/agent/echo_default, get reply, see audit event + SQLite row" do
     target = Ezagent.URI.new!("#{URI.to_string(EchoApp.default_uri())}?action=echo.say")
 
     inv = %Invocation{
@@ -72,8 +72,8 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
     # fires a chat.receive :stop event — drain until we get the
     # one we asked for).
     assert_receive {:audit_event, %{event: [:ezagent, :authz, :granted]}}, 500
-    stop_event = drain_stop_event_for_target!("entity://agent/system/echo_default?action=echo.say")
-    assert stop_event.metadata.target == "entity://agent/system/echo_default?action=echo.say"
+    stop_event = drain_stop_event_for_target!("entity://system/agent/echo_default?action=echo.say")
+    assert stop_event.metadata.target == "entity://system/agent/echo_default?action=echo.say"
     assert stop_event.metadata.action == :say
 
     # Step 3: wait for Audit.Writer batch flush (100ms) + 50ms slack,
@@ -83,11 +83,11 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
     rows =
       EzagentCore.Repo.query!(
         "SELECT target, action, authz, duration_us FROM invocations " <>
-          "WHERE target LIKE 'entity://agent/system/echo_default%' ORDER BY id DESC LIMIT 1"
+          "WHERE target LIKE 'entity://system/agent/echo_default%' ORDER BY id DESC LIMIT 1"
       ).rows
 
     assert [[target_col, action_col, authz_col, duration_col]] = rows
-    assert target_col == "entity://agent/system/echo_default?action=echo.say"
+    assert target_col == "entity://system/agent/echo_default?action=echo.say"
     assert action_col == "say"
     # Phase 3d: hard flip removed :stub_grant in favor of real "granted"
     # from cap check. invocations.authz column is "granted" for the
@@ -116,18 +116,23 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
   end
 
   test "PR-J regression: echo :receive replies via chat.send back to originating session" do
-    # The bug Allen flagged 2026-05-20: Echo agent in session://default/system/main
+    # The bug Allen flagged 2026-05-20: Echo agent in session://system/default/main
     # never replied. Root cause: `:receive` was not registered in
     # BehaviorRegistry — `chat.send` fan-out dispatched `chat.receive`
     # to the Echo Kind and got `:not_registered`.
     #
-    # This test joins the default Echo agent into session://default/system/main,
+    # This test joins the default Echo agent into session://system/default/main,
     # subscribes to the session's chat-stream PubSub topic, dispatches
     # `chat.send` from admin, and asserts an "echo: <text>" reply
     # message lands within 500ms.
-    session_uri = URI.new!("session://default/system/main")
+    session_uri = URI.new!("session://system/default/main")
     echo_agent_uri = EchoApp.default_uri()
     admin_uri = Ezagent.Entity.User.admin_uri()
+
+    assert {:ok, ^session_uri, _meta} =
+             EzagentDomainInstanceMessage.SessionCreator.create_session("main", admin_uri,
+               template_name: "default"
+             )
 
     # Ensure echo agent is in the session.
     join_target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")

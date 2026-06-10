@@ -31,10 +31,10 @@ defmodule EzagentPluginLiveview.Admin.MemberPanel do
   `:unauthorized` / `:cross_workspace_denied` failures (Decision #134,
   the no-silent-drop invariant).
 
-  Phase 8b — for every cc-managed agent member
-  (`entity://agent/team-alpha/cc_*`) the row renders a small PTY (🖥️)
-  button. Click dispatches `switch_to_pty_for_agent` which sets the
-  SessionEditor view-mode to `:pty` and binds xterm.js to that agent.
+  Phase 8b / Domain.Pty — for every PTY-backed agent member the row
+  renders a small PTY button. Click dispatches
+  `switch_to_pty_for_agent` which sets the SessionEditor view-mode to
+  `:pty` and binds xterm.js to that agent.
   """
 
   use Phoenix.Component
@@ -44,19 +44,19 @@ defmodule EzagentPluginLiveview.Admin.MemberPanel do
   use EzagentDomainUi.Primitives
   use EzagentDomainUi.Components
 
-  attr :members, :list, required: true
+  attr(:members, :list, required: true)
 
   # Username & Auth UI Task 1 (PR-O) — `%{uri_str => display_name}`
   # batch-resolved by admin_live via `Ezagent.EntityPresenter.display_many/1`.
   # Empty map = fall back to URI path segment for each member.
-  attr :display_map, :map, default: %{}
+  attr(:display_map, :map, default: %{})
 
   # V1 UI SPEC §2C.3 — Invite modal state. `invite_open` toggles the
   # `<.modal>`; `invite_options` is the `uri_picker`'s entity option
   # list (entities NOT already in the session, scoped to the session's
   # workspace — computed by `AdminLive.assign_session_context/2`).
-  attr :invite_open, :boolean, default: false
-  attr :invite_options, :list, default: []
+  attr(:invite_open, :boolean, default: false)
+  attr(:invite_options, :list, default: [])
 
   # V1 UI SPEC §2C.4 — surfaced cap denial. `AdminLive` sets
   # `socket.assigns.flash_error` when an `invite_member` /
@@ -65,7 +65,7 @@ defmodule EzagentPluginLiveview.Admin.MemberPanel do
   # member panel renders it inline (next to the Invite button) so
   # the caller sees WHY their click silently failed — per the
   # spec, no silent drop.
-  attr :flash_error, :string, default: nil
+  attr(:flash_error, :string, default: nil)
 
   def member_panel(assigns) do
     ~H"""
@@ -125,7 +125,7 @@ defmodule EzagentPluginLiveview.Admin.MemberPanel do
             </div>
           </div>
           <button
-            :if={cc_agent_uri?(member.uri)}
+            :if={pty_agent_uri?(member.uri)}
             type="button"
             phx-click="switch_to_pty_for_agent"
             phx-value-agent={member.uri}
@@ -209,25 +209,15 @@ defmodule EzagentPluginLiveview.Admin.MemberPanel do
     end
   end
 
-  # Phase 8b — cc-managed agents have the `cc_` flavor-prefix in their
-  # name segment (PR #149 flavor-prefix scheme). Workspace-agnostic check:
-  # match `entity://agent/<any-workspace>/cc_<name>`.
-  #
-  # Lesson 2026-05-25: an earlier version hard-coded the workspace
-  # segment to the legacy seed name, which made cc agents in other
-  # workspaces (e.g. system) silently invisible to the per-row PTY
-  # button (🖥️). Surfaced by the workspace-rename impl subagent
-  # (PR #335). Cherry-picked here as a standalone fix. (The literal
-  # URI form is omitted because `no_default_workspace_test.exs`
-  # grep-bans it; the lesson stands without it.)
-  defp cc_agent_uri?("entity://agent/" <> rest) do
-    case String.split(rest, "/", parts: 2) do
-      [_workspace, "cc_" <> _] -> true
-      _ -> false
-    end
+  defp pty_agent_uri?(uri_str) when is_binary(uri_str) do
+    uri_str
+    |> Ezagent.URI.new!()
+    |> Ezagent.Domain.Pty.alive?()
+  rescue
+    ArgumentError -> false
   end
 
-  defp cc_agent_uri?(_), do: false
+  defp pty_agent_uri?(_), do: false
 
   defp member_status_class(true),
     do: "text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1"

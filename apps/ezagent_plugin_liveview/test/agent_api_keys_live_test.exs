@@ -31,13 +31,13 @@ defmodule EzagentPluginLiveview.AgentApiKeysLiveTest do
     {:ok, conn: conn}
   end
 
-  defp spawn_curl_agent do
+  defp spawn_curl_agent(opts \\ []) do
     agent_uri =
       Ezagent.URI.new!(
-        "entity://agent/team-alpha/curl_apikeys-#{System.unique_integer([:positive])}"
+        "entity://team-alpha/agent/curl_apikeys-#{System.unique_integer([:positive])}"
       )
 
-    {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+    {:ok, _pid} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(agent_uri, "curl", opts)
     agent_uri
   end
 
@@ -105,7 +105,7 @@ defmodule EzagentPluginLiveview.AgentApiKeysLiveTest do
     # strict `^pin` round-trip. (post-lifecycle remediation: lineage
     # gained durable string backing; the string round-trip canonicalizes.)
     creator_uri =
-      Ezagent.URI.new!("entity://user/team-alpha/creator-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!("entity://team-alpha/user/creator-#{System.unique_integer([:positive])}")
 
     agent_uri = spawn_curl_agent()
     :ok = Ezagent.AgentLineage.record(agent_uri, creator_uri)
@@ -126,7 +126,7 @@ defmodule EzagentPluginLiveview.AgentApiKeysLiveTest do
     # stranger (the dispatch they trigger fails earlier with
     # `:unauthorized`, which the LV renders as an "Error loading
     # keys" card — that's the actual production UX).
-    agent_uri = spawn_curl_agent()
+    agent_uri = spawn_curl_agent(lineage?: false)
     # No AgentLineage.record / no slice creator_uri.
 
     assert :no_owner = Ezagent.Behavior.ApiKeys.data_owner(agent_uri)

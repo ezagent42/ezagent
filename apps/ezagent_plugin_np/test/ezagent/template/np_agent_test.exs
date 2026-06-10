@@ -14,7 +14,7 @@ defmodule Ezagent.PluginNp.Template.NpAgentTest do
       assert :ok =
                Tmpl.validate(%{
                  "class" => "np.agent",
-                 "agent_uri" => "entity://agent/team-alpha/np_compute"
+                 "agent_uri" => "entity://team-alpha/agent/np_compute"
                })
     end
 
@@ -22,7 +22,7 @@ defmodule Ezagent.PluginNp.Template.NpAgentTest do
       assert :ok =
                Tmpl.validate(%{
                  "class" => "np.agent",
-                 "agent_uri" => "entity://agent/team-alpha/np_calc",
+                 "agent_uri" => "entity://team-alpha/agent/np_calc",
                  "cwd" => System.tmp_dir!(),
                  "timeout_ms" => 5_000
                })
@@ -32,14 +32,14 @@ defmodule Ezagent.PluginNp.Template.NpAgentTest do
   describe "validate/1 — class field" do
     test "rejects missing class" do
       assert {:error, :missing_class_field} =
-               Tmpl.validate(%{"agent_uri" => "entity://agent/team-alpha/np_x"})
+               Tmpl.validate(%{"agent_uri" => "entity://team-alpha/agent/np_x"})
     end
 
     test "rejects wrong class" do
       assert {:error, {:wrong_class, "echo.agent"}} =
                Tmpl.validate(%{
                  "class" => "echo.agent",
-                 "agent_uri" => "entity://agent/team-alpha/np_x"
+                 "agent_uri" => "entity://team-alpha/agent/np_x"
                })
     end
   end
@@ -60,10 +60,9 @@ defmodule Ezagent.PluginNp.Template.NpAgentTest do
       #
       # (Pre-canonicalization the template used the lenient `URI.new`,
       # which parsed leniently and fell into the [workspace, entity]
-      # destructure-failure path → `:missing_flavor_prefix`. The
-      # migration moved rejection EARLIER — to URI construction — which
-      # is the stronger guarantee. This test asserts the current
-      # contract.)
+      # destructure-failure path. The migration moved rejection EARLIER — to
+      # URI construction — which is the stronger guarantee. This test asserts
+      # the current contract.)
       #
       # NOTE: the 2-segment literal is split across two strings so the
       # `EntitiesHaveWorkspaceTest` codebase-grep gate (Phase 9 PR-2)
@@ -77,27 +76,27 @@ defmodule Ezagent.PluginNp.Template.NpAgentTest do
                })
     end
 
-    test "rejects wrong flavor prefix" do
-      assert {:error, {:wrong_agent_flavor, "cc", expected: "np"}} =
+    test "ignores legacy name prefix when validating stored flavor" do
+      assert :ok =
                Tmpl.validate(%{
                  "class" => "np.agent",
-                 "agent_uri" => "entity://agent/team-alpha/cc_x"
+                 "agent_uri" => "entity://team-alpha/agent/cc_x"
                })
     end
 
-    test "rejects entity_name without flavor prefix" do
-      assert {:error, {:missing_flavor_prefix, _, _}} =
+    test "accepts entity_name without flavor prefix" do
+      assert :ok =
                Tmpl.validate(%{
                  "class" => "np.agent",
-                 "agent_uri" => "entity://agent/team-alpha/nameonly"
+                 "agent_uri" => "entity://team-alpha/agent/nameonly"
                })
     end
 
     test "rejects non-entity scheme" do
-      assert {:error, {:bad_agent_uri, _}} =
+      assert {:error, {:invalid_agent_uri, _, "agent URI must be an entity agent URI"}} =
                Tmpl.validate(%{
                  "class" => "np.agent",
-                 "agent_uri" => "session://default/team-alpha/x"
+                 "agent_uri" => "session://team-alpha/default/x"
                })
     end
   end
@@ -107,7 +106,7 @@ defmodule Ezagent.PluginNp.Template.NpAgentTest do
       assert {:error, {:bad_cwd, "/this/path/should/not/exist"}} =
                Tmpl.validate(%{
                  "class" => "np.agent",
-                 "agent_uri" => "entity://agent/team-alpha/np_x",
+                 "agent_uri" => "entity://team-alpha/agent/np_x",
                  "cwd" => "/this/path/should/not/exist"
                })
     end
@@ -116,7 +115,7 @@ defmodule Ezagent.PluginNp.Template.NpAgentTest do
       assert :ok =
                Tmpl.validate(%{
                  "class" => "np.agent",
-                 "agent_uri" => "entity://agent/team-alpha/np_x",
+                 "agent_uri" => "entity://team-alpha/agent/np_x",
                  "timeout_ms" => "5000"
                })
     end
@@ -125,7 +124,7 @@ defmodule Ezagent.PluginNp.Template.NpAgentTest do
       assert {:error, {:bad_timeout, "abc"}} =
                Tmpl.validate(%{
                  "class" => "np.agent",
-                 "agent_uri" => "entity://agent/team-alpha/np_x",
+                 "agent_uri" => "entity://team-alpha/agent/np_x",
                  "timeout_ms" => "abc"
                })
     end

@@ -125,18 +125,22 @@ defmodule EzagentWeb.HomeLive do
     end
   end
 
-  defp ensure_bootstrap_workspace(%URI{scheme: "workspace", host: "system"}, %URI{} = creator_uri) do
-    case Ezagent.Workspace.Store.get_by_name("system") do
-      nil ->
-        case Ezagent.Workspace.create("system", %{created_by: creator_uri}) do
-          {:ok, _pid} -> :ok
-          {:error, :workspace_exists} -> :ok
-          {:error, {:already_started, _pid}} -> :ok
-          {:error, reason} -> {:error, {:system_workspace_seed_failed, reason}}
-        end
+  defp ensure_bootstrap_workspace(%URI{scheme: "workspace"} = uri, %URI{} = creator_uri) do
+    unless Ezagent.URI.name?(uri, :system) do
+      :ok
+    else
+      case Ezagent.Workspace.Store.get_by_name("system") do
+        nil ->
+          case Ezagent.Workspace.create("system", %{created_by: creator_uri}) do
+            {:ok, _pid} -> :ok
+            {:error, :workspace_exists} -> :ok
+            {:error, {:already_started, _pid}} -> :ok
+            {:error, reason} -> {:error, {:system_workspace_seed_failed, reason}}
+          end
 
-      _ ->
-        :ok
+        _ ->
+          :ok
+      end
     end
   end
 
@@ -186,7 +190,7 @@ defmodule EzagentWeb.HomeLive do
   # Echo's :receive action emits a chat reply (PR-J), so the user
   # gets a working ping-pong loop out of the box.
   defp join_echo_agent(session_uri, caller_uri) do
-    echo_uri = Ezagent.URI.new!("entity://agent/system/echo_default")
+    echo_uri = Ezagent.URI.agent(:system, :echo_default)
     # Make sure the echo Kind is live (spawn is idempotent — returns
     # `{:error, {:already_started, _}}` if already up). Spawn happens
     # in the echo plugin's Application.start; this is a defensive
@@ -205,7 +209,8 @@ defmodule EzagentWeb.HomeLive do
         # `system://session-internal` (closed Catalog).
         ctx: %{
           caller: caller_uri,
-          caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+          caps:
+            "session-internal" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
           reply: :ignore
         }
       })
@@ -292,11 +297,8 @@ defmodule EzagentWeb.HomeLive do
                 class="w-full px-3 py-2 text-sm bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-md text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-zinc-500 dark:focus:border-zinc-500"
               />
               <p class="mt-1 text-xs text-zinc-500">
-                {gettext("Creates")}
-                <span class="font-mono">
-                  session://default/system/<span id="short-name-preview">{@form[:short_name].value}</span>
-                </span>
-                {gettext("bound to")} <span class="font-mono">workspace://system</span>.
+                {gettext("Creates a system workspace session named")}
+                <span class="font-mono" id="short-name-preview">{@form[:short_name].value}</span>.
               </p>
             </div>
 
@@ -315,8 +317,8 @@ defmodule EzagentWeb.HomeLive do
                 {gettext("Include echo demo agent")}
                 <span class="block text-zinc-500">
                   {gettext("Adds")}
-                  <span class="font-mono">entity://agent/system/echo_default</span> {gettext(
-                    "as a session member so you can verify the chat round-trip works."
+                  {gettext(
+                    "Adds the default echo agent as a session member so you can verify the chat round-trip works."
                   )}
                 </span>
               </span>

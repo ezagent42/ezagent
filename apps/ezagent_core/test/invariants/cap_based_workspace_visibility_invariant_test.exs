@@ -64,13 +64,13 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
       action: :any,
       instance: :any,
       workspace_uri: :any,
-      granted_by: URI.parse("system://bootstrap/default"),
+      granted_by: Ezagent.URI.new!("system://bootstrap/default"),
       granted_at: DateTime.utc_now()
     }
   end
 
   defp scoped_workspace_cap(workspace_name) do
-    ws_uri = URI.parse("workspace://#{workspace_name}")
+    ws_uri = Ezagent.URI.new!("workspace://#{workspace_name}")
 
     %Capability{
       kind: :workspace,
@@ -89,7 +89,7 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
     test "INV-1: regular non-admin caller with no caps and no membership sees []" do
       setup_workspaces()
 
-      caller = URI.parse("entity://user/team-alpha/regular")
+      caller = Ezagent.URI.new!("entity://team-alpha/user/regular")
 
       result = Workspace.list_workspaces_for(caller, MapSet.new())
 
@@ -103,7 +103,7 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
     test "INV-2: workspace member sees exactly their workspace" do
       setup_workspaces()
 
-      caller = URI.parse("entity://user/team-alpha/member")
+      caller = Ezagent.URI.new!("entity://team-alpha/user/member")
       {:ok, _} = Workspace.Store.update_members(@team_alpha, [caller])
 
       result = Workspace.list_workspaces_for(caller, MapSet.new())
@@ -118,7 +118,7 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
     test "INV-3: caller in workspace://system.members sees all (member_of_system? path)" do
       setup_workspaces()
 
-      caller = URI.parse("entity://user/team-alpha/promoted")
+      caller = Ezagent.URI.new!("entity://team-alpha/user/promoted")
       {:ok, _} = Workspace.Store.update_members(@system, [caller])
 
       result = Workspace.list_workspaces_for(caller, MapSet.new())
@@ -134,7 +134,7 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
       setup_workspaces()
 
       # Home IS system; explicitly NOT in members to isolate path (iii).
-      caller = URI.parse("entity://user/system/admin-created")
+      caller = Ezagent.URI.new!("entity://system/user/admin-created")
       {:ok, _} = Workspace.Store.update_members(@system, [])
 
       result = Workspace.list_workspaces_for(caller, MapSet.new())
@@ -152,7 +152,7 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
 
       # Home is team-alpha (NOT system); NOT in system.members; holds
       # the full 5-axis wildcard cap.
-      caller = URI.parse("entity://user/team-alpha/wildcard")
+      caller = Ezagent.URI.new!("entity://team-alpha/user/wildcard")
       {:ok, _} = Workspace.Store.update_members(@system, [])
 
       result =
@@ -175,7 +175,7 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
       # narrowly-scoped Workspace cap on team-alpha (action: :list_members,
       # NOT :any — so does NOT pass holds_cross_workspace_admin_cap?
       # or holds_admin_caps?).
-      caller = URI.parse("entity://user/team-alpha/admin")
+      caller = Ezagent.URI.new!("entity://team-alpha/user/admin")
       {:ok, _} = Workspace.Store.update_members(@system, [])
       {:ok, _} = Workspace.Store.update_members(@team_alpha, [])
       cap = scoped_workspace_cap(@team_alpha)
@@ -197,7 +197,7 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
     test "INV-5: adding a member changes visibility set with no cap grant" do
       setup_workspaces()
 
-      caller = URI.parse("entity://user/team-alpha/regular")
+      caller = Ezagent.URI.new!("entity://team-alpha/user/regular")
 
       # Initial state — no caps, no membership — sees [].
       assert names(Workspace.list_workspaces_for(caller, MapSet.new())) == []
@@ -218,7 +218,7 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
     test "INV-6: granting a scoped cap surfaces the cap-target workspace" do
       setup_workspaces()
 
-      caller = URI.parse("entity://user/team-alpha/regular")
+      caller = Ezagent.URI.new!("entity://team-alpha/user/regular")
       cap = scoped_workspace_cap(@team_alpha)
 
       result = Workspace.list_workspaces_for(caller, MapSet.new([cap]))
@@ -235,7 +235,7 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
     test "INV-7: non-admin NEVER sees workspace://system regardless of non-admin caps" do
       setup_workspaces()
 
-      caller = URI.parse("entity://user/team-alpha/regular")
+      caller = Ezagent.URI.new!("entity://team-alpha/user/regular")
       {:ok, _} = Workspace.Store.update_members(@system, [])
       cap_a = scoped_workspace_cap(@team_alpha)
       cap_b = scoped_workspace_cap(@team_beta)

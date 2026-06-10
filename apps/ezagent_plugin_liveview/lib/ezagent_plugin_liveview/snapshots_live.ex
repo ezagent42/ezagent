@@ -48,7 +48,8 @@ defmodule EzagentPluginLiveview.SnapshotsLive do
   defp workspace_filter_for(%{current_workspace_uri: wsu}) when is_binary(wsu),
     do: {:scoped, wsu}
 
-  defp workspace_filter_for(_), do: {:scoped, "workspace://__none__"}
+  defp workspace_filter_for(_),
+    do: {:scoped, Ezagent.URI.workspace(:__none__) |> Ezagent.URI.stable_key()}
 
   defp list_snapshots(:all) do
     KindSnapshot.list_all() |> Enum.map(&row_to_view/1)
@@ -97,14 +98,12 @@ defmodule EzagentPluginLiveview.SnapshotsLive do
        |> assign(:flash_error, nil)}
     else
       nil ->
-        {:noreply,
-         assign(socket, :flash_error, gettext("snapshot not found: %{uri}", uri: uri))}
+        {:noreply, assign(socket, :flash_error, gettext("snapshot not found: %{uri}", uri: uri))}
 
       {:error, :cross_workspace} ->
         # Fail-closed: don't reveal that the row exists in another
         # tenant; mirror the "not found" message.
-        {:noreply,
-         assign(socket, :flash_error, gettext("snapshot not found: %{uri}", uri: uri))}
+        {:noreply, assign(socket, :flash_error, gettext("snapshot not found: %{uri}", uri: uri))}
     end
   end
 
@@ -131,12 +130,10 @@ defmodule EzagentPluginLiveview.SnapshotsLive do
        |> assign(:flash_error, nil)}
     else
       nil ->
-        {:noreply,
-         assign(socket, :flash_error, gettext("snapshot not found: %{uri}", uri: uri))}
+        {:noreply, assign(socket, :flash_error, gettext("snapshot not found: %{uri}", uri: uri))}
 
       {:error, :cross_workspace} ->
-        {:noreply,
-         assign(socket, :flash_error, gettext("snapshot not found: %{uri}", uri: uri))}
+        {:noreply, assign(socket, :flash_error, gettext("snapshot not found: %{uri}", uri: uri))}
     end
   end
 
@@ -152,7 +149,9 @@ defmodule EzagentPluginLiveview.SnapshotsLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(Map.get(assigns, :current_entity_uri) || Ezagent.URI.new!("entity://user/system/admin"))
+        Ezagent.URI.stable_key(
+          Map.get(assigns, :current_entity_uri) || Ezagent.Entity.User.admin_uri()
+        )
       end)
 
     ~H"""
@@ -230,7 +229,11 @@ defmodule EzagentPluginLiveview.SnapshotsLive do
                           phx-click="clear"
                           phx-value-uri={s.uri}
                           class="text-[11px] px-2 py-0.5 h-auto text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-700"
-                          data-confirm={gettext("Clear this snapshot? Next Kind spawn will init_fresh — granted caps / runtime state are LOST.")}
+                          data-confirm={
+                            gettext(
+                              "Clear this snapshot? Next Kind spawn will init_fresh — granted caps / runtime state are LOST."
+                            )
+                          }
                         >
                           {gettext("Clear")}
                         </.button>
@@ -243,7 +246,9 @@ defmodule EzagentPluginLiveview.SnapshotsLive do
               <.card :if={@selected_dump} id="dump-view" class="mt-6">
                 <:header>
                   <div class="flex items-center justify-between gap-2">
-                    <span>{gettext("Dump:")} <code class="font-mono text-[11px]">{@selected_uri}</code></span>
+                    <span>
+                      {gettext("Dump:")} <code class="font-mono text-[11px]">{@selected_uri}</code>
+                    </span>
                     <.button
                       variant="ghost"
                       size="sm"

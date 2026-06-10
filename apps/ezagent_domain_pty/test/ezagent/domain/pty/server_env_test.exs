@@ -30,7 +30,7 @@ defmodule Ezagent.Domain.Pty.Server.EnvTest do
 
   defp state(cmd_env) do
     %PtyServer{
-      agent_uri: URI.new!("entity://agent/team-alpha/env_test"),
+      agent_uri: URI.new!("entity://team-alpha/agent/env_test"),
       cmd_env: cmd_env
     }
   end

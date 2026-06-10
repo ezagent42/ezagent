@@ -56,8 +56,8 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
       description: Keyword.get(opts, :description, "a team"),
       agent_slots: Keyword.get(opts, :agent_slots, []),
       routing_rules: Keyword.get(opts, :routing_rules, []),
-      orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
-      default_workspace_uri: URI.parse("workspace://team-alpha"),
+      orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator"),
+      default_workspace_uri: Ezagent.URI.new!("workspace://team-alpha"),
       parent_template_uri: Keyword.get(opts, :parent_template_uri),
       version_tag: nil,
       created_by: User.admin_uri(),
@@ -77,7 +77,7 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
 
   # Read a SessionTemplate's `:template` content via the dispatch :read.
   defp read_content(uri) do
-    target = URI.parse("#{URI.to_string(uri)}?action=template.read")
+    target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=template.read")
 
     {:ok, %{content: content}} =
       Invocation.dispatch(%Invocation{
@@ -108,7 +108,7 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
 
   # Spawn a User Kind at a unique URI carrying exactly `caps`.
   defp spawn_owner(caps) do
-    owner_uri = URI.parse("entity://user/team-alpha/fc-owner-#{uniq()}")
+    owner_uri = Ezagent.URI.new!("entity://team-alpha/user/fc-owner-#{uniq()}")
     {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: owner_uri, initial_caps: MapSet.new(caps)})
     on_exit(fn -> KindRegistry.lookup(owner_uri) end)
     owner_uri
@@ -138,7 +138,7 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
       parent_uri =
         persist_parent("fc-cfg-parent-#{uniq()}",
           description: "the original team",
-          agent_slots: [{"backend", URI.parse("template://agent/team-alpha/be")}]
+          agent_slots: [{"backend", Ezagent.URI.new!("template://team-alpha/agent/be")}]
         )
 
       owner_uri = spawn_owner([session_template_cap()])
@@ -226,7 +226,7 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
       assert {:ok, root_uri} =
                SessionTemplate.create(
                  "fc-root-noparent-#{uniq()}",
-                 %{parent_template_uri: URI.parse("template://session/team-alpha/sneaky@abc")},
+                 %{parent_template_uri: Ezagent.URI.new!("template://team-alpha/session/sneaky@abc")},
                  caps: [session_template_cap()],
                  caller: owner_uri,
                  workspace: "team-alpha"

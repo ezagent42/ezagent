@@ -73,7 +73,7 @@ defmodule EzagentPluginFeishu.E2E.Category04FeishuTest do
     @describetag scenario: "12-feishu-bind-outbound"
 
     test "InboundChatLookup.chat_ids_for/1 reflects a freshly inserted feishu binding row" do
-      session_uri = "session://default/system/main_#{uniq()}"
+      session_uri = "session://system/default/main_#{uniq()}"
       chat_id = "oc_lookup_e2e_#{uniq()}"
 
       :ok = insert_binding_row(session_uri, "feishu", chat_id)
@@ -83,7 +83,7 @@ defmodule EzagentPluginFeishu.E2E.Category04FeishuTest do
     end
 
     test "InboundChatLookup.resolve/1 round-trips chat_id → session_uri" do
-      session_uri = "session://default/system/round_trip_#{uniq()}"
+      session_uri = "session://system/default/round_trip_#{uniq()}"
       chat_id = "oc_resolve_e2e_#{uniq()}"
 
       :ok = insert_binding_row(session_uri, "feishu", chat_id)
@@ -93,7 +93,7 @@ defmodule EzagentPluginFeishu.E2E.Category04FeishuTest do
     end
 
     test "non-feishu adapter rows with same target_id are ignored by InboundChatLookup" do
-      session_uri = "session://default/system/disambig_#{uniq()}"
+      session_uri = "session://system/default/disambig_#{uniq()}"
       chat_id = "oc_disambig_e2e_#{uniq()}"
 
       # Insert with a non-feishu adapter id — feishu lookup must NOT
@@ -106,8 +106,8 @@ defmodule EzagentPluginFeishu.E2E.Category04FeishuTest do
     test "ambiguous binding (same chat_id, two sessions) fails closed" do
       chat_id = "oc_ambiguous_e2e_#{uniq()}"
 
-      :ok = insert_binding_row("session://default/system/sess_a_#{uniq()}", "feishu", chat_id)
-      :ok = insert_binding_row("session://default/system/sess_b_#{uniq()}", "feishu", chat_id)
+      :ok = insert_binding_row("session://system/default/sess_a_#{uniq()}", "feishu", chat_id)
+      :ok = insert_binding_row("session://system/default/sess_b_#{uniq()}", "feishu", chat_id)
 
       # codex r1 HIGH lesson — pre-fix this returned the oldest row
       # silently. Post-fix it surfaces the operator error.
@@ -124,7 +124,7 @@ defmodule EzagentPluginFeishu.E2E.Category04FeishuTest do
 
     test "all-success payload list updates publish_count" do
       {:ok, state} =
-        FeishuChatBinding.init({@feishu_chat_dev, FeishuAdapter, %{bound_by: "entity://user/system/admin"}})
+        FeishuChatBinding.init({@feishu_chat_dev, FeishuAdapter, %{bound_by: "entity://system/user/admin"}})
 
       assert {:ok, new_state} =
                FeishuChatBinding.publish(
@@ -200,13 +200,13 @@ defmodule EzagentPluginFeishu.E2E.Category04FeishuTest do
     test "non-chat slice (e.g. :members) is SKIPPED" do
       event = %Event{
         cursor: 1,
-        publisher_uri: URI.parse("session://default/system/main"),
+        publisher_uri: Ezagent.URI.new!("session://system/default/main"),
         slice_key: :members,
         event_at: DateTime.utc_now(),
         payload: %{
           action: :add_member,
-          caller: URI.parse("entity://user/system/admin"),
-          new_slice: %{joined: ["entity://user/system/alice"]},
+          caller: Ezagent.URI.new!("entity://system/user/admin"),
+          new_slice: %{joined: ["entity://system/user/alice"]},
           old_slice: %{joined: []}
         }
       }
@@ -224,11 +224,11 @@ defmodule EzagentPluginFeishu.E2E.Category04FeishuTest do
 
     test "bound open_id resolves to the bound User URI + caps from live Kind" do
       # Spawn a User Kind so list_caps_for finds an alive slice.
-      user_uri = URI.parse("entity://user/system/feishu_e2e_user_#{uniq()}")
+      user_uri = Ezagent.URI.new!("entity://system/user/feishu_e2e_user_#{uniq()}")
       {:ok, _} = Ezagent.SpawnRegistry.spawn(user_uri)
 
       open_id = "ou_e2e_bound_#{uniq()}"
-      {:ok, _row} = UserBinding.bind(open_id, user_uri, URI.parse("entity://user/system/admin"))
+      {:ok, _row} = UserBinding.bind(open_id, user_uri, Ezagent.URI.new!("entity://system/user/admin"))
 
       sender = %{"sender_id" => %{"open_id" => open_id}}
 
@@ -264,14 +264,14 @@ defmodule EzagentPluginFeishu.E2E.Category04FeishuTest do
       # sender → user. With both we have everything needed to build
       # the Invocation envelope; the dispatch step is exercised by
       # the integration test below.
-      session_uri = "session://default/system/inbound_e2e_#{uniq()}"
+      session_uri = "session://system/default/inbound_e2e_#{uniq()}"
       chat_id = "oc_inbound_e2e_#{uniq()}"
       :ok = insert_binding_row(session_uri, "feishu", chat_id)
 
-      user_uri = URI.parse("entity://user/system/inbound_user_#{uniq()}")
+      user_uri = Ezagent.URI.new!("entity://system/user/inbound_user_#{uniq()}")
       {:ok, _} = Ezagent.SpawnRegistry.spawn(user_uri)
       open_id = "ou_inbound_e2e_#{uniq()}"
-      {:ok, _} = UserBinding.bind(open_id, user_uri, URI.parse("entity://user/system/admin"))
+      {:ok, _} = UserBinding.bind(open_id, user_uri, Ezagent.URI.new!("entity://system/user/admin"))
 
       # Both halves resolve to a concrete URI.
       assert {:ok, %URI{scheme: "session"} = sess} = InboundChatLookup.resolve(chat_id)
@@ -292,7 +292,7 @@ defmodule EzagentPluginFeishu.E2E.Category04FeishuTest do
     @describetag scenario: "12-feishu-bind-outbound"
 
     test "deleting a binding row removes it from InboundChatLookup" do
-      session_uri = "session://default/system/kick_e2e_#{uniq()}"
+      session_uri = "session://system/default/kick_e2e_#{uniq()}"
       chat_id = "oc_kick_e2e_#{uniq()}"
 
       :ok = insert_binding_row(session_uri, "feishu", chat_id)
@@ -315,8 +315,8 @@ defmodule EzagentPluginFeishu.E2E.Category04FeishuTest do
       # but `InboundChatLookup.resolve/1` then fails closed (ambiguous).
       chat_id = "oc_multi_app_e2e_#{uniq()}"
 
-      :ok = insert_binding_row("session://default/system/app1_#{uniq()}", "feishu", chat_id)
-      :ok = insert_binding_row("session://default/system/app2_#{uniq()}", "feishu", chat_id)
+      :ok = insert_binding_row("session://system/default/app1_#{uniq()}", "feishu", chat_id)
+      :ok = insert_binding_row("session://system/default/app2_#{uniq()}", "feishu", chat_id)
 
       assert {:error, :ambiguous_chat_binding} = InboundChatLookup.resolve(chat_id)
     end
@@ -385,7 +385,7 @@ defmodule EzagentPluginFeishu.E2E.Category04FeishuTest do
       adapter_id: adapter_id,
       target_id: target_id,
       opts_json: "{}",
-      bound_by: "entity://user/system/admin",
+      bound_by: "entity://system/user/admin",
       bound_at: DateTime.utc_now(),
       workspace_uri: workspace_uri
     }
@@ -411,8 +411,8 @@ defmodule EzagentPluginFeishu.E2E.Category04FeishuTest do
   end
 
   defp make_msg(body) do
-    sender = URI.parse("entity://user/system/alice")
-    session_uri = URI.parse("session://default/system/main")
+    sender = Ezagent.URI.new!("entity://system/user/alice")
+    session_uri = Ezagent.URI.new!("session://system/default/main")
 
     %Ezagent.Message{
       id: "msg_e2e_" <> uniq(),
@@ -443,7 +443,7 @@ defmodule EzagentPluginFeishu.E2E.Category04FeishuTest do
 
     %Event{
       cursor: 1,
-      publisher_uri: URI.parse("session://default/system/main"),
+      publisher_uri: Ezagent.URI.new!("session://system/default/main"),
       slice_key: :chat,
       event_at: DateTime.utc_now(),
       payload: %{

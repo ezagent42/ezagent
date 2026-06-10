@@ -156,7 +156,7 @@ defmodule Ezagent.CapabilityRegistryTest do
           behavior: :any,
           instance: :any,
           workspace_uri: workspace_uri,
-          granted_by: URI.parse("entity://user/team-alpha/system"),
+          granted_by: Ezagent.URI.new!("entity://team-alpha/user/system"),
           granted_at: ~U[2026-01-01 00:00:00Z]
         },
         %Capability{
@@ -164,7 +164,7 @@ defmodule Ezagent.CapabilityRegistryTest do
           behavior: :any,
           instance: :any,
           workspace_uri: workspace_uri,
-          granted_by: URI.parse("entity://user/team-alpha/system"),
+          granted_by: Ezagent.URI.new!("entity://team-alpha/user/system"),
           granted_at: ~U[2026-01-01 00:00:00Z]
         }
       ]
@@ -177,7 +177,7 @@ defmodule Ezagent.CapabilityRegistryTest do
     test "register_default_grant + default_grants_for returns the fn result" do
       :ok = CapabilityRegistry.register_default_grant(MockGrantedKind, &grant_fn_two_caps/1)
 
-      ws = URI.parse("workspace://test-ws-default-grant")
+      ws = Ezagent.URI.new!("workspace://test-ws-default-grant")
       caps = CapabilityRegistry.default_grants_for(MockGrantedKind, ws)
 
       assert length(caps) == 2
@@ -186,7 +186,12 @@ defmodule Ezagent.CapabilityRegistryTest do
 
     test "default_grants_for unknown kind returns []" do
       defmodule UnknownKind, do: nil
-      assert [] = CapabilityRegistry.default_grants_for(UnknownKind, URI.parse("workspace://x"))
+
+      assert [] =
+               CapabilityRegistry.default_grants_for(
+                 UnknownKind,
+                 Ezagent.URI.new!("workspace://x")
+               )
     end
   end
 
@@ -194,7 +199,7 @@ defmodule Ezagent.CapabilityRegistryTest do
     test "returns 4-field map for registered subject" do
       :ok = CapabilityRegistry.register(Session, :mock_test_action_d, MockDispatchableBehavior)
 
-      target = URI.parse("session://default/team-alpha/test-needed-for")
+      target = Ezagent.URI.new!("session://team-alpha/default/test-needed-for")
       needed = CapabilityRegistry.needed_for(Session, :mock_test_action_d, target)
 
       assert needed.kind == Session.type_name()
@@ -206,7 +211,7 @@ defmodule Ezagent.CapabilityRegistryTest do
     end
 
     test "raises KeyError on unregistered (kind, action)" do
-      target = URI.parse("entity://user/team-alpha/x")
+      target = Ezagent.URI.new!("entity://team-alpha/user/x")
 
       assert_raise KeyError, ~r/no cap subject registered/, fn ->
         CapabilityRegistry.needed_for(User, :totally_unregistered_xyz, target)

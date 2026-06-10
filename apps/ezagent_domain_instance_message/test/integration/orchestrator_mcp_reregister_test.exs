@@ -43,8 +43,10 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
   alias Ezagent.Test.SnapshotFixtures
 
   defp unique_session_uri do
-    URI.parse(
-      "session://default/team-alpha/owner-mcp-reregister-#{System.unique_integer([:positive])}"
+    Ezagent.URI.session(
+      "team-alpha",
+      :default,
+      "owner-mcp-reregister-#{System.unique_integer([:positive])}"
     )
   end
 
@@ -54,8 +56,8 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
   defp orchestrator_chat_slice(opts) do
     wc = %{
       routing_rules: [],
-      orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
-      default_workspace_uri: URI.parse("workspace://default"),
+      orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator"),
+      default_workspace_uri: Ezagent.URI.new!("workspace://default"),
       description: "task #110 fixture"
     }
 
@@ -80,7 +82,8 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
   # cache empty, no register/on_ready having run.
   defp pure_restart_state(session_uri, chat_slice) do
     workspace_uri = Capability.workspace_of(session_uri)
-    orchestrator_uri = Session.derive_orchestrator_uri(session_uri, workspace_uri)
+    orchestrator_uri = Session.planned_orchestrator_uri(session_uri, workspace_uri)
+    chat_slice = put_in(chat_slice, [:template_working_copy, :orchestrator_uri], orchestrator_uri)
 
     :ok = KindSnapshot.delete(URI.to_string(session_uri))
     :ok = McpRegistry.unregister(orchestrator_uri)
@@ -95,8 +98,8 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
   describe "lazy rebuild from durable snapshot — THE GATE (pure phx restart)" do
     test "from_orchestrator_uri rebuilds the full context on an ETS miss" do
       session_uri = unique_session_uri()
-      owner_uri = URI.parse("entity://user/default/owner-mcp")
-      session_template_uri = URI.parse("template://session/default/owner-mcp-team@abc123")
+      owner_uri = Ezagent.URI.new!("entity://default/user/owner-mcp")
+      session_template_uri = Ezagent.URI.new!("template://default/session/owner-mcp-team@abc123")
 
       chat_slice =
         orchestrator_chat_slice(
@@ -141,14 +144,17 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
       # in Ezagent.Kind.normalize_slice_view/1 this assertion fails with
       # {:error, :orchestrator_not_registered}.
       session_uri = unique_session_uri()
-      owner_uri = URI.parse("entity://user/default/owner-2c")
-      session_template_uri = URI.parse("template://session/default/owner-2c-team@def456")
+      owner_uri = Ezagent.URI.new!("entity://default/user/owner-2c")
+      session_template_uri = Ezagent.URI.new!("template://default/session/owner-2c-team@def456")
 
       chat_slice =
         orchestrator_chat_slice(owner_uri: owner_uri, session_template_uri: session_template_uri)
 
       workspace_uri = Capability.workspace_of(session_uri)
-      orchestrator_uri = Session.derive_orchestrator_uri(session_uri, workspace_uri)
+      orchestrator_uri = Session.planned_orchestrator_uri(session_uri, workspace_uri)
+
+      chat_slice =
+        put_in(chat_slice, [:template_working_copy, :orchestrator_uri], orchestrator_uri)
 
       :ok = KindSnapshot.delete(URI.to_string(session_uri))
       :ok = McpRegistry.unregister(orchestrator_uri)
@@ -170,8 +176,8 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
 
     test "concurrent rebuilds are idempotent — same single cache row, no crash" do
       session_uri = unique_session_uri()
-      owner_uri = URI.parse("entity://user/default/owner-idem")
-      session_template_uri = URI.parse("template://session/default/owner-idem-team@def456")
+      owner_uri = Ezagent.URI.new!("entity://default/user/owner-idem")
+      session_template_uri = Ezagent.URI.new!("template://default/session/owner-idem-team@def456")
 
       chat_slice =
         orchestrator_chat_slice(
@@ -208,7 +214,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
   describe "legacy snapshot (no :session_template_uri) — MED finding" do
     test "rebuild succeeds; parent_template_uri is nil and update_template errors cleanly" do
       session_uri = unique_session_uri()
-      owner_uri = URI.parse("entity://user/default/owner-legacy")
+      owner_uri = Ezagent.URI.new!("entity://default/user/owner-legacy")
 
       # Pre-#110 working copy: orchestrator-backed but NO session_template_uri.
       chat_slice = orchestrator_chat_slice(owner_uri: owner_uri)
@@ -241,7 +247,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
     test "a plain session (no orchestrator_template_uri) returns :orchestrator_not_registered" do
       session_uri = unique_session_uri()
       workspace_uri = Capability.workspace_of(session_uri)
-      orchestrator_uri = Session.derive_orchestrator_uri(session_uri, workspace_uri)
+      orchestrator_uri = Session.planned_orchestrator_uri(session_uri, workspace_uri)
 
       :ok = KindSnapshot.delete(URI.to_string(session_uri))
       :ok = McpRegistry.unregister(orchestrator_uri)
@@ -270,7 +276,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
     test "a never-existed orchestrator URI (no session snapshot at all) fails closed" do
       orchestrator_uri =
         URI.parse(
-          "entity://agent/team-alpha/cc_orchestrator-ghost-#{System.unique_integer([:positive])}"
+          "entity://team-alpha/agent/cc_orchestrator-ghost-#{System.unique_integer([:positive])}"
         )
 
       :ok = McpRegistry.unregister(orchestrator_uri)

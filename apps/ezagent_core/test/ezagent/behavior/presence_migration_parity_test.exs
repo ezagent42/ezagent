@@ -78,7 +78,7 @@ defmodule Ezagent.Behavior.PresenceMigrationParityTest do
     end
 
     test "data_owner/1 — entity URI returns the canonical instance URI" do
-      uri = URI.parse("entity://user/team-alpha/alice")
+      uri = Ezagent.URI.new!("entity://team-alpha/user/alice")
       assert %URI{} = Presence.data_owner(uri)
     end
 

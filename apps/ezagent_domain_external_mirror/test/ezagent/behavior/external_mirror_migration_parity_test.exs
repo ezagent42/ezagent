@@ -147,8 +147,8 @@ defmodule Ezagent.Behavior.ExternalMirrorMigrationParityTest do
     end
 
     test "handle_bind/2 with missing nonce → {:error, :bind_must_go_through_facade}" do
-      session_uri = Ezagent.URI.new!("session://default/team-alpha/p2d-parity-1")
-      caller_uri = Ezagent.URI.new!("entity://user/default/alice")
+      session_uri = Ezagent.URI.new!("session://team-alpha/default/p2d-parity-1")
+      caller_uri = Ezagent.URI.new!("entity://default/user/alice")
 
       ctx = %{
         read: fn _, default -> default end,

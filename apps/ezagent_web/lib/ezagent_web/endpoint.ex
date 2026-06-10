@@ -15,14 +15,11 @@ defmodule EzagentWeb.Endpoint do
     websocket: [connect_info: [session: @session_options]],
     longpoll: [connect_info: [session: @session_options]]
 
-  # AgentBridge PR-C: canonical bridge socket plus legacy cc alias.
-  # `/cc_socket` remains for the two-release deprecation window so
-  # already-running cc Python sidecars keep their persistent WS path.
+  # AgentBridge canonical bridge socket. The legacy `/cc_socket` alias was
+  # removed in Cleanup-3 (FF-4 3→0) after the deprecation window closed; cc
+  # Python sidecars now connect to `/agent_bridge` (the MCP config writer
+  # default).
   socket "/agent_bridge", Ezagent.AgentBridge.Socket,
-    websocket: [check_origin: false],
-    longpoll: false
-
-  socket "/cc_socket", Ezagent.AgentBridge.Socket,
     websocket: [check_origin: false],
     longpoll: false
 
@@ -34,6 +31,10 @@ defmodule EzagentWeb.Endpoint do
   # caller/cap/session context is server-derived from the
   # token-authenticated agent URI.
   socket "/orchestrator_socket", Ezagent.Orchestrator.McpSocket,
+    websocket: [check_origin: false],
+    longpoll: false
+
+  socket "/socialware_socket", EzagentWeb.Socialware.CustomerSocket,
     websocket: [check_origin: false],
     longpoll: false
 

@@ -44,10 +44,10 @@ defmodule Ezagent.Behavior.PtyMigrationParityTest do
     # Stable agent name per test to ensure isolation (the live Agent
     # Kind + PtyServer are looked up by URI; collisions would mask bugs).
     name = "cc_pty-parity-#{System.unique_integer([:positive])}"
-    agent_uri = URI.parse("entity://agent/team-alpha/#{name}")
+    agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/#{name}")
 
-    # Live Agent Kind + PtyServer setup — mirrors `pty_test.exs`.
-    {:ok, _kind_pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+    # Live PTY-capable test Kind + PtyServer setup — mirrors `pty_test.exs`.
+    {:ok, _kind_pid} = EzagentDomainPty.Test.PtyAgentFixture.spawn(agent_uri)
 
     {:ok, pty_pid} =
       Ezagent.Domain.Pty.start(agent_uri, %{
@@ -65,13 +65,13 @@ defmodule Ezagent.Behavior.PtyMigrationParityTest do
   end
 
   defp build_invocation(agent_uri, bytes, caps) do
-    target = URI.parse("#{URI.to_string(agent_uri)}?action=pty.write")
+    target = Ezagent.URI.new!("#{URI.to_string(agent_uri)}?action=pty.write")
 
     %Invocation{
       target: target,
       mode: :call,
       args: %{bytes: bytes},
-      ctx: %{caller: URI.parse("entity://user/system/admin"), caps: caps, reply: :sync}
+      ctx: %{caller: Ezagent.URI.new!("entity://system/user/admin"), caps: caps, reply: :sync}
     }
   end
 
@@ -159,13 +159,13 @@ defmodule Ezagent.Behavior.PtyMigrationParityTest do
   describe "error paths" do
     test ":write — agent with no PtyServer → :no_pty_server",
          %{admin_caps: admin_caps} do
-      # Spawn a fresh Agent Kind without a PtyServer.
+      # Spawn a fresh PTY-capable test Kind without a PtyServer.
       bare_uri =
-        URI.parse(
-          "entity://agent/team-alpha/cc_pty-parity-no-pty-#{System.unique_integer([:positive])}"
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/cc_pty-parity-no-pty-#{System.unique_integer([:positive])}"
         )
 
-      {:ok, _kind_pid} = Ezagent.SpawnRegistry.spawn(bare_uri)
+      {:ok, _kind_pid} = EzagentDomainPty.Test.PtyAgentFixture.spawn(bare_uri)
 
       state = %{pty: %{write_calls: 0, total_bytes: 0}}
       inv = build_invocation(bare_uri, "x", admin_caps)
@@ -212,7 +212,7 @@ defmodule Ezagent.Behavior.PtyMigrationParityTest do
     end
 
     test "data_owner/1 — entity URI returns the canonical instance URI" do
-      uri = URI.parse("entity://agent/team-alpha/cc_x")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_x")
       assert %URI{} = Pty.data_owner(uri)
     end
   end

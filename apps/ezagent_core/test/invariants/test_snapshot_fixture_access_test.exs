@@ -20,6 +20,17 @@ defmodule Ezagent.Invariants.TestSnapshotFixtureAccessTest do
                "apps/ezagent_core/test/ezagent/lifecycle_followup_test.exs",
                "apps/ezagent_core/test/ezagent/lifecycle_test.exs",
                "apps/ezagent_core/test/ezagent/kind/snapshot_test.exs",
+               # P1 KindBase round-trip test deliberately exercises the
+               # low-level save_now/load_or_init persistence primitive to prove
+               # the :kind_base instance set survives a snapshot round-trip.
+               "apps/ezagent_core/test/ezagent/behavior/kind_base_test.exs",
+               # P1 instance-set denial suite drives save_now/load_or_init
+               # DIRECTLY because it tests the LOAD PATH itself — first-spawn
+               # scoping, reload-derives-from-persisted-:kind_base, legacy
+               # pre-P1 snapshot migration (hand-written :kind_base-less row),
+               # and unclosed-set no-partial-persist. These ARE the low-level
+               # persistence primitive under test, not fixture seeding.
+               "apps/ezagent_core/test/ezagent/kind/instance_set_denial_test.exs",
                "apps/ezagent_core/test/ezagent/snapshot_store_test.exs",
                "apps/ezagent_core/test/integration/snapshot_restart_test.exs",
                "apps/ezagent_core/test/invariants/kind_snapshot_concurrent_upsert_test.exs",

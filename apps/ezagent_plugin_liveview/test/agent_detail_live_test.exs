@@ -39,11 +39,11 @@ defmodule EzagentPluginLiveview.AgentDetailLiveTest do
     test "PTY-alive cc agent renders the inline Terminal details panel + full-page link",
          %{conn: conn} do
       agent_uri =
-        URI.parse(
-          "entity://agent/team-alpha/cc_inline-#{System.unique_integer([:positive])}"
-        )
+        Ezagent.URI.new!("entity://team-alpha/agent/cc_inline-#{System.unique_integer([:positive])}")
 
-      {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+      {:ok, _pid} =
+        Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent_with_flavor(agent_uri, "cc")
+
       {:ok, _pty_pid} = Ezagent.Domain.Pty.start(agent_uri, %{cwd: "/tmp", test_mode: true})
 
       try do
@@ -71,11 +71,11 @@ defmodule EzagentPluginLiveview.AgentDetailLiveTest do
 
     test "PTY-alive non-cc agent renders the inline Terminal details panel", %{conn: conn} do
       agent_uri =
-        URI.parse(
-          "entity://agent/team-alpha/codex_inline-#{System.unique_integer([:positive])}"
-        )
+        Ezagent.URI.new!("entity://team-alpha/agent/codex_inline-#{System.unique_integer([:positive])}")
 
-      {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+      {:ok, _pid} =
+        Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent_with_flavor(agent_uri, "codex")
+
       {:ok, _pty_pid} = Ezagent.Domain.Pty.start(agent_uri, %{cwd: "/tmp", test_mode: true})
 
       try do
@@ -94,9 +94,9 @@ defmodule EzagentPluginLiveview.AgentDetailLiveTest do
       # Echo agent — no PTY behind it. Per SPEC §5.3 + feedback_ui_no_misleading_buttons,
       # we don't surface a terminal UI when there's nothing to render.
       agent_uri =
-        URI.parse("entity://agent/team-alpha/echo_d-#{System.unique_integer([:positive])}")
+        Ezagent.URI.new!("entity://team-alpha/agent/echo_d-#{System.unique_integer([:positive])}")
 
-      {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+      {:ok, _pid} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(agent_uri, "echo")
 
       encoded = URI.encode_www_form(URI.to_string(agent_uri))
       {:ok, _lv, html} = live(conn, "/identities/agents/#{encoded}")
@@ -113,11 +113,11 @@ defmodule EzagentPluginLiveview.AgentDetailLiveTest do
   describe "PTY event seam (SPEC §5.3 wiring)" do
     test "pty_resize event is handled (no-op) without crashing the LV", %{conn: conn} do
       agent_uri =
-        URI.parse(
-          "entity://agent/team-alpha/cc_resize-#{System.unique_integer([:positive])}"
-        )
+        Ezagent.URI.new!("entity://team-alpha/agent/cc_resize-#{System.unique_integer([:positive])}")
 
-      {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+      {:ok, _pid} =
+        Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent_with_flavor(agent_uri, "cc")
+
       {:ok, _pty_pid} = Ezagent.Domain.Pty.start(agent_uri, %{cwd: "/tmp", test_mode: true})
 
       try do

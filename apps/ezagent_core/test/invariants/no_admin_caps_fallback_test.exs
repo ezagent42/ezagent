@@ -67,11 +67,11 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
   end
 
   describe "Catalog sanity" do
-    test "Catalog returns the expected 14 principals" do
+    test "Catalog returns the expected 15 principals" do
       uris = Ezagent.SystemPrincipal.Catalog.uris()
 
-      assert length(uris) == 14,
-             "SPEC §4.1 declares 14 system principals; Catalog has #{length(uris)}: " <>
+      assert length(uris) == 15,
+             "SPEC §4.1 declares 15 system principals; Catalog has #{length(uris)}: " <>
                inspect(uris)
 
       expected = [
@@ -88,7 +88,9 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
         "system://workspace-loader",
         "system://mix-task",
         "system://feishu-binding-policy",
-        "system://lv-anon-mount"
+        "system://lv-anon-mount",
+        # #17 cascade PR-0 — credential-materializer (empty-cap audit identity).
+        "system://credential-materializer"
       ]
 
       assert Enum.sort(uris) == Enum.sort(expected),
@@ -149,8 +151,8 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
     end
 
     test "caps/1 raises on non-system URI" do
-      assert_raise ArgumentError, ~r/expects a system:\/\/ URI/, fn ->
-        Ezagent.SystemPrincipal.caps("entity://user/system/admin")
+      assert_raise ArgumentError, ~r/expects a system URI/, fn ->
+        Ezagent.SystemPrincipal.caps("entity://system/user/admin")
       end
     end
 

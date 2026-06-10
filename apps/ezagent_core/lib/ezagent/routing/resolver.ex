@@ -142,14 +142,6 @@ defmodule Ezagent.Routing.Resolver do
     resolve(message, current_session_uri, members, [])
   end
 
-  # Backward-compat shim: old 2-arg form, members default to []. Phase 4
-  # callers must pass members explicitly; this clause exists for
-  # transitional callers + tests that don't need member fan-out.
-  @spec resolve(Message.t(), URI.t()) :: [URI.t()]
-  def resolve(%Message{} = message, %URI{} = current_session_uri) do
-    resolve(message, current_session_uri, [], [])
-  end
-
   @doc """
   Phase 6 PR 8: 4-arg form with workspace-scope context.
 
@@ -440,10 +432,8 @@ defmodule Ezagent.Routing.Resolver do
 
   defp cross_session?(%URI{}, %URI{}), do: false
 
-  # A User-Kind member is structurally `entity://user/<ws>/<name>`.
-  # parse!/1 guarantees the canonical shape, so the host segment is
-  # the authoritative type axis (no registry lookup needed).
-  defp user_uri?(%URI{} = uri), do: uri.scheme == "entity" and uri.host == "user"
+  # A User-Kind member is structurally an entity URI whose type axis is `user`.
+  defp user_uri?(%URI{} = uri), do: uri.scheme == "entity" and Ezagent.URI.type?(uri, :user)
   defp user_uri?(uri) when is_binary(uri), do: user_uri?(to_uri(uri))
   defp user_uri?(_), do: false
 

@@ -66,9 +66,10 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
   defmodule TestEndpoint do
     use Phoenix.Endpoint, otp_app: :ezagent_plugin_cc
 
-    socket "/cc_socket", EzagentPluginCc.Socket,
+    socket("/agent_bridge", Ezagent.AgentBridge.Socket,
       websocket: [check_origin: false],
       longpoll: false
+    )
   end
 
   use EzagentCore.DataCase, async: false
@@ -77,9 +78,9 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
 
   alias Ezagent.{Invocation, KindRegistry, Message}
   alias Ezagent.Entity.User
-  alias EzagentPluginCc.BridgeRegistry
+  alias Ezagent.AgentBridge.Registry, as: BridgeRegistry
 
-  @workspace_uri URI.parse("workspace://team-alpha")
+  @workspace_uri Ezagent.URI.new!("workspace://team-alpha")
 
   @uv_path System.find_executable("uv")
   @python_path System.find_executable("python3")
@@ -161,7 +162,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
 
   setup_all do
     port = free_tcp_port()
-    ws_url = "ws://127.0.0.1:#{port}/cc_socket/websocket"
+    ws_url = "ws://127.0.0.1:#{port}/agent_bridge/websocket"
 
     prev_url = System.get_env("EZAGENT_BRIDGE_WS_URL")
     System.put_env("EZAGENT_BRIDGE_WS_URL", ws_url)
@@ -248,7 +249,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
         File.rm(status_file)
       end)
 
-      agent_uri_str = "entity://agent/team-alpha/cc_sbxcreds-#{uniq()}"
+      agent_uri_str = "entity://team-alpha/agent/cc_sbxcreds-#{uniq()}"
       agent_uri = URI.parse(agent_uri_str)
 
       tmpl = %{
@@ -299,10 +300,12 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
         # prepend `[creds:<contents>]` to its reply.
         |> Map.put("FAKE_CLAUDE_ECHO_CREDENTIALS", "1")
 
-      # ---- 6. spawn the Agent Kind FIRST (matches PR #255's pattern —
-      #         own the lifecycle without going through CcAgent's
-      #         `test_mode: true` short-circuit in Mix.env() :test).
-      {:ok, _agent_pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+      # ---- 6. materialize the Agent through the template fixture first;
+      #         this keeps the real Agent creation path aligned with
+      #         from-template provisioning while letting this test own the
+      #         PtyServer lifecycle.
+      {:ok, _agent_pid} =
+        Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent_with_flavor(agent_uri, "cc")
 
       assert {:ok, _} = KindRegistry.lookup(agent_uri),
              "Agent Kind must be alive before the PtyServer spawns"
@@ -331,11 +334,11 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
         )
 
       assert is_pid(bridge_bound),
-             "the bridge subprocess must connect to /cc_socket and bind. " <>
-               "Status: #{File.exists?(status_file) && File.read!(status_file) || "(no status file yet)"}"
+             "the bridge subprocess must connect to /agent_bridge and bind. " <>
+               "Status: #{(File.exists?(status_file) && File.read!(status_file)) || "(no status file yet)"}"
 
       # ---- 9. session + admin, join both
-      session_uri = URI.parse("session://default/team-alpha/sbxcreds-#{uniq()}")
+      session_uri = Ezagent.URI.new!("session://team-alpha/default/sbxcreds-#{uniq()}")
       admin_uri = User.admin_uri()
 
       {:ok, _} = Ezagent.SpawnRegistry.spawn(session_uri)
@@ -357,9 +360,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
       inbound_text = "ping sandbox-credentials probe"
 
       inbound_msg =
-        Message.new(admin_uri, %{text: inbound_text, attachments: []},
-          mentions: [agent_uri]
-        )
+        Message.new(admin_uri, %{text: inbound_text, attachments: []}, mentions: [agent_uri])
 
       :ok =
         Invocation.dispatch(%Invocation{

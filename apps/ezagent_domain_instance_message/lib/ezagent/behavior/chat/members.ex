@@ -1,0 +1,96 @@
+defmodule Ezagent.Behavior.Chat.Members do
+  @moduledoc false
+
+  alias Ezagent.Routing.Legend
+
+  @spec monitor_ref_for_current_pid?(map(), URI.t(), pid()) :: boolean()
+  def monitor_ref_for_current_pid?(monitors, %URI{} = member_uri, current_pid)
+      when is_pid(current_pid) do
+    has_uri_entry? =
+      Enum.any?(monitors, fn {_ref, uri} ->
+        URI.to_string(uri) == URI.to_string(member_uri)
+      end)
+
+    has_uri_entry? and self_monitors?(current_pid)
+  end
+
+  defp self_monitors?(pid) when is_pid(pid) do
+    case Process.info(pid, :monitored_by) do
+      {:monitored_by, monitors_list} when is_list(monitors_list) ->
+        self() in monitors_list
+
+      _ ->
+        false
+    end
+  end
+
+  @spec put_member_facets(map(), map()) :: map()
+  def put_member_facets(meta, facets) when is_map(meta) and is_map(facets) do
+    meta
+    |> maybe_put_facet(:role_name, Map.get(facets, :role_name))
+    |> maybe_put_facet(:in_session_template, Map.get(facets, :in_session_template))
+    |> maybe_put_facet(:source_template_uri, Map.get(facets, :source_template_uri))
+  end
+
+  defp maybe_put_facet(map, _key, nil), do: map
+  defp maybe_put_facet(map, key, value), do: Map.put(map, key, value)
+
+  @spec sanitize_facets(map()) :: map()
+  def sanitize_facets(facets) when is_map(facets) do
+    facets
+    |> drop_facet_unless(:role_name, &is_binary/1)
+    |> drop_facet_unless(:in_session_template, &is_boolean/1)
+    |> drop_facet_unless(:source_template_uri, &match?(%URI{}, &1))
+  end
+
+  defp drop_facet_unless(map, key, pred) do
+    case Map.fetch(map, key) do
+      {:ok, value} -> if pred.(value), do: map, else: Map.delete(map, key)
+      :error -> map
+    end
+  end
+
+  @spec role_name_conflict(map(), URI.t(), String.t() | nil) ::
+          :ok | {:error, {:role_name_taken, String.t()}}
+  def role_name_conflict(_members, _member_uri, nil), do: :ok
+
+  def role_name_conflict(members, %URI{} = member_uri, role_name)
+      when is_map(members) and is_binary(role_name) do
+    case role_name_to_uri(members, role_name) do
+      nil ->
+        :ok
+
+      %URI{} = holder ->
+        if uri_eq?(holder, member_uri), do: :ok, else: {:error, {:role_name_taken, role_name}}
+    end
+  end
+
+  defp uri_eq?(%URI{} = a, %URI{} = b), do: URI.to_string(a) == URI.to_string(b)
+
+  @spec role_name_to_uri(map(), String.t()) :: URI.t() | nil
+  def role_name_to_uri(members, role_name) when is_map(members) and is_binary(role_name) do
+    Enum.find_value(members, nil, fn
+      {%URI{} = uri, %{role_name: ^role_name}} -> uri
+      _ -> nil
+    end)
+  end
+
+  @spec legends_of(map()) :: Legend.registry()
+  def legends_of(chat_slice) when is_map(chat_slice) do
+    Map.get(chat_slice, :legends, %{})
+  end
+
+  @spec resolve_legend(map(), String.t()) :: {:ok, Legend.entry()} | :error
+  def resolve_legend(chat_slice, name) when is_map(chat_slice) and is_binary(name) do
+    Legend.resolve(legends_of(chat_slice), name)
+  end
+
+  @spec fold_members(map()) :: [
+          {:legend, String.t(), [URI.t()]} | {:member, URI.t(), map()}
+        ]
+  def fold_members(chat_slice) when is_map(chat_slice) do
+    members = Map.get(chat_slice, :members, %{})
+    legends = legends_of(chat_slice)
+    Legend.fold_members(members, legends, fn role -> role_name_to_uri(members, role) end)
+  end
+end

@@ -25,7 +25,7 @@ defmodule Ezagent.Orchestrator.HealthTest do
 
   setup do
     session_uri =
-      URI.new!("session://default/system/orchhealth-#{System.unique_integer([:positive])}")
+      URI.new!("session://system/default/orchhealth-#{System.unique_integer([:positive])}")
 
     workspace_uri = URI.new!("workspace://system")
 
@@ -50,7 +50,7 @@ defmodule Ezagent.Orchestrator.HealthTest do
 
       expected_uri =
         URI.new!(
-          "entity://agent/system/cc_orchestrator-" <>
+          "entity://system/agent/cc_orchestrator-" <>
             session_discriminator(session_uri)
         )
 
@@ -62,14 +62,14 @@ defmodule Ezagent.Orchestrator.HealthTest do
       assert health.instance_name == "cc_orchestrator-" <> session_discriminator(session_uri)
 
       assert URI.to_string(health.template_uri) ==
-               "template://agent/system/cc-orchestrator"
+               "template://system/agent/cc-orchestrator"
     end
 
     test ":alive when a live pid is registered at the orchestrator URI", %{
       session_uri: session_uri
     } do
       orch_uri =
-        Ezagent.Entity.Session.derive_orchestrator_uri(
+        Ezagent.Entity.Session.planned_orchestrator_uri(
           session_uri,
           URI.new!("workspace://system")
         )
@@ -107,7 +107,7 @@ defmodule Ezagent.Orchestrator.HealthTest do
       workspace_uri: workspace_uri
     } do
       orch_uri =
-        Ezagent.Entity.Session.derive_orchestrator_uri(session_uri, workspace_uri)
+        Ezagent.Entity.Session.planned_orchestrator_uri(session_uri, workspace_uri)
 
       # Insert a snapshot row to model "orchestrator was spawned and
       # has since died"; use the test fixture helper so low-level
@@ -136,7 +136,7 @@ defmodule Ezagent.Orchestrator.HealthTest do
 
     test "returns {:error, :session_not_workspace_bound} when session has no binding" do
       unbound =
-        URI.new!("session://default/system/unbound-#{System.unique_integer([:positive])}")
+        URI.new!("session://system/default/unbound-#{System.unique_integer([:positive])}")
 
       # Do NOT bind via WorkspaceRegistry.
 
@@ -155,10 +155,10 @@ defmodule Ezagent.Orchestrator.HealthTest do
     end
 
     test "raises ArgumentError for workspace URI with no host" do
-      session_uri = URI.new!("session://default/system/x")
+      session_uri = URI.new!("session://system/default/x")
       bad_workspace = %URI{scheme: "workspace", host: nil}
 
-      assert_raise ArgumentError, ~r/workspace_uri has no host/, fn ->
+      assert_raise ArgumentError, ~r/URI has no workspace scope/, fn ->
         Health.classify_in_workspace(session_uri, bad_workspace)
       end
     end
@@ -166,7 +166,7 @@ defmodule Ezagent.Orchestrator.HealthTest do
 
   # The Session module's session_discriminator is private; reconstruct
   # the same logic here for assertions. The discriminator IS the
-  # session URI's name segment unchanged (e.g. session://default/system/orchhealth-7
+  # session URI's name segment unchanged (e.g. session://system/default/orchhealth-7
   # → "orchhealth-7").
   defp session_discriminator(%URI{path: "/" <> rest} = uri) do
     case String.split(rest, "/", parts: 2) do

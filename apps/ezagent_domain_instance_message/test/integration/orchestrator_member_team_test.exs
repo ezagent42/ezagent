@@ -61,7 +61,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
   # Persist a minimal echo-flavor AgentTemplate Kind to spawn members from.
   defp seed_agent_template(n) do
     name = "pr8-seed-#{n}"
-    uri = Ezagent.URI.new!("template://agent/system/#{name}")
+    uri = Ezagent.URI.new!("template://system/agent/#{name}")
     {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
 
     {:ok, _} =
@@ -105,12 +105,21 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
   # create_session round-trip (which would materialize a template team) — we
   # test the LIVE tool calls building a team incrementally.
   defp orchestrated_session(n) do
-    session_uri = Ezagent.URI.new!("session://generic/system/pr8-team-#{n}")
+    session_uri = Ezagent.URI.session("system", "generic", "pr8-team-#{n}")
     {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, @workspace_uri)
-    on_exit(fn -> terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, session_uri) end)
 
-    orchestrator_uri = Ezagent.URI.new!("entity://agent/system/cc_orch-#{n}")
+    on_exit(fn ->
+      terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, session_uri)
+    end)
+
+    orchestrator_uri = Ezagent.URI.new!("entity://system/agent/cc_orch-#{n}")
+    :ok = Ezagent.AgentFlavorAttributes.put(orchestrator_uri, "cc")
+
+    on_exit(fn ->
+      Ezagent.AgentFlavorAttributes.delete(orchestrator_uri)
+    end)
+
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri})
     :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
 
@@ -165,9 +174,14 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
 
     # 1) add a managed member spawned from the source AgentTemplate ----------
     assert {:ok, member_uri} =
-             Tools.add_managed_member(source_template_uri, role_name, true, McpServer.tool_opts(mcp))
+             Tools.add_managed_member(
+               source_template_uri,
+               role_name,
+               true,
+               McpServer.tool_opts(mcp)
+             )
 
-    assert %URI{scheme: "entity", host: "agent"} = member_uri
+    assert Ezagent.URI.type?(member_uri, :agent)
 
     on_exit(fn -> terminate_child(EzagentDomainInstanceMessage.AgentSupervisor, member_uri) end)
 
@@ -175,6 +189,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
     # the spawn-source facet (so a future respawn can rebuild it).
     slice = chat_slice(session_uri)
     assert Chat.role_name_to_uri(slice.members, role_name) == member_uri
+
     assert %{online: true, role_name: ^role_name, in_session_template: true} =
              slice.members[member_uri]
 
@@ -182,7 +197,11 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
 
     # 2) define a named prompt template --------------------------------------
     assert {:ok, _} =
-             Tools.define_prompt_template(tpl_ref, "接龙：{body}（by {sender}）", McpServer.tool_opts(mcp))
+             Tools.define_prompt_template(
+               tpl_ref,
+               "接龙：{body}（by {sender}）",
+               McpServer.tool_opts(mcp)
+             )
 
     # 3) define a rule-set rule targeting the member BY ROLE_NAME ------------
     assert {:ok, %{id: _}} =
@@ -195,7 +214,13 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
 
     # 4) front the rule-set with a legend ------------------------------------
     assert {:ok, _} =
-             Tools.define_legend(legend_name, [role_name], rule_set, true, McpServer.tool_opts(mcp))
+             Tools.define_legend(
+               legend_name,
+               [role_name],
+               rule_set,
+               true,
+               McpServer.tool_opts(mcp)
+             )
 
     # ── the team is built. Now prove it ROUTES (PR-2/PR-4/PR-6 seam). ──────
     slice = chat_slice(session_uri)
@@ -219,9 +244,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
     operator = User.admin_uri()
 
     msg =
-      Message.new(operator, %{text: "山顶的雪化了", attachments: []},
-        legend_triggers: [legend_name]
-      )
+      Message.new(operator, %{text: "山顶的雪化了", attachments: []}, legend_triggers: [legend_name])
 
     pairs =
       Resolver.resolve_with_ctx(msg, session_uri, Map.keys(slice.members),
@@ -326,6 +349,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
     # No member was spawned + joined: the session's members slice has no
     # member holding `role` (the preflight fails BEFORE spawn_member runs).
     slice = chat_slice(session_uri)
+
     assert Chat.role_name_to_uri(slice.members, role) == nil,
            "M2: an unauthorized add_managed_member must not leave a spawned/joined member; " <>
              "members=#{inspect(Map.keys(slice.members))}"

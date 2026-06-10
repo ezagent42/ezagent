@@ -150,7 +150,7 @@ defmodule EzagentWeb.OnboardingController do
 
       {:ok, canonical} ->
         cond do
-          not Ezagent.Workspace.accepts_email?("workspace://" <> canonical, email) ->
+          not Ezagent.Workspace.accepts_email?(workspace_key(canonical), email) ->
             render_form(
               conn,
               email,
@@ -182,7 +182,7 @@ defmodule EzagentWeb.OnboardingController do
         # Workspace did not exist; we own it. Now safe to add the
         # rule + mark the session.
         case Ezagent.Workspace.add_magic_link_rule(
-               "workspace://" <> workspace_name,
+               workspace_key(workspace_name),
                rule_type,
                rule_value
              ) do
@@ -211,6 +211,8 @@ defmodule EzagentWeb.OnboardingController do
         )
     end
   end
+
+  defp workspace_key(name), do: name |> Ezagent.URI.workspace() |> Ezagent.URI.stable_key()
 
   # --- workspace name validation (codex PR-B round-1 HIGH-1 + CRITICAL) ---
 

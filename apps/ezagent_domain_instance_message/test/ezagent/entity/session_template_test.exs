@@ -36,7 +36,7 @@ defmodule Ezagent.Entity.SessionTemplateTest do
         description: "test desc",
         agent_slots: [],
         routing_rules: [],
-        default_workspace_uri: URI.parse("workspace://test")
+        default_workspace_uri: Ezagent.URI.new!("workspace://test")
       }
 
       hash = SessionTemplate.compute_version_hash(slice)
@@ -50,7 +50,7 @@ defmodule Ezagent.Entity.SessionTemplateTest do
     test "same slice content → same hash (deterministic)" do
       slice = %{
         name: "stable",
-        agent_slots: [{"a", URI.parse("template://agent/team-alpha/x")}],
+        agent_slots: [{"a", Ezagent.URI.new!("template://team-alpha/agent/x")}],
         version_hash: nil
       }
 
@@ -86,14 +86,14 @@ defmodule Ezagent.Entity.SessionTemplateTest do
         name: "stable",
         agent_slots: [],
         created_at: ~U[2026-05-18 10:00:00Z],
-        created_by: URI.parse("entity://user/team-alpha/alice")
+        created_by: Ezagent.URI.new!("entity://team-alpha/user/alice")
       }
 
       slice_b = %{
         name: "stable",
         agent_slots: [],
         created_at: ~U[2026-12-31 23:59:59Z],
-        created_by: URI.parse("entity://user/team-alpha/bob")
+        created_by: Ezagent.URI.new!("entity://team-alpha/user/bob")
       }
 
       assert SessionTemplate.compute_version_hash(slice_a) ==
@@ -118,7 +118,7 @@ defmodule Ezagent.Entity.SessionTemplateTest do
       # `agent_slots` is no longer a content field — neither the atom nor
       # the string key may ride into the version hash. A template with a
       # vestigial slot list must hash identically to one without.
-      with_atom = Map.put(base, :agent_slots, [{"backend", "template://agent/team-alpha/be"}])
+      with_atom = Map.put(base, :agent_slots, [{"backend", "template://team-alpha/agent/be"}])
       with_string = Map.put(base, "agent_slots", [%{"slot" => "frontend"}])
 
       assert SessionTemplate.compute_version_hash(base) ==
@@ -130,21 +130,21 @@ defmodule Ezagent.Entity.SessionTemplateTest do
   end
 
   describe "build_uri/2" do
-    test "constructs template://session/<workspace>/<name>@<hash> URI shape (SPEC v3 §3.6 PR-7)" do
+    test "constructs template://<workspace>/session/<name>@<hash> URI shape" do
       hash = String.duplicate("a", 64)
       uri = SessionTemplate.build_uri("code-review", hash, workspace: "team-alpha")
 
       assert uri.scheme == "template"
-      assert uri.host == "session"
-      # SPEC #324: workspace is required (no silent `"default"` fallback).
-      assert uri.path == "/team-alpha/code-review@" <> hash
+      assert uri.host == "team-alpha"
+      assert uri.path == "/session/code-review@" <> hash
     end
 
-    test "build_uri/3 with explicit workspace places template in workspace path segment" do
+    test "build_uri/3 with explicit workspace places template under workspace authority" do
       hash = String.duplicate("b", 64)
       uri = SessionTemplate.build_uri("code-review", hash, workspace: "team-alpha")
 
-      assert uri.path == "/team-alpha/code-review@" <> hash
+      assert uri.host == "team-alpha"
+      assert uri.path == "/session/code-review@" <> hash
     end
   end
 end

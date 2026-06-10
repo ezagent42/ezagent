@@ -24,14 +24,14 @@ defmodule Ezagent.Routing.RuleStoreTest do
       RuleStore.add(
         table,
         Matcher.text_contains("urgent"),
-        ["session://default/team-alpha/oncall"],
-        URI.new!("entity://user/system/admin")
+        ["session://team-alpha/default/oncall"],
+        URI.new!("entity://system/user/admin")
       )
 
     assert row.table_name == Atom.to_string(table)
     assert row.matcher_data == %{"type" => "text_contains", "arg" => "urgent"}
-    assert row.receivers == ["session://default/team-alpha/oncall"]
-    assert row.created_by == "entity://user/system/admin"
+    assert row.receivers == ["session://team-alpha/default/oncall"]
+    assert row.created_by == "entity://system/user/admin"
 
     [loaded] = admin_rules(table)
     assert loaded.id == row.id
@@ -45,9 +45,9 @@ defmodule Ezagent.Routing.RuleStoreTest do
       {:ok, row} =
         RuleStore.add(
           table,
-          Matcher.from(URI.new!("entity://agent/system/cc_relay")),
-          ["entity://agent/system/codex_relay"],
-          URI.new!("entity://user/system/admin"),
+          Matcher.from(URI.new!("entity://system/agent/cc_relay")),
+          ["entity://system/agent/codex_relay"],
+          URI.new!("entity://system/user/admin"),
           rule_set: "telephone",
           position: 2,
           prompt_template_ref: "telephone_hop"
@@ -65,20 +65,20 @@ defmodule Ezagent.Routing.RuleStoreTest do
 
     test "a rule in a named rule_set MUST be single-receiver" do
       table = EzagentDomainInstanceMessage.Routing.MentionRouting
-      admin = URI.new!("entity://user/system/admin")
+      admin = URI.new!("entity://system/user/admin")
 
       assert {:error, :rule_set_requires_single_receiver} =
                RuleStore.add(
                  table,
                  Matcher.always(),
-                 ["entity://agent/system/a", "entity://agent/system/b"],
+                 ["entity://system/agent/a", "entity://system/agent/b"],
                  admin,
                  rule_set: "telephone"
                )
 
       # single receiver in a rule_set is fine
       assert {:ok, _} =
-               RuleStore.add(table, Matcher.always(), ["entity://agent/system/a"], admin,
+               RuleStore.add(table, Matcher.always(), ["entity://system/agent/a"], admin,
                  rule_set: "telephone"
                )
 
@@ -87,7 +87,7 @@ defmodule Ezagent.Routing.RuleStoreTest do
                RuleStore.add(
                  table,
                  Matcher.always(),
-                 ["entity://agent/system/a", "entity://agent/system/b"],
+                 ["entity://system/agent/a", "entity://system/agent/b"],
                  admin
                )
     end
@@ -99,9 +99,9 @@ defmodule Ezagent.Routing.RuleStoreTest do
       {:ok, row} =
         RuleStore.add(
           table,
-          Matcher.from(URI.new!("entity://agent/system/cc_relay")),
-          ["entity://agent/system/codex_relay"],
-          URI.new!("entity://user/system/admin"),
+          Matcher.from(URI.new!("entity://system/agent/cc_relay")),
+          ["entity://system/agent/codex_relay"],
+          URI.new!("entity://system/user/admin"),
           rule_set: "telephone",
           prompt_template_ref: "telephone_hop"
         )
@@ -116,22 +116,22 @@ defmodule Ezagent.Routing.RuleStoreTest do
 
     test "update_receivers must not widen a rule_set rule to multi-receiver" do
       table = EzagentDomainInstanceMessage.Routing.MentionRouting
-      admin = URI.new!("entity://user/system/admin")
+      admin = URI.new!("entity://system/user/admin")
 
       {:ok, row} =
-        RuleStore.add(table, Matcher.always(), ["entity://agent/system/a"], admin,
+        RuleStore.add(table, Matcher.always(), ["entity://system/agent/a"], admin,
           rule_set: "telephone"
         )
 
       assert {:error, :rule_set_requires_single_receiver} =
                RuleStore.update_receivers(
                  row.id,
-                 ["entity://agent/system/a", "entity://agent/system/b"],
+                 ["entity://system/agent/a", "entity://system/agent/b"],
                  true
                )
 
       # a single-receiver update is fine
-      assert :ok = RuleStore.update_receivers(row.id, ["entity://agent/system/c"], true)
+      assert :ok = RuleStore.update_receivers(row.id, ["entity://system/agent/c"], true)
     end
   end
 
@@ -147,15 +147,15 @@ defmodule Ezagent.Routing.RuleStoreTest do
       RuleStore.add(
         EzagentDomainInstanceMessage.Routing.MentionRouting,
         Matcher.always(),
-        ["session://default/team-alpha/a"],
+        ["session://team-alpha/default/a"],
         nil
       )
 
     {:ok, _} =
       RuleStore.add(
         other_table,
-        Matcher.from("entity://agent/team-alpha/test_x"),
-        ["session://default/team-alpha/b"],
+        Matcher.from("entity://team-alpha/agent/test_x"),
+        ["session://team-alpha/default/b"],
         nil
       )
 
@@ -168,7 +168,7 @@ defmodule Ezagent.Routing.RuleStoreTest do
       RuleStore.add(
         EzagentDomainInstanceMessage.Routing.MentionRouting,
         Matcher.always(),
-        ["session://default/team-alpha/x"],
+        ["session://team-alpha/default/x"],
         nil
       )
 
@@ -182,10 +182,10 @@ defmodule Ezagent.Routing.RuleStoreTest do
       RuleStore.add(
         EzagentDomainInstanceMessage.Routing.MentionRouting,
         Matcher.always(),
-        [URI.new!("session://default/team-alpha/x"), URI.new!("session://default/team-alpha/y")],
-        URI.new!("entity://user/system/admin")
+        [URI.new!("session://team-alpha/default/x"), URI.new!("session://team-alpha/default/y")],
+        URI.new!("entity://system/user/admin")
       )
 
-    assert row.receivers == ["session://default/team-alpha/x", "session://default/team-alpha/y"]
+    assert row.receivers == ["session://team-alpha/default/x", "session://team-alpha/default/y"]
   end
 end

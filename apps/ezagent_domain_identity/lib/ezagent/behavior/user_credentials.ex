@@ -83,7 +83,7 @@ defmodule Ezagent.Behavior.UserCredentials do
 
   use Ezagent.Lifecycle
 
-  action :set_password,
+  action(:set_password,
     args: %{password: :string},
     returns: %{user_uri: :string, password_set: :boolean},
     caps: [{:set_password, kind: :user}],
@@ -93,6 +93,7 @@ defmodule Ezagent.Behavior.UserCredentials do
         "(`ctx.self_uri`); CLI passes it via `--user <entity-uri>`.",
     data_owner: :self,
     modes: [:call]
+  )
 
   # =================================================================
   # Explicit `required_caps/0` — the new `caps:` macro grammar
@@ -140,12 +141,11 @@ defmodule Ezagent.Behavior.UserCredentials do
          {:ok, _decoded} <- Ezagent.Users.set_password(user_uri, password) do
       cur = ctx[:read].(:set_password_count, 0)
 
-      {:ok,
-       %{user_uri: URI.to_string(user_uri), password_set: true},
+      {:ok, %{user_uri: Ezagent.URI.stable_key(user_uri), password_set: true},
        [
          {:set, :set_password_count, cur + 1},
          {:emit, :password_set,
-          %{user_uri: URI.to_string(user_uri), at: DateTime.utc_now()}}
+          %{user_uri: Ezagent.URI.stable_key(user_uri), at: DateTime.utc_now()}}
        ]}
     end
   end
@@ -162,8 +162,8 @@ defmodule Ezagent.Behavior.UserCredentials do
   # Test scenarios that build ctx manually may pass it directly.
   defp target_user_uri(ctx) do
     case Map.get(ctx, :self_uri) do
-      %URI{scheme: "entity", host: "user"} = uri ->
-        {:ok, uri}
+      %URI{scheme: "entity"} = uri ->
+        if Ezagent.URI.type?(uri, :user), do: {:ok, uri}, else: {:error, {:bad_target_uri, uri}}
 
       other ->
         {:error, {:bad_target_uri, other}}

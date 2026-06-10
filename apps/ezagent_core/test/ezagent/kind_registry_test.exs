@@ -3,7 +3,7 @@ defmodule Ezagent.KindRegistryTest do
   alias Ezagent.KindRegistry
 
   test "put_new + lookup round-trip from same process" do
-    uri = "entity://agent/team-alpha/test_kr-test-#{System.unique_integer([:positive])}"
+    uri = "entity://team-alpha/agent/test_kr-test-#{System.unique_integer([:positive])}"
 
     # Same process registers itself.
     assert :ok = KindRegistry.put_new(uri)
@@ -14,12 +14,12 @@ defmodule Ezagent.KindRegistryTest do
   test "lookup returns :error for unregistered URI" do
     assert :error =
              KindRegistry.lookup(
-               "entity://agent/team-alpha/test_nonexistent-#{System.unique_integer([:positive])}"
+               "entity://team-alpha/agent/test_nonexistent-#{System.unique_integer([:positive])}"
              )
   end
 
   test "duplicate put_new returns {:error, {:already_registered, pid}}" do
-    uri = "entity://agent/team-alpha/test_kr-dup-#{System.unique_integer([:positive])}"
+    uri = "entity://team-alpha/agent/test_kr-dup-#{System.unique_integer([:positive])}"
 
     # Spawn a process to register first and stay alive.
     parent = self()
@@ -44,7 +44,7 @@ defmodule Ezagent.KindRegistryTest do
   end
 
   test "list_all includes our registration" do
-    uri = "entity://agent/team-alpha/test_kr-list-#{System.unique_integer([:positive])}"
+    uri = "entity://team-alpha/agent/test_kr-list-#{System.unique_integer([:positive])}"
     :ok = KindRegistry.put_new(uri)
 
     entries = KindRegistry.list_all()

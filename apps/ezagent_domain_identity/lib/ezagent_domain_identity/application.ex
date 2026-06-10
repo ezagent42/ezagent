@@ -40,7 +40,18 @@ defmodule EzagentDomainIdentity.Application do
 
   alias Ezagent.{CapabilityRegistry, SpawnRegistry}
   alias Ezagent.Entity.User
-  alias Ezagent.Behavior.{Identity, ApiKeys, UserCredentials, UserTokens, WorkspaceUserAdmin}
+
+  alias Ezagent.Behavior.{
+    Identity,
+    ApiKeys,
+    UserCredentials,
+    UserTokens,
+    WorkspaceUserAdmin,
+    WorkspaceSharedCredentialSource,
+    CredentialGrant
+  }
+
+  alias Ezagent.Behavior.UserDefaultCredentialSource
 
   @impl true
   def start(_type, _args) do
@@ -68,6 +79,7 @@ defmodule EzagentDomainIdentity.Application do
         # MapSet.to_list(SystemPrincipal.caps("system://bootstrap")))` in setup. Dev/prod see
         # the seed on every boot (idempotent).
         :ok = maybe_ensure_admin_user()
+        _ = maybe_seed_smtp_config()
 
         # PR-A (Allen 2026-05-23) seeded a `default` non-admin operator
         # user under the `default` workspace; SPEC v2 PR-C (#295)
@@ -108,6 +120,51 @@ defmodule EzagentDomainIdentity.Application do
     end
   end
 
+  # Auto-seed SMTP from a credential file on boot so a fresh / reseeded env
+  # (dev reseeds each E2E) has email (magic-link login) working without a
+  # manual admin step. Idempotent: writes ONLY when smtp isn't already
+  # configured AND `<credentials>/smtp_config.json` exists. The file itself is
+  # seeded from the read-only /secrets mount by the docker entrypoint, mirroring
+  # how feishu.yaml is seeded. Never crashes boot.
+  defp maybe_seed_smtp_config do
+    # PR-M pattern (see maybe_ensure_admin_user) — skip the boot DB write in
+    # :test. Otherwise, when a `<credentials>/smtp_config.json` happens to be
+    # present (e.g. inside the docker image's mounted secrets), the seed would
+    # mark smtp as configured in the test DB, flipping the login page's email
+    # form on and breaking tests that assert the default email-disabled state.
+    if test_env?() do
+      :ok
+    else
+      do_seed_smtp_config()
+    end
+  end
+
+  defp do_seed_smtp_config do
+    # Resource-unification P3 (SPEC §10 OI-3): smtp_config is a node-global app
+    # credential (no `<ws>`) → `system://credentials/...` via `UriQuery`.
+    #
+    # Boot-order (the one item OI-3 flagged to verify): this read runs inside
+    # `EzagentDomainIdentity.Application.start/2`, and identity depends on
+    # `ezagent_core` (mix.exs `{:ezagent_core, in_umbrella: true}`), so core's
+    # `seed_uri_schemes/0` + the UriQuery ETS tables are already up before this
+    # runs. It is therefore NOT a genuine boot-order caller (those run at
+    # config-eval / before `Application.start`) and correctly migrates.
+    path = Ezagent.System.FsResolver.path!(Ezagent.URI.system("credentials", "smtp_config.json"))
+
+    with false <- Ezagent.AppSettings.smtp_configured?(),
+         {:ok, body} <- File.read(path),
+         {:ok, %{} = cfg} <- Jason.decode(body) do
+      Ezagent.AppSettings.put("smtp_config", cfg)
+    else
+      _ -> :ok
+    end
+  rescue
+    e ->
+      require Logger
+      Logger.warning("SMTP auto-seed skipped: #{inspect(e)}")
+      :ok
+  end
+
   defp maybe_seed_admin_kind_for_tests do
     if test_env?() do
       # Mimic the pre-PR-M static child via direct DynamicSupervisor
@@ -126,7 +183,10 @@ defmodule EzagentDomainIdentity.Application do
       # by `system://bootstrap`), not the deleted `User.admin_caps/0`.
       case Ezagent.Kind.spawn(User, %{
              uri: admin_uri,
-             initial_caps: Ezagent.SystemPrincipal.caps("system://bootstrap")
+             initial_caps:
+               "bootstrap"
+               |> Ezagent.SystemPrincipal.uri()
+               |> Ezagent.SystemPrincipal.caps()
            }) do
         {:ok, _pid} ->
           :ok
@@ -180,7 +240,8 @@ defmodule EzagentDomainIdentity.Application do
             # SPEC caps-cleanup-v1 §4.4 — bootstrap caps come from the
             # closed Catalog via `Ezagent.SystemPrincipal`.
             admin_cap_list =
-              "system://bootstrap"
+              "bootstrap"
+              |> Ezagent.SystemPrincipal.uri()
               |> Ezagent.SystemPrincipal.caps()
               |> MapSet.to_list()
 
@@ -222,8 +283,8 @@ defmodule EzagentDomainIdentity.Application do
   defp register_user_only_entity_spawn_fn do
     :ok =
       SpawnRegistry.register("entity", fn uri ->
-        case uri.host do
-          "user" ->
+        case Ezagent.URI.type(uri) do
+          {:ok, "user"} ->
             # SPEC caps-cleanup-v1 §4.4 — admin's bootstrap caps come
             # from `Ezagent.SystemPrincipal` (closed Catalog). Non-admin
             # users have their caps hydrated from `users.caps_json` (the
@@ -324,6 +385,32 @@ defmodule EzagentDomainIdentity.Application do
     # wraps `Ezagent.Users.create/3` from the identity domain.
     for action <- WorkspaceUserAdmin.actions() do
       :ok = CapabilityRegistry.register(Ezagent.Entity.Workspace, action, WorkspaceUserAdmin)
+    end
+
+    # #17 cascade PR-0 (spec §5.2) — the cap-checked + audited chokepoint for the
+    # user default-credential-source pointer. Registered on the User Kind with its
+    # OWN cap subject (distinct from Identity actions) so a stranger cannot set
+    # another user's source. The handler ITSELF runs the validations + the
+    # `EzagentCore.Repo.insert` (no exported cap-less writer in core, codex H2);
+    # dispatch supplies cap-check + audit.
+    for action <- UserDefaultCredentialSource.actions() do
+      :ok = CapabilityRegistry.register(User, action, UserDefaultCredentialSource)
+    end
+
+    # #17 cascade PR-3 — workspace-admin chokepoint for authorizing a shared
+    # service-account credential source. Registered on Workspace Kind with its
+    # own cap subject; the handler validates + writes the core-owned pointer.
+    for action <- WorkspaceSharedCredentialSource.actions() do
+      :ok =
+        CapabilityRegistry.register(
+          Ezagent.Entity.Workspace,
+          action,
+          WorkspaceSharedCredentialSource
+        )
+    end
+
+    for action <- CredentialGrant.actions() do
+      :ok = CapabilityRegistry.register(Ezagent.Entity.Agent, action, CredentialGrant)
     end
 
     # CapabilityRegistry SPEC rev 4 §5 — register User.default_caps/1

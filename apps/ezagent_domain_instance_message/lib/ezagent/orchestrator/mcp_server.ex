@@ -74,10 +74,18 @@ defmodule Ezagent.Orchestrator.McpServer do
 
   require Logger
 
+  alias Ezagent.Orchestrator.McpServer.ToolCatalog
   alias Ezagent.Orchestrator.Tools
 
   @enforce_keys [:orchestrator_uri, :session_uri, :workspace_uri, :caps]
-  defstruct [:orchestrator_uri, :session_uri, :workspace_uri, :caps, :owner_uri, :parent_template_uri]
+  defstruct [
+    :orchestrator_uri,
+    :session_uri,
+    :workspace_uri,
+    :caps,
+    :owner_uri,
+    :parent_template_uri
+  ]
 
   @type t :: %__MODULE__{
           orchestrator_uri: URI.t(),
@@ -278,7 +286,7 @@ defmodule Ezagent.Orchestrator.McpServer do
   end
 
   # Enumerate `session`-type snapshot rows in the workspace; return the
-  # Session URI whose derived orchestrator URI equals the target.
+  # Session URI whose stored orchestrator URI equals the target.
   defp find_session_for_orchestrator(%URI{} = orchestrator_uri, %URI{} = workspace_uri) do
     target = URI.to_string(orchestrator_uri)
 
@@ -287,9 +295,8 @@ defmodule Ezagent.Orchestrator.McpServer do
     |> Stream.map(& &1.uri)
     |> Enum.find_value(fn uri_str ->
       with {:ok, session_uri} <- safe_parse(uri_str),
-           %URI{} = derived <-
-             safe_derive_orchestrator_uri(session_uri, workspace_uri),
-           true <- URI.to_string(derived) == target do
+           %URI{} = stored <- stored_orchestrator_uri(session_uri),
+           true <- URI.to_string(stored) == target do
         session_uri
       else
         _ -> nil
@@ -303,10 +310,14 @@ defmodule Ezagent.Orchestrator.McpServer do
     _ -> :error
   end
 
-  defp safe_derive_orchestrator_uri(%URI{} = session_uri, %URI{} = workspace_uri) do
-    Ezagent.Entity.Session.derive_orchestrator_uri(session_uri, workspace_uri)
-  rescue
-    _ -> nil
+  defp stored_orchestrator_uri(%URI{} = session_uri) do
+    with {:ok, chat_slice} <- load_chat_slice(session_uri),
+         {:ok, working_copy} <- orchestrator_working_copy(chat_slice),
+         %URI{} = orchestrator_uri <- Map.get(working_copy, :orchestrator_uri) do
+      orchestrator_uri
+    else
+      _ -> nil
+    end
   end
 
   # Load the Session's durable `:chat` slice from its persisted snapshot.
@@ -413,7 +424,7 @@ defmodule Ezagent.Orchestrator.McpServer do
   # yields an empty set, and every tool then DENIES (no `admin_caps`
   # fallback — SPEC §2 PR-5 HIGH-1).
   defp load_orchestrator_caps(%URI{} = orchestrator_uri) do
-    target = Ezagent.URI.new!("#{URI.to_string(orchestrator_uri)}?action=identity.list_caps")
+    target = Ezagent.URI.with_action(orchestrator_uri, :identity, :list_caps)
 
     case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
            target: target,
@@ -421,7 +432,10 @@ defmodule Ezagent.Orchestrator.McpServer do
            args: %{},
            ctx: %{
              caller: Ezagent.SystemPrincipal.uri("orchestrator-tools"),
-             caps: Ezagent.SystemPrincipal.caps("system://orchestrator-tools"),
+             caps:
+               "orchestrator-tools"
+               |> Ezagent.SystemPrincipal.uri()
+               |> Ezagent.SystemPrincipal.caps(),
              reply: {:caller_inbox, self()}
            }
          }) do
@@ -469,222 +483,13 @@ defmodule Ezagent.Orchestrator.McpServer do
     end
   end
 
-  # --- tool JSON schemas (MCP tools/list) --------------------------------
-
-  @doc """
-  The MCP `tools/list`-shaped descriptor for all 7 orchestrator tools
-  (SPEC §2.1 — one schema per tool). The `claude` orchestrator's MCP
-  client presents these to the LLM.
-
-  NOTE — caller / cap / session context is NOT in any tool's
-  `inputSchema`. It is bound server-side (`%McpServer{}`); the LLM
-  supplies only the operation-shaped args.
-  """
+  @doc "The MCP `tools/list`-shaped descriptor for all orchestrator tools."
   @spec tool_schemas() :: [map()]
-  def tool_schemas do
-    [
-      %{
-        "name" => "add_managed_member",
-        "description" =>
-          "Spawn a worker agent from an AgentTemplate and join it to your " <>
-            "session as a MEMBER with a stable role_name. The member is " <>
-            "reached by rules targeting its role_name (see " <>
-            "define_rule_set_rule). Replaces the retired add_agent_slot " <>
-            "(a slot was just a member with extra facets).",
-        "inputSchema" => %{
-          "type" => "object",
-          "properties" => %{
-            "source_agent_template_uri" => %{
-              "type" => "string",
-              "description" => "template://agent/<workspace>/<name> to spawn the member from."
-            },
-            "role_name" => %{
-              "type" => "string",
-              "description" => "Stable per-session alias for this member (rules/legends target it)."
-            },
-            "in_session_template" => %{
-              "type" => "boolean",
-              "description" =>
-                "Whether this member is captured in a SessionTemplate snapshot " <>
-                  "(true for a persistent team member). Defaults to true."
-            }
-          },
-          "required" => ["source_agent_template_uri", "role_name"]
-        }
-      },
-      %{
-        "name" => "update_member_template",
-        "description" =>
-          "Swap a managed member's source AgentTemplate and REGENERATE the " <>
-            "member: terminate the old worker, spawn a fresh one from the new " <>
-            "template at the SAME role_name, and re-join it. Use this to change " <>
-            "a member's blueprint (flavor / cwd / skills / caps) after adding " <>
-            "it. Routing rules keyed on the role_name re-resolve automatically.",
-        "inputSchema" => %{
-          "type" => "object",
-          "properties" => %{
-            "role_name" => %{
-              "type" => "string",
-              "description" => "The member role_name to regenerate."
-            },
-            "new_source_template_uri" => %{
-              "type" => "string",
-              "description" =>
-                "template://agent/<workspace>/<name> — the NEW AgentTemplate to " <>
-                  "rebuild the member from."
-            }
-          },
-          "required" => ["role_name", "new_source_template_uri"]
-        }
-      },
-      %{
-        "name" => "remove_member",
-        "description" =>
-          "Remove a session member by role_name: terminate the worker you " <>
-            "spawned and prune routing rules naming it. Idempotent. Reports " <>
-            "the rule-set impact (deleted vs repointed rules). Replaces the " <>
-            "retired remove_agent_slot.",
-        "inputSchema" => %{
-          "type" => "object",
-          "properties" => %{
-            "role_name" => %{"type" => "string", "description" => "The member role_name to remove."}
-          },
-          "required" => ["role_name"]
-        }
-      },
-      %{
-        "name" => "define_rule_set_rule",
-        "description" =>
-          "Add a SINGLE-RECEIVER routing rule to a named rule-set: when a " <>
-            "message matches the matcher, deliver it to the member named by " <>
-            "receiver_role_name, optionally rendered with a prompt template. " <>
-            "Rule-sets express multi-agent flows as static {from: X} -> Y " <>
-            "rules (NO model-computed baton). Replaces write_matcher.",
-        "inputSchema" => %{
-          "type" => "object",
-          "properties" => %{
-            "matcher_ast" => %{
-              "type" => "object",
-              "description" =>
-                "A routing matcher in JSON form, e.g. " <>
-                  ~s({"type":"mention","arg":"传话游戏"} or {"type":"from","arg":"<member-uri>"}.)
-            },
-            "receiver_role_name" => %{
-              "type" => "string",
-              "description" => "The member role_name (or concrete URI) the matched message routes to."
-            },
-            "rule_set" => %{
-              "type" => "string",
-              "description" => "Name of the rule-set this rule belongs to (the team-flow group)."
-            },
-            "position" => %{
-              "type" => "integer",
-              "description" => "Ordinal position of this rule within the rule-set (default 0)."
-            },
-            "prompt_template_ref" => %{
-              "type" => "string",
-              "description" =>
-                "Optional — name of a prompt template (see define_prompt_template) " <>
-                  "rendered into the delivered message."
-            }
-          },
-          "required" => ["matcher_ast", "receiver_role_name", "rule_set"]
-        }
-      },
-      %{
-        "name" => "define_prompt_template",
-        "description" =>
-          "Install a named prompt template on your session. Rules reference " <>
-            "it via prompt_template_ref; it is rendered at delivery with " <>
-            "variables like {body}/{sender}. Merges into the existing map.",
-        "inputSchema" => %{
-          "type" => "object",
-          "properties" => %{
-            "name" => %{"type" => "string", "description" => "The prompt template name."},
-            "template" => %{
-              "type" => "string",
-              "description" =>
-                "The template string, e.g. " <> ~s("接龙：{body}（by {sender}）". {body} is required.)
-            }
-          },
-          "required" => ["name", "template"]
-        }
-      },
-      %{
-        "name" => "define_legend",
-        "description" =>
-          "Front a rule-set with a @legend handle: a user-facing name that " <>
-            "collapses a team (members by role_name) and triggers its " <>
-            "rule-set flow. @legend resolves through the legend registry to " <>
-            "the rule-set's entry rule.",
-        "inputSchema" => %{
-          "type" => "object",
-          "properties" => %{
-            "legend_name" => %{"type" => "string", "description" => "The @-handle, e.g. 传话游戏."},
-            "member_role_names" => %{
-              "type" => "array",
-              "items" => %{"type" => "string"},
-              "description" => "Role_names of the team members this legend collapses."
-            },
-            "bound_rule_set" => %{
-              "type" => "string",
-              "description" => "The rule-set name @legend triggers."
-            },
-            "fold" => %{
-              "type" => "boolean",
-              "description" => "Whether the legend collapses (folds) the member set. Defaults to true."
-            }
-          },
-          "required" => ["legend_name", "member_role_names", "bound_rule_set"]
-        }
-      },
-      %{
-        "name" => "update_template",
-        "description" =>
-          "Snapshot the current session as a NEW VERSION of the parent " <>
-            "SessionTemplate it was instantiated from. Persists a real, " <>
-            "content-addressed template version.",
-        "inputSchema" => %{
-          "type" => "object",
-          "properties" => %{},
-          "required" => []
-        }
-      },
-      %{
-        "name" => "save_template_as",
-        "description" =>
-          "Snapshot the current session as the FIRST VERSION of a NEW " <>
-            "SessionTemplate family under the given name.",
-        "inputSchema" => %{
-          "type" => "object",
-          "properties" => %{
-            "new_name" => %{"type" => "string", "description" => "Name for the new template family."}
-          },
-          "required" => ["new_name"]
-        }
-      },
-      %{
-        "name" => "list_templates",
-        "description" =>
-          "List the AgentTemplates and SessionTemplates visible to you in " <>
-            "your workspace. Results are filtered by your capabilities.",
-        "inputSchema" => %{
-          "type" => "object",
-          "properties" => %{
-            "name_filter" => %{
-              "type" => "string",
-              "description" => "Optional substring filter on template names."
-            }
-          },
-          "required" => []
-        }
-      }
-    ]
-  end
+  defdelegate tool_schemas(), to: ToolCatalog
 
   @doc "The 7 tool names this MCP server exposes (matches `Tools.tool_names/0`)."
   @spec tool_names() :: [String.t()]
-  def tool_names, do: Enum.map(tool_schemas(), & &1["name"])
+  defdelegate tool_names(), to: ToolCatalog
 
   # --- tool dispatch (value form) ----------------------------------------
 

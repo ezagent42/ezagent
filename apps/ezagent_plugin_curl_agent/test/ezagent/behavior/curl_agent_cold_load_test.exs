@@ -55,7 +55,7 @@ defmodule Ezagent.Behavior.CurlAgentColdLoadTest do
 
   test "create→state round-trips through a cold-load (state rehydrates; create does not re-run)" do
     uri =
-      URI.parse("entity://agent/team-alpha/curl_coldload-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!("entity://team-alpha/agent/curl_coldload-#{System.unique_integer([:positive])}")
 
     uri_str = URI.to_string(uri)
 

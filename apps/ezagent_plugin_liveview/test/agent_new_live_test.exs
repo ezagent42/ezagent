@@ -60,7 +60,7 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
   defp ensure_default_workspace do
     # The conn session pins `current_workspace_uri` to
     # `workspace://team-alpha` (V-6 fix), and every assertion expects
-    # agents under `entity://agent/team-alpha/…`. AgentNewLive dispatches
+    # agents under `entity://team-alpha/agent/…`. AgentNewLive dispatches
     # `workspace.create_agent` to the session's workspace, so the
     # workspace that must exist (DB row + live Kind) is `team-alpha`, not
     # the legacy `default` — otherwise the dispatch hits `:no_such_actor`
@@ -110,11 +110,7 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
     assert html =~ "cc"
     assert html =~ "echo"
     assert html =~ "curl"
-    # V-6 fix — preview now includes the caller's workspace
-    # segment, so the placeholder is `<flavor>_<name>` after
-    # `entity://agent/<workspace>/`.
-    assert html =~ "entity://agent/team-alpha/&lt;flavor&gt;_&lt;name&gt;" or
-             html =~ "entity://agent/team-alpha/<flavor>_<name>"
+    assert html =~ "&lt;agent-uri&gt;" or html =~ "<agent-uri>"
 
     # Submit button
     assert html =~ "Create agent"
@@ -130,7 +126,7 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
       })
       |> render_change()
 
-    assert html =~ "entity://agent/team-alpha/echo_preview-demo"
+    assert html =~ "entity://team-alpha/agent/preview-demo"
   end
 
   test "submit with valid inputs spawns agent + redirects", %{conn: conn} do
@@ -146,12 +142,12 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
              })
              |> render_submit()
 
-    expected_uri = URI.encode_www_form("entity://agent/team-alpha/echo_#{name}")
+    expected_uri = URI.encode_www_form("entity://team-alpha/agent/#{name}")
     assert to == "/identities/agents/#{expected_uri}"
 
     # Verify the agent actually exists in the live KindRegistry.
     {:ok, _pid} =
-      Ezagent.KindRegistry.lookup(URI.parse("entity://agent/team-alpha/echo_#{name}"))
+      Ezagent.KindRegistry.lookup(Ezagent.URI.new!("entity://team-alpha/agent/#{name}"))
   end
 
   test "submit with empty name surfaces error and stays on page", %{conn: conn} do
@@ -184,10 +180,10 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
 
   test "submit pre-existing URI surfaces 'already exists' error", %{conn: conn} do
     name = "dup-#{System.unique_integer([:positive])}"
-    uri = URI.parse("entity://agent/team-alpha/echo_#{name}")
+    uri = Ezagent.URI.new!("entity://team-alpha/agent/#{name}")
 
     # Pre-create the agent.
-    {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
+    {:ok, _pid} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(uri, "echo")
 
     {:ok, lv, _html} = live(conn, "/identities/agents/new")
 
@@ -224,7 +220,7 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
              })
              |> render_submit()
 
-    agent_uri = URI.parse("entity://agent/team-alpha/echo_#{name}")
+    agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/#{name}")
     {:ok, _pid} = Ezagent.KindRegistry.lookup(agent_uri)
 
     # Verify caps parser accepts the placeholder string. This is the
@@ -336,7 +332,7 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
     test "echo + with_pty=true + cwd → instantiates template → Agent Kind AND PtyServer alive",
          %{conn: conn} do
       name = "echo-pty-#{System.unique_integer([:positive])}"
-      agent_uri = URI.parse("entity://agent/team-alpha/echo_#{name}")
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/#{name}")
 
       {:ok, lv, _html} = live(conn, "/identities/agents/new")
 
@@ -379,7 +375,7 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
     test "echo + with_pty=false → only the Agent Kind is alive (no PtyServer)",
          %{conn: conn} do
       name = "echo-no-pty-#{System.unique_integer([:positive])}"
-      agent_uri = URI.parse("entity://agent/team-alpha/echo_#{name}")
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/#{name}")
 
       {:ok, lv, _html} = live(conn, "/identities/agents/new")
 
@@ -432,7 +428,7 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
     test "create_agent for cc → BOTH Agent Kind AND PtyServer alive (no `Not running`)",
          %{conn: conn} do
       name = "v1fix-#{System.unique_integer([:positive])}"
-      agent_uri = URI.parse("entity://agent/team-alpha/cc_#{name}")
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/#{name}")
 
       {:ok, lv, _html} = live(conn, "/identities/agents/new")
 
@@ -463,6 +459,52 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
 
       assert is_pid(pty_pid)
       assert Process.alive?(pty_pid)
+    end
+  end
+
+  # #598: the new-agent form rendered the WORKING DIRECTORY field only for
+  # cc / echo-with-pty, but the backend requires a cwd for codex too, so codex
+  # create always failed with :cwd_required_for_codex and the operator had no
+  # field to supply it. Found by the cascade §5.B E2E.
+  describe "codex flavor — cwd field + validation (#598 regression)" do
+    setup do
+      ensure_default_workspace()
+      :ok
+    end
+
+    test "codex flavor → cwd field rendered (was omitted, #598)", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, "/identities/agents/new")
+
+      html =
+        lv
+        |> render_change("preview", %{
+          "agent" => %{"flavor" => "codex", "name" => "cdx", "caps" => ""}
+        })
+
+      assert html =~ ~s(name="agent[cwd]")
+    end
+
+    test "codex + no cwd → friendly error, stays on page (#598)", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, "/identities/agents/new")
+
+      _ =
+        lv
+        |> render_change("preview", %{
+          "agent" => %{"flavor" => "codex", "name" => "cdx", "caps" => ""}
+        })
+
+      html =
+        lv
+        |> render_submit("create_agent", %{
+          "agent" => %{
+            "flavor" => "codex",
+            "name" => "needs-cwd-#{System.unique_integer([:positive])}",
+            "cwd" => "",
+            "caps" => ""
+          }
+        })
+
+      assert html =~ "Working directory is required for codex"
     end
   end
 end

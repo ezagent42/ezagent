@@ -410,12 +410,12 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
   # `worker_publish_test.exs`.
   defp send_chat_to_session(%URI{} = session_uri) do
     member_uri =
-      URI.parse("entity://user/team-alpha/em-catchup-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!("entity://team-alpha/user/em-catchup-#{System.unique_integer([:positive])}")
 
     :ok = spawn_user(member_uri, MapSet.new())
 
-    admin_uri = URI.parse("entity://user/system/admin")
-    target = URI.parse("#{URI.to_string(session_uri)}?action=chat.join")
+    admin_uri = Ezagent.URI.new!("entity://system/user/admin")
+    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
 
     case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
            target: target,
@@ -436,19 +436,19 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
         behavior: :any,
         instance: :any,
         workspace_uri: :any,
-        granted_by: URI.parse("system://bootstrap/default"),
+        granted_by: Ezagent.URI.new!("system://bootstrap/default"),
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
     ])
   end
 
   defp unique_user_uri(prefix) do
-    URI.parse("entity://user/team-alpha/#{prefix}-#{System.unique_integer([:positive])}")
+    Ezagent.URI.new!("entity://team-alpha/user/#{prefix}-#{System.unique_integer([:positive])}")
   end
 
   defp unique_session_uri(prefix) do
     Ezagent.URI.new!(
-      "session://default/team-alpha/#{prefix}-#{System.unique_integer([:positive])}"
+      "session://team-alpha/default/#{prefix}-#{System.unique_integer([:positive])}"
     )
   end
 

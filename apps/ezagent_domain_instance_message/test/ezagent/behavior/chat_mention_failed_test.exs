@@ -19,22 +19,31 @@ defmodule Ezagent.Behavior.Chat.MentionFailedTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Capability
+  alias Ezagent.AgentFlavorAttributes
   alias Ezagent.Invocation
   alias Ezagent.Message
 
   setup do
     # Subscribe to the sender's notification topic so we can assert.
-    sender_uri = URI.parse("entity://user/system/test-sender")
-    session_uri = URI.parse("session://default/system/test-mention-fail")
-    member_uri = URI.parse("entity://agent/system/echo_member-agent")
-    non_member_uri = URI.parse("entity://agent/system/echo_non-member-agent")
+    sender_uri = Ezagent.URI.new!("entity://system/user/test-sender")
+    session_uri = Ezagent.URI.new!("session://system/default/test-mention-fail")
+    member_uri = Ezagent.URI.new!("entity://system/agent/echo_member-agent")
+    non_member_uri = Ezagent.URI.new!("entity://system/agent/echo_non-member-agent")
+    :ok = AgentFlavorAttributes.put(member_uri, "echo")
+    :ok = AgentFlavorAttributes.put(non_member_uri, "echo")
+
+    on_exit(fn ->
+      AgentFlavorAttributes.delete(member_uri)
+      AgentFlavorAttributes.delete(non_member_uri)
+    end)
 
     Phoenix.PubSub.subscribe(
       EzagentCore.PubSub,
       Ezagent.Notifications.topic(sender_uri)
     )
 
-    {:ok, sender: sender_uri, session: session_uri, member: member_uri, non_member: non_member_uri}
+    {:ok,
+     sender: sender_uri, session: session_uri, member: member_uri, non_member: non_member_uri}
   end
 
   describe "notify_dropped_mentions/4 via :send" do
@@ -108,7 +117,7 @@ defmodule Ezagent.Behavior.Chat.MentionFailedTest do
     caps = [Capability.cap(:any, Ezagent.Behavior.Chat, :join)]
 
     inv = %Invocation{
-      target: URI.parse("#{URI.to_string(session_uri)}?action=chat.join"),
+      target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.join"),
       mode: :call,
       args: %{member: member_uri},
       ctx: %{caller: caller_uri, caps: caps, deadline_ms: 5_000}
@@ -128,7 +137,7 @@ defmodule Ezagent.Behavior.Chat.MentionFailedTest do
     ]
 
     inv = %Invocation{
-      target: URI.parse("#{URI.to_string(session_uri)}?action=chat.send"),
+      target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.send"),
       mode: :call,
       args: %{message: msg},
       ctx: %{caller: caller_uri, caps: caps, deadline_ms: 5_000}

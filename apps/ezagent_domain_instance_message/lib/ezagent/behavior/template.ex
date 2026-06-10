@@ -178,23 +178,25 @@ defmodule Ezagent.Behavior.Template do
   # template:// URIs are cross-cutting (workspace_uri segment is :any
   # at the scheme level), so workspace_scoped? = false.
 
-  action :read,
+  action(:read,
     args: %{},
     returns: %{content: :map},
     caps: [:read],
     modes: [:call],
     description: "read the template's content + metadata (write_count, last_version_hash)",
     workspace_scoped?: false
+  )
 
-  action :write,
+  action(:write,
     args: %{content: :map},
     returns: %{content: :map},
     caps: [:write],
     modes: [:call],
     description: "write a new immutable version of the template (CAS-keyed)",
     workspace_scoped?: false
+  )
 
-  action :instantiate,
+  action(:instantiate,
     args: %{
       instance_name: {:option, :string},
       workspace_uri: {:option, :uri},
@@ -203,11 +205,11 @@ defmodule Ezagent.Behavior.Template do
     returns: %{workers: {:list, :uri}, fresh?: :boolean},
     caps: [:instantiate],
     modes: [:call],
-    description:
-      "instantiate this template into a live Kind (Session / Agent / …)",
+    description: "instantiate this template into a live Kind (Session / Agent / …)",
     workspace_scoped?: false
+  )
 
-  action :fork,
+  action(:fork,
     args: %{new_name: :string, owner: {:option, :uri}},
     returns: %{template_uri: :uri},
     caps: [:fork],
@@ -216,6 +218,7 @@ defmodule Ezagent.Behavior.Template do
       "fork this template into a NEW Template Kind whose `parent_template_uri` " <>
         "points back at this one (PR1 2026-05-24)",
     workspace_scoped?: false
+  )
 
   # `init_slice/1` → `create/1` (SPEC §3 mapping). Build the persistent
   # `%{content: ...}` once, on first-ever existence. `:content` survives
@@ -351,8 +354,8 @@ defmodule Ezagent.Behavior.Template do
 
   # Extract the `@<hash>` segment from a SessionTemplate URI's name
   # path segment: `template://session/<ws>/<name>@<hash>`.
-  defp uri_hash_segment(%URI{path: "/" <> rest}) when is_binary(rest) do
-    case String.split(rest, "@", parts: 2) do
+  defp uri_hash_segment(%URI{} = uri) do
+    case uri |> Ezagent.URI.name!() |> String.split("@", parts: 2) do
       [_name, hash] when hash != "" -> {:ok, hash}
       _ -> {:error, :missing_version_hash_in_uri}
     end
@@ -382,7 +385,11 @@ defmodule Ezagent.Behavior.Template do
                  content,
                  instance_uri,
                  spawned_by,
-                 workspace_uri
+                 workspace_uri,
+                 caller: Map.get(ctx, :caller),
+                 caps: Map.get(ctx, :caps),
+                 source_template_uri: self_uri,
+                 explicit_source: Map.get(args, :explicit_source)
                ) do
           # codex PR #408 review HIGH-3 — pass through role_degraded
           # keys (if any) so callers (Session.ensure_orchestrator) can
@@ -400,28 +407,16 @@ defmodule Ezagent.Behavior.Template do
   end
 
   # The per-instance agent URI. The caller (Generator / add_agent_slot)
-  # supplies `instance_name`; the URI is built in the resolved
-  # workspace, flavor-prefixed per SPEC §1.2.
+  # supplies `instance_name`; the URI is built in the resolved workspace.
+  # PR-E: the name carries NO flavor prefix — flavor is stored template content,
+  # read via `UriQuery.resolve(:flavor, _)`, never encoded in the URI name.
   defp resolve_instance_uri(content, args, self_uri, ctx) do
     with {:ok, workspace_uri} <- resolve_workspace_uri(content, args, self_uri) do
-      flavor = Map.get(content, :flavor) || Map.get(content, "flavor")
-
-      workspace_name =
-        workspace_uri.host ||
-          raise ArgumentError,
-                "workspace_uri has no host (`workspace://<NAME>`) — got " <>
-                  inspect(workspace_uri) <>
-                  ". Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
-                  "fallback; callers must pass a workspace URI with an explicit name."
+      workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
 
       case Map.get(args, :instance_name) do
-        name when is_binary(name) and name != "" and is_binary(flavor) and flavor != "" ->
-          {:ok, Ezagent.URI.new!("entity://agent/#{workspace_name}/#{flavor}_#{name}")}
-
         name when is_binary(name) and name != "" ->
-          # No flavor in the content — let the helper error on the
-          # flavor lookup instead of constructing a bad URI.
-          {:ok, Ezagent.URI.new!("entity://agent/#{workspace_name}/#{name}")}
+          {:ok, Ezagent.URI.agent(workspace_name, name)}
 
         _ ->
           {:error, {:missing_instance_name, kind: Map.get(ctx, :kind_module)}}
@@ -540,15 +535,8 @@ defmodule Ezagent.Behavior.Template do
       caller_uri = Map.get(ctx, :caller)
       owner_uri = Map.get(args, :owner, caller_uri)
 
-      workspace_name =
-        workspace_uri.host ||
-          raise ArgumentError,
-                "workspace_uri has no host (`workspace://<NAME>`) — got " <>
-                  inspect(workspace_uri) <>
-                  ". Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
-                  "fallback; callers must pass a workspace URI with an explicit name."
-
-      new_uri = Ezagent.URI.new!("template://agent/#{workspace_name}/#{new_name}")
+      workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
+      new_uri = Ezagent.URI.template(workspace_name, :agent, new_name)
 
       content =
         parent_content
@@ -619,7 +607,7 @@ defmodule Ezagent.Behavior.Template do
 
   defp notify_fork_owner(_, _, _), do: :ok
 
-  defp user_uri?(%URI{scheme: "entity", host: "user"}), do: true
+  defp user_uri?(%URI{scheme: "entity"} = uri), do: Ezagent.URI.type?(uri, :user)
   defp user_uri?(_), do: false
 
   # Shared shape helpers ---------------------------------------------------
@@ -739,7 +727,10 @@ defmodule Ezagent.Behavior.Template do
            # `system://template-materialize` (closed Catalog).
            ctx: %{
              caller: Ezagent.SystemPrincipal.uri("template-materialize"),
-             caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
+             caps:
+               "template-materialize"
+               |> Ezagent.SystemPrincipal.uri()
+               |> Ezagent.SystemPrincipal.caps(),
              reply: {:caller_inbox, self()}
            }
          }) do

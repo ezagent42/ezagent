@@ -20,11 +20,11 @@ defmodule Ezagent.EventLogTest do
   alias Ezagent.EventLog
   alias EzagentCore.Repo
 
-  @aggregate_a "entity://agent/team-alpha/test_event-log-a"
-  @aggregate_b "entity://agent/team-alpha/test_event-log-b"
+  @aggregate_a "entity://team-alpha/agent/test_event-log-a"
+  @aggregate_b "entity://team-alpha/agent/test_event-log-b"
   @workspace_x "workspace://team-alpha"
   @workspace_y "workspace://team-beta"
-  @caller "entity://user/system/admin"
+  @caller "entity://system/user/admin"
 
   setup do
     # SPEC §5.1 wraps the existing `invocations` table; sandbox checkout

@@ -19,13 +19,13 @@ defmodule Ezagent.SliceChangeTest do
 
   describe "topic/1" do
     test "shape: esr:entity:<uri>:slice_changed" do
-      assert SliceChange.topic("entity://user/acme/alice") ==
-               "esr:entity:entity://user/acme/alice:slice_changed"
+      assert SliceChange.topic("entity://acme/user/alice") ==
+               "esr:entity:entity://acme/user/alice:slice_changed"
     end
 
     test "accepts a %URI{} struct" do
-      uri = URI.parse("entity://user/acme/alice")
-      assert SliceChange.topic(uri) =~ "esr:entity:entity://user/acme/alice:slice_changed"
+      uri = Ezagent.URI.new!("entity://acme/user/alice")
+      assert SliceChange.topic(uri) =~ "esr:entity:entity://acme/user/alice:slice_changed"
     end
   end
 
@@ -67,7 +67,7 @@ defmodule Ezagent.SliceChangeTest do
       # `slice_change_event_carries_no_slice_content_test.exs` is the
       # canonical gate; this test just sanity-checks that emit/1 still
       # broadcasts at all when given the fat producer-side input.
-      uri = URI.parse("entity://user/x/y-#{System.unique_integer([:positive])}")
+      uri = Ezagent.URI.new!("entity://x/user/y-#{System.unique_integer([:positive])}")
       SliceChange.subscribe_unverified(uri)
 
       producer_event = %{
@@ -135,7 +135,7 @@ defmodule Ezagent.SliceChangeTest do
     end
 
     test "subscribe_unverified + unsubscribe_unverified contract" do
-      uri = URI.parse("entity://user/x/sub-#{System.unique_integer([:positive])}")
+      uri = Ezagent.URI.new!("entity://x/user/sub-#{System.unique_integer([:positive])}")
       assert :ok = SliceChange.subscribe_unverified(uri)
       assert :ok = SliceChange.unsubscribe_unverified(uri)
     end

@@ -10,14 +10,14 @@ defmodule Ezagent.AuditTest do
   end
 
   test "[:ezagent, :invoke, :stop] is broadcast to esr:audit:stream" do
-    target = URI.parse("entity://agent/team-alpha/test_audit-test")
+    target = Ezagent.URI.new!("entity://team-alpha/agent/test_audit-test")
 
     :telemetry.execute(
       [:ezagent, :invoke, :stop],
       %{duration_us: 123},
       %{
         target: target,
-        caller: URI.parse("entity://user/system/admin"),
+        caller: Ezagent.URI.new!("entity://system/user/admin"),
         action: :test,
         kind_module: Foo,
         behavior_module: Bar,
@@ -28,16 +28,20 @@ defmodule Ezagent.AuditTest do
     assert_receive {:audit_event, event}, 500
     assert event.event == [:ezagent, :invoke, :stop]
     assert event.measurements == %{duration_us: 123}
-    assert event.metadata.target == "entity://agent/team-alpha/test_audit-test"
+    assert event.metadata.target == "entity://team-alpha/agent/test_audit-test"
   end
 
   test "[:ezagent, :invoke, :error] is also broadcast" do
-    target = URI.parse("entity://agent/team-alpha/test_audit-test")
+    target = Ezagent.URI.new!("entity://team-alpha/agent/test_audit-test")
 
     :telemetry.execute(
       [:ezagent, :invoke, :error],
       %{duration_us: 7},
-      %{target: target, caller: URI.parse("entity://user/system/admin"), reason: :test_failure}
+      %{
+        target: target,
+        caller: Ezagent.URI.new!("entity://system/user/admin"),
+        reason: :test_failure
+      }
     )
 
     assert_receive {:audit_event, event}, 500
@@ -63,7 +67,7 @@ defmodule Ezagent.AuditTest do
   # attached AND the row routes to `workspace://system` via the
   # `system_scoped_uri?/1` allowlist.
   test ":invoke :stop with caller: :system does NOT crash the audit handler" do
-    target = URI.parse("entity://agent/system/sys-caller-test")
+    target = Ezagent.URI.new!("entity://system/agent/sys-caller-test")
 
     # Capture handler-detach events so a crash would surface clearly
     # instead of silently disabling future audit rows.

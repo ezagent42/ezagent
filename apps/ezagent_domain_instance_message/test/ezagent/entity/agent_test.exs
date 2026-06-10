@@ -7,7 +7,7 @@ defmodule Ezagent.Entity.AgentTest do
       assert Agent.type_name() == :agent
     end
 
-    test "behaviors/0 returns [Chat, Identity, Sandbox, ApiKeys] (Allen 2026-05-26: ApiKeys moved from User)" do
+    test "behaviors/0 returns Agent's hosted behavior slices" do
       # PR2 2026-05-24 (Allen): Sandbox Behavior added — per-agent
       # config_dir_path + Kind.Template plugin extension callbacks.
       #
@@ -15,11 +15,16 @@ defmodule Ezagent.Entity.AgentTest do
       # agents hold their own outbound credentials. `:api_keys` slice
       # now coexists with `:identity` / `:chat` / `:sandbox` on the
       # Agent Kind's snapshot.
+      #
+      # #17 cascade PR-5 — CredentialGrant hosts the cap-checked
+      # operator revoke action on Agent so LiveViews do not write
+      # credential_grants directly.
       assert Agent.behaviors() == [
                Ezagent.Behavior.Chat,
                Ezagent.Behavior.Identity,
                Ezagent.Behavior.Sandbox,
-               Ezagent.Behavior.ApiKeys
+               Ezagent.Behavior.ApiKeys,
+               Ezagent.Behavior.CredentialGrant
              ]
     end
 

@@ -111,6 +111,25 @@ defmodule Ezagent.Workspace do
   """
   @spec add_member(String.t(), URI.t()) :: :ok | {:error, term()}
   def add_member(name, %URI{} = member_uri) do
+    do_add_member(name, member_uri, system_loader_ctx())
+  end
+
+  @doc """
+  Cap-checked variant of `add_member/2`: dispatches `:add_member` under
+  the CALLER's caps (`ctx` is `%{caller: URI.t(), caps: Enumerable.t()}`)
+  so step 5.5 CapBAC runs against the logged-in entity, NOT
+  `system://workspace-loader`. Web surfaces (LiveView) MUST use this; the
+  `/2` variant is for trusted in-VM CLI / mix-task / Loader callers.
+  SPEC 2026-05-27-capability-action-axis §7. Mirrors `create_user/3`.
+  """
+  @spec add_member(String.t(), URI.t(), map()) :: :ok | {:error, term()}
+  def add_member(name, %URI{} = member_uri, ctx) when is_map(ctx) do
+    with {:ok, dispatch_ctx} <- caller_ctx(ctx) do
+      do_add_member(name, member_uri, dispatch_ctx)
+    end
+  end
+
+  defp do_add_member(name, %URI{} = member_uri, dispatch_ctx) do
     case Store.get_by_name(name) do
       nil ->
         {:error, :not_found}
@@ -141,7 +160,8 @@ defmodule Ezagent.Workspace do
         # divergence window for paths where the Behavior would
         # otherwise be the only pre-spawner.
         with :ok <- ensure_member_kind_spawned_at_facade(member_uri),
-             :ok <- dispatch_mutation(name, "add_member", %{member: member_uri}, :call),
+             :ok <-
+               dispatch_mutation(name, "add_member", %{member: member_uri}, :call, dispatch_ctx),
              {:ok, _} <- Store.update_members(name, new_members) do
           # Task #46 (Allen 2026-05-27) — the facade-local
           # `grant_member_create_session_cap/2` call was REMOVED. The
@@ -193,16 +213,20 @@ defmodule Ezagent.Workspace do
   # tolerant of `:no_spawn_fn` for unit tests) — they converge on
   # the same `SpawnRegistry.spawn/1` chokepoint so a fresh-user
   # add lands the Kind exactly once.
-  defp ensure_member_kind_spawned_at_facade(%URI{scheme: "entity", host: "user"} = uri) do
-    case Ezagent.SpawnRegistry.spawn(uri) do
-      {:ok, _pid} ->
-        :ok
+  defp ensure_member_kind_spawned_at_facade(%URI{scheme: "entity"} = uri) do
+    if Ezagent.URI.type?(uri, :user) do
+      case Ezagent.SpawnRegistry.spawn(uri) do
+        {:ok, _pid} ->
+          :ok
 
-      {:error, {:no_spawn_fn, _scheme}} ->
-        :ok
+        {:error, {:no_spawn_fn, _scheme}} ->
+          :ok
 
-      {:error, reason} ->
-        {:error, {:member_user_spawn_failed, uri, reason}}
+        {:error, reason} ->
+          {:error, {:member_user_spawn_failed, uri, reason}}
+      end
+    else
+      :ok
     end
   end
 
@@ -210,6 +234,22 @@ defmodule Ezagent.Workspace do
 
   @spec remove_member(String.t(), URI.t()) :: :ok | {:error, term()}
   def remove_member(name, %URI{} = member_uri) do
+    do_remove_member(name, member_uri, system_loader_ctx())
+  end
+
+  @doc """
+  Cap-checked variant of `remove_member/2`: dispatches `:remove_member`
+  under the CALLER's caps (step 5.5 CapBAC against the logged-in entity).
+  Web surfaces MUST use this; see `add_member/3`. SPEC §7.
+  """
+  @spec remove_member(String.t(), URI.t(), map()) :: :ok | {:error, term()}
+  def remove_member(name, %URI{} = member_uri, ctx) when is_map(ctx) do
+    with {:ok, dispatch_ctx} <- caller_ctx(ctx) do
+      do_remove_member(name, member_uri, dispatch_ctx)
+    end
+  end
+
+  defp do_remove_member(name, %URI{} = member_uri, dispatch_ctx) do
     case Store.get_by_name(name) do
       nil ->
         {:error, :not_found}
@@ -217,8 +257,31 @@ defmodule Ezagent.Workspace do
       %{members: existing} ->
         new_members = Enum.reject(existing, &(URI.to_string(&1) == URI.to_string(member_uri)))
 
-        with {:ok, _} <- Store.update_members(name, new_members),
-             :ok <- dispatch_mutation(name, "remove_member", %{member: member_uri}) do
+        # SPEC §7 Part B: dispatch FIRST (mirroring `add_member`) so an
+        # unauthorized caller is rejected BEFORE the DB write, and the
+        # action body's `revoke_cap` effect sweeps the `:create_session`
+        # cap `:add_member` granted on this workspace (no dangling cap on
+        # demotion).
+        #
+        # codex MEDIUM (drift window, fail-SAFE direction): the synchronous
+        # revoke commits in the action body before `Store.update_members/2`.
+        # If that DB write then fails, the member can reappear from the DB
+        # on next boot WITHOUT the create_session cap — strictly LESS
+        # privilege than intended, never more (the dangerous direction —
+        # cap surviving without membership — is exactly what Part B closes).
+        # This is the same one-process-lifetime dispatch∧persist drift the
+        # `add_member/2` moduledoc documents; a true atomic fix needs the
+        # Phase 5 cross-DB transaction/saga (tracked in docs/futures/todo.md
+        # "Workspace dispatch∧persist atomicity"). NOT a security regression.
+        with :ok <-
+               dispatch_mutation(
+                 name,
+                 "remove_member",
+                 %{member: member_uri},
+                 :call,
+                 dispatch_ctx
+               ),
+             {:ok, _} <- Store.update_members(name, new_members) do
           # Skip for agent members (Notifications is user-only by design —
           # agents don't have inboxes); mirrors the `add_member` guard.
           if user_uri?(member_uri) do
@@ -269,7 +332,9 @@ defmodule Ezagent.Workspace do
 
       _persisted ->
         target =
-          Ezagent.URI.new!("workspace://#{name}?action=workspace.remove_cross_prefix_members")
+          name
+          |> Ezagent.URI.workspace()
+          |> Ezagent.URI.with_action(:workspace, :remove_cross_prefix_members)
 
         case Router.dispatch(%Cmd{
                target: target,
@@ -278,7 +343,10 @@ defmodule Ezagent.Workspace do
                ctx: %{
                  mode: :call,
                  caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
-                 caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
+                 caps:
+                   "workspace-loader"
+                   |> Ezagent.SystemPrincipal.uri()
+                   |> Ezagent.SystemPrincipal.caps(),
                  reply: {:caller_inbox, self()}
                }
              }) do
@@ -308,7 +376,10 @@ defmodule Ezagent.Workspace do
   end
 
   defp list_current_members_for_persist(name) do
-    target = Ezagent.URI.new!("workspace://#{name}?action=workspace.list_members")
+    target =
+      name
+      |> Ezagent.URI.workspace()
+      |> Ezagent.URI.with_action(:workspace, :list_members)
 
     case Router.dispatch(%Cmd{
            target: target,
@@ -317,7 +388,10 @@ defmodule Ezagent.Workspace do
            ctx: %{
              mode: :call,
              caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
-             caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
+             caps:
+               "workspace-loader"
+               |> Ezagent.SystemPrincipal.uri()
+               |> Ezagent.SystemPrincipal.caps(),
              reply: {:caller_inbox, self()}
            }
          }) do
@@ -368,7 +442,7 @@ defmodule Ezagent.Workspace do
   end
 
   defp invoke_template_now(name, tmpl_name) do
-    workspace_uri = Ezagent.URI.new!("workspace://#{name}")
+    workspace_uri = Ezagent.URI.workspace(name)
 
     case Loader.invoke_template(workspace_uri, tmpl_name) do
       {:ok, _uris} -> :ok
@@ -398,8 +472,30 @@ defmodule Ezagent.Workspace do
             {:error, {:no_template_class, class_name}}
 
           {:ok, class_module} ->
-            invoke_validate(class_module, tmpl)
+            with :ok <- validate_file_flavor_config_dir(class_module, tmpl) do
+              invoke_validate(class_module, tmpl)
+            end
         end
+    end
+  end
+
+  # 2026-06-07 file-flavor-create-cascade — a credentialled file-flavor (cc/codex)
+  # template MUST carry a non-empty `config_dir` reference. Validated BEFORE the
+  # Store write (this `add_template/3` path has no post-instantiate rollback), so
+  # a config-dir-less file-flavor template never persists + poisons every boot.
+  # Mirrors the Loader's `file_flavor_to_data/2` fail-loud guard (no-silent
+  # operator-home fallback). echo/np/curl have no credential home → exempt.
+  defp validate_file_flavor_config_dir(class_module, tmpl) do
+    if Ezagent.Agent.CredentialAdapter.credentialled?(class_module) do
+      case Map.get(tmpl, "config_dir") || Map.get(tmpl, :config_dir) do
+        dir when is_binary(dir) and dir != "" ->
+          :ok
+
+        _ ->
+          {:error, {:file_flavor_missing_config_dir, Map.get(tmpl, "class")}}
+      end
+    else
+      :ok
     end
   end
 
@@ -449,15 +545,24 @@ defmodule Ezagent.Workspace do
   # remove_template, remove_member, set_routing_rules) that are
   # validator-free and don't need synchronous error propagation.
   defp dispatch_mutation(name, action_str, args),
-    do: dispatch_mutation(name, action_str, args, :cast)
+    do: dispatch_mutation(name, action_str, args, :cast, system_loader_ctx())
 
   # Task #55 round-2 codex CRIT-1 — `:call` mode for add_member so the
   # facade can see the Behavior validator's rejection (cross-prefix
   # member) and SKIP the subsequent `Store.update_members/2`. Without
   # `:call`, a `:cast` dispatch silently drops the error and the facade
   # persists the bad URI regardless.
-  defp dispatch_mutation(name, action_str, args, mode) when mode in [:cast, :call] do
-    target = Ezagent.URI.new!("workspace://#{name}?action=workspace.#{action_str}")
+  #
+  # SPEC §7 — `auth_ctx` carries the `:caller` + `:caps` step 5.5 CapBAC
+  # checks against: `system_loader_ctx/0` for the `/2` programmatic
+  # variants, the logged-in caller's caps for the `/3` cap-checked ones.
+  defp dispatch_mutation(name, action_str, args, mode, auth_ctx)
+       when mode in [:cast, :call] and is_map(auth_ctx) do
+    target =
+      name
+      |> Ezagent.URI.workspace()
+      |> Ezagent.URI.with_action(:workspace, action_str)
+
     # The action verb already lives in the URI's `?action=workspace.<verb>`
     # query (Router preserves a pre-baked `action=` and the registry
     # resolves `{kind_module, action}` from it). `Cmd.action` carries the
@@ -475,14 +580,7 @@ defmodule Ezagent.Workspace do
            target: target,
            action: action,
            args: args,
-           # SPEC caps-cleanup-v1 §4.4 — Workspace mutation runs under
-           # `system://workspace-loader` (closed Catalog).
-           ctx: %{
-             mode: mode,
-             caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
-             caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
-             reply: reply
-           }
+           ctx: Map.merge(auth_ctx, %{mode: mode, reply: reply})
          }) do
       :ok -> :ok
       {:ok, _} -> :ok
@@ -490,138 +588,48 @@ defmodule Ezagent.Workspace do
     end
   end
 
+  # SPEC §7 (codex review HIGH — fail-closed caller ctx). The cap-checked
+  # `/3` path carries the caller's fresh caps. REQUIRE a concrete
+  # `%URI{}` caller + a list/MapSet of caps; REJECT the ambient-authority
+  # shapes (`:system`, nil, atom, string) so a programmatic caller that
+  # accidentally reaches `/3` cannot slip past step 5.5 via Runtime's
+  # `default_holds_cap?(:system)` all-caps bypass. Trusted ambient callers
+  # MUST use the explicit `/2` path (`system_loader_ctx/0`).
+  defp caller_ctx(%{caller: %URI{} = caller, caps: caps}) when is_list(caps),
+    do: {:ok, %{caller: caller, caps: caps}}
+
+  defp caller_ctx(%{caller: %URI{} = caller, caps: %MapSet{} = caps}),
+    do: {:ok, %{caller: caller, caps: caps}}
+
+  defp caller_ctx(_other), do: {:error, :invalid_caller_ctx}
+
+  # SPEC caps-cleanup-v1 §4.4 — programmatic mutations run under the
+  # closed `system://workspace-loader` Catalog principal.
+  defp system_loader_ctx do
+    %{
+      caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
+      caps:
+        "workspace-loader"
+        |> Ezagent.SystemPrincipal.uri()
+        |> Ezagent.SystemPrincipal.caps()
+    }
+  end
+
   # --- listing -------------------------------------------------------
+  #
+  # Listing + cap-derived per-caller visibility queries live in
+  # `Ezagent.Workspace.Listing` (#25 Phase-3 PR-3U). Kept as defdelegates
+  # so all callers (live_auth, mix tasks, invariant tests) + the
+  # workspace_sot invariant (`Ezagent.Workspace.list_workspaces_for/2`)
+  # resolve unchanged.
+  @doc "See `Ezagent.Workspace.Listing.list_workspaces/0`."
+  defdelegate list_workspaces(), to: Ezagent.Workspace.Listing
 
-  @doc """
-  List all live Workspace URIs (those registered in KindRegistry under
-  the `workspace://` scheme).
-  """
-  @spec list_workspaces() :: [URI.t()]
-  def list_workspaces do
-    KindRegistry.list_all()
-    |> Enum.filter(fn {uri_str, _pid} -> String.starts_with?(uri_str, "workspace://") end)
-    |> Enum.map(fn {uri_str, _pid} -> Ezagent.URI.new!(uri_str) end)
-    |> Enum.sort_by(&URI.to_string/1)
-  end
+  @doc "See `Ezagent.Workspace.Listing.list_all/0`."
+  defdelegate list_all(), to: Ezagent.Workspace.Listing
 
-  @doc """
-  List all persisted workspaces — SYSTEM-INTERNAL use only
-  (Loader rehydration, agent-flavor resolution, audit mix tasks,
-  invariant tests).
-
-  SPEC 2026-05-27-workspace-cap-based-visibility §4.2: operator-facing
-  surfaces (LiveViews, web auth mounts, plugin-author UIs) MUST use
-  `list_workspaces_for/2` — the cap-derived per-caller view. The
-  `list_visible/0` field-based filter and the `list_persisted/0`
-  alias are both DELETED in this SPEC.
-  """
-  @spec list_all() :: [map()]
-  def list_all, do: Store.list_all()
-
-  @doc """
-  Cap-derived per-caller workspace listing — the SINGLE operator-facing
-  query (SPEC 2026-05-27-workspace-cap-based-visibility §3.3).
-
-  Returns workspaces the caller can act on, computed as:
-
-      list_workspaces_for(caller_uri, caps) =
-        if   admin_shortcut(caller_uri, caps)  -- 4-predicate UNION
-        then list_all()
-        else union(
-               member_of_workspaces(caller_uri),  -- (a) membership
-               workspaces_for_caps(caps)          -- (b) cap-scope
-             )
-
-  Where `admin_shortcut/2` is the 4-predicate UNION encoded by
-  `Ezagent.Identity.AdminAuthority.admin?/2`:
-
-  - bootstrap-wildcard cap (`kind:any/behavior:any/action:any/instance:any/workspace_uri:any`)
-  - structural cross-workspace admin cap
-    (`kind:workspace/behavior:Workspace/action:any/instance:any/workspace_uri:any`)
-  - caller's URI host is `system` (admin-created in `workspace://system`)
-  - caller is a member of `workspace://system` (promoted via the LV
-    admin flow)
-
-  ## Inputs
-
-  - `caller_uri` — `%URI{}` of the caller (`entity://user/<ws>/<name>`
-    typical; `entity://agent/...` accepted). Malformed callers
-    return `[]` defensively per SPEC §3.6.
-  - `caps` — caller's loaded cap set (`MapSet.t() | [Capability.t()]`).
-    Supplied by upstream (`live_auth.ex`, mix tasks, etc.); this
-    function does NOT re-fetch from `Identity` slice.
-
-  ## Output
-
-  `[Workspace.Store.decoded()]` sorted by name ASC. Same shape as
-  the former `list_visible/0` minus the deleted `:visible` key.
-
-  ## Caps with `workspace_uri: :any` from non-admin callers
-
-  Per SPEC §3.3.b + OQ-5: caps with `workspace_uri: :any` contribute
-  NOTHING to the non-admin cap-scope branch. The admin shortcut is
-  the legitimate way to surface all workspaces; a non-admin holding
-  a session-wildcard cap should not see every workspace in the
-  system. This is deliberately NARROWER than
-  `Capability.cross_workspace?/2`'s first clause — see SPEC §3.3
-  "Relationship" subsection.
-  """
-  @spec list_workspaces_for(URI.t() | nil, MapSet.t() | [Ezagent.Capability.t()]) :: [map()]
-  def list_workspaces_for(caller_uri, caps) do
-    if Ezagent.Identity.AdminAuthority.admin?(caller_uri, caps) do
-      Store.list_all()
-    else
-      caller_str = caller_uri_string(caller_uri)
-      all = Store.list_all()
-      ws_uri_strs = caps_workspace_uri_strs(caps)
-
-      all
-      |> Enum.filter(fn ws ->
-        member_match?(ws, caller_str) or cap_scope_match?(ws, ws_uri_strs)
-      end)
-    end
-  end
-
-  # `%URI{}` → "entity://...". `nil` / non-URI → `nil` (membership
-  # check short-circuits to false). Per SPEC §3.6 defensive contract:
-  # malformed callers see no workspaces via the membership branch,
-  # cap-scope still applies independently.
-  defp caller_uri_string(%URI{} = uri), do: URI.to_string(uri)
-  defp caller_uri_string(_), do: nil
-
-  defp member_match?(_ws, nil), do: false
-
-  defp member_match?(%{members: members}, caller_str)
-       when is_list(members) and is_binary(caller_str) do
-    Enum.any?(members, fn m -> URI.to_string(m) == caller_str end)
-  end
-
-  defp member_match?(_, _), do: false
-
-  defp cap_scope_match?(%{uri: %URI{} = ws_uri}, ws_uri_strs) when is_list(ws_uri_strs) do
-    URI.to_string(ws_uri) in ws_uri_strs
-  end
-
-  defp cap_scope_match?(_, _), do: false
-
-  # Extract concrete `%URI{}` `workspace_uri` values from caps, drop
-  # `:any` (per SPEC §3.3.b — wildcards do NOT contribute to the
-  # non-admin cap-scope branch). Returns the URIs as strings for O(1)
-  # `in/2` lookup.
-  defp caps_workspace_uri_strs(caps) do
-    caps
-    |> caps_to_list()
-    |> Enum.flat_map(fn
-      %Ezagent.Capability{workspace_uri: %URI{} = uri} -> [URI.to_string(uri)]
-      %Ezagent.Capability{workspace_uri: _} -> []
-      _ -> []
-    end)
-    |> Enum.uniq()
-  end
-
-  defp caps_to_list(caps) when is_list(caps), do: caps
-  defp caps_to_list(%MapSet{} = caps), do: MapSet.to_list(caps)
-  defp caps_to_list(_), do: []
+  @doc "See `Ezagent.Workspace.Listing.list_workspaces_for/2`."
+  defdelegate list_workspaces_for(caller_uri, caps), to: Ezagent.Workspace.Listing
 
   # --- magic-link rules (SPEC 2026-05-24 v2 PR-A) ----------------------
 
@@ -674,7 +682,7 @@ defmodule Ezagent.Workspace do
   # only accepts `entity://user/...` URIs (agents don't have inboxes
   # by design). Use this guard at notify call sites where a member
   # URI may be either user or agent.
-  defp user_uri?(%URI{scheme: "entity", host: "user"}), do: true
+  defp user_uri?(%URI{scheme: "entity"} = uri), do: Ezagent.URI.type?(uri, :user)
   defp user_uri?(_), do: false
 
   # --- create_agent (SPEC 2026-05-25-agent-create-cli-gui-parity) -----
@@ -777,8 +785,9 @@ defmodule Ezagent.Workspace do
     end
   end
 
-  defp ensure_workspace_live(%URI{scheme: "workspace", host: name} = workspace_uri)
-       when is_binary(name) and name != "" do
+  defp ensure_workspace_live(%URI{scheme: "workspace"} = workspace_uri) do
+    name = Ezagent.URI.name!(workspace_uri)
+
     case KindRegistry.lookup(workspace_uri) do
       {:ok, _pid} ->
         :ok
@@ -914,7 +923,8 @@ defmodule Ezagent.Workspace do
              ctx: %{
                mode: :call,
                caller: creator_uri,
-               caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+               caps:
+                 "bootstrap" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
                reply: :ignore
              }
            }) do

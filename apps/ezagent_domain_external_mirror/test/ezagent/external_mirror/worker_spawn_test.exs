@@ -40,9 +40,9 @@ defmodule Ezagent.ExternalMirror.WorkerSpawnTest do
     # The Worker subscribes to the Session Publisher in its
     # `handle_continue(:subscribe_and_init, ...)` callback (SPEC §6.1).
     # The test env's `EzagentDomainInstanceMessage.Application.start/2` seeds
-    # `session://default/system/main`; we use that as the Publisher
+    # `session://system/default/main`; we use that as the Publisher
     # for these tests so subscribe succeeds.
-    session_uri = URI.parse("session://default/system/main")
+    session_uri = Ezagent.URI.new!("session://system/default/main")
 
     on_exit(fn -> cleanup_workers() end)
 
@@ -51,27 +51,27 @@ defmodule Ezagent.ExternalMirror.WorkerSpawnTest do
 
   describe "worker_uri_for/3 (SPEC §7.2)" do
     test "is deterministic for the same triple" do
-      session_uri = URI.parse("session://default/wsA/main")
+      session_uri = Ezagent.URI.new!("session://wsA/default/main")
       a = WorkerSpawn.worker_uri_for(session_uri, "mock_publish", "tgt-1")
       b = WorkerSpawn.worker_uri_for(session_uri, "mock_publish", "tgt-1")
       assert URI.to_string(a) == URI.to_string(b)
     end
 
     test "yields different URIs for different targets" do
-      session_uri = URI.parse("session://default/wsA/main")
+      session_uri = Ezagent.URI.new!("session://wsA/default/main")
       a = WorkerSpawn.worker_uri_for(session_uri, "mock_publish", "tgt-1")
       b = WorkerSpawn.worker_uri_for(session_uri, "mock_publish", "tgt-2")
       refute URI.to_string(a) == URI.to_string(b)
     end
 
-    test "encodes workspace from session URI middle segment" do
-      session_uri = URI.parse("session://default/wsB/main")
+    test "encodes workspace from session URI workspace segment" do
+      session_uri = Ezagent.URI.new!("session://wsB/default/main")
       worker_uri = WorkerSpawn.worker_uri_for(session_uri, "mock_publish", "tgt-1")
 
       assert worker_uri.scheme == "entity"
-      assert worker_uri.host == "worker"
-      # path is "/<workspace>/em_<hash>"
-      assert String.starts_with?(worker_uri.path, "/wsB/em_")
+      assert worker_uri.host == "wsB"
+      assert Ezagent.URI.type?(worker_uri, :worker)
+      assert String.starts_with?(worker_uri.path, "/worker/em_")
     end
 
     test "raises on a 2-segment session URI (workspace missing)" do

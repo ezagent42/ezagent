@@ -387,7 +387,7 @@ defmodule Ezagent.Domain.Pty.Server do
   def init(args) do
     agent_uri = Map.fetch!(args, :agent_uri)
     cwd = Map.get(args, :cwd, File.cwd!())
-    test_mode = Map.get(args, :test_mode, Mix.env() == :test)
+    test_mode = Map.get(args, :test_mode, Code.ensure_loaded?(Mix) and Mix.env() == :test)
     cmd_override = Map.get(args, :cmd_override)
     cmd_env = Map.get(args, :cmd_env, %{})
 
@@ -422,6 +422,75 @@ defmodule Ezagent.Domain.Pty.Server do
   @doc false
   def default_auto_prompts do
     [
+      %{
+        name: :theme_dialog,
+        # claude v2.1.x shows a first-run THEME picker the very first time it
+        # runs against a fresh CLAUDE_CONFIG_DIR (no onboarding flags). It
+        # appears BEFORE the dev-channels / trust-folder dialogs, so an
+        # unanswered theme picker hangs the spawn here and the scanner never
+        # reaches the dialogs it already handles — the fresh-stack failure seen
+        # in the §5.B credential-cascade live E2E (2026-06-07). Bare Enter
+        # confirms the highlighted default (claude auto-detects e.g. "Dark mode").
+        #
+        # Match the FULL menu shape, not just two words: an auto-prompt that does
+        # not fire at startup (e.g. theme already persisted) stays armed for the
+        # whole session, so a loose match like ["text style", "Dark mode"] would
+        # later false-positive on ordinary claude output and inject a spurious
+        # Enter (codex review of PR #611). Requiring the header + `/theme` hint +
+        # three distinct option labels makes the match specific to this exact
+        # dialog — ordinary prose cannot satisfy all five. The radio menu is
+        # static (no animated banner), so these labels are not fragmented.
+        match: [
+          "Choose the text style",
+          "/theme",
+          "Auto (match terminal)",
+          "Dark mode",
+          "Light mode"
+        ],
+        send: "\r",
+        fired?: false
+      },
+      %{
+        name: :login_method_dialog,
+        # claude v2.1.x shows a "Select login method" picker as part of the SAME
+        # first-run onboarding flow as the theme picker — EVEN when a valid
+        # `.credentials.json` is already materialized into CLAUDE_CONFIG_DIR. The
+        # §5.B credential-cascade live finding (2026-06-07): a materialized cred is
+        # NOT sufficient to skip this dialog; claude still asks until onboarding is
+        # marked complete. A headless PTY cannot answer it, so the spawn hangs here
+        # and the bridge never binds. The durable fix is to mark onboarding complete
+        # in the per-agent config (cc plugin's OnboardingBootstrap), so this dialog
+        # never appears; this scanner entry is the SAFETY NET for any claude version
+        # / config-state that still surfaces it.
+        #
+        # Option 1 ("Claude account with subscription") is the OAuth/subscription
+        # path that USES the materialized credential and is the highlighted default
+        # on a Claude Max login; bare Enter confirms it (NOT "2\r", which would pick
+        # the Console/API-key path and ignore the materialized OAuth token).
+        #
+        # Match the FULL menu shape (header + BOTH option labels), not a loose
+        # ["login", "subscription"]: an auto-prompt that doesn't fire at startup
+        # (onboarding already complete) stays armed all session, so a loose match
+        # would later false-positive on ordinary claude prose and inject a spurious
+        # Enter (codex review of PR #611 / theme_dialog). The radio menu is static
+        # (no animated banner), so these labels are not fragmented.
+        #
+        # CRUCIAL — the subscription row must carry the SELECTION MARKER `❯`
+        # (codex review of PR #718): bare Enter confirms whatever is HIGHLIGHTED,
+        # so we only fire when option 1 (the OAuth/subscription path that uses the
+        # materialized credential) is the highlighted default. If account/version
+        # drift highlights option 2 (Console/API-key) instead, `❯ 1.` is absent →
+        # we do NOT fire, never confirming the wrong auth path. (`\e[1C` cursor-
+        # forwards strip to single spaces, so the marker row renders as
+        # "❯ 1. Claude account with subscription".)
+        match: [
+          "Select login method",
+          "❯ 1. Claude account with subscription",
+          "Anthropic Console account"
+        ],
+        send: "\r",
+        fired?: false
+      },
       %{
         name: :dev_channels_dialog,
         # Anchor on the menu OPTION label, not the WARNING prose: claude's

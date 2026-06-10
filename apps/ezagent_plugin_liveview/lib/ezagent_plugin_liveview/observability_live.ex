@@ -62,11 +62,12 @@ defmodule EzagentPluginLiveview.ObservabilityLive do
 
   # Fail-closed: if neither flag is present, scope to a nonexistent
   # workspace so the LV shows zero rows rather than leaking.
-  defp workspace_filter_for(_), do: {:scoped, "workspace://__none__"}
+  defp workspace_filter_for(_),
+    do: {:scoped, Ezagent.URI.workspace(:__none__) |> Ezagent.URI.stable_key()}
 
   defp list_bridges do
-    if Code.ensure_loaded?(EzagentPluginCc.BridgeRegistry) do
-      EzagentPluginCc.BridgeRegistry.list_all()
+    if Code.ensure_loaded?(Ezagent.AgentBridge.Registry) do
+      Ezagent.AgentBridge.Registry.list_all()
     else
       []
     end
@@ -123,7 +124,7 @@ defmodule EzagentPluginLiveview.ObservabilityLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(assigns.current_entity_uri || Ezagent.URI.new!("entity://user/system/admin"))
+        Ezagent.URI.stable_key(assigns.current_entity_uri || Ezagent.Entity.User.admin_uri())
       end)
 
     ~H"""
@@ -141,19 +142,19 @@ defmodule EzagentPluginLiveview.ObservabilityLive do
         <AdminShell.admin_shell current_path="/admin/logs" active_section={:logs}>
           <:main>
             <div class="px-6 py-6">
-          <%!-- Phase 8c PR-F: sub-section tabs (overview / events / audit
+              <%!-- Phase 8c PR-F: sub-section tabs (overview / events / audit
                 / bridges / snapshots) live inline as a horizontal tab
                 strip. The left sidebar holds the top-level sub-section
                 nav (Overview / Logs & Audit / Registry / Snapshots);
                 a second vertical nav would be redundant. --%>
-          <nav class="flex items-center gap-1 mb-4 border-b border-zinc-200 dark:border-zinc-800 -mx-6 px-6 pb-0">
-            <.tab_link tab={@tab} value={:overview} label={gettext("Overview")} />
-            <.tab_link tab={@tab} value={:events} label={gettext("Events")} />
-            <.tab_link tab={@tab} value={:audit} label={gettext("Audit Log")} />
-            <.tab_link tab={@tab} value={:bridges} label={gettext("Bridges")} />
-            <.tab_link tab={@tab} value={:snapshots} label={gettext("Snapshots")} />
-          </nav>
-          {render_tab(assigns, @tab)}
+              <nav class="flex items-center gap-1 mb-4 border-b border-zinc-200 dark:border-zinc-800 -mx-6 px-6 pb-0">
+                <.tab_link tab={@tab} value={:overview} label={gettext("Overview")} />
+                <.tab_link tab={@tab} value={:events} label={gettext("Events")} />
+                <.tab_link tab={@tab} value={:audit} label={gettext("Audit Log")} />
+                <.tab_link tab={@tab} value={:bridges} label={gettext("Bridges")} />
+                <.tab_link tab={@tab} value={:snapshots} label={gettext("Snapshots")} />
+              </nav>
+              {render_tab(assigns, @tab)}
             </div>
           </:main>
         </AdminShell.admin_shell>
@@ -187,7 +188,9 @@ defmodule EzagentPluginLiveview.ObservabilityLive do
   defp render_tab(assigns, :overview) do
     ~H"""
     <.page_header title={gettext("Health Overview")}>
-      <:subtitle>{gettext("System pulse — KindRegistry, CC bridges, recent audit activity.")}</:subtitle>
+      <:subtitle>
+        {gettext("System pulse — KindRegistry, CC bridges, recent audit activity.")}
+      </:subtitle>
     </.page_header>
     <div class="grid grid-cols-3 gap-3">
       <.stat label={gettext("Kinds alive")} value={@kinds_total} />
@@ -200,16 +203,23 @@ defmodule EzagentPluginLiveview.ObservabilityLive do
   defp render_tab(assigns, :events) do
     ~H"""
     <.page_header title={gettext("Events")}>
-      <:subtitle>{gettext("CC hook errors + runtime events. Per-event detail in audit log.")}</:subtitle>
+      <:subtitle>
+        {gettext("CC hook errors + runtime events. Per-event detail in audit log.")}
+      </:subtitle>
     </.page_header>
-    <.empty_state title={gettext("No live events")} description={gettext("Live event stream wires in Phase 9.")} />
+    <.empty_state
+      title={gettext("No live events")}
+      description={gettext("Live event stream wires in Phase 9.")}
+    />
     """
   end
 
   defp render_tab(assigns, :audit) do
     ~H"""
     <.page_header title={gettext("Audit Log (last 50)")}>
-      <:subtitle>{gettext("Every Ezagent.Invocation.dispatch — target, action, authz, duration.")}</:subtitle>
+      <:subtitle>
+        {gettext("Every Ezagent.Invocation.dispatch — target, action, authz, duration.")}
+      </:subtitle>
     </.page_header>
     <.card class="p-0">
       <table class="w-full text-xs font-mono">
@@ -247,7 +257,11 @@ defmodule EzagentPluginLiveview.ObservabilityLive do
     <.empty_state
       :if={@bridges == []}
       title={gettext("No connected bridges")}
-      description={gettext("A bridge connects when a cc.agent's claude PtyServer launches its Python MCP sidecar.")}
+      description={
+        gettext(
+          "A bridge connects when a cc.agent's claude PtyServer launches its Python MCP sidecar."
+        )
+      }
     />
     <.card :if={@bridges != []} class="p-0">
       <table class="w-full text-xs font-mono">

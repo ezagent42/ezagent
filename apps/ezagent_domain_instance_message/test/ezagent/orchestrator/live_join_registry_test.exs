@@ -23,7 +23,7 @@ defmodule Ezagent.Orchestrator.LiveJoinRegistryTest do
 
   setup do
     :ok = LiveJoinRegistry.init()
-    uri = Ezagent.URI.new!("entity://agent/default/cc_orchestrator-test#{System.unique_integer([:positive])}")
+    uri = Ezagent.URI.new!("entity://default/agent/cc_orchestrator-test#{System.unique_integer([:positive])}")
     on_exit(fn -> LiveJoinRegistry.clear(uri) end)
     {:ok, uri: uri}
   end
@@ -58,7 +58,7 @@ defmodule Ezagent.Orchestrator.LiveJoinRegistryTest do
     end
 
     test "marks are per-URI — one orchestrator's join does not satisfy another", %{uri: uri} do
-      other = Ezagent.URI.new!("entity://agent/default/cc_orchestrator-other")
+      other = Ezagent.URI.new!("entity://default/agent/cc_orchestrator-other")
       on_exit(fn -> LiveJoinRegistry.clear(other) end)
 
       :ok = LiveJoinRegistry.mark_joined(uri)

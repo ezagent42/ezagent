@@ -81,10 +81,6 @@ defmodule EzagentPluginLiveview.RoutingLive do
   alias Ezagent.Routing.{Matcher, RuleStore}
   alias Ezagent.UI.UriOptions
 
-  # PR #146: default rule scope is **global** — dispatches to the
-  # System Kind sentinel for routing.
-  @global_routing_uri Ezagent.Entity.System.routing_default_uri()
-
   # NOTE (2026-05-25): SessionRouting deleted — see moduledoc. Only
   # MentionRouting remains, so the table is a constant rather than a
   # list with a selector. The hidden form input `rule[table]` still
@@ -262,7 +258,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
            socket,
            :flash_error,
            gettext(
-             "You don't have routing cap on the global system://routing/default scope. Ask admin to grant via mix ezagent.user.create."
+             "You don't have routing cap on the global routing scope. Ask admin to grant via mix ezagent.user.create."
            )
          )}
 
@@ -332,7 +328,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
                socket,
                :flash_error,
                gettext(
-                 "You don't have routing cap on the global system://routing/default scope to perform this action."
+                 "You don't have routing cap on the global routing scope to perform this action."
                )
              )}
 
@@ -361,10 +357,9 @@ defmodule EzagentPluginLiveview.RoutingLive do
   # scope narrowing lands in a follow-up PR with workspace/session
   # picker fields.
   defp dispatch_routing_admin(socket, action, args) do
-    scope_uri = @global_routing_uri
+    scope_uri = Ezagent.Entity.System.routing_default_uri()
 
-    target =
-      Ezagent.URI.new!("#{URI.to_string(scope_uri)}?action=routing.#{Atom.to_string(action)}")
+    target = Ezagent.URI.with_action(scope_uri, :routing, action)
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
@@ -535,7 +530,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
     # ExternalMirror Bindings.
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(assigns.current_entity_uri || Ezagent.URI.new!("entity://user/system/admin"))
+        URI.to_string(assigns.current_entity_uri || Ezagent.Entity.User.admin_uri())
       end)
 
     ~H"""
@@ -564,7 +559,10 @@ defmodule EzagentPluginLiveview.RoutingLive do
               <%!-- Tab strip: Rules + ExternalMirror Bindings.
                 URL-driven so refresh + bookmark + back/forward all work
                 (handled by `handle_params/3`). --%>
-              <nav id="routing-tabs" class="mb-4 border-b border-zinc-200 dark:border-zinc-800 flex gap-1">
+              <nav
+                id="routing-tabs"
+                class="mb-4 border-b border-zinc-200 dark:border-zinc-800 flex gap-1"
+              >
                 <.link
                   patch="/admin/routing"
                   id="tab-rules"
@@ -657,187 +655,187 @@ defmodule EzagentPluginLiveview.RoutingLive do
                 `:if={@active_tab == :rules}` so the heavy form HTML
                 doesn't render on the Bindings tab. --%>
               <div :if={@active_tab == :rules} id="rules-tab">
-
-              <%!-- 2026-05-25: SessionRouting retired — see moduledoc.
+                <%!-- 2026-05-25: SessionRouting retired — see moduledoc.
                 With only MentionRouting left, the old <section
                 id="table-tabs"> top-tab strip is gone. The MentionRouting
                 explainer below replaces it; the left resource_panel
                 still shows the table name (one item) for orientation. --%>
-              <.card id="mention-routing-blurb" class="mb-4">
-                <div class="space-y-3 text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">
-                  <%!-- HEEx note: `{...}` is the tag-engine's expression
+                <.card id="mention-routing-blurb" class="mb-4">
+                  <div class="space-y-3 text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">
+                    <%!-- HEEx note: `{...}` is the tag-engine's expression
                     interpolation, so literal Elixir-tuple syntax like
                     `{:mention, X}` would be parsed as an expression and
                     fail to compile. The matcher snippets are rendered
                     via `Phoenix.HTML.raw/1` of pre-built strings to
                     keep literal braces in the output. --%>
-                  <%!-- English copy --%>
-                  <div>
-                    <p>
-                      <strong class="font-semibold">MentionRouting</strong>
-                      — the general message routing rule table. Matchers {Phoenix.HTML.raw(
-                        ~s(<code class="font-mono">{:mention, X}</code>)
-                      )} / {Phoenix.HTML.raw(~s(<code class="font-mono">{:from, Y}</code>))} / {Phoenix.HTML.raw(
-                        ~s(<code class="font-mono">{:always}</code>)
-                      )} match messages, dispatching to receivers (URIs + magic
-                      tokens like <code class="font-mono">$session_users</code>
-                      / <code class="font-mono">$mentions</code>
-                      / <code class="font-mono">$session_members</code>). 90% of
-                      rules here are admin-authored. The <code class="font-mono">system_default</code>
-                      mention-gated rule lives here too.
-                    </p>
-                    <p class="mt-2 text-zinc-500">
-                      <strong class="font-semibold">NOTE (2026-05-25)</strong>: SessionRouting table was removed —
-                      it used to manage Feishu chat → session bridging; that
-                      responsibility has migrated to the ExternalMirror domain's
-                      <code class="font-mono">external_mirror_bindings</code>
-                      table (PR-EM-3, #317).
-                    </p>
+                    <%!-- English copy --%>
+                    <div>
+                      <p>
+                        <strong class="font-semibold">MentionRouting</strong>
+                        — the general message routing rule table. Matchers {Phoenix.HTML.raw(
+                          ~s(<code class="font-mono">{:mention, X}</code>)
+                        )} / {Phoenix.HTML.raw(~s(<code class="font-mono">{:from, Y}</code>))} / {Phoenix.HTML.raw(
+                          ~s(<code class="font-mono">{:always}</code>)
+                        )} match messages, dispatching to receivers (URIs + magic
+                        tokens like <code class="font-mono">$session_users</code>
+                        / <code class="font-mono">$mentions</code>
+                        / <code class="font-mono">$session_members</code>). 90% of
+                        rules here are admin-authored. The
+                        <code class="font-mono">system_default</code>
+                        mention-gated rule lives here too.
+                      </p>
+                      <p class="mt-2 text-zinc-500">
+                        <strong class="font-semibold">NOTE (2026-05-25)</strong>: SessionRouting table was removed —
+                        it used to manage Feishu chat → session bridging; that
+                        responsibility has migrated to the ExternalMirror domain's
+                        <code class="font-mono">external_mirror_bindings</code>
+                        table (PR-EM-3, #317).
+                      </p>
+                    </div>
+
+                    <%!-- Chinese copy (bilingual_docs convention) --%>
+                    <div lang="zh" class="border-t border-zinc-200 dark:border-zinc-800 pt-3">
+                      <p>
+                        <strong class="font-semibold">MentionRouting</strong>
+                        — 通用消息路由规则表。matcher {Phoenix.HTML.raw(
+                          ~s(<code class="font-mono">{:mention, X}</code>)
+                        )} / {Phoenix.HTML.raw(~s(<code class="font-mono">{:from, Y}</code>))} / {Phoenix.HTML.raw(
+                          ~s(<code class="font-mono">{:always}</code>)
+                        )} 匹配消息，对应 receivers 列表（包含 magic tokens
+                        <code class="font-mono">$session_users</code>
+                        / <code class="font-mono">$mentions</code>
+                        / <code class="font-mono">$session_members</code>）。这里
+                        90% 的规则是 admin 手动加的。 <code class="font-mono">system_default</code>
+                        那条 mention-gated rule 也在这。
+                      </p>
+                      <p class="mt-2 text-zinc-500">
+                        <strong class="font-semibold">NOTE (2026-05-25)</strong>: SessionRouting 表已删除 —
+                        它原管 Feishu chat → session 的桥接，职责已迁移到 ExternalMirror domain 的
+                        <code class="font-mono">external_mirror_bindings</code>
+                        表（PR-EM-3, #317）。
+                      </p>
+                    </div>
                   </div>
+                </.card>
 
-                  <%!-- Chinese copy (bilingual_docs convention) --%>
-                  <div lang="zh" class="border-t border-zinc-200 dark:border-zinc-800 pt-3">
-                    <p>
-                      <strong class="font-semibold">MentionRouting</strong>
-                      — 通用消息路由规则表。matcher {Phoenix.HTML.raw(
-                        ~s(<code class="font-mono">{:mention, X}</code>)
-                      )} / {Phoenix.HTML.raw(~s(<code class="font-mono">{:from, Y}</code>))} / {Phoenix.HTML.raw(
-                        ~s(<code class="font-mono">{:always}</code>)
-                      )} 匹配消息，对应 receivers 列表（包含 magic tokens
-                      <code class="font-mono">$session_users</code>
-                      / <code class="font-mono">$mentions</code>
-                      / <code class="font-mono">$session_members</code>）。这里
-                      90% 的规则是 admin 手动加的。 <code class="font-mono">system_default</code>
-                      那条 mention-gated rule 也在这。
-                    </p>
-                    <p class="mt-2 text-zinc-500">
-                      <strong class="font-semibold">NOTE (2026-05-25)</strong>: SessionRouting 表已删除 —
-                      它原管 Feishu chat → session 的桥接，职责已迁移到 ExternalMirror domain 的
-                      <code class="font-mono">external_mirror_bindings</code>
-                      表（PR-EM-3, #317）。
-                    </p>
-                  </div>
-                </div>
-              </.card>
+                <.card id="rules-list">
+                  <p
+                    :if={@rules == []}
+                    id="rules-empty"
+                    class="text-sm text-zinc-500 italic"
+                  >
+                    {gettext("No rules yet. Add one below.")}
+                  </p>
 
-              <.card id="rules-list">
-                <p
-                  :if={@rules == []}
-                  id="rules-empty"
-                  class="text-sm text-zinc-500 italic"
-                >
-                  {gettext("No rules yet. Add one below.")}
-                </p>
+                  <table
+                    :if={@rules != []}
+                    id="rules-table"
+                    class="w-full text-xs border-collapse"
+                  >
+                    <thead>
+                      <tr class="border-b border-zinc-200 dark:border-zinc-800">
+                        <th class="text-left px-1 py-1.5">{gettext("ID")}</th>
+                        <th class="text-left">{gettext("Source")}</th>
+                        <th class="text-left">{gettext("Matcher")}</th>
+                        <th class="text-left">{gettext("Receivers")}</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        :for={rule <- @rules}
+                        class={[
+                          "border-b border-zinc-100 dark:border-zinc-900",
+                          !rule.enabled && "opacity-50"
+                        ]}
+                      >
+                        <td class="px-1 py-1">{rule.id}</td>
+                        <td class="text-[11px]">
+                          <.badge variant={source_badge_variant(rule.source)}>{rule.source}</.badge>
+                          <span :if={!rule.enabled} class="text-zinc-500 ml-1">
+                            {gettext("(disabled)")}
+                          </span>
+                        </td>
+                        <td class="font-mono text-[11px] break-all">{inspect(rule.matcher)}</td>
+                        <td class="font-mono text-[11px]">
+                          <span :for={r <- rule.receivers}>{render_receiver(r)}</span>
+                        </td>
+                        <td class="whitespace-nowrap">
+                          <.button
+                            :if={rule.source != "system_default"}
+                            variant="outline"
+                            size="sm"
+                            type="button"
+                            phx-click="delete_rule"
+                            phx-value-id={rule.id}
+                            class="text-[11px] px-2 py-0.5 h-auto text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-700"
+                            data-confirm={gettext("Delete this rule?")}
+                          >
+                            {gettext("Delete")}
+                          </.button>
+                          <.button
+                            :if={rule.source == "system_default" and rule.enabled}
+                            variant="outline"
+                            size="sm"
+                            type="button"
+                            phx-click="disable_rule"
+                            phx-value-id={rule.id}
+                            class="text-[11px] px-2 py-0.5 h-auto text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700"
+                            data-confirm={
+                              gettext(
+                                "Disable this system_default rule? (admin opt-out — re-enable via Enable button)"
+                              )
+                            }
+                          >
+                            {gettext("Disable")}
+                          </.button>
+                          <.button
+                            :if={rule.source == "system_default" and !rule.enabled}
+                            variant="outline"
+                            size="sm"
+                            type="button"
+                            phx-click="enable_rule"
+                            phx-value-id={rule.id}
+                            class="text-[11px] px-2 py-0.5 h-auto text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700"
+                          >
+                            {gettext("Enable")}
+                          </.button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </.card>
 
-                <table
-                  :if={@rules != []}
-                  id="rules-table"
-                  class="w-full text-xs border-collapse"
-                >
-                  <thead>
-                    <tr class="border-b border-zinc-200 dark:border-zinc-800">
-                      <th class="text-left px-1 py-1.5">{gettext("ID")}</th>
-                      <th class="text-left">{gettext("Source")}</th>
-                      <th class="text-left">{gettext("Matcher")}</th>
-                      <th class="text-left">{gettext("Receivers")}</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr
-                      :for={rule <- @rules}
-                      class={[
-                        "border-b border-zinc-100 dark:border-zinc-900",
-                        !rule.enabled && "opacity-50"
-                      ]}
+                <.card id="add-rule" class="mt-6">
+                  <:header>{gettext("Add rule")}</:header>
+
+                  <div class="flex gap-2 mb-3">
+                    <button
+                      type="button"
+                      phx-click="toggle_mode"
+                      phx-value-mode="form"
+                      class={mode_btn_class(@matcher_mode == "form")}
                     >
-                      <td class="px-1 py-1">{rule.id}</td>
-                      <td class="text-[11px]">
-                        <.badge variant={source_badge_variant(rule.source)}>{rule.source}</.badge>
-                        <span :if={!rule.enabled} class="text-zinc-500 ml-1">
-                          {gettext("(disabled)")}
-                        </span>
-                      </td>
-                      <td class="font-mono text-[11px] break-all">{inspect(rule.matcher)}</td>
-                      <td class="font-mono text-[11px]">
-                        <span :for={r <- rule.receivers}>{render_receiver(r)}</span>
-                      </td>
-                      <td class="whitespace-nowrap">
-                        <.button
-                          :if={rule.source != "system_default"}
-                          variant="outline"
-                          size="sm"
-                          type="button"
-                          phx-click="delete_rule"
-                          phx-value-id={rule.id}
-                          class="text-[11px] px-2 py-0.5 h-auto text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-700"
-                          data-confirm={gettext("Delete this rule?")}
-                        >
-                          {gettext("Delete")}
-                        </.button>
-                        <.button
-                          :if={rule.source == "system_default" and rule.enabled}
-                          variant="outline"
-                          size="sm"
-                          type="button"
-                          phx-click="disable_rule"
-                          phx-value-id={rule.id}
-                          class="text-[11px] px-2 py-0.5 h-auto text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700"
-                          data-confirm={
-                            gettext(
-                              "Disable this system_default rule? (admin opt-out — re-enable via Enable button)"
-                            )
-                          }
-                        >
-                          {gettext("Disable")}
-                        </.button>
-                        <.button
-                          :if={rule.source == "system_default" and !rule.enabled}
-                          variant="outline"
-                          size="sm"
-                          type="button"
-                          phx-click="enable_rule"
-                          phx-value-id={rule.id}
-                          class="text-[11px] px-2 py-0.5 h-auto text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700"
-                        >
-                          {gettext("Enable")}
-                        </.button>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </.card>
+                      {gettext("Form mode")}
+                    </button>
+                    <button
+                      type="button"
+                      phx-click="toggle_mode"
+                      phx-value-mode="json"
+                      class={mode_btn_class(@matcher_mode == "json")}
+                    >
+                      {gettext("JSON mode (combinators)")}
+                    </button>
+                  </div>
 
-              <.card id="add-rule" class="mt-6">
-                <:header>{gettext("Add rule")}</:header>
+                  <.form for={@add_form} phx-submit="add_rule" class="flex flex-col gap-3">
+                    <input type="hidden" name="rule[table]" value={Atom.to_string(@table)} />
 
-                <div class="flex gap-2 mb-3">
-                  <button
-                    type="button"
-                    phx-click="toggle_mode"
-                    phx-value-mode="form"
-                    class={mode_btn_class(@matcher_mode == "form")}
-                  >
-                    {gettext("Form mode")}
-                  </button>
-                  <button
-                    type="button"
-                    phx-click="toggle_mode"
-                    phx-value-mode="json"
-                    class={mode_btn_class(@matcher_mode == "json")}
-                  >
-                    {gettext("JSON mode (combinators)")}
-                  </button>
-                </div>
-
-                <.form for={@add_form} phx-submit="add_rule" class="flex flex-col gap-3">
-                  <input type="hidden" name="rule[table]" value={Atom.to_string(@table)} />
-
-                  <div
-                    :if={@matcher_mode == "form"}
-                    class="grid grid-cols-[200px_1fr] gap-2"
-                  >
-                    <%!-- 2026-05-25: matcher-type select. NOTE: we'd prefer
+                    <div
+                      :if={@matcher_mode == "form"}
+                      class="grid grid-cols-[200px_1fr] gap-2"
+                    >
+                      <%!-- 2026-05-25: matcher-type select. NOTE: we'd prefer
                       `<.input type="select">` from Phoenix CoreComponents,
                       but :ezagent_plugin_liveview deliberately does NOT
                       depend on :ezagent_web (would create a compile cycle —
@@ -847,78 +845,78 @@ defmodule EzagentPluginLiveview.RoutingLive do
                       <select> inline with the same shadcn-style classes as
                       <.uri_picker>'s filter input below: px-2 py-1.5 text-xs
                       border rounded-md font-mono + zinc palette. --%>
-                    <select
-                      name="rule[matcher_type]"
-                      class="w-full px-2 py-1.5 text-xs border rounded-md font-mono border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
-                    >
-                      <option :for={{t, _arg_label} <- @matcher_types} value={t}>{t}</option>
-                    </select>
-                    <%!--
+                      <select
+                        name="rule[matcher_type]"
+                        class="w-full px-2 py-1.5 text-xs border rounded-md font-mono border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+                      >
+                        <option :for={{t, _arg_label} <- @matcher_types} value={t}>{t}</option>
+                      </select>
+                      <%!--
               V1 UI PR-1 (SPEC §1.2) — matcher arg is a :single
               uri_picker over in-workspace entities. allow_freetext is
               ON so text_contains / text_matches matchers (substring /
               regex args, not URIs) can still be entered via the
               manual-entry disclosure.
             --%>
-                    <.uri_picker
-                      name="rule[matcher_arg]"
-                      mode={:single}
-                      kinds={[:entity]}
-                      options={@entity_options}
-                      allow_freetext={true}
-                      placeholder={gettext("pick an entity, or enter a substring/regex below")}
-                    />
-                  </div>
+                      <.uri_picker
+                        name="rule[matcher_arg]"
+                        mode={:single}
+                        kinds={[:entity]}
+                        options={@entity_options}
+                        allow_freetext={true}
+                        placeholder={gettext("pick an entity, or enter a substring/regex below")}
+                      />
+                    </div>
 
-                  <div :if={@matcher_mode == "json"}>
-                    <textarea
-                      name="rule[matcher_json]"
-                      rows="4"
-                      placeholder={
-                        ~s({"type":"and","items":[{"type":"mention","arg":"entity://agent/team-alpha/cc_x"},{"type":"from","arg":"entity://user/system/admin"}]})
-                      }
-                      class="w-full px-2 py-1.5 text-xs font-mono border rounded-md border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
-                    ></textarea>
-                    <p class="text-[11px] text-zinc-500 mt-1">
-                      {gettext(
-                        "Use full matcher JSON for combinators. Shapes: %{combinators} wrap leaf matchers (%{leaves}).",
-                        combinators: "and / or / not",
-                        leaves: "mention, from, text_contains, text_matches, always"
-                      )}
-                    </p>
-                  </div>
+                    <div :if={@matcher_mode == "json"}>
+                      <textarea
+                        name="rule[matcher_json]"
+                        rows="4"
+                        placeholder={
+                          ~s({"type":"and","items":[{"type":"mention","arg":"agent-uri"},{"type":"from","arg":"user-uri"}]})
+                        }
+                        class="w-full px-2 py-1.5 text-xs font-mono border rounded-md border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+                      ></textarea>
+                      <p class="text-[11px] text-zinc-500 mt-1">
+                        {gettext(
+                          "Use full matcher JSON for combinators. Shapes: %{combinators} wrap leaf matchers (%{leaves}).",
+                          combinators: "and / or / not",
+                          leaves: "mention, from, text_contains, text_matches, always"
+                        )}
+                      </p>
+                    </div>
 
-                  <div>
-                    <%!--
+                    <div>
+                      <%!--
               V1 UI PR-1 (SPEC §1.2) — receivers is a :multi uri_picker
               (chips + autocomplete) over in-workspace entities +
               sessions. Submits as rule[receivers][] — a list, same
               shape parse_receivers/1 + dispatch already expect.
             --%>
-                    <.uri_picker
-                      name="rule[receivers]"
-                      mode={:multi}
-                      kinds={[:entity, :session]}
-                      options={@receiver_options}
-                      label={gettext("Receivers")}
-                      placeholder={gettext("add entities + sessions")}
-                    />
-                  </div>
+                      <.uri_picker
+                        name="rule[receivers]"
+                        mode={:multi}
+                        kinds={[:entity, :session]}
+                        options={@receiver_options}
+                        label={gettext("Receivers")}
+                        placeholder={gettext("add entities + sessions")}
+                      />
+                    </div>
 
-                  <div class="flex justify-end pt-2 border-t border-zinc-200 dark:border-zinc-800">
-                    <.button variant="success" type="submit">
-                      {gettext("Add rule")}
-                    </.button>
-                  </div>
-                </.form>
+                    <div class="flex justify-end pt-2 border-t border-zinc-200 dark:border-zinc-800">
+                      <.button variant="success" type="submit">
+                        {gettext("Add rule")}
+                      </.button>
+                    </div>
+                  </.form>
 
-                <p
-                  :if={@flash_error}
-                  class="text-rose-700 dark:text-rose-300 text-sm mt-2"
-                >
-                  {@flash_error}
-                </p>
-              </.card>
+                  <p
+                    :if={@flash_error}
+                    class="text-rose-700 dark:text-rose-300 text-sm mt-2"
+                  >
+                    {@flash_error}
+                  </p>
+                </.card>
               </div>
             </div>
           </:main>

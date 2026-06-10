@@ -72,24 +72,22 @@ defmodule EzagentPluginLiveview.IdentitiesLive do
         # with try/rescue keeping the empty-list fallback for malformed
         # registry entries.
         case safe_parse_entity(uri_str) do
-          {:ok, %URI{scheme: "entity", host: host, path: "/" <> rest} = uri}
-          when host in ["user", "agent"] ->
+          {:ok, %URI{scheme: "entity"} = uri} ->
             # Phase 9 PR-2 (SPEC v3 §3): entity URIs are 3-segment;
             # extract workspace + entity_name for display + filter.
-            {workspace_name, entity_name} =
-              case String.split(rest, "/", parts: 2) do
-                [ws, name] -> {ws, name}
-                [name] -> {nil, name}
-              end
+            entity_type = uri |> Ezagent.URI.type() |> ok_or_nil()
+            workspace_name = uri |> Ezagent.URI.workspace_name() |> ok_or_nil()
+            entity_name = uri |> Ezagent.URI.name() |> ok_or_nil()
 
-            if entity_matches_workspace?(workspace_name, workspace_filter) do
+            if entity_type in ["user", "agent"] && entity_name &&
+                 entity_matches_workspace?(workspace_name, workspace_filter) do
               [
                 %{
                   uri: uri,
                   uri_str: uri_str,
-                  host: host,
+                  host: entity_type,
                   name: entity_name,
-                  flavor: flavor_for(host, entity_name),
+                  flavor: flavor_for(entity_type, uri),
                   pid: pid,
                   alive: is_pid(pid) and Process.alive?(pid)
                 }
@@ -108,12 +106,17 @@ defmodule EzagentPluginLiveview.IdentitiesLive do
     # Username & Auth UI Task 1 (Phase 8c PR-O) — batch-resolve display
     # names so each card shows a friendly primary label.
     display_map = Ezagent.EntityPresenter.display_many(Enum.map(rows, & &1.uri_str))
-    rows = Enum.map(rows, fn r -> Map.put(r, :display_name, Map.get(display_map, r.uri_str, r.name)) end)
+
+    rows =
+      Enum.map(rows, fn r ->
+        Map.put(r, :display_name, Map.get(display_map, r.uri_str, r.name))
+      end)
 
     flavors =
       rows
       |> Enum.filter(&(&1.host == "agent"))
       |> Enum.map(& &1.flavor)
+      |> Enum.filter(&(is_binary(&1) and &1 != ""))
       |> Enum.uniq()
       |> Enum.sort()
 
@@ -122,10 +125,9 @@ defmodule EzagentPluginLiveview.IdentitiesLive do
     |> assign(:agent_flavors, flavors)
   end
 
-  # "cc_demo-builder" → "cc"; "echo_default" → "echo"; no underscore → ""
-  defp flavor_for("agent", name) do
-    case String.split(name, "_", parts: 2) do
-      [flavor, _] -> flavor
+  defp flavor_for("agent", %URI{} = uri) do
+    case Ezagent.UriQuery.resolve(:flavor, uri) do
+      {:ok, flavor} when is_binary(flavor) and flavor != "" -> flavor
       _ -> ""
     end
   end
@@ -139,15 +141,21 @@ defmodule EzagentPluginLiveview.IdentitiesLive do
   # `:all` short-circuits the per-entry check below to keep the
   # legacy unfiltered render for cold-mount paths where LiveAuth has
   # not yet populated `current_workspace_uri`.
-  defp workspace_name_filter(%URI{scheme: "workspace", host: name})
-       when is_binary(name) and name != "",
-       do: name
+  defp workspace_name_filter(%URI{scheme: "workspace"} = uri) do
+    case Ezagent.URI.name(uri) do
+      {:ok, name} -> name
+      :error -> :all
+    end
+  end
 
   defp workspace_name_filter(_), do: :all
 
   defp entity_matches_workspace?(_workspace_name, :all), do: true
   defp entity_matches_workspace?(workspace_name, workspace_name), do: true
   defp entity_matches_workspace?(_, _), do: false
+
+  defp ok_or_nil({:ok, value}), do: value
+  defp ok_or_nil(:error), do: nil
 
   defp matches_filter?(_, "all"), do: true
   defp matches_filter?(%{host: "user"}, "users"), do: true
@@ -165,7 +173,9 @@ defmodule EzagentPluginLiveview.IdentitiesLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(Map.get(assigns, :current_entity_uri) || Ezagent.URI.new!("entity://user/system/admin"))
+        Ezagent.URI.stable_key(
+          Map.get(assigns, :current_entity_uri) || Ezagent.Entity.User.admin_uri()
+        )
       end)
 
     ~H"""
@@ -185,59 +195,77 @@ defmodule EzagentPluginLiveview.IdentitiesLive do
           current_path="/identities"
           status={%{agents_alive: 0, bridges: 0, debug_events: 0, version: "dev"}}
         >
-      <:resource_panel>
-        <div class="p-3 flex flex-col gap-1">
-          <div class="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">{gettext("Filters")}</div>
-          <.filter_chip filter={@filter} value="all" label={gettext("All")} />
-          <.filter_chip filter={@filter} value="users" label={gettext("Users")} />
-          <.filter_chip filter={@filter} value="agents" label={gettext("Agents")} />
-          <div :if={@agent_flavors != []} class="text-[10px] uppercase tracking-wide text-zinc-500 mt-3 mb-1">{gettext("By flavor")}</div>
-          <.filter_chip
-            :for={f <- @agent_flavors}
-            filter={@filter}
-            value={"agent:" <> f}
-            label={"agent: " <> f}
-          />
-          <div class="text-[10px] uppercase tracking-wide text-zinc-500 mt-3 mb-1">{gettext("Manage")}</div>
-          <a href="/identities/users" class="px-2 py-1 text-xs rounded text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800">{gettext("+ Users admin")}</a>
-        </div>
-      </:resource_panel>
-      <:main_window>
-        <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-          <.page_header title={gettext("Identities")}>
-            <:subtitle>
-              {gettext(
-                "The directory of every live entity — users and agents. Driven by %{registry} filtered to %{scheme}.",
-                registry: "Ezagent.KindRegistry",
-                scheme: "entity://*"
-              )}
-            </:subtitle>
-            <:actions>
-              <.button variant="primary" size="sm" type="button" phx-click={JS.navigate("/identities/agents/new")}>
-                {gettext("+ New agent")}
-              </.button>
-            </:actions>
-          </.page_header>
+          <:resource_panel>
+            <div class="p-3 flex flex-col gap-1">
+              <div class="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">
+                {gettext("Filters")}
+              </div>
+              <.filter_chip filter={@filter} value="all" label={gettext("All")} />
+              <.filter_chip filter={@filter} value="users" label={gettext("Users")} />
+              <.filter_chip filter={@filter} value="agents" label={gettext("Agents")} />
+              <div
+                :if={@agent_flavors != []}
+                class="text-[10px] uppercase tracking-wide text-zinc-500 mt-3 mb-1"
+              >
+                {gettext("By flavor")}
+              </div>
+              <.filter_chip
+                :for={f <- @agent_flavors}
+                filter={@filter}
+                value={"agent:" <> f}
+                label={"agent: " <> f}
+              />
+              <div class="text-[10px] uppercase tracking-wide text-zinc-500 mt-3 mb-1">
+                {gettext("Manage")}
+              </div>
+              <a
+                href="/identities/users"
+                class="px-2 py-1 text-xs rounded text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                {gettext("+ Users admin")}
+              </a>
+            </div>
+          </:resource_panel>
+          <:main_window>
+            <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
+              <.page_header title={gettext("Identities")}>
+                <:subtitle>
+                  {gettext(
+                    "The directory of every live entity — users and agents. Driven by %{registry} filtered to %{scheme}.",
+                    registry: "Ezagent.KindRegistry",
+                    scheme: "entity scheme"
+                  )}
+                </:subtitle>
+                <:actions>
+                  <.button
+                    variant="primary"
+                    size="sm"
+                    type="button"
+                    phx-click={JS.navigate("/identities/agents/new")}
+                  >
+                    {gettext("+ New agent")}
+                  </.button>
+                </:actions>
+              </.page_header>
 
-          <p :if={@entities == []} id="identities-empty" class="text-sm text-zinc-500 italic">
-            {gettext("No entities match the current filter.")}
-          </p>
+              <p :if={@entities == []} id="identities-empty" class="text-sm text-zinc-500 italic">
+                {gettext("No entities match the current filter.")}
+              </p>
 
-          <div :if={@entities != []} class="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <.identity_card :for={e <- @entities} entity={e} />
-          </div>
-        </div>
-      </:main_window>
-
+              <div :if={@entities != []} class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <.identity_card :for={e <- @entities} entity={e} />
+              </div>
+            </div>
+          </:main_window>
         </WorkspaceShell.workspace_shell>
       </:body>
     </AppShell.app_shell>
     """
   end
 
-  attr :filter, :string, required: true
-  attr :value, :string, required: true
-  attr :label, :string, required: true
+  attr(:filter, :string, required: true)
+  attr(:value, :string, required: true)
+  attr(:label, :string, required: true)
 
   defp filter_chip(assigns) do
     ~H"""
@@ -245,13 +273,16 @@ defmodule EzagentPluginLiveview.IdentitiesLive do
       href={"/identities?filter=" <> URI.encode_www_form(@value)}
       class={[
         "px-2 py-1 text-xs rounded font-mono",
-        @filter == @value && "bg-zinc-900 text-white" || "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+        (@filter == @value && "bg-zinc-900 text-white") ||
+          "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"
       ]}
-    >{@label}</a>
+    >
+      {@label}
+    </a>
     """
   end
 
-  attr :entity, :map, required: true
+  attr(:entity, :map, required: true)
 
   defp identity_card(assigns) do
     ~H"""
@@ -262,7 +293,9 @@ defmodule EzagentPluginLiveview.IdentitiesLive do
           <%!-- Username & Auth UI Task 1 (PR-O) — display name primary,
                 URI mono subtitle. status_dot moves up beside the name. --%>
           <div class="flex items-center gap-2">
-            <span class="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">{Map.get(@entity, :display_name, @entity.name)}</span>
+            <span class="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">
+              {Map.get(@entity, :display_name, @entity.name)}
+            </span>
             <.status_dot color={(@entity.alive && "green") || "gray"} />
           </div>
           <div class="font-mono text-[10px] text-zinc-500 truncate">{@entity.uri_str}</div>
@@ -275,20 +308,28 @@ defmodule EzagentPluginLiveview.IdentitiesLive do
               <a
                 href={"/identities/users/" <> URI.encode_www_form(@entity.uri_str) <> "/caps"}
                 class="text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 underline"
-              >{gettext("Caps")}</a>
+              >
+                {gettext("Caps")}
+              </a>
             <% else %>
               <a
                 href={"/identities/agents/" <> URI.encode_www_form(@entity.uri_str)}
                 class="text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 underline"
-              >{gettext("Status")}</a>
+              >
+                {gettext("Status")}
+              </a>
               <a
                 href={"/identities/agents/" <> URI.encode_www_form(@entity.uri_str) <> "/caps"}
                 class="text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 underline"
-              >{gettext("Caps")}</a>
+              >
+                {gettext("Caps")}
+              </a>
               <a
                 href={"/identities/agents/" <> URI.encode_www_form(@entity.uri_str) <> "/api-keys"}
                 class="text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 underline"
-              >{gettext("API Keys")}</a>
+              >
+                {gettext("API Keys")}
+              </a>
             <% end %>
           </div>
         </div>

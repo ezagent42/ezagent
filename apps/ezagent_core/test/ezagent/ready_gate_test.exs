@@ -5,7 +5,7 @@ defmodule Ezagent.ReadyGateTest do
 
   setup do
     # Each test uses a unique URI so we don't trip on prior state.
-    uri = "entity://agent/team-alpha/test_ready-gate-test-#{System.unique_integer([:positive])}"
+    uri = "entity://team-alpha/agent/test_ready-gate-test-#{System.unique_integer([:positive])}"
     {:ok, uri: uri}
   end
 
@@ -28,7 +28,7 @@ defmodule Ezagent.ReadyGateTest do
   end
 
   test "accepts both URI struct and string keys", %{uri: uri_str} do
-    parsed = URI.parse(uri_str)
+    parsed = Ezagent.URI.new!(uri_str)
     :ok = ReadyGate.put(parsed, :ready)
     # Reading back via string form returns the same value.
     assert ReadyGate.status(uri_str) == :ready
@@ -88,7 +88,7 @@ defmodule Ezagent.ReadyGateTest do
     end
 
     test "accepts URI struct (not just string)", %{uri: uri_str} do
-      parsed = URI.parse(uri_str)
+      parsed = Ezagent.URI.new!(uri_str)
       :ok = ReadyGate.put(parsed, :ready)
       assert :ok = ReadyGate.await(parsed, 50)
     end

@@ -49,6 +49,12 @@ config :ezagent_web, EzagentWeb.Endpoint,
     tailwind: {Tailwind, :install_and_run, [:ezagent_web, ~w(--watch)]}
   ]
 
+# Resource-unification P2 — upload download-token signing secret (core-owned
+# config key). Wired to the same value as the web endpoint's secret_key_base so
+# the token minted in ezagent_web/ezagent_plugin_liveview verifies identically.
+config :ezagent_core, Ezagent.Uploads.DownloadToken,
+  secret_key_base: "LB/r5X+0G50lTmGaZonOO8PxwMhtOxdS3J308T7s+w3fBI0R8fkZbABhqZxjOFqO"
+
 # ## SSL Support
 #
 # In order to use HTTPS in development, a self-signed

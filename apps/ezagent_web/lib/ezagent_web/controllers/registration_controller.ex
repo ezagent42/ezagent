@@ -35,7 +35,7 @@ defmodule EzagentWeb.RegistrationController do
         {{ERROR}}
         <form method="post" action="/register/complete">
           <input type="hidden" name="_csrf_token" value="{{CSRF}}">
-          <label for="handle">#{gettext("Username (your permanent handle — entity://user/<handle>)")}</label>
+          <label for="handle">#{gettext("Username (your permanent handle)")}</label>
           <input type="text" id="handle" name="handle" value="{{HANDLE}}" required autofocus>
           <label for="display_name">#{gettext("Display name (you can change this later)")}</label>
           <input type="text" id="display_name" name="display_name" value="{{DISPLAY}}" required>
@@ -98,7 +98,10 @@ defmodule EzagentWeb.RegistrationController do
   end
 
   defp workspace_still_valid?(workspace_name, email) do
-    Ezagent.Workspace.accepts_email?("workspace://" <> workspace_name, email)
+    workspace_name
+    |> Ezagent.URI.workspace()
+    |> Ezagent.URI.stable_key()
+    |> Ezagent.Workspace.accepts_email?(email)
   end
 
   defp do_complete_create(conn, handle, display_name, email, workspace) do

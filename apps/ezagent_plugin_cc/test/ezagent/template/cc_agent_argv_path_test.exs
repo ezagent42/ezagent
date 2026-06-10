@@ -32,7 +32,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentArgvPathTest do
 
   alias Ezagent.PluginCc.Template.CcAgent
 
-  @agent_uri URI.parse("entity://agent/team-alpha/cc_argv-path-test")
+  @agent_uri Ezagent.URI.new!("entity://team-alpha/agent/cc_argv-path-test")
 
   setup do
     original_path = System.get_env("PATH")

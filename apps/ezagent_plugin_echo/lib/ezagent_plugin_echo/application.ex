@@ -67,14 +67,6 @@ defmodule EzagentPluginEcho.Application do
 
   # PR #141 (SPEC v2): `agent://` scheme deleted; merged into `entity://`.
   # Agent flavor moves to free-form name prefix (SPEC §5.14):
-  # Echo's default instance is `entity://agent/system/echo_default` —
-  # admin's workspace, since echo is the admin demo agent (SPEC #324).
-  # SPEC 2026-05-27-uri-canonicalization §3.5: compile-time constant
-  # — ETS-backed SchemeRegistry not available at compile time, so
-  # `URI.new!/1` (RFC 3986 strict) is the canonical form for hard-coded
-  # module attributes (§3.5 carve-out from the URI.new! ban).
-  @default_uri URI.new!("entity://agent/system/echo_default")
-
   # --- OTP Application -------------------------------------------------
 
   @impl Application
@@ -146,10 +138,12 @@ defmodule EzagentPluginEcho.Application do
   """
   @impl Ezagent.Plugin
   def after_boot do
-    case Ezagent.SpawnRegistry.spawn(@default_uri) do
-      {:ok, _pid} ->
-        :ok
+    default_uri = default_uri()
+    :ok = Ezagent.AgentFlavorAttributes.put(default_uri, "echo")
 
+    with {:ok, _pid} <- Ezagent.SpawnRegistry.spawn(default_uri) do
+      :ok
+    else
       {:error, reason} ->
         require Logger
 
@@ -169,5 +163,5 @@ defmodule EzagentPluginEcho.Application do
   URI of the default Echo instance — seeded by `after_boot/0`
   (PR-5 codex HIGH-2, see moduledoc).
   """
-  def default_uri, do: @default_uri
+  def default_uri, do: Ezagent.URI.agent(:system, :echo_default)
 end

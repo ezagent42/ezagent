@@ -19,8 +19,8 @@ defmodule EzagentCli.CoercionTest do
       {_, kw} = Coercion.to_option(:member, :uri)
       parser = Keyword.fetch!(kw, :parser)
 
-      assert {:ok, %URI{scheme: "entity", host: "agent", path: "/team-alpha/test_cc-architect"}} =
-               parser.("entity://agent/team-alpha/test_cc-architect")
+      assert {:ok, %URI{scheme: "entity", host: "team-alpha", path: "/agent/test_cc-architect"}} =
+               parser.("entity://team-alpha/agent/test_cc-architect")
     end
 
     test ":uri parser rejects malformed" do
@@ -53,7 +53,7 @@ defmodule EzagentCli.CoercionTest do
       {_, kw} = Coercion.to_option(:members, {:list, :uri})
       parser = Keyword.fetch!(kw, :parser)
 
-      assert {:ok, [%URI{}, %URI{}]} = parser.("entity://user/system/admin,entity://agent/team-alpha/test_x")
+      assert {:ok, [%URI{}, %URI{}]} = parser.("entity://system/user/admin,entity://team-alpha/agent/test_x")
     end
 
     test "{:list, :string} via CSV" do

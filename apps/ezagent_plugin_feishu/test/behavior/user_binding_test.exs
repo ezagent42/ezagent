@@ -19,8 +19,8 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
   alias EzagentPluginFeishu.Behavior.UserBinding, as: BV
   alias EzagentPluginFeishu.UserBinding, as: UB
 
-  @admin_uri URI.parse("entity://user/system/admin")
-  @user_uri URI.parse("entity://user/team-alpha/alice")
+  @admin_uri Ezagent.URI.new!("entity://system/user/admin")
+  @user_uri Ezagent.URI.new!("entity://team-alpha/user/alice")
 
   # Build a ctx that mirrors what Kind.Runtime.handle_dispatch/4 step
   # 5.5 supplies to a new-contract handler. The `:read` closure is
@@ -30,7 +30,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
     base = %{
       caller: @admin_uri,
       caps: MapSet.new(),
-      self_uri: URI.parse("workspace://team-alpha"),
+      self_uri: Ezagent.URI.new!("workspace://team-alpha"),
       reply: :sync,
       read: fn key, default -> Map.get(slice, key, default) end
     }
@@ -100,7 +100,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
     end
 
     test "data_owner is :any (workspace-admin grantable)" do
-      assert BV.data_owner(URI.parse("workspace://team-alpha")) == :any
+      assert BV.data_owner(Ezagent.URI.new!("workspace://team-alpha")) == :any
       assert BV.data_owner(:any) == :any
     end
 
@@ -161,7 +161,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
     test "rebind silently replaces the prior user_uri" do
       open_id = "ou_bv_rebind_#{System.unique_integer([:positive])}"
       args1 = %{open_id: open_id, user_uri: @user_uri}
-      args2 = %{open_id: open_id, user_uri: URI.parse("entity://user/team-alpha/bob")}
+      args2 = %{open_id: open_id, user_uri: Ezagent.URI.new!("entity://team-alpha/user/bob")}
 
       # First bind — slice starts at 0.
       {:ok, _, effects1} = BV.handle_bind(args1, ctx(%{bind_count: 0}))
@@ -175,12 +175,12 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
       assert {:found, 2} = set_effect(effects2, :bind_count)
 
       {:ok, u} = UB.resolve(open_id)
-      assert URI.to_string(u) == "entity://user/team-alpha/bob"
+      assert URI.to_string(u) == "entity://team-alpha/user/bob"
     end
 
     test "ctx.caller is recorded as bound_by (anti-impersonation)" do
       open_id = "ou_bv_bound_by_#{System.unique_integer([:positive])}"
-      caller = URI.parse("entity://user/system/admin")
+      caller = Ezagent.URI.new!("entity://system/user/admin")
 
       args = %{open_id: open_id, user_uri: @user_uri}
       {:ok, _, _} = BV.handle_bind(args, %{ctx() | caller: caller})
@@ -198,7 +198,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
     test "refuses to bind a user from a different workspace" do
       # Target = workspace://team-alpha, user is in workspace://team-beta.
       open_id = "ou_bv_cross_ws_#{System.unique_integer([:positive])}"
-      foreign_user = URI.parse("entity://user/team-beta/eve")
+      foreign_user = Ezagent.URI.new!("entity://team-beta/user/eve")
 
       args = %{open_id: open_id, user_uri: foreign_user}
 
@@ -217,7 +217,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
       open_id = "ou_bv_admin_bypass_#{System.unique_integer([:positive])}"
       admin_ctx = Map.delete(ctx(), :self_uri)
 
-      args = %{open_id: open_id, user_uri: URI.parse("entity://user/team-beta/eve")}
+      args = %{open_id: open_id, user_uri: Ezagent.URI.new!("entity://team-beta/user/eve")}
 
       assert {:ok, _ret, _effects} = BV.handle_bind(args, admin_ctx)
     end
@@ -245,7 +245,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
 
       {:ok, _, _} =
         BV.handle_bind(
-          %{open_id: open_id, user_uri: URI.parse("entity://user/team-beta/eve")},
+          %{open_id: open_id, user_uri: Ezagent.URI.new!("entity://team-beta/user/eve")},
           admin_ctx
         )
 
@@ -258,7 +258,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
 
       # Original team-beta binding is still intact.
       {:ok, u} = UB.resolve(open_id)
-      assert URI.to_string(u) == "entity://user/team-beta/eve"
+      assert URI.to_string(u) == "entity://team-beta/user/eve"
     end
 
     test "allows rebind within the same workspace (legitimate rotation)" do
@@ -268,7 +268,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
 
       {:ok, _, _} = BV.handle_bind(%{open_id: open_id, user_uri: @user_uri}, ctx())
 
-      new_user = URI.parse("entity://user/team-alpha/bob")
+      new_user = Ezagent.URI.new!("entity://team-alpha/user/bob")
 
       assert {:ok, _ret, _effects} =
                BV.handle_bind(%{open_id: open_id, user_uri: new_user}, ctx())
@@ -296,7 +296,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
       # user in a workspace whose Workspace Kind isn't running will
       # cause `ensure_user_kind` to fail at the dispatch grant_cap
       # step (no Identity slice to grant against).
-      orphan_user = URI.parse("entity://user/no_such_workspace/orphan")
+      orphan_user = Ezagent.URI.new!("entity://no_such_workspace/user/orphan")
       open_id = "ou_bv_rollback_#{System.unique_integer([:positive])}"
 
       # The action MAY succeed if SpawnRegistry handles unknown
@@ -365,7 +365,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
 
       {:ok, _, _} =
         BV.handle_bind(
-          %{open_id: open_id, user_uri: URI.parse("entity://user/team-beta/eve")},
+          %{open_id: open_id, user_uri: Ezagent.URI.new!("entity://team-beta/user/eve")},
           admin_ctx
         )
 
@@ -412,13 +412,13 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
       # Admin seeds both.
       {:ok, _, _} =
         BV.handle_bind(
-          %{open_id: open_id_alpha, user_uri: URI.parse("entity://user/team-alpha/alice")},
+          %{open_id: open_id_alpha, user_uri: Ezagent.URI.new!("entity://team-alpha/user/alice")},
           admin_ctx
         )
 
       {:ok, _, _} =
         BV.handle_bind(
-          %{open_id: open_id_beta, user_uri: URI.parse("entity://user/team-beta/eve")},
+          %{open_id: open_id_beta, user_uri: Ezagent.URI.new!("entity://team-beta/user/eve")},
           admin_ctx
         )
 

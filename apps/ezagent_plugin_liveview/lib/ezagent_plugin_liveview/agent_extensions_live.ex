@@ -34,7 +34,7 @@ defmodule EzagentPluginLiveview.AgentExtensionsLive do
   use Phoenix.LiveView
   use Gettext, backend: EzagentPluginLiveview.Gettext
 
-  alias Ezagent.AgentFlavorRegistry
+  alias EzagentDomainInstanceMessage.SessionCreator.TemplateResolver
   use EzagentDomainUi.Components
   import Phoenix.Component
 
@@ -51,7 +51,7 @@ defmodule EzagentPluginLiveview.AgentExtensionsLive do
 
     case parse_agent_uri(encoded_uri) do
       {:ok, agent_uri} ->
-        case resolve_template_class(agent_uri) do
+        case TemplateResolver.resolve_agent_template_class(agent_uri) do
           {:ok, template_class} ->
             socket =
               socket
@@ -93,13 +93,13 @@ defmodule EzagentPluginLiveview.AgentExtensionsLive do
   # the bootstrap wildcard cap (seeded via `SystemPrincipal` at
   # identity-domain boot), so no admin special-case is needed.
   defp resolve_caller_caps(nil),
-    do: Ezagent.SystemPrincipal.caps("system://lv-anon-mount")
+    do: "lv-anon-mount" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps()
 
   defp resolve_caller_caps(caller_uri) do
     Ezagent.Identity.list_caps_for(caller_uri)
   end
 
-  # Mirror `AgentDetailLive.parse_agent_uri/1` — entity://agent/<ws>/<flavor>_<name>.
+  # Mirror `AgentDetailLive.parse_agent_uri/1` — entity://agent/<workspace>/<name>.
   defp parse_agent_uri(encoded) do
     decoded = URI.decode_www_form(encoded)
 
@@ -107,9 +107,12 @@ defmodule EzagentPluginLiveview.AgentExtensionsLive do
     # with try/rescue keeping the `:error` failure contract.
     try do
       case Ezagent.URI.new!(decoded) do
-        %URI{scheme: "entity", host: "agent", path: "/" <> rest} = uri
-        when is_binary(rest) and rest != "" ->
-          {:ok, uri}
+        %URI{scheme: "entity"} = uri ->
+          if Ezagent.URI.type?(uri, :agent) and match?({:ok, _name}, Ezagent.URI.name(uri)) do
+            {:ok, uri}
+          else
+            :error
+          end
 
         _ ->
           :error
@@ -118,22 +121,6 @@ defmodule EzagentPluginLiveview.AgentExtensionsLive do
       ArgumentError -> :error
     end
   end
-
-  # Extract flavor from `entity://agent/<workspace>/<flavor>_<name>`
-  # (Phase 9 PR-2 URI shape) → look up Template Class via
-  # `AgentFlavorRegistry`.
-  defp resolve_template_class(%URI{path: "/" <> rest}) do
-    with [_workspace, entity_name] <- String.split(rest, "/", parts: 2),
-         [flavor, _suffix] <- String.split(entity_name, "_", parts: 2),
-         {:ok, %{template_class: tc}} <- AgentFlavorRegistry.lookup(flavor) do
-      {:ok, tc}
-    else
-      :error -> {:error, :unknown_flavor}
-      _ -> {:error, :bad_agent_uri}
-    end
-  end
-
-  defp resolve_template_class(_), do: {:error, :bad_agent_uri}
 
   # Dispatch `sandbox.read` to fetch the agent's `:sandbox` slice
   # (config_dir_path + template_class), then call `list_extensions/1`
@@ -215,8 +202,7 @@ defmodule EzagentPluginLiveview.AgentExtensionsLive do
 
     cond do
       is_nil(config_dir) ->
-        {:noreply,
-         assign(socket, :flash, {:error, "No config dir — cannot toggle extensions."})}
+        {:noreply, assign(socket, :flash, {:error, "No config dir — cannot toggle extensions."})}
 
       # Codex PR3 round-1 CRITICAL — pre-check that the caller's caps
       # authorize a write on this agent's sandbox slice. Mutation
@@ -317,8 +303,7 @@ defmodule EzagentPluginLiveview.AgentExtensionsLive do
       <div>
         <h1 class="text-2xl font-bold">Agent Extensions</h1>
         <p class="text-sm text-gray-600">
-          Per-agent config dir:
-          <code>{@config_dir_path || "(none)"}</code>
+          Per-agent config dir: <code>{@config_dir_path || "(none)"}</code>
         </p>
         <p class="text-sm text-gray-600">
           Template Class: <code>{inspect(@template_class)}</code>
@@ -345,8 +330,7 @@ defmodule EzagentPluginLiveview.AgentExtensionsLive do
       <div :if={@extensions == []} class="p-4 border rounded bg-gray-50">
         <p class="text-gray-700">No extensions installed.</p>
         <p class="text-sm text-gray-500 mt-2">
-          Extensions live under
-          <code>{@config_dir_path || "<config_dir>"}/.claude/plugins/</code>.
+          Extensions live under <code>{@config_dir_path || "<config_dir>"}/.claude/plugins/</code>.
           Drop a plugin bundle (<code>.claude-plugin/plugin.json</code> manifest) there
           and it will appear here.
         </p>

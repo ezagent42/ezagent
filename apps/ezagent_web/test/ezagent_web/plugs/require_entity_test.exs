@@ -26,32 +26,32 @@ defmodule EzagentWeb.Plugs.RequireEntityTest do
     test "passes through + assigns current_entity_uri for entity://user/*" do
       conn =
         conn(:get, "/admin")
-        |> init_test_session(%{"current_entity_uri" => "entity://user/system/admin"})
+        |> init_test_session(%{"current_entity_uri" => "entity://system/user/admin"})
         |> RequireEntity.call([])
 
       refute conn.halted
 
       # Phase 9 PR-8: admin URI is in workspace://system.
-      assert %URI{scheme: "entity", host: "user", path: "/system/admin"} =
+      assert %URI{scheme: "entity", host: "system", path: "/user/admin"} =
                conn.assigns.current_entity_uri
     end
 
     test "passes through + assigns current_entity_uri for entity://agent/*" do
       conn =
         conn(:get, "/admin")
-        |> init_test_session(%{"current_entity_uri" => "entity://agent/team-alpha/cc_test"})
+        |> init_test_session(%{"current_entity_uri" => "entity://team-alpha/agent/cc_test"})
         |> RequireEntity.call([])
 
       refute conn.halted
 
-      assert %URI{scheme: "entity", host: "agent", path: "/team-alpha/cc_test"} =
+      assert %URI{scheme: "entity", host: "team-alpha", path: "/agent/cc_test"} =
                conn.assigns.current_entity_uri
     end
 
     test "rejects malformed (non-entity scheme) session URI" do
       conn =
         conn(:get, "/admin")
-        |> init_test_session(%{"current_entity_uri" => "session://default/system/main"})
+        |> init_test_session(%{"current_entity_uri" => "session://system/default/main"})
         |> RequireEntity.call([])
 
       assert conn.halted

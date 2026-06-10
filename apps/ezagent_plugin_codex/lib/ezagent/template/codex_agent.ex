@@ -35,6 +35,12 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   @impl Ezagent.Agent.CredentialAdapter
   def credential_relpaths, do: ["auth.json", "config.toml"]
 
+  # #17 cascade PR-0 (§D6, codex H4) — the SECRET subset, disjoint from config.
+  # config.toml is configuration (joins the PR-2 layer merge), NOT a secret —
+  # only auth.json is token material copied from the single resolved source.
+  @impl Ezagent.Agent.CredentialAdapter
+  def secret_relpaths, do: ["auth.json"]
+
   # codex's expiry/missing-auth signatures (confirm against a live expiry in PR-C).
   @impl Ezagent.Agent.CredentialAdapter
   def auth_failure_signals,
@@ -76,12 +82,8 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     end
   end
 
-  defp content_field(content, key) when is_atom(key) do
-    case Map.get(content, key) do
-      nil -> Map.get(content, Atom.to_string(key))
-      v -> v
-    end
-  end
+  # Cleanup-2: shared tolerant content reader lives in core.
+  defp content_field(content, key), do: Ezagent.Kind.Template.content_field(content, key)
 
   @impl Ezagent.Kind.Template
   def validate(tmpl) when is_map(tmpl) do
@@ -122,9 +124,9 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
       %{
         name: "agent_uri",
         type: :uri,
-        label: "Agent URI (entity://agent/<workspace>/codex_<name>)",
+        label: "Agent URI",
         required: true,
-        placeholder: "entity://agent/team-alpha/codex_builder"
+        placeholder: "codex_builder"
       },
       %{
         name: "cwd",
@@ -179,36 +181,63 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
           {:ok, [agent_uri], %{fresh?: false}}
 
         :started ->
-          case create_agent_config_dir(agent_uri, tmpl) do
-            {:ok, config_dir} ->
+          case create_agent_config_dir_with_grant(agent_uri, tmpl) do
+            {:ok, config_dir, grant_ctx} ->
               tmpl_with_dir = put_agent_config_dir(tmpl, config_dir)
 
-              case ensure_sidecars(agent_uri, tmpl_with_dir) do
-                {:ok, meta} ->
-                  {:ok, [agent_uri],
-                   meta
-                   |> Map.put(:fresh?, true)
-                   |> Map.put(:config_dir_path, config_dir)
-                   |> Map.put(:respawn_template_data, tmpl_with_dir)}
+              # #17 cascade PR-2 (codex CRITICAL §5.1) — the config_dir is materialized but
+              # the sidecars/PTY launch HERE (ensure_sidecars). Re-validate the grant
+              # version IMMEDIATELY before launch; on :grant_changed ABORT + clear the
+              # just-materialized config_dir so it is not left usable for the revoked grant.
+              # No-grant agents skip this (nil ctx).
+              case revalidate_grant_before_launch(grant_ctx) do
+                :ok ->
+                  case ensure_sidecars(agent_uri, tmpl_with_dir) do
+                    {:ok, meta} ->
+                      {:ok, [agent_uri],
+                       meta
+                       |> Map.put(:fresh?, true)
+                       |> Map.put(:config_dir_path, config_dir)
+                       |> Map.put(:respawn_template_data, tmpl_with_dir)}
+
+                    {:error, reason} ->
+                      rollback_sidecars(agent_uri)
+                      _ = Ezagent.Kind.terminate(agent_uri)
+                      handle_spawn_failure(agent_uri, reason)
+                  end
 
                 {:error, reason} ->
-                  rollback_sidecars(agent_uri)
                   _ = Ezagent.Kind.terminate(agent_uri)
-                  rollback_agent_config_dir(agent_uri)
-                  {:error, reason}
+                  handle_spawn_failure(agent_uri, reason)
               end
 
             {:error, reason} ->
-              rollback_agent_config_dir(agent_uri)
               _ = Ezagent.Kind.terminate(agent_uri)
-              {:error, reason}
+              handle_spawn_failure(agent_uri, reason)
           end
       end
     end
   end
 
-  defp put_agent_config_dir(tmpl, nil), do: tmpl
-  defp put_agent_config_dir(tmpl, dir), do: Map.put(tmpl, "agent_config_dir", dir)
+  defp put_agent_config_dir(tmpl, dir),
+    do: Ezagent.Credential.HomeRuntime.put_agent_config_dir(tmpl, dir)
+
+  # #17 cascade PR-2 (codex CRITICAL §5.1) — normalize the 2-tuple (non-cascade) and
+  # 3-tuple (cascade, carrying the grant ctx) returns of create_agent_config_dir/2.
+  defp create_agent_config_dir_with_grant(agent_uri, tmpl) do
+    Ezagent.Credential.HomeRuntime.create_agent_config_dir_with_grant(
+      agent_uri,
+      tmpl,
+      __MODULE__,
+      config_home_opts()
+    )
+  end
+
+  # #17 cascade PR-2 (codex CRITICAL §5.1) — second grant re-validation immediately before
+  # the sidecar/PTY launch. `nil` ctx → :ok. On :grant_changed the caller tears down + clears
+  # the config_dir so nothing launches with (or leaves usable) a revoked grant's secret.
+  defp revalidate_grant_before_launch(grant_ctx),
+    do: Ezagent.Credential.HomeRuntime.revalidate_grant_before_launch(grant_ctx)
 
   defp ensure_sidecars(agent_uri, tmpl) do
     cwd = Map.fetch!(tmpl, "cwd")
@@ -325,9 +354,24 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     :ok
   end
 
-  defp rollback_agent_config_dir(agent_uri) do
-    _ = File.rm_rf(agent_config_dir(agent_uri))
-    :ok
+  # codex H2 (FINDING 2) — handle a spawn failure AFTER the config_dir was materialized
+  # (mirror of cc_agent.ex). Tear down the just-materialized grant-scoped secret dir, then
+  # SURFACE a cleanup failure as BLOCKING: a grant-revoked-at-launch abort whose cleanup
+  # fails leaves a usable revoked-grant credential dir in the canonical location — reporting
+  # only the grant-change would silently leave it. Return a COMPOSITE
+  # `{:grant_revoked_cleanup_failed, agent_uri, reason}` for that case; for any other failure
+  # where cleanup also fails, attach the cleanup failure too.
+  #
+  # `@doc false` so the contract is directly unit-testable with an injected rm_rf failure.
+  @doc false
+  @spec handle_spawn_failure(URI.t(), term()) :: {:error, term()}
+  def handle_spawn_failure(agent_uri, reason) do
+    Ezagent.Credential.HomeRuntime.handle_spawn_failure(
+      agent_uri,
+      reason,
+      __MODULE__,
+      "codex.agent"
+    )
   end
 
   defp pty_params(cwd, socket_path, thread_id, tmpl, codex_path, true) do
@@ -461,139 +505,48 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
 
   @doc false
   def resolve_config_home(%URI{} = agent_uri, tmpl) when is_map(tmpl) do
-    cond do
-      valid_dir?(Map.get(tmpl, "agent_config_dir")) ->
-        Map.get(tmpl, "agent_config_dir")
-
-      valid_dir?(Map.get(tmpl, "allocated_config_dir")) ->
-        Map.get(tmpl, "allocated_config_dir")
-
-      valid_dir?(Map.get(tmpl, "config_dir")) ->
-        agent_config_dir(agent_uri)
-
-      config_dir_present_but_malformed?(tmpl) ->
-        raise ArgumentError,
-              "codex.agent: invalid config_dir #{inspect(Map.get(tmpl, "config_dir"))} — " <>
-                "must be a non-empty string or absent. No silent fallback to operator " <>
-                "CODEX_HOME."
-
-      true ->
-        nil
-    end
-  end
-
-  defp valid_dir?(dir) when is_binary(dir) and dir != "", do: true
-  defp valid_dir?(_), do: false
-
-  defp config_dir_present_but_malformed?(tmpl) do
-    case Map.fetch(tmpl, "config_dir") do
-      :error -> false
-      {:ok, value} -> not valid_dir?(value)
-    end
+    Ezagent.Credential.HomeRuntime.resolve_config_home(agent_uri, tmpl, __MODULE__,
+      on_malformed: {:raise, &invalid_config_dir_message/1}
+    )
   end
 
   @doc false
   def agent_config_dir(%URI{} = agent_uri) do
-    Ezagent.Sandbox.ConfigDir.path(agent_uri, Ezagent.Kind.Template.namespace_of(__MODULE__))
+    Ezagent.Credential.HomeRuntime.agent_config_dir(agent_uri, __MODULE__)
   end
 
+  # Return: `{:ok, dir}` / `{:ok, nil}` on the non-cascade path (backward-compatible), OR
+  # `{:ok, dir, {:grant, agent_uri_str, version}}` on the cascade path — the third element
+  # carries the grant version validated at materialize so `spawn_for_codex/3` can
+  # re-validate the grant IMMEDIATELY before the sidecar/PTY launch (codex CRITICAL §5.1).
   @doc false
-  @spec create_agent_config_dir(URI.t(), map()) :: {:ok, String.t() | nil} | {:error, term()}
-  def create_agent_config_dir(%URI{} = _agent_uri, tmpl) when is_map(tmpl) do
-    case Map.fetch(tmpl, "config_dir") do
-      :error ->
-        {:ok, nil}
-
-      {:ok, ref} when is_binary(ref) and ref != "" ->
-        case Map.fetch(tmpl, "allocated_config_dir") do
-          {:ok, target} when is_binary(target) and target != "" ->
-            materialize_config_dir(target, ref)
-
-          _ ->
-            {:error, :config_dir_not_allocated}
-        end
-
-      {:ok, bad} ->
-        {:error, {:invalid_config_dir, bad}}
-    end
+  @spec create_agent_config_dir(URI.t(), map()) ::
+          {:ok, String.t() | nil}
+          | {:ok, String.t(), {:grant, String.t(), non_neg_integer()}}
+          | {:error, term()}
+  def create_agent_config_dir(%URI{} = agent_uri, tmpl) when is_map(tmpl) do
+    Ezagent.Credential.HomeRuntime.create_agent_config_dir(
+      agent_uri,
+      tmpl,
+      __MODULE__,
+      config_home_opts()
+    )
   end
 
-  @config_complete_marker ".ezagent-config-complete"
+  # #17 cascade PR-2 (§5.1) — true iff this agent has a credential grant that is now
+  # REVOKED (no grant / active grant → false → proceed). Defensive: a DB read error must
+  # not crash-loop a boot — treat as "not provably revoked" and let the materialize-time
+  # TOCTOU gate be the loud authority.
+  defp grant_revoked_for_restart?(%URI{} = agent_uri),
+    do: Ezagent.Credential.HomeRuntime.grant_revoked_for_restart?(agent_uri)
 
-  defp materialize_config_dir(target, reference_dir) do
-    marker = Path.join(target, @config_complete_marker)
+  defp config_home_opts,
+    do: [stage_error_tag: :config_dir_materialize_failed, chmod_error: :tagged]
 
-    cond do
-      not File.dir?(reference_dir) ->
-        {:error, {:reference_dir_missing, reference_dir}}
-
-      File.dir?(target) and File.exists?(marker) ->
-        {:ok, target}
-
-      File.dir?(target) and has_user_credentials?(target) ->
-        stage_and_swap(reference_dir, target, marker, overlay: target)
-
-      true ->
-        stage_and_swap(reference_dir, target, marker)
-    end
-  end
-
-  defp stage_and_swap(reference_dir, target, marker, opts \\ []) do
-    staging = "#{target}.staging-#{System.unique_integer([:positive])}"
-    marker_name = Path.basename(marker)
-    _ = File.rm_rf(staging)
-
-    with :ok <- File.mkdir_p(Path.dirname(target)),
-         {:ok, _} <- File.cp_r(reference_dir, staging),
-         :ok <- maybe_overlay(Keyword.get(opts, :overlay), staging),
-         :ok <- File.chmod(staging, 0o700),
-         :ok <- chmod_credential_files(staging),
-         :ok <- File.write(Path.join(staging, marker_name), "ok\n"),
-         :ok <- swap_into_place(staging, target) do
-      {:ok, target}
-    else
-      {:error, reason} ->
-        _ = File.rm_rf(staging)
-        {:error, {:config_dir_materialize_failed, reason}}
-
-      err ->
-        _ = File.rm_rf(staging)
-        {:error, {:config_dir_materialize_failed, err}}
-    end
-  end
-
-  defp maybe_overlay(nil, _staging), do: :ok
-
-  defp maybe_overlay(src, staging) when is_binary(src) do
-    case File.cp_r(src, staging) do
-      {:ok, _} -> :ok
-      {:error, reason, _path} -> {:error, reason}
-    end
-  end
-
-  defp swap_into_place(staging, target) do
-    _ = File.rm_rf(target)
-    File.rename(staging, target)
-  end
-
-  defp chmod_credential_files(dir) do
-    credential_relpaths()
-    |> Enum.reduce_while(:ok, fn relpath, :ok ->
-      path = Path.join(dir, relpath)
-
-      if File.exists?(path) do
-        case File.chmod(path, 0o600) do
-          :ok -> {:cont, :ok}
-          {:error, reason} -> {:halt, {:error, {:chmod_failed, relpath, reason}}}
-        end
-      else
-        {:cont, :ok}
-      end
-    end)
-  end
-
-  defp has_user_credentials?(dir) do
-    Enum.any?(credential_relpaths(), fn relpath -> File.exists?(Path.join(dir, relpath)) end)
+  defp invalid_config_dir_message(value) do
+    "codex.agent: invalid config_dir #{inspect(value)} — " <>
+      "must be a non-empty string or absent. No silent fallback to operator " <>
+      "CODEX_HOME."
   end
 
   defp ensure_agent_kind(agent_uri) do
@@ -621,28 +574,40 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
         :ok
 
       true ->
-        case Map.fetch(respawn_data, "cwd") do
-          {:ok, cwd} when is_binary(cwd) and cwd != "" ->
-            case ensure_sidecars(agent_uri, respawn_data) do
-              {:ok, _meta} ->
-                Logger.info(
-                  "codex.agent.ensure_subprocess_alive: respawned sidecars for " <>
-                    URI.to_string(agent_uri)
-                )
+        with {:ok, respawn_data} <-
+               Ezagent.Credential.CascadeRuntime.rehydrate_respawn_data(agent_uri, respawn_data) do
+          cond do
+            # #17 cascade PR-2 (§5.1) — a (re)start is a cascade boundary: an agent whose
+            # credential grant was REVOKED must NOT come back up holding stale creds. No grant
+            # / active grant → proceed. Full re-resolve-from-inputs re-materialize is FLAGGED.
+            grant_revoked_for_restart?(agent_uri) ->
+              {:error, {:credential_grant_revoked, agent_uri}}
 
-                :ok
+            true ->
+              case Map.fetch(respawn_data, "cwd") do
+                {:ok, cwd} when is_binary(cwd) and cwd != "" ->
+                  case ensure_sidecars(agent_uri, respawn_data) do
+                    {:ok, _meta} ->
+                      Logger.info(
+                        "codex.agent.ensure_subprocess_alive: respawned sidecars for " <>
+                          URI.to_string(agent_uri)
+                      )
 
-              {:error, reason} ->
-                Logger.error(
-                  "codex.agent.ensure_subprocess_alive: failed to respawn sidecars for " <>
-                    "#{URI.to_string(agent_uri)}: #{inspect(reason)}"
-                )
+                      :ok
 
-                {:error, reason}
-            end
+                    {:error, reason} ->
+                      Logger.error(
+                        "codex.agent.ensure_subprocess_alive: failed to respawn sidecars for " <>
+                          "#{URI.to_string(agent_uri)}: #{inspect(reason)}"
+                      )
 
-          _ ->
-            {:error, {:missing_cwd_in_respawn_data, agent_uri}}
+                      {:error, reason}
+                  end
+
+                _ ->
+                  {:error, {:missing_cwd_in_respawn_data, agent_uri}}
+              end
+          end
         end
     end
   end
@@ -656,10 +621,10 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     end
   end
 
-  defp owns_this_agent?(%URI{path: "/" <> rest}, %URI{} = workspace_uri) do
-    case String.split(rest, "/", parts: 2) do
-      [workspace, _entity_name] -> workspace == workspace_uri.host
-      _ -> false
+  defp owns_this_agent?(%URI{} = agent_uri, %URI{} = workspace_uri) do
+    case Ezagent.URI.workspace_name(agent_uri) do
+      {:ok, workspace} -> workspace == workspace_uri.host
+      :error -> false
     end
   end
 
@@ -781,41 +746,7 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     end
   end
 
-  defp check_agent_uri(%{"agent_uri" => uri_str}) when is_binary(uri_str) and uri_str != "" do
-    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
-    # with try/rescue keeping the structured `{:error, _}` contract for
-    # each validator branch. Mirrors `EzagentPluginCc.Template.CcAgent.check_agent_uri/1`.
-    try do
-      case Ezagent.URI.new!(uri_str) do
-        %URI{scheme: "entity", host: "agent", path: "/" <> rest} when rest != "" ->
-          with [_workspace, entity_name] when entity_name != "" <-
-                 String.split(rest, "/", parts: 2),
-               [flavor, suffix] when flavor != "" and suffix != "" <-
-                 String.split(entity_name, "_", parts: 2) do
-            if flavor == "codex" do
-              :ok
-            else
-              {:error, {:wrong_agent_flavor, flavor, expected: "codex"}}
-            end
-          else
-            _ ->
-              {:error,
-               {:missing_flavor_prefix, uri_str,
-                "agent URIs must be `entity://agent/<workspace>/codex_<name>`"}}
-          end
-
-        %URI{scheme: "entity"} ->
-          {:error,
-           {:invalid_agent_uri, uri_str,
-            "agent URIs must be `entity://agent/<workspace>/codex_<name>`"}}
-
-        _ ->
-          {:error, {:bad_agent_uri, uri_str}}
-      end
-    rescue
-      ArgumentError -> {:error, {:bad_agent_uri, uri_str}}
-    end
-  end
-
-  defp check_agent_uri(_), do: {:error, :missing_agent_uri}
+  # Cleanup-2: shared entity-agent-URI validator lives in core
+  # (Ezagent.Kind.Template) — byte-identical across every flavor.
+  defp check_agent_uri(tmpl), do: Ezagent.Kind.Template.check_agent_uri(tmpl)
 end

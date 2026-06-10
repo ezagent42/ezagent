@@ -60,11 +60,11 @@ defmodule EzagentPluginFeishu.BindingPolicyTest do
   alias Ezagent.Capability
   alias EzagentPluginFeishu.BindingPolicy
 
-  @workspace_uri URI.parse("workspace://team-alpha")
+  @workspace_uri Ezagent.URI.new!("workspace://team-alpha")
   # Build via the SAME constructor production uses
   # (`BindingPolicy` calls `Ezagent.SystemPrincipal.uri/1`) so the
   # `granted_by` provenance comparison is apples-to-apples. Post-SPEC
-  # 2026-05-27 URI canonicalization, a `URI.parse("system://...")` pin
+  # 2026-05-27 URI canonicalization, a `Ezagent.URI.new!("system://...")` pin
   # carries an `authority` field the canonical `SystemPrincipal.uri/1`
   # value omits, so `==` would spuriously fail.
   @binding_policy_uri Ezagent.SystemPrincipal.uri("feishu-binding-policy")

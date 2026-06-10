@@ -39,11 +39,12 @@ defmodule Ezagent.Behavior.PtyTest do
     # is exercised across tests; per-test PtyServer write_calls counter is
     # asserted with `>=` to tolerate cross-test accumulation.
     name = "cc_pty-input-test-#{System.unique_integer([:positive])}"
-    agent_uri = URI.parse("entity://agent/team-alpha/#{name}")
+    agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/#{name}")
 
-    # Ensure the Agent Kind is alive so `Behavior.Pty.invoke(:write, ...)`
-    # against `entity://agent/<name>?action=pty.write` resolves.
-    {:ok, _kind_pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+    # Ensure a PTY-capable test Kind is alive so dispatch against
+    # `entity://agent/<name>?action=pty.write` resolves. This is a
+    # Domain.Pty fixture, not real Agent provisioning.
+    {:ok, _kind_pid} = EzagentDomainPty.Test.PtyAgentFixture.spawn(agent_uri)
 
     {:ok, pty_pid} =
       Ezagent.Domain.Pty.start(agent_uri, %{
@@ -90,7 +91,7 @@ defmodule Ezagent.Behavior.PtyTest do
     # from this stream (each test uses a fresh agent URI, so == 100).
     {:ok, kind_pid} = Ezagent.KindRegistry.lookup(agent_uri)
     state = :sys.get_state(kind_pid, 500)
-    slice = state.state.pty
+    slice = pty_slice_state(state.state.pty)
 
     assert slice.write_calls >= 100
     assert slice.total_bytes >= 100
@@ -98,7 +99,7 @@ defmodule Ezagent.Behavior.PtyTest do
 
   test "non-admin without per-agent pty cap → :unauthorized", %{agent_uri: agent_uri} do
     non_admin_ctx = %{
-      caller: URI.parse("entity://user/team-alpha/non-admin-pty-test"),
+      caller: Ezagent.URI.new!("entity://team-alpha/user/non-admin-pty-test"),
       caps: MapSet.new(),
       reply: {:caller_inbox, self()}
     }
@@ -118,9 +119,11 @@ defmodule Ezagent.Behavior.PtyTest do
   end
 
   test "dispatch against an agent with no PtyServer → :no_pty_server" do
-    # Spawn the Agent Kind (so dispatch resolves) but no PtyServer.
-    bare_uri = URI.parse("entity://agent/team-alpha/cc_no-pty-#{System.unique_integer([:positive])}")
-    {:ok, _kind_pid} = Ezagent.SpawnRegistry.spawn(bare_uri)
+    # Spawn the PTY-capable test Kind (so dispatch resolves) but no PtyServer.
+    bare_uri =
+      Ezagent.URI.new!("entity://team-alpha/agent/cc_no-pty-#{System.unique_integer([:positive])}")
+
+    {:ok, _kind_pid} = EzagentDomainPty.Test.PtyAgentFixture.spawn(bare_uri)
 
     assert {:error, :no_pty_server} =
              Invocation.dispatch(%Invocation{
@@ -132,11 +135,17 @@ defmodule Ezagent.Behavior.PtyTest do
   end
 
   test "PubSub output topic broadcasts on chunk arrival", %{agent_uri: agent_uri, pty_pid: pid} do
-    Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.Domain.Pty.Server.output_topic(agent_uri))
+    Phoenix.PubSub.subscribe(
+      EzagentCore.PubSub,
+      Ezagent.Domain.Pty.Server.output_topic(agent_uri)
+    )
 
     # Simulate a stdout chunk arrival (the erlexec :stdout message shape).
     send(pid, {:stdout, 0, "hello from pty\n"})
 
     assert_receive {:pty_output, ^agent_uri, "hello from pty\n"}, 500
   end
+
+  defp pty_slice_state(%{state: state}) when is_map(state), do: state
+  defp pty_slice_state(slice), do: slice
 end

@@ -179,7 +179,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   # Publisher.SessionImpl is registered on Session Kind only — kind axis
   # is `:session`.
 
-  action :subscribe_from,
+  action(:subscribe_from,
     # `args: %{}` for all three actions — the InterfaceValidator's
     # schema grammar does not have a `:pid` or `:any` atom (see
     # `Ezagent.InterfaceValidator` @moduledoc), and the publisher
@@ -195,20 +195,23 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
     description:
       "Subscribe a pid to this Publisher's structured stream from a cursor " <>
         "(:latest / :earliest / integer)"
+  )
 
-  action :snapshot,
+  action(:snapshot,
     args: %{},
     returns: %{cursor: :integer},
     caps: [:snapshot],
     modes: [:call],
     description: "Read this Publisher's current cursor + state without subscribing"
+  )
 
-  action :history,
+  action(:history,
     args: %{},
     returns: %{},
     caps: [:history],
     modes: [:call],
     description: "Read events in the (from, to] cursor window from this Publisher's ring"
+  )
 
   @doc """
   Per SPEC §2.1: the Publisher cap is gated on the publishing Kind
@@ -303,7 +306,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   defp subscribe_to_self_slice_change(%URI{} = self_uri) do
     try do
       :ok = Ezagent.SliceChange.subscribe_unverified(self_uri)
-      %{subscribed_to: URI.to_string(self_uri), subscriber: self()}
+      %{subscribed_to: Ezagent.URI.stable_key(self_uri), subscriber: self()}
     catch
       kind, reason ->
         Logger.warning(
@@ -312,7 +315,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
             "#{URI.to_string(self_uri)}; this incarnation will not mirror slice changes"
         )
 
-        %{subscribed_to: URI.to_string(self_uri), subscriber: self()}
+        %{subscribed_to: Ezagent.URI.stable_key(self_uri), subscriber: self()}
     end
   end
 

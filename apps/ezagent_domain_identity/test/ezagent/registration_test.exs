@@ -21,7 +21,7 @@ defmodule Ezagent.RegistrationTest do
     assert Registration.slug_available?("freshslug", @test_workspace)
 
     {:ok, _} =
-      Ezagent.Users.create("entity://user/#{@test_workspace}/taken", nil, [])
+      Ezagent.Users.create("entity://#{@test_workspace}/user/taken", nil, [])
 
     refute Registration.slug_available?("taken", @test_workspace)
     assert Registration.suggest_slug("taken", @test_workspace) == "taken-2"
@@ -43,7 +43,7 @@ defmodule Ezagent.RegistrationTest do
   test "principal_for_email/1 resolves an existing profile" do
     {:ok, _} =
       Profile.upsert(%{
-        entity_uri: "entity://user/#{@test_workspace}/known",
+        entity_uri: "entity://#{@test_workspace}/user/known",
         display_name: "Known",
         email: "known@good.com"
       })
@@ -53,7 +53,7 @@ defmodule Ezagent.RegistrationTest do
     # populate the deprecated `:authority` field that `Ezagent.URI`
     # deliberately omits, producing a spurious struct mismatch.
     assert Registration.principal_for_email("known@good.com") ==
-             {:ok, Ezagent.URI.new!("entity://user/#{@test_workspace}/known")}
+             {:ok, Ezagent.URI.new!("entity://#{@test_workspace}/user/known")}
 
     assert Registration.principal_for_email("nobody@good.com") == :none
   end
@@ -67,11 +67,11 @@ defmodule Ezagent.RegistrationTest do
                @test_workspace
              )
 
-    assert URI.to_string(uri) == "entity://user/#{@test_workspace}/newbie"
+    assert URI.to_string(uri) == "entity://#{@test_workspace}/user/newbie"
     assert Ezagent.Users.get_by_uri(uri) != nil
 
     assert Profile.by_email("newbie@good.com").entity_uri ==
-             "entity://user/#{@test_workspace}/newbie"
+             "entity://#{@test_workspace}/user/newbie"
 
     assert {:ok, _pid} = Ezagent.KindRegistry.lookup(uri)
   end

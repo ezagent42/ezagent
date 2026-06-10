@@ -7,7 +7,6 @@ defmodule Ezagent.AgentBridge.Adapter do
   """
 
   @callback flavor() :: String.t()
-  @callback agent_uri_prefix() :: String.t()
   @callback deliver(Ezagent.AgentBridge.Payload.t(), pid()) :: :ok | {:error, term()}
 
   @callback handle_client_event(String.t(), map(), Phoenix.Socket.t()) ::

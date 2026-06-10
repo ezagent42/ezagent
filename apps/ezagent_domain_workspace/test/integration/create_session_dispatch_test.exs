@@ -41,10 +41,10 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
       template = Keyword.fetch!(opts, :template_name)
 
       session_uri =
-        URI.new!("session://#{template}/#{ws_uri.host}/#{short_name}")
+        Ezagent.URI.session(ws_uri.host, template, short_name)
 
       orch_uri =
-        URI.new!("entity://agent/#{ws_uri.host}/cc_orchestrator-#{short_name}")
+        Ezagent.URI.agent(ws_uri.host, "cc_orchestrator-#{short_name}")
 
       {:ok, session_uri,
        %{
@@ -59,7 +59,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
     ws_name = "create-session-test-#{System.unique_integer([:positive])}"
     {:ok, _ws_pid} = Workspace.create(ws_name, %{})
 
-    workspace_uri = URI.new!("workspace://#{ws_name}")
+    workspace_uri = Ezagent.URI.workspace(ws_name)
 
     admin_ctx = %{
       caller: User.admin_uri(),
@@ -90,10 +90,10 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
                  admin_ctx
                )
 
-      assert URI.to_string(result.session_uri) == "session://default/#{ws_name}/#{short}"
+      assert URI.to_string(result.session_uri) == "session://#{ws_name}/default/#{short}"
 
       assert URI.to_string(result.orchestrator_uri) ==
-               "entity://agent/#{ws_name}/cc_orchestrator-#{short}"
+               "entity://#{ws_name}/agent/cc_orchestrator-#{short}"
 
       assert result.orchestrator_status == :ready
       assert is_nil(result.orchestrator_error)
@@ -104,7 +104,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
       ws_name: ws_name
     } do
       creator_uri =
-        URI.new!("entity://user/#{ws_name}/session-creator-#{System.unique_integer([:positive])}")
+        Ezagent.URI.user(ws_name, "session-creator-#{System.unique_integer([:positive])}")
 
       create_cap =
         Ezagent.Capability.cap(
@@ -234,7 +234,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
     } do
       # Spawn a non-admin user with NO caps so step 5.5 denies the
       # workspace.create_session subject.
-      bare_uri = URI.new!("entity://user/system/bare-c3-#{System.unique_integer([:positive])}")
+      bare_uri = URI.new!("entity://system/user/bare-c3-#{System.unique_integer([:positive])}")
       {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: bare_uri, initial_caps: MapSet.new()})
 
       bare_ctx = %{caller: bare_uri, caps: MapSet.new()}
@@ -280,7 +280,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
     } do
       # Set up a non-admin user with NO caps initially.
       member_uri =
-        URI.new!("entity://user/#{ws_name}/med2-#{System.unique_integer([:positive])}")
+        URI.new!("entity://#{ws_name}/user/med2-#{System.unique_integer([:positive])}")
 
       {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: member_uri, initial_caps: MapSet.new()})
 
@@ -328,7 +328,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
       # dispatch path (no facade call) and asserts the new member has
       # the cap afterwards.
       member_uri =
-        URI.new!("entity://user/#{ws_name}/med2-disp-#{System.unique_integer([:positive])}")
+        URI.new!("entity://#{ws_name}/user/med2-disp-#{System.unique_integer([:positive])}")
 
       {:ok, _pid} =
         Ezagent.Kind.spawn(User, %{uri: member_uri, initial_caps: MapSet.new()})
@@ -375,7 +375,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
       # Agents don't drive create_session — the grant is gated on
       # `entity://user/...` URI shape.
       agent_uri =
-        URI.new!("entity://agent/#{ws_name}/cc_test-#{System.unique_integer([:positive])}")
+        URI.new!("entity://#{ws_name}/agent/cc_test-#{System.unique_integer([:positive])}")
 
       # Spawn the agent first so the lookup doesn't fail.
       _ = Ezagent.SpawnRegistry.spawn(agent_uri)

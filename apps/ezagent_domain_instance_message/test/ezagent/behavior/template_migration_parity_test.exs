@@ -118,7 +118,7 @@ defmodule Ezagent.Behavior.TemplateMigrationParityTest do
     end
 
     test "with self_uri but wrong content hash → :hash_mismatch" do
-      uri = URI.parse("template://session/team-alpha/demo@wronghash123")
+      uri = Ezagent.URI.new!("template://team-alpha/session/demo@wronghash123")
       ctx = ctx_with_slice(nil, %{kind_module: SessionTemplate, self_uri: uri})
 
       content = %{name: "demo", agent_slots: [], routing_rules: []}
@@ -148,7 +148,7 @@ defmodule Ezagent.Behavior.TemplateMigrationParityTest do
       ctx =
         ctx_with_slice(nil, %{
           kind_module: AgentTemplate,
-          self_uri: URI.parse("template://agent/team-alpha/demo")
+          self_uri: Ezagent.URI.new!("template://team-alpha/agent/demo")
         })
 
       assert {:error, :template_not_populated} = Template.handle_instantiate(%{}, ctx)
@@ -167,7 +167,7 @@ defmodule Ezagent.Behavior.TemplateMigrationParityTest do
       ctx =
         ctx_with_slice(nil, %{
           kind_module: AgentTemplate,
-          self_uri: URI.parse("template://agent/team-alpha/demo")
+          self_uri: Ezagent.URI.new!("template://team-alpha/agent/demo")
         })
 
       assert {:error, :template_not_populated} =
@@ -178,7 +178,7 @@ defmodule Ezagent.Behavior.TemplateMigrationParityTest do
       ctx =
         ctx_with_slice(%{name: "demo"}, %{
           kind_module: AgentTemplate,
-          self_uri: URI.parse("template://agent/team-alpha/demo")
+          self_uri: Ezagent.URI.new!("template://team-alpha/agent/demo")
         })
 
       assert {:error, {:missing_arg, :new_name}} = Template.handle_fork(%{}, ctx)
@@ -188,8 +188,8 @@ defmodule Ezagent.Behavior.TemplateMigrationParityTest do
   describe "data_owner/1" do
     test "returns :any (workspace admin grants)" do
       assert Template.data_owner(:any) == :any
-      assert Template.data_owner({:within_workspace, URI.parse("workspace://x")}) == :any
-      assert Template.data_owner(URI.parse("template://agent/ws/n")) == :any
+      assert Template.data_owner({:within_workspace, Ezagent.URI.new!("workspace://x")}) == :any
+      assert Template.data_owner(Ezagent.URI.new!("template://ws/agent/n")) == :any
     end
   end
 end

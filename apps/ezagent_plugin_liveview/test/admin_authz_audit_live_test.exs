@@ -23,7 +23,7 @@ defmodule EzagentPluginLiveview.AdminAuthzAuditLiveTest do
   end
 
   defp non_admin_conn do
-    uri = "entity://user/team-alpha/authz_audit_test_user_#{System.unique_integer([:positive])}"
+    uri = "entity://team-alpha/user/authz_audit_test_user_#{System.unique_integer([:positive])}"
     {:ok, _} = Ezagent.Users.create(URI.parse(uri), nil, [])
 
     Phoenix.ConnTest.build_conn()

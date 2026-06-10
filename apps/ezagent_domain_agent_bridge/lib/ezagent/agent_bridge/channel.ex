@@ -103,7 +103,7 @@ defmodule Ezagent.AgentBridge.Channel do
   end
 
   defp verify_topic_flavor(topic_flavor, %URI{} = agent_uri) do
-    case derive_flavor(agent_uri) do
+    case resolve_flavor(agent_uri) do
       ^topic_flavor -> :ok
       other -> {:error, {:topic_flavor_mismatch, topic_flavor, other}}
     end
@@ -176,17 +176,12 @@ defmodule Ezagent.AgentBridge.Channel do
     end
   end
 
-  defp derive_flavor(%URI{scheme: "entity", host: "agent", path: "/" <> rest})
-       when rest != "" do
-    with [_workspace, entity_name] when entity_name != "" <-
-           String.split(rest, "/", parts: 2),
-         [flavor, suffix] when flavor != "" and suffix != "" <-
-           String.split(entity_name, "_", parts: 2) do
-      flavor
-    else
-      _ -> nil
+  defp resolve_flavor(%URI{} = agent_uri) do
+    case Ezagent.UriQuery.resolve(:flavor, agent_uri) do
+      {:ok, flavor} when is_binary(flavor) and flavor != "" -> flavor
+      :none -> nil
+      {:error, reason} -> {:error, reason}
+      {:ok, other} -> {:error, {:invalid_agent_flavor, other}}
     end
   end
-
-  defp derive_flavor(_), do: nil
 end

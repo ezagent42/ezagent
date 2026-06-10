@@ -11,7 +11,7 @@ defmodule EzagentPluginLiveview.AdminLiveMentionParseTest do
      replaced its `agent_uri` form-field dropdown with text-only
      `parse_mentions` regex (`@(entity://[^\\s]+)`). Mentions are now
      parsed from message text. Without the JS autocomplete expanding
-     `@cc_e2e_final` → `@entity://agent/system/cc_e2e_final`, the
+     `@cc_e2e_final` → `@entity://system/agent/cc_e2e_final`, the
      regex finds nothing and `mentions: []`.
 
   2. **mention-gated dispatch (#226, 2026-05-22)** — the
@@ -44,8 +44,8 @@ defmodule EzagentPluginLiveview.AdminLiveMentionParseTest do
 
   alias EzagentPluginLiveview.AdminLive
 
-  @cc_agent_uri "entity://agent/system/cc_e2e_final"
-  @user_uri "entity://user/system/linyilun"
+  @cc_agent_uri "entity://system/agent/cc_e2e_final"
+  @user_uri "entity://system/user/linyilun"
 
   defp members do
     [
@@ -160,20 +160,20 @@ defmodule EzagentPluginLiveview.AdminLiveMentionParseTest do
       # is `evil`, the user's URI segment is `admin`. Typing `@admin`
       # MUST resolve to the user (URI segment), not the agent.
       members = [
-        %{"uri" => "entity://agent/system/evil", "display_name" => "admin"},
-        %{"uri" => "entity://user/system/admin", "display_name" => "admin"}
+        %{"uri" => "entity://system/agent/evil", "display_name" => "admin"},
+        %{"uri" => "entity://system/user/admin", "display_name" => "admin"}
       ]
 
       assert [uri] = AdminLive.parse_mentions("@admin please check", members)
-      assert URI.to_string(uri) == "entity://user/system/admin"
+      assert URI.to_string(uri) == "entity://system/user/admin"
     end
 
     test "ambiguous bare-name with multiple URI-segment matches drops silently" do
       # Two distinct URIs share the same path segment `admin`. The
       # parser cannot disambiguate; drop rather than guess.
       members = [
-        %{"uri" => "entity://user/system/admin", "display_name" => "Alice"},
-        %{"uri" => "entity://user/team-alpha/admin", "display_name" => "Bob"}
+        %{"uri" => "entity://system/user/admin", "display_name" => "Alice"},
+        %{"uri" => "entity://team-alpha/user/admin", "display_name" => "Bob"}
       ]
 
       assert [] = AdminLive.parse_mentions("@admin", members)
@@ -183,8 +183,8 @@ defmodule EzagentPluginLiveview.AdminLiveMentionParseTest do
       # No URI-segment matches `admin`; both members carry it as
       # display_name. Same drop rule.
       members = [
-        %{"uri" => "entity://user/system/u1", "display_name" => "admin"},
-        %{"uri" => "entity://user/system/u2", "display_name" => "admin"}
+        %{"uri" => "entity://system/user/u1", "display_name" => "admin"},
+        %{"uri" => "entity://system/user/u2", "display_name" => "admin"}
       ]
 
       assert [] = AdminLive.parse_mentions("@admin", members)
@@ -256,7 +256,7 @@ defmodule EzagentPluginLiveview.AdminLiveMentionParseTest do
       # Member URI segment is `bob`; display_name happens to equal the legend
       # `传话游戏`. Typing `@传话游戏` must NOT resolve to bob.
       collide_members = [
-        %{"uri" => "entity://user/system/bob", "display_name" => "传话游戏"}
+        %{"uri" => "entity://system/user/bob", "display_name" => "传话游戏"}
       ]
 
       legends =

@@ -21,7 +21,7 @@ defmodule Ezagent.Behavior.ExternalMirror.ReconcileAfterLoadTest do
   alias Ezagent.ExternalMirror.BindingRow
 
   defp session_uri(name \\ "reconcile-test"),
-    do: URI.parse("session://default/system/#{name}-#{System.unique_integer([:positive])}")
+    do: Ezagent.URI.new!("session://system/default/#{name}-#{System.unique_integer([:positive])}")
 
   defp insert_binding!(session_uri, adapter_id, target_id) do
     {:ok, row} =
@@ -31,7 +31,7 @@ defmodule Ezagent.Behavior.ExternalMirror.ReconcileAfterLoadTest do
         adapter_id: adapter_id,
         target_id: target_id,
         opts_json: "{}",
-        bound_by: "entity://user/system/admin",
+        bound_by: "entity://system/user/admin",
         bound_at: DateTime.utc_now() |> DateTime.truncate(:microsecond),
         workspace_uri: "workspace://system"
       })
@@ -75,7 +75,7 @@ defmodule Ezagent.Behavior.ExternalMirror.ReconcileAfterLoadTest do
         adapter_id: "feishu",
         target_id: "oc_a",
         opts: %{},
-        bound_by: URI.parse("entity://user/system/admin"),
+        bound_by: Ezagent.URI.new!("entity://system/user/admin"),
         bound_at: row_a.bound_at,
         subscription_state: :active
       }

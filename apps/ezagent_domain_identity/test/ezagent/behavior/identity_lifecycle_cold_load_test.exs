@@ -78,7 +78,7 @@ defmodule Ezagent.Behavior.IdentityLifecycleColdLoadTest do
   end
 
   defp unique_agent_uri do
-    URI.new!("entity://agent/cold-load/curl_agent-#{System.unique_integer([:positive])}")
+    URI.new!("entity://cold-load/agent/curl_agent-#{System.unique_integer([:positive])}")
   end
 
   describe "THE GATE (state-only) — cold restart rehydrates state + does NOT re-run create/1" do
@@ -149,7 +149,7 @@ defmodule Ezagent.Behavior.IdentityLifecycleColdLoadTest do
       # the `:identity` state is via the activate/2 reconcile (the folded
       # post_init/handle_continue caps_json re-read, OQ-8).
       handle = "cold-reconcile-#{System.unique_integer([:positive])}"
-      user_uri = URI.new!("entity://user/cold-load/#{handle}")
+      user_uri = URI.new!("entity://cold-load/user/#{handle}")
 
       # A concrete granter URI is required so the cap encodes into
       # users.caps_json (the default `:plugin_declared` granter is not a URI).
@@ -161,7 +161,7 @@ defmodule Ezagent.Behavior.IdentityLifecycleColdLoadTest do
           :any,
           Ezagent.Capability.workspace_of(user_uri)
         )
-        |> Map.put(:granted_by, URI.new!("entity://user/system/admin"))
+        |> Map.put(:granted_by, URI.new!("entity://system/user/admin"))
         |> Map.put(:granted_at, DateTime.utc_now())
 
       {:ok, _decoded} = Ezagent.Users.create(user_uri, nil, [extra_cap])

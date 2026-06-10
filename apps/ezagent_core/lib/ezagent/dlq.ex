@@ -61,7 +61,7 @@ defmodule Ezagent.DLQ do
   defp payload_to_map(map) when is_map(map), do: map
   defp payload_to_map(other), do: %{inspect: inspect(other)}
 
-  defp caller_string(%{caller: %URI{} = u}), do: URI.to_string(u)
+  defp caller_string(%{caller: %URI{} = u}), do: Ezagent.URI.stable_key(u)
   defp caller_string(%{caller: s}) when is_binary(s), do: s
   defp caller_string(_), do: nil
 end

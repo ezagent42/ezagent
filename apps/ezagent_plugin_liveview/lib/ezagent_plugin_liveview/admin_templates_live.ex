@@ -96,13 +96,120 @@ defmodule EzagentPluginLiveview.AdminTemplatesLive do
   end
 
   defp decode_row(%KindSnapshot{} = row) do
+    content =
+      row
+      |> decode_snapshot_state()
+      |> template_content()
+
     %{
       uri: row.uri,
       kind_type: row.kind_type,
+      level: template_level(row.uri, content),
+      mandatory_set: mandatory_set(content),
       bytes: byte_size_or_zero(row.state_binary),
       version: row.version,
       updated_at: row.updated_at
     }
+  end
+
+  defp decode_snapshot_state(%KindSnapshot{state_binary: bin}) when is_binary(bin) do
+    case :erlang.binary_to_term(bin) do
+      state when is_map(state) -> state
+      _ -> %{}
+    end
+  rescue
+    _ -> %{}
+  end
+
+  defp decode_snapshot_state(%KindSnapshot{state: state}) when is_map(state), do: state
+  defp decode_snapshot_state(%KindSnapshot{}), do: %{}
+
+  defp template_content(state) when is_map(state) do
+    [
+      field_path(state, [:template, :state, :content]),
+      field_path(state, [:template, :content]),
+      field_path(state, [:state, :content]),
+      map_field(state, :content)
+    ]
+    |> Enum.find(&is_map/1)
+    |> case do
+      nil -> %{}
+      content -> content
+    end
+  end
+
+  defp template_level(uri, content) do
+    string_field(content, :level) ||
+      string_field(content, :template_level) ||
+      inferred_template_level(uri, content)
+  end
+
+  defp inferred_template_level(uri, content) do
+    cond do
+      string_field(content, :owner_uri) ->
+        "user"
+
+      template_workspace(uri) == "system" ->
+        "system"
+
+      true ->
+        "workspace"
+    end
+  end
+
+  defp template_workspace(uri) when is_binary(uri) do
+    case Ezagent.URI.parse(uri) do
+      {:ok, %URI{} = parsed} ->
+        case Ezagent.URI.workspace_name(parsed) do
+          {:ok, name} -> name
+          :error -> nil
+        end
+
+      {:error, _} ->
+        nil
+    end
+  end
+
+  defp template_workspace(_), do: nil
+
+  defp mandatory_set(content) when is_map(content) do
+    content
+    |> mandatory_value()
+    |> normalize_mandatory_set()
+  end
+
+  defp mandatory_value(content) do
+    map_field(content, :mandatory) || map_field(content, :mandatory_set)
+  end
+
+  defp normalize_mandatory_set(list) when is_list(list) do
+    Enum.map(list, &to_string/1)
+  end
+
+  defp normalize_mandatory_set(nil), do: []
+  defp normalize_mandatory_set(other), do: [to_string(other)]
+
+  defp field_path(map, []), do: map
+
+  defp field_path(map, [key | rest]) when is_map(map) do
+    map
+    |> map_field(key)
+    |> field_path(rest)
+  end
+
+  defp field_path(_, _), do: nil
+
+  defp string_field(map, key) when is_map(map) do
+    case map_field(map, key) do
+      value when is_binary(value) -> value
+      %URI{} = value -> URI.to_string(value)
+      value when is_atom(value) -> Atom.to_string(value)
+      _ -> nil
+    end
+  end
+
+  defp map_field(map, key) when is_map(map) and is_atom(key) do
+    Map.get(map, key) || Map.get(map, Atom.to_string(key))
   end
 
   defp byte_size_or_zero(bin) when is_binary(bin), do: byte_size(bin)
@@ -122,8 +229,8 @@ defmodule EzagentPluginLiveview.AdminTemplatesLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(
-          Map.get(assigns, :current_entity_uri) || Ezagent.URI.new!("entity://user/system/admin")
+        Ezagent.URI.stable_key(
+          Map.get(assigns, :current_entity_uri) || Ezagent.Entity.User.admin_uri()
         )
       end)
 
@@ -157,7 +264,11 @@ defmodule EzagentPluginLiveview.AdminTemplatesLive do
                 <span class="text-[10px] uppercase tracking-wide text-zinc-500 mr-2">
                   {gettext("Type")}
                 </span>
-                <.filter_chip filter={@filter} value="all" label={gettext("all (%{n})", n: total_count(@counts))} />
+                <.filter_chip
+                  filter={@filter}
+                  value="all"
+                  label={gettext("all (%{n})", n: total_count(@counts))}
+                />
                 <.filter_chip
                   filter={@filter}
                   value="agent_template"
@@ -166,7 +277,9 @@ defmodule EzagentPluginLiveview.AdminTemplatesLive do
                 <.filter_chip
                   filter={@filter}
                   value="session_template"
-                  label={gettext("SessionTemplate (%{n})", n: Map.get(@counts, "session_template", 0))}
+                  label={
+                    gettext("SessionTemplate (%{n})", n: Map.get(@counts, "session_template", 0))
+                  }
                 />
               </div>
 
@@ -190,6 +303,10 @@ defmodule EzagentPluginLiveview.AdminTemplatesLive do
                     <tr class="border-b border-zinc-200 dark:border-zinc-800">
                       <th class="text-left px-1 py-1.5">{gettext("URI")}</th>
                       <th class="text-left">{gettext("Type")}</th>
+                      <th id="template-level-column" class="text-left">{gettext("Level")}</th>
+                      <th id="template-mandatory-column" class="text-left">
+                        {gettext("Mandatory")}
+                      </th>
                       <th class="text-right">{gettext("Bytes")}</th>
                       <th class="text-left">{gettext("Updated")}</th>
                       <th></th>
@@ -205,6 +322,12 @@ defmodule EzagentPluginLiveview.AdminTemplatesLive do
                       </td>
                       <td>
                         <.badge variant={type_badge_variant(t.kind_type)}>{t.kind_type}</.badge>
+                      </td>
+                      <td>
+                        <.badge variant="default">{t.level}</.badge>
+                      </td>
+                      <td class="font-mono text-[11px] text-zinc-600 dark:text-zinc-400">
+                        {mandatory_set_label(t.mandatory_set)}
                       </td>
                       <td class="text-right font-mono text-[11px] text-zinc-500">{t.bytes}</td>
                       <td class="font-mono text-[11px] text-zinc-500">
@@ -246,9 +369,12 @@ defmodule EzagentPluginLiveview.AdminTemplatesLive do
   defp type_badge_variant("session_template"), do: "primary"
   defp type_badge_variant(_), do: "default"
 
-  attr :filter, :string, required: true
-  attr :value, :string, required: true
-  attr :label, :string, required: true
+  defp mandatory_set_label([]), do: "(none)"
+  defp mandatory_set_label(paths), do: Enum.join(paths, ", ")
+
+  attr(:filter, :string, required: true)
+  attr(:value, :string, required: true)
+  attr(:label, :string, required: true)
 
   defp filter_chip(assigns) do
     ~H"""

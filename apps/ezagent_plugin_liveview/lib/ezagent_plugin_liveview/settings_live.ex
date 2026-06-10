@@ -114,7 +114,9 @@ defmodule EzagentPluginLiveview.SettingsLive do
 
       not Ezagent.AppSettings.smtp_configured?() ->
         {:noreply,
-         assign(socket, :smtp_test_result,
+         assign(
+           socket,
+           :smtp_test_result,
            {:error,
             gettext(
               "SMTP not configured — fill host/port/username/password/from above and save first."
@@ -202,7 +204,7 @@ defmodule EzagentPluginLiveview.SettingsLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(assigns.current_entity_uri || Ezagent.URI.new!("entity://user/system/admin"))
+        Ezagent.URI.stable_key(assigns.current_entity_uri || Ezagent.Entity.User.admin_uri())
       end)
 
     ~H"""
@@ -220,28 +222,42 @@ defmodule EzagentPluginLiveview.SettingsLive do
         <AdminShell.admin_shell current_path="/admin/settings" active_section={:settings}>
           <:main>
             <div class="flex flex-1 min-h-0">
-          <%!-- V1 fix (Allen 2026-05-21 17:44): inner sub-section rail.
+              <%!-- V1 fix (Allen 2026-05-21 17:44): inner sub-section rail.
                 AdminShell's outer sidebar selects which admin
                 page is active (Overview / Workspaces / Logs / Registry
                 / Snapshots / Settings); this inner rail switches
                 between sub-sections of the Settings page itself. All
                 sub-sections are admin-only at the mount-gate level, so
                 the prior `:if={@is_admin?}` conditionals are dropped. --%>
-          <aside class="w-56 shrink-0 border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-950/50">
-            <div class="p-3 flex flex-col gap-px">
-              <div class="text-[10px] uppercase tracking-wide text-zinc-500 mb-2">{gettext("Settings")}</div>
-              <.section_link section={@section} value={:smtp} label={gettext("Email / SMTP")} />
-              <.section_link section={@section} value={:registration} label={gettext("Registration")} />
-              <.section_link section={@section} value={:access} label={gettext("Access & Identity")} />
-              <.section_link section={@section} value={:system} label={gettext("System")} />
-              <.section_link section={@section} value={:account} label={gettext("Account")} />
-              <.section_link section={@section} value={:preferences} label={gettext("Preferences")} />
-              <.section_link section={@section} value={:keyboard} label={gettext("Keyboard")} />
-            </div>
-          </aside>
-          <div class="flex-1 overflow-auto px-6 py-6">
-            {render_section(assigns, @section)}
-          </div>
+              <aside class="w-56 shrink-0 border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-950/50">
+                <div class="p-3 flex flex-col gap-px">
+                  <div class="text-[10px] uppercase tracking-wide text-zinc-500 mb-2">
+                    {gettext("Settings")}
+                  </div>
+                  <.section_link section={@section} value={:smtp} label={gettext("Email / SMTP")} />
+                  <.section_link
+                    section={@section}
+                    value={:registration}
+                    label={gettext("Registration")}
+                  />
+                  <.section_link
+                    section={@section}
+                    value={:access}
+                    label={gettext("Access & Identity")}
+                  />
+                  <.section_link section={@section} value={:system} label={gettext("System")} />
+                  <.section_link section={@section} value={:account} label={gettext("Account")} />
+                  <.section_link
+                    section={@section}
+                    value={:preferences}
+                    label={gettext("Preferences")}
+                  />
+                  <.section_link section={@section} value={:keyboard} label={gettext("Keyboard")} />
+                </div>
+              </aside>
+              <div class="flex-1 overflow-auto px-6 py-6">
+                {render_section(assigns, @section)}
+              </div>
             </div>
           </:main>
         </AdminShell.admin_shell>
@@ -250,9 +266,9 @@ defmodule EzagentPluginLiveview.SettingsLive do
     """
   end
 
-  attr :section, :atom, required: true
-  attr :value, :atom, required: true
-  attr :label, :string, required: true
+  attr(:section, :atom, required: true)
+  attr(:value, :atom, required: true)
+  attr(:label, :string, required: true)
 
   defp section_link(assigns) do
     ~H"""
@@ -262,8 +278,9 @@ defmodule EzagentPluginLiveview.SettingsLive do
       phx-value-key={Atom.to_string(@value)}
       class={[
         "text-left px-2 py-1 text-xs rounded",
-        @section == @value && "bg-zinc-100 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 font-medium"
-          || "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+        (@section == @value &&
+           "bg-zinc-100 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 font-medium") ||
+          "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"
       ]}
     >
       {@label}
@@ -333,9 +350,21 @@ defmodule EzagentPluginLiveview.SettingsLive do
       <:subtitle>{gettext("Manage users, capabilities, API keys, Feishu bindings.")}</:subtitle>
     </.page_header>
     <div class="grid grid-cols-2 gap-3">
-      <.access_card href="/identities/users" title={gettext("Users")} desc={gettext("List + create users + set passwords")} />
-      <.access_card href="/admin/registry" title={gettext("Registry")} desc={gettext("Live registry of every Kind instance")} />
-      <.access_card href="/plugins/feishu/bindings" title={gettext("Feishu bindings")} desc={gettext("open_id ↔ user URI bindings")} />
+      <.access_card
+        href="/identities/users"
+        title={gettext("Users")}
+        desc={gettext("List + create users + set passwords")}
+      />
+      <.access_card
+        href="/admin/registry"
+        title={gettext("Registry")}
+        desc={gettext("Live registry of every Kind instance")}
+      />
+      <.access_card
+        href="/plugins/feishu/bindings"
+        title={gettext("Feishu bindings")}
+        desc={gettext("open_id ↔ user URI bindings")}
+      />
     </div>
     """
   end
@@ -368,80 +397,142 @@ defmodule EzagentPluginLiveview.SettingsLive do
   defp render_section(assigns, :smtp) do
     ~H"""
     <.page_header title={gettext("Email / SMTP")}>
-        <:subtitle>
-          {gettext(
-            "Outbound mail config for magic-link sign-in. Until SMTP is set here, email login fails with %{error}.",
-            error: ":smtp_not_configured"
-          )}
-        </:subtitle>
-      </.page_header>
+      <:subtitle>
+        {gettext(
+          "Outbound mail config for magic-link sign-in. Until SMTP is set here, email login fails with %{error}.",
+          error: ":smtp_not_configured"
+        )}
+      </:subtitle>
+    </.page_header>
 
-      <.card class="mt-4">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="text-sm font-medium text-zinc-900 dark:text-zinc-100">{gettext("Relay credentials")}</h2>
-          <.badge :if={@smtp_configured?} variant="success">{gettext("Configured")}</.badge>
-          <.badge :if={not @smtp_configured?} variant="warning">{gettext("Not configured")}</.badge>
+    <.card class="mt-4">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+          {gettext("Relay credentials")}
+        </h2>
+        <.badge :if={@smtp_configured?} variant="success">{gettext("Configured")}</.badge>
+        <.badge :if={not @smtp_configured?} variant="warning">{gettext("Not configured")}</.badge>
+      </div>
+
+      <.form for={%{}} as={:smtp} phx-submit="save_smtp" class="space-y-3">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <.smtp_field
+            name="smtp[host]"
+            label={gettext("Host")}
+            type="text"
+            placeholder="smtp.example.com"
+            value={Map.get(@smtp_config, "host", "")}
+          />
+          <.smtp_field
+            name="smtp[port]"
+            label={gettext("Port")}
+            type="number"
+            placeholder="587"
+            value={to_string(Map.get(@smtp_config, "port", ""))}
+          />
+          <.smtp_field
+            name="smtp[username]"
+            label={gettext("Username")}
+            type="text"
+            placeholder="postmaster@example.com"
+            value={Map.get(@smtp_config, "username", "")}
+          />
+          <.smtp_field
+            name="smtp[password]"
+            label={gettext("Password")}
+            type="password"
+            placeholder={
+              if(Map.get(@smtp_config, "password") not in [nil, ""],
+                do: gettext("(saved — leave blank to keep)"),
+                else: gettext("(required)")
+              )
+            }
+            value=""
+          />
+          <.smtp_field
+            name="smtp[from_address]"
+            label={gettext("From address")}
+            type="email"
+            placeholder="no-reply@example.com"
+            value={Map.get(@smtp_config, "from_address", "")}
+          />
+          <div class="flex items-end gap-2">
+            <label class="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300">
+              <input
+                type="checkbox"
+                name="smtp[tls]"
+                value="true"
+                checked={Map.get(@smtp_config, "tls", true)}
+              />
+              <span>{gettext("Use STARTTLS (recommended)")}</span>
+            </label>
+          </div>
         </div>
+        <div class="flex justify-end">
+          <.button type="submit" variant="primary" size="sm">{gettext("Save SMTP config")}</.button>
+        </div>
+      </.form>
 
-        <.form for={%{}} as={:smtp} phx-submit="save_smtp" class="space-y-3">
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <.smtp_field name="smtp[host]" label={gettext("Host")} type="text" placeholder="smtp.example.com" value={Map.get(@smtp_config, "host", "")} />
-            <.smtp_field name="smtp[port]" label={gettext("Port")} type="number" placeholder="587" value={to_string(Map.get(@smtp_config, "port", ""))} />
-            <.smtp_field name="smtp[username]" label={gettext("Username")} type="text" placeholder="postmaster@example.com" value={Map.get(@smtp_config, "username", "")} />
-            <.smtp_field name="smtp[password]" label={gettext("Password")} type="password" placeholder={if(Map.get(@smtp_config, "password") not in [nil, ""], do: gettext("(saved — leave blank to keep)"), else: gettext("(required)"))} value="" />
-            <.smtp_field name="smtp[from_address]" label={gettext("From address")} type="email" placeholder="no-reply@example.com" value={Map.get(@smtp_config, "from_address", "")} />
-            <div class="flex items-end gap-2">
-              <label class="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300">
-                <input type="checkbox" name="smtp[tls]" value="true" checked={Map.get(@smtp_config, "tls", true)} />
-                <span>{gettext("Use STARTTLS (recommended)")}</span>
-              </label>
-            </div>
-          </div>
-          <div class="flex justify-end">
-            <.button type="submit" variant="primary" size="sm">{gettext("Save SMTP config")}</.button>
-          </div>
-        </.form>
+      <p
+        :if={match?({:ok, _}, @smtp_flash)}
+        class="text-emerald-600 dark:text-emerald-400 text-xs mt-3"
+      >
+        {elem(@smtp_flash, 1)}
+      </p>
+      <p :if={match?({:error, _}, @smtp_flash)} class="text-rose-600 dark:text-rose-400 text-xs mt-3">
+        {elem(@smtp_flash, 1)}
+      </p>
+    </.card>
 
-        <p :if={match?({:ok, _}, @smtp_flash)} class="text-emerald-600 dark:text-emerald-400 text-xs mt-3">
-          {elem(@smtp_flash, 1)}
-        </p>
-        <p :if={match?({:error, _}, @smtp_flash)} class="text-rose-600 dark:text-rose-400 text-xs mt-3">
-          {elem(@smtp_flash, 1)}
-        </p>
-      </.card>
+    <.card class="mt-4">
+      <h2 class="text-sm font-medium text-zinc-900 dark:text-zinc-100 mb-3">
+        {gettext("Send test email")}
+      </h2>
+      <p class="text-xs text-zinc-500 mb-3">
+        {gettext(
+          "Sends a test magic-link email using the currently-saved SMTP config. Surfaces real delivery success or failure — no syntactic checks."
+        )}
+      </p>
+      <form
+        phx-submit="send_test_email"
+        phx-change="update_test_recipient"
+        class="flex gap-2 items-end flex-wrap"
+      >
+        <div class="flex-1 min-w-0">
+          <label
+            for="smtp_test_recipient"
+            class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1"
+          >
+            {gettext("Recipient")}
+          </label>
+          <input
+            type="email"
+            id="smtp_test_recipient"
+            name="recipient"
+            value={@smtp_test_recipient}
+            placeholder="you@example.com"
+            required
+            class="w-full px-2 py-1.5 text-xs border border-zinc-300 dark:border-zinc-700 rounded font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+          />
+        </div>
+        <.button type="submit" variant="outline" size="sm">
+          <.icon name="paper-airplane" size="xs" /> {gettext("Send test")}
+        </.button>
+      </form>
 
-      <.card class="mt-4">
-        <h2 class="text-sm font-medium text-zinc-900 dark:text-zinc-100 mb-3">{gettext("Send test email")}</h2>
-        <p class="text-xs text-zinc-500 mb-3">
-          {gettext(
-            "Sends a test magic-link email using the currently-saved SMTP config. Surfaces real delivery success or failure — no syntactic checks."
-          )}
-        </p>
-        <form phx-submit="send_test_email" phx-change="update_test_recipient" class="flex gap-2 items-end flex-wrap">
-          <div class="flex-1 min-w-0">
-            <label for="smtp_test_recipient" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">{gettext("Recipient")}</label>
-            <input
-              type="email"
-              id="smtp_test_recipient"
-              name="recipient"
-              value={@smtp_test_recipient}
-              placeholder="you@example.com"
-              required
-              class="w-full px-2 py-1.5 text-xs border border-zinc-300 dark:border-zinc-700 rounded font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
-            />
-          </div>
-          <.button type="submit" variant="outline" size="sm">
-            <.icon name="paper-airplane" size="xs" /> {gettext("Send test")}
-          </.button>
-        </form>
-
-        <p :if={match?({:ok, _}, @smtp_test_result)} class="text-emerald-600 dark:text-emerald-400 text-xs mt-3">
-          ✓ {elem(@smtp_test_result, 1)}
-        </p>
-        <p :if={match?({:error, _}, @smtp_test_result)} class="text-rose-600 dark:text-rose-400 text-xs mt-3">
-          ✗ {elem(@smtp_test_result, 1)}
-        </p>
-      </.card>
+      <p
+        :if={match?({:ok, _}, @smtp_test_result)}
+        class="text-emerald-600 dark:text-emerald-400 text-xs mt-3"
+      >
+        ✓ {elem(@smtp_test_result, 1)}
+      </p>
+      <p
+        :if={match?({:error, _}, @smtp_test_result)}
+        class="text-rose-600 dark:text-rose-400 text-xs mt-3"
+      >
+        ✗ {elem(@smtp_test_result, 1)}
+      </p>
+    </.card>
     """
   end
 
@@ -449,37 +540,41 @@ defmodule EzagentPluginLiveview.SettingsLive do
   defp render_section(assigns, :registration) do
     ~H"""
     <.page_header title={gettext("Registration")}>
-        <:subtitle>
-          {gettext(
-            "Self-registration is now managed PER WORKSPACE via magic_link_rule rows. Each workspace specifies who may register into it (domain, user_list, or invite_only). See /workspaces."
-          )}
-        </:subtitle>
-      </.page_header>
+      <:subtitle>
+        {gettext(
+          "Self-registration is now managed PER WORKSPACE via magic_link_rule rows. Each workspace specifies who may register into it (domain, user_list, or invite_only). See /workspaces."
+        )}
+      </:subtitle>
+    </.page_header>
 
-      <.card class="mt-4">
-        <h2 class="text-sm font-medium text-zinc-900 dark:text-zinc-100 mb-3">{gettext("Where did the registration_domains form go?")}</h2>
-        <p class="text-xs text-zinc-600 dark:text-zinc-400">
-          {gettext(
-            "SPEC v2 (2026-05-24) — the global `registration_domains` AppSetting was replaced by per-workspace rules. To allow a domain to register, create a workspace at /workspaces and add a `domain` rule. Multiple domains? Multiple workspaces, one each — admin can promote users to system after."
-          )}
-        </p>
-        <p class="text-xs text-zinc-600 dark:text-zinc-400 mt-2">
-          <a href="/workspaces" class="underline">{gettext("Manage workspaces →")}</a>
-        </p>
-      </.card>
+    <.card class="mt-4">
+      <h2 class="text-sm font-medium text-zinc-900 dark:text-zinc-100 mb-3">
+        {gettext("Where did the registration_domains form go?")}
+      </h2>
+      <p class="text-xs text-zinc-600 dark:text-zinc-400">
+        {gettext(
+          "SPEC v2 (2026-05-24) — the global `registration_domains` AppSetting was replaced by per-workspace rules. To allow a domain to register, create a workspace at /workspaces and add a `domain` rule. Multiple domains? Multiple workspaces, one each — admin can promote users to system after."
+        )}
+      </p>
+      <p class="text-xs text-zinc-600 dark:text-zinc-400 mt-2">
+        <a href="/workspaces" class="underline">{gettext("Manage workspaces →")}</a>
+      </p>
+    </.card>
     """
   end
 
-  attr :name, :string, required: true
-  attr :label, :string, required: true
-  attr :type, :string, default: "text"
-  attr :value, :string, default: ""
-  attr :placeholder, :string, default: ""
+  attr(:name, :string, required: true)
+  attr(:label, :string, required: true)
+  attr(:type, :string, default: "text")
+  attr(:value, :string, default: "")
+  attr(:placeholder, :string, default: "")
 
   defp smtp_field(assigns) do
     ~H"""
     <div>
-      <label for={@name} class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">{@label}</label>
+      <label for={@name} class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">
+        {@label}
+      </label>
       <input
         type={@type}
         id={@name}
@@ -492,9 +587,9 @@ defmodule EzagentPluginLiveview.SettingsLive do
     """
   end
 
-  attr :href, :string, required: true
-  attr :title, :string, required: true
-  attr :desc, :string, required: true
+  attr(:href, :string, required: true)
+  attr(:title, :string, required: true)
+  attr(:desc, :string, required: true)
 
   defp access_card(assigns) do
     ~H"""

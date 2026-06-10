@@ -35,7 +35,7 @@ defmodule EzagentCore.Invariants.NoDefaultWorkspaceSeededTest do
   ## Scope: 1st-pass cleanup (lib only)
 
   PR-F 1st pass touches `apps/*/lib/`. Test fixtures + docs that
-  still reference `entity://user/default/...` / `session://default/
+  still reference `entity://default/user/...` / `session://default/
   default/...` are deferred to a 2nd PR; the URI string literal is
   not a workspace row, so this invariant remains green regardless.
   """

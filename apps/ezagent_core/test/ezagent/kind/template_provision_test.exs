@@ -34,10 +34,10 @@ defmodule Ezagent.Kind.TemplateProvisionTest do
     :ok
   end
 
-  defp ws, do: URI.parse("entity://workspace/system/myws")
+  defp ws, do: Ezagent.URI.new!("entity://workspace/system/myws")
 
   test "allocates + injects allocated_config_dir when a config_dir reference is present, then delegates" do
-    uri_str = "entity://agent/myws/cc_foo"
+    uri_str = "entity://myws/agent/cc_foo"
     data = %{"agent_uri" => uri_str, "config_dir" => "/some/reference/dir", "cwd" => "/tmp"}
 
     assert {:ok, [^uri_str], %{received: received}} =
@@ -50,7 +50,7 @@ defmodule Ezagent.Kind.TemplateProvisionTest do
   end
 
   test "no config_dir reference → no allocation, no injected key (curl/echo footprint-free)" do
-    data = %{"agent_uri" => "entity://agent/myws/curl_bar", "cwd" => "/tmp"}
+    data = %{"agent_uri" => "entity://myws/agent/curl_bar", "cwd" => "/tmp"}
 
     assert {:ok, _uris, %{received: received}} =
              Template.provision_and_instantiate(FakeClass, "cc.agent", data, ws())

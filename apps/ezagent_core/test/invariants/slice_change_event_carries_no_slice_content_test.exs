@@ -67,7 +67,7 @@ defmodule Ezagent.Invariants.SliceChangeEventCarriesNoSliceContentTest do
 
   describe "slice_change broadcast envelope (PR-N3 codex r2 HIGH-1)" do
     test "emit/1 carries ONLY the allowed-keys subset, no slice content" do
-      uri = URI.parse("entity://user/system/sec-#{System.unique_integer([:positive])}")
+      uri = Ezagent.URI.new!("entity://system/user/sec-#{System.unique_integer([:positive])}")
       :ok = SliceChange.subscribe_unverified(uri)
 
       # Simulate the largest possible event the producer could hand
@@ -85,7 +85,7 @@ defmodule Ezagent.Invariants.SliceChangeEventCarriesNoSliceContentTest do
           old_slice: %{keys: %{"openai" => "sk-OLD-LEAKY-KEY-1111"}},
           new_slice: %{keys: %{"openai" => "sk-NEW-LEAKY-KEY-2222"}},
           result: %{ok: true, provider: "openai"},
-          caller: URI.parse("entity://user/system/attacker"),
+          caller: Ezagent.URI.new!("entity://system/user/attacker"),
           at: DateTime.utc_now()
         })
 
@@ -140,7 +140,7 @@ defmodule Ezagent.Invariants.SliceChangeEventCarriesNoSliceContentTest do
     end
 
     test "emit/1 populates required allowed keys with right types" do
-      uri = URI.parse("entity://user/system/sh-#{System.unique_integer([:positive])}")
+      uri = Ezagent.URI.new!("entity://system/user/sh-#{System.unique_integer([:positive])}")
       :ok = SliceChange.subscribe_unverified(uri)
 
       :ok =
@@ -167,7 +167,7 @@ defmodule Ezagent.Invariants.SliceChangeEventCarriesNoSliceContentTest do
     end
 
     test "cursor is monotonically increasing per URI" do
-      uri = URI.parse("entity://user/system/cur-#{System.unique_integer([:positive])}")
+      uri = Ezagent.URI.new!("entity://system/user/cur-#{System.unique_integer([:positive])}")
       :ok = SliceChange.subscribe_unverified(uri)
 
       base = %{
@@ -195,8 +195,8 @@ defmodule Ezagent.Invariants.SliceChangeEventCarriesNoSliceContentTest do
     end
 
     test "cursor counters are independent per URI" do
-      uri_a = URI.parse("entity://user/system/cur-a-#{System.unique_integer([:positive])}")
-      uri_b = URI.parse("entity://user/system/cur-b-#{System.unique_integer([:positive])}")
+      uri_a = Ezagent.URI.new!("entity://system/user/cur-a-#{System.unique_integer([:positive])}")
+      uri_b = Ezagent.URI.new!("entity://system/user/cur-b-#{System.unique_integer([:positive])}")
 
       :ok = SliceChange.subscribe_unverified(uri_a)
       :ok = SliceChange.subscribe_unverified(uri_b)
@@ -233,7 +233,7 @@ defmodule Ezagent.Invariants.SliceChangeEventCarriesNoSliceContentTest do
     end
 
     test "result_summary is :ok when caller passes result != nil, :error when nil/error" do
-      uri = URI.parse("entity://user/system/sum-#{System.unique_integer([:positive])}")
+      uri = Ezagent.URI.new!("entity://system/user/sum-#{System.unique_integer([:positive])}")
       :ok = SliceChange.subscribe_unverified(uri)
 
       # nil result -> :ok (the invoke succeeded, just returned no result map)

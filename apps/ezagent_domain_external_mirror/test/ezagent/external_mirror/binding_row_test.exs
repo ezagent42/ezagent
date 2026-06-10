@@ -23,7 +23,7 @@ defmodule Ezagent.ExternalMirror.BindingRowTest do
 
   describe "delete_by_id/1 — task #53 return shape" do
     test "{:ok, :deleted} when row existed" do
-      attrs = fixture_attrs("session://default/system/em-del-1", "feishu", "oc_a")
+      attrs = fixture_attrs("session://system/default/em-del-1", "feishu", "oc_a")
       {:ok, row} = BindingRow.insert(attrs)
 
       assert {:ok, :deleted} = BindingRow.delete_by_id(row.id)
@@ -39,7 +39,7 @@ defmodule Ezagent.ExternalMirror.BindingRowTest do
 
   describe "delete_by_natural_key/3 — task #53 return shape" do
     test "{:ok, :deleted} for an existing (session, adapter, target) triple" do
-      session_uri = URI.parse("session://default/system/em-nk-1")
+      session_uri = Ezagent.URI.new!("session://system/default/em-nk-1")
       attrs = fixture_attrs(URI.to_string(session_uri), "feishu", "oc_nk_a")
       {:ok, _row} = BindingRow.insert(attrs)
 
@@ -48,15 +48,15 @@ defmodule Ezagent.ExternalMirror.BindingRowTest do
     end
 
     test "{:ok, :not_found} for an unbound triple — surfaces desync" do
-      session_uri = URI.parse("session://default/system/em-nk-missing")
+      session_uri = Ezagent.URI.new!("session://system/default/em-nk-missing")
 
       assert {:ok, :not_found} =
                BindingRow.delete_by_natural_key(session_uri, "feishu", "oc_missing")
     end
 
     test "delete is session-scoped — other sessions' rows survive" do
-      session_a = URI.parse("session://default/system/em-nk-a")
-      session_b = URI.parse("session://default/system/em-nk-b")
+      session_a = Ezagent.URI.new!("session://system/default/em-nk-a")
+      session_b = Ezagent.URI.new!("session://system/default/em-nk-b")
       shared_target = "oc_shared"
 
       {:ok, row_a} =
@@ -87,7 +87,7 @@ defmodule Ezagent.ExternalMirror.BindingRowTest do
     # ACTUAL natural-key columns, so it works regardless of
     # `:id` drift.
     test "deletes even when stored :id does not match the current row_id/3 hash" do
-      session_uri = URI.parse("session://system/system/em-nk-drift")
+      session_uri = Ezagent.URI.new!("session://system/system/em-nk-drift")
       attrs = fixture_attrs(URI.to_string(session_uri), "feishu", "oc_drift")
 
       # Manufacture the drift: overwrite the row's `:id` with the
@@ -95,7 +95,7 @@ defmodule Ezagent.ExternalMirror.BindingRowTest do
       # default-to-system migration's
       # `UPDATE … SET session_uri = REPLACE(…)` without recomputing
       # `:id`).
-      pre_migration_uri = URI.parse("session://default/system/em-nk-drift")
+      pre_migration_uri = Ezagent.URI.new!("session://system/default/em-nk-drift")
       drifted_id = BindingRow.row_id(pre_migration_uri, "feishu", "oc_drift")
       attrs = %{attrs | id: drifted_id}
 
@@ -136,7 +136,7 @@ defmodule Ezagent.ExternalMirror.BindingRowTest do
       adapter_id: adapter_id,
       target_id: target_id,
       opts_json: "{}",
-      bound_by: "entity://user/system/admin",
+      bound_by: "entity://system/user/admin",
       bound_at: DateTime.utc_now(),
       workspace_uri: workspace_uri
     }

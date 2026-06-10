@@ -344,7 +344,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
     test "validate/1 accepts role=\"orchestrator\" (string)" do
       tmpl = %{
         "class" => "cc.agent",
-        "agent_uri" => "entity://agent/system/cc_test-#{System.unique_integer([:positive])}",
+        "agent_uri" => "entity://system/agent/cc_test-#{System.unique_integer([:positive])}",
         "cwd" => System.tmp_dir!(),
         "role" => "orchestrator"
       }
@@ -355,7 +355,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
     test "validate/1 accepts role=:orchestrator (atom)" do
       tmpl = %{
         "class" => "cc.agent",
-        "agent_uri" => "entity://agent/system/cc_test-#{System.unique_integer([:positive])}",
+        "agent_uri" => "entity://system/agent/cc_test-#{System.unique_integer([:positive])}",
         "cwd" => System.tmp_dir!(),
         "role" => :orchestrator
       }
@@ -366,7 +366,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
     test "validate/1 accepts role=\"default\" (string)" do
       tmpl = %{
         "class" => "cc.agent",
-        "agent_uri" => "entity://agent/system/cc_test-#{System.unique_integer([:positive])}",
+        "agent_uri" => "entity://system/agent/cc_test-#{System.unique_integer([:positive])}",
         "cwd" => System.tmp_dir!(),
         "role" => "default"
       }
@@ -377,7 +377,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
     test "validate/1 accepts role=:default (atom)" do
       tmpl = %{
         "class" => "cc.agent",
-        "agent_uri" => "entity://agent/system/cc_test-#{System.unique_integer([:positive])}",
+        "agent_uri" => "entity://system/agent/cc_test-#{System.unique_integer([:positive])}",
         "cwd" => System.tmp_dir!(),
         "role" => :default
       }
@@ -388,7 +388,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
     test "validate/1 rejects unknown role value" do
       tmpl = %{
         "class" => "cc.agent",
-        "agent_uri" => "entity://agent/system/cc_test-#{System.unique_integer([:positive])}",
+        "agent_uri" => "entity://system/agent/cc_test-#{System.unique_integer([:positive])}",
         "cwd" => System.tmp_dir!(),
         "role" => "admin"
       }
@@ -399,7 +399,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
     test "validate/1 omits the role field cleanly" do
       tmpl = %{
         "class" => "cc.agent",
-        "agent_uri" => "entity://agent/system/cc_test-#{System.unique_integer([:positive])}",
+        "agent_uri" => "entity://system/agent/cc_test-#{System.unique_integer([:positive])}",
         "cwd" => System.tmp_dir!()
       }
 
@@ -414,7 +414,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
       Application.put_env(:ezagent_plugin_cc, :orchestrator_skill_source, "/no/such/path")
 
       tmpl = %{"role" => "orchestrator"}
-      agent_uri = URI.new!("entity://agent/system/cc_orch-#{System.unique_integer([:positive])}")
+      agent_uri = URI.new!("entity://system/agent/cc_orch-#{System.unique_integer([:positive])}")
 
       assert {:ok, %{role_degraded: true, role_degraded_reason: reason}} =
                CcAgent.try_role_bootstrap(tmpl, config_dir, agent_uri)
@@ -425,7 +425,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
     test "returns {:ok, %{}} when role is default (no bootstrap to attempt)",
          %{config_dir: config_dir} do
       tmpl = %{"role" => "default"}
-      agent_uri = URI.new!("entity://agent/system/cc_orch-#{System.unique_integer([:positive])}")
+      agent_uri = URI.new!("entity://system/agent/cc_orch-#{System.unique_integer([:positive])}")
 
       assert {:ok, meta} = CcAgent.try_role_bootstrap(tmpl, config_dir, agent_uri)
       refute Map.has_key?(meta, :role_degraded)
@@ -434,7 +434,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
     test "returns {:ok, %{}} when orchestrator role succeeds",
          %{config_dir: config_dir} do
       tmpl = %{"role" => "orchestrator"}
-      agent_uri = URI.new!("entity://agent/system/cc_orch-#{System.unique_integer([:positive])}")
+      agent_uri = URI.new!("entity://system/agent/cc_orch-#{System.unique_integer([:positive])}")
 
       assert {:ok, meta} = CcAgent.try_role_bootstrap(tmpl, config_dir, agent_uri)
       refute Map.has_key?(meta, :role_degraded)
@@ -445,7 +445,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
       Application.put_env(:ezagent_plugin_cc, :orchestrator_skill_source, "/no/such/path-2")
 
       tmpl = %{"role" => "orchestrator"}
-      agent_uri = URI.new!("entity://agent/system/cc_orch-#{System.unique_integer([:positive])}")
+      agent_uri = URI.new!("entity://system/agent/cc_orch-#{System.unique_integer([:positive])}")
 
       :telemetry.attach(
         "role-bootstrap-test-#{System.unique_integer([:positive])}",

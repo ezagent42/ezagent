@@ -50,11 +50,11 @@ defmodule Ezagent.PluginCc.E2E.Scenario05CcAgentRoundtripTest do
     test "converts an inbound chat payload into a `to_claude` channel frame" do
       payload = %Payload{
         message_id: "m-#{System.unique_integer([:positive])}",
-        session_uri: URI.new!("session://default/team-alpha/scenario05"),
-        sender_uri: URI.new!("entity://user/system/admin"),
+        session_uri: URI.new!("session://team-alpha/default/scenario05"),
+        sender_uri: URI.new!("entity://system/user/admin"),
         text: "say hello",
         event_type: :chat_send,
-        meta: %{"sender" => "entity://user/system/admin"}
+        meta: %{"sender" => "entity://system/user/admin"}
       }
 
       assert :ok = BridgeAdapter.deliver(payload, self())
@@ -63,7 +63,7 @@ defmodule Ezagent.PluginCc.E2E.Scenario05CcAgentRoundtripTest do
 
       assert frame == %{
                "content" => "say hello",
-               "meta" => %{"sender" => "entity://user/system/admin"}
+               "meta" => %{"sender" => "entity://system/user/admin"}
              }
     end
 
@@ -75,8 +75,8 @@ defmodule Ezagent.PluginCc.E2E.Scenario05CcAgentRoundtripTest do
       # EzagentPluginCodex.BridgeAdapter.deliver/2).
       payload = %Payload{
         message_id: "m-shouldnt-leak",
-        session_uri: URI.new!("session://default/team-alpha/x"),
-        sender_uri: URI.new!("entity://user/system/admin"),
+        session_uri: URI.new!("session://team-alpha/default/x"),
+        sender_uri: URI.new!("entity://system/user/admin"),
         text: "ping",
         event_type: :chat_send
       }
@@ -96,13 +96,13 @@ defmodule Ezagent.PluginCc.E2E.Scenario05CcAgentRoundtripTest do
   describe "BridgeAdapter.handle_client_event/3 — inbound reply" do
     test "rejects a reply without `text`" do
       socket = %Phoenix.Socket{
-        assigns: %{agent_uri: URI.new!("entity://agent/team-alpha/cc_alpha")}
+        assigns: %{agent_uri: URI.new!("entity://team-alpha/agent/cc_alpha")}
       }
 
       assert {:reply, {:error, %{reason: msg}}, ^socket} =
                BridgeAdapter.handle_client_event(
                  "reply",
-                 %{"session_uris" => ["session://default/team-alpha/x"]},
+                 %{"session_uris" => ["session://team-alpha/default/x"]},
                  socket
                )
 
@@ -111,7 +111,7 @@ defmodule Ezagent.PluginCc.E2E.Scenario05CcAgentRoundtripTest do
 
     test "rejects a reply without `session_uris`" do
       socket = %Phoenix.Socket{
-        assigns: %{agent_uri: URI.new!("entity://agent/team-alpha/cc_alpha")}
+        assigns: %{agent_uri: URI.new!("entity://team-alpha/agent/cc_alpha")}
       }
 
       assert {:reply, {:error, %{reason: msg}}, ^socket} =
@@ -126,7 +126,7 @@ defmodule Ezagent.PluginCc.E2E.Scenario05CcAgentRoundtripTest do
 
     test "rejects empty `session_uris` (Invariant #9 closure r3)" do
       socket = %Phoenix.Socket{
-        assigns: %{agent_uri: URI.new!("entity://agent/team-alpha/cc_alpha")}
+        assigns: %{agent_uri: URI.new!("entity://team-alpha/agent/cc_alpha")}
       }
 
       assert {:reply, {:error, %{reason: msg}}, ^socket} =
@@ -141,7 +141,7 @@ defmodule Ezagent.PluginCc.E2E.Scenario05CcAgentRoundtripTest do
 
     test "rejects malformed attachments (must be a list)" do
       socket = %Phoenix.Socket{
-        assigns: %{agent_uri: URI.new!("entity://agent/team-alpha/cc_alpha")}
+        assigns: %{agent_uri: URI.new!("entity://team-alpha/agent/cc_alpha")}
       }
 
       assert {:reply, {:error, %{reason: msg}}, ^socket} =
@@ -149,7 +149,7 @@ defmodule Ezagent.PluginCc.E2E.Scenario05CcAgentRoundtripTest do
                  "reply",
                  %{
                    "text" => "x",
-                   "session_uris" => ["session://default/team-alpha/x"],
+                   "session_uris" => ["session://team-alpha/default/x"],
                    "attachments" => "not-a-list"
                  },
                  socket
@@ -165,7 +165,7 @@ defmodule Ezagent.PluginCc.E2E.Scenario05CcAgentRoundtripTest do
 
   describe "BridgeAdapter.dispatch_reply/5 — three-bucket classifier" do
     test "skipped: malformed session URI is classified, NOT dispatched" do
-      agent_uri = URI.new!("entity://agent/team-alpha/cc_alpha")
+      agent_uri = URI.new!("entity://team-alpha/agent/cc_alpha")
 
       assert {:ok, %{dispatched: dispatched, failed: _failed, skipped: skipped}} =
                BridgeAdapter.dispatch_reply(
@@ -181,8 +181,10 @@ defmodule Ezagent.PluginCc.E2E.Scenario05CcAgentRoundtripTest do
     end
 
     test "failed: a session URI with no live Kind yields `{uri, :no_such_actor}`" do
-      agent_uri = URI.new!("entity://agent/team-alpha/cc_alpha")
-      stale_session = "session://default/team-alpha/never_spawned_#{System.unique_integer([:positive])}"
+      agent_uri = URI.new!("entity://team-alpha/agent/cc_alpha")
+
+      stale_session =
+        "session://team-alpha/default/never_spawned_#{System.unique_integer([:positive])}"
 
       assert {:ok, %{dispatched: dispatched, failed: failed, skipped: skipped}} =
                BridgeAdapter.dispatch_reply(
@@ -232,8 +234,8 @@ defmodule Ezagent.PluginCc.E2E.Scenario05CcAgentRoundtripTest do
       assert BridgeAdapter.flavor() == "cc"
     end
 
-    test "agent_uri_prefix is \"cc_\" (PR #141 SPEC v2 flavor prefix)" do
-      assert BridgeAdapter.agent_uri_prefix() == "cc_"
+    test "agent_uri_prefix callback is removed; flavor is stored, not URI-derived" do
+      refute function_exported?(BridgeAdapter, :agent_uri_prefix, 0)
     end
 
     test "channel_topic_prefix routes to the shared agent_bridge socket" do

@@ -121,7 +121,7 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.CLI do
 
       caller_required? ->
         Mix.shell().error(
-          "error: caller URI required — pass --as <entity://user/...> or set " <>
+          "error: caller URI required — pass --as <user-uri> or set " <>
             "EZAGENT_AS_USER env. NO silent admin fallback (codex r1 HIGH 2026-05-25 — a " <>
             "typoed flag could have run privileged)."
         )
@@ -131,7 +131,7 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.CLI do
       true ->
         # caller_required: false (unauthed metadata commands only — e.g.
         # list_adapters). Admin default keeps the audit row populated.
-        "entity://user/system/admin"
+        Ezagent.Entity.User.admin_uri() |> URI.to_string()
     end
   end
 
@@ -226,7 +226,7 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.CLI do
         uri
 
       _ ->
-        Mix.shell().error("error: #{inspect(s)} is not a session:// URI")
+        Mix.shell().error("error: #{inspect(s)} is not a session URI")
         Mix.raise("bad session URI")
     end
   end
@@ -270,7 +270,9 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.CLI do
   def format_bindings([]), do: "(no bindings)\n"
 
   def format_bindings(bindings) when is_list(bindings) do
-    header = pad("adapter_id", 16) <> pad("target_id", 32) <> pad("bound_at", 32) <> "binding_id\n"
+    header =
+      pad("adapter_id", 16) <> pad("target_id", 32) <> pad("bound_at", 32) <> "binding_id\n"
+
     rule = String.duplicate("-", 100) <> "\n"
 
     rows =

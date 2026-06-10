@@ -17,9 +17,9 @@ defmodule EzagentDomainUi.UriPickerTest do
 
   defp opts do
     [
-      %{uri: "entity://agent/team-alpha/cc_demo", label: "CC Demo", kind: :entity, flavor: "cc"},
-      %{uri: "entity://user/team-alpha/alice", label: "Alice", kind: :entity, flavor: nil},
-      %{uri: "session://default/system/main", label: "main", kind: :session, flavor: nil}
+      %{uri: "entity://team-alpha/agent/cc_demo", label: "CC Demo", kind: :entity, flavor: "cc"},
+      %{uri: "entity://team-alpha/user/alice", label: "Alice", kind: :entity, flavor: nil},
+      %{uri: "session://system/default/main", label: "main", kind: :session, flavor: nil}
     ]
   end
 
@@ -37,8 +37,8 @@ defmodule EzagentDomainUi.UriPickerTest do
       assert html =~ ~s(phx-update="ignore")
       # data-options carries the immutable option list as JSON.
       assert html =~ "data-options="
-      assert html =~ "entity://agent/team-alpha/cc_demo"
-      assert html =~ "session://default/system/main"
+      assert html =~ "entity://team-alpha/agent/cc_demo"
+      assert html =~ "session://system/default/main"
     end
 
     test "single mode emits one hidden input under the name attr" do
@@ -50,14 +50,14 @@ defmodule EzagentDomainUi.UriPickerTest do
           name="rule[matcher_arg]"
           mode={:single}
           options={@options}
-          value="entity://user/team-alpha/alice"
+          value="entity://team-alpha/user/alice"
         />
         """)
 
       assert html =~ ~s(type="hidden")
       assert html =~ ~s(name="rule[matcher_arg]")
       # The pre-selected value seeds the hidden input.
-      assert html =~ ~s(value="entity://user/team-alpha/alice")
+      assert html =~ ~s(value="entity://team-alpha/user/alice")
       # No list-style name for single mode.
       refute html =~ ~s(name="rule[matcher_arg][]")
     end
@@ -85,7 +85,7 @@ defmodule EzagentDomainUi.UriPickerTest do
           name="rule[receivers]"
           mode={:multi}
           options={@options}
-          value={["entity://agent/team-alpha/cc_demo", "session://default/system/main"]}
+          value={["entity://team-alpha/agent/cc_demo", "session://system/default/main"]}
         />
         """)
 
@@ -93,8 +93,8 @@ defmodule EzagentDomainUi.UriPickerTest do
       # Multi mode → name[] list-style hidden inputs.
       assert html =~ ~s(name="rule[receivers][]")
       assert html =~ "data-uri-picker-chip"
-      assert html =~ "entity://agent/team-alpha/cc_demo"
-      assert html =~ "session://default/system/main"
+      assert html =~ "entity://team-alpha/agent/cc_demo"
+      assert html =~ "session://system/default/main"
     end
 
     test "renders no chips when value is empty" do

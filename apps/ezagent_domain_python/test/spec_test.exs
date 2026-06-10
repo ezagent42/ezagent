@@ -6,7 +6,7 @@ defmodule Ezagent.Domain.Python.SpecTest do
   describe "validate/1" do
     test "accepts a minimal :uv_script spec" do
       spec = %Spec{
-        handle: URI.parse("system://python/x"),
+        handle: Ezagent.URI.new!("system://python/x"),
         command: :uv_script,
         script_path: "/tmp/foo.py",
         cwd: System.tmp_dir!()
@@ -17,7 +17,7 @@ defmodule Ezagent.Domain.Python.SpecTest do
 
     test "rejects bad cwd" do
       spec = %Spec{
-        handle: URI.parse("system://python/x"),
+        handle: Ezagent.URI.new!("system://python/x"),
         command: :uv_script,
         script_path: "/tmp/foo.py",
         cwd: "/no/such/dir/here-#{System.unique_integer([:positive])}"
@@ -28,7 +28,7 @@ defmodule Ezagent.Domain.Python.SpecTest do
 
     test ":uv_script without script_path is rejected" do
       spec = %Spec{
-        handle: URI.parse("system://python/x"),
+        handle: Ezagent.URI.new!("system://python/x"),
         command: :uv_script,
         cwd: System.tmp_dir!()
       }
@@ -38,7 +38,7 @@ defmodule Ezagent.Domain.Python.SpecTest do
 
     test ":uv_project without project_dir is rejected" do
       spec = %Spec{
-        handle: URI.parse("system://python/x"),
+        handle: Ezagent.URI.new!("system://python/x"),
         command: :uv_project,
         entry_module: "mymod",
         cwd: System.tmp_dir!()
@@ -49,7 +49,7 @@ defmodule Ezagent.Domain.Python.SpecTest do
 
     test ":uv_project without entry_module is rejected" do
       spec = %Spec{
-        handle: URI.parse("system://python/x"),
+        handle: Ezagent.URI.new!("system://python/x"),
         command: :uv_project,
         project_dir: System.tmp_dir!(),
         cwd: System.tmp_dir!()
@@ -60,7 +60,7 @@ defmodule Ezagent.Domain.Python.SpecTest do
 
     test "explicit argv list passes" do
       spec = %Spec{
-        handle: URI.parse("system://python/x"),
+        handle: Ezagent.URI.new!("system://python/x"),
         command: ["/usr/bin/false"],
         cwd: System.tmp_dir!()
       }
@@ -70,7 +70,7 @@ defmodule Ezagent.Domain.Python.SpecTest do
 
     test "bad command shape is rejected" do
       spec = %Spec{
-        handle: URI.parse("system://python/x"),
+        handle: Ezagent.URI.new!("system://python/x"),
         command: :not_a_known_atom,
         cwd: System.tmp_dir!()
       }
@@ -82,7 +82,7 @@ defmodule Ezagent.Domain.Python.SpecTest do
   describe "to_argv/1" do
     test "explicit argv passes through verbatim" do
       spec = %Spec{
-        handle: URI.parse("system://python/x"),
+        handle: Ezagent.URI.new!("system://python/x"),
         command: ["/usr/bin/false", "--flag", "value"],
         cwd: System.tmp_dir!()
       }
@@ -96,7 +96,7 @@ defmodule Ezagent.Domain.Python.SpecTest do
 
       try do
         spec = %Spec{
-          handle: URI.parse("system://python/x"),
+          handle: Ezagent.URI.new!("system://python/x"),
           command: :uv_script,
           script_path: "/tmp/foo.py",
           cwd: System.tmp_dir!()
@@ -114,7 +114,7 @@ defmodule Ezagent.Domain.Python.SpecTest do
 
       if uv do
         spec = %Spec{
-          handle: URI.parse("system://python/x"),
+          handle: Ezagent.URI.new!("system://python/x"),
           command: :uv_script,
           script_path: "/tmp/foo.py",
           cwd: System.tmp_dir!()
@@ -129,7 +129,7 @@ defmodule Ezagent.Domain.Python.SpecTest do
 
       if uv do
         spec = %Spec{
-          handle: URI.parse("system://python/x"),
+          handle: Ezagent.URI.new!("system://python/x"),
           command: :uv_project,
           project_dir: System.tmp_dir!(),
           entry_module: "my.mod",

@@ -72,7 +72,8 @@ defmodule Ezagent.Invariants.NoSilentWorkspaceInWritersTest do
 
   describe "Snapshot.save_now/3 — system:// scheme lands in workspace://system" do
     test "system://routing/default is accepted and tagged with workspace://system" do
-      sys_uri = URI.parse("system://routing/snapshot-test-#{System.unique_integer([:positive])}")
+      sys_uri =
+        Ezagent.URI.new!("system://routing/snapshot-test-#{System.unique_integer([:positive])}")
 
       :ok = Ezagent.Kind.Snapshot.save_now(sys_uri, @real_kind, %{})
 

@@ -62,8 +62,8 @@ defmodule EzagentDomainInstanceMessage.Integration.WorkspaceIsolationTest do
 
     # SPEC v3 §3.6 (Phase 9 PR-7) — 3-segment sessions carry workspace
     # as second path segment.
-    session_a = URI.new!("session://default/#{suffix}-A/main")
-    session_b = URI.new!("session://default/#{suffix}-B/main")
+    session_a = URI.new!("session://#{suffix}-A/default/main")
+    session_b = URI.new!("session://#{suffix}-B/default/main")
 
     {:ok, _} = Ezagent.SpawnRegistry.spawn(session_a)
     {:ok, _} = Ezagent.SpawnRegistry.spawn(session_b)
@@ -71,8 +71,8 @@ defmodule EzagentDomainInstanceMessage.Integration.WorkspaceIsolationTest do
     :ok = Ezagent.WorkspaceRegistry.bind(session_a, workspace_a)
     :ok = Ezagent.WorkspaceRegistry.bind(session_b, workspace_b)
 
-    sender = URI.new!("entity://user/team-alpha/#{unique("sender")}")
-    eavesdropper = URI.new!("entity://user/team-alpha/#{unique("eavesdropper")}")
+    sender = URI.new!("entity://team-alpha/user/#{unique("sender")}")
+    eavesdropper = URI.new!("entity://team-alpha/user/#{unique("eavesdropper")}")
 
     {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
     {:ok, _} = Ezagent.SpawnRegistry.spawn(eavesdropper)
@@ -95,7 +95,11 @@ defmodule EzagentDomainInstanceMessage.Integration.WorkspaceIsolationTest do
       target: URI.new!("#{URI.to_string(session_uri)}?action=chat.send"),
       mode: :cast,
       args: %{message: msg},
-      ctx: %{caller: sender, caps: Ezagent.SystemPrincipal.caps("system://bootstrap"), reply: :ignore}
+      ctx: %{
+        caller: sender,
+        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        reply: :ignore
+      }
     }
 
     Invocation.dispatch(inv)
@@ -212,7 +216,7 @@ defmodule EzagentDomainInstanceMessage.Integration.WorkspaceIsolationTest do
     # the literal so the bulk-rewrite tool doesn't 3-segment it.
     legacy = "session://" <> "#{suffix}-unbound"
 
-    assert_raise ArgumentError, ~r/workspace segment/, fn ->
+    assert_raise ArgumentError, ~r/session URI must include type and name segments/, fn ->
       Ezagent.URI.new!(legacy)
     end
 
