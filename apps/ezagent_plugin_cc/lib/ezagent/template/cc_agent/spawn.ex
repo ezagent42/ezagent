@@ -303,7 +303,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
       source_path when is_binary(source_path) ->
         config_home = resolve_config_home(agent_uri, respawn_data)
 
-        case reprovision_source_credential(config_home, source_path, []) do
+        case reprovision_source_credential(config_home, source_path, reprovision_opts()) do
           :ok ->
             :ok
 
@@ -317,6 +317,21 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
 
             :ok
         end
+    end
+  end
+
+  # Provisioner opts (OAuth `http_post` + `now_ms` clock) for the respawn-time
+  # re-provision. PRODUCTION → `[]` (the provisioner uses real `:httpc` + the
+  # system clock). TESTS inject a stubbed `http_post`/`now_ms` via the established
+  # `:ezagent_plugin_cc` app-env seam (same pattern as `:orchestrator_skill_source`,
+  # `:mcp_config_dir`, `:ws_url`) so the PATH-LEVEL respawn test can drive an
+  # EXPIRED→refreshed source through `ensure_subprocess_alive/2` WITHOUT hitting the
+  # network or rotating a real token. No data shim — the injection never rides in
+  # `respawn_template_data`.
+  defp reprovision_opts do
+    case Application.get_env(:ezagent_plugin_cc, :source_reprovision_opts) do
+      opts when is_list(opts) -> opts
+      _ -> []
     end
   end
 
