@@ -290,24 +290,36 @@ defmodule Ezagent.Kind.Runtime do
   end
 
   # P1 (SPEC §3.1, E9) — even though the BehaviorRegistry resolves an action by
-  # {kind_module, action} (module-keyed), a NON-universal behavior must be in
-  # THIS INSTANCE's effective set to act. A chat instance on a superset
-  # SessionKind cannot dispatch a Surface/ProbeBehavior action.
+  # {kind_module, action} (module-keyed), a behavior must belong to THIS
+  # INSTANCE to act. A chat instance on a superset SessionKind cannot dispatch a
+  # Surface/ProbeBehavior action whose slice was never materialized for it.
+  #
+  # SLICE-membership criterion (NOT raw module membership). The instance's
+  # security boundary is the set of SLICES it actually materialized
+  # (`materialized_set/2` → each behavior's `state_slice/0`). A behavior may act
+  # iff its `state_slice/0` is one of those keys. This is correct for the
+  # "split-out sibling Behavior" pattern (codex register/lookup-parity class):
+  # `Ezagent.Behavior.IdentityAdmin` owns the privileged `identity.grant_cap` /
+  # `revoke_cap` actions, is registered for `{Agent, _}` / `{User, _}` at app
+  # boot, and SHARES the `:identity` slice with `Ezagent.Behavior.Identity`
+  # (which IS in `behaviors/0`) — but `IdentityAdmin` itself is NOT in any Kind's
+  # `behaviors/0`. A raw module-membership gate would wrongly deny `grant_cap` on
+  # every real Agent/User. Gating by the SLICE it operates on admits the sibling
+  # (its `:identity` slice IS materialized) while still denying a genuinely
+  # out-of-set behavior (e.g. ProbeBehavior's `:probe` slice is absent on a
+  # chat-only instance).
   #
   # Universal-behavior fallback policy (SPEC §3.1): behaviors in
   # `Ezagent.UniversalBehaviors.all/0` (today `Ezagent.Behavior.Manage`) resolve
-  # for EVERY Kind by construction and are intentionally NOT in any Kind's
-  # `behaviors/0`. They are ALWAYS reachable, so the membership gate EXEMPTS them
-  # — the subsequent `authz_check` still cap-gates them.
+  # for EVERY Kind by construction, are NOT in any Kind's `behaviors/0`, and own
+  # no per-instance slice — they are ALWAYS reachable, so the gate EXEMPTS them
+  # (the subsequent `authz_check` still cap-gates them).
   defp instance_set_gate(behavior_module, kind_module, state) do
     cond do
       behavior_module in Ezagent.UniversalBehaviors.all() ->
         :ok
 
-      Ezagent.Kind.BehaviorSet.member?(
-        behavior_module,
-        Ezagent.Kind.BehaviorSet.effective_set(kind_module, state)
-      ) ->
+      behavior_module.state_slice() in instance_slice_keys(kind_module, state) ->
         :ok
 
       true ->
@@ -319,6 +331,14 @@ defmodule Ezagent.Kind.Runtime do
 
         {:error, :behavior_not_in_instance_set}
     end
+  end
+
+  # The slice keys this instance materialized = `materialized_set/2`'s members'
+  # `state_slice/0` (the slice-bearing, non-universal instance behaviors).
+  defp instance_slice_keys(kind_module, state) do
+    kind_module
+    |> Ezagent.Kind.BehaviorSet.materialized_set(state)
+    |> Enum.map(& &1.state_slice())
   end
 
   # PR-CC-2-v2 chokepoint flip (SPEC docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md

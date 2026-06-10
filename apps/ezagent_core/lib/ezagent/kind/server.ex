@@ -265,7 +265,7 @@ defmodule Ezagent.Kind.Server do
   defp collect_post_init_queue(kind_module, args, slice_state) do
     # P1 (SPEC §3.1, E1) — enumerate the INSTANCE effective set, not the module
     # superset, so an out-of-set behavior's post_init/activate never queues.
-    Ezagent.Kind.BehaviorSet.effective_set(kind_module, slice_state)
+    Ezagent.Kind.BehaviorSet.materialized_set(kind_module, slice_state)
     |> Enum.reduce([], fn behavior, acc ->
       if function_exported?(behavior, :post_init, 2) do
         slice = Map.get(slice_state, behavior.state_slice(), %{})
@@ -517,7 +517,7 @@ defmodule Ezagent.Kind.Server do
     ctx = %{kind_module: kind_module, self_uri: self_uri}
 
     # P1 (SPEC §3.1, E2) — only the INSTANCE effective set runs on_ready.
-    Enum.each(Ezagent.Kind.BehaviorSet.effective_set(kind_module, slice_state), fn behavior ->
+    Enum.each(Ezagent.Kind.BehaviorSet.materialized_set(kind_module, slice_state), fn behavior ->
       if function_exported?(behavior, :on_ready, 2) do
         slice = Map.get(slice_state, behavior.state_slice(), %{})
 
@@ -582,7 +582,7 @@ defmodule Ezagent.Kind.Server do
     ctx = %{kind_module: kind_module, self_uri: self_uri}
 
     # P1 (SPEC §3.1, E3) — only the INSTANCE effective set runs destroy.
-    Enum.each(Ezagent.Kind.BehaviorSet.effective_set(kind_module, slice_state), fn behavior ->
+    Enum.each(Ezagent.Kind.BehaviorSet.materialized_set(kind_module, slice_state), fn behavior ->
       if function_exported?(behavior, :__ezagent_lifecycle_destroy__, 3) do
         slice = Map.get(slice_state, behavior.state_slice(), %{})
 
@@ -746,7 +746,7 @@ defmodule Ezagent.Kind.Server do
     # message, so an out-of-set behavior's handle_signal/handle_kind_message
     # never runs.
     new_slice_state =
-      Ezagent.Kind.BehaviorSet.effective_set(kind_module, slice_state)
+      Ezagent.Kind.BehaviorSet.materialized_set(kind_module, slice_state)
       |> Enum.reduce(slice_state, fn behavior, acc_state ->
         forward_to_behavior(behavior, message, acc_state, kind_module, self_uri)
       end)
@@ -901,7 +901,7 @@ defmodule Ezagent.Kind.Server do
     ctx = %{kind_module: kind_module, self_uri: uri}
 
     # P1 (SPEC §3.1, E5) — only the INSTANCE effective set runs terminate.
-    Enum.each(Ezagent.Kind.BehaviorSet.effective_set(kind_module, slice_state), fn behavior ->
+    Enum.each(Ezagent.Kind.BehaviorSet.materialized_set(kind_module, slice_state), fn behavior ->
       if function_exported?(behavior, :terminate, 3) do
         slice = Map.get(slice_state, behavior.state_slice(), %{})
 

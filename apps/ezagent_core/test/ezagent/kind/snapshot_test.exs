@@ -13,7 +13,15 @@ defmodule Ezagent.Kind.SnapshotTest do
 
     state = Snapshot.load_or_init(uri, TestKind, %{uri: uri})
 
-    assert state == %{test: %{count: 0, last_msg: nil}}
+    # P1 (socialware substrate): every Kind now composes the `KindBase` base
+    # behavior, which materializes the `:kind_base` slice capturing the instance
+    # set. With no `:behaviors` spawn arg, KindBase persists the legacy sentinel
+    # `nil` (→ full declared list at reload). The universal `Manage` base
+    # behavior stays a SET member but is dispatch-only (no materialized slice).
+    assert state == %{
+             test: %{count: 0, last_msg: nil},
+             kind_base: %{state: %{behaviors: nil}, transients: %{}}
+           }
   end
 
   test "load_or_init for :on_change Kind without prior snapshot init_fresh" do
@@ -162,10 +170,16 @@ defmodule Ezagent.Kind.SnapshotTest do
     # adding a new User-Behavior should force this assertion to be
     # updated alongside.
     # remediation C-D — each slice is now two-container (state/transients).
+    # P1 (socialware substrate): the saved snapshot pre-dates KindBase (no
+    # `:kind_base` slice), so the reload path SEEDS it with the legacy sentinel
+    # `nil` (deploy-safety migration — full declared list, nothing pruned). The
+    # universal `Manage` base behavior stays a set member but materializes no
+    # slice.
     assert loaded == %{
              identity: %{state: %{caps: caps}, transients: %{}},
              user_credentials: %{state: %{set_password_count: 0}, transients: %{}},
-             user_tokens: %{state: %{mint_count: 0, revoke_count: 0}, transients: %{}}
+             user_tokens: %{state: %{mint_count: 0, revoke_count: 0}, transients: %{}},
+             kind_base: %{state: %{behaviors: nil}, transients: %{}}
            }
   end
 

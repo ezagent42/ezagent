@@ -131,6 +131,34 @@ defmodule Ezagent.Kind.BehaviorSet do
     behavior in effective_set
   end
 
+  @doc """
+  The instance's SLICE-BEARING behaviors — `effective_set/2` MINUS the universal
+  behaviors (`UniversalBehaviors.all/0`, today `Manage`).
+
+  Universal behaviors are DISPATCH-ONLY: they are universal-by-construction,
+  resolve via the registry fallback, read no per-instance slice, and pre-P1 were
+  NEVER in any Kind's `behaviors_of/0`. They therefore participate in NEITHER
+  slice materialization NOR the per-instance lifecycle enumerations (post_init /
+  on_ready / activate / terminate / destroy / handle_signal / prune / reconcile).
+  Running their Lifecycle hooks would crash (no materialized slice → the
+  `%{state: _}` engine callbacks have no clause for `%{}`) and is semantically
+  wrong (they are not per-instance state).
+
+  Every runtime SLICE/LIFECYCLE entry point (E1–E7) enumerates THIS set; only the
+  DISPATCH membership gate (E9) uses the full `effective_set/2` (with its own
+  explicit universal exemption). `KindBase` IS slice-bearing (it owns the
+  persisted `:kind_base` slice) and stays in this set.
+  """
+  @spec materialized_set(module(), %{atom() => map()}) :: [module()]
+  def materialized_set(kind_module, slice_state)
+      when is_atom(kind_module) and is_map(slice_state) do
+    universal = MapSet.new(Ezagent.UniversalBehaviors.all())
+
+    kind_module
+    |> effective_set(slice_state)
+    |> Enum.reject(&MapSet.member?(universal, &1))
+  end
+
   # Slice-owner map: which Behavior module OWNS each slice key. Single
   # source of truth for the closure resolver. Derived from each
   # session-relevant Behavior's `state_slice/0`.

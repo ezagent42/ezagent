@@ -158,11 +158,14 @@ defmodule Ezagent.Kind.Snapshot do
   # above: merge gives fresh init for NEW slices, prune drops orphans
   # for REMOVED slices.
   defp prune_orphan_slices(state, kind_module) do
-    # P1 (SPEC §3.1, E6) — keep only the INSTANCE effective set's slices
+    # P1 (SPEC §3.1, E6) — keep only the INSTANCE slice-bearing set's slices
     # (defense-in-depth on reload over the persisted `:kind_base`-derived set),
-    # not the module's declared superset.
+    # not the module's declared superset. `materialized_set/2` excludes universal
+    # behaviors (Manage — dispatch-only, no slice); `:kind_base` is in the set
+    # (KindBase is slice-bearing) but we also keep it explicitly as belt-and-
+    # suspenders since it carries the instance set.
     kept =
-      Ezagent.Kind.BehaviorSet.effective_set(kind_module, state)
+      Ezagent.Kind.BehaviorSet.materialized_set(kind_module, state)
       |> Enum.map(& &1.state_slice())
       |> MapSet.new()
       # KindBase's own slice must never be pruned — it carries the set.
@@ -190,10 +193,12 @@ defmodule Ezagent.Kind.Snapshot do
   # supervisor restarts the Kind. Persistent reconcile failure =
   # Kind stays down = correct (operator must fix the DB).
   defp reconcile_after_load_behaviors(state, %URI{} = uri, kind_module) do
-    # P1 (SPEC §3.1, E7) — iterate the INSTANCE effective set, not the module
-    # superset, so an out-of-set behavior's `reconcile_after_load` never runs.
-    Enum.reduce(Ezagent.Kind.BehaviorSet.effective_set(kind_module, state), state, fn behavior,
-                                                                                      acc ->
+    # P1 (SPEC §3.1, E7) — iterate the INSTANCE slice-bearing set
+    # (`materialized_set/2`, excludes the slice-less universal Manage), not the
+    # module superset, so an out-of-set behavior's `reconcile_after_load` never
+    # runs.
+    Enum.reduce(Ezagent.Kind.BehaviorSet.materialized_set(kind_module, state), state, fn behavior,
+                                                                                         acc ->
       slice_key = behavior.state_slice()
       slice_value = Map.get(acc, slice_key)
 

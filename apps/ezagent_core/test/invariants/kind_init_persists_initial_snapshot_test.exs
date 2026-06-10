@@ -38,7 +38,7 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
   describe "init writes initial snapshot for non-ephemeral Kinds" do
     test "{:snapshot, :on_change} — row exists immediately after spawn" do
       uri =
-        URI.parse(
+        Ezagent.URI.new!(
           "entity://team-alpha/agent/test_init-snap-onchange-#{System.unique_integer([:positive])}"
         )
 
@@ -59,7 +59,7 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
 
     test ":on_terminate — row exists immediately after spawn" do
       uri =
-        URI.parse(
+        Ezagent.URI.new!(
           "entity://team-alpha/agent/test_init-snap-onterm-#{System.unique_integer([:positive])}"
         )
 
@@ -83,7 +83,7 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
   describe "init does NOT write for ephemeral / external Kinds" do
     test ":ephemeral — no row after spawn (regression guard)" do
       uri =
-        URI.parse(
+        Ezagent.URI.new!(
           "entity://team-alpha/agent/test_init-snap-eph-#{System.unique_integer([:positive])}"
         )
 

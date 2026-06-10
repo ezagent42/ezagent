@@ -5,8 +5,13 @@ defmodule Ezagent.Kind.ServerTest do
   setup do
     # Each test gets a unique URI so registry state doesn't leak.
     # PR #141: agent URIs are entity://agent/<flavor>_<name>; use "test" flavor.
+    # P1 (socialware substrate): every Kind now composes `KindBase`
+    # (a Lifecycle behavior), so spawn runs the Lifecycle `__init_slice__` →
+    # `ever_created?` → canonical-URI guard. The CANONICAL constructor
+    # `Ezagent.URI.new!/1` is required (the deprecated `URI.parse/1` builds a
+    # non-canonical struct the guard rejects — its own error message says so).
     uri =
-      URI.parse(
+      Ezagent.URI.new!(
         "entity://team-alpha/agent/test_kind-server-#{System.unique_integer([:positive])}"
       )
 
