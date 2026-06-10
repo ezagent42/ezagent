@@ -197,5 +197,33 @@ defmodule Ezagent.Socialware.CustomerFeedApprovedAttachmentTest do
                  &fake_resolve/2
                )
     end
+
+    test "resolves a committed attachment with NO WorkspaceRegistry binding (cold reconnect; codex P2.5a rev5)",
+         ctx do
+      ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
+      upload = upload_uri(ws_name, "uuid-cold.pdf")
+      _ = commit_message_with_attachment(ctx, upload, :customer_visible)
+
+      # Token signed with the STRUCTURAL workspace (what the cold path derives).
+      structural_ws = Ezagent.Persistence.workspace_uri_for!(ctx.session)
+      token = CustomerAuth.issue_token(ctx.session, structural_ws)
+
+      # Drop the volatile registry binding (== restart with empty ETS).
+      :ok = Ezagent.WorkspaceRegistry.unbind(ctx.session)
+      assert Ezagent.WorkspaceRegistry.lookup(ctx.session) == :error
+
+      # workspace/1 must yield a %URI{} that EzURI.workspace_name/1 accepts (no
+      # FunctionClauseError) AND auth must pass on the structurally-derived ws.
+      assert {:ok, path} =
+               CustomerFeed.authorized_attachment_path(
+                 ctx.session,
+                 token,
+                 upload,
+                 &fake_resolve/2
+               )
+
+      assert String.contains?(path, ws_name)
+      assert String.ends_with?(path, "uuid-cold.pdf")
+    end
   end
 end
