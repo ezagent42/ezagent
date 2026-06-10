@@ -45,6 +45,7 @@ The outbox's `surface_version` column + the cursor-addressable replay primitive 
 | `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed.ex` | Modify | `customer_page/1` renders the latest COMMITTED settlement's `target_surface_version` (not the live approved pointer); cold-safe `surface_slice/1` (snapshot fallback); `workspace/1` derives the workspace structurally (not the volatile registry). |
 | `apps/ezagent_domain_socialware/test/ezagent/behavior/surface_test.exs` | Modify | `tree_for_version/2` unit tests. |
 | `apps/ezagent_domain_socialware/test/ezagent/socialware/customer_page_commit_gate_test.exs` | Create | committed-page + leak (approve, no commit) + partial-commit (pending settlement → nil) + wake-up-loss + cold-read (session terminated → snapshot still serves page) + cold-reconnect-auth (no registry binding → still authorizes) tests. |
+| `apps/ezagent_domain_socialware/test/ezagent/socialware/customer_feed_approved_attachment_test.exs` | Modify | Add a cold no-registry `authorized_attachment_path/4` test (proves `workspace/1` returns a `%URI{}` usable by `EzURI.workspace_name/1`). |
 
 No migration. No `ezagent_core` change.
 
@@ -445,27 +446,63 @@ Edit `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed.ex`:
   # WorkspaceRegistry ETS cache (empty after a restart → a still-valid customer
   # token would be wrongly rejected on cold reconnect). Mirrors
   # MessageStore.committed_customer_visible/2, which already resolves the
-  # workspace via Ezagent.Persistence.
+  # workspace via Ezagent.Persistence. Returns a `%URI{}` (parsed from the
+  # structural string) to preserve the URI-struct contract the previous
+  # WorkspaceRegistry.lookup/1 provided — `authorized_attachment_path/4` calls
+  # `EzURI.workspace_name/1`, which has ONLY `%URI{}` heads (codex rev5 HIGH).
   defp workspace(session_uri) do
     case Ezagent.Persistence.workspace_uri_for(session_uri) do
-      {:ok, workspace_uri} -> {:ok, workspace_uri}
+      {:ok, workspace_str} -> {:ok, EzURI.new!(workspace_str)}
       {:error, _} -> {:error, :unbound_session}
     end
   end
 ```
 
-> `Persistence.workspace_uri_for/1` returns `{:ok, workspace_uri_string}` for a `session://` URI. `CustomerAuth.authorize/3` accepts a `URI.t() | String.t()` workspace (`customer_auth.ex:27`), and `authorized_attachment_path/4`'s `EzURI.workspace_name/1` accepts the string form — confirm both signatures take the string before finalizing (no `URI.t()`-only callers of `workspace/1`'s result).
+> `Persistence.workspace_uri_for/1` returns `{:ok, workspace_uri_string}` (e.g. `"workspace://team_alpha"`) for a `session://` URI; `EzURI.new!/1` round-trips it to a `%URI{}`. `CustomerAuth.authorize/3` stringifies its workspace arg before comparing (`uri_to_string/1`, `customer_auth.ex:34`), so a `%URI{}` matches a token signed with the equivalent string. `EzURI.workspace_name/1` (only `%URI{}` heads) and any other `%URI{}`-expecting caller of `workspace/1`'s result are satisfied. (`EzURI` is the existing `alias Ezagent.URI, as: EzURI` at the top of `customer_feed.ex`.)
 
 - [ ] **Step 4: Run to verify they pass**
 
 Run: `MIX_ENV=test mix test apps/ezagent_domain_socialware/test/ezagent/socialware/customer_page_commit_gate_test.exs -v 2>&1 | tail -20`
 Expected: PASS — committed-page, leak, partial-commit, wake-up-loss all green.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Add the cold attachment-path regression (codex rev5 HIGH)**
+
+The workspace change touches `authorized_attachment_path/4` (it calls `EzURI.workspace_name/1`, `%URI{}`-only). Add this test to the EXISTING `apps/ezagent_domain_socialware/test/ezagent/socialware/customer_feed_approved_attachment_test.exs` (it already has `commit_message_with_attachment/3`, `upload_uri/2`, and `alias Ezagent.URI, as: EzURI`), before its final `end`:
+
+```elixir
+  test "authorized_attachment_path resolves a committed attachment with NO WorkspaceRegistry binding (cold reconnect; codex rev5)",
+       ctx do
+    ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
+    upload = upload_uri(ws_name, "uuid-cold.pdf")
+    _ = commit_message_with_attachment(ctx, upload, :customer_visible)
+
+    # Token signed with the STRUCTURAL workspace (what the cold path derives).
+    structural_ws = Ezagent.Persistence.workspace_uri_for!(ctx.session)
+    token = CustomerAuth.issue_token(ctx.session, structural_ws)
+
+    # Drop the volatile registry binding (== restart with empty ETS).
+    :ok = Ezagent.WorkspaceRegistry.unbind(ctx.session)
+    assert Ezagent.WorkspaceRegistry.lookup(ctx.session) == :error
+
+    # workspace/1 must yield a %URI{} that EzURI.workspace_name/1 accepts (no
+    # FunctionClauseError) AND auth must pass on the structurally-derived ws.
+    resolve_fun = fn ^upload, %{workspace: ws} -> {:ok, "/tmp/#{ws}/cold.pdf"} end
+
+    assert {:ok, path} =
+             CustomerFeed.authorized_attachment_path(ctx.session, token, upload, resolve_fun)
+
+    assert String.ends_with?(path, "/cold.pdf")
+  end
+```
+
+Run: `MIX_ENV=test mix test apps/ezagent_domain_socialware/test/ezagent/socialware/customer_feed_approved_attachment_test.exs -v 2>&1 | tail -15`
+Expected: PASS — all existing approved-attachment tests (unchanged behavior, now via structural workspace) + the new cold no-registry one. (Pre-fix, returning a string from `workspace/1` would raise `FunctionClauseError` in `EzURI.workspace_name/1`.)
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed.ex apps/ezagent_domain_socialware/test/ezagent/socialware/customer_page_commit_gate_test.exs
-git commit -m "feat(socialware/p2.5a): commit-gate the customer page (render committed surface version)
+git add apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed.ex apps/ezagent_domain_socialware/test/ezagent/socialware/customer_page_commit_gate_test.exs apps/ezagent_domain_socialware/test/ezagent/socialware/customer_feed_approved_attachment_test.exs
+git commit -m "feat(socialware/p2.5a): commit-gate the customer page + cold-safe surface read & structural workspace
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
