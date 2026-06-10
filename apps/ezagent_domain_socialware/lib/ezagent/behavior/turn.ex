@@ -184,7 +184,12 @@ defmodule Ezagent.Behavior.Turn do
           case prepare_settlement(turn_id, turn, ctx) do
             :ok ->
               updated = %{turn | status: :settled}
-              {:ok, updated, %{status: :settled}, settle_commit_effects(turn_id, turn, ctx)}
+
+              # P2.5c — settle FAST PATH: emit settlement/config dispatches as
+              # `:dispatch_after_commit` so they run only after the parent
+              # `:turns` slice durably commits.
+              {:ok, updated, %{status: :settled},
+               settle_commit_effects(turn_id, turn, ctx, :after_commit)}
 
             {:error, reason} ->
               {:error, reason}
@@ -305,32 +310,56 @@ defmodule Ezagent.Behavior.Turn do
 
   defp hold_visibility(_turn), do: :ok
 
-  defp approve_and_commit_effects(turn_id, %{result: %{version: version}}, ctx)
+  defp approve_and_commit_effects(turn_id, %{result: %{version: version}}, ctx, dispatch_kind)
        when is_integer(version) do
     [
-      {:dispatch, Cmd.new(ctx.self_uri, :approve, %{version: version}, dispatch_ctx(ctx))},
-      {:dispatch,
-       Cmd.new(ctx.self_uri, :commit_settlement, %{turn_id: turn_id}, dispatch_ctx(ctx))}
+      effect(dispatch_kind, Cmd.new(ctx.self_uri, :approve, %{version: version}, dispatch_ctx(ctx))),
+      effect(
+        dispatch_kind,
+        Cmd.new(ctx.self_uri, :commit_settlement, %{turn_id: turn_id}, dispatch_ctx(ctx))
+      )
     ]
   end
 
-  defp approve_and_commit_effects(turn_id, _turn, ctx) do
+  defp approve_and_commit_effects(turn_id, _turn, ctx, dispatch_kind) do
     [
-      {:dispatch,
-       Cmd.new(ctx.self_uri, :commit_settlement, %{turn_id: turn_id}, dispatch_ctx(ctx))}
+      effect(
+        dispatch_kind,
+        Cmd.new(ctx.self_uri, :commit_settlement, %{turn_id: turn_id}, dispatch_ctx(ctx))
+      )
     ]
   end
 
-  defp settle_commit_effects(turn_id, turn, ctx) do
+  # P2.5c — the settle-time settlement/config dispatches (approve /
+  # commit_settlement / apply_delta) are the durable customer-facing side
+  # effects that MUST NOT outlive a failed parent `:turns` commit.
+  #
+  # `dispatch_kind` parameterizes WHEN they run:
+  #   * `:after_commit` (the settle FAST PATH, `handle_settle`) emits
+  #     `{:dispatch_after_commit, …}` — the runtime defers them so
+  #     `Kind.Server` runs them only after the parent `:turns` slice durably
+  #     commits (closes the rev4 orphan-delivery bug).
+  #   * `:now` (the CRASH-RECOVERY path, `activated/2` → self-signal →
+  #     `handle_signal/2`) emits normal `{:dispatch, …}` — the turn is
+  #     ALREADY durably `:settled`, there is no parent-commit-in-flight to
+  #     gate against, and the signal path has no deferred-effect consumer.
+  #     Replay is idempotent (re-approve same version; commit_after_pointer
+  #     no-ops when already committed).
+  defp settle_commit_effects(turn_id, turn, ctx, dispatch_kind) do
     settlement_effects =
       if settlement_needed?(turn) do
-        approve_and_commit_effects(turn_id, turn, ctx)
+        approve_and_commit_effects(turn_id, turn, ctx, dispatch_kind)
       else
         []
       end
 
-    settlement_effects ++ config_update_effects(turn_id, turn, ctx)
+    settlement_effects ++ config_update_effects(turn_id, turn, ctx, dispatch_kind)
   end
+
+  # P2.5c — wrap a `%Cmd{}` in the effect tuple matching the requested
+  # dispatch timing.
+  defp effect(:after_commit, %Cmd{} = cmd), do: {:dispatch_after_commit, cmd}
+  defp effect(:now, %Cmd{} = cmd), do: {:dispatch, cmd}
 
   defp settlement_attrs(turn_id, turn, ctx) do
     result = Map.get(turn, :result, %{})
@@ -442,14 +471,17 @@ defmodule Ezagent.Behavior.Turn do
     |> Map.get(:approved)
   end
 
-  defp config_update_effects(turn_id, %{result: %{config_delta: delta}}, ctx)
+  defp config_update_effects(turn_id, %{result: %{config_delta: delta}}, ctx, dispatch_kind)
        when is_map(delta) do
     [
-      {:dispatch, Cmd.new(ctx.self_uri, :apply_delta, %{turn_id: turn_id}, dispatch_ctx(ctx))}
+      effect(
+        dispatch_kind,
+        Cmd.new(ctx.self_uri, :apply_delta, %{turn_id: turn_id}, dispatch_ctx(ctx))
+      )
     ]
   end
 
-  defp config_update_effects(_turn_id, _turn, _ctx), do: []
+  defp config_update_effects(_turn_id, _turn, _ctx, _dispatch_kind), do: []
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, _key, []), do: map
