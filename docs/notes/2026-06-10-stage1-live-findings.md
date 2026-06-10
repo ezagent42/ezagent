@@ -44,39 +44,55 @@ says to STOP + escalate at.
 
 ## The two remaining blockers — G1 / 地基 (need Allen)
 
-### G1-a — cc bot esr-bridge does not join → deliver timeout (ROOT CAUSE: #512 EagerBridge not merged)
-On the first run the customer message routed to the bot, but:
+### G1-a — cc bot esr-bridge does not join → deliver timeout
+### ROOT CAUSE (confirmed on this machine): claude ≥2.1.92 Keychain isolation + unseeded isolated CLAUDE_CONFIG_DIR; the fix `b03cb4da` is NOT on this line
 ```
 [warning] AgentBridge deliver dropped for entity://cinnox/agent/cs-bot-alice: :timeout
 invocation chat.receive → cs-bot-alice  duration_us=15004961   # = deliver_ensuring 15s ready-timeout
+JOINED agent_bridge … : 0 occurrences   # the bridge never joins
 ```
-**Root cause (confirmed — this is the documented G-live / PoC-G1 blocker):** a
-freshly-spawned cc agent's claude **does not auto-join the `agent_bridge:cc:<uri>`
-WS channel** on startup — it sits idle (historically stuck at claude's first-run
-onboarding) and never starts/announces its esr-bridge MCP, so `AgentBridge.deliver`
-has nothing to deliver to and times out at the 15 s ready window. See
-`docs/notes/2026-06-…demo-script` G-live: *"spawn 的 cc agent 卡 onboarding,不
-自动 JOIN esr-bridge … 修复 PR #512 `EagerBridge` 未合并进 main"*.
+This is the **same bug Allen located on `fix/cc-bridge-join-2026-06-01` (2026-06-01,
+via a PTY probe)**, re-verified item-by-item on the Stage-1 branch + this mac:
 
-**The fix exists but is NOT on this line.** `EzagentPluginCc.EagerBridge.ensure_bound!/2`
-("programmatic MCP bridge init" — the bridge-kick) lives on branches
-`feat/eager-bridge` / `fix/cc-bridge-join-2026-06-01`, NOT on `main`/`autoservice`.
-So every fresh stack built on main/autoservice lacks the eager bridge-kick → the
-bot's bridge never joins → deliver timeout. **This is why the bug recurs across
-sessions: the fix never landed on the tested line.**
+**Two sub-causes (claude CLI 2.1.92):**
+1. **OAuth login screen.** claude ≥2.1.92 changed macOS Keychain isolation — a
+   fresh per-agent `CLAUDE_CONFIG_DIR` no longer inherits the host Keychain. With
+   no creds in the isolated dir, claude shows *"Paste code here if prompted"*
+   instead of entering the REPL; PtyServer's theme-picker `\r` is read as an
+   invalid OAuth code → the agent hangs forever and never starts its bridge MCP.
+2. **dialog-gate timeout is fatal.** EagerBridge gates its `\r` kick on "all
+   one-time dialogs fired"; when trust_folder doesn't appear (cwd already trusted),
+   the gate times out → `{:error, :timeout}` up the `with` chain → `kick_loop`
+   never runs → the MCP bridge is never triggered.
 
-**Ruled out (so the diagnosis is precise):**
-- Identity is correct: the bot's claude process has `EZAGENT_AGENT_URI` +
-  `EZAGENT_AGENT_TOKEN` (via `CcAgent.build_claude_cmd/3` `cmd_env`, the #539 path)
-  + `CLAUDE_CODE_OAUTH_TOKEN`; the v2 `AgentBridge.TokenStore` WS-join gate is
-  satisfied. `.mcp.json` (shared, ws_url only) + `CLAUDE.md` (soul) are present.
-- One env artifact compounded it during testing: the bridge WS URL derives from
-  the **public port** (default `10042`); a run on `PORT=10052` dialed a dead
-  `10042`. Run on `10042` — but even then, without EagerBridge the join is lazy.
+**Verified here:**
+- **Fix missing on branch.** `git merge-base --is-ancestor b03cb4da HEAD` → missing;
+  `grep oauth_blocked? .../pty/server.ex` → none. The server.ex half of the fix
+  (`b03cb4da` code + `65a0732f` tests) is only on `fix/cc-bridge-join-2026-06-01`
+  / `poc/phase-2-customer-service` — NOT on `main`/`autoservice`, no open PR
+  (#524 closed; #512 has only `eager_bridge.ex`, not `server.ex`).
+- **Trigger present:** `claude --version` = **2.1.169** (≥2.1.92); macOS **26.5.1**.
+- **Isolated dir, unseeded:** bot env `CLAUDE_CONFIG_DIR=…/cc-agents/cinnox/cs-bot-alice`;
+  that dir's `.claude.json` has **no `oauthAccount`** (not logged in); host
+  `~/.claude.json` HAS it (host logged in) but the isolated dir doesn't inherit it.
+- **Token env does NOT bypass it:** the bot's claude has `EZAGENT_AGENT_URI/TOKEN`
+  (cmd_env, #539 — identity is correct, RULED OUT) + `CLAUDE_CODE_OAUTH_TOKEN`; a
+  standalone `claude -p` with that token passes (TOKEN_OK), but under an isolated
+  `CLAUDE_CONFIG_DIR` claude still hits the OAuth screen.
+- **No bridge/oauth/EagerBridge logs at all** — because the detection code isn't on
+  this branch; the bridge just silently never joins → deliver timeout.
 
-**Fix path:** land #512 `EagerBridge` on `main` → flows to `autoservice`; then
-`SocialwareCS` provisioning calls (or relies on) `EagerBridge.ensure_bound!/2`
-after `create_agent` so the bot's bridge joins eagerly before the first message.
+**Why it recurs across sessions:** the fix lives on a side branch and never landed
+on `main`/`autoservice`, so every fresh stack built on that line reproduces it.
+
+**Why Allen can't reproduce (hypotheses):** older claude (<2.1.92, no Keychain
+isolation); using shared `~/.claude` (logged-in) instead of a per-agent isolated
+dir; Linux (no macOS Keychain); or his branch already carries `b03cb4da`.
+
+**Fix path:** land **`b03cb4da` (+ test `65a0732f`)** on `main` → flows to
+`autoservice`; then `SocialwareCS` provisioning wires `EagerBridge.ensure_bound!/2`
+after `create_agent`. Likely also needs the isolated `CLAUDE_CONFIG_DIR` to be
+actually credentialled (materialize the token into the dir) — Allen's call.
 
 ### G1-b — routing registry not rehydrated on server boot
 After a server restart, the seed's `{:from customer, :in_session} → bot` rule is
