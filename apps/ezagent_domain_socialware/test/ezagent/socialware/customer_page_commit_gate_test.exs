@@ -1,0 +1,218 @@
+defmodule Ezagent.Socialware.CustomerPageCommitGateTest do
+  @moduledoc """
+  P2.5a — the customer PAGE is commit-gated: it renders from the latest COMMITTED
+  settlement's surface version (never the live approved-but-uncommitted slice). A
+  pending settlement does not expose a page; dropping the {:customer_delivery}
+  wake-up still delivers via the durable snapshot; a committed page survives a
+  stopped session (cold read) and a missing WorkspaceRegistry binding (cold auth).
+  """
+  use EzagentCore.DataCase, async: false
+
+  alias Ezagent.Invocation
+  alias Ezagent.Ecto.KindSnapshot
+  alias Ezagent.Entity.{SocialwareSession, User}
+  alias Ezagent.Socialware.CustomerFeed
+
+  defp session_uri do
+    Ezagent.URI.session(:team_alpha, :socialware, "p2-5a-#{System.unique_integer([:positive])}")
+  end
+
+  defp agent_uri(name), do: Ezagent.URI.entity(:team_alpha, :agent, name)
+
+  defp target(session_uri, behavior, action) do
+    Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=#{behavior}.#{action}")
+  end
+
+  defp dispatch(session_uri, behavior, action, args) do
+    Invocation.dispatch(%Invocation{
+      target: target(session_uri, behavior, action),
+      mode: :call,
+      args: args,
+      ctx: %{
+        caller: User.admin_uri(),
+        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        reply: {:caller_inbox, self()}
+      }
+    })
+  end
+
+  defp wait_until(fun, attempts \\ 100)
+  defp wait_until(_fun, 0), do: flunk("wait_until: condition never became true")
+
+  defp wait_until(fun, attempts) do
+    if fun.(), do: :ok, else: (Process.sleep(20); wait_until(fun, attempts - 1))
+  end
+
+  defp spawn_session do
+    uri = session_uri()
+    :ok = KindSnapshot.delete(URI.to_string(uri))
+    {:ok, _pid} = Ezagent.Kind.spawn(SocialwareSession, %{uri: uri})
+    :ok = Ezagent.WorkspaceRegistry.bind(uri, Ezagent.Capability.workspace_of(uri))
+    uri
+  end
+
+  # Derive the workspace STRUCTURALLY (same as the production snapshot/auth path),
+  # so the token's workspace matches what CustomerFeed.workspace/1 derives — even
+  # after the volatile WorkspaceRegistry binding is dropped.
+  defp test_token(session_uri) do
+    workspace_uri = Ezagent.Persistence.workspace_uri_for!(session_uri)
+    Ezagent.Socialware.CustomerAuth.issue_token(session_uri, workspace_uri)
+  end
+
+  # open -> dispatch -> deliver(page) -> compose; returns {turn_id, version}.
+  # Does NOT settle (caller chooses approve-only vs full settle).
+  defp compose_page(uri, page_tree) do
+    {:ok, %{turn_id: turn_id}} =
+      dispatch(uri, :turn, :open, %{trigger: %{message_id: "m1"}, opened_at: 1})
+
+    {:ok, _} =
+      dispatch(uri, :turn, :dispatch, %{
+        turn_id: turn_id,
+        subtasks: [%{id: :page, mention: agent_uri("page"), prompt: "render"}]
+      })
+
+    {:ok, _} =
+      dispatch(uri, :turn, :deliver, %{
+        turn_id: turn_id,
+        subtask_id: :page,
+        card_ref: %{kind: :page, tree: page_tree}
+      })
+
+    {:ok, %{version: version}} =
+      dispatch(uri, :turn, :compose, %{turn_id: turn_id, result_refs: []})
+
+    {turn_id, version}
+  end
+
+  defp settle(uri, turn_id) do
+    {:ok, %{status: :settled}} = dispatch(uri, :turn, :settle, %{turn_id: turn_id})
+
+    wait_until(fn ->
+      case Ezagent.Socialware.Settlement.get(turn_id) do
+        {:ok, %{status: :committed}} -> true
+        _ -> false
+      end
+    end)
+  end
+
+  describe "committed page renders from the committed version" do
+    test "after a full settle+commit, snapshot.page is the committed surface tree" do
+      page_tree = %{type: "text", props: %{text: "committed page"}}
+      uri = spawn_session()
+      token = test_token(uri)
+      {turn_id, _version} = compose_page(uri, page_tree)
+      settle(uri, turn_id)
+
+      {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
+      assert snapshot.page == page_tree
+    end
+  end
+
+  describe "page commit-gating (leak test)" do
+    test "approved-but-uncommitted page does NOT leak (no settlement at all)" do
+      page_tree = %{type: "text", props: %{text: "draft page"}}
+      uri = spawn_session()
+      token = test_token(uri)
+      {_turn_id, version} = compose_page(uri, page_tree)
+
+      # Approve the surface (advances the LIVE pointer) but never settle/commit.
+      {:ok, _} = dispatch(uri, :surface, :approve, %{version: version})
+
+      wait_until(fn ->
+        {:ok, surface} = Ezagent.Kind.get_slice(uri, :surface)
+        surface.approved == version
+      end)
+
+      {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
+      assert snapshot.page == nil, "approved-but-uncommitted page must NOT leak"
+      assert snapshot.messages == []
+    end
+  end
+
+  describe "partial-commit gate: settlement pending" do
+    test "a PENDING settlement (target version set, surface approved) does NOT expose a page" do
+      page_tree = %{type: "text", props: %{text: "pending page"}}
+      uri = spawn_session()
+      token = test_token(uri)
+      {:ok, workspace_uri} = Ezagent.WorkspaceRegistry.lookup(uri)
+      {turn_id, version} = compose_page(uri, page_tree)
+
+      {:ok, _} = dispatch(uri, :surface, :approve, %{version: version})
+
+      # A PENDING settlement carrying the target version (status not flipped).
+      {:ok, settlement} =
+        Ezagent.Socialware.Settlement.begin(%{
+          turn_id: turn_id,
+          session_uri: uri,
+          workspace_uri: workspace_uri,
+          target_message_ids: [],
+          target_surface_version: version
+        })
+
+      assert settlement.status == :pending
+
+      {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
+      assert snapshot.page == nil
+    end
+  end
+
+  describe "wake-up loss" do
+    test "a committed page is visible via the durable snapshot even with no PubSub event" do
+      page_tree = %{type: "text", props: %{text: "delivered despite lost wake-up"}}
+      uri = spawn_session()
+      token = test_token(uri)
+      {turn_id, _version} = compose_page(uri, page_tree)
+      settle(uri, turn_id)
+
+      # We never subscribed to / received {:customer_delivery}; a fresh snapshot
+      # (== reconnect) still returns the committed page from the durable record.
+      {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
+      assert snapshot.page == page_tree
+    end
+  end
+
+  describe "cold-read durability (codex rev4 HIGH): committed page survives a stopped session" do
+    test "after the live session process is terminated, snapshot still returns the committed page" do
+      page_tree = %{type: "text", props: %{text: "cold page"}}
+      uri = spawn_session()
+      token = test_token(uri)
+      {turn_id, _version} = compose_page(uri, page_tree)
+      settle(uri, turn_id)
+
+      # The snapshot must be durable before we drop the process.
+      wait_until(fn -> KindSnapshot.get(URI.to_string(uri)) != nil end)
+
+      {:ok, pid} = Ezagent.KindRegistry.lookup(uri)
+
+      :ok =
+        DynamicSupervisor.terminate_child(
+          EzagentDomainSocialware.SocialwareSessionSupervisor,
+          pid
+        )
+
+      wait_until(fn -> Ezagent.KindRegistry.lookup(uri) == :error end)
+
+      # COLD path: no live process; the page is served from the durable snapshot.
+      {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
+      assert snapshot.page == page_tree
+    end
+  end
+
+  describe "cold-reconnect auth (codex rev4 MEDIUM): structural workspace, no registry binding" do
+    test "snapshot authorizes a valid token even when the WorkspaceRegistry binding is gone" do
+      page_tree = %{type: "text", props: %{text: "structural page"}}
+      uri = spawn_session()
+      token = test_token(uri)
+      {turn_id, _version} = compose_page(uri, page_tree)
+      settle(uri, turn_id)
+
+      # Drop the volatile registry binding (simulating a restart where ETS is empty).
+      :ok = Ezagent.WorkspaceRegistry.unbind(uri)
+      assert Ezagent.WorkspaceRegistry.lookup(uri) == :error
+
+      # Auth derives the workspace structurally -> still authorizes + returns the page.
+      {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
+      assert snapshot.page == page_tree
+    end
+  end
+end

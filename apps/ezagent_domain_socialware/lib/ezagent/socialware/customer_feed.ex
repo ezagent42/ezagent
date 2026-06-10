@@ -6,9 +6,12 @@ defmodule Ezagent.Socialware.CustomerFeed do
   Publisher, or ExternalMirror streams.
   """
 
+  import Ecto.Query
+
   alias Ezagent.{Behavior.Surface, MessageStore}
-  alias Ezagent.Socialware.CustomerAuth
+  alias Ezagent.Socialware.{CustomerAuth, SettlementRecord}
   alias Ezagent.URI, as: EzURI
+  alias EzagentCore.Repo
 
   @history_limit 100
   @approved_scan_limit 500
@@ -147,17 +150,73 @@ defmodule Ezagent.Socialware.CustomerFeed do
 
   defp attachment_key(_), do: nil
 
+  # P2.5a (codex rev4 MEDIUM) — derive the workspace STRUCTURALLY from the
+  # session URI (session://<workspace>/<template>/<name>), not the volatile
+  # WorkspaceRegistry ETS cache (empty after a restart → a still-valid customer
+  # token would be wrongly rejected on cold reconnect). Mirrors
+  # MessageStore.committed_customer_visible/2, which already resolves the
+  # workspace via Ezagent.Persistence. Returns a `%URI{}` (parsed from the
+  # structural string) to preserve the URI-struct contract the previous
+  # WorkspaceRegistry.lookup/1 provided — `authorized_attachment_path/4` calls
+  # `EzURI.workspace_name/1`, which has ONLY `%URI{}` heads.
   defp workspace(session_uri) do
-    case Ezagent.WorkspaceRegistry.lookup(session_uri) do
-      {:ok, workspace_uri} -> {:ok, workspace_uri}
-      :error -> {:error, :unbound_session}
+    case Ezagent.Persistence.workspace_uri_for(session_uri) do
+      {:ok, workspace_str} -> {:ok, EzURI.new!(workspace_str)}
+      {:error, _} -> {:error, :unbound_session}
     end
   end
 
+  # P2.5a — render the customer page from the COMMITTED surface version, NOT the
+  # live `:surface.approved` pointer. `turn.settle` dispatches `:approve`
+  # (advancing the live pointer) BEFORE `:commit_settlement` flips the settlement
+  # status, so reading the live pointer leaks an approved-but-uncommitted page.
+  # The committed version is the latest committed settlement's
+  # `target_surface_version` (mirrors the message gate, which requires
+  # status == :committed). The :surface slice retains every version tree, so the
+  # committed (possibly older) version is still renderable.
   defp customer_page(session_uri) do
+    case committed_surface_version(session_uri) do
+      nil -> nil
+      version -> Surface.tree_for_version(surface_slice(session_uri), version)
+    end
+  end
+
+  # The target_surface_version of the most-recently-COMMITTED settlement that
+  # carries a page (target_surface_version not null). nil → no committed page.
+  defp committed_surface_version(session_uri) do
+    session_str = URI.to_string(session_uri)
+
+    from(s in SettlementRecord,
+      where:
+        s.session_uri == ^session_str and s.status == :committed and
+          not is_nil(s.target_surface_version),
+      order_by: [desc: s.committed_at, desc: s.turn_id],
+      limit: 1,
+      select: s.target_surface_version
+    )
+    |> Repo.one()
+  end
+
+  # P2.5a (codex rev4 HIGH) — COLD-SAFE surface read. `get_slice/2` needs a live
+  # session process (it does NOT lazy-spawn); after a BEAM restart / reaped
+  # session the committed page must still render from the durable snapshot. Try
+  # the live slice first; on `:not_found` fall back to the snapshot via
+  # StateRebuilder.rebuild/1 + the public normalize_slice_view/1 (the snapshot
+  # stores the two-container Lifecycle slice; normalize flattens it exactly as
+  # get_slice/2 does). Returns `%{}` if neither path yields a slice.
+  defp surface_slice(session_uri) do
     case Ezagent.Kind.get_slice(session_uri, :surface) do
-      {:ok, surface} -> Surface.customer_tree(surface)
-      _ -> nil
+      {:ok, surface} when is_map(surface) ->
+        surface
+
+      _ ->
+        case Ezagent.Kind.StateRebuilder.rebuild(URI.to_string(session_uri)) do
+          {:ok, state, _from} ->
+            Ezagent.Kind.normalize_slice_view(Map.get(state, :surface, %{}))
+
+          _ ->
+            %{}
+        end
     end
   end
 end
