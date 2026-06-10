@@ -151,6 +151,35 @@ In `apps/ezagent_domain_ui/test/ezagent_domain_ui/session_view_registry_test.exs
     @impl true
     def external_render(_session_uri), do: %{type: "container", children: []}
   end
+
+  # codex P2 review HIGH — a HALF-DECLARED view: declares `external_render?/0 =>
+  # true` but OMITS `external_render/1`. The registry MUST NOT publish it as an
+  # external renderer (else the future ExternalAdapter crashes invoking the
+  # missing `external_render/1`).
+  defmodule StubHalfDeclaredExternalView do
+    @behaviour Ezagent.UI.SessionView
+    use Phoenix.Component
+
+    @impl true
+    def id, do: :stub_half_declared
+
+    @impl true
+    def label, do: "Half"
+
+    @impl true
+    def icon, do: "globe"
+
+    @impl true
+    def applies_to?(_session_uri), do: true
+
+    @impl true
+    def render(assigns), do: ~H"<div>half-declared internal render</div>"
+
+    @impl true
+    def external_render?, do: true
+
+    # external_render/1 intentionally NOT implemented.
+  end
 ```
 
 Then add this `describe` block immediately before the final `describe "all_ids/0"` block (currently line 163):
@@ -163,6 +192,10 @@ Then add this `describe` block immediately before the final `describe "all_ids/0
 
     test "is false for an internal-only view (no external_render?/0)" do
       assert SessionViewRegistry.external_render?(StubChatView) == false
+    end
+
+    test "is false for a HALF-DECLARED view: external_render?/0 true but no external_render/1 (codex P2 HIGH)" do
+      assert SessionViewRegistry.external_render?(StubHalfDeclaredExternalView) == false
     end
   end
 
@@ -229,17 +262,23 @@ Edit `apps/ezagent_domain_ui/lib/ezagent_domain_ui/session_view_registry.ex`. In
 
 ```elixir
   @doc """
-  P2 — whether `view_module` declares an EXTERNAL render target.
+  P2 — whether `view_module` declares a USABLE EXTERNAL render target.
 
-  A view is an external renderer iff it exports `external_render?/0` AND it
-  returns `true`. Internal-only views (no `external_render?/0`) are `false`.
-  The probe is `function_exported?`-guarded + try/catch so a buggy plugin
-  can't tear down a render (same safety posture as `safe_applies_to/2`).
+  A view is an external renderer iff it exports BOTH `external_render?/0`
+  AND `external_render/1` (both optional callbacks) AND `external_render?/0`
+  returns `true`. Requiring `external_render/1` to ALSO be exported (codex
+  P2 review HIGH) prevents publishing a half-declared view — one that says
+  `external_render?/0 == true` but omits `external_render/1` — which would
+  later crash the ExternalAdapter when it invokes the missing renderer.
+  Internal-only views (neither callback) are `false`. The boolean probe is
+  `function_exported?`-guarded + try/catch (same posture as
+  `safe_applies_to/2`).
   """
   @spec external_render?(module()) :: boolean()
   def external_render?(view_module) when is_atom(view_module) do
     Code.ensure_loaded?(view_module) and
       function_exported?(view_module, :external_render?, 0) and
+      function_exported?(view_module, :external_render, 1) and
       safe_external_render?(view_module)
   end
 
@@ -402,15 +441,22 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ## Task 4: Registry integration test — real registered views, dual-target discovery
 
 **Files:**
-- Test: `apps/ezagent_domain_ui/test/ezagent_domain_ui/session_view_registry_test.exs` (add one describe block)
+- Test: `apps/ezagent_plugin_liveview/test/ezagent_plugin_liveview/session_view_registry_integration_test.exs` (new file)
 
 This proves the contract end-to-end with the REAL views: PageView is an external renderer; ConversationView is internal-only; both keep showing up in `applicable_views/1` (internal switcher) unchanged.
 
+> **Why this test lives in `ezagent_plugin_liveview`, NOT `ezagent_domain_ui` (codex P2 review MEDIUM):** `Ezagent.UI.SessionView`/`SessionViewRegistry` live in `ezagent_domain_ui`, which the concrete views *depend on* — `ezagent_domain_ui` must NOT depend back on `EzagentDomainSocialware.PageView` or `EzagentPluginLiveview.Views.ConversationView` (that would invert the dependency and create a cycle). `apps/ezagent_plugin_liveview` already depends on both the socialware domain and the registry (it references both modules at `admin_live.ex:86-90`), so it is the one place where this integration assertion is a legal compile-time dependency. Do NOT add socialware/liveview to `ezagent_domain_ui`'s deps to work around this.
+
 - [ ] **Step 1: Write the failing test**
 
-Add this `describe` block to `apps/ezagent_domain_ui/test/ezagent_domain_ui/session_view_registry_test.exs`, immediately after the `external_renderers/1` describe block added in Task 2:
+Create `apps/ezagent_plugin_liveview/test/ezagent_plugin_liveview/session_view_registry_integration_test.exs` with this content:
 
 ```elixir
+defmodule EzagentPluginLiveview.SessionViewRegistryIntegrationTest do
+  use ExUnit.Case, async: false
+
+  alias Ezagent.UI.SessionViewRegistry
+
   describe "P2 contract — real views" do
     test "PageView is an external renderer; ConversationView is internal-only" do
       assert SessionViewRegistry.external_render?(EzagentDomainSocialware.PageView) == true
@@ -431,19 +477,18 @@ Add this `describe` block to `apps/ezagent_domain_ui/test/ezagent_domain_ui/sess
       assert :conversation in internal_ids
     end
   end
+end
 ```
 
 - [ ] **Step 2: Run the test to verify it fails (before, in a clean checkout) / passes (now)**
 
-Run: `MIX_ENV=test mix test apps/ezagent_domain_ui/test/ezagent_domain_ui/session_view_registry_test.exs -v 2>&1 | tail -25`
+Run: `MIX_ENV=test mix test apps/ezagent_plugin_liveview/test/ezagent_plugin_liveview/session_view_registry_integration_test.exs -v 2>&1 | tail -25`
 Expected: PASS — because Tasks 1–3 already implemented the contract. (This test is the *integration* assertion against the real modules; if Task 3 were reverted, the first assertion would FAIL with `external_render?(PageView) == false`, proving the test bites.)
-
-> If `EzagentPluginLiveview.Views.ConversationView` or `EzagentDomainSocialware.PageView` are not loadable from the `ezagent_domain_ui` test env (cross-app dep), add the two apps to `apps/ezagent_domain_ui/mix.exs` `:test`-env deps OR move this `describe` block into `apps/ezagent_plugin_liveview/test/admin_live_test.exs` (which already references both modules at `admin_live.ex:86-90`). Confirm by checking `apps/ezagent_domain_ui/mix.exs` `deps/0` before running.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add apps/ezagent_domain_ui/test/ezagent_domain_ui/session_view_registry_test.exs
+git add apps/ezagent_plugin_liveview/test/ezagent_plugin_liveview/session_view_registry_integration_test.exs
 git commit -m "test(socialware/p2): registry contract integration with real PageView + ConversationView
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
