@@ -470,6 +470,16 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
       end
     end)
     |> Enum.reject(&is_nil/1)
+    # P3-1 Finding 2 — this dropdown drives the BIND surface, and only
+    # `:push` adapters are bindable (a `:pull` adapter has no per-binding
+    # transport — it is served by its caller's Phoenix channel, P3-2).
+    # Filter pull adapters out of the bind picker so the operator can't
+    # select an adapter the bind facade would reject with
+    # `{:error, :not_bindable}`. (The general-purpose
+    # `ExternalMirror.list_adapters/0` is left unfiltered.)
+    |> Enum.filter(fn %{module: module} ->
+      ExternalMirror.Adapter.kind_of(module) == :push
+    end)
     |> Enum.filter(fn %{module: module} ->
       caller_holds_adapter_cap?(caller_caps, module, session_instance, session_workspace)
     end)
