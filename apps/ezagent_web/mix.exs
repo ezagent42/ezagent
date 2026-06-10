@@ -76,6 +76,10 @@ defmodule EzagentWeb.MixProject do
       # The plugin contract stays narrow — ezagent_web depends on it for
       # routing only, not for code calls.
       {:ezagent_plugin_liveview, in_umbrella: true},
+      # Stage-1 autoservice CS: web routes CustomerLive by module atom (same
+      # routing-only contract as ezagent_plugin_liveview) AND boots the plugin's
+      # supervision tree (the per-session Turn AdapterRegistry/Supervisor).
+      {:ezagent_plugin_autoservice, in_umbrella: true},
       {:ezagent_plugin_echo, in_umbrella: true},
       # Phase 5 PR 6: Feishu webhook route forwards to
       # EzagentPluginFeishu.WebhookPlug — needed at compile time so the

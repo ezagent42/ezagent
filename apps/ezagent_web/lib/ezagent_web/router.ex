@@ -92,6 +92,16 @@ defmodule EzagentWeb.Router do
     post "/workspaces/switch", WorkspaceSwitchController, :switch
   end
 
+  # Stage-1 autoservice CS customer chat (socialware). The plugin deliberately
+  # does NOT dep on ezagent_web; web routes its LiveView by module atom here.
+  scope "/", EzagentPluginAutoservice do
+    pipe_through [:browser, EzagentWeb.Plugs.RequireEntity]
+
+    live_session :autoservice_customer, on_mount: {EzagentWeb.LiveAuth, :require_entity} do
+      live "/autoservice", CustomerLive
+    end
+  end
+
   scope "/", EzagentPluginLiveview do
     pipe_through [:browser, EzagentWeb.Plugs.RequireEntity]
 
