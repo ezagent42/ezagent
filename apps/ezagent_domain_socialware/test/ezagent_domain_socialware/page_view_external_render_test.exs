@@ -1,0 +1,127 @@
+defmodule EzagentDomainSocialware.PageViewExternalRenderTest do
+  @moduledoc """
+  P2 — PageView declares an external render target and produces it via the
+  SAME projection the customer feed already uses (Surface.customer_tree/1).
+  Internal render (operator_tree) is unaffected.
+  """
+  # Spawns a real SocialwareSession Kind (touches KindSnapshot/Repo), so this
+  # MUST use the Repo-sandbox case and run non-async (codex P2 review).
+  use EzagentCore.DataCase, async: false
+
+  alias Ezagent.Invocation
+  alias Ezagent.Ecto.KindSnapshot
+  alias Ezagent.Entity.{SocialwareSession, User}
+  alias Ezagent.Behavior.Surface
+  alias EzagentDomainSocialware.PageView
+
+  defp session_uri do
+    Ezagent.URI.session(
+      :team_alpha,
+      :socialware,
+      "page-ext-render-#{System.unique_integer([:positive])}"
+    )
+  end
+
+  defp agent_uri(name), do: Ezagent.URI.entity(:team_alpha, :agent, name)
+
+  defp target(session_uri, behavior, action) do
+    Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=#{behavior}.#{action}")
+  end
+
+  defp dispatch(session_uri, behavior, action, args) do
+    Invocation.dispatch(%Invocation{
+      target: target(session_uri, behavior, action),
+      mode: :call,
+      args: args,
+      ctx: %{
+        caller: User.admin_uri(),
+        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        reply: {:caller_inbox, self()}
+      }
+    })
+  end
+
+  defp wait_until(fun, attempts \\ 100)
+  defp wait_until(_fun, 0), do: flunk("wait_until: condition never became true")
+
+  defp wait_until(fun, attempts) do
+    if fun.() do
+      :ok
+    else
+      Process.sleep(20)
+      wait_until(fun, attempts - 1)
+    end
+  end
+
+  # Spawn a fresh socialware session. `Surface.create/1` seeds
+  # %{versions: %{}, approved: nil, version_seq: 0}, so there is NO approved
+  # version yet — `customer_tree` returns nil.
+  defp spawn_session do
+    uri = session_uri()
+    :ok = KindSnapshot.delete(URI.to_string(uri))
+    {:ok, _pid} = Ezagent.Kind.spawn(SocialwareSession, %{uri: uri})
+
+    :ok = Ezagent.WorkspaceRegistry.bind(uri, Ezagent.Capability.workspace_of(uri))
+    uri
+  end
+
+  # Drive a full turn to APPROVE a page version (auto-approve on settle) — the
+  # exact seeding path the surface dispatch integration test exercises.
+  defp approve_page(session_uri, page_tree) do
+    {:ok, %{turn_id: turn_id}} =
+      dispatch(session_uri, :turn, :open, %{trigger: %{message_id: "m1"}, opened_at: 1})
+
+    {:ok, _} =
+      dispatch(session_uri, :turn, :dispatch, %{
+        turn_id: turn_id,
+        subtasks: [%{id: :page, mention: agent_uri("page"), prompt: "render"}]
+      })
+
+    {:ok, _} =
+      dispatch(session_uri, :turn, :deliver, %{
+        turn_id: turn_id,
+        subtask_id: :page,
+        card_ref: %{kind: :page, tree: page_tree}
+      })
+
+    {:ok, %{version: version}} =
+      dispatch(session_uri, :turn, :compose, %{turn_id: turn_id, result_refs: []})
+
+    {:ok, %{status: :settled}} =
+      dispatch(session_uri, :turn, :settle, %{turn_id: turn_id})
+
+    wait_until(fn ->
+      {:ok, surface} = Ezagent.Kind.get_slice(session_uri, :surface)
+      surface.approved == version
+    end)
+
+    version
+  end
+
+  describe "external_render?/0" do
+    test "PageView declares an external render target" do
+      assert PageView.external_render?() == true
+    end
+  end
+
+  describe "external_render/1" do
+    test "returns nil when there is no approved version" do
+      uri = spawn_session()
+      assert PageView.external_render(uri) == nil
+    end
+
+    test "returns the APPROVED version tree (== Surface.customer_tree/1)" do
+      page_tree = %{type: "text", props: %{text: "live page"}}
+      uri = spawn_session()
+      _version = approve_page(uri, page_tree)
+
+      {:ok, surface} = Ezagent.Kind.get_slice(uri, :surface)
+      assert PageView.external_render(uri) == Surface.customer_tree(surface)
+      assert PageView.external_render(uri) == page_tree
+    end
+
+    test "returns nil for a non-URI argument (clause fallback)" do
+      assert PageView.external_render(:not_a_uri) == nil
+    end
+  end
+end
