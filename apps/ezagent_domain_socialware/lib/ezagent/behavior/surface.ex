@@ -105,6 +105,24 @@ defmodule Ezagent.Behavior.Surface do
 
   def customer_tree(_surface), do: nil
 
+  @doc """
+  P2.5a — render a SPECIFIC version's tree, independent of the live `approved`
+  pointer. The committed customer page is rendered from the version recorded on
+  the committed settlement (NOT `surface.approved`, which may have advanced past
+  the last committed delivery). Returns `nil` for a missing/nil version.
+  """
+  @spec tree_for_version(map(), integer() | nil) :: map() | nil
+  def tree_for_version(_surface, nil), do: nil
+
+  def tree_for_version(%{versions: versions}, version) when is_map(versions) do
+    case Map.fetch(versions, version) do
+      {:ok, %{tree: tree}} -> tree
+      _ -> nil
+    end
+  end
+
+  def tree_for_version(_surface, _version), do: nil
+
   @spec latest_version(map()) :: integer() | nil
   def latest_version(%{versions: versions}) when map_size(versions) == 0, do: nil
 

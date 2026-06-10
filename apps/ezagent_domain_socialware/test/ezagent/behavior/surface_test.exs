@@ -105,4 +105,26 @@ defmodule EzagentDomainSocialware.Behavior.SurfaceTest do
     assert Surface.operator_tree(surface) == tree2
     assert Surface.customer_tree(surface) == tree1
   end
+
+  describe "tree_for_version/2" do
+    test "returns the tree for an explicit version regardless of the approved pointer" do
+      surface = %{
+        versions: %{
+          1 => %{tree: %{type: "text", props: %{text: "v1"}}},
+          2 => %{tree: %{type: "text", props: %{text: "v2"}}}
+        },
+        approved: 2
+      }
+
+      assert Surface.tree_for_version(surface, 1) == %{type: "text", props: %{text: "v1"}}
+      assert Surface.tree_for_version(surface, 2) == %{type: "text", props: %{text: "v2"}}
+    end
+
+    test "returns nil for a missing version or nil version" do
+      surface = %{versions: %{1 => %{tree: %{type: "text"}}}, approved: 1}
+      assert Surface.tree_for_version(surface, 99) == nil
+      assert Surface.tree_for_version(surface, nil) == nil
+      assert Surface.tree_for_version(%{}, 1) == nil
+    end
+  end
 end
