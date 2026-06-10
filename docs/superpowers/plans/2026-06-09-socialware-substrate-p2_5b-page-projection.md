@@ -102,16 +102,15 @@ defmodule EzagentCore.Repo.Migrations.SocialwareOutboxSurfaceVersionAndCommitted
 end
 ```
 
-- [ ] **Step 3: Run against the TEST DB only**
+- [ ] **Step 3: Do NOT run the migration yet (ordering — codex rev5 HIGH)**
 
-Run: `MIX_ENV=test mix ecto.migrate 2>&1 | tail -15`
-Expected: applies cleanly (on a fresh test DB the backfill is a no-op — no committed rows yet). NEVER run against dev/prod.
+The migration calls `Ezagent.Socialware.Settlement.backfill_committed_seq!/0`, which does not exist until Task 3. Running `mix ecto.migrate` now would raise `UndefinedFunctionError`. **Compile-only check** the migration file is syntactically valid (`MIX_ENV=test mix compile 2>&1 | tail -3`), then proceed. The migration is RUN in **Task 3 Step 5** (after the schema in Task 2 + the helper in Task 3 exist). NEVER run against dev/prod.
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add apps/ezagent_core/priv/repo/migrations/<next>_socialware_outbox_surface_version_and_committed_seq.exs
-git commit -m "feat(socialware/p2.5b): outbox surface_version + committed_seq cursor migration
+git commit -m "feat(socialware/p2.5b): outbox surface_version + committed_seq cursor migration (not yet run)
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -736,10 +735,16 @@ Edit `apps/ezagent_domain_socialware/lib/ezagent/socialware/settlement.ex`:
 
 > Also update `mark_committed_for_test/1` (the public full-commit test helper, `settlement.ex:131-143`) so it ALSO assigns the cursor + surface_version, faithful to the real commit path: after its `update_all(set: [status: :committed, committed_at: …])`, call `assign_committed_seq(get_record)` where `get_record` is the `%SettlementRecord{}` (re-fetch via `get/1` to get `target_surface_version`). Keep its return shape (`get(turn_id)`). Tests that manually construct a pending settlement + outbox row then commit it use ONLY `mark_committed_for_test/1` (it now does status + subwrites + seq + surface_version) — no separate seq helper is needed/exposed.
 
-- [ ] **Step 4: Run to verify they pass**
+- [ ] **Step 4: NOW run the migration (codex rev5 — helper now exists)**
+
+The Task 1 migration calls `Settlement.backfill_committed_seq!/0`, which exists as of this Task. Run it against the TEST DB:
+Run: `MIX_ENV=test mix ecto.migrate 2>&1 | tail -15`
+Expected: applies cleanly (fresh test DB → backfill no-op). NEVER run against dev/prod.
+
+- [ ] **Step 4b: Run the cursor tests to verify they pass**
 
 Run: `MIX_ENV=test mix test apps/ezagent_domain_socialware/test/ezagent/socialware/customer_delivery_cursor_test.exs -v 2>&1 | tail -20`
-Expected: PASS — seq=1,2 in commit order; replay-since; pending invisible + late commit gets seq 3 (not skipped).
+Expected: PASS — seq=1,2 in commit order; replay-since; pending invisible + late commit gets seq 3 (not skipped); upgrade-surface_version; re-commit no-op; tie; rollback; backfill.
 
 - [ ] **Step 5: Commit**
 
