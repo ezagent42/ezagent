@@ -662,14 +662,41 @@ defmodule Ezagent.Kind.Server do
             # Issue #342 — durable write failed. Mirror the handle_call
             # branch: propagate the error to the caller, leave the
             # in-memory slice un-advanced.
+            log_unobservable_cast_error(inv, {:persistence_failed, reason})
             Ezagent.Invocation.reply(inv.ctx, {:error, {:persistence_failed, reason}})
             {:noreply, state}
         end
 
       {:error, reason} ->
+        log_unobservable_cast_error(inv, reason)
         Ezagent.Invocation.reply(inv.ctx, {:error, reason})
         {:noreply, state}
     end
+  end
+
+  # P2.5c (codex impl HIGH r2) — a cast dispatch is fire-and-forget: its error
+  # surfaces HERE in the target's `handle_cast`, AFTER `Router.dispatch` already
+  # returned `:ok` to the (post-commit deferred) caller. When the cast carries
+  # `reply: :ignore` (every `DeferredDispatch` Cmd, and Turn's own settlement
+  # Cmds), `Invocation.reply/2` is a NO-OP — so without this log the failure is
+  # invisible in-uptime. The durable side is still safe: the settlement record
+  # stays `:pending` (the retry marker) and `Turn.activated/2` re-drives it on
+  # restart. This closes the in-uptime OBSERVABILITY half; in-uptime no-restart
+  # RETRY is P3's outbox-replay concern. Observable-reply casts (caller_inbox)
+  # already see the error via `Invocation.reply`, so only log the `:ignore` case.
+  defp log_unobservable_cast_error(%Ezagent.Invocation{ctx: ctx} = inv, reason) do
+    if Map.get(ctx, :reply) == :ignore do
+      require Logger
+
+      Logger.error(
+        "Kind.Server: fire-and-forget cast dispatch FAILED (no caller will see it) " <>
+          "target=#{inspect(inv.target)} reason=#{inspect(reason)} — if this is a " <>
+          "post-commit settlement the record stays :pending and Turn.activated/2 " <>
+          "recovers it on restart"
+      )
+    end
+
+    :ok
   end
 
   # Commit-then-notify ordering (codex PR-N1 round-2 MEDIUM +

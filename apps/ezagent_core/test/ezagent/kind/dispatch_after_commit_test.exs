@@ -67,8 +67,30 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
       modes: [:call]
     )
 
+    # `:trigger_self_fail` emits a deferred Cmd at a LIVE self-target action
+    # (`:probe_fail`) that FAILS inside its own handler AFTER the cast is
+    # accepted — exercising the post-delivery failure path (codex P2.5c r2 HIGH),
+    # distinct from `:trigger_bad`'s pre-delivery missing-target failure.
+    action(:trigger_self_fail,
+      args: %{},
+      returns: :ok,
+      caps: [:trigger_self_fail],
+      modes: [:call]
+    )
+
+    # `:probe_fail` is a LIVE deferred target whose handler returns a bad shape,
+    # which `Runtime` maps to `{:error, _}` — surfacing in the target's
+    # `handle_cast` AFTER the cast was accepted.
+    action(:probe_fail,
+      args: %{},
+      returns: :ok,
+      caps: [:probe_fail],
+      modes: [:call, :cast]
+    )
+
     @impl Ezagent.Behavior
-    def cap_exempt_actions, do: [:trigger, :probe, :trigger_bad]
+    def cap_exempt_actions,
+      do: [:trigger, :probe, :trigger_bad, :trigger_self_fail, :probe_fail]
 
     @impl Ezagent.Lifecycle
     def create(_args), do: {:ok, %{marker: :initial, probe_count: 0}}
@@ -115,6 +137,21 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
          {:dispatch_after_commit, cmd}
        ]}
     end
+
+    def handle_trigger_self_fail(_args, ctx) do
+      cmd =
+        Ezagent.Cmd.new(ctx.self_uri, :probe_fail, %{}, %{reply: :ignore, caps: MapSet.new()})
+
+      {:ok, :ok,
+       [
+         {:set, :marker, :committed_selffail},
+         {:dispatch_after_commit, cmd}
+       ]}
+    end
+
+    # Returns a bad shape on purpose → Runtime maps it to `{:error, _}` in the
+    # target's handle_cast, AFTER the deferred cast was already accepted.
+    def handle_probe_fail(_args, _ctx), do: :not_a_valid_handler_return
   end
 
   defmodule DacKind do
@@ -140,6 +177,8 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
     :ok = BehaviorRegistry.register(DacKind, :trigger, DacBehavior)
     :ok = BehaviorRegistry.register(DacKind, :probe, DacBehavior)
     :ok = BehaviorRegistry.register(DacKind, :trigger_bad, DacBehavior)
+    :ok = BehaviorRegistry.register(DacKind, :trigger_self_fail, DacBehavior)
+    :ok = BehaviorRegistry.register(DacKind, :probe_fail, DacBehavior)
 
     :persistent_term.put({DacBehavior, :test_pid}, self())
 
@@ -271,5 +310,32 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
     # The failed post-commit dispatch was logged at :error.
     assert log =~ "DeferredDispatch.run"
     assert log =~ "post-commit dispatch FAILED"
+  end
+
+  test "a deferred dispatch to a LIVE target that FAILS post-delivery is logged, not silently lost",
+       %{uri: uri} do
+    {:ok, pid} = Ezagent.Kind.Server.start_link({DacKind, %{uri: uri}})
+    :ok = wait_until_ready(uri, 1000)
+
+    log =
+      capture_log(fn ->
+        assert {:ok, :ok} =
+                 GenServer.call(pid, {:ezagent_dispatch, inv(uri, :trigger_self_fail)})
+
+        # Give the post-commit cast a beat to be accepted + fail target-side.
+        Process.sleep(100)
+      end)
+
+    # The parent slice DID commit (the deferred target-side failure is
+    # observational — it does not roll back the already-committed parent turn).
+    {:ok, %{marker: marker}} = Ezagent.Kind.get_slice(uri, :dac)
+    assert marker == :committed_selffail
+
+    # codex P2.5c r2 HIGH: the cast was ACCEPTED (Router.dispatch returned :ok),
+    # then the handler failed inside the target's handle_cast. Because the
+    # deferred Cmd is reply: :ignore, no caller sees the error — so the target
+    # server MUST log it. Without `log_unobservable_cast_error/2` this failure
+    # would be silently lost in-uptime.
+    assert log =~ "fire-and-forget cast dispatch FAILED"
   end
 end
