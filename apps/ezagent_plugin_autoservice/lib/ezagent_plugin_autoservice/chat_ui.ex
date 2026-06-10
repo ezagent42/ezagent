@@ -25,6 +25,17 @@ defmodule EzagentPluginAutoservice.ChatUI do
   end
 
   defp label_for(_sender, true), do: "我"
+  # An auto-settled bot reply is composed under the turn-driving principal
+  # (`entity://system/...`), so attribute that to the AI assistant. A direct
+  # bot-agent sender (`.../agent/<name>`) is also the AI. A non-system human
+  # `.../user/<name>` sender is a human operator who took over.
+  # NOTE: proper per-message authorship (bot vs operator on the settled surface)
+  # is a settlement-layer follow-up; this display heuristic is correct for the
+  # auto (no-takeover) CS flow the customer feed shows today.
+  defp label_for(%URI{host: "system"}, _), do: "AI 客服"
+  defp label_for(%URI{path: "/agent/" <> _}, _), do: "AI 客服"
+  defp label_for(%URI{path: "/user/" <> _}, _), do: "人工客服"
+  # legacy URI shape (host-segmented) fallthrough
   defp label_for(%URI{scheme: "entity", host: "agent"}, _), do: "AI 客服"
   defp label_for(%URI{scheme: "entity", host: "user"}, _), do: "人工客服"
   defp label_for(_sender, _), do: "系统"

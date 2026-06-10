@@ -41,7 +41,7 @@ defmodule EzagentPluginAutoservice.CustomerLive do
         end
 
         caps = Ezagent.Identity.list_caps_for(customer_uri)
-        messages = load_customer_messages(session_uri, feed_token, customer_uri)
+        feed_messages = load_customer_messages(session_uri, feed_token, customer_uri)
 
         {:ok,
          assign(socket,
@@ -50,7 +50,9 @@ defmodule EzagentPluginAutoservice.CustomerLive do
            session_uri: session_uri,
            feed_token: feed_token,
            caps: caps,
-           messages: messages,
+           feed_messages: feed_messages,
+           my_messages: [],
+           messages: feed_messages,
            compose_nonce: 0,
            error: nil
          )}
@@ -67,6 +69,8 @@ defmodule EzagentPluginAutoservice.CustomerLive do
            session_uri: nil,
            feed_token: nil,
            caps: MapSet.new(),
+           feed_messages: [],
+           my_messages: [],
            messages: [],
            compose_nonce: 0,
            error: "暂时无法进入会话,请联系管理员先为你开通客服会话。"
@@ -97,26 +101,46 @@ defmodule EzagentPluginAutoservice.CustomerLive do
             ctx: %{caller: socket.assigns.customer_uri, caps: socket.assigns.caps, reply: :ignore}
           })
 
-        # The customer's own message surfaces back through the gated
-        # CustomerFeed (DD5-b) once its turn settles, so we don't append
-        # optimistically — just reset the composer input by bumping its nonce.
-        {:noreply, update(socket, :compose_nonce, &(&1 + 1))}
+        # The customer's own message is the turn TRIGGER, not a settled message,
+        # so it never returns through CustomerFeed (which only carries committed
+        # `customer_visible` bot/operator replies — DD5-b). Echo it locally so the
+        # sender sees their own question interleaved with the replies; the feed
+        # stays the source of truth for everything settled.
+        echo = %{
+          id: "me-" <> Integer.to_string(System.unique_integer([:positive])),
+          mine?: true,
+          label: "我",
+          text: text,
+          at: DateTime.utc_now()
+        }
+
+        my_messages = socket.assigns.my_messages ++ [echo]
+
+        {:noreply,
+         socket
+         |> assign(:my_messages, my_messages)
+         |> assign(:messages, merge_rows(socket.assigns.feed_messages, my_messages))
+         |> update(:compose_nonce, &(&1 + 1))}
     end
   end
 
   @impl true
   def handle_info({:customer_delivery, _payload}, socket) do
     # A settlement committed new customer-visible messages. Re-snapshot the
-    # gated feed (single source of truth) rather than trusting the payload —
-    # the snapshot already applies visibility filtering.
-    messages =
+    # gated feed (single source of truth for settled replies) rather than
+    # trusting the payload — the snapshot already applies visibility filtering.
+    # Re-merge with the locally-echoed customer turns (never in the feed).
+    feed_messages =
       load_customer_messages(
         socket.assigns.session_uri,
         socket.assigns.feed_token,
         socket.assigns.customer_uri
       )
 
-    {:noreply, assign(socket, :messages, messages)}
+    {:noreply,
+     socket
+     |> assign(:feed_messages, feed_messages)
+     |> assign(:messages, merge_rows(feed_messages, socket.assigns.my_messages))}
   end
 
   def handle_info(_other, socket), do: {:noreply, socket}
@@ -143,6 +167,13 @@ defmodule EzagentPluginAutoservice.CustomerLive do
   end
 
   def load_customer_messages(_session_uri, _token, _viewer_uri), do: []
+
+  # Interleave the settled feed (bot/operator replies) with the customer's own
+  # locally-echoed turns, ordered by time. Both row shapes carry `:at`
+  # (DateTime) — feed rows from the message's `inserted_at`, echoes from send time.
+  defp merge_rows(feed_messages, my_messages) do
+    Enum.sort_by(feed_messages ++ my_messages, & &1.at, DateTime)
+  end
 
   @impl true
   def render(assigns) do
