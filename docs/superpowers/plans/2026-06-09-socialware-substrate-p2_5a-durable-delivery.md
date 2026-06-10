@@ -4,7 +4,13 @@
 
 **Goal:** Close the customer **page leak**: render the customer page from the **committed** surface version (the latest `socialware_settlements` row with `status == :committed`), never from the live `:surface.approved` pointer — which `turn.settle` advances via `:approve` BEFORE `:commit_settlement`, so a refetch in that window leaks an approved-but-uncommitted page.
 
-**Architecture:** The narrowest correct slice of spec §6 P2.5 — **page commit-gating**, symmetric with the message gate that already works (`MessageStore.committed_customer_visible/2` joins `socialware_settlements` WHERE `status == "committed"`). The committed page version is **already** recorded on the commit record: `SettlementRecord.target_surface_version` (set by `Turn.settlement_attrs/3`, persisted by `Settlement.begin/1`, and authoritative once `status == :committed`). So `CustomerFeed.customer_page/1` reads the latest committed settlement's `target_surface_version` and renders THAT version's tree from the immutable `:surface.versions` map — **no schema change, no migration, no outbox change, upgrade-safe** (operates on existing data). The outbox's `surface_version` column + the cursor-addressable replay primitive (`committed_deliveries_since`) are **DEFERRED to P2.5b**: their correctness depends on the commit-ordering fix (atomic outbox-insert + status-flip → a commit-order cursor), and an `id` cursor allocated pre-commit can permanently skip an out-of-order-committed row (codex P2.5a rev2 CRITICAL). Building them here, before commit-ordering is sound, is the "don't migrate a consumer onto a signal before its correct form exists" anti-pattern (spec ANTI-PATTERNS).
+**Architecture:** The narrowest correct slice of spec §6 P2.5 — **page commit-gating**, symmetric with the message gate that already works (`MessageStore.committed_customer_visible/2` joins `socialware_settlements` WHERE `status == "committed"`). The committed page version is **already** recorded on the commit record: `SettlementRecord.target_surface_version` (set by `Turn.settlement_attrs/3`, persisted by `Settlement.begin/1`, authoritative once `status == :committed`). So `CustomerFeed.customer_page/1` reads the latest committed settlement's `target_surface_version` and renders THAT version's tree from the immutable `:surface.versions` map — **no schema change, no migration, no outbox change, upgrade-safe** (operates on existing data).
+
+**Cold-path durability (codex P2.5a rev4 HIGH + MEDIUM).** "Durable delivery" must survive a BEAM restart / reaped session, so two reads in `CustomerFeed` are made cold-safe in this plan:
+- **Surface read:** `customer_page/1` previously called `Ezagent.Kind.get_slice/2`, which returns `{:error, :not_found}` when the session process is absent (it does NOT lazy-spawn). The committed surface tree must come from the durable snapshot when the process is down. We add a `surface_slice/1` helper: try `get_slice/2` (live, fast), and on `:not_found` fall back to `Ezagent.Kind.StateRebuilder.rebuild/1` (reads `kind_snapshots`) + the public `Ezagent.Kind.normalize_slice_view/1` (the snapshot stores the two-container Lifecycle slice; `normalize_slice_view/1` flattens it exactly as `get_slice/2` does).
+- **Workspace auth:** `CustomerFeed.workspace/1` previously used `Ezagent.WorkspaceRegistry.lookup/1` (volatile ETS — empty after restart → a valid token is rejected). The workspace is structural in `session://<workspace>/<template>/<name>`; switch to `Ezagent.Persistence.workspace_uri_for/1` (the same structural derivation the message gate already uses), so cold reconnects authorize.
+
+The outbox's `surface_version` column + the cursor-addressable replay primitive (`committed_deliveries_since`) are **DEFERRED to P2.5b**: their correctness depends on the commit-ordering fix (atomic outbox-insert + status-flip → a commit-order cursor), and an `id` cursor allocated pre-commit can permanently skip an out-of-order-committed row (codex P2.5a rev2 CRITICAL). Building them here, before commit-ordering is sound, is the "don't migrate a consumer onto a signal before its correct form exists" anti-pattern (spec ANTI-PATTERNS).
 
 **Tech Stack:** Elixir 1.19 / OTP 27, umbrella (`apps/ezagent_domain_socialware`), Ecto query (read-path only — NO migration), ExUnit. Run mix from the umbrella root with `MIX_ENV=test`.
 
@@ -36,9 +42,9 @@
 | File | Status | Responsibility |
 |---|---|---|
 | `apps/ezagent_domain_socialware/lib/ezagent/behavior/surface.ex` | Modify | Add `tree_for_version/2` (public) — render a SPECIFIC version's tree (not the live `approved` pointer). |
-| `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed.ex` | Modify | `customer_page/1` renders the latest COMMITTED settlement's `target_surface_version` (`SettlementRecord` WHERE status==:committed), not the live approved pointer. |
+| `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed.ex` | Modify | `customer_page/1` renders the latest COMMITTED settlement's `target_surface_version` (not the live approved pointer); cold-safe `surface_slice/1` (snapshot fallback); `workspace/1` derives the workspace structurally (not the volatile registry). |
 | `apps/ezagent_domain_socialware/test/ezagent/behavior/surface_test.exs` | Modify | `tree_for_version/2` unit tests. |
-| `apps/ezagent_domain_socialware/test/ezagent/socialware/customer_page_commit_gate_test.exs` | Create | committed-page test + leak test (approve, no commit) + partial-commit gate test (pending settlement → page nil) + wake-up-loss test (commit, no broadcast → snapshot still has page). |
+| `apps/ezagent_domain_socialware/test/ezagent/socialware/customer_page_commit_gate_test.exs` | Create | committed-page + leak (approve, no commit) + partial-commit (pending settlement → nil) + wake-up-loss + cold-read (session terminated → snapshot still serves page) + cold-reconnect-auth (no registry binding → still authorizes) tests. |
 
 No migration. No `ezagent_core` change.
 
@@ -189,8 +195,11 @@ defmodule Ezagent.Socialware.CustomerPageCommitGateTest do
     uri
   end
 
+  # Derive the workspace STRUCTURALLY (same as the production snapshot/auth path),
+  # so the token's workspace matches what CustomerFeed.workspace/1 derives — even
+  # after the volatile WorkspaceRegistry binding is dropped.
   defp test_token(session_uri) do
-    {:ok, workspace_uri} = Ezagent.WorkspaceRegistry.lookup(session_uri)
+    workspace_uri = Ezagent.Persistence.workspace_uri_for!(session_uri)
     Ezagent.Socialware.CustomerAuth.issue_token(session_uri, workspace_uri)
   end
 
@@ -305,6 +314,51 @@ defmodule Ezagent.Socialware.CustomerPageCommitGateTest do
       assert snapshot.page == page_tree
     end
   end
+
+  describe "cold-read durability (codex rev4 HIGH): committed page survives a stopped session" do
+    test "after the live session process is terminated, snapshot still returns the committed page" do
+      page_tree = %{type: "text", props: %{text: "cold page"}}
+      uri = spawn_session()
+      token = test_token(uri)
+      {turn_id, _version} = compose_page(uri, page_tree)
+      settle(uri, turn_id)
+
+      # The snapshot must be durable before we drop the process.
+      wait_until(fn -> KindSnapshot.get(URI.to_string(uri)) != nil end)
+
+      {:ok, pid} = Ezagent.KindRegistry.lookup(uri)
+
+      :ok =
+        DynamicSupervisor.terminate_child(
+          EzagentDomainSocialware.SocialwareSessionSupervisor,
+          pid
+        )
+
+      wait_until(fn -> Ezagent.KindRegistry.lookup(uri) == :error end)
+
+      # COLD path: no live process; the page is served from the durable snapshot.
+      {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
+      assert snapshot.page == page_tree
+    end
+  end
+
+  describe "cold-reconnect auth (codex rev4 MEDIUM): structural workspace, no registry binding" do
+    test "snapshot authorizes a valid token even when the WorkspaceRegistry binding is gone" do
+      page_tree = %{type: "text", props: %{text: "structural page"}}
+      uri = spawn_session()
+      token = test_token(uri)
+      {turn_id, _version} = compose_page(uri, page_tree)
+      settle(uri, turn_id)
+
+      # Drop the volatile registry binding (simulating a restart where ETS is empty).
+      :ok = Ezagent.WorkspaceRegistry.unbind(uri)
+      assert Ezagent.WorkspaceRegistry.lookup(uri) == :error
+
+      # Auth derives the workspace structurally -> still authorizes + returns the page.
+      {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
+      assert snapshot.page == page_tree
+    end
+  end
 end
 ```
 
@@ -338,14 +392,8 @@ Edit `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed.ex`:
   # committed (possibly older) version is still renderable.
   defp customer_page(session_uri) do
     case committed_surface_version(session_uri) do
-      nil ->
-        nil
-
-      version ->
-        case Ezagent.Kind.get_slice(session_uri, :surface) do
-          {:ok, surface} -> Surface.tree_for_version(surface, version)
-          _ -> nil
-        end
+      nil -> nil
+      version -> Surface.tree_for_version(surface_slice(session_uri), version)
     end
   end
 
@@ -364,7 +412,49 @@ Edit `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed.ex`:
     )
     |> Repo.one()
   end
+
+  # P2.5a (codex rev4 HIGH) — COLD-SAFE surface read. `get_slice/2` needs a live
+  # session process (it does NOT lazy-spawn); after a BEAM restart / reaped
+  # session the committed page must still render from the durable snapshot. Try
+  # the live slice first; on `:not_found` fall back to the snapshot via
+  # StateRebuilder.rebuild/1 + the public normalize_slice_view/1 (the snapshot
+  # stores the two-container Lifecycle slice; normalize flattens it exactly as
+  # get_slice/2 does). Returns `%{}` if neither path yields a slice.
+  defp surface_slice(session_uri) do
+    case Ezagent.Kind.get_slice(session_uri, :surface) do
+      {:ok, surface} when is_map(surface) ->
+        surface
+
+      _ ->
+        case Ezagent.Kind.StateRebuilder.rebuild(URI.to_string(session_uri)) do
+          {:ok, state, _from} ->
+            Ezagent.Kind.normalize_slice_view(Map.get(state, :surface, %{}))
+
+          _ ->
+            %{}
+        end
+    end
+  end
 ```
+
+(c) Make workspace auth cold-safe — replace `workspace/1` (currently `customer_feed.ex:150-155`, which uses `Ezagent.WorkspaceRegistry.lookup/1`, volatile ETS lost on restart) with the structural derivation the message gate already uses:
+
+```elixir
+  # P2.5a (codex rev4 MEDIUM) — derive the workspace STRUCTURALLY from the
+  # session URI (session://<workspace>/<template>/<name>), not the volatile
+  # WorkspaceRegistry ETS cache (empty after a restart → a still-valid customer
+  # token would be wrongly rejected on cold reconnect). Mirrors
+  # MessageStore.committed_customer_visible/2, which already resolves the
+  # workspace via Ezagent.Persistence.
+  defp workspace(session_uri) do
+    case Ezagent.Persistence.workspace_uri_for(session_uri) do
+      {:ok, workspace_uri} -> {:ok, workspace_uri}
+      {:error, _} -> {:error, :unbound_session}
+    end
+  end
+```
+
+> `Persistence.workspace_uri_for/1` returns `{:ok, workspace_uri_string}` for a `session://` URI. `CustomerAuth.authorize/3` accepts a `URI.t() | String.t()` workspace (`customer_auth.ex:27`), and `authorized_attachment_path/4`'s `EzURI.workspace_name/1` accepts the string form — confirm both signatures take the string before finalizing (no `URI.t()`-only callers of `workspace/1`'s result).
 
 - [ ] **Step 4: Run to verify they pass**
 
@@ -420,6 +510,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 1. **Spec coverage:** P2.5a covers the socialware-local **page commit-gating** sub-point of spec §6 P2.5 (render the page from the committed surface version, status-gated). The **durable outbox surface_version column + cursor-addressable replay** and **post-parent-turn-commit ordering** + **#44 wire-schema** are explicitly DEFERRED to **P2.5b** (the cursor needs commit-ordering to be correct; codex rev2 CRITICAL).
 2. **Upgrade-safe (codex rev3 HIGH closed):** no migration, no new nullable column to be null on existing rows. The read operates on `SettlementRecord.target_surface_version`, which already exists and is populated for committed settlements — existing committed pages keep rendering.
+2b. **Cold-path durable (codex rev4 HIGH + MEDIUM closed):** `surface_slice/1` falls back to `StateRebuilder.rebuild/1` + `normalize_slice_view/1` when the session process is absent (committed page survives a BEAM restart / reaped session); `workspace/1` derives the workspace structurally via `Persistence.workspace_uri_for/1` (cold reconnects authorize without the volatile registry). Covered by the cold-read + cold-reconnect-auth tests.
 3. **Placeholder scan:** none. `test_token/1` uses the verified real API `CustomerAuth.issue_token/3`.
 4. **Type consistency:** `target_surface_version` integer-or-nil across the read (`not is_nil(s.target_surface_version)`) and `Surface.tree_for_version/2`. `status == :committed` compares the `Ecto.Enum` atom (consistent with the schema `values: [:pending, :committed]`).
 5. **Ambiguity — page version selection:** `committed_surface_version/1` picks the committed settlement with the latest `committed_at` (tiebreak by turn_id), filtered to `target_surface_version not null` (a messages-only commit must not clear a previously-committed page). Explicit in the query.
