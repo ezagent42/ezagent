@@ -51,7 +51,13 @@ This closes the widening **by construction**: a chat `{kind: :session}` cap hold
 
 > The customer SPA adapter (P3-2) does NOT use `SocialwarePublisherRead` — it reads only the committed-delivery projection (`committed_deliveries_since`), already gated by `CustomerAuth` + committed-status. `SocialwarePublisherRead` is for owner/member/peers following the internal trunk.
 
-Specify the EXACT in-handler authz (which membership field, owner+member, the deny path) + the `cap_exempt_actions` declaration. Gate: the **authz-boundary test** — (a) a chat `{kind: :session, behavior: Publisher.SessionImpl}` cap holder who is NOT a socialware member CANNOT read this `SocialwareSession`'s `:turns`/`:surface`/`:config_updates`; (b) the **owner** CAN — including the owner of a **pre-existing (P0–P2) session created before this behavior** (no backfill needed, since there is no cap); (c) a **current non-owner member** CAN; (d) a non-member is denied; (e) an **ex-member (after LEAVE)** is denied via the live re-check — with NO revoke step required.
+**The EXACT fail-closed predicate (codex rev4 HIGH — cap-exempt skips CapBAC + workspace-isolation treats nil/unknown callers as `:any`, AND `:chat`'s `owner_uri` can be nil since `Chat.create` stores `Map.get(args, :owner_uri)` and many sessions spawn ownerless).** The handler declares `reads_siblings [:chat]` and authorizes ONLY when ALL hold (deny — `{:error, :unauthorized}` — otherwise):
+- `ctx.caller` is a `%URI{}` (reject nil / `:any` / `:system` / non-URI caller);
+- the `:chat` sibling slice is present + readable;
+- EITHER the slice's `owner_uri` is a `%URI{}` AND `== ctx.caller`, OR `ctx.caller` is in the slice's `members` set (URIs).
+Crucially: a nil/missing `owner_uri` matches NOTHING (an ownerless session is NOT readable by a nil/any caller), and a nil/malformed caller is rejected up front. There is no "allow if owner is nil" branch.
+
+Specify the `cap_exempt_actions` declaration + this predicate verbatim. Gate: the **authz-boundary test** — (a) a chat `{kind: :session, behavior: Publisher.SessionImpl}` cap holder who is NOT a socialware member CANNOT read this `SocialwareSession`'s `:turns`/`:surface`/`:config_updates`; (b) the **owner** CAN — incl. the owner of a **pre-existing (P0–P2) session** (no backfill, no cap); (c) a **current non-owner member** CAN; (d) a non-member is denied; (e) an **ex-member (after LEAVE)** is denied via the live re-check (no revoke step); (f) **a nil/`:any`/`:system` caller is denied against an OWNERLESS pre-existing SocialwareSession** (the cap-exempt + nil-owner trap codex flagged); (g) a malformed caller is denied.
 
 ### P3-4 — Feishu mirror on the generalized contract (conformance)
 Confirm/port the Feishu mirror adapter to the generalized `ExternalAdapter` contract (likely a no-op rename if P3-1 keeps the push axis identical). Gate: Feishu mirror E2E green on the new path (slice-change → adapter publish → Lark).
