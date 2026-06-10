@@ -615,9 +615,14 @@ defmodule Ezagent.Kind.Server do
 
   def handle_call({:ezagent_dispatch, %Ezagent.Invocation{} = inv}, _from, state) do
     case Ezagent.Kind.Runtime.handle_dispatch(inv, state.state, state.kind, state.uri) do
-      {:ok, new_slice_state, result, slice_change_event} ->
+      {:ok, new_slice_state, result, slice_change_event, deferred} ->
         case commit_and_notify(state, new_slice_state, slice_change_event) do
           commit_ok when commit_ok in [:ok, :not_durable] ->
+            # P2.5c — the parent slice durably committed (or by-design has no
+            # durability promise). NOW run the deferred post-commit
+            # dispatches. They are already ref-substituted + enriched
+            # (caller=self_uri) by Runtime.Effects.execute_buckets.
+            run_deferred_dispatches(deferred)
             reply = if is_nil(result), do: :ok, else: {:ok, result}
             {:reply, reply, %{state | state: new_slice_state}}
 
@@ -642,9 +647,13 @@ defmodule Ezagent.Kind.Server do
   @impl true
   def handle_cast({:ezagent_dispatch, %Ezagent.Invocation{} = inv}, state) do
     case Ezagent.Kind.Runtime.handle_dispatch(inv, state.state, state.kind, state.uri) do
-      {:ok, new_slice_state, result, slice_change_event} ->
+      {:ok, new_slice_state, result, slice_change_event, deferred} ->
         case commit_and_notify(state, new_slice_state, slice_change_event) do
           commit_ok when commit_ok in [:ok, :not_durable] ->
+            # P2.5c — run the deferred post-commit dispatches AFTER the
+            # parent slice durably committed (before replying to the caller,
+            # mirroring the handle_call ordering).
+            run_deferred_dispatches(deferred)
             # cast still replies via ctx.reply if set (e.g. caller_inbox).
             Ezagent.Invocation.reply(inv.ctx, {:ok, result})
             {:noreply, %{state | state: new_slice_state}}
@@ -692,6 +701,59 @@ defmodule Ezagent.Kind.Server do
     end
 
     commit_result
+  end
+
+  # P2.5c — run deferred (post-commit) re-entrant dispatches. Called ONLY
+  # after the parent slice durably committed (or has no durability promise),
+  # at the SAME gate as `SliceChange.emit` — so the parent slice + its
+  # notification are durable before any settlement re-dispatch fires (closes
+  # the rev4 ordering bug: a settlement/customer-delivery must not outlive a
+  # failed parent-turn commit).
+  #
+  # The cmds are ALREADY ref-substituted + enriched (caller=self_uri,
+  # trace_id) by `Runtime.Effects.execute_buckets` — so they dispatch with
+  # the EMITTING Kind's authority, NOT `:system`. Turn's settlement Cmds use
+  # `reply: :ignore` → `:cast`; a post-commit self-`cast` is enqueued to this
+  # GenServer's mailbox (we are mid-`handle_call`/`handle_cast`, the cast is
+  # processed next) — NOT a synchronous self-`call`, so no deadlock.
+  #
+  # The parent commit already succeeded, so a failure here is OBSERVATIONAL:
+  # we log BOTH a `{:error, reason}` Router return AND a raised exception at
+  # `:error` (codex P2.5c MEDIUM: never silently drop a post-commit dispatch
+  # — that is the orphan-in-the-other-direction). All cmds run regardless of
+  # an individual failure. Durable retry is P3's outbox-replay concern (the
+  # committed_seq cursor makes the delivery itself replayable).
+  defp run_deferred_dispatches([]), do: :ok
+
+  defp run_deferred_dispatches(cmds) when is_list(cmds) do
+    require Logger
+
+    Enum.each(cmds, fn %Ezagent.Cmd{} = cmd ->
+      try do
+        case Ezagent.Router.dispatch(cmd) do
+          :ok ->
+            :ok
+
+          {:ok, _result} ->
+            :ok
+
+          {:error, reason} ->
+            Logger.error(
+              "Kind.Server.run_deferred_dispatches: post-commit dispatch FAILED " <>
+                "target=#{inspect(cmd.target)} action=#{inspect(cmd.action)} " <>
+                "reason=#{inspect(reason)} — parent slice committed but this side " <>
+                "effect did not run"
+            )
+        end
+      catch
+        kind, reason ->
+          Logger.error(
+            "Kind.Server.run_deferred_dispatches: post-commit dispatch RAISED " <>
+              "target=#{inspect(cmd.target)} action=#{inspect(cmd.action)} " <>
+              "#{inspect({kind, reason})}"
+          )
+      end
+    end)
   end
 
   # Unified forwarder: any GenServer message a Kind's Behaviors might want

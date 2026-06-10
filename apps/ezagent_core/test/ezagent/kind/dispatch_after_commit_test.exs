@@ -1,0 +1,275 @@
+defmodule Ezagent.Kind.DispatchAfterCommitTest do
+  @moduledoc """
+  P2.5c — `{:dispatch_after_commit, %Cmd{}}` effect end-to-end through a
+  real `Kind.Server`:
+
+  - **success + ordering:** the deferred command is dispatched exactly once,
+    AFTER the parent slice durably commits (observed via a probe message + a
+    committed-slice read).
+  - **enrichment (codex HIGH):** a deferred Cmd emitted with NO `caller`
+    (default `:system`) is dispatched with `caller` = the emitting Kind's
+    `self_uri`, NOT `:system` — proving it flowed through
+    `Runtime.Effects.execute_buckets`' `enrich_dispatch_cmd`, not a raw
+    `Router.dispatch`.
+  - **commit-failure skip:** when `commit_and_notify` returns `{:error, _}`
+    (forced via the P2.5c test-only seam), the deferred command is NOT
+    dispatched and the call returns `{:error, {:persistence_failed, _}}`.
+  - **observable failure (codex MEDIUM):** a deferred Cmd whose
+    `Router.dispatch` returns `{:error, _}` AFTER a successful parent commit
+    → the parent slice IS committed AND the failure is logged at `:error`
+    (captured via `CaptureLog`), not silently dropped.
+
+  The fixtures live inline so the handler-atom resolution
+  (`String.to_existing_atom`) + cap-axis derivation have real modules.
+  """
+
+  use ExUnit.Case, async: false
+
+  import ExUnit.CaptureLog
+
+  alias Ezagent.{BehaviorRegistry, Invocation}
+
+  # ---------------------------------------------------------------
+  # Fixture Behavior — emits :dispatch_after_commit effects.
+  # ---------------------------------------------------------------
+  defmodule DacBehavior do
+    @moduledoc false
+    use Ezagent.Lifecycle, state_slice: :dac
+
+    # `:trigger` emits a `{:dispatch_after_commit, cmd}` targeting THIS same
+    # Kind's `:probe` action (self-dispatch — same workspace, cap-exempt).
+    # The deferred Cmd is built with the default `caller: :system` so the
+    # test can prove enrichment overrode it to `self_uri`.
+    action(:trigger,
+      args: %{},
+      returns: :ok,
+      caps: [:trigger],
+      modes: [:call, :cast]
+    )
+
+    # `:probe` is the deferred target. It sends a message to the registered
+    # test pid (carrying the caller it observed + the committed `:marker`) and
+    # bumps a slice field so a committed-slice read can confirm it ran.
+    action(:probe,
+      args: %{},
+      returns: :ok,
+      caps: [:probe],
+      modes: [:call, :cast]
+    )
+
+    # `:trigger_bad` emits a deferred Cmd at a NON-EXISTENT target — its
+    # post-commit Router.dispatch fails AFTER the parent commit succeeds
+    # (observable-failure path).
+    action(:trigger_bad,
+      args: %{},
+      returns: :ok,
+      caps: [:trigger_bad],
+      modes: [:call]
+    )
+
+    @impl Ezagent.Behavior
+    def cap_exempt_actions, do: [:trigger, :probe, :trigger_bad]
+
+    @impl Ezagent.Lifecycle
+    def create(_args), do: {:ok, %{marker: :initial, probe_count: 0}}
+
+    def handle_trigger(_args, ctx) do
+      cmd =
+        Ezagent.Cmd.new(
+          ctx.self_uri,
+          :probe,
+          %{},
+          # NO caller → defaults to :system; enrichment must rewrite it.
+          %{reply: :ignore, caps: MapSet.new()}
+        )
+
+      {:ok, :ok,
+       [
+         {:set, :marker, :committed},
+         {:dispatch_after_commit, cmd}
+       ]}
+    end
+
+    def handle_probe(_args, ctx) do
+      test_pid = :persistent_term.get({__MODULE__, :test_pid}, nil)
+      observed_caller = Map.get(ctx, :caller)
+      committed_marker = ctx.read.(:marker, nil)
+
+      if is_pid(test_pid) do
+        send(test_pid, {:probe_ran, observed_caller, committed_marker})
+      end
+
+      count = ctx.read.(:probe_count, 0)
+      {:ok, :ok, [{:set, :probe_count, count + 1}]}
+    end
+
+    def handle_trigger_bad(_args, _ctx) do
+      missing = Ezagent.URI.new!("entity://team-alpha/agent/dac-missing-target")
+
+      cmd =
+        Ezagent.Cmd.new(missing, :probe, %{}, %{reply: :ignore, caps: MapSet.new()})
+
+      {:ok, :ok,
+       [
+         {:set, :marker, :committed_bad},
+         {:dispatch_after_commit, cmd}
+       ]}
+    end
+  end
+
+  defmodule DacKind do
+    @moduledoc false
+    @behaviour Ezagent.Kind
+
+    @impl true
+    def type_name, do: :test_dac
+
+    @impl true
+    def behaviors, do: [DacBehavior]
+
+    # `:on_change` so `commit/4` attempts a real durable write (and the
+    # force-fail seam has something to fail).
+    @impl true
+    def persistence, do: {:snapshot, :on_change}
+  end
+
+  setup do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
+    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+
+    :ok = BehaviorRegistry.register(DacKind, :trigger, DacBehavior)
+    :ok = BehaviorRegistry.register(DacKind, :probe, DacBehavior)
+    :ok = BehaviorRegistry.register(DacKind, :trigger_bad, DacBehavior)
+
+    :persistent_term.put({DacBehavior, :test_pid}, self())
+
+    uri =
+      Ezagent.URI.new!(
+        "entity://team-alpha/agent/test_dac-#{System.unique_integer([:positive])}"
+      )
+
+    on_exit(fn ->
+      Application.delete_env(:ezagent_core, :p2_5c_force_commit_failure_uris)
+    end)
+
+    {:ok, uri: uri}
+  end
+
+  defp inv(uri, action) do
+    %Invocation{
+      target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=dac.#{action}"),
+      mode: :call,
+      args: %{},
+      ctx: %{
+        caller: Ezagent.URI.new!("entity://system/user/admin"),
+        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        reply: :ignore
+      }
+    }
+  end
+
+  defp wait_until(fun, attempts \\ 100)
+  defp wait_until(_fun, 0), do: flunk("wait_until: condition never became true")
+
+  defp wait_until(fun, attempts) do
+    if fun.() do
+      :ok
+    else
+      Process.sleep(20)
+      wait_until(fun, attempts - 1)
+    end
+  end
+
+  defp wait_until_ready(uri, timeout_ms) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    poll(uri, deadline)
+  end
+
+  defp poll(uri, deadline) do
+    case Ezagent.ReadyGate.status(uri) do
+      :ready ->
+        :ok
+
+      _ ->
+        if System.monotonic_time(:millisecond) >= deadline do
+          flunk("Kind never became :ready")
+        else
+          Process.sleep(5)
+          poll(uri, deadline)
+        end
+    end
+  end
+
+  test "deferred dispatch runs AFTER commit with self_uri caller (enrichment)", %{uri: uri} do
+    {:ok, pid} = Ezagent.Kind.Server.start_link({DacKind, %{uri: uri}})
+    :ok = wait_until_ready(uri, 1000)
+
+    assert {:ok, :ok} = GenServer.call(pid, {:ezagent_dispatch, inv(uri, :trigger)})
+
+    # The deferred :probe must have run, observed the COMMITTED marker
+    # (proving it ran post-commit, not in-handler), and observed the
+    # emitting Kind's self_uri as caller (proving enrich_dispatch_cmd ran —
+    # NOT the default :system).
+    assert_receive {:probe_ran, observed_caller, committed_marker}, 1000
+    assert committed_marker == :committed
+    assert observed_caller == uri
+
+    # Exactly once — no second deferred dispatch from a single :trigger.
+    refute_receive {:probe_ran, _, _}, 200
+
+    # The parent slice's in-handler marker committed (synchronous on the
+    # :trigger call). probe_count is mutated by the async post-commit cast;
+    # poll until it lands to confirm the deferred slice mutation committed.
+    assert {:ok, %{marker: :committed}} = Ezagent.Kind.get_slice(uri, :dac)
+
+    wait_until(fn ->
+      match?({:ok, %{probe_count: 1}}, Ezagent.Kind.get_slice(uri, :dac))
+    end)
+  end
+
+  test "deferred dispatch is SKIPPED when the parent commit fails", %{uri: uri} do
+    {:ok, pid} = Ezagent.Kind.Server.start_link({DacKind, %{uri: uri}})
+    :ok = wait_until_ready(uri, 1000)
+
+    # Force this URI's parent commit to fail.
+    Application.put_env(
+      :ezagent_core,
+      :p2_5c_force_commit_failure_uris,
+      MapSet.new([URI.to_string(uri)])
+    )
+
+    assert {:error, {:persistence_failed, {:p2_5c_forced_commit_failure, _}}} =
+             GenServer.call(pid, {:ezagent_dispatch, inv(uri, :trigger)})
+
+    # The probe MUST NOT have run — the parent commit failed, so the
+    # settlement/delivery (here: the probe) must not leak.
+    refute_receive {:probe_ran, _, _}, 300
+
+    # The slice was NOT advanced (marker stays :initial, probe never ran).
+    {:ok, %{probe_count: count, marker: marker}} =
+      Ezagent.Kind.get_slice(uri, :dac)
+
+    assert count == 0
+    assert marker == :initial
+  end
+
+  test "a deferred dispatch that FAILS post-commit is logged, not silently dropped", %{uri: uri} do
+    {:ok, pid} = Ezagent.Kind.Server.start_link({DacKind, %{uri: uri}})
+    :ok = wait_until_ready(uri, 1000)
+
+    log =
+      capture_log(fn ->
+        assert {:ok, :ok} = GenServer.call(pid, {:ezagent_dispatch, inv(uri, :trigger_bad)})
+        # Give the post-commit dispatch a beat to run + log.
+        Process.sleep(100)
+      end)
+
+    # The parent slice DID commit (the deferred failure is observational).
+    {:ok, %{marker: marker}} = Ezagent.Kind.get_slice(uri, :dac)
+    assert marker == :committed_bad
+
+    # The failed post-commit dispatch was logged at :error.
+    assert log =~ "run_deferred_dispatches"
+    assert log =~ "post-commit dispatch FAILED"
+  end
+end

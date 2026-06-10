@@ -308,6 +308,39 @@ defmodule Ezagent.Kind.Snapshot do
   @spec commit(URI.t() | String.t(), module(), %{atom() => map()}, %{atom() => map()}) ::
           :ok | :not_durable | {:error, term()}
   def commit(uri, kind_module, old_state, new_state) do
+    # P2.5c TEST-ONLY force-fail seam (codex-reviewed). Lets the
+    # parent-commit-rollback gate (and the dispatch_after_commit unit test)
+    # deterministically force a durable-commit failure for ONE specific URI
+    # mid-test, without a real DB outage. Consulted ONLY when the app env
+    # `:ezagent_core, :p2_5c_force_commit_failure_uris` is set (a MapSet /
+    # list of URI strings) — `nil` in dev/prod, so this is a pure no-op with
+    # zero behavior change off the test path. When the dispatching URI is in
+    # the set, `commit/4` returns `{:error, _}` exactly as a genuine
+    # `save_now` failure would (issue #342), so `Kind.Server` keeps the slice
+    # un-advanced AND skips the deferred post-commit dispatches.
+    case maybe_forced_commit_failure(uri) do
+      :proceed -> do_commit(uri, kind_module, old_state, new_state)
+      {:error, _} = err -> err
+    end
+  end
+
+  defp maybe_forced_commit_failure(uri) do
+    case Application.get_env(:ezagent_core, :p2_5c_force_commit_failure_uris) do
+      nil ->
+        :proceed
+
+      uris ->
+        uri_str = uri_to_str(uri)
+
+        if uri_str in uris do
+          {:error, {:p2_5c_forced_commit_failure, uri_str}}
+        else
+          :proceed
+        end
+    end
+  end
+
+  defp do_commit(uri, kind_module, old_state, new_state) do
     case Ezagent.Kind.persistence_of(kind_module) do
       :ephemeral ->
         :not_durable
