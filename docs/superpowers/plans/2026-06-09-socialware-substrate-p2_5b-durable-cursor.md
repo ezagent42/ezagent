@@ -246,6 +246,11 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
     uri
   end
 
+  defp test_token(session_uri) do
+    workspace_uri = Ezagent.Persistence.workspace_uri_for!(session_uri)
+    Ezagent.Socialware.CustomerAuth.issue_token(session_uri, workspace_uri)
+  end
+
   # full turn -> committed delivery; returns turn_id.
   defp run_turn(uri, page_tree) do
     {:ok, %{turn_id: turn_id}} =
@@ -362,8 +367,8 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
       assert Repo.get_by(CustomerOutbox, turn_id: t3).committed_seq == 2
 
       # Now commit the pending one -> it MUST get the next seq (3), not be skipped.
+      # mark_committed_for_test now does the full commit (status + seq + surface_version).
       {:ok, _} = Ezagent.Socialware.Settlement.mark_committed_for_test(pending_turn)
-      :ok = Ezagent.Socialware.Settlement.assign_committed_seq_for_test(pending_turn)
 
       assert Repo.get_by(CustomerOutbox, turn_id: pending_turn).committed_seq == 3
 
@@ -371,10 +376,73 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
       assert Enum.map(CustomerFeed.committed_deliveries_since(uri, 2), & &1.turn_id) == [pending_turn]
     end
   end
+
+  describe "upgrade: pending outbox row with nil surface_version (codex rev1 HIGH-1)" do
+    test "committing it assigns BOTH committed_seq and surface_version from the settlement" do
+      uri = spawn_session()
+      {:ok, workspace_uri} = Ezagent.WorkspaceRegistry.lookup(uri)
+      turn_id = "#{URI.to_string(uri)}#turn-legacy"
+
+      {:ok, _} =
+        Ezagent.Socialware.Settlement.begin(%{
+          turn_id: turn_id,
+          session_uri: uri,
+          workspace_uri: workspace_uri,
+          target_message_ids: [],
+          target_surface_version: 7
+        })
+
+      # Pre-migration-shaped outbox row: surface_version + committed_seq both nil.
+      {:ok, _} =
+        Repo.insert(%CustomerOutbox{
+          turn_id: turn_id,
+          session_uri: URI.to_string(uri),
+          workspace_uri: URI.to_string(workspace_uri),
+          message_ids: [],
+          surface_version: nil,
+          committed_seq: nil,
+          emitted_at: DateTime.utc_now()
+        })
+
+      # mark_committed_for_test now does the full commit (status + seq + surface_version).
+      {:ok, _} = Ezagent.Socialware.Settlement.mark_committed_for_test(turn_id)
+
+      row = Repo.get_by(CustomerOutbox, turn_id: turn_id)
+      assert row.committed_seq == 1
+      assert row.surface_version == 7, "upgrade-pending row must get surface_version at commit"
+
+      [d] = CustomerFeed.committed_deliveries_since(uri, 0)
+      assert d.surface_version == 7
+    end
+  end
+
+  describe "re-commit is a full no-op (codex rev1 HIGH-2): page does not roll back" do
+    test "re-committing an older turn after a newer one preserves committed_at + latest page" do
+      uri = spawn_session()
+      token = test_token(uri)
+      t1 = run_turn(uri, %{type: "text", props: %{text: "p1"}})
+      t2 = run_turn(uri, %{type: "text", props: %{text: "p2"}})
+
+      {:ok, s1_before} = Ezagent.Socialware.Settlement.get(t1)
+      assert s1_before.status == :committed
+
+      # Delayed re-commit of the OLDER turn — must be a complete no-op.
+      {:ok, %{status: :committed}} = Ezagent.Socialware.Settlement.commit_after_pointer(t1, nil)
+
+      {:ok, s1_after} = Ezagent.Socialware.Settlement.get(t1)
+      assert s1_after.committed_at == s1_before.committed_at, "committed_at must NOT move on re-commit"
+      assert Repo.get_by(CustomerOutbox, turn_id: t1).committed_seq == 1
+
+      # Cursor order unchanged; the customer page stays the NEWER version.
+      assert Enum.map(CustomerFeed.committed_deliveries_since(uri, 0), & &1.turn_id) == [t1, t2]
+      {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
+      assert snapshot.page == %{type: "text", props: %{text: "p2"}}
+    end
+  end
 end
 ```
 
-> **Note on the test's `assign_committed_seq_for_test/1`:** the production seq assignment happens inside `commit_after_pointer/2`. The pending-row scenario is constructed manually (it bypasses the normal commit path), so the test needs a public test-only helper to run the same seq-assignment the commit path uses. Add it in Task 3 Step 3 alongside the production code (mirrors the existing `mark_committed_for_test/1`).
+> **Note:** the pending-row scenarios are constructed manually (bypassing the normal dispatch commit path), then committed via the existing public `mark_committed_for_test/1` — which Task 3 Step 3 updates to ALSO assign `committed_seq` + `surface_version`, so it faithfully reproduces the real commit boundary. No separate seq test-helper is exposed.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -415,7 +483,30 @@ Edit `apps/ezagent_domain_socialware/lib/ezagent/socialware/settlement.ex`:
   end
 ```
 
-(b) In `commit_after_pointer/2`, replace the bare `update_all(set: [status: :committed, committed_at: …])` block with an atomic transaction that ALSO assigns `committed_seq` (and tolerates re-commit idempotently — if the row already has a seq, keep it):
+(b1) **Full no-op on re-commit (codex rev1 HIGH-2).** An already-`:committed` settlement MUST be a complete no-op — do NOT rewrite `committed_at`/`status`/`committed_seq`. Otherwise a delayed re-commit of an older turn bumps its `committed_at` to now, and `customer_page/1` (P2.5a, "latest committed by `committed_at desc`") would roll the customer page back to the older surface version. Add this guard at the TOP of `commit_after_pointer/2` (before `confirm_pointer_advanced`):
+
+```elixir
+  def commit_after_pointer(turn_id, approved_version) do
+    case get(turn_id) do
+      {:ok, %SettlementRecord{status: :committed}} ->
+        # Already committed — FULL no-op. Preserve committed_at + committed_seq
+        # so the durable cursor order and the page projection never disagree
+        # (codex P2.5b HIGH). No re-broadcast.
+        {:ok, %{status: :committed, message_ids: message_ids(turn_id), emitted?: false}}
+
+      _ ->
+        commit_pending_after_pointer(turn_id, approved_version)
+    end
+  end
+
+  defp commit_pending_after_pointer(turn_id, approved_version) do
+    # ... the EXISTING commit_after_pointer body (confirm_pointer_advanced ->
+    # emit_outbox_once -> get -> committed_ready? -> the transaction below ->
+    # broadcast), moved verbatim into this private fn ...
+  end
+```
+
+(b2) In `commit_pending_after_pointer/2`, replace the bare `update_all(set: [status: :committed, committed_at: …])` block with an atomic transaction that ALSO assigns `committed_seq` + `surface_version`:
 
 ```elixir
       committed_at = DateTime.utc_now()
@@ -423,7 +514,9 @@ Edit `apps/ezagent_domain_socialware/lib/ezagent/socialware/settlement.ex`:
 
       {:ok, _} =
         Repo.transaction(fn ->
-          assign_committed_seq(settlement.session_uri, turn_id)
+          # `settlement` here is the freshly re-fetched record (it carries
+          # target_surface_version) bound earlier in this body by `get(turn_id)`.
+          assign_committed_seq(settlement)
 
           {1, _} =
             from(s in SettlementRecord, where: s.turn_id == ^turn_id)
@@ -435,11 +528,14 @@ Edit `apps/ezagent_domain_socialware/lib/ezagent/socialware/settlement.ex`:
 
 ```elixir
   # P2.5b — assign the per-session monotonic COMMIT-ORDER cursor to this turn's
-  # outbox row, IF not already assigned (idempotent re-commit). Runs inside the
+  # outbox row, IF not already assigned (idempotent re-commit). ALSO (re)writes
+  # surface_version from the settlement — covers an UPGRADE-pending row inserted
+  # before this migration with surface_version == NULL (codex rev1 HIGH-1): the
+  # committed delivery must carry the page version P3 replays. Runs inside the
   # SocialwareSession GenServer (per-session serialized), so max+1 has no
-  # concurrent writer for the session; the (session_uri, committed_seq) unique
-  # index is a let-it-crash backstop.
-  defp assign_committed_seq(session_uri, turn_id) when is_binary(session_uri) do
+  # concurrent writer; the (session_uri, committed_seq) unique index is a
+  # let-it-crash backstop.
+  defp assign_committed_seq(%SettlementRecord{turn_id: turn_id, session_uri: session_uri} = settlement) do
     case Repo.one(from(o in CustomerOutbox, where: o.turn_id == ^turn_id, select: o.committed_seq)) do
       seq when is_integer(seq) ->
         :ok
@@ -455,22 +551,16 @@ Edit `apps/ezagent_domain_socialware/lib/ezagent/socialware/settlement.ex`:
 
         {1, _} =
           from(o in CustomerOutbox, where: o.turn_id == ^turn_id)
-          |> Repo.update_all(set: [committed_seq: next])
+          |> Repo.update_all(
+            set: [committed_seq: next, surface_version: settlement.target_surface_version]
+          )
 
         :ok
     end
   end
-
-  @doc false
-  def assign_committed_seq_for_test(turn_id) when is_binary(turn_id) do
-    case get(turn_id) do
-      {:ok, settlement} -> assign_committed_seq(settlement.session_uri, turn_id)
-      :error -> :error
-    end
-  end
 ```
 
-> Also update `mark_committed_for_test/1` (used by other tests) so it ALSO assigns the seq, keeping the test helper faithful to the real commit path: after its `update_all(set: [status: :committed, …])`, call `assign_committed_seq(settlement.session_uri, turn_id)`. Confirm by reading the existing `mark_committed_for_test/1` (`settlement.ex:131-143`) before editing — keep its return shape (`get(turn_id)`).
+> Also update `mark_committed_for_test/1` (the public full-commit test helper, `settlement.ex:131-143`) so it ALSO assigns the cursor + surface_version, faithful to the real commit path: after its `update_all(set: [status: :committed, committed_at: …])`, call `assign_committed_seq(get_record)` where `get_record` is the `%SettlementRecord{}` (re-fetch via `get/1` to get `target_surface_version`). Keep its return shape (`get(turn_id)`). Tests that manually construct a pending settlement + outbox row then commit it use ONLY `mark_committed_for_test/1` (it now does status + subwrites + seq + surface_version) — no separate seq helper is needed/exposed.
 
 - [ ] **Step 4: Run to verify they pass**
 
@@ -585,8 +675,8 @@ Expected: no FAIL; `oversized_modules_gt_1000: count=0`; invariants clean.
 
 1. **Cursor correctness (the whole point):** `committed_seq` assigned ONLY at commit, in commit order, per session. `not is_nil(committed_seq)` ⟺ committed. A pending row (NULL) is invisible; on commit it gets `max+1` (higher than all prior) → never skipped. The pending-then-late-commit test proves the rev2 hazard is gone by construction.
 2. **Serialization assumption:** `commit_after_pointer/2` runs inside the single `SocialwareSession` GenServer → per-session commits serialized → `max+1` race-free. The `(session_uri, committed_seq)` unique index is a let-it-crash backstop, not a correctness crutch. Stated explicitly.
-3. **Idempotent re-commit:** `assign_committed_seq/2` no-ops if the row already has a seq; `commit_after_pointer` is already idempotent (`emit_outbox_once` `on_conflict: :nothing`); a double commit_settlement does not bump the seq.
-4. **Upgrade-safe:** the migration backfills existing committed rows (per-session, commit-order) so the cursor is dense from deploy; pending rows stay NULL. New columns are nullable.
+3. **Idempotent re-commit — FULL no-op (codex rev1 HIGH-2):** `commit_after_pointer/2` returns early (no `status`/`committed_at`/`committed_seq` rewrite) when the settlement is already `:committed`. This is what keeps the durable cursor order and the P2.5a `customer_page/1` projection (latest by `committed_at desc`) from disagreeing — a delayed re-commit of an older turn cannot roll the page back. Regression: commit t1, t2, re-commit t1 → t1.committed_at unchanged, page stays t2.
+4. **Upgrade-safe + surface_version at commit (codex rev1 HIGH-1):** the migration backfills existing committed rows (per-session, commit-order). For a row that was PENDING at deploy (committed_seq + surface_version both NULL), the commit boundary's `assign_committed_seq/1` sets BOTH `committed_seq` AND `surface_version` (from `settlement.target_surface_version`) — so a committed delivery never has a cursor without its page version. Regression: pre-migration-shaped pending row (nil surface_version) → commit → replay returns target_surface_version. New columns nullable; pending rows stay NULL → invisible.
 5. **Scope:** durable-source only. Post-parent-turn-commit ordering (rev4 HIGH) = P2.5c; #44 wire-schema folds into P3 prep. `customer_page/1` (P2.5a) untouched.
 6. **No core change:** only `ezagent_core/priv/repo/migrations` (column adds + backfill) + socialware library. Blast radius inside socialware.
 7. **Placeholder scan:** the migration filename `<next>` must be resolved to a concrete timestamp in Task 1 Step 1. No other placeholders.
