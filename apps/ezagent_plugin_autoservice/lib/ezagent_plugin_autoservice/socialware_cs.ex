@@ -104,6 +104,29 @@ defmodule EzagentPluginAutoservice.SocialwareCS do
     end
   end
 
+  @doc """
+  Runtime: ensure the customer's (already-provisioned) **SocialwareSession** is
+  alive and the customer is joined. Returns the session URI.
+
+  This is the `CustomerLive.mount/3` path — the socialware successor to the
+  legacy `CustomerSession.ensure_joined/1`, which would spawn a bare
+  `Ezagent.Entity.Session` at the same URI and shadow the seeded
+  SocialwareSession. `ensure_session/3` spawns the **SocialwareSession** Kind,
+  which rehydrates from the seeded snapshot when one exists.
+  """
+  @spec ensure_joined(URI.t()) :: {:ok, URI.t()} | {:error, term()}
+  def ensure_joined(%URI{scheme: "entity"} = customer_uri) do
+    ctx = session_internal_ctx()
+    session_uri = session_uri(customer_uri)
+    workspace_uri = Ezagent.URI.entity_workspace_uri(customer_uri)
+
+    with :ok <- ensure_user_alive(customer_uri),
+         :ok <- ensure_session(session_uri, customer_uri, workspace_uri),
+         :ok <- join(session_uri, customer_uri, ctx) do
+      {:ok, session_uri}
+    end
+  end
+
   @doc "The socialware CS session URI for a customer: `session://cs/<ws>/<name>` (no side effects)."
   @spec session_uri(URI.t()) :: URI.t()
   def session_uri(%URI{} = customer_uri) do
@@ -204,6 +227,15 @@ defmodule EzagentPluginAutoservice.SocialwareCS do
   end
 
   # --- internals ------------------------------------------------------
+
+  # Privileged internal principal for the lazy mount-time join (same pattern
+  # as the legacy `CustomerSession.session_internal_ctx/0`).
+  defp session_internal_ctx do
+    %{
+      caller: Ezagent.SystemPrincipal.uri("session-internal"),
+      caps: Ezagent.SystemPrincipal.caps("system://session-internal")
+    }
+  end
 
   defp decompose(%URI{scheme: "entity"} = uri) do
     ws = Ezagent.URI.workspace_name!(uri)

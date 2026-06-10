@@ -121,4 +121,45 @@ defmodule EzagentPluginAutoservice.SocialwareCSTest do
       assert :ok = SocialwareCS.materialize_skill(work_dir, @stage1_skill)
     end
   end
+
+  describe "ensure_joined/1 (CustomerLive mount path)" do
+    test "on an already-provisioned customer returns the session URI and the session stays a SocialwareSession" do
+      n = System.unique_integer([:positive])
+      workspace = Ezagent.URI.workspace(:team_alpha)
+      customer = Ezagent.URI.user(:team_alpha, "cust-joined-#{n}")
+
+      {:ok, %{session_uri: session_uri}} =
+        SocialwareCS.provision(customer,
+          workspace_uri: workspace,
+          ctx: ctx(),
+          create_bot_agent: false
+        )
+
+      assert {:ok, ^session_uri} = SocialwareCS.ensure_joined(customer)
+
+      # Still the socialware base — Turn + Surface slices present.
+      assert {:ok, _turns} = Ezagent.Kind.get_slice(session_uri, :turns)
+      assert {:ok, _surface} = Ezagent.Kind.get_slice(session_uri, :surface)
+
+      # Customer is (still) a chat member.
+      {:ok, chat} = Ezagent.Kind.get_slice(session_uri, :chat)
+      assert Map.has_key?(chat.members, customer)
+    end
+
+    test "on a fresh customer spawns a SocialwareSession (NOT a bare Session) and joins the customer" do
+      n = System.unique_integer([:positive])
+      customer = Ezagent.URI.user(:team_alpha, "cust-fresh-#{n}")
+
+      assert {:ok, session_uri} = SocialwareCS.ensure_joined(customer)
+      assert session_uri == SocialwareCS.session_uri(customer)
+
+      # A bare Ezagent.Entity.Session has no :turns / :surface slices —
+      # their presence proves the socialware Kind type was spawned.
+      assert {:ok, _turns} = Ezagent.Kind.get_slice(session_uri, :turns)
+      assert {:ok, _surface} = Ezagent.Kind.get_slice(session_uri, :surface)
+
+      {:ok, chat} = Ezagent.Kind.get_slice(session_uri, :chat)
+      assert Map.has_key?(chat.members, customer)
+    end
+  end
 end

@@ -12,7 +12,7 @@ defmodule EzagentPluginAutoservice.CustomerLive do
   import Phoenix.Component
 
   alias Ezagent.Socialware.{CustomerAuth, CustomerFeed}
-  alias EzagentPluginAutoservice.{ChatUI, CustomerSession}
+  alias EzagentPluginAutoservice.{ChatUI, SocialwareCS}
 
   require Logger
 
@@ -20,14 +20,14 @@ defmodule EzagentPluginAutoservice.CustomerLive do
   def mount(_params, _session, socket) do
     customer_uri = socket.assigns.current_entity_uri
 
-    case CustomerSession.ensure_joined(customer_uri) do
+    case SocialwareCS.ensure_joined(customer_uri) do
       {:ok, session_uri} ->
         # Live wiring (Stage 1): lazily ensure the per-session CS turn
         # adapter on THIS server node — the deterministic prod starter
         # (a seed BEAM's adapter dies with the seed). Cheap + idempotent:
         # a registry hit returns the running pid. Best-effort — a legacy
         # (non-socialware) session simply has no turns for it to drive.
-        _ = EzagentPluginAutoservice.SocialwareCS.ensure_adapter(session_uri, customer_uri)
+        _ = SocialwareCS.ensure_adapter(session_uri, customer_uri)
 
         # DD5-b: the customer's ONLY message source is the visibility-gated
         # CustomerFeed (settled, `customer_visible` messages). The raw
