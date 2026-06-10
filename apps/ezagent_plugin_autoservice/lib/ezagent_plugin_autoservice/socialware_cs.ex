@@ -95,7 +95,11 @@ defmodule EzagentPluginAutoservice.SocialwareCS do
            ensure_bot(customer_uri, bot_uri, workspace_uri, config_id, create_bot_agent?, ctx),
          :ok <- join(session_uri, customer_uri, ctx),
          :ok <- join(session_uri, bot_uri, ctx),
-         :ok <- install_routing(session_uri, customer_uri, workspace_uri) do
+         :ok <- install_routing(session_uri, customer_uri, bot_uri, workspace_uri) do
+      # Best-effort adapter start: authoritative in a running server (the
+      # seed runs in its own short-lived BEAM where the adapter dies with
+      # it — `CustomerLive.mount/3` re-ensures it on the server node).
+      _ = ensure_adapter(session_uri, customer_uri)
       {:ok, %{session_uri: session_uri, bot_uri: bot_uri}}
     end
   end
@@ -144,6 +148,58 @@ defmodule EzagentPluginAutoservice.SocialwareCS do
       end
     else
       {:error, {:skill_source_missing, skill_name}}
+    end
+  end
+
+  @doc """
+  Idempotently start the per-session CS turn adapter
+  (`SocialwareCSTurnAdapter`) under the plugin's `AdapterSupervisor`,
+  registered in `AdapterRegistry` by the session-URI string.
+
+  A second call for the same session is a no-op returning the same pid.
+  The adapter drives turns with a privileged principal (the same pattern
+  the adapter tests use: `system://bootstrap` caps, admin caller); the
+  reply-attribution caller is overridable via `opts[:caller]`.
+
+  Called from BOTH ends of the live wiring:
+  - `provision/2` — best-effort (a seed BEAM's adapter dies with it),
+  - `CustomerLive.mount/3` — the deterministic prod path (the customer
+    opening the chat lazily ensures the adapter on the server node).
+
+  Extra `opts` (e.g. `:idle_window_ms`) are forwarded to the adapter.
+  """
+  @spec ensure_adapter(URI.t(), URI.t(), keyword()) :: {:ok, pid()} | {:error, term()}
+  def ensure_adapter(%URI{} = session_uri, %URI{} = customer_uri, opts \\ []) do
+    key = URI.to_string(session_uri)
+
+    case Registry.lookup(EzagentPluginAutoservice.AdapterRegistry, key) do
+      [{pid, _}] ->
+        {:ok, pid}
+
+      [] ->
+        {caller, opts} = Keyword.pop(opts, :caller, Ezagent.Entity.User.admin_uri())
+
+        ctx = %{
+          caller: caller,
+          caps: Ezagent.SystemPrincipal.caps("system://bootstrap")
+        }
+
+        child_opts =
+          Keyword.merge(opts,
+            session_uri: session_uri,
+            customer_uri: customer_uri,
+            ctx: ctx,
+            name: {:via, Registry, {EzagentPluginAutoservice.AdapterRegistry, key}}
+          )
+
+        case DynamicSupervisor.start_child(
+               EzagentPluginAutoservice.AdapterSupervisor,
+               {EzagentPluginAutoservice.SocialwareCSTurnAdapter, child_opts}
+             ) do
+          {:ok, pid} -> {:ok, pid}
+          {:error, {:already_started, pid}} -> {:ok, pid}
+          {:error, reason} -> {:error, {:adapter_start_failed, reason}}
+        end
     end
   end
 
@@ -299,16 +355,20 @@ defmodule EzagentPluginAutoservice.SocialwareCS do
     end
   end
 
-  # customer message in THIS session → the session itself (the Turn adapter,
-  # installed in a later task, picks the message off the session and drives the
-  # bot reply). Workspace-scoped so it only fires for this workspace.
-  defp install_routing(session_uri, customer_uri, workspace_uri) do
+  # customer message in THIS session → the BOT (mirrors the legacy
+  # `CustomerSession.install_routing/5` pattern where receivers = the agent
+  # URIs). The bot must be a routing receiver to actually RECEIVE the customer
+  # message and reply; the Turn adapter needs no receiver slot — it listens on
+  # the PubSub session-events topic, which fires regardless of routing.
+  # Workspace-scoped so it only fires for this workspace.
+  defp install_routing(session_uri, customer_uri, bot_uri, workspace_uri) do
     session_str = URI.to_string(session_uri)
+    bot_str = URI.to_string(bot_uri)
     existing = Ezagent.Routing.RuleStore.list(@routing_table)
 
-    # Idempotent: each customer's session URI is unique, so an existing rule
+    # Idempotent: each customer's bot URI is unique, so an existing rule
     # already routing to it means this customer is wired.
-    if Enum.any?(existing, fn r -> session_str in (r.receivers || []) end) do
+    if Enum.any?(existing, fn r -> bot_str in (r.receivers || []) end) do
       _ = Ezagent.Routing.RuleStore.load_into_registry(@routing_table)
       :ok
     else
@@ -322,7 +382,7 @@ defmodule EzagentPluginAutoservice.SocialwareCS do
       case Ezagent.Routing.RuleStore.add(
              @routing_table,
              matcher,
-             [session_uri],
+             [bot_uri],
              nil,
              workspace_uri: workspace_uri
            ) do

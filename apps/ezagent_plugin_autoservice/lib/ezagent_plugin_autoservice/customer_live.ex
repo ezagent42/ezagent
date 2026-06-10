@@ -22,6 +22,13 @@ defmodule EzagentPluginAutoservice.CustomerLive do
 
     case CustomerSession.ensure_joined(customer_uri) do
       {:ok, session_uri} ->
+        # Live wiring (Stage 1): lazily ensure the per-session CS turn
+        # adapter on THIS server node — the deterministic prod starter
+        # (a seed BEAM's adapter dies with the seed). Cheap + idempotent:
+        # a registry hit returns the running pid. Best-effort — a legacy
+        # (non-socialware) session simply has no turns for it to drive.
+        _ = EzagentPluginAutoservice.SocialwareCS.ensure_adapter(session_uri, customer_uri)
+
         # DD5-b: the customer's ONLY message source is the visibility-gated
         # CustomerFeed (settled, `customer_visible` messages). The raw
         # `Chat.session_events_topic` broadcast is NOT subscribed — it carries

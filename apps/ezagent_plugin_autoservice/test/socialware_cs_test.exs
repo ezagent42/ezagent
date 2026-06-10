@@ -68,13 +68,18 @@ defmodule EzagentPluginAutoservice.SocialwareCSTest do
     {:ok, soul} = ConfigStore.resolve("session", workspace, bot_uri, "soul")
     assert soul.body["soul_md"] =~ "IDENTITY"
 
-    # The customer→session routing rule exists (workspace-scoped to this ws).
+    # The customer→bot routing rule exists (workspace-scoped to this ws).
+    # The BOT is the receiver — that's how the live cc bot gets the customer
+    # message and replies; the Turn adapter listens on the PubSub
+    # session-events topic and needs no routing receiver.
     rules = Ezagent.Routing.RuleStore.list(@routing_table)
     session_str = URI.to_string(session_uri)
+    bot_str = URI.to_string(bot_uri)
 
-    assert Enum.any?(rules, fn r ->
-             session_str in (r.receivers || [])
-           end)
+    rule = Enum.find(rules, fn r -> inspect(r.matcher_data) =~ session_str end)
+
+    assert rule, "expected a routing rule scoped to #{session_str}"
+    assert bot_str in (rule.receivers || [])
   end
 
   describe "materialize_skill/2 (Task 4)" do

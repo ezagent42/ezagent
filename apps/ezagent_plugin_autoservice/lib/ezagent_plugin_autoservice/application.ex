@@ -44,6 +44,20 @@ defmodule EzagentPluginAutoservice.Application do
   @impl Application
   def start(_type, _args), do: Ezagent.Plugin.boot(__MODULE__)
 
+  # Live wiring (Stage 1): per-session CS turn-adapter processes are
+  # started lazily + idempotently by `SocialwareCS.ensure_adapter/3`
+  # under this Registry + DynamicSupervisor pair. `Ezagent.Plugin.boot/1`
+  # Phase 1 starts `children/0` FIRST (before any declaration is
+  # published) — the sanctioned way for a plugin to own processes.
+  @impl Ezagent.Plugin
+  def children do
+    [
+      {Registry, keys: :unique, name: EzagentPluginAutoservice.AdapterRegistry},
+      {DynamicSupervisor,
+       strategy: :one_for_one, name: EzagentPluginAutoservice.AdapterSupervisor}
+    ]
+  end
+
   @impl Ezagent.Plugin
   def plugin_info do
     %{

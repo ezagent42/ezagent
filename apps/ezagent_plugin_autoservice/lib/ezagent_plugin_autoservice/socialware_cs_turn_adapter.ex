@@ -186,10 +186,14 @@ defmodule EzagentPluginAutoservice.SocialwareCSTurnAdapter do
   Optional opts:
   - `:idle_window_ms` — coalesce window `W` in ms (default `#{@default_idle_window_ms}`);
     `0` flushes synchronously on the first bot message (test-deterministic).
+  - `:name` — a GenServer name (e.g. a Registry `:via` tuple); omitted = unnamed.
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts)
+    case Keyword.pop(opts, :name) do
+      {nil, opts} -> GenServer.start_link(__MODULE__, opts)
+      {name, opts} -> GenServer.start_link(__MODULE__, opts, name: name)
+    end
   end
 
   @impl true
