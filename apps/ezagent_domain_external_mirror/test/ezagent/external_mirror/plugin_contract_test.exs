@@ -18,8 +18,8 @@ defmodule Ezagent.ExternalMirror.PluginContractTest do
 
   use ExUnit.Case, async: false
 
-  alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRegistry}
-  alias Ezagent.ExternalMirror.TestSupport.{MockAdapter, MockBinding}
+  alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRegistry, WorkerRegistry}
+  alias Ezagent.ExternalMirror.TestSupport.{MockAdapter, MockBinding, PullAdapter}
   alias Ezagent.ExternalMirror.TestSupport.RegistrySnapshot
 
   setup do
@@ -49,6 +49,69 @@ defmodule Ezagent.ExternalMirror.PluginContractTest do
 
       assert AdapterRegistry.list() == []
       assert BindingRegistry.list_all() == []
+    end
+  end
+
+  # P3-1 codex HIGH (Finding 1) — the plugin-boot publication path must
+  # accept a binding-less `:pull` adapter declaration (a BARE adapter
+  # module, NOT a `{adapter, binding}` tuple). A pull adapter:
+  #   (a) registers its `allow_<id>` cap subject (install hook fires on
+  #       AdapterRegistry alone),
+  #   (b) writes NO BindingRegistry row (no-binding invariant),
+  #   (c) spawns NO Worker.
+  # This mirrors the DIRECT-register regression in adapter_registry_test.exs
+  # but through `Ezagent.Plugin.boot/1` (the production publication path).
+  describe "Ezagent.Plugin.boot/1 publishes a :pull adapter (binding-less)" do
+    test "a bare-module :pull declaration registers the adapter + cap subject, NO binding, NO worker" do
+      workers_before = WorkerRegistry.list_all()
+
+      # Bare module — NOT a {adapter, binding} tuple. This is the P3-1
+      # pull declaration shape.
+      plugin = define_plugin("pull_v1", [PullAdapter])
+
+      assert {:ok, _sup_pid} = Ezagent.Plugin.boot(plugin)
+
+      # (a) AdapterRegistry has the pull adapter...
+      assert {:ok, PullAdapter} = AdapterRegistry.lookup("pull_em")
+
+      # ...and its install hook fired on AdapterRegistry alone → the
+      # per-adapter allow cap subject is registered.
+      assert {:ok, %{behavior: Ezagent.ExternalMirror.TestSupport.PullAdapter.Allow}} =
+               Ezagent.CapabilityRegistry.lookup_subject(
+                 Ezagent.Entity.Session,
+                 :allow_pull_em
+               )
+
+      # (b) NO BindingRegistry row for a pull adapter.
+      assert :error = BindingRegistry.lookup("pull_em")
+
+      # (c) NO Worker spawned (pull is served by the caller's Phoenix
+      # channel in P3-2, not a per-binding Worker).
+      assert WorkerRegistry.list_all() == workers_before
+    end
+
+    test "a push pair and a bare pull module can be declared together (mixed adapters/0)" do
+      plugin = define_plugin("mixed_v1", [{MockAdapter, MockBinding}, PullAdapter])
+
+      assert {:ok, _sup_pid} = Ezagent.Plugin.boot(plugin)
+
+      # Push side: BOTH registries written (byte-identical to before).
+      assert {:ok, MockAdapter} = AdapterRegistry.lookup("mock_em")
+      assert {:ok, MockBinding} = BindingRegistry.lookup("mock_em")
+
+      # Pull side: AdapterRegistry only, no binding row.
+      assert {:ok, PullAdapter} = AdapterRegistry.lookup("pull_em")
+      assert :error = BindingRegistry.lookup("pull_em")
+    end
+
+    test "a BARE module that is actually a :push adapter is rejected (must use the tuple shape)" do
+      # MockAdapter is a :push adapter — declaring it bare (without its
+      # binding) is a malformed declaration: push needs the {adapter,
+      # binding} tuple.
+      plugin = define_plugin("bare_push_v1", [MockAdapter])
+
+      err = assert_raise ArgumentError, fn -> Ezagent.Plugin.boot(plugin) end
+      assert err.message =~ "push"
     end
   end
 

@@ -177,6 +177,22 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheckTest do
              end),
              "expected a Grill-5 (c) bidirectional-mismatch diagnostic; got #{inspect(diagnostics)}"
     end
+
+    # P3-1 Finding 1 — the compiler gate must ACCEPT a binding-less
+    # `:pull` adapter declared as a BARE module (no `{adapter, binding}`
+    # tuple, no binding required).
+    test "PASSES for a fixture declaring a binding-less :pull adapter as a BARE module (P3-1)" do
+      compile_fixture_module("ezagent_plugin_em_pull", "ezagent_plugin_em_pull.ex")
+
+      result =
+        in_fixture_project(:ezagent_plugin_em_pull, "ezagent_plugin_em_pull", fn ->
+          EzagentPluginCheck.run([])
+        end)
+
+      assert {:ok, []} = result,
+             "a conforming bare-module :pull adapter must pass the gate — " <>
+               "got #{inspect(result)}"
+    end
   end
 
   # Compile a fixture's plugin .ex file into the loaded code path so

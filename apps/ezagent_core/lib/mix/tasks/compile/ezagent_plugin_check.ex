@@ -444,20 +444,95 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
     src = "adapters/0 entry #{inspect({adapter, binding})}"
 
     diagnostics
+    |> check_adapter_push_kind(adapter, src)
     |> check_adapter_distinct(adapter, binding, src)
     |> check_adapter_module(adapter, Ezagent.ExternalMirror.Adapter, src)
     |> check_adapter_module(binding, Ezagent.ExternalMirror.Binding, src)
     |> check_adapter_bidirectional(adapter, binding, src)
   end
 
+  # P3-1 — a BARE adapter module is the `:pull` declaration shape (no
+  # binding; pull adapters have no per-binding transport). Validate the
+  # module implements the Adapter behaviour AND resolves to kind `:pull`;
+  # a bare `:push` module is malformed (push needs the tuple).
+  defp check_adapter_entry(diagnostics, _plugin_module, adapter)
+       when is_atom(adapter) and not is_nil(adapter) and not is_boolean(adapter) do
+    src = "adapters/0 entry #{inspect(adapter)}"
+
+    cond do
+      not ensure_compiled?(adapter) ->
+        # Not on the plugin's compile-time codepath — defer to runtime
+        # `assert_adapter_decl!`. (Reachability caveat, same as the tuple
+        # path's `check_adapter_module`.)
+        diagnostics
+
+      not implements_behaviour?(adapter, Ezagent.ExternalMirror.Adapter) ->
+        [
+          diagnostic(
+            "#{src}: a bare-module entry must implement the " <>
+              "#{inspect(Ezagent.ExternalMirror.Adapter)} behaviour. " <>
+              "#{inspect(adapter)} does not."
+          )
+          | diagnostics
+        ]
+
+      adapter_kind_of(adapter) != :pull ->
+        [
+          diagnostic(
+            "#{src}: #{inspect(adapter)} is a :push adapter declared as a BARE " <>
+              "module. The bare-module shape is reserved for :pull adapters; a " <>
+              ":push adapter MUST be declared as a `{adapter_module, " <>
+              "binding_module}` tuple (P3-1 / SPEC §5.1)."
+          )
+          | diagnostics
+        ]
+
+      true ->
+        diagnostics
+    end
+  end
+
   defp check_adapter_entry(diagnostics, _plugin_module, malformed) do
     [
       diagnostic(
         "adapters/0 has a malformed entry #{inspect(malformed)} — each entry " <>
-          "must be `{adapter_module :: module(), binding_module :: module()}`."
+          "must be a `{adapter_module :: module(), binding_module :: module()}` " <>
+          "tuple (:push) or a bare `adapter_module :: module()` (:pull)."
       )
       | diagnostics
     ]
+  end
+
+  # P3-1 — reject a `:pull` adapter wrapped in a `{adapter, binding}`
+  # tuple. A pull adapter has no binding; pairing it with one (even a
+  # dummy) would write a BindingRegistry row at boot, violating the
+  # no-binding invariant. The compiler mirrors the runtime
+  # `assert_adapter_decl!` guard.
+  defp check_adapter_push_kind(diagnostics, adapter, src) do
+    if ensure_compiled?(adapter) and
+         implements_behaviour?(adapter, Ezagent.ExternalMirror.Adapter) and
+         adapter_kind_of(adapter) == :pull do
+      [
+        diagnostic(
+          "#{src}: #{inspect(adapter)} is a :pull adapter (adapter_kind/0 == " <>
+            ":pull) declared as a `{adapter, binding}` tuple. A pull adapter " <>
+            "has NO binding — declare it as a BARE module (P3-1)."
+        )
+        | diagnostics
+      ]
+    else
+      diagnostics
+    end
+  end
+
+  # Resolve an adapter module's kind. `Ezagent.ExternalMirror.Adapter`
+  # lives downstream of core; guard the call behind `ensure_compiled?`
+  # (callers already do) and `apply/3` to avoid a compile-time module
+  # reference.
+  defp adapter_kind_of(adapter) when is_atom(adapter) do
+    apply(Ezagent.ExternalMirror.Adapter, :kind_of, [adapter])
+  rescue
+    _ -> :push
   end
 
   defp check_adapter_distinct(diagnostics, adapter, binding, src) when adapter == binding do
