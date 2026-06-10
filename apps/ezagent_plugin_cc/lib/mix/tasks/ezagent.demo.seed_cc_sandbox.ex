@@ -92,7 +92,13 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
 
     name = opts[:name] || Mix.raise("--name <name> is required")
     sandbox_dir = opts[:sandbox_dir] || default_sandbox_dir(name)
-    source = opts[:credentials_file] || default_credentials_path()
+    # P2.5b/§5.B(c) — NORMALIZE to an absolute path at the seed boundary (codex
+    # #719 MEDIUM): `source` is both copied now AND persisted into the template's
+    # `credential_source` -> respawn_template_data. A relative path would copy OK
+    # under the mix task cwd but later resolve under the RUNTIME cwd on respawn,
+    # degrading the credential refresh to a stale no-op. Path.expand makes the
+    # durable value cwd-independent.
+    source = Path.expand(opts[:credentials_file] || default_credentials_path())
     force? = !!opts[:force]
     template_name = opts[:seed_template]
 
