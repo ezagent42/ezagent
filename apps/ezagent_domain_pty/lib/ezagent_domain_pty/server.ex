@@ -474,9 +474,18 @@ defmodule Ezagent.Domain.Pty.Server do
         # would later false-positive on ordinary claude prose and inject a spurious
         # Enter (codex review of PR #611 / theme_dialog). The radio menu is static
         # (no animated banner), so these labels are not fragmented.
+        #
+        # CRUCIAL — the subscription row must carry the SELECTION MARKER `❯`
+        # (codex review of PR #718): bare Enter confirms whatever is HIGHLIGHTED,
+        # so we only fire when option 1 (the OAuth/subscription path that uses the
+        # materialized credential) is the highlighted default. If account/version
+        # drift highlights option 2 (Console/API-key) instead, `❯ 1.` is absent →
+        # we do NOT fire, never confirming the wrong auth path. (`\e[1C` cursor-
+        # forwards strip to single spaces, so the marker row renders as
+        # "❯ 1. Claude account with subscription".)
         match: [
           "Select login method",
-          "Claude account with subscription",
+          "❯ 1. Claude account with subscription",
           "Anthropic Console account"
         ],
         send: "\r",

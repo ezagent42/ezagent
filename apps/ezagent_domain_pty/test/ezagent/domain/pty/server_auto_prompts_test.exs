@@ -21,16 +21,16 @@ defmodule Ezagent.Domain.Pty.Server.AutoPromptsTest do
   # first time claude runs in a cwd not yet recorded as trusted.
   @trust_buffer "\e[1CAccessing\e[1Cworkspace:\r\r\n\e[1C/Users/x/poc-sandbox-phase2/cinnox\r\r\n" <>
                   "\e[1CQuick\e[1Csafety\e[1Ccheck:\e[1CIs\e[1Cthis\e[1Ca\e[1Cproject\e[1Cyou\e[1Ccreated\e[1Cor\e[1Cone\e[1Cyou\e[1Ctrust?\r\r\n" <>
-                  "\e[1C\x{276F}\e[1C1.\e[1CYes,\e[1CI\e[1Ctrust\e[1Cthis\e[1Cfolder\r\r\n\e[3C2.\e[1CNo,\e[1Cexit\r\r\n" <>
-                  "\e[1CEnter\e[1Cto\e[1Cconfirm\e[1C\x{00B7}\e[1CEsc\e[1Cto\e[1Ccancel"
+                  "\e[1C\u276F\e[1C1.\e[1CYes,\e[1CI\e[1Ctrust\e[1Cthis\e[1Cfolder\r\r\n\e[3C2.\e[1CNo,\e[1Cexit\r\r\n" <>
+                  "\e[1CEnter\e[1Cto\e[1Cconfirm\e[1C\u00B7\e[1CEsc\e[1Cto\e[1Ccancel"
 
   # Real dev-channels warning, where claude animates the banner so the
   # "o" of "Loading" is drawn via a cursor move → strips to "L ading".
   @dev_channels_buffer "\e[13A WARNING:\e[1CL\e[1Cading development\e[1Cchannels\r" <>
                          "\e[2B --dangerously-l\e[1Cad-development-chan\e[1Cels\e[1Cis\e[1Cfor\e[1Clocal\e[1Cchannel\e[1Cdevelopment\e[1Conly.\r" <>
                          "\e[2B Channels: server:esr-bridg\e[1C\r" <>
-                         "\e[2B \x{276F} 1. I am using\e[1Cthis\e[1Cfor\e[1Clocal\e[1Cdevelopment\r\e[4C\e[1B2.\e[1CExit\r" <>
-                         "\e[1BEnter to confirm\e[1C\x{00B7}\e[1CEsc\e[1Cto\e[1Ccancel"
+                         "\e[2B \u276F 1. I am using\e[1Cthis\e[1Cfor\e[1Clocal\e[1Cdevelopment\r\e[4C\e[1B2.\e[1CExit\r" <>
+                         "\e[1BEnter to confirm\e[1C\u00B7\e[1CEsc\e[1Cto\e[1Ccancel"
 
   # Real first-run THEME picker, shown by claude v2.1.x the very first time it
   # runs against a fresh CLAUDE_CONFIG_DIR (no onboarding flags). It appears
@@ -44,7 +44,7 @@ defmodule Ezagent.Domain.Pty.Server.AutoPromptsTest do
                   "\e[1CChoose\e[1Cthe\e[1Ctext\e[1Cstyle\e[1Cthat\e[1Clooks\e[1Cbest\e[1Cwith\e[1Cyour\e[1Cterminal\r\r\n" <>
                   "\e[1CTo\e[1Cchange\e[1Cthis\e[1Clater,\e[1Crun\e[1C/theme\r\r\n" <>
                   "\e[1C1.\e[1CAuto\e[1C(match\e[1Cterminal)\r\r\n" <>
-                  "\e[1C\x{276F}\e[1C2.\e[1CDark\e[1Cmode\e[1C\x{2714}\r\r\n" <>
+                  "\e[1C\u276F\e[1C2.\e[1CDark\e[1Cmode\e[1C\u2714\r\r\n" <>
                   "\e[3C3.\e[1CLight\e[1Cmode\r\r\n"
 
   # Real first-run LOGIN-METHOD picker, shown by claude v2.1.x when it starts a
@@ -62,9 +62,19 @@ defmodule Ezagent.Domain.Pty.Server.AutoPromptsTest do
   # menu is a static radio list (no animated banner), so words are not fragmented.
   @login_method_buffer "\e[1CSelect\e[1Clogin\e[1Cmethod:\r\r\n" <>
                           "\e[1CUse\e[1Cyour\e[1Csubscription\e[1Cor\e[1CAPI\e[1Caccount\r\r\n" <>
-                          "\e[1C\x{276F}\e[1C1.\e[1CClaude\e[1Caccount\e[1Cwith\e[1Csubscription\r\r\n" <>
+                          "\e[1C\u276F\e[1C1.\e[1CClaude\e[1Caccount\e[1Cwith\e[1Csubscription\r\r\n" <>
                           "\e[3C2.\e[1CAnthropic\e[1CConsole\e[1Caccount\r\r\n" <>
-                          "\e[1CEnter\e[1Cto\e[1Cconfirm\e[1C\x{00B7}\e[1CEsc\e[1Cto\e[1Cexit"
+                          "\e[1CEnter\e[1Cto\e[1Cconfirm\e[1C\u00B7\e[1CEsc\e[1Cto\e[1Cexit"
+
+  # SAME menu, but the selection marker `❯` is on option 2 (Console/API-key)
+  # instead of option 1 — account/version drift could render this. Bare Enter
+  # here would pick the WRONG auth path, so the prompt MUST NOT fire (codex PR
+  # #718): the matcher requires `❯ 1.` on the subscription row.
+  @login_method_buffer_opt2_highlighted "\e[1CSelect\e[1Clogin\e[1Cmethod:\r\r\n" <>
+                          "\e[1CUse\e[1Cyour\e[1Csubscription\e[1Cor\e[1CAPI\e[1Caccount\r\r\n" <>
+                          "\e[3C1.\e[1CClaude\e[1Caccount\e[1Cwith\e[1Csubscription\r\r\n" <>
+                          "\e[1C\u276F\e[1C2.\e[1CAnthropic\e[1CConsole\e[1Caccount\r\r\n" <>
+                          "\e[1CEnter\e[1Cto\e[1Cconfirm\e[1C\u00B7\e[1CEsc\e[1Cto\e[1Cexit"
 
   defp spec(name),
     do: Enum.find(PtyServer.default_auto_prompts(), &(&1.name == name))
@@ -134,6 +144,16 @@ defmodule Ezagent.Domain.Pty.Server.AutoPromptsTest do
 
     refute PtyServer.matches?(p.match, ordinary),
            "login_method_dialog must not fire on ordinary output that merely mentions the words"
+  end
+
+  test ":login_method_dialog does NOT fire when option 2 (Console/API-key) is highlighted (codex PR #718)" do
+    # The picker is present but the WRONG option is highlighted. Bare Enter would
+    # confirm the Console/API-key path and ignore the materialized OAuth token, so
+    # the matcher must require `❯ 1.` on the subscription row and NOT fire here.
+    p = spec(:login_method_dialog)
+
+    refute PtyServer.matches?(p.match, AnsiStrip.strip(@login_method_buffer_opt2_highlighted)),
+           "login_method_dialog must NOT auto-confirm when option 2 is the highlighted default"
   end
 
   test ":trust_folder_dialog fires on the real folder-trust buffer and sends \"1\\r\"" do
