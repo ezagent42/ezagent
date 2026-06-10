@@ -121,6 +121,25 @@ defmodule Ezagent.ExternalMirror.AdapterRegistryTest do
       assert WorkerRegistry.list_all() == before
     end
 
+    test "a :pull adapter's install hook FIRES on AdapterRegistry alone — cap subject registered, no binding (codex P3-1 HIGH)" do
+      # The install hook for a binding-less pull adapter must NOT wait on a
+      # BindingRegistry entry (which never arrives) — otherwise install/1 never
+      # runs and the per-adapter allow cap is never registered, leaving the
+      # adapter unusable for grant/validate flows.
+      assert :ok = AdapterRegistry.register(PullAdapter)
+
+      # install/1 ran register_cap_subject/2 → the allow_<id> subject exists
+      # on Ezagent.Entity.Session, even though no Worker/binding exists.
+      assert {:ok, %{behavior: Ezagent.ExternalMirror.TestSupport.PullAdapter.Allow}} =
+               Ezagent.CapabilityRegistry.lookup_subject(
+                 Ezagent.Entity.Session,
+                 :allow_pull_em
+               )
+
+      # ...and NO BindingRegistry row was ever created for the pull adapter.
+      assert :error = Ezagent.ExternalMirror.BindingRegistry.lookup("pull_em")
+    end
+
     test "a :push adapter missing binding_module/0 still RAISES (push contract unchanged)" do
       assert Adapter.kind_of(PushAdapterMissingBinding) == :push
 
