@@ -274,9 +274,10 @@ defmodule EzagentPluginLoom.ClaudeCode do
   defp exec_stream(bin, prompt, system, idle, group) do
     ensure_exec_started()
 
-    argv = build_argv(bin, prompt, system)
+    argv = build_argv(bin, system)
 
     opts = [
+      :stdin,
       :stdout,
       :stderr,
       :monitor,
@@ -289,8 +290,14 @@ defmodule EzagentPluginLoom.ClaudeCode do
         # 注册 os_pid + 本收集进程(self),供 stop/1 中断;结束必注销。
         register_run(group, os_pid, self())
 
+        # prompt 走 **stdin**(不再作为 argv)。改页请求会把整页源码(数百 KB)拼进
+        # prompt;作为 argv 传会超 erlexec 端口/OS `ARG_MAX` 限制,`:exec.run` 的
+        # 30s gen_server.call 超时 → :exec 崩溃(2026-06-09 实测根因)。`claude -p`
+        # 无位置参数时从 stdin 读 prompt,大小无上限。写完发 :eof 收口。
+        write_stdin(os_pid, prompt)
+
         try do
-          collect_stream(os_pid, "", "", idle)
+          collect_stream(os_pid, "", "", idle, group)
         after
           deregister_run(group, os_pid)
         end
@@ -300,9 +307,22 @@ defmodule EzagentPluginLoom.ClaudeCode do
     end
   end
 
+  # 把 prompt 写进子进程 stdin 后发 :eof 关闭(claude 读到 EOF 才开始处理)。
+  # erlexec `:exec.send/2`:二进制写入,原子 `:eof` 关 stdin。失败吞掉(子进程
+  # 可能已退出)。
+  defp write_stdin(os_pid, prompt) when is_binary(prompt) do
+    :exec.send(os_pid, prompt)
+    :exec.send(os_pid, :eof)
+    :ok
+  catch
+    _, _ -> :ok
+  end
+
   # 收集 NDJSON 事件流。`after idle` 每次收到任意消息都重置 → 只有"完全静默 idle"
   # 才 fire(= 真卡死)。stdout 行里出现 result 事件 → 完成。
-  defp collect_stream(os_pid, buf, errbuf, idle) do
+  # 2026-06-09:每个 stdout chunk 里的 partial-message token(text/thinking delta)
+  # 抽出来**广播到进度 topic**(group=session 字符串),供编辑页实时显示 v0 生成过程。
+  defp collect_stream(os_pid, buf, errbuf, idle, group) do
     receive do
       # 用户中止(stop/1 发来):SIGINT 子进程 + 立即返回 :stopped,上层据此丢弃。
       :stop_requested ->
@@ -311,6 +331,7 @@ defmodule EzagentPluginLoom.ClaudeCode do
 
       {:stdout, ^os_pid, chunk} ->
         {lines, rest} = split_lines(buf <> chunk)
+        publish_progress(group, extract_progress(lines))
 
         case scan_result(lines) do
           {:done, result} ->
@@ -318,12 +339,12 @@ defmodule EzagentPluginLoom.ClaudeCode do
             result
 
           :continue ->
-            collect_stream(os_pid, rest, errbuf, idle)
+            collect_stream(os_pid, rest, errbuf, idle, group)
         end
 
       {:stderr, ^os_pid, chunk} ->
         # stderr 也算"活着";留尾部供报错。
-        collect_stream(os_pid, buf, truncate(errbuf <> chunk, 500), idle)
+        collect_stream(os_pid, buf, truncate(errbuf <> chunk, 500), idle, group)
 
       {:DOWN, ^os_pid, :process, _pid, _reason} ->
         # 进程退出且 stdout 分支没截到 result → 最后再扫一遍 buf,否则报错。
@@ -332,6 +353,51 @@ defmodule EzagentPluginLoom.ClaudeCode do
       idle ->
         safe_stop(os_pid)
         {:error, :stalled}
+    end
+  end
+
+  # 进度广播(**出站观测**,非 Kind 间分发):把 v0 流式 token 推给本 session 的进度
+  # topic;编辑页 SSE 订阅它实时显示。group=nil(无 session)→ 不广播。
+  defp publish_progress(nil, _text), do: :ok
+  defp publish_progress(_group, ""), do: :ok
+
+  defp publish_progress(group, text) when is_binary(group) and is_binary(text) do
+    # 诊断:每次生成只打一次(collector 是 per-run 进程,进程字典 flag 即可)。
+    unless Process.get(:loom_progress_logged) do
+      Process.put(:loom_progress_logged, true)
+      Logger.info("[loom] gen progress streaming → #{group} (first #{byte_size(text)}B)")
+    end
+
+    Phoenix.PubSub.broadcast(
+      EzagentCore.PubSub,
+      "loom:gen_progress:" <> group,
+      {:loom_gen_progress, text}
+    )
+  catch
+    _, _ -> :ok
+  end
+
+  # 从完整 NDJSON 行里抽 partial-message 的增量文本(正文 text_delta + 思考
+  # thinking_delta),按出现顺序拼接。没有则空串。
+  defp extract_progress(lines) do
+    lines
+    |> Enum.map(&progress_text_of/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join("")
+  end
+
+  defp progress_text_of(line) do
+    case Jason.decode(String.trim(line)) do
+      {:ok, %{"type" => "stream_event", "event" => %{"delta" => %{"text" => t}}}}
+      when is_binary(t) ->
+        t
+
+      {:ok, %{"type" => "stream_event", "event" => %{"delta" => %{"thinking" => t}}}}
+      when is_binary(t) ->
+        t
+
+      _ ->
+        ""
     end
   end
 
@@ -400,9 +466,10 @@ defmodule EzagentPluginLoom.ClaudeCode do
     _, _ -> :ok
   end
 
-  # argv 用 charlist 列表(no-shell exec):prompt 作为位置参数,自带注入安全
-  # (任何元字符都只是一个 argv 元素,claude 不经 shell)。空 system 时不传
-  # --system-prompt(避免 claude 对空串报错)。
+  # argv 用 charlist 列表(no-shell exec)。**prompt 不在 argv 里**——它走 stdin
+  # (见 exec_stream/write_stdin):改页 prompt 含整页源码可达数百 KB,作为 argv 会
+  # 超 ARG_MAX/erlexec 端口限制致 :exec 崩溃。`claude -p` 无位置参数 ⇒ 读 stdin。
+  # 空 system 时不传 --system-prompt(避免 claude 对空串报错)。
   #
   # 隔离 flag(2026-06-02 —— 修 loom"串戏"回答开发内容的 bug):loom 要的是
   # 纯 LLM,不是带用户环境的编码 agent。默认 `claude -p` 会加载运行用户的全局
@@ -419,11 +486,10 @@ defmodule EzagentPluginLoom.ClaudeCode do
   # 不管尝试)。`--max-turns 1` 下尝试一次就没回合 → error_max_turns。给到 6 个回合
   # 让它从拒绝里恢复成文本输出(配合系统提示里的 @no_tools_directive,绝大多数情况
   # 1 回合就出文本,6 只是兜底)。
-  defp build_argv(bin, prompt, system) do
+  defp build_argv(bin, system) do
     base = [
       String.to_charlist(bin),
       ~c"-p",
-      String.to_charlist(prompt),
       # stream-json + partial messages:边生成边吐事件(thinking/正文 token),
       # 作为"活性"信号驱动空闲超时;stream-json 需要 --verbose。
       ~c"--output-format",

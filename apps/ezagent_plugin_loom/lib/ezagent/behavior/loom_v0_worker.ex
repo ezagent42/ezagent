@@ -68,7 +68,7 @@ defmodule Ezagent.Behavior.LoomV0Worker do
       case LLM.chat(
              [
                %{"role" => "system", "content" => Prompts.page_gen_system_prompt()},
-               %{"role" => "user", "content" => subtask}
+               %{"role" => "user", "content" => build_user_message(ctx, subtask)}
              ],
              temperature: 0.7,
              thinking_disabled: true,
@@ -240,6 +240,54 @@ defmodule Ezagent.Behavior.LoomV0Worker do
       rescue
         _ -> nil
       end
+    end
+  end
+
+  # 2026-06-09 修 `:no_jsx_block`:**修改请求**(如「改成web端」「换个颜色」)必须让
+  # claude 看到当前页面源码,否则它无从下手、只回文字 → 无 jsx 块。这里读编排器
+  # `:loom_orchestrator` slice 的 `loom_source`(权威当前页),非种子页时拼进 user 消息,
+  # 并明确要求输出完整修改后文件。首次生成(无源/种子页)→ 只发指令(原行为)。
+  defp build_user_message(ctx, subtask) do
+    case current_source(ctx) do
+      files when is_map(files) and map_size(files) > 0 ->
+        serialized =
+          files
+          |> Enum.map(fn {path, code} -> "```jsx file=#{path}\n#{code}\n```" end)
+          |> Enum.join("\n\n")
+
+        """
+        这是这个页面**当前的完整源码(可能多文件)**:
+
+        #{serialized}
+
+        ——————
+        用户的修改要求:#{subtask}
+
+        请在**上面当前源码的基础上**做这个修改,然后输出**完整的修改后文件代码块**
+        (每个文件一个 ```jsx file=/路径``` 块;**即使某文件没改也要原样带上、即使只改一处也要
+        输出整份文件**)。平台用你输出的文件整体替换页面——只用文字描述改动、不给完整代码会让
+        页面无法更新。
+        """
+
+      _ ->
+        subtask
+    end
+  end
+
+  # 读编排器当前 loom_source(files map);无 / 为种子占位页 → nil(当首次生成处理)。
+  defp current_source(ctx) do
+    with %URI{} = self_uri <- Map.get(ctx, :self_uri),
+         %URI{} = orch <- orchestrator_uri(self_uri),
+         {:ok, slice} when is_map(slice) <- Ezagent.Kind.get_slice(orch, :loom_orchestrator) do
+      files = EzagentPluginLoom.Prompts.normalize_source(slice[:loom_source] || slice["loom_source"])
+
+      if is_map(files) and map_size(files) > 0 and files != EzagentPluginLoom.Prompts.loom_seed_files() do
+        files
+      else
+        nil
+      end
+    else
+      _ -> nil
     end
   end
 
