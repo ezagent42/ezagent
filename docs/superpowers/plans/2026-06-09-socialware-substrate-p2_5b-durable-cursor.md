@@ -35,8 +35,8 @@
 | `apps/ezagent_core/priv/repo/migrations/<next>_socialware_outbox_surface_version_and_committed_seq.exs` | Create | `add :surface_version, :integer` + `add :committed_seq, :integer` to `socialware_customer_outbox`; unique index `(session_uri, committed_seq)`; backfill existing committed rows. |
 | `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_outbox.ex` | Modify | Add `surface_version :integer` + `committed_seq :integer` fields. |
 | `apps/ezagent_domain_socialware/lib/ezagent/socialware/settlement.ex` | Modify | `emit_outbox_once/1` writes `surface_version`; the commit step atomically assigns `committed_seq` + flips status in one transaction. |
-| `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed.ex` | Modify | Add `committed_deliveries_since/2` + `latest_cursor/1` (cursor-addressable durable replay). |
-| `apps/ezagent_domain_socialware/test/ezagent/socialware/customer_delivery_cursor_test.exs` | Create | commit-order cursor + replay-since + out-of-order-no-skip + surface_version + pending-invisible + backfill-shape tests. |
+| `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed.ex` | Modify | Add `committed_deliveries_since/2` + `latest_cursor/1` (cursor replay); re-point `committed_surface_version/1` (P2.5a) onto the outbox `committed_seq` order so the page projection shares one commit-order source with replay. |
+| `apps/ezagent_domain_socialware/test/ezagent/socialware/customer_delivery_cursor_test.exs` | Create | commit-order cursor + replay-since + out-of-order-no-skip + surface_version + pending-invisible + upgrade-pending + re-commit-no-op + committed_at-tie tests. |
 
 ---
 
@@ -207,10 +207,12 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
   """
   use EzagentCore.DataCase, async: false
 
+  import Ecto.Query
+
   alias Ezagent.Invocation
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Entity.{SocialwareSession, User}
-  alias Ezagent.Socialware.{CustomerFeed, CustomerOutbox}
+  alias Ezagent.Socialware.{CustomerFeed, CustomerOutbox, SettlementRecord}
   alias EzagentCore.Repo
 
   defp session_uri do
@@ -439,6 +441,37 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
       assert snapshot.page == %{type: "text", props: %{text: "p2"}}
     end
   end
+
+  describe "committed_at tie: page follows committed_seq, not lexicographic turn_id (codex rev2 HIGH)" do
+    test "two latest deliveries sharing committed_at -> page is the max-committed_seq version" do
+      uri = spawn_session()
+      token = test_token(uri)
+
+      # 10 turns -> surface versions 1..10, committed_seq 1..10, turn ids
+      # ...#turn-1 .. #turn-10. Lexicographically "#turn-9" SORTS AFTER "#turn-10",
+      # so the OLD (committed_at desc, turn_id desc) projection would wrongly pick
+      # turn-9 (older, version 9) on a committed_at tie.
+      turn_ids = for n <- 1..10, do: run_turn(uri, %{type: "text", props: %{text: "p#{n}"}})
+      t9 = Enum.at(turn_ids, 8)
+      t10 = Enum.at(turn_ids, 9)
+
+      # Force turn-9 + turn-10 to share the LATEST committed_at (a microsecond tie).
+      {:ok, s10} = Ezagent.Socialware.Settlement.get(t10)
+
+      from(s in SettlementRecord, where: s.turn_id in ^[t9, t10])
+      |> Repo.update_all(set: [committed_at: s10.committed_at])
+
+      assert Repo.get_by(CustomerOutbox, turn_id: t9).committed_seq == 9
+      assert Repo.get_by(CustomerOutbox, turn_id: t10).committed_seq == 10
+
+      # committed_seq is the authority -> page is version 10 (NOT version 9).
+      {:ok, snapshot} = CustomerFeed.snapshot(uri, token)
+      assert snapshot.page == %{type: "text", props: %{text: "p10"}}
+
+      # ...and it agrees with the cursor replay's last delivery.
+      assert List.last(CustomerFeed.committed_deliveries_since(uri, 0)).turn_id == t10
+    end
+  end
 end
 ```
 
@@ -636,6 +669,33 @@ Add to `apps/ezagent_domain_socialware/lib/ezagent/socialware/customer_feed.ex` 
   end
 ```
 
+- [ ] **Step 1b: Unify the customer PAGE projection onto `committed_seq` (codex rev2 HIGH)**
+
+P2.5a's `committed_surface_version/1` ordered by `s.committed_at desc, s.turn_id desc`. With fast commits sharing a `:utc_datetime_usec` and **non-padded** turn ids (`#turn-9` vs `#turn-10`), that lexicographic tiebreak can pick an OLDER turn — so the page projection and the `committed_seq` cursor replay can disagree. Make the page read from the SAME commit-order source as replay. Replace `committed_surface_version/1` (added in P2.5a) with an outbox-`committed_seq` read (the join to `SettlementRecord` is no longer needed — `committed_seq != nil` ⟺ committed):
+
+```elixir
+  # P2.5b — the committed page version = the latest page-bearing COMMITTED
+  # delivery, ordered by the SAME commit-order cursor (committed_seq) that
+  # committed_deliveries_since/2 replays — so the page projection and the durable
+  # cursor can never disagree (codex rev2 HIGH: committed_at ties + non-padded
+  # turn_id lexicographic order could otherwise pick an older turn).
+  defp committed_surface_version(session_uri) do
+    session_str = URI.to_string(session_uri)
+
+    from(o in CustomerOutbox,
+      where:
+        o.session_uri == ^session_str and not is_nil(o.committed_seq) and
+          not is_nil(o.surface_version),
+      order_by: [desc: o.committed_seq],
+      limit: 1,
+      select: o.surface_version
+    )
+    |> Repo.one()
+  end
+```
+
+After this, `SettlementRecord` may be unused in `customer_feed.ex` — if so, drop it from the alias to satisfy `--warnings-as-errors` (confirm with a compile). The alias becomes `alias Ezagent.Socialware.{CustomerAuth, CustomerOutbox}`.
+
 - [ ] **Step 2: Compile + run the cursor tests (red→green with Task 3)**
 
 Run: `MIX_ENV=test mix test apps/ezagent_domain_socialware/test/ezagent/socialware/customer_delivery_cursor_test.exs 2>&1 | tail -10`
@@ -677,6 +737,7 @@ Expected: no FAIL; `oversized_modules_gt_1000: count=0`; invariants clean.
 2. **Serialization assumption:** `commit_after_pointer/2` runs inside the single `SocialwareSession` GenServer → per-session commits serialized → `max+1` race-free. The `(session_uri, committed_seq)` unique index is a let-it-crash backstop, not a correctness crutch. Stated explicitly.
 3. **Idempotent re-commit — FULL no-op (codex rev1 HIGH-2):** `commit_after_pointer/2` returns early (no `status`/`committed_at`/`committed_seq` rewrite) when the settlement is already `:committed`. This is what keeps the durable cursor order and the P2.5a `customer_page/1` projection (latest by `committed_at desc`) from disagreeing — a delayed re-commit of an older turn cannot roll the page back. Regression: commit t1, t2, re-commit t1 → t1.committed_at unchanged, page stays t2.
 4. **Upgrade-safe + surface_version at commit (codex rev1 HIGH-1):** the migration backfills existing committed rows (per-session, commit-order). For a row that was PENDING at deploy (committed_seq + surface_version both NULL), the commit boundary's `assign_committed_seq/1` sets BOTH `committed_seq` AND `surface_version` (from `settlement.target_surface_version`) — so a committed delivery never has a cursor without its page version. Regression: pre-migration-shaped pending row (nil surface_version) → commit → replay returns target_surface_version. New columns nullable; pending rows stay NULL → invisible.
-5. **Scope:** durable-source only. Post-parent-turn-commit ordering (rev4 HIGH) = P2.5c; #44 wire-schema folds into P3 prep. `customer_page/1` (P2.5a) untouched.
+4b. **One commit-order source for page AND cursor (codex rev2 HIGH):** `customer_page/1`'s `committed_surface_version/1` is re-pointed from `SettlementRecord.committed_at desc, turn_id desc` (which ties on equal `:utc_datetime_usec` + non-padded turn_id lexicographic order, possibly picking an older turn) onto the outbox `committed_seq desc` — the exact order `committed_deliveries_since/2` replays. Page and cursor can no longer disagree. Regression: 10 turns, force turn-9 + turn-10 to share `committed_at`, assert page == version-10 (committed_seq 10), not version-9.
+5. **Scope:** durable-source only. Post-parent-turn-commit ordering (rev4 HIGH) = P2.5c; #44 wire-schema folds into P3 prep. P2.5b DOES adjust `committed_surface_version/1` (P2.5a) — necessary to keep page+cursor consistent (4b).
 6. **No core change:** only `ezagent_core/priv/repo/migrations` (column adds + backfill) + socialware library. Blast radius inside socialware.
 7. **Placeholder scan:** the migration filename `<next>` must be resolved to a concrete timestamp in Task 1 Step 1. No other placeholders.
