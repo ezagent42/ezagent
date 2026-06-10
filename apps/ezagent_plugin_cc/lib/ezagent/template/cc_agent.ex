@@ -248,7 +248,20 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       "operator_settings_path" => content_field(content, :settings_path),
       "operator_mcp_config_path" => content_field(content, :mcp_config_path),
       "api_key_helper" => content_field(content, :api_key_helper),
-      "role" => content_field(content, :role)
+      "role" => content_field(content, :role),
+      # §5.B follow-up (c) — the TEST/E2E source-credential path. The
+      # refresh-if-expired provisioner (`refresh_test_credentials/3`) needs a
+      # SOURCE `.credentials.json` to refresh FROM on the source agent's OWN
+      # respawn (the respawn path deliberately doesn't re-materialize the
+      # config_dir, so a token that expired between create and respawn would
+      # otherwise stay expired). Persisting this content field into the
+      # Template-Class data carries it into the sandbox `respawn_template_data`
+      # (it is NOT a `cascade`/reserved key, so `sanitize_respawn_template_data`
+      # preserves it), which is exactly what
+      # `Spawn.maybe_reprovision_source_from_respawn_data/2` reads. Production
+      # interactive-login agents never set it (nil → dropped by the caller), so
+      # the production respawn path stays a no-op.
+      "credential_source" => content_field(content, :credential_source)
     }
   end
 

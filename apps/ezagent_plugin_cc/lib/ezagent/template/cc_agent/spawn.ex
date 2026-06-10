@@ -243,6 +243,19 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
         # don't recreate the config dir here — the snapshot is the source of truth).
         case Map.fetch(respawn_data, "cwd") do
           {:ok, cwd} when is_binary(cwd) and cwd != "" ->
+            # §5.B follow-up (c) — re-provision the SOURCE agent's credential on its
+            # OWN respawn. The fresh-create path provisions the source's
+            # `.credentials.json` via the test/E2E refresh-if-expired provisioner;
+            # respawn deliberately does NOT re-materialize the config_dir, so before
+            # this fix an OAuth token that expired between create and respawn stayed
+            # expired and the source came back up mute. When respawn_data carries an
+            # E2E `:credential_source` (production interactive-login agents never set
+            # it), re-run the provisioner into the resolved config_home BEFORE
+            # relaunch so the source's credential is DURABLE across its own restarts.
+            # Best-effort: a missing/failed E2E source must not crash-loop the respawn
+            # (the agent's own auth-failure observers surface a truly-dead cred).
+            _ = maybe_reprovision_source_from_respawn_data(agent_uri, respawn_data)
+
             case ensure_pty_server(agent_uri, cwd, respawn_data) do
               :ok ->
                 Logger.info(
@@ -268,6 +281,80 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
             {:error, {:missing_cwd_in_respawn_data, agent_uri}}
         end
     end
+  end
+
+  # §5.B follow-up (c) — respawn-time SOURCE credential re-provisioning.
+  #
+  # Reads the E2E `:credential_source` from respawn_data (atom or string key). When
+  # present, resolves the agent's config_home from respawn_data and re-runs the
+  # refresh-if-expired provisioner into it. Absent key / unresolvable config_home →
+  # no-op (the production interactive-login path never sets the key). A provisioner
+  # FAILURE is logged + swallowed (best-effort — a missing/expired E2E source must
+  # not crash-loop the source agent's respawn; its own PTY auth-failure observers
+  # surface a genuinely-dead credential).
+  @doc false
+  @spec maybe_reprovision_source_from_respawn_data(URI.t(), map()) :: :ok
+  def maybe_reprovision_source_from_respawn_data(%URI{} = agent_uri, respawn_data)
+      when is_map(respawn_data) do
+    case credential_source_field(respawn_data) do
+      nil ->
+        :ok
+
+      source_path when is_binary(source_path) ->
+        config_home = resolve_config_home(agent_uri, respawn_data)
+
+        case reprovision_source_credential(config_home, source_path, reprovision_opts()) do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning(
+              "cc.agent: source-credential re-provision on respawn failed for " <>
+                "#{URI.to_string(agent_uri)} (source=#{source_path}): #{inspect(reason)} — " <>
+                "the agent will relaunch with whatever credential is on disk; its PTY " <>
+                "auth-failure observers surface a dead credential. (best-effort, §5.B c)"
+            )
+
+            :ok
+        end
+    end
+  end
+
+  # Provisioner opts (OAuth `http_post` + `now_ms` clock) for the respawn-time
+  # re-provision. PRODUCTION → `[]` (the provisioner uses real `:httpc` + the
+  # system clock). TESTS inject a stubbed `http_post`/`now_ms` via the established
+  # `:ezagent_plugin_cc` app-env seam (same pattern as `:orchestrator_skill_source`,
+  # `:mcp_config_dir`, `:ws_url`) so the PATH-LEVEL respawn test can drive an
+  # EXPIRED→refreshed source through `ensure_subprocess_alive/2` WITHOUT hitting the
+  # network or rotating a real token. No data shim — the injection never rides in
+  # `respawn_template_data`.
+  defp reprovision_opts do
+    case Application.get_env(:ezagent_plugin_cc, :source_reprovision_opts) do
+      opts when is_list(opts) -> opts
+      _ -> []
+    end
+  end
+
+  defp credential_source_field(respawn_data) do
+    case Map.get(respawn_data, "credential_source") || Map.get(respawn_data, :credential_source) do
+      v when is_binary(v) and v != "" -> v
+      _ -> nil
+    end
+  end
+
+  # The refresh-if-expired provisioner (TEST/E2E only). `nil` config_home or
+  # `nil`/blank source → no-op. Delegates to the cc CredentialAdapter so the OAuth
+  # `http_post` + clock are injectable by tests (no network, no real-token rotation).
+  @doc false
+  @spec reprovision_source_credential(String.t() | nil, String.t() | nil, keyword()) ::
+          :ok | {:error, term()}
+  def reprovision_source_credential(nil, _source, _opts), do: :ok
+  def reprovision_source_credential(_config_home, nil, _opts), do: :ok
+  def reprovision_source_credential(_config_home, "", _opts), do: :ok
+
+  def reprovision_source_credential(config_home, source, opts)
+      when is_binary(config_home) and is_binary(source) do
+    CcAgent.refresh_test_credentials(source, config_home, opts)
   end
 
   # Raw cc PTY launcher — PRIVATE (codex PR-3T/#701 chokepoint): reachable

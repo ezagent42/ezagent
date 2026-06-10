@@ -92,14 +92,20 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
 
     name = opts[:name] || Mix.raise("--name <name> is required")
     sandbox_dir = opts[:sandbox_dir] || default_sandbox_dir(name)
-    source = opts[:credentials_file] || default_credentials_path()
+    # P2.5b/§5.B(c) — NORMALIZE to an absolute path at the seed boundary (codex
+    # #719 MEDIUM): `source` is both copied now AND persisted into the template's
+    # `credential_source` -> respawn_template_data. A relative path would copy OK
+    # under the mix task cwd but later resolve under the RUNTIME cwd on respawn,
+    # degrading the credential refresh to a stale no-op. Path.expand makes the
+    # durable value cwd-independent.
+    source = Path.expand(opts[:credentials_file] || default_credentials_path())
     force? = !!opts[:force]
     template_name = opts[:seed_template]
 
     with :ok <- ensure_source_present!(source),
          :ok <- ensure_sandbox_dir!(sandbox_dir),
          {:ok, dest} <- copy_credentials!(source, sandbox_dir, force?),
-         :ok <- maybe_seed_template(template_name, sandbox_dir) do
+         :ok <- maybe_seed_template(template_name, sandbox_dir, source) do
       print_summary(name, sandbox_dir, dest, template_name)
       :ok
     end
@@ -190,9 +196,9 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
   # `Ezagent.Behavior.Template` `:write` to populate the `:template`
   # slice for `template://agent/system/cc-<s>`. Same pattern as
   # `Ezagent.Orchestrator.CcOrchestratorSeed.write_template_slice/2`.
-  defp maybe_seed_template(nil, _sandbox_dir), do: :ok
+  defp maybe_seed_template(nil, _sandbox_dir, _source), do: :ok
 
-  defp maybe_seed_template(template_name, sandbox_dir) do
+  defp maybe_seed_template(template_name, sandbox_dir, source) do
     {:ok, _} = Application.ensure_all_started(:ezagent_core)
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_instance_message)
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_cc)
@@ -200,7 +206,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
     uri = Ezagent.URI.template(:system, :agent, "cc-#{template_name}")
 
     with {:ok, _pid} <- ensure_template_kind(uri),
-         :ok <- write_template_slice(uri, sandbox_dir, template_name) do
+         :ok <- write_template_slice(uri, sandbox_dir, template_name, source) do
       :ok
     else
       {:error, reason} ->
@@ -222,7 +228,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
     end
   end
 
-  defp write_template_slice(%URI{} = uri, sandbox_dir, template_name) do
+  defp write_template_slice(%URI{} = uri, sandbox_dir, template_name, source) do
     content = %{
       name: "cc-#{template_name}",
       description:
@@ -234,6 +240,14 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
       settings_path: nil,
       mcp_config_path: nil,
       api_key_helper: nil,
+      # §5.B follow-up (c) — the SOURCE `.credentials.json` this E2E agent was
+      # seeded FROM (the test-dedicated host login). Persisting it into the
+      # template content carries it (via cc `template_data_extra/1`) into the
+      # sandbox `respawn_template_data`, so the source agent's credential is
+      # refreshed-if-expired on its OWN respawn (the respawn path doesn't
+      # re-materialize the config_dir). Production agents log in interactively
+      # and never set this.
+      credential_source: source,
       default_caps: [],
       created_by: nil,
       created_at: DateTime.utc_now()
