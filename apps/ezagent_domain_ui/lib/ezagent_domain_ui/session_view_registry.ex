@@ -83,6 +83,57 @@ defmodule Ezagent.UI.SessionViewRegistry do
     end
   end
 
+  @doc """
+  P2 — whether `view_module` declares a USABLE EXTERNAL render target.
+
+  A view is an external renderer iff it exports BOTH `external_render?/0`
+  AND `external_render/1` (both optional callbacks) AND `external_render?/0`
+  returns `true`. Requiring `external_render/1` to ALSO be exported (codex
+  P2 review HIGH) prevents publishing a half-declared view — one that says
+  `external_render?/0 == true` but omits `external_render/1` — which would
+  later crash the ExternalAdapter when it invokes the missing renderer.
+  Internal-only views (neither callback) are `false`. The boolean probe is
+  `function_exported?`-guarded + try/catch (same posture as
+  `safe_applies_to/2`).
+  """
+  @spec external_render?(module()) :: boolean()
+  def external_render?(view_module) when is_atom(view_module) do
+    Code.ensure_loaded?(view_module) and
+      function_exported?(view_module, :external_render?, 0) and
+      function_exported?(view_module, :external_render, 1) and
+      safe_external_render?(view_module)
+  end
+
+  defp safe_external_render?(mod) do
+    mod.external_render?() == true
+  catch
+    _, _ -> false
+  end
+
+  @doc """
+  P2 — all registered views that BOTH apply to `session_uri` AND declare an
+  external render target. The single registration point the ExternalAdapter
+  (P3) consults to discover a session's external render(s), instead of
+  reaching into `Behavior.Surface` directly.
+
+  Returns the same `%{id, label, icon, module}` shape as `applicable_views/1`,
+  sorted by id.
+  """
+  @spec external_renderers(URI.t()) :: [
+          %{id: atom(), label: String.t(), icon: String.t(), module: module()}
+        ]
+  def external_renderers(%URI{} = session_uri) do
+    @table
+    |> :ets.tab2list()
+    |> Enum.filter(fn {_id, mod} ->
+      external_render?(mod) and safe_applies_to(mod, session_uri)
+    end)
+    |> Enum.map(fn {_id, mod} ->
+      %{id: mod.id(), label: mod.label(), icon: mod.icon(), module: mod}
+    end)
+    |> Enum.sort_by(& &1.id)
+  end
+
   @doc "Look up a view module by id (atom). Returns `{:ok, module} | :error`."
   @spec lookup(atom()) :: {:ok, module()} | :error
   def lookup(id) when is_atom(id) do
