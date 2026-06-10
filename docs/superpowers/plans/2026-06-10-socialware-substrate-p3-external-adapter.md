@@ -17,18 +17,33 @@
 
 ## Sub-PR decomposition (each shippable + tested; ordered)
 
-### P3-1 — Generalize the adapter contract (no behavior change)
-Lift/rename `Ezagent.ExternalMirror.Adapter` into the general `Behavior.ExternalAdapter` contract (or keep the name + add the customer-render callback path). Add the render axis the customer adapter needs: alongside `event_to_payload/1` (push-to-external), an adapter may declare a **pull/render** surface (the `customer_tree` json-render snapshot for a Channel-served SPA). Keep Feishu's adapter byte-identical (it implements only the push axis). Registry unchanged. Gate: existing external-mirror + Feishu tests green; the contract additions are optional callbacks so the Feishu adapter is unaffected.
+### P3-1 — Make pull/render adapters FIRST-CLASS (codex P3 rev1 HIGH-1: not via nil callbacks)
+The existing `Ezagent.ExternalMirror.Adapter` contract is **push/binding-shaped**: `AdapterRegistry.register/1` + plugin boot require `{adapter_module, binding_module}` pairs; `BindingRegistry` requires `init/1` + `publish/2`; the Worker ALWAYS looks up a binding, calls `binding_module.init/1`, then `publish/2`. A Phoenix-Channel **pull** feed (customer feed) has NO per-binding external transport — representing it with `nil` `binding_module`/`target_ownership_check` would be rejected at boot or crash the Worker, and a dummy binding would blur the bind-time ownership/transport boundary.
+So P3-1 introduces an explicit **adapter KIND axis** — `:push` (event → external transport, today's Feishu mirror: binding + worker + `event_to_payload/1`) vs `:pull` (render-on-demand over a caller-owned channel: `render/2` returning the `customer_tree` json-render; NO binding/worker/transport). Concrete changes (a real sub-PR, NOT optional callbacks on the old contract):
+- `Adapter` behaviour: add `adapter_kind/0 :: :push | :pull`; for `:pull`, `binding_module/0` + `target_ownership_check/2` are **not required** (the behaviour splits required callbacks by kind); add `render/2` (session_uri, ctx → json-render map) for `:pull`.
+- `AdapterRegistry.register/1` + `Plugin.adapters/0` boot: accept a `:pull` adapter WITHOUT a `{adapter, binding}` pair; gate/install hooks + Worker startup skip binding/worker for `:pull` (a pull adapter has no Worker — it's served by its caller's channel).
+- Feishu mirror = `:push`, byte-identical. Gate: existing external-mirror + Feishu tests green; a new `:pull` test adapter registers + renders without a binding and does NOT spawn a Worker.
 
-### P3-2 — Customer feed as an ExternalAdapter over the committed cursor
-Reimplement `CustomerFeed`/`CustomerChannel` as a registered `ExternalAdapter` (`adapter_id: "customer_feed"`) whose:
+### P3-2 — Customer feed as a `:pull` ExternalAdapter over the committed cursor
+Reimplement `CustomerFeed`/`CustomerChannel` as a registered `:pull` `ExternalAdapter` (`adapter_id: "customer_feed"`) whose:
 - **source** = `committed_deliveries_since/2` (replay by cursor) + the gated snapshot (`committed_customer_visible` + the committed page from P2.5a/P2.5b);
 - **wake-up** = the existing `{:customer_delivery}` PubSub (advisory) → triggers a replay from the channel's last cursor;
 - **render** = `Surface.customer_tree` json-render (unchanged projection).
-The `CustomerChannel` keeps its auth (`CustomerAuth`) + the structural-workspace + cold-safe reads (P2.5a). Gate: customer SPA render/deny tests green on the new path; the P2.5 **leak test** + **wake-up-loss test** still hold; cursor replay is idempotent (no double-delivery).
+The `CustomerChannel` keeps its auth (`CustomerAuth`) + structural-workspace + cold-safe reads (P2.5a).
 
-### P3-3 — SocialwareSession publisher READ API + scoped cap (codex #711 HIGH)
-Wire `snapshot`/`history`/`subscribe_from` dispatch on `SocialwareSession` (the `Publisher.SessionImpl` read-API deferred from P0), authz-scoped to a **concrete session/member/owner** cap — NOT `kind: :session`. Gate: the **authz-boundary test** — a chat-only `kind: :session` publisher cap CANNOT read a `SocialwareSession`'s internal slices through the ring; a legitimate member/owner cap can. (Per P0's recorded boundary requirement: P3 must NOT reuse the broad chat publisher cap.)
+**ATOMIC snapshot/subscribe ordering (codex P3 rev1 HIGH-3 — the join race).** Today `CustomerChannel.join` takes the snapshot BEFORE `Phoenix.PubSub.subscribe`. A commit landing between snapshot and subscribe, with the advisory event then missed, would let the adapter record `latest_cursor` having skipped an un-rendered delivery → violates the wake-up-loss guarantee. P3-2 fixes the protocol: **the snapshot is cursor-bearing**, and ordering is made consistent — **subscribe to the `{:customer_delivery}` topic FIRST, THEN take the snapshot and record its `cursor` (= `latest_cursor` at snapshot time); thereafter every advisory wake-up replays `committed_deliveries_since(cursor)` and advances `cursor`.** Subscribing first means any commit during/after the snapshot delivers an advisory event that triggers a replay from the snapshot cursor (idempotent — re-delivering an already-shown row is a no-op by id). Equivalent alternative: capture `snapshot_cursor` then `replay > snapshot_cursor` after subscribe. Gate: a **join-race test** that injects a commit BETWEEN the snapshot and the subscribe AND drops the advisory PubSub, then asserts the delivery is still rendered (via the cursor replay), not lost.
+
+Gate: customer SPA render/deny tests green on the new path; the P2.5 **leak test** + **wake-up-loss test** still hold; the new join-race test; cursor replay is idempotent (no double-delivery — keyed by committed_seq id).
+
+### P3-3 — SocialwareSession publisher READ API via a DISTINCT behavior + cap (codex #711 HIGH + P3 rev1 HIGH-2)
+**A scoped cap alone is NOT enough, and reusing `Publisher.SessionImpl` does NOT work.** The runtime derives the needed cap from `kind_module.type_name()` + the registered behavior + the action. `SocialwareSession.type_name/0` is `:session` (same as chat `Session`). So if P3 registered the EXISTING `Publisher.SessionImpl` read actions on `SocialwareSession`, the needed cap would be `{kind: :session, behavior: Publisher.SessionImpl, action: snapshot|history|subscribe_from}` — which an existing BROAD `kind: :session` `Publisher.SessionImpl` grant (held by chat/Feishu) would STILL match (kind axis identical), re-opening the widening; and a Surface/Chat member cap would NOT match (wrong behavior). Also `Publisher.SessionImpl.data_owner/1` delegates to `Ezagent.Entity.Session.owner/1`, not a socialware owner/member model.
+
+So P3-3 introduces a **DISTINCT socialware publisher-read behavior** (e.g. `Ezagent.Behavior.SocialwarePublisherRead`, registered ONLY on `SocialwareSession`) exposing `snapshot`/`history`/`subscribe_from` over the same Publisher ring, with:
+- its OWN `cap_subject` / action set → a `{behavior: SocialwarePublisherRead, …}` needed-cap that a chat `Publisher.SessionImpl` grant can NEVER match (different behavior), closing the widening by construction;
+- a socialware-specific `data_owner/1` + default-grant scoped to the concrete `session://` instance's owner/member (NOT `Session.owner`), so only the session's owner/members (and the customer adapter via its own gate) can read;
+- (alternative if a separate behavior is too heavy: an explicit in-handler socialware member/owner gate on the read actions — but the distinct behavior is cleaner + matches the needed-cap derivation).
+
+Specify the EXACT needed-cap shape + `data_owner` + default-grant. Gate: the **authz-boundary test** — (a) an existing chat `{kind: :session, behavior: Publisher.SessionImpl}` cap CANNOT read a `SocialwareSession`'s `:turns`/`:surface`/`:config_updates` via the ring; (b) a socialware owner/member cap CAN; (c) a non-member is denied.
 
 ### P3-4 — Feishu mirror on the generalized contract (conformance)
 Confirm/port the Feishu mirror adapter to the generalized `ExternalAdapter` contract (likely a no-op rename if P3-1 keeps the push axis identical). Gate: Feishu mirror E2E green on the new path (slice-change → adapter publish → Lark).
@@ -44,11 +59,12 @@ On the isolated fresh-seeded disposable stack (own ports, Tailscale `100.64.0.27
 
 ---
 
-## Open decisions (to settle when finalizing post-P2.5c-merge, via codex review)
-1. **One contract or two axes?** Generalize `ExternalMirror.Adapter` in place (add an optional pull/render axis) vs. a new `Behavior.ExternalAdapter` superset. Lean: extend in place (least churn; Feishu unaffected) — confirm against the external-mirror spec's binding/worker coupling (the customer feed has NO per-binding external transport; it's a Channel pull, so the `binding_module`/`target_ownership_check` callbacks may be `nil`/optional for it).
-2. **Cap shape for the publisher read-API** — the exact per-instance/member/owner cap tuple (reuse the socialware member/owner cap from the chat/Surface authz, scoped to the concrete `session://` instance). Must NOT be `kind: :session`.
-3. **Cursor ownership** — does the customer adapter persist its replay cursor (per channel connection in-memory is enough, since the snapshot is the full committed state) or durably? Lean: in-memory per-connection (reconnect re-snapshots from cursor 0 / latest), since `committed_deliveries_since` + the gated snapshot are both complete.
+## Open decisions (RESOLVED after codex P3 rev1 — confirm again at finalize post-P2.5c-merge)
+1. **One contract or two axes? → RESOLVED: explicit `:push`/`:pull` adapter-KIND axis, pull is first-class** (codex HIGH-1). NOT nil callbacks on the push contract — pull adapters carry no binding/worker/transport and are split out at the behaviour + registry + boot + worker-startup level (P3-1).
+2. **Cap for the publisher read-API → RESOLVED: a DISTINCT `SocialwarePublisherRead` behavior** (codex HIGH-2), NOT the chat `Publisher.SessionImpl` + a "scoped cap" (the needed-cap derives from `type_name :session` shared by both Kinds, so only a distinct BEHAVIOR closes the widening) with a socialware owner/member `data_owner`/default-grant (P3-3).
+3. **Cursor snapshot/subscribe ordering → RESOLVED: subscribe-FIRST, then cursor-bearing snapshot, replay `> cursor` on every advisory** (codex HIGH-3) — closes the join race; cursor is in-memory per channel connection (the snapshot is the full committed state, so reconnect re-snapshots safely).
 4. **Does P3 need P2.5c, or only P2.5b?** P3 consumes `committed_deliveries_since` (P2.5b, merged). It does NOT depend on P2.5c's ordering internals — BUT it must not be IMPLEMENTED concurrently with P2.5c (file overlap in CustomerFeed/settlement). Sequence: P2.5c merges → finalize+codex this plan → implement P3.
+5. **`SocialwarePublisherRead` vs in-handler gate** — confirm at finalize whether a separate behavior or an in-handler socialware owner/member gate is the cleaner realization (lean: separate behavior, matches needed-cap derivation).
 
 ---
 
