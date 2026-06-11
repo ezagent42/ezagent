@@ -119,12 +119,15 @@ defmodule Ezagent.Message do
       values: [:customer_visible, :operator_only],
       default: :customer_visible
 
-    # VIRTUAL — the per-session ROUTING timestamp (`message_routings.inserted_at`)
-    # for the row, surfaced by the chat-feed queries via `select_merge` so the
-    # chat-feed cursor checkpoints on the SAME column the query orders/filters on
-    # (P4 codex r2 HIGH: a message id routed into multiple sessions can have
-    # `messages.inserted_at != message_routings.inserted_at`; the cursor must use
-    # the routing time, not the message write time). Not persisted; nil otherwise.
+    # VIRTUAL — the per-session ROUTE-INTO-THIS-SESSION timestamp
+    # (`message_routings.routed_at`) for the row, surfaced by the chat-feed
+    # queries via `select_merge` so the chat-feed cursor checkpoints on the SAME
+    # column the query orders/filters on (P4 codex r4 HIGH: a message id routed
+    # into a session LONG AFTER it was created must carry that session's own
+    # route time, not the message's CREATION time `messages.inserted_at`/
+    # `message_routings.inserted_at`; keying on creation time strands a relayed
+    # message behind the session's already-advanced cursor). Not persisted; nil
+    # otherwise.
     field :routed_at, :utc_datetime_usec, virtual: true
   end
 
