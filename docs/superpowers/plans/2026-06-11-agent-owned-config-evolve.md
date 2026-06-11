@@ -47,6 +47,7 @@
 - Move: `apps/ezagent_domain_socialware/lib/ezagent/socialware/config_store.ex` → `apps/ezagent_domain_identity/lib/ezagent/socialware/config_store.ex`
 - Move: `…/socialware/config_object.ex` → identity (same relative path)
 - Move: `…/socialware/config_projection.ex` → identity
+- Move: `…/socialware/config_pointer.ex` → identity (**REQUIRED — `ConfigStore` compile-depends on it; omitting it causes an identity→socialware cycle. Found during PR-1 execution.**)
 - Move tests: `apps/ezagent_domain_socialware/test/ezagent/socialware/config_projection_test.exs` → `apps/ezagent_domain_identity/test/ezagent/socialware/config_projection_test.exs`
 - Modify: `apps/ezagent_domain_socialware/lib/ezagent_domain_socialware/application.ex:17-20` (remove the `ConfigProjection.register()` call)
 - Modify: `apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex` (add `:ok = Ezagent.Socialware.ConfigProjection.register()` in `start/2`)
