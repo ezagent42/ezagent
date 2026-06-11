@@ -1,10 +1,9 @@
 gap_analysis:
   scan_date: '2026-06-11'
-  source_type: ingested_updated
+  source_type: ingested
   summary:
-    total_stories: 6
+    total_stories: 15
     coverage_pct: 0
-    note: All greenfield after reset to main
   infrastructure_ready:
     socialware: Turn,CustomerFeed(topic+snapshot+{:customer_delivery}),PublisherRead,ConfigStore,render_soul
     identity: WorkspaceUserAdmin,Users
@@ -18,85 +17,215 @@ gap_analysis:
   by_module:
   - module: MOD-01
     coverage_pct: 0
+    note: 5 tasks (A1-A5)
   - module: MOD-02
     coverage_pct: 0
+    note: 1 task (A6)
   - module: MOD-03
     coverage_pct: 0
+    note: 6 tasks (A7-A8,B1-B4)
   - module: MOD-04
     coverage_pct: 20
+    note: 2 tasks (C1-C2)
   - module: MOD-05
     coverage_pct: 0
+    note: 1 task (D1)
   gaps:
-  - id: GAP-001
+  - id: GAP-A1
+    canonical_id: GAP-A1
+    description: 'Phase A1: ezagent_plugin_content 基础骨架 — skeleton 模板, agents.yaml, fast_ack_prompt.md, cc_preamble.md, priv/platform/
+      soul/skill 模板'
+    priority: P0
     module: MOD-01
-    priority: P0
-    description: ezagent_plugin_content — soul/skill/KB CRUD + tenant management
     gap_type: missing
-    estimated_effort: large
+    existing_code: []
     missing_parts:
-    - soul_loader 4-layer
-    - soul_renderer {{slot}}+CLAUDE.md
-    - skill_loader 4-layer+index
-    - kb_store CRUD+rebuild+MCP provider
-    - tenant_provisioner+runtime
-  - id: GAP-002
+    - skeleton 模板, agents.yaml, fast_ack_prompt.md, cc_preamble.md, priv/platform/ soul/skill 模板
+    estimated_effort: large
+    depends_on_gaps: []
+  - id: GAP-A2
+    canonical_id: GAP-A2
+    description: 'Phase A2: Soul CRUD — soul_loader 4-layer, soul_slot_parser {{key}}, soul_renderer, soul_store (sandbox/release
+      slots)'
+    priority: P0
+    module: MOD-01
+    gap_type: missing
+    existing_code: []
+    missing_parts:
+    - soul_loader 4-layer, soul_slot_parser {{key}}, soul_renderer, soul_store (sandbox/release slots)
+    estimated_effort: large
+    depends_on_gaps:
+    - A1
+  - id: GAP-A3
+    canonical_id: GAP-A3
+    description: 'Phase A3: Skill CRUD — skill_loader 4-layer scan, skill_indexer (YAML frontmatter→markdown), skill_store
+      CRUD'
+    priority: P0
+    module: MOD-01
+    gap_type: missing
+    existing_code: []
+    missing_parts:
+    - skill_loader 4-layer scan, skill_indexer (YAML frontmatter→markdown), skill_store CRUD
+    estimated_effort: large
+    depends_on_gaps:
+    - A1
+  - id: GAP-A4
+    canonical_id: GAP-A4
+    description: 'Phase A4: KB CRUD — kb_store CRUD, kb_rebuilder (uv run kb_search_mcp.py --rebuild), kb_mcp_provider, URL
+      fetch+file upload, _sources tracking'
+    priority: P0
+    module: MOD-01
+    gap_type: missing
+    existing_code: []
+    missing_parts:
+    - kb_store CRUD, kb_rebuilder (uv run kb_search_mcp.py --rebuild), kb_mcp_provider, URL fetch+file upload, _sources tracking
+    estimated_effort: large
+    depends_on_gaps:
+    - A1
+  - id: GAP-A5
+    canonical_id: GAP-A5
+    description: 'Phase A5: Tenant 管理 — tenant_provisioner (create_tenant), tenant_runtime (materialize+symlink), tenant_config
+      (ConfigStore), platform_soul/ skill_store'
+    priority: P0
+    module: MOD-01
+    gap_type: missing
+    existing_code: []
+    missing_parts:
+    - tenant_provisioner (create_tenant), tenant_runtime (materialize+symlink), tenant_config (ConfigStore), platform_soul/
+      skill_store
+    estimated_effort: large
+    depends_on_gaps:
+    - A2
+    - A3
+    - A4
+  - id: GAP-A6
+    canonical_id: GAP-A6
+    description: 'Phase A6: ezagent_plugin_cr CR 引擎 — cr_engine (ensure_active_cr, publish, cancel), cr_lint (R01-R05), cr_snapshot,
+      cr_rollback, ConfigStore CR metadata'
+    priority: P0
     module: MOD-02
-    priority: P0
-    description: ezagent_plugin_cr — CR engine (全量发布,无选择性)
     gap_type: missing
-    estimated_effort: large
+    existing_code: []
     missing_parts:
-    - cr_engine create/publish/cancel
-    - cr_lint R01-R05
-    - cr_snapshot+rollback
-    - ConfigStore CR metadata
-  - id: GAP-003
+    - cr_engine (ensure_active_cr, publish, cancel), cr_lint (R01-R05), cr_snapshot, cr_rollback, ConfigStore CR metadata
+    estimated_effort: large
+    depends_on_gaps:
+    - A5
+  - id: GAP-A7
+    canonical_id: GAP-A7
+    description: 'Phase A7: CinnoxAssets/Runtime 重构 — customer_session→content plugin, agent config from agents.yaml, tid
+      parameterization, roles master_admin, deprecated markers'
+    priority: P0
     module: MOD-03
-    priority: P0
-    description: autoservice — assembly + TurnAdapter + operator takeover
     gap_type: missing
+    existing_code: []
+    missing_parts:
+    - customer_session→content plugin, agent config from agents.yaml, tid parameterization, roles master_admin, deprecated
+      markers
     estimated_effort: large
-    missing_parts:
-    - autoservice_assembly.ex
-    - turn_adapter.ex (%Invocation format)
-    - operator_live Turn.claim/settle+RuleStore.disable/enable
-    - customer_session→content plugin
-    - roles master_admin
-  - id: GAP-004
-    module: MOD-04
-    priority: P1
-    description: Admin UI — master+tenant dashboards, skill/KB editors, CR dashboard
-    gap_type: partial
-    existing_code:
-    - soul_slot_editor_live
-    - template_editor_live
-    - template_diff_live
-    - bot_creator_live
-    estimated_effort: medium
-    missing_parts:
-    - master_dashboard
-    - tenant_onboard
-    - tenant_dashboard
-    - skill_editor
-    - kb_manager
-    - cr_dashboard
-    - operators_live
-  - id: GAP-005
-    module: MOD-05
-    priority: P2
-    description: loom — Turn+CustomerFeed integration (Phase B uses CustomerLive first)
-    gap_type: missing
-    estimated_effort: medium
-    missing_parts:
-    - deepseek.ex Turn.open
-    - claude_code.ex Turn.compose/settle
-    - filler_loop.ex
-  - id: GAP-006
-    module: cross-cutting
+    depends_on_gaps:
+    - A5
+    - A6
+  - id: GAP-A8
+    canonical_id: GAP-A8
+    description: 'Phase A8: cinnox 数据迁移 — mix ezagent.content.migrate_cinnox: priv/cinnox/→runtime path, slot_values生成, 首个CR+Publish
+      v1'
     priority: P0
-    description: 'Review fixes applied: P14 PubSub removed, CustomerFeed real API, TurnAdapter fixed, CR simplified, slow=cc
-      harness'
+    module: MOD-03
     gap_type: missing
-    estimated_effort: small
-  nfr_gaps: []
-  dependency_gaps: []
+    existing_code: []
+    missing_parts:
+    - 'mix ezagent.content.migrate_cinnox: priv/cinnox/→runtime path, slot_values生成, 首个CR+Publish v1'
+    estimated_effort: large
+    depends_on_gaps:
+    - A7
+  - id: GAP-B1
+    canonical_id: GAP-B1
+    description: 'Phase B1: autoservice_assembly.ex — wiring: provision_agent, preview_provision, preview_teardown, write_slot→track_change'
+    priority: P1
+    module: MOD-03
+    gap_type: missing
+    existing_code: []
+    missing_parts:
+    - 'wiring: provision_agent, preview_provision, preview_teardown, write_slot→track_change'
+    estimated_effort: medium
+    depends_on_gaps:
+    - A8
+  - id: GAP-B2
+    canonical_id: GAP-B2
+    description: 'Phase B2: Turn 接入 Customer 路径 — TurnAdapter (%Invocation format), customer_live Turn message flow (open→fast→compose→settle),
+      PR#715 findings (#10 echo,#11 role-gate,#12 label)'
+    priority: P1
+    module: MOD-03
+    gap_type: missing
+    existing_code: []
+    missing_parts:
+    - TurnAdapter (%Invocation format), customer_live Turn message flow (open→fast→compose→settle), PR#715 findings (#10 echo,#11
+      role-gate,#12 label)
+    estimated_effort: medium
+    depends_on_gaps:
+    - B1
+  - id: GAP-B3
+    canonical_id: GAP-B3
+    description: 'Phase B3: Operator 接管完善 — Turn.claim→RuleStore.disable→edit→Turn.settle→RuleStore.enable, visibility via
+      CustomerFeed snapshot'
+    priority: P1
+    module: MOD-03
+    gap_type: missing
+    existing_code: []
+    missing_parts:
+    - Turn.claim→RuleStore.disable→edit→Turn.settle→RuleStore.enable, visibility via CustomerFeed snapshot
+    estimated_effort: medium
+    depends_on_gaps:
+    - B2
+  - id: GAP-B4
+    canonical_id: GAP-B4
+    description: 'Phase B4: CustomerFeed :pull 接入 — customer_live→Phoenix.PubSub.subscribe(CustomerFeed.topic), {:customer_delivery}→snapshot,
+      visibility gating'
+    priority: P1
+    module: MOD-03
+    gap_type: missing
+    existing_code: []
+    missing_parts:
+    - customer_live→Phoenix.PubSub.subscribe(CustomerFeed.topic), {:customer_delivery}→snapshot, visibility gating
+    estimated_effort: medium
+    depends_on_gaps:
+    - B2
+    - B3
+  - id: GAP-C1
+    canonical_id: GAP-C1
+    description: 'Phase C1: Master Admin 页面 — master_dashboard_live, tenant_onboard_live, platform_content_live'
+    priority: P2
+    module: MOD-04
+    gap_type: missing
+    existing_code: []
+    missing_parts:
+    - master_dashboard_live, tenant_onboard_live, platform_content_live
+    estimated_effort: medium
+    depends_on_gaps:
+    - B4
+  - id: GAP-C2
+    canonical_id: GAP-C2
+    description: 'Phase C2: Tenant Admin 页面 — tenant_dashboard_live, skill_editor_live (4-layer), kb_manager_live (URL+file+entry),
+      cr_dashboard_live, operators_live'
+    priority: P2
+    module: MOD-04
+    gap_type: missing
+    existing_code: []
+    missing_parts:
+    - tenant_dashboard_live, skill_editor_live (4-layer), kb_manager_live (URL+file+entry), cr_dashboard_live, operators_live
+    estimated_effort: medium
+    depends_on_gaps:
+    - C1
+  - id: GAP-D1
+    canonical_id: GAP-D1
+    description: 'Phase D1: FillerLoop — filler_loop.ex (N秒安抚, max 3次), cc超时45s→静态道歉'
+    priority: P2
+    module: MOD-05
+    gap_type: missing
+    existing_code: []
+    missing_parts:
+    - filler_loop.ex (N秒安抚, max 3次), cc超时45s→静态道歉
+    estimated_effort: medium
+    depends_on_gaps:
+    - B4
