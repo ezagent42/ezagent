@@ -72,6 +72,14 @@ defmodule EzagentPluginFeishu.FeishuAdapterTest do
   # axis byte-identical, so this is a no-op for behavior but pins the conformance
   # so a future change can't silently drift the mirror off the push contract.
   describe "P3-4 — generalized push/pull contract conformance" do
+    setup do
+      # `function_exported?/3` returns false for an UNLOADED module, which would
+      # make the negative pins below (no adapter_kind/0, no render/2) pass
+      # vacuously depending on test order (codex P3-4 MEDIUM). Force-load first.
+      assert Code.ensure_loaded?(FeishuAdapter)
+      :ok
+    end
+
     test "resolves as a :push adapter (no adapter_kind/0 → default :push)" do
       refute function_exported?(FeishuAdapter, :adapter_kind, 0)
       assert Ezagent.ExternalMirror.Adapter.kind_of(FeishuAdapter) == :push
