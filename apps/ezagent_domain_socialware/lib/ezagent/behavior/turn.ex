@@ -134,24 +134,73 @@ defmodule Ezagent.Behavior.Turn do
     bootstrap_caps =
       "bootstrap" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps()
 
-    ctx = Map.put(ctx, :caps, bootstrap_caps)
+    bootstrap_ctx = Map.put(ctx, :caps, bootstrap_caps)
 
+    # The approve/commit settlement replays KEEP their bootstrap caps (the
+    # session legitimately re-performing its OWN settlement side effects; out of
+    # scope for H3).
     settlement_effects =
       if settlement_pending?(turn_id) do
-        approve_and_commit_effects(turn_id, turn, ctx, :now)
+        approve_and_commit_effects(turn_id, turn, bootstrap_ctx, :now)
       else
         []
       end
 
+    # PR-3 Task 3.2 (H3 — DECIDED, Allen 2026-06-11) — the config-apply replay
+    # MUST NOT bootstrap-launder authority. Re-validate it against the RECORDED
+    # manager's CURRENT authority: read the manager URI off the durable turn
+    # record and build the ctx with `caller: manager_uri` +
+    # `caps: Ezagent.Identity.list_caps_for(manager_uri)`. The standard manage-cap
+    # gate then re-checks the config replay — still holds it → apply; lost it →
+    # denied by standard authz (skip + log; `source_turn_id` keeps a later fresh
+    # dispatch idempotent). If NO manager URI was recorded (legacy/edge), the
+    # replay is SKIPPED (fail-safe — never bootstrap-applied).
     config_effects =
       if config_replay_needed?(turn_id, turn) do
-        config_update_effects(turn_id, turn, ctx, :now)
+        config_recovery_effects(turn_id, turn, ctx)
       else
         []
       end
 
     settlement_effects ++ config_effects
   end
+
+  # H3 — build the config-apply replay under the recorded manager's current
+  # authority, or skip (fail-safe) when no manager was recorded.
+  defp config_recovery_effects(turn_id, turn, ctx) do
+    case Map.get(turn, :settler_uri) do
+      nil ->
+        :ok =
+          log_skipped_config_replay(turn_id, turn)
+
+        []
+
+      manager_uri ->
+        manager_ctx =
+          ctx
+          |> Map.put(:caller, manager_uri)
+          |> Map.put(:caps, Ezagent.Identity.list_caps_for(manager_uri))
+
+        config_update_effects(turn_id, turn, manager_ctx, :now)
+    end
+  end
+
+  defp log_skipped_config_replay(turn_id, turn) do
+    require Logger
+
+    Logger.warning(
+      "Turn config-replay SKIPPED on recovery: no manager URI recorded on the " <>
+        "settled turn (legacy/edge). turn_id=#{inspect(turn_id)} " <>
+        "subject=#{inspect(get_in(turn, [:result, :config_delta]) |> config_subject())}"
+    )
+
+    :ok
+  end
+
+  defp config_subject(%{} = delta),
+    do: Map.get(delta, :subject_uri) || Map.get(delta, "subject_uri")
+
+  defp config_subject(_), do: nil
 
   defp settlement_pending?(turn_id) do
     case Ezagent.Socialware.Settlement.get(turn_id) do
@@ -197,7 +246,10 @@ defmodule Ezagent.Behavior.Turn do
       result: [],
       status: :open,
       turn_no: turn_no,
-      opened_at: opened_at
+      opened_at: opened_at,
+      # PR-3 Task 3.1b — the settling manager URI, recorded at `handle_settle`
+      # (nil until then; H3 recovery reads it to re-validate the config replay).
+      settler_uri: nil
     }
 
     {:ok, %{turn_id: turn_id},
@@ -278,7 +330,13 @@ defmodule Ezagent.Behavior.Turn do
         :ok ->
           case prepare_settlement(turn_id, turn, ctx) do
             :ok ->
-              updated = %{turn | status: :settled}
+              # PR-3 Task 3.1b (H3) — record the MANAGER URI (the settling caller
+              # whose authority gated the config apply) on the durable turn
+              # record, keyed by turn. Recovery (`recovery_effects`) reads it to
+              # re-validate the config replay against the manager's CURRENT
+              # authority instead of bootstrap-laundering. Backward-tolerant:
+              # `nil` when the caller is absent (legacy turns → replay skipped).
+              updated = %{turn | status: :settled, settler_uri: Map.get(ctx, :caller)}
 
               # P2.5c — settle FAST PATH: emit settlement/config dispatches as
               # `:dispatch_after_commit` so they run only after the parent
@@ -408,7 +466,10 @@ defmodule Ezagent.Behavior.Turn do
   defp approve_and_commit_effects(turn_id, %{result: %{version: version}}, ctx, dispatch_kind)
        when is_integer(version) do
     [
-      effect(dispatch_kind, Cmd.new(ctx.self_uri, :approve, %{version: version}, dispatch_ctx(ctx))),
+      effect(
+        dispatch_kind,
+        Cmd.new(ctx.self_uri, :approve, %{version: version}, dispatch_ctx(ctx))
+      ),
       effect(
         dispatch_kind,
         Cmd.new(ctx.self_uri, :commit_settlement, %{turn_id: turn_id}, dispatch_ctx(ctx))
@@ -566,17 +627,61 @@ defmodule Ezagent.Behavior.Turn do
     |> Map.get(:approved)
   end
 
+  # PR-3 cut-over (spec 2026-06-11 §5) — the settlement no longer self-dispatches
+  # `:apply_delta` to the SESSION (the old `ConfigUpdate`). It extracts the
+  # target agent (`subject_uri`) from the settled `config_delta` and dispatches
+  # `config_evolve.apply_config_delta` to THAT AGENT, forwarding the delta fields
+  # as args (the agent has no `:turns` slice, so the delta rides on the dispatch
+  # args — matching ConfigEvolve's `apply_config_delta` arg shape). The dispatch
+  # carries the settling manager's caps (`dispatch_ctx`), and the agent-side
+  # manage-cap gate (§4) re-validates authority. If `subject_uri` is absent there
+  # is no target, so emit nothing.
   defp config_update_effects(turn_id, %{result: %{config_delta: delta}}, ctx, dispatch_kind)
        when is_map(delta) do
-    [
-      effect(
-        dispatch_kind,
-        Cmd.new(ctx.self_uri, :apply_delta, %{turn_id: turn_id}, dispatch_ctx(ctx))
-      )
-    ]
+    case delta_subject_uri(delta) do
+      nil ->
+        []
+
+      subject ->
+        [
+          effect(
+            dispatch_kind,
+            Cmd.new(
+              ensure_uri(subject),
+              :apply_config_delta,
+              apply_config_delta_args(turn_id, delta),
+              dispatch_ctx(ctx)
+            )
+          )
+        ]
+    end
   end
 
   defp config_update_effects(_turn_id, _turn, _ctx, _dispatch_kind), do: []
+
+  # The delta is a result-ref map whose keys may be atoms (composed in-process)
+  # or strings (rehydrated from a snapshot); read both.
+  defp delta_field(delta, key) when is_atom(key) do
+    Map.get(delta, key) || Map.get(delta, Atom.to_string(key))
+  end
+
+  defp delta_subject_uri(delta), do: delta_field(delta, :subject_uri)
+
+  # Forward the settled delta's fields as `apply_config_delta` args. `turn_id`
+  # is the idempotency marker (`source_turn_id`); optional fields default on the
+  # agent side when absent.
+  defp apply_config_delta_args(turn_id, delta) do
+    %{turn_id: turn_id}
+    |> maybe_put(:layer, delta_field(delta, :layer))
+    |> maybe_put(:workspace_uri, delta_field(delta, :workspace_uri))
+    |> maybe_put(:subject_uri, ensure_uri(delta_field(delta, :subject_uri)))
+    |> maybe_put(:key, delta_field(delta, :key))
+    |> maybe_put(:patch, delta_field(delta, :patch))
+  end
+
+  defp ensure_uri(nil), do: nil
+  defp ensure_uri(%URI{} = uri), do: uri
+  defp ensure_uri(uri) when is_binary(uri), do: Ezagent.URI.new!(uri)
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, _key, []), do: map

@@ -201,6 +201,16 @@ defmodule EzagentDomainSocialware.Integration.ConfigUpdateTest do
   # If the repoint fails (here: subject agent has no cascade_resolution → loud
   # error), put_pointer never runs, so the pointer MUST still resolve to the PRIOR
   # object (only an unreferenced orphan object was written — non-harmful).
+  #
+  # PR-3 cut-over (spec 2026-06-11): `Turn` no longer drives the SESSION-side
+  # `ConfigUpdate` at settlement — it dispatches `config_evolve.apply_config_delta`
+  # to the TARGET AGENT, whose durable object+pointer write is independent of the
+  # agent's Sandbox cascade (cascade now gates only the async sandbox PROJECTION,
+  # which fail-softs when absent). This test's premise (a missing cascade prevents
+  # `put_pointer`) is therefore retired with the old path. The whole module is
+  # DELETED in PR-4 (plan File Structure); skipped here so PR-3's suite is green
+  # on its own.
+  @tag :skip
   test "a failed repoint leaves the config pointer unchanged (atomic)", ctx do
     # Seed a USER-layer pointer (distinct key from the :workspace seed) and an
     # agent with a sandbox but NO cascade_resolution so the repoint fails loud.
