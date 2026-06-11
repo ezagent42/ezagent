@@ -198,6 +198,43 @@ defmodule Ezagent.Socialware.ChatFeedJoinProtocolTest do
              "every tied-timestamp row must be delivered across capped replays — " <>
                "missing: #{inspect(MapSet.difference(all, collected) |> MapSet.to_list())}"
     end
+
+    @tag timeout: 120_000
+    test "JOIN drains the FULL backlog beyond a single replay cap — no middle-stranding (codex P4 r3 HIGH)",
+         ctx do
+      cap = MessageStore.chat_replay_cap()
+      window = ChatFeed.history_limit()
+      # > cap + window: with the old single-replay join (oldest cap-batch +
+      # newest window) the MIDDLE range was rendered by neither and the cursor
+      # advanced past it. Include a tied-`routed_at` cluster around the cap
+      # boundary so the drain's keyset batch-boundary is exercised under ties.
+      total = cap + window + 5
+      base = ~U[2026-01-01 00:00:00.000000Z]
+
+      posted =
+        for i <- 1..total do
+          at =
+            if i in (cap - 4)..(cap + 5),
+              do: DateTime.add(base, cap, :microsecond),
+              else: DateTime.add(base, i, :microsecond)
+
+          post(ctx.session, "m#{i}", at)
+        end
+
+      {:ok, result} = ChatFeed.join(ctx.session, @owner, [])
+
+      rendered = MapSet.new(result.snapshot.messages, & &1.id)
+      posted_ids = MapSet.new(posted, & &1.id)
+
+      assert MapSet.subset?(posted_ids, rendered),
+             "join must render the COMPLETE backlog (drained in cap-sized batches), " <>
+               "not just oldest-cap + newest-window — missing: " <>
+               "#{inspect(MapSet.difference(posted_ids, rendered) |> MapSet.to_list() |> Enum.take(5))}"
+
+      # The cursor checkpointed the true max keyset, so a replay from it is a no-op.
+      {:ok, replay} = ChatFeed.replay(ctx.session, @owner, result.cursor)
+      assert replay.messages == []
+    end
   end
 
   # Repeatedly replay from `cursor`, accumulating delivered ids, until a replay

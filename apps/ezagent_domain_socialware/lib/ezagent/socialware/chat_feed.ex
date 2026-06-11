@@ -167,11 +167,38 @@ defmodule Ezagent.Socialware.ChatFeed do
     case snapshot(session_uri, caller) do
       {:ok, snapshot0} ->
         run_before_replay(opts[:before_replay])
-        messages = MessageStore.chat_visible_since(session_uri, @epoch_cursor)
+        # DRAIN the full backlog in `@replay_cap` keyset batches (codex P4 r3
+        # HIGH): a single `chat_visible_since(@epoch)` is capped at `@replay_cap`,
+        # so a session with more than `@replay_cap + @history_limit` visible
+        # messages would strand the middle range (rendered = oldest cap-batch +
+        # newest snapshot window) AND advance the cursor past it. Draining until a
+        # short batch renders the COMPLETE backlog, so the join cursor only ever
+        # checkpoints a row that was actually rendered. The composite
+        # `{routed_at, message_id}` keyset makes the batch boundary correct even
+        # when many rows share a `routed_at`.
+        messages = drain_backlog(session_uri, @epoch_cursor, [])
         replayed_result(session_uri, caller, snapshot0, messages)
 
       {:error, _} = err ->
         err
+    end
+  end
+
+  defp drain_backlog(session_uri, cursor, acc) do
+    case MessageStore.chat_visible_since(session_uri, cursor) do
+      [] ->
+        acc
+
+      batch ->
+        acc = acc ++ batch
+
+        # A short batch (< the SAME cap `chat_visible_since/2` enforces) means the
+        # backlog is exhausted; a full batch means there may be more.
+        if length(batch) < MessageStore.chat_replay_cap() do
+          acc
+        else
+          drain_backlog(session_uri, max_keyset(batch), acc)
+        end
     end
   end
 

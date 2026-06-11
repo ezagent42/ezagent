@@ -50,6 +50,10 @@ defmodule Ezagent.MessageStore do
 
   @replay_cap 1000
 
+  @doc "The per-call row cap on `chat_visible_since/2` (so the chat-feed drain loop uses the SAME bound)."
+  @spec chat_replay_cap() :: pos_integer()
+  def chat_replay_cap, do: @replay_cap
+
   @doc """
   Persist a Message in the given session context.
 
