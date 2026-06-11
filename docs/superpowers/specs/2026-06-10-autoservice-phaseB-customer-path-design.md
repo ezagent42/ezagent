@@ -63,7 +63,9 @@ assembly.provision_session(cinnox, alice):
 ## 4. 数据流 B — 运行时编排(核心,原生 dispatch + effects)
 
 ### 4.0 原则(为什么不是 observe-GenServer)
-`Behavior.Turn` 是 dispatched Behavior(action + `handle_*` 返回 effects),substrate **不自动开 turn**。Stage-1 用 GenServer + `PubSub.subscribe(Chat.session_events_topic)` 观察消息驱动 turn —— **fire-and-forget,进程重启时事件丢失(违 P22 no-silent-drop)**。本 slice 改为**原生 dispatch**:编排者是一个 Behavior/Kind,**消息经 routing dispatch 给它**,它用 **effects** 驱动 Turn。P14 合规、P22 可靠(走 ReadyGate/PendingDelivery)。
+`Behavior.Turn` 是 dispatched(action + `handle_*` 返回 effects),substrate **不自动开 turn**。Stage-1 用 GenServer + `PubSub.subscribe(Chat.session_events_topic)` 观察消息驱动 turn —— **fire-and-forget,进程重启时事件丢失(违 P22 no-silent-drop)**。本 slice 改为**原生 dispatch**:编排者是一个 **Lifecycle Kind**,**消息经 routing dispatch 给它**,它用 **effects** 驱动 Turn。P14 合规、P22 可靠(走 ReadyGate/PendingDelivery)。
+
+> **开发层契约(2026-05-29 起)= `use Ezagent.Lifecycle`,不是 `use Ezagent.Behavior`**(后者已 supersede,`mix ezagent.check_invariants.lifecycle` CI 硬门控禁开发层直接用)。形状:`create/1`(首次建持久 `state`)+ `activate/2`(每次进程起——fresh/restart/cold-load——重建 `transients`,`{:ok, transients}`)+ `handle_<action>(args, ctx) → {:ok, result, [effect]}` + `handle_signal/2`(非 action 消息)。effects:`:set`(持久)/`:set_transient`(易失,永不快照)/`:dispatch`(`%Ezagent.Cmd{}` 跨 Kind)/`:emit`。orchestrator 的 current turn_id 放 `state`(durable),无 transients。
 
 ### 4.1 路由模型(B1,已定)
 **routing 把 session 内所有消息(客户 + agent 回复)dispatch 给 orchestrator Kind**;orchestrator **显式 dispatch** fast/slow(effects),agent 回复再路由回 orchestrator。orchestrator 是唯一 hub。后续 operator 接管时,**暂停 fast/slow = orchestrator 不再派发**(具体机制——orchestrator 内门控 vs 禁用"→orchestrator"输入路由——留 operator phase 定;注意:v2 §7.2 的 `RuleStore.disable` 假设"路由直达 agent",与本 slice 的"路由到 orchestrator"模型不同,operator phase 需重新对齐)。本 slice 不实现 operator。
