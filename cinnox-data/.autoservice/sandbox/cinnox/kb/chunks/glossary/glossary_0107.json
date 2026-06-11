@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0107",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "DTMF (Dual-tone multi-frequency signaling )",
+  "content": "**DTMF (Dual-tone multi-frequency signaling )**\n\nDual-Tone Multi-Frequency (DTMF) signaling is used between telephones and switching systems, most commonly for transmitting the called number during dialing. The invention of DTMF not only shortened dialing times but also expanded functionalities beyond simple dialing, such as Automated Attendant and Interactive Voice Response (IVR). Before DTMF became widespread, telephone systems used a series of intermittent pulses to transmit the called number, known as pulse dialing, which required manual intervention by operators for long-distance connections.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

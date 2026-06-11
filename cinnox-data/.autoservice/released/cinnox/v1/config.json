@@ -1,0 +1,45 @@
+{
+  "tenant_id": "cinnox",
+  "brand_name": "CINNOX",
+  "industry": "contact_center",
+  "status": "released",
+  "created_at": "2026-05-08T02:14:17.835874+00:00",
+  "channels": [
+    "web"
+  ],
+  "compliance": {
+    "privacy_policy_url": "",
+    "consent_mechanism_enabled": false,
+    "data_retention_days": null,
+    "right_to_erasure_enabled": false,
+    "data_collection_disclosure": false,
+    "opt_out_enabled": false,
+    "coppa_compliant": false,
+    "provider_registration_id": "",
+    "data_cross_border_enabled": false,
+    "user_identity_verification": false,
+    "complaint_channel_url": "",
+    "training_data_compliance": false
+  },
+  "soul": {
+    "disclosure_enabled": true,
+    "human_escalation_enabled": true,
+    "automated_decision_notice": false,
+    "ai_content_labeling": false
+  },
+  "welcome_message": "您好，我是 CINNOX 的 AI 助手。请问需要帮您了解哪方面？\n\nHi! I'm CINNOX AI, your virtual assistant for CINNOX and M800 products. How can I help you today?",
+  "dream": {
+    "trigger": "idle",
+    "coverage": "all",
+    "risk_threshold": "medium",
+    "canary": {
+      "stages": [
+        5,
+        25,
+        100
+      ],
+      "observe_hours": 24
+    }
+  },
+  "version": "v1"
+}

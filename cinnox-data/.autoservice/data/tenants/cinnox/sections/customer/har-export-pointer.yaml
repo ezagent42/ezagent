@@ -1,0 +1,19 @@
+---
+unit:
+  tenant: cinnox
+  role: customer
+  slug: har-export-pointer
+  layer: tenant
+  kind: soul_section
+schema_version: 1
+binding:
+  template: stub-pointer
+  template_version: 1
+---
+values:
+  section_number: '9.8'
+  section_title: .har export guidance (after §9.7a self-troubleshoot fails)
+  section_id: har-export-pointer
+  chunk_id: cinnox-flow-har-export
+  intent_name: existing_customer.har_export
+  fallback_message: 'see skill: har-export-walkthrough.'

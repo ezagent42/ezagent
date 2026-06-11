@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0194",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Monitor Enquiry",
+  "content": "**Monitor Enquiry**\n\nThe admin can open the enquiry chat room and view the ongoing conversation between the agent and visitor. The admin can then join or take over the conversation to help resolve the visitor's query.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

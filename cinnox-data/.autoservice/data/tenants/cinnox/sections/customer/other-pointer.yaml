@@ -1,0 +1,19 @@
+---
+unit:
+  tenant: cinnox
+  role: customer
+  slug: other-pointer
+  layer: tenant
+  kind: soul_section
+schema_version: 1
+binding:
+  template: stub-pointer
+  template_version: 1
+---
+values:
+  section_number: '6.6'
+  section_title: OTHER BRANCH — off-topic / not a CINNOX customer-service request
+  section_id: other-pointer
+  chunk_id: cinnox-flow-other
+  intent_name: other
+  fallback_message: 'see skill: off-topic-redirect.'

@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0243",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Red Number Badge",
+  "content": "**Red Number Badge**\n\nThis is an indicator that there are unread chatrooms in CINNOX. When a Staff member goes into a chatroom and reads the unread messages in it, the badge will deduct the room from the unread room count. It will disappear after all chatrooms have been visited.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

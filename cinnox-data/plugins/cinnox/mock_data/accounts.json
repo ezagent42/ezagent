@@ -1,0 +1,116 @@
+[
+  {
+    "id": "ACC-1001",
+    "name": "David Wong",
+    "company": "GlobalTech Ltd",
+    "email": "d.wong@globaltech.com",
+    "phone": "+852-3008-1001",
+    "type": "enterprise",
+    "account_status": "active",
+    "plan": "Professional",
+    "seats": 25,
+    "dids": [
+      {"number": "+852-3008-1001", "country": "HK", "type": "DID"},
+      {"number": "+65-6321-5501", "country": "SG", "type": "DID"}
+    ],
+    "integrations": ["WhatsApp", "WeChat", "Telegram"],
+    "billing_status": "current",
+    "monthly_amount": 1250.00,
+    "notes": "Account in good standing. 25 active agent seats."
+  },
+  {
+    "id": "ACC-2002",
+    "name": "Amy Cheung",
+    "company": "FastRetail HK",
+    "email": "amy@fastretail.hk",
+    "phone": "+852-3008-2002",
+    "type": "small_business",
+    "account_status": "active",
+    "plan": "Starter",
+    "seats": 8,
+    "dids": [
+      {"number": "+852-3008-2002", "country": "HK", "type": "DID"}
+    ],
+    "integrations": ["WhatsApp"],
+    "billing_status": "overdue",
+    "monthly_amount": 400.00,
+    "notes": "Invoice #INV-2026-0215 overdue by 18 days (HKD 400). Second reminder sent."
+  },
+  {
+    "id": "ACC-3003",
+    "name": "James Liu",
+    "company": "Nexus Telecom",
+    "email": "j.liu@nexustelecom.com",
+    "phone": "+852-3008-3003",
+    "type": "enterprise",
+    "account_status": "active",
+    "plan": "Enterprise",
+    "seats": 150,
+    "dids": [
+      {"number": "+852-3008-3003", "country": "HK", "type": "DID"},
+      {"number": "+1-213-555-3003", "country": "US", "type": "DID"},
+      {"number": "+44-20-7946-3003", "country": "UK", "type": "DID"},
+      {"number": "+86-400-003-3003", "country": "CN", "type": "Toll-Free"}
+    ],
+    "integrations": ["WhatsApp", "WeChat", "LINE", "Telegram", "Facebook Messenger"],
+    "billing_status": "current",
+    "monthly_amount": 7500.00,
+    "notes": "Enterprise customer since 2023. Dedicated account manager: Michael Liu."
+  },
+  {
+    "id": "ACC-4004",
+    "name": "Sarah Park",
+    "company": "ByteCloud Inc",
+    "email": "s.park@bytecloud.io",
+    "phone": "+852-3008-4004",
+    "type": "enterprise",
+    "account_status": "active",
+    "plan": "Professional",
+    "seats": 40,
+    "dids": [
+      {"number": "+852-3008-4004", "country": "HK", "type": "DID"},
+      {"number": "+82-2-1234-4004", "country": "KR", "type": "DID"}
+    ],
+    "integrations": ["WhatsApp", "Kakao"],
+    "billing_status": "current",
+    "monthly_amount": 2000.00,
+    "notes": "Reported intermittent inbound call quality issues on HK DID since 2026-02-20. Ticket #TK-8821 open."
+  },
+  {
+    "id": "ACC-5005",
+    "name": "Linda Ho",
+    "company": "MediConnect",
+    "email": "linda@mediconnect.hk",
+    "phone": "",
+    "type": "small_business",
+    "account_status": "suspended",
+    "plan": "Starter",
+    "seats": 5,
+    "dids": [],
+    "integrations": [],
+    "billing_status": "cancelled",
+    "monthly_amount": 0.00,
+    "notes": "Account suspended 2026-01-15 due to non-payment. DID numbers released."
+  },
+  {
+    "id": "ACC-6006",
+    "name": "Robert Chen",
+    "company": "GreenEnergy Co",
+    "email": "r.chen@greenenergy.com",
+    "phone": "+852-3008-6006",
+    "type": "enterprise",
+    "account_status": "active",
+    "plan": "Enterprise Plus",
+    "seats": 200,
+    "dids": [
+      {"number": "+852-3008-6006", "country": "HK", "type": "DID"},
+      {"number": "+61-2-8006-6006", "country": "AU", "type": "DID"},
+      {"number": "+49-30-6006-6006", "country": "DE", "type": "DID"},
+      {"number": "+1-800-600-6006", "country": "US", "type": "Toll-Free"}
+    ],
+    "integrations": ["WhatsApp", "WeChat", "Telegram", "Facebook Messenger", "Instagram"],
+    "billing_status": "current",
+    "monthly_amount": 12000.00,
+    "notes": "Top-tier Enterprise Plus customer. SLA: 4-hour response. 5 dedicated DIDs."
+  }
+]

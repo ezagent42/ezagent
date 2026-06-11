@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0263",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "SMS Sender ID",
+  "content": "**SMS Sender ID**\n\nThe phone number is displayed as the sender of an SMS text to the SMS recipient.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

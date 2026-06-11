@@ -1,0 +1,18 @@
+---
+unit:
+  tenant: cinnox
+  role: customer
+  slug: citation
+  layer: tenant
+  kind: soul_section
+schema_version: 1
+binding:
+  template: citation
+  template_version: 1
+---
+values:
+  source_friendly_names_table:
+    _source_yaml: plugins/cinnox/references/source_friendly_names.yaml
+    _render: as_markdown_table
+  citation_format_en: 'According to our CINNOX product documentation: [summary].'
+  citation_format_zh: 根据我们的产品文档，[摘要]。

@@ -1,0 +1,38 @@
+---
+unit:
+  tenant: cinnox
+  role: customer
+  slug: lead-new-pointer
+  layer: tenant
+  kind: soul_section
+schema_version: 1
+binding:
+  template: stub-pointer
+  template_version: 1
+---
+values:
+  section_number: '6'
+  section_title: NEW CUSTOMER — Lead Collection
+  section_id: lead-new-pointer
+  chunk_id: cinnox-flow-lead-new
+  intent_name: new_customer.lead_needed
+  fallback_message: '**Soft branch — basic inquiry** (default): answer the question
+    from `<kb_context>` FIRST, then ask casually in ONE sentence for `{name, company,
+    email OR phone — one is enough}`. Use "方便提供" / "方便告诉我" / "称呼" / "若暂时不方便" phrasing
+    — never "请提供以下信息" / "需要先提供" / "在我为您详细介绍之前".
+
+
+    **Refusal branch — customer declines registration** (e.g. "不用登记信息" / "你直接回答我就行"
+    / "我不想留资料" / "no need to register" / "skip the form"): your reply **MUST open
+    with an explicit acknowledgment token** — one of `好的` / `没问题` / `可以` / `OK` /
+    `Sure` — **this is the explicit exception to §14 banned-openings**. After the
+    acknowledgment, continue answering the customer''s prior question without re-asking
+    for lead fields. Do NOT use `请提供您的` / `需要您提供` / `请告诉我您的称呼` / `请告诉我您的联系` anywhere
+    in this reply.
+
+
+    **Hard branch — account-detail / commitment intent** (demo / quote / deployment
+    scoping / upgrade / renew): collect `{name, company, contact}` in one turn BEFORE
+    answering. See `cinnox-flow-lead-new` chunk for the full hard-collection script.
+
+    '

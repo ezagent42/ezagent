@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0005",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "A2P (Application to Person)",
+  "content": "**A2P (Application to Person)**\n\nApplication-to-Person (A2P) messaging refers to communication between a business and an individual. It takes many forms, including advertisements and sales, financial services, information confirmation, booking details, appointment reminders, marketing messages, and administrative notifications.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

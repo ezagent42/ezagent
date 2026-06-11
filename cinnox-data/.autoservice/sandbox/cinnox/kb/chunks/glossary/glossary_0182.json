@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0182",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Keypress Prompt",
+  "content": "**Keypress Prompt**\n\nAn instruction prompt for the customer to follow (e.g. \"To speak with our Sales Representative, press 1. To reach our Billing Department, press 2. If you would like to speak with our Technical Support, press 3…\")",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

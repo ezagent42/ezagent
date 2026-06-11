@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0315",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Trusted IP Address List",
+  "content": "**Trusted IP Address List**\n\nThe list of IP addresses Staff members need to connect to before they can log in to the CINNOX service.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

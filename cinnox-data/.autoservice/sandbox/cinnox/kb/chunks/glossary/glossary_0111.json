@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0111",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Data Source",
+  "content": "**Data Source**\n\nServe as the centralised hub of information. Data sources could be your organisation's product and service knowledge bases that empower the organisation, e.g., CINNOX Q&A Bot and Intent Bot, to respond with precise information according to the queries.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

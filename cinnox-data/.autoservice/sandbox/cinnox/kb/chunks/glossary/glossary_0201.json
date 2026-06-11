@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0201",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Notification",
+  "content": "**Notification**\n\nA message is displayed to get a user's attention. CINNOX typically sends Staff members notifications whenever a visitor or another member calls or sends them a chat message.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

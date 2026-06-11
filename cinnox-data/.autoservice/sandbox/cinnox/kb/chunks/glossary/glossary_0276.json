@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0276",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Smart Greeting",
+  "content": "**Smart Greeting**\n\nA Widget feature that automatically displays a welcome message above the minimised CINNOX Widget, letting visitors know that they can use it to connect and interact with support Staff members through call or chat.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

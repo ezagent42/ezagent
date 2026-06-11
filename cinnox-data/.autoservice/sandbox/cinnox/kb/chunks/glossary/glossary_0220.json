@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0220",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Payload",
+  "content": "**Payload**\n\nIt is used when your channel is configured with a chatbot, and you want to trigger different chatbot flows or actions based on the buttons your visitors have clicked. You can trigger your chatbot by entering a text as the button name. The Payload value will be sent to the chatbot when the Payload field is not empty. Otherwise, the button name will be sent to the chatbot.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

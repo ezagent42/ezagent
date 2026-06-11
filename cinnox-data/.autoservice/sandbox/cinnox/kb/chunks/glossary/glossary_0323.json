@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0323",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Visitor",
+  "content": "**Visitor**\n\nAn end-user that visits a CINNOX user's website and makes an enquiry.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

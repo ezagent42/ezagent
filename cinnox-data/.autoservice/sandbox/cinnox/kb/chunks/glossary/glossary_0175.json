@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0175",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Interactive Voice Response (IVR)",
+  "content": "**Interactive Voice Response (IVR)**\n\nIt is a voice system which interacts with the visitor through pre-recorded audio, collects information from the visitor's keypress and routes them to the right agent.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

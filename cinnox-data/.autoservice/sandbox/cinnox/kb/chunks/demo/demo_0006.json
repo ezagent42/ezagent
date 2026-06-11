@@ -1,0 +1,15 @@
+{
+  "id": "demo_0006",
+  "source_id": "demo",
+  "source_type": "md",
+  "source_name": "cinnox Demo Knowledge",
+  "source_url": null,
+  "file_path": "scripts/seed_cinnox_tenant.py#DEMO_FACTS",
+  "section": "IVR Orchestrator · Binding DID",
+  "content": "**Binding a newly provisioned DID into existing IVR**\n\n- The CINNOX IVR orchestrator supports hot-binding a new DID to an existing call flow without republishing the entire IVR tree.\n- Flow: IVR Editor → Select existing flow → 'Inbound DID' panel → '+ Add number' → pick the newly activated DID → Save.\n- Effective within 60 seconds; no impact on in-flight calls on other DIDs bound to the same flow.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

@@ -1,0 +1,105 @@
+name: cinnox
+version: 1.0.0
+description: CINNOX/M800 CRM, billing, and telecom product catalog
+industry: cloud-comms
+mode: mock
+installer: cinnox
+
+mcp_tools:
+  - name: cinnox_customer_lookup
+    description: Look up CINNOX customer by account ID, phone, or company name
+    handler: tools.customer_lookup
+    input_schema:
+      type: object
+      properties:
+        identifier:
+          type: string
+          description: Account ID, phone number, or company name
+      required: [identifier]
+  - name: cinnox_billing
+    description: Get customer billing history and invoice status
+    handler: tools.billing_query
+    input_schema:
+      type: object
+      properties:
+        account_id:
+          type: string
+        start_date:
+          type: string
+        end_date:
+          type: string
+      required: [account_id]
+  - name: cinnox_subscriptions
+    description: Get active subscriptions and DID numbers
+    handler: tools.subscription_query
+    input_schema:
+      type: object
+      properties:
+        account_id:
+          type: string
+      required: [account_id]
+  - name: cinnox_permission_check
+    description: Check if an action is permitted for the current operator
+    handler: tools.permission_check
+    input_schema:
+      type: object
+      properties:
+        action:
+          type: string
+        product_id:
+          type: string
+      required: [action]
+  # NOTE on naming: this tool is named ``kb_search`` (no ``cinnox_`` prefix)
+  # to MATCH the framework-level KB tool exposed by
+  # ``autoservice.kb_mcp_server.build_kb_mcp_server`` to voice/web via
+  # cc_pool. Souls that say "调用 kb_search" therefore work on every
+  # channel — Feishu uses this implementation, voice/web uses the framework
+  # one. Both apply the same escalation hard rule via the shared keyword
+  # JSON at ``plugins/cinnox/kb_escalation_keywords.json``.
+  - name: kb_search
+    description: |
+      Search the CINNOX knowledge base for product / feature terms (DID, IVR,
+      IDD, PSTN, SSO/AD, Omnichannel, etc.). Use this whenever the customer
+      asks about CINNOX product features, term definitions, or technical
+      concepts.
+
+      RESULT CONTRACT (read carefully — affects how you must reply):
+        * `matches: [...]` non-empty   → answer using these entries.
+        * `match_count: 0` and no escalate_required → KB miss; say "这个我得帮您
+          核实一下" and escalate.
+        * `escalate_required: true`    → query asked about something this KB
+          structurally does not carry (pricing, plan-tier comparisons, SLA
+          numbers, contract terms). DO NOT call any other tool, DO NOT retry
+          with another query, DO NOT speculate. Reply once with the soul's
+          escalation phrase (e.g. "这个具体数字我得帮您核实一下，让销售/工程
+          师同事直接跟您说") and stop.
+    handler: tools.kb_search
+    input_schema:
+      type: object
+      properties:
+        query:
+          type: string
+          description: Free-text search term (e.g. "DID", "IVR routing", "Omnichannel")
+        limit:
+          type: integer
+          description: Max matches to return (default 5)
+      required: [query]
+
+http_routes:
+  - path: /api/cinnox/customers/{identifier}
+    method: GET
+    handler: routes.get_customer
+  - path: /api/cinnox/customers/{account_id}/billing
+    method: GET
+    handler: routes.get_billing
+  - path: /api/cinnox/customers/{account_id}/subscriptions
+    method: GET
+    handler: routes.get_subscriptions
+
+mock_server:
+  seed_data: mock_data/accounts.json
+  database: .autoservice/database/cinnox/mock.db
+
+references:
+  - references/glossary.json
+  - references/synonym-map.json

@@ -1,0 +1,62 @@
+# Cinnox voice overlay — translated from plugins/cinnox/souls/customer_soul.voice.md
+# Phase 3.2 Task 7 of voice channel integration.
+#
+# Each sections.<sid>.ops is applied at resolve_unit(channel="voice")
+# time, modifying the section's values: block in the resolved UnitFile.
+#
+# Translation notes:
+#   customer_soul.voice.md §語音風格 → conversation-style overrides
+#   customer_soul.voice.md §輸出形態 → conversation-style max_pricing_tables=0, max_bullets=0
+#   customer_soul.voice.md §身份鐵律 §首輪披露 → identity self_intro overrides
+#   Directives are all expressible via the 4 ops (replace_field / append_block /
+#   remove_field / set_block) — no DSL extension needed.
+
+channel: voice
+role: customer
+schema_version: 1
+
+sections:
+  conversation-style:
+    ops:
+      # Voice: ≤15s per reply ≈ 2 short sentences (vs 2–4 for text).
+      # Derived from voice.md "整段回復 ≤ 15 秒（約 80 中文字 / 50 英文 words）"
+      - kind: replace_field
+        field: max_sentences_per_turn
+        value: 2
+
+      # Voice: no markdown tables — tables cannot be read aloud.
+      # Derived from voice.md "不輸出 markdown：無表格"
+      - kind: replace_field
+        field: max_pricing_tables
+        value: 0
+
+      # Voice: no bullet lists — lists are a visual affordance, not aural.
+      # Derived from voice.md "無列表"
+      - kind: replace_field
+        field: max_bullets
+        value: 0
+
+      # Voice: always verbally acknowledge the customer — the text-channel
+      # length threshold that suppresses "ack" bubbles does not apply.
+      # (Instant-ack suppression is handled by filler config, not soul.)
+      - kind: replace_field
+        field: ack_threshold_zh
+        value: 0
+
+      - kind: replace_field
+        field: ack_threshold_en
+        value: 0
+
+  identity:
+    ops:
+      # Voice-specific self-intro: shorter, natural speech cadence.
+      # Derived from voice.md §首輪披露 AI + §語音風格 "每句 ≤ 20 字".
+      # The text intro includes a question that works as text but sounds
+      # abrupt in voice; voice uses a warmer two-breath opener.
+      - kind: replace_field
+        field: self_intro_zh
+        value: "您好，我是 CINNOX 的 AI 助手。请问您需要了解什么？"
+
+      - kind: replace_field
+        field: self_intro_en
+        value: "Hi, I'm CINNOX AI. How can I help you today?"

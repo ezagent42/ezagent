@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0307",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Third-Party Authentication",
+  "content": "**Third-Party Authentication**\n\nThe process of one entity (e.g., a user or a service) handing over authentication credentials to another. In CINNOX, Third-Party Authentication is a feature that lets Staff administrators link their service to Microsoft Active Directory (AD). Staff members can log in to CINNOX using their Microsoft AD account.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

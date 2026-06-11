@@ -1,0 +1,31 @@
+---
+unit:
+  tenant: cinnox
+  role: customer
+  slug: brand-structure
+  layer: tenant
+  kind: soul_section
+schema_version: 1
+binding:
+  template: brand-structure
+  template_version: 1
+---
+values:
+  parent_company: M800 Limited
+  parent_founded: '2007'
+  parent_hq: Hong Kong
+  parent_services_bullets: "- Global telecom infrastructure: virtual numbers (DID),\
+    \ SMS, voice\n  (IDD), covering 160+ countries\n- Cross-border communication services\n\
+    - AI-powered SaaS solutions\n"
+  flagship_product: CINNOX
+  flagship_descriptor: M800's flagship integrated platform product
+  flagship_services_bullets: '- Omnichannel contact center (voice, video, chat, social
+    media)
+
+    - AI-powered customer engagement
+
+    - Unified communication hub
+
+    '
+  ambiguity_examples_zh: 你们价格怎么样?
+  ambiguity_examples_en: what do you charge?

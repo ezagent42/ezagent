@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0184",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Link Preview",
+  "content": "**Link Preview**\n\nA CINNOX chat feature lets Staff members view the link with an image, title, description, and more to provide contextual information.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

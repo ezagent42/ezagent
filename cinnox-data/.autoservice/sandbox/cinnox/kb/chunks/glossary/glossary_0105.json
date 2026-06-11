@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0105",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Custom View",
+  "content": "**Custom View**\n\nA Custom View is a copy of a view that has your selections and filters applied in the Enquiry Detail Report. Custom Views can save your filters, sorts, or selections without changing the original view.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

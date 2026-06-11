@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0141",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Enquiry History",
+  "content": "**Enquiry History**\n\nA list of all ongoing and closed enquiries from a visitor or External Contact. This can be found in the visitor's profile details.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

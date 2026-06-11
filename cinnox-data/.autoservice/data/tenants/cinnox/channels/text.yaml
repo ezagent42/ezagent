@@ -1,0 +1,35 @@
+# Cinnox text/chat channel config — Phase 3.2 initial cut.
+#
+# Captures current chat behaviour as data (was env vars). Mostly defaults.
+
+channel: text
+schema_version: 1
+
+filler:
+  interval_s: 10
+  max_count_per_turn: 1
+  vocabulary: conversational     # current behaviour: deepseek generates short sentences
+
+  # Text channel does NOT need the suppress-by-fast-cc trick — multi-bubble
+  # makes the visual flow OK even if filler + cc both arrive.
+  suppress_if_cc_first_byte_within_ms: 0
+  delay_ms_before_play: 0
+
+backend:
+  # Text channel does not use TTS/ASR — these stay defaults / unused.
+  asr:
+    provider: doubao
+    sample_rate: 16000
+  tts:
+    provider: doubao
+    voice: ""
+    sample_rate: 8000
+    speech_rate: 0
+
+skills:
+  exclude: []
+  include_only: null
+
+runtime:
+  greeting_required: false
+  warmup_enabled: false

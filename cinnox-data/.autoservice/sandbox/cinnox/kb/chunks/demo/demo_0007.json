@@ -1,0 +1,15 @@
+{
+  "id": "demo_0007",
+  "source_id": "demo",
+  "source_type": "md",
+  "source_name": "cinnox Demo Knowledge",
+  "source_url": null,
+  "file_path": "scripts/seed_cinnox_tenant.py#DEMO_FACTS",
+  "section": "Escalation & Handoff · Conversation Rules",
+  "content": "**When AI agent must escalate to human**\n\n- Customer explicitly asks for a human agent → immediate handoff, no questions asked.\n- Contract terms, custom pricing, refunds, legal/compliance wording → sales / billing team.\n- P1 technical fault with impact on live business → support team + PSTN network team if carrier-side.\n- After 2 consecutive KB misses on the same topic → escalate rather than guess.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

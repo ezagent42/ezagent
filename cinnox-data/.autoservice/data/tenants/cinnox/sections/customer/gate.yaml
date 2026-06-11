@@ -1,0 +1,21 @@
+---
+unit:
+  tenant: cinnox
+  role: customer
+  slug: gate
+  layer: tenant
+  kind: soul_section
+schema_version: 1
+binding:
+  template: gate
+  template_version: 1
+---
+values:
+  customer_types_list: new / existing / partner / other
+  basic_inquiry_examples_list: '"M800 支持多渠道吗?", "你们的产品有什么功能?", "什么是 CINNOX?"'
+  account_detail_examples_list: '"我们想接入,具体怎么部署?", "schedule a demo", "give me a custom
+    quote", "我们公司情况是 X,适合哪个套餐?", "想升级/续费/开通"'
+  lead_field_names_list: name / company / email / phone / service_account
+  unknown_type_clarifier_en: I'd be happy to help! Are you an existing CINNOX customer,
+    or are you new to us?
+  unknown_type_clarifier_zh: 很高兴为您服务！请问您是 CINNOX 现有客户，还是第一次了解我们？

@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0281",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Staff IP Login Allowlist",
+  "content": "**Staff IP Login Allowlist**\n\nA CINNOX security feature that uses a Trusted IP Address List to limit the locations Staff members can log in to the CINNOX service.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0266",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Scheduled Conference",
+  "content": "**Scheduled Conference**\n\nThe conference type lets the staff create a conference call with a future start and end date with calendar integration. It allows staff to share the conference link with the participants in the chat room or other channels. You can start the call anytime before the scheduled end time. You can send your scheduled call with Outlook, Google or other Calendars with an ICS file.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

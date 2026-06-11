@@ -1,0 +1,19 @@
+---
+unit:
+  tenant: cinnox
+  role: customer
+  slug: existing-product-pointer
+  layer: tenant
+  kind: soul_section
+schema_version: 1
+binding:
+  template: stub-pointer
+  template_version: 1
+---
+values:
+  section_number: '9.5'
+  section_title: General product inquiry — KB with retry=2
+  section_id: existing-product-pointer
+  chunk_id: cinnox-flow-existing-product
+  intent_name: existing_customer.product
+  fallback_message: 'see skill: general-inquiry-flow.'

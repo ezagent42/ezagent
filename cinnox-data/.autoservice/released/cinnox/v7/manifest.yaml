@@ -1,0 +1,13 @@
+actor: hjj.gemini@gmail.com
+framework_ver: 5c68948f
+items_published:
+- id:
+    layer: L3
+    role: customer
+    skill_name: attachments-handling
+  kind: skill
+lint_findings: []
+parent_version: v6
+published_at: '2026-05-25T23:12:00.744592+00:00'
+tenant_id: cinnox
+version: v7

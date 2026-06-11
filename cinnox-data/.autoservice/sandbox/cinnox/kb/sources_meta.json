@@ -1,0 +1,86 @@
+{
+  "f1": {
+    "name": "AI Sales Bot Charging Model",
+    "type": "pdf",
+    "domain": "ai_sales_bot",
+    "region": "global",
+    "updated_at": "2026-04-23T14:43:38.507964"
+  },
+  "f2": {
+    "name": "AI Sales Bot Feature List 2026",
+    "type": "xlsx",
+    "domain": "ai_sales_bot",
+    "region": "global",
+    "updated_at": "2026-04-23T14:43:38.507980"
+  },
+  "f3": {
+    "name": "M800 AI Sales Voice Bot Overview",
+    "type": "pdf",
+    "domain": "ai_sales_bot",
+    "region": "global",
+    "updated_at": "2026-04-23T14:43:38.507983"
+  },
+  "f4": {
+    "name": "CINNOX Feature List 2026",
+    "type": "xlsx",
+    "domain": "contact_center",
+    "region": "global",
+    "updated_at": "2026-04-23T14:43:38.507986"
+  },
+  "f5": {
+    "name": "CINNOX Pricing",
+    "type": "xlsx",
+    "domain": "contact_center",
+    "region": "global",
+    "updated_at": "2026-04-23T14:43:38.507988"
+  },
+  "f6": {
+    "name": "M800 Introduction",
+    "type": "pdf",
+    "domain": "contact_center",
+    "region": "global",
+    "updated_at": "2026-04-23T14:43:38.507990"
+  },
+  "f7": {
+    "name": "M800 Global Rates",
+    "type": "xlsx",
+    "domain": "global_telecom",
+    "region": "global",
+    "updated_at": "2026-04-23T14:43:38.507992"
+  },
+  "f8": {
+    "name": "M800 Global Telecom 2026",
+    "type": "pdf",
+    "domain": "global_telecom",
+    "region": "global",
+    "updated_at": "2026-04-23T14:43:38.507994"
+  },
+  "w1": {
+    "name": "CINNOX Documentation",
+    "url": "https://docs.cinnox.com",
+    "domain": "contact_center",
+    "region": "global",
+    "updated_at": "2026-04-23T14:43:38.507997"
+  },
+  "w2": {
+    "name": "CINNOX Official Website",
+    "url": "https://www.cinnox.com",
+    "domain": "contact_center",
+    "region": "global",
+    "updated_at": "2026-04-23T14:43:38.508000"
+  },
+  "w3": {
+    "name": "M800 Official Website",
+    "url": "https://www.m800.com",
+    "domain": "contact_center",
+    "region": "global",
+    "updated_at": "2026-04-23T14:43:38.508002"
+  },
+  "w4": {
+    "name": "M800 Pricing",
+    "url": "https://www.m800.com/pricing",
+    "domain": "global_telecom",
+    "region": "global",
+    "updated_at": "2026-04-23T14:43:38.508005"
+  }
+}

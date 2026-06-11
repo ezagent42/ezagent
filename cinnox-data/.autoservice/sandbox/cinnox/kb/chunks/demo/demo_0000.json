@@ -1,0 +1,15 @@
+{
+  "id": "demo_0000",
+  "source_id": "demo",
+  "source_type": "md",
+  "source_name": "cinnox Demo Knowledge",
+  "source_url": null,
+  "file_path": "scripts/seed_cinnox_tenant.py#DEMO_FACTS",
+  "section": "Service Overview",
+  "content": "**CINNOX 提供什么服务**\n\nCINNOX 是一家全渠道客户互动平台，主要面向企业客户提供以下服务：\n- **云联络中心**：统一管理语音、视频、聊天、邮件等多渠道客户互动\n- **全球号码**：DID（直拨入号）、Toll-free、Virtual Number，覆盖 50+ 国家/地区\n- **IVR 编排**：可视化拖拽式 IVR 流程设计器\n- **Omnichannel 路由**：WhatsApp / Web chat / IM / Voice 统一接入\n- **AI 销售语音机器人**：外呼自动化、语义理解、话术管理\n- **CRM 集成 & 分析**：通话录音、会话归档、客户画像\n\n套餐分为 Essentials（中小企业）、Professional（中型）、Enterprise（大型）、Enterprise Plus（全球账户）四档。",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

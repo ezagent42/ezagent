@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0044",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Backup Log",
+  "content": "**Backup Log**\n\nA log is created when the Data Retention feature in CINNOX is enabled. After CINNOX backs up the data to the SFTP server according to the set schedule, it provides the following information in the Backup Log: date and time the backup was created, backup file name, the total data size of the backup, the total number of backup files, and retention status.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

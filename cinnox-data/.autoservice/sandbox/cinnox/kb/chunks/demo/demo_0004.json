@@ -1,0 +1,15 @@
+{
+  "id": "demo_0004",
+  "source_id": "demo",
+  "source_type": "md",
+  "source_name": "cinnox Demo Knowledge",
+  "source_url": null,
+  "file_path": "scripts/seed_cinnox_tenant.py#DEMO_FACTS",
+  "section": "PSTN Outage Handling · P1 Escalation",
+  "content": "**PSTN outage / DID unreachable handling**\n\n- For Enterprise customers reporting intermittent call failure on a provisioned DID (e.g. ACC-xxxx affected), the standard response is:\n  1. Upgrade existing ticket (TK-xxxx) to P1 priority; on-call engineer to contact within 30 minutes.\n  2. Assign a temporary backup DID (same country, same routing) via failover within 5 minutes — customer's business does not interrupt.\n  3. After root cause fix, automatically route back to the original DID.\n- Escalation path: AI agent → Support team → PSTN network team (for carrier-side issues).",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "HK",
+  "language": "en",
+  "page_number": null
+}

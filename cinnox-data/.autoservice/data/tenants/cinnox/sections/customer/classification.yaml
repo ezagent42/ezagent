@@ -1,0 +1,40 @@
+---
+unit:
+  tenant: cinnox
+  role: customer
+  slug: classification
+  layer: tenant
+  kind: soul_section
+schema_version: 1
+binding:
+  template: classification
+  template_version: 1
+---
+values:
+  brand_short_name: CINNOX
+  signals_new_strong: 'explicit new-identity ("new to CINNOX", "first time", "haven''t
+    used", "我们是新客户", "评估你们的产品"), OR clear vendor-search language ("looking for a customer
+    service tool", "want to try a contact center"), OR company description + **specific
+    operational use case** ("we''re a bank with 50 agents, can you handle SMS at scale?",
+    "我们做电商,想接 WhatsApp + 视频客服"), OR explicit demo request ("schedule a demo", "I''d
+    like a demo")
+
+    '
+  signals_existing_strong: '"I''m an existing customer", "our agent", "my account",
+    "cannot receive", "billing", "error in", "we are using CINNOX", "upgrade my plan",
+    "renew", "cancel my subscription", "switch plan"
+
+    '
+  signals_partner_strong: '"partner", "reseller", "system integrator", "SI", "distributor"
+
+    '
+  signals_other_strong: 'Off-topic / not a CINNOX customer-service request (recruiting,
+    vendor pitch, media inquiry, generic non-CX question)
+
+    '
+  signals_weak_examples: 'see skill: customer-type-clarifier.'
+  weak_clarifier_zh: 'see skill: customer-type-clarifier.'
+  weak_clarifier_en: 'see skill: customer-type-clarifier.'
+  weak_max_turns: 2
+  confirmation_new_phrases: 'see skill: customer-type-clarifier.'
+  confirmation_existing_phrases: 'see skill: customer-type-clarifier.'

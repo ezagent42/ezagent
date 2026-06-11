@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0265",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "SMS Template",
+  "content": "**SMS Template**\n\nA ready-made message SMS content that staff can use or insert in their campaigns. CINNOX lets you create or import Templates, so you don't have to compose messages from scratch every time you launch a campaign.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

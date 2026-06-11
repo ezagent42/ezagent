@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0225",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Personal QR Code",
+  "content": "**Personal QR Code**\n\nA QR code associated with or owned by a specific Staff member. Scanning this QR code lets visitors send the Staff member a direct enquiry.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

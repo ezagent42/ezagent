@@ -1,0 +1,15 @@
+---
+unit:
+  tenant: cinnox
+  role: customer
+  slug: privacy
+  layer: tenant
+  kind: soul_section
+schema_version: 1
+binding:
+  template: privacy
+  template_version: 1
+---
+values:
+  sensitive_operations_list: porting a number, plan downgrade, cancellation
+  id_verification_fields: 服务账号 Service Account + email match

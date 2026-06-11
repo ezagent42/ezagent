@@ -1,0 +1,19 @@
+---
+unit:
+  tenant: cinnox
+  role: customer
+  slug: discovery-pointer
+  layer: tenant
+  kind: soul_section
+schema_version: 1
+binding:
+  template: stub-pointer
+  template_version: 1
+---
+values:
+  section_number: '8'
+  section_title: DISCOVERY PHASE — Vague Requests (TC-H2)
+  section_id: discovery-pointer
+  chunk_id: cinnox-flow-discovery
+  intent_name: new_customer.discovery
+  fallback_message: 'see skill: discovery-questions.'
