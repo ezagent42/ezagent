@@ -48,5 +48,20 @@ Once both route through the unified Kind, retire the duplicate Kind module(s) (o
 
 ---
 
+## Re-alignment notes (2026-06-11 — against as-built P0–P4 + Allen decisions; pending config-evolve A/B/C)
+
+These supersede the body above where they conflict; fold in at finalize once the config-evolve decision lands.
+
+1. **As-built behavior lists (verified on origin/main 20a38d5e):**
+   - chat `Session` = `Chat` + `Publisher.SessionImpl` + `ExternalMirror`
+   - `SocialwareSession` = `Chat` + `Turn` + `Surface` + `ConfigUpdate` + `Publisher.SessionImpl`
+   - So socialware ⊇ chat (shared `Chat` + `Publisher`); socialware = chat + `Turn`/`Surface`/`ConfigUpdate`. The collapse is a **chat-base + socialware-extension** hierarchy, NOT two peer Kinds.
+
+2. **Mandatory core = `Chat` + `Publisher` (Allen 2026-06-11).** Every template's behavior set includes the core; `chat` template = core (+`ExternalMirror`); `socialware` template = core + `Turn` + `Surface` (+ `ConfigUpdate`, see #4). Rationale: `Chat` carries the session's ownership/membership model that `Surface.data_owner`→`Chat.data_owner` and `ConfigUpdate`'s `reads_siblings([:chat])` depend on; a fully chat-optional substrate would first need ownership/membership extracted into a base behavior (YAGNI).
+
+3. **NEW P5-0 — backfill nil `:kind_base` BEFORE the union (load-bearing precondition).** Verified: `BehaviorSet.effective_set/2` expands a **nil** `:kind_base` capture to the FULL declared list (`behavior_set.ex` "Legacy sentinel … → declared"). Pre-P1 / absent-args session snapshots have a nil `:kind_base`. The moment P5-1 makes the declared list the UNION, a legacy chat snapshot would cold-load with the entire socialware superset → the P1 "chat denies `surface.*`" invariant silently breaks on restart. **P5-0 (runs FIRST): backfill every session snapshot's `:kind_base` with its concrete as-built behavior set (chat-Kind rows → chat set; SocialwareSession rows → socialware set); rows that cannot be classified FAIL LOUD; a go/no-go gate confirms zero nil `:kind_base` session rows remain before P5-1 proceeds.** TEST/sandbox DB only.
+
+4. **`ConfigUpdate` in the union is conditional on the config-evolve decision (task #50, A/B/C):** if **C** (decouple), `ConfigUpdate` stays a socialware-template behavior in the union; if **A/B** (move to Agent), `ConfigUpdate` is already deleted from `SocialwareSession` before P5, so it is NOT in the union and the socialware template = core + `Turn` + `Surface` only. Finalize the union list after #50 lands.
+
 ## Dependency + parallel-safety
-Depends on P1 (merged) + the as-built P2.5c/P3/P4. Docs-only to plan; implementation strictly last, after P4, and only if the go/no-go favors it. This plan finalizes against the as-built P1–P4 before any P5 code.
+Depends on P1 (merged) + the as-built P2.5c/P3/P4, **and on the config-evolve decision (#50) for the final behavior union (note #4)**. P5-0 (nil `:kind_base` backfill + go/no-go) runs FIRST, then P5-1→P5-2→P5-3. Docs-only to plan; implementation strictly last, after P4 + #50, and only if the go/no-go favors it.
