@@ -1,6 +1,13 @@
 # Agent-Owned Config-Evolve — Design Spec
 
-> **STATUS: design, rev 3 (two-step model — Allen 2026-06-11; codex round-1+2 REVISE addressed), awaiting codex round-3 + Allen review.** Prerequisite refactor that must merge BEFORE the P5 collapse-to-one-Kind work. Decided in Feishu brainstorm: **full move** of config-application from the socialware Session to the Agent entity.
+> **STATUS: design, rev 4 (codex round-3 — 3 HIGH addressed), awaiting codex round-4 + Allen review of the recovery-authority point.** Prerequisite refactor that must merge BEFORE the P5 collapse-to-one-Kind work. Decided in Feishu brainstorm: **full move** of config-application from the socialware Session to the Agent entity.
+>
+> **rev 4 (codex round-3 — three HIGH closed):**
+> - **H1 cap-action mismatch** — the runtime overwrites the needed-cap *action* with the dispatched action (`runtime.ex:466-476`), so a `Sandbox.write_path` cap can't gate a `:project_cascade_to_sandbox` action. FIX: there is **no intermediate projection action**; step 1 (which `reads_siblings([:sandbox])`) computes the new `respawn_template_data` in-handler and emits the deferred dispatch **directly to `sandbox.write_path`** — the dispatched action IS `write_path`, matching the agent's self-scoped `cap(:agent, Sandbox, :write_path)`.
+> - **H2 wrong reconcile hook** — `activate/2` returns no effects and gets no sibling slices (`lifecycle.ex:76-86`, `kind/server.ex:379-385`). FIX: boot reconciliation uses **`post_init/2` → `{:continue, :reconcile_cascade}` → `handle_continue/3`** (the ExternalMirror precedent, `external_mirror.ex:73`), which schedules a deferred self-dispatch to a `reconcile_cascade` ConfigEvolve action (`reads_siblings([:sandbox])`, self-cap whose action == `:reconcile_cascade`) that compares the ConfigStore pointer to the Sandbox cache and emits `sandbox.write_path` if divergent.
+> - **H3 recovery authority laundering** — settlement *recovery* re-emits config effects under bootstrap **wildcard** caps (`turn.ex:127-153`, `catalog.ex:101-110`), bypassing the manage-cap gate. FIX (§4): record the **approver** (the manager who settled, holding the agent's manage-cap) on the durable settlement state; on recovery, re-dispatch the apply with the **recorded approver re-loaded caps**, re-validated against the agent's manage-cap — if the approver no longer holds it, **skip + log loud** (never bootstrap-launder). **⚠ This recovery-authority choice is flagged for Allen's confirmation** (his authority-model domain).
+>
+> **rev 3 (Allen two-step — retained):** step 1 = synchronous durable apply to ConfigStore ON the agent (manage-cap gated); step 2 = async projection of the pointer into the agent's own Sandbox cache. Sandbox pointer demoted source→cache; spawn read path untouched. Self-evolution-as-caller dropped (settlement caller is the manager).
 >
 > **rev 3 (Allen two-step — supersedes the rev-2 mechanism):** split the behavior into two steps with two distinct callers, resolving codex round-2's two HIGH blockers:
 > - **Step 1 `apply_config_delta`** — dispatched TO the agent, gated by the agent's manage-cap (the manager/creator caller holds it via #533). Writes the immutable object + pointer to **ConfigStore — the DURABLE source of truth** — synchronously, object→pointer ordered, `source_turn_id`-idempotent.
@@ -92,23 +99,34 @@ The work is **two steps with two distinct callers** (Allen's design — resolves
 
 ```elixir
 # Agent.behaviors/0 gains Ezagent.Behavior.ConfigEvolve
-# STEP 1 — caller = the manager (holds the agent's manage-cap)
-action(:apply_config_delta, args: %{turn_id, delta...}, caps: [:apply_config_delta], modes: [:call])
+# STEP 1 — caller = the manager (holds the agent's manage-cap). Emits the step-2 sandbox write directly.
+action(:apply_config_delta, args: %{turn_id}, caps: [:apply_config_delta], modes: [:call])
 action(:repoint_config,     args: %{layer, config_id...}, caps: [:repoint_config], modes: [:call])
-# STEP 2 — caller = the agent itself (self-scoped Sandbox cap); a deferred projection, not user-facing
-action(:project_cascade_to_sandbox, args: %{}, caps: [:project_cascade_to_sandbox], modes: [:cast])
+# BOOT RECONCILE — self-dispatched from post_init; reads :sandbox; emits sandbox.write_path if divergent.
+action(:reconcile_cascade,  args: %{}, caps: [:reconcile_cascade], modes: [:cast])
+# (NO :project_cascade_to_sandbox action — H1: step 1 / reconcile emit sandbox.write_path DIRECTLY,
+#  so the dispatched action == :write_path matches the self-scoped cap(:agent, Sandbox, :write_path).)
 ```
+
+Required caps (H1-correct — each declared cap's ACTION equals the dispatched action it gates):
+```
+apply_config_delta / repoint_config → cap(:agent, Ezagent.Behavior.Manage, :any)   # the manager holds it
+reconcile_cascade                   → cap(:agent, Ezagent.Behavior.ConfigEvolve, :reconcile_cascade)  # self-cap
+# the sandbox write that step 1 + reconcile emit is a Cmd(self, :write_path, …):
+# gated by cap(:agent, Ezagent.Behavior.Sandbox, :write_path)                       # self-cap
+```
+The agent's base self-caps at create gain TWO entries: `cap(:agent, Sandbox, :write_path, instance: self)` and `cap(:agent, ConfigEvolve, :reconcile_cascade, instance: self)`.
 
 ### Step 1 — durable apply (the agent is the dispatch target; manager-authorized)
 `apply_config_delta` (and `repoint_config` for rollback) run in the **agent's** process, gated by the agent's manage-cap (§4). Synchronously, **object-keyed**: merge delta → `ConfigStore.write_config` (immutable object) → `ConfigStore.put_pointer` (current/previous rollback ledger, `source_turn_id`-stamped) → record the applied marker in the agent's own `:config_evolve` slice. **`ConfigStore` is the durable source of truth.** Then the handler emits **one `dispatch_after_commit` Cmd** for step 2 (post-commit, so it runs only after step 1's durable state commits). This step is fully synchronous + observable to its caller; the #607 atomic-by-ordering guarantee lives entirely here (in the DB), unchanged.
 
 ### Step 2 — sandbox projection (the agent acts on itself; self-authorized, async)
-`project_cascade_to_sandbox` is the agent's own deferred handler. It reads the current `ConfigStore` pointer + the current `cascade_resolution` (via `reads_siblings([:sandbox])`, the genuine ApiKeys in-process read precedent), and writes the refreshed `user_layer_uri` into the **`Sandbox`** slice by self-dispatching `sandbox.write_path` (the agent is both caller and target). This needs a **self-scoped** `cap(:agent, Sandbox, :write_path, instance: self)` granted to the agent at create. As a post-commit **cast** (`DeferredDispatch`, P2.5c), it never deadlocks and its failure is logged (`log_unobservable_cast_error`).
+Step 1 itself reads the current `cascade_resolution` (via `reads_siblings([:sandbox])`, the genuine ApiKeys in-process read precedent), computes the refreshed `respawn_template_data` with the new `user_layer_uri`, and emits **one** `{:dispatch_after_commit, Cmd(self, :write_path, rtd)}` — i.e. step 2 is a deferred self-dispatch **directly to `sandbox.write_path`** (H1: the dispatched action is `write_path`, matching the agent's self-scoped `cap(:agent, Sandbox, :write_path)`; there is no intermediate projection action whose action axis would be overwritten). As a post-commit **cast** (`DeferredDispatch`, P2.5c) it never deadlocks and its failure is logged (`log_unobservable_cast_error`).
 
 **Why this is sound where rev-2's single self-dispatch was not (codex round-2):** the Sandbox copy of the pointer is **demoted from source to a spawn-time cache**. The durable consume (object + pointer) is step 1, synchronous in `ConfigStore`; the Sandbox write is a downstream *projection* whose async timing cannot lose or mis-order durable state. The spawn read path is **untouched** (it still reads `cascade_resolution.user_layer_uri`), so there is **no relocation** of the 6+ `cascade_resolution` consumers.
 
-### Crash-window self-heal (boot reconciliation)
-If the agent crashes between step 1's commit and step 2 running, the Sandbox cache is stale. `ConfigEvolve.activate/2` (agent boot, in identity) **reconciles**: read the `ConfigStore` current pointer, compare to the Sandbox `user_layer_uri`, and if they diverge re-emit the step-2 projection. This closes the window with **no `core→ConfigStore` dependency** (it runs in the agent's own domain). Correctness is preserved; only the cache refresh is async + self-healing.
+### Crash-window self-heal (boot reconciliation) — H2-correct hook
+If the agent crashes between step 1's commit and step 2 running, the Sandbox cache is stale. `activate/2` cannot emit effects or see siblings (`lifecycle.ex:76-86`), so reconciliation uses **`post_init/2 → {:continue, :reconcile_cascade} → handle_continue/3`** (the ExternalMirror precedent): `handle_continue/3` schedules a deferred self-dispatch to the `reconcile_cascade` action, which `reads_siblings([:sandbox])`, reads the `ConfigStore` current pointer, compares to the Sandbox `user_layer_uri`, and if they diverge emits `Cmd(self, :write_path, rtd)`. This closes the window with **no `core→ConfigStore` dependency** (it runs in the agent's own domain). Correctness is preserved; only the cache refresh is async + self-healing.
 
 **The confused-deputy is dissolved structurally:** there is no longer any path where a caller-controlled `subject_uri` lets a *session* write an *arbitrary* agent's Sandbox under a god-cap. Step 1's authority is the specific target agent's manage-cap (instance-scoped); step 2's write is the agent acting on **itself**. The cross-entity `system://agent-internal` Sandbox-read escalation is removed.
 
@@ -143,7 +161,12 @@ So **whoever manages the agent holds the cap and may evolve it** (the orchestrat
 
 The agent's **base self-caps at create** gain exactly one entry for this feature: the self-scoped `cap(:agent, Sandbox, :write_path, instance: self)` that step 2 needs (NOT a self manage-cap — the agent does not manage itself; only the step-2 projection is self-authorized).
 
-**Recovery-path caller (verified at `turn.ex` `config_update_effects`/`dispatch_ctx`):** the `delta` carrying `subject_uri` (the target agent) IS available at the Turn settlement effect, so step 1 can target the agent. BUT the **settlement-recovery** path defaults `dispatch_ctx` to `caller: ctx.self_uri` (the session) with bootstrap/empty caps — which does NOT hold the target agent's manage-cap. The plan MUST make the recovery re-dispatch run under a principal that holds (or is granted) the target agent's manage-cap — e.g. a scoped system-principal entry for the settlement-recovery dispatch, mirroring how recovery already injects bootstrap caps. The NORMAL settlement path carries the settling caller's caps (the manager who drove the turn); the plan asserts that caller holds the manage-cap and adds the recovery-path principal so a crashed-then-recovered settlement is not denied.
+**Recovery-path authority (codex H3 — ⚠ flagged for Allen).** The `delta` carrying `subject_uri` IS available at settlement so step 1 can target the agent (normal path: carries the settling **manager's** caps — they hold the agent's manage-cap). The hazard codex found: settlement **recovery** (`turn.ex:127-153`) re-emits config effects under **bootstrap wildcard** caps (`catalog.ex:101-110`), which would pass the manage-cap gate trivially — *laundering* authority (a config-apply that was never manager-authorized could be applied on recovery). FIX:
+
+1. At normal settlement, **record the approver URI** (the manager whose caps gated step 1) on the durable settlement state alongside the config delta.
+2. On recovery, do NOT use bootstrap caps for the config-apply. Re-dispatch with **the recorded approver re-loaded caps** (read the approver's current Identity caps) and let the standard manage-cap gate re-validate: if the approver still holds the agent's manage-cap → apply; if not → **skip + log loud** (the self-evolve consume is not silently applied under laundered authority; `source_turn_id` idempotency means a later fresh manager dispatch is safe).
+
+This keeps auto-recovery when authority persists and never launders. **It is flagged for Allen** because it is an authority-model choice in his domain; the safe fallback if he prefers minimal surface is codex's option (b) — exclude config-apply from the bootstrap-recovery path entirely and require a fresh manager dispatch (loses auto-recovery of an interrupted self-evolve, but `source_turn_id` keeps it idempotent).
 
 The existing `config_update_test.exs` fixtures that grant only session caps are **updated** to grant the manage-cap to the authorized caller (reflecting the corrected model), plus a new denial test for an unauthorized caller.
 
