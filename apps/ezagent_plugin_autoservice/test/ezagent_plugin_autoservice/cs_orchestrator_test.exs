@@ -132,12 +132,12 @@ defmodule EzagentPluginAutoservice.CsOrchestratorTest do
       [{:set, :open_turn_id, tid}] = set_effects
       assert is_binary(tid)
 
-      # Must have 2 dispatch effects.
-      dispatches = Enum.filter(effects, &match?({:dispatch, _}, &1))
+      # Must have 2 dispatch_after_commit effects (P22 — dead agent must not abort commit).
+      dispatches = Enum.filter(effects, &match?({:dispatch_after_commit, _}, &1))
       assert length(dispatches) == 2
 
       targets =
-        Enum.map(dispatches, fn {:dispatch, cmd} -> URI.to_string(cmd.target) end)
+        Enum.map(dispatches, fn {:dispatch_after_commit, cmd} -> URI.to_string(cmd.target) end)
 
       fast_str = URI.to_string(fast_uri)
       slow_str = URI.to_string(slow_uri)
@@ -181,11 +181,11 @@ defmodule EzagentPluginAutoservice.CsOrchestratorTest do
       set_effects = Enum.filter(effects, &match?({:set, :open_turn_id, _}, &1))
       assert length(set_effects) == 1
 
-      # No dispatch effects — operator has taken over.
-      dispatches = Enum.filter(effects, &match?({:dispatch, _}, &1))
+      # No dispatch_after_commit effects — operator has taken over.
+      dispatches = Enum.filter(effects, &match?({:dispatch_after_commit, _}, &1))
 
       assert dispatches == [],
-             "expected no dispatch effects with operator_active=true, got: #{inspect(dispatches)}"
+             "expected no dispatch_after_commit effects with operator_active=true, got: #{inspect(dispatches)}"
     end
   end
 
@@ -452,6 +452,76 @@ defmodule EzagentPluginAutoservice.CsOrchestratorTest do
 
       assert Enum.any?(snapshot.messages, &message_text?(&1, slow_reply_text)),
              "expected slow reply in feed after orchestrator dispatch, got: #{inspect(Enum.map(snapshot.messages, & &1.body))}"
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Integration — fan-out to nonexistent agents must not abort turn commit (P22)
+  # ---------------------------------------------------------------------------
+
+  describe "fan-out failure does not abort turn-open commit (P22 — dispatch_after_commit)" do
+    test "customer dispatch succeeds and open_turn_id is SET even when fast/slow URIs are dead",
+         ctx_map do
+      %{
+        session: session,
+        token: _token,
+        customer_uri: customer_uri,
+        orch_uri: orch_uri
+      } = ctx_map
+
+      suffix = System.unique_integer([:positive])
+
+      # Ghost URIs — real entity-shaped URIs with no Kind/snapshot registered.
+      ghost_fast = Ezagent.URI.agent(:team_alpha, "ghost-fast-#{suffix}")
+      ghost_slow = Ezagent.URI.agent(:team_alpha, "ghost-slow-#{suffix}")
+
+      :ok = Ezagent.AgentFlavorAttributes.put(orch_uri, "cs_orchestrator")
+
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(Ezagent.Entity.CsOrchestrator, %{
+          uri: orch_uri,
+          session_uri: URI.to_string(session),
+          customer_uri: URI.to_string(customer_uri),
+          fast_uri: URI.to_string(ghost_fast),
+          slow_uri: URI.to_string(ghost_slow)
+        })
+
+      customer_msg = test_message(customer_uri, "Need help — ghosts ahead")
+      target = Ezagent.URI.with_action(orch_uri, :chat, :receive)
+
+      # The call must succeed: dead fan-out targets must NOT abort the turn-open commit.
+      assert {:ok, %{ok: true}} =
+               Invocation.dispatch(%Invocation{
+                 target: target,
+                 mode: :call,
+                 args: %{message: customer_msg},
+                 ctx: %{
+                   caller: session,
+                   caps: Ezagent.SystemPrincipal.caps("system://chat-router"),
+                   reply: {:caller_inbox, self()}
+                 }
+               })
+
+      # open_turn_id must be SET in the live orchestrator state. The dispatch was
+      # :call so the commit has already completed before we return. Read state
+      # directly from the running Kind server via :sys.get_state (same pattern as
+      # pty_test.exs) — no Snapshot.load needed.
+      # Kind.Server state shape: %{state: %{cs_orchestrator: %{state: %{...}, transients: %{}}}}
+      # (Lifecycle two-container slice, keyed by the auto-derived state_slice/0 atom).
+      {:ok, kind_pid} = Ezagent.KindRegistry.lookup(orch_uri)
+      server_state = :sys.get_state(kind_pid, 500)
+      slice = get_in(server_state, [:state, :cs_orchestrator])
+
+      open_turn_id =
+        case slice do
+          %{state: %{open_turn_id: tid}} -> tid
+          %{open_turn_id: tid} -> tid
+          _ -> nil
+        end
+
+      assert is_binary(open_turn_id),
+             "expected open_turn_id to be a binary after customer dispatch with dead fan-out URIs, " <>
+               "got: #{inspect(open_turn_id)}. P22 violation — dead sub-agent aborted the turn commit."
     end
   end
 

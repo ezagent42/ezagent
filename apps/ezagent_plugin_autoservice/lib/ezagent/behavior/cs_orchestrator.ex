@@ -316,7 +316,18 @@ defmodule Ezagent.Behavior.CsOrchestrator do
     end
   end
 
-  # Build the {:dispatch, %Cmd{}} effects for fast + slow agent fan-out.
+  # Build the {:dispatch_after_commit, %Cmd{}} effects for fast + slow agent fan-out.
+  #
+  # P22 — a dead or unprovisioned sub-agent must NOT abort the turn-open commit.
+  # Using {:dispatch, cmd} here caused the effect executor to treat a failing
+  # dispatch as FATAL: the first sub-agent failure would abort all remaining
+  # effects AND roll back the {:set, :open_turn_id, tid} state commit, leaving
+  # the turn durably opened in the session store but the orchestrator state
+  # diverged (open_turn_id = nil). {:dispatch_after_commit, cmd} defers each
+  # fan-out dispatch to AFTER the parent slice durably commits: runs only on
+  # a successful commit, forces cast + reply: :ignore, logs (never aborts) on
+  # per-Cmd failure. Partial fan-out failure is observational — the turn open
+  # is already durable and recovery is Turn.activated/2 + P3 outbox replay.
   defp build_fanout_effects(msg, ctx) do
     self_uri = Map.get(ctx, :self_uri)
     fast_uri_str = ctx[:read].(:fast_uri, "")
@@ -338,7 +349,7 @@ defmodule Ezagent.Behavior.CsOrchestrator do
             reply: :ignore
           })
 
-        [{:dispatch, cmd}]
+        [{:dispatch_after_commit, cmd}]
       else
         _ -> []
       end
@@ -363,7 +374,26 @@ defmodule Ezagent.Behavior.CsOrchestrator do
     # Defensive: if dispatched with a plain map (e.g. from tests), try to
     # reconstruct a minimal Message-like struct for sender extraction.
     # In production, chat-router always dispatches a %Message{}.
-    struct(Message, Map.new(raw, fn {k, v} -> {to_atom_key(k), v} end))
+    msg = struct(Message, Map.new(raw, fn {k, v} -> {to_atom_key(k), v} end))
+
+    # Ensure sender is a %URI{} so URI.to_string/1 in handle_receive/2 works.
+    # A plain-map message may carry sender as a binary — parse it defensively.
+    sender =
+      case msg.sender do
+        %URI{} = u ->
+          u
+
+        s when is_binary(s) ->
+          case safe_parse_uri(s) do
+            {:ok, u} -> u
+            :error -> msg.sender
+          end
+
+        _ ->
+          msg.sender
+      end
+
+    %{msg | sender: sender}
   end
 
   defp to_atom_key(k) when is_atom(k), do: k
