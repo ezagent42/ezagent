@@ -50,8 +50,9 @@ defmodule Ezagent.Socialware.ChatFeedAdapter do
   A `:pull` adapter (P3-1) has NO per-binding external transport: no
   `binding_module/0`, no `target_ownership_check/2`, no `event_to_payload/1`,
   and registering it spawns NO Worker. It is served on demand by its CALLER's
-  Phoenix channel, which owns the per-connection state (the caller identity, the
-  lower-bound cursor, the advisory subscription).
+  Phoenix channel, which owns the per-connection state (the caller identity and
+  the advisory subscription) and re-reads the windowed snapshot on each advisory
+  (no delta cursor — chat uses snapshot-refresh, unlike the customer feed).
 
   `render/2` is the stateless projection chokepoint: it returns the gated chat
   snapshot (`%{messages, page}`) via `ChatFeed.snapshot/2` — the chat-message
