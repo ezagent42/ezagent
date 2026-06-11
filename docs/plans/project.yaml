@@ -1,0 +1,18 @@
+project:
+  team:
+    - id: Dev1
+      line: main
+      branch: autoservice-dev
+      skills: [fullstack, elixir]
+  parallel_capacity: 1
+  plans_dir: docs/plans
+  milestones:
+    - id: M0
+      name: "Phase A — Content + CR Plugin"
+      phase: P0
+    - id: M1
+      name: "Phase B — Autoservice Assembly + Turn"
+      phase: P1
+    - id: M2
+      name: "Phase C+D — Admin UI + FillerLoop"
+      phase: P2

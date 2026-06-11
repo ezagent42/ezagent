@@ -1,0 +1,429 @@
+generated_at: '2026-06-11'
+batches:
+- id: batch-1
+  name: 'Phase A: Content + CR Plugin — Batch 1'
+  milestone: M0
+  schedule:
+    start: Day 1
+    duration: 4 hours
+    target: Day 1
+  tasks:
+  - id: T0A.1
+    name: ezagent_plugin_content 基础骨架
+    description: 'Phase A1: 创建 content plugin 目录结构、skeleton 模板 (soul.md, skills/, kb/)、agents.yaml (fast+slow provider配置)、fast_ack_prompt.md、cc_preamble.md、priv/platform/
+      平台模板'
+    type: green
+    phase: P0
+    module: MOD-01
+    depends_on: []
+    deliverables:
+    - path: apps/ezagent_plugin_content/
+      type: code
+    verification: mix compile — content plugin 编译通过
+    estimated_effort: large
+    status: pending
+    gap_ref: GAP-A.1
+  gate: mix test green
+- id: batch-2
+  name: 'Phase A: Content + CR Plugin — Batch 2'
+  milestone: M0
+  schedule:
+    start: Day 1
+    duration: 4 hours
+    target: Day 2
+  tasks:
+  - id: T0A.2
+    name: Soul CRUD
+    description: 'Phase A2: soul_loader (4-layer), soul_slot_parser ({{key}}→section分组), soul_renderer (渲染+CLAUDE.md生成), soul_store
+      (sandbox/release slots yaml)'
+    type: green
+    phase: P0
+    module: MOD-01
+    depends_on:
+    - T0A.1
+    deliverables:
+    - path: apps/ezagent_plugin_content/lib/soul/
+      type: code
+    verification: mix test — soul CRUD 全部绿
+    estimated_effort: large
+    status: pending
+    gap_ref: GAP-A.2
+  - id: T0A.3
+    name: Skill CRUD
+    description: 'Phase A3: skill_loader (4-layer扫描,同名覆盖), skill_indexer (YAML frontmatter→markdown index), skill_store (list/read/write/delete)'
+    type: green
+    phase: P0
+    module: MOD-01
+    depends_on:
+    - T0A.1
+    deliverables:
+    - path: apps/ezagent_plugin_content/lib/skill/
+      type: code
+    verification: mix test — skill CRUD+index 全部绿
+    estimated_effort: large
+    status: pending
+    gap_ref: GAP-A.3
+  - id: T0A.4
+    name: KB CRUD
+    description: 'Phase A4: kb_store (search/upsert/delete), kb_rebuilder (uv run kb_search_mcp.py --rebuild), kb_mcp_provider
+      (.mcp.json生成,参数化<tid>-kb), URL fetch+file upload, _sources tracking'
+    type: green
+    phase: P0
+    module: MOD-01
+    depends_on:
+    - T0A.1
+    deliverables:
+    - path: apps/ezagent_plugin_content/lib/kb/
+      type: code
+    verification: mix test — KB CRUD+rebuild+MCP config 全部绿
+    estimated_effort: large
+    status: pending
+    gap_ref: GAP-A.4
+  gate: mix test green
+- id: batch-3
+  name: 'Phase A: Content + CR Plugin — Batch 3'
+  milestone: M0
+  schedule:
+    start: Day 2
+    duration: 4 hours
+    target: Day 2
+  tasks:
+  - id: T0A.5
+    name: Tenant 管理
+    description: 'Phase A5: tenant_provisioner (create_tenant: workspace+sandbox+kb.db+first CR), tenant_runtime (materialize+symlink),
+      tenant_config (ConfigStore), platform_soul/skill_store'
+    type: green
+    phase: P0
+    module: MOD-01
+    depends_on:
+    - T0A.2
+    - T0A.3
+    - T0A.4
+    deliverables:
+    - path: apps/ezagent_plugin_content/lib/tenant/
+      type: code
+    verification: mix test — provision 创建租户,文件就位,kb.db可用
+    estimated_effort: large
+    status: pending
+    gap_ref: GAP-A.5
+  gate: mix test green
+- id: batch-4
+  name: 'Phase A: Content + CR Plugin — Batch 4'
+  milestone: M0
+  schedule:
+    start: Day 2
+    duration: 4 hours
+    target: Day 3
+  tasks:
+  - id: T0A.6
+    name: ezagent_plugin_cr CR 引擎
+    description: 'Phase A6: cr_engine (ensure_active_cr, publish全量, cancel), cr_lint (R01-R05), cr_snapshot (cp sandbox→release),
+      cr_rollback (ln -sf _current)'
+    type: green
+    phase: P0
+    module: MOD-02
+    depends_on:
+    - T0A.5
+    deliverables:
+    - path: apps/ezagent_plugin_cr/
+      type: code
+    verification: mix test — CR lifecycle 绿
+    estimated_effort: large
+    status: pending
+    gap_ref: GAP-A.6
+  gate: mix test green
+- id: batch-5
+  name: 'Phase A: Content + CR Plugin — Batch 5'
+  milestone: M0
+  schedule:
+    start: Day 3
+    duration: 4 hours
+    target: Day 3
+  tasks:
+  - id: T0A.7
+    name: CinnoxAssets/Runtime 重构
+    description: 'Phase A7: customer_session→content plugin API, agent config从agents.yaml读取(不再硬编码), tid参数化(所有cinnox→tid),
+      roles加master_admin, 旧模块@deprecated'
+    type: yellow
+    phase: P0
+    module: MOD-03
+    depends_on:
+    - T0A.5
+    - T0A.6
+    deliverables:
+    - path: apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/customer_session.ex
+      type: code
+    verification: 现有autoservice test绿, 参数化验证
+    estimated_effort: large
+    status: pending
+    gap_ref: GAP-A.7
+  gate: mix test green
+- id: batch-6
+  name: 'Phase A: Content + CR Plugin — Batch 6'
+  milestone: M0
+  schedule:
+    start: Day 3
+    duration: 4 hours
+    target: Day 4
+  tasks:
+  - id: T0A.8
+    name: cinnox 数据迁移
+    description: 'Phase A8: mix ezagent.content.migrate_cinnox — priv/cinnox/→runtime path, skills统一, slot_values生成, 首个CR创建+Publish
+      v1(手动,预览sandbox后确认)'
+    type: yellow
+    phase: P0
+    module: MOD-03
+    depends_on:
+    - T0A.7
+    deliverables:
+    - path: apps/ezagent_plugin_autoservice/lib/mix/tasks/
+      type: code
+    verification: 迁移后agent provision可用cinnox租户
+    estimated_effort: large
+    status: pending
+    gap_ref: GAP-A.8
+  - id: T0A.9
+    name: 'Integration: content plugin → CR plugin pipeline'
+    description: 'End-to-end test: write soul slot→track_change→publish→verify release content matches sandbox'
+    type: green
+    phase: P0
+    module: MOD-02
+    depends_on:
+    - T0A.6
+    - T0A.7
+    deliverables:
+    - path: apps/ezagent_plugin_cr/test/integration/content_cr_pipeline_test.exs
+      type: test
+    verification: full publish pipeline works end-to-end
+    estimated_effort: small
+    status: pending
+    meta:
+      connector_seam: true
+      connects:
+      - T0A.6
+      - T0A.7
+  gate: mix test green
+- id: batch-7
+  name: 'Phase B: Assembly + Turn — Batch 7'
+  milestone: M1
+  schedule:
+    start: Day 4
+    duration: 4 hours
+    target: Day 4
+  tasks:
+  - id: T1A.1
+    name: autoservice_assembly.ex
+    description: 'Phase B1: wiring — provision_agent (production, release data), preview_provision (sandbox data), preview_teardown,
+      write_slot→cr_engine.publish track'
+    type: green
+    phase: P1
+    module: MOD-03
+    depends_on:
+    - T0A.8
+    deliverables:
+    - path: apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/autoservice_assembly.ex
+      type: code
+    verification: assembly 调用链正确
+    estimated_effort: medium
+    status: pending
+    gap_ref: GAP-A.1
+  gate: E2E flow works
+- id: batch-8
+  name: 'Phase B: Assembly + Turn — Batch 8'
+  milestone: M1
+  schedule:
+    start: Day 4
+    duration: 4 hours
+    target: Day 5
+  tasks:
+  - id: T1A.2
+    name: Turn 接入 Customer 路径
+    description: 'Phase B2: TurnAdapter (%Invocation格式), customer_live Turn message flow (open→fast ACK→compose→settle), PR#715
+      #10客户回显,#11 role-gate,#12 AI标签'
+    type: green
+    phase: P1
+    module: MOD-03
+    depends_on:
+    - T1A.1
+    deliverables:
+    - path: apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/turn_adapter.ex
+      type: code
+    verification: Turn lifecycle 绿
+    estimated_effort: medium
+    status: pending
+    gap_ref: GAP-A.2
+  gate: E2E flow works
+- id: batch-9
+  name: 'Phase B: Assembly + Turn — Batch 9'
+  milestone: M1
+  schedule:
+    start: Day 5
+    duration: 4 hours
+    target: Day 5
+  tasks:
+  - id: T1A.3
+    name: Operator 接管完善
+    description: 'Phase B3: Turn.claim→RuleStore.disable→edit→Turn.settle→RuleStore.enable, visibility via CustomerFeed snapshot
+      (P14 compliant)'
+    type: green
+    phase: P1
+    module: MOD-03
+    depends_on:
+    - T1A.2
+    deliverables:
+    - path: apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/operator_live.ex
+      type: code
+    verification: 接管流程完整绿
+    estimated_effort: medium
+    status: pending
+    gap_ref: GAP-A.3
+  gate: E2E flow works
+- id: batch-10
+  name: 'Phase B: Assembly + Turn — Batch 10'
+  milestone: M1
+  schedule:
+    start: Day 5
+    duration: 4 hours
+    target: Day 6
+  tasks:
+  - id: T1A.4
+    name: CustomerFeed 接入
+    description: 'Phase B4: customer_live→Phoenix.PubSub.subscribe(CustomerFeed.topic), {:customer_delivery}→snapshot, visibility
+      gating'
+    type: green
+    phase: P1
+    module: MOD-03
+    depends_on:
+    - T1A.2
+    - T1A.3
+    deliverables:
+    - path: apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/customer_live.ex
+      type: code
+    verification: customer只收settled消息
+    estimated_effort: medium
+    status: pending
+    gap_ref: GAP-A.4
+  gate: E2E flow works
+- id: batch-11
+  name: 'Phase C+D: Admin UI + FillerLoop — Batch 11'
+  milestone: M2
+  schedule:
+    start: Day 6
+    duration: 4 hours
+    target: Day 6
+  tasks:
+  - id: T2A.1
+    name: Master Admin 页面
+    description: 'Phase C1: master_dashboard_live, tenant_onboard_live (Step1基本信息→Step2 Admin→Step3初始化), platform_content_live
+      (L0/L1/L2 soul编辑)'
+    type: green
+    phase: P2
+    module: MOD-04
+    depends_on:
+    - T1A.4
+    deliverables:
+    - path: apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/master/
+      type: code
+    verification: master admin可创建租户,编辑平台模板
+    estimated_effort: medium
+    status: pending
+    gap_ref: GAP-A.1
+  - id: T2A.3
+    name: FillerLoop + 优化
+    description: 'Phase D1: filler_loop.ex (N秒安抚, max 3次), cc超时45s→静态道歉'
+    type: green
+    phase: P2
+    module: MOD-05
+    depends_on:
+    - T1A.4
+    deliverables:
+    - path: apps/ezagent_plugin_loom/lib/ezagent/filler_loop.ex
+      type: code
+    verification: filler在cc慢时出现,快时不出现
+    estimated_effort: small
+    status: pending
+    gap_ref: GAP-D1
+  gate: Admin UI complete
+- id: batch-12
+  name: 'Phase C+D: Admin UI + FillerLoop — Batch 12'
+  milestone: M2
+  schedule:
+    start: Day 6
+    duration: 4 hours
+    target: Day 7
+  tasks:
+  - id: T2A.2
+    name: Tenant Admin 页面
+    description: 'Phase C2: tenant_dashboard_live, skill_editor_live (4-layer), kb_manager_live (URL fetch+file upload+entry
+      edit), cr_dashboard_live, operators_live'
+    type: green
+    phase: P2
+    module: MOD-04
+    depends_on:
+    - T2A.1
+    deliverables:
+    - path: apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/tenant/
+      type: code
+    verification: tenant admin可完整管理soul/skill/KB/CR/operator
+    estimated_effort: medium
+    status: pending
+    gap_ref: GAP-A.2
+  gate: Admin UI complete
+milestones:
+- id: M0
+  name: Content + CR Plugin
+  phase: P0
+  batches:
+  - batch-1
+  - batch-2
+  - batch-3
+  - batch-4
+  - batch-5
+  - batch-6
+  target: Day 3
+  gate_checks:
+  - content plugin compiles
+  - CR engine passes lifecycle test
+  - cinnox migration successful
+- id: M1
+  name: Assembly + Turn
+  phase: P1
+  batches:
+  - batch-7
+  - batch-8
+  - batch-9
+  - batch-10
+  target: Day 5
+  gate_checks:
+  - Turn lifecycle E2E
+  - operator takeover works
+  - CustomerFeed :pull verified
+- id: M2
+  name: Admin UI + FillerLoop
+  phase: P2
+  batches:
+  - batch-11
+  - batch-12
+  target: Day 7
+  gate_checks:
+  - admin can create tenant
+  - tenant can edit soul/skill/KB
+  - CR publish works
+critical_path:
+- T0A.1
+- T0A.2
+- T0A.5
+- T0A.6
+- T0A.7
+- T0A.8
+- T1A.1
+- T1A.2
+- T1A.4
+- T2A.1
+- T2A.2
+summary:
+  total_batches: 12
+  total_milestones: 3
+  estimated_days: 6.0
+  team_size: 1
+  critical_path_length: 11
