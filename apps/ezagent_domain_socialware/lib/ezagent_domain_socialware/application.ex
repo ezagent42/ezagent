@@ -9,7 +9,7 @@ defmodule EzagentDomainSocialware.Application do
   use Application
 
   alias Ezagent.CapabilityRegistry
-  alias Ezagent.Behavior.{Chat, ConfigUpdate, Surface, Turn}
+  alias Ezagent.Behavior.{Chat, ConfigUpdate, SocialwarePublisherRead, Surface, Turn}
   alias Ezagent.Entity.SocialwareSession
   alias Ezagent.Socialware.ConfigProjection
 
@@ -44,6 +44,23 @@ defmodule EzagentDomainSocialware.Application do
 
     Enum.each(ConfigUpdate.actions(), fn action ->
       :ok = CapabilityRegistry.register(SocialwareSession, action, ConfigUpdate)
+    end)
+
+    # P3-3 (codex #711 HIGH) — the socialware publisher READ API. A DISTINCT,
+    # registry-only behavior (NOT in `SocialwareSession.behaviors/0`) exposing
+    # `:snapshot` + `:history` (no `:subscribe_from`) over the publisher trunk.
+    #
+    # The reads are CAP-EXEMPT (`cap_exempt_actions/0`) — the behavior's
+    # handler is the SOLE fail-closed authority (a live socialware owner/member
+    # check against the `:chat` sibling slice). Registering it ONLY for these
+    # read actions on `SocialwareSession` (NOT `Publisher.SessionImpl`) is what
+    # keeps a broad chat `kind: :session, behavior: Publisher.SessionImpl` grant
+    # from ever dispatching a read on a `SocialwareSession` — the chat publisher
+    # read actions are registered ONLY against the chat `Session` Kind, so there
+    # is no `{kind, action}` collision and no trunk/read split is needed; the
+    # trunk `Publisher.SessionImpl` stays the sole `:publisher` owner.
+    Enum.each(SocialwarePublisherRead.actions(), fn action ->
+      :ok = CapabilityRegistry.register(SocialwareSession, action, SocialwarePublisherRead)
     end)
 
     :ok
