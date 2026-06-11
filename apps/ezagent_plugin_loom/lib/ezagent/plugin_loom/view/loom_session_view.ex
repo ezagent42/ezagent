@@ -38,8 +38,18 @@ defmodule Ezagent.PluginLoom.View.LoomSessionView do
   def icon, do: "puzzle"
 
   @impl true
-  def applies_to?(%URI{scheme: "session", host: "loom", path: path}) when is_binary(path),
-    do: path != "/" and path != ""
+  # 只有**创作会话**(直接 session.loom / 手存模板如 zuatu)显示 loom 视图;**发布消费
+  # 会话**(`/p/:token/open` 从 published 物 mint 的 `pub_<hex>`,经 `ConsumerSession.mark`
+  # 持久标记)不显示。按来源持久标志判,不靠名字、不靠有没有 v0(2026-06-10)。
+  def applies_to?(%URI{scheme: "session", host: "loom", path: path}) when is_binary(path) do
+    case String.split(path, "/", trim: true) do
+      [ws, name | _] ->
+        name != "" and not Ezagent.PluginLoom.ConsumerSession.consumer?(ws, name)
+
+      _ ->
+        false
+    end
+  end
 
   def applies_to?(_), do: false
 

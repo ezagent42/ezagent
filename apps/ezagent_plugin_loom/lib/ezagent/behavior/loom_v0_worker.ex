@@ -79,16 +79,25 @@ defmodule Ezagent.Behavior.LoomV0Worker do
           {:ok, %{}, []}
 
         {:ok, reply_text} ->
-          case extract_files_and_summary(reply_text) do
+          # 2026-06-10:先抽可选 stitchConfig,再把该块从文本剥掉(否则会被 file 正则
+          # 误当成一个代码块文件)。文件抽取走剥干净的文本。
+          stitch_cfg = extract_stitch_config(reply_text)
+          files_text = Regex.replace(~r/```stitchConfig\s*\n[\s\S]*?```/, reply_text, "")
+
+          case extract_files_and_summary(files_text) do
             {:ok, files, summary} ->
-              # 2026-06-02 多文件:span 带 `files`(权威,新 dist 用)+ `source`
-              # (= /App.jsx,旧 dist 单文件降级渲染兼容)+ `summary`。
-              body_text =
-                Span.span("page_update", %{
-                  "files" => files,
-                  "source" => Map.get(files, "/App.jsx", ""),
-                  "summary" => summary
-                })
+              # span 带 `files`(权威)+ `source`(= /App.jsx,旧 dist 降级兼容)+ `summary`
+              # + 可选 `stitchConfig`(页面助手样式)。
+              base = %{
+                "files" => files,
+                "source" => Map.get(files, "/App.jsx", ""),
+                "summary" => summary
+              }
+
+              span_map =
+                if is_map(stitch_cfg), do: Map.put(base, "stitchConfig", stitch_cfg), else: base
+
+              body_text = Span.span("page_update", span_map)
 
               {:ok, %{},
                [{:set, :count, count + 1}, {:set, :last_error, nil}] ++
@@ -179,6 +188,24 @@ defmodule Ezagent.Behavior.LoomV0Worker do
       _ -> "页面已更新"
     end
   end
+
+  # 2026-06-10 — 抽 ```stitchConfig\n{...}\n``` 块(可选):v0 用它控制页面助手(Stitch)
+  # 的**样式/位置**(placement: bottom-right|bottom-center,draggable,accent),功能不变。
+  # 前端 loom-bridge 从 page_update 的 stitchConfig 字段读它。无块 → nil。
+  defp extract_stitch_config(text) when is_binary(text) do
+    case Regex.run(~r/```stitchConfig\s*\n([\s\S]*?)```/, text) do
+      [_, json] ->
+        case Jason.decode(String.trim(json)) do
+          {:ok, m} when is_map(m) -> m
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp extract_stitch_config(_), do: nil
 
   # ---------------------------------------------------------------
   # boilerplate — mention guard + reply dispatch (copied from LoomWorker)
@@ -279,9 +306,11 @@ defmodule Ezagent.Behavior.LoomV0Worker do
     with %URI{} = self_uri <- Map.get(ctx, :self_uri),
          %URI{} = orch <- orchestrator_uri(self_uri),
          {:ok, slice} when is_map(slice) <- Ezagent.Kind.get_slice(orch, :loom_orchestrator) do
-      files = EzagentPluginLoom.Prompts.normalize_source(slice[:loom_source] || slice["loom_source"])
+      files =
+        EzagentPluginLoom.Prompts.normalize_source(slice[:loom_source] || slice["loom_source"])
 
-      if is_map(files) and map_size(files) > 0 and files != EzagentPluginLoom.Prompts.loom_seed_files() do
+      if is_map(files) and map_size(files) > 0 and
+           files != EzagentPluginLoom.Prompts.loom_seed_files() do
         files
       else
         nil

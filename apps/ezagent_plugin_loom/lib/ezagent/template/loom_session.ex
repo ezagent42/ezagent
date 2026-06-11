@@ -83,6 +83,11 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
 
     seed_summary = Map.get(tmpl, "loom_summary") || "初始页"
 
+    # 2026-06-10 — 页面助手(Stitch)样式。发布/快照时由 read_orchestrator_snapshot
+    # 存进 saved_state.orchestrator.stitch_config;这里取出 → seed 进 page_update span
+    # (前端 extractStitchConfig 从这条消息读),让 published/pub 会话保持作者配的样式。
+    seed_stitch_config = Map.get(saved_orch, "stitch_config")
+
     saved_workers = Map.get(saved_state, "workers") || []
     worker_themes = worker_themes_from_saved(saved_workers)
     # 2026-06-05 — 发布物 fork 出的 session 不含 v0(base 冻结,只能 user_schema
@@ -102,7 +107,7 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
       # in chat — `Workspace.add_template/3` triggers instantiate twice
       # via an ESR-layer slice-change side-effect (deferred root-cause fix),
       # leading to duplicate seeds before this guard.
-      maybe_seed_loom_source(session_uri, seed_source, seed_summary)
+      maybe_seed_loom_source(session_uri, seed_source, seed_summary, seed_stitch_config)
 
       # Best-effort one-way Feishu mirror (gated by FEISHU_MIRROR_ENABLED=1),
       # mirroring EzagentPluginLoom.Bootstrap — so a UI-created loom session
@@ -282,18 +287,29 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
   # Idempotent wrapper around `seed_loom_source/3`. If the session already
   # has a `<span type="page_update">` message in recent history, skip (the
   # bridge will pick it up). Else seed once.
-  defp maybe_seed_loom_source(%URI{} = session_uri, source, summary)
+  defp maybe_seed_loom_source(%URI{} = session_uri, source, summary, stitch_config \\ nil)
        when is_binary(summary) do
     if already_seeded?(session_uri) do
       :ok
     else
-      seed_loom_source(session_uri, source, summary)
+      seed_loom_source(session_uri, source, summary, stitch_config)
     end
   end
 
+  # 2026-06-10 — 幂等判据:**看 session 里有没有 page_update 消息**(前端就是从这条消息
+  # 读页面文件的,所以判据必须看消息、**不能看 orchestrator slice**)。
+  #
+  # 坑历史:
+  #   - 原来只看最近 5 条 → Stitch 对话灌多了把 page_update 挤出窗口 → 误判没 seed →
+  #     boot 又 seed 默认页(zuatu 反复变回初始页)。
+  #   - 改成看 orchestrator slice 又坑了发布:pub 会话的 orchestrator 从发布类 saved_state
+  #     预启(slice 里已有源),于是误判"已 seed" → **跳过播 page_update 消息** → 前端没文件
+  #     → 发布预览空白。
+  # 正解:**宽窗口看消息**(200 条),既不被 Stitch 挤掉,又不会让"slice 有源但没消息"
+  # 的 pub 会话漏 seed。
   defp already_seeded?(%URI{} = session_uri) do
     session_uri
-    |> Ezagent.MessageStore.recent_in_session(5)
+    |> Ezagent.MessageStore.recent_in_session(200)
     |> Enum.any?(&page_update_msg?/1)
   rescue
     _ -> false
@@ -312,17 +328,22 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
   # = `system://session-internal` (same principal LoomSession uses for joins);
   # `mentions = []` (session-wide announcement, not addressed to anyone).
   # Best-effort; failures logged + swallowed.
-  defp seed_loom_source(%URI{} = session_uri, source, summary)
+  defp seed_loom_source(%URI{} = session_uri, source, summary, stitch_config \\ nil)
        when is_binary(summary) do
     # 2026-06-02 多文件:source 可能是 files map(新)或字符串(旧 saved/seed)→ 归一。
     files = EzagentPluginLoom.Prompts.normalize_source(source)
 
-    body =
-      EzagentPluginLoom.Span.span("page_update", %{
+    # 2026-06-10 — 作者配过 Stitch 样式就一并塞进 span(键名 `stitchConfig`,跟 v0
+    # 发的 page_update 一致),前端 extractStitchConfig 据此渲染 published/pub 助手。
+    span_payload =
+      %{
         "files" => files,
         "source" => Map.get(files, "/App.jsx", ""),
         "summary" => summary
-      })
+      }
+      |> maybe_put_stitch_config(stitch_config)
+
+    body = EzagentPluginLoom.Span.span("page_update", span_payload)
 
     sender = Ezagent.SystemPrincipal.uri("session-internal")
     msg = Ezagent.Message.new(sender, %{text: body, attachments: []}, mentions: [])
@@ -351,6 +372,11 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
         :ok
     end
   end
+
+  defp maybe_put_stitch_config(payload, cfg) when is_map(cfg) and map_size(cfg) > 0,
+    do: Map.put(payload, "stitchConfig", cfg)
+
+  defp maybe_put_stitch_config(payload, _), do: payload
 
   # Gated + best-effort, identical semantics to Bootstrap.maybe_bind_feishu/1.
   defp maybe_bind_feishu(%URI{} = session_uri) do
@@ -442,7 +468,10 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
       persona: to_string(Map.get(saved, "persona") || "visitor"),
       # 2026-06-02 多文件:saved loom_source 可能是 files map(新)或字符串(旧)。
       # 原样传,orchestrator init_slice 用 normalize_source 归一。
-      initial_loom_source: Map.get(saved, "loom_source") || %{}
+      initial_loom_source: Map.get(saved, "loom_source") || %{},
+      # 2026-06-10 — 把作者配的 Stitch 样式注回 orchestrator slice,这样从此 fork
+      # 出去的会话再 publish 时 read_orchestrator_snapshot 还能带上它。
+      initial_stitch_config: Map.get(saved, "stitch_config")
     }
 
     case Ezagent.Kind.spawn(Ezagent.Entity.LoomOrchestrator, args) do

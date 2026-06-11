@@ -140,37 +140,136 @@ defmodule EzagentPluginLoom.WebPlug do
     end
   end
 
-  # 2026-06-05 Stitch:preview 右下角聊天界面。GET 读对话(打开页面时拉,重放)。
+  # 2026-06-10 重构:Stitch / AiSpot 不再直连 DeepSeek。改成把每次请求包成一条
+  # `@loomstitch_<sid>` 消息**派进 session**,由 stitch worker(DeepSeek)处理,回帧
+  # 经 SSE 流回前端(前端按 ref_id 关联回发起的 Promise)。对话因此进 MessageStore。
+  #
+  # GET 读对话:从 **session 历史**重建 Stitch 聊天线程(取代旧 StitchChat JSON)。
   get "/api/:ws/:sid/stitch" do
-    json_resp(conn, 200, %{ok: true, conversation: Ezagent.PluginLoom.StitchChat.get(ws, sid)})
+    json_resp(conn, 200, %{ok: true, conversation: stitch_conversation(ws, sid)})
   end
 
-  # POST 发一条消息:接**独立 DeepSeek-v4-flash(非思考)**。2026-06-08 升级:
-  # 前端把页面当前**能力清单**(loom-kit 组件注册的 caps)一起带上,DeepSeek 优先
-  # 把自然语言**映射成一次组件驱动**(`DRIVE: {id,action,params}`,如「看看非洲」→
-  # 切 DataScope),映射不上才当普通对话/addText。两条对话都进 StitchChat;drive 由
-  # 前端经引擎应用(不进 user_schema)。body: %{"text", "caps"=[...]}
+  # POST 发一条 Stitch 聊天:派 `@loomstitch_<sid>`(mode=stitch,带 caps + 最近历史)。
+  # 异步——立即返回 `{ok, id}`,真正的 `{reply, drive, op}` 由 worker 回的 stitch_reply
+  # 帧经流送达。body: %{"text", "caps"=[...], "history"=[{role,text,drive}]}
   post "/api/:ws/:sid/stitch" do
     text = conn.body_params |> Map.get("text", "") |> to_string()
     caps = conn.body_params |> Map.get("caps", []) |> normalize_caps()
-    json_resp(conn, 200, stitch_send(ws, sid, text, caps))
+    history = conn.body_params |> Map.get("history", [])
+
+    json_resp(
+      conn,
+      200,
+      dispatch_to_stitch(
+        ws,
+        sid,
+        %{"mode" => "stitch", "text" => text, "caps" => caps, "history" => history},
+        text
+      )
+    )
   end
 
-  # 注:stitch_send 内部读 Knowledge.get(ws, sid) 作 grounding(见 stitch_system_prompt)。
-
-  # 2026-06-08 AiSpot 动态卡:点页面上某个 ✨ 时,带上该点的 context(v0 注入的「这块
-  # 是什么 + 当前数据/状态」)实时问 AI,返回一段**与该处相关**的卡片内容(非写死)。
-  # body: %{"feature", "context"}。(v1 非流式;流式作后续。)
+  # 2026-06-10 AiSpot ✨:同样走 stitch worker(mode=aispot,纯文本应答)。异步,回帧
+  # 经流按 ref_id 关联回那次 ✨ 请求。body: %{"feature", "context"}。
   post "/api/:ws/:sid/aispot" do
     feature = conn.body_params |> Map.get("feature", "") |> to_string()
     context = conn.body_params |> Map.get("context", "") |> to_string()
-    json_resp(conn, 200, aispot_ask(feature, context, Ezagent.PluginLoom.Knowledge.get(ws, sid)))
+    caps = conn.body_params |> Map.get("caps", []) |> normalize_caps()
+
+    json_resp(
+      conn,
+      200,
+      dispatch_to_stitch(
+        ws,
+        sid,
+        %{"mode" => "aispot", "feature" => feature, "context" => context, "caps" => caps},
+        aispot_visible(feature)
+      )
+    )
   end
 
   # 2026-06-09 知识库:编辑器写一段 md,作为消费侧 Stitch/AiSpot 的 grounding。
   get "/api/:ws/:sid/knowledge" do
     json_resp(conn, 200, %{ok: true, md: Ezagent.PluginLoom.Knowledge.get(ws, sid)})
   end
+
+  # 2026-06-11 意图路由(推荐版):发布页可带 ?intent=<自然语言>。host 收集页面 caps
+  # (含 type:"catalog" 的商品目录能力)+ POST 这里,**直连 DeepSeek**(session-less,一次性,
+  # 不进会话)→ 从目录里**硬选恰好 3 个**最符合意图的商品 + 写一句推荐语 → 返回 {pitch, slugs}。
+  # host 据此 drive 页面到「为你推荐」走马灯(首屏揭开前应用,见 lib/sandbox/intent.ts)。
+  post "/intent" do
+    text = conn.body_params |> Map.get("text", "") |> to_string()
+    caps = conn.body_params |> Map.get("caps", []) |> normalize_caps()
+    catalog = extract_catalog(caps)
+
+    cond do
+      String.trim(text) == "" or catalog == [] ->
+        json_resp(conn, 200, %{ok: false, error: "no_catalog_or_text"})
+
+      true ->
+        system = recommend_prompt(catalog)
+        messages = [%{role: "system", content: system}, %{role: "user", content: text}]
+
+        case EzagentPluginLoom.DeepSeek.chat(messages, thinking_disabled: true) do
+          {:ok, reply} ->
+            case parse_recommend(reply, catalog) do
+              {pitch, slugs} -> json_resp(conn, 200, %{ok: true, pitch: pitch, slugs: slugs})
+              :error -> json_resp(conn, 200, %{ok: false, error: "parse"})
+            end
+
+          {:error, reason} ->
+            json_resp(conn, 200, %{ok: false, error: inspect(reason)})
+        end
+    end
+  end
+
+  # 从 caps 里抽出 type:"catalog" 能力的商品列表(zuatu App 注册)。每项至少有 slug。
+  defp extract_catalog(caps) do
+    caps
+    |> Enum.find(fn c -> Map.get(c, "type") == "catalog" end)
+    |> case do
+      %{"products" => ps} when is_list(ps) -> ps
+      _ -> []
+    end
+  end
+
+  defp recommend_prompt(catalog) do
+    """
+    你是 ZUATU 网店的选品导购。下面是商品目录(JSON 数组,每项有 slug/name/priceText/tag/catLabel):
+    #{Jason.encode!(catalog)}
+
+    用户会给一句话表达偏好或意图。请:
+    1. 从目录里挑出**最符合**该意图的**恰好 3 个**商品(按相关度排序,最相关在前);
+       若强相关不足 3 个,用目录里其它合适的补满 3 个。
+    2. 写一句简短有力、像导购当面对她说的中文推荐语(≤28 字,不要书名号)。
+
+    **只返回 JSON,不要任何额外文字 / 不要代码块标记**:
+    {"pitch":"……","slugs":["slug1","slug2","slug3"]}
+    slugs 里的值必须严格来自目录的 slug 字段。
+    """
+  end
+
+  # 解析 DeepSeek 回复 → {pitch, slugs(恰好3个有效slug)}。失败 → :error。
+  defp parse_recommend(reply, catalog) when is_binary(reply) do
+    valid = catalog |> Enum.map(&Map.get(&1, "slug")) |> Enum.filter(&is_binary/1)
+
+    cleaned =
+      reply
+      |> String.replace(~r/```json|```/, "")
+      |> String.trim()
+
+    with {:ok, %{"slugs" => slugs} = m} when is_list(slugs) <- Jason.decode(cleaned) do
+      pitch = m |> Map.get("pitch", "为你精选") |> to_string()
+      picked = slugs |> Enum.filter(&(&1 in valid)) |> Enum.uniq()
+      # 补满 / 截断到 3 个(硬要 3 个)。
+      filled = (picked ++ Enum.reject(valid, &(&1 in picked))) |> Enum.take(3)
+      if filled == [], do: :error, else: {pitch, filled}
+    else
+      _ -> :error
+    end
+  end
+
+  defp parse_recommend(_, _), do: :error
 
   post "/api/:ws/:sid/knowledge" do
     md = conn.body_params |> Map.get("md", "") |> to_string()
@@ -208,6 +307,9 @@ defmodule EzagentPluginLoom.WebPlug do
           page: Map.get(snap, "page", %{}),
           ops: Map.get(snap, "ops", []),
           conversation: Map.get(snap, "conversation", []),
+          # 2026-06-11 — 只读快照视图的 Stitch 没有 bridge,样式只能靠这里带过去
+          # (否则退回默认 fab,丢掉作者配的 bar / accent)。
+          stitch_config: Map.get(snap, "stitch_config"),
           ws: Map.get(snap, "ws"),
           origin_sid: Map.get(snap, "origin_sid")
         })
@@ -394,7 +496,8 @@ defmodule EzagentPluginLoom.WebPlug do
     valid_ids = [
       "loommeta_#{sid}",
       "loomorch_#{sid}",
-      "loomv0_#{sid}"
+      "loomv0_#{sid}",
+      "loomstitch_#{sid}"
     ]
 
     case Regex.run(~r/^\s*@([a-zA-Z_][a-zA-Z0-9_]*)\s*/, text) do
@@ -476,7 +579,10 @@ defmodule EzagentPluginLoom.WebPlug do
 
       # v0 生成进度增量 → 作 `__loom_progress` 帧推给前端(前端识别后实时显示)。
       {:loom_gen_progress, text} when is_binary(text) ->
-        case chunk(conn, "data: " <> Jason.encode!(%{"__loom_progress" => true, "text" => text}) <> "\n\n") do
+        case chunk(
+               conn,
+               "data: " <> Jason.encode!(%{"__loom_progress" => true, "text" => text}) <> "\n\n"
+             ) do
           {:ok, conn} -> sse_loop(conn)
           {:error, _} -> conn
         end
@@ -493,14 +599,25 @@ defmodule EzagentPluginLoom.WebPlug do
   end
 
   defp frame(%Ezagent.Message{} = m) do
-    %{
+    base = %{
       "id" => m.id,
       "sender" => to_string(m.sender),
       "role" => role_of(m.sender),
       "body" => body_text(m.body),
       "refId" => m.ref_id
     }
+
+    # stitch worker 回复:body 是纯文本,drive/op/mode 在 `stitch_reply` 字段 → 随帧
+    # 作独立 `stitch` 字段送前端(前端据此应用 drive、关联回 Promise)。
+    case stitch_meta_of(m.body) do
+      nil -> base
+      meta -> Map.put(base, "stitch", meta)
+    end
   end
+
+  defp stitch_meta_of(%{stitch_reply: m}) when is_map(m), do: m
+  defp stitch_meta_of(%{"stitch_reply" => m}) when is_map(m), do: m
+  defp stitch_meta_of(_), do: nil
 
   defp role_of(%URI{} = u), do: role_of(URI.to_string(u))
   defp role_of("entity://user/" <> _), do: "user"
@@ -771,7 +888,16 @@ defmodule EzagentPluginLoom.WebPlug do
          {:ok, user_uri} <- EzagentPluginLoom.TempUser.ensure_named(ws, "loomui_#{sid}"),
          :ok <- ensure_joined(session_uri, user_uri) do
       # 知识库随发布物 seed 进这个消费会话 → 它的 Stitch 也有知识。
-      _ = Ezagent.PluginLoom.Knowledge.put(ws, sid, Ezagent.PluginLoom.SavedClasses.knowledge_for_token(token))
+      _ =
+        Ezagent.PluginLoom.Knowledge.put(
+          ws,
+          sid,
+          Ezagent.PluginLoom.SavedClasses.knowledge_for_token(token)
+        )
+
+      # 2026-06-10 — 标记为发布消费会话:它不该有 loom 编辑视图 tab(LoomSessionView)。
+      _ = Ezagent.PluginLoom.ConsumerSession.mark(ws, sid)
+
       %{ok: true, ws: ws, sid: sid}
     else
       :error -> %{ok: false, error: "unknown token"}
@@ -799,180 +925,6 @@ defmodule EzagentPluginLoom.WebPlug do
     _ -> %{ok: true, logged_in: false}
   end
 
-  # --- Stitch(独立 DeepSeek-v4-flash 聊天 + 简单增强)-----------------
-
-  # Stitch system prompt(动态:能力清单 caps + 知识库 kb)。两条职责并重:
-  #   ① 能映射成命令就 DRIVE(操作页面);
-  #   ② 映射不上就**当个会答问题的助手**,优先据知识库作答 —— **绝不**简单说"不懂"。
-  defp stitch_system_prompt(caps, kb) do
-    caps_json =
-      case caps do
-        [_ | _] -> Jason.encode!(caps)
-        _ -> "[]"
-      end
-
-    kb_block =
-      case String.trim(kb || "") do
-        "" -> "(本页没有提供知识库)"
-        k -> k
-      end
-
-    """
-    你是 Stitch —— 嵌在一个网页里的友好助手。页面作者声明了若干「能力」(见下方 JSON,
-    每项是参数化指令集:`options` 可选值 + `commands` 命令形状)。你每次回复,要么**操作页面**,
-    要么**回答问题**。
-
-    ════ A)操作页面(切换 / 对比 / 筛选 / 排序 / 高亮 / 调数值 / 打开解读)════
-    当用户的意图能对应某能力的某 command 时,你**必须**在回复里输出一行机器指令:
-      DRIVE: {"id":"<能力 id>","action":"<command.action>","params":<你据 options 自己构造的真实参数>}
-
-    ⛔ **铁律(最重要,违反就是欺骗用户)**:
-      **没有输出 DRIVE 行,就绝对不许说「已切换 / 已切到 / 已对比 / 已筛选 / 已高亮 / 已设为 / 已…」
-      之类表示"做完了"的话。** 不许只动嘴、不干活。要么 DRIVE 行 + 确认话一起给,要么都别给。
-
-    （历史里若有你过去「已切…」却**没带 DRIVE 行**的回复,那是旧 bug,**别模仿**;也别因此以为
-      操作已做完。只要用户这次要切换/对比/筛选,不管你是否觉得页面已是该状态,都**重新输出 DRIVE 行**
-      ——这些操作是幂等的,重复发安全。)
-
-    构造要点:
-      - `params` 里用 `options` 的 **key**(不是 label、不是 `<占位符>`)自己填;支持任意组合,别被示例局限。
-      - 一次最多一行 DRIVE;`options` 里没有的值不要硬编成命令。
-
-    例(设某能力 id="datascope:渠道",options 含 {key:"tb",label:"淘宝"}、{key:"dy",label:"抖音"}):
-      用户说「看看淘宝」「只看淘宝」 → 你回:
-        DRIVE: {"id":"datascope:渠道","action":"setScope","params":{"scope":"tb"}}
-        已切到淘宝渠道。
-      用户说「对比淘宝和抖音」 → 你回:
-        DRIVE: {"id":"datascope:渠道","action":"setCompare","params":{"pair":["tb","dy"]}}
-        已对比淘宝和抖音。
-
-    ════ B)回答问题 / 闲聊 ════
-    用户在提问 / 闲聊 / 意图对应不上任何能力时,就**友好具体地回答**,优先依据下方【知识库】;
-    知识库没写到的用常识简洁回答或坦诚说"这点资料里没提到"。**绝不要**简单回"抱歉我不懂"。
-    若用户想做的操作**这页没有对应能力**,要**如实说**"这个页面暂时没有这个操作"并说明它能做什么
-    ——**不要假装操作成功**(这就是上面铁律的另一面)。
-
-    【这页声明的能力】(JSON;每项含 id/label、options[{key,label}]、commands[{action,desc,params}]):
-    #{caps_json}
-
-    【知识库】(页面作者写的,作答的首要依据):
-    #{kb_block}
-
-    用户明确只想"在某处加段文字"时可输出:
-      OP: {"op":"addText","position":"<top|bottom|top-right|top-left|bottom-right|bottom-left>","text":"..."}
-    保持简短、友好、中文。
-    """
-  end
-
-  defp stitch_send(ws, sid, text, caps \\ [])
-  defp stitch_send(_ws, _sid, "", _caps), do: %{ok: false, error: "empty text"}
-
-  defp stitch_send(ws, sid, text, caps) do
-    user_msg = %{"role" => "user", "text" => text, "id" => stitch_id()}
-    _ = Ezagent.PluginLoom.StitchChat.append(ws, sid, user_msg)
-
-    history = Ezagent.PluginLoom.StitchChat.get(ws, sid)
-    kb = Ezagent.PluginLoom.Knowledge.get(ws, sid)
-
-    # 回放给模型的历史:**把当时的 DRIVE 行重新拼回 assistant 内容**,让历史呈现「确认话
-    # + 机器指令」的正确样式。否则模型会模仿旧的"只说话不发 DRIVE",甚至以为操作早做完了而
-    # 拒绝再发(history 污染 bug,2026-06-10)。UI 那份 conversation 仍只读 text,不受影响。
-    # 只喂最近 16 条,省 token 也减少旧污染权重。
-    hist_msgs =
-      history
-      |> Enum.take(-16)
-      |> Enum.map(fn m ->
-        content =
-          case m do
-            %{"role" => "assistant", "drive" => d} when is_map(d) ->
-              (m["text"] || "") <> "\nDRIVE: " <> Jason.encode!(d)
-
-            _ ->
-              m["text"] || ""
-          end
-
-        %{"role" => m["role"], "content" => content}
-      end)
-
-    ds_messages =
-      [%{"role" => "system", "content" => stitch_system_prompt(caps, kb)}] ++ hist_msgs
-
-    # 独立直连 DeepSeek-v4-flash,非思考(不走 LLM 分发器 / 不走会话编排器)。
-    case EzagentPluginLoom.DeepSeek.chat(ds_messages, temperature: 0.3, thinking_disabled: true) do
-      {:ok, raw} ->
-        {reply, op, drive} = parse_stitch_reply(raw)
-
-        _ =
-          Ezagent.PluginLoom.StitchChat.append(ws, sid, %{
-            "role" => "assistant",
-            "text" => reply,
-            # 存下本次 DRIVE(nil 或 map):下次回放历史时拼回机器指令行,history 不再污染。
-            "drive" => drive,
-            "id" => stitch_id()
-          })
-
-        applied = if op, do: apply_stitch_op(ws, sid, op), else: nil
-
-        %{
-          ok: true,
-          reply: reply,
-          op: applied,
-          # drive:由前端经引擎驱动对应组件(切数据/对比等);不进 user_schema。
-          drive: drive,
-          conversation: Ezagent.PluginLoom.StitchChat.get(ws, sid),
-          ops: Ezagent.PluginLoom.UserSchema.get(ws, sid)
-        }
-
-      {:error, reason} ->
-        # 失败也把一条错误助手消息记进对话,UI 有反馈。
-        msg = "(增强助手暂时不可用:#{inspect(reason)})"
-
-        _ =
-          Ezagent.PluginLoom.StitchChat.append(ws, sid, %{
-            "role" => "assistant",
-            "text" => msg,
-            "id" => stitch_id()
-          })
-
-        %{
-          ok: false,
-          error: inspect(reason),
-          conversation: Ezagent.PluginLoom.StitchChat.get(ws, sid)
-        }
-    end
-  end
-
-  # AiSpot 动态卡:用该 ✨ 点的 feature + context(+ 页面知识库)实时问 AI,生成一段
-  # **与该处相关**的内容(非写死)。v1 非流式。
-  defp aispot_ask(feature, context, kb \\ "")
-  defp aispot_ask("", "", _kb), do: %{ok: false, error: "no context"}
-
-  defp aispot_ask(feature, context, kb) do
-    kb_block =
-      case String.trim(kb || "") do
-        "" -> ""
-        k -> "\n这页的知识库(可作依据):\n#{k}\n"
-      end
-
-    sys = """
-    你在为一个网页上的「✨ AI 点」生成一小段有用、与该处强相关的内容。直接、具体、口语化中文,
-    2-4 句,**紧扣下面给的这块是什么和它的当前数据/状态**(有知识库就结合),不要套话/客套/免责声明。
-    把回答里**值得进一步追问的关键名词/术语**用双方括号包起来(如 `[[增值税]]`、`[[复购率]]`),
-    最多 3 个,只标真正值得解释的;用户点它会向页面助手追问。普通词不要标。
-    这块功能:#{if feature == "", do: "(未命名)", else: feature}
-    这块的上下文/数据:#{if context == "", do: "(无)", else: context}#{kb_block}
-    """
-
-    case EzagentPluginLoom.DeepSeek.chat(
-           [%{"role" => "system", "content" => sys}, %{"role" => "user", "content" => "生成。"}],
-           temperature: 0.5,
-           thinking_disabled: true
-         ) do
-      {:ok, text} -> %{ok: true, text: text}
-      {:error, reason} -> %{ok: false, error: inspect(reason)}
-    end
-  end
-
   # 前端传来的 caps 直通(限制条数,防 prompt 过长)。只保留有 id 的对象。
   defp normalize_caps(caps) when is_list(caps) do
     caps |> Enum.filter(&(is_map(&1) and Map.get(&1, "id") not in [nil, ""])) |> Enum.take(40)
@@ -980,77 +932,131 @@ defmodule EzagentPluginLoom.WebPlug do
 
   defp normalize_caps(_), do: []
 
-  defp apply_stitch_op(ws, sid, op) do
-    op = Map.put_new(op, "id", "op_" <> stitch_id())
-    _ = Ezagent.PluginLoom.UserSchema.append(ws, sid, op)
-    op
+  # --- Stitch / AiSpot → loomstitch worker(2026-06-10 重构)-------------
+  # preview 侧 AI 不再直连 DeepSeek。每次请求包成一条 `@loomstitch_<sid>` 消息派进
+  # session,由 stitch worker(DeepSeek)处理,回 `stitch_reply` 帧经 SSE 流回前端。
+
+  defp aispot_visible(""), do: "✨ AI 解读"
+  defp aispot_visible(feature), do: "✨ " <> feature
+
+  # 幂等 spawn + join loomstitch worker(老会话兜底)。失败不阻断(派发仍会进行,
+  # 极端情况落 DLQ,但正常路径已就位)。
+  defp ensure_stitch_worker(%URI{} = suri, %URI{} = stitch_uri) do
+    _ = Ezagent.SpawnRegistry.spawn(stitch_uri)
+    ensure_joined(suri, stitch_uri)
+  rescue
+    _ -> :ok
   end
 
-  defp stitch_id, do: :crypto.strong_rand_bytes(6) |> Base.encode16(case: :lower)
+  # 派 @loomstitch 消息(异步)。结构化负载放 body 的 `:stitch` 键;visible_text 是
+  # admin/session 可见的那句。返回 `%{ok, id}`(id=消息 id,前端据此关联回帧)。
+  defp dispatch_to_stitch(ws, sid, payload, visible_text) do
+    suri = session_uri(ws, sid)
+    stitch_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomstitch_#{sid}")
 
-  # 从 DeepSeek 回复里抽出 `DRIVE: {json}` 和/或 `OP: {json}` 行 →
-  # {显示文本, addText_op|nil, drive|nil}。
-  defp parse_stitch_reply(raw) when is_binary(raw) do
-    lines = String.split(raw, "\n")
+    # 幂等保证 stitch worker 在场:老会话(zuatu / 发布物)boot 时不一定重跑 ensure_team,
+    # 所以这里按需 spawn + join(已在则短路)。新会话由 Team.ensure_team 装配。
+    _ = ensure_stitch_worker(suri, stitch_uri)
 
-    classify = fn prefix ->
-      lines
-      |> Enum.find(fn l -> l |> String.trim() |> String.starts_with?(prefix) end)
-      |> case do
-        nil ->
-          nil
+    with {:ok, user_uri} <- EzagentPluginLoom.TempUser.ensure_named(ws, "loomui_#{sid}"),
+         :ok <- ensure_joined(suri, user_uri) do
+      msg =
+        Ezagent.Message.new(
+          user_uri,
+          %{text: visible_text, attachments: [], stitch: payload},
+          mentions: [stitch_uri]
+        )
 
-        line ->
-          json = line |> String.trim() |> String.replace_prefix(prefix, "") |> String.trim()
+      inv = %Ezagent.Invocation{
+        target: URI.new!("#{URI.to_string(suri)}?action=chat.send"),
+        mode: :cast,
+        args: %{message: msg},
+        ctx: %{
+          caller: user_uri,
+          caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+          reply: :ignore
+        }
+      }
 
-          case Jason.decode(json) do
-            {:ok, m} when is_map(m) -> m
-            _ -> nil
-          end
+      case Ezagent.Invocation.dispatch(inv) do
+        :ok -> %{ok: true, id: msg.id}
+        {:ok, _} -> %{ok: true, id: msg.id}
+        {:error, reason} -> %{ok: false, error: inspect(reason)}
       end
+    else
+      {:error, reason} -> %{ok: false, error: inspect(reason)}
     end
-
-    drive =
-      case classify.("DRIVE:") do
-        %{"id" => id, "action" => action} = m when is_binary(id) and is_binary(action) -> m
-        _ -> nil
-      end
-
-    op =
-      case classify.("OP:") do
-        %{"op" => _} = o -> o
-        _ -> nil
-      end
-
-    text =
-      lines
-      |> Enum.reject(fn l ->
-        t = String.trim(l)
-        String.starts_with?(t, "DRIVE:") or String.starts_with?(t, "OP:")
-      end)
-      |> Enum.join("\n")
-      |> String.trim()
-      |> case do
-        "" -> "好的。"
-        t -> t
-      end
-
-    {text, op, drive}
   end
+
+  # GET /stitch:从 session 历史重建 Stitch 聊天线程(取代旧 StitchChat)。只取
+  # mode=stitch 的用户消息(@loomstitch 发起)+ loomstitch 回的 stitch_reply。
+  # AiSpot(mode=aispot)不进聊天面板。
+  defp stitch_conversation(ws, sid) do
+    stitch_name = "loomstitch_#{sid}"
+
+    session_uri(ws, sid)
+    |> Ezagent.MessageStore.recent_in_session(80)
+    |> Enum.reverse()
+    |> Enum.flat_map(&stitch_turn(&1, stitch_name))
+  rescue
+    _ -> []
+  end
+
+  defp stitch_turn(%Ezagent.Message{sender: sender, body: body}, stitch_name) do
+    cond do
+      # assistant:loomstitch 回的消息。body 是纯文本;mode/drive 在 stitch_reply 字段。
+      String.contains?(to_string(sender), "/" <> stitch_name) ->
+        case stitch_meta_of(body) do
+          %{} = meta ->
+            if to_string(meta["mode"] || meta[:mode] || "stitch") == "stitch",
+              do: [
+                %{
+                  "role" => "assistant",
+                  "text" => body_text(body),
+                  "drive" => meta["drive"] || meta[:drive]
+                }
+              ],
+              else: []
+
+          _ ->
+            []
+        end
+
+      # user:@loomstitch 发起的 stitch 聊天(body.stitch.mode == "stitch")
+      true ->
+        payload = (is_map(body) && (body["stitch"] || body[:stitch])) || nil
+
+        case payload do
+          %{} = p ->
+            if to_string(p["mode"] || p[:mode] || "stitch") == "stitch",
+              do: [%{"role" => "user", "text" => body_text(body)}],
+              else: []
+
+          _ ->
+            []
+        end
+    end
+  end
+
+  defp stitch_turn(_, _), do: []
 
   # 从当前 preview 会话冻结快照副本(页面取自 orchestrator 的 loom_source,ops 取自
   # user_schema,**Stitch 对话取自 StitchChat**)。三者都是**副本**:之后 live 会话继续
   # 增强/对话,这份快照不变,被分享者看到的是冻结时刻的状态。
   defp create_snapshot(ws, sid) do
     case read_orchestrator_snapshot(ws, sid) do
-      {:ok, %{"loom_source" => page}} ->
+      {:ok, %{"loom_source" => page} = orch} ->
         token = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
 
         Ezagent.PluginLoom.Snapshots.put(token, %{
           "ws" => ws,
           "page" => page,
+          # 2026-06-10 — Stitch 样式随快照冻结,fork 出的会话据此 seed。
+          "stitch_config" => Map.get(orch, "stitch_config"),
           "ops" => Ezagent.PluginLoom.UserSchema.get(ws, sid),
-          "conversation" => Ezagent.PluginLoom.StitchChat.get(ws, sid),
+          # 2026-06-10 — Stitch 对话现在存在 session 消息里(不再是 StitchChat),
+          # 从 session 历史重建,否则快照冻结的是空对话。
+          "conversation" => stitch_conversation(ws, sid),
           "knowledge" => Ezagent.PluginLoom.Knowledge.get(ws, sid),
           "origin_sid" => sid,
           "created_at" => DateTime.utc_now() |> DateTime.to_iso8601()
@@ -1077,7 +1083,11 @@ defmodule EzagentPluginLoom.WebPlug do
            "class" => "session.loom",
            "session_name" => sid,
            "no_v0" => true,
-           "saved_state" => %{"orchestrator" => %{"loom_source" => page}}
+           "saved_state" => %{
+             "orchestrator" =>
+               %{"loom_source" => page}
+               |> put_if(snap, "stitch_config")
+           }
          },
          {:ok, [session_uri | _]} <-
            Ezagent.PluginLoom.Template.LoomSession.instantiate(
@@ -1116,6 +1126,15 @@ defmodule EzagentPluginLoom.WebPlug do
 
   defp mint_published_sid,
     do: "pub_" <> (:crypto.strong_rand_bytes(6) |> Base.encode16(case: :lower))
+
+  # Copy `key` from `src` into `map` only when present + non-empty (keeps the
+  # saved_state.orchestrator map lean — absent stitch_config stays absent).
+  defp put_if(map, src, key) do
+    case Map.get(src, key) do
+      v when is_map(v) and map_size(v) > 0 -> Map.put(map, key, v)
+      _ -> map
+    end
+  end
 
   defp read_full_session_snapshot(ws, sid) do
     case read_orchestrator_snapshot(ws, sid) do
@@ -1202,34 +1221,91 @@ defmodule EzagentPluginLoom.WebPlug do
   defp read_orchestrator_snapshot(ws, sid) do
     orch_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomorch_#{sid}")
 
-    case Ezagent.Kind.get_slice(orch_uri, :loom_orchestrator) do
-      {:ok, slice} when is_map(slice) ->
-        persona = slice[:persona] || slice["persona"] || "visitor"
-        # 2026-06-02 多文件:loom_source 现为 files map。先判原始值是否"无源",
-        # 再归一存 map(不再 to_string)。normalize_source 对 nil/"" 会回退 seed,
-        # 所以空判用原始值,避免把 seed 当成用户自定义源快照下来。
-        raw = slice[:loom_source] || slice["loom_source"]
-        files = EzagentPluginLoom.Prompts.normalize_source(raw)
+    # 2026-06-11 — 幂等补 spawn orchestrator(老会话兜底)。发布/消费会话(pub_*)是按需
+    # mint 的临时会话,boot 时不重跑 Team.ensure_team,server 重启后 orchestrator 进程没了
+    # → get_slice 直接 :not_found,快照/存模板失败。这里像 ensure_stitch_worker 一样按需
+    # 复活:有持久化快照就 rehydrate 回 loom_source(已在则短路)。失败不阻断,交给下面读。
+    _ =
+      try do
+        Ezagent.SpawnRegistry.spawn(orch_uri)
+      rescue
+        _ -> :ok
+      end
 
-        cond do
-          raw in [nil, "", %{}] or map_size(files) == 0 ->
-            {:error, :no_source_in_orchestrator}
+    # slice(orchestrator 缓存的源 + persona + stitch 样式)。可能滞后 / 为空 / 退化成
+    # 默认页(老会话重启后被默认 seed),所以下面**优先用最新 page_update 消息**。
+    {slice_files, slice_cfg, persona} =
+      case Ezagent.Kind.get_slice(orch_uri, :loom_orchestrator) do
+        {:ok, slice} when is_map(slice) ->
+          raw = slice[:loom_source] || slice["loom_source"]
+          files = EzagentPluginLoom.Prompts.normalize_source(raw)
+          sf = if raw in [nil, "", %{}] or map_size(files) == 0, do: nil, else: files
+          {sf, slice[:stitch_config] || slice["stitch_config"],
+           slice[:persona] || slice["persona"] || "visitor"}
 
-          true ->
-            {:ok,
-             %{
-               "persona" => to_string(persona),
-               "loom_source" => files
-             }}
-        end
+        _ ->
+          {nil, nil, "visitor"}
+      end
 
-      {:error, _} = err ->
-        err
+    # 2026-06-11 — 发布/快照冻结的应是**用户此刻看到的页面** = 编辑器从最新 page_update
+    # 消息渲染的那一份。slice 只是 orchestrator 的缓存,可能滞后(直接改库 / 删快照后
+    # 退化成默认页),故**优先消息,slice 兜底**。消息没带 stitchConfig 时用 slice 的。
+    {msg_files, msg_cfg} =
+      case latest_page_update(ws, sid) do
+        {f, c} -> {f, c}
+        _ -> {nil, nil}
+      end
 
-      other ->
-        {:error, {:get_slice_unexpected, inspect(other)}}
+    files = msg_files || slice_files
+    cfg = msg_cfg || slice_cfg
+
+    if is_map(files) and map_size(files) > 0 do
+      {:ok, build_orch_snapshot(persona, files, cfg)}
+    else
+      {:error, :no_source_in_orchestrator}
     end
   end
+
+  # publish/snapshot 用的 orchestrator 快照 shape(persona + loom_source [+ stitch_config])。
+  defp build_orch_snapshot(persona, files, stitch_cfg) do
+    base = %{"persona" => to_string(persona || "visitor"), "loom_source" => files}
+
+    if is_map(stitch_cfg) and map_size(stitch_cfg) > 0,
+      do: Map.put(base, "stitch_config", stitch_cfg),
+      else: base
+  end
+
+  # 从会话历史里取最新一条 page_update 的 {files, stitchConfig}(recent_in_session 按
+  # inserted_at DESC,故第一条命中即最新)。无则 nil。
+  defp latest_page_update(ws, sid) do
+    session_uri(ws, sid)
+    |> Ezagent.MessageStore.recent_in_session(200)
+    |> Enum.find_value(&parse_page_update_msg/1)
+  rescue
+    _ -> nil
+  end
+
+  defp parse_page_update_msg(%Ezagent.Message{body: body}) do
+    text =
+      case body do
+        %{text: t} when is_binary(t) -> t
+        %{"text" => t} when is_binary(t) -> t
+        _ -> ""
+      end
+
+    with [_full, inner] <- Regex.run(~r/<span\s+type="page_update"\s*>([\s\S]*)<\/span>/, text),
+         {:ok, decoded} <- Jason.decode(String.trim(inner)) do
+      files = EzagentPluginLoom.Prompts.normalize_source(decoded["files"] || decoded["source"])
+
+      if is_map(files) and map_size(files) > 0,
+        do: {files, decoded["stitchConfig"]},
+        else: nil
+    else
+      _ -> nil
+    end
+  end
+
+  defp parse_page_update_msg(_), do: nil
 
   # 2026-06-01 — Class-级:从 SavedClasses JSON 文件读保存项,不再扫
   # workspace.session_templates(那里现在是 Instance 级别,跟保存的 Class 是不同概念)。
