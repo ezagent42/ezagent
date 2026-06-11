@@ -906,39 +906,63 @@ published_version: null
 
 > 所有内容数据统一走文件系统。ConfigStore 仅存 CR 元数据(`cr:<tid>:<cr_id>`) + tenant config(`tenant:<tid>:config`)。
 
-### 5.3 CR 工作流
+### 5.3 CR 工作流 — 从编辑到发布
+
+#### 阶段 1: 编辑 (写 sandbox)
 
 ```
-┌─────────────────────────────────────────────────────┐
-│ Admin 编辑 (Soul Editor / Skill Editor / KB Mgr)     │
-│   → 所有编辑直接写 sandbox/ 目录                      │
-│     (slots/<role>.yaml, souls/, skills/, kb/)        │
-│   → editor 调 cr_engine.track_change(tid, resource)  │
-│   → cr_engine ensure_active_cr + 更新 scope          │
-└──────────────────┬──────────────────────────────────┘
-                   ↓
-┌─────────────────────────────────────────────────────┐
-│ CR 详情页                                           │
-│   scope: [soul_slot:customer/identity,              │
-│           skill:lead-collection/SKILL.md, ...]       │
-│   scope_hash: {sha256 of sandbox content at lock}   │
-│   status: open                                      │
-│                                                     │
-│   [Publish] → Lint check → Promote → Flip pointer   │
-│   [Cancel]  → 释放锁, CR 作废                       │
-└──────────────────┬──────────────────────────────────┘
-                   ↓
-┌─────────────────────────────────────────────────────┐
-│ Publish 执行:                                       │
-│   1. Lint check (R01-R05)                           │
-│   2. cp -r sandbox/ → release/v<N>/                 │
-│      (config/, slots/, souls/, skills/, kb/)        │
-│   3. ln -sf release/v<N> → _current (原子翻指针)    │
-│   4. 通知活跃 agent: PubSub broadcast               │
-│      {:content_published, tid, version}              │
-│      → agent 重载 CLAUDE.md (重新渲染 + symlink)    │
-│   5. CR status → published                          │
-└─────────────────────────────────────────────────────┘
+Admin 在 SoulSlotEditor / SkillEditor / KbManager 中编辑:
+  -> 槽值修改 -> 写 sandbox/slots/<role>.yaml
+  -> skill 编辑 -> 写 sandbox/skills/<role>/<name>/SKILL.md
+  -> KB 编辑   -> 写 sandbox/kb/kb.db / glossary.json / escalation_keywords.json
+  -> prompt 编辑 -> 写 sandbox/config/fast_ack_prompt.md / cc_preamble.md
+  -> 每个编辑操作后调 cr_engine.track_change(tid, resource)
+```
+
+#### 阶段 2: 预览 (测试 sandbox)
+
+```
+Admin 点 "预览 sandbox":
+  -> autoservice_assembly.preview_provision(tid, role, admin_uri)
+    -> 创建 preview session + fast agent + cc agent (数据源=sandbox)
+  -> Admin 在 preview LiveView 中测试
+  -> 验证 bot 行为、skill 触发、KB 检索、slot 渲染
+  -> 满意 -> 进入发布; 不满意 -> 继续编辑 -> 再预览
+```
+
+#### 阶段 3: 发布 (选择范围 -> Publish)
+
+```
+Admin 打开 CR 详情页 (cr_dashboard_live):
+  +-- CR #42 (draft) ---------------------------------+
+  |  改动清单 (自动收集):                              |
+  |    [x] soul_slot: customer/identity    (2h ago)     |
+  |    [x] soul_slot: customer/gate        (1h ago)     |
+  |    [x] skill: lead-collection/SKILL.md  (30min ago) |
+  |    [ ] kb: escalation_keywords.json    (3d ago)     |  <- 可取消勾选,不发布
+  |    [ ] kb: glossary.json               (3d ago)     |  <- 同上
+  |                                                   |
+  |  [全选] [取消] [预览 sandbox] [Publish 选中]       |
+  +---------------------------------------------------+
+```
+
+> **可 all 可选择性发布**: CR 自动收集所有 sandbox 改动，但 admin 在发布前可以**取消勾选**不想发布的项。
+> 取消勾选的项留在 sandbox，下次 CR 继续追踪。勾选的项组成发布 scope。
+
+**发布执行:**
+
+```
+Admin 点 "Publish 选中":
+  -> 1. Lint check (R01-R05)
+  -> 2. scope_hash 冻结 (锁定当前 sandbox 内容)
+  -> 3. 按 scope 拷贝到 release:
+       选中的 slot sections -> 合并到 release/v<N>/slots/<role>.yaml
+       选中的 skill 文件 -> cp -> release/v<N>/skills/
+       选中的 KB 数据 -> cp -> release/v<N>/kb/
+       选中的 config -> cp -> release/v<N>/config/
+  -> 4. ln -sf release/v<N> -> _current (原子翻指针)
+  -> 5. PubSub broadcast {:content_published, tid, "<version>"}
+  -> 6. CR status -> published, 未选中的项留在 sandbox 进入下一个 CR
 ```
 
 ### 5.4 Lint 规则
