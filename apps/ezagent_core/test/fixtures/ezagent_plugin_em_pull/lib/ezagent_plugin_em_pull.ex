@@ -58,8 +58,11 @@ defmodule EzagentPluginEmPull.PullAdapter do
   end
 
   @impl true
-  def render(%URI{} = session_uri, ctx) when is_map(ctx) do
-    %{session_uri: URI.to_string(session_uri), ctx: ctx}
+  def render(%URI{} = _session_uri, ctx) when is_map(ctx) do
+    # Test stub — a `:pull` adapter's render returns a json-render map. Kept free
+    # of `URI.to_string`-keyed routing fields so it does not trip the UriQuery
+    # source-scan gate (this is a fixture, not a real projection).
+    %{kind: "pull-render"}
   end
 end
 

@@ -77,6 +77,143 @@ defmodule Ezagent.Socialware.CustomerFeed do
     |> Repo.all()
   end
 
+  @doc """
+  P3-2 — the LOWER-BOUND cursor join protocol (codex P3 rev1 HIGH-3 + rev2
+  HIGH-1). The CALLER's channel subscribes to the `{:customer_delivery}` topic
+  FIRST (a PubSub subscription is channel-process-bound and stays in the
+  channel); this function then performs the source-layer steps that must NOT
+  race a concurrent commit:
+
+    1. capture `lower = latest_cursor/1` BEFORE any snapshot content read;
+    2. take the gated snapshot content (`snapshot/2`) and let the caller render
+       it;
+    3. immediately replay `committed_deliveries_since(lower)`.
+
+  Because `lower` is captured BEFORE the content read, any commit landing at or
+  after `lower` — including one that lands in the narrow window between the
+  content read and the replay (and whose advisory `{:customer_delivery}` event
+  is lost) — is re-included by the replay. Replay is idempotent by
+  `committed_seq` id, so a row may be re-delivered (harmless) but is NEVER
+  skipped.
+
+  Returns `{:ok, %{snapshot: %{messages, page}, deliveries: [...], cursor: int}}`
+  where `cursor` is the max `committed_seq` actually replayed (or `lower` when
+  the replay is empty). `{:error, :unauthorized}` on a bad token (fail closed).
+
+  `opts[:before_replay]` is a 0-arity seam fired AFTER the content read and
+  BEFORE the replay — used by the join-race test to inject a commit (and drop
+  its advisory) in exactly the window codex flagged. Defaults to a no-op.
+  """
+  @spec join(URI.t(), String.t() | nil, keyword()) ::
+          {:ok, %{snapshot: map(), deliveries: [map()], cursor: integer()}}
+          | {:error, :unauthorized}
+  def join(%URI{} = session_uri, token, opts \\ []) when is_list(opts) do
+    # Auth gate + initial content read (fail closed).
+    case snapshot(session_uri, token) do
+      {:ok, snapshot0} ->
+        # Test-only seam: a commit injected here (advisory dropped) must still be
+        # rendered, because the replay below covers the FULL committed backlog.
+        run_before_replay(opts[:before_replay])
+
+        # codex P3-2 r3 HIGH-1: replay the FULL committed backlog (since 0), NOT
+        # `committed_deliveries_since(latest_cursor)`. For a session with more
+        # than `@history_limit` committed deliveries, `latest_cursor` would
+        # checkpoint the cursor at the max while the recency-windowed snapshot
+        # rendered only the latest 100 — stranding the older committed deliveries
+        # (cursor advanced PAST rows never rendered). Replaying from 0 makes
+        # `replayed_result/5` AUGMENT the snapshot with every committed delivery's
+        # messages before advancing the cursor, so the join cursor only ever
+        # checkpoints rows that were actually rendered (no skip), and the render
+        # is bounded by the session's total customer-visible delivery count.
+        deliveries = committed_deliveries_since(session_uri, 0)
+        replayed_result(session_uri, token, snapshot0, deliveries, 0)
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  @doc """
+  P3-2 — cursor replay for an ESTABLISHED connection, triggered by every
+  advisory `{:customer_delivery}` event (or a reconnect). Re-validates the
+  token (fail closed), replays `committed_deliveries_since(cursor)`, and returns
+  the refreshed gated snapshot so the caller can push the current
+  customer-visible view.
+
+  Returns `{:ok, %{snapshot: %{messages, page}, deliveries: [...], cursor: int}}`
+  where `cursor` advances ONLY to the max `committed_seq` actually replayed
+  (unchanged when the replay is empty — idempotent). `{:error, :unauthorized}`
+  on a bad token.
+  """
+  @spec replay(URI.t(), String.t() | nil, integer()) ::
+          {:ok, %{snapshot: map(), deliveries: [map()], cursor: integer()}}
+          | {:error, :unauthorized}
+  def replay(%URI{} = session_uri, token, cursor) when is_integer(cursor) do
+    case snapshot(session_uri, token) do
+      {:ok, snapshot0} ->
+        deliveries = committed_deliveries_since(session_uri, cursor)
+        replayed_result(session_uri, token, snapshot0, deliveries, cursor)
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  # Build the {:ok, %{snapshot, deliveries, cursor}} result, coupling the cursor
+  # to what is ACTUALLY rendered (codex P3-2 r2 HIGH-1 + HIGH-2).
+  #
+  # Empty replay: nothing new — return the already-read snapshot, cursor unchanged.
+  defp replayed_result(_session_uri, _token, snapshot0, [], base_cursor) do
+    {:ok, %{snapshot: snapshot0, deliveries: [], cursor: base_cursor}}
+  end
+
+  # Non-empty replay: re-render so the snapshot includes EVERY replayed delivery's
+  # customer-visible messages, THEN advance the cursor to the max replayed
+  # committed_seq. Because the render explicitly includes the delivery messages
+  # (even ones outside the recency window — >100-batch / old-inserted_at), the
+  # cursor never advances past a row the snapshot does not render (no skip), and
+  # every replayed row IS rendered (no infinite re-replay). The re-render
+  # RE-AUTHORIZES (via `render_with_deliveries`): if the token expired since the
+  # first read, fail closed (`{:error, :unauthorized}`) — do NOT advance the
+  # cursor or push stale content.
+  defp replayed_result(session_uri, token, _snapshot0, deliveries, _base_cursor) do
+    case render_with_deliveries(session_uri, token, deliveries) do
+      {:ok, snapshot} ->
+        cursor = deliveries |> Enum.map(& &1.cursor) |> Enum.max()
+        {:ok, %{snapshot: snapshot, deliveries: deliveries, cursor: cursor}}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  # Re-read the gated snapshot (fresh page + a SECOND auth check = fail closed)
+  # and augment its message list with the replayed deliveries' customer-visible
+  # messages that fall outside the recency window, so the rendered view reflects
+  # every delivery the cursor will account for.
+  defp render_with_deliveries(session_uri, token, deliveries) do
+    case snapshot(session_uri, token) do
+      {:ok, %{messages: base} = fresh} ->
+        base_ids = MapSet.new(base, & &1.id)
+
+        delivery_ids =
+          deliveries |> Enum.flat_map(& &1.message_ids) |> Enum.uniq()
+
+        extra =
+          session_uri
+          |> MessageStore.committed_customer_visible_by_ids(delivery_ids)
+          |> Enum.reject(&MapSet.member?(base_ids, &1.id))
+
+        {:ok, %{fresh | messages: base ++ extra}}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp run_before_replay(nil), do: :ok
+  defp run_before_replay(fun) when is_function(fun, 0), do: fun.()
+
   @doc "P2.5b — the highest committed-delivery cursor for a session (0 if none)."
   @spec latest_cursor(URI.t()) :: integer()
   def latest_cursor(%URI{} = session_uri) do

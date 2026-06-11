@@ -232,9 +232,43 @@ defmodule Ezagent.MessageStore do
       on: s.turn_id == sm.turn_id,
       where:
         r.session_uri == ^session_str and m.workspace_uri == ^workspace_str and
-          m.visibility == :customer_visible and s.status == "committed",
+          m.visibility == :customer_visible and s.status == "committed" and
+          s.session_uri == ^session_str and s.workspace_uri == ^workspace_str,
       order_by: [desc: r.inserted_at],
       limit: ^limit
+    )
+    |> Repo.all()
+  end
+
+  @doc """
+  Customer-visible, committed messages restricted to a fixed id set (within the
+  session). Same gating as `committed_customer_visible/2` (customer_visible +
+  committed settlement + session/workspace match) but selected by id rather than
+  windowed by recency — so a caller replaying committed deliveries can render the
+  delivered messages even when they fall outside the latest-N recency window
+  (P3-2: keeps the customer feed's render-cursor consistent with the delivery
+  cursor). Returns `[]` for an empty id list.
+  """
+  @spec committed_customer_visible_by_ids(URI.t(), [String.t()]) :: [Message.t()]
+  def committed_customer_visible_by_ids(%URI{} = _session_uri, []), do: []
+
+  def committed_customer_visible_by_ids(%URI{} = session_uri, ids) when is_list(ids) do
+    session_str = URI.to_string(session_uri)
+    workspace_str = Ezagent.Persistence.workspace_uri_for!(session_uri)
+
+    from(m in Message,
+      join: r in MessageRouting,
+      on: r.message_id == m.id,
+      join: sm in "socialware_settlement_messages",
+      on: sm.message_id == m.id,
+      join: s in "socialware_settlements",
+      on: s.turn_id == sm.turn_id,
+      where:
+        r.session_uri == ^session_str and m.workspace_uri == ^workspace_str and
+          m.visibility == :customer_visible and s.status == "committed" and
+          s.session_uri == ^session_str and s.workspace_uri == ^workspace_str and
+          m.id in ^ids,
+      order_by: [desc: r.inserted_at]
     )
     |> Repo.all()
   end
