@@ -12,8 +12,21 @@ defmodule Ezagent.MessageRouting do
   Schema:
     message_id     :string  (FK to messages.id)
     session_uri    :string
-    inserted_at    :utc_datetime_usec
+    inserted_at    :utc_datetime_usec  (message CREATION time — `msg.inserted_at`)
+    routed_at      :utc_datetime_usec  (ROUTE-INTO-THIS-SESSION time — fresh now)
   PK: composite (message_id, session_uri)
+
+  ## `routed_at` (P4 codex r4 HIGH — additive)
+
+  `inserted_at` is the message's creation time (`msg.inserted_at`), shared
+  across every session the same `%Message{}` is routed into. The chat-feed
+  cursor needs the per-session ROUTE time so a message relayed into a session
+  long after it was created sorts AFTER that session's already-advanced cursor
+  (not behind it, where it would be stranded forever). `routed_at` carries that
+  route-into-this-session time (a fresh `DateTime.utc_now()` captured by
+  `MessageStore.write/2`); `inserted_at` is left UNCHANGED so the production
+  pagination (`older_than/3` / `in_session_since/2`) and the customer feed are
+  unaffected.
 
   `MessageStore.write/2` upserts messages + inserts here.
   `MessageStore.recent_in_session/2` + `in_session_since/2` JOIN this
@@ -34,11 +47,13 @@ defmodule Ezagent.MessageRouting do
     field :message_id, :string, primary_key: true
     field :session_uri, :string, primary_key: true
     field :inserted_at, :utc_datetime_usec
+    field :routed_at, :utc_datetime_usec
   end
 
   @type t :: %__MODULE__{
           message_id: String.t(),
           session_uri: String.t(),
-          inserted_at: DateTime.t() | nil
+          inserted_at: DateTime.t() | nil,
+          routed_at: DateTime.t() | nil
         }
 end

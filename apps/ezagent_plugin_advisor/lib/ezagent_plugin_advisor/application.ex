@@ -34,6 +34,12 @@ defmodule EzagentPluginAdvisor.Application do
   # `Ezagent.ExternalMirror.Adapter` (no binding — served by the customer
   # channel). Registering it installs the `allow_customer_feed` cap subject and
   # spawns NO Worker (pull adapters have no per-binding transport).
+  #
+  # P4: the chat feed — a SECOND bare `:pull` adapter that projects a chat
+  # session into the SAME SPA + channel + json-render shape, sourced from the
+  # chat `inserted_at` cursor and gated by chat membership. Installs the
+  # `allow_chat_feed` cap subject; likewise spawns NO Worker.
   @impl Ezagent.Plugin
-  def adapters, do: [Ezagent.Socialware.CustomerFeedAdapter]
+  def adapters,
+    do: [Ezagent.Socialware.CustomerFeedAdapter, Ezagent.Socialware.ChatFeedAdapter]
 end

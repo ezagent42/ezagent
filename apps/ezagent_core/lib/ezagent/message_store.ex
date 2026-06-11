@@ -77,7 +77,21 @@ defmodule Ezagent.MessageStore do
       |> Map.put(:session_uri, session_uri)
       |> Map.put(:workspace_uri, workspace_uri_str)
 
-    now = msg.inserted_at || DateTime.utc_now()
+    # `message_routings.inserted_at` keeps the message CREATION time (the
+    # message's own `inserted_at`) so the production pagination (`older_than/3` /
+    # `in_session_since/2`) and the customer feed — all ordered by
+    # `r.inserted_at` — are UNCHANGED.
+    routing_inserted_at = msg.inserted_at || DateTime.utc_now()
+
+    # `routed_at` is the ROUTE-INTO-THIS-SESSION time — a FRESH timestamp
+    # captured at write, NOT `msg.inserted_at` (P4 codex r4 HIGH). The
+    # cross-session relay path routes the SAME `%Message{}` (original, possibly
+    # OLD `inserted_at`) into a target session; keying the chat-feed cursor on
+    # `inserted_at` would let that relayed message sort BEHIND the target
+    # session's already-advanced cursor and be stranded forever. `routed_at = now`
+    # makes the chat-feed cursor reflect when the message actually entered THIS
+    # session.
+    routed_at = DateTime.utc_now()
 
     # Two-step write: messages (upsert) + message_routings (insert).
     # Wrapped in a transaction so we don't end up with messages row
@@ -88,7 +102,8 @@ defmodule Ezagent.MessageStore do
           routing = %MessageRouting{
             message_id: msg.id,
             session_uri: URI.to_string(session_uri),
-            inserted_at: now
+            inserted_at: routing_inserted_at,
+            routed_at: routed_at
           }
 
           case Repo.insert(routing,
@@ -271,6 +286,56 @@ defmodule Ezagent.MessageStore do
       order_by: [desc: r.inserted_at]
     )
     |> Repo.all()
+  end
+
+  @doc """
+  P4-2 — the N most-recent `:customer_visible` messages in `session_uri`,
+  ASCENDING (oldest→newest). The CHAT external-SPA snapshot window: chat has NO
+  settlement model, so unlike `committed_customer_visible/2` there is no
+  settlement join — the gate is per-message `visibility == :customer_visible`
+  (an `:operator_only` chat message never leaks to the external read) plus
+  session + workspace scoping (defense-in-depth, mirroring the other chat
+  queries).
+
+  Queried descending+`limit` (so the latest N are kept) then reversed to
+  ascending — the same shape the LV "load older" path uses — so the chat_feed
+  projection renders oldest→newest. Ordered by `routed_at` (with `message_id` as
+  a deterministic tie-break) so a cross-session-relayed message windows at its
+  route-into-session position.
+
+  ## `routed_at`, not `inserted_at`
+
+  This windowed snapshot read is the ONLY chat-feed read path — there is no
+  delta cursor (the customer feed needs one; chat does not — see
+  `Ezagent.Socialware.ChatFeed`). It orders on `message_routings.routed_at` —
+  the per-session ROUTE-INTO-THIS-SESSION time — NOT `inserted_at` (the message
+  CREATION time): the cross-session relay path routes the SAME `%Message{}` with
+  its original, OLD `inserted_at`, so ordering on `routed_at` windows the relayed
+  message at the position it actually entered THIS session. (Without a cursor to
+  strand on, any `routed_at` tie is now harmless — a tie only reorders within the
+  snapshot, never drops a row.) `inserted_at` is left for the production
+  pagination + customer feed.
+  """
+  @spec chat_visible_recent(URI.t(), pos_integer()) :: [Message.t()]
+  def chat_visible_recent(%URI{} = session_uri, limit)
+      when is_integer(limit) and limit > 0 do
+    session_str = URI.to_string(session_uri)
+    workspace_str = Ezagent.Persistence.workspace_uri_for!(session_uri)
+
+    from(m in Message,
+      join: r in MessageRouting,
+      on: r.message_id == m.id,
+      where:
+        r.session_uri == ^session_str and m.workspace_uri == ^workspace_str and
+          m.visibility == :customer_visible,
+      order_by: [desc: r.routed_at, desc: r.message_id],
+      limit: ^limit,
+      # Surface the per-session ROUTE timestamp so the snapshot orders on the
+      # route-into-session time (a relayed message windows at its arrival here).
+      select_merge: %{routed_at: r.routed_at}
+    )
+    |> Repo.all()
+    |> Enum.reverse()
   end
 
   @doc """

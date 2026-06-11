@@ -23,6 +23,75 @@ defmodule Ezagent.URITest do
     "system://bootstrap/default"
   ]
 
+  describe "bare_principal?/1 — the centralized fail-closed caller-identity gate (P4)" do
+    test "accepts a canonical user/agent/worker principal" do
+      assert Ezagent.URI.bare_principal?(Ezagent.URI.entity(:team_alpha, :user, "alice"))
+      assert Ezagent.URI.bare_principal?(Ezagent.URI.entity(:team_alpha, :agent, "bot"))
+      assert Ezagent.URI.bare_principal?(Ezagent.URI.entity(:team_alpha, :worker, "slot-1"))
+    end
+
+    test "rejects nil / atoms / non-URI" do
+      refute Ezagent.URI.bare_principal?(nil)
+      refute Ezagent.URI.bare_principal?(:any)
+      refute Ezagent.URI.bare_principal?(:system)
+      refute Ezagent.URI.bare_principal?("entity://x")
+      refute Ezagent.URI.bare_principal?(%{not: "a uri"})
+    end
+
+    test "rejects a non-entity scheme even if structurally a %URI{}" do
+      refute Ezagent.URI.bare_principal?(Ezagent.URI.session(:team_alpha, :default, "s1"))
+      refute Ezagent.URI.bare_principal?(Ezagent.URI.workspace(:team_alpha))
+    end
+
+    test "rejects a non-canonical (URI.parse authority-bearing) entity URI" do
+      non_canonical = URI.parse("entity://team-alpha/user/alice")
+      assert non_canonical.authority != nil
+      refute Ezagent.URI.bare_principal?(non_canonical)
+    end
+
+    test "rejects crafted entity URIs with extraneous fields" do
+      refute Ezagent.URI.bare_principal?(%URI{
+               scheme: "entity",
+               host: "team-alpha",
+               path: "/user/alice",
+               query: "action=x"
+             })
+
+      refute Ezagent.URI.bare_principal?(%URI{
+               scheme: "entity",
+               host: "team-alpha",
+               path: "/user/alice",
+               fragment: "x"
+             })
+
+      refute Ezagent.URI.bare_principal?(%URI{
+               scheme: "entity",
+               host: "team-alpha",
+               userinfo: "evil",
+               path: "/user/alice"
+             })
+
+      refute Ezagent.URI.bare_principal?(%URI{
+               scheme: "entity",
+               host: "team-alpha",
+               port: 443,
+               path: "/user/alice"
+             })
+
+      refute Ezagent.URI.bare_principal?(%URI{
+               scheme: "entity",
+               host: "team-alpha",
+               path: "/user/alice/auth/login"
+             })
+
+      refute Ezagent.URI.bare_principal?(%URI{
+               scheme: "entity",
+               host: "team-alpha",
+               path: "/notatype/x"
+             })
+    end
+  end
+
   describe "canonical?/1 + canonical!/1 — the silent-error guard (URI hardening 2026-05-30)" do
     test "new!/1 output is canonical for every Ezagent scheme" do
       for s <- @ezagent_scheme_examples do

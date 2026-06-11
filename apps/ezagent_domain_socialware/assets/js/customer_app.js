@@ -7,26 +7,35 @@ import {createBaseRegistry, renderJsonNode} from "./json_render.mjs"
 function boot(root) {
   const sessionUri = root.dataset.sessionUri
   const token = root.dataset.token
+  // The socket PATH and channel topic PREFIX are read from the mount element so
+  // the SAME SPA serves both the customer feed and the chat feed (P4 codex
+  // finding 3). Both default to the customer values, so an existing
+  // customer-feed page (which sets neither attribute) is byte-identical to
+  // before.
+  const socketPath = root.dataset.socketPath || "/socialware_socket"
+  const topicPrefix = root.dataset.topicPrefix || "socialware:customer"
   const reactRoot = createRoot(root)
 
   reactRoot.render(
     React.createElement(CustomerApp, {
       sessionUri,
       token,
+      socketPath,
+      topicPrefix,
     })
   )
 }
 
-function CustomerApp({sessionUri, token}) {
+function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
   const [snapshot, setSnapshot] = useState(null)
   const [unauthorized, setUnauthorized] = useState(false)
   const registry = useMemo(() => createBaseRegistry(React, Sandpack), [])
 
   useEffect(() => {
-    const socket = new Socket("/socialware_socket", {params: {session_uri: sessionUri, token}})
+    const socket = new Socket(socketPath, {params: {session_uri: sessionUri, token}})
     socket.connect()
 
-    const channel = socket.channel(`socialware:customer:${sessionUri}`, {})
+    const channel = socket.channel(`${topicPrefix}:${sessionUri}`, {})
     channel
       .join()
       .receive("ok", ({snapshot}) => setSnapshot(snapshot))
@@ -34,11 +43,34 @@ function CustomerApp({sessionUri, token}) {
 
     channel.on("snapshot", (snapshot) => setSnapshot(snapshot))
 
+    // Live revocation (e.g. an ex-member who LEFT a chat): the server pushes
+    // `unauthorized` then closes the channel. Fail closed on the CLIENT too —
+    // CLEAR the rendered snapshot so a revoked viewer cannot keep reading stale
+    // content (codex P4 HIGH). Without this the browser would keep the last
+    // authorized snapshot visible after the channel closes.
+    channel.on("unauthorized", () => {
+      setSnapshot(null)
+      setUnauthorized(true)
+    })
+
+    // A channel close AFTER a successful join (the server `{:stop}` on
+    // revocation, or a dropped connection) also fails closed. `leaving` guards
+    // the INTENTIONAL close from the unmount cleanup below so it doesn't flip
+    // an unmounting component into the unauthorized state.
+    let leaving = false
+    channel.onClose(() => {
+      if (!leaving) {
+        setSnapshot(null)
+        setUnauthorized(true)
+      }
+    })
+
     return () => {
+      leaving = true
       channel.leave()
       socket.disconnect()
     }
-  }, [sessionUri, token])
+  }, [sessionUri, token, socketPath, topicPrefix])
 
   if (unauthorized) {
     return React.createElement(
