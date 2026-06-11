@@ -216,6 +216,26 @@ defmodule Ezagent.Behavior.SocialwarePublisherReadTest do
       chat = owned_chat(bad_shape)
       assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(bad_shape, chat))
     end
+
+    test "entity %URI{} caller with a SUBRESOURCE path → unauthorized even if it equals owner_uri (codex P3-3 r2 HIGH)" do
+      # A canonical entity URI but with extra path segments — NOT a bare
+      # principal instance. Placed as both caller and owner_uri; still denied.
+      subresource = %URI{scheme: "entity", host: "team-alpha", path: "/user/alice/auth/login"}
+      chat = owned_chat(subresource)
+      assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(subresource, chat))
+    end
+
+    test "entity %URI{} caller carrying a QUERY → unauthorized even if it equals owner_uri (codex P3-3 r2 HIGH)" do
+      with_query = %URI{scheme: "entity", host: "team-alpha", path: "/user/alice", query: "action=x"}
+      chat = owned_chat(with_query)
+      assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(with_query, chat))
+    end
+
+    test "entity %URI{} caller carrying a FRAGMENT → unauthorized even if it equals owner_uri" do
+      with_frag = %URI{scheme: "entity", host: "team-alpha", path: "/user/alice", fragment: "x"}
+      chat = owned_chat(with_frag)
+      assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(with_frag, chat))
+    end
   end
 
   describe "missing/unreadable :chat sibling slice → fail closed" do

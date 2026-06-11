@@ -197,22 +197,31 @@ defmodule Ezagent.Behavior.SocialwarePublisherRead do
     end
   end
 
-  # A valid caller is a CANONICAL identity-principal entity URI
-  # (`entity://<workspace>/<user|agent|worker>/<name>`). `Ezagent.URI.canonical?/1`
-  # rejects the deprecated `URI.parse/1` shape (`:authority` set), so a malformed
-  # `%URI{}` struct cannot slip past the owner/member equality (codex P3-3 HIGH:
-  # the bare `%URI{}` match accepted any struct, incl. malformed ones).
-  defp valid_caller_uri?(%URI{scheme: "entity", host: host, path: path} = uri)
+  # A valid caller is a CANONICAL identity-principal INSTANCE entity URI —
+  # EXACTLY `entity://<workspace>/<user|agent|worker>/<name>` with NO query, NO
+  # fragment, and NO extra path segments (codex P3-3 HIGH r1+r2). The two-rounds
+  # of hardening: (r1) `Ezagent.URI.canonical?/1` rejects the deprecated
+  # `URI.parse/1` `:authority`-set shape; (r2) the EXACT three-segment path check
+  # + `query: nil`/`fragment: nil` rejects a canonical-but-non-principal struct
+  # like `/user/alice/auth/login` (subresource) or `/user/alice?action=x` —
+  # otherwise such a hand-built struct, if placed as `owner_uri`/`members`, would
+  # authorize via the equality. Only a bare principal instance may read.
+  defp valid_caller_uri?(
+         %URI{scheme: "entity", host: host, path: path, query: nil, fragment: nil} = uri
+       )
        when is_binary(host) and host != "" and is_binary(path) do
-    Ezagent.URI.canonical?(uri) and entity_principal_path?(path)
+    Ezagent.URI.canonical?(uri) and principal_instance_path?(path)
   end
 
   defp valid_caller_uri?(_), do: false
 
-  defp entity_principal_path?("/user/" <> name), do: name != ""
-  defp entity_principal_path?("/agent/" <> name), do: name != ""
-  defp entity_principal_path?("/worker/" <> name), do: name != ""
-  defp entity_principal_path?(_), do: false
+  # EXACTLY `/<type>/<name>` (two non-empty segments) — no subresource path.
+  defp principal_instance_path?(path) do
+    case String.split(path, "/", trim: false) do
+      ["", type, name] when type in ["user", "agent", "worker"] and name != "" -> true
+      _ -> false
+    end
+  end
 
   defp get_chat_sibling(ctx) do
     ctx
