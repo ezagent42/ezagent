@@ -28,8 +28,7 @@ defmodule EzagentPluginCr.CrEngine do
   def publish(tid) do
     with {:ok, cr} <- ensure_active_cr(tid),
          :ok <- CrLint.check(tid),
-         :ok <- CrSnapshot.snapshot(tid),
-         new_ver <- next_version(tid),
+         {:ok, new_ver} <- CrSnapshot.snapshot(tid),
          :ok <- update_current(tid, new_ver) do
       published =
         Map.merge(cr, %{
@@ -55,11 +54,6 @@ defmodule EzagentPluginCr.CrEngine do
   # Full ConfigStore key matching TenantConfig.read_cr/2's construction:
   # ConfigStore.resolve(..., "cr:#{tid}:#{cr_id}")
   defp cr_key(tid), do: "cr:#{tid}:#{active_cr_id(tid)}"
-
-  defp next_version(tid) do
-    releases = Path.join(TenantRuntime.release_path(tid), "v*") |> Path.wildcard()
-    "v#{length(releases) + 1}"
-  end
 
   defp update_current(tid, ver) do
     current = TenantRuntime.current_release_path(tid)
