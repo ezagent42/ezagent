@@ -1,7 +1,9 @@
 # AutoService v2 on ezagent — 完整架构设计
 
-> 状态: **设计稿 v1** | 日期: 2026-06-10
-> 基于 ezagent `autoservice` 分支现状 + 原 AutoService (Python) 线上经验
+> 状态: **设计稿 v2** | 日期: 2026-06-11
+> 基线: ezagent `autoservice` = `main` HEAD (`0a094410`) + 设计文档，core/domain 零差异
+> 旧 Phase 1-4 代码已归档: `archive/autoservice-phase1-4` (tag)
+> socialware P3 (#716 render_soul, #727 CustomerFeed :pull, #728 PublisherRead) 已纳入
 > 目标: 一个完整可用的多租户客服 vertical,纯 plugin 实现,core/domain 零改动
 
 ---
@@ -1665,4 +1667,15 @@ ezagent_plugin_liveview → 依赖 content + cr + autoservice(admin UI)
 
 ---
 
-*文档版本: 2026-06-10 · 下一步: 逐 Phase 出详细 SPEC + VERIFICATION*
+### 第三轮更新 (2026-06-11) — main 同步
+
+| # | 内容 | 状态 |
+|---|---|---|
+| — | autoservice 重置到 main HEAD (`0a094410`) + 14 文档 commit | ✅ |
+| — | socialware #727 CustomerFeed :pull ExternalAdapter 纳入 §6.3 | ✅ |
+| — | socialware #728 PublisherRead 纳入 operator_live | ✅ |
+| — | socialware #716 render_soul soul_md 纳入 §3.2.2 | ✅ |
+| — | 旧 Phase 1-4 代码归档 `archive/autoservice-phase1-4` | ✅ |
+| — | core #721 G1-b routing boot hydration 确认设计正确 | ✅ |
+
+*文档版本: 2026-06-11 · 下一步: 进 Phase A 实施*

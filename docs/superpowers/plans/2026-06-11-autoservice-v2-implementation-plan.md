@@ -2,7 +2,9 @@
 
 > 基于 [`2026-06-10-autoservice-v2-design.md`](../specs/2026-06-10-autoservice-v2-design.md) §10
 > 配套设计: /home/huangjiajia/ezagent/docs/superpowers/specs/2026-06-10-autoservice-v2-design.md
-> 状态: **Plan v2** | 日期: 2026-06-11
+> 状态: **Plan v2** | 日期: 2026-06-11 | 基线: autoservice = main HEAD (`0a094410`) + docs
+> 旧 Phase 1-4 代码已归档: `archive/autoservice-phase1-4` (tag)
+> socialware P3 (#727 CustomerFeed :pull, #728 PublisherRead, #716 render_soul) 已纳入
 > 
 > **核心约束: core 0 / domain 0 改动，所有实现在 plugin 层。**
 
