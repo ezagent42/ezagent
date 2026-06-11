@@ -29,10 +29,12 @@ defmodule Ezagent.Socialware.ChatFeedAuth do
   def issue_token(%URI{} = caller_uri, %URI{} = session_uri, opts \\ []) do
     now_ms = System.system_time(:millisecond)
     ttl_ms = Keyword.get(opts, :expires_in_ms, @default_ttl_ms)
+    caller_str = uri_to_string(caller_uri)
+    session_str = uri_to_string(session_uri)
 
     payload = %{
-      "caller_uri" => URI.to_string(caller_uri),
-      "session_uri" => URI.to_string(session_uri),
+      "caller_uri" => caller_str,
+      "session_uri" => session_str,
       "expires_at_ms" => now_ms + ttl_ms
     }
 
@@ -47,7 +49,7 @@ defmodule Ezagent.Socialware.ChatFeedAuth do
   """
   @spec verify(String.t(), URI.t()) :: {:ok, URI.t()} | {:error, :unauthorized}
   def verify(token, %URI{} = session_uri) when is_binary(token) do
-    session_str = URI.to_string(session_uri)
+    session_str = uri_to_string(session_uri)
 
     with {:ok, payload} <-
            Phoenix.Token.verify(secret_key_base!(), @salt, token, max_age: :infinity),
@@ -69,6 +71,8 @@ defmodule Ezagent.Socialware.ChatFeedAuth do
   rescue
     ArgumentError -> {:error, :unauthorized}
   end
+
+  defp uri_to_string(%URI{} = uri), do: URI.to_string(uri)
 
   defp secret_key_base! do
     :ezagent_web

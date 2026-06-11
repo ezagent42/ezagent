@@ -400,6 +400,38 @@ defmodule Ezagent.URI do
     per_tenant("entity", workspace, type, name)
   end
 
+  @doc """
+  Whether `uri` is a WELL-FORMED bare identity-principal instance entity URI —
+  a canonical `entity://<workspace>/<user|agent|worker>/<name>` with NO
+  extraneous fields (authority/userinfo/port/query/fragment/subresource path).
+
+  The check RECONSTRUCTS the canonical principal from the URI's own
+  workspace/type/name (via the centralized decomposition `workspace_name/1` +
+  `type/1` + `name/1`) through `entity/3` (which `new!`s the canonical form —
+  every extraneous field nil) and requires EXACT struct equality. Any crafted
+  extra field makes the URI `!=` its canonical rebuild, so it is rejected. The
+  authoritative caller-identity gate for fail-closed authorization predicates
+  (P3-3 / P4 chat membership) — keeping the positional URI introspection in
+  `Ezagent.URI` rather than scattered across domain predicates.
+
+  Returns `false` for any non-`%URI{}`, non-entity, or non-canonical input
+  (and never raises — a name `entity/3` cannot canonicalize fails closed).
+  """
+  @spec bare_principal?(term()) :: boolean()
+  def bare_principal?(%URI{scheme: "entity"} = uri) do
+    with {:ok, workspace} <- workspace_name(uri),
+         {:ok, type} when type in ["user", "agent", "worker"] <- type(uri),
+         {:ok, name} when is_binary(name) and name != "" <- name(uri) do
+      uri == entity(workspace, type, name)
+    else
+      _ -> false
+    end
+  rescue
+    _ -> false
+  end
+
+  def bare_principal?(_), do: false
+
   @doc "Build an `entity://<workspace>/user/...` URI."
   @spec user(String.t() | atom(), String.t() | atom()) :: URI.t()
   def user(workspace, name), do: entity(workspace, :user, name)

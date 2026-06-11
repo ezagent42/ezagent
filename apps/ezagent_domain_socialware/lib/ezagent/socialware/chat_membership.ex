@@ -52,34 +52,18 @@ defmodule Ezagent.Socialware.ChatMembership do
 
   @doc """
   Whether `caller` is a WELL-FORMED bare identity-principal instance entity URI
-  `entity://<workspace>/<user|agent|worker>/<name>`.
+  `entity://<workspace>/<user|agent|worker>/<name>` — delegates to the
+  centralized `Ezagent.URI.bare_principal?/1` (reconstruct-and-compare against
+  the canonical rebuild; any crafted authority/userinfo/port/query/fragment/
+  subresource field makes the caller `!=` its rebuild and is rejected, even if
+  the same crafted struct is planted as `owner_uri`/`members`).
 
-  Rather than enumerate the fields that must be empty (authority/query/fragment/
-  userinfo/port/…), RECONSTRUCT the canonical principal from the caller's
-  workspace+type+name via `Ezagent.URI.entity/3` (which `new!`s the canonical
-  form — every extraneous field nil) and require EXACT struct equality. Any
-  crafted extra field (userinfo, port, query, fragment, subresource path, or a
-  non-canonical `:authority`) makes the caller `!=` its canonical rebuild, so it
-  is rejected — even if that same crafted struct is planted as
-  `owner_uri`/`members`.
+  The positional URI introspection lives in `Ezagent.URI` (per the UriQuery
+  invariant) rather than being inlined here; this stays a thin, named gate so
+  the security predicate reads the same as P3-3.
   """
   @spec valid_caller_uri?(term()) :: boolean()
-  def valid_caller_uri?(%URI{scheme: "entity", host: host, path: path} = caller)
-      when is_binary(host) and host != "" and is_binary(path) do
-    case String.split(path, "/", trim: false) do
-      ["", type, name] when type in ["user", "agent", "worker"] and name != "" ->
-        caller == Ezagent.URI.entity(host, type, name)
-
-      _ ->
-        false
-    end
-  rescue
-    # `Ezagent.URI.entity/3` raises on a name/segment it cannot canonicalize —
-    # such a caller is not a valid principal instance: fail closed.
-    _ -> false
-  end
-
-  def valid_caller_uri?(_), do: false
+  def valid_caller_uri?(caller), do: Ezagent.URI.bare_principal?(caller)
 
   # Owner match ONLY when owner_uri is a real %URI{} that equals the caller.
   # A nil/missing owner matches NOTHING.

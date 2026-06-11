@@ -40,7 +40,6 @@ defmodule Ezagent.Socialware.ChatFeed do
 
   alias Ezagent.MessageStore
   alias Ezagent.Socialware.ChatMembership
-  alias Ezagent.URI, as: EzURI
 
   @history_limit 200
 
@@ -257,14 +256,6 @@ defmodule Ezagent.Socialware.ChatFeed do
     case Ezagent.Kind.get_slice(session_uri, :chat) do
       {:ok, slice} -> slice
       _ -> nil
-    end
-  end
-
-  @doc false
-  def workspace(session_uri) do
-    case Ezagent.Persistence.workspace_uri_for(session_uri) do
-      {:ok, workspace_str} -> {:ok, EzURI.new!(workspace_str)}
-      {:error, _} -> {:error, :unbound_session}
     end
   end
 end

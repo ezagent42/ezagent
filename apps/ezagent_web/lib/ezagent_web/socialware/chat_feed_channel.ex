@@ -30,6 +30,7 @@ defmodule EzagentWeb.Socialware.ChatFeedChannel do
   use Phoenix.Channel
 
   alias Ezagent.Socialware.ChatFeed
+  alias EzagentWeb.Socialware.FeedEncoding
 
   @impl true
   def join("socialware:chat_feed:" <> session_str, _params, socket) do
@@ -60,21 +61,7 @@ defmodule EzagentWeb.Socialware.ChatFeedChannel do
   end
 
   defp encode_snapshot(%{messages: messages, page: page}) do
-    %{messages: encode_messages(messages), page: page}
-  end
-
-  defp encode_messages(messages) do
-    Enum.map(messages, fn message ->
-      %{
-        id: message.id,
-        text: message_text(message),
-        sender: URI.to_string(message.sender)
-      }
-    end)
-  end
-
-  defp message_text(message) do
-    Map.get(message.body, "text") || Map.get(message.body, :text)
+    %{messages: FeedEncoding.encode_messages(messages), page: page}
   end
 
   defp epoch, do: ~U[1970-01-01 00:00:00.000000Z]
