@@ -55,24 +55,15 @@ defmodule EzagentPluginContent.TenantContent do
   defp do_provision(tid, role, base) do
     slots = load_slots(base)
 
-    # Soul layers: platform skeleton base + optional tenant override
-    skeleton_soul = Path.join([TenantPaths.skeleton_dir(), "souls", "customer_soul.md"])
-    tenant_soul = Path.join(base, "souls/customer.md")
-
-    soul_layers =
-      [File.read!(skeleton_soul)] ++
-        if(File.exists?(tenant_soul), do: [File.read!(tenant_soul)], else: [])
-
-    rendered_soul = SoulRenderer.render(soul_layers, slots)
-
     skills_dir = Path.join(base, "skills")
     kb_path = Path.join(base, "kb/kb.db")
     kb_db_path = if File.exists?(kb_path), do: kb_path, else: nil
 
-    with {:ok, role_content} <- build_role_content(role, base, rendered_soul, tid, skills_dir) do
+    with {:ok, role_content} <- build_role_content(role, base, slots, tid, skills_dir),
+         {:ok, agent_config} <- AgentsConfig.for_role(role) do
       {:ok,
        Map.merge(role_content, %{
-         agent_config: AgentsConfig.for_role(role),
+         agent_config: agent_config,
          work_dir: TenantPaths.work_dir(tid, role),
          kb_db_path: kb_db_path,
          skills_dir: skills_dir
@@ -91,18 +82,27 @@ defmodule EzagentPluginContent.TenantContent do
     end
   end
 
-  defp build_role_content("slow", _base, rendered_soul, tid, skills_dir) do
+  defp build_role_content("slow", base, slots, tid, skills_dir) do
+    # Soul layers: platform skeleton base + optional tenant override
+    skeleton_soul = Path.join([TenantPaths.skeleton_dir(), "souls", "customer_soul.md"])
+    tenant_soul = Path.join(base, "souls/customer.md")
+
+    soul_layers =
+      [File.read!(skeleton_soul)] ++
+        if(File.exists?(tenant_soul), do: [File.read!(tenant_soul)], else: [])
+
+    rendered_soul = SoulRenderer.render(soul_layers, slots)
+
     skill_index = SkillIndexer.build(skills_dir, tid)
     claude_md = preamble() <> rendered_soul <> "\n\n" <> skill_index
 
     {:ok, %{claude_md: claude_md, system_prompt: nil}}
   end
 
-  defp build_role_content("fast", base, _rendered_soul, _tid, _skills_dir) do
+  defp build_role_content("fast", base, slots, _tid, _skills_dir) do
     prompt_path = Path.join(base, "fast-deepseek-prompt/system_prompt.md")
 
     if File.exists?(prompt_path) do
-      slots = load_slots(base)
       raw = File.read!(prompt_path)
       system_prompt = SoulRenderer.render(raw, slots)
       {:ok, %{claude_md: nil, system_prompt: system_prompt}}

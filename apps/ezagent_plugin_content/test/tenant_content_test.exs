@@ -1,14 +1,14 @@
 defmodule EzagentPluginContent.TenantContentTest do
-  use ExUnit.Case, async: false
-
-  alias EzagentPluginContent.{TenantContent, TenantPaths}
-
   @moduledoc """
   Tests for TenantContent.provision_context/3.
 
   Uses a tmp EZAGENT_HOME (same pattern as tenant_paths_test.exs) so
   filesystem side-effects are isolated per test run.
   """
+
+  use ExUnit.Case, async: false
+
+  alias EzagentPluginContent.{TenantContent, TenantPaths}
 
   setup do
     tmp =

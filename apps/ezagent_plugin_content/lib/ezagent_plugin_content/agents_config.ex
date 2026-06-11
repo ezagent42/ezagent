@@ -11,30 +11,38 @@ defmodule EzagentPluginContent.AgentsConfig do
   @doc """
   Load the platform agents config from `priv/skeleton/config/agents.yaml`.
 
-  Returns the parsed map, e.g. `%{"fast" => %{...}, "slow" => %{...}}`.
+  Returns `{:ok, map}` or `{:error, {:agents_config_unreadable, reason}}`.
   """
-  @spec load() :: map()
+  @spec load() :: {:ok, map()} | {:error, {:agents_config_unreadable, term()}}
   def load do
     path = Path.join([TenantPaths.skeleton_dir(), "config", "agents.yaml"])
-    YamlElixir.read_from_file!(path)
+
+    case YamlElixir.read_from_file(path) do
+      {:ok, map} when is_map(map) -> {:ok, map}
+      {:error, reason} -> {:error, {:agents_config_unreadable, reason}}
+    end
   end
 
   @doc """
   Return the config map for the given role.
 
-  Raises `ArgumentError` if the role is unknown.
+  Returns `{:ok, map}`, `{:error, {:unknown_role, role, known: [...]}}`, or
+  `{:error, {:agents_config_unreadable, reason}}`.
   """
-  @spec for_role(String.t()) :: map()
+  @spec for_role(String.t()) ::
+          {:ok, map()}
+          | {:error, {:unknown_role, String.t(), known: [String.t()]}}
+          | {:error, {:agents_config_unreadable, term()}}
   def for_role(role) when is_binary(role) do
-    config = load()
+    with {:ok, config} <- load() do
+      case Map.fetch(config, role) do
+        {:ok, value} ->
+          {:ok, value}
 
-    case Map.fetch(config, role) do
-      {:ok, value} ->
-        value
-
-      :error ->
-        known = config |> Map.keys() |> Enum.sort() |> Enum.join(", ")
-        raise ArgumentError, "unknown role #{inspect(role)}; known roles: #{known}"
+        :error ->
+          known = config |> Map.keys() |> Enum.sort()
+          {:error, {:unknown_role, role, known: known}}
+      end
     end
   end
 end
