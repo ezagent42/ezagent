@@ -11,12 +11,10 @@ defmodule EzagentDomainSocialware.Application do
   alias Ezagent.CapabilityRegistry
   alias Ezagent.Behavior.{Chat, ConfigUpdate, SocialwarePublisherRead, Surface, Turn}
   alias Ezagent.Entity.SocialwareSession
-  alias Ezagent.Socialware.ConfigProjection
 
   @impl true
   def start(_type, _args) do
     :ok = register_behaviors()
-    :ok = ConfigProjection.register()
 
     children = [
       {DynamicSupervisor,

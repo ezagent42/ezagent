@@ -57,6 +57,15 @@ defmodule EzagentDomainIdentity.Application do
   def start(_type, _args) do
     :ok = register_identity_behaviors()
 
+    # Agent-owned config-evolve (spec 2026-06-11 §6): the durable-config
+    # ConfigStore/ConfigObject/ConfigProjection moved here from socialware.
+    # `register/0` is a pure `Ezagent.UriQuery` ETS resolver registration (the
+    # `:socialware_config_dir` attr the single `:config_dir` owner delegates to
+    # at runtime), so it runs in the registration phase before the supervisor —
+    # the same lifecycle point socialware used. The coupling to core's resolver
+    # is runtime via `Ezagent.UriQuery`, not a compile dep (no cycle).
+    :ok = Ezagent.Socialware.ConfigProjection.register()
+
     children = [
       {DynamicSupervisor, name: __MODULE__.UserSupervisor, strategy: :one_for_one}
     ]
