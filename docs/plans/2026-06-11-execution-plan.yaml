@@ -373,42 +373,36 @@ milestones:
 - id: M0
   name: Content + CR Plugin
   phase: P0
-  batches:
-  - batch-1
-  - batch-2
-  - batch-3
-  - batch-4
-  - batch-5
-  - batch-6
-  target: Day 3
+  target: Day 4
   gate_checks:
   - content plugin compiles
-  - CR engine passes lifecycle test
+  - CR engine lifecycle test passes
   - cinnox migration successful
+  - 'code-review: all P0 tasks'
+  - 'contract-check: content↔cr interface'
+  smoke_test: mix test apps/ezagent_plugin_content/ && mix test apps/ezagent_plugin_cr/
 - id: M1
   name: Assembly + Turn
   phase: P1
-  batches:
-  - batch-7
-  - batch-8
-  - batch-9
-  - batch-10
-  target: Day 5
+  target: Day 6
   gate_checks:
   - Turn lifecycle E2E
   - operator takeover works
   - CustomerFeed :pull verified
+  - 'code-review: all P1 tasks'
+  - 'contract-check: TurnAdapter→socialware'
+  smoke_test: mix test apps/ezagent_plugin_autoservice/
 - id: M2
   name: Admin UI + FillerLoop
   phase: P2
-  batches:
-  - batch-11
-  - batch-12
-  target: Day 7
+  target: Day 8
   gate_checks:
   - admin can create tenant
   - tenant can edit soul/skill/KB
   - CR publish works
+  - 'code-review: all P2 tasks'
+  - 'E2E: agent-browser demo'
+  smoke_test: mix ezagent.demo.seed_autoservice --tenant=test && agent-browser test
 critical_path:
 - T0A.1
 - T0A.2
