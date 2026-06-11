@@ -1,0 +1,28 @@
+identity:
+  bot_full_name: ""
+  host_site_descriptor: ""
+  self_intro_zh: ""
+  self_intro_en: ""
+brand-structure:
+  parent_company: ""
+purpose:
+  topics_covered: ""
+classification:
+  brand_short_name: ""
+  signals_new_strong: ""
+  signals_existing_strong: ""
+  unknown_type_clarifier_zh: ""
+  max_clarify_turns: "2"
+gate:
+  basic_inquiry_examples: ""
+  account_detail_examples: ""
+  escalation_triggers: "转人工, 找真人, 我要人工, 投诉"
+  escalation_phrase: ""
+  max_self_resolve_attempts: "2"
+conversation:
+  max_sentences: "3"
+  max_bullets: "2"
+  banned_openings: ""
+  good_examples: ""
+privacy:
+  sensitive_operations: ""

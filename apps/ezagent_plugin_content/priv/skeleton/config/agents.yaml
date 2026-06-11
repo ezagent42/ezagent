@@ -1,0 +1,12 @@
+fast:
+  runtime: curl
+  provider: deepseek
+  api_url: https://api.deepseek.com/chat/completions
+  model: deepseek-v4-flash
+  max_tokens: 256
+  thinking: disabled
+slow:
+  runtime: cc
+  model: ""            # empty = claude account default; set e.g. deepseek-v4-flash with endpoint below
+  endpoint: ""         # e.g. https://api.deepseek.com/anthropic
+  effort: low          # measured: high → 1-4 min/reply; low → ~26 s (PR #715)

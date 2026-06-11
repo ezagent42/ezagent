@@ -1,0 +1,54 @@
+# Ambiguous country aliases — when the customer mentions one of these
+# names, the agent should clarify which specific country before pulling
+# rate-card data, otherwise KB retrieval may surface unrelated entries
+# (e.g. "Guinea" → Guinea-Bissau rates).
+#
+# Schema:
+#   ambiguous:
+#     <alias>:
+#       options: [<exact CINNOX rate-card country name>, ...]
+#       clarify_msg: <suggestion text the model should adapt>
+#
+# Ported from legacy route_query.py::AMBIGUOUS_COUNTRIES (cinnox-demo skill).
+# Aliases are matched case-insensitively against word boundaries; if the
+# query already includes one of the precise option names (e.g. "South Korea")
+# the alias does NOT trigger so well-specified queries pass through unchanged.
+
+ambiguous:
+  america:
+    options: ["United States", "American Samoa"]
+    clarify_msg: "Could you clarify which country you mean? We have rates for United States and American Samoa."
+  american:
+    options: ["United States", "American Samoa"]
+    clarify_msg: "Could you clarify which country you mean? We have rates for United States and American Samoa."
+  guinea:
+    options: ["Guinea", "Equatorial Guinea", "Guinea Bissau", "Papua New Guinea"]
+    clarify_msg: "Could you clarify which Guinea? We have rates for Guinea, Equatorial Guinea, Guinea Bissau, and Papua New Guinea."
+  congo:
+    options: ["Congo", "Democratic Republic of the Congo"]
+    clarify_msg: "Could you clarify which Congo? We have rates for Congo and Democratic Republic of the Congo."
+  sudan:
+    options: ["Sudan", "South Sudan"]
+    clarify_msg: "Could you clarify Sudan or South Sudan?"
+  niger:
+    options: ["Niger", "Nigeria"]
+    clarify_msg: "Could you clarify Niger or Nigeria?"
+  dominica:
+    options: ["Dominica", "Dominican Rep"]
+    clarify_msg: "Could you clarify Dominica or Dominican Republic?"
+  netherlands:
+    options: ["Netherlands", "Netherlands Antilles"]
+    clarify_msg: "Could you clarify Netherlands or Netherlands Antilles?"
+  samoa:
+    options: ["Samoa", "American Samoa"]
+    clarify_msg: "Could you clarify Samoa or American Samoa?"
+  korea:
+    options: ["South Korea", "North Korea"]
+    clarify_msg: "Could you clarify South Korea or North Korea?"
+  vietnam:
+    options:
+      - "Vietnam"
+      - "Vietnam (120 - VNPT network)"
+      - "Vietnam (121 - Mobifone network)"
+      - "Vietnam (122 - Viettel network)"
+    clarify_msg: "Could you clarify which Vietnam network? We have rates for VNPT (120), Mobifone (121), Viettel (122), and the general Vietnam tier."

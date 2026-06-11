@@ -1,0 +1,9 @@
+name: cinnox.product_glossary
+version: 1.0.0
+layer: L3
+category: enterprise_data
+role: customer
+description: CINNOX Product Glossary — auto-generated from product_glossary.l3.json.
+brand_lint_clean: false
+marketplace: false
+dependencies: []
