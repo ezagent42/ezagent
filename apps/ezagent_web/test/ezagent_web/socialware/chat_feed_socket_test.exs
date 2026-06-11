@@ -2,8 +2,8 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
   @moduledoc """
   P4-2 transport + P4-3 authz-boundary GATE for the chat external SPA.
 
-  The chat_feed channel reuses the P3-2 lower-bound cursor join + advisory
-  replay machinery over the chat `inserted_at` cursor, gated by the LIVE
+  The chat_feed channel uses a windowed snapshot-refresh read (re-read the
+  current latest-N on every advisory — NO cursor), gated by the LIVE
   `ChatMembership` predicate. These tests drive the REAL socket connect + the
   REAL channel join/advisory path, with members JOINED/LEFT via the production
   `chat.join` / `chat.leave` dispatch (the member is a live User Kind), so the

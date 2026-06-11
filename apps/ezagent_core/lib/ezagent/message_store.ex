@@ -50,10 +50,6 @@ defmodule Ezagent.MessageStore do
 
   @replay_cap 1000
 
-  @doc "The per-call row cap on `chat_visible_since/2` (so the chat-feed drain loop uses the SAME bound)."
-  @spec chat_replay_cap() :: pos_integer()
-  def chat_replay_cap, do: @replay_cap
-
   @doc """
   Persist a Message in the given session context.
 
@@ -303,20 +299,22 @@ defmodule Ezagent.MessageStore do
 
   Queried descending+`limit` (so the latest N are kept) then reversed to
   ascending — the same shape the LV "load older" path uses — so the chat_feed
-  projection renders oldest→newest. Ordered by the composite
-  `{routed_at, message_id}` keyset (P4 codex finding 2) so tied timestamps get
-  a deterministic total order that matches `chat_visible_since/2`'s cursor.
+  projection renders oldest→newest. Ordered by `routed_at` (with `message_id` as
+  a deterministic tie-break) so a cross-session-relayed message windows at its
+  route-into-session position.
 
-  ## `routed_at`, not `inserted_at` (P4 codex r4 HIGH)
+  ## `routed_at`, not `inserted_at`
 
-  The cursor orders/filters/cursors on `message_routings.routed_at` — the
-  per-session ROUTE-INTO-THIS-SESSION time — NOT `inserted_at` (the message
-  CREATION time). A message relayed into this session long after it was created
-  (the cross-session relay path routes the SAME `%Message{}` with its original,
-  OLD `inserted_at`) would otherwise sort BEHIND this session's already-advanced
-  chat-feed cursor and be stranded forever. `routed_at` is set to a fresh
-  `now` at write so the cursor reflects when the message actually entered THIS
-  session. `inserted_at` is left for the production pagination + customer feed.
+  This windowed snapshot read is the ONLY chat-feed read path — there is no
+  delta cursor (the customer feed needs one; chat does not — see
+  `Ezagent.Socialware.ChatFeed`). It orders on `message_routings.routed_at` —
+  the per-session ROUTE-INTO-THIS-SESSION time — NOT `inserted_at` (the message
+  CREATION time): the cross-session relay path routes the SAME `%Message{}` with
+  its original, OLD `inserted_at`, so ordering on `routed_at` windows the relayed
+  message at the position it actually entered THIS session. (Without a cursor to
+  strand on, any `routed_at` tie is now harmless — a tie only reorders within the
+  snapshot, never drops a row.) `inserted_at` is left for the production
+  pagination + customer feed.
   """
   @spec chat_visible_recent(URI.t(), pos_integer()) :: [Message.t()]
   def chat_visible_recent(%URI{} = session_uri, limit)
@@ -332,65 +330,12 @@ defmodule Ezagent.MessageStore do
           m.visibility == :customer_visible,
       order_by: [desc: r.routed_at, desc: r.message_id],
       limit: ^limit,
-      # Surface the per-session ROUTE timestamp so the chat-feed cursor
-      # checkpoints on the SAME column this query orders on (P4 codex r4 HIGH).
+      # Surface the per-session ROUTE timestamp so the snapshot orders on the
+      # route-into-session time (a relayed message windows at its arrival here).
       select_merge: %{routed_at: r.routed_at}
     )
     |> Repo.all()
     |> Enum.reverse()
-  end
-
-  @doc """
-  P4-2 — `:customer_visible` messages in `session_uri` strictly after the
-  **composite `{routed_at, message_id}` keyset cursor** (ascending). The CHAT
-  external-SPA REPLAY primitive, mirroring `committed_deliveries_since/2` but
-  over the chat message ordering.
-
-  ## Why a composite keyset (P4 codex finding 2 — HIGH)
-
-  `routed_at` alone is NOT a total order: two messages can share a
-  `routed_at` (millisecond/microsecond collisions, batch writes). With the old
-  `routed_at > ^since`, once the chat-feed cursor reached a tied timestamp the
-  later tied row was excluded FOREVER (and the `@replay_cap` bound could lose
-  rows when >cap share a timestamp). The composite cursor `{ts, id}` restores a
-  total order:
-
-      routed_at > ts  OR  (routed_at == ts AND message_id > id)
-
-  ordered by `[asc: routed_at, asc: message_id]`. `MessageRouting`'s PK is
-  `(message_id, session_uri)` so `message_id` is the deterministic tie-break.
-  The epoch lower bound is `{~U[1970-01-01 ...], ""}` (`""` sorts before any
-  UUID, so the full backlog is covered). Per-message visibility gate +
-  session/workspace scoping as `chat_visible_recent/2`. Bounded to `@replay_cap`.
-
-  ## `routed_at`, not `inserted_at` (P4 codex r4 HIGH)
-
-  The cursor keys on `message_routings.routed_at` (the per-session ROUTE time),
-  not `inserted_at` (the message CREATION time), so a message relayed into this
-  session long after it was created is NOT stranded behind the already-advanced
-  cursor. See `chat_visible_recent/2`.
-  """
-  @spec chat_visible_since(URI.t(), {DateTime.t(), String.t()}) :: [Message.t()]
-  def chat_visible_since(%URI{} = session_uri, {%DateTime{} = since_at, since_id})
-      when is_binary(since_id) do
-    session_str = URI.to_string(session_uri)
-    workspace_str = Ezagent.Persistence.workspace_uri_for!(session_uri)
-
-    from(m in Message,
-      join: r in MessageRouting,
-      on: r.message_id == m.id,
-      where:
-        r.session_uri == ^session_str and m.workspace_uri == ^workspace_str and
-          m.visibility == :customer_visible and
-          (r.routed_at > ^since_at or
-             (r.routed_at == ^since_at and r.message_id > ^since_id)),
-      order_by: [asc: r.routed_at, asc: r.message_id],
-      limit: @replay_cap,
-      # Cursor checkpoints on the per-session ROUTE timestamp, not
-      # messages.inserted_at (P4 codex r4 HIGH).
-      select_merge: %{routed_at: r.routed_at}
-    )
-    |> Repo.all()
   end
 
   @doc """
