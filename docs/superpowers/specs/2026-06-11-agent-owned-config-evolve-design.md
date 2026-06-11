@@ -1,6 +1,8 @@
 # Agent-Owned Config-Evolve — Design Spec
 
-> **STATUS: design, awaiting codex adversarial-review + Allen review.** Prerequisite refactor that must merge BEFORE the P5 collapse-to-one-Kind work (Allen, 2026-06-11). Decided in Feishu brainstorm: **full move** of config-application from the socialware Session to the Agent entity.
+> **STATUS: design, rev 2 (codex round-1 REVISE addressed), awaiting re-review + Allen review.** Prerequisite refactor that must merge BEFORE the P5 collapse-to-one-Kind work (Allen, 2026-06-11). Decided in Feishu brainstorm: **full move** of config-application from the socialware Session to the Agent entity.
+>
+> **rev 2 (codex round-1):** Q2 — the cascade-layer write is NOT cap-free; behaviors write only their own slice (sibling slices are read-only), so the agent mutates its own Sandbox via a **capped self-dispatch** under a self-scoped cap (§3). Q3 — the manage-cap authority is load-bearing and today's callers don't hold it, so the plan must **wire the manage-cap grant to the legitimate evolvers and update the tests** (§4); this is a deliberate authority tightening, safe because SW-UPD is not in production. Q5/Q6 — the replay guard + `source_turn_id` + the `ConfigProjection` boot-registration + the `BehaviorSet`/`SocialwareSession` metadata all move with the code (§6).
 
 **Goal:** Dissolve the #607 confused-deputy class *structurally* by moving the agent-config-application capability (today `Ezagent.Behavior.ConfigUpdate` on the socialware Session Kind) onto the **Agent entity**, so the agent mutates its own config under its own authority. The socialware Session keeps only the optimizer Turn + the approval gate, then dispatches a validated, settled delta to the target agent.
 
@@ -89,7 +91,11 @@ action(:repoint_config,     args: %{...layer, config_id...}, caps: [:repoint_con
 - **`apply_config_delta`** — the agent writes a NEW immutable `ConfigObject` (from the delta carried by a settled turn), repoints its OWN user cascade layer at that object, and records the rollback pointer. Object-keyed ordering preserved (§5).
 - **`repoint_config`** — rollback / explicit advance to an existing immutable object on the agent's own layer.
 
-The agent performs the cascade-layer write **in-process on its own `Sandbox` slice** (caller == subject == self), exactly as the ApiKeys flip reads its own slice in-process. There is **no** `system://agent-internal` escalation, because nothing crosses the entity boundary: the agent is mutating itself. (Plan-level mechanism: an in-process self-targeted `sandbox.write_path` where `ctx.caller` is the agent, vs. a direct slice update via a `reads_siblings([:sandbox])` + a Sandbox-provided in-process writer — to be chosen in the plan; the precedent is the ApiKeys in-process slice access.)
+**The cascade-layer write mechanism (codex Q2 — corrected).** A behavior writes ONLY its own slice; sibling slices are injected **read-only** (`apps/ezagent_core/lib/ezagent/kind/runtime/context.ex:37-40`, `apps/ezagent_core/lib/ezagent/behavior/effects.ex:158-193`). The cascade pointer lives in the **`Sandbox`** slice (`respawn_template_data.cascade_resolution.user_layer_uri`), which the spawn-time `CascadeRuntime` reads. So `ConfigEvolve` cannot write it directly, and the original "no-cap in-process write" claim was wrong (the ApiKeys precedent was a *read*; this is a read-modify-write).
+
+The agent updates the pointer via a **capped self-dispatch of `sandbox.write_path`**: `ConfigEvolve`'s handler reads the current `cascade_resolution` in-process via `reads_siblings([:sandbox])` (the read side — the genuine ApiKeys precedent), computes the new `user_layer_uri`, and emits a `Cmd` targeting **its own URI** (`sandbox.write_path`), processed in-process by the same `Kind.Server`. This requires a **self-scoped** `cap(:agent, Ezagent.Behavior.Sandbox, :write_path, instance: self)` granted to the agent over itself (added to the agent's base self-caps at create).
+
+This is **not** cap-free — but it is **not** the #607 confused-deputy either. The structural win holds: there is no longer any path where a caller-controlled `subject_uri` lets a *session* write an *arbitrary* agent's Sandbox. The write runs under the agent's **own self-authority** (instance-scoped to itself), and the cross-entity `system://agent-internal` escalation is removed. (Alternative considered and rejected for now: move `user_layer_uri` out of the Sandbox slice into `ConfigEvolve`'s own slice — eliminates the self-dispatch but ripples into the spawn-time `CascadeRuntime` read path; deferred as higher-risk, YAGNI.)
 
 ---
 
@@ -112,7 +118,13 @@ So **whoever manages the agent holds the cap and may evolve it** (the orchestrat
 
 **Why the manage-cap (not a new `config_evolve` cap):** config-evolve is bundled under *management* authority by design (Allen-endorsed 2026-06-11: "谁持有 manage-cap 谁就可以更新 agent"). Evolving an agent's soul is a management act of the same weight as `Manage.delete`/`reconfigure`; gating it by the same cap means there is exactly one authority concept for "may control this agent," not a proliferation of per-action caps. (A future split is possible if a role should evolve but not delete — out of scope; YAGNI.)
 
-**Self-iteration** (an agent evolving itself): `ctx.caller == subject == the agent`. It writes its own slice; nothing crosses a boundary. Authorized by self-identity (a self-manage-cap or a self-caller short-circuit — plan-level; trivial case).
+**How legitimate evolvers acquire the cap (codex Q3 — load-bearing).** Codex confirmed today's SW-UPD callers pass with ordinary **session-scoped user caps**, NOT the Agent manage-cap (`config_update_test.exs:294-301,345-357`; the settling caller's caps are forwarded at `turn.ex:585-597`). So flipping the gate to the manage-cap **denies them unless the cap is wired**. This is a deliberate authority tightening — safe because SW-UPD is **not in production** — and the wiring is in-scope here, NOT a deferred diligence note:
+
+- **Manager-driven evolution** (orchestrator / creator runs SW-UPD on an agent it manages): the caller already holds `cap(:agent, Manage, :any, instance: agent)` via the #533 create-grant. The plan asserts this with a test where the authorized manager passes and a non-manager is denied.
+- **Self-evolution** (the agent evolves itself): the SW-UPD turn runs in the agent's own context, so `ctx.caller == the agent`. The agent is granted a **self-scoped** `cap(:agent, Manage, :any, instance: self)` at create (the same base-self-cap grant that carries the self-scoped `Sandbox.write_path` from §3). The agent manages itself.
+- **Any other current caller** that passed only via the old membership predicate: the plan identifies it and grants the manage-cap at the point its management relationship is established — it is NOT given a membership fallback. If no such legitimate caller exists, the tightening simply removes an over-broad path.
+
+The existing `config_update_test.exs` fixtures that grant only session caps are **updated** to grant the manage-cap to the authorized caller (reflecting the corrected model), plus a new denial test for an unauthorized caller.
 
 **Validation (step 2) under the new model:** the agent re-validates the delta it receives (layer / key / patch shape) before any side effect — the same single-upfront-chokepoint discipline (#607 round-5), but now the agent validates *its own* incoming delta rather than a Session validating a cross-entity write. The confused-deputy authority guard (`subject_uri` belongs to a manageable agent) is **gone** because the agent *is* the subject — there is no deputy.
 
@@ -133,17 +145,16 @@ Turn settles → Turn self-dispatches Cmd(:apply_delta, session)   (turn.ex:574)
 ```
 Turn settles → Turn reads its settled delta, extracts subject_uri (target agent)
   → Turn dispatches Cmd(:apply_config_delta, TARGET AGENT, {delta})   ── caller must hold the agent's manage-cap
-    → ConfigEvolve (AGENT behavior) handles it, IN-PROCESS on its own slices:
-      → write_config (object)            (agent's own config-version store)
-      → repoint its OWN Sandbox layer    (in-process; no escalation)
-      → put_pointer                      (agent's own rollback ledger)
+    → ConfigEvolve (AGENT behavior) handles it; gate = target agent's manage-cap (§4):
+      → write_config (object)                 (agent's own config-version store)
+      → read cascade_resolution via reads_siblings([:sandbox])   (in-process read)
+      → emit Cmd(sandbox.write_path → SELF)    (capped self-dispatch; self-scoped Sandbox cap)
+      → put_pointer                            (agent's own rollback ledger)
 ```
 
-The **object-keyed ordering** that makes the two-store write atomic-by-ordering (object → repoint → pointer; #607 CRITICAL) is preserved verbatim — it just runs inside the agent now. The P2.5c durable idempotency marker (`source_turn_id` on the `ConfigObject`, `applied_for_turn?`) and crash-replay semantics move unchanged.
+The **object-keyed ordering** that makes the two-store write atomic-by-ordering (object → repoint → pointer; #607 CRITICAL) is preserved verbatim — it just runs inside the agent now. The P2.5c durable idempotency marker (`source_turn_id` on the `ConfigObject`, `applied_for_turn?`) and crash-replay semantics move unchanged **with the store** (§6 — the replay guard the Turn's recovery scan calls at `turn.ex:163-170` must remain reachable after the store relocates).
 
-### Authority handoff
-
-The Turn's settlement dispatch carries `ctx` whose caller is the principal that drove the turn. For the dispatch to the agent to pass Check-2, that caller must hold the target agent's manage-cap. This is the diligence item: **verify every legitimate evolver (orchestrator / evolver-role / creator / the self-iterating agent) holds or is granted the agent's manage-cap** so the cap-gate does not lock out a real caller. If a current path relied on membership-without-cap, the fix is to grant the manage-cap at the point management authority is established — never to reinstate the membership fallback.
+**Authority handoff** is specified concretely in §4 (manager holds the #533 create-grant; self-evolution uses a self-scoped manage-cap; the plan wires the grants + updates the tests). The cap is **instance-scoped to the specific target agent**, so there is no arbitrary-agent surface even at hop 1.
 
 ---
 
@@ -154,13 +165,20 @@ The Turn's settlement dispatch carries `ctx` whose caller is the principal that 
 - **TEST DB ONLY** for any verification; never `mix ecto.migrate` against dev/prod (:10042/:10043).
 - **`system://agent-internal` cleanup:** drop the #607-specific `cap(:agent, Sandbox, :read)` entry; the shared `cap(:agent, Sandbox, :write_path)` **stays** (still used by `Agent.do_record_sandbox_state/3`). Leave a comment recording the #607 removal, mirroring the ApiKeys-flip comment.
 
+- **Replay guard moves WITH the store (codex Q5):** the Turn crash-recovery scan calls `ConfigStore.applied_for_turn?/1` keyed by `source_turn_id` (`turn.ex:163-170`). After the store relocates to identity, this call site must resolve to the new module (the Turn already depends on identity), and the Agent-side write must keep stamping `source_turn_id` on the `ConfigObject` and preserve the object→repoint→pointer ordering. Carry the P2.5c replay test.
+
+- **`ConfigProjection` registration + resolver ownership move (codex Q6):** `ConfigProjection.register()` runs from `socialware`'s `application.ex:17-20` and the `socialware-config-object` URI delegates to the `:socialware_config_dir` resolver (`instance_message/uri_query_resolvers.ex:98-131`). The boot `register/0` moves to identity's `application.ex`; the `UriQuery` delegation is preserved (the coupling is runtime via `Ezagent.UriQuery`, NOT a compile dep — so no cycle and the `uri_query` arch gate stays green).
+
+- **`BehaviorSet` + `SocialwareSession` metadata (codex Q6 LOW):** remove `config_updates: Ezagent.Behavior.ConfigUpdate` and the `ConfigUpdate => %{turns: :required, chat: :required}` `@required_reads` entry from `behavior_set.ex:165-183`; add `ConfigEvolve`'s slice + its `%{sandbox: :required}` sibling-read closure (on the Agent Kind side). Remove `ConfigUpdate` from `SocialwareSession.behaviors` (`socialware_session.ex:15-21`). These keep the static lifecycle / cap-chokepoint / required-reads gates green.
+
 ---
 
 ## 7. Testing (TDD)
 
 1. **Authority gate (load-bearing):** a caller holding the target agent's manage-cap CAN `apply_config_delta`/`repoint_config`; a caller WITHOUT it is denied. A cross-agent caller (manage-cap on agent X, target agent Y) is denied.
 2. **Self-iteration:** the agent evolving itself (caller == subject) is authorized.
-3. **No escalation:** an in-process test proving the cascade-layer write runs under the agent's own identity — no `system://agent-internal` needed (the dropped `Sandbox, :read` cap is gone and the path still works).
+3. **No cross-entity escalation:** the cascade-layer write succeeds via the agent's **self-scoped** `Sandbox.write_path` cap (the self-dispatch), and FAILS if that self-cap is absent (proving it is genuinely cap-gated, not bypassing). After the move, `system://agent-internal` no longer carries the #607 `cap(:agent, Sandbox, :read)`, and no session-scoped caller can write another agent's Sandbox via this path.
+3b. **Authority wiring (Q3):** a manager holding the target agent's manage-cap passes the settlement dispatch; a caller with only session-scoped caps is **denied** (the corrected, tightened gate). Self-evolution (caller == the agent, holding its self-scoped manage-cap) passes.
 4. **Object-keyed ordering preserved:** carry over the #607 ordering/partial-write tests (object → repoint → pointer; infra-failure-between leaves only non-harmful state) against the relocated code.
 5. **Idempotency / crash replay:** carry over P2.5c `applied_for_turn?` / `source_turn_id` replay tests.
 6. **Confused-deputy regression:** the old crafted-`subject_uri` attack now has no surface (the agent is the subject); assert the validation rejects malformed delta shapes upfront.
