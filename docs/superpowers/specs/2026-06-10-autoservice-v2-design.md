@@ -639,7 +639,12 @@ Admin 点 "预览 sandbox":
   → preview session 消息不进生产 CustomerFeed (真实客户看不到)
   → preview session 消息不进 OperatorLive (operator 不处理)
   → 满意 → CR Publish → sandbox 拷贝到 release → 正式客户走相同路径(读 release)
-  → 预览结束 → 销毁临时 agent + session
+  → 预览结束:
+      - 销毁临时 agent (SpawnRegistry.terminate)
+      - 删除 preview routing rule (RuleStore.delete)
+      - 关闭 preview session (Session.destroy)
+      - 清理 agent work dir (~/.ezagent/.../preview-<role>-work/)
+  → 超时保护: preview session 闲置 30min 自动销毁
 
 生产客户:
   → session://cs/<ws>/<name>
