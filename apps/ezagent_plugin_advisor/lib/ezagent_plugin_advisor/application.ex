@@ -29,4 +29,11 @@ defmodule EzagentPluginAdvisor.Application do
 
   @impl Ezagent.Plugin
   def config_surface, do: nil
+
+  # P3-2: the socialware customer feed declared as a BARE `:pull`
+  # `Ezagent.ExternalMirror.Adapter` (no binding — served by the customer
+  # channel). Registering it installs the `allow_customer_feed` cap subject and
+  # spawns NO Worker (pull adapters have no per-binding transport).
+  @impl Ezagent.Plugin
+  def adapters, do: [Ezagent.Socialware.CustomerFeedAdapter]
 end

@@ -77,6 +77,100 @@ defmodule Ezagent.Socialware.CustomerFeed do
     |> Repo.all()
   end
 
+  @doc """
+  P3-2 — the LOWER-BOUND cursor join protocol (codex P3 rev1 HIGH-3 + rev2
+  HIGH-1). The CALLER's channel subscribes to the `{:customer_delivery}` topic
+  FIRST (a PubSub subscription is channel-process-bound and stays in the
+  channel); this function then performs the source-layer steps that must NOT
+  race a concurrent commit:
+
+    1. capture `lower = latest_cursor/1` BEFORE any snapshot content read;
+    2. take the gated snapshot content (`snapshot/2`) and let the caller render
+       it;
+    3. immediately replay `committed_deliveries_since(lower)`.
+
+  Because `lower` is captured BEFORE the content read, any commit landing at or
+  after `lower` — including one that lands in the narrow window between the
+  content read and the replay (and whose advisory `{:customer_delivery}` event
+  is lost) — is re-included by the replay. Replay is idempotent by
+  `committed_seq` id, so a row may be re-delivered (harmless) but is NEVER
+  skipped.
+
+  Returns `{:ok, %{snapshot: %{messages, page}, deliveries: [...], cursor: int}}`
+  where `cursor` is the max `committed_seq` actually replayed (or `lower` when
+  the replay is empty). `{:error, :unauthorized}` on a bad token (fail closed).
+
+  `opts[:before_replay]` is a 0-arity seam fired AFTER the content read and
+  BEFORE the replay — used by the join-race test to inject a commit (and drop
+  its advisory) in exactly the window codex flagged. Defaults to a no-op.
+  """
+  @spec join(URI.t(), String.t() | nil, keyword()) ::
+          {:ok, %{snapshot: map(), deliveries: [map()], cursor: integer()}}
+          | {:error, :unauthorized}
+  def join(%URI{} = session_uri, token, opts \\ []) when is_list(opts) do
+    # Step 1: capture the lower bound BEFORE reading snapshot content.
+    lower = latest_cursor(session_uri)
+
+    # Step 2: gated snapshot content (also the auth gate — fail closed here).
+    case snapshot(session_uri, token) do
+      {:ok, snapshot} ->
+        # Test-only seam: a commit injected here (advisory dropped) must still be
+        # picked up by the replay below, because `lower` predates the content read.
+        run_before_replay(opts[:before_replay])
+
+        # Step 3: replay from the lower bound (idempotent overlap with the snapshot).
+        {deliveries, cursor} = deliveries_and_cursor(session_uri, lower)
+        {:ok, %{snapshot: snapshot, deliveries: deliveries, cursor: cursor}}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  @doc """
+  P3-2 — cursor replay for an ESTABLISHED connection, triggered by every
+  advisory `{:customer_delivery}` event (or a reconnect). Re-validates the
+  token (fail closed), replays `committed_deliveries_since(cursor)`, and returns
+  the refreshed gated snapshot so the caller can push the current
+  customer-visible view.
+
+  Returns `{:ok, %{snapshot: %{messages, page}, deliveries: [...], cursor: int}}`
+  where `cursor` advances ONLY to the max `committed_seq` actually replayed
+  (unchanged when the replay is empty — idempotent). `{:error, :unauthorized}`
+  on a bad token.
+  """
+  @spec replay(URI.t(), String.t() | nil, integer()) ::
+          {:ok, %{snapshot: map(), deliveries: [map()], cursor: integer()}}
+          | {:error, :unauthorized}
+  def replay(%URI{} = session_uri, token, cursor) when is_integer(cursor) do
+    case snapshot(session_uri, token) do
+      {:ok, snapshot} ->
+        {deliveries, new_cursor} = deliveries_and_cursor(session_uri, cursor)
+        {:ok, %{snapshot: snapshot, deliveries: deliveries, cursor: new_cursor}}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  # Replay rows strictly after `cursor`; the new cursor advances ONLY to the max
+  # committed_seq actually replayed (so a dropped advisory cannot strand a row —
+  # the next replay from the unchanged cursor still picks it up).
+  defp deliveries_and_cursor(session_uri, cursor) do
+    deliveries = committed_deliveries_since(session_uri, cursor)
+
+    new_cursor =
+      case deliveries do
+        [] -> cursor
+        rows -> rows |> Enum.map(& &1.cursor) |> Enum.max()
+      end
+
+    {deliveries, new_cursor}
+  end
+
+  defp run_before_replay(nil), do: :ok
+  defp run_before_replay(fun) when is_function(fun, 0), do: fun.()
+
   @doc "P2.5b — the highest committed-delivery cursor for a session (0 if none)."
   @spec latest_cursor(URI.t()) :: integer()
   def latest_cursor(%URI{} = session_uri) do
