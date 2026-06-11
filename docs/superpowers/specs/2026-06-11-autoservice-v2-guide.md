@@ -14,7 +14,54 @@
 
 ---
 
-## 2. 三角色
+## 2. 概念映射 — AutoService 在 ezagent 中的位置
+
+> 如果你已经了解 ezagent 的核心概念（Workspace、Session、Routing、CapBAC），这节帮你快速理解 autoservice 是怎么"复用"这些能力的。
+
+```
+AutoService 概念          ezagent 实现              说明
+─────────────────────────────────────────────────────────────────
+租户 (Tenant)      →     Workspace                 每个企业 = 一个 Workspace
+                                                   "workspace://cinnox"
+
+客户会话            →     Session                   客户聊天 = 一个 Session
+                                                   "session://cs/<ws>/<name>"
+
+AI 客服 (Agent)     →     Agent + AgentTemplate     fast agent = curl.agent (调用 DeepSeek HTTP)
+                                                   slow agent = cc agent (Claude Code)
+
+路由 (Routing)      →     RoutingRegistry           "客户消息 → 发给 fast+slow agent"
+                         + RuleStore               接管时 Disable/Enable 规则
+
+人工接管 (Turn)     →     Behavior.Turn             open → compose → claim → settle
+                         (socialware domain)        接管时暂停路由，提交后恢复
+
+消息门控 (Feed)     →     CustomerFeed              只投递已发布的回复（不是草稿）
+                         (socialware domain)        接管期间客户看不到客服编辑中内容
+
+内容存储            →     ConfigStore               租户配置（品牌名、渠道等）
+                         (socialware domain)        不走文件系统，走数据库
+
+权限控制            →     CapBAC                    5 维权限: kind/behavior/action/
+                         (ezagent_core)             instance/workspace_uri
+
+外部 AI 服务调用    →     ExternalAdapter            DeepSeek HTTP API（curl agent）
+                         + cc bridge                Claude Code SDK bridge（cc agent）
+```
+
+### 关键架构原则
+
+```
+core (ezagent_core)         — 完全不动（dispatch, routing, CapBAC, Kind）
+domain (ezagent_domain_*)   — 完全不动，纯复用（Turn, CustomerFeed, ConfigStore）
+plugin (ezagent_plugin_*)   — 所有 autoservice 新功能都在这里
+```
+
+**autoservice 不发明新机制，只组合现有能力。** 就像搭积木——Turn 是 socialware 提供的"回合管理积木"，CustomerFeed 是"消息门控积木"，autoservice 把它们拼成客服场景。
+
+---
+
+## 3. 三角色
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -39,7 +86,7 @@
 
 ---
 
-## 3. AI 客服的"大脑"是怎么构成的
+## 4. AI 客服的"大脑"是怎么构成的
 
 AI 客服需要知道三件事：**我是谁**、**我会什么**、**我查什么**。
 
@@ -86,7 +133,7 @@ AI 客服需要知道三件事：**我是谁**、**我会什么**、**我查什�
 
 ---
 
-## 4. Soul 的四层继承
+## 5. Soul 的四层继承
 
 Soul 不是一份文件，而是**四层叠加**（后一层覆盖前一层）：
 
@@ -115,7 +162,7 @@ Soul 不是一份文件，而是**四层叠加**（后一层覆盖前一层）�
 
 ---
 
-## 5. Skill 的四层加载
+## 6. Skill 的四层加载
 
 和 Soul 类似，Skill 也有四层，**租户的 Skill 优先级最高**：
 
@@ -135,7 +182,7 @@ Soul 不是一份文件，而是**四层叠加**（后一层覆盖前一层）�
 
 ---
 
-## 6. 内容发布流 — 编辑→预览→发布
+## 7. 内容发布流 — 编辑→预览→发布
 
 租户管理员修改 AI 客服的内容时，不会直接生效。需要经过发布流程：
 
@@ -172,7 +219,7 @@ Soul 不是一份文件，而是**四层叠加**（后一层覆盖前一层）�
 
 ---
 
-## 7. 客户对话流程
+## 8. 客户对话流程
 
 客户发一条消息，背后发生了什么：
 
@@ -206,7 +253,7 @@ Soul 不是一份文件，而是**四层叠加**（后一层覆盖前一层）�
 
 ---
 
-## 8. 人工客服接管流程
+## 9. 人工客服接管流程
 
 当 AI 判断需要人工介入，或客户主动要求转人工时：
 
@@ -237,7 +284,7 @@ AI 判断需要转人工
 
 ---
 
-## 9. 数据分区 — 版本隔离
+## 10. 数据分区 — 版本隔离
 
 ```
 每个租户有两套数据区：
@@ -259,7 +306,7 @@ CR = Change Request（变更请求）
 
 ---
 
-## 10. 租户隔离
+## 11. 租户隔离
 
 每个租户（企业）的数据完全隔离：
 
@@ -287,19 +334,24 @@ CR = Change Request（变更请求）
 
 ---
 
-## 11. 关键术语速查
+## 12. 关键术语速查
 
-| 术语 | 含义 |
-|---|---|
-| **Soul** | AI 客服的身份、规则、风格（始终加载） |
-| **Skill** | AI 客服处理特定场景的流程手册（按需查阅） |
-| **KB** | 知识库，产品数据、术语、触发词（搜索查询） |
-| **Slot** | 模板中的填空位，如 `{{bot_full_name}}` 填 "CINNOX AI Bot" |
-| **沙盒** | 草稿区，管理员编辑和预览的地方 |
-| **生产** | 已发布区，客户实际看到的内容 |
-| **CR** | 变更请求，从沙盒到生产的发布单 |
-| **租户** | 一个使用平台的企业（如 CINNOX） |
-| **接管** | 人工客服介入 AI 对话 |
+| AutoService 术语 | ezagent 对应 | 含义 |
+|---|---|---|
+| **租户 (Tenant)** | Workspace | 一个使用平台的企业（如 CINNOX → workspace://cinnox） |
+| **Soul** | — (内容层) | AI 客服的身份、规则、风格（始终加载，存文件系统） |
+| **Skill** | — (内容层) | AI 客服处理特定场景的流程手册（按需查阅，cc agent Read tool） |
+| **KB** | — (内容层) | 知识库，产品数据、术语、触发词（SQLite + MCP server） |
+| **Slot** | — (内容层) | 模板中的填空位，如 `{{bot_full_name}}` → "CINNOX AI Bot" |
+| **沙盒 (Sandbox)** | — (文件系统) | 草稿区，管理员编辑和预览的地方 |
+| **生产 (Release)** | — (文件系统) | 已发布区，客户实际看到的内容，`_current` 符号链接指向当前版本 |
+| **CR** | ConfigStore | 变更请求，从沙盒到生产的发布单 |
+| **AI Agent** | Agent + AgentTemplate | fast=curl.agent(DeepSeek), slow=cc agent(Claude Code) |
+| **路由** | RoutingRegistry + RuleStore | 客户消息→agent 的规则，接管时 disable/enable |
+| **Turn** | Behavior.Turn (socialware) | 回合管理: open→compose→claim→settle |
+| **CustomerFeed** | CustomerFeed (socialware) | 消息门控，只投递 settled 消息，visibility 控制 |
+| **接管** | Turn.claim | 人工客服介入 AI 对话 |
+| **权限** | CapBAC | 5 维权限: kind/behavior/action/instance/workspace |
 
 ---
 
