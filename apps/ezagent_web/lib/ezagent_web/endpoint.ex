@@ -38,6 +38,12 @@ defmodule EzagentWeb.Endpoint do
     websocket: [check_origin: false],
     longpoll: false
 
+  # P4 — the CHAT external SPA socket (chat analogue of the customer socket;
+  # caller-identity token → live chat-membership-gated chat_feed projection).
+  socket "/socialware_chat_socket", EzagentWeb.Socialware.ChatFeedSocket,
+    websocket: [check_origin: false],
+    longpoll: false
+
   # Serve at "/" the static files from "priv/static" directory.
   #
   # When code reloading is disabled (e.g., in production),
