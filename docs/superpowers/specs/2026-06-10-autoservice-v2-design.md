@@ -52,7 +52,7 @@ Admin     → ezagent_plugin_liveview
 │  filler_loop.ex                                              │
 └──────────────────────────┬──────────────────────────────────┘
                            │ Turn.open/compose/settle
-                           │ Phoenix.PubSub.subscribe(CustomerFeed.topic)
+                           │ CustomerFeed.topic (PubSub)
 ┌──────────────────────────▼──────────────────────────────────┐
 │               ezagent_plugin_autoservice (容器外壳)           │
 │  autoservice_assembly.ex  — 组装协调                         │
@@ -1007,9 +1007,9 @@ loom (LoomSessionView)
   ├─ claude_code.ex: cc agent 主回复 + kb_search + skill Read
   ├─ Turn.compose (收集 cc 回复)
   ├─ Turn.settle (标记完成,锁定回复)
-  └─ {:customer_delivery} → CustomerFeed.snapshot 拉取 (门控投递)
+  └─ {:customer_delivery} → CustomerFeed.snapshot 拉取
   ↓
-Customer 收到消息 (Phoenix.PubSub.subscribe)
+Customer 收到消息 (订阅 CustomerFeed.topic，底层走 Phoenix.PubSub)
 ```
 
 > **时序修正 (H2):** Turn.open 在 fast agent 之前执行。客户消息到达后立即 open turn,
