@@ -43,7 +43,30 @@ function CustomerApp({sessionUri, token, socketPath, topicPrefix}) {
 
     channel.on("snapshot", (snapshot) => setSnapshot(snapshot))
 
+    // Live revocation (e.g. an ex-member who LEFT a chat): the server pushes
+    // `unauthorized` then closes the channel. Fail closed on the CLIENT too —
+    // CLEAR the rendered snapshot so a revoked viewer cannot keep reading stale
+    // content (codex P4 HIGH). Without this the browser would keep the last
+    // authorized snapshot visible after the channel closes.
+    channel.on("unauthorized", () => {
+      setSnapshot(null)
+      setUnauthorized(true)
+    })
+
+    // A channel close AFTER a successful join (the server `{:stop}` on
+    // revocation, or a dropped connection) also fails closed. `leaving` guards
+    // the INTENTIONAL close from the unmount cleanup below so it doesn't flip
+    // an unmounting component into the unauthorized state.
+    let leaving = false
+    channel.onClose(() => {
+      if (!leaving) {
+        setSnapshot(null)
+        setUnauthorized(true)
+      }
+    })
+
     return () => {
+      leaving = true
       channel.leave()
       socket.disconnect()
     }
