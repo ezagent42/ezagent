@@ -65,10 +65,15 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
       argv =
         [
           claude_path,
-          "--dangerously-skip-permissions",
-          "--dangerously-load-development-channels",
-          "server:esr-bridge"
-        ] ++ settings_mcp_args
+          "--effort",
+          effort_for(tmpl)
+        ] ++
+          model_args(tmpl) ++
+          [
+            "--dangerously-skip-permissions",
+            "--dangerously-load-development-channels",
+            "server:esr-bridge"
+          ] ++ settings_mcp_args
 
       base_env = %{
         "EZAGENT_AGENT_URI" => Ezagent.URI.stable_key(agent_uri),
@@ -79,6 +84,7 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
         base_env
         |> put_claude_config_dir(config_home, tmpl)
         |> maybe_put_orchestrator_role_env(tmpl)
+        |> maybe_put_anthropic_base_url(tmpl)
 
       {:ok, {argv, cmd_env}}
     end
@@ -137,6 +143,42 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
       Map.put(env, "EZAGENT_AGENT_ROLE", "orchestrator")
     else
       env
+    end
+  end
+
+  # Reasoning effort, per-template (Allen 2026-06-10). A cc bot otherwise inherits
+  # claude's `high` effort default → 1–4 min of server-side extended thinking PER
+  # reply (measured on the socialware CS live run, #715; local CPU idle = it was
+  # waiting, not computing). Latency-sensitive templates (CS bots) take the `low`
+  # default (~26 s, no quality loss); a template needing deep reasoning sets
+  # `"effort" => "high"` (or `"medium"`) in its `template_data`. Invalid/absent → low.
+  @valid_efforts ~w(low medium high)
+  defp effort_for(tmpl) when is_map(tmpl) do
+    case Map.get(tmpl, "effort") do
+      e when e in @valid_efforts -> e
+      _ -> "low"
+    end
+  end
+
+  # Per-template model + endpoint (Allen / autoservice-v2 §6.4, 2026-06-10). A cc
+  # agent runs the `claude` CLI, which can target a non-default model and/or an
+  # Anthropic-compatible endpoint: `--model <m>` selects the model, and the
+  # `ANTHROPIC_BASE_URL` env points claude at a proxy (e.g. autoservice's "slow"
+  # agent runs `deepseek-v4-flash` via `https://api.deepseek.com/anthropic`).
+  # The cc plugin stays generic — it reads `model`/`endpoint` from the template
+  # map; the autoservice content layer maps its (master-only) `agents.yaml` into
+  # the template. Absent → the operator/account default model + endpoint (claude).
+  defp model_args(tmpl) when is_map(tmpl) do
+    case Map.get(tmpl, "model") do
+      m when is_binary(m) and m != "" -> ["--model", m]
+      _ -> []
+    end
+  end
+
+  defp maybe_put_anthropic_base_url(env, tmpl) when is_map(env) do
+    case Map.get(tmpl, "endpoint") do
+      url when is_binary(url) and url != "" -> Map.put(env, "ANTHROPIC_BASE_URL", url)
+      _ -> env
     end
   end
 
