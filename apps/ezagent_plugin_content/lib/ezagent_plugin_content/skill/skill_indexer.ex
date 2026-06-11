@@ -13,13 +13,15 @@ defmodule EzagentPluginContent.Skill.SkillIndexer do
   end
 
   defp build_markdown(entries) do
-    lines = Enum.map(entries, fn e ->
-      meta = read_frontmatter(e.path)
-      name = Map.get(meta, "name", e.name)
-      desc = Map.get(meta, "description", "")
-      desc_suffix = if desc != "", do: ": #{desc}", else: ""
-      "  - **#{name}** — `skills/customer/#{e.name}/SKILL.md`#{desc_suffix}"
-    end)
+    lines =
+      Enum.map(entries, fn e ->
+        meta = read_frontmatter(e.path)
+        name = Map.get(meta, "name", e.name)
+        desc = Map.get(meta, "description", "")
+        desc_suffix = if desc != "", do: ": #{desc}", else: ""
+        "  - **#{name}** — `skills/customer/#{e.name}/SKILL.md`#{desc_suffix}"
+      end)
+
     ["\n## Skill Index\n\n需要时 Read 对应文件:\n" | lines] |> Enum.join("\n")
   end
 
@@ -32,9 +34,13 @@ defmodule EzagentPluginContent.Skill.SkillIndexer do
               {:ok, map} -> map
               _ -> %{}
             end
-          _ -> %{}
+
+          _ ->
+            %{}
         end
-      _ -> %{}
+
+      _ ->
+        %{}
     end
   end
 end

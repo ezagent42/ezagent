@@ -29,7 +29,12 @@ defmodule EzagentPluginContent.Soul.SoulSlotParserTest do
 
     # Section 2: BRAND STRUCTURE
     brand = Enum.find(result, &(&1.section == "BRAND STRUCTURE"))
-    assert brand.keys == ["identity.host_site_descriptor", "brand-structure.parent_company", "brand-structure.parent_hq"]
+
+    assert brand.keys == [
+             "identity.host_site_descriptor",
+             "brand-structure.parent_company",
+             "brand-structure.parent_hq"
+           ]
 
     # Section 3: GATE
     gate = Enum.find(result, &(&1.section == "GATE"))

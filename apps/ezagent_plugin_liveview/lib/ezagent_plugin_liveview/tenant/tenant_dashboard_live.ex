@@ -224,8 +224,8 @@ defmodule EzagentPluginLiveview.Tenant.TenantDashboardLive do
   defp cr_status_badge_text(%{"status" => s}), do: s
   defp cr_status_badge_text(_), do: gettext("unknown")
 
-  defp cr_status_variant(%{"status" => "open"}), do: :warning
-  defp cr_status_variant(%{"status" => "published"}), do: :success
-  defp cr_status_variant(%{"status" => "cancelled"}), do: :danger
-  defp cr_status_variant(_), do: :default
+  defp cr_status_variant(%{"status" => "open"}), do: "warning"
+  defp cr_status_variant(%{"status" => "published"}), do: "success"
+  defp cr_status_variant(%{"status" => "cancelled"}), do: "danger"
+  defp cr_status_variant(_), do: "default"
 end

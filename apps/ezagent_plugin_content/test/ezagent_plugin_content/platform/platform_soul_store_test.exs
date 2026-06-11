@@ -54,6 +54,7 @@ defmodule EzagentPluginContent.Platform.PlatformSoulStoreTest do
   # Helpers that simulate operating against a specific priv dir
   defp mock_read(level, role, base) do
     path = soul_path(level, role, base)
+
     case File.read(path) do
       {:ok, content} -> {:ok, content}
       {:error, _} -> {:error, :not_found}

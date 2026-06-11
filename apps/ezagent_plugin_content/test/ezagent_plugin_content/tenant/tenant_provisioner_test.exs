@@ -13,15 +13,18 @@ defmodule EzagentPluginContent.Tenant.TenantProvisionerTest do
     tmp = Path.join(System.tmp_dir!(), "prov_test_#{System.unique_integer()}")
     prev = Application.get_env(:ezagent_plugin_content, :tenant_base_dir)
     Application.put_env(:ezagent_plugin_content, :tenant_base_dir, tmp)
+
     on_exit(fn ->
       if prev, do: Application.put_env(:ezagent_plugin_content, :tenant_base_dir, prev)
       File.rm_rf!(tmp)
     end)
+
     {:ok, base_dir: tmp}
   end
 
   test "create_tenant creates sandbox directory structure" do
-    assert {:ok, result} = TenantProvisioner.create_tenant(@test_tid, "TestBrand", industry: "cloud-comms", role: @test_role)
+    assert {:ok, result} =
+             TenantProvisioner.create_tenant(@test_tid, "TestBrand", industry: "cloud-comms", role: @test_role)
 
     assert result.tenant_id == @test_tid
     assert result.cr_id =~ "cr-"
@@ -36,7 +39,8 @@ defmodule EzagentPluginContent.Tenant.TenantProvisionerTest do
   end
 
   test "create_tenant with custom industry and role" do
-    assert {:ok, result} = TenantProvisioner.create_tenant("custom-tid", "CustomBrand", industry: "fintech", role: "agent")
+    assert {:ok, result} =
+             TenantProvisioner.create_tenant("custom-tid", "CustomBrand", industry: "fintech", role: "agent")
 
     assert result.tenant_id == "custom-tid"
     sandbox = result.sandbox

@@ -10,10 +10,12 @@ defmodule EzagentPluginContent.Tenant.TenantRuntimeTest do
     tmp = Path.join(System.tmp_dir!(), "tenant_runtime_test_#{System.unique_integer()}")
     prev = Application.get_env(:ezagent_plugin_content, :tenant_base_dir)
     Application.put_env(:ezagent_plugin_content, :tenant_base_dir, tmp)
+
     on_exit(fn ->
       if prev, do: Application.put_env(:ezagent_plugin_content, :tenant_base_dir, prev)
       File.rm_rf!(tmp)
     end)
+
     {:ok, base_dir: tmp}
   end
 

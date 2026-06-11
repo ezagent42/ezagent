@@ -13,6 +13,7 @@ defmodule EzagentPluginContent.Soul.SoulRenderer do
   @spec render([binary()], map()) :: binary()
   def render(templates, slot_values) when is_list(templates) do
     merged = Enum.join(templates, "\n\n")
+
     Regex.replace(@key_pattern, merged, fn _, key ->
       resolve_key(key, slot_values)
     end)
@@ -25,6 +26,7 @@ defmodule EzagentPluginContent.Soul.SoulRenderer do
   def full_claude_md(templates, slot_values, skill_index \\ "") do
     preamble = get_preamble()
     rendered = render(templates, slot_values)
+
     [preamble, rendered, skill_index]
     |> Enum.reject(&(is_nil(&1) or &1 == ""))
     |> Enum.join("\n\n")
@@ -32,6 +34,7 @@ defmodule EzagentPluginContent.Soul.SoulRenderer do
 
   defp resolve_key(key, values) do
     parts = String.split(key, ".")
+
     case get_in(values, parts) do
       nil -> "{{#{key}}}"
       val when is_binary(val) -> val

@@ -6,10 +6,13 @@ defmodule EzagentPluginContent.Skill.SkillStore do
   @spec read(binary(), String.t(), String.t(), String.t()) :: {:ok, binary()} | :not_found
   def read(base_dir, tid, role, name) do
     layers = [:tenant, :industry, :platform, :framework]
+
     Enum.find_value(layers, :not_found, fn layer ->
       entries = SkillLoader.list(base_dir, tid, role, layer)
+
       case Enum.find(entries, &(&1.name == name)) do
-        nil -> nil  # keep searching
+        # keep searching
+        nil -> nil
         entry -> {:ok, File.read!(entry.path)}
       end
     end)

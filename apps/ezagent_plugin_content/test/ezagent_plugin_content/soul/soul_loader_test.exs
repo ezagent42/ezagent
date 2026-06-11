@@ -18,7 +18,8 @@ defmodule EzagentPluginContent.Soul.SoulLoaderTest do
 
     result = SoulLoader.load(tmp, "test-tenant", "customer")
     assert Enum.any?(result, &(&1 =~ "L0 id"))
-    assert Enum.any?(result, &(&1 =~ "L3 id"))   # L3 overrides
+    # L3 overrides
+    assert Enum.any?(result, &(&1 =~ "L3 id"))
     assert Enum.any?(result, &(&1 =~ "L3 extra"))
   end
 end

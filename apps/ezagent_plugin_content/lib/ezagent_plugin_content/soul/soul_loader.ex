@@ -8,12 +8,18 @@ defmodule EzagentPluginContent.Soul.SoulLoader do
   @spec load(binary(), String.t(), String.t()) :: [binary()]
   def load(priv_dir, tid, role) do
     layers = [
-      read_if_exists(priv_dir, "platform/framework/#{role}/soul.md"),     # L0
-      read_if_exists(priv_dir, "platform/platform/#{role}.md"),           # L1
-      read_if_exists(priv_dir, "platform/industry/cloud-comms/#{role}/soul.md"), # L2
-      read_if_exists(priv_dir, "platform/templates/#{role}/soul.md"),     # L3
-      read_if_exists(Path.join([priv_dir, "..", "tenants", tid, "sandbox"]), "souls/#{role}_soul.md"), # Tenant override
+      # L0
+      read_if_exists(priv_dir, "platform/framework/#{role}/soul.md"),
+      # L1
+      read_if_exists(priv_dir, "platform/platform/#{role}.md"),
+      # L2
+      read_if_exists(priv_dir, "platform/industry/cloud-comms/#{role}/soul.md"),
+      # L3
+      read_if_exists(priv_dir, "platform/templates/#{role}/soul.md"),
+      # Tenant override
+      read_if_exists(Path.join([priv_dir, "..", "tenants", tid, "sandbox"]), "souls/#{role}_soul.md")
     ]
+
     Enum.filter(layers, &(&1 != nil))
   end
 

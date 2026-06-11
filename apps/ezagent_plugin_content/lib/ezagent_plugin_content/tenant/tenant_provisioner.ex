@@ -32,8 +32,14 @@ defmodule EzagentPluginContent.Tenant.TenantProvisioner do
 
     # 5. Write tenant config to ConfigStore
     cr_id = "cr-#{Date.utc_today()}-001"
-    cr = %{cr_id: cr_id, tenant_id: tid, status: "open",
-           created_by: "system://tenant-provisioner", created_at: DateTime.utc_now() |> DateTime.to_iso8601()}
+
+    cr = %{
+      cr_id: cr_id,
+      tenant_id: tid,
+      status: "open",
+      created_by: "system://tenant-provisioner",
+      created_at: DateTime.utc_now() |> DateTime.to_iso8601()
+    }
 
     config = %{brand_name: brand_name, industry: industry, roles: [role], channels: ["web"]}
 

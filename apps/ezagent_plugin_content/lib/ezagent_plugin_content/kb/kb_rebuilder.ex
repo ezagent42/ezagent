@@ -8,9 +8,11 @@ defmodule EzagentPluginContent.Kb.KbRebuilder do
     glossary = Path.join(sandbox_kb_dir, "glossary.json")
     sources = Path.join(sandbox_kb_dir, "_sources")
 
-    case System.cmd("uv", ["run", "--script", script, "--rebuild",
-         "--db-path", db_path, "--glossary", glossary, "--sources", sources],
-         stderr_to_stdout: true) do
+    case System.cmd(
+           "uv",
+           ["run", "--script", script, "--rebuild", "--db-path", db_path, "--glossary", glossary, "--sources", sources],
+           stderr_to_stdout: true
+         ) do
       {_, 0} -> :ok
       {output, _} -> {:error, output}
     end
