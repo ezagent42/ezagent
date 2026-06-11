@@ -118,6 +118,14 @@ defmodule Ezagent.Message do
     field :visibility, Ecto.Enum,
       values: [:customer_visible, :operator_only],
       default: :customer_visible
+
+    # VIRTUAL — the per-session ROUTING timestamp (`message_routings.inserted_at`)
+    # for the row, surfaced by the chat-feed queries via `select_merge` so the
+    # chat-feed cursor checkpoints on the SAME column the query orders/filters on
+    # (P4 codex r2 HIGH: a message id routed into multiple sessions can have
+    # `messages.inserted_at != message_routings.inserted_at`; the cursor must use
+    # the routing time, not the message write time). Not persisted; nil otherwise.
+    field :routed_at, :utc_datetime_usec, virtual: true
   end
 
   @doc """

@@ -301,7 +301,10 @@ defmodule Ezagent.MessageStore do
         r.session_uri == ^session_str and m.workspace_uri == ^workspace_str and
           m.visibility == :customer_visible,
       order_by: [desc: r.inserted_at, desc: r.message_id],
-      limit: ^limit
+      limit: ^limit,
+      # Surface the ROUTING timestamp so the chat-feed cursor checkpoints on the
+      # SAME column this query orders on (P4 codex r2 HIGH).
+      select_merge: %{routed_at: r.inserted_at}
     )
     |> Repo.all()
     |> Enum.reverse()
@@ -345,7 +348,10 @@ defmodule Ezagent.MessageStore do
           (r.inserted_at > ^since_at or
              (r.inserted_at == ^since_at and r.message_id > ^since_id)),
       order_by: [asc: r.inserted_at, asc: r.message_id],
-      limit: @replay_cap
+      limit: @replay_cap,
+      # Cursor checkpoints on the ROUTING timestamp, not messages.inserted_at
+      # (P4 codex r2 HIGH).
+      select_merge: %{routed_at: r.inserted_at}
     )
     |> Repo.all()
   end

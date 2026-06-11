@@ -138,5 +138,59 @@ defmodule Ezagent.MessageStoreChatCursorTest do
     end
   end
 
+  describe "multi-session routing (P4 codex r2): routed_at is the ROUTING time, not messages.inserted_at" do
+    test "the SAME message id routed into two sessions with different inserted_at carries each session's OWN routing time",
+         %{session: s_a, workspace: ws_a} do
+      t1 = ~U[2026-01-01 00:00:00.000000Z]
+      t2 = ~U[2026-06-01 00:00:00.000000Z]
+
+      m = write(s_a, "shared", at: t1)
+
+      # Route the SAME message id into session B with a DIFFERENT incoming
+      # inserted_at. `MessageStore.write/2` upserts the message row (on_conflict
+      # :nothing → keeps t1) and inserts B's routing at t2.
+      s_b = session_uri()
+      ws_b = Ezagent.Capability.workspace_of(s_b)
+      :ok = Ezagent.WorkspaceRegistry.bind(s_b, ws_b)
+      {:ok, _} = MessageStore.write(%{m | inserted_at: t2}, s_b)
+
+      [row_a] = MessageStore.chat_visible_recent(s_a, 10)
+      [row_b] = MessageStore.chat_visible_recent(s_b, 10)
+
+      assert row_a.id == m.id and row_b.id == m.id
+
+      # `routed_at` is each session's OWN routing timestamp — the column the
+      # chat-feed cursor checkpoints on (so replay never regresses/skips for a
+      # multi-routed id).
+      assert row_a.routed_at == t1
+      assert row_b.routed_at == t2
+
+      # The shared `messages.inserted_at` stays t1 for BOTH (the message row is
+      # shared) — proving routed_at ≠ messages.inserted_at, the codex r2 gap.
+      assert row_a.inserted_at == t1
+      assert row_b.inserted_at == t1
+
+      _ = ws_a
+    end
+
+    test "chat_visible_since over a session uses the routing time so a multi-routed id is not re-delivered forever",
+         %{session: s_a} do
+      t1 = ~U[2026-01-01 00:00:00.000000Z]
+      t2 = ~U[2026-06-01 00:00:00.000000Z]
+      m = write(s_a, "shared", at: t1)
+
+      s_b = session_uri()
+      ws_b = Ezagent.Capability.workspace_of(s_b)
+      :ok = Ezagent.WorkspaceRegistry.bind(s_b, ws_b)
+      {:ok, _} = MessageStore.write(%{m | inserted_at: t2}, s_b)
+
+      # B's cursor after rendering = B's routing keyset {t2, id}. Replaying from
+      # it returns NOTHING (idempotent — no infinite re-delivery). The old
+      # message-time cursor {t1, id} would re-return the row since t2 > t1.
+      assert [%{routed_at: ^t2, id: id}] = MessageStore.chat_visible_recent(s_b, 10)
+      assert [] = MessageStore.chat_visible_since(s_b, {t2, id})
+    end
+  end
+
   defp text(%Message{body: body}), do: Map.get(body, "text") || Map.get(body, :text)
 end

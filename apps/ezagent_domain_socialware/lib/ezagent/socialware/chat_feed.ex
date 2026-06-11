@@ -120,7 +120,9 @@ defmodule Ezagent.Socialware.ChatFeed do
   @spec latest_cursor(URI.t()) :: {DateTime.t(), String.t()}
   def latest_cursor(%URI{} = session_uri) do
     case MessageStore.chat_visible_recent(session_uri, 1) do
-      [%{inserted_at: %DateTime{} = at, id: id}] -> {at, id}
+      # `routed_at` is the per-session ROUTING timestamp (the column the query
+      # orders on) — NOT `messages.inserted_at` (P4 codex r2 HIGH).
+      [%{routed_at: %DateTime{} = at, id: id}] -> {at, id}
       _ -> @epoch_cursor
     end
   end
@@ -260,7 +262,12 @@ defmodule Ezagent.Socialware.ChatFeed do
   # The `{inserted_at, message_id}` keyset of the LAST row in an ascending list.
   defp max_keyset(messages), do: messages |> List.last() |> keyset()
 
-  defp keyset(%{inserted_at: %DateTime{} = at, id: id}), do: {at, id}
+  # `routed_at` (the per-session ROUTING timestamp surfaced by the chat-feed
+  # queries) is the keyset column — NOT `messages.inserted_at`, which can differ
+  # for a message id routed into multiple sessions (P4 codex r2 HIGH). Every
+  # message reaching here comes from `chat_visible_recent/2`/`chat_visible_since/2`,
+  # which `select_merge` `routed_at`.
+  defp keyset(%{routed_at: %DateTime{} = at, id: id}), do: {at, id}
 
   # Total order on the composite keyset: inserted_at first, message_id as the
   # deterministic tie-break — the SAME order as the SQL keyset predicate.
