@@ -132,7 +132,7 @@ tasks:
     type: code
   verification: 迁移后agent provision可用cinnox租户
   estimated_effort: large
-  status: pending
+  status: completed
   gap_ref: GAP-A.8
 - id: T1A.1
   name: autoservice_assembly.ex
@@ -260,7 +260,7 @@ tasks:
     type: test
   verification: full publish pipeline works end-to-end
   estimated_effort: small
-  status: pending
+  status: completed
   meta:
     connector_seam: true
     connects:
