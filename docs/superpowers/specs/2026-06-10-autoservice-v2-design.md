@@ -631,21 +631,24 @@ Tenant 内容配置 (租户编辑,走 CR):
 ```
 Admin 点 "预览 sandbox":
   → 以 admin 身份创建 preview session (session://preview/<tid>/<role>)
-  → admin 发送测试消息 (admin 自己扮演客户,不需要单独 customer account)
-  → 创建临时 cc agent (cwd 指向 sandbox/, 非 release/)
-  → preview session 消息不进 CustomerFeed (真实客户看不到)
-  → preview session 消息不进 OperatorLive (operator 不处理测试消息)
-  → 满意 → CR Publish; 不满意 → 继续编辑 sandbox → 再预览
+  → 走完整生产路径 (与正式客户完全相同):
+      fast agent(读 sandbox prompt) → Turn.open
+      → cc agent(cwd 指向 sandbox/) → Turn.compose → Turn.settle
+      → CustomerFeed (仅 preview session 订阅)
+  → 唯一差异: 数据源 = sandbox (非 release)
+  → preview session 消息不进生产 CustomerFeed (真实客户看不到)
+  → preview session 消息不进 OperatorLive (operator 不处理)
+  → 满意 → CR Publish → sandbox 拷贝到 release → 正式客户走相同路径(读 release)
   → 预览结束 → 销毁临时 agent + session
 
 生产客户:
-  → 使用自己的 CS session (session://cs/<ws>/<name>)
-  → agent 始终指向 release/_current
-  → 消息经 Turn → CustomerFeed → loom/customer_live
+  → session://cs/<ws>/<name>
+  → 走相同路径: fast agent → Turn.open → cc agent → Turn.compose → Turn.settle → CustomerFeed
+  → 唯一差异: 数据源 = release/_current (非 sandbox)
 ```
 
-> **admin 自己就是测试客户。** sandbox 预览不需要真实 customer account，
-> admin 在 preview session 中发送测试消息,agent 用 sandbox 内容回复。
+> **preview 和生产走相同的完整路径。** 差异仅在于数据源(sandbox vs release)和 session 类型(preview vs cs)。
+> 这样 preview 通过 = 生产必然通过。
 
 **agents.yaml 格式:**
 
