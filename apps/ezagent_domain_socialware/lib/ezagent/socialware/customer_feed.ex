@@ -108,19 +108,25 @@ defmodule Ezagent.Socialware.CustomerFeed do
           {:ok, %{snapshot: map(), deliveries: [map()], cursor: integer()}}
           | {:error, :unauthorized}
   def join(%URI{} = session_uri, token, opts \\ []) when is_list(opts) do
-    # Step 1: capture the lower bound BEFORE reading snapshot content.
-    lower = latest_cursor(session_uri)
-
-    # Step 2: gated snapshot content (also the auth gate — fail closed here).
+    # Auth gate + initial content read (fail closed).
     case snapshot(session_uri, token) do
       {:ok, snapshot0} ->
         # Test-only seam: a commit injected here (advisory dropped) must still be
-        # picked up by the replay below, because `lower` predates the content read.
+        # rendered, because the replay below covers the FULL committed backlog.
         run_before_replay(opts[:before_replay])
 
-        # Step 3: replay from the lower bound (idempotent overlap with the snapshot).
-        deliveries = committed_deliveries_since(session_uri, lower)
-        replayed_result(session_uri, token, snapshot0, deliveries, lower)
+        # codex P3-2 r3 HIGH-1: replay the FULL committed backlog (since 0), NOT
+        # `committed_deliveries_since(latest_cursor)`. For a session with more
+        # than `@history_limit` committed deliveries, `latest_cursor` would
+        # checkpoint the cursor at the max while the recency-windowed snapshot
+        # rendered only the latest 100 — stranding the older committed deliveries
+        # (cursor advanced PAST rows never rendered). Replaying from 0 makes
+        # `replayed_result/5` AUGMENT the snapshot with every committed delivery's
+        # messages before advancing the cursor, so the join cursor only ever
+        # checkpoints rows that were actually rendered (no skip), and the render
+        # is bounded by the session's total customer-visible delivery count.
+        deliveries = committed_deliveries_since(session_uri, 0)
+        replayed_result(session_uri, token, snapshot0, deliveries, 0)
 
       {:error, _} = err ->
         err

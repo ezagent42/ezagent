@@ -225,6 +225,76 @@ defmodule Ezagent.Socialware.CustomerFeedJoinProtocolTest do
       assert {:error, :unauthorized} =
                CustomerFeed.join(ctx.session, short_token, before_replay: before_replay)
     end
+
+    test "JOIN with MORE than the recency window of pre-existing deliveries renders EVERY delivered message; the cursor covers only rendered rows (codex P3-2 r3 HIGH-1)",
+         ctx do
+      # A session that already has >100 committed customer-visible deliveries at
+      # join time: the recency-windowed snapshot alone renders only the latest
+      # 100, so join must replay the FULL backlog (since 0) and augment the
+      # snapshot — never checkpointing the cursor past an unrendered older row.
+      n = 105
+      for i <- 1..n, do: commit_delivery(ctx, "prejoin-#{i}", "turn-jp-prejoin-#{i}")
+
+      {:ok, r} = CustomerFeed.join(ctx.session, ctx.token, [])
+
+      assert r.cursor == n
+
+      delivered_ids = r.deliveries |> Enum.flat_map(& &1.message_ids) |> MapSet.new()
+      rendered_ids = MapSet.new(r.snapshot.messages, & &1.id)
+
+      assert MapSet.subset?(delivered_ids, rendered_ids),
+             "join must render every pre-existing committed delivery — the cursor " <>
+               "must not checkpoint past a row outside the recency window"
+    end
+
+    test "CROSS-SESSION: a message committed in session A is NOT customer-committed for session B that merely routes the same message id (codex P3-2 r3 HIGH-2)",
+         ctx do
+      # Session B in the SAME workspace, routing the SAME message id as A. Only A
+      # has a committed settlement for it. B must NOT borrow A's commit state.
+      session_b = session_uri()
+      {:ok, _pid} = Ezagent.Kind.spawn(SocialwareSession, %{uri: session_b})
+      :ok = Ezagent.WorkspaceRegistry.bind(session_b, ctx.workspace)
+      token_b = CustomerAuth.issue_token(session_b, ctx.workspace)
+
+      msg =
+        Message.new(sender_uri(), %{text: "shared", attachments: []},
+          visibility: :customer_visible
+        )
+
+      {:ok, written} = MessageStore.write(msg, session_b)
+      {:ok, _} = MessageStore.write(written, ctx.session)
+
+      # Commit a settlement binding the message in session A ONLY.
+      {:ok, _} =
+        Settlement.begin(%{
+          turn_id: "turn-xsess",
+          session_uri: ctx.session,
+          workspace_uri: ctx.workspace,
+          target_message_ids: [written.id],
+          target_surface_version: nil,
+          expected_prior_approved: nil
+        })
+
+      {:ok, _} = Settlement.mark_committed_for_test("turn-xsess")
+
+      a_ids = ctx.session |> MessageStore.committed_customer_visible(100) |> Enum.map(& &1.id)
+      b_ids = session_b |> MessageStore.committed_customer_visible(100) |> Enum.map(& &1.id)
+
+      assert written.id in a_ids, "session A (which committed it) sees the message"
+      refute written.id in b_ids, "session B must NOT borrow A's committed settlement"
+
+      # The by-id gate (used by the replay augment) must also deny B.
+      b_byid =
+        session_b
+        |> MessageStore.committed_customer_visible_by_ids([written.id])
+        |> Enum.map(& &1.id)
+
+      refute written.id in b_byid, "the by-id gate must also bind the settlement to the session"
+
+      # And B's customer feed snapshot does not show it.
+      {:ok, snap_b} = CustomerFeed.snapshot(session_b, token_b)
+      refute Enum.any?(snap_b.messages, &(&1.id == written.id))
+    end
   end
 
   describe "adapter render/2 routes the customer projection" do

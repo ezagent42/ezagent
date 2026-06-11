@@ -232,7 +232,8 @@ defmodule Ezagent.MessageStore do
       on: s.turn_id == sm.turn_id,
       where:
         r.session_uri == ^session_str and m.workspace_uri == ^workspace_str and
-          m.visibility == :customer_visible and s.status == "committed",
+          m.visibility == :customer_visible and s.status == "committed" and
+          s.session_uri == ^session_str and s.workspace_uri == ^workspace_str,
       order_by: [desc: r.inserted_at],
       limit: ^limit
     )
@@ -265,6 +266,7 @@ defmodule Ezagent.MessageStore do
       where:
         r.session_uri == ^session_str and m.workspace_uri == ^workspace_str and
           m.visibility == :customer_visible and s.status == "committed" and
+          s.session_uri == ^session_str and s.workspace_uri == ^workspace_str and
           m.id in ^ids,
       order_by: [desc: r.inserted_at]
     )
