@@ -420,11 +420,13 @@ Agent 启动 (cc agent provision):
 
   5. 拼接完整 CLAUDE.md:
      preamble + 渲染后 soul + skill_index → agent work dir
+     可选: 通过 `ConfigProjection.render_soul/1` (socialware #716) 输出 soul_md 分支
      ~/.ezagent/<profile>/tenants/<tid>/cc-agents/<role>-work/CLAUDE.md (临时产物)
 ```
 
 > **slot_values 翻指针后新 agent 自动拿到新值，无需重写 soul 文件。**
 > agent work dir 里的 CLAUDE.md 是渲染后的临时产物，每次 agent 启动重新生成。
+> socialware #716 已支持 `render_soul` soul_md 分支，可复用。
 
 ### 3.2.3 Skill 文件格式 (含 {{slot}} 支持)
 
@@ -1018,21 +1020,26 @@ open → dispatch → deliver → compose → claim → settle
 
 ### 6.3 CustomerFeed 门控
 
-```
-CustomerFeed:
-  - subscribe → 只接收 settle 后的消息
-  - visibility: :customer_visible (默认) | :operator_only (接管期间)
-  - 替代当前 session_events_topic 原始广播
+> **2026-06-11 更新**: socialware P3-2 (#727) 把 CustomerFeed 重构为 `:pull` ExternalAdapter。
+> 支持 cursor 协议、断线重连、backlog 安全回放。
 
-loom:
-  订阅 CustomerFeed.topic(session_uri)
-  → 收到 message_ids
-  → MessageStore 拉取完整消息
-  → 渲染
+```
+CustomerFeed (socialware P3-2):
+  - :pull ExternalAdapter (adapter_id: "customer_feed")
+  - cursor-based: subscribe → snapshot → replay backlog → hold per-connection cursor
+  - reconnect-safe: 断线后通过 cursor 回放,不丢消息
+  - visibility: :customer_visible (默认) | :operator_only (接管期间)
+
+loom/customer_live:
+  通过 CustomerFeed :pull adapter 获取消息
+  → 不再需要 PubSub subscribe
+  → 自动获得断线重连、backlog 回放能力
 
 operator_live:
-  接管时: Turn.claim → visibility = :operator_only
-  编辑完成后: Turn.settle → visibility = :customer_visible
+  通过 SocialwarePublisherRead (#728) 读取 feed 数据
+  → cap-exempt, owner/member 鉴权
+  → 接管时: Turn.claim → visibility = :operator_only
+  → 编辑完成后: Turn.settle → visibility = :customer_visible
 ```
 
 ### 6.4 Agent 模型
