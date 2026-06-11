@@ -1,5 +1,10 @@
 defmodule EzagentPluginContent.SoulRenderer do
-  @moduledoc "Render {{key}} templates against flattened slot values (v2 §3.2.2). Missing key → keep {{key}} literal."
+  @moduledoc """
+  Render {{key}} templates against flattened slot values (v2 §3.2.2).
+
+  Missing key → keep {{key}} literal.
+  A nil value is treated as unconfigured (same as missing): the literal {{key}} is kept.
+  """
   @slot_re ~r/\{\{\s*([A-Za-z0-9_.]+)\s*\}\}/
 
   @spec render([String.t()] | String.t(), map()) :: String.t()
@@ -9,6 +14,7 @@ defmodule EzagentPluginContent.SoulRenderer do
   def render(template, slot_values) when is_binary(template) and is_map(slot_values) do
     Regex.replace(@slot_re, template, fn whole, key ->
       case Map.fetch(slot_values, key) do
+        {:ok, nil} -> whole
         {:ok, v} -> to_string(v)
         :error -> whole
       end
@@ -21,6 +27,7 @@ defmodule EzagentPluginContent.SoulRenderer do
       key = if prefix == "", do: to_string(k), else: "#{prefix}.#{k}"
 
       case v do
+        %{__struct__: _} -> Map.put(acc, key, v)
         %{} = nested -> Map.merge(acc, flatten(nested, key))
         _ -> Map.put(acc, key, v)
       end

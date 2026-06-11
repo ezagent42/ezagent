@@ -78,5 +78,17 @@ defmodule EzagentPluginContent.SoulRendererTest do
     test "empty map returns empty map" do
       assert SoulRenderer.flatten(%{}) == %{}
     end
+
+    test "struct value is kept as a leaf (no Protocol.UndefinedError)" do
+      ts = ~U[2024-01-01 00:00:00Z]
+      result = SoulRenderer.flatten(%{"ts" => ts})
+      assert result == %{"ts" => ts}
+    end
+  end
+
+  describe "render/2 nil slot value" do
+    test "nil value keeps the literal {{key}} (treated as unconfigured)" do
+      assert SoulRenderer.render("Hello {{name}}!", %{"name" => nil}) == "Hello {{name}}!"
+    end
   end
 end

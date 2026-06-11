@@ -97,5 +97,17 @@ defmodule EzagentPluginContent.SkillIndexerTest do
       result = SkillIndexer.build(dir, "acme")
       assert result =~ "- no-desc —  (plugins/acme/skills/no-desc/SKILL.md)"
     end
+
+    test "SKILL.md at skills_dir root (zero depth) without frontmatter falls back to 'unnamed-skill'",
+         %{dir: dir} do
+      path = Path.join(dir, "SKILL.md")
+      File.write!(path, "# No frontmatter, lives directly in skills_dir")
+
+      result = SkillIndexer.build(dir, "acme")
+
+      assert result =~ "## Skill Index"
+      assert result =~ "unnamed-skill"
+      refute result =~ "(none)"
+    end
   end
 end

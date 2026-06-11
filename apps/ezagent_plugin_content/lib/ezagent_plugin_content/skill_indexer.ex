@@ -24,7 +24,13 @@ defmodule EzagentPluginContent.SkillIndexer do
 
   defp parse_skill(abs_path, skills_dir, _tid) do
     rel = Path.relative_to(abs_path, skills_dir)
-    dir_name = abs_path |> Path.dirname() |> Path.basename()
+
+    dir_name =
+      if Path.dirname(abs_path) == Path.expand(skills_dir) do
+        "unnamed-skill"
+      else
+        abs_path |> Path.dirname() |> Path.basename()
+      end
 
     {name, description} =
       abs_path
