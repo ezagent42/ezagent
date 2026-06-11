@@ -192,21 +192,26 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
       assert {:error, %{reason: "unauthorized"}} = join_as(ctx.session, stranger)
     end
 
-    test "EX-MEMBER: a member who LEAVES is denied on the next advisory replay (live re-check)",
+    test "EX-MEMBER: a member who LEAVES is denied IMMEDIATELY on the leave event — no later chat.send needed (codex P4 HIGH)",
          ctx do
       _m = post_msg(ctx.session, "before leave")
       assert {:ok, _reply, _socket} = join_as(ctx.session, ctx.member)
 
-      # The member LEAVES via the production chat.leave path — removed from the
-      # live :chat slice members map.
+      # The channel CLOSES on revocation ({:stop, :shutdown}); the test process is
+      # linked to it via subscribe_and_join, so trap the expected exit.
+      Process.flag(:trap_exit, true)
+
+      # The member LEAVES via the production chat.leave path. handle_leave/2
+      # broadcasts {:member_left, ...} on esr:session:<uri>:events — the SAME
+      # topic the chat_feed channel subscribes to. The channel treats ANY event
+      # there as an advisory → re-reads → the LIVE membership re-check now denies
+      # the ex-member. NO subsequent chat.send is required.
       {:ok, _} = chat_leave(ctx.session, ctx.member)
 
-      # A new message arrives via the PRODUCTION chat.send path (which broadcasts
-      # the canonical {:chat_message, ...} advisory on esr:session:<uri>:events).
-      # The channel replays — and the LIVE re-check now denies the ex-member, so
-      # NO snapshot is pushed.
-      _late = chat_send(ctx.session, "after leave")
-
+      # The ex-member's client is cleared (explicit unauthorized push) AND the
+      # channel is closed — fail-closed at the transport, immediately on leave.
+      assert_push("unauthorized", %{reason: "membership_revoked"}, 1000)
+      assert_receive {:EXIT, _channel_pid, :shutdown}, 1000
       refute_push("snapshot", _payload, 300)
     end
   end

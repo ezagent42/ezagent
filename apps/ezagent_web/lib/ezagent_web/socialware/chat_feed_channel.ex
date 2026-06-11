@@ -62,16 +62,14 @@ defmodule EzagentWeb.Socialware.ChatFeedChannel do
     end
   end
 
-  # The production chat-message advisory (the canonical event the chat write path
-  # broadcasts) — re-read the CURRENT snapshot (ADVISORY ONLY; the payload is
-  # never trusted as the delivery).
+  # ANY event on the subscribed session topic is an ADVISORY (codex P4 HIGH):
+  # re-read the CURRENT snapshot. This includes `{:chat_message, ...}` AND
+  # membership events (join/leave), so a `chat.leave` re-runs the LIVE membership
+  # check immediately — without waiting for a later chat message. The channel is
+  # subscribed ONLY to the session topic, so every message here is a session
+  # event; the payload is never trusted as the delivery.
   @impl true
-  def handle_info({:chat_message, _session_uri, _msg}, socket), do: refresh_snapshot(socket)
-
-  # Any OTHER event on the session topic (e.g. membership changes) is ignored —
-  # the chat_feed read is message-only.
-  @impl true
-  def handle_info(_other, socket), do: {:noreply, socket}
+  def handle_info(_event, socket), do: refresh_snapshot(socket)
 
   defp refresh_snapshot(socket) do
     case ChatFeed.snapshot(socket.assigns.session_uri, socket.assigns.caller) do
@@ -80,7 +78,13 @@ defmodule EzagentWeb.Socialware.ChatFeedChannel do
         {:noreply, socket}
 
       {:error, :unauthorized} ->
-        {:noreply, socket}
+        # Live revocation — e.g. the viewer LEFT the chat (codex P4 HIGH). An
+        # ex-member must NOT keep rendering a stale snapshot: push an explicit
+        # `unauthorized` so the client clears the feed, then CLOSE the channel
+        # (the `phx_close` also clears the view). Fail-closed at the transport,
+        # not just the read.
+        push(socket, "unauthorized", %{reason: "membership_revoked"})
+        {:stop, :shutdown, socket}
     end
   end
 
