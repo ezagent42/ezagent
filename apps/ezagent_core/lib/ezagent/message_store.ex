@@ -274,6 +274,64 @@ defmodule Ezagent.MessageStore do
   end
 
   @doc """
+  P4-2 — the N most-recent `:customer_visible` messages in `session_uri`,
+  ASCENDING (oldest→newest). The CHAT external-SPA snapshot window: chat has NO
+  settlement model, so unlike `committed_customer_visible/2` there is no
+  settlement join — the gate is per-message `visibility == :customer_visible`
+  (an `:operator_only` chat message never leaks to the external read) plus
+  session + workspace scoping (defense-in-depth, mirroring the other chat
+  queries).
+
+  Queried descending+`limit` (so the latest N are kept) then reversed to
+  ascending — the same shape the LV "load older" path uses — so the chat_feed
+  projection renders oldest→newest.
+  """
+  @spec chat_visible_recent(URI.t(), pos_integer()) :: [Message.t()]
+  def chat_visible_recent(%URI{} = session_uri, limit)
+      when is_integer(limit) and limit > 0 do
+    session_str = URI.to_string(session_uri)
+    workspace_str = Ezagent.Persistence.workspace_uri_for!(session_uri)
+
+    from(m in Message,
+      join: r in MessageRouting,
+      on: r.message_id == m.id,
+      where:
+        r.session_uri == ^session_str and m.workspace_uri == ^workspace_str and
+          m.visibility == :customer_visible,
+      order_by: [desc: r.inserted_at],
+      limit: ^limit
+    )
+    |> Repo.all()
+    |> Enum.reverse()
+  end
+
+  @doc """
+  P4-2 — `:customer_visible` messages in `session_uri` strictly after the
+  `inserted_at` cursor (ascending). The CHAT external-SPA REPLAY primitive,
+  mirroring `committed_deliveries_since/2` but over the chat message ordering
+  (`inserted_at` — per Spec 5 P5-D8 `id` is NOT monotonic) instead of the
+  socialware committed-delivery cursor. Same per-message visibility gate +
+  session/workspace scoping as `chat_visible_recent/2`. Bounded to `@replay_cap`
+  rows (mirrors `in_session_since/2`).
+  """
+  @spec chat_visible_since(URI.t(), DateTime.t()) :: [Message.t()]
+  def chat_visible_since(%URI{} = session_uri, %DateTime{} = since) do
+    session_str = URI.to_string(session_uri)
+    workspace_str = Ezagent.Persistence.workspace_uri_for!(session_uri)
+
+    from(m in Message,
+      join: r in MessageRouting,
+      on: r.message_id == m.id,
+      where:
+        r.session_uri == ^session_str and r.inserted_at > ^since and
+          m.workspace_uri == ^workspace_str and m.visibility == :customer_visible,
+      order_by: [asc: r.inserted_at],
+      limit: @replay_cap
+    )
+    |> Repo.all()
+  end
+
+  @doc """
   Idempotently set visibility for a fixed message-id set.
   """
   @spec mark_visibility([String.t()], :customer_visible | :operator_only) ::
