@@ -123,13 +123,17 @@ defmodule Ezagent.Behavior.CsOrchestrator do
     session_uri_str = ctx[:read].(:session_uri, "")
 
     cond do
+      sender_str == "" ->
+        # Empty sender string — no-op (defensive guard against blank URI).
+        {:ok, %{ok: true}, []}
+
       sender_str == customer_uri ->
         handle_customer_message(msg, session_uri_str, operator_active, ctx)
 
-      sender_str == fast_uri ->
-        handle_fast_reply(msg, session_uri_str, open_turn_id, ctx)
+      fast_uri != "" and sender_str == fast_uri ->
+        handle_fast_reply(msg, session_uri_str, ctx)
 
-      sender_str == slow_uri ->
+      slow_uri != "" and sender_str == slow_uri ->
         handle_slow_reply(msg, session_uri_str, open_turn_id, ctx)
 
       true ->
@@ -149,7 +153,14 @@ defmodule Ezagent.Behavior.CsOrchestrator do
       {:ok, session_uri} ->
         tctx = turn_ctx(ctx)
 
-        case TurnDriver.claim(session_uri, turn_id, operator_uri_str, tctx) do
+        # Turn.claim validates `by:` as :uri — parse the string to %URI{} first.
+        operator_uri =
+          case safe_parse_uri(operator_uri_str) do
+            {:ok, u} -> u
+            :error -> operator_uri_str
+          end
+
+        case TurnDriver.claim(session_uri, turn_id, operator_uri, tctx) do
           {:ok, _} ->
             {:ok, %{ok: true}, [{:set, :operator_active, true}]}
 
@@ -181,6 +192,24 @@ defmodule Ezagent.Behavior.CsOrchestrator do
 
         case TurnDriver.settle(session_uri, turn_id, tctx) do
           {:ok, _} ->
+            # Cancel any tracked open_turn_id that is different from the
+            # caller's turn_id — operator_settle only clears the caller's turn
+            # but must not leak a separately-tracked turn.
+            tracked_tid = ctx[:read].(:open_turn_id, nil)
+
+            if tracked_tid != nil and tracked_tid != turn_id do
+              case TurnDriver.cancel(session_uri, tracked_tid, tctx) do
+                {:ok, _} ->
+                  :ok
+
+                {:error, reason} ->
+                  Logger.warning(
+                    "CsOrchestrator operator_settle: failed to cancel stale tracked turn " <>
+                      "#{tracked_tid}: #{inspect(reason)} — proceeding"
+                  )
+              end
+            end
+
             {:ok, %{ok: true},
              [
                {:set, :operator_active, false},
@@ -211,6 +240,23 @@ defmodule Ezagent.Behavior.CsOrchestrator do
       {:ok, session_uri} ->
         tctx = turn_ctx(ctx)
         trigger = %{message_id: msg.id, text: extract_text(msg.body)}
+
+        # Consecutive customer messages are normal chat behaviour: the slow reply
+        # composes into the LATEST turn. Cancel the superseded open turn so it
+        # doesn't leak. Failure is non-fatal — the new turn still opens.
+        stale_tid = ctx[:read].(:open_turn_id, nil)
+
+        if stale_tid != nil do
+          case TurnDriver.cancel(session_uri, stale_tid, tctx) do
+            {:ok, _} ->
+              :ok
+
+            {:error, reason} ->
+              Logger.warning(
+                "CsOrchestrator: failed to cancel superseded turn #{stale_tid}: #{inspect(reason)} — proceeding"
+              )
+          end
+        end
 
         case TurnDriver.open(session_uri, trigger, tctx) do
           {:ok, %{turn_id: tid}} ->
@@ -243,10 +289,10 @@ defmodule Ezagent.Behavior.CsOrchestrator do
     end
   end
 
-  defp handle_fast_reply(msg, session_uri_str, open_turn_id, ctx) do
+  defp handle_fast_reply(msg, session_uri_str, ctx) do
     # ACK quick-turn: open→compose(text)→settle on fast reply.
-    # This creates a fresh turn for the ACK (fast agent's reply text),
-    # not the customer's open_turn_id.
+    # This creates a fresh degenerate turn for the ACK (fast agent's reply text),
+    # independent of the customer's open_turn_id.
     case parse_session_uri(session_uri_str) do
       {:ok, session_uri} ->
         tctx = turn_ctx(ctx)
@@ -259,10 +305,7 @@ defmodule Ezagent.Behavior.CsOrchestrator do
           {:ok, %{ok: true}, []}
         else
           {:error, reason} ->
-            Logger.error(
-              "CsOrchestrator fast reply TurnDriver failed: #{inspect(reason)}, " <>
-                "open_turn_id=#{inspect(open_turn_id)}"
-            )
+            Logger.error("CsOrchestrator fast reply TurnDriver failed: #{inspect(reason)}")
 
             {:ok, %{ok: false}, []}
         end
@@ -405,15 +448,7 @@ defmodule Ezagent.Behavior.CsOrchestrator do
 
   defp parse_session_uri(""), do: :error
   defp parse_session_uri(nil), do: :error
-
-  defp parse_session_uri(str) when is_binary(str) do
-    try do
-      {:ok, Ezagent.URI.new!(str)}
-    rescue
-      _ -> :error
-    end
-  end
-
+  defp parse_session_uri(str) when is_binary(str), do: safe_parse_uri(str)
   defp parse_session_uri(%URI{} = u), do: {:ok, u}
 
   defp safe_parse_uri(str) when is_binary(str) do

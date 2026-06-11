@@ -99,6 +99,21 @@ defmodule EzagentPluginAutoservice.TurnDriver do
     end
   end
 
+  @doc """
+  Cancel a non-terminal turn.
+
+  Dispatches `turn.cancel` with `%{turn_id: turn_id}`.
+  Returns `{:ok, result_map}` on success.
+  """
+  @spec cancel(URI.t(), String.t(), ctx()) :: {:ok, map()} | {:error, term()}
+  def cancel(%URI{} = session_uri, turn_id, ctx) when is_binary(turn_id) do
+    case dispatch(session_uri, :turn, :cancel, %{turn_id: turn_id}, ctx) do
+      {:ok, result} when is_map(result) -> {:ok, result}
+      {:ok, other} -> {:error, {:unexpected_turn_status, other}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   # ------------------------------------------------------------------
   # Private helpers
   # ------------------------------------------------------------------

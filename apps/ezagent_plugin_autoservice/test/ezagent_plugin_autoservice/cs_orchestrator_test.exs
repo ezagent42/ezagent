@@ -216,6 +216,165 @@ defmodule EzagentPluginAutoservice.CsOrchestratorTest do
   end
 
   # ---------------------------------------------------------------------------
+  # Handler-level — operator_claim
+  # ---------------------------------------------------------------------------
+
+  describe "handle_operator_claim/2" do
+    test "returns {:set, :operator_active, true} after successful claim", ctx_map do
+      %{session: session, customer_uri: customer_uri, fast_uri: fast_uri, slow_uri: slow_uri} =
+        ctx_map
+
+      # Open a turn and compose it so claim is valid (claim transitions from :composing only).
+      tctx = priv_ctx()
+      trigger = %{message_id: "m-#{System.unique_integer([:positive])}", text: "help me"}
+
+      assert {:ok, %{turn_id: turn_id}} =
+               EzagentPluginAutoservice.TurnDriver.open(session, trigger, tctx)
+
+      assert {:ok, _} =
+               EzagentPluginAutoservice.TurnDriver.compose(session, turn_id, "draft reply", tctx)
+
+      operator_uri =
+        Ezagent.URI.entity(:team_alpha, :user, "op-#{System.unique_integer([:positive])}")
+
+      state = %{
+        session_uri: URI.to_string(session),
+        customer_uri: URI.to_string(customer_uri),
+        fast_uri: URI.to_string(fast_uri),
+        slow_uri: URI.to_string(slow_uri),
+        open_turn_id: turn_id,
+        operator_active: false
+      }
+
+      ctx =
+        fake_ctx(state)
+        |> Map.put(:caps, Ezagent.SystemPrincipal.caps("system://bootstrap"))
+
+      assert {:ok, %{ok: true}, effects} =
+               CsOrchestrator.handle_operator_claim(
+                 %{turn_id: turn_id, operator_uri: URI.to_string(operator_uri)},
+                 ctx
+               )
+
+      assert {:set, :operator_active, true} in effects
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Handler-level — operator_settle
+  # ---------------------------------------------------------------------------
+
+  describe "handle_operator_settle/2" do
+    test "resets operator_active and open_turn_id after successful settle", ctx_map do
+      %{session: session, customer_uri: customer_uri, fast_uri: fast_uri, slow_uri: slow_uri} =
+        ctx_map
+
+      # open → compose → claim (so settle can transition from :awaiting_human).
+      tctx = priv_ctx()
+      trigger = %{message_id: "m-#{System.unique_integer([:positive])}", text: "take over"}
+
+      assert {:ok, %{turn_id: turn_id}} =
+               EzagentPluginAutoservice.TurnDriver.open(session, trigger, tctx)
+
+      assert {:ok, _} =
+               EzagentPluginAutoservice.TurnDriver.compose(session, turn_id, "draft", tctx)
+
+      operator_uri =
+        Ezagent.URI.entity(:team_alpha, :user, "op-settle-#{System.unique_integer([:positive])}")
+
+      assert {:ok, _} =
+               EzagentPluginAutoservice.TurnDriver.claim(session, turn_id, operator_uri, tctx)
+
+      state = %{
+        session_uri: URI.to_string(session),
+        customer_uri: URI.to_string(customer_uri),
+        fast_uri: URI.to_string(fast_uri),
+        slow_uri: URI.to_string(slow_uri),
+        open_turn_id: turn_id,
+        operator_active: true
+      }
+
+      ctx =
+        fake_ctx(state)
+        |> Map.put(:caps, Ezagent.SystemPrincipal.caps("system://bootstrap"))
+
+      assert {:ok, %{ok: true}, effects} =
+               CsOrchestrator.handle_operator_settle(%{turn_id: turn_id}, ctx)
+
+      assert {:set, :operator_active, false} in effects
+      assert {:set, :open_turn_id, nil} in effects
+    end
+
+    test "settle with mismatched turn_id — tracked turn gets cancelled", ctx_map do
+      %{session: session, customer_uri: customer_uri, fast_uri: fast_uri, slow_uri: slow_uri} =
+        ctx_map
+
+      tctx = priv_ctx()
+
+      # Open and compose the "caller" turn.
+      caller_trigger = %{
+        message_id: "m-caller-#{System.unique_integer([:positive])}",
+        text: "caller"
+      }
+
+      assert {:ok, %{turn_id: caller_tid}} =
+               EzagentPluginAutoservice.TurnDriver.open(session, caller_trigger, tctx)
+
+      assert {:ok, _} =
+               EzagentPluginAutoservice.TurnDriver.compose(
+                 session,
+                 caller_tid,
+                 "caller draft",
+                 tctx
+               )
+
+      operator_uri =
+        Ezagent.URI.entity(
+          :team_alpha,
+          :user,
+          "op-mismatch-#{System.unique_integer([:positive])}"
+        )
+
+      assert {:ok, _} =
+               EzagentPluginAutoservice.TurnDriver.claim(session, caller_tid, operator_uri, tctx)
+
+      # Open a second (stale) turn which will be tracked as open_turn_id.
+      stale_trigger = %{
+        message_id: "m-stale-#{System.unique_integer([:positive])}",
+        text: "stale"
+      }
+
+      assert {:ok, %{turn_id: stale_tid}} =
+               EzagentPluginAutoservice.TurnDriver.open(session, stale_trigger, tctx)
+
+      state = %{
+        session_uri: URI.to_string(session),
+        customer_uri: URI.to_string(customer_uri),
+        fast_uri: URI.to_string(fast_uri),
+        slow_uri: URI.to_string(slow_uri),
+        # Tracked turn differs from the caller's turn_id.
+        open_turn_id: stale_tid,
+        operator_active: true
+      }
+
+      ctx =
+        fake_ctx(state)
+        |> Map.put(:caps, Ezagent.SystemPrincipal.caps("system://bootstrap"))
+
+      # Settle the caller's turn.
+      assert {:ok, %{ok: true}, effects} =
+               CsOrchestrator.handle_operator_settle(%{turn_id: caller_tid}, ctx)
+
+      assert {:set, :open_turn_id, nil} in effects
+
+      # The stale turn should now be cancelled — verify by attempting a second
+      # settle on it; Turn.settle on a :cancelled turn returns {:error, {:illegal_transition, :cancelled}}.
+      assert {:error, {:illegal_transition, :cancelled}} =
+               EzagentPluginAutoservice.TurnDriver.settle(session, stale_tid, tctx)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # Integration — slow reply settles to customer feed
   # ---------------------------------------------------------------------------
 
