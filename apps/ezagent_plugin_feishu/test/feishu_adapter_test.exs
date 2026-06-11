@@ -67,6 +67,41 @@ defmodule EzagentPluginFeishu.FeishuAdapterTest do
     end
   end
 
+  # P3-4 — confirm the Feishu mirror is a conformant `:push` adapter on the
+  # generalized push/pull `ExternalAdapter` contract (P3-1). P3-1 kept the push
+  # axis byte-identical, so this is a no-op for behavior but pins the conformance
+  # so a future change can't silently drift the mirror off the push contract.
+  describe "P3-4 — generalized push/pull contract conformance" do
+    setup do
+      # `function_exported?/3` returns false for an UNLOADED module, which would
+      # make the negative pins below (no adapter_kind/0, no render/2) pass
+      # vacuously depending on test order (codex P3-4 MEDIUM). Force-load first.
+      assert Code.ensure_loaded?(FeishuAdapter)
+      :ok
+    end
+
+    test "resolves as a :push adapter (no adapter_kind/0 → default :push)" do
+      refute function_exported?(FeishuAdapter, :adapter_kind, 0)
+      assert Ezagent.ExternalMirror.Adapter.kind_of(FeishuAdapter) == :push
+    end
+
+    test "declares the FULL :push required-callback set (binding + transport + event)" do
+      for {fun, arity} <- [
+            binding_module: 0,
+            cap_subject: 0,
+            target_ownership_check: 2,
+            event_to_payload: 1
+          ] do
+        assert function_exported?(FeishuAdapter, fun, arity),
+               "push adapter must export #{fun}/#{arity}"
+      end
+    end
+
+    test "is push-only — does NOT declare the :pull render/2 callback" do
+      refute function_exported?(FeishuAdapter, :render, 2)
+    end
+  end
+
   describe "cap_subject/0" do
     test "names the FeishuAllow marker Behavior (Cap 2)" do
       assert %{behavior_module: FeishuAllow, description: desc} = FeishuAdapter.cap_subject()
