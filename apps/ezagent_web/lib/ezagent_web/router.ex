@@ -90,6 +90,16 @@ defmodule EzagentWeb.Router do
     # Must be inside `:require_entity` so anonymous traffic can't spam
     # session-clearing POSTs.
     post "/workspaces/switch", WorkspaceSwitchController, :switch
+
+    # P4 (codex finding 3) — the CHAT external SPA. Mounted under
+    # RequireEntity so the viewer is an AUTHENTICATED signed-in principal
+    # (`conn.assigns.current_entity_uri`); the controller mints a
+    # `ChatFeedAuth` token binding THAT principal to the session and renders
+    # the shared SPA pointed at /socialware_chat_socket + socialware:chat_feed.
+    # Unlike the public customer feed (anonymous-but-token-bound), chat
+    # viewers are members — the live ChatMembership re-check at the channel
+    # remains the authorization, the login just supplies a trusted identity.
+    get "/socialware/chat", Socialware.ChatFeedController, :show
   end
 
   scope "/", EzagentPluginLiveview do
