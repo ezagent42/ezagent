@@ -82,7 +82,12 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
         Prompts.normalize_source(
           Map.get(args, :initial_loom_source) || Map.get(args, "initial_loom_source") ||
             Prompts.loom_seed_files()
-        )
+        ),
+      # 2026-06-10 — 页面助手(Stitch)样式。v0 在 page_update span 里可选带
+      # `stitchConfig`(位置/外观),缓存到 slice → publish/snapshot 读 orchestrator
+      # slice 时带走,seed 给消费会话(published/pub)也保留。nil = 用前端默认。
+      stitch_config:
+        Map.get(args, :initial_stitch_config) || Map.get(args, "initial_stitch_config")
     }
   end
 
@@ -668,19 +673,50 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
   # Cache the new source on slice; close the pending turn (if any) so the
   # aggregator no-ops and the compose path is skipped — v0's message already
   # rendered to the session.
-  defp handle_page_update(%Message{ref_id: ref}, files, pending) when is_binary(ref) do
+  defp handle_page_update(%Message{ref_id: ref} = msg, files, pending) when is_binary(ref) do
+    cfg = stitch_config_effects(msg)
+
     case find_turn_by_subtask(pending, ref) do
       nil ->
-        {:ok, %{}, [{:set, :loom_source, files}]}
+        {:ok, %{}, [{:set, :loom_source, files}] ++ cfg}
 
       turn_id ->
-        {:ok, %{}, [{:set, :loom_source, files}, {:set, :pending, Map.delete(pending, turn_id)}]}
+        {:ok, %{},
+         [{:set, :loom_source, files}, {:set, :pending, Map.delete(pending, turn_id)}] ++ cfg}
     end
   end
 
-  defp handle_page_update(_msg, files, _pending) do
-    {:ok, %{}, [{:set, :loom_source, files}]}
+  defp handle_page_update(msg, files, _pending) do
+    {:ok, %{}, [{:set, :loom_source, files}] ++ stitch_config_effects(msg)}
   end
+
+  # page_update span 里可选 `stitchConfig`(页面助手样式)。带了才 set —— 后续不带
+  # cfg 的编辑不清掉已存样式(v0 不必每次都重发样式块)。
+  defp stitch_config_effects(%Message{} = msg) do
+    case page_update_stitch_config(msg) do
+      cfg when is_map(cfg) and map_size(cfg) > 0 -> [{:set, :stitch_config, cfg}]
+      _ -> []
+    end
+  end
+
+  defp stitch_config_effects(_), do: []
+
+  defp page_update_stitch_config(%Message{body: body}) do
+    text = body_text(body)
+
+    case Regex.run(~r/<span\s+type="page_update"\s*>([\s\S]*)<\/span>/, text) do
+      [_full, inner] ->
+        case Jason.decode(String.trim(inner)) do
+          {:ok, %{"stitchConfig" => cfg}} when is_map(cfg) -> cfg
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp page_update_stitch_config(_), do: nil
 
   defp v0?(%URI{} = uri), do: String.contains?(URI.to_string(uri), "/loomv0_")
   defp v0?(_), do: false

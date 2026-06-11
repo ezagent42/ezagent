@@ -50,9 +50,39 @@ defmodule EzagentPluginLoom.Application do
 
   @impl Application
   def start(_type, _args) do
+    configure_httpc_proxy()
     result = Ezagent.Plugin.boot(__MODULE__)
     register_session_views()
     result
+  end
+
+  # 2026-06-11 — `:httpc` 不读 HTTPS_PROXY/HTTP_PROXY 环境变量。开发机走 Clash
+  # fake-ip 模式时,`api.deepseek.com` 解析成不可路由的假 IP(198.18.x.x),只能经
+  # 代理隧道出网。boot 时若检测到 proxy env,就显式配进 httpc 默认 profile,让
+  # `DeepSeek` / `FetchProxy`(都用 httpc)走代理。无 proxy env(如 prod)则不动,安全。
+  defp configure_httpc_proxy do
+    no_proxy =
+      (System.get_env("no_proxy") || System.get_env("NO_PROXY") || "")
+      |> String.split(",", trim: true)
+      |> Enum.map(&(&1 |> String.trim() |> String.to_charlist()))
+      |> then(fn list -> [~c"localhost", ~c"127.0.0.1" | list] end)
+
+    [{:proxy, "HTTP_PROXY"}, {:https_proxy, "HTTPS_PROXY"}]
+    |> Enum.each(fn {opt, var} ->
+      with url when is_binary(url) <-
+             System.get_env(var) || System.get_env(String.downcase(var)),
+           %URI{host: host, port: port} when is_binary(host) and is_integer(port) <-
+             URI.parse(url) do
+        :httpc.set_options([{opt, {{String.to_charlist(host), port}, no_proxy}}])
+
+        require Logger
+        Logger.info("EzagentPluginLoom: httpc #{opt} → #{host}:#{port}")
+      else
+        _ -> :ok
+      end
+    end)
+
+    :ok
   end
 
   # 2026-06-01 — view-switcher 的第 4 个 tab。`SessionViewRegistry` 是 ETS,
@@ -98,6 +128,9 @@ defmodule EzagentPluginLoom.Application do
       # orchestrator with current source + user request, replies with a
       # <span type="page_update"> body.
       {Ezagent.Entity.LoomV0Worker, :receive, Ezagent.Behavior.LoomV0Worker},
+      # 2026-06-10 — stitchworker: preview-side AI (Stitch chat + AiSpot),
+      # @-only, DeepSeek-backed. Replaces the old direct-DeepSeek path.
+      {Ezagent.Entity.LoomStitchWorker, :receive, Ezagent.Behavior.LoomStitchWorker},
       # 2026-06-01 — team manager: @-mention-driven add/remove worker agent.
       # Uses DeepSeek NL parsing → spawn/terminate Kind + chat.join/leave.
       {Ezagent.Entity.LoomMetaAgent, :receive, Ezagent.Behavior.LoomMetaAgent}
@@ -113,6 +146,8 @@ defmodule EzagentPluginLoom.Application do
       # 2026-06-01 redesign — v0worker Template Class (flavor declaration
       # satisfies the :ezagent_plugin_check gate).
       Ezagent.PluginLoom.Template.LoomV0Worker,
+      # 2026-06-10 — stitchworker Template Class (preview-side AI).
+      Ezagent.PluginLoom.Template.LoomStitchWorker,
       # 2026-06-01 — team manager Template Class.
       Ezagent.PluginLoom.Template.LoomMetaAgent,
       # Session template: "create a loom session" auto-assembles the team
@@ -146,6 +181,13 @@ defmodule EzagentPluginLoom.Application do
         flavor: "loomv0",
         kind: Ezagent.Entity.LoomV0Worker,
         template_class: Ezagent.PluginLoom.Template.LoomV0Worker
+      },
+      # 2026-06-10 — `entity://agent/<ws>/loomstitch_<name>` (preview-side AI;
+      # one per loom session, always spawned by Team.ensure_team).
+      %{
+        flavor: "loomstitch",
+        kind: Ezagent.Entity.LoomStitchWorker,
+        template_class: Ezagent.PluginLoom.Template.LoomStitchWorker
       },
       # 2026-06-01 — `entity://agent/<ws>/loommeta_<name>` (team manager;
       # one per loom session, spawned by Team.ensure_team).

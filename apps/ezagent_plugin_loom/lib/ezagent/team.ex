@@ -71,15 +71,21 @@ defmodule EzagentPluginLoom.Team do
           do: [Ezagent.URI.new!("entity://agent/#{ws}/loomv0_#{sid}")],
           else: []
 
+      # 2026-06-10 — preview-side AI worker(Stitch chat + AiSpot)。和 v0 平级、
+      # @-only,但**不受 include_v0 门控**:发布物 / fork 出的无-v0 会话也要有 Stitch,
+      # 所以每个 loom session 都常驻一个 loomstitch。
+      stitch_members = [Ezagent.URI.new!("entity://agent/#{ws}/loomstitch_#{sid}")]
+
       # 2026-06-01 — team manager,接收 @ 的自然语言加 / 删 worker 指令。
       # 默认每个 loom session 都有。Behavior 是 mention-gated,不 @ 不动。
       meta = Ezagent.URI.new!("entity://agent/#{ws}/loommeta_#{sid}")
 
-      members = [orchestrator | workers] ++ v0_members ++ [meta]
+      members = [orchestrator | workers] ++ v0_members ++ stitch_members ++ [meta]
 
       with :ok <- Enum.reduce_while(members, :ok, &spawn_step/2),
            :ok <- Enum.reduce_while(members, :ok, fn uri, _ -> join_step(session_uri, uri) end) do
-        {:ok, %{orchestrator: orchestrator, workers: workers ++ v0_members ++ [meta]}}
+        {:ok,
+         %{orchestrator: orchestrator, workers: workers ++ v0_members ++ stitch_members ++ [meta]}}
       end
     end
   end

@@ -133,6 +133,19 @@ defmodule EzagentPluginLoom.Prompts do
   }
   ```
 
+  ## 页面助手（Stitch）样式 —— 可选,你来定它长什么样
+  页面右下角/底部有个「Stitch」页面助手浮层(访客用它对话操作页面)。它的**样式和位置**
+  你可以控制(功能不用管),让它契合页面风格。需要时在代码块**之外**额外输出**一个**这样的块:
+
+  ```stitchConfig
+  {"placement":"bottom-center","draggable":false,"accent":"#272324"}
+  ```
+
+  - `placement`:`"bottom-right"`(默认,可拖)或 `"bottom-center"`(底部居中)。
+  - `draggable`:是否可拖拽(`bottom-center` 默认 false)。
+  - `accent`:主题强调色(hex),让助手配色和页面一致(如深色站用页面主色)。
+  不输出这个块 → 用默认(右下角紫色、可拖)。
+
   ## 可用技术栈（这些已装好，放心 import）
   - **React + Tailwind CSS**（Tailwind 走 CDN，直接写 className）
   - **lucide-react** — 图标：`import { Menu, ArrowRight } from 'lucide-react'`（别用 emoji 当图标）。
