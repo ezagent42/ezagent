@@ -630,10 +630,12 @@ Tenant 内容配置 (租户编辑,走 CR):
 
 ```
 Admin 点 "预览 sandbox":
-  → 创建独立 preview session (session://preview/<tid>/<role>)
+  → 以 admin 身份创建 preview session (session://preview/<tid>/<role>)
+  → admin 发送测试消息 (admin 自己扮演客户,不需要单独 customer account)
   → 创建临时 cc agent (cwd 指向 sandbox/, 非 release/)
-  → preview session 消息不进 CustomerFeed (客户看不到)
-  → preview session 消息不进 OperatorLive (operator 不处理)
+  → preview session 消息不进 CustomerFeed (真实客户看不到)
+  → preview session 消息不进 OperatorLive (operator 不处理测试消息)
+  → 满意 → CR Publish; 不满意 → 继续编辑 sandbox → 再预览
   → 预览结束 → 销毁临时 agent + session
 
 生产客户:
@@ -641,6 +643,9 @@ Admin 点 "预览 sandbox":
   → agent 始终指向 release/_current
   → 消息经 Turn → CustomerFeed → loom/customer_live
 ```
+
+> **admin 自己就是测试客户。** sandbox 预览不需要真实 customer account，
+> admin 在 preview session 中发送测试消息,agent 用 sandbox 内容回复。
 
 **agents.yaml 格式:**
 
