@@ -116,7 +116,7 @@ tasks:
     type: code
   verification: 现有autoservice test绿, 参数化验证
   estimated_effort: large
-  status: pending
+  status: completed
   gap_ref: GAP-A.7
 - id: T0A.8
   name: cinnox 数据迁移
