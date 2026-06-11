@@ -183,9 +183,7 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
     :persistent_term.put({DacBehavior, :test_pid}, self())
 
     uri =
-      Ezagent.URI.new!(
-        "entity://team-alpha/agent/test_dac-#{System.unique_integer([:positive])}"
-      )
+      Ezagent.URI.new!("entity://team-alpha/agent/test_dac-#{System.unique_integer([:positive])}")
 
     on_exit(fn ->
       Application.delete_env(:ezagent_core, :p2_5c_force_commit_failure_uris)

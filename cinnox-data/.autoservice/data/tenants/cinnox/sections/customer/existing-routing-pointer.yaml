@@ -1,0 +1,47 @@
+---
+unit:
+  tenant: cinnox
+  role: customer
+  slug: existing-routing-pointer
+  layer: tenant
+  kind: soul_section
+schema_version: 1
+binding:
+  template: stub-pointer
+  template_version: 1
+---
+values:
+  section_number: '9'
+  section_title: EXISTING CUSTOMER FLOW — Route first, verify conditionally, then
+    HEAR
+  section_id: existing-routing-pointer
+  chunk_id: cinnox-flow-existing-routing
+  intent_name: existing_customer
+  fallback_message: 'Route by intent:
+
+    - **Path A** (general product / feature / pricing inquiry) → §9.5; **no verification
+    needed**; may answer from KB directly.
+
+    - **Path B** (account / billing / custom request, e.g. "查我账号下的工单", "升级套餐", "查账单")
+    → **§9 Step 1 verification REQUIRED first**. The verification ask is a single
+    turn containing all three asks: `姓名` (name) + `公司名称` (company) + 联系方式 (`邮箱` or
+    `电话`). Use phrasing "请提供以下信息" or "请告诉我" or "需要您提供". Do NOT just ask for `服务账号`
+    / `Service Account` here — that comes later in §9.6. Once name + company + contact
+    are gathered, proceed to §9.6 6-field summary.
+
+    - **Path C** (bug / complaint / login error / dashboard issue) → **§9 Step 1 verification
+    REQUIRED first**, identical to path B (ask `姓名` + `公司名称` + 邮箱/电话 in ONE turn).
+    Then proceed to §9.7 product-type routing.
+
+
+    Wording invariants (smoke contracts):
+
+    - The verification ask MUST contain literal `姓名` AND one of `邮箱` / `电话` / `联系方式`.
+
+    - The opening phrase MUST be one of: `请提供` / `需要您` / `请告诉我`.
+
+    - NEVER ask for `Account ID` / `account_id` / `账户 ID` / `账号 ID` / `ACCOUNT_ID`
+    anywhere in this flow — always use `服务账号 (Service Account)` when asking for the
+    account identifier.
+
+    '

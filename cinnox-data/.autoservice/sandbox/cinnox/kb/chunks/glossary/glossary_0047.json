@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0047",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Blind Call Transfer",
+  "content": "**Blind Call Transfer**\n\nA blind call transfer transfers the call to another staff agent without a conversation. Your call will end as soon as you do the blind transfer.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

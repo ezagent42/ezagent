@@ -1,0 +1,20 @@
+---
+unit:
+  tenant: cinnox
+  role: customer
+  slug: existing-billing-pointer
+  layer: tenant
+  kind: soul_section
+schema_version: 1
+binding:
+  template: stub-pointer
+  template_version: 1
+---
+values:
+  section_number: '9.6'
+  section_title: Account / billing / custom request — 6-field summary
+  section_id: existing-billing-pointer
+  chunk_id: cinnox-flow-existing-billing
+  intent_name: existing_customer.billing
+  fallback_message: collect 6-field summary (name + company + contact + 服务账号 + issue
+    + when occurred), then hand off.

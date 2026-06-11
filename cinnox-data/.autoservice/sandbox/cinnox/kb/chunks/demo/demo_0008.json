@@ -1,0 +1,15 @@
+{
+  "id": "demo_0008",
+  "source_id": "demo",
+  "source_type": "md",
+  "source_name": "cinnox Demo Knowledge",
+  "source_url": null,
+  "file_path": "scripts/seed_cinnox_tenant.py#DEMO_FACTS",
+  "section": "Account Lookup · Existing Customer Verification",
+  "content": "**Existing customer identity verification (before handling account-specific requests)**\n\n- Required fields (request all 4 in a single message): Name, Company name, Contact email, Account ID (format ACC-xxxx).\n- Do NOT discuss billing, plan change, or ticket status before all 4 are collected.\n- Example account IDs in demo: ACC-4004 (Enterprise, HK-based).",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

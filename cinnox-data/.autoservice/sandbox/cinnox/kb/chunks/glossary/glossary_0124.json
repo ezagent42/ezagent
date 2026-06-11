@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0124",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Dual-Tone Multi-Frequency (DTMF)",
+  "content": "**Dual-Tone Multi-Frequency (DTMF)**\n\nAre the touch-tone telephone keypads used to gather the IVR Menu responses.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

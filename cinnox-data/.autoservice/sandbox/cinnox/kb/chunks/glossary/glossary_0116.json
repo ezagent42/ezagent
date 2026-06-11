@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0116",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Destination Type",
+  "content": "**Destination Type**\n\nThe method with which a Staff member can pick up an enquiry. CINNOX provides the following options: PSTN phone, SIP trunk, or Staff List.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0090",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Click-to-call",
+  "content": "**Click-to-call**\n\nA CINNOX widget feature that automatically calls a specific Tag or Staff whenever a customer or visitor clicks on a web object, i.e., a button, a text, an image or an icon.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

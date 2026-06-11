@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0283",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Staff List",
+  "content": "**Staff List**\n\nA list of CINNOX Staff members can be endpoints for a Destination to attend to visitor and customer enquiries.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

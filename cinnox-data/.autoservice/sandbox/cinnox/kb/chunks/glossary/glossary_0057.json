@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0057",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "CINNOX Chrome Extension",
+  "content": "**CINNOX Chrome Extension**\n\nIs a software for Chrome Browser to extend the usage of CINNOX to make and receive calls and send SMS directly from any webpage you are working on, e.g., your CRM, Helpdesk, Sales Software, and other webpages",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

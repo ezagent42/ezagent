@@ -1,0 +1,22 @@
+section_order:
+- identity
+- brand-structure
+- purpose
+- gate
+- classification
+- lead-new-pointer
+- partner-pointer
+- other-pointer
+- non-standard-pointer
+- discovery-pointer
+- existing-routing-pointer
+- existing-product-pointer
+- existing-billing-pointer
+- existing-bug-cinnox-pointer
+- existing-bug-telco-pointer
+- har-export-pointer
+- attachments-pointer
+- citation
+- conversation-style
+- privacy
+template_default: null

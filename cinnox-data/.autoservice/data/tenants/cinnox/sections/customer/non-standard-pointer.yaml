@@ -1,0 +1,19 @@
+---
+unit:
+  tenant: cinnox
+  role: customer
+  slug: non-standard-pointer
+  layer: tenant
+  kind: soul_section
+schema_version: 1
+binding:
+  template: stub-pointer
+  template_version: 1
+---
+values:
+  section_number: '7'
+  section_title: NON-STANDARD REQUEST FLOW — Demo / Quote / Other (after lead saved)
+  section_id: non-standard-pointer
+  chunk_id: cinnox-flow-non-standard
+  intent_name: new_customer.non_standard
+  fallback_message: 'see skill: non-standard-handling.'

@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0299",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Tag",
+  "content": "**Tag**\n\nA display label is listed in the CINNOX Widget's Directory. Tags are usually associated with business divisions or teams in a company, and they help website visitors identify which one they will have to contact.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

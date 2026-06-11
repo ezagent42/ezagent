@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0045",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Billing Duration",
+  "content": "**Billing Duration**\n\nThe call duration used for billing is measured in minutes. For example, if a call lasts 100 seconds, the billing duration is recorded as 2 minutes in the table of the Report Details tab on the Call Report page and in the downloaded Call Report Details.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

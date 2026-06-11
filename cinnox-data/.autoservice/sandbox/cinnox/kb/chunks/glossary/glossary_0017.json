@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0017",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Advanced Messages",
+  "content": "**Advanced Messages**\n\nAre messages incorporate customisable elements such as formats (e.g., Bubble, Quick Reply), texts, buttons with customisable functions and actions, and attached media files send in the chat room using chatbot.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

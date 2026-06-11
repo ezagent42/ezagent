@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0185",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Local Number",
+  "content": "**Local Number**\n\nA telephone service that lets visitors directly contact a business by dialling a specific, local phone number. Also known as direct inward dialling (DID) number.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

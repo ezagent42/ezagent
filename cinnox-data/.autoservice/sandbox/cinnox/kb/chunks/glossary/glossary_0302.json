@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0302",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Take Over Enquiry",
+  "content": "**Take Over Enquiry**\n\nWhen monitoring the enquiry conversation between the agent and visitor, the admin can take over the enquiry and continue the conversation to resolve the visitor's query.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

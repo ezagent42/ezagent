@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0314",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Trunk or Gateway Information",
+  "content": "**Trunk or Gateway Information**\n\nThis specifies the telephony resource that the Partner should use to route their outbound calls.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

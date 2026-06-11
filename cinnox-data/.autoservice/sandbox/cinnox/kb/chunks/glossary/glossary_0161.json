@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0161",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "General Chatbot",
+  "content": "**General Chatbot**\n\nThis is another method to connect any chatbot platform to CINNOX, distinct from Microsoft QnA Maker and Google Dialogflow, following the POST method integration step.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0103",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Custom Prompt",
+  "content": "**Custom Prompt**\n\nIt enables you to provide context and define the chatbot's desired tone, style, content type, and behaviour when it generates responses from the data source.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

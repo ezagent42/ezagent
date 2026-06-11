@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0335",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Warm Call Transfer",
+  "content": "**Warm Call Transfer**\n\nA warm call transfer is when you speak with another staff agent to provide the customer's enquiry or call background before confirming the transfer of the customer's call.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

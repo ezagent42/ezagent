@@ -1,0 +1,19 @@
+---
+unit:
+  tenant: cinnox
+  role: customer
+  slug: attachments-pointer
+  layer: tenant
+  kind: soul_section
+schema_version: 1
+binding:
+  template: stub-pointer
+  template_version: 1
+---
+values:
+  section_number: '9.9'
+  section_title: File Attachments — reading uploaded files
+  section_id: attachments-pointer
+  chunk_id: cinnox-flow-attachments
+  intent_name: any.with_attachments
+  fallback_message: 'see skill: attachments-handling.'

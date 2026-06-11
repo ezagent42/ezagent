@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0097",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Conference Host",
+  "content": "**Conference Host**\n\nIs the staff member creating a conference call with the privileges of participants and allowed to mute a participant, mute all participants, promote a participant as a co-host, remove and block a participant and re-invite a blocked participant?",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

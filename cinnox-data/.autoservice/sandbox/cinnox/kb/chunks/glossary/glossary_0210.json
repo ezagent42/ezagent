@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0210",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Omnichannel",
+  "content": "**Omnichannel**\n\nA cross-channel service strategy that lets organisations use social media channels and messaging apps as customer touchpoints. In CINNOX, Omnichannel is a feature that enables administrators to link third-party channels, such as social media pages, into the service so that staff members can attend to enquiries from those pages directly from their CINNOX Dashboard or App.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

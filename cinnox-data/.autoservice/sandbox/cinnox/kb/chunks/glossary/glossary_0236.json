@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0236",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Quick link",
+  "content": "**Quick link**\n\nA text shortcut to channel and direct web links and service phone numbers. It helps to quickly insert the web link or phone number in the chatroom or campaign without memorising them.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

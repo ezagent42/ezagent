@@ -1,0 +1,71 @@
+# CINNOX KB source -> customer-facing friendly name mapping.
+#
+# Purpose: when triage_dispatch._build_customer_prompt injects KB hits
+# into <kb_context>, OR when reply post-processing sanitises citations,
+# this map translates internal filenames (e.g. EN_CINNOX_Pricing_v2026.xlsx)
+# into the friendly descriptions the model is supposed to surface to
+# customers (e.g. "our pricing documentation").
+#
+# Keep in sync with the table in
+# .autoservice/sandbox/cinnox/souls/customer_soul.md §11
+# ("SOURCE CITATION — friendly names"). The soul is what the model reads;
+# this YAML is what code reads. Both must agree.
+#
+# Pattern format: Python `re` regex, case-insensitive matching is the
+# convention for callers (i.e. compile with re.IGNORECASE). Patterns are
+# tried top-to-bottom; first match wins. End with the catch-all "default".
+
+mappings:
+  # CINNOX product / feature documentation
+  - pattern: "EN_CINNOX_Feature_List.*\\.xlsx"
+    friendly: "our CINNOX product documentation"
+  - pattern: "EN_CINNOX_Features.*\\.xlsx"
+    friendly: "our CINNOX product documentation"
+  - pattern: "CINNOX_Feature.*\\.(xlsx|pdf)"
+    friendly: "our CINNOX product documentation"
+
+  # CINNOX pricing / plans
+  - pattern: "EN_CINNOX_Pricing.*\\.xlsx"
+    friendly: "our pricing documentation"
+  - pattern: "EN_CINNOX_Plan[s]?.*\\.xlsx"
+    friendly: "our plan documentation"
+  - pattern: "CINNOX_Pricing.*\\.(xlsx|pdf)"
+    friendly: "our pricing documentation"
+
+  # M800 global rates / DID / telecom
+  - pattern: "M800_Global_Rates.*\\.xlsx"
+    friendly: "our published rate sheet"
+  - pattern: ".*Global_Rates.*\\.xlsx"
+    friendly: "our published rate sheet"
+  - pattern: "M800_DID.*\\.(xlsx|pdf)"
+    friendly: "our DID rate sheet"
+  - pattern: ".*Toll[-_ ]?Free.*\\.(xlsx|pdf)"
+    friendly: "our toll-free rate sheet"
+
+  # AI Sales Bot
+  - pattern: "AI_Sales_Bot.*\\.(pdf|xlsx)"
+    friendly: "our AI Sales Bot documentation"
+  - pattern: "AI_Sales_Bot_Charging.*\\.pdf"
+    friendly: "our AI Sales Bot pricing documentation"
+
+  # Web sources (cinnox.com, m800.com, docs.*)
+  - pattern: "https?://docs\\.cinnox\\.com.*"
+    friendly: "the CINNOX documentation site"
+  - pattern: ".*docs\\.cinnox\\.com.*"
+    friendly: "the CINNOX documentation site"
+  - pattern: "https?://(www\\.)?cinnox\\.com.*"
+    friendly: "the CINNOX website"
+  - pattern: ".*\\bcinnox\\.com\\b.*"
+    friendly: "the CINNOX website"
+  - pattern: "https?://(www\\.)?m800\\.com.*"
+    friendly: "the M800 website"
+  - pattern: ".*\\bm800\\.com\\b.*"
+    friendly: "the M800 website"
+
+  # Glossary / terminology references
+  - pattern: ".*[Gg]lossary.*\\.(json|xlsx|md)"
+    friendly: "our official CINNOX glossary"
+
+# Catch-all fallback when no pattern matches. Keep generic — never echo
+# the raw filename to the customer.
+default: "our product documentation"

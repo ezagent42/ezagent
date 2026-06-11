@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0269",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Sent Campaigns",
+  "content": "**Sent Campaigns**\n\nIt is a section in the Campaign that provides details of campaigns sent, like the Staff sender, sender ID, total recipients, dates and times sent, and whether the campaigns were successfully delivered.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

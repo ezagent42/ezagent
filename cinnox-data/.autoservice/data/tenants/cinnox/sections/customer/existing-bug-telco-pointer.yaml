@@ -1,0 +1,19 @@
+---
+unit:
+  tenant: cinnox
+  role: customer
+  slug: existing-bug-telco-pointer
+  layer: tenant
+  kind: soul_section
+schema_version: 1
+binding:
+  template: stub-pointer
+  template_version: 1
+---
+values:
+  section_number: 9.7b
+  section_title: Global telco / PSTN / DID issue
+  section_id: existing-bug-telco-pointer
+  chunk_id: cinnox-flow-existing-bug-telco
+  intent_name: existing_customer.bug.telco
+  fallback_message: 'see skill: bug-routing-flow.'

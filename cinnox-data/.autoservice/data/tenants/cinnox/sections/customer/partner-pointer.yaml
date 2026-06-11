@@ -1,0 +1,19 @@
+---
+unit:
+  tenant: cinnox
+  role: customer
+  slug: partner-pointer
+  layer: tenant
+  kind: soul_section
+schema_version: 1
+binding:
+  template: stub-pointer
+  template_version: 1
+---
+values:
+  section_number: '6.5'
+  section_title: PARTNER BRANCH — channel partner / reseller / SI / distributor
+  section_id: partner-pointer
+  chunk_id: cinnox-flow-partner
+  intent_name: partner
+  fallback_message: 'see skill: partner-handoff.'

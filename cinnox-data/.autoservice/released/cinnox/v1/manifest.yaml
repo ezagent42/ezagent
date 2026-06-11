@@ -1,0 +1,9 @@
+cr_actor: hjj.gemini@gmail.com
+cr_source: manual
+framework_ver: 1.0.0
+gate_results:
+  manual_publish: true
+  reason: first publish to materialize released/ for strict isolation rollout
+published_at: '2026-05-12T15:48:46.470222+00:00'
+tenant_id: cinnox
+version: v1

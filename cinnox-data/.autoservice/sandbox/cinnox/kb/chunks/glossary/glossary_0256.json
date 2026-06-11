@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0256",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "SFTP User",
+  "content": "**SFTP User**\n\nThe user name will be used to log in to the SFTP server, where the archived data will be backed up.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

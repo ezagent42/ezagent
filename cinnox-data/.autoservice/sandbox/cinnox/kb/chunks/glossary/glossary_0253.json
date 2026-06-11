@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0253",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "SFTP",
+  "content": "**SFTP**\n\nSSH File Transfer Protocol is a network protocol that allows the access, transfer, and management of files over a secure data stream—also known as Secure File Transfer Protocol.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

@@ -1,0 +1,11 @@
+mode: manual_seed
+roles:
+  customer:
+    kb_hit_count: 0
+    warnings: []
+tenant_id: cinnox
+total_kb_hits: 0
+note: Hand-authored seed to restore runtime KB retrieval for cinnox tenant.
+  Writes to .autoservice/sandbox/cinnox/kb/kb.db (the path dream_agent._sandbox_kb_path
+  actually queries), rather than the global kb.db that seed_mystore_tenant.py
+  targets. Fixes the observed "agent always escalates instead of using KB" bug.

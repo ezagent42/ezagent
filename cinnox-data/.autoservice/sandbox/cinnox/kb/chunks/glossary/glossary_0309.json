@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0309",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Time Routing",
+  "content": "**Time Routing**\n\nA type of routing rule that distributes incoming enquiries using time allocation.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0038",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Availability Status",
+  "content": "**Availability Status**\n\nAn indicator of a staff member's readiness to handle incoming enquiries. A staff member's availability status may be Active, Busy, Idle, or Offline. See Staff Report",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

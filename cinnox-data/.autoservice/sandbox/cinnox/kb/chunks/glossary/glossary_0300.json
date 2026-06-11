@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0300",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Tag QR Code",
+  "content": "**Tag QR Code**\n\nA QR code associated with a Tag. When a visitor scans this QR code, CINNOX alerts and rings all Destination endpoints, such as Staff List, PSTN Phone, and SIP Trunk numbers associated with the Tag of the incoming enquiry.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

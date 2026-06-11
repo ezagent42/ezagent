@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0322",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Virtual Number (VN)",
+  "content": "**Virtual Number (VN)**\n\nVirtual phone numbers are not tied to any physical location or device. Calls to a virtual number can be routed to mobile devices, physical office phones, software-based \"softphones\" on computers, or even other telephone numbers.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

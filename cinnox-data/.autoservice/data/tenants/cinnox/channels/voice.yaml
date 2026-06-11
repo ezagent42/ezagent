@@ -1,0 +1,43 @@
+# Cinnox voice channel config — Phase 3.2 initial cut.
+#
+# Per-tenant per-channel runtime knobs. Replaces PV2 env vars for voice.
+# See spec §4.3 for schema and rationale.
+
+channel: voice
+schema_version: 1
+
+filler:
+  # Solve customer pain: shorter ack instead of full sentence.
+  interval_s: 4
+  max_count_per_turn: 1
+
+  # "minimal" vocabulary — uses hardcoded [嗯, 嗯嗯, 好的, 我看看] pool.
+  # See autoservice/pipeline_v2/fast_agent/prompts.py::MINIMAL_VOICE_FILLER_PHRASES.
+  vocabulary: minimal
+
+  # When cc starts responding within 500ms, skip filler entirely.
+  # Prevents the "bot speaks twice" awkwardness.
+  suppress_if_cc_first_byte_within_ms: 500
+
+  # Wait 800ms before playing filler — give cc a head-start chance.
+  delay_ms_before_play: 800
+
+backend:
+  asr:
+    provider: doubao
+    sample_rate: 16000
+  tts:
+    provider: doubao
+    voice: Chelsie
+    sample_rate: 24000      # Doubao always returns 24k; backend resamples to 8k
+    speech_rate: -10        # offset for narrowband Mandarin intelligibility
+
+skills:
+  # Phase 3.2: relying on SKILL.md::channels declarations (see Task 8).
+  # exclude here is the per-tenant escape hatch; empty by default.
+  exclude: []
+  include_only: null
+
+runtime:
+  greeting_required: true
+  warmup_enabled: true

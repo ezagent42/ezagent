@@ -1,0 +1,9 @@
+framework_ver: b8ba2663
+gate_results:
+  manual_ops_fix: '2026-05-19'
+  migrated_from_sandbox: true
+  passed: true
+  warnings: []
+published_at: '2026-05-19T16:49:49.885907+00:00'
+tenant_id: cinnox
+version: v2

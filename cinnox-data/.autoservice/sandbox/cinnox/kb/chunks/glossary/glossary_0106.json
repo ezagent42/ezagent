@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0106",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "DID (Direct Inward Dialing)",
+  "content": "**DID (Direct Inward Dialing)**\n\nDirect Inward Dialing (DID) technology allows businesses to request a sequence of telephone numbers and map specific numbers directly to an employee's phone or a particular device. When you purchase a \"Virtual Number\" (such as a local landline number from various countries) on the CINNOX platform, that number is a DID. This enables customers worldwide to dial a local number directly, connecting through the network to your CINNOX system to be answered by the designated personnel.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

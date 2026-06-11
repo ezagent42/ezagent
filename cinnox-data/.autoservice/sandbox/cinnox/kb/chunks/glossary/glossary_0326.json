@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0326",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Visitor Language",
+  "content": "**Visitor Language**\n\nThe designated language to which the agent's message is sent to the visitor will be automatically translated.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

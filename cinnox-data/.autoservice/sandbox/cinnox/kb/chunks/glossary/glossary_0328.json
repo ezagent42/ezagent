@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0328",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Visitor Report",
+  "content": "**Visitor Report**\n\nA report that monitors the total number of new and active visitors, as well as their geographic locations.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

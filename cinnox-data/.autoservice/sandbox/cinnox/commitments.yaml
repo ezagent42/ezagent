@@ -1,0 +1,54 @@
+# Default commitments seed — admin onboarding starting point.
+#
+# Conservative thresholds chosen so a freshly-onboarded tenant doesn't drown
+# in commitment-failure proposals on day 1. Admins should tighten these as
+# the tenant's real-world baseline becomes clear.
+#
+# Schema reference: docs/superpowers/specs/2026-05-13-commitment-driven-dream-design.md §3.2
+# Metric registry:  autoservice/commitments/evaluator.py::METRIC_REGISTRY
+#
+# This file is GOODHART-PROTECTED. Dream cannot patch it (patch_compiler
+# rejects writes to any path matching `commitments.yaml`). Admin edits
+# only, via the standard CR flow.
+version: 1
+commitments:
+  - id: response_latency_p95
+    description: "回复延迟 p95 ≤ 8s（保守默认）"
+    metric: response_latency_p95_ms
+    threshold: { op: "<=", value: 8000 }
+    severity: medium
+    on_violation:
+      hint: "update_filler_intent for wait perception; if root cause is real latency, advisory only"
+
+  - id: csat_floor
+    description: "CSAT 均分 ≥ 3.8（保守默认）"
+    metric: csat_avg
+    threshold: { op: ">=", value: 3.8 }
+    severity: high
+    on_violation:
+      hint: "review escalation cases via query_incidents(low_csat); usually KB gap or tone issue"
+
+  - id: escalation_rate_cap
+    description: "升级率 ≤ 15%"
+    metric: escalation_rate
+    threshold: { op: "<=", value: 0.15 }
+    severity: medium
+    on_violation:
+      hint: "soul append_section to guide self-service; check handoff_breakdown for KB-shaped misses"
+
+  - id: early_handoff_low
+    description: "前 3 turn 不该触发 handoff"
+    metric: early_handoff_rate
+    params: { turn_window: 3 }
+    threshold: { op: "<=", value: 0.10 }
+    severity: high
+    on_violation:
+      hint: "soul guidance for opening turns; ensure greeting doesn't immediately escalate"
+
+  - id: operator_takeover_low
+    description: "operator 接管率 ≤ 10%"
+    metric: operator_takeover_rate
+    threshold: { op: "<=", value: 0.10 }
+    severity: low
+    on_violation:
+      hint: "advisory: takeover patterns indicate agent capability gap or operator preference; needs human triage"

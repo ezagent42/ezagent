@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0069",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Called Party",
+  "content": "**Called Party**\n\nThe user or device that answers a telephone call. A called party may be more than one person or device, e.g., during a conference call.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

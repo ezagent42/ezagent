@@ -1,0 +1,15 @@
+{
+  "id": "demo_0003",
+  "source_id": "demo",
+  "source_type": "md",
+  "source_name": "cinnox Demo Knowledge",
+  "source_url": null,
+  "file_path": "scripts/seed_cinnox_tenant.py#DEMO_FACTS",
+  "section": "Enterprise Plus · Included Entitlements",
+  "content": "**Enterprise Plus plan entitlements**\n\n- Enterprise Plus includes a dedicated Customer Success Manager (CSM) with quarterly business reviews.\n- SSO (Single Sign-On) and Active Directory / ADFS integration is included with Enterprise and Enterprise Plus tiers at no extra cost.\n- Professional plan: SSO available as paid add-on.\n- Essentials plan: SSO not available.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

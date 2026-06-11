@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0167",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Home Dashboard",
+  "content": "**Home Dashboard**\n\nA visual representation of the key performance of your service and staff members. It provides graphs and statistics to give an at-a-glance of your staff performance.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

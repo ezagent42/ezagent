@@ -1,0 +1,10 @@
+framework_ver: 06d7d100
+gate_results:
+  manual_ops_fix: '2026-05-21: phase-e-followup: §9 Step 1 verification + §9.7a service_account
+    ask explicit'
+  migrated_from_sandbox: true
+  passed: true
+  warnings: []
+published_at: '2026-05-21T01:12:35.739016+00:00'
+tenant_id: cinnox
+version: v3

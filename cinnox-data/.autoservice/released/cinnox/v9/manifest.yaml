@@ -1,0 +1,90 @@
+actor: hjj.gemini@gmail.com
+framework_ver: 5c68948f
+items_published:
+- id:
+    role: customer
+    sid: identity
+  kind: section
+- id:
+    role: customer
+    sid: brand-structure
+  kind: section
+- id:
+    role: customer
+    sid: purpose
+  kind: section
+- id:
+    role: customer
+    sid: gate
+  kind: section
+- id:
+    role: customer
+    sid: classification
+  kind: section
+- id:
+    role: customer
+    sid: lead-new-pointer
+  kind: section
+- id:
+    role: customer
+    sid: partner-pointer
+  kind: section
+- id:
+    role: customer
+    sid: other-pointer
+  kind: section
+- id:
+    role: customer
+    sid: non-standard-pointer
+  kind: section
+- id:
+    role: customer
+    sid: discovery-pointer
+  kind: section
+- id:
+    role: customer
+    sid: existing-routing-pointer
+  kind: section
+- id:
+    role: customer
+    sid: existing-product-pointer
+  kind: section
+- id:
+    role: customer
+    sid: existing-billing-pointer
+  kind: section
+- id:
+    role: customer
+    sid: existing-bug-cinnox-pointer
+  kind: section
+- id:
+    role: customer
+    sid: existing-bug-telco-pointer
+  kind: section
+- id:
+    role: customer
+    sid: har-export-pointer
+  kind: section
+- id:
+    role: customer
+    sid: attachments-pointer
+  kind: section
+- id:
+    role: customer
+    sid: citation
+  kind: section
+- id:
+    role: customer
+    sid: conversation-style
+  kind: section
+- id:
+    role: customer
+    sid: privacy
+  kind: section
+- id: cinnox-flow-other
+  kind: flow_chunk
+lint_findings: []
+parent_version: v8
+published_at: '2026-05-26T01:47:59.782676+00:00'
+tenant_id: cinnox
+version: v9

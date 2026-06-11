@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0343",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "WhatsApp Engagement (WhatsApp Outbound)",
+  "content": "**WhatsApp Engagement (WhatsApp Outbound)**\n\nA CINNOX feature that allows staff to initiate conversations with the target audience using the WhatsApp messaging platform.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

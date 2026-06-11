@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0173",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Installation Code",
+  "content": "**Installation Code**\n\nA small piece of code that is ready to be copied from the CINNOX Dashboard and pasted into a website's HTML code. Once the code is installed, the CINNOX widget will appear at the bottom right corner of the site.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

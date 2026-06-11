@@ -1,0 +1,15 @@
+{
+  "id": "glossary_0235",
+  "source_id": "glossary",
+  "source_type": "json",
+  "source_name": "CINNOX Glossary",
+  "source_url": null,
+  "file_path": "plugins/cinnox/references/glossary.json",
+  "section": "Quick Reply",
+  "content": "**Quick Reply**\n\nIt is an advanced message type in CINNOX. Quick Reply appears as a set, listed horizontally, and each appears in its clickable bubble. When a quick reply button is clicked or tapped, the message is sent in the conversation, and all the other quick replies buttons disappear.",
+  "created_at": "2026-04-23T06:43:27.995442+00:00",
+  "domain": "contact_center",
+  "region": "global",
+  "language": "en",
+  "page_number": null
+}

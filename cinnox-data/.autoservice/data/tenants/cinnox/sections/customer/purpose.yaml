@@ -1,0 +1,14 @@
+---
+unit:
+  tenant: cinnox
+  role: customer
+  slug: purpose
+  layer: tenant
+  kind: soul_section
+schema_version: 1
+binding:
+  template: purpose
+  template_version: 1
+---
+values:
+  topics_covered: CINNOX and M800 products, features, pricing, and integrations
