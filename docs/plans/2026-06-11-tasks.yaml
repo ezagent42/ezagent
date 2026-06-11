@@ -248,7 +248,7 @@ tasks:
     type: code
   verification: filler在cc慢时出现,快时不出现
   estimated_effort: small
-  status: pending
+  status: completed
   gap_ref: GAP-D1
 - id: T0A.9
   name: 'Integration: content plugin → CR plugin pipeline'
