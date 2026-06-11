@@ -8,37 +8,32 @@ defmodule Ezagent.Socialware.CustomerFeedAdapter.Allow do
   (`allow_customer_feed`) exists on `Ezagent.Entity.Session`. The behavior is
   never dispatched — it is the Check-2 cap subject only.
   """
-  @behaviour Ezagent.Behavior
+  # `use Ezagent.Lifecycle` — the macro auto-derives `state_slice/0` and provides
+  # `create/1` + the dispatch machinery, so this cap-only subject carries NO
+  # retired `state_slice/0`/`init_slice/1`/`invoke/4` callbacks (the lifecycle
+  # invariant forbids them). It is `dispatchable?: false` (never dispatched), so
+  # the macro's default handlers are never exercised — it exists only as the
+  # Check-2 cap subject for `allow_customer_feed`.
+  use Ezagent.Lifecycle
 
-  @impl true
+  @impl Ezagent.Behavior
   def actions, do: [:allow_customer_feed]
 
-  @impl true
+  @impl Ezagent.Behavior
   def cap_subjects,
     do: [{:allow_customer_feed, "Authorize the customer-feed pull adapter on this session."}]
 
-  @impl true
+  @impl Ezagent.Behavior
   def dispatchable?, do: false
 
-  @impl true
-  def state_slice, do: :external_adapter_customer_feed
-
-  @impl true
-  def init_slice(_args), do: %{}
-
-  @impl true
-  def invoke(_action, _slice, _args, _ctx) do
-    raise "CustomerFeedAdapter.Allow is cap-only (Check-2 subject) — never dispatched."
-  end
-
-  @impl true
+  @impl Ezagent.Behavior
   def interface, do: %{}
 
-  @impl true
+  @impl Ezagent.Behavior
   def required_caps,
     do: %{allow_customer_feed: Ezagent.Capability.cap(:session, __MODULE__, :allow_customer_feed)}
 
-  @impl true
+  @impl Ezagent.Behavior
   def data_owner(_), do: :any
 end
 
