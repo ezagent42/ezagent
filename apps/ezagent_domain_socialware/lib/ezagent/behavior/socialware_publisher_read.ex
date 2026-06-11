@@ -197,31 +197,32 @@ defmodule Ezagent.Behavior.SocialwarePublisherRead do
     end
   end
 
-  # A valid caller is a CANONICAL identity-principal INSTANCE entity URI —
-  # EXACTLY `entity://<workspace>/<user|agent|worker>/<name>` with NO query, NO
-  # fragment, and NO extra path segments (codex P3-3 HIGH r1+r2). The two-rounds
-  # of hardening: (r1) `Ezagent.URI.canonical?/1` rejects the deprecated
-  # `URI.parse/1` `:authority`-set shape; (r2) the EXACT three-segment path check
-  # + `query: nil`/`fragment: nil` rejects a canonical-but-non-principal struct
-  # like `/user/alice/auth/login` (subresource) or `/user/alice?action=x` —
-  # otherwise such a hand-built struct, if placed as `owner_uri`/`members`, would
-  # authorize via the equality. Only a bare principal instance may read.
-  defp valid_caller_uri?(
-         %URI{scheme: "entity", host: host, path: path, query: nil, fragment: nil} = uri
-       )
+  # A valid caller is EXACTLY a bare identity-principal instance entity URI
+  # `entity://<workspace>/<user|agent|worker>/<name>` (codex P3-3 HIGH, 3 rounds).
+  # Rather than enumerate the fields that must be empty (authority/query/fragment/
+  # userinfo/port/…), RECONSTRUCT the canonical principal from the caller's
+  # workspace+type+name via `Ezagent.URI.entity/3` (which `new!`s the canonical
+  # form — every extraneous field nil) and require EXACT struct equality. Any
+  # crafted extra field (userinfo, port, query, fragment, subresource path, or a
+  # non-canonical `:authority`) makes the caller `!=` its canonical rebuild, so it
+  # is rejected before the owner/member equality — even if that same crafted
+  # struct is planted as `owner_uri`/`members`.
+  defp valid_caller_uri?(%URI{scheme: "entity", host: host, path: path} = caller)
        when is_binary(host) and host != "" and is_binary(path) do
-    Ezagent.URI.canonical?(uri) and principal_instance_path?(path)
+    case String.split(path, "/", trim: false) do
+      ["", type, name] when type in ["user", "agent", "worker"] and name != "" ->
+        caller == Ezagent.URI.entity(host, type, name)
+
+      _ ->
+        false
+    end
+  rescue
+    # `Ezagent.URI.entity/3` raises on a name/segment it cannot canonicalize —
+    # such a caller is not a valid principal instance: fail closed.
+    _ -> false
   end
 
   defp valid_caller_uri?(_), do: false
-
-  # EXACTLY `/<type>/<name>` (two non-empty segments) — no subresource path.
-  defp principal_instance_path?(path) do
-    case String.split(path, "/", trim: false) do
-      ["", type, name] when type in ["user", "agent", "worker"] and name != "" -> true
-      _ -> false
-    end
-  end
 
   defp get_chat_sibling(ctx) do
     ctx

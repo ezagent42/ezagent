@@ -236,6 +236,23 @@ defmodule Ezagent.Behavior.SocialwarePublisherReadTest do
       chat = owned_chat(with_frag)
       assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(with_frag, chat))
     end
+
+    test "entity %URI{} caller carrying USERINFO → unauthorized even as owner_uri AND as member (codex P3-3 r3 HIGH)" do
+      with_userinfo = %URI{scheme: "entity", host: "team-alpha", userinfo: "evil", path: "/user/alice"}
+      # planted as owner_uri:
+      assert {:error, :unauthorized} =
+               SPR.handle_snapshot(%{}, ctx(with_userinfo, owned_chat(with_userinfo)))
+
+      # planted as a member key:
+      chat = %{owner_uri: nil, members: %{with_userinfo => %{online: true}}, last_seen: %{}}
+      assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(with_userinfo, chat))
+    end
+
+    test "entity %URI{} caller carrying a PORT → unauthorized even as owner_uri (codex P3-3 r3 HIGH)" do
+      with_port = %URI{scheme: "entity", host: "team-alpha", port: 443, path: "/user/alice"}
+      chat = owned_chat(with_port)
+      assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(with_port, chat))
+    end
   end
 
   describe "missing/unreadable :chat sibling slice → fail closed" do
