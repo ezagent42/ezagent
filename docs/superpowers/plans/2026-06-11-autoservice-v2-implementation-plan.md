@@ -869,7 +869,7 @@ end
   → cc agent 主回复 + kb_search + skill Read
   → TurnAdapter.compose_turn(session_uri, turn_id, %{agent_uri, text})
   → TurnAdapter.settle_turn(session_uri, turn_id)
-  → CustomerFeed.deliver → loom/customer_live 收到
+  → {:customer_delivery} → CustomerFeed.snapshot → loom/customer_live 收到
 
 客户消息回显 (PR #715 #10):
   客户消息是 Turn trigger, 不是 settled message
@@ -912,7 +912,7 @@ end
 
   operator 提交 → TurnAdapter.settle_turn(session_uri, turn_id)
     → visibility: :operator_only → :customer_visible
-    → CustomerFeed.deliver
+    → {:customer_delivery} → CustomerFeed.snapshot
     → RuleStore.enable(rule_id)  ← 恢复 agent route
     → PubSub.broadcast(session_topic, {:operator_settled, operator_uri})
 ```
