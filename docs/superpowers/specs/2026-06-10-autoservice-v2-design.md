@@ -28,10 +28,10 @@
 ### 1.1 三层角色
 
 ```
-Customer  → ezagent_plugin_loom (Next.js SPA, iframe 嵌入)
-            - 编排: fast(deepseek) + slow(cc) agent
-            - Turn 状态机接入
-            - CustomerFeed 门控订阅
+Customer  → ezagent_plugin_autoservice (customer_live.ex, 后用 loom SPA)
+            - 编排: TurnAdapter (autoservice) — fast(deepseek) + slow(cc) agent
+            - Turn 状态机接入 (socialware Turn Behavior)
+            - CustomerFeed 门控订阅 (socialware CustomerFeed.topic)
 
 Operator  → ezagent_plugin_autoservice
             - OperatorLive: 客服工作台
@@ -896,19 +896,30 @@ published_at: null
 published_version: null
 ```
 
-### 5.2 CR 类型
+### 5.2 CR 模型 (简化: 全量发布)
 
-| target_kind | scope | 存储类型 | 锁粒度 | 谁能发起 |
-|---|---|---|---|---|
-| `soul_slot` | section (role, sid) | sandbox/slots/<role>.yaml | 对应 section key | tenant_admin |
-| `skill` | skill 文件 | sandbox/skills/<role>/<name>/SKILL.md | 对应文件 | tenant_admin |
-| `kb` | KB 条目或 escalation_keywords | sandbox/kb/ | 对应数据 | tenant_admin |
-| `soul` | tenant soul.md 覆盖 | sandbox/souls/<role>_soul.md | 对应文件 | tenant_admin |
-| `bundle` | 上面任意组合 | 混合 | scope 内所有资源 | tenant_admin+ |
-| `platform_soul` | L0/L1/L2 soul 模板 | priv/platform/ (git) | priv/platform/ 中 .md 文件 | master_admin |
-| `platform_skill` | Platform/Industry skill | priv/platform/ (git) | priv/platform/ 中 SKILL.md | master_admin |
+> **一个租户一个 active CR。所有 sandbox 改动 = 一个发布单元。无选择性发布。**
+> 好处: 实现简单、原子操作(`cp -r sandbox/ → release/v<N>/`)、与原 AutoService 一致。
+> CR 价值: 版本历史 + 回滚 + lint gate + 防误发。
 
-> 所有内容数据统一走文件系统。ConfigStore 仅存 CR 元数据(`cr:<tid>:<cr_id>`) + tenant config(`tenant:<tid>:config`)。
+| 属性 | 说明 |
+|---|---|
+| scope | 始终 = 整个 sandbox (不区分 soul/skill/kb) |
+| 锁 | 无 (编辑直接写 sandbox，不需要锁) |
+| 并发 | 一个租户一个 active CR，多个 editor 共享 |
+| 发布 | `cp -r sandbox/ → release/v<N>/` → `ln -sf release/v<N> → _current` |
+| 回滚 | `ln -sf release/v<旧版本> → _current` |
+
+CR 元数据 (ConfigStore `cr:<tid>:<cr_id>`):
+```yaml
+cr_id: "cr-20260610-001"
+tenant_id: "cinnox"
+status: open | published | cancelled
+created_by: "entity://user/cinnox/admin"
+created_at: "2026-06-10T10:00:00Z"
+published_at: "2026-06-10T10:30:00Z"
+published_version: "v1"
+```
 
 ### 5.3 CR 工作流 — 从编辑到发布
 
@@ -934,39 +945,25 @@ Admin 点 "预览 sandbox":
   -> 满意 -> 进入发布; 不满意 -> 继续编辑 -> 再预览
 ```
 
-#### 阶段 3: 发布 (选择范围 -> Publish)
+#### 阶段 3: 发布 (全量)
 
 ```
-Admin 打开 CR 详情页 (cr_dashboard_live):
-  +-- CR #42 (draft) ---------------------------------+
-  |  改动清单 (自动收集):                              |
-  |    [x] soul_slot: customer/identity    (2h ago)     |
-  |    [x] soul_slot: customer/gate        (1h ago)     |
-  |    [x] skill: lead-collection/SKILL.md  (30min ago) |
-  |    [ ] kb: escalation_keywords.json    (3d ago)     |  <- 可取消勾选,不发布
-  |    [ ] kb: glossary.json               (3d ago)     |  <- 同上
-  |                                                   |
-  |  [全选] [取消] [预览 sandbox] [Publish 选中]       |
-  +---------------------------------------------------+
+Admin 打开 CR 详情页:
+  -> 显示 sandbox vs release 的 diff 摘要
+  -> [预览 sandbox] 验证改动
+  -> [Publish] 全量发布
+  -> [Cancel] 放弃 CR
 ```
 
-> **可 all 可选择性发布**: CR 自动收集所有 sandbox 改动，但 admin 在发布前可以**取消勾选**不想发布的项。
-> 取消勾选的项留在 sandbox，下次 CR 继续追踪。勾选的项组成发布 scope。
-
-**发布执行:**
+**发布执行 (全量 cp):**
 
 ```
-Admin 点 "Publish 选中":
+Admin 点 "Publish":
   -> 1. Lint check (R01-R05)
-  -> 2. scope_hash 冻结 (锁定当前 sandbox 内容)
-  -> 3. 按 scope 拷贝到 release:
-       选中的 slot sections -> 合并到 release/v<N>/slots/<role>.yaml
-       选中的 skill 文件 -> cp -> release/v<N>/skills/
-       选中的 KB 数据 -> cp -> release/v<N>/kb/
-       选中的 config -> cp -> release/v<N>/config/
-  -> 4. ln -sf release/v<N> -> _current (原子翻指针)
-  -> 5. PubSub broadcast {:content_published, tid, "<version>"}
-  -> 6. CR status -> published, 未选中的项留在 sandbox 进入下一个 CR
+  -> 2. cp -r sandbox/ -> release/v<N>/  (全量拷贝)
+  -> 3. ln -sf release/v<N> -> _current  (原子翻指针)
+  -> 4. PubSub broadcast {:content_published, tid, "<version>"}
+  -> 5. CR status -> published
 ```
 
 ### 5.4 Lint 规则
@@ -1022,34 +1019,40 @@ open → dispatch → deliver → compose → claim → settle
 
 ### 6.3 CustomerFeed 门控
 
-> **2026-06-11 更新**: socialware P3-2 (#727) 把 CustomerFeed 重构为 `:pull` ExternalAdapter。
-> 支持 cursor 协议、断线重连、backlog 安全回放。
+> **2026-06-11 修正**: 基于 socialware 真实 API (#727 #728) + Stage-1 (#715) 验证。
 
 ```
-CustomerFeed (socialware P3-2):
-  - :pull ExternalAdapter (adapter_id: "customer_feed")
-  - cursor-based: subscribe → snapshot → replay backlog → hold per-connection cursor
-  - reconnect-safe: 断线后通过 cursor 回放,不丢消息
-  - visibility: :customer_visible (默认) | :operator_only (接管期间)
+CustomerFeed 真实机制 (socialware):
+  - topic/1:  PubSub topic "socialware:customer:<session_uri>"
+  - snapshot/2: 返回当前可见消息快照 (受 visibility 门控)
+  - history/2:  完整已提交消息列表
+  - Settlement → CustomerOutbox → {:customer_delivery} PubSub 广播
 
 loom/customer_live:
-  通过 CustomerFeed :pull adapter 获取消息
-  → 不再需要 PubSub subscribe
-  → 自动获得断线重连、backlog 回放能力
+  Phoenix.PubSub.subscribe(CustomerFeed.topic(session_uri))
+  → 收到 {:customer_delivery, %{message_ids: [...]}}
+  → CustomerFeed.snapshot(session_uri, token) 拉取可见消息
+  → 渲染
 
 operator_live:
-  通过 SocialwarePublisherRead (#728) 读取 feed 数据
-  → cap-exempt, owner/member 鉴权
+  同一 PubSub topic → 收到 {:customer_delivery}
+  → SocialwarePublisherRead (#728) snapshot/history
   → 接管时: Turn.claim → visibility = :operator_only
+    → customer snapshot 不再返回该 turn 的消息
+    → operator snapshot 包含 :operator_only 消息
   → 编辑完成后: Turn.settle → visibility = :customer_visible
+    → customer snapshot 恢复可见
 ```
+
+> **不额外广播 operator 状态。** operator 接管/提交隐含在 Turn visibility 翻转
+> + CustomerFeed snapshot 变化中。遵守 P14 (dispatch is the only path between Kinds)。
 
 ### 6.4 Agent 模型
 
 | Agent | 模型 | 职责 | 实现 |
 |---|---|---|---|
 | **fast** (DeepSeek) | `deepseek-v4-flash`, no thinking | 即时安抚 ACK (12-30字,<2s) | `curl.agent` template, plain-text output, `thinking: {type: "disabled"}`, `max_tokens: 256` |
-| **slow** (cc) | `deepseek-v4-flash`, effort=medium | 主回复 + kb_search + skill Read | cc agent, CLAUDE.md(soul) + MCP |
+| **slow** (cc) | cc harness (Claude CLI), model 可配: 默认 Claude, 可切 DeepSeek-v4-flash | 主回复 + kb_search + skill Read | cc agent, CLAUDE.md(soul) + MCP．effort 等 cc harness 参数从 agents.yaml 读取 |
 | **KB MCP** | SQLite FTS5 | KB 检索 (被 cc 作为 tool 调用) | Python MCP server sidecar |
 
 ### 6.5 租户运行时
@@ -1072,42 +1075,47 @@ per-tenant per-agent 工作目录:
 
 #### 6.6.1 TurnAdapter (给 loom 调)
 
-loom 不直接调 socialware domain,通过 `turn_adapter.ex`:
+loom 不直接调 socialware domain,通过 `turn_adapter.ex`。
+实现使用 `%Invocation{}` 格式，与 Stage-1 (#715) 一致：
 
 ```elixir
 defmodule EzagentPluginAutoservice.TurnAdapter do
-  @moduledoc """
-  Turn 编排 — 内部通过 Router.dispatch 调 socialware Turn Behavior。
-  """
+  alias Ezagent.Invocation
 
-  alias Ezagent.{Router, Cmd, Invocation}
+  defp system_ctx, do: %{caller: Ezagent.SystemPrincipal.uri("turn-adapter"),
+                          caps: Ezagent.SystemPrincipal.caps("system://turn-adapter"),
+                          reply: {:caller_inbox, self()}}
 
-  def open_turn(session_uri, %{customer_uri: customer_uri, text: text}) do
-    Router.dispatch(%Cmd{
-      target: session_uri, action: :turn.open,
-      args: %{trigger: %{msg: text, from: customer_uri}, opened_at: System.system_time(:second)},
+  def open_turn(session_uri, %{customer_uri: cu, text: text}) do
+    Invocation.dispatch(%Invocation{
+      target: URI.new!("#{URI.to_string(session_uri)}?action=turn.open"),
+      mode: :call,
+      args: %{trigger: %{msg: text, from: cu}, opened_at: System.system_time(:second)},
       ctx: system_ctx()
     })
   end
 
-  def compose_turn(session_uri, turn_id, %{agent_uri: agent_uri, text: text}) do
-    Router.dispatch(%Cmd{
-      target: session_uri, action: :turn.compose,
-      args: %{turn_id: turn_id, result_refs: [%{agent: agent_uri, text: text}]},
+  def compose_turn(session_uri, turn_id, %{agent_uri: au, text: text}) do
+    Invocation.dispatch(%Invocation{
+      target: URI.new!("#{URI.to_string(session_uri)}?action=turn.compose"),
+      mode: :call,
+      args: %{turn_id: turn_id, result_refs: [%{agent: au, text: text}]},
       ctx: system_ctx()
     })
   end
 
   def settle_turn(session_uri, turn_id) do
-    Router.dispatch(%Cmd{
-      target: session_uri, action: :turn.settle,
+    Invocation.dispatch(%Invocation{
+      target: URI.new!("#{URI.to_string(session_uri)}?action=turn.settle"),
+      mode: :call,
       args: %{turn_id: turn_id}, ctx: system_ctx()
     })
   end
 
   def claim_turn(session_uri, turn_id, %{operator_uri: op}) do
-    Router.dispatch(%Cmd{
-      target: session_uri, action: :turn.claim,
+    Invocation.dispatch(%Invocation{
+      target: URI.new!("#{URI.to_string(session_uri)}?action=turn.claim"),
+      mode: :call,
       args: %{turn_id: turn_id, by: op}, ctx: system_ctx()
     })
   end
@@ -1137,50 +1145,42 @@ end
 
 ### 7.1 接管流程
 
+> **P14 合规**: operator 状态隐含在 Turn visibility 翻转 + CustomerFeed snapshot 变化中，
+> 不额外跨 Kind 广播。
+
 ```
 1. Operator 打开 OperatorLive
-   → 列出 workspace 内 CS 会话 (snapshot + live)
+   → 列出 workspace 内 CS 会话 (snapshot + live, 过滤 session://cs/<ws>/*)
    → 选择会话
 
 2. 查看会话消息
-   → MessageStore.recent_in_session + CustomerFeed 实时投递
+   → Phoenix.PubSub.subscribe(CustomerFeed.topic(session_uri))
+   → 收到 {:customer_delivery} → CustomerFeed.snapshot 拉取
 
 3. 接管 (Turn.claim)
    → TurnAdapter.claim_turn(session_uri, turn_id, %{operator_uri: operator_uri})
    → visibility: :customer_visible → :operator_only
-   → PubSub.broadcast(session_topic, {:operator_joined, operator_uri})  ← 通知 loom
-   → RuleStore.disable(rule_id)  ← 暂停 fast/slow agent 接收客户消息
+   → customer 的 CustomerFeed.snapshot 不再返回该 turn 消息 (自动，无需通知)
+   → RuleStore.disable(rule_id)  ← 暂停 fast/slow agent
 
 4. 编辑回复
-   → operator 输入消息
-   → 预览 (不投递给 customer)
+   → operator 输入消息，预览
 
 5. 提交 (Turn.settle)
    → TurnAdapter.settle_turn(session_uri, turn_id)
    → visibility: :operator_only → :customer_visible
-   → CustomerFeed.deliver (消息投递给 customer)
-   → PubSub.broadcast(session_topic, {:operator_settled, operator_uri})
+   → {:customer_delivery} 触发 → customer snapshot 恢复可见
 ```
 
 ### 7.2 Route 调整
 
-使用已有的 `RuleStore.disable/1` + `RuleStore.enable/1` (不改 core):
+使用已有的 `RuleStore.disable/1` + `RuleStore.enable/1` (零 core 改动):
 
 ```
-接管前:
-  customer msg → route → fast agent + slow agent
-
-接管时 (Turn.claim):
-  rule = RuleStore.list(@routing_table) |> Enum.find(matcher)
-  RuleStore.disable(rule.id)  ← enabled=false, loader 自动过滤
-  customer msg → agent 不再接收
-
-接管结束 (Turn.settle):
-  RuleStore.enable(rule.id)   ← 恢复
-  customer msg → agent 恢复接收
+接管前:  customer msg → route → fast + slow agent
+接管时:  RuleStore.disable(rule.id) → agent 不再接收
+接管结束: RuleStore.enable(rule.id)  → agent 恢复接收
 ```
-
-> `RuleStore.disable/1` + `enable/1` 已存在于 ezagent_core,无需改动。
 
 ---
 
@@ -1667,7 +1667,21 @@ ezagent_plugin_liveview → 依赖 content + cr + autoservice(admin UI)
 
 ---
 
-### 第三轮更新 (2026-06-11) — main 同步
+### 第三轮更新 (2026-06-11) — 团队审查修正
+
+| # | 级别 | 问题 | 决议 |
+|---|---|---|---|
+| ①② | MUST-FIX | slow runtime 混淆 + P14 PubSub | slow=cc harness(model 可配)；operator 状态走 CustomerFeed visibility，不额外广播 |
+| ③ | MUST-FIX | CustomerFeed API 不存在 | 改用真实 API: topic/1 + snapshot/2 + history/2 + {:customer_delivery} |
+| ④ | MUST-FIX | TurnAdapter 代码编不过 | 改为 %Invocation{target: "...?action=turn.open"} |
+| ⑤ | SHOULD-FIX | macOS Keychain 隔离 | Linux only 部署约束，不处理 macOS |
+| ⑥ | WATCH | CR 选择性发布矛盾 | **去掉选择性发布**，CR = sandbox 全量 → release |
+| ⑦ | WATCH | agents.yaml 租户可写 | **确认 master-only**，priv/skeleton/config/ 不进入 sandbox |
+| ⑧ | WATCH | Phase B 归属模糊 | **编排归属 autoservice TurnAdapter**，loom 只是前端渲染 |
+
+**6 个开放问题回答**: slow=cc harness、CR=全量发布、cc 凭证=Linux 部署解决、编排=autoservice、CR 并发=一个租户一个 CR 无并发、版本不一致=可接受。
+
+### 第四轮更新 (2026-06-11) — main 同步
 
 | # | 内容 | 状态 |
 |---|---|---|
