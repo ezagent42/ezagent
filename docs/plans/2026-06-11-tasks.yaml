@@ -217,7 +217,7 @@ tasks:
     type: code
   verification: master admin可创建租户,编辑平台模板
   estimated_effort: medium
-  status: pending
+  status: completed
   gap_ref: GAP-A.1
 - id: T2A.2
   name: Tenant Admin 页面
@@ -233,7 +233,7 @@ tasks:
     type: code
   verification: tenant admin可完整管理soul/skill/KB/CR/operator
   estimated_effort: medium
-  status: pending
+  status: completed
   gap_ref: GAP-A.2
 - id: T2A.3
   name: FillerLoop + 优化
