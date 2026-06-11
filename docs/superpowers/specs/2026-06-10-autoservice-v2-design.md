@@ -677,19 +677,35 @@ Tenant 内容配置 (租户编辑,走 CR):
 > **preview 和生产走相同的完整路径。** 差异仅在于数据源(sandbox vs release)和 session 类型(preview vs cs)。
 > 这样 preview 通过 = 生产必然通过。
 
-**agents.yaml 格式:**
+**agents.yaml 格式 (priv/skeleton/config/agents.yaml — master-only，不进 sandbox):**
 
 ```yaml
-# sandbox/config/agents.yaml — tenant 覆盖
 fast:
-  model: deepseek-v4-flash     # 覆盖平台默认
-  endpoint: https://api.deepseek.com
+  provider: deepseek                          # curl agent 直连 DeepSeek HTTP API
+  model: deepseek-v4-flash
+  endpoint: https://api.deepseek.com/chat/completions
   max_tokens: 256
   thinking: disabled
+
 slow:
-  model: deepseek-v4-flash
-  effort: medium
+  provider: claude                            # cc harness 后端: claude | deepseek
+  model: claude-sonnet-4-6                    # provider=claude 时的模型
+  # model: deepseek-v4-flash                  # provider=deepseek 时替换上面
+  effort: low                                 # provider=claude 时生效 (Claude CLI --effort)
+                                              # provider=deepseek 时不生效
 ```
+
+**slow agent 走 DeepSeek 时需要额外部署环境变量 (master 管控，不进仓库，不进 CR):**
+
+```bash
+# 让 cc harness 的 Claude CLI 指向 DeepSeek Anthropic 兼容端点:
+ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic
+ANTHROPIC_API_KEY=sk-xxx
+# cc CLI 参数 --model 从 agents.yaml slow.model 读取
+```
+
+> **已验证**: cc harness + deepseek-v4-flash 在线上 Linux 环境运行。
+> `effort` 是 Claude CLI 原生参数，provider=deepseek 时 DeepSeek 不支持，忽略即可。
 
 **配置生效时机 (租户侧):**
 
