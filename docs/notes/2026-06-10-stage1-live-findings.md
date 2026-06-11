@@ -13,14 +13,17 @@ in PR #715). Reaching it surfaced + fixed issues across two layers:
 - **Plugin layer (this PR, `feat/autoservice-cs-stage1`):** the original 9 build
   fixes + 3 more found while driving the browser — customer-message echo, a
   single-bot response gate (biphasic residue), and the "AI 客服" reply label.
-- **cc-runtime layer (Allen's domain, NOT in this PR):** the headless cc bot on
-  macOS authenticates via an ambient `CLAUDE_CODE_OAUTH_TOKEN`; claude 2.1.170 added
-  two startup dialogs that need auto-prompt entries; and per-reply latency is
-  dominated by a `high` reasoning-effort default that should be tunable.
+- **cc-runtime layer (Allen's domain, NOT in this PR — see Allen's triage on #715):**
+  G1-a's proper fix is **creation-unification (#533, impl pending)** credentialling the
+  bot's isolated config dir via the #17 cascade (the `:no_cascade_resolution` gap = fix
+  #7); the ambient `CLAUDE_CODE_OAUTH_TOKEN` here is only a **demo workaround (shared
+  identity)**. Two findings are ORTHOGONAL to that credential gap: (a) claude 2.1.170
+  added two startup dialogs the existing #718 scanner doesn't cover; (b) per-reply
+  latency is dominated by a `high` reasoning-effort default. Both → **PR #723**.
 
-**`b03cb4da` (the earlier "bridge never JOINs" fix) is obsolete** — its `EagerBridge`
-target was deleted in the arch-deepening refactor, and its OAuth-detection is moot
-under the ambient token. The actual blocker on claude 2.1.170 was two NEW dialogs.
+**`b03cb4da` is dead** (Allen + this run agree): its credential half is superseded by
+#641/#719 (cascade materializes creds into the isolated dir, respawn-durable), its dialog
+half by #718, and it patches `EagerBridge` which no longer exists. Do not resurrect.
 
 ## What works live (proven — see Demo GIF)
 
@@ -57,27 +60,41 @@ customer_visible → CustomerFeed → CustomerLive`.
 | 11 | Bot stays silent. The soul's `CLAUDE.md` carried a **biphasic** response gate ("ONLY respond when @-mentioned `@cc_slow-alice`"), but the deployed agent is single-bot `cs-bot-alice` (name + URI both stale) → never @-mentioned → never replies. The adapter itself already says "no fast/slow biphasic"; only the soul lagged. | Replace with a role-based single-bot gate (answer the customer; silent on own + operator), **zero hard-coded agent URI** (uses `EZAGENT_AGENT_URI` + the customer's `…/user/…` role) → drift-resistant. | `cinnox_assets.ex` |
 | 12 | Bot replies labeled "系统". The settled reply is composed under the turn-driving principal (`entity://system/…`), and `label_for` only matched the legacy host-segmented URI shape. | Label the system-principal / `/agent/` sender as "AI 客服". **Follow-up**: proper per-message authorship (bot vs operator) on the settled surface is a settlement-layer concern. | `chat_ui.ex` |
 
-## G1-a (cc bot esr-bridge never JOINed) — RESOLVED at runtime, no Stage-1 code
+## G1-a (cc bot esr-bridge never JOINed) — proper fix is creation-unification; demo on a workaround
 
-Root cause was NOT b03cb4da's targets. On claude **2.1.170** + macOS:
+**Allen's #715 triage is the authority.** Two distinct things:
 
-1. **Auth.** A headless cc bot's isolated `CLAUDE_CONFIG_DIR` has no creds → OAuth
-   screen. **Fix:** set `CLAUDE_CODE_OAUTH_TOKEN` on the `mix phx.server` process —
-   `EzagentDomainPty.Server.build_env/1` passes only ezagent's own vars to erlexec
-   and relies on OS-process env inheritance, so the spawned claude inherits the
-   token. No code change; a launch-env concern (prod sets the same service token the
-   same way → no local/prod divergence).
-2. **Startup dialogs (NEW on 2.1.170, NOT suppressed by `--dangerously-skip-permissions`):**
-   - `New MCP server found … 1. Use this MCP server` (MCP trust)
-   - `Bypass Permissions mode … 2. Yes, I accept` (bypass acceptance)
+### The credential gap (the actual G1-a) — creation-unification's, NOT this vertical
+The vertical creates the bot via the blessed `Workspace.create_agent` correctly, but the
+in-session cc bot ends up with `:no_cascade_resolution` (fix #7) → the #17 cascade never
+materializes a credential into its isolated `CLAUDE_CONFIG_DIR` → on claude ≥2.1.92
+(Keychain isolation) an unseeded dir shows the OAuth screen → the MCP/esr-bridge never
+starts. This is the create-path credential-wiring that **creation-unification (#533, spec
+merged, impl pending)** owns — it must credential every agent (incl. in-session cc bot) by
+construction. **Acceptance criterion to carry into that impl:** *a cc bot created via the
+unified chokepoint has its isolated config dir cascade-credentialled so its bridge joins
+and `chat.receive` delivers* — and trace WHY current `create_agent` yields
+`:no_cascade_resolution` here (missing credential-source/grant? the `with_pty:false`
+headless path skipping the cascade step?).
 
-   `default_auto_prompts/0` only had `trust_folder` → the headless PTY hung → the
-   bridge never JOINed. **Fix:** two entries in `ezagent_domain_pty/server.ex`
-   (`mcp_trust_dialog` send `"\r"` on `❯ 1.`; `bypass_permissions_dialog` send
-   `"2\r"` — a bare Enter would pick "No, exit"). → cc-runtime, Allen.
+**Our demo sidesteps this** by setting an ambient `CLAUDE_CODE_OAUTH_TOKEN` on the
+`mix phx.server` process (the spawned claude inherits it via OS env), so the isolated dir
+needn't be credentialled. This is a **workaround with SHARED identity** — fine for a demo,
+not per-agent. The durable per-agent fix is creation-unification.
 
-With both, the bot JOINs `agent_bridge` in ~4 s and replies. **`b03cb4da` is obsolete**
-(it patched `EagerBridge`, deleted on `main`; its OAuth-detection is moot here).
+### Two NEW claude 2.1.170 dialogs — orthogonal, and NOT covered by #718
+EVEN authenticated, claude 2.1.170 shows two one-shot startup dialogs that
+`--dangerously-skip-permissions` does NOT suppress and that **#718's scanner
+(theme/login/dev_channels/trust_folder) does not cover**:
+- `New MCP server found … 1. Use this MCP server` (MCP trust)
+- `Bypass Permissions mode … 2. Yes, I accept` (bypass acceptance)
+
+The headless PTY hangs on them → the bridge never JOINs. Two auto-prompt entries fix it
+(`mcp_trust_dialog` → `"\r"` on `❯ 1.`; `bypass_permissions_dialog` → `"2\r"` — bare Enter
+picks "No, exit"). → **PR #723**. **Open question for Allen:** does creation-unification's
+config materialization also pre-approve the esr-bridge MCP + bypass-accept (subsuming
+these), or are these scanner entries still needed as the 2.1.170 extension of #718's
+safety-net? With the workaround + these two entries, the bot JOINs in ~4 s and replies.
 
 ## Per-reply latency — the real UX issue, and the lever
 
@@ -92,17 +109,28 @@ OUT of the `AgentTemplate` slice (cc-agent-config §"NOT in the slice"), so the 
 fix is **making effort per-template configurable** (or defaulting the cc bot lower) —
 cc-runtime, Allen's call. Far lighter than the deferred fast/slow biphasic.
 
-## G1-b (routing not rehydrated on boot) — did NOT recur
+## G1-b (routing not live after restart) — E2E seed ORDERING, not a core gap (Allen)
 
-In this fresh-seed → restart-server flow the customer message routed to the bot
-correctly (`chat.receive` granted, reply settled, `JOINED` in the server log). The
-earlier G1-b symptom did not reproduce; no action needed unless it resurfaces.
+Per Allen's #715 triage: **boot hydration already exists and works** —
+`DefaultRules.bootstrap` → `RuleStore.load_into_registry(MentionRouting)` runs on every
+boot and loads ALL enabled rules (regression-pinned by #721, merged). The live symptom was
+a **two-process timing** issue: the long-running `mix phx.server` (B) boots + hydrates
+BEFORE the short-lived seed task (A) writes the `alice → cs-bot-alice` rule to the DB; A's
+own ETS dies with A, and nothing re-reads the DB after B's boot → the message doesn't route
+until B restarts. **Fix on the E2E line (core unchanged):** (a) seed BEFORE starting the
+server, (b) restart after seeding, or (c) have the seed RPC the running node to
+`load_into_registry`. **Our `record-clean.sh` already does (a)** (seed → then start the
+server), which is why routing worked in the demo.
 
-## cc-runtime items for Allen (separate from this PR)
+## cc-runtime / core items (Allen's domain — NOT this PR)
 
-1. The two new `default_auto_prompts` entries (claude 2.1.170 MCP-trust + bypass).
-2. Make reasoning **effort** per-template configurable (or default the cc bot lower).
+1. **Credential the in-session cc bot's isolated config dir** (the real G1-a) →
+   **creation-unification (#533) implementation**; carry the acceptance criterion above.
+2. **Two new `default_auto_prompts`** (claude 2.1.170 MCP-trust + bypass) → **PR #723**;
+   open question whether (1) subsumes them.
+3. **Make reasoning `effort` per-template configurable** (or default the cc bot lower) →
+   **PR #723**; orthogonal to G1-a.
 
-Both live in `ezagent_domain_pty` / `ezagent_plugin_cc` (cc-runtime). The ambient
-`CLAUDE_CODE_OAUTH_TOKEN` is operational (no code). Stage-1 application logic
-(this PR) is complete, unit-green, and now live-proven end-to-end.
+The ambient `CLAUDE_CODE_OAUTH_TOKEN` is an operational demo workaround (no code), not the
+durable fix. Stage-1 application logic (this PR) is complete, unit-green, and live-proven
+end-to-end on the workaround.
