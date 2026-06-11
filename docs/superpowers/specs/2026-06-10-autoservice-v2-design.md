@@ -698,7 +698,7 @@ slow:
 | soul.md + slot_values | `release/_current/` | agent 重渲染 CLAUDE.md | 否 |
 | skill 文件 | `release/_current/skills/` | symlink 跟随 `_current` | 否 |
 | kb.db | `release/_current/kb/kb.db` | symlink 跟随 `_current` | 否 |
-| fast ACK prompt | `release/_current/config/` | curl agent 需重建(固化在 Template) | **是** |
+| fast ACK prompt | `release/_current/config/` | Template system_prompt 字段 dispatch 更新 | 否 |
 | cc preamble | `release/_current/config/` | agent 重渲染 CLAUDE.md | 否 |
 
 > **生产 agent 始终读 release。** sandbox 仅用于 admin preview (临时 agent)。
