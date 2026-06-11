@@ -13,10 +13,13 @@ defmodule EzagentPluginContent.Platform.PlatformSkillStore do
   @spec list_skills(String.t()) :: {:ok, [String.t()]} | {:error, term()}
   def list_skills(role) do
     dir = Path.join(@skills_base, role)
+
     if File.dir?(dir) do
-      {:ok, File.ls!(dir) |> Enum.filter(fn name ->
-        File.dir?(Path.join(dir, name))
-      end)}
+      {:ok,
+       File.ls!(dir)
+       |> Enum.filter(fn name ->
+         File.dir?(Path.join(dir, name))
+       end)}
     else
       {:ok, []}
     end
@@ -28,6 +31,7 @@ defmodule EzagentPluginContent.Platform.PlatformSkillStore do
   @spec read_skill(String.t(), String.t()) :: {:ok, binary()} | {:error, term()}
   def read_skill(role, skill_name) do
     path = Path.join([@skills_base, role, skill_name, "SKILL.md"])
+
     case File.read(path) do
       {:ok, content} -> {:ok, content}
       {:error, _} -> {:error, :not_found}

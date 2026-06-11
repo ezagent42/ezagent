@@ -219,8 +219,8 @@ defmodule EzagentPluginLiveview.Tenant.CrDashboardLive do
     """
   end
 
-  defp cr_status_variant(%{"status" => "open"}), do: :warning
-  defp cr_status_variant(%{"status" => "published"}), do: :success
-  defp cr_status_variant(%{"status" => "cancelled"}), do: :danger
-  defp cr_status_variant(_), do: :default
+  defp cr_status_variant(%{"status" => "open"}), do: "warning"
+  defp cr_status_variant(%{"status" => "published"}), do: "success"
+  defp cr_status_variant(%{"status" => "cancelled"}), do: "danger"
+  defp cr_status_variant(_), do: "default"
 end

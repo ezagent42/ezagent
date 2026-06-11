@@ -13,6 +13,7 @@ defmodule EzagentPluginCr.CrEngine do
 
       _ ->
         cr_id = "cr-#{Date.utc_today()}-#{System.unique_integer([:positive]) |> rem(1000)}"
+
         cr = %{
           "cr_id" => cr_id,
           "tenant_id" => tid,
@@ -20,6 +21,7 @@ defmodule EzagentPluginCr.CrEngine do
           "created_by" => "system://cr-engine",
           "created_at" => DateTime.utc_now() |> DateTime.to_iso8601()
         }
+
         write_cr(tid, cr_id, cr)
     end
   end

@@ -27,10 +27,13 @@ defmodule EzagentPluginContent.Soul.SoulStore do
   @spec write_slots(binary(), String.t(), String.t(), map(), :sandbox | :release) :: :ok | {:error, term()}
   def write_slots(base_dir, tid, role, values, source) when source in [:sandbox, :release] do
     path = path_for(base_dir, tid, role, source)
-    existing = case read_yaml(path) do
-      {:ok, m} -> m
-      _ -> %{}
-    end
+
+    existing =
+      case read_yaml(path) do
+        {:ok, m} -> m
+        _ -> %{}
+      end
+
     merged = deep_merge(existing, values)
     write_yaml(path, merged)
   end
@@ -49,18 +52,21 @@ defmodule EzagentPluginContent.Soul.SoulStore do
   # Private helpers
   defp path_for(base, tid, role, :sandbox),
     do: sandbox_path(base, tid, role)
+
   defp path_for(base, tid, role, :release),
     do: release_path(base, tid, role)
 
   defp sandbox_path(base, tid, role),
     do: Path.join([base, tid, "sandbox", "slots", "#{role}.yaml"])
+
   defp release_path(base, tid, role),
     do: Path.join([base, tid, "release", "_current", "slots", "#{role}.yaml"])
 
   defp read_yaml(path) do
     case YamlElixir.read_from_file(path) do
       {:ok, data} -> {:ok, data}
-      {:error, _} -> {:ok, %{}}  # No file = empty slots
+      # No file = empty slots
+      {:error, _} -> {:ok, %{}}
     end
   end
 
@@ -73,10 +79,12 @@ defmodule EzagentPluginContent.Soul.SoulStore do
 
   # Simple YAML encoder for string-keyed nested maps
   defp encode_yaml(map, indent \\ 0)
+
   defp encode_yaml(map, indent) when is_map(map) do
     map
     |> Enum.map(fn {k, v} ->
       prefix = String.duplicate("  ", indent)
+
       if is_map(v) do
         "#{prefix}#{k}:\n#{encode_yaml(v, indent + 1)}"
       else

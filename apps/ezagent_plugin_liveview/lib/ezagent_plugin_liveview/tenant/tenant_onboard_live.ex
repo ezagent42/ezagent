@@ -23,6 +23,7 @@ defmodule EzagentPluginLiveview.Tenant.TenantOnboardLive do
      socket
      |> assign(:page_title, gettext("Onboard New Tenant"))
      |> assign(:workspace_uri, Map.get(socket.assigns, :current_workspace_uri))
+     |> assign(:steps, @steps)
      |> assign(:step, :basic_info)
      |> assign(:step_index, 0)
      |> assign(:form_data, %{

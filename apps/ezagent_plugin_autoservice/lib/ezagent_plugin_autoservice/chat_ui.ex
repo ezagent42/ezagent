@@ -25,9 +25,15 @@ defmodule EzagentPluginAutoservice.ChatUI do
   end
 
   defp label_for(_sender, true), do: "我"
-  defp label_for(%URI{scheme: "entity", host: "agent"}, _), do: "AI 客服"
+  defp label_for(%URI{scheme: "entity"} = sender, _) do
+    case Ezagent.URI.type(sender) do
+      {:ok, "agent"} -> "AI 客服"
+      {:ok, "user"} -> "人工客服"
+      _ -> "系统"
+    end
+  end
+
   defp label_for(%URI{scheme: "system"}, _), do: "AI 客服"
-  defp label_for(%URI{scheme: "entity", host: "user"}, _), do: "人工客服"
   defp label_for(_sender, _), do: "系统"
 
   attr :messages, :list, required: true

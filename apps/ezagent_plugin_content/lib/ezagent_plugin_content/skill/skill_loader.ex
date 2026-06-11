@@ -37,7 +37,9 @@ defmodule EzagentPluginContent.Skill.SkillLoader do
           skill_file = Path.join([dir, name, "SKILL.md"])
           if File.exists?(skill_file), do: [%Entry{name: name, path: skill_file, layer: layer}], else: []
         end)
-      _ -> []
+
+      _ ->
+        []
     end
   end
 end

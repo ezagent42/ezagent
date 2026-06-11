@@ -1,6 +1,10 @@
 defmodule EzagentWeb.Router do
   use EzagentWeb, :router
 
+  alias EzagentPluginAutoservice.{CustomerLive, OperatorLive}
+  alias EzagentPluginLiveview.Master.MasterDashboardLive
+  alias EzagentPluginLiveview.Tenant.{TenantOnboardLive, TenantDashboardLive, CrDashboardLive, OperatorsLive}
+
   pipeline :browser do
     plug :accepts, ["html"]
     plug :fetch_session
@@ -152,6 +156,11 @@ defmodule EzagentWeb.Router do
       # Top-level Profile (reached via avatar dropdown — personal
       # config). Settings moved to /admin/settings above (admin scope).
       live "/profile", ProfileLive
+
+      # === AutoService v2 ===
+      # === AutoService v2 ===
+      live "/autoservice", AutoService.CustomerLive
+      live "/autoservice/operator", AutoService.OperatorLive
     end
 
     # Codex PR #305 round-2 HIGH fix — centralized admin gate.
@@ -188,6 +197,14 @@ defmodule EzagentWeb.Router do
       # SessionTemplate Kinds list, read-only. Detail link goes to
       # the existing /plugins/auto/:kind LV for raw slice inspection.
       live "/admin/templates", AdminTemplatesLive
+
+      # === AutoService v2 Admin ===
+      # === AutoService v2 Admin ===
+      live "/admin/autoservice", Master.MasterDashboardLive
+      live "/admin/autoservice/tenants/new", Tenant.TenantOnboardLive
+      live "/admin/autoservice/tenants/:tid", Tenant.TenantDashboardLive
+      live "/admin/autoservice/tenants/:tid/cr", Tenant.CrDashboardLive
+      live "/admin/autoservice/tenants/:tid/operators", Tenant.OperatorsLive
       # CapabilityRegistry SPEC `docs/superpowers/specs/2026-05-23-capability-registry.md`
       # §8.1 — surfaces every cap subject registered via
       # `Ezagent.CapabilityRegistry` (dispatchable + cap-only) plus

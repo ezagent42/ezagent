@@ -5,8 +5,8 @@ defmodule EzagentPluginContent.Kb.KbStore do
   def search(kb_dir, query) do
     script = Path.join(kb_dir, "kb_search_mcp.py")
     db = Path.join(kb_dir, "kb.db")
-    case System.cmd("uv", ["run", "--script", script, "--db-path", db, "--query", query],
-         stderr_to_stdout: true) do
+
+    case System.cmd("uv", ["run", "--script", script, "--db-path", db, "--query", query], stderr_to_stdout: true) do
       {output, 0} -> decode_json_list(output)
       _ -> []
     end
@@ -18,8 +18,20 @@ defmodule EzagentPluginContent.Kb.KbStore do
   def upsert(kb_dir, entry) do
     script = Path.join(kb_dir, "kb_search_mcp.py")
     db = Path.join(kb_dir, "kb.db")
-    case System.cmd("uv", ["run", "--script", script, "--db-path", db, "--upsert",
-         Jason.encode_to_iodata!(entry) |> IO.iodata_to_binary()], stderr_to_stdout: true) do
+
+    case System.cmd(
+           "uv",
+           [
+             "run",
+             "--script",
+             script,
+             "--db-path",
+             db,
+             "--upsert",
+             Jason.encode_to_iodata!(entry) |> IO.iodata_to_binary()
+           ],
+           stderr_to_stdout: true
+         ) do
       {_, 0} -> :ok
       {out, _} -> {:error, out}
     end
@@ -31,8 +43,7 @@ defmodule EzagentPluginContent.Kb.KbStore do
   def delete(kb_dir, id) do
     script = Path.join(kb_dir, "kb_search_mcp.py")
     db = Path.join(kb_dir, "kb.db")
-    System.cmd("uv", ["run", "--script", script, "--db-path", db, "--delete", id],
-      stderr_to_stdout: true)
+    System.cmd("uv", ["run", "--script", script, "--db-path", db, "--delete", id], stderr_to_stdout: true)
     :ok
   rescue
     _ -> :ok

@@ -10,6 +10,7 @@ defmodule EzagentPluginContent.Platform.PlatformSkillStoreTest do
       PlatformSkillStore.delete_skill(@test_role, "test-skill")
       PlatformSkillStore.delete_skill(@test_role, "delete-test-skill")
     end)
+
     :ok
   end
 

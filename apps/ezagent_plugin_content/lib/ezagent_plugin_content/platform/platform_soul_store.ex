@@ -90,6 +90,7 @@ defmodule EzagentPluginContent.Platform.PlatformSoulStore do
     if File.exists?(path) do
       File.rm!(path)
     end
+
     :ok
   end
 end
