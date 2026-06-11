@@ -308,7 +308,15 @@ defmodule Ezagent.SystemPrincipal.Catalog do
       # and passed as the dispatch caps for the single `sandbox.read` on the
       # validated source. A broad standing cap here would defeat the per-source
       # scoping — so the entry is deliberately empty (like `lv-anon-mount`).
-      {principal("credential-materializer"), []}
+      {principal("credential-materializer"), []},
+      # T1A.1 — TurnAdapter dispatches turn lifecycle actions (open, compose, settle,
+      # claim) on customer-service Sessions. These actions are received by the Session
+      # Kind and routed to an autoservice-specific Behavior. For now the session cap
+      # mirrors session-internal/orchestrator-tools (Chat wildcard on Session).
+      {principal("turn-adapter"),
+       [
+         Capability.cap(:session, Chat, :any)
+       ]}
     ]
   end
 
