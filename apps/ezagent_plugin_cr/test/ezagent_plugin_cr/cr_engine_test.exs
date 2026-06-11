@@ -7,8 +7,15 @@ defmodule EzagentPluginCr.CrEngineTest do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
     tid = "test-cr-#{System.unique_integer([:positive])}"
 
+    # Create a minimal valid sandbox for publish (lint R02 requires CLAUDE.md, skills/, kb/)
+    sandbox = TenantRuntime.sandbox_path(tid)
+    File.mkdir_p!(sandbox)
+    File.write!(Path.join(sandbox, "CLAUDE.md"), "# Test CR Engine")
+    File.mkdir_p!(Path.join(sandbox, "skills"))
+    File.mkdir_p!(Path.join(sandbox, "kb"))
+
     on_exit(fn ->
-      # Clean up release directories created during publish
+      File.rm_rf!(sandbox)
       base = TenantRuntime.release_path(tid)
       if File.exists?(base), do: File.rm_rf!(base)
     end)
