@@ -1,0 +1,45 @@
+task_hints:
+  source_files:
+  - docs/superpowers/specs/2026-06-10-autoservice-v2-design.md
+  - docs/superpowers/plans/2026-06-11-autoservice-v2-implementation-plan.md
+  source_type: ingested_updated
+  extracted_at: '2026-06-11'
+  file_changes:
+  - path: apps/ezagent_plugin_content/
+    change: create
+    description: 'New: soul/skill/KB CRUD + tenant'
+  - path: apps/ezagent_plugin_cr/
+    change: create
+    description: 'New: CR engine (full publish)'
+  - path: apps/ezagent_plugin_autoservice/turn_adapter.ex
+    change: create
+    description: TurnAdapter (%Invocation format)
+  - path: apps/ezagent_plugin_autoservice/autoservice_assembly.ex
+    change: create
+    description: Assembly coordinator
+  - path: apps/ezagent_plugin_autoservice/operator_live.ex
+    change: modify
+    description: Turn.claim/settle + RuleStore.disable/enable
+  - path: apps/ezagent_plugin_autoservice/customer_live.ex
+    change: modify
+    description: CustomerFeed.topic subscription + :customer_delivery
+  implementation_steps:
+  - 'A1-A5: content plugin (soul/skill/KB CRUD)'
+  - 'A6: cr plugin (full publish)'
+  - 'A7: autoservice refactor'
+  - 'A8: cinnox migration'
+  - 'B1-B4: assembly+Turn+CustomerFeed+operator'
+  - 'C1-C2: admin UI'
+  - 'D1-D2: FillerLoop (defer)'
+  non_goals:
+  - No core/domain changes
+  - No selective CR publish (full only)
+  - No macOS Keychain (Linux only)
+  - No tenant-level model/key config
+  - agents.yaml master-only
+  test_strategy: 'Phase A: per-plugin ExUnit; Phase B: autoservice integration; Phase C: LiveView E2E'
+  risks:
+  - Python MCP dependency
+  - content↔cr one-way dep
+  - cinnox migration idempotent
+  - loom on separate branch (Phase B uses CustomerLive)
