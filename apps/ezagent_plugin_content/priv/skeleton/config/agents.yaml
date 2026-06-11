@@ -1,0 +1,10 @@
+fast:
+  provider: deepseek
+  model: deepseek-v4-flash
+  endpoint: https://api.deepseek.com/chat/completions
+  max_tokens: 256
+  thinking: disabled
+slow:
+  provider: claude
+  model: claude-sonnet-4-6
+  effort: low
