@@ -1,0 +1,285 @@
+defmodule Ezagent.Behavior.SocialwarePublisherRead do
+  @moduledoc """
+  Socialware publisher READ API — the scoped, fail-closed boundary that lets
+  a `SocialwareSession`'s owner/members follow its internal publisher trunk
+  WITHOUT the chat-publisher authz widening (codex #711 HIGH / P3-3).
+
+  ## Why a DISTINCT behavior (not `Publisher.SessionImpl`)
+
+  `SocialwareSession.type_name/0` is `:session` — the SAME as the chat
+  `Session`. The chat publisher read actions (`:snapshot`/`:history`/
+  `:subscribe_from`) are registered as `{Session, action} ->
+  Publisher.SessionImpl`. If those same actions were registered on
+  `SocialwareSession` via `Publisher.SessionImpl`, a BROAD chat
+  `kind: :session, behavior: Publisher.SessionImpl` grant (held by
+  chat/Feishu participants) would ALSO authorize reading a
+  `SocialwareSession`'s INTERNAL `:turns`/`:surface`/`:config_updates`
+  payloads (the kind axis is identical), re-opening the widening; and
+  `Publisher.SessionImpl.data_owner/1` delegates to chat `Session.owner/1`,
+  not a socialware owner/member model.
+
+  This behavior is registered ONLY on `SocialwareSession` (in
+  `EzagentDomainSocialware.Application.register_behaviors/0`), for the read
+  actions `:snapshot` + `:history`. As-built today the chat publisher read
+  actions are registered ONLY against the chat `Session`, NOT against
+  `SocialwareSession` — so there is NO `{kind, action}` collision and NO
+  trunk/read split is required: `Publisher.SessionImpl` remains the SOLE
+  owner+materializer of the `:publisher` slice on both Kinds, and this
+  behavior is a REGISTRY-ONLY dispatch surface (NOT in
+  `SocialwareSession.behaviors/0`) that READS that slice.
+
+  ## Registry-only — reads but does NOT materialize the `:publisher` slice
+
+  This module declares `state_slice :publisher` to READ the trunk's
+  ring/cursor (the SAME slice the trunk owner `Publisher.SessionImpl`
+  materializes), but it is NOT in `SocialwareSession.behaviors/0`, so it
+  never `init_slice`/materializes the slice — exactly ONE behavior per Kind
+  (the trunk) owns `:publisher`. The handlers READ the slice via
+  `ctx.read.(...)` and return it UNCHANGED (no `{:set, ...}` effects). Same
+  registry-only pattern as `Ezagent.Behavior.IdentityAdmin` /
+  `Ezagent.Behavior.UserDefaultCredentialSource`.
+
+  ## `subscribe_from` is DEFERRED (codex rev5 HIGH — post-leave leak)
+
+  The action set is EXACTLY `[:snapshot, :history]`. A long-lived
+  `subscribe_from` subscription stores only a pid/ref and fans future
+  events out with NO per-event caller re-check, so a member who
+  subscribes-then-LEAVEs would keep receiving internal events. No P3
+  consumer needs streaming (the customer SPA adapter reads
+  `committed_deliveries_since`; the Feishu mirror uses the ExternalMirror
+  slice-change path). `subscribe_from` is added ONLY when a streaming
+  consumer exists AND carries a per-fan-out re-check + leave-removal. Its
+  ABSENCE makes the streaming leak impossible by construction.
+
+  ## Authorization — cap-EXEMPT + a LIVE in-handler fail-closed check
+
+  The read actions are `cap_exempt_actions` at the CapBAC layer (no
+  per-member/owner cap, no grant-at-join, no revoke-at-leave, no backfill
+  for existing P0-P2 owners, no stale-cap risk). The HANDLER is the SOLE
+  authority. It declares `reads_siblings [:chat]` and authorizes a read
+  ONLY when ALL hold (otherwise `{:error, :unauthorized}`):
+
+    1. `ctx.caller` is a `%URI{}` (reject nil / `:any` / `:system` /
+       non-URI caller — these are NOT identities, and cap-exempt dispatch
+       does not vet the caller for us);
+    2. the `:chat` sibling slice is present + readable (a map);
+    3. EITHER the slice's `owner_uri` is a `%URI{}` AND `== ctx.caller`,
+       OR `ctx.caller` is a key of the slice's `members` map (keyed by
+       `%URI{}`).
+
+  A nil/missing `owner_uri` matches NOTHING (an OWNERLESS session is NOT
+  readable by a nil/`:any` caller) — there is NO "allow if owner is nil"
+  branch. Because membership is re-read LIVE on every call, an ex-member
+  (post-LEAVE) is denied immediately with no revoke ordering to get wrong,
+  and a chat `kind: :session` cap holder who is NOT a socialware member is
+  denied (chat participation ≠ socialware read).
+  """
+
+  # lifecycle:state_slice_override
+  #
+  # Read the publisher TRUNK slice (`:publisher`), which the trunk owner
+  # `Publisher.SessionImpl` materializes. The macro would otherwise derive
+  # `:socialware_publisher_read` from the module name and read an empty
+  # slice. This module does NOT init/materialize `:publisher` (registry-only
+  # — not in `behaviors/0`); it only READS the owner's ring/cursor.
+  use Ezagent.Lifecycle, state_slice: :publisher
+
+  alias Ezagent.Publisher.Event
+
+  @default_retention 100
+
+  reads_siblings([:chat])
+
+  action(:snapshot,
+    args: %{},
+    returns: %{cursor: :integer},
+    caps: [:snapshot],
+    modes: [:call],
+    description:
+      "Read this SocialwareSession's publisher trunk cursor + current state. " <>
+        "Cap-exempt; authorized by a live in-handler socialware owner/member check."
+  )
+
+  action(:history,
+    args: %{},
+    returns: %{},
+    caps: [:history],
+    modes: [:call],
+    description:
+      "Read events in the (from, to] cursor window from this SocialwareSession's " <>
+        "publisher trunk ring. Cap-exempt; authorized by a live in-handler " <>
+        "socialware owner/member check."
+  )
+
+  # The reads are EXEMPT from the CapBAC layer (no held cap). The handler
+  # below is the SOLE, fail-closed authority. MUST equal `actions/0` (the
+  # plugin-check invariant asserts `required_caps keys ∪ cap_exempt == actions`).
+  @impl Ezagent.Behavior
+  def cap_exempt_actions, do: [:snapshot, :history]
+
+  # `data_owner/1` — grant authority for this behavior's cap subjects.
+  #
+  # The `action/3` macro auto-emits `cap_subjects/0` (from the `caps:`
+  # declarations), so the caps-data-ownership invariant
+  # (`Ezagent.Invariants.CapsDataOwnerTest`) requires a `data_owner/1`. But
+  # these actions are `cap_exempt_actions` — they NEVER gate via a held cap,
+  # and there is intentionally NO grantable owner/member cap (the whole point
+  # of P3-3: no grant-at-join, no revoke-at-leave, no backfill). The authority
+  # is the LIVE in-handler socialware owner/member check, NOT a cap a
+  # `data_owner` could be the grant authority for.
+  #
+  # So this declares `:no_owner` for every subject: there is no cap-grant
+  # authority to formalize (`default_grants_from_data_owner/2` synthesizes
+  # nothing, and the cap is never consulted at dispatch because the actions
+  # are exempt). `:no_owner` documents "no grantable authority" — exactly
+  # correct here.
+  @impl Ezagent.Behavior
+  def data_owner(_), do: :no_owner
+
+  # ----- Handlers (cap-exempt; the live check is the boundary) ----------
+
+  @doc """
+  Read the publisher trunk's current cursor + most-recent payload. Authorized
+  ONLY for a current owner/member of THIS `SocialwareSession` (live check).
+  """
+  def handle_snapshot(_args, ctx) do
+    with :ok <- authorize(ctx) do
+      cursor = ctx[:read].(:cursor, 0)
+      ring = ctx[:read].(:ring, [])
+
+      state =
+        case List.last(ring) do
+          %Event{payload: payload} -> payload
+          _ -> nil
+        end
+
+      {:ok, %{cursor: cursor, state: state}, []}
+    end
+  end
+
+  @doc """
+  Read events in the `(from, to]` cursor window from the publisher trunk ring.
+  Authorized ONLY for a current owner/member of THIS `SocialwareSession`.
+  """
+  def handle_history(args, ctx) do
+    with :ok <- authorize(ctx) do
+      ring = ctx[:read].(:ring, [])
+      from = Map.get(args, :from, :earliest)
+      to = Map.get(args, :to, :latest)
+
+      case window(ring, from, to) do
+        {:ok, events} -> {:ok, %{events: events}, []}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  # ----- The fail-closed authorization predicate (THE security boundary) -
+  #
+  # Authorize ONLY when ALL hold (else `{:error, :unauthorized}`):
+  #   - `ctx.caller` is a WELL-FORMED identity-principal `%URI{}` — a canonical
+  #     `entity://<workspace>/<user|agent|worker>/<name>` (reject nil / :any /
+  #     :system / non-URI AND a malformed/non-canonical/non-entity `%URI{}`,
+  #     codex P3-3 HIGH);
+  #   - the `:chat` sibling slice is present + readable (a map);
+  #   - EITHER the slice's `owner_uri` is a `%URI{}` AND `== ctx.caller`,
+  #     OR `ctx.caller` is a key of the slice's `members` map (URIs).
+  # A nil/missing `owner_uri` matches NOTHING; a nil/malformed caller is
+  # rejected up front. There is NO "allow if owner is nil" branch.
+  defp authorize(ctx) do
+    with %URI{} = caller <- Map.get(ctx, :caller),
+         true <- valid_caller_uri?(caller),
+         %{} = chat <- get_chat_sibling(ctx),
+         true <- owner?(chat, caller) or member?(chat, caller) do
+      :ok
+    else
+      _ -> {:error, :unauthorized}
+    end
+  end
+
+  # A valid caller is EXACTLY a bare identity-principal instance entity URI
+  # `entity://<workspace>/<user|agent|worker>/<name>` (codex P3-3 HIGH, 3 rounds).
+  # Rather than enumerate the fields that must be empty (authority/query/fragment/
+  # userinfo/port/…), RECONSTRUCT the canonical principal from the caller's
+  # workspace+type+name via `Ezagent.URI.entity/3` (which `new!`s the canonical
+  # form — every extraneous field nil) and require EXACT struct equality. Any
+  # crafted extra field (userinfo, port, query, fragment, subresource path, or a
+  # non-canonical `:authority`) makes the caller `!=` its canonical rebuild, so it
+  # is rejected before the owner/member equality — even if that same crafted
+  # struct is planted as `owner_uri`/`members`.
+  defp valid_caller_uri?(%URI{scheme: "entity", host: host, path: path} = caller)
+       when is_binary(host) and host != "" and is_binary(path) do
+    case String.split(path, "/", trim: false) do
+      ["", type, name] when type in ["user", "agent", "worker"] and name != "" ->
+        caller == Ezagent.URI.entity(host, type, name)
+
+      _ ->
+        false
+    end
+  rescue
+    # `Ezagent.URI.entity/3` raises on a name/segment it cannot canonicalize —
+    # such a caller is not a valid principal instance: fail closed.
+    _ -> false
+  end
+
+  defp valid_caller_uri?(_), do: false
+
+  defp get_chat_sibling(ctx) do
+    ctx
+    |> Map.get(:siblings, %{})
+    |> Map.get(:chat)
+  end
+
+  # Owner match ONLY when owner_uri is a real %URI{} that equals the caller.
+  # A nil/missing owner matches NOTHING.
+  defp owner?(%{owner_uri: %URI{} = owner}, %URI{} = caller), do: owner == caller
+  defp owner?(_chat, _caller), do: false
+
+  # The `:chat` slice keys `members` by the member's `%URI{}` (see
+  # `Ezagent.Behavior.Chat` + `Ezagent.Socialware.ConfigUpdate.session_member?/2`).
+  defp member?(%{members: members}, %URI{} = caller) when is_map(members),
+    do: Map.has_key?(members, caller)
+
+  defp member?(_chat, _caller), do: false
+
+  # ----- Read-only window helper over the trunk ring --------------------
+  #
+  # Returns events with cursor in `(from, to]`:
+  #   - from = :earliest → no lower bound
+  #   - from = integer   → cursor > from (exclusive)
+  #   - to   = :latest   → no upper bound
+  #   - to   = integer   → cursor <= to (inclusive)
+  # `{:error, :cursor_out_of_window}` if `from` predates the oldest retained
+  # cursor. Mirrors `Publisher.SessionImpl`'s window semantics (read-only).
+  defp window(ring, from, to) do
+    with :ok <- validate_window(ring, from, to) do
+      {:ok, Enum.filter(ring, fn %Event{cursor: c} -> in_window?(c, from, to) end)}
+    end
+  end
+
+  defp validate_window(_ring, :earliest, _to), do: :ok
+
+  defp validate_window(ring, from, to) when is_integer(from) and from >= 0 do
+    cond do
+      is_integer(to) and to < from -> {:error, {:invalid_window, from, to}}
+      cursor_out_of_window?(ring, from) -> {:error, :cursor_out_of_window}
+      true -> :ok
+    end
+  end
+
+  defp validate_window(_ring, bad, _to), do: {:error, {:invalid_cursor, bad}}
+
+  defp cursor_out_of_window?([], _from), do: false
+  defp cursor_out_of_window?([%Event{cursor: oldest} | _], from), do: from < oldest - 1
+
+  defp in_window?(_c, :earliest, :latest), do: true
+  defp in_window?(c, :earliest, to) when is_integer(to), do: c <= to
+  defp in_window?(c, from, :latest) when is_integer(from), do: c > from
+
+  defp in_window?(c, from, to) when is_integer(from) and is_integer(to),
+    do: c > from and c <= to
+
+  # Default trunk retention (documented fallback; matches Publisher.SessionImpl).
+  @doc false
+  def default_retention, do: @default_retention
+end
