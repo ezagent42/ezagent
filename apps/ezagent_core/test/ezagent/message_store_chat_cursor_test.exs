@@ -77,14 +77,16 @@ defmodule Ezagent.MessageStoreChatCursorTest do
     end
   end
 
-  describe "chat_visible_since/2" do
+  @epoch ~U[1970-01-01 00:00:00.000000Z]
+
+  describe "chat_visible_since/2 (composite {inserted_at, message_id} keyset)" do
     test "returns customer-visible messages strictly after the cursor, ascending", %{session: s} do
       t0 = ~U[2026-06-10 00:00:00.000000Z]
       _a = write(s, "a", at: DateTime.add(t0, 1, :second))
       b = write(s, "b", at: DateTime.add(t0, 2, :second))
       _c = write(s, "c", at: DateTime.add(t0, 3, :second))
 
-      since = b.inserted_at
+      since = {b.inserted_at, b.id}
       assert s |> MessageStore.chat_visible_since(since) |> Enum.map(&text(&1)) == ["c"]
     end
 
@@ -92,8 +94,7 @@ defmodule Ezagent.MessageStoreChatCursorTest do
       write(s, "a", at: ~U[2026-06-10 00:00:01.000000Z])
       write(s, "b", at: ~U[2026-06-10 00:00:02.000000Z])
 
-      assert s |> MessageStore.chat_visible_since(~U[1970-01-01 00:00:00.000000Z]) |> length() ==
-               2
+      assert s |> MessageStore.chat_visible_since({@epoch, ""}) |> length() == 2
     end
 
     test "excludes operator_only messages", %{session: s} do
@@ -101,8 +102,39 @@ defmodule Ezagent.MessageStoreChatCursorTest do
       write(s, "secret", visibility: :operator_only, at: ~U[2026-06-10 00:00:02.000000Z])
 
       assert s
-             |> MessageStore.chat_visible_since(~U[1970-01-01 00:00:00.000000Z])
+             |> MessageStore.chat_visible_since({@epoch, ""})
              |> Enum.map(&text(&1)) == ["public"]
+    end
+
+    test "TIED inserted_at: a cursor at {ts, id} still returns the SIBLING with the same ts but a higher id",
+         %{session: s} do
+      # Two messages share the SAME inserted_at. Sort their ids so the test is
+      # deterministic about which is "lower" by message_id tie-break.
+      at = ~U[2026-06-10 00:00:05.000000Z]
+      m1 = write(s, "tied-one", at: at)
+      m2 = write(s, "tied-two", at: at)
+      [lo, hi] = Enum.sort_by([m1, m2], & &1.id)
+
+      # A cursor sitting EXACTLY on the lower-id tied row must still surface the
+      # higher-id tied row (the old inserted_at-only `> ts` predicate dropped it
+      # forever once the cursor reached that timestamp).
+      results = MessageStore.chat_visible_since(s, {at, lo.id})
+      result_ids = Enum.map(results, & &1.id)
+
+      assert hi.id in result_ids,
+             "the tied sibling (same inserted_at, higher message_id) must not be skipped"
+
+      refute lo.id in result_ids, "the cursor row itself is strictly excluded"
+    end
+
+    test "TIED inserted_at, ordered by [asc: inserted_at, asc: message_id]", %{session: s} do
+      at = ~U[2026-06-10 00:00:05.000000Z]
+      m1 = write(s, "tied-a", at: at)
+      m2 = write(s, "tied-b", at: at)
+      expected = Enum.sort_by([m1, m2], & &1.id) |> Enum.map(& &1.id)
+
+      got = s |> MessageStore.chat_visible_since({@epoch, ""}) |> Enum.map(& &1.id)
+      assert got == expected
     end
   end
 

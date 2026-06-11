@@ -284,7 +284,9 @@ defmodule Ezagent.MessageStore do
 
   Queried descending+`limit` (so the latest N are kept) then reversed to
   ascending — the same shape the LV "load older" path uses — so the chat_feed
-  projection renders oldest→newest.
+  projection renders oldest→newest. Ordered by the composite
+  `{inserted_at, message_id}` keyset (P4 codex finding 2) so tied timestamps get
+  a deterministic total order that matches `chat_visible_since/2`'s cursor.
   """
   @spec chat_visible_recent(URI.t(), pos_integer()) :: [Message.t()]
   def chat_visible_recent(%URI{} = session_uri, limit)
@@ -298,7 +300,7 @@ defmodule Ezagent.MessageStore do
       where:
         r.session_uri == ^session_str and m.workspace_uri == ^workspace_str and
           m.visibility == :customer_visible,
-      order_by: [desc: r.inserted_at],
+      order_by: [desc: r.inserted_at, desc: r.message_id],
       limit: ^limit
     )
     |> Repo.all()
@@ -307,15 +309,30 @@ defmodule Ezagent.MessageStore do
 
   @doc """
   P4-2 — `:customer_visible` messages in `session_uri` strictly after the
-  `inserted_at` cursor (ascending). The CHAT external-SPA REPLAY primitive,
-  mirroring `committed_deliveries_since/2` but over the chat message ordering
-  (`inserted_at` — per Spec 5 P5-D8 `id` is NOT monotonic) instead of the
-  socialware committed-delivery cursor. Same per-message visibility gate +
-  session/workspace scoping as `chat_visible_recent/2`. Bounded to `@replay_cap`
-  rows (mirrors `in_session_since/2`).
+  **composite `{inserted_at, message_id}` keyset cursor** (ascending). The CHAT
+  external-SPA REPLAY primitive, mirroring `committed_deliveries_since/2` but
+  over the chat message ordering.
+
+  ## Why a composite keyset (P4 codex finding 2 — HIGH)
+
+  `inserted_at` alone is NOT a total order: two messages can share an
+  `inserted_at` (millisecond/microsecond collisions, batch writes). With the old
+  `inserted_at > ^since`, once the chat-feed cursor reached a tied timestamp the
+  later tied row was excluded FOREVER (and the `@replay_cap` bound could lose
+  rows when >cap share a timestamp). The composite cursor `{ts, id}` restores a
+  total order:
+
+      inserted_at > ts  OR  (inserted_at == ts AND message_id > id)
+
+  ordered by `[asc: inserted_at, asc: message_id]`. `MessageRouting`'s PK is
+  `(message_id, session_uri)` so `message_id` is the deterministic tie-break.
+  The epoch lower bound is `{~U[1970-01-01 ...], ""}` (`""` sorts before any
+  UUID, so the full backlog is covered). Per-message visibility gate +
+  session/workspace scoping as `chat_visible_recent/2`. Bounded to `@replay_cap`.
   """
-  @spec chat_visible_since(URI.t(), DateTime.t()) :: [Message.t()]
-  def chat_visible_since(%URI{} = session_uri, %DateTime{} = since) do
+  @spec chat_visible_since(URI.t(), {DateTime.t(), String.t()}) :: [Message.t()]
+  def chat_visible_since(%URI{} = session_uri, {%DateTime{} = since_at, since_id})
+      when is_binary(since_id) do
     session_str = URI.to_string(session_uri)
     workspace_str = Ezagent.Persistence.workspace_uri_for!(session_uri)
 
@@ -323,9 +340,11 @@ defmodule Ezagent.MessageStore do
       join: r in MessageRouting,
       on: r.message_id == m.id,
       where:
-        r.session_uri == ^session_str and r.inserted_at > ^since and
-          m.workspace_uri == ^workspace_str and m.visibility == :customer_visible,
-      order_by: [asc: r.inserted_at],
+        r.session_uri == ^session_str and m.workspace_uri == ^workspace_str and
+          m.visibility == :customer_visible and
+          (r.inserted_at > ^since_at or
+             (r.inserted_at == ^since_at and r.message_id > ^since_id)),
+      order_by: [asc: r.inserted_at, asc: r.message_id],
       limit: @replay_cap
     )
     |> Repo.all()

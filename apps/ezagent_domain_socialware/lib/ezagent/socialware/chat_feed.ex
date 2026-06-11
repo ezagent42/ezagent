@@ -43,10 +43,14 @@ defmodule Ezagent.Socialware.ChatFeed do
 
   @history_limit 200
 
-  # The chat cursor is `inserted_at` (a DateTime). The lower bound for a session
-  # with NO messages is the epoch — strictly older than any real message, so the
-  # first replay covers the full backlog (mirrors CustomerFeed's integer 0).
+  # The chat cursor is the composite total-order keyset `{inserted_at,
+  # message_id}` (P4 codex finding 2 — `inserted_at` alone is NOT a total order:
+  # tied timestamps would strand the later row forever). The lower bound for a
+  # session with NO messages is `{@epoch, ""}` — strictly below any real message
+  # (`""` sorts before any UUID), so the first replay covers the full backlog
+  # (mirrors CustomerFeed's integer 0).
   @epoch ~U[1970-01-01 00:00:00.000000Z]
+  @epoch_cursor {@epoch, ""}
 
   # ----- P4-1: the PURE chat → customer_tree projection ----------------------
 
@@ -108,18 +112,22 @@ defmodule Ezagent.Socialware.ChatFeed do
   end
 
   @doc """
-  The highest `inserted_at` among `session_uri`'s `:customer_visible` chat
-  messages (the chat-cursor analogue of `CustomerFeed.latest_cursor/1`).
-  Returns `@epoch` when the session has no visible messages, so the first replay
-  covers the full backlog.
+  The highest `{inserted_at, message_id}` keyset among `session_uri`'s
+  `:customer_visible` chat messages (the chat-cursor analogue of
+  `CustomerFeed.latest_cursor/1`). Returns `{@epoch, ""}` when the session has no
+  visible messages, so the first replay covers the full backlog.
   """
-  @spec latest_cursor(URI.t()) :: DateTime.t()
+  @spec latest_cursor(URI.t()) :: {DateTime.t(), String.t()}
   def latest_cursor(%URI{} = session_uri) do
     case MessageStore.chat_visible_recent(session_uri, 1) do
-      [%{inserted_at: %DateTime{} = at}] -> at
-      _ -> @epoch
+      [%{inserted_at: %DateTime{} = at, id: id}] -> {at, id}
+      _ -> @epoch_cursor
     end
   end
+
+  @doc "The epoch lower-bound cursor — strictly below any real message."
+  @spec epoch_cursor() :: {DateTime.t(), String.t()}
+  def epoch_cursor, do: @epoch_cursor
 
   @doc """
   P4-2 — the LOWER-BOUND cursor JOIN protocol (P3-2's, over the chat
@@ -130,27 +138,34 @@ defmodule Ezagent.Socialware.ChatFeed do
     2. (test seam) `opts[:before_replay]` fires AFTER the content read and
        BEFORE the replay — used to inject a message + drop its advisory in the
        exact join-race window;
-    3. replays `chat_visible_since(@epoch)` (the FULL backlog) and re-renders so
-       the snapshot includes EVERY replayed message, then advances the cursor to
-       the max replayed `inserted_at`.
+    3. replays `chat_visible_since({@epoch, ""})` (the FULL backlog) and
+       re-renders so the snapshot includes EVERY replayed message, then advances
+       the cursor to the `{inserted_at, message_id}` of the LAST replayed row.
 
-  Replaying from `@epoch` (not from `latest_cursor`) means the recency-windowed
-  snapshot can never strand older messages: the cursor only ever checkpoints a
-  message the snapshot actually renders (no skip), and a message landing in the
-  join window — even with its advisory dropped — is re-included (never lost).
+  Replaying from `{@epoch, ""}` (not from `latest_cursor`) means the
+  recency-windowed snapshot can never strand older messages: the cursor only
+  ever checkpoints a message the snapshot actually renders (no skip), and a
+  message landing in the join window — even with its advisory dropped — is
+  re-included (never lost).
 
   Returns `{:ok, %{snapshot: %{messages, page}, messages: [...], cursor:
-  DateTime}}` (`cursor` = max replayed `inserted_at`, or the snapshot's max when
-  the replay is empty). `{:error, :unauthorized}` fail-closed.
+  {DateTime, String.t()}}}` (`cursor` = the last replayed `{inserted_at,
+  message_id}`, or the snapshot's max when the replay is empty).
+  `{:error, :unauthorized}` fail-closed.
   """
   @spec join(URI.t(), URI.t() | term(), keyword()) ::
-          {:ok, %{snapshot: map(), messages: [Ezagent.Message.t()], cursor: DateTime.t()}}
+          {:ok,
+           %{
+             snapshot: map(),
+             messages: [Ezagent.Message.t()],
+             cursor: {DateTime.t(), String.t()}
+           }}
           | {:error, :unauthorized}
   def join(%URI{} = session_uri, caller, opts \\ []) when is_list(opts) do
     case snapshot(session_uri, caller) do
       {:ok, snapshot0} ->
         run_before_replay(opts[:before_replay])
-        messages = MessageStore.chat_visible_since(session_uri, @epoch)
+        messages = MessageStore.chat_visible_since(session_uri, @epoch_cursor)
         replayed_result(session_uri, caller, snapshot0, messages)
 
       {:error, _} = err ->
@@ -162,13 +177,19 @@ defmodule Ezagent.Socialware.ChatFeed do
   P4-2 — cursor replay for an ESTABLISHED connection, triggered by every
   advisory (or a reconnect). Re-authorizes (fail-closed LIVE re-check — an
   ex-member who LEFT is denied here), replays `chat_visible_since(cursor)`, and
-  returns the refreshed snapshot. The cursor advances ONLY to the max replayed
-  `inserted_at` (unchanged when the replay is empty — idempotent).
+  returns the refreshed snapshot. The cursor advances ONLY to the
+  `{inserted_at, message_id}` of the last replayed row (unchanged when the
+  replay is empty — idempotent).
   """
-  @spec replay(URI.t(), URI.t() | term(), DateTime.t()) ::
-          {:ok, %{snapshot: map(), messages: [Ezagent.Message.t()], cursor: DateTime.t()}}
+  @spec replay(URI.t(), URI.t() | term(), {DateTime.t(), String.t()}) ::
+          {:ok,
+           %{
+             snapshot: map(),
+             messages: [Ezagent.Message.t()],
+             cursor: {DateTime.t(), String.t()}
+           }}
           | {:error, :unauthorized}
-  def replay(%URI{} = session_uri, caller, %DateTime{} = cursor) do
+  def replay(%URI{} = session_uri, caller, {%DateTime{}, id} = cursor) when is_binary(id) do
     case snapshot(session_uri, caller) do
       {:ok, snapshot0} ->
         messages = MessageStore.chat_visible_since(session_uri, cursor)
@@ -190,8 +211,9 @@ defmodule Ezagent.Socialware.ChatFeed do
     finalize_replay(session_uri, caller, snapshot0, messages)
   end
 
-  # The `join/3` path: the base cursor is the snapshot's max (or @epoch when the
-  # backlog is empty), so the cursor never sits below a rendered message.
+  # The `join/3` path: the base cursor is the snapshot's max keyset (or
+  # `{@epoch, ""}` when the backlog is empty), so the cursor never sits below a
+  # rendered message.
   defp replayed_result(_session_uri, _caller, snapshot0, []) do
     {:ok, %{snapshot: snapshot0, messages: [], cursor: snapshot_max(snapshot0)}}
   end
@@ -203,7 +225,10 @@ defmodule Ezagent.Socialware.ChatFeed do
   # Re-render so the snapshot includes EVERY replayed message (even ones outside
   # the recency window), RE-AUTHORIZING (fail-closed: an ex-member who left
   # between the first read and now is denied — no stale push, no cursor advance),
-  # THEN advance the cursor to the max replayed inserted_at.
+  # THEN advance the cursor to the `{inserted_at, message_id}` keyset of the LAST
+  # actually-rendered (replayed) row. `messages` is ascending by
+  # `[inserted_at, message_id]` (MessageStore ordering), so its last element is
+  # the keyset max — the cursor never advances past an unrendered row.
   defp finalize_replay(session_uri, caller, _snapshot0, messages) do
     case snapshot(session_uri, caller) do
       {:ok, %{messages: base}} ->
@@ -213,7 +238,7 @@ defmodule Ezagent.Socialware.ChatFeed do
          %{
            snapshot: %{messages: merged, page: chat_tree(merged)},
            messages: messages,
-           cursor: max_inserted_at(messages)
+           cursor: max_keyset(messages)
          }}
 
       {:error, _} = err ->
@@ -222,20 +247,39 @@ defmodule Ezagent.Socialware.ChatFeed do
   end
 
   # Union base (recency window) + replayed messages, dedup by id, ascending by
-  # inserted_at. So the rendered snapshot reflects every message the cursor will
-  # account for — even a >recency-window backlog the latest-N window omitted.
+  # the composite `{inserted_at, message_id}` keyset. So the rendered snapshot
+  # reflects every message the cursor will account for — even a >recency-window
+  # backlog the latest-N window omitted — in a deterministic total order even
+  # when timestamps tie.
   defp merge_messages(base, replayed) do
     (base ++ replayed)
     |> Enum.uniq_by(& &1.id)
-    |> Enum.sort_by(& &1.inserted_at, DateTime)
+    |> Enum.sort_by(&keyset/1, &keyset_le?/2)
   end
 
-  defp max_inserted_at(messages) do
-    messages |> Enum.map(& &1.inserted_at) |> Enum.max(DateTime)
+  # The `{inserted_at, message_id}` keyset of the LAST row in an ascending list.
+  defp max_keyset(messages), do: messages |> List.last() |> keyset()
+
+  defp keyset(%{inserted_at: %DateTime{} = at, id: id}), do: {at, id}
+
+  # Total order on the composite keyset: inserted_at first, message_id as the
+  # deterministic tie-break — the SAME order as the SQL keyset predicate.
+  defp keyset_le?({at_a, id_a}, {at_b, id_b}) do
+    case DateTime.compare(at_a, at_b) do
+      :lt -> true
+      :gt -> false
+      :eq -> id_a <= id_b
+    end
   end
 
-  defp snapshot_max(%{messages: []}), do: @epoch
-  defp snapshot_max(%{messages: messages}), do: max_inserted_at(messages)
+  defp snapshot_max(%{messages: []}), do: @epoch_cursor
+
+  defp snapshot_max(%{messages: messages}) do
+    messages
+    |> Enum.map(&keyset/1)
+    |> Enum.sort(&keyset_le?/2)
+    |> List.last()
+  end
 
   defp run_before_replay(nil), do: :ok
   defp run_before_replay(fun) when is_function(fun, 0), do: fun.()

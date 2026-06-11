@@ -55,14 +55,15 @@ defmodule Ezagent.Socialware.ChatFeedJoinProtocolTest do
   end
 
   describe "lower-bound cursor join protocol (over the chat inserted_at cursor)" do
-    test "a pre-join message is in the snapshot; the cursor starts at its inserted_at", ctx do
+    test "a pre-join message is in the snapshot; the cursor starts at its {inserted_at, id}",
+         ctx do
       at = ~U[2026-06-10 00:00:01.000000Z]
-      _m1 = post(ctx.session, "first", at)
+      m1 = post(ctx.session, "first", at)
 
       {:ok, result} = ChatFeed.join(ctx.session, @owner, [])
 
       assert "first" in rendered_texts(result)
-      assert result.cursor == at
+      assert result.cursor == {at, m1.id}
     end
 
     test "JOIN-RACE: a message posted BETWEEN content read and first replay, advisory DROPPED, is STILL rendered",
@@ -102,7 +103,7 @@ defmodule Ezagent.Socialware.ChatFeedJoinProtocolTest do
 
       {:ok, replay} = ChatFeed.replay(ctx.session, @owner, join.cursor)
       assert "wake-up-lost" in rendered_texts(replay)
-      assert replay.cursor == late.inserted_at
+      assert replay.cursor == {late.inserted_at, late.id}
       assert Enum.any?(replay.snapshot.page.children, &(&1.key == late.id))
     end
 
@@ -110,8 +111,8 @@ defmodule Ezagent.Socialware.ChatFeedJoinProtocolTest do
          ctx do
       m1 = post(ctx.session, "once", ~U[2026-06-10 00:00:01.000000Z])
 
-      {:ok, r1} = ChatFeed.replay(ctx.session, @owner, ~U[1970-01-01 00:00:00.000000Z])
-      assert r1.cursor == m1.inserted_at
+      {:ok, r1} = ChatFeed.replay(ctx.session, @owner, ChatFeed.epoch_cursor())
+      assert r1.cursor == {m1.inserted_at, m1.id}
       assert Enum.map(r1.messages, & &1.id) == [m1.id]
 
       {:ok, r2} = ChatFeed.replay(ctx.session, @owner, r1.cursor)
@@ -119,13 +120,13 @@ defmodule Ezagent.Socialware.ChatFeedJoinProtocolTest do
       assert r2.cursor == r1.cursor
     end
 
-    test "cursor only advances to the max inserted_at actually replayed", ctx do
+    test "cursor only advances to the {inserted_at, id} keyset of the last replayed row", ctx do
       _ = post(ctx.session, "d1", ~U[2026-06-10 00:00:01.000000Z])
       m2 = post(ctx.session, "d2", ~U[2026-06-10 00:00:02.000000Z])
 
-      {:ok, r} = ChatFeed.replay(ctx.session, @owner, ~U[1970-01-01 00:00:00.000000Z])
+      {:ok, r} = ChatFeed.replay(ctx.session, @owner, ChatFeed.epoch_cursor())
       assert Enum.map(r.messages, & &1.id) |> length() == 2
-      assert r.cursor == m2.inserted_at
+      assert r.cursor == {m2.inserted_at, m2.id}
     end
 
     test "unauthorized caller fails the join closed (non-member denied)", ctx do
@@ -133,7 +134,7 @@ defmodule Ezagent.Socialware.ChatFeedJoinProtocolTest do
       assert {:error, :unauthorized} = ChatFeed.join(ctx.session, stranger, [])
 
       assert {:error, :unauthorized} =
-               ChatFeed.replay(ctx.session, stranger, ~U[1970-01-01 00:00:00.000000Z])
+               ChatFeed.replay(ctx.session, stranger, ChatFeed.epoch_cursor())
     end
 
     test ">recency-window batch: every replayed message is rendered; the cursor matches", ctx do
@@ -141,10 +142,10 @@ defmodule Ezagent.Socialware.ChatFeedJoinProtocolTest do
       n = ChatFeed.history_limit() + 5
       msgs = for i <- 1..n, do: post(ctx.session, "batch-#{i}", DateTime.add(t0, i, :second))
 
-      {:ok, r} = ChatFeed.replay(ctx.session, @owner, ~U[1970-01-01 00:00:00.000000Z])
+      {:ok, r} = ChatFeed.replay(ctx.session, @owner, ChatFeed.epoch_cursor())
 
       last = List.last(msgs)
-      assert r.cursor == last.inserted_at
+      assert r.cursor == {last.inserted_at, last.id}
 
       replayed_ids = MapSet.new(r.messages, & &1.id)
       rendered_ids = MapSet.new(r.snapshot.page.children, & &1.key)
@@ -152,6 +153,66 @@ defmodule Ezagent.Socialware.ChatFeedJoinProtocolTest do
       assert MapSet.subset?(replayed_ids, rendered_ids),
              "every replayed message must be in the rendered snapshot — the cursor must " <>
                "not advance past a message omitted by the recency window"
+    end
+  end
+
+  describe "composite {inserted_at, message_id} cursor (P4 codex finding 2 — no tied-row skip)" do
+    test "TIED inserted_at: BOTH messages delivered across join+replay; neither skipped", ctx do
+      at = ~U[2026-06-10 00:00:05.000000Z]
+      a = post(ctx.session, "tied-a", at)
+      b = post(ctx.session, "tied-b", at)
+      [lo, hi] = Enum.sort_by([a, b], & &1.id)
+
+      # Join checkpoints to the HIGHER-id tied row (the keyset max), so both are
+      # rendered and the cursor sits exactly on the last-rendered tuple.
+      {:ok, join} = ChatFeed.join(ctx.session, @owner, [])
+      join_ids = MapSet.new(join.snapshot.page.children, & &1.key)
+      assert MapSet.member?(join_ids, lo.id)
+      assert MapSet.member?(join_ids, hi.id)
+      assert join.cursor == {at, hi.id}
+
+      # A replay sitting on the LOWER-id tied row must still surface the higher
+      # tied sibling — the old inserted_at-only `> ts` predicate would have
+      # excluded it forever once the cursor reached that timestamp.
+      {:ok, replay} = ChatFeed.replay(ctx.session, @owner, {at, lo.id})
+      assert Enum.map(replay.messages, & &1.id) == [hi.id]
+      assert replay.cursor == {at, hi.id}
+    end
+
+    test "cap-boundary: >replay_cap rows SHARING one inserted_at lose nothing across replays",
+         ctx do
+      at = ~U[2026-06-10 00:00:05.000000Z]
+      # @replay_cap is 1000 in MessageStore; exceed it with rows that ALL share
+      # the same inserted_at, so the ONLY total-order discriminator is message_id.
+      n = 1005
+      ids = for i <- 1..n, do: post(ctx.session, "same-ts-#{i}", at).id |> then(& &1)
+      all = MapSet.new(ids)
+
+      # Drain the full set across capped replays starting from the epoch. Each
+      # replay advances the cursor to its last-rendered keyset; the composite
+      # cursor guarantees the next replay resumes strictly after it (no row tied
+      # at the cap boundary is dropped).
+      collected = drain_all(ctx.session, ChatFeed.epoch_cursor(), MapSet.new())
+
+      assert MapSet.equal?(collected, all),
+             "every tied-timestamp row must be delivered across capped replays — " <>
+               "missing: #{inspect(MapSet.difference(all, collected) |> MapSet.to_list())}"
+    end
+  end
+
+  # Repeatedly replay from `cursor`, accumulating delivered ids, until a replay
+  # returns no new messages. Proves the composite cursor never strands a row even
+  # when >replay_cap rows share one inserted_at.
+  defp drain_all(session, cursor, acc) do
+    {:ok, r} = ChatFeed.replay(session, @owner, cursor)
+
+    case r.messages do
+      [] ->
+        acc
+
+      msgs ->
+        acc2 = Enum.reduce(msgs, acc, fn m, a -> MapSet.put(a, m.id) end)
+        drain_all(session, r.cursor, acc2)
     end
   end
 end
