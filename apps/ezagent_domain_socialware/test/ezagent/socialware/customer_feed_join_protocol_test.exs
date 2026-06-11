@@ -122,6 +122,13 @@ defmodule Ezagent.Socialware.CustomerFeedJoinProtocolTest do
       assert injected_id in delivery_message_ids(result),
              "lower-bound replay must re-include a commit that landed between the " <>
                "content read and the first replay even with the advisory dropped"
+
+      # codex P3-2 HIGH: the channel RENDERS result.snapshot, not result.deliveries.
+      # So the raced-in row must be in the SNAPSHOT the caller pushes — otherwise
+      # the cursor advances past a row that was never rendered (stale forever).
+      assert Enum.any?(result.snapshot.messages, &(&1.id == injected_id)),
+             "the rendered snapshot must reflect the raced-in delivery — the cursor " <>
+               "must not advance past a row the snapshot does not show"
     end
 
     test "WAKE-UP-LOSS: dropping the advisory does not lose a delivery — the next replay from the stored cursor catches it",
@@ -138,6 +145,11 @@ defmodule Ezagent.Socialware.CustomerFeedJoinProtocolTest do
       {:ok, replay} = CustomerFeed.replay(ctx.session, ctx.token, join.cursor)
       assert late.id in delivery_message_ids(replay)
       assert replay.cursor == 1
+
+      # codex P3-2 HIGH: the rendered snapshot (what the channel pushes) must
+      # reflect the late delivery too — not just the deliveries list.
+      assert Enum.any?(replay.snapshot.messages, &(&1.id == late.id)),
+             "the replay snapshot must reflect the late (advisory-lost) delivery"
     end
 
     test "IDEMPOTENT replay: re-replaying from a cursor that already covers a delivery is a no-op (no double-delivery)",

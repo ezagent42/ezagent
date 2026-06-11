@@ -113,13 +113,23 @@ defmodule Ezagent.Socialware.CustomerFeed do
 
     # Step 2: gated snapshot content (also the auth gate — fail closed here).
     case snapshot(session_uri, token) do
-      {:ok, snapshot} ->
+      {:ok, snapshot0} ->
         # Test-only seam: a commit injected here (advisory dropped) must still be
         # picked up by the replay below, because `lower` predates the content read.
         run_before_replay(opts[:before_replay])
 
         # Step 3: replay from the lower bound (idempotent overlap with the snapshot).
         {deliveries, cursor} = deliveries_and_cursor(session_uri, lower)
+
+        # Step 4 (codex P3-2 HIGH): the caller RENDERS the snapshot, not the
+        # `deliveries` list. `snapshot0` was read BEFORE the replay, so a commit
+        # that landed in the window advances the cursor past a row `snapshot0`
+        # does not reflect — rendering `snapshot0` + storing `cursor` would hide
+        # it forever (the dropped-advisory race). So re-read the snapshot AFTER
+        # the cursor capture when the replay caught anything: the fresh snapshot
+        # reflects state >= `cursor` (it can only be AHEAD — harmless idempotent
+        # over-delivery on the next replay — never behind, i.e. never a skip).
+        snapshot = refresh_snapshot_if_raced(session_uri, token, snapshot0, deliveries)
         {:ok, %{snapshot: snapshot, deliveries: deliveries, cursor: cursor}}
 
       {:error, _} = err ->
@@ -144,12 +154,29 @@ defmodule Ezagent.Socialware.CustomerFeed do
           | {:error, :unauthorized}
   def replay(%URI{} = session_uri, token, cursor) when is_integer(cursor) do
     case snapshot(session_uri, token) do
-      {:ok, snapshot} ->
+      {:ok, snapshot0} ->
         {deliveries, new_cursor} = deliveries_and_cursor(session_uri, cursor)
+        # Same codex P3-2 HIGH rule as `join/3`: re-read AFTER the cursor capture
+        # when the replay caught anything, so the rendered snapshot reflects
+        # state >= `new_cursor` and the advisory cannot strand a row.
+        snapshot = refresh_snapshot_if_raced(session_uri, token, snapshot0, deliveries)
         {:ok, %{snapshot: snapshot, deliveries: deliveries, cursor: new_cursor}}
 
       {:error, _} = err ->
         err
+    end
+  end
+
+  # Re-read the gated snapshot AFTER the cursor capture when the replay caught
+  # deliveries, so the snapshot reflects state >= the returned cursor. Auth
+  # already passed on the first read; a transient re-read error falls back to the
+  # pre-replay snapshot (the next advisory re-renders from the unchanged cursor).
+  defp refresh_snapshot_if_raced(_session_uri, _token, snapshot0, []), do: snapshot0
+
+  defp refresh_snapshot_if_raced(session_uri, token, snapshot0, _deliveries) do
+    case snapshot(session_uri, token) do
+      {:ok, fresh} -> fresh
+      {:error, _} -> snapshot0
     end
   end
 
