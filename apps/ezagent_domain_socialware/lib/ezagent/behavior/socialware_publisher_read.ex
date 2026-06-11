@@ -176,6 +176,14 @@ defmodule Ezagent.Behavior.SocialwarePublisherRead do
 
   # ----- The fail-closed authorization predicate (THE security boundary) -
   #
+  # P4 — the predicate is EXTRACTED into the shared
+  # `Ezagent.Socialware.ChatMembership` so that this behavior's read authz AND
+  # the P4 chat_feed external read call ONE predicate (no copy-paste drift on a
+  # security boundary). This wrapper only extracts `caller` + the `:chat`
+  # sibling slice from the dispatch `ctx`; the byte-equivalent owner/member +
+  # `valid_caller_uri?` reconstruct-and-compare logic now lives in
+  # `ChatMembership.authorize/2`.
+  #
   # Authorize ONLY when ALL hold (else `{:error, :unauthorized}`):
   #   - `ctx.caller` is a WELL-FORMED identity-principal `%URI{}` — a canonical
   #     `entity://<workspace>/<user|agent|worker>/<name>` (reject nil / :any /
@@ -187,60 +195,14 @@ defmodule Ezagent.Behavior.SocialwarePublisherRead do
   # A nil/missing `owner_uri` matches NOTHING; a nil/malformed caller is
   # rejected up front. There is NO "allow if owner is nil" branch.
   defp authorize(ctx) do
-    with %URI{} = caller <- Map.get(ctx, :caller),
-         true <- valid_caller_uri?(caller),
-         %{} = chat <- get_chat_sibling(ctx),
-         true <- owner?(chat, caller) or member?(chat, caller) do
-      :ok
-    else
-      _ -> {:error, :unauthorized}
-    end
+    Ezagent.Socialware.ChatMembership.authorize(get_chat_sibling(ctx), Map.get(ctx, :caller))
   end
-
-  # A valid caller is EXACTLY a bare identity-principal instance entity URI
-  # `entity://<workspace>/<user|agent|worker>/<name>` (codex P3-3 HIGH, 3 rounds).
-  # Rather than enumerate the fields that must be empty (authority/query/fragment/
-  # userinfo/port/…), RECONSTRUCT the canonical principal from the caller's
-  # workspace+type+name via `Ezagent.URI.entity/3` (which `new!`s the canonical
-  # form — every extraneous field nil) and require EXACT struct equality. Any
-  # crafted extra field (userinfo, port, query, fragment, subresource path, or a
-  # non-canonical `:authority`) makes the caller `!=` its canonical rebuild, so it
-  # is rejected before the owner/member equality — even if that same crafted
-  # struct is planted as `owner_uri`/`members`.
-  defp valid_caller_uri?(%URI{scheme: "entity", host: host, path: path} = caller)
-       when is_binary(host) and host != "" and is_binary(path) do
-    case String.split(path, "/", trim: false) do
-      ["", type, name] when type in ["user", "agent", "worker"] and name != "" ->
-        caller == Ezagent.URI.entity(host, type, name)
-
-      _ ->
-        false
-    end
-  rescue
-    # `Ezagent.URI.entity/3` raises on a name/segment it cannot canonicalize —
-    # such a caller is not a valid principal instance: fail closed.
-    _ -> false
-  end
-
-  defp valid_caller_uri?(_), do: false
 
   defp get_chat_sibling(ctx) do
     ctx
     |> Map.get(:siblings, %{})
     |> Map.get(:chat)
   end
-
-  # Owner match ONLY when owner_uri is a real %URI{} that equals the caller.
-  # A nil/missing owner matches NOTHING.
-  defp owner?(%{owner_uri: %URI{} = owner}, %URI{} = caller), do: owner == caller
-  defp owner?(_chat, _caller), do: false
-
-  # The `:chat` slice keys `members` by the member's `%URI{}` (see
-  # `Ezagent.Behavior.Chat` + `Ezagent.Socialware.ConfigUpdate.session_member?/2`).
-  defp member?(%{members: members}, %URI{} = caller) when is_map(members),
-    do: Map.has_key?(members, caller)
-
-  defp member?(_chat, _caller), do: false
 
   # ----- Read-only window helper over the trunk ring --------------------
   #
