@@ -119,18 +119,8 @@ defmodule Ezagent.Socialware.CustomerFeed do
         run_before_replay(opts[:before_replay])
 
         # Step 3: replay from the lower bound (idempotent overlap with the snapshot).
-        {deliveries, cursor} = deliveries_and_cursor(session_uri, lower)
-
-        # Step 4 (codex P3-2 HIGH): the caller RENDERS the snapshot, not the
-        # `deliveries` list. `snapshot0` was read BEFORE the replay, so a commit
-        # that landed in the window advances the cursor past a row `snapshot0`
-        # does not reflect — rendering `snapshot0` + storing `cursor` would hide
-        # it forever (the dropped-advisory race). So re-read the snapshot AFTER
-        # the cursor capture when the replay caught anything: the fresh snapshot
-        # reflects state >= `cursor` (it can only be AHEAD — harmless idempotent
-        # over-delivery on the next replay — never behind, i.e. never a skip).
-        snapshot = refresh_snapshot_if_raced(session_uri, token, snapshot0, deliveries)
-        {:ok, %{snapshot: snapshot, deliveries: deliveries, cursor: cursor}}
+        deliveries = committed_deliveries_since(session_uri, lower)
+        replayed_result(session_uri, token, snapshot0, deliveries, lower)
 
       {:error, _} = err ->
         err
@@ -155,44 +145,64 @@ defmodule Ezagent.Socialware.CustomerFeed do
   def replay(%URI{} = session_uri, token, cursor) when is_integer(cursor) do
     case snapshot(session_uri, token) do
       {:ok, snapshot0} ->
-        {deliveries, new_cursor} = deliveries_and_cursor(session_uri, cursor)
-        # Same codex P3-2 HIGH rule as `join/3`: re-read AFTER the cursor capture
-        # when the replay caught anything, so the rendered snapshot reflects
-        # state >= `new_cursor` and the advisory cannot strand a row.
-        snapshot = refresh_snapshot_if_raced(session_uri, token, snapshot0, deliveries)
-        {:ok, %{snapshot: snapshot, deliveries: deliveries, cursor: new_cursor}}
+        deliveries = committed_deliveries_since(session_uri, cursor)
+        replayed_result(session_uri, token, snapshot0, deliveries, cursor)
 
       {:error, _} = err ->
         err
     end
   end
 
-  # Re-read the gated snapshot AFTER the cursor capture when the replay caught
-  # deliveries, so the snapshot reflects state >= the returned cursor. Auth
-  # already passed on the first read; a transient re-read error falls back to the
-  # pre-replay snapshot (the next advisory re-renders from the unchanged cursor).
-  defp refresh_snapshot_if_raced(_session_uri, _token, snapshot0, []), do: snapshot0
+  # Build the {:ok, %{snapshot, deliveries, cursor}} result, coupling the cursor
+  # to what is ACTUALLY rendered (codex P3-2 r2 HIGH-1 + HIGH-2).
+  #
+  # Empty replay: nothing new — return the already-read snapshot, cursor unchanged.
+  defp replayed_result(_session_uri, _token, snapshot0, [], base_cursor) do
+    {:ok, %{snapshot: snapshot0, deliveries: [], cursor: base_cursor}}
+  end
 
-  defp refresh_snapshot_if_raced(session_uri, token, snapshot0, _deliveries) do
-    case snapshot(session_uri, token) do
-      {:ok, fresh} -> fresh
-      {:error, _} -> snapshot0
+  # Non-empty replay: re-render so the snapshot includes EVERY replayed delivery's
+  # customer-visible messages, THEN advance the cursor to the max replayed
+  # committed_seq. Because the render explicitly includes the delivery messages
+  # (even ones outside the recency window — >100-batch / old-inserted_at), the
+  # cursor never advances past a row the snapshot does not render (no skip), and
+  # every replayed row IS rendered (no infinite re-replay). The re-render
+  # RE-AUTHORIZES (via `render_with_deliveries`): if the token expired since the
+  # first read, fail closed (`{:error, :unauthorized}`) — do NOT advance the
+  # cursor or push stale content.
+  defp replayed_result(session_uri, token, _snapshot0, deliveries, _base_cursor) do
+    case render_with_deliveries(session_uri, token, deliveries) do
+      {:ok, snapshot} ->
+        cursor = deliveries |> Enum.map(& &1.cursor) |> Enum.max()
+        {:ok, %{snapshot: snapshot, deliveries: deliveries, cursor: cursor}}
+
+      {:error, _} = err ->
+        err
     end
   end
 
-  # Replay rows strictly after `cursor`; the new cursor advances ONLY to the max
-  # committed_seq actually replayed (so a dropped advisory cannot strand a row —
-  # the next replay from the unchanged cursor still picks it up).
-  defp deliveries_and_cursor(session_uri, cursor) do
-    deliveries = committed_deliveries_since(session_uri, cursor)
+  # Re-read the gated snapshot (fresh page + a SECOND auth check = fail closed)
+  # and augment its message list with the replayed deliveries' customer-visible
+  # messages that fall outside the recency window, so the rendered view reflects
+  # every delivery the cursor will account for.
+  defp render_with_deliveries(session_uri, token, deliveries) do
+    case snapshot(session_uri, token) do
+      {:ok, %{messages: base} = fresh} ->
+        base_ids = MapSet.new(base, & &1.id)
 
-    new_cursor =
-      case deliveries do
-        [] -> cursor
-        rows -> rows |> Enum.map(& &1.cursor) |> Enum.max()
-      end
+        delivery_ids =
+          deliveries |> Enum.flat_map(& &1.message_ids) |> Enum.uniq()
 
-    {deliveries, new_cursor}
+        extra =
+          session_uri
+          |> MessageStore.committed_customer_visible_by_ids(delivery_ids)
+          |> Enum.reject(&MapSet.member?(base_ids, &1.id))
+
+        {:ok, %{fresh | messages: base ++ extra}}
+
+      {:error, _} = err ->
+        err
+    end
   end
 
   defp run_before_replay(nil), do: :ok

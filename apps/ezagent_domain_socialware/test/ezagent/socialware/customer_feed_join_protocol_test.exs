@@ -185,6 +185,46 @@ defmodule Ezagent.Socialware.CustomerFeedJoinProtocolTest do
       assert {:error, :unauthorized} = CustomerFeed.join(ctx.session, "bad-token", [])
       assert {:error, :unauthorized} = CustomerFeed.replay(ctx.session, "bad-token", 0)
     end
+
+    test ">100-BATCH: a replay batch larger than the recency window renders EVERY delivered message; the cursor matches (codex P3-2 r2 HIGH-1)",
+         ctx do
+      # Commit more deliveries than the customer snapshot's recency window (100),
+      # so the latest-100 snapshot alone cannot render them all. The cursor must
+      # NOT advance past a delivery the rendered snapshot omits.
+      n = 105
+      for i <- 1..n, do: commit_delivery(ctx, "batch-#{i}", "turn-jp-batch-#{i}")
+
+      {:ok, r} = CustomerFeed.replay(ctx.session, ctx.token, 0)
+
+      assert r.cursor == n
+
+      delivered_ids =
+        r.deliveries |> Enum.flat_map(& &1.message_ids) |> MapSet.new()
+
+      rendered_ids = MapSet.new(r.snapshot.messages, & &1.id)
+
+      assert MapSet.subset?(delivered_ids, rendered_ids),
+             "every replayed delivery message must be in the rendered snapshot — the " <>
+               "cursor must not advance past a row omitted by the recency window"
+    end
+
+    test "FAIL-CLOSED: a token expiring BETWEEN the first snapshot read and the post-replay refresh denies — no stale push, no cursor advance (codex P3-2 r2 HIGH-2)",
+         ctx do
+      short_token =
+        CustomerAuth.issue_token(ctx.session, ctx.workspace, expires_in_ms: 50)
+
+      # The seam fires AFTER the first (valid) snapshot read: commit a delivery
+      # (so the replay is non-empty and the post-replay refresh runs) and let the
+      # short-TTL token EXPIRE before that refresh re-authorizes.
+      before_replay = fn ->
+        _ = commit_delivery(ctx, "raced-after-expiry", "turn-jp-expiry")
+        Process.sleep(120)
+        :ok
+      end
+
+      assert {:error, :unauthorized} =
+               CustomerFeed.join(ctx.session, short_token, before_replay: before_replay)
+    end
   end
 
   describe "adapter render/2 routes the customer projection" do
