@@ -282,6 +282,8 @@ defmodule EzagentPluginAutoservice.AutserviceAssembly do
   - create_agents → 调 workspace + cc plugin
   - install_routing → 调 routing registry
   - open_turn → 调 socialware Turn Behavior
+  - preview_provision(tid, role, admin_uri) → 创建预览环境(数据源=sandbox)
+  - preview_teardown(session_uri) → 销毁预览环境
   """
 end
 ```
@@ -629,22 +631,38 @@ Tenant 内容配置 (租户编辑,走 CR):
 **Admin preview 隔离规则:**
 
 ```
-Admin 点 "预览 sandbox":
-  → 以 admin 身份创建 preview session (session://preview/<tid>/<role>)
-  → 走完整生产路径 (与正式客户完全相同):
-      fast agent(读 sandbox prompt) → Turn.open
-      → cc agent(cwd 指向 sandbox/) → Turn.compose → Turn.settle
-      → CustomerFeed (仅 preview session 订阅)
+创建 (autoservice_assembly.preview_provision/3):
+  → 输入: tid, role, admin_uri
+  → 创建 preview session:
+      session_uri = session://preview/<tid>/<role>-<timestamp>
+      (带时间戳,防止多次预览冲突)
+  → 创建 preview fast agent:
+      entity://agent/<ws>/fast-preview-<admin>-<timestamp>
+      AgentTemplate: curl.agent, system_prompt ← sandbox/config/fast_ack_prompt.md
+  → 创建 preview cc agent:
+      entity://agent/<ws>/cc-preview-<admin>-<timestamp>
+      cwd ← ~/.ezagent/<profile>/tenants/<tid>/cc-agents/preview-<role>-work/
+      CLAUDE.md ← soul_renderer 从 sandbox/slots/ + sandbox/souls/ 渲染
+      skills/ symlink → sandbox/skills/
+      kb.db symlink → sandbox/kb/kb.db
+      .mcp.json → kb_mcp_provider 生成(参数化 <tid>-kb, sandbox 路径)
+  → 安装 preview routing:
+      {:in_session, preview_uri} {:from, admin_uri} → fast_uri + cc_uri
+  → 返回: %{session_uri, fast_uri, cc_uri}
+  → 前端打开 preview LiveView,订阅 CustomerFeed(preview session)
+
+使用 (与生产路径相同):
+  → admin 发消息 → fast agent(读 sandbox prompt) → Turn.open
+  → cc agent(cwd 指向 sandbox/) → Turn.compose → Turn.settle
+  → CustomerFeed(仅 preview session 订阅) → 前端渲染
   → 唯一差异: 数据源 = sandbox (非 release)
-  → preview session 消息不进生产 CustomerFeed (真实客户看不到)
-  → preview session 消息不进 OperatorLive (operator 不处理)
-  → 满意 → CR Publish → sandbox 拷贝到 release → 正式客户走相同路径(读 release)
-  → 预览结束:
-      - 销毁临时 agent (SpawnRegistry.terminate)
-      - 删除 preview routing rule (RuleStore.delete)
-      - 关闭 preview session (Session.destroy)
-      - 清理 agent work dir (~/.ezagent/.../preview-<role>-work/)
-  → 超时保护: preview session 闲置 30min 自动销毁
+
+销毁 (autoservice_assembly.preview_teardown/1):
+  → SpawnRegistry.terminate(fast_uri) + SpawnRegistry.terminate(cc_uri)
+  → RuleStore.delete(preview_routing_rule)
+  → Session.destroy(preview_uri) 或等超时自动回收
+  → File.rm_rf(preview_work_dir)
+  → 超时保护: preview session 闲置 30min 自动触发 teardown
 
 生产客户:
   → session://cs/<ws>/<name>
