@@ -122,7 +122,9 @@ defmodule Ezagent.Socialware.ConfigStore do
   """
   @spec normalize_uri(term(), atom()) :: {:ok, URI.t()} | {:error, {:invalid_uri, map()}}
   def normalize_uri(%URI{} = uri, _field), do: {:ok, uri}
-  def normalize_uri(uri, _field) when is_binary(uri) and uri != "", do: {:ok, Ezagent.URI.new!(uri)}
+
+  def normalize_uri(uri, _field) when is_binary(uri) and uri != "",
+    do: {:ok, Ezagent.URI.new!(uri)}
 
   def normalize_uri(other, field),
     do: {:error, {:invalid_uri, %{field: field, got: inspect(other)}}}
@@ -160,6 +162,29 @@ defmodule Ezagent.Socialware.ConfigStore do
 
   @spec get!(String.t()) :: ConfigObject.t()
   def get!(config_id), do: Repo.get!(ConfigObject, config_id)
+
+  @doc """
+  The current `:user`-layer config object id for `agent_uri` (its own user
+  cascade layer). Thin wrapper over `resolve/4` keyed by the agent's
+  workspace + the standard cascade key, returning just the object id.
+
+  Used by `Ezagent.Behavior.ConfigEvolve`'s step-2 projection + boot
+  reconciliation to read the durable pointer the Sandbox cache must mirror.
+  Returns `{:ok, object_id}` or `:none` (no user-layer pointer yet).
+  """
+  @spec current_user_object(URI.t(), String.t()) :: {:ok, String.t()} | :none
+  def current_user_object(%URI{} = agent_uri, key) when is_binary(key) do
+    case Ezagent.URI.workspace_of(agent_uri) do
+      %URI{} = workspace_uri ->
+        case resolve(:user, workspace_uri, agent_uri, key) do
+          {:ok, %ConfigObject{id: id}} -> {:ok, id}
+          :none -> :none
+        end
+
+      :any ->
+        :none
+    end
+  end
 
   @doc """
   P2.5c — durable idempotency marker for `apply_delta` recovery.

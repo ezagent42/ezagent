@@ -48,7 +48,8 @@ defmodule EzagentDomainIdentity.Application do
     UserTokens,
     WorkspaceUserAdmin,
     WorkspaceSharedCredentialSource,
-    CredentialGrant
+    CredentialGrant,
+    ConfigEvolve
   }
 
   alias Ezagent.Behavior.UserDefaultCredentialSource
@@ -420,6 +421,15 @@ defmodule EzagentDomainIdentity.Application do
 
     for action <- CredentialGrant.actions() do
       :ok = CapabilityRegistry.register(Ezagent.Entity.Agent, action, CredentialGrant)
+    end
+
+    # Agent-owned config evolution (spec 2026-06-11 rev 4). The behavior
+    # module lives in the identity domain; the Agent Kind lives in the chat
+    # domain — same cross-domain registration pattern as ApiKeys /
+    # CredentialGrant above. Registers apply_config_delta / repoint_config
+    # (manage-cap gated) + reconcile_cascade (self-cap, boot self-heal).
+    for action <- ConfigEvolve.actions() do
+      :ok = CapabilityRegistry.register(Ezagent.Entity.Agent, action, ConfigEvolve)
     end
 
     # CapabilityRegistry SPEC rev 4 §5 — register User.default_caps/1
