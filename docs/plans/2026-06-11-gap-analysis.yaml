@@ -1,0 +1,102 @@
+gap_analysis:
+  scan_date: '2026-06-11'
+  source_type: ingested_updated
+  summary:
+    total_stories: 6
+    coverage_pct: 0
+    note: All greenfield after reset to main
+  infrastructure_ready:
+    socialware: Turn,CustomerFeed(topic+snapshot+{:customer_delivery}),PublisherRead,ConfigStore,render_soul
+    identity: WorkspaceUserAdmin,Users
+    existing_admin_ui:
+    - soul_slot_editor
+    - template_editor
+    - template_diff
+    - bot_creator
+    - users
+    - workspaces
+  by_module:
+  - module: MOD-01
+    coverage_pct: 0
+  - module: MOD-02
+    coverage_pct: 0
+  - module: MOD-03
+    coverage_pct: 0
+  - module: MOD-04
+    coverage_pct: 20
+  - module: MOD-05
+    coverage_pct: 0
+  gaps:
+  - id: GAP-001
+    module: MOD-01
+    priority: P0
+    description: ezagent_plugin_content — soul/skill/KB CRUD + tenant management
+    gap_type: missing
+    estimated_effort: large
+    missing_parts:
+    - soul_loader 4-layer
+    - soul_renderer {{slot}}+CLAUDE.md
+    - skill_loader 4-layer+index
+    - kb_store CRUD+rebuild+MCP provider
+    - tenant_provisioner+runtime
+  - id: GAP-002
+    module: MOD-02
+    priority: P0
+    description: ezagent_plugin_cr — CR engine (全量发布,无选择性)
+    gap_type: missing
+    estimated_effort: large
+    missing_parts:
+    - cr_engine create/publish/cancel
+    - cr_lint R01-R05
+    - cr_snapshot+rollback
+    - ConfigStore CR metadata
+  - id: GAP-003
+    module: MOD-03
+    priority: P0
+    description: autoservice — assembly + TurnAdapter + operator takeover
+    gap_type: missing
+    estimated_effort: large
+    missing_parts:
+    - autoservice_assembly.ex
+    - turn_adapter.ex (%Invocation format)
+    - operator_live Turn.claim/settle+RuleStore.disable/enable
+    - customer_session→content plugin
+    - roles master_admin
+  - id: GAP-004
+    module: MOD-04
+    priority: P1
+    description: Admin UI — master+tenant dashboards, skill/KB editors, CR dashboard
+    gap_type: partial
+    existing_code:
+    - soul_slot_editor_live
+    - template_editor_live
+    - template_diff_live
+    - bot_creator_live
+    estimated_effort: medium
+    missing_parts:
+    - master_dashboard
+    - tenant_onboard
+    - tenant_dashboard
+    - skill_editor
+    - kb_manager
+    - cr_dashboard
+    - operators_live
+  - id: GAP-005
+    module: MOD-05
+    priority: P2
+    description: loom — Turn+CustomerFeed integration (Phase B uses CustomerLive first)
+    gap_type: missing
+    estimated_effort: medium
+    missing_parts:
+    - deepseek.ex Turn.open
+    - claude_code.ex Turn.compose/settle
+    - filler_loop.ex
+  - id: GAP-006
+    module: cross-cutting
+    priority: P0
+    description: 'Review fixes applied: P14 PubSub removed, CustomerFeed real API, TurnAdapter fixed, CR simplified, slow=cc
+      harness'
+    gap_type: missing
+    estimated_effort: small
+  nfr_gaps: []
+  dependency_gaps: []

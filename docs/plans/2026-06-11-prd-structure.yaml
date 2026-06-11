@@ -1,0 +1,51 @@
+prd_structure:
+  source_files:
+  - docs/superpowers/specs/2026-06-10-autoservice-v2-design.md
+  source_type: ingested_updated
+  source_role: design-spec
+  extracted_at: '2026-06-11'
+  modules:
+  - id: MOD-01
+    name: ezagent_plugin_content
+    description: soul/skill/KB CRUD, tenant provision, agent config (master-only)
+  - id: MOD-02
+    name: ezagent_plugin_cr
+    description: CR full publish flow, lint, snapshot, rollback (no selective scope)
+  - id: MOD-03
+    name: ezagent_plugin_autoservice
+    description: assembly coordinator, TurnAdapter, operator takeover, customer session
+  - id: MOD-04
+    name: ezagent_plugin_liveview
+    description: master+tenant admin UI
+  nfrs:
+  - id: NFR-01
+    requirement: Zero core/domain changes
+    target: 0 files
+  - id: NFR-02
+    requirement: CustomerFeed real API (topic+snapshot+{:customer_delivery})
+    target: P14 compliant
+  - id: NFR-03
+    requirement: CR full publish (cp sandbox→release)
+    target: atomic
+  constraints:
+  - id: CON-01
+    description: Elixir/OTP plugin only
+  - id: CON-02
+    description: slow=cc harness, model configurable (Claude/DeepSeek)
+  - id: CON-03
+    description: Linux deployment (no macOS Keychain)
+  - id: CON-04
+    description: agents.yaml master-only (priv/skeleton/config/)
+  external_deps:
+  - id: DEP-01
+    name: socialware Turn/CustomerFeed/ConfigStore
+    status: available
+  - id: DEP-02
+    name: identity WorkspaceUserAdmin
+    status: available
+  - id: DEP-03
+    name: DeepSeek API
+    status: available
+  - id: DEP-04
+    name: Claude Code SDK
+    status: available
