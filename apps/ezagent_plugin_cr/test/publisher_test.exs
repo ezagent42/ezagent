@@ -94,6 +94,71 @@ defmodule EzagentPluginCr.PublisherTest do
     end
   end
 
+  describe "init_tenant/2 — half-init resume" do
+    test "sandbox exists but no _current → publishes v1 (not :already_initialized)" do
+      t = tid()
+      sandbox = TenantPaths.sandbox_dir(t)
+
+      # Manually create the sandbox as if cp_r succeeded but publish crashed.
+      File.mkdir_p!(sandbox)
+      File.cp_r!(TenantPaths.skeleton_dir(), sandbox)
+
+      # _current must NOT exist yet
+      assert {:error, :no_release} = TenantPaths.current_dir(t)
+
+      # init_tenant should resume and publish v1
+      assert {:ok, %{version: 1}} = Publisher.init_tenant(t, @actor)
+
+      # _current now resolves to v1
+      assert {:ok, current} = TenantPaths.current_dir(t)
+      assert String.ends_with?(current, "/v1")
+    end
+  end
+
+  describe "repair_current/1" do
+    test "returns {:ok, :consistent} when _current already points at published version" do
+      t = tid()
+      {:ok, %{version: 1}} = Publisher.init_tenant(t, @actor)
+      assert {:ok, :consistent} = Publisher.repair_current(t)
+    end
+
+    test "returns {:ok, :repaired} when _current lags behind published version" do
+      t = tid()
+      {:ok, %{version: 1}} = Publisher.init_tenant(t, @actor)
+
+      # Publish v2 normally
+      sandbox = TenantPaths.sandbox_dir(t)
+      souls_dir = Path.join(sandbox, "souls")
+      File.mkdir_p!(souls_dir)
+      File.write!(Path.join(souls_dir, "customer.md"), "## v2\n")
+      {:ok, %{version: 2}} = Publisher.publish(t, @actor)
+
+      # Simulate crash-after-mark-before-flip by manually flipping _current
+      # back to v1 (as if flip_current never ran for v2).
+      v1_dir = TenantPaths.release_dir(t, 1)
+      link = TenantPaths.current_link(t)
+      tmp = link <> ".tmp"
+      :ok = :file.make_symlink(String.to_charlist(v1_dir), String.to_charlist(tmp))
+      :ok = :file.rename(tmp, link)
+
+      # _current now points at v1 but CR says published v2
+      {:ok, current_before} = TenantPaths.current_dir(t)
+      assert String.ends_with?(current_before, "/v1")
+
+      # repair_current should detect the gap and flip to v2
+      assert {:ok, :repaired} = Publisher.repair_current(t)
+
+      # _current now resolves to v2
+      {:ok, current_after} = TenantPaths.current_dir(t)
+      assert String.ends_with?(current_after, "/v2")
+    end
+
+    test "returns {:ok, :consistent} when no CR exists yet" do
+      t = tid()
+      assert {:ok, :consistent} = Publisher.repair_current(t)
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # publish
   # ---------------------------------------------------------------------------

@@ -59,11 +59,17 @@ defmodule EzagentPluginCr.LintTest do
   end
 
   describe "run/1 — clean sandbox (no issues)" do
-    test "returns {:ok, []} when skeleton has no unresolved placeholders and all skills present" do
+    test "returns {:ok, warnings} with no fatal errors when skeleton is clean" do
       t = tid()
       populate_sandbox(t)
+      # The skeleton may contain cross-namespace skill refs (e.g. instructional
+      # references like `plugins/cinnox/skills/customer/<name>/SKILL.md`). These
+      # generate cross-namespace warnings (not fatal errors), so we assert no
+      # fatal error is returned — not that warnings is empty.
       assert {:ok, warnings} = Lint.run(t)
-      assert warnings == []
+
+      # No same-tenant missing-skill errors.
+      refute Enum.any?(warnings, fn w -> String.contains?(w, "unresolved slot") end)
     end
   end
 
@@ -153,6 +159,28 @@ defmodule EzagentPluginCr.LintTest do
 
       # R03 fatal — does not return {:ok, warnings}
       assert {:error, {:missing_skill, "missing/SKILL.md"}} = Lint.run(t)
+    end
+
+    test "cross-namespace ref (plugins/platform/...) → publish succeeds with warning" do
+      t = tid()
+      sandbox = populate_sandbox(t)
+
+      souls_dir = Path.join(sandbox, "souls")
+      File.mkdir_p!(souls_dir)
+
+      # Reference a path in a DIFFERENT namespace (platform, not this tenant).
+      # The file does not exist under this tenant's sandbox — but it must NOT
+      # be a fatal error, only a warning.
+      File.write!(Path.join(souls_dir, "customer.md"), """
+      See plugins/platform/skills/common/SKILL.md for shared guidance.
+      """)
+
+      assert {:ok, warnings} = Lint.run(t)
+
+      assert Enum.any?(warnings, fn w ->
+               String.contains?(w, "unverified cross-namespace skill ref") and
+                 String.contains?(w, "plugins/platform/skills/common/SKILL.md")
+             end)
     end
   end
 end
