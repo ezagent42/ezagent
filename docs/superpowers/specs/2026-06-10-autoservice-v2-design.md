@@ -617,10 +617,29 @@ Tenant 内容配置 (租户编辑,走 CR):
 ```
   1. 读 agents.yaml(平台) → model, endpoint, max_tokens 等
   2. 读部署环境变量 → API key
-  3. 读 sandbox/config/*.md(租户) → prompt 内容(如有,覆盖默认)
-  4. 读 sandbox/slots/ + souls/ + skills/ + kb/ → soul/skill/KB 内容
-  5. 渲染 CLAUDE.md → agent work dir
+  3. 读 release/_current/config/*.md(租户) → prompt 内容(已发布版本,如有)
+     (admin preview agent 才读 sandbox/config/)
+  4. 读 release/_current/slots/ + souls/ + skills/ + kb/ → soul/skill/KB 内容
+  5. 渲染 CLAUDE.md → agent work dir (symlink → release/_current)
   6. API key → agent Identity slice
+```
+
+> **生产 agent 始终读 release，不读 sandbox。** admin 预览时使用单独的临时 agent + 独立 preview session 指向 sandbox。fast agent prompt 同样从 release 读取，不是 sandbox。
+
+**Admin preview 隔离规则:**
+
+```
+Admin 点 "预览 sandbox":
+  → 创建独立 preview session (session://preview/<tid>/<role>)
+  → 创建临时 cc agent (cwd 指向 sandbox/, 非 release/)
+  → preview session 消息不进 CustomerFeed (客户看不到)
+  → preview session 消息不进 OperatorLive (operator 不处理)
+  → 预览结束 → 销毁临时 agent + session
+
+生产客户:
+  → 使用自己的 CS session (session://cs/<ws>/<name>)
+  → agent 始终指向 release/_current
+  → 消息经 Turn → CustomerFeed → loom/customer_live
 ```
 
 **agents.yaml 格式:**
@@ -639,19 +658,24 @@ slow:
 
 **配置生效时机 (租户侧):**
 
-| 配置项 | 存储 | CR publish 后 | 需要重建 agent? |
+| 配置项 | agent 读取源 | CR publish 后 | 需要重建 agent? |
 |---|---|---|---|
-| soul.md + slot_values | sandbox → release | agent 重渲染 CLAUDE.md | 否 |
-| skill 文件 | sandbox → release | symlink 跟随 `_current` | 否 |
-| kb.db | sandbox → release | symlink 跟随 `_current` | 否 |
+| soul.md + slot_values | `release/_current/` | agent 重渲染 CLAUDE.md | 否 |
+| skill 文件 | `release/_current/skills/` | symlink 跟随 `_current` | 否 |
+| kb.db | `release/_current/kb/kb.db` | symlink 跟随 `_current` | 否 |
+| fast ACK prompt | `release/_current/config/` | curl agent 需重建(固化在 Template) | **是** |
+| cc preamble | `release/_current/config/` | agent 重渲染 CLAUDE.md | 否 |
+
+> **生产 agent 始终读 release。** sandbox 仅用于 admin preview (临时 agent)。
+> fast agent prompt 因 AgentTemplate 固化,CR publish 后需手动重建。
 
 **配置生效时机 (平台侧, master admin 管控):**
 
 | 配置项 | 存储 | 生效方式 |
 |---|---|---|
 | model/endpoint/max_tokens | priv/skeleton/config/agents.yaml | git PR → 部署 → 重建 AgentTemplate |
-| fast ACK prompt | priv/skeleton/config/fast_ack_prompt.md | git PR → 部署 → 重建 curl agent |
-| cc preamble | priv/skeleton/config/cc_preamble.md | git PR → 部署 → 重渲染 CLAUDE.md |
+| fast ACK prompt 默认模板 | priv/skeleton/config/fast_ack_prompt.md | git PR → 部署,新租户创建时复制到 sandbox |
+| cc preamble 默认模板 | priv/skeleton/config/cc_preamble.md | git PR → 部署,新租户创建时复制到 sandbox |
 | API key (DeepSeek) | 部署环境变量 | 运维管理,重启 agent 后生效 |
 
 **CR publish 后的自动更新:**
