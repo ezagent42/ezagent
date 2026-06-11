@@ -55,14 +55,36 @@ defmodule EzagentPluginContent.TenantPathsTest do
       assert String.starts_with?(result, profile_dir)
     end
 
-    test "current_link/1 ends with tenants/<tid>/release/_current" do
+    test "current_link/1 ends with tenants/<tid>/release/_current", %{profile_dir: profile_dir} do
       result = TenantPaths.current_link("t1")
       assert String.ends_with?(result, "tenants/t1/release/_current")
+      assert String.starts_with?(result, profile_dir)
     end
 
-    test "work_dir/2 ends with tenants/<tid>/cc-agents/<role>-work" do
+    test "work_dir/2 ends with tenants/<tid>/cc-agents/<role>-work", %{profile_dir: profile_dir} do
       result = TenantPaths.work_dir("t1", "customer")
       assert String.ends_with?(result, "tenants/t1/cc-agents/customer-work")
+      assert String.starts_with?(result, profile_dir)
+    end
+  end
+
+  describe "segment validation" do
+    test "tenant_root/1 raises ArgumentError on path traversal '../evil'" do
+      assert_raise ArgumentError, ~r/tenant id/, fn ->
+        TenantPaths.tenant_root("../evil")
+      end
+    end
+
+    test "tenant_root/1 raises ArgumentError on segment with slash 'a/b'" do
+      assert_raise ArgumentError, ~r/tenant id/, fn ->
+        TenantPaths.tenant_root("a/b")
+      end
+    end
+
+    test "work_dir/2 raises ArgumentError on role with path traversal '../x'" do
+      assert_raise ArgumentError, ~r/role/, fn ->
+        TenantPaths.work_dir("t1", "../x")
+      end
     end
   end
 
@@ -82,6 +104,26 @@ defmodule EzagentPluginContent.TenantPathsTest do
 
       assert {:ok, resolved} = TenantPaths.current_dir(tid)
       assert resolved == v1_dir
+    end
+
+    test "returns {:error, :no_release} when symlink points outside release_root" do
+      tid = "t1"
+      # Create a target directory outside the tenant tree
+      outside_dir =
+        System.tmp_dir!() |> Path.join("outside_tenant_#{:erlang.unique_integer([:positive])}")
+
+      File.mkdir_p!(outside_dir)
+
+      # Ensure the release_root parent directory exists so we can create the symlink
+      release_root = TenantPaths.release_root(tid)
+      File.mkdir_p!(release_root)
+
+      link = TenantPaths.current_link(tid)
+      :ok = :file.make_symlink(outside_dir, link)
+
+      assert TenantPaths.current_dir(tid) == {:error, :no_release}
+
+      File.rm_rf!(outside_dir)
     end
   end
 
