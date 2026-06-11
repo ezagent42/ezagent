@@ -31,7 +31,8 @@ defmodule EzagentPluginCr.MixProject do
   defp deps do
     [
       {:ezagent_core, in_umbrella: true},
-      {:ezagent_plugin_content, in_umbrella: true}
+      {:ezagent_plugin_content, in_umbrella: true},
+      {:ezagent_domain_socialware, in_umbrella: true}
     ]
   end
 end
