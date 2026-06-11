@@ -177,7 +177,10 @@ defmodule Ezagent.Behavior.SocialwarePublisherRead do
   # ----- The fail-closed authorization predicate (THE security boundary) -
   #
   # Authorize ONLY when ALL hold (else `{:error, :unauthorized}`):
-  #   - `ctx.caller` is a `%URI{}` (reject nil / :any / :system / non-URI);
+  #   - `ctx.caller` is a WELL-FORMED identity-principal `%URI{}` — a canonical
+  #     `entity://<workspace>/<user|agent|worker>/<name>` (reject nil / :any /
+  #     :system / non-URI AND a malformed/non-canonical/non-entity `%URI{}`,
+  #     codex P3-3 HIGH);
   #   - the `:chat` sibling slice is present + readable (a map);
   #   - EITHER the slice's `owner_uri` is a `%URI{}` AND `== ctx.caller`,
   #     OR `ctx.caller` is a key of the slice's `members` map (URIs).
@@ -185,6 +188,7 @@ defmodule Ezagent.Behavior.SocialwarePublisherRead do
   # rejected up front. There is NO "allow if owner is nil" branch.
   defp authorize(ctx) do
     with %URI{} = caller <- Map.get(ctx, :caller),
+         true <- valid_caller_uri?(caller),
          %{} = chat <- get_chat_sibling(ctx),
          true <- owner?(chat, caller) or member?(chat, caller) do
       :ok
@@ -192,6 +196,23 @@ defmodule Ezagent.Behavior.SocialwarePublisherRead do
       _ -> {:error, :unauthorized}
     end
   end
+
+  # A valid caller is a CANONICAL identity-principal entity URI
+  # (`entity://<workspace>/<user|agent|worker>/<name>`). `Ezagent.URI.canonical?/1`
+  # rejects the deprecated `URI.parse/1` shape (`:authority` set), so a malformed
+  # `%URI{}` struct cannot slip past the owner/member equality (codex P3-3 HIGH:
+  # the bare `%URI{}` match accepted any struct, incl. malformed ones).
+  defp valid_caller_uri?(%URI{scheme: "entity", host: host, path: path} = uri)
+       when is_binary(host) and host != "" and is_binary(path) do
+    Ezagent.URI.canonical?(uri) and entity_principal_path?(path)
+  end
+
+  defp valid_caller_uri?(_), do: false
+
+  defp entity_principal_path?("/user/" <> name), do: name != ""
+  defp entity_principal_path?("/agent/" <> name), do: name != ""
+  defp entity_principal_path?("/worker/" <> name), do: name != ""
+  defp entity_principal_path?(_), do: false
 
   defp get_chat_sibling(ctx) do
     ctx

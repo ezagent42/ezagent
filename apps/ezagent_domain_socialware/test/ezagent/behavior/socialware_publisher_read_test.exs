@@ -193,6 +193,29 @@ defmodule Ezagent.Behavior.SocialwarePublisherReadTest do
       chat = owned_chat(@owner)
       assert {:error, :unauthorized} = SPR.handle_history(%{}, ctx(%{not: "a uri"}, chat))
     end
+
+    test "malformed (non-canonical, :authority-set) %URI{} caller → unauthorized even if it equals owner_uri (codex P3-3 HIGH)" do
+      # A %URI{} built the deprecated way (URI.parse sets :authority) is NON-canonical.
+      # Even if it is structurally placed as BOTH caller and owner_uri, the
+      # valid_caller_uri? guard rejects it before the owner equality check.
+      malformed = URI.parse("entity://team-alpha/user/owner-spr")
+      assert malformed.authority != nil, "fixture must be a non-canonical URI"
+
+      chat = owned_chat(malformed)
+      assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(malformed, chat))
+    end
+
+    test "non-entity %URI{} caller (session scheme) → unauthorized even if it equals owner_uri" do
+      not_a_principal = @self_uri
+      chat = owned_chat(not_a_principal)
+      assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(not_a_principal, chat))
+    end
+
+    test "entity %URI{} caller with a non-principal path → unauthorized" do
+      bad_shape = %URI{scheme: "entity", host: "team-alpha", path: "/notatype/x"}
+      chat = owned_chat(bad_shape)
+      assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(bad_shape, chat))
+    end
   end
 
   describe "missing/unreadable :chat sibling slice → fail closed" do
