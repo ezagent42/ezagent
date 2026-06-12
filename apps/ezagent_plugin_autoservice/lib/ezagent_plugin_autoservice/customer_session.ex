@@ -59,7 +59,8 @@ defmodule EzagentPluginAutoservice.CustomerSession do
 
   @fast_provider get_in(@agents_config, ["fast", "provider"]) || "deepseek"
   @fast_model get_in(@agents_config, ["fast", "model"]) || "deepseek-chat"
-  @fast_endpoint get_in(@agents_config, ["fast", "endpoint"]) || "https://api.deepseek.com/chat/completions"
+  @fast_endpoint get_in(@agents_config, ["fast", "endpoint"]) ||
+                   "https://api.deepseek.com/chat/completions"
 
   @typedoc "Setup context -- `%{caller: URI.t(), caps: [Capability.t()]}`."
   @type setup_ctx :: %{caller: URI.t(), caps: list()}
@@ -110,9 +111,19 @@ defmodule EzagentPluginAutoservice.CustomerSession do
     fast_prompt = load_fast_prompt(tid)
 
     with :ok <- ensure_user_alive(customer_uri),
-         {:ok, ^fast_uri} <- ensure_fast_agent(customer_uri, workspace_uri, fast_prompt, soul_slot_values, tid),
+         {:ok, ^fast_uri} <-
+           ensure_fast_agent(customer_uri, workspace_uri, fast_prompt, soul_slot_values, tid),
          :ok <- maybe_put_deepseek_key(fast_uri, deepseek_key, ctx),
-         {:ok, slow_uri} <- maybe_slow_agent(customer_uri, workspace_uri, with_slow?, ctx, soul_slot_values, tid, role),
+         {:ok, slow_uri} <-
+           maybe_slow_agent(
+             customer_uri,
+             workspace_uri,
+             with_slow?,
+             ctx,
+             soul_slot_values,
+             tid,
+             role
+           ),
          :ok <- ensure_session(session_uri, customer_uri, workspace_uri),
          :ok <- join(session_uri, customer_uri, ctx),
          :ok <- join(session_uri, fast_uri, ctx),
@@ -141,10 +152,12 @@ defmodule EzagentPluginAutoservice.CustomerSession do
     ctx = session_internal_ctx()
     session_uri = Uris.session_uri(customer_uri)
     workspace_uri = Ezagent.URI.entity_workspace_uri(customer_uri)
+    fast_uri = Uris.fast_agent_uri(customer_uri)
 
     with :ok <- ensure_user_alive(customer_uri),
          :ok <- ensure_session(session_uri, customer_uri, workspace_uri),
-         :ok <- join(session_uri, customer_uri, ctx) do
+         :ok <- join(session_uri, customer_uri, ctx),
+         :ok <- join(session_uri, fast_uri, ctx) do
       {:ok, session_uri}
     end
   end
@@ -208,7 +221,13 @@ defmodule EzagentPluginAutoservice.CustomerSession do
   # Provision the fast agent as a workspace `curl.agent` TEMPLATE.
   # The template is re-instantiated by `Workspace.Loader.load_all/0` on
   # every boot, so the fast agent is always alive after a restart.
-  defp ensure_fast_agent(customer_uri, %URI{scheme: "workspace"} = workspace_uri, system_prompt, soul_slot_values, _tid) do
+  defp ensure_fast_agent(
+         customer_uri,
+         %URI{scheme: "workspace"} = workspace_uri,
+         system_prompt,
+         soul_slot_values,
+         _tid
+       ) do
     fast_uri = Uris.fast_agent_uri(customer_uri)
     {_ws, name} = Uris.decompose_customer(customer_uri)
     tmpl_name = "autoservice.fast." <> name
@@ -293,6 +312,7 @@ defmodule EzagentPluginAutoservice.CustomerSession do
         # Render CLAUDE.md with slot values + skill index.
         rendered_claude_md =
           SoulRenderer.full_claude_md(soul_templates, soul_slot_values, skill_index)
+
         File.write!(Path.join(work_dir, "CLAUDE.md"), rendered_claude_md)
 
         case Ezagent.Workspace.create_agent(
@@ -311,7 +331,9 @@ defmodule EzagentPluginAutoservice.CustomerSession do
               kb_mcp = Jason.decode!(kb_mcp_json)
 
               mcp =
-                mcp_path |> File.read!() |> Jason.decode!()
+                mcp_path
+                |> File.read!()
+                |> Jason.decode!()
                 |> Map.update!("mcpServers", &Map.merge(kb_mcp["mcpServers"], &1))
 
               File.write!(mcp_path, Jason.encode_to_iodata!(mcp, pretty: true))
@@ -345,7 +367,8 @@ defmodule EzagentPluginAutoservice.CustomerSession do
   # Load skill index for a role from the tenant release directory.
   # Looks for: release/_current/skills/<role>/SKILL_INDEX.md
   defp load_skill_index(tid, role) do
-    index_path = Path.join([TenantRuntime.current_release_path(tid), "skills", role, "SKILL_INDEX.md"])
+    index_path =
+      Path.join([TenantRuntime.current_release_path(tid), "skills", role, "SKILL_INDEX.md"])
 
     if File.exists?(index_path) do
       File.read!(index_path)

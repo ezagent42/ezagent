@@ -103,11 +103,14 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
 
       # 3. Subscribe to CustomerFeed topic for real-time delivery
       feed_topic = CustomerFeed.topic(session_uri)
+
       if connected?(socket) do
         Phoenix.PubSub.subscribe(EzagentCore.PubSub, feed_topic)
       end
 
-      Logger.info("Operator #{URI.to_string(op_uri)} claimed turn #{turn_id} on session #{URI.to_string(session_uri)}")
+      Logger.info(
+        "Operator #{URI.to_string(op_uri)} claimed turn #{turn_id} on session #{URI.to_string(session_uri)}"
+      )
 
       {:noreply, assign(socket, subscribed_feed_topic: feed_topic)}
     end
@@ -138,7 +141,9 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
           ctx: %{caller: op_uri, caps: caps, reply: :ignore}
         })
 
-      Logger.info("Operator #{URI.to_string(op_uri)} settled turn #{turn_id} on session #{URI.to_string(session_uri)}")
+      Logger.info(
+        "Operator #{URI.to_string(op_uri)} settled turn #{turn_id} on session #{URI.to_string(session_uri)}"
+      )
 
       {:noreply, socket}
     end
@@ -218,7 +223,7 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
 
     (live ++ dormant)
     |> Enum.uniq()
-    |> Enum.filter(&String.starts_with?(&1, "session://cs/"))
+    |> Enum.filter(&String.contains?(&1, "/cs/"))
     |> Enum.map(fn str ->
       uri = Ezagent.URI.new!(str)
       %{uri: uri, str: str, name: customer_name(uri)}
@@ -252,6 +257,7 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
   end
 
   defp selected_match?(nil, _), do: false
+
   defp selected_match?(%URI{} = selected, %URI{} = incoming),
     do: URI.to_string(selected) == URI.to_string(incoming)
 
@@ -260,6 +266,7 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
 
     if connected?(socket) do
       old = socket.assigns[:subscribed_topic]
+
       if is_binary(old) and old != new_topic do
         Phoenix.PubSub.unsubscribe(EzagentCore.PubSub, old)
       end
@@ -301,7 +308,9 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
             <h1 class="font-semibold text-sm">客服工作台</h1>
             <p class="text-[11px] opacity-70">{workspace_label(@workspace_uri)}</p>
           </div>
-          <button phx-click="refresh" class="text-xs underline opacity-80 hover:opacity-100">刷新</button>
+          <button phx-click="refresh" class="text-xs underline opacity-80 hover:opacity-100">
+            刷新
+          </button>
         </header>
         <div class="flex-1 overflow-y-auto">
           <p :if={@sessions == []} class="p-4 text-sm text-gray-400">该工作区暂无客服会话</p>
@@ -321,7 +330,10 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
       </aside>
 
       <main class="flex-1 flex flex-col rounded-xl border border-gray-200 bg-white overflow-hidden">
-        <div :if={is_nil(@selected)} class="flex-1 flex items-center justify-center text-gray-400 text-sm">
+        <div
+          :if={is_nil(@selected)}
+          class="flex-1 flex items-center justify-center text-gray-400 text-sm"
+        >
           从左侧选择一个客户会话进入
         </div>
 
