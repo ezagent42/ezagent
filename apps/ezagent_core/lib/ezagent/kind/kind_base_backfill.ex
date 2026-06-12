@@ -225,15 +225,20 @@ defmodule Ezagent.Kind.KindBaseBackfill do
   Options:
     * `:dry_run` (boolean, default `false`) — classify + report without writing.
 
-  Returns `{:ok, %{scanned: n, backfilled: n, already: n, dry_run: n}}`.
-  Raises on the FIRST unclassifiable / ambiguous row.
+  Returns `{:ok, %{scanned: n, backfilled: n, already: n, dry_run: n,
+  legacy_skipped: n}}`. A legacy JSON-column (string-keyed) row is SKIPPED with
+  a warning (it cannot be auto-migrated and the P5-0b guard blocks a runtime
+  re-save — it must be re-seeded from binary or dropped by a human; `gate/0`
+  keeps it as not-go). Raises on the FIRST genuinely-corrupt unclassifiable /
+  ambiguous (atom-keyed) row.
   """
   @spec run(keyword()) :: {:ok, map()}
   def run(opts \\ []) when is_list(opts) do
     dry_run? = Keyword.get(opts, :dry_run, false)
 
     session_rows()
-    |> Enum.reduce(%{scanned: 0, backfilled: 0, already: 0, dry_run: 0}, fn row, acc ->
+    |> Enum.reduce(%{scanned: 0, backfilled: 0, already: 0, dry_run: 0, legacy_skipped: 0}, fn row,
+                                                                                              acc ->
       acc = %{acc | scanned: acc.scanned + 1}
 
       case KindSnapshot.decode_state(row) do
@@ -280,14 +285,27 @@ defmodule Ezagent.Kind.KindBaseBackfill do
           end
 
         {:error, {:legacy_json_unsupported, _keys} = reason} ->
-          raise ArgumentError,
-                "Ezagent.Kind.KindBaseBackfill: session snapshot #{row.uri} is a " <>
-                  "LEGACY JSON-column row (string-keyed: #{inspect(reason)}). The " <>
-                  ":kind_base backfill only rewrites binary (`term_to_binary`) " <>
-                  "snapshots — atom-normalizing a legacy row's top-level keys would " <>
-                  "leave its nested slice content string-keyed and unloadable. " <>
-                  "Re-save this row as a binary snapshot first (touch it via the " <>
-                  "runtime so the Kind re-commits) THEN re-run the backfill."
+          # A legacy JSON-column row (string-keyed) CANNOT be auto-migrated:
+          # atom-normalizing only its top-level keys would leave nested slice
+          # content (e.g. JSON-flattened `%URI{}` member keys) string-keyed and
+          # unloadable, and a JSON row can no longer be re-saved through the
+          # runtime — the P5-0b guard raises `MissingKindBaseError` on its
+          # nil/missing `:kind_base` BEFORE it could re-commit a binary snapshot
+          # (the would-be deadlock). So SKIP it here (do NOT abort the whole run
+          # over one un-migratable row) and let `gate/0` keep counting it as
+          # not-go: a human must re-seed it from a binary source or drop it if
+          # obsolete BEFORE the guarded P5-1 union ships. No current code writes
+          # the legacy `state` column (`KindSnapshot.upsert/6` writes only
+          # `state_binary`), so this is defensive — it should never fire on any
+          # DB seeded by a post-Phase-1 release.
+          Logger.warning(
+            "Ezagent.Kind.KindBaseBackfill: SKIPPING legacy JSON-column session " <>
+              "snapshot #{row.uri} (#{inspect(reason)}) — cannot auto-migrate a " <>
+              "lossy JSON row. Re-seed it from a binary snapshot or drop it if " <>
+              "obsolete; the backfill gate stays >0 until it is resolved."
+          )
+
+          %{acc | legacy_skipped: acc.legacy_skipped + 1}
 
         {:error, reason} ->
           raise ArgumentError,
