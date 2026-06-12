@@ -13,7 +13,7 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
   import Phoenix.Component
 
   alias Ezagent.Behavior.Chat
-  alias EzagentPluginAutoservice.{ChatUI, TurnAdapter}
+  alias EzagentPluginAutoservice.ChatUI
   alias Ezagent.Socialware.CustomerFeed
 
   require Logger
