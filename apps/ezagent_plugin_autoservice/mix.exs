@@ -47,6 +47,13 @@ defmodule EzagentPluginAutoservice.MixProject do
       {:ezagent_domain_identity, in_umbrella: true},
       # Instance message domain: Session Kind + Chat behavior
       {:ezagent_domain_instance_message, in_umbrella: true},
+      # Test-only: the fast agent is a `curl.agent` workspace template, whose
+      # template class + InstanceSupervisor are brought up by this plugin's app.
+      # At runtime the seed task starts it explicitly
+      # (`Application.ensure_all_started(:ezagent_plugin_curl_agent)`); the
+      # multi-tenant isolation test exercises that same provisioning path, so it
+      # needs the app in the test load path.
+      {:ezagent_plugin_curl_agent, in_umbrella: true, only: [:test], runtime: false},
       # UI primitives for chat
       {:ezagent_domain_ui, in_umbrella: true},
       {:phoenix_live_view, ">= 0.0.0"},
