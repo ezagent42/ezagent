@@ -12,6 +12,7 @@ defmodule EzagentPluginAutoservice.CustomerLive do
   import Phoenix.Component
 
   alias EzagentPluginAutoservice.{ChatUI, CustomerSession}
+  alias Ezagent.Behavior.Chat
   alias Ezagent.Socialware.CustomerFeed
 
   require Logger
@@ -26,6 +27,10 @@ defmodule EzagentPluginAutoservice.CustomerLive do
       {:ok, session_uri} ->
         if connected?(socket) do
           Phoenix.PubSub.subscribe(EzagentCore.PubSub, CustomerFeed.topic(session_uri))
+          # Also subscribe to Chat session events so the customer sees
+          # agent replies in real time (CustomerFeed delivers via its own
+          # protocol; Chat publishes via session_events_topic).
+          Phoenix.PubSub.subscribe(EzagentCore.PubSub, Chat.session_events_topic(session_uri))
         end
 
         caps = Ezagent.Identity.list_caps_for(customer_uri)
@@ -133,6 +138,18 @@ defmodule EzagentPluginAutoservice.CustomerLive do
 
           {:noreply, socket}
       end
+    end
+  end
+
+  # Agent replies arrive via Chat.session_events_topic (the session's
+  # internal event bus). Append them directly — no dedup needed because
+  # optimistic echo (customer's own messages) uses a different id format.
+  def handle_info({:chat_message, session_uri, %Ezagent.Message{} = msg}, socket) do
+    if session_uri == socket.assigns.session_uri do
+      row = ChatUI.row(msg, socket.assigns.customer_uri)
+      {:noreply, update(socket, :messages, fn ms -> ms ++ [row] end)}
+    else
+      {:noreply, socket}
     end
   end
 

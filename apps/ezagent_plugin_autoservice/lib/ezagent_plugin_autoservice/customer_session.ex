@@ -153,12 +153,22 @@ defmodule EzagentPluginAutoservice.CustomerSession do
     session_uri = Uris.session_uri(customer_uri)
     workspace_uri = Ezagent.URI.entity_workspace_uri(customer_uri)
     fast_uri = Uris.fast_agent_uri(customer_uri)
+    slow_uri = Uris.slow_agent_uri(customer_uri)
 
     with :ok <- ensure_user_alive(customer_uri),
          :ok <- ensure_session(session_uri, customer_uri, workspace_uri),
          :ok <- join(session_uri, customer_uri, ctx),
-         :ok <- join(session_uri, fast_uri, ctx) do
+         :ok <- join(session_uri, fast_uri, ctx),
+         :ok <- maybe_join_slow(session_uri, slow_uri, ctx) do
       {:ok, session_uri}
+    end
+  end
+
+  # Only join the slow agent if it exists (it's optional — only created with --with-slow).
+  defp maybe_join_slow(session_uri, slow_uri, ctx) do
+    case KindRegistry.lookup(slow_uri) do
+      {:ok, _pid} -> join(session_uri, slow_uri, ctx)
+      :error -> :ok
     end
   end
 
