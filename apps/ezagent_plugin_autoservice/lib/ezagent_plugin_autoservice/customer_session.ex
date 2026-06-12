@@ -403,7 +403,7 @@ defmodule EzagentPluginAutoservice.CustomerSession do
           :ok
 
         :error ->
-          case Ezagent.Kind.spawn(Ezagent.Entity.Session, %{
+          case Ezagent.Kind.spawn(Ezagent.Entity.SocialwareSession, %{
                  uri: session_uri,
                  owner_uri: owner_uri
                }) do
