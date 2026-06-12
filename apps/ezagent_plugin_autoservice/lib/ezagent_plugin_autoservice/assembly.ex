@@ -14,8 +14,9 @@ defmodule EzagentPluginAutoservice.Assembly do
   4. Slow cc agent — provision context via `TenantContent.provision_context/2`,
      write `CLAUDE.md`, write `.mcp.json` (if KB path present), create via
      `Workspace.create_agent` with `flavor: "cc"`.
-  5. Fast curl agent — provision context, create via `Workspace.create_agent`
-     with `flavor: "curl"`.
+  5. Fast curl agent — provision context, register via `Workspace.add_template/3`
+     (curl.agent class) so provider/api_url/model/system_prompt flow through the
+     template instantiate path and are stored on the CurlAgent Kind.
   6. CS Orchestrator — tag flavor attribute, spawn `CsOrchestrator` Kind
      idempotently.
   7. Routing — install `in_session(session)` → [orchestrator_uri] rule
@@ -25,10 +26,28 @@ defmodule EzagentPluginAutoservice.Assembly do
   ## Bot-creation opt-out
 
   `provision_session/3` accepts `opts[:create_agents]` (default `true`).
-  When `false`, the cc/curl `create_agent` calls are skipped and plain
-  `Ezagent.Entity.Agent` Kinds are spawned instead. This enables full
-  structural testing of session + orchestrator + routing without requiring
+  When `false`, the cc/curl `create_agent`/`add_template` calls are skipped
+  and plain `Ezagent.Entity.Agent` Kinds are spawned instead. This enables
+  full structural testing of session + orchestrator + routing without requiring
   a live claude environment or valid curl credentials.
+
+  ## Fast agent config delivery
+
+  The fast curl agent's `provider`/`api_url`/`model`/`system_prompt` are
+  delivered via `Workspace.add_template/3` (curl.agent class template).
+  `Workspace.create_agent` only forwards `flavor/name/cwd/with_pty/from` and
+  DROPS any extra config — the template route is the only correct path.
+
+  ## SLOW CC CONFIG GAP (Phase B)
+
+  model/endpoint/explicit-effort overrides do NOT flow through
+  `Workspace.create_agent` (it strips template_data to flavor/cwd/config_dir).
+  Carrying them requires a per-agent AgentTemplate + spawn_from_template_content
+  (the #17 cascade chokepoint) AND a cc `template_data_extra` producer for those
+  keys — creation-unification-adjacent (Allen's domain), deferred.
+  effort=low is delivered for free by #730's spawn_plan default
+  (effort_for → "low" when absent), so the slow cc still gets ~26s replies
+  once #730 syncs; model=deepseek is a cost optimization, not Phase-B-critical.
 
   ## `.mcp.json` path decision
 
@@ -267,7 +286,7 @@ defmodule EzagentPluginAutoservice.Assembly do
           with_pty: false
         }
 
-        create_or_lookup_agent(workspace_uri, args, ctx, slow_template_data(sctx))
+        create_or_lookup_agent(workspace_uri, args, ctx)
 
       {:error, reason} ->
         {:error, {:slow_content_failed, reason}}
@@ -279,22 +298,6 @@ defmodule EzagentPluginAutoservice.Assembly do
     agent_uri = Ezagent.URI.agent(tid, agent_name)
     stub_agent(agent_uri)
   end
-
-  defp slow_template_data(sctx) do
-    ac = sctx.agent_config || %{}
-
-    # Only include non-empty string values — cc agent ignores nil/empty
-    # template_data keys, and the AgentCreate handler doesn't accept a :data key;
-    # slow_template_data is documented in CONCERNS below (data key drift).
-    %{}
-    |> maybe_put("model", Map.get(ac, "model") || Map.get(ac, :model))
-    |> maybe_put("endpoint", Map.get(ac, "endpoint") || Map.get(ac, :endpoint))
-    |> maybe_put("effort", Map.get(ac, "effort") || Map.get(ac, :effort))
-  end
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, _key, ""), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp maybe_write_mcp_json(%{kb_db_path: nil}), do: :ok
 
@@ -325,30 +328,51 @@ defmodule EzagentPluginAutoservice.Assembly do
   # Step 5 — Fast curl agent
   # ---------------------------------------------------------------------------
 
-  defp ensure_fast_agent(tid, customer_name, workspace_uri, ctx, true) do
-    agent_name = "cs-fast-" <> customer_name
+  defp ensure_fast_agent(tid, customer_name, _workspace_uri, _ctx, true) do
+    curl_name = "cs-fast-" <> customer_name
+    # The curl.agent Template Class instantiate/3 spawns the CurlAgent at the URI
+    # carried in the template's "agent_uri" field — entity://<tid>/agent/<curl_name>.
+    agent_uri = Ezagent.URI.agent(tid, curl_name)
+    agent_uri_str = URI.to_string(agent_uri)
 
     case TenantContent.provision_context(tid, "fast") do
       {:ok, fctx} ->
         ac = fctx.agent_config || %{}
 
-        args = %{
-          flavor: "curl",
-          name: agent_name,
-          cwd: "",
-          with_pty: false
-        }
-
-        # Curl flavor: provider/api_url/model are required by curl.agent validate/1;
-        # system_prompt and max_tokens are optional.
-        extra = %{
+        # NOTE: agents.yaml's fast.max_tokens has NO consumer in curl (curl reads
+        # "max_history" — a different concept, a count of history turns, not token
+        # budget). Do NOT thread max_tokens here. This is an acknowledged gap.
+        tmpl = %{
+          "class" => "curl.agent",
+          "agent_uri" => agent_uri_str,
           "provider" => Map.get(ac, "provider") || Map.get(ac, :provider) || "",
           "api_url" => Map.get(ac, "api_url") || Map.get(ac, :api_url) || "",
           "model" => Map.get(ac, "model") || Map.get(ac, :model) || "",
           "system_prompt" => fctx.system_prompt
         }
 
-        create_or_lookup_agent(workspace_uri, args, ctx, extra)
+        # Template name: stable per-agent, using the curl_name so re-provision
+        # overwrites the same template slot (Map.put semantics in add_template).
+        tmpl_name = "curl.agent." <> curl_name
+
+        case Ezagent.Workspace.add_template(tid, tmpl_name, tmpl) do
+          :ok ->
+            {:ok, agent_uri}
+
+          {:error, {:already_started, _pid}} ->
+            # Idempotent: agent is already alive from a previous provision.
+            {:ok, agent_uri}
+
+          {:error, {:already_registered, _}} ->
+            {:ok, agent_uri}
+
+          {:error, reason} ->
+            # Tight race: check live registry before propagating failure.
+            case Ezagent.KindRegistry.lookup(agent_uri) do
+              {:ok, _pid} -> {:ok, agent_uri}
+              :error -> {:error, {:fast_agent_add_template_failed, curl_name, reason}}
+            end
+        end
 
       {:error, reason} ->
         {:error, {:fast_content_failed, reason}}
@@ -362,46 +386,20 @@ defmodule EzagentPluginAutoservice.Assembly do
   end
 
   # ---------------------------------------------------------------------------
-  # create_agent wrapper (idempotent)
+  # create_agent wrapper (idempotent) — cc slow agent only
   # ---------------------------------------------------------------------------
 
-  # CONCERN: `Workspace.create_agent/3` accepts `args` with keys
-  # `:flavor`, `:name`, `:cwd`, `:with_pty` (and optional `:from`).
-  # There is NO `:data` or `:template_data` key accepted by `coerce_create_args/1`
-  # (verified in agent_create.ex). The slow agent's `model/endpoint/effort`
-  # and the curl agent's `provider/api_url/model/system_prompt` are passed
-  # via separate mechanisms:
-  #   - For curl: `Workspace.create_agent` DOES route through
-  #     `direct_spawn_flavor_agent` → `CurlAgent.instantiate/3`, but the
-  #     instantiate/3 callback receives only the STORED template (which has
-  #     no extra data without a `:data` key in args). The curl-agent template
-  #     data is populated when the template is registered via `add_template`
-  #     or when the LV pre-fills it. For programmatic create, we use
-  #     `Ezagent.Workspace.add_template` + `instantiate` OR pass the data
-  #     fields directly in `args` (for flavor-specific handling).
-  #   - For cc: the `file_flavor_template` builds content from `cwd`; extra
-  #     knobs (model/endpoint/effort) are not threaded through this path.
+  # `Workspace.create_agent/3` accepts args with keys `:flavor`, `:name`,
+  # `:cwd`, `:with_pty` (and optional `:from`). The curl fast agent no longer
+  # uses this path — it goes through `Workspace.add_template/3` so that
+  # provider/api_url/model/system_prompt flow into the CurlAgent Kind via the
+  # template instantiate path.
   #
-  # PRACTICAL DECISION (C4 scope): pass the extra data map as additional
-  # keys in `args`. `coerce_create_args/1` only reads the 5 known keys and
-  # ignores extras — they are silently dropped. The cc/curl agents will
-  # use their default provider/model from the credential cascade. If the
-  # tenant-specific model/provider must be threaded, a follow-up task must
-  # either (a) extend `coerce_create_args` to pass a `:data` override, or
-  # (b) use `Workspace.add_template/3` + a separate instantiate dispatch.
-  # We log a warning so the limitation is visible.
-  defp create_or_lookup_agent(workspace_uri, args, ctx, extra_data) do
+  # SLOW CC CONFIG GAP — see module @moduledoc for the full explanation.
+  defp create_or_lookup_agent(workspace_uri, args, ctx) do
     {:ok, tid} = Ezagent.URI.workspace_name(workspace_uri)
     agent_name = Map.fetch!(args, :name)
     agent_uri = Ezagent.URI.agent(tid, agent_name)
-
-    if map_size(extra_data) > 0 do
-      Logger.warning(
-        "Assembly: extra agent_config data #{inspect(Map.keys(extra_data))} for " <>
-          "agent #{agent_name} cannot be threaded into create_agent args " <>
-          "(no :data key in coerce_create_args). Data dropped; agent uses default config."
-      )
-    end
 
     case Ezagent.Workspace.create_agent(workspace_uri, args, ctx) do
       {:ok, %{agent_uri: %URI{} = uri}} ->
