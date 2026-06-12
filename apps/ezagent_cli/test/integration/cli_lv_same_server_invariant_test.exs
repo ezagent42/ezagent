@@ -56,7 +56,7 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
     {:ok, caller_uri: test_user_uri}
   end
 
-  test "CLI server-side exec changes Session.chat.members IN THIS BEAM", ctx do
+  test "CLI server-side exec changes Session.session.members IN THIS BEAM", ctx do
     session_name = "cli-same-server-test-#{System.unique_integer([:positive])}"
     # SPEC v3 §3.6 (Phase 9 PR-7) — sessions are 3-segment.
     session_uri = Ezagent.URI.new!("session://team-alpha/default/" <> session_name)
@@ -84,11 +84,11 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
     #
     # Post-lifecycle two-container slice (SPEC 2026-05-29): the Kind
     # Server state is `%{state: %{<slice> => %{state: _, transients: _}}}`,
-    # so the `:chat` slice's members live at `.state.chat.state.members`
+    # so the `:chat` slice's members live at `.state.session.state.members`
     # (was the flat `.state.chat.members` pre-migration).
     state_before = :sys.get_state(session_pid, 500)
 
-    refute Enum.any?(Map.keys(state_before.state.chat.state.members), fn k ->
+    refute Enum.any?(Map.keys(state_before.state.session.state.members), fn k ->
              URI.to_string(k) == member_uri_str
            end)
 
@@ -146,7 +146,7 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
     state_after = :sys.get_state(session_pid, 500)
 
     member_present? =
-      Enum.any?(Map.keys(state_after.state.chat.state.members), fn k ->
+      Enum.any?(Map.keys(state_after.state.session.state.members), fn k ->
         URI.to_string(k) == member_uri_str
       end)
 
@@ -157,7 +157,7 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
     Means CLI dispatched against a DIFFERENT BEAM than the test — breaks
     CLI ↔ LV isomorphism.
 
-    Members in this BEAM: #{inspect(Enum.map(Map.keys(state_after.state.chat.state.members), &URI.to_string/1))}
+    Members in this BEAM: #{inspect(Enum.map(Map.keys(state_after.state.session.state.members), &URI.to_string/1))}
     """
   end
 
