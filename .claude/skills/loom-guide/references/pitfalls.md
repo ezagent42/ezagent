@@ -1,6 +1,9 @@
 # Loom 坑与债 — 事故根因 + 已知欠账
 
 按"碰到症状先查这里"组织。每条都有出处，别重新踩。
+**编码类 landmines**（旧 Behavior 引擎、plugin 声明三元组、前端 sync 等）在
+`loom-developer` skill 的 gotchas——写代码前两边都过一眼；本文件偏项目级
+（事故根因、gate 债、分支状态、环境）。
 
 ## 事故根因（已修，但模式会复发）
 
@@ -46,8 +49,9 @@ fitness/不变式 gate 全亮红（跑 `mix test apps/ezagent_core/test` 可复�
 不触发）。迁移时按 migration-map 重做；feat/loom 上不要扩散这个模式。
 
 ### 6. worker_label 测试失败（分支既有）
-fixture `loomworker_policy` 无 sid 段，不匹配 `loomworker_<sid>_<theme>` 正则。
-见 `agent-roles.md` 末节。
+`loom_orchestrator_test.exs` 的 fixture `loomworker_policy` 无 sid 段，不匹配
+2026-06-01 引入的 `loomworker_<sid>_<theme>` 正则——预期 "policy" 实得 "worker"。
+修 fixture 或修正则二选一。
 
 ## 环境 / 运维注意
 
@@ -62,9 +66,13 @@ WSL 上没起 epmd 时 `:net_kernel.start` 会 etimedout 干等数十秒——�
 （`EZAGENT_HOME=/x mix phx.server` 仍覆盖文件值）。prod 不读 `.env`。
 模板见 `.env.example`。
 
-### 9. Stitch/AiSpot 不走 LLM 开关
-即使 `LOOM_LLM_BACKEND=claude_code`，Stitch/AiSpot 仍直连 DeepSeek，
-需要 `DEEPSEEK_KEY`。见 `llm-backends.md`。
+### 9. Stitch/AiSpot/intent 不走 LLM 开关
+即使 `LOOM_LLM_BACKEND=claude_code`，preview 侧 AI 仍是 DeepSeek：06-10 重构后
+Stitch/AiSpot 走 `loomstitch_<sid>` worker（本质仍调 DeepSeek），session-less 的
+`POST /intent` 也直连 DeepSeek——这三处都需要 `DEEPSEEK_KEY`。
+另：`application.ex` boot 时会从 `HTTPS_PROXY` 配置 `:httpc` 代理
+（Clash fake-ip 这类 dev 环境下 DeepSeek 才可达）——代理环境变量不对时
+preview 侧 AI 会静默超时，先查这里。
 
 ## 分支管理注意
 

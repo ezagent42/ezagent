@@ -19,9 +19,24 @@
 | `2026-06-01-loom-as-session-redesign.md` | 06-01 | ✅ | session-rooted 重设计：v0worker、page_update span、mention 解析。**现行编排形态的奠基文档**。 |
 | `2026-06-05-shareable-snapshots-and-fork.md` | 06-05 | ✅ | 分享快照 + fork 两阶段设计。 |
 | `2026-06-08-loom-data-lifecycle.md` | 06-08 | ⚠️ | 数据全生命周期（阶段 0-7），**最接近现状的全景文档**。唯一漂移：写的"四个旁路 JSON"，06-09 加了第五个 `loom_knowledge.json`（见 persistence-map.md）。 |
-| `2026-06-08-loom-to-socialware-migration.md` | 06-08 | ✅ | 迁移处置清单。**注意：在 `docs/loom-socialware-migration` 分支上，feat/loom 本体没有这个文件**。提炼版见本 skill 的 `migration-map.md`。 |
+| `2026-06-08-loom-to-socialware-migration.md` | 06-08 | ⚠️ | 迁移处置清单。**在 `docs/loom-socialware-migration` 分支上，feat/loom 本体没有这个文件**。处置方向仍有效，但 phase 状态已漂移（P4 已在 main 落地且实现路线有出入）——修正见本 skill 的 `migration-map.md`。 |
+
+## 未成文变更（代码已变、docs/loom 没跟上）
+
+- **06-10/11 Stitch 重构**：Stitch/AiSpot 从 WebPlug 直连 DeepSeek 改为
+  `loomstitch_<sid>` worker（对话进 MessageStore）、consumer_session 标记、
+  session-less `POST /intent`、publish self-heal。**没有 docs/loom 设计文档**，
+  权威是代码 + `loom-developer` skill（同在 feat/loom，`.claude/skills/loom-developer/`）。
+  06-05 snapshots 文档与 06-08 data-lifecycle 文档里关于 Stitch 持久化的描述
+  （`loom_stitch_chats.json`）相应过时。
+
+## 相关 skill
+
+- **`loom-developer`**（06-11 起，feat/loom）：开发者向——backend-map / 前端与
+  SDK / gotchas / recipes。写代码用它；本 skill 管介绍、考古、迁移。
 
 ## 维护约定
 
 新设计文档落 `docs/loom/`（日期前缀），同时更新本表 + 受影响 reference。
 被推翻的文档**不删**（演化记录有考古价值），改本表状态即可。
+代码先行、文档未跟上的变更，记进上面"未成文变更"一节。

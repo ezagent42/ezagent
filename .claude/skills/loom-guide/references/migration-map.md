@@ -45,12 +45,21 @@ feat/loom 是单体原型（自带 LLM、飞书、临时用户、前端、SDK �
 
 web_plug 24 条路由的逐条映射表在权威清单 §3——动 web 面之前必读。
 
-## 落点 phase
+## 落点 phase（+ main 实际落地状态，2026-06-12 核对）
 
-| 内容 | phase |
-|---|---|
-| SDK 路由 + fetch_proxy + tool + span→json-render + 前端 SPA 重建（React+json-render+Sandpack） | **P4** 基座 |
-| behavior/template/entity/prompts/application → 新瘦身 `ezagent_plugin_loom` | **P5** 第一个 fused vertical + SW-USE E2E |
+| 内容 | phase | main 落地状态 |
+|---|---|---|
+| SDK 路由 + fetch_proxy + tool + span→json-render + 前端 SPA 重建 | **P4** 基座 | ✅ **已落地**（#732，06-11）。⚠️ 实际实现是 "chat external SPA via the **`:pull` machinery**（snapshot-refresh）"——与本清单写的 "React+json-render+Sandpack" 路线有出入，**做 P5 迁移时以 main 实现为准**，先读 #732 再动手 |
+| behavior/template/entity/prompts/application → 新瘦身 `ezagent_plugin_loom` | **P5** 第一个 fused vertical + SW-USE E2E | 前置已动：config-evolve（#733，"dissolve SW-UPD confused-deputy, P5 prereq"） |
+
+⚠️ 本清单（06-08）写作时 P4 尚未动工；现在 main 推进速度快于清单更新，
+**逐项处置前先 `git log origin/main -- apps/ezagent_domain_socialware` 核对现状**。
+
+另：06-10/11 loom 侧新增的 stitchworker / consumer_session / `/intent` 端点
+**不在本清单内**（清单基于 06-08 的 loom）。迁移时这三块的对应处置需补判：
+stitchworker ≈ 原 stitch_chat 条目（📦 后置，vertical 辅助聊天）；
+consumer_session → customer identity model（§4.4）的一部分；
+`/intent` 是 session-less DeepSeek 调用，归 vertical 增量。
 
 首版完成判据（设计 §9 SW-USE 不变式）：一个 settled turn 同时驱动 customer
 两个 pane（chat 气泡 + 实时 page）；operator 批准前 customer 看不到任何东西；

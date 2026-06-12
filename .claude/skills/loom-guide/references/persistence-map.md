@@ -1,29 +1,34 @@
 # Loom 数据归宿地图
 
 > 权威详述：`docs/loom/2026-06-08-loom-data-lifecycle.md`（阶段 0-7 全程 + 重启/
-> 清理边界）。本文件是速查 + 该文档之后的增量修正。
+> 清理边界）。本文件是速查 + 该文档之后的增量修正（已含 06-10 Stitch 重构）。
 
 ## 五个旁路 JSON（`~/.ezagent/<EZAGENT_PROFILE>/`，profile 默认 `default`）
 
 | 文件 | key | value | 写入点 | 模块 |
 |---|---|---|---|---|
 | `loom_user_schemas.json` | session uri | `[op, ...]` 增强操作序列 | Stitch 加内容 / fork 复制 | `user_schema.ex` |
-| `loom_stitch_chats.json` | session uri | `[{role, text, id}, ...]` | 每条 Stitch 收发 | `stitch_chat.ex` |
+| `loom_stitch_chats.json` ⚠️ **legacy** | session uri | `[{role, text, id}, ...]` | 仅剩 fork 时回填快照对话；**新对话不再写这里**（见下） | `stitch_chat.ex` |
 | `loom_snapshots.json` | 16-hex token | `{ws, page, ops, conversation, origin_sid, created_at}` | 分享时冻结 | `snapshots.ex` |
 | `loom_saved_classes.json` | `session.<name>` / `session.pub_<hex>` | `{saved_state, description, saved_at, ...}` | 存为模板 / 发布 | `saved_classes.ex` |
 | `loom_knowledge.json` | session uri | Markdown 知识库 | 编辑器保存 / fork 复制 | `knowledge.ex` |
 
-> ⚠️ data-lifecycle 文档写的是"**四个**旁路 JSON"——它写于 06-08，
-> `loom_knowledge.json` 是 06-09 加的第五个，文档未更新。
+> ⚠️ 两处文档漂移：
+> 1. data-lifecycle 文档（06-08）写"**四个**旁路 JSON"——`loom_knowledge.json`
+>    是 06-09 加的第五个，文档未更新。
+> 2. **06-10 Stitch 重构后**，Stitch/AiSpot 对话由 `loomstitch_<sid>` worker 处理，
+>    **进 MessageStore（session 可见 + 持久化）**，取代 `loom_stitch_chats.json`；
+>    该 JSON 仅剩 fork 流程回填快照 conversation 一处写入。
 
 ## 走 ezagent 正轨的数据
 
 | 数据 | 归宿 |
 |---|---|
-| session 对话历史 | `Ezagent.MessageStore`（正常 session 消息） |
+| session 对话历史（**含 06-10 起的 Stitch/AiSpot 对话**） | `Ezagent.MessageStore` |
 | agent / session 状态 | **Kind snapshot**（SnapshotStore，snapshot-on-change） |
-| 临时用户 / loom_signup 用户 | Identity（`entity://user/<ws>/<username>`，Bcrypt） |
+| 临时用户 / loom_signup 用户 | Identity（Bcrypt；URI 段序以当前 SPEC 为准：`entity://<ws>/user/<name>`） |
 | saved class 的 Registry 注册 | `Ezagent.TemplateRegistry`（boot 时从 JSON 重建模块） |
+| 消费会话标记 | `consumer_session.ex`（`/p/:token/open` 创建点打标，按来源不按名字） |
 
 ## 消歧（最容易出错的一个词）
 
