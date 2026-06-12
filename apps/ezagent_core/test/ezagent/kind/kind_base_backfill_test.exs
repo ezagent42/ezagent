@@ -122,7 +122,7 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
       # `:unclassifiable` (it IS a recognizable session) — it gets a PRECISE
       # legacy error so the operator re-saves it as a binary snapshot first.
       assert {:error, {:legacy_json_unsupported, _keys}} =
-               KindBaseBackfill.classify_session_state(%{"chat" => %{}, "publisher" => %{}})
+               KindBaseBackfill.classify_session_state(%{"session" => %{}, "publisher" => %{}})
 
       assert {:error, {:legacy_json_unsupported, _keys}} =
                KindBaseBackfill.classify_session_state(%{"surface" => %{}, "turns" => %{}})
@@ -228,7 +228,7 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
         EzagentCore.Repo.insert(%KindSnapshot{
           uri: uri,
           kind_type: "session",
-          state: %{"chat" => %{"state" => %{"owner_uri" => nil, "members" => %{}}}},
+          state: %{"session" => %{"state" => %{"owner_uri" => nil, "members" => %{}}}},
           state_binary: nil,
           version: 0,
           workspace_uri: @workspace,

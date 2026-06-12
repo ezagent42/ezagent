@@ -287,7 +287,7 @@ defmodule Ezagent.URITest do
 
     test "accepts string behavior/action as well as atoms" do
       base = Ezagent.URI.new!("session://system/default/main")
-      target = Ezagent.URI.with_action(base, "chat", "send")
+      target = Ezagent.URI.with_action(base, "session", "send")
       assert {:ok, {:session, :send}} = Ezagent.URI.behavior_action(target)
     end
 

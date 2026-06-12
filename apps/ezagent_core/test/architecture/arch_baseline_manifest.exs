@@ -56,7 +56,7 @@
   # "session"`). Two standalone one-shot migrations naturally share that 1-line
   # row selector; this is a structural mirror of the approved pattern, not a
   # copy-paste fork of business logic.
-  cross_file_duplicate_fn_groups: 30,
+  cross_file_duplicate_fn_groups: 30, # arch-cap-bump: chat→session SliceMigration mirrors KindBaseBackfill session_rows/0
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3

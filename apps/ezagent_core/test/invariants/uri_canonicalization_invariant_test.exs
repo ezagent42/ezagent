@@ -313,26 +313,26 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
     canonicalized = Ezagent.Kind.Snapshot.canonicalize_uris(decoded)
 
     # Map value at top level
-    assert canonicalized.chat.owner.authority == nil
+    assert canonicalized.session.owner.authority == nil
     # List element
-    assert hd(canonicalized.chat.members).authority == nil
+    assert hd(canonicalized.session.members).authority == nil
     # Deep nesting (Map → Map → List → URI)
-    assert hd(canonicalized.chat.deep.nested.list).authority == nil
+    assert hd(canonicalized.session.deep.nested.list).authority == nil
     # Tuple element
-    {tag, dave_uri, ts} = canonicalized.chat.last_event
+    {tag, dave_uri, ts} = canonicalized.session.last_event
     assert tag == :joined and ts == 1_700_000_000
     assert dave_uri.authority == nil
 
     # Map KEY was walked
-    [{carol_uri, status}] = Enum.to_list(canonicalized.chat.per_member)
+    [{carol_uri, status}] = Enum.to_list(canonicalized.session.per_member)
     assert carol_uri.authority == nil and status == :online
 
     # Custom struct shape preserved AND URI canonical
-    assert canonicalized.chat.binding.__struct__ == MyBinding
-    assert canonicalized.chat.binding.uri.authority == nil
+    assert canonicalized.session.binding.__struct__ == MyBinding
+    assert canonicalized.session.binding.uri.authority == nil
 
     # Equality against parse!/1 result holds
-    assert canonicalized.chat.owner == Ezagent.URI.new!("entity://system/user/admin")
+    assert canonicalized.session.owner == Ezagent.URI.new!("entity://system/user/admin")
   end
 
   # ---------------------------------------------------------------------
