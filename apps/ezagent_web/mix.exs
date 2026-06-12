@@ -103,6 +103,11 @@ defmodule EzagentWeb.MixProject do
       # SW5: advisor socialware vertical. Web boot must start the plugin
       # so `session.advisor` is registered in TemplateRegistry.
       {:ezagent_plugin_advisor, in_umbrella: true},
+      # Task D1 (autoservice phaseB): CustomerLive is routed here by module
+      # atom. Plugin must compile before ezagent_web so the module resolves
+      # in the router. Plugin deliberately does NOT dep on ezagent_web
+      # (no back-dep / compile cycle).
+      {:ezagent_plugin_autoservice, in_umbrella: true},
       {:jason, "~> 1.2"},
       {:bandit, "~> 1.5"}
     ]
