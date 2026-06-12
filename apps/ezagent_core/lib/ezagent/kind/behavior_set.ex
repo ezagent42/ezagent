@@ -166,7 +166,8 @@ defmodule Ezagent.Kind.BehaviorSet do
     chat: Ezagent.Behavior.Chat,
     turns: Ezagent.Behavior.Turn,
     surface: Ezagent.Behavior.Surface,
-    config_updates: Ezagent.Behavior.ConfigUpdate,
+    config_evolve: Ezagent.Behavior.ConfigEvolve,
+    identity: Ezagent.Behavior.Identity,
     publisher: Ezagent.Behavior.Publisher.SessionImpl,
     sandbox: Ezagent.Behavior.Sandbox,
     api_keys: Ezagent.Behavior.ApiKeys,
@@ -179,7 +180,7 @@ defmodule Ezagent.Kind.BehaviorSet do
   # the soft `%{}` default the runtime injects today — `context.ex`).
   @required_reads %{
     Ezagent.Behavior.Turn => %{surface: :required},
-    Ezagent.Behavior.ConfigUpdate => %{turns: :required, chat: :required},
+    Ezagent.Behavior.ConfigEvolve => %{sandbox: :required, identity: :required},
     Ezagent.Behavior.ExternalMirror => %{publisher: :required},
     Ezagent.Behavior.Chat => %{sandbox: :optional},
     Ezagent.Behavior.CurlAgent => %{api_keys: :optional}

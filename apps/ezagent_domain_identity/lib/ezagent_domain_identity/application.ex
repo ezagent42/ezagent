@@ -48,7 +48,8 @@ defmodule EzagentDomainIdentity.Application do
     UserTokens,
     WorkspaceUserAdmin,
     WorkspaceSharedCredentialSource,
-    CredentialGrant
+    CredentialGrant,
+    ConfigEvolve
   }
 
   alias Ezagent.Behavior.UserDefaultCredentialSource
@@ -56,6 +57,15 @@ defmodule EzagentDomainIdentity.Application do
   @impl true
   def start(_type, _args) do
     :ok = register_identity_behaviors()
+
+    # Agent-owned config-evolve (spec 2026-06-11 §6): the durable-config
+    # ConfigStore/ConfigObject/ConfigProjection moved here from socialware.
+    # `register/0` is a pure `Ezagent.UriQuery` ETS resolver registration (the
+    # `:socialware_config_dir` attr the single `:config_dir` owner delegates to
+    # at runtime), so it runs in the registration phase before the supervisor —
+    # the same lifecycle point socialware used. The coupling to core's resolver
+    # is runtime via `Ezagent.UriQuery`, not a compile dep (no cycle).
+    :ok = Ezagent.Socialware.ConfigProjection.register()
 
     children = [
       {DynamicSupervisor, name: __MODULE__.UserSupervisor, strategy: :one_for_one}
@@ -411,6 +421,15 @@ defmodule EzagentDomainIdentity.Application do
 
     for action <- CredentialGrant.actions() do
       :ok = CapabilityRegistry.register(Ezagent.Entity.Agent, action, CredentialGrant)
+    end
+
+    # Agent-owned config evolution (spec 2026-06-11 rev 4). The behavior
+    # module lives in the identity domain; the Agent Kind lives in the chat
+    # domain — same cross-domain registration pattern as ApiKeys /
+    # CredentialGrant above. Registers apply_config_delta / repoint_config
+    # (manage-cap gated) + reconcile_cascade (self-cap, boot self-heal).
+    for action <- ConfigEvolve.actions() do
+      :ok = CapabilityRegistry.register(Ezagent.Entity.Agent, action, ConfigEvolve)
     end
 
     # CapabilityRegistry SPEC rev 4 §5 — register User.default_caps/1

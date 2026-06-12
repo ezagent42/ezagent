@@ -19,12 +19,17 @@ defmodule Ezagent.Entity.AgentTest do
       # #17 cascade PR-5 — CredentialGrant hosts the cap-checked
       # operator revoke action on Agent so LiveViews do not write
       # credential_grants directly.
+      #
+      # Agent-owned config-evolve (spec 2026-06-11) — ConfigEvolve added so
+      # the agent mutates its OWN config under its own authority (the #607
+      # confused-deputy dissolved; the old session-side ConfigUpdate is gone).
       assert Agent.behaviors() == [
                Ezagent.Behavior.Chat,
                Ezagent.Behavior.Identity,
                Ezagent.Behavior.Sandbox,
                Ezagent.Behavior.ApiKeys,
-               Ezagent.Behavior.CredentialGrant
+               Ezagent.Behavior.CredentialGrant,
+               Ezagent.Behavior.ConfigEvolve
              ]
     end
 

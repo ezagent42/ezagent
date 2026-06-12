@@ -44,6 +44,11 @@
   # (cc carries the Invariant-#9 empty-`session_uris` rejection + three-bucket
   # ACK + telemetry that codex does not). Measured 2026-06-08 = 29.
   # Generalizes `duplicated_resolve_template_class`.
+  # PR-2 config-evolve transiently bumped this to 30 when it ported
+  # CascadeRepoint's put_user_layer/put_resolution into Behavior.ConfigEvolve
+  # while cascade_repoint.ex still held the originals. PR-4 deleted
+  # cascade_repoint.ex (the functions now live ONLY on ConfigEvolve), so the
+  # transient duplicate is gone — ratcheted back to 29.
   cross_file_duplicate_fn_groups: 29,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
@@ -76,7 +81,10 @@
   spawn_fresh_unsanctioned: 0,
   all_slices_occurrences: 3,
   all_slices_unsanctioned: 0,
-  set_effect_sites: 118,
+  # PR-2 config-evolve adds the `{:set, :applied, …}` applied-turn idempotency
+  # marker effect in Behavior.ConfigEvolve.handle_apply_config_delta (the agent's
+  # own :config_evolve slice).
+  set_effect_sites: 119, # arch-cap-bump: PR-2 applied-turn marker
   cross_slice_set_violations: 0,
   missing_cap_check_mutating_actions: 0,
   kind_runtime_ordering_violations: 0,

@@ -140,7 +140,12 @@ defmodule Ezagent.Kind.BehaviorSetTest do
         Ezagent.Behavior.Chat,
         Ezagent.Behavior.Turn,
         Ezagent.Behavior.Surface,
-        Ezagent.Behavior.ConfigUpdate,
+        # ConfigEvolve requires :sandbox + :identity owners (the agent-owned
+        # config-evolve set, replacing the old session-side ConfigUpdate which
+        # required :turns + :chat).
+        Ezagent.Behavior.ConfigEvolve,
+        Ezagent.Behavior.Sandbox,
+        Ezagent.Behavior.Identity,
         Ezagent.Behavior.KindBase
       ]
 

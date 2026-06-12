@@ -78,7 +78,13 @@ defmodule Ezagent.Entity.Agent do
       Ezagent.Behavior.Identity,
       Ezagent.Behavior.Sandbox,
       Ezagent.Behavior.ApiKeys,
-      Ezagent.Behavior.CredentialGrant
+      Ezagent.Behavior.CredentialGrant,
+      # Agent-owned config evolution (spec 2026-06-11 rev 4) — the agent
+      # mutates its OWN config under its own authority, dissolving the #607
+      # confused-deputy. Registered (CapabilityRegistry) in
+      # EzagentDomainIdentity.Application, like the other identity-domain
+      # behaviors that live on the Agent Kind.
+      Ezagent.Behavior.ConfigEvolve
     ]
 
   # Allen 2026-05-25 — bumped from `:on_terminate` to `{:snapshot, :on_change}`

@@ -48,14 +48,18 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
   ]
 
   @spawn_fresh_sanctioned [
-    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 182},
-    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 221},
-    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 223},
+    # PR-2 config-evolve — shifted +6 by adding `Ezagent.Behavior.ConfigEvolve`
+    # (+ its comment block) to `Agent.behaviors/0`; same sanctioned defs/call.
+    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 188},
+    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 227},
+    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 229},
     # PR-3S — `spawn_fresh_member/8` (def) + its single call site moved VERBATIM
     # from `Orchestrator.Tools` to `Orchestrator.Tools.MemberTemplate` along with
     # the `update_member_template` regenerate cluster (gt_1000 4→3 extraction).
-    {"apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools/member_template.ex", 190},
-    {"apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools/member_template.ex", 223}
+    {"apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools/member_template.ex",
+     190},
+    {"apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools/member_template.ex",
+     223}
   ]
 
   @all_slices_sanctioned [
@@ -67,7 +71,11 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # condensed to keep runtime.ex under the gt_1000 LOC gate).
     {"apps/ezagent_core/lib/ezagent/kind/runtime.ex", 180},
     {"apps/ezagent_core/lib/ezagent/behavior.ex", 454},
-    {"apps/ezagent_core/lib/ezagent/system_principal/catalog.ex", 271}
+    # PR-4 (agent-owned config-evolve) — shifted 271→272 when the #607
+    # `system://agent-internal` Sandbox:read drop replaced the old #607 comment
+    # block with a (one-line-longer) note above this ApiKeys-flip comment. Same
+    # sanctioned `ctx[:all_slices][:api_keys]` mention, one line lower.
+    {"apps/ezagent_core/lib/ezagent/system_principal/catalog.ex", 272}
   ]
 
   @runtime_file "apps/ezagent_core/lib/ezagent/kind/runtime.ex"

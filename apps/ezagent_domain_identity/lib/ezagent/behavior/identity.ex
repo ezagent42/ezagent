@@ -126,13 +126,59 @@ defmodule Ezagent.Behavior.Identity do
     caps =
       case Map.get(args, :uri) do
         %URI{} = uri ->
-          add_owner_identity_cap(caps, uri)
+          caps
+          |> add_owner_identity_cap(uri)
+          |> add_agent_self_caps(uri)
 
         _ ->
           caps
       end
 
     {:ok, %{caps: caps}}
+  end
+
+  # Agent-owned config-evolve (spec 2026-06-11 rev 4) — every agent's base
+  # self-caps at create gain TWO self-scoped entries, held over ITSELF
+  # (instance: self), so the agent can:
+  #   1. project its durable config pointer into its own Sandbox cache
+  #      (the step-2 / boot-reconcile `Cmd(self, :write_path, …)`) — gated
+  #      by `cap(:agent, Sandbox, :write_path)`, and
+  #   2. run its own boot reconciliation (`reconcile_cascade`) — gated by
+  #      `cap(:agent, ConfigEvolve, :reconcile_cascade)`.
+  # User Kinds get neither (the cascade write + reconcile are agent-only).
+  defp add_agent_self_caps(caps, %URI{} = uri) do
+    if kind_for_uri(uri) == :agent do
+      instance = Ezagent.URI.instance(uri)
+      workspace_uri = Ezagent.Capability.workspace_of(uri)
+
+      caps
+      |> MapSet.put(
+        self_scoped_cap(:agent, Ezagent.Behavior.Sandbox, :write_path, instance, workspace_uri)
+      )
+      |> MapSet.put(
+        self_scoped_cap(
+          :agent,
+          Ezagent.Behavior.ConfigEvolve,
+          :reconcile_cascade,
+          instance,
+          workspace_uri
+        )
+      )
+    else
+      caps
+    end
+  end
+
+  defp self_scoped_cap(kind, behavior, action, instance, workspace_uri) do
+    %Ezagent.Capability{
+      kind: kind,
+      behavior: behavior,
+      action: action,
+      instance: instance,
+      workspace_uri: workspace_uri,
+      granted_by: bootstrap_granter(),
+      granted_at: DateTime.utc_now()
+    }
   end
 
   defp add_owner_identity_cap(caps, %URI{} = uri) do

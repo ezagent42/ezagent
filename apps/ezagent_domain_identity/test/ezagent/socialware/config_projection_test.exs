@@ -14,9 +14,31 @@ defmodule Ezagent.Socialware.ConfigProjectionTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Entity.User
-  alias Ezagent.Socialware.{ConfigProjection, ConfigStore}
+  alias Ezagent.Socialware.{ConfigObject, ConfigProjection}
+  alias EzagentCore.Repo
 
   @key "advisor.behavior"
+
+  # PR-7 — `ConfigStore.write_config/1` (the public object-only insert) was
+  # removed so the only public durable-write path is the atomic
+  # `write_and_point/1`. These projection tests genuinely need an object WITHOUT
+  # a pointer (they exercise object-by-URI materialization, which never touches
+  # a pointer), so they build the immutable object directly via the schema
+  # changeset — the clearly-named test-only seam for the object-without-pointer
+  # case. No production code can mint an orphan object.
+  defp seed_object(attrs) do
+    object_attrs = %{
+      id: Ecto.UUID.generate(),
+      workspace_uri: URI.to_string(attrs.workspace_uri),
+      subject_uri: URI.to_string(attrs.subject_uri),
+      key: attrs.key,
+      body: attrs.body,
+      created_by: URI.to_string(attrs.actor_uri),
+      source_turn_id: attrs.source_turn_id
+    }
+
+    object_attrs |> ConfigObject.changeset() |> Repo.insert()
+  end
 
   defp workspace(name), do: Ezagent.URI.workspace(name)
 
@@ -44,7 +66,7 @@ defmodule Ezagent.Socialware.ConfigProjectionTest do
       subject = agent(:team_alpha)
 
       {:ok, object} =
-        ConfigStore.write_config(%{
+        seed_object(%{
           workspace_uri: ws,
           subject_uri: subject,
           key: @key,
@@ -64,7 +86,7 @@ defmodule Ezagent.Socialware.ConfigProjectionTest do
       subject = agent(:team_alpha)
 
       {:ok, object} =
-        ConfigStore.write_config(%{
+        seed_object(%{
           workspace_uri: victim_ws,
           subject_uri: subject,
           key: @key,

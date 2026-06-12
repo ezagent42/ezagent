@@ -21,13 +21,15 @@ defmodule Ezagent.Socialware.ConfigStore do
           required(:previous_config_id) => String.t() | nil
         }
 
-  @spec write_config(map()) :: {:ok, ConfigObject.t()} | {:error, Ecto.Changeset.t()}
-  def write_config(attrs) when is_map(attrs) do
-    attrs
-    |> object_attrs()
-    |> ConfigObject.changeset()
-    |> Repo.insert()
-  end
+  # PR-7 (LOW) — the public object-only insert (`write_config/1`) was REMOVED.
+  # The ONLY public durable-write path is now the atomic `write_and_point/1`
+  # (object + pointer in one transaction). A public object-only insert let a
+  # caller create an ORPHAN object (object with no pointer advancing to it),
+  # breaking the "object-existence ⟺ applied" invariant the PR-6/7 recovery +
+  # idempotency logic now relies on (`applied_for_turn?/1`, `object_for_turn/1`).
+  # Tests that legitimately need an object WITHOUT a pointer (config-object
+  # materialization by URI; the unique-constraint check) build the changeset
+  # directly via the `ConfigObject` schema (no production entry point).
 
   @spec write_and_point(map()) :: {:ok, write_result()} | {:error, term()}
   def write_and_point(attrs) when is_map(attrs) do
@@ -122,7 +124,9 @@ defmodule Ezagent.Socialware.ConfigStore do
   """
   @spec normalize_uri(term(), atom()) :: {:ok, URI.t()} | {:error, {:invalid_uri, map()}}
   def normalize_uri(%URI{} = uri, _field), do: {:ok, uri}
-  def normalize_uri(uri, _field) when is_binary(uri) and uri != "", do: {:ok, Ezagent.URI.new!(uri)}
+
+  def normalize_uri(uri, _field) when is_binary(uri) and uri != "",
+    do: {:ok, Ezagent.URI.new!(uri)}
 
   def normalize_uri(other, field),
     do: {:error, {:invalid_uri, %{field: field, got: inspect(other)}}}
@@ -162,17 +166,85 @@ defmodule Ezagent.Socialware.ConfigStore do
   def get!(config_id), do: Repo.get!(ConfigObject, config_id)
 
   @doc """
-  P2.5c — durable idempotency marker for `apply_delta` recovery.
+  The current `:user`-layer config object id for `agent_uri` (its own user
+  cascade layer). Thin wrapper over `resolve/4` keyed by the agent's
+  workspace + the standard cascade key, returning just the object id.
 
-  `apply_delta` writes a NEW immutable `ConfigObject` whose `source_turn_id`
-  records the originating turn. `apply_delta` is therefore NOT idempotent
-  (re-running mints a fresh object UUID + repoints). `Turn.activated/2`'s
-  crash-recovery uses this to decide whether a settled turn's config delta
-  still needs replaying: `true` once any object exists for the turn.
+  Used by `Ezagent.Behavior.ConfigEvolve`'s step-2 projection + boot
+  reconciliation to read the durable pointer the Sandbox cache must mirror.
+  Returns `{:ok, object_id}` or `:none` (no user-layer pointer yet).
+  """
+  @spec current_user_object(URI.t(), String.t()) :: {:ok, String.t()} | :none
+  def current_user_object(%URI{} = agent_uri, key) when is_binary(key) do
+    case Ezagent.URI.workspace_of(agent_uri) do
+      %URI{} = workspace_uri ->
+        case resolve(:user, workspace_uri, agent_uri, key) do
+          {:ok, %ConfigObject{id: id}} -> {:ok, id}
+          :none -> :none
+        end
+
+      :any ->
+        :none
+    end
+  end
+
+  @doc """
+  CE-3 — OBJECT-EXISTENCE durable idempotency marker for `apply_config_delta`
+  recovery.
+
+  A settled config delta is "applied" for a turn iff a `ConfigObject` stamped
+  with `source_turn_id == turn_id` exists. This is sound because
+  `write_and_point/1` writes the immutable object AND advances the pointer in
+  ONE `Repo.transaction` — an orphan object (object inserted, pointer not
+  advanced) can NO LONGER occur. So "an object for turn T exists" ⟺ "turn T
+  was durably applied", and a genuinely-interrupted apply (the transaction
+  never committed) leaves NEITHER object nor pointer → `false` → recovery
+  correctly replays.
+
+  PR-6: this REVERTS the PR-5 pointer-aware join. Keying on the pointer
+  resolving to the object was not only unnecessary under atomicity, it
+  REGRESSED superseded turns: applying turn B on top of turn A advances the
+  pointer off A's object, which flipped `applied_for_turn?("A")` back to
+  `false` and made recovery REPLAY an already-applied, merely-superseded turn.
+  Object existence is permanent (objects are append-only / never deleted), so
+  a superseded turn correctly stays applied.
+
+  `Turn.config_replay_needed?/2` uses this to decide whether a settled turn's
+  config delta still needs replaying.
   """
   @spec applied_for_turn?(String.t()) :: boolean()
   def applied_for_turn?(turn_id) when is_binary(turn_id) do
     Repo.exists?(from(o in ConfigObject, where: o.source_turn_id == ^turn_id))
+  end
+
+  @doc """
+  CE-2/CE-3 (PR-7) — OBJECT-EXISTENCE idempotency lookup: the id of the
+  `ConfigObject` whose `source_turn_id == turn_id`, or `:none`.
+
+  This is the OBJECT-EXISTENCE companion to `applied_for_turn?/1` (which only
+  returns a boolean). It does NOT join the CURRENT pointer, so it is consistent
+  for a SUPERSEDED turn: applying turn B on top of turn A leaves A's object
+  intact (objects are append-only), so `object_for_turn(A)` still resolves A's
+  historical id even after the pointer has advanced off A onto B.
+
+  Used by `Ezagent.Behavior.ConfigEvolve` to make `apply_config_delta`
+  idempotent on BOTH the serial pre-check AND the unique-constraint conflict
+  path: re-dispatching ANY already-applied turn (current OR superseded) returns
+  that turn's historical object id (a string) instead of minting a new object —
+  satisfying the `config_id: :string` action contract. Lookup is by
+  `source_turn_id` alone; the DB unique index `(workspace, subject, key,
+  source_turn_id)` is tuple-scoped, but the production invariant (one settled
+  Turn → one `config_delta` → one `(subject, key)`, self-bound in ConfigEvolve)
+  means a `source_turn_id` maps to a single object, so `limit: 1` is unambiguous.
+  """
+  @spec object_for_turn(String.t()) :: {:ok, String.t()} | :none
+  def object_for_turn(turn_id) when is_binary(turn_id) do
+    case Repo.one(
+           from(o in ConfigObject, where: o.source_turn_id == ^turn_id, select: o.id, limit: 1)
+         ) do
+      nil -> :none
+      object_id -> {:ok, object_id}
+    end
   end
 
   @doc """

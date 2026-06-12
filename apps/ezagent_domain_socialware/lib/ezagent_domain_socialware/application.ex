@@ -9,14 +9,12 @@ defmodule EzagentDomainSocialware.Application do
   use Application
 
   alias Ezagent.CapabilityRegistry
-  alias Ezagent.Behavior.{Chat, ConfigUpdate, SocialwarePublisherRead, Surface, Turn}
+  alias Ezagent.Behavior.{Chat, SocialwarePublisherRead, Surface, Turn}
   alias Ezagent.Entity.SocialwareSession
-  alias Ezagent.Socialware.ConfigProjection
 
   @impl true
   def start(_type, _args) do
     :ok = register_behaviors()
-    :ok = ConfigProjection.register()
 
     children = [
       {DynamicSupervisor,
@@ -40,10 +38,6 @@ defmodule EzagentDomainSocialware.Application do
 
     Enum.each(Surface.actions(), fn action ->
       :ok = CapabilityRegistry.register(SocialwareSession, action, Surface)
-    end)
-
-    Enum.each(ConfigUpdate.actions(), fn action ->
-      :ok = CapabilityRegistry.register(SocialwareSession, action, ConfigUpdate)
     end)
 
     # P3-3 (codex #711 HIGH) — the socialware publisher READ API. A DISTINCT,

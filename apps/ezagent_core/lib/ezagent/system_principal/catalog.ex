@@ -253,18 +253,19 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # bootstrap-wildcard bridge masked this dependency). The cap
          # is narrowed to the exact Behavior + action; the runtime
          # dispatch path substitutes the per-agent instance + workspace.
-         Capability.cap(:agent, Sandbox, :write_path),
-         # #607 self-evolve (SW-UPD) — Socialware.CascadeRepoint repoints a
-         # target agent's user cascade layer at the new immutable config
-         # object by reading its sandbox (cascade_resolution) and writing it
-         # back. The user-facing `config_update.apply_delta`/`repoint` action
-         # is gated by the CALLER's caps; the downstream sandbox read/write is
-         # an agent-internal effect that runs under THIS principal (the
-         # caller's session-scoped grant is not Sandbox-on-the-target-agent).
-         # `:write_path` is shared with record_sandbox_state above; `:read`
-         # is added because CascadeRepoint must read-modify-write the
-         # cascade_resolution.
-         Capability.cap(:agent, Sandbox, :read)
+         Capability.cap(:agent, Sandbox, :write_path)
+         # 2026-06-11 — `cap(:agent, Sandbox, :read)` was part of
+         # `system://agent-internal` for #607 self-evolve (SW-UPD), when
+         # `Socialware.CascadeRepoint` reached ACROSS the entity boundary to
+         # read+rewrite a target agent's `cascade_resolution`. Config-evolve
+         # is now AGENT-OWNED (`Ezagent.Behavior.ConfigEvolve` on the Agent
+         # Kind, spec 2026-06-11): the agent reads its OWN `:sandbox` sibling
+         # slice IN-PROCESS (no dispatch, no cap) and the cascade write is the
+         # agent acting on ITSELF under its self-scoped
+         # `cap(:agent, Sandbox, :write_path)`. So the cross-entity read
+         # escalation is dropped — same play as the ApiKeys-to-Agent flip
+         # below. `:write_path` STAYS (still used by
+         # `Agent.do_record_sandbox_state/3` above).
          # Allen 2026-05-26 — `cap(:user, ApiKeys, :get_api_key)` was
          # part of `system://agent-internal` pre ApiKeys-to-Agent flip.
          # Post-flip, ApiKeys lives on the agent's own Kind and the
