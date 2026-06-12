@@ -71,7 +71,11 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # condensed to keep runtime.ex under the gt_1000 LOC gate).
     {"apps/ezagent_core/lib/ezagent/kind/runtime.ex", 180},
     {"apps/ezagent_core/lib/ezagent/behavior.ex", 454},
-    {"apps/ezagent_core/lib/ezagent/system_principal/catalog.ex", 271}
+    # PR-4 (agent-owned config-evolve) — shifted 271→272 when the #607
+    # `system://agent-internal` Sandbox:read drop replaced the old #607 comment
+    # block with a (one-line-longer) note above this ApiKeys-flip comment. Same
+    # sanctioned `ctx[:all_slices][:api_keys]` mention, one line lower.
+    {"apps/ezagent_core/lib/ezagent/system_principal/catalog.ex", 272}
   ]
 
   @runtime_file "apps/ezagent_core/lib/ezagent/kind/runtime.ex"
