@@ -32,6 +32,23 @@ defmodule Ezagent.AgentBridge.AdapterRegistry do
     GenServer.call(__MODULE__, {:lookup, flavor})
   end
 
+  @doc """
+  Resolve the transport class for a flavor.
+
+  Looks up the registered adapter and returns its `transport_class/0`. When
+  no adapter is registered for the flavor yet, defaults to `:subprocess_ws`
+  — the status-quo WS path that buffers until the adapter registers
+  (preserves the pre-PR-0 behaviour for cc/codex flavors whose adapter
+  registers UP at boot but may not be present at a given delivery moment).
+  """
+  @spec transport_class(flavor()) :: Ezagent.AgentBridge.Adapter.transport_class()
+  def transport_class(flavor) when is_binary(flavor) do
+    case lookup(flavor) do
+      {:ok, adapter} -> adapter.transport_class()
+      :error -> :subprocess_ws
+    end
+  end
+
   @spec deliver_or_buffer(flavor(), Payload.t(), pid()) :: :ok | {:error, term()}
   def deliver_or_buffer(flavor, %Payload{} = payload, channel_pid)
       when is_binary(flavor) and is_pid(channel_pid) do
