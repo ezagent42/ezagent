@@ -102,7 +102,7 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
 
     @impl true
     def instantiate(_tmpl_name, %{"probe_name" => name}, _workspace_uri) do
-      uri = URI.parse("probe://#{name}")
+      uri = URI.new!("probe://#{name}")
 
       case Ezagent.SpawnRegistry.spawn(uri) do
         {:ok, _pid} -> {:ok, [uri]}
@@ -118,7 +118,7 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
   test "PHASE 4 INVARIANT: plugin-defined Kind survives Workspace teardown + Loader rehydrate" do
     # 1. Plugin-author work: declare a new URI scheme + register spawn fn.
     #    This is what a future plugin's Application.start would do.
-    probe_uri = URI.parse("probe://invariant-#{System.unique_integer([:positive])}")
+    probe_uri = URI.new!("probe://invariant-#{System.unique_integer([:positive])}")
 
     SpawnRegistry.register("probe", fn uri ->
       DynamicSupervisor.start_child(
@@ -199,7 +199,7 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
     #    must produce the probe Kind via Loader.
     workspace_name = "tmpl-invariant-#{System.unique_integer([:positive])}"
     probe_name = "tmpl-probe-#{System.unique_integer([:positive])}"
-    probe_uri = URI.parse("probe://#{probe_name}")
+    probe_uri = URI.new!("probe://#{probe_name}")
 
     tmpl_data = %{
       "class" => "probe.template",

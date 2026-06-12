@@ -58,7 +58,7 @@ defmodule Ezagent.Behavior.ExternalMirror.CodecTest do
     test "maps a BindingRow to the slice's human-readable binding shape" do
       row = %BindingRow{
         id: "deadbeef",
-        session_uri: "session://default/s1",
+        session_uri: "session://default/team-alpha/s1",
         adapter_id: "lark",
         target_id: "chat-123",
         opts_json: ~s({"label":"ops"}),

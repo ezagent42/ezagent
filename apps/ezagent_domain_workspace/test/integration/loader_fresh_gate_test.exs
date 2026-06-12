@@ -97,7 +97,7 @@ defmodule Ezagent.Integration.LoaderFreshGateTest do
 
     @impl true
     def instantiate(_tmpl_name, %{"probe_name" => name}, _workspace_uri) do
-      uri = URI.parse("gate-probe-r9://#{name}")
+      uri = URI.new!("gate-probe-r9://#{name}")
 
       case SpawnRegistry.spawn(uri) do
         {:ok, _pid} -> {:ok, [uri], %{fresh?: false}}
@@ -124,7 +124,7 @@ defmodule Ezagent.Integration.LoaderFreshGateTest do
 
     @impl true
     def instantiate(_tmpl_name, %{"probe_name" => name}, _workspace_uri) do
-      uri = URI.parse("gate-probe-r9://#{name}")
+      uri = URI.new!("gate-probe-r9://#{name}")
 
       case SpawnRegistry.spawn(uri) do
         {:ok, _pid} -> {:ok, [uri], %{fresh?: true}}
@@ -171,7 +171,7 @@ defmodule Ezagent.Integration.LoaderFreshGateTest do
   describe "HIGH-1 r9 — Loader fresh?: false adopt-only-if-owned gate" do
     test "a fresh?: false worker NOT bound to the workspace → error, no rebind" do
       probe_name = "r9-notowned-#{System.unique_integer([:positive])}"
-      probe_uri = URI.parse("gate-probe-r9://#{probe_name}")
+      probe_uri = URI.new!("gate-probe-r9://#{probe_name}")
 
       # The worker exists and is bound to a DIFFERENT (foreign)
       # workspace — a worker some other workspace already owns.
@@ -202,7 +202,7 @@ defmodule Ezagent.Integration.LoaderFreshGateTest do
 
     test "a fresh?: false worker already bound to the workspace → succeeds (idempotent re-load)" do
       probe_name = "r9-owned-#{System.unique_integer([:positive])}"
-      probe_uri = URI.parse("gate-probe-r9://#{probe_name}")
+      probe_uri = URI.new!("gate-probe-r9://#{probe_name}")
 
       {workspace_uri, tmpl_name} =
         persisted_workspace_with_template("round9.nonfresh.probe", probe_name)
@@ -227,7 +227,7 @@ defmodule Ezagent.Integration.LoaderFreshGateTest do
 
     test "a fresh?: true worker is bound unconditionally" do
       probe_name = "r9-fresh-#{System.unique_integer([:positive])}"
-      probe_uri = URI.parse("gate-probe-r9://#{probe_name}")
+      probe_uri = URI.new!("gate-probe-r9://#{probe_name}")
 
       # No pre-existing binding — the fresh worker is created by this
       # instantiate and the Loader binds it (invariant 4).

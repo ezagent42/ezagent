@@ -58,7 +58,13 @@
   # the `/cc_socket` endpoint mount — ratcheting this to 0. This cap MUST
   # stay at 0: the shim layer is gone and no lib file may reintroduce it.
   cc_bridge_shim_callers: 0,
-  cc_codex_template_class_combined_loc: 1669,
+  # #719 §5.B(c) re-provisions the source agent credential across its own respawn
+  # (durable-credential bug fix). cc_agent.ex 917→930 (+13 net: the
+  # `maybe_reprovision_source_from_respawn_data/2` chokepoint + the
+  # `credential_source` producer in `template_data_extra/1`). codex 752 unchanged.
+  # Genuine product logic, codex-reviewed (HIGH+MEDIUM addressed); not extractable
+  # shared duplication. 1669 → 1682.
+  cc_codex_template_class_combined_loc: 1682, # arch-cap-bump: #719 §5.B(c) source-respawn credential reprovision (+13 cc_agent)
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam
