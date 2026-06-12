@@ -198,8 +198,12 @@ defmodule EzagentPluginAutoservice.OperatorLive do
   # Helpers
   # ---------------------------------------------------------------------------
 
-  # All customer-service sessions in the workspace — union of live + dormant,
-  # filtered to session://cs/* prefix. Pattern from Stage-1 OperatorLive.
+  # All customer-service sessions in the workspace — union of live + dormant.
+  # CS session URIs are `session://<ws>/cs/<customer>` (the workspace is the
+  # host; `cs` is the first PATH segment), so filter on the `/cs/` path segment,
+  # NOT a `session://cs/` prefix (that prefix never matches — the ws segment
+  # sits between `session://` and `/cs/`). `list_in_workspace` already scopes to
+  # this workspace.
   defp list_cs_sessions(%URI{scheme: "workspace"} = workspace_uri) do
     live =
       workspace_uri
@@ -213,7 +217,12 @@ defmodule EzagentPluginAutoservice.OperatorLive do
 
     (live ++ dormant)
     |> Enum.uniq()
-    |> Enum.filter(&String.starts_with?(&1, "session://cs/"))
+    |> Enum.filter(fn str ->
+      case Ezagent.URI.parse(str) do
+        {:ok, %URI{scheme: "session", path: "/cs/" <> _}} -> true
+        _ -> false
+      end
+    end)
     |> Enum.map(fn str ->
       uri = Ezagent.URI.new!(str)
       %{uri: uri, str: str, name: customer_name(uri)}
@@ -244,7 +253,7 @@ defmodule EzagentPluginAutoservice.OperatorLive do
 
   defp rehydrate_session(_, _), do: :ok
 
-  # session://cs/<ws>/<name> → orchestrator URI + open_turn_id.
+  # session://<ws>/cs/<name> → orchestrator URI + open_turn_id.
   # Orchestrator URI is deterministic: entity://<ws>/agent/orch-cs-<customer>
   # (MUST match Assembly.provision_session/3 which builds orch_uri as:
   #   Ezagent.URI.agent(tid, "orch-cs-" <> customer_name))
@@ -300,7 +309,7 @@ defmodule EzagentPluginAutoservice.OperatorLive do
 
   defp load_messages(nil, _), do: []
 
-  # session://cs/<ws>/<name> → "<name>"
+  # session://<ws>/cs/<name> → "<name>" (last path segment)
   defp customer_name(%URI{path: path}) do
     path |> String.split("/", trim: true) |> List.last() || "?"
   end
