@@ -12,6 +12,21 @@ defmodule EzagentPluginEcho.Integration.PluginContractTest do
 
   use ExUnit.Case, async: true
 
+  setup do
+    # The default echo agent (boot-spawned at `EzagentPluginEcho.Application`
+    # start) is a node-global singleton. Under the full-umbrella `async`
+    # run it can be transiently absent if a sibling test's sandbox owner
+    # exited mid-snapshot and crashed the Kind.Server (a sandbox-model
+    # artifact, not a production defect — prod uses the real pool, no
+    # per-test owner). Re-spawn idempotently so the boot-resolution
+    # assertion below starts from a live `echo_default`. This mirrors the
+    # established pattern in `f1_direct_invoke_test.exs`'s setup;
+    # `SpawnRegistry.spawn/1` returns the existing pid for an already-alive
+    # Kind, so this is a no-op when the singleton survived.
+    _ = Ezagent.SpawnRegistry.spawn(EzagentPluginEcho.Application.default_uri())
+    :ok
+  end
+
   test "echo plugin is registered in Ezagent.PluginRegistry after boot" do
     assert EzagentPluginEcho.Application in Ezagent.PluginRegistry.list_all(),
            "the real echo Application.start/2 → Ezagent.Plugin.boot/1 path " <>
