@@ -185,43 +185,50 @@ defmodule EzagentPluginAutoservice.Assembly do
     workspace_uri = Ezagent.URI.workspace(tid)
 
     # Create the DB user row with password (enables web login).
-    case Ezagent.Users.create(customer_uri, customer_name, []) do
-      {:ok, _decoded} ->
-        :ok
-
-      {:error, %Ecto.Changeset{errors: errors}} ->
-        if Keyword.has_key?(errors, :uri) do
+    # A URI unique-constraint violation means the customer already exists
+    # from a prior provision — that is the idempotent success case.
+    # Any other error is a real failure and must stop execution.
+    create_result =
+      case Ezagent.Users.create(customer_uri, customer_name, []) do
+        {:ok, _decoded} ->
           :ok
-        else
-          {:error, {:user_create_failed, errors}}
-        end
 
-      {:error, reason} ->
-        {:error, {:user_create_failed, reason}}
+        {:error, %Ecto.Changeset{errors: errors}} ->
+          if Keyword.has_key?(errors, :uri) do
+            # Duplicate URI — customer already exists; idempotent OK.
+            :ok
+          else
+            {:error, {:customer_create_failed, errors}}
+          end
+
+        {:error, reason} ->
+          {:error, {:customer_create_failed, reason}}
+      end
+
+    with :ok <- create_result do
+      # Add workspace membership (best-effort — already-member is ok).
+      _ = add_member(tid, customer_uri)
+
+      # Grant customer caps via dispatch (same pattern as Stage-1 seed).
+      grant_ctx = %{
+        caller: Ezagent.Entity.User.admin_uri(),
+        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        reply: {:caller_inbox, self()}
+      }
+
+      customer_caps = customer_cap_bundle(workspace_uri)
+
+      Enum.each(customer_caps, fn cap ->
+        Invocation.dispatch(%Invocation{
+          target: Ezagent.URI.new!("#{URI.to_string(customer_uri)}?action=identity.grant_cap"),
+          mode: :call,
+          args: %{cap: cap},
+          ctx: grant_ctx
+        })
+      end)
+
+      :ok
     end
-
-    # Add workspace membership (best-effort — already-member is ok).
-    _ = add_member(tid, customer_uri)
-
-    # Grant customer caps via dispatch (same pattern as Stage-1 seed).
-    grant_ctx = %{
-      caller: Ezagent.Entity.User.admin_uri(),
-      caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
-      reply: {:caller_inbox, self()}
-    }
-
-    customer_caps = customer_cap_bundle(workspace_uri)
-
-    Enum.each(customer_caps, fn cap ->
-      Invocation.dispatch(%Invocation{
-        target: Ezagent.URI.new!("#{URI.to_string(customer_uri)}?action=identity.grant_cap"),
-        mode: :call,
-        args: %{cap: cap},
-        ctx: grant_ctx
-      })
-    end)
-
-    :ok
   end
 
   defp add_member(tid, uri) do
