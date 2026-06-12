@@ -2,7 +2,7 @@ defmodule Ezagent.Socialware.OutboxTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Invocation, Message, MessageStore}
-  alias Ezagent.Entity.{SocialwareSession, User}
+  alias Ezagent.Entity.{Session, User}
   alias Ezagent.Socialware.{CustomerFeed, Settlement}
 
   defp session_uri do
@@ -31,9 +31,9 @@ defmodule Ezagent.Socialware.OutboxTest do
     workspace = Ezagent.Capability.workspace_of(session)
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(SocialwareSession, %{
+      Ezagent.Kind.spawn(Session, %{
         uri: session,
-        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+        behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)

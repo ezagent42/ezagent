@@ -11,7 +11,7 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
 
   alias Ezagent.Invocation
   alias Ezagent.Ecto.KindSnapshot
-  alias Ezagent.Entity.{SocialwareSession, User}
+  alias Ezagent.Entity.{Session, User}
   alias Ezagent.Socialware.{CustomerFeed, CustomerOutbox, SettlementRecord}
   alias EzagentCore.Repo
 
@@ -55,9 +55,9 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
     :ok = KindSnapshot.delete(URI.to_string(uri))
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(SocialwareSession, %{
+      Ezagent.Kind.spawn(Session, %{
         uri: uri,
-        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+        behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(uri, Ezagent.Capability.workspace_of(uri))

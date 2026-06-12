@@ -10,7 +10,7 @@ defmodule Ezagent.Socialware.CustomerPageCommitGateTest do
 
   alias Ezagent.Invocation
   alias Ezagent.Ecto.KindSnapshot
-  alias Ezagent.Entity.{SocialwareSession, User}
+  alias Ezagent.Entity.{Session, User}
   alias Ezagent.Socialware.CustomerFeed
 
   defp session_uri do
@@ -54,9 +54,9 @@ defmodule Ezagent.Socialware.CustomerPageCommitGateTest do
     :ok = KindSnapshot.delete(URI.to_string(uri))
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(SocialwareSession, %{
+      Ezagent.Kind.spawn(Session, %{
         uri: uri,
-        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+        behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(uri, Ezagent.Capability.workspace_of(uri))
@@ -198,7 +198,8 @@ defmodule Ezagent.Socialware.CustomerPageCommitGateTest do
 
       :ok =
         DynamicSupervisor.terminate_child(
-          EzagentDomainSocialware.SocialwareSessionSupervisor,
+          # P5-1b: unified `Entity.Session` runs under instance_message's supervisor.
+          EzagentDomainInstanceMessage.SessionSupervisor,
           pid
         )
 

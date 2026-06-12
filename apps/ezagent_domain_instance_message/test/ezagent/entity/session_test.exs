@@ -7,22 +7,32 @@ defmodule Ezagent.Entity.SessionTest do
       assert Session.type_name() == :session
     end
 
-    test "behaviors/0 returns [Chat, Publisher.SessionImpl, ExternalMirror] — PR-EM-0 added SessionImpl; PR-EM-3 added ExternalMirror" do
-      # SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
-      # §8.1: Session implements `@behaviour Ezagent.Behavior.Publisher`
-      # via the `Publisher.SessionImpl` Kind-Behavior, which owns the
-      # `:publisher` slice + serves the 3 publisher actions.
-      #
-      # SPEC §4.1 (PR-EM-3): Session ALSO hosts
-      # `Ezagent.Behavior.ExternalMirror` which owns the
-      # `:external_mirror` slice + the bind / unbind / list_bindings
-      # actions. Declared here so `init_slice/1` rehydrates the
-      # binding list from the projection table on Session boot
-      # AND `post_init/2` schedules the worker reconciliation.
+    test "behaviors/0 is the chat+socialware UNION (P5-1b collapse); the two subsets select per-instance" do
+      # P5-1b (socialware substrate collapse) — `Entity.Session` is the ONE
+      # parameterized Session Kind; `behaviors/0` is the UNION of the chat +
+      # socialware behavior sets. Templates pick the per-instance ACTIVE subset
+      # via the `:kind_base` set threaded at spawn (`chat_behaviors/0` vs
+      # `socialware_behaviors/0`); the P1 per-instance denial keeps a chat
+      # instance from invoking the socialware-only Turn/Surface actions.
       assert Session.behaviors() == [
                Ezagent.Behavior.Session,
                Ezagent.Behavior.Publisher.SessionImpl,
+               Ezagent.Behavior.ExternalMirror,
+               Ezagent.Behavior.Turn,
+               Ezagent.Behavior.Surface
+             ]
+
+      assert Session.chat_behaviors() == [
+               Ezagent.Behavior.Session,
+               Ezagent.Behavior.Publisher.SessionImpl,
                Ezagent.Behavior.ExternalMirror
+             ]
+
+      assert Session.socialware_behaviors() == [
+               Ezagent.Behavior.Session,
+               Ezagent.Behavior.Turn,
+               Ezagent.Behavior.Surface,
+               Ezagent.Behavior.Publisher.SessionImpl
              ]
     end
 

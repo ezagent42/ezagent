@@ -2,7 +2,7 @@ defmodule EzagentDomainSocialware.Integration.TurnCustomerFeedIntegrationTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Invocation, MessageStore}
-  alias Ezagent.Entity.{SocialwareSession, User}
+  alias Ezagent.Entity.{Session, User}
   alias Ezagent.Socialware.{CustomerAuth, CustomerFeed}
 
   defp session_uri do
@@ -47,9 +47,9 @@ defmodule EzagentDomainSocialware.Integration.TurnCustomerFeedIntegrationTest do
     workspace = Ezagent.Capability.workspace_of(session)
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(SocialwareSession, %{
+      Ezagent.Kind.spawn(Session, %{
         uri: session,
-        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+        behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)

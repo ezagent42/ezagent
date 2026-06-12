@@ -2,7 +2,7 @@ defmodule Ezagent.Socialware.CustomerLeakTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Message, MessageStore}
-  alias Ezagent.Entity.SocialwareSession
+  alias Ezagent.Entity.Session
   alias Ezagent.Socialware.{CustomerAuth, CustomerFeed, Settlement}
 
   defp session_uri do
@@ -20,9 +20,9 @@ defmodule Ezagent.Socialware.CustomerLeakTest do
     workspace = Ezagent.Capability.workspace_of(session)
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(SocialwareSession, %{
+      Ezagent.Kind.spawn(Session, %{
         uri: session,
-        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+        behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)

@@ -3,7 +3,7 @@ defmodule EzagentDomainSocialware.Integration.TurnSurvivesRestartTest do
 
   alias Ezagent.{Invocation, KindRegistry}
   alias Ezagent.Ecto.KindSnapshot
-  alias Ezagent.Entity.{SocialwareSession, User}
+  alias Ezagent.Entity.{Session, User}
 
   defp session_uri do
     Ezagent.URI.session(:team_alpha, :socialware, "restart-#{System.unique_integer([:positive])}")
@@ -50,9 +50,9 @@ defmodule EzagentDomainSocialware.Integration.TurnSurvivesRestartTest do
     :ok = KindSnapshot.delete(URI.to_string(session_uri))
 
     {:ok, pid1} =
-      Ezagent.Kind.spawn(SocialwareSession, %{
+      Ezagent.Kind.spawn(Session, %{
         uri: session_uri,
-        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+        behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok =
@@ -75,16 +75,17 @@ defmodule EzagentDomainSocialware.Integration.TurnSurvivesRestartTest do
 
     :ok =
       DynamicSupervisor.terminate_child(
-        EzagentDomainSocialware.SocialwareSessionSupervisor,
+        # P5-1b: unified `Entity.Session` runs under instance_message's supervisor.
+        EzagentDomainInstanceMessage.SessionSupervisor,
         pid1
       )
 
     wait_until(fn -> KindRegistry.lookup(session_uri) == :error end)
 
     {:ok, pid2} =
-      Ezagent.Kind.spawn(SocialwareSession, %{
+      Ezagent.Kind.spawn(Session, %{
         uri: session_uri,
-        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+        behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     refute pid1 == pid2

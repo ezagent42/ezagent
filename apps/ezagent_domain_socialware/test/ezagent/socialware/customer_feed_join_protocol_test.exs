@@ -12,7 +12,7 @@ defmodule Ezagent.Socialware.CustomerFeedJoinProtocolTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Message, MessageStore}
-  alias Ezagent.Entity.SocialwareSession
+  alias Ezagent.Entity.Session
   alias Ezagent.Socialware.{CustomerAuth, CustomerFeed, CustomerOutbox, Settlement}
   alias EzagentCore.Repo
 
@@ -31,9 +31,9 @@ defmodule Ezagent.Socialware.CustomerFeedJoinProtocolTest do
     workspace = Ezagent.Capability.workspace_of(session)
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(SocialwareSession, %{
+      Ezagent.Kind.spawn(Session, %{
         uri: session,
-        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+        behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
@@ -260,9 +260,9 @@ defmodule Ezagent.Socialware.CustomerFeedJoinProtocolTest do
       session_b = session_uri()
 
       {:ok, _pid} =
-        Ezagent.Kind.spawn(SocialwareSession, %{
+        Ezagent.Kind.spawn(Session, %{
           uri: session_b,
-          behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+          behaviors: Ezagent.Entity.Session.socialware_behaviors()
         })
 
       :ok = Ezagent.WorkspaceRegistry.bind(session_b, ctx.workspace)

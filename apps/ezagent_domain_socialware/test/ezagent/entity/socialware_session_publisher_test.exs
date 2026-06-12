@@ -15,14 +15,14 @@ defmodule Ezagent.Entity.SocialwareSessionPublisherTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Ecto.KindSnapshot
-  alias Ezagent.Entity.{SocialwareSession, User}
+  alias Ezagent.Entity.{Session, User}
   alias Ezagent.Invocation
 
   # `Ezagent.Kind.behaviors_of/1` gates on `function_exported?/3`, which under
   # Elixir 1.19 does NOT auto-load the target module. Force it loaded so the
   # introspection sees the `behaviors/0` callback (test-harness bind-point).
   setup_all do
-    Code.ensure_loaded!(SocialwareSession)
+    Code.ensure_loaded!(Session)
     :ok
   end
 
@@ -54,9 +54,9 @@ defmodule Ezagent.Entity.SocialwareSessionPublisherTest do
     :ok = KindSnapshot.delete(URI.to_string(session_uri))
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(SocialwareSession, %{
+      Ezagent.Kind.spawn(Session, %{
         uri: session_uri,
-        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+        behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok =
@@ -102,15 +102,16 @@ defmodule Ezagent.Entity.SocialwareSessionPublisherTest do
     end
   end
 
-  test "SocialwareSession composes Publisher.SessionImpl (the trunk)" do
-    behaviors = Ezagent.Kind.behaviors_of(SocialwareSession)
-    assert Ezagent.Behavior.Publisher.SessionImpl in behaviors
+  test "the unified Session composes Publisher.SessionImpl (the trunk) in its socialware subset" do
+    # P5-1b: the trunk is in the union declaration AND in the socialware subset.
+    assert Ezagent.Behavior.Publisher.SessionImpl in Ezagent.Kind.behaviors_of(Session)
+    assert Ezagent.Behavior.Publisher.SessionImpl in Ezagent.Entity.Session.socialware_behaviors()
 
-    slice_keys = Enum.map(behaviors, & &1.state_slice())
+    slice_keys = Enum.map(Ezagent.Entity.Session.socialware_behaviors(), & &1.state_slice())
     assert :publisher in slice_keys
   end
 
-  test "a spawned SocialwareSession has a :publisher slice" do
+  test "a spawned socialware-subset Session has a :publisher slice" do
     session_uri = spawn_session()
 
     assert {:ok, %{ring: [], cursor: 0}} = Ezagent.Kind.get_slice(session_uri, :publisher)
