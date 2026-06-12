@@ -6,7 +6,8 @@ defmodule Ezagent.Socialware.Settlement do
   import Ecto.Query
 
   alias Ezagent.MessageStore
-  alias Ezagent.Socialware.{CustomerFeed, CustomerOutbox, SettlementMessage, SettlementRecord}
+  alias Ezagent.Session.CustomerDelivery
+  alias Ezagent.Socialware.{CustomerOutbox, SettlementMessage, SettlementRecord}
   alias EzagentCore.Repo
 
   @visibility_flipped "visibility_flipped"
@@ -131,7 +132,7 @@ defmodule Ezagent.Socialware.Settlement do
       if emitted? do
         Phoenix.PubSub.broadcast(
           EzagentCore.PubSub,
-          CustomerFeed.topic(Ezagent.URI.new!(settlement.session_uri)),
+          CustomerDelivery.topic(Ezagent.URI.new!(settlement.session_uri)),
           {:customer_delivery, %{message_ids: message_ids}}
         )
       end

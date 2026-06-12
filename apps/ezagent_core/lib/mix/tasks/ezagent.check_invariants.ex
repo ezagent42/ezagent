@@ -120,9 +120,9 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
             "| grep -v 'apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex' " <>
             "| grep -v 'apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex' " <>
             "| grep -v 'apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex' " <>
-            "| grep -v 'apps/ezagent_domain_socialware/lib/ezagent/socialware/settlement.ex' " <>
+            "| grep -v 'apps/ezagent_domain_instance_message/lib/ezagent/socialware/settlement.ex' " <>
             "| grep -v 'apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/presence_fanout.ex' " <>
-            "| grep -v 'apps/ezagent_domain_instance_message/lib/ezagent/chat/read_marker.ex' " <>
+            "| grep -v 'apps/ezagent_domain_instance_message/lib/ezagent/session/read_marker.ex' " <>
             "| grep -v 'apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/mcp_channel.ex' " <>
             "| grep -v 'ezagent.check_invariants.ex' " <>
             "| grep -v '^[^:]*:[0-9]*:[[:space:]]*#' " <>

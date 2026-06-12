@@ -139,7 +139,7 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         # skip+log). This is ctx CONSTRUCTION feeding the chokepoint, NOT a
         # cap-gate decision outside it — same class as the home_live wizard
         # and the session_creator idempotency reads above.
-        "apps/ezagent_domain_socialware/lib/ezagent/behavior/turn.ex"
+        "apps/ezagent_domain_instance_message/lib/ezagent/behavior/turn.ex"
       ]
     },
     %{

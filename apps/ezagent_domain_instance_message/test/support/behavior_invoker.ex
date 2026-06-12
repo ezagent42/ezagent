@@ -96,6 +96,14 @@ defmodule EzagentDomainInstanceMessage.Test.BehaviorInvoker do
       |> Map.put_new(:read, fn key, default -> Map.get(slice, key, default) end)
       |> Map.put_new(:transients, slice)
 
+    # Ensure the behavior module is loaded before probing with
+    # `function_exported?/3` — it reports `false` for a not-yet-loaded module
+    # even when the clause exists. Most im behaviors are eagerly loaded by the
+    # app boot, but session behaviors registered by a sibling app (e.g. Turn /
+    # Surface, registered by the socialware app) are lazy when im is tested
+    # standalone, so the probe would spuriously miss their handlers.
+    _ = Code.ensure_loaded(behavior_module)
+
     if function_exported?(behavior_module, handler, 2) do
       case apply(behavior_module, handler, [args, enriched_ctx]) do
         {:ok, result, effects} when is_list(effects) ->

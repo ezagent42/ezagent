@@ -33,6 +33,7 @@ defmodule EzagentWeb.Socialware.CustomerChannel do
   """
   use Phoenix.Channel
 
+  alias Ezagent.Session.CustomerDelivery
   alias Ezagent.Socialware.CustomerFeed
   alias EzagentWeb.Socialware.FeedEncoding
 
@@ -44,7 +45,7 @@ defmodule EzagentWeb.Socialware.CustomerChannel do
     # Step 1: subscribe FIRST so no advisory is lost while the snapshot is read.
     with true <- session_str == URI.to_string(session_uri),
          :ok <-
-           Phoenix.PubSub.subscribe(EzagentCore.PubSub, CustomerFeed.topic(session_uri)),
+           Phoenix.PubSub.subscribe(EzagentCore.PubSub, CustomerDelivery.topic(session_uri)),
          # Steps 2-3: lower-bound capture -> gated snapshot -> replay -> cursor.
          {:ok, %{snapshot: snapshot, cursor: cursor}} <- CustomerFeed.join(session_uri, token) do
       {:ok, %{snapshot: encode_snapshot(snapshot)}, assign(socket, :feed_cursor, cursor)}

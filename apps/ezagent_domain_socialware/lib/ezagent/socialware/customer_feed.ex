@@ -9,6 +9,7 @@ defmodule Ezagent.Socialware.CustomerFeed do
   import Ecto.Query
 
   alias Ezagent.{Behavior.Surface, MessageStore}
+  alias Ezagent.Session.CustomerDelivery
   alias Ezagent.Socialware.{CustomerAuth, CustomerOutbox}
   alias Ezagent.URI, as: EzURI
   alias EzagentCore.Repo
@@ -16,8 +17,13 @@ defmodule Ezagent.Socialware.CustomerFeed do
   @history_limit 100
   @approved_scan_limit 500
 
+  @doc """
+  Thin delegator — the canonical customer-delivery topic builder now lives in
+  `Ezagent.Session.CustomerDelivery` (instance_message). Kept so existing
+  callers of `CustomerFeed.topic/1` do not churn.
+  """
   @spec topic(URI.t()) :: String.t()
-  def topic(%URI{} = session_uri), do: "socialware:customer:" <> URI.to_string(session_uri)
+  def topic(%URI{} = session_uri), do: CustomerDelivery.topic(session_uri)
 
   @spec snapshot(URI.t(), String.t()) :: {:ok, map()} | {:error, :unauthorized}
   def snapshot(%URI{} = session_uri, token) do
