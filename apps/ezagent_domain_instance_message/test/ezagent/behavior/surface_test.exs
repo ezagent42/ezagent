@@ -1,8 +1,8 @@
-defmodule EzagentDomainSocialware.Behavior.SurfaceTest do
+defmodule EzagentDomainInstanceMessage.Behavior.SurfaceTest do
   use ExUnit.Case, async: true
 
   alias Ezagent.Behavior.Surface
-  alias EzagentDomainSocialware.Test.BehaviorInvoker, as: Invoker
+  alias EzagentDomainInstanceMessage.Test.BehaviorInvoker, as: Invoker
 
   defp session_uri do
     Ezagent.URI.session(:team_alpha, :socialware, "surface-#{System.unique_integer([:positive])}")

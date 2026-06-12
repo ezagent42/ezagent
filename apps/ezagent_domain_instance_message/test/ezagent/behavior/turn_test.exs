@@ -1,9 +1,9 @@
-defmodule EzagentDomainSocialware.Behavior.TurnTest do
+defmodule EzagentDomainInstanceMessage.Behavior.TurnTest do
   use ExUnit.Case, async: true
 
   alias Ezagent.Behavior.Turn
   alias Ezagent.Cmd
-  alias EzagentDomainSocialware.Test.BehaviorInvoker, as: Invoker
+  alias EzagentDomainInstanceMessage.Test.BehaviorInvoker, as: Invoker
 
   defp session_uri do
     Ezagent.URI.session(:team_alpha, :socialware, "unit-#{System.unique_integer([:positive])}")
