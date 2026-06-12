@@ -1,6 +1,6 @@
 # 员工工作台 — 页面 UI 设计文档
 
-> 状态：Draft v0.1（2026-06-12）
+> 状态：Draft v0.2（2026-06-12，随架构文档 v0.4 同步三轮评审修订）
 > 配套：`2026-06-12-employee-dashboard-design.md`（架构与分期，决策 1 = v3 路线②：PR-0 先修 loom URI canonical 债）；需求源 Module B
 > 本文件回答两个问题：**页面怎么布局**、**每个区域是什么功能**
 
@@ -53,7 +53,7 @@
 | 区 | 功能 | 数据源 | 交互 |
 |---|---|---|---|
 | 顶部问候条 | 姓名 + 需关注数（红色 SLA 会话计数），点击数字 → 页面 B 并筛"需要关注" | SLA 聚合 | 点击跳转 |
-| **A1 我的渠道** | admin 授权给我的渠道列表；每行：渠道 icon+名、**聚合 SLA 点**（该渠道最差会话的颜色）、活跃会话数 | workspace member declaration 的 `channels:` 标注 | 点渠道 → 页面 B 左栏定位到该渠道分组 |
+| **A1 我的渠道** | admin 授权给我的渠道列表；每行：渠道 icon+名、**聚合 SLA 点**（该渠道最差会话的颜色）、活跃会话数 | v0 渠道 = Web（恒有）∪ 飞书（binding 表有绑定的）；授权过滤数据源 = PR-2 的 per-tenant channels 表 | 点渠道 → 页面 B 左栏定位到该渠道分组 |
 | **A2 我的业绩** | 今日 4 指标：会话数 / 接管次数 / 平均首响 / CSAT（占位"—"，标 tooltip"评分入口未开通"） | 业绩聚合查询（PR-4 前显示占位骨架） | [详情] → 页面 C；[问 operator-agent] → 页面 C 并聚焦聊天框 |
 | **A3 活跃会话** | 跨渠道合并的活跃会话表，每行：SLA 点、客户标识、渠道、**当前处理者**（"AI 接待中" / "您已接管" / "王五处理中"）、最后消息摘要、距今时间。**卡头带"我的客户 N"计数**——手册 B.1②"您负责的客户群体"由本卡 + 页面 C3 客户类型分布共同承接 | `SessionContext.list_sessions_for` + 授权过滤 + 末条消息 | [进入] → 页面 B 打开该会话 |
 | **A4 沙箱入口** | 一句话引导 + 进入按钮 | — | → 页面 D |
@@ -76,7 +76,7 @@
 │ 筛选:     │ │ Marie · WhatsApp · EN→中  [Auto|Copilot|Takeover]│ │ 本会话 AI 同事  │
 │ [全部]    │ ├─────────────────────────────────────────┤ │ ● 接待AI  空闲  │
 │ [🔴需关注]│ │ 客户: Is it waterproof?            10:02 │ │ ● 业务AI  思考中│
-│ [我接管的]│ │ 🤖接待AI: Yes! The ZL series is...  10:02 │ │ ● 翻译AI  空闲  │
+│ [我接管的]│ │ 🤖接待AI: Yes! The ZL series is...  10:02 │ │ ● 页面AI  空闲  │
 │          │ │ 客户: reviews from US buyers?      10:04 │ │                 │
 │ ▾ WhatsApp│ │ ┄┄🔒您→AI团队: 提一下 RE100 认证┄┄ 10:05 │ │ 客户上下文      │
 │  🔴 Marie │ │ 🤖业务AI: We're RE100 certified...  10:06 │ │ 来源: WhatsApp  │
@@ -102,13 +102,13 @@
 
 ### B2 · 会话区（中）
 
-**B2a header**：客户标识 · 渠道 · 语言对（翻译 AI 检测）· **三模式切换器**（页面最重要的控件）
+**B2a header**：客户标识 · 渠道 · 语言对（**占位**——loom team 无翻译 AI、系统无语言检测器，待后端事实）· **三模式切换器**（页面最重要的控件）
 
 | 模式 | 切换器状态 | 含义（手册 B.3） | loom 实现（决策 2026-06-12 v3：路线② + loom 旁路，见架构文档 §5） |
 |---|---|---|---|
 | **Auto** | 默认 | AI 独立处理，员工纯旁观 | 现状即是：orchestrator 正常应答 |
 | **Copilot** | 一键切 | 员工私密建议给 AI，客户不可见 | composer 内容经 `:coach` dispatch 直达 orchestrator slice，**对客户下一条消息后的回复生效**（无在飞插入；立即纠错用 Takeover）；建议不进 session 消息流 |
-| **Takeover** | 一键切 | 员工直接发消息，客户感觉是真人 | orchestrator `:standby`（对**下一条**客户消息生效；在飞回合可点"中断生成"）+ 员工 `chat.send` 直接回复（客户页渲染 **staff 气泡**） |
+| **Takeover** | 一键切 | 员工直接发消息，客户感觉是真人 | orchestrator `:standby`（对**下一条**客户消息生效；在飞回合可点"中断生成"——claude_code 真中断 / deepseek 只清 pending 不停在跑生成，文案按后端区分）+ 员工 `chat.send` 直接回复（客户页渲染 **staff 气泡**） |
 
 **模式指示器不是独立 UI 状态——它是 orchestrator slice 的 `collab_mode/owner`
 投影**（字段命名与 socialware Turn 对齐，为迁移留直通道）。
@@ -174,7 +174,7 @@ standby 期间客户新消息记入 `unanswered`，工作台高亮"客户有新�
 |---|---|
 | C1 KPI 行 | 5 指标卡；CSAT 灰显"—"+ tooltip；可切 今日/本周/本月 |
 | C2 趋势 | 近 7 日会话量 bar（纯 HEEx/SVG，不引图表库） |
-| C3 分布 | 客户类型 = 渠道 × 检测语言 的粗分布 |
+| C3 分布 | 客户类型 = 渠道 ×（语言占位——无检测器前先只按渠道分） |
 | C4 operator-agent | 对话区 + **预置问题 chips**（对照手册 B.4 对话示例）；"帮我在沙箱跑一下" chip 在 PR-5 前回复"沙箱即将上线" |
 
 ---
@@ -209,7 +209,7 @@ D2 练习中:
 | 项 | 设计 |
 |---|---|
 | **可见性安全** | Copilot 私密内容是本设计最大风险面。原则：**不靠过滤、靠根本不进 session 消息流**（loom 的 `/stream` SSE 与飞书镜像都是全量推送，写进去就等于泄漏）——建议/系统提示走 `:coach` dispatch + 旁路存储；PR-3 带不变式测试（coach 内容在 MessageStore 零记录）。样式上锁形角标 + 虚线必须无歧义 |
-| 会话占用 | orchestrator slice 的 `owner` 是其他员工的会话：模式切换器禁用 + 显示"王五处理中"，可观察不可操作。互斥在 `:set_collab_mode` action 内校验 caller==owner 做实，UI 禁用只是表象 |
+| 会话占用 | orchestrator slice 的 `owner` 是其他员工的会话：模式切换器禁用 + 显示"王五处理中"，可观察不可操作。互斥在全部新 action 内校验 caller==owner **或 admin** 做实（admin override = owner 下班未释放的逃生通道，三轮 M-6）；owner 为 nil 时首次 set 即认领 |
 | 降级 | AI 成员全部无响应 >30s：B3 面板红色提示"AI 同事未响应，建议 Takeover" |
 | 响应式 | v0 桌面优先；窄屏 B1/B3 折叠为抽屉 |
 | i18n | 全部文案走 gettext（员工界面中文优先） |
