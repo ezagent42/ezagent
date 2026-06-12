@@ -302,8 +302,8 @@ defmodule EzagentPluginAutoservice.OperatorLive do
   def render(assigns) do
     ~H"""
     <div class="h-[calc(100vh-1rem)] m-2 flex gap-2">
-      <aside class="w-72 flex flex-col rounded-xl border border-gray-200 bg-white overflow-hidden">
-        <header class="px-4 py-3 border-b bg-gray-800 text-white flex items-center justify-between">
+      <aside class="w-72 flex flex-col rounded-xl border border-zinc-200 bg-white overflow-hidden">
+        <header class="px-4 py-3 border-b bg-zinc-800 text-white flex items-center justify-between">
           <div>
             <h1 class="font-semibold text-sm">客服工作台</h1>
             <p class="text-[11px] opacity-70">{workspace_label(@workspace_uri)}</p>
@@ -313,34 +313,34 @@ defmodule EzagentPluginAutoservice.OperatorLive do
           </button>
         </header>
         <div class="flex-1 overflow-y-auto">
-          <p :if={@sessions == []} class="p-4 text-sm text-gray-400">该工作区暂无客服会话</p>
+          <p :if={@sessions == []} class="p-4 text-sm text-zinc-400">该工作区暂无客服会话</p>
           <button
             :for={s <- @sessions}
             phx-click="select"
             phx-value-uri={s.str}
             class={[
-              "w-full text-left px-4 py-3 border-b hover:bg-gray-50",
+              "w-full text-left px-4 py-3 border-b hover:bg-zinc-50",
               selected_match?(@selected, s.uri) && "bg-blue-50"
             ]}
           >
-            <div class="text-sm font-medium text-gray-800">客户:{s.name}</div>
-            <div class="text-[11px] text-gray-400 truncate">{s.str}</div>
+            <div class="text-sm font-medium text-zinc-800">客户:{s.name}</div>
+            <div class="text-[11px] text-zinc-400 truncate">{s.str}</div>
           </button>
         </div>
       </aside>
 
-      <main class="flex-1 flex flex-col rounded-xl border border-gray-200 bg-white overflow-hidden">
+      <main class="flex-1 flex flex-col rounded-xl border border-zinc-200 bg-white overflow-hidden">
         <div
           :if={is_nil(@selected)}
-          class="flex-1 flex items-center justify-center text-gray-400 text-sm"
+          class="flex-1 flex items-center justify-center text-zinc-400 text-sm"
         >
           从左侧选择一个客户会话进入
         </div>
 
         <%= if @selected do %>
-          <header class="px-4 py-3 border-b bg-gray-50">
-            <h2 class="font-semibold text-sm text-gray-800">客户:{customer_name(@selected)}</h2>
-            <p class="text-[11px] text-gray-400">{URI.to_string(@selected)}</p>
+          <header class="px-4 py-3 border-b bg-zinc-50">
+            <h2 class="font-semibold text-sm text-zinc-800">客户:{customer_name(@selected)}</h2>
+            <p class="text-[11px] text-zinc-400">{URI.to_string(@selected)}</p>
           </header>
           <ChatUI.message_list messages={@messages} empty_hint="该会话还没有消息" />
           <ChatUI.composer nonce={@compose_nonce} placeholder="以人工客服身份回复客户…" />

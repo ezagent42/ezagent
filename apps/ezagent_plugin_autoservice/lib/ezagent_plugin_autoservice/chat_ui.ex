@@ -42,8 +42,8 @@ defmodule EzagentPluginAutoservice.ChatUI do
 
   def message_list(assigns) do
     ~H"""
-    <div class="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
-      <p :if={@messages == []} class="text-center text-sm text-gray-400 mt-8">{@empty_hint}</p>
+    <div class="flex-1 overflow-y-auto p-4 space-y-3 bg-zinc-50">
+      <p :if={@messages == []} class="text-center text-sm text-zinc-400 mt-8">{@empty_hint}</p>
       <div :for={m <- @messages} class={["flex", (m.mine? && "justify-end") || "justify-start"]}>
         <div class={["max-w-[72%] rounded-2xl px-3 py-2 text-sm shadow-sm", bubble_class(m)]}>
           <div class="text-[11px] opacity-60 mb-0.5">{m.label}</div>
@@ -55,9 +55,9 @@ defmodule EzagentPluginAutoservice.ChatUI do
   end
 
   defp bubble_class(%{mine?: true}), do: "bg-blue-600 text-white"
-  defp bubble_class(%{label: "AI 客服"}), do: "bg-white border border-gray-200 text-gray-800"
+  defp bubble_class(%{label: "AI 客服"}), do: "bg-white border border-zinc-200 text-zinc-800"
   defp bubble_class(%{label: "人工客服"}), do: "bg-emerald-100 text-emerald-900"
-  defp bubble_class(_), do: "bg-gray-200 text-gray-700"
+  defp bubble_class(_), do: "bg-zinc-200 text-zinc-700"
 
   attr(:placeholder, :string, default: "输入消息…")
   attr(:nonce, :integer, default: 0)
@@ -77,7 +77,7 @@ defmodule EzagentPluginAutoservice.ChatUI do
         placeholder={@placeholder}
         autocomplete="off"
         disabled={@disabled}
-        class="flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+        class="flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-zinc-100"
       />
       <button
         type="submit"
