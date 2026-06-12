@@ -1,6 +1,11 @@
 # AutoService V2 — 设计实现缺口 & 技术上下文
 
 > 分析日期: 2026-06-12 | 可交付给下一个实施 session
+>
+> **📋 已整合为实施回顾**: 本文档的缺口分析 + 调试记录 + M2 retro + Phase C 流程退化已统一整合到
+> [`docs/superpowers/retros/2026-06-12-autoservice-v2-implementation-retro.md`](superpowers/retros/2026-06-12-autoservice-v2-implementation-retro.md)
+> — 包含 prd2impl 流程退化链、M2 NO-GO 裁决、调试问题、技术约束、Lessons Learned。
+> 本文档保留作为快速参考。
 
 ## 快速导航
 
