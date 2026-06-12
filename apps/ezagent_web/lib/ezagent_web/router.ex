@@ -106,6 +106,12 @@ defmodule EzagentWeb.Router do
     live_session :autoservice_operator, on_mount: {EzagentWeb.LiveAuth, :require_entity} do
       live "/autoservice/operator", OperatorLive
     end
+
+    # Stage F3: tenant admin console (soul/slots edit + CR publish + skill list + preview).
+    # Cap-gated: content:write check inside the LV; :require_entity ensures login.
+    live_session :autoservice_admin, on_mount: {EzagentWeb.LiveAuth, :require_entity} do
+      live "/autoservice/admin", Admin.TenantAdminLive
+    end
   end
 
   scope "/", EzagentPluginLiveview do
