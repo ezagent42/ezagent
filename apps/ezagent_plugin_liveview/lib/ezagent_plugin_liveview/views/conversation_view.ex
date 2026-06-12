@@ -46,7 +46,15 @@ defmodule EzagentPluginLiveview.Views.ConversationView do
       end)
 
     ~H"""
-    <div class="flex-1 flex flex-col min-h-0">
+    <div class="flex-1 flex flex-col min-h-0 relative">
+      <%!-- 一键回到最新:翻看历史(未贴底)时由 ScrollOnUpdate 钩子显示;点了滚到底。 --%>
+      <button
+        type="button"
+        id="jump-latest-btn"
+        class="hidden absolute bottom-4 right-4 z-10 px-3 py-1.5 rounded-full shadow-md bg-blue-600 text-white text-xs hover:bg-blue-700"
+      >
+        ↓ {gettext("Jump to latest")}
+      </button>
       <div
         :if={@oldest_cursor}
         class="text-center py-1 bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800 shrink-0"
@@ -114,6 +122,15 @@ defmodule EzagentPluginLiveview.Views.ConversationView do
             </span>
             <span>·</span>
             <span>{format_time(row.at)}</span>
+            <%!-- 复制消息内容(委托监听见 app.js 的 [data-copy] handler)。 --%>
+            <button
+              :if={row.text != ""}
+              type="button"
+              data-copy={row.text}
+              data-label={gettext("Copy")}
+              title={gettext("Copy message")}
+              class="ml-auto text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+            >{gettext("Copy")}</button>
           </div>
           <div class="font-mono text-[10px] text-zinc-400 dark:text-zinc-600 break-all">
             {row.sender}
@@ -128,7 +145,15 @@ defmodule EzagentPluginLiveview.Views.ConversationView do
           <div
             :if={row.text != ""}
             class="mt-1 text-sm whitespace-pre-wrap break-words"
+            style={collapse_style(row.text)}
           >{row.text}</div>
+          <%!-- 过长消息折叠:初始 clamp(见 collapse_style),点切换(app.js [data-collapse-toggle])。 --%>
+          <button
+            :if={long_text?(row.text)}
+            type="button"
+            data-collapse-toggle
+            class="mt-0.5 text-[11px] text-blue-600 dark:text-blue-400 hover:underline"
+          >{gettext("Show all")} ▼</button>
           <div :if={attachments_of(row) != []} class="mt-2 flex gap-1 flex-wrap">
             <a
               :for={{name, href} <- attachments_of(row)}
@@ -147,6 +172,12 @@ defmodule EzagentPluginLiveview.Views.ConversationView do
 
   defp format_time(%DateTime{} = dt), do: Calendar.strftime(dt, "%H:%M")
   defp format_time(_), do: ""
+
+  # 过长消息折叠:超阈值的初始 clamp 到 16rem(JS 切换展开/收起)。
+  @collapse_threshold 600
+  defp long_text?(t) when is_binary(t), do: String.length(t) > @collapse_threshold
+  defp long_text?(_), do: false
+  defp collapse_style(t), do: if(long_text?(t), do: "max-height:16rem;overflow:hidden", else: nil)
 
   defp attachments_of(%{attachments: list}) when is_list(list), do: list
   defp attachments_of(_), do: []

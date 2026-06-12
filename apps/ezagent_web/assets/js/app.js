@@ -47,12 +47,34 @@ import {ViewportMarkRead} from "./hooks/viewport_mark_read"
 // from a prepend — adjust scrollTop by the delta to compensate.
 const ScrollOnUpdate = {
   _firstChildId() { return this.el.firstElementChild ? this.el.firstElementChild.id : null },
+  _nearBottom() {
+    const el = this.el
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 80
+  },
+  // 滚到底:用 rAF 等新流入的节点完成布局后再量高度,否则新消息会"出现在下方看不到"。
+  _toBottom() {
+    requestAnimationFrame(() => { this.el.scrollTop = this.el.scrollHeight })
+  },
+  _btn() { return document.getElementById("jump-latest-btn") },
+  _syncBtn() {
+    const b = this._btn()
+    if (b) b.classList.toggle("hidden", this._nearBottom())
+  },
   mounted() {
-    this.el.scrollTop = this.el.scrollHeight
+    this._toBottom()
     this._prevHeight = this.el.scrollHeight
     this._prevFirstId = this._firstChildId()
+    // 用户滚动 → 更新"回到最新"按钮显隐。
+    this.el.addEventListener("scroll", () => this._syncBtn(), { passive: true })
+    // "回到最新"按钮点击 → 滚到底。
+    const b = this._btn()
+    if (b) b.addEventListener("click", () => this._toBottom())
+    this._syncBtn()
   },
   beforeUpdate() {
+    // 关键修复:更新前记下"是否本来就贴着底",只有贴底时才跟随新消息往下;
+    // 滚上去看历史时,新消息进来**不动**(不再被拽回最新)。
+    this._wasNearBottom = this._nearBottom()
     this._prevHeight = this.el.scrollHeight
     this._prevScrollTop = this.el.scrollTop
     this._prevFirstId = this._firstChildId()
@@ -63,20 +85,39 @@ const ScrollOnUpdate = {
     const firstChanged = this._firstChildId() !== this._prevFirstId
 
     if (grew > 0 && firstChanged) {
-      // Prepend (e.g. "↑ Load older"). Scroll up to reveal the newly
-      // added older messages while keeping previously-visible content
-      // still on screen as the user's anchor.
+      // 前插("↑ 加载更早"):保持当前可见内容为锚点,往上露出新加载的旧消息。
       el.scrollTop = grew
-    } else {
-      // Append (new chat message). Follow it down iff already near bottom.
-      const wasNearBottom =
-        (this._prevHeight || 0) - (this._prevScrollTop || 0) - el.clientHeight < 120
-      if (wasNearBottom) el.scrollTop = el.scrollHeight
+    } else if (this._wasNearBottom) {
+      // 追加(新消息)且本来贴底 → 跟随到底(rAF 后量高度,确保新消息可见)。
+      this._toBottom()
     }
     this._prevHeight = el.scrollHeight
     this._prevFirstId = this._firstChildId()
+    this._syncBtn()
   }
 }
+
+// 复制已发送的消息:点带 `[data-copy]` 的按钮 → 复制其 data-copy 文本(委托监听,适配 stream)。
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest && e.target.closest("[data-copy]")
+  if (!btn) return
+  const text = btn.getAttribute("data-copy") || ""
+  const done = () => { const o = btn.getAttribute("data-label") || ""; btn.textContent = "✓"; setTimeout(() => { btn.textContent = o }, 1100) }
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, () => {})
+})
+
+// 折叠/展开过长消息:点 `[data-collapse-toggle]` → 切换相邻消息文本的高度 clamp(内联样式,无需 CSS)。
+document.addEventListener("click", (e) => {
+  const t = e.target.closest && e.target.closest("[data-collapse-toggle]")
+  if (!t) return
+  const box = t.previousElementSibling
+  if (!box) return
+  if (box.style.maxHeight) {
+    box.style.maxHeight = ""; box.style.overflow = ""; t.textContent = "收起 ▲"
+  } else {
+    box.style.maxHeight = "16rem"; box.style.overflow = "hidden"; t.textContent = "展开全部 ▼"
+  }
+})
 
 // Domain.Pty PR-C (2026-05-21): the xterm.js PtyTerminal hook moved
 // to apps/ezagent_web/assets/js/hooks/pty_terminal.js. Import is at

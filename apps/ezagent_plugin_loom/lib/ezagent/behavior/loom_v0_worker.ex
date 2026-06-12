@@ -82,7 +82,8 @@ defmodule Ezagent.Behavior.LoomV0Worker do
              temperature: 0.7,
              thinking_disabled: true,
              group: group_id(ctx),
-             materials_dir: materials_dir
+             materials_dir: materials_dir,
+             role: "v0"
            ) do
         # 用户中止 → 静默丢弃:不发 page_update、不发 error 卡 → :loom_source 不变、页面不变。
         {:error, :stopped} ->

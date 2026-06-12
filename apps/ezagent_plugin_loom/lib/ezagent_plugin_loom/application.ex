@@ -93,6 +93,8 @@ defmodule EzagentPluginLoom.Application do
     try do
       :ok = Ezagent.UI.SessionViewRegistry.init()
       :ok = Ezagent.UI.SessionViewRegistry.register(Ezagent.PluginLoom.View.LoomSessionView)
+      # 2026-06-12 — loom session 的 Dashboard tab(token/分享/素材/团队统计)。
+      :ok = Ezagent.UI.SessionViewRegistry.register(Ezagent.PluginLoom.View.LoomDashboardView)
     rescue
       e ->
         require Logger

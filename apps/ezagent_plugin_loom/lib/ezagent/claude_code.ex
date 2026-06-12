@@ -111,7 +111,16 @@ defmodule EzagentPluginLoom.ClaudeCode do
         # group(通常=session 字符串):用于"停止"——同 group 的在跑 claude 会被
         # `stop/1` 一起中断。nil → 不注册(行为同前)。
         group = opts[:group]
-        rctx = %{cwd: if(read_files?, do: String.to_charlist(materials_dir), else: nil), read_files: read_files?}
+        # 2026-06-12 — token 统计:role(v0/orchestrator/worker…)随调用,result 事件的 usage
+        # 累加进 `Stats`(按 session=group + role)。
+        role = to_string(opts[:role] || "other")
+
+        rctx = %{
+          cwd: if(read_files?, do: String.to_charlist(materials_dir), else: nil),
+          read_files: read_files?,
+          role: role
+        }
+
         run_with_retry(bin, prompt, system, idle, attempts, group, rctx)
     end
   end
@@ -308,7 +317,7 @@ defmodule EzagentPluginLoom.ClaudeCode do
         write_stdin(os_pid, prompt)
 
         try do
-          collect_stream(os_pid, "", "", idle, group)
+          collect_stream(os_pid, "", "", idle, group, rctx.role)
         after
           deregister_run(group, os_pid)
         end
@@ -333,7 +342,7 @@ defmodule EzagentPluginLoom.ClaudeCode do
   # 才 fire(= 真卡死)。stdout 行里出现 result 事件 → 完成。
   # 2026-06-09:每个 stdout chunk 里的 partial-message token(text/thinking delta)
   # 抽出来**广播到进度 topic**(group=session 字符串),供编辑页实时显示 v0 生成过程。
-  defp collect_stream(os_pid, buf, errbuf, idle, group) do
+  defp collect_stream(os_pid, buf, errbuf, idle, group, role) do
     receive do
       # 用户中止(stop/1 发来):SIGINT 子进程 + 立即返回 :stopped,上层据此丢弃。
       :stop_requested ->
@@ -344,22 +353,22 @@ defmodule EzagentPluginLoom.ClaudeCode do
         {lines, rest} = split_lines(buf <> chunk)
         publish_progress(group, extract_progress(lines))
 
-        case scan_result(lines) do
+        case scan_result(lines, group, role) do
           {:done, result} ->
             safe_stop(os_pid)
             result
 
           :continue ->
-            collect_stream(os_pid, rest, errbuf, idle, group)
+            collect_stream(os_pid, rest, errbuf, idle, group, role)
         end
 
       {:stderr, ^os_pid, chunk} ->
         # stderr 也算"活着";留尾部供报错。
-        collect_stream(os_pid, buf, truncate(errbuf <> chunk, 500), idle, group)
+        collect_stream(os_pid, buf, truncate(errbuf <> chunk, 500), idle, group, role)
 
       {:DOWN, ^os_pid, :process, _pid, _reason} ->
         # 进程退出且 stdout 分支没截到 result → 最后再扫一遍 buf,否则报错。
-        finalize(buf, errbuf)
+        finalize(buf, errbuf, group, role)
     after
       idle ->
         safe_stop(os_pid)
@@ -412,15 +421,32 @@ defmodule EzagentPluginLoom.ClaudeCode do
     end
   end
 
-  # 在已完整的行里找 stream-json 的 result 事件;找到 → {:done, decode结果}。
-  defp scan_result(lines) do
+  # 在已完整的行里找 stream-json 的 result 事件;找到 → 累加 token usage + {:done, decode结果}。
+  defp scan_result(lines, group, role) do
     Enum.reduce_while(lines, :continue, fn line, _acc ->
       case result_event(line) do
-        nil -> {:cont, :continue}
-        obj -> {:halt, {:done, decode_result(obj)}}
+        nil ->
+          {:cont, :continue}
+
+        obj ->
+          tally_usage(group, role, obj)
+          {:halt, {:done, decode_result(obj)}}
       end
     end)
   end
+
+  # result 事件里的 `usage` → 累加进本 session 的 token 统计(input 含 cache 读/写)。
+  defp tally_usage(group, role, %{"usage" => u}) when is_binary(group) and is_map(u) do
+    input =
+      (u["input_tokens"] || 0) + (u["cache_read_input_tokens"] || 0) +
+        (u["cache_creation_input_tokens"] || 0)
+
+    output = u["output_tokens"] || 0
+    _ = Ezagent.PluginLoom.Stats.add_tokens(group, input, output, role)
+    :ok
+  end
+
+  defp tally_usage(_, _, _), do: :ok
 
   defp result_event(line) do
     case String.trim(line) do
@@ -446,10 +472,10 @@ defmodule EzagentPluginLoom.ClaudeCode do
   defp decode_result(other),
     do: {:error, {:decode, {:unexpected_shape, other}}}
 
-  defp finalize(buf, errbuf) do
+  defp finalize(buf, errbuf, group, role) do
     {lines, last} = split_lines(buf)
 
-    case scan_result(lines ++ [last]) do
+    case scan_result(lines ++ [last], group, role) do
       {:done, result} -> result
       :continue -> {:error, {:no_result, truncate(errbuf, 240)}}
     end
