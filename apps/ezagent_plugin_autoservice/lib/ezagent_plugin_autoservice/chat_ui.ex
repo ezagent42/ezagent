@@ -25,6 +25,7 @@ defmodule EzagentPluginAutoservice.ChatUI do
   end
 
   defp label_for(_sender, true), do: "我"
+
   defp label_for(%URI{scheme: "entity"} = sender, _) do
     case Ezagent.URI.type(sender) do
       {:ok, "agent"} -> "AI 客服"
@@ -36,8 +37,8 @@ defmodule EzagentPluginAutoservice.ChatUI do
   defp label_for(%URI{scheme: "system"}, _), do: "AI 客服"
   defp label_for(_sender, _), do: "系统"
 
-  attr :messages, :list, required: true
-  attr :empty_hint, :string, default: "暂无消息"
+  attr(:messages, :list, required: true)
+  attr(:empty_hint, :string, default: "暂无消息")
 
   def message_list(assigns) do
     ~H"""
@@ -58,13 +59,17 @@ defmodule EzagentPluginAutoservice.ChatUI do
   defp bubble_class(%{label: "人工客服"}), do: "bg-emerald-100 text-emerald-900"
   defp bubble_class(_), do: "bg-gray-200 text-gray-700"
 
-  attr :placeholder, :string, default: "输入消息…"
-  attr :nonce, :integer, default: 0
-  attr :disabled, :boolean, default: false
+  attr(:placeholder, :string, default: "输入消息…")
+  attr(:nonce, :integer, default: 0)
+  attr(:disabled, :boolean, default: false)
 
   def composer(assigns) do
     ~H"""
-    <form id={"autoservice-composer-#{@nonce}"} phx-submit="send" class="flex gap-2 p-3 border-t bg-white">
+    <form
+      id={"autoservice-composer-#{@nonce}"}
+      phx-submit="send"
+      class="flex gap-2 p-3 border-t bg-white"
+    >
       <input
         type="text"
         name="text"
@@ -72,7 +77,7 @@ defmodule EzagentPluginAutoservice.ChatUI do
         placeholder={@placeholder}
         autocomplete="off"
         disabled={@disabled}
-        class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+        class="flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
       />
       <button
         type="submit"

@@ -11,7 +11,13 @@ defmodule EzagentWeb.Router do
 
   alias EzagentPluginAutoservice.{CustomerLive, OperatorLive}
   alias EzagentPluginLiveview.Master.MasterDashboardLive
-  alias EzagentPluginLiveview.Tenant.{TenantOnboardLive, TenantDashboardLive, CrDashboardLive, OperatorsLive}
+
+  alias EzagentPluginLiveview.Tenant.{
+    TenantOnboardLive,
+    TenantDashboardLive,
+    CrDashboardLive,
+    OperatorsLive
+  }
 
   pipeline :browser do
     plug :accepts, ["html"]
