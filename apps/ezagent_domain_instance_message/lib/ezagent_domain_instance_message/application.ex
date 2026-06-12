@@ -844,22 +844,25 @@ defmodule EzagentDomainInstanceMessage.Application do
       :ok = CapabilityRegistry.register(SessionTemplate, action, TemplateB)
     end)
 
-    # ExternalMirror PR-EM-0 (SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
-    # §8.1, Allen 2026-05-25) — register the `Ezagent.Behavior.Publisher.SessionImpl`
-    # Kind-Behavior on `Ezagent.Entity.Session`. The three publisher
-    # actions (`:publisher_subscribe_from`, `:publisher_snapshot`,
-    # `:publisher_history`) gate via standard step 5.5 CapBAC; the
-    # session-side implementation owns the `:publisher` slice +
-    # subscribes to its own SliceChange topic via `post_init/2`'s
-    # continuation. SessionImpl is registered ONLY against Session
-    # because Session is the V1 publisher (option (a) — implementer
-    # lives in the publishing domain). Future publisher Kinds will
-    # add their own per-Kind registration alongside this one.
+    # ExternalMirror PR-EM-0 (SPEC §8.1, Allen 2026-05-25) — register
+    # `Ezagent.Behavior.Publisher.SessionImpl` on `Ezagent.Entity.Session`.
+    # It OWNS the `:publisher` slice (in `Session.behaviors/0`, materializes
+    # the ring) + self-subscribes to its SliceChange topic in `activate/2`.
+    #
+    # P5-A (codex H3; Allen option B) — only `:subscribe_from` is registered
+    # here now. The READ actions (`:snapshot`/`:history`) MOVED to the unified
+    # MEMBERSHIP-gated read (`SocialwarePublisherRead`: cap-EXEMPT + a live
+    # `ChatMembership` owner/member check), registered for `{Session,
+    # :snapshot|:history}` in SOCIALWARE's `application.ex`. Cross-app
+    # placement is forced by the dep direction: `SocialwarePublisherRead` +
+    # `ChatMembership` live in `ezagent_domain_socialware`; `instance_message`
+    # does NOT depend on socialware so it CANNOT name them here, but
+    # `socialware` DOES depend on `instance_message` so it CAN name `Session`.
+    # Keeping the read-action registration here too would COLLIDE
+    # (`CapabilityRegistry.register/3` raises on a `{Kind, action}` conflict).
     alias Ezagent.Behavior.Publisher.SessionImpl, as: PublisherSI
 
-    Enum.each(PublisherSI.actions(), fn action ->
-      :ok = CapabilityRegistry.register(Session, action, PublisherSI)
-    end)
+    :ok = CapabilityRegistry.register(Session, :subscribe_from, PublisherSI)
 
     # ExternalMirror PR-EM-3 (SPEC §4.1 / §9 PR-EM-3) — register
     # the `Ezagent.Behavior.ExternalMirror` (bind / unbind /

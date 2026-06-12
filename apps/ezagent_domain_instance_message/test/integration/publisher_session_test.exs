@@ -53,7 +53,12 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
     {:ok, _pid} =
       Ezagent.Kind.spawn(Session, %{
         uri: session_uri,
-        behaviors: Ezagent.Entity.Session.behaviors()
+        behaviors: Ezagent.Entity.Session.behaviors(),
+        # P5-A: `:snapshot`/`:history` are now MEMBERSHIP-gated (cap-exempt +
+        # a live `ChatMembership` owner/member check), so the `admin_ctx`
+        # reader must be the session OWNER to pass authz. (`:subscribe_from`
+        # is still cap-gated, so admin's bootstrap caps cover it regardless.)
+        owner_uri: User.admin_uri()
       })
 
     :ok =

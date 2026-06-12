@@ -55,9 +55,18 @@ defmodule Ezagent.Behavior.SocialwarePublisherReadRegistrationTest do
     refute :subscribe_from in SocialwarePublisherRead.actions()
   end
 
-  test "the chat Session keeps its OWN Publisher.SessionImpl read registration (unchanged)" do
-    assert BR.lookup(Session, :snapshot) == {:ok, Publisher.SessionImpl}
-    assert BR.lookup(Session, :history) == {:ok, Publisher.SessionImpl}
+  test "P5-A: the chat Session's READS are now the unified membership-gated SocialwarePublisherRead" do
+    # P5-A (codex H3; Allen option B) — BOTH Kinds' `:snapshot`/`:history`
+    # reads route through the SAME membership-gated read behavior
+    # (`SocialwarePublisherRead`: cap-exempt + live `ChatMembership`
+    # owner/member check). The chat Session's read-action registration moved
+    # off `Publisher.SessionImpl`.
+    assert BR.lookup(Session, :snapshot) == {:ok, SocialwarePublisherRead}
+    assert BR.lookup(Session, :history) == {:ok, SocialwarePublisherRead}
+
+    # `:subscribe_from` is UNCHANGED — still the chat publisher's cap-gated
+    # streaming subscribe (`Publisher.SessionImpl`), which retains the
+    # `:publisher` slice ownership too.
     assert BR.lookup(Session, :subscribe_from) == {:ok, Publisher.SessionImpl}
   end
 
