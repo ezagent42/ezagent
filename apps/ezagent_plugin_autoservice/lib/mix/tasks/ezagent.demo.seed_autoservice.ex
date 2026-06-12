@@ -1,5 +1,5 @@
 defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
-  @shortdoc "Seed the cinnox autoservice demo tenant (workspace + roles + agents + sessions)"
+  @shortdoc "Seed an autoservice demo tenant (workspace + roles + agents + sessions; --tenant, default cinnox)"
   @moduledoc """
   > **Demo seeder** (Category A, same class as `ezagent.demo.seed_cc_agent`).
   > Runs in its own BEAM via `Application.ensure_all_started/1`; the
@@ -30,6 +30,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
       mix ezagent.demo.seed_autoservice
 
       # options
+      mix ezagent.demo.seed_autoservice --tenant acme    # seed an `acme` tenant (default: cinnox)
       mix ezagent.demo.seed_autoservice --customers alice,bob,carol
       mix ezagent.demo.seed_autoservice --with-slow      # also spawn cc slow agents (needs claude)
       mix ezagent.demo.seed_autoservice --deepseek-key sk-...
@@ -49,7 +50,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
   import Ecto.Query
   alias EzagentPluginAutoservice.{CustomerSession, Roles}
 
-  @workspace_name "cinnox"
+  @default_tenant "cinnox"
   @default_customers ["alice", "bob"]
   @admin_short "admin"
   @operator_short "op"
@@ -58,8 +59,10 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
   def run(argv) do
     {opts, _rest, _} =
       OptionParser.parse(argv,
-        strict: [customers: :string, with_slow: :boolean, deepseek_key: :string]
+        strict: [tenant: :string, customers: :string, with_slow: :boolean, deepseek_key: :string]
       )
+
+    tid = opts[:tenant] || @default_tenant
 
     {:ok, _} = Application.ensure_all_started(:ezagent_core)
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_identity)
@@ -78,21 +81,22 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
 
     customers = parse_customers(opts[:customers])
 
-    workspace_uri = Ezagent.URI.new!("workspace://#{@workspace_name}")
+    workspace_uri = Ezagent.URI.new!("workspace://#{tid}")
     ctx = mix_task_ctx()
 
-    Mix.shell().info("Seeding autoservice tenant `#{@workspace_name}` …")
+    Mix.shell().info("Seeding autoservice tenant `#{tid}` …")
 
     # Idempotency: delete existing users from the DB first.
-    :ok = delete_existing_users()
+    :ok = delete_existing_users(tid)
 
-    :ok = ensure_workspace()
+    :ok = ensure_workspace(tid)
 
     # Create all users first.
-    :ok = seed_role_user(@admin_short, :admin, workspace_uri, ctx)
-    :ok = seed_role_user(@operator_short, :operator, workspace_uri, ctx)
+    :ok = seed_role_user(tid, @admin_short, :admin, workspace_uri, ctx)
+    :ok = seed_role_user(tid, @operator_short, :operator, workspace_uri, ctx)
+
     Enum.each(customers, fn name ->
-      :ok = seed_role_user(name, :customer, workspace_uri, ctx)
+      :ok = seed_role_user(tid, name, :customer, workspace_uri, ctx)
     end)
 
     # Default SessionTemplate for native /sessions UI.
@@ -104,10 +108,10 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
     # greeting).
     results =
       Enum.map(customers, fn name ->
-        customer_uri = user_uri(name)
+        customer_uri = user_uri(tid, name)
 
         case CustomerSession.provision(customer_uri,
-               tid: @workspace_name,
+               tid: tid,
                workspace_uri: workspace_uri,
                ctx: ctx,
                deepseek_key: deepseek_key,
@@ -121,13 +125,13 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
         end
       end)
 
-    print_summary(results, deepseek_key, with_slow?)
+    print_summary(tid, results, deepseek_key, with_slow?)
   end
 
   # --- steps ----------------------------------------------------------
 
-  defp delete_existing_users do
-    workspace_uri = Ezagent.URI.new!("workspace://#{@workspace_name}")
+  defp delete_existing_users(tid) do
+    workspace_uri = Ezagent.URI.new!("workspace://#{tid}")
 
     users = Ezagent.Users.list_in_workspace(workspace_uri)
 
@@ -138,9 +142,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
       Enum.each(users, fn user ->
         uri_str = URI.to_string(user.uri)
 
-        case EzagentCore.Repo.delete_all(
-               from(u in Ezagent.Users, where: u.uri == ^uri_str)
-             ) do
+        case EzagentCore.Repo.delete_all(from(u in Ezagent.Users, where: u.uri == ^uri_str)) do
           {n, _} when n > 0 ->
             Mix.shell().info("  deleted user #{uri_str}")
 
@@ -157,26 +159,26 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
     end
   end
 
-  defp ensure_workspace do
-    case Ezagent.Workspace.create(@workspace_name, %{}) do
+  defp ensure_workspace(tid) do
+    case Ezagent.Workspace.create(tid, %{}) do
       {:ok, _pid} ->
-        Mix.shell().info("  workspace://#{@workspace_name} created")
+        Mix.shell().info("  workspace://#{tid} created")
         :ok
 
       {:error, :workspace_exists} ->
-        Mix.shell().info("  workspace://#{@workspace_name} already exists")
+        Mix.shell().info("  workspace://#{tid} already exists")
         :ok
 
       {:error, {:already_started, _pid}} ->
-        Mix.shell().info("  workspace://#{@workspace_name} already exists")
+        Mix.shell().info("  workspace://#{tid} already exists")
         :ok
 
       {:error, reason} ->
         # Some create paths return {:error, :already_exists}-style atoms;
         # treat a live workspace Kind as success.
-        case Ezagent.KindRegistry.lookup(Ezagent.URI.new!("workspace://#{@workspace_name}")) do
+        case Ezagent.KindRegistry.lookup(Ezagent.URI.new!("workspace://#{tid}")) do
           {:ok, _pid} ->
-            Mix.shell().info("  workspace://#{@workspace_name} already exists")
+            Mix.shell().info("  workspace://#{tid} already exists")
             :ok
 
           :error ->
@@ -188,8 +190,8 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
   # Create the user row (idempotent) with default + role caps, then add
   # to the workspace member set. `Ezagent.Users.create/3` prepends
   # `User.default_caps/1`; `Roles.bundle/2` supplies the extras.
-  defp seed_role_user(short, role, workspace_uri, _ctx) do
-    uri = user_uri(short)
+  defp seed_role_user(tid, short, role, workspace_uri, _ctx) do
+    uri = user_uri(tid, short)
     password = short
     extra_caps = Roles.bundle(role, workspace_uri)
 
@@ -208,12 +210,13 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
         Mix.raise("user create failed for #{URI.to_string(uri)}: #{inspect(reason)}")
     end
 
-    _ = add_member(uri)
+    _ = add_member(tid, uri)
 
     # Grant role caps via dispatch so they land in the Identity slice.
     # Use :call (synchronous) — the seed VM exits after this function,
     # so :cast would be dropped before the Kind is ready.
     grant_ctx = Map.put(mix_task_ctx(), :reply, {:caller_inbox, self()})
+
     Enum.each(extra_caps, fn cap ->
       case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
              target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=identity.grant_cap"),
@@ -221,8 +224,11 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
              args: %{cap: cap},
              ctx: grant_ctx
            }) do
-        {:ok, _result} -> :ok
-        {:error, reason} -> Mix.shell().info("  grant_cap #{URI.to_string(uri)}: #{inspect(reason)}")
+        {:ok, _result} ->
+          :ok
+
+        {:error, reason} ->
+          Mix.shell().info("  grant_cap #{URI.to_string(uri)}: #{inspect(reason)}")
       end
     end)
 
@@ -263,8 +269,8 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
     :ok
   end
 
-  defp add_member(uri) do
-    Ezagent.Workspace.add_member(@workspace_name, uri)
+  defp add_member(tid, uri) do
+    Ezagent.Workspace.add_member(tid, uri)
   rescue
     e ->
       Mix.shell().info("  (add_member #{URI.to_string(uri)} skipped: #{inspect(e)})")
@@ -286,7 +292,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
     end
   end
 
-  defp user_uri(short), do: Ezagent.URI.new!("entity://#{@workspace_name}/user/#{short}")
+  defp user_uri(tid, short), do: Ezagent.URI.new!("entity://#{tid}/user/#{short}")
 
   defp mix_task_ctx do
     %{
@@ -295,7 +301,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
     }
   end
 
-  defp print_summary(results, deepseek_key, with_slow?) do
+  defp print_summary(tid, results, deepseek_key, with_slow?) do
     key_note =
       if deepseek_key in [nil, ""] do
         "\n  ⚠ No DeepSeek key (set DEEPSEEK_API_KEY) — fast agents post the greeting " <>
@@ -316,15 +322,15 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
 
     Mix.shell().info("""
 
-    autoservice demo tenant `#{@workspace_name}` seeded#{if with_slow?, do: " (with slow cc agents)", else: ""}.
+    autoservice demo tenant `#{tid}` seeded#{if with_slow?, do: " (with slow cc agents)", else: ""}.
 
     #{Enum.join(lines, "\n")}
     #{key_note}
 
     Login at /login (password = the user's short name):
-      admin:     entity://#{@workspace_name}/user/#{@admin_short}
-      operator:  entity://#{@workspace_name}/user/#{@operator_short}
-      customers: #{results |> Enum.map(fn {n, _, _} -> "entity://#{@workspace_name}/user/#{n}" end) |> Enum.join(", ")}
+      admin:     entity://#{tid}/user/#{@admin_short}
+      operator:  entity://#{tid}/user/#{@operator_short}
+      customers: #{results |> Enum.map(fn {n, _, _} -> "entity://#{tid}/user/#{n}" end) |> Enum.join(", ")}
 
     Start the server with `mix phx.server`, then:
       • customer → /autoservice (their service session, fast agent greeting)
