@@ -575,7 +575,16 @@ defmodule EzagentPluginLiveview.AutoService.TenantAdminLive do
     ~H"""
     <div class="max-w-4xl mx-auto p-6 space-y-6">
       <div class="flex items-center justify-between">
-        <h1 class="text-xl font-bold text-gray-900">租户内容管理控制台</h1>
+        <div class="flex items-center gap-3">
+          <a
+            :if={@tid}
+            href={"/admin/autoservice/tenants/#{@tid}"}
+            class="text-sm text-gray-500 hover:text-gray-900"
+          >
+            ← 返回控制台
+          </a>
+          <h1 class="text-xl font-bold text-gray-900">租户内容管理控制台</h1>
+        </div>
         <span class="text-xs text-gray-400">{@tid || "(no tenant)"} · role={@role}</span>
       </div>
 

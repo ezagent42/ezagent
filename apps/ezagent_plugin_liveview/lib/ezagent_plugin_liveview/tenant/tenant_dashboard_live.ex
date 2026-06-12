@@ -24,7 +24,7 @@ defmodule EzagentPluginLiveview.Tenant.TenantDashboardLive do
      |> assign(:tid, tid)
      |> assign(:config, config)
      |> assign(:cr, cr)
-     |> assign(:version, cr && cr["published_version"] || gettext("none"))
+     |> assign(:version, (cr && cr["published_version"]) || gettext("none"))
      |> assign(:flash_info, nil)}
   end
 
@@ -90,7 +90,10 @@ defmodule EzagentPluginLiveview.Tenant.TenantDashboardLive do
         </:subtitle>
       </.page_header>
 
-      <p :if={@flash_info} class="mb-4 text-sm text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950 p-3 rounded-md">
+      <p
+        :if={@flash_info}
+        class="mb-4 text-sm text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950 p-3 rounded-md"
+      >
         {@flash_info}
       </p>
 
@@ -213,6 +216,12 @@ defmodule EzagentPluginLiveview.Tenant.TenantDashboardLive do
             class="block p-3 border border-zinc-200 dark:border-zinc-800 rounded-md hover:bg-zinc-50 dark:hover:bg-zinc-800 text-sm"
           >
             {gettext("Operators")} →
+          </a>
+          <a
+            href="/autoservice/admin"
+            class="block p-3 border border-zinc-200 dark:border-zinc-800 rounded-md hover:bg-zinc-50 dark:hover:bg-zinc-800 text-sm"
+          >
+            {gettext("Content Edit")} →
           </a>
         </div>
       </.card>
