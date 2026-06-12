@@ -41,7 +41,12 @@ defmodule EzagentPluginAutoservice.TurnAdapter do
     Invocation.dispatch(%Invocation{
       target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=turn.compose"),
       mode: :call,
-      args: %{turn_id: turn_id, result_refs: [%{agent: au, text: text}]},
+      # `kind: :chat` is REQUIRED: `Turn.handle_compose` only writes a chat
+      # message (and records its id for settlement → customer delivery) for refs
+      # whose kind is :chat/:message. Without it the reply is never persisted as
+      # a customer-deliverable message, the settlement has no target_message_ids,
+      # and the operator reply silently never reaches the customer feed.
+      args: %{turn_id: turn_id, result_refs: [%{kind: :chat, agent: au, text: text}]},
       ctx: system_ctx()
     })
   end
