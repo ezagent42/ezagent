@@ -102,7 +102,7 @@ defmodule Ezagent.Integration.AddTemplateInvokesTest do
 
     @impl true
     def instantiate(_tmpl_name, %{"probe_name" => name}, _workspace_uri) do
-      uri = URI.parse("probe-v1fix://#{name}")
+      uri = URI.new!("probe-v1fix://#{name}")
 
       case SpawnRegistry.spawn(uri) do
         {:ok, _pid} -> {:ok, [uri]}
@@ -135,7 +135,7 @@ defmodule Ezagent.Integration.AddTemplateInvokesTest do
     test "after add_template returns :ok, the spawned Kind is alive in KindRegistry" do
       workspace_name = "v1-fix-add-tmpl-#{System.unique_integer([:positive])}"
       probe_name = "v1-fix-probe-#{System.unique_integer([:positive])}"
-      probe_uri = URI.parse("probe-v1fix://#{probe_name}")
+      probe_uri = URI.new!("probe-v1fix://#{probe_name}")
 
       # 1. Persist + spawn the Workspace Kind (workspace must be alive
       #    for add_template's dispatch_mutation to land).
@@ -173,7 +173,7 @@ defmodule Ezagent.Integration.AddTemplateInvokesTest do
     test "WorkspaceRegistry binding is set after add_template's instantiate (invariant 4)" do
       workspace_name = "v1-fix-bind-#{System.unique_integer([:positive])}"
       probe_name = "v1-fix-bind-probe-#{System.unique_integer([:positive])}"
-      probe_uri = URI.parse("probe-v1fix://#{probe_name}")
+      probe_uri = URI.new!("probe-v1fix://#{probe_name}")
       workspace_uri = Ezagent.Entity.Workspace.uri_for(workspace_name)
 
       {:ok, _ws_pid} = Workspace.create(workspace_name, %{})
@@ -200,7 +200,7 @@ defmodule Ezagent.Integration.AddTemplateInvokesTest do
       # crash on `{:error, {:already_started, _}}` — that's success.
       workspace_name = "v1-fix-idem-#{System.unique_integer([:positive])}"
       probe_name = "v1-fix-idem-probe-#{System.unique_integer([:positive])}"
-      probe_uri = URI.parse("probe-v1fix://#{probe_name}")
+      probe_uri = URI.new!("probe-v1fix://#{probe_name}")
 
       {:ok, _ws_pid} = Workspace.create(workspace_name, %{})
 
