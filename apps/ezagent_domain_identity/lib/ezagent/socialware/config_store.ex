@@ -21,13 +21,15 @@ defmodule Ezagent.Socialware.ConfigStore do
           required(:previous_config_id) => String.t() | nil
         }
 
-  @spec write_config(map()) :: {:ok, ConfigObject.t()} | {:error, Ecto.Changeset.t()}
-  def write_config(attrs) when is_map(attrs) do
-    attrs
-    |> object_attrs()
-    |> ConfigObject.changeset()
-    |> Repo.insert()
-  end
+  # PR-7 (LOW) — the public object-only insert (`write_config/1`) was REMOVED.
+  # The ONLY public durable-write path is now the atomic `write_and_point/1`
+  # (object + pointer in one transaction). A public object-only insert let a
+  # caller create an ORPHAN object (object with no pointer advancing to it),
+  # breaking the "object-existence ⟺ applied" invariant the PR-6/7 recovery +
+  # idempotency logic now relies on (`applied_for_turn?/1`, `object_for_turn/1`).
+  # Tests that legitimately need an object WITHOUT a pointer (config-object
+  # materialization by URI; the unique-constraint check) build the changeset
+  # directly via the `ConfigObject` schema (no production entry point).
 
   @spec write_and_point(map()) :: {:ok, write_result()} | {:error, term()}
   def write_and_point(attrs) when is_map(attrs) do
@@ -216,44 +218,32 @@ defmodule Ezagent.Socialware.ConfigStore do
   end
 
   @doc """
-  CE-2/CE-3 — the object id the CURRENT pointer for `subject_uri`/`key`
-  resolves to, IF that object was minted for `turn_id`; `:none` otherwise.
+  CE-2/CE-3 (PR-7) — OBJECT-EXISTENCE idempotency lookup: the id of the
+  `ConfigObject` whose `source_turn_id == turn_id`, or `:none`.
+
+  This is the OBJECT-EXISTENCE companion to `applied_for_turn?/1` (which only
+  returns a boolean). It does NOT join the CURRENT pointer, so it is consistent
+  for a SUPERSEDED turn: applying turn B on top of turn A leaves A's object
+  intact (objects are append-only), so `object_for_turn(A)` still resolves A's
+  historical id even after the pointer has advanced off A onto B.
 
   Used by `Ezagent.Behavior.ConfigEvolve` to make `apply_config_delta`
-  idempotent: re-dispatching a turn whose object is already the live pointer
-  returns the existing object instead of minting a new one. Scoped to the
-  agent's own layer + workspace (the agent applies config to itself).
+  idempotent on BOTH the serial pre-check AND the unique-constraint conflict
+  path: re-dispatching ANY already-applied turn (current OR superseded) returns
+  that turn's historical object id (a string) instead of minting a new object —
+  satisfying the `config_id: :string` action contract. The `write_and_point/1`
+  unique index on `(workspace, subject, key, source_turn_id)` guarantees at
+  most one object per turn, so this is unambiguous.
   """
-  @spec pointer_object_for_turn(atom() | String.t(), URI.t() | String.t(), String.t(), String.t()) ::
-          {:ok, String.t()} | :none
-  def pointer_object_for_turn(layer, subject_uri, key, turn_id)
-      when is_binary(key) and is_binary(turn_id) do
-    case Ezagent.URI.workspace_of(uri!(subject_uri)) do
-      %URI{} = workspace_uri ->
-        subject = uri_string!(subject_uri)
-        workspace = uri_string!(workspace_uri)
-        pointer_id = ConfigPointer.id(normalize_layer!(layer), workspace, subject, key)
-
-        query =
-          from(p in ConfigPointer,
-            join: o in ConfigObject,
-            on: o.id == p.config_id,
-            where: p.id == ^pointer_id and o.source_turn_id == ^turn_id,
-            select: o.id
-          )
-
-        case Repo.one(query) do
-          nil -> :none
-          object_id -> {:ok, object_id}
-        end
-
-      :any ->
-        :none
+  @spec object_for_turn(String.t()) :: {:ok, String.t()} | :none
+  def object_for_turn(turn_id) when is_binary(turn_id) do
+    case Repo.one(
+           from(o in ConfigObject, where: o.source_turn_id == ^turn_id, select: o.id, limit: 1)
+         ) do
+      nil -> :none
+      object_id -> {:ok, object_id}
     end
   end
-
-  defp uri!(%URI{} = uri), do: uri
-  defp uri!(uri) when is_binary(uri), do: Ezagent.URI.new!(uri)
 
   @doc """
   Fetch an immutable config object by id.

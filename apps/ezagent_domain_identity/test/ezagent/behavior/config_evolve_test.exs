@@ -20,7 +20,7 @@ defmodule Ezagent.Behavior.ConfigEvolveTest do
 
   alias Ezagent.{Invocation, CreatorGrant}
   alias Ezagent.Entity.{Agent, User}
-  alias Ezagent.Socialware.{ConfigProjection, ConfigStore}
+  alias Ezagent.Socialware.{ConfigObject, ConfigProjection, ConfigStore}
 
   @cascade_key "advisor.behavior"
 
@@ -305,21 +305,31 @@ defmodule Ezagent.Behavior.ConfigEvolveTest do
        %{agent: agent, workspace: workspace} do
     turn_id = "t-dup-#{System.unique_integer([:positive])}"
 
-    attrs = fn ->
+    # PR-7 — `ConfigStore.write_config/1` (the public object-only insert) was
+    # removed (the only public durable-write path is now the atomic
+    # `write_and_point/1`). This test genuinely needs to drive the OBJECT-level
+    # unique index directly (object without pointer), so it inserts via the
+    # `ConfigObject` schema changeset — the clearly-named test-only seam. (No
+    # production code can mint an orphan object.)
+    object_attrs = fn ->
       %{
-        layer: :user,
-        workspace_uri: workspace,
-        subject_uri: agent,
+        id: Ecto.UUID.generate(),
+        workspace_uri: URI.to_string(workspace),
+        subject_uri: URI.to_string(agent),
         key: @cascade_key,
         body: %{"tone" => "x"},
-        actor_uri: agent,
+        created_by: URI.to_string(agent),
         source_turn_id: turn_id
       }
     end
 
-    assert {:ok, _first} = ConfigStore.write_config(attrs.())
+    insert_object = fn ->
+      object_attrs.() |> ConfigObject.changeset() |> EzagentCore.Repo.insert()
+    end
 
-    assert {:error, %Ecto.Changeset{} = changeset} = ConfigStore.write_config(attrs.())
+    assert {:ok, _first} = insert_object.()
+
+    assert {:error, %Ecto.Changeset{} = changeset} = insert_object.()
 
     assert {"already applied for this turn", _} =
              changeset.errors[:source_turn_id] || changeset.errors[:id],
@@ -379,6 +389,55 @@ defmodule Ezagent.Behavior.ConfigEvolveTest do
     assert wait_until(fn -> sandbox_user_layer_uri(agent) == want end),
            "idempotent re-apply did NOT refresh the stale sandbox cache (got " <>
              "#{inspect(sandbox_user_layer_uri(agent))}, want #{want})"
+  end
+
+  # ---- PR-7 — redelivery of a SUPERSEDED turn (object-existence idempotency) -
+
+  # The MED blocker: handler idempotency was POINTER-aware
+  # (`pointer_object_for_turn`), inconsistent with the object-existence
+  # `applied_for_turn?/1`. When turn A is superseded by turn B, a REDELIVERY of
+  # A found `pointer_object_for_turn(A) == :none` (the pointer is now B), so it
+  # proceeded to `write_and_point`, hit the unique index, and the conflict path
+  # returned `%{config_id: nil}` + `[]` — violating the `config_id: :string`
+  # contract and skipping the sandbox refresh.
+  #
+  # PR-7 makes the pre-check OBJECT-EXISTENCE-consistent: A's historical object
+  # still exists, so redelivering A returns A's object id (a string) WITHOUT
+  # minting/repointing, and the sandbox refresh targets the CURRENT pointer (B)
+  # — so redelivering a superseded turn does NOT revert the cache to A.
+  test "redelivery of a SUPERSEDED turn returns its historical config_id (string) and does NOT revert the pointer/sandbox (PR-7)",
+       %{agent: agent, workspace: workspace} do
+    seed_sandbox_cascade(agent, workspace)
+    manager = grant_manage_cap(agent, workspace)
+    turn_a = "t-sup-redeliver-A-#{System.unique_integer([:positive])}"
+    turn_b = "t-sup-redeliver-B-#{System.unique_integer([:positive])}"
+
+    {:ok, %{config_id: cid_a}} = apply_delta(agent, manager, turn_a, %{"tone" => "A"})
+    {:ok, %{config_id: cid_b}} = apply_delta(agent, manager, turn_b, %{"tone" => "B"})
+    assert cid_b != cid_a
+    assert {:ok, ^cid_b} = ConfigStore.current_user_object(agent, @cascade_key)
+
+    want_b = URI.to_string(ConfigProjection.object_uri(workspace, cid_b))
+    assert wait_until(fn -> sandbox_user_layer_uri(agent) == want_b end)
+
+    count = config_object_count()
+
+    # Redeliver the SUPERSEDED turn A. It must return A's HISTORICAL object id
+    # (a string, NOT nil), mint no new object, and leave the pointer on B.
+    {:ok, reply} = apply_delta(agent, manager, turn_a, %{"tone" => "ignored"})
+    assert is_binary(reply.config_id)
+    assert reply.config_id == cid_a
+    assert config_object_count() == count
+    assert {:ok, ^cid_b} = ConfigStore.current_user_object(agent, @cascade_key)
+
+    # The sandbox refresh on the idempotent path targets the CURRENT pointer (B),
+    # NOT the redelivered superseded turn A — it never reverts to A.
+    want_a = URI.to_string(ConfigProjection.object_uri(workspace, cid_a))
+    assert sandbox_user_layer_uri(agent) != want_a
+
+    assert wait_until(fn -> sandbox_user_layer_uri(agent) == want_b end),
+           "idempotent redelivery of superseded turn A reverted/failed to keep the sandbox on B " <>
+             "(got #{inspect(sandbox_user_layer_uri(agent))}, want #{want_b})"
   end
 
   # ========================================================================

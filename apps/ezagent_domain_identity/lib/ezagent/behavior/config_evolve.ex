@@ -65,8 +65,6 @@ defmodule Ezagent.Behavior.ConfigEvolve do
 
   use Ezagent.Lifecycle
 
-  require Logger
-
   alias Ezagent.Socialware.{ConfigProjection, ConfigStore}
 
   # rev-4: step 1 / reconcile read the agent's OWN Sandbox cascade in-process
@@ -226,19 +224,27 @@ defmodule Ezagent.Behavior.ConfigEvolve do
          # mutate B (cross-agent confused-deputy). Bind both to `self_uri`
          # BEFORE any store write.
          {:ok, attrs} <- assert_subject_self(attrs, ctx) do
-      # CE-2 — idempotency (SERIAL re-dispatch): if this turn already settled
-      # (the current pointer resolves an object for this turn), RETURN the
-      # existing result without minting a new object / repointing. Checked
-      # AFTER self-binding so the lookup is scoped to self.
+      # CE-2 (PR-7) — idempotency (SERIAL re-dispatch), OBJECT-EXISTENCE-keyed
+      # to match `applied_for_turn?/1`: if an object stamped with this `turn_id`
+      # already exists, this turn was ALREADY applied → RETURN that object's
+      # HISTORICAL id (a string — contract `config_id: :string` satisfied)
+      # without minting a new object / repointing. Object existence is
+      # permanent (objects are append-only), so this covers BOTH the
+      # CURRENT-turn redelivery AND a SUPERSEDED-turn redelivery (turn A after
+      # turn B advanced the pointer off A) — the prior pointer-aware
+      # `pointer_object_for_turn` mismatched and fell through to the unique
+      # index + a `config_id: nil` no-op. Checked AFTER self-binding so the
+      # lookup is scoped to self.
       #
-      # ITEM 3 (PR-6) — the idempotent path emits the SAME deferred
-      # sandbox.write_path projection (computed from the CURRENT object), NOT
-      # `[]`. A redelivery after a lost step-2 thus self-heals the Sandbox
-      # cache instead of waiting for the next boot reconcile.
-      case ConfigStore.pointer_object_for_turn(attrs.layer, attrs.subject_uri, attrs.key, turn_id) do
+      # ITEM 3 (PR-6/7) — the idempotent path emits the deferred
+      # sandbox.write_path projection of the CURRENT pointer object (NOT the
+      # redelivered, possibly-superseded turn's object), so a redelivery
+      # self-heals the cache to the live config (B) and NEVER reverts it to a
+      # superseded turn (A). If there is no current pointer object, emit none.
+      case ConfigStore.object_for_turn(turn_id) do
         {:ok, existing_id} ->
           {:ok, %{config_id: existing_id, previous_config_id: nil},
-           sandbox_write_effects(ctx, attrs, existing_id)}
+           sandbox_refresh_current_pointer(ctx, attrs)}
 
         :none ->
           do_apply_config_delta(turn_id, attrs, ctx)
@@ -290,25 +296,29 @@ defmodule Ezagent.Behavior.ConfigEvolve do
     end)
   end
 
-  # The race-winner's object is now durable for this turn. Re-read it and
-  # return the same idempotent result the serial early-return would have —
-  # including the sandbox refresh so this loser still heals its cache.
+  # The race-winner's object is now durable for this turn. Re-read it BY
+  # OBJECT-EXISTENCE (PR-7) — the unique constraint that just fired proves an
+  # object with this `source_turn_id` exists, so `object_for_turn/1` resolves
+  # its id deterministically (no dependence on whether the winner's pointer is
+  # the CURRENT pointer — a superseded turn's object still resolves). Return
+  # the same idempotent result the serial early-return would have, with a
+  # string `config_id` (NEVER nil) and the sandbox refreshed to the CURRENT
+  # pointer so this loser heals its cache to the live config (not to a
+  # superseded turn).
   defp idempotent_after_conflict(turn_id, attrs, ctx) do
-    case ConfigStore.pointer_object_for_turn(attrs.layer, attrs.subject_uri, attrs.key, turn_id) do
+    case ConfigStore.object_for_turn(turn_id) do
       {:ok, existing_id} ->
         {:ok, %{config_id: existing_id, previous_config_id: nil},
-         sandbox_write_effects(ctx, attrs, existing_id)}
+         sandbox_refresh_current_pointer(ctx, attrs)}
 
       :none ->
-        # The winner committed the object but its pointer is not yet visible
-        # (should not happen under the atomic write_and_point, but stay
-        # honest): report applied without a config_id rather than crash.
-        Logger.warning(
-          "ConfigEvolve: source_turn unique conflict but no pointer resolves the turn " <>
-            "yet (turn_id=#{inspect(turn_id)}); returning idempotent no-op"
+        # The unique constraint fired, so an object for this turn MUST exist;
+        # not finding it would be a genuine invariant violation. Let it crash
+        # (no silent `config_id: nil` no-op — that violated the contract).
+        raise(
+          "ConfigEvolve: source_turn unique conflict for turn_id=#{inspect(turn_id)} " <>
+            "but object_for_turn/1 found no object (invariant violation)"
         )
-
-        {:ok, %{config_id: nil, previous_config_id: nil}, []}
     end
   end
 
@@ -410,6 +420,24 @@ defmodule Ezagent.Behavior.ConfigEvolve do
 
       _ ->
         []
+    end
+  end
+
+  # PR-7 — idempotent-path sandbox refresh. A redelivered turn (current OR
+  # superseded) minted NO new object; the cache must be refreshed to the
+  # CURRENT pointer's object, NOT the redelivered turn's (a superseded turn's
+  # object would REVERT the live config). Reads the durable current user-layer
+  # pointer (`ConfigStore.current_user_object`) and projects IT. If there is no
+  # current pointer object (edge — nothing applied yet), or no sandbox/cascade
+  # cache, emit no effect.
+  defp sandbox_refresh_current_pointer(ctx, attrs) do
+    with sandbox when is_map(sandbox) <- sibling_sandbox(ctx),
+         {:ok, _rtd, _resolution} <- fetch_resolution(sandbox),
+         {:ok, current_id} <- ConfigStore.current_user_object(attrs.subject_uri, attrs.key) do
+      object_uri = object_layer_uri(attrs.subject_uri, current_id)
+      [{:dispatch_after_commit, sandbox_write_cmd(ctx, sandbox, object_uri)}]
+    else
+      _ -> []
     end
   end
 
