@@ -73,7 +73,9 @@ defmodule Ezagent.Behavior.CsOrchestrator do
     returns: %{ok: :boolean},
     caps: [:operator_claim],
     modes: [:call],
-    description: "Operator takeover: compose operator reply then Turn.claim + pause fan-out."
+    description:
+      "Operator override: cancel in-flight bot turn (if any), open fresh turn, " <>
+        "compose operator reply, claim (operator_only) + pause fan-out."
   )
 
   action(:operator_settle,
@@ -147,10 +149,11 @@ defmodule Ezagent.Behavior.CsOrchestrator do
   # -----------------------------------------------------------------------
 
   def handle_operator_claim(
-        %{turn_id: turn_id, operator_text: operator_text, operator_uri: operator_uri_str},
+        %{turn_id: _turn_id, operator_text: operator_text, operator_uri: operator_uri_str},
         ctx
       ) do
     session_uri_str = ctx[:read].(:session_uri, "")
+    open_turn_id = ctx[:read].(:open_turn_id, nil)
 
     case parse_session_uri(session_uri_str) do
       {:ok, session_uri} ->
@@ -163,24 +166,79 @@ defmodule Ezagent.Behavior.CsOrchestrator do
             :error -> operator_uri_str
           end
 
-        # Stage-1 pattern: compose the operator's own text first (stages the draft
-        # operator_only), then claim (moves turn to :awaiting_human so fan-out stays paused).
+        # Operator override pattern: cancel any in-flight bot turn, open a FRESH
+        # turn, compose the operator's text into it, then claim.
         #
-        # CONSTRAINT: Turn.compose only allows :open (empty expected) or :aggregating status.
-        # If the bot already composed (turn is :composing), a second compose will fail.
-        # In that case log and return ok: false — the caller should cancel the bot turn
-        # and open a fresh one, or claim the existing bot draft instead.
-        with {:ok, _} <- TurnDriver.compose(session_uri, turn_id, operator_text, tctx),
-             {:ok, _} <- TurnDriver.claim(session_uri, turn_id, operator_uri, tctx) do
-          {:ok, %{ok: true}, [{:set, :operator_active, true}]}
-        else
-          {:error, reason} ->
-            Logger.error(
-              "CsOrchestrator operator_claim failed: #{inspect(reason)}, " <>
-                "turn_id=#{turn_id}"
-            )
+        # Rationale: Turn.compose only allows :open (empty expected) or :aggregating.
+        # In the biphasic flow the slow bot almost always composes first (turn reaches
+        # :composing) before a human takes over, so a direct compose on the existing
+        # turn would fail with {:illegal_transition, :composing}.
+        #
+        # Instead we:
+        # 1. Cancel the in-flight turn (if any) — cancel is legal from any
+        #    non-terminal status including :composing. If open_turn_id is nil
+        #    (operator proactively answers before any bot activity) we skip cancel.
+        # 2. Open a fresh turn — starts at :open, compose is legal.
+        # 3. Compose the operator's text into the fresh turn.
+        # 4. Claim the fresh turn — moves to :awaiting_human, draft held :operator_only.
+        # 5. Set open_turn_id to the NEW turn + operator_active = true.
+        #
+        # Any step failure is logged distinctly (so the operator UI sees a real signal)
+        # and returns ok: false — the orchestrator stays alive per P22.
+        cancel_result =
+          if is_binary(open_turn_id) do
+            case TurnDriver.cancel(session_uri, open_turn_id, tctx) do
+              {:ok, _} ->
+                :ok
 
-            {:ok, %{ok: false}, []}
+              {:error, reason} ->
+                Logger.error(
+                  "CsOrchestrator operator_claim: failed to cancel in-flight turn " <>
+                    "#{open_turn_id}: #{inspect(reason)}"
+                )
+
+                {:error, {:cancel_failed, reason}}
+            end
+          else
+            :ok
+          end
+
+        case cancel_result do
+          {:error, _} = err ->
+            {:ok, %{ok: false, step: :cancel, detail: inspect(err)}, []}
+
+          :ok ->
+            trigger = %{
+              message_id: "operator-override-#{System.unique_integer([:positive])}",
+              text: operator_text
+            }
+
+            case TurnDriver.open(session_uri, trigger, tctx) do
+              {:ok, %{turn_id: new_tid}} ->
+                with {:ok, _} <- TurnDriver.compose(session_uri, new_tid, operator_text, tctx),
+                     {:ok, _} <- TurnDriver.claim(session_uri, new_tid, operator_uri, tctx) do
+                  {:ok, %{ok: true},
+                   [
+                     {:set, :open_turn_id, new_tid},
+                     {:set, :operator_active, true}
+                   ]}
+                else
+                  {:error, reason} ->
+                    Logger.error(
+                      "CsOrchestrator operator_claim: compose/claim failed on fresh turn " <>
+                        "#{new_tid}: #{inspect(reason)}"
+                    )
+
+                    {:ok, %{ok: false, step: :compose_or_claim, detail: inspect(reason)}, []}
+                end
+
+              {:error, reason} ->
+                Logger.error(
+                  "CsOrchestrator operator_claim: failed to open fresh turn: #{inspect(reason)}"
+                )
+
+                {:ok, %{ok: false, step: :open, detail: inspect(reason)}, []}
+            end
         end
 
       :error ->
