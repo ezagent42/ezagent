@@ -136,11 +136,25 @@ TenantAdminLive (/autoservice/admin)
 
 ### 移植清单 (PR → dev)
 
+> **架构基准**: 设计文档 v3 选定 **Session + CsOrchestrator Behavior** 方案。
+> CsOrchestrator 作为 Behavior 注册在 SocialwareSession Kind，Turn 操作通过 TurnDriver 在同进程内执行。
+> Customer 消息和 agent reply 都走 Turn 生命周期 (open → compose → settle)，operator 接管走 cancel+reopen。
+> 详见 `docs/superpowers/specs/2026-06-10-autoservice-v2-design.md` v3。
+
 ```
-P0 (修复 bug):
-  ☐ OperatorLive: synthetic turn_id → cancel+reopen (~50行改动)
-  ☐ CustomerSession: Ezagent.Entity.Session → SocialwareSession (~1行)
-  ☐ api_key: 参数传入 → $PROVIDER_API_KEY env (~10行)
+P0 (核心架构 — CsOrchestrator Behavior + TurnDriver):
+  ☐ CsOrchestrator Behavior (use Ezagent.Lifecycle, ~250行新文件)
+      - :receive action: open turn → dispatch_after_commit fast+slow
+      - :operator_claim action: cancel bot turn → reopen → compose → claim
+      - :operator_settle action: settle tracked turn → customer_visible
+      - State: cs_orchestrator namespace in Session slice
+  ☐ TurnDriver (同进程 Turn 驱动, ~100行新文件)
+      - open/compose/settle/cancel/claim — 直接调用 Turn，不走 dispatch
+  ☐ CustomerSession.ensure_session: Ezagent.Entity.Session → SocialwareSession
+  ☐ Application.behaviors/0: 注册 CsOrchestrator 在 SocialwareSession Kind
+  ☐ Routing: {:in_session, session} → [session] (customer msg → cs_orchestrator.receive)
+  ☐ Agent reply 路由: agent reply → session?action=cs_orchestrator.receive (单路径)
+  ☐ OperatorLive: 接管/提交 dispatch 到 cs_orchestrator.operator_claim/settle
 
 P1 (移植已验证能力):
   ☐ 新增 TenantAdminLive (525行新文件, /autoservice/admin)
@@ -149,49 +163,63 @@ P1 (移植已验证能力):
   ☐ 新增 multitenant_test.exs (377行)
   ☐ 新增 operator_flow_test.exs (438行)
   ☐ 新增 publish_refresh_test.exs (117行)
-  ☐ dispatch_after_commit for fan-out (改 customer_session.ex)
+  ☐ api_key from env (确认 dev 已有 maybe_put_deepseek_key 后决定是否冗余)
 
 P2 (增强):
   ☐ Seed task: @workspace_name 硬编码 → --tenant 参数化
   ☐ AgentsConfig: @module_attr → {:ok, map}/{:error, reason} 合约
-  ☐ 连续消息 cancel 旧 turn (改 CustomerSession/orchestrator)
   ☐ Admin navigation: TenantDashboardLive 加 [Content Edit] 链接
 ```
 
 ### 执行步骤
+
+> **架构**: 设计文档 v3 选定 Session + CsOrchestrator Behavior。P0 实现 Behavior + TurnDriver，不是最小修正。
 
 ```bash
 # 1. 从 autoservice-dev 创建合并分支
 git checkout autoservice-dev
 git checkout -b feat/autoservice-v2-merge
 
-# 2. P0: 修复 operator 接管 (最小修正方案 A)
-#    改: operator_live.ex + turn_adapter.ex → Turn 正确使用
-#    改: customer_session.ex → spawn SocialwareSession
-#    测试: 验证 Turn.claim visibility gating 生效
+# 2. P0: 实现 CsOrchestrator Behavior (~250行新文件)
+#    新建: apps/ezagent_plugin_autoservice/lib/ezagent/behavior/cs_orchestrator.ex
+#      use Ezagent.Lifecycle, 3 actions: :receive, :operator_claim, :operator_settle
+#      :receive → open turn → dispatch_after_commit fast+slow
+#      :operator_claim → cancel bot turn → reopen → compose → claim
+#      :operator_settle → settle tracked turn → customer_visible
+#      State: cs_orchestrator namespace in Session slice
+#    注册: application.ex behaviors/0 → SocialwareSession Kind
 
-# 3. P0: api_key from env
-#    改: customer_session.ex → 读 $DEEPSEEK_API_KEY env
+# 3. P0: 实现 TurnDriver (~100行新文件)
+#    新建: apps/ezagent_plugin_autoservice/lib/.../turn_driver.ex
+#      open/compose/settle/cancel/claim — 同进程调用，不走 dispatch
 
-# 4. P1: 移植 TenantAdminLive (新文件)
-#    cp PR 的 tenant_admin_live.ex → apps/ezagent_plugin_liveview/.../tenant/
+# 4. P0: Session spawn + 路由
+#    改: customer_session.ex → Ezagent.Entity.Session → SocialwareSession
+#    改: routing → {:in_session, session} → [session] (msg → cs_orchestrator.receive)
+#    改: agent reply 路由 → session?action=cs_orchestrator.receive
+
+# 5. P0: OperatorLive 对接 Behavior
+#    改: operator_live.ex → 接管 dispatch cs_orchestrator.operator_claim/settle
+
+# 6. P1: 移植 TenantAdminLive (新文件)
+#    PR tenant_admin_live.ex → apps/ezagent_plugin_liveview/.../tenant/
 #    加路由 /autoservice/admin
 
-# 5. P1: 移植 Assembly.Refresh (新文件)
+# 7. P1: 移植 Assembly.Refresh (新文件)
 #    加 publish 后的 agent 更新逻辑
 
-# 6. P1: CR 崩溃恢复
+# 8. P1: CR 崩溃恢复
 #    改 cr_engine.ex → mark-before-flip + repair_current
 
-# 7. P1: 移植测试
+# 9. P1: 移植测试
 #    加 multitenant_test, operator_flow_test, publish_refresh_test
+#    加 cs_orchestrator_test
 
-# 8. P1: dispatch_after_commit
-#    改 customer_session.ex → agent fan-out effect
+# 10. P2: seed 参数化 + URL 统一 + 导航链接
 
-# 9. 验证全量测试通过
+# 11. 验证全量测试通过
 
-# 10. 合并回 autoservice-dev
+# 12. 合并回 autoservice-dev
 ```
 
 ---
@@ -203,8 +231,8 @@ git checkout -b feat/autoservice-v2-merge
 ```
 需要从 dev 移植到 PR:
   ☐ 删除 CsOrchestrator Kind (~750行) + 拆除所有引用
-  ☐ 删除 TurnDriver (被 TurnAdapter 替代)
-  ☐ 重连 agent reply 路由 (bridge → orchestrator.send → chat.send → PubSub)
+  ☐ 重写 CsOrchestrator 为 Behavior (Kind→Behavior, 保留编排逻辑)
+  ☐ 重连 agent reply 路由 (bridge → orchestrator.send → cs_orchestrator.receive)
   ☐ 添加 content plugin Behavior 层 (~2300行, 18模块)
   ☐ 添加 admin/ 子目录 (~3262行)
   ☐ 添加 admin_live.ex (974行)
@@ -228,13 +256,16 @@ git checkout -b feat/autoservice-v2-merge
 ## 五、合并后的 plugin 结构
 
 ```
-ezagent_plugin_autoservice/          ← 保留 dev 结构 + 增量
+ezagent_plugin_autoservice/          ← 保留 dev 结构 + Behavior + TurnDriver
   lib/
+    ezagent/behavior/
+      cs_orchestrator.ex              ← 新: CsOrchestrator Behavior (use Ezagent.Lifecycle)
     ezagent_plugin_autoservice/
-      application.ex                 ← dev (加 behavior 注册)
+      application.ex                 ← dev (加 behaviors/0 注册 CsOrchestrator)
       autoservice_assembly.ex        ← dev + PR 的 8-step provision
-      customer_session.ex            ← dev + PR 的 SocialwareSession + api_key
-      turn_adapter.ex                ← dev (保留，operator takeover 修复后使用)
+      customer_session.ex            ← dev + SocialwareSession spawn
+      turn_driver.ex                 ← 新: Turn 驱动 (同进程, 不走 dispatch)
+      turn_adapter.ex                ← dev (保留作为外部 dispatch 入口)
       filler_loop.ex                 ← dev (保留，后续完善)
       roles.ex                       ← dev (保留)
       uris.ex                        ← dev (保留)
