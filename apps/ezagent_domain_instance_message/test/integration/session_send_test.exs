@@ -171,6 +171,38 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSendTest do
     end
   end
 
+  describe "Ezagent.Entity.Session.send/3 convenience entry" do
+    test "dispatches session.send and fans out, honoring ctx[:mode]" do
+      session = spawn_session()
+      sender = URI.new!("entity://system/user/#{u("conv-sender")}")
+      receiver = URI.new!("entity://system/user/#{u("conv-receiver")}")
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(receiver)
+      join(session, sender)
+      join(session, receiver)
+
+      msg = Message.new(sender, %{text: "via Session.send/3", attachments: []})
+
+      assert {:ok, %{stored: true}} =
+               Ezagent.Entity.Session.send(session, msg, %{
+                 caller: sender,
+                 caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+                 mode: :call,
+                 reply: :sync
+               })
+
+      slice =
+        wait_until(fn ->
+          case Ezagent.Kind.get_slice(receiver, :chat) do
+            {:ok, %{last_received: %{message_id: id}} = s} when id == msg.id -> s
+            _ -> nil
+          end
+        end)
+
+      assert slice.last_received.message_id == msg.id
+    end
+  end
+
   defp assert_mode_result(:call, result), do: assert({:ok, %{stored: true}} = result)
   defp assert_mode_result(:cast, result), do: assert(result == :ok)
 

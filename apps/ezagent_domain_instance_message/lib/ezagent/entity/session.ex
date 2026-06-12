@@ -215,6 +215,37 @@ defmodule Ezagent.Entity.Session do
     })
   end
 
+  @doc """
+  PR-1 (im/session/agent decomposition) — the convenience entry for the
+  SINGLE public Session post verb, `session.send`. Builds + dispatches
+  `<session_uri>?action=session.send` with the caller's `ctx` (which MUST
+  carry `:caller` + `:caps`).
+
+  The transport `mode` (`:call` | `:cast` | `:ignore`) flows from the
+  caller: pass it via `ctx[:mode]`. Per Decision #134 / Invariant #9 the
+  inbound surface chooses the mode — IM inbound uses `:call` so cap-denial
+  surfaces to the human; agent-reply + LV callers use `:cast`/`:ignore`.
+  Defaults to `:cast` (the fire-and-forget agent-reply default) when
+  `ctx[:mode]` is absent.
+
+  Delegates routing/fan-out to `Ezagent.Behavior.Session` →
+  `Ezagent.Behavior.Chat.handle_send/2`. Returns the standard dispatch
+  envelope (`{:ok, %{stored: true}}` for `:call`; `:ok` for `:cast`).
+  """
+  @spec send(URI.t(), Ezagent.Message.t(), map()) :: {:ok, map()} | :ok | {:error, term()}
+  def send(%URI{} = session_uri, %Ezagent.Message{} = msg, ctx) when is_map(ctx) do
+    target = Ezagent.URI.with_action(session_uri, :session, :send)
+    mode = Map.get(ctx, :mode, :cast)
+    dispatch_ctx = ctx |> Map.delete(:mode) |> Map.put_new(:reply, :ignore)
+
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      target: target,
+      mode: mode,
+      args: %{message: msg},
+      ctx: dispatch_ctx
+    })
+  end
+
   defp unwrap_cursor({:ok, %{cursor: cursor}}), do: {:ok, cursor}
   defp unwrap_cursor({:error, _} = err), do: err
 
