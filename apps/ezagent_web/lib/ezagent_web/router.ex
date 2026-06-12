@@ -8,6 +8,9 @@ defmodule EzagentWeb.Router do
   pipeline :browser do
     plug :accepts, ["html"]
     plug :fetch_session
+    # Dev-only ?as=<short_name> auto-login (runs after fetch_session so
+    # put_session works, before any auth plug so the session is set).
+    plug EzagentWeb.Plugs.DevAutoLogin
     # i18n V1 (Allen 2026-05-21): resolves Gettext locale from query
     # string → session → Accept-Language → default "en". Persists the
     # choice in the session so subsequent requests stay translated.
