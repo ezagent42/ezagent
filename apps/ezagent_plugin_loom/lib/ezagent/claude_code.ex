@@ -104,13 +104,17 @@ defmodule EzagentPluginLoom.ClaudeCode do
         # 2026-06-12 — v0 读素材库:opts[:materials_dir] 给定且是真实目录 → 放开
         # Read/Glob/LS + cwd 锁到该目录,让 Claude Code 直接读素材文件(无 prompt 预算)。
         materials_dir = opts[:materials_dir]
-        read_files? = is_binary(materials_dir) and materials_dir != "" and File.dir?(materials_dir)
+
+        read_files? =
+          is_binary(materials_dir) and materials_dir != "" and File.dir?(materials_dir)
+
         {system, prompt} = build(messages, read_files?)
         idle = Keyword.get(opts, :idle_timeout_ms, @idle_timeout_ms)
         attempts = Keyword.get(opts, :attempts, @max_attempts)
         # group(通常=session 字符串):用于"停止"——同 group 的在跑 claude 会被
         # `stop/1` 一起中断。nil → 不注册(行为同前)。
         group = opts[:group]
+
         # 2026-06-12 — token 统计:role(v0/orchestrator/worker…)随调用,result 事件的 usage
         # 累加进 `Stats`(按 session=group + role)。
         role = to_string(opts[:role] || "other")
@@ -435,18 +439,31 @@ defmodule EzagentPluginLoom.ClaudeCode do
     end)
   end
 
-  # result 事件里的 `usage` → 累加进本 session 的 token 统计(input 含 cache 读/写)。
-  defp tally_usage(group, role, %{"usage" => u}) when is_binary(group) and is_map(u) do
-    input =
-      (u["input_tokens"] || 0) + (u["cache_read_input_tokens"] || 0) +
-        (u["cache_creation_input_tokens"] || 0)
+  # result 事件 → 累加本 session 的 token / 成本 / 时延统计。input 拆 fresh / cache 读 / cache 写;
+  # `total_cost_usd` + `duration_ms` 也是 Claude Code result 事件自带的(给 Dashboard 用)。
+  defp tally_usage(group, role, %{"usage" => u} = obj) when is_binary(group) and is_map(u) do
+    fresh = u["input_tokens"] || 0
+    cache_read = u["cache_read_input_tokens"] || 0
+    cache_creation = u["cache_creation_input_tokens"] || 0
 
-    output = u["output_tokens"] || 0
-    _ = Ezagent.PluginLoom.Stats.add_tokens(group, input, output, role)
+    metrics = %{
+      input: fresh + cache_read + cache_creation,
+      fresh_input: fresh,
+      cache_read: cache_read,
+      cache_creation: cache_creation,
+      output: u["output_tokens"] || 0,
+      cost_usd: num(obj["total_cost_usd"]),
+      duration_ms: num(obj["duration_ms"])
+    }
+
+    _ = Ezagent.PluginLoom.Stats.record(group, role, metrics)
     :ok
   end
 
   defp tally_usage(_, _, _), do: :ok
+
+  defp num(n) when is_number(n), do: n
+  defp num(_), do: 0
 
   defp result_event(line) do
     case String.trim(line) do
@@ -524,7 +541,10 @@ defmodule EzagentPluginLoom.ClaudeCode do
   # 让它从拒绝里恢复成文本输出(配合系统提示里的 @no_tools_directive,绝大多数情况
   # 1 回合就出文本,6 只是兜底)。
   defp build_argv(bin, system, read_files? \\ false) do
-    tools = if read_files?, do: ~c"WebFetch,WebSearch,Skill,Read,Glob,LS", else: ~c"WebFetch,WebSearch,Skill"
+    tools =
+      if read_files?,
+        do: ~c"WebFetch,WebSearch,Skill,Read,Glob,LS",
+        else: ~c"WebFetch,WebSearch,Skill"
 
     base = [
       String.to_charlist(bin),

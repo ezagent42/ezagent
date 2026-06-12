@@ -10,6 +10,10 @@
    compiled into the output CSS. */
 @source "../../../ezagent_plugin_liveview/lib";
 @source "../../../ezagent_domain_ui/lib";
+/* 2026-06-12: loom plugin SessionViews (LoomDashboardView etc.) render inside the
+   admin LiveView, so their Tailwind classes (the dashboard's cyan/violet/rose/…
+   accents) must be scanned here too — they live in the loom plugin lib. */
+@source "../../../ezagent_plugin_loom/lib";
 
 /* A Tailwind plugin that makes "hero-#{ICON}" classes available.
    The heroicons installation itself is managed by your mix.exs */
