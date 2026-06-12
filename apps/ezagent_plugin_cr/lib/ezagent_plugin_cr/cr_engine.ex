@@ -31,6 +31,10 @@ defmodule EzagentPluginCr.CrEngine do
     with {:ok, cr} <- ensure_active_cr(tid),
          :ok <- CrLint.check(tid),
          {:ok, new_ver} <- CrSnapshot.snapshot(tid),
+         # mark-before-flip: persist "publishing" status BEFORE symlink flip.
+         # If crash occurs during flip, repair_current/1 detects "publishing"
+         # and re-runs the flip without re-snapshotting.
+         :ok <- mark_publishing(tid, cr, new_ver),
          :ok <- update_current(tid, new_ver) do
       published =
         Map.merge(cr, %{
@@ -41,6 +45,44 @@ defmodule EzagentPluginCr.CrEngine do
 
       write_cr(tid, cr["cr_id"], published)
       {:ok, published}
+    end
+  end
+
+  @doc """
+  Detect and heal the mark-before-flip gap: if a CR is marked "publishing"
+  but the symlink points to an older version, re-run the flip.
+  """
+  @spec repair_current(String.t()) :: {:ok, :repaired | :consistent} | {:error, term()}
+  def repair_current(tid) do
+    case ensure_active_cr(tid) do
+      {:ok, %{"status" => "publishing", "published_version" => ver}} ->
+        if current_points_to?(tid, ver) do
+          # Symlink is already correct — just update status.
+          cr = ensure_active_cr!(tid)
+          write_cr(tid, cr["cr_id"], Map.put(cr, "status", "published"))
+          {:ok, :consistent}
+        else
+          # Symlink is stale — re-run the flip.
+          case update_current(tid, ver) do
+            :ok ->
+              cr = ensure_active_cr!(tid)
+              published = Map.merge(cr, %{
+                "status" => "published",
+                "published_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+              })
+              write_cr(tid, cr["cr_id"], published)
+              {:ok, :repaired}
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+        end
+
+      {:ok, _cr} ->
+        {:ok, :consistent}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -61,8 +103,6 @@ defmodule EzagentPluginCr.CrEngine do
     current = TenantRuntime.current_release_path(tid)
     target = Path.join(TenantRuntime.release_path(tid), ver)
 
-    # Ensure the release directory exists (CrSnapshot creates it in non-stub path, but
-    # guard here in case it does not).
     File.mkdir_p!(target)
 
     if File.exists?(current), do: File.rm!(current)
@@ -71,6 +111,32 @@ defmodule EzagentPluginCr.CrEngine do
       :ok -> :ok
       {:error, reason} -> {:error, "symlink failed: #{inspect(reason)}"}
     end
+  end
+
+  defp mark_publishing(tid, cr, new_ver) do
+    publishing =
+      Map.merge(cr, %{
+        "status" => "publishing",
+        "published_version" => new_ver,
+        "published_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+      })
+
+    write_cr(tid, cr["cr_id"], publishing)
+  end
+
+  defp current_points_to?(tid, ver) do
+    current = TenantRuntime.current_release_path(tid)
+    target = Path.join(TenantRuntime.release_path(tid), ver)
+
+    case File.read_link(current) do
+      {:ok, link_target} -> link_target == target
+      _ -> false
+    end
+  end
+
+  defp ensure_active_cr!(tid) do
+    {:ok, cr} = ensure_active_cr(tid)
+    cr
   end
 
   defp write_cr(tid, _cr_id, cr) do
