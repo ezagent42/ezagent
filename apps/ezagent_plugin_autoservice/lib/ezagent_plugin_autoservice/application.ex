@@ -18,18 +18,38 @@ defmodule EzagentPluginAutoservice.Application do
   - `behaviors/0` — `{CsOrchestrator Kind, action, Behavior}` triples.
   - `agent_flavors/0` — flavor `"cs_orchestrator"` → `CsOrchestrator` Kind.
   - `children/0` — `EzagentPluginAutoservice.InstanceSupervisor` (DynamicSupervisor).
-  - `after_boot/0` — no-op in Phase C3; provision task (C4) seeds
-    orchestrator instances per customer. Documented here for the
-    re-registration hook once provisioning is in place.
+  - `after_boot/0` — re-registers the flavor tag for every persisted
+    orchestrator so they survive a node restart (see below).
 
-  ## AgentFlavorAttributes durability note
+  ## AgentFlavorAttributes durability — `after_boot/0` re-registration
 
-  `AgentFlavorAttributes` is non-durable ETS. After a node restart, any
-  provisioned orchestrator URIs lose their flavor tag and cannot be
-  re-resolved by `SpawnRegistry`. The `after_boot/0` in Phase C4 will
-  enumerate provisioned URIs (from a durable store) and re-call
-  `AgentFlavorAttributes.put/2` for each. This is a KNOWN gap deferred
-  to C4 — documented here per the spike's risk mitigation note.
+  `AgentFlavorAttributes` is a non-durable ETS cache (its own moduledoc:
+  "its persisted sandbox slice remains the durable restart source; this
+  table is [a cache]"). The flavor→Kind map (`agent_flavors/0`) IS durable
+  (re-published every boot), but the *uri→flavor* tag is only put into ETS
+  at provision time — in the provisioning BEAM. After a server restart the
+  cache is empty, so the cold-load resolver's flavor step
+  (`AgentModuleResolver.lookup_via_stored_flavor` → `UriQuery.resolve(:flavor)`)
+  returns `:none` and a dormant orchestrator dispatch fails with
+  `:no_such_actor` — the customer message never reaches the orchestrator,
+  so no turn opens and no reply is produced. (cc/curl agents are immune:
+  their `kind_type` — `agent`/`curl_agent` — is resolved by the resolver's
+  step 1, which reads the durable snapshot column.)
+
+  `after_boot/0` (Phase-3 of `Ezagent.Plugin.boot/1`, after this plugin's
+  `agent_flavors/0` is published) enumerates every persisted snapshot whose
+  durable `kind_type` is `"cs_orchestrator"` and re-`put`s its flavor tag,
+  rehydrating the cache so dormant orchestrators cold-load on the next
+  customer message. It best-effort warm-spawns each so the first message
+  doesn't pay cold-load latency. Enumeration uses the durable snapshot index
+  (`Ezagent.Ecto.KindSnapshot.list_all/0` filtered by `kind_type` — the same
+  index the resolver reads; precedent: `Orchestrator.McpServer`,
+  `Orchestrator.Tools.Templates`), NOT the §11-barred `SnapshotStore`.
+
+  Framework gap flagged to Allen: generic rehydration of the
+  `AgentFlavorAttributes` cache from the durable slice at boot arguably
+  belongs in core (every non-core-kind agent-flavor plugin hits this), not
+  in each plugin's `after_boot/0`.
   """
 
   use Application
@@ -84,12 +104,42 @@ defmodule EzagentPluginAutoservice.Application do
   end
 
   @doc """
-  Phase 3 post-register hook — no-op in Phase C3.
+  Phase-3 post-register hook: rehydrate the non-durable
+  `AgentFlavorAttributes` cache for every persisted orchestrator so they
+  survive a node restart (see the moduledoc "durability" section).
 
-  Phase C4 (provision task) will seed orchestrator instances here and
-  re-register `AgentFlavorAttributes` after a node restart, mirroring
-  the pattern in `EzagentPluginEcho.Application.after_boot/0`.
+  Runs after this plugin's `agent_flavors/0` is published, so the
+  flavor→Kind map is in place when a re-tagged orchestrator cold-loads.
+  Non-fatal throughout — a failure here must not abort plugin boot.
   """
   @impl Ezagent.Plugin
-  def after_boot, do: :ok
+  def after_boot do
+    orchestrators =
+      try do
+        Ezagent.Ecto.KindSnapshot.list_all()
+        |> Enum.filter(&(&1.kind_type == "cs_orchestrator"))
+      rescue
+        # DB not ready / unavailable at boot — nothing to rehydrate yet.
+        # Orchestrators provisioned after boot get tagged at provision time.
+        _ -> []
+      end
+
+    Enum.each(orchestrators, fn %{uri: uri_str} ->
+      case Ezagent.URI.parse(uri_str) do
+        {:ok, uri} ->
+          :ok = Ezagent.AgentFlavorAttributes.put(uri, "cs_orchestrator")
+          # Best-effort warm spawn (so the first customer message skips
+          # cold-load latency). Non-fatal: if it fails the orchestrator
+          # still cold-loads on the next dispatch now that its flavor tag
+          # is back in the cache.
+          _ = Ezagent.SpawnRegistry.spawn(uri)
+          :ok
+
+        _ ->
+          :ok
+      end
+    end)
+
+    :ok
+  end
 end
