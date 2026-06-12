@@ -13,6 +13,7 @@ defmodule EzagentPluginAutoservice.TurnAdapter do
   - `compose_turn/3` — an agent contributes a response for an open turn
   - `settle_turn/2` — mark a turn as complete (committed to message store)
   - `claim_turn/2` — operator claims a turn (direct human intervention)
+  - `cancel_turn/2` — cancel a non-terminal turn
   """
 
   alias Ezagent.Invocation
@@ -67,6 +68,19 @@ defmodule EzagentPluginAutoservice.TurnAdapter do
       target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=turn.claim"),
       mode: :call,
       args: %{turn_id: turn_id, by: op},
+      ctx: system_ctx()
+    })
+  end
+
+  @doc """
+  Cancel a non-terminal turn (open, composing, or awaiting_human).
+  """
+  @spec cancel_turn(URI.t(), String.t()) :: term()
+  def cancel_turn(session_uri, turn_id) do
+    Invocation.dispatch(%Invocation{
+      target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=turn.cancel"),
+      mode: :call,
+      args: %{turn_id: turn_id},
       ctx: system_ctx()
     })
   end

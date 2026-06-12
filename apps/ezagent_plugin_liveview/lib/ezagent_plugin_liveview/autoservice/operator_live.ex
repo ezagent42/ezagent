@@ -39,7 +39,8 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
        messages: [],
        compose_nonce: 0,
        claimed: false,
-       claiming: false
+       claiming: false,
+       open_turn_id: nil
      )}
   end
 
@@ -76,7 +77,15 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
         {:noreply, socket}
 
       true ->
-        msg = Ezagent.Message.new(socket.assigns.operator_uri, %{text: text, attachments: []})
+        visibility = if socket.assigns.claimed, do: :operator_only, else: :customer_visible
+
+        msg =
+          Ezagent.Message.new(
+            socket.assigns.operator_uri,
+            %{text: text, attachments: []},
+            visibility: visibility
+          )
+
         target = URI.new!("#{URI.to_string(socket.assigns.selected)}?action=chat.send")
 
         _ =
@@ -94,47 +103,87 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
   def handle_event("claim", _params, socket) do
     %{selected: session_uri, operator_uri: op_uri} = socket.assigns
 
-    if is_nil(session_uri) do
+    if is_nil(session_uri) or socket.assigns.claimed or socket.assigns.claiming do
       {:noreply, socket}
     else
-      # 1. Claim the turn (operator takes over). Use a synthetic turn_id
-      #    derived from the session and timestamp.
-      turn_id = :erlang.unique_integer([:positive])
-      _ = TurnAdapter.claim_turn(session_uri, turn_id, %{operator_uri: op_uri})
+      socket = assign(socket, claiming: true)
 
-      # 2. Disable the routing rule so the agent stops responding
-      _ = disable_session_rule(session_uri)
+      # 1. Derive the customer trigger (latest customer message or fallback)
+      trigger = get_latest_customer_trigger(session_uri, op_uri)
 
-      # 3. Subscribe to CustomerFeed topic for real-time delivery
-      feed_topic = CustomerFeed.topic(session_uri)
+      # 2. Open a real Turn
+      case TurnAdapter.open_turn(session_uri, trigger) do
+        {:ok, %{turn_id: turn_id}} ->
+          # 3. Compose (transition to :composing) so claim is allowed
+          case TurnAdapter.compose_turn(session_uri, turn_id, %{agent_uri: op_uri, text: "人工客服接管"}) do
+            {:ok, _} ->
+              # 4. Claim (transition to :awaiting_human, hold visibility)
+              case TurnAdapter.claim_turn(session_uri, turn_id, %{operator_uri: op_uri}) do
+                {:ok, _} ->
+                  # 5. Disable AI routing
+                  _ = disable_session_rule(session_uri)
 
-      if connected?(socket) do
-        Phoenix.PubSub.subscribe(EzagentCore.PubSub, feed_topic)
+                  # 6. Subscribe to CustomerFeed topic for real-time delivery
+                  feed_topic = CustomerFeed.topic(session_uri)
+
+                  if connected?(socket) do
+                    Phoenix.PubSub.subscribe(EzagentCore.PubSub, feed_topic)
+                  end
+
+                  Logger.info(
+                    "Operator #{URI.to_string(op_uri)} claimed turn #{turn_id} on session #{URI.to_string(session_uri)}"
+                  )
+
+                  {:noreply,
+                   assign(socket,
+                     subscribed_feed_topic: feed_topic,
+                     claimed: true,
+                     claiming: false,
+                     open_turn_id: turn_id
+                   )}
+
+                {:error, claim_reason} ->
+                  Logger.error(
+                    "OperatorLive: claim_turn failed for turn #{turn_id}: #{inspect(claim_reason)}"
+                  )
+
+                  _ = TurnAdapter.cancel_turn(session_uri, turn_id)
+                  {:noreply, assign(socket, claiming: false)}
+              end
+
+            {:error, compose_reason} ->
+              Logger.error(
+                "OperatorLive: compose_turn failed for turn #{turn_id}: #{inspect(compose_reason)}"
+              )
+
+              _ = TurnAdapter.cancel_turn(session_uri, turn_id)
+              {:noreply, assign(socket, claiming: false)}
+          end
+
+        {:error, open_reason} ->
+          Logger.error("OperatorLive: open_turn failed: #{inspect(open_reason)}")
+          {:noreply, assign(socket, claiming: false)}
       end
-
-      Logger.info(
-        "Operator #{URI.to_string(op_uri)} claimed turn #{turn_id} on session #{URI.to_string(session_uri)}"
-      )
-
-      {:noreply,
-       assign(socket, subscribed_feed_topic: feed_topic, claimed: true, claiming: false)}
     end
   end
 
   def handle_event("settle", _params, socket) do
-    %{selected: session_uri, operator_uri: op_uri, caps: caps} = socket.assigns
+    %{selected: session_uri, operator_uri: op_uri, caps: caps, open_turn_id: turn_id} =
+      socket.assigns
 
-    if is_nil(session_uri) do
+    if is_nil(session_uri) or is_nil(turn_id) do
       {:noreply, socket}
     else
-      # 1. Settle the turn (complete it)
-      turn_id = :erlang.unique_integer([:positive])
+      # 1. Flip operator messages from operator_only → customer_visible
+      flip_operator_messages(session_uri, op_uri)
+
+      # 2. Settle the Turn (transitions to :settled, commits visibility)
       _ = TurnAdapter.settle_turn(session_uri, turn_id)
 
-      # 2. Re-enable the routing rule (restore agent routing)
+      # 3. Re-enable the routing rule (restore agent routing)
       _ = enable_session_rule(session_uri)
 
-      # 3. Post the operator's final message to the session
+      # 4. Post the operator's final message to the session
       msg = Ezagent.Message.new(op_uri, %{text: "客服已结束本次人工对话。", attachments: []})
       target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
 
@@ -150,7 +199,44 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
         "Operator #{URI.to_string(op_uri)} settled turn #{turn_id} on session #{URI.to_string(session_uri)}"
       )
 
-      {:noreply, assign(socket, claimed: false)}
+      {:noreply, assign(socket, claimed: false, open_turn_id: nil)}
+    end
+  end
+
+  def handle_event("cancel", _params, socket) do
+    %{selected: session_uri, operator_uri: op_uri, open_turn_id: turn_id} = socket.assigns
+
+    if is_nil(session_uri) or is_nil(turn_id) do
+      {:noreply, socket}
+    else
+      # 1. Cancel the Turn (transitions to :cancelled)
+      case TurnAdapter.cancel_turn(session_uri, turn_id) do
+        {:ok, _} ->
+          Logger.info(
+            "Operator #{URI.to_string(op_uri)} cancelled turn #{turn_id} on session #{URI.to_string(session_uri)}"
+          )
+
+        {:error, reason} ->
+          Logger.error("OperatorLive: cancel_turn failed: #{inspect(reason)}")
+      end
+
+      # 2. Re-enable the routing rule (restore agent routing)
+      _ = enable_session_rule(session_uri)
+
+      # 3. Unsubscribe from CustomerFeed topic
+      feed_topic = socket.assigns[:subscribed_feed_topic]
+
+      if connected?(socket) and is_binary(feed_topic) do
+        Phoenix.PubSub.unsubscribe(EzagentCore.PubSub, feed_topic)
+      end
+
+      {:noreply,
+       assign(socket,
+         claimed: false,
+         claiming: false,
+         open_turn_id: nil,
+         subscribed_feed_topic: nil
+       )}
     end
   end
 
@@ -303,6 +389,38 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
     |> Enum.map(&ChatUI.row(&1, viewer_uri))
   end
 
+  defp get_latest_customer_trigger(session_uri, operator_uri) do
+    operator_str = URI.to_string(operator_uri)
+
+    session_uri
+    |> Ezagent.MessageStore.recent_in_session(@msg_limit)
+    |> Enum.find(fn msg -> URI.to_string(msg.sender) != operator_str end)
+    |> case do
+      %Ezagent.Message{sender: cu, body: body} ->
+        %{customer_uri: cu, text: body[:text] || body["text"] || ""}
+
+      nil ->
+        %{customer_uri: operator_uri, text: "operator 主动发起对话"}
+    end
+  end
+
+  defp flip_operator_messages(session_uri, operator_uri) do
+    operator_str = URI.to_string(operator_uri)
+
+    operator_only_ids =
+      session_uri
+      |> Ezagent.MessageStore.recent_in_session(@msg_limit)
+      |> Enum.filter(fn msg ->
+        URI.to_string(msg.sender) == operator_str and msg.visibility == :operator_only
+      end)
+      |> Enum.map(& &1.id)
+
+    if operator_only_ids != [] do
+      {:ok, count} = Ezagent.MessageStore.mark_visibility(operator_only_ids, :customer_visible)
+      Logger.info("OperatorLive: flipped #{count} operator messages to customer_visible")
+    end
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -377,6 +495,12 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
               class="rounded-lg bg-zinc-600 text-white px-3 py-1.5 text-sm font-medium hover:bg-zinc-700"
             >
               结束人工对话
+            </button>
+            <button
+              phx-click="cancel"
+              class="rounded-lg bg-red-500 text-white px-3 py-1.5 text-sm font-medium hover:bg-red-600 ml-2"
+            >
+              取消接管
             </button>
           </div>
           <ChatUI.composer nonce={@compose_nonce} placeholder="以人工客服身份回复客户…" />
