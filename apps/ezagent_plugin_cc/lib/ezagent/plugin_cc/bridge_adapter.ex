@@ -14,6 +14,9 @@ defmodule EzagentPluginCc.BridgeAdapter do
   def flavor, do: "cc"
 
   @impl Ezagent.AgentBridge.Adapter
+  def transport_class, do: :subprocess_ws
+
+  @impl Ezagent.AgentBridge.Adapter
   def deliver(%Payload{} = payload, channel_pid) when is_pid(channel_pid) do
     send(
       channel_pid,

@@ -10,6 +10,9 @@ defmodule Ezagent.AgentBridge.DeliverTest do
     def flavor, do: "test"
 
     @impl true
+    def transport_class, do: :subprocess_ws
+
+    @impl true
     def deliver(%Payload{} = payload, channel_pid) do
       send(channel_pid, {:agent_bridge_delivered, payload})
       :ok
@@ -26,6 +29,9 @@ defmodule Ezagent.AgentBridge.DeliverTest do
     def flavor, do: "test"
 
     @impl true
+    def transport_class, do: :subprocess_ws
+
+    @impl true
     def deliver(%Payload{}, _channel_pid), do: :ok
 
     @impl true
@@ -37,6 +43,9 @@ defmodule Ezagent.AgentBridge.DeliverTest do
 
     @impl true
     def flavor, do: "late"
+
+    @impl true
+    def transport_class, do: :subprocess_ws
 
     @impl true
     def deliver(%Payload{} = payload, channel_pid) do

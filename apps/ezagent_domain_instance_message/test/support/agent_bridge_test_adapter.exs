@@ -14,6 +14,9 @@ defmodule EzagentDomainInstanceMessage.AgentBridgeTestAdapter do
   def flavor, do: "cc"
 
   @impl true
+  def transport_class, do: :subprocess_ws
+
+  @impl true
   def deliver(payload, channel_pid) when is_pid(channel_pid) do
     send(channel_pid, {:to_claude, %{"content" => payload.text, "meta" => payload.meta}})
     :ok

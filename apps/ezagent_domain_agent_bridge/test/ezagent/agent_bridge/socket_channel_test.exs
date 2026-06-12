@@ -13,12 +13,31 @@ defmodule Ezagent.AgentBridge.SocketChannelTest do
     def flavor, do: "testchan"
 
     @impl true
+    def transport_class, do: :subprocess_ws
+
+    @impl true
     def deliver(_payload, _channel_pid), do: :ok
 
     @impl true
     def handle_client_event(event, params, socket) do
       {:reply, {:ok, %{"event" => event, "params" => params}}, socket}
     end
+  end
+
+  defmodule SyncAdapter do
+    @moduledoc false
+    # An :in_process_sync flavor has NO WebSocket; a Channel join must reject
+    # it. Note: NO WS callbacks defined (handle_client_event/3 etc.).
+    @behaviour Ezagent.AgentBridge.Adapter
+
+    @impl true
+    def flavor, do: "syncchan"
+
+    @impl true
+    def transport_class, do: :in_process_sync
+
+    @impl true
+    def deliver(_payload, _channel_ref), do: {:ok, :noop}
   end
 
   defmodule TestEndpoint do
@@ -198,6 +217,24 @@ defmodule Ezagent.AgentBridge.SocketChannelTest do
 
     assert reason =~ "topic_flavor_mismatch"
     assert :error = Registry.lookup(codex_uri)
+  end
+
+  test "join REJECTS an :in_process_sync flavor — it has no WS endpoint (PR-0 MED-2)" do
+    agent_uri = uri!("entity://team-alpha/agent/syncchan_reject-#{u()}")
+    :ok = Ezagent.AgentBridge.AdapterRegistry.register("syncchan", SyncAdapter)
+    put_flavor(agent_uri, "syncchan")
+
+    assert {:error, %{reason: reason}} =
+             @endpoint
+             |> socket("agent_bridge:#{URI.to_string(agent_uri)}", %{agent_uri: agent_uri})
+             |> subscribe_and_join(
+               Channel,
+               "agent_bridge:syncchan:#{URI.to_string(agent_uri)}",
+               %{}
+             )
+
+    assert reason == "transport_class_mismatch"
+    assert :error = Registry.lookup(agent_uri)
   end
 
   defp uri!(value), do: URI.new!(value)
