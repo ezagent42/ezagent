@@ -138,10 +138,18 @@ defmodule EzagentPluginLiveview.AutoService.CustomerLive do
     end
   end
 
+  # Chat messages and CustomerFeed deliveries both fire for the same event.
+  # De-duplicate by message id so the customer doesn't see double.
   def handle_info({:chat_message, session_uri, %Ezagent.Message{} = msg}, socket) do
     if session_uri == socket.assigns.session_uri do
-      row = ChatUI.row(msg, socket.assigns.customer_uri)
-      {:noreply, update(socket, :messages, fn ms -> ms ++ [row] end)}
+      already_shown? = Enum.any?(socket.assigns.messages, &(&1.id == msg.id))
+
+      if already_shown? do
+        {:noreply, socket}
+      else
+        row = ChatUI.row(msg, socket.assigns.customer_uri)
+        {:noreply, update(socket, :messages, fn ms -> ms ++ [row] end)}
+      end
     else
       {:noreply, socket}
     end
