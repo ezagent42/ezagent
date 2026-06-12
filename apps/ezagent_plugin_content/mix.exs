@@ -21,6 +21,10 @@ defmodule EzagentPluginContent.MixProject do
   end
 
   defp deps do
-    [{:ezagent_core, in_umbrella: true}, {:ezagent_domain_socialware, in_umbrella: true}, {:yaml_elixir, "~> 2.0"}]
+    [
+      {:ezagent_core, in_umbrella: true},
+      {:ezagent_domain_socialware, in_umbrella: true},
+      {:yaml_elixir, "~> 2.0"}
+    ]
   end
 end
