@@ -10,7 +10,7 @@ defmodule EzagentDomainSocialware.Application do
 
   alias Ezagent.CapabilityRegistry
   alias Ezagent.Behavior.{Chat, SocialwarePublisherRead, Surface, Turn}
-  alias Ezagent.Entity.{Session, SocialwareSession}
+  alias Ezagent.Entity.SocialwareSession
 
   @impl true
   def start(_type, _args) do
@@ -53,37 +53,16 @@ defmodule EzagentDomainSocialware.Application do
     # read actions are registered ONLY against the chat `Session` Kind, so there
     # is no `{kind, action}` collision and no trunk/read split is needed; the
     # trunk `Publisher.SessionImpl` stays the sole `:publisher` owner.
+    #
+    # P5-A unifies the two publisher READs onto ONE membership-gated behavior:
+    # `SocialwarePublisherRead` is now registered for BOTH the chat `Session`
+    # (in `instance_message`'s `application.ex` — its HOME app, where the module
+    # was relocated alongside `Ezagent.Socialware.ChatMembership`) AND
+    # `SocialwareSession` (HERE — socialware DEPENDS ON instance_message so it
+    # reuses the relocated module). Both Kinds' reads are authorized by live
+    # MEMBERSHIP, not a held cap. Distinct Kinds ⇒ no `{Kind, action}` collision.
     Enum.each(SocialwarePublisherRead.actions(), fn action ->
       :ok = CapabilityRegistry.register(SocialwareSession, action, SocialwarePublisherRead)
-    end)
-
-    # P5-A (codex H3; Allen option B) — UNIFY the two publisher READs into
-    # ONE membership-gated read. Register `SocialwarePublisherRead`
-    # (`:snapshot` / `:history`, cap-EXEMPT + a live `ChatMembership`
-    # owner/member check) for the chat `Session` Kind TOO — not just
-    # `SocialwareSession`. After this, EVERY session read (chat AND
-    # socialware) is authorized by MEMBERSHIP ("谁在 session 里谁能读"),
-    # NOT by a held `Publisher.SessionImpl :snapshot`/`:history` cap.
-    #
-    # WHY HERE (not in instance_message): the dep direction. This module
-    # (`ezagent_domain_socialware`) DEPENDS ON `instance_message`, so it
-    # CAN name `Ezagent.Entity.Session`; `instance_message` does NOT depend
-    # on socialware, so it CANNOT name `SocialwarePublisherRead`. The chat
-    # Session's read-action registration is therefore REMOVED from
-    # `instance_message/application.ex` (it kept only `:subscribe_from`) and
-    # ADDED here. This avoids the `{Kind, action}` collision that
-    # `CapabilityRegistry.register/3` would raise if both behaviors claimed
-    # `{Session, :snapshot|:history}`.
-    #
-    # `SocialwarePublisherRead` is registry-only (NOT in
-    # `Session.behaviors/0`), so it never materializes the `:publisher`
-    # slice — `Publisher.SessionImpl` stays the sole owner of `:publisher`
-    # on the chat Session AND keeps `:subscribe_from`. The read handler
-    # reads the trunk via `ctx.read` + authorizes via the `:chat` sibling
-    # slice (`reads_siblings [:chat]`), which the chat Session has from the
-    # `Chat` behavior — same shape `ChatMembership.authorize/2` expects.
-    Enum.each(SocialwarePublisherRead.actions(), fn action ->
-      :ok = CapabilityRegistry.register(Session, action, SocialwarePublisherRead)
     end)
 
     :ok

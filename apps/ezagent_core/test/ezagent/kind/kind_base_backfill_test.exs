@@ -115,6 +115,21 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
       assert {:error, {:unclassifiable, _keys}} =
                KindBaseBackfill.classify_session_state(%{some_other: %{}})
     end
+
+    test "legacy JSON-column row (STRING session keys) ⇒ legacy_json_unsupported (precise fail loud)" do
+      # A snapshot decoded via the legacy `state` JSON column has STRING
+      # top-level keys, not atoms. It MUST NOT be mis-reported as
+      # `:unclassifiable` (it IS a recognizable session) — it gets a PRECISE
+      # legacy error so the operator re-saves it as a binary snapshot first.
+      assert {:error, {:legacy_json_unsupported, _keys}} =
+               KindBaseBackfill.classify_session_state(%{"chat" => %{}, "publisher" => %{}})
+
+      assert {:error, {:legacy_json_unsupported, _keys}} =
+               KindBaseBackfill.classify_session_state(%{"surface" => %{}, "turns" => %{}})
+
+      assert {:error, {:legacy_json_unsupported, _keys}} =
+               KindBaseBackfill.classify_session_state(%{"external_mirror" => %{}})
+    end
   end
 
   describe "target_behaviors/1" do

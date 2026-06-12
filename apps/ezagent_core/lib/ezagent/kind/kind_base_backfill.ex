@@ -73,6 +73,18 @@ defmodule Ezagent.Kind.KindBaseBackfill do
   # slice) is what makes a row a recognizable CHAT session — the default.
   @session_marker_slice_keys [:chat, :publisher]
 
+  # The STRING forms of the session slice keys. A snapshot decoded from the
+  # LEGACY JSON `state` column (`KindSnapshot.decode_state/1` fallback) has
+  # STRING top-level keys, NOT atoms — so the atom `Map.has_key?` checks below
+  # would all miss and mis-report a perfectly recognizable session as
+  # `:unclassifiable`. We detect that shape FIRST and fail loud with a PRECISE,
+  # actionable message instead. We do NOT atom-normalize + classify: only the
+  # TOP-LEVEL keys could be safely atomized (a finite framework set), but the
+  # NESTED slice content stays string-keyed JSON, so the rewritten binary row
+  # would still fail to load at runtime — a legacy row must be re-saved as a
+  # binary snapshot (which the runtime does on its next commit) BEFORE backfill.
+  @legacy_json_marker_keys ~w(chat publisher turns surface external_mirror)
+
   # The stable type atom both session Kinds share (Session + SocialwareSession).
   @session_kind_type "session"
 
@@ -100,7 +112,9 @@ defmodule Ezagent.Kind.KindBaseBackfill do
 
   @type classification :: :chat | :socialware
   @type classify_error ::
-          {:ambiguous, [atom()]} | {:unclassifiable, [atom()]}
+          {:ambiguous, [atom()]}
+          | {:unclassifiable, [atom()]}
+          | {:legacy_json_unsupported, [String.t()]}
 
   @doc "The as-built behavior set for a classification (module atoms, no base behaviors)."
   @spec target_behaviors(classification()) :: [module()]
@@ -127,6 +141,15 @@ defmodule Ezagent.Kind.KindBaseBackfill do
     is_session? = Enum.any?(@session_marker_slice_keys, &Map.has_key?(state, &1))
 
     cond do
+      # A LEGACY JSON-column row decodes to STRING top-level keys. Detect it
+      # FIRST so a recognizable-but-string-keyed session is NOT mis-reported as
+      # `:unclassifiable`. Fail loud with a precise, actionable error (see
+      # `@legacy_json_marker_keys`): the row must be re-saved as a binary
+      # snapshot before `:kind_base` backfill.
+      not is_session? and not has_socialware? and not has_external_mirror? and
+          legacy_json_session?(state) ->
+        {:error, {:legacy_json_unsupported, keys}}
+
       # Socialware slice AND a chat-only mirror slice: neither Kind declares
       # both. Genuinely corrupt — fail loud.
       has_socialware? and has_external_mirror? ->
@@ -145,6 +168,13 @@ defmodule Ezagent.Kind.KindBaseBackfill do
       true ->
         {:error, {:unclassifiable, keys}}
     end
+  end
+
+  # A decoded state is a LEGACY JSON session row when it carries a STRING
+  # session-marker key (the JSON column never produces atom keys). Pure string
+  # check — never consults atom presence.
+  defp legacy_json_session?(state) do
+    Enum.any?(@legacy_json_marker_keys, &Map.has_key?(state, &1))
   end
 
   @doc """
@@ -248,6 +278,16 @@ defmodule Ezagent.Kind.KindBaseBackfill do
             persist_backfilled(row, new_state)
             %{acc | backfilled: acc.backfilled + 1}
           end
+
+        {:error, {:legacy_json_unsupported, _keys} = reason} ->
+          raise ArgumentError,
+                "Ezagent.Kind.KindBaseBackfill: session snapshot #{row.uri} is a " <>
+                  "LEGACY JSON-column row (string-keyed: #{inspect(reason)}). The " <>
+                  ":kind_base backfill only rewrites binary (`term_to_binary`) " <>
+                  "snapshots — atom-normalizing a legacy row's top-level keys would " <>
+                  "leave its nested slice content string-keyed and unloadable. " <>
+                  "Re-save this row as a binary snapshot first (touch it via the " <>
+                  "runtime so the Kind re-commits) THEN re-run the backfill."
 
         {:error, reason} ->
           raise ArgumentError,

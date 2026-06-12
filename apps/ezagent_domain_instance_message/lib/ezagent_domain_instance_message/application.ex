@@ -849,20 +849,26 @@ defmodule EzagentDomainInstanceMessage.Application do
     # It OWNS the `:publisher` slice (in `Session.behaviors/0`, materializes
     # the ring) + self-subscribes to its SliceChange topic in `activate/2`.
     #
-    # P5-A (codex H3; Allen option B) — only `:subscribe_from` is registered
-    # here now. The READ actions (`:snapshot`/`:history`) MOVED to the unified
-    # MEMBERSHIP-gated read (`SocialwarePublisherRead`: cap-EXEMPT + a live
-    # `ChatMembership` owner/member check), registered for `{Session,
-    # :snapshot|:history}` in SOCIALWARE's `application.ex`. Cross-app
-    # placement is forced by the dep direction: `SocialwarePublisherRead` +
-    # `ChatMembership` live in `ezagent_domain_socialware`; `instance_message`
-    # does NOT depend on socialware so it CANNOT name them here, but
-    # `socialware` DOES depend on `instance_message` so it CAN name `Session`.
-    # Keeping the read-action registration here too would COLLIDE
-    # (`CapabilityRegistry.register/3` raises on a `{Kind, action}` conflict).
+    # P5-A (codex P5 round-2 P2) — the chat `Session`'s publisher actions
+    # register HERE, in the Kind's HOME app (registration-lives-with-the-Kind):
+    # `:subscribe_from` → `Publisher.SessionImpl` (cap-gated trunk/mirror path);
+    # `:snapshot`/`:history` → the unified MEMBERSHIP-gated `SocialwarePublisherRead`
+    # (cap-EXEMPT + live `ChatMembership` owner/member check). Both read modules
+    # read ONLY `:chat`/`:publisher` (owned here), so they were RELOCATED into
+    # this app from socialware — making chat `Session` SELF-SUFFICIENT (a
+    # standalone instance_message run, no socialware started, resolves
+    # `Session.snapshot/2`+`history/4`; previously these regs lived in socialware
+    # → app-isolated runs hit `{:unknown_action, :snapshot}`). `SocialwareSession`
+    # reuses both modules from its own app. Distinct Kinds ⇒ no collision.
+    # (Names keep the `Socialware*` prefix this PR; rename deferred to P5-1.)
     alias Ezagent.Behavior.Publisher.SessionImpl, as: PublisherSI
+    alias Ezagent.Behavior.SocialwarePublisherRead
 
     :ok = CapabilityRegistry.register(Session, :subscribe_from, PublisherSI)
+
+    Enum.each(SocialwarePublisherRead.actions(), fn action ->
+      :ok = CapabilityRegistry.register(Session, action, SocialwarePublisherRead)
+    end)
 
     # ExternalMirror PR-EM-3 (SPEC §4.1 / §9 PR-EM-3) — register
     # the `Ezagent.Behavior.ExternalMirror` (bind / unbind /
