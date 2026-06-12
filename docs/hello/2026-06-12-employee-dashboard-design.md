@@ -136,9 +136,12 @@ canonicalize 与否在 PR-0b 单独决策（涉及 prompt 同步 + 前端跨 rep
 
 **工作量定调（三轮 H-5）**：0a + 0b ≈ 两个中型 PR（含 5 个测试文件 fixture
 重写）；每轮回归吃 dev server 重启 ~4.5 分钟。**与 zhangning 的并行开发
-冲突面大，开工前同步分工 + 重置窗口 + 前端 repo 位置确认**（文档此前写
-github.com/ezagent42/loom，docs/loom 记载为 Ning 的 Desktop 仓库——以
-zhangning 确认为准）。
+冲突面大，开工前同步分工 + 重置窗口**（协调由 Allen/产品侧跟进，
+2026-06-13 确认启动）。
+**前端 repo 已确认（2026-06-13）**：`github.com/ezagent42/loom`——
+docs/loom 里的"Ning 的 Desktop 仓库"中 **Ning 是 loom 的旧名**，
+两处记载指同一仓库，无冲突（顺带：PR-0b 文档同步时把 docs/loom 里的
+"Ning"统一改注为 loom 旧名，免后人再困惑一轮）。
 
 **遗留注记**：LOCKED spec 端态含"去 flavor 前缀"（`loomorch_` 等），主线
 尚未执行——本期保留前缀，**主线执行 flavor-drop 时 loom URI 还要再动一次**
