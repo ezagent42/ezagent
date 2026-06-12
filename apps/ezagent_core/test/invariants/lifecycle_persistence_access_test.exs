@@ -67,7 +67,17 @@ defmodule Ezagent.Invariants.LifecyclePersistenceAccessTest do
         # lives in ezagent_core, which has NO dependency on the domain-owned
         # session Kind modules `save_now/3` would need to resolve. Framework-
         # internal one-shot migration, not a domain/Behavior write path.
-        "apps/ezagent_core/lib/ezagent/kind/kind_base_backfill.ex"
+        "apps/ezagent_core/lib/ezagent/kind/kind_base_backfill.ex",
+        # chat→session one-shot MIGRATION (TEST/sandbox only): rewrites the
+        # top-level `:chat`→`:session` slice key on EXISTING session rows in
+        # place. Same direct-`upsert` rationale as kind_base_backfill (core, no
+        # dependency on the domain session Kind modules `save_now/3` resolves).
+        "apps/ezagent_core/lib/ezagent/session/slice_migration.ex",
+        # chat→session one-shot grant MIGRATION (TEST/sandbox only): rewrites
+        # persisted `Behavior.Chat`→`Behavior.Session` caps in the `:identity`
+        # slice of EXISTING snapshot rows. Framework-internal row-level rewrite,
+        # not a domain/Behavior write path.
+        "apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex"
       ],
       guidance:
         "Domain/Behavior/plugin state persists via the normal dispatch → " <>

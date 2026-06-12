@@ -88,7 +88,7 @@ defmodule EzagentPluginFeishu.MentionParser do
     * a typed `@<name>` that IS a registered legend is intercepted BEFORE the
       URI-mention path and surfaced as a SYMBOLIC LEGEND NAME in
       `legend_triggers` — NOT pre-canonicalized to concrete URIs. The send
-      path (`Behavior.Chat.handle_send`) then fires the legend's bound rule-set
+      path (`Behavior.Session.handle_send`) then fires the legend's bound rule-set
       ENTRY rule through the NORMAL `Resolver.resolve_with_ctx/4` expansion
       (matching `mention(<legend_name>)` against the virtual
       `Message.legend_triggers`), which carries the entry's `prompt_template_ref`
@@ -101,7 +101,7 @@ defmodule EzagentPluginFeishu.MentionParser do
   `legend_triggers`, and the typed token is removed from the URI-mention scan.
 
   `legends` is the session-scoped legend registry (`name => entry`), read off
-  the Chat slice via `Ezagent.Behavior.Chat.legends_of/1` by the caller.
+  the Chat slice via `Ezagent.Behavior.Session.legends_of/1` by the caller.
   Passing `%{}` yields `{extract_agent_mentions(text), []}`.
   """
   @spec extract_mentions(String.t(), map()) :: {[URI.t()], [String.t()]}

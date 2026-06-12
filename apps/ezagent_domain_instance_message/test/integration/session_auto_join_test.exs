@@ -34,7 +34,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
     # `:state` (persisted); `monitors` lives in `:transients` (rebuilt by
     # activate/2). Return the same `{members, monitors, persistent_slice}`
     # tuple the callers expect.
-    %{state: %{chat: chat}} = :sys.get_state(pid)
+    %{state: %{session: chat}} = :sys.get_state(pid)
     persistent = Map.get(chat, :state, chat)
     transients = Map.get(chat, :transients, %{})
     monitors = Map.get(transients, :monitors, Map.get(persistent, :monitors, %{}))
@@ -47,7 +47,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
   # just membership presence.
   defp session_members_meta(%URI{} = session_uri) do
     {:ok, pid} = KindRegistry.lookup(session_uri)
-    %{state: %{chat: chat}} = :sys.get_state(pid)
+    %{state: %{session: chat}} = :sys.get_state(pid)
     persistent = Map.get(chat, :state, chat)
     persistent.members
   end
@@ -87,7 +87,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
   # Layer 2 — `:join` invoke idempotency at the slice level
   # ----------------------------------------------------------------------
 
-  describe ":join idempotency (Behavior.Chat)" do
+  describe ":join idempotency (Behavior.Session)" do
     # Codex r1 HIGH-1 (2026-05-26) — strict pid-match short-circuit
     # regression test. The short-circuit MUST verify the held monitor
     # ref is for the SAME pid KindRegistry currently resolves the URI
@@ -124,7 +124,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
       # Repeated chat.join with the SAME admin pid — must NOT stack
       # monitors AND must NOT install a fresh ref (the existing one
       # is for the current pid).
-      target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+      target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
       :ok =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{
@@ -166,7 +166,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
 
       # Dispatch chat.join 5 more times — every one should be a no-op
       # at the slice level (online + monitor alive → short-circuit).
-      target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+      target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
       for _ <- 1..5 do
         :ok =
@@ -190,7 +190,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
       assert map_size(monitors_after) == ref_count_before,
              "5 repeated chat.join casts must NOT stack monitor refs (was " <>
                "#{ref_count_before}, now #{map_size(monitors_after)}) — " <>
-               "Behavior.Chat.invoke(:join) idempotency regression"
+               "Behavior.Session.invoke(:join) idempotency regression"
     end
   end
 
@@ -317,7 +317,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
 
   defp join_cast(session_uri, member_uri, facets) do
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=chat.join"),
+      target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
       mode: :cast,
       args: Map.put(facets, :member, member_uri),
       ctx: join_ctx(:ignore)
@@ -326,7 +326,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
 
   defp join_call(session_uri, member_uri, facets) do
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=chat.join"),
+      target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
       mode: :call,
       args: Map.put(facets, :member, member_uri),
       ctx: join_ctx({:caller_inbox, self()})

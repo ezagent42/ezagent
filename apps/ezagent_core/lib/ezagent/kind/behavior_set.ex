@@ -196,7 +196,7 @@ defmodule Ezagent.Kind.BehaviorSet do
   # source of truth for the closure resolver. Derived from each
   # session-relevant Behavior's `state_slice/0`.
   @slice_owners %{
-    chat: Ezagent.Behavior.Chat,
+    chat: Ezagent.Behavior.Session,
     turns: Ezagent.Behavior.Turn,
     surface: Ezagent.Behavior.Surface,
     config_evolve: Ezagent.Behavior.ConfigEvolve,
@@ -215,7 +215,7 @@ defmodule Ezagent.Kind.BehaviorSet do
     Ezagent.Behavior.Turn => %{surface: :required},
     Ezagent.Behavior.ConfigEvolve => %{sandbox: :required, identity: :required},
     Ezagent.Behavior.ExternalMirror => %{publisher: :required},
-    Ezagent.Behavior.Chat => %{sandbox: :optional},
+    Ezagent.Behavior.Session => %{sandbox: :optional},
     Ezagent.Behavior.CurlAgent => %{api_keys: :optional}
   }
 

@@ -17,7 +17,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
        routes to the session the mentioned agent is a member of
        (2026-06-01).
     4. On bound + session-bound → dispatch
-       `<session_uri>?action=chat.send`. On success, react `OK`
+       `<session_uri>?action=session.send`. On success, react `OK`
        emoji (Allen 2026-05-17 "受到了信息" 反馈).
     5. On dispatch error → send a Feishu text back into the source
        chat explaining what happened, then `THUMBSDOWN` react. The
@@ -34,7 +34,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
 
   ## Dispatch mode: `:call`, not `:cast` (Decision #134)
 
-  `Ezagent.Behavior.Chat.@interface[:send]` declares `:send` as `:cast`
+  `Ezagent.Behavior.Session.@interface[:send]` declares `:send` as `:cast`
   (fire-and-forget). This module dispatches with `mode: :call`
   anyway, so cap-denial or other dispatch failures return
   synchronously as `{:error, _}` and can be surfaced to the human
@@ -117,8 +117,8 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
                   message_id,
                   "THUMBSDOWN",
                   "🚫 ESR: 没有权限发送到 #{Ezagent.URI.stable_key(session_uri)} " <>
-                    "(missing cap: session.chat). " <>
-                    "请联系管理员补一条 `kind=:session behavior=:chat` 的 cap。"
+                    "(missing cap: session.send). " <>
+                    "请联系管理员补一条 `kind=:session behavior=:session` 的 cap。"
                 )
 
                 {:error, :unauthorized}
@@ -283,7 +283,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
         legend_triggers: legend_triggers
       )
 
-    target = Ezagent.URI.with_action(session_uri, :chat, :send)
+    target = Ezagent.URI.with_action(session_uri, :session, :send)
 
     # Allen 2026-05-18: mode :call so cap-denial bubbles back
     # synchronously; the caller (dispatch/1) sends a text message to

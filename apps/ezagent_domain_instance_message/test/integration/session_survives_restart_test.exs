@@ -86,7 +86,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
   end
 
   defp join(session_uri, member_uri) do
-    target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
     Invocation.dispatch(%Invocation{
       target: target,
@@ -106,7 +106,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
     # Lifecycle migration (SPEC 2026-05-29 §2.3C): the `:chat` slice is now
     # the two-container `%{state, transients}` shape; `members` lives in
     # `:state`. (`:monitors` moved to `:transients` — rebuilt by activate/2.)
-    chat_slice = Map.get(wrapper.state, :chat, %{})
+    chat_slice = Map.get(wrapper.state, :session, %{})
     chat_state = Map.get(chat_slice, :state, chat_slice)
     Map.get(chat_state, :members, %{})
   end
@@ -248,7 +248,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
       # only [Chat] in behaviors/0). Saved verbatim to simulate a
       # snapshot taken before PR-EM-0 landed.
       chat_only_slice = %{
-        chat: %{members: %{member => %{online: true}}, monitors: %{}, last_seen: %{}},
+        session: %{members: %{member => %{online: true}}, monitors: %{}, last_seen: %{}},
         # P5-0b: Session requires an explicit :kind_base (a backfilled legacy
         # row carries it). Without it the scoped guard fails the reload loud.
         kind_base: %{state: %{behaviors: Session.behaviors()}, transients: %{}}
@@ -258,7 +258,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
 
       loaded = Snapshot.load_or_init(session_uri, Session, %{uri: session_uri})
 
-      # T4 (Lifecycle Phase B foundation): `Behavior.Chat` is now a
+      # T4 (Lifecycle Phase B foundation): `Behavior.Session` is now a
       # `use Ezagent.Lifecycle` behavior, so `init_fresh` carries `:chat`
       # as the two-container `%{state, transients}` shape. A LEGACY FLAT
       # snapshot slice is coerced on load to `%{state: flat, transients:
@@ -291,7 +291,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
   # Phase 7 completion PR-2 (SPEC §2 "PR-2") — the durable
   # `template_working_copy` field on the Chat slice.
   describe "template_working_copy slice (PR-2)" do
-    alias Ezagent.Behavior.Chat
+    alias Ezagent.Behavior.Session, as: SessionBehavior
 
     test "the template_working_copy field round-trips through a Session snapshot/restore" do
       session_uri =
@@ -324,7 +324,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
 
       :ok =
         SnapshotFixtures.save_kind_snapshot(session_uri, Session, %{
-          chat: chat_slice,
+          session: chat_slice,
           # P5-0b: explicit :kind_base (backfilled legacy row).
           kind_base: %{state: %{behaviors: Session.behaviors()}, transients: %{}}
         })
@@ -332,10 +332,10 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
       loaded = Snapshot.load_or_init(session_uri, Session, %{uri: session_uri})
 
       # T4: the loaded flat snapshot is coerced to two-container; the
-      # `Chat.template_working_copy/1` accessor reads the flat `:chat` slice,
+      # `SessionBehavior.template_working_copy/1` accessor reads the flat `:chat` slice,
       # so pass the normalized `.state` view (same as the production
       # consumers — `McpServer.load_chat_slice`, `Session.read_*`).
-      assert Chat.template_working_copy(Ezagent.Kind.normalize_slice_view(loaded.chat)) ==
+      assert SessionBehavior.template_working_copy(Ezagent.Kind.normalize_slice_view(loaded.chat)) ==
                working_copy,
              "the durable template_working_copy field must survive a Session " <>
                "snapshot/restore — Session is {:snapshot, :on_change}"
@@ -377,7 +377,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
 
       # Reading the field via the accessor yields the empty default —
       # no crash, the field gracefully defaults.
-      assert Chat.template_working_copy(loaded_chat) == Chat.default_template_working_copy()
+      assert SessionBehavior.template_working_copy(loaded_chat) == SessionBehavior.default_template_working_copy()
     end
   end
 end

@@ -74,7 +74,7 @@ defmodule Ezagent.Entity.Agent do
   @impl Ezagent.Kind
   def behaviors,
     do: [
-      Ezagent.Behavior.Chat,
+      Ezagent.Behavior.Session,
       Ezagent.Behavior.Identity,
       Ezagent.Behavior.Sandbox,
       Ezagent.Behavior.ApiKeys,
@@ -311,7 +311,7 @@ defmodule Ezagent.Entity.Agent do
   the first **32 hex chars** (128 bits) — accidental collision is
   negligible. This is the probabilistic defense; the deterministic
   guarantee is **per-session `role_name` uniqueness** (enforced at
-  `chat.join` by `Ezagent.Behavior.Chat`'s `role_name_conflict/3`,
+  `chat.join` by `Ezagent.Behavior.Session`'s `role_name_conflict/3`,
   team-routing-unification §3.1) — two members in one session cannot share
   a role_name, and the session discriminator folded into the name keeps
   distinct sessions distinct. (The pre-§3.8 slot-tool

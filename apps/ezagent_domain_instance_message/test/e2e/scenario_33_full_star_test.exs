@@ -205,7 +205,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
 
   defp chat_slice(session_uri) do
     {:ok, pid} = KindRegistry.lookup(session_uri)
-    %{state: %{chat: %{state: slice}}} = :sys.get_state(pid)
+    %{state: %{session: %{state: slice}}} = :sys.get_state(pid)
     slice
   end
 
@@ -268,7 +268,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
       slice = chat_slice(ctx.session_uri)
 
       for {role_name, _} <- members do
-        assert Behavior.Chat.role_name_to_uri(slice.members, role_name),
+        assert Behavior.Session.role_name_to_uri(slice.members, role_name),
                "member #{role_name} must be a live session member — got #{inspect(Map.keys(slice.members))}"
       end
 

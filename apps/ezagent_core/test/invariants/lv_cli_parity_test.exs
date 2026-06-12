@@ -227,7 +227,7 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
     "preview" => {:ui_only, "preview computed shape; no persistence"},
     "validate_compose" => {:ui_only, "live form validation"},
     "cancel_upload" => {:ui_only, "cancel ongoing upload; LV-only state"},
-    "mark_displayed" => {:ui_only, "client-side read tracking (Ezagent.Chat.ReadMarker.mark/4)"},
+    "mark_displayed" => {:ui_only, "client-side read tracking (Ezagent.Session.ReadMarker.mark/4)"},
     "load_older_messages" => {:ui_only, "pagination — pure UI"},
     "update_test_recipient" => {:ui_only, "settings test-email recipient field"},
     "refresh" => {:ui_only, "force re-mount listings"},

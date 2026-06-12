@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Chat.MentionFailedTest do
+defmodule Ezagent.Behavior.Session.MentionFailedTest do
   @moduledoc """
   Allen 2026-05-26 directive — `chat.send` MUST surface a
   `:mention_failed` notification to the sender when an @-mention's
@@ -114,10 +114,10 @@ defmodule Ezagent.Behavior.Chat.MentionFailedTest do
   end
 
   defp join_session(session_uri, member_uri, caller_uri) do
-    caps = [Capability.cap(:any, Ezagent.Behavior.Chat, :join)]
+    caps = [Capability.cap(:any, Ezagent.Behavior.Session, :join)]
 
     inv = %Invocation{
-      target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.join"),
+      target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
       mode: :call,
       args: %{member: member_uri},
       ctx: %{caller: caller_uri, caps: caps, deadline_ms: 5_000}
@@ -132,12 +132,12 @@ defmodule Ezagent.Behavior.Chat.MentionFailedTest do
 
   defp send_message(session_uri, msg, caller_uri) do
     caps = [
-      Capability.cap(:any, Ezagent.Behavior.Chat, :send),
-      Capability.cap(:any, Ezagent.Behavior.Chat, :receive)
+      Capability.cap(:any, Ezagent.Behavior.Session, :send),
+      Capability.cap(:any, Ezagent.Behavior.Session, :receive)
     ]
 
     inv = %Invocation{
-      target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.send"),
+      target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
       mode: :call,
       args: %{message: msg},
       ctx: %{caller: caller_uri, caps: caps, deadline_ms: 5_000}

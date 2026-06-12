@@ -5,7 +5,7 @@ defmodule Ezagent.Behavior.ChatRenderForDeliveryTest do
   runtime — these are pure functions over a message + ctx + templates map.
   """
   use ExUnit.Case, async: true
-  alias Ezagent.{Behavior.Chat, Message}
+  alias Ezagent.{Behavior.Session, Message}
 
   @session URI.new!("session://system/default/main")
 

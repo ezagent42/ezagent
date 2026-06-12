@@ -110,7 +110,7 @@ defmodule Ezagent.E2E.Scenario25PhxRestartRebuildTest do
           caps:
             MapSet.new([
               %Ezagent.Capability{
-                kind: :chat,
+                kind: :session,
                 behavior: :any,
                 action: :any,
                 instance: :any,

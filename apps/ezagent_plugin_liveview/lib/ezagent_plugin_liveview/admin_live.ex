@@ -333,7 +333,7 @@ defmodule EzagentPluginLiveview.AdminLive do
     session_uri = socket.assigns.current_session_uri
     viewer_uri = socket.assigns.current_entity_uri
 
-    _ = Ezagent.Chat.ReadMarker.mark(session_uri, viewer_uri, msg_id, :displayed)
+    _ = Ezagent.Session.ReadMarker.mark(session_uri, viewer_uri, msg_id, :displayed)
 
     {:noreply, socket}
   end

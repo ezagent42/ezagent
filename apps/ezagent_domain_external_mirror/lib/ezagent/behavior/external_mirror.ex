@@ -745,7 +745,7 @@ defmodule Ezagent.Behavior.ExternalMirror do
   three-branch enforcement).
   """
   def data_owner(%URI{scheme: "session"} = session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :chat) do
+    case Ezagent.Kind.get_slice(session_uri, :session) do
       {:ok, %{owner_uri: %URI{} = owner_uri}} -> Ezagent.URI.instance(owner_uri)
       _ -> :no_owner
     end

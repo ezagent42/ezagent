@@ -11,7 +11,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
   use ExUnit.Case
   alias Ezagent.{Message, MessageStore}
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session, as: SessionBehavior
   alias Ezagent.InterfaceValidator
   alias EzagentCore.Repo
 
@@ -24,7 +24,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
   # Phase 9 PR-6 — `MessageStore.write/2` requires the session to be
   # bound to a workspace via WorkspaceRegistry (invariant 4 + SPEC v3
-  # §7). Helper binds + queues teardown so tests calling EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Chat, :send)
+  # §7). Helper binds + queues teardown so tests calling EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Session, :send)
   # or :join don't hit the "no workspace binding" raise.
   defp bind_to_default(session_uri) do
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, URI.new!("workspace://team-alpha"))
@@ -42,7 +42,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # :set_working_copy). team-routing-unification §3.4/§3.7 (PR-7) —
       # `:set_prompt_templates` joins as the named prompt-template-map
       # writer (same authority class; PR-7 materialization installs it).
-      assert Chat.actions() ==
+      assert SessionBehavior.actions() ==
                [
                  :send,
                  :receive,
@@ -55,7 +55,7 @@ defmodule Ezagent.Behavior.ChatTest do
     end
 
     test "state_slice/0 returns :chat" do
-      assert Chat.state_slice() == :chat
+      assert SessionBehavior.state_slice() == :chat
     end
 
     test "init_slice/1 returns two-container slice; create/1 holds the PERSISTENT fields (no :monitors)" do
@@ -71,7 +71,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # PR-EM-6-PRE (Allen 2026-05-25) — three send-tracking fields at
       # their identity defaults. `:owner_uri` defaults to nil for arg-less
       # init (PR-OWN-2).
-      assert Chat.init_slice(%{}) == %{
+      assert SessionBehavior.init_slice(%{}) == %{
                state: %{
                  members: %{},
                  owner_uri: nil,
@@ -87,17 +87,17 @@ defmodule Ezagent.Behavior.ChatTest do
                  # team-routing-unification §3.6 (PR-6) — session-scoped legend
                  # registry; empty by default.
                  legends: %{},
-                 template_working_copy: Chat.default_template_working_copy()
+                 template_working_copy: SessionBehavior.default_template_working_copy()
                },
                transients: %{}
              }
 
       # :monitors is GONE from the persistent state (it's a transient).
-      refute Map.has_key?(Chat.init_slice(%{}).state, :monitors)
+      refute Map.has_key?(SessionBehavior.init_slice(%{}).state, :monitors)
     end
 
     test "default_template_working_copy/0 is the empty template-shaped record (no agent_slots, §3.8)" do
-      wc = Chat.default_template_working_copy()
+      wc = SessionBehavior.default_template_working_copy()
 
       # team-routing-unification §3.8 (PR-8) — `agent_slots` is DROPPED from
       # the live working copy (clean cutover). A team is members + rule-sets.
@@ -119,18 +119,18 @@ defmodule Ezagent.Behavior.ChatTest do
     test "template_working_copy/1 returns the field, defaulting when key is absent (pre-PR-2 slice)" do
       # A fresh `create/1` state carries the field. `template_working_copy/1`
       # operates on the PERSISTENT slice (the `:state` sub-map post-Lifecycle).
-      slice = Chat.init_slice(%{}).state
-      assert Chat.template_working_copy(slice) == Chat.default_template_working_copy()
+      slice = SessionBehavior.init_slice(%{}).state
+      assert SessionBehavior.template_working_copy(slice) == SessionBehavior.default_template_working_copy()
 
       # A pre-PR-2 `:chat` slice has no `template_working_copy` key —
       # readers must still get the empty default, never crash.
       pre_pr2_slice = %{members: %{}, monitors: %{}, last_seen: %{}}
       refute Map.has_key?(pre_pr2_slice, :template_working_copy)
-      assert Chat.template_working_copy(pre_pr2_slice) == Chat.default_template_working_copy()
+      assert SessionBehavior.template_working_copy(pre_pr2_slice) == SessionBehavior.default_template_working_copy()
     end
 
     test "interface/0 declares all 7 actions" do
-      keys = Chat.interface() |> Map.keys() |> Enum.sort()
+      keys = SessionBehavior.interface() |> Map.keys() |> Enum.sort()
       # team-routing-unification §3.6 (PR-6) — :set_legends added;
       # §3.4/§3.7 (PR-7) — :set_prompt_templates added.
       assert keys ==
@@ -175,7 +175,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # fire-and-forget — invoke still {:ok, ...}.
       assert {:ok, _, %{stored: true}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Chat,
+                 Ezagent.Behavior.Session,
                  :send,
                  slice,
                  %{message: msg},
@@ -226,7 +226,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # NOT the in-session member list. invoke still succeeds.
       assert {:ok, _, %{stored: true}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Chat,
+                 Ezagent.Behavior.Session,
                  :send,
                  slice,
                  %{message: msg},
@@ -244,10 +244,10 @@ defmodule Ezagent.Behavior.ChatTest do
       sender = URI.new!("entity://system/user/admin")
       msg = Message.new(sender, %{text: "hello world", attachments: []})
 
-      slice = Chat.init_slice(%{}).state
+      slice = SessionBehavior.init_slice(%{}).state
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: sender}
 
-      topic = Chat.session_events_topic(session_uri)
+      topic = SessionBehavior.session_events_topic(session_uri)
       :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
 
       # PR-EM-6-PRE (Allen 2026-05-25) — `:send` now mutates the slice
@@ -256,7 +256,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # The bound `new_slice` shape is asserted below.
       assert {:ok, new_slice, %{stored: true}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Chat,
+                 Ezagent.Behavior.Session,
                  :send,
                  slice,
                  %{message: msg},
@@ -317,7 +317,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # consume the return — fan-out is fire-and-forget).
       assert {:ok, _new_slice, %{stored: true}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Chat,
+                 Ezagent.Behavior.Session,
                  :send,
                  slice,
                  %{message: msg},
@@ -333,12 +333,12 @@ defmodule Ezagent.Behavior.ChatTest do
       # rejects with :error.
       sender = URI.new!("entity://system/user/admin")
       msg = Message.new(sender, %{text: "boom", attachments: []})
-      slice = Chat.init_slice(%{}).state
+      slice = SessionBehavior.init_slice(%{}).state
       ctx = %{self_uri: :not_a_uri, kind_module: Ezagent.Entity.Session, caller: sender}
 
       assert_raise FunctionClauseError, fn ->
         EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-          Ezagent.Behavior.Chat,
+          Ezagent.Behavior.Session,
           :send,
           slice,
           %{message: msg},
@@ -349,7 +349,7 @@ defmodule Ezagent.Behavior.ChatTest do
   end
 
   describe "invoke(:send, ...) — PR-EM-6-PRE slice mutation + SliceChange emit" do
-    # PR-EM-6-PRE (Allen 2026-05-25) — Chat.send must mutate the :chat
+    # PR-EM-6-PRE (Allen 2026-05-25) — SessionBehavior.send must mutate the :chat
     # slice so the SliceChange hook in `Kind.Runtime` fires per send.
     # This is the architectural seam external-mirror plugins ride on
     # after PR-EM-6 deletes the legacy `maybe_notify_external/3` path.
@@ -357,7 +357,7 @@ defmodule Ezagent.Behavior.ChatTest do
     # the `new_slice != slice` predicate that gates the event.
 
     test "fresh session has nil id, nil message, cursor 0" do
-      slice = Chat.init_slice(%{}).state
+      slice = SessionBehavior.init_slice(%{}).state
 
       assert Map.has_key?(slice, :last_message_id)
       assert Map.has_key?(slice, :last_message)
@@ -378,12 +378,12 @@ defmodule Ezagent.Behavior.ChatTest do
       sender = URI.new!("entity://system/user/admin")
       msg = Message.new(sender, %{text: "ping", attachments: []})
 
-      slice = Chat.init_slice(%{}).state
+      slice = SessionBehavior.init_slice(%{}).state
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: sender}
 
       assert {:ok, new_slice, %{stored: true}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Chat,
+                 Ezagent.Behavior.Session,
                  :send,
                  slice,
                  %{message: msg},
@@ -435,11 +435,11 @@ defmodule Ezagent.Behavior.ChatTest do
       # Sanity: independent message ids
       refute msg1.id == msg2.id
 
-      slice = Chat.init_slice(%{}).state
+      slice = SessionBehavior.init_slice(%{}).state
 
       assert {:ok, slice1, _} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Chat,
+                 Ezagent.Behavior.Session,
                  :send,
                  slice,
                  %{message: msg1},
@@ -452,7 +452,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, slice2, _} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Chat,
+                 Ezagent.Behavior.Session,
                  :send,
                  slice1,
                  %{message: msg2},
@@ -485,11 +485,11 @@ defmodule Ezagent.Behavior.ChatTest do
 
       msg = Message.new(sender, %{text: "same payload, sent twice", attachments: []})
 
-      slice = Chat.init_slice(%{}).state
+      slice = SessionBehavior.init_slice(%{}).state
 
       assert {:ok, slice1, %{stored: true}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Chat,
+                 Ezagent.Behavior.Session,
                  :send,
                  slice,
                  %{message: msg},
@@ -505,7 +505,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # `{:ok, _, %{stored: true}}`.
       assert {:ok, slice2, %{stored: true}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Chat,
+                 Ezagent.Behavior.Session,
                  :send,
                  slice1,
                  %{message: msg},
@@ -549,12 +549,12 @@ defmodule Ezagent.Behavior.ChatTest do
       assert original.id == adversarial.id
       refute original.body == adversarial.body
 
-      slice = Chat.init_slice(%{}).state
+      slice = SessionBehavior.init_slice(%{}).state
 
       # First send persists the original
       assert {:ok, slice1, %{stored: true}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Chat,
+                 Ezagent.Behavior.Session,
                  :send,
                  slice,
                  %{message: original},
@@ -570,7 +570,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # MUST be the original row, not the adversarial one.
       assert {:ok, slice2, %{stored: true}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Chat,
+                 Ezagent.Behavior.Session,
                  :send,
                  slice1,
                  %{message: adversarial},
@@ -613,7 +613,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, new_slice, %{stored: true}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Chat,
+                 Ezagent.Behavior.Session,
                  :send,
                  legacy_slice,
                  %{message: msg},
@@ -629,7 +629,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # End-to-end: drive the Chat behavior via Kind.Runtime so the
       # slice_change_event hook fires (per runtime.ex step 9.5). With
       # the three send-tracking fields mutated by `:send`, subscribers
-      # should receive a `{:slice_changed, %{slice_key: :chat, ...}}`
+      # should receive a `{:slice_changed, %{slice_key: :session, ...}}`
       # event carrying the full Message in `new_slice.last_message`
       # (HIGH-2 — adapters convert the event without DB lookups).
       # Without this PR's slice mutation, `new_slice == slice` and
@@ -651,7 +651,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # Lifecycle migration: the Kind stores `:chat` as the two-container
       # `%{state, transients}` slice; seed that shape so the runtime's
       # handler-ctx builder reads persistent fields from `:state`.
-      slice = Chat.init_slice(%{})
+      slice = SessionBehavior.init_slice(%{})
 
       # Subscribe to the entity's slice-changed topic. The hook fires
       # only via `Kind.Server.commit_and_notify/3` → `SliceChange.emit/1`
@@ -662,7 +662,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       # Build a dispatch envelope identical to what `Invocation.dispatch/1`
       # would land in a Session GenServer's handle_call/cast.
-      target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+      target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
 
       inv = %Ezagent.Invocation{
         target: target,
@@ -730,7 +730,7 @@ defmodule Ezagent.Behavior.ChatTest do
       assert_receive {:slice_changed,
                       %{
                         uri: ^session_uri,
-                        slice_key: :chat,
+                        slice_key: :session,
                         cursor: cursor,
                         event_at: %DateTime{},
                         result_summary: :ok
@@ -762,7 +762,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, new_slice} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Chat,
+                 Ezagent.Behavior.Session,
                  :receive,
                  slice,
                  %{message: msg},
@@ -789,7 +789,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, ^slice} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Chat,
+                 Ezagent.Behavior.Session,
                  :receive,
                  slice,
                  %{message: msg},
@@ -825,7 +825,7 @@ defmodule Ezagent.Behavior.ChatTest do
       ctx = %{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri}
 
       EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-        Ezagent.Behavior.Chat,
+        Ezagent.Behavior.Session,
         :receive,
         %{},
         %{message: msg},
@@ -880,7 +880,7 @@ defmodule Ezagent.Behavior.ChatTest do
       ctx = %{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri}
 
       EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-        Ezagent.Behavior.Chat,
+        Ezagent.Behavior.Session,
         :receive,
         %{},
         %{message: msg},
@@ -937,7 +937,7 @@ defmodule Ezagent.Behavior.ChatTest do
       ctx = %{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri}
 
       EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-        Ezagent.Behavior.Chat,
+        Ezagent.Behavior.Session,
         :receive,
         %{},
         %{message: msg},
@@ -965,12 +965,12 @@ defmodule Ezagent.Behavior.ChatTest do
       # so KindRegistry.lookup returns ITS pid (the Registry's owner-pid).
       {:ok, member_pid} = GenServer.start_link(__MODULE__.NoopServer, member_uri)
 
-      slice = Chat.init_slice(%{}).state
+      slice = SessionBehavior.init_slice(%{}).state
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: member_uri}
 
       assert {:ok, new_slice, %{members: [^member_uri]}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Chat,
+                 Ezagent.Behavior.Session,
                  :join,
                  slice,
                  %{member: member_uri},
@@ -995,12 +995,12 @@ defmodule Ezagent.Behavior.ChatTest do
       missing_uri =
         URI.new!("entity://team-alpha/user/does-not-exist-#{System.unique_integer([:positive])}")
 
-      slice = Chat.init_slice(%{}).state
+      slice = SessionBehavior.init_slice(%{}).state
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: missing_uri}
 
       assert {:error, {:member_not_registered, ^missing_uri}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Chat,
+                 Ezagent.Behavior.Session,
                  :join,
                  slice,
                  %{member: missing_uri},
@@ -1023,12 +1023,12 @@ defmodule Ezagent.Behavior.ChatTest do
 
       {:ok, member_pid} = GenServer.start_link(__MODULE__.NoopServer, member_uri)
 
-      slice = Chat.init_slice(%{}).state
+      slice = SessionBehavior.init_slice(%{}).state
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: member_uri}
 
       assert {:ok, _slice, _result} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Chat,
+                 Ezagent.Behavior.Session,
                  :join,
                  slice,
                  %{member: member_uri},
@@ -1039,7 +1039,7 @@ defmodule Ezagent.Behavior.ChatTest do
                       %{
                         type: :session_member_joined,
                         body: %{text: text, session_uri: ^session_uri},
-                        source: Ezagent.Behavior.Chat
+                        source: Ezagent.Behavior.Session
                       }},
                      1_000
 
@@ -1070,12 +1070,12 @@ defmodule Ezagent.Behavior.ChatTest do
 
       {:ok, agent_pid} = GenServer.start_link(__MODULE__.NoopServer, agent_uri)
 
-      slice = Chat.init_slice(%{}).state
+      slice = SessionBehavior.init_slice(%{}).state
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: agent_uri}
 
       assert {:ok, _slice, _result} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Chat,
+                 Ezagent.Behavior.Session,
                  :join,
                  slice,
                  %{member: agent_uri},
@@ -1122,7 +1122,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, new_slice, _} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Chat,
+                 Ezagent.Behavior.Session,
                  :join,
                  slice,
                  %{member: member_uri},
@@ -1156,7 +1156,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, new_slice} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Chat,
+                 Ezagent.Behavior.Session,
                  :leave,
                  slice,
                  %{member: member_uri},
@@ -1193,7 +1193,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       down_msg = {:DOWN, ref, :process, self(), :normal}
 
-      assert {:ok, effects} = Chat.handle_signal(down_msg, ctx)
+      assert {:ok, effects} = SessionBehavior.handle_signal(down_msg, ctx)
 
       # member flipped offline (persisted :set)
       assert Enum.any?(effects, fn
@@ -1223,7 +1223,7 @@ defmodule Ezagent.Behavior.ChatTest do
       }
 
       assert :ignore =
-               Chat.handle_signal({:DOWN, make_ref(), :process, self(), :normal}, ctx)
+               SessionBehavior.handle_signal({:DOWN, make_ref(), :process, self(), :normal}, ctx)
     end
 
     test "ignores non-:DOWN messages" do
@@ -1234,8 +1234,8 @@ defmodule Ezagent.Behavior.ChatTest do
         transients: %{monitors: %{}}
       }
 
-      assert :ignore = Chat.handle_signal(:tick, ctx)
-      assert :ignore = Chat.handle_signal({:any, "thing"}, ctx)
+      assert :ignore = SessionBehavior.handle_signal(:tick, ctx)
+      assert :ignore = SessionBehavior.handle_signal({:any, "thing"}, ctx)
     end
   end
 
@@ -1248,12 +1248,12 @@ defmodule Ezagent.Behavior.ChatTest do
         |> Message.new(%{text: "hi", attachments: []})
         |> Map.from_struct()
 
-      schema = Chat.interface()[:send].args
+      schema = SessionBehavior.interface()[:send].args
       assert :ok = InterfaceValidator.validate(%{message: message}, schema)
     end
 
     test ":join args schema accepts URI member, rejects string" do
-      schema = Chat.interface()[:join].args
+      schema = SessionBehavior.interface()[:join].args
 
       assert :ok =
                InterfaceValidator.validate(

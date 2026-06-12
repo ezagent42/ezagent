@@ -143,7 +143,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
       user_uri = User.admin_uri()
       _ = Ezagent.SpawnRegistry.spawn(user_uri)
 
-      target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+      target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
       {:ok, _} =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{
@@ -200,7 +200,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
       first_user = User.admin_uri()
       _ = Ezagent.SpawnRegistry.spawn(first_user)
 
-      join_target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+      join_target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
       ctx = %{
         caller: Ezagent.SystemPrincipal.uri("session-internal"),
@@ -274,7 +274,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
 
       _ = Ezagent.SpawnRegistry.spawn(agent_uri)
 
-      target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+      target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
       _ =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{

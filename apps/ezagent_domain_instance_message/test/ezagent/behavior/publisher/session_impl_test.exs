@@ -84,7 +84,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
   defp slice_change(self_uri, _new_slice_map, opts \\ []) do
     %{
       uri: self_uri,
-      slice_key: Keyword.get(opts, :slice_key, :chat),
+      slice_key: Keyword.get(opts, :slice_key, :session),
       cursor: Keyword.get(opts, :cursor, 1),
       event_at: DateTime.utc_now(),
       result_summary: :ok
@@ -215,13 +215,13 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
       slice = fresh_slice()
 
       change =
-        slice_change(self_uri, %{members: %{:m1 => true}}, slice_key: :chat, action: :join)
+        slice_change(self_uri, %{members: %{:m1 => true}}, slice_key: :session, action: :join)
 
       assert {:ok, new_slice} =
                signal({:slice_changed, change}, slice, ctx(self_uri))
 
       assert new_slice.cursor == 1
-      assert [%Event{cursor: 1, slice_key: :chat}] = new_slice.ring
+      assert [%Event{cursor: 1, slice_key: :session}] = new_slice.ring
     end
 
     test "F1b — Lifecycle :transients are STRIPPED from the slice mirrored into the durable ring" do
@@ -234,7 +234,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
       self_uri = Ezagent.URI.new!("session://team-alpha/default/strip-transients")
       slice = fresh_slice()
 
-      change = slice_change(self_uri, %{ignored: true}, slice_key: :chat)
+      change = slice_change(self_uri, %{ignored: true}, slice_key: :session)
 
       lifecycle_sibling = %{
         state: %{members: %{m1: true}},
@@ -242,7 +242,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
       }
 
       ctx_with_state =
-        ctx(self_uri) |> Map.put(:slice_state, %{chat: lifecycle_sibling})
+        ctx(self_uri) |> Map.put(:slice_state, %{session: lifecycle_sibling})
 
       assert {:ok, new_slice} =
                signal({:slice_changed, change}, slice, ctx_with_state)
@@ -259,10 +259,10 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
     test "F1b — a legacy flat sibling slice mirrors UNCHANGED (no :transients sub-key)" do
       self_uri = Ezagent.URI.new!("session://team-alpha/default/legacy-mirror")
       slice = fresh_slice()
-      change = slice_change(self_uri, %{ignored: true}, slice_key: :chat)
+      change = slice_change(self_uri, %{ignored: true}, slice_key: :session)
 
       legacy_flat = %{members: %{m1: true}, owner_uri: :x}
-      ctx_with_state = ctx(self_uri) |> Map.put(:slice_state, %{chat: legacy_flat})
+      ctx_with_state = ctx(self_uri) |> Map.put(:slice_state, %{session: legacy_flat})
 
       assert {:ok, new_slice} =
                signal({:slice_changed, change}, slice, ctx_with_state)
@@ -554,7 +554,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
       self_uri = Ezagent.URI.new!("session://team-alpha/default/snap")
       slice = fresh_slice()
 
-      change = slice_change(self_uri, %{x: 1}, slice_key: :chat, action: :send)
+      change = slice_change(self_uri, %{x: 1}, slice_key: :session, action: :send)
 
       {:ok, slice, _} =
         signal({:slice_changed, change}, slice, ctx(self_uri))
@@ -742,7 +742,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
       stale_event = %Event{
         cursor: 7,
         publisher_uri: uri,
-        slice_key: :chat,
+        slice_key: :session,
         event_at: DateTime.utc_now(),
         payload: %{new_slice: %{}}
       }

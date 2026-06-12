@@ -5,7 +5,7 @@ defmodule Ezagent.SessionInstanceSetTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Invocation, KindRegistry, Message, MessageStore}
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session, as: SessionBehavior
   alias Ezagent.Entity.{Session, User}
 
   setup do
@@ -61,18 +61,18 @@ defmodule Ezagent.SessionInstanceSetTest do
 
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session_uri)}?action=chat.join"),
+        target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
         mode: :cast,
         args: %{member: member_uri},
         ctx: %{caller: member_uri, caps: bootstrap_caps, reply: :ignore}
       })
 
     {:ok, session_pid} = KindRegistry.lookup(session_uri)
-    %{state: %{chat: %{state: joined_slice}}} = :sys.get_state(session_pid)
+    %{state: %{session: %{state: joined_slice}}} = :sys.get_state(session_pid)
     assert joined_slice.members[member_uri].online == true
 
     # --- chat.send: broadcast + store + slice mutation ---
-    session_topic = Chat.session_events_topic(session_uri)
+    session_topic = SessionBehavior.session_events_topic(session_uri)
     :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, session_topic)
 
     msg =
@@ -80,7 +80,7 @@ defmodule Ezagent.SessionInstanceSetTest do
 
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session_uri)}?action=chat.send"),
+        target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
         mode: :cast,
         args: %{message: msg},
         ctx: %{caller: sender, caps: bootstrap_caps, reply: :ignore}
@@ -95,13 +95,13 @@ defmodule Ezagent.SessionInstanceSetTest do
     assert loaded.session_uri == session_uri
 
     # Slice mutation persisted (serialize through the GenServer to drain the commit).
-    %{state: %{chat: %{state: post_send_slice}}} = :sys.get_state(session_pid)
+    %{state: %{session: %{state: post_send_slice}}} = :sys.get_state(session_pid)
     assert post_send_slice.last_message_id == msg.id
 
     # Cleanup — leave the transient member.
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session_uri)}?action=chat.leave"),
+        target: URI.new!("#{URI.to_string(session_uri)}?action=session.leave"),
         mode: :cast,
         args: %{member: member_uri},
         ctx: %{caller: member_uri, caps: bootstrap_caps, reply: :ignore}

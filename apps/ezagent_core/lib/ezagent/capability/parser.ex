@@ -145,7 +145,7 @@ defmodule Ezagent.Capability.Parser do
     # OR look up in BehaviorRegistry by state_slice match
     # For Phase 4 v1: accept the literal string as an atom (e.g. "chat" → :chat),
     # which matches state_slice values; downstream cap matching is by module.
-    # Convert to module via convention: "chat" → Ezagent.Behavior.Chat
+    # Convert to module via convention: "chat" → Ezagent.Behavior.Session
     capitalized =
       name
       |> String.split("_")

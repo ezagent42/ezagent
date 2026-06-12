@@ -96,14 +96,14 @@ defmodule Ezagent.Capability do
   ## Examples
 
       # required_caps/0 declaration
-      Capability.cap(:chat, Ezagent.Behavior.Chat, :send)
-      # => %Capability{kind: :chat, behavior: Ezagent.Behavior.Chat, action: removed,
+      Capability.cap(:session, Ezagent.Behavior.Session, :send)
+      # => %Capability{kind: :session, behavior: Ezagent.Behavior.Session, action: removed,
       #                instance: :any, workspace_uri: :any,
       #                granted_by: :plugin_declared,
       #                granted_at: :compile_time}
 
       # narrow grant
-      Capability.cap(:chat, Chat, :send, session_uri, workspace_uri)
+      Capability.cap(:session, Chat, :send, session_uri, workspace_uri)
 
   ## Action axis
 
@@ -454,7 +454,7 @@ defmodule Ezagent.Capability do
 
   Phase 3d (P3-D6 hard flip + #P1-8): the target URI is required so
   we can extract the `instance` part (e.g. `session://default/team-alpha/main` from
-  `session://default/team-alpha/main?action=chat.send`). `behavior` is looked up via
+  `session://default/team-alpha/main?action=session.send`). `behavior` is looked up via
   `BehaviorRegistry.lookup(kind_module, action)` — same lookup
   `Kind.Runtime` does for invoke routing.
 

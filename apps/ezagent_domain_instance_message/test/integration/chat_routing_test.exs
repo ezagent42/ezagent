@@ -21,7 +21,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
   # DBConnection.OwnershipError, dropping the :chat_message broadcast.
   use EzagentCore.DataCase, async: false
   alias Ezagent.{Invocation, KindRegistry, Message, MessageStore}
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session, as: SessionBehavior
   alias Ezagent.Entity.{Session, User}
 
   setup do
@@ -41,7 +41,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
   test "admin User landed in session://system/default/main members after boot" do
     {:ok, session_pid} = KindRegistry.lookup(Session.default_uri())
 
-    %{state: %{chat: %{state: chat_slice}}} = :sys.get_state(session_pid)
+    %{state: %{session: %{state: chat_slice}}} = :sys.get_state(session_pid)
 
     assert Map.has_key?(chat_slice.members, User.admin_uri()),
            "expected admin User in Session members; got #{inspect(chat_slice.members)}"
@@ -55,18 +55,18 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
     msg = Message.new(sender, %{text: "integration-send #{System.unique_integer()}", attachments: []})
 
     # Subscribe to user:events for admin (the :receive path broadcasts here)
-    user_topic = Chat.user_events_topic(sender)
+    user_topic = SessionBehavior.user_events_topic(sender)
     :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, user_topic)
 
     # Subscribe to session:events (the :send path broadcasts here)
-    session_topic = Chat.session_events_topic(session_uri)
+    session_topic = SessionBehavior.session_events_topic(session_uri)
     :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, session_topic)
 
     # Dispatch send. Sender is admin; mentions empty → fan-out to all
     # members except sender. Only member besides sender is... none yet
     # (admin is the only joined member at boot). So no :receive fires.
     # The chat_message broadcast still fires for session:events.
-    target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
 
     :ok =
       Invocation.dispatch(%Invocation{
@@ -95,7 +95,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
     # GenServer, so by the time it returns any prior handle_cast
     # (including commit_and_notify's Snapshot.commit) has drained.
     {:ok, session_pid} = KindRegistry.lookup(session_uri)
-    %{state: %{chat: %{state: chat_slice}}} = :sys.get_state(session_pid)
+    %{state: %{session: %{state: chat_slice}}} = :sys.get_state(session_pid)
     assert chat_slice.last_message_id == msg.id
   end
 
@@ -109,14 +109,14 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
     # Join transient member to session
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session_uri)}?action=chat.join"),
+        target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
         mode: :cast,
         args: %{member: transient_uri},
         ctx: %{caller: transient_uri, caps: Ezagent.SystemPrincipal.caps("system://bootstrap"), reply: :ignore}
       })
 
     # Allow cast to process
-    %{state: %{chat: %{state: pre_kill_slice}}} = :sys.get_state(session_pid)
+    %{state: %{session: %{state: pre_kill_slice}}} = :sys.get_state(session_pid)
     assert pre_kill_slice.members[transient_uri].online == true
 
     # Kill the transient process; Session.Process.monitor fires :DOWN.
@@ -127,7 +127,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
 
     post_kill_slice =
       wait_until(fn ->
-        %{state: %{chat: %{state: s}}} = :sys.get_state(session_pid)
+        %{state: %{session: %{state: s}}} = :sys.get_state(session_pid)
         if s.members[transient_uri].online == false, do: s, else: nil
       end)
 
@@ -137,7 +137,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
     # Cleanup — leave transient member
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session_uri)}?action=chat.leave"),
+        target: URI.new!("#{URI.to_string(session_uri)}?action=session.leave"),
         mode: :cast,
         args: %{member: transient_uri},
         ctx: %{caller: transient_uri, caps: Ezagent.SystemPrincipal.caps("system://bootstrap"), reply: :ignore}

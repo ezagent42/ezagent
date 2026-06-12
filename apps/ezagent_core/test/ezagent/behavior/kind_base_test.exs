@@ -8,7 +8,7 @@ defmodule Ezagent.Behavior.KindBaseTest do
   end
 
   test "create/1 captures the instance behavior set from a PRESENT :behaviors arg" do
-    behaviors = [Ezagent.Behavior.Chat, Ezagent.Behavior.Surface]
+    behaviors = [Ezagent.Behavior.Session, Ezagent.Behavior.Surface]
     assert {:ok, %{behaviors: ^behaviors}} = KindBase.create(%{behaviors: behaviors})
   end
 
@@ -26,9 +26,9 @@ defmodule Ezagent.Behavior.KindBaseTest do
   end
 
   test "behaviors_in_slice/1 reads the captured PRESENT set from a two-container slice" do
-    {:ok, st} = KindBase.create(%{behaviors: [Ezagent.Behavior.Chat]})
+    {:ok, st} = KindBase.create(%{behaviors: [Ezagent.Behavior.Session]})
     slice = %{state: st, transients: %{}}
-    assert KindBase.behaviors_in_slice(slice) == [Ezagent.Behavior.Chat]
+    assert KindBase.behaviors_in_slice(slice) == [Ezagent.Behavior.Session]
   end
 
   test "behaviors_in_slice/1 reads back the EXPLICIT empty list as [] (present, not sentinel)" do
@@ -55,7 +55,7 @@ defmodule Ezagent.Behavior.KindBaseTest do
       uri =
         Ezagent.URI.session(:system, :default, :"kbtest-#{System.unique_integer([:positive])}")
 
-      behaviors = [Ezagent.Behavior.Chat, Ezagent.Behavior.Surface]
+      behaviors = [Ezagent.Behavior.Session, Ezagent.Behavior.Surface]
 
       # A throwaway Kind module composing only KindBase, on_change persistence.
       defmodule KBTestKind do

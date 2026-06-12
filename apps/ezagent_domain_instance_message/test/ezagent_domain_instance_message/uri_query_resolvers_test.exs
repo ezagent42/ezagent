@@ -1,7 +1,7 @@
 defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
   use ExUnit.Case, async: false
 
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session, as: SessionBehavior
   alias Ezagent.Credential.WorkspaceSharedSource
   alias Ezagent.Entity.{Session, User}
   alias Ezagent.{AgentFlavorAttributes, Invocation, Kind, UriQuery}
@@ -171,11 +171,11 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
     orchestrator_uri = URI.new!("entity://system/agent/cc_uri-query-orchestrator")
 
     working_copy =
-      Chat.default_template_working_copy()
+      SessionBehavior.default_template_working_copy()
       |> Map.put(:session_template_uri, session_template_uri)
       |> Map.put(:orchestrator_uri, orchestrator_uri)
 
-    assert {:ok, _} = Chat.system_set_working_copy(session_uri, working_copy)
+    assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
 
     assert {:ok, ^session_template_uri} = UriQuery.resolve(:session_template, session_uri)
     assert {:ok, ^orchestrator_uri} = UriQuery.resolve(:orchestrator, session_uri)
@@ -211,7 +211,7 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
 
   defp join(session_uri, member_uri, facets) do
     Invocation.dispatch(%Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=chat.join"),
+      target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
       mode: :call,
       args: Map.merge(%{member: member_uri}, Map.new(facets)),
       ctx: %{

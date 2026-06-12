@@ -29,7 +29,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker.SendKey do
   `:send_cursor` field) so the key is still a stable pair.
   """
   @spec extract_event_send_key(term()) :: {term(), term()} | nil
-  def extract_event_send_key(%Event{payload: %{} = payload, slice_key: :chat}) do
+  def extract_event_send_key(%Event{payload: %{} = payload, slice_key: :session}) do
     new_slice =
       (Map.get(payload, :new_slice) || Map.get(payload, "new_slice"))
       |> unwrap_chat_slice()

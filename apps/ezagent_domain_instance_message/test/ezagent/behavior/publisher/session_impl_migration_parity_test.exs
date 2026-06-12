@@ -138,7 +138,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplMigrationParityTest do
       ev = %Event{
         cursor: 3,
         publisher_uri: Ezagent.URI.new!("session://x/y/z"),
-        slice_key: :chat,
+        slice_key: :session,
         event_at: DateTime.utc_now(),
         payload: %{new_slice: %{members: %{}}}
       }

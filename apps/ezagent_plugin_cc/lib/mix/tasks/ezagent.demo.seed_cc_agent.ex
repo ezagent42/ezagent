@@ -136,7 +136,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
   end
 
   defp join_agent_to_session(%URI{} = agent_uri, %URI{} = session_uri) do
-    target = Ezagent.URI.with_action(session_uri, :chat, :join)
+    target = Ezagent.URI.with_action(session_uri, :session, :join)
 
     # SPEC caps-cleanup-v1 §4.4 — operator demo mix task runs under
     # `system://mix-task` (closed Catalog; operator already has shell

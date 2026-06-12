@@ -109,7 +109,7 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
 
     case caller_uri do
       %URI{} = caller_uri when not is_nil(caller_caps) ->
-        target = Ezagent.URI.with_action(session_uri, :chat, :join)
+        target = Ezagent.URI.with_action(session_uri, :session, :join)
 
         result =
           Ezagent.Invocation.dispatch(%Ezagent.Invocation{
@@ -406,13 +406,13 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
 
       {:ok, _pid} ->
         slice =
-          case Ezagent.Kind.get_slice(session_uri, :chat) do
+          case Ezagent.Kind.get_slice(session_uri, :session) do
             {:ok, chat_slice} when is_map(chat_slice) -> chat_slice
             _ -> nil
           end
 
         if is_map(slice) do
-          wc = Ezagent.Behavior.Chat.template_working_copy(slice)
+          wc = Ezagent.Behavior.Session.template_working_copy(slice)
 
           if (wc[:agent_slots] || []) == [] and is_nil(wc[:orchestrator_template_uri]) do
             nil
@@ -648,7 +648,7 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
     end
   end
 
-  def session_events_topic(%URI{} = uri), do: Ezagent.Behavior.Chat.session_events_topic(uri)
+  def session_events_topic(%URI{} = uri), do: Ezagent.Behavior.Session.session_events_topic(uri)
 
   def list_sessions_for(%URI{scheme: "workspace"} = workspace_uri),
     do: EzagentDomainInstanceMessage.list_sessions(workspace_uri)
@@ -686,7 +686,7 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
   def log_orchestrator_status_on_rehydrate(_, _), do: :ok
 
   defp read_session_members(%URI{} = session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :chat) do
+    case Ezagent.Kind.get_slice(session_uri, :session) do
       {:ok, %{members: members} = slice} when is_map(members) ->
         last_seen = Map.get(slice, :last_seen, %{})
 
@@ -705,8 +705,8 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
   end
 
   defp read_session_legends(%URI{} = session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :chat) do
-      {:ok, slice} when is_map(slice) -> Ezagent.Behavior.Chat.legends_of(slice)
+    case Ezagent.Kind.get_slice(session_uri, :session) do
+      {:ok, slice} when is_map(slice) -> Ezagent.Behavior.Session.legends_of(slice)
       _ -> %{}
     end
   end

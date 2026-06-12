@@ -9,7 +9,8 @@ defmodule EzagentDomainSocialware.Application do
   use Application
 
   alias Ezagent.CapabilityRegistry
-  alias Ezagent.Behavior.{Chat, SocialwarePublisherRead, Surface, Turn}
+  alias Ezagent.Behavior.{SocialwarePublisherRead, Surface, Turn}
+  alias Ezagent.Behavior.Session, as: SessionBehavior
   alias Ezagent.Entity.SocialwareSession
 
   @impl true
@@ -29,7 +30,7 @@ defmodule EzagentDomainSocialware.Application do
   def register_behaviors do
     Enum.each([:send, :join, :leave, :set_working_copy, :set_legends, :set_prompt_templates], fn
       action ->
-        :ok = CapabilityRegistry.register(SocialwareSession, action, Chat)
+        :ok = CapabilityRegistry.register(SocialwareSession, action, SessionBehavior)
     end)
 
     Enum.each(Turn.actions(), fn action ->
@@ -57,7 +58,7 @@ defmodule EzagentDomainSocialware.Application do
     # P5-A unifies the two publisher READs onto ONE membership-gated behavior:
     # `SocialwarePublisherRead` is now registered for BOTH the chat `Session`
     # (in `instance_message`'s `application.ex` — its HOME app, where the module
-    # was relocated alongside `Ezagent.Socialware.ChatMembership`) AND
+    # was relocated alongside `Ezagent.Session.Membership`) AND
     # `SocialwareSession` (HERE — socialware DEPENDS ON instance_message so it
     # reuses the relocated module). Both Kinds' reads are authorized by live
     # MEMBERSHIP, not a held cap. Distinct Kinds ⇒ no `{Kind, action}` collision.

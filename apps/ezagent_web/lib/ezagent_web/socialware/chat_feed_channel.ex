@@ -27,7 +27,7 @@ defmodule EzagentWeb.Socialware.ChatFeedChannel do
 
   The channel subscribes to **`esr:session:<session_uri>:events`** — the SAME
   canonical topic the production chat write path already broadcasts to (the
-  `:notify` effect in `Ezagent.Behavior.Chat.handle_send/2` emits
+  `:notify` effect in `Ezagent.Behavior.Session.handle_send/2` emits
   `{:chat_message, session_uri, msg}` there; member join/leave emit membership
   events on the same topic). There is NO bespoke `{:chat_feed_delivery}`
   broadcast in production — reusing the existing topic (reuse > new) is what
@@ -40,7 +40,7 @@ defmodule EzagentWeb.Socialware.ChatFeedChannel do
   """
   use Phoenix.Channel
 
-  alias Ezagent.Behavior.Chat.Delivery
+  alias Ezagent.Behavior.Session.Delivery
   alias Ezagent.Socialware.ChatFeed
   alias EzagentWeb.Socialware.FeedEncoding
 

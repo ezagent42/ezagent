@@ -5,8 +5,8 @@ defmodule Ezagent.Behavior.SocialwarePublisherReadTest do
   The read actions (`:snapshot` / `:history`) are **cap-exempt** at the
   CapBAC layer, so the handler is the SOLE fail-closed authority. These
   tests drive the pure `(args, ctx)` handlers directly with a synthetic
-  `ctx.siblings[:chat]` slice (the exact shape the runtime injects via
-  `reads_siblings [:chat]`) to exercise EVERY branch of the security
+  `ctx.siblings[:session]` slice (the exact shape the runtime injects via
+  `reads_siblings [:session]`) to exercise EVERY branch of the security
   predicate:
 
   Authorize ONLY when ALL hold (else `{:error, :unauthorized}`):
@@ -73,7 +73,7 @@ defmodule Ezagent.Behavior.SocialwarePublisherReadTest do
       reply: :none,
       read: fn key, default -> Map.get(state, key, default) end,
       transients: %{},
-      siblings: %{chat: chat_slice},
+      siblings: %{session: chat_slice},
       caps: MapSet.new()
     }
   end
@@ -92,8 +92,8 @@ defmodule Ezagent.Behavior.SocialwarePublisherReadTest do
       assert Enum.sort(SPR.cap_exempt_actions()) == [:history, :snapshot]
     end
 
-    test "declares reads_siblings [:chat]" do
-      assert SPR.reads_siblings() == [:chat]
+    test "declares reads_siblings [:session]" do
+      assert SPR.reads_siblings() == [:session]
     end
 
     test "declares state_slice :publisher (reads the owner's slice)" do

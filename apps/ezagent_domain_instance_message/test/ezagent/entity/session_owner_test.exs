@@ -5,7 +5,7 @@ defmodule Ezagent.Entity.SessionOwnerTest do
   Covers:
   - (a) Session.owner/1 returns the owner_uri recorded at session
     creation
-  - Behavior.Chat.data_owner/1 maps a session URI to the owner via
+  - Behavior.Session.data_owner/1 maps a session URI to the owner via
     Session.owner/1
 
   Tests for §5.2 grant_cap enforcement (acceptance b-e) live in
@@ -16,21 +16,21 @@ defmodule Ezagent.Entity.SessionOwnerTest do
 
   defp uniq, do: System.unique_integer([:positive])
 
-  describe "Behavior.Chat.data_owner/1 (PR-OWN-2 §3.3)" do
+  describe "Behavior.Session.data_owner/1 (PR-OWN-2 §3.3)" do
     test "session URI without live Kind returns :no_owner" do
       session_uri =
         Ezagent.URI.new!("session://generic/team-alpha/dead-#{uniq()}")
 
-      assert :no_owner = Ezagent.Behavior.Chat.data_owner(session_uri)
+      assert :no_owner = Ezagent.Behavior.Session.data_owner(session_uri)
     end
 
     test ":any input returns :any (class-wide query)" do
-      assert :any = Ezagent.Behavior.Chat.data_owner(:any)
+      assert :any = Ezagent.Behavior.Session.data_owner(:any)
     end
 
     test "non-session URI returns :no_owner (Chat only owns Session caps)" do
       user_uri = Ezagent.URI.new!("entity://acme/user/alice-#{uniq()}")
-      assert :no_owner = Ezagent.Behavior.Chat.data_owner(user_uri)
+      assert :no_owner = Ezagent.Behavior.Session.data_owner(user_uri)
     end
   end
 

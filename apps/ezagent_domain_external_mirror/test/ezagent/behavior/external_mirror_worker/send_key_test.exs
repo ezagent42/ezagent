@@ -13,7 +13,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker.SendKeyTest do
 
   defp chat_event(new_slice) do
     %Event{
-      slice_key: :chat,
+      slice_key: :session,
       payload: %{new_slice: new_slice},
       cursor: 0,
       publisher_uri: nil,

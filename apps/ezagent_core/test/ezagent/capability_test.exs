@@ -90,7 +90,7 @@ defmodule Ezagent.CapabilityTest do
       refute Capability.matches?(
                cap,
                needed(
-                 kind: :chat,
+                 kind: :session,
                  behavior: Mod,
                  instance: Ezagent.URI.new!("entity://team-alpha/agent/test_x")
                )
@@ -231,17 +231,17 @@ defmodule Ezagent.CapabilityTest do
       assert n.behavior == :unknown
     end
 
-    test "session://system/default/main?action=chat.send → workspace from URI path (SPEC v3 §3.6 PR-7)" do
+    test "session://system/default/main?action=session.send → workspace from URI path (SPEC v3 §3.6 PR-7)" do
       session_uri =
         URI.new!(
           "session://team-alpha/default/test-cap-for-action-#{System.unique_integer([:positive])}"
         )
 
-      target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+      target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
       n = Capability.cap_for_action(Ezagent.Entity.Session, :send, target)
 
       assert n.kind == :session
-      assert n.behavior == Ezagent.Behavior.Chat
+      assert n.behavior == Ezagent.Behavior.Session
       assert URI.to_string(n.workspace_uri) == "workspace://team-alpha"
     end
 
@@ -252,7 +252,7 @@ defmodule Ezagent.CapabilityTest do
       unbound =
         URI.new!("session://team-alpha/default/never-bound-#{System.unique_integer([:positive])}")
 
-      target = URI.new!("#{URI.to_string(unbound)}?action=chat.send")
+      target = URI.new!("#{URI.to_string(unbound)}?action=session.send")
       n = Capability.cap_for_action(Ezagent.Entity.Session, :send, target)
 
       assert URI.to_string(n.workspace_uri) == "workspace://team-alpha"
@@ -288,7 +288,7 @@ defmodule Ezagent.CapabilityTest do
 
       :ok = Ezagent.WorkspaceRegistry.bind(session_uri, "workspace://team-alpha")
 
-      target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+      target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
       n = Capability.cap_for_action(Ezagent.Entity.Session, :send, target)
 
       assert Capability.matches?(admin_cap, n)
@@ -322,7 +322,7 @@ defmodule Ezagent.CapabilityTest do
 
       assert Capability.matches?(
                c,
-               needed_session("#{URI.to_string(session_uri)}?action=chat.send")
+               needed_session("#{URI.to_string(session_uri)}?action=session.send")
              )
     end
 
@@ -353,7 +353,7 @@ defmodule Ezagent.CapabilityTest do
 
       refute Capability.matches?(
                c,
-               needed_session("session://team-alpha/default/other-w3-#{uniq}?action=chat.send")
+               needed_session("session://team-alpha/default/other-w3-#{uniq}?action=session.send")
              )
     end
 
@@ -510,7 +510,7 @@ defmodule Ezagent.CapabilityTest do
                Capability.cap_for_action(
                  Ezagent.Entity.Session,
                  :send,
-                 URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+                 URI.new!("#{URI.to_string(session_uri)}?action=session.send")
                )
              ),
              "scope-tuple cap with wrong kind must NOT match"
@@ -611,7 +611,7 @@ defmodule Ezagent.CapabilityTest do
     test "encodes a Capability with URI fields, atoms and DateTime without raising" do
       cap = %Capability{
         kind: :user,
-        behavior: Ezagent.Behavior.Chat,
+        behavior: Ezagent.Behavior.Session,
         action: :send,
         instance: :any,
         workspace_uri: @ws_default,

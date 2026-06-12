@@ -323,7 +323,7 @@ defmodule Ezagent.Orchestrator.McpServer do
   # Load the Session's durable `:chat` slice from its persisted snapshot.
   #
   # T3 (Lifecycle Phase B foundation) — the persisted `:chat` slice may be
-  # the two-container shape `%{state: persistent, ...}` once `Behavior.Chat`
+  # the two-container shape `%{state: persistent, ...}` once `Behavior.Session`
   # converts to `use Ezagent.Lifecycle` (the snapshot strips `:transients`,
   # so on disk it is `%{state: persistent}`). We route it through the SAME
   # `Ezagent.Kind.normalize_slice_view/1` chokepoint the live `get_slice/2`
@@ -334,7 +334,7 @@ defmodule Ezagent.Orchestrator.McpServer do
     case Ezagent.Ecto.KindSnapshot.get(URI.to_string(session_uri)) do
       %Ezagent.Ecto.KindSnapshot{} = row ->
         case Ezagent.Ecto.KindSnapshot.decode_state(row) do
-          {:ok, %{chat: chat_slice}} when is_map(chat_slice) ->
+          {:ok, %{session: chat_slice}} when is_map(chat_slice) ->
             # Lifecycle migration (SPEC 2026-05-29 §2.3C): the persisted Chat
             # slice is now the two-container shape (transients stripped at
             # persist, so only `:state` survives). The orchestrator reads

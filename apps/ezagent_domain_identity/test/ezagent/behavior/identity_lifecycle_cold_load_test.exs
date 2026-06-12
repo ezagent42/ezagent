@@ -156,7 +156,7 @@ defmodule Ezagent.Behavior.IdentityLifecycleColdLoadTest do
       extra_cap =
         Ezagent.Capability.cap(
           :session,
-          Ezagent.Behavior.Chat,
+          Ezagent.Behavior.Session,
           :send,
           :any,
           Ezagent.Capability.workspace_of(user_uri)
@@ -182,7 +182,7 @@ defmodule Ezagent.Behavior.IdentityLifecycleColdLoadTest do
       {:ok, %{state: state0}} = Ezagent.Kind.get_raw_slice(user_uri, :identity)
 
       assert Enum.any?(state0.caps, fn c ->
-               c.behavior == Ezagent.Behavior.Chat and c.action == :send
+               c.behavior == Ezagent.Behavior.Session and c.action == :send
              end),
              "Identity.activate/2 did not reconcile the users.caps_json Chat.send cap into " <>
                "the :identity state — the folded post_init/handle_continue reconcile did not run"

@@ -51,7 +51,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RepairOrchestratorTest do
              "precondition: a freshly-created session has OTU set"
 
       cleared = Map.put(wc, :orchestrator_template_uri, nil)
-      {:ok, _} = Ezagent.Behavior.Chat.system_set_working_copy(session_uri, cleared)
+      {:ok, _} = Ezagent.Behavior.Session.system_set_working_copy(session_uri, cleared)
 
       assert is_nil(
                Map.get(
@@ -156,7 +156,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RepairOrchestratorTest do
 
       # the pre-existing materialized member is still a session member.
       slice = chat_slice(session_uri)
-      member_uri = Ezagent.Behavior.Chat.role_name_to_uri(slice.members, role_name)
+      member_uri = Ezagent.Behavior.Session.role_name_to_uri(slice.members, role_name)
 
       assert match?(%URI{}, member_uri),
              "the pre-existing team member must remain joined after a failed repair"
@@ -171,7 +171,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RepairOrchestratorTest do
 
   defp chat_slice(session_uri) do
     {:ok, pid} = KindRegistry.lookup(session_uri)
-    %{state: %{chat: %{state: slice}}} = :sys.get_state(pid)
+    %{state: %{session: %{state: slice}}} = :sys.get_state(pid)
     slice
   end
 

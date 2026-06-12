@@ -8,9 +8,9 @@ defmodule EzagentDomainInstanceMessage.Application do
      before spawning any Kind so dispatch routes correctly on first
      message:
 
-         Ezagent.Entity.Session  → :send | :join | :leave  → Ezagent.Behavior.Chat
-         Ezagent.Entity.User     → :receive               → Ezagent.Behavior.Chat
-         Ezagent.Entity.Agent    → :receive               → Ezagent.Behavior.Chat
+         Ezagent.Entity.Session  → :send | :join | :leave  → Ezagent.Behavior.Session
+         Ezagent.Entity.User     → :receive               → Ezagent.Behavior.Session
+         Ezagent.Entity.Agent    → :receive               → Ezagent.Behavior.Session
 
      PR #141 (SPEC v2): User+Agent merged into the `entity://` scheme;
      `Kind` modules are unchanged (`Ezagent.Entity.User` /
@@ -47,20 +47,20 @@ defmodule EzagentDomainInstanceMessage.Application do
   Per the same reasoning, `Ezagent.Entity.User.behaviors/0` returns `[]`
   — Chat is wired in via per-Kind `BehaviorRegistry.register` rather
   than via `behaviors/0`, so ezagent_core stays free of any
-  `Ezagent.Behavior.Chat` reference.
+  `Ezagent.Behavior.Session` reference.
   """
 
   use Application
 
   alias Ezagent.{CapabilityRegistry, RoutingRegistry}
   alias Ezagent.Entity.{Agent, AgentTemplate, Session, SessionTemplate, User}
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session, as: SessionBehavior
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
   alias EzagentDomainInstanceMessage.AgentModuleResolver
 
   @impl true
   def start(_type, _args) do
-    :ok = register_chat_behaviors()
+    :ok = register_session_behaviors()
     :ok = declare_routing_tables()
 
     # Phase 7 completion PR-5 — the `orchestrator_uri → bound
@@ -109,7 +109,7 @@ defmodule EzagentDomainInstanceMessage.Application do
       # §8 + Decision Log #93 — fan out `Ezagent.Presence` diffs into
       # per-session `:events` topics. Subscribes to
       # `esr:session_membership:changes` (broadcast by
-      # `Ezagent.Behavior.Chat.broadcast_membership/2`) to maintain a
+      # `Ezagent.Behavior.Session.broadcast_membership/2`) to maintain a
       # reverse `user_uri → MapSet(session_uri)` index.
       EzagentDomainInstanceMessage.PresenceFanout,
       # #17 PR-C2 — subscribes to the shared PTY auth-failure topic and notifies an
@@ -721,7 +721,7 @@ defmodule EzagentDomainInstanceMessage.Application do
         # (ETS is in-memory). Without rebinding here, a rehydrated
         # session that's referenced via a bare `SpawnRegistry.spawn`
         # (not `create_session/2`) would have no workspace binding →
-        # `Ezagent.Behavior.Chat.invoke(:send)` resolves
+        # `Ezagent.Behavior.Session.invoke(:send)` resolves
         # `workspace_uri: nil` and workspace-scoped routing rules
         # silently never fire. Per Phase 9 PR-7 the workspace is in
         # the 3-segment session URI, so the binding is derived
@@ -781,27 +781,27 @@ defmodule EzagentDomainInstanceMessage.Application do
 
   defp bind_session_workspace(_other), do: :ok
 
-  defp register_chat_behaviors do
-    :ok = CapabilityRegistry.register(Session, :send, Chat)
-    :ok = CapabilityRegistry.register(Session, :join, Chat)
-    :ok = CapabilityRegistry.register(Session, :leave, Chat)
+  defp register_session_behaviors do
+    :ok = CapabilityRegistry.register(Session, :send, SessionBehavior)
+    :ok = CapabilityRegistry.register(Session, :join, SessionBehavior)
+    :ok = CapabilityRegistry.register(Session, :leave, SessionBehavior)
     # Phase 7 completion PR-4 (SPEC §1.6) — the Generator + the
     # orchestrator slot tools write the durable `template_working_copy`
-    # field via `?action=chat.set_working_copy` on the Session Kind.
-    :ok = CapabilityRegistry.register(Session, :set_working_copy, Chat)
+    # field via `?action=session.set_working_copy` on the Session Kind.
+    :ok = CapabilityRegistry.register(Session, :set_working_copy, SessionBehavior)
     # team-routing-unification §3.6 (PR-6) — the session-scoped legend
-    # registry is written via `?action=chat.set_legends` on the Session Kind
+    # registry is written via `?action=session.set_legends` on the Session Kind
     # (orchestrator / system-internal authority — same class as
     # :set_working_copy; the PR-7 template materialization path will use it).
-    :ok = CapabilityRegistry.register(Session, :set_legends, Chat)
+    :ok = CapabilityRegistry.register(Session, :set_legends, SessionBehavior)
     # team-routing-unification §3.4/§3.7 (PR-7) — the session-scoped named
-    # prompt-template map is written via `?action=chat.set_prompt_templates`
+    # prompt-template map is written via `?action=session.set_prompt_templates`
     # on the Session Kind (same orchestrator / system-internal authority class
     # as :set_legends; the PR-7 template materialization path uses it to
     # install a template's `prompt_templates`).
-    :ok = CapabilityRegistry.register(Session, :set_prompt_templates, Chat)
-    :ok = CapabilityRegistry.register(User, :receive, Chat)
-    :ok = CapabilityRegistry.register(Agent, :receive, Chat)
+    :ok = CapabilityRegistry.register(Session, :set_prompt_templates, SessionBehavior)
+    :ok = CapabilityRegistry.register(User, :receive, SessionBehavior)
+    :ok = CapabilityRegistry.register(Agent, :receive, SessionBehavior)
     # Phase 6 PR 2: Identity behavior registration (list_caps / has_cap?)
     # moved to ezagent_domain_identity.Application — Identity is the identity
     # domain's concern, not chat's.

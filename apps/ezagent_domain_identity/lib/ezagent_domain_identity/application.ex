@@ -9,7 +9,7 @@ defmodule EzagentDomainIdentity.Application do
   - `Ezagent.Users` SQLite provisioning (Phase 4-completion Spec 05)
 
   Does NOT own (Chat plugin owns those):
-  - `Ezagent.Behavior.Chat` :receive registration on User/Agent
+  - `Ezagent.Behavior.Session` :receive registration on User/Agent
   - Session boot or admin-join-default-session
 
   ## Boot order

@@ -32,7 +32,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DynamicSessionTest do
     assert wait_until(fn ->
              # Lifecycle migration (SPEC 2026-05-29 §2.3C): `members` lives
              # under the Chat slice's persistent `:state`.
-             %{state: %{chat: %{state: slice}}} = :sys.get_state(pid)
+             %{state: %{session: %{state: slice}}} = :sys.get_state(pid)
              Map.has_key?(slice.members, admin_uri)
            end)
   end

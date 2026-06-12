@@ -106,7 +106,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
 
   Two maps (subscribers + monitors) so `:DOWN` cleanup is O(log n) on
   the monitor ref without scanning all subscribers (same pattern as
-  `Ezagent.Behavior.Chat`'s members + monitors).
+  `Ezagent.Behavior.Session`'s members + monitors).
 
   ## post_init self-subscription
 
@@ -216,7 +216,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   @doc """
   Per SPEC §2.1: the Publisher cap is gated on the publishing Kind
   (the Session). Session caps' data_owner is the user/agent that
-  created the session (same rule as `Ezagent.Behavior.Chat.data_owner/1`).
+  created the session (same rule as `Ezagent.Behavior.Session.data_owner/1`).
   Reads via `Ezagent.Kind.get_slice/2` on the `:chat` slice's
   `:owner_uri` field — caps-data-ownership SPEC #306 §7.
 

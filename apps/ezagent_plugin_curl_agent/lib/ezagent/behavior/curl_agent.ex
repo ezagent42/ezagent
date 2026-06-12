@@ -33,7 +33,7 @@ defmodule Ezagent.Behavior.CurlAgent do
 
   Registered for `(Ezagent.Entity.CurlAgent, :receive)` in
   `EzagentPluginCurlAgent.Application`. The chat router targets
-  `entity://agent/team-alpha/curl_<name>?action=chat.receive`; the dispatcher
+  `entity://agent/team-alpha/curl_<name>?action=session.receive`; the dispatcher
   pattern-matches behavior_module to land here.
 
   ## Persistent state (auto-derived state_slice :curl_agent)
@@ -304,7 +304,7 @@ defmodule Ezagent.Behavior.CurlAgent do
 
       %URI{} = session ->
         reply_msg = Message.new(self_uri, %{text: text, attachments: []})
-        target = Ezagent.URI.with_action(session, :chat, :send)
+        target = Ezagent.URI.with_action(session, :session, :send)
 
         cmd =
           Cmd.new(target, :send, %{message: reply_msg}, %{

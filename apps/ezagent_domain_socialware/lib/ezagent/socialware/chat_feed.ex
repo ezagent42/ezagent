@@ -47,7 +47,7 @@ defmodule Ezagent.Socialware.ChatFeed do
       route-into-session position) — there is NO delta cursor;
     * the read authority is **chat membership** (a chat session has no
       "customer" / settlement token): the SAME live, fail-closed owner/member
-      predicate P3-3 specified, via the shared `Ezagent.Socialware.ChatMembership`
+      predicate P3-3 specified, via the shared `Ezagent.Session.Membership`
       so the chat_feed authz and `SocialwarePublisherRead` stay byte-equivalent
       on the security boundary;
     * per-message visibility — only `:customer_visible` messages are projected
@@ -55,7 +55,7 @@ defmodule Ezagent.Socialware.ChatFeed do
   """
 
   alias Ezagent.MessageStore
-  alias Ezagent.Socialware.ChatMembership
+  alias Ezagent.Session.Membership
 
   @history_limit 200
 
@@ -132,11 +132,11 @@ defmodule Ezagent.Socialware.ChatFeed do
   # ex-member (post-LEAVE) is denied because the slice is re-read live on every
   # call; a missing/unreadable slice fails closed.
   defp authorize(session_uri, caller) do
-    ChatMembership.authorize(chat_slice(session_uri), caller)
+    Membership.authorize(chat_slice(session_uri), caller)
   end
 
   defp chat_slice(session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :chat) do
+    case Ezagent.Kind.get_slice(session_uri, :session) do
       {:ok, slice} -> slice
       _ -> nil
     end

@@ -203,7 +203,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
 
   defp join_member_with_facets(%URI{} = session_uri, %URI{} = member_uri, facets)
        when is_map(facets) do
-    target = Ezagent.URI.with_action(session_uri, :chat, :join)
+    target = Ezagent.URI.with_action(session_uri, :session, :join)
 
     result =
       Invocation.dispatch(%Invocation{
@@ -234,7 +234,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
         :ok
 
       pts ->
-        case Ezagent.Behavior.Chat.system_set_prompt_templates(session_uri, pts) do
+        case Ezagent.Behavior.Session.system_set_prompt_templates(session_uri, pts) do
           {:ok, _} -> :ok
           {:error, reason} -> {:error, {:install_prompt_templates_failed, reason}}
         end
@@ -247,7 +247,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
         :ok
 
       legends ->
-        case Ezagent.Behavior.Chat.system_set_legends(session_uri, legends) do
+        case Ezagent.Behavior.Session.system_set_legends(session_uri, legends) do
           {:ok, _} -> :ok
           {:error, reason} -> {:error, {:install_legends_failed, reason}}
         end

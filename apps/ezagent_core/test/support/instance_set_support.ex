@@ -98,7 +98,7 @@ defmodule Ezagent.Kind.InstanceSetSupport do
     @impl true
     def behaviors do
       [
-        Ezagent.Behavior.Chat,
+        Ezagent.Behavior.Session,
         # Turn is DECLARED (but NOT spawned into the chat-only instance set)
         # so the closure-denial test (Task 9) can REQUEST `Turn` and have it
         # survive `init_set/2`'s ∩-declared intersection — otherwise Turn is

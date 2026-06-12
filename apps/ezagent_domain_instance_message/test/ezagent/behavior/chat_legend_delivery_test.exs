@@ -12,7 +12,7 @@ defmodule Ezagent.Behavior.ChatLegendDeliveryTest do
        `[{receiver_uri, matched_rule_ctx}]` where `ctx` carries the entry's
        `prompt_template_ref` AND magic receivers (`$session_members`) are
        expanded by the Resolver.
-    3. `Chat.render_for_delivery/4` applies that ctx's template, so the receiver
+    3. `SessionBehavior.render_for_delivery/4` applies that ctx's template, so the receiver
        gets the TEMPLATED payload — not the raw message.
 
   This is the codex BLOCKER #1 acceptance: matched-rule ctx is NOT dropped and
@@ -21,7 +21,7 @@ defmodule Ezagent.Behavior.ChatLegendDeliveryTest do
   use ExUnit.Case, async: false
 
   alias Ezagent.{Message, RoutingRegistry}
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session, as: SessionBehavior
   alias Ezagent.Routing.{Matcher, Resolver}
 
   setup do
@@ -90,7 +90,7 @@ defmodule Ezagent.Behavior.ChatLegendDeliveryTest do
     assert ctx.prompt_template_ref == "telephone_hop"
 
     # The per-recipient delivery applies the entry's template → templated body.
-    delivered = Chat.render_for_delivery(msg, ctx, templates, session)
+    delivered = SessionBehavior.render_for_delivery(msg, ctx, templates, session)
     assert delivered.body.text == "接龙：山顶的雪化了（by entity://team/user/operator）"
     # identity preserved
     assert delivered.sender == msg.sender

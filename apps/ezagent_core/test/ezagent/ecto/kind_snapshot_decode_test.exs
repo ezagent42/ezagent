@@ -48,7 +48,7 @@ defmodule Ezagent.Ecto.KindSnapshotDecodeTest do
   end
 
   test "decode_state still round-trips a normal map snapshot" do
-    state = %{chat: %{state: %{messages: []}}, routing: %{calls: 0}}
+    state = %{session: %{state: %{messages: []}}, routing: %{calls: 0}}
     row = %KindSnapshot{state_binary: :erlang.term_to_binary(state)}
 
     assert {:ok, ^state} = KindSnapshot.decode_state(row)

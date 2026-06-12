@@ -89,7 +89,7 @@ defmodule EzagentPluginLiveview.Views.ConversationView do
               hook (IntersectionObserver + 250ms dwell) fires
               `mark_displayed` with `{msg_id: row.id}` when this row
               enters viewport. AdminLive's handle_event calls
-              `Ezagent.Chat.ReadMarker.mark(session, user, msg_id,
+              `Ezagent.Session.ReadMarker.mark(session, user, msg_id,
               :displayed)`. Fire-once per element per mount. --%>
         <div
           :for={{dom_id, row} <- @messages_stream}

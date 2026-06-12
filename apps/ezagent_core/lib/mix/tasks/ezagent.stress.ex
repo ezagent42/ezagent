@@ -368,7 +368,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
 
   defp inject_messages(session_uri, budget, interval_ms, turn_cap) do
     admin = admin_uri()
-    target = Ezagent.URI.with_action(session_uri, :chat, :send)
+    target = Ezagent.URI.with_action(session_uri, :session, :send)
     caps = admin_caps()
 
     Enum.reduce(1..budget, 0, fn i, count ->
@@ -480,7 +480,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
   end
 
   defp join!(session_uri, member_uri) do
-    target = Ezagent.URI.with_action(session_uri, :chat, :join)
+    target = Ezagent.URI.with_action(session_uri, :session, :join)
 
     result =
       Invocation.dispatch(%Invocation{

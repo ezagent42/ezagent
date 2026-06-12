@@ -1,4 +1,4 @@
-defmodule Ezagent.Chat.ReadMarker do
+defmodule Ezagent.Session.ReadMarker do
   @moduledoc """
   Per-`(session, user, source)` read marker — "what's the latest
   message this user has SEEN via this source?".
@@ -323,7 +323,7 @@ defmodule Ezagent.Chat.ReadMarker do
   defp broadcast(session_str, user_str, src_str, msg_str, observed_at) do
     Phoenix.PubSub.broadcast(
       EzagentCore.PubSub,
-      Ezagent.Behavior.Chat.session_events_topic(session_str),
+      Ezagent.Behavior.Session.session_events_topic(session_str),
       {:read_marker_updated, Ezagent.URI.new!(session_str), Ezagent.URI.new!(user_str),
        %{
          source: String.to_existing_atom(src_str),

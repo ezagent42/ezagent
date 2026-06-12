@@ -1,26 +1,26 @@
-defmodule Ezagent.Behavior.Chat.Membership do
+defmodule Ezagent.Behavior.Session.Membership do
   @moduledoc false
   #
-  # Join machinery extracted VERBATIM from `Ezagent.Behavior.Chat`
+  # Join machinery extracted VERBATIM from `Ezagent.Behavior.Session`
   # (PR-3R helper extraction). These functions run in the same Session
-  # Kind GenServer process whether defined here or in `Behavior.Chat` —
+  # Kind GenServer process whether defined here or in `Behavior.Session` —
   # the effect lists they BUILD (`{:set, ...}` / `{:set_transient, ...}` /
   # the membership-broadcast `{:notify, ...}` effects) are emitted by the
-  # `handle_join/2` callback in `Behavior.Chat`, and the same-process
+  # `handle_join/2` callback in `Behavior.Session`, and the same-process
   # side-effects (`Process.monitor` / `Process.demonitor` / the owner-cap
   # grant dispatch / `Ezagent.Notifications.notify`) are identical to
-  # running in `Behavior.Chat`.
+  # running in `Behavior.Session`.
 
   require Logger
 
   alias Ezagent.Cmd
-  alias Ezagent.Behavior.Chat.{Delivery, Members}
+  alias Ezagent.Behavior.Session.{Delivery, Members}
 
   @doc """
   Add a member to the session — the `:join` handler body. Builds the
   `{:ok, result, [effect]}` tuple the `handle_join/2` callback returns.
 
-  `source_module` is the `Behavior.Chat` module reference used as the
+  `source_module` is the `Behavior.Session` module reference used as the
   `:source` on join notifications (preserves the pre-extraction
   `__MODULE__` semantics).
   """
@@ -151,7 +151,7 @@ defmodule Ezagent.Behavior.Chat.Membership do
   # `check_grant_authorized` → `data_owner_of(OrchestratorAdmin,
   # session_uri)` → `OrchestratorAdmin.data_owner` →
   # `Chat.data_owner` → `Session.owner(session_uri)` →
-  # `Ezagent.Kind.get_slice(session_uri, :chat)` which is itself
+  # `Ezagent.Kind.get_slice(session_uri, :session)` which is itself
   # a `GenServer.call` to this very Session. A `:call`-mode
   # grant_cap dispatch therefore deadlocks (5-sec timeout, then
   # `:join` crashes with `:exit`).
@@ -205,7 +205,7 @@ defmodule Ezagent.Behavior.Chat.Membership do
             )
 
             :telemetry.execute(
-              [:ezagent, :chat, :first_join_owner_cap, :failed],
+              [:ezagent, :session, :first_join_owner_cap, :failed],
               %{count: 1},
               %{session_uri: session_uri, owner_uri: owner_uri, reason: reason}
             )

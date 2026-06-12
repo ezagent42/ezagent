@@ -56,7 +56,7 @@ defmodule Ezagent.Behavior.PublisherTest do
       event = %Ezagent.Publisher.Event{
         cursor: 1,
         publisher_uri: Ezagent.URI.new!("session://system/default/main"),
-        slice_key: :chat,
+        slice_key: :session,
         event_at: DateTime.utc_now(),
         payload: %{}
       }

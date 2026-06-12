@@ -88,9 +88,9 @@ defmodule EzagentPluginLiveview.Admin.EventFormat do
   Slice-change flash text. Chat changes use the cursor-indexed message
   ring; unreadable or non-chat slices degrade to a generic flash.
   """
-  def format_slice_change(%{uri: %URI{} = uri, slice_key: :chat, cursor: cursor} = _event)
+  def format_slice_change(%{uri: %URI{} = uri, slice_key: :session, cursor: cursor} = _event)
       when is_integer(cursor) do
-    case Ezagent.Kind.get_slice(uri, :chat) do
+    case Ezagent.Kind.get_slice(uri, :session) do
       {:ok, %{} = slice} ->
         case chat_msg_id_for_cursor(slice, cursor) do
           {:ok, msg_id} -> chat_flash_for(msg_id)
@@ -103,8 +103,8 @@ defmodule EzagentPluginLiveview.Admin.EventFormat do
   end
 
   # Legacy/synthetic event without a cursor.
-  def format_slice_change(%{uri: %URI{} = uri, slice_key: :chat} = _event) do
-    case Ezagent.Kind.get_slice(uri, :chat) do
+  def format_slice_change(%{uri: %URI{} = uri, slice_key: :session} = _event) do
+    case Ezagent.Kind.get_slice(uri, :session) do
       {:ok, %{last_received: %{message_id: msg_id}}} when is_binary(msg_id) ->
         chat_flash_for(msg_id)
 

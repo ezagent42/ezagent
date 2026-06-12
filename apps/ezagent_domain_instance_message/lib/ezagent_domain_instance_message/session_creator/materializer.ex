@@ -18,7 +18,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
       |> Map.put(:orchestrator_template_uri, orchestrator_template_uri)
       |> Map.put(:session_template_uri, session_template_uri)
 
-    case Ezagent.Behavior.Chat.system_set_working_copy(session_uri, working_copy) do
+    case Ezagent.Behavior.Session.system_set_working_copy(session_uri, working_copy) do
       {:ok, _} -> :ok
       {:error, _} = err -> err
       other -> {:error, {:unexpected_set_working_copy_result, other}}
@@ -31,7 +31,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
       |> Session.read_template_working_copy()
       |> Map.put(:orchestrator_uri, orchestrator_uri)
 
-    case Ezagent.Behavior.Chat.system_set_working_copy(session_uri, working_copy) do
+    case Ezagent.Behavior.Session.system_set_working_copy(session_uri, working_copy) do
       {:ok, _} -> :ok
       {:error, _} = err -> err
       other -> {:error, {:unexpected_set_working_copy_result, other}}
@@ -87,7 +87,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
   end
 
   def join_session_members(%URI{} = session_uri, members) when is_list(members) do
-    target = Ezagent.URI.with_action(session_uri, :chat, :join)
+    target = Ezagent.URI.with_action(session_uri, :session, :join)
 
     Enum.reduce_while(members, :ok, fn %URI{} = member_uri, :ok ->
       _ = EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(member_uri)

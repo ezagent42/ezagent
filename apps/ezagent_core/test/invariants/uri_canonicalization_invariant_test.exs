@@ -237,7 +237,7 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
       "entity://system/user/admin",
       "entity://team-alpha/agent/cc_demo",
       "session://system/default/main",
-      "session://template-x/team-alpha/main?action=chat.send",
+      "session://template-x/team-alpha/main?action=session.send",
       "template://system/agent/cc-orchestrator",
       "template://team-alpha/session/code@abc123",
       "resource://team-alpha/uploads/file-abc",
@@ -295,7 +295,7 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
     end
 
     pre_migration_state = %{
-      chat: %{
+      session: %{
         owner: parse_legacy.("entity://system/user/admin"),
         members: [parse_legacy.("entity://team-alpha/user/alice")],
         deep: %{nested: %{list: [parse_legacy.("entity://team-alpha/user/bob")]}},

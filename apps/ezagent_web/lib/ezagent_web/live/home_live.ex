@@ -197,7 +197,7 @@ defmodule EzagentWeb.HomeLive do
     # rehydrate in case the Kind was snapshot-restored stale.
     _ = Ezagent.SpawnRegistry.spawn(echo_uri)
 
-    target = Ezagent.URI.with_action(session_uri, :chat, :join)
+    target = Ezagent.URI.with_action(session_uri, :session, :join)
 
     _ =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{

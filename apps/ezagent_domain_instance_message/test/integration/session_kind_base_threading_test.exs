@@ -56,6 +56,6 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionKindBaseThreadingTest 
 
     # The Kind boots + stays alive through reload-derived effective_set on every
     # dispatch; if :kind_base were nil the scoped guard would have crashed it.
-    assert {:ok, _} = get_slice_eventually(session_uri, :chat)
+    assert {:ok, _} = get_slice_eventually(session_uri, :session)
   end
 end

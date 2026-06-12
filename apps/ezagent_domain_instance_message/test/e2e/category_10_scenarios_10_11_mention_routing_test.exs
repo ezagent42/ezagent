@@ -13,7 +13,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenarios10_11_MentionRout
     scenario 11 as ⚠️ "no dedicated test"; this file is that test.
 
   Both scenarios exercise `Ezagent.Routing.Resolver.resolve/4` at the
-  pure-function level. Production dispatch goes through `Behavior.Chat`'s
+  pure-function level. Production dispatch goes through `Behavior.Session`'s
   `:send` action, but the routing decision IS made by Resolver — pinning
   it here covers the security-critical property without requiring a
   full Session GenServer + Audit writer setup. Sibling integration

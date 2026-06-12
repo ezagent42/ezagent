@@ -37,7 +37,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
 
   alias Ezagent.Capability
   alias Ezagent.Ecto.KindSnapshot
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session, as: SessionBehavior
   alias Ezagent.Entity.Session
   alias Ezagent.Orchestrator.{McpRegistry, McpServer}
   alias Ezagent.Test.SnapshotFixtures
@@ -87,7 +87,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
 
     :ok = KindSnapshot.delete(URI.to_string(session_uri))
     :ok = McpRegistry.unregister(orchestrator_uri)
-    :ok = SnapshotFixtures.save_kind_snapshot(session_uri, Session, %{chat: chat_slice})
+    :ok = SnapshotFixtures.save_kind_snapshot(session_uri, Session, %{session: chat_slice})
 
     # Assert the precondition that makes this a REAL restart simulation.
     assert McpRegistry.lookup(orchestrator_uri) == :error
@@ -134,7 +134,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
 
     test "rebuilds from the PERSISTED TWO-CONTAINER chat slice (transients stripped) — the real regression" do
       # The sibling test above persists a FLAT chat slice. But a converted
-      # Behavior.Chat (use Ezagent.Lifecycle) persists the TWO-CONTAINER
+      # Behavior.Session (use Ezagent.Lifecycle) persists the TWO-CONTAINER
       # shape, and the snapshot path strips :transients, so the ON-DISK
       # :chat value is a single-key %{state: persistent}. This is the shape
       # production actually writes — and the regression (normalize_slice_view
@@ -161,7 +161,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
       # Persist the EXACT on-disk shape: :chat wrapped in single-key %{state}
       # (what strip_transients leaves of the two-container in-memory slice).
       :ok =
-        SnapshotFixtures.save_kind_snapshot(session_uri, Session, %{chat: %{state: chat_slice}})
+        SnapshotFixtures.save_kind_snapshot(session_uri, Session, %{session: %{state: chat_slice}})
 
       assert McpRegistry.lookup(orchestrator_uri) == :error
 
@@ -259,10 +259,10 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
         monitors: %{},
         last_seen: %{},
         owner_uri: nil,
-        template_working_copy: Chat.default_template_working_copy()
+        template_working_copy: SessionBehavior.default_template_working_copy()
       }
 
-      :ok = SnapshotFixtures.save_kind_snapshot(session_uri, Session, %{chat: plain_slice})
+      :ok = SnapshotFixtures.save_kind_snapshot(session_uri, Session, %{session: plain_slice})
 
       assert McpServer.from_orchestrator_uri(orchestrator_uri) ==
                {:error, :orchestrator_not_registered},

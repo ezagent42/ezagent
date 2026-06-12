@@ -62,7 +62,7 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
   end
 
   defp chat_send_target(session_uri),
-    do: URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+    do: URI.new!("#{URI.to_string(session_uri)}?action=session.send")
 
   defp dispatch_send(caller_uri, caps, session_uri, text, mentions \\ []) do
     msg =
@@ -142,7 +142,7 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
       # Watcher has a Chat behavior cap — should NOT pass Presence cap check
       cap_chat = %Capability{
         kind: :user,
-        behavior: Ezagent.Behavior.Chat,
+        behavior: Ezagent.Behavior.Session,
         instance: :any,
         workspace_uri: Ezagent.URI.new!("workspace://team-alpha"),
         granted_by: Ezagent.Entity.User.admin_uri(),

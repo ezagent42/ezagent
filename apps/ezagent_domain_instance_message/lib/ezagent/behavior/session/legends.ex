@@ -1,17 +1,17 @@
-defmodule Ezagent.Behavior.Chat.Legends do
+defmodule Ezagent.Behavior.Session.Legends do
   @moduledoc false
   #
   # Session-scoped legend-registry machinery extracted VERBATIM from
-  # `Ezagent.Behavior.Chat` (PR-3R helper extraction). The authorization
+  # `Ezagent.Behavior.Session` (PR-3R helper extraction). The authorization
   # predicates run in the same Session Kind process as the
   # `handle_set_legends/2` / `handle_set_prompt_templates/2` callbacks (the
   # legend write-gate is shared by both); the legend readers are pure
-  # delegations to `Ezagent.Behavior.Chat.Members`; `system_set_legends/2`
+  # delegations to `Ezagent.Behavior.Session.Members`; `system_set_legends/2`
   # is an `Ezagent.Router.dispatch` round-trip identical to running in
-  # `Behavior.Chat`.
+  # `Behavior.Session`.
 
   alias Ezagent.Cmd
-  alias Ezagent.Behavior.Chat.{ConfigActions, Members}
+  alias Ezagent.Behavior.Session.{ConfigActions, Members}
   alias Ezagent.Routing.Legend
 
   # The trusted-principal allowlist for `set_legends` — installing a legend is

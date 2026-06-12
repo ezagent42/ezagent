@@ -395,7 +395,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
       event = %Ezagent.Publisher.Event{
         cursor: 99,
         publisher_uri: session_uri,
-        slice_key: :chat,
+        slice_key: :session,
         event_at: DateTime.utc_now(),
         payload: %{}
       }
@@ -1942,7 +1942,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
     member_uri = unique_user_uri("trigger")
     :ok = spawn_user(member_uri, MapSet.new())
 
-    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
     Invocation.dispatch(%Invocation{
       target: target,

@@ -444,7 +444,7 @@ defmodule EzagentPluginFeishu.E2E.Category04FeishuTest do
     %Event{
       cursor: 1,
       publisher_uri: Ezagent.URI.new!("session://system/default/main"),
-      slice_key: :chat,
+      slice_key: :session,
       event_at: DateTime.utc_now(),
       payload: %{
         action: :send,

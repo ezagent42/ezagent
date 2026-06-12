@@ -292,7 +292,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
           %Ezagent.Publisher.Event{
             cursor: 100,
             publisher_uri: session_uri,
-            slice_key: :chat,
+            slice_key: :session,
             event_at: DateTime.utc_now(),
             payload: %{}
           }
@@ -421,7 +421,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
     :ok = spawn_user(member_uri, MapSet.new())
 
     admin_uri = Ezagent.URI.new!("entity://system/user/admin")
-    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
     case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
            target: target,

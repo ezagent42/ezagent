@@ -326,9 +326,9 @@ defmodule Ezagent.Behavior do
       @impl true
       def required_caps do
         %{
-          send:    Ezagent.Capability.cap(:chat, __MODULE__, :send),
-          receive: Ezagent.Capability.cap(:chat, __MODULE__, :receive),
-          join:    Ezagent.Capability.cap(:chat, __MODULE__, :join)
+          send:    Ezagent.Capability.cap(:session, __MODULE__, :send),
+          receive: Ezagent.Capability.cap(:session, __MODULE__, :receive),
+          join:    Ezagent.Capability.cap(:session, __MODULE__, :join)
         }
       end
 

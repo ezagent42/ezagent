@@ -79,7 +79,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
   # - `:events` topics (view fan-out per §5.7.6)
   # - `esr:audit:stream` (audit view fan-out, this is `Ezagent.Audit`)
   # - Chat outbound broadcasts (session/user :events topics) inside
-  #   `Ezagent.Behavior.Chat` — these are view fan-out per §5.7.6, same
+  #   `Ezagent.Behavior.Session` — these are view fan-out per §5.7.6, same
   #   shape as audit.ex; the inbound path is the dispatch that
   #   triggered `invoke/4` in the first place.
   # Any other broadcast call would be an inbound-message path which

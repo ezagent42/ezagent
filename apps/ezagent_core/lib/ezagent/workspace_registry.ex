@@ -17,7 +17,7 @@ defmodule Ezagent.WorkspaceRegistry do
   every binding equals the workspace segment of its bound URI.
 
   Phase 7 PR 31 (IMPL-7-1) — historical context: production routing
-  dispatch via `Ezagent.Behavior.Chat.invoke(:send, ...)` needed to
+  dispatch via `Ezagent.Behavior.Session.invoke(:send, ...)` needed to
   know which workspace a session belongs to so it could pass
   `workspace_uri:` to `Ezagent.Routing.Resolver.resolve/4`. PR-7
   replaces that lookup with structural extraction; the routing

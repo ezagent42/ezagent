@@ -174,7 +174,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants.Lifecycle do
   # Gate 1 — no developer-tier `use Ezagent.Behavior` (must be Lifecycle)
   # SPEC §5 / AC-1. Anchored to the directive, not moduledoc/comment
   # mentions: `^\s*use Ezagent.Behavior` with a word boundary so
-  # `Ezagent.Behavior.Chat` etc. in prose are not matched.
+  # `Ezagent.Behavior.Session` etc. in prose are not matched.
   # ----------------------------------------------------------------------
   defp gate_no_use_behavior(files) do
     re = ~r/^\s*use\s+Ezagent\.Behavior\b/

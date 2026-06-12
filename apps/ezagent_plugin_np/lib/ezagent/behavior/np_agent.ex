@@ -49,7 +49,7 @@ defmodule Ezagent.Behavior.NpAgent do
 
   Registered for `(Ezagent.Entity.NpAgent, :receive | :configure | :reset)`
   in `EzagentPluginNp.Application`. The chat router targets
-  `entity://agent/<ws>/np_<name>?action=chat.receive`; the dispatcher
+  `entity://agent/<ws>/np_<name>?action=session.receive`; the dispatcher
   pattern-matches behavior_module to land here.
 
   ## Slice (state_slice :np_agent)
@@ -312,7 +312,7 @@ defmodule Ezagent.Behavior.NpAgent do
         reply_msg =
           Message.new(self_uri, %{text: text, attachments: []}, ref_id: in_msg.id)
 
-        target = Ezagent.URI.with_action(session, :chat, :send)
+        target = Ezagent.URI.with_action(session, :session, :send)
 
         cmd =
           Cmd.new(target, :send, %{message: reply_msg}, %{

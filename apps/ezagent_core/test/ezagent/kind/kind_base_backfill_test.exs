@@ -18,7 +18,7 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
     @impl true
     def behaviors,
       do: [
-        Ezagent.Behavior.Chat,
+        Ezagent.Behavior.Session,
         Ezagent.Behavior.Publisher.SessionImpl,
         Ezagent.Behavior.ExternalMirror,
         Ezagent.Behavior.KindBase
@@ -49,7 +49,7 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
   # A chat-shaped state: has :external_mirror, no socialware slices. nil kind_base.
   defp chat_state do
     %{
-      chat: %{state: %{owner_uri: nil, members: MapSet.new()}, transients: %{}},
+      session: %{state: %{owner_uri: nil, members: MapSet.new()}, transients: %{}},
       publisher: %{state: %{}, transients: %{}},
       external_mirror: %{state: %{bindings: []}, transients: %{}},
       kind_base: %{state: %{behaviors: nil}, transients: %{}}
@@ -60,11 +60,11 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
   # slices. This is the real shape a chat Session persists with when no mirror
   # binding has ever been created (proof fixture:
   # apps/ezagent_domain_instance_message/test/integration/
-  # orchestrator_mcp_reregister_test.exs saves `%{chat: chat_slice}` only).
+  # orchestrator_mcp_reregister_test.exs saves `%{session: chat_slice}` only).
   # `:external_mirror` is OPTIONAL for chat — chat is the DEFAULT classification.
   defp minimal_chat_state do
     %{
-      chat: %{state: %{owner_uri: nil, members: MapSet.new()}, transients: %{}},
+      session: %{state: %{owner_uri: nil, members: MapSet.new()}, transients: %{}},
       kind_base: %{state: %{behaviors: nil}, transients: %{}}
     }
   end
@@ -72,7 +72,7 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
   # A socialware-shaped state: has :surface + :turns. nil kind_base.
   defp socialware_state do
     %{
-      chat: %{state: %{owner_uri: nil, members: MapSet.new()}, transients: %{}},
+      session: %{state: %{owner_uri: nil, members: MapSet.new()}, transients: %{}},
       publisher: %{state: %{}, transients: %{}},
       turns: %{state: %{}, transients: %{}},
       surface: %{state: %{versions: []}, transients: %{}},
@@ -88,19 +88,19 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
     end
 
     test "external_mirror without socialware slices ⇒ chat" do
-      assert {:ok, :chat} = KindBaseBackfill.classify_session_state(chat_state())
+      assert {:ok, :instance_message} = KindBaseBackfill.classify_session_state(chat_state())
     end
 
     test "minimal :chat-only (NO external_mirror, NO socialware) ⇒ chat (chat is the DEFAULT)" do
       # The proof-fixture shape: a real chat Session that never created a mirror
       # binding persists with ONLY :chat. It MUST classify as chat — not be
       # rejected as unclassifiable. :external_mirror is optional for chat.
-      assert {:ok, :chat} = KindBaseBackfill.classify_session_state(minimal_chat_state())
-      assert {:ok, :chat} = KindBaseBackfill.classify_session_state(%{chat: %{}})
+      assert {:ok, :instance_message} = KindBaseBackfill.classify_session_state(minimal_chat_state())
+      assert {:ok, :instance_message} = KindBaseBackfill.classify_session_state(%{session: %{}})
     end
 
     test "recognizable session by :publisher alone (no mirror, no socialware) ⇒ chat" do
-      assert {:ok, :chat} = KindBaseBackfill.classify_session_state(%{publisher: %{}})
+      assert {:ok, :instance_message} = KindBaseBackfill.classify_session_state(%{publisher: %{}})
     end
 
     test "socialware slices AND external_mirror ⇒ ambiguous (fail loud)" do
@@ -134,8 +134,8 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
 
   describe "target_behaviors/1" do
     test "chat set" do
-      assert KindBaseBackfill.target_behaviors(:chat) == [
-               Ezagent.Behavior.Chat,
+      assert KindBaseBackfill.target_behaviors(:instance_message) == [
+               Ezagent.Behavior.Session,
                Ezagent.Behavior.Publisher.SessionImpl,
                Ezagent.Behavior.ExternalMirror
              ]
@@ -143,7 +143,7 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
 
     test "socialware set matches SocialwareSession.behaviors/0 order exactly" do
       assert KindBaseBackfill.target_behaviors(:socialware) == [
-               Ezagent.Behavior.Chat,
+               Ezagent.Behavior.Session,
                Ezagent.Behavior.Turn,
                Ezagent.Behavior.Surface,
                Ezagent.Behavior.Publisher.SessionImpl
@@ -157,7 +157,7 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
       refute Map.has_key?(%{}, :kind_base)
       assert KindBaseBackfill.kind_base_missing?(%{})
 
-      present = %{kind_base: %{state: %{behaviors: [Ezagent.Behavior.Chat]}, transients: %{}}}
+      present = %{kind_base: %{state: %{behaviors: [Ezagent.Behavior.Session]}, transients: %{}}}
       refute KindBaseBackfill.kind_base_missing?(present)
     end
   end
@@ -187,7 +187,7 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
       {:ok, _counts} = KindBaseBackfill.run([])
 
       captured = KindBase.behaviors_in_slice(Map.get(decode(uri), :kind_base))
-      assert captured == KindBaseBackfill.target_behaviors(:chat)
+      assert captured == KindBaseBackfill.target_behaviors(:instance_message)
     end
 
     test "minimal :chat-only row → chat set in :kind_base (round-trip, no raise on reload)" do
@@ -200,7 +200,7 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
       {:ok, _counts} = KindBaseBackfill.run([])
 
       captured = KindBase.behaviors_in_slice(Map.get(decode(uri), :kind_base))
-      assert captured == KindBaseBackfill.target_behaviors(:chat)
+      assert captured == KindBaseBackfill.target_behaviors(:instance_message)
 
       # Round-trip: with :kind_base now a PRESENT list (the chat set), the scoped
       # guard is SATISFIED — effective_set/2 does NOT raise MissingKindBaseError;
@@ -208,7 +208,7 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
       slice_state = decode(uri)
 
       effective = Ezagent.Kind.BehaviorSet.effective_set(ChatSessionLikeKind, slice_state)
-      assert Ezagent.Behavior.Chat in effective
+      assert Ezagent.Behavior.Session in effective
       assert Ezagent.Behavior.Publisher.SessionImpl in effective
       # ExternalMirror is in BOTH the backfilled chat set and the declared set,
       # so it is retained — the chat set is its own declared list (no over/under).
@@ -262,7 +262,7 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
     test "already-backfilled row is skipped (idempotent)" do
       already =
         Map.put(chat_state(), :kind_base, %{
-          state: %{behaviors: [Ezagent.Behavior.Chat]},
+          state: %{behaviors: [Ezagent.Behavior.Session]},
           transients: %{}
         })
 

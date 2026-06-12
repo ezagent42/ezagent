@@ -42,7 +42,7 @@ defmodule EzagentPluginAdvisor.Template.AdvisorSession do
       {:ok, fresh?} ->
         with :ok <- WorkspaceRegistry.bind(session_uri, workspace_uri),
              {:ok, _} <-
-               Ezagent.Behavior.Chat.system_set_working_copy(session_uri, working_copy(tmpl)),
+               Ezagent.Behavior.Session.system_set_working_copy(session_uri, working_copy(tmpl)),
              :ok <- ensure_operator_user(operator_uri),
              {:ok, _} <- join_operator(session_uri, operator_uri) do
           {:ok, [session_uri], %{fresh?: fresh?, vertical: :advisor}}
@@ -143,7 +143,7 @@ defmodule EzagentPluginAdvisor.Template.AdvisorSession do
 
   defp join_operator(session_uri, operator_uri) do
     Invocation.dispatch(%Invocation{
-      target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.join"),
+      target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
       mode: :call,
       args: %{member: operator_uri, role_name: "operator", in_session_template: true},
       ctx: %{

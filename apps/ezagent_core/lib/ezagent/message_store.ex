@@ -376,7 +376,7 @@ defmodule Ezagent.MessageStore do
   List all session URIs this message has been routed into.
 
   Phase 3 multi-session helper — for D8 ref/session_uris consistency
-  check in `Ezagent.Behavior.Chat.handle_kind_message/3`.
+  check in `Ezagent.Behavior.Session.handle_kind_message/3`.
   """
   @spec sessions_for_message(String.t()) :: [String.t()]
   def sessions_for_message(message_id) when is_binary(message_id) do

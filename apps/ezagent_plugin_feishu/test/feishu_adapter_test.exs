@@ -391,14 +391,14 @@ defmodule EzagentPluginFeishu.FeishuAdapterTest do
     %Event{
       cursor: 1,
       publisher_uri: Ezagent.URI.new!("session://system/default/main"),
-      slice_key: :chat,
+      slice_key: :session,
       event_at: DateTime.utc_now(),
       payload: payload
     }
   end
 
   # Convenience for the "normal :send mutation" envelope shape produced
-  # by `Behavior.Chat.invoke(:send, ...)` + `SessionImpl.build_payload/1`:
+  # by `Behavior.Session.invoke(:send, ...)` + `SessionImpl.build_payload/1`:
   # action=:send, both slices populated, send_cursor bumped, msg id
   # promoted into `:last_message_id` + full struct into `:last_message`.
   defp chat_send_event(msg, opts) do

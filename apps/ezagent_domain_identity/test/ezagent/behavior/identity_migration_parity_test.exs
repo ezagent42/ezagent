@@ -82,7 +82,7 @@ defmodule Ezagent.Behavior.IdentityMigrationParityTest do
          %{user_uri: user_uri, state: state, admin_caps: admin_caps} do
       needed = %{
         kind: :session,
-        behavior: Ezagent.Behavior.Chat,
+        behavior: Ezagent.Behavior.Session,
         instance: URI.new!("session://system/default/main"),
         workspace_uri: @workspace_uri
       }
@@ -99,7 +99,7 @@ defmodule Ezagent.Behavior.IdentityMigrationParityTest do
 
       needed = %{
         kind: :session,
-        behavior: Ezagent.Behavior.Chat,
+        behavior: Ezagent.Behavior.Session,
         instance: URI.new!("session://system/default/main"),
         workspace_uri: @workspace_uri
       }

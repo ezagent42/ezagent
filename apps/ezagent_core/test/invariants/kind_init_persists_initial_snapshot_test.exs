@@ -136,7 +136,7 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
       # `commit_and_notify/3` → `Snapshot.commit/4` path.
       cap = %Ezagent.Capability{
         kind: :agent,
-        behavior: Ezagent.Behavior.Chat,
+        behavior: Ezagent.Behavior.Session,
         instance: :any,
         workspace_uri: URI.new!("workspace://team-alpha"),
         granted_by: Ezagent.Entity.User.admin_uri(),

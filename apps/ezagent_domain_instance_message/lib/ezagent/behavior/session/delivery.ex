@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Chat.Delivery do
+defmodule Ezagent.Behavior.Session.Delivery do
   @moduledoc false
 
   require Logger
@@ -47,7 +47,7 @@ defmodule Ezagent.Behavior.Chat.Delivery do
         rescue
           e ->
             Logger.warning(
-              "Ezagent.Behavior.Chat: notify mention_failed raised for " <>
+              "Ezagent.Behavior.Session: notify mention_failed raised for " <>
                 "#{URI.to_string(dropped_uri)}: #{Exception.message(e)}"
             )
         end
@@ -69,7 +69,7 @@ defmodule Ezagent.Behavior.Chat.Delivery do
 
   @spec dispatch_cross_session_call(URI.t(), Message.t()) :: term()
   def dispatch_cross_session_call(target_session_uri, %Message{} = msg) do
-    send_target = Ezagent.URI.with_action(target_session_uri, :chat, :send)
+    send_target = Ezagent.URI.with_action(target_session_uri, :session, :send)
 
     Ezagent.Router.dispatch(%Cmd{
       target: send_target,
@@ -119,7 +119,7 @@ defmodule Ezagent.Behavior.Chat.Delivery do
   @spec dispatch_receive_call(URI.t(), Message.t(), URI.t()) :: term()
   def dispatch_receive_call(recipient_uri, %Message{} = msg, session_uri) do
     session_uri = Ezagent.URI.new!(URI.to_string(session_uri))
-    receive_target = Ezagent.URI.with_action(recipient_uri, :chat, :receive)
+    receive_target = Ezagent.URI.with_action(recipient_uri, :session, :receive)
 
     result =
       Ezagent.Router.dispatch(%Cmd{
@@ -134,7 +134,7 @@ defmodule Ezagent.Behavior.Chat.Delivery do
       })
 
     if result == :ok do
-      _ = Ezagent.Chat.ReadMarker.mark(session_uri, recipient_uri, msg.id, :delivered)
+      _ = Ezagent.Session.ReadMarker.mark(session_uri, recipient_uri, msg.id, :delivered)
     end
 
     result
@@ -198,7 +198,7 @@ defmodule Ezagent.Behavior.Chat.Delivery do
 
   @doc """
   Agent-branch `:receive` delivery (extracted VERBATIM from
-  `Ezagent.Behavior.Chat.handle_receive/2`, PR-3R). Builds a
+  `Ezagent.Behavior.Session.handle_receive/2`, PR-3R). Builds a
   flavor-neutral `Ezagent.AgentBridge.Payload` from the message + ctx and
   delivers it via `Ezagent.AgentBridge`, self-healing a vanished bridge.
   Runs in the same Agent Kind process as the handler; returns `:ok`

@@ -40,7 +40,7 @@ defmodule Ezagent.Entity.Session do
     # Session boot AND `post_init/2` schedules the worker
     # reconciliation handle_continue per SPEC §3.1.
     do: [
-      Ezagent.Behavior.Chat,
+      Ezagent.Behavior.Session,
       Ezagent.Behavior.Publisher.SessionImpl,
       Ezagent.Behavior.ExternalMirror
     ]
@@ -243,17 +243,17 @@ defmodule Ezagent.Entity.Session do
     (system session, or pre-PR-OWN-2 snapshot without `:owner_uri`)
   - `{:error, reason}` — session not live or call failed
 
-  Used by `Behavior.Chat.data_owner/1` which converts the result
+  Used by `Behavior.Session.data_owner/1` which converts the result
   into `%URI{} | :no_owner` for the cap-grant authorization path.
   """
   @spec owner(URI.t() | String.t()) :: {:ok, URI.t() | nil} | {:error, term()}
   def owner(uri) do
-    # Lifecycle migration (SPEC 2026-05-29 §2.3C): `Ezagent.Behavior.Chat`
+    # Lifecycle migration (SPEC 2026-05-29 §2.3C): `Ezagent.Behavior.Session`
     # now stores the two-container `%{state, transients}` slice, so
-    # `get_slice(uri, :chat)` returns that shape and `:owner_uri` lives
+    # `get_slice(uri, :session)` returns that shape and `:owner_uri` lives
     # under `:state`. Unwrap (a flat slice falls through unchanged for any
     # not-yet-converted snapshot path).
-    case Ezagent.Kind.get_slice(uri, :chat) do
+    case Ezagent.Kind.get_slice(uri, :session) do
       {:ok, %{state: %{owner_uri: owner_uri}}} -> {:ok, owner_uri}
       {:ok, %{owner_uri: owner_uri}} -> {:ok, owner_uri}
       {:ok, nil} -> {:ok, nil}

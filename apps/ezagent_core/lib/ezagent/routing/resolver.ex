@@ -151,7 +151,7 @@ defmodule Ezagent.Routing.Resolver do
       `workspace_uri` only fire if it matches the context; rules with
       `nil` workspace_uri apply globally.
 
-  Use this from `EzagentDomainInstanceMessage.Behavior.Chat.invoke(:send)` when the
+  Use this from `EzagentDomainInstanceMessage.Behavior.Session.invoke(:send)` when the
   Session knows its workspace binding. Old 3-arg call sites continue
   to work — workspace scoping passes through as nil = global-only
   rules apply.

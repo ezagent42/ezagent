@@ -142,7 +142,7 @@ defmodule Ezagent.Behavior.EchoTest do
                Enum.filter(effects, &match?({:dispatch, _}, &1))
 
       assert cmd.action == :send
-      assert URI.to_string(cmd.target) =~ "action=chat.send"
+      assert URI.to_string(cmd.target) =~ "action=session.send"
       assert URI.to_string(cmd.target) =~ "session://team-alpha/default/main"
       # The reply text format
       assert %Ezagent.Message{body: %{text: "echo: ping"}} = cmd.args.message

@@ -85,7 +85,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatReceiveUserSliceChangeTes
   defp join(session, member) do
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session)}?action=chat.join"),
+        target: URI.new!("#{URI.to_string(session)}?action=session.join"),
         mode: :cast,
         args: %{member: member},
         ctx: %{caller: member, caps: Ezagent.SystemPrincipal.caps("system://bootstrap"), reply: :ignore}
@@ -99,7 +99,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatReceiveUserSliceChangeTes
 
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session)}?action=chat.send"),
+        target: URI.new!("#{URI.to_string(session)}?action=session.send"),
         mode: :cast,
         args: %{message: msg},
         ctx: %{caller: sender, caps: Ezagent.SystemPrincipal.caps("system://bootstrap"), reply: :ignore}
@@ -149,7 +149,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatReceiveUserSliceChangeTes
       # `Kind.get_slice/2` path (this test runs in-VM so the read
       # succeeds; production code would dispatch a cap-gated read
       # action like `chat.list_recent` instead).
-      {:ok, slice} = Ezagent.Kind.get_slice(receiver, :chat)
+      {:ok, slice} = Ezagent.Kind.get_slice(receiver, :session)
       assert slice.last_received.message_id == msg.id
       assert %DateTime{} = slice.last_received.at
     end

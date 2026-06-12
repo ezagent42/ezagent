@@ -9,7 +9,7 @@ defmodule Ezagent.Kind.BehaviorSetTest do
     def type_name, do: :session
     @impl true
     def behaviors,
-      do: [Ezagent.Behavior.Chat, Ezagent.Behavior.Surface, Ezagent.Behavior.KindBase]
+      do: [Ezagent.Behavior.Session, Ezagent.Behavior.Surface, Ezagent.Behavior.KindBase]
 
     @impl true
     def persistence, do: :ephemeral
@@ -35,30 +35,30 @@ defmodule Ezagent.Kind.BehaviorSetTest do
     slice_state = %{kind_base: %{state: %{behaviors: []}, transients: %{}}}
 
     assert BehaviorSet.effective_set(SupersetKind, slice_state) == BehaviorSet.base_behaviors()
-    refute Ezagent.Behavior.Chat in BehaviorSet.effective_set(SupersetKind, slice_state)
+    refute Ezagent.Behavior.Session in BehaviorSet.effective_set(SupersetKind, slice_state)
     refute Ezagent.Behavior.Surface in BehaviorSet.effective_set(SupersetKind, slice_state)
     assert Ezagent.Behavior.KindBase in BehaviorSet.effective_set(SupersetKind, slice_state)
     assert Ezagent.Behavior.Manage in BehaviorSet.effective_set(SupersetKind, slice_state)
   end
 
   test "captured subset → (declared ∩ captured) + base behaviors, declaration order preserved" do
-    captured = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
+    captured = [Ezagent.Behavior.Session, Ezagent.Behavior.KindBase]
     slice_state = %{kind_base: %{state: %{behaviors: captured}, transients: %{}}}
 
     # Surface is dropped (out of captured set); Chat + KindBase kept in
     # declaration order; Manage appended as a universal base behavior.
     assert BehaviorSet.effective_set(SupersetKind, slice_state) ==
-             [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase, Ezagent.Behavior.Manage]
+             [Ezagent.Behavior.Session, Ezagent.Behavior.KindBase, Ezagent.Behavior.Manage]
 
     refute Ezagent.Behavior.Surface in BehaviorSet.effective_set(SupersetKind, slice_state)
   end
 
   test "member?/2 reflects the effective set" do
-    captured = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
+    captured = [Ezagent.Behavior.Session, Ezagent.Behavior.KindBase]
     slice_state = %{kind_base: %{state: %{behaviors: captured}, transients: %{}}}
 
     assert BehaviorSet.member?(
-             Ezagent.Behavior.Chat,
+             Ezagent.Behavior.Session,
              BehaviorSet.effective_set(SupersetKind, slice_state)
            )
 
@@ -74,9 +74,9 @@ defmodule Ezagent.Kind.BehaviorSetTest do
       # `init_fresh_first_spawn` enumerates on FIRST spawn (no :kind_base slice
       # yet), so Surface's
       # create/init_slice must NEVER appear here.
-      set = BehaviorSet.init_set(SupersetKind, %{behaviors: [Ezagent.Behavior.Chat]})
+      set = BehaviorSet.init_set(SupersetKind, %{behaviors: [Ezagent.Behavior.Session]})
 
-      assert Ezagent.Behavior.Chat in set
+      assert Ezagent.Behavior.Session in set
       # base behaviors are always present so KindBase can persist the set and
       # Manage stays reachable (universal-by-construction).
       assert Ezagent.Behavior.KindBase in set
@@ -103,7 +103,7 @@ defmodule Ezagent.Kind.BehaviorSetTest do
       set = BehaviorSet.init_set(SupersetKind, %{behaviors: []})
 
       assert set == BehaviorSet.base_behaviors()
-      refute Ezagent.Behavior.Chat in set
+      refute Ezagent.Behavior.Session in set
       refute Ezagent.Behavior.Surface in set
       assert Ezagent.Behavior.KindBase in set
       assert Ezagent.Behavior.Manage in set
@@ -112,10 +112,10 @@ defmodule Ezagent.Kind.BehaviorSetTest do
     test "args :behaviors are intersected with declared (an undeclared module is ignored)" do
       set =
         BehaviorSet.init_set(SupersetKind, %{
-          behaviors: [Ezagent.Behavior.Chat, Ezagent.Behavior.ApiKeys]
+          behaviors: [Ezagent.Behavior.Session, Ezagent.Behavior.ApiKeys]
         })
 
-      assert Ezagent.Behavior.Chat in set
+      assert Ezagent.Behavior.Session in set
       # ApiKeys is NOT declared by SupersetKind → must not be admitted.
       refute Ezagent.Behavior.ApiKeys in set
     end
@@ -137,7 +137,7 @@ defmodule Ezagent.Kind.BehaviorSetTest do
   describe "resolve_closure/1 (required/optional siblings)" do
     test "passes when every required sibling owner is present" do
       set = [
-        Ezagent.Behavior.Chat,
+        Ezagent.Behavior.Session,
         Ezagent.Behavior.Turn,
         Ezagent.Behavior.Surface,
         # ConfigEvolve requires :sandbox + :identity owners (the agent-owned
@@ -153,7 +153,7 @@ defmodule Ezagent.Kind.BehaviorSetTest do
     end
 
     test "fails loud when a REQUIRED sibling owner is missing (Turn without Surface)" do
-      set = [Ezagent.Behavior.Chat, Ezagent.Behavior.Turn, Ezagent.Behavior.KindBase]
+      set = [Ezagent.Behavior.Session, Ezagent.Behavior.Turn, Ezagent.Behavior.KindBase]
 
       assert {:error, {:missing_required_siblings, missing}} = BehaviorSet.resolve_closure(set)
       assert {Ezagent.Behavior.Turn, :surface} in missing
@@ -174,19 +174,19 @@ defmodule Ezagent.Kind.BehaviorSetTest do
     end
 
     test "OPTIONAL sibling absent is OK (Chat without Sandbox — today's behavior)" do
-      set = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
+      set = [Ezagent.Behavior.Session, Ezagent.Behavior.KindBase]
       assert BehaviorSet.resolve_closure(set) == :ok
     end
   end
 
   describe "validate_closure!/1 (raising wrapper used on the init path)" do
     test "returns the set unchanged when closed (passthrough for piping)" do
-      set = [Ezagent.Behavior.Chat, Ezagent.Behavior.KindBase]
+      set = [Ezagent.Behavior.Session, Ezagent.Behavior.KindBase]
       assert BehaviorSet.validate_closure!(set) == set
     end
 
     test "RAISES UnclosedSetError when a required sibling OWNER is missing" do
-      set = [Ezagent.Behavior.Chat, Ezagent.Behavior.Turn, Ezagent.Behavior.KindBase]
+      set = [Ezagent.Behavior.Session, Ezagent.Behavior.Turn, Ezagent.Behavior.KindBase]
 
       err =
         assert_raise Ezagent.Kind.BehaviorSet.UnclosedSetError,
@@ -247,7 +247,7 @@ defmodule Ezagent.Kind.BehaviorSetTest do
     def type_name, do: :session
     @impl true
     def behaviors,
-      do: [Ezagent.Behavior.Chat, Ezagent.Behavior.Surface, Ezagent.Behavior.KindBase]
+      do: [Ezagent.Behavior.Session, Ezagent.Behavior.Surface, Ezagent.Behavior.KindBase]
 
     @impl true
     def persistence, do: :ephemeral
@@ -276,11 +276,11 @@ defmodule Ezagent.Kind.BehaviorSetTest do
     end
 
     test "a session Kind with a PRESENT explicit set is unaffected (no raise)" do
-      captured = [Ezagent.Behavior.Chat, Ezagent.Behavior.Surface]
+      captured = [Ezagent.Behavior.Session, Ezagent.Behavior.Surface]
       slice_state = %{kind_base: %{state: %{behaviors: captured}, transients: %{}}}
 
       set = BehaviorSet.effective_set(SessionLikeKind, slice_state)
-      assert Ezagent.Behavior.Chat in set
+      assert Ezagent.Behavior.Session in set
       assert Ezagent.Behavior.Surface in set
       assert Ezagent.Behavior.KindBase in set
     end

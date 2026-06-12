@@ -15,7 +15,7 @@ defmodule EzagentDomainPython do
 
   A unified runtime for Python subprocesses ezagent itself launches:
 
-    * Future Python-implemented Agent Kinds whose `Behavior.Chat`
+    * Future Python-implemented Agent Kinds whose `Behavior.Session`
       invoke delegates to `Ezagent.Domain.Python.call/4`.
     * Future Behavior `:invoke` / Template `:instantiate`
       implementations written in Python.

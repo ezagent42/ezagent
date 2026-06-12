@@ -26,7 +26,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Capability, Invocation, KindRegistry, Message, RoutingRegistry}
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session, as: SessionBehavior
   alias Ezagent.Entity.{Agent, Session, User}
   alias Ezagent.Orchestrator.{McpServer, Tools}
   alias Ezagent.Routing.{Matcher, Resolver}
@@ -54,7 +54,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
 
   defp chat_slice(session_uri) do
     {:ok, pid} = KindRegistry.lookup(session_uri)
-    %{state: %{chat: %{state: slice}}} = :sys.get_state(pid)
+    %{state: %{session: %{state: slice}}} = :sys.get_state(pid)
     slice
   end
 
@@ -194,7 +194,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
     # The member appears with its role_name + the in_session_template facet +
     # the spawn-source facet (so a future respawn can rebuild it).
     slice = chat_slice(session_uri)
-    assert Chat.role_name_to_uri(slice.members, role_name) == member_uri
+    assert SessionBehavior.role_name_to_uri(slice.members, role_name) == member_uri
 
     assert %{online: true, role_name: ^role_name, in_session_template: true} =
              slice.members[member_uri]
@@ -231,7 +231,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
     # ── the team is built. Now prove it ROUTES (PR-2/PR-4/PR-6 seam). ──────
     slice = chat_slice(session_uri)
     assert slice.prompt_templates[tpl_ref] == "接龙：{body}（by {sender}）"
-    assert {:ok, %{bound_rule_set: ^rule_set}} = Chat.resolve_legend(slice, legend_name)
+    assert {:ok, %{bound_rule_set: ^rule_set}} = SessionBehavior.resolve_legend(slice, legend_name)
 
     table = Resolver.default_routing_table()
     rows = RoutingRegistry.list_all(table)
@@ -263,7 +263,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
 
     assert ctx.prompt_template_ref == tpl_ref
 
-    delivered = Chat.render_for_delivery(msg, ctx, slice.prompt_templates, session_uri)
+    delivered = SessionBehavior.render_for_delivery(msg, ctx, slice.prompt_templates, session_uri)
     assert delivered.body.text == "接龙：山顶的雪化了（by #{URI.to_string(operator)}）"
   end
 
@@ -356,7 +356,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
     # member holding `role` (the preflight fails BEFORE spawn_member runs).
     slice = chat_slice(session_uri)
 
-    assert Chat.role_name_to_uri(slice.members, role) == nil,
+    assert SessionBehavior.role_name_to_uri(slice.members, role) == nil,
            "M2: an unauthorized add_managed_member must not leave a spawned/joined member; " <>
              "members=#{inspect(Map.keys(slice.members))}"
   end

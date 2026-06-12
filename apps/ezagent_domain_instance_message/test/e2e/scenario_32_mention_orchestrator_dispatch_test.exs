@@ -27,7 +27,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario32_MentionOrchestratorDispatc
       `Ezagent.Routing.Resolver` when (and only when) the orchestrator is
       a session member. This is the routing half of "the mention is
       delivered to the orchestrator" — the production dispatch
-      (`Behavior.Chat :send`) makes the SAME `Resolver.resolve/4`
+      (`Behavior.Session :send`) makes the SAME `Resolver.resolve/4`
       decision the feishu inbound path drives.
 
   **G3 (create-agent) and G4 (modify-routing)** — the orchestrator's

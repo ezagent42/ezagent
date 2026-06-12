@@ -11,7 +11,7 @@ defmodule EzagentCore.Repo.Migrations.Pr144FeishuSessionBindings do
   ## Direction
 
   - Inbound (Feishu → Ezagent): chat_id → session_uri lookup → dispatch
-    `<session_uri>?action=chat.send`.
+    `<session_uri>?action=session.send`.
   - Outbound (Ezagent → Feishu): session_uri → chat_id reverse lookup
     in `Behavior.FeishuOutbound` (registered on Session Kind for
     `:notify_external` action). If a binding exists, mirror the

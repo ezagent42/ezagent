@@ -53,7 +53,7 @@ defmodule EzagentPluginLiveview.AdminCapsLiveTest do
       assert html =~ "Capability subjects"
       # At least one production cap subject is visible (Chat / Session is
       # always registered by EzagentDomainInstanceMessage.Application.start/2).
-      assert html =~ "Ezagent.Behavior.Chat" or html =~ "Ezagent.Entity.Session"
+      assert html =~ "Ezagent.Behavior.Session" or html =~ "Ezagent.Entity.Session"
     end
 
     test "non-admin caller is redirected away from /admin/caps" do

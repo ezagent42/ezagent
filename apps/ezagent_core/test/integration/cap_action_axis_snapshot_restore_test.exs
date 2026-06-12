@@ -26,8 +26,8 @@ defmodule Ezagent.Integration.CapActionAxisSnapshotRestoreTest do
     # pre-action-axis snapshot.
     fresh =
       %Capability{
-        kind: :chat,
-        behavior: Ezagent.Behavior.Chat,
+        kind: :session,
+        behavior: Ezagent.Behavior.Session,
         action: :any,
         instance: :any,
         workspace_uri: :any,
@@ -52,8 +52,8 @@ defmodule Ezagent.Integration.CapActionAxisSnapshotRestoreTest do
     # that the deserialized legacy cap matches (action_of returns :any
     # which matches any concrete needed action).
     needed = %{
-      kind: :chat,
-      behavior: Ezagent.Behavior.Chat,
+      kind: :session,
+      behavior: Ezagent.Behavior.Session,
       action: :send,
       instance: URI.new!("session://team-alpha/default/main"),
       workspace_uri: URI.new!("workspace://team-alpha")
@@ -82,8 +82,8 @@ defmodule Ezagent.Integration.CapActionAxisSnapshotRestoreTest do
   test "B3 — action_of/1 on legacy cap returns :any (no raise)" do
     legacy =
       %Capability{
-        kind: :chat,
-        behavior: Ezagent.Behavior.Chat,
+        kind: :session,
+        behavior: Ezagent.Behavior.Session,
         action: :any,
         instance: :any,
         workspace_uri: :any,

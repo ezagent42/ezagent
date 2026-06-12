@@ -13,13 +13,13 @@ defmodule Ezagent.CapabilityActionTest do
   alias Ezagent.Capability
 
   describe "A1 — cap/3 stores the action atom" do
-    test "Capability.cap(:chat, Chat, :send).action == :send" do
-      cap = Capability.cap(:chat, Ezagent.Behavior.Chat, :send)
+    test "Capability.cap(:session, Chat, :send).action == :send" do
+      cap = Capability.cap(:session, Ezagent.Behavior.Session, :send)
       assert cap.action == :send
     end
 
-    test "Capability.cap(:chat, Chat, :any).action == :any (declarative wildcard)" do
-      cap = Capability.cap(:chat, Ezagent.Behavior.Chat, :any)
+    test "Capability.cap(:session, Chat, :any).action == :any (declarative wildcard)" do
+      cap = Capability.cap(:session, Ezagent.Behavior.Session, :any)
       assert cap.action == :any
     end
 
@@ -28,7 +28,7 @@ defmodule Ezagent.CapabilityActionTest do
       workspace_uri = URI.new!("workspace://team-alpha")
 
       cap =
-        Capability.cap(:session, Ezagent.Behavior.Chat, :send, session_uri, workspace_uri)
+        Capability.cap(:session, Ezagent.Behavior.Session, :send, session_uri, workspace_uri)
 
       assert cap.action == :send
       assert cap.instance == session_uri
@@ -90,7 +90,7 @@ defmodule Ezagent.CapabilityActionTest do
     test "from_map shim defaults missing \"action\" to \"any\" before atomization" do
       old_row = %{
         "kind" => "chat",
-        "behavior" => "Ezagent.Behavior.Chat",
+        "behavior" => "Ezagent.Behavior.Session",
         "instance" => "any",
         "workspace_uri" => "workspace://team-alpha",
         "granted_by" => "entity://system/user/admin",
@@ -196,7 +196,7 @@ defmodule Ezagent.CapabilityActionTest do
   defp build_held_cap(action) do
     %Capability{
       kind: :session,
-      behavior: Ezagent.Behavior.Chat,
+      behavior: Ezagent.Behavior.Session,
       action: action,
       instance: :any,
       workspace_uri: :any,
@@ -208,7 +208,7 @@ defmodule Ezagent.CapabilityActionTest do
   defp build_needed(action) do
     %{
       kind: :session,
-      behavior: Ezagent.Behavior.Chat,
+      behavior: Ezagent.Behavior.Session,
       action: action,
       instance: URI.new!("session://team-alpha/default/main"),
       workspace_uri: URI.new!("workspace://team-alpha")
