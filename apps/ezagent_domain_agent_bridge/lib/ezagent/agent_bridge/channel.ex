@@ -21,9 +21,11 @@ defmodule Ezagent.AgentBridge.Channel do
   def join("agent_bridge:" <> rest, params, socket) do
     with {:ok, flavor, topic_uri} <- parse_agent_bridge_topic(rest),
          :ok <- verify_topic_uri(topic_uri, socket),
-         :ok <- verify_topic_flavor(flavor, socket.assigns.agent_uri) do
+         :ok <- verify_topic_flavor(flavor, socket.assigns.agent_uri),
+         :ok <- verify_transport_class(flavor) do
       join_bridge(flavor, params, socket)
     else
+      :transport_class_mismatch -> {:error, %{reason: "transport_class_mismatch"}}
       {:error, reason} -> {:error, %{reason: inspect(reason)}}
       false -> {:error, %{reason: "topic_uri_mismatch"}}
       _ -> {:error, %{reason: "invalid_topic"}}
@@ -36,9 +38,11 @@ defmodule Ezagent.AgentBridge.Channel do
     # `:error` failure path for malformed topic URIs.
     with {:ok, topic_uri} <- safe_parse_uri(uri_str),
          :ok <- verify_topic_uri(topic_uri, socket),
-         :ok <- verify_topic_flavor("cc", socket.assigns.agent_uri) do
+         :ok <- verify_topic_flavor("cc", socket.assigns.agent_uri),
+         :ok <- verify_transport_class("cc") do
       join_bridge("cc", params, socket)
     else
+      :transport_class_mismatch -> {:error, %{reason: "transport_class_mismatch"}}
       {:error, reason} -> {:error, %{reason: inspect(reason)}}
       false -> {:error, %{reason: "topic_uri_mismatch"}}
       _ -> {:error, %{reason: "invalid_topic"}}
@@ -99,6 +103,18 @@ defmodule Ezagent.AgentBridge.Channel do
       :ok
     else
       false
+    end
+  end
+
+  # A WS Channel join is only valid for a `:subprocess_ws` flavor. An
+  # `:in_process_sync` flavor (e.g. a future curl agent) has no WebSocket
+  # endpoint, so it must NEVER reach the Channel — reject the join (codex
+  # MED-2 point 1). Unregistered flavors default to `:subprocess_ws`
+  # (their adapter registers UP at boot and may not be present yet).
+  defp verify_transport_class(flavor) when is_binary(flavor) do
+    case AdapterRegistry.transport_class(flavor) do
+      :subprocess_ws -> :ok
+      _other -> :transport_class_mismatch
     end
   end
 

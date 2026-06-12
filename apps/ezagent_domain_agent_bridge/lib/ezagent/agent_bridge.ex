@@ -7,14 +7,36 @@ defmodule Ezagent.AgentBridge do
 
   alias Ezagent.AgentBridge.{AdapterRegistry, Payload, Registry}
 
-  @spec deliver(URI.t(), Payload.t()) :: :ok | {:error, term()}
+  @spec deliver(URI.t(), Payload.t()) :: :ok | {:ok, term()} | {:error, term()}
   def deliver(%URI{} = agent_uri, %Payload{} = payload) do
-    with {:ok, channel_pid} <- lookup_channel(agent_uri),
-         {:ok, flavor} <- resolve_flavor(agent_uri),
-         :ok <- AdapterRegistry.deliver_or_buffer(flavor, payload, channel_pid) do
-      :ok
-    else
-      {:error, reason} -> drop(agent_uri, payload, reason)
+    case resolve_flavor(agent_uri) do
+      {:ok, flavor} ->
+        case AdapterRegistry.transport_class(flavor) do
+          :in_process_sync ->
+            # No subprocess, no WebSocket, no channel pid — deliver inline.
+            deliver_in_process(agent_uri, payload, flavor)
+
+          :subprocess_ws ->
+            # Status-quo WS path, UNCHANGED ordering: channel-lookup first
+            # (so a missing bridge surfaces as :no_bridge as before).
+            with {:ok, channel_pid} <- lookup_channel(agent_uri),
+                 :ok <- AdapterRegistry.deliver_or_buffer(flavor, payload, channel_pid) do
+              :ok
+            else
+              {:error, reason} -> drop(agent_uri, payload, reason)
+            end
+        end
+
+      {:error, _flavor_reason} ->
+        # Flavor unresolved — only the WS transport is meaningful (default).
+        # Preserve the pre-PR-0 ordering: surface :no_bridge before flavor.
+        with {:ok, channel_pid} <- lookup_channel(agent_uri),
+             {:ok, flavor} <- resolve_flavor(agent_uri),
+             :ok <- AdapterRegistry.deliver_or_buffer(flavor, payload, channel_pid) do
+          :ok
+        else
+          {:error, reason} -> drop(agent_uri, payload, reason)
+        end
     end
   end
 
@@ -27,14 +49,23 @@ defmodule Ezagent.AgentBridge do
   from the runtime. Re-reading the same slice through `Kind.get_slice/2`
   would be a `GenServer.call(self)`.
   """
-  @spec deliver_with_flavor(URI.t(), Payload.t(), String.t()) :: :ok | {:error, term()}
+  @spec deliver_with_flavor(URI.t(), Payload.t(), String.t()) ::
+          :ok | {:ok, term()} | {:error, term()}
   def deliver_with_flavor(%URI{} = agent_uri, %Payload{} = payload, flavor)
       when is_binary(flavor) and flavor != "" do
-    with {:ok, channel_pid} <- lookup_channel(agent_uri),
-         :ok <- AdapterRegistry.deliver_or_buffer(flavor, payload, channel_pid) do
-      :ok
-    else
-      {:error, reason} -> drop(agent_uri, payload, reason)
+    case AdapterRegistry.transport_class(flavor) do
+      :in_process_sync ->
+        # No subprocess, no WebSocket, no channel pid — deliver synchronously
+        # in-process. The result flows back to the owning Behavior (PR-6).
+        deliver_in_process(agent_uri, payload, flavor)
+
+      :subprocess_ws ->
+        with {:ok, channel_pid} <- lookup_channel(agent_uri),
+             :ok <- AdapterRegistry.deliver_or_buffer(flavor, payload, channel_pid) do
+          :ok
+        else
+          {:error, reason} -> drop(agent_uri, payload, reason)
+        end
     end
   end
 
@@ -58,18 +89,25 @@ defmodule Ezagent.AgentBridge do
   `:bridge_heal_fn`.
   """
   @spec deliver_ensuring(URI.t(), Payload.t(), (URI.t() -> :ok | {:error, term()})) ::
-          :ok | {:error, term()}
+          :ok | {:ok, term()} | {:error, term()}
   def deliver_ensuring(%URI{} = agent_uri, %Payload{} = payload, heal_fn \\ resolve_heal_fn())
       when is_function(heal_fn, 1) do
-    case Registry.lookup(agent_uri) do
-      {:ok, _pid} ->
-        deliver(agent_uri, payload)
+    if in_process_sync?(agent_uri) do
+      # :in_process_sync — no subprocess to heal, no readiness gate. Deliver
+      # synchronously in-process (the readiness gate lives ONE LAYER UP here,
+      # so the deliver/2 branch alone would not bypass it — codex MED-2).
+      deliver(agent_uri, payload)
+    else
+      case Registry.lookup(agent_uri) do
+        {:ok, _pid} ->
+          deliver(agent_uri, payload)
 
-      :error ->
-        case ensure_ready(agent_uri, heal_fn) do
-          :ok -> deliver(agent_uri, payload)
-          {:error, reason} -> drop(agent_uri, payload, reason)
-        end
+        :error ->
+          case ensure_ready(agent_uri, heal_fn) do
+            :ok -> deliver(agent_uri, payload)
+            {:error, reason} -> drop(agent_uri, payload, reason)
+          end
+      end
     end
   end
 
@@ -82,7 +120,7 @@ defmodule Ezagent.AgentBridge do
           Payload.t(),
           String.t(),
           (URI.t() -> :ok | {:error, term()})
-        ) :: :ok | {:error, term()}
+        ) :: :ok | {:ok, term()} | {:error, term()}
   def deliver_ensuring_with_flavor(
         %URI{} = agent_uri,
         %Payload{} = payload,
@@ -90,14 +128,22 @@ defmodule Ezagent.AgentBridge do
         heal_fn \\ resolve_heal_fn()
       )
       when is_binary(flavor) and flavor != "" and is_function(heal_fn, 1) do
-    case Registry.lookup(agent_uri) do
-      {:ok, _pid} ->
+    case AdapterRegistry.transport_class(flavor) do
+      :in_process_sync ->
+        # No subprocess to heal, no Registry row, no readiness gate — call the
+        # adapter's deliver/2 synchronously in-process (codex MED-2 point 3).
         deliver_with_flavor(agent_uri, payload, flavor)
 
-      :error ->
-        case ensure_ready(agent_uri, heal_fn) do
-          :ok -> deliver_with_flavor(agent_uri, payload, flavor)
-          {:error, reason} -> drop(agent_uri, payload, reason)
+      :subprocess_ws ->
+        case Registry.lookup(agent_uri) do
+          {:ok, _pid} ->
+            deliver_with_flavor(agent_uri, payload, flavor)
+
+          :error ->
+            case ensure_ready(agent_uri, heal_fn) do
+              :ok -> deliver_with_flavor(agent_uri, payload, flavor)
+              {:error, reason} -> drop(agent_uri, payload, reason)
+            end
         end
     end
   end
@@ -233,6 +279,26 @@ defmodule Ezagent.AgentBridge do
     case Registry.lookup(agent_uri) do
       {:ok, channel_pid} -> {:ok, channel_pid}
       :error -> {:error, :no_bridge}
+    end
+  end
+
+  # :in_process_sync delivery — bypasses the Channel/Registry/readiness gate.
+  # The adapter runs its work in-process (e.g. an HTTP round-trip) with a nil
+  # channel ref and returns `{:ok, result}` / `{:error, reason}` synchronously.
+  defp deliver_in_process(agent_uri, payload, flavor) do
+    case AdapterRegistry.lookup(flavor) do
+      {:ok, adapter} ->
+        adapter.deliver(payload, nil)
+
+      :error ->
+        drop(agent_uri, payload, {:no_adapter, flavor})
+    end
+  end
+
+  defp in_process_sync?(%URI{} = agent_uri) do
+    case resolve_flavor(agent_uri) do
+      {:ok, flavor} -> AdapterRegistry.transport_class(flavor) == :in_process_sync
+      {:error, _} -> false
     end
   end
 
