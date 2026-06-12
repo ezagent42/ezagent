@@ -104,8 +104,12 @@ defmodule EzagentPluginAutoservice.OperatorLive do
 
     with false <- text == "",
          %URI{} = session_uri <- socket.assigns.selected,
-         %URI{} = orch_uri <- socket.assigns.orchestrator_uri,
-         turn_id when is_binary(turn_id) <- socket.assigns.open_turn_id do
+         %URI{} = orch_uri <- socket.assigns.orchestrator_uri do
+      # `open_turn_id` may be nil — proactive takeover (no bot turn in flight).
+      # The orchestrator's operator_claim IGNORES this arg and reads its own
+      # state's open_turn_id, opening a FRESH turn when none is open. Pass "" so
+      # the action's `turn_id: :string` arg contract holds.
+      turn_id = socket.assigns.open_turn_id || ""
       operator_uri_str = URI.to_string(socket.assigns.operator_uri)
       orch_action = URI.to_string(orch_uri) <> "?action=cs_orchestrator.operator_claim"
       target = Ezagent.URI.new!(orch_action)
@@ -148,8 +152,12 @@ defmodule EzagentPluginAutoservice.OperatorLive do
 
   # "提交" — settle the claimed turn
   def handle_event("settle", _params, socket) do
-    with %URI{} = orch_uri <- socket.assigns.orchestrator_uri,
-         turn_id when is_binary(turn_id) <- socket.assigns.open_turn_id do
+    with %URI{} = orch_uri <- socket.assigns.orchestrator_uri do
+      # The turn to settle is the one operator_claim opened — tracked in the
+      # orchestrator's own state. `@open_turn_id` here is stale (it reflects the
+      # pre-claim select-time read), so we pass "" and let operator_settle use
+      # its tracked open_turn_id.
+      turn_id = socket.assigns.open_turn_id || ""
       orch_action = URI.to_string(orch_uri) <> "?action=cs_orchestrator.operator_settle"
       target = Ezagent.URI.new!(orch_action)
 
@@ -232,22 +240,21 @@ defmodule EzagentPluginAutoservice.OperatorLive do
 
   defp list_cs_sessions(_), do: []
 
-  # Rehydrate a dormant session Kind (snapshot-backed but not yet alive
-  # this server uptime). Idempotent.
+  # Rehydrate a dormant session Kind (snapshot-backed but not yet alive this
+  # server uptime). Idempotent. MUST spawn as SocialwareSession (Turn
+  # behaviors) — the generic `SpawnRegistry.spawn` would resolve kind_type
+  # "session" to the plain chat Session (no Turn), so a subsequent
+  # operator_claim → TurnDriver.open would fail with {:unknown_action, :open}.
+  # `Assembly.ensure_socialware_session/2` mirrors the customer mount path.
   defp rehydrate_session(%URI{} = session_uri, %URI{scheme: "workspace"} = workspace_uri) do
     case Ezagent.KindRegistry.lookup(session_uri) do
       {:ok, _pid} ->
         :ok
 
       :error ->
-        case Ezagent.SpawnRegistry.spawn(session_uri) do
-          {:ok, _pid} ->
-            _ = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
-            :ok
-
-          _ ->
-            :ok
-        end
+        _ = Assembly.ensure_socialware_session(session_uri, workspace_uri)
+        _ = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
+        :ok
     end
   end
 
@@ -393,14 +400,14 @@ defmodule EzagentPluginAutoservice.OperatorLive do
                 type="text"
                 name="text"
                 value=""
-                placeholder={if @open_turn_id, do: "输入人工回复后点击「接管」…", else: "暂无开放 turn，等待客户消息"}
+                placeholder={if @open_turn_id, do: "输入人工回复后点击「接管」…", else: "输入人工回复直接接管（将新开一轮）…"}
                 autocomplete="off"
-                disabled={is_nil(@open_turn_id) || @claimed?}
+                disabled={@claimed?}
                 class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:bg-gray-100"
               />
               <button
                 type="submit"
-                disabled={is_nil(@open_turn_id) || @claimed?}
+                disabled={@claimed?}
                 class="rounded-lg bg-amber-500 text-white px-4 py-2 text-sm font-medium hover:bg-amber-600 disabled:opacity-50"
               >
                 接管

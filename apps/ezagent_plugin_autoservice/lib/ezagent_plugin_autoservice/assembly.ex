@@ -301,6 +301,32 @@ defmodule EzagentPluginAutoservice.Assembly do
     end
   end
 
+  @doc """
+  Ensure a CS `SocialwareSession` Kind is alive for `session_uri`.
+
+  CS sessions MUST run as `Ezagent.Entity.SocialwareSession` (it carries the
+  Turn behaviors). The generic `SpawnRegistry` `"session"` handler spawns a
+  PLAIN chat `Session` (Chat but NO Turn) — so any path that rehydrates a
+  dormant CS session via that handler leaves it unable to answer `turn.open`
+  (`{:unknown_action, :open}`). `ensure_joined/1` (customer mount) already
+  avoids this by going through `ensure_session/3`; this public wrapper lets the
+  operator console do the same on session-select. Derives the session owner
+  (the customer) structurally from the `session://<ws>/cs/<name>` URI.
+  """
+  @spec ensure_socialware_session(URI.t(), URI.t()) :: :ok | {:error, term()}
+  def ensure_socialware_session(
+        %URI{scheme: "session"} = session_uri,
+        %URI{scheme: "workspace"} = workspace_uri
+      ) do
+    with {:ok, tid} <- Ezagent.URI.workspace_name(session_uri),
+         {:ok, name} <- Ezagent.URI.name(session_uri) do
+      owner_uri = Ezagent.URI.user(tid, name)
+      ensure_session(session_uri, owner_uri, workspace_uri)
+    else
+      other -> {:error, {:bad_cs_session_uri, other}}
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # Step 1 — Content release init
   # ---------------------------------------------------------------------------

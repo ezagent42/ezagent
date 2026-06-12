@@ -277,8 +277,19 @@ defmodule Ezagent.Behavior.CsOrchestrator do
   # handle_operator_settle/2
   # -----------------------------------------------------------------------
 
-  def handle_operator_settle(%{turn_id: turn_id}, ctx) do
+  def handle_operator_settle(%{turn_id: arg_turn_id}, ctx) do
     session_uri_str = ctx[:read].(:session_uri, "")
+    # The turn the operator is settling is the one operator_claim opened, tracked
+    # in our own state. Prefer it; fall back to the caller-supplied arg only when
+    # we have no tracked turn (the OperatorLive settle passes "" by design).
+    tracked = ctx[:read].(:open_turn_id, nil)
+
+    turn_id =
+      cond do
+        is_binary(tracked) and tracked != "" -> tracked
+        is_binary(arg_turn_id) and arg_turn_id != "" -> arg_turn_id
+        true -> ""
+      end
 
     case parse_session_uri(session_uri_str) do
       {:ok, session_uri} ->

@@ -309,55 +309,40 @@ defmodule EzagentPluginAutoservice.CsOrchestratorTest do
       assert {:set, :open_turn_id, nil} in effects
     end
 
-    test "settle with mismatched turn_id — tracked turn gets cancelled", ctx_map do
+    test "settles the TRACKED turn, ignoring a stale/bogus arg turn_id", ctx_map do
+      # New contract (live-E2E operator fix): operator_claim opens a fresh turn
+      # and tracks it as open_turn_id; OperatorLive's settle passes "" (it does
+      # not know the fresh id). So operator_settle must settle its OWN tracked
+      # turn, NOT a caller-supplied arg. Here the tracked turn is a real claimed
+      # (settle-able) turn and the arg is bogus — the tracked turn must settle.
       %{session: session, customer_uri: customer_uri, fast_uri: fast_uri, slow_uri: slow_uri} =
         ctx_map
 
       tctx = priv_ctx()
 
-      # Open and compose the "caller" turn.
-      caller_trigger = %{
-        message_id: "m-caller-#{System.unique_integer([:positive])}",
-        text: "caller"
+      tracked_trigger = %{
+        message_id: "m-tracked-#{System.unique_integer([:positive])}",
+        text: "tracked"
       }
 
-      assert {:ok, %{turn_id: caller_tid}} =
-               EzagentPluginAutoservice.TurnDriver.open(session, caller_trigger, tctx)
+      assert {:ok, %{turn_id: tracked_tid}} =
+               EzagentPluginAutoservice.TurnDriver.open(session, tracked_trigger, tctx)
 
       assert {:ok, _} =
-               EzagentPluginAutoservice.TurnDriver.compose(
-                 session,
-                 caller_tid,
-                 "caller draft",
-                 tctx
-               )
+               EzagentPluginAutoservice.TurnDriver.compose(session, tracked_tid, "draft", tctx)
 
       operator_uri =
-        Ezagent.URI.entity(
-          :team_alpha,
-          :user,
-          "op-mismatch-#{System.unique_integer([:positive])}"
-        )
+        Ezagent.URI.entity(:team_alpha, :user, "op-tracked-#{System.unique_integer([:positive])}")
 
       assert {:ok, _} =
-               EzagentPluginAutoservice.TurnDriver.claim(session, caller_tid, operator_uri, tctx)
-
-      # Open a second (stale) turn which will be tracked as open_turn_id.
-      stale_trigger = %{
-        message_id: "m-stale-#{System.unique_integer([:positive])}",
-        text: "stale"
-      }
-
-      assert {:ok, %{turn_id: stale_tid}} =
-               EzagentPluginAutoservice.TurnDriver.open(session, stale_trigger, tctx)
+               EzagentPluginAutoservice.TurnDriver.claim(session, tracked_tid, operator_uri, tctx)
 
       state = %{
         session_uri: URI.to_string(session),
         customer_uri: URI.to_string(customer_uri),
         fast_uri: URI.to_string(fast_uri),
         slow_uri: URI.to_string(slow_uri),
-        # Tracked turn differs from the caller's turn_id.
-        open_turn_id: stale_tid,
+        open_turn_id: tracked_tid,
         operator_active: true
       }
 
@@ -365,16 +350,15 @@ defmodule EzagentPluginAutoservice.CsOrchestratorTest do
         fake_ctx(state)
         |> Map.put(:caps, Ezagent.SystemPrincipal.caps("system://bootstrap"))
 
-      # Settle the caller's turn.
+      # Arg turn_id is bogus — the tracked turn must be the one that settles.
       assert {:ok, %{ok: true}, effects} =
-               CsOrchestrator.handle_operator_settle(%{turn_id: caller_tid}, ctx)
+               CsOrchestrator.handle_operator_settle(%{turn_id: "bogus-arg-turn-id"}, ctx)
 
       assert {:set, :open_turn_id, nil} in effects
 
-      # The stale turn should now be cancelled — verify by attempting a second
-      # settle on it; Turn.settle on a :cancelled turn returns {:error, {:illegal_transition, :cancelled}}.
-      assert {:error, {:illegal_transition, :cancelled}} =
-               EzagentPluginAutoservice.TurnDriver.settle(session, stale_tid, tctx)
+      # The tracked turn is now settled (terminal) — a second settle is illegal.
+      assert {:error, {:illegal_transition, _}} =
+               EzagentPluginAutoservice.TurnDriver.settle(session, tracked_tid, tctx)
     end
   end
 
