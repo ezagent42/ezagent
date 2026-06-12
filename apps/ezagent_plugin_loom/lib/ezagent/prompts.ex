@@ -471,9 +471,9 @@ defmodule EzagentPluginLoom.Prompts do
       <div className="flex items-center justify-center min-h-screen bg-gray-50">
         <div className="text-center">
           <h1 className="text-3xl font-bold text-gray-800 mb-2">
-            欢迎使用 Loom
+            Hello! 欢迎使用
           </h1>
-          <p className="text-gray-500">在左侧 @编排器 告诉我你想要什么页面</p>
+          <p className="text-gray-500">在左侧 @v0 告诉我你想要什么页面</p>
         </div>
       </div>
     );
