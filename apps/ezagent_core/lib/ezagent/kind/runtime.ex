@@ -138,25 +138,13 @@ defmodule Ezagent.Kind.Runtime do
     # no way to know which session a dispatch is happening in, so
     # scope-bounded delegation can't be enforced. Derivation is pure
     # URI parsing — no dispatch, no registry lookup, O(1).
-    # PR-N3 r4 (Allen 2026-05-25) — pre-allocate the `SliceChange`
-    # broadcast cursor BEFORE invoke so the Behavior can write
-    # cursor-keyed entries into its slice that match what subscribers
-    # will receive in the envelope. Allocation here means every
-    # dispatch (even read-only Behaviors that don't mutate the slice)
-    # burns a cursor number; the moduledoc on
-    # `Ezagent.SliceChange.Cursors` documents skipping is acceptable
-    # (cursors are a "low-cost ordering hint", not a tight log
-    # primary key). The alternative — allocating AFTER invoke — would
-    # force the Behavior to write cursor-less ring entries and then
-    # have Runtime back-patch them, which violates the "Behavior owns
-    # invoke contract" boundary and is more code for the same
-    # outcome. Pre-allocation keeps the Behavior the SoT for its own
-    # slice.
-    #
-    # `SliceChange.emit/1` reads the pre-allocated cursor from the
-    # producer event (instead of calling `Cursors.next/1` itself —
-    # see `Ezagent.SliceChange.build_broadcast_event/2`) so the
-    # envelope's `:cursor` matches the slice's ring entry exactly.
+    # PR-N3 r4 (Allen 2026-05-25) — pre-allocate the `SliceChange` broadcast
+    # cursor BEFORE invoke so the Behavior writes cursor-keyed slice entries that
+    # match what subscribers receive in the envelope (keeps the Behavior the SoT
+    # for its own slice). Every dispatch burns a cursor; skipping is acceptable
+    # (`SliceChange.Cursors` moduledoc — cursors are an ordering hint, not a key).
+    # `SliceChange.emit/1` reads this pre-allocated cursor from the producer event
+    # (see `SliceChange.build_broadcast_event/2`) so envelope + ring entry match.
     slice_change_cursor = Ezagent.SliceChange.Cursors.next(self_uri)
 
     enriched_ctx =
@@ -168,7 +156,7 @@ defmodule Ezagent.Kind.Runtime do
 
     with {:ok, {behavior_name_atom, action}} <- Ezagent.URI.behavior_action(target),
          {:ok, behavior_module} <- lookup_behavior(kind_module, action),
-         :ok <- instance_set_gate(behavior_module, kind_module, state),
+         :ok <- instance_set_gate(behavior_module, kind_module, state, target, enriched_ctx),
          :ok <- authz_check(kind_module, behavior_module, action, target, enriched_ctx),
          :ok <- workspace_isolation_check(behavior_module, target, enriched_ctx),
          :ok <- validate_args(behavior_module, action, args),
@@ -312,7 +300,7 @@ defmodule Ezagent.Kind.Runtime do
   # This precisely targets the subset threat (a DECLARED-but-scoped-out behavior
   # like ProbeBehavior/Surface on a chat-only superset instance → DENIED) while
   # leaving every legitimate non-declared dispatch surface untouched.
-  defp instance_set_gate(behavior_module, kind_module, state) do
+  defp instance_set_gate(behavior_module, kind_module, state, target, ctx) do
     declared? = behavior_module in Ezagent.Kind.behaviors_of(kind_module)
 
     in_instance? =
@@ -324,9 +312,21 @@ defmodule Ezagent.Kind.Runtime do
     if not declared? or in_instance? do
       :ok
     else
+      # Carry caller + target so the `:authz, :denied` audit handler builds a
+      # workspace-scoped row instead of raising on nil (which DETACHES the global
+      # telemetry handler) — and so a denied dispatch leaves an audit trail.
+      action =
+        case Ezagent.URI.behavior_action(target) do
+          {:ok, {_behavior, a}} -> a
+          _ -> nil
+        end
+
       :telemetry.execute([:ezagent, :authz, :denied], %{}, %{
         kind_module: kind_module,
         behavior_module: behavior_module,
+        action: action,
+        caller: Map.get(ctx, :caller),
+        target: target,
         reason: :behavior_not_in_instance_set
       })
 

@@ -28,21 +28,67 @@ defmodule Ezagent.Entity.Session do
   def type_name, do: :session
 
   @impl Ezagent.Kind
+  # P5-1b (socialware substrate collapse) — `behaviors/0` is now the UNION
+  # of the chat + socialware behavior sets. The two former Session Kinds
+  # (`Entity.Session` chat + `Entity.SocialwareSession`) collapse into this
+  # ONE parameterized Kind; Templates select the per-instance ACTIVE subset
+  # via P1's `:kind_base` mechanism (`chat_behaviors/0` / `socialware_behaviors/0`
+  # are the sets threaded at spawn). The declared list here is the SUPERSET;
+  # the load-bearing P1 per-instance denial (`instance_set_gate`, runtime E9)
+  # is what keeps a chat instance from invoking `turn.*`/`surface.*` even
+  # though those Behaviors are declared on the Kind.
+  #
+  # ExternalMirror PR-EM-0 (SPEC §8.1) — `Publisher.SessionImpl` owns
+  # the `:publisher` slice + serves the 3 publisher actions; declared
+  # alongside Session so every Session instance can boot the publisher slice.
+  #
+  # ExternalMirror PR-EM-3 (SPEC §4.1) — `Behavior.ExternalMirror`
+  # owns the `:external_mirror` slice + the bind / unbind /
+  # list_bindings actions; declared here so `init_slice/1`
+  # rehydrates the binding list from the projection table on
+  # Session boot AND `post_init/2` schedules the worker
+  # reconciliation handle_continue per SPEC §3.1.
+  #
+  # Turn / Surface (SPEC §3.1) — the socialware turn-state-machine +
+  # surface-render Behaviors. Declared in the union; ACTIVE only on a
+  # socialware-subset instance (a chat instance's `:kind_base` excludes them).
   def behaviors,
-    # ExternalMirror PR-EM-0 (SPEC §8.1) — `Publisher.SessionImpl` owns
-    # the `:publisher` slice + serves the 3 publisher actions; declared
-    # alongside Chat so every Session Kind boots with both slices.
-    #
-    # ExternalMirror PR-EM-3 (SPEC §4.1) — `Behavior.ExternalMirror`
-    # owns the `:external_mirror` slice + the bind / unbind /
-    # list_bindings actions; declared here so `init_slice/1`
-    # rehydrates the binding list from the projection table on
-    # Session boot AND `post_init/2` schedules the worker
-    # reconciliation handle_continue per SPEC §3.1.
+    do: [
+      Ezagent.Behavior.Session,
+      Ezagent.Behavior.Publisher.SessionImpl,
+      Ezagent.Behavior.ExternalMirror,
+      Ezagent.Behavior.Turn,
+      Ezagent.Behavior.Surface
+    ]
+
+  @doc """
+  The chat per-instance behavior subset (the `:kind_base` set threaded at a
+  chat session spawn). Selects `{Session, Publisher, ExternalMirror}` out of
+  the declared union — Turn/Surface are EXCLUDED, so `effective_set/2` denies
+  `turn.*`/`surface.*` on a chat instance (P1 per-instance denial, SPEC §3.1).
+  """
+  @spec chat_behaviors() :: [module()]
+  def chat_behaviors,
     do: [
       Ezagent.Behavior.Session,
       Ezagent.Behavior.Publisher.SessionImpl,
       Ezagent.Behavior.ExternalMirror
+    ]
+
+  @doc """
+  The socialware per-instance behavior subset (the `:kind_base` set threaded at
+  a socialware/advisor session spawn). Selects `{Session, Turn, Surface,
+  Publisher}` out of the declared union — `ExternalMirror` is EXCLUDED. This is
+  the set the former `Entity.SocialwareSession.behaviors/0` declared. Closed
+  under `Turn → Surface` (required-sibling closure, `BehaviorSet.@required_reads`).
+  """
+  @spec socialware_behaviors() :: [module()]
+  def socialware_behaviors,
+    do: [
+      Ezagent.Behavior.Session,
+      Ezagent.Behavior.Turn,
+      Ezagent.Behavior.Surface,
+      Ezagent.Behavior.Publisher.SessionImpl
     ]
 
   @impl Ezagent.Kind

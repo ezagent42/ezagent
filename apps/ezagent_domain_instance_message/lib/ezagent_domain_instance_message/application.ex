@@ -706,11 +706,15 @@ defmodule EzagentDomainInstanceMessage.Application do
         # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
         # P5-0b: thread the explicit chat behavior set so `init_set/2` stores a
         # non-nil `:kind_base` (the scoped guard requires it for sessions).
-        # Pre-union this set == Session.behaviors(), so effective_set is
-        # unchanged (behavior-preserving). This covers the SpawnRegistry
-        # "session" route, which `GenericSession.instantiate/3` also funnels
-        # through (SpawnRegistry.spawn → this fn).
-        result = Ezagent.Kind.spawn(Session, %{uri: uri, behaviors: Session.behaviors()})
+        # P5-1b: `Session.behaviors/0` is now the UNION, so this DEMAND-SPAWN /
+        # rehydrate route passes the chat SUBSET (`chat_behaviors/0`). NB this is
+        # the `:not_found` first-spawn path's set; for an EXISTING snapshot the
+        # reload branch derives the effective set from the PERSISTED `:kind_base`
+        # (a socialware row keeps its socialware set), so a cold-rehydrated
+        # socialware session is NOT downgraded to chat by this default (P5-2 /
+        # the rehydration test). This covers the SpawnRegistry "session" route,
+        # which `GenericSession.instantiate/3` also funnels through.
+        result = Ezagent.Kind.spawn(Session, %{uri: uri, behaviors: Session.chat_behaviors()})
 
         # Allen V1 acceptance 2026-05-22 (invariant 4): rebind the
         # session → workspace consistency cache on EVERY spawn,
@@ -844,23 +848,15 @@ defmodule EzagentDomainInstanceMessage.Application do
       :ok = CapabilityRegistry.register(SessionTemplate, action, TemplateB)
     end)
 
-    # ExternalMirror PR-EM-0 (SPEC §8.1, Allen 2026-05-25) — register
-    # `Ezagent.Behavior.Publisher.SessionImpl` on `Ezagent.Entity.Session`.
-    # It OWNS the `:publisher` slice (in `Session.behaviors/0`, materializes
-    # the ring) + self-subscribes to its SliceChange topic in `activate/2`.
-    #
-    # P5-A (codex P5 round-2 P2) — the chat `Session`'s publisher actions
-    # register HERE, in the Kind's HOME app (registration-lives-with-the-Kind):
-    # `:subscribe_from` → `Publisher.SessionImpl` (cap-gated trunk/mirror path);
-    # `:snapshot`/`:history` → the unified MEMBERSHIP-gated `SocialwarePublisherRead`
-    # (cap-EXEMPT + live `ChatMembership` owner/member check). Both read modules
-    # read ONLY `:chat`/`:publisher` (owned here), so they were RELOCATED into
-    # this app from socialware — making chat `Session` SELF-SUFFICIENT (a
-    # standalone instance_message run, no socialware started, resolves
-    # `Session.snapshot/2`+`history/4`; previously these regs lived in socialware
-    # → app-isolated runs hit `{:unknown_action, :snapshot}`). `SocialwareSession`
-    # reuses both modules from its own app. Distinct Kinds ⇒ no collision.
-    # (Names keep the `Socialware*` prefix this PR; rename deferred to P5-1.)
+    # ExternalMirror PR-EM-0 (SPEC §8.1) — `Publisher.SessionImpl` OWNS the
+    # `:publisher` slice + the `:subscribe_from` trunk action (cap-gated).
+    # P5-A — `:snapshot`/`:history` resolve to the MEMBERSHIP-gated
+    # `SocialwarePublisherRead` (cap-EXEMPT, live owner/member check). Both read
+    # modules read only `:chat`/`:publisher` (owned here) and live in THIS app
+    # (registration-lives-with-the-Kind), so a standalone instance_message run is
+    # self-sufficient. P5-1b: these are the UNIFIED `Entity.Session`'s only
+    # publisher regs — `SocialwareSession` no longer spawns, so its former
+    # duplicate regs are gone.
     alias Ezagent.Behavior.Publisher.SessionImpl, as: PublisherSI
     alias Ezagent.Behavior.SocialwarePublisherRead
 
@@ -870,58 +866,61 @@ defmodule EzagentDomainInstanceMessage.Application do
       :ok = CapabilityRegistry.register(Session, action, SocialwarePublisherRead)
     end)
 
-    # ExternalMirror PR-EM-3 (SPEC §4.1 / §9 PR-EM-3) — register
-    # the `Ezagent.Behavior.ExternalMirror` (bind / unbind /
-    # list_bindings) Behavior on `Ezagent.Entity.Session`. Per the
-    # convention (`feedback_register_lookup_key_parity` / SPEC §5.1
-    # step 7): Kind ↔ Behavior wiring lives in the app that DEFINES
-    # the Kind — Session is here in `:ezagent_domain_instance_message`, so the
-    # registration lives here even though the Behavior module ships
-    # from `:ezagent_domain_external_mirror`.
+    # ExternalMirror PR-EM-3 (SPEC §4.1 / §9 PR-EM-3) — register the
+    # `Ezagent.Behavior.ExternalMirror` (bind / unbind / list_bindings) Behavior
+    # on `Entity.Session`. Per `feedback_register_lookup_key_parity` / SPEC §5.1
+    # step 7, Kind ↔ Behavior wiring lives in the app that DEFINES the Kind
+    # (here), even though the module ships from `:ezagent_domain_external_mirror`.
     alias Ezagent.Behavior.ExternalMirror, as: ExternalMirrorBehavior
 
     Enum.each(ExternalMirrorBehavior.actions(), fn action ->
       :ok = CapabilityRegistry.register(Session, action, ExternalMirrorBehavior)
     end)
 
-    # Phase 7 completion PR-5 (SPEC §1.6b) — register the core
-    # `Ezagent.Behavior.Terminable` Behavior's `:terminate` action on the
-    # Agent Kind. After this, `entity://agent/...?action=lifecycle.terminate`
-    # resolves through `BehaviorRegistry` and is dispatch-invocable +
-    # CapBAC-gated — so the orchestrator's `remove_agent_slot` /
-    # `update_agent_template` tools terminate workers through dispatch,
-    # NOT a bare `DynamicSupervisor.terminate_child` (which would bypass
-    # CapBAC and let an orchestrator kill any agent). The orchestrator's
-    # cap #2 (`{:spawned_by, orchestrator}`) is what permits it to
-    # terminate only ITS OWN workers. (The dispatch action string stays
-    # `lifecycle.terminate` — a cosmetic label; resolution is by the
-    # `:terminate` action atom, not the prefix.)
+    # P5-1b (socialware substrate collapse) — register Turn + Surface on the
+    # now-UNIFIED `Entity.Session` (relocated from socialware's `application.ex`,
+    # which registered them on `SocialwareSession`). SAFE under P1: a chat
+    # instance's `:kind_base` (`Session.chat_behaviors/0`) excludes Turn/Surface
+    # → `instance_set_gate` (runtime E9) DENIES `turn.*`/`surface.*` on it; a
+    # socialware instance (`socialware_behaviors/0`) includes them → allowed.
+    Enum.each(Ezagent.Behavior.Turn.actions(), fn action ->
+      :ok = CapabilityRegistry.register(Session, action, Ezagent.Behavior.Turn)
+    end)
+
+    Enum.each(Ezagent.Behavior.Surface.actions(), fn action ->
+      :ok = CapabilityRegistry.register(Session, action, Ezagent.Behavior.Surface)
+    end)
+
+    # Phase 7 completion PR-5 (SPEC §1.6b) — register `Behavior.Terminable`'s
+    # `:terminate` action on the Agent Kind, so `?action=lifecycle.terminate`
+    # is dispatch-invocable + CapBAC-gated and the orchestrator's
+    # `remove_agent_slot` / `update_agent_template` tools terminate workers
+    # through dispatch, NOT a bare `DynamicSupervisor.terminate_child` (which
+    # would bypass CapBAC). The orchestrator's cap #2 (`{:spawned_by, orch}`)
+    # permits terminating only ITS OWN workers. (`lifecycle.terminate` is a
+    # cosmetic label; resolution is by the `:terminate` atom.)
     alias Ezagent.Behavior.Terminable, as: TerminableB
 
     Enum.each(TerminableB.actions(), fn action ->
       :ok = CapabilityRegistry.register(Agent, action, TerminableB)
     end)
 
-    # PR2 2026-05-24 (Allen) — Sandbox Behavior registers the per-agent
-    # config_dir + extension-management actions. Listed in
-    # `Agent.behaviors/0` so init_slice fires; ALSO registered with
-    # CapabilityRegistry so dispatch (read / write_path / destroy) goes
-    # through CapBAC. Same pattern as Terminable above.
+    # PR2 2026-05-24 — Sandbox Behavior registers the per-agent config_dir +
+    # extension-management actions. In `Agent.behaviors/0` (init_slice fires);
+    # ALSO registered so dispatch (read / write_path / destroy) goes through
+    # CapBAC. Same pattern as Terminable above.
     alias Ezagent.Behavior.Sandbox, as: SandboxB
 
     Enum.each(SandboxB.actions(), fn action ->
       :ok = CapabilityRegistry.register(Agent, action, SandboxB)
     end)
 
-    # RFC #402 (Allen 2026-05-26) — `OrchestratorAdmin` is a cap-only
-    # Behavior anchoring the session-owner authority over this
-    # session's orchestrator agent. `:restart` is the single cap
-    # subject; held by the session owner (`slice.chat.owner_uri`) +
-    # the bootstrap admin via `:any`. `OrchestratorHealthCard` in
-    # `ezagent_plugin_liveview` consults this cap to gate the Restart
-    # button. `dispatchable?: false` means the registration writes
-    # ONLY the subject row; no dispatch path can accidentally invoke
-    # `:restart` (same pattern as `Behavior.Presence`).
+    # RFC #402 — `OrchestratorAdmin` is a cap-only Behavior anchoring the
+    # session-owner authority over this session's orchestrator agent. `:restart`
+    # is the single cap subject (held by `slice.chat.owner_uri` + bootstrap admin
+    # via `:any`); `OrchestratorHealthCard` consults it to gate the Restart
+    # button. `dispatchable?: false` → writes ONLY the subject row, no dispatch
+    # path can invoke `:restart` (same pattern as `Behavior.Presence`).
     alias Ezagent.Behavior.OrchestratorAdmin, as: OrchAdminB
 
     Enum.each(OrchAdminB.actions(), fn action ->
@@ -929,9 +928,8 @@ defmodule EzagentDomainInstanceMessage.Application do
     end)
 
     # #533 §3.4 — Manage (`:delete` / `:reconfigure`) is a UNIVERSAL behavior
-    # (`Ezagent.UniversalBehaviors`); it resolves for every Kind by
-    # construction via the registry fallback, so no per-Kind registration
-    # here. The manage-cap granted at create (PR-5c) gates it.
+    # (resolves for every Kind via the registry fallback); no per-Kind
+    # registration here. The manage-cap granted at create (PR-5c) gates it.
 
     :ok
   end

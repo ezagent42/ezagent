@@ -69,7 +69,10 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # P2.5c — shifted 183→180: net comment trim in `handle_dispatch` (the
     # `deferred` 4-tuple bind added, but verbose @type/comment blocks
     # condensed to keep runtime.ex under the gt_1000 LOC gate).
-    {"apps/ezagent_core/lib/ezagent/kind/runtime.ex", 180},
+    # P5-1b — shifted 180→168: condensed the PR-N3 cursor comment to absorb the
+    # `instance_set_gate` denial-telemetry caller/target enrichment (audit
+    # handler no longer detaches on a per-instance denial) under the LOC gate.
+    {"apps/ezagent_core/lib/ezagent/kind/runtime.ex", 168},
     {"apps/ezagent_core/lib/ezagent/behavior.ex", 454},
     # PR-4 (agent-owned config-evolve) — shifted 271→272 when the #607
     # `system://agent-internal` Sandbox:read drop replaced the old #607 comment

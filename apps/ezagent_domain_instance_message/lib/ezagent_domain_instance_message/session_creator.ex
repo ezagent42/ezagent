@@ -364,8 +364,11 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
            uri: session_uri,
            owner_uri: effective_owner,
            # P5-0b: explicit chat behavior set → non-nil :kind_base (scoped
-           # guard). Pre-union == Session.behaviors(), so behavior-preserving.
-           behaviors: Session.behaviors()
+           # guard). P5-1b: `Session.behaviors/0` is now the UNION, so this
+           # passes `chat_behaviors/0` (the chat subset) — selects
+           # {Session, Publisher, ExternalMirror}, excludes Turn/Surface so the
+           # P1 per-instance gate denies them on chat instances.
+           behaviors: Session.chat_behaviors()
          }) do
       {:ok, _pid} ->
         finalize_fresh_session(
@@ -464,8 +467,9 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
            uri: session_uri,
            owner_uri: effective_owner,
            # P5-0b: explicit chat behavior set on the recreate-after-rollback
-           # path too → non-nil :kind_base. Pre-union == Session.behaviors().
-           behaviors: Session.behaviors()
+           # path too → non-nil :kind_base. P5-1b: now the chat SUBSET of the
+           # union (`chat_behaviors/0`), not the union itself.
+           behaviors: Session.chat_behaviors()
          }) do
       {:ok, _pid} ->
         finalize_fresh_session(
