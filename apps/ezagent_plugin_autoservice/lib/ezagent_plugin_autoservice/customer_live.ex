@@ -127,7 +127,10 @@ defmodule EzagentPluginAutoservice.CustomerLive do
            |> update(:messages, fn ms -> ms ++ new_rows end)}
 
         {:error, :unauthorized} ->
-          Logger.warning("CustomerLive: customer_delivery replay unauthorized for #{URI.to_string(session_uri)}")
+          Logger.warning(
+            "CustomerLive: customer_delivery replay unauthorized for #{URI.to_string(session_uri)}"
+          )
+
           {:noreply, socket}
       end
     end
@@ -145,17 +148,24 @@ defmodule EzagentPluginAutoservice.CustomerLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="mx-auto max-w-2xl h-[calc(100vh-2rem)] my-4 flex flex-col rounded-xl border border-gray-200 shadow-sm overflow-hidden bg-white">
+    <div class="mx-auto max-w-2xl h-[calc(100vh-2rem)] my-4 flex flex-col rounded-xl border border-zinc-200 shadow-sm overflow-hidden bg-white">
       <header class="px-4 py-3 border-b bg-blue-600 text-white">
         <h1 class="font-semibold">在线客服</h1>
         <p class="text-xs opacity-80">{URI.to_string(@customer_uri)}</p>
       </header>
 
-      <p :if={@error} class="m-4 rounded bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
+      <p
+        :if={@error}
+        class="m-4 rounded bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800"
+      >
         {@error}
       </p>
 
-      <ChatUI.message_list :if={!@error} messages={@messages} empty_hint="正在为你接入客服…" />
+      <ChatUI.message_list
+        :if={!@error}
+        messages={@messages}
+        empty_hint="正在为你接入客服…"
+      />
       <ChatUI.composer :if={!@error} nonce={@compose_nonce} placeholder="输入你的问题…" />
     </div>
     """
