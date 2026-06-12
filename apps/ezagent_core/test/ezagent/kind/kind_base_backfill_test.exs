@@ -126,12 +126,12 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
              ]
     end
 
-    test "socialware set" do
+    test "socialware set matches SocialwareSession.behaviors/0 order exactly" do
       assert KindBaseBackfill.target_behaviors(:socialware) == [
                Ezagent.Behavior.Chat,
-               Ezagent.Behavior.Publisher.SessionImpl,
                Ezagent.Behavior.Turn,
-               Ezagent.Behavior.Surface
+               Ezagent.Behavior.Surface,
+               Ezagent.Behavior.Publisher.SessionImpl
              ]
     end
   end

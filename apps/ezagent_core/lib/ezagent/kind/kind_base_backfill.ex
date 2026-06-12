@@ -87,11 +87,15 @@ defmodule Ezagent.Kind.KindBaseBackfill do
     Ezagent.Behavior.ExternalMirror
   ]
 
+  # Order matches SocialwareSession.behaviors/0 exactly (Chat, Turn, Surface,
+  # Publisher.SessionImpl) so a backfilled :kind_base is byte-identical to a live
+  # socialware spawn — the P5-2 cold-restart round-trip invariant compares the
+  # raw captured list, not just the (reorder-normalized) effective set. (codex LOW)
   @socialware_set [
     Ezagent.Behavior.Chat,
-    Ezagent.Behavior.Publisher.SessionImpl,
     Ezagent.Behavior.Turn,
-    Ezagent.Behavior.Surface
+    Ezagent.Behavior.Surface,
+    Ezagent.Behavior.Publisher.SessionImpl
   ]
 
   @type classification :: :chat | :socialware
