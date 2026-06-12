@@ -3,35 +3,42 @@ defmodule EzagentPluginAutoservice.Assembly.Refresh do
   Post-publish agent refresh for the AutoService v2 vertical.
 
   `refresh_agents/1` is called after a successful `Publisher.publish/2` to
-  bring running agents in sync with the newly-published release content.
+  bring agents in sync with the newly-published release content.
 
   ## Slow cc agent
 
   1. `TenantContent.provision_context(tid, "slow", source: :release)` —
      re-renders the soul + skill-index from the new `_current` release.
-  2. Rewrites `<work_dir>/CLAUDE.md` with the fresh content.
-     The slow agent reads its soul from work-dir CLAUDE.md; the rewrite is
-     the minimal correct update path.
-  3. For each live slow cc agent, triggers a sanctioned PTY respawn via
-     `Ezagent.PluginCc.Template.CcAgent.ensure_subprocess_alive/2` so the
-     agent re-reads CLAUDE.md immediately. Respawn data is read from the
-     live Kind's `:sandbox` slice (non-deadlocking — called from outside
-     the Kind's process). Falls back to the snapshot store for dormant Kinds.
-     The respawn deliberately does NOT re-materialize config_dir — that is
-     acceptable and by design; we only need the agent to re-read work-dir
-     CLAUDE.md.
+  2. Rewrites `<work_dir>/CLAUDE.md` with the fresh content. The slow agent
+     reads its soul from work-dir CLAUDE.md at **process start**; rewriting
+     the file is the minimal correct update so the next start (a new session,
+     a cold-load, or a crash-restart) reads the published soul.
+
+  Note on hot-restart: `claude` reads CLAUDE.md only when its process boots,
+  so an already-running slow agent does NOT pick up the new soul until it
+  restarts. There is no sanctioned plugin-facing entrypoint to force-restart
+  a *live* cc PTY (`CcAgent.ensure_subprocess_alive/2` is a *revive-if-dead*
+  gate — it is a no-op when the PTY is alive, by design). A forced hot-restart
+  of a running slow agent is therefore a documented deferral: it needs a
+  sanctioned cc-runtime respawn/restart dispatch (cc-runtime is Allen's
+  domain). For the demo flow ("publish → next session reflects it") this is
+  sufficient: a newly-provisioned session reads fresh `:release`. This module
+  does NOT reach into the cc agent's snapshot or slices to fabricate a
+  respawn — that would violate the plugin contract (§11: no `SnapshotStore` /
+  cross-Kind slice reads from plugin code).
 
   ## Fast curl agent
 
   Dispatches `curl_agent.configure` with the updated `system_prompt` from
   `provision_context(tid, "fast", source: :release).system_prompt` to all
-  live fast curl agents for this tenant.
+  live fast curl agents for this tenant. Unlike the slow cc agent, the curl
+  agent holds its `system_prompt` in live Kind state, so `configure` updates
+  it in place via a `{:set, :system_prompt, _}` effect — no restart needed.
 
   ## Failure semantics
 
-  Returns `:ok` when CLAUDE.md is written successfully (the content-rewrite
-  is the gate). Respawn and configure errors are logged as warnings and are
-  non-fatal — agents pick up fresh content on their next natural restart.
+  Returns `:ok` when CLAUDE.md is written successfully (the content-rewrite is
+  the gate). Fast-configure errors are logged as warnings and are non-fatal.
   Returns `{:error, reason}` only on fatal failures (provision fails or
   CLAUDE.md write fails).
   """
@@ -41,13 +48,13 @@ defmodule EzagentPluginAutoservice.Assembly.Refresh do
   require Logger
 
   @doc """
-  Refresh running agents for tenant `tid` after a publish.
+  Refresh agents for tenant `tid` after a publish.
 
-  Rewrites the slow agent's `work_dir/CLAUDE.md` from the new release,
-  triggers a sanctioned respawn on live slow agents, and updates the fast
-  curl agent's `system_prompt` via dispatch.
+  Rewrites the slow agent's `work_dir/CLAUDE.md` from the new release (read on
+  the agent's next start) and updates live fast curl agents' `system_prompt`
+  via dispatch.
 
-  Returns `:ok` on success (including degraded-but-non-fatal respawn/configure
+  Returns `:ok` on success (including degraded-but-non-fatal fast-configure
   errors). Returns `{:error, reason}` on fatal provision or write failures.
   """
   @spec refresh_agents(String.t()) :: :ok | {:error, term()}
@@ -58,7 +65,8 @@ defmodule EzagentPluginAutoservice.Assembly.Refresh do
   end
 
   # ---------------------------------------------------------------------------
-  # Slow agent refresh: rewrite CLAUDE.md + respawn live agents
+  # Slow agent refresh: rewrite work-dir CLAUDE.md from the new release.
+  # Read by the slow cc agent on its next process start (new session / restart).
   # ---------------------------------------------------------------------------
 
   defp refresh_slow(tid) do
@@ -72,12 +80,10 @@ defmodule EzagentPluginAutoservice.Assembly.Refresh do
         case File.write(claude_md_path, content) do
           :ok ->
             Logger.info(
-              "Refresh: slow CLAUDE.md rewritten — #{claude_md_path} (#{byte_size(content)} bytes)"
+              "Refresh: slow CLAUDE.md rewritten — #{claude_md_path} (#{byte_size(content)} bytes). " <>
+                "Live slow agents read it on their next start; a forced hot-restart of a running " <>
+                "slow agent is deferred (needs a sanctioned cc respawn dispatch — cc-runtime domain)."
             )
-
-            # Respawn all live slow cc agents for this tenant (best-effort).
-            live_agents_for(tid, "cs-slow-")
-            |> Enum.each(fn uri -> respawn_slow_agent(uri) end)
 
             :ok
 
@@ -90,46 +96,10 @@ defmodule EzagentPluginAutoservice.Assembly.Refresh do
     end
   end
 
-  @doc """
-  Trigger a sanctioned PTY respawn for a single slow cc agent.
-
-  Uses `Ezagent.PluginCc.Template.CcAgent.ensure_subprocess_alive/2` — the
-  ONLY public entrypoint for PTY respawn. Respawn data is read from the live
-  Kind's `:sandbox` slice or, if dormant, from the snapshot store.
-
-  Returns `:ok` (non-fatal on respawn failure — logs a warning instead).
-  """
-  @spec respawn_slow_agent(URI.t()) :: :ok
-  def respawn_slow_agent(%URI{} = slow_uri) do
-    respawn_data = load_respawn_data(slow_uri)
-
-    if is_map(respawn_data) do
-      result =
-        Ezagent.PluginCc.Template.CcAgent.ensure_subprocess_alive(slow_uri, respawn_data)
-
-      case result do
-        :ok ->
-          Logger.info("Refresh: slow agent respawned — #{URI.to_string(slow_uri)}")
-
-        {:error, reason} ->
-          Logger.warning(
-            "Refresh: slow agent respawn (non-fatal) — #{URI.to_string(slow_uri)}: #{inspect(reason)}"
-          )
-      end
-
-      :ok
-    else
-      Logger.info(
-        "Refresh: no respawn data for #{URI.to_string(slow_uri)} " <>
-          "(not yet a cc agent or dormant — will pick up CLAUDE.md on next start)"
-      )
-
-      :ok
-    end
-  end
-
   # ---------------------------------------------------------------------------
-  # Fast agent refresh: update system_prompt via curl_agent.configure dispatch
+  # Fast agent refresh: update system_prompt via curl_agent.configure dispatch.
+  # The curl agent holds system_prompt in live Kind state, so this takes effect
+  # immediately (no restart) via a {:set, :system_prompt, _} effect.
   # ---------------------------------------------------------------------------
 
   defp refresh_fast(tid) do
@@ -221,34 +191,5 @@ defmodule EzagentPluginAutoservice.Assembly.Refresh do
           []
       end
     end)
-  end
-
-  # Read respawn_template_data from the live Kind's sandbox slice, falling
-  # back to the snapshot store for dormant Kinds.
-  defp load_respawn_data(%URI{} = agent_uri) do
-    case Ezagent.KindRegistry.lookup(agent_uri) do
-      {:ok, _pid} ->
-        # Kind is alive — read from live slice (non-deadlocking: we are outside
-        # the Kind's process; Kind.get_slice/2 is a GenServer.call to that pid).
-        case Ezagent.Kind.get_slice(agent_uri, :sandbox) do
-          {:ok, sandbox} ->
-            normalized = Ezagent.Kind.normalize_slice_view(sandbox)
-            Map.get(normalized, :respawn_template_data)
-
-          _ ->
-            nil
-        end
-
-      :error ->
-        # Kind is dormant — read from snapshot store.
-        case Ezagent.SnapshotStore.latest(agent_uri) do
-          {:ok, %{state: state}} when is_map(state) ->
-            sandbox = Ezagent.Kind.normalize_slice_view(Map.get(state, :sandbox, %{}))
-            Map.get(sandbox, :respawn_template_data)
-
-          _ ->
-            nil
-        end
-    end
   end
 end

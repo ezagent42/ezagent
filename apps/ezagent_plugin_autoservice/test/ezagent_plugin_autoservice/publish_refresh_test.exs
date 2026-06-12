@@ -10,9 +10,12 @@ defmodule EzagentPluginAutoservice.PublishRefreshTest do
   - Assert the slow agent's work-dir `CLAUDE.md` on disk CONTAINS the sentinel
     (proves re-render + rewrite happened from the new release).
 
-  The respawn path is NOT exercised here (no live PTY in tests); the test
-  asserts the CLAUDE.md disk state and that `refresh_agents/1` returns `:ok`.
-  The live respawn is exercised in Stage-G E2E.
+  The slow agent reads CLAUDE.md only at process start, so the rewrite IS the
+  refresh: a new session / restart reads the published soul. There is no live
+  hot-restart (documented deferral — see `Assembly.Refresh` moduledoc — needs a
+  sanctioned cc respawn dispatch). With `create_agents: false` there are also
+  no live fast agents to `configure`, so the test asserts the CLAUDE.md disk
+  state and that `refresh_agents/1` returns `:ok` without raising.
   """
 
   use EzagentCore.DataCase, async: false
