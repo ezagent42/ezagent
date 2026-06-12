@@ -40,12 +40,26 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
   defp wait_until(_fun, 0), do: flunk("wait_until: condition never became true")
 
   defp wait_until(fun, attempts),
-    do: if(fun.(), do: :ok, else: (Process.sleep(20); wait_until(fun, attempts - 1)))
+    do:
+      if(fun.(),
+        do: :ok,
+        else:
+          (
+            Process.sleep(20)
+            wait_until(fun, attempts - 1)
+          )
+      )
 
   defp spawn_session do
     uri = session_uri()
     :ok = KindSnapshot.delete(URI.to_string(uri))
-    {:ok, _pid} = Ezagent.Kind.spawn(SocialwareSession, %{uri: uri})
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(SocialwareSession, %{
+        uri: uri,
+        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+      })
+
     :ok = Ezagent.WorkspaceRegistry.bind(uri, Ezagent.Capability.workspace_of(uri))
     uri
   end
@@ -169,7 +183,10 @@ defmodule Ezagent.Socialware.CustomerDeliveryCursorTest do
       {:ok, _} = Ezagent.Socialware.Settlement.mark_committed_for_test(pending_turn)
 
       assert Repo.get_by(CustomerOutbox, turn_id: pending_turn).committed_seq == 3
-      assert Enum.map(CustomerFeed.committed_deliveries_since(uri, 2), & &1.turn_id) == [pending_turn]
+
+      assert Enum.map(CustomerFeed.committed_deliveries_since(uri, 2), & &1.turn_id) == [
+               pending_turn
+             ]
     end
   end
 

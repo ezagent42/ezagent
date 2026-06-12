@@ -15,7 +15,17 @@ defmodule EzagentDomainInstanceMessage.Integration.ManageBehaviorTest do
 
   defp wait_until(fun, tries \\ 60)
   defp wait_until(_fun, 0), do: flunk("condition not met in time")
-  defp wait_until(fun, n), do: if(fun.(), do: :ok, else: (Process.sleep(20); wait_until(fun, n - 1)))
+
+  defp wait_until(fun, n),
+    do:
+      if(fun.(),
+        do: :ok,
+        else:
+          (
+            Process.sleep(20)
+            wait_until(fun, n - 1)
+          )
+      )
 
   describe "the Manage behavior surface" do
     test "exposes :delete and :reconfigure" do
@@ -39,7 +49,9 @@ defmodule EzagentDomainInstanceMessage.Integration.ManageBehaviorTest do
       uri = Ezagent.URI.new!("session://system/default/mg-#{System.unique_integer([:positive])}")
 
       assert {:ok, {:ok, :deleted}, effects} = Manage.handle_delete(%{}, %{self_uri: uri})
-      assert {:effect, {Manage, :schedule_delete}, [^uri]} = Enum.find(effects, &match?({:effect, {Manage, :schedule_delete}, _}, &1))
+
+      assert {:effect, {Manage, :schedule_delete}, [^uri]} =
+               Enum.find(effects, &match?({:effect, {Manage, :schedule_delete}, _}, &1))
     end
   end
 
@@ -76,18 +88,32 @@ defmodule EzagentDomainInstanceMessage.Integration.ManageBehaviorTest do
     end
 
     test "non-manage actions are unaffected by the universal fallback" do
-      assert :error = Ezagent.BehaviorRegistry.lookup(Ezagent.NeverRegisteredFakeKind, :some_random_action)
-      assert :error = CapabilityRegistry.lookup_subject(Ezagent.NeverRegisteredFakeKind, :some_random_action)
+      assert :error =
+               Ezagent.BehaviorRegistry.lookup(
+                 Ezagent.NeverRegisteredFakeKind,
+                 :some_random_action
+               )
+
+      assert :error =
+               CapabilityRegistry.lookup_subject(
+                 Ezagent.NeverRegisteredFakeKind,
+                 :some_random_action
+               )
     end
   end
 
   describe ":delete tears the Kind down (via Lifecycle.destroy)" do
     test "schedule_delete destroys a live durable Session (process gone + snapshot cleared)" do
       uri =
-        Ezagent.URI.new!("session://team-alpha/default/mg-del-#{System.unique_integer([:positive])}")
+        Ezagent.URI.new!(
+          "session://team-alpha/default/mg-del-#{System.unique_integer([:positive])}"
+        )
 
       uri_str = URI.to_string(uri)
-      {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: uri})
+
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(Session, %{uri: uri, behaviors: Ezagent.Entity.Session.behaviors()})
+
       wait_until(fn -> match?({:ok, _}, KindRegistry.lookup(uri)) end)
       wait_until(fn -> not is_nil(KindSnapshot.get(uri_str)) end)
 

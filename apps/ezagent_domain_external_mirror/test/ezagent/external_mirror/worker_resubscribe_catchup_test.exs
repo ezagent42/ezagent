@@ -381,7 +381,11 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
   defp spawn_owner_and_session(%URI{} = owner_uri, %URI{} = session_uri) do
     :ok = spawn_user(owner_uri, Ezagent.SystemPrincipal.caps("system://bootstrap"))
 
-    case Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: owner_uri}) do
+    case Ezagent.Kind.spawn(Session, %{
+           uri: session_uri,
+           owner_uri: owner_uri,
+           behaviors: Session.behaviors()
+         }) do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _pid}} -> :ok
     end
@@ -410,7 +414,9 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
   # `worker_publish_test.exs`.
   defp send_chat_to_session(%URI{} = session_uri) do
     member_uri =
-      Ezagent.URI.new!("entity://team-alpha/user/em-catchup-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!(
+        "entity://team-alpha/user/em-catchup-#{System.unique_integer([:positive])}"
+      )
 
     :ok = spawn_user(member_uri, MapSet.new())
 

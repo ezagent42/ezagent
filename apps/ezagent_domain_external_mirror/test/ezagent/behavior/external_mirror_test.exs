@@ -191,7 +191,10 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
 
       # Re-spawn the Session to exercise the init_slice rehydration path.
       {:ok, pid_a} = Ezagent.KindRegistry.lookup(session_uri)
-      :ok = DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, pid_a)
+
+      :ok =
+        DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, pid_a)
+
       wait_until_dead(session_uri, 30)
       {:ok, _pid_b} = Ezagent.SpawnRegistry.spawn(session_uri)
       :ok = await_session_alive(session_uri, 50)
@@ -373,7 +376,11 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
       # contradiction — verified red at baseline 54df56c9). Spawn a fresh
       # NON-privileged user holding ONLY the session bind cap (memory
       # `feedback_e2e_prefers_non_admin_user`) and dispatch as THEM.
-      unpriv_uri = Ezagent.URI.new!("entity://team-alpha/user/unpriv-d-#{System.unique_integer([:positive])}")
+      unpriv_uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/user/unpriv-d-#{System.unique_integer([:positive])}"
+        )
+
       :ok = spawn_user(unpriv_uri, MapSet.new([session_bind_cap(session_uri, @workspace_uri)]))
 
       user_ctx = %{
@@ -382,7 +389,8 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
         reply: :ignore
       }
 
-      target = Ezagent.URI.new!("#{URI.to_string(worker_uri)}?action=external_mirror_worker.publish")
+      target =
+        Ezagent.URI.new!("#{URI.to_string(worker_uri)}?action=external_mirror_worker.publish")
 
       event = %Ezagent.Publisher.Event{
         cursor: 99,
@@ -450,14 +458,20 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
     test "caller in workspace A tries to bind session in workspace B → denied",
          %{owner_uri: _ignored_owner, session_uri: _ignored_session} do
       # Session in workspace B (3-segment session URI per Phase 9 PR-7).
-      ws_b_session = Ezagent.URI.new!("session://ws_b/default/em3-#{System.unique_integer([:positive])}")
-      ws_b_owner = Ezagent.URI.new!("entity://ws_b/user/owner-#{System.unique_integer([:positive])}")
+      ws_b_session =
+        Ezagent.URI.new!("session://ws_b/default/em3-#{System.unique_integer([:positive])}")
+
+      ws_b_owner =
+        Ezagent.URI.new!("entity://ws_b/user/owner-#{System.unique_integer([:positive])}")
+
       :ok = spawn_owner_and_session(ws_b_owner, ws_b_session)
 
       # Caller is in workspace A — has bind cap on ws_b's session but
       # also the per-adapter cap, both narrowed to workspace A. Step
       # 5.6 (workspace isolation) blocks the dispatch.
-      ws_a_caller = Ezagent.URI.new!("entity://ws_a/user/caller-#{System.unique_integer([:positive])}")
+      ws_a_caller =
+        Ezagent.URI.new!("entity://ws_a/user/caller-#{System.unique_integer([:positive])}")
+
       :ok = spawn_user(ws_a_caller, MapSet.new())
 
       ws_a_uri = Ezagent.URI.new!("workspace://ws_a")
@@ -572,7 +586,10 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
       {:ok, session_pid_1} = Ezagent.KindRegistry.lookup(session_uri)
 
       :ok =
-        DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, session_pid_1)
+        DynamicSupervisor.terminate_child(
+          EzagentDomainInstanceMessage.SessionSupervisor,
+          session_pid_1
+        )
 
       wait_until_dead(session_uri, 30)
 
@@ -739,7 +756,8 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
       # OUTSIDE the Session GenServer (per r6 HIGH-2 facade fix).
       list_ctx = owner_ctx(owner_uri)
 
-      target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=external_mirror.list_bindings")
+      target =
+        Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=external_mirror.list_bindings")
 
       {elapsed_us, list_result} =
         :timer.tc(fn ->
@@ -1157,7 +1175,9 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
       # Post-fix must return [] because the caller holds no
       # `:list_bindings` cap on the session.
       same_ws_caller =
-        Ezagent.URI.new!("entity://team-alpha/user/h1-empty-#{System.unique_integer([:positive])}")
+        Ezagent.URI.new!(
+          "entity://team-alpha/user/h1-empty-#{System.unique_integer([:positive])}"
+        )
 
       empty_ctx = %{
         caller: same_ws_caller,
@@ -1196,7 +1216,9 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
 
       # Caller holds :list_bindings cap on session_b only.
       caller_uri =
-        Ezagent.URI.new!("entity://team-alpha/user/h1-caller-#{System.unique_integer([:positive])}")
+        Ezagent.URI.new!(
+          "entity://team-alpha/user/h1-caller-#{System.unique_integer([:positive])}"
+        )
 
       caller_caps =
         MapSet.new([
@@ -1716,7 +1738,11 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
   defp spawn_owner_and_session(%URI{} = owner_uri, %URI{} = session_uri) do
     :ok = spawn_user(owner_uri, Ezagent.SystemPrincipal.caps("system://bootstrap"))
 
-    case Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: owner_uri}) do
+    case Ezagent.Kind.spawn(Session, %{
+           uri: session_uri,
+           owner_uri: owner_uri,
+           behaviors: Session.behaviors()
+         }) do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _pid}} -> :ok
     end
@@ -1904,7 +1930,9 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
     # though both stringify identically — breaking `session_uri in
     # admin_sessions` assertions on `==`. Building the test URI canonically
     # keeps the fixture shape == production shape.
-    Ezagent.URI.new!("session://team-alpha/default/#{prefix}-#{System.unique_integer([:positive])}")
+    Ezagent.URI.new!(
+      "session://team-alpha/default/#{prefix}-#{System.unique_integer([:positive])}"
+    )
   end
 
   # Trigger a chat-slice change on the Session to fire a Publisher

@@ -37,7 +37,14 @@ defmodule Ezagent.Socialware.ChatFeedSnapshotTest do
   setup do
     session = session_uri()
     workspace = Ezagent.Capability.workspace_of(session)
-    {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session, owner_uri: @owner})
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Session, %{
+        uri: session,
+        owner_uri: @owner,
+        behaviors: Ezagent.Entity.Session.behaviors()
+      })
+
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
     %{session: session, workspace: workspace}
   end

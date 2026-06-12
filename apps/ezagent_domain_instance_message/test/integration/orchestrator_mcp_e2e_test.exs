@@ -186,7 +186,12 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
   defp spawn_session do
     session_uri = Ezagent.URI.session("team-alpha", "generic", "mcp-e2e-#{uniq()}")
 
-    {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Session, %{
+        uri: session_uri,
+        behaviors: Ezagent.Entity.Session.behaviors()
+      })
+
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, @workspace_uri)
     session_uri
   end

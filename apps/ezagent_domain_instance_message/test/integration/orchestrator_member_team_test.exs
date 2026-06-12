@@ -106,7 +106,13 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
   # test the LIVE tool calls building a team incrementally.
   defp orchestrated_session(n) do
     session_uri = Ezagent.URI.session("system", "generic", "pr8-team-#{n}")
-    {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Session, %{
+        uri: session_uri,
+        behaviors: Ezagent.Entity.Session.behaviors()
+      })
+
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, @workspace_uri)
 
     on_exit(fn ->

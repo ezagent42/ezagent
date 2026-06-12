@@ -40,13 +40,25 @@ defmodule Ezagent.Socialware.CustomerPageCommitGateTest do
   defp wait_until(_fun, 0), do: flunk("wait_until: condition never became true")
 
   defp wait_until(fun, attempts) do
-    if fun.(), do: :ok, else: (Process.sleep(20); wait_until(fun, attempts - 1))
+    if fun.(),
+      do: :ok,
+      else:
+        (
+          Process.sleep(20)
+          wait_until(fun, attempts - 1)
+        )
   end
 
   defp spawn_session do
     uri = session_uri()
     :ok = KindSnapshot.delete(URI.to_string(uri))
-    {:ok, _pid} = Ezagent.Kind.spawn(SocialwareSession, %{uri: uri})
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(SocialwareSession, %{
+        uri: uri,
+        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+      })
+
     :ok = Ezagent.WorkspaceRegistry.bind(uri, Ezagent.Capability.workspace_of(uri))
     uri
   end

@@ -677,7 +677,12 @@ defmodule Ezagent.Behavior.ChatTest do
 
       # Initial state: just the :chat slice. Runtime defaults missing
       # slices to %{}, so we only need to seed this one.
-      initial_state = %{chat: slice}
+      # P5-0b: Session requires a non-nil :kind_base; the instance_set_gate
+      # reads it via effective_set/2. Seed an explicit set alongside :chat.
+      initial_state = %{
+        chat: slice,
+        kind_base: %{state: %{behaviors: Ezagent.Entity.Session.behaviors()}, transients: %{}}
+      }
 
       assert {:ok, new_state, _result, slice_change_event, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(

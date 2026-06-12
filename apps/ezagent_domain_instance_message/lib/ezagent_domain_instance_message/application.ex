@@ -704,7 +704,13 @@ defmodule EzagentDomainInstanceMessage.Application do
     :ok =
       Ezagent.SpawnRegistry.register("session", fn uri ->
         # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
-        result = Ezagent.Kind.spawn(Session, %{uri: uri})
+        # P5-0b: thread the explicit chat behavior set so `init_set/2` stores a
+        # non-nil `:kind_base` (the scoped guard requires it for sessions).
+        # Pre-union this set == Session.behaviors(), so effective_set is
+        # unchanged (behavior-preserving). This covers the SpawnRegistry
+        # "session" route, which `GenericSession.instantiate/3` also funnels
+        # through (SpawnRegistry.spawn → this fn).
+        result = Ezagent.Kind.spawn(Session, %{uri: uri, behaviors: Session.behaviors()})
 
         # Allen V1 acceptance 2026-05-22 (invariant 4): rebind the
         # session → workspace consistency cache on EVERY spawn,

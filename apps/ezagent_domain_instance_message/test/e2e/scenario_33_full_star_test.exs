@@ -167,7 +167,13 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
 
   defp spawn_session do
     session_uri = Ezagent.URI.session("team-alpha", "generic", "s33-#{uniq()}")
-    {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Session, %{
+        uri: session_uri,
+        behaviors: Ezagent.Entity.Session.behaviors()
+      })
+
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, @workspace_uri)
     session_uri
   end

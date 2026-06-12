@@ -11,6 +11,23 @@ defmodule Ezagent.Kind.BehaviorSet.UnclosedSetError do
   defexception [:message, missing: []]
 end
 
+defmodule Ezagent.Kind.BehaviorSet.MissingKindBaseError do
+  @moduledoc """
+  P5-0b (socialware substrate collapse) — raised by
+  `Ezagent.Kind.BehaviorSet.effective_set/2` when a Kind that declares
+  `requires_explicit_behavior_set?/0 == true` (the session Kind(s)) has a
+  nil / missing `:kind_base` capture.
+
+  This is the SCOPED runtime fail-loud guard: it fires ONLY for the session
+  Kind(s), never for legacy static non-session Kinds (whose absent-`:behaviors`
+  → declared expansion is the intentional compat path). Once a session's
+  declared list is the union (P5-1), a nil `:kind_base` would silently
+  cold-load the entire superset and break P1's per-instance denial invariant —
+  so for sessions a missing explicit set is a hard error, surfaced here.
+  """
+  defexception [:message, :kind_module]
+end
+
 defmodule Ezagent.Kind.BehaviorSet do
   @moduledoc """
   Per-instance behavior-set resolution + required/optional sibling
@@ -112,8 +129,24 @@ defmodule Ezagent.Kind.BehaviorSet do
 
     chosen =
       case captured do
-        # Legacy sentinel (absent-args instance, or missing slice) → declared.
+        # Legacy sentinel (absent-args instance, or missing slice).
         nil ->
+          # P5-0b SCOPED nil-guard: for a Kind that requires an explicit set
+          # (the session Kind(s)), a nil capture is INVALID — fail loud rather
+          # than expand to the declared (post-P5-1: union) list and silently
+          # break P1's per-instance denial. For every other (legacy static)
+          # Kind, the sentinel nil → full declared list is the intentional
+          # compat path and is UNCHANGED.
+          if Ezagent.Kind.requires_explicit_behavior_set?(kind_module) do
+            raise Ezagent.Kind.BehaviorSet.MissingKindBaseError,
+              kind_module: kind_module,
+              message:
+                "#{inspect(kind_module)} requires an explicit :kind_base behavior " <>
+                  "set on every instance, but this instance's :kind_base is nil/missing. " <>
+                  "Thread `:behaviors` through the spawn path (P5-0b) or backfill the " <>
+                  "snapshot (`mix ezagent.kind_base.backfill`, P5-0)."
+          end
+
           declared
 
         # PRESENT captured list (INCLUDING []) → intersect with declared.

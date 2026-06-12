@@ -96,7 +96,14 @@ defmodule EzagentPluginAdvisor.Template.AdvisorSession do
   end
 
   defp ensure_session(session_uri) do
-    case Ezagent.Kind.spawn(SocialwareSession, %{uri: session_uri}) do
+    # P5-0b: thread the explicit socialware behavior set so `init_set/2` stores
+    # a non-nil `:kind_base` (the scoped guard requires it for sessions).
+    # Pre-union this set == SocialwareSession.behaviors(), so effective_set is
+    # unchanged (behavior-preserving).
+    case Ezagent.Kind.spawn(SocialwareSession, %{
+           uri: session_uri,
+           behaviors: SocialwareSession.behaviors()
+         }) do
       {:ok, _pid} -> {:ok, true}
       {:error, {:already_started, _pid}} -> {:ok, false}
       {:error, reason} -> {:error, reason}

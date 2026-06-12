@@ -29,7 +29,13 @@ defmodule Ezagent.Socialware.OutboxTest do
   setup do
     session = session_uri()
     workspace = Ezagent.Capability.workspace_of(session)
-    {:ok, _pid} = Ezagent.Kind.spawn(SocialwareSession, %{uri: session})
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(SocialwareSession, %{
+        uri: session,
+        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+      })
+
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
     :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, CustomerFeed.topic(session))
 

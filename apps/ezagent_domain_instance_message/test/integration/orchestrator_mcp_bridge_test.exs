@@ -13,9 +13,10 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest.Bri
   """
   use Phoenix.Endpoint, otp_app: :ezagent_domain_instance_message
 
-  socket "/orchestrator_socket", Ezagent.Orchestrator.McpSocket,
+  socket("/orchestrator_socket", Ezagent.Orchestrator.McpSocket,
     websocket: [check_origin: false],
     longpoll: false
+  )
 end
 
 defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
@@ -92,9 +93,9 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
   # printed "SKIP" that would let CI pass the gate without ever
   # executing the configured `uv run --script` command.
   @uv_path System.find_executable("uv")
-  @uv_skip (if is_nil(@uv_path),
-              do: "`uv` not on PATH — cannot execute the configured bridge command",
-              else: false)
+  @uv_skip if is_nil(@uv_path),
+             do: "`uv` not on PATH — cannot execute the configured bridge command",
+             else: false
 
   # --- a minimal endpoint so Phoenix.ChannelTest can drive the Channel --
 
@@ -153,7 +154,13 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
 
   defp spawn_session do
     session_uri = Ezagent.URI.new!("session://generic/team-alpha/orch-bridge-#{uniq()}")
-    {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Session, %{
+        uri: session_uri,
+        behaviors: Ezagent.Entity.Session.behaviors()
+      })
+
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, @workspace_uri)
     session_uri
   end
@@ -192,6 +199,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
       assert server["command"] == "uv"
       assert "run" in server["args"] and "--script" in server["args"]
       configured_script = List.last(server["args"])
+
       assert configured_script == script,
              "the MCP config must point at the shipped script path"
 
@@ -217,6 +225,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
       responses = parse_jsonrpc_lines(out)
 
       init = Enum.find(responses, &(&1["id"] == 1))
+
       assert init["result"]["serverInfo"]["name"] == "esr-orchestrator",
              "the configured command must start a working MCP server. Got: #{inspect(out)}"
 
@@ -275,7 +284,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
 
       # tools/list over the Channel — the BEAM-served redundancy path.
       ref = push(socket, "mcp_tools_list", %{})
-      assert_reply ref, :ok, %{"tools" => tools}
+      assert_reply(ref, :ok, %{"tools" => tools})
       assert length(tools) == length(McpServer.tool_schemas())
 
       # tools/call — list_templates. The orchestrator holds the
@@ -283,7 +292,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
       # gated out (cap not held). This proves the call reached the real
       # McpServer with the orchestrator's OWN caps.
       ref = push(socket, "mcp_tools_call", %{"tool" => "list_templates", "arguments" => %{}})
-      assert_reply ref, :ok, result
+      assert_reply(ref, :ok, result)
 
       refute result["isError"],
              "list_templates over the transport must succeed with the orchestrator's " <>
@@ -353,7 +362,10 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
       System.put_env("EZAGENT_HOME", home)
 
       on_exit(fn ->
-        if prev_home, do: System.put_env("EZAGENT_HOME", prev_home), else: System.delete_env("EZAGENT_HOME")
+        if prev_home,
+          do: System.put_env("EZAGENT_HOME", prev_home),
+          else: System.delete_env("EZAGENT_HOME")
+
         File.rm_rf(home)
       end)
 
@@ -425,6 +437,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
       responses = parse_jsonrpc_lines(out)
 
       init = Enum.find(responses, &(&1["id"] == 1))
+
       assert init["result"]["serverInfo"]["name"] == "esr-orchestrator",
              "the configured command must start a working MCP server. Got: #{inspect(out)}"
 

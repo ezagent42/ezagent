@@ -75,7 +75,13 @@ defmodule EzagentDomainSocialware.Integration.SettlementRecoveryOnRestartTest do
   setup do
     session = session_uri()
     workspace = Ezagent.Capability.workspace_of(session)
-    {:ok, pid} = Ezagent.Kind.spawn(SocialwareSession, %{uri: session})
+
+    {:ok, pid} =
+      Ezagent.Kind.spawn(SocialwareSession, %{
+        uri: session,
+        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+      })
+
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
     token = CustomerAuth.issue_token(session, workspace)
     %{session: session, token: token, pid: pid, workspace: workspace}
@@ -136,7 +142,12 @@ defmodule EzagentDomainSocialware.Integration.SettlementRecoveryOnRestartTest do
     wait_until(fn -> KindRegistry.lookup(ctx.session) == :error end)
 
     # (5) Re-spawn → activated/2 runs → recovery commits the settlement.
-    {:ok, pid2} = Ezagent.Kind.spawn(SocialwareSession, %{uri: ctx.session})
+    {:ok, pid2} =
+      Ezagent.Kind.spawn(SocialwareSession, %{
+        uri: ctx.session,
+        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+      })
+
     refute ctx.pid == pid2
 
     # The settled turn re-loaded from the snapshot.

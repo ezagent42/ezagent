@@ -136,7 +136,11 @@ defmodule Ezagent.ExternalMirror.AuthModelTestHelpers do
         "bootstrap" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps()
       )
 
-    case Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: owner_uri}) do
+    case Ezagent.Kind.spawn(Session, %{
+           uri: session_uri,
+           owner_uri: owner_uri,
+           behaviors: Session.behaviors()
+         }) do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _pid}} -> :ok
     end
