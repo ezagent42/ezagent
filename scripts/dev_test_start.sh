@@ -117,9 +117,13 @@ if [ "$OPEN_BROWSER" -eq 1 ]; then
 
   # URLs with ?as= for DevAutoLogin plug to auto-login each role.
   # The plug sets the session cookie then redirects to the clean URL.
+  #
+  # Admin uses a full entity URI (not bare handle + &workspace=) to
+  # avoid the & being interpreted by cmd.exe / shell as a command
+  # separator. Bare handles default to workspace "cinnox".
   CUSTOMER_URL="${BASE_URL}/autoservice?as=alice"
   OPERATOR_URL="${BASE_URL}/autoservice/operator?as=op"
-  ADMIN_URL="${BASE_URL}/admin/autoservice?as=admin&workspace=system"
+  ADMIN_URL="${BASE_URL}/admin/autoservice?as=entity://system/user/admin"
 
   open_chrome_incognito() {
     local url="$1"
@@ -176,7 +180,7 @@ else
   echo "  Open manually in 3 incognito windows:"
   echo "    customer: ${BASE_URL}/autoservice?as=alice"
   echo "    operator: ${BASE_URL}/autoservice/operator?as=op"
-  echo "    admin:    ${BASE_URL}/admin/autoservice?as=admin&workspace=system"
+  echo "    admin:    ${BASE_URL}/admin/autoservice?as=entity://system/user/admin"
 fi
 
 echo ""
