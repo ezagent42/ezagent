@@ -11,7 +11,7 @@ defmodule EzagentPluginAdvisor.Template.AdvisorSession do
   @behaviour Ezagent.Kind.Template
 
   alias Ezagent.{Invocation, KindRegistry, WorkspaceRegistry}
-  alias Ezagent.Entity.{SocialwareSession, User}
+  alias Ezagent.Entity.{Session, User}
   alias EzagentPluginAdvisor.NodeTypes
 
   @impl Ezagent.Kind.Template
@@ -96,13 +96,17 @@ defmodule EzagentPluginAdvisor.Template.AdvisorSession do
   end
 
   defp ensure_session(session_uri) do
-    # P5-0b: thread the explicit socialware behavior set so `init_set/2` stores
-    # a non-nil `:kind_base` (the scoped guard requires it for sessions).
-    # Pre-union this set == SocialwareSession.behaviors(), so effective_set is
-    # unchanged (behavior-preserving).
-    case Ezagent.Kind.spawn(SocialwareSession, %{
+    # P5-1b (socialware substrate collapse) — advisor sessions now spawn the
+    # UNIFIED `Entity.Session` Kind (not the retired `Entity.SocialwareSession`),
+    # threading the SOCIALWARE subset (`Session.socialware_behaviors/0`) as the
+    # explicit `:kind_base`. That set == the former `SocialwareSession.behaviors/0`
+    # ({Session, Turn, Surface, Publisher}), so `effective_set/2` is unchanged
+    # (behavior-preserving) and Turn/Surface stay ACTIVE on advisor instances
+    # while ExternalMirror stays excluded. (advisor deps instance_message, so it
+    # can name `Entity.Session.socialware_behaviors/0` directly.)
+    case Ezagent.Kind.spawn(Session, %{
            uri: session_uri,
-           behaviors: SocialwareSession.behaviors()
+           behaviors: Session.socialware_behaviors()
          }) do
       {:ok, _pid} -> {:ok, true}
       {:error, {:already_started, _pid}} -> {:ok, false}

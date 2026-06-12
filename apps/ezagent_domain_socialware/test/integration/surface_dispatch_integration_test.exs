@@ -3,7 +3,7 @@ defmodule EzagentDomainSocialware.Integration.SurfaceDispatchIntegrationTest do
 
   alias Ezagent.Invocation
   alias Ezagent.Ecto.KindSnapshot
-  alias Ezagent.Entity.{SocialwareSession, User}
+  alias Ezagent.Entity.{Session, User}
 
   defp session_uri do
     Ezagent.URI.session(
@@ -49,9 +49,9 @@ defmodule EzagentDomainSocialware.Integration.SurfaceDispatchIntegrationTest do
     :ok = KindSnapshot.delete(URI.to_string(session_uri))
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(SocialwareSession, %{
+      Ezagent.Kind.spawn(Session, %{
         uri: session_uri,
-        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+        behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok =

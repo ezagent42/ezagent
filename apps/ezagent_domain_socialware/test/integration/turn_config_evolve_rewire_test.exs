@@ -27,7 +27,7 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{CreatorGrant, Invocation}
-  alias Ezagent.Entity.{Agent, SocialwareSession, User}
+  alias Ezagent.Entity.{Agent, Session, User}
   alias Ezagent.Socialware.ConfigStore
 
   @cascade_key "advisor.behavior"
@@ -42,9 +42,9 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
       Ezagent.URI.entity(:team_alpha, :agent, "tce-agent-#{System.unique_integer([:positive])}")
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(SocialwareSession, %{
+      Ezagent.Kind.spawn(Session, %{
         uri: session,
-        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+        behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)

@@ -138,14 +138,20 @@ defmodule EzagentPluginAdvisor.Integration.SwUseLogicTest do
     {:ok, pid1} = KindRegistry.lookup(ctx.session)
 
     :ok =
-      DynamicSupervisor.terminate_child(EzagentDomainSocialware.SocialwareSessionSupervisor, pid1)
+      # P5-1b: advisor sessions are the unified `Entity.Session` (spawned by
+      # AdvisorSession.instantiate), which runs under instance_message's
+      # SessionSupervisor — not the legacy SocialwareSessionSupervisor.
+      DynamicSupervisor.terminate_child(
+        EzagentDomainInstanceMessage.SessionSupervisor,
+        pid1
+      )
 
     wait_until(fn -> KindRegistry.lookup(ctx.session) == :error end)
 
     {:ok, pid2} =
-      Ezagent.Kind.spawn(Ezagent.Entity.SocialwareSession, %{
+      Ezagent.Kind.spawn(Ezagent.Entity.Session, %{
         uri: ctx.session,
-        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+        behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     refute pid1 == pid2
@@ -164,9 +170,9 @@ defmodule EzagentPluginAdvisor.Integration.SwUseLogicTest do
       )
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Ezagent.Entity.SocialwareSession, %{
+      Ezagent.Kind.spawn(Ezagent.Entity.Session, %{
         uri: other_session,
-        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+        behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok = WorkspaceRegistry.bind(other_session, ctx.workspace_uri)

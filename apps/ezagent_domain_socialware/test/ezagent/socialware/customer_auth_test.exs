@@ -1,7 +1,7 @@
 defmodule Ezagent.Socialware.CustomerAuthTest do
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Entity.SocialwareSession
+  alias Ezagent.Entity.Session
   alias Ezagent.Socialware.{CustomerAuth, CustomerFeed}
 
   defp session_uri(name) do
@@ -15,9 +15,9 @@ defmodule Ezagent.Socialware.CustomerAuthTest do
 
     for session <- [session_a, session_b] do
       {:ok, _pid} =
-        Ezagent.Kind.spawn(SocialwareSession, %{
+        Ezagent.Kind.spawn(Session, %{
           uri: session,
-          behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+          behaviors: Ezagent.Entity.Session.socialware_behaviors()
         })
 
       :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)

@@ -4,7 +4,7 @@ defmodule EzagentDomainSocialware.PageViewTest do
   import Phoenix.LiveViewTest, only: [render_component: 2]
 
   alias Ezagent.Ecto.KindSnapshot
-  alias Ezagent.Entity.SocialwareSession
+  alias Ezagent.Entity.Session
   alias EzagentDomainSocialware.PageView
 
   defp session_uri do
@@ -54,9 +54,9 @@ defmodule EzagentDomainSocialware.PageViewTest do
     :ok = KindSnapshot.delete(URI.to_string(session_uri))
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(SocialwareSession, %{
+      Ezagent.Kind.spawn(Session, %{
         uri: session_uri,
-        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+        behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     assert PageView.applies_to?(session_uri)

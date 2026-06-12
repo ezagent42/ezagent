@@ -32,7 +32,7 @@ defmodule EzagentDomainSocialware.Integration.SettlementRecoveryOnRestartTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Invocation, KindRegistry}
-  alias Ezagent.Entity.{SocialwareSession, User}
+  alias Ezagent.Entity.{Session, User}
   alias Ezagent.Socialware.{CustomerAuth, CustomerFeed, Settlement}
 
   defp session_uri do
@@ -77,9 +77,9 @@ defmodule EzagentDomainSocialware.Integration.SettlementRecoveryOnRestartTest do
     workspace = Ezagent.Capability.workspace_of(session)
 
     {:ok, pid} =
-      Ezagent.Kind.spawn(SocialwareSession, %{
+      Ezagent.Kind.spawn(Session, %{
         uri: session,
-        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+        behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
@@ -135,7 +135,9 @@ defmodule EzagentDomainSocialware.Integration.SettlementRecoveryOnRestartTest do
     # (4) Terminate + wait for deregistration.
     :ok =
       DynamicSupervisor.terminate_child(
-        EzagentDomainSocialware.SocialwareSessionSupervisor,
+        # P5-1b: the unified `Entity.Session` runs under instance_message's
+        # SessionSupervisor (its `supervisor/0`), not the legacy socialware one.
+        EzagentDomainInstanceMessage.SessionSupervisor,
         ctx.pid
       )
 
@@ -143,9 +145,9 @@ defmodule EzagentDomainSocialware.Integration.SettlementRecoveryOnRestartTest do
 
     # (5) Re-spawn → activated/2 runs → recovery commits the settlement.
     {:ok, pid2} =
-      Ezagent.Kind.spawn(SocialwareSession, %{
+      Ezagent.Kind.spawn(Session, %{
         uri: ctx.session,
-        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+        behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     refute ctx.pid == pid2
@@ -196,7 +198,7 @@ defmodule EzagentDomainSocialware.Integration.SettlementRecoveryOnRestartTest do
     :ok =
       Ezagent.Test.SnapshotFixtures.save_kind_snapshot(
         uri_str,
-        SocialwareSession,
+        Session,
         new_slice_state
       )
   end

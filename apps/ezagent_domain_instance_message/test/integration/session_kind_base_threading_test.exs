@@ -1,13 +1,15 @@
 defmodule EzagentDomainInstanceMessage.Integration.SessionKindBaseThreadingTest do
   @moduledoc """
-  P5-0b — every session-spawn entry point threads an explicit `:behaviors`
-  set, so a freshly-spawned session persists a NON-nil `:kind_base` equal to
-  the Kind's declared set (pre-union, behavior-preserving).
+  P5-0b / P5-1b — every session-spawn entry point threads an explicit
+  `:behaviors` set, so a freshly-spawned session persists a NON-nil `:kind_base`.
+  Post-P5-1b `Session.behaviors/0` is the union, so the "session" SpawnRegistry
+  route threads the CHAT SUBSET (`Session.chat_behaviors/0`) — that is what the
+  persisted `:kind_base` must equal (not the union, not the legacy sentinel nil).
 
   Drives the PRODUCTION path: `SpawnRegistry.spawn(session://...)` → the
   registered "session" route (`application.ex`) → `Kind.spawn(Session,
-  %{behaviors: Session.behaviors()})`. Reads the live `:kind_base` slice back
-  and asserts it captured the chat behavior set (not the legacy sentinel nil).
+  %{behaviors: Session.chat_behaviors()})`. Reads the live `:kind_base` slice
+  back and asserts it captured the chat subset.
   """
 
   use EzagentCore.DataCase, async: false
@@ -34,7 +36,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionKindBaseThreadingTest 
     end
   end
 
-  test "SpawnRegistry session route persists a non-nil :kind_base == Session.behaviors()" do
+  test "SpawnRegistry session route persists a non-nil :kind_base == Session.chat_behaviors()" do
     session_uri = Ezagent.URI.session(:system, :default, unique("kb-thread"))
 
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(session_uri)
@@ -46,7 +48,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionKindBaseThreadingTest 
     refute is_nil(captured),
            "session :kind_base must be a non-nil explicit set after P5-0b threading"
 
-    assert captured == Session.behaviors()
+    assert captured == Session.chat_behaviors()
   end
 
   test "the spawned session's effective_set does NOT raise the scoped guard (explicit set present)" do
