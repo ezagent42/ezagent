@@ -39,7 +39,8 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
        messages: [],
        compose_nonce: 0,
        claimed: false,
-       claiming: false
+       claiming: false,
+       open_turn_id: nil
      )}
   end
 
@@ -92,32 +93,67 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
   end
 
   def handle_event("claim", _params, socket) do
-    %{selected: session_uri, operator_uri: op_uri} = socket.assigns
+    %{selected: session_uri, operator_uri: op_uri, caps: caps} = socket.assigns
 
     if is_nil(session_uri) do
       {:noreply, socket}
     else
-      # 1. Claim the turn (operator takes over). Use a synthetic turn_id
-      #    derived from the session and timestamp.
-      turn_id = :erlang.unique_integer([:positive])
-      _ = TurnAdapter.claim_turn(session_uri, turn_id, %{operator_uri: op_uri})
+      socket = assign(socket, claiming: true)
 
-      # 2. Disable the routing rule so the agent stops responding
-      _ = disable_session_rule(session_uri)
+      # Dispatch to CsOrchestrator Behavior's operator_claim action.
+      # The orchestrator handles: cancel bot turn → open fresh → compose → claim.
+      target =
+        Ezagent.URI.new!(
+          "#{URI.to_string(session_uri)}?action=cs_orchestrator.operator_claim"
+        )
 
-      # 3. Subscribe to CustomerFeed topic for real-time delivery
-      feed_topic = CustomerFeed.topic(session_uri)
+      result =
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target: target,
+          mode: :call,
+          args: %{
+            operator_uri: op_uri,
+            operator_text: "人工客服接管对话"
+          },
+          ctx: %{
+            caller: op_uri,
+            caps: caps,
+            reply: {:caller_inbox, self()}
+          }
+        })
 
-      if connected?(socket) do
-        Phoenix.PubSub.subscribe(EzagentCore.PubSub, feed_topic)
+      case result do
+        {:ok, %{ok: true, turn_id: turn_id}} ->
+          # Disable the routing rule so the agent stops responding
+          _ = disable_session_rule(session_uri)
+
+          # Subscribe to CustomerFeed topic for real-time delivery
+          feed_topic = CustomerFeed.topic(session_uri)
+
+          if connected?(socket) do
+            Phoenix.PubSub.subscribe(EzagentCore.PubSub, feed_topic)
+          end
+
+          Logger.info(
+            "Operator #{URI.to_string(op_uri)} claimed turn #{turn_id} on session #{URI.to_string(session_uri)}"
+          )
+
+          {:noreply,
+           assign(socket,
+             subscribed_feed_topic: feed_topic,
+             claimed: true,
+             claiming: false,
+             open_turn_id: turn_id
+           )}
+
+        {:ok, %{ok: false} = detail} ->
+          Logger.error("OperatorLive claim failed: #{inspect(detail)}")
+          {:noreply, assign(socket, claiming: false)}
+
+        {:error, reason} ->
+          Logger.error("OperatorLive claim dispatch failed: #{inspect(reason)}")
+          {:noreply, assign(socket, claiming: false)}
       end
-
-      Logger.info(
-        "Operator #{URI.to_string(op_uri)} claimed turn #{turn_id} on session #{URI.to_string(session_uri)}"
-      )
-
-      {:noreply,
-       assign(socket, subscribed_feed_topic: feed_topic, claimed: true, claiming: false)}
     end
   end
 
@@ -127,30 +163,45 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
     if is_nil(session_uri) do
       {:noreply, socket}
     else
-      # 1. Settle the turn (complete it)
-      turn_id = :erlang.unique_integer([:positive])
-      _ = TurnAdapter.settle_turn(session_uri, turn_id)
-
-      # 2. Re-enable the routing rule (restore agent routing)
-      _ = enable_session_rule(session_uri)
-
-      # 3. Post the operator's final message to the session
-      msg = Ezagent.Message.new(op_uri, %{text: "客服已结束本次人工对话。", attachments: []})
-      target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+      # Dispatch to CsOrchestrator Behavior's operator_settle action.
+      # The orchestrator handles: Turn.settle → visibility → customer_visible.
+      target =
+        Ezagent.URI.new!(
+          "#{URI.to_string(session_uri)}?action=cs_orchestrator.operator_settle"
+        )
 
       _ =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{
           target: target,
+          mode: :call,
+          args: %{},
+          ctx: %{
+            caller: op_uri,
+            caps: caps,
+            reply: {:caller_inbox, self()}
+          }
+        })
+
+      # Re-enable the routing rule (restore agent routing)
+      _ = enable_session_rule(session_uri)
+
+      # Post the operator's final message to the session
+      msg = Ezagent.Message.new(op_uri, %{text: "客服已结束本次人工对话。", attachments: []})
+      chat_target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+
+      _ =
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target: chat_target,
           mode: :cast,
           args: %{message: msg},
           ctx: %{caller: op_uri, caps: caps, reply: :ignore}
         })
 
       Logger.info(
-        "Operator #{URI.to_string(op_uri)} settled turn #{turn_id} on session #{URI.to_string(session_uri)}"
+        "Operator #{URI.to_string(op_uri)} settled turn on session #{URI.to_string(session_uri)}"
       )
 
-      {:noreply, assign(socket, claimed: false)}
+      {:noreply, assign(socket, claimed: false, open_turn_id: nil)}
     end
   end
 

@@ -448,6 +448,14 @@ defmodule EzagentPluginAutoservice.CustomerSession do
     else
       receivers = [fast_uri | slow_receivers(slow_uri)]
 
+      # P0: also route to CsOrchestrator Behavior on the Session itself.
+      # The Session?action=cs_orchestrator.receive URI triggers the
+      # CsOrchestrator Behavior's :receive handler.
+      orch_receiver =
+        Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=cs_orchestrator.receive")
+
+      receivers = [orch_receiver | receivers]
+
       matcher =
         {:and,
          [
