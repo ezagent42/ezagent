@@ -128,6 +128,102 @@ defmodule EzagentPluginAutoservice.Assembly do
   end
 
   @doc """
+  Ensure an operator user exists on tenant `tid` with name `operator_name`.
+
+  Creates the DB user row (password = operator_name, enables web login) and
+  grants them the same workspace caps as the customer path — broad Phase-B grant
+  so operator dispatch authz passes. Real CapBAC role assignment comes in Stage F.
+
+  Idempotent: re-running converges, never duplicates.
+  """
+  @spec ensure_operator(String.t(), String.t()) :: {:ok, URI.t()} | {:error, term()}
+  def ensure_operator(tid, operator_name)
+      when is_binary(tid) and is_binary(operator_name) do
+    operator_uri = Ezagent.URI.user(tid, operator_name)
+    workspace_uri = Ezagent.URI.workspace(tid)
+
+    create_result =
+      case Ezagent.Users.create(operator_uri, operator_name, []) do
+        {:ok, _decoded} ->
+          :ok
+
+        {:error, %Ecto.Changeset{errors: errors}} ->
+          if Keyword.has_key?(errors, :uri) do
+            # Duplicate URI — already exists; idempotent OK.
+            :ok
+          else
+            {:error, {:operator_create_failed, errors}}
+          end
+
+        {:error, reason} ->
+          {:error, {:operator_create_failed, reason}}
+      end
+
+    with :ok <- create_result do
+      _ = add_member(tid, operator_uri)
+
+      # Grant operator caps — same broad bundle as customer for Phase B.
+      # Stage F will scope these down to operator-specific roles.
+      grant_ctx = %{
+        caller: Ezagent.Entity.User.admin_uri(),
+        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        reply: {:caller_inbox, self()}
+      }
+
+      operator_caps = customer_cap_bundle(workspace_uri)
+
+      Enum.each(operator_caps, fn cap ->
+        Invocation.dispatch(%Invocation{
+          target: Ezagent.URI.new!("#{URI.to_string(operator_uri)}?action=identity.grant_cap"),
+          mode: :call,
+          args: %{cap: cap},
+          ctx: grant_ctx
+        })
+      end)
+
+      {:ok, operator_uri}
+    end
+  end
+
+  @doc """
+  Read the open_turn_id from the live CS Orchestrator Kind state.
+
+  **Phase-B shortcut**: uses `:sys.get_state/2` to read the orchestrator's
+  Lifecycle state directly. This is acceptable for Phase B (documented here)
+  because there is no sanctioned read action on the orchestrator yet.
+  Stage F will replace this with a CapBAC-gated `orchestrator.read_state`
+  dispatch action.
+
+  Returns the open_turn_id string if the orchestrator is alive and has one,
+  or `nil` if the orchestrator is dormant, not found, or has no open turn.
+  """
+  @spec open_turn_id(URI.t()) :: String.t() | nil
+  def open_turn_id(%URI{} = orch_uri) do
+    case KindRegistry.lookup(orch_uri) do
+      {:ok, pid} ->
+        try do
+          server_state = :sys.get_state(pid, 1_000)
+          # Lifecycle two-container slice key is derived from the Behavior module name.
+          # CsOrchestrator → :cs_orchestrator (the state_slice/0 atom).
+          slice = get_in(server_state, [:state, :cs_orchestrator])
+
+          case slice do
+            %{state: %{open_turn_id: tid}} when is_binary(tid) -> tid
+            %{open_turn_id: tid} when is_binary(tid) -> tid
+            _ -> nil
+          end
+        rescue
+          e ->
+            Logger.info("Assembly.open_turn_id: :sys.get_state failed: #{inspect(e)}")
+            nil
+        end
+
+      :error ->
+        nil
+    end
+  end
+
+  @doc """
   Runtime: ensure the customer's (already-provisioned) SocialwareSession is
   alive and the customer is joined. Returns `{:ok, session_uri}`.
 

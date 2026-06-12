@@ -100,6 +100,12 @@ defmodule EzagentWeb.Router do
     live_session :autoservice_customer, on_mount: {EzagentWeb.LiveAuth, :require_entity} do
       live "/autoservice", CustomerLive
     end
+
+    # Stage-E: operator console (human takeover via CS Orchestrator).
+    # Route #715 NEVER added in Stage 1 — added here.
+    live_session :autoservice_operator, on_mount: {EzagentWeb.LiveAuth, :require_entity} do
+      live "/autoservice/operator", OperatorLive
+    end
   end
 
   scope "/", EzagentPluginLiveview do
