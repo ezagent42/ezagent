@@ -44,10 +44,14 @@ defmodule EzagentCore.Invariants.Phase5NoRegressionTest do
 
   describe "Phase 5: BehaviorRegistry wiring" do
     test "Chat actions are registered on the right Kinds" do
-      # Session-side actions
-      assert {:ok, Ezagent.Behavior.Chat} =
+      # PR-1 (im/session/agent decomposition): session.send is the SINGLE
+      # public Session post verb — {Session, :send} now dispatches to
+      # Ezagent.Behavior.Session (which delegates to the session-internal
+      # Chat.handle_send/2). chat.send is no longer publicly registered.
+      assert {:ok, Ezagent.Behavior.Session} =
                BehaviorRegistry.lookup(Ezagent.Entity.Session, :send)
 
+      # Session-side actions (still direct Chat)
       assert {:ok, Ezagent.Behavior.Chat} =
                BehaviorRegistry.lookup(Ezagent.Entity.Session, :join)
 
