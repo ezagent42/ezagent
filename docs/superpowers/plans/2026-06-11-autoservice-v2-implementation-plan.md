@@ -2,11 +2,14 @@
 
 > 基于 [`2026-06-10-autoservice-v2-design.md`](../specs/2026-06-10-autoservice-v2-design.md) §10
 > 配套设计: /home/huangjiajia/ezagent/docs/superpowers/specs/2026-06-10-autoservice-v2-design.md
-> 状态: **Plan v2** | 日期: 2026-06-11 | 基线: autoservice = main HEAD (`0a094410`) + docs
+> 状态: **Plan v3** | 日期: 2026-06-12 | 基线: autoservice = main HEAD (`0a094410`) + docs
 > 旧 Phase 1-4 代码已归档: `archive/autoservice-phase1-4` (tag)
 > socialware P3 (#727 CustomerFeed :pull, #728 PublisherRead, #716 render_soul) 已纳入
 > 
 > **核心约束: core 0 / domain 0 改动，所有实现在 plugin 层。**
+>
+> **v3 变更 (2026-06-12)**:
+> - Phase B 重写: CsOrchestrator Behavior + TurnDriver + cancel+reopen 接管
 
 ---
 
@@ -740,196 +743,184 @@ end
 
 ---
 
-## Phase B: autoservice 精简 + Turn 接入
+## Phase B: autoservice 精简 + CsOrchestrator Behavior + Turn 接入
 
 ### 目标
 
 1. autoservice 精简为容器外壳
-2. Customer 路径接入 Turn + CustomerFeed（PR #715 已验证可行，本 Phase 整合）
-3. Operator 接管完善
+2. CsOrchestrator Behavior 实现 (Session + Behavior 编排)
+3. TurnDriver 实现 (同进程 Turn 驱动)
+4. Customer 路径: biphasic (fast ACK + slow cc) via dispatch_after_commit
+5. Operator 接管: cancel+reopen 模式
 
 ### 前置条件
 - Phase A 全部完成
-- ezagent_domain_socialware (Turn, CustomerFeed) 可用
+- ezagent_domain_socialware (SocialwareSession Kind, Turn, CustomerFeed) 可用
+- 架构决策: Session + Behavior (详见 [CsOrchestrator-vs-Session-Behavior.md](../../reviews/CsOrchestrator-vs-Session-Behavior.md))
 
-### Task B1: autoservice_assembly.ex — 组装协调
+### Task B1: CsOrchestrator Behavior (编排核心)
 
-**产出**: autoservice plugin 新文件
+**产出**: `apps/ezagent_plugin_autoservice/lib/ezagent/behavior/cs_orchestrator.ex`
 
-**模块接口**:
+**参考设计**: §1.2 (Session + Behavior 架构), §6.1 (整体流程), §7.1 (接管流程)
 
 ```elixir
-defmodule EzagentPluginAutoservice.AutserviceAssembly do
+defmodule Ezagent.Behavior.CsOrchestrator do
   @moduledoc """
-  组装协调 — autoservice 唯一的胶水模块 (§2.3, §6.6.2)。
+  编排 Behavior — 注册在 SocialwareSession Kind 上。
 
-  不包含业务逻辑, 只做 wiring。
+  3 个 action:
+  - :receive — customer 消息入口 → open turn → fan-out fast+slow via dispatch_after_commit
+  - :operator_claim — cancel bot turn → reopen → compose operator text → claim
+  - :operator_settle — settle tracked turn → customer_visible
   """
 
-  alias EzagentPluginContent.{Soul.SoulRenderer, Skill.SkillIndexer, Tenant.TenantRuntime}
-  alias EzagentPluginContent.Kb.KbMcpProvider
-  alias EzagentPluginCr.CrEngine
+  use Ezagent.Lifecycle
+  alias EzagentPluginAutoservice.TurnDriver
 
-  @doc "生产 agent provision (§6.5, §6.6.2)"
-  @spec provision_agent(tid :: String.t(), role :: String.t()) ::
-          {:ok, %{fast_uri: URI.t(), slow_uri: URI.t(), session_uri: URI.t()}} | {:error, term()}
-  def provision_agent(tid, role)
-    # 1. TenantRuntime.materialize(tid, role, :release) → work_dir
-    # 2. 读 agents.yaml → model, endpoint, max_tokens, thinking
-    # 3. 创建 fast agent (curl.agent template, system_prompt ← release config)
-    # 4. 创建 cc agent (cc flavor, cwd ← work_dir)
-    # 5. 创建 session (session://cs/<ws>/<customer>)
-    # 6. 安装 routing
-    # 7. 返回 agent + session URI
+  # Action 声明
+  action :receive, args: %{message: :map}, returns: %{ok: :boolean}
+  action :operator_claim, args: %{operator_text: :string}, returns: %{ok: :boolean}
+  action :operator_settle, args: %{}, returns: %{ok: :boolean}
 
-  @doc "Admin sandbox 预览 (§8 admin preview 隔离规则)"
-  @spec preview_provision(tid :: String.t(), role :: String.t(), admin_uri :: URI.t()) ::
-          {:ok, %{session_uri: URI.t(), fast_uri: URI.t(), cc_uri: URI.t()}} | {:error, term()}
-  def preview_provision(tid, role, admin_uri)
-    # 与 provision_agent 相同, 但:
-    #   数据源 = sandbox (TenantRuntime.materialize(tid, role, :sandbox))
-    #   session = session://preview/<tid>/<role>-<timestamp>
-    #   agent URI 带 -preview-<admin>-<timestamp>
+  @impl Ezagent.Lifecycle
+  def create(_args), do: {:ok, %{open_turn_id: nil, operator_active: false,
+                                    customer_uri: nil, fast_uri: nil, slow_uri: nil}}
 
-  @doc "预览结束清理"
-  @spec preview_teardown(session_uri :: URI.t()) :: :ok
-  def preview_teardown(session_uri)
-    # SpawnRegistry.terminate(fast_uri) + SpawnRegistry.terminate(cc_uri)
-    # RuleStore.delete(preview routing rule)
-    # Session.destroy(session_uri)
-    # File.rm_rf(preview work dir)
+  # --- Handler: customer message ---
+  def handle_receive(args, ctx) do
+    # 1. Open turn → track turn_id
+    # 2. Build fan-out effects: {:dispatch_after_commit, fast_cmd} + {:dispatch_after_commit, slow_cmd}
+    # 3. Return effects — fan-out runs AFTER parent slice commit (P22)
+  end
 
-  @doc "Admin 编辑 slot → 写 sandbox + 跟踪 CR (§8.2, §5.3)"
-  @spec write_slot(tid :: String.t(), role :: String.t(), key :: String.t(), val :: String.t()) :: :ok
-  def write_slot(tid, role, key, val)
-    # SoulStore.write_slots(tid, role, %{key => val}) → 写 sandbox
-    # CrEngine.track_change(tid, {:soul_slot, role, section_id})
+  # --- Handler: operator takeover (cancel+reopen) ---
+  def handle_operator_claim(args, ctx) do
+    # 1. if open_turn_id: TurnDriver.cancel (discard bot draft)
+    # 2. TurnDriver.open fresh turn
+    # 3. TurnDriver.compose(operator_text)
+    # 4. TurnDriver.claim(by: operator_uri)
+    # 5. Effects: {:set, :open_turn_id, new_tid} + {:set, :operator_active, true}
+  end
+
+  # --- Handler: operator settle ---
+  def handle_operator_settle(_args, ctx) do
+    # 1. TurnDriver.settle(tracked turn_id)
+    # 2. Effects: {:set, :operator_active, false}
+  end
 end
 ```
 
-**测试**:
-- provision_agent 调用链正确 (mock content plugin)
-- preview_provision 使用 sandbox 数据源
-- write_slot 触发 track_change
+**关键实现要点**:
+- Fan-out 走 `{:dispatch_after_commit, cmd}` — dead agent 不 abort turn commit
+- Agent reply 走 `session?action=cs_orchestrator.receive` (同 action，sender-based 分发)
+- 所有 Turn 操作通过 `TurnDriver` 在同进程内调用 (不走 dispatch)
+- 空字符串 / nil URI guard: fast_uri="" 或 slow_uri="" 时跳过对应 fan-out
 
-**前置**: Phase A 完成
+**注册**: `application.ex` 的 `behaviors/0` 返回 `[{Ezagent.Entity.SocialwareSession, :receive, __MODULE__}, ...]`
+
+**测试清单**:
+```
+test/ezagent_plugin_autoservice/cs_orchestrator_test.exs:
+  - test "customer msg → open turn + fan-out fast+slow"
+  - test "fast agent reply → compose + settle → customer_visible"
+  - test "slow agent reply → compose + settle → customer_visible"
+  - test "dead fast agent → fan-out fails but turn committed"
+  - test "operator_claim: cancel bot turn → reopen → compose → claim"
+  - test "operator_claim: nil open_turn_id → open fresh (proactive takeover)"
+  - test "operator_settle: settle tracked turn → customer_visible"
+  - test "operator_active=true → fan-out suppressed on next customer msg"
+  - test "ghost fast/slow URIs → dispatch_after_commit graceful"
+```
+
+**前置**: Phase A 完成, SocialwareSession Kind 可用
 
 ---
 
-### Task B2: Turn 接入 (Customer 路径)
+### Task B2: TurnDriver (同进程 Turn 驱动)
 
-**产出**: `turn_adapter.ex` + `customer_session.ex` 改动 + `customer_live.ex` 改动
+**产出**: `apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/turn_driver.ex`
 
-**参考设计**: §6.1-6.2, §6.6.1 TurnAdapter 接口
+**参考设计**: §6.6.1 TurnDriver 接口
+
+TurnDriver 是纯函数模块，在 Session 进程内直接调用 socialware Turn 函数。
+与旧 TurnAdapter 的关键差异: TurnAdapter 构建 `%Invocation{}` 并 dispatch (跨 Kind)，TurnDriver 直接调用同进程内的 Turn 函数。
 
 ```elixir
-defmodule EzagentPluginAutoservice.TurnAdapter do
-  @moduledoc "Turn 编排 — 内部通过 Router.dispatch 调 socialware Turn Behavior (§6.6.1)"
+defmodule EzagentPluginAutoservice.TurnDriver do
+  @moduledoc "Turn 生命周期驱动 — 纯函数, Session 进程内同步调用。"
 
-  alias Ezagent.{Router, Cmd}
+  @spec open(URI.t(), %{customer_uri: URI.t(), text: String.t()}) ::
+          {:ok, turn_id :: String.t()} | {:error, term()}
+  def open(session_uri, trigger)
 
-  def open_turn(session_uri, %{customer_uri: customer_uri, text: text}) do
-    Router.dispatch(%Cmd{
-      target: session_uri, action: :turn.open,
-      args: %{trigger: %{msg: text, from: customer_uri}, opened_at: System.system_time(:second)},
-      ctx: system_ctx()
-    })
-  end
+  @spec compose(URI.t(), String.t(), %{agent_uri: URI.t(), text: String.t()}) ::
+          :ok | {:error, term()}
+  def compose(session_uri, turn_id, reply)
 
-  def compose_turn(session_uri, turn_id, %{agent_uri: agent_uri, text: text}) do
-    Router.dispatch(%Cmd{
-      target: session_uri, action: :turn.compose,
-      args: %{turn_id: turn_id, result_refs: [%{agent: agent_uri, text: text}]},
-      ctx: system_ctx()
-    })
-  end
+  @spec settle(URI.t(), String.t()) :: :ok | {:error, term()}
+  def settle(session_uri, turn_id)
 
-  def settle_turn(session_uri, turn_id) do
-    Router.dispatch(%Cmd{
-      target: session_uri, action: :turn.settle,
-      args: %{turn_id: turn_id}, ctx: system_ctx()
-    })
-  end
+  @spec cancel(URI.t(), String.t()) :: :ok | {:error, term()}
+  def cancel(session_uri, turn_id)
 
-  def claim_turn(session_uri, turn_id, %{operator_uri: op}) do
-    Router.dispatch(%Cmd{
-      target: session_uri, action: :turn.claim,
-      args: %{turn_id: turn_id, by: op}, ctx: system_ctx()
-    })
-  end
+  @spec claim(URI.t(), String.t(), %{by: URI.t()}) :: :ok | {:error, term()}
+  def claim(session_uri, turn_id, opts)
 end
 ```
 
-**customer_live.ex 消息流** (§6.1, PR #715 #10):
-
+**测试清单**:
 ```
-客户发消息:
-  → TurnAdapter.open_turn(session_uri, %{customer_uri, text})  ← 先 open
-  → fast agent ACK (deepseek 即时安抚)
-  → cc agent 主回复 + kb_search + skill Read
-  → TurnAdapter.compose_turn(session_uri, turn_id, %{agent_uri, text})
-  → TurnAdapter.settle_turn(session_uri, turn_id)
-  → {:customer_delivery} → CustomerFeed.snapshot → loom/customer_live 收到
-
-客户消息回显 (PR #715 #10):
-  客户消息是 Turn trigger, 不是 settled message
-  → CustomerFeed 不返回 (正确行为 — 门控只投递 settled 消息)
-  → customer_live 本地乐观回显: 发送后立即 append 到 messages 列表
-  → 与 CustomerFeed 收到的消息按时间 merge
+test/ezagent_plugin_autoservice/turn_driver_test.exs:
+  - test "open → returns turn_id"
+  - test "open → compose → settle → customer_visible"
+  - test "claim → operator_only draft, customer feed empty"
+  - test "settle after claim → customer_visible"
+  - test "cancel → turn status :cancelled"
 ```
 
-**PR #715 发现整合**:
-
-| # | 发现 | 整合到本 Task |
-|---|---|---|
-| #10 | 客户消息乐观回显 | customer_live.ex — 本地 append + merge |
-| #11 | role-based 门控 | CLAUDE.md preamble — "仅回复 @mention" → "回复客户消息, 对自己+operator 沉默" |
-| #12 | "AI 客服" label | chat_ui.ex — label_for 匹配 system-principal + /agent/ sender |
-
-**测试**:
-- Turn lifecycle 集成测试: open → compose → settle
-- customer_live 消息流: 客户消息 → agent 回复 → UI 显示
-- 客户消息回显: settle 后 customer 看到自己的消息 + bot 回复
-
-**前置**: B1 (assembly 就位)
+**前置**: B1 (CsOrchestrator Behavior 就位, 知道 Turn 接口)
 
 ---
 
-### Task B3: Operator 接管完善
+### Task B3: Assembly 更新 (C4 provision, 8-step)
 
-**产出**: `operator_live.ex` 改动
+**产出**: 更新 `autoservice_assembly.ex`，集成 CsOrchestrator Behavior provision。
 
-**参考设计**: §7 Operator 接管
+Assembly 的 8-step provision 流程 (详见 §2.3 Assembly 职责):
+1. CR init: `Publisher.init_tenant/2`
+2. Workspace + customer user
+3. SocialwareSession spawn + bind
+4. Slow cc agent provision (CLAUDE.md from content plugin)
+5. Fast curl agent via add_template
+6. Routing: `{:in_session, session}` → [session] (customer msg → cs_orchestrator.receive)
+7. API key: `api_keys.put_api_key` from env
+8. Return `{:ok, %{session_uri, customer_uri, fast_uri, slow_uri}}`
 
-```
-接管流程 (§7.1):
-  operator 选择 session → TurnAdapter.claim_turn(session_uri, turn_id, %{operator_uri})
-    → visibility: :customer_visible → :operator_only
-    → RuleStore.disable(rule_id)  ← 暂停 agent route
-    → PubSub.broadcast(session_topic, {:operator_joined, operator_uri})
-
-  operator 编辑消息 → 预览 (不投递 customer)
-
-  operator 提交 → TurnAdapter.settle_turn(session_uri, turn_id)
-    → visibility: :operator_only → :customer_visible
-    → {:customer_delivery} → CustomerFeed.snapshot
-    → RuleStore.enable(rule_id)  ← 恢复 agent route
-    → PubSub.broadcast(session_topic, {:operator_settled, operator_uri})
-```
-
-**Route 调整** (§7.2):
-- 用已有 `RuleStore.disable/1` + `RuleStore.enable/1` (零 core 改动)
-- RuleStore.list(@routing_table) |> Enum.find(matcher) → rule.id → disable/enable
-
-**测试**:
-- 接管流程集成测试: claim → operator 编辑 → settle → customer 看到
-- visibility 门控: 接管期间 customer 看不到草稿
-
-**前置**: B2 (Turn 接入)
+**前置**: B1, B2
 
 ---
 
-### Task B4: CustomerFeed 订阅替换 session_events_topic
+### Task B4: CustomerLive + OperatorLive 更新
+
+**产出**: 更新 LiveView 文件以对接 CsOrchestrator Behavior。
+
+**CustomerLive 改动**:
+- `chat.send` 照旧（消息存储在 Session）
+- MentionRouting 将消息路由到 `session?action=cs_orchestrator.receive`
+- CustomerFeed 订阅照旧（settle 后收到 `:customer_delivery`）
+
+**OperatorLive 改动**:
+- "接管" → dispatch `session?action=cs_orchestrator.operator_claim` (传 operator_text)
+- "提交" → dispatch `session?action=cs_orchestrator.operator_settle`
+- 不再操作 RuleStore (enable/disable 逻辑已由 orchestrator 的 cancel+reopen 替代)
+- `open_turn_id` 从 orchestrator slice 读取（非 Phase B 优化: 通过 Behavior action 查询）
+
+**前置**: B1, B2, B3
+
+---
+
+### Task B5: CustomerFeed 订阅替换 session_events_topic
 
 **产出**: `customer_live.ex` + `operator_live.ex` 改动
 
@@ -943,7 +934,7 @@ end
 CustomerFeed 行为:
   - settle 后才投递消息 (门控)
   - visibility: customer_visible | operator_only
-  - loom/customer_live 只收到 customer_visible + settled 消息
+  - customer_live 只收到 customer_visible + settled 消息
   - operator_live 收到全部消息 (含 operator_only)
 ```
 
@@ -952,7 +943,7 @@ CustomerFeed 行为:
 - operator 接管期间 customer 看不到草稿
 - customer 自己的消息通过本地回显 (不通过 CustomerFeed)
 
-**前置**: B2, B3
+**前置**: B4
 
 ---
 

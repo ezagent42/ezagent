@@ -1,10 +1,16 @@
 # AutoService v2 on ezagent — 完整架构设计
 
-> 状态: **设计稿 v2** | 日期: 2026-06-11
+> 状态: **设计稿 v3** | 日期: 2026-06-12
 > 基线: ezagent `autoservice` = `main` HEAD (`0a094410`) + 设计文档，core/domain 零差异
 > 旧 Phase 1-4 代码已归档: `archive/autoservice-phase1-4` (tag)
 > socialware P3 (#716 render_soul, #727 CustomerFeed :pull, #728 PublisherRead) 已纳入
 > 目标: 一个完整可用的多租户客服 vertical,纯 plugin 实现,core/domain 零改动
+>
+> **v3 变更 (2026-06-12)**:
+> - 编排模型: CsOrchestrator Kind → **Session + Behavior** (CsOrchestrator Behavior 注册在 SocialwareSession Kind)
+> - 决策依据: [CsOrchestrator-vs-Session-Behavior.md](../../reviews/CsOrchestrator-vs-Session-Behavior.md)
+> - Operator 接管: RuleStore.disable/enable → **cancel+reopen** (CsOrchestrator Behavior 内)
+> - Turn 驱动: TurnAdapter (跨 Kind dispatch) → **TurnDriver** (同进程直接调用)
 
 ---
 
@@ -29,20 +35,36 @@
 
 ```
 Customer  → ezagent_plugin_autoservice (customer_live.ex, 后用 loom SPA)
-            - 编排: TurnAdapter (autoservice) — fast(deepseek) + slow(cc) agent
+            - 编排: CsOrchestrator Behavior on SocialwareSession — biphasic(fast ACK + slow cc)
             - Turn 状态机接入 (socialware Turn Behavior)
             - CustomerFeed 门控订阅 (socialware CustomerFeed.topic)
 
 Operator  → ezagent_plugin_autoservice
             - OperatorLive: 客服工作台
-            - Turn.claim → 编辑 → settle 接管流程
+            - cancel+reopen 接管流程 (via CsOrchestrator Behavior)
 
 Admin     → ezagent_plugin_liveview
             - Master Admin: 全平台管控
             - Tenant Admin: 单租户管理
 ```
 
-### 1.2 Plugin 架构图
+### 1.2 核心架构决策: Session + Behavior
+
+**编排模型选择 `Session + Behavior` 而非独立 `CsOrchestrator Kind`**:
+
+对比分析见 [`CsOrchestrator-vs-Session-Behavior.md`](../../reviews/CsOrchestrator-vs-Session-Behavior.md)。核心考量:
+
+| 方案 | Session + Behavior ✅ (选定) | CsOrchestrator Kind ❌ |
+|---|---|---|
+| **进程模型** | 编排逻辑运行在 Session 进程内 | 独立的 Lifecycle Kind 进程 |
+| **跨 VM 重启** | ✅ 天然支持(snapshot 包含所有状态) | ❌ 需要 after_boot hack 重 hydrated flavor cache |
+| **Agent reply 路由** | ✅ 单路径 dispatch 到 Session | ⚠️ 双路径 (:receive + :send) |
+| **Turn 一致性** | ✅ 同进程内原子操作 | ⚠️ 跨 Kind 协调可能不一致 |
+| **符合框架惯例** | ✅ Behavior 注册在已有 Kind 是成熟模式 | ⚠️ agent-flavor Kind 被用于非 agent 目的 |
+
+`CsOrchestrator` 作为 **Behavior** (`Ezagent.Behavior.CsOrchestrator`) 注册在 `SocialwareSession` Kind 上，编排状态存储在 Session 的 slice 中 (`cs_orchestrator` namespace)。Turn 操作在 Session 进程内直接调用，避免跨 Kind dispatch。详见 §6 Customer 路径。
+
+### 1.3 Plugin 架构图
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -51,14 +73,15 @@ Admin     → ezagent_plugin_liveview
 │  deepseek.ex (fast) / claude_code.ex (slow) / knowledge.ex  │
 │  filler_loop.ex                                              │
 └──────────────────────────┬──────────────────────────────────┘
-                           │ Turn.open/compose/settle
+                           │ dispatch → Session?action=cs_orchestrator.receive
                            │ CustomerFeed.topic (PubSub)
 ┌──────────────────────────▼──────────────────────────────────┐
 │               ezagent_plugin_autoservice (容器外壳)           │
-│  autoservice_assembly.ex  — 组装协调                         │
+│  autoservice_assembly.ex  — 组装协调(C4 provision)           │
+│  behavior/cs_orchestrator.ex — 编排 Behavior(Session 上)     │
 │  customer_session.ex      — session 创建(代理到 content)     │
-│  operator_live.ex         — 客服工作台 + Turn.claim/settle   │
-│  turn_adapter.ex          — Turn 编排(给 loom 调)            │
+│  operator_live.ex         — 客服工作台(接管走 orchestrator)  │
+│  turn_driver.ex           — Turn 驱动(同进程,不走 dispatch)  │
 │  roles.ex, uris.ex, chat_ui.ex                              │
 └──┬────────────┬──────────────┬──────────────┬───────────────┘
    │            │              │              │
@@ -73,20 +96,25 @@ Admin     → ezagent_plugin_liveview
 ┌────────────────────────────────┐ │   ConfigProjection,   │
 │   ezagent_domain_socialware    │ │   SocialwareSession,  │
 │   Turn / CustomerFeed / ...    │ │   CustomerAuth        │
-└────────────────────────────────┘ │                        │
-                                   │ identity:              │
+│   SocialwareSession Kind       │ │                        │
+│   + CsOrchestrator Behavior    │ │                        │
+└────────────────────────────────┘ │ identity:              │
                                    │   WorkspaceUserAdmin,  │
                                    │   Identity, Users      │
                                    └────────────────────────┘
 ```
 
-### 1.3 核心原则
+### 1.4 核心原则
 
 ```
 core (ezagent_core)     — 零改动
 domain (ezagent_domain_*) — 零改动,纯复用
 plugin (ezagent_plugin_*) — 所有新功能
 autoservice             — 精简为容器外壳,组装协调
+编排层 (CsOrchestrator)  — Behavior 注册在 SocialwareSession Kind 上
+                            - 同进程 Turn 操作 (不走跨 Kind dispatch)
+                            - fan-out via dispatch_after_commit effects
+                            - 状态在 Session slice 的 cs_orchestrator namespace
 ```
 
 ---
@@ -252,43 +280,49 @@ scope_hash 冻结 → promote 到 released/<tid>/v<N>/
 | L3 | Dashboard "悬挂改动" 视图 | 常驻 |
 | L4 | Daily digest 通知 | cron 每日 |
 
-### 2.3 ezagent_plugin_autoservice (精简)
+### 2.3 ezagent_plugin_autoservice (精简 + CsOrchestrator Behavior)
 
-精简为容器外壳,组装协调各 plugin。
+精简为容器外壳,组装协调各 plugin。编排逻辑集中在 `CsOrchestrator` Behavior (注册在 SocialwareSession Kind 上)。
 
 ```
 apps/ezagent_plugin_autoservice/
   lib/
+    ezagent/behavior/
+      cs_orchestrator.ex          ← 新: 编排 Behavior (use Ezagent.Lifecycle)
     ezagent_plugin_autoservice/
-      application.ex              — OTP app + Plugin contract
-      autoservice_assembly.ex     ← 新: 组装协调(唯一胶水模块)
+      application.ex              — OTP app + Plugin contract (注册 behavior/0)
+      autoservice_assembly.ex     — 组装协调(C4 provision, 8-step)
       customer_session.ex         — 精简: 代理到 content plugin
-      operator_live.ex            — 加 Turn.claim/settle
-      turn_adapter.ex             ← 新: Turn 编排(loom 侧调)
-      roles.ex                    — 扩展: 加 master_admin
+      turn_driver.ex              ← 新: Turn 驱动(同进程直接调,不走 dispatch)
+      operator_live.ex            — 接管走 orchestrator (cancel+reopen)
+      roles.ex                    — 扩展: 4 角色 CapBAC bundles
       uris.ex                     — URI 推导
       chat_ui.ex                  — 共享 UI 组件
     mix/tasks/
-      ezagent.tenant.seed.ex      — 重构: 通用租户 seed
+      ezagent.tenant.seed.ex      — 通用租户 seed (ezagent.tenant.*)
 ```
 
-**autoservice_assembly.ex 职责:**
+**CsOrchestrator Behavior (use Ezagent.Lifecycle, 注册在 SocialwareSession Kind):**
 
-```elixir
-defmodule EzagentPluginAutoservice.AutserviceAssembly do
-  @moduledoc """
-  组装协调 — autoservice 唯一的胶水模块。
+3 个 action:
+- `:receive` — customer 消息入口 (open turn → fan-out fast+slow via `dispatch_after_commit`)
+- `:operator_claim` — operator 接管 (cancel bot turn → reopen → compose → claim)
+- `:operator_settle` — operator 提交 (settle → customer_visible)
 
-  不包含业务逻辑,只做 wiring:
-  - provision_session → 调 content plugin 取 soul/skill/KB
-  - create_agents → 调 workspace + cc plugin
-  - install_routing → 调 routing registry
-  - open_turn → 调 socialware Turn Behavior
-  - preview_provision(tid, role, admin_uri) → 创建预览环境(数据源=sandbox)
-  - preview_teardown(session_uri) → 销毁预览环境
-  """
-end
-```
+Slice (`cs_orchestrator` namespace): `open_turn_id`, `operator_active`, `customer_uri`, `fast_uri`, `slow_uri`
+
+Turn 操作通过 `TurnDriver` 在同进程内直接调用 (不走跨 Kind dispatch)。Fan-out 走 `{:dispatch_after_commit, cmd}` effect — dead agent 不 abort turn commit (P22)。详见 §6 Customer 路径。
+
+**autoservice_assembly.ex 职责 (C4 provision, 8-step):**
+
+1. CR init — `EzagentPluginCr.Publisher.init_tenant/2`
+2. Workspace + customer user
+3. SocialwareSession spawn + WorkspaceRegistry.bind
+4. Slow cc agent — `TenantContent.provision_context` → CLAUDE.md → create_agent
+5. Fast curl agent — add_template (config flows from agents.yaml, api_key from env)
+6. CsOrchestrator Behavior 已在 Session Kind 上 (via `behaviors/0` 注册)
+7. Routing — `{:in_session, session}` → [session] (customer msg → `cs_orchestrator.receive`)
+8. API key — dispatch `api_keys.put_api_key` (from `$<PROVIDER>_API_KEY` env, never config file)
 
 ### 2.4 ezagent_plugin_liveview (扩展)
 
@@ -996,24 +1030,31 @@ Admin 点 "Publish":
 
 ## 6. Customer 路径
 
-### 6.1 整体流程
+### 6.1 整体流程 (Session + CsOrchestrator Behavior)
+
+**编排架构**: CsOrchestrator Behavior 注册在 SocialwareSession Kind 上。Customer 消息路由到 Session，Behavior handler 在同进程内执行编排逻辑。
 
 ```
-客户发消息
+客户发消息 (via CustomerLive → chat.send → Session)
   ↓
-loom (LoomSessionView)
-  ├─ Turn.open (立即,记录客户消息 — 即使后续 agent 失败,Turn 也可见)
-  ├─ deepseek.ex: fast agent 即时安抚 ACK
-  ├─ claude_code.ex: cc agent 主回复 + kb_search + skill Read
-  ├─ Turn.compose (收集 cc 回复)
-  ├─ Turn.settle (标记完成,锁定回复)
-  └─ {:customer_delivery} → CustomerFeed.snapshot 拉取
+Session 进程内 — CsOrchestrator Behavior (:receive):
+  ├─ Turn.open (记录客户消息, 返回 turn_id)
+  ├─ {:dispatch_after_commit, fast_cmd}  → fast agent (curl, DeepSeek)
+  │     Fast agent 完成 → 回复 dispatch 到 Session?action=cs_orchestrator.receive
+  │     → Turn.compose → Turn.settle → fast ACK 立即可见 (customer_visible)
+  ├─ {:dispatch_after_commit, slow_cmd}  → slow agent (cc, Claude Code)
+  │     Slow agent 完成 → 回复 dispatch 到 Session?action=cs_orchestrator.receive
+  │     → Turn.compose → Turn.settle → 主回复可见
+  └─ (biphasic: fast ACK 是独立 quick turn, slow reply 是另一个 turn)
   ↓
-Customer 收到消息 (订阅 CustomerFeed.topic，底层走 Phoenix.PubSub)
+客户收到消息: CustomerFeed.topic → {:customer_delivery} → CustomerFeed.snapshot 拉取
 ```
 
-> **时序修正 (H2):** Turn.open 在 fast agent 之前执行。客户消息到达后立即 open turn,
-> 即使 fast/slow agent 失败,operator 也能在 OperatorLive 中看到未处理的 turn。
+> **双相(biphasic)模式**: Fast ACK 自成快速 turn (open → compose → settle，< 2s)。Slow cc 主回复是独立 turn。两个 turn 各自 settle 后 customer 都能立即看到，不互相等待。
+
+> **dispatch_after_commit (P22 合规)**: Fan-out 走 `{:dispatch_after_commit, cmd}` effect — 只在 Session slice 持久化提交后才执行。Dead agent 不 abort turn commit（fast/slow 任一挂掉，另一个和 turn 状态不受影响）。失败 per-Cmd 记 log。
+
+> **Agent reply 路由**: Agent 回复走 `session?action=cs_orchestrator.receive` (同 Session Kind 的同一个 Behavior)，单一路径。Sender 是 agent URI (不是 customer)，Behavior handler 据此识别为 agent reply → compose + settle。
 
 ### 6.2 Turn 状态机 (socialware Behavior.Turn — 已有,复用)
 
@@ -1023,15 +1064,18 @@ open → dispatch → deliver → compose → claim → settle
                                    cancelled
 ```
 
-**autoservice 使用:**
+**autoservice 使用 (CsOrchestrator Behavior 内部，同进程调用 TurnDriver):**
 
-| Turn action | 触发时机 | 调用方 |
-|---|---|---|
-| `open` | 客户消息到达后立即(在 fast agent 之前) | loom (TurnAdapter) |
-| `compose` | cc agent 完成主回复 | loom claude_code.ex (via TurnAdapter) |
-| `settle` | compose 完成后,锁定回复,投递 CustomerFeed | loom claude_code.ex (via TurnAdapter) |
-| `claim` | operator 接管 | autoservice operator_live.ex (via TurnAdapter) |
-| `settle` | operator 编辑完成后,翻转可见性为 `:customer_visible` | autoservice operator_live.ex (via TurnAdapter) |
+| Turn action | 触发时机 | 调用方 | 说明 |
+|---|---|---|---|
+| `open` | customer msg 到达 | TurnDriver.open (Session 进程内) | 记录客户消息，orchestrator 记 open_turn_id |
+| `compose` | fast/slow agent 回复到达 | TurnDriver.compose (Session 进程内) | 写入 agent 回复到 turn |
+| `settle` | compose 后立即 | TurnDriver.settle (Session 进程内) | 翻转 visibility → customer_visible |
+| `cancel` | operator 接管时 | TurnDriver.cancel (Session 进程内) | 丢弃 bot in-flight turn |
+| `claim` | operator 接管(compose 后) | TurnDriver.claim (Session 进程内) | visibility → operator_only |
+| `settle` | operator 提交 | TurnDriver.settle (Session 进程内) | visibility → customer_visible |
+
+> **TurnDriver 是纯函数模块(非 Kind)**，在 Session 进程内直接调用 Turn 函数（不走 `Invocation.dispatch`）。避免跨 Kind 协调不一致。
 
 ### 6.3 CustomerFeed 门控
 
@@ -1089,54 +1133,41 @@ per-tenant per-agent 工作目录:
 
 ### 6.6 autoservice 集成接口
 
-#### 6.6.1 TurnAdapter (给 loom 调)
+#### 6.6.1 TurnDriver (CsOrchestrator Behavior 内部调用)
 
-loom 不直接调 socialware domain,通过 `turn_adapter.ex`。
-实现使用 `%Invocation{}` 格式，与 Stage-1 (#715) 一致：
+**TurnDriver 是纯函数模块(非 Kind)**，在 Session 进程内直接调用 Turn 函数，**不走 `Invocation.dispatch`**。避免跨 Kind 协调不一致。
 
 ```elixir
-defmodule EzagentPluginAutoservice.TurnAdapter do
-  alias Ezagent.Invocation
+defmodule EzagentPluginAutoservice.TurnDriver do
+  @moduledoc """
+  Turn 生命周期驱动 — 纯函数,在 Session 进程内同步调用。
 
-  defp system_ctx, do: %{caller: Ezagent.SystemPrincipal.uri("turn-adapter"),
-                          caps: Ezagent.SystemPrincipal.caps("system://turn-adapter"),
-                          reply: {:caller_inbox, self()}}
+  与旧 TurnAdapter 的差异:
+  - TurnAdapter: 构建 %Invocation{} → dispatch 到 session?action=turn.* (跨进程)
+  - TurnDriver:  直接调用 socialware Turn Behavior 的内部函数 (同进程)
+                  → 无 dispatch overhead → 无跨 Kind 不一致风险
+  """
 
-  def open_turn(session_uri, %{customer_uri: cu, text: text}) do
-    Invocation.dispatch(%Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=turn.open"),
-      mode: :call,
-      args: %{trigger: %{msg: text, from: cu}, opened_at: System.system_time(:second)},
-      ctx: system_ctx()
-    })
-  end
+  @spec open(URI.t(), %{customer_uri: URI.t(), text: String.t()}) ::
+          {:ok, turn_id} | {:error, term()}
+  def open(session_uri, trigger)
 
-  def compose_turn(session_uri, turn_id, %{agent_uri: au, text: text}) do
-    Invocation.dispatch(%Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=turn.compose"),
-      mode: :call,
-      args: %{turn_id: turn_id, result_refs: [%{agent: au, text: text}]},
-      ctx: system_ctx()
-    })
-  end
+  @spec compose(URI.t(), turn_id, %{agent_uri: URI.t(), text: String.t()}) ::
+          :ok | {:error, term()}
+  def compose(session_uri, turn_id, reply)
 
-  def settle_turn(session_uri, turn_id) do
-    Invocation.dispatch(%Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=turn.settle"),
-      mode: :call,
-      args: %{turn_id: turn_id}, ctx: system_ctx()
-    })
-  end
+  @spec settle(URI.t(), turn_id) :: :ok | {:error, term()}
+  def settle(session_uri, turn_id)
 
-  def claim_turn(session_uri, turn_id, %{operator_uri: op}) do
-    Invocation.dispatch(%Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=turn.claim"),
-      mode: :call,
-      args: %{turn_id: turn_id, by: op}, ctx: system_ctx()
-    })
-  end
+  @spec cancel(URI.t(), turn_id) :: :ok | {:error, term()}
+  def cancel(session_uri, turn_id)
+
+  @spec claim(URI.t(), turn_id, %{by: URI.t()}) :: :ok | {:error, term()}
+  def claim(session_uri, turn_id, opts)
 end
 ```
+
+> **为什么同进程调用**: CsOrchestrator Behavior 运行在 SocialwareSession 进程中，Turn 操作也在同一进程。直接调用 Turn 函数避免: (1) 跨 Kind dispatch 的序列化/反序列化开销，(2) orchestrator 记录的 turn_id 和 Session 实际 Turn 状态不同步的 race condition。
 
 #### 6.6.2 TenantContent.provision_context (autoservice 调 content)
 
@@ -1157,46 +1188,52 @@ end
 
 ---
 
-## 7. Operator 接管
+## 7. Operator 接管 (via CsOrchestrator Behavior)
 
-### 7.1 接管流程
+### 7.1 接管流程 (cancel+reopen 模式)
 
-> **P14 合规**: operator 状态隐含在 Turn visibility 翻转 + CustomerFeed snapshot 变化中，
-> 不额外跨 Kind 广播。
+> **P14 合规**: operator 接管走 CsOrchestrator Behavior 的 `operator_claim` / `operator_settle` action，dispatch 到 Session Kind。状态变化通过 Turn visibility 翻转 + CustomerFeed snapshot 体现。
 
 ```
 1. Operator 打开 OperatorLive
-   → 列出 workspace 内 CS 会话 (snapshot + live, 过滤 session://cs/<ws>/*)
-   → 选择会话
+   → 列出 workspace 内 CS 会话 (snapshot + live, 过滤 /cs/ path segment)
+   → 选择会话 → 查看消息
 
-2. 查看会话消息
-   → Phoenix.PubSub.subscribe(CustomerFeed.topic(session_uri))
-   → 收到 {:customer_delivery} → CustomerFeed.snapshot 拉取
+2. 接管 (CsOrchestrator.operator_claim)
+   → OperatorLive dispatch: Session?action=cs_orchestrator.operator_claim
+   → CsOrchestrator Behavior handler (Session 进程内):
+      a. if open_turn_id: TurnDriver.cancel(bot_turn)   ← 丢弃 bot in-flight turn
+      b. TurnDriver.open(fresh turn)                     ← 开新 turn
+      c. TurnDriver.compose(operator_text)               ← 写入 operator 文本
+      d. TurnDriver.claim(by: operator_uri)              ← visibility → operator_only
+      e. 设 operator_active = true                       ← 抑制后续 fan-out
+   → customer 的 CustomerFeed.snapshot 不返回 operator_only 消息 (自动)
 
-3. 接管 (Turn.claim)
-   → TurnAdapter.claim_turn(session_uri, turn_id, %{operator_uri: operator_uri})
-   → visibility: :customer_visible → :operator_only
-   → customer 的 CustomerFeed.snapshot 不再返回该 turn 消息 (自动，无需通知)
-   → RuleStore.disable(rule_id)  ← 暂停 fast/slow agent
+3. 编辑回复 (可选)
+   → operator 可多次 compose (turn 在 :aggregating 状态)
 
-4. 编辑回复
-   → operator 输入消息，预览
-
-5. 提交 (Turn.settle)
-   → TurnAdapter.settle_turn(session_uri, turn_id)
-   → visibility: :operator_only → :customer_visible
+4. 提交 (CsOrchestrator.operator_settle)
+   → OperatorLive dispatch: Session?action=cs_orchestrator.operator_settle
+   → CsOrchestrator Behavior handler:
+      a. TurnDriver.settle(tracked turn_id)              ← visibility → customer_visible
+      b. 设 operator_active = false                      ← 恢复 fan-out
    → {:customer_delivery} 触发 → customer snapshot 恢复可见
 ```
 
-### 7.2 Route 调整
+> **cancel+reopen 的优势 vs RuleStore.disable**: 
+> - RuleStore.disable 是粗糙的全局开关（禁用整个路由规则），影响所有 customer
+> - cancel+reopen 精细：只取消当前 bot turn，operator 走后新 customer 消息正常触发 fan-out
+> - bot 的 partial reply 不会丢失（cancel 前已 compose 的内容保留在旧 turn 中，operator 可查看）
 
-使用已有的 `RuleStore.disable/1` + `RuleStore.enable/1` (零 core 改动):
+### 7.2 与旧方案 (RuleStore.disable) 的对比
 
-```
-接管前:  customer msg → route → fast + slow agent
-接管时:  RuleStore.disable(rule.id) → agent 不再接收
-接管结束: RuleStore.enable(rule.id)  → agent 恢复接收
-```
+| | cancel+reopen (via CsOrchestrator Behavior) ✅ | RuleStore.disable (旧方案) ❌ |
+|---|---|---|
+| **粒度** | 单个 turn | 整个 routing rule（影响所有 customer） |
+| **bot draft 处理** | cancel 旧 turn → 新 turn (operator)，旧 draft 保留可查 | bot 继续 compose 但被 disable 阻塞 |
+| **恢复** | operator_settle → operator_active=false → 新 msg 正常 fan-out | RuleStore.enable |
+| **状态可观测** | orchestrator slice: operator_active, open_turn_id | 无（规则 enabled/disabled 不在 Session 状态中） |
+| **并发安全** | 同进程内原子操作 | 跨组件 (LV → RuleStore + LV → TurnAdapter) |
 
 ---
 
@@ -1661,10 +1698,10 @@ ezagent_plugin_liveview → 依赖 content + cr + autoservice(admin UI)
     → autoservice 调 content.tenant_content.provision_context(tid, role) → %{claude_md, mcp_json, ...}
     → autoservice 调 workspace.create_agent 创建 cc agent(传入 work_dir + CLAUDE.md)
   
-  operator takeover → autoservice TurnAdapter.claim_turn(session_uri, turn_id, attrs)
-    → 内部 dispatch 到 socialware Turn Behavior
-    → RuleStore.disable(rule_id)  ← 暂停 agent route
-    → PubSub.broadcast(session_topic, {:operator_joined, operator_uri})
+  operator takeover → OperatorLive dispatch session?action=cs_orchestrator.operator_claim
+    → CsOrchestrator Behavior: cancel bot turn → open → compose → claim
+    → visibility: operator_only → customer 不可见
+    → operator_settle → visibility: customer_visible → CustomerFeed 投递
 ```
 
 | # | 级别 | 问题 | 决议 | 状态 |

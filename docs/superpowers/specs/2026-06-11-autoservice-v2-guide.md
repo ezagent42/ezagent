@@ -1,8 +1,11 @@
 # AutoService v2 架构引导
 
+> 状态: **v3** | 日期: 2026-06-12
 > 给团队成员的快速入门 — 了解 AutoService v2 是什么、怎么工作、有哪些关键设计。
 > 不需要懂代码，只需要理解概念和流程。
-> 详细设计见 [`2026-06-10-autoservice-v2-design.md`](2026-06-10-autoservice-v2-design.md)
+> 详细设计见 [`2026-06-10-autoservice-v2-design.md`](2026-06-10-autoservice-v2-design.md) (v3)
+>
+> **v3 变更**: 编排模型 = Session + CsOrchestrator Behavior (vs 旧 CsOrchestrator Kind)
 
 ---
 
@@ -30,11 +33,11 @@ AutoService 概念          ezagent 实现              说明
 AI 客服 (Agent)     →     Agent + AgentTemplate     fast agent = curl.agent (调用 DeepSeek HTTP)
                                                    slow agent = cc agent (Claude Code)
 
-路由 (Routing)      →     RoutingRegistry           "客户消息 → 发给 fast+slow agent"
-                         + RuleStore               接管时 Disable/Enable 规则
+路由 (Routing)      →     RoutingRegistry           "客户消息 → 发给 session (cs_orchestrator.receive)"
+                         + CsOrchestrator Behavior 编排 fast+slow (cancel+reopen 接管)
 
 人工接管 (Turn)     →     Behavior.Turn             open → compose → claim → settle
-                         (socialware domain)        接管时暂停路由，提交后恢复
+                         (socialware domain)        cancel+reopen (CsOrchestrator Behavior 内)
 
 消息门控 (Feed)     →     CustomerFeed              只投递已发布的回复（不是草稿）
                          (socialware domain)        接管期间客户看不到客服编辑中内容
@@ -53,11 +56,15 @@ AI 客服 (Agent)     →     Agent + AgentTemplate     fast agent = curl.agent 
 
 ```
 core (ezagent_core)         — 完全不动（dispatch, routing, CapBAC, Kind）
-domain (ezagent_domain_*)   — 完全不动，纯复用（Turn, CustomerFeed, ConfigStore）
+domain (ezagent_domain_*)   — 完全不动，纯复用（Turn, CustomerFeed, SocialwareSession Kind）
 plugin (ezagent_plugin_*)   — 所有 autoservice 新功能都在这里
+编排 (CsOrchestrator)       — Behavior 注册在 SocialwareSession Kind 上
+                              - Session 进程内执行 (同进程 Turn 操作)
+                              - fan-out via dispatch_after_commit effects
+                              - 状态在 Session slice 的 cs_orchestrator namespace
 ```
 
-**autoservice 不发明新机制，只组合现有能力。** 就像搭积木——Turn 是 socialware 提供的"回合管理积木"，CustomerFeed 是"消息门控积木"，autoservice 把它们拼成客服场景。
+**autoservice 不发明新机制，只组合现有能力。** 就像搭积木——Turn 是 socialware 提供的"回合管理积木"，CustomerFeed 是"消息门控积木"，Session 是"会话管理积木"，CsOrchestrator Behavior 是"编排积木"（注册在 Session 上），autoservice 把它们拼成客服场景。
 
 ---
 

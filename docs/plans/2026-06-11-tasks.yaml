@@ -217,8 +217,10 @@ tasks:
     type: code
   verification: master admin可创建租户,编辑平台模板
   estimated_effort: medium
-  status: completed
+  status: in_progress
   gap_ref: GAP-A.1
+  actual_notes: '2026-06-12 audit: 2/3 pages done (master_dashboard, tenant_onboard). platform_content_live MISSING. Previously
+    mis-marked completed (commit 10f76ab1 only flipped tasks.yaml).'
 - id: T2A.2
   name: Tenant Admin 页面
   description: 'Phase C2: tenant_dashboard_live, skill_editor_live (4-layer), kb_manager_live (URL fetch+file upload+entry
@@ -233,8 +235,11 @@ tasks:
     type: code
   verification: tenant admin可完整管理soul/skill/KB/CR/operator
   estimated_effort: medium
-  status: completed
+  status: in_progress
   gap_ref: GAP-A.2
+  actual_notes: '2026-06-12 audit: 3/5 pages done (tenant_dashboard, cr_dashboard, operators). skill_editor_live MISSING, kb_manager_live
+    MISSING. operators disable is stub. cr_dashboard history is placeholder. Previously
+    mis-marked completed (commit 470bb383 only flipped tasks.yaml).'
 - id: T2A.3
   name: FillerLoop + 优化
   description: 'Phase D1: filler_loop.ex (N秒安抚, max 3次), cc超时45s→静态道歉'
@@ -322,12 +327,21 @@ summary:
     green: 14
     yellow: 2
     red: 0
+  by_status:
+    completed: 14
+    in_progress: 2
+    pending: 0
   by_phase:
     P0: 9
     P1: 4
     P2: 3
   critical_path_length: 11
+  audit_note: '2026-06-12: T2A.1/T2A.2 reverted from completed→in_progress after
+    deliverable audit found 3 missing pages (platform_content_live, skill_editor_live,
+    kb_manager_live) + 2 stubs (operators disable, cr history placeholder). See
+    docs/debugging/2026-06-12-phase-c-admin-ui-gaps.md.'
 generated_at: '2026-06-11'
+last_audited_at: '2026-06-12'
 source_files:
 - docs/plans/2026-06-11-gap-analysis.yaml
 - docs/plans/2026-06-11-prd-structure.yaml
