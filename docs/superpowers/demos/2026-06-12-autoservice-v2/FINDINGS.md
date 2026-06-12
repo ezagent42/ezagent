@@ -3,7 +3,7 @@
 First end-to-end live run of the AutoService-on-socialware vertical (single-tenant
 `cinnox`, real cc bot on **claude 2.1.169**, ambient `CLAUDE_CODE_OAUTH_TOKEN`).
 All three role paths now work live. The 145-unit/integration suite was green, but
-the live run exposed **8 bugs that only manifest in the cold-load + real-bridge +
+the live run exposed **6 bugs that only manifest in the cold-load + real-bridge +
 real-UI paths** (the tests dispatch to already-alive in-BEAM kinds and stub the
 browser, so they never hit these). All fixed; suite now 61 autoservice tests green.
 
