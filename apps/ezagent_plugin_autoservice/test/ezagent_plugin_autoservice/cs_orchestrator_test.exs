@@ -616,6 +616,59 @@ defmodule EzagentPluginAutoservice.CsOrchestratorTest do
       assert Enum.any?(snapshot.messages, &message_text?(&1, slow_reply_text)),
              "expected slow reply in feed after orchestrator dispatch, got: #{inspect(Enum.map(snapshot.messages, & &1.body))}"
     end
+
+    test "slow reply delivered as chat.SEND (bridge path) settles identically", ctx_map do
+      # Regression for the live-E2E #4 fix: the agent bridge's dispatch_reply/5
+      # delivers a sub-agent's reply to the orchestrator as `chat.send` (:send),
+      # NOT `chat.receive`. The orchestrator's :send action delegates to
+      # handle_receive/2, so the slow reply must settle to the feed exactly as
+      # the :receive path does. Before the fix this dropped with
+      # {:unknown_action, :send} and the customer saw no answer.
+      %{session: session, token: token, customer_uri: customer_uri, slow_uri: slow_uri} = ctx_map
+
+      orch = Ezagent.URI.agent(:team_alpha, "orch_send_#{System.unique_integer([:positive])}")
+      :ok = Ezagent.AgentFlavorAttributes.put(orch, "cs_orchestrator")
+
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(CsOrchestratorKind, %{
+          uri: orch,
+          session_uri: URI.to_string(session),
+          customer_uri: URI.to_string(customer_uri),
+          fast_uri: "",
+          slow_uri: URI.to_string(slow_uri)
+        })
+
+      slow_reply_text = "Answer delivered via chat.send"
+      slow_msg = test_message(slow_uri, slow_reply_text)
+      # The bridge targets ?action=chat.send (not chat.receive).
+      target = Ezagent.URI.with_action(orch, :chat, :send)
+
+      assert {:ok, %{ok: true}} =
+               Invocation.dispatch(%Invocation{
+                 target: target,
+                 mode: :call,
+                 args: %{message: slow_msg},
+                 ctx: %{
+                   caller: session,
+                   caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
+                   reply: {:caller_inbox, self()}
+                 }
+               })
+
+      wait_until(
+        fn ->
+          {:ok, snap} = CustomerFeed.snapshot(session, token)
+          Enum.any?(snap.messages, &message_text?(&1, slow_reply_text))
+        end,
+        200
+      )
+
+      assert {:ok, snapshot} = CustomerFeed.snapshot(session, token)
+
+      assert Enum.any?(snapshot.messages, &message_text?(&1, slow_reply_text)),
+             "expected the chat.send-delivered slow reply to settle to the feed, got: " <>
+               "#{inspect(Enum.map(snapshot.messages, & &1.body))}"
+    end
   end
 
   # ---------------------------------------------------------------------------
