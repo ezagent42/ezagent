@@ -78,6 +78,9 @@ defmodule EzagentPluginAutoservice.Application do
   def behaviors do
     [
       {Ezagent.Entity.CsOrchestrator, :receive, Ezagent.Behavior.CsOrchestrator},
+      # Agent replies (fast/slow) reach the orchestrator via the bridge as
+      # chat.send — see CsOrchestrator's :send action (delegates to :receive).
+      {Ezagent.Entity.CsOrchestrator, :send, Ezagent.Behavior.CsOrchestrator},
       {Ezagent.Entity.CsOrchestrator, :operator_claim, Ezagent.Behavior.CsOrchestrator},
       {Ezagent.Entity.CsOrchestrator, :operator_settle, Ezagent.Behavior.CsOrchestrator}
     ]

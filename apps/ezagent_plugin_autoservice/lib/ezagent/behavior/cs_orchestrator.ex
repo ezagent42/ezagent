@@ -68,6 +68,28 @@ defmodule Ezagent.Behavior.CsOrchestrator do
         "slow → compose+settle."
   )
 
+  # The orchestrator is the hub for BOTH directions of message flow, which
+  # arrive under DIFFERENT action names:
+  #   - customer messages reach it via MentionRouting fan-out as `chat.receive`
+  #     (`Delivery.dispatch_receive_call` → `:receive`);
+  #   - sub-agent (fast curl / slow cc) REPLIES reach it via the agent bridge's
+  #     `dispatch_reply/5` as `chat.send` (`:send`) — the bridge always replies
+  #     to the caller (this orchestrator) with the standard
+  #     `%{message: %Message{sender: <agent>}}` shape.
+  # Both carry an identical payload classified the same way (by `msg.sender`),
+  # so `:send` delegates to the `:receive` handler. Without this the slow cc
+  # reply is dropped with `{:unknown_action, :send}` and the customer never
+  # sees a bot answer (live-E2E root cause, Stage G2).
+  action(:send,
+    args: %{message: :map},
+    returns: %{ok: :boolean},
+    caps: [:send],
+    modes: [:cast, :call],
+    description:
+      "Agent-reply inlet: the bridge delivers fast/slow replies as chat.send; " <>
+        "classified identically to :receive (delegates to handle_receive/2)."
+  )
+
   action(:operator_claim,
     args: %{turn_id: :string, operator_text: :string, operator_uri: :string},
     returns: %{ok: :boolean},
@@ -112,6 +134,10 @@ defmodule Ezagent.Behavior.CsOrchestrator do
   # -----------------------------------------------------------------------
   # handle_receive/2
   # -----------------------------------------------------------------------
+
+  # Agent replies arrive via the bridge as `chat.send` (see the `:send` action
+  # declaration). Same payload + classification as `:receive` — delegate.
+  def handle_send(args, ctx), do: handle_receive(args, ctx)
 
   def handle_receive(%{message: raw_msg}, ctx) do
     msg = normalize_message(raw_msg)
