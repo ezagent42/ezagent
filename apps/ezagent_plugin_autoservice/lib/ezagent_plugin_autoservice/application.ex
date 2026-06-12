@@ -49,7 +49,17 @@ defmodule EzagentPluginAutoservice.Application do
           "fast (curl/DeepSeek) + slow (cc) agent team, operator console, and " <>
           "workspace-scoped admin. Uses content plugin APIs for tenant-aware " <>
           "prompts, souls, skills, and KB.",
-      version: "0.2.0"
+      version: "0.3.0"
     }
+  end
+
+  @impl Ezagent.Plugin
+  def behaviors do
+    [
+      {Ezagent.Entity.SocialwareSession, :receive, Ezagent.Behavior.CsOrchestrator},
+      {Ezagent.Entity.SocialwareSession, :send, Ezagent.Behavior.CsOrchestrator},
+      {Ezagent.Entity.SocialwareSession, :operator_claim, Ezagent.Behavior.CsOrchestrator},
+      {Ezagent.Entity.SocialwareSession, :operator_settle, Ezagent.Behavior.CsOrchestrator}
+    ]
   end
 end

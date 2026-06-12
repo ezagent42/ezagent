@@ -1,15 +1,40 @@
-# AutoService v2 — Task Status
+# Task Status — AutoService v2 P0
 
-Updated: 2026-06-11
+> Updated: 2026-06-12 | Branch: `feat/autoservice-v2-merge-v2`
 
 ## Progress
 
-| Phase | Total | Pending | In Progress | Done |
-|---|---|---|---|---|
-| P0 | 9 | 9 | 0 | 0 |
-| P1 | 4 | 4 | 0 | 0 |
-| P2 | 3 | 3 | 0 | 0 |
+| | Count |
+|---|---|
+| Total | 13 |
+| Done | 0 |
+| In Progress | 0 |
+| Pending | 13 |
 
-### 2026-06-11 Session
-- 🟦 T0A.1 in_progress — content plugin skeleton (plan: docs/superpowers/plans/2026-06-11-T0A.1-content-plugin-skeleton.md)
-- 🟩 T0A.1 completed — content plugin skeleton (4 sub-tasks, 2 tests PASS)
+## P0 — Core Architecture (M0)
+
+| ID | Name | Effort | Deps | Status |
+|----|------|--------|------|--------|
+| T0A.1 | CsOrchestrator Behavior | large | — | ⬜ pending |
+| T0A.2 | TurnDriver | medium | T0A.1 | ⬜ pending |
+| T0A.3 | Register Behavior | small | T0A.1 | ⬜ pending |
+| T0A.4 | Session→SocialwareSession | small | — | ⬜ pending |
+| T0A.5 | Routing + Agent reply | medium | T0A.1, T0A.3 | ⬜ pending |
+| T0A.6 | OperatorLive dispatch | medium | T0A.1-3 | ⬜ pending |
+| T0A.7 | api_key from env | small | — | ⬜ pending |
+
+## P1 — PR Verified Capabilities (M1)
+
+| ID | Name | Effort | Deps | Status |
+|----|------|--------|------|--------|
+| T1A.1 | TenantAdminLive | medium | T0A.1 | ⬜ pending |
+| T1A.2 | Assembly.Refresh | medium | T0A.1, T0A.3 | ⬜ pending |
+| T1A.3 | CR crash recovery | medium | — | ⬜ pending |
+| T1A.4 | Port tests | large | T0A.1-6, T1A.1-3 | ⬜ pending |
+
+## P2 — Enhancements (M2)
+
+| ID | Name | Effort | Deps | Status |
+|----|------|--------|------|--------|
+| T2A.1 | Seed params | small | T0A.4 | ⬜ pending |
+| T2A.2 | Admin nav | small | T1A.1 | ⬜ pending |

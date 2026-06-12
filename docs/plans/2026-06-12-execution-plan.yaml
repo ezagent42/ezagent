@@ -1,0 +1,114 @@
+execution_plan:
+  plan_date: "2026-06-12"
+  source_tasks: "docs/plans/2026-06-12-tasks.yaml"
+  team_size: 1
+  parallel_capacity: 1
+
+  critical_path: [T0A.1, T0A.2, T0A.6, T1A.4]
+  critical_path_hours: 12
+
+  batches:
+    - id: batch-0
+      name: "P0 基础 — CsOrchestrator Behavior + 独立任务"
+      milestone: M0
+      tasks: [T0A.1, T0A.4, T0A.7]
+      schedule: { start: "Day 1 AM", duration: "4h" }
+      pre_check: "branch feat/autoservice-v2-merge-v2 干净, tasks.yaml confirmed"
+      gate: "cs_orchestrator.ex 编译通过, customer_session spawn→SocialwareSession, $DEEPSEEK_API_KEY env 读取"
+
+    - id: batch-1
+      name: "P0 中间 — TurnDriver + Behavior 注册"
+      milestone: M0
+      tasks: [T0A.2, T0A.3]
+      schedule: { start: "Day 1 PM", duration: "2h" }
+      pre_check: "T0A.1 done"
+      gate: "TurnDriver 编译通过, CsOrchestrator 注册在 SocialwareSession Kind"
+
+    - id: batch-2
+      name: "P0 收尾 — Routing + OperatorLive"
+      milestone: M0
+      tasks: [T0A.5, T0A.6]
+      schedule: { start: "Day 2 AM", duration: "3h" }
+      pre_check: "T0A.1, T0A.2, T0A.3 done"
+      gate: "customer msg → cs_orchestrator.receive; operator takeover flow 端到端"
+
+    - id: batch-3
+      name: "P1 — PR 特性移植 (独立任务)"
+      milestone: M1
+      tasks: [T1A.1, T1A.3]
+      schedule: { start: "Day 2 PM", duration: "3h" }
+      pre_check: "T0A.1 done (CsOrchestrator Behavior 可用)"
+      gate: "/autoservice/admin 可用; cr_engine mark-before-flip + repair_current"
+
+    - id: batch-4
+      name: "P1 — Assembly.Refresh + 测试"
+      milestone: M1
+      tasks: [T1A.2, T1A.4]
+      schedule: { start: "Day 3 AM", duration: "4h" }
+      pre_check: "T0A.3, T1A.1, T1A.3 done"
+      gate: "全量测试通过; CR publish + refresh 端到端"
+
+    - id: batch-5
+      name: "P2 — Seed 参数化 + Admin 导航"
+      milestone: M2
+      tasks: [T2A.1, T2A.2]
+      schedule: { start: "Day 3 PM", duration: "1h" }
+      pre_check: "T0A.4, T1A.1 done"
+      gate: "mix seed --tenant acme 正常; admin nav link 点击跳转"
+
+  milestones:
+    - id: M0
+      name: "Core Architecture — CsOrchestrator Behavior + TurnDriver"
+      phase: P0
+      batches: [batch-0, batch-1, batch-2]
+      gate_checks:
+        - "mix compile --warnings-as-errors"
+        - "cs_orchestrator_test.exs 通过"
+        - "operator takeover flow: claim → cs_orchestrator.operator_claim, settle → operator_settle"
+        - "cold-load: dormant session spawn 为 SocialwareSession (有 Turn Behavior)"
+      smoke_test:
+        - scenario: "operator 接管端到端"
+          steps:
+            - "seed 创建 CS session + customer"
+            - "customer 发消息 → cs_orchestrator.receive → Turn.open → dispatch_after_commit fast+slow"
+            - "operator 点击 接管 → cs_orchestrator.operator_claim → cancel bot turn → reopen → compose → claim"
+            - "operator 输入回复 → visibility: operator_only"
+            - "operator 点击 结束 → cs_orchestrator.operator_settle → visibility: customer_visible"
+          expected: "customer 在 settle 后才看到 operator 回复"
+
+    - id: M1
+      name: "Port PR Verified Capabilities"
+      phase: P1
+      batches: [batch-3, batch-4]
+      gate_checks:
+        - "mix test — 全量通过 (cs_orchestrator + multitenant + operator_flow + publish_refresh)"
+        - "/autoservice/admin 正常渲染 soul/slots/skills/preview"
+        - "CR publish → Assembly.Refresh → agent 重载 CLAUDE.md"
+      smoke_test:
+        - scenario: "CR publish + refresh"
+          steps:
+            - "tenant admin 编辑 soul slot → track_change"
+            - "CR publish → mark-before-flip → flip_current"
+            - "Assembly.Refresh → {:content_published, tid, version} → agent 重载"
+          expected: "新 session 的 cc agent 使用更新后的 CLAUDE.md"
+
+    - id: M2
+      name: "Enhancements"
+      phase: P2
+      batches: [batch-5]
+      gate_checks:
+        - "mix ezagent.demo.seed_autoservice --tenant acme --customer test 正常"
+        - "TenantDashboard [Content Edit] → /autoservice/admin 跳转正确"
+      smoke_test:
+        - scenario: "seed --tenant acme"
+          steps:
+            - "mix ezagent.demo.seed_autoservice --tenant acme --customer alice --admin bob"
+            - "验证 session://cs/acme/alice 创建"
+            - "验证 entity://acme/user/bob 可访问 /autoservice/admin"
+          expected: "多租户隔离正常工作"
+
+  estimate:
+    total_estimated_hours: 17
+    calendar_days: 3
+    buffer_pct: 20
+    estimated_with_buffer: "~4 days (solo dev)"

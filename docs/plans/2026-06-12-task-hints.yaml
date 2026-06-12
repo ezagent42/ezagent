@@ -1,0 +1,177 @@
+task_hints:
+  source_type: "ingested"
+  source_files:
+    - "docs/superpowers/specs/2026-06-10-autoservice-v2-design.md"
+    - "docs/superpowers/reviews/merge-strategy.md"
+  source_hash:
+    docs/superpowers/specs/2026-06-10-autoservice-v2-design.md: "1589b633ebd07f13190754ab01a60668f4292987"
+    docs/superpowers/reviews/merge-strategy.md: "333a1245d267244e0cb1f049f1b5e220137bca29"
+
+  file_changes:
+    - path: "apps/ezagent_plugin_autoservice/lib/ezagent/behavior/cs_orchestrator.ex"
+      change_type: create
+      purpose: "CsOrchestrator Behavior — 编排逻辑 on SocialwareSession Kind"
+      source_anchor: "merge-strategy-P0"
+      related_gap_refs: ["GAP-003"]
+
+    - path: "apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/turn_driver.ex"
+      change_type: create
+      purpose: "TurnDriver — 同进程 Turn 操作，不走 dispatch"
+      source_anchor: "merge-strategy-P0"
+      related_gap_refs: ["GAP-003"]
+
+    - path: "apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/application.ex"
+      change_type: modify
+      purpose: "注册 CsOrchestrator Behavior 在 SocialwareSession Kind"
+      source_anchor: "merge-strategy-P0"
+      related_gap_refs: ["GAP-003"]
+
+    - path: "apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/customer_session.ex"
+      change_type: modify
+      purpose: "Session spawn→SocialwareSession, routing rules, api_key from env"
+      source_anchor: "merge-strategy-P0"
+      related_gap_refs: ["GAP-001", "GAP-004", "GAP-005"]
+
+    - path: "apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/autoservice/operator_live.ex"
+      change_type: modify
+      purpose: "Dispatch 到 cs_orchestrator.operator_claim/settle"
+      source_anchor: "merge-strategy-P0"
+      related_gap_refs: ["GAP-003"]
+
+    - path: "apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/tenant/tenant_admin_live.ex"
+      change_type: create
+      purpose: "从 PR #731 移植 TenantAdminLive — Content Admin UI"
+      source_anchor: "merge-strategy-P1"
+      related_gap_refs: ["GAP-007"]
+
+    - path: "apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/assembly/refresh.ex"
+      change_type: create
+      purpose: "从 PR #731 移植 Assembly.Refresh — CR publish agent 重载"
+      source_anchor: "merge-strategy-P1"
+      related_gap_refs: ["GAP-006"]
+
+    - path: "apps/ezagent_plugin_cr/lib/ezagent_plugin_cr/cr_engine.ex"
+      change_type: modify
+      purpose: "mark-before-flip + repair_current 崩溃恢复"
+      source_anchor: "merge-strategy-P1"
+      related_gap_refs: []
+
+  implementation_steps:
+    - step: 1
+      description: "创建 CsOrchestrator Behavior (use Ezagent.Lifecycle, ~250行)。3 actions"
+      depends_on_steps: []
+      touches_files:
+        - "apps/ezagent_plugin_autoservice/lib/ezagent/behavior/cs_orchestrator.ex"
+      source_anchor: "merge-strategy-P0"
+
+    - step: 2
+      description: "创建 TurnDriver (~100行)。同进程 Turn 操作"
+      depends_on_steps: [1]
+      touches_files:
+        - "apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/turn_driver.ex"
+      source_anchor: "merge-strategy-P0"
+
+    - step: 3
+      description: "注册 CsOrchestrator 在 SocialwareSession Kind"
+      depends_on_steps: [1]
+      touches_files:
+        - "apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/application.ex"
+      source_anchor: "merge-strategy-P0"
+
+    - step: 4
+      description: "Session spawn → SocialwareSession (修复 kind_type 共用)"
+      depends_on_steps: []
+      touches_files:
+        - "apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/customer_session.ex"
+      source_anchor: "merge-strategy-P0"
+
+    - step: 5
+      description: "Routing: customer msg → cs_orchestrator.receive"
+      depends_on_steps: [1, 3]
+      touches_files:
+        - "apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/customer_session.ex"
+      source_anchor: "merge-strategy-P0"
+
+    - step: 6
+      description: "Agent reply 路由 → cs_orchestrator.receive (单路径)"
+      depends_on_steps: [1, 5]
+      touches_files:
+        - "apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/customer_session.ex"
+      source_anchor: "merge-strategy-P0"
+
+    - step: 7
+      description: "OperatorLive dispatch 到 cs_orchestrator.operator_claim/settle"
+      depends_on_steps: [1, 2, 3]
+      touches_files:
+        - "apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/autoservice/operator_live.ex"
+      source_anchor: "merge-strategy-P0"
+
+    - step: 8
+      description: "api_key from $DEEPSEEK_API_KEY env"
+      depends_on_steps: []
+      touches_files:
+        - "apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/customer_session.ex"
+      source_anchor: "merge-strategy-P0"
+
+    - step: 9
+      description: "移植 TenantAdminLive (525行) → /autoservice/admin"
+      depends_on_steps: [1]
+      touches_files:
+        - "apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/tenant/tenant_admin_live.ex"
+      source_anchor: "merge-strategy-P1"
+
+    - step: 10
+      description: "移植 Assembly.Refresh (195行)"
+      depends_on_steps: [1, 3]
+      touches_files:
+        - "apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/assembly/refresh.ex"
+      source_anchor: "merge-strategy-P1"
+
+    - step: 11
+      description: "CR mark-before-flip + repair_current"
+      depends_on_steps: []
+      touches_files:
+        - "apps/ezagent_plugin_cr/lib/ezagent_plugin_cr/cr_engine.ex"
+      source_anchor: "merge-strategy-P1"
+
+    - step: 12
+      description: "移植测试: multitenant + operator_flow + publish_refresh + cs_orchestrator"
+      depends_on_steps: [1, 2, 3, 7, 9, 10, 11]
+      touches_files: []
+      source_anchor: "merge-strategy-P1"
+
+    - step: 13
+      description: "Seed task --tenant 参数化"
+      depends_on_steps: [4]
+      touches_files: []
+      source_anchor: "merge-strategy-P2"
+
+    - step: 14
+      description: "Admin navigation: [Content Edit] → /autoservice/admin"
+      depends_on_steps: [9]
+      touches_files: []
+      source_anchor: "merge-strategy-P2"
+
+  non_goals:
+    - "不引入独立 CsOrchestrator Kind (已选定 Session + Behavior)"
+    - "不改 core/domain (纯 plugin 实现)"
+    - "Phase C (Admin UI 补齐) 和 Phase D (FillerLoop) 不在 P0/P1 范围"
+    - "不覆盖租户删除/暂停"
+    - "loom SPA 前端对接 — 先用 CustomerLive 验证"
+
+  test_strategy:
+    preserved_testids: []
+    new_tests:
+      - "cs_orchestrator_test.exs — CsOrchestrator Behavior 单元测试"
+      - "multitenant_test.exs — 多租户隔离 (port from PR #731)"
+      - "operator_flow_test.exs — operator 接管 e2e (port from PR #731)"
+      - "publish_refresh_test.exs — CR publish + agent refresh (port from PR #731)"
+    e2e_delta: "Phase B 集成验证 via mix ezagent.demo.seed_autoservice + agent-browser"
+
+  risks:
+    - risk: "CsOrchestrator Behavior crash 影响 Session (共享进程)"
+      mitigation: "try/catch TurnDriver 调用; fan-out 用 dispatch_after_commit"
+    - risk: "Turn 生命周期 contract 变更"
+      mitigation: "Turn Behavior handle_cancel 已实现; cs_orchestrator_test 覆盖"
+    - risk: "cold-load spawn 错误 Kind"
+      mitigation: "customer_session.ex ensure_session → SocialwareSession"

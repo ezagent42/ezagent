@@ -1,0 +1,177 @@
+gap_analysis:
+  scan_date: "2026-06-12"
+  source_type: "ingested"
+  source_files:
+    - "docs/superpowers/retros/core-issues-tracker.md"
+    - "docs/superpowers/reviews/FINAL-对比结论.md"
+    - "docs/superpowers/reviews/CsOrchestrator-vs-Session-Behavior.md"
+  source_hash:
+    docs/superpowers/retros/core-issues-tracker.md: "9eedce4c74bea6ec536efa0028fc90cfc14a674e"
+    docs/superpowers/reviews/FINAL-对比结论.md: "2bbd47f4b39f2b5f463ac0e17deb75f41ba2718c"
+    docs/superpowers/reviews/CsOrchestrator-vs-Session-Behavior.md: "ce763c99ca25ce1cf2e1953eb175c95bb45eef27"
+
+  summary:
+    total_gaps: 10
+    by_priority:
+      P0: 2
+      P1: 7
+      P2: 1
+    by_gap_type:
+      missing: 5
+      partial: 5
+      outdated: 0
+
+  gaps:
+    - id: GAP-001
+      source_id: "core-issue-1"
+      source_file: "core-issues-tracker.md"
+      source_anchor: "issue-1-session-kind_type-共用"
+      description: "Session kind_type 共用 — dormant CS session cold-load 成 plain Session (有 Chat 没 Turn) → turn.open 返回 {:unknown_action, :open}"
+      module: "autoservice"
+      priority: P0
+      gap_type: partial
+      existing_code:
+        - "customer_session.ex:406 — Ezagent.Kind.spawn(Ezagent.Entity.Session, ...)"
+      missing_parts:
+        - "改为 Ezagent.Kind.spawn(Ezagent.Entity.SocialwareSession, ...)"
+      estimated_effort: small
+      depends_on_gaps: []
+
+    - id: GAP-002
+      source_id: "core-issue-3"
+      source_file: "core-issues-tracker.md"
+      source_anchor: "issue-3-producer-gap"
+      description: "Producer Gap — cc agent 的 template_data_extra 缺少 model/endpoint/effort 字段"
+      module: "autoservice"
+      priority: P1
+      gap_type: missing
+      existing_code:
+        - "customer_session.ex:337 — create_agent 缺 model/endpoint 参数"
+      missing_parts:
+        - "cc harness spawn_plan 需要 producer 填入 template_data_extra"
+      estimated_effort: medium
+      depends_on_gaps: []
+
+    - id: GAP-003
+      source_id: "FINAL-dev-劣势-1"
+      source_file: "FINAL-对比结论.md"
+      source_anchor: "二-方案优劣总评"
+      description: "Operator 接管 Turn 门控不生效 — :erlang.unique_integer 生成 synthetic turn_id → Turn.claim/settle 找不到对应 Turn"
+      module: "autoservice"
+      priority: P0
+      gap_type: partial
+      existing_code:
+        - "operator_live.ex:102 — turn_id = :erlang.unique_integer([:positive])"
+        - "operator_live.ex:131 — turn_id = :erlang.unique_integer([:positive])"
+      missing_parts:
+        - "CsOrchestrator Behavior: cancel+reopen operator takeover"
+        - "TurnDriver: 同进程 Turn open/compose/claim/settle"
+        - "OperatorLive dispatch → cs_orchestrator.operator_claim/settle"
+      estimated_effort: large
+      depends_on_gaps: ["GAP-001"]
+
+    - id: GAP-004
+      source_id: "FINAL-dev-劣势-2"
+      source_file: "FINAL-对比结论.md"
+      source_anchor: "二-方案优劣总评"
+      description: "Bot reply 不走 Turn 生命周期 — agent reply 走 chat.send → PubSub chat_message，无 visibility gating"
+      module: "autoservice"
+      priority: P1
+      gap_type: missing
+      existing_code:
+        - "customer_session.ex — agent reply 路由走 chat.send → PubSub"
+      missing_parts:
+        - "CsOrchestrator.receive: agent reply → Turn.compose → Turn.settle → customer_visible"
+      estimated_effort: medium
+      depends_on_gaps: ["GAP-003"]
+
+    - id: GAP-005
+      source_id: "FINAL-dev-劣势-3"
+      source_file: "FINAL-对比结论.md"
+      source_anchor: "二-方案优劣总评"
+      description: "Slow agent model config 不传入 — create_agent 缺 model/endpoint"
+      module: "autoservice"
+      priority: P1
+      gap_type: partial
+      existing_code:
+        - "customer_session.ex — create_agent 缺 model/endpoint"
+      missing_parts:
+        - "传入 model/endpoint 到 cc agent create_agent 调用"
+      estimated_effort: small
+      depends_on_gaps: []
+
+    - id: GAP-006
+      source_id: "FINAL-dev-劣势-4"
+      source_file: "FINAL-对比结论.md"
+      source_anchor: "二-方案优劣总评"
+      description: "无内容热更新 — CR publish 只翻指针，agent 不重载 CLAUDE.md"
+      module: "cr"
+      priority: P1
+      gap_type: missing
+      existing_code:
+        - "cr_engine.ex — publish 只翻指针"
+      missing_parts:
+        - "Assembly.Refresh — CR publish 后通知 agent 重载"
+      estimated_effort: medium
+      depends_on_gaps: []
+
+    - id: GAP-007
+      source_id: "FINAL-dev-劣势-5"
+      source_file: "FINAL-对比结论.md"
+      source_anchor: "二-方案优劣总评"
+      description: "无 Content Admin UI — 缺 soul/slots/skills 编辑界面"
+      module: "liveview"
+      priority: P1
+      gap_type: missing
+      existing_code: []
+      missing_parts:
+        - "从 PR #731 移植 TenantAdminLive → /autoservice/admin"
+      estimated_effort: medium
+      depends_on_gaps: []
+
+    - id: GAP-008
+      source_id: "FINAL-dev-劣势-6"
+      source_file: "FINAL-对比结论.md"
+      source_anchor: "二-方案优劣总评"
+      description: "测试覆盖薄弱 — autoservice 仅 131 行测试 vs PR 2538 行"
+      module: "autoservice"
+      priority: P1
+      gap_type: missing
+      existing_code: []
+      missing_parts:
+        - "multitenant_test.exs (377行)"
+        - "operator_flow_test.exs (438行)"
+        - "publish_refresh_test.exs (117行)"
+        - "cs_orchestrator_test.exs (~200行)"
+      estimated_effort: large
+      depends_on_gaps: ["GAP-003", "GAP-006", "GAP-007"]
+
+    - id: GAP-009
+      source_id: "FINAL-dev-劣势-7"
+      source_file: "FINAL-对比结论.md"
+      source_anchor: "二-方案优劣总评"
+      description: "Seed task 硬编码 cinnox — @workspace_name cinnox 无法用于其他租户"
+      module: "autoservice"
+      priority: P2
+      gap_type: partial
+      existing_code:
+        - "seed_autoservice.ex — @workspace_name cinnox"
+      missing_parts:
+        - "--tenant/--customer/--admin 参数化"
+      estimated_effort: small
+      depends_on_gaps: []
+
+    - id: GAP-010
+      source_id: "CsOrch-risk-1"
+      source_file: "CsOrchestrator-vs-Session-Behavior.md"
+      source_anchor: "2-方案-b-session-behavior"
+      description: "编排 crash 影响 Session（共享进程）— CsOrchestrator Behavior handler 崩溃 → Session 进程也崩溃 → chat 中断"
+      module: "autoservice"
+      priority: P1
+      gap_type: partial
+      existing_code: []
+      missing_parts:
+        - "Behavior handler 内部 try/catch 所有 TurnDriver 调用"
+        - "fan-out 使用 dispatch_after_commit (dead agent 不 abort)"
+      estimated_effort: medium
+      depends_on_gaps: ["GAP-003"]

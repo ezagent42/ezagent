@@ -1,0 +1,135 @@
+prd_structure:
+  source_type: "ingested"
+  source_role: "design-spec"
+  source_files:
+    - "docs/superpowers/specs/2026-06-10-autoservice-v2-design.md"
+    - "docs/superpowers/reviews/merge-strategy.md"
+  source_hash:
+    docs/superpowers/specs/2026-06-10-autoservice-v2-design.md: "1589b633ebd07f13190754ab01a60668f4292987"
+    docs/superpowers/reviews/merge-strategy.md: "333a1245d267244e0cb1f049f1b5e220137bca29"
+
+  modules:
+    - id: MOD-01
+      name: "CsOrchestrator Behavior"
+      description: "编排 Behavior (use Ezagent.Lifecycle) 注册在 SocialwareSession Kind。3 actions: :receive / :operator_claim / :operator_settle。State 在 Session slice 的 cs_orchestrator namespace"
+      prd_sections: ["§1.2", "§6", "§7"]
+      source: "design-spec"
+      coarse: false
+
+    - id: MOD-02
+      name: "TurnDriver"
+      description: "同进程 Turn 驱动 — open/compose/settle/cancel/claim 直接调用 Turn Behavior，不走跨 Kind dispatch"
+      prd_sections: ["§6.6"]
+      source: "design-spec"
+      coarse: false
+
+    - id: MOD-03
+      name: "ezagent_plugin_autoservice"
+      description: "精简为容器外壳。assembly.ex 组装, customer_session.ex, operator_live.ex, turn_driver.ex, CsOrchestrator Behavior"
+      prd_sections: ["§2.3"]
+      source: "design-spec"
+      coarse: true
+
+    - id: MOD-04
+      name: "ezagent_plugin_content"
+      description: "通用内容管理 — soul/skill/KB CRUD + tenant provision。18 模块"
+      prd_sections: ["§2.1", "§3"]
+      source: "design-spec"
+      coarse: true
+
+    - id: MOD-05
+      name: "ezagent_plugin_cr"
+      description: "CR 发布流 — Engine/Lint/Snapshot/Publisher。双区模型(sandbox→release)"
+      prd_sections: ["§2.2", "§5"]
+      source: "design-spec"
+      coarse: true
+
+    - id: MOD-06
+      name: "ezagent_plugin_liveview"
+      description: "Admin UI 扩展 — Master/Tenant Dashboard, CR, Operators, Content Admin"
+      prd_sections: ["§2.4", "§8"]
+      source: "design-spec"
+      coarse: true
+
+  user_stories: []
+
+  nfrs:
+    - id: NFR-01
+      category: compatibility
+      requirement: "core/domain 零改动 — 所有功能 pure plugin 实现"
+      prd_ref: "§1.1"
+
+    - id: NFR-02
+      category: performance
+      requirement: "Session + Behavior 零额外进程"
+      prd_ref: "§1.2"
+
+    - id: NFR-03
+      category: performance
+      requirement: "dispatch_after_commit — dead agent 不 abort turn (P22 合规)"
+      prd_ref: "§6"
+
+    - id: NFR-04
+      category: security
+      requirement: "CapBAC 5 维权限模型"
+      prd_ref: "§4.2"
+
+    - id: NFR-05
+      category: compatibility
+      requirement: "跨 VM 重启天然支持 — snapshot 包含所有编排状态"
+      prd_ref: "§1.2"
+
+  constraints:
+    - id: CON-01
+      type: architecture
+      description: "不引入独立 CsOrchestrator Kind — 选定 Session + Behavior 方案"
+      rationale: "零额外进程，跨 VM 重启天然支持，Agent reply 单路径"
+      prd_ref: "§1.2"
+
+    - id: CON-02
+      type: architecture
+      description: "Turn 操作在 Session 同进程内执行 (TurnDriver), 不走跨 Kind dispatch"
+      rationale: "避免跨 Kind 协调不一致"
+      prd_ref: "§1.2"
+
+    - id: CON-03
+      type: architecture
+      description: "编排状态存储在 Session slice 的 cs_orchestrator namespace"
+      rationale: "与 Chat 状态分开，snapshot 原子恢复"
+      prd_ref: "§6"
+
+    - id: CON-04
+      type: technology
+      description: "必须使用 SocialwareSession Kind (有 Turn Behavior)"
+      rationale: "Operator takeover 需要 Turn.claim/settle visibility gating"
+      prd_ref: "core-issues-tracker #1"
+
+  external_deps:
+    - id: DEP-01
+      name: "socialware: Turn Behavior"
+      purpose: "Turn 生命周期 (open/compose/settle/claim/cancel)"
+      source_anchor: "socialware-domain"
+
+    - id: DEP-02
+      name: "socialware: SocialwareSession Kind"
+      purpose: "Session Kind with Chat + Turn + Surface behaviors"
+      source_anchor: "socialware-domain"
+
+    - id: DEP-03
+      name: "socialware: CustomerFeed"
+      purpose: "Visibility-gated message delivery"
+      source_anchor: "socialware-domain"
+
+    - id: DEP-04
+      name: "ezagent_core: Ezagent.Lifecycle"
+      purpose: "Behavior 基座 (action 宏, slice 读写, effect 系统)"
+      source_anchor: "core"
+
+    - id: DEP-05
+      name: "ezagent_core: Ezagent.Kind"
+      purpose: "Kind spawn/registry/ReadyGate/PendingDelivery"
+      source_anchor: "core"
+
+  extraction:
+    regex_fields: ["modules", "nfrs", "constraints", "external_deps"]
+    llm_fields: []

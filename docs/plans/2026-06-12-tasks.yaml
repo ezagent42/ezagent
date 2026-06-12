@@ -1,0 +1,294 @@
+tasks:
+  - id: T0A.1
+    name: "CsOrchestrator Behavior"
+    description: >
+      创建 CsOrchestrator Behavior (use Ezagent.Lifecycle, ~250行)。
+      3 actions: :receive (open turn → dispatch_after_commit fast+slow),
+      :operator_claim (cancel bot turn → reopen → compose → claim),
+      :operator_settle (settle tracked turn → customer_visible)。
+      State: cs_orchestrator namespace in Session slice。
+    line: main
+    type: green
+    phase: P0
+    module: MOD-01
+    gap_ref: GAP-003
+    depends_on: []
+    deliverables:
+      - path: "apps/ezagent_plugin_autoservice/lib/ezagent/behavior/cs_orchestrator.ex"
+        type: code
+    verification: "mix compile --warnings-as-errors; cs_orchestrator_test.exs all green"
+    estimated_effort: large
+    status: pending
+
+  - id: T0A.2
+    name: "TurnDriver"
+    description: >
+      创建 TurnDriver (~100行)。同进程 Turn 操作 (open/compose/settle/cancel/claim)，
+      直接调用 Turn Behavior 函数，不走 dispatch。
+    line: main
+    type: green
+    phase: P0
+    module: MOD-02
+    gap_ref: GAP-003
+    depends_on: [T0A.1]
+    deliverables:
+      - path: "apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/turn_driver.ex"
+        type: code
+    verification: "mix compile; Turn open/compose/settle flow works end-to-end"
+    estimated_effort: medium
+    status: pending
+
+  - id: T0A.3
+    name: "Register CsOrchestrator on SocialwareSession Kind"
+    description: >
+      在 application.ex 的 behaviors/0 中注册 CsOrchestrator Behavior
+      到 SocialwareSession Kind。
+    line: main
+    type: green
+    phase: P0
+    module: MOD-03
+    gap_ref: GAP-003
+    depends_on: [T0A.1]
+    deliverables:
+      - path: "apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/application.ex"
+        type: code
+    verification: "Ezagent.Kind.behaviors(SocialwareSession) includes CsOrchestrator"
+    estimated_effort: small
+    status: pending
+
+  - id: T0A.4
+    name: "Session spawn → SocialwareSession"
+    description: >
+      修复 customer_session.ex ensure_session 中的 Kind spawn:
+      Ezagent.Entity.Session → Ezagent.Entity.SocialwareSession。
+      解决 cold-load 时 spawn 错误 Kind (有 Chat 没 Turn) 的 bug。
+    line: main
+    type: green
+    phase: P0
+    module: MOD-03
+    gap_ref: GAP-001
+    depends_on: []
+    deliverables:
+      - path: "apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/customer_session.ex"
+        type: code
+    verification: "dormant CS session cold-load 为 SocialwareSession (有 Turn Behavior)"
+    estimated_effort: small
+    status: pending
+
+  - id: T0A.5
+    name: "Routing rules + Agent reply 路由"
+    description: >
+      设置 routing: customer 消息 → session?action=cs_orchestrator.receive。
+      Agent reply → 同路径 cs_orchestrator.receive (单路径)。
+    line: main
+    type: green
+    phase: P0
+    module: MOD-03
+    gap_ref: GAP-004
+    depends_on: [T0A.1, T0A.3]
+    deliverables:
+      - path: "apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/customer_session.ex"
+        type: code
+    verification: "customer msg → cs_orchestrator.receive; agent reply → 同路径"
+    estimated_effort: medium
+    status: pending
+
+  - id: T0A.6
+    name: "OperatorLive → CsOrchestrator dispatch"
+    description: >
+      重写 OperatorLive: claim dispatch 到 cs_orchestrator.operator_claim,
+      settle 到 cs_orchestrator.operator_settle。
+      移除直接 TurnAdapter 调用 (open_turn/compose_turn/claim_turn/settle_turn)。
+    line: main
+    type: green
+    phase: P0
+    module: MOD-03
+    gap_ref: GAP-003
+    depends_on: [T0A.1, T0A.2, T0A.3]
+    deliverables:
+      - path: "apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/autoservice/operator_live.ex"
+        type: code
+    verification: "operator 接管 flow: claim → operator_claim, settle → operator_settle"
+    estimated_effort: medium
+    status: pending
+
+  - id: T0A.7
+    name: "api_key from $DEEPSEEK_API_KEY env"
+    description: >
+      customer_session.ex 中 deepseek_key 改为从 System.get_env("DEEPSEEK_API_KEY") 读取，
+      保留 opts fallback。
+    line: main
+    type: green
+    phase: P0
+    module: MOD-03
+    gap_ref: GAP-005
+    depends_on: []
+    deliverables:
+      - path: "apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/customer_session.ex"
+        type: code
+    verification: "$DEEPSEEK_API_KEY 设置后 deepseek_key 正确传入 fast agent"
+    estimated_effort: small
+    status: pending
+
+  # --- P1 tasks ---
+  - id: T1A.1
+    name: "Port TenantAdminLive (Content Admin UI)"
+    description: >
+      从 PR #731 移植 TenantAdminLive (525行) 到 liveview plugin 的 tenant/ 目录。
+      加路由 /autoservice/admin。功能: Soul textarea 编辑, Slots YAML 编辑,
+      Skills 只读列表, Preview 渲染, Cap 门控。
+    line: main
+    type: green
+    phase: P1
+    module: MOD-06
+    gap_ref: GAP-007
+    depends_on: [T0A.1]
+    deliverables:
+      - path: "apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/tenant/tenant_admin_live.ex"
+        type: code
+    verification: "/autoservice/admin 可访问; soul/slots/skills/preview 功能正常"
+    estimated_effort: medium
+    status: pending
+
+  - id: T1A.2
+    name: "Port Assembly.Refresh (内容热更新)"
+    description: >
+      从 PR #731 移植 Assembly.Refresh (195行)。CR publish 后通知 agent 重载 CLAUDE.md。
+    line: main
+    type: green
+    phase: P1
+    module: MOD-03
+    gap_ref: GAP-006
+    depends_on: [T0A.1, T0A.3]
+    deliverables:
+      - path: "apps/ezagent_plugin_autoservice/lib/ezagent_plugin_autoservice/assembly/refresh.ex"
+        type: code
+    verification: "CR publish 后 agent 自动重载 CLAUDE.md; PubSub {:content_published, tid, version}"
+    estimated_effort: medium
+    status: pending
+
+  - id: T1A.3
+    name: "CR mark-before-flip + repair_current"
+    description: >
+      cr_engine.ex 崩溃恢复: mark-before-flip (先标状态再翻指针),
+      repair_current (重启后修复残留状态)。
+    line: main
+    type: green
+    phase: P1
+    module: MOD-05
+    depends_on: []
+    deliverables:
+      - path: "apps/ezagent_plugin_cr/lib/ezagent_plugin_cr/cr_engine.ex"
+        type: code
+    verification: "CR publish 过程中 crash 后重启, repair_current 恢复正确状态"
+    estimated_effort: medium
+    status: pending
+
+  - id: T1A.4
+    name: "Port tests from PR #731"
+    description: >
+      移植测试: multitenant_test.exs (377行), operator_flow_test.exs (438行),
+      publish_refresh_test.exs (117行), cs_orchestrator_test.exs (~200行)。
+    line: main
+    type: green
+    phase: P1
+    module: MOD-03
+    gap_ref: GAP-008
+    depends_on: [T0A.1, T0A.2, T0A.3, T0A.6, T1A.1, T1A.2, T1A.3]
+    deliverables:
+      - path: "apps/ezagent_plugin_autoservice/test/cs_orchestrator_test.exs"
+        type: test
+      - path: "apps/ezagent_plugin_autoservice/test/multitenant_test.exs"
+        type: test
+      - path: "apps/ezagent_plugin_autoservice/test/operator_flow_test.exs"
+        type: test
+      - path: "apps/ezagent_plugin_autoservice/test/publish_refresh_test.exs"
+        type: test
+    verification: "mix test — 全量测试通过, 覆盖 operator takeover e2e + 多租户隔离"
+    estimated_effort: large
+    status: pending
+
+  # --- P2 tasks ---
+  - id: T2A.1
+    name: "Seed task --tenant 参数化"
+    description: >
+      ezagent.demo.seed_autoservice: @workspace_name 硬编码 cinnox → --tenant/--customer/--admin 参数化。
+    line: main
+    type: green
+    phase: P2
+    module: MOD-03
+    gap_ref: GAP-009
+    depends_on: [T0A.4]
+    deliverables:
+      - path: "apps/ezagent_plugin_autoservice/lib/mix/tasks/ezagent.demo.seed_autoservice.ex"
+        type: code
+    verification: "mix ezagent.demo.seed_autoservice --tenant acme --customer test 正常工作"
+    estimated_effort: small
+    status: pending
+
+  - id: T2A.2
+    name: "Admin navigation: [Content Edit] link"
+    description: >
+      TenantDashboardLive 加 [Content Edit] → /autoservice/admin 导航链接。
+    line: main
+    type: green
+    phase: P2
+    module: MOD-06
+    depends_on: [T1A.1]
+    deliverables:
+      - path: "apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/tenant/tenant_dashboard_live.ex"
+        type: code
+    verification: "TenantDashboard 页面出现 [Content Edit] 链接, 点击跳转 /autoservice/admin"
+    estimated_effort: small
+    status: pending
+
+dependency_graph:
+  T0A.1: [T0A.2, T0A.3, T0A.5, T0A.6, T1A.1, T1A.2, T1A.4]
+  T0A.2: [T0A.6, T1A.4]
+  T0A.3: [T0A.5, T0A.6, T1A.2, T1A.4]
+  T0A.4: [T2A.1]
+  T0A.5: []
+  T0A.6: [T1A.4]
+  T0A.7: []
+  T1A.1: [T1A.4, T2A.2]
+  T1A.2: [T1A.4]
+  T1A.3: [T1A.4]
+  T1A.4: []
+  T2A.1: []
+  T2A.2: []
+
+critical_path: [T0A.1, T0A.2, T0A.6, T1A.4]
+critical_path_length: 4
+
+phases:
+  - id: P0
+    name: "Core Architecture — CsOrchestrator Behavior + TurnDriver"
+    milestone: M0
+    tasks: [T0A.1, T0A.2, T0A.3, T0A.4, T0A.5, T0A.6, T0A.7]
+    gate: "mix compile; cs_orchestrator_test 通过; operator takeover flow 端到端"
+
+  - id: P1
+    name: "Port PR Verified Capabilities"
+    milestone: M1
+    tasks: [T1A.1, T1A.2, T1A.3, T1A.4]
+    gate: "全量测试通过; /autoservice/admin 可用; CR publish+refresh 工作"
+
+  - id: P2
+    name: "Enhancements"
+    milestone: M2
+    tasks: [T2A.1, T2A.2]
+    gate: "seed --tenant acme 正常; admin navigation 链接正确"
+
+summary:
+  total_tasks: 13
+  by_type:
+    green: 13
+    yellow: 0
+    red: 0
+  by_phase:
+    P0: 7
+    P1: 4
+    P2: 2
+  critical_path_length: 4
+  estimated_duration: "P0: ~3 days (7 tasks, sequential dependencies); P1+P2: ~2 days"
+  warnings: []
