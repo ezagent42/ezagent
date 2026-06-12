@@ -12,6 +12,9 @@ defmodule EzagentPluginCodex.BridgeAdapter do
   def flavor, do: "codex"
 
   @impl Ezagent.AgentBridge.Adapter
+  def transport_class, do: :subprocess_ws
+
+  @impl Ezagent.AgentBridge.Adapter
   def deliver(%Payload{} = payload, channel_pid) when is_pid(channel_pid) do
     message = %{
       "content" => payload.text,

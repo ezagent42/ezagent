@@ -19,6 +19,9 @@ defmodule Ezagent.AgentBridge.DeliverEnsuringTest do
     def flavor, do: "drt"
 
     @impl true
+    def transport_class, do: :subprocess_ws
+
+    @impl true
     def deliver(%Payload{} = payload, channel_pid) do
       send(channel_pid, {:agent_bridge_delivered, payload})
       :ok
