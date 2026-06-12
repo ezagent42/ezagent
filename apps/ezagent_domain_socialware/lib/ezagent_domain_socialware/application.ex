@@ -27,7 +27,16 @@ defmodule EzagentDomainSocialware.Application do
   @doc false
   @spec register_behaviors() :: :ok
   def register_behaviors do
-    Enum.each([:send, :join, :leave, :set_working_copy, :set_legends, :set_prompt_templates], fn
+    # PR-1 (im/session/agent decomposition) — `session.send` is the SINGLE
+    # public Session entry verb. `{SocialwareSession, :send}` dispatches to
+    # `Ezagent.Behavior.Session` (delegating to the session-INTERNAL
+    # `Ezagent.Behavior.Chat.handle_send/2` fan-out); the remaining Chat
+    # actions keep their direct Chat registration. `chat.send` is no longer
+    # publicly dispatchable on either Session Kind. Cap parity is preserved
+    # (`Behavior.Session.required_caps/0` keeps `behavior: Chat`).
+    :ok = CapabilityRegistry.register(SocialwareSession, :send, Ezagent.Behavior.Session)
+
+    Enum.each([:join, :leave, :set_working_copy, :set_legends, :set_prompt_templates], fn
       action ->
         :ok = CapabilityRegistry.register(SocialwareSession, action, Chat)
     end)

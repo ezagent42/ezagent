@@ -782,7 +782,18 @@ defmodule EzagentDomainInstanceMessage.Application do
   defp bind_session_workspace(_other), do: :ok
 
   defp register_chat_behaviors do
-    :ok = CapabilityRegistry.register(Session, :send, Chat)
+    # PR-1 (im/session/agent decomposition) — `session.send` is the SINGLE
+    # public Session entry verb. `{Session, :send}` now dispatches to
+    # `Ezagent.Behavior.Session` (which delegates to the session-INTERNAL
+    # `Ezagent.Behavior.Chat.handle_send/2` fan-out). `chat.send`'s public
+    # `{Session, :send} -> Chat` registration is REPLACED here — `chat.send`
+    # is no longer publicly dispatchable; its fan-out logic is reached ONLY
+    # via `Ezagent.Behavior.Session`'s in-process delegation. Cap parity is
+    # preserved because `Behavior.Session.required_caps/0` keeps
+    # `behavior: Chat` (Invariant #19). The arch invariant test
+    # `SessionSendIsSolePublicVerbTest` enforces no external `chat.send`
+    # caller remains.
+    :ok = CapabilityRegistry.register(Session, :send, Ezagent.Behavior.Session)
     :ok = CapabilityRegistry.register(Session, :join, Chat)
     :ok = CapabilityRegistry.register(Session, :leave, Chat)
     # Phase 7 completion PR-4 (SPEC §1.6) — the Generator + the
