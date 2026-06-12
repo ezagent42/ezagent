@@ -69,12 +69,12 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatMembersSurviveRestartTest
   setup_all do
     Code.ensure_loaded!(ChatOnlyKind)
 
-    # Register Chat's actions for the test Kind so dispatch can resolve
-    # `chat.join` (production Kinds register at app boot). Single canonical
-    # chokepoint; idempotent upsert.
+    # Register the Session behavior's actions for the test Kind so dispatch can
+    # resolve `session.join` (production Kinds register at app boot). Single
+    # canonical chokepoint; idempotent upsert.
     for action <- [:join, :leave, :send] do
       if Ezagent.BehaviorRegistry.lookup(ChatOnlyKind, action) == :error do
-        :ok = Ezagent.CapabilityRegistry.register(ChatOnlyKind, action, Chat)
+        :ok = Ezagent.CapabilityRegistry.register(ChatOnlyKind, action, SessionBehavior)
       end
     end
 
