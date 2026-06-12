@@ -200,7 +200,19 @@ Phase C 缺失 per-task plan → 实施粒度失控 → 3 页面无声缺失。*
 
 ---
 
-## 六、流程改进建议 (提交 prd2impl 框架)
+## 六、Core Issues (合并后必须回顾)
+
+→ [`core-issues-tracker.md`](core-issues-tracker.md)
+
+| # | 问题 | 合并后状态 | 短期处理 | 长期 Owner |
+|---|---|---|---|---|
+| #1 | Session kind_type 共用 | ⚠️ | 改 spawn SocialwareSession | Allen |
+| #2 | Flavor cache 非持久 | ✅ 消失 | 无需处理 | Allen (框架改进) |
+| #3 | Producer gap | ⚠️ | effort default 可用 | Allen |
+
+---
+
+## 七、流程改进建议 (提交 prd2impl 框架)
 
 以下问题记录在 `docs/notes/prd2impl-usage-issues-2026-06-11.md` 和 `docs/notes/prd2impl-feature-requests-2026-06-11.md`:
 

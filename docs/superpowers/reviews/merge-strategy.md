@@ -266,7 +266,19 @@ ezagent_plugin_liveview/             ← dev 完整保留 + PR Content Admin
 
 ---
 
-## 六、结论
+## 六、Core Issues 追踪
+
+合并后必须回顾的三个 core 问题 → [`docs/superpowers/retros/core-issues-tracker.md`](../retros/core-issues-tracker.md)
+
+| # | 问题 | 合并后状态 | Owner |
+|---|---|---|---|
+| #1 | Session kind_type 共用 | ⚠️ 短期改 spawn SocialwareSession；长期 Allen 修 | 合并时修复 + Allen |
+| #2 | Flavor cache 非持久 | ✅ 消失 | Allen (框架改进) |
+| #3 | Producer gap | ⚠️ 等 framework 修 | Allen |
+
+---
+
+## 七、结论
 
 | 决策 | 选择 | 原因 |
 |---|---|---|

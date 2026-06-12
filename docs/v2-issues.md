@@ -5,6 +5,10 @@
 > **📋 已整合为实施回顾**: 本文档的缺口分析 + 调试记录 + M2 retro + Phase C 流程退化已统一整合到
 > [`docs/superpowers/retros/2026-06-12-autoservice-v2-implementation-retro.md`](superpowers/retros/2026-06-12-autoservice-v2-implementation-retro.md)
 > — 包含 prd2impl 流程退化链、M2 NO-GO 裁决、调试问题、技术约束、Lessons Learned。
+>
+> **⚠️ Core Issues Tracker**: 三个 PR #731 发现的 core 问题 → [`docs/superpowers/retros/core-issues-tracker.md`](superpowers/retros/core-issues-tracker.md)
+> — 合并完成后逐项验证，不可遗漏。
+>
 > 本文档保留作为快速参考。
 
 ## 快速导航
