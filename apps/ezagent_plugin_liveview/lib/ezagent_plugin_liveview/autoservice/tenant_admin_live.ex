@@ -182,6 +182,10 @@ defmodule EzagentPluginLiveview.AutoService.TenantAdminLive do
       case publish_cr(tid) do
         {:ok, cr} ->
           version = cr["published_version"] || "?"
+          # Re-render running slow agents' CLAUDE.md from the freshly-published
+          # release (non-fatal; runtime-resolved to avoid a compile dep on
+          # ezagent_plugin_autoservice).
+          _ = refresh_agents_after_publish(tid)
 
           {:noreply,
            socket
@@ -477,6 +481,21 @@ defmodule EzagentPluginLiveview.AutoService.TenantAdminLive do
     end
   rescue
     e -> {:error, Exception.message(e)}
+  end
+
+  # Re-render running slow agents' work-dir CLAUDE.md from the new release so a
+  # new session / restart reads the published content. Non-fatal + runtime-
+  # resolved (no compile dep on ezagent_plugin_autoservice).
+  defp refresh_agents_after_publish(tid) do
+    mod = EzagentPluginAutoservice.Refresh
+
+    if Code.ensure_loaded?(mod) and function_exported?(mod, :after_publish, 1) do
+      apply(mod, :after_publish, [tid])
+    else
+      :ok
+    end
+  rescue
+    _ -> :ok
   end
 
   defp load_lint_results(nil), do: %{ok: true, warnings: []}
