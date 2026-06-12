@@ -169,6 +169,11 @@ defmodule EzagentWeb.Router do
       # === AutoService v2 ===
       live "/autoservice", AutoService.CustomerLive
       live "/autoservice/operator", AutoService.OperatorLive
+      # Tenant content-admin console (slots/skills edit + preview + CR
+      # publish). Sibling to /autoservice + /autoservice/operator under
+      # the same :require_entity guard; server-side cap-gate (admin
+      # workspace cap) is enforced inside the LV's write/publish events.
+      live "/autoservice/admin", AutoService.TenantAdminLive
     end
 
     # Codex PR #305 round-2 HIGH fix — centralized admin gate.
