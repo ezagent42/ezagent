@@ -215,13 +215,13 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
       assert Ezagent.Behavior.ExternalMirror in effective
     end
 
-    test "legacy JSON-column row is SKIPPED (run does not abort) and keeps the gate red" do
+    test "legacy JSON-column row is CLEARED (run does not abort) so the gate reaches zero" do
       # Seed a row in the legacy JSON `state` column (STRING keys, NO
       # state_binary) — the shape `KindSnapshot.decode_state/1` returns from its
       # legacy fallback. It cannot be auto-migrated (lossy) and the P5-0b guard
-      # blocks a runtime re-save, so `run/1` must SKIP it (NOT raise) and the
-      # gate must stay >0 until a human re-seeds/drops it. Regression for the
-      # codex P5 round-2 deadlock finding.
+      # blocks a runtime re-save, so `run/1` DELETES it (Allen 2026-06-12): no
+      # raise, no stranded row, and the gate reaches 0. Regression for the codex
+      # P5 round-2 deadlock finding.
       uri = "session://default/system/legacy-#{System.unique_integer([:positive])}"
 
       {:ok, _} =
@@ -238,16 +238,14 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
         })
 
       assert {:ok, counts} = KindBaseBackfill.run([])
-      assert counts.legacy_skipped >= 1
+      assert counts.legacy_cleared >= 1
       assert counts.backfilled == 0
 
-      # Not backfilled ⇒ still nil/missing :kind_base ⇒ gate stays not-go.
-      {:ok, after_count} = KindBaseBackfill.gate()
-      assert after_count >= 1
+      # The dead legacy row was DELETED ...
+      assert is_nil(KindSnapshot.get(uri))
 
-      # The row was left UNTOUCHED (still the legacy JSON shape) — never a
-      # mixed-key binary rewrite.
-      assert {:ok, %{"chat" => _}} = KindSnapshot.decode_state(KindSnapshot.get(uri))
+      # ... so the gate reaches 0 (no stranded not-go row remains).
+      assert {:ok, 0} = KindBaseBackfill.gate()
     end
 
     test "ambiguous row fails loud" do

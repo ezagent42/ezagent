@@ -226,18 +226,18 @@ defmodule Ezagent.Kind.KindBaseBackfill do
     * `:dry_run` (boolean, default `false`) — classify + report without writing.
 
   Returns `{:ok, %{scanned: n, backfilled: n, already: n, dry_run: n,
-  legacy_skipped: n}}`. A legacy JSON-column (string-keyed) row is SKIPPED with
-  a warning (it cannot be auto-migrated and the P5-0b guard blocks a runtime
-  re-save — it must be re-seeded from binary or dropped by a human; `gate/0`
-  keeps it as not-go). Raises on the FIRST genuinely-corrupt unclassifiable /
-  ambiguous (atom-keyed) row.
+  legacy_cleared: n}}`. A legacy JSON-column (string-keyed) row is DELETED with
+  a warning (it can neither be auto-migrated nor runtime-reloaded under the
+  P5-0b guard, so it is dead weight; clearing it lets `gate/0` reach zero with
+  no manual step — Allen 2026-06-12). Raises on the FIRST genuinely-corrupt
+  unclassifiable / ambiguous (atom-keyed) row.
   """
   @spec run(keyword()) :: {:ok, map()}
   def run(opts \\ []) when is_list(opts) do
     dry_run? = Keyword.get(opts, :dry_run, false)
 
     session_rows()
-    |> Enum.reduce(%{scanned: 0, backfilled: 0, already: 0, dry_run: 0, legacy_skipped: 0}, fn row,
+    |> Enum.reduce(%{scanned: 0, backfilled: 0, already: 0, dry_run: 0, legacy_cleared: 0}, fn row,
                                                                                               acc ->
       acc = %{acc | scanned: acc.scanned + 1}
 
@@ -288,24 +288,25 @@ defmodule Ezagent.Kind.KindBaseBackfill do
           # A legacy JSON-column row (string-keyed) CANNOT be auto-migrated:
           # atom-normalizing only its top-level keys would leave nested slice
           # content (e.g. JSON-flattened `%URI{}` member keys) string-keyed and
-          # unloadable, and a JSON row can no longer be re-saved through the
-          # runtime — the P5-0b guard raises `MissingKindBaseError` on its
-          # nil/missing `:kind_base` BEFORE it could re-commit a binary snapshot
-          # (the would-be deadlock). So SKIP it here (do NOT abort the whole run
-          # over one un-migratable row) and let `gate/0` keep counting it as
-          # not-go: a human must re-seed it from a binary source or drop it if
-          # obsolete BEFORE the guarded P5-1 union ships. No current code writes
-          # the legacy `state` column (`KindSnapshot.upsert/6` writes only
-          # `state_binary`), so this is defensive — it should never fire on any
-          # DB seeded by a post-Phase-1 release.
+          # unloadable, and it can no longer be re-saved through the runtime
+          # either — the P5-0b guard raises `MissingKindBaseError` on its
+          # nil/missing `:kind_base` before it could re-commit a binary snapshot.
+          # Such a row is therefore ALREADY dead weight (it can neither backfill
+          # nor load). Per Allen (2026-06-12) an un-migratable legacy row may be
+          # CLEARED outright: we DELETE it so the gate can reach zero (no
+          # stranded row, no manual step), and the session re-spawns fresh if
+          # ever addressed again. No current code writes the legacy `state`
+          # column (`KindSnapshot.upsert/6` writes only `state_binary`), so this
+          # is defensive — it should never fire on any post-Phase-1 DB.
           Logger.warning(
-            "Ezagent.Kind.KindBaseBackfill: SKIPPING legacy JSON-column session " <>
-              "snapshot #{row.uri} (#{inspect(reason)}) — cannot auto-migrate a " <>
-              "lossy JSON row. Re-seed it from a binary snapshot or drop it if " <>
-              "obsolete; the backfill gate stays >0 until it is resolved."
+            "Ezagent.Kind.KindBaseBackfill: CLEARING un-migratable legacy " <>
+              "JSON-column session snapshot #{row.uri} (#{inspect(reason)}) — a " <>
+              "lossy JSON row cannot be backfilled or runtime-reloaded; deleting " <>
+              "it so the backfill gate can reach zero (Allen 2026-06-12)."
           )
 
-          %{acc | legacy_skipped: acc.legacy_skipped + 1}
+          :ok = KindSnapshot.delete(row.uri)
+          %{acc | legacy_cleared: acc.legacy_cleared + 1}
 
         {:error, reason} ->
           raise ArgumentError,
