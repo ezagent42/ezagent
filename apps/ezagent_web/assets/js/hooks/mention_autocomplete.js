@@ -74,7 +74,7 @@ export const MentionAutocomplete = {
           m.uri.toLowerCase().includes(filter) ||
           (m.display_name && m.display_name.toLowerCase().includes(filter))
         )
-        .slice(0, 5)
+        .slice(0, 50)
       this._matches = matches
       this._activeIndex = 0
       this.renderPopover(matches)
@@ -124,6 +124,9 @@ export const MentionAutocomplete = {
     this.popover.style.bottom = (window.innerHeight - rect.top + 4) + "px"
     this.popover.style.minWidth = rect.width + "px"
     this.popover.style.maxWidth = "480px"
+    // 候选可能很多(loom session 成员数十个)→ 限高 + 滚动,别撑满屏。
+    this.popover.style.maxHeight = "320px"
+    this.popover.style.overflowY = "auto"
 
     this.popover.innerHTML = matches
       .map((m, i) => {
@@ -149,6 +152,12 @@ export const MentionAutocomplete = {
     })
 
     this.popover.classList.remove("hidden")
+
+    // 让上下键选中的项跟随滚动进可视区(候选可能 >可视高度)。
+    const activeEl = this.popover.children[this._activeIndex]
+    if (activeEl && typeof activeEl.scrollIntoView === "function") {
+      activeEl.scrollIntoView({ block: "nearest" })
+    }
   },
 
   selectMention(uri) {

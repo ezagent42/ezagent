@@ -132,6 +132,20 @@ defmodule EzagentPluginLiveview.AdminLive do
     # on `session://default/system/main` (the admin's workspace's
     # session). Post-fix a `team-alpha` operator lands on
     # `session://default/team-alpha/main`.
+    # caps-before-rehydrate fix — `ensure_main_session/2` (next line) may
+    # dispatch `Workspace.create_session` to cold-rebuild the VIEWED
+    # workspace's `main` session, and it reads `:caller_caps` from assigns.
+    # Pre-fix those caps were only assigned ~60 lines below, so the rehydrate
+    # ran with EMPTY caps; an operator viewing a workspace OTHER than their
+    # own entity's (e.g. admin in `system` viewing `m800`) then got
+    # `:cross_workspace_denied` on EVERY refresh. Load caps first so the
+    # caller's cross-workspace authority (admin wildcard) is actually present.
+    socket =
+      case socket.assigns[:current_entity_uri] do
+        nil -> socket
+        cu -> assign(socket, :caller_caps, Ezagent.Identity.list_caps_for(cu))
+      end
+
     main_session_uri = default_main_session_uri(socket.assigns[:current_workspace_uri])
     {current_session_uri, socket} = ensure_main_session(main_session_uri, socket)
 
@@ -790,6 +804,16 @@ defmodule EzagentPluginLiveview.AdminLive do
       _ ->
         {:noreply,
          assign(socket, :flash_error, gettext("Bad session URI: %{uri}", uri: session_uri_str))}
+    end
+  end
+
+  # 快捷刷新:对**当前** session 重跑 `select_session/2`(幂等)——重算
+  # applicable_views(tab)、成员、orchestrator 状态等,无需整页刷新。用于
+  # 注册/视图变化后(如 loom tab 迟注册)就地拉到最新状态。
+  def handle_event("refresh_session", _params, socket) do
+    case socket.assigns[:current_session_uri] do
+      %URI{} = uri -> {:noreply, select_session(socket, uri)}
+      _ -> {:noreply, socket}
     end
   end
 

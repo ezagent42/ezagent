@@ -34,6 +34,14 @@ defmodule EzagentPluginLoom.Stitch do
     每项是参数化指令集:`options` 可选值 + `commands` 命令形状)。你每次回复,要么**操作页面**,
     要么**回答问题**。
 
+    ════ 输出格式(每次都要,顺序固定:先决策,后动作)════
+    **回复的第一行永远先写一行决策说明**,然后才给 DRIVE 行 / OP 行 / 回答正文:
+      DECISION: <一句到三句,说清你这次为什么这么决定 —— 为什么选择「操作页面」还是「直接回答」;
+                若操作,为什么选这个能力、这个 action、这一项参数;若不操作 / 这页没有对应能力,为什么;
+                若是解释 / 闲聊,为什么这么答>
+    这行**只给页面作者排查问题用,不会展示给终端用户**,所以请直说你真实的判断依据,别客套。
+    写完 DECISION 这一行,再按下面 A)/ B)给出 DRIVE 行、OP 行或回答正文。
+
     ════ A)操作页面(切换 / 对比 / 筛选 / 排序 / 高亮 / 调数值 / 打开解读)════
     当用户的意图能对应某能力的某 command 时,你**必须**在回复里输出一行机器指令:
       DRIVE: {"id":"<能力 id>","action":"<command.action>","params":<你据 options 自己构造的真实参数>}
@@ -93,8 +101,14 @@ defmodule EzagentPluginLoom.Stitch do
       end
 
     """
-    你在为一个网页上的「✨ AI 点」生成一小段有用、与该处强相关的内容。直接、具体、口语化中文,
-    2-4 句,**紧扣下面给的这块是什么和它的当前数据/状态**(有知识库就结合),不要套话/客套/免责声明。
+    你在为一个网页上的「✨ AI 点」生成一小段有用、与该处强相关的内容。
+
+    **第一行先写一行决策说明,再写卡片正文**(顺序固定):
+      DECISION: <为什么生成这块内容、依据是什么;若放了 `[[标记]]`,为什么标这些;若没放,为什么>
+    这行**只给页面作者排查用,不进卡片、不展示给终端用户**。写完 DECISION 再写卡片正文。
+
+    卡片正文:直接、具体、口语化中文,2-4 句,**紧扣下面给的这块是什么和它的当前数据/状态**
+    (有知识库就结合),不要套话/客套/免责声明。
 
     回答里可以放**最多 3 个可点击标记**,用 `[[显示词|点击后要对页面助手说的话]]` 语法(竖线左边是
     展示的短词,右边是用户点击时**自动发给助手 Stitch 的那句话**)。两类标记**只标真正有价值的**:
@@ -146,12 +160,14 @@ defmodule EzagentPluginLoom.Stitch do
 
   # ---- 解析回复 --------------------------------------------------------
 
-  # 从回复里抽 `DRIVE: {json}` / `OP: {json}` 行 → {显示文本, addText_op|nil, drive|nil}。
-  @spec parse_reply(String.t()) :: {String.t(), map() | nil, map() | nil}
+  # 从回复里抽 `DECISION:` / `DRIVE: {json}` / `OP: {json}` 行
+  # → {显示文本, addText_op|nil, drive|nil, decision|nil}。
+  # decision 是模型的「先决策」那行(纯文本,排查用),从可见文本里剔掉。
+  @spec parse_reply(String.t()) :: {String.t(), map() | nil, map() | nil, String.t() | nil}
   def parse_reply(raw) when is_binary(raw) do
     lines = String.split(raw, "\n")
 
-    classify = fn prefix ->
+    decode_line = fn prefix ->
       lines
       |> Enum.find(fn l -> l |> String.trim() |> String.starts_with?(prefix) end)
       |> case do
@@ -169,23 +185,22 @@ defmodule EzagentPluginLoom.Stitch do
     end
 
     drive =
-      case classify.("DRIVE:") do
+      case decode_line.("DRIVE:") do
         %{"id" => id, "action" => action} = m when is_binary(id) and is_binary(action) -> m
         _ -> nil
       end
 
     op =
-      case classify.("OP:") do
+      case decode_line.("OP:") do
         %{"op" => _} = o -> o
         _ -> nil
       end
 
+    decision = find_decision(lines)
+
     text =
       lines
-      |> Enum.reject(fn l ->
-        t = String.trim(l)
-        String.starts_with?(t, "DRIVE:") or String.starts_with?(t, "OP:")
-      end)
+      |> Enum.reject(&control_line?/1)
       |> Enum.join("\n")
       |> String.trim()
       |> case do
@@ -193,8 +208,46 @@ defmodule EzagentPluginLoom.Stitch do
         t -> t
       end
 
-    {text, op, drive}
+    {text, op, drive, decision}
   end
 
-  def parse_reply(_), do: {"好的。", nil, nil}
+  def parse_reply(_), do: {"好的。", nil, nil, nil}
+
+  # AiSpot 用:只切掉 `DECISION:` 行 → {decision|nil, 卡片正文}。
+  @spec split_decision(String.t()) :: {String.t() | nil, String.t()}
+  def split_decision(raw) when is_binary(raw) do
+    lines = String.split(raw, "\n")
+
+    text =
+      lines
+      |> Enum.reject(fn l -> l |> String.trim() |> String.starts_with?("DECISION:") end)
+      |> Enum.join("\n")
+      |> String.trim()
+
+    {find_decision(lines), text}
+  end
+
+  def split_decision(other), do: {nil, to_string(other)}
+
+  defp find_decision(lines) do
+    lines
+    |> Enum.find(fn l -> l |> String.trim() |> String.starts_with?("DECISION:") end)
+    |> case do
+      nil ->
+        nil
+
+      line ->
+        case line |> String.trim() |> String.replace_prefix("DECISION:", "") |> String.trim() do
+          "" -> nil
+          d -> d
+        end
+    end
+  end
+
+  defp control_line?(l) do
+    t = String.trim(l)
+
+    String.starts_with?(t, "DRIVE:") or String.starts_with?(t, "OP:") or
+      String.starts_with?(t, "DECISION:")
+  end
 end

@@ -14,7 +14,7 @@ Authoritative design docs (read the one matching your change — they carry the 
 
 | | Location | In ezagent repo? | Node needed? |
 |---|---|---|---|
-| Frontend **source** (Next.js 14) | `C:\Users\Ning\Desktop\loom\ai-ui-builder` (separate Desktop repo) | ❌ no | yes — build/dev only |
+| Frontend **source** (Next.js 14, package `ai-ui-builder`) | `C:\Users\ning\Desktop\work\loom` (separate Desktop repo; from WSL: `/mnt/c/Users/ning/Desktop/work/loom`) | ❌ no | yes — build/dev only |
 | Frontend **build output** (static export) | `apps/ezagent_plugin_loom/priv/static/loom_ui/` | ✅ vendored | no |
 | Backend serving it | `apps/ezagent_plugin_loom/lib/ezagent/web_plug.ex` | ✅ | — (pure Elixir) |
 
@@ -26,11 +26,11 @@ Authoritative design docs (read the one matching your change — they carry the 
 - A real frontend change is made in the Desktop `ai-ui-builder` repo, then rebuilt and synced in.
 - If you (Claude Code) are running inside the ezagent repo and asked to "change the Loom UI," and the Desktop source isn't reachable, **say so** — you cannot meaningfully edit the UI from the vendored export. Surface it rather than editing hashed bundles.
 
-## 2. The 4 build-time adaptations (live in the Desktop source, behind `NEXT_PUBLIC_ESR_MODE`)
+## 2. The 4 build-time adaptations (live in the Desktop source, behind `NEXT_PUBLIC_ESR`)
 
 These must stay in the Desktop source and be **environment-switched** so `pnpm dev` still runs standalone and only the ESR-targeted build flips to `/loom`:
 
-1. **`next.config`** — `output: 'export'`; in ESR mode set `basePath: '/loom'` + `assetPrefix: '/loom'` so assets resolve at `/loom/_next/...`. (You can confirm a given build's mode by grepping `priv/static/loom_ui/index.html` for `/loom/_next/`.)
+1. **`next.config.mjs`** — gated on `process.env.NEXT_PUBLIC_ESR === '1'`. In ESR mode it sets `output: 'export'` + `basePath: '/loom'` + `images: { unoptimized: true }` (no separate `assetPrefix` — `basePath` alone resolves assets at `/loom/_next/...`). Non-ESR build/dev returns `{}` (standalone on `:3000`). (Confirm a build's mode by grepping `priv/static/loom_ui/index.html` for `/loom/_next/`.)
 2. **Chat endpoint** — Next Route Handlers don't exist in a static export. The page-gen system prompt moved server-side (it's now the `loomv0` worker, not an HTTP route). `pnpm dev` keeps a local handler for standalone work.
 3. **`useChat` hook** — absolute path, `streamProtocol: 'text'` (the backend returns the whole body as one assistant message; DeepSeek replies non-streaming).
 4. **`app/page.tsx`** — parse `:workspace` + `:session_id` out of `window.location.pathname` (`/loom/:ws/:sid`) as the per-page state-isolation key.
@@ -40,21 +40,26 @@ These must stay in the Desktop source and be **environment-switched** so `pnpm d
 ## 3. Build → sync → run
 
 ```bash
-# In the Desktop frontend repo (NOT ezagent):
-cd /path/to/loom/ai-ui-builder
-NEXT_PUBLIC_ESR_MODE=1 pnpm build          # static export → out/
+# In the Desktop frontend repo (NOT ezagent), from WSL:
+cd /mnt/c/Users/ning/Desktop/work/loom
+rm -rf .next out                           # clean — see WSL note below
+NEXT_PUBLIC_ESR=1 npx next build           # static export → out/  (pnpm build also works)
 
 # Sync into the plugin. GUARD the delete (memory feedback-destructive-file-ops-guardrails):
-rsync -av --delete \
+rsync -a --delete \
   out/ \
-  apps/ezagent_plugin_loom/priv/static/loom_ui/
+  /home/ning/ezagent/apps/ezagent_plugin_loom/priv/static/loom_ui/
 # (never a bare `rm -rf $VAR/*`; if you must rm, rm a LITERAL path only.)
 
 # Run ESR (pure Elixir, no Node):
-cd /path/to/ezagent
+cd /home/ning/ezagent
 DEEPSEEK_KEY=sk-... LOOM_LLM_BACKEND=deepseek mix phx.server
 # open http://localhost:10042/loom/<ws>/<sid>
 ```
+
+> ⚠️ **Two WSL build traps (verified 2026-06-12):**
+> 1. **`node` here is `node.exe`** (`/mnt/c/nvm4w/nodejs`, a Windows binary). WSL does **not** forward shell env vars across the Win boundary unless they're in `WSLENV` — so `NEXT_PUBLIC_ESR=1 npx next build` silently builds **without** ESR (no `output:'export'`, **no `out/`** produced, basePath wrong), yet still prints "✓ Compiled successfully". The flag must reach Next via a file: drop a throwaway **`.env.production`** with `NEXT_PUBLIC_ESR=1` in the source dir (Next loads `.env*` from disk before evaluating `next.config.mjs`), build, then delete it (it's **not** gitignored — leaving it would force ESR on every prod build). Confirm a real ESR build by checking `out/index.html` contains `/loom/_next/`.
+> 2. **Always `rm -rf .next out` first.** On the 9p `/mnt/c` mount, file mtimes are unreliable, so Next's incremental cache can reuse a stale module and emit an **identical content-hashed chunk** — your source edit silently doesn't ship.
 
 - A **frontend-only** change = rebuild + sync + hard-refresh the browser. **No backend restart needed** (the static files are served fresh; memory `feedback-warn-before-dev-server-restart`).
 - A **backend** change (any `.ex`) needs the ~4.5-min `phx.server` restart — **tell Allen first**.
@@ -100,8 +105,8 @@ Backend handlers all live in `web_plug.ex` (see `backend-map.md` §3). The front
 
 ## 5. The four preview-side features
 
-- **Stitch chat** — floating assistant on published/preview pages. `GET/POST /api/:ws/:sid/stitch`. Calls **DeepSeek directly** (not `LLM`, not the team). Maps NL → a component `DRIVE: {id, action, params}` (applied by the frontend engine, *not* persisted) or a plain reply / `addText` op (appended to `user_schema`). Grounded by `Knowledge.get`. The frontend sends the page's current **capability list** (`caps`) so DeepSeek knows what components it can drive.
-- **AiSpot** — click a "✨" hotspot → `POST /api/:ws/:sid/aispot` with the v0-injected local context → a dynamic card. Also **direct DeepSeek**, also `Knowledge`-grounded.
+- **Stitch chat** — floating assistant on published/preview pages. `GET/POST /api/:ws/:sid/stitch`. Calls **DeepSeek directly** (not `LLM`). Since the 2026-06-10 refactor it runs as the in-session `loomstitch_<sid>` worker — a team member, but `@`-only so the orchestrator never reaches it (see `backend-map.md` §2 Plane B). Maps NL → a component `DRIVE: {id, action, params}` (applied by the frontend engine, *not* persisted) or a plain reply / `addText` op (appended to `user_schema`). Grounded by `Knowledge.get`. The frontend sends the page's current **capability list** (`caps`) so DeepSeek knows what components it can drive.
+- **AiSpot** — click a "✨" hotspot → `POST /api/:ws/:sid/aispot` with the v0-injected local context → a dynamic card. Same `loomstitch` worker (`mode=aispot`), **direct DeepSeek**, also `Knowledge`-grounded.
 - **user_schema (the "draggable"/overlay ops)** — `GET/POST /api/:ws/:sid/user-schema`. A per-session **ordered list of immutable ops** (`addText`, `updateState`, …) layered on top of the frozen base page. `POST {op}` appends; `POST {ops}` replaces (used after the host upserts stateful-component ops). The op vocabulary is interpreted by the frontend engine, not the backend.
 - **publish / snapshot / fork** — see §6.
 

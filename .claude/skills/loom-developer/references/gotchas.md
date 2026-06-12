@@ -33,7 +33,7 @@ Read this before any non-trivial Loom change. Each item is something the code do
 ## LLM backends
 
 9. **Stitch and AiSpot ALWAYS call `EzagentPluginLoom.DeepSeek` directly — never `LLM`.**
-   This is load-bearing (memory `feedback-preview-ai-independent-deepseek`). They are a separate consumer-side assistant, independent of the editor's swappable backend and of the agent team. Do not "unify" them onto `LLM.chat`. Conversely, agent-team code must go *through* `LLM` so the `LOOM_LLM_BACKEND` switch works.
+   This is load-bearing (memory `feedback-preview-ai-independent-deepseek`). They are a separate consumer-side assistant, independent of the editor's swappable backend. Do not "unify" them onto `LLM.chat`. Conversely, agent-team code must go *through* `LLM` so the `LOOM_LLM_BACKEND` switch works. **(2026-06-10:** Stitch/AiSpot are no longer inline in `WebPlug` — they're the in-session `loomstitch_<sid>` worker, `@`-only, reached by dispatching an `@loomstitch` message into the session; still DeepSeek-direct. The convo now persists in the MessageStore, *not* `loom_stitch_chats.json`. See `backend-map.md` §2.) The DRIVE-vs-answer-vs-addText **decision is prompt-driven** (DeepSeek following `Stitch.system_prompt`); `Stitch.parse_reply` only extracts it by line-prefix and does **not** validate `params` against `caps` — don't assume a server-side guard exists.
 
 10. **`LOOM_LLM_BACKEND` is a boot-time switch, not runtime.**
     Read once from app env (`config/runtime.exs` ← env var, default `:claude_code`). Changing it requires a `phx.server` restart. Don't add code that expects to flip it live.
@@ -67,7 +67,10 @@ Read this before any non-trivial Loom change. Each item is something the code do
     Removed in the 2026-06-01 redesign — page generation is the `loomv0` worker now, dispatched by the orchestrator. There is no `/api/chat` route in the `Plug.Router`. Don't curl it, don't re-add it. (The moduledoc is the stale part; the route block is authoritative.)
 
 19. **`docs/loom/FRONTEND_DIST_PLAN.md` describes the predecessor (`studio-mobile`, Vite, `dist/`, port 5175, `npm`).**
-    The current Loom frontend is Next.js `ai-ui-builder` (`out/`, `pnpm`, `NEXT_PUBLIC_ESR_MODE`). Use `2026-05-29-frontend-plugin-integration.md` for the current flow, not that file.
+    The current Loom frontend is Next.js `ai-ui-builder` (`out/`, `pnpm`, `NEXT_PUBLIC_ESR`). Use `2026-05-29-frontend-plugin-integration.md` for the current flow, not that file.
+
+22. **Building the frontend from WSL: the ESR flag must come from a file, and always clean first.**
+    `node` is `node.exe` (Windows) — shell env vars don't cross the WSL→Win boundary (not in `WSLENV`), so `NEXT_PUBLIC_ESR=1 npx next build` silently builds non-ESR (no `out/`, wrong basePath) while still printing "✓ Compiled successfully". Use a throwaway `.env.production` with `NEXT_PUBLIC_ESR=1` (delete after — not gitignored). And `rm -rf .next out` before every build: on the 9p mount Next's mtime-based cache can reuse a stale module and emit an identical hashed chunk, so your edit doesn't ship. (Verified 2026-06-12; full flow in `frontend-and-sdk.md` §3.)
 
 ## Data
 

@@ -100,6 +100,13 @@ defmodule EzagentPluginLoom.WebPlug do
     json_resp(conn, 200, %{ok: true, items: list_published_for_ws(ws)})
   end
 
+  # 2026-06-12 — 只列**本 session** 发布的(按 published_from 过滤);修「发布历史
+  # 在所有 loom session 间共享」的 bug。前端 listPublished 改用这条。
+  get "/api/:ws/:sid/published" do
+    items = list_published_for_ws(ws) |> Enum.filter(&(&1.published_from == sid))
+    json_resp(conn, 200, %{ok: true, items: items})
+  end
+
   # 删除一个 template entry。
   delete "/api/:ws/templates/:name" do
     json_resp(conn, 200, remove_template_entry(ws, name))
@@ -352,6 +359,37 @@ defmodule EzagentPluginLoom.WebPlug do
   # returns: %{ok: true, uri, name, size, mime} | %{ok: false, error}
   post "/api/:ws/:sid/upload" do
     json_resp(conn, 200, do_upload(conn, ws, sid))
+  end
+
+  # resource:// 上传的公开提供(SDK uploadFile / openResource 的图片用)。
+  get "/uploads/:name" do
+    serve_upload(conn, name)
+  end
+
+  # 2026-06-12 — 素材库(目录即库):上传(保留文件夹路径)/ 列 / 删 / 公开提供。
+  # 文件落进 `loom_materials/<ws>/<sid>/<rel>`;v0(Claude Code)用 cwd+Read 直接读。
+  post "/api/:ws/:sid/materials/upload" do
+    json_resp(conn, 200, do_materials_upload(conn, ws, sid))
+  end
+
+  get "/api/:ws/:sid/materials" do
+    items =
+      Ezagent.PluginLoom.Materials.list(ws, sid)
+      |> Enum.map(&Map.put(&1, "url", "/loom/materials/#{ws}/#{sid}/#{&1["path"]}"))
+
+    json_resp(conn, 200, %{ok: true, items: items})
+  end
+
+  # path 含 `/`,用 query 传(`?path=test1/sub/a.png`)。
+  delete "/api/:ws/:sid/materials" do
+    path = conn_query(conn) |> Map.get("path", "") |> to_string()
+    _ = Ezagent.PluginLoom.Materials.remove(ws, sid, path)
+    json_resp(conn, 200, %{ok: true})
+  end
+
+  # 公开提供素材(图片等),让 v0 生成的 Sandpack 页面能 `<img src="/loom/materials/<ws>/<sid>/<path>">`。
+  get "/materials/:ws/:sid/*path" do
+    serve_material(conn, ws, sid, Enum.join(path, "/"))
   end
 
   # 解析 resource:// URI → 302 到 /files/<filename> 下载端点。
@@ -609,11 +647,19 @@ defmodule EzagentPluginLoom.WebPlug do
 
     # stitch worker 回复:body 是纯文本,drive/op/mode 在 `stitch_reply` 字段 → 随帧
     # 作独立 `stitch` 字段送前端(前端据此应用 drive、关联回 Promise)。
+    # stitch 决策 trace(`stitch_debug: true`)标 `stitchDebug` → 前端可据此在消费侧隐藏
+    # (编辑器/admin 时间线照常显示纯文本)。GET /stitch 因其无 stitch_reply 已自动跳过。
+    base = if debug_body?(m.body), do: Map.put(base, "stitchDebug", true), else: base
+
     case stitch_meta_of(m.body) do
       nil -> base
       meta -> Map.put(base, "stitch", meta)
     end
   end
+
+  defp debug_body?(%{stitch_debug: true}), do: true
+  defp debug_body?(%{"stitch_debug" => true}), do: true
+  defp debug_body?(_), do: false
 
   defp stitch_meta_of(%{stitch_reply: m}) when is_map(m), do: m
   defp stitch_meta_of(%{"stitch_reply" => m}) when is_map(m), do: m
@@ -632,6 +678,59 @@ defmodule EzagentPluginLoom.WebPlug do
     conn
     |> put_resp_content_type("application/json")
     |> send_resp(status, Jason.encode!(data))
+  end
+
+  # 公开提供 uploads/<name>(图片素材等)。name 限定 basename 安全字符,防目录遍历。
+  defp serve_upload(conn, name) do
+    name = to_string(name)
+    path = Path.join(Ezagent.Home.path("uploads"), name)
+
+    if Regex.match?(~r/^[A-Za-z0-9._-]+$/, name) and File.regular?(path) do
+      conn
+      |> put_resp_content_type(MIME.from_path(name))
+      |> put_resp_header("cache-control", "public, max-age=86400")
+      |> send_file(200, path)
+    else
+      json_resp(conn, 404, %{ok: false, error: "not_found"})
+    end
+  end
+
+  # 素材库上传:文件落进 `loom_materials/<ws>/<sid>/<rel>`(保留文件夹)。
+  defp do_materials_upload(conn, ws, sid) do
+    case Map.get(conn.body_params, "file") do
+      %Plug.Upload{path: tmp, filename: fname, content_type: mime} ->
+        with :ok <- check_upload_size(tmp),
+             :ok <- check_upload_mime(fname, mime) do
+          rel = conn.body_params |> Map.get("path", "") |> to_string() |> String.trim()
+          rel = if rel == "", do: fname, else: rel
+
+          case Ezagent.PluginLoom.Materials.save_file(ws, sid, rel, tmp) do
+            {:ok, saved} -> %{ok: true, path: saved}
+            {:error, e} -> %{ok: false, error: to_string(e)}
+          end
+        else
+          {:error, reason} -> %{ok: false, error: to_string(reason)}
+        end
+
+      _ ->
+        %{ok: false, error: "missing or invalid 'file' upload field"}
+    end
+  rescue
+    e -> %{ok: false, error: "materials_upload_failed: #{Exception.message(e)}"}
+  end
+
+  # 公开提供素材库文件(图片等)。Materials.read 已做相对路径净化(防目录遍历)。
+  defp serve_material(conn, ws, sid, path) do
+    case Ezagent.PluginLoom.Materials.read(ws, sid, path) do
+      {:ok, bin, rel} ->
+        conn
+        |> put_resp_content_type(MIME.from_path(rel))
+        |> put_resp_header("cache-control", "public, max-age=86400")
+        |> send_resp(200, bin)
+
+      :error ->
+        json_resp(conn, 404, %{ok: false, error: "not_found"})
+    end
   end
 
   # --- 2026-06-02 SDK v2 helpers -------------------------------------
@@ -664,6 +763,7 @@ defmodule EzagentPluginLoom.WebPlug do
             ok: true,
             uri: uri_str,
             name: original_name,
+            stored_name: stored_name,
             size: size,
             mime: mime || "application/octet-stream"
           }
@@ -943,7 +1043,21 @@ defmodule EzagentPluginLoom.WebPlug do
   # 极端情况落 DLQ,但正常路径已就位)。
   defp ensure_stitch_worker(%URI{} = suri, %URI{} = stitch_uri) do
     _ = Ezagent.SpawnRegistry.spawn(stitch_uri)
-    ensure_joined(suri, stitch_uri)
+    _ = ensure_joined(suri, stitch_uri)
+
+    # 2026-06-12 — 同时确保 4 个 Stitch 子 worker 在场。老会话(在 ensure_team 加
+    # 子 worker 之前创建的 zuatu / tudou 等)靠这里按需 spawn + join(幂等),
+    # 否则编排器 fan-out 派给不存在的子 worker → 无 deliverable → 超时降级。
+    with %URI{path: path} <- suri,
+         [ws, sid | _] <- path |> to_string() |> String.trim_leading("/") |> String.split("/") do
+      Enum.each(EzagentPluginLoom.StitchExperts.role_keys(), fn role ->
+        sub = Ezagent.URI.new!("entity://agent/#{ws}/loomstitchsub_#{sid}_#{role}")
+        _ = Ezagent.SpawnRegistry.spawn(sub)
+        _ = ensure_joined(suri, sub)
+      end)
+    end
+
+    :ok
   rescue
     _ -> :ok
   end
@@ -960,10 +1074,17 @@ defmodule EzagentPluginLoom.WebPlug do
 
     with {:ok, user_uri} <- EzagentPluginLoom.TempUser.ensure_named(ws, "loomui_#{sid}"),
          :ok <- ensure_joined(suri, user_uri) do
+      # 2026-06-12 — 与 `send_to_session`/`parse_mentions` 的编排器路径一致:在
+      # 可见文本前缀 `@loomstitch_<sid>`,让 admin/session 视图肉眼看得到这条确实
+      # @ 了 stitch(此前只塞了 `mentions` 结构化字段,人眼看不到,跟 @编排器 不一致)。
+      # 路由仍走 `mentions`(不依赖文本解析),前缀只是给人眼看。preview 侧 Stitch
+      # 气泡用前端本地 echo,不受此前缀影响。
+      visible_with_mention = "@loomstitch_#{sid} " <> visible_text
+
       msg =
         Ezagent.Message.new(
           user_uri,
-          %{text: visible_text, attachments: [], stitch: payload},
+          %{text: visible_with_mention, attachments: [], stitch: payload},
           mentions: [stitch_uri]
         )
 

@@ -34,6 +34,7 @@ defmodule Ezagent.Behavior.LoomV0Worker do
   require Logger
 
   alias Ezagent.{Cmd, Message}
+  alias Ezagent.PluginLoom.Materials
   alias EzagentPluginLoom.{LLM, Prompts, Span}
 
   action(:receive,
@@ -65,14 +66,23 @@ defmodule Ezagent.Behavior.LoomV0Worker do
       subtask = extract_text(msg.body)
       count = ctx[:read].(:count, 0)
 
+      # 2026-06-12 素材库:把本 session 素材目录设为 Claude Code 的 cwd(放开 Read)+ 给它清单;
+      # 它需要素材内容时直接 Read 文件,不靠 prompt 塞。无素材 → 不传(行为同前)。
+      {mws, msid} = v0_ws_sid(ctx)
+      manifest = if mws, do: Materials.render_for_v0(mws, msid), else: ""
+
+      materials_dir =
+        if mws && Materials.list(mws, msid) != [], do: Materials.dir(mws, msid), else: nil
+
       case LLM.chat(
              [
                %{"role" => "system", "content" => Prompts.page_gen_system_prompt()},
-               %{"role" => "user", "content" => build_user_message(ctx, subtask)}
+               %{"role" => "user", "content" => build_user_message(ctx, subtask, manifest)}
              ],
              temperature: 0.7,
              thinking_disabled: true,
-             group: group_id(ctx)
+             group: group_id(ctx),
+             materials_dir: materials_dir
            ) do
         # 用户中止 → 静默丢弃:不发 page_update、不发 error 卡 → :loom_source 不变、页面不变。
         {:error, :stopped} ->
@@ -104,9 +114,19 @@ defmodule Ezagent.Behavior.LoomV0Worker do
                  reply_effect(ctx, msg, body_text)}
 
             :error ->
-              {:ok, %{},
-               [{:set, :last_error, :no_jsx_block}] ++
-                 reply_effect(ctx, msg, Span.error_span(:no_jsx_block))}
+              # 没有代码块:多半是闲聊 / 提问(如「你好」「这个页面能做成商城吗」),LLM
+              # 自然只回了文字。把这段文字当**普通对话回复**呈现、页面保持不变 —— 不甩
+              # danger 错误卡。只有连文字都没有(真·空回复)才报 :no_jsx_block。
+              case conversational_reply(files_text) do
+                prose when is_binary(prose) and prose != "" ->
+                  {:ok, %{},
+                   [{:set, :last_error, nil}] ++ reply_effect(ctx, msg, prose)}
+
+                _ ->
+                  {:ok, %{},
+                   [{:set, :last_error, :no_jsx_block}] ++
+                     reply_effect(ctx, msg, Span.error_span(:no_jsx_block))}
+              end
           end
 
         {:error, reason} ->
@@ -179,6 +199,13 @@ defmodule Ezagent.Behavior.LoomV0Worker do
       true -> files
     end
   end
+
+  # 无代码块回复 → 抽出纯文字(剥掉任何残留围栏),当普通对话呈现。空 → "".
+  defp conversational_reply(text) when is_binary(text) do
+    Regex.replace(~r/```[\s\S]*?```/, text, "") |> String.trim()
+  end
+
+  defp conversational_reply(_), do: ""
 
   defp extract_summary(text) do
     prose = Regex.replace(~r/```[\s\S]*?```/, text, "") |> String.trim()
@@ -274,7 +301,7 @@ defmodule Ezagent.Behavior.LoomV0Worker do
   # claude 看到当前页面源码,否则它无从下手、只回文字 → 无 jsx 块。这里读编排器
   # `:loom_orchestrator` slice 的 `loom_source`(权威当前页),非种子页时拼进 user 消息,
   # 并明确要求输出完整修改后文件。首次生成(无源/种子页)→ 只发指令(原行为)。
-  defp build_user_message(ctx, subtask) do
+  defp build_user_message(ctx, subtask, materials) do
     case current_source(ctx) do
       files when is_map(files) and map_size(files) > 0 ->
         serialized =
@@ -286,7 +313,7 @@ defmodule Ezagent.Behavior.LoomV0Worker do
         这是这个页面**当前的完整源码(可能多文件)**:
 
         #{serialized}
-
+        #{materials}
         ——————
         用户的修改要求:#{subtask}
 
@@ -297,7 +324,19 @@ defmodule Ezagent.Behavior.LoomV0Worker do
         """
 
       _ ->
-        subtask
+        subtask <> materials
+    end
+  end
+
+  # 把本次消息附件入库 + 渲染本 session 整个素材库(2026-06-12 素材库)。
+  # 从 session 推 {ws, sid}(本 session 素材目录的 key);非 loom session → {nil, nil}。
+  defp v0_ws_sid(ctx) do
+    with %URI{path: path} <- session_from_ctx(ctx),
+         [ws, sid | _] <- path |> to_string() |> String.trim_leading("/") |> String.split("/"),
+         true <- ws != "" and sid != "" do
+      {ws, sid}
+    else
+      _ -> {nil, nil}
     end
   end
 

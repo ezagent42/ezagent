@@ -54,6 +54,9 @@ defmodule EzagentPluginLoom.Team do
     include_v0? = Keyword.get(opts, :include_v0, true)
 
     with {:ok, ws, sid} <- session_parts(session_uri) do
+      # 2026-06-12 — session 初始化即建好素材库根目录(目录即库;v0/Claude Code 用 cwd+Read 读)。
+      _ = Ezagent.PluginLoom.Materials.ensure_dir(ws, sid)
+
       # 2026-06-01 — 用 `Ezagent.URI.new!`(走 `URI.new`,canonical 形:无
       # `authority` 字段)代替 deprecated `URI.parse/1`(留 `authority: "agent"`)。
       # canonicalize_uris/1 在 snapshot load 时把 chat.members 的 key 全 rewrite
@@ -71,10 +74,15 @@ defmodule EzagentPluginLoom.Team do
           do: [Ezagent.URI.new!("entity://agent/#{ws}/loomv0_#{sid}")],
           else: []
 
-      # 2026-06-10 — preview-side AI worker(Stitch chat + AiSpot)。和 v0 平级、
-      # @-only,但**不受 include_v0 门控**:发布物 / fork 出的无-v0 会话也要有 Stitch,
-      # 所以每个 loom session 都常驻一个 loomstitch。
-      stitch_members = [Ezagent.URI.new!("entity://agent/#{ws}/loomstitch_#{sid}")]
+      # 2026-06-10 — preview-side AI orchestrator(Stitch chat + AiSpot)。和 v0 平级、
+      # @-only,不受 include_v0 门控:发布物 / fork 出的无-v0 会话也要有 Stitch。
+      # 2026-06-12 — Stitch 现在是 orchestrator,外加一组固定的 sub-worker
+      # (chat/navigation/controls/content),每个 loom session 创建即全量自带。
+      stitch_members =
+        [Ezagent.URI.new!("entity://agent/#{ws}/loomstitch_#{sid}")] ++
+          Enum.map(EzagentPluginLoom.StitchExperts.role_keys(), fn role ->
+            Ezagent.URI.new!("entity://agent/#{ws}/loomstitchsub_#{sid}_#{role}")
+          end)
 
       # 2026-06-01 — team manager,接收 @ 的自然语言加 / 删 worker 指令。
       # 默认每个 loom session 都有。Behavior 是 mention-gated,不 @ 不动。

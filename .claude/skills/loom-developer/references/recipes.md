@@ -54,7 +54,7 @@ Backend restart for the route; frontend re-sync + refresh for the client.
 
 ## Change an agent's prompt / persona
 
-Prompts live in `lib/ezagent/prompts.ex` (shared: `web_system_prompt/0`, `chat_system_prompt/0`, `page_gen_system_prompt/0`, `persona_line/1`, …) and as `@theme_prompts` / `@default_system_prompt` inside individual Behaviors (e.g. `behavior/loom_worker.ex`). Edit the right one; restart. For the Stitch/AiSpot grounding prompt, note it incorporates `Knowledge.get(ws, sid)` — the per-session knowledge base is editable from the UI, so persona vs. grounding are separate levers.
+Prompts live in `lib/ezagent/prompts.ex` (shared: `web_system_prompt/0`, `chat_system_prompt/0`, `page_gen_system_prompt/0`, `persona_line/1`, …) and as `@theme_prompts` / `@default_system_prompt` inside individual Behaviors (e.g. `behavior/loom_worker.ex`). The **Stitch/AiSpot** prompts are separate — `EzagentPluginLoom.Stitch.system_prompt/2` and `aispot_prompt/4` in `lib/ezagent/stitch.ex` (consumed by `behavior/loom_stitch_worker.ex`). Edit the right one; restart. The Stitch/AiSpot prompts incorporate `Knowledge.get(ws, sid)` — the per-session knowledge base is editable from the UI, so persona vs. grounding are separate levers.
 
 ## Change the published/share/fork behavior
 
@@ -62,7 +62,7 @@ Read `docs/loom/2026-06-05-shareable-snapshots-and-fork.md` first. The endpoints
 
 ## Rebuild & redeploy the frontend
 
-See `frontend-and-sdk.md` §3. Short version: build in the Desktop `ai-ui-builder` repo with `NEXT_PUBLIC_ESR_MODE=1 pnpm build`, `rsync --delete out/ → priv/static/loom_ui/`, hard-refresh the browser. No backend restart for a pure frontend change. Commit the vendored output only when asked.
+See `frontend-and-sdk.md` §3. Short version: in the Desktop repo (`/mnt/c/Users/ning/Desktop/work/loom`) run `rm -rf .next out && NEXT_PUBLIC_ESR=1 npx next build`, then `rsync -a --delete out/ → priv/static/loom_ui/`, hard-refresh the browser. No backend restart for a pure frontend change. Commit the vendored output only when asked. **WSL caveat:** `node` is Windows `node.exe`, so the env var won't cross the boundary — feed `NEXT_PUBLIC_ESR=1` via a throwaway `.env.production` instead (gotcha #22).
 
 ## Switch / debug the LLM backend
 

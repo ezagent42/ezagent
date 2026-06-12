@@ -101,13 +101,18 @@ defmodule EzagentPluginLoom.ClaudeCode do
         err
 
       {:ok, bin} ->
-        {system, prompt} = build(messages)
+        # 2026-06-12 — v0 读素材库:opts[:materials_dir] 给定且是真实目录 → 放开
+        # Read/Glob/LS + cwd 锁到该目录,让 Claude Code 直接读素材文件(无 prompt 预算)。
+        materials_dir = opts[:materials_dir]
+        read_files? = is_binary(materials_dir) and materials_dir != "" and File.dir?(materials_dir)
+        {system, prompt} = build(messages, read_files?)
         idle = Keyword.get(opts, :idle_timeout_ms, @idle_timeout_ms)
         attempts = Keyword.get(opts, :attempts, @max_attempts)
         # group(通常=session 字符串):用于"停止"——同 group 的在跑 claude 会被
         # `stop/1` 一起中断。nil → 不注册(行为同前)。
         group = opts[:group]
-        run_with_retry(bin, prompt, system, idle, attempts, group)
+        rctx = %{cwd: if(read_files?, do: String.to_charlist(materials_dir), else: nil), read_files: read_files?}
+        run_with_retry(bin, prompt, system, idle, attempts, group, rctx)
     end
   end
 
@@ -182,12 +187,17 @@ defmodule EzagentPluginLoom.ClaudeCode do
   # 这样既能让它按需取参考,又不会变成乱写文件的编码 agent。
   @tools_directive "（你可以用 WebFetch 抓取网页、WebSearch 搜索来获取参考资料；但不要读/写/编辑本地文件、不要执行 shell 命令——把完整结果（如 jsx 代码块）直接写在你的回复里。）"
 
-  defp build(messages) do
+  # 2026-06-12 — v0 读素材库:当调用方给了 `materials_dir`(= 工作目录)时,放开 Read/Glob/LS,
+  # 用这条指令取代上面的"别读文件"。只读工作目录内的素材,不写文件、不跑命令、不读别处。
+  @read_dir_directive "（你的工作目录(当前目录)下放着用户上传的素材：图片 / 参考文件 / 文件夹。需要看某个素材的实际内容时，用 Read 读它的相对路径(例如 `Read zuatu-source-backup/src/App.jsx`)，用 Glob / LS 浏览有哪些文件。**只读工作目录内的素材**，不要写文件、不要执行 shell、不要读工作目录以外的地方。其余参考资料可用 WebFetch/WebSearch。最终把页面 jsx 代码块直接写在回复里。）"
+
+  defp build(messages, read_files? \\ false) do
     {sys_msgs, turns} = Enum.split_with(messages, &(role(&1) == "system"))
+    directive = if read_files?, do: @read_dir_directive, else: @tools_directive
 
     system =
       (sys_msgs |> Enum.map(&content/1) |> Enum.reject(&(&1 == "")) |> Enum.join("\n\n")) <>
-        "\n\n" <> @tools_directive
+        "\n\n" <> directive
 
     prompt = render_prompt(turns)
 
@@ -218,8 +228,8 @@ defmodule EzagentPluginLoom.ClaudeCode do
 
   # 临时性错误(Anthropic 过载/限流)自动重试,其它错误直接返回。
   # `:stopped`(用户中止)永不重试。
-  defp run_with_retry(bin, prompt, system, idle, attempts, group) do
-    case run(bin, prompt, system, idle, group) do
+  defp run_with_retry(bin, prompt, system, idle, attempts, group, rctx) do
+    case run(bin, prompt, system, idle, group, rctx) do
       {:error, reason} when attempts > 1 ->
         if transient?(reason) do
           Logger.warning(
@@ -227,7 +237,7 @@ defmodule EzagentPluginLoom.ClaudeCode do
           )
 
           Process.sleep(@retry_backoff_ms)
-          run_with_retry(bin, prompt, system, idle, attempts - 1, group)
+          run_with_retry(bin, prompt, system, idle, attempts - 1, group, rctx)
         else
           {:error, reason}
         end
@@ -258,8 +268,8 @@ defmodule EzagentPluginLoom.ClaudeCode do
 
   # 异步流式跑 claude:不设总超时(慢/长思考 model 不被误杀),只在内部用**空闲
   # 超时**判卡死。外层 Task 仅用 @hard_cap_ms 作绝对兜底(防极端不结束)。
-  defp run(bin, prompt, system, idle, group) do
-    task = Task.async(fn -> exec_stream(bin, prompt, system, idle, group) end)
+  defp run(bin, prompt, system, idle, group, rctx) do
+    task = Task.async(fn -> exec_stream(bin, prompt, system, idle, group, rctx) end)
 
     case Task.yield(task, @hard_cap_ms) || Task.shutdown(task, :brutal_kill) do
       {:ok, result} -> result
@@ -271,17 +281,18 @@ defmodule EzagentPluginLoom.ClaudeCode do
   # 正文 token / status / ping)到达都重置空闲计时**(`collect_stream` 的 `after`);
   # 见到 `{"type":"result"}` 事件即完成。不依赖 `:DOWN`(实测异步退出通知不可靠) —
   # 完成信号来自 stream 里的 result 事件。
-  defp exec_stream(bin, prompt, system, idle, group) do
+  defp exec_stream(bin, prompt, system, idle, group, rctx) do
     ensure_exec_started()
 
-    argv = build_argv(bin, system)
+    argv = build_argv(bin, system, rctx.read_files)
+    cd = rctx.cwd || String.to_charlist(System.tmp_dir!())
 
     opts = [
       :stdin,
       :stdout,
       :stderr,
       :monitor,
-      {:cd, String.to_charlist(System.tmp_dir!())},
+      {:cd, cd},
       {:kill_timeout, 3}
     ]
 
@@ -486,7 +497,9 @@ defmodule EzagentPluginLoom.ClaudeCode do
   # 不管尝试)。`--max-turns 1` 下尝试一次就没回合 → error_max_turns。给到 6 个回合
   # 让它从拒绝里恢复成文本输出(配合系统提示里的 @no_tools_directive,绝大多数情况
   # 1 回合就出文本,6 只是兜底)。
-  defp build_argv(bin, system) do
+  defp build_argv(bin, system, read_files? \\ false) do
+    tools = if read_files?, do: ~c"WebFetch,WebSearch,Skill,Read,Glob,LS", else: ~c"WebFetch,WebSearch,Skill"
+
     base = [
       String.to_charlist(bin),
       ~c"-p",
@@ -503,7 +516,7 @@ defmodule EzagentPluginLoom.ClaudeCode do
       # 设计 skill。其余工具(Bash/Write/…)不在白名单 → 仍被自动拒绝,靠 --max-turns
       # 6 从拒绝里恢复成文本。
       ~c"--allowedTools",
-      ~c"WebFetch,WebSearch,Skill",
+      tools,
       ~c"--setting-sources",
       ~c"",
       ~c"--strict-mcp-config",

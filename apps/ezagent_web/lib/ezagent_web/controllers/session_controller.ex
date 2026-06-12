@@ -191,42 +191,75 @@ defmodule EzagentWeb.SessionController do
   @doc """
   2026-06-05 (Allen 批准) — loom 分享页轻量自助注册(开放,**跳过邮箱验证**)。
 
-  建一个 `entity://user/<ws>/<username>` 用户(Bcrypt 密码 + User Kind 默认 caps)并
+  建一个 `entity://user/<ws>/<name>` 用户(Bcrypt 密码 + User Kind 默认 caps)并
   **即登录**(`SessionPrincipal.put`)。仅供 loom preview 的登录/注册 modal 用。
   注意:这是故意的开放注册(不验邮箱),是 Allen 为内部测试场景批准的取舍。
-  body: `%{"ws" => ws, "username" => u, "password" => p}` + `_csrf_token`。
+
+  body: `%{"username" => u, "password" => p}` + `_csrf_token`。
+  `username` **必须**是完整实体 URI `entity://user/<工作区>/<名字>`(不接受裸用户名,避免
+  歧义;workspace 段由用户显式指定,**不写死 `system`**)。规范化复用登录同款
+  `SessionPrincipal.canonicalize/1`(见 `canonicalize_signup/1`)。
   """
-  def loom_signup(conn, %{"ws" => ws, "username" => username, "password" => password})
-      when is_binary(ws) and is_binary(username) and is_binary(password) do
-    ws = String.trim(ws)
-    username = String.trim(username)
+  def loom_signup(conn, %{"username" => account, "password" => password})
+      when is_binary(account) and is_binary(password) do
+    account = String.trim(account)
 
+    # 注册**必须**填完整实体 URI(`entity://user/<工作区>/<用户名>`)—— workspace 段由
+    # 用户显式指定,不写死 `system`,也**不接受 bare handle**(避免歧义)。段字符校验交给
+    # `Ezagent.URI.new!`;规范化复用登录同款 `SessionPrincipal.canonicalize/1`。
     cond do
-      ws == "" or not Regex.match?(~r/^[a-zA-Z0-9_-]+$/, username) or String.length(password) < 4 ->
-        signup_json(conn, %{ok: false, error: "用户名只能含字母/数字/_/-,密码至少 4 位"})
+      account == "" or String.length(password) < 4 ->
+        signup_json(conn, %{ok: false, error: "身份 URI 必填,密码至少 4 位"})
 
-      loom_user_exists?("entity://user/#{ws}/#{username}") ->
-        signup_json(conn, %{ok: false, error: "用户名已被占用"})
+      not String.starts_with?(account, "entity://") ->
+        signup_json(conn, %{
+          ok: false,
+          error: "注册请填写完整身份 URI:entity://user/<工作区>/<用户名>"
+        })
 
       true ->
-        uri = "entity://user/#{ws}/#{username}"
+        case canonicalize_signup(account) do
+          {:ok, uri} ->
+            cond do
+              loom_user_exists?(uri) ->
+                signup_json(conn, %{ok: false, error: "用户名已被占用"})
 
-        case Ezagent.Users.create(uri, password, []) do
-          {:ok, _} ->
-            _ = loom_safe_spawn_user(uri)
+              true ->
+                case Ezagent.Users.create(uri, password, []) do
+                  {:ok, _} ->
+                    _ = loom_safe_spawn_user(uri)
 
-            conn
-            |> SessionPrincipal.put(uri)
-            |> signup_json(%{ok: true, entity_uri: uri})
+                    conn
+                    |> SessionPrincipal.put(uri)
+                    |> signup_json(%{ok: true, entity_uri: uri})
 
-          {:error, reason} ->
-            Logger.warning("loom_signup create failed for #{uri}: #{inspect(reason)}")
-            signup_json(conn, %{ok: false, error: "注册失败,请换个用户名重试"})
+                  {:error, reason} ->
+                    Logger.warning("loom_signup create failed for #{uri}: #{inspect(reason)}")
+                    signup_json(conn, %{ok: false, error: "注册失败,请换个用户名重试"})
+                end
+            end
+
+          {:error, msg} ->
+            signup_json(conn, %{ok: false, error: msg})
         end
     end
   end
 
   def loom_signup(conn, _params), do: signup_json(conn, %{ok: false, error: "参数缺失"})
+
+  # 完整 entity:// URI → 规范 `entity://user/<ws>/<name>` 字符串。复用登录同款
+  # `SessionPrincipal.canonicalize/1`(URI 段校验)。注册只收 user(不收 agent)。
+  defp canonicalize_signup(account) do
+    canonical = SessionPrincipal.canonicalize(account)
+
+    case Ezagent.URI.new!(canonical) do
+      %URI{scheme: "entity", host: "user"} -> {:ok, canonical}
+      _ -> {:error, "只能注册用户身份(entity://user/<工作区>/<名字>)"}
+    end
+  rescue
+    ArgumentError ->
+      {:error, "身份 URI 不合法,格式应为 entity://user/<工作区>/<名字>"}
+  end
 
   defp loom_user_exists?(uri) do
     Ezagent.Users.get_by_uri(uri) != nil

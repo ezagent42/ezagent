@@ -13,7 +13,7 @@ Every Loom agent type is declared across **four parallel files**. Using `loomwor
 | **Template Class** | `lib/ezagent/template/loom_worker.ex` | how to spawn an instance | `@behaviour Ezagent.Kind.Template`; `template_name/0 → "loom.worker"`; `validate/1` (enforces the URI shape); `instantiate/3 → {:ok, [uri], %{fresh?: bool}}` |
 | **Wiring** | `lib/ezagent_plugin_loom/application.ex` | registers all of the above | `behaviors/0`, `template_classes/0`, `agent_flavors/0` lists |
 
-The same quadruplet exists for: `loom` (the original fixed-reply test bot), `loom_orchestrator`, `loom_worker`, `loom_v0_worker`, `loom_meta_agent`. Plus two extra Template Classes with no Behavior/Kind: `template/loom_agent.ex` and `template/loom_session.ex` (the latter assembles the whole team — see §3).
+The same quadruplet exists for: `loom` (the original fixed-reply test bot), `loom_orchestrator`, `loom_worker`, `loom_v0_worker`, `loom_meta_agent`, and `loom_stitch_worker` (the preview-side AI — added in the 2026-06-10 refactor; see §2 Plane B). Plus two extra Template Classes with no Behavior/Kind: `template/loom_agent.ex` and `template/loom_session.ex` (the latter assembles the whole team — see §3).
 
 ### How a chat message reaches a worker
 
@@ -35,6 +35,7 @@ The reply is a `{:dispatch, %Cmd{}}` effect targeting `session://...?action=chat
 - **`loomworker` (worker)** — produces one content fragment for one subtask. Two demo instances carry `policy` / `company` *themes* derived purely from their URI name (`loomworker_<sid>_policy` / `_company`). Acts ONLY when `@mentioned` (loop-guard).
 - **`loomv0` (v0worker)** — the AI **page generator**. Dispatched by the orchestrator with the current source + the user request; replies with a `<span type="page_update">` body. **The only agent that edits page source.** Streams generation progress over a PubSub topic the SSE endpoint relays to the browser.
 - **`loommeta` (meta-agent)** — team manager. Parses `@`-mention NL commands ("加一个法务 worker") via DeepSeek → spawns/terminates Kinds + `chat.join`/`chat.leave`.
+- **`loomstitch` (stitch worker)** — the **preview-side AI** (Stitch chat + AiSpot ✨), a team member peer to `loomv0` since the 2026-06-10 refactor. `@`-only (the orchestrator never `@`s it, so it stays out of page-building). Still calls `EzagentPluginLoom.DeepSeek` **directly** (never the `LLM` dispatcher). The decision (operate page via `DRIVE` / answer / `addText` op) is **prompt-driven** — `EzagentPluginLoom.Stitch.system_prompt(caps, kb)` + history → DeepSeek → `Stitch.parse_reply` extracts `{text, op, drive}` by line-prefix. `op` (addText) appends to `user_schema`; `drive` is applied by the frontend engine (not persisted). Replies as `<span type="stitch_reply">{text,drive,op,mode}</span>` with `ref_id`/`mentions`; the visible body is plain text, the drive/op ride a separate SSE frame field. Two modes via `body.stitch.mode`: `stitch` (chat) / `aispot` (✨ card, plain text + `[[term|msg]]` markers). Logic in `behavior/loom_stitch_worker.ex` + `stitch.ex`. **Decision trace (2026-06-12):** the prompt forces a leading `DECISION:` line (reason-first), and each turn emits an **extra** `stitch_debug` session message (`debug_effect`/`decision_trace`) — model's reasoning + caps/kb/history it saw + its choice (DRIVE/addText/answer) + raw output — for troubleshooting "why the response was off". Always-on; visible only in the editor/admin timeline (`GET /stitch` skips it; SSE frame carries `stitchDebug: true`).
 
 ## 2. LLM backends — two planes
 
@@ -47,12 +48,14 @@ The reply is a `{:dispatch, %Cmd{}}` effect targeting `session://...?action=chat
 
 Both expose the same `chat/2 → {:ok, content} | {:error, reason}` so the Behavior layer is backend-agnostic.
 
-### Plane B: preview-side AI — ALWAYS DeepSeek, direct
+### Plane B: preview-side AI — ALWAYS DeepSeek, direct (now an in-session `loomstitch` worker)
 
-`stitch_chat.ex` (the store) + the `/api/.../stitch` and `/api/.../aispot` endpoints call `EzagentPluginLoom.DeepSeek.chat/2` **directly**, bypassing `LLM`. This is intentional and load-bearing (memory `feedback-preview-ai-independent-deepseek`): Stitch/AiSpot are a separate consumer-facing assistant, not the editor's reasoning model and not the agent team. **Never** "unify" them onto the `LLM` dispatcher.
+> **2026-06-10 refactor — read this; older notes (and memory) said the endpoints call DeepSeek *inline in `WebPlug`*, which is now stale.** Preview-side AI is no longer called inline. Each `/api/.../stitch` and `/api/.../aispot` request is packed by `WebPlug` into a **`@loomstitch_<sid>` message dispatched into the session**; the `loomstitch` worker (`behavior/loom_stitch_worker.ex`) handles it and replies with a `stitch_reply` frame relayed over SSE. The conversation therefore lives in the **MessageStore** (session-visible + persisted) — this *replaces* the old `loom_stitch_chats.json` store. `stitch_chat.ex` is now legacy.
 
-- **Stitch** maps natural language → either a component drive (`DRIVE: {id, action, params}` applied by the frontend, *not* persisted) or a plain reply / `addText` op (appended to `user_schema`). It reads `Knowledge.get(ws, sid)` as grounding.
-- **AiSpot** answers about a specific on-page hotspot, given the v0-injected local context, also grounded by `Knowledge`.
+The worker still calls `EzagentPluginLoom.DeepSeek.chat/2` **directly**, bypassing `LLM`. This is intentional and load-bearing (memory `feedback-preview-ai-independent-deepseek`): Stitch/AiSpot are a separate consumer-facing assistant, not the editor's reasoning model. It's `@`-only (loop-guard via `addressed_to_self?`), and the orchestrator's decompose never `@`s it — so it can never be dragged into page-building. **Never** "unify" it onto the `LLM` dispatcher. Shared transport-free logic (prompts + parse) is in `EzagentPluginLoom.Stitch` (`stitch.ex`).
+
+- **Stitch** maps natural language → either a component drive (`DRIVE: {id, action, params}` applied by the frontend, *not* persisted) or a plain reply / `addText` op (appended to `user_schema`). It reads `Knowledge.get(ws, sid)` as grounding. The DRIVE-vs-answer-vs-op decision is **made by DeepSeek following `system_prompt`**, not by Elixir — the code only `parse_reply`s the model's output by line-prefix and does **not** validate `params` against `caps`.
+- **AiSpot** answers about a specific on-page hotspot, given the v0-injected local context, also grounded by `Knowledge`. Plain-text card, may carry up to 3 `[[显示词|点击后对 Stitch 说的话]]` clickable markers.
 
 ## 3. Web entry & SDK bridge (`lib/ezagent/web_plug.ex`)
 
@@ -72,8 +75,8 @@ Route table (all prefixed `/loom` from the browser; `:ws`/`:sid` = workspace / s
 | DELETE | `/api/:ws/templates/:name` | delete a template entry |
 | POST | `/api/:ws/:sid/publish` | freeze session → immutable published Template Class + 16-hex token + `/loom/p/<token>` link |
 | GET/POST | `/api/:ws/:sid/user-schema` | read / append-or-replace the per-session page-edit ops |
-| GET/POST | `/api/:ws/:sid/stitch` | read Stitch conversation / send (→ **direct DeepSeek** + DRIVE/op parse) |
-| POST | `/api/:ws/:sid/aispot` | dynamic ✨ card for a hotspot (→ **direct DeepSeek** + Knowledge grounding) |
+| GET/POST | `/api/:ws/:sid/stitch` | GET = read Stitch convo (rebuilt from session history); POST = dispatch `@loomstitch_<sid>` message into session → worker (DeepSeek) → `stitch_reply` SSE frame (async, returns `{ok,id}`) |
+| POST | `/api/:ws/:sid/aispot` | dynamic ✨ card → same `@loomstitch` worker, `mode=aispot` (async, `stitch_reply` frame) |
 | GET/POST | `/api/:ws/:sid/knowledge` | read / write the per-session Markdown knowledge base |
 | POST | `/api/:ws/:sid/snapshot` | freeze current page + ops + Stitch convo → snapshot token + link (copy-on-snapshot) |
 | POST | `/api/:ws/:sid/upload` | multipart upload → `resource://uploads/<ws>/<name>` URI |
@@ -98,7 +101,7 @@ Loom data lives in **three** places (full walkthrough: `docs/loom/2026-06-08-loo
 2. **MessageStore** (framework-owned) — every chat message in the session.
 3. **Four local JSON files** in `~/.ezagent/<profile>/`, keyed by `session://loom/<ws>/<sid>` or a token, written by the plug:
    - `loom_user_schemas.json` → `user_schema.ex` — per-session page-edit ops (append/replace)
-   - `loom_stitch_chats.json` → `stitch_chat.ex` — per-session Stitch conversation
+   - ~~`loom_stitch_chats.json` → `stitch_chat.ex` — per-session Stitch conversation~~ **(legacy since 2026-06-10: the Stitch convo now lives in the MessageStore as the `loomstitch` worker's turns; `stitch_chat.ex` is no longer the source of truth — `GET /stitch` rebuilds the thread from session history)**
    - `loom_snapshots.json` → `snapshots.ex` — frozen page+ops+convo+knowledge copies (share)
    - `loom_saved_classes.json` → `saved_classes.ex` — published Template Classes (reincarnated at boot via `Module.create`)
    - (plus `loom_knowledge.json` → `knowledge.ex` — per-session grounding Markdown)

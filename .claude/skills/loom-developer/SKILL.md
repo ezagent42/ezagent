@@ -67,16 +67,19 @@ Browser  ──HTTP/loom──▶  EzagentPluginLoom.WebPlug   (the ONLY web ent
         ┌─────────────────────┼──────────────────────────────┐
         │ serves               │ /api/* SDK bridge             │ preview-side AI
         ▼                      ▼                               ▼
-  priv/static/loom_ui/   Router.dispatch / legacy        DeepSeek (DIRECT — never the
-  (Next.js static          Invocation.dispatch into       LLM dispatcher, never the team)
-   export, basePath         the session                   ├─ Stitch chat  (/api/.../stitch)
-   '/loom')                 │                              └─ AiSpot cards (/api/.../aispot)
+  priv/static/loom_ui/   Router.dispatch / legacy        preview chat/✨ packed as a
+  (Next.js static          Invocation.dispatch into       @loomstitch_<sid> message,
+   export, basePath         the session                   dispatched INTO the session
+   '/loom')                 │                              (/api/.../stitch, /aispot)
                             ▼
                    Loom agent TEAM (per session, spawned by Team.ensure_team):
                      loomorch_<sid>     orchestrator: decompose→fan out→aggregate→compose
                      loomworker_<sid>_* workers (policy / company themes)
                      loomv0_<sid>       v0worker: the ONLY thing that edits page source
                      loommeta_<sid>     meta-agent: @-mention add/remove team members
+                     loomstitch_<sid>   preview-side AI (Stitch chat + AiSpot ✨); @-only,
+                                        calls DeepSeek DIRECT (not the LLM dispatcher);
+                                        orchestrator never @s it  (2026-06-10 refactor)
                             │
                             ▼
                    LLM dispatcher  EzagentPluginLoom.LLM.chat/2
@@ -87,9 +90,9 @@ Browser  ──HTTP/loom──▶  EzagentPluginLoom.WebPlug   (the ONLY web ent
 
 Three facts that explain most of the design:
 
-- **Two LLM "planes."** The agent team's reasoning goes through the swappable `LLM` dispatcher (`claude_code` or `deepseek`). The *preview-side* AI (Stitch, AiSpot) **always** calls `EzagentPluginLoom.DeepSeek` directly — it is a separate, simpler, faster assistant and is not user-configurable. Never route Stitch/AiSpot through `LLM`. (Memory: `feedback-preview-ai-independent-deepseek`.)
+- **Two LLM "planes."** The agent team's reasoning goes through the swappable `LLM` dispatcher (`claude_code` or `deepseek`). The *preview-side* AI (Stitch, AiSpot) **always** calls `EzagentPluginLoom.DeepSeek` directly — a separate, simpler, faster assistant, not user-configurable. Never route Stitch/AiSpot through `LLM`. **(2026-06-10 refactor:** Stitch/AiSpot are no longer called inline in `WebPlug` — they're an in-session `loomstitch_<sid>` worker, a team member peer to `loomv0`, that the `WebPlug` reaches by dispatching an `@loomstitch` message into the session. It's still DeepSeek-direct, still never the `LLM` dispatcher; it's `@`-only so the orchestrator never invokes it. The invariant holds — the *transport* changed, not the plane.) Memory: `feedback-preview-ai-independent-deepseek`.
 - **One writer of page source.** Only the *authoring* session's `loomv0` worker can change the page source (the `:loom_orchestrator` slice's `loom_source`). Every consumer surface (published link, snapshot, fork) gets a **frozen** base and can only layer `user_schema` ops on top. Stitch never touches source — it only appends ops.
-- **The frontend source is not in this repo.** Only the built static export is vendored at `priv/static/loom_ui/`. The Next.js source lives in a separate Desktop repo (`C:\Users\Ning\Desktop\loom\ai-ui-builder`). Editing files under `priv/static/loom_ui/` directly is almost always a mistake — they get overwritten on the next build→sync. See `references/frontend-and-sdk.md`.
+- **The frontend source is not in this repo.** Only the built static export is vendored at `priv/static/loom_ui/`. The Next.js source (package `ai-ui-builder`) lives in a separate Desktop repo — actual path `C:\Users\ning\Desktop\work\loom` (from WSL: `/mnt/c/Users/ning/Desktop/work/loom`). Editing files under `priv/static/loom_ui/` directly is almost always a mistake — they get overwritten on the next build→sync. See `references/frontend-and-sdk.md`.
 
 ## Project conventions that apply here
 

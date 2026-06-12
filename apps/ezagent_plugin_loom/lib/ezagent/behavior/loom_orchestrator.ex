@@ -721,9 +721,11 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
   defp v0?(%URI{} = uri), do: String.contains?(URI.to_string(uri), "/loomv0_")
   defp v0?(_), do: false
 
-  # Compose the v0 subtask text:current files + user's modification request.
+  # Compose the v0 subtask text:current files + user's modification request +
+  # 用户上传的素材(参考 HTML/文本 → 内容;图片 → 可引用的 URL)。
   # v0's system prompt (`Prompts.page_gen_system_prompt`) handles output rules.
   # 2026-06-02 多文件:current_source 现为 files map,逐文件渲染成带 file= 的代码块。
+  # 2026-06-12:把用户消息的 attachments(resource://uploads/…)解析进来喂给 v0。
   defp v0_task(user_request, dispatch_hint, current_files) do
     files_block =
       current_files
@@ -746,6 +748,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
     (会作为 page_update 的 summary)。不要输出 /platform.js 或 /ezagent-ui.js。
     """
   end
+
 
   def data_owner(_), do: :no_owner
 end

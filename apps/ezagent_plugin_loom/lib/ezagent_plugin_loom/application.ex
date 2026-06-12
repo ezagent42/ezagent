@@ -130,7 +130,11 @@ defmodule EzagentPluginLoom.Application do
       {Ezagent.Entity.LoomV0Worker, :receive, Ezagent.Behavior.LoomV0Worker},
       # 2026-06-10 — stitchworker: preview-side AI (Stitch chat + AiSpot),
       # @-only, DeepSeek-backed. Replaces the old direct-DeepSeek path.
+      # 2026-06-12 — now the ORCHESTRATOR over the stitch sub-workers below.
       {Ezagent.Entity.LoomStitchWorker, :receive, Ezagent.Behavior.LoomStitchWorker},
+      # 2026-06-12 — stitch sub-workers (chat/navigation/controls/content):
+      # real worker Kinds the Stitch orchestrator fans a turn out to.
+      {Ezagent.Entity.LoomStitchSubWorker, :receive, Ezagent.Behavior.LoomStitchSubWorker},
       # 2026-06-01 — team manager: @-mention-driven add/remove worker agent.
       # Uses DeepSeek NL parsing → spawn/terminate Kind + chat.join/leave.
       {Ezagent.Entity.LoomMetaAgent, :receive, Ezagent.Behavior.LoomMetaAgent}
@@ -148,6 +152,8 @@ defmodule EzagentPluginLoom.Application do
       Ezagent.PluginLoom.Template.LoomV0Worker,
       # 2026-06-10 — stitchworker Template Class (preview-side AI).
       Ezagent.PluginLoom.Template.LoomStitchWorker,
+      # 2026-06-12 — stitch sub-worker Template Class.
+      Ezagent.PluginLoom.Template.LoomStitchSubWorker,
       # 2026-06-01 — team manager Template Class.
       Ezagent.PluginLoom.Template.LoomMetaAgent,
       # Session template: "create a loom session" auto-assembles the team
@@ -188,6 +194,12 @@ defmodule EzagentPluginLoom.Application do
         flavor: "loomstitch",
         kind: Ezagent.Entity.LoomStitchWorker,
         template_class: Ezagent.PluginLoom.Template.LoomStitchWorker
+      },
+      # 2026-06-12 — `entity://agent/<ws>/loomstitchsub_<sid>_<role>`.
+      %{
+        flavor: "loomstitchsub",
+        kind: Ezagent.Entity.LoomStitchSubWorker,
+        template_class: Ezagent.PluginLoom.Template.LoomStitchSubWorker
       },
       # 2026-06-01 — `entity://agent/<ws>/loommeta_<name>` (team manager;
       # one per loom session, spawned by Team.ensure_team).

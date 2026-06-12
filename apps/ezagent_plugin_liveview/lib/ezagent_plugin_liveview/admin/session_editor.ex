@@ -86,6 +86,15 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
   defp session_header(assigns) do
     ~H"""
     <header class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shrink-0">
+      <button
+        type="button"
+        phx-click="refresh_session"
+        title={gettext("Refresh this session (reload tabs / members / state)")}
+        aria-label={gettext("Refresh session")}
+        class="shrink-0 p-1 rounded text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+      >
+        <.icon name="refresh" size="sm" />
+      </button>
       <.session_selector current_session_uri={@current_session_uri} sessions={@sessions} />
       <.loom_link current_session_uri={@current_session_uri} />
       <.create_session_button
