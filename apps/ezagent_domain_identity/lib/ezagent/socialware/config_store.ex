@@ -231,9 +231,11 @@ defmodule Ezagent.Socialware.ConfigStore do
   idempotent on BOTH the serial pre-check AND the unique-constraint conflict
   path: re-dispatching ANY already-applied turn (current OR superseded) returns
   that turn's historical object id (a string) instead of minting a new object —
-  satisfying the `config_id: :string` action contract. The `write_and_point/1`
-  unique index on `(workspace, subject, key, source_turn_id)` guarantees at
-  most one object per turn, so this is unambiguous.
+  satisfying the `config_id: :string` action contract. Lookup is by
+  `source_turn_id` alone; the DB unique index `(workspace, subject, key,
+  source_turn_id)` is tuple-scoped, but the production invariant (one settled
+  Turn → one `config_delta` → one `(subject, key)`, self-bound in ConfigEvolve)
+  means a `source_turn_id` maps to a single object, so `limit: 1` is unambiguous.
   """
   @spec object_for_turn(String.t()) :: {:ok, String.t()} | :none
   def object_for_turn(turn_id) when is_binary(turn_id) do
