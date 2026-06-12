@@ -1,0 +1,263 @@
+defmodule Ezagent.Kind.KindBaseBackfill do
+  @moduledoc """
+  P5-0 (socialware substrate collapse) — backfill every persisted session
+  snapshot's `:kind_base` slice with its concrete as-built behavior set, and
+  the go/no-go gate that proves ZERO nil/missing `:kind_base` session rows
+  remain.
+
+  ## Why this exists (the load-bearing precondition for P5-1)
+
+  `Ezagent.Kind.BehaviorSet.effective_set/2` expands a NIL / missing
+  `:kind_base` capture to the host Kind's FULL declared list (the legacy
+  sentinel rule). Today every session-spawn path omits `:behaviors`, so every
+  session snapshot persists `%{behaviors: nil}` — which is FINE today because
+  each session Kind's declared list IS its own set (chat ≠ socialware, two
+  distinct Kinds).
+
+  P5-1 will collapse both into ONE Kind whose declared list is the UNION
+  `{Chat, Publisher.SessionImpl, ExternalMirror, Turn, Surface}`. At that
+  point a nil-`:kind_base` chat row would cold-load with the entire socialware
+  superset, silently breaking P1's "chat denies `surface.*`/`turn.*`"
+  invariant. This module sets every existing session row's `:kind_base` to the
+  concrete set BEFORE the union lands.
+
+  ## Classification — by DURABLE SLICE SHAPE, never `kind_type`
+
+  Both `Ezagent.Entity.Session` (chat) and `Ezagent.Entity.SocialwareSession`
+  return `kind_type "session"`, so `kind_type` cannot distinguish them. We
+  classify by the slice keys actually present in the durable state:
+
+    * a `:surface` OR `:turns` slice ⇒ **socialware** ⇒
+      `{Chat, Publisher.SessionImpl, Turn, Surface}`
+    * an `:external_mirror` slice (and NO socialware slice) ⇒ **chat** ⇒
+      `{Chat, Publisher.SessionImpl, ExternalMirror}`
+
+  Any row that is AMBIGUOUS (socialware slices AND `:external_mirror`) or
+  UNCLASSIFIABLE (neither shape) **FAILS LOUD** — never guess.
+
+  ## Migration boundary
+
+  TEST / sandbox DB only (per the P5 plan). The module reads + rewrites
+  `kind_snapshots` rows via the same `Ezagent.Kind.Snapshot.save_now/3` write
+  path the runtime uses, so the rewritten `:kind_base` two-container slice is
+  byte-identical to what `KindBase.create/1` would have persisted with an
+  explicit `:behaviors` arg.
+  """
+
+  require Logger
+
+  alias Ezagent.Behavior.KindBase
+  alias Ezagent.Ecto.KindSnapshot
+
+  # Slice keys that mark a snapshot as socialware-shaped. Sourced from the
+  # session behaviors' `state_slice/0`: Turn → :turns, Surface → :surface.
+  @socialware_slice_keys [:turns, :surface]
+  # Slice key that marks a chat-shaped session (ExternalMirror → :external_mirror).
+  @chat_marker_slice_key :external_mirror
+
+  # The stable type atom both session Kinds share (Session + SocialwareSession).
+  @session_kind_type "session"
+
+  # As-built concrete behavior sets (the value stored verbatim in `:kind_base`,
+  # WITHOUT the always-on base behaviors KindBase/Manage which BehaviorSet
+  # appends). These are module ATOM references only — no function is called on
+  # them here, so referencing them creates NO compile dependency on the domain
+  # apps (same pattern as BehaviorSet.@slice_owners, which lives in core).
+  @chat_set [
+    Ezagent.Behavior.Chat,
+    Ezagent.Behavior.Publisher.SessionImpl,
+    Ezagent.Behavior.ExternalMirror
+  ]
+
+  @socialware_set [
+    Ezagent.Behavior.Chat,
+    Ezagent.Behavior.Publisher.SessionImpl,
+    Ezagent.Behavior.Turn,
+    Ezagent.Behavior.Surface
+  ]
+
+  @type classification :: :chat | :socialware
+  @type classify_error ::
+          {:ambiguous, [atom()]} | {:unclassifiable, [atom()]}
+
+  @doc "The as-built behavior set for a classification (module atoms, no base behaviors)."
+  @spec target_behaviors(classification()) :: [module()]
+  def target_behaviors(:chat), do: @chat_set
+  def target_behaviors(:socialware), do: @socialware_set
+
+  @doc """
+  Classify a decoded session snapshot state by its durable slice shape.
+
+  Returns `{:ok, :socialware}` / `{:ok, :chat}`, or fails loud with
+  `{:error, {:ambiguous, keys}}` / `{:error, {:unclassifiable, keys}}` for a
+  row that cannot be unambiguously placed.
+  """
+  @spec classify_session_state(map()) :: {:ok, classification()} | {:error, classify_error()}
+  def classify_session_state(state) when is_map(state) do
+    keys = Map.keys(state)
+    has_socialware? = Enum.any?(@socialware_slice_keys, &Map.has_key?(state, &1))
+    has_chat_marker? = Map.has_key?(state, @chat_marker_slice_key)
+
+    cond do
+      has_socialware? and has_chat_marker? ->
+        {:error, {:ambiguous, keys}}
+
+      has_socialware? ->
+        {:ok, :socialware}
+
+      has_chat_marker? ->
+        {:ok, :chat}
+
+      true ->
+        {:error, {:unclassifiable, keys}}
+    end
+  end
+
+  @doc """
+  Is the `:kind_base` slice nil / missing for this state?
+
+  `true` when the slice key is absent, OR present but captures the legacy
+  sentinel `nil` (`KindBase.behaviors_in_slice/1` returns `nil`). `false` when
+  it captures a present list (already backfilled / spawned with `:behaviors`).
+  """
+  @spec kind_base_missing?(map()) :: boolean()
+  def kind_base_missing?(state) when is_map(state) do
+    kind_base_key = KindBase.state_slice()
+
+    case Map.fetch(state, kind_base_key) do
+      :error -> true
+      {:ok, slice} -> is_nil(KindBase.behaviors_in_slice(slice))
+    end
+  end
+
+  @doc """
+  Pure transform: backfill a decoded session snapshot state's `:kind_base`
+  slice with the classified as-built set.
+
+  Returns `{:ok, new_state}` with `:kind_base` set to the two-container shape
+  `KindBase` persists (`%{state: %{behaviors: set}, transients: %{}}`), or
+  `{:error, reason}` from classification (fail-loud, state unchanged).
+  """
+  @spec backfill_state(map()) :: {:ok, map()} | {:error, classify_error()}
+  def backfill_state(state) when is_map(state) do
+    with {:ok, classification} <- classify_session_state(state) do
+      set = target_behaviors(classification)
+      kind_base_key = KindBase.state_slice()
+      new_slice = %{state: %{behaviors: set}, transients: %{}}
+      {:ok, Map.put(state, kind_base_key, new_slice)}
+    end
+  end
+
+  @doc """
+  Run the backfill over every persisted session snapshot whose `:kind_base` is
+  nil / missing.
+
+  For each such row: decode → classify by slice shape → rewrite `:kind_base` →
+  persist back via `Ezagent.Kind.Snapshot.save_now/3`. A row that cannot be
+  classified FAILS LOUD (raises) — the whole task aborts, never guesses.
+
+  Options:
+    * `:dry_run` (boolean, default `false`) — classify + report without writing.
+
+  Returns `{:ok, %{scanned: n, backfilled: n, already: n, dry_run: n}}`.
+  Raises on the FIRST unclassifiable / ambiguous row.
+  """
+  @spec run(keyword()) :: {:ok, map()}
+  def run(opts \\ []) when is_list(opts) do
+    dry_run? = Keyword.get(opts, :dry_run, false)
+
+    session_rows()
+    |> Enum.reduce(%{scanned: 0, backfilled: 0, already: 0, dry_run: 0}, fn row, acc ->
+      acc = %{acc | scanned: acc.scanned + 1}
+
+      case KindSnapshot.decode_state(row) do
+        {:ok, state} -> backfill_row(row, state, dry_run?, acc)
+        :error -> raise_undecodable(row, :empty)
+        {:error, reason} -> raise_undecodable(row, reason)
+      end
+    end)
+    |> then(&{:ok, &1})
+  end
+
+  @doc """
+  Go/no-go gate. Returns `{:ok, count}` where `count` is the number of session
+  snapshot rows whose `:kind_base` is STILL nil / missing. `count == 0` is the
+  green light for P5-1 to proceed; `> 0` means the backfill has not (fully) run.
+  """
+  @spec gate() :: {:ok, non_neg_integer()}
+  def gate do
+    count =
+      session_rows()
+      |> Enum.count(fn row ->
+        case KindSnapshot.decode_state(row) do
+          {:ok, state} -> kind_base_missing?(state)
+          # An undecodable row cannot be proven backfilled — count it as
+          # not-go so the gate fails loud rather than green-lighting.
+          _ -> true
+        end
+      end)
+
+    {:ok, count}
+  end
+
+  # --- internals -------------------------------------------------------------
+
+  defp backfill_row(row, state, dry_run?, acc) do
+    if kind_base_missing?(state) do
+      case backfill_state(state) do
+        {:ok, new_state} ->
+          if dry_run? do
+            %{acc | dry_run: acc.dry_run + 1}
+          else
+            persist_backfilled(row, new_state)
+            %{acc | backfilled: acc.backfilled + 1}
+          end
+
+        {:error, reason} ->
+          raise ArgumentError,
+                "Ezagent.Kind.KindBaseBackfill: session snapshot #{row.uri} is " <>
+                  "unclassifiable/ambiguous (#{inspect(reason)}). Per P5-0 this MUST " <>
+                  "fail loud — no guessing. Inspect the row " <>
+                  "(`mix ezagent.snapshot.dump #{row.uri}`) and fix the data."
+      end
+    else
+      %{acc | already: acc.already + 1}
+    end
+  end
+
+  # Write the backfilled state back via the ECTO upsert directly — NOT via
+  # `Snapshot.save_now/3`. This module lives in `ezagent_core`, which has no
+  # compile/runtime dependency on the domain-owned session Kind modules
+  # (`Ezagent.Entity.Session` / `SocialwareSession`); calling
+  # `kind_module.type_name/0` would crash when those modules aren't loaded.
+  # We don't NEED a module: the row already carries the correct `kind_type`
+  # ("session"), `version`, and `workspace_uri`, and we mutate ONLY the state
+  # binary. We strip transients (`Ezagent.Kind.Snapshot.strip_transients/1`) so
+  # the persisted shape matches exactly what the runtime writes.
+  defp persist_backfilled(row, new_state) do
+    binary =
+      new_state
+      |> Ezagent.Kind.Snapshot.strip_transients()
+      |> :erlang.term_to_binary()
+
+    case KindSnapshot.upsert(row.uri, row.kind_type, binary, row.version, row.workspace_uri) do
+      {:ok, _row} ->
+        :ok
+
+      {:error, reason} ->
+        raise "Ezagent.Kind.KindBaseBackfill: failed to persist backfilled " <>
+                ":kind_base for #{row.uri}: #{inspect(reason)}"
+    end
+  end
+
+  defp session_rows do
+    KindSnapshot.list_all()
+    |> Enum.filter(&(&1.kind_type == @session_kind_type))
+  end
+
+  defp raise_undecodable(row, reason) do
+    raise "Ezagent.Kind.KindBaseBackfill: session snapshot #{row.uri} is " <>
+            "undecodable (#{inspect(reason)}) — refusing to backfill over an " <>
+            "unloadable row (would risk durable state). Fix/clear the row first."
+  end
+end
