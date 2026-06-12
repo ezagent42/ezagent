@@ -69,7 +69,11 @@ defmodule Ezagent.Behavior.Chat.Delivery do
 
   @spec dispatch_cross_session_call(URI.t(), Message.t()) :: term()
   def dispatch_cross_session_call(target_session_uri, %Message{} = msg) do
-    send_target = Ezagent.URI.with_action(target_session_uri, :chat, :send)
+    # PR-1: cross-session re-entry uses the uniform public verb
+    # session.send (chat.send demoted to session-internal). The action
+    # atom is still :send (routing keys on {kind, atom}); mode preserved
+    # (:ignore via reply: :ignore on the Cmd ctx).
+    send_target = Ezagent.URI.with_action(target_session_uri, :session, :send)
 
     Ezagent.Router.dispatch(%Cmd{
       target: send_target,

@@ -121,7 +121,7 @@ defmodule Ezagent.Behavior.EchoTest do
       assert dispatches == []
     end
 
-    test "emits :dispatch effect targeting the session's chat.send when caller is a session URI" do
+    test "emits :dispatch effect targeting the session's session.send when caller is a session URI" do
       msg = Ezagent.Message.new(
         Ezagent.URI.new!("entity://team-alpha/user/alice"),
         %{text: "ping"}
@@ -141,8 +141,10 @@ defmodule Ezagent.Behavior.EchoTest do
       assert [{:dispatch, %Ezagent.Cmd{} = cmd}] =
                Enum.filter(effects, &match?({:dispatch, _}, &1))
 
+      # PR-1: the reply now targets the SINGLE public verb session.send
+      # (the action atom stays :send; chat.send demoted to session-internal).
       assert cmd.action == :send
-      assert URI.to_string(cmd.target) =~ "action=chat.send"
+      assert URI.to_string(cmd.target) =~ "action=session.send"
       assert URI.to_string(cmd.target) =~ "session://team-alpha/default/main"
       # The reply text format
       assert %Ezagent.Message{body: %{text: "echo: ping"}} = cmd.args.message

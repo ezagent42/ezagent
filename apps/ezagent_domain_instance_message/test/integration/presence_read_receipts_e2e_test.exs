@@ -146,7 +146,7 @@ defmodule EzagentDomainInstanceMessage.Integration.PresenceReadReceiptsE2ETest d
         ref_id: nil
       )
 
-    target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
 
     Invocation.dispatch(%Invocation{
       target: target,

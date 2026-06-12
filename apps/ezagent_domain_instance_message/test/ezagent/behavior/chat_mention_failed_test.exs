@@ -137,7 +137,7 @@ defmodule Ezagent.Behavior.Chat.MentionFailedTest do
     ]
 
     inv = %Invocation{
-      target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.send"),
+      target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
       mode: :call,
       args: %{message: msg},
       ctx: %{caller: caller_uri, caps: caps, deadline_ms: 5_000}

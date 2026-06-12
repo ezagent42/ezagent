@@ -81,7 +81,7 @@ defmodule Ezagent.URI do
       entity://system/user/admin                             # PR-2 entity
       entity://team-alpha/agent/cc_demo?action=chat.receive      # entity + action
       entity://team-alpha/agent/curl_my-deepseek              # cross-workspace entity
-      session://demo-workspace/demo-class/main?action=chat.send         # PR-7 session
+      session://demo-workspace/demo-class/main?action=session.send      # PR-7 session
       template://system/agent/cc-orchestrator                # PR-7 agent template
       template://team-alpha/session/code-review@abc123        # PR-7 session template
       resource://team-alpha/uploads/file-abc                  # PR-7 resource
@@ -585,7 +585,7 @@ defmodule Ezagent.URI do
   - `entity://system/user/admin` → unchanged
   - `entity://team-alpha/agent/cc_demo?action=chat.receive`
     → `%URI{scheme: "entity", host: "team-alpha", path: "/agent/cc_demo"}`
-  - `session://demo-workspace/demo-class/main?action=chat.send`
+  - `session://demo-workspace/demo-class/main?action=session.send`
     → `%URI{scheme: "session", host: "demo-workspace", path: "/demo-class/main"}`
   - `template://system/agent/cc-orchestrator`
     → unchanged (already in instance form)
@@ -906,7 +906,7 @@ defmodule Ezagent.URI do
   Examples:
   - `entity://system/agent/echo_default?action=echo.say` → `{:ok, {:echo, :say}}`
   - `entity://team-alpha/agent/cc_demo-builder?action=chat.receive` → `{:ok, {:chat, :receive}}`
-  - `session://demo-workspace/demo-class/main?action=chat.send` → `{:ok, {:chat, :send}}`
+  - `session://demo-workspace/demo-class/main?action=session.send` → `{:ok, {:session, :send}}`
   - `entity://team-alpha/agent/cc_demo-builder` → `{:error, :missing_action}`
   - `entity://team-alpha/agent/cc_demo-builder?action=` → `{:error, :missing_action}`
   - `entity://team-alpha/agent/cc_demo-builder?action=justone` → `{:error, :malformed_action}`
@@ -948,7 +948,7 @@ defmodule Ezagent.URI do
   - `entity://system/user/admin` → `""`
   - `entity://team-alpha/agent/cc_demo-builder?action=chat.receive` → `"behavior/chat/receive"`
   - `entity://team-alpha/agent/cc_demo-builder/auth/login` → `"auth/login"`
-  - `session://demo-workspace/demo-class/main?action=chat.send` → `"behavior/chat/send"`
+  - `session://demo-workspace/demo-class/main?action=session.send` → `"behavior/session/send"`
   """
   @spec subresource(URI.t()) :: String.t()
   def subresource(%URI{path: nil}), do: ""

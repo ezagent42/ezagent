@@ -9,7 +9,7 @@ defmodule EzagentPluginFeishu.BindingPolicy do
   `feishu://oc_xxx` Receiver Kind directly. With the Kind deleted,
   the bound user's path is now:
 
-      Feishu (open_id) → entity://user/<X> → session://<Y>?action=chat.send
+      Feishu (open_id) → entity://user/<X> → session://<Y>?action=session.send
 
   All caps the user needs to *use* a Feishu binding are
   session-participation caps. Bind-time policy therefore reduces to:

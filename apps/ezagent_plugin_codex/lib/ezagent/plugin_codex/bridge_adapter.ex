@@ -92,7 +92,9 @@ defmodule EzagentPluginCodex.BridgeAdapter do
       # SPEC §3.4 query-target idiom — `session_uri` is canonical-by-construction
       # via the chokepoint above; URI.new!/1 here consumes the canonical-form
       # string the carve-out permits.
-      target = Ezagent.URI.with_action(session_uri, :chat, :send)
+      # PR-1: session.send is the SINGLE public Session post verb
+      # (chat.send demoted to session-internal). Mode preserved (:cast).
+      target = Ezagent.URI.with_action(session_uri, :session, :send)
 
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
         target: target,

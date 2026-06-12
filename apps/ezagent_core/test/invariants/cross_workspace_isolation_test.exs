@@ -59,7 +59,7 @@ defmodule EzagentCore.Invariants.CrossWorkspaceIsolationTest do
     msg = Message.new(caller_uri, %{text: "hello", attachments: []})
 
     %Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=chat.send"),
+      target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
       mode: :call,
       args: %{message: msg},
       ctx: %{caller: caller_uri, caps: caps, reply: :ignore}

@@ -99,7 +99,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatReceiveUserSliceChangeTes
 
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session)}?action=chat.send"),
+        target: URI.new!("#{URI.to_string(session)}?action=session.send"),
         mode: :cast,
         args: %{message: msg},
         ctx: %{caller: sender, caps: Ezagent.SystemPrincipal.caps("system://bootstrap"), reply: :ignore}

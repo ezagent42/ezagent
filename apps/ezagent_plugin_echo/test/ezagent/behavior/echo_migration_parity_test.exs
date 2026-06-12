@@ -15,7 +15,7 @@ defmodule Ezagent.Behavior.EchoMigrationParityTest do
 
   1. `{:set, :count, _}` + `{:set, :last_msg, _}`
   2. `{:ok, %{echo: msg}, _}` direct return tuple
-  3. `{:dispatch, %Cmd{action: :send, target: session-URI?action=chat.send,
+  3. `{:dispatch, %Cmd{action: :send, target: session-URI?action=session.send,
                        args: %{message: %Message{}}}}`
 
   This test pins the externally-observable contract at the boundary

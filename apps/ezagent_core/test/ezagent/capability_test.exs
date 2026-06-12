@@ -231,17 +231,25 @@ defmodule Ezagent.CapabilityTest do
       assert n.behavior == :unknown
     end
 
-    test "session://system/default/main?action=chat.send → workspace from URI path (SPEC v3 §3.6 PR-7)" do
+    test "session://system/default/main?action=session.send → workspace from URI path (SPEC v3 §3.6 PR-7)" do
       session_uri =
         URI.new!(
           "session://team-alpha/default/test-cap-for-action-#{System.unique_integer([:positive])}"
         )
 
-      target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+      target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
       n = Capability.cap_for_action(Ezagent.Entity.Session, :send, target)
 
       assert n.kind == :session
-      assert n.behavior == Ezagent.Behavior.Chat
+      # PR-1: {Session, :send} is now registered to Ezagent.Behavior.Session
+      # (the public verb), so the legacy registry-lookup-derived behavior axis
+      # is Session. Production authz does NOT use this fallback for the send
+      # path — it reads Behavior.Session.required_caps()[:send], which is
+      # hand-keyed to Ezagent.Behavior.Chat for cap parity (Invariant #19), so
+      # existing chat-keyed grants still authorize session.send (asserted just
+      # below).
+      assert n.behavior == Ezagent.Behavior.Session
+      assert Ezagent.Behavior.Session.required_caps()[:send].behavior == Ezagent.Behavior.Chat
       assert URI.to_string(n.workspace_uri) == "workspace://team-alpha"
     end
 
@@ -252,7 +260,7 @@ defmodule Ezagent.CapabilityTest do
       unbound =
         URI.new!("session://team-alpha/default/never-bound-#{System.unique_integer([:positive])}")
 
-      target = URI.new!("#{URI.to_string(unbound)}?action=chat.send")
+      target = URI.new!("#{URI.to_string(unbound)}?action=session.send")
       n = Capability.cap_for_action(Ezagent.Entity.Session, :send, target)
 
       assert URI.to_string(n.workspace_uri) == "workspace://team-alpha"
@@ -288,7 +296,7 @@ defmodule Ezagent.CapabilityTest do
 
       :ok = Ezagent.WorkspaceRegistry.bind(session_uri, "workspace://team-alpha")
 
-      target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+      target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
       n = Capability.cap_for_action(Ezagent.Entity.Session, :send, target)
 
       assert Capability.matches?(admin_cap, n)
@@ -322,7 +330,7 @@ defmodule Ezagent.CapabilityTest do
 
       assert Capability.matches?(
                c,
-               needed_session("#{URI.to_string(session_uri)}?action=chat.send")
+               needed_session("#{URI.to_string(session_uri)}?action=session.send")
              )
     end
 
@@ -353,7 +361,7 @@ defmodule Ezagent.CapabilityTest do
 
       refute Capability.matches?(
                c,
-               needed_session("session://team-alpha/default/other-w3-#{uniq}?action=chat.send")
+               needed_session("session://team-alpha/default/other-w3-#{uniq}?action=session.send")
              )
     end
 
@@ -510,7 +518,7 @@ defmodule Ezagent.CapabilityTest do
                Capability.cap_for_action(
                  Ezagent.Entity.Session,
                  :send,
-                 URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+                 URI.new!("#{URI.to_string(session_uri)}?action=session.send")
                )
              ),
              "scope-tuple cap with wrong kind must NOT match"

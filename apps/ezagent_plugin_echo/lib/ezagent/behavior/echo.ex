@@ -172,7 +172,9 @@ defmodule Ezagent.Behavior.Echo do
             end
 
           reply_msg = Message.new(agent_uri, reply_body, ref_id: msg.id)
-          target = Ezagent.URI.with_action(session, :chat, :send)
+          # PR-1: session.send is the SINGLE public Session post verb
+          # (chat.send demoted to session-internal). Mode preserved (:ignore).
+          target = Ezagent.URI.with_action(session, :session, :send)
 
           cmd =
             Cmd.new(target, :send, %{message: reply_msg}, %{

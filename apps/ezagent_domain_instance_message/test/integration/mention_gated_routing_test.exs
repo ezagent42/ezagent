@@ -105,7 +105,7 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
 
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session)}?action=chat.send"),
+        target: URI.new!("#{URI.to_string(session)}?action=session.send"),
         mode: :cast,
         args: %{message: msg},
         ctx: %{

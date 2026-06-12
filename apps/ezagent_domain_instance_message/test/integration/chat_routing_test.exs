@@ -66,7 +66,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
     # members except sender. Only member besides sender is... none yet
     # (admin is the only joined member at boot). So no :receive fires.
     # The chat_message broadcast still fires for session:events.
-    target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
 
     :ok =
       Invocation.dispatch(%Invocation{

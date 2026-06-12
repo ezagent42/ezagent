@@ -304,7 +304,9 @@ defmodule Ezagent.Behavior.CurlAgent do
 
       %URI{} = session ->
         reply_msg = Message.new(self_uri, %{text: text, attachments: []})
-        target = Ezagent.URI.with_action(session, :chat, :send)
+        # PR-1: session.send is the SINGLE public Session post verb
+        # (chat.send demoted to session-internal). Mode preserved (:ignore).
+        target = Ezagent.URI.with_action(session, :session, :send)
 
         cmd =
           Cmd.new(target, :send, %{message: reply_msg}, %{

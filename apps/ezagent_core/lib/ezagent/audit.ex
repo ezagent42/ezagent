@@ -176,7 +176,10 @@ defmodule Ezagent.Audit do
   # claude reply silently disappeared.
   defp build_row([:ezagent, :chat, :reply_dispatch_failed], _measurements, meta) do
     agent = Map.get(meta, :agent)
-    target = "#{Map.get(meta, :target_session)}?action=chat.send"
+    # PR-1: session.send is the SINGLE public Session post verb
+    # (chat.send demoted to session-internal) — the audit target reflects
+    # the verb the failed reply dispatch actually used.
+    target = "#{Map.get(meta, :target_session)}?action=session.send"
 
     %{
       trace_id: nil,

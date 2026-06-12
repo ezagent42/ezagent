@@ -662,7 +662,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       # Build a dispatch envelope identical to what `Invocation.dispatch/1`
       # would land in a Session GenServer's handle_call/cast.
-      target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+      target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
 
       inv = %Ezagent.Invocation{
         target: target,

@@ -368,7 +368,9 @@ defmodule Mix.Tasks.Ezagent.Stress do
 
   defp inject_messages(session_uri, budget, interval_ms, turn_cap) do
     admin = admin_uri()
-    target = Ezagent.URI.with_action(session_uri, :chat, :send)
+    # PR-1: session.send is the SINGLE public Session post verb
+    # (chat.send demoted to session-internal).
+    target = Ezagent.URI.with_action(session_uri, :session, :send)
     caps = admin_caps()
 
     Enum.reduce(1..budget, 0, fn i, count ->

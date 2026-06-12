@@ -312,7 +312,9 @@ defmodule Ezagent.Behavior.NpAgent do
         reply_msg =
           Message.new(self_uri, %{text: text, attachments: []}, ref_id: in_msg.id)
 
-        target = Ezagent.URI.with_action(session, :chat, :send)
+        # PR-1: session.send is the SINGLE public Session post verb
+        # (chat.send demoted to session-internal). Mode preserved (:ignore).
+        target = Ezagent.URI.with_action(session, :session, :send)
 
         cmd =
           Cmd.new(target, :send, %{message: reply_msg}, %{

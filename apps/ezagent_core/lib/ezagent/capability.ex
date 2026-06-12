@@ -454,7 +454,7 @@ defmodule Ezagent.Capability do
 
   Phase 3d (P3-D6 hard flip + #P1-8): the target URI is required so
   we can extract the `instance` part (e.g. `session://default/team-alpha/main` from
-  `session://default/team-alpha/main?action=chat.send`). `behavior` is looked up via
+  `session://default/team-alpha/main?action=session.send`). `behavior` is looked up via
   `BehaviorRegistry.lookup(kind_module, action)` — same lookup
   `Kind.Runtime` does for invoke routing.
 

@@ -62,7 +62,7 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
   end
 
   defp chat_send_target(session_uri),
-    do: URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+    do: URI.new!("#{URI.to_string(session_uri)}?action=session.send")
 
   defp dispatch_send(caller_uri, caps, session_uri, text, mentions \\ []) do
     msg =

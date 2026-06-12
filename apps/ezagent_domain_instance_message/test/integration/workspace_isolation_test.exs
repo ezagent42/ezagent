@@ -92,7 +92,7 @@ defmodule EzagentDomainInstanceMessage.Integration.WorkspaceIsolationTest do
     msg = Message.new(sender, %{text: text, attachments: []})
 
     inv = %Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=chat.send"),
+      target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
       mode: :cast,
       args: %{message: msg},
       ctx: %{

@@ -299,7 +299,7 @@ defmodule EzagentPluginNp.Integration.Comprehensive4AgentE2eTest do
 
       :ok =
         Invocation.dispatch(%Invocation{
-          target: URI.new!("#{URI.to_string(session_uri)}?action=chat.send"),
+          target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
           mode: :cast,
           args: %{message: inbound_msg},
           ctx: %{

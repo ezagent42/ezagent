@@ -160,7 +160,7 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
         mentions: [echo_agent_uri]
       )
 
-    send_target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+    send_target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
 
     :ok =
       Invocation.dispatch(%Invocation{

@@ -96,7 +96,9 @@ defmodule EzagentPluginLiveview.Admin.Compose do
         legend_triggers: legend_triggers
       )
 
-    target = Ezagent.URI.with_action(socket.assigns.current_session_uri, :chat, :send)
+    # PR-1: session.send is the SINGLE public Session post verb
+    # (chat.send demoted to session-internal). Mode preserved (:cast).
+    target = Ezagent.URI.with_action(socket.assigns.current_session_uri, :session, :send)
 
     inv = %Ezagent.Invocation{
       target: target,
