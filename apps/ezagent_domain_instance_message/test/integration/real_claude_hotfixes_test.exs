@@ -45,7 +45,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RealClaudeHotfixesTest do
   end
 
   describe "fix #1: to_claude payload meta includes source session" do
-    test "EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Session, :receive) on Agent sends {:agent_bridge_push, \"to_claude\", %{meta}} to bound channel pid with session key" do
+    test "session.receive on Agent sends to_claude agent_bridge_push with session-keyed meta to bound channel pid" do
       agent_uri =
         URI.new!("entity://team-alpha/agent/cc_meta-test-#{System.unique_integer([:positive])}")
 

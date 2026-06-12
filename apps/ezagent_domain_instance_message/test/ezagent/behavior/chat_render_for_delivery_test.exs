@@ -1,7 +1,7 @@
 defmodule Ezagent.Behavior.ChatRenderForDeliveryTest do
   @moduledoc """
   Pure unit tests for the PR-4b delivery transform (team-routing-unification
-  §3.4): `Chat.render_for_delivery/4` + `Chat.message_vars/2`. No DB / no full
+  §3.4): `Session.render_for_delivery/4` + `Session.message_vars/2`. No DB / no full
   runtime — these are pure functions over a message + ctx + templates map.
   """
   use ExUnit.Case, async: true
@@ -20,7 +20,7 @@ defmodule Ezagent.Behavior.ChatRenderForDeliveryTest do
       templates = %{"telephone_hop" => "接龙：{body}（by {sender}）"}
       ctx = %{rule_id: 1, rule_set: "telephone", prompt_template_ref: "telephone_hop"}
 
-      out = Chat.render_for_delivery(msg("山顶的雪化了"), ctx, templates, @session)
+      out = Session.render_for_delivery(msg("山顶的雪化了"), ctx, templates, @session)
       assert out.body.text == "接龙：山顶的雪化了（by entity://system/user/admin）"
       # only the body text is rewritten; identity fields are preserved
       assert out.sender == URI.new!("entity://system/user/admin")
@@ -28,13 +28,13 @@ defmodule Ezagent.Behavior.ChatRenderForDeliveryTest do
 
     test "message is UNCHANGED when ctx has no / unknown / nil template ref" do
       m = msg("hello")
-      assert Chat.render_for_delivery(m, %{prompt_template_ref: nil}, %{}, @session) == m
-      assert Chat.render_for_delivery(m, nil, %{}, @session) == m
-      assert Chat.render_for_delivery(m, %{prompt_template_ref: "missing"}, %{}, @session) == m
+      assert Session.render_for_delivery(m, %{prompt_template_ref: nil}, %{}, @session) == m
+      assert Session.render_for_delivery(m, nil, %{}, @session) == m
+      assert Session.render_for_delivery(m, %{prompt_template_ref: "missing"}, %{}, @session) == m
 
       # ref present but the template map has it → renders; sanity that the
       # "unchanged" cases above are genuinely the no-op path
-      refute Chat.render_for_delivery(
+      refute Session.render_for_delivery(
                m,
                %{prompt_template_ref: "t"},
                %{"t" => "X {body}"},
@@ -45,7 +45,7 @@ defmodule Ezagent.Behavior.ChatRenderForDeliveryTest do
 
   describe "message_vars/2" do
     test "extracts sender / body / session" do
-      vars = Chat.message_vars(msg("hi there"), @session)
+      vars = Session.message_vars(msg("hi there"), @session)
       assert vars.sender == "entity://system/user/admin"
       assert vars.body == "hi there"
       assert vars.session == "session://system/default/main"

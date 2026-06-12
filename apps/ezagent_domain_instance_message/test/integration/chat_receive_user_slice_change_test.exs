@@ -140,7 +140,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatReceiveUserSliceChangeTes
       # contract closes — see
       # `apps/ezagent_core/test/invariants/slice_change_event_carries_no_slice_content_test.exs`).
       assert event.uri == receiver
-      assert event.slice_key == :chat
+      assert event.slice_key == :session
       assert is_integer(event.cursor) and event.cursor >= 1
       assert %DateTime{} = event.event_at
       assert event.result_summary == :ok

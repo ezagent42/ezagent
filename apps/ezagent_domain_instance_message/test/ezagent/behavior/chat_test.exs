@@ -55,7 +55,7 @@ defmodule Ezagent.Behavior.ChatTest do
     end
 
     test "state_slice/0 returns :chat" do
-      assert SessionBehavior.state_slice() == :chat
+      assert SessionBehavior.state_slice() == :session
     end
 
     test "init_slice/1 returns two-container slice; create/1 holds the PERSISTENT fields (no :monitors)" do
@@ -680,7 +680,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # P5-0b: Session requires a non-nil :kind_base; the instance_set_gate
       # reads it via effective_set/2. Seed an explicit set alongside :chat.
       initial_state = %{
-        chat: slice,
+        session: slice,
         kind_base: %{state: %{behaviors: Ezagent.Entity.Session.behaviors()}, transients: %{}}
       }
 
@@ -694,7 +694,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       # Runtime built the event (proves new_slice != slice)
       assert is_map(slice_change_event)
-      assert slice_change_event.slice_key == :chat
+      assert slice_change_event.slice_key == :session
       assert slice_change_event.action == :send
       assert slice_change_event.kind_module == Ezagent.Entity.Session
 
@@ -712,9 +712,9 @@ defmodule Ezagent.Behavior.ChatTest do
       assert slice_change_event.old_slice.state.send_cursor == 0
 
       # State carries the mutated slice
-      assert new_state.chat.state.last_message_id == msg.id
-      assert new_state.chat.state.last_message.id == msg.id
-      assert new_state.chat.state.send_cursor == 1
+      assert new_state.session.state.last_message_id == msg.id
+      assert new_state.session.state.last_message.id == msg.id
+      assert new_state.session.state.send_cursor == 1
 
       # Fire emit directly the same way Kind.Server.commit_and_notify/3
       # does post-snapshot — and assert subscribers receive the event.

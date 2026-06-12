@@ -63,7 +63,7 @@ defmodule Ezagent.Behavior.PublisherTest do
 
       assert %Ezagent.Publisher.Event{} = event
       assert event.cursor == 1
-      assert event.slice_key == :chat
+      assert event.slice_key == :session
     end
 
     test "struct enforces all five keys (raises ArgumentError if any is missing)" do

@@ -265,7 +265,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
       # %{}}` (`Snapshot.coerce_loaded_to_fresh_shape/2`). Normalize to the
       # flat `.state` view (the same T3 chokepoint production consumers
       # use) before the verbatim round-trip assertion.
-      assert Ezagent.Kind.normalize_slice_view(loaded.chat) == chat_only_slice.chat
+      assert Ezagent.Kind.normalize_slice_view(loaded.session) == chat_only_slice.session
 
       # The :publisher slice (added by ExternalMirror PR-EM-0) gets
       # fresh init values via the Q5 merge path in
@@ -335,7 +335,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
       # `SessionBehavior.template_working_copy/1` accessor reads the flat `:chat` slice,
       # so pass the normalized `.state` view (same as the production
       # consumers — `McpServer.load_chat_slice`, `Session.read_*`).
-      assert SessionBehavior.template_working_copy(Ezagent.Kind.normalize_slice_view(loaded.chat)) ==
+      assert SessionBehavior.template_working_copy(Ezagent.Kind.normalize_slice_view(loaded.session)) ==
                working_copy,
              "the durable template_working_copy field must survive a Session " <>
                "snapshot/restore — Session is {:snapshot, :on_change}"
@@ -359,7 +359,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
 
       :ok =
         SnapshotFixtures.save_kind_snapshot(session_uri, Session, %{
-          chat: pre_pr2_chat,
+          session: pre_pr2_chat,
           # P5-0b: explicit :kind_base (backfilled legacy row).
           kind_base: %{state: %{behaviors: Session.behaviors()}, transients: %{}}
         })
@@ -371,7 +371,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
       # `template_working_copy` key (the snapshot layer merges at
       # slice-key level, so the loaded slice replaces the fresh one).
       loaded = Snapshot.load_or_init(session_uri, Session, %{uri: session_uri})
-      loaded_chat = Ezagent.Kind.normalize_slice_view(loaded.chat)
+      loaded_chat = Ezagent.Kind.normalize_slice_view(loaded.session)
       assert Map.has_key?(loaded_chat, :members)
       assert loaded_chat.members == pre_pr2_chat.members
 

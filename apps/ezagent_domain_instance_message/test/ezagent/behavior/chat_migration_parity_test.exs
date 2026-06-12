@@ -88,7 +88,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
     end
 
     test "state_slice/0 is :chat" do
-      assert SessionBehavior.state_slice() == :chat
+      assert SessionBehavior.state_slice() == :session
     end
 
     test "init_slice/1 returns the two-container PR-EM-6-PRE shape (monitors → transient)" do
