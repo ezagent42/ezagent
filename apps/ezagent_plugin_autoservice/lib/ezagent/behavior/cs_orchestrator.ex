@@ -69,11 +69,11 @@ defmodule Ezagent.Behavior.CsOrchestrator do
   )
 
   action(:operator_claim,
-    args: %{turn_id: :string, operator_uri: :string},
+    args: %{turn_id: :string, operator_text: :string, operator_uri: :string},
     returns: %{ok: :boolean},
     caps: [:operator_claim],
     modes: [:call],
-    description: "Operator takeover: Turn.claim + pause fan-out."
+    description: "Operator takeover: compose operator reply then Turn.claim + pause fan-out."
   )
 
   action(:operator_settle,
@@ -146,7 +146,10 @@ defmodule Ezagent.Behavior.CsOrchestrator do
   # handle_operator_claim/2
   # -----------------------------------------------------------------------
 
-  def handle_operator_claim(%{turn_id: turn_id, operator_uri: operator_uri_str}, ctx) do
+  def handle_operator_claim(
+        %{turn_id: turn_id, operator_text: operator_text, operator_uri: operator_uri_str},
+        ctx
+      ) do
     session_uri_str = ctx[:read].(:session_uri, "")
 
     case parse_session_uri(session_uri_str) do
@@ -160,10 +163,17 @@ defmodule Ezagent.Behavior.CsOrchestrator do
             :error -> operator_uri_str
           end
 
-        case TurnDriver.claim(session_uri, turn_id, operator_uri, tctx) do
-          {:ok, _} ->
-            {:ok, %{ok: true}, [{:set, :operator_active, true}]}
-
+        # Stage-1 pattern: compose the operator's own text first (stages the draft
+        # operator_only), then claim (moves turn to :awaiting_human so fan-out stays paused).
+        #
+        # CONSTRAINT: Turn.compose only allows :open (empty expected) or :aggregating status.
+        # If the bot already composed (turn is :composing), a second compose will fail.
+        # In that case log and return ok: false — the caller should cancel the bot turn
+        # and open a fresh one, or claim the existing bot draft instead.
+        with {:ok, _} <- TurnDriver.compose(session_uri, turn_id, operator_text, tctx),
+             {:ok, _} <- TurnDriver.claim(session_uri, turn_id, operator_uri, tctx) do
+          {:ok, %{ok: true}, [{:set, :operator_active, true}]}
+        else
           {:error, reason} ->
             Logger.error(
               "CsOrchestrator operator_claim failed: #{inspect(reason)}, " <>

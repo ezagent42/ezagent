@@ -224,15 +224,15 @@ defmodule EzagentPluginAutoservice.CsOrchestratorTest do
       %{session: session, customer_uri: customer_uri, fast_uri: fast_uri, slow_uri: slow_uri} =
         ctx_map
 
-      # Open a turn and compose it so claim is valid (claim transitions from :composing only).
+      # Open a turn (status :open, empty expected) — handle_operator_claim will
+      # compose the operator's text then claim. Do NOT pre-compose here since
+      # Turn.compose only allows :open (empty expected) or :aggregating status;
+      # a pre-composed (:composing) turn would cause the handler's compose to fail.
       tctx = priv_ctx()
       trigger = %{message_id: "m-#{System.unique_integer([:positive])}", text: "help me"}
 
       assert {:ok, %{turn_id: turn_id}} =
                EzagentPluginAutoservice.TurnDriver.open(session, trigger, tctx)
-
-      assert {:ok, _} =
-               EzagentPluginAutoservice.TurnDriver.compose(session, turn_id, "draft reply", tctx)
 
       operator_uri =
         Ezagent.URI.entity(:team_alpha, :user, "op-#{System.unique_integer([:positive])}")
@@ -252,7 +252,11 @@ defmodule EzagentPluginAutoservice.CsOrchestratorTest do
 
       assert {:ok, %{ok: true}, effects} =
                CsOrchestrator.handle_operator_claim(
-                 %{turn_id: turn_id, operator_uri: URI.to_string(operator_uri)},
+                 %{
+                   turn_id: turn_id,
+                   operator_text: "Operator edited reply",
+                   operator_uri: URI.to_string(operator_uri)
+                 },
                  ctx
                )
 
