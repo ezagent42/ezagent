@@ -45,20 +45,20 @@ defmodule EzagentCore.Invariants.Phase5NoRegressionTest do
   describe "Phase 5: BehaviorRegistry wiring" do
     test "Chat actions are registered on the right Kinds" do
       # Session-side actions
-      assert {:ok, Ezagent.Behavior.Chat} =
+      assert {:ok, Ezagent.Behavior.Session} =
                BehaviorRegistry.lookup(Ezagent.Entity.Session, :send)
 
-      assert {:ok, Ezagent.Behavior.Chat} =
+      assert {:ok, Ezagent.Behavior.Session} =
                BehaviorRegistry.lookup(Ezagent.Entity.Session, :join)
 
-      assert {:ok, Ezagent.Behavior.Chat} =
+      assert {:ok, Ezagent.Behavior.Session} =
                BehaviorRegistry.lookup(Ezagent.Entity.Session, :leave)
 
       # Receiver-side
-      assert {:ok, Ezagent.Behavior.Chat} =
+      assert {:ok, Ezagent.Behavior.Session} =
                BehaviorRegistry.lookup(Ezagent.Entity.User, :receive)
 
-      assert {:ok, Ezagent.Behavior.Chat} =
+      assert {:ok, Ezagent.Behavior.Session} =
                BehaviorRegistry.lookup(Ezagent.Entity.Agent, :receive)
     end
 

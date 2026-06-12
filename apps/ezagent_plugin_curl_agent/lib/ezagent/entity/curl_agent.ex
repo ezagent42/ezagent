@@ -8,7 +8,7 @@ defmodule Ezagent.Entity.CurlAgent do
   `entity://agent/team-alpha/curl_<instance_name>` — flavor `curl` prefix on
   the name segment distinguishes from `cc_*` (PTY-based Claude Code
   agents). When the chat router dispatches
-  `<receiver>?action=chat.receive`, the BehaviorRegistry maps
+  `<receiver>?action=session.receive`, the BehaviorRegistry maps
   `(CurlAgent, :receive)` straight to `Ezagent.Behavior.CurlAgent`
   without overloading the Agent Kind's receive handler.
 

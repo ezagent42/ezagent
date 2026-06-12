@@ -20,7 +20,7 @@ defmodule Ezagent.Entity.SessionTest do
       # binding list from the projection table on Session boot
       # AND `post_init/2` schedules the worker reconciliation.
       assert Session.behaviors() == [
-               Ezagent.Behavior.Chat,
+               Ezagent.Behavior.Session,
                Ezagent.Behavior.Publisher.SessionImpl,
                Ezagent.Behavior.ExternalMirror
              ]

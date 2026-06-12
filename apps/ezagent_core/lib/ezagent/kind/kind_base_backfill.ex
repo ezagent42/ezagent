@@ -71,7 +71,7 @@ defmodule Ezagent.Kind.KindBaseBackfill do
   @external_mirror_slice_key :external_mirror
   # Slice keys shared by BOTH session Kinds. Their presence (with no socialware
   # slice) is what makes a row a recognizable CHAT session — the default.
-  @session_marker_slice_keys [:chat, :publisher]
+  @session_marker_slice_keys [:session, :publisher]
 
   # The STRING forms of the session slice keys. A snapshot decoded from the
   # LEGACY JSON `state` column (`KindSnapshot.decode_state/1` fallback) has
@@ -83,7 +83,7 @@ defmodule Ezagent.Kind.KindBaseBackfill do
   # NESTED slice content stays string-keyed JSON, so the rewritten binary row
   # would still fail to load at runtime — a legacy row must be re-saved as a
   # binary snapshot (which the runtime does on its next commit) BEFORE backfill.
-  @legacy_json_marker_keys ~w(chat publisher turns surface external_mirror)
+  @legacy_json_marker_keys ~w(session publisher turns surface external_mirror)
 
   # The stable type atom both session Kinds share (Session + SocialwareSession).
   @session_kind_type "session"
@@ -93,8 +93,8 @@ defmodule Ezagent.Kind.KindBaseBackfill do
   # appends). These are module ATOM references only — no function is called on
   # them here, so referencing them creates NO compile dependency on the domain
   # apps (same pattern as BehaviorSet.@slice_owners, which lives in core).
-  @chat_set [
-    Ezagent.Behavior.Chat,
+  @instance_message_set [
+    Ezagent.Behavior.Session,
     Ezagent.Behavior.Publisher.SessionImpl,
     Ezagent.Behavior.ExternalMirror
   ]
@@ -104,13 +104,13 @@ defmodule Ezagent.Kind.KindBaseBackfill do
   # socialware spawn — the P5-2 cold-restart round-trip invariant compares the
   # raw captured list, not just the (reorder-normalized) effective set. (codex LOW)
   @socialware_set [
-    Ezagent.Behavior.Chat,
+    Ezagent.Behavior.Session,
     Ezagent.Behavior.Turn,
     Ezagent.Behavior.Surface,
     Ezagent.Behavior.Publisher.SessionImpl
   ]
 
-  @type classification :: :chat | :socialware
+  @type classification :: :instance_message | :socialware
   @type classify_error ::
           {:ambiguous, [atom()]}
           | {:unclassifiable, [atom()]}
@@ -118,7 +118,7 @@ defmodule Ezagent.Kind.KindBaseBackfill do
 
   @doc "The as-built behavior set for a classification (module atoms, no base behaviors)."
   @spec target_behaviors(classification()) :: [module()]
-  def target_behaviors(:chat), do: @chat_set
+  def target_behaviors(:instance_message), do: @instance_message_set
   def target_behaviors(:socialware), do: @socialware_set
 
   @doc """
@@ -128,7 +128,7 @@ defmodule Ezagent.Kind.KindBaseBackfill do
   chat is the DEFAULT for any recognizable session that is not socialware,
   because `:external_mirror` is OPTIONAL for chat.
 
-  Returns `{:ok, :socialware}` / `{:ok, :chat}`, or fails loud with
+  Returns `{:ok, :socialware}` / `{:ok, :instance_message}`, or fails loud with
   `{:error, {:ambiguous, keys}}` (socialware slice AND `:external_mirror` —
   neither Kind declares both) / `{:error, {:unclassifiable, keys}}` (not a
   session at all) for a row that cannot be unambiguously placed.
@@ -162,7 +162,7 @@ defmodule Ezagent.Kind.KindBaseBackfill do
       # Any recognizable session that is NOT socialware is chat — whether or not
       # it carries the optional :external_mirror slice.
       is_session? or has_external_mirror? ->
-        {:ok, :chat}
+        {:ok, :instance_message}
 
       # Not a session at all — never guess.
       true ->

@@ -75,7 +75,7 @@ defmodule EzagentPluginNp.Integration.Comprehensive4AgentE2eTest do
   require Logger
 
   alias Ezagent.{Invocation, Message, RoutingRegistry}
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session, as: SessionBehavior
   alias Ezagent.Entity.User
   alias Ezagent.PluginNp.Template.NpAgent, as: NpTemplate
   alias Ezagent.PluginNp.Test.MockDeepSeek
@@ -140,7 +140,7 @@ defmodule EzagentPluginNp.Integration.Comprehensive4AgentE2eTest do
   defp join(session, member) do
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session)}?action=chat.join"),
+        target: URI.new!("#{URI.to_string(session)}?action=session.join"),
         mode: :cast,
         args: %{member: member},
         ctx: %{
@@ -213,7 +213,7 @@ defmodule EzagentPluginNp.Integration.Comprehensive4AgentE2eTest do
           Ezagent.BehaviorRegistry.register(
             Ezagent.Entity.Agent,
             :receive,
-            Ezagent.Behavior.Chat
+            Ezagent.Behavior.Session
           )
       end)
 
@@ -288,7 +288,7 @@ defmodule EzagentPluginNp.Integration.Comprehensive4AgentE2eTest do
       join(session_uri, np_uri)
 
       # ---- 7. Subscribe to the session events stream BEFORE the send --
-      session_topic = Chat.session_events_topic(session_uri)
+      session_topic = SessionBehavior.session_events_topic(session_uri)
       :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, session_topic)
 
       # ---- 8. admin sends "compute 2+2" — kicks off the chain ---------
@@ -299,7 +299,7 @@ defmodule EzagentPluginNp.Integration.Comprehensive4AgentE2eTest do
 
       :ok =
         Invocation.dispatch(%Invocation{
-          target: URI.new!("#{URI.to_string(session_uri)}?action=chat.send"),
+          target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
           mode: :cast,
           args: %{message: inbound_msg},
           ctx: %{

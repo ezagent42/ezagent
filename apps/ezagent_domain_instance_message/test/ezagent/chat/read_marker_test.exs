@@ -1,6 +1,6 @@
-defmodule Ezagent.Chat.ReadMarkerTest do
+defmodule Ezagent.Session.ReadMarkerTest do
   @moduledoc """
-  Tests for `Ezagent.Chat.ReadMarker` — Read receipts SPEC.
+  Tests for `Ezagent.Session.ReadMarker` — Read receipts SPEC.
 
   Exercises:
   - `mark/4` insert + upsert + idempotency + out-of-order (`:already_ahead`)
@@ -13,7 +13,7 @@ defmodule Ezagent.Chat.ReadMarkerTest do
   use ExUnit.Case, async: false
 
   alias EzagentCore.Repo
-  alias Ezagent.Chat.ReadMarker
+  alias Ezagent.Session.ReadMarker
 
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
@@ -181,7 +181,7 @@ defmodule Ezagent.Chat.ReadMarkerTest do
 
       Phoenix.PubSub.subscribe(
         EzagentCore.PubSub,
-        Ezagent.Behavior.Chat.session_events_topic(session)
+        Ezagent.Behavior.Session.session_events_topic(session)
       )
 
       assert {:ok, :updated} = ReadMarker.mark(session, user, msg, :displayed)

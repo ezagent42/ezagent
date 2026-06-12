@@ -76,7 +76,7 @@ defmodule Ezagent.Behavior.IdentityTest do
 
       needed = %{
         kind: :session,
-        behavior: Ezagent.Behavior.Chat,
+        behavior: Ezagent.Behavior.Session,
         instance: URI.new!("session://system/default/main"),
         workspace_uri: URI.new!("workspace://team-alpha")
       }
@@ -89,7 +89,7 @@ defmodule Ezagent.Behavior.IdentityTest do
 
       needed = %{
         kind: :session,
-        behavior: Ezagent.Behavior.Chat,
+        behavior: Ezagent.Behavior.Session,
         instance: URI.new!("session://system/default/main"),
         workspace_uri: URI.new!("workspace://team-alpha")
       }

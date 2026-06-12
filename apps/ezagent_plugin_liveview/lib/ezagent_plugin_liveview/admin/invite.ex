@@ -42,7 +42,7 @@ defmodule EzagentPluginLiveview.Admin.Invite do
   end
 
   defp dispatch_invite(socket, session_uri, workspace_uri, trimmed) do
-    target = Ezagent.URI.with_action(session_uri, :chat, :join)
+    target = Ezagent.URI.with_action(session_uri, :session, :join)
 
     result =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{

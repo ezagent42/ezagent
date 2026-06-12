@@ -16,7 +16,7 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
   - §6.8 — the session stream broadcast is unconditional regardless
     of mentions.
 
-  Drives the production path: `Chat.invoke(:send, ...)` through
+  Drives the production path: `SessionBehavior.invoke(:send, ...)` through
   `Invocation.dispatch` against the live Session GenServer, with the
   routing table set to the migrated `system_default` shape
   `{:always} → [$session_users, $mentions]`. `chat.receive`
@@ -28,7 +28,7 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
   import Ecto.Query
 
   alias Ezagent.{Invocation, Message, RoutingRegistry}
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session, as: SessionBehavior
   alias Ezagent.Entity.User
   alias Ezagent.Routing.Resolver
 
@@ -86,7 +86,7 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
   defp join(session, member) do
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session)}?action=chat.join"),
+        target: URI.new!("#{URI.to_string(session)}?action=session.join"),
         mode: :cast,
         args: %{member: member},
         ctx: %{
@@ -105,7 +105,7 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
 
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session)}?action=chat.send"),
+        target: URI.new!("#{URI.to_string(session)}?action=session.send"),
         mode: :cast,
         args: %{message: msg},
         ctx: %{
@@ -121,7 +121,7 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
   end
 
   defp receive_dispatch_count(target_uri) do
-    prefix = "#{URI.to_string(target_uri)}?action=chat.receive"
+    prefix = "#{URI.to_string(target_uri)}?action=session.receive"
 
     EzagentCore.Repo.aggregate(
       from(i in "invocations",
@@ -191,8 +191,8 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
     # cursor / event_at / result_summary`. Slice content is fetched
     # via `Kind.get_slice/2` per the new contract; see
     # `apps/ezagent_core/test/invariants/slice_change_event_carries_no_slice_content_test.exs`.
-    assert_receive {:slice_changed, %{uri: ^user_member, slice_key: :chat}}, 1_000
-    {:ok, slice} = Ezagent.Kind.get_slice(user_member, :chat)
+    assert_receive {:slice_changed, %{uri: ^user_member, slice_key: :session}}, 1_000
+    {:ok, slice} = Ezagent.Kind.get_slice(user_member, :session)
     assert slice.last_received.message_id == msg.id
   end
 
@@ -203,7 +203,7 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
     {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
     join(session, sender)
 
-    :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, Chat.session_events_topic(session))
+    :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, SessionBehavior.session_events_topic(session))
 
     msg = dispatch_send(session, sender, "stream shows everything")
 

@@ -96,7 +96,7 @@ defmodule EzagentPluginLiveview.Admin.Compose do
         legend_triggers: legend_triggers
       )
 
-    target = Ezagent.URI.with_action(socket.assigns.current_session_uri, :chat, :send)
+    target = Ezagent.URI.with_action(socket.assigns.current_session_uri, :session, :send)
 
     inv = %Ezagent.Invocation{
       target: target,

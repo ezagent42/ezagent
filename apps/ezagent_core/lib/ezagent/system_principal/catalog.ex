@@ -39,7 +39,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   the SPEC's provisional atoms:
 
   - `system://chat-router` originally had `session.chat.system_message` —
-    `:system_message` is NOT an action on `Behavior.Chat` (the action
+    `:system_message` is NOT an action on `Behavior.Session` (the action
     list is `[:send, :receive, :join, :leave, :set_working_copy]`); the
     string was a dead cap. The struct entry KEEPS only `:send` — the
     only chat-router action that actually fires in dispatch.
@@ -80,7 +80,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   # post ApiKeys-to-Agent flip CurlAgent reads its own `:api_keys`
   # slice in-process via `ctx[:sibling_slices]`, so no system principal
   # dispatches `identity.get_api_key` anymore.
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session
   alias Ezagent.Behavior.ExternalMirror
   alias Ezagent.Behavior.ExternalMirrorWorker
   alias Ezagent.Behavior.Identity
@@ -147,7 +147,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
        ]},
       {principal("chat-router"),
        [
-         # `cap(:any, Chat, :any)` covers Chat-registered receivers
+         # `cap(:any, Session, :any)` covers Session-registered receivers
          # (Session, User). But chat fan-out also dispatches
          # `chat.receive` to Agent Kinds whose BehaviorRegistry routes
          # `:receive` to a PLUGIN-DEFINED Behavior (e.g. Echo's
@@ -192,7 +192,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # map (Template lives on AgentTemplate/SessionTemplate). Mapped
          # to a Template Behavior cap on :any-Kind (template:// is
          # cross-cutting). The session-spawn half of the original glob
-         # `session.*` becomes a Chat-wildcard cap on Session Kind.
+         # `session.*` becomes a Session-wildcard cap on Session Kind.
          # PR-CC-2-v2 added IdentityAdmin grant_cap on User — the
          # `grant_owner_template_cap/2` flow in SessionTemplate.create/3
          # / fork/3 dispatches `identity.grant_cap` on the owner User
@@ -205,7 +205,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # principal as a "workspace admin" for the target workspace
          # (per the PR-CC-2-v2 amendment to `holds_workspace_admin_cap?`).
          Capability.cap(:any, Template, :any),
-         Capability.cap(:session, Chat, :any),
+         Capability.cap(:session, Session, :any),
          Capability.cap(:user, IdentityAdmin, :grant_cap),
          # 2026-05-31 orchestrator-startup-atomicity §4 step 9
          # (codex-review Q1) — rollback is the symmetric INVERSE of the
@@ -220,9 +220,9 @@ defmodule Ezagent.SystemPrincipal.Catalog do
        ]},
       {principal("orchestrator-tools"),
        [
-         # `session.*` → Chat behavior on Session (orchestrator tools
+         # `session.*` → Session behavior on Session (orchestrator tools
          # write into the session's chat slice).
-         Capability.cap(:session, Chat, :any),
+         Capability.cap(:session, Session, :any),
          # `agent.identity.list_caps` — the MCP McpServer loads the
          # orchestrator AGENT's OWN four delegated caps from its
          # `:identity` slice under this principal
@@ -238,10 +238,10 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # Deviation: original `workspace.workspace.read` mapped to a
          # Workspace Behavior wildcard cap so session-internal can read
          # any workspace state. Original `session.chat.*` widened to
-         # `:any`-Kind Chat — session-internal dispatches `chat.receive`
+         # `:any`-Kind Session — session-internal dispatches `chat.receive`
          # on User AND Agent Kinds during fan-out, so the Kind axis must
          # cross those (same multi-Kind pattern as chat-router).
-         Capability.cap(:any, Chat, :any),
+         Capability.cap(:any, Session, :any),
          Capability.cap(:workspace, Workspace, :any)
        ]},
       {principal("agent-internal"),

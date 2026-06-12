@@ -35,7 +35,7 @@ defmodule EzagentDomainInstanceMessage.Integration.PresenceReadReceiptsE2ETest d
   use ExUnit.Case, async: false
 
   alias Ezagent.{Invocation, KindRegistry, Message, Presence}
-  alias Ezagent.Chat.ReadMarker
+  alias Ezagent.Session.ReadMarker
 
   defp unique_suffix, do: System.unique_integer([:positive])
 
@@ -120,7 +120,7 @@ defmodule EzagentDomainInstanceMessage.Integration.PresenceReadReceiptsE2ETest d
   end
 
   defp chat_join(session_uri, member_uri) do
-    target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
     Invocation.dispatch(%Invocation{
       target: target,
@@ -146,7 +146,7 @@ defmodule EzagentDomainInstanceMessage.Integration.PresenceReadReceiptsE2ETest d
         ref_id: nil
       )
 
-    target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
 
     Invocation.dispatch(%Invocation{
       target: target,
@@ -171,7 +171,7 @@ defmodule EzagentDomainInstanceMessage.Integration.PresenceReadReceiptsE2ETest d
       # Subscribe to session events topic to observe broadcasts
       Phoenix.PubSub.subscribe(
         EzagentCore.PubSub,
-        Ezagent.Behavior.Chat.session_events_topic(session_uri)
+        Ezagent.Behavior.Session.session_events_topic(session_uri)
       )
 
       # ---------- Phase 1: cc-demo "comes online" via Presence ----------

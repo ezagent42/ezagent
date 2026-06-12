@@ -1,7 +1,7 @@
 defmodule Ezagent.Behavior.ChatMigrationParityTest do
   @moduledoc """
   Phase 2-a r3 (2026-05-28) — migration parity tests for
-  `Ezagent.Behavior.Chat` after the SPEC 2026-05-28 new-action-grammar
+  `Ezagent.Behavior.Session` after the SPEC 2026-05-28 new-action-grammar
   migration.
 
   Covers the five actions (:send / :receive / :join / :leave /
@@ -15,7 +15,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
   ## Boundary
 
   These parity tests cover the HANDLER contract surface — they call
-  `Chat.handle_<action>/2` directly with a stub ctx[:read]/1 and
+  `SessionBehavior.handle_<action>/2` directly with a stub ctx[:read]/1 and
   pin the returned `{:ok, result, effects}` tuple. End-to-end coverage
   via `Ezagent.Kind.Runtime.handle_dispatch/4` continues to live in
   the integration suite.
@@ -24,7 +24,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
   use ExUnit.Case, async: false
 
   alias Ezagent.{Message, MessageStore}
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session, as: SessionBehavior
   alias EzagentCore.Repo
 
   setup do
@@ -56,7 +56,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
   # persistent field (e.g. `members:`) or, via the `:monitors` key, the
   # transient — `ctx_for/2` routes `:monitors` into `ctx.transients`.
   defp empty_chat_slice(extras \\ %{}) do
-    Map.merge(Chat.init_slice(%{}).state, extras)
+    Map.merge(SessionBehavior.init_slice(%{}).state, extras)
   end
 
   defp ctx_for(chat_slice, extras \\ %{}) do
@@ -77,25 +77,25 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
 
   describe "new-contract surface" do
     test "is a new-style Behavior" do
-      assert Chat.__behavior__?() == true
+      assert SessionBehavior.__behavior__?() == true
     end
 
     test "declares the seven actions" do
       # team-routing-unification §3.6 (PR-6) — :set_legends added;
       # §3.4/§3.7 (PR-7) — :set_prompt_templates added.
-      assert Enum.sort(Chat.__action_names__()) ==
+      assert Enum.sort(SessionBehavior.__action_names__()) ==
                [:join, :leave, :receive, :send, :set_legends, :set_prompt_templates, :set_working_copy]
     end
 
     test "state_slice/0 is :chat" do
-      assert Chat.state_slice() == :chat
+      assert SessionBehavior.state_slice() == :session
     end
 
     test "init_slice/1 returns the two-container PR-EM-6-PRE shape (monitors → transient)" do
       # Lifecycle migration: two-container slice. Persistent fields live
       # under `.state`; `:monitors` is GONE (it's a transient, rebuilt by
       # `activate/2` — SPEC §2.3C).
-      slice = Chat.init_slice(%{})
+      slice = SessionBehavior.init_slice(%{})
       assert slice.transients == %{}
 
       st = slice.state
@@ -107,17 +107,17 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
       assert st.send_cursor == 0
       assert st.recent_messages == []
       assert st.owner_uri == nil
-      assert st.template_working_copy == Chat.default_template_working_copy()
+      assert st.template_working_copy == SessionBehavior.default_template_working_copy()
     end
 
     test "init_slice/1 honors :owner_uri arg (PR-OWN-2)" do
       owner = Ezagent.URI.new!("entity://system/user/admin")
-      assert Chat.init_slice(%{owner_uri: owner}).state.owner_uri == owner
+      assert SessionBehavior.init_slice(%{owner_uri: owner}).state.owner_uri == owner
     end
 
     test "recent_messages_ring_depth/0 returns the SPEC-pinned constant" do
       # PR-N3 r4 (Allen 2026-05-25) — SPEC-pinned, not a config knob.
-      assert Chat.recent_messages_ring_depth() == 20
+      assert SessionBehavior.recent_messages_ring_depth() == 20
     end
   end
 
@@ -134,7 +134,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
       slice = empty_chat_slice()
       ctx = ctx_for(slice, %{self_uri: session_uri, caller: sender})
 
-      assert {:ok, %{stored: true}, effects} = Chat.handle_send(%{message: msg}, ctx)
+      assert {:ok, %{stored: true}, effects} = SessionBehavior.handle_send(%{message: msg}, ctx)
 
       # Three :set effects for the SliceChange trigger fields.
       assert Enum.any?(effects, fn
@@ -148,7 +148,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
              end)
 
       # In-session broadcast as :notify effect.
-      topic = Chat.session_events_topic(session_uri)
+      topic = SessionBehavior.session_events_topic(session_uri)
 
       assert Enum.any?(effects, fn
                {:notify, ^topic, {:chat_message, _, _}} -> true
@@ -168,7 +168,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
       slice = empty_chat_slice()
       ctx = ctx_for(slice, %{self_uri: session_uri, caller: sender})
 
-      {:ok, _, effects1} = Chat.handle_send(%{message: msg}, ctx)
+      {:ok, _, effects1} = SessionBehavior.handle_send(%{message: msg}, ctx)
       cursor1 = effects1 |> Enum.find_value(fn {:set, :send_cursor, c} -> c; _ -> nil end)
       assert cursor1 == 1
 
@@ -176,7 +176,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
       slice2 = %{slice | send_cursor: 1}
       ctx2 = ctx_for(slice2, %{self_uri: session_uri, caller: sender})
 
-      {:ok, _, effects2} = Chat.handle_send(%{message: msg}, ctx2)
+      {:ok, _, effects2} = SessionBehavior.handle_send(%{message: msg}, ctx2)
       cursor2 = effects2 |> Enum.find_value(fn {:set, :send_cursor, c} -> c; _ -> nil end)
       assert cursor2 == 2
     end
@@ -208,7 +208,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
       slice = empty_chat_slice()
       ctx = ctx_for(slice, %{self_uri: session_uri, caller: sender})
 
-      assert {:ok, %{stored: true}, _effects} = Chat.handle_send(%{message: msg}, ctx)
+      assert {:ok, %{stored: true}, _effects} = SessionBehavior.handle_send(%{message: msg}, ctx)
     end
   end
 
@@ -227,7 +227,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
           slice_change_cursor: 5
         })
 
-      assert {:ok, %{}, effects} = Chat.handle_receive(%{message: msg}, ctx)
+      assert {:ok, %{}, effects} = SessionBehavior.handle_receive(%{message: msg}, ctx)
 
       assert Enum.any?(effects, fn
                {:set, :last_received, %{message_id: id}} -> id == msg.id
@@ -247,7 +247,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
       # Pre-fill ring to capacity-1; new entry should land at HEAD,
       # oldest entry falls off the tail.
       prefill =
-        for i <- 1..Chat.recent_messages_ring_depth() do
+        for i <- 1..SessionBehavior.recent_messages_ring_depth() do
           {i, "msg-#{i}"}
         end
 
@@ -262,7 +262,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
           slice_change_cursor: 999
         })
 
-      {:ok, _, effects} = Chat.handle_receive(%{message: msg}, ctx)
+      {:ok, _, effects} = SessionBehavior.handle_receive(%{message: msg}, ctx)
 
       ring =
         Enum.find_value(effects, fn
@@ -271,7 +271,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
         end)
 
       # Ring size capped at the SPEC-pinned depth.
-      assert length(ring) == Chat.recent_messages_ring_depth()
+      assert length(ring) == SessionBehavior.recent_messages_ring_depth()
       # HEAD is the new message.
       assert [{999, _msg_id} | _] = ring
     end
@@ -294,7 +294,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
           caller: URI.to_string(URI.new!("session://team-alpha/default/x"))
         })
 
-      assert {:ok, %{}, []} = Chat.handle_receive(%{message: msg}, ctx)
+      assert {:ok, %{}, []} = SessionBehavior.handle_receive(%{message: msg}, ctx)
     end
 
     test "unsupported kind → typed error" do
@@ -303,7 +303,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
       ctx = ctx_for(empty_chat_slice(), %{kind_module: SomeOtherKind})
 
       assert {:error, {:receive_unsupported_for_kind, SomeOtherKind}} =
-               Chat.handle_receive(%{message: msg}, ctx)
+               SessionBehavior.handle_receive(%{message: msg}, ctx)
     end
   end
 
@@ -320,7 +320,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
       ctx = ctx_for(slice, %{self_uri: session_uri})
 
       assert {:error, {:member_not_registered, ^stranger}} =
-               Chat.handle_join(%{member: stranger}, ctx)
+               SessionBehavior.handle_join(%{member: stranger}, ctx)
     end
   end
 
@@ -336,7 +336,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
 
       ctx = ctx_for(slice, %{self_uri: session_uri})
 
-      assert {:ok, %{}, effects} = Chat.handle_leave(%{member: member}, ctx)
+      assert {:ok, %{}, effects} = SessionBehavior.handle_leave(%{member: member}, ctx)
 
       # Slice mutation effects.
       assert Enum.any?(effects, fn
@@ -345,7 +345,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
              end)
 
       # Per-session + global broadcasts as :notify effects.
-      per_session_topic = Chat.session_events_topic(session_uri)
+      per_session_topic = SessionBehavior.session_events_topic(session_uri)
 
       assert Enum.any?(effects, fn
                {:notify, ^per_session_topic, {:member_left, ^member}} -> true
@@ -372,7 +372,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
       ctx = ctx_for(slice, %{self_uri: session_uri})
 
       assert {:error, :unauthorized} =
-               Chat.handle_set_working_copy(
+               SessionBehavior.handle_set_working_copy(
                  %{template_working_copy: %{description: "new"}},
                  ctx
                )
@@ -388,7 +388,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
       wc = %{description: "system-set"}
 
       assert {:ok, %{template_working_copy: ^wc}, effects} =
-               Chat.handle_set_working_copy(%{template_working_copy: wc}, ctx)
+               SessionBehavior.handle_set_working_copy(%{template_working_copy: wc}, ctx)
 
       assert Enum.any?(effects, fn
                {:set, :template_working_copy, w} -> w == wc
@@ -421,17 +421,17 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
       wc = %{description: "orch-set"}
 
       assert {:ok, %{template_working_copy: ^wc}, _} =
-               Chat.handle_set_working_copy(%{template_working_copy: wc}, ctx)
+               SessionBehavior.handle_set_working_copy(%{template_working_copy: wc}, ctx)
     end
   end
 
   describe "data_owner/1" do
     test "non-session URI returns :no_owner" do
-      assert Chat.data_owner(Ezagent.URI.new!("entity://x/user/y")) == :no_owner
+      assert SessionBehavior.data_owner(Ezagent.URI.new!("entity://x/user/y")) == :no_owner
     end
 
     test ":any returns :any" do
-      assert Chat.data_owner(:any) == :any
+      assert SessionBehavior.data_owner(:any) == :any
     end
   end
 
@@ -446,7 +446,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
 
       msg = {:DOWN, make_ref(), :process, self(), :normal}
 
-      assert :ignore = Chat.handle_signal(msg, ctx)
+      assert :ignore = SessionBehavior.handle_signal(msg, ctx)
     end
 
     test "known ref flips member online → false + records last_seen + drops transient ref" do
@@ -462,7 +462,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
       ctx = ctx_for(slice, %{self_uri: Ezagent.URI.new!("session://team-alpha/default/down-parity")})
 
       assert {:ok, effects} =
-               Chat.handle_signal({:DOWN, ref, :process, self(), :normal}, ctx)
+               SessionBehavior.handle_signal({:DOWN, ref, :process, self(), :normal}, ctx)
 
       assert Enum.any?(effects, fn
                {:set, :members, m} -> m[member] == %{online: false}

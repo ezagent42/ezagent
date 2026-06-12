@@ -49,7 +49,14 @@
   # while cascade_repoint.ex still held the originals. PR-4 deleted
   # cascade_repoint.ex (the functions now live ONLY on ConfigEvolve), so the
   # transient duplicate is gone — ratcheted back to 29.
-  cross_file_duplicate_fn_groups: 29,
+  # chat→session (2026-06-12) +1 = 30: `Ezagent.Session.SliceMigration` is a new
+  # one-shot snapshot migration that DELIBERATELY mirrors the sanctioned
+  # `Ezagent.Kind.KindBaseBackfill` migration shape (it shares the byte-identical
+  # `session_rows/0` row-selector — `KindSnapshot.list_all |> filter kind_type ==
+  # "session"`). Two standalone one-shot migrations naturally share that 1-line
+  # row selector; this is a structural mirror of the approved pattern, not a
+  # copy-paste fork of business logic.
+  cross_file_duplicate_fn_groups: 30, # arch-cap-bump: chat→session SliceMigration mirrors KindBaseBackfill session_rows/0
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3

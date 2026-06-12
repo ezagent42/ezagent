@@ -7,7 +7,7 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolvers do
   live/durable Kind state owned by this domain.
   """
 
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session
 
   @doc "Register the instance-message UriQuery resolvers."
   @spec register() :: :ok | {:error, term()}
@@ -189,8 +189,8 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolvers do
   @spec resolve_member_by_role(term()) :: Ezagent.UriQuery.result()
   def resolve_member_by_role({%URI{scheme: "session"} = session_uri, role_name})
       when is_binary(role_name) do
-    with {:ok, chat_slice} <- kind_slice(session_uri, :chat) do
-      case Chat.role_name_to_uri(Map.get(chat_slice, :members, %{}), role_name) do
+    with {:ok, chat_slice} <- kind_slice(session_uri, :session) do
+      case Session.role_name_to_uri(Map.get(chat_slice, :members, %{}), role_name) do
         %URI{} = member_uri -> {:ok, member_uri}
         nil -> :none
       end
@@ -210,8 +210,8 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolvers do
   def resolve_session_template(_), do: :none
 
   defp template_working_copy(%URI{} = session_uri) do
-    with {:ok, chat_slice} <- kind_slice(session_uri, :chat) do
-      {:ok, Chat.template_working_copy(chat_slice)}
+    with {:ok, chat_slice} <- kind_slice(session_uri, :session) do
+      {:ok, Session.template_working_copy(chat_slice)}
     end
   end
 

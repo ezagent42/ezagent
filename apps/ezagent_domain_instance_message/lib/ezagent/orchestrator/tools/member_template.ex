@@ -371,7 +371,7 @@ defmodule Ezagent.Orchestrator.Tools.MemberTemplate do
   defp preflight_chat_action_cap(cap_set, action, %URI{} = session_uri, %URI{} = workspace_uri) do
     needed = %{
       kind: :session,
-      behavior: Ezagent.Behavior.Chat,
+      behavior: Ezagent.Behavior.Session,
       action: action,
       instance: session_uri,
       workspace_uri: workspace_uri

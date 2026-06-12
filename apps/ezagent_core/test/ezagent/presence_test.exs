@@ -200,7 +200,7 @@ defmodule Ezagent.PresenceTest do
 
       cap = %Ezagent.Capability{
         kind: :user,
-        behavior: Ezagent.Behavior.Chat,
+        behavior: Ezagent.Behavior.Session,
         instance: :any,
         workspace_uri: workspace_uri,
         granted_by: Ezagent.URI.new!("entity://team-alpha/user/system"),

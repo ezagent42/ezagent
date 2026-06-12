@@ -5,7 +5,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanoutTest do
   `:events` topics.
 
   These tests broadcast the membership-change events directly (rather
-  than going through `Ezagent.Behavior.Chat.invoke(:join)` end-to-end)
+  than going through `Ezagent.Behavior.Session.invoke(:join)` end-to-end)
   to keep the test fast + isolated. The chat-behavior integration is
   exercised via existing chat tests.
   """
@@ -17,7 +17,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanoutTest do
   # also brings the P6 owner-exit Kind drain.
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session, as: SessionBehavior
   alias Ezagent.Presence
   alias EzagentDomainInstanceMessage.PresenceFanout
 
@@ -172,7 +172,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanoutTest do
       # chat.join member
       :ok =
         case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-               target: URI.new!("#{URI.to_string(session_uri)}?action=chat.join"),
+               target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
                mode: :call,
                args: %{member: member_uri},
                ctx: %{
@@ -220,7 +220,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanoutTest do
       member_uri = unique_user_uri("fanout_on")
 
       # Subscribe to the session's events topic FIRST — assertion target
-      Phoenix.PubSub.subscribe(EzagentCore.PubSub, Chat.session_events_topic(session_uri))
+      Phoenix.PubSub.subscribe(EzagentCore.PubSub, SessionBehavior.session_events_topic(session_uri))
 
       # Register interest
       broadcast_change(session_uri, {:member_joined, member_uri})
@@ -251,7 +251,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanoutTest do
       session_uri = unique_session_uri("fanout_off")
       member_uri = unique_user_uri("fanout_off")
 
-      Phoenix.PubSub.subscribe(EzagentCore.PubSub, Chat.session_events_topic(session_uri))
+      Phoenix.PubSub.subscribe(EzagentCore.PubSub, SessionBehavior.session_events_topic(session_uri))
 
       broadcast_change(session_uri, {:member_joined, member_uri})
       wait_for(fn -> Map.has_key?(PresenceFanout.__index__(), member_uri) end)

@@ -115,7 +115,7 @@ defmodule Ezagent.Template.GenericSession do
 
   defp join_members(session_uri, members) do
     target =
-      Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+      Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
     Enum.each(members, fn member_uri_str ->
       # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint

@@ -25,7 +25,7 @@ defmodule Ezagent.Orchestrator.SlotRetirementTest do
 
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session, as: SessionBehavior
   alias Ezagent.Orchestrator.{McpServer, Tools}
 
   @retired_slot_tools [:add_agent_slot, :remove_agent_slot, :update_agent_template, :write_matcher]
@@ -74,7 +74,7 @@ defmodule Ezagent.Orchestrator.SlotRetirementTest do
     end
 
     test "the live Chat working-copy default carries NO agent_slots key" do
-      wc = Chat.default_template_working_copy()
+      wc = SessionBehavior.default_template_working_copy()
 
       refute Map.has_key?(wc, :agent_slots),
              "default_template_working_copy still has :agent_slots — §3.8 drops the residual " <>

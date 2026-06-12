@@ -92,7 +92,7 @@ defmodule Ezagent.Orchestrator.Tools do
 
   require Logger
 
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session
   alias Ezagent.Invocation
   alias Ezagent.Orchestrator.Tools.MemberTemplate
   alias Ezagent.Orchestrator.Tools.Templates
@@ -313,7 +313,7 @@ defmodule Ezagent.Orchestrator.Tools do
     # `with_action/3` (which rejects a non-canonical session URI a test
     # fixture may pass) — same pattern as the routing/prompt-template/legend
     # dispatches below.
-    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
     case Invocation.dispatch(%Invocation{
            target: target,
@@ -452,7 +452,7 @@ defmodule Ezagent.Orchestrator.Tools do
   # rollback leave).
   @doc false
   def leave_member(%URI{} = session_uri, %URI{} = member_uri, %URI{} = caller, caps) do
-    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.leave")
+    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.leave")
 
     Invocation.dispatch(%Invocation{
       target: target,
@@ -600,7 +600,7 @@ defmodule Ezagent.Orchestrator.Tools do
         {:ok, role_name}
 
       true ->
-        case Chat.role_name_to_uri(read_members(session_uri), role_name) do
+        case Session.role_name_to_uri(read_members(session_uri), role_name) do
           %URI{} = uri -> {:ok, uri}
           nil -> {:error, {:unknown_member_role, role_name}}
         end
@@ -629,7 +629,7 @@ defmodule Ezagent.Orchestrator.Tools do
   @doc """
   Install a named prompt template on the session (`name => template`).
   Rules reference it via `prompt_template_ref`; it is rendered at the
-  delivery seam (`Chat.render_for_delivery/4`) — spec §3.4. The
+  delivery seam (`Session.render_for_delivery/4`) — spec §3.4. The
   member-model team needs this so a rule-set rule's `prompt_template_ref`
   resolves to a real template (e.g. the relay's `telephone_hop`).
 
@@ -650,13 +650,13 @@ defmodule Ezagent.Orchestrator.Tools do
          {:ok, session_uri} <- require_opt(opts, :session_uri),
          # M3 (codex MAJOR) — reject a template missing the `{body}`
          # placeholder BEFORE installing it. Without `{body}` the renderer
-         # (`Chat.render_for_delivery/4`) silently DROPS the original message
+         # (`Session.render_for_delivery/4`) silently DROPS the original message
          # at delivery. Validate at the tool boundary so the orchestrator gets
          # `{:error, :body_placeholder_required}` instead of a live message loss.
          :ok <- Ezagent.Routing.PromptTemplate.validate(template) do
       merged = Map.put(read_prompt_templates(session_uri), name, template)
 
-      target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.set_prompt_templates")
+      target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.set_prompt_templates")
 
       case Invocation.dispatch(%Invocation{
              target: target,
@@ -702,7 +702,7 @@ defmodule Ezagent.Orchestrator.Tools do
 
       merged = Map.put(read_legends(session_uri), legend_name, entry)
 
-      target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.set_legends")
+      target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.set_legends")
 
       case Invocation.dispatch(%Invocation{
              target: target,
@@ -851,7 +851,7 @@ defmodule Ezagent.Orchestrator.Tools do
 
   # M2 — true iff `caps` carries the orchestrator's cap #1
   # (`{:within_session, session_uri}` on the `:session` kind). Mirrors the
-  # session-side `Chat.orchestrator_cap_present?/1` check so the preflight
+  # session-side `Session.orchestrator_cap_present?/1` check so the preflight
   # decision matches the authority the deferred `chat.join` would enforce.
   # `:ok` / `{:error, :unauthorized}` — fail closed.
   #
@@ -910,7 +910,7 @@ defmodule Ezagent.Orchestrator.Tools do
           pid
           |> :sys.get_state()
           |> Map.get(:state, %{})
-          |> Map.get(Chat.state_slice(), %{})
+          |> Map.get(Session.state_slice(), %{})
 
         Map.get(chat_slice, :state, chat_slice)
 
@@ -933,6 +933,6 @@ defmodule Ezagent.Orchestrator.Tools do
   # PUBLIC (PR-3S): also called by `Tools.MemberTemplate.resolve_existing_member/2`.
   @doc false
   def member_uri_for_role(%URI{} = session_uri, role_name) when is_binary(role_name) do
-    Chat.role_name_to_uri(read_members(session_uri), role_name)
+    Session.role_name_to_uri(read_members(session_uri), role_name)
   end
 end

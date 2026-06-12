@@ -154,7 +154,7 @@ defmodule EzagentPluginFeishu.BindingPolicyTest do
     end
 
     test "Chat caps cover exactly the pinned action set" do
-      chat_caps = Enum.filter(production_caps(), &(&1.behavior == Ezagent.Behavior.Chat))
+      chat_caps = Enum.filter(production_caps(), &(&1.behavior == Ezagent.Behavior.Session))
       chat_actions = chat_caps |> Enum.map(& &1.action) |> Enum.sort()
 
       assert chat_actions == Enum.sort(@expected_chat_actions),
@@ -177,7 +177,7 @@ defmodule EzagentPluginFeishu.BindingPolicyTest do
     test "Chat :set_working_copy is NOT granted (orchestrator-only)" do
       chat_actions =
         production_caps()
-        |> Enum.filter(&(&1.behavior == Ezagent.Behavior.Chat))
+        |> Enum.filter(&(&1.behavior == Ezagent.Behavior.Session))
         |> Enum.map(& &1.action)
 
       refute :set_working_copy in chat_actions,
@@ -188,7 +188,7 @@ defmodule EzagentPluginFeishu.BindingPolicyTest do
     test "Chat :receive is NOT granted (registered on User/Agent Kinds, not Session)" do
       chat_actions =
         production_caps()
-        |> Enum.filter(&(&1.behavior == Ezagent.Behavior.Chat))
+        |> Enum.filter(&(&1.behavior == Ezagent.Behavior.Session))
         |> Enum.map(& &1.action)
 
       refute :receive in chat_actions,
@@ -242,13 +242,13 @@ defmodule EzagentPluginFeishu.BindingPolicyTest do
     # past a Behavior's actual `actions/0` list (e.g. typo'd action
     # atom that compiles but never matches at dispatch).
 
-    test "pinned chat actions are a subset of Ezagent.Behavior.Chat.actions/0" do
+    test "pinned chat actions are a subset of Ezagent.Behavior.Session.actions/0" do
       assert MapSet.subset?(
                MapSet.new(@expected_chat_actions),
-               MapSet.new(Ezagent.Behavior.Chat.actions())
+               MapSet.new(Ezagent.Behavior.Session.actions())
              ),
              "Pinned Chat action set is no longer a subset of " <>
-               "Ezagent.Behavior.Chat.actions/0 — re-audit the grant list"
+               "Ezagent.Behavior.Session.actions/0 — re-audit the grant list"
     end
 
     test "pinned publisher actions are a SUBSET of Publisher.SessionImpl.actions/0 (reads excluded — P5-A)" do

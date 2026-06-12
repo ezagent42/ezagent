@@ -38,7 +38,7 @@ defmodule Ezagent.Audit do
     # Phase 3d quality hotfix: chat reply dispatch fail visibility
     # (was silent before — real-claude e2e exposed wrong session_uri
     # disappearing into the void).
-    [:ezagent, :chat, :reply_dispatch_failed],
+    [:ezagent, :session, :reply_dispatch_failed],
     # Phase 4-completion Spec 04: per-Kind state persistence events.
     [:ezagent, :persistence, :restored],
     [:ezagent, :persistence, :written],
@@ -53,7 +53,7 @@ defmodule Ezagent.Audit do
     [:ezagent, :notification, :emit],
     # Notifier/log audit 2026-05-24 MED — chat-receive drops were
     # logged to Logger but never made the audit table. Now they do.
-    [:ezagent, :chat, :receive, :dropped]
+    [:ezagent, :session, :receive, :dropped]
   ]
 
   @doc """
@@ -174,9 +174,9 @@ defmodule Ezagent.Audit do
   # Phase 3d quality hotfix: chat reply dispatch failure (agent's chat/send
   # targeting a non-existent session). Persisted so admin can see why a
   # claude reply silently disappeared.
-  defp build_row([:ezagent, :chat, :reply_dispatch_failed], _measurements, meta) do
+  defp build_row([:ezagent, :session, :reply_dispatch_failed], _measurements, meta) do
     agent = Map.get(meta, :agent)
-    target = "#{Map.get(meta, :target_session)}?action=chat.send"
+    target = "#{Map.get(meta, :target_session)}?action=session.send"
 
     %{
       trace_id: nil,
@@ -297,7 +297,7 @@ defmodule Ezagent.Audit do
   # when the recipient has no BridgeRegistry binding (the chat target
   # was reached but no transport could push it). Pre-fix: Logger only,
   # never made the audit table.
-  defp build_row([:ezagent, :chat, :receive, :dropped], _measurements, meta) do
+  defp build_row([:ezagent, :session, :receive, :dropped], _measurements, meta) do
     %{
       trace_id: nil,
       caller: uri_to_string_or_nil(Map.get(meta, :sender)),

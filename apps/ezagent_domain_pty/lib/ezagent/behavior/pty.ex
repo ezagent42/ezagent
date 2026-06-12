@@ -59,7 +59,7 @@ defmodule Ezagent.Behavior.Pty do
   pure side effects but cannot also abort the action on failure.
   Inline keeps the failure-propagation contract identical to the
   legacy contract clause (matches the pattern documented in
-  `Ezagent.Behavior.Chat`'s moduledoc — "result-dependent in-handler
+  `Ezagent.Behavior.Session`'s moduledoc — "result-dependent in-handler
   dispatches stay as direct calls in the handler body").
 
   ## Lifecycle migration (Phase B, SPEC 2026-05-29 §2.3 — the

@@ -14,7 +14,7 @@ defmodule Ezagent.Entity.SocialwareSession do
   @impl Ezagent.Kind
   def behaviors do
     [
-      Ezagent.Behavior.Chat,
+      Ezagent.Behavior.Session,
       Ezagent.Behavior.Turn,
       Ezagent.Behavior.Surface,
       # P0 (socialware substrate) — every SocialwareSession composes the

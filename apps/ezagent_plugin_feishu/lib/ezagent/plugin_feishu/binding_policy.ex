@@ -9,7 +9,7 @@ defmodule EzagentPluginFeishu.BindingPolicy do
   `feishu://oc_xxx` Receiver Kind directly. With the Kind deleted,
   the bound user's path is now:
 
-      Feishu (open_id) → entity://user/<X> → session://<Y>?action=chat.send
+      Feishu (open_id) → entity://user/<X> → session://<Y>?action=session.send
 
   All caps the user needs to *use* a Feishu binding are
   session-participation caps. Bind-time policy therefore reduces to:
@@ -101,7 +101,7 @@ defmodule EzagentPluginFeishu.BindingPolicy do
   #
   # Action INTENTIONALLY OMITTED:
   #
-  #   * `Ezagent.Behavior.Chat :receive` — `:receive` is registered
+  #   * `Ezagent.Behavior.Session :receive` — `:receive` is registered
   #     against the USER + AGENT Kinds (Chat fan-out delivers
   #     `chat.receive` to recipient `entity://` Kinds), NOT against
   #     the Session Kind: see
@@ -112,7 +112,7 @@ defmodule EzagentPluginFeishu.BindingPolicy do
   #     action: :receive` cap therefore never matches a real dispatch
   #     and would be dead weight.
   #
-  #   * `Ezagent.Behavior.Chat :set_working_copy` — orchestrator-only
+  #   * `Ezagent.Behavior.Session :set_working_copy` — orchestrator-only
   #     action; gated separately inside `Chat.invoke(:set_working_copy)`
   #     via `working_copy_write_authorized?/1`. Granting it to a
   #     bound user would not break the orchestrator gate (defense in
@@ -223,7 +223,7 @@ defmodule EzagentPluginFeishu.BindingPolicy do
       Enum.map(@session_chat_actions, fn action ->
         %Capability{
           kind: :session,
-          behavior: Ezagent.Behavior.Chat,
+          behavior: Ezagent.Behavior.Session,
           action: action,
           instance: :any,
           workspace_uri: workspace_uri,

@@ -523,7 +523,7 @@ defmodule Ezagent.Kind do
   2026-05-29 §0.1). Cross-module callers (`Ezagent.Identity`,
   `Ezagent.Behavior.ApiKeys`, `Ezagent.Behavior.ExternalMirror`,
   `Ezagent.Entity.Session`, the admin LVs, …) read a converted producer's
-  slice via FLAT field access — e.g. `get_slice(uri, :chat).owner_uri`.
+  slice via FLAT field access — e.g. `get_slice(uri, :session).owner_uri`.
   Returning the raw two-container map would make every such field resolve
   to `nil` (the flat field lives under `:state`, not at the top level) —
   a silent-nil that corrupts the consumer without crashing.
@@ -785,7 +785,7 @@ defmodule Ezagent.Kind do
   @doc """
   Attach a Behavior to this Kind.
 
-      attach Ezagent.Behavior.Chat,
+      attach Ezagent.Behavior.Session,
         actions: [:send, :receive],
         init_state: %{members: %{}}
 

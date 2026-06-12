@@ -200,7 +200,7 @@ defmodule EzagentCore.Invariants.DemoSmokeTest do
       assert detail.kind_module == "Ezagent.Entity.User"
       assert is_map(detail.slices)
       # admin User carries the all-cap identity slice + chat slice
-      assert Map.has_key?(detail.slices, :identity) or Map.has_key?(detail.slices, :chat)
+      assert Map.has_key?(detail.slices, :identity) or Map.has_key?(detail.slices, :session)
       assert is_list(detail.behaviors)
     end
   end

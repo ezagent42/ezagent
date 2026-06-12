@@ -21,7 +21,7 @@ defmodule Ezagent.Behavior.SocialwarePublisherRead do
   P5-A — this behavior is the UNIFIED membership-gated read for the `:snapshot`
   + `:history` actions on BOTH session Kinds: registered for the chat `Session`
   in `EzagentDomainInstanceMessage.Application` (this module's HOME app, where
-  it was relocated from socialware alongside `Ezagent.Socialware.ChatMembership`
+  it was relocated from socialware alongside `Ezagent.Session.Membership`
   — both read ONLY the `:chat`/`:publisher` slices, owned here) AND for
   `SocialwareSession` in `EzagentDomainSocialware.Application` (socialware
   depends on instance_message, so it reuses this module). The two are DISTINCT
@@ -62,7 +62,7 @@ defmodule Ezagent.Behavior.SocialwarePublisherRead do
   The read actions are `cap_exempt_actions` at the CapBAC layer (no
   per-member/owner cap, no grant-at-join, no revoke-at-leave, no backfill
   for existing P0-P2 owners, no stale-cap risk). The HANDLER is the SOLE
-  authority. It declares `reads_siblings [:chat]` and authorizes a read
+  authority. It declares `reads_siblings [:session]` and authorizes a read
   ONLY when ALL hold (otherwise `{:error, :unauthorized}`):
 
     1. `ctx.caller` is a `%URI{}` (reject nil / `:any` / `:system` /
@@ -94,7 +94,7 @@ defmodule Ezagent.Behavior.SocialwarePublisherRead do
 
   @default_retention 100
 
-  reads_siblings([:chat])
+  reads_siblings([:session])
 
   action(:snapshot,
     args: %{},
@@ -183,7 +183,7 @@ defmodule Ezagent.Behavior.SocialwarePublisherRead do
   # ----- The fail-closed authorization predicate (THE security boundary) -
   #
   # P4 — the predicate is EXTRACTED into the shared
-  # `Ezagent.Socialware.ChatMembership` so that this behavior's read authz AND
+  # `Ezagent.Session.Membership` so that this behavior's read authz AND
   # the P4 chat_feed external read call ONE predicate (no copy-paste drift on a
   # security boundary). This wrapper only extracts `caller` + the `:chat`
   # sibling slice from the dispatch `ctx`; the byte-equivalent owner/member +
@@ -201,13 +201,13 @@ defmodule Ezagent.Behavior.SocialwarePublisherRead do
   # A nil/missing `owner_uri` matches NOTHING; a nil/malformed caller is
   # rejected up front. There is NO "allow if owner is nil" branch.
   defp authorize(ctx) do
-    Ezagent.Socialware.ChatMembership.authorize(get_chat_sibling(ctx), Map.get(ctx, :caller))
+    Ezagent.Session.Membership.authorize(get_chat_sibling(ctx), Map.get(ctx, :caller))
   end
 
   defp get_chat_sibling(ctx) do
     ctx
     |> Map.get(:siblings, %{})
-    |> Map.get(:chat)
+    |> Map.get(:session)
   end
 
   # ----- Read-only window helper over the trunk ring --------------------

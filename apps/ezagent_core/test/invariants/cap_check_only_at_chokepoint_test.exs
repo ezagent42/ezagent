@@ -153,11 +153,11 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         "apps/ezagent_domain_instance_message/lib/ezagent/entity/session_template.ex",
         "apps/ezagent_domain_instance_message/lib/ezagent/entity/agent_template.ex",
         # Capability module references Identity.grant_cap in
-        # docstrings + the chat Behavior dispatches it as part of
+        # docstrings + the session Behavior dispatches it as part of
         # the reconciler's session-create path (lift to a future
         # refactor — for now allowlisted).
         "apps/ezagent_core/lib/ezagent/capability.ex",
-        "apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex"
+        "apps/ezagent_domain_instance_message/lib/ezagent/behavior/session.ex"
       ]
     },
     %{

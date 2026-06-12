@@ -93,7 +93,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
 
     Phoenix.PubSub.broadcast(
       EzagentCore.PubSub,
-      Ezagent.Behavior.Chat.session_events_topic(URI.new!("session://system/default/main")),
+      Ezagent.Behavior.Session.session_events_topic(URI.new!("session://system/default/main")),
       {:chat_message, URI.new!("session://system/default/main"), agent_msg}
     )
 
@@ -229,7 +229,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       {:ok, _pty_pid} = Ezagent.Domain.Pty.start(agent_uri, %{cwd: "/tmp", test_mode: true})
       on_exit(fn -> Ezagent.Domain.Pty.stop(agent_uri) end)
 
-      join_target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+      join_target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
       :ok =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{
@@ -292,7 +292,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       {:ok, _pty_pid} = Ezagent.Domain.Pty.start(agent_uri, %{cwd: "/tmp", test_mode: true})
       on_exit(fn -> Ezagent.Domain.Pty.stop(agent_uri) end)
 
-      join_target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+      join_target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
       _ =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{
@@ -482,7 +482,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       # 2026-05-26 (post default→system sweep PR #335 / #362) — the
       # default session lives in workspace `system`, so caller AND
       # agent must also be in `system` for the dispatch to reach
-      # `Behavior.Chat.join` and surface `:unauthorized` (rather than
+      # `Behavior.Session.join` and surface `:unauthorized` (rather than
       # being short-circuited by the `valid_for?/4` cross-workspace
       # check in `handle_event("invite_member", ...)`).
       name = "cc_demo-unauth-#{System.unique_integer([:positive])}"
@@ -762,7 +762,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       # SliceChange envelope in the first place).
       :ok =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-          target: URI.new!("#{URI.to_string(receiver)}?action=chat.receive"),
+          target: URI.new!("#{URI.to_string(receiver)}?action=session.receive"),
           mode: :cast,
           args: %{message: stored},
           ctx: %{
@@ -776,7 +776,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
 
       event = %{
         uri: receiver,
-        slice_key: :chat,
+        slice_key: :session,
         cursor: 1,
         event_at: DateTime.utc_now(),
         result_summary: :ok
@@ -815,7 +815,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
 
       :ok =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-          target: URI.new!("#{URI.to_string(receiver)}?action=chat.receive"),
+          target: URI.new!("#{URI.to_string(receiver)}?action=session.receive"),
           mode: :cast,
           args: %{message: ghost_msg},
           ctx: %{
@@ -829,7 +829,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
 
       event = %{
         uri: receiver,
-        slice_key: :chat,
+        slice_key: :session,
         cursor: 1,
         event_at: DateTime.utc_now(),
         result_summary: :ok
@@ -863,7 +863,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
 
       event = %{
         uri: missing_uri,
-        slice_key: :chat,
+        slice_key: :session,
         cursor: 1,
         event_at: DateTime.utc_now(),
         result_summary: :ok
@@ -903,7 +903,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
           {:slice_changed,
            %{
              uri: caller_uri,
-             slice_key: :chat,
+             slice_key: :session,
              cursor: 1,
              event_at: DateTime.utc_now(),
              result_summary: :ok
@@ -963,7 +963,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
 
           :ok =
             Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-              target: URI.new!("#{URI.to_string(receiver)}?action=chat.receive"),
+              target: URI.new!("#{URI.to_string(receiver)}?action=session.receive"),
               mode: :cast,
               args: %{message: stored},
               ctx: %{
@@ -983,7 +983,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       # predict the absolute numbers — Cursors counter is shared
       # across tests; we only know they're consecutive for this
       # receiver).
-      {:ok, %{recent_messages: ring}} = Ezagent.Kind.get_slice(receiver, :chat)
+      {:ok, %{recent_messages: ring}} = Ezagent.Kind.get_slice(receiver, :session)
 
       # Each ring entry is one of our 3 sends (head is newest).
       assert length(ring) >= 3, "expected >= 3 ring entries, got #{inspect(ring)}"
@@ -1007,7 +1007,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       event_for = fn cursor ->
         %{
           uri: receiver,
-          slice_key: :chat,
+          slice_key: :session,
           cursor: cursor,
           event_at: DateTime.utc_now(),
           result_summary: :ok
@@ -1058,7 +1058,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
 
       :ok =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-          target: URI.new!("#{URI.to_string(receiver)}?action=chat.receive"),
+          target: URI.new!("#{URI.to_string(receiver)}?action=session.receive"),
           mode: :cast,
           args: %{message: stored},
           ctx: %{
@@ -1074,7 +1074,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       # (well past any real allocation).
       event = %{
         uri: receiver,
-        slice_key: :chat,
+        slice_key: :session,
         cursor: 999_999,
         event_at: DateTime.utc_now(),
         result_summary: :ok
@@ -1107,7 +1107,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
           {:slice_changed,
            %{
              uri: foreign_uri,
-             slice_key: :chat,
+             slice_key: :session,
              cursor: 1,
              event_at: DateTime.utc_now(),
              result_summary: :ok

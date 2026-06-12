@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.Chat do
+defmodule Ezagent.Behavior.Session do
   @moduledoc """
   Chat Behavior — Decision P2-D2 K-path: 4 actions, registered per-Kind
   subset to realize Decision #61 "ESR is router not req/resp app".
@@ -91,29 +91,27 @@ defmodule Ezagent.Behavior.Chat do
   (drop the dead ref) + `{:set, :last_seen, ...}` (persisted) + the
   `online → false` member flip via `{:set, :members, ...}`.
 
-  Naming (§11 NP-1/NP-2/NP-3 audit): `Ezagent.Behavior.Chat` — a domain
+  Naming (§11 NP-1/NP-2/NP-3 audit): `Ezagent.Behavior.Session` — a domain
   module (`apps/ezagent_domain_instance_message`) naming its own domain concept
   (`Chat`), with five actions whose intent the name closely tracks. NO
   violation; kept as-is (a rename would touch the `:chat` snapshot slice
   key + every call site for no clarity gain).
   """
 
-  # lifecycle:state_slice_override
-  #
-  # The `:chat` slice key is pinned (snapshot-compat — SPEC §5 step 2 /
-  # §7 OQ-7). The auto-derived key from `Ezagent.Behavior.Chat` would be
-  # `:chat` anyway, but the multi-Kind subset registration (Session uses
-  # the slice; User/Agent default it to `%{}`) + every existing
-  # `kind_snapshots` row + integration test that reads `:chat` by name
-  # depends on the stable key, so we declare it explicitly with the
-  # sanctioned marker rather than relying on derivation.
-  use Ezagent.Lifecycle, state_slice: :chat
+  # The `:session` slice key is AUTO-DERIVED from `Ezagent.Behavior.Session`
+  # (last module segment "Session" → `:session`), so NO `state_slice:`
+  # override is needed. The chat→session rename (Allen 2026-06-12, NO
+  # back-compat) renamed the slice key from `:chat` to `:session`
+  # system-wide. Existing `:chat`-keyed `kind_snapshots` rows are migrated
+  # to `:session` by `mix ezagent.session.migrate_slice` BEFORE the new
+  # code serves them (ordered cutover — no dual-read shim).
+  use Ezagent.Lifecycle
   reads_siblings([:sandbox])
 
   require Logger
 
   alias Ezagent.{KindRegistry, Message, MessageStore}
-  alias Ezagent.Behavior.Chat.{ConfigActions, Delivery, Legends, Members, Membership}
+  alias Ezagent.Behavior.Session.{ConfigActions, Delivery, Legends, Members, Membership}
   alias Ezagent.Routing.Legend
 
   # PR-N3 r4 (Allen 2026-05-25) — bounded cursor-indexed ring depth for
@@ -410,7 +408,7 @@ defmodule Ezagent.Behavior.Chat do
   @doc """
   The empty/default `template_working_copy` shape (Phase 7 completion
   SPEC §1.3 / §1.6). Thin delegator to
-  `Ezagent.Behavior.Chat.ConfigActions.default_template_working_copy/0`.
+  `Ezagent.Behavior.Session.ConfigActions.default_template_working_copy/0`.
   """
   @spec default_template_working_copy() :: map()
   defdelegate default_template_working_copy, to: ConfigActions
@@ -419,7 +417,7 @@ defmodule Ezagent.Behavior.Chat do
   Read the durable `template_working_copy` field from a `:chat` slice,
   defaulting to `default_template_working_copy/0` when the key is
   absent. Thin delegator to
-  `Ezagent.Behavior.Chat.ConfigActions.template_working_copy/1`.
+  `Ezagent.Behavior.Session.ConfigActions.template_working_copy/1`.
   """
   @spec template_working_copy(map()) :: map()
   defdelegate template_working_copy(chat_slice), to: ConfigActions
@@ -758,7 +756,7 @@ defmodule Ezagent.Behavior.Chat do
   @doc """
   System-internal path to write the durable `template_working_copy`
   field (HIGH-2 hardening). Thin delegator to
-  `Ezagent.Behavior.Chat.ConfigActions.system_set_working_copy/2`.
+  `Ezagent.Behavior.Session.ConfigActions.system_set_working_copy/2`.
   """
   @spec system_set_working_copy(URI.t(), map()) :: {:ok, map()} | {:error, term()}
   defdelegate system_set_working_copy(session_uri, working_copy), to: ConfigActions
@@ -800,14 +798,14 @@ defmodule Ezagent.Behavior.Chat do
 
   @doc """
   Read the session-scoped legend registry from a `:chat` slice. Thin
-  delegator to `Ezagent.Behavior.Chat.Legends.legends_of/1`.
+  delegator to `Ezagent.Behavior.Session.Legends.legends_of/1`.
   """
   @spec legends_of(map()) :: Legend.registry()
   defdelegate legends_of(chat_slice), to: Legends
 
   @doc """
   Resolve a legend NAME against a `:chat` slice's registry to its entry. Thin
-  delegator to `Ezagent.Behavior.Chat.Legends.resolve_legend/2`.
+  delegator to `Ezagent.Behavior.Session.Legends.resolve_legend/2`.
   """
   @spec resolve_legend(map(), String.t()) :: {:ok, Legend.entry()} | :error
   defdelegate resolve_legend(chat_slice, name), to: Legends
@@ -815,7 +813,7 @@ defmodule Ezagent.Behavior.Chat do
   @doc """
   Member-list rows with folded legends collapsed (team-routing-unification
   §3.6 fold, PR-6, GATE c). Thin delegator to
-  `Ezagent.Behavior.Chat.Legends.fold_members/1`.
+  `Ezagent.Behavior.Session.Legends.fold_members/1`.
   """
   @spec fold_members(map()) :: [
           {:legend, String.t(), [URI.t()]} | {:member, URI.t(), map()}
@@ -824,7 +822,7 @@ defmodule Ezagent.Behavior.Chat do
 
   @doc """
   System-internal path to install the legend registry. Thin delegator to
-  `Ezagent.Behavior.Chat.Legends.system_set_legends/2`.
+  `Ezagent.Behavior.Session.Legends.system_set_legends/2`.
   """
   @spec system_set_legends(URI.t(), Legend.registry()) :: {:ok, map()} | {:error, term()}
   defdelegate system_set_legends(session_uri, legends), to: Legends
@@ -849,7 +847,7 @@ defmodule Ezagent.Behavior.Chat do
   @doc """
   System-internal path to install the session-scoped named prompt-template map.
   Thin delegator to
-  `Ezagent.Behavior.Chat.ConfigActions.system_set_prompt_templates/2`.
+  `Ezagent.Behavior.Session.ConfigActions.system_set_prompt_templates/2`.
   """
   @spec system_set_prompt_templates(URI.t(), map()) :: {:ok, map()} | {:error, term()}
   defdelegate system_set_prompt_templates(session_uri, prompt_templates), to: ConfigActions

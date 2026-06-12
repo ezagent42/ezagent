@@ -49,7 +49,7 @@ defmodule Ezagent.NotificationSubscriptionsTest do
   defp narrow_cross_workspace_cap do
     %Ezagent.Capability{
       kind: :user,
-      behavior: Ezagent.Behavior.Chat,
+      behavior: Ezagent.Behavior.Session,
       instance: :any,
       workspace_uri: :any,
       granted_by: Ezagent.URI.new!("entity://system/user/test"),

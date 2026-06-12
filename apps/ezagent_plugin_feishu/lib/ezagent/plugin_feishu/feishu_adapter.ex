@@ -157,7 +157,7 @@ defmodule EzagentPluginFeishu.FeishuAdapter do
   `Ezagent.Behavior.Publisher.SessionImpl.build_payload/1`:
 
       %Ezagent.Publisher.Event{
-        slice_key: :chat,
+        slice_key: :session,
         payload: %{
           action: atom(),                # the Behavior action that fired
           caller: URI.t() | nil,
@@ -204,7 +204,7 @@ defmodule EzagentPluginFeishu.FeishuAdapter do
   the list so a 429 on one attachment doesn't lose the rest.
   """
   @impl Ezagent.ExternalMirror.Adapter
-  def event_to_payload(%Event{slice_key: :chat, payload: %{} = payload}) do
+  def event_to_payload(%Event{slice_key: :session, payload: %{} = payload}) do
     # Two-container Lifecycle migration (2026-05-29) wraps the developer slice
     # as `%{state: <persistent>, transients: ...}`. The Publisher event carries
     # that wrapped shape, but every reader below (chat_send_occurred?,

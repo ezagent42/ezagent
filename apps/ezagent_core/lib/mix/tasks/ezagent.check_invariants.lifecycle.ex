@@ -103,7 +103,14 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants.Lifecycle do
     # WorkspaceSharedSource — core credential source row schema for
     # workspace-scoped sharing; this is data vocabulary, not Workspace
     # behavior ownership.
-    "apps/ezagent_core/lib/ezagent/credential/workspace_shared_source.ex"
+    "apps/ezagent_core/lib/ezagent/credential/workspace_shared_source.ex",
+    # Session.SliceMigration + its mix task — one-shot chat→session snapshot
+    # slice-key cutover (Allen 2026-06-12). Operates on core `kind_snapshots`
+    # rows (same layer as `KindBaseBackfill`); "Session" names the SLICE KEY
+    # being renamed, not an upper-layer Session Kind/runtime composition. A
+    # migration tool that mentions the data it migrates, not a runtime owner.
+    "apps/ezagent_core/lib/ezagent/session/slice_migration.ex",
+    "apps/ezagent_core/lib/mix/tasks/ezagent.session.migrate_slice.ex"
   ]
 
   # NP-3 width lint: a generic lifecycle/admin/manager module name that
@@ -174,7 +181,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants.Lifecycle do
   # Gate 1 — no developer-tier `use Ezagent.Behavior` (must be Lifecycle)
   # SPEC §5 / AC-1. Anchored to the directive, not moduledoc/comment
   # mentions: `^\s*use Ezagent.Behavior` with a word boundary so
-  # `Ezagent.Behavior.Chat` etc. in prose are not matched.
+  # `Ezagent.Behavior.Session` etc. in prose are not matched.
   # ----------------------------------------------------------------------
   defp gate_no_use_behavior(files) do
     re = ~r/^\s*use\s+Ezagent\.Behavior\b/

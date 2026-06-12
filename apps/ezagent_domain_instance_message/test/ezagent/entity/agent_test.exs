@@ -24,7 +24,7 @@ defmodule Ezagent.Entity.AgentTest do
       # the agent mutates its OWN config under its own authority (the #607
       # confused-deputy dissolved; the old session-side ConfigUpdate is gone).
       assert Agent.behaviors() == [
-               Ezagent.Behavior.Chat,
+               Ezagent.Behavior.Session,
                Ezagent.Behavior.Identity,
                Ezagent.Behavior.Sandbox,
                Ezagent.Behavior.ApiKeys,

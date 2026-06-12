@@ -19,7 +19,7 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session, as: SessionBehavior
   alias Ezagent.Entity.SessionTemplate
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Orchestrator.Tools
@@ -76,11 +76,11 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
 
     :sys.replace_state(pid, fn server_state ->
       chat_slice =
-        get_in(server_state, [:state, Chat.state_slice()]) || %{state: %{}, transients: %{}}
+        get_in(server_state, [:state, SessionBehavior.state_slice()]) || %{state: %{}, transients: %{}}
 
       merged = Map.merge(Map.get(chat_slice, :state, %{}), chat_state)
       new_chat = Map.put(chat_slice, :state, merged)
-      put_in(server_state, [:state, Chat.state_slice()], new_chat)
+      put_in(server_state, [:state, SessionBehavior.state_slice()], new_chat)
     end)
 
     on_exit(fn ->

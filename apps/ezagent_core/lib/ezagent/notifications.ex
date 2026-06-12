@@ -3,7 +3,7 @@ defmodule Ezagent.Notifications do
   Unified user-inbox notifications primitive.
 
   Allen 2026-05-23 asked: "plugin 是否有注册 notification 的统一入口？"
-  Answer (before this PR): no — `Ezagent.Behavior.Chat` and a few
+  Answer (before this PR): no — `Ezagent.Behavior.Session` and a few
   other producers each `Phoenix.PubSub.broadcast` directly to
   `esr:user:<uri>:events`. No helper, no shape, no cap gate. Plugins
   copy the pattern.
@@ -35,7 +35,7 @@ defmodule Ezagent.Notifications do
     `:member_joined`, `:read_ack`, `:cap_granted`, …). Convention:
     snake_case atom. Subscribers pattern-match.
   - `:body` — the payload map. Shape per-type (caller's concern).
-  - `:source` — module that emitted (e.g. `Ezagent.Behavior.Chat`).
+  - `:source` — module that emitted (e.g. `Ezagent.Behavior.Session`).
     Used for audit + admin filtering.
   - `:dedup_key` — OPTIONAL idempotency key. If two notifications
     with the same `:dedup_key` arrive within the same VM run,

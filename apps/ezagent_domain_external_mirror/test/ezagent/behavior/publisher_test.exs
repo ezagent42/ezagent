@@ -56,14 +56,14 @@ defmodule Ezagent.Behavior.PublisherTest do
       event = %Ezagent.Publisher.Event{
         cursor: 1,
         publisher_uri: Ezagent.URI.new!("session://system/default/main"),
-        slice_key: :chat,
+        slice_key: :session,
         event_at: DateTime.utc_now(),
         payload: %{}
       }
 
       assert %Ezagent.Publisher.Event{} = event
       assert event.cursor == 1
-      assert event.slice_key == :chat
+      assert event.slice_key == :session
     end
 
     test "struct enforces all five keys (raises ArgumentError if any is missing)" do

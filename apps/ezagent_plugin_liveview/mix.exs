@@ -59,7 +59,7 @@ defmodule EzagentPluginLiveview.MixProject do
       {:jason, "~> 1.2"},
       {:ezagent_domain_socialware, in_umbrella: true},
       # Phase 2: the /admin LV displays Session membership (online/
-      # offline) sourced from `Ezagent.Behavior.Chat`. Same shape as the
+      # offline) sourced from `Ezagent.Behavior.Session`. Same shape as the
       # cc-bridge coupling — Phase 3+ may abstract the LV's "what
       # session UI to show" via configuration rather than direct dep.
       {:ezagent_domain_instance_message, in_umbrella: true},

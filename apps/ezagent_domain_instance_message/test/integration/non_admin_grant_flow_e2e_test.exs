@@ -64,7 +64,7 @@ defmodule EzagentDomainInstanceMessage.Integration.NonAdminGrantFlowE2ETest do
     msg = Message.new(caller_uri, %{text: text, attachments: []}, mentions: [])
 
     Invocation.dispatch(%Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=chat.send"),
+      target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
       mode: :call,
       args: %{message: msg},
       ctx: %{caller: caller_uri, caps: caps, reply: :inline}

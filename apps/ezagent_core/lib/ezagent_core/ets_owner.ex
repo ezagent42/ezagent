@@ -38,7 +38,7 @@ defmodule EzagentCore.EtsOwner do
     {Ezagent.SpawnRegistry, :set},
     {Ezagent.TemplateRegistry, :set},
     # Phase 7 PR 31 (IMPL-7-1): session→workspace back-edge for
-    # Ezagent.Behavior.Chat.invoke(:send) to plumb workspace_uri into
+    # Ezagent.Behavior.Session.invoke(:send) to plumb workspace_uri into
     # Resolver. See WorkspaceRegistry moduledoc.
     {Ezagent.WorkspaceRegistry, :set},
     # Phase 7 PR 40: agent spawn lineage for {:spawned_by, _} cap

@@ -3,7 +3,7 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
 
   require Logger
 
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session
   alias Ezagent.Entity.SessionTemplate
   alias Ezagent.Invocation
 
@@ -260,7 +260,7 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
           pid
           |> :sys.get_state()
           |> Map.get(:state, %{})
-          |> Map.get(Chat.state_slice(), %{})
+          |> Map.get(Session.state_slice(), %{})
 
         Map.get(chat_slice, :state, chat_slice)
 

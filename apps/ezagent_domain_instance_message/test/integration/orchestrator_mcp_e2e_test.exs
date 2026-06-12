@@ -234,7 +234,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
   # Read the live Session Kind's :chat persistent slice.
   defp chat_slice(session_uri) do
     {:ok, pid} = KindRegistry.lookup(session_uri)
-    %{state: %{chat: %{state: slice}}} = :sys.get_state(pid)
+    %{state: %{session: %{state: slice}}} = :sys.get_state(pid)
     slice
   end
 
@@ -443,7 +443,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
 
       # It joined the session as a member carrying its role_name + facets.
       slice = chat_slice(ctx.session_uri)
-      member_uri = Behavior.Chat.role_name_to_uri(slice.members, "backend-dev")
+      member_uri = Behavior.Session.role_name_to_uri(slice.members, "backend-dev")
       assert URI.to_string(member_uri) == member_uri_str
       assert slice.members[member_uri].in_session_template == true
       assert slice.members[member_uri].source_template_uri == ctx.backend_uri
@@ -468,7 +468,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
 
       # The member is gone from the session.
       slice = chat_slice(ctx.session_uri)
-      refute Behavior.Chat.role_name_to_uri(slice.members, "rm-role")
+      refute Behavior.Session.role_name_to_uri(slice.members, "rm-role")
     end
 
     test "remove_member of an absent role is idempotent success", ctx do
@@ -743,7 +743,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpE2eTest do
       refute result["isError"], "define_legend failed: #{inspect(result)}"
 
       assert {:ok, %{bound_rule_set: "ship-rs"}} =
-               Behavior.Chat.resolve_legend(chat_slice(ctx.session_uri), "team-x")
+               Behavior.Session.resolve_legend(chat_slice(ctx.session_uri), "team-x")
     end
 
     test "define_rule_set_rule with an unknown receiver role → structured error (codex M1)",

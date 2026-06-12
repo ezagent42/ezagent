@@ -135,7 +135,7 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
              )
 
     # Ensure echo agent is in the session.
-    join_target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+    join_target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
     {:ok, _} =
       Invocation.dispatch(%Invocation{
@@ -150,7 +150,7 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
       })
 
     # Subscribe BEFORE sending so we don't miss the broadcast.
-    session_topic = Ezagent.Behavior.Chat.session_events_topic(session_uri)
+    session_topic = Ezagent.Behavior.Session.session_events_topic(session_uri)
     :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, session_topic)
 
     text = "ping-#{System.unique_integer([:positive])}"
@@ -160,7 +160,7 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
         mentions: [echo_agent_uri]
       )
 
-    send_target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+    send_target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
 
     :ok =
       Invocation.dispatch(%Invocation{

@@ -13,7 +13,7 @@ defmodule Ezagent.URITest do
     "entity://team-alpha/agent/cc_demo",
     "entity://team-alpha/worker/slot-1",
     "session://system/default/main",
-    "session://team-alpha/template-x/main?action=chat.send",
+    "session://team-alpha/template-x/main?action=session.send",
     "template://system/agent/cc-orchestrator",
     "template://team-alpha/session/code-review",
     "resource://team-alpha/uploads/file-abc",
@@ -230,12 +230,12 @@ defmodule Ezagent.URITest do
     end
 
     test "?action= query is preserved through round-trip" do
-      s = "session://team-alpha/template-x/main?action=chat.send"
+      s = "session://team-alpha/template-x/main?action=session.send"
       canon = Ezagent.URI.new!(s)
-      assert canon.query == "action=chat.send"
+      assert canon.query == "action=session.send"
       {:ok, round} = Ezagent.URI.parse(URI.to_string(canon))
-      assert round.query == "action=chat.send"
-      assert {:ok, {:chat, :send}} = Ezagent.URI.behavior_action(round)
+      assert round.query == "action=session.send"
+      assert {:ok, {:session, :send}} = Ezagent.URI.behavior_action(round)
     end
   end
 
@@ -279,22 +279,22 @@ defmodule Ezagent.URITest do
   describe "with_action/3 — canonical dispatch-target constructor (URI hardening 2026-05-30)" do
     test "appends ?action=behavior.action to a canonical instance" do
       base = Ezagent.URI.new!("entity://team-alpha/agent/cc_demo")
-      target = Ezagent.URI.with_action(base, :chat, :receive)
-      assert URI.to_string(target) == "entity://team-alpha/agent/cc_demo?action=chat.receive"
+      target = Ezagent.URI.with_action(base, :session, :receive)
+      assert URI.to_string(target) == "entity://team-alpha/agent/cc_demo?action=session.receive"
       assert Ezagent.URI.canonical?(target)
-      assert {:ok, {:chat, :receive}} = Ezagent.URI.behavior_action(target)
+      assert {:ok, {:session, :receive}} = Ezagent.URI.behavior_action(target)
     end
 
     test "accepts string behavior/action as well as atoms" do
       base = Ezagent.URI.new!("session://system/default/main")
-      target = Ezagent.URI.with_action(base, "chat", "send")
-      assert {:ok, {:chat, :send}} = Ezagent.URI.behavior_action(target)
+      target = Ezagent.URI.with_action(base, "session", "send")
+      assert {:ok, {:session, :send}} = Ezagent.URI.behavior_action(target)
     end
 
     test "replaces any stale action already on the base" do
       base = Ezagent.URI.new!("entity://team-alpha/agent/cc_demo?action=old.verb")
-      target = Ezagent.URI.with_action(base, :chat, :send)
-      assert {:ok, {:chat, :send}} = Ezagent.URI.behavior_action(target)
+      target = Ezagent.URI.with_action(base, :session, :send)
+      assert {:ok, {:session, :send}} = Ezagent.URI.behavior_action(target)
     end
 
     test "works for cross-cutting schemes (workspace://, system://)" do
@@ -311,7 +311,7 @@ defmodule Ezagent.URITest do
       legacy = noncanonical_uri("entity://team-alpha/agent/cc_demo")
 
       assert_raise ArgumentError, ~r/non-canonical/, fn ->
-        Ezagent.URI.with_action(legacy, :chat, :send)
+        Ezagent.URI.with_action(legacy, :session, :send)
       end
     end
   end
@@ -439,11 +439,11 @@ defmodule Ezagent.URITest do
     end
 
     test "parses URI with action query (SPEC v2 §5.2, PR #148)" do
-      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_demo-builder?action=chat.receive")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_demo-builder?action=session.receive")
       assert uri.scheme == "entity"
       assert uri.host == "team-alpha"
       assert uri.path == "/agent/cc_demo-builder"
-      assert uri.query == "action=chat.receive"
+      assert uri.query == "action=session.receive"
     end
 
     test "parses cross-workspace entity URI" do
@@ -575,7 +575,7 @@ defmodule Ezagent.URITest do
 
     test "entity:// agent flavor in name prefix is opaque to parser" do
       # PR #141 SPEC v2 §5.14: <flavor>_<name> is one opaque name string.
-      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_demo-builder?action=chat.receive")
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_demo-builder?action=session.receive")
       inst = Ezagent.URI.instance(uri)
       assert URI.to_string(inst) == "entity://team-alpha/agent/cc_demo-builder"
     end
@@ -583,7 +583,7 @@ defmodule Ezagent.URITest do
 
   describe "instance/1 — unified 3-seg schemes (SPEC v3 §3.6 PR-7)" do
     test "session:// strips query and keeps full 3-segment path" do
-      uri = Ezagent.URI.new!("session://system/default/main?action=chat.send")
+      uri = Ezagent.URI.new!("session://system/default/main?action=session.send")
       inst = Ezagent.URI.instance(uri)
       assert inst.scheme == "session"
       assert inst.host == "system"
@@ -707,8 +707,8 @@ defmodule Ezagent.URITest do
     end
 
     test "extracts from 3-seg session:// scheme (SPEC v3 §3.6 PR-7)" do
-      uri = Ezagent.URI.new!("session://system/default/main?action=chat.send")
-      assert {:ok, {:chat, :send}} = Ezagent.URI.behavior_action(uri)
+      uri = Ezagent.URI.new!("session://system/default/main?action=session.send")
+      assert {:ok, {:session, :send}} = Ezagent.URI.behavior_action(uri)
     end
 
     test "extracts when behavior or action contains underscores" do

@@ -362,7 +362,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
     test "threads desired_caps into the data map when present" do
       cap = %Ezagent.Capability{
         kind: :session,
-        behavior: Ezagent.Behavior.Chat,
+        behavior: Ezagent.Behavior.Session,
         action: :any,
         instance: :any,
         workspace_uri: URI.new!("workspace://team-alpha"),

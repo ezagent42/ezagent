@@ -62,8 +62,8 @@ defmodule EzagentPluginAdvisor.Integration.PluginContractTest do
     assert is_pid(pid)
     assert {:ok, ^workspace_uri} = WorkspaceRegistry.lookup(session_uri)
 
-    assert {:ok, chat} = Ezagent.Kind.get_slice(session_uri, :chat)
-    working_copy = Ezagent.Behavior.Chat.template_working_copy(chat)
+    assert {:ok, chat} = Ezagent.Kind.get_slice(session_uri, :session)
+    working_copy = Ezagent.Behavior.Session.template_working_copy(chat)
 
     assert working_copy["class"] == "session.advisor"
     assert working_copy["vertical"] == "advisor"

@@ -1,13 +1,13 @@
-defmodule Ezagent.Behavior.Chat.ConfigActions do
+defmodule Ezagent.Behavior.Session.ConfigActions do
   @moduledoc false
   #
   # Working-copy + prompt-template management helpers extracted VERBATIM
-  # from `Ezagent.Behavior.Chat` (PR-3R helper extraction). The
+  # from `Ezagent.Behavior.Session` (PR-3R helper extraction). The
   # authorization predicates (`working_copy_write_authorized?/1`,
   # `orchestrator_cap_present?/1`) run in the same Session Kind process as
   # the `handle_set_working_copy/2` / `handle_set_prompt_templates/2`
   # callbacks; the `system_set_*` functions are `Ezagent.Router.dispatch`
-  # round-trips identical to running in `Behavior.Chat`.
+  # round-trips identical to running in `Behavior.Session`.
 
   alias Ezagent.Cmd
 

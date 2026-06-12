@@ -57,7 +57,7 @@ defmodule Ezagent.Behavior.OrchestratorAdmin do
   Registered against `Ezagent.Entity.Session` in
   `EzagentDomainInstanceMessage.Application.start/2`. Lives in
   `ezagent_domain_instance_message` because `data_owner/1` delegates to
-  `Ezagent.Behavior.Chat.data_owner/1` (which reads
+  `Ezagent.Behavior.Session.data_owner/1` (which reads
   `slice.chat.owner_uri`); a `ezagent_core` location would create a
   core→domain dependency.
 
@@ -145,11 +145,11 @@ defmodule Ezagent.Behavior.OrchestratorAdmin do
   end
 
   # RFC #402: the cap data-owner is the session's owner. The session
-  # URI's owner is read by `Ezagent.Behavior.Chat.data_owner/1` (which
+  # URI's owner is read by `Ezagent.Behavior.Session.data_owner/1` (which
   # reads `slice.chat.owner_uri` via `Session.owner/1`); we route
   # through there to keep one source of truth.
   def data_owner(%URI{scheme: "session"} = session_uri) do
-    Ezagent.Behavior.Chat.data_owner(session_uri)
+    Ezagent.Behavior.Session.data_owner(session_uri)
   end
 
   def data_owner(:any), do: :any

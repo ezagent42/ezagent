@@ -77,7 +77,7 @@ defmodule EzagentPluginLiveview.ComposerMentionTest do
     # query. Chat fan-out now dispatches via `Ezagent.Router.dispatch/1`
     # (the §11 facade-consistency migration), which annotates the target
     # with `?action=_.receive` (the `_.` behavior-name placeholder a
-    # `%Cmd{}` carries) rather than the legacy `?action=chat.receive`.
+    # `%Cmd{}` carries) rather than the legacy `?action=session.receive`.
     # Match the action suffix so the count is robust to the behavior-name
     # prefix. (post-lifecycle remediation.)
     base = URI.to_string(target_uri)
@@ -140,7 +140,7 @@ defmodule EzagentPluginLiveview.ComposerMentionTest do
 
     :ok =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-        target: URI.new!("#{URI.to_string(@session)}?action=chat.join"),
+        target: URI.new!("#{URI.to_string(@session)}?action=session.join"),
         mode: :cast,
         args: %{member: member},
         ctx: %{

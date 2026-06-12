@@ -560,7 +560,7 @@ defmodule Ezagent.Kind.Server do
   # PR-OWN-2 (caps-data-ownership SPEC #306 §7) — read a single
   # Behavior slice. Used by `Ezagent.Kind.get_slice/2` for cross-
   # process lookups (e.g. `Session.owner/1` resolves session.owner_uri
-  # so `Behavior.Chat.data_owner/1` can return a real URI).
+  # so `Behavior.Session.data_owner/1` can return a real URI).
   def handle_call({:ezagent_get_slice, slice_key}, _from, %{state: slice_state} = state)
       when is_atom(slice_key) do
     {:reply, {:ok, Map.get(slice_state, slice_key)}, state}

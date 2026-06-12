@@ -1,4 +1,4 @@
-defmodule Ezagent.Socialware.ChatMembership do
+defmodule Ezagent.Session.Membership do
   @moduledoc """
   The SHARED, live, fail-closed chat owner/member authorization predicate.
 
@@ -13,7 +13,7 @@ defmodule Ezagent.Socialware.ChatMembership do
   ## Shape
 
   `authorize/2` takes the RAW `:chat` slice map (as `Ezagent.Kind.get_slice/2`
-  returns it, or as the Behavior runtime injects under `ctx.siblings[:chat]`)
+  returns it, or as the Behavior runtime injects under `ctx.siblings[:session]`)
   and a `caller`. It returns `:ok` ONLY when ALL hold (else
   `{:error, :unauthorized}`):
 

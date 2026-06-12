@@ -323,7 +323,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
        )
        when is_binary(template_name) do
     # RFC #402 (Allen 2026-05-26) — thread the creator URI as `owner_uri`
-    # so `Behavior.Chat.init_slice/1` records it on the session's `:chat`
+    # so `Behavior.Session.init_slice/1` records it on the session's `:chat`
     # slice. Falls back to the bootstrap admin for system-internal
     # creates (`creator_uri == nil`).
     effective_owner = creator_uri || User.admin_uri()

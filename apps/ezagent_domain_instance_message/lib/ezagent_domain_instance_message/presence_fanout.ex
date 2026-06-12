@@ -19,7 +19,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanout do
   ## State machine
 
   - **Subscribes to** `esr:session_membership:changes` (global topic
-    broadcast by `Ezagent.Behavior.Chat.broadcast_membership/2`):
+    broadcast by `Ezagent.Behavior.Session.broadcast_membership/2`):
     - `{:session_membership_change, session_uri, {:member_joined, member_uri}}`
       → add `(session_uri ↔ member_uri)` to index; on FIRST mapping
       for `member_uri`, `Presence.subscribe(member_uri, %{caps: :system})`.
@@ -35,7 +35,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanout do
 
       Phoenix.PubSub.broadcast(
         EzagentCore.PubSub,
-        Ezagent.Behavior.Chat.session_events_topic(session_uri),
+        Ezagent.Behavior.Session.session_events_topic(session_uri),
         {:member_presence, session_uri, member_uri,
          %{online?: current != %{}}}
       )
@@ -56,7 +56,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanout do
 
   require Logger
 
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session
   alias Ezagent.Presence
 
   @membership_topic "esr:session_membership:changes"
@@ -200,7 +200,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanout do
         Enum.each(sessions, fn session_uri ->
           Phoenix.PubSub.broadcast(
             EzagentCore.PubSub,
-            Chat.session_events_topic(session_uri),
+            Session.session_events_topic(session_uri),
             {:member_presence, session_uri, member_uri, %{online?: online?}}
           )
         end)
@@ -247,7 +247,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanout do
           # way to read a Kind's slice without adding a new dispatch
           # path. Short timeout — bootstrap is best-effort.
           wrapper = :sys.get_state(session_pid, 1_000)
-          slice = get_in(wrapper, [:state, :chat]) || %{}
+          slice = get_in(wrapper, [:state, :session]) || %{}
           # Lifecycle migration (SPEC 2026-05-29 §2.3C): the Chat slice is
           # now two-container; `members` lives under `:state` (a flat slice
           # falls through unchanged).

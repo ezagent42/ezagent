@@ -475,7 +475,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
 
       :ok =
         Invocation.dispatch(%Invocation{
-          target: URI.new!("#{URI.to_string(session_uri)}?action=chat.send"),
+          target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
           mode: :cast,
           args: %{message: inbound_msg},
           ctx: %{
@@ -588,7 +588,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
 
   defp chat_join(session_uri, member_uri) do
     Invocation.dispatch(%Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=chat.join"),
+      target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
       mode: :call,
       args: %{member: member_uri},
       ctx: %{

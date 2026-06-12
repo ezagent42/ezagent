@@ -214,7 +214,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorkerColdRestartTest do
     end
 
     admin_uri = Ezagent.URI.new!("entity://system/user/admin")
-    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,

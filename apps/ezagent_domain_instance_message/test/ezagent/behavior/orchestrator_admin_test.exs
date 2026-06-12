@@ -13,7 +13,7 @@ defmodule Ezagent.Behavior.OrchestratorAdminTest do
     3. `invoke/4` raises with a clear error if ever reached (defence
        in depth).
     4. `data_owner/1` for a session URI delegates to
-       `Behavior.Chat.data_owner/1`, which reads `slice.chat.owner_uri`.
+       `Behavior.Session.data_owner/1`, which reads `slice.chat.owner_uri`.
   """
 
   use ExUnit.Case, async: true
@@ -65,8 +65,8 @@ defmodule Ezagent.Behavior.OrchestratorAdminTest do
   end
 
   describe "data_owner/1" do
-    test "for a session URI, delegates to Behavior.Chat.data_owner/1" do
-      # Behavior.Chat.data_owner reads slice.chat.owner_uri via
+    test "for a session URI, delegates to Behavior.Session.data_owner/1" do
+      # Behavior.Session.data_owner reads slice.chat.owner_uri via
       # Session.owner/1. Without a live session, owner/1 returns
       # {:error, _} and Chat.data_owner returns :no_owner.
       session_uri = Ezagent.URI.new!("session://system/default/dead-test-session-#{:rand.uniform(99999)}")

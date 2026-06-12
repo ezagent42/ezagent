@@ -112,7 +112,7 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
     member_uri = spawn_member_user()
 
     Invocation.dispatch(%Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=chat.join"),
+      target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
       mode: :call,
       args: %{member: member_uri},
       ctx: %{
@@ -141,7 +141,7 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
       assert {:ok, %{members: _}} = mutate_chat_slice(session_uri)
 
       # Receive the publisher event.
-      assert_receive {:publisher_event, %Event{cursor: 1, slice_key: :chat}}, 500
+      assert_receive {:publisher_event, %Event{cursor: 1, slice_key: :session}}, 500
     end
   end
 

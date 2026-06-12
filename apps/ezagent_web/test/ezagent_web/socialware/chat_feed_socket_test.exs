@@ -16,7 +16,7 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
     * a forged / cross-session token is denied at connect.
 
   (The exhaustive crafted/malformed-caller matrix is the predicate's own gate —
-  `Ezagent.Socialware.ChatMembershipTest` — byte-equivalent to P3-3.)
+  `Ezagent.Session.MembershipTest` — byte-equivalent to P3-3.)
   """
   use EzagentWeb.ConnCase, async: false
 
@@ -76,7 +76,7 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
   end
 
   defp chat_dispatch(session, action, member) do
-    target = URI.new!("#{URI.to_string(session)}?action=chat.#{action}")
+    target = URI.new!("#{URI.to_string(session)}?action=session.#{action}")
 
     Invocation.dispatch(%Invocation{
       target: target,
@@ -106,7 +106,7 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
   # returned `msg.id` lets the assertion bind the live push to this send.
   defp chat_send(session, text) do
     msg = Message.new(@sender, %{text: text, attachments: []}, visibility: :customer_visible)
-    target = URI.new!("#{URI.to_string(session)}?action=chat.send")
+    target = URI.new!("#{URI.to_string(session)}?action=session.send")
 
     {:ok, %{stored: true}} =
       Invocation.dispatch(%Invocation{

@@ -566,7 +566,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
     %Ezagent.Publisher.Event{
       cursor: Keyword.fetch!(opts, :cursor),
       publisher_uri: Ezagent.URI.new!("session://system/default/main"),
-      slice_key: :chat,
+      slice_key: :session,
       event_at: DateTime.utc_now(),
       payload: %{
         new_slice: %{
@@ -586,7 +586,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
     %Ezagent.Publisher.Event{
       cursor: Keyword.fetch!(opts, :cursor),
       publisher_uri: Ezagent.URI.new!("session://system/default/main"),
-      slice_key: :chat,
+      slice_key: :session,
       event_at: DateTime.utc_now(),
       payload: %{
         new_slice: %{
@@ -746,7 +746,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
 
     admin_uri = Ezagent.URI.new!("entity://system/user/admin")
 
-    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,

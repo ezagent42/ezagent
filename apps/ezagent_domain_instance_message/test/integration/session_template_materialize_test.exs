@@ -24,7 +24,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     2. **it routes (with the prompt-template applied)** — reusing the
        PR-4/PR-6 delivery path: a `@legend`-triggered message resolves —
        through the INSTALLED rule-set — to the materialized member, and
-       `Chat.render_for_delivery/4` applies the INSTALLED prompt template
+       `SessionBehavior.render_for_delivery/4` applies the INSTALLED prompt template
        so the member's delivered message is the TEMPLATED payload. We also
        drive a live `chat.send` and confirm the member actually receives.
   """
@@ -32,7 +32,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Invocation, KindRegistry, Message, RoutingRegistry}
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session, as: SessionBehavior
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Entity.{SessionTemplate, User}
   alias Ezagent.Routing.{Matcher, Resolver}
@@ -61,7 +61,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
   # Read the live Session Kind's :chat slice.
   defp chat_slice(session_uri) do
     {:ok, pid} = KindRegistry.lookup(session_uri)
-    %{state: %{chat: %{state: slice}}} = :sys.get_state(pid)
+    %{state: %{session: %{state: slice}}} = :sys.get_state(pid)
     slice
   end
 
@@ -190,7 +190,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
 
     # The spawned agent member was recreated + joined, carrying role_name +
     # the in_session_template snapshot facet + the spawn-source facet.
-    member_uri = Chat.role_name_to_uri(slice.members, role_name)
+    member_uri = SessionBehavior.role_name_to_uri(slice.members, role_name)
     assert Ezagent.URI.type?(member_uri, :agent)
 
     assert %{online: true, role_name: ^role_name, in_session_template: true} =
@@ -212,7 +212,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
 
     # The template's prompt_templates + legends were installed on the slice.
     assert slice.prompt_templates[tpl_ref] == "接龙：{body}（by {sender}）"
-    assert {:ok, %{bound_rule_set: "telephone"}} = Chat.resolve_legend(slice, legend_name)
+    assert {:ok, %{bound_rule_set: "telephone"}} = SessionBehavior.resolve_legend(slice, legend_name)
 
     # The rule-set rule is live in the RoutingRegistry — and its receiver was
     # resolved from role_name to the materialized member's concrete URI.
@@ -235,7 +235,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     # legend-triggered message resolves through the installed rule-set to the
     # materialized member, carrying the rule's prompt_template_ref; the
     # delivery render applies the INSTALLED template. This is the SAME
-    # resolve_with_ctx → render_for_delivery seam Chat.handle_send/2 drives.
+    # resolve_with_ctx → render_for_delivery seam SessionBehavior.handle_send/2 drives.
     operator = User.admin_uri()
 
     msg =
@@ -255,7 +255,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     assert recipient == member_uri
     assert ctx.prompt_template_ref == tpl_ref
 
-    delivered = Chat.render_for_delivery(msg, ctx, slice.prompt_templates, session_uri)
+    delivered = SessionBehavior.render_for_delivery(msg, ctx, slice.prompt_templates, session_uri)
     assert delivered.body.text == "接龙：山顶的雪化了（by #{URI.to_string(operator)}）"
 
     # ── live liveness: a real chat.send through the Session does not error
@@ -263,7 +263,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     # working, send-able team).
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session_uri)}?action=chat.send"),
+        target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
         mode: :cast,
         args: %{message: msg},
         ctx: %{
@@ -276,7 +276,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     # Synchronize on the Session GenServer draining the cast, then confirm
     # the send was recorded (the slice's last_message_id advanced).
     {:ok, session_pid} = KindRegistry.lookup(session_uri)
-    %{state: %{chat: %{state: post}}} = :sys.get_state(session_pid)
+    %{state: %{session: %{state: post}}} = :sys.get_state(session_pid)
     assert post.last_message_id == msg.id
   end
 
@@ -341,7 +341,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     # A spawned agent member appears under a workspace-first entity agent URI
     # and carrying its role_name + the spawn-source facet (so a future
     # respawn can rebuild it).
-    spawned = Chat.role_name_to_uri(slice.members, role_name)
+    spawned = SessionBehavior.role_name_to_uri(slice.members, role_name)
     assert Ezagent.URI.type?(spawned, :agent)
     assert slice.members[spawned].in_session_template == true
     assert slice.members[spawned].source_template_uri == source_template_uri
@@ -407,8 +407,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     cleanup_session(session_a)
     cleanup_session(session_b)
 
-    member_a = Chat.role_name_to_uri(chat_slice(session_a).members, role_name)
-    member_b = Chat.role_name_to_uri(chat_slice(session_b).members, role_name)
+    member_a = SessionBehavior.role_name_to_uri(chat_slice(session_a).members, role_name)
+    member_b = SessionBehavior.role_name_to_uri(chat_slice(session_b).members, role_name)
 
     cleanup_agent(member_a)
     cleanup_agent(member_b)
@@ -433,7 +433,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
         content
       )
       |> case do
-        :ok -> Chat.role_name_to_uri(chat_slice(session_a).members, role_name)
+        :ok -> SessionBehavior.role_name_to_uri(chat_slice(session_a).members, role_name)
       end
 
     assert member_a_again == member_a,
@@ -500,8 +500,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     cleanup_session(session_a)
     cleanup_session(session_b)
 
-    member_a = Chat.role_name_to_uri(chat_slice(session_a).members, role_name)
-    member_b = Chat.role_name_to_uri(chat_slice(session_b).members, role_name)
+    member_a = SessionBehavior.role_name_to_uri(chat_slice(session_a).members, role_name)
+    member_b = SessionBehavior.role_name_to_uri(chat_slice(session_b).members, role_name)
 
     cleanup_agent(member_a)
     cleanup_agent(member_b)
@@ -619,7 +619,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
              )
 
     cleanup_session(session_uri)
-    member = Chat.role_name_to_uri(chat_slice(session_uri).members, role_name)
+    member = SessionBehavior.role_name_to_uri(chat_slice(session_uri).members, role_name)
     cleanup_agent(member)
 
     table = Resolver.default_routing_table()
@@ -753,7 +753,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     n = uniq()
     template_name = "joinfail-team-#{n}"
     # Two members sharing the SAME role_name but DIFFERENT URIs. role_name is
-    # UNIQUE-per-session (Chat.do_join's role_name_conflict guard), so:
+    # UNIQUE-per-session (SessionBehavior.do_join's role_name_conflict guard), so:
     #   * member A is a predeclared plain echo agent that joins OK and holds
     #     the role_name.
     #   * member B is a cc AgentTemplate member with the SAME role_name; it

@@ -371,7 +371,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
     :ok = spawn_user_with_retry(member_uri, 20)
 
     admin_uri = Ezagent.URI.new!("entity://system/user/admin")
-    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
     dispatch_chat_join_with_retry(target, member_uri, admin_uri, 20)
   end

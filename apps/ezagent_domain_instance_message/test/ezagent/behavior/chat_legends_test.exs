@@ -8,32 +8,32 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
     * the `:legends` slice field default (legacy snapshots → `%{}`)
     * the `chat.set_legends` handler + its authorization (orchestrator /
       system-internal only — same authority class as `set_working_copy`)
-    * `Chat.legends_of/1` reader + `Chat.resolve_legend/2` (GATE a — a legend
+    * `SessionBehavior.legends_of/1` reader + `SessionBehavior.resolve_legend/2` (GATE a — a legend
       resolves to its bound rule-set entry via the registry)
-    * `Chat.fold_members/2` wiring `role_name_to_uri` into `Legend.fold_members`
+    * `SessionBehavior.fold_members/2` wiring `role_name_to_uri` into `Legend.fold_members`
       (GATE c — folded members collapse but stay individually @-able)
   """
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session, as: SessionBehavior
   alias Ezagent.Routing.Legend
 
   defp uri(s), do: URI.new!(s)
 
   describe "slice default — :legends" do
     test "a fresh session's :chat state carries an empty legends map" do
-      {:ok, state} = Chat.create(%{owner_uri: uri("entity://system/user/admin")})
+      {:ok, state} = SessionBehavior.create(%{owner_uri: uri("entity://system/user/admin")})
       assert state.legends == %{}
     end
 
     test "legends_of/1 defaults a legacy (key-absent) slice to %{}" do
-      assert Chat.legends_of(%{}) == %{}
-      assert Chat.legends_of(%{members: %{}}) == %{}
+      assert SessionBehavior.legends_of(%{}) == %{}
+      assert SessionBehavior.legends_of(%{members: %{}}) == %{}
     end
 
     test "legends_of/1 reads an installed registry" do
       legends = Legend.put(%{}, "team", member_set: ["a"], bound_rule_set: "rs")
-      assert Chat.legends_of(%{legends: legends}) == legends
+      assert SessionBehavior.legends_of(%{legends: legends}) == legends
     end
   end
 
@@ -50,7 +50,7 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
       }
 
       assert {:ok, %{legends: ^legends}, effects} =
-               Chat.handle_set_legends(%{legends: legends}, ctx)
+               SessionBehavior.handle_set_legends(%{legends: legends}, ctx)
 
       assert Enum.any?(effects, fn {:set, :legends, l} -> l == legends; _ -> false end)
     end
@@ -58,7 +58,7 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
     test "system://orchestrator-tools is also a trusted caller" do
       legends = Legend.put(%{}, "team", member_set: [], bound_rule_set: "rs")
       ctx = %{self_uri: uri("session://team/default/s1"), caller: uri("system://orchestrator-tools")}
-      assert {:ok, _, _} = Chat.handle_set_legends(%{legends: legends}, ctx)
+      assert {:ok, _, _} = SessionBehavior.handle_set_legends(%{legends: legends}, ctx)
     end
 
     test "the session's orchestrator (within_session cap) is authorized" do
@@ -77,13 +77,13 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
 
       ctx = %{self_uri: sess, caps: MapSet.new([orch_cap])}
 
-      assert {:ok, _, effects} = Chat.handle_set_legends(%{legends: legends}, ctx)
+      assert {:ok, _, effects} = SessionBehavior.handle_set_legends(%{legends: legends}, ctx)
       assert Enum.any?(effects, fn {:set, :legends, l} -> l == legends; _ -> false end)
     end
 
     test "a plain session-cap holder (no orchestrator authority) is denied" do
       ctx = %{self_uri: uri("session://team/default/s1"), caps: MapSet.new()}
-      assert {:error, :unauthorized} = Chat.handle_set_legends(%{legends: %{}}, ctx)
+      assert {:error, :unauthorized} = SessionBehavior.handle_set_legends(%{legends: %{}}, ctx)
     end
 
     # The codex HIGH #2 regression: a plain session MEMBER (broad workspace
@@ -113,7 +113,7 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
         system_internal: true
       }
 
-      assert {:error, :unauthorized} = Chat.handle_set_legends(%{legends: %{}}, ctx)
+      assert {:error, :unauthorized} = SessionBehavior.handle_set_legends(%{legends: %{}}, ctx)
     end
   end
 
@@ -125,14 +125,14 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
 
       slice = %{legends: legends}
 
-      assert {:ok, entry} = Chat.resolve_legend(slice, "传话游戏")
+      assert {:ok, entry} = SessionBehavior.resolve_legend(slice, "传话游戏")
       assert entry.bound_rule_set == "telephone"
       assert entry.name == "传话游戏"
     end
 
     test "resolve_legend/2 is :error for a non-legend / empty slice" do
-      assert :error = Chat.resolve_legend(%{legends: %{}}, "nope")
-      assert :error = Chat.resolve_legend(%{}, "nope")
+      assert :error = SessionBehavior.resolve_legend(%{legends: %{}}, "nope")
+      assert :error = SessionBehavior.resolve_legend(%{}, "nope")
     end
   end
 
@@ -158,7 +158,7 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
         )
 
       slice = %{members: members, legends: legends}
-      folded = Chat.fold_members(slice)
+      folded = SessionBehavior.fold_members(slice)
 
       assert Enum.any?(folded, fn
                {:legend, "传话游戏", uris} ->
@@ -182,15 +182,15 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
 
       # ...but they remain individually @-able: the SoT members map is
       # untouched, so a concrete @relay-cc still resolves to the live member.
-      assert Chat.role_name_to_uri(members, "relay-cc") == relay_cc
-      assert Chat.role_name_to_uri(members, "relay-codex") == relay_codex
+      assert SessionBehavior.role_name_to_uri(members, "relay-cc") == relay_cc
+      assert SessionBehavior.role_name_to_uri(members, "relay-codex") == relay_codex
     end
 
     test "no legends → every member is a plain row" do
       admin = uri("entity://system/user/admin")
       slice = %{members: %{admin => %{online: true}}, legends: %{}}
 
-      assert Chat.fold_members(slice) == [{:member, admin, %{online: true}}]
+      assert SessionBehavior.fold_members(slice) == [{:member, admin, %{online: true}}]
     end
   end
 end

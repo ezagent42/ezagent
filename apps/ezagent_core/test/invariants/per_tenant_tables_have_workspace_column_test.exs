@@ -65,7 +65,7 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # SPEC 2026-05-23-read-receipts — read-confidence marker per
     # `(session, user, source)`. Per-tenant: a marker's
     # `last_read_message_uri` is meaningless across workspaces.
-    {Ezagent.Chat.ReadMarker, "read_markers"},
+    {Ezagent.Session.ReadMarker, "read_markers"},
     # SPEC 2026-05-24-magic-link-rules-v2 PR-A — per-workspace
     # magic-link acceptance rules. Per-tenant by definition (a
     # `domain` rule for ws A must never authorise a login into ws B).
