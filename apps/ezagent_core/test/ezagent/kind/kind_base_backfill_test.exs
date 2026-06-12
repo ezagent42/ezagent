@@ -4,13 +4,40 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
   alias Ezagent.Kind.KindBaseBackfill
   alias Ezagent.Behavior.KindBase
   alias Ezagent.Ecto.KindSnapshot
+  alias Ezagent.Test.SnapshotFixtures
 
   @workspace "workspace://system"
 
-  # Seed a "session" snapshot row with the given decoded state map.
+  # A session-like Kind that REQUIRES an explicit (non-nil) :kind_base (the
+  # P5-0b scoped guard) and declares the CHAT Session set. Used to prove the
+  # backfilled minimal-chat row reloads via effective_set/2 without raising.
+  defmodule ChatSessionLikeKind do
+    @behaviour Ezagent.Kind
+    @impl true
+    def type_name, do: :session
+    @impl true
+    def behaviors,
+      do: [
+        Ezagent.Behavior.Chat,
+        Ezagent.Behavior.Publisher.SessionImpl,
+        Ezagent.Behavior.ExternalMirror,
+        Ezagent.Behavior.KindBase
+      ]
+
+    @impl true
+    def persistence, do: :ephemeral
+    @impl true
+    def supervisor, do: Ezagent.Kind.Server
+    @impl true
+    def requires_explicit_behavior_set?, do: true
+  end
+
+  # Seed a "session" snapshot row with the given decoded state map. Routes
+  # through the sanctioned `SnapshotFixtures.upsert_kind_snapshot/5` helper
+  # (gate #20) rather than calling `KindSnapshot.upsert/5` directly.
   defp seed_session(uri_str, state) do
     binary = :erlang.term_to_binary(state)
-    {:ok, _row} = KindSnapshot.upsert(uri_str, "session", binary, 0, @workspace)
+    {:ok, _row} = SnapshotFixtures.upsert_kind_snapshot(uri_str, "session", binary, 0, @workspace)
     uri_str
   end
 
@@ -25,6 +52,19 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
       chat: %{state: %{owner_uri: nil, members: MapSet.new()}, transients: %{}},
       publisher: %{state: %{}, transients: %{}},
       external_mirror: %{state: %{bindings: []}, transients: %{}},
+      kind_base: %{state: %{behaviors: nil}, transients: %{}}
+    }
+  end
+
+  # A MINIMAL chat-shaped state: ONLY :chat, NO :external_mirror, NO socialware
+  # slices. This is the real shape a chat Session persists with when no mirror
+  # binding has ever been created (proof fixture:
+  # apps/ezagent_domain_instance_message/test/integration/
+  # orchestrator_mcp_reregister_test.exs saves `%{chat: chat_slice}` only).
+  # `:external_mirror` is OPTIONAL for chat — chat is the DEFAULT classification.
+  defp minimal_chat_state do
+    %{
+      chat: %{state: %{owner_uri: nil, members: MapSet.new()}, transients: %{}},
       kind_base: %{state: %{behaviors: nil}, transients: %{}}
     }
   end
@@ -51,14 +91,29 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
       assert {:ok, :chat} = KindBaseBackfill.classify_session_state(chat_state())
     end
 
+    test "minimal :chat-only (NO external_mirror, NO socialware) ⇒ chat (chat is the DEFAULT)" do
+      # The proof-fixture shape: a real chat Session that never created a mirror
+      # binding persists with ONLY :chat. It MUST classify as chat — not be
+      # rejected as unclassifiable. :external_mirror is optional for chat.
+      assert {:ok, :chat} = KindBaseBackfill.classify_session_state(minimal_chat_state())
+      assert {:ok, :chat} = KindBaseBackfill.classify_session_state(%{chat: %{}})
+    end
+
+    test "recognizable session by :publisher alone (no mirror, no socialware) ⇒ chat" do
+      assert {:ok, :chat} = KindBaseBackfill.classify_session_state(%{publisher: %{}})
+    end
+
     test "socialware slices AND external_mirror ⇒ ambiguous (fail loud)" do
       ambiguous = Map.put(socialware_state(), :external_mirror, %{state: %{}, transients: %{}})
       assert {:error, {:ambiguous, _keys}} = KindBaseBackfill.classify_session_state(ambiguous)
     end
 
-    test "neither shape ⇒ unclassifiable (fail loud)" do
+    test "non-session (no :chat, no :publisher, no session slice) ⇒ unclassifiable (fail loud)" do
       assert {:error, {:unclassifiable, _keys}} =
-               KindBaseBackfill.classify_session_state(%{chat: %{}, kind_base: %{}})
+               KindBaseBackfill.classify_session_state(%{kind_base: %{}})
+
+      assert {:error, {:unclassifiable, _keys}} =
+               KindBaseBackfill.classify_session_state(%{some_other: %{}})
     end
   end
 
@@ -118,6 +173,31 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
 
       captured = KindBase.behaviors_in_slice(Map.get(decode(uri), :kind_base))
       assert captured == KindBaseBackfill.target_behaviors(:chat)
+    end
+
+    test "minimal :chat-only row → chat set in :kind_base (round-trip, no raise on reload)" do
+      uri =
+        seed_session(
+          "session://default/system/min-#{System.unique_integer([:positive])}",
+          minimal_chat_state()
+        )
+
+      {:ok, _counts} = KindBaseBackfill.run([])
+
+      captured = KindBase.behaviors_in_slice(Map.get(decode(uri), :kind_base))
+      assert captured == KindBaseBackfill.target_behaviors(:chat)
+
+      # Round-trip: with :kind_base now a PRESENT list (the chat set), the scoped
+      # guard is SATISFIED — effective_set/2 does NOT raise MissingKindBaseError;
+      # it intersects the captured chat set with the declared chat set.
+      slice_state = decode(uri)
+
+      effective = Ezagent.Kind.BehaviorSet.effective_set(ChatSessionLikeKind, slice_state)
+      assert Ezagent.Behavior.Chat in effective
+      assert Ezagent.Behavior.Publisher.SessionImpl in effective
+      # ExternalMirror is in BOTH the backfilled chat set and the declared set,
+      # so it is retained — the chat set is its own declared list (no over/under).
+      assert Ezagent.Behavior.ExternalMirror in effective
     end
 
     test "ambiguous row fails loud" do

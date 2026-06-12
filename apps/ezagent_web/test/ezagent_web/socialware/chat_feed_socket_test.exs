@@ -37,7 +37,15 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
       Ezagent.URI.session(:team_alpha, :default, "cfs-#{System.unique_integer([:positive])}")
 
     workspace = Ezagent.Capability.workspace_of(session)
-    {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session, owner_uri: @owner})
+    # P5-0b — thread the explicit chat-Session behavior set so :kind_base is
+    # non-nil and the scoped effective_set/2 guard does not crash the session.
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Session, %{
+        uri: session,
+        owner_uri: @owner,
+        behaviors: Session.behaviors()
+      })
+
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
 
     member = spawn_member()

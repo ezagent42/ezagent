@@ -21,27 +21,37 @@ defmodule Ezagent.Kind.KindBaseBackfill do
   invariant. This module sets every existing session row's `:kind_base` to the
   concrete set BEFORE the union lands.
 
-  ## Classification — by DURABLE SLICE SHAPE, never `kind_type`
+  ## Classification — socialware is POSITIVE, chat is the DEFAULT
 
   Both `Ezagent.Entity.Session` (chat) and `Ezagent.Entity.SocialwareSession`
   return `kind_type "session"`, so `kind_type` cannot distinguish them. We
-  classify by the slice keys actually present in the durable state:
+  classify by the slice keys actually present in the durable state — but the
+  ONLY positively-identifying mark is a socialware slice. `:external_mirror`
+  is OPTIONAL for chat (a chat Session that never created a mirror binding
+  persists with ONLY `:chat`), so chat must be the DEFAULT, not gated on
+  `:external_mirror`:
 
-    * a `:surface` OR `:turns` slice ⇒ **socialware** ⇒
-      `{Chat, Publisher.SessionImpl, Turn, Surface}`
-    * an `:external_mirror` slice (and NO socialware slice) ⇒ **chat** ⇒
-      `{Chat, Publisher.SessionImpl, ExternalMirror}`
-
-  Any row that is AMBIGUOUS (socialware slices AND `:external_mirror`) or
-  UNCLASSIFIABLE (neither shape) **FAILS LOUD** — never guess.
+    * a `:surface` OR `:turns` slice present (and NO `:external_mirror`)
+      ⇒ **socialware** ⇒ `{Chat, Publisher.SessionImpl, Turn, Surface}`
+    * a recognizable session (has `:chat` and/or `:publisher`) with NO
+      socialware slice ⇒ **chat** ⇒ `{Chat, Publisher.SessionImpl,
+      ExternalMirror}` — REGARDLESS of whether `:external_mirror` is present
+      (it is optional for an older/minimal chat row)
+    * `:surface`/`:turns` AND `:external_mirror` TOGETHER ⇒ **ambiguous**
+      fail-loud — neither Kind declares both, so the row is genuinely corrupt
+    * NO `:chat`, NO `:publisher`, and no session slice at all (not a session)
+      ⇒ **unclassifiable** fail-loud — never guess
 
   ## Migration boundary
 
   TEST / sandbox DB only (per the P5 plan). The module reads + rewrites
-  `kind_snapshots` rows via the same `Ezagent.Kind.Snapshot.save_now/3` write
-  path the runtime uses, so the rewritten `:kind_base` two-container slice is
-  byte-identical to what `KindBase.create/1` would have persisted with an
-  explicit `:behaviors` arg.
+  `kind_snapshots` rows via a direct `Ezagent.Ecto.KindSnapshot.upsert/5`
+  (NOT `Ezagent.Kind.Snapshot.save_now/3`): this module lives in
+  `ezagent_core`, which has NO compile/runtime dependency on the domain-owned
+  session Kind modules, and `save_now/3` would require resolving a Kind
+  module. We strip transients (`Ezagent.Kind.Snapshot.strip_transients/1`) so
+  the rewritten `:kind_base` two-container slice is byte-identical to what
+  `KindBase.create/1` would have persisted with an explicit `:behaviors` arg.
   """
 
   require Logger
@@ -49,11 +59,19 @@ defmodule Ezagent.Kind.KindBaseBackfill do
   alias Ezagent.Behavior.KindBase
   alias Ezagent.Ecto.KindSnapshot
 
-  # Slice keys that mark a snapshot as socialware-shaped. Sourced from the
-  # session behaviors' `state_slice/0`: Turn → :turns, Surface → :surface.
+  # Slice keys that POSITIVELY mark a snapshot as socialware-shaped. Sourced
+  # from the socialware-only behaviors' `state_slice/0`: Turn → :turns,
+  # Surface → :surface. (Chat + Publisher are shared by BOTH session Kinds and
+  # so are NOT discriminating.)
   @socialware_slice_keys [:turns, :surface]
-  # Slice key that marks a chat-shaped session (ExternalMirror → :external_mirror).
-  @chat_marker_slice_key :external_mirror
+  # Slice key declared ONLY by the chat Session (ExternalMirror →
+  # :external_mirror). Present in a chat row, but OPTIONAL: a chat Session that
+  # never created a mirror binding persists WITHOUT it. Used only to detect the
+  # ambiguous (socialware + external_mirror) corruption, NEVER to gate chat.
+  @external_mirror_slice_key :external_mirror
+  # Slice keys shared by BOTH session Kinds. Their presence (with no socialware
+  # slice) is what makes a row a recognizable CHAT session — the default.
+  @session_marker_slice_keys [:chat, :publisher]
 
   # The stable type atom both session Kinds share (Session + SocialwareSession).
   @session_kind_type "session"
@@ -88,26 +106,38 @@ defmodule Ezagent.Kind.KindBaseBackfill do
   @doc """
   Classify a decoded session snapshot state by its durable slice shape.
 
+  Socialware is identified POSITIVELY (it owns the `:surface`/`:turns` slices);
+  chat is the DEFAULT for any recognizable session that is not socialware,
+  because `:external_mirror` is OPTIONAL for chat.
+
   Returns `{:ok, :socialware}` / `{:ok, :chat}`, or fails loud with
-  `{:error, {:ambiguous, keys}}` / `{:error, {:unclassifiable, keys}}` for a
-  row that cannot be unambiguously placed.
+  `{:error, {:ambiguous, keys}}` (socialware slice AND `:external_mirror` —
+  neither Kind declares both) / `{:error, {:unclassifiable, keys}}` (not a
+  session at all) for a row that cannot be unambiguously placed.
   """
   @spec classify_session_state(map()) :: {:ok, classification()} | {:error, classify_error()}
   def classify_session_state(state) when is_map(state) do
     keys = Map.keys(state)
     has_socialware? = Enum.any?(@socialware_slice_keys, &Map.has_key?(state, &1))
-    has_chat_marker? = Map.has_key?(state, @chat_marker_slice_key)
+    has_external_mirror? = Map.has_key?(state, @external_mirror_slice_key)
+    is_session? = Enum.any?(@session_marker_slice_keys, &Map.has_key?(state, &1))
 
     cond do
-      has_socialware? and has_chat_marker? ->
+      # Socialware slice AND a chat-only mirror slice: neither Kind declares
+      # both. Genuinely corrupt — fail loud.
+      has_socialware? and has_external_mirror? ->
         {:error, {:ambiguous, keys}}
 
+      # Positively socialware (and not ambiguous).
       has_socialware? ->
         {:ok, :socialware}
 
-      has_chat_marker? ->
+      # Any recognizable session that is NOT socialware is chat — whether or not
+      # it carries the optional :external_mirror slice.
+      is_session? or has_external_mirror? ->
         {:ok, :chat}
 
+      # Not a session at all — never guess.
       true ->
         {:error, {:unclassifiable, keys}}
     end
@@ -153,8 +183,10 @@ defmodule Ezagent.Kind.KindBaseBackfill do
   nil / missing.
 
   For each such row: decode → classify by slice shape → rewrite `:kind_base` →
-  persist back via `Ezagent.Kind.Snapshot.save_now/3`. A row that cannot be
-  classified FAILS LOUD (raises) — the whole task aborts, never guesses.
+  persist back via a direct `Ezagent.Ecto.KindSnapshot.upsert/5` (NOT
+  `Snapshot.save_now/3`, which would pull a core→domain-Kind dependency). A row
+  that cannot be classified FAILS LOUD (raises) — the whole task aborts, never
+  guesses.
 
   Options:
     * `:dry_run` (boolean, default `false`) — classify + report without writing.
