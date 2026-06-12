@@ -9,6 +9,7 @@
    so their Tailwind classes (shadcn-style cards / badges / etc.) get
    compiled into the output CSS. */
 @source "../../../ezagent_plugin_liveview/lib";
+@source "../../../ezagent_plugin_autoservice/lib";
 @source "../../../ezagent_domain_ui/lib";
 
 /* A Tailwind plugin that makes "hero-#{ICON}" classes available.

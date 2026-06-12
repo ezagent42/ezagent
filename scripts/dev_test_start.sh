@@ -9,7 +9,7 @@
 #   bash scripts/dev_test_start.sh              # seed + start + open windows
 #   bash scripts/dev_test_start.sh --no-seed    # skip seed, just start + open
 #   bash scripts/dev_test_start.sh --no-browser # don't open browser windows
-#   bash scripts/dev_test_start.sh --with-slow  # seed with cc slow agents too
+#   bash scripts/dev_test_start.sh                 # seed with fast + slow agents
 #
 # Roles opened:
 #   1. Customer (alice) → /autoservice
@@ -26,14 +26,13 @@ PORT="${EZAGENT_PORT:-10042}"
 BASE_URL="http://${HOST}:${PORT}"
 SEED=1
 OPEN_BROWSER=1
-WITH_SLOW=""
 
 # --- parse args ---
 for arg in "$@"; do
   case "$arg" in
     --no-seed)    SEED=0 ;;
     --no-browser) OPEN_BROWSER=0 ;;
-    --with-slow)  WITH_SLOW="--with-slow" ;;
+    --with-slow)  ;; # deprecated — now the default
     *) echo "Unknown flag: $arg"; exit 1 ;;
   esac
 done
@@ -67,11 +66,10 @@ fi
 if [ "$SEED" -eq 1 ]; then
   info "Seeding autoservice demo data …"
 
-  if [ -n "$WITH_SLOW" ]; then
-    mix ezagent.demo.seed_autoservice --with-slow "$WITH_SLOW"
-  else
-    mix ezagent.demo.seed_autoservice
-  fi || warn "Seed exited non-zero (may be ok — check output above)"
+  # Slow agent (cc) is required for the full customer-service flow.
+  # DEEPSEEK_API_KEY must be set for the fast agent; ANTHROPIC_API_KEY
+  # (or ANTHROPIC_BASE_URL pointing to DeepSeek) for the slow cc agent.
+  mix ezagent.demo.seed_autoservice --with-slow || warn "Seed exited non-zero (may be ok — check output above)"
 
   echo ""
 fi
