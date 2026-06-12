@@ -855,8 +855,8 @@ defmodule EzagentDomainInstanceMessage.Application do
     # modules read only `:chat`/`:publisher` (owned here) and live in THIS app
     # (registration-lives-with-the-Kind), so a standalone instance_message run is
     # self-sufficient. P5-1b: these are the UNIFIED `Entity.Session`'s only
-    # publisher regs — `SocialwareSession` no longer spawns, so its former
-    # duplicate regs are gone.
+    # publisher regs — the former standalone socialware-session Kind (deleted
+    # in P5-3) no longer carries any duplicate regs.
     alias Ezagent.Behavior.Publisher.SessionImpl, as: PublisherSI
     alias Ezagent.Behavior.SocialwarePublisherRead
 
@@ -879,7 +879,8 @@ defmodule EzagentDomainInstanceMessage.Application do
 
     # P5-1b (socialware substrate collapse) — register Turn + Surface on the
     # now-UNIFIED `Entity.Session` (relocated from socialware's `application.ex`,
-    # which registered them on `SocialwareSession`). SAFE under P1: a chat
+    # which registered them on the former standalone socialware-session Kind).
+    # SAFE under P1: a chat
     # instance's `:kind_base` (`Session.chat_behaviors/0`) excludes Turn/Surface
     # → `instance_set_gate` (runtime E9) DENIES `turn.*`/`surface.*` on it; a
     # socialware instance (`socialware_behaviors/0`) includes them → allowed.

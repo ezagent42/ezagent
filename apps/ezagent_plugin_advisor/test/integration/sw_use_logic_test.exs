@@ -137,10 +137,11 @@ defmodule EzagentPluginAdvisor.Integration.SwUseLogicTest do
 
     {:ok, pid1} = KindRegistry.lookup(ctx.session)
 
+    # P5-1b: advisor sessions are the unified `Entity.Session` (spawned by
+    # AdvisorSession.instantiate), which runs under instance_message's
+    # SessionSupervisor — the deleted socialware-session Kind's own
+    # supervisor is gone (P5-3).
     :ok =
-      # P5-1b: advisor sessions are the unified `Entity.Session` (spawned by
-      # AdvisorSession.instantiate), which runs under instance_message's
-      # SessionSupervisor — not the legacy SocialwareSessionSupervisor.
       DynamicSupervisor.terminate_child(
         EzagentDomainInstanceMessage.SessionSupervisor,
         pid1

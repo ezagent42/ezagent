@@ -30,8 +30,9 @@ defmodule Ezagent.Entity.Session do
   @impl Ezagent.Kind
   # P5-1b (socialware substrate collapse) — `behaviors/0` is now the UNION
   # of the chat + socialware behavior sets. The two former Session Kinds
-  # (`Entity.Session` chat + `Entity.SocialwareSession`) collapse into this
-  # ONE parameterized Kind; Templates select the per-instance ACTIVE subset
+  # (the chat Session + the standalone socialware-session Kind, now deleted)
+  # collapsed into this ONE parameterized Kind; Templates select the
+  # per-instance ACTIVE subset
   # via P1's `:kind_base` mechanism (`chat_behaviors/0` / `socialware_behaviors/0`
   # are the sets threaded at spawn). The declared list here is the SUPERSET;
   # the load-bearing P1 per-instance denial (`instance_set_gate`, runtime E9)
@@ -79,7 +80,7 @@ defmodule Ezagent.Entity.Session do
   The socialware per-instance behavior subset (the `:kind_base` set threaded at
   a socialware/advisor session spawn). Selects `{Session, Turn, Surface,
   Publisher}` out of the declared union — `ExternalMirror` is EXCLUDED. This is
-  the set the former `Entity.SocialwareSession.behaviors/0` declared. Closed
+  the set the former standalone socialware-session Kind declared. Closed
   under `Turn → Surface` (required-sibling closure, `BehaviorSet.@required_reads`).
   """
   @spec socialware_behaviors() :: [module()]

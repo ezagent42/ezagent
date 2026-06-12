@@ -5,10 +5,10 @@ defmodule Ezagent.Behavior.SocialwarePublisherReadRegistrationTest do
 
   P5-1b (socialware substrate collapse) — there is now ONE Session Kind,
   `Ezagent.Entity.Session`, whose `behaviors/0` is the chat+socialware union.
-  The former `Entity.SocialwareSession` no longer spawns and carries NO
-  registrations (its action registrations were removed from socialware's
-  `application.ex`; the module is retained for P5-3 deletion). So the
-  publisher-read wiring this suite gates now lives entirely on `Entity.Session`:
+  The former standalone socialware-session Kind has been DELETED (P5-3); its
+  action registrations were already removed from socialware's `application.ex`
+  in P5-1b. So the publisher-read wiring this suite gates lives entirely on
+  `Entity.Session`:
 
   - `{Session, :snapshot|:history} -> SocialwarePublisherRead` is registered
     (reads route to the membership-gated read behavior: cap-exempt + live

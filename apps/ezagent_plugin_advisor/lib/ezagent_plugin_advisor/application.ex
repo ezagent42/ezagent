@@ -4,8 +4,9 @@ defmodule EzagentPluginAdvisor.Application do
 
   The plugin contributes the first socialware vertical template:
   `session.advisor`. It owns only Tier-3 declarations and materialization
-  metadata; the runtime session remains the domain-owned
-  `Ezagent.Entity.SocialwareSession`.
+  metadata; the runtime session is the domain-owned, UNIFIED
+  `Ezagent.Entity.Session` Kind carrying the socialware `:kind_base` subset
+  (`Ezagent.Entity.Session.socialware_behaviors/0`).
   """
 
   use Application

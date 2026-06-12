@@ -1,8 +1,9 @@
-defmodule Ezagent.Entity.SocialwareSessionPublisherTest do
+defmodule Ezagent.Entity.SocialwareSubsetPublisherTest do
   @moduledoc """
   P0 (socialware substrate) — minimal trunk-only test.
 
-  Proves the Publisher TRUNK is composed onto `SocialwareSession`:
+  Proves the Publisher TRUNK is composed onto a socialware-subset
+  `Entity.Session` (the `Session.socialware_behaviors/0` `:kind_base`):
   the `:publisher` slice exists on a spawned session AND a slice change
   to a NON-publisher slice (`:surface`, via a real `surface.put_version`
   dispatch) RECORDS into the publisher ring.

@@ -95,7 +95,9 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
       # The proof-fixture shape: a real chat Session that never created a mirror
       # binding persists with ONLY :chat. It MUST classify as chat — not be
       # rejected as unclassifiable. :external_mirror is optional for chat.
-      assert {:ok, :instance_message} = KindBaseBackfill.classify_session_state(minimal_chat_state())
+      assert {:ok, :instance_message} =
+               KindBaseBackfill.classify_session_state(minimal_chat_state())
+
       assert {:ok, :instance_message} = KindBaseBackfill.classify_session_state(%{session: %{}})
     end
 
@@ -141,7 +143,7 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
              ]
     end
 
-    test "socialware set matches SocialwareSession.behaviors/0 order exactly" do
+    test "socialware set matches Session.socialware_behaviors/0 order exactly" do
       assert KindBaseBackfill.target_behaviors(:socialware) == [
                Ezagent.Behavior.Session,
                Ezagent.Behavior.Turn,

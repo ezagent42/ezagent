@@ -4,8 +4,8 @@ defmodule EzagentDomainSocialware.PageViewExternalRenderTest do
   SAME projection the customer feed already uses (Surface.customer_tree/1).
   Internal render (operator_tree) is unaffected.
   """
-  # Spawns a real SocialwareSession Kind (touches KindSnapshot/Repo), so this
-  # MUST use the Repo-sandbox case and run non-async (codex P2 review).
+  # Spawns a real socialware-subset Entity.Session (touches KindSnapshot/Repo),
+  # so this MUST use the Repo-sandbox case and run non-async (codex P2 review).
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Invocation
