@@ -1,7 +1,6 @@
 defmodule EzagentWeb.Router do
   use EzagentWeb, :router
 
-  alias EzagentPluginAutoservice.{CustomerLive, OperatorLive}
   alias EzagentPluginLiveview.Master.MasterDashboardLive
 
   alias EzagentPluginLiveview.Tenant.{
