@@ -99,7 +99,7 @@ defmodule EzagentPluginAutoservice.CustomerSession do
     workspace_uri = Keyword.fetch!(opts, :workspace_uri)
     ctx = Keyword.fetch!(opts, :ctx)
     greeting = Keyword.get(opts, :greeting, @default_greeting)
-    deepseek_key = Keyword.get(opts, :deepseek_key)
+    deepseek_key = System.get_env("DEEPSEEK_API_KEY") || Keyword.get(opts, :deepseek_key)
     with_slow? = Keyword.get(opts, :with_slow, false)
     soul_slot_values = Keyword.get(opts, :soul_slot_values, %{})
     role = Keyword.get(opts, :role, "slow")
