@@ -94,22 +94,24 @@
 |---|---|
 | 筛选 chips | 全部 / 🔴需关注（SLA 红）/ 我接管的 |
 | 渠道分组列表 | 按渠道分组的活跃会话；每行：**SLA 点 + 客户标识 + 未读数** |
-| SLA 点语义（v0） | 最后一条**客户**消息未被任何人（AI/员工）回复的时长：🟢 <30s ｜ 🟡 30s–2min ｜ 🔴 >2min；阈值进 config。5s tick 刷新 |
+| SLA 点语义（v0） | 最后一条**客户**消息未被回应的时长：🟢 <30s ｜ 🟡 30s–2min ｜ 🔴 >2min；turn 处于 `:awaiting_human`（claim 后未 settle）**恒黄**——扣着 visibility 等员工就是"需要关注"。阈值进 config，5s tick 刷新 |
 | 实时性 | PubSub 订阅 session 事件（复用 admin_live 订阅模式），新消息即时插入 + SLA 重算 |
 
 ### B2 · 会话区（中）
 
 **B2a header**：客户标识 · 渠道 · 语言对（翻译 AI 检测）· **三模式切换器**（页面最重要的控件）
 
-| 模式 | 切换器状态 | 含义（手册 B.3） |
-|---|---|---|
-| **Auto** | 默认 | AI 独立处理，员工纯旁观 |
-| **Copilot** | 一键切 | 员工私密建议给 AI，客户不可见 |
-| **Takeover** | 一键切 | 员工直接发消息，客户感觉是真人 |
+| 模式 | 切换器状态 | 含义（手册 B.3） | Turn 语义（决策 2026-06-12：建在 socialware Turn 上） |
+|---|---|---|---|
+| **Auto** | 默认 | AI 独立处理，员工纯旁观 | turn 不 claim，`open→…→settle` 自动走完 |
+| **Copilot** | 一键切 | 员工私密建议给 AI，客户不可见 | `turn.claim(by: 我)` → `:awaiting_human`，**visibility 扣住**；建议后 AI 重 compose，员工 settle 放行 |
+| **Takeover** | 一键切 | 员工直接发消息，客户感觉是真人 | claim 后员工自写 turn result → settle |
 
+**模式指示器不是独立 UI 状态——它是当前 turn 的 `mode/owner/status` 投影**。
 切换规则：任何时候可一键切换；**每次切换在消息流插入一条系统提示**（"您于 10:05
-进入 Copilot 模式"）——审计 + 团队可追溯；Takeover → Auto 切回时弹一次确认
-（"AI 将接管后续回复"）。
+进入 Copilot 模式"）——审计 + 团队可追溯；Copilot/Takeover → Auto 切回时弹确认，
+二选一：**放行**（settle，客户看到当前结果）或**丢弃**（cancel）。
+`turn.owner` 是别人时切换器整体禁用（见 §5 会话占用）。
 
 **B2b 消息流**（复用 ConversationView + 新消息类型样式）：
 
@@ -199,7 +201,7 @@ D2 练习中:
 | 项 | 设计 |
 |---|---|
 | **可见性安全** | Copilot 私密消息是本设计最大风险面：样式上锁形角标 + 虚线必须无歧义；实现上对照 socialware 红线——`:operator_only` 类内容**不经任何路径**（渠道镜像 / 分享 / SSE）到达客户 |
-| 会话占用 | 他人已 Takeover 的会话：模式切换器禁用 + 显示"王五处理中"，可观察不可操作（v0 单接管者模型） |
+| 会话占用 | `turn.owner` 是其他员工（已 claim）的会话：模式切换器禁用 + 显示"王五处理中"，可观察不可操作（Turn 单 owner 模型天然保证） |
 | 降级 | AI 成员全部无响应 >30s：B3 面板红色提示"AI 同事未响应，建议 Takeover" |
 | 响应式 | v0 桌面优先；窄屏 B1/B3 折叠为抽屉 |
 | i18n | 全部文案走 gettext（员工界面中文优先） |

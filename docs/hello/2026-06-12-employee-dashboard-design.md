@@ -64,28 +64,36 @@ CSAT 数据源（无客户评分入口）。
 - **Gate**：员工身份登录 → 落地 `/workbench` 看到三块；admin 不受影响
 - 测试：LV 渲染 + 权限（未登录 redirect、entity 可进）
 
-### PR-2 · 三栏工作台 + SLA 标（B.2）
+### PR-2 · socialware 会话装配 + 三栏工作台 + SLA 标（B.2）
+- **会话装配先行**：员工工作台接的 demo 会话用 socialware 三件套装配
+  （`Behavior.Chat + Turn + Surface`，SessionTemplate seed 方式，参照
+  socialware 既有 E2E fixtures）——这是选项 B 的地基
 - 左栏：渠道/会话列表 + **SLA 红绿标**（规则 v0：最后一条客户消息距今未被
-  AI/员工回复 >2min 红、>30s 黄、否则绿；阈值进 config）
-- 中栏：复用 ConversationView（observe 模式，stream 订阅）
+  回应 >2min 红、>30s 黄、否则绿；turn 处于 `:awaiting_human` 的会话恒黄
+  ——扣着 visibility 等员工，就是"需要关注"；阈值进 config）
+- 中栏：复用 ConversationView（observe 模式，stream 订阅）+ **turn 状态条**
+  （当前 turn 的 status：delegating / aggregating / composing / awaiting_human）
 - 右栏：AI 协作面板（MemberPanel 变体：本会话 AI 成员 + 状态）
 - 员工↔渠道授权模型 v0：workspace member declaration 上挂 `channels: [...]`
   标注（admin 在 workspace 页配置），dashboard 按它过滤
-- **Gate**：两个浏览器（客户 + 员工）E2E——客户发消息，员工列表 30s 内变黄、
-  点进可见实时对话
+- **Gate**：两个浏览器（客户 + 员工）E2E——客户发消息开 turn，员工列表
+  30s 内变黄、点进可见实时对话 + turn 状态推进
 
-### PR-3 · 三模式协作 MVP（B.3，最大的一期）
-- 会话级 `collab_mode` 状态（per employee×session）：`:auto`（默认，纯观察）
-  / `:copilot` / `:takeover`，工作台一键切换
-- **Takeover**：员工经 composer 直接 `chat.send`（已有能力，UI 上标明
-  "您正在直接回复"）
-- **Copilot**：员工建议以**员工→AI 私聊**实现——v0 用 mention-gated 私发
-  （消息只 @ 目标 AI，客户渠道镜像按 visibility 过滤不出去）；
-  AI 收到建议后修正下一条回复
-- ⚠️ 依赖 §5 决策点 1（visibility 机制选型）——决策前本期只先落
-  observe/takeover 两态
-- **Gate**：E2E——Auto 观察 → 切 Copilot 发建议（客户侧渠道不可见）→
-  切 Takeover 直接回（客户可见）
+### PR-3 · 三模式协作（B.3，建在 Turn 上）
+- 模式 ↔ Turn 映射见 §5 决策 1 的表。UI 状态不另造：**工作台的模式指示
+  = 当前 turn 的 `mode`/`owner`/`status` 的投影**
+- **Auto**：默认。composer 禁用，turn 不 claim 自动 settle
+- **Copilot**：切换 = `turn.claim(by: 员工)`；员工建议经 dispatch 发给
+  orchestrator（`:operator_only` 类内容，**不进 customer feed**）；AI 重新
+  compose 后员工 `turn.settle` 放行 / 继续改
+- **Takeover**：claim 后员工在 composer 直接写最终回复（作为 turn result）
+  → `turn.settle`；客户经 settlement/outbox 看到员工内容
+- 切回 Auto：settle 或 cancel 当前 turn；他人已 claim 的会话模式切换器禁用
+  （`turn.owner` 不是我 → 只读观察）
+- **Gate**：E2E——Auto 旁观（客户即时收到 AI 回复）→ 切 Copilot（claim 后
+  **客户侧 customer_feed 什么都看不到**，员工建议后 AI 重 compose，settle
+  后客户一次性看到改进版）→ 切 Takeover 直接回（客户看到员工内容）。
+  红线断言：claim~settle 间隔内 customer feed 零增量
 
 ### PR-4 · 业绩 + operator-agent（B.4）
 - 业绩聚合查询（per employee）：今日/本周会话数、接管次数、平均首响时长、
@@ -103,18 +111,27 @@ CSAT 数据源（无客户评分入口）。
 
 ---
 
-## 5. 待决策项（动 PR-3 前必须定）
+## 5. 决策项
 
-1. **三模式建在哪套语义上？**（最大方向性问题）
-   - 选项 A：在 loom/chat 的 mention-gated 体系上做简化 copilot（私发 + 渠道
-     镜像过滤）——快，但**与 main 的 socialware Turn/visibility 是两套**，
-     迁移时重做
-   - 选项 B：把员工工作台直接建在 socialware `Behavior.Turn` 上（rebase 后
-     本分支已有 turn.ex）——与 main 方向一致（SW-USE 不变式原生支持
-     copilot/takeover + `:operator_only` 永不达客户），但 loom 会话要接 Turn，
-     工作量大
-   - **倾向 B 的语义 + A 的节奏**：PR-3 v0 用 A 落 demo，数据结构按 Turn 的
-     `mode/owner/visibility` 命名对齐，给迁移留直通道。**需 Allen 拍板**
+1. **三模式建在哪套语义上？——已定（2026-06-12）：选项 B，socialware `Behavior.Turn`**
+   工作台直接建在 Turn 状态机上，与 main 方向一致。三模式 ↔ Turn 映射：
+
+   | 工作台模式 | Turn 语义 |
+   |---|---|
+   | **Auto** | turn 正常走 `open → dispatch → deliver → compose → settle`，员工不 `claim`，纯旁观 |
+   | **Copilot** | 员工 `turn.claim(by: 员工URI)` → turn 进 `mode: :copilot / status: :awaiting_human`，**visibility 被扣住**（`hold_visibility`）；员工建议 → AI 重新 compose → 员工 `turn.settle` 放行 |
+   | **Takeover** | `turn.claim` 后员工**自己写最终结果**（替代 AI compose 产物）→ `turn.settle`。客户看到的是员工内容 |
+   | 切回 Auto | 当前 turn `settle`（放行）或 `cancel`（丢弃），之后新 turn 不再 claim |
+
+   推论（对 PR 计划的影响，已在 §4 更新）：
+   - 工作台接的会话必须是 **socialware 装配的 session**（`Behavior.Chat + Turn
+     + Surface`），不是 loom chat 会话——PR-2 先做 session 装配，再做 UI
+   - **客户侧任何投影只能读 `Socialware.CustomerFeed`**（gated query +
+     outbox），员工侧（内部人）可读 MessageStore——红线自动满足：
+     claim 后 settle 前客户什么都看不到
+   - ⚠️ 本分支的 socialware 是 main@bf9525b2 时点（P1/P2/P2.5/P3/P6 已有，
+     **P4 customer SPA #732 / config-evolve #733 不在本分支**）；工作台是
+     operator 侧 UI 不依赖 P4，但若要演示客户侧页面需注意此差距
 2. operator-agent / 导师 AI 放 `ezagent_plugin_loom` 还是新
    `ezagent_plugin_workbench`？（倾向新 plugin——它们不是 loom 页面生成域的）
 3. SLA 阈值与"渠道"粒度（per channel? per session?）的产品定义
