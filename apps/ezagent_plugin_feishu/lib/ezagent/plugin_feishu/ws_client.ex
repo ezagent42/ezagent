@@ -20,7 +20,7 @@ defmodule EzagentPluginFeishu.WsClient do
   4. For each event: hand off to `EzagentPluginFeishu.InboundDispatcher`
      using the SAME shape as the HTTP webhook (`build_message_body`
      in `WebhookPlug`, called via the public test helper)
-  5. On sidecar exit: log + auto-restart (5s backoff)
+  5. On sidecar exit: log + auto-restart (exponential backoff 5s→300s)
 
   ## Disabling
 
@@ -34,7 +34,8 @@ defmodule EzagentPluginFeishu.WsClient do
 
   alias EzagentPluginFeishu.InboundDispatcher
 
-  @restart_backoff_ms 5_000
+  @restart_backoff_initial_ms 5_000
+  @restart_backoff_max_ms 300_000
 
   defstruct [
     :port,
@@ -44,6 +45,7 @@ defmodule EzagentPluginFeishu.WsClient do
     :domain,
     :sidecar_path,
     :node_bin,
+    :restart_backoff_ms,
     enabled?: true
   ]
 
@@ -62,7 +64,8 @@ defmodule EzagentPluginFeishu.WsClient do
       buffer: "",
       sidecar_path: sidecar_path(),
       node_bin: System.find_executable("node"),
-      enabled?: System.get_env("EZAGENT_FEISHU_WS") != "0"
+      enabled?: System.get_env("EZAGENT_FEISHU_WS") != "0",
+      restart_backoff_ms: @restart_backoff_initial_ms
     }
 
     cond do
@@ -101,15 +104,43 @@ defmodule EzagentPluginFeishu.WsClient do
           )
 
         Logger.info("EzagentPluginFeishu.WsClient: sidecar started (port=#{inspect(port)})")
-        {:noreply, %{state | port: port, app_id: app_id, app_secret: app_secret, domain: domain}}
+        {:noreply, %{state | port: port, app_id: app_id, app_secret: app_secret, domain: domain, restart_backoff_ms: @restart_backoff_initial_ms}}
 
-      {:error, reason} ->
+      {:error, :credentials_unfilled} ->
         Logger.warning(
-          "EzagentPluginFeishu.WsClient: cannot start (#{inspect(reason)}); retry in #{@restart_backoff_ms}ms"
+          "EzagentPluginFeishu.WsClient: credentials contain REPLACE_ME — " <>
+            "WS disabled until credentials are filled and server restarted. " <>
+            "Edit system://credentials/feishu.yaml to fix."
         )
 
-        Process.send_after(self(), :open_sidecar, @restart_backoff_ms)
-        {:noreply, state}
+        {:noreply, %{state | enabled?: false}}
+
+      {:error, :credentials_not_found} ->
+        Logger.warning(
+          "EzagentPluginFeishu.WsClient: credentials file not found — " <>
+            "WS disabled until system://credentials/feishu.yaml is created and server restarted."
+        )
+
+        {:noreply, %{state | enabled?: false}}
+
+      {:error, reason} ->
+        backoff = state.restart_backoff_ms
+        next_backoff = min(backoff * 2, @restart_backoff_max_ms)
+
+        if backoff == @restart_backoff_initial_ms do
+          Logger.warning(
+            "EzagentPluginFeishu.WsClient: cannot start (#{inspect(reason)}); " <>
+              "retry in #{div(backoff, 1000)}s (will back off if persistent)"
+          )
+        else
+          Logger.info(
+            "EzagentPluginFeishu.WsClient: still cannot start (#{inspect(reason)}); " <>
+              "next retry in #{div(next_backoff, 1000)}s"
+          )
+        end
+
+        Process.send_after(self(), :open_sidecar, backoff)
+        {:noreply, %{state | restart_backoff_ms: next_backoff}}
     end
   end
 
@@ -124,12 +155,23 @@ defmodule EzagentPluginFeishu.WsClient do
   end
 
   def handle_info({port, {:exit_status, status}}, %{port: port} = state) do
-    Logger.warning(
-      "EzagentPluginFeishu.WsClient: sidecar exited status=#{status}; restart in #{@restart_backoff_ms}ms"
-    )
+    backoff = state.restart_backoff_ms
+    next_backoff = min(backoff * 2, @restart_backoff_max_ms)
 
-    Process.send_after(self(), :open_sidecar, @restart_backoff_ms)
-    {:noreply, %{state | port: nil}}
+    if backoff == @restart_backoff_initial_ms do
+      Logger.warning(
+        "EzagentPluginFeishu.WsClient: sidecar exited status=#{status}; " <>
+          "restart in #{div(backoff, 1000)}s (will back off if persistent)"
+      )
+    else
+      Logger.info(
+        "EzagentPluginFeishu.WsClient: sidecar exited status=#{status}; " <>
+          "next restart in #{div(next_backoff, 1000)}s"
+      )
+    end
+
+    Process.send_after(self(), :open_sidecar, backoff)
+    {:noreply, %{state | port: nil, restart_backoff_ms: next_backoff}}
   end
 
   def handle_info(_other, state), do: {:noreply, state}
