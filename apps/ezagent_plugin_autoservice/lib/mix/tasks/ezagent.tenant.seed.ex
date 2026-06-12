@@ -1,5 +1,5 @@
 defmodule Mix.Tasks.Ezagent.Tenant.Seed do
-  @shortdoc "Seed a tenant + customer (+ optional operator) for the AutoService CS vertical"
+  @shortdoc "Seed a tenant + customer (+ optional operator/admin) for the AutoService CS vertical"
   @moduledoc """
   Seeds the AutoService CS vertical end-to-end for a single tenant + customer:
 
@@ -14,21 +14,26 @@ defmodule Mix.Tasks.Ezagent.Tenant.Seed do
      - Routing rule (in_session → orchestrator).
   3. Optionally provisions an operator user (`--operator <name>`, default: `bob`):
      - Creates/ensures the operator User entity with password = operator name.
-     - Grants operator the same workspace caps as the customer (broad grant;
-       real CapBAC roles come in Stage F).
-  4. Prints a summary with all URIs and the login hint.
+     - Grants operator the `Roles.bundle(:operator, ws)` caps: session:join +
+       turn:claim/settle + cs_orchestrator:operator_claim/settle.
+  4. Optionally provisions a tenant-admin user (`--admin <name>`, default: `carol`):
+     - Creates/ensures the tenant-admin User entity with password = admin name.
+     - Grants admin the `Roles.bundle(:tenant_admin, ws)` caps: workspace manage +
+       content write + user create.
+  5. Prints a summary with all URIs and the login hint.
 
   ## Usage
 
       mix ecto.create && mix ecto.migrate    # first run only
       mix ezagent.tenant.seed
-      mix ezagent.tenant.seed --tenant cinnox --customer alice --operator bob
+      mix ezagent.tenant.seed --tenant cinnox --customer alice --operator bob --admin carol
 
   ## Options
 
   - `--tenant` — workspace / tenant name (default: `cinnox`)
   - `--customer` — customer short name (default: `alice`)
   - `--operator` — operator short name (default: `bob`); pass empty string to skip
+  - `--admin` — tenant-admin short name (default: `carol`); pass empty string to skip
   - `--no-agents` — skip real cc/curl `create_agent` calls; bring agents up as
     plain entity stubs (structural seed only, no live AI reply).
 
@@ -43,17 +48,25 @@ defmodule Mix.Tasks.Ezagent.Tenant.Seed do
   @default_tenant "cinnox"
   @default_customer "alice"
   @default_operator "bob"
+  @default_admin "carol"
 
   @impl Mix.Task
   def run(argv) do
     {opts, _rest, _} =
       OptionParser.parse(argv,
-        strict: [tenant: :string, customer: :string, operator: :string, no_agents: :boolean]
+        strict: [
+          tenant: :string,
+          customer: :string,
+          operator: :string,
+          admin: :string,
+          no_agents: :boolean
+        ]
       )
 
     tid = Keyword.get(opts, :tenant, @default_tenant)
     customer = Keyword.get(opts, :customer, @default_customer)
     operator = Keyword.get(opts, :operator, @default_operator)
+    admin = Keyword.get(opts, :admin, @default_admin)
     create_agents? = not Keyword.get(opts, :no_agents, false)
 
     {:ok, _} = Application.ensure_all_started(:ezagent_core)
@@ -94,7 +107,36 @@ defmodule Mix.Tasks.Ezagent.Tenant.Seed do
             nil
           end
 
-        print_summary(result, customer, operator, operator_uri, create_agents?)
+        # Provision tenant-admin user if name is non-empty.
+        tenant_admin_uri =
+          if admin != "" do
+            Mix.shell().info("Provisioning tenant-admin=#{admin} …")
+
+            case Assembly.ensure_admin(tid, admin) do
+              {:ok, a_uri} ->
+                Mix.shell().info("  tenant-admin URI: #{URI.to_string(a_uri)}")
+                a_uri
+
+              {:error, reason} ->
+                Mix.shell().error(
+                  "  tenant-admin provision failed: #{inspect(reason)} (continuing)"
+                )
+
+                nil
+            end
+          else
+            nil
+          end
+
+        print_summary(
+          result,
+          customer,
+          operator,
+          operator_uri,
+          admin,
+          tenant_admin_uri,
+          create_agents?
+        )
 
       {:error, reason} ->
         Mix.raise("provision_session failed for #{tid}/#{customer}: #{inspect(reason)}")
@@ -126,6 +168,8 @@ defmodule Mix.Tasks.Ezagent.Tenant.Seed do
          customer,
          operator,
          operator_uri,
+         admin,
+         tenant_admin_uri,
          create_agents?
        ) do
     agent_note =
@@ -142,9 +186,23 @@ defmodule Mix.Tasks.Ezagent.Tenant.Seed do
         "  operator     (not seeded — pass --operator <name> to seed)"
       end
 
+    admin_line =
+      if tenant_admin_uri do
+        "  tenant-admin #{URI.to_string(tenant_admin_uri)}"
+      else
+        "  tenant-admin (not seeded — pass --admin <name> to seed)"
+      end
+
     operator_hint =
       if operator_uri do
         "\nOperator login: /login as `#{operator}` / password `#{operator}`,\nthen open /autoservice/operator."
+      else
+        ""
+      end
+
+    admin_hint =
+      if tenant_admin_uri do
+        "\nTenant-admin login: /login as `#{admin}` / password `#{admin}`."
       else
         ""
       end
@@ -159,10 +217,11 @@ defmodule Mix.Tasks.Ezagent.Tenant.Seed do
       fast agent   #{URI.to_string(fast_uri)}
       slow agent   #{URI.to_string(slow_uri)}
     #{operator_line}
+    #{admin_line}
       agents:      #{agent_note}
 
     Customer login: /login as `#{customer}` / password `#{customer}`,
-    then open /autoservice.#{operator_hint}
+    then open /autoservice.#{operator_hint}#{admin_hint}
     """)
   end
 end

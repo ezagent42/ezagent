@@ -61,6 +61,7 @@ defmodule EzagentPluginAutoservice.Assembly do
 
   alias Ezagent.{Invocation, KindRegistry, SpawnRegistry, WorkspaceRegistry}
   alias Ezagent.Entity.SocialwareSession
+  alias EzagentPluginAutoservice.Roles
   alias EzagentPluginContent.TenantContent
   alias EzagentPluginCr.Publisher
 
@@ -131,8 +132,9 @@ defmodule EzagentPluginAutoservice.Assembly do
   Ensure an operator user exists on tenant `tid` with name `operator_name`.
 
   Creates the DB user row (password = operator_name, enables web login) and
-  grants them the same workspace caps as the customer path — broad Phase-B grant
-  so operator dispatch authz passes. Real CapBAC role assignment comes in Stage F.
+  grants them the `Roles.bundle(:operator, workspace_uri)` capability set:
+  session:join + turn:claim/settle + cs_orchestrator:operator_claim/settle,
+  all scoped to this workspace (Stage F CapBAC role assignment).
 
   Idempotent: re-running converges, never duplicates.
   """
@@ -162,15 +164,14 @@ defmodule EzagentPluginAutoservice.Assembly do
     with :ok <- create_result do
       _ = add_member(tid, operator_uri)
 
-      # Grant operator caps — same broad bundle as customer for Phase B.
-      # Stage F will scope these down to operator-specific roles.
+      # Grant operator caps — scoped operator role bundle (Stage F CapBAC).
       grant_ctx = %{
         caller: Ezagent.Entity.User.admin_uri(),
         caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
         reply: {:caller_inbox, self()}
       }
 
-      operator_caps = customer_cap_bundle(workspace_uri)
+      operator_caps = Roles.bundle(:operator, workspace_uri)
 
       Enum.each(operator_caps, fn cap ->
         Invocation.dispatch(%Invocation{
@@ -182,6 +183,62 @@ defmodule EzagentPluginAutoservice.Assembly do
       end)
 
       {:ok, operator_uri}
+    end
+  end
+
+  @doc """
+  Ensure a tenant-admin user exists on tenant `tid` with name `admin_name`.
+
+  Creates the DB user row (password = admin_name, enables web login) and
+  grants them the `Roles.bundle(:tenant_admin, workspace_uri)` capability set:
+  workspace manage + content write + user create, all scoped to this workspace.
+
+  Idempotent: re-running converges, never duplicates.
+  """
+  @spec ensure_admin(String.t(), String.t()) :: {:ok, URI.t()} | {:error, term()}
+  def ensure_admin(tid, admin_name)
+      when is_binary(tid) and is_binary(admin_name) do
+    admin_uri = Ezagent.URI.user(tid, admin_name)
+    workspace_uri = Ezagent.URI.workspace(tid)
+
+    create_result =
+      case Ezagent.Users.create(admin_uri, admin_name, []) do
+        {:ok, _decoded} ->
+          :ok
+
+        {:error, %Ecto.Changeset{errors: errors}} ->
+          if Keyword.has_key?(errors, :uri) do
+            # Duplicate URI — already exists; idempotent OK.
+            :ok
+          else
+            {:error, {:admin_create_failed, errors}}
+          end
+
+        {:error, reason} ->
+          {:error, {:admin_create_failed, reason}}
+      end
+
+    with :ok <- create_result do
+      _ = add_member(tid, admin_uri)
+
+      grant_ctx = %{
+        caller: Ezagent.Entity.User.admin_uri(),
+        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        reply: {:caller_inbox, self()}
+      }
+
+      admin_caps = Roles.bundle(:tenant_admin, workspace_uri)
+
+      Enum.each(admin_caps, fn cap ->
+        Invocation.dispatch(%Invocation{
+          target: Ezagent.URI.new!("#{URI.to_string(admin_uri)}?action=identity.grant_cap"),
+          mode: :call,
+          args: %{cap: cap},
+          ctx: grant_ctx
+        })
+      end)
+
+      {:ok, admin_uri}
     end
   end
 
@@ -312,7 +369,7 @@ defmodule EzagentPluginAutoservice.Assembly do
         reply: {:caller_inbox, self()}
       }
 
-      customer_caps = customer_cap_bundle(workspace_uri)
+      customer_caps = Roles.bundle(:customer, workspace_uri)
 
       Enum.each(customer_caps, fn cap ->
         Invocation.dispatch(%Invocation{
@@ -333,12 +390,6 @@ defmodule EzagentPluginAutoservice.Assembly do
     e ->
       Logger.info("Assembly: add_member #{URI.to_string(uri)} skipped: #{inspect(e)}")
       :ok
-  end
-
-  # Minimal customer cap bundle — workspace read access.
-  # Extend when a full Roles module exists.
-  defp customer_cap_bundle(%URI{} = _workspace_uri) do
-    []
   end
 
   # ---------------------------------------------------------------------------
@@ -380,7 +431,7 @@ defmodule EzagentPluginAutoservice.Assembly do
       {:ok, sctx} ->
         File.mkdir_p!(sctx.work_dir)
         File.write!(Path.join(sctx.work_dir, "CLAUDE.md"), sctx.claude_md || "")
-        maybe_write_mcp_json(sctx)
+        maybe_write_mcp_json(tid, sctx)
 
         args = %{
           flavor: "cc",
@@ -402,16 +453,21 @@ defmodule EzagentPluginAutoservice.Assembly do
     stub_agent(agent_uri)
   end
 
-  defp maybe_write_mcp_json(%{kb_db_path: nil}), do: :ok
+  defp maybe_write_mcp_json(_tid, %{kb_db_path: nil}), do: :ok
 
-  defp maybe_write_mcp_json(%{kb_db_path: kb_db_path, skills_dir: skills_dir, work_dir: work_dir}) do
+  defp maybe_write_mcp_json(
+         tid,
+         %{kb_db_path: kb_db_path, skills_dir: skills_dir, work_dir: work_dir}
+       ) do
     # KB MCP server script lives at <skills_dir>/../kb/kb_search_mcp.py
     # (skills_dir is <release_dir>/skills, parent is <release_dir>).
     kb_script = Path.join([Path.dirname(skills_dir), "kb", "kb_search_mcp.py"])
+    # MCP server name is derived from tid so each tenant has its own namespaced key.
+    kb_server_name = "#{tid}-kb"
 
     mcp_config = %{
       "mcpServers" => %{
-        "cinnox-kb" => %{
+        kb_server_name => %{
           "command" => "python3",
           "args" => [kb_script],
           "env" => %{"KB_DB_PATH" => kb_db_path}
