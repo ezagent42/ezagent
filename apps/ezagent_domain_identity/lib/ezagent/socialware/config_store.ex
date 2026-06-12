@@ -187,30 +187,32 @@ defmodule Ezagent.Socialware.ConfigStore do
   end
 
   @doc """
-  CE-3 — POINTER-AWARE durable idempotency marker for `apply_config_delta`
+  CE-3 — OBJECT-EXISTENCE durable idempotency marker for `apply_config_delta`
   recovery.
 
-  A settled config delta is "applied" for a turn only when SOME current
-  pointer resolves to an object whose `source_turn_id == turn_id`. Keying on
-  bare ConfigObject existence (the prior implementation) was unsafe: a
-  non-atomic write that inserted the immutable object but failed to advance
-  the pointer left an ORPHAN object whose `source_turn_id` made this return
-  `true`, so `Turn`'s crash-recovery skipped the replay forever and the
-  settled config was lost. Joining through the pointer means an orphan object
-  alone does NOT count as applied → recovery correctly replays.
+  A settled config delta is "applied" for a turn iff a `ConfigObject` stamped
+  with `source_turn_id == turn_id` exists. This is sound because
+  `write_and_point/1` writes the immutable object AND advances the pointer in
+  ONE `Repo.transaction` — an orphan object (object inserted, pointer not
+  advanced) can NO LONGER occur. So "an object for turn T exists" ⟺ "turn T
+  was durably applied", and a genuinely-interrupted apply (the transaction
+  never committed) leaves NEITHER object nor pointer → `false` → recovery
+  correctly replays.
+
+  PR-6: this REVERTS the PR-5 pointer-aware join. Keying on the pointer
+  resolving to the object was not only unnecessary under atomicity, it
+  REGRESSED superseded turns: applying turn B on top of turn A advances the
+  pointer off A's object, which flipped `applied_for_turn?("A")` back to
+  `false` and made recovery REPLAY an already-applied, merely-superseded turn.
+  Object existence is permanent (objects are append-only / never deleted), so
+  a superseded turn correctly stays applied.
 
   `Turn.config_replay_needed?/2` uses this to decide whether a settled turn's
   config delta still needs replaying.
   """
   @spec applied_for_turn?(String.t()) :: boolean()
   def applied_for_turn?(turn_id) when is_binary(turn_id) do
-    Repo.exists?(
-      from(p in ConfigPointer,
-        join: o in ConfigObject,
-        on: o.id == p.config_id,
-        where: o.source_turn_id == ^turn_id
-      )
-    )
+    Repo.exists?(from(o in ConfigObject, where: o.source_turn_id == ^turn_id))
   end
 
   @doc """

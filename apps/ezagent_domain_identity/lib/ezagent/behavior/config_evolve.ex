@@ -226,13 +226,19 @@ defmodule Ezagent.Behavior.ConfigEvolve do
          # mutate B (cross-agent confused-deputy). Bind both to `self_uri`
          # BEFORE any store write.
          {:ok, attrs} <- assert_subject_self(attrs, ctx) do
-      # CE-2 — idempotency: if this turn already settled (the current pointer
-      # resolves an object for this turn), RETURN the existing result without
-      # minting a new object / repointing. Composes with CE-3's pointer-aware
-      # check. Checked AFTER self-binding so the lookup is scoped to self.
+      # CE-2 — idempotency (SERIAL re-dispatch): if this turn already settled
+      # (the current pointer resolves an object for this turn), RETURN the
+      # existing result without minting a new object / repointing. Checked
+      # AFTER self-binding so the lookup is scoped to self.
+      #
+      # ITEM 3 (PR-6) — the idempotent path emits the SAME deferred
+      # sandbox.write_path projection (computed from the CURRENT object), NOT
+      # `[]`. A redelivery after a lost step-2 thus self-heals the Sandbox
+      # cache instead of waiting for the next boot reconcile.
       case ConfigStore.pointer_object_for_turn(attrs.layer, attrs.subject_uri, attrs.key, turn_id) do
         {:ok, existing_id} ->
-          {:ok, %{config_id: existing_id, previous_config_id: nil}, []}
+          {:ok, %{config_id: existing_id, previous_config_id: nil},
+           sandbox_write_effects(ctx, attrs, existing_id)}
 
         :none ->
           do_apply_config_delta(turn_id, attrs, ctx)
@@ -251,18 +257,58 @@ defmodule Ezagent.Behavior.ConfigEvolve do
       )
 
     # CE-3 — write the immutable object AND advance the pointer in ONE
-    # transaction (`write_and_point/1`). Two separate ops left an orphan
-    # object on a `put_pointer` failure; with the pointer-aware
-    # `applied_for_turn?`, that orphan would never count as applied, but the
-    # settled config would still be lost. Atomic write = no orphan.
-    with {:ok, %{config_id: config_id, previous_config_id: previous}} <-
-           ConfigStore.write_and_point(Map.put(attrs, :body, body)) do
-      applied = ctx.read.(:applied, %{})
-      reply = %{config_id: config_id, previous_config_id: previous}
+    # transaction (`write_and_point/1`). Atomic write = no orphan object, so
+    # the object-existence `applied_for_turn?` is sound.
+    case ConfigStore.write_and_point(Map.put(attrs, :body, body)) do
+      {:ok, %{config_id: config_id, previous_config_id: previous}} ->
+        applied = ctx.read.(:applied, %{})
+        reply = %{config_id: config_id, previous_config_id: previous}
 
-      {:ok, reply,
-       [{:set, :applied, Map.put(applied, turn_id, reply)}] ++
-         sandbox_write_effects(ctx, attrs, config_id)}
+        {:ok, reply,
+         [{:set, :applied, Map.put(applied, turn_id, reply)}] ++
+           sandbox_write_effects(ctx, attrs, config_id)}
+
+      # CE-2 — CONCURRENT duplicate dispatch: another caller for the SAME turn
+      # won the race and the unique index
+      # (`socialware_config_objects_unique_source_turn`) rejected this insert
+      # (surfaced as a changeset error, not a raw raise). Treat the collision
+      # as "already applied": re-read the existing object and return it
+      # idempotently (refreshing the sandbox cache too), never crash.
+      {:error, %Ecto.Changeset{} = changeset} ->
+        if source_turn_conflict?(changeset),
+          do: idempotent_after_conflict(turn_id, attrs, ctx),
+          else: {:error, changeset}
+    end
+  end
+
+  # The unique index added in PR-6 surfaces as an error on `:source_turn_id`
+  # in the ConfigObject changeset (see ConfigObject.changeset/1).
+  defp source_turn_conflict?(%Ecto.Changeset{errors: errors}) do
+    Enum.any?(errors, fn
+      {:source_turn_id, {_msg, opts}} -> Keyword.get(opts, :constraint) == :unique
+      _ -> false
+    end)
+  end
+
+  # The race-winner's object is now durable for this turn. Re-read it and
+  # return the same idempotent result the serial early-return would have —
+  # including the sandbox refresh so this loser still heals its cache.
+  defp idempotent_after_conflict(turn_id, attrs, ctx) do
+    case ConfigStore.pointer_object_for_turn(attrs.layer, attrs.subject_uri, attrs.key, turn_id) do
+      {:ok, existing_id} ->
+        {:ok, %{config_id: existing_id, previous_config_id: nil},
+         sandbox_write_effects(ctx, attrs, existing_id)}
+
+      :none ->
+        # The winner committed the object but its pointer is not yet visible
+        # (should not happen under the atomic write_and_point, but stay
+        # honest): report applied without a config_id rather than crash.
+        Logger.warning(
+          "ConfigEvolve: source_turn unique conflict but no pointer resolves the turn " <>
+            "yet (turn_id=#{inspect(turn_id)}); returning idempotent no-op"
+        )
+
+        {:ok, %{config_id: nil, previous_config_id: nil}, []}
     end
   end
 

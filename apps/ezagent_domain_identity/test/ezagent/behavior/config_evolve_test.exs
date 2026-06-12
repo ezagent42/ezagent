@@ -216,43 +216,169 @@ defmodule Ezagent.Behavior.ConfigEvolveTest do
     assert {:ok, ^cid1} = ConfigStore.current_user_object(agent, @cascade_key)
   end
 
-  # ---- CE-3 non-atomic object+pointer → lost update -----------------------
+  # ---- PR-6 ITEM 1 — superseded turn STAYS applied (object-existence) ------
 
-  # An orphan ConfigObject (object inserted, pointer NOT advanced) must NOT
-  # count as "applied for turn" — otherwise recovery skips the replay forever
-  # and the settled config is lost. The pointer-aware check keys on the
-  # POINTER resolving to an object for this turn, not bare object existence.
-  test "an orphan object (no advancing pointer) is NOT applied_for_turn? (CE-3)",
+  # The PR-5 pointer-aware `applied_for_turn?/1` regressed: applying turn B on
+  # top of turn A (same agent/layer/key) advanced the pointer off A's object,
+  # so `applied_for_turn?("A")` flipped back to FALSE — recovery would REPLAY
+  # an already-applied, merely-superseded turn (a lost-then-double-applied
+  # update). Because `write_and_point/1` is atomic (no orphan object can
+  # exist), "an object for turn T exists" ⟺ "turn T was applied", so the check
+  # is reverted to OBJECT-EXISTENCE: a superseded turn is STILL applied.
+  test "a superseded turn is STILL applied_for_turn? (object-existence — no replay) (PR-6)",
        %{agent: agent, workspace: workspace} do
-    turn_id = "t-orphan-#{System.unique_integer([:positive])}"
+    manager = grant_manage_cap(agent, workspace)
+    turn_a = "t-supersede-A-#{System.unique_integer([:positive])}"
+    turn_b = "t-supersede-B-#{System.unique_integer([:positive])}"
 
-    # Simulate the partial write: insert an immutable object stamped with the
-    # turn, but do NOT advance the pointer to it.
-    {:ok, _object} =
-      ConfigStore.write_config(%{
+    {:ok, %{config_id: cid_a}} = apply_delta(agent, manager, turn_a, %{"tone" => "A"})
+    assert ConfigStore.applied_for_turn?(turn_a)
+
+    # Apply turn B to the SAME agent/layer/key → pointer advances off A onto B.
+    {:ok, %{config_id: cid_b}} = apply_delta(agent, manager, turn_b, %{"tone" => "B"})
+    assert cid_b != cid_a
+    assert {:ok, ^cid_b} = ConfigStore.current_user_object(agent, @cascade_key)
+
+    # A was applied (even though superseded) → recovery must NOT replay it.
+    assert ConfigStore.applied_for_turn?(turn_a),
+           "superseded turn A wrongly reported as NOT applied — recovery would replay an applied turn"
+
+    assert ConfigStore.applied_for_turn?(turn_b)
+  end
+
+  # ---- CE-3 atomicity keeps the lost-update class closed ------------------
+
+  # `write_and_point/1` writes the object AND advances the pointer in ONE
+  # Repo.transaction, so a partial write (object without pointer = an orphan)
+  # is impossible. ITEM 1: prove the do_apply handler routes through the
+  # atomic `write_and_point/1` and never calls the object-only `write_config/1`
+  # separately (which would re-open the orphan window object-existence relies
+  # on being closed).
+  test "do_apply uses the atomic write_and_point, not a separate object write (CE-3)" do
+    source = File.read!("lib/ezagent/behavior/config_evolve.ex")
+
+    do_apply =
+      source
+      |> String.split("defp do_apply_config_delta(")
+      |> Enum.at(1)
+      |> String.split("\n  defp ", parts: 2)
+      |> List.first()
+
+    assert do_apply =~ "ConfigStore.write_and_point(",
+           "do_apply_config_delta must persist via the atomic write_and_point/1"
+
+    refute do_apply =~ "ConfigStore.write_config(",
+           "do_apply_config_delta must NOT call the non-atomic object-only write_config/1 " <>
+             "(that re-opens the orphan window object-existence assumes closed)"
+  end
+
+  # A genuinely-interrupted apply (the atomic transaction never committed)
+  # leaves NEITHER object NOR pointer, so `applied_for_turn?` is false and
+  # recovery correctly replays.
+  test "an aborted write_and_point leaves no object and is NOT applied_for_turn? (CE-3)",
+       %{agent: agent, workspace: workspace} do
+    turn_id = "t-aborted-#{System.unique_integer([:positive])}"
+    before = config_object_count()
+
+    # No write happened (the apply was interrupted before write_and_point).
+    refute ConfigStore.applied_for_turn?(turn_id)
+    assert config_object_count() == before
+
+    # And a fresh, complete apply for the same turn then succeeds (replay).
+    manager = grant_manage_cap(agent, workspace)
+    {:ok, %{config_id: cid}} = apply_delta(agent, manager, turn_id, %{"tone" => "recovered"})
+    assert ConfigStore.applied_for_turn?(turn_id)
+    assert {:ok, ^cid} = ConfigStore.current_user_object(agent, @cascade_key)
+  end
+
+  # ---- CE-2 concurrent duplicate dispatch — DB unique constraint -----------
+
+  # The handler's serial early-return (pointer_object_for_turn /
+  # applied_for_turn?) only catches RE-dispatch after the first apply
+  # committed. Two CONCURRENT dispatches can both observe "not applied" and
+  # both reach write_and_point. A partial unique index on
+  # (workspace_uri, subject_uri, key, source_turn_id) makes the DB reject the
+  # second object so only one delta per turn ever lands. This test asserts the
+  # constraint exists by inserting two objects with the same identifying
+  # tuple — the second must be rejected (changeset error, not a raw raise).
+  test "two ConfigObjects with the same (workspace,subject,key,source_turn_id) are rejected (CE-2)",
+       %{agent: agent, workspace: workspace} do
+    turn_id = "t-dup-#{System.unique_integer([:positive])}"
+
+    attrs = fn ->
+      %{
         layer: :user,
         workspace_uri: workspace,
         subject_uri: agent,
         key: @cascade_key,
-        body: %{"tone" => "orphan"},
+        body: %{"tone" => "x"},
         actor_uri: agent,
         source_turn_id: turn_id
-      })
+      }
+    end
 
-    refute ConfigStore.applied_for_turn?(turn_id),
-           "orphan object (no advancing pointer) wrongly reported as applied — recovery would skip replay"
+    assert {:ok, _first} = ConfigStore.write_config(attrs.())
+
+    assert {:error, %Ecto.Changeset{} = changeset} = ConfigStore.write_config(attrs.())
+
+    assert {"already applied for this turn", _} =
+             changeset.errors[:source_turn_id] || changeset.errors[:id],
+           "second object for the same turn was not rejected by the unique constraint: " <>
+             inspect(changeset.errors)
   end
 
-  test "after a real apply the pointer reflects the turn and applied_for_turn? is true (CE-3)",
+  # The handler turns a concurrent-loss constraint collision into an
+  # idempotent success (it returns the already-applied object id), never a
+  # crash. We drive this through the public apply path: the SECOND apply of the
+  # same turn returns the first object id with no new object (the serial gate
+  # OR the constraint handling both land here).
+  test "concurrent-style re-apply of a turn returns the existing object, no crash (CE-2)",
        %{agent: agent, workspace: workspace} do
     manager = grant_manage_cap(agent, workspace)
-    turn_id = "t-applied-#{System.unique_integer([:positive])}"
+    turn_id = "t-conc-#{System.unique_integer([:positive])}"
+
+    {:ok, %{config_id: cid1}} = apply_delta(agent, manager, turn_id, %{"tone" => "v1"})
+    count = config_object_count()
+
+    {:ok, %{config_id: cid2}} = apply_delta(agent, manager, turn_id, %{"tone" => "v2"})
+
+    assert cid2 == cid1
+    assert config_object_count() == count
+  end
+
+  # ---- PR-6 ITEM 3 — idempotent re-apply REFRESHES a stale sandbox ---------
+
+  # The already-applied early-return used to emit `[]` effects, so a redelivery
+  # after a lost step-2 (deferred sandbox.write_path) left the Sandbox cache
+  # stale until the next boot reconcile. ITEM 3: the idempotent path must emit
+  # the SAME sandbox projection (computed from the CURRENT pointer) so a
+  # redelivery self-heals the cache — WITHOUT minting a new object.
+  test "re-applying an already-applied turn refreshes a stale sandbox cache, mints no object (PR-6)",
+       %{agent: agent, workspace: workspace} do
+    seed_sandbox_cascade(agent, workspace)
+    manager = grant_manage_cap(agent, workspace)
+    turn_id = "t-stale-#{System.unique_integer([:positive])}"
 
     {:ok, %{config_id: cid}} = apply_delta(agent, manager, turn_id, %{"tone" => "decisive"})
+    want = URI.to_string(ConfigProjection.object_uri(workspace, cid))
+    assert wait_until(fn -> sandbox_user_layer_uri(agent) == want end)
 
-    assert ConfigStore.applied_for_turn?(turn_id)
-    # The current user-layer pointer resolves the object minted for this turn.
-    assert {:ok, ^cid} = ConfigStore.current_user_object(agent, @cascade_key)
+    # Simulate a lost step-2 / stale cache AFTER the durable apply.
+    force_sandbox_user_layer(agent, workspace, "stale://layer")
+    assert sandbox_user_layer_uri(agent) == "stale://layer"
+
+    count = config_object_count()
+
+    # Re-dispatch the SAME turn (settlement redelivery). It must NOT mint a new
+    # object, but it MUST re-emit the sandbox projection that refreshes the
+    # cache back to the durable pointer.
+    {:ok, %{config_id: cid2}} = apply_delta(agent, manager, turn_id, %{"tone" => "ignored"})
+    assert cid2 == cid
+    assert config_object_count() == count
+
+    assert wait_until(fn -> sandbox_user_layer_uri(agent) == want end),
+           "idempotent re-apply did NOT refresh the stale sandbox cache (got " <>
+             "#{inspect(sandbox_user_layer_uri(agent))}, want #{want})"
   end
 
   # ========================================================================

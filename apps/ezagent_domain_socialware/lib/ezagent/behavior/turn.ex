@@ -210,12 +210,13 @@ defmodule Ezagent.Behavior.Turn do
   end
 
   # Config replay is needed when the settled turn carries a `config_delta` but
-  # it was not yet DURABLY APPLIED for it. CE-3: "applied" is POINTER-AWARE —
-  # `applied_for_turn?/1` returns true only when a current pointer resolves to
-  # an object minted for this turn, NOT on bare object existence. An orphan
-  # object (object inserted but pointer never advanced — the crash window of a
-  # non-atomic write) therefore does NOT suppress replay, so a lost settlement
-  # is recovered.
+  # it was not yet DURABLY APPLIED for it. CE-3: "applied" is OBJECT-EXISTENCE —
+  # `applied_for_turn?/1` returns true iff a ConfigObject stamped with this
+  # turn exists. This is sound because `write_and_point/1` is atomic (object +
+  # pointer in one transaction), so an orphan object cannot exist and a
+  # genuinely-interrupted apply leaves neither object nor pointer → replay
+  # correctly fires. (A superseded turn's object still exists, so it stays
+  # applied and is NOT replayed — PR-6 fix for the pointer-aware regression.)
   defp config_replay_needed?(turn_id, %{result: %{config_delta: delta}}) when is_map(delta) do
     not Ezagent.Socialware.ConfigStore.applied_for_turn?(turn_id)
   end
