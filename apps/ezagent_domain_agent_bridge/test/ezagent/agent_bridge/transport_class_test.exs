@@ -62,6 +62,23 @@ defmodule Ezagent.AgentBridge.TransportClassTest do
     def handle_client_event(_event, _params, socket), do: {:noreply, socket}
   end
 
+  # Declares the Adapter behaviour + transport_class/0, but returns an atom that
+  # is NEITHER :subprocess_ws NOR :in_process_sync. Registration must REJECT it
+  # so the bad class is caught at boot, not at the first delivery/join.
+  defmodule BadClassAdapter do
+    @moduledoc false
+    @behaviour Ezagent.AgentBridge.Adapter
+
+    @impl true
+    def flavor, do: "badclass"
+
+    @impl true
+    def transport_class, do: :carrier_pigeon
+
+    @impl true
+    def deliver(%Payload{} = _payload, _ref), do: :ok
+  end
+
   setup do
     Registry.init()
     for {uri, _pid} <- Registry.list_all(), do: Registry.unbind(uri)
@@ -96,6 +113,39 @@ defmodule Ezagent.AgentBridge.TransportClassTest do
       event_type: :chat_send,
       meta: %{}
     }
+  end
+
+  describe "AdapterRegistry.register/2 transport_class validation (fail at boot, not at delivery)" do
+    test "rejects an adapter whose transport_class/0 returns an unknown atom" do
+      assert {:error, {:invalid_transport_class, BadClassAdapter, :carrier_pigeon}} =
+               AdapterRegistry.register("badclass", BadClassAdapter)
+
+      # And it was NOT stored — a later transport_class/1 must not see it.
+      assert :error = AdapterRegistry.lookup("badclass")
+    end
+
+    test "rejects a legacy adapter that declares the behaviour but omits transport_class/0" do
+      # Build a legacy-shaped adapter AT RUNTIME: it carries the @behaviour
+      # attribute (so it passes the behaviour check) but never exported the
+      # PR-0 transport_class/0 callback — the exact third-party/precompiled
+      # case the warnings-as-errors gate cannot catch. capture_io swallows the
+      # expected "callback not implemented" compile warning to keep output clean.
+      body =
+        quote do
+          @behaviour Ezagent.AgentBridge.Adapter
+          def flavor, do: "legacytest"
+          def deliver(_payload, _ref), do: :ok
+        end
+
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        Module.create(LegacyNoClassAdapter, body, Macro.Env.location(__ENV__))
+      end)
+
+      assert {:error, {:invalid_transport_class, LegacyNoClassAdapter, :not_exported}} =
+               AdapterRegistry.register("legacytest", LegacyNoClassAdapter)
+
+      assert :error = AdapterRegistry.lookup("legacytest")
+    end
   end
 
   describe "AdapterRegistry.transport_class/1" do

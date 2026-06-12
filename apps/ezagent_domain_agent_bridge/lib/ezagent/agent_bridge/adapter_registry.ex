@@ -113,6 +113,8 @@ defmodule Ezagent.AgentBridge.AdapterRegistry do
     {:noreply, state}
   end
 
+  @valid_transport_classes [:subprocess_ws, :in_process_sync]
+
   defp validate_adapter(flavor, adapter) do
     cond do
       not Code.ensure_loaded?(adapter) ->
@@ -123,6 +125,24 @@ defmodule Ezagent.AgentBridge.AdapterRegistry do
 
       adapter.flavor() != flavor ->
         {:error, {:flavor_mismatch, adapter.flavor(), flavor}}
+
+      true ->
+        # Validate transport_class/0 AT REGISTRATION so a non-conforming adapter
+        # fails fast at boot, not at the first delivery/join. A legacy or
+        # third-party `.beam` may still carry the @behaviour attribute but never
+        # exported the PR-0 callback (the warnings-as-errors gate only covers
+        # recompiled lib code), and an adapter could return an unexpected atom.
+        validate_transport_class(adapter)
+    end
+  end
+
+  defp validate_transport_class(adapter) do
+    cond do
+      not function_exported?(adapter, :transport_class, 0) ->
+        {:error, {:invalid_transport_class, adapter, :not_exported}}
+
+      adapter.transport_class() not in @valid_transport_classes ->
+        {:error, {:invalid_transport_class, adapter, adapter.transport_class()}}
 
       true ->
         :ok
