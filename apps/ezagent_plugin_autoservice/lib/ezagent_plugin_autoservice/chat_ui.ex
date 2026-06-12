@@ -42,8 +42,10 @@ defmodule EzagentPluginAutoservice.ChatUI do
 
   def message_list(assigns) do
     ~H"""
-    <div class="flex-1 overflow-y-auto p-4 space-y-3 bg-zinc-50">
-      <p :if={@messages == []} class="text-center text-sm text-zinc-400 mt-8">{@empty_hint}</p>
+    <div class="flex-1 overflow-y-auto p-4 space-y-3 bg-zinc-50 dark:bg-zinc-900">
+      <p :if={@messages == []} class="text-center text-sm text-zinc-400 dark:text-zinc-500 mt-8">
+        {@empty_hint}
+      </p>
       <div :for={m <- @messages} class={["flex", (m.mine? && "justify-end") || "justify-start"]}>
         <div class={["max-w-[72%] rounded-2xl px-3 py-2 text-sm shadow-sm", bubble_class(m)]}>
           <div class="text-[11px] opacity-60 mb-0.5">{m.label}</div>
@@ -55,9 +57,15 @@ defmodule EzagentPluginAutoservice.ChatUI do
   end
 
   defp bubble_class(%{mine?: true}), do: "bg-blue-600 text-white"
-  defp bubble_class(%{label: "AI 客服"}), do: "bg-white border border-zinc-200 text-zinc-800"
-  defp bubble_class(%{label: "人工客服"}), do: "bg-emerald-100 text-emerald-900"
-  defp bubble_class(_), do: "bg-zinc-200 text-zinc-700"
+
+  defp bubble_class(%{label: "AI 客服"}),
+    do:
+      "bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200"
+
+  defp bubble_class(%{label: "人工客服"}),
+    do: "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-900 dark:text-emerald-100"
+
+  defp bubble_class(_), do: "bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300"
 
   attr(:placeholder, :string, default: "输入消息…")
   attr(:nonce, :integer, default: 0)
@@ -68,7 +76,7 @@ defmodule EzagentPluginAutoservice.ChatUI do
     <form
       id={"autoservice-composer-#{@nonce}"}
       phx-submit="send"
-      class="flex gap-2 p-3 border-t bg-white"
+      class="flex gap-2 p-3 border-t border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-950"
     >
       <input
         type="text"
@@ -77,7 +85,7 @@ defmodule EzagentPluginAutoservice.ChatUI do
         placeholder={@placeholder}
         autocomplete="off"
         disabled={@disabled}
-        class="flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-zinc-100"
+        class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-zinc-100 dark:disabled:bg-zinc-800"
       />
       <button
         type="submit"

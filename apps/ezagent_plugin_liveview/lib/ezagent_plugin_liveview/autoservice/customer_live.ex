@@ -167,15 +167,15 @@ defmodule EzagentPluginLiveview.AutoService.CustomerLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="mx-auto max-w-2xl h-[calc(100vh-2rem)] my-4 flex flex-col rounded-xl border border-zinc-200 shadow-sm overflow-hidden bg-white">
-      <header class="px-4 py-3 border-b bg-blue-600 text-white">
+    <div class="mx-auto max-w-2xl h-[calc(100vh-2rem)] my-4 flex flex-col rounded-xl border border-zinc-200 dark:border-zinc-700 shadow-sm overflow-hidden bg-white dark:bg-zinc-950">
+      <header class="px-4 py-3 border-b border-blue-700 bg-blue-600 text-white">
         <h1 class="font-semibold">在线客服</h1>
         <p class="text-xs opacity-80">{URI.to_string(@customer_uri)}</p>
       </header>
 
       <p
         :if={@error}
-        class="m-4 rounded bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800"
+        class="m-4 rounded bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-sm text-amber-800 dark:text-amber-100"
       >
         {@error}
       </p>
