@@ -130,7 +130,16 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         # First-login wizard: builds a real caller ctx for
         # Workspace.create_session/3. Same class as LV display/ctx
         # construction allowlisted for plugin LiveView.
-        "apps/ezagent_web/lib/ezagent_web/live/home_live.ex"
+        "apps/ezagent_web/lib/ezagent_web/live/home_live.ex",
+        # Agent-owned config-evolve recovery replay (spec 2026-06-11 H3,
+        # Allen-decided). Turn's `recovery_effects` reads the recorded
+        # manager URI's caps to BUILD the dispatch ctx for the config-apply
+        # replay; the standard manage-cap gate then re-validates AT the
+        # dispatch chokepoint (still holds → apply; lost it → :unauthorized,
+        # skip+log). This is ctx CONSTRUCTION feeding the chokepoint, NOT a
+        # cap-gate decision outside it — same class as the home_live wizard
+        # and the session_creator idempotency reads above.
+        "apps/ezagent_domain_socialware/lib/ezagent/behavior/turn.ex"
       ]
     },
     %{

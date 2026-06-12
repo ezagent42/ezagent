@@ -44,10 +44,12 @@
   # (cc carries the Invariant-#9 empty-`session_uris` rejection + three-bucket
   # ACK + telemetry that codex does not). Measured 2026-06-08 = 29.
   # Generalizes `duplicated_resolve_template_class`.
-  # PR-2 config-evolve ports CascadeRepoint's put_user_layer/put_resolution
-  # cascade read-modify-write into Behavior.ConfigEvolve (step-2 projection).
-  # TRANSIENT by design — PR-4 deletes cascade_repoint.ex (folded in) → back to 29.
-  cross_file_duplicate_fn_groups: 30, # arch-cap-bump: PR-2 transient port
+  # PR-2 config-evolve transiently bumped this to 30 when it ported
+  # CascadeRepoint's put_user_layer/put_resolution into Behavior.ConfigEvolve
+  # while cascade_repoint.ex still held the originals. PR-4 deleted
+  # cascade_repoint.ex (the functions now live ONLY on ConfigEvolve), so the
+  # transient duplicate is gone — ratcheted back to 29.
+  cross_file_duplicate_fn_groups: 29,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3
