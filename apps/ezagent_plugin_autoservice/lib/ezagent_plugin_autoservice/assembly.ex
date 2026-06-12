@@ -497,6 +497,7 @@ defmodule EzagentPluginAutoservice.Assembly do
     case TenantContent.provision_context(tid, "fast") do
       {:ok, fctx} ->
         ac = fctx.agent_config || %{}
+        provider = Map.get(ac, "provider") || Map.get(ac, :provider) || ""
 
         # NOTE: agents.yaml's fast.max_tokens has NO consumer in curl (curl reads
         # "max_history" — a different concept, a count of history turns, not token
@@ -504,7 +505,7 @@ defmodule EzagentPluginAutoservice.Assembly do
         tmpl = %{
           "class" => "curl.agent",
           "agent_uri" => agent_uri_str,
-          "provider" => Map.get(ac, "provider") || Map.get(ac, :provider) || "",
+          "provider" => provider,
           "api_url" => Map.get(ac, "api_url") || Map.get(ac, :api_url) || "",
           "model" => Map.get(ac, "model") || Map.get(ac, :model) || "",
           "system_prompt" => fctx.system_prompt
@@ -516,6 +517,7 @@ defmodule EzagentPluginAutoservice.Assembly do
 
         case Ezagent.Workspace.add_template(tid, tmpl_name, tmpl) do
           :ok ->
+            _ = maybe_put_api_key(agent_uri, provider)
             {:ok, agent_uri}
 
           {:error, {:already_started, _pid}} ->
@@ -543,6 +545,64 @@ defmodule EzagentPluginAutoservice.Assembly do
     agent_uri = Ezagent.URI.agent(tid, agent_name)
     stub_agent(agent_uri)
   end
+
+  # The fast curl agent reads its OWN provider key from its `:api_keys` slice
+  # (curl_agent.ex `fetch_self_api_key/2`); without it the agent returns
+  # `{:no_api_key, provider}` and produces no ACK. The key is a SECRET, so it is
+  # NEVER baked into the agents.yaml/template — it is read from the environment
+  # (`<PROVIDER>_API_KEY`, e.g. `DEEPSEEK_API_KEY`) at provision time and stored
+  # via the `api_keys.put_api_key` dispatch. If the env var is absent we log a
+  # clear warning and skip — the slow cc path still works; only the fast ACK
+  # (biphasic) leg is unavailable until a key is provided.
+  defp maybe_put_api_key(%URI{} = agent_uri, provider)
+       when is_binary(provider) and provider != "" do
+    env_var = String.upcase(provider) <> "_API_KEY"
+
+    case System.get_env(env_var) do
+      key when is_binary(key) and key != "" ->
+        ctx = %{
+          caller: Ezagent.Entity.User.admin_uri(),
+          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+          reply: {:caller_inbox, self()}
+        }
+
+        target =
+          Ezagent.URI.new!("#{URI.to_string(agent_uri)}?action=api_keys.put_api_key")
+
+        case Invocation.dispatch(%Invocation{
+               target: target,
+               mode: :call,
+               args: %{provider: provider, key: key},
+               ctx: ctx
+             }) do
+          {:ok, _} ->
+            Logger.info(
+              "Assembly: provisioned #{provider} api_key for #{URI.to_string(agent_uri)} (from $#{env_var})"
+            )
+
+            :ok
+
+          other ->
+            Logger.warning(
+              "Assembly: api_keys.put_api_key failed for #{URI.to_string(agent_uri)} " <>
+                "(#{inspect(other)}) — fast ACK will be unavailable"
+            )
+
+            :ok
+        end
+
+      _ ->
+        Logger.warning(
+          "Assembly: no $#{env_var} in env — fast curl agent " <>
+            "#{URI.to_string(agent_uri)} has no #{provider} key; the fast ACK leg is " <>
+            "DISABLED (slow cc reply still works). Set $#{env_var} and re-provision to enable."
+        )
+
+        :ok
+    end
+  end
+
+  defp maybe_put_api_key(_agent_uri, _provider), do: :ok
 
   # ---------------------------------------------------------------------------
   # create_agent wrapper (idempotent) — cc slow agent only
