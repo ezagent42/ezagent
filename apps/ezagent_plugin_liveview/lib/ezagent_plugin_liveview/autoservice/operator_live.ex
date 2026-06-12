@@ -109,7 +109,8 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
   def handle_event("claim", _params, socket), do: {:noreply, socket}
 
   def handle_event("settle", _params, socket) do
-    %{selected: session_uri, operator_uri: op_uri, open_turn_id: turn_id} = socket.assigns
+    %{selected: session_uri, operator_uri: op_uri, open_turn_id: turn_id, caps: caps} =
+      socket.assigns
 
     if is_nil(session_uri) or is_nil(turn_id) do
       {:noreply, socket}
@@ -119,7 +120,7 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
       # which CustomerFeed delivers it (`{:customer_delivery}`). No chat.send
       # here — the Turn is the ONLY path the operator reply reaches the customer
       # (a chat.send would broadcast unconditionally and bypass the gate).
-      case TurnAdapter.settle_turn(session_uri, turn_id) do
+      case TurnAdapter.settle_turn(session_uri, turn_id, op_uri, caps) do
         {:ok, _} ->
           Logger.info(
             "Operator #{URI.to_string(op_uri)} settled turn #{turn_id} on session #{URI.to_string(session_uri)}"
@@ -137,13 +138,14 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
   end
 
   def handle_event("cancel", _params, socket) do
-    %{selected: session_uri, operator_uri: op_uri, open_turn_id: turn_id} = socket.assigns
+    %{selected: session_uri, operator_uri: op_uri, open_turn_id: turn_id, caps: caps} =
+      socket.assigns
 
     if is_nil(session_uri) or is_nil(turn_id) do
       {:noreply, socket}
     else
       # 1. Cancel the Turn (transitions to :cancelled)
-      case TurnAdapter.cancel_turn(session_uri, turn_id) do
+      case TurnAdapter.cancel_turn(session_uri, turn_id, op_uri, caps) do
         {:ok, _} ->
           Logger.info(
             "Operator #{URI.to_string(op_uri)} cancelled turn #{turn_id} on session #{URI.to_string(session_uri)}"
@@ -191,20 +193,35 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
   # operator's actual answer to the customer; `claim`'s hold_visibility holds it
   # `operator_only`, so it stays hidden from CustomerFeed until "提交" (settle).
   defp do_claim(session_uri, op_uri, text, socket) do
+    # The operator drives their OWN takeover Turn with their own authority.
+    caps = socket.assigns.caps
+
     # 1. Derive the customer trigger (latest customer message or fallback)
     trigger = get_latest_customer_trigger(session_uri, op_uri)
 
     # 2. Open a real Turn
-    case TurnAdapter.open_turn(session_uri, trigger) do
+    case TurnAdapter.open_turn(session_uri, trigger, op_uri, caps) do
       {:ok, %{turn_id: turn_id}} ->
         # 3. Compose the operator's REAL reply (transition to :composing so
         #    claim is allowed). Written customer_visible at compose-time (turn
         #    mode :auto), then held operator_only by claim's hold_visibility.
-        case TurnAdapter.compose_turn(session_uri, turn_id, %{agent_uri: op_uri, text: text}) do
+        case TurnAdapter.compose_turn(
+               session_uri,
+               turn_id,
+               %{agent_uri: op_uri, text: text},
+               op_uri,
+               caps
+             ) do
           {:ok, _} ->
             # 4. Claim (transition to :awaiting_human, hold visibility ->
             #    operator_only). The customer cannot see the reply yet.
-            case TurnAdapter.claim_turn(session_uri, turn_id, %{operator_uri: op_uri}) do
+            case TurnAdapter.claim_turn(
+                   session_uri,
+                   turn_id,
+                   %{operator_uri: op_uri},
+                   op_uri,
+                   caps
+                 ) do
               {:ok, _} ->
                 # 5. Disable AI routing
                 _ = disable_session_rule(session_uri)
@@ -234,7 +251,7 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
                   "OperatorLive: claim_turn failed for turn #{turn_id}: #{inspect(claim_reason)}"
                 )
 
-                _ = TurnAdapter.cancel_turn(session_uri, turn_id)
+                _ = TurnAdapter.cancel_turn(session_uri, turn_id, op_uri, caps)
                 {:noreply, assign(socket, claiming: false)}
             end
 
@@ -243,7 +260,7 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
               "OperatorLive: compose_turn failed for turn #{turn_id}: #{inspect(compose_reason)}"
             )
 
-            _ = TurnAdapter.cancel_turn(session_uri, turn_id)
+            _ = TurnAdapter.cancel_turn(session_uri, turn_id, op_uri, caps)
             {:noreply, assign(socket, claiming: false)}
         end
 

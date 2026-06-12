@@ -30,6 +30,7 @@ defmodule EzagentPluginAutoservice.Roles do
   @spec bundle(role(), URI.t()) :: [Capability.t()]
   def bundle(:customer, %URI{scheme: "workspace"} = workspace_uri) do
     now = DateTime.utc_now()
+
     [
       grantable_session_any(:send, workspace_uri, now),
       grantable_session_any(:receive, workspace_uri, now)
@@ -38,11 +39,12 @@ defmodule EzagentPluginAutoservice.Roles do
 
   def bundle(:operator, %URI{scheme: "workspace"} = workspace_uri) do
     now = DateTime.utc_now()
+
     [
       grantable_session_any(:join, workspace_uri, now),
       grantable_session_any(:send, workspace_uri, now),
       grantable_session_any(:receive, workspace_uri, now)
-    ]
+    ] ++ operator_turn_caps(workspace_uri, now)
   end
 
   def bundle(:admin, %URI{scheme: "workspace"} = workspace_uri) do
@@ -90,6 +92,31 @@ defmodule EzagentPluginAutoservice.Roles do
       granted_by: @granted_by,
       granted_at: now
     }
+  end
+
+  # Turn lifecycle caps for the operator. During takeover the operator drives
+  # their OWN takeover Turn (open → compose → claim → settle) with their own
+  # authority — this is the runtime path `OperatorLive` exercises via
+  # `TurnAdapter`, which now builds the dispatch ctx from the operator's caps.
+  #
+  # Shape mirrors `User.default_caps/1`: `kind: :session` is the SocialwareSession
+  # Kind `type_name`, `behavior: Ezagent.Behavior.Turn` narrows to the Turn slice,
+  # and each action atom matches the corresponding `action(...)` cap declaration
+  # in `Ezagent.Behavior.Turn` (`:open`/`:compose`/`:claim`/`:settle`). Scoped to
+  # the workspace with `instance: :any` (any session in the workspace), consistent
+  # with the operator's session join/send/receive caps above.
+  defp operator_turn_caps(%URI{} = workspace_uri, %DateTime{} = now) do
+    for action <- [:open, :compose, :claim, :settle] do
+      %Capability{
+        kind: :session,
+        behavior: Ezagent.Behavior.Turn,
+        action: action,
+        instance: :any,
+        workspace_uri: workspace_uri,
+        granted_by: @granted_by,
+        granted_at: now
+      }
+    end
   end
 
   defp grantable_session_any(action, %URI{} = workspace_uri, %DateTime{} = now) do
