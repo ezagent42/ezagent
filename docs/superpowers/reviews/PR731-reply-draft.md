@@ -128,6 +128,8 @@ dev 有 ~8893 行 admin 基础设施 + 18 模块 content plugin。以 PR 为基�
 
 ## 六、三个 Core 问题在新方案下的状态
 
+> **合并后追踪**: [`docs/superpowers/retros/core-issues-tracker.md`](../retros/core-issues-tracker.md) — 逐项验证清单
+
 | 问题 | 状态 | 处理 |
 |---|---|---|
 | **#1 Session kind_type** (SocialwareSession vs chat Session 共用 "session") | ⚠️ 仍存在 | 短期: `CustomerSession.ensure_session` 改为 spawn `SocialwareSession`；长期: 建议 Allen 修 substrate (distinct kind_type 或 snapshot-aware spawn handler) |

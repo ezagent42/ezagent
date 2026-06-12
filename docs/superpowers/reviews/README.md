@@ -9,6 +9,9 @@
 > - [取舍分析](PR731-vs-autoservice-dev-取舍分析.md) — 保留/采纳/不采纳
 > - [Operator 接管修正](operator-takeover-fix-options.md) — 最小修正 vs Behavior 方案
 > - [Core 问题影响](PR731-core-issues-impact.md) — 三个 core 问题在新方案下状态
+- [Core Issues Tracker](../retros/core-issues-tracker.md) — ⚠️ 合并后必须回顾的逐项验证清单
+- [Session + MentionRouting 框架合规](session-mentionrouting-framework-alignment.md) — 对照 P1-P27
+- [模型与 Session 影响分析](../retros/2026-06-12-model-and-session-impact.md) — DeepSeek vs Claude Opus 对实施质量的影响
 
 ---
 
