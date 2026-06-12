@@ -140,7 +140,16 @@ defmodule EzagentPluginAutoservice.CustomerSession do
   """
   @spec ensure_joined(URI.t()) :: {:ok, URI.t()} | {:error, term()}
   def ensure_joined(%URI{scheme: "entity"} = customer_uri) do
-    # 3-segment URI format: entity://<ws>/user/<name>
+    {_, dict} = Process.info(self(), :dictionary)
+    {_, initial_call} = Process.info(self(), :initial_call)
+    {_, parent} = Process.info(self(), :group_leader)
+
+    Logger.warning(
+      "CustomerSession.ensure_joined: uri=#{URI.to_string(customer_uri)} " <>
+        "initial_call=#{inspect(initial_call)} parent_gl=#{inspect(parent)} " <>
+        "dict_keys=#{inspect(dict |> Keyword.keys() |> Enum.take(10))}"
+    )
+
     if Ezagent.URI.type(customer_uri) != {:ok, "user"} do
       {:error, {:not_a_user_uri, URI.to_string(customer_uri)}}
     else

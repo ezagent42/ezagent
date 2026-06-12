@@ -37,7 +37,9 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
        selected: nil,
        subscribed_topic: nil,
        messages: [],
-       compose_nonce: 0
+       compose_nonce: 0,
+       claimed: false,
+       claiming: false
      )}
   end
 
@@ -89,13 +91,15 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
     end
   end
 
-  def handle_event("claim", %{"turn_id" => turn_id}, socket) do
+  def handle_event("claim", _params, socket) do
     %{selected: session_uri, operator_uri: op_uri} = socket.assigns
 
     if is_nil(session_uri) do
       {:noreply, socket}
     else
-      # 1. Claim the turn (operator takes over)
+      # 1. Claim the turn (operator takes over). Use a synthetic turn_id
+      #    derived from the session and timestamp.
+      turn_id = :erlang.unique_integer([:positive])
       _ = TurnAdapter.claim_turn(session_uri, turn_id, %{operator_uri: op_uri})
 
       # 2. Disable the routing rule so the agent stops responding
@@ -112,24 +116,25 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
         "Operator #{URI.to_string(op_uri)} claimed turn #{turn_id} on session #{URI.to_string(session_uri)}"
       )
 
-      {:noreply, assign(socket, subscribed_feed_topic: feed_topic)}
+      {:noreply,
+       assign(socket, subscribed_feed_topic: feed_topic, claimed: true, claiming: false)}
     end
   end
 
-  def handle_event("settle", %{"turn_id" => turn_id}, socket) do
+  def handle_event("settle", _params, socket) do
     %{selected: session_uri, operator_uri: op_uri, caps: caps} = socket.assigns
 
     if is_nil(session_uri) do
       {:noreply, socket}
     else
       # 1. Settle the turn (complete it)
+      turn_id = :erlang.unique_integer([:positive])
       _ = TurnAdapter.settle_turn(session_uri, turn_id)
 
       # 2. Re-enable the routing rule (restore agent routing)
       _ = enable_session_rule(session_uri)
 
-      # 3. Optionally post the operator's final message to the session
-      #    (if the turn had operator-edited content, it's sent via chat.send)
+      # 3. Post the operator's final message to the session
       msg = Ezagent.Message.new(op_uri, %{text: "客服已结束本次人工对话。", attachments: []})
       target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
 
@@ -145,7 +150,7 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
         "Operator #{URI.to_string(op_uri)} settled turn #{turn_id} on session #{URI.to_string(session_uri)}"
       )
 
-      {:noreply, socket}
+      {:noreply, assign(socket, claimed: false)}
     end
   end
 
@@ -345,6 +350,35 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
             <p class="text-[11px] text-zinc-400 dark:text-zinc-500">{URI.to_string(@selected)}</p>
           </header>
           <ChatUI.message_list messages={@messages} empty_hint="该会话还没有消息" />
+          <div
+            :if={!@claimed}
+            class="px-4 py-2 border-t border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900"
+          >
+            <button
+              phx-click="claim"
+              disabled={@claiming}
+              class="rounded-lg bg-emerald-600 text-white px-4 py-2 text-sm font-medium hover:bg-emerald-700 disabled:opacity-50"
+            >
+              接管对话
+            </button>
+            <span class="ml-2 text-xs text-zinc-400 dark:text-zinc-500">
+              接管后将暂停 AI 自动回复，由人工客服处理
+            </span>
+          </div>
+          <div
+            :if={@claimed}
+            class="px-4 py-2 border-t border-zinc-200 dark:border-zinc-700 bg-amber-50 dark:bg-amber-950/30"
+          >
+            <span class="text-sm font-medium text-amber-800 dark:text-amber-200 mr-3">
+              🔒 已接管 — AI 回复已暂停
+            </span>
+            <button
+              phx-click="settle"
+              class="rounded-lg bg-zinc-600 text-white px-3 py-1.5 text-sm font-medium hover:bg-zinc-700"
+            >
+              结束人工对话
+            </button>
+          </div>
           <ChatUI.composer nonce={@compose_nonce} placeholder="以人工客服身份回复客户…" />
         <% end %>
       </main>
