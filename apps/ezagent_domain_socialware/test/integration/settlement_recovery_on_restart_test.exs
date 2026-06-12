@@ -23,7 +23,8 @@ defmodule EzagentDomainSocialware.Integration.SettlementRecoveryOnRestartTest do
        + `flip_visibility` — WITHOUT running the deferred approve/commit.
     3. Mark the turn `:settled` in the persisted `:turns` snapshot (what
        `handle_settle` durably leaves) via a direct snapshot write.
-    4. Terminate the session via the SocialwareSessionSupervisor; wait for
+    4. Terminate the session via instance_message's SessionSupervisor (the
+       unified `Entity.Session`'s supervisor); wait for
        `KindRegistry.lookup == :error`.
     5. Re-spawn → `activated/2` runs → recovery commits the settlement; the
        committed customer delivery appears.

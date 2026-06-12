@@ -41,7 +41,7 @@ defmodule EzagentPluginAdvisor.Integration.PluginContractTest do
              })
   end
 
-  test "Workspace.add_template instantiates an advisor SocialwareSession without core/domain edits" do
+  test "Workspace.add_template instantiates an advisor session (unified Entity.Session) without core/domain edits" do
     workspace_name = "advisor-contract-#{System.unique_integer([:positive])}"
     session_name = "main-#{System.unique_integer([:positive])}"
     workspace_uri = Ezagent.URI.workspace(workspace_name)

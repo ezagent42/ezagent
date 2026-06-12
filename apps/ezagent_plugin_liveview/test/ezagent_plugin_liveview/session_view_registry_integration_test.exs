@@ -3,15 +3,15 @@ defmodule EzagentPluginLiveview.SessionViewRegistryIntegrationTest do
   P2 — end-to-end contract with the REAL registered views, in the one app that
   may legally depend on BOTH the registry (ezagent_domain_ui) and the concrete
   views (PageView in ezagent_domain_socialware; ConversationView here). Spawns a
-  real SocialwareSession so PageView.applies_to?/1 is true and the registry's
-  external_renderers/1 discovery — the exact registration point the P3
-  ExternalAdapter will consult — is actually exercised.
+  real socialware-subset `Entity.Session` so PageView.applies_to?/1 is true and
+  the registry's external_renderers/1 discovery — the exact registration point
+  the P3 ExternalAdapter will consult — is actually exercised.
   """
-  # Spawns a real SocialwareSession Kind (touches KindSnapshot/Repo).
+  # Spawns a real socialware-subset `Entity.Session` (touches KindSnapshot/Repo).
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Ecto.KindSnapshot
-  alias Ezagent.Entity.SocialwareSession
+  alias Ezagent.Entity.Session
   alias Ezagent.UI.SessionViewRegistry
   alias EzagentDomainSocialware.PageView
   alias EzagentPluginLiveview.Views.ConversationView
@@ -34,9 +34,9 @@ defmodule EzagentPluginLiveview.SessionViewRegistryIntegrationTest do
     :ok = KindSnapshot.delete(URI.to_string(uri))
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(SocialwareSession, %{
+      Ezagent.Kind.spawn(Session, %{
         uri: uri,
-        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+        behaviors: Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(uri, Ezagent.Capability.workspace_of(uri))

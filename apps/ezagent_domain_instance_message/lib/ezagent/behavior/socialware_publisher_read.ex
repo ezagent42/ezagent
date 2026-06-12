@@ -1,44 +1,40 @@
 defmodule Ezagent.Behavior.SocialwarePublisherRead do
   @moduledoc """
   Socialware publisher READ API — the scoped, fail-closed boundary that lets
-  a `SocialwareSession`'s owner/members follow its internal publisher trunk
+  a socialware session's owner/members follow its internal publisher trunk
   WITHOUT the chat-publisher authz widening (codex #711 HIGH / P3-3).
 
   ## Why a DISTINCT behavior (not `Publisher.SessionImpl`)
 
-  `SocialwareSession.type_name/0` is `:session` — the SAME as the chat
-  `Session`. The chat publisher read actions (`:snapshot`/`:history`/
-  `:subscribe_from`) are registered as `{Session, action} ->
-  Publisher.SessionImpl`. If those same actions were registered on
-  `SocialwareSession` via `Publisher.SessionImpl`, a BROAD chat
+  The (former, now-collapsed) socialware session also used `type_name/0 ==
+  :session` — the SAME as the chat `Session`. The chat publisher read actions
+  (`:snapshot`/`:history`/`:subscribe_from`) are registered as `{Session,
+  action} -> Publisher.SessionImpl`. If reads resolved through
+  `Publisher.SessionImpl`, a BROAD chat
   `kind: :session, behavior: Publisher.SessionImpl` grant (held by
-  chat/Feishu participants) would ALSO authorize reading a
-  `SocialwareSession`'s INTERNAL `:turns`/`:surface`/`:config_updates`
-  payloads (the kind axis is identical), re-opening the widening; and
-  `Publisher.SessionImpl.data_owner/1` delegates to chat `Session.owner/1`,
-  not a socialware owner/member model.
+  chat/Feishu participants) would ALSO authorize reading a socialware
+  session's INTERNAL `:turns`/`:surface`/`:config_updates` payloads, re-opening
+  the widening; and `Publisher.SessionImpl.data_owner/1` delegates to chat
+  `Session.owner/1`, not a socialware owner/member model.
 
-  P5-A — this behavior is the UNIFIED membership-gated read for the `:snapshot`
-  + `:history` actions on BOTH session Kinds: registered for the chat `Session`
-  in `EzagentDomainInstanceMessage.Application` (this module's HOME app, where
-  it was relocated from socialware alongside `Ezagent.Session.Membership`
-  — both read ONLY the `:chat`/`:publisher` slices, owned here) AND for
-  `SocialwareSession` in `EzagentDomainSocialware.Application` (socialware
-  depends on instance_message, so it reuses this module). The two are DISTINCT
-  Kinds ⇒ NO `{kind, action}` collision. `Publisher.SessionImpl` remains the
-  SOLE owner+materializer of the `:publisher` slice on both Kinds; this behavior
-  is a REGISTRY-ONLY dispatch surface (NOT in either Kind's `behaviors/0`) that
-  READS that slice.
+  P5-A / P5-1b — this behavior is the UNIFIED membership-gated read for the
+  `:snapshot` + `:history` actions on the now-single `Entity.Session` Kind:
+  registered for `Session` in `EzagentDomainInstanceMessage.Application` (this
+  module's HOME app, where it was relocated from socialware alongside
+  `Ezagent.Session.Membership` — both read ONLY the `:chat`/`:publisher`
+  slices, owned here). `Publisher.SessionImpl` remains the SOLE
+  owner+materializer of the `:publisher` slice; this behavior is a
+  REGISTRY-ONLY dispatch surface (NOT in the Kind's `behaviors/0`) that READS
+  that slice — reads route HERE, never to `Publisher.SessionImpl`.
 
-  (The `SocialwarePublisherRead` / `Ezagent.Socialware.*` names are retained
-  through this PR to keep the diff tight; a rename to a chat/session-scoped name
-  is deferred to the P5-1 Kind collapse.)
+  (The `SocialwarePublisherRead` / `Ezagent.Socialware.*` names are retained;
+  a rename to a chat/session-scoped name is out of scope for this step.)
 
   ## Registry-only — reads but does NOT materialize the `:publisher` slice
 
   This module declares `state_slice :publisher` to READ the trunk's
   ring/cursor (the SAME slice the trunk owner `Publisher.SessionImpl`
-  materializes), but it is NOT in `SocialwareSession.behaviors/0`, so it
+  materializes), but it is NOT in `Entity.Session.behaviors/0`, so it
   never `init_slice`/materializes the slice — exactly ONE behavior per Kind
   (the trunk) owns `:publisher`. The handlers READ the slice via
   `ctx.read.(...)` and return it UNCHANGED (no `{:set, ...}` effects). Same
@@ -102,7 +98,7 @@ defmodule Ezagent.Behavior.SocialwarePublisherRead do
     caps: [:snapshot],
     modes: [:call],
     description:
-      "Read this SocialwareSession's publisher trunk cursor + current state. " <>
+      "Read this socialware session's publisher trunk cursor + current state. " <>
         "Cap-exempt; authorized by a live in-handler socialware owner/member check."
   )
 
@@ -112,7 +108,7 @@ defmodule Ezagent.Behavior.SocialwarePublisherRead do
     caps: [:history],
     modes: [:call],
     description:
-      "Read events in the (from, to] cursor window from this SocialwareSession's " <>
+      "Read events in the (from, to] cursor window from this socialware session's " <>
         "publisher trunk ring. Cap-exempt; authorized by a live in-handler " <>
         "socialware owner/member check."
   )
@@ -146,7 +142,7 @@ defmodule Ezagent.Behavior.SocialwarePublisherRead do
 
   @doc """
   Read the publisher trunk's current cursor + most-recent payload. Authorized
-  ONLY for a current owner/member of THIS `SocialwareSession` (live check).
+  ONLY for a current owner/member of THIS socialware session (live check).
   """
   def handle_snapshot(_args, ctx) do
     with :ok <- authorize(ctx) do
@@ -165,7 +161,7 @@ defmodule Ezagent.Behavior.SocialwarePublisherRead do
 
   @doc """
   Read events in the `(from, to]` cursor window from the publisher trunk ring.
-  Authorized ONLY for a current owner/member of THIS `SocialwareSession`.
+  Authorized ONLY for a current owner/member of THIS socialware session.
   """
   def handle_history(args, ctx) do
     with :ok <- authorize(ctx) do

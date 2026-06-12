@@ -29,8 +29,8 @@ defmodule EzagentCore.Repo.Migrations.SocialwareOutboxSurfaceVersionAndCommitted
     backfill_committed_seq()
 
     # A per-session unique index — a backstop against a committed_seq collision
-    # (per-session commits are serialized by the single SocialwareSession
-    # GenServer, so a collision would be a real bug → fail loudly, not corrupt).
+    # (per-session commits are serialized by the single session GenServer, so a
+    # collision would be a real bug → fail loudly, not corrupt).
     create unique_index(:socialware_customer_outbox, [:session_uri, :committed_seq],
              name: :socialware_customer_outbox_session_committed_seq_index
            )

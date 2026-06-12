@@ -4,7 +4,7 @@ defmodule EzagentWeb.Socialware.CustomerSocketTest do
   import Phoenix.ChannelTest
 
   alias Ezagent.{Message, MessageStore}
-  alias Ezagent.Entity.SocialwareSession
+  alias Ezagent.Entity.Session
   alias Ezagent.Socialware.{CustomerAuth, Settlement}
   alias EzagentWeb.Socialware.{CustomerChannel, CustomerSocket}
 
@@ -15,9 +15,9 @@ defmodule EzagentWeb.Socialware.CustomerSocketTest do
     workspace = Ezagent.Capability.workspace_of(session)
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(SocialwareSession, %{
+      Ezagent.Kind.spawn(Session, %{
         uri: session,
-        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+        behaviors: Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)

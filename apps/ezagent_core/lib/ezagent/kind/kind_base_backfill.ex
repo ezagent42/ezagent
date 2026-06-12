@@ -23,8 +23,10 @@ defmodule Ezagent.Kind.KindBaseBackfill do
 
   ## Classification — socialware is POSITIVE, chat is the DEFAULT
 
-  Both `Ezagent.Entity.Session` (chat) and `Ezagent.Entity.SocialwareSession`
-  return `kind_type "session"`, so `kind_type` cannot distinguish them. We
+  Both former Session Kinds (the chat `Ezagent.Entity.Session` and the
+  standalone socialware-session Kind, since collapsed into the unified
+  `Entity.Session`) persist `kind_type "session"`, so `kind_type` cannot
+  distinguish a legacy row's intended subset. We
   classify by the slice keys actually present in the durable state — but the
   ONLY positively-identifying mark is a socialware slice. `:external_mirror`
   is OPTIONAL for chat (a chat Session that never created a mirror binding
@@ -85,7 +87,8 @@ defmodule Ezagent.Kind.KindBaseBackfill do
   # binary snapshot (which the runtime does on its next commit) BEFORE backfill.
   @legacy_json_marker_keys ~w(session publisher turns surface external_mirror)
 
-  # The stable type atom both session Kinds share (Session + SocialwareSession).
+  # The stable type atom every session row carries (both former Session Kinds,
+  # now the single unified `Entity.Session`).
   @session_kind_type "session"
 
   # As-built concrete behavior sets (the value stored verbatim in `:kind_base`,
@@ -99,8 +102,9 @@ defmodule Ezagent.Kind.KindBaseBackfill do
     Ezagent.Behavior.ExternalMirror
   ]
 
-  # Order matches SocialwareSession.behaviors/0 exactly (Chat, Turn, Surface,
-  # Publisher.SessionImpl) so a backfilled :kind_base is byte-identical to a live
+  # Order matches the former socialware-session Kind's behavior set exactly —
+  # now `Entity.Session.socialware_behaviors/0` (Session, Turn, Surface,
+  # Publisher.SessionImpl) — so a backfilled :kind_base is byte-identical to a live
   # socialware spawn — the P5-2 cold-restart round-trip invariant compares the
   # raw captured list, not just the (reorder-normalized) effective set. (codex LOW)
   @socialware_set [
@@ -237,16 +241,18 @@ defmodule Ezagent.Kind.KindBaseBackfill do
     dry_run? = Keyword.get(opts, :dry_run, false)
 
     session_rows()
-    |> Enum.reduce(%{scanned: 0, backfilled: 0, already: 0, dry_run: 0, legacy_cleared: 0}, fn row,
-                                                                                              acc ->
-      acc = %{acc | scanned: acc.scanned + 1}
+    |> Enum.reduce(
+      %{scanned: 0, backfilled: 0, already: 0, dry_run: 0, legacy_cleared: 0},
+      fn row, acc ->
+        acc = %{acc | scanned: acc.scanned + 1}
 
-      case KindSnapshot.decode_state(row) do
-        {:ok, state} -> backfill_row(row, state, dry_run?, acc)
-        :error -> raise_undecodable(row, :empty)
-        {:error, reason} -> raise_undecodable(row, reason)
+        case KindSnapshot.decode_state(row) do
+          {:ok, state} -> backfill_row(row, state, dry_run?, acc)
+          :error -> raise_undecodable(row, :empty)
+          {:error, reason} -> raise_undecodable(row, reason)
+        end
       end
-    end)
+    )
     |> then(&{:ok, &1})
   end
 
@@ -322,9 +328,9 @@ defmodule Ezagent.Kind.KindBaseBackfill do
 
   # Write the backfilled state back via the ECTO upsert directly — NOT via
   # `Snapshot.save_now/3`. This module lives in `ezagent_core`, which has no
-  # compile/runtime dependency on the domain-owned session Kind modules
-  # (`Ezagent.Entity.Session` / `SocialwareSession`); calling
-  # `kind_module.type_name/0` would crash when those modules aren't loaded.
+  # compile/runtime dependency on the domain-owned session Kind module
+  # (`Ezagent.Entity.Session`); calling
+  # `kind_module.type_name/0` would crash when that module isn't loaded.
   # We don't NEED a module: the row already carries the correct `kind_type`
   # ("session"), `version`, and `workspace_uri`, and we mutate ONLY the state
   # binary. We strip transients (`Ezagent.Kind.Snapshot.strip_transients/1`) so

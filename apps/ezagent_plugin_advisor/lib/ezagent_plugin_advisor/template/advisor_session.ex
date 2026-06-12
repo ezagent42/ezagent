@@ -2,8 +2,9 @@ defmodule EzagentPluginAdvisor.Template.AdvisorSession do
   @moduledoc """
   `session.advisor` Template Class.
 
-  This template materializes a domain-owned SocialwareSession and annotates
-  its chat working copy with advisor vertical metadata. It deliberately avoids
+  This template materializes a domain-owned, socialware-subset
+  `Ezagent.Entity.Session` and annotates its chat working copy with advisor
+  vertical metadata. It deliberately avoids
   spawning real sidecar agents in isolated tests; live agent-browser validation
   is author-owned after merge per the P5 handoff.
   """
@@ -96,12 +97,11 @@ defmodule EzagentPluginAdvisor.Template.AdvisorSession do
   end
 
   defp ensure_session(session_uri) do
-    # P5-1b (socialware substrate collapse) — advisor sessions now spawn the
-    # UNIFIED `Entity.Session` Kind (not the retired `Entity.SocialwareSession`),
-    # threading the SOCIALWARE subset (`Session.socialware_behaviors/0`) as the
-    # explicit `:kind_base`. That set == the former `SocialwareSession.behaviors/0`
-    # ({Session, Turn, Surface, Publisher}), so `effective_set/2` is unchanged
-    # (behavior-preserving) and Turn/Surface stay ACTIVE on advisor instances
+    # P5-1b (socialware substrate collapse) — advisor sessions spawn the
+    # UNIFIED `Entity.Session` Kind, threading the SOCIALWARE subset
+    # (`Session.socialware_behaviors/0`) as the explicit `:kind_base`. That
+    # subset is {Session, Turn, Surface, Publisher}, so Turn/Surface stay
+    # ACTIVE on advisor instances
     # while ExternalMirror stays excluded. (advisor deps instance_message, so it
     # can name `Entity.Session.socialware_behaviors/0` directly.)
     case Ezagent.Kind.spawn(Session, %{

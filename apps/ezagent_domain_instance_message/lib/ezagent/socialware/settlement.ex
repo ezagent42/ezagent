@@ -173,10 +173,12 @@ defmodule Ezagent.Socialware.Settlement do
   # outbox row, IF not already assigned (idempotent re-commit). ALSO (re)writes
   # surface_version from the settlement — covers an UPGRADE-pending row inserted
   # before this migration with surface_version == NULL. Runs inside the
-  # SocialwareSession GenServer (per-session serialized), so max+1 has no
+  # session GenServer (per-session serialized), so max+1 has no
   # concurrent writer; the (session_uri, committed_seq) unique index is a
   # let-it-crash backstop. Tolerates a missing outbox row (no MatchError).
-  defp assign_committed_seq(%SettlementRecord{turn_id: turn_id, session_uri: session_uri} = settlement) do
+  defp assign_committed_seq(
+         %SettlementRecord{turn_id: turn_id, session_uri: session_uri} = settlement
+       ) do
     case Repo.get_by(CustomerOutbox, turn_id: turn_id) do
       nil ->
         :ok
@@ -253,7 +255,9 @@ defmodule Ezagent.Socialware.Settlement do
       |> Enum.each(fn {row, seq} ->
         {1, _} =
           from(o in CustomerOutbox, where: o.turn_id == ^row.turn_id)
-          |> Repo.update_all(set: [committed_seq: seq, surface_version: row.target_surface_version])
+          |> Repo.update_all(
+            set: [committed_seq: seq, surface_version: row.target_surface_version]
+          )
       end)
     end)
 
