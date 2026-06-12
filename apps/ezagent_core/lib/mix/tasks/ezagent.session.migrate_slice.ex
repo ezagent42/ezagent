@@ -44,13 +44,26 @@ defmodule Mix.Tasks.Ezagent.Session.MigrateSlice do
         :ok
 
       opts[:gate] ->
-        Mix.Task.run("app.start")
-        run_gate()
+        with_repo_only(&run_gate/0)
 
       true ->
-        Mix.Task.run("app.start")
-        run_migrate(!!opts[:dry_run])
+        with_repo_only(fn -> run_migrate(!!opts[:dry_run]) end)
     end
+  end
+
+  # Start ONLY the Repo + its DB deps — NOT the domain apps (codex P1). A plain
+  # `app.start` would boot the new `Behavior.Session` runtime, and if startup /
+  # the workspace loader touched an old `:chat`-keyed snapshot BEFORE the rename
+  # ran, the `:session`-reading code would default the slice to `%{}` and prune
+  # the orphan `:chat` membership/owner/working-copy state — destroying exactly
+  # the data this migration exists to preserve. `Ecto.Migrator.with_repo/2`
+  # starts the repo (and the ecto/sqlite deps) only, runs `fun`, then stops it —
+  # no domain runtime is ever started against the un-migrated DB.
+  defp with_repo_only(fun) do
+    # Load config (DB url, pool) WITHOUT starting any application.
+    Mix.Task.run("app.config")
+    {:ok, _result, _started} = Ecto.Migrator.with_repo(EzagentCore.Repo, fn _repo -> fun.() end)
+    :ok
   end
 
   defp run_migrate(dry_run?) do

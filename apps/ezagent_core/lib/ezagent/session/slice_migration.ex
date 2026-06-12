@@ -57,10 +57,6 @@ defmodule Ezagent.Session.SliceMigration do
   @old_slice_key :chat
   @new_slice_key :session
 
-  # Both session Kinds (Session + SocialwareSession) persist as kind_type
-  # "session"; only these rows can carry the `:chat` slice.
-  @session_kind_type "session"
-
   @doc """
   Pure transform: rename the top-level `:chat` slice key to `:session` in a
   decoded snapshot state map, preserving the value.
@@ -112,7 +108,7 @@ defmodule Ezagent.Session.SliceMigration do
   def run(opts \\ []) when is_list(opts) do
     dry_run? = Keyword.get(opts, :dry_run, false)
 
-    session_rows()
+    all_rows()
     |> Enum.reduce(%{scanned: 0, renamed: 0, already: 0, dry_run: 0}, fn row, acc ->
       acc = %{acc | scanned: acc.scanned + 1}
 
@@ -133,7 +129,7 @@ defmodule Ezagent.Session.SliceMigration do
   @spec gate() :: {:ok, non_neg_integer()}
   def gate do
     count =
-      session_rows()
+      all_rows()
       |> Enum.count(fn row ->
         case KindSnapshot.decode_state(row) do
           {:ok, state} -> Map.has_key?(state, @old_slice_key)
@@ -192,10 +188,15 @@ defmodule Ezagent.Session.SliceMigration do
     end
   end
 
-  defp session_rows do
-    KindSnapshot.list_all()
-    |> Enum.filter(&(&1.kind_type == @session_kind_type))
-  end
+  # Scan EVERY snapshot, not just `kind_type == "session"` (codex P2): the old
+  # Chat behavior was registered for `:receive` on the User AND Agent Kinds too,
+  # so a User/Agent row that ever received a message carries the same `:chat`
+  # slice (its `last_received`/cursor-ring receive-state). The renamed runtime
+  # reads `:session` on those Kinds as well, so an unmigrated `:chat` there is
+  # equally stale. `rename_slice_key/1` noops any row without a `:chat` key, so
+  # scanning all rows is safe — and the gate now counts a stale `:chat` on ANY
+  # Kind, not falsely green-lighting on lingering User/Agent rows.
+  defp all_rows, do: KindSnapshot.list_all()
 
   defp raise_undecodable(row, reason) do
     raise "Ezagent.Session.SliceMigration: session snapshot #{row.uri} is " <>

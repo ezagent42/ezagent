@@ -80,6 +80,27 @@ defmodule Ezagent.Session.SliceMigrationTest do
       assert Map.has_key?(post, :publisher)
     end
 
+    test "migrates a NON-session (agent) row that carries the old :chat receive-state (codex P2)" do
+      # The old Chat behavior was registered for :receive on the User AND Agent
+      # Kinds too, so an agent/user snapshot that ever received a message carries
+      # the same `:chat` slice. The migration MUST cover it (not just
+      # kind_type==session) or the gate falsely green-lights with stale data.
+      uri = "entity://team-alpha/agent/recv-state"
+      binary = :erlang.term_to_binary(%{chat: %{state: %{last_received: "m9"}, transients: %{}}})
+      {:ok, _} = SnapshotFixtures.upsert_kind_snapshot(uri, "agent", binary, 0, @workspace)
+
+      assert {:ok, counts} = SliceMigration.run()
+      assert counts.renamed >= 1
+
+      post = decode(uri)
+      refute Map.has_key?(post, :chat)
+      assert post[:session][:state][:last_received] == "m9"
+
+      # And the gate counts a stale :chat on a non-session Kind (no false green).
+      {:ok, remaining} = SliceMigration.gate()
+      assert remaining == 0
+    end
+
     test "an already-:session row is counted as already, not rewritten" do
       uri = "session://team-alpha/default/fresh-session"
       seed_session(uri, %{session: %{state: %{members: %{}}, transients: %{}}})
