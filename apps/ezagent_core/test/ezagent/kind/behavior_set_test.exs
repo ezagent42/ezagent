@@ -238,4 +238,71 @@ defmodule Ezagent.Kind.BehaviorSetTest do
   defmodule UnknownKeyReader do
     use Ezagent.Lifecycle, state_slice: :unknown_key_reader
   end
+
+  # P5-0b — a session-like Kind that REQUIRES an explicit (non-nil) :kind_base.
+  # Same shape as SupersetKind but opts into the scoped nil-guard.
+  defmodule SessionLikeKind do
+    @behaviour Ezagent.Kind
+    @impl true
+    def type_name, do: :session
+    @impl true
+    def behaviors,
+      do: [Ezagent.Behavior.Chat, Ezagent.Behavior.Surface, Ezagent.Behavior.KindBase]
+
+    @impl true
+    def persistence, do: :ephemeral
+    @impl true
+    def supervisor, do: Ezagent.Kind.Server
+    @impl true
+    def requires_explicit_behavior_set?, do: true
+  end
+
+  describe "P5-0b scoped nil-:kind_base guard (effective_set/2)" do
+    test "RAISES on a session Kind (requires_explicit_behavior_set? == true) with nil capture" do
+      nil_slice = %{kind_base: %{state: %{behaviors: nil}, transients: %{}}}
+
+      err =
+        assert_raise Ezagent.Kind.BehaviorSet.MissingKindBaseError,
+                     ~r/requires an explicit :kind_base/,
+                     fn -> BehaviorSet.effective_set(SessionLikeKind, nil_slice) end
+
+      assert err.kind_module == SessionLikeKind
+    end
+
+    test "RAISES on a session Kind with a MISSING :kind_base slice entirely" do
+      assert_raise Ezagent.Kind.BehaviorSet.MissingKindBaseError, fn ->
+        BehaviorSet.effective_set(SessionLikeKind, %{})
+      end
+    end
+
+    test "a session Kind with a PRESENT explicit set is unaffected (no raise)" do
+      captured = [Ezagent.Behavior.Chat, Ezagent.Behavior.Surface]
+      slice_state = %{kind_base: %{state: %{behaviors: captured}, transients: %{}}}
+
+      set = BehaviorSet.effective_set(SessionLikeKind, slice_state)
+      assert Ezagent.Behavior.Chat in set
+      assert Ezagent.Behavior.Surface in set
+      assert Ezagent.Behavior.KindBase in set
+    end
+
+    test "a LEGACY non-session Kind (no override) with nil capture is UNAFFECTED — still expands to declared" do
+      # SupersetKind does NOT override requires_explicit_behavior_set? → the
+      # guard must NOT fire; the legacy sentinel-nil → full-declared compat
+      # path is preserved exactly.
+      nil_slice = %{kind_base: %{state: %{behaviors: nil}, transients: %{}}}
+
+      assert BehaviorSet.effective_set(SupersetKind, nil_slice) ==
+               Ezagent.Kind.behaviors_of(SupersetKind) ++ [Ezagent.Behavior.Manage]
+    end
+  end
+
+  describe "P5-0b Ezagent.Kind.requires_explicit_behavior_set?/1 accessor" do
+    test "false for a Kind without the optional callback" do
+      refute Ezagent.Kind.requires_explicit_behavior_set?(SupersetKind)
+    end
+
+    test "true for a Kind that overrides it" do
+      assert Ezagent.Kind.requires_explicit_behavior_set?(SessionLikeKind)
+    end
+  end
 end

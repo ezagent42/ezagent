@@ -14,7 +14,12 @@ defmodule Ezagent.Socialware.CustomerAuthTest do
     workspace = Ezagent.Capability.workspace_of(session_a)
 
     for session <- [session_a, session_b] do
-      {:ok, _pid} = Ezagent.Kind.spawn(SocialwareSession, %{uri: session})
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(SocialwareSession, %{
+          uri: session,
+          behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+        })
+
       :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
     end
 

@@ -572,7 +572,11 @@ defmodule Mix.Tasks.Ezagent.ExternalMirrorTest do
   defp spawn_owner_and_session(%URI{} = owner_uri, %URI{} = session_uri) do
     :ok = spawn_user(owner_uri, Ezagent.SystemPrincipal.caps("system://bootstrap"))
 
-    case Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: owner_uri}) do
+    case Ezagent.Kind.spawn(Session, %{
+           uri: session_uri,
+           owner_uri: owner_uri,
+           behaviors: Session.behaviors()
+         }) do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _pid}} -> :ok
     end
@@ -635,7 +639,9 @@ defmodule Mix.Tasks.Ezagent.ExternalMirrorTest do
   end
 
   defp unique_session_uri(prefix) do
-    Ezagent.URI.new!("session://team-alpha/default/#{prefix}-#{System.unique_integer([:positive])}")
+    Ezagent.URI.new!(
+      "session://team-alpha/default/#{prefix}-#{System.unique_integer([:positive])}"
+    )
   end
 
   # Workaround silence-unused-alias warnings — these aliases are

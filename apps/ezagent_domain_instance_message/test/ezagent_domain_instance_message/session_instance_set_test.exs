@@ -22,10 +22,22 @@ defmodule Ezagent.SessionInstanceSetTest do
     :ok
   end
 
-  test "chat Session's effective set = full declared list + universal base behaviors (no :behaviors arg)" do
-    # no :kind_base captured → fallback to declared (+ base)
-    slice_state = %{}
+  test "chat Session with nil :kind_base FAILS LOUD (P5-0b scoped guard) — sessions require an explicit set" do
+    # P5-0b: the Session Kind declares requires_explicit_behavior_set? == true,
+    # so a nil/missing :kind_base is INVALID for it. effective_set/2 raises
+    # rather than silently expanding to the declared list (which post-P5-1
+    # would be the union superset, breaking P1's per-instance denial).
+    assert_raise Ezagent.Kind.BehaviorSet.MissingKindBaseError, fn ->
+      Ezagent.Kind.BehaviorSet.effective_set(Ezagent.Entity.Session, %{})
+    end
+  end
+
+  test "chat Session with an EXPLICIT :kind_base → declared ∩ captured + universal base behaviors" do
     declared = Ezagent.Kind.behaviors_of(Ezagent.Entity.Session)
+
+    slice_state = %{
+      kind_base: %{state: %{behaviors: declared}, transients: %{}}
+    }
 
     effective = Ezagent.Kind.BehaviorSet.effective_set(Ezagent.Entity.Session, slice_state)
 

@@ -342,7 +342,11 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorUnif
       workspace_uri = URI.new!("workspace://system")
 
       {:ok, _pid} =
-        Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: User.admin_uri()})
+        Ezagent.Kind.spawn(Session, %{
+          uri: session_uri,
+          owner_uri: User.admin_uri(),
+          behaviors: Ezagent.Entity.Session.behaviors()
+        })
 
       # Bind workspace to match what the atomic create flow would have
       # done before failing — this is the state rollback must undo.
@@ -497,7 +501,11 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorUnif
       # Spawn the Session first so ensure_orchestrator has something to
       # work with (it doesn't spawn the Session itself).
       {:ok, _pid} =
-        Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: User.admin_uri()})
+        Ezagent.Kind.spawn(Session, %{
+          uri: session_uri,
+          owner_uri: User.admin_uri(),
+          behaviors: Ezagent.Entity.Session.behaviors()
+        })
 
       result =
         Session.ensure_orchestrator(session_uri, workspace_uri, User.admin_uri())

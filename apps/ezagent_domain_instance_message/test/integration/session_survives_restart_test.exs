@@ -69,7 +69,12 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
   end
 
   defp spawn_session(session_uri) do
-    {:ok, pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
+    {:ok, pid} =
+      Ezagent.Kind.spawn(Session, %{
+        uri: session_uri,
+        behaviors: Ezagent.Entity.Session.behaviors()
+      })
+
     # Mirror the production `session` spawn fn: bind the workspace cache.
     :ok =
       Ezagent.WorkspaceRegistry.bind(
@@ -208,7 +213,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
 
       # Drop the Kind AND the ETS binding — simulating a phx restart
       # where ETS (in-memory) is wiped but the snapshot row survives.
-      :ok = DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, pid1)
+      :ok =
+        DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, pid1)
+
       wait_until(fn -> KindRegistry.lookup(session_uri) == :error end)
       :ok = Ezagent.WorkspaceRegistry.unbind(session_uri)
       assert :error = Ezagent.WorkspaceRegistry.lookup(session_uri)
@@ -241,7 +248,10 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
       # only [Chat] in behaviors/0). Saved verbatim to simulate a
       # snapshot taken before PR-EM-0 landed.
       chat_only_slice = %{
-        chat: %{members: %{member => %{online: true}}, monitors: %{}, last_seen: %{}}
+        chat: %{members: %{member => %{online: true}}, monitors: %{}, last_seen: %{}},
+        # P5-0b: Session requires an explicit :kind_base (a backfilled legacy
+        # row carries it). Without it the scoped guard fails the reload loud.
+        kind_base: %{state: %{behaviors: Session.behaviors()}, transients: %{}}
       }
 
       :ok = SnapshotFixtures.save_kind_snapshot(session_uri, Session, chat_only_slice)
@@ -312,7 +322,12 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
         template_working_copy: working_copy
       }
 
-      :ok = SnapshotFixtures.save_kind_snapshot(session_uri, Session, %{chat: chat_slice})
+      :ok =
+        SnapshotFixtures.save_kind_snapshot(session_uri, Session, %{
+          chat: chat_slice,
+          # P5-0b: explicit :kind_base (backfilled legacy row).
+          kind_base: %{state: %{behaviors: Session.behaviors()}, transients: %{}}
+        })
 
       loaded = Snapshot.load_or_init(session_uri, Session, %{uri: session_uri})
 
@@ -342,7 +357,12 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
       pre_pr2_chat = %{members: %{member => %{online: true}}, monitors: %{}, last_seen: %{}}
       refute Map.has_key?(pre_pr2_chat, :template_working_copy)
 
-      :ok = SnapshotFixtures.save_kind_snapshot(session_uri, Session, %{chat: pre_pr2_chat})
+      :ok =
+        SnapshotFixtures.save_kind_snapshot(session_uri, Session, %{
+          chat: pre_pr2_chat,
+          # P5-0b: explicit :kind_base (backfilled legacy row).
+          kind_base: %{state: %{behaviors: Session.behaviors()}, transients: %{}}
+        })
 
       # The snapshot loads without crashing. T4: the legacy flat slice is
       # coerced to the two-container `%{state, transients}` shape on load

@@ -53,7 +53,14 @@ defmodule Ezagent.Socialware.ChatFeedAdapterTest do
         Ezagent.URI.session(:team_alpha, :default, "cfa-#{System.unique_integer([:positive])}")
 
       workspace = Ezagent.Capability.workspace_of(session)
-      {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session, owner_uri: @owner})
+
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(Session, %{
+          uri: session,
+          owner_uri: @owner,
+          behaviors: Ezagent.Entity.Session.behaviors()
+        })
+
       :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
 
       msg =

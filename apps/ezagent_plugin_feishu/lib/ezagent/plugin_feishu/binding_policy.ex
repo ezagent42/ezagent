@@ -123,8 +123,21 @@ defmodule EzagentPluginFeishu.BindingPolicy do
   #     — adapter wiring is workspace-admin territory; routed via
   #     `system://adapter-install` / `system://boot-reconciler` (closed
   #     Catalog) at boot, never user-driven.
+  #
+  #   * `Ezagent.Behavior.Publisher.SessionImpl :snapshot` / `:history`
+  #     (P5-A cleanup, codex P5 LOW) — the publisher READ actions are no
+  #     longer registered against `Publisher.SessionImpl`. They are now
+  #     MEMBERSHIP-gated, cap-EXEMPT reads via
+  #     `Ezagent.Behavior.SocialwarePublisherRead` (a live `ChatMembership`
+  #     owner/member check is the SOLE authority — no held cap is
+  #     consulted). A `Publisher.SessionImpl :snapshot`/`:history` grant is
+  #     therefore obsolete/ignored: it matches no dispatch (the read action
+  #     resolves to `SocialwarePublisherRead`, which is `cap_exempt`).
+  #     Removed so the grant surface doesn't mislead. The Feishu mirror's
+  #     OWN slice-change path (ExternalMirror) is unaffected; only the
+  #     streaming `:subscribe_from` publisher cap remains.
   @session_chat_actions [:send, :join, :leave]
-  @session_publisher_actions [:subscribe_from, :snapshot, :history]
+  @session_publisher_actions [:subscribe_from]
 
   # Returns the per-action cap list `apply/2` will grant for a user
   # scoped to `workspace_uri`.

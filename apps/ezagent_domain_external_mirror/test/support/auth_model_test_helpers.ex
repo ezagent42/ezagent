@@ -136,7 +136,18 @@ defmodule Ezagent.ExternalMirror.AuthModelTestHelpers do
         "bootstrap" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps()
       )
 
-    case Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: owner_uri}) do
+    # `behaviors` is resolved at RUNTIME via `apply/3`: this app deliberately
+    # does NOT depend on `:ezagent_domain_instance_message` (a deps cycle —
+    # see mix.exs), so `Ezagent.Entity.Session` is undefined at COMPILE time
+    # in this `.ex` support module. A direct `Session.behaviors()` would emit
+    # an "undefined function" warning that the FF-3 dead-code gate (`mix
+    # compile --warnings-as-errors`) hard-fails on. The module IS loaded at
+    # test-run time in the umbrella, so `apply/3` resolves it then.
+    case Ezagent.Kind.spawn(Session, %{
+           uri: session_uri,
+           owner_uri: owner_uri,
+           behaviors: apply(Session, :behaviors, [])
+         }) do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _pid}} -> :ok
     end

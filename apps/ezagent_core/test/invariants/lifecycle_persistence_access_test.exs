@@ -60,7 +60,14 @@ defmodule Ezagent.Invariants.LifecyclePersistenceAccessTest do
         # The Lifecycle/RBK persistence module — the canonical write path.
         "apps/ezagent_core/lib/ezagent/kind/snapshot.ex",
         # The framework-internal snapshot store (versioned write + reads).
-        "apps/ezagent_core/lib/ezagent/snapshot_store.ex"
+        "apps/ezagent_core/lib/ezagent/snapshot_store.ex",
+        # P5-0 migration (TEST/sandbox only): rewrites the :kind_base slice of
+        # EXISTING session rows in place. It intentionally uses a direct
+        # `KindSnapshot.upsert/5` rather than `Snapshot.save_now/3` because it
+        # lives in ezagent_core, which has NO dependency on the domain-owned
+        # session Kind modules `save_now/3` would need to resolve. Framework-
+        # internal one-shot migration, not a domain/Behavior write path.
+        "apps/ezagent_core/lib/ezagent/kind/kind_base_backfill.ex"
       ],
       guidance:
         "Domain/Behavior/plugin state persists via the normal dispatch → " <>

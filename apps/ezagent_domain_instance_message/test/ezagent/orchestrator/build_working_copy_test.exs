@@ -67,7 +67,12 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
   # persistent `:state` container.
   defp spawn_session_with_state(session_uri, chat_state) do
     :ok = KindSnapshot.delete(URI.to_string(session_uri))
-    {:ok, pid} = Ezagent.Kind.spawn(Ezagent.Entity.Session, %{uri: session_uri})
+
+    {:ok, pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Session, %{
+        uri: session_uri,
+        behaviors: Ezagent.Entity.Session.behaviors()
+      })
 
     :sys.replace_state(pid, fn server_state ->
       chat_slice =
@@ -147,7 +152,12 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
         )
 
       :ok = KindSnapshot.delete(URI.to_string(session_uri))
-      {:ok, pid} = Ezagent.Kind.spawn(Ezagent.Entity.Session, %{uri: session_uri})
+
+      {:ok, pid} =
+        Ezagent.Kind.spawn(Ezagent.Entity.Session, %{
+          uri: session_uri,
+          behaviors: Ezagent.Entity.Session.behaviors()
+        })
 
       on_exit(fn ->
         if Process.alive?(pid) do

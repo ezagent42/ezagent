@@ -52,7 +52,12 @@ defmodule EzagentDomainSocialware.PageViewTest do
   test "applies_to? only returns true for a live session with a :surface slice" do
     session_uri = session_uri()
     :ok = KindSnapshot.delete(URI.to_string(session_uri))
-    {:ok, _pid} = Ezagent.Kind.spawn(SocialwareSession, %{uri: session_uri})
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(SocialwareSession, %{
+        uri: session_uri,
+        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+      })
 
     assert PageView.applies_to?(session_uri)
     refute PageView.applies_to?(Ezagent.URI.entity(:team_alpha, :agent, "not-a-session"))

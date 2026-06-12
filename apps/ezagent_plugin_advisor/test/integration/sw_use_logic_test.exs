@@ -142,7 +142,12 @@ defmodule EzagentPluginAdvisor.Integration.SwUseLogicTest do
 
     wait_until(fn -> KindRegistry.lookup(ctx.session) == :error end)
 
-    {:ok, pid2} = Ezagent.Kind.spawn(Ezagent.Entity.SocialwareSession, %{uri: ctx.session})
+    {:ok, pid2} =
+      Ezagent.Kind.spawn(Ezagent.Entity.SocialwareSession, %{
+        uri: ctx.session,
+        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+      })
+
     refute pid1 == pid2
 
     assert {:ok, after_restart} = CustomerFeed.snapshot(ctx.session, ctx.second_token)
@@ -158,7 +163,12 @@ defmodule EzagentPluginAdvisor.Integration.SwUseLogicTest do
         "other-#{System.unique_integer([:positive])}"
       )
 
-    {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.SocialwareSession, %{uri: other_session})
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.SocialwareSession, %{
+        uri: other_session,
+        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+      })
+
     :ok = WorkspaceRegistry.bind(other_session, ctx.workspace_uri)
 
     cross_workspace_token = CustomerAuth.issue_token(ctx.session, "workspace://other")

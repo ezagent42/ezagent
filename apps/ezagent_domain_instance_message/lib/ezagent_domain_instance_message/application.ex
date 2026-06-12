@@ -704,7 +704,13 @@ defmodule EzagentDomainInstanceMessage.Application do
     :ok =
       Ezagent.SpawnRegistry.register("session", fn uri ->
         # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
-        result = Ezagent.Kind.spawn(Session, %{uri: uri})
+        # P5-0b: thread the explicit chat behavior set so `init_set/2` stores a
+        # non-nil `:kind_base` (the scoped guard requires it for sessions).
+        # Pre-union this set == Session.behaviors(), so effective_set is
+        # unchanged (behavior-preserving). This covers the SpawnRegistry
+        # "session" route, which `GenericSession.instantiate/3` also funnels
+        # through (SpawnRegistry.spawn → this fn).
+        result = Ezagent.Kind.spawn(Session, %{uri: uri, behaviors: Session.behaviors()})
 
         # Allen V1 acceptance 2026-05-22 (invariant 4): rebind the
         # session → workspace consistency cache on EVERY spawn,
@@ -838,21 +844,30 @@ defmodule EzagentDomainInstanceMessage.Application do
       :ok = CapabilityRegistry.register(SessionTemplate, action, TemplateB)
     end)
 
-    # ExternalMirror PR-EM-0 (SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
-    # §8.1, Allen 2026-05-25) — register the `Ezagent.Behavior.Publisher.SessionImpl`
-    # Kind-Behavior on `Ezagent.Entity.Session`. The three publisher
-    # actions (`:publisher_subscribe_from`, `:publisher_snapshot`,
-    # `:publisher_history`) gate via standard step 5.5 CapBAC; the
-    # session-side implementation owns the `:publisher` slice +
-    # subscribes to its own SliceChange topic via `post_init/2`'s
-    # continuation. SessionImpl is registered ONLY against Session
-    # because Session is the V1 publisher (option (a) — implementer
-    # lives in the publishing domain). Future publisher Kinds will
-    # add their own per-Kind registration alongside this one.
+    # ExternalMirror PR-EM-0 (SPEC §8.1, Allen 2026-05-25) — register
+    # `Ezagent.Behavior.Publisher.SessionImpl` on `Ezagent.Entity.Session`.
+    # It OWNS the `:publisher` slice (in `Session.behaviors/0`, materializes
+    # the ring) + self-subscribes to its SliceChange topic in `activate/2`.
+    #
+    # P5-A (codex P5 round-2 P2) — the chat `Session`'s publisher actions
+    # register HERE, in the Kind's HOME app (registration-lives-with-the-Kind):
+    # `:subscribe_from` → `Publisher.SessionImpl` (cap-gated trunk/mirror path);
+    # `:snapshot`/`:history` → the unified MEMBERSHIP-gated `SocialwarePublisherRead`
+    # (cap-EXEMPT + live `ChatMembership` owner/member check). Both read modules
+    # read ONLY `:chat`/`:publisher` (owned here), so they were RELOCATED into
+    # this app from socialware — making chat `Session` SELF-SUFFICIENT (a
+    # standalone instance_message run, no socialware started, resolves
+    # `Session.snapshot/2`+`history/4`; previously these regs lived in socialware
+    # → app-isolated runs hit `{:unknown_action, :snapshot}`). `SocialwareSession`
+    # reuses both modules from its own app. Distinct Kinds ⇒ no collision.
+    # (Names keep the `Socialware*` prefix this PR; rename deferred to P5-1.)
     alias Ezagent.Behavior.Publisher.SessionImpl, as: PublisherSI
+    alias Ezagent.Behavior.SocialwarePublisherRead
 
-    Enum.each(PublisherSI.actions(), fn action ->
-      :ok = CapabilityRegistry.register(Session, action, PublisherSI)
+    :ok = CapabilityRegistry.register(Session, :subscribe_from, PublisherSI)
+
+    Enum.each(SocialwarePublisherRead.actions(), fn action ->
+      :ok = CapabilityRegistry.register(Session, action, SocialwarePublisherRead)
     end)
 
     # ExternalMirror PR-EM-3 (SPEC §4.1 / §9 PR-EM-3) — register

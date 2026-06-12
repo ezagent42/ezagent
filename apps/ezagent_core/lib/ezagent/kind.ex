@@ -172,13 +172,20 @@ defmodule Ezagent.Kind do
   @callback holds_cap?(entity_uri :: URI.t() | String.t(), needed :: Ezagent.Capability.t()) ::
               boolean()
 
+  # P5-0b — does this Kind REQUIRE a non-nil `:kind_base` on every instance?
+  # Default `false` when absent (legacy static Kinds: omitted-`:behaviors` →
+  # declared list, the intentional compat path). Session Kind(s) override to
+  # `true` — see `requires_explicit_behavior_set?/1` + `effective_set/2`.
+  @callback requires_explicit_behavior_set?() :: boolean()
+
   @optional_callbacks [
     uri_from_args: 1,
     snapshot_version: 0,
     supervisor: 0,
     spawn_strategy: 0,
     terminate_strategy: 0,
-    holds_cap?: 2
+    holds_cap?: 2,
+    requires_explicit_behavior_set?: 0
   ]
 
   @doc """
@@ -400,6 +407,15 @@ defmodule Ezagent.Kind do
     else
       :standard
     end
+  end
+
+  # P5-0b accessor — optional callback (default `false`); `Code.ensure_loaded?/1`
+  # first for cold-VM load determinism. Scopes the `effective_set/2` nil-guard.
+  @spec requires_explicit_behavior_set?(module()) :: boolean()
+  def requires_explicit_behavior_set?(kind_module) when is_atom(kind_module) do
+    Code.ensure_loaded?(kind_module) and
+      function_exported?(kind_module, :requires_explicit_behavior_set?, 0) and
+      kind_module.requires_explicit_behavior_set?()
   end
 
   @doc """

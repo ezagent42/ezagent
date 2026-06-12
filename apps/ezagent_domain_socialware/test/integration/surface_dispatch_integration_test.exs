@@ -47,7 +47,12 @@ defmodule EzagentDomainSocialware.Integration.SurfaceDispatchIntegrationTest do
   setup do
     session_uri = session_uri()
     :ok = KindSnapshot.delete(URI.to_string(session_uri))
-    {:ok, _pid} = Ezagent.Kind.spawn(SocialwareSession, %{uri: session_uri})
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(SocialwareSession, %{
+        uri: session_uri,
+        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+      })
 
     :ok =
       Ezagent.WorkspaceRegistry.bind(session_uri, Ezagent.Capability.workspace_of(session_uri))

@@ -18,15 +18,21 @@ defmodule Ezagent.Behavior.SocialwarePublisherRead do
   `Publisher.SessionImpl.data_owner/1` delegates to chat `Session.owner/1`,
   not a socialware owner/member model.
 
-  This behavior is registered ONLY on `SocialwareSession` (in
-  `EzagentDomainSocialware.Application.register_behaviors/0`), for the read
-  actions `:snapshot` + `:history`. As-built today the chat publisher read
-  actions are registered ONLY against the chat `Session`, NOT against
-  `SocialwareSession` — so there is NO `{kind, action}` collision and NO
-  trunk/read split is required: `Publisher.SessionImpl` remains the SOLE
-  owner+materializer of the `:publisher` slice on both Kinds, and this
-  behavior is a REGISTRY-ONLY dispatch surface (NOT in
-  `SocialwareSession.behaviors/0`) that READS that slice.
+  P5-A — this behavior is the UNIFIED membership-gated read for the `:snapshot`
+  + `:history` actions on BOTH session Kinds: registered for the chat `Session`
+  in `EzagentDomainInstanceMessage.Application` (this module's HOME app, where
+  it was relocated from socialware alongside `Ezagent.Socialware.ChatMembership`
+  — both read ONLY the `:chat`/`:publisher` slices, owned here) AND for
+  `SocialwareSession` in `EzagentDomainSocialware.Application` (socialware
+  depends on instance_message, so it reuses this module). The two are DISTINCT
+  Kinds ⇒ NO `{kind, action}` collision. `Publisher.SessionImpl` remains the
+  SOLE owner+materializer of the `:publisher` slice on both Kinds; this behavior
+  is a REGISTRY-ONLY dispatch surface (NOT in either Kind's `behaviors/0`) that
+  READS that slice.
+
+  (The `SocialwarePublisherRead` / `Ezagent.Socialware.*` names are retained
+  through this PR to keep the diff tight; a rename to a chat/session-scoped name
+  is deferred to the P5-1 Kind collapse.)
 
   ## Registry-only — reads but does NOT materialize the `:publisher` slice
 

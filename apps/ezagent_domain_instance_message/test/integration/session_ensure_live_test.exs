@@ -18,12 +18,24 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionEnsureLiveTest do
   alias Ezagent.Entity.Session
 
   defp session_uri do
-    Ezagent.URI.new!("session://team-alpha/default/ensure-live-#{System.unique_integer([:positive])}")
+    Ezagent.URI.new!(
+      "session://team-alpha/default/ensure-live-#{System.unique_integer([:positive])}"
+    )
   end
 
   defp wait_until(fun, tries \\ 50)
   defp wait_until(_fun, 0), do: flunk("condition not met in time")
-  defp wait_until(fun, tries), do: if(fun.(), do: :ok, else: (Process.sleep(20); wait_until(fun, tries - 1)))
+
+  defp wait_until(fun, tries),
+    do:
+      if(fun.(),
+        do: :ok,
+        else:
+          (
+            Process.sleep(20)
+            wait_until(fun, tries - 1)
+          )
+      )
 
   test "ensure_live refuses a session that was never durably created" do
     uri = session_uri()
@@ -37,7 +49,10 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionEnsureLiveTest do
 
   test "ensure_live returns :live for an already-live session" do
     uri = session_uri()
-    {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: uri})
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Session, %{uri: uri, behaviors: Ezagent.Entity.Session.behaviors()})
+
     wait_until(fn -> match?({:ok, _}, KindRegistry.lookup(uri)) end)
 
     assert {:ok, :live} = SpawnRegistry.ensure_live(uri)

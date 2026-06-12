@@ -49,7 +49,11 @@ defmodule EzagentDomainSocialware.Integration.TurnSurvivesRestartTest do
     session_uri = session_uri()
     :ok = KindSnapshot.delete(URI.to_string(session_uri))
 
-    {:ok, pid1} = Ezagent.Kind.spawn(SocialwareSession, %{uri: session_uri})
+    {:ok, pid1} =
+      Ezagent.Kind.spawn(SocialwareSession, %{
+        uri: session_uri,
+        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+      })
 
     :ok =
       Ezagent.WorkspaceRegistry.bind(session_uri, Ezagent.Capability.workspace_of(session_uri))
@@ -77,7 +81,12 @@ defmodule EzagentDomainSocialware.Integration.TurnSurvivesRestartTest do
 
     wait_until(fn -> KindRegistry.lookup(session_uri) == :error end)
 
-    {:ok, pid2} = Ezagent.Kind.spawn(SocialwareSession, %{uri: session_uri})
+    {:ok, pid2} =
+      Ezagent.Kind.spawn(SocialwareSession, %{
+        uri: session_uri,
+        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+      })
+
     refute pid1 == pid2
 
     {turns_after, 1} = get_turns(session_uri)

@@ -74,7 +74,10 @@ defmodule Ezagent.E2E.Scenario24DestroyCascadeTest do
 
   defp spawn_session! do
     uri = Ezagent.URI.new!("session://team-alpha/default/scen24-sess-#{uniq()}")
-    {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: uri})
+    # P5-0b — thread the explicit chat-Session behavior set so the spawned
+    # session persists a non-nil :kind_base and the scoped effective_set/2 guard
+    # (Session.requires_explicit_behavior_set? == true) does not crash it.
+    {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: uri, behaviors: Session.behaviors()})
 
     :ok =
       Ezagent.WorkspaceRegistry.bind(

@@ -30,6 +30,12 @@ defmodule Ezagent.Entity.SocialwareSession do
   @impl Ezagent.Kind
   def persistence, do: {:snapshot, :on_change}
 
+  # P5-0b (socialware substrate collapse) — every SocialwareSession instance
+  # MUST carry an explicit (non-nil) `:kind_base` behavior set; a nil capture
+  # fails loud in `BehaviorSet.effective_set/2`. Scoped to the session Kind(s).
+  @impl Ezagent.Kind
+  def requires_explicit_behavior_set?, do: true
+
   @impl Ezagent.Kind
   def supervisor, do: EzagentDomainSocialware.SocialwareSessionSupervisor
 end

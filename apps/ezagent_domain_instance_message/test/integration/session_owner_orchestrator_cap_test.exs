@@ -128,7 +128,12 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
 
       # Spawn the Session Kind directly with NO owner_uri — emulates
       # a legacy snapshot rehydration / system-internal spawn.
-      {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(Session, %{
+          uri: session_uri,
+          behaviors: Ezagent.Entity.Session.behaviors()
+        })
+
       :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
 
       # Sanity-check the legacy precondition.
@@ -184,7 +189,12 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
       session_uri = URI.new!("session://system/default/#{short_name}")
 
       # Spawn legacy session.
-      {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(Session, %{
+          uri: session_uri,
+          behaviors: Ezagent.Entity.Session.behaviors()
+        })
+
       :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
 
       first_user = User.admin_uri()
@@ -250,7 +260,12 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
       workspace_uri = Ezagent.URI.new!("workspace://system")
       session_uri = URI.new!("session://system/default/#{short_name}")
 
-      {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(Session, %{
+          uri: session_uri,
+          behaviors: Ezagent.Entity.Session.behaviors()
+        })
+
       :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
 
       # An agent URI (cc-orchestrator naming convention).

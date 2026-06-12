@@ -12,7 +12,8 @@ defmodule EzagentPluginFeishu.BindingPolicyTest do
 
   Post-fix the policy grants ONE cap per `(Behavior, action)` pair
   (Chat: `:send / :join / :leave`; Publisher.SessionImpl:
-  `:subscribe_from / :snapshot / :history`). Each cap carries a
+  `:subscribe_from` — P5-A removed the `:snapshot`/`:history` read grants,
+  those reads are now membership-gated/cap-exempt). Each cap carries a
   concrete action atom — `check_action_wildcard_grant_authorized/2`
   passes (the `action: :any` clause is the only rejection path).
 
@@ -76,7 +77,12 @@ defmodule EzagentPluginFeishu.BindingPolicyTest do
   # exactly these action sets — a contributor changing one without
   # the other gets a loud failure here.
   @expected_chat_actions [:send, :join, :leave]
-  @expected_publisher_actions [:subscribe_from, :snapshot, :history]
+  # P5-A (codex P5 LOW) — the publisher READ grants (`:snapshot`/`:history`)
+  # are REMOVED. Those reads are now membership-gated + cap-EXEMPT
+  # (`SocialwarePublisherRead`), so a `Publisher.SessionImpl :snapshot`/
+  # `:history` cap is obsolete/ignored. Only the streaming `:subscribe_from`
+  # publisher cap remains.
+  @expected_publisher_actions [:subscribe_from]
 
   # The runtime caps held by the `system://feishu-binding-policy`
   # principal at dispatch time — narrow, NOT admin shape. Matches the
@@ -245,11 +251,21 @@ defmodule EzagentPluginFeishu.BindingPolicyTest do
                "Ezagent.Behavior.Chat.actions/0 — re-audit the grant list"
     end
 
-    test "pinned publisher actions exactly equal Publisher.SessionImpl.actions/0" do
-      assert Enum.sort(@expected_publisher_actions) ==
-               Enum.sort(Ezagent.Behavior.Publisher.SessionImpl.actions()),
-             "Pinned Publisher.SessionImpl action set drifted from " <>
-               "Publisher.SessionImpl.actions/0"
+    test "pinned publisher actions are a SUBSET of Publisher.SessionImpl.actions/0 (reads excluded — P5-A)" do
+      # P5-A: the grant set is now a STRICT SUBSET of the behavior's actions
+      # — the read actions (`:snapshot`/`:history`) are excluded because
+      # they're membership-gated/cap-exempt and a held cap is never
+      # consulted. `:subscribe_from` remains a real cap-gated grant.
+      assert MapSet.subset?(
+               MapSet.new(@expected_publisher_actions),
+               MapSet.new(Ezagent.Behavior.Publisher.SessionImpl.actions())
+             ),
+             "Pinned Publisher.SessionImpl grant set is no longer a subset of " <>
+               "Publisher.SessionImpl.actions/0 — re-audit the grant list"
+
+      # And the read actions are explicitly NOT granted (P5-A).
+      refute :snapshot in @expected_publisher_actions
+      refute :history in @expected_publisher_actions
     end
   end
 end

@@ -360,7 +360,13 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     # half-start the SPEC forbids. A COMPLETE session is returned
     # idempotently; an INCOMPLETE one is rolled back fully (§4 step 9)
     # then RECREATED fresh.
-    case Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: effective_owner}) do
+    case Ezagent.Kind.spawn(Session, %{
+           uri: session_uri,
+           owner_uri: effective_owner,
+           # P5-0b: explicit chat behavior set → non-nil :kind_base (scoped
+           # guard). Pre-union == Session.behaviors(), so behavior-preserving.
+           behaviors: Session.behaviors()
+         }) do
       {:ok, _pid} ->
         finalize_fresh_session(
           session_uri,
@@ -454,7 +460,13 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
          %URI{} = session_template_uri,
          template_content
        ) do
-    case Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: effective_owner}) do
+    case Ezagent.Kind.spawn(Session, %{
+           uri: session_uri,
+           owner_uri: effective_owner,
+           # P5-0b: explicit chat behavior set on the recreate-after-rollback
+           # path too → non-nil :kind_base. Pre-union == Session.behaviors().
+           behaviors: Session.behaviors()
+         }) do
       {:ok, _pid} ->
         finalize_fresh_session(
           session_uri,

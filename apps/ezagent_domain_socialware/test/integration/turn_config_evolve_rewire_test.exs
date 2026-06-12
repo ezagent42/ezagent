@@ -41,7 +41,12 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
     agent =
       Ezagent.URI.entity(:team_alpha, :agent, "tce-agent-#{System.unique_integer([:positive])}")
 
-    {:ok, _pid} = Ezagent.Kind.spawn(SocialwareSession, %{uri: session})
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(SocialwareSession, %{
+        uri: session,
+        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+      })
+
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
 
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: agent, initial_caps: MapSet.new()})

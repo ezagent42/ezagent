@@ -198,7 +198,11 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
     session_uri = unique_session_uri(label)
 
     assert {:ok, _pid} =
-             Kind.spawn(Session, %{uri: session_uri, owner_uri: User.admin_uri()})
+             Kind.spawn(Session, %{
+               uri: session_uri,
+               owner_uri: User.admin_uri(),
+               behaviors: Ezagent.Entity.Session.behaviors()
+             })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, URI.new!("workspace://system"))
 

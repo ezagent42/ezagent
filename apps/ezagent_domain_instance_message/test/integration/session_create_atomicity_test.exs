@@ -61,7 +61,13 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateAtomicityTest do
       # NO step-8 owner join. This is exactly the residue a crash
       # mid-create leaves — and exactly what the pre-Q2 `{:already_started}`
       # arm would have returned as a successful session.
-      {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: owner})
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(Session, %{
+          uri: session_uri,
+          owner_uri: owner,
+          behaviors: Ezagent.Entity.Session.behaviors()
+        })
+
       :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
 
       # Sanity — the half-session is genuinely incomplete BEFORE we

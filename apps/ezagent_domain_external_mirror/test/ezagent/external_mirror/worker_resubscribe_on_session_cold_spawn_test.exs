@@ -332,7 +332,11 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
   defp spawn_owner_and_session(%URI{} = owner_uri, %URI{} = session_uri) do
     :ok = spawn_user(owner_uri, Ezagent.SystemPrincipal.caps("system://bootstrap"))
 
-    case Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: owner_uri}) do
+    case Ezagent.Kind.spawn(Session, %{
+           uri: session_uri,
+           owner_uri: owner_uri,
+           behaviors: Session.behaviors()
+         }) do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _pid}} -> :ok
     end
@@ -360,7 +364,9 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
   # fresh member each call guarantees a new event.
   defp send_chat_to_session(%URI{} = session_uri) do
     member_uri =
-      Ezagent.URI.new!("entity://team-alpha/user/em-pub-test-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!(
+        "entity://team-alpha/user/em-pub-test-#{System.unique_integer([:positive])}"
+      )
 
     :ok = spawn_user_with_retry(member_uri, 20)
 

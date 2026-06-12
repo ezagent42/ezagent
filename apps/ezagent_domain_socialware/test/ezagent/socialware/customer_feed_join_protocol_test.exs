@@ -29,7 +29,13 @@ defmodule Ezagent.Socialware.CustomerFeedJoinProtocolTest do
   setup do
     session = session_uri()
     workspace = Ezagent.Capability.workspace_of(session)
-    {:ok, _pid} = Ezagent.Kind.spawn(SocialwareSession, %{uri: session})
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(SocialwareSession, %{
+        uri: session,
+        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+      })
+
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
     token = CustomerAuth.issue_token(session, workspace)
     %{session: session, workspace: workspace, token: token}
@@ -252,7 +258,13 @@ defmodule Ezagent.Socialware.CustomerFeedJoinProtocolTest do
       # Session B in the SAME workspace, routing the SAME message id as A. Only A
       # has a committed settlement for it. B must NOT borrow A's commit state.
       session_b = session_uri()
-      {:ok, _pid} = Ezagent.Kind.spawn(SocialwareSession, %{uri: session_b})
+
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(SocialwareSession, %{
+          uri: session_b,
+          behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+        })
+
       :ok = Ezagent.WorkspaceRegistry.bind(session_b, ctx.workspace)
       token_b = CustomerAuth.issue_token(session_b, ctx.workspace)
 

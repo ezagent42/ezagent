@@ -48,6 +48,14 @@ defmodule Ezagent.Entity.Session do
   @impl Ezagent.Kind
   def persistence, do: {:snapshot, :on_change}
 
+  # P5-0b (socialware substrate collapse) — every Session instance MUST carry
+  # an explicit (non-nil) `:kind_base` behavior set. The spawn paths thread
+  # `:behaviors` (init_set stores a non-nil set); a nil capture fails loud in
+  # `BehaviorSet.effective_set/2`. Scoped to the session Kind(s) so legacy
+  # static Kinds keep their absent-`:behaviors` → declared compat path.
+  @impl Ezagent.Kind
+  def requires_explicit_behavior_set?, do: true
+
   @impl Ezagent.Kind
   def supervisor, do: EzagentDomainInstanceMessage.SessionSupervisor
 
@@ -276,7 +284,9 @@ defmodule Ezagent.Entity.Session do
 
   defdelegate orchestrator_uri(session_uri), to: Ezagent.Entity.Session.Orchestrator
   defdelegate orchestrator_instance_name(session_uri), to: Ezagent.Entity.Session.Orchestrator
-  defdelegate planned_orchestrator_uri(session_uri, workspace_uri), to: Ezagent.Entity.Session.Orchestrator
+
+  defdelegate planned_orchestrator_uri(session_uri, workspace_uri),
+    to: Ezagent.Entity.Session.Orchestrator
 
   defdelegate worker_already_owned_by_us?(candidate_uri, session_uri, owner_uri),
     to: Ezagent.Entity.Session.Orchestrator
@@ -288,8 +298,13 @@ defmodule Ezagent.Entity.Session do
   defdelegate grant_orchestrator_scoped_caps(orchestrator_uri, session_uri, owner_uri),
     to: Ezagent.Entity.Session.Orchestrator
 
-  defdelegate revoke_orchestrator_scoped_caps(orchestrator_uri, session_uri, owner_uri, workspace_uri),
-    to: Ezagent.Entity.Session.Orchestrator
+  defdelegate revoke_orchestrator_scoped_caps(
+                orchestrator_uri,
+                session_uri,
+                owner_uri,
+                workspace_uri
+              ),
+              to: Ezagent.Entity.Session.Orchestrator
 
   defdelegate cap_equal_ignoring_metadata?(left, right),
     to: Ezagent.Entity.Session.Orchestrator

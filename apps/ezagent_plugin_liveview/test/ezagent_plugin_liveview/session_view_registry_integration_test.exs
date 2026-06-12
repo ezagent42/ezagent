@@ -32,7 +32,13 @@ defmodule EzagentPluginLiveview.SessionViewRegistryIntegrationTest do
       )
 
     :ok = KindSnapshot.delete(URI.to_string(uri))
-    {:ok, _pid} = Ezagent.Kind.spawn(SocialwareSession, %{uri: uri})
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(SocialwareSession, %{
+        uri: uri,
+        behaviors: Ezagent.Entity.SocialwareSession.behaviors()
+      })
+
     :ok = Ezagent.WorkspaceRegistry.bind(uri, Ezagent.Capability.workspace_of(uri))
     uri
   end

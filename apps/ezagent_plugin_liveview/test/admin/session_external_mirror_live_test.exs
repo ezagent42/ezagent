@@ -340,9 +340,7 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
       # admin gate admits via `is_system_member?`. Has Cap 1 so mount's
       # `list_bindings` succeeds.
       caller_uri =
-        Ezagent.URI.new!(
-          "entity://system/user/pr4_revoke_#{System.unique_integer([:positive])}"
-        )
+        Ezagent.URI.new!("entity://system/user/pr4_revoke_#{System.unique_integer([:positive])}")
 
       cap1 = %Capability{
         kind: :session,
@@ -478,9 +476,7 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
 
       # Caller holds Cap 1 + Cap 2 for pr4_mock ONLY (not pr4_mock_b).
       caller_uri =
-        Ezagent.URI.new!(
-          "entity://system/user/pr4_a_only_#{System.unique_integer([:positive])}"
-        )
+        Ezagent.URI.new!("entity://system/user/pr4_a_only_#{System.unique_integer([:positive])}")
 
       caps =
         MapSet.new([
@@ -578,7 +574,13 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
   defp spawn_owner_and_session(%URI{} = owner_uri, %URI{} = session_uri) do
     :ok = spawn_user(owner_uri, Ezagent.SystemPrincipal.caps("system://bootstrap"))
 
-    case Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: owner_uri}) do
+    # P5-0b — thread the explicit chat-Session behavior set so :kind_base is
+    # non-nil and the scoped effective_set/2 guard does not crash the session.
+    case Ezagent.Kind.spawn(Session, %{
+           uri: session_uri,
+           owner_uri: owner_uri,
+           behaviors: Session.behaviors()
+         }) do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _pid}} -> :ok
     end
@@ -643,6 +645,8 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
   end
 
   defp unique_session_uri(prefix) do
-    Ezagent.URI.new!("session://team-alpha/default/#{prefix}-#{System.unique_integer([:positive])}")
+    Ezagent.URI.new!(
+      "session://team-alpha/default/#{prefix}-#{System.unique_integer([:positive])}"
+    )
   end
 end

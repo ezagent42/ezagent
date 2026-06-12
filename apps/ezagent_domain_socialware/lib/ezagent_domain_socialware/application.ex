@@ -53,6 +53,14 @@ defmodule EzagentDomainSocialware.Application do
     # read actions are registered ONLY against the chat `Session` Kind, so there
     # is no `{kind, action}` collision and no trunk/read split is needed; the
     # trunk `Publisher.SessionImpl` stays the sole `:publisher` owner.
+    #
+    # P5-A unifies the two publisher READs onto ONE membership-gated behavior:
+    # `SocialwarePublisherRead` is now registered for BOTH the chat `Session`
+    # (in `instance_message`'s `application.ex` — its HOME app, where the module
+    # was relocated alongside `Ezagent.Socialware.ChatMembership`) AND
+    # `SocialwareSession` (HERE — socialware DEPENDS ON instance_message so it
+    # reuses the relocated module). Both Kinds' reads are authorized by live
+    # MEMBERSHIP, not a held cap. Distinct Kinds ⇒ no `{Kind, action}` collision.
     Enum.each(SocialwarePublisherRead.actions(), fn action ->
       :ok = CapabilityRegistry.register(SocialwareSession, action, SocialwarePublisherRead)
     end)

@@ -46,9 +46,20 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
 
   defp spawn_session do
     session_uri =
-      Ezagent.URI.new!("session://team-alpha/default/publisher-test-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!(
+        "session://team-alpha/default/publisher-test-#{System.unique_integer([:positive])}"
+      )
 
-    {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Session, %{
+        uri: session_uri,
+        behaviors: Ezagent.Entity.Session.behaviors(),
+        # P5-A: `:snapshot`/`:history` are now MEMBERSHIP-gated (cap-exempt +
+        # a live `ChatMembership` owner/member check), so the `admin_ctx`
+        # reader must be the session OWNER to pass authz. (`:subscribe_from`
+        # is still cap-gated, so admin's bootstrap caps cover it regardless.)
+        owner_uri: User.admin_uri()
+      })
 
     :ok =
       Ezagent.WorkspaceRegistry.bind(
@@ -76,7 +87,9 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
   # a no-op for our Publisher hook.
   defp spawn_member_user do
     member_uri =
-      Ezagent.URI.new!("entity://team-alpha/user/pub-test-member-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!(
+        "entity://team-alpha/user/pub-test-member-#{System.unique_integer([:positive])}"
+      )
 
     {:ok, pid} =
       Ezagent.Kind.spawn(User, %{uri: member_uri, initial_caps: MapSet.new()})
@@ -191,7 +204,11 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
   describe "no-ambient-caps invariant (codex round-1 CRITICAL fix)" do
     test "Session.subscribe_from/3 raises — forces caller to supply ctx" do
       assert_raise ArgumentError, ~r/requires an explicit caller ctx/, fn ->
-        Session.subscribe_from(Ezagent.URI.new!("session://team-alpha/default/x"), self(), :latest)
+        Session.subscribe_from(
+          Ezagent.URI.new!("session://team-alpha/default/x"),
+          self(),
+          :latest
+        )
       end
     end
 
@@ -211,7 +228,10 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
       session_uri = spawn_session()
 
       empty_ctx = %{
-        caller: Ezagent.URI.new!("entity://team-alpha/user/no-caps-#{System.unique_integer([:positive])}"),
+        caller:
+          Ezagent.URI.new!(
+            "entity://team-alpha/user/no-caps-#{System.unique_integer([:positive])}"
+          ),
         caps: MapSet.new()
       }
 
@@ -234,7 +254,12 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
 
       # Restart the Session Kind.
       {:ok, pid_before} = Ezagent.KindRegistry.lookup(session_uri)
-      :ok = DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, pid_before)
+
+      :ok =
+        DynamicSupervisor.terminate_child(
+          EzagentDomainInstanceMessage.SessionSupervisor,
+          pid_before
+        )
 
       # Wait for it to be gone.
       Enum.reduce_while(1..50, nil, fn _, _ ->
@@ -249,7 +274,11 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
       end)
 
       # Respawn — snapshot restore should bring back cursor + ring.
-      {:ok, _new_pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
+      {:ok, _new_pid} =
+        Ezagent.Kind.spawn(Session, %{
+          uri: session_uri,
+          behaviors: Ezagent.Entity.Session.behaviors()
+        })
 
       :ok =
         Ezagent.WorkspaceRegistry.bind(session_uri, Ezagent.Capability.workspace_of(session_uri))
