@@ -28,19 +28,69 @@ defmodule EzagentPluginCr.CrEngine do
 
   @spec publish(String.t()) :: {:ok, map()} | {:error, term()}
   def publish(tid) do
-    with {:ok, cr} <- ensure_active_cr(tid),
+    # Heal any half-finished prior publish before allocating a new version.
+    with {:ok, _} <- repair_current(tid),
+         {:ok, cr} <- ensure_active_cr(tid),
          :ok <- CrLint.check(tid),
          {:ok, new_ver} <- CrSnapshot.snapshot(tid),
+         # Mark-before-flip: durably record "this version is published" in the
+         # CR pointer BEFORE flipping _current. A crash between the two steps
+         # leaves the CR saying "published vN" while _current still points at
+         # vN-1; repair_current/1 detects that gap and completes the flip
+         # idempotently (vN dir is already fully materialized by snapshot).
+         #
+         # The opposite ordering (flip → mark) is unrecoverable: a crash after
+         # flip but before the CR write leaves _current at vN with the CR still
+         # reading the previous version, and nothing on disk records that vN was
+         # meant to be the published one.
+         published =
+           Map.merge(cr, %{
+             "status" => "published",
+             "published_version" => new_ver,
+             "published_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+           }),
+         {:ok, _} <- write_cr(tid, cr["cr_id"], published),
          :ok <- update_current(tid, new_ver) do
-      published =
-        Map.merge(cr, %{
-          "status" => "published",
-          "published_version" => new_ver,
-          "published_at" => DateTime.utc_now() |> DateTime.to_iso8601()
-        })
-
-      write_cr(tid, cr["cr_id"], published)
       {:ok, published}
+    end
+  end
+
+  @doc """
+  Detect and heal a half-finished publish (the mark-before-flip gap).
+
+  Reads the tenant's active CR pointer. If it is `"published"` at version
+  `vN`, the `vN` release dir exists, but `_current` does not already resolve to
+  it, completes the flip and returns `{:ok, :repaired}`. Otherwise returns
+  `{:ok, :consistent}` (already pointing, no published CR yet, or the `vN` dir
+  is missing — in which case there is nothing to complete).
+
+  Idempotent: safe to call on every `publish/1` and at startup.
+  """
+  @spec repair_current(String.t()) :: {:ok, :repaired | :consistent} | {:error, term()}
+  def repair_current(tid) do
+    case TenantConfig.read_cr(tid, active_cr_id(tid)) do
+      {:ok, %{"status" => "published", "published_version" => ver}} when is_binary(ver) ->
+        target = Path.join(TenantRuntime.release_path(tid), ver)
+        current = TenantRuntime.current_release_path(tid)
+
+        cond do
+          # No materialized version to point at — nothing to complete.
+          not File.dir?(target) ->
+            {:ok, :consistent}
+
+          # _current already resolves to the published version — consistent.
+          resolves_to?(current, target) ->
+            {:ok, :consistent}
+
+          true ->
+            case update_current(tid, ver) do
+              :ok -> {:ok, :repaired}
+              err -> err
+            end
+        end
+
+      _ ->
+        {:ok, :consistent}
     end
   end
 
@@ -57,6 +107,13 @@ defmodule EzagentPluginCr.CrEngine do
   # ConfigStore.resolve(..., "cr:#{tid}:#{cr_id}")
   defp cr_key(tid), do: "cr:#{tid}:#{active_cr_id(tid)}"
 
+  # Atomically flip _current → release/<ver>.
+  #
+  # Create the symlink at a temp path then rename it over _current. rename(2)
+  # is atomic on POSIX, so a crash never leaves _current dangling (the old
+  # gap: rm _current → crash → no _current). This makes the flip step itself
+  # crash-safe; mark-before-flip + repair_current handle a crash BETWEEN the
+  # CR write and this flip.
   defp update_current(tid, ver) do
     current = TenantRuntime.current_release_path(tid)
     target = Path.join(TenantRuntime.release_path(tid), ver)
@@ -65,11 +122,24 @@ defmodule EzagentPluginCr.CrEngine do
     # guard here in case it does not).
     File.mkdir_p!(target)
 
-    if File.exists?(current), do: File.rm!(current)
+    tmp = current <> ".tmp"
+    _ = File.rm_rf(tmp)
 
-    case File.ln_s(target, current) do
-      :ok -> :ok
-      {:error, reason} -> {:error, "symlink failed: #{inspect(reason)}"}
+    with :ok <- File.ln_s(target, tmp),
+         :ok <- :file.rename(tmp, current) do
+      :ok
+    else
+      {:error, reason} ->
+        _ = File.rm_rf(tmp)
+        {:error, "symlink flip failed: #{inspect(reason)}"}
+    end
+  end
+
+  # True when `current` (a symlink) resolves to the same dir as `target`.
+  defp resolves_to?(current, target) do
+    case File.read_link(current) do
+      {:ok, dest} -> Path.expand(dest) == Path.expand(target)
+      _ -> false
     end
   end
 
