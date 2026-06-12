@@ -187,18 +187,71 @@ defmodule Ezagent.Socialware.ConfigStore do
   end
 
   @doc """
-  P2.5c — durable idempotency marker for `apply_delta` recovery.
+  CE-3 — POINTER-AWARE durable idempotency marker for `apply_config_delta`
+  recovery.
 
-  `apply_delta` writes a NEW immutable `ConfigObject` whose `source_turn_id`
-  records the originating turn. `apply_delta` is therefore NOT idempotent
-  (re-running mints a fresh object UUID + repoints). `Turn.activated/2`'s
-  crash-recovery uses this to decide whether a settled turn's config delta
-  still needs replaying: `true` once any object exists for the turn.
+  A settled config delta is "applied" for a turn only when SOME current
+  pointer resolves to an object whose `source_turn_id == turn_id`. Keying on
+  bare ConfigObject existence (the prior implementation) was unsafe: a
+  non-atomic write that inserted the immutable object but failed to advance
+  the pointer left an ORPHAN object whose `source_turn_id` made this return
+  `true`, so `Turn`'s crash-recovery skipped the replay forever and the
+  settled config was lost. Joining through the pointer means an orphan object
+  alone does NOT count as applied → recovery correctly replays.
+
+  `Turn.config_replay_needed?/2` uses this to decide whether a settled turn's
+  config delta still needs replaying.
   """
   @spec applied_for_turn?(String.t()) :: boolean()
   def applied_for_turn?(turn_id) when is_binary(turn_id) do
-    Repo.exists?(from(o in ConfigObject, where: o.source_turn_id == ^turn_id))
+    Repo.exists?(
+      from(p in ConfigPointer,
+        join: o in ConfigObject,
+        on: o.id == p.config_id,
+        where: o.source_turn_id == ^turn_id
+      )
+    )
   end
+
+  @doc """
+  CE-2/CE-3 — the object id the CURRENT pointer for `subject_uri`/`key`
+  resolves to, IF that object was minted for `turn_id`; `:none` otherwise.
+
+  Used by `Ezagent.Behavior.ConfigEvolve` to make `apply_config_delta`
+  idempotent: re-dispatching a turn whose object is already the live pointer
+  returns the existing object instead of minting a new one. Scoped to the
+  agent's own layer + workspace (the agent applies config to itself).
+  """
+  @spec pointer_object_for_turn(atom() | String.t(), URI.t() | String.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | :none
+  def pointer_object_for_turn(layer, subject_uri, key, turn_id)
+      when is_binary(key) and is_binary(turn_id) do
+    case Ezagent.URI.workspace_of(uri!(subject_uri)) do
+      %URI{} = workspace_uri ->
+        subject = uri_string!(subject_uri)
+        workspace = uri_string!(workspace_uri)
+        pointer_id = ConfigPointer.id(normalize_layer!(layer), workspace, subject, key)
+
+        query =
+          from(p in ConfigPointer,
+            join: o in ConfigObject,
+            on: o.id == p.config_id,
+            where: p.id == ^pointer_id and o.source_turn_id == ^turn_id,
+            select: o.id
+          )
+
+        case Repo.one(query) do
+          nil -> :none
+          object_id -> {:ok, object_id}
+        end
+
+      :any ->
+        :none
+    end
+  end
+
+  defp uri!(%URI{} = uri), do: uri
+  defp uri!(uri) when is_binary(uri), do: Ezagent.URI.new!(uri)
 
   @doc """
   Fetch an immutable config object by id.

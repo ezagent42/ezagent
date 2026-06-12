@@ -152,9 +152,127 @@ defmodule Ezagent.Behavior.ConfigEvolveTest do
              "got #{inspect(sandbox_user_layer_uri(agent))}"
   end
 
+  # ---- CE-1 cross-agent confused-deputy (security) -------------------------
+
+  # A caller holding agent A's manage-cap dispatches apply_config_delta TO A
+  # but with `subject_uri` = agent B. The agent must ONLY ever apply config to
+  # ITSELF: the dispatch is denied/errors and B's config is unchanged.
+  test "apply_config_delta refuses a subject_uri that is not the receiving agent (CE-1)",
+       %{agent: agent_a, workspace: workspace} do
+    # A second agent B in the same workspace — the confused-deputy victim.
+    name_b = "ce-victim-#{System.unique_integer([:positive])}"
+    agent_b = Ezagent.URI.entity(:team_alpha, :agent, name_b)
+    {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: agent_b, initial_caps: MapSet.new()})
+    :ok = Ezagent.WorkspaceRegistry.bind(agent_b, workspace)
+
+    # Caller manages A (NOT B). The dispatch lands on A (A's manage-cap gate
+    # passes) but names B as the subject.
+    manager = grant_manage_cap(agent_a, workspace)
+    turn_id = "t-deputy-#{System.unique_integer([:positive])}"
+
+    assert :none = ConfigStore.current_user_object(agent_b, @cascade_key)
+
+    assert {:error, :subject_not_self} =
+             apply_delta_with(agent_a, manager, turn_id, %{
+               subject_uri: agent_b,
+               patch: %{"tone" => "hijacked"}
+             })
+
+    # B's config was NOT mutated, and no object was minted for it.
+    assert :none = ConfigStore.current_user_object(agent_b, @cascade_key)
+    refute ConfigStore.applied_for_turn?(turn_id)
+  end
+
+  test "apply_config_delta accepts a subject_uri that matches self (CE-1 positive)",
+       %{agent: agent, workspace: workspace} do
+    manager = grant_manage_cap(agent, workspace)
+    turn_id = "t-self-#{System.unique_integer([:positive])}"
+
+    assert {:ok, %{config_id: cid}} =
+             apply_delta_with(agent, manager, turn_id, %{
+               subject_uri: agent,
+               patch: %{"tone" => "decisive"}
+             })
+
+    assert {:ok, ^cid} = ConfigStore.current_user_object(agent, @cascade_key)
+  end
+
+  # ---- CE-2 idempotency (no new object on replay of a settled turn) --------
+
+  test "re-dispatching the same turn_id after a successful apply mints NO new object (CE-2)",
+       %{agent: agent, workspace: workspace} do
+    manager = grant_manage_cap(agent, workspace)
+    turn_id = "t-idem-#{System.unique_integer([:positive])}"
+
+    {:ok, %{config_id: cid1}} = apply_delta(agent, manager, turn_id, %{"tone" => "v1"})
+    count_after_first = config_object_count()
+
+    # Re-dispatch the SAME turn_id (a settlement replay). It must return the
+    # original config_id and NOT mint a second object.
+    {:ok, %{config_id: cid2}} = apply_delta(agent, manager, turn_id, %{"tone" => "v2"})
+
+    assert cid2 == cid1
+    assert config_object_count() == count_after_first
+    assert {:ok, ^cid1} = ConfigStore.current_user_object(agent, @cascade_key)
+  end
+
+  # ---- CE-3 non-atomic object+pointer → lost update -----------------------
+
+  # An orphan ConfigObject (object inserted, pointer NOT advanced) must NOT
+  # count as "applied for turn" — otherwise recovery skips the replay forever
+  # and the settled config is lost. The pointer-aware check keys on the
+  # POINTER resolving to an object for this turn, not bare object existence.
+  test "an orphan object (no advancing pointer) is NOT applied_for_turn? (CE-3)",
+       %{agent: agent, workspace: workspace} do
+    turn_id = "t-orphan-#{System.unique_integer([:positive])}"
+
+    # Simulate the partial write: insert an immutable object stamped with the
+    # turn, but do NOT advance the pointer to it.
+    {:ok, _object} =
+      ConfigStore.write_config(%{
+        layer: :user,
+        workspace_uri: workspace,
+        subject_uri: agent,
+        key: @cascade_key,
+        body: %{"tone" => "orphan"},
+        actor_uri: agent,
+        source_turn_id: turn_id
+      })
+
+    refute ConfigStore.applied_for_turn?(turn_id),
+           "orphan object (no advancing pointer) wrongly reported as applied — recovery would skip replay"
+  end
+
+  test "after a real apply the pointer reflects the turn and applied_for_turn? is true (CE-3)",
+       %{agent: agent, workspace: workspace} do
+    manager = grant_manage_cap(agent, workspace)
+    turn_id = "t-applied-#{System.unique_integer([:positive])}"
+
+    {:ok, %{config_id: cid}} = apply_delta(agent, manager, turn_id, %{"tone" => "decisive"})
+
+    assert ConfigStore.applied_for_turn?(turn_id)
+    # The current user-layer pointer resolves the object minted for this turn.
+    assert {:ok, ^cid} = ConfigStore.current_user_object(agent, @cascade_key)
+  end
+
   # ========================================================================
   # Fixtures / helpers (ported from config_update_test.exs)
   # ========================================================================
+
+  defp config_object_count do
+    EzagentCore.Repo.aggregate(Ezagent.Socialware.ConfigObject, :count, :id)
+  end
+
+  # apply_config_delta carrying explicit delta fields (subject_uri etc.) in
+  # args — used by the CE-1 confused-deputy + positive self tests.
+  defp apply_delta_with(agent, manager, turn_id, fields) do
+    Invocation.dispatch(%Invocation{
+      target: action_uri(agent, :apply_config_delta),
+      mode: :call,
+      args: Map.put(fields, :turn_id, turn_id),
+      ctx: %{caller: manager.uri, caps: manager.caps, reply: {:caller_inbox, self()}}
+    })
+  end
 
   defp action_uri(agent, action) do
     Ezagent.URI.new!("#{URI.to_string(agent)}?action=config_evolve.#{action}")

@@ -219,25 +219,71 @@ defmodule Ezagent.Behavior.ConfigEvolve do
   def handle_apply_config_delta(%{turn_id: turn_id} = args, ctx) do
     with raw_attrs <- attrs_from_args(args, turn_id, ctx),
          {:ok, attrs} <- validate_and_normalize(raw_attrs),
-         body <-
-           ConfigStore.merge_delta(
-             attrs.layer,
-             attrs.workspace_uri,
-             attrs.subject_uri,
-             attrs.key,
-             attrs.patch
-           ),
-         {:ok, object} <- ConfigStore.write_config(Map.put(attrs, :body, body)),
-         {:ok, %{previous_config_id: previous}} <-
-           ConfigStore.put_pointer(Map.put(attrs, :config_id, object.id)) do
+         # CE-1 — the agent applies config to ITSELF only. The dispatch is
+         # gated by the TARGET agent's manage-cap, but `subject_uri`/
+         # `workspace_uri` are caller-supplied; an unbound subject lets a
+         # caller managing agent A dispatch to A with subject=agent B and
+         # mutate B (cross-agent confused-deputy). Bind both to `self_uri`
+         # BEFORE any store write.
+         {:ok, attrs} <- assert_subject_self(attrs, ctx) do
+      # CE-2 — idempotency: if this turn already settled (the current pointer
+      # resolves an object for this turn), RETURN the existing result without
+      # minting a new object / repointing. Composes with CE-3's pointer-aware
+      # check. Checked AFTER self-binding so the lookup is scoped to self.
+      case ConfigStore.pointer_object_for_turn(attrs.layer, attrs.subject_uri, attrs.key, turn_id) do
+        {:ok, existing_id} ->
+          {:ok, %{config_id: existing_id, previous_config_id: nil}, []}
+
+        :none ->
+          do_apply_config_delta(turn_id, attrs, ctx)
+      end
+    end
+  end
+
+  defp do_apply_config_delta(turn_id, attrs, ctx) do
+    body =
+      ConfigStore.merge_delta(
+        attrs.layer,
+        attrs.workspace_uri,
+        attrs.subject_uri,
+        attrs.key,
+        attrs.patch
+      )
+
+    # CE-3 — write the immutable object AND advance the pointer in ONE
+    # transaction (`write_and_point/1`). Two separate ops left an orphan
+    # object on a `put_pointer` failure; with the pointer-aware
+    # `applied_for_turn?`, that orphan would never count as applied, but the
+    # settled config would still be lost. Atomic write = no orphan.
+    with {:ok, %{config_id: config_id, previous_config_id: previous}} <-
+           ConfigStore.write_and_point(Map.put(attrs, :body, body)) do
       applied = ctx.read.(:applied, %{})
-      reply = %{config_id: object.id, previous_config_id: previous}
+      reply = %{config_id: config_id, previous_config_id: previous}
 
       {:ok, reply,
        [{:set, :applied, Map.put(applied, turn_id, reply)}] ++
-         sandbox_write_effects(ctx, attrs, object.id)}
+         sandbox_write_effects(ctx, attrs, config_id)}
     end
   end
+
+  # CE-1 — reject any caller-supplied `subject_uri`/`workspace_uri` that does
+  # not name THIS agent (or derive them from self when omitted). The agent may
+  # only ever apply config to itself.
+  defp assert_subject_self(attrs, ctx) do
+    self_uri = ctx.self_uri
+    self_workspace = Ezagent.URI.workspace_of(self_uri)
+
+    cond do
+      not same_uri?(attrs.subject_uri, self_uri) -> {:error, :subject_not_self}
+      not same_uri?(attrs.workspace_uri, self_workspace) -> {:error, :subject_not_self}
+      true -> {:ok, %{attrs | subject_uri: self_uri, workspace_uri: self_workspace}}
+    end
+  end
+
+  defp same_uri?(a, b), do: uri_string(a) == uri_string(b)
+
+  defp uri_string(%URI{} = uri), do: URI.to_string(uri)
+  defp uri_string(other), do: other
 
   # ---- STEP 1 (rollback/advance) — `repoint_config` ------------------------
   #
@@ -259,6 +305,9 @@ defmodule Ezagent.Behavior.ConfigEvolve do
     }
 
     with {:ok, attrs} <- validate_and_normalize(raw_attrs),
+         # CE-1 — repoint, like apply, may only ever target THIS agent's own
+         # config pointer; bind/reject the caller-supplied subject/workspace.
+         {:ok, attrs} <- assert_subject_self(attrs, ctx),
          {:ok, _object} <- ConfigStore.fetch_matching_object(attrs),
          {:ok, %{previous_config_id: previous}} <- ConfigStore.put_pointer(attrs) do
       {:ok, %{config_id: attrs.config_id, previous_config_id: previous},

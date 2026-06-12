@@ -210,10 +210,12 @@ defmodule Ezagent.Behavior.Turn do
   end
 
   # Config replay is needed when the settled turn carries a `config_delta` but
-  # no ConfigObject was yet durably written for it (`source_turn_id`). This is
-  # the apply_delta idempotency marker: apply_delta writes a NEW immutable
-  # config object keyed by `source_turn_id`, so once a row exists the delta was
-  # applied and must NOT re-run.
+  # it was not yet DURABLY APPLIED for it. CE-3: "applied" is POINTER-AWARE —
+  # `applied_for_turn?/1` returns true only when a current pointer resolves to
+  # an object minted for this turn, NOT on bare object existence. An orphan
+  # object (object inserted but pointer never advanced — the crash window of a
+  # non-atomic write) therefore does NOT suppress replay, so a lost settlement
+  # is recovered.
   defp config_replay_needed?(turn_id, %{result: %{config_delta: delta}}) when is_map(delta) do
     not Ezagent.Socialware.ConfigStore.applied_for_turn?(turn_id)
   end
