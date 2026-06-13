@@ -339,30 +339,70 @@ defmodule Ezagent.Behavior.Session.Delivery do
   end
 
   # Resolve the delivery flavor: ctx-sandbox first (deadlock-safe in-process
-  # read), then the durable `:flavor` query (covers the curl stored flavor
-  # attribute) so the transport-class decision matches `AgentBridge.deliver`.
+  # read), then the ETS launch-attribute fast-path, then the DURABLE snapshot
+  # slice (codex P1) so the transport-class decision survives a cold-load.
   defp resolve_delivery_flavor(ctx) do
     case resolve_agent_flavor_from_ctx(ctx) do
       {:ok, _} = ok ->
         ok
 
       :none ->
-        # Read the STORED flavor attribute ONLY (an ETS lookup — deadlock-safe
-        # inside the agent's own dispatch process). NOT the full
-        # `UriQuery.resolve(:flavor, _)`, whose sandbox-slice fallback would be
-        # a `Kind.get_slice(self_uri)` self-call deadlock. The curl flavor
-        # lives in this attribute; cc/codex resolve via the ctx-sandbox path
-        # above and never reach here.
         case Map.get(ctx, :self_uri) do
-          %URI{} = uri ->
-            case Ezagent.AgentFlavorAttributes.get(uri) do
-              {:ok, flavor} when is_binary(flavor) and flavor != "" -> {:ok, flavor}
-              _ -> :none
+          %URI{} = uri -> resolve_delivery_flavor_for(uri)
+          _ -> :none
+        end
+    end
+  end
+
+  # codex P1 (PR-6) — the curl flavor is a DURABLE slice field (O-2: stored
+  # state), so it MUST survive a BEAM restart / lazy demand-spawn from
+  # `kind_snapshots`. The ETS `AgentFlavorAttributes` row is an OPTIONAL
+  # fast-path — gone after a cold restart — so it can NEVER be the sole
+  # source: when it misses, fall back to the persisted slice in the snapshot
+  # store. Without this, a rehydrated curl agent resolves `:none` → its
+  # `:in_process_sync` receive is mis-routed down the `:subprocess_ws` async
+  # branch and silently DROPPED (no live channel).
+  #
+  # Both reads are deadlock-safe inside the agent's OWN dispatch process: ETS
+  # is a plain table read, and `SnapshotStore.latest/1` is a DB read — neither
+  # is a `Kind.get_slice(self_uri)` self-`call`.
+  defp resolve_delivery_flavor_for(%URI{} = uri) do
+    case Ezagent.AgentFlavorAttributes.get(uri) do
+      {:ok, flavor} when is_binary(flavor) and flavor != "" ->
+        {:ok, flavor}
+
+      _ ->
+        flavor_from_snapshot(uri)
+    end
+  end
+
+  # Read the DURABLE flavor from the persisted snapshot slice. A flavor
+  # Behavior that owns durable state persists its `:flavor` in its OWN slice
+  # (curl → the `:curl_agent` slice); scan the snapshot state for that stored
+  # field so this stays flavor-blind (any future durable-flavor Behavior is
+  # covered). cc/codex carry no durable `:flavor` slice field and resolve via
+  # the ctx-sandbox path above, so they never reach here.
+  defp flavor_from_snapshot(%URI{} = uri) do
+    case Ezagent.SnapshotStore.latest(uri) do
+      {:ok, %{state: state}} when is_map(state) ->
+        state
+        |> Map.values()
+        |> Enum.find_value(:none, fn
+          # Snapshot slices are the RAW two-container form
+          # (`%{state: ..., transients: ...}`); normalize to the flat view
+          # before reading the durable `:flavor` field.
+          slice when is_map(slice) ->
+            case slice |> Ezagent.Kind.normalize_slice_view() |> Map.get(:flavor) do
+              flavor when is_binary(flavor) and flavor != "" -> {:ok, flavor}
+              _ -> nil
             end
 
           _ ->
-            :none
-        end
+            nil
+        end)
+
+      _ ->
+        :none
     end
   end
 

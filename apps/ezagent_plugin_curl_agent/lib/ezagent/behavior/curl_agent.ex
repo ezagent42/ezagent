@@ -139,6 +139,14 @@ defmodule Ezagent.Behavior.CurlAgent do
   def create(args) do
     {:ok,
      %{
+       # codex P1 (PR-6) — the flavor is a DURABLE slice field (O-2: flavor
+       # is STORED state, not an ETS-only launch attribute). Persisting it in
+       # the `:curl_agent` slice that THIS Behavior owns means a cold-load
+       # (rehydrate from `kind_snapshots`, no ETS) still resolves the curl
+       # `:in_process_sync` transport — `resolve_delivery_flavor/1` reads it
+       # from the snapshot store. The ETS `AgentFlavorAttributes` row stays an
+       # OPTIONAL fast-path, never the sole source.
+       flavor: "curl",
        provider: Map.get(args, :provider, "deepseek"),
        api_url: Map.get(args, :api_url, "https://api.deepseek.com/chat/completions"),
        model: Map.get(args, :model, "deepseek-chat"),
@@ -229,7 +237,8 @@ defmodule Ezagent.Behavior.CurlAgent do
 
         effects =
           [
-            {:set, :conversation, current_conv |> append_turn("user", user_text) |> trim(max_history)},
+            {:set, :conversation,
+             current_conv |> append_turn("user", user_text) |> trim(max_history)},
             {:set, :last_error, {:no_api_key, provider}}
           ] ++ maybe_reply_effect(source_session_uri, self_uri, reply_text)
 
@@ -246,7 +255,8 @@ defmodule Ezagent.Behavior.CurlAgent do
 
         effects =
           [
-            {:set, :conversation, current_conv |> append_turn("user", user_text) |> trim(max_history)},
+            {:set, :conversation,
+             current_conv |> append_turn("user", user_text) |> trim(max_history)},
             {:set, :last_error, reason}
           ] ++ maybe_reply_effect(source_session_uri, self_uri, reply_text)
 
