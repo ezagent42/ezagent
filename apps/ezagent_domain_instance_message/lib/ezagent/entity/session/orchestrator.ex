@@ -280,7 +280,7 @@ defmodule Ezagent.Entity.Session.Orchestrator do
       :ok =
         Phoenix.PubSub.subscribe(
           EzagentCore.PubSub,
-          Ezagent.Orchestrator.McpChannel.lifecycle_topic()
+          Ezagent.Session.OrchestratorReadinessPort.lifecycle_topic()
         )
 
       :subscribed
@@ -326,7 +326,7 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   # deadline → fail-loud.
   defp poll_orchestrator_ready(ok, %URI{} = candidate_uri, deadline) do
     cond do
-      Ezagent.Orchestrator.LiveJoinRegistry.joined?(candidate_uri) ->
+      Ezagent.Session.OrchestratorReadinessPort.joined?(candidate_uri) ->
         unsubscribe_orchestrator_lifecycle()
         ok
 
@@ -378,7 +378,7 @@ defmodule Ezagent.Entity.Session.Orchestrator do
     _ =
       Phoenix.PubSub.unsubscribe(
         EzagentCore.PubSub,
-        Ezagent.Orchestrator.McpChannel.lifecycle_topic()
+        Ezagent.Session.OrchestratorReadinessPort.lifecycle_topic()
       )
 
     :ok
@@ -398,7 +398,7 @@ defmodule Ezagent.Entity.Session.Orchestrator do
 
     # Clear any durable live-join row so a stale signal from this killed
     # incarnation can never satisfy a future startup gate. Idempotent.
-    _ = Ezagent.Orchestrator.LiveJoinRegistry.clear(candidate_uri)
+    _ = Ezagent.Session.OrchestratorReadinessPort.clear(candidate_uri)
     :ok
   end
 
@@ -764,7 +764,7 @@ defdelegate cap_equal_ignoring_metadata?(left, right),
         %URI{} = owner_uri,
         %URI{} = parent_template_uri
       ) do
-    Ezagent.Orchestrator.McpRegistry.register(orchestrator_uri,
+    Ezagent.Session.OrchestratorReadinessPort.register_context(orchestrator_uri,
       session_uri: session_uri,
       workspace_uri: workspace_uri,
       owner_uri: owner_uri,
