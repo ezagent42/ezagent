@@ -3,7 +3,15 @@ defmodule Ezagent.Behavior.Session.Members do
 
   alias Ezagent.Routing.Legend
 
-  @doc "Whether `monitors` already holds an entry for `member_uri` AND `current_pid` is monitored by the calling process — i.e. this process holds the live monitor for that member (guards against re-monitoring / acting on a stale or foreign monitor ref)."
+  @doc """
+  Heuristic combining two INDEPENDENT facts: `monitors` (a `ref => uri` map) has
+  SOME entry for `member_uri`, AND the calling process is among `current_pid`'s
+  monitors. It does NOT tie the two together — the stored ref for `member_uri` is
+  not checked to be the ref actually monitoring `current_pid`, so a stale
+  `member_uri` entry plus any unrelated live self-monitor can return a false
+  positive. Treat it as a fast rejoin pre-check, not a proof of a correct live
+  monitor.
+  """
   @spec monitor_ref_for_current_pid?(map(), URI.t(), pid()) :: boolean()
   def monitor_ref_for_current_pid?(monitors, %URI{} = member_uri, current_pid)
       when is_pid(current_pid) do
