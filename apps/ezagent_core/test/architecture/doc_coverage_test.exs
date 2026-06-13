@@ -98,6 +98,30 @@ defmodule EzagentCore.Architecture.DocCoverageTest do
       assert Mix.Tasks.Ezagent.Doc.Scan.scan_source(source) == []
     end
 
+    test "macro-generated (quoted) defs are not counted, but the generating macro IS" do
+      # Policy: a def emitted from a quote block is macro-generated public API —
+      # the doc obligation sits on the GENERATING macro (which is counted), not
+      # on the expansion. So generated API cannot silently bypass the ratchet:
+      # the undocumented macro itself trips the counter.
+      source = """
+      defmodule Sample do
+        defmacro emit_api do
+          quote do
+            def generated_public(a), do: a
+          end
+        end
+      end
+      """
+
+      offenders = Mix.Tasks.Ezagent.Doc.Scan.scan_source(source)
+
+      refute {:generated_public, 1} in offenders,
+             "a quoted (macro-generated) def must NOT be counted directly"
+
+      assert {:emit_api, 0} in offenders,
+             "the undocumented generating macro IS counted — that is the bypass-proofing"
+    end
+
     test "documented / @doc false / private forms are NOT counted" do
       source = """
       defmodule Sample do

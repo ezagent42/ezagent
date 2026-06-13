@@ -150,6 +150,15 @@ captured in `arch_baseline_manifest.exs`:
 > public defs (the count was unchanged at 513), so this is forward-looking
 > robustness; fixtures in `doc_coverage_test.exs` prove the recursion.
 
+> **Macro-generated (quoted) public API — explicit policy (codex 2026-06-14).**
+> Defs emitted from `quote` blocks are deliberately NOT counted: their names can
+> be dynamic (`def unquote(n)(...)`, no static `{name, arity}`) and the doc
+> obligation idiomatically sits on the GENERATING macro. That macro is itself a
+> `defmacro` / `__using__` — already in the denominator — so generated public
+> API cannot *silently* grow undocumented: the undocumented generator trips the
+> counter. A `scan_source/1` fixture asserts a quoted def is not counted while
+> the generating macro is. Recursing into `quote` would yield false positives.
+
 > The def-only `461` from the canonical scanner was slightly higher than the `428` in the
 > §A function table above. The difference is attribute-adjacency strictness: the
 > gate scanner only lets a pending `@doc`/`@impl` carry across *module

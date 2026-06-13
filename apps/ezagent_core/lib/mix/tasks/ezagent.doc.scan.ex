@@ -34,6 +34,19 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
   author made a deliberate "this is internal, no prose" decision, which is
   exactly the escape hatch the gate wants (vs. silently omitting it).
 
+  ## Macro-generated public API (quote blocks)
+
+  Public defs emitted from a `quote` block are NOT scanned, by deliberate
+  policy. They are macro-generated: their name may be dynamic
+  (`def unquote(n)(...)` — no static `{name, arity}`), and the documentation
+  obligation idiomatically sits on the GENERATING macro, not on each expansion.
+  That generating form is itself a `defmacro` / `__using__`, which IS in the
+  denominator — so a generator of undocumented public API still increments the
+  counter unless the macro is documented. Generated API therefore cannot
+  *silently* grow undocumented; the bypass-proofing is the counted macro
+  (proven by a `scan_source/1` fixture). Recursing into `quote` would instead
+  yield false positives (dynamic names, generated boilerplate).
+
   ## Analysis
 
   AST-based (`Code.string_to_quoted` → `Macro.prewalk`), not line/regex
@@ -383,6 +396,17 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
   defp container_branches({:unless, _, [_cond, kw]}), do: keyword_branches(kw)
   defp container_branches({:case, _, [_subj, [{:do, clauses}]]}), do: clause_branches(clauses)
   defp container_branches({:cond, _, [[{:do, clauses}]]}), do: clause_branches(clauses)
+  # `quote` is INTENTIONALLY not recursed (codex 2026-06-14 — explicit policy).
+  # A def emitted from a quote block is macro-generated public API: its name may
+  # be dynamic (`def unquote(n)(...)`) so it has no static {name, arity}, and the
+  # documentation obligation idiomatically sits on the GENERATING macro, not on
+  # each expansion. That generating form is itself a `defmacro` / `__using__` /
+  # `defmacro`-family head, which IS in the denominator (@public_def_forms) — so
+  # adding a generator of undocumented public API still increments the counter
+  # unless the macro is documented. Generated API therefore cannot SILENTLY
+  # bypass the ratchet; the bypass-proofing is the counted macro. Recursing into
+  # `quote` would instead produce false positives (dynamic names, boilerplate).
+  defp container_branches({:quote, _, _}), do: nil
   defp container_branches(_), do: nil
 
   defp keyword_branches(kw) when is_list(kw) do
