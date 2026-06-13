@@ -3,6 +3,15 @@ defmodule Ezagent.Behavior.Session.Members do
 
   alias Ezagent.Routing.Legend
 
+  @doc """
+  Heuristic combining two INDEPENDENT facts: `monitors` (a `ref => uri` map) has
+  SOME entry for `member_uri`, AND the calling process is among `current_pid`'s
+  monitors. It does NOT tie the two together — the stored ref for `member_uri` is
+  not checked to be the ref actually monitoring `current_pid`, so a stale
+  `member_uri` entry plus any unrelated live self-monitor can return a false
+  positive. Treat it as a fast rejoin pre-check, not a proof of a correct live
+  monitor.
+  """
   @spec monitor_ref_for_current_pid?(map(), URI.t(), pid()) :: boolean()
   def monitor_ref_for_current_pid?(monitors, %URI{} = member_uri, current_pid)
       when is_pid(current_pid) do
@@ -24,6 +33,7 @@ defmodule Ezagent.Behavior.Session.Members do
     end
   end
 
+  @doc "Merge the recognized member facets (`:role_name`, `:in_session_template`, `:source_template_uri`) from `facets` into a member's `meta` map, skipping any whose value is `nil` (so absent facets don't overwrite)."
   @spec put_member_facets(map(), map()) :: map()
   def put_member_facets(meta, facets) when is_map(meta) and is_map(facets) do
     meta
@@ -35,6 +45,7 @@ defmodule Ezagent.Behavior.Session.Members do
   defp maybe_put_facet(map, _key, nil), do: map
   defp maybe_put_facet(map, key, value), do: Map.put(map, key, value)
 
+  @doc "Defensively drop any recognized facet whose value fails its type check (`:role_name` binary, `:in_session_template` boolean, `:source_template_uri` a `%URI{}`) — unrecognized/absent keys pass through untouched."
   @spec sanitize_facets(map()) :: map()
   def sanitize_facets(facets) when is_map(facets) do
     facets
@@ -50,6 +61,7 @@ defmodule Ezagent.Behavior.Session.Members do
     end
   end
 
+  @doc "Whether `role_name` is already held by a DIFFERENT member: `:ok` if free or held by `member_uri` itself (or `role_name` is nil); `{:error, {:role_name_taken, role_name}}` if another member holds it."
   @spec role_name_conflict(map(), URI.t(), String.t() | nil) ::
           :ok | {:error, {:role_name_taken, String.t()}}
   def role_name_conflict(_members, _member_uri, nil), do: :ok
@@ -67,6 +79,7 @@ defmodule Ezagent.Behavior.Session.Members do
 
   defp uri_eq?(%URI{} = a, %URI{} = b), do: URI.to_string(a) == URI.to_string(b)
 
+  @doc "The member URI whose `:role_name` facet equals `role_name`, or `nil` if no member holds that role."
   @spec role_name_to_uri(map(), String.t()) :: URI.t() | nil
   def role_name_to_uri(members, role_name) when is_map(members) and is_binary(role_name) do
     Enum.find_value(members, nil, fn
@@ -75,16 +88,19 @@ defmodule Ezagent.Behavior.Session.Members do
     end)
   end
 
+  @doc "The legend registry (role-name → member-set aliases) stored on a chat slice, or `%{}` when none."
   @spec legends_of(map()) :: Legend.registry()
   def legends_of(chat_slice) when is_map(chat_slice) do
     Map.get(chat_slice, :legends, %{})
   end
 
+  @doc "Resolve a legend `name` against the chat slice's legend registry to its entry (`{:ok, entry}`), or `:error` if undefined."
   @spec resolve_legend(map(), String.t()) :: {:ok, Legend.entry()} | :error
   def resolve_legend(chat_slice, name) when is_map(chat_slice) and is_binary(name) do
     Legend.resolve(legends_of(chat_slice), name)
   end
 
+  @doc "Fold a chat slice's members + legends into a flat list of `{:legend, name, member_uris}` and `{:member, uri, meta}` entries (resolving each legend's roles to URIs) — the display/iteration view of a session's roster."
   @spec fold_members(map()) :: [
           {:legend, String.t(), [URI.t()]} | {:member, URI.t(), map()}
         ]
