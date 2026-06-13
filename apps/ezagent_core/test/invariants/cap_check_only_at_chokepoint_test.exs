@@ -131,15 +131,15 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         # against the grantee's own caps), NOT a cap-gate decision
         # outside the dispatch chokepoint.
         "apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/session_creator.ex",
-        # PR-8 (transport #53 / O-4) — the session-side `OrchestratorTools`
-        # action RECONSTRUCTS the orchestrator's OWN delegated caps to run a
+        # Transport #53 Decision C — the per-orchestrator `SessionManager`
+        # GenServer RECONSTRUCTS the orchestrator's OWN delegated caps to run a
         # forwarded `tools/call` under them. It reads them via the sanctioned
         # `Identity.list_caps_for/1` (which dispatches `identity.list_caps`
         # through the chokepoint for the agent's OWN caps) — a read of the
         # caller's own delegated authority to BUILD the op ctx, NOT a cap-gate
         # decision made outside dispatch. The 4 delegated caps then gate each
         # underlying op AT the dispatch chokepoint.
-        "apps/ezagent_domain_instance_message/lib/ezagent/behavior/orchestrator_tools.ex",
+        "apps/ezagent_domain_instance_message/lib/ezagent/session/session_manager.ex",
         # #533 PR-5 — create-time Manage cap grants use the same
         # idempotency pattern in the Workspace facade: read existing
         # caps to avoid duplicate grant writes, then dispatch the

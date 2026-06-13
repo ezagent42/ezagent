@@ -86,6 +86,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
   alias Ezagent.Entity.{Agent, Session, User}
   alias Ezagent.Orchestrator.{CcOrchestratorSeed, McpChannel, McpRegistry, McpServer}
   alias Ezagent.AgentBridge.TokenStore
+  alias Ezagent.Session.SessionManager
 
   # `uv` presence is resolved ONCE at module eval. The three subprocess
   # tests below tag themselves `skip:` when it is absent — a real
@@ -254,6 +255,26 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
   # ======================================================================
 
   describe "mcp_tools_call over the Channel reaches the per-orchestrator McpServer" do
+    # Transport #53 Decision C — the Channel forwards the bridge token to the
+    # session-domain SessionManager. These tests mint real tokens, so isolate
+    # TokenStore in a sandboxed EZAGENT_HOME.
+    setup do
+      home = Path.join(System.tmp_dir!(), "orch-chan-home-#{uniq()}")
+      File.mkdir_p!(home)
+      prev_home = System.get_env("EZAGENT_HOME")
+      System.put_env("EZAGENT_HOME", home)
+
+      on_exit(fn ->
+        if prev_home,
+          do: System.put_env("EZAGENT_HOME", prev_home),
+          else: System.delete_env("EZAGENT_HOME")
+
+        File.rm_rf(home)
+      end)
+
+      :ok
+    end
+
     test "a registered orchestrator's bridge join + mcp_tools_call routes to ITS McpServer" do
       session_uri = spawn_session()
 
@@ -273,24 +294,38 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
           owner_uri: User.admin_uri()
         )
 
-      # PR-8 (O-4): the session-side `OrchestratorTools` action authorizes
-      # the forwarded `tools/call` by the STRUCTURAL check
-      # `ctx.caller == working_copy.orchestrator_uri`. Wire that durable
-      # field exactly as create's step-4 materialization does, so this end-
-      # to-end wire test exercises the real session-side gate + reconstruction.
+      # Decision C: the SessionManager (session domain) authorizes the
+      # forwarded `tools/call` by verifying the bridge token + the STRUCTURAL
+      # check `binding.orchestrator_uri == working_copy.orchestrator_uri`. Wire
+      # the durable field + start the SessionManager exactly as create's step-7
+      # materialization does, so this end-to-end wire test exercises the real
+      # session-side token gate + cap reconstruction.
       {:ok, _} =
         Ezagent.Behavior.Session.ConfigActions.system_set_working_copy(session_uri, %{
           orchestrator_uri: orchestrator_uri,
-          orchestrator_template_uri:
-            Ezagent.URI.new!("template://system/agent/cc-orchestrator")
+          orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator")
         })
 
-      # Join the Channel exactly as the bridge does: the Socket has
-      # already token-authenticated `agent_uri`; the topic is keyed to it.
+      {:ok, token} = TokenStore.mint(orchestrator_uri)
+
+      {:ok, _sm} =
+        SessionManager.ensure_started(
+          orchestrator_uri: orchestrator_uri,
+          session_uri: session_uri,
+          workspace_uri: @workspace_uri,
+          owner_uri: User.admin_uri()
+        )
+
+      on_exit(fn -> SessionManager.stop(orchestrator_uri) end)
+
+      # Join the Channel exactly as the bridge does: the Socket has already
+      # token-authenticated `agent_uri` AND stashed the connection token (the
+      # bridge token) in assigns; the topic is keyed to the agent URI.
       {:ok, _join_reply, socket} =
         TestEndpoint
         |> socket("orchestrator_socket:#{URI.to_string(orchestrator_uri)}", %{
-          agent_uri: orchestrator_uri
+          agent_uri: orchestrator_uri,
+          bridge_token: token
         })
         |> subscribe_and_join(
           McpChannel,
@@ -323,13 +358,18 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
     end
 
     test "an authenticated agent that is NOT a registered orchestrator is denied the join" do
-      # An agent with a valid URI but no McpRegistry row — fail-closed.
+      # An agent with a valid URI + a connection token but no McpRegistry row —
+      # fail-closed.
       orphan = Ezagent.URI.new!("entity://team-alpha/agent/cc_not-an-orch-#{uniq()}")
       {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orphan})
+      {:ok, token} = TokenStore.mint(orphan)
 
       result =
         TestEndpoint
-        |> socket("orchestrator_socket:#{URI.to_string(orphan)}", %{agent_uri: orphan})
+        |> socket("orchestrator_socket:#{URI.to_string(orphan)}", %{
+          agent_uri: orphan,
+          bridge_token: token
+        })
         |> subscribe_and_join(McpChannel, "orch:bridge:#{URI.to_string(orphan)}")
 
       assert {:error, %{reason: reason}} = result
@@ -342,6 +382,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
       session_uri = spawn_session()
       orch_a = spawn_orchestrator_with_caps(MapSet.new())
       orch_b = spawn_orchestrator_with_caps(MapSet.new())
+      {:ok, token_a} = TokenStore.mint(orch_a)
 
       :ok =
         McpRegistry.register(orch_b,
@@ -352,7 +393,10 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
       result =
         TestEndpoint
         # Socket authenticated as A …
-        |> socket("orchestrator_socket:#{URI.to_string(orch_a)}", %{agent_uri: orch_a})
+        |> socket("orchestrator_socket:#{URI.to_string(orch_a)}", %{
+          agent_uri: orch_a,
+          bridge_token: token_a
+        })
         # … but the join targets B's topic.
         |> subscribe_and_join(McpChannel, "orch:bridge:#{URI.to_string(orch_b)}")
 
@@ -412,19 +456,29 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
           owner_uri: User.admin_uri()
         )
 
-      # PR-8 (O-4): wire the durable orchestrator_uri so the session-side
-      # `OrchestratorTools` action's structural caller-is-our-orchestrator
-      # gate passes for the forwarded tools/call.
+      # Decision C: wire the durable orchestrator_uri + start the SessionManager
+      # so the session-side token gate + structural caller-is-our-orchestrator
+      # gate pass for the forwarded tools/call.
       {:ok, _} =
         Ezagent.Behavior.Session.ConfigActions.system_set_working_copy(session_uri, %{
           orchestrator_uri: orchestrator_uri,
-          orchestrator_template_uri:
-            Ezagent.URI.new!("template://system/agent/cc-orchestrator")
+          orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator")
         })
 
       # The token `McpSocket.connect/3` will verify — minted by the same
-      # TokenStore the cc Template Class uses for a cc-flavored agent.
+      # TokenStore the cc Template Class uses for a cc-flavored agent. It is the
+      # SAME secret the SessionManager verifies on each forwarded tools/call.
       {:ok, token} = TokenStore.mint(orchestrator_uri)
+
+      {:ok, _sm} =
+        SessionManager.ensure_started(
+          orchestrator_uri: orchestrator_uri,
+          session_uri: session_uri,
+          workspace_uri: @workspace_uri,
+          owner_uri: User.admin_uri()
+        )
+
+      on_exit(fn -> SessionManager.stop(orchestrator_uri) end)
 
       # --- 4. ship the configured bridge into a temp dir --------------
       base = Path.join(System.tmp_dir!(), "orch-bridge-auth-#{uniq()}")
@@ -487,6 +541,50 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
       assert structured["session_templates"] == [],
              "session_templates must be gated out — the call ran through the real " <>
                "McpSocket-authenticated transport with the orchestrator's OWN caps"
+    end
+  end
+
+  # --- Decision C §6 (3a): the cc → SessionManager hop carries NO caps -----
+
+  describe "the cc transport hop is caps-free (Decision C §6 3a)" do
+    test "handle_tool_call forwards {:run_tool, tool, args, bridge_token} with NO caps" do
+      orchestrator_uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_nocaps-#{uniq()}")
+      token = "tok_cc-hop-#{uniq()}"
+
+      # Stand in for the per-orchestrator SessionManager: register a plain test
+      # process under the SAME Registry name + key the cc transport looks up, so
+      # we capture the EXACT message the cc hop sends.
+      {:ok, _} =
+        Registry.register(
+          Ezagent.Session.SessionManagerRegistry,
+          URI.to_string(orchestrator_uri),
+          nil
+        )
+
+      {:ok, ctx} =
+        McpServer.new(orchestrator_uri: orchestrator_uri, bridge_token: token)
+
+      parent = self()
+
+      # handle_tool_call does a blocking GenServer.call; run it in a task and
+      # reply from this process (which is the registered "SessionManager").
+      task =
+        Task.async(fn ->
+          McpServer.handle_tool_call(ctx, "list_templates", %{"name_filter" => "x"})
+        end)
+
+      assert_receive {:"$gen_call", from, message}, 1_000
+      GenServer.reply(from, {:ok, %{ok: true}})
+      _ = Task.await(task)
+      _ = parent
+
+      assert {:run_tool, "list_templates", %{"name_filter" => "x"}, ^token} = message,
+             "the cc → SessionManager message MUST be {:run_tool, tool, args, bridge_token} — " <>
+               "tool/args + the connection credential ONLY, NEVER caps."
+
+      # Belt-and-suspenders: NOTHING in the message resembles a capability set.
+      refute Enum.any?(Tuple.to_list(message), &match?(%MapSet{}, &1)),
+             "the cc hop must carry NO MapSet (caps) — caps are reconstructed session-side."
     end
   end
 

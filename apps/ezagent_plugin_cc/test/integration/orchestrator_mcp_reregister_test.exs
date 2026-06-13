@@ -112,18 +112,15 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
       # The fix: with the ETS row gone, from_orchestrator_uri rebuilds it
       # from the durable snapshot. Pre-fix this returned
       # {:error, :orchestrator_not_registered}.
-      assert {:ok, %McpServer{} = mcp} = McpServer.from_orchestrator_uri(orchestrator_uri),
+      assert {:ok, :registered} = McpServer.from_orchestrator_uri(orchestrator_uri),
              "from_orchestrator_uri must LAZILY REBUILD the context from the " <>
                "durable Session snapshot on an ETS miss (pure phx restart) — " <>
                "Task #110 read-through cache"
 
-      # PR-8 (transport #53 / O-4): the cc transport struct binds only the
-      # ROUTING context it needs to ADDRESS the dispatch — the orchestrator
-      # URI (→ ctx.caller) + its session URI (the dispatch target). The full
-      # owner/parent/caps context is reconstructed SESSION-side by the
-      # `OrchestratorTools` action; the transport no longer carries it.
-      assert URI.to_string(mcp.orchestrator_uri) == URI.to_string(orchestrator_uri)
-      assert URI.to_string(mcp.session_uri) == URI.to_string(session_uri)
+      # Transport #53 Decision C: the cc transport no longer carries the
+      # session/owner/parent context — the SessionManager (session domain)
+      # reconstructs it. `from_orchestrator_uri/1` is now the readiness gate;
+      # its rebuild side-effect fills the McpRegistry row, asserted below.
 
       # Cache was filled as a side-effect of the rebuild — the registry row
       # still records the FULL context (the readiness/register API is
@@ -171,15 +168,15 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
 
       assert McpRegistry.lookup(orchestrator_uri) == :error
 
-      assert {:ok, %McpServer{} = mcp} = McpServer.from_orchestrator_uri(orchestrator_uri),
+      assert {:ok, :registered} = McpServer.from_orchestrator_uri(orchestrator_uri),
              "from_orchestrator_uri must rebuild from the PERSISTED two-container " <>
                "(single-key %{state}) chat slice — the production shape"
 
-      assert URI.to_string(mcp.session_uri) == URI.to_string(session_uri)
-
-      # Owner + parent recovery is verified on the cache row (the session
-      # action reconstructs from it / the durable working copy).
+      # The rebuild side-effect filled the cache row; session/owner/parent
+      # recovery is verified on it (the SessionManager reconstructs from it /
+      # the durable working copy).
       assert {:ok, ctx} = McpRegistry.lookup(orchestrator_uri)
+      assert URI.to_string(ctx.session_uri) == URI.to_string(session_uri)
       assert URI.to_string(ctx.owner_uri) == URI.to_string(owner_uri)
       assert URI.to_string(ctx.parent_template_uri) == URI.to_string(session_template_uri)
     end
@@ -209,7 +206,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
         )
         |> Enum.map(fn {:ok, r} -> r end)
 
-      assert Enum.all?(results, &match?({:ok, %McpServer{}}, &1))
+      assert Enum.all?(results, &match?({:ok, :registered}, &1))
 
       # Exactly one row, with the correct context.
       assert {:ok, ctx} = McpRegistry.lookup(orchestrator_uri)
@@ -233,10 +230,9 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
 
       # Rebuild still succeeds (the session HAS an orchestrator) — the 6
       # tools that do not need parent_template_uri work after restart.
-      assert {:ok, %McpServer{} = mcp} = McpServer.from_orchestrator_uri(orchestrator_uri)
-      assert URI.to_string(mcp.session_uri) == URI.to_string(session_uri)
+      assert {:ok, :registered} = McpServer.from_orchestrator_uri(orchestrator_uri)
 
-      # PR-8 (O-4): parent recovery is now a SESSION-side concern; the
+      # Decision C: parent recovery is now a SESSION-side concern; the
       # transport's cache row carries the recovered (here: unrecoverable →
       # nil) parent_template_uri. A legacy snapshot's parent is structurally
       # unrecoverable (content-addressed hash is not in any durable legacy
