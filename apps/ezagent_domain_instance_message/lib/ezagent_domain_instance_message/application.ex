@@ -907,6 +907,24 @@ defmodule EzagentDomainInstanceMessage.Application do
       :ok = CapabilityRegistry.register(Session, action, OrchAdminB)
     end)
 
+    # PR-8 (transport #53 / decomposition spec §3.4 / O-4) — register the
+    # session-side `Ezagent.Behavior.OrchestratorTools` dispatch surface on
+    # `Entity.Session`. The cc MCP transport (`Ezagent.Orchestrator.McpServer`)
+    # FORWARDS a `tools/call` via `Invocation.dispatch` to a
+    # `session://…?action=orchestrate.<tool>` action here, carrying ONLY the
+    # orchestrator's caller URI (NO caps). This Behavior reconstructs the
+    # orchestrator's 4 delegated caps SESSION-side and runs the op — so no
+    # plugin-minted authority crosses the boundary (O-4). Registry-only (NOT
+    # in `Session.behaviors/0`), so it stays a reachable dispatch surface
+    # orthogonal to the per-instance subset (same pattern as IdentityAdmin /
+    # Terminable). Cap-exempt actions; the in-handler structural
+    # caller-is-our-orchestrator check is the entry authority.
+    alias Ezagent.Behavior.OrchestratorTools, as: OrchToolsB
+
+    Enum.each(OrchToolsB.actions(), fn action ->
+      :ok = CapabilityRegistry.register(Session, action, OrchToolsB)
+    end)
+
     # #533 §3.4 — Manage (`:delete` / `:reconfigure`) is a UNIVERSAL behavior
     # (resolves for every Kind via the registry fallback); no per-Kind
     # registration here. The manage-cap granted at create (PR-5c) gates it.
