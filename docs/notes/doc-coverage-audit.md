@@ -126,10 +126,11 @@ captured in `arch_baseline_manifest.exs`:
 
 - `undocumented_public_modules: 6` — public modules with no `@moduledoc`
   (real or `false`).
-- `undocumented_public_defs: 513` — non-`@impl` public API forms
-  (`def` + `defmacro` + `defdelegate` + `defguard`, minus the
-  `child_spec`/`start_link` boilerplate allowlist) with no `@doc` (real or
-  `false`).
+- `undocumented_public_defs: 535` — non-`@impl` public API forms
+  (`def` + `defmacro` + `defdelegate` + `defguard`, plus statically-named
+  public defs emitted from `quote` blocks, minus the `child_spec`/`start_link`
+  boilerplate allowlist) with no `@doc` (real or `false`). Only `@impl true` /
+  `@impl SomeBehaviour` exempt — `@impl false` does not.
 
 > **Denominator covers all public API forms (codex 2026-06-14).** An early
 > version of the scanner counted only raw `def`, which let public API exposed
@@ -150,14 +151,21 @@ captured in `arch_baseline_manifest.exs`:
 > public defs (the count was unchanged at 513), so this is forward-looking
 > robustness; fixtures in `doc_coverage_test.exs` prove the recursion.
 
-> **Macro-generated (quoted) public API — explicit policy (codex 2026-06-14).**
-> Defs emitted from `quote` blocks are deliberately NOT counted: their names can
-> be dynamic (`def unquote(n)(...)`, no static `{name, arity}`) and the doc
-> obligation idiomatically sits on the GENERATING macro. That macro is itself a
-> `defmacro` / `__using__` — already in the denominator — so generated public
-> API cannot *silently* grow undocumented: the undocumented generator trips the
-> counter. A `scan_source/1` fixture asserts a quoted def is not counted while
-> the generating macro is. Recursing into `quote` would yield false positives.
+> **Macro-generated (quoted) public API — counted (codex 2026-06-14).** A
+> whole-module `Macro.prewalk` finds every `quote` block (they live inside
+> def/defmacro bodies) and counts the STATICALLY-named public defs they emit
+> (e.g. the `kinds/0`/`behaviors/0` defaults a `__using__/1` injects) — once, at
+> the source, not per call-site. This closed a real hole: under the earlier
+> "skip quote, the generator macro is counted" policy, adding a new quoted public
+> def under an *already-documented* generator never moved the counter (+22 defs
+> were invisible). DYNAMICALLY-named heads (`def unquote(n)`) yield no static
+> `{name, arity}` and are skipped (the counted generator macro is their
+> backstop). Fixtures in `doc_coverage_test.exs` prove both.
+
+> **`@impl false` does not exempt (codex 2026-06-14).** Only `@impl true` /
+> `@impl SomeBehaviour` mark a behaviour-callback obligation; `@impl false`
+> explicitly means "not a callback", so a public def preceded by it is still
+> counted (regression fixture proves it).
 
 > The def-only `461` from the canonical scanner was slightly higher than the `428` in the
 > §A function table above. The difference is attribute-adjacency strictness: the

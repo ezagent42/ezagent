@@ -98,16 +98,19 @@ defmodule EzagentCore.Architecture.DocCoverageTest do
       assert Mix.Tasks.Ezagent.Doc.Scan.scan_source(source) == []
     end
 
-    test "macro-generated (quoted) defs are not counted, but the generating macro IS" do
-      # Policy: a def emitted from a quote block is macro-generated public API —
-      # the doc obligation sits on the GENERATING macro (which is counted), not
-      # on the expansion. So generated API cannot silently bypass the ratchet:
-      # the undocumented macro itself trips the counter.
+    test "statically-named quoted public defs ARE counted; dynamically-named are not" do
+      # Policy: a statically-named public def in a quote block is real public API
+      # (written once in source) and is counted — so adding one under an
+      # already-documented generator still moves the counter (codex 2026-06-14).
+      # A `def unquote(n)` head has no static {name, arity} and is skipped; the
+      # counted generating macro is its doc backstop.
       source = """
       defmodule Sample do
-        defmacro emit_api do
+        @doc "documented generator"
+        defmacro emit_api(name) do
           quote do
-            def generated_public(a), do: a
+            def static_generated(a), do: a
+            def unquote(name)(a), do: a
           end
         end
       end
@@ -115,11 +118,34 @@ defmodule EzagentCore.Architecture.DocCoverageTest do
 
       offenders = Mix.Tasks.Ezagent.Doc.Scan.scan_source(source)
 
-      refute {:generated_public, 1} in offenders,
-             "a quoted (macro-generated) def must NOT be counted directly"
+      assert {:static_generated, 1} in offenders,
+             "an undocumented statically-named quoted def must be counted"
 
-      assert {:emit_api, 0} in offenders,
-             "the undocumented generating macro IS counted — that is the bypass-proofing"
+      refute Enum.any?(offenders, fn {n, _a} -> n == :unquote end),
+             "a dynamically-named `def unquote(n)` head has no static arity and must be skipped"
+    end
+
+    test "@impl false does NOT exempt a public def (only @impl true / @impl Behaviour)" do
+      source = """
+      defmodule Sample do
+        @impl false
+        def not_a_callback(a), do: a
+
+        @impl true
+        def real_callback(a), do: a
+
+        @impl SomeBehaviour
+        def aliased_callback(a), do: a
+      end
+      """
+
+      offenders = Mix.Tasks.Ezagent.Doc.Scan.scan_source(source)
+
+      assert {:not_a_callback, 1} in offenders,
+             "@impl false is not a callback obligation — the def must still be counted"
+
+      refute {:real_callback, 1} in offenders, "@impl true exempts"
+      refute {:aliased_callback, 1} in offenders, "@impl SomeBehaviour exempts"
     end
 
     test "documented / @doc false / private forms are NOT counted" do

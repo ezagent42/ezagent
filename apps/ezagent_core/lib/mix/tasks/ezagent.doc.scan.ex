@@ -36,16 +36,15 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
 
   ## Macro-generated public API (quote blocks)
 
-  Public defs emitted from a `quote` block are NOT scanned, by deliberate
-  policy. They are macro-generated: their name may be dynamic
-  (`def unquote(n)(...)` — no static `{name, arity}`), and the documentation
-  obligation idiomatically sits on the GENERATING macro, not on each expansion.
-  That generating form is itself a `defmacro` / `__using__`, which IS in the
-  denominator — so a generator of undocumented public API still increments the
-  counter unless the macro is documented. Generated API therefore cannot
-  *silently* grow undocumented; the bypass-proofing is the counted macro
-  (proven by a `scan_source/1` fixture). Recursing into `quote` would instead
-  yield false positives (dynamic names, generated boilerplate).
+  `quote` blocks ARE scanned. A STATICALLY-named public def emitted from a quote
+  block (e.g. the `kinds/0` / `behaviors/0` defaults injected by
+  `Ezagent.Plugin.__using__/1`) is real public API, written once in source, so
+  it is counted here — once, not per call-site. (Skipping quotes would let a new
+  quoted public def under an already-documented generator grow the API surface
+  without moving the counter.) A DYNAMICALLY-named head (`def unquote(n)(...)`)
+  has no static `{name, arity}`, so it is skipped; for those the
+  documentation obligation falls back to the GENERATING macro, which is itself a
+  counted `defmacro` / `__using__`.
 
   ## Analysis
 
@@ -320,9 +319,46 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
   # the function). `doc_text` is the literal doc string when it is a plain
   # binary (for the WARN heuristic only).
   defp public_defs(forms) do
+    direct = collect_defs(forms, %{})
+
+    # Also count STATICALLY-named public defs emitted from `quote` blocks
+    # (macro-generated public API — e.g. the `kinds/0`/`behaviors/0` defaults a
+    # `__using__/1` injects). These live inside `defmacro`/`def` BODIES, so a
+    # single prewalk over the whole module finds every quote at any depth; each
+    # quote's body is run through the same `collect_defs` reducer. Counting them
+    # at the source (not per call-site) closes the hole where a new quoted public
+    # def under an already-documented generator would never move the counter
+    # (codex 2026-06-14). Dynamically-named heads (`def unquote(n)`) yield no
+    # static {name, arity} and are skipped by `fn_key/1`.
     forms
-    |> collect_defs(%{})
+    |> collect_quoted_defs(direct)
     |> Map.values()
+  end
+
+  defp collect_quoted_defs(ast, defs) do
+    {_ast, defs} =
+      Macro.prewalk(ast, defs, fn
+        {:quote, _meta, qargs} = node, acc when is_list(qargs) ->
+          {node, scan_quote_body(qargs, acc)}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    defs
+  end
+
+  defp scan_quote_body(qargs, defs) do
+    case List.last(qargs) do
+      kw when is_list(kw) ->
+        case Keyword.fetch(kw, :do) do
+          {:ok, body} -> collect_defs(top_forms(body), defs)
+          :error -> defs
+        end
+
+      _ ->
+        defs
+    end
   end
 
   # Reduce a flat list of module-body forms into a `{name, arity} => def-info`
@@ -342,8 +378,8 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
           {:@, _, [{:doc, _, [text]}]} ->
             {defs, :real, doc_text(text), pimpl}
 
-          {:@, _, [{:impl, _, [_]}]} ->
-            {defs, pdoc, ptext, true}
+          {:@, _, [{:impl, _, [impl_arg]}]} ->
+            {defs, pdoc, ptext, pimpl or impl_exempts?(impl_arg)}
 
           {form, _, [head | _]} when form in @public_def_forms ->
             case fn_key(head) do
@@ -396,17 +432,9 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
   defp container_branches({:unless, _, [_cond, kw]}), do: keyword_branches(kw)
   defp container_branches({:case, _, [_subj, [{:do, clauses}]]}), do: clause_branches(clauses)
   defp container_branches({:cond, _, [[{:do, clauses}]]}), do: clause_branches(clauses)
-  # `quote` is INTENTIONALLY not recursed (codex 2026-06-14 — explicit policy).
-  # A def emitted from a quote block is macro-generated public API: its name may
-  # be dynamic (`def unquote(n)(...)`) so it has no static {name, arity}, and the
-  # documentation obligation idiomatically sits on the GENERATING macro, not on
-  # each expansion. That generating form is itself a `defmacro` / `__using__` /
-  # `defmacro`-family head, which IS in the denominator (@public_def_forms) — so
-  # adding a generator of undocumented public API still increments the counter
-  # unless the macro is documented. Generated API therefore cannot SILENTLY
-  # bypass the ratchet; the bypass-proofing is the counted macro. Recursing into
-  # `quote` would instead produce false positives (dynamic names, boilerplate).
-  defp container_branches({:quote, _, _}), do: nil
+  # `quote` is handled separately (see `collect_quoted_defs/2`) via a whole-module
+  # prewalk, because quote blocks live inside def/defmacro bodies, not at the
+  # module-body level this function scans.
   defp container_branches(_), do: nil
 
   defp keyword_branches(kw) when is_list(kw) do
@@ -420,6 +448,14 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
   end
 
   defp clause_branches(_), do: nil
+
+  # `@impl` exempts a public def as a behaviour-callback obligation ONLY for
+  # `@impl true` or `@impl SomeBehaviour` (a module alias). `@impl false`
+  # explicitly means "this is NOT a callback", so it must NOT exempt the def
+  # from the doc ratchet (codex 2026-06-14).
+  defp impl_exempts?(true), do: true
+  defp impl_exempts?({:__aliases__, _, _}), do: true
+  defp impl_exempts?(_), do: false
 
   defp doc_text(text) when is_binary(text), do: text
   defp doc_text(_), do: nil

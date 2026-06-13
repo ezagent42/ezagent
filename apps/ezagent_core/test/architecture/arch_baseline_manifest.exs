@@ -157,6 +157,9 @@
   #   boilerplate allowlist. defdelegate/defmacro/defguard are in the
   #   denominator because public API here is not limited to raw `def` — a
   #   facade's delegates + the Kind/Behavior DSL macros are public surface too
-  #   (codex 2026-06-14; def-only undercounted by 52).
-  undocumented_public_defs: 513
+  #   (codex 2026-06-14; def-only undercounted by 52). Also counts STATICALLY-
+  #   named public defs emitted from quote blocks (macro-generated public API,
+  #   e.g. __using__-injected defaults; +22 over def+macro+delegate+guard) and
+  #   ignores @impl false (only @impl true / @impl Behaviour exempt).
+  undocumented_public_defs: 535
 }
