@@ -150,8 +150,13 @@
   #   documented). The 6 offenders are all framework boilerplate (Repo /
   #   Endpoint / Router / 3 Ecto schemas). Target end-state: 0.
   undocumented_public_modules: 6,
-  # undocumented_public_defs — distinct {name, arity} public `def`s (not defp)
-  #   with NO @doc (a `@doc false` COUNTS as documented), EXCLUDING @impl
-  #   callbacks + the {child_spec,1}/{start_link,0|1} boilerplate allowlist.
-  undocumented_public_defs: 461
+  # undocumented_public_defs — distinct {name, arity} public API forms
+  #   (def + defmacro + defdelegate + defguard; NOT their defp/defmacrop/
+  #   defguardp siblings) with NO @doc (a `@doc false` COUNTS as documented),
+  #   EXCLUDING @impl callbacks + the {child_spec,1}/{start_link,0|1}
+  #   boilerplate allowlist. defdelegate/defmacro/defguard are in the
+  #   denominator because public API here is not limited to raw `def` — a
+  #   facade's delegates + the Kind/Behavior DSL macros are public surface too
+  #   (codex 2026-06-14; def-only undercounted by 52).
+  undocumented_public_defs: 513
 }

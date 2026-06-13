@@ -20,11 +20,15 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
   - `undocumented_public_modules` — `defmodule`s under `apps/*/lib`
     (excluding test files + this scanner) with NO `@moduledoc` (neither a
     real one nor an explicit `@moduledoc false`).
-  - `undocumented_public_defs` — distinct `{name, arity}` public `def`s
-    (NOT `defp`) with NO `@doc` (real or `@doc false`), EXCLUDING `@impl`
-    callbacks (framework contract obligations — mirrors how the arch gate
-    exempts behaviour callbacks) and a small justified allowlist
-    (`@doc_def_allowlist`).
+  - `undocumented_public_defs` — distinct `{name, arity}` public
+    API-creating forms (`def`, `defmacro`, `defdelegate`, `defguard` —
+    NOT their `defp`/`defmacrop`/`defguardp` siblings) with NO `@doc`
+    (real or `@doc false`), EXCLUDING `@impl` callbacks (framework contract
+    obligations — mirrors how the arch gate exempts behaviour callbacks) and
+    a small justified allowlist (`@doc_def_allowlist`). `defdelegate` /
+    `defmacro` are counted because public API in this repo is not limited to
+    raw `def` (a facade's delegates + the Kind/Behavior DSL macros are public
+    surface that must be documented too).
 
   An explicit `@moduledoc false` / `@doc false` COUNTS AS DOCUMENTED — the
   author made a deliberate "this is internal, no prose" decision, which is
@@ -61,6 +65,16 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
   # same way in `@dup_always_exempt`). Empty by default beyond these — grow only
   # with a comment justifying each entry.
   @doc_def_allowlist MapSet.new([{:child_spec, 1}, {:start_link, 0}, {:start_link, 1}])
+
+  # The public-API-creating top-level forms the gate's denominator must cover.
+  # `def` alone undercounts: this codebase exposes public API via `defdelegate`
+  # (e.g. the `EzagentDomainInstanceMessage` facade) and `defmacro` / `defguard`
+  # (DSL like `Ezagent.Kind.attach/2`, `Ezagent.Behavior.action/2`). Counting
+  # only `def` would let a branch add an undocumented delegate/macro/guard
+  # without tripping the ratchet (codex 2026-06-14). Their private siblings
+  # break @doc/@impl adjacency exactly like `defp`.
+  @public_def_forms [:def, :defmacro, :defdelegate, :defguard]
+  @private_def_forms [:defp, :defmacrop, :defguardp]
 
   @impl Mix.Task
   def run(_args) do
@@ -129,6 +143,28 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
           |> Enum.map(&{m.file, m.name, &1.name, &1.arity})
         end)
     }
+  end
+
+  @doc false
+  # Analyze an in-memory source string (not a file on disk) and return the
+  # `{name, arity}` list of UNDOCUMENTED public API forms in it. Exists so the
+  # gate's denominator (def/defmacro/defdelegate/defguard coverage + the @doc /
+  # @impl / allowlist exemptions) is unit-testable with fixtures, independent of
+  # the real source tree the ratchet measures.
+  def scan_source(source) when is_binary(source) do
+    case Code.string_to_quoted(source) do
+      {:ok, ast} ->
+        ast
+        |> modules("<memory>")
+        |> Enum.flat_map(fn m ->
+          m.public_defs
+          |> Enum.filter(&undocumented_def?/1)
+          |> Enum.map(&{&1.name, &1.arity})
+        end)
+
+      {:error, _} ->
+        []
+    end
   end
 
   defp undocumented_def?(d) do
@@ -283,7 +319,7 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
           {:@, _, [{:impl, _, [_]}]} ->
             {defs, pdoc, ptext, true}
 
-          {:def, _, [head | _]} ->
+          {form, _, [head | _]} when form in @public_def_forms ->
             case fn_key(head) do
               nil ->
                 {defs, :none, nil, false}
@@ -300,7 +336,7 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
                 {defs, :none, nil, false}
             end
 
-          {:defp, _, _} ->
+          {form, _, _} when form in @private_def_forms ->
             {defs, :none, nil, false}
 
           {:@, _, _} ->

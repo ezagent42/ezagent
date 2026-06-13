@@ -126,11 +126,22 @@ captured in `arch_baseline_manifest.exs`:
 
 - `undocumented_public_modules: 6` — public modules with no `@moduledoc`
   (real or `false`).
-- `undocumented_public_defs: 461` — non-`@impl` public `def` (minus the
+- `undocumented_public_defs: 513` — non-`@impl` public API forms
+  (`def` + `defmacro` + `defdelegate` + `defguard`, minus the
   `child_spec`/`start_link` boilerplate allowlist) with no `@doc` (real or
   `false`).
 
-> The `461` from the canonical scanner is slightly higher than the `428` in the
+> **Denominator covers all public API forms (codex 2026-06-14).** An early
+> version of the scanner counted only raw `def`, which let public API exposed
+> via `defdelegate` (e.g. the `EzagentDomainInstanceMessage` facade) and
+> `defmacro` / `defguard` (the `Ezagent.Kind` / `Ezagent.Behavior` DSL) slip
+> past the ratchet. The scanner now counts those forms too; this lifted the
+> calibrated baseline from 461 (def-only) to 513 — the 52 previously-invisible
+> undocumented delegates/macros/guards. `doc_coverage_test.exs` has a fixture
+> regression test (`scan_source/1`) proving an undocumented delegate/macro/guard
+> now fails the gate.
+
+> The def-only `461` from the canonical scanner was slightly higher than the `428` in the
 > §A function table above. The difference is attribute-adjacency strictness: the
 > gate scanner only lets a pending `@doc`/`@impl` carry across *module
 > attributes* (`@spec`/`@dialyzer`/…) to the next `def`, and clears it across a

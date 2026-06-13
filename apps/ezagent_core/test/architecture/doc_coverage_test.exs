@@ -30,4 +30,48 @@ defmodule EzagentCore.Architecture.DocCoverageTest do
              "doc.scan counter #{inspect(key)} missing from arch_baseline_manifest.exs"
     end
   end
+
+  describe "denominator covers all public API forms (codex 2026-06-14)" do
+    test "undocumented defdelegate / defmacro / defguard are counted, not just def" do
+      source = """
+      defmodule Sample do
+        def plain_def(a), do: a
+        defdelegate delegated(a), to: Other
+        defmacro a_macro(a), do: a
+        defguard is_thing(a) when is_atom(a)
+      end
+      """
+
+      offenders = Mix.Tasks.Ezagent.Doc.Scan.scan_source(source)
+
+      assert {:plain_def, 1} in offenders
+      assert {:delegated, 1} in offenders,
+             "a public defdelegate without @doc must count toward the ratchet"
+      assert {:a_macro, 1} in offenders,
+             "a public defmacro without @doc must count toward the ratchet"
+      assert {:is_thing, 1} in offenders,
+             "a public defguard without @doc must count toward the ratchet"
+    end
+
+    test "documented / @doc false / private forms are NOT counted" do
+      source = """
+      defmodule Sample do
+        @doc "why this delegate exists"
+        defdelegate documented(a), to: Other
+
+        @doc false
+        defmacro internal_macro(a), do: a
+
+        defp private_fn(a), do: a
+        defmacrop private_macro(a), do: a
+        defguardp is_private(a) when is_atom(a)
+      end
+      """
+
+      offenders = Mix.Tasks.Ezagent.Doc.Scan.scan_source(source)
+
+      assert offenders == [],
+             "documented, @doc false, and private forms must not count; got #{inspect(offenders)}"
+    end
+  end
 end
