@@ -78,6 +78,18 @@ defmodule EzagentDomainInstanceMessage.Application do
     # repopulate. Same lazy-`init/0` domain-app pattern.
     :ok = Ezagent.Orchestrator.LiveJoinRegistry.init()
 
+    # Decomposition spec §3.6 / codex HIGH-3 — the orchestrator readiness logic
+    # in `Ezagent.Entity.Session.Orchestrator` calls the session-owned
+    # `OrchestratorReadinessPort`; register the passthrough impl that forwards
+    # to the (currently session-resident) transport modules just inited above.
+    # "The current owner registers": PR-8 relocates those modules + this
+    # registration into the cc plugin. Registering here (not in cc) keeps the
+    # standalone orchestrator integration tests — which run without cc — green.
+    :ok =
+      Ezagent.Session.OrchestratorReadinessPort.put_impl(
+        Ezagent.Session.OrchestratorReadinessPassthrough
+      )
+
     # Phase 8c PR-J (Allen 2026-05-20) — `session://default/system/main` is no longer
     # a static supervisor child. The first-login wizard at `/` creates
     # the default session via the canonical `Ezagent.Workspace.create_session/3`
