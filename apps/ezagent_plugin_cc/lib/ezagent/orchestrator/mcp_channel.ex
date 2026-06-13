@@ -28,20 +28,23 @@ defmodule Ezagent.Orchestrator.McpChannel do
 
   On join, the Channel resolves the bound `%McpServer{}` ENTIRELY from
   `socket.assigns.agent_uri` (the token-authenticated value) via
-  `Ezagent.Orchestrator.McpServer.from_orchestrator_uri/1`:
+  `Ezagent.Orchestrator.McpServer.from_orchestrator_uri/1`. The transport
+  struct binds only the ROUTING context (the orchestrator URI + its session
+  URI) resolved from `Ezagent.Orchestrator.McpRegistry`.
 
-  - the session / workspace / owner / parent-template come from
-    `Ezagent.Orchestrator.McpRegistry` — the binding the Generator
-    registered when it spawned this orchestrator;
-  - the four delegated caps are loaded from the orchestrator agent's
-    own `:identity` slice.
-
-  Nothing in any `mcp_tools_call` payload influences caller, caps, or
-  session. The `tool` name + its `arguments` are the ONLY wire input,
-  and `McpServer.handle_tool_call/3` enforces CapBAC on every tool
-  with the server-bound caps. A `claude` process therefore cannot
-  spoof another orchestrator's authority — it can only call its OWN 7
-  tools, gated by its OWN delegated caps.
+  Nothing in any `mcp_tools_call` payload influences caller or session. The
+  `tool` name + its `arguments` are the ONLY wire input. On a `tools/call`,
+  `McpServer.handle_tool_call/3` DECODES the request and FORWARDS it via
+  `Invocation.dispatch` to the session-domain action
+  `session://…?action=orchestrate.<tool>` carrying ONLY the orchestrator's
+  caller URI — NO ambient/plugin-minted authority crosses the boundary
+  (decomposition spec O-4). The session-side `Ezagent.Behavior.OrchestratorTools`
+  action enforces a fail-closed STRUCTURAL gate (caller MUST be this
+  session's orchestrator) and RECONSTRUCTS the orchestrator's 4 delegated
+  caps session-side, gating each underlying tool op at the dispatch
+  chokepoint. A `claude` process therefore cannot spoof another
+  orchestrator's authority — it can only call its OWN tools, gated by its
+  OWN delegated caps.
 
   ## Why a separate Channel module (not the cc Channel)
 

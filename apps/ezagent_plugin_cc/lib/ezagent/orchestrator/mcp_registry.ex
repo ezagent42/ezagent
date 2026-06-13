@@ -25,10 +25,13 @@ defmodule Ezagent.Orchestrator.McpRegistry do
   `(session_uri, workspace_uri, owner_uri, parent_template_uri)`
   context under the orchestrator's URI; the bridge's Channel
   (`Ezagent.Orchestrator.McpChannel`) — having token-verified that
-  URI — LOOKS UP the context and reconstructs the bound
-  `%McpServer{}` server-side. Caps are loaded fresh from the
-  orchestrator's `:identity` slice at construction (`McpServer.new/1`),
-  never carried on the wire.
+  URI — LOOKS UP the context and reconstructs the bound transport
+  `%McpServer{}` server-side. The cc transport struct uses only the
+  `session_uri` from this row (to address the dispatch); the orchestrator's
+  delegated caps are reconstructed SESSION-side by the
+  `Ezagent.Behavior.OrchestratorTools` action (decomposition spec O-4),
+  never carried on the wire. The full context the row stores is read by the
+  session-side reconstruction / readiness-register API.
 
   ## Storage
 
