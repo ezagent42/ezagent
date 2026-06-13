@@ -29,14 +29,17 @@ defmodule Ezagent.Invariants.RoutingSingletonNotBootSpawnedInTestTest do
 
   Per `feedback_completion_requires_invariant_test`, this gate FAILS when
   the architectural goal ("no DB-touching singleton spawns at boot in
-  `:test`") is violated — not merely when the suite is red:
+  `:test`") is violated — via a STATIC check of the boot code:
+  `register_system_kind/0` must guard the eager spawn with a test-env check
+  (the `if is_test?() do :ok else …` block). Deleting that guard
+  re-introduces the boot-time no-owner read/write.
 
-    a. STATIC: `register_system_kind/0` must guard the eager spawn with a
-       test-env check (the `if is_test?() do :ok else …` block). Deleting
-       that guard re-introduces the boot-time no-owner read/write.
-    b. RUNTIME: in `:test`, `system://routing/default` must NOT already be
-       live in `KindRegistry` at the point a test runs (nothing spawned it
-       at boot). A test that needs it spawns it explicitly.
+  NOTE (codex P1): a RUNTIME `KindRegistry.lookup` check is deliberately NOT
+  used — the suite DRAINS rather than terminates Kinds, so a test that
+  demand-spawns `system://routing/default` earlier leaves it globally
+  registered. A runtime refute would then check *current suite state*, not
+  *boot state*, and flake under randomized ordering. The static source gate
+  is the correct, order-independent invariant.
   """
 
   use ExUnit.Case, async: true
@@ -62,19 +65,6 @@ defmodule Ezagent.Invariants.RoutingSingletonNotBootSpawnedInTestTest do
            `DBConnection.OwnershipError` cascade + cold-restart-gate flake
            (#52 Mode B). If you intentionally changed this, update this gate
            AND the demand-spawn setups in the routing tests AND the SPEC.
-           """
-  end
-
-  test "in test env, system://routing/default is NOT live at boot (runtime gate)" do
-    uri = Ezagent.Entity.System.routing_default_uri()
-
-    refute match?({:ok, _pid}, Ezagent.KindRegistry.lookup(uri)),
-           """
-           `system://routing/default` must NOT be eagerly spawned at boot in
-           `:test`. It was found live in KindRegistry with no test having
-           spawned it — the boot-spawn guard (#52 Mode B) has regressed.
-           Tests that need the sentinel demand-spawn it inside a checked-out
-           sandbox owner (grep: routing_default_uri).
            """
   end
 end
