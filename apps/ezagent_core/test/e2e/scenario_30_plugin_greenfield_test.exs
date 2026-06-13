@@ -26,6 +26,10 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
 
   use ExUnit.Case, async: false
 
+  # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
+  # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
+  @moduletag :umbrella_only
+
   @moduletag scenario: "30-plugin-author-behavior"
   @moduletag :e2e
 

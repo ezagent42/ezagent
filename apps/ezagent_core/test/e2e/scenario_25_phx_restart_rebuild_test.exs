@@ -53,6 +53,10 @@ defmodule Ezagent.E2E.Scenario25PhxRestartRebuildTest do
 
   use EzagentCore.DataCase, async: false
 
+  # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
+  # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
+  @moduletag :umbrella_only
+
   @moduletag scenario: "25-phx-restart-rebuild"
 
   alias Ezagent.{Invocation, KindRegistry, SnapshotStore, SystemPrincipal, WorkspaceRegistry}

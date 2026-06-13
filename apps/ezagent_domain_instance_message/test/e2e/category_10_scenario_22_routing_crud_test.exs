@@ -49,6 +49,24 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
 
   defp uniq(prefix), do: "#{prefix}-#{System.unique_integer([:positive])}"
 
+  # #52 Mode-B fix: `system://routing/default` is no longer eager-spawned
+  # at boot in `:test`. These tests dispatch `routing.add_rule` / `delete_rule`
+  # to it, so spawn it inside the DataCase-checked-out owner and allow its
+  # pid onto the connection. Exercises the demand-spawn path. (greppable:
+  # routing_default_uri)
+  setup do
+    uri = Ezagent.Entity.System.routing_default_uri()
+
+    case Ezagent.SpawnRegistry.spawn(uri) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+    end
+
+    {:ok, pid} = Ezagent.KindRegistry.lookup(uri)
+    _ = Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, self(), pid)
+    :ok
+  end
+
   describe "add_rule via Behavior.Routing dispatch" do
     test "admin can add a mention-matcher rule + it appears in list" do
       receiver = "entity://team-alpha/agent/echo_#{uniq("x")}"

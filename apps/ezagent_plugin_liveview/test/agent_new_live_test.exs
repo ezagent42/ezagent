@@ -13,6 +13,11 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
   - cap parsing happens — invalid caps surface the parser error
   """
   use ExUnit.Case
+
+  # #52 Mode-A: cross-tier LiveView suite — mounts views that resolve
+  # sibling-app domain modules; runs only in the umbrella. Excluded
+  # standalone (`cd apps/ezagent_plugin_liveview && mix test`).
+  @moduletag :umbrella_only
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
 

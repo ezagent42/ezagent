@@ -27,6 +27,10 @@ defmodule Ezagent.Invariants.PluginHotInstallTest do
 
   use ExUnit.Case, async: true
 
+  # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
+  # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
+  @moduletag :umbrella_only
+
   alias Ezagent.{AgentFlavorRegistry, BehaviorRegistry, TemplateRegistry}
 
   @plugin_app :ezagent_plugin_echo

@@ -3,6 +3,10 @@ defmodule Ezagent.Invariants.CascadePr0FoundationsTest do
   # which reads the Repo — so it needs the SQL sandbox.
   use EzagentCore.DataCase, async: false
 
+  # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
+  # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
+  @moduletag :umbrella_only
+
   test "grant store, user-source registry, grant cap, adapter split all present" do
     assert Code.ensure_loaded?(Ezagent.Credential.GrantRow)
     assert Code.ensure_loaded?(Ezagent.Credential.UserDefaultSource)

@@ -20,6 +20,10 @@ defmodule Ezagent.Invariants.TemplateClassExtensionContractTest do
 
   use ExUnit.Case, async: true
 
+  # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
+  # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
+  @moduletag :umbrella_only
+
   @extension_callbacks [
     {:list_extensions, 1},
     {:toggle_extension, 3},

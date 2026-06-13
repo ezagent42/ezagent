@@ -14,11 +14,28 @@ config :ezagent_core, EzagentCore.Repo,
   #   - Step 5.6 cap-loading (Identity slice read)
   #   - PR-6 per-tenant write paths (messages, kind_snapshots)
   # Pool of 5 was enough for unit-level tests but exhausts under
-  # integration-level concurrency. Bumping to 20 — SQLite handles
-  # concurrent readers fine; the limit is per-connection serialization
-  # of writes (which sandbox checkouts already serialize per test).
+  # integration-level concurrency. Bumped to 20 and KEPT at 20.
+  #
+  # #52 Mode-C NOTE: the design proposed trimming the pool 20→~10 "(measure)"
+  # to cut connect-time write-lock contention. MEASURED: the reduction
+  # REGRESSES heavier suites — the `ezagent_domain_instance_message` suite
+  # (many concurrent globally-supervised Kinds, each `start_owner_stable!`
+  # checking out one connection) STARVES at pool_size 15 (`DBConnection`
+  # `:queue_timeout` after ~10 s in `start_owner_stable!`), and the
+  # boot-time `Workspace.create_session` seed deadlocks at 12. So the pool
+  # stays at 20. The real Mode-C levers are (a) removing the Mode-B
+  # boot-writer (gating `system://routing/default`'s boot-spawn out of
+  # `:test`, which deletes the unsynchronized boot-time `kind_snapshots`
+  # writer) and (b) the raised `busy_timeout` below — NOT a smaller pool.
   pool_size: 20,
   pool: Ecto.Adapters.SQL.Sandbox,
+  # #52 Mode-C fix: RAISE busy_timeout above the 2_000 ms ecto_sqlite3
+  # default (NOT "add WAL" — WAL + a 2 s busy_timeout are already the
+  # adapter defaults and config/test.exs overrides neither). A contending
+  # writer now WAITS up to 5 s for the single-writer lock instead of
+  # immediately raising `Exqlite.Error: database is locked`. journal_mode
+  # is left at the adapter default `:wal`.
+  busy_timeout: 5_000,
   # Extend queue timeout for the same reason — under load tests can
   # legitimately wait briefly for a connection.
   queue_target: 1000,

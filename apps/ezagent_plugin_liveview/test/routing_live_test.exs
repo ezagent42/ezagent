@@ -1,5 +1,10 @@
 defmodule EzagentPluginLiveview.RoutingLiveTest do
   use ExUnit.Case
+
+  # #52 Mode-A: cross-tier LiveView suite — mounts views that resolve
+  # sibling-app domain modules; runs only in the umbrella. Excluded
+  # standalone (`cd apps/ezagent_plugin_liveview && mix test`).
+  @moduletag :umbrella_only
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
 
@@ -8,6 +13,15 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
     Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+
+    # #52 Mode-B fix: `system://routing/default` is no longer eager-spawned
+    # at boot in `:test`. The routing form dispatches `routing.add_rule` to
+    # it, so spawn it here (after shared mode is set, so its `Kind.Server`
+    # DB work runs on this owned connection). Idempotent across tests.
+    case Ezagent.SpawnRegistry.spawn(Ezagent.Entity.System.routing_default_uri()) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+    end
 
     # V1 UI PR-1 — the uri_picker fields are scoped to
     # `current_workspace_uri`. The admin is a `workspace://system`

@@ -77,8 +77,37 @@ defmodule EzagentCore.DataCase do
   """
   def setup_sandbox(tags) do
     pid = start_owner_stable!(not tags[:async])
+    allow_live_kinds(pid)
     on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
     on_exit(&drain_live_kinds/0)
+  end
+
+  # #52 Mode-B tightening (design §3.2). Walk every Kind ALREADY LIVE in
+  # `KindRegistry` at setup time and `Sandbox.allow/3` its pid onto this
+  # test's owner connection. A globally-supervised `Kind.Server` runs Repo
+  # queries OUTSIDE the test's `$callers` chain (in `handle_continue` /
+  # `handle_info` — snapshot writes, `EventLog.append`), so without an
+  # explicit allow it can hit `cannot find ownership process for #PID<…>
+  # (:proc_lib)` and degrade to in-memory-only / log noise. Allowing the
+  # live pids here closes that gap for Kinds alive at setup.
+  #
+  # This is best-effort and complements (does not replace) the P6
+  # `drain_live_kinds/0` teardown + the cold-restart fix (gating the boot
+  # singleton out of `:test`). Kinds spawned LATER in the test under a
+  # global supervisor still inherit via `$callers` when spawned from the
+  # (allowed) test process; the residual detached class is best-effort
+  # drained at teardown. `Sandbox.allow/3` is idempotent and tolerates an
+  # already-owned or dead pid, so we ignore its result.
+  defp allow_live_kinds(owner) do
+    Enum.each(registered_kinds(), fn {_uri, pid} ->
+      try do
+        Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, owner, pid)
+      rescue
+        _ -> :ok
+      catch
+        :exit, _ -> :ok
+      end
+    end)
   end
 
   # P6 cold-restart determinism (remediation §3 C-D). A drop-in for

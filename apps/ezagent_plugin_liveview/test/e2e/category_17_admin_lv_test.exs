@@ -41,6 +41,11 @@ defmodule EzagentPluginLiveview.E2E.Category17AdminLvTest do
   """
 
   use ExUnit.Case, async: false
+
+  # #52 Mode-A: cross-tier LiveView suite — mounts views that resolve
+  # sibling-app domain modules; runs only in the umbrella. Excluded
+  # standalone (`cd apps/ezagent_plugin_liveview && mix test`).
+  @moduletag :umbrella_only
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
 
@@ -49,6 +54,14 @@ defmodule EzagentPluginLiveview.E2E.Category17AdminLvTest do
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
     Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+
+    # #52 Mode-B fix: `system://routing/default` is no longer eager-spawned
+    # at boot in `:test`. The /admin/routing form dispatches `routing.add_rule`
+    # to it, so spawn it here (after shared mode is set). Idempotent.
+    case Ezagent.SpawnRegistry.spawn(Ezagent.Entity.System.routing_default_uri()) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+    end
 
     # Seed the workspaces the dropdown / templates pages read from.
     # Mirrors `users_live_test.exs` setup — the dropdown source is

@@ -17,6 +17,11 @@ defmodule EzagentPluginLiveview.ConfigFormTest do
   """
   use ExUnit.Case, async: true
 
+  # #52 Mode-A: cross-tier LiveView suite — mounts views that resolve
+  # sibling-app domain modules; runs only in the umbrella. Excluded
+  # standalone (`cd apps/ezagent_plugin_liveview && mix test`).
+  @moduletag :umbrella_only
+
   import Phoenix.Component
   import Phoenix.LiveViewTest
 

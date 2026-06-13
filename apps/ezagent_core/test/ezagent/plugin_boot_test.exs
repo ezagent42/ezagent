@@ -10,6 +10,10 @@ defmodule Ezagent.Plugin.BootTest do
 
   use ExUnit.Case, async: false
 
+  # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
+  # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
+  @moduletag :umbrella_only
+
   # A GenServer used as a Phase-1 child. On `init` it records, via the
   # message it sends to the test process, whether the plugin's declared
   # Behavior is ALREADY published in BehaviorRegistry. If boot is

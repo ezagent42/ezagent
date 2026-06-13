@@ -41,6 +41,10 @@ defmodule EzagentCore.Invariants.NoDefaultWorkspaceSeededTest do
   """
   use EzagentCore.DataCase, async: false
 
+  # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
+  # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
+  @moduletag :umbrella_only
+
   test "no `default` workspace row is boot-seeded" do
     # Sanity: the system workspace IS seeded (in :test the chat
     # plugin short-circuits its `ensure_system_workspace/0`, but

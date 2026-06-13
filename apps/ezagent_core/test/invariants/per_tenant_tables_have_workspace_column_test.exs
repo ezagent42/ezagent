@@ -24,6 +24,10 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
 
   use EzagentCore.DataCase, async: false
 
+  # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
+  # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
+  @moduletag :umbrella_only
+
   alias EzagentCore.Repo
 
   # Per-tenant schemas — MUST declare `:workspace_uri` field AND have
