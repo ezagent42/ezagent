@@ -208,6 +208,81 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigrationTest do
 
       assert_raise RuntimeError, ~r/undecodable/, fn -> Migration.run() end
     end
+
+    # codex P2 (r5) — a curl_agent row missing a LEGACY-OWNED slice is corrupt;
+    # the migration must fail loud, NOT fabricate an empty slice (which would
+    # turn it into a migrated agent with lost conversation/keys).
+    test "a curl_agent row missing the legacy :curl_agent slice FAILS LOUD" do
+      uri = "entity://team-alpha/agent/curl_noslice-#{System.unique_integer([:positive])}"
+      # only :api_keys — the :curl_agent conversation slice is gone
+      truncated = %{api_keys: %{state: %{keys: %{}, creator_uri: nil}, transients: %{}}}
+      seed_curl_agent(uri, truncated)
+
+      assert_raise RuntimeError, ~r/missing the legacy-owned :curl_agent slice/, fn ->
+        Migration.run()
+      end
+    end
+  end
+
+  describe "cross-store cap-axis rewrite (codex P1 — :curl_agent → :agent everywhere)" do
+    test "rewrite_caps_json/1 flips kind curl_agent → agent, leaves others, idempotent" do
+      # the stored caps_json shape (`Capability.Normalize.to_map/1`): the `:kind`
+      # axis is the plain-atom string under the "kind" key.
+      json =
+        Jason.encode!([
+          %{
+            "kind" => "curl_agent",
+            "behavior" => "Elixir.Ezagent.Behavior.CurlAgent",
+            "action" => "reset_conversation"
+          },
+          %{
+            "kind" => "agent",
+            "behavior" => "Elixir.Ezagent.Behavior.Identity",
+            "action" => "list_caps"
+          }
+        ])
+
+      assert {:changed, rewritten} = Migration.rewrite_caps_json(json)
+      decoded = Jason.decode!(rewritten)
+      kinds = decoded |> Enum.map(&Map.get(&1, "kind")) |> Enum.sort()
+      # the curl cap is now :agent; the pre-existing :agent cap is untouched
+      assert kinds == ["agent", "agent"]
+      # actions preserved
+      assert Enum.any?(decoded, &(&1["action"] == "reset_conversation"))
+      # nothing left referencing the deleted curl axis
+      refute String.contains?(rewritten, "curl_agent")
+      # idempotent + nil/garbage tolerated
+      assert {:unchanged, ^rewritten} = Migration.rewrite_caps_json(rewritten)
+      assert {:unchanged, nil} = Migration.rewrite_caps_json(nil)
+      assert {:unchanged, "not json"} = Migration.rewrite_caps_json("not json")
+    end
+
+    test "a NON-curl snapshot holding a :curl_agent cap is rewritten + gated" do
+      # e.g. an admin/owner agent granted manage rights over a curl agent, under
+      # the old :curl_agent axis — lives in a kind_type:"agent" row, never seen
+      # by the curl_agent-row pass.
+      uri = "entity://team-alpha/agent/owner_holds_curl-#{System.unique_integer([:positive])}"
+      curl_cap = Capability.cap(:curl_agent, Ezagent.Behavior.CurlAgent, :configure)
+      foreign = %{identity: %{state: %{caps: MapSet.new([curl_cap])}, transients: %{}}}
+      {:ok, _} =
+        KindSnapshot.upsert(uri, "agent", :erlang.term_to_binary(foreign), 0, @workspace,
+          mark_ever_created: true
+        )
+
+      # gate sees the stale cross-store grant BEFORE migration
+      assert {:ok, n} = Migration.gate()
+      assert n >= 1
+
+      assert {:ok, %{foreign_snapshots_rewritten: r}} = Migration.run()
+      assert r >= 1
+
+      # kind_type preserved (foreign row keeps its own Kind), cap axis flipped
+      assert %KindSnapshot{kind_type: "agent"} = KindSnapshot.get(uri)
+      {:ok, state} = KindSnapshot.decode_state(KindSnapshot.get(uri))
+      kinds = state.identity.state.caps |> MapSet.to_list() |> Enum.map(& &1.kind)
+      assert kinds == [:agent]
+      assert {:ok, 0} = Migration.gate()
+    end
   end
 
   describe "cold-load round-trip — a migrated row rehydrates as a unified curl agent" do

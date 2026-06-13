@@ -65,6 +65,13 @@ defmodule Mix.Tasks.Ezagent.Curl.Migrate do
         "migrated=#{counts.migrated} already=#{counts.already} dry_run=#{counts.dry_run}"
     )
 
+    Mix.shell().info(
+      "curl→agent cross-store cap rewrite: users_scanned=#{counts.users_scanned} " <>
+        "users_rewritten=#{counts.users_rewritten} " <>
+        "snapshots_scanned=#{counts.foreign_snapshots_scanned} " <>
+        "snapshots_rewritten=#{counts.foreign_snapshots_rewritten}"
+    )
+
     if dry_run? do
       Mix.shell().info("(no rows written — re-run without --dry-run to apply)")
     else
