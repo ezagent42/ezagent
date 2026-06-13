@@ -90,6 +90,22 @@ has no `McpChannel`/`orchestrator_bridge` symbol; the compile dep graph is acycl
   occurrence first (enumerate-all-gates discipline) — including `config/`,
   release, and CI; `mix compile --force` + full umbrella + the 3 arch gates +
   `check_invariants.lifecycle` after.
+- **The arch gates THEMSELVES hardcode the old app path — they WILL go red on
+  rename (concrete, verified).** `ezagent.arch.scan.ex` has
+  `apps/ezagent_domain_instance_message/...` in its allowlists (e.g. lines ~29/31/44),
+  and `ezagent.check_invariants.ex` has several `grep -v
+  'apps/ezagent_domain_instance_message/...'` exclusions (lines ~123-125/262).
+  Renaming the app without updating these stale path allowlists is the EXACT class
+  that reddened main twice (#736/#741, memory `feedback_run_check_invariants_gate`
+  + `feedback_enumerate_all_gates_before_deletion`). PR-9b MUST update every
+  hardcoded `apps/ezagent_domain_instance_message/` literal in the gate tasks in
+  the same commit, then run all gates force-compiled to prove green.
+- **Runtime app-name atoms.** At least `Application.ensure_all_started(
+  :ezagent_domain_instance_message)` (`ezagent.credential.adopt.ex:52`) and any
+  `Application.get_env(:ezagent_domain_instance_message, …)` use the app atom at
+  runtime — these must move with the rename (a compile pass won't catch a wrong
+  app atom in a string/atom literal). Grep `:ezagent_domain_instance_message`
+  (atom form) separately from the dep-tuple form.
 - **Accidental module-namespace rename → snapshot break.** Mitigate: hard rule —
   PR-9 does NOT rename modules; an arch test / review check that no `kind_type`
   string and no `Ezagent.*` module atom changed in the diff.
