@@ -24,6 +24,27 @@ defmodule EzagentCore.ArchitectureCase do
            """
   end
 
+  @doc """
+  Ratchet assertion for the documentation-coverage gate (2026-06-13). Same
+  semantics as `assert_at_or_below/1` but counts come from
+  `Mix.Tasks.Ezagent.Doc.Scan` (doc-coverage) rather than the architecture
+  scanner. Shares the manifest cap + `# arch-cap-bump:` convention.
+  """
+  def assert_doc_at_or_below(name) when is_atom(name) do
+    count = Mix.Tasks.Ezagent.Doc.Scan.count(name)
+    cap = cap(name)
+
+    assert count <= cap,
+           """
+           Documentation-coverage regression for #{name}: measured #{count}, cap #{cap}.
+           Add a @moduledoc / @doc (or an explicit @moduledoc false / @doc false)
+           to the new offender(s) — run `mix ezagent.doc.scan` to list them.
+           For an intentional cap increase, add:
+               # arch-cap-bump: <reason>
+           on the manifest line.
+           """
+  end
+
   def assert_zero(name) when is_atom(name) do
     count = Mix.Tasks.Ezagent.Arch.Scan.count(name)
 

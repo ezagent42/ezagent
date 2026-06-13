@@ -138,5 +138,20 @@
   missing_cap_check_mutating_actions: 0,
   kind_runtime_ordering_violations: 0,
   kind_runtime_reentry_violations: 0,
-  cold_restart_respawn_round_trip_drift: 0
+  cold_restart_respawn_round_trip_drift: 0,
+  # Documentation-coverage gate (2026-06-13, Allen) — RATCHET-DOWN counters.
+  # Backed by `Mix.Tasks.Ezagent.Doc.Scan`; enforced by
+  # test/architecture/doc_coverage_test.exs. Calibrated GREEN at the CURRENT
+  # main count (no day-one red build); the comment-improvement campaign lowers
+  # these. See docs/notes/doc-coverage-audit.md §"How to ratchet DOWN".
+  #
+  # undocumented_public_modules — defmodules under apps/*/lib (sans test files +
+  #   the scanner) with NO @moduledoc (a `@moduledoc false` COUNTS as
+  #   documented). The 6 offenders are all framework boilerplate (Repo /
+  #   Endpoint / Router / 3 Ecto schemas). Target end-state: 0.
+  undocumented_public_modules: 6,
+  # undocumented_public_defs — distinct {name, arity} public `def`s (not defp)
+  #   with NO @doc (a `@doc false` COUNTS as documented), EXCLUDING @impl
+  #   callbacks + the {child_spec,1}/{start_link,0|1} boilerplate allowlist.
+  undocumented_public_defs: 461
 }
