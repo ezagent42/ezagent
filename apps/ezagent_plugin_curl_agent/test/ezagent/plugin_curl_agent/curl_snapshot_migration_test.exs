@@ -224,66 +224,6 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigrationTest do
     end
   end
 
-  describe "cross-store cap-axis rewrite (codex P1 — :curl_agent → :agent everywhere)" do
-    test "rewrite_caps_json/1 flips kind curl_agent → agent, leaves others, idempotent" do
-      # the stored caps_json shape (`Capability.Normalize.to_map/1`): the `:kind`
-      # axis is the plain-atom string under the "kind" key.
-      json =
-        Jason.encode!([
-          %{
-            "kind" => "curl_agent",
-            "behavior" => "Elixir.Ezagent.Behavior.CurlAgent",
-            "action" => "reset_conversation"
-          },
-          %{
-            "kind" => "agent",
-            "behavior" => "Elixir.Ezagent.Behavior.Identity",
-            "action" => "list_caps"
-          }
-        ])
-
-      assert {:changed, rewritten} = Migration.rewrite_caps_json(json)
-      decoded = Jason.decode!(rewritten)
-      kinds = decoded |> Enum.map(&Map.get(&1, "kind")) |> Enum.sort()
-      # the curl cap is now :agent; the pre-existing :agent cap is untouched
-      assert kinds == ["agent", "agent"]
-      # actions preserved
-      assert Enum.any?(decoded, &(&1["action"] == "reset_conversation"))
-      # nothing left referencing the deleted curl axis
-      refute String.contains?(rewritten, "curl_agent")
-      # idempotent + nil/garbage tolerated
-      assert {:unchanged, ^rewritten} = Migration.rewrite_caps_json(rewritten)
-      assert {:unchanged, nil} = Migration.rewrite_caps_json(nil)
-      assert {:unchanged, "not json"} = Migration.rewrite_caps_json("not json")
-    end
-
-    test "a NON-curl snapshot holding a :curl_agent cap is rewritten + gated" do
-      # e.g. an admin/owner agent granted manage rights over a curl agent, under
-      # the old :curl_agent axis — lives in a kind_type:"agent" row, never seen
-      # by the curl_agent-row pass.
-      uri = "entity://team-alpha/agent/owner_holds_curl-#{System.unique_integer([:positive])}"
-      curl_cap = Capability.cap(:curl_agent, Ezagent.Behavior.CurlAgent, :configure)
-      foreign = %{identity: %{state: %{caps: MapSet.new([curl_cap])}, transients: %{}}}
-      {:ok, _} =
-        KindSnapshot.upsert(uri, "agent", :erlang.term_to_binary(foreign), 0, @workspace,
-          mark_ever_created: true
-        )
-
-      # gate sees the stale cross-store grant BEFORE migration
-      assert {:ok, n} = Migration.gate()
-      assert n >= 1
-
-      assert {:ok, %{foreign_snapshots_rewritten: r}} = Migration.run()
-      assert r >= 1
-
-      # kind_type preserved (foreign row keeps its own Kind), cap axis flipped
-      assert %KindSnapshot{kind_type: "agent"} = KindSnapshot.get(uri)
-      {:ok, state} = KindSnapshot.decode_state(KindSnapshot.get(uri))
-      kinds = state.identity.state.caps |> MapSet.to_list() |> Enum.map(& &1.kind)
-      assert kinds == [:agent]
-      assert {:ok, 0} = Migration.gate()
-    end
-  end
 
   describe "cold-load round-trip — a migrated row rehydrates as a unified curl agent" do
     test "cold-loads on Entity.Agent with curl flavor + conversation + keys + creator_uri" do

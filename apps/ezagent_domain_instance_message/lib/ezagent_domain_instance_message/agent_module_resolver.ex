@@ -111,9 +111,10 @@ defmodule EzagentDomainInstanceMessage.AgentModuleResolver do
   # Every pre-fold `curl_agent` snapshot row is rewritten to `kind_type "agent"`
   # by `mix ezagent.curl.migrate` BEFORE a new-code node serves it, so it
   # resolves here as `Entity.Agent` (the unified Kind) with a `curl` flavor
-  # slice. A `curl_agent` row that reaches here UN-migrated falls through to
-  # `nil` (the migration is the ordered cutover precondition — like the slice
-  # migrations).
+  # slice. With no back-compat the cutover is total — an un-migrated
+  # `curl_agent` row does not exist by the time new code serves rows (Allen
+  # 2026-06-13), so `"curl_agent"` is simply a dead kind_type that falls through
+  # to the unknown-kind `nil` like any other.
   defp kind_module_from_kind_type("agent"), do: Ezagent.Entity.Agent
   defp kind_module_from_kind_type("echo"), do: Ezagent.Entity.Echo
   defp kind_module_from_kind_type(_), do: nil

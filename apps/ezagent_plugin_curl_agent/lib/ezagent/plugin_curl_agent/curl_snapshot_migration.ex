@@ -58,7 +58,6 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigration do
 
   alias Ezagent.Behavior.KindBase
   alias Ezagent.Ecto.KindSnapshot
-  alias EzagentCore.Repo
 
   # The pre-fold standalone-curl-Kind `kind_type` (its `type_name` was
   # `:curl_agent`). Selects the rows to migrate.
@@ -256,22 +255,13 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigration do
   Options:
     * `:dry_run` (boolean, default `false`) — count + classify without writing.
 
-  Returns `{:ok, %{scanned, migrated, already, dry_run, users_scanned,
-  users_rewritten, foreign_snapshots_scanned, foreign_snapshots_rewritten}}`.
+  Returns `{:ok, %{scanned, migrated, already, dry_run}}`.
 
-  ## Cross-store cap-axis rewrite (codex P1, r5)
-
-  Migrating only `curl_agent` ROWS is not enough for a forward-only cutover: a
-  `%Capability{kind: :curl_agent}` grant can also live in ANOTHER identity store
-  — a user's `users.caps_json` (the caps SSOT) or a NON-curl entity's
-  `:identity` snapshot slice (e.g. an admin/owner granted manage rights over a
-  curl agent). With the standalone curl Kind deleted, `CurlAgent.required_caps/0`
-  now demands `kind: :agent`, so any stale `:curl_agent` grant silently stops
-  authorizing. So `run/1` ALSO rewrites `:curl_agent → :agent` across every
-  user row and every snapshot's caps — the same all-identity-store pattern as
-  `Ezagent.Identity.GrantMigration` (chat→session). Idempotent: a row already
-  migrated above carries no `:curl_agent` cap, so the cross-store pass is a
-  no-op there.
+  Only `curl_agent` ROWS are touched: with no back-compat (Allen 2026-06-13) the
+  cutover is total — no code mints a cross-entity `%Capability{kind: :curl_agent}`
+  grant (the only `:curl_agent` caps were SELF-caps in a curl agent's own
+  `:identity` slice, rewritten in-row by `migrate_state/2`), so there is no
+  stranded cross-store grant to chase.
   """
   @spec run(keyword()) :: {:ok, map()}
   def run(opts \\ []) when is_list(opts) do
@@ -289,140 +279,17 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigration do
         end
       end)
 
-    cross_store =
-      migrate_user_caps(dry_run?)
-      |> Map.merge(migrate_foreign_snapshot_caps(dry_run?))
-
-    {:ok, Map.merge(counts, cross_store)}
+    {:ok, counts}
   end
 
   @doc """
-  Go/no-go gate. `{:ok, count}` where `count` is the number of persisted homes
-  that STILL reference the deleted curl Kind: un-migrated `curl_agent` rows PLUS
-  any user `caps_json` or snapshot caps that still carry a `kind: :curl_agent`
-  grant (codex P1). `0` is the green light for the forward-only cutover — with
-  the legacy Kind deleted, a remaining `curl_agent` row would fail to cold-load
-  and a remaining `:curl_agent` grant would silently stop authorizing.
+  Go/no-go gate. `{:ok, count}` where `count` is the number of `curl_agent`
+  rows STILL present. `0` is the green light: every curl row has been migrated
+  onto the unified Kind (a forward-only cutover precondition — with the legacy
+  Kind deleted, a remaining `curl_agent` row would fail to cold-load).
   """
   @spec gate() :: {:ok, non_neg_integer()}
-  def gate do
-    stale_rows = length(legacy_rows())
-
-    stale_users =
-      Repo.all(Ezagent.Users)
-      |> Enum.count(fn row -> match?({:changed, _}, rewrite_caps_json(row.caps_json)) end)
-
-    stale_snaps =
-      KindSnapshot.list_all()
-      |> Enum.count(&snapshot_has_curl_cap?/1)
-
-    {:ok, stale_rows + stale_users + stale_snaps}
-  end
-
-  # --- cross-store cap-axis rewrite (codex P1) -------------------------------
-
-  # `users.caps_json` — the caps SSOT (`Behavior.Identity.activate/2` reconciles
-  # in-memory caps FROM it on every start). A `:curl_agent` cap is stored as the
-  # plain-atom string `"curl_agent"` under the `"kind"` key
-  # (`Capability.Normalize.to_map/1`). Rewrite structurally (decode → flip
-  # `"kind"` → re-encode), NOT by raw substring replace, so a coincidental
-  # `"curl_agent"` in any other field is never touched.
-  defp migrate_user_caps(dry_run?) do
-    Repo.all(Ezagent.Users)
-    |> Enum.reduce(%{users_scanned: 0, users_rewritten: 0}, fn row, acc ->
-      acc = %{acc | users_scanned: acc.users_scanned + 1}
-
-      case rewrite_caps_json(row.caps_json) do
-        {:changed, new_json} ->
-          unless dry_run? do
-            row |> Ecto.Changeset.change(caps_json: new_json) |> Repo.update!()
-          end
-
-          %{acc | users_rewritten: acc.users_rewritten + 1}
-
-        {:unchanged, _} ->
-          acc
-      end
-    end)
-  end
-
-  @doc """
-  Pure transform on a raw `caps_json` STRING: rewrite every cap whose `"kind"`
-  is `"curl_agent"` to `"agent"`. Returns `{:changed, new_json}` when a rewrite
-  happened, `{:unchanged, json}` otherwise. An undecodable / non-list JSON is
-  left untouched (the runtime / row owner owns that failure mode).
-  """
-  @spec rewrite_caps_json(String.t() | nil) ::
-          {:changed, String.t()} | {:unchanged, String.t() | nil}
-  def rewrite_caps_json(nil), do: {:unchanged, nil}
-
-  def rewrite_caps_json(json) when is_binary(json) do
-    case Jason.decode(json) do
-      {:ok, caps} when is_list(caps) ->
-        {new_caps, changed?} =
-          Enum.map_reduce(caps, false, fn
-            %{"kind" => "curl_agent"} = cap, _ -> {Map.put(cap, "kind", "agent"), true}
-            cap, changed? -> {cap, changed?}
-          end)
-
-        if changed?, do: {:changed, Jason.encode!(new_caps)}, else: {:unchanged, json}
-
-      _ ->
-        {:unchanged, json}
-    end
-  end
-
-  # Every snapshot's caps (the `:identity` slice cache + any cap nested
-  # elsewhere): rewrite stray `:curl_agent` grants held by NON-curl entities
-  # (the migrated curl rows above already carry none, so they no-op here). An
-  # undecodable row is left to the main pass / runtime — not raised on, since a
-  # foreign row's load is not THIS migration's contract.
-  defp migrate_foreign_snapshot_caps(dry_run?) do
-    KindSnapshot.list_all()
-    |> Enum.reduce(%{foreign_snapshots_scanned: 0, foreign_snapshots_rewritten: 0}, fn row, acc ->
-      acc = %{acc | foreign_snapshots_scanned: acc.foreign_snapshots_scanned + 1}
-
-      case KindSnapshot.decode_state(row) do
-        {:ok, state} when is_map(state) ->
-          new_state = deep_rewrite_cap(state)
-
-          if new_state != state do
-            unless dry_run?, do: persist_cap_rewrite(row, new_state)
-            %{acc | foreign_snapshots_rewritten: acc.foreign_snapshots_rewritten + 1}
-          else
-            acc
-          end
-
-        _ ->
-          acc
-      end
-    end)
-  end
-
-  defp snapshot_has_curl_cap?(row) do
-    case KindSnapshot.decode_state(row) do
-      {:ok, state} when is_map(state) -> deep_rewrite_cap(state) != state
-      _ -> false
-    end
-  end
-
-  # Persist a caps-only rewrite — PRESERVES `kind_type` (unlike `persist_migrated`,
-  # which rewrites it to `"agent"`); a foreign row keeps its own Kind.
-  defp persist_cap_rewrite(row, new_state) do
-    binary =
-      new_state
-      |> Ezagent.Kind.Snapshot.strip_transients()
-      |> :erlang.term_to_binary()
-
-    case KindSnapshot.upsert(row.uri, row.kind_type, binary, row.version, row.workspace_uri) do
-      {:ok, _row} ->
-        :ok
-
-      {:error, reason} ->
-        raise "Ezagent.PluginCurlAgent.CurlSnapshotMigration: failed to persist " <>
-                ":curl_agent→:agent cap rewrite for #{row.uri}: #{inspect(reason)}"
-    end
-  end
+  def gate, do: {:ok, length(legacy_rows())}
 
   # --- internals -------------------------------------------------------------
 
