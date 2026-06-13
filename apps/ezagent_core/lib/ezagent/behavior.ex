@@ -645,6 +645,11 @@ defmodule Ezagent.Behavior do
     action_impl(name, opts, __CALLER__)
   end
 
+  @doc """
+  Error guard for a common misuse: `action` takes `(name, opts)` (a keyword list),
+  NOT a `do`-block. The `do`-block form expands to `action/3` and raises an
+  `ArgumentError` at compile time pointing the author at `action/2`.
+  """
   defmacro action(_name, _opts, _block) do
     raise ArgumentError,
           "action/3 macro called with a block — use action/2 (the second arg is the keyword list of opts)"
@@ -809,6 +814,7 @@ defmodule Ezagent.Behavior do
           | {:ok, term()}
           | {:error, term()}
 
+  @doc "Apply a handler's effect list against `state`, returning the effects sorted into their buckets (state/events/dispatches/notifies/terminations/saga/returning) for the runtime to commit, or `{:halt, …}`. Delegates to `Ezagent.Behavior.Effects`."
   @spec apply_effects([effect()], map()) ::
           {:ok,
            %{
@@ -827,28 +833,36 @@ defmodule Ezagent.Behavior do
   @doc false
   defdelegate substitute_refs(term, bound), to: Ezagent.Behavior.Effects
 
+  @doc "Whether `mod` is a new-contract (action-based) Behavior rather than a legacy `invoke/4` one — the branch the runtime takes when dispatching. Delegates to `Ezagent.Behavior.Introspection`."
   @spec new_style?(module()) :: boolean()
   defdelegate new_style?(mod), to: Ezagent.Behavior.Introspection
 
+  @doc "The action atoms a Behavior module declares (via `action/2`). Delegates to `Ezagent.Behavior.Introspection`."
   @spec action_names(module()) :: [atom()]
   defdelegate action_names(mod), to: Ezagent.Behavior.Introspection
 
+  @doc "The spec map for one `action` of a Behavior (args/returns/caps/modes/data_owner/…), or `nil` if undeclared. Delegates to `Ezagent.Behavior.Introspection`."
   @spec action_spec(module(), atom()) :: map() | nil
   defdelegate action_spec(mod, action), to: Ezagent.Behavior.Introspection
 
+  @doc "Resolve a Behavior's cap data-owner for a given instance (entity URI / `:any` / scoped tuple) — used by the CapBAC chokepoint to find who owns the subject. Delegates to `Ezagent.Behavior.Introspection`."
   @spec data_owner_of(module(), URI.t() | :any | {atom(), URI.t()}) ::
           URI.t() | :any | :no_owner | {:scope, atom(), URI.t()}
   defdelegate data_owner_of(behavior, instance), to: Ezagent.Behavior.Introspection
 
+  @doc "The LEGACY sibling-slice keys a Behavior reads (the pre-Lifecycle `reads_sibling_slices/0`). Delegates to `Ezagent.Behavior.Introspection`; prefer `reads_siblings_of/1` for the union."
   @spec reads_sibling_slices_of(module()) :: [atom()]
   defdelegate reads_sibling_slices_of(behavior_module), to: Ezagent.Behavior.Introspection
 
+  @doc "The UNION of sibling state keys a Behavior reads (`reads_siblings/0` + the legacy `reads_sibling_slices/0`) — surfaced read-only on the handler ctx. Delegates to `Ezagent.Behavior.Introspection`."
   @spec reads_siblings_of(module()) :: [atom()]
   defdelegate reads_siblings_of(behavior_module), to: Ezagent.Behavior.Introspection
 
+  @doc "The action atoms a Behavior marks cap-exempt (run without a CapBAC check — a deliberate, audited escape). Delegates to `Ezagent.Behavior.Introspection`."
   @spec cap_exempt_actions_of(module()) :: [atom()]
   defdelegate cap_exempt_actions_of(behavior_module), to: Ezagent.Behavior.Introspection
 
+  @doc "Whether a Behavior's required caps are workspace-scoped (the cap must match the instance's workspace). Delegates to `Ezagent.Behavior.Introspection`."
   @spec workspace_scoped?(module()) :: boolean()
   defdelegate workspace_scoped?(behavior_module), to: Ezagent.Behavior.Introspection
 end
