@@ -164,8 +164,9 @@
   #   @doc is preserved only across def-adjacent metadata (@spec/@dialyzer/
   #   @deprecated); doc-consuming attrs (@callback/@type/@typedoc/…) clear it, so
   #   a callback's @doc can't leak onto a later def (codex 2026-06-14; +4 real
-  #   false-negatives caught).
-  undocumented_public_defs: 539,
+  #   false-negatives caught). Same-name defs across compile-time branches/quotes
+  #   merge conservatively — documented only if EVERY branch is (+1 caught).
+  undocumented_public_defs: 540,
   # dynamic_public_def_heads — `def unquote(name)(...)` heads whose function name
   #   is only known at macro-expansion, so they cannot become a documented
   #   {name, arity} entry. ENFORCED at 0 (the tree has none): adding any new

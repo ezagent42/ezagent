@@ -126,7 +126,7 @@ captured in `arch_baseline_manifest.exs`:
 
 - `undocumented_public_modules: 6` — public modules with no `@moduledoc`
   (real or `false`).
-- `undocumented_public_defs: 539` — non-`@impl` public API forms
+- `undocumented_public_defs: 540` — non-`@impl` public API forms
   (`def` + `defmacro` + `defdelegate` + `defguard`, plus statically-named
   public defs emitted from `quote` blocks, minus the `child_spec`/`start_link`
   boilerplate allowlist) with no `@doc` (real or `false`). Only `@impl true` /

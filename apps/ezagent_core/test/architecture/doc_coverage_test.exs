@@ -102,6 +102,51 @@ defmodule EzagentCore.Architecture.DocCoverageTest do
              "a public def generated inside a module-level `for` must be counted"
     end
 
+    test "a documented branch does NOT mask an undocumented same-name def in a sibling branch" do
+      # Order-independent: whichever branch is undocumented, the conservative
+      # cross-branch merge counts the function (codex 2026-06-14).
+      doc_first = """
+      defmodule Sample do
+        if Mix.env() == :prod do
+          @doc "prod variant"
+          def env_api(a), do: a
+        else
+          def env_api(a), do: a
+        end
+      end
+      """
+
+      doc_last = """
+      defmodule Sample do
+        if Mix.env() == :prod do
+          def env_api(a), do: a
+        else
+          @doc "test variant"
+          def env_api(a), do: a
+        end
+      end
+      """
+
+      assert {:env_api, 1} in Mix.Tasks.Ezagent.Doc.Scan.scan_source(doc_first),
+             "an undocumented else-branch must count regardless of branch order"
+
+      assert {:env_api, 1} in Mix.Tasks.Ezagent.Doc.Scan.scan_source(doc_last),
+             "an undocumented if-branch must count regardless of branch order"
+    end
+
+    test "normal multi-clause def with @doc on the first clause is documented" do
+      source = """
+      defmodule Sample do
+        @doc "covers all clauses"
+        def foo(1), do: :a
+        def foo(_), do: :b
+      end
+      """
+
+      assert Mix.Tasks.Ezagent.Doc.Scan.scan_source(source) == [],
+             "the @doc on the first clause documents the whole function"
+    end
+
     test "a documented public def inside a compile-time container is NOT counted" do
       source = """
       defmodule Sample do

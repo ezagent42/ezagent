@@ -409,23 +409,24 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
     end)
   end
 
-  # Distinct {name, arity} public defs in module-body order, carrying the
-  # @doc / @impl status of the FIRST clause (where the attributes sit). A later
-  # clause carrying @impl upgrades the impl flag (an @impl on any clause exempts
-  # the function). `doc_text` is the literal doc string when it is a plain
-  # binary (for the WARN heuristic only).
+  # Distinct {name, arity} public defs, carrying @doc / @impl status. Within a
+  # single form-list, multi-clause defs keep the FIRST clause's @doc (where the
+  # attribute sits) — see `put_clause/5`. ACROSS compile-time branches and quote
+  # blocks, observations are merged CONSERVATIVELY (`merge_defs/2`): a function
+  # is documented only if EVERY observed definition is, so a documented `if`
+  # branch cannot mask an undocumented `else` branch (codex 2026-06-14).
   defp public_defs(forms) do
-    direct = collect_defs(forms, %{})
+    direct = collect_defs(forms)
 
     # Also count STATICALLY-named public defs emitted from `quote` blocks
     # (macro-generated public API — e.g. the `kinds/0`/`behaviors/0` defaults a
     # `__using__/1` injects). These live inside `defmacro`/`def` BODIES, so a
     # single prewalk over the whole module finds every quote at any depth; each
-    # quote's body is run through the same `collect_defs` reducer. Counting them
-    # at the source (not per call-site) closes the hole where a new quoted public
-    # def under an already-documented generator would never move the counter
-    # (codex 2026-06-14). Dynamically-named heads (`def unquote(n)`) yield no
-    # static {name, arity} and are skipped by `fn_key/1`.
+    # quote's body is collected and merged conservatively. Counting them at the
+    # source (not per call-site) closes the hole where a new quoted public def
+    # under an already-documented generator would never move the counter (codex
+    # 2026-06-14). Dynamically-named heads (`def unquote(n)`) yield no static
+    # {name, arity} and are skipped by `fn_key/1`.
     forms
     |> collect_quoted_defs(direct)
     |> Map.values()
@@ -435,7 +436,7 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
     {_ast, defs} =
       Macro.prewalk(ast, defs, fn
         {:quote, _meta, qargs} = node, acc when is_list(qargs) ->
-          {node, scan_quote_body(qargs, acc)}
+          {node, merge_defs(acc, quote_body_defs(qargs))}
 
         node, acc ->
           {node, acc}
@@ -444,29 +445,30 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
     defs
   end
 
-  defp scan_quote_body(qargs, defs) do
+  defp quote_body_defs(qargs) do
     case List.last(qargs) do
       kw when is_list(kw) ->
         case Keyword.fetch(kw, :do) do
-          {:ok, body} -> collect_defs(top_forms(body), defs)
-          :error -> defs
+          {:ok, body} -> collect_defs(top_forms(body))
+          :error -> %{}
         end
 
       _ ->
-        defs
+        %{}
     end
   end
 
-  # Reduce a flat list of module-body forms into a `{name, arity} => def-info`
-  # map, accumulating into `defs`. Recurses into top-level compile-time
-  # containers (`if`/`unless`/`case`/`cond`) because a public def nested inside
-  # one is real public API — counting only DIRECT forms would let an
-  # environment-/version-gated public function escape the ratchet (codex
-  # 2026-06-14). `quote` blocks are deliberately NOT recursed (macro-generated
-  # code, not a hand-written public def the author must document).
-  defp collect_defs(forms, defs) when is_list(forms) do
+  # Reduce a flat list of module-body forms into its OWN `{name, arity} =>
+  # def-info` map. Recurses into compile-time containers (`if`/`unless`/`case`/
+  # `cond`/`for`) because a public def nested inside one is real public API —
+  # counting only DIRECT forms would let an environment-/version-gated public
+  # function escape the ratchet. Each branch is collected into a fresh map and
+  # merged CONSERVATIVELY (so a documented branch can't mask an undocumented
+  # same-name def in a sibling branch). `quote` is handled separately by
+  # `collect_quoted_defs/2`.
+  defp collect_defs(forms) when is_list(forms) do
     {defs, _pdoc, _ptext, _pimpl} =
-      Enum.reduce(forms, {defs, :none, nil, false}, fn form, {defs, pdoc, ptext, pimpl} ->
+      Enum.reduce(forms, {%{}, :none, nil, false}, fn form, {defs, pdoc, ptext, pimpl} ->
         case form do
           {:@, _, [{:doc, _, [false]}]} ->
             {defs, false, nil, pimpl}
@@ -479,19 +481,8 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
 
           {form, _, [head | _]} when form in @public_def_forms ->
             case fn_key(head) do
-              nil ->
-                {defs, :none, nil, false}
-
-              key ->
-                defs =
-                  Map.update(
-                    defs,
-                    key,
-                    %{name: elem(key, 0), arity: elem(key, 1), doc: pdoc, doc_text: ptext, impl: pimpl},
-                    fn existing -> %{existing | impl: existing.impl or pimpl} end
-                  )
-
-                {defs, :none, nil, false}
+              nil -> {defs, :none, nil, false}
+              key -> {put_clause(defs, key, pdoc, ptext, pimpl), :none, nil, false}
             end
 
           {form, _, _} when form in @private_def_forms ->
@@ -512,14 +503,14 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
             {defs, :none, nil, false}
 
           _ ->
-            # Either a compile-time container wrapping defs (recurse into each
-            # branch with its OWN @doc scope — a @doc cannot attach across the
-            # wrapper) or a genuine non-def form. Either way the pending
-            # @doc/@impl is cleared so it can't leak onto a later def.
+            # A compile-time container wrapping defs (recurse into each branch
+            # with its OWN @doc scope, merged conservatively) or a genuine
+            # non-def form. Either way pending @doc/@impl is cleared so it can't
+            # leak onto a later def.
             defs =
               case container_branches(form) do
                 nil -> defs
-                branches -> Enum.reduce(branches, defs, &collect_defs(&1, &2))
+                branches -> Enum.reduce(branches, defs, fn b, acc -> merge_defs(acc, collect_defs(b)) end)
               end
 
             {defs, :none, nil, false}
@@ -528,6 +519,32 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
 
     defs
   end
+
+  # Record a public def clause into a single form-list's map. Multi-clause defs
+  # keep the FIRST clause's @doc/@doc_text (where the attribute sits); a later
+  # clause only upgrades the @impl flag (an @impl on any clause exempts).
+  defp put_clause(defs, key, pdoc, ptext, pimpl) do
+    Map.update(
+      defs,
+      key,
+      %{name: elem(key, 0), arity: elem(key, 1), doc: pdoc, doc_text: ptext, impl: pimpl},
+      fn existing -> %{existing | impl: existing.impl or pimpl} end
+    )
+  end
+
+  # Merge two def maps from DIFFERENT branches/quotes conservatively: a
+  # {name, arity} seen in both is documented only if BOTH observations are
+  # documented (`:none` undocumented wins), so a documented branch cannot mask an
+  # undocumented sibling. @impl is OR-ed; doc_text takes whichever is present.
+  defp merge_defs(a, b) do
+    Map.merge(a, b, fn _key, da, db ->
+      %{da | doc: merge_doc(da.doc, db.doc), doc_text: da.doc_text || db.doc_text, impl: da.impl or db.impl}
+    end)
+  end
+
+  defp merge_doc(:none, _), do: :none
+  defp merge_doc(_, :none), do: :none
+  defp merge_doc(doc, _), do: doc
 
   # The form-lists of a top-level compile-time container that can legally hold
   # `def`s, or `nil` for anything else (including `quote`, which we skip). Each
