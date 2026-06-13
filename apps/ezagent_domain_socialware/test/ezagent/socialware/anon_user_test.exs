@@ -96,4 +96,17 @@ defmodule Ezagent.Socialware.AnonUserTest do
       refute AnonUser.anon_uri?("entity://team-alpha/user/anon-x")
     end
   end
+
+  describe "codex P2 — the anon- name prefix is RESERVED for the anon mint path" do
+    test "Users.create/3 (normal path) REJECTS an anon- prefixed name" do
+      anon_named = Ezagent.URI.entity(:team_alpha, :user, "anon-impersonator")
+      assert {:error, :reserved_anon_prefix} = Ezagent.Users.create(anon_named, "pw", [])
+      assert is_nil(Ezagent.Users.get_by_uri(anon_named))
+    end
+
+    test "create_read_only/1 (the mint path) is EXEMPT — anon- is allowed there" do
+      anon = Ezagent.URI.entity(:team_alpha, :user, "anon-#{System.unique_integer([:positive])}")
+      assert {:ok, _} = Ezagent.Users.create_read_only(anon)
+    end
+  end
 end

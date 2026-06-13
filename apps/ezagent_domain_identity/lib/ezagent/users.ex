@@ -58,6 +58,19 @@ defmodule Ezagent.Users do
   def create(uri, password, caps) when is_list(caps) do
     uri_str = uri_to_str(uri)
 
+    if reserved_anon_name?(uri_str) do
+      # #51 codex P2: the `anon-` user-name prefix is RESERVED for the
+      # anonymous-viewer mint path (`create_read_only/1`). A normal user MUST
+      # NOT use it — otherwise `Session.Membership.anon_member?/1` would
+      # misclassify them and silently drop their legitimate first-join owner
+      # behavior. Reject it here so the prefix reliably identifies anon users.
+      {:error, :reserved_anon_prefix}
+    else
+      do_create(uri_str, password, caps)
+    end
+  end
+
+  defp do_create(uri_str, password, caps) do
     hash =
       if is_binary(password) and password != "" do
         Bcrypt.hash_pwd_salt(password)
@@ -287,6 +300,18 @@ defmodule Ezagent.Users do
 
       _ ->
         []
+    end
+  end
+
+  # #51 codex P2 — the `anon-` user-name prefix is RESERVED for the
+  # anonymous-viewer mint (`create_read_only/1`, which does its OWN insert and
+  # is exempt). `create/3` (the normal, default-caps path) rejects it so the
+  # prefix reliably identifies anon users for `Session.Membership.anon_member?/1`.
+  @anon_name_prefix "anon-"
+  defp reserved_anon_name?(uri_str) when is_binary(uri_str) do
+    case uri_str |> String.split("/") |> List.last() do
+      nil -> false
+      name -> String.starts_with?(name, @anon_name_prefix)
     end
   end
 
