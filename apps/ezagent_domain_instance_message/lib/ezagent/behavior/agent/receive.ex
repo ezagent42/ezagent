@@ -56,7 +56,18 @@ defmodule Ezagent.Behavior.Agent.Receive do
   with a width that matches its one action (NP-3). No violation.
   """
 
-  use Ezagent.Lifecycle
+  # lifecycle:state_slice_override
+  #
+  # codex P3 (PR-2): the macro would auto-derive `:receive` from the module
+  # name, but `Entity.Agent` has no `:receive` slice — so the runtime would
+  # fetch `%{}` and commit `Map.put(state, :receive, %{})`, leaving a durable
+  # ORPHAN slice on snapshot-on-change Agents after the first inbound message.
+  # Pin to `:session` — the EXISTING receive-state slice that `Entity.Agent`
+  # already materializes via `Ezagent.Behavior.Session` in its `behaviors/0`
+  # (the same slice the pre-split Agent branch used, and that `User.Receive`
+  # pins to). This handler emits NO effects, so the slice is read + committed
+  # UNCHANGED — no orphan, no write.
+  use Ezagent.Lifecycle, state_slice: :session
   reads_siblings([:sandbox])
 
   require Logger
