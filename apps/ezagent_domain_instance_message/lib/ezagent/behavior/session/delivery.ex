@@ -119,7 +119,16 @@ defmodule Ezagent.Behavior.Session.Delivery do
   @spec dispatch_receive_call(URI.t(), Message.t(), URI.t()) :: term()
   def dispatch_receive_call(recipient_uri, %Message{} = msg, session_uri) do
     session_uri = Ezagent.URI.new!(URI.to_string(session_uri))
-    receive_target = Ezagent.URI.with_action(recipient_uri, :session, :receive)
+    # PR-2 (im/session/agent decomposition §3.3) — spell the behavior
+    # prefix `<entity>.receive` (`user.receive` / `agent.receive`) per the
+    # recipient's Kind. The prefix is TELEMETRY-ONLY: dispatch routes on
+    # the action atom `:receive` + the recipient Kind via the
+    # BehaviorRegistry (which now resolves `{User, :receive}` →
+    # `Behavior.User.Receive` and `{Agent, :receive}` → `Behavior.Agent.Receive`).
+    # A user URI → `user.receive`; everything else (agent + plugin agent
+    # flavors, all `agent`-typed) → `agent.receive`.
+    receive_prefix = receive_behavior_prefix(recipient_uri)
+    receive_target = Ezagent.URI.with_action(recipient_uri, receive_prefix, :receive)
 
     result =
       Ezagent.Router.dispatch(%Cmd{
@@ -138,6 +147,20 @@ defmodule Ezagent.Behavior.Session.Delivery do
     end
 
     result
+  end
+
+  # PR-2 — derive the `<entity>.receive` behavior-prefix atom for the
+  # `:receive` dispatch telemetry from the recipient URI's type axis. A
+  # `user`-typed recipient → `:user`; any other entity type (`agent` and
+  # all plugin agent flavors, which are `agent`-typed) → `:agent`. Falls
+  # back to `:agent` when the type can't be resolved (best-effort
+  # telemetry; routing is unaffected — it keys on the action atom + Kind).
+  @spec receive_behavior_prefix(URI.t()) :: :user | :agent
+  defp receive_behavior_prefix(%URI{} = recipient_uri) do
+    case Ezagent.URI.type(recipient_uri) do
+      {:ok, "user"} -> :user
+      _ -> :agent
+    end
   end
 
   @spec replay_messages_since(URI.t(), URI.t(), map()) :: :ok

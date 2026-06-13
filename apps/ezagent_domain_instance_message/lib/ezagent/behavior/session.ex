@@ -10,25 +10,34 @@ defmodule Ezagent.Behavior.Session do
       | :send     | Ezagent.Entity.Session                     | cast  |
       | :join     | Ezagent.Entity.Session                     | call  |
       | :leave    | Ezagent.Entity.Session                     | cast  |
-      | :receive  | Ezagent.Entity.User, Ezagent.Entity.Agent      | cast  |
 
   Session-side actions (`:send / :join / :leave`) mutate the Session's
-  `:chat` slice (`members` map / `monitors` ref→URI / `last_seen` URI→DateTime).
+  `:session` slice (`members` map / `monitors` ref→URI / `last_seen` URI→DateTime).
   When `:send` is invoked, recipients are derived from `msg.mentions` (or
   all `members` if mentions is empty), excluding the sender, and each
-  receives a `chat/receive` dispatch on its own Kind. The Session also
+  receives a `<entity>.receive` dispatch on its own Kind. The Session also
   broadcasts to `esr:session:<self_uri>:events` so the LV chat stream
   picks up the message.
 
-  ## Receive branching
+  ## Receive (split out — PR-2, im/session/agent decomposition)
 
-  `:receive` switches on `ctx.kind_module`:
-  - `Ezagent.Entity.User` — broadcast to `esr:user:<self_uri>:events`. LV
-    subscribes for admin inbox / mention notifications.
-  - `Ezagent.Entity.Agent` — delivers a flavor-neutral
-    `Ezagent.AgentBridge.Payload` through `Ezagent.AgentBridge.deliver/2`.
-    If no bridge or adapter is bound, AgentBridge logs and emits
-    telemetry while chat receive itself remains a best-effort cast.
+  `:receive` is NO LONGER handled here. SPEC
+  `docs/superpowers/specs/2026-06-12-im-session-agent-decomposition-design.md`
+  §OQ-4 / §3.3 split the old single `:receive` (which branched internally
+  on `ctx.kind_module`) into TWO first-class Behaviors, each registered
+  for `:receive` on its own Kind:
+
+  - `Ezagent.Behavior.User.Receive` (`user.receive`, on `Entity.User`) —
+    the passive inbox: records `:last_received` + the cursor-ring
+    `:recent_messages` slice; the SliceChange hook emits the notification.
+  - `Ezagent.Behavior.Agent.Receive` (`agent.receive`, on `Entity.Agent`)
+    — active live-process delivery: builds a flavor-neutral
+    `Ezagent.AgentBridge.Payload` and delivers it via
+    `Ezagent.AgentBridge` (the shared
+    `Ezagent.Behavior.Session.Delivery.deliver_agent_receive/2` helper).
+
+  The internal `case ctx.kind_module` is RETIRED — dispatch routes
+  `:receive` to the right Behavior by Kind via the BehaviorRegistry.
 
   ## Offline state machine (P2-D3 failure modes)
 
@@ -114,43 +123,16 @@ defmodule Ezagent.Behavior.Session do
   alias Ezagent.Behavior.Session.{ConfigActions, Delivery, Legends, Members, Membership}
   alias Ezagent.Routing.Legend
 
-  # PR-N3 r4 (Allen 2026-05-25) — bounded cursor-indexed ring depth for
-  # the User-branch `:receive` `:recent_messages` ring. SPEC-pinned (NOT
-  # a runtime config knob — per `feedback_let_it_crash_no_workarounds`
-  # config knobs are anti-patterns; structural constants belong here).
-  #
-  # Why 20: AdminLive's flash bridge re-fetches the slice on each
-  # `:slice_changed` event. Between "envelope cursor C broadcast" and
-  # "LV process pulls slice", N more :receive events may have committed
-  # (LV mailbox under burst). Ring depth caps the worst-case
-  # backlog the bridge can resolve — 20 is ~10x typical bursts (single
-  # AdminLive instance processing ~2-3 events/sec under load) and well
-  # below the cost-of-carry threshold (each entry is `{int, binary}` =
-  # ~40 bytes; 20 entries = ~800 bytes added to every persisted
-  # Session/User snapshot). Older events fall off the tail; the bridge
-  # falls back to the "New chat update on <uri>" generic line for any
-  # envelope cursor that's no longer in the ring (graceful skip —
-  # observability degradation, not correctness loss).
-  @recent_messages_ring_depth 20
-
-  @doc """
-  Ring depth for the `:recent_messages` cursor-indexed ring on the
-  `:chat` slice (PR-N3 r4 cursor-race fix).
-
-  Exposed as a function (rather than module attr access from outside)
-  so tests can assert against the SPEC-pinned constant without coupling
-  to compile-time internals. SPEC §2.1.3 documents the rationale; this
-  is the canonical reader for the bound.
-  """
-  @spec recent_messages_ring_depth() :: pos_integer()
-  def recent_messages_ring_depth, do: @recent_messages_ring_depth
+  # PR-N3 r4 ring depth + `recent_messages_ring_depth/0` MOVED to
+  # `Ezagent.Behavior.User.Receive` (PR-2 split) — the `:recent_messages`
+  # ring is owned by `user.receive` now, so the SPEC-pinned constant
+  # lives with it. Session no longer touches the receive slice.
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
-  # Chat is registered on:
-  #   - Session Kind for :send, :join, :leave, :set_working_copy
-  #   - User Kind for :receive
-  #   - Agent Kind for :receive
-  # The multi-Kind registration → kind axis is `:any` (check 11(b) escape).
+  # Session is registered on:
+  #   - Session Kind for :send, :join, :leave, :set_working_copy, ...
+  # `:receive` is NO LONGER a Session action (PR-2 split → User.Receive /
+  # Agent.Receive, registered on their own Kinds).
 
   action(:send,
     args: %{message: :map},
@@ -158,14 +140,6 @@ defmodule Ezagent.Behavior.Session do
     caps: [:send],
     modes: [:cast],
     description: "Post a message into the session and fan it out to members"
-  )
-
-  action(:receive,
-    args: %{message: :map},
-    returns: %{},
-    caps: [:receive],
-    modes: [:cast],
-    description: "Deliver a session message to this member (User inbox / Agent bridge)"
   )
 
   action(:join,
@@ -553,66 +527,15 @@ defmodule Ezagent.Behavior.Session do
   end
 
   # --- :receive ----------------------------------------------------------
-
-  def handle_receive(%{message: %Message{} = msg}, ctx) do
-    case ctx[:kind_module] do
-      Ezagent.Entity.User ->
-        # PR-N3 (SPEC v2 notification-architecture-v2 §2.4 + §3 lines
-        # 204-211, Allen 2026-05-25) — producer-pattern proof.
-        #
-        # Both the legacy raw PubSub broadcast to
-        # `esr:user:<uri>:events` and the new `Ezagent.Notifications.notify/3`
-        # call were DELETED here. SPEC §2.4 / §3 PR-N3: the User-branch
-        # is just "mutate the receive slice; the runtime emits the
-        # slice-change event". `Ezagent.Kind.Runtime.handle_dispatch/4`
-        # detects `new_slice != old_slice` and `Kind.Server.commit_and_notify/3`
-        # routes the slice-change event through `Ezagent.SliceChange.emit/1`
-        # post-commit (PR-N1 wiring + PR-N3 hard-switch flip).
-        # AdminLive's PR-N2 subscription on
-        # `Ezagent.Notifications.subscribe_slice_change/1` picks it up.
-        #
-        # The slice mutation we make is the structural notification:
-        # `:last_received` records the message id + arrival timestamp.
-        # Always-mutating (DateTime.utc_now/0 differs across calls), so
-        # the auto-hook fires on every legitimate receive. The User's
-        # `:chat` slice is initialized to `%{}` (User Kind does NOT list
-        # Chat in `behaviors/0` — SPEC v2 §5.14 + chat.ex `init_slice/1`
-        # moduledoc), so `Map.put/3` is safe on a default-empty map.
-        #
-        # PR-N3 r4 (Allen 2026-05-25) — ALSO push the {cursor, msg_id}
-        # tuple into the cursor-indexed `:recent_messages` ring so
-        # AdminLive's flash bridge can resolve the correct message even
-        # under burst (codex r3 HIGH-1 race fix). Cursor comes from
-        # `ctx.slice_change_cursor` — pre-allocated by
-        # `Ezagent.Kind.Runtime.handle_dispatch/4` step 9.5 and
-        # threaded into ctx so the slice's ring key matches the
-        # `SliceChange` broadcast envelope's `:cursor` field exactly.
-        cursor = Map.get(ctx, :slice_change_cursor)
-        prior_ring = ctx[:read].(:recent_messages, [])
-        new_entry = {cursor, msg.id}
-
-        trimmed_ring =
-          [new_entry | prior_ring]
-          |> Enum.take(@recent_messages_ring_depth)
-
-        {:ok, %{},
-         [
-           {:set, :last_received, %{message_id: msg.id, at: DateTime.utc_now()}},
-           {:set, :recent_messages, trimmed_ring}
-         ]}
-
-      Ezagent.Entity.Agent ->
-        # AgentBridge PR-D: keep chat receive flavor-neutral. Payload build
-        # + self-healing bridge delivery live in `Chat.Delivery` (PR-3R) —
-        # same-process side-effect, the handler emits no effects here.
-        _ = Delivery.deliver_agent_receive(msg, ctx)
-        {:ok, %{}, []}
-
-      _other ->
-        # Should not happen — :receive is only registered for User/Agent.
-        {:error, {:receive_unsupported_for_kind, ctx[:kind_module]}}
-    end
-  end
+  #
+  # SPLIT OUT (PR-2, im/session/agent decomposition §OQ-4 / §3.3). The old
+  # `handle_receive/2` branched internally on `ctx.kind_module`:
+  #   - `Entity.User` → inbox slice → now `Ezagent.Behavior.User.Receive`.
+  #   - `Entity.Agent` → AgentBridge → now `Ezagent.Behavior.Agent.Receive`.
+  # The Agent branch's delivery mechanics remain in the shared
+  # `Ezagent.Behavior.Session.Delivery.deliver_agent_receive/2` helper
+  # (reused by `Agent.Receive`). The internal `case kind_module` is gone —
+  # dispatch routes `:receive` to the right Behavior by Kind.
 
   # --- :join -------------------------------------------------------------
 

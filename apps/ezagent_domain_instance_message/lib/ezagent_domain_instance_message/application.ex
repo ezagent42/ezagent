@@ -9,8 +9,8 @@ defmodule EzagentDomainInstanceMessage.Application do
      message:
 
          Ezagent.Entity.Session  → :send | :join | :leave  → Ezagent.Behavior.Session
-         Ezagent.Entity.User     → :receive               → Ezagent.Behavior.Session
-         Ezagent.Entity.Agent    → :receive               → Ezagent.Behavior.Session
+         Ezagent.Entity.User     → :receive               → Ezagent.Behavior.User.Receive
+         Ezagent.Entity.Agent    → :receive               → Ezagent.Behavior.Agent.Receive
 
      PR #141 (SPEC v2): User+Agent merged into the `entity://` scheme;
      `Kind` modules are unchanged (`Ezagent.Entity.User` /
@@ -804,8 +804,9 @@ defmodule EzagentDomainInstanceMessage.Application do
     # as :set_legends; the PR-7 template materialization path uses it to
     # install a template's `prompt_templates`).
     :ok = CapabilityRegistry.register(Session, :set_prompt_templates, SessionBehavior)
-    :ok = CapabilityRegistry.register(User, :receive, SessionBehavior)
-    :ok = CapabilityRegistry.register(Agent, :receive, SessionBehavior)
+    # PR-2 (§OQ-4) — `:receive` split per Kind into two first-class Behaviors.
+    :ok = CapabilityRegistry.register(User, :receive, Ezagent.Behavior.User.Receive)
+    :ok = CapabilityRegistry.register(Agent, :receive, Ezagent.Behavior.Agent.Receive)
     # Phase 6 PR 2: Identity behavior registration (list_caps / has_cap?)
     # moved to ezagent_domain_identity.Application — Identity is the identity
     # domain's concern, not chat's.

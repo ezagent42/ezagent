@@ -80,7 +80,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RealClaudeHotfixesTest do
 
       assert {:ok, _} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.Behavior.Agent.Receive,
                  :receive,
                  %{},
                  %{message: msg},

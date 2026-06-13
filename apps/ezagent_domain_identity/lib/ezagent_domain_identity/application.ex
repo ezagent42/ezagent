@@ -8,8 +8,11 @@ defmodule EzagentDomainIdentity.Application do
   - `Ezagent.Behavior.Identity` registration on User + Agent
   - `Ezagent.Users` SQLite provisioning (Phase 4-completion Spec 05)
 
-  Does NOT own (Chat plugin owns those):
-  - `Ezagent.Behavior.Session` :receive registration on User/Agent
+  Does NOT own (the session/im domain owns those):
+  - `:receive` registration on User/Agent — `Ezagent.Behavior.User.Receive`
+    (`user.receive`) + `Ezagent.Behavior.Agent.Receive` (`agent.receive`),
+    split out of `Ezagent.Behavior.Session` in PR-2 (im/session/agent
+    decomposition §OQ-4).
   - Session boot or admin-join-default-session
 
   ## Boot order

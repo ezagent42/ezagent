@@ -111,7 +111,18 @@ defmodule EzagentDomainInstanceMessage.Integration.WorkspaceIsolationTest do
   end
 
   defp receive_dispatches_to(target_uri) do
-    target_prefix = "#{URI.to_string(target_uri)}?action=session.receive"
+    # PR-2 (im/session/agent decomposition §OQ-4 / §3.3): the `:receive`
+    # fan-out spells the behavior prefix per recipient Kind — `user.receive`
+    # / `agent.receive`. The prefix is telemetry-only (routing keys on the
+    # action atom + Kind), but the audit `target` carries it, so this
+    # counter matches the per-Kind spelling instead of `session.receive`.
+    behavior =
+      case Ezagent.URI.type(target_uri) do
+        {:ok, "user"} -> "user"
+        _ -> "agent"
+      end
+
+    target_prefix = "#{URI.to_string(target_uri)}?action=#{behavior}.receive"
 
     EzagentCore.Repo.all(
       from(i in "invocations",

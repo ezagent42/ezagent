@@ -4,7 +4,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
   `Ezagent.Behavior.Session` after the SPEC 2026-05-28 new-action-grammar
   migration.
 
-  Covers the five actions (:send / :receive / :join / :leave /
+  Covers the actions (:send / :join / :leave /
   :set_working_copy) via their `handle_<action>/2` shape, asserting:
   - Slice-state reads via ctx[:read]
   - Effects produced match expected shape (:set for state mutations,
@@ -25,6 +25,10 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
 
   alias Ezagent.{Message, MessageStore}
   alias Ezagent.Behavior.Session, as: SessionBehavior
+  # PR-2 (im/session/agent decomposition §OQ-4) — `:receive` split out of
+  # SessionBehavior into two first-class Behaviors.
+  alias Ezagent.Behavior.User.Receive, as: UserReceive
+  alias Ezagent.Behavior.Agent.Receive, as: AgentReceive
   alias EzagentCore.Repo
 
   setup do
@@ -80,11 +84,13 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
       assert SessionBehavior.__behavior__?() == true
     end
 
-    test "declares the seven actions" do
+    test "declares the six Session actions (:receive split out — PR-2)" do
       # team-routing-unification §3.6 (PR-6) — :set_legends added;
-      # §3.4/§3.7 (PR-7) — :set_prompt_templates added.
+      # §3.4/§3.7 (PR-7) — :set_prompt_templates added. PR-2 (im/session/
+      # agent decomposition §OQ-4) — :receive removed (→ user.receive /
+      # agent.receive).
       assert Enum.sort(SessionBehavior.__action_names__()) ==
-               [:join, :leave, :receive, :send, :set_legends, :set_prompt_templates, :set_working_copy]
+               [:join, :leave, :send, :set_legends, :set_prompt_templates, :set_working_copy]
     end
 
     test "state_slice/0 is :chat" do
@@ -117,7 +123,8 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
 
     test "recent_messages_ring_depth/0 returns the SPEC-pinned constant" do
       # PR-N3 r4 (Allen 2026-05-25) — SPEC-pinned, not a config knob.
-      assert SessionBehavior.recent_messages_ring_depth() == 20
+      # PR-2: the ring + its depth moved to UserReceive with the receive split.
+      assert UserReceive.recent_messages_ring_depth() == 20
     end
   end
 
@@ -158,7 +165,9 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
 
     test "send_cursor increments with each call (HIGH-1: retries still mutate)" do
       session_uri =
-        URI.new!("session://team-alpha/default/parity-cursor-#{System.unique_integer([:positive])}")
+        URI.new!(
+          "session://team-alpha/default/parity-cursor-#{System.unique_integer([:positive])}"
+        )
 
       bind_to_default(session_uri)
 
@@ -169,7 +178,14 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
       ctx = ctx_for(slice, %{self_uri: session_uri, caller: sender})
 
       {:ok, _, effects1} = SessionBehavior.handle_send(%{message: msg}, ctx)
-      cursor1 = effects1 |> Enum.find_value(fn {:set, :send_cursor, c} -> c; _ -> nil end)
+
+      cursor1 =
+        effects1
+        |> Enum.find_value(fn
+          {:set, :send_cursor, c} -> c
+          _ -> nil
+        end)
+
       assert cursor1 == 1
 
       # Now simulate the slice carrying send_cursor: 1, and call again.
@@ -177,7 +193,14 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
       ctx2 = ctx_for(slice2, %{self_uri: session_uri, caller: sender})
 
       {:ok, _, effects2} = SessionBehavior.handle_send(%{message: msg}, ctx2)
-      cursor2 = effects2 |> Enum.find_value(fn {:set, :send_cursor, c} -> c; _ -> nil end)
+
+      cursor2 =
+        effects2
+        |> Enum.find_value(fn
+          {:set, :send_cursor, c} -> c
+          _ -> nil
+        end)
+
       assert cursor2 == 2
     end
 
@@ -190,7 +213,9 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
       # path's let-it-crash behaviour on Repo errors is covered by
       # the integration suite (chat_routing_test).
       session_uri =
-        URI.new!("session://team-alpha/default/parity-error-#{System.unique_integer([:positive])}")
+        URI.new!(
+          "session://team-alpha/default/parity-error-#{System.unique_integer([:positive])}"
+        )
 
       bind_to_default(session_uri)
 
@@ -212,7 +237,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
     end
   end
 
-  describe "handle_receive/2 — User branch" do
+  describe "handle_receive/2 — user.receive (Behavior.User.Receive)" do
     test "produces :set effects for :last_received + :recent_messages ring" do
       user_uri = URI.new!("entity://team-alpha/user/u-#{System.unique_integer([:positive])}")
       sender = URI.new!("entity://team-alpha/user/sender")
@@ -227,7 +252,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
           slice_change_cursor: 5
         })
 
-      assert {:ok, %{}, effects} = SessionBehavior.handle_receive(%{message: msg}, ctx)
+      assert {:ok, %{}, effects} = UserReceive.handle_receive(%{message: msg}, ctx)
 
       assert Enum.any?(effects, fn
                {:set, :last_received, %{message_id: id}} -> id == msg.id
@@ -247,7 +272,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
       # Pre-fill ring to capacity-1; new entry should land at HEAD,
       # oldest entry falls off the tail.
       prefill =
-        for i <- 1..SessionBehavior.recent_messages_ring_depth() do
+        for i <- 1..UserReceive.recent_messages_ring_depth() do
           {i, "msg-#{i}"}
         end
 
@@ -262,7 +287,7 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
           slice_change_cursor: 999
         })
 
-      {:ok, _, effects} = SessionBehavior.handle_receive(%{message: msg}, ctx)
+      {:ok, _, effects} = UserReceive.handle_receive(%{message: msg}, ctx)
 
       ring =
         Enum.find_value(effects, fn
@@ -271,13 +296,13 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
         end)
 
       # Ring size capped at the SPEC-pinned depth.
-      assert length(ring) == SessionBehavior.recent_messages_ring_depth()
+      assert length(ring) == UserReceive.recent_messages_ring_depth()
       # HEAD is the new message.
       assert [{999, _msg_id} | _] = ring
     end
   end
 
-  describe "handle_receive/2 — Agent branch" do
+  describe "handle_receive/2 — agent.receive (Behavior.Agent.Receive)" do
     test "produces no :set effects (agent slice is empty by design)" do
       agent_uri =
         URI.new!("entity://team-alpha/agent/cc_demo-#{System.unique_integer([:positive])}")
@@ -294,17 +319,16 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
           caller: URI.to_string(URI.new!("session://team-alpha/default/x"))
         })
 
-      assert {:ok, %{}, []} = SessionBehavior.handle_receive(%{message: msg}, ctx)
+      assert {:ok, %{}, []} = AgentReceive.handle_receive(%{message: msg}, ctx)
     end
 
-    test "unsupported kind → typed error" do
-      sender = URI.new!("entity://team-alpha/user/sender")
-      msg = Message.new(sender, %{text: "x", attachments: []})
-      ctx = ctx_for(empty_chat_slice(), %{kind_module: SomeOtherKind})
-
-      assert {:error, {:receive_unsupported_for_kind, SomeOtherKind}} =
-               SessionBehavior.handle_receive(%{message: msg}, ctx)
-    end
+    # PR-2: the old "unsupported kind → typed error" parity test is DELETED.
+    # That `{:error, {:receive_unsupported_for_kind, _}}` branch lived in the
+    # retired internal `case ctx.kind_module` on SessionBehavior. With the
+    # split, `:receive` is registered ONLY for `{User, :receive}` /
+    # `{Agent, :receive}` (each its own Behavior), so a third Kind can never
+    # reach a `handle_receive` at all — the error condition is gone by
+    # construction, not by a runtime guard.
   end
 
   describe "handle_join/2 — member not in registry" do
@@ -459,7 +483,8 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
           monitors: %{ref => member}
         })
 
-      ctx = ctx_for(slice, %{self_uri: Ezagent.URI.new!("session://team-alpha/default/down-parity")})
+      ctx =
+        ctx_for(slice, %{self_uri: Ezagent.URI.new!("session://team-alpha/default/down-parity")})
 
       assert {:ok, effects} =
                SessionBehavior.handle_signal({:DOWN, ref, :process, self(), :normal}, ctx)
