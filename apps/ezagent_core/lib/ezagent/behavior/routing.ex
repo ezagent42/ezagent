@@ -168,7 +168,7 @@ defmodule Ezagent.Behavior.Routing do
     end
   end
 
-  @doc "Permanently delete routing rule `id` from `table` (via `RuleStore.delete/1`), reload the registry, and bump `:calls`. Returns `%{deleted: id}`."
+  @doc "Permanently delete the rule with GLOBAL `id` (via `RuleStore.delete/1` — `id` is NOT scoped by `table`), then reload `table`'s registry and bump `:calls`. The caller MUST pass the rule's own `table`, else that table's live registry is left stale. Returns `%{deleted: id}`."
   def handle_delete_rule(%{id: id} = args, ctx) when is_integer(id) do
     table = Map.fetch!(args, :table)
     prev_calls = ctx.read.(:calls, 0)
@@ -183,7 +183,7 @@ defmodule Ezagent.Behavior.Routing do
     end
   end
 
-  @doc "Disable (soft-off, retained) routing rule `id` in `table` (via `RuleStore.disable/1`), reload the registry, and bump `:calls`. Returns `%{disabled: id}`."
+  @doc "Disable (soft-off, retained) the rule with GLOBAL `id` (via `RuleStore.disable/1` — not scoped by `table`), then reload `table`'s registry and bump `:calls`. The caller MUST pass the rule's own `table` or its live registry is left stale. Returns `%{disabled: id}`."
   def handle_disable_rule(%{id: id} = args, ctx) when is_integer(id) do
     table = Map.fetch!(args, :table)
     prev_calls = ctx.read.(:calls, 0)
@@ -198,7 +198,7 @@ defmodule Ezagent.Behavior.Routing do
     end
   end
 
-  @doc "Re-enable a disabled routing rule `id` in `table` (via `RuleStore.enable/1`), reload the registry, and bump `:calls`. Returns `%{enabled: id}`."
+  @doc "Re-enable the disabled rule with GLOBAL `id` (via `RuleStore.enable/1` — not scoped by `table`), then reload `table`'s registry and bump `:calls`. The caller MUST pass the rule's own `table` or its live registry is left stale. Returns `%{enabled: id}`."
   def handle_enable_rule(%{id: id} = args, ctx) when is_integer(id) do
     table = Map.fetch!(args, :table)
     prev_calls = ctx.read.(:calls, 0)
