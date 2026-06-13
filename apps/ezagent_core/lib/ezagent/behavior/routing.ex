@@ -127,6 +127,7 @@ defmodule Ezagent.Behavior.Routing do
   # macro default change can't silently widen the cap shape. workspace_scoped?
   # = false: the system-routing dispatch target (system://routing/default)
   # is cross-workspace by nature.
+  @doc "Cap map for the rule-CRUD actions (add/delete/disable/enable_rule), pinned to `kind: :any` (Routing is multi-Kind: it backs both per-session routing and the global `system://routing/default`)."
   def required_caps do
     %{
       add_rule: Ezagent.Capability.cap(:any, __MODULE__, :add_rule),
@@ -136,6 +137,7 @@ defmodule Ezagent.Behavior.Routing do
     }
   end
 
+  @doc "`false` — the system-routing target (`system://routing/default`) is cross-workspace by nature, so the rule caps are not workspace-scoped."
   def workspace_scoped?, do: false
 
   # State-only: persistent `:calls` counter, no transients. Slice key
@@ -143,6 +145,7 @@ defmodule Ezagent.Behavior.Routing do
   @impl Ezagent.Lifecycle
   def create(_args), do: {:ok, %{calls: 0}}
 
+  @doc "Add a routing rule (`matcher_json` → `receivers`) to `table`: parse the matcher, persist via `RuleStore.add/5` (stamping `created_by` for per-scope ownership/idempotent reconcile), reload the registry, and bump the `:calls` counter. Returns `%{id: row.id}`."
   def handle_add_rule(args, ctx) do
     %{table: table, matcher_json: matcher_json, receivers: receivers} = args
     opts = build_add_opts(args, ctx)
@@ -165,6 +168,7 @@ defmodule Ezagent.Behavior.Routing do
     end
   end
 
+  @doc "Permanently delete the rule with GLOBAL `id` (via `RuleStore.delete/1` — `id` is NOT scoped by `table`), then reload `table`'s registry and bump `:calls`. The caller MUST pass the rule's own `table`, else that table's live registry is left stale. Returns `%{deleted: id}`."
   def handle_delete_rule(%{id: id} = args, ctx) when is_integer(id) do
     table = Map.fetch!(args, :table)
     prev_calls = ctx.read.(:calls, 0)
@@ -179,6 +183,7 @@ defmodule Ezagent.Behavior.Routing do
     end
   end
 
+  @doc "Disable (soft-off, retained) the rule with GLOBAL `id` (via `RuleStore.disable/1` — not scoped by `table`), then reload `table`'s registry and bump `:calls`. The caller MUST pass the rule's own `table` or its live registry is left stale. Returns `%{disabled: id}`."
   def handle_disable_rule(%{id: id} = args, ctx) when is_integer(id) do
     table = Map.fetch!(args, :table)
     prev_calls = ctx.read.(:calls, 0)
@@ -193,6 +198,7 @@ defmodule Ezagent.Behavior.Routing do
     end
   end
 
+  @doc "Re-enable the disabled rule with GLOBAL `id` (via `RuleStore.enable/1` — not scoped by `table`), then reload `table`'s registry and bump `:calls`. The caller MUST pass the rule's own `table` or its live registry is left stale. Returns `%{enabled: id}`."
   def handle_enable_rule(%{id: id} = args, ctx) when is_integer(id) do
     table = Map.fetch!(args, :table)
     prev_calls = ctx.read.(:calls, 0)
@@ -243,6 +249,7 @@ defmodule Ezagent.Behavior.Routing do
   # `entity://`) return a concrete `%URI{}`. Global system
   # instances (`system://routing/default`) return `:any` — those
   # require bootstrap admin per the `:no_owner` branch.
+  @doc "Cap data-owner for a Routing instance: a workspace-scoped instance (`session://`/`workspace://`/`entity://`) resolves to `:any` (in-scope holders qualify); the global `system://routing/default` resolves to `:no_owner`, so editing system rules requires the bootstrap-admin cap."
   def data_owner(%URI{} = instance) do
     case Ezagent.Capability.workspace_of(instance) do
       %URI{} -> :any
