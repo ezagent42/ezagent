@@ -26,7 +26,7 @@
   def_count_orchestrator_tools: 35,
   def_count_session_creator: 29,
   def_count_capability: 22,
-  spawn_registry_call_sites: 36,
+  spawn_registry_call_sites: 37,
   # Transport #53 Decision C (codex C-rC-P1): the orchestrator MCP transport
   # (`mcp_server.ex`) references the Session Kind it routes to through the
   # SANCTIONED SpawnRegistry chokepoint on a bridge reconnect, to rehydrate the

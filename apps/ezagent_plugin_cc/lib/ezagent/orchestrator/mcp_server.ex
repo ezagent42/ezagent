@@ -158,14 +158,20 @@ defmodule Ezagent.Orchestrator.McpServer do
           parent_template_uri: parent_template_uri
         )
 
-      # Transport #53 Decision C (cold-restart self-heal, codex C-rC-P1) — after
-      # a BEAM restart the per-orchestrator `SessionManager` is also gone. Force
-      # the Session Kind to rehydrate (a core SpawnRegistry call — NOT an im
-      # compile dep): the session-domain `session` spawn fn restarts the
-      # SessionManager from the rehydrated durable working copy, so the
-      # reconnecting bridge's first `tools/call` reaches a live executor instead
-      # of `:orchestrator_context_unavailable`.
+      # Transport #53 Decision C (cold-restart self-heal, codex C-rC-P1 / C-r3-P2)
+      # — after a BEAM restart the per-orchestrator `SessionManager` AND the
+      # orchestrator Agent Kind are both gone. Force BOTH to rehydrate through the
+      # core SpawnRegistry chokepoint (NOT an im compile dep):
+      #
+      #   * the Session Kind → its session-domain spawn fn restarts the
+      #     SessionManager from the durable working copy (else the first
+      #     `tools/call` hits `:orchestrator_context_unavailable`);
+      #   * the orchestrator Agent Kind → so the session-side cap reconstruction
+      #     (`Identity.list_caps_for/1`) finds it in `KindRegistry` and returns
+      #     its REAL delegated caps (a not-yet-rehydrated agent yields an empty
+      #     set → every tool would wrongly deny as unauthorized).
       _ = Ezagent.SpawnRegistry.spawn(session_uri)
+      _ = Ezagent.SpawnRegistry.spawn(orchestrator_uri)
 
       :ok
     else
