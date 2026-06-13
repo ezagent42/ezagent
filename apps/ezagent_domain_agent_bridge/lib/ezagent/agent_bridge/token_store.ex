@@ -46,6 +46,32 @@ defmodule Ezagent.AgentBridge.TokenStore do
     end
   end
 
+  @doc """
+  Return the persisted connect token for `agent_uri`.
+
+  The inverse of `lookup_by_token/1`: given the agent URI, return the
+  secret token minted for it (`{:ok, token}`), or `:error` when no token
+  has been minted. Used by the session-domain `Ezagent.Session.SessionManager`
+  to VERIFY a bridge-forwarded token (constant-time compare) against the
+  orchestrator's known secret — the unforgeable authz gate (Decision C, §2
+  step 0). The token is a SECRET; callers must not log it.
+  """
+  @spec token_for(URI.t()) :: {:ok, String.t()} | :error
+  def token_for(%URI{} = agent_uri) do
+    agent_str = URI.to_string(agent_uri)
+
+    case load_all() do
+      {:ok, instances} ->
+        case Map.get(instances, agent_str) do
+          %{"token" => token} when is_binary(token) -> {:ok, token}
+          _ -> :error
+        end
+
+      _ ->
+        :error
+    end
+  end
+
   @doc "Look up an `agent_uri` by token."
   @spec lookup_by_token(String.t()) :: {:ok, URI.t()} | :error
   def lookup_by_token(token) when is_binary(token) do

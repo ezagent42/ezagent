@@ -107,7 +107,13 @@ defmodule EzagentDomainInstanceMessage.Application do
       EzagentDomainInstanceMessage.PresenceFanout,
       # #17 PR-C2 — subscribes to the shared PTY auth-failure topic and notifies an
       # agent's owner (creator_uri) to re-`/login`, instead of the silent mute.
-      Ezagent.Agent.CredentialNotifier
+      Ezagent.Agent.CredentialNotifier,
+      # Transport #53 Decision C — the per-orchestrator MCP executor
+      # (`Ezagent.Session.SessionManager`, a GenServer NOT a Kind). Registry keys
+      # it by orchestrator URI so cc reaches it by URI (no compile dep); the
+      # DynamicSupervisor owns the per-session processes.
+      {Registry, keys: :unique, name: Ezagent.Session.SessionManagerRegistry},
+      {DynamicSupervisor, name: Ezagent.Session.SessionManagerSupervisor, strategy: :one_for_one}
     ]
 
     case Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__) do
@@ -907,23 +913,14 @@ defmodule EzagentDomainInstanceMessage.Application do
       :ok = CapabilityRegistry.register(Session, action, OrchAdminB)
     end)
 
-    # PR-8 (transport #53 / decomposition spec §3.4 / O-4) — register the
-    # session-side `Ezagent.Behavior.OrchestratorTools` dispatch surface on
-    # `Entity.Session`. The cc MCP transport (`Ezagent.Orchestrator.McpServer`)
-    # FORWARDS a `tools/call` via `Invocation.dispatch` to a
-    # `session://…?action=orchestrate.<tool>` action here, carrying ONLY the
-    # orchestrator's caller URI (NO caps). This Behavior reconstructs the
-    # orchestrator's 4 delegated caps SESSION-side and runs the op — so no
-    # plugin-minted authority crosses the boundary (O-4). Registry-only (NOT
-    # in `Session.behaviors/0`), so it stays a reachable dispatch surface
-    # orthogonal to the per-instance subset (same pattern as IdentityAdmin /
-    # Terminable). Cap-exempt actions; the in-handler structural
-    # caller-is-our-orchestrator check is the entry authority.
-    alias Ezagent.Behavior.OrchestratorTools, as: OrchToolsB
-
-    Enum.each(OrchToolsB.actions(), fn action ->
-      :ok = CapabilityRegistry.register(Session, action, OrchToolsB)
-    end)
+    # Transport #53 Decision C — the orchestrator MCP executor is a plain
+    # supervised `Ezagent.Session.SessionManager` GenServer (NOT a Kind / NOT a
+    # dispatch action), so there is NOTHING to register here. cc's transport
+    # looks it up by orchestrator URI + `GenServer.call`s it with the bridge
+    # token, which SessionManager verifies before reconstructing caps + running
+    # the op. Decision C REPLACES the deadlocking O-4 `Behavior.OrchestratorTools`
+    # + `Orchestrator.ToolRunner` (both deleted) and closes the authz hole: a
+    # plain GenServer has no cap-exempt forgeable dispatch entry — the token is.
 
     # #533 §3.4 — Manage (`:delete` / `:reconfigure`) is a UNIVERSAL behavior
     # (resolves for every Kind via the registry fallback); no per-Kind

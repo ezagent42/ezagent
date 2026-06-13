@@ -689,6 +689,21 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
                  effective_owner,
                  session_template_uri
                ),
+             # Transport #53 Decision C — spawn the per-orchestrator MCP
+             # executor (`Ezagent.Session.SessionManager` GenServer) alongside
+             # the transport-context registration. The cc MCP transport reaches
+             # it by orchestrator URI; it verifies the bridge token, reconstructs
+             # the orchestrator's caps session-side, and runs each tool with the
+             # Session cap-checked at the dispatch chokepoint. Terminated with
+             # the session.
+             {:ok, _sm_pid} <-
+               Ezagent.Session.SessionManager.ensure_started(
+                 orchestrator_uri: orchestrator_uri,
+                 session_uri: session_uri,
+                 workspace_uri: workspace_uri,
+                 owner_uri: effective_owner,
+                 parent_template_uri: session_template_uri
+               ),
              :ok <-
                Materializer.join_session_members(session_uri, [
                  effective_owner,
