@@ -42,33 +42,24 @@ defmodule EzagentPluginCurlAgent.Integration.PluginContractTest do
   end
 
   test "curl's behaviors/0 were published to BehaviorRegistry by boot/1" do
-    # PR-6 — the curl STATE Behavior is reparented onto Entity.Agent (NEW
-    # agents) AND kept bound on the legacy Entity.CurlAgent Kind (existing
-    # agents, through the PR-7 rollback window). On the UNIFIED Entity.Agent,
-    # ALL of the reparented behavior's actions resolve to Behavior.CurlAgent.
+    # PR-6+7 — the curl STATE Behavior is reparented onto the UNIFIED
+    # Entity.Agent Kind and is the SOLE curl path (the standalone curl Kind +
+    # its legacy :receive / :reset_conversation / :configure shim bindings are
+    # DELETED, no rollback window). ALL of the curl behavior's actions resolve
+    # to Behavior.CurlAgent on Entity.Agent.
     for action <- Ezagent.Behavior.CurlAgent.actions() do
       assert {:ok, Ezagent.Behavior.CurlAgent} =
                Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Agent, action),
              "expected (Entity.Agent, #{inspect(action)}) → Behavior.CurlAgent"
     end
 
-    # codex round-2 P2 — on the LEGACY Entity.CurlAgent Kind, the public
-    # `:reset_conversation` / `:configure` are served by the `:curl_agent`-axis
-    # companion `CurlAgentLegacyConfig` (existing grants hold `:curl_agent`, not
-    # the reparented `:agent`); only `:sync_result` stays on Behavior.CurlAgent.
-    # `:receive` is the inline-completion `CurlAgentLegacyReceive`. PR-7 deletes
-    # all three legacy bindings with `Entity.CurlAgent`.
-    assert {:ok, Ezagent.Behavior.CurlAgentLegacyConfig} =
-             Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.CurlAgent, :reset_conversation)
+    # :receive is NOT a curl action — it flows through agent.receive
+    # (Behavior.Agent.Receive) → AgentBridge → the curl :in_process_sync
+    # adapter, NOT a curl-owned :receive binding.
+    refute :receive in Ezagent.Behavior.CurlAgent.actions()
 
-    assert {:ok, Ezagent.Behavior.CurlAgentLegacyConfig} =
-             Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.CurlAgent, :configure)
-
-    assert {:ok, Ezagent.Behavior.CurlAgent} =
-             Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.CurlAgent, :sync_result)
-
-    assert {:ok, Ezagent.Behavior.CurlAgentLegacyReceive} =
-             Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.CurlAgent, :receive)
+    assert {:ok, mod} = Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Agent, :receive)
+    assert mod == Ezagent.Behavior.Agent.Receive
   end
 
   test "curl's curl.agent Template Class was published to TemplateRegistry" do

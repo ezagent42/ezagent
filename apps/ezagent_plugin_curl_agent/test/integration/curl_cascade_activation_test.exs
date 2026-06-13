@@ -50,7 +50,12 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
     source_uri = agent_uri("curl-empty-source")
     target_uri = agent_uri("curl-target-missing")
 
-    {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.CurlAgent, %{uri: source_uri})
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+        uri: source_uri,
+        behaviors: Ezagent.Entity.Agent.curl_behaviors()
+      })
+
     wait_for(fn -> Ezagent.ReadyGate.status(source_uri) == :ready end)
 
     assert {:ok, _grant} =
@@ -177,11 +182,13 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
     Ezagent.Kind.terminate(target_uri)
   end
 
+  # PR-6+7 (curl-as-flavor) — curl actions register on the UNIFIED
+  # `Ezagent.Entity.Agent` Kind (the standalone curl Kind is deleted).
   defp register_curl_dispatch do
     for action <- Ezagent.Behavior.CurlAgent.actions() do
       :ok =
         Ezagent.BehaviorRegistry.register(
-          Ezagent.Entity.CurlAgent,
+          Ezagent.Entity.Agent,
           action,
           Ezagent.Behavior.CurlAgent
         )
@@ -190,15 +197,22 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
     for action <- Ezagent.Behavior.ApiKeys.actions() do
       :ok =
         Ezagent.BehaviorRegistry.register(
-          Ezagent.Entity.CurlAgent,
+          Ezagent.Entity.Agent,
           action,
           Ezagent.Behavior.ApiKeys
         )
     end
   end
 
+  # PR-6+7 — a curl source agent is a unified `Entity.Agent` with the curl
+  # per-instance behavior set (so its `:curl_agent` + `:api_keys` slices
+  # materialize), the same shape the `curl.agent` Template spawns.
   defp spawn_curl_source!(source_uri, provider, key) do
-    {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.CurlAgent, %{uri: source_uri})
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+        uri: source_uri,
+        behaviors: Ezagent.Entity.Agent.curl_behaviors()
+      })
     wait_for(fn -> Ezagent.ReadyGate.status(source_uri) == :ready end)
 
     target = Ezagent.URI.with_action(source_uri, :api_keys, :put_api_key)

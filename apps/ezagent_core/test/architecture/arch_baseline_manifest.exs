@@ -62,14 +62,19 @@
   # row selector; this is a structural mirror of the approved pattern, not a
   # copy-paste fork of business logic.
   # arch-cap-bump: chat→session SliceMigration mirrors KindBaseBackfill session_rows/0
-  # PR-6 codex round-2 P2 +1 = 31: `Ezagent.Behavior.CurlAgentLegacyConfig` is the
-  # legacy `:curl_agent`-axis `:reset_conversation` / `:configure` companion (existing
-  # grants hold `:curl_agent`, not the reparented behavior's `:agent`). Its handler
-  # bodies are DELIBERATELY byte-identical to `Ezagent.Behavior.CurlAgent`'s
-  # `handle_reset_conversation` / `handle_configure` — the split is purely the cap axis,
-  # so the logic MUST match (a divergence would be the bug). Legacy-only; deleted in PR-7
-  # with `Entity.CurlAgent`, ratcheting this back to 30.
-  cross_file_duplicate_fn_groups: 31, # arch-cap-bump: PR-6 P2 CurlAgentLegacyConfig mirrors CurlAgent reset/configure bodies
+  # PR-6+7 (curl-as-flavor, forward-only) RATCHET-DOWN 31 → 30: the legacy
+  # `:curl_agent`-axis companion `Ezagent.Behavior.CurlAgentLegacyConfig` (whose
+  # reset/configure bodies mirrored `Ezagent.Behavior.CurlAgent`) is DELETED with
+  # the standalone curl Kind. No rollback window (Allen) — the unified Entity.Agent
+  # is the sole curl path, so the duplicate group is gone.
+  # PR-6+7 RATCHET-DOWN 31 → 29: (a) the legacy `CurlAgentLegacyConfig` mirror is
+  # DELETED (−1); (b) the new `mix ezagent.curl.migrate` task adds NO fork — its
+  # Repo-only boot is the shared `Ezagent.Migration.RepoOnly.run/1` (extracted from
+  # `ezagent.session.migrate_slice`, eliminating that copy too) and its `run/1` is
+  # the `use Mix.Task` callback, now correctly exempted via `@dup_callback_owners`
+  # (which also retires a pre-existing Mix-task `run/1` fork the gap had been
+  # counting, −1 more). The chat→session `SliceMigration` mirror remains.
+  cross_file_duplicate_fn_groups: 29, # arch-cap: PR-6+7 curl fold + Mix.Task run/1 callback exemption
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3
@@ -111,15 +116,15 @@
   # PR-2 config-evolve adds the `{:set, :applied, …}` applied-turn idempotency
   # marker effect in Behavior.ConfigEvolve.handle_apply_config_delta (the agent's
   # own :config_evolve slice).
-  # arch-cap-bump: PR-2 applied-turn marker; PR-6 curl fold; +7 (codex P1) — `Ezagent.Behavior.CurlAgentLegacyReceive` restores the OLD inline-completion `:receive` for the legacy `Entity.CurlAgent` Kind through the rollback window (its 7 `{:set, :conversation/:last_error/:last_tokens}` sites). Deleted in PR-7 with `Entity.CurlAgent`, which drops the cap back.
-  # arch-cap-bump: PR-6 codex round-2 P2 (+8) — `Ezagent.Behavior.CurlAgentLegacyConfig`
-  # restores the LEGACY `:curl_agent`-axis `:reset_conversation` / `:configure` for the
-  # legacy `Entity.CurlAgent` Kind (existing grants hold `:curl_agent`, not `:agent`). Its
-  # `{:set}` sites — `handle_configure` (provider/api_url/model/system_prompt/max_history)
-  # + `handle_reset_conversation` (conversation/last_error) — mirror the reparented
-  # behavior's bodies, differing only in cap axis. Deleted in PR-7 with `Entity.CurlAgent`,
-  # which drops the cap back.
-  set_effect_sites: 135, # arch-cap-bump: PR-6 P2 CurlAgentLegacyConfig legacy reset/configure (+8)
+  # PR-6+7 (curl-as-flavor, forward-only) RATCHET-DOWN 135 → 121: both legacy
+  # curl shims are DELETED with the standalone curl Kind (no rollback window —
+  # Allen). `Ezagent.Behavior.CurlAgentLegacyReceive` (−7 `{:set,
+  # :conversation/:last_error/:last_tokens}` sites) and
+  # `Ezagent.Behavior.CurlAgentLegacyConfig` (−7 `{:set}` sites across
+  # handle_configure + handle_reset_conversation) are gone — a measured −14 (the
+  # prior baseline comment mis-stated LegacyConfig as −8; the scanned regex
+  # counts 7). The PR-2 applied-turn marker remains.
+  set_effect_sites: 121, # arch-cap-bump: PR-2 applied-turn marker; curl legacy shims deleted (−14)
   cross_slice_set_violations: 0,
   missing_cap_check_mutating_actions: 0,
   kind_runtime_ordering_violations: 0,

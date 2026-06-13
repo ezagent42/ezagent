@@ -71,16 +71,17 @@ defmodule Ezagent.Entity.Agent do
   # who can rotate. CapabilityRegistry binding lives in
   # `EzagentDomainIdentity.Application` against `Ezagent.Entity.Agent`
   # — same cross-domain pattern as Identity Behavior registration.
-  # PR-6 (im/session/agent decomposition §3.5 / §OQ-1) — `behaviors/0` is
+  # PR-6+7 (im/session/agent decomposition §3.5 / §OQ-1) — `behaviors/0` is
   # the declared SUPERSET. It gains `Ezagent.Behavior.CurlAgent` (the curl
-  # flavor's STATE behavior, reparented off the deleted-in-PR-7
-  # `Entity.CurlAgent`). CurlAgent is ACTIVE only on a `curl`-flavor
+  # flavor's STATE behavior, reparented off the now-DELETED standalone
+  # curl Kind). CurlAgent is ACTIVE only on a `curl`-flavor
   # instance, which threads an explicit `:behaviors` set
   # (`curl_behaviors/0`) at spawn. EVERY OTHER agent (cc / codex / echo)
   # has a `nil`/absent `:kind_base` and resolves to `nil_capture_behavior_set/0`
   # below — the BASE subset, which EXCLUDES CurlAgent — so they stay
-  # byte-identical to pre-PR-6 (no `:curl_agent` slice pollution, no
-  # migration). The full curl-snapshot migration onto this Kind is PR-7.
+  # byte-identical to pre-PR-6 (no `:curl_agent` slice pollution). The
+  # forward-only curl-snapshot migration onto this Kind is `mix
+  # ezagent.curl.migrate` (rewrites pre-fold rows; no rollback window).
   @impl Ezagent.Kind
   def behaviors, do: base_behaviors() ++ [Ezagent.Behavior.CurlAgent]
 

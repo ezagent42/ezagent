@@ -20,22 +20,27 @@ defmodule EzagentPluginCurlAgent.Application do
 
   ## What this plugin declares
 
-  - `behaviors/0` — `{Ezagent.Entity.CurlAgent, :receive |
-    :reset_conversation | :configure}` → `Ezagent.Behavior.CurlAgent`
+  - `behaviors/0` — `{Ezagent.Entity.Agent, :reset_conversation |
+    :configure | :sync_result}` → `Ezagent.Behavior.CurlAgent`
     (the action list comes from `Ezagent.Behavior.CurlAgent.actions/0`).
+    PR-6+7 (curl-as-flavor) folded curl into the unified `Entity.Agent`
+    Kind and DELETED the standalone curl Kind + its legacy
+    `:receive` / `:reset_conversation` / `:configure` shim bindings — the
+    unified Agent Kind is the SOLE curl path (no back-compat window). The
+    `curl_agent` snapshot migration (`mix ezagent.curl.migrate`) rewrites
+    every pre-fold row onto `Entity.Agent` before a new-code node serves it.
   - `template_classes/0` — the `curl.agent` Template Class, so
-    workspaces can declare CurlAgent instances via the standard
-    add-template UI.
-  - `agent_flavors/0` — flavor `"curl"` → `{Ezagent.Entity.CurlAgent,
+    workspaces can declare curl agents via the standard add-template UI.
+  - `agent_flavors/0` — flavor `"curl"` → `{Ezagent.Entity.Agent,
     Ezagent.PluginCurlAgent.Template}`. Consumed by
-    `Ezagent.AgentFlavorRegistry`; PR-3 migrates the domain_instance_message agent
-    resolver onto it, replacing the hardcoded `kind_module_from_flavor`
-    map.
+    `Ezagent.AgentFlavorRegistry`; the domain_instance_message agent
+    resolver consults it.
   - `config_surface/0` — `:flavor` surface. The `/plugins` config icon
     routes to this flavor's agent surface (SPEC §6.1).
-  - `children/0` — `InstanceSupervisor`, a `DynamicSupervisor` for the
-    per-instance Kind processes the `curl.agent` Template Class spawns
-    (`Ezagent.Entity.CurlAgent.supervisor/0` points here).
+  - `children/0` — `InstanceSupervisor`, a `DynamicSupervisor` retained
+    for any per-instance child processes this plugin owns. Curl agents
+    themselves now spawn under the unified Agent Kind's supervisor
+    (`EzagentDomainInstanceMessage.AgentSupervisor`).
   - `after_boot/0` — re-runs `Ezagent.Workspace.Loader.load_all/0`.
     Decision #112 boot-ordering: when the chat plugin ran
     `load_all/0` before this plugin registered its Template Class,
@@ -55,12 +60,8 @@ defmodule EzagentPluginCurlAgent.Application do
   use Application
   use Ezagent.Plugin
 
-  alias Ezagent.Behavior.ApiKeys
   alias Ezagent.Behavior.CurlAgent, as: CurlAgentBehavior
-  alias Ezagent.Behavior.CurlAgentLegacyConfig
-  alias Ezagent.Behavior.CurlAgentLegacyReceive
   alias Ezagent.Entity.Agent, as: AgentKind
-  alias Ezagent.Entity.CurlAgent, as: CurlAgentKind
   alias Ezagent.PluginCurlAgent.Template, as: CurlAgentTemplate
 
   # --- OTP Application -------------------------------------------------
@@ -82,62 +83,23 @@ defmodule EzagentPluginCurlAgent.Application do
 
   @impl Ezagent.Plugin
   def behaviors do
-    # PR-6 (im/session/agent decomposition §3.5 / §OQ-1) — the curl STATE
+    # PR-6+7 (im/session/agent decomposition §3.5 / §OQ-1) — the curl STATE
     # Behavior is REPARENTED onto the unified `Ezagent.Entity.Agent` Kind
-    # (curl flavor). NEW curl agents spawn on `Entity.Agent`, so the curl
-    # actions (`reset_conversation` / `configure` / `sync_result`) bind
-    # there. The old `:receive` action is gone — receive flows through
-    # `agent.receive` → AgentBridge → the curl `:in_process_sync` adapter.
-    agent_curl_actions =
-      for action <- CurlAgentBehavior.actions(), do: {AgentKind, action, CurlAgentBehavior}
-
-    # KEEP `:sync_result` from the reparented curl Behavior bound on the legacy
-    # `Entity.CurlAgent` Kind so EXISTING curl_agent snapshots still resolve it
-    # through the rollback window. PR-7 migrates those snapshots onto
-    # `Entity.Agent` and deletes `Entity.CurlAgent` + this binding. `:api_keys`
-    # stays bound on the legacy Kind for the same reason (on `Entity.Agent` it
-    # is already bound by `EzagentDomainIdentity.Application`).
+    # (curl flavor) and is the SOLE curl path. Curl agents spawn on
+    # `Entity.Agent` with the curl per-instance behavior set, so the curl
+    # actions (`reset_conversation` / `configure` / `sync_result`) bind there.
+    # `:receive` is NOT a curl action — receive flows through `agent.receive`
+    # → AgentBridge → the curl `:in_process_sync` adapter.
     #
-    # codex round-2 P2 — `:reset_conversation` / `:configure` are DELIBERATELY
-    # EXCLUDED here and re-bound below from `CurlAgentLegacyConfig`. The
-    # reparented `Ezagent.Behavior.CurlAgent.required_caps/0` pins the `:agent`
-    # cap axis (correct for `Entity.Agent`), but on the LEGACY Kind existing
-    # callers hold `:curl_agent` caps — binding the `:agent`-axis behavior here
-    # would DENY a legacy caller who could previously reset/configure the agent.
-    legacy_curl_actions =
-      for action <- CurlAgentBehavior.actions(),
-          action == :sync_result,
-          do: {CurlAgentKind, action, CurlAgentBehavior}
-
-    # codex round-2 P2 — the legacy `:curl_agent`-axis `:reset_conversation` /
-    # `:configure`. Same handler bodies as the reparented behavior; the ONLY
-    # difference is the cap axis (`:curl_agent` vs `:agent`), preserving the
-    # authority EXISTING grants were issued against. Legacy Kind ONLY — the
-    # unified `Entity.Agent` keeps the reparented `:agent`-axis behavior. PR-7
-    # deletes this with `Entity.CurlAgent`.
-    legacy_config_actions =
-      for action <- CurlAgentLegacyConfig.actions(),
-          do: {CurlAgentKind, action, CurlAgentLegacyConfig}
-
-    # codex P1 — `CurlAgentBehavior.actions/0` no longer includes `:receive`
-    # (PR-6 moved NEW-agent receive to `agent.receive` → the adapter). But
-    # EXISTING `curl_agent` snapshots still resolve to `Entity.CurlAgent`, and
-    # session delivery dispatches inbound chat as `:receive` — so the legacy
-    # Kind MUST keep a working `:receive` or a pre-migration curl agent hits
-    # `{:unknown_action, :receive}` and goes MUTE for the rollback window.
-    # `Ezagent.Behavior.CurlAgentLegacyReceive` restores the OLD
-    # inline-completion `:receive` (shares the `:curl_agent` slice; legacy Kind
-    # ONLY). It is intentionally NOT bound on the unified `Entity.Agent`
-    # (which uses `agent.receive`) — no double-registration. PR-7 deletes it
-    # with `Entity.CurlAgent`.
-    legacy_receive_action = [{CurlAgentKind, :receive, CurlAgentLegacyReceive}]
-
-    legacy_api_keys_actions =
-      for action <- ApiKeys.actions(), do: {CurlAgentKind, action, ApiKeys}
-
-    agent_curl_actions ++
-      legacy_curl_actions ++
-      legacy_config_actions ++ legacy_receive_action ++ legacy_api_keys_actions
+    # The standalone curl Kind + its legacy `:receive` /
+    # `:reset_conversation` / `:configure` shim bindings are DELETED (PR-7, no
+    # rollback window — Allen). The `curl_agent` snapshot migration
+    # (`mix ezagent.curl.migrate`) rewrites every pre-fold row onto
+    # `Entity.Agent` (`:curl_agent → :agent` cap axis, `flavor: "curl"` slice,
+    # curl behaviors into `:kind_base`) BEFORE a new-code node serves it.
+    # `:api_keys` is already bound on `Entity.Agent` by
+    # `EzagentDomainIdentity.Application` — no re-binding here.
+    for action <- CurlAgentBehavior.actions(), do: {AgentKind, action, CurlAgentBehavior}
   end
 
   @impl Ezagent.Plugin
@@ -148,16 +110,25 @@ defmodule EzagentPluginCurlAgent.Application do
     [
       %{
         flavor: "curl",
-        # PR-6 — the curl flavor now resolves to the UNIFIED
-        # `Ezagent.Entity.Agent` Kind (was the standalone `Entity.CurlAgent`).
-        # NEW curl agents spawn on `Entity.Agent`; the curl-specific STATE
+        # PR-6+7 — the curl flavor resolves to the UNIFIED
+        # `Ezagent.Entity.Agent` Kind (the standalone curl Kind is deleted).
+        # Curl agents spawn on `Entity.Agent`; the curl-specific STATE
         # lives in the reparented `Behavior.CurlAgent`, selected for this
         # flavor via the per-instance behavior set (see `Template`).
         kind: AgentKind,
         template_class: CurlAgentTemplate,
         # PR-6 — register the `:in_process_sync` transport adapter (the HTTP
         # round-trip) UP at boot, symmetric to cc/codex's `bridge_adapter`.
-        bridge_adapter: EzagentPluginCurlAgent.BridgeAdapter
+        bridge_adapter: EzagentPluginCurlAgent.BridgeAdapter,
+        # PR-6+7 (codex round-3 P1-1) — the per-instance behavior SET the
+        # generic direct-create path (`Workspace.create_agent/3` →
+        # `direct_spawn_flavor_agent/2`) threads as `:behaviors`. Curl's `kind`
+        # is the SHARED `Entity.Agent`, whose nil-`:kind_base` default EXCLUDES
+        # `Behavior.CurlAgent`; without this set a direct-created curl agent
+        # captures the BASE (non-curl) behaviors → broken. Declaring it HERE (in
+        # the plugin) keeps the workspace domain flavor-agnostic. Same set the
+        # `curl.agent` Template threads, so the two create paths converge.
+        instance_behaviors: &AgentKind.curl_behaviors/0
       }
     ]
   end

@@ -85,11 +85,16 @@ defmodule EzagentPluginCurlAgent.BridgeAdapterTest do
           "entity://team-alpha/agent/curl_noadapterkey-#{System.unique_integer([:positive])}"
         )
 
-      # Spawn a real curl Kind so the :curl_agent + :api_keys snapshot
-      # slices exist; NO key is seeded → the adapter must short-circuit
+      # PR-6+7 — spawn a real curl agent on the UNIFIED `Entity.Agent` Kind
+      # with the curl per-instance behavior set so the :curl_agent + :api_keys
+      # snapshot slices exist; NO key is seeded → the adapter must short-circuit
       # BEFORE any HTTP call and relay the no_api_key error.
       {:ok, _pid} =
-        Kind.spawn(Ezagent.Entity.CurlAgent, %{uri: uri, provider: "deepseek"})
+        Kind.spawn(Ezagent.Entity.Agent, %{
+          uri: uri,
+          behaviors: Ezagent.Entity.Agent.curl_behaviors(),
+          provider: "deepseek"
+        })
 
       wait_until(fn -> Ezagent.ReadyGate.status(uri) == :ready end)
 

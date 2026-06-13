@@ -170,8 +170,8 @@ defmodule Ezagent.PluginCurlAgent.Template do
     :ok = Ezagent.AgentFlavorAttributes.put(agent_uri, "curl")
 
     # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
-    # PR-6 — the curl flavor now spawns the unified `Ezagent.Entity.Agent`
-    # Kind (was the standalone `Entity.CurlAgent`); the Agent Kind's
+    # PR-6+7 — the curl flavor spawns the unified `Ezagent.Entity.Agent`
+    # Kind (the standalone curl Kind is deleted); the Agent Kind's
     # `supervisor/0` is `EzagentDomainInstanceMessage.AgentSupervisor`.
     #
     # codex round-6 HIGH-1 — `Ezagent.Kind.spawn/2` returns the raw

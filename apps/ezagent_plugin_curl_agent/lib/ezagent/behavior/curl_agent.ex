@@ -111,12 +111,13 @@ defmodule Ezagent.Behavior.CurlAgent do
     description: "persist the curl in-process-sync transport result + reply into the session"
   )
 
-  # PR-6 — the reparented Behavior lives on the unified `Ezagent.Entity.Agent`
-  # Kind (type_name :agent), so its cap subjects key on the `:agent` axis
-  # (the old standalone `Entity.CurlAgent` Kind keyed on `:curl_agent`; the
-  # `:curl_agent → :agent` cap-axis migration for EXISTING agents is PR-7).
-  # Manually exported to override the macro's `:any` default, mirroring how
-  # other agent-flavor behaviors pin their kind axis.
+  # PR-6+7 — the reparented Behavior lives on the unified `Ezagent.Entity.Agent`
+  # Kind (type_name :agent), so its cap subjects key on the `:agent` axis. The
+  # old standalone curl Kind (keyed on `:curl_agent`) is DELETED;
+  # the `:curl_agent → :agent` cap-axis migration for EXISTING agents runs in
+  # `mix ezagent.curl.migrate` (forward-only, no rollback window). Manually
+  # exported to override the macro's `:any` default, mirroring how other
+  # agent-flavor behaviors pin their kind axis.
   def required_caps do
     %{
       reset_conversation: Ezagent.Capability.cap(:agent, __MODULE__, :reset_conversation),

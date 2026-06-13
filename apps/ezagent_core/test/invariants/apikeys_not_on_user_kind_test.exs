@@ -40,7 +40,7 @@ defmodule EzagentCore.Invariants.ApiKeysNotOnUserKindTest do
            "Allen 2026-05-26 flipped ApiKeys from User Kind to Agent Kind. " <>
              "Re-adding it to `Ezagent.Entity.User.behaviors/0` resurrects " <>
              "the per-user credential bag. Move the cap subject to " <>
-             "`Ezagent.Entity.Agent` / `Ezagent.Entity.CurlAgent`."
+             "`Ezagent.Entity.Agent` (the unified agent-flavor Kind)."
   end
 
   test "CapabilityRegistry.subjects_for_kind(User) must not name ApiKeys as a subject" do
@@ -52,8 +52,8 @@ defmodule EzagentCore.Invariants.ApiKeysNotOnUserKindTest do
     assert leaking == [],
            "Behavior.ApiKeys is registered against User Kind in CapabilityRegistry. " <>
              "Allen 2026-05-26 flip: registration must be on `Ezagent.Entity.Agent` " <>
-             "(in `EzagentDomainIdentity.Application`) and `Ezagent.Entity.CurlAgent` " <>
-             "(in `EzagentPluginCurlAgent.Application`). Found subjects: " <>
+             "(in `EzagentDomainIdentity.Application`; curl folded onto this " <>
+             "unified Kind in PR-6+7). Found subjects: " <>
              inspect(leaking)
   end
 
@@ -81,7 +81,9 @@ defmodule EzagentCore.Invariants.ApiKeysNotOnUserKindTest do
   test "Behavior.ApiKeys IS registered on every supported agent-flavor Kind" do
     # The list mirrors the post-flip registration sites:
     # - identity domain Application registers against Ezagent.Entity.Agent
-    # - curl_agent plugin's behaviors/0 publishes against Ezagent.Entity.CurlAgent
+    # - PR-6+7 (curl-as-flavor) folded curl onto Ezagent.Entity.Agent; the
+    #   standalone curl Kind is DELETED, so the only agent-flavor Kind that
+    #   binds ApiKeys is the unified Entity.Agent.
     #
     # Test-mode safety: the chat/curl plugins may not be loaded in a
     # bare core-only test run; we skip an agent flavor whose Kind
@@ -89,7 +91,7 @@ defmodule EzagentCore.Invariants.ApiKeysNotOnUserKindTest do
     # to assert). The assertion still locks the post-flip wiring
     # for any Kind that IS present.
     expected_kinds =
-      [Ezagent.Entity.Agent, Ezagent.Entity.CurlAgent]
+      [Ezagent.Entity.Agent]
       |> Enum.filter(&Code.ensure_loaded?/1)
 
     assert expected_kinds != [],
@@ -104,7 +106,7 @@ defmodule EzagentCore.Invariants.ApiKeysNotOnUserKindTest do
                "must return `{:ok, Ezagent.Behavior.ApiKeys}`. Allen 2026-05-26 — " <>
                "ApiKeys moved from User Kind to every agent-flavor Kind. Check " <>
                "EzagentDomainIdentity.Application.register_identity_behaviors/0 " <>
-               "(Agent) and EzagentPluginCurlAgent.Application.behaviors/0 (CurlAgent)."
+               "(the unified Entity.Agent Kind; curl folded on in PR-6+7)."
     end
   end
 
@@ -115,7 +117,7 @@ defmodule EzagentCore.Invariants.ApiKeysNotOnUserKindTest do
     # against `Kind.get_slice/2` return `:error`. Registration alone
     # (above) is insufficient — both axes must line up.
     expected_kinds =
-      [Ezagent.Entity.Agent, Ezagent.Entity.CurlAgent]
+      [Ezagent.Entity.Agent]
       |> Enum.filter(&Code.ensure_loaded?/1)
 
     for kind <- expected_kinds do

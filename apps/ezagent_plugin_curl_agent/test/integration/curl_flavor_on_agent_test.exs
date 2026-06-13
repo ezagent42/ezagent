@@ -5,17 +5,15 @@ defmodule EzagentPluginCurlAgent.Integration.CurlFlavorOnAgentTest do
 
   The architectural gates this PR must hold:
 
-    1. A FRESH curl agent spawns on `Entity.Agent` (NOT the standalone
-       `Entity.CurlAgent`) with the curl STATE behavior in its per-instance
-       set, so its `:curl_agent` slice materializes.
+    1. A FRESH curl agent spawns on `Entity.Agent` (the standalone curl Kind is
+       DELETED) with the curl STATE behavior in its per-instance set, so its
+       `:curl_agent` slice materializes.
     2. The curl `:in_process_sync` adapter is registered for the `"curl"`
        flavor and resolves the agent's flavor via the stored attribute.
     3. `agent.receive` is flavor-blind: for the curl `:in_process_sync`
        class it re-dispatches the adapter's result into the curl Behavior's
        `:sync_result` action (the durable persist step), keeping
        `Behavior.Agent.Receive` curl-agnostic.
-    4. The legacy `Entity.CurlAgent` Kind + Behavior still resolve (cold-load
-       for EXISTING agents; PR-7 migrates them).
 
   No real DeepSeek HTTP — the no-api-key path is deterministic + network-free
   (`feedback_let_it_crash_no_workarounds`: the REAL contract path, not a
@@ -261,13 +259,13 @@ defmodule EzagentPluginCurlAgent.Integration.CurlFlavorOnAgentTest do
     end
   end
 
-  describe "legacy Entity.CurlAgent still resolves (PR-7 migrates it)" do
-    test "the legacy Kind + Behavior binding survive the fold" do
-      # BehaviorRegistry still routes the curl actions on the legacy Kind so
-      # EXISTING curl_agent snapshots keep working through the rollback window.
+  describe "curl actions resolve ONLY on the unified Entity.Agent (no legacy Kind)" do
+    test "the curl behavior binding lives on Entity.Agent (standalone curl Kind deleted)" do
+      # PR-6+7 — the standalone curl Kind is DELETED; curl actions resolve on
+      # the UNIFIED Entity.Agent Kind, the sole curl path (no rollback window).
       for action <- Ezagent.Behavior.CurlAgent.actions() do
         assert {:ok, Ezagent.Behavior.CurlAgent} =
-                 Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.CurlAgent, action)
+                 Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Agent, action)
       end
     end
   end

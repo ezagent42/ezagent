@@ -225,8 +225,8 @@ defmodule EzagentPluginNp.Integration.Comprehensive4AgentE2eTest do
       # behavior set (`curl_behaviors/0`) + the stored `curl` flavor. Receive
       # flows `agent.receive` → AgentBridge → the curl `:in_process_sync`
       # adapter (the mocked-DeepSeek HTTP round-trip) → the curl Behavior's
-      # `:sync_result` persist+reply. (Pre-PR-6 this spawned the standalone
-      # `Entity.CurlAgent`; PR-7 migrates the remaining legacy snapshots.)
+      # `:sync_result` persist+reply. (Pre-fold this spawned the standalone
+      # curl Kind, now DELETED; `mix ezagent.curl.migrate` rewrites old rows.)
       curl_uri = URI.new!("entity://team-alpha/agent/curl_np-e2e-#{uniq()}")
 
       {:ok, _curl_pid} =

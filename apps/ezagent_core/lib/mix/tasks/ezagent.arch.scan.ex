@@ -54,9 +54,12 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # `Agent.behaviors/0` into `base_behaviors/0` + `curl_behaviors/0` +
     # `nil_capture_behavior_set/0` (the curl flavor fold); SAME sanctioned
     # `spawn/4` shim + `spawn_fresh/4` def + its single call site, lower lines.
-    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 229},
-    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 268},
-    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 270},
+    # PR-6+7 (curl-as-flavor forward-only) — shifted +1 by the moduledoc comment
+    # rewording on `Agent.behaviors/0` (standalone curl Kind now DELETED). SAME
+    # sanctioned defs/call, one line lower.
+    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 230},
+    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 269},
+    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 271},
     # PR-3S — `spawn_fresh_member/8` (def) + its single call site moved VERBATIM
     # from `Orchestrator.Tools` to `Orchestrator.Tools.MemberTemplate` along with
     # the `update_member_template` regenerate cluster (gt_1000 4→3 extraction).
@@ -132,7 +135,14 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     "Schema" => [{:changeset, 2}],
     "Ecto" => [{:changeset, 2}],
     "Lifecycle" => [{:create, 1}, {:activate, 2}, {:deactivate, 2}, {:destroy, 1}],
-    "Behavior" => [{:required_caps, 0}]
+    "Behavior" => [{:required_caps, 0}],
+    # `use Mix.Task` obligates `run/1` (the `@impl Mix.Task` callback). Two
+    # one-shot snapshot-migration tasks sharing the SAME thin `run/1` dispatch
+    # skeleton (parse switches → `cond` → `Ezagent.Migration.RepoOnly.run/1`) is
+    # a callback contract, not a copy-paste fork — exempt it, scoped to modules
+    # that actually `use Mix.Task`. (PR-6+7 curl-as-flavor: closes the gap so
+    # `ezagent.curl.migrate` + `ezagent.session.migrate_slice` aren't a fork.)
+    "Task" => [{:run, 1}]
   }
 
   # `{name, arity}` exempt in EVERY module — universal OTP child-spec boilerplate
