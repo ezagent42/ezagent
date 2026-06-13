@@ -73,6 +73,12 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   @bridge_script "orchestrator_bridge.py"
   @tools_schema_file "orchestrator_tools.json"
 
+  # Canonical localhost orchestrator-socket WS URL — the fallback when no
+  # `EZAGENT_BRIDGE_WS_URL` env / `:ezagent_plugin_cc, :ws_url` is configured
+  # (matches `orchestrator_bridge.py`'s own default). Custom deployments override
+  # via the same knobs the regular cc bridge uses (codex C-r2-P2).
+  @orchestrator_ws_default "ws://127.0.0.1:10042/orchestrator_socket/websocket"
+
   defmodule InstallError do
     @moduledoc """
     Raised when the orchestrator MCP bridge / schema / mcp.json could
@@ -483,13 +489,52 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
             "args" => ["run", "--script", Path.join(base, @bridge_script)],
             "env" => %{
               "EZAGENT_ROLE" => "orchestrator",
-              "EZAGENT_ORCHESTRATOR_TOOLS_PATH" => Path.join(base, @tools_schema_file)
+              "EZAGENT_ORCHESTRATOR_TOOLS_PATH" => Path.join(base, @tools_schema_file),
+              # codex C-r2-P2 — write the resolved orchestrator-socket WS URL so a
+              # non-default deployment (custom port / remote host / TLS /
+              # `:ezagent_plugin_cc, :ws_url`) does NOT silently fall back to the
+              # hardcoded `ws://127.0.0.1:10042/orchestrator_socket/websocket`
+              # (the bridge would then fail to connect to its MCP channel). Mirrors
+              # the regular cc bridge config (`McpConfigWriter` writes
+              # `EZAGENT_BRIDGE_WS_URL`), but on the `/orchestrator_socket` mount.
+              "EZAGENT_BRIDGE_WS_URL" => resolve_orchestrator_ws_url()
             }
           }
         }
       },
       pretty: true
     )
+  end
+
+  # The orchestrator MCP bridge connects to the `/orchestrator_socket` mount
+  # (NOT the regular `/agent_bridge` mount). Reuse the regular bridge's resolved
+  # host:port (`EZAGENT_BRIDGE_WS_URL` env / `:ws_url` app config) and swap the
+  # path to `orchestrator_socket`, so a custom-port / remote / TLS deployment is
+  # honored. Falls back to the canonical localhost orchestrator-socket URL.
+  defp resolve_orchestrator_ws_url do
+    @orchestrator_ws_default
+    |> resolve_base_ws_url()
+    |> swap_ws_path("/orchestrator_socket/websocket")
+  end
+
+  defp resolve_base_ws_url(default) do
+    System.get_env("EZAGENT_BRIDGE_WS_URL") ||
+      Application.get_env(:ezagent_plugin_cc, :ws_url) ||
+      default
+  end
+
+  # Replace the path of a `ws(s)://host:port/<path>` URL, preserving scheme +
+  # authority (so a custom host/port/TLS deployment's connectivity is kept while
+  # pointing at the orchestrator mount). A malformed URL falls back to the
+  # canonical orchestrator default.
+  defp swap_ws_path(ws_url, path) when is_binary(ws_url) do
+    case URI.parse(ws_url) do
+      %URI{scheme: scheme, host: host} = uri when is_binary(scheme) and is_binary(host) ->
+        %{uri | path: path, query: nil, fragment: nil} |> URI.to_string()
+
+      _ ->
+        @orchestrator_ws_default
+    end
   end
 
   # The orchestrator system prompt — written into the sandbox CLAUDE.md

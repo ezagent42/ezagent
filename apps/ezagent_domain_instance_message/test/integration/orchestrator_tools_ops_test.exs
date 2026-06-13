@@ -313,6 +313,70 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
       assert {:ok, :no_orchestrator} = SessionManager.ensure_for_session(session_uri)
     end
 
+    test "update_template targets the LIVE working-copy parent, not the stale start binding (P2-r2)" do
+      # Start the SessionManager with NO parent in the binding, then update the
+      # session's LIVE working copy to point at a real parent (as repair /
+      # re-materialization would). The running executor must pick up the NEW
+      # parent on the next call — never the stale cached binding.
+      session_uri = spawn_session()
+      orchestrator_uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch-#{uniq()}")
+      :ok = Ezagent.AgentFlavorAttributes.put(orchestrator_uri, "cc")
+      on_exit(fn -> Ezagent.AgentFlavorAttributes.delete(orchestrator_uri) end)
+
+      caps =
+        orchestrator_caps(session_uri, orchestrator_uri, @workspace_uri, [
+          :agent_template,
+          :session_template
+        ])
+
+      {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri, initial_caps: caps})
+      :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
+
+      # A real parent SessionTemplate the updated working copy will point at.
+      parent_content = %{
+        name: "mcp-live-parent-#{uniq()}",
+        description: "live parent",
+        agent_slots: [],
+        routing_rules: [],
+        orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator"),
+        default_workspace_uri: @workspace_uri,
+        parent_template_uri: nil,
+        created_by: User.admin_uri(),
+        created_at: ~U[2026-06-13 00:00:00Z]
+      }
+
+      {:ok, parent_uri} = SessionTemplate.persist_version(parent_content, "team-alpha")
+
+      # Working copy points at the parent (orchestrator_uri + session_template_uri).
+      {:ok, _} =
+        Ezagent.Behavior.Session.ConfigActions.system_set_working_copy(session_uri, %{
+          orchestrator_uri: orchestrator_uri,
+          orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator"),
+          session_template_uri: parent_uri
+        })
+
+      {:ok, token} = TokenStore.mint(orchestrator_uri)
+
+      # Start the executor with NO parent in the binding (the stale value).
+      {:ok, _sm} =
+        SessionManager.ensure_started(
+          orchestrator_uri: orchestrator_uri,
+          session_uri: session_uri,
+          workspace_uri: @workspace_uri,
+          owner_uri: orchestrator_uri
+        )
+
+      on_exit(fn -> SessionManager.stop(orchestrator_uri) end)
+
+      orch = %{orchestrator_uri: orchestrator_uri, token: token, session_uri: session_uri}
+
+      # update_template must resolve the parent from the LIVE working copy
+      # (parent_uri), persisting a new version — NOT fail with missing/stale parent.
+      assert {:ok, %URI{}} = run_tool(orch, "update_template", %{}),
+             "update_template must target the LIVE working-copy parent — the running " <>
+               "executor must not be pinned to its stale start-time binding."
+    end
+
     test "rollback stops the SessionManager (P2 — no leaked executor)" do
       ctx = provision([:agent_template])
       assert {:ok, _} = SessionManager.whereis(ctx.orchestrator_uri)

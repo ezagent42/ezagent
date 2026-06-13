@@ -285,10 +285,10 @@ defmodule Ezagent.Session.SessionManager do
   # check, cap reconstruction, and the cross-process tool dispatch.
   defp run(%__MODULE__{} = binding, tool, arguments, bridge_token) do
     with :ok <- verify_bridge_token(binding, bridge_token),
-         :ok <- structural_check(binding),
+         {:ok, wc} <- structural_check(binding),
          {:ok, tool_atom} <- normalize_tool(tool) do
       caps = load_orchestrator_caps(binding.orchestrator_uri)
-      run_tool_op(tool_atom, arguments, opts(binding, caps))
+      run_tool_op(tool_atom, arguments, opts(binding, wc, caps))
     end
   end
 
@@ -330,33 +330,28 @@ defmodule Ezagent.Session.SessionManager do
   # === Step 1 — structural caller-is-our-orchestrator check ==============
   #
   # Defense-in-depth: the bound orchestrator URI MUST equal the session's
-  # DURABLE stored orchestrator (the working-copy field). A stale binding or a
-  # session whose orchestrator changed → fail-closed.
+  # DURABLE stored orchestrator (the LIVE working-copy field). A stale binding or
+  # a session whose orchestrator changed → fail-closed. Returns the LIVE working
+  # copy `{:ok, wc}` so step 3 reads the CURRENT mutable fields
+  # (`parent_template_uri` / owner) — a repair that re-materializes the same
+  # orchestrator with a new parent is reflected immediately, never the stale
+  # cached binding (codex C-r2-P2).
   defp structural_check(%__MODULE__{} = binding) do
-    with %URI{} = stored <- stored_orchestrator_uri(binding.session_uri),
+    with wc when is_map(wc) <- live_working_copy(binding.session_uri),
+         %URI{} = stored <- Map.get(wc, :orchestrator_uri),
          true <- URI.to_string(stored) == URI.to_string(binding.orchestrator_uri) do
-      :ok
+      {:ok, wc}
     else
       _ -> {:error, :unauthorized}
     end
   end
 
-  # Read the session's working-copy orchestrator URI from the LIVE Session
-  # Kind's `:session` slice (the same-domain canonical reader
-  # `Ezagent.Kind.get_slice/2`). SessionManager is materialized alongside the
-  # live session, so the live slice is authoritative; we do not re-read the
-  # durable snapshot (that path belongs to the cc transport's registration
-  # rebuild). Unwraps the Lifecycle two-container `%{state: %{...}}` shape (a
-  # flat slice falls through unchanged for any not-yet-converted path).
-  defp stored_orchestrator_uri(%URI{} = session_uri) do
-    with wc when is_map(wc) <- live_working_copy(session_uri),
-         %URI{} = orchestrator_uri <- Map.get(wc, :orchestrator_uri) do
-      orchestrator_uri
-    else
-      _ -> nil
-    end
-  end
-
+  # Read the LIVE Session Kind's `:session` slice working copy via the
+  # same-domain canonical reader `Ezagent.Kind.get_slice/2`. SessionManager is
+  # materialized alongside the live session, so the live slice is authoritative;
+  # we do not re-read the durable snapshot (that path belongs to the cc
+  # transport's registration rebuild). Unwraps the Lifecycle two-container
+  # `%{state: %{...}}` shape (a flat slice falls through unchanged).
   defp live_working_copy(%URI{} = session_uri) do
     case Ezagent.Kind.get_slice(session_uri, :session) do
       {:ok, %{state: %{template_working_copy: wc}}} when is_map(wc) -> wc
@@ -380,15 +375,26 @@ defmodule Ezagent.Session.SessionManager do
 
   # The caller opts the `Ezagent.Orchestrator.Tools.<tool>` ops consume. The
   # caps are the RECONSTRUCTED orchestrator caps (NOT empty) — the Session
-  # chokepoint gates each op with them.
-  defp opts(%__MODULE__{} = binding, caps) do
+  # chokepoint gates each op with them. `parent_template_uri` (the MUTABLE field
+  # `update_template` targets) is read from the LIVE working copy `wc` so a
+  # repair that re-materializes the same orchestrator with a NEW parent is
+  # reflected immediately (codex C-r2-P2) — never the stale cached binding; it
+  # falls back to the binding only when the live slice omits it. The other fields
+  # (orchestrator/session/workspace URIs + owner) are stable for a session.
+  defp opts(%__MODULE__{} = binding, wc, caps) do
+    parent_template_uri =
+      case Map.get(wc, :session_template_uri) do
+        %URI{} = uri -> uri
+        _ -> binding.parent_template_uri
+      end
+
     [
       caller: binding.orchestrator_uri,
       caps: caps,
       session_uri: binding.session_uri,
       workspace_uri: binding.workspace_uri,
       owner: binding.owner_uri || binding.orchestrator_uri,
-      parent_template_uri: binding.parent_template_uri
+      parent_template_uri: parent_template_uri
     ]
   end
 

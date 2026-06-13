@@ -248,6 +248,42 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
       # source of truth (§3.8 rewrote this to the member/rule-set surface).
       assert names == expected_names
     end
+
+    test "the orchestrator MCP config writes a resolved orchestrator-socket WS URL (codex C-r2-P2)" do
+      base = Path.join(System.tmp_dir!(), "orch-wsurl-#{uniq()}")
+      File.mkdir_p!(base)
+      on_exit(fn -> File.rm_rf(base) end)
+
+      # Default: no override → canonical localhost orchestrator-socket URL is
+      # written explicitly (not left to the bridge's implicit fallback).
+      env = Jason.decode!(CcOrchestratorSeed.orchestrator_mcp_json_for_test(base))
+      server = env["mcpServers"]["esr-orchestrator"]
+
+      assert server["env"]["EZAGENT_BRIDGE_WS_URL"] ==
+               "ws://127.0.0.1:10042/orchestrator_socket/websocket"
+
+      # A custom deployment (env override on host:port/TLS) is honored, with the
+      # path swapped to the orchestrator-socket mount.
+      prev = System.get_env("EZAGENT_BRIDGE_WS_URL")
+
+      System.put_env(
+        "EZAGENT_BRIDGE_WS_URL",
+        "wss://orch.example.com:9443/agent_bridge/websocket"
+      )
+
+      on_exit(fn ->
+        if prev,
+          do: System.put_env("EZAGENT_BRIDGE_WS_URL", prev),
+          else: System.delete_env("EZAGENT_BRIDGE_WS_URL")
+      end)
+
+      env2 = Jason.decode!(CcOrchestratorSeed.orchestrator_mcp_json_for_test(base))
+
+      assert env2["mcpServers"]["esr-orchestrator"]["env"]["EZAGENT_BRIDGE_WS_URL"] ==
+               "wss://orch.example.com:9443/orchestrator_socket/websocket",
+             "a custom WS deployment must be honored (host/port/TLS preserved), " <>
+               "pointed at the /orchestrator_socket mount — not the localhost fallback."
+    end
   end
 
   # ======================================================================
