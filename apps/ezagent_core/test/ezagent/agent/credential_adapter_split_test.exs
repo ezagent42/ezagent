@@ -1,6 +1,10 @@
 defmodule Ezagent.Agent.CredentialAdapterSplitTest do
   use ExUnit.Case, async: true
 
+  # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
+  # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
+  @moduletag :umbrella_only
+
   # Every credentialled flavor must declare secret_relpaths/0, and the secret set
   # must be DISJOINT from the config paths (config.toml is config, not a secret — H4).
   test "cc/codex declare secret_relpaths and secrets are not config files" do

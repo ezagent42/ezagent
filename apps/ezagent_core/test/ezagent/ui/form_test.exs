@@ -10,6 +10,10 @@ defmodule Ezagent.UI.FormTest do
   """
   use ExUnit.Case
 
+  # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
+  # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
+  @moduletag :umbrella_only
+
   alias Ezagent.UI.Form
 
   describe "implements?/1" do

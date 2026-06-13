@@ -5,6 +5,10 @@ defmodule Ezagent.CapabilityTest do
   # DataCase sets one up per test; `async: false` because it shares the
   # global AgentLineage ETS cache + a sandbox connection.
   use EzagentCore.DataCase, async: false
+
+  # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
+  # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
+  @moduletag :umbrella_only
   alias Ezagent.Capability
   import Ezagent.Test.CapHelper
 

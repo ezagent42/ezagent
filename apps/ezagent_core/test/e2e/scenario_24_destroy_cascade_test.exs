@@ -46,6 +46,10 @@ defmodule Ezagent.E2E.Scenario24DestroyCascadeTest do
 
   use EzagentCore.DataCase, async: false
 
+  # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
+  # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
+  @moduletag :umbrella_only
+
   @moduletag scenario: "24-destroy-cascade"
 
   alias Ezagent.{Invocation, KindRegistry, SagaRunner, SystemPrincipal}

@@ -7,6 +7,10 @@ defmodule Ezagent.Credential.ResolverDbTest do
   """
   use EzagentCore.DataCase, async: false
 
+  # #52 Mode-A: cross-tier suite — references `Ezagent.Users` (sibling app
+  # ezagent_domain_identity). Runs only in the umbrella; excluded standalone.
+  @moduletag :umbrella_only
+
   alias Ezagent.Credential.{Adopt, GrantCap, GrantRow, Resolver}
   alias Ezagent.Users
 

@@ -240,18 +240,40 @@ defmodule EzagentCore.Application do
         Ezagent.Kind.spawn(SK, %{uri: uri})
       end)
 
-    uri = SK.routing_default_uri()
+    # #52 Mode-B fix (test-isolation race): in `:test`, do NOT eagerly
+    # spawn `system://routing/default` at boot. The eager spawn runs
+    # `Kind.Server.init/1` → a `kind_snapshots` READ (`Snapshot.load_or_init`)
+    # and `persist_initial_snapshot/3` WRITE under the app supervisor tree,
+    # BEFORE any test's `Ecto.Adapters.SQL.Sandbox` owner exists. With no
+    # allowed process in manual mode that DB work raises
+    # `DBConnection.OwnershipError` — today silently rescued by
+    # `StateRebuilder.snapshot_exists?/1` / `persist_initial_snapshot`
+    # (hence the green-but-noisy umbrella run) and, in the cold-restart-gate
+    # tests, surfacing as flakiness (a restarted snapshot Kind reads
+    # `kind_snapshots` before it registers in KindRegistry, so it can only
+    # reach a connection via a foreign/reverted shared owner).
+    #
+    # We KEEP the Behavior registration + the `system://` SpawnRegistry fn
+    # above (no DB touch); only the eager boot-spawn is deferred. Tests that
+    # dispatch to / assert the routing sentinel spawn it explicitly inside a
+    # checked-out test (greppable: `routing_default_uri`). This mirrors the
+    # existing `@writers_skipped_in_test` precedent (Audit/Snapshot writers).
+    if is_test?() do
+      :ok
+    else
+      uri = SK.routing_default_uri()
 
-    case Ezagent.KindRegistry.lookup(uri) do
-      {:ok, _pid} ->
-        :ok
+      case Ezagent.KindRegistry.lookup(uri) do
+        {:ok, _pid} ->
+          :ok
 
-      :error ->
-        case Ezagent.SpawnRegistry.spawn(uri) do
-          {:ok, _pid} -> :ok
-          {:error, {:already_started, _pid}} -> :ok
-          err -> err
-        end
+        :error ->
+          case Ezagent.SpawnRegistry.spawn(uri) do
+            {:ok, _pid} -> :ok
+            {:error, {:already_started, _pid}} -> :ok
+            err -> err
+          end
+      end
     end
   end
 

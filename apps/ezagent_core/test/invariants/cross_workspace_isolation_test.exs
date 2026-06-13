@@ -46,6 +46,10 @@ defmodule EzagentCore.Invariants.CrossWorkspaceIsolationTest do
   """
   use EzagentCore.DataCase, async: false
 
+  # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
+  # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
+  @moduletag :umbrella_only
+
   alias Ezagent.{Capability, Invocation, Message, SpawnRegistry, WorkspaceRegistry}
   alias Ezagent.Entity.User
 

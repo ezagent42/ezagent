@@ -20,8 +20,34 @@ defmodule Ezagent.Integration.RoutingCapTest do
 
   use EzagentCore.DataCase, async: false
 
+  # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
+  # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
+  @moduletag :umbrella_only
+
   alias Ezagent.{Invocation, Routing.Matcher}
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
+
+  # #52 Mode-B fix: `system://routing/default` is no longer eagerly
+  # spawned at boot in `:test` (`EzagentCore.Application.register_system_kind/0`).
+  # Spawn it HERE, inside the DataCase-checked-out test owner, so the
+  # `Kind.Server.init/1` `kind_snapshots` read/write runs against an
+  # owned sandbox connection (and the dispatches below have a live
+  # target). This exercises the demand-spawn path the production lazy
+  # dispatch relies on. (greppable: routing_default_uri)
+  setup do
+    uri = Ezagent.Entity.System.routing_default_uri()
+
+    case Ezagent.SpawnRegistry.spawn(uri) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+    end
+
+    # The DataCase shared owner already allows the test process; allow the
+    # freshly-spawned routing Kind too so its in-test DB work is owned.
+    {:ok, pid} = Ezagent.KindRegistry.lookup(uri)
+    _ = Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, self(), pid)
+    :ok
+  end
 
   defp admin_ctx do
     %{
@@ -88,7 +114,10 @@ defmodule Ezagent.Integration.RoutingCapTest do
              })
   end
 
-  test "System Kind singleton is alive at boot at system://routing/default" do
+  # #52 Mode-B: the routing sentinel is now DEMAND-spawned (the `setup`
+  # above spawns it inside the test owner), not eager-spawned at boot in
+  # `:test`. The invariant is "it resolves once spawned", not "alive at boot".
+  test "System Kind singleton resolves at system://routing/default once spawned" do
     uri = Ezagent.Entity.System.routing_default_uri()
     assert {:ok, _pid} = Ezagent.KindRegistry.lookup(uri)
   end

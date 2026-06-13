@@ -13,6 +13,10 @@ defmodule Ezagent.NotificationsTest do
 
   use ExUnit.Case, async: false
 
+  # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
+  # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
+  @moduletag :umbrella_only
+
   alias Ezagent.{Capability, Notifications}
 
   defp unique_user_uri(suffix),

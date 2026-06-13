@@ -42,6 +42,10 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
   """
   use ExUnit.Case, async: true
 
+  # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
+  # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
+  @moduletag :umbrella_only
+
   @uri_new_allowlist [
     "apps/ezagent_core/lib/ezagent/uri.ex",
     "apps/ezagent_core/lib/ezagent/ecto/uri_type.ex"

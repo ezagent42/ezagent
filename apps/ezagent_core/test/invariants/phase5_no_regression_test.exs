@@ -13,6 +13,10 @@ defmodule EzagentCore.Invariants.Phase5NoRegressionTest do
   """
   use ExUnit.Case, async: false
 
+  # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
+  # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
+  @moduletag :umbrella_only
+
   alias Ezagent.{BehaviorRegistry, KindRegistry, RoutingRegistry}
 
   describe "Phase 5: foundational Kinds" do
@@ -35,8 +39,21 @@ defmodule EzagentCore.Invariants.Phase5NoRegressionTest do
     # PR #146 (SPEC v2 §5.7) — `routing-admin://default` synthetic
     # singleton dissolved. The functionally-equivalent invariant is the
     # global System Kind sentinel for routing.
-    test "system://routing/default singleton is alive" do
+    #
+    # #52 Mode-B fix: this sentinel is no longer eager-spawned at boot in
+    # `:test` (its `Kind.Server.init/1` `kind_snapshots` read/write would
+    # run with no sandbox owner). The equivalent invariant is now "it
+    # DEMAND-spawns + resolves". We check out a sandbox connection so the
+    # spawn's DB work is owned, spawn the sentinel, and assert it's alive.
+    test "system://routing/default singleton demand-spawns + is alive" do
+      :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
       uri = Ezagent.Entity.System.routing_default_uri()
+
+      case Ezagent.SpawnRegistry.spawn(uri) do
+        {:ok, pid} -> Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, self(), pid)
+        {:error, {:already_started, _pid}} -> :ok
+      end
+
       assert {:ok, pid} = KindRegistry.lookup(uri)
       assert Process.alive?(pid)
     end

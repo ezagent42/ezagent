@@ -34,6 +34,10 @@ defmodule Ezagent.Invariants.NoSilentWorkspaceInWritersTest do
 
   use EzagentCore.DataCase, async: false
 
+  # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
+  # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
+  @moduletag :umbrella_only
+
   alias Ezagent.Ecto.KindSnapshot
 
   # Use a real Kind for the URI shape requirements; the negative

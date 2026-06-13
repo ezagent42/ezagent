@@ -1,6 +1,10 @@
 defmodule Ezagent.Kind.InstanceSetDenialTest do
   use ExUnit.Case, async: false
 
+  # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
+  # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
+  @moduletag :umbrella_only
+
   alias Ezagent.Kind.InstanceSetSupport.{SupersetSessionKind, ProbeBehavior}
 
   # Module-level setup_all — registers the test-only Kind's dispatch entry

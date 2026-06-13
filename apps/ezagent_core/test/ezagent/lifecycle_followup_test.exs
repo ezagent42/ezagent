@@ -26,6 +26,10 @@ defmodule Ezagent.LifecycleFollowupTest do
 
   use Ezagent.LifecycleCase
 
+  # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
+  # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
+  @moduletag :umbrella_only
+
   alias Ezagent.Behavior
   alias Ezagent.Kind.{Runtime, Snapshot}
   alias Ezagent.Ecto.KindSnapshot

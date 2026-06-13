@@ -36,6 +36,10 @@ defmodule Ezagent.Invariants.CapHasWorkspaceTest do
 
   use ExUnit.Case, async: true
 
+  # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
+  # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
+  @moduletag :umbrella_only
+
   alias Ezagent.Capability
 
   describe "@enforce_keys workspace_uri" do
