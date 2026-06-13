@@ -2,9 +2,10 @@ defmodule EzagentWeb.Router do
   @moduledoc """
   The Phoenix router for `:ezagent_web` — pipelines and route scopes.
 
-  Standard Phoenix router; note the `Plugs.Locale` ordering in the browser
-  pipeline (it must run after the session plug). LiveView routes for the admin /
-  socialware surfaces are declared in their scopes here.
+  Note the `Plugs.Locale` ordering in the `:browser` pipeline: it must run after
+  `:fetch_session` (it reads/writes the session — see the inline comment at that
+  plug). Route scopes are declared here, including the public scope, the
+  login-gated admin LiveView surface, and the socialware customer/chat routes.
   """
   use EzagentWeb, :router
 
