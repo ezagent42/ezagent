@@ -28,6 +28,12 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
       # the now-cc-resident `McpRegistry` / `LiveJoinRegistry`.
       safe(fn -> Ezagent.Session.OrchestratorReadinessPort.unregister(orchestrator_uri) end)
 
+      # Transport #53 Decision C (codex C-rC-P2) — stop the per-orchestrator
+      # `SessionManager` GenServer (started at step-7 materialization). It is
+      # independently supervised, so unregistering the transport alone would leak
+      # it + leave a stale-bound executor a later recreate could reuse.
+      safe(fn -> Ezagent.Session.SessionManager.stop(orchestrator_uri) end)
+
       if match?(%URI{}, owner_uri) and match?(%URI{}, workspace_uri) do
         safe(fn ->
           Session.revoke_orchestrator_scoped_caps(

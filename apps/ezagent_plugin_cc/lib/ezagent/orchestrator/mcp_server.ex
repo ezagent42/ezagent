@@ -158,6 +158,15 @@ defmodule Ezagent.Orchestrator.McpServer do
           parent_template_uri: parent_template_uri
         )
 
+      # Transport #53 Decision C (cold-restart self-heal, codex C-rC-P1) — after
+      # a BEAM restart the per-orchestrator `SessionManager` is also gone. Force
+      # the Session Kind to rehydrate (a core SpawnRegistry call — NOT an im
+      # compile dep): the session-domain `session` spawn fn restarts the
+      # SessionManager from the rehydrated durable working copy, so the
+      # reconnecting bridge's first `tools/call` reaches a live executor instead
+      # of `:orchestrator_context_unavailable`.
+      _ = Ezagent.SpawnRegistry.spawn(session_uri)
+
       :ok
     else
       _ -> {:error, :orchestrator_not_registered}
@@ -315,7 +324,14 @@ defmodule Ezagent.Orchestrator.McpServer do
 
     case Registry.lookup(@session_manager_registry, key) do
       [{pid, _}] ->
-        GenServer.call(pid, {:run_tool, tool, arguments, ctx.bridge_token})
+        # `:infinity` (codex C-rC-P2) — a tool such as `add_managed_member` /
+        # `update_member_template` spawns or regenerates a worker agent, which
+        # can exceed the default 5s `GenServer.call` timeout. A premature client
+        # timeout here would abandon the call while SessionManager keeps mutating
+        # state (failed / duplicated MCP op). The outer transports bound the
+        # latency (the Channel reply + the bridge's own 30s `call_beam` timeout),
+        # so the executor call itself waits for the real result.
+        GenServer.call(pid, {:run_tool, tool, arguments, ctx.bridge_token}, :infinity)
 
       [] ->
         {:error, :orchestrator_context_unavailable}

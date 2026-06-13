@@ -289,6 +289,49 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
     slice
   end
 
+  describe "SessionManager lifecycle (codex C-rC fixes)" do
+    test "ensure_for_session restarts the executor from the durable working copy (P1 self-heal)" do
+      ctx = provision([:agent_template])
+
+      # Simulate the executor being gone after a BEAM restart (the cc McpRegistry
+      # + SessionManagerRegistry are empty post-restart).
+      :ok = SessionManager.stop(ctx.orchestrator_uri)
+      assert SessionManager.whereis(ctx.orchestrator_uri) == :error
+
+      # Cold-restart self-heal: rehydrating the session re-derives the binding
+      # from the LIVE working copy + restarts the executor.
+      assert {:ok, pid} = SessionManager.ensure_for_session(ctx.session_uri)
+      assert is_pid(pid)
+      assert {:ok, ^pid} = SessionManager.whereis(ctx.orchestrator_uri)
+
+      # And it works end-to-end again (token + cap reconstruction restored).
+      assert {:ok, _} = run_tool(ctx, "list_templates", %{})
+    end
+
+    test "ensure_for_session is a no-op for a session with no orchestrator" do
+      session_uri = spawn_session()
+      assert {:ok, :no_orchestrator} = SessionManager.ensure_for_session(session_uri)
+    end
+
+    test "rollback stops the SessionManager (P2 — no leaked executor)" do
+      ctx = provision([:agent_template])
+      assert {:ok, _} = SessionManager.whereis(ctx.orchestrator_uri)
+
+      # The create rollback path stops the executor it started.
+      :ok =
+        EzagentDomainInstanceMessage.SessionCreator.Rollback.rollback_session(
+          ctx.session_uri,
+          ctx.orchestrator_uri,
+          owner_uri: ctx.orchestrator_uri,
+          workspace_uri: @workspace_uri
+        )
+
+      assert SessionManager.whereis(ctx.orchestrator_uri) == :error,
+             "rollback MUST stop the per-orchestrator SessionManager — leaving it " <>
+               "running leaks the process + a later recreate could reuse stale state."
+    end
+  end
+
   describe "the orchestrator tool surface (§3.8 member/rule-set + template tools)" do
     test "SessionManager.tool_names/0 is the 9-tool member + rule-set + template set" do
       assert MapSet.new(SessionManager.tool_names()) ==

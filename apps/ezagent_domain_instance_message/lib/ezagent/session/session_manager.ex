@@ -115,7 +115,10 @@ defmodule Ezagent.Session.SessionManager do
 
   def whereis(orchestrator_uri) when is_binary(orchestrator_uri) do
     case Registry.lookup(@registry, orchestrator_uri) do
-      [{pid, _}] -> {:ok, pid}
+      # Filter a just-terminated pid whose Registry monitor-cleanup has not yet
+      # fired (the `:DOWN` reaches `stop/1` before the Registry processes its own
+      # monitor) — a dead pid is NOT a live executor.
+      [{pid, _}] -> if Process.alive?(pid), do: {:ok, pid}, else: :error
       [] -> :error
     end
   end
@@ -152,12 +155,81 @@ defmodule Ezagent.Session.SessionManager do
     end
   end
 
-  @doc "Terminate the SessionManager for `orchestrator_uri` (with the session)."
+  @doc """
+  Ensure the SessionManager exists for `session_uri`'s orchestrator, rebuilding
+  the binding from the session's LIVE `:session` slice.
+
+  This is the COLD-RESTART self-heal (codex C-rC-P1): after a BEAM restart both
+  the `SessionManagerRegistry` and the cc `McpRegistry` start empty; when the
+  Session Kind rehydrates (the `session` SpawnRegistry route), this re-derives
+  the orchestrator binding from the durable working copy + starts the executor,
+  so the orchestrator's bridge can reconnect + drive `tools/call` without a fresh
+  `create_session`. A session with NO orchestrator (the common case) is a no-op
+  (`{:ok, :no_orchestrator}`).
+  """
+  @spec ensure_for_session(URI.t()) ::
+          {:ok, pid()} | {:ok, :no_orchestrator} | {:error, term()}
+  def ensure_for_session(%URI{} = session_uri) do
+    case live_working_copy(session_uri) do
+      wc when is_map(wc) ->
+        case Map.get(wc, :orchestrator_uri) do
+          %URI{} = orchestrator_uri ->
+            ensure_started(
+              orchestrator_uri: orchestrator_uri,
+              session_uri: session_uri,
+              workspace_uri: workspace_of(session_uri),
+              owner_uri: live_owner_uri(session_uri),
+              parent_template_uri: Map.get(wc, :session_template_uri)
+            )
+
+          _ ->
+            {:ok, :no_orchestrator}
+        end
+
+      _ ->
+        {:ok, :no_orchestrator}
+    end
+  end
+
+  defp workspace_of(%URI{} = session_uri) do
+    case Ezagent.Capability.workspace_of(session_uri) do
+      %URI{} = ws -> ws
+      _ -> nil
+    end
+  end
+
+  defp live_owner_uri(%URI{} = session_uri) do
+    case Ezagent.Kind.get_slice(session_uri, :session) do
+      {:ok, %{state: %{owner_uri: %URI{} = owner}}} -> owner
+      {:ok, %{owner_uri: %URI{} = owner}} -> owner
+      _ -> nil
+    end
+  end
+
+  @doc """
+  Terminate the SessionManager for `orchestrator_uri` (with the session).
+
+  SYNCHRONOUS w.r.t. the Registry: it waits for the process to die before
+  returning, so the `SessionManagerRegistry` key is free. This matters for the
+  rollback→recreate path (codex C-rC-P2): `Registry` cleans up its entry on the
+  process `:DOWN` monitor (async), so without the wait a recreate's
+  `ensure_started` could observe the dying registration and reuse a STALE pid.
+  """
   @spec stop(URI.t() | String.t()) :: :ok
   def stop(orchestrator_uri) do
     case whereis(orchestrator_uri) do
-      {:ok, pid} -> DynamicSupervisor.terminate_child(@supervisor, pid)
-      :error -> :ok
+      {:ok, pid} ->
+        ref = Process.monitor(pid)
+        _ = DynamicSupervisor.terminate_child(@supervisor, pid)
+
+        receive do
+          {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
+        after
+          5_000 -> Process.demonitor(ref, [:flush])
+        end
+
+      :error ->
+        :ok
     end
 
     :ok
@@ -185,7 +257,10 @@ defmodule Ezagent.Session.SessionManager do
   def run_tool(orchestrator_uri, tool, arguments, bridge_token) do
     case whereis(orchestrator_uri) do
       {:ok, pid} ->
-        GenServer.call(pid, {:run_tool, tool, arguments, bridge_token})
+        # `:infinity` (codex C-rC-P2) — a tool may spawn/regenerate a worker
+        # agent, exceeding the default 5s call timeout; the outer transports
+        # bound the latency. Match the cc transport hop.
+        GenServer.call(pid, {:run_tool, tool, arguments, bridge_token}, :infinity)
 
       :error ->
         {:error, :session_manager_unavailable}

@@ -109,8 +109,8 @@ defmodule EzagentDomainInstanceMessage.Application do
       # agent's owner (creator_uri) to re-`/login`, instead of the silent mute.
       Ezagent.Agent.CredentialNotifier,
       # Transport #53 Decision C — the per-orchestrator MCP executor
-      # (`Ezagent.Session.SessionManager`, a GenServer NOT a Kind). Registry keys
-      # it by orchestrator URI so cc reaches it by URI (no compile dep); the
+      # (`Ezagent.Session.SessionManager`, a GenServer NOT a Kind): Registry keys
+      # it by orchestrator URI (cc reaches it by URI, no compile dep); the
       # DynamicSupervisor owns the per-session processes.
       {Registry, keys: :unique, name: Ezagent.Session.SessionManagerRegistry},
       {DynamicSupervisor, name: Ezagent.Session.SessionManagerSupervisor, strategy: :one_for_one}
@@ -717,6 +717,13 @@ defmodule EzagentDomainInstanceMessage.Application do
         case result do
           {:ok, _pid} -> bind_session_workspace(uri)
           {:error, {:already_started, _pid}} -> bind_session_workspace(uri)
+          _ -> :ok
+        end
+
+        # Decision C cold-restart self-heal — restart the per-orchestrator
+        # `SessionManager` from the rehydrated session's durable working copy.
+        case result do
+          {:ok, _} -> _ = Ezagent.Session.SessionManager.ensure_for_session(uri)
           _ -> :ok
         end
 
