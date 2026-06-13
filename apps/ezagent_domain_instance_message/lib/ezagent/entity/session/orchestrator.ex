@@ -735,12 +735,15 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   end
 
   # ─────────────────────────────────────────────────────────────────────
+@doc "Grant the orchestrator its scope-bounded delegation caps (RFC #402 caps #1–#4) at session create. Delegates to `Orchestrator.Caps`; idempotent (skips logically-equal re-grants)."
 defdelegate grant_orchestrator_scoped_caps(orchestrator_uri, session_uri, owner_uri),
   to: Ezagent.Entity.Session.Orchestrator.Caps
 
+@doc "Revoke exactly the scoped-cap set `grant_orchestrator_scoped_caps/3` adds — the rollback inverse on a failed create. Delegates to `Orchestrator.Caps`; best-effort + idempotent."
 defdelegate revoke_orchestrator_scoped_caps(orchestrator_uri, session_uri, owner_uri, workspace_uri),
   to: Ezagent.Entity.Session.Orchestrator.Caps
 
+@doc "Whether two caps are logically equal ignoring volatile metadata (e.g. `granted_at`) — the idempotency comparator used by the scoped-cap grant/revoke. Delegates to `Orchestrator.Caps`."
 defdelegate cap_equal_ignoring_metadata?(left, right),
   to: Ezagent.Entity.Session.Orchestrator.Caps
 
@@ -772,6 +775,7 @@ defdelegate cap_equal_ignoring_metadata?(left, right),
     )
   end
 
+  @doc "Ensure the SessionTemplate Kind at `template_uri` is materialized/alive before it is read or instantiated. Delegates to `Ezagent.Entity.Session`."
   defdelegate ensure_template_alive(template_uri), to: Ezagent.Entity.Session
 
   @doc """

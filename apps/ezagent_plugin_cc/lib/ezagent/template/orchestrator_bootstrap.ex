@@ -7,6 +7,13 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
   @orchestrator_skill_marker_relpath "SKILL.md"
   @orchestrator_hint_line "## Use the ezagent-session-orchestrator skill for all session coordination work."
 
+  @doc """
+  Install the orchestrator skill into a cc agent's `config_dir` IF the template's
+  role is `orchestrator`: copies the `ezagent-session-orchestrator` skill and
+  appends a CLAUDE.md hint so the agent uses it. A `nil` config_dir or a
+  non-orchestrator template is a `:ok` no-op. Returns `{:error, _}` on a copy/
+  source-resolution failure (see `try_apply/3` for the best-effort wrapper).
+  """
   @spec bootstrap(map(), String.t() | nil) :: :ok | {:error, term()}
   def bootstrap(_tmpl, nil), do: :ok
 
@@ -22,6 +29,14 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
     end
   end
 
+  @doc """
+  Best-effort wrapper around `bootstrap/2` for the spawn path: it NEVER fails the
+  spawn. On success returns `{:ok, %{}}`; on a bootstrap error it logs a warning,
+  emits `[:ezagent, :cc, :role_bootstrap, :failed]` telemetry, and returns
+  `{:ok, %{role_degraded: true, role_degraded_reason: reason}}` so the agent spawns
+  as a plain cc agent and the caller can surface the degraded status to the owner
+  (SPEC 2026-05-26 Gap B).
+  """
   @spec try_apply(map(), String.t() | nil, URI.t()) :: {:ok, map()}
   def try_apply(tmpl, config_dir, %URI{} = agent_uri) do
     case bootstrap(tmpl, config_dir) do
@@ -47,6 +62,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
     end
   end
 
+  @doc "Whether a template map declares the `orchestrator` role (`\"role\" => \"orchestrator\"`/`:orchestrator`) — the gate that decides whether `bootstrap/2` installs the skill. Anything else is `false`."
   @spec orchestrator_role?(map()) :: boolean()
   def orchestrator_role?(tmpl) when is_map(tmpl) do
     case Map.get(tmpl, "role") do
@@ -58,6 +74,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
 
   def orchestrator_role?(_), do: false
 
+  @doc "Locate the orchestrator skill source dir: the `:ezagent_plugin_cc, :orchestrator_skill_source` config override if set + present, else a search up from the plugin's `priv` dir. `{:error, _}` if neither resolves."
   @spec resolve_orchestrator_skill_source() :: {:ok, String.t()} | {:error, term()}
   def resolve_orchestrator_skill_source do
     override = Application.get_env(:ezagent_plugin_cc, :orchestrator_skill_source)
@@ -73,12 +90,14 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
     end
   end
 
+  @doc "Walk UP the directory tree from `start_dir` looking for the `ezagent-session-orchestrator/SKILL.md` marker; returns the skill dir or `{:error, {:skill_source_not_found, attempted_paths}}`."
   @spec search_orchestrator_skill_source_from(String.t()) ::
           {:ok, String.t()} | {:error, {:skill_source_not_found, [String.t()]}}
   def search_orchestrator_skill_source_from(start_dir) when is_binary(start_dir) do
     walk_for_skill(start_dir, [])
   end
 
+  @doc "The CLAUDE.md hint line `bootstrap/2` appends for orchestrator agents (directs the agent to the ezagent-session-orchestrator skill). Exposed so callers/tests can assert on it."
   @spec hint_line() :: String.t()
   def hint_line, do: @orchestrator_hint_line
 
