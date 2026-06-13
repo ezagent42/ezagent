@@ -51,6 +51,7 @@ defmodule Ezagent.Session.OrchestratorReadinessPort do
   @spec impl() :: module() | nil
   def impl, do: :persistent_term.get(@pt_key, nil)
 
+  @doc "PubSub topic for orchestrator-MCP lifecycle events; the dead neutral topic when no transport impl is registered (subscribing to it is harmless — nothing broadcasts)."
   @spec lifecycle_topic() :: String.t()
   def lifecycle_topic do
     case impl() do
@@ -59,6 +60,7 @@ defmodule Ezagent.Session.OrchestratorReadinessPort do
     end
   end
 
+  @doc "Whether the orchestrator's MCP transport has joined. `false` with no impl — the readiness gate then holds/polls rather than silently dropping (Invariant #9)."
   @spec joined?(URI.t()) :: boolean()
   def joined?(%URI{} = uri) do
     case impl() do
@@ -67,6 +69,7 @@ defmodule Ezagent.Session.OrchestratorReadinessPort do
     end
   end
 
+  @doc "Whether the orchestrator-MCP transport is ready to accept a `tools/call`. `false` with no impl (no transport loaded — a correct steady state, not an error)."
   @spec ready?(URI.t()) :: boolean()
   def ready?(%URI{} = uri) do
     case impl() do
@@ -75,6 +78,7 @@ defmodule Ezagent.Session.OrchestratorReadinessPort do
     end
   end
 
+  @doc "Clear the orchestrator's cached readiness/context (e.g. on restart). No-op (`:ok`) with no impl."
   @spec clear(URI.t()) :: :ok
   def clear(%URI{} = uri) do
     case impl() do
@@ -83,6 +87,7 @@ defmodule Ezagent.Session.OrchestratorReadinessPort do
     end
   end
 
+  @doc "Drop the orchestrator's transport registration (teardown). No-op (`:ok`) with no impl."
   @spec unregister(URI.t()) :: :ok
   def unregister(%URI{} = uri) do
     case impl() do
@@ -91,6 +96,7 @@ defmodule Ezagent.Session.OrchestratorReadinessPort do
     end
   end
 
+  @doc "Register the orchestrator's runtime context (the binding the transport needs to route `tools/call`). No-op (`:ok`) with no impl."
   @spec register_context(URI.t(), keyword()) :: :ok | {:error, term()}
   def register_context(%URI{} = uri, context) when is_list(context) do
     case impl() do
