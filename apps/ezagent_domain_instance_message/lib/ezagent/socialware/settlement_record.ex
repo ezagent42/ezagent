@@ -1,4 +1,15 @@
 defmodule Ezagent.Socialware.SettlementRecord do
+  @moduledoc """
+  The durable two-phase settlement record for one socialware turn (`turn_id` PK).
+
+  Tracks a turn's commit from `:pending` to `:committed`: `target_surface_version`
+  (the page version this turn produces) is checked against
+  `expected_prior_approved` for optimistic concurrency — a mismatch records a
+  `conflict_reason` instead of committing. `subwrites_done` accumulates the
+  idempotency keys of side-writes already applied, so a retried commit is
+  safe. The committed record is what `Ezagent.Socialware.CustomerOutbox`
+  denormalizes its version/commit-seq from.
+  """
   use Ecto.Schema
 
   @primary_key {:turn_id, :string, []}

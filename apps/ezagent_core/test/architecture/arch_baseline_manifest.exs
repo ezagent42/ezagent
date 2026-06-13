@@ -147,9 +147,9 @@
   #
   # undocumented_public_modules — defmodules under apps/*/lib (sans test files +
   #   the scanner) with NO @moduledoc (a `@moduledoc false` COUNTS as
-  #   documented). The 6 offenders are all framework boilerplate (Repo /
-  #   Endpoint / Router / 3 Ecto schemas). Target end-state: 0.
-  undocumented_public_modules: 6,
+  #   documented). Ratcheted to 0 (2026-06-14): the 6 former offenders (Repo /
+  #   Endpoint / Router / 3 socialware Ecto schemas) now carry @moduledoc.
+  undocumented_public_modules: 0,
   # undocumented_public_defs — distinct {name, arity} public API forms
   #   (def + defmacro + defdelegate + defguard; NOT their defp/defmacrop/
   #   defguardp siblings) with NO @doc (a `@doc false` COUNTS as documented),

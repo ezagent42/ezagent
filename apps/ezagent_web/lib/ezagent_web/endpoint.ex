@@ -1,4 +1,10 @@
 defmodule EzagentWeb.Endpoint do
+  @moduledoc """
+  The Phoenix endpoint for `:ezagent_web` — the HTTP/WebSocket entry point.
+
+  Standard Phoenix endpoint: the socket, plug, and static/code-reload pipeline
+  in declaration order. App-specific routing lives in `EzagentWeb.Router`.
+  """
   use Phoenix.Endpoint, otp_app: :ezagent_web
 
   # The session will be stored in the cookie and signed,
