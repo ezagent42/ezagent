@@ -162,8 +162,14 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolvers do
   @spec resolve_flavor(term()) :: Ezagent.UriQuery.result()
   def resolve_flavor(%URI{} = agent_uri) do
     case Ezagent.AgentFlavorAttributes.get(agent_uri) do
-      {:ok, _flavor} = ok -> ok
-      :none -> resolve_flavor_from_kind(agent_uri)
+      {:ok, _flavor} = ok ->
+        ok
+
+      :none ->
+        case resolve_flavor_from_kind(agent_uri) do
+          :none -> flavor_from_durable_snapshot(agent_uri)
+          other -> other
+        end
     end
   end
 
@@ -172,6 +178,48 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolvers do
   defp resolve_flavor_from_kind(%URI{} = agent_uri) do
     with {:ok, sandbox} <- kind_slice(agent_uri, :sandbox) do
       resolve_flavor_from_sandbox(sandbox)
+    end
+  end
+
+  @doc """
+  Durable-snapshot flavor fallback (codex P2 — PR-6). The SHARED, deadlock-safe
+  read both this resolver and `Ezagent.Behavior.Session.Delivery` use.
+
+  A flavor Behavior that owns DURABLE state persists its `:flavor` in its OWN
+  slice (curl → the `:curl_agent` slice). After a BEAM restart / lazy
+  demand-spawn the ETS `AgentFlavorAttributes` fast-path is gone AND the live
+  sandbox carries no `template_class`/`respawn_template_data` (curl's
+  `:in_process_sync` flavor never populates them), so BOTH fast paths above
+  miss and the canonical resolver would return `:none` for a cold-loaded curl
+  agent — mis-resolving every caller (`AgentBridge.resolve_flavor`,
+  credential-source validation, flavor-aware UI), not just delivery.
+
+  This scans the persisted snapshot for ANY slice carrying a stored `:flavor`,
+  so it stays flavor-blind (any future durable-flavor Behavior is covered).
+  cc/codex carry no durable `:flavor` slice field, so they never match here and
+  correctly resolve via the sandbox path. It reads only ETS + `SnapshotStore`
+  (a DB read) — never `Kind.get_slice/2` — so it is safe to call from inside an
+  agent's OWN dispatch process (delivery), where a self-`call` would deadlock.
+  """
+  @spec flavor_from_durable_snapshot(URI.t()) :: Ezagent.UriQuery.result()
+  def flavor_from_durable_snapshot(%URI{} = uri) do
+    case Ezagent.SnapshotStore.latest(uri) do
+      {:ok, %{state: state}} when is_map(state) ->
+        state
+        |> Map.values()
+        |> Enum.find_value(:none, fn
+          slice when is_map(slice) ->
+            case slice |> Ezagent.Kind.normalize_slice_view() |> Map.get(:flavor) do
+              flavor when is_binary(flavor) and flavor != "" -> {:ok, flavor}
+              _ -> nil
+            end
+
+          _ ->
+            nil
+        end)
+
+      _ ->
+        :none
     end
   end
 

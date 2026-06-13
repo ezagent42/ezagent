@@ -372,37 +372,14 @@ defmodule Ezagent.Behavior.Session.Delivery do
         {:ok, flavor}
 
       _ ->
-        flavor_from_snapshot(uri)
-    end
-  end
-
-  # Read the DURABLE flavor from the persisted snapshot slice. A flavor
-  # Behavior that owns durable state persists its `:flavor` in its OWN slice
-  # (curl → the `:curl_agent` slice); scan the snapshot state for that stored
-  # field so this stays flavor-blind (any future durable-flavor Behavior is
-  # covered). cc/codex carry no durable `:flavor` slice field and resolve via
-  # the ctx-sandbox path above, so they never reach here.
-  defp flavor_from_snapshot(%URI{} = uri) do
-    case Ezagent.SnapshotStore.latest(uri) do
-      {:ok, %{state: state}} when is_map(state) ->
-        state
-        |> Map.values()
-        |> Enum.find_value(:none, fn
-          # Snapshot slices are the RAW two-container form
-          # (`%{state: ..., transients: ...}`); normalize to the flat view
-          # before reading the durable `:flavor` field.
-          slice when is_map(slice) ->
-            case slice |> Ezagent.Kind.normalize_slice_view() |> Map.get(:flavor) do
-              flavor when is_binary(flavor) and flavor != "" -> {:ok, flavor}
-              _ -> nil
-            end
-
-          _ ->
-            nil
-        end)
-
-      _ ->
-        :none
+        # Durable snapshot fallback — the SHARED, deadlock-safe scan also used by
+        # the canonical `UriQuery.resolve(:flavor, _)` resolver (codex P2).
+        # Delivery runs inside the agent's OWN dispatch process, so it can only
+        # use this ETS + `SnapshotStore` path (NOT the resolver's sandbox
+        # `Kind.get_slice/2` branch, which would self-`call` and deadlock); both
+        # share one snapshot-scan impl so a cold-loaded curl agent resolves
+        # identically here and for every external caller.
+        EzagentDomainInstanceMessage.UriQueryResolvers.flavor_from_durable_snapshot(uri)
     end
   end
 

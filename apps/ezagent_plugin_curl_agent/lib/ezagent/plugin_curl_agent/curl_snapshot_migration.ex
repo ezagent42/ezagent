@@ -105,11 +105,11 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigration do
   state is a no-op (the `:flavor` is already set, the caps already `:agent`,
   the `:kind_base` already the curl set).
   """
-  @spec migrate_state(map()) :: map()
-  def migrate_state(state) when is_map(state) do
+  @spec migrate_state(URI.t(), map()) :: map()
+  def migrate_state(%URI{} = uri, state) when is_map(state) do
     state
     |> put_kind_base()
-    |> materialize_added_behavior_slices()
+    |> materialize_added_behavior_slices(uri)
     |> put_curl_flavor()
     |> rewrite_cap_axis()
   end
@@ -136,7 +136,7 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigration do
   # start empty and `activate/2` rebuilds them on the cold-load. Universal
   # behaviors (`KindBase` is set in step 2 above; `Manage` owns no slice) are
   # excluded, exactly as `Kind.Snapshot.init_fresh_for_set/2` excludes them.
-  defp materialize_added_behavior_slices(state) do
+  defp materialize_added_behavior_slices(state, %URI{} = uri) do
     universal = MapSet.new(Ezagent.UniversalBehaviors.all())
 
     Ezagent.Entity.Agent.curl_behaviors()
@@ -149,7 +149,14 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigration do
         # unchanged (carry-forward, spec §6.1 step 3).
         acc
       else
-        {:ok, created} = behavior.create(%{})
+        # Pass the row URI exactly as a fresh `Entity.Agent` spawn does. Most
+        # behaviors ignore it, but `Behavior.Identity.create/1` reads `:uri` to
+        # embed the agent's self-scoped `Sandbox.write_path` +
+        # `ConfigEvolve.reconcile_cascade` caps INTO the identity slice (codex
+        # P1). Without the URI a migrated curl agent cold-loads with an empty
+        # identity slice and its config-evolve self-dispatch is unauthorized —
+        # breaking the fresh-spawn parity this migration guarantees.
+        {:ok, created} = behavior.create(%{uri: uri})
         Map.put(acc, slice_key, %{state: created, transients: %{}})
       end
     end)
@@ -260,7 +267,7 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigration do
     if dry_run? do
       %{acc | dry_run: acc.dry_run + 1}
     else
-      new_state = migrate_state(state)
+      new_state = migrate_state(Ezagent.URI.new!(row.uri), state)
       persist_migrated(row, new_state)
       %{acc | migrated: acc.migrated + 1}
     end

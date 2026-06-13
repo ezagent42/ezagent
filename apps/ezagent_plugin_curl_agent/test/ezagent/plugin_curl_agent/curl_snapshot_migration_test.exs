@@ -22,6 +22,12 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigrationTest do
 
   @workspace "workspace://team-alpha"
 
+  # `migrate_state/2` takes the row URI (threaded so `Behavior.Identity.create/1`
+  # embeds the agent's self-scoped caps — codex P1). The pure-transform tests
+  # don't care which URI, so they share one canonical agent URI.
+  defp migrate(state), do: Migration.migrate_state(migrate_uri(), state)
+  defp migrate_uri, do: Ezagent.URI.new!("entity://team-alpha/agent/curl_mig-test")
+
   defp wait_until(fun, attempts \\ 100)
   defp wait_until(_fun, 0), do: flunk("wait_until: condition never became true")
 
@@ -88,9 +94,9 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigrationTest do
     state
   end
 
-  describe "migrate_state/1 (pure transform — spec §6.1 steps 2-4)" do
+  describe "migrate_state/2 (pure transform — spec §6.1 steps 2-4)" do
     test "sets the curl :kind_base behavior set in the two-container shape" do
-      migrated = Migration.migrate_state(legacy_curl_state())
+      migrated = migrate(legacy_curl_state())
 
       kind_base_key = KindBase.state_slice()
       assert %{state: %{behaviors: behaviors}, transients: %{}} = migrated[kind_base_key]
@@ -103,7 +109,7 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigrationTest do
       pre = legacy_curl_state()
       refute Map.has_key?(pre.curl_agent.state, :flavor)
 
-      migrated = Migration.migrate_state(pre)
+      migrated = migrate(pre)
       assert migrated.curl_agent.state.flavor == "curl"
     end
 
@@ -112,7 +118,7 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigrationTest do
       conv = [%{role: "user", content: "hi"}, %{role: "assistant", content: "yo"}]
 
       migrated =
-        Migration.migrate_state(
+        migrate(
           legacy_curl_state(
             conversation: conv,
             creator_uri: creator,
@@ -132,7 +138,7 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigrationTest do
       other_cap = Capability.cap(:agent, Ezagent.Behavior.Identity, :list_caps)
 
       migrated =
-        Migration.migrate_state(legacy_curl_state(caps: [reset_cap, configure_cap, other_cap]))
+        migrate(legacy_curl_state(caps: [reset_cap, configure_cap, other_cap]))
 
       caps = migrated.identity.state.caps |> MapSet.to_list()
       kinds = caps |> Enum.map(& &1.kind) |> Enum.sort()
@@ -146,8 +152,8 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigrationTest do
     end
 
     test "is idempotent (re-running over a migrated state is a no-op)" do
-      once = Migration.migrate_state(legacy_curl_state(creator_uri: nil))
-      twice = Migration.migrate_state(once)
+      once = migrate(legacy_curl_state(creator_uri: nil))
+      twice = migrate(once)
       assert twice == once
     end
   end
@@ -240,6 +246,16 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigrationTest do
       # Keys + creator_uri survived (key-rotation authz provenance intact).
       assert {:ok, %{keys: %{"deepseek" => "sk-coldmig"}, creator_uri: ^creator}} =
                Kind.get_slice(uri, :api_keys)
+
+      # codex P1 regression: the migration threaded the row URI into
+      # Behavior.Identity.create/1, so the migrated agent cold-loads WITH its
+      # self-scoped Sandbox.write_path + ConfigEvolve.reconcile_cascade caps
+      # (fresh-spawn parity). Without the URI the identity slice is empty and
+      # config-evolve self-dispatch is unauthorized.
+      assert {:ok, %{caps: identity_caps}} = Kind.get_slice(uri, :identity)
+      self_caps = identity_caps |> MapSet.to_list() |> Enum.map(&{&1.behavior, &1.action})
+      assert {Ezagent.Behavior.Sandbox, :write_path} in self_caps
+      assert {Ezagent.Behavior.ConfigEvolve, :reconcile_cascade} in self_caps
 
       # The reparented curl Behavior is in the effective set (its public action
       # resolves on Entity.Agent), and :receive is NOT a curl action.
