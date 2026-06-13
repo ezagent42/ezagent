@@ -173,6 +173,49 @@ defmodule Ezagent.Socialware.AnonAccessMembershipTest do
     end
   end
 
+  describe "codex P1 — an anon-User NEVER claims ownership on first-join" do
+    alias Ezagent.Behavior.Session.Membership
+
+    test "anon_member?/1 recognizes the reserved anon naming convention" do
+      assert Membership.anon_member?(Ezagent.URI.entity(:team_alpha, :user, "anon-deadbeef"))
+      refute Membership.anon_member?(Ezagent.URI.entity(:team_alpha, :user, "real-human"))
+      refute Membership.anon_member?(Ezagent.URI.entity(:team_alpha, :agent, "anon-not-a-user"))
+      refute Membership.anon_member?(nil)
+    end
+
+    test "joining an OWNERLESS session leaves owner_uri nil (no first-join owner claim)" do
+      session = spawn_session(nil)
+      {:ok, anon} = AnonUser.mint(session)
+      spawn_anon_kind(anon)
+      {:ok, _} = join(session, anon)
+
+      # The first-join owner fallback is SUPPRESSED for the anon: the session
+      # stays ownerless rather than handing the anon owner + the
+      # OrchestratorAdmin :restart cap (the codex P1 escalation).
+      {:ok, pid} = KindRegistry.lookup(session)
+      state = :sys.get_state(pid, 500)
+      assert is_nil(state.state.session.state.owner_uri)
+    end
+  end
+
+  describe "codex P2 — deleting an anon-User clears its Kind snapshot (no resurrection)" do
+    test "Users.delete tears down the spawned User Kind state, not just the provisioning row" do
+      session = spawn_session()
+      {:ok, anon} = AnonUser.mint(session)
+      spawn_anon_kind(anon)
+      {:ok, _} = join(session, anon)
+      # the joined anon User now has durable kind_snapshots state
+      anon_str = URI.to_string(anon)
+      assert Ezagent.Ecto.KindSnapshot.get(anon_str)
+
+      :ok = Ezagent.Users.delete(anon)
+
+      # both the provisioning row AND the Kind snapshot are gone
+      assert is_nil(Ezagent.Ecto.KindSnapshot.get(anon_str))
+      assert is_nil(Ezagent.Users.get_by_uri(anon))
+    end
+  end
+
   defp message_text(%{body: %{"text" => t}}), do: t
   defp message_text(%{body: %{text: t}}), do: t
   defp message_text(_), do: nil

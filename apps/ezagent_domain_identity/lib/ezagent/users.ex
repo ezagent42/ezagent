@@ -132,12 +132,32 @@ defmodule Ezagent.Users do
   end
 
   @doc """
-  Delete a User row by URI. Returns `:ok` (idempotent — a missing row is `:ok`).
-  Used by the anon-User GC sweeper (issue #51) to reap an abandoned anon-User's
-  provisioning row after it has left its session.
+  Delete a User by URI. Returns `:ok` (idempotent — a missing row is `:ok`).
+  Used by the anon-User GC sweeper (issue #51) to reap an abandoned anon-User
+  after it has left its session.
+
+  Tears down BOTH the provisioning `users` row AND the User KIND state (#51
+  codex P2): `Ezagent.Entity.User` is snapshot-backed (`persistence` is
+  snapshot-on-change), so an anon User that ever joined a session has a durable
+  `kind_snapshots` row. Deleting only the provisioning row would leave that
+  snapshot behind — the URI could resurrect on restart / demand-spawn with
+  stale identity state even though the `users` row was reaped. So we route the
+  Kind teardown through `Ezagent.Lifecycle.destroy/2` (THE sanctioned teardown:
+  hooks → snapshot + ever-created marker clear → terminate) BEFORE deleting the
+  provisioning row. `destroy/2` is idempotent — a never-spawned User (no
+  snapshot) is a harmless no-op.
   """
   @spec delete(URI.t() | String.t()) :: :ok
   def delete(uri) do
+    # Terminate + clear the Kind snapshot/marker first (best-effort: a User
+    # that was never spawned has no Kind state — destroy is a no-op).
+    _ =
+      try do
+        Ezagent.Lifecycle.destroy(uri)
+      rescue
+        _ -> :ok
+      end
+
     case Repo.get_by(__MODULE__, uri: uri_to_str(uri)) do
       nil ->
         :ok
