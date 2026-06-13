@@ -3,12 +3,17 @@ defmodule Ezagent.Socialware.CustomerOutbox do
   Durable per-turn delivery rows for socialware customer-facing output.
 
   One row per settled turn (`turn_id` PK) holds the `message_ids` to deliver plus,
-  since P2.5b, the COMMIT-ORDER metadata that makes a delivery committed-visible:
-  `committed_seq` (a per-session monotonic cursor, NULL until the settlement
-  commits — `committed_seq != nil` IS the commit-visible flag) and
-  `surface_version` (the committed page version this delivery carries). Both are
-  denormalized here from `Ezagent.Socialware.SettlementRecord` so a delivery
-  reader never has to join back to the settlement.
+  since P2.5b, the COMMIT-ORDER metadata that makes a delivery committed-visible
+  (`committed_seq != nil` IS the commit-visible flag):
+
+    * `committed_seq` — a per-session monotonic cursor, NULL until commit. It is
+      assigned ON this row at the commit boundary as `max(committed_seq for the
+      session) + 1` (see `Ezagent.Socialware.Settlement` `assign_committed_seq`);
+      the outbox row is the SOURCE OF TRUTH for the cursor — `SettlementRecord`
+      has no `committed_seq`.
+    * `surface_version` — the committed page version this delivery carries,
+      mirrored from `Ezagent.Socialware.SettlementRecord.target_surface_version`
+      so a reader need not join back to the settlement.
   """
   use Ecto.Schema
 
