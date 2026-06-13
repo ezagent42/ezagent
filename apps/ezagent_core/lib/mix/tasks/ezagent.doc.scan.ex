@@ -606,4 +606,15 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
   defp fn_key({name, _meta, args}) when is_atom(name) and is_list(args), do: {name, length(args)}
   defp fn_key({name, _meta, nil}) when is_atom(name), do: {name, 0}
   defp fn_key(_), do: nil
+
+  # NOTE on default arguments (codex 2026-06-14): `def foo(a \\ 1, b \\ 2)`
+  # exports foo/0, foo/1, foo/2 at the BEAM level, but it is ONE function with
+  # ONE `@doc` covering all arities — ExDoc (the canonical Elixir doc tool)
+  # renders it as a single entry. This gate measures DOCUMENTATION OBLIGATIONS,
+  # not exported arities, so a default-arg head is deliberately one counter entry
+  # (its max arity, via `length(args)` counting the `{:\\, _, _}` nodes). Adding a
+  # default to a function creates no new doc obligation, so the count must not
+  # move. Expanding into per-arity entries would over-count and demand separate
+  # docs for arities that physically share one `@doc` (unsatisfiable). Verified
+  # by a `scan_source/1` fixture.
 end

@@ -288,6 +288,31 @@ defmodule EzagentCore.Architecture.DocCoverageTest do
              "a @doc must still attach to its def across @spec/@deprecated"
     end
 
+    test "a default-arg public def is ONE documentation obligation, not one per arity" do
+      # `def foo(a \\ 1, b \\ 2)` exports foo/0..2 at the BEAM level but is one
+      # @doc'd function (ExDoc shows one entry). The gate measures documentation
+      # obligations, so it counts once (codex 2026-06-14 — decided NOT to expand
+      # into per-arity entries, which would over-count one @doc).
+      undocumented = """
+      defmodule Sample do
+        def foo(a \\\\ 1, b \\\\ 2), do: {a, b}
+      end
+      """
+
+      documented = """
+      defmodule Sample do
+        @doc "one doc covers foo/0, foo/1, foo/2"
+        def foo(a \\\\ 1, b \\\\ 2), do: {a, b}
+      end
+      """
+
+      offenders = Mix.Tasks.Ezagent.Doc.Scan.scan_source(undocumented)
+      assert offenders == [{:foo, 2}], "counted once at max arity, got #{inspect(offenders)}"
+
+      assert Mix.Tasks.Ezagent.Doc.Scan.scan_source(documented) == [],
+             "one @doc documents all default-arg arities"
+    end
+
     test "documented / @doc false / private forms are NOT counted" do
       source = """
       defmodule Sample do
