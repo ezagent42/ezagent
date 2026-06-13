@@ -1,70 +1,65 @@
 defmodule Ezagent.Behavior.CurlAgent do
   @moduledoc """
-  CurlAgent Behavior — receives chat messages, accumulates a
-  conversation, calls a remote LLM completion API per :receive, and
-  dispatches the reply back into the originating session.
+  CurlAgent Behavior — the curl flavor's STATE half on the unified
+  `Ezagent.Entity.Agent` Kind.
 
-  ## Phase B migration (2026-05-29) — Lifecycle API
+  ## PR-6 fold (im/session/agent decomposition, codex HIGH-1)
 
-  Migrated from `use Ezagent.Behavior` to `use Ezagent.Lifecycle`
-  per SPEC `2026-05-29-lifecycle-hooks-design.md` §2.3 (representative
-  example A — the simple, no-transients case). The CQRS engine
-  (slice / invocation / snapshot) is hidden behind two state
-  containers + lifecycle moments:
+  Per SPEC
+  `docs/superpowers/specs/2026-06-12-im-session-agent-decomposition-design.md`
+  §3.5 / §OQ-1, curl is decomposed into a STATE Behavior (this module) and
+  a TRANSPORT adapter (`EzagentPluginCurlAgent.BridgeAdapter`,
+  `transport_class :in_process_sync`). curl is STATEFUL; the adapter is
+  NOT.
 
-  - `create/1` builds the PERSISTENT `state` (was `init_slice/1`).
-  - There are NO transients (no PID / ETS / port / subprocess /
-    monitor), so `activate/2` is the macro-injected no-op default —
-    omitted here.
-  - `handle_<action>/2` is byte-identical except `ctx[:read]` →
-    `ctx.read` and the sibling read `ctx[:sibling_slices]` →
-    `ctx.siblings` (with `reads_sibling_slices/0` → `reads_siblings/0`).
+  This Behavior is **REPARENTED onto `Ezagent.Entity.Agent`** and composed
+  into the per-instance behavior set ONLY for the `curl` flavor (via the
+  same `:kind_base` per-instance-set mechanism the Session Kind uses). It
+  keeps:
 
-  The `:receive` handler builds the chat reply via a
-  `{:dispatch, %Cmd{}}` effect; `:reset_conversation` and `:configure`
-  mutate the persistent `state` via `{:set, _, _}` effects.
+    * the `:curl_agent` slice (provider / api_url / model / system_prompt /
+      max_history / conversation / last_error / last_tokens),
+    * the PUBLIC `reset_conversation` / `configure` actions,
+    * ALL the durable `{:set, :conversation/:last_error/:last_tokens}`
+      effects,
+    * the `session.send` reply dispatch.
 
-  `required_caps/0` is still manually exported to preserve the
-  kind axis `:curl_agent` (the macro auto-derives uses `:any`).
+  What it SHEDS is the in-process HTTP round-trip (`run_completion/6` +
+  `ApiClient`) — that moved to the adapter. The old `:receive` action is
+  GONE: receive now flows through `agent.receive`
+  (`Ezagent.Behavior.Agent.Receive`) → `AgentBridge.deliver` → the curl
+  adapter (the `:in_process_sync` HTTP round-trip).
 
-  The auto-derived `state_slice/0` (last module segment `CurlAgent`
-  → `:curl_agent`) equals the historical snapshot key, so NO
-  `state_slice:` override is needed (SPEC §5 step 2 / §7 OQ-7).
+  ## The `:sync_result` seam (the post-HTTP persist step)
 
-  Registered for `(Ezagent.Entity.CurlAgent, :receive)` in
-  `EzagentPluginCurlAgent.Application`. The chat router targets
-  `entity://agent/team-alpha/curl_<name>?action=session.receive`; the dispatcher
-  pattern-matches behavior_module to land here.
+  `agent.receive` is flavor-blind. For the `:in_process_sync` class it
+  calls the adapter, gets back `{:ok, %{content, usage, user_text}}` /
+  `{:error, reason}` SYNCHRONOUSLY, and re-dispatches that result to this
+  Behavior's `:sync_result` action (SPEC §9 tension 3). `handle_sync_result/2`
+  is where the durable conversation mutation lives:
+
+    1. append `{role: "user", content: user_text}` then `{role:
+       "assistant", content: content}` to `conversation`, trim to
+       `max_history`, `{:set, :conversation, …}` + `{:set, :last_tokens,
+       usage}` + `{:set, :last_error, nil}`;
+    2. on `{:error, reason}` set `last_error` (and, for `{:no_api_key, _}`,
+       append only the user turn) and dispatch the SAME chat-visible reply
+       the pre-fold curl agent produced;
+    3. dispatch the reply back into the originating session via
+       `session.send`.
+
+  **The adapter delivers; this Behavior owns state/effects.** The adapter
+  reads the persisted slices to ASSEMBLE the request (deadlock-safe
+  snapshot reads) but NEVER persists; this Behavior performs every
+  `{:set, …}`.
 
   ## Persistent state (auto-derived state_slice :curl_agent)
 
-  All fields are PERSISTENT (no transients). See
-  `Ezagent.Entity.CurlAgent` moduledoc for the schema. This
-  behavior:
-  - reads `provider / api_url / model / system_prompt / max_history`
-    for the outbound call (set at instantiate via the Template Class)
-  - appends to `conversation`
-  - records `last_error / last_tokens`
-
-  ## Per-receive flow
-
-  1. Append `{role: "user", content: msg.body.text}` to conversation
-  2. Trim conversation to last `max_history` entries (paired user/assistant)
-  3. Build messages = [system?, ...conversation]
-  4. Read this agent's OWN api key from the `:api_keys` sibling slice
-     (post ApiKeys-to-Agent flip)
-  5. POST `api_url` with `{model, messages}` → assistant reply
-  6. Append `{role: "assistant", content: reply}` to conversation
-  7. Dispatch `chat.send` back into the originating session with the
-     reply text
-
-  ## Failure modes
-
-  - **No key for provider** → set `last_error: {:no_api_key, provider}`,
-    dispatch a chat reply telling the operator to configure the key
-  - **HTTP non-2xx** → set `last_error`, dispatch a chat reply with
-    the error code, don't append a fake assistant turn
-  - **Transport / decode** → same as HTTP non-2xx
+  All fields are PERSISTENT (no transients). `create/1` builds the initial
+  state; `reset_conversation`/`configure`/`sync_result` mutate it via
+  `{:set, …}` effects. The auto-derived `state_slice/0` (last module
+  segment `CurlAgent` → `:curl_agent`) equals the historical snapshot key,
+  so NO `state_slice:` override is needed.
 
   ## Caller cap reuse
 
@@ -77,16 +72,6 @@ defmodule Ezagent.Behavior.CurlAgent do
   require Logger
 
   alias Ezagent.{Cmd, Message}
-  alias Ezagent.PluginCurlAgent.ApiClient
-
-  action(:receive,
-    args: %{message: :map},
-    returns: %{ok: :boolean, tokens: :integer, error: :atom},
-    caps: [:receive],
-    modes: [:cast],
-    description:
-      "receive a session message and call the configured curl endpoint (LLM API mirror)"
-  )
 
   action(:reset_conversation,
     args: %{},
@@ -110,30 +95,46 @@ defmodule Ezagent.Behavior.CurlAgent do
     description: "set or update the curl agent's endpoint config (URL, headers, prompt)"
   )
 
-  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
-  # CurlAgent is registered on Entity.CurlAgent Kind (type_name
-  # :curl_agent) — kind axis is `:curl_agent`. Manually exported to
-  # override the macro's `:any` default.
+  # PR-6 (im/session/agent decomposition §3.5 / §9 tension 3) — the
+  # post-HTTP persist step. `agent.receive` re-dispatches the curl
+  # adapter's `:in_process_sync` result HERE; this Behavior owns the
+  # durable conversation/token/error mutation + the session reply. The
+  # adapter is transport-only and persists nothing.
+  action(:sync_result,
+    # `result` is the adapter's `{:ok, %{content, usage}} | {:error, term}` —
+    # a structurally-varied tuple this handler pattern-matches itself, hence
+    # `:term`. `source_session` is the originating session URI.
+    args: %{result: :term, source_session: {:option, :uri}, user_text: :string},
+    returns: %{ok: :boolean, tokens: :integer, error: :atom},
+    caps: [:sync_result],
+    modes: [:cast],
+    description: "persist the curl in-process-sync transport result + reply into the session"
+  )
+
+  # PR-6 — the reparented Behavior lives on the unified `Ezagent.Entity.Agent`
+  # Kind (type_name :agent), so its cap subjects key on the `:agent` axis
+  # (the old standalone `Entity.CurlAgent` Kind keyed on `:curl_agent`; the
+  # `:curl_agent → :agent` cap-axis migration for EXISTING agents is PR-7).
+  # Manually exported to override the macro's `:any` default, mirroring how
+  # other agent-flavor behaviors pin their kind axis.
   def required_caps do
     %{
-      receive: Ezagent.Capability.cap(:curl_agent, __MODULE__, :receive),
-      reset_conversation: Ezagent.Capability.cap(:curl_agent, __MODULE__, :reset_conversation),
-      configure: Ezagent.Capability.cap(:curl_agent, __MODULE__, :configure)
+      reset_conversation: Ezagent.Capability.cap(:agent, __MODULE__, :reset_conversation),
+      configure: Ezagent.Capability.cap(:agent, __MODULE__, :configure),
+      sync_result: Ezagent.Capability.cap(:agent, __MODULE__, :sync_result)
     }
   end
 
   # Allen 2026-05-26 — declare the sibling state this Behavior reads
-  # in-process. `:api_keys` lives on the SAME Agent Kind; reading it
-  # via dispatch back to `ctx.self_uri` would be a `GenServer.call(self)`
-  # deadlock. The Runtime injects the declared sibling into
-  # `ctx.siblings[:api_keys]` as a read-only O(1) lookup. Renamed from
-  # `reads_sibling_slices/0` per SPEC §2.2 (same opt-in semantics).
+  # in-process. `:api_keys` lives on the SAME Agent Kind. The receive-time
+  # key fetch moved to the adapter (snapshot read), but the declaration is
+  # retained for `BehaviorSet` closure parity (`@required_reads` lists
+  # `CurlAgent => %{api_keys: :optional}`) + `data_owner/1`'s key lookup.
   reads_siblings([:api_keys])
 
-  # `init_slice/1` → `create/1` (SPEC §3 mapping). Build the initial
-  # PERSISTENT `state` once, on first-ever existence. No transients
-  # here (all fields survive restart), so `activate/2` is the
-  # macro-injected no-op default.
+  # `create/1` — build the initial PERSISTENT `:curl_agent` state once, on
+  # first-ever existence. No transients (all fields survive restart), so
+  # `activate/2` is the macro-injected no-op default.
   @impl Ezagent.Lifecycle
   def create(args) do
     {:ok,
@@ -150,21 +151,8 @@ defmodule Ezagent.Behavior.CurlAgent do
   end
 
   # ---------------------------------------------------------------
-  # handle_<action>/2 (new contract)
+  # handle_<action>/2
   # ---------------------------------------------------------------
-
-  def handle_receive(%{message: %Message{} = msg}, ctx) do
-    # Loop prevention: ignore messages we sent ourselves.
-    self_uri = Map.get(ctx, :self_uri)
-    self_uri_str = if is_struct(self_uri, URI), do: URI.to_string(self_uri), else: ""
-    sender_str = sender_string(msg.sender)
-
-    if sender_str == self_uri_str do
-      {:ok, %{ok: true, ignored: :self_message}, []}
-    else
-      do_receive_effects(msg, ctx)
-    end
-  end
 
   def handle_reset_conversation(_args, _ctx) do
     {:ok, %{ok: true},
@@ -191,26 +179,39 @@ defmodule Ezagent.Behavior.CurlAgent do
      ]}
   end
 
-  # --- internals --------------------------------------------------------
+  @doc """
+  Persist the curl adapter's `:in_process_sync` round-trip result and reply
+  into the originating session (PR-6 §3.5).
 
-  defp do_receive_effects(%Message{} = msg, ctx) do
-    user_text = msg.body[:text] || msg.body["text"] || ""
-    source_session_uri = ctx[:caller]
+  `args.result` is the adapter's return:
+
+    * `{:ok, %{content, usage, user_text}}` — append the user + assistant
+      turns, trim to `max_history`, set tokens, clear error, reply with the
+      assistant content;
+    * `{:error, {:no_api_key, provider}}` — append the user turn only, set
+      `last_error`, reply with the operator-help text;
+    * `{:error, reason}` — append the user turn only, set `last_error`,
+      reply with the upstream-error text.
+
+  `args.source_session` is the session URI the reply is dispatched back to.
+  This handler owns EVERY durable `{:set, …}` mutation — the adapter
+  persists nothing.
+  """
+  def handle_sync_result(%{result: result} = args, ctx) do
+    source_session_uri = Map.get(args, :source_session)
     self_uri = Map.get(ctx, :self_uri)
-
-    provider = ctx.read.(:provider, "deepseek")
-    api_url = ctx.read.(:api_url, "https://api.deepseek.com/chat/completions")
-    model = ctx.read.(:model, "deepseek-chat")
-    system_prompt = ctx.read.(:system_prompt, nil)
     max_history = ctx.read.(:max_history, 20)
     current_conv = ctx.read.(:conversation, [])
 
-    appended_conv = append_turn(current_conv, "user", user_text)
-    trimmed_conv = trim(appended_conv, max_history)
+    user_text = Map.get(args, :user_text, "")
 
-    case run_completion(provider, api_url, model, system_prompt, trimmed_conv, ctx) do
+    case result do
       {:ok, %{content: reply, usage: usage}} ->
-        final_conv = append_turn(trimmed_conv, "assistant", reply)
+        final_conv =
+          current_conv
+          |> append_turn("user", user_text)
+          |> append_turn("assistant", reply)
+          |> trim(max_history)
 
         effects =
           [
@@ -228,7 +229,7 @@ defmodule Ezagent.Behavior.CurlAgent do
 
         effects =
           [
-            {:set, :conversation, trimmed_conv},
+            {:set, :conversation, current_conv |> append_turn("user", user_text) |> trim(max_history)},
             {:set, :last_error, {:no_api_key, provider}}
           ] ++ maybe_reply_effect(source_session_uri, self_uri, reply_text)
 
@@ -237,8 +238,7 @@ defmodule Ezagent.Behavior.CurlAgent do
       {:error, reason} ->
         if is_struct(self_uri, URI) do
           Logger.warning(
-            "CurlAgent #{URI.to_string(self_uri)} provider=#{provider} model=#{model} " <>
-              "completion error: #{inspect(reason)}"
+            "CurlAgent #{URI.to_string(self_uri)} completion error: #{inspect(reason)}"
           )
         end
 
@@ -246,7 +246,7 @@ defmodule Ezagent.Behavior.CurlAgent do
 
         effects =
           [
-            {:set, :conversation, trimmed_conv},
+            {:set, :conversation, current_conv |> append_turn("user", user_text) |> trim(max_history)},
             {:set, :last_error, reason}
           ] ++ maybe_reply_effect(source_session_uri, self_uri, reply_text)
 
@@ -254,42 +254,12 @@ defmodule Ezagent.Behavior.CurlAgent do
     end
   end
 
+  # --- internals --------------------------------------------------------
+
   defp append_turn(conv, role, content), do: conv ++ [%{role: role, content: content}]
 
   defp trim(conv, max_history) when length(conv) <= max_history, do: conv
   defp trim(conv, max_history), do: Enum.take(conv, -max_history)
-
-  defp run_completion(provider, api_url, model, system_prompt, conversation, ctx) do
-    with {:ok, api_key} <- fetch_self_api_key(ctx, provider) do
-      messages = build_messages(system_prompt, conversation)
-
-      ApiClient.chat_completion(%{
-        api_url: api_url,
-        api_key: api_key,
-        model: model,
-        messages: messages
-      })
-    end
-  end
-
-  # Allen 2026-05-26 — fetch the agent's OWN api_key from its `:api_keys`
-  # sibling state (post ApiKeys-to-Agent flip). Reads via the Lifecycle
-  # `ctx.siblings` surface (SPEC §2.2 — renamed from `ctx.sibling_slices`).
-  defp fetch_self_api_key(ctx, provider) when is_binary(provider) do
-    api_keys_sibling = ctx |> Map.get(:siblings, %{}) |> Map.get(:api_keys, %{})
-    keys = Map.get(api_keys_sibling, :keys, %{})
-
-    case Map.fetch(keys, provider) do
-      {:ok, key} when is_binary(key) and key != "" -> {:ok, key}
-      _ -> {:error, {:no_api_key, provider}}
-    end
-  end
-
-  defp build_messages(nil, conversation), do: conversation
-
-  defp build_messages(system_prompt, conversation) when is_binary(system_prompt) do
-    [%{role: "system", content: system_prompt} | conversation]
-  end
 
   # Build a single `{:dispatch, %Cmd{}}` effect when source session +
   # self URI are both well-formed; otherwise emit nothing.
@@ -322,8 +292,6 @@ defmodule Ezagent.Behavior.CurlAgent do
   defp parse_session_uri(%URI{scheme: "session"} = u), do: u
 
   defp parse_session_uri(s) when is_binary(s) do
-    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
-    # with try/rescue keeping the nil fallback for malformed input.
     try do
       case Ezagent.URI.new!(s) do
         %URI{scheme: "session"} = u -> u
@@ -335,10 +303,6 @@ defmodule Ezagent.Behavior.CurlAgent do
   end
 
   defp parse_session_uri(_), do: nil
-
-  defp sender_string(%URI{} = u), do: URI.to_string(u)
-  defp sender_string(s) when is_binary(s), do: s
-  defp sender_string(_), do: ""
 
   defp maybe_encode_uri(%URI{} = u), do: URI.encode_www_form(URI.to_string(u))
   defp maybe_encode_uri(_), do: "unknown"
@@ -353,10 +317,8 @@ defmodule Ezagent.Behavior.CurlAgent do
   defp format_error({:decode, _}), do: "could not decode response"
   defp format_error(other), do: inspect(other)
 
-  # Allen 2026-05-26 — `:owner_uri` on the curl_agent slice is gone
-  # (post ApiKeys-to-Agent flip). CurlAgent caps now follow the
-  # standard agent-creator model: the data owner is the entity URI
-  # recorded in the `:api_keys` slice's `:creator_uri`.
+  # Allen 2026-05-26 — the data owner is the entity URI recorded in the
+  # `:api_keys` slice's `:creator_uri`.
   def data_owner(%URI{scheme: "entity"} = agent_uri) do
     if Ezagent.URI.type?(agent_uri, :agent) do
       case Ezagent.Kind.get_slice(agent_uri, :api_keys) do

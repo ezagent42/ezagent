@@ -57,6 +57,7 @@ defmodule EzagentPluginCurlAgent.Application do
 
   alias Ezagent.Behavior.ApiKeys
   alias Ezagent.Behavior.CurlAgent, as: CurlAgentBehavior
+  alias Ezagent.Entity.Agent, as: AgentKind
   alias Ezagent.Entity.CurlAgent, as: CurlAgentKind
   alias Ezagent.PluginCurlAgent.Template, as: CurlAgentTemplate
 
@@ -79,15 +80,28 @@ defmodule EzagentPluginCurlAgent.Application do
 
   @impl Ezagent.Plugin
   def behaviors do
-    # Allen 2026-05-26 — register ApiKeys against CurlAgent Kind so the
-    # `:api_keys` slice is dispatchable on `entity://agent/<ws>/curl_*`
-    # URIs. ApiKeys Behavior module ships from `:ezagent_domain_identity`;
-    # the plugin owns the Kind, so the binding lives here per
-    # `feedback_register_lookup_key_parity`.
-    curl_actions = for action <- CurlAgentBehavior.actions(), do: {CurlAgentKind, action, CurlAgentBehavior}
-    api_keys_actions = for action <- ApiKeys.actions(), do: {CurlAgentKind, action, ApiKeys}
+    # PR-6 (im/session/agent decomposition §3.5 / §OQ-1) — the curl STATE
+    # Behavior is REPARENTED onto the unified `Ezagent.Entity.Agent` Kind
+    # (curl flavor). NEW curl agents spawn on `Entity.Agent`, so the curl
+    # actions (`reset_conversation` / `configure` / `sync_result`) bind
+    # there. The old `:receive` action is gone — receive flows through
+    # `agent.receive` → AgentBridge → the curl `:in_process_sync` adapter.
+    agent_curl_actions =
+      for action <- CurlAgentBehavior.actions(), do: {AgentKind, action, CurlAgentBehavior}
 
-    curl_actions ++ api_keys_actions
+    # KEEP the curl Behavior bound on the legacy `Entity.CurlAgent` Kind so
+    # EXISTING curl_agent snapshots still resolve their actions through the
+    # rollback window. PR-7 migrates those snapshots onto `Entity.Agent`
+    # and deletes `Entity.CurlAgent` + this binding. `:api_keys` stays bound
+    # on the legacy Kind for the same reason (on `Entity.Agent` it is
+    # already bound by `EzagentDomainIdentity.Application`).
+    legacy_curl_actions =
+      for action <- CurlAgentBehavior.actions(), do: {CurlAgentKind, action, CurlAgentBehavior}
+
+    legacy_api_keys_actions =
+      for action <- ApiKeys.actions(), do: {CurlAgentKind, action, ApiKeys}
+
+    agent_curl_actions ++ legacy_curl_actions ++ legacy_api_keys_actions
   end
 
   @impl Ezagent.Plugin
@@ -98,8 +112,16 @@ defmodule EzagentPluginCurlAgent.Application do
     [
       %{
         flavor: "curl",
-        kind: CurlAgentKind,
-        template_class: CurlAgentTemplate
+        # PR-6 — the curl flavor now resolves to the UNIFIED
+        # `Ezagent.Entity.Agent` Kind (was the standalone `Entity.CurlAgent`).
+        # NEW curl agents spawn on `Entity.Agent`; the curl-specific STATE
+        # lives in the reparented `Behavior.CurlAgent`, selected for this
+        # flavor via the per-instance behavior set (see `Template`).
+        kind: AgentKind,
+        template_class: CurlAgentTemplate,
+        # PR-6 — register the `:in_process_sync` transport adapter (the HTTP
+        # round-trip) UP at boot, symmetric to cc/codex's `bridge_adapter`.
+        bridge_adapter: EzagentPluginCurlAgent.BridgeAdapter
       }
     ]
   end
