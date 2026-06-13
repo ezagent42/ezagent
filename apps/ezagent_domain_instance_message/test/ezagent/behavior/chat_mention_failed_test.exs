@@ -133,7 +133,13 @@ defmodule Ezagent.Behavior.Session.MentionFailedTest do
   defp send_message(session_uri, msg, caller_uri) do
     caps = [
       Capability.cap(:any, Ezagent.Behavior.Session, :send),
-      Capability.cap(:any, Ezagent.Behavior.Session, :receive)
+      # PR-2 (im/session/agent decomposition §OQ-4): `:receive` is now
+      # `Behavior.User.Receive` / `Behavior.Agent.Receive` per Kind. The
+      # actual fan-out receive dispatches under `system://chat-router`
+      # (not the caller's caps), so this defensive grant is vestigial —
+      # but keep it shaped to the post-split behaviors for correctness.
+      Capability.cap(:any, Ezagent.Behavior.User.Receive, :receive),
+      Capability.cap(:any, Ezagent.Behavior.Agent.Receive, :receive)
     ]
 
     inv = %Invocation{

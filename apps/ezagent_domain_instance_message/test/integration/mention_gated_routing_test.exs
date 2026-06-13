@@ -121,7 +121,19 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
   end
 
   defp receive_dispatch_count(target_uri) do
-    prefix = "#{URI.to_string(target_uri)}?action=session.receive"
+    # PR-2 (im/session/agent decomposition §OQ-4 / §3.3): the `:receive`
+    # fan-out now spells the behavior prefix per recipient Kind —
+    # `user.receive` for a user target, `agent.receive` for an agent. The
+    # prefix is telemetry-only (routing keys on the `:receive` action atom
+    # + Kind), but the audit `target` carries it, so this counter matches
+    # the per-Kind spelling instead of the retired `session.receive`.
+    behavior =
+      case Ezagent.URI.type(target_uri) do
+        {:ok, "user"} -> "user"
+        _ -> "agent"
+      end
+
+    prefix = "#{URI.to_string(target_uri)}?action=#{behavior}.receive"
 
     EzagentCore.Repo.aggregate(
       from(i in "invocations",
@@ -203,7 +215,8 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
     {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
     join(session, sender)
 
-    :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, SessionBehavior.session_events_topic(session))
+    :ok =
+      Phoenix.PubSub.subscribe(EzagentCore.PubSub, SessionBehavior.session_events_topic(session))
 
     msg = dispatch_send(session, sender, "stream shows everything")
 

@@ -767,7 +767,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       # SliceChange envelope in the first place).
       :ok =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-          target: URI.new!("#{URI.to_string(receiver)}?action=session.receive"),
+          target: URI.new!("#{URI.to_string(receiver)}?action=user.receive"),
           mode: :cast,
           args: %{message: stored},
           ctx: %{
@@ -820,7 +820,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
 
       :ok =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-          target: URI.new!("#{URI.to_string(receiver)}?action=session.receive"),
+          target: URI.new!("#{URI.to_string(receiver)}?action=user.receive"),
           mode: :cast,
           args: %{message: ghost_msg},
           ctx: %{
@@ -968,7 +968,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
 
           :ok =
             Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-              target: URI.new!("#{URI.to_string(receiver)}?action=session.receive"),
+              target: URI.new!("#{URI.to_string(receiver)}?action=user.receive"),
               mode: :cast,
               args: %{message: stored},
               ctx: %{
@@ -1063,7 +1063,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
 
       :ok =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-          target: URI.new!("#{URI.to_string(receiver)}?action=session.receive"),
+          target: URI.new!("#{URI.to_string(receiver)}?action=user.receive"),
           mode: :cast,
           args: %{message: stored},
           ctx: %{

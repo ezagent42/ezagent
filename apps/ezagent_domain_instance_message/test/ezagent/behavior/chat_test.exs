@@ -42,10 +42,12 @@ defmodule Ezagent.Behavior.ChatTest do
       # :set_working_copy). team-routing-unification §3.4/§3.7 (PR-7) —
       # `:set_prompt_templates` joins as the named prompt-template-map
       # writer (same authority class; PR-7 materialization installs it).
+      # PR-2 (im/session/agent decomposition §OQ-4): `:receive` is no
+      # longer a Session action — it split into `user.receive` /
+      # `agent.receive` (their own Behaviors, on their own Kinds).
       assert SessionBehavior.actions() ==
                [
                  :send,
-                 :receive,
                  :join,
                  :leave,
                  :set_working_copy,
@@ -120,24 +122,29 @@ defmodule Ezagent.Behavior.ChatTest do
       # A fresh `create/1` state carries the field. `template_working_copy/1`
       # operates on the PERSISTENT slice (the `:state` sub-map post-Lifecycle).
       slice = SessionBehavior.init_slice(%{}).state
-      assert SessionBehavior.template_working_copy(slice) == SessionBehavior.default_template_working_copy()
+
+      assert SessionBehavior.template_working_copy(slice) ==
+               SessionBehavior.default_template_working_copy()
 
       # A pre-PR-2 `:chat` slice has no `template_working_copy` key —
       # readers must still get the empty default, never crash.
       pre_pr2_slice = %{members: %{}, monitors: %{}, last_seen: %{}}
       refute Map.has_key?(pre_pr2_slice, :template_working_copy)
-      assert SessionBehavior.template_working_copy(pre_pr2_slice) == SessionBehavior.default_template_working_copy()
+
+      assert SessionBehavior.template_working_copy(pre_pr2_slice) ==
+               SessionBehavior.default_template_working_copy()
     end
 
-    test "interface/0 declares all 7 actions" do
+    test "interface/0 declares the 6 Session actions (:receive split out — PR-2)" do
       keys = SessionBehavior.interface() |> Map.keys() |> Enum.sort()
       # team-routing-unification §3.6 (PR-6) — :set_legends added;
       # §3.4/§3.7 (PR-7) — :set_prompt_templates added.
+      # PR-2 (im/session/agent decomposition §OQ-4) — :receive removed
+      # (now `user.receive` / `agent.receive`).
       assert keys ==
                [
                  :join,
                  :leave,
-                 :receive,
                  :send,
                  :set_legends,
                  :set_prompt_templates,
@@ -741,15 +748,19 @@ defmodule Ezagent.Behavior.ChatTest do
     end
   end
 
-  describe "invoke(:receive, ...) — User branch" do
+  describe "user.receive — Behavior.User.Receive" do
     # PR-N3 (SPEC v2 notification-architecture-v2 §2.4 + §3, Allen
     # 2026-05-25) replaced the legacy raw `{:message_received, msg}`
     # broadcast on `esr:user:<uri>:events` with the PRODUCER pattern:
-    # the User-branch just mutates its `:chat` slice (`:last_received`
+    # `user.receive` just mutates its `:session` slice (`:last_received`
     # + the cursor-indexed `:recent_messages` ring), and the runtime
     # emits the slice-change event post-commit via SliceChange.emit/1.
     # The handler itself does NO broadcast — the slice mutation IS the
     # notification.
+    #
+    # PR-2 (im/session/agent decomposition §OQ-4): this is now the
+    # first-class `Ezagent.Behavior.User.Receive`, NOT a branch inside
+    # `Ezagent.Behavior.Session`.
     test "mutates the receive slice (:last_received + :recent_messages ring)" do
       user_uri =
         URI.new!("entity://team-alpha/user/admin-recv-#{System.unique_integer([:positive])}")
@@ -762,7 +773,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, new_slice} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.Behavior.User.Receive,
                  :receive,
                  slice,
                  %{message: msg},
@@ -774,9 +785,17 @@ defmodule Ezagent.Behavior.ChatTest do
       assert [{_cursor, rid} | _] = new_slice.recent_messages
       assert rid == msg.id
     end
+
+    test "state_slice is :session (no snapshot migration — shares the User Kind slice key)" do
+      assert Ezagent.Behavior.User.Receive.state_slice() == :session
+    end
   end
 
-  describe "invoke(:receive, ...) — Agent branch" do
+  describe "agent.receive — Behavior.Agent.Receive" do
+    # PR-2 (im/session/agent decomposition §OQ-4): the Agent delivery
+    # path is now the first-class `Ezagent.Behavior.Agent.Receive`, NOT a
+    # branch inside `Ezagent.Behavior.Session`. Delivery mechanics still
+    # live in the shared `Session.Delivery.deliver_agent_receive/2` helper.
     test "returns {:ok, slice} unchanged (Agent has no chat slice state)" do
       agent_uri =
         URI.new!("entity://team-alpha/agent/cc_builder-#{System.unique_integer([:positive])}")
@@ -789,7 +808,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, ^slice} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-                 Ezagent.Behavior.Session,
+                 Ezagent.Behavior.Agent.Receive,
                  :receive,
                  slice,
                  %{message: msg},
@@ -825,7 +844,7 @@ defmodule Ezagent.Behavior.ChatTest do
       ctx = %{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri}
 
       EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-        Ezagent.Behavior.Session,
+        Ezagent.Behavior.Agent.Receive,
         :receive,
         %{},
         %{message: msg},
@@ -880,7 +899,7 @@ defmodule Ezagent.Behavior.ChatTest do
       ctx = %{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri}
 
       EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-        Ezagent.Behavior.Session,
+        Ezagent.Behavior.Agent.Receive,
         :receive,
         %{},
         %{message: msg},
@@ -937,7 +956,7 @@ defmodule Ezagent.Behavior.ChatTest do
       ctx = %{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri}
 
       EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
-        Ezagent.Behavior.Session,
+        Ezagent.Behavior.Agent.Receive,
         :receive,
         %{},
         %{message: msg},

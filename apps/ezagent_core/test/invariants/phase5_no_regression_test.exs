@@ -71,11 +71,14 @@ defmodule EzagentCore.Invariants.Phase5NoRegressionTest do
       assert {:ok, Ezagent.Behavior.Session} =
                BehaviorRegistry.lookup(Ezagent.Entity.Session, :leave)
 
-      # Receiver-side
-      assert {:ok, Ezagent.Behavior.Session} =
+      # Receiver-side — PR-2 (im/session/agent decomposition §OQ-4) split
+      # the single `:receive` into two first-class Behaviors, each on its
+      # own Kind: `user.receive` (passive inbox) / `agent.receive` (live
+      # delivery). The internal `case kind_module` is retired.
+      assert {:ok, Ezagent.Behavior.User.Receive} =
                BehaviorRegistry.lookup(Ezagent.Entity.User, :receive)
 
-      assert {:ok, Ezagent.Behavior.Session} =
+      assert {:ok, Ezagent.Behavior.Agent.Receive} =
                BehaviorRegistry.lookup(Ezagent.Entity.Agent, :receive)
     end
 

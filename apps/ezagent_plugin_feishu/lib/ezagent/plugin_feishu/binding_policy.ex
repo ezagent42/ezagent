@@ -101,10 +101,11 @@ defmodule EzagentPluginFeishu.BindingPolicy do
   #
   # Action INTENTIONALLY OMITTED:
   #
-  #   * `Ezagent.Behavior.Session :receive` — `:receive` is registered
-  #     against the USER + AGENT Kinds (Chat fan-out delivers
-  #     `chat.receive` to recipient `entity://` Kinds), NOT against
-  #     the Session Kind: see
+  #   * `:receive` — registered against the USER + AGENT Kinds via the
+  #     PR-2-split `Ezagent.Behavior.User.Receive` (`user.receive`) /
+  #     `Ezagent.Behavior.Agent.Receive` (`agent.receive`) (the session
+  #     fan-out delivers `<entity>.receive` to recipient `entity://`
+  #     Kinds), NOT against the Session Kind: see
   #     `apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/application.ex:609-610`.
   #     The fan-out dispatch runs under `system://chat-router` caps
   #     (`apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:1215`),
