@@ -57,6 +57,7 @@ defmodule EzagentPluginCurlAgent.Application do
 
   alias Ezagent.Behavior.ApiKeys
   alias Ezagent.Behavior.CurlAgent, as: CurlAgentBehavior
+  alias Ezagent.Behavior.CurlAgentLegacyReceive
   alias Ezagent.Entity.Agent, as: AgentKind
   alias Ezagent.Entity.CurlAgent, as: CurlAgentKind
   alias Ezagent.PluginCurlAgent.Template, as: CurlAgentTemplate
@@ -98,10 +99,23 @@ defmodule EzagentPluginCurlAgent.Application do
     legacy_curl_actions =
       for action <- CurlAgentBehavior.actions(), do: {CurlAgentKind, action, CurlAgentBehavior}
 
+    # codex P1 — `CurlAgentBehavior.actions/0` no longer includes `:receive`
+    # (PR-6 moved NEW-agent receive to `agent.receive` → the adapter). But
+    # EXISTING `curl_agent` snapshots still resolve to `Entity.CurlAgent`, and
+    # session delivery dispatches inbound chat as `:receive` — so the legacy
+    # Kind MUST keep a working `:receive` or a pre-migration curl agent hits
+    # `{:unknown_action, :receive}` and goes MUTE for the rollback window.
+    # `Ezagent.Behavior.CurlAgentLegacyReceive` restores the OLD
+    # inline-completion `:receive` (shares the `:curl_agent` slice; legacy Kind
+    # ONLY). It is intentionally NOT bound on the unified `Entity.Agent`
+    # (which uses `agent.receive`) — no double-registration. PR-7 deletes it
+    # with `Entity.CurlAgent`.
+    legacy_receive_action = [{CurlAgentKind, :receive, CurlAgentLegacyReceive}]
+
     legacy_api_keys_actions =
       for action <- ApiKeys.actions(), do: {CurlAgentKind, action, ApiKeys}
 
-    agent_curl_actions ++ legacy_curl_actions ++ legacy_api_keys_actions
+    agent_curl_actions ++ legacy_curl_actions ++ legacy_receive_action ++ legacy_api_keys_actions
   end
 
   @impl Ezagent.Plugin

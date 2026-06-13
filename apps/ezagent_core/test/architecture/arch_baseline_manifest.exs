@@ -19,7 +19,8 @@
   #   `requires_explicit_behavior_set?/1` enabling the curl-flavor fold without
   #   an agent backfill) pushed ezagent/kind.ex 999 → 1013. Its natural home is
   #   alongside the behavior-set accessors it mirrors. Burn-down target.
-  oversized_modules_gt_1000: 1, # arch-cap-bump: PR-6 nil_capture_behavior_set/1 → kind.ex 999→1013
+  # arch-cap-bump: PR-6 nil_capture_behavior_set/1 → kind.ex 999→1013
+  oversized_modules_gt_1000: 1,
   def_count_admin_live: 46,
   def_count_cc_agent: 50,
   def_count_orchestrator_tools: 35,
@@ -61,7 +62,8 @@
   # "session"`). Two standalone one-shot migrations naturally share that 1-line
   # row selector; this is a structural mirror of the approved pattern, not a
   # copy-paste fork of business logic.
-  cross_file_duplicate_fn_groups: 30, # arch-cap-bump: chat→session SliceMigration mirrors KindBaseBackfill session_rows/0
+  # arch-cap-bump: chat→session SliceMigration mirrors KindBaseBackfill session_rows/0
+  cross_file_duplicate_fn_groups: 30,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3
@@ -76,7 +78,8 @@
   # `credential_source` producer in `template_data_extra/1`). codex 752 unchanged.
   # Genuine product logic, codex-reviewed (HIGH+MEDIUM addressed); not extractable
   # shared duplication. 1669 → 1682.
-  cc_codex_template_class_combined_loc: 1682, # arch-cap-bump: #719 §5.B(c) source-respawn credential reprovision (+13 cc_agent)
+  # arch-cap-bump: #719 §5.B(c) source-respawn credential reprovision (+13 cc_agent)
+  cc_codex_template_class_combined_loc: 1682,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam
@@ -102,7 +105,8 @@
   # PR-2 config-evolve adds the `{:set, :applied, …}` applied-turn idempotency
   # marker effect in Behavior.ConfigEvolve.handle_apply_config_delta (the agent's
   # own :config_evolve slice).
-  set_effect_sites: 120, # arch-cap-bump: PR-2 applied-turn marker; PR-6 curl fold net +1 ({:set} sites moved from the old curl `:receive` HTTP handler into the new `:sync_result` persist handler + the `agent.receive` re-dispatch shape)
+  # arch-cap-bump: PR-2 applied-turn marker; PR-6 curl fold; +7 (codex P1) — `Ezagent.Behavior.CurlAgentLegacyReceive` restores the OLD inline-completion `:receive` for the legacy `Entity.CurlAgent` Kind through the rollback window (its 7 `{:set, :conversation/:last_error/:last_tokens}` sites). Deleted in PR-7 with `Entity.CurlAgent`, which drops the cap back.
+  set_effect_sites: 127,
   cross_slice_set_violations: 0,
   missing_cap_check_mutating_actions: 0,
   kind_runtime_ordering_violations: 0,
