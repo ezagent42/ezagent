@@ -34,9 +34,16 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
 
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Entity.User
-  alias Ezagent.Orchestrator.CcOrchestratorSeed
 
   @workspace_uri_str "workspace://system"
+
+  # PR-8 (transport #53) — `Ezagent.Orchestrator.CcOrchestratorSeed` relocated
+  # into the cc plugin (which this app does not depend on). The seed's
+  # `template_uri/0` is the string form of
+  # `Ezagent.URI.template(:system, :agent, "cc-orchestrator")`; inline it so
+  # this im test never names the cc-resident module. Behavior-identical.
+  defp cc_orchestrator_template_uri_str,
+    do: :system |> Ezagent.URI.template(:agent, "cc-orchestrator") |> URI.to_string()
 
   setup do
     # Drive the seed deterministically inside the sandbox checkout so
@@ -165,9 +172,9 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
         _ -> nil
       end
 
-    assert orchestrator_uri_str == CcOrchestratorSeed.template_uri(),
+    assert orchestrator_uri_str == cc_orchestrator_template_uri_str(),
            "expected orchestrator_template_uri to point at the cc-orchestrator " <>
-             "AgentTemplate seed URI (`#{CcOrchestratorSeed.template_uri()}`); " <>
+             "AgentTemplate seed URI (`#{cc_orchestrator_template_uri_str()}`); " <>
              "got #{inspect(orchestrator_uri)}"
   end
 

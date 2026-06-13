@@ -28,7 +28,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
   alias Ezagent.{Capability, Invocation, KindRegistry, Message, RoutingRegistry}
   alias Ezagent.Behavior.Session, as: SessionBehavior
   alias Ezagent.Entity.{Agent, Session, User}
-  alias Ezagent.Orchestrator.{McpServer, Tools}
+  alias Ezagent.Orchestrator.Tools
   alias Ezagent.Routing.{Matcher, Resolver}
 
   defp uniq, do: System.unique_integer([:positive])
@@ -131,13 +131,19 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
 
     caps = orchestrator_caps(session_uri, orchestrator_uri)
 
-    {:ok, mcp} =
-      McpServer.new(
-        orchestrator_uri: orchestrator_uri,
-        session_uri: session_uri,
-        workspace_uri: @workspace_uri,
-        caps: caps
-      )
+    # PR-8 (transport #53): `Tools` is now driven directly with the
+    # orchestrator's caller `opts` — the exact context the session-side
+    # `Ezagent.Behavior.OrchestratorTools` action reconstructs. (The cc
+    # `McpServer` value-form / `tool_opts/1` helper is gone — it is a thin
+    # transport that DISPATCHES into this op layer.)
+    mcp = [
+      caller: orchestrator_uri,
+      caps: caps,
+      session_uri: session_uri,
+      workspace_uri: @workspace_uri,
+      owner: orchestrator_uri,
+      parent_template_uri: nil
+    ]
 
     {mcp, session_uri, @workspace_uri, orchestrator_uri}
   end
@@ -184,7 +190,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
                source_template_uri,
                role_name,
                true,
-               McpServer.tool_opts(mcp)
+               mcp
              )
 
     assert Ezagent.URI.type?(member_uri, :agent)
@@ -206,7 +212,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
              Tools.define_prompt_template(
                tpl_ref,
                "接龙：{body}（by {sender}）",
-               McpServer.tool_opts(mcp)
+               mcp
              )
 
     # 3) define a rule-set rule targeting the member BY ROLE_NAME ------------
@@ -215,7 +221,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
                Matcher.mention(legend_name),
                role_name,
                [rule_set: rule_set, position: 0, prompt_template_ref: tpl_ref] ++
-                 McpServer.tool_opts(mcp)
+                 mcp
              )
 
     # 4) front the rule-set with a legend ------------------------------------
@@ -225,7 +231,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
                [role_name],
                rule_set,
                true,
-               McpServer.tool_opts(mcp)
+               mcp
              )
 
     # ── the team is built. Now prove it ROUTES (PR-2/PR-4/PR-6 seam). ──────
@@ -277,14 +283,14 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
 
     {mcp, session_uri, _ws, orch} = orchestrated_session(n)
 
-    {:ok, member_uri} = Tools.add_managed_member(src, role, true, McpServer.tool_opts(mcp))
+    {:ok, member_uri} = Tools.add_managed_member(src, role, true, mcp)
     on_exit(fn -> terminate_child(EzagentDomainInstanceMessage.AgentSupervisor, member_uri) end)
 
     assert {:ok, %{id: rule_id}} =
              Tools.define_rule_set_rule(
                Matcher.mention("legend-#{n}"),
                role,
-               [rule_set: rule_set, position: 0] ++ McpServer.tool_opts(mcp)
+               [rule_set: rule_set, position: 0] ++ mcp
              )
 
     # The persisted rule carries the per-session identity the snapshot keys on
@@ -300,7 +306,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
     # And it round-trips into a saved SessionTemplate (the snapshot captures it).
     caps =
       MapSet.put(
-        mcp.caps,
+        mcp[:caps],
         %Capability{
           kind: :session_template,
           behavior: Ezagent.Behavior.Template,
@@ -341,14 +347,14 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
 
     # Strip the {:within_session, S} cap — the caller is now unauthorized.
     no_session_caps =
-      mcp.caps
+      mcp[:caps]
       |> Enum.reject(fn
         %Capability{kind: :session, instance: {:within_session, _}} -> true
         _ -> false
       end)
       |> MapSet.new()
 
-    opts = Keyword.put(McpServer.tool_opts(mcp), :caps, no_session_caps)
+    opts = Keyword.put(mcp, :caps, no_session_caps)
 
     assert {:error, :unauthorized} = Tools.add_managed_member(src, role, true, opts)
 
@@ -374,8 +380,8 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
 
     {mcp, session_uri, workspace_uri, _orch} = orchestrated_session(n)
 
-    {:ok, cc_uri} = Tools.add_managed_member(src, cc_role, true, McpServer.tool_opts(mcp))
-    {:ok, codex_uri} = Tools.add_managed_member(src, codex_role, true, McpServer.tool_opts(mcp))
+    {:ok, cc_uri} = Tools.add_managed_member(src, cc_role, true, mcp)
+    {:ok, codex_uri} = Tools.add_managed_member(src, codex_role, true, mcp)
     on_exit(fn -> terminate_child(EzagentDomainInstanceMessage.AgentSupervisor, cc_uri) end)
     on_exit(fn -> terminate_child(EzagentDomainInstanceMessage.AgentSupervisor, codex_uri) end)
 
@@ -385,7 +391,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
              Tools.define_rule_set_rule(
                Matcher.from(cc_uri),
                codex_role,
-               [rule_set: rule_set, position: 1] ++ McpServer.tool_opts(mcp)
+               [rule_set: rule_set, position: 1] ++ mcp
              )
 
     slice = chat_slice(session_uri)

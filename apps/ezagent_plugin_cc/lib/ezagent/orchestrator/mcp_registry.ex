@@ -25,10 +25,12 @@ defmodule Ezagent.Orchestrator.McpRegistry do
   `(session_uri, workspace_uri, owner_uri, parent_template_uri)`
   context under the orchestrator's URI; the bridge's Channel
   (`Ezagent.Orchestrator.McpChannel`) — having token-verified that
-  URI — LOOKS UP the context and reconstructs the bound
-  `%McpServer{}` server-side. Caps are loaded fresh from the
-  orchestrator's `:identity` slice at construction (`McpServer.new/1`),
-  never carried on the wire.
+  URI — uses this row as the fail-closed "is this a registered orchestrator?"
+  readiness gate (transport #53 Decision C: the executor is the session-domain
+  `Ezagent.Session.SessionManager`, keyed by orchestrator URI; the orchestrator's
+  delegated caps are reconstructed SESSION-side there, never carried on the
+  wire). The full context the row stores is read by the session-side
+  materialization / readiness-register API.
 
   ## Storage
 

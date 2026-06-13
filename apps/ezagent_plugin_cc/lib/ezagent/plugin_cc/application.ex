@@ -118,8 +118,37 @@ defmodule EzagentPluginCc.Application do
   # See `EzagentPluginCc.OrphanReaper` moduledoc.
   @impl Ezagent.Plugin
   def after_boot do
+    # PR-8 (transport #53) — the orchestrator-MCP transport subsystem moved
+    # from `ezagent_domain_instance_message` INTO this plugin. Their lazy-`init/0`
+    # ETS tables + the readiness-port impl registration move here with them.
+    #
+    # `McpRegistry` — the `orchestrator_uri → bound McpServer context` table.
+    # `LiveJoinRegistry` — the `orchestrator_uri → live-bridge-joined?` durable
+    #   state table the §5 readiness gate POLLS. Both are lazy-`init/0`.
+    # `ReadinessAdapter` — the cc-resident impl of the session-owned
+    #   `OrchestratorReadinessPort` (replaces the deleted im passthrough).
+    #   "The current owner registers": now that the transport lives in cc, cc
+    #   registers the impl. The session never names a transport module.
+    :ok = Ezagent.Orchestrator.McpRegistry.init()
+    :ok = Ezagent.Orchestrator.LiveJoinRegistry.init()
+
+    :ok =
+      Ezagent.Session.OrchestratorReadinessPort.put_impl(
+        EzagentPluginCc.Orchestrator.ReadinessAdapter
+      )
+
     _ = maybe_reap_orphans()
     _ = Ezagent.Workspace.Loader.load_all()
+
+    # PR-8 (transport #53) APPROVED SEED RELOCATION — the cc-orchestrator
+    # AgentTemplate seed (`template://agent/system/cc-orchestrator`) moved out of
+    # `EzagentDomainInstanceMessage.Application.start/2` into here. The seed depends on the
+    # `Ezagent.Orchestrator.CcOrchestratorSeed` module (now cc-resident) and on
+    # the cc flavor + templates being published, so it belongs after `load_all/0`
+    # in cc's `after_boot`. Same semantics as the old im call: `seed/0` is
+    # idempotent + best-effort (logs + `:ok` on soft failure; raises `InstallError`
+    # only on a bridge/schema install failure, deliberately uncaught).
+    :ok = Ezagent.Orchestrator.CcOrchestratorSeed.seed()
 
     # 2026-05-31 orchestrator-startup-atomicity §4 — the test-only
     # `session://default/system/main` seed runs HERE (not in

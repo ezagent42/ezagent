@@ -41,7 +41,7 @@ defmodule Ezagent.Orchestrator.McpSocket do
 
   alias Ezagent.AgentBridge.TokenStore
 
-  channel "orch:bridge:*", Ezagent.Orchestrator.McpChannel
+  channel("orch:bridge:*", Ezagent.Orchestrator.McpChannel)
 
   @impl true
   def connect(params, socket, _connect_info) do
@@ -56,6 +56,11 @@ defmodule Ezagent.Orchestrator.McpSocket do
       socket =
         socket
         |> assign(:agent_uri, agent_uri)
+        # Transport #53 Decision C — stash the verified connection token so the
+        # Channel can FORWARD it to the session-domain `SessionManager`, which
+        # VERIFIES it (the unforgeable authz gate). The token is a SECRET held
+        # only on this server-side socket (never echoed to the wire / logs).
+        |> assign(:bridge_token, token)
         |> assign(:authed_at, DateTime.utc_now())
 
       {:ok, socket}

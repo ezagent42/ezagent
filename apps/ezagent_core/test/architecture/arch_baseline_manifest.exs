@@ -19,14 +19,21 @@
   #   `requires_explicit_behavior_set?/1` enabling the curl-flavor fold without
   #   an agent backfill) pushed ezagent/kind.ex 999 → 1013. Its natural home is
   #   alongside the behavior-set accessors it mirrors. Burn-down target.
-  oversized_modules_gt_1000: 1, # arch-cap-bump: PR-6 nil_capture_behavior_set/1 → kind.ex 999→1013
+  # arch-cap-bump: PR-6 nil_capture_behavior_set/1 → kind.ex 999→1013
+  oversized_modules_gt_1000: 1,
   def_count_admin_live: 46,
   def_count_cc_agent: 50,
   def_count_orchestrator_tools: 35,
   def_count_session_creator: 29,
   def_count_capability: 22,
-  spawn_registry_call_sites: 38,
-  spawn_registry_modules: 32,
+  spawn_registry_call_sites: 37,
+  # Transport #53 Decision C (codex C-rC-P1): the orchestrator MCP transport
+  # (`mcp_server.ex`) references the Session Kind it routes to through the
+  # SANCTIONED SpawnRegistry chokepoint on a bridge reconnect, to rehydrate the
+  # session (whose `session` spawn fn restarts the per-orchestrator
+  # SessionManager) after a BEAM restart. +1 module (sanctioned, so
+  # off_chokepoint is unchanged).
+  spawn_registry_modules: 33, # arch-cap-bump: Decision C cold-restart self-heal (cc transport → SpawnRegistry chokepoint)
   spawn_registry_off_chokepoint_modules: 25,
   create_session_call_sites: 6,
   create_session_modules: 5,
@@ -74,7 +81,8 @@
   # the `use Mix.Task` callback, now correctly exempted via `@dup_callback_owners`
   # (which also retires a pre-existing Mix-task `run/1` fork the gap had been
   # counting, −1 more). The chat→session `SliceMigration` mirror remains.
-  cross_file_duplicate_fn_groups: 29, # arch-cap: PR-6+7 curl fold + Mix.Task run/1 callback exemption
+  # arch-cap: PR-6+7 curl fold + Mix.Task run/1 callback exemption
+  cross_file_duplicate_fn_groups: 29,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3
@@ -124,7 +132,8 @@
   # handle_configure + handle_reset_conversation) are gone — a measured −14 (the
   # prior baseline comment mis-stated LegacyConfig as −8; the scanned regex
   # counts 7). The PR-2 applied-turn marker remains.
-  set_effect_sites: 121, # arch-cap-bump: PR-2 applied-turn marker; curl legacy shims deleted (−14)
+  # arch-cap-bump: PR-2 applied-turn marker; curl legacy shims deleted (−14)
+  set_effect_sites: 121,
   cross_slice_set_violations: 0,
   missing_cap_check_mutating_actions: 0,
   kind_runtime_ordering_violations: 0,

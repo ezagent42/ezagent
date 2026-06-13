@@ -44,7 +44,14 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     "apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex",
     "apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex",
     "apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/session_creator.ex",
-    "apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/application.ex"
+    "apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/application.ex",
+    # Transport #53 Decision C (codex C-rC-P1) — the orchestrator MCP transport's
+    # durable-rebuild path forces the Session Kind to rehydrate (through the
+    # SANCTIONED SpawnRegistry chokepoint) on a bridge reconnect after a BEAM
+    # restart, so the session-domain `session` spawn fn restarts the
+    # per-orchestrator `SessionManager` executor. cc spawns nothing itself; it
+    # references the session it already routes to via the chokepoint.
+    "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/mcp_server.ex"
   ]
 
   @spawn_fresh_sanctioned [
@@ -63,6 +70,9 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # PR-3S — `spawn_fresh_member/8` (def) + its single call site moved VERBATIM
     # from `Orchestrator.Tools` to `Orchestrator.Tools.MemberTemplate` along with
     # the `update_member_template` regenerate cluster (gt_1000 4→3 extraction).
+    # PR-8 (transport #53) — the MCP TRANSPORT relocated im → cc, but the tool
+    # OPERATIONS (`Orchestrator.Tools` + `Orchestrator.Tools.MemberTemplate`)
+    # STAY in the session domain (O-4); paths restored to im.
     {"apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools/member_template.ex",
      190},
     {"apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools/member_template.ex",

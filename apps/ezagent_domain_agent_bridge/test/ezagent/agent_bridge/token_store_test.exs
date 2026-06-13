@@ -68,4 +68,28 @@ defmodule Ezagent.AgentBridge.TokenStoreTest do
     assert URI.to_string(found_uri) == URI.to_string(agent_uri)
     assert is_binary(minted_at)
   end
+
+  describe "verify_token/2 — the SessionManager authz gate (no secret exposure)" do
+    test "true only for the exact minted token; false otherwise (fail-closed)" do
+      agent_uri = URI.new!("entity://team-alpha/agent/test_token-verify")
+      assert {:ok, token} = TokenStore.mint(agent_uri)
+
+      assert TokenStore.verify_token(agent_uri, token)
+      refute TokenStore.verify_token(agent_uri, token <> "x")
+      refute TokenStore.verify_token(agent_uri, "tok_wrong")
+      refute TokenStore.verify_token(agent_uri, "")
+      refute TokenStore.verify_token(agent_uri, nil)
+
+      # An orchestrator with NO minted token never verifies.
+      refute TokenStore.verify_token(URI.new!("entity://team-alpha/agent/test_token-none"), "x")
+    end
+
+    test "the module exposes NO getter that returns the secret (codex C-r6-P1)" do
+      # Decision C §2 step 0 — the unforgeable-token threat model requires the
+      # secret stay inside TokenStore. Any function returning the raw token would
+      # let co-resident code forge a SessionManager call. Assert no such getter.
+      refute function_exported?(TokenStore, :token_for, 1),
+             "TokenStore must NOT expose the secret token via a getter — verify in-module."
+    end
+  end
 end

@@ -15,10 +15,11 @@ defmodule Ezagent.Orchestrator.McpChannel do
     answers `tools/list` from a schema file shipped beside it, so this
     Channel event is a redundancy / liveness path — but it is served
     so the wire is self-contained.
-  - `mcp_tools_call` → routed to the per-orchestrator
-    `Ezagent.Orchestrator.McpServer`, which runs the named tool with
-    the orchestrator's four delegated caps as `ctx` and returns a
-    structured MCP result.
+  - `mcp_tools_call` → the cc transport (`Ezagent.Orchestrator.McpServer`)
+    looks up the per-orchestrator `Ezagent.Session.SessionManager` by URI and
+    `GenServer.call`s it (with the bridge token); SessionManager verifies the
+    token, reconstructs the orchestrator's delegated caps session-side, runs
+    the named tool, and returns a structured MCP result.
 
   Topic shape `orch:bridge:<orchestrator_uri>` — the URI MUST equal the
   token-authenticated `socket.assigns.agent_uri` (`join/3` asserts it).
@@ -28,20 +29,24 @@ defmodule Ezagent.Orchestrator.McpChannel do
 
   On join, the Channel resolves the bound `%McpServer{}` ENTIRELY from
   `socket.assigns.agent_uri` (the token-authenticated value) via
-  `Ezagent.Orchestrator.McpServer.from_orchestrator_uri/1`:
+  `Ezagent.Orchestrator.McpServer.from_orchestrator_uri/2`, binding the
+  orchestrator URI + the verified **bridge token** (`socket.assigns.bridge_token`,
+  set by `McpSocket.connect/3` from the WS connect credential). The join is
+  fail-closed for any agent that is not a registered orchestrator.
 
-  - the session / workspace / owner / parent-template come from
-    `Ezagent.Orchestrator.McpRegistry` — the binding the Generator
-    registered when it spawned this orchestrator;
-  - the four delegated caps are loaded from the orchestrator agent's
-    own `:identity` slice.
-
-  Nothing in any `mcp_tools_call` payload influences caller, caps, or
-  session. The `tool` name + its `arguments` are the ONLY wire input,
-  and `McpServer.handle_tool_call/3` enforces CapBAC on every tool
-  with the server-bound caps. A `claude` process therefore cannot
-  spoof another orchestrator's authority — it can only call its OWN 7
-  tools, gated by its OWN delegated caps.
+  Nothing in any `mcp_tools_call` payload influences caller or session. The
+  `tool` name + its `arguments` are the ONLY wire input. On a `tools/call`,
+  `McpServer.handle_tool_call/3` DECODES the request, LOOKS UP the
+  per-orchestrator `Ezagent.Session.SessionManager` (session domain) BY
+  orchestrator URI, and `GenServer.call`s `{:run_tool, tool, args, bridge_token}`
+  carrying ONLY the tool/args + the bridge token — NO caps cross the boundary
+  (transport #53 Decision C). SessionManager VERIFIES the bridge token (the
+  unforgeable gate), enforces the structural caller-is-our-orchestrator check,
+  RECONSTRUCTS the orchestrator's 4 delegated caps session-side, and gates each
+  underlying tool op at the Session dispatch chokepoint. A `claude` process
+  therefore cannot spoof another orchestrator's authority — it can only call
+  its OWN tools (its token authenticates exactly one orchestrator), gated by
+  its OWN delegated caps.
 
   ## Why a separate Channel module (not the cc Channel)
 
@@ -82,47 +87,62 @@ defmodule Ezagent.Orchestrator.McpChannel do
         {:error, %{reason: "topic does not match authenticated agent"}}
 
       true ->
-        case McpServer.from_orchestrator_uri(socket.assigns.agent_uri) do
-          {:ok, %McpServer{} = mcp} ->
-            # 2026-05-31 orchestrator-startup-atomicity §5 — record the
-            # live-join as DURABLE STATE. This is the SINGLE definitive
-            # confirmation the orchestrator is functional end-to-end
-            # (PTY up → claude up → MCP bridge up → registered). The §5
-            # startup gate (`Session.await_orchestrator_ready/3`) POLLS
-            # `LiveJoinRegistry.joined?/1` on a bounded loop, so it cannot
-            # miss a join that already happened — the fire-once broadcast
-            # below was lost whenever the gate's `receive` was not yet
-            # parked, killing a working orchestrator + rolling back create
-            # with empty members.
-            :ok = Ezagent.Orchestrator.LiveJoinRegistry.mark_joined(socket.assigns.agent_uri)
+        # Decision C — bind the orchestrator URI + its verified bridge token
+        # (from the token-authenticated socket). The token is forwarded to
+        # SessionManager on each tools/call so it can verify the unforgeable
+        # connection credential (§2 step 0). A socket that authenticated MUST
+        # carry the token; absent → fail-closed (treat as no transport).
+        case socket.assigns do
+          %{bridge_token: token} when is_binary(token) ->
+            join_with_token(socket, agent_uri_str, token)
 
-            # KEEP the broadcast as an INSTANT-WAKE optimization for the
-            # poll. The URI is the token-authenticated `agent_uri` (== the
-            # registered orchestrator URI); the gate filters by it.
-            # Fire-and-forget — a no-subscriber broadcast is a harmless
-            # no-op (the gate may not be running, e.g. a reconnect after a
-            # prior successful create).
-            :ok =
-              Phoenix.PubSub.broadcast(
-                EzagentCore.PubSub,
-                @orch_lifecycle_topic,
-                {:orchestrator_ready, socket.assigns.agent_uri}
-              )
-
-            {:ok, assign(socket, :mcp, mcp)}
-
-          {:error, reason} ->
-            # The agent authenticated, but is not a registered
-            # orchestrator (no McpRegistry row) — fail-closed: the
-            # 7-tool surface is reachable only by a real orchestrator.
-            Logger.warning(
-              "Ezagent.Orchestrator.McpChannel: #{agent_uri_str} authenticated " <>
-                "but is not a registered orchestrator (#{inspect(reason)}) — " <>
-                "join rejected (fail-closed)"
-            )
-
-            {:error, %{reason: "not a registered orchestrator: #{inspect(reason)}"}}
+          _ ->
+            {:error, %{reason: "no connection credential on socket"}}
         end
+    end
+  end
+
+  defp join_with_token(socket, agent_uri_str, token) do
+    case McpServer.from_orchestrator_uri(socket.assigns.agent_uri, token) do
+      {:ok, %McpServer{} = mcp} ->
+        # 2026-05-31 orchestrator-startup-atomicity §5 — record the
+        # live-join as DURABLE STATE. This is the SINGLE definitive
+        # confirmation the orchestrator is functional end-to-end
+        # (PTY up → claude up → MCP bridge up → registered). The §5
+        # startup gate (`Session.await_orchestrator_ready/3`) POLLS
+        # `LiveJoinRegistry.joined?/1` on a bounded loop, so it cannot
+        # miss a join that already happened — the fire-once broadcast
+        # below was lost whenever the gate's `receive` was not yet
+        # parked, killing a working orchestrator + rolling back create
+        # with empty members.
+        :ok = Ezagent.Orchestrator.LiveJoinRegistry.mark_joined(socket.assigns.agent_uri)
+
+        # KEEP the broadcast as an INSTANT-WAKE optimization for the
+        # poll. The URI is the token-authenticated `agent_uri` (== the
+        # registered orchestrator URI); the gate filters by it.
+        # Fire-and-forget — a no-subscriber broadcast is a harmless
+        # no-op (the gate may not be running, e.g. a reconnect after a
+        # prior successful create).
+        :ok =
+          Phoenix.PubSub.broadcast(
+            EzagentCore.PubSub,
+            @orch_lifecycle_topic,
+            {:orchestrator_ready, socket.assigns.agent_uri}
+          )
+
+        {:ok, assign(socket, :mcp, mcp)}
+
+      {:error, reason} ->
+        # The agent authenticated, but is not a registered
+        # orchestrator (no McpRegistry row) — fail-closed: the
+        # 7-tool surface is reachable only by a real orchestrator.
+        Logger.warning(
+          "Ezagent.Orchestrator.McpChannel: #{agent_uri_str} authenticated " <>
+            "but is not a registered orchestrator (#{inspect(reason)}) — " <>
+            "join rejected (fail-closed)"
+        )
+
+        {:error, %{reason: "not a registered orchestrator: #{inspect(reason)}"}}
     end
   end
 

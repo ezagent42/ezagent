@@ -23,7 +23,16 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
     )
 
     if match?(%URI{}, orchestrator_uri) do
-      safe(fn -> Ezagent.Orchestrator.McpRegistry.unregister(orchestrator_uri) end)
+      # PR-8 (transport #53) — route MCP unregister + live-join clear through
+      # the session-owned port (no-op when cc is not loaded) instead of naming
+      # the now-cc-resident `McpRegistry` / `LiveJoinRegistry`.
+      safe(fn -> Ezagent.Session.OrchestratorReadinessPort.unregister(orchestrator_uri) end)
+
+      # Transport #53 Decision C (codex C-rC-P2) — stop the per-orchestrator
+      # `SessionManager` GenServer (started at step-7 materialization). It is
+      # independently supervised, so unregistering the transport alone would leak
+      # it + leave a stale-bound executor a later recreate could reuse.
+      safe(fn -> Ezagent.Session.SessionManager.stop(orchestrator_uri) end)
 
       if match?(%URI{}, owner_uri) and match?(%URI{}, workspace_uri) do
         safe(fn ->
@@ -39,7 +48,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
       safe(fn -> Ezagent.Lifecycle.destroy(orchestrator_uri, :rollback) end)
       safe(fn -> Ezagent.WorkspaceRegistry.unbind(orchestrator_uri) end)
       forget_lineage(orchestrator_uri)
-      safe(fn -> Ezagent.Orchestrator.LiveJoinRegistry.clear(orchestrator_uri) end)
+      safe(fn -> Ezagent.Session.OrchestratorReadinessPort.clear(orchestrator_uri) end)
     end
 
     if match?(%URI{}, owner_uri) and match?(%URI{}, workspace_uri) do

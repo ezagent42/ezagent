@@ -33,11 +33,31 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
 
   alias Ezagent.{AgentFlavorRegistry, AgentLineage, Behavior, Capability, KindRegistry}
   alias Ezagent.Entity.{Agent, Session, User}
-  alias Ezagent.Orchestrator.McpServer
+  alias Ezagent.Session.SessionManager
+  alias Ezagent.AgentBridge.TokenStore
 
   @moduletag scenario: "33-full-star-orchestrator-all-flavors"
 
   @workspace_uri URI.new!("workspace://team-alpha")
+
+  # Transport #53 Decision C — the tool ops run in the per-orchestrator
+  # `SessionManager` GenServer. Isolate TokenStore in a sandboxed EZAGENT_HOME.
+  setup do
+    home = Path.join(System.tmp_dir!(), "s33-home-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(home)
+    prev_home = System.get_env("EZAGENT_HOME")
+    System.put_env("EZAGENT_HOME", home)
+
+    on_exit(fn ->
+      if prev_home,
+        do: System.put_env("EZAGENT_HOME", prev_home),
+        else: System.delete_env("EZAGENT_HOME")
+
+      File.rm_rf(home)
+    end)
+
+    :ok
+  end
 
   # A no-PTY Template Class: the worker Kind is the plain Agent (no
   # claude/codex/curl subprocess). Mirrors orchestrator_mcp_e2e_test's
@@ -178,7 +198,12 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
     session_uri
   end
 
-  defp spawn_orchestrator do
+  # Transport #53 Decision C — spawn the orchestrator WITH its delegated caps in
+  # its `:identity` slice (reconstructed session-side per-call), set the durable
+  # working-copy orchestrator_uri (the structural gate), mint its bridge token,
+  # and start the per-orchestrator `SessionManager`. Returns `{orchestrator_uri,
+  # token}`.
+  defp spawn_orchestrator(session_uri) do
     orchestrator_uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch-s33-#{uniq()}")
     :ok = Ezagent.AgentFlavorAttributes.put(orchestrator_uri, "cc")
 
@@ -186,21 +211,36 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
       Ezagent.AgentFlavorAttributes.delete(orchestrator_uri)
     end)
 
-    {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri})
+    caps = orchestrator_caps(session_uri, orchestrator_uri, @workspace_uri)
+    {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri, initial_caps: caps})
     :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
-    orchestrator_uri
-  end
 
-  defp mcp_server(session_uri, orchestrator_uri, caps) do
-    {:ok, ctx} =
-      McpServer.new(
+    {:ok, _} =
+      Ezagent.Behavior.Session.ConfigActions.system_set_working_copy(session_uri, %{
+        orchestrator_uri: orchestrator_uri,
+        orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator")
+      })
+
+    {:ok, token} = TokenStore.mint(orchestrator_uri)
+
+    {:ok, _sm} =
+      SessionManager.ensure_started(
         orchestrator_uri: orchestrator_uri,
         session_uri: session_uri,
         workspace_uri: @workspace_uri,
-        caps: caps
+        owner_uri: orchestrator_uri
       )
 
-    ctx
+    on_exit(fn -> SessionManager.stop(orchestrator_uri) end)
+
+    {orchestrator_uri, token}
+  end
+
+  # Run a tool through the per-orchestrator SessionManager (the real Decision C
+  # flow: token verify → structural gate → cap reconstruction → Tools op).
+  # Returns the RAW `{:ok, _}` / `{:error, _}` result.
+  defp run_tool(%{orchestrator_uri: orch, token: token}, tool, args) when is_binary(tool) do
+    SessionManager.run_tool(orch, tool, args, token)
   end
 
   defp chat_slice(session_uri) do
@@ -226,9 +266,9 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
         end)
 
       session_uri = spawn_session()
-      orchestrator_uri = spawn_orchestrator()
-      caps = orchestrator_caps(session_uri, orchestrator_uri, @workspace_uri)
-      mcp = mcp_server(session_uri, orchestrator_uri, caps)
+      {orchestrator_uri, token} = spawn_orchestrator(session_uri)
+
+      mcp = %{orchestrator_uri: orchestrator_uri, token: token, session_uri: session_uri}
 
       %{
         mcp: mcp,
@@ -249,13 +289,13 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
       member_uris =
         for {role_name, tmpl_uri} <- members do
           result =
-            McpServer.handle_tool_call(ctx.mcp, "add_managed_member", %{
+            run_tool(ctx.mcp, "add_managed_member", %{
               "source_agent_template_uri" => URI.to_string(tmpl_uri),
               "role_name" => role_name
             })
 
-          refute result["isError"], "add_managed_member #{role_name} failed: #{inspect(result)}"
-          member_uri = Ezagent.URI.new!(result["structuredContent"])
+          assert {:ok, %URI{} = member_uri} = result,
+                 "add_managed_member #{role_name} failed: #{inspect(result)}"
 
           assert AgentLineage.spawned_in_lineage?(member_uri, ctx.orchestrator_uri),
                  "#{role_name} member must be recorded under the orchestrator lineage (cap #2)"
@@ -286,22 +326,24 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
             {"wm-ds", ctx.templates.curl}
           ] do
         add =
-          McpServer.handle_tool_call(ctx.mcp, "add_managed_member", %{
+          run_tool(ctx.mcp, "add_managed_member", %{
             "source_agent_template_uri" => URI.to_string(tmpl_uri),
             "role_name" => role_name
           })
 
-        refute add["isError"], "add_managed_member #{role_name} failed: #{inspect(add)}"
+        assert {:ok, _} = add, "add_managed_member #{role_name} failed: #{inspect(add)}"
 
         wm =
-          McpServer.handle_tool_call(ctx.mcp, "define_rule_set_rule", %{
+          run_tool(ctx.mcp, "define_rule_set_rule", %{
             "matcher_ast" => %{"type" => "text_contains", "arg" => role_name},
             "receiver_role_name" => role_name,
             "rule_set" => "rs-#{role_name}"
           })
 
-        refute wm["isError"], "define_rule_set_rule for #{role_name} failed: #{inspect(wm)}"
-        assert is_integer(wm["structuredContent"]["id"])
+        assert {:ok, %{id: id}} = wm,
+               "define_rule_set_rule for #{role_name} failed: #{inspect(wm)}"
+
+        assert is_integer(id)
       end
     end
   end
