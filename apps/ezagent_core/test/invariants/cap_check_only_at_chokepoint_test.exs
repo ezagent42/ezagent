@@ -50,11 +50,13 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         "apps/ezagent_core/lib/ezagent/",
         "apps/ezagent_domain_identity/lib/ezagent/",
         "apps/ezagent_domain_external_mirror/lib/ezagent/",
+        # PR-8 (transport #53 / O-4) — the orchestrator tool OPERATIONS
+        # (`Orchestrator.Tools` + `.MemberTemplate` + `.Templates`, which read
+        # `matches?` for delegated-cap preflight + read-only tooling display)
+        # STAY in the session domain; they are covered by this im allowlist
+        # entry. The cc orchestrator dir no longer uses `matches?` (the cc
+        # McpServer is a thin transport that dispatches), so it is NOT listed.
         "apps/ezagent_domain_instance_message/lib/ezagent/",
-        # PR-8 (transport #53) — the orchestrator-MCP subsystem (incl.
-        # `Orchestrator.Tools.Templates`, which reads `matches?` for read-only
-        # tooling display, same class as mcp_server.ex in p6) relocated im → cc.
-        "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/",
         "apps/ezagent_plugin_liveview/lib/",
         # Mix tasks consume matches? for CLI display.
         "apps/ezagent_domain_external_mirror/lib/mix/tasks/",
@@ -108,9 +110,12 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         "apps/ezagent_domain_identity/",
         "apps/ezagent_core/lib/ezagent/kind.ex",
         "apps/ezagent_plugin_liveview/lib/",
-        # Orchestrator MCP tool — read-only display of caps to LLM
-        # callers (P6 docstring allows tooling).
-        "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/mcp_server.ex",
+        # PR-8 (transport #53 / O-4): the cc McpServer no longer reads caps —
+        # it is a thin transport that dispatches; the orchestrator's delegated
+        # caps are reconstructed SESSION-side via the `identity.list_caps`
+        # DISPATCH (not `Identity.list_caps_for`), so no cc orchestrator file
+        # matches this pattern. (The session-side reconstruction goes through
+        # the dispatch chokepoint, the sanctioned path.)
         # External-mirror CLI — operator-driven cap display.
         "apps/ezagent_domain_external_mirror/lib/mix/tasks/",
         # Feishu binding sender resolver — read-only inbound-binding
@@ -126,6 +131,15 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         # against the grantee's own caps), NOT a cap-gate decision
         # outside the dispatch chokepoint.
         "apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/session_creator.ex",
+        # PR-8 (transport #53 / O-4) — the session-side `OrchestratorTools`
+        # action RECONSTRUCTS the orchestrator's OWN delegated caps to run a
+        # forwarded `tools/call` under them. It reads them via the sanctioned
+        # `Identity.list_caps_for/1` (which dispatches `identity.list_caps`
+        # through the chokepoint for the agent's OWN caps) — a read of the
+        # caller's own delegated authority to BUILD the op ctx, NOT a cap-gate
+        # decision made outside dispatch. The 4 delegated caps then gate each
+        # underlying op AT the dispatch chokepoint.
+        "apps/ezagent_domain_instance_message/lib/ezagent/behavior/orchestrator_tools.ex",
         # #533 PR-5 — create-time Manage cap grants use the same
         # idempotency pattern in the Workspace facade: read existing
         # caps to avoid duplicate grant writes, then dispatch the
