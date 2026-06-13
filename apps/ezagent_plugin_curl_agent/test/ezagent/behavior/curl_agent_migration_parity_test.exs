@@ -75,49 +75,33 @@ defmodule Ezagent.Behavior.CurlAgentMigrationParityTest do
     end
   end
 
-  describe ":receive parity" do
-    test "self-message returns identity tuple with no effects (loop guard)" do
-      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/curl_self")
-      msg = Ezagent.Message.new(agent_uri, %{text: "self-loop"})
-
-      ctx = %{
-        read: fn _k, d -> d end,
-        self_uri: agent_uri,
-        caller: Ezagent.URI.new!("session://team-alpha/default/main"),
-        siblings: %{api_keys: %{keys: %{}}}
-      }
-
-      assert {:ok, %{ok: true, ignored: :self_message}, []} =
-               CurlAgent.handle_receive(%{message: msg}, ctx)
-    end
-
+  # PR-6 (im/session/agent decomposition §3.5) — `:receive` parity is now
+  # `:sync_result` parity: the post-HTTP persist step owns the durable
+  # conversation/error mutation + the session reply (the in-process HTTP
+  # round-trip moved to the curl `:in_process_sync` adapter).
+  describe ":sync_result parity" do
     test "missing api_key emits operator-help reply dispatch + sets last_error" do
       agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/curl_x")
       session_uri = Ezagent.URI.new!("session://team-alpha/default/main")
 
-      msg =
-        Ezagent.Message.new(
-          Ezagent.URI.new!("entity://team-alpha/user/alice"),
-          %{text: "hi"}
-        )
-
       ctx = %{
         read: fn
-          :provider, _ -> "openai"
-          :api_url, _ -> "https://api.openai.com/v1/chat/completions"
-          :model, _ -> "gpt-4o"
-          :system_prompt, _ -> nil
           :max_history, _ -> 20
           :conversation, _ -> []
           _, d -> d
         end,
         self_uri: agent_uri,
-        caller: session_uri,
-        siblings: %{api_keys: %{keys: %{}}}
+        caller: session_uri
+      }
+
+      args = %{
+        result: {:error, {:no_api_key, "openai"}},
+        source_session: session_uri,
+        user_text: "hi"
       }
 
       assert {:ok, %{ok: false, error: :no_api_key}, effects} =
-               CurlAgent.handle_receive(%{message: msg}, ctx)
+               CurlAgent.handle_sync_result(args, ctx)
 
       assert {:set, :last_error, {:no_api_key, "openai"}} in effects
 
@@ -127,28 +111,54 @@ defmodule Ezagent.Behavior.CurlAgentMigrationParityTest do
       assert %Ezagent.Message{body: %{text: text}} = cmd.args.message
       assert text =~ "no API key for provider `openai`"
     end
+
+    test "success path appends user+assistant turns through apply_effects" do
+      {:ok, base} = CurlAgent.create(%{})
+      ctx = %{read: fn k, d -> Map.get(base, k, d) end, self_uri: nil, caller: nil}
+
+      usage = %{prompt: 1, completion: 2, total: 3}
+
+      args = %{
+        result: {:ok, %{content: "world", usage: usage}},
+        source_session: nil,
+        user_text: "hello"
+      }
+
+      assert {:ok, %{ok: true, tokens: 3}, effects} = CurlAgent.handle_sync_result(args, ctx)
+      assert {:ok, %{state: new_state}} = Ezagent.Behavior.apply_effects(effects, base)
+
+      assert new_state.conversation == [
+               %{role: "user", content: "hello"},
+               %{role: "assistant", content: "world"}
+             ]
+
+      assert new_state.last_tokens == usage
+      assert new_state.last_error == nil
+    end
   end
 
   describe "macro-derived legacy callbacks (backwards-compat parity)" do
-    test "actions/0 matches the legacy set" do
+    # PR-6 — `:receive` replaced by `:sync_result`.
+    test "actions/0 matches the PR-6 set" do
       assert MapSet.new(CurlAgent.actions()) ==
-               MapSet.new([:receive, :reset_conversation, :configure])
+               MapSet.new([:sync_result, :reset_conversation, :configure])
     end
 
     test "interface/0 keys cover all 3 actions with descriptions" do
       iface = CurlAgent.interface()
 
-      for action <- [:receive, :reset_conversation, :configure] do
+      for action <- [:sync_result, :reset_conversation, :configure] do
         assert Map.has_key?(iface, action)
         assert is_binary(iface[action][:description])
       end
     end
 
-    test "required_caps/0 preserves :curl_agent kind axis" do
+    # PR-6 — reparented onto Entity.Agent → `:agent` cap axis (was `:curl_agent`).
+    test "required_caps/0 uses the :agent kind axis (PR-6 reparent)" do
       caps = CurlAgent.required_caps()
 
-      for action <- [:receive, :reset_conversation, :configure] do
-        assert %Ezagent.Capability{kind: :curl_agent} = caps[action]
+      for action <- [:sync_result, :reset_conversation, :configure] do
+        assert %Ezagent.Capability{kind: :agent} = caps[action]
       end
     end
 

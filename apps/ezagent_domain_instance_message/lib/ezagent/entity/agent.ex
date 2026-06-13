@@ -71,8 +71,30 @@ defmodule Ezagent.Entity.Agent do
   # who can rotate. CapabilityRegistry binding lives in
   # `EzagentDomainIdentity.Application` against `Ezagent.Entity.Agent`
   # — same cross-domain pattern as Identity Behavior registration.
+  # PR-6+7 (im/session/agent decomposition §3.5 / §OQ-1) — `behaviors/0` is
+  # the declared SUPERSET. It gains `Ezagent.Behavior.CurlAgent` (the curl
+  # flavor's STATE behavior, reparented off the now-DELETED standalone
+  # curl Kind). CurlAgent is ACTIVE only on a `curl`-flavor
+  # instance, which threads an explicit `:behaviors` set
+  # (`curl_behaviors/0`) at spawn. EVERY OTHER agent (cc / codex / echo)
+  # has a `nil`/absent `:kind_base` and resolves to `nil_capture_behavior_set/0`
+  # below — the BASE subset, which EXCLUDES CurlAgent — so they stay
+  # byte-identical to pre-PR-6 (no `:curl_agent` slice pollution). The
+  # forward-only curl-snapshot migration onto this Kind is `mix
+  # ezagent.curl.migrate` (rewrites pre-fold rows; no rollback window).
   @impl Ezagent.Kind
-  def behaviors,
+  def behaviors, do: base_behaviors() ++ [Ezagent.Behavior.CurlAgent]
+
+  @doc """
+  The BASE (non-flavor) Agent behavior set — the pre-PR-6 declared list.
+
+  This is the `nil_capture_behavior_set/0` default below, so a legacy
+  agent (cc / codex / echo) with a `nil`/absent `:kind_base` resolves to
+  exactly this set (byte-identical to pre-PR-6) even though `behaviors/0`
+  now declares the wider curl superset.
+  """
+  @spec base_behaviors() :: [module()]
+  def base_behaviors,
     do: [
       Ezagent.Behavior.Session,
       Ezagent.Behavior.Identity,
@@ -86,6 +108,26 @@ defmodule Ezagent.Entity.Agent do
       # behaviors that live on the Agent Kind.
       Ezagent.Behavior.ConfigEvolve
     ]
+
+  @doc """
+  The curl-flavor per-instance behavior subset (the explicit `:behaviors`
+  set threaded at a NEW curl agent spawn, PR-6). The BASE Agent behaviors
+  PLUS `Ezagent.Behavior.CurlAgent` (which owns the `:curl_agent` slice +
+  `reset_conversation` / `configure` / `sync_result` actions). `:api_keys`
+  is already in the base set, so curl's credential need is satisfied with no
+  duplication.
+  """
+  @spec curl_behaviors() :: [module()]
+  def curl_behaviors, do: base_behaviors() ++ [Ezagent.Behavior.CurlAgent]
+
+  @doc """
+  Behavior set for a `nil`/absent `:kind_base` instance (PR-6). Returns the
+  BASE (non-flavor) subset so legacy agents never gain the curl-only
+  `Behavior.CurlAgent` that `behaviors/0` now declares for the curl flavor.
+  See `Ezagent.Kind.nil_capture_behavior_set/1` + `Ezagent.Kind.BehaviorSet`.
+  """
+  @spec nil_capture_behavior_set() :: [module()]
+  def nil_capture_behavior_set, do: base_behaviors()
 
   # Allen 2026-05-25 — bumped from `:on_terminate` to `{:snapshot, :on_change}`
   # as part of the CLI persistence fix (PR codex r1 HIGH).

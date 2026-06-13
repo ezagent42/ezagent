@@ -9,7 +9,17 @@ defmodule Ezagent.TestSupport.TemplateAgentSpawn do
       kind: Ezagent.Entity.Agent,
       template_class: Ezagent.PluginCodex.Template.CodexAgent
     },
-    "curl" => %{kind: Ezagent.Entity.CurlAgent, template_class: Ezagent.PluginCurlAgent.Template},
+    # PR-6+7 (curl-as-flavor) — curl resolves to the UNIFIED `Entity.Agent` Kind
+    # (the standalone `Entity.CurlAgent` is DELETED); the curl behavior SET is
+    # selected per-instance via the `instance_behaviors` thunk. This decl MUST
+    # byte-match the curl plugin's `agent_flavors/0` registration (same kind +
+    # template_class + the SAME `&Agent.curl_behaviors/0` capture, which compares
+    # equal) so re-registering here is idempotent, not a duplicate-flavor clash.
+    "curl" => %{
+      kind: Agent,
+      template_class: Ezagent.PluginCurlAgent.Template,
+      instance_behaviors: &Agent.curl_behaviors/0
+    },
     "echo" => %{kind: Ezagent.Entity.Echo, template_class: Ezagent.PluginEcho.Template.EchoAgent},
     "np" => %{kind: Ezagent.Entity.NpAgent, template_class: Ezagent.PluginNp.Template.NpAgent},
     "test" => %{kind: Ezagent.Entity.Agent, template_class: Ezagent.TestSupport.NoopAgentTemplate}
@@ -99,12 +109,16 @@ defmodule Ezagent.TestSupport.TemplateAgentSpawn do
     end
   end
 
-  defp ensure_flavor_registered(flavor, %{kind: kind, template_class: template_class}) do
+  defp ensure_flavor_registered(flavor, %{kind: kind, template_class: template_class} = decl) do
     :ok =
       Ezagent.AgentFlavorRegistry.register(%{
         flavor: flavor,
         kind: kind,
-        template_class: template_class
+        template_class: template_class,
+        # carry the per-instance behavior-set thunk (curl) so the registered
+        # value byte-matches the plugin's decl → idempotent re-register; `nil`
+        # for the dedicated-Kind flavors (cc/codex/echo/np/test).
+        instance_behaviors: Map.get(decl, :instance_behaviors)
       })
 
     :ok

@@ -156,4 +156,12 @@ defmodule Ezagent.Behavior.User.Receive do
        {:set, :recent_messages, trimmed_ring}
      ]}
   end
+
+  # caps-data-ownership-v2 (SPEC #306 §7) — a Behavior with caps MUST declare
+  # data_owner/1. `user.receive` writes the User's OWN inbox slice
+  # (`:last_received` / `:recent_messages`), so the data owner is the User
+  # entity itself (the inbox is per-recipient).
+  def data_owner(%URI{scheme: "entity"} = uri), do: Ezagent.URI.instance(uri)
+  def data_owner(:any), do: :any
+  def data_owner(_), do: :no_owner
 end

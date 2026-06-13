@@ -61,8 +61,11 @@ defmodule Ezagent.Behavior.CurlAgentColdLoadTest do
 
     # Non-default args so the rehydrated state is distinguishable from a
     # wrongly-re-run `create/1` (which would reset to deepseek defaults).
+    # PR-6+7 — a curl agent spawns on the UNIFIED `Entity.Agent` Kind with the
+    # curl per-instance behavior set (the standalone curl Kind is deleted).
     spawn_args = %{
       uri: uri,
+      behaviors: Ezagent.Entity.Agent.curl_behaviors(),
       provider: "openai",
       api_url: "https://api.openai.com/v1/chat/completions",
       model: "gpt-4o",
@@ -75,7 +78,7 @@ defmodule Ezagent.Behavior.CurlAgentColdLoadTest do
     #    `create/1` builds the PERSISTENT :curl_agent state;
     #    `Kind.Server.init/1` writes the initial snapshot ({:snapshot,
     #    :on_change} persists at init).
-    {:ok, pid1} = Kind.spawn(Ezagent.Entity.CurlAgent, spawn_args)
+    {:ok, pid1} = Kind.spawn(Ezagent.Entity.Agent, spawn_args)
     wait_until(fn -> Ezagent.ReadyGate.status(uri) == :ready end)
 
     # T3 (Phase B foundation): `get_slice/2` now normalizes a two-container
@@ -118,7 +121,7 @@ defmodule Ezagent.Behavior.CurlAgentColdLoadTest do
     # 3. Cold-load — re-spawn the same URI. `init_slice` sees
     #    `ever_created?/1` true → SKIPS create/1; the snapshot merge
     #    rehydrates the persistent state.
-    {:ok, pid2} = Kind.spawn(Ezagent.Entity.CurlAgent, %{uri: uri})
+    {:ok, pid2} = Kind.spawn(Ezagent.Entity.Agent, %{uri: uri})
     refute pid1 == pid2
     wait_until(fn -> Ezagent.ReadyGate.status(uri) == :ready end)
 

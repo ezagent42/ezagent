@@ -87,13 +87,36 @@ defmodule Ezagent.PluginNp.Test.FakeCcAgent do
     self_uri_str = uri_string(ctx[:self_uri])
     sender_str = uri_string(msg.sender)
 
-    if sender_str == self_uri_str do
-      # Loop safety — never reply to our own message.
-      {:ok, %{}, []}
-    else
-      do_receive(msg, ctx)
+    cond do
+      sender_str == self_uri_str ->
+        # Loop safety — never reply to our own message.
+        {:ok, %{}, []}
+
+      # PR-6 (im/session/agent decomposition §3.5) — the curl agent now
+      # spawns on the UNIFIED `Ezagent.Entity.Agent` Kind, the SAME Kind this
+      # test double is transiently bound to for `:receive`. The
+      # `{Entity.Agent, :receive}` override would otherwise hijack the curl
+      # agent too (double-wrapping its input). This double represents ONLY the
+      # fake-cc agent (`entity://…/agent/test_cc-…`); every OTHER Entity.Agent
+      # (the curl flavor) must flow through the REAL `agent.receive` →
+      # AgentBridge → the curl `:in_process_sync` adapter. Delegate it.
+      not fake_cc_agent?(self_uri_str) ->
+        Ezagent.Behavior.Agent.Receive.handle_receive(%{message: msg}, ctx)
+
+      true ->
+        do_receive(msg, ctx)
     end
   end
+
+  # The fake-cc stand-in is the agent whose name segment is `test_cc-<uniq>`
+  # (the e2e spawns it as `entity://…/agent/test_cc-<uniq>`). Matched on the
+  # full URI string (NOT a positional `%URI{}` field read — that is reserved
+  # for `Ezagent.URI` per the URI-query scan invariant).
+  defp fake_cc_agent?(self_uri_str) when is_binary(self_uri_str) do
+    String.contains?(self_uri_str, "/agent/test_cc")
+  end
+
+  defp fake_cc_agent?(_), do: false
 
   defp do_receive(%Message{} = msg, ctx) do
     inbound_text = extract_text(msg.body)

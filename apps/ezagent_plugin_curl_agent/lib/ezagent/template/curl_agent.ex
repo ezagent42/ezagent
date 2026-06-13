@@ -143,6 +143,12 @@ defmodule Ezagent.PluginCurlAgent.Template do
 
     init_args = %{
       uri: agent_uri,
+      # PR-6 (im/session/agent decomposition §3.5) — a NEW curl agent spawns
+      # on the UNIFIED `Ezagent.Entity.Agent` Kind. The curl flavor's STATE
+      # behavior (`Behavior.CurlAgent`) is selected via the explicit
+      # per-instance `:behaviors` set (the same `:kind_base` mechanism the
+      # Session Kind uses); the set persists, so cold-load rehydrates it.
+      behaviors: Ezagent.Entity.Agent.curl_behaviors(),
       provider: tmpl["provider"],
       api_url: tmpl["api_url"],
       model: tmpl["model"],
@@ -156,9 +162,17 @@ defmodule Ezagent.PluginCurlAgent.Template do
       # future work tracked in docs/futures/todo.md).
     }
 
+    # PR-6 — record the stored `curl` flavor attribute (O-2: flavor is a
+    # STORED slice field, read at load via `Ezagent.UriQuery`, NOT a
+    # name-segment prefix). `AgentBridge.deliver` + the AgentModuleResolver
+    # resolve the agent's flavor through this, picking the curl
+    # `:in_process_sync` adapter + the unified Kind module.
+    :ok = Ezagent.AgentFlavorAttributes.put(agent_uri, "curl")
+
     # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
-    # CurlAgent declares EzagentPluginCurlAgent.InstanceSupervisor via
-    # supervisor/0 — destination preserved.
+    # PR-6+7 — the curl flavor spawns the unified `Ezagent.Entity.Agent`
+    # Kind (the standalone curl Kind is deleted); the Agent Kind's
+    # `supervisor/0` is `EzagentDomainInstanceMessage.AgentSupervisor`.
     #
     # codex round-6 HIGH-1 — `Ezagent.Kind.spawn/2` returns the raw
     # `DynamicSupervisor.start_child` outcome, which atomically
@@ -166,7 +180,7 @@ defmodule Ezagent.PluginCurlAgent.Template do
     # `{:error, {:already_started, pid}}` (it pre-existed). Thread that
     # ground truth out as `%{fresh?: _}` so `update_agent_template`'s
     # swap can refuse adopting a worker it did not create.
-    case Ezagent.Kind.spawn(Ezagent.Entity.CurlAgent, init_args) do
+    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args) do
       {:ok, _pid} ->
         case materialize_credential_slice(agent_uri, tmpl) do
           :ok ->

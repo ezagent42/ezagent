@@ -105,8 +105,17 @@ defmodule EzagentDomainInstanceMessage.AgentModuleResolver do
 
   # KindSnapshot.kind_type is `to_string(kind_module.type_name())` per
   # the Snapshot writer (kind/snapshot.ex). Map back to the Kind module.
+  #
+  # PR-6+7 (curl-as-flavor) — the `"curl_agent"` → standalone-curl-Kind branch
+  # is DELETED with that Kind (forward-only, no rollback alias — Allen).
+  # Every pre-fold `curl_agent` snapshot row is rewritten to `kind_type "agent"`
+  # by `mix ezagent.curl.migrate` BEFORE a new-code node serves it, so it
+  # resolves here as `Entity.Agent` (the unified Kind) with a `curl` flavor
+  # slice. With no back-compat the cutover is total — an un-migrated
+  # `curl_agent` row does not exist by the time new code serves rows (Allen
+  # 2026-06-13), so `"curl_agent"` is simply a dead kind_type that falls through
+  # to the unknown-kind `nil` like any other.
   defp kind_module_from_kind_type("agent"), do: Ezagent.Entity.Agent
-  defp kind_module_from_kind_type("curl_agent"), do: Ezagent.Entity.CurlAgent
   defp kind_module_from_kind_type("echo"), do: Ezagent.Entity.Echo
   defp kind_module_from_kind_type(_), do: nil
 

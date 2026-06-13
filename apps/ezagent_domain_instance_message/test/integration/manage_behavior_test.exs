@@ -56,9 +56,12 @@ defmodule EzagentDomainInstanceMessage.Integration.ManageBehaviorTest do
   end
 
   describe "universal registration — every Kind by construction (§3.4, decision 1-B)" do
-    # Includes core/domain Kinds AND plugin Kinds (CurlAgent — the codex P2
-    # gap) AND an arbitrary never-registered module: Manage resolves for all
-    # via the UniversalBehaviors fallback, with NO per-Kind registration.
+    # Includes core/domain Kinds AND an arbitrary never-registered module:
+    # Manage resolves for all via the UniversalBehaviors fallback, with NO
+    # per-Kind registration. (The former standalone curl Kind — the codex P2
+    # gap — was DELETED in PR-6+7 when curl folded onto Entity.Agent, already
+    # in this list; the never-registered module still proves the universal
+    # fallback for any module.)
     @kinds [
       Ezagent.Entity.Session,
       Ezagent.Entity.Agent,
@@ -67,7 +70,6 @@ defmodule EzagentDomainInstanceMessage.Integration.ManageBehaviorTest do
       Ezagent.Entity.System,
       Ezagent.Entity.AgentTemplate,
       Ezagent.Entity.SessionTemplate,
-      Ezagent.Entity.CurlAgent,
       Ezagent.NeverRegisteredFakeKind
     ]
 

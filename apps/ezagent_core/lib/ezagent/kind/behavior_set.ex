@@ -100,9 +100,14 @@ defmodule Ezagent.Kind.BehaviorSet do
 
     chosen =
       case Map.fetch(args, :behaviors) do
-        # ABSENT key → legacy static Kind → full declared list.
+        # ABSENT key → legacy static Kind → the Kind's nil-capture default
+        # (PR-6). For every Kind without a `nil_capture_behavior_set/0`
+        # override this IS `behaviors_of/1` (= `declared`), so the legacy
+        # expansion is byte-identical. A superset Kind (Entity.Agent) returns
+        # its BASE subset here so legacy nil-`:kind_base` agents never gain a
+        # flavor-only declared behavior.
         :error ->
-          declared
+          Ezagent.Kind.nil_capture_behavior_set(kind_module)
 
         # PRESENT list (INCLUDING []) → intersect with declared, order-preserved.
         {:ok, list} when is_list(list) ->
@@ -147,7 +152,10 @@ defmodule Ezagent.Kind.BehaviorSet do
                   "snapshot (`mix ezagent.kind_base.backfill`, P5-0)."
           end
 
-          declared
+          # PR-6 — the Kind's nil-capture default (= `behaviors_of/1` for every
+          # Kind without an override; the BASE subset for a superset Kind like
+          # Entity.Agent). Symmetric with `init_set/2`'s absent-key branch.
+          Ezagent.Kind.nil_capture_behavior_set(kind_module)
 
         # PRESENT captured list (INCLUDING []) → intersect with declared.
         list when is_list(list) ->

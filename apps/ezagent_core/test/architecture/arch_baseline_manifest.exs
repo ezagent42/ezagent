@@ -14,7 +14,12 @@
   # Final remaining entrant: `Ezagent.Behavior.Workspace` (1498) — the
   # #685 CapBAC membership Behavior, the last burn-down target (PR-3V).
   #   PR-3V: 1 → 0 (extracted Behavior.Workspace.AgentCreate, behavior/workspace.ex 1498 → 786) — CAMPAIGN COMPLETE
-  oversized_modules_gt_1000: 0,
+  #   PR-6 (im/session/agent decomposition §3.5): 0 → 1 — the
+  #   `nil_capture_behavior_set/1` accessor (the soft sibling of
+  #   `requires_explicit_behavior_set?/1` enabling the curl-flavor fold without
+  #   an agent backfill) pushed ezagent/kind.ex 999 → 1013. Its natural home is
+  #   alongside the behavior-set accessors it mirrors. Burn-down target.
+  oversized_modules_gt_1000: 1, # arch-cap-bump: PR-6 nil_capture_behavior_set/1 → kind.ex 999→1013
   def_count_admin_live: 46,
   def_count_cc_agent: 50,
   def_count_orchestrator_tools: 35,
@@ -56,7 +61,20 @@
   # "session"`). Two standalone one-shot migrations naturally share that 1-line
   # row selector; this is a structural mirror of the approved pattern, not a
   # copy-paste fork of business logic.
-  cross_file_duplicate_fn_groups: 30, # arch-cap-bump: chat→session SliceMigration mirrors KindBaseBackfill session_rows/0
+  # arch-cap-bump: chat→session SliceMigration mirrors KindBaseBackfill session_rows/0
+  # PR-6+7 (curl-as-flavor, forward-only) RATCHET-DOWN 31 → 30: the legacy
+  # `:curl_agent`-axis companion `Ezagent.Behavior.CurlAgentLegacyConfig` (whose
+  # reset/configure bodies mirrored `Ezagent.Behavior.CurlAgent`) is DELETED with
+  # the standalone curl Kind. No rollback window (Allen) — the unified Entity.Agent
+  # is the sole curl path, so the duplicate group is gone.
+  # PR-6+7 RATCHET-DOWN 31 → 29: (a) the legacy `CurlAgentLegacyConfig` mirror is
+  # DELETED (−1); (b) the new `mix ezagent.curl.migrate` task adds NO fork — its
+  # Repo-only boot is the shared `Ezagent.Migration.RepoOnly.run/1` (extracted from
+  # `ezagent.session.migrate_slice`, eliminating that copy too) and its `run/1` is
+  # the `use Mix.Task` callback, now correctly exempted via `@dup_callback_owners`
+  # (which also retires a pre-existing Mix-task `run/1` fork the gap had been
+  # counting, −1 more). The chat→session `SliceMigration` mirror remains.
+  cross_file_duplicate_fn_groups: 29, # arch-cap: PR-6+7 curl fold + Mix.Task run/1 callback exemption
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3
@@ -71,7 +89,8 @@
   # `credential_source` producer in `template_data_extra/1`). codex 752 unchanged.
   # Genuine product logic, codex-reviewed (HIGH+MEDIUM addressed); not extractable
   # shared duplication. 1669 → 1682.
-  cc_codex_template_class_combined_loc: 1682, # arch-cap-bump: #719 §5.B(c) source-respawn credential reprovision (+13 cc_agent)
+  # arch-cap-bump: #719 §5.B(c) source-respawn credential reprovision (+13 cc_agent)
+  cc_codex_template_class_combined_loc: 1682,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam
@@ -97,7 +116,15 @@
   # PR-2 config-evolve adds the `{:set, :applied, …}` applied-turn idempotency
   # marker effect in Behavior.ConfigEvolve.handle_apply_config_delta (the agent's
   # own :config_evolve slice).
-  set_effect_sites: 119, # arch-cap-bump: PR-2 applied-turn marker
+  # PR-6+7 (curl-as-flavor, forward-only) RATCHET-DOWN 135 → 121: both legacy
+  # curl shims are DELETED with the standalone curl Kind (no rollback window —
+  # Allen). `Ezagent.Behavior.CurlAgentLegacyReceive` (−7 `{:set,
+  # :conversation/:last_error/:last_tokens}` sites) and
+  # `Ezagent.Behavior.CurlAgentLegacyConfig` (−7 `{:set}` sites across
+  # handle_configure + handle_reset_conversation) are gone — a measured −14 (the
+  # prior baseline comment mis-stated LegacyConfig as −8; the scanned regex
+  # counts 7). The PR-2 applied-turn marker remains.
+  set_effect_sites: 121, # arch-cap-bump: PR-2 applied-turn marker; curl legacy shims deleted (−14)
   cross_slice_set_violations: 0,
   missing_cap_check_mutating_actions: 0,
   kind_runtime_ordering_violations: 0,

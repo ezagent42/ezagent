@@ -43,15 +43,17 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
   # 1. Greenfield contract surface
   # ---------------------------------------------------------------
 
-  describe "macro-derived metadata (new contract)" do
-    test "all three actions are declared via the action/3 macro" do
+  describe "macro-derived metadata (PR-6 contract)" do
+    # PR-6 — `:receive` is gone (→ `agent.receive` + curl adapter);
+    # `:sync_result` is the post-HTTP persist step.
+    test "the three actions are declared via the action/3 macro" do
       assert MapSet.new(CurlAgent.__action_names__()) ==
-               MapSet.new([:receive, :reset_conversation, :configure])
+               MapSet.new([:sync_result, :reset_conversation, :configure])
     end
 
     test "each action has args + returns + description from action/3" do
       i = CurlAgent.interface()
-      assert i[:receive].modes == [:cast]
+      assert i[:sync_result].modes == [:cast]
       assert i[:reset_conversation].modes == [:call]
       assert i[:configure].modes == [:call]
 
@@ -61,11 +63,11 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
       end
     end
 
-    test "`:any` kind axis is NOT used (manually overridden to `:curl_agent`)" do
+    test "`:any` kind axis is NOT used (PR-6: reparented onto Entity.Agent → `:agent`)" do
       caps = CurlAgent.required_caps()
-      assert caps.receive.kind == :curl_agent
-      assert caps.configure.kind == :curl_agent
-      assert caps.reset_conversation.kind == :curl_agent
+      assert caps.sync_result.kind == :agent
+      assert caps.configure.kind == :agent
+      assert caps.reset_conversation.kind == :agent
     end
 
     test "reads_siblings/0 declares [:api_keys] (post ApiKeys-to-Agent flip)" do
@@ -158,47 +160,69 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
   # 4. handle_receive/2 — loop guard + no-key path
   # ---------------------------------------------------------------
 
-  describe "handle_receive/2 — loop guard" do
-    test "self-message returns identity result tuple with NO effects" do
-      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/curl_self")
-      msg = Ezagent.Message.new(agent_uri, %{text: "self-loop"})
-
-      ctx = %{
-        read: fn _k, d -> d end,
-        self_uri: agent_uri,
-        caller: Ezagent.URI.new!("session://team-alpha/default/main"),
-        siblings: %{api_keys: %{keys: %{}}}
-      }
-
-      assert {:ok, %{ok: true, ignored: :self_message}, []} =
-               CurlAgent.handle_receive(%{message: msg}, ctx)
-    end
-  end
-
-  describe "handle_receive/2 — missing API key path" do
-    test "emits :set last_error + dispatches operator-help reply" do
-      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/curl_x")
+  # PR-6 — receive flows through `agent.receive` → the curl
+  # `:in_process_sync` adapter; the durable persist + reply is the
+  # `:sync_result` step on the curl STATE Behavior.
+  describe "handle_sync_result/2 — success path" do
+    test "appends user+assistant turns, sets tokens, replies into the session" do
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/curl_ok")
       session_uri = Ezagent.URI.new!("session://team-alpha/default/main")
-      sender_uri = Ezagent.URI.new!("entity://team-alpha/user/alice")
-      msg = Ezagent.Message.new(sender_uri, %{text: "hi"})
+      usage = %{prompt: 2, completion: 4, total: 6}
 
       ctx = %{
         read: fn
-          :provider, _ -> "deepseek"
-          :api_url, _ -> "https://api.deepseek.com/chat/completions"
-          :model, _ -> "deepseek-chat"
-          :system_prompt, _ -> nil
           :max_history, _ -> 20
           :conversation, _ -> []
           _, d -> d
         end,
         self_uri: agent_uri,
-        caller: session_uri,
-        siblings: %{api_keys: %{keys: %{}}}
+        caller: session_uri
+      }
+
+      args = %{
+        result: {:ok, %{content: "pong", usage: usage}},
+        source_session: session_uri,
+        user_text: "ping"
+      }
+
+      assert {:ok, %{ok: true, tokens: 6}, effects} = CurlAgent.handle_sync_result(args, ctx)
+
+      {:set, :conversation, conv} = Enum.find(effects, &match?({:set, :conversation, _}, &1))
+      assert conv == [%{role: "user", content: "ping"}, %{role: "assistant", content: "pong"}]
+      assert {:set, :last_tokens, ^usage} = Enum.find(effects, &match?({:set, :last_tokens, _}, &1))
+
+      dispatches = Enum.filter(effects, &match?({:dispatch, _}, &1))
+      assert [{:dispatch, %Ezagent.Cmd{} = cmd}] = dispatches
+      assert cmd.action == :send
+      assert cmd.target.scheme == "session"
+      assert cmd.args.message.body[:text] == "pong"
+      assert is_struct(cmd.ctx.caps, MapSet)
+    end
+  end
+
+  describe "handle_sync_result/2 — missing API key path" do
+    test "emits :set last_error + dispatches operator-help reply" do
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/curl_x")
+      session_uri = Ezagent.URI.new!("session://team-alpha/default/main")
+
+      ctx = %{
+        read: fn
+          :max_history, _ -> 20
+          :conversation, _ -> []
+          _, d -> d
+        end,
+        self_uri: agent_uri,
+        caller: session_uri
+      }
+
+      args = %{
+        result: {:error, {:no_api_key, "deepseek"}},
+        source_session: session_uri,
+        user_text: "hi"
       }
 
       assert {:ok, %{ok: false, error: :no_api_key}, effects} =
-               CurlAgent.handle_receive(%{message: msg}, ctx)
+               CurlAgent.handle_sync_result(args, ctx)
 
       # Slice records the no_api_key error.
       assert {:set, :last_error, {:no_api_key, "deepseek"}} in effects
