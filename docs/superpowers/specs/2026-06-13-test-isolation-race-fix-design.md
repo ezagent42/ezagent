@@ -18,7 +18,7 @@ precisely, and the headline symptom (large standalone failure counts) turns out 
 |---|---|---|---|---|
 | **A** | `UndefinedFunctionError … (module … is not available)` | **~135 of 148** | **0** | Test/code-path **layering**: tests reference sibling-app modules absent from the standalone code path. NOT a DB race. |
 | **B** | `DBConnection.OwnershipError` / `snapshot_exists?: … raised` / `EventLog.append failed (… cannot find ownership process)` | ~7 | **8 / 14 / 6 (present even when umbrella is GREEN)** | Genuine **ownership gap**: boot-singletons + `(:proc_lib)`-spawned Kinds/Tasks run `Repo` queries outside any test's `$callers` chain. Currently surfaces as **async log noise** (rescued), not assertion failures. |
-| **C** | `Exqlite.Connection … failed to connect: database is locked` | 3 | **3 (present even when umbrella is GREEN)** | SQLite **single-writer lock** during connection establishment under the 20-slot pool. Distinct from B (a connect-time lock, not an ownership error). No `busy_timeout` / WAL configured. |
+| **C** | `Exqlite.Connection … failed to connect: database is locked` | 3 | **3 (present even when umbrella is GREEN)** | SQLite **single-writer lock** under the 20-slot pool. Distinct from B (a connect-time lock, not an ownership error). WAL + 2 s `busy_timeout` are SQLite3-adapter DEFAULTS and ARE active — the lock is write CONTENTION exceeding 2 s (pool_size 20 + the Mode-B boot-writer), NOT missing config (codex correction). |
 
 **Measured this session:**
 - `cd apps/ezagent_core && mix test --seed 0` → **1584 tests, 148 failures** (logs `/tmp/p52_core_standalone.log`).
@@ -151,11 +151,17 @@ ownership error — it is a pool connection *failing to open* because another co
 holds SQLite's database-level write lock. Contributing factors:
 
 - `pool_size: 20` (`config/test.exs:20`) → up to 20 connections racing to open against
-  one SQLite file.
-- **No `busy_timeout` and no `journal_mode = WAL`** are configured anywhere
-  (`grep` across `config/` and app configs returns nothing). ezagent_sqlite3's default
-  is rollback-journal + a short/zero busy timeout, so a concurrent writer gets an
-  immediate `SQLITE_BUSY` → "database is locked" instead of waiting.
+  one SQLite file (high for a single-writer DB).
+- **CORRECTION (codex review):** the earlier draft claimed "no `busy_timeout`/WAL
+  configured." That is misleading. `EzagentCore.Repo` uses `Ecto.Adapters.SQLite3`
+  (`repo.ex:4`), whose Exqlite layer DEFAULTS `journal_mode: :wal` and `busy_timeout:
+  2000` ms — and `config/test.exs` adds NO override disabling them. So WAL + a 2 s busy
+  timeout are ALREADY ACTIVE. The lock therefore happens **despite** WAL/timeout: a
+  contending writer waited the full 2 s and still couldn't acquire the write lock →
+  `database is locked`. The root cause is genuine write CONTENTION exceeding 2 s, driven
+  by (a) `pool_size: 20` and (b) extra unsynchronized writers — chiefly the Mode-B
+  boot-singleton writing `kind_snapshots` at boot outside any test's serialization, plus
+  `:proc_lib`-spawned Kinds writing after a test body returns. It is NOT "missing config."
 
 In the sandbox, writes are serialized per-test, so this rarely fails an assertion — but
 it is a real, separable lock contention that becomes a hard failure under heavier
@@ -238,15 +244,21 @@ Force the cold-restart-gate / cross-BEAM / Kind-spawning suites to `async: false
   shared owner. Use only as a belt-and-braces alongside 3.1.
 - **Repo pattern?** Some suites already do this; consistent but insufficient alone.
 
-### 3.5 (Mode C) SQLite settings: `busy_timeout` + `journal_mode = WAL` (+ revisit `pool_size`)
+### 3.5 (Mode C) Reduce write contention; RAISE busy_timeout above the 2 s default (WAL already on)
 
-Configure the SQLite pragmas the repo currently omits. In `config/test.exs` (and
-arguably dev/prod) set, via ecto_sqlite3 options, `busy_timeout: 5_000` and
-`journal_mode: :wal` (and `cache_size`, `synchronous: :normal` as standard companions).
-Optionally reconsider `pool_size: 20` for the test env — under the sandbox each test
-owns one connection, so a large pool mostly adds connect-time lock contention.
+**CORRECTED (codex):** WAL + 2 s `busy_timeout` are already active (SQLite3-adapter
+defaults; `config/test.exs` overrides neither). So the lever is NOT "add WAL" — it is
+to (a) REMOVE the chief unsynchronized contending writer, which is the **Mode-B
+boot-singleton** (fix 3.2 already does this — gating the boot-spawn out of `:test`
+eliminates the boot-time `kind_snapshots` writer that races the pool), and (b) tune for
+the single-writer reality: raise `busy_timeout` ABOVE the 2 s default (e.g. `5_000`) via
+the explicit `EzagentCore.Repo` test config, and reduce `pool_size: 20` (under the
+sandbox each test owns one connection, so a 20-slot pool mostly adds connect-time lock
+contention). Mode C is thus largely SUBSUMED by fix 3.2 plus a small config tune — it is
+not an independent "missing pragma" fix.
 
-- **Root cause?** Yes for C — `busy_timeout` makes a contending writer *wait* instead of
+- **Root cause?** The contention root is shared with B (the boot-writer); the residual
+  config tune (longer `busy_timeout`, smaller pool) makes a contending writer *wait* instead of
   immediately raising "database is locked"; WAL lets readers proceed during a write.
 - **Blast radius:** config only; affects all SQLite connections.
 - **Risk:** low and well-understood; WAL is the standard SQLite-under-concurrency
@@ -272,9 +284,10 @@ fix):
    *registration* (no DB touch); rely on the existing lazy-spawn dispatch path. This
    removes the **no-owner-at-boot** read/write — the source of the 7 boot-time
    `snapshot_exists?: … raised` lines and the cold-restart-gate's pre-registration read.
-3. **3.5 — Add SQLite `busy_timeout` + WAL (+ trim test `pool_size`).** Eliminates the
-   Mode-C "database is locked" connect failures by making writers wait and readers
-   non-blocking.
+3. **3.5 — RAISE `busy_timeout` above the 2 s default + trim test `pool_size` (WAL already on).**
+   Mode-C "database is locked" is largely SUBSUMED by fix 3.1/3.2 (removing the boot-writer);
+   the residual config tune (longer busy_timeout, smaller pool) handles leftover contention.
+   NOT "add WAL" — WAL + 2 s busy_timeout are SQLite3-adapter defaults already active (codex).
 4. **3.2 — Tighten DataCase:** after `start_owner_stable!`, `Sandbox.allow/3` every
    currently-live `KindRegistry` pid onto the owner connection (cheap, reuses the
    `registered_kinds/0` helper already present for draining). This shrinks the
@@ -295,7 +308,7 @@ a degraded boot path rather than adding another rescue/default.
 |---|---|---|
 | S1 | `apps/ezagent_core/lib/ezagent_core/application.ex` | In `register_system_kind/0`, wrap the `SpawnRegistry.spawn(uri)` eager-spawn block (`:250-255`) in `if not is_test?()`. Keep the `CapabilityRegistry.register` + `SpawnRegistry.register("system", …)` (no DB). |
 | S2 | `apps/ezagent_core/test/support/` (or DataCase) | For any test asserting `system://routing/default` is pre-live, add an explicit `SpawnRegistry.spawn/1` inside the checked-out test (greppable: `routing_default_uri`). |
-| S3 | `config/test.exs` | Add `busy_timeout: 5_000`, `journal_mode: :wal`, `cache_size: -2000`, `synchronous: :normal` to the `EzagentCore.Repo` config; reduce `pool_size` to e.g. `10` (measure). |
+| S3 | `config/test.exs` | RAISE `busy_timeout` to `5_000` (above the 2 s adapter default) on the `EzagentCore.Repo` test config; reduce `pool_size` 20→`10` (measure). WAL is already the adapter default — do NOT re-add it expecting it to be the fix. The boot-writer removal (S2) is the primary Mode-C lever. |
 | S4 | `apps/ezagent_core/lib/ezagent_core/data_case.ex` | In `setup_sandbox/1`, after `start_owner_stable!`, `Enum.each(registered_kinds(), fn {_uri, pid} -> Sandbox.allow(Repo, owner_or_test, pid) end)`. (Reuse `registered_kinds/0`.) |
 | S5 | docs | Add the `#52` resolution note + `:umbrella_only` framing (3.0). |
 | — | invariant test | Add a regression test (see §5) that FAILS if the boot singleton spawns in `:test` or if a green umbrella run emits a `cannot find ownership process` for `system://routing/default`. |
