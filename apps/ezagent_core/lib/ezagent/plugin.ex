@@ -131,6 +131,16 @@ defmodule Ezagent.Plugin do
   """
   @type agent_flavor_decl :: %{
           optional(:bridge_adapter) => module() | nil,
+          # PR-6+7 (curl-as-flavor) — an OPTIONAL 0-arity thunk returning the
+          # per-instance behavior SET to thread as `:behaviors` at a direct
+          # `Kind.spawn`. A flavor whose `kind` is a SHARED Kind (`Entity.Agent`)
+          # but whose runtime behavior is a flavor-specific SUBSET (curl) declares
+          # it here, so the generic direct-spawn path
+          # (`Workspace.AgentCreate.direct_spawn_flavor_agent/2`) materializes the
+          # flavor's behaviors WITHOUT the workspace domain knowing about curl.
+          # Absent (np / a flavor with its own dedicated Kind) → nil → the spawn
+          # omits `:behaviors` and the Kind's full declared set applies.
+          optional(:instance_behaviors) => (-> [module()]) | nil,
           flavor: String.t(),
           kind: module(),
           template_class: module()

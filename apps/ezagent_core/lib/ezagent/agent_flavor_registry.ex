@@ -26,8 +26,19 @@ defmodule Ezagent.AgentFlavorRegistry do
 
   @table :ezagent_agent_flavor_registry
 
-  @typedoc "The stored value — a flavor's kind + template-class wiring."
-  @type decl :: %{kind: module(), template_class: module()}
+  @typedoc """
+  The stored value — a flavor's kind + template-class wiring, plus the
+  OPTIONAL per-instance behavior-set thunk (PR-6+7 curl-as-flavor). The thunk
+  is `nil` for a flavor backed by its own dedicated Kind (np); it is a 0-arity
+  fn returning the flavor's behavior SUBSET for a flavor folded onto a SHARED
+  Kind (`curl` → `Entity.Agent`), so the generic direct-spawn path threads
+  `:behaviors` without the workspace domain knowing the flavor.
+  """
+  @type decl :: %{
+          kind: module(),
+          template_class: module(),
+          instance_behaviors: (-> [module()]) | nil
+        }
 
   @doc "Return the ETS table name (used by `EzagentCore.EtsOwner`)."
   @spec table() :: atom()
@@ -41,9 +52,12 @@ defmodule Ezagent.AgentFlavorRegistry do
   is a real bug — raises `ArgumentError`.
   """
   @spec register(Ezagent.Plugin.agent_flavor_decl()) :: :ok
-  def register(%{flavor: flavor, kind: kind, template_class: template_class})
+  def register(%{flavor: flavor, kind: kind, template_class: template_class} = decl)
       when is_binary(flavor) and is_atom(kind) and is_atom(template_class) do
-    value = %{kind: kind, template_class: template_class}
+    # PR-6+7 — carry the OPTIONAL per-instance behavior-set thunk through.
+    # Absent → nil (the common case; a flavor with its own dedicated Kind).
+    instance_behaviors = validate_instance_behaviors!(Map.get(decl, :instance_behaviors))
+    value = %{kind: kind, template_class: template_class, instance_behaviors: instance_behaviors}
 
     case :ets.lookup(@table, flavor) do
       [{^flavor, ^value}] ->
@@ -77,4 +91,17 @@ defmodule Ezagent.AgentFlavorRegistry do
   @doc "List every registered `{flavor, decl}` pair — for debug / admin."
   @spec list_all() :: [{String.t(), decl()}]
   def list_all, do: :ets.tab2list(@table)
+
+  # The per-instance behavior-set thunk must be a 0-arity fn or nil. A bad
+  # value is a plugin authoring bug — fail loud at register time, not at the
+  # first agent spawn.
+  defp validate_instance_behaviors!(nil), do: nil
+
+  defp validate_instance_behaviors!(fun) when is_function(fun, 0), do: fun
+
+  defp validate_instance_behaviors!(other) do
+    raise ArgumentError,
+          "AgentFlavorRegistry: :instance_behaviors must be a 0-arity fn or nil, " <>
+            "got #{inspect(other)}."
+  end
 end

@@ -376,10 +376,34 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
     end
   end
 
+  # PR-6+7 (curl-as-flavor, codex round-3 P1-1 fix) — the direct-create path
+  # for a flavor with NO workspace Template (curl / np / future). It now threads
+  # the flavor's OPTIONAL per-instance behavior SET (`:instance_behaviors`) as
+  # `:behaviors` in the spawn args. This is LOAD-BEARING for curl: curl's `kind`
+  # is the SHARED `Entity.Agent`, whose nil-`:kind_base` default set EXCLUDES
+  # `Behavior.CurlAgent`. Without threading `curl_behaviors/0` here, a
+  # `Workspace.create_agent/3` curl agent captured the BASE (non-curl) set — no
+  # `:curl_agent` slice, no `reset_conversation`/`configure`/`sync_result`, no
+  # `flavor: "curl"` slice field (that field is written by `Behavior.CurlAgent.create/1`,
+  # which only runs when the behavior is in the effective set) — i.e. a broken
+  # curl agent. A flavor with its own dedicated Kind (np) declares no thunk →
+  # `:behaviors` is omitted → the Kind's full declared set applies (unchanged).
   defp direct_spawn_flavor_agent(flavor, agent_uri) when is_binary(flavor) do
-    with {:ok, %{kind: kind_module}} <- Ezagent.AgentFlavorRegistry.lookup(flavor),
+    with {:ok, decl} <- Ezagent.AgentFlavorRegistry.lookup(flavor),
          :ok <- Ezagent.AgentFlavorAttributes.put(agent_uri, flavor) do
-      Ezagent.Kind.spawn(kind_module, %{uri: agent_uri})
+      Ezagent.Kind.spawn(decl.kind, spawn_args_for_flavor(decl, agent_uri))
+    end
+  end
+
+  # Thread `:behaviors` ONLY when the flavor declares a per-instance set
+  # (curl). Omitting the key for other flavors preserves the legacy-sentinel
+  # rule (`init_set/2`: absent `:behaviors` → the Kind's full declared set).
+  defp spawn_args_for_flavor(decl, %URI{} = agent_uri) do
+    base = %{uri: agent_uri}
+
+    case Map.get(decl, :instance_behaviors) do
+      thunk when is_function(thunk, 0) -> Map.put(base, :behaviors, thunk.())
+      _ -> base
     end
   end
 

@@ -305,6 +305,65 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
         # this assertion the test was vacuous on spawn failures.
         assert {:ok, _pid} = Ezagent.KindRegistry.lookup(agent_uri),
                "agent should be alive in KindRegistry after create_agent returned :ok"
+
+        # PR-6+7 (codex round-3 P1-1) REGRESSION — a curl agent created via the
+        # generic direct-spawn path must be a FULLY-WORKING curl agent, not a
+        # bare Entity.Agent. Pre-fix `direct_spawn_flavor_agent/2` spawned with
+        # NO :behaviors, so the agent captured the BASE (non-curl) set: no
+        # :curl_agent slice, no flavor field, no reset/configure/sync_result. The
+        # fix threads the flavor's :instance_behaviors (curl_behaviors/0).
+        # `Kind.spawn/2` (inside create_agent) awaits :ready, so the slice is
+        # materialized by the time create_agent returned {:ok, _}.
+
+        # (1) the :curl_agent slice materialized (proves Behavior.CurlAgent is in
+        # this instance's effective set) AND its create/1 wrote the durable
+        # flavor field.
+        assert {:ok, curl_slice} = Ezagent.Kind.get_slice(agent_uri, :curl_agent),
+               "curl agent created via create_agent/3 has NO :curl_agent slice — " <>
+                 "the direct-spawn path did not thread curl_behaviors/0 (codex r3 P1-1)"
+
+        assert curl_slice.flavor == "curl"
+        assert curl_slice.conversation == []
+
+        # (2) the curl public actions resolve to Behavior.CurlAgent on this Kind.
+        assert {:ok, Ezagent.Behavior.CurlAgent} =
+                 Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Agent, :reset_conversation)
+
+        # (3) the base credential slice is present (api_keys is in the curl set).
+        assert {:ok, api_keys} = Ezagent.Kind.get_slice(agent_uri, :api_keys)
+        assert is_map(api_keys)
+      end
+    end
+
+    @tag :integration
+    test "np flavor (dedicated Kind, NO :instance_behaviors) still direct-spawns unchanged",
+         %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+      # PR-6+7 — a flavor whose `kind` is its OWN dedicated Kind (np →
+      # Entity.NpAgent) declares no :instance_behaviors thunk, so the direct
+      # spawn OMITS :behaviors and the Kind's full declared set applies. This
+      # pins that the curl fix did not perturb the generic path for other flavors.
+      if not function_exported?(Ezagent.SpawnRegistry, :registered_schemes, 0) or
+           "entity" not in Ezagent.SpawnRegistry.registered_schemes() or
+           :error == Ezagent.AgentFlavorRegistry.lookup("np") do
+        IO.puts(:stderr, "SKIP: entity scheme / np flavor not registered (bootstrap incomplete)")
+        :ok
+      else
+        name = "np-#{System.unique_integer([:positive])}"
+        expected_uri = Ezagent.URI.agent(ws_name, name)
+
+        assert {:ok, %{agent_uri: agent_uri, template_name: nil}} =
+                 Workspace.create_agent(
+                   workspace_uri,
+                   %{flavor: "np", name: name, cwd: "", with_pty: false},
+                   admin_ctx
+                 )
+
+        assert agent_uri == expected_uri
+        assert {:ok, "np"} = Ezagent.UriQuery.resolve(:flavor, agent_uri)
+        assert {:ok, _pid} = Ezagent.KindRegistry.lookup(agent_uri)
+        # np is NOT a curl agent — no :curl_agent slice pollution. (Kind.spawn
+        # inside create_agent awaited :ready, so the slice set is settled.)
+        assert {:ok, nil} = Ezagent.Kind.get_slice(agent_uri, :curl_agent)
       end
     end
 
