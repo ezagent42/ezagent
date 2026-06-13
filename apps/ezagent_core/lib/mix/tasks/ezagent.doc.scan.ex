@@ -145,7 +145,15 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
       undocumented_public_defs:
         modules
         |> Enum.flat_map(& &1.public_defs)
-        |> Enum.count(&undocumented_def?/1)
+        |> Enum.count(&undocumented_def?/1),
+      # ENFORCED counter (codex 2026-06-14): dynamically-named public def heads
+      # (`def unquote(...)`) cannot be turned into a documented {name, arity}
+      # entry, so instead of only WARNing we ratchet their COUNT. Baselined at 0
+      # — adding any new dynamic public head fails the gate unless the baseline
+      # is deliberately bumped with a documented rationale. This closes the
+      # "advisory-only" gap: the warning prints in `run/0`, but THIS counter is
+      # what `DocCoverageTest` / precommit actually enforce.
+      dynamic_public_def_heads: length(dynamic_heads())
     ]
   end
 

@@ -162,14 +162,17 @@ captured in `arch_baseline_manifest.exs`:
 > `{name, arity}` and are skipped (the counted generator macro is their
 > backstop). Fixtures in `doc_coverage_test.exs` prove both.
 
-> **Dynamically-named public defs — surfaced, not silent (codex 2026-06-14).**
+> **Dynamically-named public defs — ENFORCED counter at 0 (codex 2026-06-14).**
 > A `def unquote(name)(...)` head's name is only known at macro-expansion, so a
-> source-AST scan cannot make it a `{name, arity}` counter entry (resolving it
-> would require partially evaluating comprehension generators / unquote — out of
-> scope for a ratchet). This is a fundamental static-analysis limit, not a silent
-> bypass: each such head (in a `quote`, a module-level `for`, anywhere) is
-> surfaced as a non-failing WARN at every scan, and `dynamic_public_defs/1` makes
-> the detection testable. The tree currently has zero such heads.
+> source-AST scan cannot make it a `{name, arity}` entry (resolving it would
+> require partially evaluating comprehension generators / unquote — out of scope
+> for a ratchet). Rather than only WARN, the gate ratchets their COUNT
+> (`dynamic_public_def_heads`, baselined at **0** — the tree has none): adding any
+> new dynamic public head FAILS the gate unless the baseline is deliberately
+> raised with a `# arch-cap-bump:` rationale. So a dynamic head can neither
+> silently bypass the gate (it's surfaced by a WARN that lists files) nor grow
+> unenforced (the counter is checked by `DocCoverageTest` / precommit).
+> `dynamic_public_defs/1` makes the detection testable.
 
 > **`@impl false` does not exempt (codex 2026-06-14).** Only `@impl true` /
 > `@impl SomeBehaviour` mark a behaviour-callback obligation; `@impl false`

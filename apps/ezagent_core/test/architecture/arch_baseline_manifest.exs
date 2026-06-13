@@ -161,5 +161,11 @@
   #   named public defs emitted from quote blocks (macro-generated public API,
   #   e.g. __using__-injected defaults; +22 over def+macro+delegate+guard) and
   #   ignores @impl false (only @impl true / @impl Behaviour exempt).
-  undocumented_public_defs: 535
+  undocumented_public_defs: 535,
+  # dynamic_public_def_heads — `def unquote(name)(...)` heads whose function name
+  #   is only known at macro-expansion, so they cannot become a documented
+  #   {name, arity} entry. ENFORCED at 0 (the tree has none): adding any new
+  #   dynamic public head fails the gate unless this baseline is deliberately
+  #   raised with a `# arch-cap-bump:` rationale (codex 2026-06-14).
+  dynamic_public_def_heads: 0
 }

@@ -22,6 +22,10 @@ defmodule EzagentCore.Architecture.DocCoverageTest do
     assert_doc_at_or_below(:undocumented_public_defs)
   end
 
+  test "no new dynamically-named public def heads beyond baseline (enforced)" do
+    assert_doc_at_or_below(:dynamic_public_def_heads)
+  end
+
   test "doc.scan counters are wired into the shared manifest" do
     manifest = manifest()
 
