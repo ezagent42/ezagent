@@ -83,19 +83,25 @@ defmodule Ezagent.Behavior.Session.Membership do
     Delivery.replay_messages_since(session_uri, member_uri, last_seen)
     new_last_seen = Map.delete(last_seen, member_uri)
 
-    # RFC #402 (Allen 2026-05-26) — "first user to join is owner"
-    # fallback.
-    new_owner_uri =
-      if is_nil(prior_owner) and user_uri?(member_uri) do
-        member_uri
-      else
-        prior_owner
-      end
+    # RFC #402 (Allen 2026-05-26) — "first user to join is owner" fallback.
+    #
+    # #51 codex P1 (security): an ANONYMOUS external viewer
+    # (`entity://<ws>/user/anon-<rand>`) MUST NEVER claim ownership. If an
+    # ownerless session (spawned without `owner_uri`, or a legacy nil) is
+    # opened via the public-view flow, the joining anon user would otherwise
+    # become owner AND be granted the `OrchestratorAdmin :restart` cap —
+    # a privilege escalation that flatly contradicts the membership-only,
+    # read-only anon model. Anon users are excluded from BOTH the owner
+    # transition and the cap grant; an ownerless session simply stays
+    # ownerless (read-only viewing needs no owner).
+    claims_owner? = is_nil(prior_owner) and user_uri?(member_uri) and not anon_member?(member_uri)
+
+    new_owner_uri = if claims_owner?, do: member_uri, else: prior_owner
 
     # RFC #402 (codex r1 HIGH 2026-05-26) — when this join transitions
-    # `owner_uri` from `nil` to a real user, ALSO grant that user the
-    # `OrchestratorAdmin :restart` cap on this session.
-    if is_nil(prior_owner) and user_uri?(member_uri) do
+    # `owner_uri` from `nil` to a real (non-anon) user, ALSO grant that user
+    # the `OrchestratorAdmin :restart` cap on this session.
+    if claims_owner? do
       grant_first_join_owner_cap(session_uri, member_uri)
     end
 
@@ -137,6 +143,24 @@ defmodule Ezagent.Behavior.Session.Membership do
   @spec user_uri?(term()) :: boolean()
   def user_uri?(%URI{scheme: "entity"} = uri), do: Ezagent.URI.type?(uri, :user)
   def user_uri?(_), do: false
+
+  # #51 codex P1 — an anonymous external viewer by the reserved naming
+  # convention `entity://<ws>/user/anon-<rand>`. Used ONLY to suppress the
+  # first-join owner-claim (above); a string check on the name keeps this in
+  # the session domain with no dependency on the socialware View layer that
+  # mints them (mirrors `Ezagent.Socialware.AnonUser.anon_uri?/1`). The
+  # suppression direction is safe even if a non-anon user is mis-named
+  # `anon-…`: it would only DECLINE ownership, never escalate.
+  @anon_user_name_prefix "anon-"
+  def anon_member?(%URI{scheme: "entity"} = uri) do
+    user_uri?(uri) and
+      case uri |> URI.to_string() |> String.split("/") |> List.last() do
+        nil -> false
+        name -> String.starts_with?(name, @anon_user_name_prefix)
+      end
+  end
+
+  def anon_member?(_), do: false
 
   # RFC #402 (codex r1 HIGH 2026-05-26) — companion to the
   # first-USER-join owner claim. Dispatches `identity.grant_cap` on

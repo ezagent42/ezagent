@@ -58,6 +58,19 @@ defmodule Ezagent.Users do
   def create(uri, password, caps) when is_list(caps) do
     uri_str = uri_to_str(uri)
 
+    if reserved_anon_name?(uri_str) do
+      # #51 codex P2: the `anon-` user-name prefix is RESERVED for the
+      # anonymous-viewer mint path (`create_read_only/1`). A normal user MUST
+      # NOT use it — otherwise `Session.Membership.anon_member?/1` would
+      # misclassify them and silently drop their legitimate first-join owner
+      # behavior. Reject it here so the prefix reliably identifies anon users.
+      {:error, :reserved_anon_prefix}
+    else
+      do_create(uri_str, password, caps)
+    end
+  end
+
+  defp do_create(uri_str, password, caps) do
     hash =
       if is_binary(password) and password != "" do
         Bcrypt.hash_pwd_salt(password)
@@ -91,6 +104,80 @@ defmodule Ezagent.Users do
     case Repo.insert(changeset) do
       {:ok, row} -> {:ok, decode(row)}
       err -> err
+    end
+  end
+
+  @doc """
+  Create a **read-only** User row — NO password and an EMPTY caps_json.
+
+  Unlike `create/3`, this path does NOT prepend `Ezagent.Entity.User.default_caps/1`
+  (the broad `{kind: :session, behavior: :any, action: :any}` baseline cap that lets
+  a normal user attempt `chat.send`). It is the minting path for the socialware
+  anonymous external user (issue #51): an entity that may only READ a session it is
+  a member of, and whose read-only-ness IS the absence of any session cap. The User
+  Kind demand-spawns this row via `Ezagent.Entity.User.initial_caps_for_spawn/1`,
+  which hydrates from `caps_json` — an empty caps_json yields no session cap, so the
+  spawned anon-User holds only the structural self-Identity cap.
+
+  The row carries no `password_hash`, so `verify_password/2` refuses login for it
+  (a read-only viewer is never a login principal).
+  """
+  @spec create_read_only(URI.t() | String.t()) :: {:ok, decoded()} | {:error, term()}
+  def create_read_only(uri) do
+    uri_str = uri_to_str(uri)
+    user_workspace = Ezagent.URI.entity_workspace_uri(Ezagent.URI.new!(uri_str))
+
+    changeset =
+      %__MODULE__{}
+      |> Ecto.Changeset.change(%{
+        uri: uri_str,
+        password_hash: nil,
+        # EMPTY caps — the read-only-by-construction guarantee (no default_caps).
+        caps_json: encode_caps([]),
+        workspace_uri: URI.to_string(user_workspace)
+      })
+      |> Ecto.Changeset.unique_constraint(:uri, name: :users_uri_index)
+
+    case Repo.insert(changeset) do
+      {:ok, row} -> {:ok, decode(row)}
+      err -> err
+    end
+  end
+
+  @doc """
+  Delete a User by URI. Returns `:ok` (idempotent — a missing row is `:ok`).
+  Used by the anon-User GC sweeper (issue #51) to reap an abandoned anon-User
+  after it has left its session.
+
+  Tears down BOTH the provisioning `users` row AND the User KIND state (#51
+  codex P2): `Ezagent.Entity.User` is snapshot-backed (`persistence` is
+  snapshot-on-change), so an anon User that ever joined a session has a durable
+  `kind_snapshots` row. Deleting only the provisioning row would leave that
+  snapshot behind — the URI could resurrect on restart / demand-spawn with
+  stale identity state even though the `users` row was reaped. So we route the
+  Kind teardown through `Ezagent.Lifecycle.destroy/2` (THE sanctioned teardown:
+  hooks → snapshot + ever-created marker clear → terminate) BEFORE deleting the
+  provisioning row. `destroy/2` is idempotent — a never-spawned User (no
+  snapshot) is a harmless no-op.
+  """
+  @spec delete(URI.t() | String.t()) :: :ok
+  def delete(uri) do
+    # Terminate + clear the Kind snapshot/marker first (best-effort: a User
+    # that was never spawned has no Kind state — destroy is a no-op).
+    _ =
+      try do
+        Ezagent.Lifecycle.destroy(uri)
+      rescue
+        _ -> :ok
+      end
+
+    case Repo.get_by(__MODULE__, uri: uri_to_str(uri)) do
+      nil ->
+        :ok
+
+      row ->
+        _ = Repo.delete(row)
+        :ok
     end
   end
 
@@ -213,6 +300,18 @@ defmodule Ezagent.Users do
 
       _ ->
         []
+    end
+  end
+
+  # #51 codex P2 — the `anon-` user-name prefix is RESERVED for the
+  # anonymous-viewer mint (`create_read_only/1`, which does its OWN insert and
+  # is exempt). `create/3` (the normal, default-caps path) rejects it so the
+  # prefix reliably identifies anon users for `Session.Membership.anon_member?/1`.
+  @anon_name_prefix "anon-"
+  defp reserved_anon_name?(uri_str) when is_binary(uri_str) do
+    case uri_str |> String.split("/") |> List.last() do
+      nil -> false
+      name -> String.starts_with?(name, @anon_name_prefix)
     end
   end
 
