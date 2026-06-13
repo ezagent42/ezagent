@@ -160,8 +160,12 @@
   #   (codex 2026-06-14; def-only undercounted by 52). Also counts STATICALLY-
   #   named public defs emitted from quote blocks (macro-generated public API,
   #   e.g. __using__-injected defaults; +22 over def+macro+delegate+guard) and
-  #   ignores @impl false (only @impl true / @impl Behaviour exempt).
-  undocumented_public_defs: 535,
+  #   ignores @impl false (only @impl true / @impl Behaviour exempt). Pending
+  #   @doc is preserved only across def-adjacent metadata (@spec/@dialyzer/
+  #   @deprecated); doc-consuming attrs (@callback/@type/@typedoc/…) clear it, so
+  #   a callback's @doc can't leak onto a later def (codex 2026-06-14; +4 real
+  #   false-negatives caught).
+  undocumented_public_defs: 539,
   # dynamic_public_def_heads — `def unquote(name)(...)` heads whose function name
   #   is only known at macro-expansion, so they cannot become a documented
   #   {name, arity} entry. ENFORCED at 0 (the tree has none): adding any new

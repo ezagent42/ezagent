@@ -99,6 +99,13 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
   @public_def_forms [:def, :defmacro, :defdelegate, :defguard]
   @private_def_forms [:defp, :defmacrop, :defguardp]
 
+  # Module attributes that legitimately sit between a `@doc`/`@impl` and the def
+  # they annotate WITHOUT consuming the doc — so pending @doc/@impl is preserved
+  # across them. Everything else (notably doc-consuming `@callback`/`@type`/
+  # `@typedoc`/`@moduledoc`/`@opaque`/`@macrocallback`) clears pending, so a
+  # callback's `@doc` cannot leak onto a later def (codex 2026-06-14).
+  @doc_neutral_attrs [:spec, :dialyzer, :deprecated]
+
   @impl Mix.Task
   def run(_args) do
     Mix.shell().info("ezagent.doc.scan — documentation-coverage fitness functions")
@@ -490,10 +497,19 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
           {form, _, _} when form in @private_def_forms ->
             {defs, :none, nil, false}
 
-          {:@, _, _} ->
-            # An interleaved module attribute (@spec, @dialyzer, @typedoc, ...)
-            # is normal between @doc/@impl and the def — preserve pending state.
+          {:@, _, [{attr, _, _}]} when attr in @doc_neutral_attrs ->
+            # A def-adjacent metadata attribute (@spec/@dialyzer/@deprecated)
+            # legitimately sits between @doc/@impl and the def — preserve pending.
             {defs, pdoc, ptext, pimpl}
+
+          {:@, _, _} ->
+            # Any OTHER attribute breaks @doc/@impl-to-def adjacency. Crucially,
+            # doc-consuming attrs (@callback/@macrocallback/@type/@opaque/
+            # @typedoc/@moduledoc) CONSUME the pending @doc — e.g.
+            # `@doc ...; @callback cb(...); def x` documents the CALLBACK, not x —
+            # so preserving would falsely mark x documented (codex 2026-06-14,
+            # a false-negative). Clear pending; default to clear for safety.
+            {defs, :none, nil, false}
 
           _ ->
             # Either a compile-time container wrapping defs (recurse into each

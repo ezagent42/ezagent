@@ -199,6 +199,50 @@ defmodule EzagentCore.Architecture.DocCoverageTest do
       refute {:aliased_callback, 1} in offenders, "@impl SomeBehaviour exempts"
     end
 
+    test "@doc is consumed by @callback/@type and does NOT leak onto a later def" do
+      # @doc before a doc-consuming attribute documents THAT attribute, not the
+      # next def — preserving it would falsely mark the def documented
+      # (codex 2026-06-14, a false-negative).
+      callback_source = """
+      defmodule Sample do
+        @doc "documents the callback, not the def below"
+        @callback cb(term()) :: term()
+        def undocumented_after_callback(a), do: a
+      end
+      """
+
+      type_source = """
+      defmodule Sample do
+        @typedoc "documents the type"
+        @type t :: term()
+        def undocumented_after_type(a), do: a
+      end
+      """
+
+      assert {:undocumented_after_callback, 1} in Mix.Tasks.Ezagent.Doc.Scan.scan_source(callback_source),
+             "a def after a documented @callback must still count as undocumented"
+
+      assert {:undocumented_after_type, 1} in Mix.Tasks.Ezagent.Doc.Scan.scan_source(type_source),
+             "a def after a @typedoc'd @type must still count as undocumented"
+    end
+
+    test "@doc is preserved across def-adjacent metadata (@spec/@deprecated)" do
+      source = """
+      defmodule Sample do
+        @doc "real doc"
+        @spec ok(term()) :: term()
+        def ok(a), do: a
+
+        @doc "another"
+        @deprecated "use ok/1"
+        def deprecated_ok(a), do: a
+      end
+      """
+
+      assert Mix.Tasks.Ezagent.Doc.Scan.scan_source(source) == [],
+             "a @doc must still attach to its def across @spec/@deprecated"
+    end
+
     test "documented / @doc false / private forms are NOT counted" do
       source = """
       defmodule Sample do

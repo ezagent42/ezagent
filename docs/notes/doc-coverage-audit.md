@@ -126,11 +126,14 @@ captured in `arch_baseline_manifest.exs`:
 
 - `undocumented_public_modules: 6` — public modules with no `@moduledoc`
   (real or `false`).
-- `undocumented_public_defs: 535` — non-`@impl` public API forms
+- `undocumented_public_defs: 539` — non-`@impl` public API forms
   (`def` + `defmacro` + `defdelegate` + `defguard`, plus statically-named
   public defs emitted from `quote` blocks, minus the `child_spec`/`start_link`
   boilerplate allowlist) with no `@doc` (real or `false`). Only `@impl true` /
-  `@impl SomeBehaviour` exempt — `@impl false` does not.
+  `@impl SomeBehaviour` exempt — `@impl false` does not. Pending `@doc` attaches
+  to its def only across def-adjacent metadata (`@spec`/`@dialyzer`/
+  `@deprecated`); doc-consuming attrs (`@callback`/`@type`/`@typedoc`/…) clear it.
+- `dynamic_public_def_heads: 0` — `def unquote(...)` heads (enforced at 0).
 
 > **Denominator covers all public API forms (codex 2026-06-14).** An early
 > version of the scanner counted only raw `def`, which let public API exposed
@@ -178,6 +181,14 @@ captured in `arch_baseline_manifest.exs`:
 > `@impl SomeBehaviour` mark a behaviour-callback obligation; `@impl false`
 > explicitly means "not a callback", so a public def preceded by it is still
 > counted (regression fixture proves it).
+
+> **`@doc` does not leak across doc-consuming attributes (codex 2026-06-14).**
+> Pending `@doc`/`@impl` is preserved only across def-adjacent metadata
+> (`@spec`/`@dialyzer`/`@deprecated`). A doc-consuming attribute
+> (`@callback`/`@macrocallback`/`@type`/`@opaque`/`@typedoc`/`@moduledoc`)
+> consumes the `@doc` and clears pending — so `@doc "…"; @callback cb(...); def x`
+> documents the callback, not `x`, and `x` still counts. This caught **4** real
+> false-negatives (535→539). Fixtures cover both the clear and the preserve path.
 
 > The def-only `461` from the canonical scanner was slightly higher than the `428` in the
 > §A function table above. The difference is attribute-adjacency strictness: the
