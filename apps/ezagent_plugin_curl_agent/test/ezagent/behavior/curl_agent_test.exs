@@ -9,12 +9,15 @@ defmodule Ezagent.Behavior.CurlAgentTest do
   alias Ezagent.Behavior.CurlAgent
 
   describe "macro-derived metadata" do
-    test "exactly the 3 documented actions" do
+    # PR-6 (im/session/agent decomposition §3.5) — `:receive` is GONE
+    # (receive flows through `agent.receive` → curl `:in_process_sync`
+    # adapter); `:sync_result` (the post-HTTP persist step) replaces it.
+    test "exactly the 3 documented actions (PR-6: receive→sync_result)" do
       assert MapSet.new(CurlAgent.actions()) ==
-               MapSet.new([:receive, :reset_conversation, :configure])
+               MapSet.new([:sync_result, :reset_conversation, :configure])
 
       assert Map.keys(CurlAgent.interface()) |> Enum.sort() ==
-               [:configure, :receive, :reset_conversation]
+               [:configure, :reset_conversation, :sync_result]
     end
 
     test "state_slice is :curl_agent" do
@@ -30,11 +33,15 @@ defmodule Ezagent.Behavior.CurlAgentTest do
       end
     end
 
-    test "required_caps/0 uses :curl_agent kind axis (not auto-derived :any)" do
+    # PR-6 — the reparented Behavior lives on `Entity.Agent` (type_name
+    # :agent), so its cap subjects key on the `:agent` axis (was
+    # `:curl_agent` on the standalone Kind; the cap-axis migration for
+    # EXISTING agents is PR-7).
+    test "required_caps/0 uses :agent kind axis (PR-6 reparent onto Entity.Agent)" do
       caps = CurlAgent.required_caps()
-      assert caps.receive.kind == :curl_agent
-      assert caps.reset_conversation.kind == :curl_agent
-      assert caps.configure.kind == :curl_agent
+      assert caps.sync_result.kind == :agent
+      assert caps.reset_conversation.kind == :agent
+      assert caps.configure.kind == :agent
     end
 
     test "reads_siblings/0 declares [:api_keys] (post ApiKeys-to-Agent flip)" do
@@ -141,50 +148,79 @@ defmodule Ezagent.Behavior.CurlAgentTest do
     end
   end
 
-  describe "handle_receive/2 — loop safety" do
-    test "self-message returns identity result tuple with no effects" do
-      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/curl_self")
-      msg = Ezagent.Message.new(agent_uri, %{text: "self-loop"})
-
-      ctx = %{
-        read: fn _k, d -> d end,
-        self_uri: agent_uri,
-        caller: Ezagent.URI.new!("session://team-alpha/default/main"),
-        siblings: %{api_keys: %{keys: %{}}}
-      }
-
-      assert {:ok, %{ok: true, ignored: :self_message}, []} =
-               CurlAgent.handle_receive(%{message: msg}, ctx)
-    end
-  end
-
-  describe "handle_receive/2 — no API key" do
-    test "emits :set last_error + dispatches operator help reply" do
-      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/curl_x")
+  # PR-6 (im/session/agent decomposition §3.5 / §9 tension 3) — the
+  # post-HTTP persist step. `agent.receive` re-dispatches the curl adapter's
+  # `:in_process_sync` result here; this Behavior owns the durable
+  # conversation/token/error mutation + the session reply.
+  describe "handle_sync_result/2 — success" do
+    test "appends user + assistant turns, sets tokens, replies into the session" do
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/curl_ok")
       session_uri = Ezagent.URI.new!("session://team-alpha/default/main")
-      sender_uri = Ezagent.URI.new!("entity://team-alpha/user/alice")
-      msg = Ezagent.Message.new(sender_uri, %{text: "hi"})
+
+      usage = %{prompt: 3, completion: 5, total: 8}
 
       ctx = %{
         read: fn
-          :provider, _ -> "deepseek"
-          :api_url, _ -> "https://api.deepseek.com/chat/completions"
-          :model, _ -> "deepseek-chat"
-          :system_prompt, _ -> nil
+          :max_history, _ -> 20
+          :conversation, _ -> [%{role: "user", content: "earlier"}, %{role: "assistant", content: "ok"}]
+          _, d -> d
+        end,
+        self_uri: agent_uri,
+        caller: session_uri
+      }
+
+      args = %{
+        result: {:ok, %{content: "hello back", usage: usage}},
+        source_session: session_uri,
+        user_text: "hello"
+      }
+
+      assert {:ok, %{ok: true, tokens: 8}, effects} =
+               CurlAgent.handle_sync_result(args, ctx)
+
+      assert {:set, :last_tokens, ^usage} = Enum.find(effects, &match?({:set, :last_tokens, _}, &1))
+      assert {:set, :last_error, nil} in effects
+
+      {:set, :conversation, conv} = Enum.find(effects, &match?({:set, :conversation, _}, &1))
+      # The new user turn + the assistant reply are appended after the history.
+      assert List.last(conv) == %{role: "assistant", content: "hello back"}
+      assert Enum.at(conv, -2) == %{role: "user", content: "hello"}
+
+      dispatches = Enum.filter(effects, &match?({:dispatch, _}, &1))
+      assert [{:dispatch, %Ezagent.Cmd{} = cmd}] = dispatches
+      assert cmd.action == :send
+      assert %Ezagent.Message{body: %{text: "hello back"}} = cmd.args.message
+    end
+  end
+
+  describe "handle_sync_result/2 — no API key" do
+    test "appends only the user turn, sets last_error + dispatches operator help reply" do
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/curl_x")
+      session_uri = Ezagent.URI.new!("session://team-alpha/default/main")
+
+      ctx = %{
+        read: fn
           :max_history, _ -> 20
           :conversation, _ -> []
           _, d -> d
         end,
         self_uri: agent_uri,
-        caller: session_uri,
-        # No keys for "deepseek" → no_api_key path.
-        siblings: %{api_keys: %{keys: %{}}}
+        caller: session_uri
+      }
+
+      args = %{
+        result: {:error, {:no_api_key, "deepseek"}},
+        source_session: session_uri,
+        user_text: "hi"
       }
 
       assert {:ok, %{ok: false, error: :no_api_key}, effects} =
-               CurlAgent.handle_receive(%{message: msg}, ctx)
+               CurlAgent.handle_sync_result(args, ctx)
 
       assert {:set, :last_error, {:no_api_key, "deepseek"}} in effects
+
+      {:set, :conversation, conv} = Enum.find(effects, &match?({:set, :conversation, _}, &1))
+      assert conv == [%{role: "user", content: "hi"}]
 
       # Reply dispatch present
       dispatches = Enum.filter(effects, &match?({:dispatch, _}, &1))

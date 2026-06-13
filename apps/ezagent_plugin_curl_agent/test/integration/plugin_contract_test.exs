@@ -27,15 +27,32 @@ defmodule EzagentPluginCurlAgent.Integration.PluginContractTest do
     assert {:ok, %{kind: kind, template_class: template_class}} =
              Ezagent.AgentFlavorRegistry.lookup("curl")
 
-    assert kind == Ezagent.Entity.CurlAgent
+    # PR-6 — the curl flavor now resolves to the UNIFIED Entity.Agent Kind.
+    assert kind == Ezagent.Entity.Agent
     assert template_class == Ezagent.PluginCurlAgent.Template
   end
 
+  test "curl's :in_process_sync bridge adapter is registered for the curl flavor" do
+    # PR-6 — the curl transport adapter registers UP at boot (symmetric to
+    # cc/codex). `:in_process_sync` is the no-subprocess/no-WS class.
+    assert {:ok, EzagentPluginCurlAgent.BridgeAdapter} =
+             Ezagent.AgentBridge.AdapterRegistry.lookup("curl")
+
+    assert EzagentPluginCurlAgent.BridgeAdapter.transport_class() == :in_process_sync
+  end
+
   test "curl's behaviors/0 were published to BehaviorRegistry by boot/1" do
+    # PR-6 — the curl STATE Behavior is reparented onto Entity.Agent (NEW
+    # agents) AND kept bound on the legacy Entity.CurlAgent Kind (existing
+    # agents, through the PR-7 rollback window).
     for action <- Ezagent.Behavior.CurlAgent.actions() do
       assert {:ok, Ezagent.Behavior.CurlAgent} =
+               Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Agent, action),
+             "expected (Entity.Agent, #{inspect(action)}) → Behavior.CurlAgent"
+
+      assert {:ok, Ezagent.Behavior.CurlAgent} =
                Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.CurlAgent, action),
-             "expected (CurlAgent, #{inspect(action)}) → Behavior.CurlAgent"
+             "expected legacy (Entity.CurlAgent, #{inspect(action)}) → Behavior.CurlAgent"
     end
   end
 

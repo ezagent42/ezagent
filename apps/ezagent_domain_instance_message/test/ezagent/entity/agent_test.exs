@@ -23,14 +23,26 @@ defmodule Ezagent.Entity.AgentTest do
       # Agent-owned config-evolve (spec 2026-06-11) — ConfigEvolve added so
       # the agent mutates its OWN config under its own authority (the #607
       # confused-deputy dissolved; the old session-side ConfigUpdate is gone).
-      assert Agent.behaviors() == [
-               Ezagent.Behavior.Session,
-               Ezagent.Behavior.Identity,
-               Ezagent.Behavior.Sandbox,
-               Ezagent.Behavior.ApiKeys,
-               Ezagent.Behavior.CredentialGrant,
-               Ezagent.Behavior.ConfigEvolve
-             ]
+      #
+      # PR-6 (im/session/agent decomposition §3.5) — `behaviors/0` is now the
+      # declared SUPERSET: the BASE set PLUS `Ezagent.Behavior.CurlAgent`
+      # (the curl flavor's STATE behavior). CurlAgent is ACTIVE only on a
+      # curl-flavor instance (explicit `:behaviors` = `curl_behaviors/0`);
+      # legacy nil-`:kind_base` agents resolve to `nil_capture_behavior_set/0`
+      # = the BASE set, so they are byte-identical to pre-PR-6.
+      base = [
+        Ezagent.Behavior.Session,
+        Ezagent.Behavior.Identity,
+        Ezagent.Behavior.Sandbox,
+        Ezagent.Behavior.ApiKeys,
+        Ezagent.Behavior.CredentialGrant,
+        Ezagent.Behavior.ConfigEvolve
+      ]
+
+      assert Agent.base_behaviors() == base
+      assert Agent.nil_capture_behavior_set() == base
+      assert Agent.behaviors() == base ++ [Ezagent.Behavior.CurlAgent]
+      assert Agent.curl_behaviors() == base ++ [Ezagent.Behavior.CurlAgent]
     end
 
     test "persistence/0 is {:snapshot, :on_change} (CLI persistence fix 2026-05-25)" do

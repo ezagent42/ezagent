@@ -207,30 +207,44 @@ defmodule EzagentPluginNp.Integration.Comprehensive4AgentE2eTest do
         )
 
       on_exit(fn ->
-        # Restore the chat-domain Agent :receive Behavior so other tests
-        # in the suite aren't affected.
+        # Restore the REAL Agent :receive Behavior so other tests in the suite
+        # aren't affected. PR-2 (im/session/agent decomposition §OQ-4) split
+        # `:receive` per Kind — `{Entity.Agent, :receive}` is now
+        # `Ezagent.Behavior.Agent.Receive` (was `Behavior.Session` pre-split).
         _ =
           Ezagent.BehaviorRegistry.register(
             Ezagent.Entity.Agent,
             :receive,
-            Ezagent.Behavior.Session
+            Ezagent.Behavior.Agent.Receive
           )
       end)
 
       # ---- 3. Spawn the real curl-agent + point it at the mock --------
+      # PR-6 (im/session/agent decomposition §3.5) — a curl agent now spawns
+      # on the UNIFIED `Ezagent.Entity.Agent` Kind with the curl per-instance
+      # behavior set (`curl_behaviors/0`) + the stored `curl` flavor. Receive
+      # flows `agent.receive` → AgentBridge → the curl `:in_process_sync`
+      # adapter (the mocked-DeepSeek HTTP round-trip) → the curl Behavior's
+      # `:sync_result` persist+reply. (Pre-PR-6 this spawned the standalone
+      # `Entity.CurlAgent`; PR-7 migrates the remaining legacy snapshots.)
       curl_uri = URI.new!("entity://team-alpha/agent/curl_np-e2e-#{uniq()}")
 
       {:ok, _curl_pid} =
-        Ezagent.Kind.spawn(Ezagent.Entity.CurlAgent, %{
+        Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
           uri: curl_uri,
+          behaviors: Ezagent.Entity.Agent.curl_behaviors(),
           provider: "deepseek",
           api_url: mock_deepseek_url,
           model: "deepseek-chat",
           system_prompt: nil,
           max_history: 20
-          # Allen 2026-05-26 — `owner_uri` removed; ApiKeys lives on
-          # the agent's OWN `:api_keys` slice now.
         })
+
+      # PR-6 — record the stored curl flavor so AgentBridge resolves the
+      # `:in_process_sync` adapter (the Template does this; the direct spawn
+      # here must do it explicitly).
+      :ok = Ezagent.AgentFlavorAttributes.put(curl_uri, "curl")
+      on_exit(fn -> Ezagent.AgentFlavorAttributes.delete(curl_uri) end)
 
       # Seed an API key on the curl-agent's OWN `:api_keys` slice
       # (Allen 2026-05-26 ApiKeys-to-Agent flip — agents hold their
