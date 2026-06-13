@@ -39,10 +39,11 @@ defmodule Ezagent.Session.SessionManager do
   0. **AUTHZ — verify the bridge token (THE unforgeable gate, §2 step 0).**
      The cc socket authenticated the orchestrator's WS connection with its
      bridge token and FORWARDS that token (its connection credential, NOT
-     caps) with the call. SessionManager VERIFIES it (constant-time compare)
-     against the orchestrator's known bridge token
-     (`Ezagent.AgentBridge.TokenStore.token_for/1`). A mismatch / absent token
-     → `{:error, :unauthorized}` (fail-loud) BEFORE anything else. Being a
+     caps) with the call. SessionManager VERIFIES it via
+     `Ezagent.AgentBridge.TokenStore.verify_token/2` — a constant-time compare
+     INSIDE the TokenStore, so the secret never leaves it (a getter would let
+     co-resident code read it + forge this very call). A mismatch / absent
+     token → `{:error, :unauthorized}` (fail-loud) BEFORE anything else. Being a
      GenServer is NOT sufficient authz: the Registry key is URI-derivable and
      the pid is enumerable, so a co-resident process could `GenServer.call`
      it; only the secret token closes that. cc forwarding caps would not help
@@ -294,38 +295,18 @@ defmodule Ezagent.Session.SessionManager do
 
   # === Step 0 — verify the bridge token (THE unforgeable gate) ===========
   #
-  # Constant-time compare the cc-forwarded token against the orchestrator's
-  # known secret from the TokenStore. A nil/non-binary token, an orchestrator
-  # with no minted token, or a mismatch → `{:error, :unauthorized}` (fail-loud),
-  # BEFORE any tool or cap work. The token is the orchestrator's CONNECTION
-  # credential (held by the cc socket that authenticated the WS), never caps.
-  defp verify_bridge_token(%__MODULE__{orchestrator_uri: orchestrator_uri}, presented)
-       when is_binary(presented) do
-    case Ezagent.AgentBridge.TokenStore.token_for(orchestrator_uri) do
-      {:ok, known} when is_binary(known) ->
-        if secure_compare(presented, known), do: :ok, else: {:error, :unauthorized}
-
-      :error ->
-        {:error, :unauthorized}
-    end
+  # Delegate the constant-time compare to `TokenStore.verify_token/2` so the
+  # orchestrator's secret NEVER leaves the TokenStore (codex C-r6-P1): a getter
+  # would let co-resident code read the token + forge this very call. A
+  # nil/non-binary token, an orchestrator with no minted token, or a mismatch →
+  # `{:error, :unauthorized}` (fail-loud), BEFORE any tool or cap work. The token
+  # is the orchestrator's CONNECTION credential (held by the cc socket that
+  # authenticated the WS), never caps.
+  defp verify_bridge_token(%__MODULE__{orchestrator_uri: orchestrator_uri}, presented) do
+    if Ezagent.AgentBridge.TokenStore.verify_token(orchestrator_uri, presented),
+      do: :ok,
+      else: {:error, :unauthorized}
   end
-
-  defp verify_bridge_token(_binding, _presented), do: {:error, :unauthorized}
-
-  # Constant-time byte comparison (Plug.Crypto.secure_compare/2 equivalent) —
-  # avoids leaking the token via timing. Length mismatch returns false but
-  # still walks the shorter string to keep the comparison data-independent
-  # within equal-length inputs.
-  defp secure_compare(left, right) when is_binary(left) and is_binary(right) do
-    byte_size(left) == byte_size(right) and constant_time_compare(left, right, 0)
-  end
-
-  defp constant_time_compare(<<x, left::binary>>, <<y, right::binary>>, acc) do
-    import Bitwise
-    constant_time_compare(left, right, acc ||| bxor(x, y))
-  end
-
-  defp constant_time_compare(<<>>, <<>>, acc), do: acc == 0
 
   # === Step 1 — structural caller-is-our-orchestrator check ==============
   #

@@ -47,30 +47,48 @@ defmodule Ezagent.AgentBridge.TokenStore do
   end
 
   @doc """
-  Return the persisted connect token for `agent_uri`.
+  Constant-time VERIFY a `presented` token against `agent_uri`'s persisted
+  connect token.
 
-  The inverse of `lookup_by_token/1`: given the agent URI, return the
-  secret token minted for it (`{:ok, token}`), or `:error` when no token
-  has been minted. Used by the session-domain `Ezagent.Session.SessionManager`
-  to VERIFY a bridge-forwarded token (constant-time compare) against the
-  orchestrator's known secret — the unforgeable authz gate (Decision C, §2
-  step 0). The token is a SECRET; callers must not log it.
+  The secret NEVER leaves this module (Decision C, §2 step 0; codex C-r6-P1):
+  exposing the token via a getter would let any co-resident BEAM code read it +
+  forge a `SessionManager` `{:run_tool, …}` call as that orchestrator, defeating
+  the whole unforgeable-token threat model. SessionManager calls THIS to gate a
+  bridge-forwarded token. Returns `true` only on an exact constant-time match;
+  `false` for a mismatch, a non-binary token, or an orchestrator with no minted
+  token (fail-closed).
   """
-  @spec token_for(URI.t()) :: {:ok, String.t()} | :error
-  def token_for(%URI{} = agent_uri) do
+  @spec verify_token(URI.t(), term()) :: boolean()
+  def verify_token(%URI{} = agent_uri, presented) when is_binary(presented) do
     agent_str = URI.to_string(agent_uri)
 
     case load_all() do
       {:ok, instances} ->
         case Map.get(instances, agent_str) do
-          %{"token" => token} when is_binary(token) -> {:ok, token}
-          _ -> :error
+          %{"token" => known} when is_binary(known) -> secure_compare(presented, known)
+          _ -> false
         end
 
       _ ->
-        :error
+        false
     end
   end
+
+  def verify_token(_agent_uri, _presented), do: false
+
+  # Constant-time byte comparison (Plug.Crypto.secure_compare/2 equivalent) — no
+  # early exit, so the wall-clock time does not leak how many leading bytes
+  # matched. Differing lengths are non-equal but still walk a fixed comparison.
+  defp secure_compare(left, right) when is_binary(left) and is_binary(right) do
+    byte_size(left) == byte_size(right) and constant_time_compare(left, right, 0)
+  end
+
+  defp constant_time_compare(<<x, left::binary>>, <<y, right::binary>>, acc) do
+    import Bitwise
+    constant_time_compare(left, right, acc ||| bxor(x, y))
+  end
+
+  defp constant_time_compare(<<>>, <<>>, acc), do: acc == 0
 
   @doc "Look up an `agent_uri` by token."
   @spec lookup_by_token(String.t()) :: {:ok, URI.t()} | :error

@@ -468,7 +468,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
           [:agent_template]
         )
 
-      {orch_a, _token_a} = setup_orchestrator(session_uri, caps)
+      {orch_a, token_a} = setup_orchestrator(session_uri, caps)
 
       # … but a SECOND SessionManager is started bound to a foreign orchestrator
       # B for the SAME session (a stale/foreign binding). B mints its OWN token,
@@ -495,13 +495,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
                "orchestrator MUST be denied (structural gate)."
 
       # Control: A (the real stored orchestrator) passes.
-      assert {:ok, _} =
-               SessionManager.run_tool(
-                 orch_a,
-                 "list_templates",
-                 %{},
-                 elem(TokenStore.token_for(orch_a), 1)
-               )
+      assert {:ok, _} = SessionManager.run_tool(orch_a, "list_templates", %{}, token_a)
     end
   end
 
