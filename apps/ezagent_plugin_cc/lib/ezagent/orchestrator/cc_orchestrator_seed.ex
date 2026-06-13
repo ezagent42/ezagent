@@ -44,7 +44,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
 
   The `mcp_config_path` config's stdio command runs
   `uv run --script <orchestrator_bridge.py>`. That bridge is a real
-  MCP server (`apps/ezagent_domain_instance_message/priv/orchestrator_bridge.py`,
+  MCP server (`apps/ezagent_plugin_cc/priv/orchestrator_bridge.py`,
   the orchestrator analogue of `ezagent_mcp_bridge.py`). For the
   configured command to resolve, the seed:
 
@@ -296,7 +296,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
 
   defp sandbox_base do
     cond do
-      base = Application.get_env(:ezagent_domain_instance_message, :cc_orchestrator_sandbox_base) ->
+      base = Application.get_env(:ezagent_plugin_cc, :cc_orchestrator_sandbox_base) ->
         base
 
       test_env?() ->
@@ -378,7 +378,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   @doc false
   @spec priv_bridge_path() :: String.t()
   def priv_bridge_path do
-    :code.priv_dir(:ezagent_domain_instance_message)
+    :code.priv_dir(:ezagent_plugin_cc)
     |> Path.join(@bridge_script)
   end
 
