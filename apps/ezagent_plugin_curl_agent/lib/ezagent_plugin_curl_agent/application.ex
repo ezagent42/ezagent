@@ -57,6 +57,7 @@ defmodule EzagentPluginCurlAgent.Application do
 
   alias Ezagent.Behavior.ApiKeys
   alias Ezagent.Behavior.CurlAgent, as: CurlAgentBehavior
+  alias Ezagent.Behavior.CurlAgentLegacyConfig
   alias Ezagent.Behavior.CurlAgentLegacyReceive
   alias Ezagent.Entity.Agent, as: AgentKind
   alias Ezagent.Entity.CurlAgent, as: CurlAgentKind
@@ -90,14 +91,33 @@ defmodule EzagentPluginCurlAgent.Application do
     agent_curl_actions =
       for action <- CurlAgentBehavior.actions(), do: {AgentKind, action, CurlAgentBehavior}
 
-    # KEEP the curl Behavior bound on the legacy `Entity.CurlAgent` Kind so
-    # EXISTING curl_agent snapshots still resolve their actions through the
-    # rollback window. PR-7 migrates those snapshots onto `Entity.Agent`
-    # and deletes `Entity.CurlAgent` + this binding. `:api_keys` stays bound
-    # on the legacy Kind for the same reason (on `Entity.Agent` it is
-    # already bound by `EzagentDomainIdentity.Application`).
+    # KEEP `:sync_result` from the reparented curl Behavior bound on the legacy
+    # `Entity.CurlAgent` Kind so EXISTING curl_agent snapshots still resolve it
+    # through the rollback window. PR-7 migrates those snapshots onto
+    # `Entity.Agent` and deletes `Entity.CurlAgent` + this binding. `:api_keys`
+    # stays bound on the legacy Kind for the same reason (on `Entity.Agent` it
+    # is already bound by `EzagentDomainIdentity.Application`).
+    #
+    # codex round-2 P2 — `:reset_conversation` / `:configure` are DELIBERATELY
+    # EXCLUDED here and re-bound below from `CurlAgentLegacyConfig`. The
+    # reparented `Ezagent.Behavior.CurlAgent.required_caps/0` pins the `:agent`
+    # cap axis (correct for `Entity.Agent`), but on the LEGACY Kind existing
+    # callers hold `:curl_agent` caps — binding the `:agent`-axis behavior here
+    # would DENY a legacy caller who could previously reset/configure the agent.
     legacy_curl_actions =
-      for action <- CurlAgentBehavior.actions(), do: {CurlAgentKind, action, CurlAgentBehavior}
+      for action <- CurlAgentBehavior.actions(),
+          action == :sync_result,
+          do: {CurlAgentKind, action, CurlAgentBehavior}
+
+    # codex round-2 P2 — the legacy `:curl_agent`-axis `:reset_conversation` /
+    # `:configure`. Same handler bodies as the reparented behavior; the ONLY
+    # difference is the cap axis (`:curl_agent` vs `:agent`), preserving the
+    # authority EXISTING grants were issued against. Legacy Kind ONLY — the
+    # unified `Entity.Agent` keeps the reparented `:agent`-axis behavior. PR-7
+    # deletes this with `Entity.CurlAgent`.
+    legacy_config_actions =
+      for action <- CurlAgentLegacyConfig.actions(),
+          do: {CurlAgentKind, action, CurlAgentLegacyConfig}
 
     # codex P1 — `CurlAgentBehavior.actions/0` no longer includes `:receive`
     # (PR-6 moved NEW-agent receive to `agent.receive` → the adapter). But
@@ -115,7 +135,9 @@ defmodule EzagentPluginCurlAgent.Application do
     legacy_api_keys_actions =
       for action <- ApiKeys.actions(), do: {CurlAgentKind, action, ApiKeys}
 
-    agent_curl_actions ++ legacy_curl_actions ++ legacy_receive_action ++ legacy_api_keys_actions
+    agent_curl_actions ++
+      legacy_curl_actions ++
+      legacy_config_actions ++ legacy_receive_action ++ legacy_api_keys_actions
   end
 
   @impl Ezagent.Plugin

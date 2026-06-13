@@ -19,8 +19,7 @@
   #   `requires_explicit_behavior_set?/1` enabling the curl-flavor fold without
   #   an agent backfill) pushed ezagent/kind.ex 999 → 1013. Its natural home is
   #   alongside the behavior-set accessors it mirrors. Burn-down target.
-  # arch-cap-bump: PR-6 nil_capture_behavior_set/1 → kind.ex 999→1013
-  oversized_modules_gt_1000: 1,
+  oversized_modules_gt_1000: 1, # arch-cap-bump: PR-6 nil_capture_behavior_set/1 → kind.ex 999→1013
   def_count_admin_live: 46,
   def_count_cc_agent: 50,
   def_count_orchestrator_tools: 35,
@@ -63,7 +62,14 @@
   # row selector; this is a structural mirror of the approved pattern, not a
   # copy-paste fork of business logic.
   # arch-cap-bump: chat→session SliceMigration mirrors KindBaseBackfill session_rows/0
-  cross_file_duplicate_fn_groups: 30,
+  # PR-6 codex round-2 P2 +1 = 31: `Ezagent.Behavior.CurlAgentLegacyConfig` is the
+  # legacy `:curl_agent`-axis `:reset_conversation` / `:configure` companion (existing
+  # grants hold `:curl_agent`, not the reparented behavior's `:agent`). Its handler
+  # bodies are DELIBERATELY byte-identical to `Ezagent.Behavior.CurlAgent`'s
+  # `handle_reset_conversation` / `handle_configure` — the split is purely the cap axis,
+  # so the logic MUST match (a divergence would be the bug). Legacy-only; deleted in PR-7
+  # with `Entity.CurlAgent`, ratcheting this back to 30.
+  cross_file_duplicate_fn_groups: 31, # arch-cap-bump: PR-6 P2 CurlAgentLegacyConfig mirrors CurlAgent reset/configure bodies
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3
@@ -106,7 +112,14 @@
   # marker effect in Behavior.ConfigEvolve.handle_apply_config_delta (the agent's
   # own :config_evolve slice).
   # arch-cap-bump: PR-2 applied-turn marker; PR-6 curl fold; +7 (codex P1) — `Ezagent.Behavior.CurlAgentLegacyReceive` restores the OLD inline-completion `:receive` for the legacy `Entity.CurlAgent` Kind through the rollback window (its 7 `{:set, :conversation/:last_error/:last_tokens}` sites). Deleted in PR-7 with `Entity.CurlAgent`, which drops the cap back.
-  set_effect_sites: 127,
+  # arch-cap-bump: PR-6 codex round-2 P2 (+8) — `Ezagent.Behavior.CurlAgentLegacyConfig`
+  # restores the LEGACY `:curl_agent`-axis `:reset_conversation` / `:configure` for the
+  # legacy `Entity.CurlAgent` Kind (existing grants hold `:curl_agent`, not `:agent`). Its
+  # `{:set}` sites — `handle_configure` (provider/api_url/model/system_prompt/max_history)
+  # + `handle_reset_conversation` (conversation/last_error) — mirror the reparented
+  # behavior's bodies, differing only in cap axis. Deleted in PR-7 with `Entity.CurlAgent`,
+  # which drops the cap back.
+  set_effect_sites: 135, # arch-cap-bump: PR-6 P2 CurlAgentLegacyConfig legacy reset/configure (+8)
   cross_slice_set_violations: 0,
   missing_cap_check_mutating_actions: 0,
   kind_runtime_ordering_violations: 0,
