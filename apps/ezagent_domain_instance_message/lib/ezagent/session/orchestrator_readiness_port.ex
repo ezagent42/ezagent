@@ -26,14 +26,17 @@ defmodule Ezagent.Session.OrchestratorReadinessPort do
 
   When NO impl is registered (e.g. the cc plugin is not loaded), there is simply
   no orchestrator-MCP transport — which is CORRECT, not an error:
-  `joined?/1 → false` (the readiness gate holds/polls, never silently drops),
-  `register_context/2 → :ok` (no-op), `clear/1 → :ok`, `lifecycle_topic/0 → a
-  dead neutral topic` (subscribing to it is harmless; nothing broadcasts).
+  `joined?/1 → false` and `ready?/1 → false` (the readiness gate holds/polls,
+  never silently drops), `register_context/2 → :ok` (no-op), `clear/1 → :ok`,
+  `unregister/1 → :ok` (no-op), `lifecycle_topic/0 → a dead neutral topic`
+  (subscribing to it is harmless; nothing broadcasts).
   """
 
   @callback lifecycle_topic() :: String.t()
   @callback joined?(orchestrator_uri :: URI.t()) :: boolean()
+  @callback ready?(orchestrator_uri :: URI.t()) :: boolean()
   @callback clear(orchestrator_uri :: URI.t()) :: :ok
+  @callback unregister(orchestrator_uri :: URI.t()) :: :ok
   @callback register_context(orchestrator_uri :: URI.t(), context :: keyword()) ::
               :ok | {:error, term()}
 
@@ -64,11 +67,27 @@ defmodule Ezagent.Session.OrchestratorReadinessPort do
     end
   end
 
+  @spec ready?(URI.t()) :: boolean()
+  def ready?(%URI{} = uri) do
+    case impl() do
+      nil -> false
+      m -> m.ready?(uri)
+    end
+  end
+
   @spec clear(URI.t()) :: :ok
   def clear(%URI{} = uri) do
     case impl() do
       nil -> :ok
       m -> m.clear(uri)
+    end
+  end
+
+  @spec unregister(URI.t()) :: :ok
+  def unregister(%URI{} = uri) do
+    case impl() do
+      nil -> :ok
+      m -> m.unregister(uri)
     end
   end
 
