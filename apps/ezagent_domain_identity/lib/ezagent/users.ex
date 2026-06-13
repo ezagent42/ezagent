@@ -94,6 +94,60 @@ defmodule Ezagent.Users do
     end
   end
 
+  @doc """
+  Create a **read-only** User row — NO password and an EMPTY caps_json.
+
+  Unlike `create/3`, this path does NOT prepend `Ezagent.Entity.User.default_caps/1`
+  (the broad `{kind: :session, behavior: :any, action: :any}` baseline cap that lets
+  a normal user attempt `chat.send`). It is the minting path for the socialware
+  anonymous external user (issue #51): an entity that may only READ a session it is
+  a member of, and whose read-only-ness IS the absence of any session cap. The User
+  Kind demand-spawns this row via `Ezagent.Entity.User.initial_caps_for_spawn/1`,
+  which hydrates from `caps_json` — an empty caps_json yields no session cap, so the
+  spawned anon-User holds only the structural self-Identity cap.
+
+  The row carries no `password_hash`, so `verify_password/2` refuses login for it
+  (a read-only viewer is never a login principal).
+  """
+  @spec create_read_only(URI.t() | String.t()) :: {:ok, decoded()} | {:error, term()}
+  def create_read_only(uri) do
+    uri_str = uri_to_str(uri)
+    user_workspace = Ezagent.URI.entity_workspace_uri(Ezagent.URI.new!(uri_str))
+
+    changeset =
+      %__MODULE__{}
+      |> Ecto.Changeset.change(%{
+        uri: uri_str,
+        password_hash: nil,
+        # EMPTY caps — the read-only-by-construction guarantee (no default_caps).
+        caps_json: encode_caps([]),
+        workspace_uri: URI.to_string(user_workspace)
+      })
+      |> Ecto.Changeset.unique_constraint(:uri, name: :users_uri_index)
+
+    case Repo.insert(changeset) do
+      {:ok, row} -> {:ok, decode(row)}
+      err -> err
+    end
+  end
+
+  @doc """
+  Delete a User row by URI. Returns `:ok` (idempotent — a missing row is `:ok`).
+  Used by the anon-User GC sweeper (issue #51) to reap an abandoned anon-User's
+  provisioning row after it has left its session.
+  """
+  @spec delete(URI.t() | String.t()) :: :ok
+  def delete(uri) do
+    case Repo.get_by(__MODULE__, uri: uri_to_str(uri)) do
+      nil ->
+        :ok
+
+      row ->
+        _ = Repo.delete(row)
+        :ok
+    end
+  end
+
   @doc "Set or rotate a user's password. Returns `{:ok, decoded}` or `{:error, :not_found}`."
   @spec set_password(URI.t() | String.t(), String.t()) ::
           {:ok, decoded()} | {:error, term()}
