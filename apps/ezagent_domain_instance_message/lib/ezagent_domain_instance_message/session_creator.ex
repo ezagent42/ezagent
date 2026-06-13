@@ -494,7 +494,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   #   * (orchestrator only) working-copy OTU set — the step-4
   #     materialization ran;
   #   * (orchestrator only) orchestrator registered-or-rebuildable —
-  #     `McpServer.from_orchestrator_uri/1` → {:ok} (the registry row OR
+  #     `OrchestratorReadinessPort.ready?/1` → true (the registry row OR
   #     a durable rebuild succeeds — the step-5/7 outcome).
   defp session_complete?(
          %URI{} = session_uri,
@@ -518,11 +518,12 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
           if bound? do
             orch_uri = Map.get(wc, :orchestrator_uri)
 
+            # PR-8 (transport #53) — route the orchestrator-MCP readiness check
+            # through the session-owned port (returns a boolean) instead of
+            # naming the now-cc-resident `McpServer`. The port's `ready?/1`
+            # wraps the same `match?({:ok, _}, McpServer.from_orchestrator_uri/1)`.
             match?(%URI{}, orch_uri) and
-              match?(
-                {:ok, _},
-                Ezagent.Orchestrator.McpServer.from_orchestrator_uri(orch_uri)
-              )
+              Ezagent.Session.OrchestratorReadinessPort.ready?(orch_uri)
           else
             false
           end

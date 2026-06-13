@@ -179,8 +179,9 @@ defmodule EzagentDomainInstanceMessage.Integration.RepairOrchestratorTest do
     %{
       name: template_name,
       description: "orchestrated team for repair-failure test",
-      orchestrator_template_uri:
-        Ezagent.URI.new!(Ezagent.Orchestrator.CcOrchestratorSeed.template_uri()),
+      # PR-8 (transport #53) — `CcOrchestratorSeed` relocated to the cc plugin
+      # (not an im dep); inline the SAME URI its `template_uri/0` returned.
+      orchestrator_template_uri: Ezagent.URI.template(:system, :agent, "cc-orchestrator"),
       default_workspace_uri: Ezagent.URI.new!("workspace://system"),
       parent_template_uri: nil,
       version_tag: nil,

@@ -63,32 +63,13 @@ defmodule EzagentDomainInstanceMessage.Application do
     :ok = register_session_behaviors()
     :ok = declare_routing_tables()
 
-    # Phase 7 completion PR-5 — the `orchestrator_uri → bound
-    # McpServer context` ETS table. The Generator registers a row when
-    # it spawns an orchestrator; `Ezagent.Orchestrator.McpChannel`
-    # (the MCP transport bridge's BEAM endpoint) looks it up. Same
-    # lazy-`init/0` pattern as the AgentBridge registry.
-    :ok = Ezagent.Orchestrator.McpRegistry.init()
-
-    # 2026-05-31 orchestrator-startup-atomicity — the
-    # `orchestrator_uri → live-bridge-joined?` durable-state table the
-    # §5 readiness gate POLLS. Written ONLY by `McpChannel.join/3`
-    # (mark) + `terminate/2` (clear) — distinct from `McpRegistry`,
-    # whose read-through rebuild can't tell a live join from a cache
-    # repopulate. Same lazy-`init/0` domain-app pattern.
-    :ok = Ezagent.Orchestrator.LiveJoinRegistry.init()
-
-    # Decomposition spec §3.6 / codex HIGH-3 — the orchestrator readiness logic
-    # in `Ezagent.Entity.Session.Orchestrator` calls the session-owned
-    # `OrchestratorReadinessPort`; register the passthrough impl that forwards
-    # to the (currently session-resident) transport modules just inited above.
-    # "The current owner registers": PR-8 relocates those modules + this
-    # registration into the cc plugin. Registering here (not in cc) keeps the
-    # standalone orchestrator integration tests — which run without cc — green.
-    :ok =
-      Ezagent.Session.OrchestratorReadinessPort.put_impl(
-        Ezagent.Session.OrchestratorReadinessPassthrough
-      )
+    # PR-8 (transport #53) — the orchestrator-MCP transport subsystem
+    # (`McpRegistry`/`LiveJoinRegistry`/`McpChannel`/`McpServer`/`Tools`/…) +
+    # its `OrchestratorReadinessPort` impl registration RELOCATED into the cc
+    # plugin (`EzagentPluginCc.Application.after_boot/0`). This app now only
+    # owns the port + its neutral fallback (spec §3.6); the cc-resident
+    # `ReadinessAdapter` is registered at cc boot. The session never names a
+    # transport module, keeping `im → session → agent` acyclic.
 
     # Phase 8c PR-J (Allen 2026-05-20) — `session://default/system/main` is no longer
     # a static supervisor child. The first-login wizard at `/` creates
@@ -188,21 +169,24 @@ defmodule EzagentDomainInstanceMessage.Application do
         # published; echo declares a dep on `ezagent_domain_instance_message` so the
         # `entity://` spawn dispatcher is registered first.
 
-        # Phase 7 PR 45: install the cc-orchestrator AgentTemplate seed
-        # so SessionTemplate-instantiation paths (PR 41 Generator) can
-        # reference `template://agent/system/cc-orchestrator` without operator
-        # setup. Idempotent: re-install on existing template is a no-op.
-        :ok = seed_cc_orchestrator_template()
+        # PR-8 (transport #53) — the cc-orchestrator AgentTemplate seed
+        # (`Ezagent.Orchestrator.CcOrchestratorSeed.seed/0`) RELOCATED to
+        # `EzagentPluginCc.Application.after_boot/0` (approved seed relocation)
+        # together with the `CcOrchestratorSeed` module. This app no longer
+        # names that module. The `default` SessionTemplate seed below stays
+        # here and only stores the orchestrator AgentTemplate *URI* by value
+        # (`template://agent/system/cc-orchestrator`) in the template content —
+        # it never requires the AgentTemplate Kind to be alive at this point,
+        # so the relocation is behavior-identical (same URI, seeded by cc later).
 
         # Task #50 (Allen 2026-05-27) — seed a `default` SessionTemplate
         # under `workspace://system` so `/admin/templates` is non-empty
         # on a fresh install AND so `mix ezagent workspace create_session
         # --template-name default` resolves to a known team config
         # without operator setup. Idempotent (content-addressable: same
-        # config → same hash URI → already-alive). Depends on
-        # `seed_cc_orchestrator_template/0` because the default template's
+        # config → same hash URI → already-alive). The default template's
         # `orchestrator_template_uri` points at the cc-orchestrator
-        # AgentTemplate URI.
+        # AgentTemplate URI (seeded by the cc plugin's after_boot).
         :ok = seed_default_session_template()
 
         # Phase 8c PR-J — test-only main session seed.
@@ -408,28 +392,6 @@ defmodule EzagentDomainInstanceMessage.Application do
   # ezagent_plugin_echo). The seed moved to
   # `EzagentPluginEcho.Application.after_boot/0`.
 
-  # Phase 7 PR 45 + completion PR-5 — seed the cc-orchestrator
-  # AgentTemplate at boot with a REAL `:template` slice.
-  #
-  # The cc-orchestrator is the LLM-driven session-internal manager
-  # (Decision D7-1, #136). Every SessionTemplate's
-  # `orchestrator_template_uri` field defaults to
-  # `template://agent/system/cc-orchestrator` — so the template must
-  # exist by the time the Generator tries to spawn an orchestrator
-  # instance.
-  #
-  # Pre-PR-5 this seed only spawned an EMPTY AgentTemplate Kind. PR-5
-  # delegates to `Ezagent.Orchestrator.CcOrchestratorSeed.seed/0`, which
-  # populates a real slice (`flavor: "cc"`, an isolated
-  # `claude_config_dir`, a `settings.json`, an `mcp_config_path` pointing
-  # at the orchestrator MCP server, a system prompt) so a Generator-
-  # spawned orchestrator comes up fully configured. The seed is
-  # idempotent (AgentTemplate `:write` is a mutable replace) and
-  # best-effort (logs + `:ok` on failure so boot never aborts).
-  defp seed_cc_orchestrator_template do
-    Ezagent.Orchestrator.CcOrchestratorSeed.seed()
-  end
-
   # Task #50 (Allen 2026-05-27) seeded a `default` SessionTemplate Kind
   # under `workspace://system`. Task #27 extends the invariant: every
   # workspace that creates a `"default"` session must resolve a
@@ -582,7 +544,11 @@ defmodule EzagentDomainInstanceMessage.Application do
 
   defp do_seed_default_session_template(%URI{scheme: "workspace"} = workspace_uri) do
     workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
-    orchestrator_uri = Ezagent.URI.new!(Ezagent.Orchestrator.CcOrchestratorSeed.template_uri())
+    # PR-8 (transport #53) — `Ezagent.Orchestrator.CcOrchestratorSeed.template_uri/0`
+    # relocated into the cc plugin with the rest of the orchestrator-MCP
+    # subsystem. This app no longer names that module; inline the SAME URI it
+    # returned (`template://agent/system/cc-orchestrator`). Behavior-identical.
+    orchestrator_uri = Ezagent.URI.template(:system, :agent, "cc-orchestrator")
 
     content = %{
       name: "default",
