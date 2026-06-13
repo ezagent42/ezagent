@@ -307,8 +307,21 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
   # the function). `doc_text` is the literal doc string when it is a plain
   # binary (for the WARN heuristic only).
   defp public_defs(forms) do
+    forms
+    |> collect_defs(%{})
+    |> Map.values()
+  end
+
+  # Reduce a flat list of module-body forms into a `{name, arity} => def-info`
+  # map, accumulating into `defs`. Recurses into top-level compile-time
+  # containers (`if`/`unless`/`case`/`cond`) because a public def nested inside
+  # one is real public API — counting only DIRECT forms would let an
+  # environment-/version-gated public function escape the ratchet (codex
+  # 2026-06-14). `quote` blocks are deliberately NOT recursed (macro-generated
+  # code, not a hand-written public def the author must document).
+  defp collect_defs(forms, defs) when is_list(forms) do
     {defs, _pdoc, _ptext, _pimpl} =
-      Enum.reduce(forms, {%{}, :none, nil, false}, fn form, {defs, pdoc, ptext, pimpl} ->
+      Enum.reduce(forms, {defs, :none, nil, false}, fn form, {defs, pdoc, ptext, pimpl} ->
         case form do
           {:@, _, [{:doc, _, [false]}]} ->
             {defs, false, nil, pimpl}
@@ -345,15 +358,44 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
             {defs, pdoc, ptext, pimpl}
 
           _ ->
-            # A non-attribute, non-def form (a macro call, import, etc.) breaks
-            # the attribute-to-def adjacency — clear pending @doc/@impl so it
-            # can't leak onto a later, unrelated def.
+            # Either a compile-time container wrapping defs (recurse into each
+            # branch with its OWN @doc scope — a @doc cannot attach across the
+            # wrapper) or a genuine non-def form. Either way the pending
+            # @doc/@impl is cleared so it can't leak onto a later def.
+            defs =
+              case container_branches(form) do
+                nil -> defs
+                branches -> Enum.reduce(branches, defs, &collect_defs(&1, &2))
+              end
+
             {defs, :none, nil, false}
         end
       end)
 
-    Map.values(defs)
+    defs
   end
+
+  # The form-lists of a top-level compile-time container that can legally hold
+  # `def`s, or `nil` for anything else (including `quote`, which we skip). Each
+  # branch body is normalized through `top_forms/1` so a single-def branch and a
+  # multi-def `__block__` branch are handled uniformly.
+  defp container_branches({:if, _, [_cond, kw]}), do: keyword_branches(kw)
+  defp container_branches({:unless, _, [_cond, kw]}), do: keyword_branches(kw)
+  defp container_branches({:case, _, [_subj, [{:do, clauses}]]}), do: clause_branches(clauses)
+  defp container_branches({:cond, _, [[{:do, clauses}]]}), do: clause_branches(clauses)
+  defp container_branches(_), do: nil
+
+  defp keyword_branches(kw) when is_list(kw) do
+    for {k, body} <- kw, k in [:do, :else], do: top_forms(body)
+  end
+
+  defp keyword_branches(_), do: nil
+
+  defp clause_branches(clauses) when is_list(clauses) do
+    for {:->, _, [_pattern, body]} <- clauses, do: top_forms(body)
+  end
+
+  defp clause_branches(_), do: nil
 
   defp doc_text(text) when is_binary(text), do: text
   defp doc_text(_), do: nil

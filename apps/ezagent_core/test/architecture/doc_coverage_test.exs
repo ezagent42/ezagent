@@ -53,6 +53,51 @@ defmodule EzagentCore.Architecture.DocCoverageTest do
              "a public defguard without @doc must count toward the ratchet"
     end
 
+    test "undocumented public defs inside top-level if/unless/case/cond are counted" do
+      source = """
+      defmodule Sample do
+        if Mix.env() == :prod do
+          def in_if(a), do: a
+        else
+          def in_else(a), do: a
+        end
+
+        unless Mix.env() == :test do
+          def in_unless(a), do: a
+        end
+
+        case System.otp_release() do
+          "26" -> def in_case(a), do: a
+          _ -> :ok
+        end
+
+        cond do
+          true -> def in_cond(a), do: a
+        end
+      end
+      """
+
+      offenders = Mix.Tasks.Ezagent.Doc.Scan.scan_source(source)
+
+      for fn_name <- [:in_if, :in_else, :in_unless, :in_case, :in_cond] do
+        assert {fn_name, 1} in offenders,
+               "undocumented public def #{fn_name}/1 nested in a compile-time container must count; got #{inspect(offenders)}"
+      end
+    end
+
+    test "a documented public def inside a compile-time container is NOT counted" do
+      source = """
+      defmodule Sample do
+        if Mix.env() == :prod do
+          @doc "why this prod-only entry exists"
+          def documented_in_if(a), do: a
+        end
+      end
+      """
+
+      assert Mix.Tasks.Ezagent.Doc.Scan.scan_source(source) == []
+    end
+
     test "documented / @doc false / private forms are NOT counted" do
       source = """
       defmodule Sample do

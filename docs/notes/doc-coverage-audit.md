@@ -141,6 +141,15 @@ captured in `arch_baseline_manifest.exs`:
 > regression test (`scan_source/1`) proving an undocumented delegate/macro/guard
 > now fails the gate.
 
+> **Denominator recurses into compile-time containers (codex 2026-06-14).** The
+> scanner also descends into top-level `if` / `unless` / `case` / `cond` bodies,
+> so an environment- or version-gated public def (e.g. `if Mix.env() == :prod do
+> def … end`) is counted rather than escaping through the catch-all branch.
+> `quote` blocks are deliberately NOT recursed (macro-generated, not a
+> hand-written public def). The codebase currently has zero such conditional
+> public defs (the count was unchanged at 513), so this is forward-looking
+> robustness; fixtures in `doc_coverage_test.exs` prove the recursion.
+
 > The def-only `461` from the canonical scanner was slightly higher than the `428` in the
 > §A function table above. The difference is attribute-adjacency strictness: the
 > gate scanner only lets a pending `@doc`/`@impl` carry across *module
