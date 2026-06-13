@@ -26,7 +26,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
       "apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_live.ex",
     def_count_cc_agent: "apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex",
     def_count_orchestrator_tools:
-      "apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools.ex",
+      "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/tools.ex",
     def_count_session_creator:
       "apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/session_creator.ex",
     def_count_capability: "apps/ezagent_core/lib/ezagent/capability.ex"
@@ -63,10 +63,10 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # PR-3S — `spawn_fresh_member/8` (def) + its single call site moved VERBATIM
     # from `Orchestrator.Tools` to `Orchestrator.Tools.MemberTemplate` along with
     # the `update_member_template` regenerate cluster (gt_1000 4→3 extraction).
-    {"apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools/member_template.ex",
-     190},
-    {"apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools/member_template.ex",
-     223}
+    # PR-8 (transport #53) — the orchestrator-MCP subsystem (incl.
+    # `Orchestrator.Tools.MemberTemplate`) relocated im → cc; paths updated.
+    {"apps/ezagent_plugin_cc/lib/ezagent/orchestrator/tools/member_template.ex", 190},
+    {"apps/ezagent_plugin_cc/lib/ezagent/orchestrator/tools/member_template.ex", 223}
   ]
 
   @all_slices_sanctioned [

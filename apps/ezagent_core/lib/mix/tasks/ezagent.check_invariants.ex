@@ -123,7 +123,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
             "| grep -v 'apps/ezagent_domain_instance_message/lib/ezagent/socialware/settlement.ex' " <>
             "| grep -v 'apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/presence_fanout.ex' " <>
             "| grep -v 'apps/ezagent_domain_instance_message/lib/ezagent/session/read_marker.ex' " <>
-            "| grep -v 'apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/mcp_channel.ex' " <>
+            "| grep -v 'apps/ezagent_plugin_cc/lib/ezagent/orchestrator/mcp_channel.ex' " <>
             "| grep -v 'ezagent.check_invariants.ex' " <>
             "| grep -v '^[^:]*:[0-9]*:[[:space:]]*#' " <>
             "| grep -v '`Phoenix\\.PubSub\\.broadcast' " <>

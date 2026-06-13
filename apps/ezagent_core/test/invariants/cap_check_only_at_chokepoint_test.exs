@@ -51,6 +51,10 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         "apps/ezagent_domain_identity/lib/ezagent/",
         "apps/ezagent_domain_external_mirror/lib/ezagent/",
         "apps/ezagent_domain_instance_message/lib/ezagent/",
+        # PR-8 (transport #53) — the orchestrator-MCP subsystem (incl.
+        # `Orchestrator.Tools.Templates`, which reads `matches?` for read-only
+        # tooling display, same class as mcp_server.ex in p6) relocated im → cc.
+        "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/",
         "apps/ezagent_plugin_liveview/lib/",
         # Mix tasks consume matches? for CLI display.
         "apps/ezagent_domain_external_mirror/lib/mix/tasks/",
@@ -106,7 +110,7 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         "apps/ezagent_plugin_liveview/lib/",
         # Orchestrator MCP tool — read-only display of caps to LLM
         # callers (P6 docstring allows tooling).
-        "apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/mcp_server.ex",
+        "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/mcp_server.ex",
         # External-mirror CLI — operator-driven cap display.
         "apps/ezagent_domain_external_mirror/lib/mix/tasks/",
         # Feishu binding sender resolver — read-only inbound-binding
