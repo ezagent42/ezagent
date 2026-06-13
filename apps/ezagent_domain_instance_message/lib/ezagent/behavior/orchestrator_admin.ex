@@ -119,6 +119,11 @@ defmodule Ezagent.Behavior.OrchestratorAdmin do
   # on `Ezagent.Entity.Session`, so the cap kind is `:session` —
   # NOT the macro's default `:any` (which is correct for multi-Kind
   # Behaviors like `Chat`).
+  @doc """
+  The cap map for this Behavior's actions, overriding the macro default to pin the
+  `:session` kind axis (OrchestratorAdmin registers only on `Entity.Session`, so
+  `:restart`'s cap subject is `:session`, not the macro's multi-Kind `:any`).
+  """
   def required_caps do
     %{restart: Ezagent.Capability.cap(:session, __MODULE__, :restart)}
   end
@@ -129,8 +134,16 @@ defmodule Ezagent.Behavior.OrchestratorAdmin do
   # the dispatchable BehaviorRegistry. The macro doesn't surface
   # `dispatchable?/0` (it's an OPTIONAL legacy callback); we keep it
   # as `false` so registration semantics match pre-migration.
+  @doc "`false` — this is a cap-only Behavior (no invokable action), so registration opts out of the dispatchable BehaviorRegistry, matching pre-migration semantics."
   def dispatchable?, do: false
 
+  @doc """
+  Cap-only handler — unreachable in normal use. The `:restart` action exists only
+  to satisfy the new-contract Behavior shape; the real restart is the UI consulting
+  the `:restart` cap and dispatching `template.instantiate` on the cc-orchestrator
+  template. A stray dispatch here RAISES (mapped to a clean `{:error, …}` by the
+  runtime) — defence in depth, and preserves the legacy cap-only assertion.
+  """
   def handle_restart(_args, _ctx) do
     # Cap-only — see moduledoc. If a caller ever reaches this handler
     # they should be dispatching template.instantiate instead. We
@@ -148,6 +161,12 @@ defmodule Ezagent.Behavior.OrchestratorAdmin do
   # URI's owner is read by `Ezagent.Behavior.Session.data_owner/1` (which
   # reads `slice.chat.owner_uri` via `Session.owner/1`); we route
   # through there to keep one source of truth.
+  @doc """
+  The cap data-owner for a subject URI: the session's owner. A `session://` URI
+  routes through `Ezagent.Behavior.Session.data_owner/1` (which reads
+  `slice.chat.owner_uri`) so ownership has ONE source of truth (RFC #402); `:any`
+  is its own owner, anything else has `:no_owner`.
+  """
   def data_owner(%URI{scheme: "session"} = session_uri) do
     Ezagent.Behavior.Session.data_owner(session_uri)
   end
