@@ -50,9 +50,13 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
   @spawn_fresh_sanctioned [
     # PR-2 config-evolve — shifted +6 by adding `Ezagent.Behavior.ConfigEvolve`
     # (+ its comment block) to `Agent.behaviors/0`; same sanctioned defs/call.
-    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 188},
-    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 227},
+    # PR-6 (im/session/agent decomposition) — shifted +41/+40 by splitting
+    # `Agent.behaviors/0` into `base_behaviors/0` + `curl_behaviors/0` +
+    # `nil_capture_behavior_set/0` (the curl flavor fold); SAME sanctioned
+    # `spawn/4` shim + `spawn_fresh/4` def + its single call site, lower lines.
     {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 229},
+    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 268},
+    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 270},
     # PR-3S — `spawn_fresh_member/8` (def) + its single call site moved VERBATIM
     # from `Orchestrator.Tools` to `Orchestrator.Tools.MemberTemplate` along with
     # the `update_member_template` regenerate cluster (gt_1000 4→3 extraction).

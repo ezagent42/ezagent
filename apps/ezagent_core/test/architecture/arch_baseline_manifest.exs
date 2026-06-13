@@ -14,7 +14,12 @@
   # Final remaining entrant: `Ezagent.Behavior.Workspace` (1498) — the
   # #685 CapBAC membership Behavior, the last burn-down target (PR-3V).
   #   PR-3V: 1 → 0 (extracted Behavior.Workspace.AgentCreate, behavior/workspace.ex 1498 → 786) — CAMPAIGN COMPLETE
-  oversized_modules_gt_1000: 0,
+  #   PR-6 (im/session/agent decomposition §3.5): 0 → 1 — the
+  #   `nil_capture_behavior_set/1` accessor (the soft sibling of
+  #   `requires_explicit_behavior_set?/1` enabling the curl-flavor fold without
+  #   an agent backfill) pushed ezagent/kind.ex 999 → 1013. Its natural home is
+  #   alongside the behavior-set accessors it mirrors. Burn-down target.
+  oversized_modules_gt_1000: 1, # arch-cap-bump: PR-6 nil_capture_behavior_set/1 → kind.ex 999→1013
   def_count_admin_live: 46,
   def_count_cc_agent: 50,
   def_count_orchestrator_tools: 35,
@@ -97,7 +102,7 @@
   # PR-2 config-evolve adds the `{:set, :applied, …}` applied-turn idempotency
   # marker effect in Behavior.ConfigEvolve.handle_apply_config_delta (the agent's
   # own :config_evolve slice).
-  set_effect_sites: 119, # arch-cap-bump: PR-2 applied-turn marker
+  set_effect_sites: 120, # arch-cap-bump: PR-2 applied-turn marker; PR-6 curl fold net +1 ({:set} sites moved from the old curl `:receive` HTTP handler into the new `:sync_result` persist handler + the `agent.receive` re-dispatch shape)
   cross_slice_set_violations: 0,
   missing_cap_check_mutating_actions: 0,
   kind_runtime_ordering_violations: 0,
