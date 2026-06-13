@@ -418,6 +418,20 @@ defmodule Ezagent.Kind do
       kind_module.requires_explicit_behavior_set?()
   end
 
+  # Behavior set for an ABSENT/`nil` `:kind_base` instance (PR-6, §3.5). Default
+  # = `behaviors_of/1` (byte-identical pre-PR-6). A SUPERSET Kind overrides it
+  # to its BASE subset so a flavor-only declared Behavior never pollutes legacy
+  # nil-`:kind_base` agents. See `Ezagent.Kind.BehaviorSet` + `Entity.Agent`.
+  @spec nil_capture_behavior_set(module()) :: [module()]
+  def nil_capture_behavior_set(kind_module) when is_atom(kind_module) do
+    if Code.ensure_loaded?(kind_module) and
+         function_exported?(kind_module, :nil_capture_behavior_set, 0) do
+      kind_module.nil_capture_behavior_set()
+    else
+      behaviors_of(kind_module)
+    end
+  end
+
   @doc """
   Terminate a live Kind process by its instance URI (codex round-10 HIGH).
 

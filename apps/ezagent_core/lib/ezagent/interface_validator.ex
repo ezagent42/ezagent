@@ -4,6 +4,11 @@ defmodule Ezagent.InterfaceValidator do
 
   Type-spec grammar (per ARCHITECTURE.md §6.2):
   - `:string` / `:integer` / `:boolean` / `:atom` / `:map` — primitives
+  - `:term` — opaque wildcard, accepts ANY value (PR-6: the curl
+    `:in_process_sync` adapter result `{:ok, %{…}} | {:error, term}` is a
+    structurally-varied payload the `:sync_result` Behavior pattern-matches
+    itself; the dispatch validator must not reject it). Use sparingly — a
+    precise spec is preferred wherever the shape is known.
   - `:uri` — `%URI{}` struct (Phase 2: Message envelope identity fields
     are typed URIs, not bare strings — see DECISIONS §interface-validator-uri)
   - `{:list, ty}` — homogeneous list
@@ -24,6 +29,7 @@ defmodule Ezagent.InterfaceValidator do
           | :boolean
           | :atom
           | :map
+          | :term
           | :uri
           | {:list, type_spec()}
           | {:tuple, [type_spec()]}
@@ -66,6 +72,11 @@ defmodule Ezagent.InterfaceValidator do
   defp check(value, :boolean, _path) when is_boolean(value), do: :ok
   defp check(value, :atom, _path) when is_atom(value), do: :ok
   defp check(value, :map, _path) when is_map(value), do: :ok
+  # `:term` — opaque wildcard. Accepts any value (a present field of any
+  # shape). The `:__missing__` sentinel is still rejected by the
+  # missing-field clause above (a `:term` field is REQUIRED unless wrapped in
+  # `{:option, :term}`), so `:term` relaxes the VALUE check, not presence.
+  defp check(_value, :term, _path), do: :ok
   defp check(%URI{} = _value, :uri, _path), do: :ok
 
   defp check(nil, {:option, _ty}, _path), do: :ok
