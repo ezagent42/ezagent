@@ -1,22 +1,20 @@
 defmodule Ezagent.Socialware.SettlementRecord do
   @moduledoc """
-  The durable settlement record for one socialware turn (`turn_id` PK), driving
-  its commit from `:pending` to `:committed`.
+  The durable settlement record for one socialware turn (`turn_id` PK); `status`
+  moves `:pending` -> `:committed`.
 
-  The production commit path (`Ezagent.Socialware.Settlement.commit_after_pointer/2`,
-  via `confirm_pointer_advanced/2`) gates ONLY on `target_surface_version`: it
-  must equal the session's current approved surface version (`pointer_matches?/2`),
-  else a `conflict_reason` is recorded instead of committing. `subwrites_done`
-  accumulates the fixed three commit sub-steps (visibility-flip, pointer-advance,
-  outbox-emit) already applied, so a retried commit skips done steps and is
-  idempotent; `committed_ready?/1` flips to `:committed` only once all three are
-  present. The committed record is what `Ezagent.Socialware.CustomerOutbox`
-  denormalizes its version / commit-seq from.
-
-  `expected_prior_approved` is a prior-version CAS field checked by
-  `prior_matches?/2` — but ONLY via `mark_pointer_advanced/2`, which is not on the
-  current production commit path (no `lib` caller); the field is stored for that
-  guard, not enforced by `commit_after_pointer/2` today.
+  Production commit is `Ezagent.Socialware.Settlement.commit_after_pointer/2`.
+  Via `confirm_pointer_advanced/2` it requires `target_surface_version` to equal
+  the session's current approved surface version (`pointer_matches?/2`); on
+  mismatch it returns `{:error, :target_version_mismatch}` and does not commit
+  (it does NOT write `conflict_reason` — that field is only set by
+  `record_conflict/2`, called solely from `mark_pointer_advanced/2`, which has no
+  `lib` caller and is not on the production path; `expected_prior_approved` is
+  likewise only read there). `subwrites_done` records the three commit sub-steps
+  applied so far (visibility-flip, pointer-advance, outbox-emit) for idempotent
+  retry; `committed_ready?/1` requires all three before the status flips. The
+  committed row is what `Ezagent.Socialware.CustomerOutbox` denormalizes its
+  `surface_version` / `committed_seq` from.
   """
   use Ecto.Schema
 
