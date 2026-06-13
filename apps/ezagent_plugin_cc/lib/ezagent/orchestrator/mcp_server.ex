@@ -158,10 +158,10 @@ defmodule Ezagent.Orchestrator.McpServer do
           parent_template_uri: parent_template_uri
         )
 
-      # Transport #53 Decision C (cold-restart self-heal, codex C-rC-P1 / C-r3-P2)
-      # — after a BEAM restart the per-orchestrator `SessionManager` AND the
-      # orchestrator Agent Kind are both gone. Force BOTH to rehydrate through the
-      # core SpawnRegistry chokepoint (NOT an im compile dep):
+      # Transport #53 Decision C (cold-restart self-heal, codex C-rC-P1 / C-r3-P2
+      # / C-r5-P2) — after a BEAM restart the per-orchestrator `SessionManager`
+      # AND the orchestrator Agent Kind are both gone. Force BOTH to rehydrate
+      # through the core SpawnRegistry chokepoint (NOT an im compile dep):
       #
       #   * the Session Kind → its session-domain spawn fn restarts the
       #     SessionManager from the durable working copy (else the first
@@ -170,6 +170,20 @@ defmodule Ezagent.Orchestrator.McpServer do
       #     (`Identity.list_caps_for/1`) finds it in `KindRegistry` and returns
       #     its REAL delegated caps (a not-yet-rehydrated agent yields an empty
       #     set → every tool would wrongly deny as unauthorized).
+      #
+      # BEST-EFFORT self-heal (codex C-r5-P2 addressed at call-time, not
+      # gate-time): registration = the durable McpRegistry rebuild above (the
+      # proof this URI IS a real orchestrator); it does NOT hinge on the
+      # processes being up this instant. The spawns opportunistically restart the
+      # executor source + the cap source so the reconnecting bridge's first
+      # `tools/call` finds them live. If a spawn fails, the failure surfaces
+      # LOUDLY at the tool call — the cc transport returns
+      # `:orchestrator_context_unavailable` for a missing SessionManager, and a
+      # missing agent yields empty reconstructed caps → the Session chokepoint
+      # DENIES (fail-closed). Neither path silently succeeds, and both
+      # self-resolve on the next reference. (Gating registration on a live spawn
+      # would conflate "is a registered orchestrator" with "is running right now"
+      # — the durable snapshot answers the former.)
       _ = Ezagent.SpawnRegistry.spawn(session_uri)
       _ = Ezagent.SpawnRegistry.spawn(orchestrator_uri)
 
