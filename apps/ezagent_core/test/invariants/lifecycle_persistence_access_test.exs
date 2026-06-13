@@ -77,7 +77,15 @@ defmodule Ezagent.Invariants.LifecyclePersistenceAccessTest do
         # persisted `Behavior.Chat`→`Behavior.Session` caps in the `:identity`
         # slice of EXISTING snapshot rows. Framework-internal row-level rewrite,
         # not a domain/Behavior write path.
-        "apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex"
+        "apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
+        # curl-as-flavor one-shot MIGRATION (TEST/sandbox only, PR-6+7): rewrites
+        # EXISTING `curl_agent` rows onto the unified Agent Kind (`kind_type`,
+        # `flavor` slice, curl `:kind_base`, `:curl_agent → :agent` cap axis).
+        # Same direct-`upsert` rationale as the other one-shot migrations: a
+        # framework-internal row-level rewrite that runs Repo-only (NOT through
+        # the domain dispatch/commit path, which would cold-load the very rows it
+        # repairs against the deleted standalone curl Kind).
+        "apps/ezagent_plugin_curl_agent/lib/ezagent/plugin_curl_agent/curl_snapshot_migration.ex"
       ],
       guidance:
         "Domain/Behavior/plugin state persists via the normal dispatch → " <>
