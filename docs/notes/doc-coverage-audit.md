@@ -143,7 +143,7 @@ captured in `arch_baseline_manifest.exs`:
 > now fails the gate.
 
 > **Denominator recurses into compile-time containers (codex 2026-06-14).** The
-> scanner also descends into top-level `if` / `unless` / `case` / `cond` bodies,
+> scanner also descends into top-level `if` / `unless` / `case` / `cond` / `for` bodies,
 > so an environment- or version-gated public def (e.g. `if Mix.env() == :prod do
 > def … end`) is counted rather than escaping through the catch-all branch.
 > `quote` blocks are deliberately NOT recursed (macro-generated, not a

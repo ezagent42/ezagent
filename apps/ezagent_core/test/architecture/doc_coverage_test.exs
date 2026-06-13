@@ -85,6 +85,19 @@ defmodule EzagentCore.Architecture.DocCoverageTest do
       end
     end
 
+    test "undocumented public defs inside a module-level for comprehension are counted" do
+      source = """
+      defmodule Sample do
+        for _ <- [1, 2, 3] do
+          def in_for(a), do: a
+        end
+      end
+      """
+
+      assert {:in_for, 1} in Mix.Tasks.Ezagent.Doc.Scan.scan_source(source),
+             "a public def generated inside a module-level `for` must be counted"
+    end
+
     test "a documented public def inside a compile-time container is NOT counted" do
       source = """
       defmodule Sample do

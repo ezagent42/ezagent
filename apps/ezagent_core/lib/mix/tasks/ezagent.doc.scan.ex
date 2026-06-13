@@ -432,6 +432,11 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
   defp container_branches({:unless, _, [_cond, kw]}), do: keyword_branches(kw)
   defp container_branches({:case, _, [_subj, [{:do, clauses}]]}), do: clause_branches(clauses)
   defp container_branches({:cond, _, [[{:do, clauses}]]}), do: clause_branches(clauses)
+  # A module-level `for` comprehension is a valid compile-time pattern for
+  # generating public defs (codex 2026-06-14). Its `:do` body is the last arg
+  # (after the generators/filters); statically-named defs in it are counted,
+  # `def unquote(...)` heads skipped as elsewhere.
+  defp container_branches({:for, _, args}) when is_list(args), do: do_body_branch(args)
   # `quote` is handled separately (see `collect_quoted_defs/2`) via a whole-module
   # prewalk, because quote blocks live inside def/defmacro bodies, not at the
   # module-body level this function scans.
@@ -442,6 +447,21 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
   end
 
   defp keyword_branches(_), do: nil
+
+  # Extract a single `:do` body (from the last keyword arg of a form like `for`)
+  # as a one-element branch list, or nil when there is no `:do`.
+  defp do_body_branch(args) do
+    case List.last(args) do
+      kw when is_list(kw) ->
+        case Keyword.fetch(kw, :do) do
+          {:ok, body} -> [top_forms(body)]
+          :error -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
 
   defp clause_branches(clauses) when is_list(clauses) do
     for {:->, _, [_pattern, body]} <- clauses, do: top_forms(body)
