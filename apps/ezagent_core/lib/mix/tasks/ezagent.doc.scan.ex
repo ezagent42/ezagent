@@ -46,6 +46,17 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
   documentation obligation falls back to the GENERATING macro, which is itself a
   counted `defmacro` / `__using__`.
 
+  ## Limitation: dynamically-named public defs (surfaced, not silent)
+
+  A `def unquote(name)(...)` head's function name is only known at
+  macro-expansion time, so a source-AST scan cannot turn it into a
+  `{name, arity}` counter entry (short of partially evaluating comprehension
+  generators / `unquote` substitution — out of scope for a ratchet). This is a
+  fundamental limit of static analysis, NOT a silent bypass: every such head —
+  whether in a `quote`, a module-level `for`, or anywhere else — is surfaced as a
+  non-failing WARN (`print_dynamic_heads_warning/0`) at each scan so a reviewer
+  can confirm its docs. `dynamic_public_defs/1` makes the detection testable.
+
   ## Analysis
 
   AST-based (`Code.string_to_quoted` → `Macro.prewalk`), not line/regex
@@ -107,6 +118,7 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
     end)
 
     print_restates_warnings()
+    print_dynamic_heads_warning()
 
     failures = Enum.reject(results, fn {status, _name, _count, _cap} -> status == "PASS" end)
 
@@ -184,6 +196,55 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
       not MapSet.member?(@doc_def_allowlist, {d.name, d.arity})
   end
 
+  @doc false
+  # The `{file, context}` list of DYNAMICALLY-named public def heads
+  # (`def unquote(name)(...)`) in the tree. These have no static `{name, arity}`,
+  # so the ratchet's denominator cannot count them — a fundamental limit of a
+  # source-AST scan (resolving them would require partially evaluating
+  # comprehension generators / unquote substitution). They are NOT silently
+  # ignored: the scan surfaces their count as a WARN (see
+  # `print_dynamic_heads_warning/0`) so a reviewer can confirm their docs, and
+  # `dynamic_public_defs/1` makes the detection unit-testable.
+  def dynamic_heads do
+    lib_files()
+    |> Enum.flat_map(fn file ->
+      case Code.string_to_quoted(read!(file)) do
+        {:ok, ast} -> Enum.map(dynamic_head_markers(ast), fn _ -> file end)
+        {:error, _} -> []
+      end
+    end)
+  end
+
+  @doc false
+  # In-memory variant of `dynamic_heads/0` for fixtures: returns one marker per
+  # dynamically-named public def head in `source`.
+  def dynamic_public_defs(source) when is_binary(source) do
+    case Code.string_to_quoted(source) do
+      {:ok, ast} -> dynamic_head_markers(ast)
+      {:error, _} -> []
+    end
+  end
+
+  defp dynamic_head_markers(ast) do
+    {_ast, markers} =
+      Macro.prewalk(ast, [], fn
+        {form, _meta, [head | _]} = node, acc when form in @public_def_forms ->
+          if dynamic_head?(head), do: {node, [:dynamic | acc]}, else: {node, acc}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    markers
+  end
+
+  # A def head whose NAME position is an `unquote(...)` (so the function name is
+  # only known at macro-expansion time, not statically).
+  defp dynamic_head?({:when, _meta, [head | _]}), do: dynamic_head?(head)
+  defp dynamic_head?({{:unquote, _meta, _}, _meta2, _args}), do: true
+  defp dynamic_head?({:unquote, _meta, _}), do: true
+  defp dynamic_head?(_), do: false
+
   # ── WARN heuristic: docs that look like they restate the signature ──
 
   defp print_restates_warnings do
@@ -203,6 +264,26 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
       if length(suspects) > 40 do
         Mix.shell().info("    ... and #{length(suspects) - 40} more")
       end
+    end
+  end
+
+  # ── WARN: dynamically-named public defs the denominator cannot count ──
+
+  defp print_dynamic_heads_warning do
+    files = dynamic_heads()
+
+    if files != [] do
+      by_file = Enum.frequencies(files)
+
+      Mix.shell().info(
+        "\n  WARN (advisory, non-failing): #{length(files)} dynamically-named public def head(s) " <>
+          "(`def unquote(...)`) cannot be statically counted by the ratchet — confirm their docs manually:"
+      )
+
+      by_file
+      |> Enum.sort_by(fn {_file, n} -> -n end)
+      |> Enum.take(40)
+      |> Enum.each(fn {file, n} -> Mix.shell().info("    - #{n}×  (#{file})") end)
     end
   end
 

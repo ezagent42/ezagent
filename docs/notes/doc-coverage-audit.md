@@ -162,6 +162,15 @@ captured in `arch_baseline_manifest.exs`:
 > `{name, arity}` and are skipped (the counted generator macro is their
 > backstop). Fixtures in `doc_coverage_test.exs` prove both.
 
+> **Dynamically-named public defs — surfaced, not silent (codex 2026-06-14).**
+> A `def unquote(name)(...)` head's name is only known at macro-expansion, so a
+> source-AST scan cannot make it a `{name, arity}` counter entry (resolving it
+> would require partially evaluating comprehension generators / unquote — out of
+> scope for a ratchet). This is a fundamental static-analysis limit, not a silent
+> bypass: each such head (in a `quote`, a module-level `for`, anywhere) is
+> surfaced as a non-failing WARN at every scan, and `dynamic_public_defs/1` makes
+> the detection testable. The tree currently has zero such heads.
+
 > **`@impl false` does not exempt (codex 2026-06-14).** Only `@impl true` /
 > `@impl SomeBehaviour` mark a behaviour-callback obligation; `@impl false`
 > explicitly means "not a callback", so a public def preceded by it is still

@@ -138,6 +138,40 @@ defmodule EzagentCore.Architecture.DocCoverageTest do
              "a dynamically-named `def unquote(n)` head has no static arity and must be skipped"
     end
 
+    test "dynamically-named public defs are surfaced (not silently dropped)" do
+      # A `def unquote(name)` head has no static {name, arity} — it cannot be a
+      # counter entry, but it MUST be surfaced so it is not a silent bypass
+      # (codex 2026-06-14). Holds for a module-level `for` (no macro backstop)
+      # and a quoted generator alike.
+      for_source = """
+      defmodule Sample do
+        for name <- [:foo, :bar] do
+          def unquote(name)(a), do: a
+        end
+      end
+      """
+
+      quote_source = """
+      defmodule Sample do
+        defmacro emit(name) do
+          quote do
+            def unquote(name)(a), do: a
+          end
+        end
+      end
+      """
+
+      # One `def unquote(name)` node in SOURCE (the comprehension generates many
+      # at compile time, but the scanner sees the single source form).
+      assert length(Mix.Tasks.Ezagent.Doc.Scan.dynamic_public_defs(for_source)) == 1,
+             "the `def unquote(name)` head in the for must be surfaced"
+
+      assert length(Mix.Tasks.Ezagent.Doc.Scan.dynamic_public_defs(quote_source)) == 1
+
+      # They are surfaced, not counted in the denominator (no static {name,arity}).
+      assert Mix.Tasks.Ezagent.Doc.Scan.scan_source(for_source) == []
+    end
+
     test "@impl false does NOT exempt a public def (only @impl true / @impl Behaviour)" do
       source = """
       defmodule Sample do
