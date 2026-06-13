@@ -394,6 +394,19 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
              "rollback MUST stop the per-orchestrator SessionManager — leaving it " <>
                "running leaks the process + a later recreate could reuse stale state."
     end
+
+    test "normal session deletion (Lifecycle.destroy) stops the SessionManager (P2-r4)" do
+      ctx = provision([:agent_template])
+      assert {:ok, _} = SessionManager.whereis(ctx.orchestrator_uri)
+
+      # A normal teardown (NOT create rollback): the Session Kind's destroy hook
+      # must tie the executor to the session lifecycle.
+      :ok = Ezagent.Lifecycle.destroy(ctx.session_uri, :test_delete)
+
+      assert SessionManager.whereis(ctx.orchestrator_uri) == :error,
+             "Lifecycle.destroy of an orchestrator-bearing session MUST stop its " <>
+               "per-orchestrator SessionManager — a deleted session must not leak its executor."
+    end
   end
 
   describe "the orchestrator tool surface (§3.8 member/rule-set + template tools)" do

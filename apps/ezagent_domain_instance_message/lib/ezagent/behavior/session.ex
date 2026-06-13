@@ -834,6 +834,29 @@ defmodule Ezagent.Behavior.Session do
 
   def handle_signal(_other_message, _ctx), do: :ignore
 
+  # Transport #53 Decision C (codex C-r4-P2) — on PERMANENT session deletion
+  # (`Lifecycle.destroy` / `manage.delete`, NOT a graceful deactivate), stop the
+  # per-orchestrator `Ezagent.Session.SessionManager` executor so it terminates
+  # WITH the session. The SessionManager is an independently supervised process
+  # keyed by the orchestrator URI; without this hook a deleted orchestrator-
+  # bearing session would LEAK its executor (and a later recreate at the same URI
+  # could reuse a stale-bound manager). Runs while the Kind is still LIVE, so the
+  # durable working copy (with the orchestrator URI) is readable from `state`.
+  # Best-effort: a session with no orchestrator (the common case) is a no-op.
+  @impl Ezagent.Lifecycle
+  def destroy(_reason, ctx) do
+    wc = ConfigActions.template_working_copy(ctx[:state] || %{})
+
+    case Map.get(wc, :orchestrator_uri) do
+      %URI{} = orchestrator_uri ->
+        _ = Ezagent.Session.SessionManager.stop(orchestrator_uri)
+        :ok
+
+      _ ->
+        :ok
+    end
+  end
+
   # --- Task #110 — orchestrator MCP context is now LAZILY REBUILT --------
   #
   # The earlier patch (commit 73044554) re-registered the orchestrator
