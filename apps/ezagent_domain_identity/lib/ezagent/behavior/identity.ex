@@ -99,6 +99,7 @@ defmodule Ezagent.Behavior.Identity do
   # version also produces `:any` so this override is technically a
   # no-op, but kept explicit for parity with the pre-migration shape.
   # =================================================================
+  @doc "Cap map for the read actions (`list_caps`/`has_cap?`), pinned to `kind: :any` because Identity is registered on multiple Kinds (matches the auto-derived shape; kept explicit for parity)."
   def required_caps do
     %{
       list_caps: Ezagent.Capability.cap(:any, __MODULE__, :list_caps),
@@ -209,8 +210,7 @@ defmodule Ezagent.Behavior.Identity do
     end
   end
 
-  # PR-OWN-3 SPEC #306 §3.3: data_owner for Identity is the
-  # entity itself.
+  @doc "Cap data-owner for Identity: the entity OWNS its own `:identity` slice (PR-OWN-3 / SPEC #306 §3.3) — an entity URI is its own owner; `:any` is its own owner; anything else is `:no_owner`."
   def data_owner(%URI{} = entity_uri), do: entity_uri
   def data_owner(:any), do: :any
   def data_owner(_), do: :no_owner
@@ -268,11 +268,13 @@ defmodule Ezagent.Behavior.Identity do
   # New-contract action handlers (§6.2 — replace invoke/4)
   # =================================================================
 
+  @doc "Action handler: return the entity's full cap set (read from the `:caps` slice) as a list."
   def handle_list_caps(_args, ctx) do
     caps = ctx[:read].(:caps, MapSet.new())
     {:ok, %{caps: MapSet.to_list(caps)}, []}
   end
 
+  @doc "Action handler: whether the entity holds any cap matching `needed` (via `Ezagent.Capability.matches?/2`)."
   def handle_has_cap?(%{cap: needed}, ctx) do
     caps = ctx[:read].(:caps, MapSet.new())
     has? = Enum.any?(caps, &Ezagent.Capability.matches?(&1, needed))
@@ -350,6 +352,7 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   # =================================================================
   # Explicit `required_caps/0` — preserved `kind: :user` axis.
   # =================================================================
+  @doc "Cap map for the admin write actions (`grant_cap`/`revoke_cap`), pinned to the `:user` kind axis (these are user-principal admin operations)."
   def required_caps do
     %{
       grant_cap: Ezagent.Capability.cap(:user, __MODULE__, :grant_cap),
@@ -357,8 +360,7 @@ defmodule Ezagent.Behavior.IdentityAdmin do
     }
   end
 
-  # workspace_scoped? = false: admin grant/revoke routinely crosses
-  # workspaces.
+  @doc "`false` — admin grant/revoke routinely crosses workspaces, so the required cap is NOT workspace-scoped."
   def workspace_scoped?, do: false
 
   # =================================================================
@@ -375,7 +377,7 @@ defmodule Ezagent.Behavior.IdentityAdmin do
     Ezagent.Behavior.Identity.create(args)
   end
 
-  # PR-OWN-3: data_owner = :no_owner.
+  @doc "`:no_owner` for all subjects (PR-OWN-3): admin grant/revoke authority comes from the caller's admin cap, not from per-entity data-ownership."
   def data_owner(_), do: :no_owner
 
   # =================================================================
@@ -385,6 +387,14 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   # Bug 2 fix (Allen 2026-05-26) — `cap` arrives as one of three
   # shapes (struct / atom-keyed map / string-keyed map). `normalize!`
   # coerces all three to the canonical struct.
+  @doc """
+  Grant a capability to this principal — the cap-grant chokepoint.
+
+  Normalizes the incoming `cap` (struct / atom-keyed / string-keyed → canonical
+  struct), runs the grant authorization checks (`check_action_wildcard_grant_authorized/2`
+  + `check_grant_authorized/2`), dedups any cap with the same identity-key, adds
+  the new cap (`{:set, :caps, …}`), notifies the principal, and emits `:cap_granted`.
+  """
   def handle_grant_cap(%{cap: cap}, ctx) do
     cap_struct = Ezagent.Capability.normalize!(cap, granter_from_ctx(ctx))
 
@@ -424,6 +434,7 @@ defmodule Ezagent.Behavior.IdentityAdmin do
     end
   end
 
+  @doc "Revoke a capability from this principal — normalizes the `cap` then removes the identity-key match via `Ezagent.Capability.revoke/2`, notifies the principal, and emits `:cap_revoked`."
   def handle_revoke_cap(%{cap: cap}, ctx) do
     cap_struct = Ezagent.Capability.normalize!(cap, granter_from_ctx(ctx))
     current_caps = ctx[:read].(:caps, MapSet.new())
