@@ -31,6 +31,7 @@ Six notes have bilingual `.zh_cn.md` companions (marked **[zh]** below).
 - [Plugin Receiver Kind contract](plugin-receiver-kind-contract.md) — the contract for plugins that receive messages from outside ESR.
 - [Lifecycle persistence-access discipline (2026-06-03)](2026-06-03-lifecycle-persistence-discipline.md) — persistence + create/activate go through the Lifecycle/framework functions, not low-level primitives; scan result (already clean) + the enforcing lint + follow-ups (maybe_save / SnapshotStore.write test-only writers).
 - [`home_path_in_runtime_code` scan gate ↔ #25 `raw_home_path` reconciliation (2026-06-08)](2026-06-08-home-path-scan-reconciliation.md) — Resource-unification P0.5: why two scanners (arch.scan count ratchet vs uri_query.scan hard-fail-new), the consistency test that keeps them from drifting, the baseline+exemption census on current main, and the codex exemption-robustness findings folded in.
+- [Documentation coverage audit + enforcement gate (2026-06-13)](doc-coverage-audit.md) — `@moduledoc`/`@doc` coverage (98.8% modules, 72.4% non-`@impl` public-fn) + WHY-vs-restates quality tally; calibration baseline + ratchet for the new `mix ezagent.doc.scan` gate.
 
 ## Walkthroughs / demos
 

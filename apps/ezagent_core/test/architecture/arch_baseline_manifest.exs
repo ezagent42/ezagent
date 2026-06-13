@@ -138,5 +138,39 @@
   missing_cap_check_mutating_actions: 0,
   kind_runtime_ordering_violations: 0,
   kind_runtime_reentry_violations: 0,
-  cold_restart_respawn_round_trip_drift: 0
+  cold_restart_respawn_round_trip_drift: 0,
+  # Documentation-coverage gate (2026-06-13, Allen) — RATCHET-DOWN counters.
+  # Backed by `Mix.Tasks.Ezagent.Doc.Scan`; enforced by
+  # test/architecture/doc_coverage_test.exs. Calibrated GREEN at the CURRENT
+  # main count (no day-one red build); the comment-improvement campaign lowers
+  # these. See docs/notes/doc-coverage-audit.md §"How to ratchet DOWN".
+  #
+  # undocumented_public_modules — defmodules under apps/*/lib (sans test files +
+  #   the scanner) with NO @moduledoc (a `@moduledoc false` COUNTS as
+  #   documented). The 6 offenders are all framework boilerplate (Repo /
+  #   Endpoint / Router / 3 Ecto schemas). Target end-state: 0.
+  undocumented_public_modules: 6,
+  # undocumented_public_defs — distinct {name, arity} public API forms
+  #   (def + defmacro + defdelegate + defguard; NOT their defp/defmacrop/
+  #   defguardp siblings) with NO @doc (a `@doc false` COUNTS as documented),
+  #   EXCLUDING @impl callbacks + the {child_spec,1}/{start_link,0|1}
+  #   boilerplate allowlist. defdelegate/defmacro/defguard are in the
+  #   denominator because public API here is not limited to raw `def` — a
+  #   facade's delegates + the Kind/Behavior DSL macros are public surface too
+  #   (codex 2026-06-14; def-only undercounted by 52). Also counts STATICALLY-
+  #   named public defs emitted from quote blocks (macro-generated public API,
+  #   e.g. __using__-injected defaults; +22 over def+macro+delegate+guard) and
+  #   ignores @impl false (only @impl true / @impl Behaviour exempt). Pending
+  #   @doc is preserved only across def-adjacent metadata (@spec/@dialyzer/
+  #   @deprecated); doc-consuming attrs (@callback/@type/@typedoc/…) clear it, so
+  #   a callback's @doc can't leak onto a later def (codex 2026-06-14; +4 real
+  #   false-negatives caught). Same-name defs across compile-time branches/quotes
+  #   merge conservatively — documented only if EVERY branch is (+1 caught).
+  undocumented_public_defs: 540,
+  # dynamic_public_def_heads — `def unquote(name)(...)` heads whose function name
+  #   is only known at macro-expansion, so they cannot become a documented
+  #   {name, arity} entry. ENFORCED at 0 (the tree has none): adding any new
+  #   dynamic public head fails the gate unless this baseline is deliberately
+  #   raised with a `# arch-cap-bump:` rationale (codex 2026-06-14).
+  dynamic_public_def_heads: 0
 }
