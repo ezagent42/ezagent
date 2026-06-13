@@ -227,6 +227,11 @@ defmodule Ezagent.Behavior.CurlAgentLegacyReceive do
   defp maybe_encode_uri(%URI{} = u), do: URI.encode_www_form(URI.to_string(u))
   defp maybe_encode_uri(_), do: "unknown"
 
+  # caps-data-ownership-v2 (SPEC #306 §7) — a Behavior with caps MUST declare
+  # data_owner/1. Shares the legacy `:curl_agent` slice; same grant authority as
+  # the reparented `Ezagent.Behavior.CurlAgent` (the `:api_keys` `:creator_uri`).
+  def data_owner(arg), do: Ezagent.Behavior.CurlAgent.data_owner(arg)
+
   defp error_kind({:http, _, _}), do: :http_error
   defp error_kind({:transport, _}), do: :transport_error
   defp error_kind({:decode, _}), do: :decode_error
