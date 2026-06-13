@@ -3,58 +3,51 @@ defmodule Ezagent.Orchestrator.McpServer do
   Orchestrator MCP **transport** — the cc-plugin request-plumbing a live
   `claude` orchestrator reaches its 7 management tools through.
 
-  ## Transport, NOT operations (decomposition spec §3.4 / O-4)
+  ## Pure transport, ZERO authority (transport #53 Decision C)
 
-  This module is the cc plugin's MCP TRANSPORT only. It does THREE things:
+  This module is the cc plugin's MCP TRANSPORT only. It does THREE things and
+  holds NO capabilities:
 
   1. **`tools/list` schema** — `tool_schemas/0` returns the MCP
      `tools/list`-shaped descriptor for the 9 tools
-     (`Ezagent.Orchestrator.McpServer.ToolCatalog`). Pure transport wire
-     format.
-  2. **`tools/call` decode + forward** — `handle_tool_call/3` DECODES the
-     wire `{tool, arguments}`, then FORWARDS it via
-     `Ezagent.Invocation.dispatch` to the SESSION-domain action
-     `session://…?action=orchestrate.<tool>`
-     (`Ezagent.Behavior.OrchestratorTools`). It carries ONLY the
-     orchestrator's caller URI — **NO capability authority crosses the
-     plugin boundary**. The session action reconstructs the orchestrator's
-     4 delegated caps SESSION-side and runs the op (O-4). This is a runtime
-     dispatch edge (cc → session), the same shape as the cc `reply` tool
-     dispatching `session.send`; NOT a compile dependency.
-  3. **Result encode** — maps the dispatched action's raw
-     `{:ok, value}` / `{:error, reason}` result to the MCP-shaped
-     success / structured-tool-error map the orchestrator LLM sees.
+     (`Ezagent.Orchestrator.McpServer.ToolCatalog`). Pure wire format.
+  2. **`tools/call` decode → look up → call → encode** — `handle_tool_call/3`
+     DECODES the wire `{tool, arguments}`, LOOKS UP the per-orchestrator
+     `Ezagent.Session.SessionManager` GenServer (in the session domain) BY
+     ORCHESTRATOR URI through its `Registry`, `GenServer.call`s it a bare
+     `{:run_tool, tool, arguments, bridge_token}` tuple, and ENCODES the raw
+     result into the MCP shape. The **bridge token is the orchestrator's
+     connection credential** — the cc socket authenticated the WS with it and
+     forwards it so SessionManager can VERIFY it (the unforgeable authz gate,
+     Decision C §2 step 0). cc carries NO caps.
+  3. **Result encode** — maps the SessionManager's raw `{:ok, value}` /
+     `{:error, reason}` to the MCP success / structured-tool-error map.
 
-  The session-mutating OPERATIONS (`Ezagent.Orchestrator.Tools` + the
-  `Ezagent.Orchestrator.ToolRunner` value-form core) live in
-  `domain.session` (`ezagent_domain_instance_message`) — they MUTATE
-  session/routing state. This module holds ZERO operation logic and NEVER
-  calls `Ezagent.Orchestrator.Tools` directly; it dispatches.
+  ## No compile dependency on the session domain (Decision C §5)
 
-  ## The bound context — orchestrator URI + its session URI
+  cc's `mix.exs` keeps `ezagent_domain_instance_message` as `only: :test`, so
+  this prod transport MUST reach `SessionManager` WITHOUT aliasing/importing it.
+  It builds the Registry `:via` tuple from the orchestrator URI STRING + the
+  session-domain Registry NAME (a plain atom) and `GenServer.call`s a bare
+  tuple. No `alias Ezagent.Session.SessionManager`, no struct of an im module.
+  This is a runtime edge (the same shape as the cc `reply` tool dispatching
+  `session.send`), NOT a compile edge.
 
-  `%McpServer{}` binds only the routing context the transport needs to
-  ADDRESS the dispatch: the calling orchestrator's URI (→ `ctx.caller`) and
-  its session URI (→ the dispatch target). It carries NO caps, owner, or
-  parent-template — those are session-domain authority/context the session
-  action reconstructs. The context is bound ESR-side, never trusted from
-  the wire.
+  ## The bound context — orchestrator URI + its bridge token
+
+  `%McpServer{}` binds the orchestrator's URI (the Registry key) and its bridge
+  token (the connection credential to forward). Both are resolved ESR-side from
+  the token-authenticated agent URI + the cc socket's verified connection,
+  never trusted from a `tools/call` payload.
 
   ## How a live `claude` orchestrator reaches it
 
-  A `claude` agent talks to MCP servers listed in its `--mcp-config`. The
-  cc-orchestrator AgentTemplate's `operator_mcp_config_path` points at a
-  config whose stdio command runs `priv/orchestrator_bridge.py`, which:
-
-  - presents `tool_schemas/0` on `tools/list`;
-  - on `tools/call`, forwards `{tool, arguments}` to the orchestrator's
-    ESR-side `McpChannel` over the existing WebSocket;
-  - the ESR side runs `handle_tool_call/3` against THIS server's bound
-    context (orchestrator URI + session URI) and returns the structured
-    MCP result.
-
-  The bound context is resolved ESR-side from the token-authenticated agent
-  URI (`from_orchestrator_uri/1`), never from the wire.
+  A `claude` agent talks to MCP servers in its `--mcp-config`. The
+  cc-orchestrator AgentTemplate's MCP config runs `priv/orchestrator_bridge.py`,
+  which on `tools/call` forwards `{tool, arguments}` over the WS to the ESR-side
+  `McpChannel`; the Channel runs `handle_tool_call/3` against THIS server's
+  bound context (orchestrator URI + bridge token, both set at join from the
+  token-authenticated socket).
   """
 
   use GenServer
@@ -62,14 +55,20 @@ defmodule Ezagent.Orchestrator.McpServer do
   require Logger
 
   alias Ezagent.Orchestrator.McpServer.ToolCatalog
-  alias Ezagent.Orchestrator.ToolRunner
 
-  @enforce_keys [:orchestrator_uri, :session_uri]
-  defstruct [:orchestrator_uri, :session_uri]
+  # The session-domain Registry the per-orchestrator `SessionManager`
+  # GenServers register under (keyed by orchestrator URI string). Named here as
+  # a bare atom — NOT an `alias` of the im module — so cc reaches SessionManager
+  # by URI without a prod compile dependency on `ezagent_domain_instance_message`
+  # (Decision C §5; cc deps im `only: :test`).
+  @session_manager_registry Ezagent.Session.SessionManagerRegistry
+
+  @enforce_keys [:orchestrator_uri, :bridge_token]
+  defstruct [:orchestrator_uri, :bridge_token]
 
   @type t :: %__MODULE__{
           orchestrator_uri: URI.t(),
-          session_uri: URI.t()
+          bridge_token: String.t()
         }
 
   # --- construction ------------------------------------------------------
@@ -78,55 +77,72 @@ defmodule Ezagent.Orchestrator.McpServer do
   Build the bound transport context (value form).
 
   Required opts:
-  - `:orchestrator_uri` — `%URI{}` of the orchestrator agent (→ `ctx.caller`)
-  - `:session_uri` — `%URI{}` of the orchestrator's session (the dispatch
-    target's instance)
+  - `:orchestrator_uri` — `%URI{}` of the orchestrator agent (the Registry key)
+  - `:bridge_token` — the orchestrator's connection credential (forwarded to
+    SessionManager for verification; the cc socket authenticated the WS with it)
 
-  No caps / owner / parent-template are bound — the session action
-  reconstructs the orchestrator's delegated caps + template context
-  session-side (O-4).
+  No caps / session / workspace are bound — SessionManager (session domain)
+  verifies the token, reconstructs the orchestrator's caps, and runs the op.
   """
   @spec new(keyword()) :: {:ok, t()} | {:error, term()}
   def new(opts) do
     with {:ok, orchestrator_uri} <- fetch_uri(opts, :orchestrator_uri),
-         {:ok, session_uri} <- fetch_uri(opts, :session_uri) do
-      {:ok, %__MODULE__{orchestrator_uri: orchestrator_uri, session_uri: session_uri}}
+         {:ok, bridge_token} <- fetch_token(opts, :bridge_token) do
+      {:ok, %__MODULE__{orchestrator_uri: orchestrator_uri, bridge_token: bridge_token}}
     end
   end
 
   @doc """
-  Build the bound transport context for `orchestrator_uri` ALONE — the
-  entry point the orchestrator MCP bridge's Channel
-  (`Ezagent.Orchestrator.McpChannel`) uses.
+  Build the bound transport context for `orchestrator_uri` + its
+  `bridge_token` — the entry point the orchestrator MCP bridge's Channel
+  (`Ezagent.Orchestrator.McpChannel`) uses on join.
 
-  A `claude`-launched bridge can only present the orchestrator's agent URI
-  (token-authenticated by `Ezagent.Orchestrator.McpSocket`). It cannot —
-  and must not — supply the session URI: this function resolves it
-  ESR-side via `Ezagent.Orchestrator.McpRegistry.lookup/1` (the binding the
-  Generator registered), lazily REBUILDING from the durable Session
-  snapshot on an ETS miss (Task #110 read-through cache; survives a phx
-  restart that emptied ETS).
-
-  Returns `{:error, :orchestrator_not_registered}` when no durable Session
-  snapshot maps back to this orchestrator URI (a valid agent URI that is
-  not — and never was — a registered orchestrator → fail-closed).
+  Fails closed (`{:error, :orchestrator_not_registered}`) when the agent is not
+  a registered orchestrator — the readiness/registration gate is preserved: the
+  bridge Channel only completes the join for a real orchestrator (one with an
+  `Ezagent.Orchestrator.McpRegistry` row, lazily rebuilt from the durable
+  Session snapshot on an ETS miss, Task #110).
   """
-  @spec from_orchestrator_uri(URI.t()) :: {:ok, t()} | {:error, term()}
-  def from_orchestrator_uri(%URI{} = orchestrator_uri) do
-    case Ezagent.Orchestrator.McpRegistry.lookup(orchestrator_uri) do
-      {:ok, ctx} ->
-        new(orchestrator_uri: orchestrator_uri, session_uri: ctx.session_uri)
+  @spec from_orchestrator_uri(URI.t(), String.t()) :: {:ok, t()} | {:error, term()}
+  def from_orchestrator_uri(%URI{} = orchestrator_uri, bridge_token)
+      when is_binary(bridge_token) do
+    case ensure_registered(orchestrator_uri) do
+      :ok -> new(orchestrator_uri: orchestrator_uri, bridge_token: bridge_token)
+      {:error, _} = err -> err
+    end
+  end
 
-      :error ->
-        rebuild_from_durable(orchestrator_uri)
+  @doc """
+  Readiness check — is `orchestrator_uri` a registered orchestrator?
+
+  Used by the cc readiness adapter (`ready?/1`). Returns `{:ok, :registered}`
+  or `{:error, :orchestrator_not_registered}`. Resolves the registration via
+  the `McpRegistry` read-through cache (durable-snapshot rebuild on ETS miss).
+  """
+  @spec from_orchestrator_uri(URI.t()) :: {:ok, :registered} | {:error, term()}
+  def from_orchestrator_uri(%URI{} = orchestrator_uri) do
+    case ensure_registered(orchestrator_uri) do
+      :ok -> {:ok, :registered}
+      {:error, _} = err -> err
+    end
+  end
+
+  # The orchestrator is registered iff McpRegistry has its row OR the durable
+  # Session snapshot can rebuild it (Task #110 read-through cache). This is the
+  # SAME fail-closed gate the join used pre-Decision-C; only the dispatch that
+  # followed it moved to SessionManager.
+  defp ensure_registered(%URI{} = orchestrator_uri) do
+    case Ezagent.Orchestrator.McpRegistry.lookup(orchestrator_uri) do
+      {:ok, _ctx} -> :ok
+      :error -> rebuild_from_durable(orchestrator_uri)
     end
   end
 
   # ETS MISS path: resolve the orchestrator's session URI from the durable
-  # `kind_snapshots` rows, fill the cache, and bind. Reads the PERSISTED
-  # snapshot (not the live Session Kind) deliberately — the bridge may join
-  # before the Session has cold-spawned, and the snapshot survives the
-  # restart that emptied ETS.
+  # `kind_snapshots` rows + cache-fill the transport registry, then confirm.
+  # Reads the PERSISTED snapshot (not the live Session Kind) deliberately — the
+  # bridge may join before the Session has cold-spawned, and the snapshot
+  # survives the restart that emptied ETS.
   defp rebuild_from_durable(%URI{} = orchestrator_uri) do
     with {:ok, session_uri, workspace_uri} <- resolve_session(orchestrator_uri),
          {:ok, chat_slice} <- load_chat_slice(session_uri),
@@ -134,9 +150,6 @@ defmodule Ezagent.Orchestrator.McpServer do
       owner_uri = Map.get(chat_slice, :owner_uri)
       parent_template_uri = Map.get(wc, :session_template_uri)
 
-      # Cache-fill the transport registry. The row still carries the full
-      # session/workspace/owner/parent context (the readiness/register API
-      # is unchanged); the transport only READS `session_uri` from it.
       _ =
         Ezagent.Orchestrator.McpRegistry.register(orchestrator_uri,
           session_uri: session_uri,
@@ -145,15 +158,12 @@ defmodule Ezagent.Orchestrator.McpServer do
           parent_template_uri: parent_template_uri
         )
 
-      new(orchestrator_uri: orchestrator_uri, session_uri: session_uri)
+      :ok
     else
       _ -> {:error, :orchestrator_not_registered}
     end
   end
 
-  # Recover (session_uri, workspace_uri) from the orchestrator URI by
-  # enumerating durable `session`-type snapshots in the workspace and
-  # matching the one whose stored orchestrator URI equals the target.
   defp resolve_session(%URI{} = orchestrator_uri) do
     with %URI{} = workspace_uri <- workspace_of_orchestrator(orchestrator_uri),
          %URI{} = session_uri <- find_session_for_orchestrator(orchestrator_uri, workspace_uri) do
@@ -203,9 +213,6 @@ defmodule Ezagent.Orchestrator.McpServer do
     end
   end
 
-  # Load the Session's durable `:chat` slice from its persisted snapshot,
-  # routed through the canonical `Ezagent.Kind.normalize_slice_view/1`
-  # chokepoint (handles the Lifecycle two-container shape).
   defp load_chat_slice(%URI{} = session_uri) do
     case Ezagent.Ecto.KindSnapshot.get(URI.to_string(session_uri)) do
       %Ezagent.Ecto.KindSnapshot{} = row ->
@@ -225,8 +232,6 @@ defmodule Ezagent.Orchestrator.McpServer do
     end
   end
 
-  # A session HAS an orchestrator iff its durable working copy carries an
-  # `:orchestrator_template_uri`. No orchestrator → fail-closed.
   defp orchestrator_working_copy(chat_slice) do
     wc = Map.get(chat_slice, :template_working_copy, %{})
 
@@ -256,6 +261,13 @@ defmodule Ezagent.Orchestrator.McpServer do
     end
   end
 
+  defp fetch_token(opts, key) do
+    case Keyword.get(opts, key) do
+      s when is_binary(s) and s != "" -> {:ok, s}
+      _ -> {:error, {:missing_opt, key}}
+    end
+  end
+
   @doc "The MCP `tools/list`-shaped descriptor for all orchestrator tools."
   @spec tool_schemas() :: [map()]
   defdelegate tool_schemas(), to: ToolCatalog
@@ -264,15 +276,15 @@ defmodule Ezagent.Orchestrator.McpServer do
   @spec tool_names() :: [String.t()]
   defdelegate tool_names(), to: ToolCatalog
 
-  # --- tools/call: decode → dispatch → encode (value form) ---------------
+  # --- tools/call: decode → lookup → call → encode (value form) ----------
 
   @doc """
   Execute an MCP `tools/call` against the bound transport context.
 
-  DECODES the `tool` name + `arguments`, FORWARDS via
-  `Ezagent.Invocation.dispatch` to the session action
-  `session://…?action=orchestrate.<tool>` carrying ONLY the orchestrator's
-  caller URI (NO caps), and ENCODES the dispatched result to the MCP shape.
+  DECODES the `tool` name + `arguments`, LOOKS UP the per-orchestrator
+  `SessionManager` by orchestrator URI (Decision C §5 — by URI, no im import),
+  `GenServer.call`s `{:run_tool, tool, arguments, bridge_token}`, and ENCODES
+  the raw result to the MCP shape.
 
   Returns an MCP-shaped result map:
 
@@ -283,54 +295,36 @@ defmodule Ezagent.Orchestrator.McpServer do
   """
   @spec handle_tool_call(t(), String.t() | atom(), map()) :: map()
   def handle_tool_call(%__MODULE__{} = ctx, tool, arguments) when is_map(arguments) do
-    case ToolRunner.normalize_tool(tool) do
-      nil ->
-        mcp_error(:unknown_tool, "Unknown tool: #{inspect(tool)}")
-
-      tool_name ->
-        ctx
-        |> dispatch_tool(tool_name, arguments)
-        |> to_mcp_result()
-    end
+    ctx
+    |> call_session_manager(tool, arguments)
+    |> to_mcp_result()
   end
 
   def handle_tool_call(%__MODULE__{} = ctx, tool, _arguments) do
     handle_tool_call(ctx, tool, %{})
   end
 
-  # Forward the decoded tools/call into the session domain. The dispatch
-  # carries `ctx.caller = orchestrator_uri` and `ctx.caps = MapSet.new()` —
-  # NO ambient / plugin-minted authority. The session action
-  # (`Ezagent.Behavior.OrchestratorTools`) reconstructs the orchestrator's
-  # delegated caps session-side and runs the op (O-4). Returns the raw
-  # `{:ok, value}` / `{:error, reason}` the session action produced (the
-  # action result), or a dispatch-level `{:error, _}` (transport failure).
-  defp dispatch_tool(%__MODULE__{} = ctx, tool_name, arguments) do
-    target = Ezagent.URI.with_action(ctx.session_uri, :orchestrate, tool_name)
+  # Look the SessionManager up by orchestrator URI in the session-domain
+  # Registry (a runtime edge — no compile dep on the im module) and call it a
+  # bare `{:run_tool, …}` tuple carrying the tool, args, and the bridge token
+  # (the connection credential SessionManager verifies). NO caps cross this
+  # hop. Returns the SessionManager's raw result, or a transport-level error
+  # when no SessionManager is running for the orchestrator.
+  defp call_session_manager(%__MODULE__{} = ctx, tool, arguments) do
+    key = URI.to_string(ctx.orchestrator_uri)
 
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: target,
-      mode: :call,
-      args: %{arguments: arguments},
-      ctx: %{
-        caller: ctx.orchestrator_uri,
-        # O-4 — NO authority crosses the plugin boundary. The session
-        # action reconstructs the orchestrator's delegated caps.
-        caps: MapSet.new(),
-        reply: {:caller_inbox, self()}
-      }
-    })
+    case Registry.lookup(@session_manager_registry, key) do
+      [{pid, _}] ->
+        GenServer.call(pid, {:run_tool, tool, arguments, ctx.bridge_token})
+
+      [] ->
+        {:error, :orchestrator_context_unavailable}
+    end
   end
 
   # --- result mapping (transport encode) ---------------------------------
 
-  # The session action returns its raw tool result AS the dispatch result
-  # (`{:ok, {:ok, value}}` / `{:ok, {:error, reason}}`); a dispatch-level
-  # failure (unroutable / not-ready / etc.) returns a bare `{:error, _}`.
-  defp to_mcp_result({:ok, {:ok, value}}), do: success_result(value)
-  defp to_mcp_result({:ok, {:error, reason}}), do: tool_error_result(reason)
-  defp to_mcp_result({:ok, :ok}), do: success_result(:ok)
-  defp to_mcp_result({:ok, other}), do: success_result(other)
+  defp to_mcp_result({:ok, value}), do: success_result(value)
   defp to_mcp_result(:ok), do: success_result(:ok)
   defp to_mcp_result({:error, reason}), do: tool_error_result(reason)
   defp to_mcp_result(other), do: success_result(other)
@@ -356,7 +350,7 @@ defmodule Ezagent.Orchestrator.McpServer do
     }
   end
 
-  # Map a tool / dispatch error reason to a structured MCP tool error.
+  # Map a tool / transport error reason to a structured MCP tool error.
   defp error_to_mcp(:unauthorized),
     do: {:unauthorized, "Not authorized — you lack the capability for this operation."}
 
@@ -389,6 +383,9 @@ defmodule Ezagent.Orchestrator.McpServer do
     do:
       {:role_name_taken,
        "role_name #{inspect(role_name)} is already held by another member in this session."}
+
+  defp error_to_mcp({:unknown_tool, tool}),
+    do: {:unknown_tool, "Unknown tool: #{inspect(tool)}"}
 
   defp error_to_mcp({:missing_opt, key}),
     do: {:missing_context, "Missing orchestrator context: #{key}"}
@@ -430,7 +427,7 @@ defmodule Ezagent.Orchestrator.McpServer do
 
   defp stringify(other), do: other
 
-  # --- GenServer (process form) ------------------------------------------
+  # --- GenServer (process form, used by the value-form tool_call tests) --
 
   @doc """
   Start the orchestrator MCP transport as a process bound to one
