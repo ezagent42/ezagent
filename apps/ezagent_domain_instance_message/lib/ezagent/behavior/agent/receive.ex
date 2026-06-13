@@ -111,20 +111,54 @@ defmodule Ezagent.Behavior.Agent.Receive do
       is never mistaken for a sync result.
   """
   def handle_receive(%{message: %Message{} = msg}, ctx) do
-    # AgentBridge PR-D / PR-6: keep receive flavor-neutral. Payload build +
-    # self-healing bridge delivery live in `Session.Delivery` (the shared
-    # helper). The CLASS-TAGGED delivery result decides whether we re-dispatch.
-    case Delivery.deliver_agent_receive(msg, ctx) do
-      :ok ->
-        # :subprocess_ws — async reply through the bridge; nothing to do.
-        {:ok, %{}, []}
+    if self_message?(msg, ctx) do
+      # codex P2 (PR-6) — loop guard. A routing rule targeting a curl agent by
+      # LITERAL URI (not a magic token) skips the magic-token sender exclusion,
+      # so the agent's OWN `session.send` reply gets delivered back to itself.
+      # Without this guard, `agent.receive` would forward that self-message to
+      # the `:in_process_sync` adapter → the curl agent calls the upstream LLM
+      # API on its OWN reply → infinite loop. The pre-fold
+      # `CurlAgent.handle_receive/2` ignored `msg.sender == self_uri`; restore
+      # that here at the flavor-blind seam (it is correct for EVERY flavor — an
+      # agent never re-processes its own outbound message).
+      {:ok, %{ignored: :self_message}, []}
+    else
+      # AgentBridge PR-D / PR-6: keep receive flavor-neutral. Payload build +
+      # self-healing bridge delivery live in `Session.Delivery` (the shared
+      # helper). The CLASS-TAGGED delivery result decides whether we re-dispatch.
+      case Delivery.deliver_agent_receive(msg, ctx) do
+        :ok ->
+          # :subprocess_ws — async reply through the bridge; nothing to do.
+          {:ok, %{}, []}
 
-      {:sync, sync_result} ->
-        # :in_process_sync — re-dispatch the result into the flavor's
-        # :sync_result Behavior to persist + reply.
-        {:ok, %{}, [sync_result_effect(msg, ctx, sync_result)]}
+        {:sync, sync_result} ->
+          # :in_process_sync — re-dispatch the result into the flavor's
+          # :sync_result Behavior to persist + reply.
+          {:ok, %{}, [sync_result_effect(msg, ctx, sync_result)]}
+      end
     end
   end
+
+  # A message whose sender is THIS agent's own URI (instance-equal). Compared
+  # on `Ezagent.URI.instance/1` so a literal-URI rule's echo matches regardless
+  # of action/query-string differences.
+  defp self_message?(%Message{sender: sender}, ctx) do
+    case ctx[:self_uri] do
+      %URI{} = self_uri -> same_instance?(sender, self_uri)
+      _ -> false
+    end
+  end
+
+  defp same_instance?(%URI{} = a, %URI{} = b),
+    do: Ezagent.URI.instance(a) == Ezagent.URI.instance(b)
+
+  defp same_instance?(a, %URI{} = b) when is_binary(a) and a != "" do
+    Ezagent.URI.instance(Ezagent.URI.new!(a)) == Ezagent.URI.instance(b)
+  rescue
+    ArgumentError -> false
+  end
+
+  defp same_instance?(_, _), do: false
 
   # Build the `{:dispatch, %Cmd{}}` that hands the `:in_process_sync`
   # delivery result to the agent's own `:sync_result` action. Runs under
