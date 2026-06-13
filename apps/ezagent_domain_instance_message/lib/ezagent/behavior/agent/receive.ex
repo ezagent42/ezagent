@@ -72,7 +72,7 @@ defmodule Ezagent.Behavior.Agent.Receive do
 
   require Logger
 
-  alias Ezagent.Message
+  alias Ezagent.{Cmd, Message}
   alias Ezagent.Behavior.Session.Delivery
 
   action(:receive,
@@ -91,14 +91,65 @@ defmodule Ezagent.Behavior.Agent.Receive do
   `Ezagent.Behavior.Session.handle_receive/2`).
 
   Builds the flavor-neutral payload and pushes it through AgentBridge
-  (self-healing a vanished bridge); a same-process side effect. The
-  Agent Kind has no receive slice, so this returns `{:ok, %{}, []}`.
+  (self-healing a vanished bridge); a same-process side effect.
+
+  ## Two transport classes — one flavor-blind handler
+
+    * `:subprocess_ws` (cc / codex) → `deliver` returns `:ok`; the agent's
+      reply is ASYNC (bridge → `session.send`). The handler emits NO
+      effects (the Agent Kind has no receive slice).
+
+    * `:in_process_sync` (curl, PR-6 §3.5 / §9 tension 3) → `deliver`
+      returns `{:sync, result}` SYNCHRONOUSLY (`result` is the adapter's
+      `{:ok, _}` / `{:error, _}`). The handler re-dispatches that result to
+      the SAME agent URI's `:sync_result` action via a `{:dispatch, %Cmd{}}`
+      effect, so the flavor's STATE Behavior (curl) persists the conversation
+      + replies. The branch is on the `{:sync, _}` CLASS TAG, not the flavor
+      name — `agent.receive` stays flavor-blind (any future
+      `:in_process_sync` flavor whose Behavior owns a `:sync_result` action
+      gets the same treatment), and a `:subprocess_ws` `{:error, :no_bridge}`
+      is never mistaken for a sync result.
   """
   def handle_receive(%{message: %Message{} = msg}, ctx) do
-    # AgentBridge PR-D: keep receive flavor-neutral. Payload build +
+    # AgentBridge PR-D / PR-6: keep receive flavor-neutral. Payload build +
     # self-healing bridge delivery live in `Session.Delivery` (the shared
-    # helper) — same-process side-effect, the handler emits no effects.
-    _ = Delivery.deliver_agent_receive(msg, ctx)
-    {:ok, %{}, []}
+    # helper). The CLASS-TAGGED delivery result decides whether we re-dispatch.
+    case Delivery.deliver_agent_receive(msg, ctx) do
+      :ok ->
+        # :subprocess_ws — async reply through the bridge; nothing to do.
+        {:ok, %{}, []}
+
+      {:sync, sync_result} ->
+        # :in_process_sync — re-dispatch the result into the flavor's
+        # :sync_result Behavior to persist + reply.
+        {:ok, %{}, [sync_result_effect(msg, ctx, sync_result)]}
+    end
+  end
+
+  # Build the `{:dispatch, %Cmd{}}` that hands the `:in_process_sync`
+  # delivery result to the agent's own `:sync_result` action. Runs under
+  # the `system://chat-router` principal (same as the `:receive` dispatch
+  # the result came from) so the in-process re-dispatch carries no ambient
+  # authority.
+  defp sync_result_effect(%Message{} = msg, ctx, sync_result) do
+    self_uri = ctx[:self_uri]
+    source_session = ctx[:caller]
+    user_text = Delivery.body_text(msg.body)
+
+    target = Ezagent.URI.with_action(self_uri, :sync_result, :sync_result)
+
+    cmd =
+      Cmd.new(
+        target,
+        :sync_result,
+        %{result: sync_result, source_session: source_session, user_text: user_text},
+        %{
+          caller: source_session,
+          caps: "chat-router" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
+          reply: :ignore
+        }
+      )
+
+    {:dispatch, cmd}
   end
 end

@@ -224,10 +224,24 @@ defmodule Ezagent.Behavior.Session.Delivery do
   `Ezagent.Behavior.Session.handle_receive/2`, PR-3R). Builds a
   flavor-neutral `Ezagent.AgentBridge.Payload` from the message + ctx and
   delivers it via `Ezagent.AgentBridge`, self-healing a vanished bridge.
-  Runs in the same Agent Kind process as the handler; returns `:ok`
-  (the handler emits its own `{:ok, %{}, []}`).
+  Runs in the same Agent Kind process as the handler.
+
+  Returns a CLASS-TAGGED result so the caller stays flavor-blind:
+
+    * `:subprocess_ws` flavors (cc / codex) → `:ok` REGARDLESS of the
+      delivery outcome (the agent's reply is ASYNC, back through the bridge
+      → `session.send`; a missing bridge is best-effort, already logged by
+      AgentBridge). The caller emits no further effects.
+    * `:in_process_sync` flavors (curl, PR-6) → `{:sync, result}` where
+      `result` is the adapter's `{:ok, _}` / `{:error, _}` round-trip
+      outcome. The caller (`Agent.Receive`) re-dispatches that result into
+      the flavor's `:sync_result` Behavior so the Behavior persists it (the
+      adapter is transport-only). The `{:sync, _}` tag — NOT the raw return
+      shape — is what distinguishes the two classes, so a `:subprocess_ws`
+      `{:error, :no_bridge}` is never mistaken for a sync result.
   """
-  @spec deliver_agent_receive(Message.t(), map()) :: :ok
+  @spec deliver_agent_receive(Message.t(), map()) ::
+          :ok | {:sync, {:ok, term()} | {:error, term()}}
   def deliver_agent_receive(%Message{} = msg, ctx) do
     # AgentBridge PR-D: keep chat receive flavor-neutral. The
     # bridge domain resolves the bound channel and adapter for the
@@ -254,7 +268,13 @@ defmodule Ezagent.Behavior.Session.Delivery do
     base_meta = %{
       "sender" => Ezagent.URI.stable_key(msg.sender),
       "message_id" => msg.id,
-      "session" => source_session
+      "session" => source_session,
+      # PR-6 — the recipient agent's OWN URI, so an `:in_process_sync`
+      # adapter (curl) can read the agent's persisted slices from the
+      # snapshot store to assemble its request (deadlock-safe; the adapter
+      # runs inside the agent Kind's dispatch process so a live
+      # `Kind.get_slice` self-call would deadlock).
+      "agent_uri" => agent_uri_meta(ctx)
     }
 
     meta =
@@ -286,16 +306,81 @@ defmodule Ezagent.Behavior.Session.Delivery do
     # unbound the Registry row), `deliver_ensuring/2` relaunches it
     # (snapshot-sourced, flavor-neutral) + awaits the rebind, then retries
     # once — instead of silently `:no_bridge`-dropping the routed message.
-    _ =
-      case resolve_agent_flavor_from_ctx(ctx) do
-        {:ok, flavor} ->
-          Ezagent.AgentBridge.deliver_ensuring_with_flavor(ctx[:self_uri], payload, flavor)
+    #
+    # PR-6 — the delivery is dispatched per the agent's transport class and
+    # the result is CLASS-TAGGED. `:subprocess_ws` → `:ok` (async reply, even
+    # on a best-effort drop); `:in_process_sync` → `{:sync, result}` the
+    # caller re-dispatches into the flavor's `:sync_result` Behavior.
+    #
+    # Flavor resolution: prefer the in-process ctx-sandbox flavor (no
+    # `Kind.get_slice` self-call), but FALL BACK to the durable flavor query
+    # `AgentBridge.deliver` itself uses (`AgentFlavorAttributes` → sandbox).
+    # The curl flavor lives in `AgentFlavorAttributes` (O-2, a stored slice
+    # field), NOT the sandbox template_class, so the ctx-sandbox path returns
+    # `:none` for curl — without this fallback the in-process-sync result
+    # would be silently discarded down the `:subprocess_ws` async branch.
+    flavor = resolve_delivery_flavor(ctx)
 
-        :none ->
-          Ezagent.AgentBridge.deliver_ensuring(ctx[:self_uri], payload)
-      end
+    if in_process_sync?(flavor) do
+      {:ok, fl} = flavor
+      {:sync, Ezagent.AgentBridge.deliver_ensuring_with_flavor(ctx[:self_uri], payload, fl)}
+    else
+      _ =
+        case flavor do
+          {:ok, fl} ->
+            Ezagent.AgentBridge.deliver_ensuring_with_flavor(ctx[:self_uri], payload, fl)
 
-    :ok
+          :none ->
+            Ezagent.AgentBridge.deliver_ensuring(ctx[:self_uri], payload)
+        end
+
+      :ok
+    end
+  end
+
+  # Resolve the delivery flavor: ctx-sandbox first (deadlock-safe in-process
+  # read), then the durable `:flavor` query (covers the curl stored flavor
+  # attribute) so the transport-class decision matches `AgentBridge.deliver`.
+  defp resolve_delivery_flavor(ctx) do
+    case resolve_agent_flavor_from_ctx(ctx) do
+      {:ok, _} = ok ->
+        ok
+
+      :none ->
+        # Read the STORED flavor attribute ONLY (an ETS lookup — deadlock-safe
+        # inside the agent's own dispatch process). NOT the full
+        # `UriQuery.resolve(:flavor, _)`, whose sandbox-slice fallback would be
+        # a `Kind.get_slice(self_uri)` self-call deadlock. The curl flavor
+        # lives in this attribute; cc/codex resolve via the ctx-sandbox path
+        # above and never reach here.
+        case Map.get(ctx, :self_uri) do
+          %URI{} = uri ->
+            case Ezagent.AgentFlavorAttributes.get(uri) do
+              {:ok, flavor} when is_binary(flavor) and flavor != "" -> {:ok, flavor}
+              _ -> :none
+            end
+
+          _ ->
+            :none
+        end
+    end
+  end
+
+  # The transport class is `:in_process_sync` ONLY when the agent's flavor
+  # resolved AND its registered adapter declares that class. A `:none` flavor
+  # or a `:subprocess_ws` adapter (or no adapter yet) is NOT sync.
+  defp in_process_sync?({:ok, flavor}) when is_binary(flavor) do
+    Ezagent.AgentBridge.AdapterRegistry.transport_class(flavor) == :in_process_sync
+  end
+
+  defp in_process_sync?(_), do: false
+
+  defp agent_uri_meta(ctx) do
+    case Map.get(ctx, :self_uri) do
+      %URI{} = u -> URI.to_string(u)
+      s when is_binary(s) -> s
+      _ -> ""
+    end
   end
 
   defp resolve_agent_flavor_from_ctx(ctx) do
