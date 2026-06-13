@@ -34,10 +34,23 @@ touch snapshot keys, as long as PR-9 keeps module namespaces stable.**
 The "renames are expensive per snapshot-key + call-site coupling" warning in the
 parent spec (§5/line 418, `chat.ex:101-110`) is about MODULE/ACTION renames
 (`chat.send → session.send`) — which already happened in the transport line — NOT
-the app-dir rename. **Recommendation: PR-9 keeps every `Ezagent.*` module name
-unchanged; it only moves files between apps + renames apps + fixes deps.** Any
-module-namespace rename is explicitly OUT of PR-9 scope (separate, snapshot-aware
-PR if ever wanted).
+the app-dir rename. **Recommendation: PR-9 keeps every module NAME unchanged; it
+only moves files between apps + renames the app atom + fixes deps.** Any
+module-namespace rename is explicitly OUT of PR-9 scope (separate, persisted-state-
+aware PR if ever wanted).
+
+> **EXCEPTION — persisted app-namespaced atoms (codex 2026-06-14, HIGH).** The
+> "module names are app-independent" safety holds only because module ATOMS don't
+> change when files move. But some persisted data stores the module atom as a
+> STRING, and some of those modules are named after the app, not `Ezagent.*`:
+> `routing_rules.table_name` persists `Atom.to_string(table_name_atom)` where the
+> atom is `EzagentDomainInstanceMessage.Routing.MentionRouting`
+> (`rule_store.ex:6,18,52-56`; `EzagentDomainInstanceMessage.DefaultRules` too,
+> `:287`). If PR-9 renames the `EzagentDomainInstanceMessage.*` MODULE namespace
+> (tempting alongside the app rename), existing `routing_rules` rows stop hydrating
+> on restart → mention/default routing silently drops, even though `kind_snapshots`
+> load fine. So the freeze must cover EVERY persisted atom/string namespace, not
+> just `Ezagent.*` — see D1.
 
 ## 3. Target app structure
 
@@ -62,6 +75,16 @@ has no `McpChannel`/`orchestrator_bridge` symbol; the compile dep graph is acycl
   release app list. Snapshot-safe per §2 (module names unchanged). Alternative: keep
   the app dir name to avoid churn (rejected — leaves the headline domain misnamed
   forever; the churn is one-time + mechanical).
+  **Sub-decision D1a (codex HIGH): if the app is renamed, do the
+  `EzagentDomainInstanceMessage.*` MODULE atoms get renamed too?** Recommended NO —
+  FREEZE them (and every persisted atom/string namespace). `routing_rules.table_name`
+  persists `EzagentDomainInstanceMessage.Routing.MentionRouting` / `.DefaultRules`
+  as strings (§2 exception); renaming those modules breaks routing-rule hydration
+  on restart. A module-namespace rename, if ever wanted, is a SEPARATE
+  persisted-state-aware PR that ALSO migrates `routing_rules.table_name` (rewrite
+  old→new + dual-load window) — never folded into PR-9. Verification: dump
+  `routing_rules` keys before AND after a cold restart and assert mention/default
+  routing still hydrates (not only the kind_snapshots round-trip).
 
 - **D2 — Is `domain.im` a NEW umbrella app, or just the existing `ezagent_plugin_feishu`
   relabeled?** Recommended: KEEP `ezagent_plugin_feishu` as the im-ingestion plugin
@@ -78,10 +101,18 @@ has no `McpChannel`/`orchestrator_bridge` symbol; the compile dep graph is acycl
 
 - **D4 — One PR or per-domain split?** Recommended: SPLIT into PR-9a (extract
   `domain.agent` — move Entity.Agent + agent receive out of the im-message app) →
-  PR-9b (app rename `instance_message → session`) → PR-9c (the acyclic arch-fitness
-  gate + im-label enforcement). Each is independently green-able; 9c is the
-  invariant that makes the split "done" (memory `feedback_completion_requires_invariant_test`).
-  Blast radius warrants the split (parent §4.1 note "PR-9 can be split per-domain").
+  PR-9b (app rename `instance_message → session`) → PR-9c (shrink to zero
+  allowlist + im-label enforcement). Blast radius warrants the split (parent §4.1
+  note "PR-9 can be split per-domain").
+  **REVISED (codex MEDIUM): the acyclic arch-fitness gate ships in PR-9a FIRST, not
+  9c.** Land the gate at the start with an explicit allowlist of the cross-domain
+  references that exist today; every sub-PR (9a/9b/9c) must keep it GREEN while
+  SHRINKING the allowlist, reaching empty at 9c. Deferring the only enforcement
+  mechanism to the cleanup PR would let a forbidden dependency survive 9a/9b
+  (and the repo already has many hardcoded cross-domain refs + path allowlists,
+  so that risk is real). The gate-with-shrinking-allowlist IS the moving
+  completion invariant (memory `feedback_completion_requires_invariant_test`),
+  enforced continuously rather than asserted once at the end.
 
 ## 5. Risks + mitigations
 
@@ -128,8 +159,12 @@ snapshot drift from the move).
 
 ## 7. Recommendation summary
 
-Proceed PR-9 as **3 sub-PRs (9a extract agent · 9b rename app · 9c acyclic gate)**,
-**module names frozen**, **feishu stays the im plugin (no new im app)**,
-**agent_bridge stays a separate leaf**. This keeps PR-9 snapshot-safe and turns the
-"scary last piece" into bounded, independently-verifiable umbrella surgery. Awaiting
-Allen on D1–D4.
+Proceed PR-9 as **3 sub-PRs (9a extract agent + land the acyclic gate
+allowlisted · 9b rename app atom · 9c shrink allowlist to zero)**, **ALL module
+names frozen — including the persisted `EzagentDomainInstanceMessage.*` atoms
+(routing_rules), not just `Ezagent.*`**, **feishu stays the im plugin (no new im
+app)**, **agent_bridge stays a separate leaf**, **arch-fitness gate enforced from
+9a with a shrinking allowlist**. This keeps PR-9 persisted-state-safe (kind_snapshots
+AND routing_rules) and turns the "scary last piece" into bounded, continuously-gated
+umbrella surgery. Awaiting Allen on D1–D4 (+ D1a: freeze the app-namespaced module
+atoms vs. a separate routing_rules-migrating rename PR).
