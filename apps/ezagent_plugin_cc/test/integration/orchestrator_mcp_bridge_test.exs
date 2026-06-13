@@ -153,7 +153,10 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
   end
 
   defp spawn_session do
-    session_uri = Ezagent.URI.new!("session://generic/team-alpha/orch-bridge-#{uniq()}")
+    # SPEC v3 per-tenant authority is workspace-first: session://<ws>/<class>/<name>.
+    # (The orchestrator agent is in workspace `team-alpha`; the session MUST
+    # share it or the session-action dispatch trips workspace isolation — O-4.)
+    session_uri = Ezagent.URI.session("team-alpha", "generic", "orch-bridge-#{uniq()}")
 
     {:ok, _pid} =
       Ezagent.Kind.spawn(Session, %{
@@ -269,6 +272,18 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
           workspace_uri: @workspace_uri,
           owner_uri: User.admin_uri()
         )
+
+      # PR-8 (O-4): the session-side `OrchestratorTools` action authorizes
+      # the forwarded `tools/call` by the STRUCTURAL check
+      # `ctx.caller == working_copy.orchestrator_uri`. Wire that durable
+      # field exactly as create's step-4 materialization does, so this end-
+      # to-end wire test exercises the real session-side gate + reconstruction.
+      {:ok, _} =
+        Ezagent.Behavior.Session.ConfigActions.system_set_working_copy(session_uri, %{
+          orchestrator_uri: orchestrator_uri,
+          orchestrator_template_uri:
+            Ezagent.URI.new!("template://system/agent/cc-orchestrator")
+        })
 
       # Join the Channel exactly as the bridge does: the Socket has
       # already token-authenticated `agent_uri`; the topic is keyed to it.
@@ -396,6 +411,16 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
           workspace_uri: @workspace_uri,
           owner_uri: User.admin_uri()
         )
+
+      # PR-8 (O-4): wire the durable orchestrator_uri so the session-side
+      # `OrchestratorTools` action's structural caller-is-our-orchestrator
+      # gate passes for the forwarded tools/call.
+      {:ok, _} =
+        Ezagent.Behavior.Session.ConfigActions.system_set_working_copy(session_uri, %{
+          orchestrator_uri: orchestrator_uri,
+          orchestrator_template_uri:
+            Ezagent.URI.new!("template://system/agent/cc-orchestrator")
+        })
 
       # The token `McpSocket.connect/3` will verify — minted by the same
       # TokenStore the cc Template Class uses for a cc-flavored agent.

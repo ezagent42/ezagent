@@ -33,7 +33,6 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
 
   alias Ezagent.{AgentFlavorRegistry, AgentLineage, Behavior, Capability, KindRegistry}
   alias Ezagent.Entity.{Agent, Session, User}
-  alias Ezagent.Orchestrator.McpServer
 
   @moduletag scenario: "33-full-star-orchestrator-all-flavors"
 
@@ -191,16 +190,28 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
     orchestrator_uri
   end
 
+  # PR-8 (transport #53): the tool OPERATIONS live in the session domain;
+  # drive them through the value-form core `Ezagent.Orchestrator.ToolRunner`
+  # with the orchestrator's caller `opts` (the exact context the session-side
+  # `OrchestratorTools` action reconstructs). The cc `McpServer` is a thin
+  # transport that dispatches into this layer.
   defp mcp_server(session_uri, orchestrator_uri, caps) do
-    {:ok, ctx} =
-      McpServer.new(
-        orchestrator_uri: orchestrator_uri,
-        session_uri: session_uri,
-        workspace_uri: @workspace_uri,
-        caps: caps
-      )
+    [
+      caller: orchestrator_uri,
+      caps: caps,
+      session_uri: session_uri,
+      workspace_uri: @workspace_uri,
+      owner: orchestrator_uri,
+      parent_template_uri: nil
+    ]
+  end
 
-    ctx
+  # Run a tool through the value-form core. Returns the RAW
+  # `{:ok, _}` / `{:error, _}` result.
+  defp run_tool(opts, tool, args) when is_binary(tool) do
+    tool_atom = Ezagent.Orchestrator.ToolRunner.normalize_tool(tool)
+    refute is_nil(tool_atom), "unknown tool name in test: #{tool}"
+    Ezagent.Orchestrator.ToolRunner.run_tool(tool_atom, args, opts)
   end
 
   defp chat_slice(session_uri) do
@@ -249,13 +260,13 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
       member_uris =
         for {role_name, tmpl_uri} <- members do
           result =
-            McpServer.handle_tool_call(ctx.mcp, "add_managed_member", %{
+            run_tool(ctx.mcp, "add_managed_member", %{
               "source_agent_template_uri" => URI.to_string(tmpl_uri),
               "role_name" => role_name
             })
 
-          refute result["isError"], "add_managed_member #{role_name} failed: #{inspect(result)}"
-          member_uri = Ezagent.URI.new!(result["structuredContent"])
+          assert {:ok, %URI{} = member_uri} = result,
+                 "add_managed_member #{role_name} failed: #{inspect(result)}"
 
           assert AgentLineage.spawned_in_lineage?(member_uri, ctx.orchestrator_uri),
                  "#{role_name} member must be recorded under the orchestrator lineage (cap #2)"
@@ -286,22 +297,22 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
             {"wm-ds", ctx.templates.curl}
           ] do
         add =
-          McpServer.handle_tool_call(ctx.mcp, "add_managed_member", %{
+          run_tool(ctx.mcp, "add_managed_member", %{
             "source_agent_template_uri" => URI.to_string(tmpl_uri),
             "role_name" => role_name
           })
 
-        refute add["isError"], "add_managed_member #{role_name} failed: #{inspect(add)}"
+        assert {:ok, _} = add, "add_managed_member #{role_name} failed: #{inspect(add)}"
 
         wm =
-          McpServer.handle_tool_call(ctx.mcp, "define_rule_set_rule", %{
+          run_tool(ctx.mcp, "define_rule_set_rule", %{
             "matcher_ast" => %{"type" => "text_contains", "arg" => role_name},
             "receiver_role_name" => role_name,
             "rule_set" => "rs-#{role_name}"
           })
 
-        refute wm["isError"], "define_rule_set_rule for #{role_name} failed: #{inspect(wm)}"
-        assert is_integer(wm["structuredContent"]["id"])
+        assert {:ok, %{id: id}} = wm, "define_rule_set_rule for #{role_name} failed: #{inspect(wm)}"
+        assert is_integer(id)
       end
     end
   end

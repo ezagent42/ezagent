@@ -30,8 +30,14 @@ defmodule Ezagent.Orchestrator.SlotRetirementTest do
 
   @retired_slot_tools [:add_agent_slot, :remove_agent_slot, :update_agent_template, :write_matcher]
 
+  # PR-8 (transport #53): `tools.ex` relocated to the session domain
+  # (operations); `mcp_server.ex` stays in cc (transport). The slot-absence
+  # grep guards each in its new home.
   @tools_source File.read!(
-                  Path.join(__DIR__, "../../../lib/ezagent/orchestrator/tools.ex")
+                  Path.join(
+                    __DIR__,
+                    "../../../../ezagent_domain_instance_message/lib/ezagent/orchestrator/tools.ex"
+                  )
                 )
   @mcp_source File.read!(
                 Path.join(__DIR__, "../../../lib/ezagent/orchestrator/mcp_server.ex")

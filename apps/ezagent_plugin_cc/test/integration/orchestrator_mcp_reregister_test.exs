@@ -117,19 +117,25 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
                "durable Session snapshot on an ETS miss (pure phx restart) — " <>
                "Task #110 read-through cache"
 
+      # PR-8 (transport #53 / O-4): the cc transport struct binds only the
+      # ROUTING context it needs to ADDRESS the dispatch — the orchestrator
+      # URI (→ ctx.caller) + its session URI (the dispatch target). The full
+      # owner/parent/caps context is reconstructed SESSION-side by the
+      # `OrchestratorTools` action; the transport no longer carries it.
       assert URI.to_string(mcp.orchestrator_uri) == URI.to_string(orchestrator_uri)
       assert URI.to_string(mcp.session_uri) == URI.to_string(session_uri)
-      assert URI.to_string(mcp.workspace_uri) == URI.to_string(workspace_uri)
-      assert URI.to_string(mcp.owner_uri) == URI.to_string(owner_uri)
 
-      assert URI.to_string(mcp.parent_template_uri) == URI.to_string(session_template_uri),
-             "parent_template_uri must be recovered from the durable " <>
-               "template_working_copy.session_template_uri so update_template works"
-
-      # Cache was filled as a side-effect of the rebuild.
+      # Cache was filled as a side-effect of the rebuild — the registry row
+      # still records the FULL context (the readiness/register API is
+      # unchanged) the session action reads/reconstructs from.
       assert {:ok, ctx} = McpRegistry.lookup(orchestrator_uri)
       assert URI.to_string(ctx.session_uri) == URI.to_string(session_uri)
-      assert URI.to_string(ctx.parent_template_uri) == URI.to_string(session_template_uri)
+      assert URI.to_string(ctx.workspace_uri) == URI.to_string(workspace_uri)
+      assert URI.to_string(ctx.owner_uri) == URI.to_string(owner_uri)
+
+      assert URI.to_string(ctx.parent_template_uri) == URI.to_string(session_template_uri),
+             "parent_template_uri must be recovered from the durable " <>
+               "template_working_copy.session_template_uri so update_template works"
     end
 
     test "rebuilds from the PERSISTED TWO-CONTAINER chat slice (transients stripped) — the real regression" do
@@ -170,8 +176,12 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
                "(single-key %{state}) chat slice — the production shape"
 
       assert URI.to_string(mcp.session_uri) == URI.to_string(session_uri)
-      assert URI.to_string(mcp.owner_uri) == URI.to_string(owner_uri)
-      assert URI.to_string(mcp.parent_template_uri) == URI.to_string(session_template_uri)
+
+      # Owner + parent recovery is verified on the cache row (the session
+      # action reconstructs from it / the durable working copy).
+      assert {:ok, ctx} = McpRegistry.lookup(orchestrator_uri)
+      assert URI.to_string(ctx.owner_uri) == URI.to_string(owner_uri)
+      assert URI.to_string(ctx.parent_template_uri) == URI.to_string(session_template_uri)
     end
 
     test "concurrent rebuilds are idempotent — same single cache row, no crash" do
@@ -225,21 +235,21 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
       # tools that do not need parent_template_uri work after restart.
       assert {:ok, %McpServer{} = mcp} = McpServer.from_orchestrator_uri(orchestrator_uri)
       assert URI.to_string(mcp.session_uri) == URI.to_string(session_uri)
-      assert URI.to_string(mcp.workspace_uri) == URI.to_string(workspace_uri)
 
-      assert mcp.parent_template_uri == nil,
+      # PR-8 (O-4): parent recovery is now a SESSION-side concern; the
+      # transport's cache row carries the recovered (here: unrecoverable →
+      # nil) parent_template_uri. A legacy snapshot's parent is structurally
+      # unrecoverable (content-addressed hash is not in any durable legacy
+      # field) — it MUST be nil, never a guessed default. The session action
+      # then surfaces the loud `:missing_context` for update_template (the
+      # op-level error mapping is covered by the session-domain ops test).
+      assert {:ok, ctx} = McpRegistry.lookup(orchestrator_uri)
+      assert URI.to_string(ctx.workspace_uri) == URI.to_string(workspace_uri)
+
+      assert ctx.parent_template_uri == nil,
              "a legacy snapshot's parent_template_uri is structurally " <>
                "unrecoverable (content-addressed hash is not in any durable " <>
                "legacy field) — it MUST be nil, never a guessed default"
-
-      # update_template — the ONLY tool that requires parent_template_uri —
-      # must fail LOUDLY with a structured MCP :missing_context error, not
-      # silently succeed against a wrong/guessed parent.
-      result = McpServer.handle_tool_call(mcp, "update_template", %{})
-
-      assert result["isError"] == true
-      assert result["error"]["code"] == "missing_context"
-      assert result["error"]["message"] =~ "parent_template_uri"
     end
   end
 
