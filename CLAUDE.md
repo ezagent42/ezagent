@@ -15,6 +15,8 @@ ESR(Ezagent Session Router)— Elixir/OTP message router runtime,multi-channel �
 3. `@IMPLEMENTATION_ROADMAP.md` — 6 phase 划分 + 4 条贯穿 track
 4. `docs/phase-specs/<current-phase>/` 全部 4 文件 — SPEC / VERIFICATION / PLAN / DECISIONS
 
+操作类 how-to(如何跑 E2E / 起 disposable docker 栈 等)看 `CONTRIBUTING.md` → `docs/guide/`(操作指引的 durable 家;specs 是 point-in-time 设计、不是操作手册)。
+
 读完后,你应该能在 30 秒内回答以下问题(否则回去再读):
 - Ezagent 跟 typical Phoenix app 的两条核心差异是什么?
 - 设计原则的五个 group 是哪些?(见下方 link)
