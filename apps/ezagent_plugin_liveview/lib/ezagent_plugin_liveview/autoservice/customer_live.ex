@@ -140,8 +140,15 @@ defmodule EzagentPluginLiveview.AutoService.CustomerLive do
 
   # Chat messages and CustomerFeed deliveries both fire for the same event.
   # De-duplicate by message id so the customer doesn't see double.
+  #
+  # Defensive visibility gate (belt-and-suspenders): Chat.handle_send broadcasts
+  # {:chat_message} UNCONDITIONALLY, with no visibility filter. Operator takeover
+  # replies are gated through Turn (operator_only → settle → customer_visible),
+  # but if any path ever broadcasts a non-`customer_visible` message, render only
+  # `customer_visible` so drafts can never leak to the customer.
+  # Adapted from PR #740.
   def handle_info({:chat_message, session_uri, %Ezagent.Message{} = msg}, socket) do
-    if session_uri == socket.assigns.session_uri do
+    if session_uri == socket.assigns.session_uri and msg.visibility == :customer_visible do
       already_shown? = Enum.any?(socket.assigns.messages, &(&1.id == msg.id))
 
       if already_shown? do

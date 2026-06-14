@@ -38,11 +38,12 @@ defmodule EzagentPluginAutoservice.Roles do
 
   def bundle(:operator, %URI{scheme: "workspace"} = workspace_uri) do
     now = DateTime.utc_now()
+
     [
       grantable_session_any(:join, workspace_uri, now),
       grantable_session_any(:send, workspace_uri, now),
       grantable_session_any(:receive, workspace_uri, now)
-    ]
+    ] ++ operator_turn_caps(workspace_uri, now)
   end
 
   def bundle(:admin, %URI{scheme: "workspace"} = workspace_uri) do
@@ -102,5 +103,24 @@ defmodule EzagentPluginAutoservice.Roles do
       granted_by: @granted_by,
       granted_at: now
     }
+  end
+
+  # Operator gets Turn caps (open/compose/claim/settle) so TurnAdapter
+  # can drive the Turn lifecycle with the operator's own authority.
+  # `kind: :session` + `behavior: Ezagent.Behavior.Turn` matches the
+  # SocialwareSession Kind (type_name = :session) and Turn Behavior.
+  # Adapted from PR #740.
+  defp operator_turn_caps(%URI{} = workspace_uri, %DateTime{} = now) do
+    for action <- [:open, :compose, :claim, :settle] do
+      %Capability{
+        kind: :session,
+        behavior: Ezagent.Behavior.Turn,
+        action: action,
+        instance: :any,
+        workspace_uri: workspace_uri,
+        granted_by: @granted_by,
+        granted_at: now
+      }
+    end
   end
 end

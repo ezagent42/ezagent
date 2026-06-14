@@ -99,17 +99,26 @@ defmodule EzagentPluginCr.CrEngine do
   # ConfigStore.resolve(..., "cr:#{tid}:#{cr_id}")
   defp cr_key(tid), do: "cr:#{tid}:#{active_cr_id(tid)}"
 
+  # Atomic symlink flip via tmp + rename. Adapted from PR #740:
+  # `rm → ln_s` is NOT atomic — crash between rm and ln_s orphans `current`.
+  # `ln_s(target, tmp)` then `:file.rename(tmp, current)` is atomic on the
+  # same filesystem (rename(2)), so `current` always points to a valid dir.
   defp update_current(tid, ver) do
     current = TenantRuntime.current_release_path(tid)
     target = Path.join(TenantRuntime.release_path(tid), ver)
 
     File.mkdir_p!(target)
 
-    if File.exists?(current), do: File.rm!(current)
+    tmp = current <> ".tmp"
+    _ = File.rm_rf(tmp)
 
-    case File.ln_s(target, current) do
-      :ok -> :ok
-      {:error, reason} -> {:error, "symlink failed: #{inspect(reason)}"}
+    with :ok <- File.ln_s(target, tmp),
+         :ok <- :file.rename(tmp, current) do
+      :ok
+    else
+      {:error, reason} ->
+        _ = File.rm_rf(tmp)
+        {:error, "symlink flip failed: #{inspect(reason)}"}
     end
   end
 
