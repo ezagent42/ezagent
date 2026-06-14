@@ -508,6 +508,52 @@ defmodule Ezagent.Domain.Pty.Server do
         match: ["Is this a project you", "trust this folder"],
         send: "1\r",
         fired?: false
+      },
+      %{
+        name: :mcp_trust_dialog,
+        # claude 2.1.x shows a "New MCP server found" TRUST prompt for servers
+        # supplied via `--mcp-config`, EVEN under `--dangerously-skip-permissions`
+        # / `--permission-mode bypassPermissions` — the MCP trust gate is SEPARATE
+        # from tool-call permissions and is not suppressed by them (observed on
+        # claude 2.1.170, 2026-06-10). A headless PTY cannot answer it, so the
+        # spawn hangs here and the esr-bridge MCP never starts → the bridge never
+        # JOINs (the post-EagerBridge-refactor recurrence of the "0 JOINED" class).
+        #
+        # The esr-bridge server is FRAMEWORK-supplied + trusted (we wrote the
+        # `--mcp-config` ourselves), so confirming option 1 ("Use this MCP server")
+        # is correct. Require the `❯ 1.` SELECTION MARKER (mirrors
+        # login_method_dialog / codex review of PR #718): bare Enter confirms
+        # whatever is HIGHLIGHTED, so we only fire when option 1 is the default —
+        # never accidentally landing on "3. Continue without using this MCP server".
+        # Match the header + the marked option-1 label (avoiding "server"/"resources"
+        # which the TUI redraw fragments after ANSI-strip) so ordinary prose cannot
+        # satisfy both while the prompt stays armed all session.
+        match: [
+          "New MCP server found",
+          "❯ 1. Use this MCP server"
+        ],
+        send: "\r",
+        fired?: false
+      },
+      %{
+        name: :bypass_permissions_dialog,
+        # claude 2.1.x shows a one-time "Bypass Permissions mode" ACCEPTANCE
+        # warning the first time a fresh CLAUDE_CONFIG_DIR runs under
+        # `--permission-mode bypassPermissions` / `--dangerously-skip-permissions`
+        # ("By proceeding, you accept all responsibility…", options `1. No, exit` /
+        # `2. Yes, I accept`). It appears AFTER the MCP-trust prompt and a headless
+        # PTY cannot answer it, so the spawn hangs here (claude 2.1.170, 2026-06-10).
+        #
+        # CRUCIAL — send the EXPLICIT "2\r" (NOT bare Enter): the highlighted
+        # default is the SAFE option "1. No, exit", so a bare Enter would QUIT
+        # claude. Typing the option number jumps to + selects "2. Yes, I accept"
+        # regardless of the current highlight (same number-select form as
+        # dev_channels_dialog / trust_folder_dialog). Match the header + the
+        # option-2 label (avoiding "approval"/"commands"/"https", which the TUI
+        # redraw fragments after ANSI-strip).
+        match: ["Bypass Permissions mode", "Yes, I accept"],
+        send: "2\r",
+        fired?: false
       }
     ]
   end
