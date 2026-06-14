@@ -34,7 +34,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 export DEEPSEEK_API_KEY=sk-deepseek-...
 ```
 
-The admin user is bootstrapped at boot (`entity://user/system/admin`).
+The admin user is bootstrapped at boot (`entity://system/user/admin`).
 You'll seed the DeepSeek key on it via the admin UI in step 4 below.
 
 ## 1. Start the umbrella
@@ -85,7 +85,7 @@ shape + sandbox knobs.)
       "no markdown, no code fences. Example: input '\\int_0^1 x dx' " <>
       "→ output 'sympy.integrate(x, (x, 0, 1))'.",
     "max_history" => "5",
-    "owner_uri" => "entity://user/system/admin"
+    "owner_uri" => "entity://system/user/admin"
   }
 )
 ```

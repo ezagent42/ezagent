@@ -7,13 +7,13 @@
 ## Pre-conditions
 
 - Phx running at `http://100.64.0.27:10042`
-- Default admin user seeded: `entity://user/system/admin` with password `8bdemo`
+- Default admin user seeded: `entity://system/user/admin` with password `8bdemo`
 - Dev seed runs on first boot via `EzagentCore.Bootstrap` (see `mix ezagent.bootstrap`)
 
 ## Actors
 
 - **Caller**: anonymous browser session
-- **Target**: `entity://user/system/admin`
+- **Target**: `entity://system/user/admin`
 
 ## Steps
 
@@ -26,7 +26,7 @@
 
 ## Expected outcomes
 
-- The LV session has `assigns.current_user.uri == entity://user/system/admin`.
+- The LV session has `assigns.current_user.uri == entity://system/user/admin`.
 - The LV session has `assigns.current_user.caps` containing `admin_caps()` (5-axis `:any`).
 - A telemetry event `[:ezagent, :auth, :login_succeeded]` is emitted.
 - `users.last_login_at` is updated.

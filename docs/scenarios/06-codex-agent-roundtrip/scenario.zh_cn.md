@@ -14,7 +14,7 @@
 
 ## 角色
 
-- **调用方**：admin（`entity://user/system/admin`）
+- **调用方**：admin（`entity://system/user/admin`）
 - **目标**：codex agent `entity://agent/system/my_codex`（Kind：`Ezagent.Entity.CodexAgent`，经 PR #436）
 - **外部系统**：codex TUI 二进制；bridge_sidecar JSON-RPC over UDS WebSocket
 

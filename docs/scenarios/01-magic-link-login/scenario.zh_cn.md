@@ -9,12 +9,12 @@
 - Phx 跑在 `http://100.64.0.27:10042`
 - Mailer dev 后端捕获已发邮件（`Swoosh.Adapters.Local`）；收件箱在 `/dev/mailbox`
 - Dev 邮件传输：消息显示在 Phoenix 收件箱 UI，非真实 SMTP
-- 存在已验证邮箱的用户；默认 seed 是 admin（`entity://user/system/admin`）
+- 存在已验证邮箱的用户；默认 seed 是 admin（`entity://system/user/admin`）
 
 ## 角色
 
 - **调用方**：匿名浏览器 session
-- **目标**：`entity://user/<workspace>/<username>`（例如 `entity://user/system/admin`）
+- **目标**：`entity://user/<workspace>/<username>`（例如 `entity://system/user/admin`）
 - **外部系统**：Mailer（dev 用 Swoosh 本地适配器）
 
 ## 步骤

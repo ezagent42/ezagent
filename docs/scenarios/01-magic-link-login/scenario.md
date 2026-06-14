@@ -9,12 +9,12 @@
 - Phx running at `http://100.64.0.27:10042`
 - Mailer dev backend captures sent mail (`Swoosh.Adapters.Local`); inbox at `/dev/mailbox`
 - Email transport in dev: messages appear in the Phoenix inbox UI, not real SMTP
-- A user exists with a verified email; default seed is admin (`entity://user/system/admin`)
+- A user exists with a verified email; default seed is admin (`entity://system/user/admin`)
 
 ## Actors
 
 - **Caller**: anonymous browser session
-- **Target**: `entity://user/<workspace>/<username>` (e.g. `entity://user/system/admin`)
+- **Target**: `entity://user/<workspace>/<username>` (e.g. `entity://system/user/admin`)
 - **External systems**: Mailer (Swoosh local adapter in dev)
 
 ## Steps

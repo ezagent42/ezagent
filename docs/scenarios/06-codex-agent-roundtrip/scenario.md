@@ -14,7 +14,7 @@
 
 ## Actors
 
-- **Caller**: admin (`entity://user/system/admin`)
+- **Caller**: admin (`entity://system/user/admin`)
 - **Target**: codex agent `entity://agent/system/my_codex` (Kind: `Ezagent.Entity.CodexAgent`, via PR #436)
 - **External systems**: codex TUI binary; bridge_sidecar JSON-RPC over UDS WebSocket
 

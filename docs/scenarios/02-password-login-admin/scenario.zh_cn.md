@@ -7,13 +7,13 @@
 ## 前置条件
 
 - Phx 跑在 `http://100.64.0.27:10042`
-- 默认 admin 用户 seed：`entity://user/system/admin`，密码 `8bdemo`
+- 默认 admin 用户 seed：`entity://system/user/admin`，密码 `8bdemo`
 - Dev seed 在首次启动经 `EzagentCore.Bootstrap` 运行（见 `mix ezagent.bootstrap`）
 
 ## 角色
 
 - **调用方**：匿名浏览器 session
-- **目标**：`entity://user/system/admin`
+- **目标**：`entity://system/user/admin`
 
 ## 步骤
 
@@ -26,7 +26,7 @@
 
 ## 预期结果
 
-- LV session 的 `assigns.current_user.uri == entity://user/system/admin`。
+- LV session 的 `assigns.current_user.uri == entity://system/user/admin`。
 - LV session 的 `assigns.current_user.caps` 包含 `admin_caps()`（5 轴 `:any`）。
 - 发出 telemetry `[:ezagent, :auth, :login_succeeded]`。
 - `users.last_login_at` 被更新。
