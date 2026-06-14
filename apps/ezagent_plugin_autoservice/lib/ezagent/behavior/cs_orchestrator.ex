@@ -138,8 +138,10 @@ defmodule Ezagent.Behavior.CsOrchestrator do
 
         case TurnDriver.open(session_uri, trigger, tctx) do
           {:ok, %{turn_id: new_tid}, open_effects} ->
-            with {:ok, _, compose_effects} <- TurnDriver.compose(session_uri, new_tid, operator_text, tctx),
-                 {:ok, _, claim_effects} <- TurnDriver.claim(session_uri, new_tid, op_uri, tctx) do
+            tctx2 = apply_turn_effects(tctx, open_effects)
+
+            with {:ok, _, compose_effects} <- TurnDriver.compose(session_uri, new_tid, operator_text, tctx2),
+                 {:ok, _, claim_effects} <- TurnDriver.claim(session_uri, new_tid, op_uri, tctx2) do
               turn_effects = cancel_effects ++ open_effects ++ compose_effects ++ claim_effects
 
               {:ok, %{ok: true, turn_id: new_tid},
@@ -333,6 +335,25 @@ defmodule Ezagent.Behavior.CsOrchestrator do
   # Turn needs ctx.self_uri (for turn_id), ctx.caller (for turn owner),
   # ctx.read (:turns slice), and ctx.caps (for authz).
   defp turn_ctx(ctx), do: ctx
+
+  # Apply Turn effects to ctx so subsequent TurnDriver calls see updated state.
+  # Needed because Turn effects from one call (e.g. open) aren't committed by
+  # the Lifecycle framework until the handler returns — but the next call
+  # (e.g. compose) needs the open's state change to be visible.
+  defp apply_turn_effects(ctx, effects) do
+    Enum.reduce(effects, ctx, fn
+      {:set, key, value}, acc ->
+        # Patch ctx.read to return the new value for this key
+        old_read = Map.get(acc, :read, fn _, d -> d end)
+        new_read = fn k, d ->
+          if k == key, do: value, else: old_read.(k, d)
+        end
+        Map.put(acc, :read, new_read)
+
+      _, acc ->
+        acc
+    end)
+  end
 
   defp normalize_message(%Message{} = msg), do: msg
 

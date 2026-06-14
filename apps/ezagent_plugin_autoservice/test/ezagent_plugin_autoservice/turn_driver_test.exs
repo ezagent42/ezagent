@@ -1,148 +1,157 @@
 defmodule EzagentPluginAutoservice.TurnDriverTest do
   @moduledoc """
-  TurnDriver — functional dispatch tests.
+  TurnDriver unit tests with stateful ctx.
 
-  Each test drives `turn.open` / `turn.compose` / `turn.settle` / `turn.claim`
-  on a real SocialwareSession via the sanctioned Invocation path and asserts
-  outcomes through `CustomerFeed.snapshot/2` (the same surface the Stage-1
-  adapter tests used). No GenServer, no PubSub subscriptions — pure
-  function-per-action dispatch.
-
-  Setup mirrors the Stage-1 adapter test:
-    - `Ezagent.Kind.spawn(SocialwareSession, %{uri: session})`
-    - `Ezagent.WorkspaceRegistry.bind(session, workspace)`
-    - `CustomerAuth.issue_token/2` for feed queries
-    - Privileged ctx: `%{caller: User.admin_uri(), caps: SystemPrincipal.caps("system://bootstrap")}`
+  TurnDriver calls Turn.handle_* directly (v3 §6.6.1), returning
+  3-tuples {status, result, effects}. Effects must be committed by the
+  caller. These tests simulate the Lifecycle effect commit by threading
+  state through an Agent.
   """
-  use EzagentCore.DataCase, async: false
+  use ExUnit.Case, async: true
 
-  alias Ezagent.Entity.{SocialwareSession, User}
-  alias Ezagent.Socialware.{CustomerAuth, CustomerFeed}
   alias EzagentPluginAutoservice.TurnDriver
 
-  # Privileged turn-driving ctx — mirrors Stage-1 adapter test ctx/0.
-  defp ctx do
+  defmodule CtxAgent do
+    @moduledoc false
+    use Agent
+
+    def start_link(init_state) do
+      Agent.start_link(fn -> init_state end)
+    end
+
+    def get(agent), do: Agent.get(agent, & &1)
+  end
+
+  defp session_uri, do: Ezagent.URI.new!("session://test/cs/td-test")
+
+  # Build a ctx that reads/writes through an Agent for state tracking.
+  defp stateful_ctx(agent) do
     %{
-      caller: User.admin_uri(),
-      caps: Ezagent.SystemPrincipal.caps("system://bootstrap")
+      caller: Ezagent.URI.new!("entity://test/user/admin"),
+      self_uri: session_uri(),
+      caps: MapSet.new(),
+      read: fn key, default ->
+        Agent.get(agent, fn state -> Map.get(state, key, default) end)
+      end
     }
   end
 
-  defp message_text?(message, text) do
-    Map.get(message.body, "text") == text or Map.get(message.body, :text) == text
+  # Apply Turn effects to the Agent state (simulates Lifecycle effect processing).
+  defp commit_effects(agent, effects) do
+    Agent.update(agent, fn state ->
+      Enum.reduce(effects, state, fn
+        {:set, key, value}, acc -> Map.put(acc, key, value)
+        _, acc -> acc
+      end)
+    end)
   end
 
-  defp wait_until(_fun, 0), do: flunk("wait_until: condition never became true")
+  describe "open + compose + settle flow" do
+    test "full lifecycle with stateful ctx" do
+      {:ok, agent} = CtxAgent.start_link(%{turns: %{}, turn_seq: 0})
+      ctx = stateful_ctx(agent)
+      sess = session_uri()
 
-  defp wait_until(fun, attempts) do
-    if fun.() do
-      :ok
-    else
-      Process.sleep(20)
-      wait_until(fun, attempts - 1)
+      # open
+      trigger = %{message_id: "m-1", text: "hello"}
+      assert {:ok, %{turn_id: tid}, effects} = TurnDriver.open(sess, trigger, ctx)
+      commit_effects(agent, effects)
+      assert is_binary(tid)
+
+      # compose
+      assert {:ok, %{status: :composing}, effects2} =
+               TurnDriver.compose(sess, tid, "bot reply", ctx)
+      commit_effects(agent, effects2)
+
+      # settle
+      assert {:ok, _, effects3} = TurnDriver.settle(sess, tid, ctx)
+      commit_effects(agent, effects3)
+
+      # Verify turn is settled in state
+      state = CtxAgent.get(agent)
+      turn = Map.get(state[:turns] || %{}, tid)
+      assert turn != nil
+      assert turn.status == :settled
     end
   end
 
-  setup do
-    session =
-      Ezagent.URI.session(
-        :team_alpha,
-        :cs,
-        "turn-driver-#{System.unique_integer([:positive])}"
-      )
+  describe "claim flow" do
+    test "open → compose → claim → settle with stateful ctx" do
+      {:ok, agent} = CtxAgent.start_link(%{turns: %{}, turn_seq: 0})
+      ctx = stateful_ctx(agent)
+      sess = session_uri()
 
-    workspace = Ezagent.Capability.workspace_of(session)
-    {:ok, _pid} = Ezagent.Kind.spawn(SocialwareSession, %{uri: session})
-    :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
-    token = CustomerAuth.issue_token(session, workspace)
+      trigger = %{message_id: "m-claim", text: "help"}
+      {:ok, %{turn_id: tid}, e1} = TurnDriver.open(sess, trigger, ctx)
+      commit_effects(agent, e1)
 
-    %{session: session, workspace: workspace, token: token}
-  end
+      {:ok, %{status: :composing}, e2} =
+        TurnDriver.compose(sess, tid, "operator draft", ctx)
+      commit_effects(agent, e2)
 
-  describe "open/3" do
-    test "returns {:ok, %{turn_id: id}} on success", ctx do
-      trigger = %{message_id: "m-#{System.unique_integer([:positive])}", text: "hello"}
-      assert {:ok, %{turn_id: turn_id}} = TurnDriver.open(ctx.session, trigger, ctx())
-      assert is_binary(turn_id)
-      assert String.length(turn_id) > 0
+      op_uri = Ezagent.URI.new!("entity://test/user/op")
+      assert {:ok, %{status: :awaiting_human}, e3} =
+               TurnDriver.claim(sess, tid, op_uri, ctx)
+      commit_effects(agent, e3)
+
+      # settle after claim
+      assert {:ok, _, e4} = TurnDriver.settle(sess, tid, ctx)
+      commit_effects(agent, e4)
+
+      state = CtxAgent.get(agent)
+      turn = Map.get(state[:turns] || %{}, tid)
+      assert turn.status == :settled
     end
   end
 
-  describe "open/3 -> compose/4 -> settle/3" do
-    test "bot reply settles to customer-visible in CustomerFeed", ctx do
-      # Feed starts empty.
-      assert {:ok, %{messages: []}} = CustomerFeed.snapshot(ctx.session, ctx.token)
+  describe "cancel" do
+    test "cancel an open turn" do
+      {:ok, agent} = CtxAgent.start_link(%{turns: %{}, turn_seq: 0})
+      ctx = stateful_ctx(agent)
+      sess = session_uri()
 
-      # Open a degenerate turn.
-      trigger = %{message_id: "m-#{System.unique_integer([:positive])}", text: "i need help"}
-      assert {:ok, %{turn_id: turn_id}} = TurnDriver.open(ctx.session, trigger, ctx())
-      assert is_binary(turn_id)
+      trigger = %{message_id: "m-cancel", text: "test"}
+      {:ok, %{turn_id: tid}, e1} = TurnDriver.open(sess, trigger, ctx)
+      commit_effects(agent, e1)
 
-      # Compose a result_ref — turn moves to :composing.
-      assert {:ok, %{status: :composing}} =
-               TurnDriver.compose(ctx.session, turn_id, "here is your answer", ctx())
+      assert {:ok, %{status: :cancelled}, e2} = TurnDriver.cancel(sess, tid, ctx)
+      commit_effects(agent, e2)
 
-      # Settle — Settlement commits asynchronously → CustomerFeed shows the reply.
-      assert {:ok, %{status: :settled}} = TurnDriver.settle(ctx.session, turn_id, ctx())
-
-      wait_until(
-        fn ->
-          {:ok, snap} = CustomerFeed.snapshot(ctx.session, ctx.token)
-          Enum.any?(snap.messages, &message_text?(&1, "here is your answer"))
-        end,
-        100
-      )
-
-      assert {:ok, snapshot} = CustomerFeed.snapshot(ctx.session, ctx.token)
-      assert Enum.any?(snapshot.messages, &message_text?(&1, "here is your answer"))
+      state = CtxAgent.get(agent)
+      turn = Map.get(state[:turns] || %{}, tid)
+      assert turn.status == :cancelled
     end
   end
 
-  describe "claim/4" do
-    test "claim moves turn to :awaiting_human (operator holds the draft)", ctx do
-      trigger = %{message_id: "m-#{System.unique_integer([:positive])}", text: "take over"}
-      assert {:ok, %{turn_id: turn_id}} = TurnDriver.open(ctx.session, trigger, ctx())
+  describe "error cases" do
+    test "compose on unknown turn" do
+      {:ok, agent} = CtxAgent.start_link(%{turns: %{}, turn_seq: 0})
+      ctx = stateful_ctx(agent)
 
-      operator_uri =
-        Ezagent.URI.entity(:team_alpha, :user, "operator-#{System.unique_integer([:positive])}")
-
-      # compose first — claim transitions from :composing only.
-      assert {:ok, %{status: :composing}} =
-               TurnDriver.compose(ctx.session, turn_id, "operator draft", ctx())
-
-      assert {:ok, %{status: :awaiting_human}} =
-               TurnDriver.claim(ctx.session, turn_id, operator_uri, ctx())
-
-      # The composed message is held operator_only — customer feed is still empty.
-      assert {:ok, %{messages: []}} = CustomerFeed.snapshot(ctx.session, ctx.token)
+      assert {:error, :unknown_turn} =
+               TurnDriver.compose(session_uri(), "nonexistent", "text", ctx)
     end
 
-    test "settle after claim flips draft to customer-visible", ctx do
-      trigger = %{message_id: "m-#{System.unique_integer([:positive])}", text: "help"}
-      assert {:ok, %{turn_id: turn_id}} = TurnDriver.open(ctx.session, trigger, ctx())
+    test "settle on unknown turn" do
+      {:ok, agent} = CtxAgent.start_link(%{turns: %{}, turn_seq: 0})
+      ctx = stateful_ctx(agent)
 
-      operator_uri =
-        Ezagent.URI.entity(:team_alpha, :user, "op-#{System.unique_integer([:positive])}")
+      assert {:error, :unknown_turn} =
+               TurnDriver.settle(session_uri(), "nonexistent", ctx)
+    end
 
-      assert {:ok, %{status: :composing}} =
-               TurnDriver.compose(ctx.session, turn_id, "operator reply", ctx())
+    test "claim without compose fails" do
+      {:ok, agent} = CtxAgent.start_link(%{turns: %{}, turn_seq: 0})
+      ctx = stateful_ctx(agent)
+      sess = session_uri()
 
-      assert {:ok, %{status: :awaiting_human}} =
-               TurnDriver.claim(ctx.session, turn_id, operator_uri, ctx())
+      trigger = %{message_id: "m-no-comp", text: "open only"}
+      {:ok, %{turn_id: tid}, e1} = TurnDriver.open(sess, trigger, ctx)
+      commit_effects(agent, e1)
 
-      # Settle — Settlement commits the held draft as customer_visible.
-      assert {:ok, %{status: :settled}} = TurnDriver.settle(ctx.session, turn_id, ctx())
-
-      wait_until(
-        fn ->
-          {:ok, snap} = CustomerFeed.snapshot(ctx.session, ctx.token)
-          Enum.any?(snap.messages, &message_text?(&1, "operator reply"))
-        end,
-        100
-      )
-
-      assert {:ok, snapshot} = CustomerFeed.snapshot(ctx.session, ctx.token)
-      assert Enum.any?(snapshot.messages, &message_text?(&1, "operator reply"))
+      assert {:error, {:illegal_transition, :open}} =
+               TurnDriver.claim(sess, tid,
+                 Ezagent.URI.new!("entity://test/user/op"), ctx)
     end
   end
 end
