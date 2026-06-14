@@ -41,7 +41,7 @@ A declarative `role → sandbox-content recipe`, ETS-backed, same house style as
   plugins: [plugin_ref],        # plugins installed into the sandbox
   prompt: prompt_ref | nil,     # system prompt / CLAUDE.md persona fragment
   behaviors: [module()],        # behavior subset the role needs (composed with flavor's)
-  caps: [cap_template],         # caps the role's agent holds
+  caps: [cap_template],         # REQUESTED caps — authorized fail-closed at materialization (§2.3.1), not copied
   session_template: ref | nil   # session-template wiring (the post-9c-coupled part)
 }
 ```
@@ -59,13 +59,36 @@ When an agent is created from `(role, flavor)`:
 1. **Flavor** provisions the empty sandbox (`config_dir`) + decides the kind +
    the loader env (`CLAUDE_CONFIG_DIR` / `CODEX_HOME` / none).
 2. **Role** fills that sandbox: install `skills` + `plugins`, write the `prompt`
-   fragment, compose `behaviors` (role's ∪ flavor's), grant `caps`.
-3. The flavor's loader binds the now-populated `config_dir` into the runtime.
+   fragment, compose `behaviors` (role's ∪ flavor's).
+3. **Caps are resolved through a fail-closed authorization step — NOT copied**
+   (see §2.3.1).
+4. The flavor's loader binds the now-populated `config_dir` into the runtime.
 
 The `role`-fills-sandbox step is the generalization of today's
 `*_bootstrap.ex` installers, made flavor-blind: a role's installer writes into
 "the config_dir" without knowing whether it's a `CLAUDE_CONFIG_DIR` or a
 `CODEX_HOME`.
+
+### 2.3.1 Cap composition is fail-closed (codex adversarial-review, 2026-06-14)
+
+A role's `caps` are **requested** caps, not granted ones. Blindly copying a
+role's cap templates onto an agent regardless of flavor/runtime/tenant would be
+a CapBAC hole ("never weaken authz") — e.g. the orchestrator role requests a
+PTY/bridge-driving cap that is meaningless (and must not be silently granted) on
+a `curl` flavor that has no bridge. So materialization runs an explicit
+authorization step:
+
+```
+effective_caps = authorize(role.requested_caps, flavor_policy, tenant_policy)
+              = role.requested_caps ∩ {caps the flavor/runtime + tenant permit}
+```
+
+**Fail closed:** a requested cap not permitted by the flavor/runtime/tenant
+policy is **rejected, never copied**. The role's *contents* (skills, prompt,
+behaviors) are identical across flavors; the *effective caps* are
+flavor-validated and may legitimately differ. This keeps the cap chokepoint
+(`Ezagent.Capability.matches?`) the sole authority — role is a *request*, the
+authorization step is the *grant*.
 
 ### 2.4 The naming axis
 
@@ -119,9 +142,17 @@ that assume cc — audited in the plan.
 
 The completion test (per `feedback_completion_requires_invariant_test`): a test
 that **materializes the SAME role against TWO different flavors and asserts the
-sandbox contents (skills/prompt/behaviors/caps) are identical while the loader
-(config_dir env / kind / bridge) differs.** That test fails today (roles can't
-compose across flavors) and passes only when role×flavor truly decouples.
+sandbox CONTENTS (skills / prompt / behaviors) are identical while the loader
+(config_dir env / kind / bridge) differs.** Caps are asserted **flavor-validated,
+not identical** — per §2.3.1 the effective caps are `requested ∩ flavor/tenant
+policy`, so they may legitimately differ across flavors. That test fails today
+(roles can't compose across flavors) and passes only when role×flavor decouples.
+
+Plus a **negative authorization test** (codex adversarial-review): the
+orchestrator role materialized against a flavor that does NOT support a
+requested cap (e.g. a bridge-driving cap on a no-bridge flavor) must have that
+cap **rejected (fail-closed), not copied** — proving cap composition is an
+authorization, not a copy.
 
 ## 7. Cross-references
 
