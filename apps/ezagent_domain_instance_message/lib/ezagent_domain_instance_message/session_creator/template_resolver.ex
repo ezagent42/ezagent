@@ -4,19 +4,12 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateResolver do
   alias Ezagent.Entity.Session
   alias Ezagent.KindRegistry
 
-  @spec resolve_template_class(map()) :: {:ok, module()} | {:error, term()}
-  def resolve_template_class(content) when is_map(content) do
-    case content_get(content, :flavor) do
-      flavor when is_binary(flavor) and flavor != "" ->
-        case Ezagent.AgentFlavorRegistry.lookup(flavor) do
-          {:ok, %{template_class: tc}} -> {:ok, tc}
-          :error -> {:error, {:unknown_flavor, flavor}}
-        end
-
-      _ ->
-        {:error, :missing_flavor}
-    end
-  end
+  # PR-9 A2 (2026-06-14): `resolve_template_class/1` RELOCATED to
+  # `Ezagent.Entity.AgentTemplate` (the agent domain) so agent-domain callers
+  # (AgentTemplate + its TemplateSpawn) no longer reach into this session-domain
+  # module to resolve their own flavor → Template Class. Cuts an agent→session
+  # compile edge for the PR-9 split. `resolve_agent_template_class/1` (URI-based)
+  # stays here — it is used session-side.
 
   @spec resolve_agent_template_class(URI.t()) :: {:ok, module()} | {:error, term()}
   def resolve_agent_template_class(%URI{} = agent_uri) do
@@ -184,8 +177,4 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateResolver do
 
   defp workspace_name_of!(other),
     do: raise(ArgumentError, "expected %URI{scheme: \"workspace\"}, got: #{inspect(other)}")
-
-  defp content_get(content, key) when is_map(content) do
-    Map.get(content, key) || Map.get(content, Atom.to_string(key))
-  end
 end

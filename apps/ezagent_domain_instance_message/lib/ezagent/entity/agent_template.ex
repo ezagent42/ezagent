@@ -232,10 +232,7 @@ defmodule Ezagent.Entity.AgentTemplate do
     # set — curl's provider/api_url/model + codex's model/sandbox/… are
     # owned by their plugins. (Pre-fix this dropped curl/codex fields, so
     # orchestrator-spawned curl/codex workers had nil provider/model.)
-    with {:ok, tc} <-
-           EzagentDomainInstanceMessage.SessionCreator.TemplateResolver.resolve_template_class(
-             content
-           ),
+    with {:ok, tc} <- resolve_template_class(content),
          {:ok, cwd} <- fetch_project_cwd(content),
          {:ok, config_dir} <- fetch_config_dir(content),
          {:ok, cascade} <- fetch_cascade(content) do
@@ -398,6 +395,32 @@ defmodule Ezagent.Entity.AgentTemplate do
     case content_get(content, key) do
       nil -> data
       value -> Map.put(data, Atom.to_string(key), value)
+    end
+  end
+
+  @doc """
+  Resolve a template `content` map's `:flavor` to its Template Class module via
+  `Ezagent.AgentFlavorRegistry`: `{:ok, module}` / `{:error, {:unknown_flavor, f}}`
+  / `{:error, :missing_flavor}`.
+
+  PR-9 A2 (2026-06-14): relocated here from
+  `EzagentDomainInstanceMessage.SessionCreator.TemplateResolver` so the agent
+  domain (`AgentTemplate` + its `TemplateSpawn`) no longer reaches into the
+  session domain to resolve its own flavor → Template Class — cutting an
+  agent→session compile edge for the PR-9 domain split. Depends only on the core
+  `AgentFlavorRegistry`.
+  """
+  @spec resolve_template_class(map()) :: {:ok, module()} | {:error, term()}
+  def resolve_template_class(content) when is_map(content) do
+    case content_get(content, :flavor) do
+      flavor when is_binary(flavor) and flavor != "" ->
+        case Ezagent.AgentFlavorRegistry.lookup(flavor) do
+          {:ok, %{template_class: tc}} -> {:ok, tc}
+          :error -> {:error, {:unknown_flavor, flavor}}
+        end
+
+      _ ->
+        {:error, :missing_flavor}
     end
   end
 
