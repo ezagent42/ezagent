@@ -338,7 +338,7 @@ defmodule EzagentDomainIdentity.Application do
       # to chat plugin but identity actions on it are an Identity
       # concern. Both apps load before plugins start dispatching, so
       # registering against Ezagent.Entity.Agent here is safe even though
-      # Agent is defined in ezagent_domain_instance_message.
+      # Agent is defined in ezagent_domain_session.
       :ok = CapabilityRegistry.register(Ezagent.Entity.Agent, action, Identity)
     end
 

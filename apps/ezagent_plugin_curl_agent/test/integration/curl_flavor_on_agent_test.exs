@@ -127,7 +127,7 @@ defmodule EzagentPluginCurlAgent.Integration.CurlFlavorOnAgentTest do
       # agent.receive runs the adapter inline (in_process_sync) and emits a
       # {:dispatch, %Cmd{action: :sync_result}} effect carrying the result.
       # Call the handler directly (the Invoker support module is private to
-      # ezagent_domain_instance_message's test env).
+      # ezagent_domain_session's test env).
       assert {:ok, %{}, effects} = AgentReceive.handle_receive(%{message: msg}, ctx)
 
       dispatches = Enum.filter(effects, &match?({:dispatch, _}, &1))

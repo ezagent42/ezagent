@@ -851,7 +851,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   # requires explicit ctx.caps per CapBAC step 5.5).
   #
   # We don't call `Ezagent.Entity.Session.subscribe_from/4`
-  # directly: `:ezagent_domain_instance_message` depends on
+  # directly: `:ezagent_domain_session` depends on
   # `:ezagent_domain_external_mirror` (for the Publisher contract),
   # so a reverse reference here would form a Mix dep cycle.
   # The dispatch goes through `?action=publisher.subscribe_from`

@@ -598,7 +598,7 @@ defmodule Ezagent.Kind.Runtime do
   # loaded in this build).
   #
   # NOTE: `Ezagent.Entity.User` / `Ezagent.Entity.Agent` live in
-  # `ezagent_domain_identity` / `ezagent_domain_instance_message` — outside core's
+  # `ezagent_domain_identity` / `ezagent_domain_session` — outside core's
   # dependency cone (P9). Resolve via `Code.ensure_loaded?/1` at
   # runtime, falling back to nil (default impl) when domain apps
   # haven't loaded.

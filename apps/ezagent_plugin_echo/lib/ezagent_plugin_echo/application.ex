@@ -48,14 +48,14 @@ defmodule EzagentPluginEcho.Application do
   (Phase 3 of `Ezagent.Plugin.boot/1`). It was previously seeded from
   `EzagentDomainInstanceMessage.Application.start/2`, but that was a boot-order
   race: chat's seed needs `Ezagent.AgentFlavorRegistry.lookup("echo")`
-  — published by THIS plugin's `boot/1` — and `ezagent_domain_instance_message`
+  — published by THIS plugin's `boot/1` — and `ezagent_domain_session`
   does not depend on `ezagent_plugin_echo`, so the seed could fire
   before echo's `agent_flavors/0` was registered and fail with
   `{:no_kind_module_for_agent, ...}`, never retried.
 
   `after_boot/0` runs in Phase 3 — AFTER this plugin's Phase-2
   `publish/1` registered `agent_flavors/0`, so the resolver can map
-  the flavor. This plugin declares a dep on `ezagent_domain_instance_message` (a
+  the flavor. This plugin declares a dep on `ezagent_domain_session` (a
   pure boot-order constraint — no chat code is referenced), so OTP
   boots chat first and the `entity://` `SpawnRegistry` dispatcher is
   published by the time `after_boot/0` runs. The spawn therefore goes
@@ -127,7 +127,7 @@ defmodule EzagentPluginEcho.Application do
   already maps the `"echo"` flavor → `Ezagent.Entity.Echo`. The seed
   spawns through `Ezagent.SpawnRegistry.spawn/1` — the standard
   `entity://` resolver path — and this plugin's dep on
-  `ezagent_domain_instance_message` guarantees the `entity://` dispatcher is
+  `ezagent_domain_session` guarantees the `entity://` dispatcher is
   published before this runs.
 
   Idempotent: `SpawnRegistry.spawn/1` returns the existing pid for an

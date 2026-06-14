@@ -25,7 +25,7 @@ defmodule Ezagent.Orchestrator.McpServer do
 
   ## No compile dependency on the session domain (Decision C §5)
 
-  cc's `mix.exs` keeps `ezagent_domain_instance_message` as `only: :test`, so
+  cc's `mix.exs` keeps `ezagent_domain_session` as `only: :test`, so
   this prod transport MUST reach `SessionManager` WITHOUT aliasing/importing it.
   It builds the Registry `:via` tuple from the orchestrator URI STRING + the
   session-domain Registry NAME (a plain atom) and `GenServer.call`s a bare
@@ -59,7 +59,7 @@ defmodule Ezagent.Orchestrator.McpServer do
   # The session-domain Registry the per-orchestrator `SessionManager`
   # GenServers register under (keyed by orchestrator URI string). Named here as
   # a bare atom — NOT an `alias` of the im module — so cc reaches SessionManager
-  # by URI without a prod compile dependency on `ezagent_domain_instance_message`
+  # by URI without a prod compile dependency on `ezagent_domain_session`
   # (Decision C §5; cc deps im `only: :test`).
   @session_manager_registry Ezagent.Session.SessionManagerRegistry
 

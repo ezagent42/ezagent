@@ -194,7 +194,7 @@ defmodule EzagentPluginFeishu.BindingPolicyTest do
       refute :receive in chat_actions,
              "BindingPolicy must NOT grant Chat :receive on :session Kind — " <>
                ":receive is registered on User/Agent Kinds " <>
-               "(see ezagent_domain_instance_message/application.ex:609-610); the dispatch " <>
+               "(see ezagent_domain_session/application.ex:609-610); the dispatch " <>
                "fan-out runs under system://chat-router caps, not the bound user's caps. " <>
                "A :session-Kind :receive cap is structurally dead weight."
     end

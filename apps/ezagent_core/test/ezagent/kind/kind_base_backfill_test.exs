@@ -59,7 +59,7 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
   # A MINIMAL chat-shaped state: ONLY :chat, NO :external_mirror, NO socialware
   # slices. This is the real shape a chat Session persists with when no mirror
   # binding has ever been created (proof fixture:
-  # apps/ezagent_domain_instance_message/test/integration/
+  # apps/ezagent_domain_session/test/integration/
   # orchestrator_mcp_reregister_test.exs saves `%{session: chat_slice}` only).
   # `:external_mirror` is OPTIONAL for chat — chat is the DEFAULT classification.
   defp minimal_chat_state do

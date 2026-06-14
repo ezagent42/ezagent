@@ -45,7 +45,7 @@ defmodule EzagentPluginLiveview.AdminDashboardLive do
   #
   # Soft-guarded via `Code.ensure_loaded?` so this LV stays decoupled
   # from the chat domain at compile time (the seed lives in
-  # `ezagent_domain_instance_message`).
+  # `ezagent_domain_session`).
   defp load_cc_orchestrator_status do
     seed_module = Ezagent.Orchestrator.CcOrchestratorSeed
 

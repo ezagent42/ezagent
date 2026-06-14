@@ -120,9 +120,9 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
             "| grep -v 'apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex' " <>
             "| grep -v 'apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex' " <>
             "| grep -v 'apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex' " <>
-            "| grep -v 'apps/ezagent_domain_instance_message/lib/ezagent/socialware/settlement.ex' " <>
-            "| grep -v 'apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/presence_fanout.ex' " <>
-            "| grep -v 'apps/ezagent_domain_instance_message/lib/ezagent/session/read_marker.ex' " <>
+            "| grep -v 'apps/ezagent_domain_session/lib/ezagent/socialware/settlement.ex' " <>
+            "| grep -v 'apps/ezagent_domain_session/lib/ezagent_domain_instance_message/presence_fanout.ex' " <>
+            "| grep -v 'apps/ezagent_domain_session/lib/ezagent/session/read_marker.ex' " <>
             "| grep -v 'apps/ezagent_plugin_cc/lib/ezagent/orchestrator/mcp_channel.ex' " <>
             "| grep -v 'ezagent.check_invariants.ex' " <>
             "| grep -v '^[^:]*:[0-9]*:[[:space:]]*#' " <>
@@ -259,7 +259,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
           # Match :stub_grant only outside backtick-quoted prose. Allowlist
           # files that legitimately mention the atom in their moduledoc
           # to explain the Phase 3d hard-flip rationale.
-          "grep -rnE ':stub_grant' apps/ezagent_core/lib apps/ezagent_domain_instance_message/lib " <>
+          "grep -rnE ':stub_grant' apps/ezagent_core/lib apps/ezagent_domain_session/lib " <>
             "apps/ezagent_plugin_echo/lib apps/ezagent_web/lib apps/ezagent_plugin_liveview/lib " <>
             "--include='*.ex' 2>/dev/null " <>
             "| grep -v 'ezagent.check_invariants.ex' " <>

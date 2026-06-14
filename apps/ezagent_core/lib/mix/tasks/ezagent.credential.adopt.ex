@@ -43,13 +43,13 @@ defmodule Mix.Tasks.Ezagent.Credential.Adopt do
     # `:set_default_credential_source` Behavior, which needs more than core started:
     #   - `:ezagent_domain_identity` registers the UserDefaultCredentialSource Behavior
     #     (the cap-checked chokepoint) on the User Kind;
-    #   - `:ezagent_domain_instance_message` registers the `:flavor` UriQuery resolver
+    #   - `:ezagent_domain_session` registers the `:flavor` UriQuery resolver
     #     used by the source-flavor validation.
     # Without these the dispatch would fail to route / resolve. Starting core alone is
     # insufficient. (Mirrors ezagent.user.create / ezagent.agent.create startup.)
     {:ok, _} = Application.ensure_all_started(:ezagent_core)
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_identity)
-    {:ok, _} = Application.ensure_all_started(:ezagent_domain_instance_message)
+    {:ok, _} = Application.ensure_all_started(:ezagent_domain_session)
 
     {opts, _rest, _invalid} = OptionParser.parse(args, switches: @switches)
 

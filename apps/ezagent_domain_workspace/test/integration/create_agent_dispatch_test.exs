@@ -177,7 +177,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
 
     test "cc + --from pointing at a non-existent source returns {:error, :source_not_found}",
          %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
-      {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_instance_message)
+      {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_session)
 
       # A real `cc_` URI shape so coerce + validate pass; the URI must
       # NOT correspond to a live Agent Kind — `sandbox.read` dispatch
@@ -256,10 +256,10 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
 
   describe "Ezagent.Workspace.create_agent/3 — end-to-end direct-spawn (codex r1 MEDIUM-6 / r2 MEDIUM-1)" do
     setup do
-      # Codex PR #330 r2 MEDIUM-1: explicitly start :ezagent_domain_instance_message
+      # Codex PR #330 r2 MEDIUM-1: explicitly start :ezagent_domain_session
       # so the `agent` SpawnRegistry scheme is registered. Without this
       # the test would skip in CI's per-app test runs.
-      {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_instance_message)
+      {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_session)
 
       case EzagentDomainInstanceMessage.UriQueryResolvers.register() do
         :ok -> :ok

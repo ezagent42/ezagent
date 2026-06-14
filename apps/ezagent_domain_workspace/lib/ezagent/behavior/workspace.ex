@@ -595,7 +595,7 @@ defmodule Ezagent.Behavior.Workspace do
   end
 
   # SPEC `2026-05-26-session-create-orchestrator-unified` Gap C — DI
-  # provider lookup for the session-creation facade. `ezagent_domain_instance_message`
+  # provider lookup for the session-creation facade. `ezagent_domain_session`
   # depends on `ezagent_domain_workspace` (workspace boots first), so a
   # compile-time alias would invert the dep graph and create a cycle.
   # Instead the facade module is looked up at runtime via the

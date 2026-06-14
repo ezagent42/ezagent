@@ -62,7 +62,7 @@ defmodule EzagentPluginLiveview.MixProject do
       # offline) sourced from `Ezagent.Behavior.Session`. Same shape as the
       # cc-bridge coupling — Phase 3+ may abstract the LV's "what
       # session UI to show" via configuration rather than direct dep.
-      {:ezagent_domain_instance_message, in_umbrella: true},
+      {:ezagent_domain_session, in_umbrella: true},
       # ezagent_plugin_cc — unified CC plugin (merged from cc_pty +
       # cc_channel in PR #130). Provides cc.pty Template Class +
       # PtyServer + BridgeRegistry surface used by admin LV.

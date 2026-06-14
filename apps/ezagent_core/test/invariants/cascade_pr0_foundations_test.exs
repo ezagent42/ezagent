@@ -61,7 +61,7 @@ defmodule Ezagent.Invariants.CascadePr0FoundationsTest do
     creator_source =
       File.read!(
         Path.expand(
-          "../../../ezagent_domain_instance_message/lib/ezagent_domain_instance_message/session_creator.ex",
+          "../../../ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator.ex",
           __DIR__
         )
       )
@@ -69,7 +69,7 @@ defmodule Ezagent.Invariants.CascadePr0FoundationsTest do
     team_source =
       File.read!(
         Path.expand(
-          "../../../ezagent_domain_instance_message/lib/ezagent_domain_instance_message/session_creator/template_team.ex",
+          "../../../ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/template_team.ex",
           __DIR__
         )
       )
@@ -85,7 +85,7 @@ defmodule Ezagent.Invariants.CascadePr0FoundationsTest do
     source =
       File.read!(
         Path.expand(
-          "../../../ezagent_domain_instance_message/lib/ezagent/entity/session.ex",
+          "../../../ezagent_domain_session/lib/ezagent/entity/session.ex",
           __DIR__
         )
       )

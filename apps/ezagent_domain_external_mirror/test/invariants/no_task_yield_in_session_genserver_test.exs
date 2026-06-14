@@ -11,7 +11,7 @@ defmodule Ezagent.ExternalMirror.Invariants.NoTaskYieldInSessionGenServerTest do
   the same session would all queue behind it.
 
   This grep gate enforces the structural rule: the Session GenServer
-  module (`apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex`)
+  module (`apps/ezagent_domain_session/lib/ezagent/entity/session.ex`)
   and any Behavior module registered against the Session Kind under
   the ExternalMirror Domain MUST NOT call `Task.yield/2` or
   `Task.await/2`. The async-with-timeout pattern lives ONLY in the
@@ -32,7 +32,7 @@ defmodule Ezagent.ExternalMirror.Invariants.NoTaskYieldInSessionGenServerTest do
   ## Scope
 
   Greps:
-  - `apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex` —
+  - `apps/ezagent_domain_session/lib/ezagent/entity/session.ex` —
     the Session GenServer.
   - `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex` —
     the Behavior registered against the Session Kind.
@@ -51,7 +51,7 @@ defmodule Ezagent.ExternalMirror.Invariants.NoTaskYieldInSessionGenServerTest do
   ]
 
   @scoped_paths [
-    "ezagent_domain_instance_message/lib/ezagent/entity/session.ex",
+    "ezagent_domain_session/lib/ezagent/entity/session.ex",
     "ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex",
     "ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror_worker.ex"
   ]

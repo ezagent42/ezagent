@@ -50,7 +50,7 @@ defmodule EzagentCore.Invariants.AgentCreateSinglePathTest do
     # PR-9a (#53): Agent Kind relocated to the ezagent_domain_agent app.
     "apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex",
     # The reconciler module itself.
-    "apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/reconciler.ex",
+    "apps/ezagent_domain_session/lib/ezagent/orchestrator/reconciler.ex",
     # SpawnRegistry itself.
     "apps/ezagent_core/lib/ezagent/spawn_registry.ex"
   ]

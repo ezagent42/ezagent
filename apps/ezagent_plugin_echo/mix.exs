@@ -47,12 +47,12 @@ defmodule EzagentPluginEcho.MixProject do
       # Plugin authoring contract PR-5 codex HIGH-2 — the default echo
       # agent is seeded in this plugin's `after_boot/0` (it owns the
       # echo flavor). The seed spawns via the `entity://` SpawnRegistry
-      # dispatcher, which `ezagent_domain_instance_message` registers in its
+      # dispatcher, which `ezagent_domain_session` registers in its
       # `start/2`. Declaring the dep makes OTP boot domain_instance_message BEFORE
       # this plugin, so the `entity://` spawn fn is published by the
       # time `after_boot/0` runs. (No code from domain_instance_message is
       # referenced here — the dep is purely a boot-order constraint.)
-      {:ezagent_domain_instance_message, in_umbrella: true}
+      {:ezagent_domain_session, in_umbrella: true}
     ]
   end
 end

@@ -39,7 +39,7 @@ defmodule EzagentPluginFeishu.MixProject do
       {:ezagent_core, in_umbrella: true},
       {:ezagent_domain_identity, in_umbrella: true},
       {:ezagent_domain_workspace, in_umbrella: true},
-      {:ezagent_domain_instance_message, in_umbrella: true},
+      {:ezagent_domain_session, in_umbrella: true},
       # PR-EM-6: ExternalMirror Adapter + Binding behaviours +
       # BindingRow projection table. The Feishu plugin's FeishuAdapter
       # / FeishuChatBinding implement these contracts; the inbound

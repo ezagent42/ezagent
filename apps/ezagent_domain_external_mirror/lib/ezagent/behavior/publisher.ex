@@ -21,7 +21,7 @@ defmodule Ezagent.Behavior.Publisher do
 
   Per SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
   §2.1 (Allen's option (a)): the first implementer is
-  `Ezagent.Entity.Session` in `apps/ezagent_domain_instance_message/`. The
+  `Ezagent.Entity.Session` in `apps/ezagent_domain_session/`. The
   Session module declares `@behaviour Ezagent.Behavior.Publisher`
   and exposes the four callbacks as module functions that route
   through `Ezagent.Router.dispatch/1` against the session URI

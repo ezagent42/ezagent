@@ -28,7 +28,7 @@ defmodule EzagentDomainExternalMirror.MixProject do
 
   defp deps do
     # PR-EM-1 (SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
-    # §9 + lines 1054-1068): adds `:ezagent_domain_instance_message` so the facade
+    # §9 + lines 1054-1068): adds `:ezagent_domain_session` so the facade
     # `Ezagent.ExternalMirror.list_bindings/1` can read the Session
     # slice (PR-EM-3 wires the real read; PR-EM-1 just declares the
     # facade), and so invariant tests can cross-reference the chat
@@ -36,7 +36,7 @@ defmodule EzagentDomainExternalMirror.MixProject do
     #
     # WARNING: chat depends on external_mirror (for the `Publisher`
     # contract module name — see PR-EM-0 wiring in
-    # `apps/ezagent_domain_instance_message/mix.exs`). Adding chat as a runtime
+    # `apps/ezagent_domain_session/mix.exs`). Adding chat as a runtime
     # dep here would form a cycle. We DON'T need a runtime dep —
     # PR-EM-1's facade stubs return `{:ok, []}` without dereferencing
     # any chat module, and Worker dispatch in PR-EM-2 goes through
@@ -45,15 +45,15 @@ defmodule EzagentDomainExternalMirror.MixProject do
     # stay duck-typed via Invocation.
     #
     # The cycle would manifest as a Mix.exs deps-cycle error on
-    # `mix compile` — DO NOT add `{:ezagent_domain_instance_message, in_umbrella: true}`
+    # `mix compile` — DO NOT add `{:ezagent_domain_session, in_umbrella: true}`
     # here as a runtime dep. Instead, the SPEC's "facade reads slice"
     # plan is realized in PR-EM-3 via dispatch, not module load.
     #
-    # That said: PR-EM-1's brief explicitly says "add :ezagent_domain_instance_message
+    # That said: PR-EM-1's brief explicitly says "add :ezagent_domain_session
     # dep". On inspection this CANNOT be a `deps/0` entry — Mix will
     # reject the cycle. The brief's intent is satisfied at the umbrella
     # level (both apps live in the same umbrella and tests in
-    # `apps/ezagent_domain_instance_message/test/` can reference ExternalMirror).
+    # `apps/ezagent_domain_session/test/` can reference ExternalMirror).
     # PR-EM-1 keeps deps/0 as only `:ezagent_core`; comment documents
     # why the brief's literal instruction would have broken the build.
     [

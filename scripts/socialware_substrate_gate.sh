@@ -97,8 +97,8 @@ if [ "$MODE" != "--structural-only" ]; then
 
   # Each entry is a transport seam the split must preserve.
   BEHAVIORAL_TESTS=(
-    "apps/ezagent_domain_instance_message/test/ezagent/behavior/receive_split_test.exs"            # agent.receive → AgentBridge, no slice mutation (A3)
-    "apps/ezagent_domain_instance_message/test/e2e/category_10_scenarios_10_11_mention_routing_test.exs" # mention-gated routing + cross-session leak guard
+    "apps/ezagent_domain_session/test/ezagent/behavior/receive_split_test.exs"            # agent.receive → AgentBridge, no slice mutation (A3)
+    "apps/ezagent_domain_session/test/e2e/category_10_scenarios_10_11_mention_routing_test.exs" # mention-gated routing + cross-session leak guard
     "apps/ezagent_core/test/e2e/scenario_17_multi_workspace_user_test.exs"                          # multi-workspace dispatch authority
     "apps/ezagent_core/test/e2e/scenario_24_destroy_cascade_test.exs"                               # destroy cascade (saga)
     "apps/ezagent_core/test/e2e/scenario_34_sender_locked_relay_test.exs"                           # sender-locked relay (multi-agent chain through session)

@@ -11,7 +11,7 @@ defmodule EzagentDomainExternalMirror.Application do
 
   The Session-side IMPLEMENTATION (`Ezagent.Behavior.Publisher.SessionImpl`
   + the `subscribe_from/3`/`snapshot/1`/`history/3` module functions
-  on `Ezagent.Entity.Session`) lives in `apps/ezagent_domain_instance_message/`
+  on `Ezagent.Entity.Session`) lives in `apps/ezagent_domain_session/`
   (chat depends on this Domain for the contract; external_mirror
   has zero reverse references to chat). Kind ↔ Behavior registration
   for SessionImpl happens in `EzagentDomainInstanceMessage.Application` (per

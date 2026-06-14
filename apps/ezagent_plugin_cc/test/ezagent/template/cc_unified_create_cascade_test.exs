@@ -35,7 +35,7 @@ defmodule Ezagent.PluginCc.Template.CcUnifiedCreateCascadeTest do
   alias EzagentCore.Repo
 
   setup do
-    {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_instance_message)
+    {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_session)
 
     case EzagentDomainInstanceMessage.UriQueryResolvers.register() do
       :ok -> :ok

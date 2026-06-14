@@ -510,7 +510,7 @@ defmodule Ezagent.Plugin do
   #
   # Reachability caveat: a flavor's `kind` may be a CORE/domain Kind
   # the plugin REUSES rather than owns (cc's flavor `kind` is
-  # `Ezagent.Entity.Agent` from `ezagent_domain_instance_message`). The plugin
+  # `Ezagent.Entity.Agent` from `ezagent_domain_session`). The plugin
   # cannot depend on a domain app that already depends on it (cycle),
   # so that module's beam is not on the plugin's standalone code path.
   # `assert_implements!` therefore behaviour-checks only modules it can

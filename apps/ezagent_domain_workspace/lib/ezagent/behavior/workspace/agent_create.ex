@@ -647,7 +647,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   # resolution + grant mint + Sandbox-slice `cascade_resolution` persistence
   # for cold-restart re-resolution). Reached via runtime DI because
   # `ezagent_domain_workspace` cannot compile-time depend on
-  # `ezagent_domain_instance_message` (which depends on workspace; boots later).
+  # `ezagent_domain_session` (which depends on workspace; boots later).
   #
   # `source_template_uri` is the per-agent template URI (its content carries a
   # `config_dir` reference, so the cascade's source_template_uri branch also
@@ -743,7 +743,7 @@ defmodule Ezagent.Behavior.Workspace.AgentCreate do
   end
 
   # Runtime DI for the agent-spawn facade (mirrors `resolve_session_facade/0`).
-  # `ezagent_domain_instance_message` owns `Ezagent.Entity.Agent.spawn_from_template_content/5`
+  # `ezagent_domain_session` owns `Ezagent.Entity.Agent.spawn_from_template_content/5`
   # and boots AFTER workspace, so a compile-time alias would invert the dep
   # graph. Tests can override via
   # `Application.put_env(:ezagent_domain_workspace, :agent_spawn_facade, Fake)`.

@@ -28,7 +28,7 @@ defmodule EzagentWeb.Endpoint do
     longpoll: false
 
   # Phase 7 completion PR-5: orchestrator MCP transport bridge WS.
-  # The orchestrator MCP stdio bridge (ezagent_domain_instance_message's
+  # The orchestrator MCP stdio bridge (ezagent_domain_session's
   # priv/orchestrator_bridge.py) forwards `tools/call` for the 7
   # orchestration tools onto `Ezagent.Orchestrator.McpChannel`. Token
   # auth (reusing the cc TokenStore) at connect; the orchestrator's

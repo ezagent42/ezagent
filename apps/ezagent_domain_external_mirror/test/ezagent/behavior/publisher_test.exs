@@ -47,8 +47,8 @@ defmodule Ezagent.Behavior.PublisherTest do
 
   # Session-side architectural-invariant tests (the "@behaviour
   # declared" gate) live in
-  # `apps/ezagent_domain_instance_message/test/ezagent/behavior/publisher/session_impl_test.exs`
-  # because Session lives in `:ezagent_domain_instance_message` and this app
+  # `apps/ezagent_domain_session/test/ezagent/behavior/publisher/session_impl_test.exs`
+  # because Session lives in `:ezagent_domain_session` and this app
   # (external_mirror) deliberately has zero reverse references to chat.
 
   describe "Ezagent.Publisher.Event struct" do

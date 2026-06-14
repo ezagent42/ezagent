@@ -36,7 +36,7 @@ defmodule Ezagent.Orchestrator.SlotRetirementTest do
   @tools_source File.read!(
                   Path.join(
                     __DIR__,
-                    "../../../../ezagent_domain_instance_message/lib/ezagent/orchestrator/tools.ex"
+                    "../../../../ezagent_domain_session/lib/ezagent/orchestrator/tools.ex"
                   )
                 )
   @mcp_source File.read!(

@@ -191,7 +191,7 @@ defmodule Ezagent.E2E.Scenario25PhxRestartRebuildTest do
   describe "Session restart surrogate: workspace binding rebind on re-spawn" do
     # Note: the full chat.join -> on_change -> restart -> member rehydrate
     # path is covered by
-    # `apps/ezagent_domain_instance_message/test/integration/session_survives_restart_test.exs`.
+    # `apps/ezagent_domain_session/test/integration/session_survives_restart_test.exs`.
     # That test exercises chat-domain machinery (Chat Behavior + Session
     # Behavior wiring) which is currently in Phase 2 migration; pinning
     # the member-rehydrate path again here would just duplicate the
