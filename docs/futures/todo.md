@@ -1016,6 +1016,15 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
 > `gt_1000` burn-down (10 modules left) + any further deepening passes; the
 > written discussion/proposal deliverable is shipped, ongoing work is the
 > Phase-3 refactor sequence. Tracked under label `arch-deepening`.
+>
+> **Regression to burn down (2026-06-15):** `ezagent_domain_pty/server.ex`
+> crossed 1000 → **1027** via PR #723 (cc-runtime 2.1.170 MCP-trust/bypass
+> dialog auto-prompt scanner), so `oversized_modules_gt_1000` cap was bumped
+> **1→2** (`arch_baseline_manifest.exs`). Burn-down: extract the dialog-scanner
+> state machine from `server.ex` into a focused sibling module (it is a clean
+> seam — the PTY-output dialog matcher is independent of the core PtyServer
+> loop), then ratchet the cap back to 1. The other oversized module is
+> `ezagent_core/kind.ex` (1013).
 
 - **Install + run `improve-codebase-architecture` skill to clarify the ESR
   architecture.** Skill installed at `.claude/skills/improve-codebase-architecture/`

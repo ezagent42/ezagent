@@ -38,6 +38,37 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
     end
   end
 
+  @doc """
+  Pre-persist the deterministic *planned* orchestrator URI into the session's
+  durable working copy BEFORE the step-5 orchestrator-readiness gate runs.
+
+  The live orchestrator's MCP bridge join self-registers by lazily rebuilding
+  its context from this durable binding (`Ezagent.Orchestrator.McpServer`
+  read-through cache). The binding was previously only written at step 6
+  (`store_session_orchestrator_uri/2`), which runs AFTER `ensure_orchestrator`
+  — but `ensure_orchestrator`'s readiness gate POLLS for that very join. So in
+  production (live claude) every join was rejected `:orchestrator_not_registered`
+  for the whole 90s gate → timeout → full create rollback, blocking the
+  orchestrator + admin UI on a fresh stack. Deterministic tests masked it
+  (test-mode signals readiness without a live MCP join). See
+  `docs/notes/2026-06-15-live-orchestrator-mcp-registration-bug.md`.
+
+  Idempotent + clobber-safe: the planned URI is a pure function of
+  `(session_uri, workspace_uri)`, and we skip the write when a binding is
+  already present so the repair/adopt path keeps its existing binding.
+  """
+  @spec prestore_planned_orchestrator_uri(URI.t(), URI.t()) :: :ok | {:error, term()}
+  def prestore_planned_orchestrator_uri(%URI{} = session_uri, %URI{} = workspace_uri) do
+    case Map.get(Session.read_template_working_copy(session_uri), :orchestrator_uri) do
+      %URI{} ->
+        :ok
+
+      _ ->
+        planned = Session.planned_orchestrator_uri(session_uri, workspace_uri)
+        store_session_orchestrator_uri(session_uri, planned)
+    end
+  end
+
   def grant_owner_orchestrator_admin_cap(
         %URI{} = session_uri,
         %URI{} = owner_uri,

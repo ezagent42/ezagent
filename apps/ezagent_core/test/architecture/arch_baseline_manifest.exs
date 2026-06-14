@@ -20,7 +20,13 @@
   #   an agent backfill) pushed ezagent/kind.ex 999 → 1013. Its natural home is
   #   alongside the behavior-set accessors it mirrors. Burn-down target.
   # arch-cap-bump: PR-6 nil_capture_behavior_set/1 → kind.ex 999→1013
-  oversized_modules_gt_1000: 1,
+  # arch-cap-bump: PR #723 (cc-runtime 2.1.170 MCP-trust/bypass dialog
+  #   auto-prompt scanner) pushed ezagent_domain_pty/server.ex over 1000
+  #   (now 1027). Both kind.ex (1013) + server.ex (1027) are >1000; cap 1→2.
+  #   Pre-existing on main (CI does not run arch.scan); surfaced by the
+  #   2026-06-15 orchestrator-readiness work. Burn-down (extract the dialog
+  #   scanner from server.ex into a sibling module) tracked in docs/futures/todo.md.
+  oversized_modules_gt_1000: 2,
   def_count_admin_live: 46,
   def_count_cc_agent: 50,
   def_count_orchestrator_tools: 35,

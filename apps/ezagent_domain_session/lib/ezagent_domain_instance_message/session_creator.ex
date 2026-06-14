@@ -645,6 +645,16 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
        when is_list(opts) do
     new_session? = Keyword.fetch!(opts, :new_session?)
 
+    # Step 4.5 — pre-persist the deterministic planned orchestrator URI to the
+    # durable session working-copy BEFORE the step-5 readiness gate, so the
+    # live orchestrator's MCP bridge join can self-register (McpServer lazy
+    # rebuild from the durable snapshot) DURING the gate's poll. Without this
+    # the join is rejected `:orchestrator_not_registered` until step 6 — which
+    # runs AFTER the gate — so the gate times out (90s) and rolls the create
+    # back. Idempotent + clobber-safe (skips when already bound). See
+    # docs/notes/2026-06-15-live-orchestrator-mcp-registration-bug.md.
+    _ = Materializer.prestore_planned_orchestrator_uri(session_uri, workspace_uri)
+
     # Step 5 — ensure orchestrator (2-way ownership; ensure failure →
     # rollback → {:error,_}).
     case Session.ensure_orchestrator(session_uri, workspace_uri, effective_owner) do
