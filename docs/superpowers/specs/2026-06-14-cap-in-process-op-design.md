@@ -51,9 +51,9 @@ end
 ```
 
 `ctx.read_slice.(key)` internally: builds `needed` for "read slice `key`"
-(§2.3), calls `authorize_in_process(ctx.caps, needed)`, and on `:ok` returns the
-slice value straight from the Kind's own state. No declaration, no surfacing of
-un-asked slices, no deadlock.
+(§2.3), authorizes against **the Kind's OWN effective caps** (§2.5 — NOT the
+inbound caller's `ctx.caps`), and on `:ok` returns the slice value straight from
+the Kind's own state. No declaration, no surfacing of un-asked slices, no deadlock.
 
 ### 2.3 The cap shape for an in-process slice read (the key design point)
 
@@ -68,12 +68,48 @@ un-asked slices, no deadlock.
 resolvable via `Kind.BehaviorSet`). So a Kind that reads its `:sandbox` slice
 must hold a cap matching `{kind, <sandbox-owning behavior>, :read, self, ws}`.
 
-**Implication (codex, scrutinize this):** this makes in-process reads a *granted*
-capability where today they are free-by-declaration. Kinds that legitimately
-self-read (the 3 consumers) must be **granted the corresponding self-read cap at
-creation** — a deliberate strengthening (the read is now authorized, auditable,
-revocable), but a real migration cost. The grant happens at the same
-create-time cap-minting the Kind already does; no runtime cap-fabrication.
+**Implication:** this makes in-process reads a *granted* capability where today
+they are free-by-declaration. Kinds that legitimately self-read (the 3 consumers)
+must be **granted the corresponding self-read cap at creation** — a deliberate
+strengthening (the read is now authorized, auditable, revocable), but a real
+migration cost. The grant happens at the same create-time cap-minting the Kind
+already does; no runtime cap-fabrication.
+
+### 2.4 Read-cap subject registration (codex review)
+
+The self-read cap's **subject is the Kind's own URI** — the cap row is minted
+with `granted_by` = the create-time authority and held under the Kind's identity
+(the same place a Kind's other caps live). Concretely, the create-time cap
+minting for each of the 3 consumers gains its self-read cap
+(`cap(self_kind, owning_behavior, :read, self_uri, ws)`). There is no separate
+"read-cap registry" — it is an ordinary cap on the Kind, resolved the same way
+all of the Kind's caps are. Boot reconciliation grants it to already-existing
+Kinds of those types (migration step §3).
+
+### 2.5 Whose authority, and effective-set closure (codex review — load-bearing)
+
+Two things the naive `authorize_in_process(ctx.caps, …)` got wrong:
+
+1. **Whose caps.** A Kind reading its OWN slice acts under **its own authority**,
+   not the inbound caller's. So the principal is the **Kind itself**, and its
+   caps are resolved the **same way `Kind.Runtime` resolves a target's
+   authority** (the Kind's identity-slice caps via `holds_cap?` / the Kind's own
+   cap set) — NOT the `ctx.caps` that arrived on the triggering dispatch (those
+   belong to whoever called in). Using `ctx.caps` would let a privileged caller's
+   caps leak into the Kind's self-read, or deny a legitimate self-read when an
+   unprivileged caller triggered it. The accessor resolves the Kind's own caps
+   internally; the handler never passes a cap set.
+2. **Effective-set closure.** The check MUST apply the SAME closures as step
+   5.5/5.6 — `Capability.cross_workspace?/2` (admin `:any` + system-membership
+   bypass) and the full effective cap set — not a bare `matches?` over a raw
+   list. `authorize_in_process/2` therefore mirrors the runtime's authorization
+   semantics exactly (it is the in-process *call site* of the same decision), so
+   an in-process read is neither stricter nor looser than the equivalent
+   cross-process dispatch would be.
+
+In short: **`authorize_in_process/2` is the same authorization `Kind.Runtime`
+already performs, just invoked in-process against the Kind's own resolved
+authority** — removing the transport, preserving the principal and the closure.
 
 ## 3. Migration (one pass — Allen-approved recommendation)
 
@@ -99,12 +135,22 @@ create-time cap-minting the Kind already does; no runtime cap-fabrication.
 ## 5. Completion invariant (the gate)
 
 A test proving the read is genuinely cap-checked (per
-`feedback_completion_requires_invariant_test`): **a Kind whose self-read cap is
-absent gets `{:error, :unauthorized}` from `ctx.read_slice.(key)`** — and a
-positive control where the cap present returns `{:ok, slice}`. This fails on the
-old `reads_siblings` mechanism (its reads are unconditional) and passes only when
-the read is authorized. Plus a regression test that the 3 migrated consumers
-still function with their granted caps.
+`feedback_completion_requires_invariant_test`). Per codex review, NOT just a
+missing-cap deny/allow pair — the full set:
+1. **Deny (negative):** a Kind whose self-read cap is absent gets
+   `{:error, :unauthorized}` from `ctx.read_slice.(key)`.
+2. **Allow (positive control):** the cap present returns `{:ok, slice}`.
+3. **Revocation:** grant → read succeeds → **revoke the self-read cap** → the
+   same read now fails `:unauthorized`. Proves the cap is *live-checked* each
+   call, not resolved once (this is what `reads_siblings` structurally cannot
+   do — its reads are static/unconditional).
+4. **Whose-authority:** an in-process self-read succeeds/denies based on the
+   **Kind's own** caps, and is **unaffected** by the inbound caller's `ctx.caps`
+   (a privileged caller must not enable, nor an unprivileged caller disable, the
+   Kind's self-read). Locks §2.5.
+5. **Closure parity:** an admin/system-member Kind's self-read passes via the
+   same `cross_workspace?` closure as cross-process dispatch (§2.5).
+6. **Regression:** the 3 migrated consumers still function with their granted caps.
 
 ## 6. Sequencing
 
