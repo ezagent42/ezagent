@@ -1026,17 +1026,29 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
 > loop), then ratchet the cap back to 1. The other oversized module is
 > `ezagent_core/kind.ex` (1013).
 
-- **Repair-path orchestrator pre-store (PR #783, 2026-06-15)** — RESOLVED in PR.
-  The step-4.5 pre-store applies on BOTH the fresh-create and repair/restart
-  paths (both spawn an orchestrator whose live join needs the durable binding).
-  Transactional: `prestore_planned_orchestrator_uri/2` ensures the durable
-  binding EQUALS the planned URI before the gate (overwriting a stale/mismatched
-  binding so a repair heals), returning `{:stored, prior}`; on a repair-path
-  `ensure_orchestrator` failure the caller compensates
-  (`restore_session_orchestrator_uri/2` to `prior` +
-  `OrchestratorReadinessPort.unregister/clear`) so a failed repair can never
-  leave a planned binding for an orchestrator that never finalized (closes the
-  codex HIGHs). `session_creator.ex` `ensure_orchestrated_session/6`.
+- **Repair-path orchestrator pre-store + readiness/binding separation
+  (follow-up to PR #783, 2026-06-15)** — OPEN. PR #783 pre-stores the planned
+  orchestrator URI before the readiness gate ONLY on the fresh-create path
+  (`new_session?: true`), where any failure rolls the whole session back. The
+  repair/restart path is NOT pre-stored — its EXISTING binding (== planned,
+  preserved through `materialize_orchestrator_working_copy/3`) already resolves
+  the live join, so a normal orchestrator restart works. The remaining gap is
+  the NARROW case of repairing a session whose stored `:orchestrator_uri` is
+  absent/nil (e.g. upgraded-from-plain), which still hits the original live-join
+  deadlock. Pre-storing on the repair path is NOT a clean fix because the
+  `:orchestrator_uri` field is OVERLOADED: it is both (a) the join-auth binding
+  the live MCP join resolves against (needs to exist EARLY) and (b) the
+  `session_complete?/4` readiness proof via `OrchestratorReadinessPort.ready?/1`
+  → `McpServer.from_orchestrator_uri/1` (should be true only when FINALIZED).
+  Pre-storing on the keep-the-live-session repair path makes a concurrent
+  `session_complete?` read it as PREMATURE readiness (codex review, 4 rounds).
+  The proper fix is to SEPARATE the two: add a durable `orchestrator_finalized`
+  marker (set at step 6/7, survives restart) that `session_complete?` checks for
+  readiness, leaving `:orchestrator_uri` purely as the join-auth binding that the
+  pre-store can safely write early on BOTH paths. Then extend the pre-store to
+  the repair path with prior-binding restore on failure.
+  `session_creator.ex` `ensure_orchestrated_session/6` + the cc `McpServer` /
+  `OrchestratorReadinessPort` readiness check.
 
 - **Install + run `improve-codebase-architecture` skill to clarify the ESR
   architecture.** Skill installed at `.claude/skills/improve-codebase-architecture/`

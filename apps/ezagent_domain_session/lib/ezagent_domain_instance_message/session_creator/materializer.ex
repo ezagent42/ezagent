@@ -53,65 +53,22 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
   (test-mode signals readiness without a live MCP join). See
   `docs/notes/2026-06-15-live-orchestrator-mcp-registration-bug.md`.
 
-  The orchestrator URI is the deterministic identity of the session's
-  orchestrator (`planned_orchestrator_uri/2`), and `ensure_orchestrator/3`
-  spawns + gates exactly that planned URI; the live MCP join resolves only by an
-  EXACT match against the stored working-copy `:orchestrator_uri`. So this
-  ensures the durable binding equals the planned URI before the gate:
-
-    * stored already EQUALS planned → `:skipped` (nothing to do);
-    * stored is ABSENT or a MISMATCHED/stale URI → overwrite it with the planned
-      URI so the joining (planned) orchestrator resolves — a repair of a session
-      carrying a stale binding heals instead of timing out (codex review HIGH) —
-      and return `{:stored, prior}` so the caller can RESTORE `prior` if the
-      subsequent readiness/finalize fails on a path that keeps the live session
-      (the repair path; the fresh-create path instead deletes the whole snapshot
-      via `rollback_session/3`).
+  Applied ONLY on the fresh-create path (`new_session?: true`), where a fresh
+  session has no `:orchestrator_uri` yet and EVERY downstream failure rolls the
+  whole session back (`rollback_session/3` deletes the snapshot — atomicity Q1),
+  so a failed gate cannot leave a stale pre-stored binding behind. The
+  repair/restart path is NOT pre-stored here — its existing binding (== planned,
+  preserved by `materialize_orchestrator_working_copy/3`) already resolves the
+  live join; the narrower nil-orchestrator repair case needs a separate
+  readiness-vs-binding separation and is tracked in docs/futures/todo.md (the
+  `:orchestrator_uri` field doubles as the `session_complete?/4` readiness proof,
+  so pre-storing it on the keep-the-live-session repair path could read as
+  premature readiness — codex review).
   """
-  @spec prestore_planned_orchestrator_uri(URI.t(), URI.t()) ::
-          {:stored, URI.t() | nil} | :skipped | {:error, term()}
+  @spec prestore_planned_orchestrator_uri(URI.t(), URI.t()) :: :ok | {:error, term()}
   def prestore_planned_orchestrator_uri(%URI{} = session_uri, %URI{} = workspace_uri) do
     planned = Session.planned_orchestrator_uri(session_uri, workspace_uri)
-    current = Map.get(Session.read_template_working_copy(session_uri), :orchestrator_uri)
-
-    if is_struct(current, URI) and URI.to_string(current) == URI.to_string(planned) do
-      :skipped
-    else
-      case store_session_orchestrator_uri(session_uri, planned) do
-        :ok -> {:stored, current}
-        {:error, _} = err -> err
-      end
-    end
-  end
-
-  @doc """
-  Restore the session's durable working-copy `:orchestrator_uri` to a prior
-  value — the transactional compensation for a `prestore_planned_orchestrator_uri/2`
-  that returned `{:stored, prior}` when the subsequent orchestrator readiness/
-  finalize then FAILS on a path that keeps the live session (the repair path).
-
-  `prior` is whatever was bound before the pre-store: a `%URI{}` (a pre-existing
-  binding we overwrote — restored verbatim) or `nil`/absent (the key is removed).
-  Without this a failed repair would leave the PLANNED binding for an
-  orchestrator that never finalized, from which
-  `Ezagent.Orchestrator.McpServer.from_orchestrator_uri/1` / `session_complete?/4`
-  would report FALSE readiness (codex review HIGH).
-  """
-  @spec restore_session_orchestrator_uri(URI.t(), URI.t() | nil) :: :ok | {:error, term()}
-  def restore_session_orchestrator_uri(%URI{} = session_uri, prior) do
-    wc = Session.read_template_working_copy(session_uri)
-
-    working_copy =
-      case prior do
-        %URI{} -> Map.put(wc, :orchestrator_uri, prior)
-        _ -> Map.delete(wc, :orchestrator_uri)
-      end
-
-    case Ezagent.Behavior.Session.system_set_working_copy(session_uri, working_copy) do
-      {:ok, _} -> :ok
-      {:error, _} = err -> err
-      other -> {:error, {:unexpected_set_working_copy_result, other}}
-    end
+    store_session_orchestrator_uri(session_uri, planned)
   end
 
   def grant_owner_orchestrator_admin_cap(

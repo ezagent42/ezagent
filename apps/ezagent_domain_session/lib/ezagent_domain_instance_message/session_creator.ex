@@ -650,21 +650,65 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     # live orchestrator's MCP bridge join can self-register (McpServer lazy
     # rebuild from the durable snapshot) DURING the gate's poll. Without this
     # the join is rejected `:orchestrator_not_registered` until step 6 — which
-    # runs AFTER the gate — so the gate times out (90s) and the orchestrator
-    # never comes up (fresh create rolls back; repair/restart stays degraded).
-    # See docs/notes/2026-06-15-live-orchestrator-mcp-registration-bug.md.
+    # runs AFTER the gate — so the gate times out (90s) and the create rolls
+    # back. See docs/notes/2026-06-15-live-orchestrator-mcp-registration-bug.md.
     #
-    # Applied on BOTH paths (fresh create AND repair/restart — both spawn an
-    # orchestrator whose live join needs the durable binding to equal the
-    # planned URI). `{:stored, prior}` means we wrote the planned URI over a
-    # `prior` value (absent or a stale/mismatched binding — so a repair heals
-    # instead of preserving a binding the planned orchestrator can't resolve)
-    # and therefore OWN its compensation on a failed gate; `:skipped` means the
-    # binding already equalled planned (left untouched).
-    prestore_outcome = Materializer.prestore_planned_orchestrator_uri(session_uri, workspace_uri)
+    # ONLY on the fresh-create path (`new_session?: true`): a fresh session has
+    # no `:orchestrator_uri` yet, and EVERY downstream failure rolls the whole
+    # session back (`rollback_session/3` deletes the snapshot — atomicity Q1),
+    # so a failed gate cannot leave a stale binding. The repair/restart path is
+    # NOT pre-stored: its existing binding (== planned, preserved through
+    # `materialize_orchestrator_working_copy/3`) already resolves the live join.
+    # The narrower nil-orchestrator repair case needs a readiness-vs-binding
+    # separation (the `:orchestrator_uri` field doubles as the
+    # `session_complete?/4` readiness proof, so pre-storing it on the
+    # keep-the-live-session repair path could read as PREMATURE readiness —
+    # codex review) and is tracked as follow-up in docs/futures/todo.md.
+    #
+    # A pre-store WRITE FAILURE dooms the gate (the join can't resolve), so
+    # fail fast + roll the fresh session back instead of waiting out the 90s.
+    prestore_result =
+      if new_session? do
+        Materializer.prestore_planned_orchestrator_uri(session_uri, workspace_uri)
+      else
+        :ok
+      end
 
-    # Step 5 — ensure orchestrator (2-way ownership; ensure failure →
-    # rollback → {:error,_}).
+    with :ok <- prestore_result do
+      # Step 5 — ensure orchestrator (2-way ownership; ensure failure →
+      # rollback → {:error,_}).
+      ensure_orchestrator_and_finalize(
+        session_uri,
+        workspace_uri,
+        effective_owner,
+        session_template_uri,
+        template_content,
+        new_session?
+      )
+    else
+      {:error, reason} ->
+        if new_session? do
+          rollback_session(session_uri, nil,
+            owner_uri: effective_owner,
+            workspace_uri: workspace_uri
+          )
+        end
+
+        {:error, {:orchestrator_prestore_failed, reason}}
+    end
+  end
+
+  # Steps 5-8: ensure the orchestrator, then (on success) wire its context.
+  # Split out of `ensure_orchestrated_session/6` so the step-4.5 pre-store can
+  # fail-fast ahead of it.
+  defp ensure_orchestrator_and_finalize(
+         session_uri,
+         workspace_uri,
+         effective_owner,
+         session_template_uri,
+         template_content,
+         new_session?
+       ) do
     case Session.ensure_orchestrator(session_uri, workspace_uri, effective_owner) do
       {:error, reason} ->
         # `ensure_orchestrator/3` self-cleans the orchestrator it spawned
@@ -674,32 +718,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
         # the repair path the pre-existing session stays alive — there is no
         # residue to sweep (the orchestrator self-cleaned, no caps granted).
         if new_session? do
-          # The full rollback deletes the Session Kind + snapshot, taking any
-          # step-4.5 pre-store with it — no separate compensation needed.
           rollback_session(session_uri, nil,
             owner_uri: effective_owner,
             workspace_uri: workspace_uri
           )
-        else
-          # Repair path keeps the live session. Transactionally compensate ONLY
-          # a pre-store WE wrote: RESTORE the prior binding so a failed gate
-          # can't leave the planned `:orchestrator_uri` for an orchestrator that
-          # never finalized → false readiness via `McpServer.from_orchestrator_uri/1`
-          # / `session_complete?/4` (codex review HIGH). An `ensure_orchestrator`
-          # FAILURE means no live join succeeded (a successful join passes the
-          # gate), so no McpRegistry cache row was created by THIS attempt; the
-          # port unregister/clear of the planned URI is belt-and-suspenders
-          # against a concurrent-probe cache fill.
-          case prestore_outcome do
-            {:stored, prior} ->
-              planned = Session.planned_orchestrator_uri(session_uri, workspace_uri)
-              _ = Materializer.restore_session_orchestrator_uri(session_uri, prior)
-              _ = Ezagent.Session.OrchestratorReadinessPort.unregister(planned)
-              _ = Ezagent.Session.OrchestratorReadinessPort.clear(planned)
-
-            _ ->
-              :ok
-          end
         end
 
         {:error, {:orchestrator_ensure_failed, reason}}

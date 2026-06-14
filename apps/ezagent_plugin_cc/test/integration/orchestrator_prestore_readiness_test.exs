@@ -78,11 +78,8 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorPrestoreReadiness
     assert McpServer.from_orchestrator_uri(planned) ==
              {:error, :orchestrator_not_registered}
 
-    # THE FIX: step 4.5 pre-store of the deterministic planned binding. It
-    # returns {:stored, prior} (prior == nil here — the binding was absent), so
-    # the caller owns its compensation on a failed gate.
-    assert {:stored, nil} =
-             Materializer.prestore_planned_orchestrator_uri(session_uri, workspace_uri)
+    # THE FIX: step 4.5 pre-store of the deterministic planned binding.
+    assert :ok = Materializer.prestore_planned_orchestrator_uri(session_uri, workspace_uri)
     # Clear the cache the precondition probe might have left, so the assertion
     # below proves a fresh durable rebuild (not a stale ETS row).
     :ok = McpRegistry.unregister(planned)
@@ -95,78 +92,16 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorPrestoreReadiness
              "readiness gate is still polling"
   end
 
-  test "compensation: restoring the prior binding makes the live-join path fail closed again" do
-    {session_uri, workspace_uri} = staged_session()
-    planned = Session.planned_orchestrator_uri(session_uri, workspace_uri)
-    :ok = McpRegistry.unregister(planned)
-
-    # Pre-store (prior == nil), then confirm the live-join path resolves.
-    assert {:stored, nil} =
-             Materializer.prestore_planned_orchestrator_uri(session_uri, workspace_uri)
-
-    :ok = McpRegistry.unregister(planned)
-    assert {:ok, :registered} = McpServer.from_orchestrator_uri(planned)
-
-    # Compensation (repair-path failed gate): restore the prior (nil) binding +
-    # evict the cache. The live-join path MUST now fail closed — no false
-    # readiness can survive a failed repair (codex review HIGH).
-    :ok = Materializer.restore_session_orchestrator_uri(session_uri, nil)
-    :ok = McpRegistry.unregister(planned)
-
-    assert McpServer.from_orchestrator_uri(planned) ==
-             {:error, :orchestrator_not_registered},
-           "after restoring the prior (nil) binding the durable binding is gone, " <>
-             "so the live MCP-join path must fail closed — a failed repair " <>
-             "cannot leave a stale orchestrator registration source"
-  end
-
-  test "pre-store skips when the binding already equals the planned URI" do
+  test "pre-store writes the planned URI as the durable orchestrator binding" do
     {session_uri, workspace_uri} = staged_session()
     planned = Session.planned_orchestrator_uri(session_uri, workspace_uri)
 
-    :ok = Materializer.store_session_orchestrator_uri(session_uri, planned)
-
-    assert :skipped = Materializer.prestore_planned_orchestrator_uri(session_uri, workspace_uri)
+    assert :ok = Materializer.prestore_planned_orchestrator_uri(session_uri, workspace_uri)
 
     wc = Session.read_template_working_copy(session_uri)
 
     assert URI.to_string(Map.get(wc, :orchestrator_uri)) == URI.to_string(planned),
-           "a binding that already equals the planned URI is left untouched"
-  end
-
-  test "pre-store OVERWRITES a stale/mismatched binding with the planned URI (repair heals)" do
-    {session_uri, workspace_uri} = staged_session()
-    planned = Session.planned_orchestrator_uri(session_uri, workspace_uri)
-
-    # A repair target carrying a STALE binding (a different URI than the planned
-    # one ensure_orchestrator will spawn + gate).
-    stale =
-      URI.new!(
-        "entity://system/agent/cc_orchestrator-stale-#{System.unique_integer([:positive])}"
-      )
-
-    :ok = Materializer.store_session_orchestrator_uri(session_uri, stale)
-    :ok = McpRegistry.unregister(planned)
-
-    # The PLANNED orchestrator must NOT be resolvable while the stale binding
-    # stands — this is the repair deadlock codex flagged.
-    assert McpServer.from_orchestrator_uri(planned) ==
-             {:error, :orchestrator_not_registered}
-
-    # Pre-store overwrites the stale binding with the planned URI, returning the
-    # prior (stale) value so the caller can restore it on a failed gate.
-    assert {:stored, ^stale} =
-             Materializer.prestore_planned_orchestrator_uri(session_uri, workspace_uri)
-
-    :ok = McpRegistry.unregister(planned)
-
-    # Now the planned (joining) orchestrator resolves — the repair can heal.
-    assert {:ok, :registered} = McpServer.from_orchestrator_uri(planned),
-           "pre-store must overwrite a stale/mismatched binding so the planned " <>
-             "orchestrator's live join resolves — otherwise repair times out"
-
-    wc = Session.read_template_working_copy(session_uri)
-
-    assert URI.to_string(Map.get(wc, :orchestrator_uri)) == URI.to_string(planned)
+           "the durable working-copy :orchestrator_uri must equal the deterministic " <>
+             "planned URI the live join resolves against"
   end
 end
