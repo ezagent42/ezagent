@@ -1016,6 +1016,55 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
 > `gt_1000` burn-down (10 modules left) + any further deepening passes; the
 > written discussion/proposal deliverable is shipped, ongoing work is the
 > Phase-3 refactor sequence. Tracked under label `arch-deepening`.
+>
+> **Regression to burn down (2026-06-15):** `ezagent_domain_pty/server.ex`
+> crossed 1000 → **1027** via PR #723 (cc-runtime 2.1.170 MCP-trust/bypass
+> dialog auto-prompt scanner), so `oversized_modules_gt_1000` cap was bumped
+> **1→2** (`arch_baseline_manifest.exs`). Burn-down: extract the dialog-scanner
+> state machine from `server.ex` into a focused sibling module (it is a clean
+> seam — the PTY-output dialog matcher is independent of the core PtyServer
+> loop), then ratchet the cap back to 1. The other oversized module is
+> `ezagent_core/kind.ex` (1013).
+
+- **Fresh-stack admin lacks create-cap → blocks ALL live E2E (2026-06-15)** — OPEN,
+  HIGH for E2E. On a blank disposable stack (`down -v` + boot + `set_password`),
+  `create_session` as `entity://system/user/admin` is denied `:unauthorized`
+  (dispatch audit: `workspace.create_session … authz=denied reason=:unauthorized`).
+  Admin caps are supposed to come from `User.initial_caps_for_spawn/1` →
+  `SystemPrincipal.caps("system://bootstrap")` (wildcard) at admin-Kind spawn,
+  but the docker entrypoint only runs `home.init` + `ecto.migrate` and
+  `mix ezagent.bootstrap` explicitly does NOT mint admin caps — so the
+  fresh-stack admin authz check sees empty caps. This blocks the live-verify of
+  PR #783's orchestrator-readiness fix AND #34 (author-side SW-USE E2E) — both
+  need an authorized `create_session`. Fix: ensure the admin Kind is spawned
+  with its bootstrap wildcard caps on a fresh stack (entrypoint step, or a
+  `mix ezagent` operator task), then re-run the live E2E. The PR #783 fix is
+  code-proven (regression test exercises `McpServer.from_orchestrator_uri/1` on
+  the exact pre-store path); only the LIVE tier is gated on this.
+
+- **Repair-path orchestrator pre-store + readiness/binding separation
+  (follow-up to PR #783, 2026-06-15)** — OPEN. PR #783 pre-stores the planned
+  orchestrator URI before the readiness gate ONLY on the fresh-create path
+  (`new_session?: true`), where any failure rolls the whole session back. The
+  repair/restart path is NOT pre-stored — its EXISTING binding (== planned,
+  preserved through `materialize_orchestrator_working_copy/3`) already resolves
+  the live join, so a normal orchestrator restart works. The remaining gap is
+  the NARROW case of repairing a session whose stored `:orchestrator_uri` is
+  absent/nil (e.g. upgraded-from-plain), which still hits the original live-join
+  deadlock. Pre-storing on the repair path is NOT a clean fix because the
+  `:orchestrator_uri` field is OVERLOADED: it is both (a) the join-auth binding
+  the live MCP join resolves against (needs to exist EARLY) and (b) the
+  `session_complete?/4` readiness proof via `OrchestratorReadinessPort.ready?/1`
+  → `McpServer.from_orchestrator_uri/1` (should be true only when FINALIZED).
+  Pre-storing on the keep-the-live-session repair path makes a concurrent
+  `session_complete?` read it as PREMATURE readiness (codex review, 4 rounds).
+  The proper fix is to SEPARATE the two: add a durable `orchestrator_finalized`
+  marker (set at step 6/7, survives restart) that `session_complete?` checks for
+  readiness, leaving `:orchestrator_uri` purely as the join-auth binding that the
+  pre-store can safely write early on BOTH paths. Then extend the pre-store to
+  the repair path with prior-binding restore on failure.
+  `session_creator.ex` `ensure_orchestrated_session/6` + the cc `McpServer` /
+  `OrchestratorReadinessPort` readiness check.
 
 - **Install + run `improve-codebase-architecture` skill to clarify the ESR
   architecture.** Skill installed at `.claude/skills/improve-codebase-architecture/`

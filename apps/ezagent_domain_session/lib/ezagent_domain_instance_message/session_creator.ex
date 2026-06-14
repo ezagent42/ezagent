@@ -645,8 +645,70 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
        when is_list(opts) do
     new_session? = Keyword.fetch!(opts, :new_session?)
 
-    # Step 5 — ensure orchestrator (2-way ownership; ensure failure →
-    # rollback → {:error,_}).
+    # Step 4.5 — pre-persist the deterministic planned orchestrator URI to the
+    # durable session working-copy BEFORE the step-5 readiness gate, so the
+    # live orchestrator's MCP bridge join can self-register (McpServer lazy
+    # rebuild from the durable snapshot) DURING the gate's poll. Without this
+    # the join is rejected `:orchestrator_not_registered` until step 6 — which
+    # runs AFTER the gate — so the gate times out (90s) and the create rolls
+    # back. See docs/notes/2026-06-15-live-orchestrator-mcp-registration-bug.md.
+    #
+    # ONLY on the fresh-create path (`new_session?: true`): a fresh session has
+    # no `:orchestrator_uri` yet, and EVERY downstream failure rolls the whole
+    # session back (`rollback_session/3` deletes the snapshot — atomicity Q1),
+    # so a failed gate cannot leave a stale binding. The repair/restart path is
+    # NOT pre-stored: its existing binding (== planned, preserved through
+    # `materialize_orchestrator_working_copy/3`) already resolves the live join.
+    # The narrower nil-orchestrator repair case needs a readiness-vs-binding
+    # separation (the `:orchestrator_uri` field doubles as the
+    # `session_complete?/4` readiness proof, so pre-storing it on the
+    # keep-the-live-session repair path could read as PREMATURE readiness —
+    # codex review) and is tracked as follow-up in docs/futures/todo.md.
+    #
+    # A pre-store WRITE FAILURE dooms the gate (the join can't resolve), so
+    # fail fast + roll the fresh session back instead of waiting out the 90s.
+    prestore_result =
+      if new_session? do
+        Materializer.prestore_planned_orchestrator_uri(session_uri, workspace_uri)
+      else
+        :ok
+      end
+
+    with :ok <- prestore_result do
+      # Step 5 — ensure orchestrator (2-way ownership; ensure failure →
+      # rollback → {:error,_}).
+      ensure_orchestrator_and_finalize(
+        session_uri,
+        workspace_uri,
+        effective_owner,
+        session_template_uri,
+        template_content,
+        new_session?
+      )
+    else
+      {:error, reason} ->
+        if new_session? do
+          rollback_session(session_uri, nil,
+            owner_uri: effective_owner,
+            workspace_uri: workspace_uri
+          )
+        end
+
+        {:error, {:orchestrator_prestore_failed, reason}}
+    end
+  end
+
+  # Steps 5-8: ensure the orchestrator, then (on success) wire its context.
+  # Split out of `ensure_orchestrated_session/6` so the step-4.5 pre-store can
+  # fail-fast ahead of it.
+  defp ensure_orchestrator_and_finalize(
+         session_uri,
+         workspace_uri,
+         effective_owner,
+         session_template_uri,
+         template_content,
+         new_session?
+       ) do
     case Session.ensure_orchestrator(session_uri, workspace_uri, effective_owner) do
       {:error, reason} ->
         # `ensure_orchestrator/3` self-cleans the orchestrator it spawned
