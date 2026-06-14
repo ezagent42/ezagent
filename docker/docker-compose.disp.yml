@@ -1,0 +1,56 @@
+# Disposable E2E stack — a fresh, blank ezagent on host :10044 (container :10042),
+# with the dedicated disposable Feishu app (docker/secrets/feishu.yaml). Single
+# `ezagent` service (no cloudflared — reach via Tailscale http://100.64.0.27:10044).
+# Build+run (host has direct net; no proxy needed in this environment):
+#   docker compose -f docker/docker-compose.disp.yml build
+#   docker compose -f docker/docker-compose.disp.yml up -d
+# Standardizes the previously-manual `ezagent-disp` setup. See docs/guide/dockerized-e2e.md.
+services:
+  ezagent:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+      args:
+        HTTP_PROXY: ${DOCKER_BUILD_PROXY:-}
+        HTTPS_PROXY: ${DOCKER_BUILD_PROXY:-}
+        NO_PROXY: "localhost,127.0.0.1,::1"
+    image: ezagent-disp:latest
+    container_name: ezagent-disp
+    ports:
+      - "10044:10042"
+    env_file:
+      - ./secrets/ezagent.env
+    environment:
+      PORT: "10042"
+      SHELL: /bin/bash
+      EZAGENT_HOME: /data
+      EZAGENT_PROFILE: default
+      EZAGENT_PUBLIC_HOST: "100.64.0.27"
+      EZAGENT_PUBLIC_SCHEME: http
+      EZAGENT_PUBLIC_PORT: "10044"
+      # Host has direct connectivity (clash TUN) — ESR_PROXY empty = no explicit proxy.
+      HTTP_PROXY: ${ESR_PROXY:-}
+      HTTPS_PROXY: ${ESR_PROXY:-}
+      http_proxy: ${ESR_PROXY:-}
+      https_proxy: ${ESR_PROXY:-}
+      NO_PROXY: "localhost,127.0.0.1,::1,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
+      no_proxy: "localhost,127.0.0.1,::1,host.docker.internal,.feishu.cn,.larksuite.com,open.feishu.cn"
+    volumes:
+      - dispm_home:/data
+      - ./secrets:/secrets:ro
+      - dispm_cred_cc:/cred/cc
+      - dispm_cred_codex:/cred/codex
+      - dispm_layers:/layers
+      - ./entrypoint.sh:/app/docker/entrypoint.sh:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:10042/"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+
+volumes:
+  dispm_home:
+  dispm_cred_cc:
+  dispm_cred_codex:
+  dispm_layers:
