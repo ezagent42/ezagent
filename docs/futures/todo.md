@@ -1029,12 +1029,14 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
 - **Repair-path orchestrator pre-store (PR #783, 2026-06-15)** — RESOLVED in PR.
   The step-4.5 pre-store applies on BOTH the fresh-create and repair/restart
   paths (both spawn an orchestrator whose live join needs the durable binding).
-  Transactional: `prestore_planned_orchestrator_uri/2` returns `:stored` only
-  when it actually wrote, and on a repair-path `ensure_orchestrator` failure the
-  caller compensates (`clear_session_orchestrator_uri/1` +
+  Transactional: `prestore_planned_orchestrator_uri/2` ensures the durable
+  binding EQUALS the planned URI before the gate (overwriting a stale/mismatched
+  binding so a repair heals), returning `{:stored, prior}`; on a repair-path
+  `ensure_orchestrator` failure the caller compensates
+  (`restore_session_orchestrator_uri/2` to `prior` +
   `OrchestratorReadinessPort.unregister/clear`) so a failed repair can never
   leave a planned binding for an orchestrator that never finalized (closes the
-  codex HIGH). `session_creator.ex` `ensure_orchestrated_session/6`.
+  codex HIGHs). `session_creator.ex` `ensure_orchestrated_session/6`.
 
 - **Install + run `improve-codebase-architecture` skill to clarify the ESR
   architecture.** Skill installed at `.claude/skills/improve-codebase-architecture/`

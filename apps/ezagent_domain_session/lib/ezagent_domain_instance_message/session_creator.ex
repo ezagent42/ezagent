@@ -655,10 +655,12 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     # See docs/notes/2026-06-15-live-orchestrator-mcp-registration-bug.md.
     #
     # Applied on BOTH paths (fresh create AND repair/restart — both spawn an
-    # orchestrator whose live join needs the durable binding). `:stored` means
-    # we actually wrote a planned URI (prior was absent) and therefore OWN its
-    # compensation on a failed gate; `:skipped` means a binding already existed
-    # (clobber-safe — left untouched).
+    # orchestrator whose live join needs the durable binding to equal the
+    # planned URI). `{:stored, prior}` means we wrote the planned URI over a
+    # `prior` value (absent or a stale/mismatched binding — so a repair heals
+    # instead of preserving a binding the planned orchestrator can't resolve)
+    # and therefore OWN its compensation on a failed gate; `:skipped` means the
+    # binding already equalled planned (left untouched).
     prestore_outcome = Materializer.prestore_planned_orchestrator_uri(session_uri, workspace_uri)
 
     # Step 5 — ensure orchestrator (2-way ownership; ensure failure →
@@ -679,19 +681,24 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
             workspace_uri: workspace_uri
           )
         else
-          # Repair path keeps the live session. Compensate ONLY a pre-store WE
-          # wrote, so a failed gate can't leave a planned `:orchestrator_uri`
-          # for an orchestrator that never finalized → false readiness via
-          # `McpServer.from_orchestrator_uri/1` / `session_complete?/4` (codex
-          # review HIGH). An `ensure_orchestrator` FAILURE means no live join
-          # succeeded (a successful join passes the gate), so no McpRegistry
-          # cache row was created by THIS attempt; the port clear/unregister is
-          # belt-and-suspenders against a concurrent-probe cache fill.
-          if prestore_outcome == :stored do
-            planned = Session.planned_orchestrator_uri(session_uri, workspace_uri)
-            _ = Materializer.clear_session_orchestrator_uri(session_uri)
-            _ = Ezagent.Session.OrchestratorReadinessPort.unregister(planned)
-            _ = Ezagent.Session.OrchestratorReadinessPort.clear(planned)
+          # Repair path keeps the live session. Transactionally compensate ONLY
+          # a pre-store WE wrote: RESTORE the prior binding so a failed gate
+          # can't leave the planned `:orchestrator_uri` for an orchestrator that
+          # never finalized → false readiness via `McpServer.from_orchestrator_uri/1`
+          # / `session_complete?/4` (codex review HIGH). An `ensure_orchestrator`
+          # FAILURE means no live join succeeded (a successful join passes the
+          # gate), so no McpRegistry cache row was created by THIS attempt; the
+          # port unregister/clear of the planned URI is belt-and-suspenders
+          # against a concurrent-probe cache fill.
+          case prestore_outcome do
+            {:stored, prior} ->
+              planned = Session.planned_orchestrator_uri(session_uri, workspace_uri)
+              _ = Materializer.restore_session_orchestrator_uri(session_uri, prior)
+              _ = Ezagent.Session.OrchestratorReadinessPort.unregister(planned)
+              _ = Ezagent.Session.OrchestratorReadinessPort.clear(planned)
+
+            _ ->
+              :ok
           end
         end
 
