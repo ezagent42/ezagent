@@ -13,7 +13,7 @@
 
 ## Actors
 
-- **Caller (LV minting)**: admin (`entity://user/system/admin`)
+- **Caller (LV minting)**: admin (`entity://system/user/admin`)
 - **Caller (CLI dispatch)**: an end-user agent holding the minted token
 - **Target**: `entity://user/<workspace>/<username>` — token's subject
 - **Behavior**: `Ezagent.Behavior.UserTokens` (`:mint_token`, `:list_tokens`, `:revoke_token`)
@@ -31,7 +31,7 @@
 
 5. From a separate shell:
    ```
-   EZAGENT_TOKEN=<token> mix ezagent identity list_api_keys --user entity://user/system/admin
+   EZAGENT_TOKEN=<token> mix ezagent identity list_api_keys --user entity://system/user/admin
    ```
 6. Verify the CLI hits the SAME BEAM via distributed Erlang RPC (per Decision #130 — CLI must not boot its own VM).
 7. Verify the response prints the masked api-keys list.

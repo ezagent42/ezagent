@@ -15,7 +15,7 @@
 
 ## 角色
 
-- **调用方**：admin（`entity://user/system/admin`）
+- **调用方**：admin（`entity://system/user/admin`）
 - **目标**：cc agent `entity://agent/system/my_cc_agent`（Kind：`Ezagent.Entity.CcAgent`）
 - **外部系统**：spawn 的 `claude` TUI 二进制；cc-bridge Phoenix Channel `ws://127.0.0.1:10042/cc_socket/websocket`
 

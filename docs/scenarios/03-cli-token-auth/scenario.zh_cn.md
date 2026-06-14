@@ -13,7 +13,7 @@
 
 ## 角色
 
-- **调用方（LV mint）**：admin（`entity://user/system/admin`）
+- **调用方（LV mint）**：admin（`entity://system/user/admin`）
 - **调用方（CLI 派发）**：持有 mint 出的 token 的终端用户 agent
 - **目标**：`entity://user/<workspace>/<username>` — token 的主体
 - **Behavior**：`Ezagent.Behavior.UserTokens`（`:mint_token`、`:list_tokens`、`:revoke_token`）
@@ -31,7 +31,7 @@
 
 5. 另一个 shell：
    ```
-   EZAGENT_TOKEN=<token> mix ezagent identity list_api_keys --user entity://user/system/admin
+   EZAGENT_TOKEN=<token> mix ezagent identity list_api_keys --user entity://system/user/admin
    ```
 6. 验证 CLI 经分布式 Erlang RPC 命中**同一个** BEAM（按 Decision #130 — CLI 不可启动自己的 VM）。
 7. 验证响应打印 masked api-key 列表。

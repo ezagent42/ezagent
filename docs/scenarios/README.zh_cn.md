@@ -56,8 +56,8 @@
 | 本机 URL | `http://127.0.0.1:10042`（操作员本机；Feishu webhook 需公网 sidecar）|
 | Allen Feishu chat_id（DM）| `oc_d9b47511b085e9d5b66c4595b3ef9bb9` |
 | Dev / smoke Feishu chat_id | `oc_83a4f1ff0bf627ffe26aa60647e5b04a` |
-| 系统管理员 | `entity://user/system/admin` —— 临时 dev 密码 `e2e-admin-2026`（2026-05-30 为 lifecycle 迁移后全量 E2E 设置，Allen 可自行轮换）。**登录时用户名栏填完整 URI** —— 裸 handle `admin` 目前在表单上不解析（小 UI 瑕疵）。|
-| 自助凭据（不向 Allen 要密码） | bootstrap 一个 admin token：`mix ezagent.user.token entity://user/system/admin --mint` → 再用 `EZAGENT_USER_TOKEN=<tok> EZAGENT_ENTITY_URI=entity://user/system/admin mix ezagent user set_password --user <uri> --password <pw>` 设登录密码，或 `mix ezagent user create` + `set_password` 造一个临时测试用户。永远不要为一个密码卡住去问 Allen（他 2026-05-30 的指令）。|
+| 系统管理员 | `entity://system/user/admin`（PR #131 后 workspace-first —— **不是** `entity://user/system/admin`）。**全新 stack 没有 admin 密码** —— entrypoint 不设密码，首登会失败，需先设：`mix ezagent.user.set_password entity://system/user/admin --password <pw>`。（共享 dev stack 是 2026-05-30 手工设了 `e2e-admin-2026`；全新/一次性 stack 没有。）**登录时用户名栏填完整 URI** —— 裸 handle `admin` 目前在表单上不解析（小 UI 瑕疵）。|
+| 自助凭据（不向 Allen 要密码） | bootstrap 一个 admin token：`mix ezagent.user.token entity://system/user/admin --mint` → 再用 `EZAGENT_USER_TOKEN=<tok> EZAGENT_ENTITY_URI=entity://system/user/admin mix ezagent user set_password --user <uri> --password <pw>` 设登录密码，或 `mix ezagent user create` + `set_password` 造一个临时测试用户。永远不要为一个密码卡住去问 Allen（他 2026-05-30 的指令）。|
 | 默认 workspace | `workspace://system`（PR #398 改名后；`workspace://default` 是禁用别名，见 PR #399）|
 
 ### 1.2 工具链

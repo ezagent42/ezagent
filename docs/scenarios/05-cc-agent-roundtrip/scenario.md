@@ -15,7 +15,7 @@
 
 ## Actors
 
-- **Caller**: admin (`entity://user/system/admin`)
+- **Caller**: admin (`entity://system/user/admin`)
 - **Target**: cc agent `entity://agent/system/my_cc_agent` (Kind: `Ezagent.Entity.CcAgent`)
 - **External systems**: spawned `claude` TUI binary; cc-bridge Phoenix Channel at `ws://127.0.0.1:10042/cc_socket/websocket`
 
