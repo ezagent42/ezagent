@@ -452,7 +452,7 @@ defmodule EzagentPluginAutoservice.CustomerSession do
       # The Session?action=cs_orchestrator.receive URI triggers the
       # CsOrchestrator Behavior's :receive handler.
       orch_receiver =
-        Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=cs_orchestrator.receive")
+        Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=cs_orchestrator.process_message")
 
       receivers = [orch_receiver | receivers]
 

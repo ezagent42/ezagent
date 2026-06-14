@@ -222,11 +222,12 @@ defmodule EzagentPluginContent.Behavior.ContentAdminTest do
 
   describe "non-workspace dispatch" do
     test "returns :no_such_actor when dispatching against non-existent session URI" do
-      non_ws_target = Ezagent.URI.with_action(
-        Ezagent.URI.new!("session://cs/test/foo"),
-        :content_admin,
-        :write_soul_slot
-      )
+      non_ws_target =
+        Ezagent.URI.with_action(
+          Ezagent.URI.new!("session://cs/test/foo"),
+          :content_admin,
+          :write_soul_slot
+        )
 
       assert {:error, :no_such_actor} =
                Invocation.dispatch(%Invocation{

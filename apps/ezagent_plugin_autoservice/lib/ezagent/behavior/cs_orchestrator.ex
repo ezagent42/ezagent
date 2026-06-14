@@ -7,10 +7,14 @@ defmodule Ezagent.Behavior.CsOrchestrator do
   TurnDriver calls Turn handlers directly (same-process, v3 §6.6.1).
 
   ## Actions
-  - `:receive` — customer message inlet
-  - `:send` — agent-reply inlet (bridge delivers as chat.send)
+  - `:process_message` — customer message inlet (renamed from :receive
+    to avoid colliding with Chat.receive on same Kind)
   - `:operator_claim` — human takeover (cancel → open → compose → claim)
   - `:operator_settle` — human submit (settle → customer_visible)
+
+  Note: :send was removed — agent replies are delivered as chat.send by
+  the bridge (framework constraint #2 from PR #740). The CsOrchestrator
+  cannot intercept agent replies on this Kind; Chat handles them natively.
   """
 
   use Ezagent.Lifecycle, state_slice: :cs_orchestrator
@@ -28,20 +32,12 @@ defmodule Ezagent.Behavior.CsOrchestrator do
   # Action declarations
   # -----------------------------------------------------------------------
 
-  action(:receive,
+  action(:process_message,
     args: %{message: :map},
     returns: %{ok: :boolean},
-    caps: [:receive],
+    caps: [:process_message],
     modes: [:cast, :call],
     description: "Customer message inlet: Turn.open + fan-out to agents"
-  )
-
-  action(:send,
-    args: %{message: :map},
-    returns: %{ok: :boolean},
-    caps: [:send],
-    modes: [:cast, :call],
-    description: "Agent-reply inlet: bridge dispatches fast/slow replies as chat.send"
   )
 
   action(:operator_claim,
@@ -79,16 +75,10 @@ defmodule Ezagent.Behavior.CsOrchestrator do
   def reads_siblings, do: [:turns]
 
   # -----------------------------------------------------------------------
-  # handle_send/2 — delegates to handle_receive/2 (PR #731 Live E2E fix)
+  # handle_process_message/2
   # -----------------------------------------------------------------------
 
-  def handle_send(args, ctx), do: handle_receive(args, ctx)
-
-  # -----------------------------------------------------------------------
-  # handle_receive/2
-  # -----------------------------------------------------------------------
-
-  def handle_receive(%{message: raw_msg}, ctx) do
+  def handle_process_message(%{message: raw_msg}, ctx) do
     msg = normalize_message(raw_msg)
     sender_str = msg.sender |> URI.to_string()
     session_uri = ctx.self_uri
@@ -141,12 +131,13 @@ defmodule Ezagent.Behavior.CsOrchestrator do
         {:ok, %{ok: false, step: :cancel, detail: inspect(err)}, cancel_effects}
 
       :ok ->
-        # 2. Open a fresh turn
-        trigger = %{message_id: "operator-claim-#{System.unique_integer([:positive])}", text: operator_text}
+        trigger = %{
+          message_id: "operator-claim-#{System.unique_integer([:positive])}",
+          text: operator_text
+        }
 
         case TurnDriver.open(session_uri, trigger, tctx) do
           {:ok, %{turn_id: new_tid}, open_effects} ->
-            # 3. Compose operator text + 4. Claim
             with {:ok, _, compose_effects} <- TurnDriver.compose(session_uri, new_tid, operator_text, tctx),
                  {:ok, _, claim_effects} <- TurnDriver.claim(session_uri, new_tid, op_uri, tctx) do
               turn_effects = cancel_effects ++ open_effects ++ compose_effects ++ claim_effects
@@ -211,7 +202,6 @@ defmodule Ezagent.Behavior.CsOrchestrator do
     tctx = turn_ctx(ctx)
     trigger = %{message_id: msg.id, text: extract_text(msg.body)}
 
-    # Cancel stale open turn from previous interaction
     {stale_effects, stale_error} = cancel_stale_turn(session_uri, ctx, tctx)
 
     case TurnDriver.open(session_uri, trigger, tctx) do
@@ -228,9 +218,7 @@ defmodule Ezagent.Behavior.CsOrchestrator do
         all_effects = stale_effects ++ open_effects ++ base_effects ++ fanout_effects
 
         if stale_error do
-          Logger.warning(
-            "CsOrchestrator: failed to cancel superseded turn — proceeding"
-          )
+          Logger.warning("CsOrchestrator: failed to cancel superseded turn — proceeding")
         end
 
         {:ok, %{ok: true}, all_effects}
@@ -261,14 +249,14 @@ defmodule Ezagent.Behavior.CsOrchestrator do
   end
 
   # -----------------------------------------------------------------------
-  # Private — agent reply handler
+  # Private — agent reply handler (dead code until framework constraint #2
+  #           is resolved; kept for future framework upgrade path)
   # -----------------------------------------------------------------------
 
   defp handle_agent_reply(msg, session_uri, open_turn_id, ctx) do
     tctx = turn_ctx(ctx)
     text = extract_text(msg.body)
 
-    # Self-heal: if no open_turn_id (e.g. restart), open a degenerate turn
     {tid, heal_effects} =
       if is_nil(open_turn_id) or open_turn_id == "" do
         trigger = %{message_id: "self-heal-#{System.unique_integer([:positive])}", text: text}
@@ -341,16 +329,10 @@ defmodule Ezagent.Behavior.CsOrchestrator do
   # Private — helpers
   # -----------------------------------------------------------------------
 
-  defp turn_ctx(%{self_uri: self_uri, caps: caps}) do
-    %{caller: self_uri, caps: caps}
-  end
-
-  defp turn_ctx(ctx) do
-    %{
-      caller: Map.get(ctx, :self_uri, :system),
-      caps: Map.get(ctx, :caps, Ezagent.SystemPrincipal.caps("system://bootstrap"))
-    }
-  end
+  # Pass the full Lifecycle ctx to TurnDriver, which forwards it to Turn handlers.
+  # Turn needs ctx.self_uri (for turn_id), ctx.caller (for turn owner),
+  # ctx.read (:turns slice), and ctx.caps (for authz).
+  defp turn_ctx(ctx), do: ctx
 
   defp normalize_message(%Message{} = msg), do: msg
 

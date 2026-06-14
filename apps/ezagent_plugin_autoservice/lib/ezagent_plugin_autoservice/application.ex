@@ -56,8 +56,7 @@ defmodule EzagentPluginAutoservice.Application do
   @impl Ezagent.Plugin
   def behaviors do
     [
-      {Ezagent.Entity.SocialwareSession, :receive, Ezagent.Behavior.CsOrchestrator},
-      {Ezagent.Entity.SocialwareSession, :send, Ezagent.Behavior.CsOrchestrator},
+      {Ezagent.Entity.SocialwareSession, :process_message, Ezagent.Behavior.CsOrchestrator},
       {Ezagent.Entity.SocialwareSession, :operator_claim, Ezagent.Behavior.CsOrchestrator},
       {Ezagent.Entity.SocialwareSession, :operator_settle, Ezagent.Behavior.CsOrchestrator}
     ]

@@ -66,10 +66,13 @@ defmodule EzagentPluginCr.CrEngine do
           case update_current(tid, ver) do
             :ok ->
               cr = ensure_active_cr!(tid)
-              published = Map.merge(cr, %{
-                "status" => "published",
-                "published_at" => DateTime.utc_now() |> DateTime.to_iso8601()
-              })
+
+              published =
+                Map.merge(cr, %{
+                  "status" => "published",
+                  "published_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+                })
+
               write_cr(tid, cr["cr_id"], published)
               {:ok, :repaired}
 
