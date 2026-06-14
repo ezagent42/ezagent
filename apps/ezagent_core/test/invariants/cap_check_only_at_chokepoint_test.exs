@@ -169,7 +169,8 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         "apps/ezagent_plugin_liveview/lib/",
         "apps/ezagent_domain_workspace/lib/mix/",
         "apps/ezagent_domain_instance_message/lib/ezagent/entity/session_template.ex",
-        "apps/ezagent_domain_instance_message/lib/ezagent/entity/agent_template.ex",
+        # PR-9a (#53): AgentTemplate relocated to the ezagent_domain_agent app.
+        "apps/ezagent_domain_agent/lib/ezagent/entity/agent_template.ex",
         # Capability module references Identity.grant_cap in
         # docstrings + the session Behavior dispatches it as part of
         # the reconciler's session-create path (lift to a future

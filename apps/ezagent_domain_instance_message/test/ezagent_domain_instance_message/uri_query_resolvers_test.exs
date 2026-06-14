@@ -161,8 +161,9 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
       respawn_template_data: %{"class" => "cc.agent", "flavor" => "cc"}
     }
 
-    assert {:ok, "cc"} =
-             EzagentDomainInstanceMessage.UriQueryResolvers.resolve_flavor_from_sandbox(sandbox)
+    # PR-9a (#53): flavor resolution moved to the core `Ezagent.AgentFlavorResolver`
+    # (shared by the session `:flavor` resolver + the agent-domain delivery seam).
+    assert {:ok, "cc"} = Ezagent.AgentFlavorResolver.resolve_flavor_from_sandbox(sandbox)
   end
 
   test "session attributes resolve from the chat slice storage" do

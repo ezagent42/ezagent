@@ -47,7 +47,8 @@ defmodule EzagentCore.Invariants.AgentCreateSinglePathTest do
     # legitimate create path.
     "apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex",
     # Reconciler / spawn_fresh path (orchestrator-spawned workers).
-    "apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex",
+    # PR-9a (#53): Agent Kind relocated to the ezagent_domain_agent app.
+    "apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex",
     # The reconciler module itself.
     "apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/reconciler.ex",
     # SpawnRegistry itself.
