@@ -31,7 +31,6 @@ defmodule Ezagent.Entity.AgentTest do
       # legacy nil-`:kind_base` agents resolve to `nil_capture_behavior_set/0`
       # = the BASE set, so they are byte-identical to pre-PR-6.
       base = [
-        Ezagent.Behavior.Session,
         Ezagent.Behavior.Identity,
         Ezagent.Behavior.Sandbox,
         Ezagent.Behavior.ApiKeys,

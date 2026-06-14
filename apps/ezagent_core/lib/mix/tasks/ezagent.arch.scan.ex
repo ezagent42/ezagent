@@ -64,9 +64,12 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # PR-6+7 (curl-as-flavor forward-only) — shifted +1 by the moduledoc comment
     # rewording on `Agent.behaviors/0` (standalone curl Kind now DELETED). SAME
     # sanctioned defs/call, one line lower.
-    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 230},
-    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 269},
-    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 271},
+    # PR-A (#53 agent→session decouple) — shifted -1 by removing
+    # `Ezagent.Behavior.Session` from `Agent.base_behaviors/0`. SAME sanctioned
+    # `spawn_fresh/4` call site + `@spec` + `def`, one line higher.
+    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 229},
+    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 268},
+    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 270},
     # PR-3S — `spawn_fresh_member/8` (def) + its single call site moved VERBATIM
     # from `Orchestrator.Tools` to `Orchestrator.Tools.MemberTemplate` along with
     # the `update_member_template` regenerate cluster (gt_1000 4→3 extraction).

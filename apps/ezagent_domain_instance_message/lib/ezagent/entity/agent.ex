@@ -96,7 +96,6 @@ defmodule Ezagent.Entity.Agent do
   @spec base_behaviors() :: [module()]
   def base_behaviors,
     do: [
-      Ezagent.Behavior.Session,
       Ezagent.Behavior.Identity,
       Ezagent.Behavior.Sandbox,
       Ezagent.Behavior.ApiKeys,
@@ -352,9 +351,9 @@ defmodule Ezagent.Entity.Agent do
   same instance name (and hence the same worker URI). The digest is now
   the first **32 hex chars** (128 bits) — accidental collision is
   negligible. This is the probabilistic defense; the deterministic
-  guarantee is **per-session `role_name` uniqueness** (enforced at
-  `chat.join` by `Ezagent.Behavior.Session`'s `role_name_conflict/3`,
-  team-routing-unification §3.1) — two members in one session cannot share
+  guarantee is **per-session `role_name` uniqueness** (enforced session-side
+  at `chat.join` via `role_name_conflict/3`, team-routing-unification §3.1)
+  — two members in one session cannot share
   a role_name, and the session discriminator folded into the name keeps
   distinct sessions distinct. (The pre-§3.8 slot-tool
   `Ezagent.Orchestrator.SlotNames` up-front-collision preflight was
