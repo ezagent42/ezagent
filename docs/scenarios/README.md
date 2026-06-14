@@ -134,7 +134,6 @@ test path + a runbook path + at least one PR-evidence screenshot. The
 | 01 | [Magic-link email login](./01-magic-link-login/scenario.md) | 1 | ⚠️ | `magic_link_invariants_test.exs` |
 | 02 | [Password login (admin)](./02-password-login-admin/scenario.md) | 1 | ✅ | `magic_link_invariants_test.exs` + Allen 2026-05-21 sign-off |
 | 03 | [Token-based CLI auth (mint / list / revoke)](./03-cli-token-auth/scenario.md) | 1 | ⚠️ | `cli_dispatch_test.exs` (no User-Kind tests yet — todo #1 HIGH-1) |
-| 04 | [Cross-workspace token use (codex external agent)](./04-cross-workspace-token/scenario.md) | 1 | ❌ | none |
 | 05 | [cc agent — spawn → first-run → message → reply](./05-cc-agent-roundtrip/scenario.md) | 2 | ✅ | `cc_agent_admin_reply_e2e_test.exs` |
 | 06 | [codex agent — spawn → bridge → reply](./06-codex-agent-roundtrip/scenario.md) | 2 | ⚠️ | `orchestrator_mcp_e2e_test.exs` + `codex_app_server_thread_repro.py` |
 | 07 | [curl agent — spawn → DeepSeek round-trip](./07-curl-agent-deepseek/scenario.md) | 2 | ✅ | PR #126 evidence + `curl-agent-walkthrough.md` |
@@ -147,7 +146,7 @@ test path + a runbook path + at least one PR-evidence screenshot. The
 | 14 | [Grant cap via LV (action-axis)](./14-grant-cap-action-axis/scenario.md) | 5 | ✅ | `cap_action_axis_invariant_test.exs` + PR #410 |
 | 15 | [Revoke cap + non-admin denial](./15-revoke-cap-non-admin-denial/scenario.md) | 5 | ✅ | `caps_denial_e2e_test.exs` + `non_admin_grant_flow_e2e_test.exs` |
 | 16 | [Switch workspace + visibility filter](./16-workspace-switch-visibility/scenario.md) | 6 | ✅ | `workspace_isolation_test.exs` + PR #434 |
-| 17 | [User with caps in multiple workspaces](./17-multi-workspace-user/scenario.md) | 6 | ⚠️ | partial — `workspace_isolation_test.exs` covers negative path only |
+| 17 | [User with caps in multiple workspaces](./17-multi-workspace-user/scenario.md) | 6 | ✅ | `scenario_17_multi_workspace_user_test.exs` (4 tests) + visibility/membership invariants + `session_principal_test.exs:147` (default-WS) |
 | 18 | [PTY first-run theme dialog handling](./18-pty-first-run/scenario.md) | 7 | ✅ | `cc_agent_admin_reply_e2e_test.exs` + PR #385 |
 | 19 | [PTY restart preserves cwd + orphan reap](./19-pty-restart-orphan/scenario.md) | 7 | ✅ | PR #385 + #388 + `sandbox_destroy_test.exs` |
 | 20 | [Workspace create + add member + destroy](./20-workspace-lifecycle/scenario.md) | 8 | ⚠️ | `add_member_spawn_then_grant_test.exs` + PR #417 (no destroy E2E) |
@@ -373,13 +372,16 @@ Scenarios for this category target:
 | **5** | **14 — cap action-axis grant** | Cap-axis is THE invariant for plugin isolation (a wildcard cap defeats the model). Any Phase 2 Behavior migration must preserve action-narrow grants. Status: shipped in PR #465. |
 
 Secondary investments (post-top-5):
-- **17 — Multi-workspace user** — gap today; needs to land before any
-  workspace-aware Behavior is retrofitted.
-- **04 — Cross-workspace token use** — `❌` today; codex plugin (the
-  most ambitious external-agent integration) needs this scenario
-  before its v2 ship.
+- **17 — Multi-workspace user** — ✅ done (2026-06-14): scenario-level e2e +
+  visibility/membership invariants; default-workspace-at-login resolved (Phase 9 PR-5).
 - **21 — Template version tags** — SPEC pending; not blocking Phase 2
   but blocking Phase 3.
+
+> Scenario 04 (cross-workspace delegated token) was **removed 2026-06-14** (YAGNI, Allen):
+> no current use case, no implementation, and "system controls other workspaces" already works
+> via system-membership cross-workspace authority (`Capability.cross_workspace?/2`) — no token
+> delegation. If codex-v2 ever needs delegated "acting-as" dispatch, it starts as a fresh
+> brainstorm + SPEC, not a resurrected scenario stub.
 
 ---
 

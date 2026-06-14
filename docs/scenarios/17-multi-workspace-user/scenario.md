@@ -1,8 +1,8 @@
 # Scenario 17: User with caps in multiple workspaces
 
 **Category**: 6 — Cross-workspace
-**Status**: ⚠️ implemented-with-gaps
-**Last verified**: only the negative path (`workspace_isolation_test.exs`)
+**Status**: ✅ implemented-and-tested
+**Last verified**: 2026-06-14 — scenario-level journey codified in `apps/ezagent_core/test/e2e/scenario_17_multi_workspace_user_test.exs` (4 tests, green): multi-workspace visibility, system-member cross-workspace dispatch into two workspaces with per-workspace caps, non-system denial control, and revoke-then-denied. The default-workspace-at-login question (formerly the headline gap) is **resolved + tested** — see Notes.
 
 ## Pre-conditions
 
@@ -59,13 +59,38 @@
   - `docs/superpowers/specs/2026-05-24-workspace-user-mental-model-v2.md` — partial coverage
   - `docs/superpowers/specs/2026-05-25-workspace-default-to-system.md` — system as default (but not for multi-WS users)
 - Tests:
-  - `apps/ezagent_core/test/integration/workspace_isolation_test.exs` — covers the negative cross-workspace dispatch path
-  - No test for multi-WS user default-workspace selection at login
+  - `apps/ezagent_core/test/e2e/scenario_17_multi_workspace_user_test.exs` — the scenario-level
+    journey (visibility of two memberships, system-member cross-workspace dispatch into two
+    workspaces, non-system denial control, revoke-then-denied).
+  - `apps/ezagent_core/test/invariants/cap_based_workspace_visibility_invariant_test.exs` —
+    INV-1..8 cover the workspace-dropdown/visibility model (step 3).
+  - `apps/ezagent_core/test/invariants/system_workspace_membership_test.exs` +
+    `promote_to_system_grants_cross_workspace_test.exs` — the membership-based cross-workspace
+    authority predicate (steps 4-8).
+  - `apps/ezagent_domain_instance_message/test/integration/workspace_isolation_test.exs` —
+    the negative cross-workspace dispatch path.
+  - `apps/ezagent_web/test/ezagent_web/session_principal_test.exs:147` — the default-workspace
+    invariant (`current_workspace_uri == entity_workspace_uri`), enforced uniformly for all
+    auth paths.
 - Open bugs / gaps:
-  - **No SPEC for default-workspace-at-login for multi-workspace users**. This is the headline gap in Category 6 and the reason scenario 04 (cross-workspace token) is downstream-blocked.
-  - **Cap-grant ≠ membership** semantic: today they are independent fields. Worth aligning.
+  - **Cap-grant ≠ membership** semantic: today they are independent fields (cap-scope and
+    membership both contribute to visibility per INV-6). Worth aligning if a single source of
+    truth is wanted, but not a correctness gap.
 
 ## Notes
 
-- Per Allen 2026-05-26 (PR #399 + #398), `workspace://system` is the canonical fallback if no preference exists. Confirming this is the universal default-on-multi-WS-login is the next SPEC.
-- This is the principal blocker for any production deployment with non-trivial multi-tenant structure.
+- **Default-workspace-at-login is resolved (Phase 9 PR-5, SPEC v3 §6.1) — the doc's earlier
+  "first-alphabetically vs last-active, not consistent, SPEC needed" was a pre-Phase-9
+  description.** `EzagentWeb.SessionPrincipal.put/2,3` is the single authorized writer of
+  `:current_workspace_uri`, and ALL auth paths funnel through it
+  (`session_controller.ex:138` password, `magic_link_controller.ex:92` magic-link,
+  `registration_controller.ex:154` registration). It always derives
+  `workspace_uri = entity_workspace_uri(entity_uri)` — the user's home workspace — and enforces
+  the invariant `current_workspace_uri == entity_workspace_uri(current_entity_uri)` at the write
+  site (tested: `session_principal_test.exs:147`, plus `:217`/`:261` prove no other writer
+  exists). So the default is deterministic AND identical across login methods. A workspace
+  *switch* is logout + re-auth into the target workspace (SPEC v3 §6.4) — entity URIs are
+  workspace-bound, so switching workspace is switching entity.
+- Entity URIs being workspace-bound means a "multi-workspace user" reaches non-home workspaces
+  either by cross-workspace authority (system membership / `:any` cap) or by re-authing into the
+  target workspace — both exercised by the scenario test + the cited invariants.

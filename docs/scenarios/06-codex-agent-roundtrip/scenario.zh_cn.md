@@ -74,4 +74,4 @@
 
 - Bridge 架构与 cc 共享（`Ezagent.Domain.AgentBridge`），使 cc-codex 成为并行 flavor 对。
 - 按 `feedback_north_star_plugin_isolation`，cc 和 codex 必须把 bridge 当黑盒消费；bridge 不嵌 cc 或 codex 特定逻辑。
-- ⚠️ 状态由于（a）今天对真 codex 二进制无自动化 e2e（操作员驱动经 `codex_app_server_thread_repro.py`），（b）场景 04（跨 workspace token）是 codex v2 部署的前置。
+- ⚠️ 状态由于今天对真 codex 二进制无自动化 e2e（操作员驱动经 `codex_app_server_thread_repro.py`）。（曾被设想为 codex-v2 前置的场景 04「跨 workspace 委派 token」已于 2026-06-14 删除（YAGNI）；若 codex-v2 将来需要跨 workspace acting-as 派发，从全新 SPEC 起步。）
