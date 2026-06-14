@@ -7,6 +7,12 @@
 > **基座化 PR-9c 之后**。动 CapBAC 收口 → "never weaken authz" 统领每个选择。
 >
 > 双语镜像：[`2026-06-14-cap-in-process-op-design.md`](./2026-06-14-cap-in-process-op-design.md)。
+>
+> **consumer 数量更正（post-9c）：** §3、§5 写「3 个 consumer」；post-PR-9c 实际
+> `reads_siblings` 数是 **6**（9c 把 curl state Behavior reparent 进 agent 域 +
+> 两个 session 域 reader 不在最初过滤 grep 里）。权威清单见
+> `docs/superpowers/plans/2026-06-14-cap-in-process-op-plan.md` 的 Scope-correction 表。
+> §3 迁移适用于全部 6 个。
 
 ## 1. 目标
 

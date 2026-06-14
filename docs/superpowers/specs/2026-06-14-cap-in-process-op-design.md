@@ -7,7 +7,14 @@
 > decides before implementation. Implementation sequenced **after 基座化 PR-9c**.
 > Touches the CapBAC chokepoint → "never weaken authz" governs every choice.
 >
-> Bilingual mirror: `2026-06-14-cap-in-process-op-design.zh_cn.md` (to follow this commit).
+> Bilingual mirror: `2026-06-14-cap-in-process-op-design.zh_cn.md`.
+>
+> **Consumer-count correction (post-9c):** §3 and §5 say "3 consumers"; the
+> actual `reads_siblings` count post-PR-9c is **6** (9c reparented the curl state
+> Behavior into the agent domain + two session-domain readers were not in the
+> original filtered grep). Authoritative list: the Scope-correction table in
+> `docs/superpowers/plans/2026-06-14-cap-in-process-op-plan.md`. The migration in
+> §3 applies to all 6.
 
 ## 1. Goal
 
