@@ -1026,6 +1026,22 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
 > loop), then ratchet the cap back to 1. The other oversized module is
 > `ezagent_core/kind.ex` (1013).
 
+- **Fresh-stack admin lacks create-cap → blocks ALL live E2E (2026-06-15)** — OPEN,
+  HIGH for E2E. On a blank disposable stack (`down -v` + boot + `set_password`),
+  `create_session` as `entity://system/user/admin` is denied `:unauthorized`
+  (dispatch audit: `workspace.create_session … authz=denied reason=:unauthorized`).
+  Admin caps are supposed to come from `User.initial_caps_for_spawn/1` →
+  `SystemPrincipal.caps("system://bootstrap")` (wildcard) at admin-Kind spawn,
+  but the docker entrypoint only runs `home.init` + `ecto.migrate` and
+  `mix ezagent.bootstrap` explicitly does NOT mint admin caps — so the
+  fresh-stack admin authz check sees empty caps. This blocks the live-verify of
+  PR #783's orchestrator-readiness fix AND #34 (author-side SW-USE E2E) — both
+  need an authorized `create_session`. Fix: ensure the admin Kind is spawned
+  with its bootstrap wildcard caps on a fresh stack (entrypoint step, or a
+  `mix ezagent` operator task), then re-run the live E2E. The PR #783 fix is
+  code-proven (regression test exercises `McpServer.from_orchestrator_uri/1` on
+  the exact pre-store path); only the LIVE tier is gated on this.
+
 - **Repair-path orchestrator pre-store + readiness/binding separation
   (follow-up to PR #783, 2026-06-15)** — OPEN. PR #783 pre-stores the planned
   orchestrator URI before the readiness gate ONLY on the fresh-create path
