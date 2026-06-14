@@ -141,7 +141,7 @@ test path + a runbook path + at least one PR-evidence screenshot. The
 | 08 | [4-agent comprehensive (cc → curl → np → user)](./08-4agent-comprehensive/scenario.md) | 2 | ✅ | `comprehensive_4agent_e2e_test.exs` + `docs/runbook/4-agent-comprehensive-e2e.md` |
 | 09 | [Create session via LV + add member](./09-session-create-lv/scenario.md) | 3 | ✅ | `session_create_orchestrator_unified_test.exs` |
 | 10 | [@-mention dispatch — mention-gated routing](./10-mention-gated-routing/scenario.md) | 3 | ✅ | `mention_gated_routing_test.exs` + `mention_failed_notification` PR #406 |
-| 11 | [Cross-session @-mention is rejected](./11-cross-session-mention-rejected/scenario.md) | 3 | ⚠️ | implicit via routing rules; no dedicated test |
+| 11 | [Cross-session @-mention is rejected](./11-cross-session-mention-rejected/scenario.md) | 3 | ✅ | `category_10_scenarios_10_11_mention_routing_test.exs` "Scenario 11" (4 tests) + PR #406 `mention_failed_notification` |
 | 12 | [Feishu chat ↔ session bind + outbound](./12-feishu-bind-outbound/scenario.md) | 4 | ✅ | PR #420 + `external_mirror/facade_test.exs` |
 | 13 | [Feishu inbound message → routed to agent](./13-feishu-inbound-routing/scenario.md) | 4 | ✅ | `feishu_chat_binding_test.exs` + `inbound_chat_lookup_test.exs` |
 | 14 | [Grant cap via LV (action-axis)](./14-grant-cap-action-axis/scenario.md) | 5 | ✅ | `cap_action_axis_invariant_test.exs` + PR #410 |
@@ -154,7 +154,7 @@ test path + a runbook path + at least one PR-evidence screenshot. The
 | 21 | [Template version tag + instantiate](./21-template-version-tag/scenario.md) | 9 | ⏳ | `add_template_invokes_test.exs` — version tags NOT YET shipped |
 | 22 | [Routing rule CRUD + precedence](./22-routing-crud/scenario.md) | 10 | ✅ | `routing_consolidation_invariant_test.exs` + `routing_boot_test.exs` |
 | 23 | [ExternalMirrorWorker re-subscribe on cold-spawn](./23-external-mirror-resubscribe/scenario.md) | 11 | ✅ | PR #420 fix for task #49 |
-| 24 | [Destroy cascade — agent / session / workspace](./24-destroy-cascade/scenario.md) | 12 | ⚠️ | `lifecycle_terminate_test.exs` + `sandbox_destroy_test.exs` (Saga compensation untested) |
+| 24 | [Destroy cascade — agent / session / workspace](./24-destroy-cascade/scenario.md) | 12 | ⚠️ | `scenario_24_destroy_cascade_test.exs` (10 tests: saga cascade + compensation) — full workspace-level 3-level cascade E2E still the gap |
 | 25 | [Phx restart — snapshot rebuild + ExternalMirror](./25-phx-restart-rebuild/scenario.md) | 13 | ✅ | `snapshot_restart_test.exs` + `session_survives_restart_test.exs` + `cap_action_axis_snapshot_restore_test.exs` |
 | 26 | [Codex bridge UDS WS thread continuity (PR #441 regression)](./26-codex-bridge-uds-ws/scenario.md) | 14 | ✅ | `orchestrator_mcp_bridge_test.exs` + `scripts/codex_app_server_thread_repro.py` |
 | 27 | [Per-agent api-keys + sandbox isolation](./27-api-keys-sandbox/scenario.md) | 15 | ⚠️ | `cc_agent_sandbox_credentials_test.exs` — Bug A (config_dir atomic setup) deferred |

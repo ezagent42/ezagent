@@ -2,7 +2,7 @@
 
 **类别**：12 — 销毁 + 级联清理
 **状态**：⚠️ implemented-with-gaps
-**最近验证**：2026-05-25（`sandbox_destroy_test.exs` 单层；级联未测）
+**最近验证**：2026-06-14 — SagaRunner 级联*机制*现已充分覆盖（`scenario_24_destroy_cascade_test.exs`，10 测试绿：2 层 session→agent 级联、幂等步骤、前向失败→反向补偿、operator-repair 标记、真实 slice 回滚）。剩余缺口：完整 **workspace 级 3 层级联** E2E + `destroy(workspace) ⇒ count(orphans) == 0` 不变式。
 
 ## 前置条件
 
@@ -67,11 +67,15 @@
 - 测试：
   - `apps/ezagent_core/test/integration/sandbox_destroy_test.exs` — 单 agent
   - `apps/ezagent_core/test/integration/lifecycle_terminate_test.exs` — terminate action body
-  - 无级联 E2E 测试。
+  - `apps/ezagent_core/test/e2e/scenario_24_destroy_cascade_test.exs` — SagaRunner 级联机制
+    （10 测试，2026-06-14 绿）：happy-path 2 层 session→agent 级联、幂等中间步、前向失败→反向补偿、
+    补偿失败→operator-repair 标记、回滚时真实 slice 写回、空/无补偿边界。
+  - `apps/ezagent_core/test/invariants/cascade_pr0_foundations_test.exs` — 级联基础。
 - Open bug / gap：
-  - **无级联 E2E 测试**。这是类别 12 主要 gap。
+  - **完整 workspace 级（3 层）级联 E2E**（步骤 8-10）— SagaRunner *机制*已测，但端到端
+    `workspace → sessions → agents → config_dirs/api-keys/bindings` 销毁 + `count(orphans) == 0`
+    不变式（见下方备注）尚未断言。这是类别 12 主要剩余缺口。
   - 引用已销毁 agent 的 routing 规则未清理。值得单独场景（或本场景内）。
-  - SagaRunner 是 Phase 1 代码；Phase 2 将在首个真 Behavior 迁移上首次演练。
 
 ## 备注
 
