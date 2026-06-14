@@ -83,7 +83,7 @@ defmodule Mix.Tasks.Ezagent.User.Create do
     """)
 
     {:ok, _} = Application.ensure_all_started(:ezagent_core)
-    {:ok, _} = Application.ensure_all_started(:ezagent_domain_instance_message)
+    {:ok, _} = Application.ensure_all_started(:ezagent_domain_session)
 
     {opts, positional, _} =
       OptionParser.parse(args,

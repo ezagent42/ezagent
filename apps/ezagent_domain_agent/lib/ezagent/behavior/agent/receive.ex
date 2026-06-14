@@ -20,7 +20,7 @@ defmodule Ezagent.Behavior.Agent.Receive do
 
   Conceptually this is the **agent domain's** transport seam (§3.3 — it
   hands DOWN to a flavor-blind `AgentBridge.deliver`). Physically it
-  STAYS in `ezagent_domain_instance_message` until PR-9 carves out
+  STAYS in `ezagent_domain_session` until PR-9 carves out
   `domain.agent`; the extraction in PR-2 was the action split, not the app
   move. PR-A (#53) then relocated the delivery mechanics into the agent
   domain — they now live in

@@ -53,7 +53,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
   @impl Mix.Task
   def run(_args) do
     {:ok, _} = Application.ensure_all_started(:ezagent_core)
-    {:ok, _} = Application.ensure_all_started(:ezagent_domain_instance_message)
+    {:ok, _} = Application.ensure_all_started(:ezagent_domain_session)
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_cc)
 
     agent_uri = agent_uri()

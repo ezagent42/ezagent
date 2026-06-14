@@ -119,7 +119,7 @@ defmodule EzagentPluginCc.Application do
   @impl Ezagent.Plugin
   def after_boot do
     # PR-8 (transport #53) — the orchestrator-MCP transport subsystem moved
-    # from `ezagent_domain_instance_message` INTO this plugin. Their lazy-`init/0`
+    # from `ezagent_domain_session` INTO this plugin. Their lazy-`init/0`
     # ETS tables + the readiness-port impl registration move here with them.
     #
     # `McpRegistry` — the `orchestrator_uri → bound McpServer context` table.

@@ -39,7 +39,7 @@ defmodule EzagentPluginNp.MixProject do
       {:ezagent_core, in_umbrella: true},
       # Outbound chat/send dispatch into the originating session uses
       # the Chat behavior (no new outbound wire).
-      {:ezagent_domain_instance_message, in_umbrella: true},
+      {:ezagent_domain_session, in_umbrella: true},
       # Domain.Python is the Tier-2 runtime this plugin validates
       # end-to-end. Per-NpAgent Kind, the Template Class starts a
       # `Ezagent.Domain.Python.Server` running the numpy/sympy

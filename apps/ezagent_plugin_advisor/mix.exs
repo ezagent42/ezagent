@@ -33,7 +33,7 @@ defmodule EzagentPluginAdvisor.MixProject do
       {:ezagent_core, in_umbrella: true},
       {:ezagent_domain_identity, in_umbrella: true},
       {:ezagent_domain_workspace, in_umbrella: true},
-      {:ezagent_domain_instance_message, in_umbrella: true},
+      {:ezagent_domain_session, in_umbrella: true},
       {:ezagent_domain_socialware, in_umbrella: true}
     ]
   end

@@ -9,7 +9,7 @@ defmodule Ezagent.Behavior.ApiKeysMigrationParityTest do
   `apply_effects/2`) as the legacy `invoke/4` shape did pre-migration.
 
   Uses a stub Kind module (the real `Ezagent.Entity.Agent` lives in
-  `ezagent_domain_instance_message`, outside this app's dep graph; we don't need
+  `ezagent_domain_session`, outside this app's dep graph; we don't need
   the real Kind to exercise the dispatch contract, only a module that
   declares `behaviors/0 == [ApiKeys]`).
   """

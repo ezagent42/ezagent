@@ -22,7 +22,7 @@ defmodule Mix.Tasks.Ezagent.Workspace.CreateSession do
   @impl Mix.Task
   def run(args) do
     {:ok, _} = Application.ensure_all_started(:ezagent_core)
-    {:ok, _} = Application.ensure_all_started(:ezagent_domain_instance_message)
+    {:ok, _} = Application.ensure_all_started(:ezagent_domain_session)
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_workspace)
     _ = Application.ensure_all_started(:ezagent_plugin_cc)
 

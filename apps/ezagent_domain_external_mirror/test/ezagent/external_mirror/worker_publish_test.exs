@@ -75,7 +75,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
     # Chat is a compile-but-not-runtime dep of :ezagent_domain_external_mirror
     # (cycle break). Force-start so SessionSupervisor / scheme registration
     # exist when this test runs alone.
-    {:ok, _} = Application.ensure_all_started(:ezagent_domain_instance_message)
+    {:ok, _} = Application.ensure_all_started(:ezagent_domain_session)
 
     :ok = ensure_adapter_registered(MockPublishAdapter, MockPublishBinding)
     cleanup_workers()

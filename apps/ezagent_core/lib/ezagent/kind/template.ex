@@ -74,7 +74,7 @@ defmodule Ezagent.Kind.Template do
   # promotion, Allen 2026-06-03), and the FLAVOR-specific extras — cc's
   # `operator_settings_path`/`role`, curl's `provider`/`api_url`/`model`,
   # codex's `model`/`sandbox`/… — are each owned by the respective plugin,
-  # NOT hardcoded in `ezagent_domain_instance_message`. cc READS the universal
+  # NOT hardcoded in `ezagent_domain_session`. cc READS the universal
   # `config_dir` and applies its claude semantics (CLAUDE_CONFIG_DIR).
   #
   # Contract:

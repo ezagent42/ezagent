@@ -75,7 +75,7 @@ defmodule EzagentPluginFeishu.BindingPolicy do
   `chat.receive` to recipient User/Agent Kinds under
   `system://chat-router` caps (not the bound user's caps), and
   `:receive` is registered against User+Agent Kinds, not Session
-  (see `ezagent_domain_instance_message/application.ex:609-610`).
+  (see `ezagent_domain_session/application.ex:609-610`).
 
   They do NOT invoke `Chat :set_working_copy` (orchestrator-only,
   gated separately in `Chat.invoke(:set_working_copy)`).
@@ -106,9 +106,9 @@ defmodule EzagentPluginFeishu.BindingPolicy do
   #     `Ezagent.Behavior.Agent.Receive` (`agent.receive`) (the session
   #     fan-out delivers `<entity>.receive` to recipient `entity://`
   #     Kinds), NOT against the Session Kind: see
-  #     `apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/application.ex:609-610`.
+  #     `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/application.ex:609-610`.
   #     The fan-out dispatch runs under `system://chat-router` caps
-  #     (`apps/ezagent_domain_instance_message/lib/ezagent/behavior/chat.ex:1215`),
+  #     (`apps/ezagent_domain_session/lib/ezagent/behavior/chat.ex:1215`),
   #     NOT the bound user's own caps. A `kind: :session, behavior: Chat,
   #     action: :receive` cap therefore never matches a real dispatch
   #     and would be dead weight.

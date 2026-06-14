@@ -50,7 +50,7 @@ defmodule EzagentCore.DataCase do
   Kind is still using it, producing the deterministic
   `DBConnection.ConnectionError` "owner #PID exited / Client #PID is
   still using a connection from owner" error. In the
-  `apps/ezagent_domain_instance_message` suite (`--max-cases 1 --seed 0`) this
+  `apps/ezagent_domain_session` suite (`--max-cases 1 --seed 0`) this
   surfaced as ~40-50 such error log occurrences per run, crashing the
   offending Kinds mid-teardown. (The chat suite's *test* failures are a
   separate, pre-existing set of assertion / `:not_ready` bugs out of P6

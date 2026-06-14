@@ -11,7 +11,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest.Bri
   `socket/3` endpoint macro is unambiguous — `Phoenix.ChannelTest`,
   imported inside the test module, also exports a `socket/3`.
   """
-  use Phoenix.Endpoint, otp_app: :ezagent_domain_instance_message
+  use Phoenix.Endpoint, otp_app: :ezagent_domain_session
 
   socket("/orchestrator_socket", Ezagent.Orchestrator.McpSocket,
     websocket: [check_origin: false],
@@ -102,7 +102,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
 
   defmodule TestEndpoint do
     @moduledoc false
-    use Phoenix.Endpoint, otp_app: :ezagent_domain_instance_message
+    use Phoenix.Endpoint, otp_app: :ezagent_domain_session
   end
 
   # The top-level endpoint with a REAL HTTP listener — see its own
@@ -118,7 +118,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
     # listener required — `socket/2` / `subscribe_and_join/3` only need
     # the endpoint process + a PubSub server). Reuse the already-running
     # `EzagentCore.PubSub` so we don't start a second one.
-    Application.put_env(:ezagent_domain_instance_message, TestEndpoint,
+    Application.put_env(:ezagent_domain_session, TestEndpoint,
       secret_key_base: String.duplicate("a", 64),
       pubsub_server: EzagentCore.PubSub,
       server: false
@@ -467,7 +467,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
       # --- 2. a REAL HTTP listener hosting McpSocket on a free port ----
       port = free_tcp_port()
 
-      Application.put_env(:ezagent_domain_instance_message, BridgeEndpoint,
+      Application.put_env(:ezagent_domain_session, BridgeEndpoint,
         # Bandit — the project's adapter (config/config.exs sets it for
         # EzagentWeb.Endpoint; this ad-hoc test endpoint must opt in
         # explicitly or Phoenix defaults to the unavailable Cowboy).

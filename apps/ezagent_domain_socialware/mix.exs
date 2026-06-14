@@ -30,7 +30,7 @@ defmodule EzagentDomainSocialware.MixProject do
     [
       {:ezagent_core, in_umbrella: true},
       {:ezagent_domain_identity, in_umbrella: true},
-      {:ezagent_domain_instance_message, in_umbrella: true},
+      {:ezagent_domain_session, in_umbrella: true},
       # P3-2: the customer feed is a `:pull` `Ezagent.ExternalMirror.Adapter`
       # (`Ezagent.Socialware.CustomerFeedAdapter`), so socialware needs the
       # external-mirror behaviour at compile time. No cycle: external_mirror

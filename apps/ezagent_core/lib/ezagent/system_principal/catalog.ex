@@ -85,7 +85,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   alias Ezagent.Behavior.ExternalMirrorWorker
   alias Ezagent.Behavior.Identity
   alias Ezagent.Behavior.IdentityAdmin
-  # 2026-05-26 — Publisher.SessionImpl lives in `ezagent_domain_instance_message`.
+  # 2026-05-26 — Publisher.SessionImpl lives in `ezagent_domain_session`.
   # Like the other Behavior aliases in this block, the module is
   # resolved at runtime (catalog evaluation), not compile time, so
   # core's no-umbrella-dep rule is preserved.

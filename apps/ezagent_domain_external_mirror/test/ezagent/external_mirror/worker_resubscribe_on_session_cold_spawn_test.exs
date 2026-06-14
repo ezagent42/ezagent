@@ -83,7 +83,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
   `EzagentDomainInstanceMessage` is NOT a runtime dep of
   `ezagent_domain_external_mirror` (cycle break). When this file is
   the only test file that triggers (e.g. `mix test path/to/this`),
-  `:ezagent_domain_instance_message` is not auto-started — its
+  `:ezagent_domain_session` is not auto-started — its
   `SessionSupervisor`, scheme registration, etc. are absent and
   `SpawnRegistry.spawn(session_uri)` would fail with
   `{:error, :no_spawn_fn}`. We explicitly `Application.ensure_all_started/1`
@@ -114,7 +114,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
     # but-not-runtime dep here (the cycle break). Force-start so
     # `EzagentDomainInstanceMessage.SessionSupervisor` + the `"session"` scheme
     # spawn fn exist when we resolve / cold-spawn the default Session.
-    {:ok, _} = Application.ensure_all_started(:ezagent_domain_instance_message)
+    {:ok, _} = Application.ensure_all_started(:ezagent_domain_session)
 
     :ok = ensure_adapter_registered(MockPublishAdapter, MockPublishBinding)
     cleanup_workers()
@@ -239,7 +239,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
       # handshake may have already re-attached the Worker — the very
       # behaviour this test exercises. Direct `reconcile_after_load/2`
       # unit coverage lives in
-      # `apps/ezagent_domain_instance_message/test/ezagent/behavior/publisher/session_impl_reconcile_after_load_test.exs`
+      # `apps/ezagent_domain_session/test/ezagent/behavior/publisher/session_impl_reconcile_after_load_test.exs`
       # (race-free, pure-function test). This integration test
       # exercises only the END-TO-END invariant: the first slice
       # change after cold-spawn must reach the still-alive Worker.

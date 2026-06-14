@@ -200,7 +200,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
 
   defp maybe_seed_template(template_name, sandbox_dir, source) do
     {:ok, _} = Application.ensure_all_started(:ezagent_core)
-    {:ok, _} = Application.ensure_all_started(:ezagent_domain_instance_message)
+    {:ok, _} = Application.ensure_all_started(:ezagent_domain_session)
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_cc)
 
     uri = Ezagent.URI.template(:system, :agent, "cc-#{template_name}")

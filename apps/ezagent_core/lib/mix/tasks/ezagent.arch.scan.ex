@@ -26,9 +26,9 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
       "apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_live.ex",
     def_count_cc_agent: "apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex",
     def_count_orchestrator_tools:
-      "apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools.ex",
+      "apps/ezagent_domain_session/lib/ezagent/orchestrator/tools.ex",
     def_count_session_creator:
-      "apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/session_creator.ex",
+      "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator.ex",
     def_count_capability: "apps/ezagent_core/lib/ezagent/capability.ex"
   }
 
@@ -42,9 +42,9 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     "apps/ezagent_core/lib/ezagent/invocation.ex",
     "apps/ezagent_core/lib/ezagent_core/application.ex",
     "apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex",
-    "apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex",
-    "apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/session_creator.ex",
-    "apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/application.ex",
+    "apps/ezagent_domain_session/lib/ezagent/entity/session.ex",
+    "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator.ex",
+    "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/application.ex",
     # Transport #53 Decision C (codex C-rC-P1) — the orchestrator MCP transport's
     # durable-rebuild path forces the Session Kind to rehydrate (through the
     # SANCTIONED SpawnRegistry chokepoint) on a bridge reconnect after a BEAM
@@ -79,9 +79,9 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # PR-8 (transport #53) — the MCP TRANSPORT relocated im → cc, but the tool
     # OPERATIONS (`Orchestrator.Tools` + `Orchestrator.Tools.MemberTemplate`)
     # STAY in the session domain (O-4); paths restored to im.
-    {"apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools/member_template.ex",
+    {"apps/ezagent_domain_session/lib/ezagent/orchestrator/tools/member_template.ex",
      190},
-    {"apps/ezagent_domain_instance_message/lib/ezagent/orchestrator/tools/member_template.ex",
+    {"apps/ezagent_domain_session/lib/ezagent/orchestrator/tools/member_template.ex",
      223}
   ]
 

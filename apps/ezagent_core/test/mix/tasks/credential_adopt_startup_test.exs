@@ -10,7 +10,7 @@ defmodule Mix.Tasks.Ezagent.Credential.AdoptStartupTest do
     * the `Ezagent.Behavior.UserDefaultCredentialSource` action registered on the User
       Kind — owned by `:ezagent_domain_identity`;
     * the `:flavor` `Ezagent.UriQuery` resolver (source-flavor validation) — owned by
-      `:ezagent_domain_instance_message`.
+      `:ezagent_domain_session`.
 
   Starting only `:ezagent_core` (the pre-fix behavior) leaves the migration unroutable.
 
@@ -42,8 +42,8 @@ defmodule Mix.Tasks.Ezagent.Credential.AdoptStartupTest do
            "adopt task must start :ezagent_domain_identity (registers the " <>
              "UserDefaultCredentialSource Behavior the dispatch routes to)"
 
-    assert src =~ "ensure_all_started(:ezagent_domain_instance_message)",
-           "adopt task must start :ezagent_domain_instance_message (registers the " <>
+    assert src =~ "ensure_all_started(:ezagent_domain_session)",
+           "adopt task must start :ezagent_domain_session (registers the " <>
              ":flavor UriQuery resolver the source-flavor validation needs)"
   end
 
@@ -57,7 +57,7 @@ defmodule Mix.Tasks.Ezagent.Credential.AdoptStartupTest do
                :set_default_credential_source
              )
 
-    # `:ezagent_domain_instance_message` registered the `:flavor` resolver. A registered
+    # `:ezagent_domain_session` registered the `:flavor` resolver. A registered
     # resolver returns `:none`/`{:ok, _}`/`{:error, _}` for the probe URI — but NEVER
     # the `{:error, {:no_resolver, _}}` shape that means "unregistered".
     refute match?(

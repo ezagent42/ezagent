@@ -18,7 +18,7 @@ config :ezagent_core, EzagentCore.Repo,
   #
   # #52 Mode-C NOTE: the design proposed trimming the pool 20→~10 "(measure)"
   # to cut connect-time write-lock contention. MEASURED: the reduction
-  # REGRESSES heavier suites — the `ezagent_domain_instance_message` suite
+  # REGRESSES heavier suites — the `ezagent_domain_session` suite
   # (many concurrent globally-supervised Kinds, each `start_owner_stable!`
   # checking out one connection) STARVES at pool_size 15 (`DBConnection`
   # `:queue_timeout` after ~10 s in `start_owner_stable!`), and the

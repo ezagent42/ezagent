@@ -4,7 +4,7 @@
 # defined in SIBLING umbrella apps (e.g. `Ezagent.Users` in
 # ezagent_domain_identity, `Ezagent.Workspace.Store` in
 # ezagent_domain_workspace, `Ezagent.Entity.Session` in
-# ezagent_domain_instance_message). `ezagent_core`'s `mix.exs` does NOT —
+# ezagent_domain_session). `ezagent_core`'s `mix.exs` does NOT —
 # and per the three-tier rule MUST NOT — depend on those apps, so when you
 # run `cd apps/ezagent_core && mix test` (STANDALONE) those modules are not
 # on the BEAM code path and the suites fail with

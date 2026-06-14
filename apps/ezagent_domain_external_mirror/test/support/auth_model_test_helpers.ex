@@ -137,7 +137,7 @@ defmodule Ezagent.ExternalMirror.AuthModelTestHelpers do
       )
 
     # `behaviors` is resolved at RUNTIME via `apply/3`: this app deliberately
-    # does NOT depend on `:ezagent_domain_instance_message` (a deps cycle —
+    # does NOT depend on `:ezagent_domain_session` (a deps cycle —
     # see mix.exs), so `Ezagent.Entity.Session` is undefined at COMPILE time
     # in this `.ex` support module. A direct `Session.behaviors()` would emit
     # an "undefined function" warning that the FF-3 dead-code gate (`mix

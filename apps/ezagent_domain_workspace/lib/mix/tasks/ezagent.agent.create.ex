@@ -94,7 +94,7 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
   @impl Mix.Task
   def run(args) do
     {:ok, _} = Application.ensure_all_started(:ezagent_core)
-    {:ok, _} = Application.ensure_all_started(:ezagent_domain_instance_message)
+    {:ok, _} = Application.ensure_all_started(:ezagent_domain_session)
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_workspace)
 
     # Boot every flavor plugin we know about so AgentFlavorRegistry

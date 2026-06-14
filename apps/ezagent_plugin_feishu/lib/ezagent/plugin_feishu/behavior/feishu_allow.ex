@@ -19,7 +19,7 @@ defmodule EzagentPluginFeishu.Behavior.ExternalAdapter.Feishu.Allow do
 
   ## data_owner = :any → workspace admin grants
 
-  Per caps-data-ownership SPEC §3.3 (`apps/ezagent_domain_instance_message/...`
+  Per caps-data-ownership SPEC §3.3 (`apps/ezagent_domain_session/...`
   alias path): `:any` means "class-wide cap, workspace admin grants".
   Operators authorize a user to use the Feishu adapter on a given
   session by granting this cap; the bind facade then enforces it

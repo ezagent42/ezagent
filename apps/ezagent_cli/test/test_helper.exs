@@ -12,7 +12,7 @@ end
 # mix deps don't include those (CLI is supposed to be transport-only),
 # so explicitly start them here.
 for app <- [
-      :ezagent_domain_instance_message,
+      :ezagent_domain_session,
       :ezagent_plugin_echo,
       :ezagent_plugin_cc,
       :ezagent_plugin_cc,

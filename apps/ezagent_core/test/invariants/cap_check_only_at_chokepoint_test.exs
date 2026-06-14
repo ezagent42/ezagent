@@ -56,7 +56,7 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         # STAY in the session domain; they are covered by this im allowlist
         # entry. The cc orchestrator dir no longer uses `matches?` (the cc
         # McpServer is a thin transport that dispatches), so it is NOT listed.
-        "apps/ezagent_domain_instance_message/lib/ezagent/",
+        "apps/ezagent_domain_session/lib/ezagent/",
         "apps/ezagent_plugin_liveview/lib/",
         # Mix tasks consume matches? for CLI display.
         "apps/ezagent_domain_external_mirror/lib/mix/tasks/",
@@ -70,7 +70,7 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
       allowlist: [
         "apps/ezagent_core/lib/ezagent/behavior.ex",
         "apps/ezagent_core/lib/ezagent/behavior/",
-        "apps/ezagent_domain_instance_message/lib/ezagent/behavior/",
+        "apps/ezagent_domain_session/lib/ezagent/behavior/",
         "apps/ezagent_domain_external_mirror/lib/ezagent/behavior/",
         "apps/ezagent_domain_identity/lib/ezagent/behavior/",
         "apps/ezagent_domain_pty/lib/ezagent/behavior/",
@@ -123,14 +123,14 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         "apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/sender_resolver.ex",
         # Session entity — chat send recipient-resolution reads
         # member caps to filter mention-gated routing.
-        "apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex",
+        "apps/ezagent_domain_session/lib/ezagent/entity/session.ex",
         # RFC #402 (Allen 2026-05-26) — the internal session creator
         # reads the creator's caps to skip a duplicate OrchestratorAdmin
         # :restart cap grant when an equivalent one already exists.
         # This is an idempotency-check on the create path (read-only
         # against the grantee's own caps), NOT a cap-gate decision
         # outside the dispatch chokepoint.
-        "apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/session_creator.ex",
+        "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator.ex",
         # Transport #53 Decision C — the per-orchestrator `SessionManager`
         # GenServer RECONSTRUCTS the orchestrator's OWN delegated caps to run a
         # forwarded `tools/call` under them. It reads them via the sanctioned
@@ -139,7 +139,7 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         # caller's own delegated authority to BUILD the op ctx, NOT a cap-gate
         # decision made outside dispatch. The 4 delegated caps then gate each
         # underlying op AT the dispatch chokepoint.
-        "apps/ezagent_domain_instance_message/lib/ezagent/session/session_manager.ex",
+        "apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex",
         # #533 PR-5 — create-time Manage cap grants use the same
         # idempotency pattern in the Workspace facade: read existing
         # caps to avoid duplicate grant writes, then dispatch the
@@ -157,7 +157,7 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         # skip+log). This is ctx CONSTRUCTION feeding the chokepoint, NOT a
         # cap-gate decision outside it — same class as the home_live wizard
         # and the session_creator idempotency reads above.
-        "apps/ezagent_domain_instance_message/lib/ezagent/behavior/turn.ex"
+        "apps/ezagent_domain_session/lib/ezagent/behavior/turn.ex"
       ]
     },
     %{
@@ -168,7 +168,7 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         "apps/ezagent_domain_identity/lib/ezagent/",
         "apps/ezagent_plugin_liveview/lib/",
         "apps/ezagent_domain_workspace/lib/mix/",
-        "apps/ezagent_domain_instance_message/lib/ezagent/entity/session_template.ex",
+        "apps/ezagent_domain_session/lib/ezagent/entity/session_template.ex",
         # PR-9a (#53): AgentTemplate relocated to the ezagent_domain_agent app.
         "apps/ezagent_domain_agent/lib/ezagent/entity/agent_template.ex",
         # Capability module references Identity.grant_cap in
@@ -176,7 +176,7 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         # the reconciler's session-create path (lift to a future
         # refactor — for now allowlisted).
         "apps/ezagent_core/lib/ezagent/capability.ex",
-        "apps/ezagent_domain_instance_message/lib/ezagent/behavior/session.ex"
+        "apps/ezagent_domain_session/lib/ezagent/behavior/session.ex"
       ]
     },
     %{

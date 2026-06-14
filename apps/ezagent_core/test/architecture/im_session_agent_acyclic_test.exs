@@ -27,7 +27,7 @@ defmodule Ezagent.Architecture.ImSessionAgentAcyclicTest do
   @repo_root Path.expand("../../../..", __DIR__)
 
   @agent_app :ezagent_domain_agent
-  @session_app :ezagent_domain_instance_message
+  @session_app :ezagent_domain_session
   @im_apps [:ezagent_plugin_feishu]
 
   # The agent Kind's two DynamicSupervisors keep their PRE-SPLIT name atoms

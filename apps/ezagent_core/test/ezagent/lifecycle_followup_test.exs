@@ -141,10 +141,10 @@ defmodule Ezagent.LifecycleFollowupTest do
   end
 
   # NOTE: F1b (Publisher ring strips Lifecycle transients) is tested in
-  # `ezagent_domain_instance_message` where `Ezagent.Behavior.Publisher.SessionImpl`
+  # `ezagent_domain_session` where `Ezagent.Behavior.Publisher.SessionImpl`
   # lives — that module is OUTSIDE ezagent_core's dependency cone (P9), so
   # the Publisher-ring regression test cannot run here. See
-  # `apps/ezagent_domain_instance_message/test/ezagent/behavior/publisher/session_impl_test.exs`.
+  # `apps/ezagent_domain_session/test/ezagent/behavior/publisher/session_impl_test.exs`.
 
   # ===================================================================
   # F2 — mixed legacy / Lifecycle sibling reads (conversion-order safe)

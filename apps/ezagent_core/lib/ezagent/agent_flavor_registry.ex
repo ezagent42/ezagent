@@ -3,7 +3,7 @@ defmodule Ezagent.AgentFlavorRegistry do
   AgentFlavorRegistry — declarative `flavor → {kind, template_class}`
   map (SPEC §6.3, codex MEDIUM-5).
 
-  Today the agent spawn resolver in `ezagent_domain_instance_message` has a
+  Today the agent spawn resolver in `ezagent_domain_session` has a
   hardcoded `flavor → {kind, template_class}` map — that is why "add a
   6th agent-flavor plugin" actually requires editing a non-plugin file.
   Each agent plugin declares `agent_flavors/0` (a list of
