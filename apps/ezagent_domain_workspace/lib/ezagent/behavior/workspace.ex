@@ -318,6 +318,7 @@ defmodule Ezagent.Behavior.Workspace do
   # PR-OWN-4 (caps-data-ownership SPEC #306 §6): workspace-scoped
   # Behavior — workspace admin grants. `:any` return signals
   # "class-wide cap, grantable by workspace admin via §5.2 admin branch".
+  @doc "`:any` for all subjects (PR-OWN-4): workspace Behavior caps are class-wide, grantable by the workspace admin via the CapBAC admin branch — not tied to a per-entity owner."
   def data_owner(_), do: :any
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
@@ -334,6 +335,7 @@ defmodule Ezagent.Behavior.Workspace do
   # workspace_scoped? defaults to true (intra-workspace admin); the
   # structural ws-cap-set on `workspace://system` members bypasses
   # isolation via step 5.6.
+  @doc "Cap map for every Workspace action (list/add/remove member · session-template CRUD · routing-rule list/set · instantiate · create_agent · create_session · remove_cross_prefix_members), all pinned to the `:workspace` kind axis (overriding the macro's `:any` default — Workspace registers only on the Workspace Kind)."
   def required_caps do
     %{
       list_members: Ezagent.Capability.cap(:workspace, __MODULE__, :list_members),
@@ -369,11 +371,13 @@ defmodule Ezagent.Behavior.Workspace do
 
   # --- members ---------------------------------------------------------
 
+  @doc "List the workspace's member URIs (from the `:members` slice)."
   def handle_list_members(_args, ctx) do
     members = ctx[:read].(:members, MapSet.new())
     {:ok, %{members: MapSet.to_list(members)}, []}
   end
 
+  @doc "Add `member` to the workspace: enforce the workspace-prefix invariant (the member's URI workspace segment must match), ensure its Kind is spawned, persist the new member set, then grant it a workspace-scoped `:create_session` cap. Rejects a cross-prefix URI before any persistence."
   def handle_add_member(%{member: %URI{} = uri}, ctx) do
     # Task #55 (Allen 2026-05-27) — workspace prefix invariant. The
     # workspace's member set MAY ONLY contain entities whose URI prefix
@@ -405,6 +409,7 @@ defmodule Ezagent.Behavior.Workspace do
     end
   end
 
+  @doc "Remove `member` from the workspace and symmetrically revoke the workspace-scoped `:create_session` cap that `add_member` granted it (matched by identity-key, so caps in other workspaces are untouched)."
   def handle_remove_member(%{member: %URI{} = uri}, ctx) do
     # SPEC §7 Part B (cap-lifecycle sweep): `:add_member` grants the
     # member a `:create_session` cap scoped to THIS workspace; pre-fix,
@@ -444,6 +449,7 @@ defmodule Ezagent.Behavior.Workspace do
   #   possible) or persisted out of order. One action body that runs
   #   under the Kind GenServer's serialized message queue makes the
   #   classify-then-mutate sequence single-threaded.
+  @doc "Admin-only cleanup: atomically remove every member whose URI violates the workspace-prefix invariant (classified the same way `add_member` validates), keeping the rest. One serialized action (not per-violator dispatches) so it can't interleave with concurrent `add_member`. Returns the removed URIs + kept count."
   def handle_remove_cross_prefix_members(_args, ctx) do
     workspace_uri = Map.get(ctx, :self_uri)
     members = ctx[:read].(:members, MapSet.new())
@@ -471,16 +477,19 @@ defmodule Ezagent.Behavior.Workspace do
 
   # --- session templates ----------------------------------------------
 
+  @doc "List the workspace's session templates (the `:session_templates` name→template map)."
   def handle_list_templates(_args, ctx) do
     {:ok, %{templates: ctx[:read].(:session_templates, %{})}, []}
   end
 
+  @doc "Add (or overwrite) the session template `tmpl` under `name` in the workspace's `:session_templates` map."
   def handle_add_template(%{name: name, template: tmpl}, ctx)
       when is_binary(name) and is_map(tmpl) do
     templates = ctx[:read].(:session_templates, %{})
     {:ok, %{}, [{:set, :session_templates, Map.put(templates, name, tmpl)}]}
   end
 
+  @doc "Remove the session template named `name` from the workspace's `:session_templates` map."
   def handle_remove_template(%{name: name}, ctx) when is_binary(name) do
     templates = ctx[:read].(:session_templates, %{})
     {:ok, %{}, [{:set, :session_templates, Map.delete(templates, name)}]}
@@ -488,10 +497,12 @@ defmodule Ezagent.Behavior.Workspace do
 
   # --- routing rules ---------------------------------------------------
 
+  @doc "List the workspace's stored routing rules (the `:routing_rules` slice)."
   def handle_list_routing_rules(_args, ctx) do
     {:ok, %{rules: ctx[:read].(:routing_rules, [])}, []}
   end
 
+  @doc "Replace the workspace's `:routing_rules` slice wholesale with `rules`."
   def handle_set_routing_rules(%{rules: rules}, _ctx) when is_list(rules) do
     {:ok, %{}, [{:set, :routing_rules, rules}]}
   end
@@ -523,6 +534,7 @@ defmodule Ezagent.Behavior.Workspace do
   # (a separate concern from the #685 member-CapBAC handlers). This engine
   # callback stays here (the runtime dispatches by module) and delegates the
   # full `with` chain body to `AgentCreate.handle_create_agent/2`.
+  @doc "Provision an agent in the workspace (unified CLI/LV path): coerce/validate args, optionally read a `--from` source agent's config, and per-flavor either register a Template Class (cc/echo/codex) or directly `SpawnRegistry.spawn` (curl/np/other). Delegates the full chain to `Ezagent.Behavior.Workspace.AgentCreate`."
   defdelegate handle_create_agent(args, ctx), to: Ezagent.Behavior.Workspace.AgentCreate
 
   # --- create_session (unified CLI/LV session provisioning) -----------
@@ -546,6 +558,7 @@ defmodule Ezagent.Behavior.Workspace do
   # `ctx.self_uri` is the workspace URI — passed as `:workspace_uri` to
   # the facade. The caller URI is the session creator (becomes the
   # session owner_uri + receives the OrchestratorAdmin :restart cap).
+  @doc "Create a session in this workspace (unified CLI/LV path): validate name/template, call the runtime-resolved session facade's `create_session/3` (synchronously, to return the session URI), grant the caller the creator manage-cap, and surface the orchestrator URI/status. The caller becomes the session owner."
   def handle_create_session(args, ctx) when is_map(args) do
     workspace_uri = Map.get(ctx, :self_uri)
     caller = Map.get(ctx, :caller)
@@ -642,6 +655,7 @@ defmodule Ezagent.Behavior.Workspace do
 
   # --- instantiate (the north-star action) -----------------------------
 
+  @doc "Emit the workspace's children for the Loader to bring up: `{:member, uri}` for each member (ordered FIRST so Session-Template member deps are alive) then `{:template, name, data}` for each session template. Returns the child list; the Loader dispatches each to SpawnRegistry / TemplateRegistry."
   def handle_instantiate(_args, ctx) do
     # Phase 4-completion: emit both member spawns and template
     # instantiations. Loader walks each child tuple and dispatches to
