@@ -1,11 +1,12 @@
 # Backlog Handoff — non-基座化 tasks (#54, #56, #55, #51)
 
 > **You (the receiving agent) own these four tasks to completion.** Work
-> autonomously: set your own sub-goals, drive each task, open a PR per logical
-> unit. **Do NOT merge your own PRs** — Claude (the cc-openclaw session) checks
-> each new PR and rebases/integrates it after verifying. Work asynchronously; do
-> not wait on Claude or Allen except where a task explicitly needs an Allen
-> decision.
+> autonomously: set your own **goal** (e.g. via `/goal`), drive each task, open a
+> PR per logical unit, and **self-merge (admin-merge) it once all gates pass +
+> `/codex:adversarial-review` is clean.** Claude (the cc-openclaw session) checks
+> the merged result on `main` afterwards and opens a **fix-PR** if something is
+> off — **remember to rebase** onto those fixes. Work asynchronously; do not wait
+> on Claude or Allen except where a task explicitly needs an Allen decision.
 >
 > **Out of scope / do NOT touch (Claude's lane):** the socialware 基座化 line is
 > DONE (im→session→agent split merged, acyclic gate at 0). The LIVE E2E
@@ -94,12 +95,11 @@ the feature impl + unit/integration tests.
 
 ## 4. Workflow + division of labor
 
-- **You:** set sub-goals, implement #54/#56/#55/#51, open a PR per unit, keep all
-  gates green. Do NOT merge your own PRs.
-- **Claude (cc-openclaw):** periodically checks your new PRs; verifies gates; on no
-  problems, rebases/integrates them onto `main` (parallel-squash history can
-  conflict — Claude handles the rebase, memory `feedback_promote_dev_to_main`).
-  Opens a fix-PR if something's off.
+- **You:** set your own goal, implement #54/#56/#55/#51, open a PR per unit, keep
+  all gates green, and **self-merge (admin-merge) once gates + codex-review pass.**
+- **Claude (cc-openclaw):** periodically checks your MERGED PRs on `main`
+  (post-merge); if something's off, opens a **fix-PR** — you rebase onto it.
+  Claude does NOT pre-gate or merge your PRs; you own the merge.
 - **Allen:** product decisions only (none currently open for #54/#56 — both fully
   specced; #55/#51 are mechanical/spec-driven).
 - **Collision avoidance:** #56 touches `core` (Capability/Kind.Runtime) + the 6
