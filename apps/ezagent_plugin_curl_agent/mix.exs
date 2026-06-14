@@ -46,6 +46,16 @@ defmodule EzagentPluginCurlAgent.MixProject do
       # `:in_process_sync` transport adapter implements
       # `Ezagent.AgentBridge.Adapter`, so the bridge domain is a direct dep.
       {:ezagent_domain_agent_bridge, in_umbrella: true},
+      # PR-9c (#53) — the curl STATE Behavior `Ezagent.Behavior.CurlAgent` is
+      # REPARENTED into the agent domain (it composes onto `Entity.Agent` as the
+      # curl flavor's state half). This plugin still owns the curl flavor WIRING
+      # (`behaviors/0` binds `{Entity.Agent, action} → CurlAgent`, plus the
+      # template/adapter/flavor), so it references both `Entity.Agent` and
+      # `Behavior.CurlAgent` from this domain — the dep makes that explicit and
+      # guarantees the agent domain compiles before the `:ezagent_plugin_check`
+      # gate validates those bindings. plugin → domain is the allowed direction
+      # (the agent domain stays a leaf; it never depends back on this plugin).
+      {:ezagent_domain_agent, in_umbrella: true},
       # Outbound chat/send dispatch into the originating session uses
       # the Chat behavior (no new outbound wire).
       {:ezagent_domain_session, in_umbrella: true}
