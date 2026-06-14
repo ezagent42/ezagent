@@ -177,6 +177,23 @@ defmodule Ezagent.Routing.RuleStoreTest do
     assert [] = admin_rules(EzagentDomainInstanceMessage.Routing.MentionRouting)
   end
 
+  describe "verify_rule_table/2 (cross-table guard — latent-bug fix 2026-06-14)" do
+    test ":ok when the rule belongs to the given table; mismatch/not_found otherwise" do
+      table = EzagentDomainInstanceMessage.Routing.MentionRouting
+      other_table = :"rule_store_test_other_#{System.unique_integer([:positive])}"
+
+      {:ok, row} =
+        RuleStore.add(table, Matcher.always(), ["session://team-alpha/default/x"], nil)
+
+      assert :ok = RuleStore.verify_rule_table(row.id, table)
+
+      assert {:error, {:rule_table_mismatch, _}} =
+               RuleStore.verify_rule_table(row.id, other_table)
+
+      assert {:error, :not_found} = RuleStore.verify_rule_table(row.id + 999_999, table)
+    end
+  end
+
   test "URI struct receiver gets serialized to string" do
     {:ok, row} =
       RuleStore.add(

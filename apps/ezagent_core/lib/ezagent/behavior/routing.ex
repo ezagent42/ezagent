@@ -168,48 +168,39 @@ defmodule Ezagent.Behavior.Routing do
     end
   end
 
-  @doc "Permanently delete the rule with GLOBAL `id` (via `RuleStore.delete/1` — `id` is NOT scoped by `table`), then reload `table`'s registry and bump `:calls`. The caller MUST pass the rule's own `table`, else that table's live registry is left stale. Returns `%{deleted: id}`."
+  @doc "Delete rule `id` from `table`. GUARDED (2026-06-14): the rule must belong to `table` (`RuleStore.verify_rule_table/2`) — a mismatch returns `{:error, {:rule_table_mismatch, …}}` and mutates nothing, so a wrong-table `id` can't delete a foreign rule or leave its registry stale. On success deletes, reloads `table`'s registry, bumps `:calls`. Returns `%{deleted: id}`."
   def handle_delete_rule(%{id: id} = args, ctx) when is_integer(id) do
     table = Map.fetch!(args, :table)
     prev_calls = ctx.read.(:calls, 0)
 
-    case RuleStore.delete(id) do
-      :ok ->
-        :ok = RuleStore.load_into_registry(table)
-        {:ok, %{deleted: id}, [{:set, :calls, prev_calls + 1}]}
-
-      err ->
-        err
+    with :ok <- RuleStore.verify_rule_table(id, table),
+         :ok <- RuleStore.delete(id) do
+      :ok = RuleStore.load_into_registry(table)
+      {:ok, %{deleted: id}, [{:set, :calls, prev_calls + 1}]}
     end
   end
 
-  @doc "Disable (soft-off, retained) the rule with GLOBAL `id` (via `RuleStore.disable/1` — not scoped by `table`), then reload `table`'s registry and bump `:calls`. The caller MUST pass the rule's own `table` or its live registry is left stale. Returns `%{disabled: id}`."
+  @doc "Disable (soft-off, retained) rule `id` in `table`. GUARDED: the rule must belong to `table` (`verify_rule_table/2`) — a mismatch returns `{:error, {:rule_table_mismatch, …}}` and mutates nothing. On success disables, reloads `table`'s registry, bumps `:calls`. Returns `%{disabled: id}`."
   def handle_disable_rule(%{id: id} = args, ctx) when is_integer(id) do
     table = Map.fetch!(args, :table)
     prev_calls = ctx.read.(:calls, 0)
 
-    case RuleStore.disable(id) do
-      :ok ->
-        :ok = RuleStore.load_into_registry(table)
-        {:ok, %{disabled: id}, [{:set, :calls, prev_calls + 1}]}
-
-      err ->
-        err
+    with :ok <- RuleStore.verify_rule_table(id, table),
+         :ok <- RuleStore.disable(id) do
+      :ok = RuleStore.load_into_registry(table)
+      {:ok, %{disabled: id}, [{:set, :calls, prev_calls + 1}]}
     end
   end
 
-  @doc "Re-enable the disabled rule with GLOBAL `id` (via `RuleStore.enable/1` — not scoped by `table`), then reload `table`'s registry and bump `:calls`. The caller MUST pass the rule's own `table` or its live registry is left stale. Returns `%{enabled: id}`."
+  @doc "Re-enable disabled rule `id` in `table`. GUARDED: the rule must belong to `table` (`verify_rule_table/2`) — a mismatch returns `{:error, {:rule_table_mismatch, …}}` and mutates nothing. On success enables, reloads `table`'s registry, bumps `:calls`. Returns `%{enabled: id}`."
   def handle_enable_rule(%{id: id} = args, ctx) when is_integer(id) do
     table = Map.fetch!(args, :table)
     prev_calls = ctx.read.(:calls, 0)
 
-    case RuleStore.enable(id) do
-      :ok ->
-        :ok = RuleStore.load_into_registry(table)
-        {:ok, %{enabled: id}, [{:set, :calls, prev_calls + 1}]}
-
-      err ->
-        err
+    with :ok <- RuleStore.verify_rule_table(id, table),
+         :ok <- RuleStore.enable(id) do
+      :ok = RuleStore.load_into_registry(table)
+      {:ok, %{enabled: id}, [{:set, :calls, prev_calls + 1}]}
     end
   end
 

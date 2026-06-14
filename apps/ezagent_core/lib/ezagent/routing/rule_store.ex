@@ -260,6 +260,34 @@ defmodule Ezagent.Routing.RuleStore do
   end
 
   @doc """
+  Verify that rule `id` belongs to `table_name_atom`.
+
+  `delete/2` / `disable/1` / `enable/1` mutate by a BARE GLOBAL `id` (they do not
+  scope by table), and their callers reload only the table they pass. Without this
+  guard, passing an `id` from another table mutates the wrong rule AND leaves the
+  rule's actual table's live registry stale. Callers use this to fail-loud on a
+  table/id mismatch before mutating (latent-bug fix 2026-06-14). Returns `:ok`,
+  `{:error, :not_found}`, or `{:error, {:rule_table_mismatch, %{expected, actual}}}`.
+  """
+  @spec verify_rule_table(integer(), atom()) ::
+          :ok | {:error, :not_found | {:rule_table_mismatch, map()}}
+  def verify_rule_table(id, table_name_atom)
+      when is_integer(id) and is_atom(table_name_atom) do
+    expected = Atom.to_string(table_name_atom)
+
+    case Repo.get(__MODULE__, id) do
+      nil ->
+        {:error, :not_found}
+
+      %__MODULE__{table_name: ^expected} ->
+        :ok
+
+      %__MODULE__{table_name: actual} ->
+        {:error, {:rule_table_mismatch, %{expected: expected, actual: actual}}}
+    end
+  end
+
+  @doc """
   Disable an enabled rule (set enabled=false). System_defaults that admin
   doesn't want can be disabled without deleting; reload picks this up.
   """

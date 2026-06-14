@@ -393,7 +393,7 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   Normalizes the incoming `cap` (struct / atom-keyed / string-keyed → canonical
   struct), runs the grant authorization checks (`check_action_wildcard_grant_authorized/2`
   + `check_grant_authorized/2`), dedups any cap with the same identity-key, adds
-  the new cap (`{:set, :caps, …}`), notifies the principal, and emits `:cap_granted`.
+  the new cap to the `:caps` slice, notifies the principal, and emits `:cap_granted`.
   """
   def handle_grant_cap(%{cap: cap}, ctx) do
     cap_struct = Ezagent.Capability.normalize!(cap, granter_from_ctx(ctx))
