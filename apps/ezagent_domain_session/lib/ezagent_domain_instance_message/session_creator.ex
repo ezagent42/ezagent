@@ -651,9 +651,23 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     # rebuild from the durable snapshot) DURING the gate's poll. Without this
     # the join is rejected `:orchestrator_not_registered` until step 6 — which
     # runs AFTER the gate — so the gate times out (90s) and rolls the create
-    # back. Idempotent + clobber-safe (skips when already bound). See
-    # docs/notes/2026-06-15-live-orchestrator-mcp-registration-bug.md.
-    _ = Materializer.prestore_planned_orchestrator_uri(session_uri, workspace_uri)
+    # back. See docs/notes/2026-06-15-live-orchestrator-mcp-registration-bug.md.
+    #
+    # ONLY on the fresh-create path (`new_session?: true`). There, EVERY failure
+    # rolls the whole freshly-created session back (`rollback_session/3` deletes
+    # the Session Kind + snapshot — atomicity Q1), so a failed gate cannot leave
+    # a stale pre-stored binding behind. The repair path (`new_session?: false`)
+    # deliberately keeps the live session on failure (lines below), so
+    # pre-storing there could persist a planned `:orchestrator_uri` for an
+    # orchestrator that never finalized → `McpServer.from_orchestrator_uri/1` /
+    # `session_complete?/4` would then report FALSE readiness from that artifact
+    # (codex adversarial-review HIGH/NO-SHIP, 2026-06-15). Repair-path pre-store
+    # would need transactional compensation; tracked as follow-up in
+    # docs/futures/todo.md. The repair path's pre-existing live-join timing is
+    # unchanged by this PR.
+    if new_session? do
+      _ = Materializer.prestore_planned_orchestrator_uri(session_uri, workspace_uri)
+    end
 
     # Step 5 — ensure orchestrator (2-way ownership; ensure failure →
     # rollback → {:error,_}).

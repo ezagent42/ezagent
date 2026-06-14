@@ -1026,6 +1026,21 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
 > loop), then ratchet the cap back to 1. The other oversized module is
 > `ezagent_core/kind.ex` (1013).
 
+- **Repair-path orchestrator pre-store (follow-up to #783, 2026-06-15)** — OPEN.
+  PR #783 pre-persists the planned orchestrator URI before the readiness gate
+  ONLY on the fresh-create path (`new_session?: true`), where any failure rolls
+  the whole session back so a failed gate can't leave a stale binding. The
+  repair path (`new_session?: false`) deliberately keeps the live session on
+  failure, so it does NOT pre-store — meaning a repair that must spawn a NEW
+  orchestrator for a nil-`orchestrator_uri` session still hits the original
+  live-join deadlock (pre-existing, not a regression). To extend the fix to
+  repair, make the pre-store transactional: capture the prior working-copy
+  `:orchestrator_uri`, and on an `ensure_orchestrator` failure for the repair
+  path, restore it (clear the pre-store) so `McpServer.from_orchestrator_uri/1`
+  / `session_complete?/4` can never report readiness from an unfinalized
+  pre-store artifact (codex adversarial-review HIGH, 2026-06-15).
+  `session_creator.ex` `ensure_orchestrated_session/6`.
+
 - **Install + run `improve-codebase-architecture` skill to clarify the ESR
   architecture.** Skill installed at `.claude/skills/improve-codebase-architecture/`
   (cc-openclaw). Use it (informed by `UBIQUITOUS_LANGUAGE.md` + the `GLOSSARY.md`
