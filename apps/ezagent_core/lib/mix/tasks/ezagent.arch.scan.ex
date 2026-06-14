@@ -41,7 +41,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     "apps/ezagent_core/lib/ezagent/spawn_registry.ex",
     "apps/ezagent_core/lib/ezagent/invocation.ex",
     "apps/ezagent_core/lib/ezagent_core/application.ex",
-    "apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex",
+    "apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex",
     "apps/ezagent_domain_instance_message/lib/ezagent/entity/session.ex",
     "apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/session_creator.ex",
     "apps/ezagent_domain_instance_message/lib/ezagent_domain_instance_message/application.ex",
@@ -67,9 +67,12 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # PR-A (#53 agent→session decouple) — shifted -1 by removing
     # `Ezagent.Behavior.Session` from `Agent.base_behaviors/0`. SAME sanctioned
     # `spawn_fresh/4` call site + `@spec` + `def`, one line higher.
-    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 229},
-    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 268},
-    {"apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex", 270},
+    # PR-9a (#53 physical split) — `entity/agent.ex` relocated VERBATIM to the
+    # new `ezagent_domain_agent` app (module name FROZEN); content unchanged so
+    # the line anchors hold, only the app-dir path prefix changed.
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 229},
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 268},
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 270},
     # PR-3S — `spawn_fresh_member/8` (def) + its single call site moved VERBATIM
     # from `Orchestrator.Tools` to `Orchestrator.Tools.MemberTemplate` along with
     # the `update_member_template` regenerate cluster (gt_1000 4→3 extraction).

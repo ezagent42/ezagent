@@ -81,17 +81,13 @@ defmodule EzagentDomainInstanceMessage.Application do
     # a single PR. Dev / prod boot WITHOUT session://default/system/main; the wizard
     # populates it on first user visit.
     children = [
-      {DynamicSupervisor,
-       name: EzagentDomainInstanceMessage.AgentSupervisor, strategy: :one_for_one},
+      # PR-9a (#53): the Agent + AgentTemplate DynamicSupervisors moved to
+      # `EzagentDomainAgent.Application` (frozen names — D1a). Only the Session
+      # supervisors remain in the session domain.
       {DynamicSupervisor,
        name: EzagentDomainInstanceMessage.SessionSupervisor, strategy: :one_for_one},
-      # Phase 7 PR 37: supervisor for AgentTemplate Kinds. 0 children at
-      # boot; templates materialize on admin create (LV or mix task) or
-      # on snapshot restore at next reference.
-      {DynamicSupervisor,
-       name: EzagentDomainInstanceMessage.AgentTemplateSupervisor, strategy: :one_for_one},
-      # Phase 7 PR 38: supervisor for SessionTemplate Kinds. Same shape
-      # as AgentTemplateSupervisor — 0 children at boot, lazy spawn.
+      # Phase 7 PR 38: supervisor for SessionTemplate Kinds. 0 children at
+      # boot, lazy spawn.
       {DynamicSupervisor,
        name: EzagentDomainInstanceMessage.SessionTemplateSupervisor, strategy: :one_for_one},
       # Phase 6 PR 2: admin User spawn moved to EzagentDomainIdentity.Application
@@ -796,8 +792,10 @@ defmodule EzagentDomainInstanceMessage.Application do
     # install a template's `prompt_templates`).
     :ok = CapabilityRegistry.register(Session, :set_prompt_templates, SessionBehavior)
     # PR-2 (§OQ-4) — `:receive` split per Kind into two first-class Behaviors.
+    # PR-9a (#53) — `{Agent, :receive}` moved to `EzagentDomainAgent.Application`
+    # (the Agent Kind now lives in the agent domain); `{User, :receive}` stays
+    # here (User Kind / inbox is the session domain's concern).
     :ok = CapabilityRegistry.register(User, :receive, Ezagent.Behavior.User.Receive)
-    :ok = CapabilityRegistry.register(Agent, :receive, Ezagent.Behavior.Agent.Receive)
     # Phase 6 PR 2: Identity behavior registration (list_caps / has_cap?)
     # moved to ezagent_domain_identity.Application — Identity is the identity
     # domain's concern, not chat's.

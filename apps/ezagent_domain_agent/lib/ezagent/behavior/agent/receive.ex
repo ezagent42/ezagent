@@ -47,8 +47,8 @@ defmodule Ezagent.Behavior.Agent.Receive do
   Behavior, not here.) `reads_siblings([:sandbox])` is declared because
   the delivery helper resolves the agent's flavor from the sibling
   `:sandbox` slice (`ctx[:siblings][:sandbox]` →
-  `UriQueryResolvers.resolve_flavor_from_sandbox/1`) to pick the right
-  AgentBridge adapter (cc / codex / …).
+  `Ezagent.AgentFlavorResolver.resolve_flavor_from_sandbox/1`) to pick the
+  right AgentBridge adapter (cc / codex / …).
 
   ## Naming (§11 NP-1/NP-2/NP-3 audit)
 

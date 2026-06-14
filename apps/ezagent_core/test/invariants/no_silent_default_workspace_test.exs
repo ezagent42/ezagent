@@ -147,7 +147,7 @@ defmodule Ezagent.Invariants.NoSilentDefaultWorkspaceTest do
              Enum.join(offenders, "\n\n") <>
              "\n\nPer Allen 2026-05-26: no default workspace concept exists. Rewrite each " <>
              "site to `raise ArgumentError, \"...\"` instead of returning a string literal. " <>
-             "Canonical example: `apps/ezagent_domain_instance_message/lib/ezagent/entity/agent.ex` " <>
+             "Canonical example: `apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex` " <>
              "`spawn_fresh/4`."
   end
 

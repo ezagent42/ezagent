@@ -172,7 +172,7 @@ defmodule Ezagent.Behavior.Agent.Delivery do
         # `Kind.get_slice/2` branch, which would self-`call` and deadlock); both
         # share one snapshot-scan impl so a cold-loaded curl agent resolves
         # identically here and for every external caller.
-        EzagentDomainInstanceMessage.UriQueryResolvers.flavor_from_durable_snapshot(uri)
+        Ezagent.AgentFlavorResolver.flavor_from_durable_snapshot(uri)
     end
   end
 
@@ -196,6 +196,6 @@ defmodule Ezagent.Behavior.Agent.Delivery do
   defp resolve_agent_flavor_from_ctx(ctx) do
     ctx
     |> get_in([:siblings, :sandbox])
-    |> EzagentDomainInstanceMessage.UriQueryResolvers.resolve_flavor_from_sandbox()
+    |> Ezagent.AgentFlavorResolver.resolve_flavor_from_sandbox()
   end
 end

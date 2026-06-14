@@ -53,6 +53,12 @@ defmodule EzagentDomainInstanceMessage.MixProject do
       # Ezagent.AgentBridge.Payload and dispatches through the
       # plugin-independent bridge facade.
       {:ezagent_domain_agent_bridge, in_umbrella: true},
+      # PR-9a (#53): the agent domain (Agent Kind + agent.receive). The session
+      # domain references `Ezagent.Entity.Agent` / `AgentTemplate` from its spawn
+      # fns + session-management logic (im → session → agent). The reverse — the
+      # agent-flavor resolver `delivery.ex` still calls — is the one allowlisted
+      # cross-edge the acyclic gate tracks (shrunk by 9c).
+      {:ezagent_domain_agent, in_umbrella: true},
       # Phase 7 completion PR-5: the orchestrator MCP transport bridge's
       # BEAM endpoint is a Phoenix.Socket + Phoenix.Channel
       # (Ezagent.Orchestrator.McpSocket / McpChannel). Declared
