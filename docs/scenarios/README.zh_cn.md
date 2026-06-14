@@ -135,7 +135,7 @@ runbook 路径 + 至少一个 PR 证据截图时，才标 ✅。这是 2026-05-0
 | 08 | [4-agent 综合（cc → curl → np → user）](./08-4agent-comprehensive/scenario.zh_cn.md) | 2 | ✅ | `comprehensive_4agent_e2e_test.exs` + `docs/runbook/4-agent-comprehensive-e2e.md` |
 | 09 | [LV 创建 session + 添加成员](./09-session-create-lv/scenario.zh_cn.md) | 3 | ✅ | `session_create_orchestrator_unified_test.exs` |
 | 10 | [@-mention 派发 — mention-gated 路由](./10-mention-gated-routing/scenario.zh_cn.md) | 3 | ✅ | `mention_gated_routing_test.exs` + PR #406 |
-| 11 | [跨 session @-mention 被拒](./11-cross-session-mention-rejected/scenario.zh_cn.md) | 3 | ⚠️ | 通过路由规则隐式；无专用测试 |
+| 11 | [跨 session @-mention 被拒](./11-cross-session-mention-rejected/scenario.zh_cn.md) | 3 | ✅ | `category_10_scenarios_10_11_mention_routing_test.exs` "Scenario 11"（4 测试）+ PR #406 `mention_failed_notification` |
 | 12 | [Feishu chat ↔ session 绑定 + outbound](./12-feishu-bind-outbound/scenario.zh_cn.md) | 4 | ✅ | PR #420 + `external_mirror/facade_test.exs` |
 | 13 | [Feishu 入站消息 → 路由到 agent](./13-feishu-inbound-routing/scenario.zh_cn.md) | 4 | ✅ | `feishu_chat_binding_test.exs` + `inbound_chat_lookup_test.exs` |
 | 14 | [LV 授予 cap（action 轴）](./14-grant-cap-action-axis/scenario.zh_cn.md) | 5 | ✅ | `cap_action_axis_invariant_test.exs` + PR #410 |
@@ -148,7 +148,7 @@ runbook 路径 + 至少一个 PR 证据截图时，才标 ✅。这是 2026-05-0
 | 21 | [Template 版本 tag + 实例化](./21-template-version-tag/scenario.zh_cn.md) | 9 | ⏳ | `add_template_invokes_test.exs` — 版本 tag 尚未发布 |
 | 22 | [Routing 规则 CRUD + 优先级](./22-routing-crud/scenario.zh_cn.md) | 10 | ✅ | `routing_consolidation_invariant_test.exs` + `routing_boot_test.exs` |
 | 23 | [ExternalMirrorWorker 冷启重新订阅](./23-external-mirror-resubscribe/scenario.zh_cn.md) | 11 | ✅ | PR #420 修复 task #49 |
-| 24 | [销毁级联 — agent / session / workspace](./24-destroy-cascade/scenario.zh_cn.md) | 12 | ⚠️ | `lifecycle_terminate_test.exs` + `sandbox_destroy_test.exs`（Saga 补偿未测）|
+| 24 | [销毁级联 — agent / session / workspace](./24-destroy-cascade/scenario.zh_cn.md) | 12 | ⚠️ | `scenario_24_destroy_cascade_test.exs`（10 测试：saga 级联 + 补偿）— 完整 workspace 级 3 层级联 E2E 仍是缺口 |
 | 25 | [Phx 重启 — 快照重建 + ExternalMirror](./25-phx-restart-rebuild/scenario.zh_cn.md) | 13 | ✅ | `snapshot_restart_test.exs` + `session_survives_restart_test.exs` + `cap_action_axis_snapshot_restore_test.exs` |
 | 26 | [Codex bridge UDS WS thread 连续性（PR #441 回归）](./26-codex-bridge-uds-ws/scenario.zh_cn.md) | 14 | ✅ | `orchestrator_mcp_bridge_test.exs` + `scripts/codex_app_server_thread_repro.py` |
 | 27 | [Per-agent api-key + 沙箱隔离](./27-api-keys-sandbox/scenario.zh_cn.md) | 15 | ⚠️ | `cc_agent_sandbox_credentials_test.exs` — Bug A（config_dir 原子化）推迟 |

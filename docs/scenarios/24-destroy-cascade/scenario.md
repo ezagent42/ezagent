@@ -2,7 +2,7 @@
 
 **Category**: 12 — Destroy + cleanup cascade
 **Status**: ⚠️ implemented-with-gaps
-**Last verified**: 2026-05-25 (`sandbox_destroy_test.exs` for single-level; cascade untested)
+**Last verified**: 2026-06-14 — the SagaRunner cascade *mechanism* is now well-tested (`scenario_24_destroy_cascade_test.exs`, 10 tests green: 2-level session→agent cascade, idempotent steps, forward-failure→reverse-compensation, operator-repair markers, real slice-revert). Remaining gap: the full **workspace-level 3-level cascade** E2E + the `destroy(workspace) ⇒ count(orphans) == 0` invariant.
 
 ## Pre-conditions
 
@@ -67,11 +67,17 @@
 - Tests:
   - `apps/ezagent_core/test/integration/sandbox_destroy_test.exs` — single agent
   - `apps/ezagent_core/test/integration/lifecycle_terminate_test.exs` — terminate action body
-  - No cascade E2E test.
+  - `apps/ezagent_core/test/e2e/scenario_24_destroy_cascade_test.exs` — the SagaRunner
+    cascade mechanism (10 tests, green 2026-06-14): happy-path 2-level session→agent
+    cascade, idempotent middle step, forward-failure→reverse-compensation, compensation-
+    failure→operator-repair marker, real slice-revert on rollback, empty/no-compensate edges.
+  - `apps/ezagent_core/test/invariants/cascade_pr0_foundations_test.exs` — cascade foundations.
 - Open bugs / gaps:
-  - **No cascade E2E test**. This is the principal Category 12 gap.
+  - **Full workspace-level (3-level) cascade E2E** (steps 8-10) — the SagaRunner *mechanism*
+    is tested, but the end-to-end `workspace → sessions → agents → config_dirs/api-keys/
+    bindings` destroy with the `count(orphans) == 0` invariant (Notes, below) is not yet
+    asserted. This is the principal remaining Category 12 gap.
   - Routing rules referencing a destroyed agent are not cleaned up. Worth a separate scenario (or part of this).
-  - SagaRunner is Phase 1 code; Phase 2 will exercise it for the first time on a real Behavior migration.
 
 ## Notes
 

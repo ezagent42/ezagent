@@ -1,8 +1,8 @@
 # 场景 11：跨 session @-mention 被拒
 
 **类别**：3 — Session 流程
-**状态**：⚠️ implemented-with-gaps
-**最近验证**：从未作为 codified 场景（规则隐式强制）
+**状态**：✅ implemented-and-tested
+**最近验证**：2026-06-14 — 核心「跨 session 泄漏」不变式已 codified 于 `apps/ezagent_domain_instance_message/test/e2e/category_10_scenarios_10_11_mention_routing_test.exs`，describe `"Scenario 11 — cross-session mention rejected"`（4 个测试，绿）。`mention_failed` 通知（步骤 5）由 PR #406（`mention_failed_notification`，见场景 10）单独覆盖。
 
 ## 前置条件
 
@@ -44,12 +44,18 @@
   - `docs/superpowers/specs/2026-05-22-mention-gated-routing.md`
   - （跨 session 泄漏防护在路由解析器设计中隐式）
 - 测试：
-  - 无专门的跨 session mention 拒绝测试。`mention_gated_routing_test.exs` 仅覆盖 in-session mention。
+  - `apps/ezagent_domain_instance_message/test/e2e/category_10_scenarios_10_11_mention_routing_test.exs`，
+    describe `"Scenario 11 — cross-session mention rejected"`（4 个测试，2026-06-14 绿）：
+    - mention 一个**不在**当前 session 成员中的 agent → 0 接收者（泄漏防护）；
+    - 正向对照：in-session mention **确实**派达；
+    - `$mentions` 里的跨 workspace 成员 URI 被丢弃；
+    - `$mentions` 里的 session URI（跨 session 路由）被丢弃。
+  - `mention_gated_routing_test.exs` 覆盖 in-session mention happy path。
 - Open bug / gap：
-  - **无跨 session 泄漏防护的回归测试**。这是安全属性；应加不变式测试断言 "不在 session 的 agent 永不收到来自该 session 的 chat.receive invocation"。
+  - `mention_failed` 通知（步骤 5）通过 PR #406 的 `mention_failed_notification` 测试（见场景 10）覆盖，不在本路由解析器测试内。
+  - 审计追踪条目（预期结果 3）尚无专门断言。
 
 ## 备注
 
-- 路由解析器在派发时 per-session 评估 `$session_members`；自然阻止跨 session 泄漏但未作为不变式断言。
-- ⚠️ 状态反映：生产行为正确，但 codified 场景 + 不变式测试不存在。
-- 推荐在 Phase 2 把 `Chat.Behavior` 迁移到新 `action/3` 宏前加本场景 — 见 master README §6 次级投资。
+- 路由解析器在派发时 per-session 评估 `$session_members`；自然阻止跨 session 泄漏，且现已作为不变式断言（见「测试」）。
+- 该安全不变式是 socialware 基座化（im→session→agent）拆分的承重回归守卫：跨 session 泄漏防护位于 session 域的路由解析器，因此在 PR-9a/9b 路由/解析器代码迁移期间必须保持绿。

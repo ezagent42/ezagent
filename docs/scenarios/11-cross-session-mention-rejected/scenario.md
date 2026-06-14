@@ -1,8 +1,8 @@
 # Scenario 11: Cross-session @-mention is rejected
 
 **Category**: 3 — Session flows
-**Status**: ⚠️ implemented-with-gaps
-**Last verified**: never as a codified scenario (rule enforced implicitly)
+**Status**: ✅ implemented-and-tested
+**Last verified**: 2026-06-14 — the core cross-session-leak invariant is codified in `apps/ezagent_domain_instance_message/test/e2e/category_10_scenarios_10_11_mention_routing_test.exs`, describe `"Scenario 11 — cross-session mention rejected"` (4 tests, green). The `mention_failed` notification piece (step 5) is covered separately by PR #406 (`mention_failed_notification`, cited in scenario 10).
 
 ## Pre-conditions
 
@@ -44,12 +44,18 @@
   - `docs/superpowers/specs/2026-05-22-mention-gated-routing.md`
   - (Cross-session leak prevention is implicit in the routing resolver design)
 - Tests:
-  - No dedicated test for cross-session mention rejection. `mention_gated_routing_test.exs` covers in-session mentions only.
+  - `apps/ezagent_domain_instance_message/test/e2e/category_10_scenarios_10_11_mention_routing_test.exs`,
+    describe `"Scenario 11 — cross-session mention rejected"` (4 tests, green 2026-06-14):
+    - mentioning an agent NOT in the current session's members → 0 recipients (the leak guard);
+    - positive control: an in-session mention DOES deliver;
+    - a cross-workspace member URI in `$mentions` is dropped;
+    - a session URI in `$mentions` (cross-session route) is dropped.
+  - `mention_gated_routing_test.exs` covers the in-session mention happy path.
 - Open bugs / gaps:
-  - **No regression test for cross-session leak prevention**. This is a security-property; should add an invariant test asserting "agent not in session never receives a chat.receive invocation from that session".
+  - The `mention_failed` notification (step 5) is exercised via PR #406's `mention_failed_notification` test (cited under scenario 10), not in this routing-resolver test.
+  - The audit-trail entry (expected outcome 3) has no dedicated assertion yet.
 
 ## Notes
 
-- The routing resolver evaluates `$session_members` per-session at dispatch time; this naturally prevents cross-session leaks but is not asserted as an invariant.
-- The ⚠️ status reflects: production behavior is correct, but the codified scenario + invariant test do not exist.
-- Adding this scenario before Phase 2 migrates `Chat.Behavior` to the new `action/3` macro is recommended — see master README §6 secondary investments.
+- The routing resolver evaluates `$session_members` per-session at dispatch time; this naturally prevents cross-session leaks and is now asserted as an invariant (see Tests).
+- This security invariant is a load-bearing regression guard for the socialware 基座化 (im→session→agent) split: the cross-session leak guard lives in the session-domain routing resolver, so it must stay green as routing/resolver code relocates during PR-9a/9b.
