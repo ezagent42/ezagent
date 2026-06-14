@@ -13,8 +13,8 @@ defmodule Ezagent.Entity.AgentTest do
       #
       # Allen 2026-05-26 — ApiKeys flipped from User Kind to Agent Kind:
       # agents hold their own outbound credentials. `:api_keys` slice
-      # now coexists with `:identity` / `:chat` / `:sandbox` on the
-      # Agent Kind's snapshot.
+      # coexists with `:identity` / `:sandbox` on the Agent Kind's snapshot
+      # (`:chat` removed in PR-9 A1).
       #
       # #17 cascade PR-5 — CredentialGrant hosts the cap-checked
       # operator revoke action on Agent so LiveViews do not write
@@ -30,8 +30,14 @@ defmodule Ezagent.Entity.AgentTest do
       # curl-flavor instance (explicit `:behaviors` = `curl_behaviors/0`);
       # legacy nil-`:kind_base` agents resolve to `nil_capture_behavior_set/0`
       # = the BASE set, so they are byte-identical to pre-PR-6.
+      #
+      # PR-9 A1 (2026-06-14, Allen-approved): `Ezagent.Behavior.Session` REMOVED
+      # from the Agent Kind — it was vestigial (agents receive via
+      # `Behavior.Agent.Receive`; no session-HOST action is dispatched to an
+      # agent). The orphaned `:chat` slice is dropped on cold-load (snapshot
+      # "drop undeclared keys"). This cuts the agent→session edge for the
+      # physical domain split. See the A1 decoupling audit spec.
       base = [
-        Ezagent.Behavior.Session,
         Ezagent.Behavior.Identity,
         Ezagent.Behavior.Sandbox,
         Ezagent.Behavior.ApiKeys,

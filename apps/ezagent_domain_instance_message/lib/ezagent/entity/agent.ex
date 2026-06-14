@@ -96,7 +96,14 @@ defmodule Ezagent.Entity.Agent do
   @spec base_behaviors() :: [module()]
   def base_behaviors,
     do: [
-      Ezagent.Behavior.Session,
+      # PR-9 A1 (2026-06-14, Allen-approved): `Ezagent.Behavior.Session` REMOVED
+      # from the Agent Kind. It was vestigial — agents receive via
+      # `Ezagent.Behavior.Agent.Receive` (registered `{Agent, :receive}`), and no
+      # session-HOST action (send/join/leave/set_*) is ever dispatched to an
+      # agent. Composing it gave agents an unused `:chat` slice (cold-load drops
+      # the now-undeclared slice, snapshot.ex "drop undeclared keys"). Removing it
+      # cuts the agent→session compile edge so the Agent Kind can move to a leaf
+      # `domain.agent`. See docs/superpowers/specs/2026-06-14-pr9-A1-agent-session-decoupling-audit.md.
       Ezagent.Behavior.Identity,
       Ezagent.Behavior.Sandbox,
       Ezagent.Behavior.ApiKeys,
