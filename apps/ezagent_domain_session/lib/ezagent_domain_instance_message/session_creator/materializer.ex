@@ -56,16 +56,50 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
   Idempotent + clobber-safe: the planned URI is a pure function of
   `(session_uri, workspace_uri)`, and we skip the write when a binding is
   already present so the repair/adopt path keeps its existing binding.
+
+  Returns `:stored` when it actually wrote the planned URI (the caller is then
+  responsible for compensating it — `clear_session_orchestrator_uri/1` — if the
+  subsequent readiness/finalize fails on a path that does NOT roll the whole
+  session back), `:skipped` when a binding was already present, or `{:error, _}`.
   """
-  @spec prestore_planned_orchestrator_uri(URI.t(), URI.t()) :: :ok | {:error, term()}
+  @spec prestore_planned_orchestrator_uri(URI.t(), URI.t()) ::
+          :stored | :skipped | {:error, term()}
   def prestore_planned_orchestrator_uri(%URI{} = session_uri, %URI{} = workspace_uri) do
     case Map.get(Session.read_template_working_copy(session_uri), :orchestrator_uri) do
       %URI{} ->
-        :ok
+        :skipped
 
       _ ->
         planned = Session.planned_orchestrator_uri(session_uri, workspace_uri)
-        store_session_orchestrator_uri(session_uri, planned)
+
+        case store_session_orchestrator_uri(session_uri, planned) do
+          :ok -> :stored
+          {:error, _} = err -> err
+        end
+    end
+  end
+
+  @doc """
+  Remove the `:orchestrator_uri` from the session's durable working copy —
+  the compensation for a `prestore_planned_orchestrator_uri/2` that returned
+  `:stored` when the subsequent orchestrator readiness/finalize then FAILS on a
+  path that keeps the live session (the repair path; the fresh-create path
+  instead deletes the whole snapshot via `rollback_session/3`). Without this a
+  failed repair would leave a planned binding for an orchestrator that never
+  finalized, from which `Ezagent.Orchestrator.McpServer.from_orchestrator_uri/1`
+  / `session_complete?/4` would report FALSE readiness (codex review HIGH).
+  """
+  @spec clear_session_orchestrator_uri(URI.t()) :: :ok | {:error, term()}
+  def clear_session_orchestrator_uri(%URI{} = session_uri) do
+    working_copy =
+      session_uri
+      |> Session.read_template_working_copy()
+      |> Map.delete(:orchestrator_uri)
+
+    case Ezagent.Behavior.Session.system_set_working_copy(session_uri, working_copy) do
+      {:ok, _} -> :ok
+      {:error, _} = err -> err
+      other -> {:error, {:unexpected_set_working_copy_result, other}}
     end
   end
 

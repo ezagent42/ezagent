@@ -78,8 +78,10 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorPrestoreReadiness
     assert McpServer.from_orchestrator_uri(planned) ==
              {:error, :orchestrator_not_registered}
 
-    # THE FIX: step 4.5 pre-store of the deterministic planned binding.
-    :ok = Materializer.prestore_planned_orchestrator_uri(session_uri, workspace_uri)
+    # THE FIX: step 4.5 pre-store of the deterministic planned binding. It
+    # returns :stored because the prior binding was absent (the caller then
+    # owns its compensation on a failed gate).
+    assert :stored = Materializer.prestore_planned_orchestrator_uri(session_uri, workspace_uri)
     # Clear the cache the precondition probe might have left, so the assertion
     # below proves a fresh durable rebuild (not a stale ETS row).
     :ok = McpRegistry.unregister(planned)
@@ -92,6 +94,29 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorPrestoreReadiness
              "readiness gate is still polling"
   end
 
+  test "compensation: clearing a pre-stored binding makes the live-join path fail closed again" do
+    {session_uri, workspace_uri} = staged_session()
+    planned = Session.planned_orchestrator_uri(session_uri, workspace_uri)
+    :ok = McpRegistry.unregister(planned)
+
+    # Pre-store, then confirm the live-join path resolves (the readiness window).
+    assert :stored = Materializer.prestore_planned_orchestrator_uri(session_uri, workspace_uri)
+    :ok = McpRegistry.unregister(planned)
+    assert {:ok, :registered} = McpServer.from_orchestrator_uri(planned)
+
+    # Compensation (repair-path failed gate): clear the durable pre-store +
+    # evict the cache. The live-join path MUST now fail closed — no false
+    # readiness can survive a failed repair (codex review HIGH).
+    :ok = Materializer.clear_session_orchestrator_uri(session_uri)
+    :ok = McpRegistry.unregister(planned)
+
+    assert McpServer.from_orchestrator_uri(planned) ==
+             {:error, :orchestrator_not_registered},
+           "after clear_session_orchestrator_uri/1 the durable binding is gone, " <>
+             "so the live MCP-join path must fail closed — a failed repair " <>
+             "cannot leave a stale orchestrator registration source"
+  end
+
   test "pre-store is clobber-safe: an already-present binding is preserved (repair/adopt path)" do
     {session_uri, workspace_uri} = staged_session()
 
@@ -101,7 +126,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorPrestoreReadiness
       )
 
     :ok = Materializer.store_session_orchestrator_uri(session_uri, existing)
-    :ok = Materializer.prestore_planned_orchestrator_uri(session_uri, workspace_uri)
+    assert :skipped = Materializer.prestore_planned_orchestrator_uri(session_uri, workspace_uri)
 
     wc = Session.read_template_working_copy(session_uri)
 
