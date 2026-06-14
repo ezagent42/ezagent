@@ -5,7 +5,7 @@ defmodule Ezagent.Behavior.Agent.Receive do
 
   ## Why this exists (im/session/agent decomposition — PR-2)
 
-  The single `Ezagent.Behavior.Session.handle_receive/2` used to branch
+  The single pre-split session `:receive` handler used to branch
   internally on `ctx[:kind_module]` (`Entity.User` → inbox slice;
   `Entity.Agent` → AgentBridge). SPEC
   `docs/superpowers/specs/2026-06-12-im-session-agent-decomposition-design.md`
@@ -21,11 +21,13 @@ defmodule Ezagent.Behavior.Agent.Receive do
   Conceptually this is the **agent domain's** transport seam (§3.3 — it
   hands DOWN to a flavor-blind `AgentBridge.deliver`). Physically it
   STAYS in `ezagent_domain_instance_message` until PR-9 carves out
-  `domain.agent`; the extraction in PR-2 is the action split, not the app
-  move. The delivery mechanics remain in
-  `Ezagent.Behavior.Session.Delivery.deliver_agent_receive/2` (the shared
-  helper both PR-2 and the future PR-9 reuse), so PR-9 relocates one
-  module, not a re-derivation.
+  `domain.agent`; the extraction in PR-2 was the action split, not the app
+  move. PR-A (#53) then relocated the delivery mechanics into the agent
+  domain — they now live in
+  `Ezagent.Behavior.Agent.Delivery.deliver_agent_receive/2` (no longer a
+  session Behavior), cutting the last agent→session compile edge so PR-9
+  can move `domain.agent` as a leaf. Pure message-body accessors are shared
+  via `Ezagent.Message.Body` (core).
 
   ## What `agent.receive` does (extracted VERBATIM from the Agent branch)
 
@@ -62,18 +64,26 @@ defmodule Ezagent.Behavior.Agent.Receive do
   # name, but `Entity.Agent` has no `:receive` slice — so the runtime would
   # fetch `%{}` and commit `Map.put(state, :receive, %{})`, leaving a durable
   # ORPHAN slice on snapshot-on-change Agents after the first inbound message.
-  # Pin to `:session` — the EXISTING receive-state slice that `Entity.Agent`
-  # already materializes via `Ezagent.Behavior.Session` in its `behaviors/0`
-  # (the same slice the pre-split Agent branch used, and that `User.Receive`
-  # pins to). This handler emits NO effects, so the slice is read + committed
-  # UNCHANGED — no orphan, no write.
+  # Pin to `:session` — the historical receive-state slice key (the same slice
+  # the pre-split Agent branch used, and that `User.Receive` pins to) — so no
+  # snapshot-key migration is forced.
+  #
+  # PR-A (#53): the vestigial session-HOST behavior is no longer composed onto
+  # `Entity.Agent` (an agent is a session MEMBER, never a host, so its
+  # `:session` slice was always empty).
+  # `Entity.Agent` therefore no longer materializes `:session`, so
+  # `Ezagent.Kind.Snapshot.prune_orphan_slices/2` correctly drops the (empty)
+  # `:session` slice from existing agent snapshots on cold-load. This handler
+  # emits NO effects, so it read-commits the slice UNCHANGED — no write, no
+  # re-created orphan. Net: byte-identical-minus-empty-`:session`; no migration.
   use Ezagent.Lifecycle, state_slice: :session
   reads_siblings([:sandbox])
 
   require Logger
 
   alias Ezagent.{Cmd, Message}
-  alias Ezagent.Behavior.Session.Delivery
+  alias Ezagent.Behavior.Agent.Delivery
+  alias Ezagent.Message.Body
 
   action(:receive,
     args: %{message: :map},
@@ -87,8 +97,7 @@ defmodule Ezagent.Behavior.Agent.Receive do
 
   @doc """
   Deliver an inbound session message to the live agent via AgentBridge
-  (extracted VERBATIM from the Agent branch of
-  `Ezagent.Behavior.Session.handle_receive/2`).
+  (delegates to `Ezagent.Behavior.Agent.Delivery.deliver_agent_receive/2`).
 
   Builds the flavor-neutral payload and pushes it through AgentBridge
   (self-healing a vanished bridge); a same-process side effect.
@@ -196,8 +205,8 @@ defmodule Ezagent.Behavior.Agent.Receive do
       {:ok, %{ignored: :self_message}, []}
     else
       # AgentBridge PR-D / PR-6: keep receive flavor-neutral. Payload build +
-      # self-healing bridge delivery live in `Session.Delivery` (the shared
-      # helper). The CLASS-TAGGED delivery result decides whether we re-dispatch.
+      # self-healing bridge delivery live in `Ezagent.Behavior.Agent.Delivery`
+      # (agent domain). The CLASS-TAGGED delivery result decides whether we re-dispatch.
       case Delivery.deliver_agent_receive(msg, ctx) do
         :ok ->
           # :subprocess_ws — async reply through the bridge; nothing to do.
@@ -257,7 +266,7 @@ defmodule Ezagent.Behavior.Agent.Receive do
   defp sync_result_effect(%Message{} = msg, ctx, sync_result) do
     self_uri = ctx[:self_uri]
     source_session = ctx[:caller]
-    user_text = Delivery.body_text(msg.body)
+    user_text = Body.body_text(msg.body)
 
     target = Ezagent.URI.with_action(self_uri, :sync_result, :sync_result)
 

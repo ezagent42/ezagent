@@ -10,7 +10,7 @@ defmodule Ezagent.Entity.AgentTemplate do
   (a directory tree that contains `.claude/settings.json`, MCP config,
   hooks, skills, plugins, credentials) plus a small cap policy.
   Instances are spawned by `Ezagent.Entity.Agent.spawn/4` (PR 40) and
-  composed into team configurations by `Ezagent.Entity.SessionTemplate`
+  composed into team configurations by the session-side template Kind
   (PR 38). The orchestrator agent (PR 45+) selects from registered
   AgentTemplates via its `list_templates` and `add_agent_slot` tools.
 
@@ -403,12 +403,11 @@ defmodule Ezagent.Entity.AgentTemplate do
   `Ezagent.AgentFlavorRegistry`: `{:ok, module}` / `{:error, {:unknown_flavor, f}}`
   / `{:error, :missing_flavor}`.
 
-  PR-9 A2 (2026-06-14): relocated here from
-  `EzagentDomainInstanceMessage.SessionCreator.TemplateResolver` so the agent
-  domain (`AgentTemplate` + its `TemplateSpawn`) no longer reaches into the
-  session domain to resolve its own flavor → Template Class — cutting an
-  agent→session compile edge for the PR-9 domain split. Depends only on the core
-  `AgentFlavorRegistry`.
+  PR-9 A2 (2026-06-14): relocated here from the session domain's template
+  resolver so the agent domain (`AgentTemplate` + its `TemplateSpawn`) no longer
+  reaches into the session domain to resolve its own flavor → Template Class —
+  cutting an agent→session compile edge for the PR-9 domain split. Depends only
+  on the core `AgentFlavorRegistry`.
   """
   @spec resolve_template_class(map()) :: {:ok, module()} | {:error, term()}
   def resolve_template_class(content) when is_map(content) do
