@@ -29,24 +29,46 @@ flavor (how the sandbox is loaded)** — the two compose, independently.
 
 ## 2. Design
 
-### 2.1 `Ezagent.RoleRegistry` (new, in `core`, parallel to `AgentFlavorRegistry`)
+### 2.1 Role is a **Template subtype** (Allen 2026-06-14 — NOT a new registry)
 
-A declarative `role → sandbox-content recipe`, ETS-backed, same house style as
-`AgentFlavorRegistry`. A role decl:
+A Role is a first-class **Template** (the template-kind axis gains `role`
+alongside `agent` / `session`): a persisted, URI-addressed
+(`template://<ws>/role/<name>`), **forkable** Template whose content is the
+sandbox-content recipe:
 
 ```elixir
+# template content of a `template://<ws>/role/<name>`:
 %{
-  role: "orchestrator" | "reviewer" | "customer-service" | …,  # the role id
   skills: [skill_ref],          # skills installed into the sandbox config_dir
   plugins: [plugin_ref],        # plugins installed into the sandbox
   prompt: prompt_ref | nil,     # system prompt / CLAUDE.md persona fragment
   behaviors: [module()],        # behavior subset the role needs (composed with flavor's)
   caps: [cap_template],         # REQUESTED caps — authorized fail-closed at materialization (§2.3.1), not copied
-  session_template: ref | nil   # session-template wiring (the post-9c-coupled part)
+  session_template: ref | nil   # a REFERENCE to a session-template (role does not own session code)
 }
 ```
 
-The role decl is **flavor-agnostic** — none of its fields name cc/codex/curl.
+The recipe is **flavor-agnostic** — none of its fields name cc/codex/curl.
+
+**Why a Template subtype, not an `AgentFlavorRegistry`-style registry?** (Allen's
+question, 2026-06-14.) Both *can* be code-declared — built-in roles are
+code-**seeded** Templates exactly as `cc-orchestrator` is seeded today. The
+difference is not "code vs not-code"; it is *what the thing is at runtime*:
+
+| | registry (flavor) | Template subtype (role) |
+|---|---|---|
+| storage | code-only, boot-time **ETS** lookup | **persisted** DB row + snapshot |
+| identity | a string key | a `template://` **URI** |
+| runtime authorability | none — change = code + redeploy | **operators fork / edit / create** roles at runtime |
+| lifecycle / caps / ownership / versioning | none | full Template lifecycle (fork is a generic Template concern) |
+| creation path | direct register | the **creation-unification** chokepoint |
+
+A **flavor** is genuinely static wiring (transport adapters are code), so a
+registry fits. A **role** is *product-level content an operator should author* —
+"what the agent does" — so it must be first-class data, not a frozen code table.
+Role-as-Template reuses the whole Template machinery (fork, caps, snapshot,
+creation-unification) instead of reinventing it. (This supersedes the analysis
+doc's "registry + Template subtype" both-option — Allen chose Template-only.)
 
 ### 2.2 Flavor unchanged
 
@@ -95,7 +117,7 @@ authorization step is the *grant*.
 An agent URI's name prefix today encodes flavor (`cc_…`, `curl_…`). Role becomes
 a separate attribute (queried via the unified URI-query, per
 `2026-06-05-unify-uri-query-design.md`), NOT concatenated into the name —
-avoids re-entangling identity. (Open sub-decision §4.)
+avoids re-entangling identity. (Decided — §4.)
 
 ## 3. Migration — the orchestrator is the first Role
 
@@ -108,25 +130,27 @@ avoids re-entangling identity. (Open sub-decision §4.)
 
 So "the orchestrator role, codex flavor" becomes expressible by installing the
 same role recipe into a `CODEX_HOME` sandbox. `orchestrator_bootstrap.ex` is
-rewritten to consult the RoleRegistry and write into *whatever* the flavor's
-config_dir is. Risk surface: the team-routing + orchestrator-readiness paths
-that assume cc — audited in the plan.
+rewritten to consult the **role Template** and write into *whatever* the flavor's
+config_dir is. The orchestrator role ships as a **code-seeded role Template**
+(`template://system/role/orchestrator`), seeded the same way `cc_orchestrator_seed.ex`
+seeds today — but as a forkable Template, so a tenant can fork + tweak it. Risk
+surface: the team-routing + orchestrator-readiness paths that assume cc — audited
+in the plan.
 
-## 4. Open sub-decisions (for Allen, before the plan)
+## 4. Sub-decisions — DECIDED (Allen 2026-06-14)
 
-1. **Role storage — registry vs Template subtype.** A standalone
-   `RoleRegistry` (module-declared, like flavors) OR roles as `Template` data
-   rows (operator-editable at runtime)? Recommendation: **registry for built-in
-   roles + a Template subtype for operator-authored roles** (both resolve to the
-   same recipe shape) — mirrors how flavors are code but templates are data.
-2. **Composition point.** At template materialization (recommended — keeps the
-   role×flavor product as a concrete Template) vs. at spawn. 
-3. **Session-template wiring ownership.** The `session_template` field is the
-   one role field that touches the `instance_message`→`session` domain — this is
-   why impl waits for post-9c. Confirm: role *references* a session-template;
-   it does not own session code.
-4. **Naming/identity.** Role as a queried attribute (recommended) vs. a second
-   name-prefix axis.
+1. **Role storage → Template subtype** (NOT a registry). Roles are forkable,
+   persisted Template-kind `role` entities; built-ins are code-seeded Templates.
+   See §2.1 for the registry-vs-Template rationale Allen asked about.
+2. **Composition point → template materialization** (role-Template × flavor →
+   a concrete agent at materialization, not at spawn).
+3. **Session-template → reference only.** The role's `session_template` field is
+   a *reference*; the role does not own session code. (This is the field that
+   touches the renamed `session` domain — impl waits post-9c.)
+4. **Naming/identity → role is a queried attribute**, not a second name-prefix
+   axis (queried via the unified URI-query).
+
+No open design decisions remain. Next: implementation plan (post-9c).
 
 ## 5. Sequencing
 
