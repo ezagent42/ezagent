@@ -128,7 +128,6 @@ runbook 路径 + 至少一个 PR 证据截图时，才标 ✅。这是 2026-05-0
 | 01 | [Magic-link 邮件登录](./01-magic-link-login/scenario.zh_cn.md) | 1 | ⚠️ | `magic_link_invariants_test.exs` |
 | 02 | [密码登录（admin）](./02-password-login-admin/scenario.zh_cn.md) | 1 | ✅ | `magic_link_invariants_test.exs` + Allen 2026-05-21 签收 |
 | 03 | [Token CLI 认证（mint / list / revoke）](./03-cli-token-auth/scenario.zh_cn.md) | 1 | ⚠️ | `cli_dispatch_test.exs`（缺 User-Kind 测试 — todo #1 HIGH-1）|
-| 04 | [跨 workspace token 使用（codex 外部 agent）](./04-cross-workspace-token/scenario.zh_cn.md) | 1 | ❌ | 无 |
 | 05 | [cc agent — spawn → 首启 → 消息 → 回复](./05-cc-agent-roundtrip/scenario.zh_cn.md) | 2 | ✅ | `cc_agent_admin_reply_e2e_test.exs` |
 | 06 | [codex agent — spawn → bridge → 回复](./06-codex-agent-roundtrip/scenario.zh_cn.md) | 2 | ⚠️ | `orchestrator_mcp_e2e_test.exs` + `codex_app_server_thread_repro.py` |
 | 07 | [curl agent — spawn → DeepSeek 往返](./07-curl-agent-deepseek/scenario.zh_cn.md) | 2 | ✅ | PR #126 证据 + `curl-agent-walkthrough.md` |
@@ -141,7 +140,7 @@ runbook 路径 + 至少一个 PR 证据截图时，才标 ✅。这是 2026-05-0
 | 14 | [LV 授予 cap（action 轴）](./14-grant-cap-action-axis/scenario.zh_cn.md) | 5 | ✅ | `cap_action_axis_invariant_test.exs` + PR #410 |
 | 15 | [撤销 cap + 非 admin 拒绝](./15-revoke-cap-non-admin-denial/scenario.zh_cn.md) | 5 | ✅ | `caps_denial_e2e_test.exs` + `non_admin_grant_flow_e2e_test.exs` |
 | 16 | [切换 workspace + 可见性过滤](./16-workspace-switch-visibility/scenario.zh_cn.md) | 6 | ✅ | `workspace_isolation_test.exs` + PR #434 |
-| 17 | [多 workspace 用户](./17-multi-workspace-user/scenario.zh_cn.md) | 6 | ⚠️ | 部分 — `workspace_isolation_test.exs` 仅覆盖反向路径 |
+| 17 | [多 workspace 用户](./17-multi-workspace-user/scenario.zh_cn.md) | 6 | ✅ | `scenario_17_multi_workspace_user_test.exs`（4 测试）+ 可见性/成员不变式 + `session_principal_test.exs:147`（默认WS）|
 | 18 | [PTY 首启 theme 对话框处理](./18-pty-first-run/scenario.zh_cn.md) | 7 | ✅ | `cc_agent_admin_reply_e2e_test.exs` + PR #385 |
 | 19 | [PTY 重启保留 cwd + 孤儿回收](./19-pty-restart-orphan/scenario.zh_cn.md) | 7 | ✅ | PR #385 + #388 + `sandbox_destroy_test.exs` |
 | 20 | [Workspace 创建 + 添加成员 + 销毁](./20-workspace-lifecycle/scenario.zh_cn.md) | 8 | ⚠️ | `add_member_spawn_then_grant_test.exs` + PR #417（无销毁 E2E）|
@@ -354,11 +353,14 @@ PR #451 加 `EventLog` 作为规范事件表（Phase 2 把 `invocations` 迁移�
 | **5** | **14 — Cap action-axis 授予** | Cap-axis 是插件隔离的**核心**不变式（一个 wildcard cap 会破坏模型）。任何 Phase 2 Behavior 迁移必须保留 action-narrow 授予。状态:PR #465 已发布。 |
 
 次级投资（top-5 之后）：
-- **17 — 多 workspace 用户** — 今天是 gap；需要在任何 workspace-aware
-  Behavior 改造前落地。
-- **04 — 跨 workspace token 使用** — 今天 `❌`；codex plugin（最进取的
-  外部 agent 集成）的 v2 ship 前需要此场景。
+- **17 — 多 workspace 用户** — ✅ 已完成（2026-06-14）：场景级 e2e + 可见性/成员不变式；
+  登录默认 workspace 已解决（Phase 9 PR-5）。
 - **21 — Template 版本 tag** — SPEC 待定；不阻塞 Phase 2 但阻塞 Phase 3。
+
+> 场景 04（跨 workspace 委派 token）已于 **2026-06-14 删除**（YAGNI，Allen 决定）：
+> 无当前用例、无实现，且「system 控制其它 workspace」已通过系统成员跨域授权
+> （`Capability.cross_workspace?/2`）实现 —— 不涉及 token 委派。若 codex-v2 将来需要
+> 委派式「acting-as」派发，从全新 brainstorm + SPEC 起步，而非复活场景桩。
 
 ---
 

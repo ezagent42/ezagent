@@ -74,4 +74,4 @@
 
 - The bridge architecture is shared with cc (`Ezagent.Domain.AgentBridge`), making cc-codex a parallel-flavor pair.
 - Per `feedback_north_star_plugin_isolation`, both cc and codex must consume the bridge as a black box; the bridge does not embed cc-specific or codex-specific logic.
-- The ⚠️ status is due to (a) no automated e2e against the real codex binary today (operator-driven via `codex_app_server_thread_repro.py`), and (b) scenario 04 (cross-workspace tokens) is the prerequisite for codex v2 deployment.
+- The ⚠️ status is due to no automated e2e against the real codex binary today (operator-driven via `codex_app_server_thread_repro.py`). (The former scenario 04 "cross-workspace delegated token" — once floated as a codex-v2 prerequisite — was removed 2026-06-14 as YAGNI; if codex-v2 ever needs cross-workspace acting-as dispatch it starts as a fresh SPEC.)
