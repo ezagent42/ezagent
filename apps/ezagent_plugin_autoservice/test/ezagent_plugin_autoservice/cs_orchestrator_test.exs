@@ -80,6 +80,28 @@ defmodule EzagentPluginAutoservice.CsOrchestratorTest do
   # ---- operator_claim: cancel + reopen ----
 
   describe "handle_operator_claim/2 (stateful)" do
+    test "verify apply_turn_effects: open→compose chain works directly" do
+      # This test isolates the open→compose chain to verify
+      # apply_turn_effects allows sequential TurnDriver calls.
+      {:ok, agent} = CtxAgent.start_link(%{
+        cs_orchestrator: %{open_turn_id: nil, operator_active: false},
+        turns: %{}, turn_seq: 0
+      })
+      ctx = fake_ctx(agent)
+      sess = session_uri()
+
+      trigger = %{message_id: "test", text: "hello"}
+      {:ok, %{turn_id: tid}, open_effects} =
+        EzagentPluginAutoservice.TurnDriver.open(sess, trigger, ctx)
+
+      # Simulate apply_turn_effects as CsOrchestrator does
+      ctx2 = apply_turn_effects(ctx, open_effects)
+
+      # compose should find the turn in patched ctx
+      assert {:ok, %{status: :composing}, _} =
+               EzagentPluginAutoservice.TurnDriver.compose(sess, tid, "reply", ctx2)
+    end
+
     test "opens fresh turn when no bot turn" do
       {:ok, agent} = CtxAgent.start_link(%{
         cs_orchestrator: %{open_turn_id: nil, operator_active: false},
@@ -159,6 +181,19 @@ defmodule EzagentPluginAutoservice.CsOrchestratorTest do
         other -> flunk("Expected {:ok, %{}, []} got #{inspect(other)}")
       end
     end
+  end
+
+  # Simulate CsOrchestrator.apply_turn_effects for direct testing
+  defp apply_turn_effects(ctx, effects) do
+    Enum.reduce(effects, ctx, fn
+      {:set, key, value}, acc ->
+        old_read = Map.get(acc, :read, fn _, d -> d end)
+        new_read = fn k, d ->
+          if k == key, do: value, else: old_read.(k, d)
+        end
+        Map.put(acc, :read, new_read)
+      _, acc -> acc
+    end)
   end
 
   # ---- Helpers ----

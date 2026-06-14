@@ -110,20 +110,21 @@ defmodule Ezagent.Behavior.CsOrchestrator do
     open_turn_id = ctx.read.(:open_turn_id, nil)
     tctx = turn_ctx(ctx)
 
-    # 1. Cancel in-flight bot turn (if any)
-    {cancel_ok, cancel_effects} =
+    # 1. Cancel in-flight bot turn (if any) and apply effects so open
+    #    reads the cancelled state (avoids Turn effect key overwrite).
+    {cancel_ok, cancel_effects, post_cancel_ctx} =
       if is_binary(open_turn_id) and open_turn_id != "" do
         case TurnDriver.cancel(session_uri, open_turn_id, tctx) do
-          {:ok, _, te} -> {:ok, te}
+          {:ok, _, te} -> {:ok, te, apply_turn_effects(tctx, te)}
           {:error, reason} ->
             Logger.error(
               "CsOrchestrator operator_claim: failed to cancel in-flight turn " <>
                 "#{open_turn_id}: #{inspect(reason)}"
             )
-            {{:error, {:cancel_failed, reason}}, []}
+            {{:error, {:cancel_failed, reason}}, [], tctx}
         end
       else
-        {:ok, []}
+        {:ok, [], tctx}
       end
 
     case cancel_ok do
@@ -136,26 +137,45 @@ defmodule Ezagent.Behavior.CsOrchestrator do
           text: operator_text
         }
 
-        case TurnDriver.open(session_uri, trigger, tctx) do
+        case TurnDriver.open(session_uri, trigger, post_cancel_ctx) do
           {:ok, %{turn_id: new_tid}, open_effects} ->
             tctx2 = apply_turn_effects(tctx, open_effects)
 
-            with {:ok, _, compose_effects} <- TurnDriver.compose(session_uri, new_tid, operator_text, tctx2),
-                 {:ok, _, claim_effects} <- TurnDriver.claim(session_uri, new_tid, op_uri, tctx2) do
-              turn_effects = cancel_effects ++ open_effects ++ compose_effects ++ claim_effects
+            compose_result = TurnDriver.compose(session_uri, new_tid, operator_text, tctx2)
 
-              {:ok, %{ok: true, turn_id: new_tid},
-               [
-                 {:set, :open_turn_id, new_tid},
-                 {:set, :operator_active, true}
-               ] ++ turn_effects}
-            else
+            case compose_result do
+              {:ok, _, compose_effects} ->
+                tctx3 = apply_turn_effects(tctx2, compose_effects)
+
+                case TurnDriver.claim(session_uri, new_tid, op_uri, tctx3) do
+                  {:ok, _, claim_effects} ->
+                    turn_effects =
+                      cancel_effects ++ open_effects ++ compose_effects ++ claim_effects
+
+                    {:ok, %{ok: true, turn_id: new_tid},
+                     [
+                       {:set, :open_turn_id, new_tid},
+                       {:set, :operator_active, true}
+                     ] ++ turn_effects}
+
+                  {:error, reason} ->
+                    Logger.error(
+                      "CsOrchestrator operator_claim: claim failed on fresh turn " <>
+                        "#{new_tid}: #{inspect(reason)}"
+                    )
+
+                    {:ok,
+                     %{ok: false, step: :claim, detail: inspect(reason)},
+                     cancel_effects ++ open_effects ++ compose_effects}
+                end
+
               {:error, reason} ->
                 Logger.error(
-                  "CsOrchestrator operator_claim: compose/claim failed on fresh turn " <>
+                  "CsOrchestrator operator_claim: compose failed on fresh turn " <>
                     "#{new_tid}: #{inspect(reason)}"
                 )
-                {:ok, %{ok: false, step: :compose_or_claim, detail: inspect(reason)},
+
+                {:ok, %{ok: false, step: :compose, detail: inspect(reason)},
                  cancel_effects ++ open_effects}
             end
 
@@ -204,9 +224,10 @@ defmodule Ezagent.Behavior.CsOrchestrator do
     tctx = turn_ctx(ctx)
     trigger = %{message_id: msg.id, text: extract_text(msg.body)}
 
-    {stale_effects, stale_error} = cancel_stale_turn(session_uri, ctx, tctx)
+    {stale_effects, stale_error, post_stale_ctx} =
+      cancel_stale_turn(session_uri, ctx, tctx)
 
-    case TurnDriver.open(session_uri, trigger, tctx) do
+    case TurnDriver.open(session_uri, trigger, post_stale_ctx) do
       {:ok, %{turn_id: tid}, open_effects} ->
         base_effects = [{:set, :open_turn_id, tid}]
 
@@ -238,15 +259,15 @@ defmodule Ezagent.Behavior.CsOrchestrator do
 
     if stale_tid != nil and stale_tid != "" do
       case TurnDriver.cancel(session_uri, stale_tid, tctx) do
-        {:ok, _, te} -> {te, false}
+        {:ok, _, te} -> {te, false, apply_turn_effects(tctx, te)}
         {:error, reason} ->
           Logger.warning(
             "CsOrchestrator: failed to cancel superseded turn #{stale_tid}: #{inspect(reason)} — proceeding"
           )
-          {[], true}
+          {[], true, tctx}
       end
     else
-      {[], false}
+      {[], false, tctx}
     end
   end
 
