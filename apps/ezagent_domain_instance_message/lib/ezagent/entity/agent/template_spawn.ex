@@ -189,9 +189,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
       )
       when is_map(template_content_map) and is_list(opts) do
     with {:ok, template_class} <-
-           EzagentDomainInstanceMessage.SessionCreator.TemplateResolver.resolve_template_class(
-             template_content_map
-           ),
+           Ezagent.Entity.AgentTemplate.resolve_template_class(template_content_map),
          {:ok, flavor} <- template_content_flavor(template_content_map),
          # `resolve_cascade_content` is the grant-MINT boundary. Its own failures
          # (incl. a unique-constraint insert conflict from a concurrent duplicate
