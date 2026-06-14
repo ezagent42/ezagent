@@ -30,7 +30,10 @@
   def_count_admin_live: 46,
   def_count_cc_agent: 50,
   def_count_orchestrator_tools: 35,
-  def_count_session_creator: 29,
+  # arch-cap-bump: PR #783 split steps 5-8 into `ensure_orchestrator_and_finalize/6`
+  #   so the step-4.5 orchestrator pre-store can fail-fast ahead of the readiness
+  #   gate (a readability seam-split — smaller functions). 29→30.
+  def_count_session_creator: 30,
   def_count_capability: 22,
   spawn_registry_call_sites: 37,
   # Transport #53 Decision C (codex C-rC-P1): the orchestrator MCP transport
