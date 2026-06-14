@@ -20,6 +20,20 @@ defmodule Ezagent.Architecture.ImSessionAgentAcyclicTest do
   the split lands incrementally (PR-9a→9c). **The completion invariant (handoff
   §8) is every allowlist EMPTY** — the gate PR-9c must reach. The
   `scripts/socialware_substrate_gate.sh` milestone script keys on this test.
+
+  ## agent → plugin edge (PR-9c)
+
+  The `in_umbrella` leaf test below proves the agent app declares no COMPILE
+  dep on a plugin. But several plugin modules live in the SHARED `Ezagent.*`
+  namespace (`Ezagent.Behavior.CurlAgent`, `Ezagent.Behavior.Echo`,
+  `Ezagent.Orchestrator.McpChannel`, …), so a bare-atom runtime reference to
+  one — exactly the shape `Entity.Agent.behaviors/0` used to have for the curl
+  state behavior — slips past the dep-graph test. The "agent domain has NO
+  compile reference to a plugin-defined module" test closes that blind spot: it
+  builds a `module → defining-app` index from every app's `defmodule`
+  declarations (so detection is by DEFINING APP, not naming convention) and
+  asserts no agent-domain symbol resolves to a module a plugin app defines.
+  PR-9c reparented `Behavior.CurlAgent` into this domain, so the allowlist is [].
   """
 
   @moduletag :umbrella_only
@@ -42,6 +56,7 @@ defmodule Ezagent.Architecture.ImSessionAgentAcyclicTest do
   # ── Allowlists (shrink to [] by PR-9c — handoff §8 completion invariant) ──
   @allowlist_im_to_agent []
   @allowlist_session_to_mcp []
+  @allowlist_agent_to_plugin []
 
   describe "im → session → agent acyclic dependency graph" do
     test "ezagent_domain_agent is a LEAF: in_umbrella deps ⊆ {core, agent_bridge}" do
@@ -100,6 +115,26 @@ defmodule Ezagent.Architecture.ImSessionAgentAcyclicTest do
              "session must not name the MCP transport (relocated to cc in PR-8; " <>
                "driven via OrchestratorReadinessPort). Offenders:\n" <> format(offenders)
     end
+
+    test "the agent domain has NO compile reference to a plugin-defined module" do
+      index = defmodule_app_index()
+
+      offenders =
+        app_modules_refs(@agent_app)
+        |> Enum.filter(fn {_rel, m} ->
+          case Map.get(index, m) do
+            nil -> false
+            app -> plugin_app?(app)
+          end
+        end)
+        |> reject_allowlisted(@allowlist_agent_to_plugin)
+
+      assert offenders == [],
+             "agent domain must reference NO plugin-defined module — it is the " <>
+               "im → session → agent LEAF (the curl STATE behavior was reparented " <>
+               "into this domain in PR-9c; flavor WIRING stays in the plugin, which " <>
+               "depends on the domain, not the reverse). Offenders:\n" <> format(offenders)
+    end
   end
 
   # ── symbol predicates ────────────────────────────────────────────────────
@@ -129,6 +164,10 @@ defmodule Ezagent.Architecture.ImSessionAgentAcyclicTest do
     ]
   end
 
+  # A plugin app by umbrella convention (`Ezagent.<Category>` §13): every
+  # plugin OTP app atom is `:ezagent_plugin_<name>`.
+  defp plugin_app?(app), do: app |> Atom.to_string() |> String.starts_with?("ezagent_plugin_")
+
   # ── AST-based module-reference collection ─────────────────────────────────
 
   # [{relative_path, module_atom}] for every `__aliases__` node in the app's lib.
@@ -154,6 +193,50 @@ defmodule Ezagent.Architecture.ImSessionAgentAcyclicTest do
     {_, acc} =
       Macro.prewalk(ast, [], fn
         {:__aliases__, _, parts} = node, acc when is_list(parts) ->
+          if Enum.all?(parts, &is_atom/1) do
+            {node, [Module.concat(parts) | acc]}
+          else
+            {node, acc}
+          end
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    Enum.uniq(acc)
+  end
+
+  # `%{defined_module => owning_app}` for EVERY app's lib — the source of
+  # truth for "which app DEFINES this module" (PR-9c agent → plugin test).
+  # Resolution is by `defmodule`, NOT naming convention, because plugin
+  # modules live in the shared `Ezagent.*` namespace just as much as domain
+  # ones do (`Ezagent.Behavior.CurlAgent` vs `Ezagent.Behavior.Agent.Receive`).
+  defp defmodule_app_index do
+    Path.wildcard(Path.join(@repo_root, "apps/*/lib/**/*.ex"))
+    |> Enum.flat_map(fn file ->
+      app =
+        file
+        |> Path.relative_to(@repo_root)
+        |> Path.split()
+        |> Enum.at(1)
+        |> String.to_atom()
+
+      file
+      |> File.read!()
+      |> Code.string_to_quoted!(warn_on_unnecessary_quotes: false, emit_warnings: false)
+      |> collect_defmodules()
+      |> Enum.map(&{&1, app})
+    end)
+    |> Map.new()
+  rescue
+    e -> flunk("defmodule index parse failed: #{Exception.message(e)}")
+  end
+
+  defp collect_defmodules(ast) do
+    {_, acc} =
+      Macro.prewalk(ast, [], fn
+        {:defmodule, _, [{:__aliases__, _, parts}, _body]} = node, acc
+        when is_list(parts) ->
           if Enum.all?(parts, &is_atom/1) do
             {node, [Module.concat(parts) | acc]}
           else

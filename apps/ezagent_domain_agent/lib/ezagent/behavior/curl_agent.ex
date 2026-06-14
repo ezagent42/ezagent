@@ -14,8 +14,22 @@ defmodule Ezagent.Behavior.CurlAgent do
 
   This Behavior is **REPARENTED onto `Ezagent.Entity.Agent`** and composed
   into the per-instance behavior set ONLY for the `curl` flavor (via the
-  same `:kind_base` per-instance-set mechanism the Session Kind uses). It
-  keeps:
+  same `:kind_base` per-instance-set mechanism the Session Kind uses).
+
+  ## PR-9c (#53) — physically relocated into the agent domain
+
+  As of PR-9c the module FILE lives in `ezagent_domain_agent` (alongside
+  `Entity.Agent`), not in the curl plugin. `Entity.Agent.behaviors/0` /
+  `curl_behaviors/0` already named it as the agent Kind's curl-flavor state
+  half, so keeping the code in the plugin was a domain → plugin upward
+  reference. Moving it makes the agent domain a clean leaf (the acyclic gate's
+  agent → plugin allowlist reaches 0). The curl plugin still owns the curl
+  flavor WIRING (binds the actions to this Behavior, plus the template /
+  adapter / flavor); it now depends on this domain to reference the module.
+  The module name `Ezagent.Behavior.CurlAgent` is frozen (snapshot keys + the
+  plugin's binding registration). It depends only on core symbols.
+
+  It keeps:
 
     * the `:curl_agent` slice (provider / api_url / model / system_prompt /
       max_history / conversation / last_error / last_tokens),
