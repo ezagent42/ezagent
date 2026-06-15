@@ -74,8 +74,22 @@ defmodule Ezagent.Role.Compose do
       effective_caps:
         role.requested_caps
         |> Enum.map(&normalize_cap_keys/1)
-        |> Enum.filter(&(authorize.(&1) == true))
+        |> Enum.filter(&authorized?(authorize, &1))
     }
+  end
+
+  # The authorization boundary is TOTAL + fail-closed: a cap is kept ONLY on a
+  # strict `true`. A predicate that returns a non-`true` value OR RAISES (e.g. a
+  # concrete-value clause `%{action: :send}` hitting an as-yet-unnormalized
+  # string value `"send"` — value normalization is PR-1b's job) drops the cap.
+  # So materialize/2 never crashes on a malformed cap × predicate combination;
+  # it fails CLOSED, which is the only safe default for a CapBAC boundary.
+  defp authorized?(authorize, cap) do
+    authorize.(cap) == true
+  rescue
+    _ -> false
+  catch
+    _, _ -> false
   end
 
   # Normalize a cap template's known AXIS keys from persisted-string to atom

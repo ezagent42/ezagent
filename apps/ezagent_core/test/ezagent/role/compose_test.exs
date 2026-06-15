@@ -85,6 +85,19 @@ defmodule Ezagent.Role.ComposeTest do
       assert out.effective_caps == [%{behavior: "Ezagent.Behavior.Chat", action: :send}]
     end
 
+    test "FAIL-CLOSED (no crash) when a concrete-value predicate raises on an unnormalized value" do
+      # value normalization is PR-1b's job, so a persisted string VALUE survives;
+      # a predicate with a concrete atom-value clause would FunctionClauseError —
+      # the boundary must drop the cap, not crash materialization.
+      {:ok, role} =
+        Role.new(%{"requested_caps" => [%{"behavior" => "B", "action" => "send"}]})
+
+      concrete = fn %{action: :send} -> true end
+
+      out = Compose.materialize(role, %{flavor_behaviors: [], authorize_cap: concrete})
+      assert out.effective_caps == []
+    end
+
     test "FAIL-CLOSED on truthy non-boolean policy result (only strict true grants)" do
       # a mis-integrated policy that returns a truthy non-`true` value (e.g.
       # `{:error, :not_permitted}`) must NOT authorize the cap.
