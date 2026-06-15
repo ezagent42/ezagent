@@ -16,6 +16,17 @@ defmodule Ezagent.Role.Compose do
     so `effective_caps` may legitimately DIFFER across flavors while the
     sandbox contents are identical.
 
+    **`effective_caps` are authorized REQUEST TEMPLATES, not mint-ready caps.**
+    A Role is workspace-agnostic (a reusable recipe), so a request template
+    carries the authority axes (`behavior`/`action`) but NOT `workspace_uri` —
+    the workspace is **materialization context** (like flavor), known only when
+    the agent is created in a specific workspace. The materialization step
+    (PR-1b) injects the agent's `workspace_uri` + `instance` and mints the
+    canonical `%Ezagent.Capability{}` via `Ezagent.Capability.normalize!/2`
+    (which mandates `workspace_uri` — no silent cross-workspace default),
+    dropping any normalize failure fail-closed. Requiring `workspace_uri` in
+    the recipe would be wrong — it would pin a reusable role to one workspace.
+
   Policy injection: `materialize/2` takes an `:authorize_cap` predicate
   (`cap -> boolean`) — the composition of the flavor/runtime + tenant policy.
   Keeping the predicate injected makes the intersection logic here pure +

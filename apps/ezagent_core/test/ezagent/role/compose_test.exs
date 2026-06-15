@@ -98,6 +98,20 @@ defmodule Ezagent.Role.ComposeTest do
       assert out.effective_caps == []
     end
 
+    test "effective_caps are authorized REQUEST TEMPLATES (no workspace_uri — injected at materialization)" do
+      # A role is workspace-agnostic; the request template carries authority axes
+      # (behavior/action) but NOT workspace_uri. PR-1b injects the agent's
+      # workspace + mints via Capability.normalize!. This pins that contract so
+      # nobody mistakes effective_caps for mint-ready %Capability{} structs.
+      out = Compose.materialize(role(), %{flavor_behaviors: [], authorize_cap: fn _ -> true end})
+
+      assert Enum.all?(out.effective_caps, fn cap ->
+               is_map(cap) and not is_struct(cap, Ezagent.Capability) and
+                 not Map.has_key?(cap, :workspace_uri) and Map.has_key?(cap, :behavior) and
+                 Map.has_key?(cap, :action)
+             end)
+    end
+
     test "FAIL-CLOSED on truthy non-boolean policy result (only strict true grants)" do
       # a mis-integrated policy that returns a truthy non-`true` value (e.g.
       # `{:error, :not_permitted}`) must NOT authorize the cap.
