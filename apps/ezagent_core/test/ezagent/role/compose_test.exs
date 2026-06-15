@@ -26,109 +26,103 @@ defmodule Ezagent.Role.ComposeTest do
     role
   end
 
+  # opts builder — flavor_kind + flavor_behaviors + a fail-closed policy predicate.
+  defp opts(overrides \\ %{}) do
+    Map.merge(
+      %{flavor_behaviors: [], flavor_kind: :agent, authorize_cap: fn _ -> true end},
+      Map.new(overrides)
+    )
+  end
+
   describe "materialize/2" do
     test "composes role behaviors with the flavor's behaviors (union, deduped)" do
       out =
-        Compose.materialize(role(), %{
-          flavor_behaviors: [Ezagent.Behavior.Identity, Ezagent.Behavior.Sandbox],
-          authorize_cap: fn _ -> true end
-        })
+        Compose.materialize(
+          role(),
+          opts(flavor_behaviors: [Ezagent.Behavior.Identity, Ezagent.Behavior.Sandbox])
+        )
 
-      # role's [Sandbox] ∪ flavor's [Identity, Sandbox], deduped
       assert Enum.sort(out.behaviors) ==
                Enum.sort([Ezagent.Behavior.Sandbox, Ezagent.Behavior.Identity])
     end
 
     test "sandbox CONTENTS are flavor-independent (same role → same content)" do
-      cc =
-        Compose.materialize(role(), %{flavor_behaviors: [:cc_b], authorize_cap: fn _ -> true end})
-
-      codex =
-        Compose.materialize(role(), %{
-          flavor_behaviors: [:codex_b],
-          authorize_cap: fn _ -> true end
-        })
+      cc = Compose.materialize(role(), opts(flavor_behaviors: [:cc_b], flavor_kind: :agent))
+      codex = Compose.materialize(role(), opts(flavor_behaviors: [:codex_b], flavor_kind: :agent))
 
       assert cc.sandbox_content == codex.sandbox_content
       assert cc.sandbox_content == %{skills: ["orchestrator"], plugins: ["np"], prompt: "persona"}
     end
 
+    test "injects the FLAVOR kind into each effective cap (closes the normalize! kind:any hole)" do
+      out = Compose.materialize(role(), opts(flavor_kind: :agent))
+      assert Enum.all?(out.effective_caps, &(&1.kind == :agent))
+
+      # the SAME role under a different flavor kind → flavor-validated DIFFERING kind (§6)
+      out2 = Compose.materialize(role(), opts(flavor_kind: :worker))
+      assert Enum.all?(out2.effective_caps, &(&1.kind == :worker))
+    end
+
     test "FAIL-CLOSED: a requested cap the policy rejects is NOT in effective_caps" do
       # policy permits :send but NOT :drive (e.g. a no-bridge flavor)
-      authorize = fn %{action: action} -> action == :send end
+      out = Compose.materialize(role(), opts(authorize_cap: fn %{action: a} -> a == :send end))
 
-      out = Compose.materialize(role(), %{flavor_behaviors: [], authorize_cap: authorize})
+      assert out.effective_caps == [
+               %{behavior: Ezagent.Behavior.Chat, action: :send, kind: :agent}
+             ]
 
-      assert out.effective_caps == [%{behavior: Ezagent.Behavior.Chat, action: :send}]
       refute Enum.any?(out.effective_caps, &(&1.action == :drive))
     end
 
-    test "all-permitted policy yields effective == requested" do
-      out = Compose.materialize(role(), %{flavor_behaviors: [], authorize_cap: fn _ -> true end})
-      assert out.effective_caps == role().requested_caps
+    test "all-permitted policy yields effective == requested (+ injected kind)" do
+      out = Compose.materialize(role(), opts())
+
+      expected = Enum.map(role().requested_caps, &Map.put(&1, :kind, :agent))
+      assert out.effective_caps == expected
     end
 
-    test "canonicalizes a realistic persisted JSON cap (string keys + values) so an atom-value predicate matches" do
-      # the realistic persisted shape: string keys AND string values. Compose
-      # canonicalizes behavior→module + action→atom, so an atom/module-value
-      # policy predicate matches and effective_caps are value-canonical (PR-1b
-      # then injects the workspace + mints via Capability.normalize!).
-      {:ok, role} =
+    test "canonicalizes a realistic persisted JSON cap (string keys + values)" do
+      # realistic persisted shape: string keys AND string values. Compose
+      # canonicalizes behavior→module + action→atom + injects flavor kind, so an
+      # atom/module-value policy predicate matches and effective_caps are
+      # value-canonical (PR-1b then injects workspace + mints via normalize!).
+      {:ok, r} =
         Role.new(%{
           "requested_caps" => [%{"behavior" => "Ezagent.Behavior.Sandbox", "action" => "read"}]
         })
 
-      authorize = fn %{action: :read} -> true end
+      out = Compose.materialize(r, opts(authorize_cap: fn %{action: :read} -> true end))
 
-      out = Compose.materialize(role, %{flavor_behaviors: [], authorize_cap: authorize})
-
-      assert out.effective_caps == [%{behavior: Ezagent.Behavior.Sandbox, action: :read}]
+      assert out.effective_caps ==
+               [%{behavior: Ezagent.Behavior.Sandbox, action: :read, kind: :agent}]
     end
 
-    test "an unresolvable behavior value stays a string → policy rejects it (fail-closed, no phantom atom)" do
-      {:ok, role} =
+    test "an unresolvable behavior value stays a string → policy rejects it (fail-closed)" do
+      {:ok, r} =
         Role.new(%{"requested_caps" => [%{"behavior" => "No.Such.Module", "action" => "read"}]})
 
-      # atom/module-value predicate; the unresolved string behavior fails it
-      authorize = fn %{behavior: b} -> is_atom(b) end
-
-      out = Compose.materialize(role, %{flavor_behaviors: [], authorize_cap: authorize})
-
+      out = Compose.materialize(r, opts(authorize_cap: fn %{behavior: b} -> is_atom(b) end))
       assert out.effective_caps == []
     end
 
-    test "FAIL-CLOSED (no crash) when the policy predicate RAISES" do
-      # a mis-integrated / total-violating predicate must not crash
-      # materialization — the boundary catches the raise and drops the cap.
-      raising = fn _ -> raise "boom" end
-
-      out = Compose.materialize(role(), %{flavor_behaviors: [], authorize_cap: raising})
-      assert out.effective_caps == []
-    end
-
-    test "effective_caps are authorized REQUEST TEMPLATES (no workspace_uri — injected at materialization)" do
-      # A role is workspace-agnostic; the request template carries authority axes
-      # (behavior/action) but NOT workspace_uri. PR-1b injects the agent's
-      # workspace + mints via Capability.normalize!. This pins that contract so
-      # nobody mistakes effective_caps for mint-ready %Capability{} structs.
-      out = Compose.materialize(role(), %{flavor_behaviors: [], authorize_cap: fn _ -> true end})
+    test "effective_caps carry flavor kind + behavior/action but NOT agent axes (workspace/instance → PR-1b)" do
+      out = Compose.materialize(role(), opts())
 
       assert Enum.all?(out.effective_caps, fn cap ->
                is_map(cap) and not is_struct(cap, Ezagent.Capability) and
-                 not Map.has_key?(cap, :workspace_uri) and Map.has_key?(cap, :behavior) and
-                 Map.has_key?(cap, :action)
+                 Map.has_key?(cap, :behavior) and Map.has_key?(cap, :action) and
+                 Map.has_key?(cap, :kind) and
+                 not Map.has_key?(cap, :workspace_uri) and not Map.has_key?(cap, :instance)
              end)
     end
 
     test "FAIL-CLOSED on truthy non-boolean policy result (only strict true grants)" do
-      # a mis-integrated policy that returns a truthy non-`true` value (e.g.
-      # `{:error, :not_permitted}`) must NOT authorize the cap.
-      out =
-        Compose.materialize(role(), %{
-          flavor_behaviors: [],
-          authorize_cap: fn _ -> {:error, :not_permitted} end
-        })
+      out = Compose.materialize(role(), opts(authorize_cap: fn _ -> {:error, :nope} end))
+      assert out.effective_caps == []
+    end
 
+    test "FAIL-CLOSED (no crash) when the policy predicate RAISES" do
+      out = Compose.materialize(role(), opts(authorize_cap: fn _ -> raise "boom" end))
       assert out.effective_caps == []
     end
   end

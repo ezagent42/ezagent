@@ -16,16 +16,19 @@ defmodule Ezagent.Role.Compose do
     so `effective_caps` may legitimately DIFFER across flavors while the
     sandbox contents are identical.
 
-    **`effective_caps` are authorized REQUEST TEMPLATES, not mint-ready caps.**
-    A Role is workspace-agnostic (a reusable recipe), so a request template
-    carries the authority axes (`behavior`/`action`) but NOT `workspace_uri` —
-    the workspace is **materialization context** (like flavor), known only when
-    the agent is created in a specific workspace. The materialization step
-    (PR-1b) injects the agent's `workspace_uri` + `instance` and mints the
-    canonical `%Ezagent.Capability{}` via `Ezagent.Capability.normalize!/2`
-    (which mandates `workspace_uri` — no silent cross-workspace default),
-    dropping any normalize failure fail-closed. Requiring `workspace_uri` in
-    the recipe would be wrong — it would pin a reusable role to one workspace.
+    **`effective_caps` are authorized, value-canonical templates carrying
+    `{kind, behavior, action}`** — the flavor's `kind` is injected here (it is
+    flavor context, known at composition, and closes the `normalize!`
+    `kind: :any` cross-kind hole), `behavior`/`action` come from the role
+    request (canonicalized to module/atom). They are NOT mint-ready
+    `%Ezagent.Capability{}`: a Role is workspace-agnostic (a reusable recipe),
+    so `workspace_uri` (and optionally `instance`) are **agent materialization
+    context**, injected by PR-1b which then mints via
+    `Ezagent.Capability.normalize!/2` (which mandates `workspace_uri` — no
+    silent cross-workspace default), dropping any normalize failure fail-closed.
+    Putting `workspace_uri`/`instance`/`kind` in the recipe would be wrong (and
+    is rejected by `Ezagent.Role.new/1`) — it would pin a reusable role to one
+    workspace/agent/flavor.
 
   Policy injection: `materialize/2` takes an `:authorize_cap` predicate
   (`cap -> boolean`) — the composition of the flavor/runtime + tenant policy.
@@ -40,6 +43,7 @@ defmodule Ezagent.Role.Compose do
 
   @type opts :: %{
           required(:flavor_behaviors) => [module() | atom()],
+          required(:flavor_kind) => atom(),
           required(:authorize_cap) => (Role.cap_template() -> boolean())
         }
 
@@ -60,8 +64,12 @@ defmodule Ezagent.Role.Compose do
   (`requested ∩ permitted`). See the moduledoc.
   """
   @spec materialize(Role.t(), opts()) :: materialized()
-  def materialize(%Role{} = role, %{flavor_behaviors: flavor_behaviors, authorize_cap: authorize})
-      when is_list(flavor_behaviors) and is_function(authorize, 1) do
+  def materialize(%Role{} = role, %{
+        flavor_behaviors: flavor_behaviors,
+        flavor_kind: flavor_kind,
+        authorize_cap: authorize
+      })
+      when is_list(flavor_behaviors) and is_atom(flavor_kind) and is_function(authorize, 1) do
     %{
       behaviors: Enum.uniq(role.behaviors ++ flavor_behaviors),
       sandbox_content: %{
@@ -85,6 +93,16 @@ defmodule Ezagent.Role.Compose do
       effective_caps:
         role.requested_caps
         |> Enum.map(&normalize_cap/1)
+        # Inject the FLAVOR's kind (the agent's Kind type) — a materialization
+        # axis the recipe is forbidden to carry (so it can't be smuggled) but
+        # which the cap-grant chokepoint needs concrete: `Capability.normalize!/2`
+        # defaults a missing atom-keyed `:kind` to `:any`, which would mint a
+        # CROSS-KIND cap. Injecting it here (kind is flavor context, known at
+        # composition) closes that hole structurally — so two flavors of the
+        # same role get correctly DIFFERING kinds (flavor-validated, §6). PR-1b
+        # injects only the agent-specific `:workspace_uri` (+ optional
+        # `:instance`) before `normalize!`.
+        |> Enum.map(&Map.put(&1, :kind, flavor_kind))
         |> Enum.filter(&authorized?(authorize, &1))
     }
   end
