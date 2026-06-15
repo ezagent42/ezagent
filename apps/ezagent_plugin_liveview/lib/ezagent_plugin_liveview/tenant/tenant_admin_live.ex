@@ -467,7 +467,7 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
   defp load_cr_info(tid) do
     case TenantConfig.read_cr(tid, "active") do
       {:ok, cr} -> cr
-      {:error, :not_found} -> nil
+      _ -> nil
     end
   end
 
