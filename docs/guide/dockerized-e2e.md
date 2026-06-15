@@ -109,8 +109,11 @@ the first is a manual console step, the rest are reproducible:
 3. **Restart the container.** `caller_open_id/1` reads the live node's
    `UserBinding`, which is cross-BEAM-stale to the CLI write until reload.
 4. **Bind the session → chat** in the admin LV
-   `/admin/sessions/<session-uri>/external_mirror` (adapter `feishu`,
-   `target_id` = the group `chat_id`) → `BINDINGS` becomes 1.
+   `/admin/sessions/<url-encoded-session-uri>/external_mirror` (adapter `feishu`,
+   `target_id` = the group `chat_id`) → `BINDINGS` becomes 1. The router matches a
+   single `:id` segment, so the URI must be **URL-encoded** (e.g.
+   `session://default/default/oncall` → `session%3A%2F%2Fdefault%2Fdefault%2Foncall`);
+   easiest is to follow the link from the admin sessions list rather than typing it.
 5. **Verify:** send a session message → the log shows
    `FeishuClient.send_text → POST im/v1/messages … OK (code=0)` and it appears in
    the group. Read the group back via `im/v1/messages?container_id=<chat_id>`
