@@ -68,33 +68,41 @@ defmodule Ezagent.Role.ComposeTest do
       assert out.effective_caps == role().requested_caps
     end
 
-    test "normalizes STRING-keyed cap axes so an atom-key policy predicate matches (no crash)" do
+    test "canonicalizes a realistic persisted JSON cap (string keys + values) so an atom-value predicate matches" do
+      # the realistic persisted shape: string keys AND string values. Compose
+      # canonicalizes behavior→module + action→atom, so an atom/module-value
+      # policy predicate matches and effective_caps are value-canonical (PR-1b
+      # then injects the workspace + mints via Capability.normalize!).
       {:ok, role} =
         Role.new(%{
-          "requested_caps" => [
-            %{"behavior" => "Ezagent.Behavior.Chat", "action" => :send},
-            %{"behavior" => "Ezagent.Behavior.Pty", "action" => :drive}
-          ]
+          "requested_caps" => [%{"behavior" => "Ezagent.Behavior.Sandbox", "action" => "read"}]
         })
 
-      # an atom-key predicate — would FunctionClauseError on raw string-keyed caps
-      authorize = fn %{action: action} -> action == :send end
+      authorize = fn %{action: :read} -> true end
 
       out = Compose.materialize(role, %{flavor_behaviors: [], authorize_cap: authorize})
 
-      assert out.effective_caps == [%{behavior: "Ezagent.Behavior.Chat", action: :send}]
+      assert out.effective_caps == [%{behavior: Ezagent.Behavior.Sandbox, action: :read}]
     end
 
-    test "FAIL-CLOSED (no crash) when a concrete-value predicate raises on an unnormalized value" do
-      # value normalization is PR-1b's job, so a persisted string VALUE survives;
-      # a predicate with a concrete atom-value clause would FunctionClauseError —
-      # the boundary must drop the cap, not crash materialization.
+    test "an unresolvable behavior value stays a string → policy rejects it (fail-closed, no phantom atom)" do
       {:ok, role} =
-        Role.new(%{"requested_caps" => [%{"behavior" => "B", "action" => "send"}]})
+        Role.new(%{"requested_caps" => [%{"behavior" => "No.Such.Module", "action" => "read"}]})
 
-      concrete = fn %{action: :send} -> true end
+      # atom/module-value predicate; the unresolved string behavior fails it
+      authorize = fn %{behavior: b} -> is_atom(b) end
 
-      out = Compose.materialize(role, %{flavor_behaviors: [], authorize_cap: concrete})
+      out = Compose.materialize(role, %{flavor_behaviors: [], authorize_cap: authorize})
+
+      assert out.effective_caps == []
+    end
+
+    test "FAIL-CLOSED (no crash) when the policy predicate RAISES" do
+      # a mis-integrated / total-violating predicate must not crash
+      # materialization — the boundary catches the raise and drops the cap.
+      raising = fn _ -> raise "boom" end
+
+      out = Compose.materialize(role(), %{flavor_behaviors: [], authorize_cap: raising})
       assert out.effective_caps == []
     end
 

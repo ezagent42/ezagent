@@ -84,7 +84,7 @@ defmodule Ezagent.Role.Compose do
       # reject, never a crash.)
       effective_caps:
         role.requested_caps
-        |> Enum.map(&normalize_cap_keys/1)
+        |> Enum.map(&normalize_cap/1)
         |> Enum.filter(&authorized?(authorize, &1))
     }
   end
@@ -103,12 +103,24 @@ defmodule Ezagent.Role.Compose do
     _, _ -> false
   end
 
-  # Normalize a cap template's known AXIS keys from persisted-string to atom
-  # form so an atom-key policy predicate matches. Only the closed set of cap
-  # axes is atomized; any other string key passes through unchanged so arbitrary
-  # persisted content can never grow the atom table.
-  defp normalize_cap_keys(cap) when is_map(cap), do: Map.new(cap, fn {k, v} -> {axis(k), v} end)
-  defp normalize_cap_keys(other), do: other
+  # Canonicalize a persisted request cap to atom KEYS + atom/module VALUES so
+  # (a) an atom-key/atom-value policy predicate matches without raising, and
+  # (b) `effective_caps` are value-canonical request templates PR-1b can mint
+  # by injecting the agent workspace + calling `Capability.normalize!/2` — not
+  # string-valued maps that would later mint a malformed `%Capability{}` (codex).
+  # Only the request axes (`behavior` → module, `action` → atom) are
+  # value-canonicalized; a value that does not resolve to an EXISTING atom/module
+  # (typo'd persisted content) is left as the string, so the policy predicate
+  # rejects it → fail-closed, never a crash and never a phantom atom.
+  defp normalize_cap(cap) when is_map(cap) do
+    Map.new(cap, fn {k, v} -> canon(axis(k), v) end)
+  end
+
+  defp normalize_cap(other), do: other
+
+  defp canon(:behavior, v) when is_binary(v), do: {:behavior, safe_module(v)}
+  defp canon(:action, v) when is_binary(v), do: {:action, safe_atom(v)}
+  defp canon(key, v), do: {key, v}
 
   defp axis("behavior"), do: :behavior
   defp axis("action"), do: :action
@@ -116,4 +128,19 @@ defmodule Ezagent.Role.Compose do
   defp axis("workspace_uri"), do: :workspace_uri
   defp axis("kind"), do: :kind
   defp axis(k), do: k
+
+  # Resolve a module-name string to its module atom ONLY if it already exists
+  # (loaded); otherwise leave the string (predicate rejects → fail-closed). Never
+  # `to_atom` — no atom-table growth from persisted content.
+  defp safe_module(s) do
+    String.to_existing_atom(if String.starts_with?(s, "Elixir."), do: s, else: "Elixir." <> s)
+  rescue
+    ArgumentError -> s
+  end
+
+  defp safe_atom(s) do
+    String.to_existing_atom(s)
+  rescue
+    ArgumentError -> s
+  end
 end
