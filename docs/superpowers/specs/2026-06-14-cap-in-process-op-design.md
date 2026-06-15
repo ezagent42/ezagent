@@ -1,5 +1,34 @@
 # Cap-checked in-process op primitive — design (task #56)
 
+> **⚠️ SUPERSEDED 2026-06-15 — decision B (structural authorization + static
+> gate). The cap-check approach below was NOT implemented.** Allen 2026-06-15:
+> a Kind reading a SIBLING Behavior's slice in-process is treated as
+> **structurally authorized — no runtime cap check**. Rationale: the
+> `reads_siblings` consumers are all cross-*Behavior* (not "a Kind reading
+> itself"); the reader and the data share one Kind/entity trust domain; the
+> sibling-read relationship is type-level/static (already encoded by the
+> `@required_reads`/`@slice_owners` closure), so minting a per-instance cap
+> that is identical for every instance adds machinery without information; and
+> a runtime self-read cap is structurally impossible for the 4 **Session**-Kind
+> consumers (the Session Kind hosts no `Behavior.Identity`, so it holds no caps
+> anywhere — see the analysis). Crucially, INVOCATION stays cap-gated at
+> dispatch step 5.5/5.6, so this does **not** enable user-facing privilege
+> escalation: a sibling read is behavior-author code (not user-invokable), is
+> intra-Kind, and is read-only.
+>
+> **Defense-in-depth that replaces the runtime cap:** a static CI gate —
+> `apps/ezagent_core/test/invariants/sensitive_slice_read_test.exs` — requires
+> every read of a SENSITIVE slice (`:identity` caps, `:api_keys` credentials)
+> by NON-owner code to be allowlisted with a justification, covering BOTH
+> `reads_siblings` (macro + hand-written `def`) and `Kind.get_slice/2`. A new
+> un-reviewed credential/caps read fails CI in code instead of leaking
+> authority at runtime. `Ezagent.Capability.authorize_in_process/2` and the
+> cap-gated `ctx.read_slice` accessor sketched below were **not** built (no
+> consumer under B). This banner + the #56 PR are the durable record; an
+> `ARCHITECTURE.md` Appendix-B Decision Log entry (#155) is left to Allen
+> (ARCHITECTURE.md is Allen-maintained per CLAUDE.md — not edited here). The
+> §1–§8 cap-check design is retained below only as the rejected alternative.
+
 > **Design spec.** Builds on
 > [`2026-06-14-cap-in-process-op-analysis.md`](./2026-06-14-cap-in-process-op-analysis.md).
 > Recommended answers provisionally approved by Allen 2026-06-14 ("写完 spec + codex
