@@ -66,7 +66,21 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
     {:noreply, assign(socket, sessions: list_cs_sessions(socket.assigns.workspace_uri))}
   end
 
-  def handle_event("send", %{"text" => text}, socket) when is_binary(text) do
+  # During claimed (takeover) mode, the operator NEVER sends via chat.send —
+  # that path broadcasts {:chat_message} unconditionally and would leak
+  # operator_only drafts to the customer. All operator replies go through
+  # the claim handler → Turn.compose (operator_only → settle → customer_visible).
+  # Adapted from PR #740 B-minimal.
+  def handle_event("send", %{"text" => _text}, socket) do
+    if socket.assigns.claimed do
+      {:noreply, socket}
+    else
+      # Fall back to normal chat.send for non-claimed mode
+      handle_send_normal(_text, socket)
+    end
+  end
+
+  defp handle_send_normal(text, socket) do
     text = String.trim(text)
 
     cond do
@@ -92,16 +106,17 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
     end
   end
 
-  def handle_event("claim", _params, socket) do
+  def handle_event("claim", %{"text" => raw_text}, socket) do
     %{selected: session_uri, operator_uri: op_uri, caps: caps} = socket.assigns
+    operator_text = String.trim(raw_text)
 
-    if is_nil(session_uri) do
+    if is_nil(session_uri) or operator_text == "" do
       {:noreply, socket}
     else
       socket = assign(socket, claiming: true)
 
       # Dispatch to CsOrchestrator Behavior's operator_claim action.
-      # The orchestrator handles: cancel bot turn → open fresh → compose → claim.
+      # The orchestrator handles: cancel bot turn → open fresh → compose(real text) → claim.
       target =
         Ezagent.URI.new!(
           "#{URI.to_string(session_uri)}?action=cs_orchestrator.operator_claim"
@@ -113,7 +128,7 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
           mode: :call,
           args: %{
             operator_uri: op_uri,
-            operator_text: "人工客服接管对话"
+            operator_text: operator_text
           },
           ctx: %{
             caller: op_uri,
@@ -430,7 +445,18 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
               结束人工对话
             </button>
           </div>
-          <ChatUI.composer nonce={@compose_nonce} placeholder="以人工客服身份回复客户…" />
+          <ChatUI.composer
+            :if={!@claimed}
+            nonce={@compose_nonce}
+            placeholder="输入消息…"
+          />
+          <ChatUI.composer
+            :if={@claimed}
+            nonce={@compose_nonce}
+            placeholder="输入人工回复内容，点击接管提交…"
+            submit_event="claim"
+            submit_label="接管并发送"
+          />
         <% end %>
       </main>
     </div>

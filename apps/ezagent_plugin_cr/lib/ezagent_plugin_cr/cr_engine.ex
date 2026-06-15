@@ -28,7 +28,10 @@ defmodule EzagentPluginCr.CrEngine do
 
   @spec publish(String.t()) :: {:ok, map()} | {:error, term()}
   def publish(tid) do
-    with {:ok, cr} <- ensure_active_cr(tid),
+    # Heal any half-finished prior publish before allocating a new version.
+    # Adapted from PR #740.
+    with {:ok, _} <- repair_current(tid),
+         {:ok, cr} <- ensure_active_cr(tid),
          :ok <- CrLint.check(tid),
          {:ok, new_ver} <- CrSnapshot.snapshot(tid),
          # mark-before-flip: persist "publishing" status BEFORE symlink flip.

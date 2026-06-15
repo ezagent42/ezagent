@@ -71,6 +71,19 @@ defmodule EzagentPluginAutoservice.TurnAdapter do
     })
   end
 
+  @doc """
+  Cancel a non-terminal turn (open, composing, or awaiting_human).
+  """
+  @spec cancel_turn(URI.t(), String.t()) :: term()
+  def cancel_turn(session_uri, turn_id) do
+    Invocation.dispatch(%Invocation{
+      target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=turn.cancel"),
+      mode: :call,
+      args: %{turn_id: turn_id},
+      ctx: system_ctx()
+    })
+  end
+
   # --- internals ---
 
   defp system_ctx do

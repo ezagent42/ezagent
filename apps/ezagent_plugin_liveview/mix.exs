@@ -43,6 +43,10 @@ defmodule EzagentPluginLiveview.MixProject do
       {:ezagent_domain_workspace, in_umbrella: true},
       # Phase 6 PR 3: shadcn-like HEEx primitives shared across plugin UIs.
       {:ezagent_domain_ui, in_umbrella: true},
+      # TenantAdminLive references content + CR + autoservice APIs.
+      {:ezagent_plugin_content, in_umbrella: true},
+      {:ezagent_plugin_cr, in_umbrella: true},
+      {:ezagent_plugin_autoservice, in_umbrella: true},
       # NOTE: deliberately do NOT depend on :ezagent_web here. ezagent_web
       # owns routing and references this plugin's LiveView modules by
       # atom — having the plugin also depend on ezagent_web would create a
