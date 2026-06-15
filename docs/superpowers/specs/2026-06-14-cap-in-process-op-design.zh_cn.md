@@ -1,5 +1,25 @@
 # 带 cap 检查的进程内操作原语 —— 设计（任务 #56）
 
+> **⚠️ 已废弃 2026-06-15 —— 决策 B（结构性授权 + 静态 gate）。下面的 cap 检查方案未实现。**
+> Allen 2026-06-15：一个 Kind 在进程内读**另一个 Behavior** 的 slice，视为**结构性授权——
+> 不做运行时 cap 检查**。理由：`reads_siblings` 的消费者全是跨 *Behavior* 的（不是"一个 Kind
+> 读自己"）；读方和数据同属一个 Kind/实体的信任域;"哪个 Behavior 读哪个 Behavior"是类型级/
+> 静态关系（已由 `@required_reads`/`@slice_owners` 闭包编码），给它铸一个每实例都相同的 cap
+> 只是重复编码同一事实、不增信息；而且对 4 个 **Session** Kind 消费者，运行时自读 cap **结构上
+> 不可能**（Session Kind 不挂 `Behavior.Identity`，本身不持有任何 cap —— 见 analysis）。关键：
+> **调用（invocation）始终在 dispatch step 5.5/5.6 被 cap 网关拦截**，所以这**不会**造成面向用户
+> 的提权：sibling 读是 behavior 作者代码（用户不可在运行时调用）、同 Kind 内、且只读。
+>
+> **替代运行时 cap 的纵深防御：** 一个静态 CI gate ——
+> `apps/ezagent_core/test/invariants/sensitive_slice_read_test.exs` —— 要求任何**非 owner** 代码
+> 读**机密 slice**（`:identity` caps、`:api_keys` 凭证）都必须带理由进 allowlist，覆盖
+> `reads_siblings`（宏 + 手写 `def`）**和** `Kind.get_slice/2` 两条路径。新增未经 review 的
+> 凭证/caps 读会在代码层 CI 失败，而不是运行时悄悄泄漏权限。下面草拟的
+> `Ezagent.Capability.authorize_in_process/2` 与 cap 化 `ctx.read_slice` 访问器**未实现**（B 下无
+> 消费者）。本 banner + #56 PR 即 durable 记录；`ARCHITECTURE.md` Appendix-B Decision Log
+> 条目（#155）留给 Allen 加（ARCHITECTURE.md 由 Allen 维护，本处不改 —— 见 CLAUDE.md）。§1–§8 的
+> cap 检查设计保留在下面，仅作被否决的备选。
+
 > **设计 spec。** 基于
 > [`2026-06-14-cap-in-process-op-analysis.zh_cn.md`](./2026-06-14-cap-in-process-op-analysis.zh_cn.md)。
 > 推荐答案 Allen 2026-06-14 暂批（"写完 spec + codex review 后再决策"）—— 故本 spec 走
