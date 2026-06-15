@@ -387,6 +387,21 @@ defmodule EzagentPluginLoom.WebPlug do
     json_resp(conn, 200, %{ok: true})
   end
 
+  # 2026-06-15 — per-session worker 配置(团队面板)。列 / 增改(upsert by key)/ 删,
+  # 改完即把活团队 reconcile 成配置的样子(spawn+join / 换 prompt / leave+terminate)。
+  get "/api/:ws/:sid/workers" do
+    json_resp(conn, 200, list_workers(ws, sid))
+  end
+
+  post "/api/:ws/:sid/workers" do
+    json_resp(conn, 200, upsert_worker(conn, ws, sid))
+  end
+
+  delete "/api/:ws/:sid/workers" do
+    key = conn_query(conn) |> Map.get("key", "") |> to_string()
+    json_resp(conn, 200, remove_worker(ws, sid, key))
+  end
+
   # 公开提供素材(图片等),让 v0 生成的 Sandpack 页面能 `<img src="/loom/materials/<ws>/<sid>/<path>">`。
   get "/materials/:ws/:sid/*path" do
     serve_material(conn, ws, sid, Enum.join(path, "/"))
@@ -731,6 +746,44 @@ defmodule EzagentPluginLoom.WebPlug do
       :error ->
         json_resp(conn, 404, %{ok: false, error: "not_found"})
     end
+  end
+
+  # --- 2026-06-15 per-session worker 配置 -----------------------------
+
+  defp list_workers(ws, sid) do
+    suri = session_uri(ws, sid)
+    %{ok: true, workers: Ezagent.PluginLoom.WorkerConfig.get_for_session(suri)}
+  rescue
+    e -> %{ok: false, error: Exception.message(e)}
+  end
+
+  defp upsert_worker(conn, ws, sid) do
+    suri = session_uri(ws, sid)
+    body = conn.body_params || %{}
+
+    spec = %{
+      "key" => Map.get(body, "key", ""),
+      "desc" => Map.get(body, "desc", ""),
+      "prompt" => Map.get(body, "prompt", "")
+    }
+
+    case Ezagent.PluginLoom.WorkerConfig.upsert(suri, spec) do
+      {:ok, list} -> %{ok: true, workers: list}
+      {:error, reason} -> %{ok: false, error: to_string(reason)}
+    end
+  rescue
+    e -> %{ok: false, error: Exception.message(e)}
+  end
+
+  defp remove_worker(ws, sid, key) do
+    suri = session_uri(ws, sid)
+
+    case Ezagent.PluginLoom.WorkerConfig.remove(suri, key) do
+      {:ok, list} -> %{ok: true, workers: list}
+      {:error, reason} -> %{ok: false, error: to_string(reason)}
+    end
+  rescue
+    e -> %{ok: false, error: Exception.message(e)}
   end
 
   # --- 2026-06-02 SDK v2 helpers -------------------------------------
@@ -1361,6 +1414,7 @@ defmodule EzagentPluginLoom.WebPlug do
           raw = slice[:loom_source] || slice["loom_source"]
           files = EzagentPluginLoom.Prompts.normalize_source(raw)
           sf = if raw in [nil, "", %{}] or map_size(files) == 0, do: nil, else: files
+
           {sf, slice[:stitch_config] || slice["stitch_config"],
            slice[:persona] || slice["persona"] || "visitor"}
 

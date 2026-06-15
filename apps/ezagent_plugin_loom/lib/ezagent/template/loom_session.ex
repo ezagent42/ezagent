@@ -409,16 +409,21 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
   # 的幂等性,看到 orchestrator 已经在,返回 :already_started → 不覆盖。
   # 没 saved snapshot → 跳过,让 Team.ensure_team 自己启默认 orchestrator。
   # 2026-06-01 Phase 2 — 把 saved_workers 数组转成 theme 列表传给 Team.ensure_team。
-  # 空数组 → 用 Team 自带默认 ["policy", "company"](向后兼容)。
-  defp worker_themes_from_saved([]), do: ["policy", "company"]
+  # 2026-06-15 — 无 saved workers(普通新建 session)→ 返回 nil,让 Team.ensure_team
+  # 走 WorkerConfig(默认 2 个通用 worker),而不是硬塞 policy/company。
+  # 有 saved workers(zuatu 等模板)→ 仍返回 theme 列表,bare spawn + pre_spawn 注入 prompt。
+  defp worker_themes_from_saved([]), do: nil
 
   defp worker_themes_from_saved(saved_workers) when is_list(saved_workers) do
-    saved_workers
-    |> Enum.map(&Map.get(&1, "theme"))
-    |> Enum.filter(&(is_binary(&1) and &1 != ""))
+    case saved_workers
+         |> Enum.map(&Map.get(&1, "theme"))
+         |> Enum.filter(&(is_binary(&1) and &1 != "")) do
+      [] -> nil
+      themes -> themes
+    end
   end
 
-  defp worker_themes_from_saved(_), do: ["policy", "company"]
+  defp worker_themes_from_saved(_), do: nil
 
   # 预 spawn 每个 saved worker,用 saved system_prompt + role 作 init args。
   # LoomWorker.init_slice 读 `:system_prompt` / `:role`。Team.ensure_team

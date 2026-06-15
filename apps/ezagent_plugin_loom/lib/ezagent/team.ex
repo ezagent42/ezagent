@@ -44,11 +44,14 @@ defmodule EzagentPluginLoom.Team do
   def ensure_team(session_uri, opts \\ [])
 
   def ensure_team(%URI{scheme: "session"} = session_uri, opts) do
-    # 2026-06-01 — 可变 worker 数组。`opts[:worker_themes]` 是字符串列表,
-    # 每个 theme 对应一个 `loomworker_<sid>_<theme>` URI;默认 `["policy",
-    # "company"]` 保留原行为。saved template 实例化时 LoomSession 从
-    # saved_state.workers 里抽 theme 列表传进来,实现"模板带 worker spec"。
-    worker_themes = Keyword.get(opts, :worker_themes, ["policy", "company"])
+    # 2026-06-15 — 可配置 worker(per-session)。worker 的真相源是
+    # `Ezagent.PluginLoom.WorkerConfig`(旁路 JSON + 默认 2 个通用 worker)。
+    #
+    # - 不传 `opts[:worker_themes]`(普通新建 session)→ 从 WorkerConfig 取(首次落地
+    #   2 个通用 worker 默认值),每个 worker **带配置 spawn**(role=desc / system_prompt)。
+    # - 传 `opts[:worker_themes]`(saved-template 路径,LoomSession 从 saved_state.workers
+    #   抽 theme 列表)→ 保留原行为:bare theme URI,prompt 由 LoomSession.pre_spawn 注入。
+    saved_themes = Keyword.get(opts, :worker_themes)
     # 2026-06-05 — 可关 v0。只有最初的 session.loom 有 v0(页面创作);发布物 fork
     # 出的 session `include_v0: false`,base 冻结、只能叠 user_schema ops,不能重写源码。
     include_v0? = Keyword.get(opts, :include_v0, true)
@@ -64,10 +67,9 @@ defmodule EzagentPluginLoom.Team do
       # 两个不同 key → 同一 agent 出现两条成员行(2026-06-01 demo6 双倍 bug)。
       orchestrator = Ezagent.URI.new!("entity://agent/#{ws}/loomorch_#{sid}")
 
-      workers =
-        Enum.map(worker_themes, fn theme ->
-          Ezagent.URI.new!("entity://agent/#{ws}/loomworker_#{sid}_#{theme}")
-        end)
+      # worker_specs:%{uri, role, prompt};role/prompt=nil → bare spawn(saved 路径)。
+      worker_specs = resolve_worker_specs(ws, sid, saved_themes)
+      workers = Enum.map(worker_specs, & &1.uri)
 
       v0_members =
         if include_v0?,
@@ -88,9 +90,13 @@ defmodule EzagentPluginLoom.Team do
       # 默认每个 loom session 都有。Behavior 是 mention-gated,不 @ 不动。
       meta = Ezagent.URI.new!("entity://agent/#{ws}/loommeta_#{sid}")
 
+      # workers 走带配置 spawn(default 路径)/ bare spawn(saved 路径);
+      # 其余成员(orchestrator / v0 / stitch / meta)走 SpawnRegistry bare spawn。
+      others = [orchestrator | v0_members] ++ stitch_members ++ [meta]
       members = [orchestrator | workers] ++ v0_members ++ stitch_members ++ [meta]
 
-      with :ok <- Enum.reduce_while(members, :ok, &spawn_step/2),
+      with :ok <- Enum.reduce_while(worker_specs, :ok, &spawn_worker_step/2),
+           :ok <- Enum.reduce_while(others, :ok, &spawn_step/2),
            :ok <- Enum.reduce_while(members, :ok, fn uri, _ -> join_step(session_uri, uri) end) do
         {:ok,
          %{orchestrator: orchestrator, workers: workers ++ v0_members ++ stitch_members ++ [meta]}}
@@ -99,6 +105,55 @@ defmodule EzagentPluginLoom.Team do
   end
 
   def ensure_team(_, _), do: {:error, :not_a_session_uri}
+
+  # worker 列表解析的优先级:
+  #   1. 已存的 WorkerConfig(用户配过 / 之前 seed 过)→ **权威**,带配置 spawn(跨重启一致)。
+  #   2. saved 模板首次实例化(传了 theme 列表、还没存配置)→ bare URI,prompt 由
+  #      LoomSession.pre_spawn 注入(zuatu 等)。首次 GET /workers 会把它们导入 WorkerConfig。
+  #   3. 普通新建(都没有)→ WorkerConfig.get_or_seed,落地默认 2 个通用 worker。
+  defp resolve_worker_specs(ws, sid, saved_themes) do
+    cond do
+      is_list(stored = Ezagent.PluginLoom.WorkerConfig.stored(ws, sid)) and stored != [] ->
+        Enum.map(stored, &config_spec(ws, sid, &1))
+
+      is_list(saved_themes) and saved_themes != [] ->
+        Enum.map(saved_themes, fn theme ->
+          %{
+            uri: Ezagent.URI.new!("entity://agent/#{ws}/loomworker_#{sid}_#{theme}"),
+            role: nil,
+            prompt: nil
+          }
+        end)
+
+      true ->
+        Ezagent.PluginLoom.WorkerConfig.get_or_seed(ws, sid)
+        |> Enum.map(&config_spec(ws, sid, &1))
+    end
+  end
+
+  defp config_spec(ws, sid, w) do
+    %{
+      uri: Ezagent.URI.new!("entity://agent/#{ws}/loomworker_#{sid}_#{w["key"]}"),
+      role: w["desc"],
+      prompt: w["prompt"]
+    }
+  end
+
+  # bare spawn(saved 路径:prompt 由 LoomSession.pre_spawn 注入,这里幂等短路)。
+  defp spawn_worker_step(%{uri: uri, role: nil}, _acc), do: spawn_step(uri, :ok)
+
+  # 带配置 spawn(default 路径):role=desc / system_prompt 注入 :loom_worker slice。
+  defp spawn_worker_step(%{uri: uri, role: role, prompt: prompt}, _acc) do
+    case Ezagent.Kind.spawn(Ezagent.Entity.LoomWorker, %{
+           uri: uri,
+           role: role,
+           system_prompt: prompt
+         }) do
+      {:ok, _} -> {:cont, :ok}
+      {:error, {:already_started, _}} -> {:cont, :ok}
+      {:error, reason} -> {:halt, {:error, {:spawn_failed, URI.to_string(uri), reason}}}
+    end
+  end
 
   # `session://<template>/<workspace>/<short_name>` (SPEC v3 — 3-segment
   # authority) → {workspace, short_name}. Agents live in <workspace>;
