@@ -91,6 +91,22 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   defp parse_session_param(_), do: nil
 
+  # 2026-06-15 — spawn the caller's User Kind if it isn't alive, so
+  # `Ezagent.Identity.list_caps_for/1` reads real caps instead of falling back
+  # to an empty set (the cause of the post-refresh :unauthorized /
+  # :cross_workspace_denied flashes that only re-login cleared). Idempotent +
+  # best-effort: a spawn failure must not crash the mount.
+  defp ensure_caller_kind(%URI{} = caller_uri) do
+    _ = Ezagent.SpawnRegistry.spawn(caller_uri)
+    :ok
+  rescue
+    _ -> :ok
+  catch
+    _, _ -> :ok
+  end
+
+  defp ensure_caller_kind(_), do: :ok
+
   # Keep `current_workspace_uri` + the session dropdown in sync with the session
   # actually being viewed (it may live in a different workspace than the
   # operator's home). No-op when already in that workspace.
@@ -181,8 +197,17 @@ defmodule EzagentPluginLiveview.AdminLive do
     # `:cross_workspace_denied` on EVERY refresh. Load caps first so the
     # caller's cross-workspace authority (admin wildcard) is actually present.
     # Load caller identity + caps up front — `authorize_session_view/2` (the
-    # target gate just below) and the rehydrate path both read them.
+    # target gate just below), `maybe_self_join/2`, and the main-session
+    # rehydrate path all read them.
     caller_uri0 = socket.assigns[:current_entity_uri]
+
+    # 2026-06-15 — ensure the caller's User Kind is ALIVE before reading caps.
+    # `Ezagent.Identity.list_caps_for/1` returns EMPTY caps when the User Kind
+    # isn't spawned (it's ephemeral + gets evicted). Empty caps then make
+    # authorize / self-join / main-session rehydrate fail with :unauthorized /
+    # :cross_workspace_denied on refresh — only fixed by re-login (login
+    # re-spawns the Kind). Spawn it here (idempotent) so caps load reliably.
+    if match?(%URI{}, caller_uri0), do: ensure_caller_kind(caller_uri0)
 
     socket =
       socket
