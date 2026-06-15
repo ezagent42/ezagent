@@ -74,6 +74,15 @@ defmodule Ezagent.Socialware.AnonUser.GC do
   confirm — and may rehydrate with the member), the binding stays claimed and the
   next sweep retries — never an undiscoverable orphan via the leave-delivery path.
   One row's reap failing is isolated; it does not abort the sweep.
+
+  Symmetrically, `Users.delete/1` returns `:ok` even when its `Repo.delete` fails,
+  so the reap **verifies the `users` row is actually gone** (`get_by_uri == nil`)
+  before hard-deleting the binding (codex r3); a surviving row keeps the binding
+  claimed for retry. One bounded residual remains by design: `Users.delete` clears
+  the Kind SNAPSHOT inside a `try/rescue → :ok`, so a row-gone-but-snapshot-survived
+  state can resurrect only an INERT shell (empty caps, no password, confirmed
+  non-member) — not a usable principal. Closing it would mean changing the shared
+  identity domain, out of this sweeper's lane.
   """
   @spec sweep(DateTime.t()) :: {:ok, non_neg_integer()}
   def sweep(%DateTime{} = now) do
@@ -110,8 +119,21 @@ defmodule Ezagent.Socialware.AnonUser.GC do
     if member_removed?(session_uri, entity_uri) do
       _ = Ezagent.Users.delete(entity_uri)
       _ = best_effort_terminate(entity_uri)
-      {:ok, _} = AnonBinding.delete(entity_uri)
-      true
+
+      if user_gone?(entity_uri) do
+        {:ok, _} = AnonBinding.delete(entity_uri)
+        true
+      else
+        # `Users.delete/1` returns `:ok` UNCONDITIONALLY — it discards a failed
+        # `Repo.delete` (users.ex). So rather than ASSUME the provisioning row is
+        # gone, VERIFY it (codex r3) before hard-deleting the binding. If the row
+        # survived, keep the binding `reaping_at`-claimed so the next sweep retries
+        # — never delete the GC index while the `users` row it points at still
+        # exists (that would orphan a row no future sweep could rediscover). A
+        # defensive postcondition: `Repo.delete` on a freshly-fetched row has no
+        # FK-restrict here, so this false-branch is rarely reached in practice.
+        false
+      end
     else
       false
     end
@@ -143,6 +165,21 @@ defmodule Ezagent.Socialware.AnonUser.GC do
       _ ->
         false
     end
+  end
+
+  # Confirm the provisioning `users` row is actually gone after `Users.delete/1`
+  # (which returns `:ok` even on a failed `Repo.delete`). The verify-after that
+  # turns "assume reaped" into "prove reaped" before the binding is hard-deleted.
+  # NOTE: this checks the `users` ROW, not the Kind snapshot — `Users.delete`
+  # clears the snapshot via `Lifecycle.destroy` inside a `try/rescue → :ok`, so a
+  # row-gone-but-snapshot-survived state is possible. That residual resurrects only
+  # an INERT shell (empty caps, no password_hash, confirmed non-member) — not a
+  # usable principal — and removing it would mean changing the shared identity
+  # domain (`Users.delete` / `Lifecycle.destroy`), out of this sweeper's lane. So
+  # the binding delete is gated on the row alone; the snapshot residual is a bounded,
+  # inert leftover by design.
+  defp user_gone?(entity_uri) when is_binary(entity_uri) do
+    Ezagent.Users.get_by_uri(entity_uri) == nil
   end
 
   # `chat.leave` the anon-User from its session via the sanctioned `session.leave`
