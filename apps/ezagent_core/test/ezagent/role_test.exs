@@ -84,6 +84,14 @@ defmodule Ezagent.RoleTest do
 
       assert {:error, {:invalid_role_field, :requested_caps, _}} =
                Role.new(%{requested_caps: [%{behavior: SomeBehavior}]})
+
+      # a DUPLICATE-axis cap (both atom + string form of the same axis) is
+      # ambiguous → rejected (would make normalize! branch selection
+      # non-deterministic).
+      dup = %{:behavior => SomeBehavior, "behavior" => "B", :action => :send}
+
+      assert {:error, {:invalid_role_field, :requested_caps, _}} =
+               Role.new(%{requested_caps: [dup]})
     end
 
     test "validates + canonicalizes behavior entries (string module names → atoms; rejects non-modules)" do
@@ -133,7 +141,7 @@ defmodule Ezagent.RoleTest do
       end
     end
 
-    test "accepts string-keyed cap templates carrying behavior + action" do
+    test "canonicalizes a string-keyed cap template's KEYS to atoms (values stay → PR-1b mints)" do
       assert {:ok, role} =
                Role.new(%{
                  "requested_caps" => [
@@ -141,7 +149,9 @@ defmodule Ezagent.RoleTest do
                  ]
                })
 
-      assert [%{"behavior" => "Ezagent.Behavior.Chat", "action" => "send"}] = role.requested_caps
+      # KEYS atomized (uniform → no mixed-key normalize! ambiguity); VALUES left
+      # for PR-1b's normalize!/context-injection.
+      assert [%{behavior: "Ezagent.Behavior.Chat", action: "send"}] = role.requested_caps
 
       assert {:error, {:invalid_role_field, :skills, "nope"}} =
                Role.new(%{"skills" => "nope"})

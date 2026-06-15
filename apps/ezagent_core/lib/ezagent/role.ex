@@ -30,6 +30,16 @@ defmodule Ezagent.Role do
 
   @flavor_fields [:flavor, :kind, :bridge_adapter, :template_class]
 
+  # Materialization/provenance axes a role recipe cap MUST NOT carry — a Role is
+  # workspace-agnostic, so these are injected at materialization (kind/instance/
+  # workspace) or stamped at grant (granted_by/_at). Rejecting them stops an
+  # operator-authored role from SMUGGLING a concrete/foreign workspace/instance
+  # into a cap (a CapBAC hole). Fail LOUD, not silent-strip.
+  @cap_materialization_axes [:kind, :instance, :workspace_uri, :granted_by, :granted_at]
+
+  # All known cap axes — used to atomize a persisted cap's string keys uniformly.
+  @cap_axes [:behavior, :action | @cap_materialization_axes]
+
   @enforce_keys []
   defstruct skills: [],
             plugins: [],
@@ -97,12 +107,12 @@ defmodule Ezagent.Role do
     with :ok <- string_list_field(role.skills, :skills),
          :ok <- string_list_field(role.plugins, :plugins),
          {:ok, behaviors} <- behaviors_field(role.behaviors),
-         :ok <- caps_field(role.requested_caps),
+         {:ok, requested_caps} <- caps_field(role.requested_caps),
          :ok <- ref_field(role.prompt, :prompt),
          :ok <- ref_field(role.session_template, :session_template) do
-      # behaviors are canonicalized (persisted string module names → module
-      # atoms) so the materialized set is always real modules.
-      {:ok, %{role | behaviors: behaviors}}
+      # behaviors → module atoms; requested_caps → atom-keyed templates (value
+      # canonicalization + minting are PR-1b's).
+      {:ok, %{role | behaviors: behaviors, requested_caps: requested_caps}}
     end
   end
 
@@ -148,37 +158,55 @@ defmodule Ezagent.Role do
   defp canon_behavior(_), do: :error
 
   defp caps_field(value) when is_list(value) do
-    if Enum.all?(value, &valid_cap_template?/1),
-      do: :ok,
-      else: {:error, {:invalid_role_field, :requested_caps, value}}
+    Enum.reduce_while(value, {:ok, []}, fn cap, {:ok, acc} ->
+      case canon_cap(cap) do
+        {:ok, c} -> {:cont, {:ok, [c | acc]}}
+        :error -> {:halt, {:error, {:invalid_role_field, :requested_caps, cap}}}
+      end
+    end)
+    |> case do
+      {:ok, caps} -> {:ok, Enum.reverse(caps)}
+      err -> err
+    end
   end
 
   defp caps_field(value), do: {:error, {:invalid_role_field, :requested_caps, value}}
 
-  # Materialization/provenance axes a role recipe MUST NOT carry. A Role is
-  # workspace-agnostic (a reusable recipe), so these are injected at
-  # materialization (the agent's workspace/instance/kind) or stamped at grant
-  # time (granted_by/granted_at) — NEVER authored into the recipe. Rejecting
-  # them at the boundary stops an operator-authored role from SMUGGLING a
-  # concrete/foreign `workspace_uri` (or instance/kind) into `effective_caps`,
-  # which would defeat the workspace-agnostic contract + the CapBAC boundary
-  # (codex). Fail LOUD (reject), not silent-strip — a smuggled axis is a
-  # malformed recipe, not something to quietly drop.
-  @cap_materialization_axes [:kind, :instance, :workspace_uri, :granted_by, :granted_at]
-
-  # A requested cap template must carry the axes the fail-closed policy predicate
-  # consumes — `behavior` + `action` (atom or persisted-string key form) — and
-  # MUST NOT carry any materialization/provenance axis. This stops both a
-  # malformed entry (`%{}`, missing `action`) AND a smuggled materialization axis
-  # from surviving into `effective_caps`. (Canonical %Capability{} construction +
-  # value normalization happen at materialization, PR-1b, via
-  # `Ezagent.Capability.normalize!/2`.)
-  defp valid_cap_template?(cap) when is_map(cap) do
-    cap_key?(cap, :behavior) and cap_key?(cap, :action) and
-      not Enum.any?(@cap_materialization_axes, &cap_key?(cap, &1))
+  # Validate + canonicalize one requested cap template. Rejects (`:error`): a
+  # non-map; a cap missing `behavior`/`action`; a smuggled materialization axis
+  # (round 7); or a DUPLICATE axis (both the atom and string key form of the
+  # same axis — ambiguous, and would make the downstream `normalize!` branch
+  # selection non-deterministic, round 12). On success, returns the cap with its
+  # axis KEYS canonicalized to ATOMS uniformly — so PR-1b always consumes
+  # atom-keyed templates (no mixed-key / wrong-branch ambiguity). VALUE
+  # canonicalization (behavior string → module, action string → atom) + context
+  # injection + `%Capability{}` minting are PR-1b's (they need `normalize!` +
+  # agent context); the recipe boundary only fixes key hygiene.
+  defp canon_cap(cap) when is_map(cap) do
+    cond do
+      not (cap_key?(cap, :behavior) and cap_key?(cap, :action)) -> :error
+      Enum.any?(@cap_materialization_axes, &cap_key?(cap, &1)) -> :error
+      dup_axis?(cap) -> :error
+      true -> {:ok, atomize_cap_keys(cap)}
+    end
   end
 
-  defp valid_cap_template?(_), do: false
+  defp canon_cap(_), do: :error
+
+  # A cap that carries BOTH the atom and string form of the same axis is
+  # ambiguous → reject.
+  defp dup_axis?(cap) do
+    Enum.any?([:behavior, :action | @cap_materialization_axes], fn axis ->
+      Map.has_key?(cap, axis) and Map.has_key?(cap, Atom.to_string(axis))
+    end)
+  end
+
+  # Atomize ONLY the known cap-axis string keys; any other key passes through
+  # unchanged (no atom-table growth from arbitrary persisted content).
+  defp atomize_cap_keys(cap) do
+    axis_strings = Map.new(@cap_axes, fn a -> {Atom.to_string(a), a} end)
+    Map.new(cap, fn {k, v} -> {Map.get(axis_strings, k, k), v} end)
+  end
 
   defp cap_key?(map, atom_key),
     do: Map.has_key?(map, atom_key) or Map.has_key?(map, Atom.to_string(atom_key))
