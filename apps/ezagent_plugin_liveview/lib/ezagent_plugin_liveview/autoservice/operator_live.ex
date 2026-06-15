@@ -346,15 +346,39 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
         :ok
 
       :error ->
-        case Ezagent.SpawnRegistry.spawn(session_uri) do
+        # MUST spawn as SocialwareSession (it carries the Turn behaviors).
+        # The generic `SpawnRegistry.spawn` resolves kind_type "session" to the
+        # plain chat Session (Chat but NO Turn), so a subsequent operator
+        # `turn.open` fails with {:unknown_action, :open}. Spawn the
+        # SocialwareSession explicitly, mirroring CustomerSession.ensure_session.
+        owner_uri = customer_uri_of(session_uri)
+
+        case Ezagent.Kind.spawn(Ezagent.Entity.SocialwareSession, %{
+               uri: session_uri,
+               owner_uri: owner_uri
+             }) do
           {:ok, _pid} ->
             _ = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
+            :ok
+
+          {:error, {:already_started, _pid}} ->
+            :ok
+
+          {:error, {:already_registered, _}} ->
             :ok
 
           _ ->
             :ok
         end
     end
+  end
+
+  # session://<ws>/cs/<name> → entity://<ws>/user/<name> (the session owner).
+  # Used only as the SocialwareSession `owner_uri` on (re)spawn; on rehydration
+  # of an already-created session the Kind ignores it (create ran once).
+  defp customer_uri_of(%URI{scheme: "session", host: ws, path: path}) do
+    name = path |> String.split("/", trim: true) |> List.last()
+    Ezagent.URI.new!("entity://#{ws}/user/#{name}")
   end
 
   defp rehydrate_session(_, _), do: :ok
