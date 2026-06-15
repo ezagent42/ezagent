@@ -40,10 +40,10 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
   use Phoenix.LiveView
   import Phoenix.Component
 
-  alias EzagentPluginAutoservice.Assembly.Refresh
+  alias EzagentPluginAutoservice.Refresh
   alias EzagentPluginContent.Tenant.{TenantRuntime, TenantConfig}
   alias EzagentPluginCr.{CrEngine, CrLint}
-  alias EzagentPluginAutoservice.Assembly.Refresh
+  alias EzagentPluginAutoservice.Refresh
 
   require Logger
 

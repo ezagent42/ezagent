@@ -436,15 +436,14 @@ defmodule EzagentPluginAutoservice.CustomerSession do
       _ = Ezagent.Routing.RuleStore.load_into_registry(@routing_table)
       :ok
     else
-      receivers = [fast_uri | slow_receivers(slow_uri)]
-
-      # P0: also route to CsOrchestrator Behavior on the Session itself.
-      # The Session?action=cs_orchestrator.receive URI triggers the
-      # CsOrchestrator Behavior's :receive handler.
+      # Route customer messages through CsOrchestrator Behavior.
+      # CsOrchestrator handles Turn.open + dispatch_after_commit fan-out to
+      # fast+slow agents. Direct agent receivers removed to avoid duplicate
+      # dispatch (MentionRouting delivers to ALL matching receivers — chat.ex:512).
       orch_receiver =
         Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=cs_orchestrator.process_message")
 
-      receivers = [orch_receiver | receivers]
+      receivers = [orch_receiver]
 
       matcher =
         {:and,
