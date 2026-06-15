@@ -19,6 +19,13 @@
 > 消费者）。本 banner + #56 PR 即 durable 记录；`ARCHITECTURE.md` Appendix-B Decision Log
 > 条目（#155）留给 Allen 加（ARCHITECTURE.md 由 Allen 维护，本处不改 —— 见 CLAUDE.md）。§1–§8 的
 > cap 检查设计保留在下面，仅作被否决的备选。
+>
+> **改名子决策 = B-定论（2026-06-15）。** 决策 B 内还有一个子选择：是否顺带做改名清理
+> （把 7 个消费者的 `reads_siblings`/`ctx.siblings` 统一成结构性 `ctx.read_slice`）。**放弃**——
+> 它没有任何行为收益（结构性 sibling 读已经能用 `reads_siblings` 工作，而 B 正是认可它），
+> 还会搅动并行开发的 session 域消费者、零收益。`reads_siblings`/`reads_sibling_slices`
+> **保留为被认可的结构性 sibling 读机制**；`sensitive_slice_read` gate（与本 banner 一同合入）
+> 是唯一的新控制。**至此 #56 完成**：决策已记录 + gate 已落地，无需再建。
 
 > **设计 spec。** 基于
 > [`2026-06-14-cap-in-process-op-analysis.zh_cn.md`](./2026-06-14-cap-in-process-op-analysis.zh_cn.md)。
