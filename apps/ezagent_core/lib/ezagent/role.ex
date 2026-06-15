@@ -94,18 +94,58 @@ defmodule Ezagent.Role do
   # predicate never receives a non-cap term), and `prompt`/`session_template`
   # are `nil` or a string/URI ref.
   defp validate(%__MODULE__{} = role) do
-    with :ok <- list_field(role.skills, :skills),
-         :ok <- list_field(role.plugins, :plugins),
-         :ok <- list_field(role.behaviors, :behaviors),
+    with :ok <- string_list_field(role.skills, :skills),
+         :ok <- string_list_field(role.plugins, :plugins),
+         {:ok, behaviors} <- behaviors_field(role.behaviors),
          :ok <- caps_field(role.requested_caps),
          :ok <- ref_field(role.prompt, :prompt),
          :ok <- ref_field(role.session_template, :session_template) do
-      {:ok, role}
+      # behaviors are canonicalized (persisted string module names → module
+      # atoms) so the materialized set is always real modules.
+      {:ok, %{role | behaviors: behaviors}}
     end
   end
 
-  defp list_field(value, _name) when is_list(value), do: :ok
-  defp list_field(value, name), do: {:error, {:invalid_role_field, name, value}}
+  defp string_list_field(value, name) when is_list(value) do
+    if Enum.all?(value, &is_binary/1), do: :ok, else: {:error, {:invalid_role_field, name, value}}
+  end
+
+  defp string_list_field(value, name), do: {:error, {:invalid_role_field, name, value}}
+
+  # Validate + canonicalize the behavior subset: every entry must resolve to a
+  # real, loadable behavior MODULE — atoms pass through, persisted module-name
+  # strings are decoded to their existing module atom, and anything that does
+  # not load (typo / nil / non-module) is REJECTED fail-loud (not silently
+  # dropped later by the behavior-set intersection). Returns the canonicalized
+  # list so the materialized behaviors are always module atoms.
+  defp behaviors_field(value) when is_list(value) do
+    Enum.reduce_while(value, {:ok, []}, fn entry, {:ok, acc} ->
+      case canon_behavior(entry) do
+        {:ok, mod} -> {:cont, {:ok, [mod | acc]}}
+        :error -> {:halt, {:error, {:invalid_role_field, :behaviors, entry}}}
+      end
+    end)
+    |> case do
+      {:ok, mods} -> {:ok, Enum.reverse(mods)}
+      err -> err
+    end
+  end
+
+  defp behaviors_field(value), do: {:error, {:invalid_role_field, :behaviors, value}}
+
+  defp canon_behavior(mod) when is_atom(mod) and not is_nil(mod) and not is_boolean(mod) do
+    if Code.ensure_loaded?(mod), do: {:ok, mod}, else: :error
+  end
+
+  defp canon_behavior(s) when is_binary(s) do
+    mod = if String.starts_with?(s, "Elixir."), do: s, else: "Elixir." <> s
+    atom = String.to_existing_atom(mod)
+    if Code.ensure_loaded?(atom), do: {:ok, atom}, else: :error
+  rescue
+    ArgumentError -> :error
+  end
+
+  defp canon_behavior(_), do: :error
 
   defp caps_field(value) when is_list(value) do
     if Enum.all?(value, &valid_cap_template?/1),

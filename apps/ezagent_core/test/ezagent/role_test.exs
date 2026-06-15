@@ -86,6 +86,34 @@ defmodule Ezagent.RoleTest do
                Role.new(%{requested_caps: [%{behavior: SomeBehavior}]})
     end
 
+    test "validates + canonicalizes behavior entries (string module names → atoms; rejects non-modules)" do
+      # atom modules pass through
+      assert {:ok, %{behaviors: [Ezagent.Behavior.Sandbox]}} =
+               Role.new(%{behaviors: [Ezagent.Behavior.Sandbox]})
+
+      # persisted string module names are canonicalized to the module atom
+      assert {:ok, %{behaviors: [Ezagent.Behavior.Sandbox]}} =
+               Role.new(%{"behaviors" => ["Ezagent.Behavior.Sandbox"]})
+
+      assert {:ok, %{behaviors: [Ezagent.Behavior.Sandbox]}} =
+               Role.new(%{"behaviors" => ["Elixir.Ezagent.Behavior.Sandbox"]})
+
+      # non-module / malformed entries are rejected fail-loud
+      assert {:error, {:invalid_role_field, :behaviors, "No.Such.Module"}} =
+               Role.new(%{"behaviors" => ["No.Such.Module"]})
+
+      assert {:error, {:invalid_role_field, :behaviors, nil}} =
+               Role.new(%{behaviors: [nil]})
+
+      assert {:error, {:invalid_role_field, :behaviors, :not_a_module}} =
+               Role.new(%{behaviors: [:not_a_module]})
+    end
+
+    test "rejects non-string skills/plugins entries" do
+      assert {:error, {:invalid_role_field, :skills, _}} = Role.new(%{skills: [:atom_not_string]})
+      assert {:error, {:invalid_role_field, :plugins, _}} = Role.new(%{plugins: [123]})
+    end
+
     test "rejects a cap template that SMUGGLES a materialization/provenance axis" do
       # a role is workspace-agnostic — these axes are injected at materialization
       # / stamped at grant, never authored into the recipe. Smuggling a concrete
