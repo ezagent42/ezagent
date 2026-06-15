@@ -164,7 +164,7 @@ defmodule Ezagent.Architecture.UndeclaredUmbrellaDepTest do
       prod =
         Regex.scan(~r/\{:(\w+),\s*in_umbrella:\s*true([^}]*)\}/, src)
         |> Enum.flat_map(fn [_, dep, rest] ->
-          if test_only?(rest), do: [], else: [String.to_atom(dep)]
+          if prod_excluded?(rest), do: [], else: [String.to_atom(dep)]
         end)
         |> MapSet.new()
 
@@ -190,10 +190,12 @@ defmodule Ezagent.Architecture.UndeclaredUmbrellaDepTest do
     kept |> Enum.reverse() |> List.to_string()
   end
 
-  # `only: :test` (but not `only: [:dev, :test]`, which is available in dev too).
-  defp test_only?(rest) do
-    String.contains?(rest, "only:") and String.contains?(rest, ":test") and
-      not String.contains?(rest, ":dev")
+  # A dep is absent from MIX_ENV=prod (so it cannot back a prod hard ref) when it
+  # carries an `only:` restriction that does not include `:prod` — covers
+  # `only: :test`, `only: :dev`, and `only: [:dev, :test]`. No `only:` (or one
+  # listing `:prod`) means it is on the prod compile path.
+  defp prod_excluded?(rest) do
+    String.contains?(rest, "only:") and not String.contains?(rest, ":prod")
   end
 
   defp reject_allowlisted(offenders), do: Enum.reject(offenders, &(&1 in @allowlist))
