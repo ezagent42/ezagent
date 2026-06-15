@@ -10,6 +10,8 @@ defmodule EzagentPluginLiveview.Tenant.CrDashboardLive do
   use EzagentDomainUi.Components
   import Phoenix.Component
 
+  alias EzagentPluginContent.Tenant.TenantRuntime
+
   @impl true
   def mount(%{"tid" => tid}, _session, socket) do
     {:ok,
@@ -18,7 +20,7 @@ defmodule EzagentPluginLiveview.Tenant.CrDashboardLive do
      |> assign(:workspace_uri, Map.get(socket.assigns, :current_workspace_uri))
      |> assign(:tid, tid)
      |> assign(:cr, load_cr(tid))
-     |> assign(:cr_history, [])
+     |> assign(:cr_history, load_cr_history(tid))
      |> assign(:error, nil)
      |> assign(:flash_info, nil)}
   end
@@ -49,6 +51,44 @@ defmodule EzagentPluginLiveview.Tenant.CrDashboardLive do
   rescue
     _ -> nil
   end
+
+  defp load_cr_history(tid) do
+    release = TenantRuntime.release_path(tid)
+
+    if File.dir?(release) do
+      case File.ls(release) do
+        {:ok, entries} ->
+          entries
+          |> Enum.filter(&String.starts_with?(&1, "v"))
+          |> Enum.sort_by(&extract_version/1, :desc)
+          |> Enum.map(fn dir ->
+            full = Path.join(release, dir)
+            stat = File.stat!(full, time: :posix)
+            time_str =
+              stat.mtime
+              |> DateTime.from_unix!()
+              |> Calendar.strftime("%Y-%m-%d %H:%M")
+
+            {dir, time_str}
+          end)
+
+        {:error, _} -> []
+      end
+    else
+      []
+    end
+  rescue
+    _ -> []
+  end
+
+  defp extract_version("v" <> rest) do
+    case Integer.parse(rest) do
+      {n, _} -> n
+      :error -> 0
+    end
+  end
+
+  defp extract_version(_), do: 0
 
   @impl true
   def handle_event("publish", _params, socket) do
@@ -208,13 +248,27 @@ defmodule EzagentPluginLiveview.Tenant.CrDashboardLive do
         </.card>
       <% end %>
 
-      <%!-- CR History (placeholder) --%>
-      <.card>
-        <:header>{gettext("CR History")}</:header>
-        <p class="text-sm text-zinc-500 italic">
-          {gettext("CR history will be shown here when available.")}
-        </p>
-      </.card>
+      <%!-- CR History --%>
+      <%= if @cr_history != [] do %>
+        <.card>
+          <:header>{gettext("CR History")} ({length(@cr_history)})</:header>
+          <div class="divide-y divide-zinc-100 dark:divide-zinc-800">
+            <%= for {ver, info} <- @cr_history do %>
+              <div class="py-2 flex items-center justify-between text-sm">
+                <span class="font-mono text-xs text-zinc-700 dark:text-zinc-300">{ver}</span>
+                <span class="text-xs text-zinc-400">{info}</span>
+              </div>
+            <% end %>
+          </div>
+        </.card>
+      <% else %>
+        <.card>
+          <:header>{gettext("CR History")}</:header>
+          <p class="text-sm text-zinc-500 italic">
+            {gettext("No published releases yet. Publish a CR to create a release version.")}
+          </p>
+        </.card>
+      <% end %>
     </div>
     """
   end
