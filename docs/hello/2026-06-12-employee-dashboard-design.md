@@ -1,10 +1,10 @@
 # 员工工作台 Dashboard — 设计整理 + 开发计划
 
-> 状态：Draft v0.4（2026-06-12，三轮评审后修订——PR-0 拆 0a/0b、权威源更正、gate 重写为结构断言）
+> 状态：Draft v0.5（2026-06-15，四轮评审后修订——补「位序解析」整类盘点、gate 加消费侧断言、reset 补 in-memory/共表、role_of 原子性）
 > 分支：`feat/employee-dashboard`（基于 `feat/loom` @ 58504c80）
 > 需求源：`docs/hello/product-handbook.md` **Module B · 我是员工（客服 / 运营 / 销售）**
 > 性质：实现整理文档，不改 ARCHITECTURE.md；方向性问题（§5）走 Allen review
-> 评审记录：三轮 subagent 评审（2026-06-12），缺陷编号 C/H/M/L 引用见 §5 决策历史
+> 评审记录：四轮 subagent 评审（前三轮 2026-06-12，四轮 2026-06-15），缺陷编号 C/H/M/L 引用见各节内联标注
 
 ---
 
@@ -86,10 +86,20 @@ URI host 段推导 workspace，loom 的 type-first URI 让员工标准 cap 永�
 
 | 类 | 位置 | 改什么 |
 |---|---|---|
-| minting | `web_plug.ex`（session/orch URI + 路由参数转换；**前端 URL `/loom/:ws/:sid` 形态不变**）、`team.ex`（**6** 个 agent：orch + 2 worker + v0 + stitch + meta）、`temp_user.ex`、`template/loom_session.ex`、`session_controller.ex` loom_signup、`behavior/loom_meta_agent.ex`（动态加/删成员两处）、`application.ex` 默认实例（兼修 stdlib `URI.parse` 残债） | 全部改走 `Ezagent.URI.entity/session` builders；session 创建**收口到 `SessionCreator`**（bootstrap 路径今天已经这么做、已产 canonical URI——目前两种形态并存，收口是根治，改字符串模板只是续命） |
-| 校验 | **6 个 template validator**（loom_orchestrator / worker / v0 / stitch / meta / agent 的 template 文件）显式 pattern-match `host: "agent"` | 漏改 = 所有装配报 `:invalid_agent_uri` 硬断；改为按 `Ezagent.URI.type/1` 判 |
-| 判别 | `loom_orchestrator.user_turn?` + **`worker_deliverable?`**（漏改 = 编排器收不到 worker 回执全部超时）、`web_plug.role_of` | 换显式 customer 判别（见下）；`role_of` 对非 customer 的 User 出 `"staff"` role |
-| 显示 | LV 侧 3 处 `host=="loom"`：`admin_live.well_known_session?`、`session_editor.loom_session_url`、`loom_session_view` | 漏改 = admin"打开 Loom"入口与 loom 视图**静默消失** |
+| minting | `web_plug.ex`（session/orch URI + 路由参数转换；**前端 URL `/loom/:ws/:sid` 形态不变**）、`team.ex`（**6** 个 agent：orch + 2 worker + v0 + stitch + meta）、`temp_user.ex` **两条路径分列**：`ensure_named/2`（line 72，已用 `Ezagent.URI.new!`，仅 type-first 待 canonical）+ **`provision/1`（line 37 仍是 stdlib `URI.parse("entity://user/<ws>/tmp_<id>")`，双重债：type-first **且** authority≠nil，四轮 H-2）**、`template/loom_session.ex`、`session_controller.ex` loom_signup、`behavior/loom_meta_agent.ex`（动态加/删成员两处）、`application.ex` `@default_uri`（line 47，见下「默认单例」专项） | 全部改走 `Ezagent.URI.entity/session/user` builders（`provision` 改 `Ezagent.URI.user/2`）；session 创建**收口到 `SessionCreator`**（bootstrap 路径今天已经这么做、已产 canonical URI——目前两种形态并存，收口是根治，改字符串模板只是续命） |
+| 校验 | **6 个 template validator**（loom_orchestrator / worker / v0 / stitch / meta / agent 的 template 文件）显式 pattern-match `host: "agent"`，**且每个文件内另有一处 `URI.parse(uri_str)`（四轮 M-1，grep 已确认 6 文件全含）喂给该 pattern** | 漏改 = 所有装配报 `:invalid_agent_uri` 硬断；改为 `Ezagent.URI.parse/1` + 按 `Ezagent.URI.type/1` 判（`URI.parse` 与 host pattern 必须**同时**改，否则解析出的 struct 仍非 canonical） |
+| 判别 | `loom_orchestrator.user_turn?` + **`worker_deliverable?`**（漏改 = 编排器收不到 worker 回执全部超时）、`web_plug.role_of`（line 623-624，**字符串前缀 match** `"entity://user/" <> _`/`"entity://agent/" <> _`——四轮 H-4：canonical 后 URI 变 `entity://<ws>/user/…`，前缀**永不再匹配**全部 fallthrough，前端 role 退化） | 换显式 customer 判别（见下）；`role_of` **从字符串前缀改结构判别**（`Ezagent.URI.type/1` + customer 判别），对非 customer 的 User 出 `"staff"` role。**与 canonicalize 必须同 PR 原子完成**（半改窗口 = customer/agent role 全退 `"unknown"`） |
+| **解析（位序，四轮 C-1 新增整类）** | **取 path 首段当 workspace 的消费/解析点**（canonical 把 ws 从 path 挪进 host，path 首段变成 type 段 `"loom"`——这些点不 crash、静默把 `"loom"` 当 workspace）：`team.ex:101` `[ws, sid \| _]`、`behavior/loom_meta_agent.ex:424` `[ws, sid \| _]`、`behavior/loom_stitch_worker.ex:162` `[ws, sid \| _]`、`view/loom_session_view.ex:46`（`applies_to?`）+ `:82`（`loom_url`，**同文件 2 处**）、`consumer_session.ex:46` key 字符串 `"session://loom/<ws>/<sid>"` | **禁止位序取 path 段**，改走 `Ezagent.URI.workspace_name/1` + `name/1`（或 `type/1`）。`consumer_session` key 由 `(ws, sid)` 经 `key/2` 重建，读写同走 `key/2` 自洽，但旧 JSON 持久行编码旧形态字符串 → reset 整文件清（见 PR-0b） |
+| 显示 | LV 侧 3 处 `host=="loom"`：`admin_live.well_known_session?`、`session_editor.loom_session_url`、`loom_session_view`（**注：`loom_session_view` 的 host 谓词与上面「解析」类的 `applies_to?/loom_url` 位序是同两函数的两个轴，必须一起改**） | 漏改 = admin"打开 Loom"入口与 loom 视图**静默消失** |
+
+**默认单例归属（四轮 M-4）**：`application.ex:47` `@default_uri =
+URI.parse("entity://agent/system/loom_agent")` 是 plugin 启动即 spawn 的
+**单例**（非 demo 数据），workspace=`system`、stdlib `URI.parse`、type-first。
+canonical 后 = `entity://system/agent/loom_agent`，**仍在 system ws**。决策：
+该单例**不参与员工 cap 路径**（员工只对租户 ws 的 loom 会话申请 cap），保留
+system ws 不是假绿源；但 `URI.parse` → `Ezagent.URI.agent/2` 仍要改（minting
+类已列）。**结论：改 builder、保留 system workspace**，在 §C-3 demo 迁移清单
+里显式排除此单例。
 
 **customer 判别设计**（三轮 H-3 更正）：真实页面流量的 sender **恒为
 `loomui_<sid>`**（signup 用户从不作为页面消息 sender，只用于 whoami/save 门槛）
@@ -103,14 +113,27 @@ orchestrator slice 在装配时记 `customer_uri`（`ensure_team`/`instantiate` 
 system 里测 cap 必然假绿。PR-0a 连带：demo 数据迁到**非 system 租户 ws**
 （reset 时建 demo 租户 + 员工账号），cap gate 在租户 ws 上跑。
 
-**Gate（三轮 C-2 重写——`canonical?/1` 与段序无关，不能当谓词）**：
-1. **结构断言**：loom 全部 minted URI 经 `Ezagent.URI.workspace_of/1` 返回
-   **真实 workspace**（而非 `workspace://agent`/`workspace://loom`），且与
+**Gate（三轮 C-2 重写——`canonical?/1` 与段序无关，不能当谓词；四轮补消费侧）**：
+1. **生成侧结构断言**：loom 全部 minted URI 经 `Ezagent.URI.workspace_of/1`
+   返回**真实 workspace**（而非 `workspace://agent`/`workspace://loom`），且与
    对应 builder 输出相等；**测试夹具一并纳入扫描**（现有 fixture 用
    `URI.parse` + 2-segment 形态绕过 parser，不扫会在测试里复活旧形态）
-2. **非 system 租户 ws 上**：员工 baseline cap 放行对本 ws loom 会话的
+2. **消费侧结构断言（四轮 C-1 新增——gate 第 1 条只扫生成侧，扫不到位序解析）**：
+   对 canonical 后的 loom session/agent URI，断言「解析（位序）」类各点取出的
+   workspace == `Ezagent.URI.workspace_name(uri)`（`team.ex:session_parts`、
+   `loom_meta_agent`、`loom_stitch_worker`、`loom_session_view.applies_to?/loom_url`
+   逐点）——防止「host 谓词改对了不 crash、但 path 首段仍被当 workspace 取成
+   `"loom"`」的静默错 ws（前三轮假绿病的同构复发）
+3. **端到端列表断言（四轮 H-1 上移——这是 PR-0 声称修复的核心能力，不留到 PR-1 才验）**：
+   `SessionContext.list_sessions_for(真实租户 ws)` 返回**非空** loom 会话列表
+   （`Listing.session_in_workspace?` 走 `workspace_name` 过滤，canonical 前恒
+   返回 `"loom"` 永不匹配——此断言直接验证 §2 想解决的"列不出"病）
+4. **role 不退化断言（四轮 H-4）**：canonical 后 `/stream` 帧的 `role` 对
+   customer 仍为 `"user"`、agent 仍为 `"agent"`、employee 出 `"staff"`（验证
+   `role_of` 从字符串前缀改结构判别后无 fallthrough 到 `"unknown"`）
+5. **非 system 租户 ws 上**：员工 baseline cap 放行对本 ws loom 会话的
    `chat.send`（最小 cap 集成测试）
-3. loom 全链路回归：生成/发布/分享/fork/Stitch/intent + 飞书镜像 +
+6. loom 全链路回归：生成/发布/分享/fork/Stitch/intent + 飞书镜像 +
    `snapshot_worker_if_match`（按 path 第二段匹配，新旧形态下"碰巧"都对，
    点名回归防巧合正确）
 
@@ -121,14 +144,26 @@ canonicalize 与否在 PR-0b 单独决策（涉及 prompt 同步 + 前端跨 rep
 
 #### PR-0b · reset 工具 + 文档/skill 同步 + resource 决策
 
-**`mix loom.reset` 完整清单**（三轮 H-4——远不止旁路 JSON）：
+**`mix loom.reset` 完整清单**（三轮 H-4——远不止旁路 JSON；四轮补 in-memory + 共表）：
 - **6 个**旁路 JSON（user_schemas / stitch_chats / knowledge /
-  consumer_sessions / snapshots / saved_classes）
+  consumer_sessions / snapshots / saved_classes）。**注（四轮 C-2）：这些 JSON 的
+  key 本身是旧形态 URI 字符串**（`consumer_session.ex:46` key=`"session://loom/<ws>/<sid>"`、
+  knowledge/snapshots 同理 key=session uri）——canonical 后 key 不匹配会**静默 miss
+  不报错**（uri.ex 开篇警告的 silent-address-error 同类）。**必须整文件清空，
+  不能增量迁移 key**
 - DB：`users`（每个访客一行 tmp user）、`kind_snapshots`、messages /
   message_routings / read_markers / audit、`workspace.session_templates`
   里的 save-as-template 行
+- **in-memory KindRegistry（四轮 C-2 新增）**：`list_sessions` 读
+  `KindRegistry.list_all()`（in-memory，非 DB）。清 DB+JSON 但不重启 BEAM 时，
+  KindRegistry 里旧形态 session/agent pid 仍活着 → reset 后旧会话仍会从
+  registry 复活、`list_sessions_for` 仍列旧 URI。**reset 必须含「重启 BEAM /
+  或 drain KindRegistry 中 `session://`+旧 `entity://agent` 实例」一步**
 - **`external_mirror_bindings`**（存旧 session uri 字符串；boot reconciler
-  会按旧行复活 worker——历史上有过 orphan-binding 崩溃风暴，必须清）
+  会按旧行复活 worker——历史上有过 orphan-binding 崩溃风暴，必须清）。**注（四轮 M-2）：
+  此表是 `ezagent_core` migration 建、feishu plugin 的 BootReconciler 也消费的
+  共享表**——`mix loom.reset` **不可整表 truncate**（会误删真实飞书绑定），须按
+  loom workspace/session 前缀**选择性删**，与 feishu BootReconciler 行为对齐
 - 明示后果：已发布分享链接（token→旧 URI）全部失效——**与 zhangning 约定
   重置时间窗**
 - 文档同步：`docs/loom/*.md` 中钉死旧 URI 形态的段落（如
@@ -156,7 +191,9 @@ docs/loom 里的"Ning 的 Desktop 仓库"中 **Ning 是 loom 的旧名**，
   - **"渠道"的 v0 定义**（三轮 M-4——系统没有渠道实体）：渠道 =
     {Web（loom 页，恒有）} ∪ {飞书（`external_mirror_bindings` 有绑定行的）}，
     枚举自 binding 表 + 静态 Web 项；授权过滤留 PR-2
-  - 活跃会话：PR-0 后 `SessionContext.list_sessions_for` 直接可用。
+  - 活跃会话：PR-0 后 `SessionContext.list_sessions_for` 直接可用（**"列得出
+    会话"的端到端断言已上移进 PR-0a gate 第 3 条**，四轮 H-1——PR-1 此处不再是
+    首次验证点，只消费已验证能力）。
     **已知限制（三轮 M-5）**：它只列 KindRegistry 里**活着的** session——
     节点重启后列表为空，直到客户页访问按需复活会话；v0 接受并在 UI 空态
     文案注明，DB 兜底列表后置
@@ -186,6 +223,10 @@ docs/loom 里的"Ning 的 Desktop 仓库"中 **Ning 是 loom 的旧名**，
   `workspace_uri NOT NULL`**，migration）+ admin 配置 UI
 - **Gate**：双浏览器 E2E——客户开 loom 页发消息，员工列表**超过 30s 后**
   变黄（二轮 L-1 措辞）、点进可见实时对话 + 编排状态条推进
+  - **对抗用例（四轮 M-3）**：Takeover 中员工回复后该会话 SLA **转绿/计"已回应"**
+    ——验证 PR-0 customer 判别没把员工消息误算成「客户提问」（误算会导致 SLA
+    永不变红：员工自己回复被当成新客户问题），这是 SLA 正确性的硬前置（真正的
+    前置是 PR-0 判别，不止决策 3 渠道粒度）
 - **存储基建顺手做**（供 PR-3/PR-4 用，二轮 H-3）：工作台旁路数据
   （coach 历史/模式切换记录）的 **per-tenant 表**（带 `workspace_uri
   NOT NULL`，经 DB 不走 JSON 文件）——明确**不仿 stitch_chat**
@@ -255,6 +296,9 @@ docs/loom 里的"Ning 的 Desktop 仓库"中 **Ning 是 loom 的旧名**，
 - customer-simulator AI（loom worker 模式 + 场景 persona）+ 导师 AI
   （点评走旁路通道——同 coach 模式，不进 session 消息流）
 - 场景库 v0：3 个内置（日语议价 / 投诉处理 / 大促咨询）
+- **手册数量承诺差距明示（四轮 L-2）**：手册 B.5 写"练 50 轮"——v0 **不强制轮数
+  目标**，只支持反复练 + 显示"已练 N 轮"计数，不做 50 轮门槛/进度条（避免静默
+  丢需求；强制目标列 v1）
 - **Gate**：员工从 dashboard 进沙箱跑完一轮，看到导师复盘
 
 ---
