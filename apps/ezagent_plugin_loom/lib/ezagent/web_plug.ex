@@ -453,6 +453,10 @@ defmodule EzagentPluginLoom.WebPlug do
       {:ok, html} ->
         conn
         |> put_resp_content_type("text/html")
+        # 2026-06-15 — index.html 必须每次 revalidate。它引用的是 hash 命名的 JS chunk
+        # (immutable 长缓存),重建后 chunk 名变;若 index.html 被浏览器启发式缓存,
+        # iframe(/loom/:ws/:sid 走这条 SPA 兜底)会一直加载旧 index → 旧 chunk → 看不到新功能。
+        |> put_resp_header("cache-control", "no-cache, must-revalidate")
         |> send_resp(200, html)
 
       {:error, _} ->
