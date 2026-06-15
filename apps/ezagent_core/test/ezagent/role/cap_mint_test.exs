@@ -55,6 +55,22 @@ defmodule Ezagent.Role.CapMintTest do
                CapMint.mint(requested, ctx(), fn _ -> true end)
     end
 
+    test "action :any (the wildcard) is a valid-but-broad request GATED by the policy" do
+      # `:any` action is the legitimate orchestrator-style wildcard (matcher treats
+      # it as match-all; Capability.any_action/0). It is well-formed (an atom), so
+      # whether it mints is entirely the POLICY's decision — never an automatic grant.
+      requested = [%{behavior: Ezagent.Behavior.Sandbox, action: :any}]
+      requested_str = [%{behavior: "Ezagent.Behavior.Sandbox", action: "any"}]
+
+      # a policy that REFUSES the broad wildcard drops it (fail-closed)
+      deny_any = fn %{action: a} -> a != :any end
+      assert [] = CapMint.mint(requested, ctx(), deny_any)
+      assert [] = CapMint.mint(requested_str, ctx(), deny_any)
+
+      # a policy that explicitly permits :any mints it (operator's deliberate choice)
+      assert [%Capability{action: :any}] = CapMint.mint(requested, ctx(), fn _ -> true end)
+    end
+
     test "FAIL-CLOSED (no crash) when the policy predicate RAISES" do
       requested = [%{behavior: Ezagent.Behavior.Sandbox, action: :read}]
       assert [] = CapMint.mint(requested, ctx(), fn _ -> raise "boom" end)
