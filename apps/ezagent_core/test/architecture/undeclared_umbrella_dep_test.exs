@@ -36,19 +36,15 @@ defmodule Ezagent.Architecture.UndeclaredUmbrellaDepTest do
   cycle), so a bare-atom-inclusive scan would false-positive the entire IoC
   layer (~23 edges); a hard-ref scan finds only the real undeclared deps.
 
-  ## Sanctioned exception: `Code.ensure_loaded?`-guarded optional peers
+  ## `Code.ensure_loaded?` does NOT exempt a direct call
 
-  A reference guarded by `Code.ensure_loaded?(Mod)` in the same file is the
-  sanctioned way to call an OPTIONAL runtime peer without taking a compile dep
-  (e.g. liveview probing `Ezagent.AgentBridge.Registry` before reading a
-  connected-bridge count). Such refs are excluded — the guard is the contract.
-
-  The exclusion is FILE-SCOPED: a module probed with `Code.ensure_loaded?/1`
-  anywhere in a file is treated as an optional peer throughout that file. This
-  matches how the pattern is used in practice (probe once, then call within the
-  same module) and keeps the check free of control-flow analysis; the trade-off
-  is that a stray unguarded call in a file that probes the module elsewhere is
-  not flagged.
+  `if Code.ensure_loaded?(Mod), do: Mod.fun(...)` still hard-references `Mod` —
+  the `Mod.fun(...)` call compiles to the same export dependency and emits the
+  same "module not available" warning when `Mod`'s app is off the compile path.
+  The runtime guard prevents the *call*, not the *compile-time dependency*. So a
+  guarded direct call is NOT exempted here; declare the dep (the module is on the
+  compile path) or reach the peer indirectly via `apply/3` / a module value (a
+  bare atom, which is not a hard reference and is therefore never flagged).
 
   ## Limitation (matches `ImSessionAgentAcyclicTest`)
 
@@ -66,9 +62,9 @@ defmodule Ezagent.Architecture.UndeclaredUmbrellaDepTest do
   # core is the shared base every app already compile-deps on — never an offender.
   @always_available :ezagent_core
 
-  # Known-good cross-app HARD refs that are NOT backed by a declared dep and are
-  # NOT ensure_loaded?-guarded. Should stay []; an entry needs a written
-  # justification (why the dep is intentionally undeclared and warning-safe).
+  # Known-good cross-app HARD refs that are NOT backed by a declared dep. Should
+  # stay []; an entry needs a written justification (why the dep is intentionally
+  # undeclared and warning-safe).
   @allowlist []
 
   test "every lib/ hard-ref to another umbrella app's module is a declared prod dep" do
@@ -80,7 +76,6 @@ defmodule Ezagent.Architecture.UndeclaredUmbrellaDepTest do
       |> Enum.flat_map(fn file ->
         app = file |> Path.relative_to(@repo_root) |> Path.split() |> Enum.at(1) |> String.to_atom()
         ast = parse(file)
-        guarded = ensure_loaded_modules(ast)
         declared = Map.get(deps, app, MapSet.new())
         rel = Path.relative_to(file, @repo_root)
 
@@ -93,7 +88,6 @@ defmodule Ezagent.Architecture.UndeclaredUmbrellaDepTest do
             def_app == app -> []
             def_app == @always_available -> []
             MapSet.member?(declared, def_app) -> []
-            MapSet.member?(guarded, mod) -> []
             true -> [{rel, app, def_app, mod}]
           end
         end)
@@ -104,7 +98,7 @@ defmodule Ezagent.Architecture.UndeclaredUmbrellaDepTest do
     assert offenders == [],
            "lib/ hard-references a module DEFINED in an umbrella app that is NOT a " <>
              "declared prod in_umbrella dep (latent 'module not available' hazard — #57). " <>
-             "Declare the dep, or guard the call with `Code.ensure_loaded?/1`. Offenders:\n" <>
+             "Declare the dep, or reach the peer via `apply/3` / a module value. Offenders:\n" <>
              format(offenders)
   end
 
@@ -136,19 +130,6 @@ defmodule Ezagent.Architecture.UndeclaredUmbrellaDepTest do
     Enum.uniq(acc)
   end
 
-  defp ensure_loaded_modules(ast) do
-    {_, acc} =
-      Macro.prewalk(ast, [], fn
-        {{:., _, [{:__aliases__, _, [:Code]}, :ensure_loaded?]}, _, [{:__aliases__, _, p}]} = n, acc ->
-          {n, add_mod(acc, p)}
-
-        n, acc ->
-          {n, acc}
-      end)
-
-    MapSet.new(acc)
-  end
-
   defp add_mod(acc, parts) do
     if is_list(parts) and Enum.all?(parts, &is_atom/1), do: [Module.concat(parts) | acc], else: acc
   end
@@ -175,7 +156,10 @@ defmodule Ezagent.Architecture.UndeclaredUmbrellaDepTest do
     Path.wildcard(Path.join(@repo_root, "apps/*/mix.exs"))
     |> Map.new(fn mix ->
       app = mix |> Path.dirname() |> Path.basename() |> String.to_atom()
-      src = File.read!(mix)
+      # Strip line comments first — a commented-out `{:dep, in_umbrella: true}`
+      # (e.g. external_mirror's "DO NOT add ..." note) must NOT count as a
+      # declared dep, or a future hard ref to it would be silently accepted.
+      src = File.read!(mix) |> strip_comments()
 
       prod =
         Regex.scan(~r/\{:(\w+),\s*in_umbrella:\s*true([^}]*)\}/, src)
@@ -186,6 +170,24 @@ defmodule Ezagent.Architecture.UndeclaredUmbrellaDepTest do
 
       {app, prod}
     end)
+  end
+
+  # Drop `#`-to-EOL line comments, but not a `#` inside a double-quoted string.
+  defp strip_comments(src) do
+    src |> String.split("\n") |> Enum.map_join("\n", &strip_line_comment/1)
+  end
+
+  defp strip_line_comment(line) do
+    {kept, _in_str} =
+      line
+      |> String.to_charlist()
+      |> Enum.reduce_while({[], false}, fn
+        ?", {acc, in_str} -> {:cont, {[?" | acc], not in_str}}
+        ?#, {acc, false} -> {:halt, {acc, false}}
+        ch, {acc, in_str} -> {:cont, {[ch | acc], in_str}}
+      end)
+
+    kept |> Enum.reverse() |> List.to_string()
   end
 
   # `only: :test` (but not `only: [:dev, :test]`, which is available in dev too).

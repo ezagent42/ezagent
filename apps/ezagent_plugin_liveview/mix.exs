@@ -49,6 +49,13 @@ defmodule EzagentPluginLiveview.MixProject do
       # avoided a "module not available" warning by alphabetical umbrella build
       # order, ezagent_domain_pty < ezagent_plugin_liveview). Declare it.
       {:ezagent_domain_pty, in_umbrella: true},
+      # #57: admin LV reads bridge state via `Ezagent.AgentBridge.Registry`
+      # (list_connected/list_all/legacy_topic). The `Code.ensure_loaded?` probes
+      # around those calls guard the runtime invocation but NOT the compile
+      # reference — `Registry.fun(...)` is a hard ref that still needs the dep on
+      # the compile path. agent_bridge is a domain (always co-deployed; cc
+      # already deps on it), so declare it honestly.
+      {:ezagent_domain_agent_bridge, in_umbrella: true},
       # NOTE: deliberately do NOT depend on :ezagent_web here. ezagent_web
       # owns routing and references this plugin's LiveView modules by
       # atom — having the plugin also depend on ezagent_web would create a
