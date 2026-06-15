@@ -35,16 +35,17 @@ defmodule Ezagent.Role.CapMintTest do
     end
 
     test "FAIL-CLOSED §6 negative-authz: a cap the policy rejects is NOT minted (never copied)" do
+      # both caps are well-formed (real Behavior + atom action) so the POLICY is
+      # what differentiates — permits :read, rejects :write
       requested = [
         %{behavior: Ezagent.Behavior.Sandbox, action: :read},
-        %{behavior: Ezagent.Behavior.Pty, action: :drive}
+        %{behavior: Ezagent.Behavior.Sandbox, action: :write}
       ]
 
-      # policy permits :read but not :drive (e.g. a no-bridge flavor)
       minted = CapMint.mint(requested, ctx(), fn %{action: a} -> a == :read end)
 
       assert [%Capability{action: :read}] = minted
-      refute Enum.any?(minted, &(&1.action == :drive))
+      refute Enum.any?(minted, &(&1.action == :write))
     end
 
     test "canonicalizes a string-valued behavior to its module before minting" do
@@ -59,10 +60,16 @@ defmodule Ezagent.Role.CapMintTest do
       assert [] = CapMint.mint(requested, ctx(), fn _ -> raise "boom" end)
     end
 
-    test "drops a cap whose value cannot canonicalize (fail-closed, no phantom atom)" do
+    test "FAIL-CLOSED independent of policy: an unresolvable value is dropped even under a permissive policy" do
+      # behavior "No.Such.Module" can't canonicalize → stays a string → dropped
+      # by well_formed? BEFORE authorization, so even an always-true policy can
+      # NOT mint it (no phantom atom, no string-valued %Capability{}).
       requested = [%{behavior: "No.Such.Module", action: "read"}]
-      # an atom/module-value policy rejects the unresolved behavior
-      assert [] = CapMint.mint(requested, ctx(), fn %{behavior: b} -> is_atom(b) end)
+      assert [] = CapMint.mint(requested, ctx(), fn _ -> true end)
+
+      # a non-Behavior atom is likewise dropped (must be a real Behavior module)
+      assert [] =
+               CapMint.mint([%{behavior: :not_a_behavior, action: :read}], ctx(), fn _ -> true end)
     end
   end
 end

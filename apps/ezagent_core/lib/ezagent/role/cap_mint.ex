@@ -48,10 +48,27 @@ defmodule Ezagent.Role.CapMint do
       when is_list(requested_caps) and is_function(policy, 1) do
     requested_caps
     |> Enum.map(&build_needed(&1, kind, inst, ws))
+    # Drop malformed cap VALUES (unresolved behavior/action strings) BEFORE
+    # authorization — fail-closed must NOT depend on a permissive policy
+    # accidentally letting a string-valued behavior through to be minted as an
+    # invalid %Capability{} (codex).
+    |> Enum.filter(&well_formed?/1)
     |> Enum.filter(&authorized?(policy, &1))
     |> Enum.map(&safe_mint(&1, granter))
     |> Enum.reject(&is_nil/1)
   end
+
+  # A mintable needed-cap has a real new-style Behavior MODULE for `behavior`
+  # (not an unresolved string / non-Behavior) and an ATOM `action`. Anything
+  # else is a malformed request → dropped fail-closed, independent of policy.
+  defp well_formed?(%{behavior: behavior, action: action}) do
+    is_atom(action) and behavior_module?(behavior)
+  end
+
+  defp behavior_module?(mod) when is_atom(mod) and not is_nil(mod) and not is_boolean(mod),
+    do: Code.ensure_loaded?(mod) and Ezagent.Behavior.new_style?(mod)
+
+  defp behavior_module?(_), do: false
 
   # Build the concrete needed-cap: inject the materialization axes + canonicalize
   # the request's behavior/action VALUES (atom/string-key tolerant).
