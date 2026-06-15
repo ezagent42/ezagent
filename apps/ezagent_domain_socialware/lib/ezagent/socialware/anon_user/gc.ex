@@ -25,6 +25,16 @@ defmodule Ezagent.Socialware.AnonUser.GC do
 
   @ttl_ms 48 * 60 * 60 * 1000
 
+  # Telemetry emitted when a claimed reap could NOT be confirmed complete (the
+  # `users` row survived `Users.delete`), so the binding stays `reaping_at`-claimed.
+  # Measurements `%{count: 1}`; metadata `%{entity_uri, session_uri, reason}`.
+  # Operators alert on this to detect a stuck-reap retry loop (codex r4).
+  @reap_unconfirmed_event [:ezagent, :socialware, :gc, :reap_unconfirmed]
+
+  @doc "The telemetry event emitted for an unconfirmed (stuck) reap."
+  @spec reap_unconfirmed_event() :: [atom()]
+  def reap_unconfirmed_event, do: @reap_unconfirmed_event
+
   @doc "The abandonment TTL in milliseconds (48h)."
   @spec ttl_ms() :: pos_integer()
   def ttl_ms, do: @ttl_ms
@@ -83,6 +93,11 @@ defmodule Ezagent.Socialware.AnonUser.GC do
   state can resurrect only an INERT shell (empty caps, no password, confirmed
   non-member) — not a usable principal. Closing it would mean changing the shared
   identity domain, out of this sweeper's lane.
+
+  Every keep-claimed outcome (leave unconfirmed OR users row survived) emits the
+  `#{inspect(@reap_unconfirmed_event)}` telemetry event so a stuck/retrying reap is
+  ALERTABLE rather than a silent no-op (codex r4) — the should-never-happen
+  `:user_delete_not_confirmed` case additionally logs a warning.
   """
   @spec sweep(DateTime.t()) :: {:ok, non_neg_integer()}
   def sweep(%DateTime{} = now) do
@@ -132,9 +147,21 @@ defmodule Ezagent.Socialware.AnonUser.GC do
         # exists (that would orphan a row no future sweep could rediscover). A
         # defensive postcondition: `Repo.delete` on a freshly-fetched row has no
         # FK-restrict here, so this false-branch is rarely reached in practice.
+        #
+        # But a stuck reap MUST be observable, not a silent no-op (codex r4): the
+        # binding is held claimed indefinitely while a live `users` row lingers, so
+        # emit telemetry + warn so operators can alert on a repeatedly-stale
+        # `reaping_at` instead of mistaking it for "no eligible work" (§3.4 / the
+        # no-silent-failure principle).
+        signal_stuck_reap(entity_uri, session_uri, :user_delete_not_confirmed)
         false
       end
     else
+      # Leave could NOT be confirmed — the member is still present (cast buffered) or
+      # the session is unreadable/down (and may rehydrate WITH the member). This is
+      # EXPECTED backpressure, not an error, so emit telemetry (visibility) but NO
+      # warning-level log: the binding stays claimed and the next sweep retries.
+      signal_stuck_reap(entity_uri, session_uri, :leave_unconfirmed)
       false
     end
   rescue
@@ -180,6 +207,34 @@ defmodule Ezagent.Socialware.AnonUser.GC do
   # inert leftover by design.
   defp user_gone?(entity_uri) when is_binary(entity_uri) do
     Ezagent.Users.get_by_uri(entity_uri) == nil
+  end
+
+  # Make a stuck/incomplete reap OBSERVABLE rather than a silent no-op (codex r4):
+  # always emit telemetry so a binding held `reaping_at`-claimed is alertable, not
+  # indistinguishable from "nothing to reap". Log severity splits by reason:
+  #
+  #   * `:user_delete_not_confirmed` — SHOULD-NEVER-HAPPEN (member confirmed gone, yet
+  #     `Users.delete` reported `:ok` while the row survived) → telemetry + WARN.
+  #   * `:leave_unconfirmed` — EXPECTED backpressure (cast buffered / session down) →
+  #     telemetry ONLY, no log (it recurs every sweep until the session settles; a
+  #     warning each pass would be noise).
+  defp signal_stuck_reap(entity_uri, session_uri, reason)
+       when is_binary(entity_uri) and is_binary(session_uri) and is_atom(reason) do
+    :telemetry.execute(
+      @reap_unconfirmed_event,
+      %{count: 1},
+      %{entity_uri: entity_uri, session_uri: session_uri, reason: reason}
+    )
+
+    if reason == :user_delete_not_confirmed do
+      Logger.warning(
+        "Socialware GC: reap of #{inspect(entity_uri)} left the users row live " <>
+          "(Users.delete reported :ok but get_by_uri still resolves) — binding stays " <>
+          "claimed (reaping_at), retried next sweep (§3.4)."
+      )
+    end
+
+    :ok
   end
 
   # `chat.leave` the anon-User from its session via the sanctioned `session.leave`

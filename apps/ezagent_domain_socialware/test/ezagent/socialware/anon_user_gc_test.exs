@@ -136,7 +136,7 @@ defmodule Ezagent.Socialware.AnonUserGCTest do
       assert Ezagent.Users.get_by_uri(a) == nil
     end
 
-    test "an UNCONFIRMED leave (session unreadable) keeps the binding claimed + user intact (no orphan)" do
+    test "an UNCONFIRMED leave (session unreadable) keeps the binding claimed + user intact (no orphan) AND is observable" do
       now = DateTime.utc_now()
       session_uri = spawn_session()
       {:ok, session_pid} = Ezagent.KindRegistry.lookup(session_uri)
@@ -145,6 +145,24 @@ defmodule Ezagent.Socialware.AnonUserGCTest do
       spawn_anon_kind(a)
       join(session_uri, a)
       {:ok, _} = AnonBinding.touch(a, session_uri, DateTime.add(now, -49 * 60 * 60, :second))
+
+      # A stuck/incomplete reap must NOT be a silent no-op (codex r4) — attach to the
+      # GC's telemetry so the keep-claimed path proves it emits. This reachable
+      # `:leave_unconfirmed` path exercises the SAME `signal_stuck_reap/3` mechanism
+      # the (publicly-unreachable) `:user_delete_not_confirmed` branch rides.
+      test_pid = self()
+      handler_id = {:gc_unconfirmed_test, make_ref()}
+
+      :telemetry.attach(
+        handler_id,
+        GC.reap_unconfirmed_event(),
+        fn event, measurements, metadata, _ ->
+          send(test_pid, {:telemetry, event, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
 
       # Tear the session down so the leave cannot be confirmed (get_slice fails). The
       # reap must NOT delete the user / binding on an unconfirmable leave — it keeps
@@ -160,6 +178,12 @@ defmodule Ezagent.Socialware.AnonUserGCTest do
       # binding + user survive (claimed, retried later); not reaped.
       assert AnonBinding.get(a) != nil
       assert Ezagent.Users.get_by_uri(a) != nil
+
+      # ...and the stuck reap surfaced telemetry (alertable, not a silent leak loop).
+      assert_receive {:telemetry, [:ezagent, :socialware, :gc, :reap_unconfirmed],
+                      %{count: 1}, %{reason: :leave_unconfirmed, entity_uri: e}}
+
+      assert e == URI.to_string(a)
     end
   end
 
