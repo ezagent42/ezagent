@@ -163,7 +163,7 @@ defmodule EzagentPluginCr.CrEngine do
       key: cr_key(tid),
       body: cr,
       actor_uri: "system://cr-engine",
-      source_turn_id: "publish"
+      source_turn_id: "publish_#{System.unique_integer([:monotonic])}"
     })
     |> case do
       {:ok, _} -> {:ok, cr}
