@@ -39,6 +39,8 @@ defmodule EzagentPluginAutoservice.MixProject do
       {:ezagent_plugin_content, in_umbrella: true},
       # Socialware domain: settlement integration for customer service
       {:ezagent_domain_socialware, in_umbrella: true},
+      # Curl (DeepSeek) agent flavor: fast agent template class
+      {:ezagent_plugin_curl_agent, in_umbrella: true},
       # CC (claude-code) agent flavor: create_agent / spawn plan
       {:ezagent_plugin_cc, in_umbrella: true},
       # CR plugin: release management (ensure_active_cr used by migrate_cinnox task)
