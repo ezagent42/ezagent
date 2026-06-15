@@ -330,25 +330,32 @@ defmodule EzagentPluginAutoservice.CustomerSession do
                ctx
              ) do
           {:ok, %{agent_uri: %URI{} = uri}} ->
-            # Merge tenant KB MCP config into the agent's .mcp.json
-            # (create_agent already wrote esr-bridge; add KB sidecar).
-            mcp_path = Path.join(work_dir, ".mcp.json")
-
-            if File.exists?(mcp_path) do
-              sandbox_kb_dir = Path.join([TenantRuntime.sandbox_path(tid), "kb"])
-              kb_mcp_json = KbMcpProvider.config(tid, sandbox_kb_dir)
-              kb_mcp = Jason.decode!(kb_mcp_json)
-
-              mcp =
-                mcp_path
-                |> File.read!()
-                |> Jason.decode!()
-                |> Map.update!("mcpServers", &Map.merge(kb_mcp["mcpServers"], &1))
-
-              File.write!(mcp_path, Jason.encode_to_iodata!(mcp, pretty: true))
-            end
-
+            merge_kb_mcp(work_dir, tid)
             {:ok, uri}
+
+          # The cc agent's PTY-less instantiate spawns the Kind AND commits the
+          # template BEFORE create_agent's post-spawn `grant_creator_manage_cap`
+          # runs (workspace/agent_create.ex:488 — grant is OUTSIDE the
+          # invoke_or_rollback wrapper). When the creator is the seed system
+          # principal (`system://mix-task`), that grant dispatches
+          # `identity.grant_cap` to a principal with no live actor → returns
+          # `:no_such_actor`. The grant is redundant — the system principal
+          # already holds `Manage :agent :any` (wildcard) — and the agent +
+          # template are already committed. So this SPECIFIC error deterministically
+          # means "agent created, only the redundant self-grant was skipped";
+          # treat it as success. (Proper fix is core: skip the creator grant when
+          # the creator is a system principal — flagged to Allen.) We match the
+          # error reason rather than re-`lookup/1` because cc's READY-gate makes
+          # a create-time registry probe racy under `with_pty: false`.
+          {:error, {:creator_manage_cap_grant_failed, :no_such_actor}} ->
+            Logger.info(
+              "CustomerSession: tolerating redundant creator-manage grant " <>
+                "(:no_such_actor) for system-principal-created cc agent " <>
+                "#{URI.to_string(slow_uri)}; agent + template already committed"
+            )
+
+            merge_kb_mcp(work_dir, tid)
+            {:ok, slow_uri}
 
           {:error, reason} ->
             case KindRegistry.lookup(slow_uri) do
@@ -357,6 +364,29 @@ defmodule EzagentPluginAutoservice.CustomerSession do
             end
         end
     end
+  end
+
+  # Merge the tenant KB MCP server entry into the cc agent's .mcp.json
+  # (create_agent already wrote the esr-bridge entry; this adds the
+  # <tid>-kb sidecar). No-op if the agent has no .mcp.json yet.
+  defp merge_kb_mcp(work_dir, tid) do
+    mcp_path = Path.join(work_dir, ".mcp.json")
+
+    if File.exists?(mcp_path) do
+      sandbox_kb_dir = Path.join([TenantRuntime.sandbox_path(tid), "kb"])
+      kb_mcp_json = KbMcpProvider.config(tid, sandbox_kb_dir)
+      kb_mcp = Jason.decode!(kb_mcp_json)
+
+      mcp =
+        mcp_path
+        |> File.read!()
+        |> Jason.decode!()
+        |> Map.update!("mcpServers", &Map.merge(kb_mcp["mcpServers"], &1))
+
+      File.write!(mcp_path, Jason.encode_to_iodata!(mcp, pretty: true))
+    end
+
+    :ok
   end
 
   # Load soul templates for a role from the tenant release directory.
