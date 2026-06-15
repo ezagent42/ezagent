@@ -23,8 +23,15 @@ defmodule EzagentDomainSocialware.Application do
     # socialware `:kind_base` subset (`Session.socialware_behaviors/0`; see
     # `AdvisorSession.ensure_session/1`). They run under instance_message's
     # `SessionSupervisor`, so this domain no longer boots a session supervisor
-    # of its own. The domain currently supervises nothing at runtime.
-    children = []
+    # of its own.
+    #
+    # #51 §3.4 — the in-app GC sweeper for abandoned anonymous external users.
+    # `init` only arms a timer (no boot-time DB work), so it is safe to supervise
+    # in every env; the default interval is hourly, so the first tick is well past
+    # any test's lifetime.
+    children = [
+      Ezagent.Socialware.AnonUser.Sweeper
+    ]
 
     Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__)
   end

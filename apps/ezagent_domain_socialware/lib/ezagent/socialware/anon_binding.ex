@@ -57,6 +57,10 @@ defmodule Ezagent.Socialware.AnonBinding do
     field(:session_uri, :string)
     field(:workspace_uri, :string)
     field(:last_seen_at, :utc_datetime_usec)
+    # #51 §3.4 crash-safe GC claim — non-null while a sweeper is reaping this row;
+    # the row survives (as the retry record) until the reap completes, then is
+    # hard-deleted. See `claim_for_reaping/3`.
+    field(:reaping_at, :utc_datetime_usec)
 
     timestamps()
   end
@@ -66,6 +70,7 @@ defmodule Ezagent.Socialware.AnonBinding do
           session_uri: String.t(),
           workspace_uri: String.t(),
           last_seen_at: DateTime.t(),
+          reaping_at: DateTime.t() | nil,
           inserted_at: DateTime.t(),
           updated_at: DateTime.t()
         }
@@ -122,11 +127,17 @@ defmodule Ezagent.Socialware.AnonBinding do
     session_str = URI.to_string(session_uri)
 
     # Conditional conflict update: bump last_seen ONLY when the stored row already
-    # names this session. A conflicting row for a DIFFERENT session is left untouched
-    # (no-op), so the write boundary — not a TOCTOU pre-read — is what fails closed.
+    # names this session AND is not being reaped. A conflicting row for a DIFFERENT
+    # session is left untouched (no-op), so the write boundary — not a TOCTOU
+    # pre-read — is what fails closed. The `reaping_at IS NULL` guard (#51 §3.4)
+    # means a row a GC sweeper has CLAIMED cannot be refreshed out from under the
+    # reap: its `last_seen_at` stays old so the stuck-reap retry (`list_expired/2`)
+    # still re-surfaces it after a crash, and the post-write re-read surfaces a
+    # `{:reaping, _}` signal so the caller mints a fresh anon (§4.1a) instead of
+    # reusing a binding that is being torn down.
     on_conflict =
       from(b in __MODULE__,
-        where: b.session_uri == ^session_str,
+        where: b.session_uri == ^session_str and is_nil(b.reaping_at),
         update: [set: [last_seen_at: ^now, updated_at: ^now]]
       )
 
@@ -153,13 +164,23 @@ defmodule Ezagent.Socialware.AnonBinding do
       |> Repo.insert(on_conflict: on_conflict, conflict_target: :entity_uri, allow_stale: true)
 
     with {:ok, _} <- result do
-      # Re-read the durable row: a no-op conditional update (different-session
-      # conflict) leaves the row bound to the OTHER session, which we surface as a
-      # mismatch instead of the changeset's optimistic value.
+      # Re-read the durable row: a no-op conditional update leaves the row in its
+      # prior state, which we surface explicitly instead of the changeset's
+      # optimistic value — a DIFFERENT-session conflict as a mismatch, and a row a
+      # sweeper has CLAIMED (reaping_at set) as `{:reaping, _}` (#51 §3.4) so the
+      # caller mints a fresh anon rather than reusing a binding being reaped.
       case get(entity_str) do
-        %__MODULE__{session_uri: ^session_str} = row -> {:ok, row}
-        %__MODULE__{session_uri: other} -> {:error, {:session_mismatch, other}}
-        nil -> {:error, :write_lost}
+        %__MODULE__{session_uri: ^session_str, reaping_at: ra} when not is_nil(ra) ->
+          {:error, {:reaping, entity_str}}
+
+        %__MODULE__{session_uri: ^session_str} = row ->
+          {:ok, row}
+
+        %__MODULE__{session_uri: other} ->
+          {:error, {:session_mismatch, other}}
+
+        nil ->
+          {:error, :write_lost}
       end
     end
   end
@@ -198,71 +219,88 @@ defmodule Ezagent.Socialware.AnonBinding do
   def get(%URI{} = entity_uri), do: get(URI.to_string(entity_uri))
   def get(entity_uri) when is_binary(entity_uri), do: Repo.get(__MODULE__, entity_uri)
 
+  # #51 §3.4 — a row whose `reaping_at` is older than this is treated as a STUCK
+  # reap (the sweeper crashed mid-reap) and re-surfaced for retry. Generous vs a
+  # real reap (milliseconds), so a healthy in-progress reap is never re-claimed by
+  # a concurrent sweeper; ≤ the sweep interval, so a crashed reap is retried on the
+  # next pass.
+  @reaping_retry_ms 60 * 60 * 1000
+
   @doc """
-  Every binding abandoned as of `now` — `last_seen_at` at or beyond `ttl_ms` ago.
+  Every binding abandoned as of `now` — `last_seen_at` at or beyond `ttl_ms` ago —
+  that is NOT currently being reaped (a stuck `reaping_at` past
+  `#{@reaping_retry_ms}`ms is re-surfaced for retry).
 
   Mirrors the SAME `>=` boundary as `Ezagent.Socialware.AnonUser.GC.expired?/2`
   (`now - last_seen >= ttl` ⟺ `last_seen <= now - ttl`); the caller passes
-  `GC.ttl_ms/0` so the TTL has a single owner. The GC sweep walks these rows to
-  leave + delete each abandoned anon-User.
+  `GC.ttl_ms/0` so the TTL has a single owner. The GC sweep `claim_for_reaping/3`s
+  then leaves + deletes each.
   """
   @spec list_expired(DateTime.t(), pos_integer()) :: [t()]
   def list_expired(%DateTime{} = now, ttl_ms) when is_integer(ttl_ms) and ttl_ms > 0 do
     cutoff = DateTime.add(now, -ttl_ms, :millisecond)
-    Repo.all(from(b in __MODULE__, where: b.last_seen_at <= ^cutoff, order_by: b.last_seen_at))
+    retry_cutoff = DateTime.add(now, -@reaping_retry_ms, :millisecond)
+
+    Repo.all(
+      from(b in __MODULE__,
+        where:
+          b.last_seen_at <= ^cutoff and
+            (is_nil(b.reaping_at) or b.reaping_at <= ^retry_cutoff),
+        order_by: b.last_seen_at
+      )
+    )
   end
 
   @doc """
-  **Compare-and-delete** the binding for `entity_uri` ONLY if it is still abandoned
-  as of `now` — i.e. `last_seen_at` is at or beyond `ttl_ms` ago. This is the
-  GC-safe reap primitive (the GC claim step).
+  **Compare-and-update** (NON-destructive claim): stamp `reaping_at = now` on the
+  binding for `entity_uri` ONLY if it is still abandoned (`last_seen_at <= cutoff`)
+  AND not already being reaped (`reaping_at` null or stale). This is the GC-safe
+  reap primitive — the claim that does NOT destroy the retry index.
 
-  Because the sweep is list-then-reap, a candidate surfaced by `list_expired/2` can
-  be refreshed by a concurrent `touch/3` before the sweeper acts. `delete/1` (by
-  `entity_uri` alone) would still reap it — and the sweeper goes on to `chat.leave`
-  + delete the `users` row, so a stale candidate becomes an *active* anon-User being
-  killed. `delete_expired/3` deletes in a single statement guarded by the SAME
-  `last_seen_at <= cutoff` predicate as `list_expired/2`, so a refresh makes it a
-  `{:ok, :not_found}` no-op:
+  Two races it closes in a single statement:
 
-  - `{:ok, :deleted}` — the row was still expired and was removed;
-  - `{:ok, :not_found}` — no row matched the cutoff (refreshed since listing, or
-    already gone) → the sweeper MUST skip the destructive leave/users-delete;
-  - `{:error, term()}` — the delete failed.
+  - **Pre-claim refresh:** a candidate from `list_expired/2` can be `touch/3`ed by a
+    returning visitor before the sweeper acts. The `last_seen_at <= cutoff` guard
+    makes a refreshed row a `{:ok, :not_claimed}` no-op, so an *active* anon-User is
+    never reaped (the original delete-as-claim concern).
+  - **Concurrent / repeat claim:** the `reaping_at` guard means only ONE sweeper
+    claims a row at a time; a healthy in-progress reap (within
+    `#{@reaping_retry_ms}`ms) is not re-claimed, while a STUCK reap past that
+    threshold is (crash recovery).
+
+  Returns:
+
+  - `{:ok, :claimed}` — the row was still expired + free, now marked `reaping_at`;
+    the caller MAY proceed to leave + `users`-delete, then hard-`delete/1` the row
+    LAST (so a crash before that re-surfaces the row for retry);
+  - `{:ok, :not_claimed}` — refreshed since listing, or another sweeper holds it →
+    SKIP, nothing destructive;
+  - `{:error, term()}` — the update failed.
 
   Pass the SAME `now`/`ttl_ms` used for the `list_expired/2` that produced the
   candidate, so the cutoff is identical.
-
-  ## Sweeper protocol the future `GC.sweep/1` MUST honour (post-claim ordering)
-
-  `delete_expired/3` closes the *pre-claim* refresh race. The *post-claim* window —
-  a returning visitor touching the same entity after the claim deletes the row, while
-  the sweeper proceeds to `chat.leave` + delete the `users` row — is the sweeper's
-  responsibility, not this primitive's (resolving it in the table would need a
-  cross-domain binding+user transaction). Two rules bound it: (1) the sweeper treats
-  a successful `{:ok, :deleted}` claim as authority to do the leave + `users`-delete,
-  and does those only after the claim; (2) resurrection is bounded by the controller
-  contract §4.1a — a returning visitor's cookie is reused ONLY if it names a *live*
-  external-user, so a binding recreated against a just-reaped `users` row is not
-  reused (the controller mints fresh — the intended behaviour) and the stray row is
-  swept on the next pass. A future sweeper that deletes the `users` row WITHOUT a
-  prior successful claim would reintroduce the reap race.
   """
-  @spec delete_expired(URI.t() | String.t(), DateTime.t(), pos_integer()) ::
-          {:ok, :deleted | :not_found} | {:error, term()}
-  def delete_expired(%URI{} = entity_uri, %DateTime{} = now, ttl_ms),
-    do: delete_expired(URI.to_string(entity_uri), now, ttl_ms)
+  @spec claim_for_reaping(URI.t() | String.t(), DateTime.t(), pos_integer()) ::
+          {:ok, :claimed | :not_claimed} | {:error, term()}
+  def claim_for_reaping(%URI{} = entity_uri, %DateTime{} = now, ttl_ms),
+    do: claim_for_reaping(URI.to_string(entity_uri), now, ttl_ms)
 
-  def delete_expired(entity_uri, %DateTime{} = now, ttl_ms)
+  def claim_for_reaping(entity_uri, %DateTime{} = now, ttl_ms)
       when is_binary(entity_uri) and is_integer(ttl_ms) and ttl_ms > 0 do
     cutoff = DateTime.add(now, -ttl_ms, :millisecond)
+    retry_cutoff = DateTime.add(now, -@reaping_retry_ms, :millisecond)
 
     query =
-      from(b in __MODULE__, where: b.entity_uri == ^entity_uri and b.last_seen_at <= ^cutoff)
+      from(b in __MODULE__,
+        where:
+          b.entity_uri == ^entity_uri and b.last_seen_at <= ^cutoff and
+            (is_nil(b.reaping_at) or b.reaping_at <= ^retry_cutoff),
+        update: [set: [reaping_at: ^now, updated_at: ^now]]
+      )
 
-    case Repo.delete_all(query) do
-      {0, _} -> {:ok, :not_found}
-      {n, _} when n >= 1 -> {:ok, :deleted}
+    case Repo.update_all(query, []) do
+      {0, _} -> {:ok, :not_claimed}
+      {n, _} when n >= 1 -> {:ok, :claimed}
     end
   rescue
     e -> {:error, e}
@@ -277,7 +315,8 @@ defmodule Ezagent.Socialware.AnonBinding do
 
   This is the **login-replacement** reap (§4.4) — a deliberate immediate retire of
   the anon-User regardless of `last_seen_at` (the real user just logged in). The
-  freshness-race-prone GC path uses `delete_expired/3` instead. Idempotent.
+  freshness-race-prone GC path claims via `claim_for_reaping/3` first, then hard-
+  deletes with this `delete/1` LAST. Idempotent.
   """
   @spec delete(URI.t() | String.t()) :: {:ok, :deleted | :not_found} | {:error, term()}
   def delete(%URI{} = entity_uri), do: delete(URI.to_string(entity_uri))

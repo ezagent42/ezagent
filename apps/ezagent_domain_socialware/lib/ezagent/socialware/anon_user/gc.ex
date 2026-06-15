@@ -12,11 +12,16 @@ defmodule Ezagent.Socialware.AnonUser.GC do
 
   - `expired?/2` — the PURE TTL predicate — is IMPLEMENTED + tested GREEN.
   - `ttl_ms/0` — the 48h budget — is IMPLEMENTED.
-  - `sweep/1` — the table-backed reap pass — is PENDING the anon binding table
-    (the `anon_user_gc_test.exs` end-to-end reap case is `@tag :pending_impl` /
-    `:skip`). It currently returns `{:error, :not_implemented}` so a caller fails
-    loudly rather than silently no-op'ing (no shim masking a missing table).
+  - `sweep/1` — the table-backed reap pass — is IMPLEMENTED (#51): it walks
+    `AnonBinding.list_expired/2`, claims each via the non-destructive compare-and-
+    update `claim_for_reaping/3`, then `chat.leave`s + deletes the `users` row +
+    best-effort stops the Kind + hard-deletes the binding LAST. Driven by
+    `Ezagent.Socialware.AnonUser.Sweeper` (the in-app GenServer) on a fixed interval.
   """
+
+  require Logger
+
+  alias Ezagent.Socialware.AnonBinding
 
   @ttl_ms 48 * 60 * 60 * 1000
 
@@ -34,11 +39,143 @@ defmodule Ezagent.Socialware.AnonUser.GC do
   end
 
   @doc """
-  Reap every anon-User whose `last_seen_at` is older than the TTL as of `now`.
+  Reap every anon-User whose binding `last_seen_at` is older than the TTL as of
+  `now`. Returns `{:ok, count}` where `count` is the number reaped this pass.
 
-  PENDING the anon binding table — see the moduledoc. Returns
-  `{:error, :not_implemented}` until the table + leave/delete pass land.
+  Per row, **non-destructive claim → destroy → delete index LAST**:
+
+  1. `AnonBinding.claim_for_reaping/3` — compare-and-UPDATE `reaping_at` under the
+     SAME `last_seen_at <= cutoff` predicate `list_expired/2` used. `{:ok, :claimed}`
+     is the authority to destroy; `{:ok, :not_claimed}` means a concurrent `touch/3`
+     refreshed it (or another sweeper holds it) → SKIP, nothing destructive.
+  2. On a claim: `chat.leave` the anon-User from its session (`session.leave`
+     dispatch under the closed-catalog `system://socialware-gc` principal — the
+     anon-User holds empty caps and cannot self-leave, §3.3), delete its `users`
+     row (`Users.delete/1`), best-effort stop its Kind, then **hard-delete the
+     binding LAST** (`AnonBinding.delete/1`).
+
+  ## Crash-safety
+
+  The binding row is BOTH the GC index and the claim token, so it must survive every
+  destructive step — it is hard-deleted only at the very end. A crash (or a dropped
+  leave) anywhere mid-reap leaves the row stuck in `reaping_at`, which
+  `list_expired/2` re-surfaces past a staleness threshold so the next sweep retries
+  it; all reap steps are idempotent, so a double-reap is harmless. A delete-as-claim
+  (the row gone before cleanup) would instead leak an orphan no future sweep could
+  rediscover (codex review) — this ordering closes that.
+
+  The leave is `:cast` (the Session `:leave` action is cast-only), so it carries no
+  delivery acknowledgement. Rather than TRUST the cast, the reap **confirms the
+  member was actually removed** — it reads the session's live `:session` slice and
+  re-runs the membership predicate (the same `Ezagent.Session.Membership.authorize/2`
+  `ChatFeed` uses). The destructive `users`-delete + binding hard-delete run ONLY
+  when the member is confirmed gone from a LIVE session. If the member is still
+  present (the cast was buffered / dropped) OR the session is unreadable (can't
+  confirm — and may rehydrate with the member), the binding stays claimed and the
+  next sweep retries — never an undiscoverable orphan via the leave-delivery path.
+  One row's reap failing is isolated; it does not abort the sweep.
   """
-  @spec sweep(DateTime.t()) :: {:ok, non_neg_integer()} | {:error, :not_implemented}
-  def sweep(%DateTime{} = _now), do: {:error, :not_implemented}
+  @spec sweep(DateTime.t()) :: {:ok, non_neg_integer()}
+  def sweep(%DateTime{} = now) do
+    ttl = ttl_ms()
+
+    reaped =
+      now
+      |> AnonBinding.list_expired(ttl)
+      |> Enum.reduce(0, fn binding, acc ->
+        case AnonBinding.claim_for_reaping(binding.entity_uri, now, ttl) do
+          {:ok, :claimed} ->
+            if reap(binding), do: acc + 1, else: acc
+
+          # {:ok, :not_claimed} (refreshed since listing / another sweeper holds it)
+          # or {:error, _} — never destroy without a claim.
+          _ ->
+            acc
+        end
+      end)
+
+    {:ok, reaped}
+  end
+
+  # Reap a SINGLE claimed binding: cast the leave, then CONFIRM the member was
+  # actually removed from the live session before any destructive op. Only on a
+  # confirmed removal: delete the `users` row + best-effort stop the Kind + hard-
+  # delete the binding LAST (so a crash before that re-surfaces the still-`reaping_at`
+  # row for retry). If the member is still present (cast buffered/dropped) or the
+  # session is unreadable, the binding stays claimed and the next sweep retries.
+  # Isolated so one bad row does not abort the sweep; returns whether it was reaped.
+  defp reap(%AnonBinding{entity_uri: entity_uri, session_uri: session_uri}) do
+    leave_session(session_uri, entity_uri)
+
+    if member_removed?(session_uri, entity_uri) do
+      _ = Ezagent.Users.delete(entity_uri)
+      _ = best_effort_terminate(entity_uri)
+      {:ok, _} = AnonBinding.delete(entity_uri)
+      true
+    else
+      false
+    end
+  rescue
+    e ->
+      Logger.warning(
+        "Socialware GC: reap of #{inspect(entity_uri)} failed mid-pass: " <>
+          "#{inspect(e)} — row stays claimed (reaping_at); retried next sweep (§3.4)."
+      )
+
+      false
+  end
+
+  # Confirm the anon-User is no longer a member of its session — the delivery-
+  # agnostic ack the `:cast` leave cannot provide. Reads the live `:session` slice
+  # (a `GenServer.call`, so mailbox-ordered after the queued leave) and re-runs the
+  # SAME membership predicate `ChatFeed` uses. `:ok` (still a member) or an
+  # unreadable slice (session down/gone — may rehydrate WITH the member) → NOT
+  # confirmed → keep the binding claimed for retry.
+  defp member_removed?(session_uri, entity_uri)
+       when is_binary(session_uri) and is_binary(entity_uri) do
+    case Ezagent.Kind.get_slice(Ezagent.URI.new!(session_uri), :session) do
+      {:ok, slice} ->
+        match?(
+          {:error, _},
+          Ezagent.Session.Membership.authorize(slice, Ezagent.URI.new!(entity_uri))
+        )
+
+      _ ->
+        false
+    end
+  end
+
+  # `chat.leave` the anon-User from its session via the sanctioned `session.leave`
+  # dispatch, under the closed-catalog `system://socialware-gc` principal (Session
+  # `:leave` only). `:cast` — eventually-consistent; a failure DLQs.
+  defp leave_session(session_uri, member_uri)
+       when is_binary(session_uri) and is_binary(member_uri) do
+    target = Ezagent.URI.new!(session_uri <> "?action=session.leave")
+
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      target: target,
+      mode: :cast,
+      args: %{member: Ezagent.URI.new!(member_uri)},
+      ctx: %{
+        caller: Ezagent.SystemPrincipal.uri("socialware-gc"),
+        caps: "socialware-gc" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
+        reply: :ignore
+      }
+    })
+
+    :ok
+  end
+
+  # Best-effort terminate the anon-User Kind if alive (anon-Users demand-spawn, so
+  # frequently no live Kind exists — a `:ok` no-op).
+  defp best_effort_terminate(entity_uri) when is_binary(entity_uri) do
+    uri = Ezagent.URI.new!(entity_uri)
+
+    case Ezagent.KindRegistry.lookup(uri) do
+      {:ok, _pid} -> Ezagent.Kind.terminate(uri)
+      :error -> :ok
+    end
+  rescue
+    _ -> :ok
+  end
 end
