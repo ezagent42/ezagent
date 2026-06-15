@@ -708,10 +708,14 @@ defmodule Ezagent.Entity.SessionTemplate do
   # content key (PR-8 removes the slot tools). Dropping it here means a
   # caller-supplied (string-keyed) `agent_slots` no longer atom-coerces into
   # the persisted content — it is not a template content field.
+  # `public_view` (issue #51, spec §3.5 / OQ-6) — a SessionTemplate-level flag
+  # marking a materialized session anonymously viewable. A content key so a
+  # JSON-boundary (string-keyed) `"public_view"` atom-coerces into persisted
+  # content; `Ezagent.Socialware.PublicView.public_view?/1` reads it back.
   @config_atom_keys ~w(name description members prompt_templates legends
                        orchestrator_template_uri routing_rules
                        default_workspace_uri parent_template_uri
-                       version_tag created_by created_at)a
+                       version_tag created_by created_at public_view)a
   defp normalize_config_keys(config) do
     Map.new(config, fn
       {k, v} when is_atom(k) ->
