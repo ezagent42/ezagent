@@ -144,18 +144,28 @@ defmodule Ezagent.Role do
   defp behaviors_field(value), do: {:error, {:invalid_role_field, :behaviors, value}}
 
   defp canon_behavior(mod) when is_atom(mod) and not is_nil(mod) and not is_boolean(mod) do
-    if Code.ensure_loaded?(mod), do: {:ok, mod}, else: :error
+    if behavior_module?(mod), do: {:ok, mod}, else: :error
   end
 
   defp canon_behavior(s) when is_binary(s) do
     mod = if String.starts_with?(s, "Elixir."), do: s, else: "Elixir." <> s
     atom = String.to_existing_atom(mod)
-    if Code.ensure_loaded?(atom), do: {:ok, atom}, else: :error
+    if behavior_module?(atom), do: {:ok, atom}, else: :error
   rescue
     ArgumentError -> :error
   end
 
   defp canon_behavior(_), do: :error
+
+  # A role behavior entry must be a real new-style Ezagent Behavior — not just
+  # any loaded module. The runtime refuses a non-Behavior at dispatch
+  # (`{:not_a_behavior, mod}`) and the behavior-set intersection drops it, so a
+  # recipe listing `String` (or any non-Behavior) must fail at THIS boundary,
+  # not degrade silently later (codex). `new_style?/1` reads the `__behavior__?/0`
+  # marker `use Ezagent.Behavior` injects.
+  defp behavior_module?(mod) do
+    Code.ensure_loaded?(mod) and Ezagent.Behavior.new_style?(mod)
+  end
 
   defp caps_field(value) when is_list(value) do
     Enum.reduce_while(value, {:ok, []}, fn cap, {:ok, acc} ->

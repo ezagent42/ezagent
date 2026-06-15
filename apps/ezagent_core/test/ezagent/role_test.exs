@@ -115,6 +115,14 @@ defmodule Ezagent.RoleTest do
 
       assert {:error, {:invalid_role_field, :behaviors, :not_a_module}} =
                Role.new(%{behaviors: [:not_a_module]})
+
+      # a LOADED but non-Behavior module is rejected (must be a real new-style
+      # Ezagent Behavior, not just any loadable module)
+      assert {:error, {:invalid_role_field, :behaviors, String}} =
+               Role.new(%{behaviors: [String]})
+
+      assert {:error, {:invalid_role_field, :behaviors, "String"}} =
+               Role.new(%{"behaviors" => ["String"]})
     end
 
     test "rejects non-string skills/plugins entries" do
