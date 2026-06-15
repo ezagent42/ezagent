@@ -46,5 +46,25 @@ defmodule Ezagent.RoleTest do
                  Role.new(Map.put(%{skills: ["x"]}, flavor_field, "cc"))
       end
     end
+
+    test "rejects a STRING-keyed flavor field too (persisted JSON/snapshot content)" do
+      for flavor_field <- [:flavor, :kind, :bridge_adapter, :template_class] do
+        assert {:error, {:flavor_field_in_role, ^flavor_field}} =
+                 Role.new(%{"skills" => ["x"], Atom.to_string(flavor_field) => "cc"})
+      end
+    end
+
+    test "reads STRING-keyed recipe fields (persisted content round-trip)" do
+      assert {:ok, role} =
+               Role.new(%{
+                 "skills" => ["orchestrator"],
+                 "prompt" => "persona",
+                 "session_template" => "template://system/session/orchestrator"
+               })
+
+      assert role.skills == ["orchestrator"]
+      assert role.prompt == "persona"
+      assert role.session_template == "template://system/session/orchestrator"
+    end
   end
 end

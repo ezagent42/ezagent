@@ -58,9 +58,12 @@ defmodule Ezagent.Role.Compose do
         plugins: role.plugins,
         prompt: role.prompt
       },
-      # §2.3.1 fail-closed: keep ONLY requested caps the policy permits. A
-      # rejected cap is dropped (never copied), so effective ⊆ requested ∩ policy.
-      effective_caps: Enum.filter(role.requested_caps, authorize)
+      # §2.3.1 fail-closed: keep ONLY requested caps the policy permits, and
+      # ONLY on a STRICT `true` — a truthy non-boolean (e.g. an `{:error, _}` /
+      # `{:ok, false}` a mis-integrated policy predicate might return) must NOT
+      # authorize the cap. A rejected cap is dropped (never copied), so
+      # effective ⊆ requested ∩ policy.
+      effective_caps: Enum.filter(role.requested_caps, &(authorize.(&1) == true))
     }
   end
 end

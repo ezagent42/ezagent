@@ -67,5 +67,17 @@ defmodule Ezagent.Role.ComposeTest do
       out = Compose.materialize(role(), %{flavor_behaviors: [], authorize_cap: fn _ -> true end})
       assert out.effective_caps == role().requested_caps
     end
+
+    test "FAIL-CLOSED on truthy non-boolean policy result (only strict true grants)" do
+      # a mis-integrated policy that returns a truthy non-`true` value (e.g.
+      # `{:error, :not_permitted}`) must NOT authorize the cap.
+      out =
+        Compose.materialize(role(), %{
+          flavor_behaviors: [],
+          authorize_cap: fn _ -> {:error, :not_permitted} end
+        })
+
+      assert out.effective_caps == []
+    end
   end
 end

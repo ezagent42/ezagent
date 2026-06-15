@@ -62,20 +62,38 @@ defmodule Ezagent.Role do
   """
   @spec new(map()) :: {:ok, t()} | {:error, {:flavor_field_in_role, atom()}}
   def new(recipe) when is_map(recipe) do
-    case Enum.find(@flavor_fields, &Map.has_key?(recipe, &1)) do
+    # A persisted role recipe (a `template://…/role/…` content slice) round-trips
+    # through JSON/snapshot as STRING keys, so the flavor-field rejection AND the
+    # field reads must be symmetric over atom + string keys — otherwise
+    # `%{"flavor" => "cc"}` would slip past the flavor-agnostic boundary (codex).
+    case Enum.find(@flavor_fields, &flavor_key_present?(recipe, &1)) do
       nil ->
         {:ok,
          %__MODULE__{
-           skills: Map.get(recipe, :skills, []),
-           plugins: Map.get(recipe, :plugins, []),
-           prompt: Map.get(recipe, :prompt),
-           behaviors: Map.get(recipe, :behaviors, []),
-           requested_caps: Map.get(recipe, :requested_caps, []),
-           session_template: Map.get(recipe, :session_template)
+           skills: get(recipe, :skills, []),
+           plugins: get(recipe, :plugins, []),
+           prompt: get(recipe, :prompt, nil),
+           behaviors: get(recipe, :behaviors, []),
+           requested_caps: get(recipe, :requested_caps, []),
+           session_template: get(recipe, :session_template, nil)
          }}
 
       flavor_field ->
         {:error, {:flavor_field_in_role, flavor_field}}
+    end
+  end
+
+  # A forbidden flavor field is present in EITHER its atom or string form.
+  defp flavor_key_present?(recipe, atom_field) do
+    Map.has_key?(recipe, atom_field) or Map.has_key?(recipe, Atom.to_string(atom_field))
+  end
+
+  # Read a recipe field by atom key, falling back to its string key (persisted
+  # JSON/snapshot content), then the default.
+  defp get(recipe, atom_key, default) do
+    case Map.fetch(recipe, atom_key) do
+      {:ok, value} -> value
+      :error -> Map.get(recipe, Atom.to_string(atom_key), default)
     end
   end
 end
