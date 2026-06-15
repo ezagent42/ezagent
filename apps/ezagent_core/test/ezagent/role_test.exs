@@ -86,6 +86,25 @@ defmodule Ezagent.RoleTest do
                Role.new(%{requested_caps: [%{behavior: SomeBehavior}]})
     end
 
+    test "rejects a cap template that SMUGGLES a materialization/provenance axis" do
+      # a role is workspace-agnostic — these axes are injected at materialization
+      # / stamped at grant, never authored into the recipe. Smuggling a concrete
+      # workspace_uri would be a cross-workspace CapBAC hole.
+      for axis <- [:kind, :instance, :workspace_uri, :granted_by, :granted_at] do
+        cap = Map.merge(%{behavior: SomeBehavior, action: :send}, %{axis => "smuggled"})
+
+        assert {:error, {:invalid_role_field, :requested_caps, _}} =
+                 Role.new(%{requested_caps: [cap]}),
+               "expected atom-keyed #{axis} to be rejected"
+
+        cap_str = %{"behavior" => "B", "action" => "send", Atom.to_string(axis) => "smuggled"}
+
+        assert {:error, {:invalid_role_field, :requested_caps, _}} =
+                 Role.new(%{"requested_caps" => [cap_str]}),
+               "expected string-keyed #{axis} to be rejected"
+      end
+    end
+
     test "accepts string-keyed cap templates carrying behavior + action" do
       assert {:ok, role} =
                Role.new(%{

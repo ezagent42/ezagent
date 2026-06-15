@@ -115,15 +115,28 @@ defmodule Ezagent.Role do
 
   defp caps_field(value), do: {:error, {:invalid_role_field, :requested_caps, value}}
 
-  # A requested cap template must carry at least the axes the fail-closed policy
-  # predicate consumes — `behavior` + `action` (in atom or persisted-string key
-  # form). This stops a malformed entry (`%{}`, missing `action`) from reaching
-  # `Compose`'s authorization predicate and crashing materialization. (Canonical
-  # %Capability{} construction + atom-key normalization happen at the
-  # materialization step, PR-1b, via `Ezagent.Capability.normalize!/2` — the
-  # recipe boundary only validates presence.)
-  defp valid_cap_template?(cap) when is_map(cap),
-    do: cap_key?(cap, :behavior) and cap_key?(cap, :action)
+  # Materialization/provenance axes a role recipe MUST NOT carry. A Role is
+  # workspace-agnostic (a reusable recipe), so these are injected at
+  # materialization (the agent's workspace/instance/kind) or stamped at grant
+  # time (granted_by/granted_at) — NEVER authored into the recipe. Rejecting
+  # them at the boundary stops an operator-authored role from SMUGGLING a
+  # concrete/foreign `workspace_uri` (or instance/kind) into `effective_caps`,
+  # which would defeat the workspace-agnostic contract + the CapBAC boundary
+  # (codex). Fail LOUD (reject), not silent-strip — a smuggled axis is a
+  # malformed recipe, not something to quietly drop.
+  @cap_materialization_axes [:kind, :instance, :workspace_uri, :granted_by, :granted_at]
+
+  # A requested cap template must carry the axes the fail-closed policy predicate
+  # consumes — `behavior` + `action` (atom or persisted-string key form) — and
+  # MUST NOT carry any materialization/provenance axis. This stops both a
+  # malformed entry (`%{}`, missing `action`) AND a smuggled materialization axis
+  # from surviving into `effective_caps`. (Canonical %Capability{} construction +
+  # value normalization happen at materialization, PR-1b, via
+  # `Ezagent.Capability.normalize!/2`.)
+  defp valid_cap_template?(cap) when is_map(cap) do
+    cap_key?(cap, :behavior) and cap_key?(cap, :action) and
+      not Enum.any?(@cap_materialization_axes, &cap_key?(cap, &1))
+  end
 
   defp valid_cap_template?(_), do: false
 
