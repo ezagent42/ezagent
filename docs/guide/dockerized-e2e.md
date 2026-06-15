@@ -85,9 +85,46 @@ Two tiers (`feedback_esr_e2e_standards`):
    the **real Feishu round-trip**. cc-openclaw chat does NOT count — only the
    disposable stack's dedicated Feishu app replying counts.
 
+## Feishu outbound sync (session → group mirror) provisioning
+
+To make session messages **mirror OUT** to a bound Feishu group (so an operator
+watching the group sees the conversation), the stack needs three things wired —
+the first is a manual console step, the rest are reproducible:
+
+1. **Grant the dedicated app two scopes** (Feishu dev console — cannot be done
+   over the API):
+   - `im:chat.members:read` — the `is_in_chat` membership probe
+     `EzagentPluginFeishu.FeishuAdapter.caller_open_id/1` runs.
+   - `im:message:send_as_bot` — the outbound send. **Note `im:message:send`
+     does NOT exist**; the bot scope is the right one.
+2. **Bind the operator's Feishu identity to the caller** so `caller_open_id/1`
+   resolves (it requires the *caller* to have a `feishu_user_bindings` row — a
+   fresh-stack admin has none, which is why a bind attempt otherwise **silently**
+   fails with `BINDINGS` stuck at 0 and no flash):
+   ```bash
+   # operator open_id = the test group's OWNER open_id from im/v1/chats
+   # (per-app, so it differs from the main app's open_id)
+   mix ezagent.feishu.bind <operator_open_id> entity://system/user/admin
+   ```
+3. **Restart the container.** `caller_open_id/1` reads the live node's
+   `UserBinding`, which is cross-BEAM-stale to the CLI write until reload.
+4. **Bind the session → chat** in the admin LV
+   `/admin/sessions/<session-uri>/external_mirror` (adapter `feishu`,
+   `target_id` = the group `chat_id`) → `BINDINGS` becomes 1.
+5. **Verify:** send a session message → the log shows
+   `FeishuClient.send_text → POST im/v1/messages … OK (code=0)` and it appears in
+   the group. Read the group back via `im/v1/messages?container_id=<chat_id>`
+   (with a tenant_access_token) to confirm.
+
+> The silent-no-flash bind failure in step 2 is itself a UX gap worth fixing
+> (`docs/futures/todo.md`). This recipe is infra-agnostic — the same scope grant
+> + operator bind + session↔chat bind applies under any deploy target (CF
+> Workers included), only the restart mechanic is docker-specific.
+
 ## Quick checklist
 
 - [ ] Build + up the disposable stack at the commit under test (10044).
 - [ ] Secrets present in `docker/secrets/` (dedicated Feishu app + cc/codex/deepseek).
 - [ ] WSS connected (logs); admin password set.
+- [ ] Outbound sync (if testing the group mirror): app scopes granted + operator bound + restart + session↔chat bound.
 - [ ] Run `mix ezagent.e2e.run` scenarios; capture agent-browser + Feishu evidence for the live tier.
