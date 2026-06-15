@@ -533,7 +533,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
     # don't apply. Written with dot-access (not a `%URI{host:}` positional match)
     # + the rebuild split off the `URI.to_string` line so the source-scan
     # (positional_uri_read / uri_string_key) doesn't false-positive on it.
-    uri = URI.parse(ws_url)
+    uri = URI.parse(ws_url) # uri-canonical-allow: ws(s):// network URL (orchestrator MCP mount), not an Ezagent-scheme URI — Ezagent.URI rejects non-ESR schemes
 
     if is_binary(uri.scheme) and is_binary(uri.host) do
       rebased = %{uri | path: path, query: nil, fragment: nil}
