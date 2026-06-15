@@ -8,7 +8,7 @@ defmodule Ezagent.PluginLoom.View.LoomDashboardView do
 
   - **KPI**:总 token / 总成本(USD)/ 调用次数 / 团队规模。
   - **Token 明细**:fresh / cache 读 / cache 写 / output 的堆叠占比 + cache 命中率 + 均值。
-  - **按角色**:v0 / 编排器 / worker… 的 token / 成本 / 次数,带占比条。
+  - **按角色**:builder / 编排器 / worker… 的 token / 成本 / 次数,带占比条。
   - **调用时间线**:最近 60 次调用的 token sparkline。
   - **团队**:session 成员花名册(按角色着色)。
   - **素材库**:文件数 + 按类型(图片/文本/其他)分布 + 体积。
@@ -17,7 +17,7 @@ defmodule Ezagent.PluginLoom.View.LoomDashboardView do
 
   数据源:`Ezagent.PluginLoom.Stats`(claude_code usage 埋点)、`Materials`、`Knowledge`、
   `SavedClasses`、chat slice。尚未埋点的(诚实标注):发布页**点击/打开数**、衍生(fork/open)
-  会话归因、Stitch(DeepSeek)plane 的 token。
+  会话归因、Salesperson(DeepSeek)plane 的 token。
   """
 
   @behaviour Ezagent.UI.SessionView
@@ -58,7 +58,7 @@ defmodule Ezagent.PluginLoom.View.LoomDashboardView do
         <header class="flex items-end justify-between flex-wrap gap-3">
           <div>
             <div class="flex items-center gap-2">
-              <h1 class="text-xl font-bold text-zinc-900 dark:text-zinc-50">Loom 控制台</h1>
+              <h1 class="text-xl font-bold text-zinc-900 dark:text-zinc-50">Dashboard</h1>
               <span class="px-2 py-0.5 rounded-full text-[11px] font-medium bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
                 {@ws} / {@sid}
               </span>
@@ -297,7 +297,7 @@ defmodule Ezagent.PluginLoom.View.LoomDashboardView do
           <ul class="text-[11px] text-zinc-400 space-y-0.5 list-disc list-inside">
             <li>发布页的**点击 / 打开数**(需要在 <code>/loom/p/:token</code> serve 处计数)。</li>
             <li>**衍生会话**(fork / open 出去的消费会话)归因到来源 session。</li>
-            <li>**Stitch / AiSpot**(预览侧 DeepSeek)的 token 与成本(独立 plane,未接入 Stats)。</li>
+            <li>**Salesperson / AiSpot**(预览侧 DeepSeek)的 token 与成本(独立 plane,未接入 Stats)。</li>
           </ul>
         </section>
       </div>
@@ -393,17 +393,21 @@ defmodule Ezagent.PluginLoom.View.LoomDashboardView do
   defp materials(ws, sid) do
     items = safe(fn -> Materials.list(ws, sid) end, [])
 
+    # Materials.list/2 returns STRING-keyed maps (%{"path","name","type","size"}),
+    # so access with string keys — `&1.type` raised KeyError and crashed the LV
+    # (→ reconnect → re-mount on the default session) whenever a session had any
+    # materials.
     by_type =
       items
-      |> Enum.group_by(& &1.type)
+      |> Enum.group_by(&(&1["type"] || "other"))
       |> Enum.map(fn {type, list} ->
-        {type, %{count: length(list), size: list |> Enum.map(&(&1.size || 0)) |> Enum.sum()}}
+        {type, %{count: length(list), size: list |> Enum.map(&(&1["size"] || 0)) |> Enum.sum()}}
       end)
       |> Enum.sort_by(fn {_t, v} -> -v.count end)
 
     %{
       count: length(items),
-      size: items |> Enum.map(&(&1.size || 0)) |> Enum.sum(),
+      size: items |> Enum.map(&(&1["size"] || 0)) |> Enum.sum(),
       by_type: by_type
     }
   end
@@ -421,10 +425,10 @@ defmodule Ezagent.PluginLoom.View.LoomDashboardView do
 
   defp classify(s) when is_binary(s) do
     cond do
-      String.contains?(s, "/loomv0_") -> "v0"
+      String.contains?(s, "/loombuilder_") -> "builder"
       String.contains?(s, "/loomorch_") -> "orchestrator"
-      String.contains?(s, "/loomstitchsub_") -> "stitch-worker"
-      String.contains?(s, "/loomstitch_") -> "stitch"
+      String.contains?(s, "/loomsalespersonsub_") -> "salesperson-worker"
+      String.contains?(s, "/loomsalesperson_") -> "salesperson"
       String.contains?(s, "/loommeta_") -> "meta"
       String.contains?(s, "/loomworker_") -> "worker"
       String.contains?(s, "/user/") or String.starts_with?(s, "entity://user") -> "user"
@@ -432,35 +436,35 @@ defmodule Ezagent.PluginLoom.View.LoomDashboardView do
     end
   end
 
-  defp role_label("v0"), do: "页面生成 (v0)"
+  defp role_label("builder"), do: "页面生成 (builder)"
   defp role_label("orchestrator"), do: "编排器"
   defp role_label("worker"), do: "主题 Worker"
-  defp role_label("stitch"), do: "Stitch 预览助手"
-  defp role_label("stitch-worker"), do: "Stitch 子助手"
+  defp role_label("salesperson"), do: "Salesperson 预览助手"
+  defp role_label("salesperson-worker"), do: "Salesperson 子助手"
   defp role_label("meta"), do: "元代理"
   defp role_label("user"), do: "用户"
   defp role_label(_), do: "其它"
 
   defp role_order("user"), do: 0
   defp role_order("orchestrator"), do: 1
-  defp role_order("v0"), do: 2
+  defp role_order("builder"), do: 2
   defp role_order("worker"), do: 3
   defp role_order("meta"), do: 4
-  defp role_order("stitch"), do: 5
-  defp role_order("stitch-worker"), do: 6
+  defp role_order("salesperson"), do: 5
+  defp role_order("salesperson-worker"), do: 6
   defp role_order(_), do: 9
 
   # literal class strings (Tailwind 不能动态拼颜色)
-  defp role_dot("v0"), do: "bg-sky-500"
+  defp role_dot("builder"), do: "bg-sky-500"
   defp role_dot("orchestrator"), do: "bg-violet-500"
   defp role_dot("worker"), do: "bg-emerald-500"
-  defp role_dot("stitch"), do: "bg-amber-500"
-  defp role_dot("stitch-worker"), do: "bg-orange-400"
+  defp role_dot("salesperson"), do: "bg-amber-500"
+  defp role_dot("salesperson-worker"), do: "bg-orange-400"
   defp role_dot("meta"), do: "bg-rose-500"
   defp role_dot("user"), do: "bg-zinc-400"
   defp role_dot(_), do: "bg-zinc-300"
 
-  defp role_chip("v0"), do: "bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300"
+  defp role_chip("builder"), do: "bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300"
 
   defp role_chip("orchestrator"),
     do: "bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-300"
@@ -468,9 +472,9 @@ defmodule Ezagent.PluginLoom.View.LoomDashboardView do
   defp role_chip("worker"),
     do: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
 
-  defp role_chip("stitch"), do: "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+  defp role_chip("salesperson"), do: "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
 
-  defp role_chip("stitch-worker"),
+  defp role_chip("salesperson-worker"),
     do: "bg-orange-50 text-orange-700 dark:bg-orange-950 dark:text-orange-300"
 
   defp role_chip("meta"), do: "bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
