@@ -28,6 +28,18 @@
 > `ARCHITECTURE.md` Appendix-B Decision Log entry (#155) is left to Allen
 > (ARCHITECTURE.md is Allen-maintained per CLAUDE.md — not edited here). The
 > §1–§8 cap-check design is retained below only as the rejected alternative.
+>
+> **Rename sub-decision = B-定论 (2026-06-15).** Within decision B there was an
+> open sub-choice: also do the cosmetic cleanup (rename `reads_siblings`/
+> `ctx.siblings` → a structural `ctx.read_slice` across the 7 consumers). That
+> is **DROPPED** — it buys NOTHING behavioral (structural sibling reads already
+> work via `reads_siblings`, which B blesses), and it would churn the
+> session-domain consumers (a concurrently-worked lane) for zero gain.
+> `reads_siblings`/`reads_sibling_slices` are **RETAINED as the blessed
+> structural sibling-read mechanism**; the `sensitive_slice_read` gate
+> (`apps/ezagent_core/test/invariants/sensitive_slice_read_test.exs`, merged
+> with this banner) is the sole new control. **With this, #56 is COMPLETE**:
+> decision recorded + gate landed; nothing further to build.
 
 > **Design spec.** Builds on
 > [`2026-06-14-cap-in-process-op-analysis.md`](./2026-06-14-cap-in-process-op-analysis.md).
