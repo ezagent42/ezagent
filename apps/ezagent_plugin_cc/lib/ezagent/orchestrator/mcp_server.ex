@@ -363,15 +363,33 @@ defmodule Ezagent.Orchestrator.McpServer do
 
   # --- result mapping (transport encode) ---------------------------------
 
-  defp to_mcp_result({:ok, value}), do: success_result(value)
-  defp to_mcp_result(:ok), do: success_result(:ok)
-  defp to_mcp_result({:error, reason}), do: tool_error_result(reason)
-  defp to_mcp_result(other), do: success_result(other)
+  @doc false
+  # Transport-encode boundary (exposed for the structured-content regression
+  # test): map a tool's `{:ok, value} | :ok | {:error, reason} | other` return
+  # into an MCP tool result.
+  def to_mcp_result({:ok, value}), do: success_result(value)
+  def to_mcp_result(:ok), do: success_result(:ok)
+  def to_mcp_result({:error, reason}), do: tool_error_result(reason)
+  def to_mcp_result(other), do: success_result(other)
 
   defp success_result(value) do
+    # MCP `structuredContent` MUST be an object/record. `stringify/1` faithfully
+    # encodes the tool's return, but a SCALAR/URI/list result (e.g.
+    # `add_managed_member` → `{:ok, member_uri}`) stringifies to a bare string or
+    # array, which the bridge rejects with `structuredContent: invalid_type,
+    # expected record, received string` — so the orchestrator's claude cannot
+    # read back the result (e.g. the new member URI). Wrap any non-map result in
+    # `%{"result" => ...}` so structuredContent is always a valid object; map
+    # results pass through unchanged. (Transport #53 / #750 encode bug.)
+    structured =
+      case stringify(value) do
+        %{} = map -> map
+        other -> %{"result" => other}
+      end
+
     %{
       "content" => [%{"type" => "text", "text" => describe_success(value)}],
-      "structuredContent" => stringify(value),
+      "structuredContent" => structured,
       "isError" => false
     }
   end
