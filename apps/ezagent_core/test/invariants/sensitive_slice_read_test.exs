@@ -169,6 +169,33 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
       assert [%{key: :api_keys, via: :get_slice}] = scan_source(bare, "apps/x/lib/b.ex")
     end
 
+    test "catches a PIPED get_slice (qualified + dynamic key)" do
+      piped = """
+      defmodule Some.Behavior.Piped do
+        def peek(uri), do: uri |> Ezagent.Kind.get_slice(:api_keys)
+      end
+      """
+
+      piped_dyn = """
+      defmodule Some.Behavior.PipedDyn do
+        def peek(uri, k), do: uri |> Ezagent.Kind.get_slice(k)
+      end
+      """
+
+      assert [%{key: :api_keys, via: :get_slice}] = scan_source(piped, "apps/x/lib/p.ex")
+      assert [%{key: :__dynamic__, via: :get_slice}] = scan_source(piped_dyn, "apps/x/lib/pd.ex")
+    end
+
+    test "catches a GUARDED zero-arity sibling callback" do
+      src = """
+      defmodule Some.Behavior.Guarded do
+        def reads_siblings() when true, do: [:identity]
+      end
+      """
+
+      assert [%{key: :identity, via: :reads_siblings}] = scan_source(src, "apps/x/lib/g.ex")
+    end
+
     test "FAIL-CLOSED: a non-literal get_slice key is flagged :__dynamic__" do
       src = """
       defmodule Some.Behavior.Dyn do
@@ -250,25 +277,41 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
 
   # def reads_siblings, do: [...] / def reads_sibling_slices, do: [...] — every
   # ZERO-ARITY head the runtime accepts via function_exported?/3: no-parens
-  # (`ctx` is nil/atom) AND explicit `()` (`ctx == []`). A head WITH args is
+  # (`ctx` is nil/atom), explicit `()` (`ctx == []`), AND a guarded head
+  # (`def foo() when ..., do:` wraps the head in `:when`). A head WITH args is
   # `ctx == [arg, ...]` and must NOT match.
-  defp node_reads({def_kw, _, [{form, _, ctx}, [{:do, body} | _]]}, file, module)
-       when def_kw in [:def, :defp] and form in [:reads_siblings, :reads_sibling_slices] and
-              (not is_list(ctx) or ctx == []) do
-    sibling_reads(form, body, file, module)
+  defp node_reads({def_kw, _, [head, [{:do, body} | _]]}, file, module)
+       when def_kw in [:def, :defp] do
+    case unwrap_def_head(head) do
+      {form, ctx}
+      when form in [:reads_siblings, :reads_sibling_slices] and (not is_list(ctx) or ctx == []) ->
+        sibling_reads(form, body, file, module)
+
+      _ ->
+        []
+    end
   end
 
-  # Qualified `*.get_slice(uri, key)` (e.g. Ezagent.Kind.get_slice/Kind.get_slice)
-  defp node_reads({{:., _, [_mod, :get_slice]}, _, [_uri, key]}, file, module) do
-    get_slice_read(key, file, module)
+  # Qualified `*.get_slice(uri, key)` (Ezagent.Kind.get_slice/Kind.get_slice) AND
+  # bare `get_slice(uri, key)` (after `import Ezagent.Kind`). The slice KEY is the
+  # LAST arg of the call node — which makes a piped `uri |> get_slice(:key)` (a
+  # 1-arg node pre-expansion) match too: its last arg IS the key.
+  defp node_reads({{:., _, [_mod, :get_slice]}, _, args}, file, module)
+       when is_list(args) and args != [] do
+    get_slice_read(List.last(args), file, module)
   end
 
-  # Bare `get_slice(uri, key)` (e.g. after `import Ezagent.Kind`)
-  defp node_reads({:get_slice, _, [_uri, key]}, file, module) do
-    get_slice_read(key, file, module)
+  defp node_reads({:get_slice, _, args}, file, module)
+       when is_list(args) and args != [] do
+    get_slice_read(List.last(args), file, module)
   end
 
   defp node_reads(_node, _file, _module), do: []
+
+  # Normalize a def head to `{name, ctx}`, unwrapping a `:when` guard wrapper.
+  defp unwrap_def_head({:when, _, [{name, _, ctx} | _]}), do: {name, ctx}
+  defp unwrap_def_head({name, _, ctx}), do: {name, ctx}
+  defp unwrap_def_head(_), do: {nil, nil}
 
   defp sibling_reads(form, arg, file, module) do
     via = if form == :reads_sibling_slices, do: :reads_sibling_slices, else: :reads_siblings
