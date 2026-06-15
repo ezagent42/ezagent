@@ -78,6 +78,24 @@ defmodule Ezagent.RoleTest do
       assert {:error, {:invalid_role_field, :requested_caps, _}} =
                Role.new(%{requested_caps: [:not_a_cap_map]})
 
+      # a cap-template map must carry behavior + action (else it crashes the policy predicate)
+      assert {:error, {:invalid_role_field, :requested_caps, _}} =
+               Role.new(%{requested_caps: [%{}]})
+
+      assert {:error, {:invalid_role_field, :requested_caps, _}} =
+               Role.new(%{requested_caps: [%{behavior: SomeBehavior}]})
+    end
+
+    test "accepts string-keyed cap templates carrying behavior + action" do
+      assert {:ok, role} =
+               Role.new(%{
+                 "requested_caps" => [
+                   %{"behavior" => "Ezagent.Behavior.Chat", "action" => "send"}
+                 ]
+               })
+
+      assert [%{"behavior" => "Ezagent.Behavior.Chat", "action" => "send"}] = role.requested_caps
+
       assert {:error, {:invalid_role_field, :skills, "nope"}} =
                Role.new(%{"skills" => "nope"})
 

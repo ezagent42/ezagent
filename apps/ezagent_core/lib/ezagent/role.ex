@@ -108,12 +108,27 @@ defmodule Ezagent.Role do
   defp list_field(value, name), do: {:error, {:invalid_role_field, name, value}}
 
   defp caps_field(value) when is_list(value) do
-    if Enum.all?(value, &is_map/1),
+    if Enum.all?(value, &valid_cap_template?/1),
       do: :ok,
       else: {:error, {:invalid_role_field, :requested_caps, value}}
   end
 
   defp caps_field(value), do: {:error, {:invalid_role_field, :requested_caps, value}}
+
+  # A requested cap template must carry at least the axes the fail-closed policy
+  # predicate consumes — `behavior` + `action` (in atom or persisted-string key
+  # form). This stops a malformed entry (`%{}`, missing `action`) from reaching
+  # `Compose`'s authorization predicate and crashing materialization. (Canonical
+  # %Capability{} construction + atom-key normalization happen at the
+  # materialization step, PR-1b, via `Ezagent.Capability.normalize!/2` — the
+  # recipe boundary only validates presence.)
+  defp valid_cap_template?(cap) when is_map(cap),
+    do: cap_key?(cap, :behavior) and cap_key?(cap, :action)
+
+  defp valid_cap_template?(_), do: false
+
+  defp cap_key?(map, atom_key),
+    do: Map.has_key?(map, atom_key) or Map.has_key?(map, Atom.to_string(atom_key))
 
   defp ref_field(nil, _name), do: :ok
   defp ref_field(value, _name) when is_binary(value), do: :ok
