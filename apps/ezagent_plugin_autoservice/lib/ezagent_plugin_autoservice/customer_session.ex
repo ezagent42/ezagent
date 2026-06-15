@@ -393,9 +393,10 @@ defmodule EzagentPluginAutoservice.CustomerSession do
           :ok
 
         :error ->
-          case Ezagent.Kind.spawn(Ezagent.Entity.SocialwareSession, %{
+          case Ezagent.Kind.spawn(Ezagent.Entity.Session, %{
                  uri: session_uri,
-                 owner_uri: owner_uri
+                 owner_uri: owner_uri,
+                 behaviors: Ezagent.Entity.Session.socialware_behaviors()
                }) do
             {:ok, _pid} -> :ok
             {:error, {:already_started, _pid}} -> :ok

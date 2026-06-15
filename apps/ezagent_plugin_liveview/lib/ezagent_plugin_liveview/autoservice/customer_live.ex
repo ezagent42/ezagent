@@ -12,7 +12,7 @@ defmodule EzagentPluginLiveview.AutoService.CustomerLive do
   import Phoenix.Component
 
   alias EzagentPluginAutoservice.{ChatUI, CustomerSession}
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session
   alias Ezagent.Socialware.CustomerFeed
 
   require Logger
@@ -27,7 +27,7 @@ defmodule EzagentPluginLiveview.AutoService.CustomerLive do
       {:ok, session_uri} ->
         if connected?(socket) do
           Phoenix.PubSub.subscribe(EzagentCore.PubSub, CustomerFeed.topic(session_uri))
-          Phoenix.PubSub.subscribe(EzagentCore.PubSub, Chat.session_events_topic(session_uri))
+          Phoenix.PubSub.subscribe(EzagentCore.PubSub, Session.session_events_topic(session_uri))
         end
 
         caps = Ezagent.Identity.list_caps_for(customer_uri)

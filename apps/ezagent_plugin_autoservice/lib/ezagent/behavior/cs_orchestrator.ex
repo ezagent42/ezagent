@@ -1,9 +1,10 @@
 defmodule Ezagent.Behavior.CsOrchestrator do
   @moduledoc """
-  Customer-service orchestration Behavior on SocialwareSession Kind.
+  Customer-service orchestration Behavior on the unified Entity.Session Kind
+  (socialware subset via P5-1b substrate collapse).
 
   Ported from PR #731 (commit 23b9974, Live E2E verified), adapted:
-  Kind → Behavior on SocialwareSession (not standalone Kind).
+  Kind → Behavior on Entity.Session (socialware subset, not standalone Kind).
   TurnDriver calls Turn handlers directly (same-process, v3 §6.6.1).
 
   ## Actions
@@ -411,7 +412,7 @@ defmodule Ezagent.Behavior.CsOrchestrator do
 
   @spec data_owner(URI.t() | :any | term()) :: URI.t() | :any | :no_owner
   def data_owner(%URI{scheme: "session"} = session_uri) do
-    Ezagent.Behavior.Chat.data_owner(session_uri)
+    Ezagent.Behavior.Session.data_owner(session_uri)
   end
 
   def data_owner(:any), do: :any

@@ -48,7 +48,7 @@ defmodule EzagentPluginAutoservice.MixProject do
       # Identity domain: users, roles, capabilities
       {:ezagent_domain_identity, in_umbrella: true},
       # Instance message domain: Session Kind + Chat behavior
-      {:ezagent_domain_instance_message, in_umbrella: true},
+      {:ezagent_domain_session, in_umbrella: true},
       # UI primitives for chat
       {:ezagent_domain_ui, in_umbrella: true},
       {:phoenix_live_view, ">= 0.0.0"},

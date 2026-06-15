@@ -12,7 +12,7 @@ defmodule EzagentPluginAutoservice.OperatorTakeoverGatingTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Invocation, MessageStore}
-  alias Ezagent.Entity.{SocialwareSession, User}
+  alias Ezagent.Entity.{Session, User}
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Socialware.{CustomerAuth, CustomerFeed, Settlement}
   alias EzagentPluginAutoservice.Roles
@@ -115,7 +115,7 @@ defmodule EzagentPluginAutoservice.OperatorTakeoverGatingTest do
 
     :ok = KindSnapshot.delete(URI.to_string(session_uri))
 
-    {:ok, _pid} = Ezagent.Kind.spawn(SocialwareSession, %{uri: session_uri})
+    {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri, behaviors: Session.socialware_behaviors()})
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
 

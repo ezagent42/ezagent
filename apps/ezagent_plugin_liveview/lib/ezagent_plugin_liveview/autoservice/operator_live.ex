@@ -12,7 +12,7 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
   use Phoenix.LiveView
   import Phoenix.Component
 
-  alias Ezagent.Behavior.Chat
+  alias Ezagent.Behavior.Session
   alias EzagentPluginAutoservice.{ChatUI, TurnAdapter}
   alias Ezagent.Socialware.CustomerFeed
 
@@ -393,7 +393,7 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
     do: URI.to_string(selected) == URI.to_string(incoming)
 
   defp resubscribe(socket, %URI{} = session_uri) do
-    new_topic = Chat.session_events_topic(session_uri)
+    new_topic = Session.session_events_topic(session_uri)
 
     if connected?(socket) do
       old = socket.assigns[:subscribed_topic]

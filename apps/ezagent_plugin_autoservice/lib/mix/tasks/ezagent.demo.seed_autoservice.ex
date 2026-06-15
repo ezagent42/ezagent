@@ -65,7 +65,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
     {:ok, _} = Application.ensure_all_started(:ezagent_core)
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_identity)
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_workspace)
-    {:ok, _} = Application.ensure_all_started(:ezagent_domain_instance_message)
+    {:ok, _} = Application.ensure_all_started(:ezagent_domain_session)
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_curl_agent)
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_autoservice)
 

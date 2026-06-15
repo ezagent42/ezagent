@@ -70,12 +70,14 @@ defmodule EzagentPluginAutoservice.ChatUI do
   attr(:placeholder, :string, default: "输入消息…")
   attr(:nonce, :integer, default: 0)
   attr(:disabled, :boolean, default: false)
+  attr(:submit_event, :string, default: "send")
+  attr(:submit_label, :string, default: "发送")
 
   def composer(assigns) do
     ~H"""
     <form
       id={"autoservice-composer-#{@nonce}"}
-      phx-submit="send"
+      phx-submit={@submit_event}
       class="flex gap-2 p-3 border-t border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-950"
     >
       <input
@@ -92,7 +94,7 @@ defmodule EzagentPluginAutoservice.ChatUI do
         disabled={@disabled}
         class="rounded-lg bg-blue-600 text-white px-4 py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
       >
-        发送
+        {@submit_label}
       </button>
     </form>
     """
