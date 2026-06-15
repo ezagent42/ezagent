@@ -133,11 +133,11 @@ defmodule EzagentPluginLoom.Prompts do
   }
   ```
 
-  ## 页面助手（Stitch）样式 —— 可选,你来定它长什么样
-  页面右下角/底部有个「Stitch」页面助手浮层(访客用它对话操作页面)。它的**样式和位置**
+  ## 页面助手（Salesperson）样式 —— 可选,你来定它长什么样
+  页面右下角/底部有个「Salesperson」页面助手浮层(访客用它对话操作页面)。它的**样式和位置**
   你可以控制(功能不用管),让它契合页面风格。需要时在代码块**之外**额外输出**一个**这样的块:
 
-  ```stitchConfig
+  ```salespersonConfig
   {"placement":"bottom-center","draggable":false,"accent":"#272324"}
   ```
 
@@ -145,6 +145,20 @@ defmodule EzagentPluginLoom.Prompts do
   - `draggable`:是否可拖拽(`bottom-center` 默认 false)。
   - `accent`:主题强调色(hex),让助手配色和页面一致(如深色站用页面主色)。
   不输出这个块 → 用默认(右下角紫色、可拖)。
+
+  ## 弹幕（Danmaku）样式 —— 可选,你来定它长什么样
+  页面上会有**弹幕**:本会话里人类的发言会像 B 站弹幕一样从右向左实时飘过页面(只飘一次,不回看)。
+  默认就是 B 站那种白字带描边、半透明、匀速滚动。想让它契合页面风格,在代码块**之外**额外输出**一个**这样的块:
+
+  ```danmakuConfig
+  {"enabled":true,"color":"#ffffff","fontSize":22,"speed":1,"opacity":0.85,"density":1}
+  ```
+
+  - `enabled`:是否开启弹幕(默认 true)。
+  - `color`:文字颜色(hex,默认白)。`fontSize`:字号 px(默认 ~22)。
+  - `speed`:速度倍率(1=默认,2=更快)。`opacity`:0~1 透明度(默认 0.85)。
+  - `density`:轨道密度倍率(1=默认)。
+  不输出这个块 → 用 B 站默认风格。
 
   ## 可用技术栈（这些已装好，放心 import）
   - **React + Tailwind CSS**（Tailwind 走 CDN，直接写 className）
@@ -176,7 +190,7 @@ defmodule EzagentPluginLoom.Prompts do
   ⚠️ **`loom-kit` 一律用裸模块名 import(`from 'loom-kit'`),不要写相对路径**(别写 `./loom-kit`
   或 `../loom-kit`)。它是平台内置模块,**在 `/App.jsx`、`/components/任意.jsx` 等任何文件、任何
   目录深度都用同一句 `from 'loom-kit'`** —— 写成 `./loom-kit` 在子目录文件里会「Could not find
-  module」报错。`useDataScope`、`askStitch` 也从 `'loom-kit'` 取。
+  module」报错。`useDataScope`、`askSalesperson` 也从 `'loom-kit'` 取。
 
   ### 1) `AiSpot` —— 在某处放一个 ✨ AI 入口（点击**实时问 AI**，生成与该处相关的内容）
   访客点 ✨ → 后端**实时**用你传的 `context` 问 AI，生成**与这块强相关**的一小段内容（**不是写死**）。
@@ -308,8 +322,8 @@ defmodule EzagentPluginLoom.Prompts do
   ```
   这样:用户在总览说「只看大额订单」→ 引擎自动跳到 orders 视图 + 滚动到该组件 + 应用筛选,效果立刻可见。
 
-  ### 8) `askStitch` —— 让页面主动问右下角助手（SDK）
-  `import { askStitch } from 'loom-kit';` 然后 `askStitch('解释一下 复购率')` 即可把一句话塞进助手并发出。
+  ### 8) `askSalesperson` —— 让页面主动问右下角助手（SDK）
+  `import { askSalesperson } from 'loom-kit';` 然后 `askSalesperson('解释一下 复购率')` 即可把一句话塞进助手并发出。
   用途:给某个名词/按钮挂「问助手」。（AiSpot 的卡片已**自动**把关键名词做成可点击追问,你通常不用手接;
   这个 SDK 是给你自定义入口用的。)
 
@@ -353,6 +367,29 @@ defmodule EzagentPluginLoom.Prompts do
   - 标准接法：进入时 `getHistory()` 回填 → `onMessage` 持续追加新消息 → 用户提交时 `sendMessage`，按返回 `ok` 给反馈（发送中禁用按钮 / 失败显示 error）。编排器的回复会稍后作为新 `frame` 经 `onMessage` 异步流回（可能要几秒）。
   - **渲染 ezagent 消息一律用组件**：`import { EzagentMessage } from 'ezagent-ui';` 然后 `<EzagentMessage frame={f} />`。它把编排器的 `<span type>` 卡（services/companies/detail/steps/form/choices/notice/application/intent）渲染成卡片，卡里的按钮/表单/快捷动作会**自动发回会话**；非卡片消息按纯文本显示。**不要**自己解析 `frame.body` 或手搓卡片 UI。（这个组件以后会支持更多 ezagent 消息能力，你只管用它。）
   - 用 `useState`/`useEffect` 管消息列表、输入、发送态；`onMessage` 的取消函数放进 `useEffect` 的 cleanup。
+
+  ## 平台能力(进阶):接线台 —— 跨多个 session（listMySessions / getSessionMessages / sendToSession）
+  当用户要的是**「接线员 / 客服工作台 / 多会话收件箱」**这类页面(像群聊软件,左边一栏 session 列表、右边当前 session 的消息 + 输入框),用 `platform` 的这三个**多 session** 能力(**需要登录**,后台据登录身份判断你在哪些 session、是不是成员):
+
+  ```jsx
+  import { listMySessions, getSessionMessages, sendToSession } from 'platform';
+
+  // 1) 列出当前登录用户作为成员的所有 session。
+  //    → { ok, logged_in, entity_uri, sessions: [{ uri, ws, sid, title, last_text }] }
+  const { logged_in, sessions } = await listMySessions();
+
+  // 2) 读某个 session 的消息(uri = sessions[i].uri)。→ { ok, messages: frame[] }
+  const { messages } = await getSessionMessages(sessions[0].uri);
+
+  // 3) 以登录身份往某个 session 发消息(成员身份门控;发进去也会以弹幕飘在该 session 的预览页)。
+  //    → { ok, id?, error? }
+  const r = await sendToSession(sessions[0].uri, '您好,我是接线员,这就为您处理');
+  ```
+
+  - 这是**轮询模型**(目前没有跨 session 实时推送):进入时 `listMySessions()`,选中一个 session 后 `getSessionMessages(uri)`;用 `setInterval`(如每 3~5 秒)刷新当前 session 的消息 + 列表的 `last_text`。
+  - `logged_in:false` → 提示用户先登录(接线台必须登录;它跟单会话的 `sendMessage`/`onMessage` 不同,后者是匿名访客也能用的)。
+  - 消息渲染同样用 `<EzagentMessage frame={f} />`。
+  - 只在「多会话工作台」场景用这组;普通单会话页用上面的 `sendMessage`/`onMessage`/`getHistory`。
 
   标准范式（参考，不要照抄，按用户需求改 UI）：
 
@@ -494,7 +531,7 @@ defmodule EzagentPluginLoom.Prompts do
 
   @doc """
   Page-generation system prompt — the rules the AI must follow to emit a
-  single jsx code block. Used by `Ezagent.Behavior.LoomV0Worker` in the
+  single jsx code block. Used by `Ezagent.Behavior.LoomBuilderWorker` in the
   session-rooted redesign (previously also served `POST /loom/api/chat`
   for the standalone frontend, now deleted).
   """

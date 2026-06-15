@@ -35,7 +35,7 @@ defmodule EzagentPluginLoom.WebPlug do
   require Logger
 
   # NOTE: `EzagentPluginLoom.DeepSeek` and `Prompts.page_gen_system_prompt`
-  # are no longer used here — page generation moved to `LoomV0Worker`
+  # are no longer used here — page generation moved to `LoomBuilderWorker`
   # (2026-06-01 redesign). The bridge endpoints dispatch session actions only.
 
   @loom_ui_root "priv/static/loom_ui"
@@ -52,7 +52,7 @@ defmodule EzagentPluginLoom.WebPlug do
 
   # POST /api/chat removed by 2026-06-01 redesign — page generation no longer
   # runs from the standalone left-chat → DeepSeek path; it's now a worker
-  # (LoomV0Worker) dispatched by the session orchestrator. See
+  # (LoomBuilderWorker) dispatched by the session orchestrator. See
   # docs/loom/2026-06-01-loom-as-session-redesign.md.
 
   # --- loom SDK 桥:per-session 端点(同源;沙箱经宿主桥调用)-----------
@@ -147,19 +147,19 @@ defmodule EzagentPluginLoom.WebPlug do
     end
   end
 
-  # 2026-06-10 重构:Stitch / AiSpot 不再直连 DeepSeek。改成把每次请求包成一条
-  # `@loomstitch_<sid>` 消息**派进 session**,由 stitch worker(DeepSeek)处理,回帧
+  # 2026-06-10 重构:Salesperson / AiSpot 不再直连 DeepSeek。改成把每次请求包成一条
+  # `@loomsalesperson_<sid>` 消息**派进 session**,由 salesperson worker(DeepSeek)处理,回帧
   # 经 SSE 流回前端(前端按 ref_id 关联回发起的 Promise)。对话因此进 MessageStore。
   #
-  # GET 读对话:从 **session 历史**重建 Stitch 聊天线程(取代旧 StitchChat JSON)。
-  get "/api/:ws/:sid/stitch" do
-    json_resp(conn, 200, %{ok: true, conversation: stitch_conversation(ws, sid)})
+  # GET 读对话:从 **session 历史**重建 Salesperson 聊天线程(取代旧 SalespersonChat JSON)。
+  get "/api/:ws/:sid/salesperson" do
+    json_resp(conn, 200, %{ok: true, conversation: salesperson_conversation(ws, sid)})
   end
 
-  # POST 发一条 Stitch 聊天:派 `@loomstitch_<sid>`(mode=stitch,带 caps + 最近历史)。
-  # 异步——立即返回 `{ok, id}`,真正的 `{reply, drive, op}` 由 worker 回的 stitch_reply
+  # POST 发一条 Salesperson 聊天:派 `@loomsalesperson_<sid>`(mode=salesperson,带 caps + 最近历史)。
+  # 异步——立即返回 `{ok, id}`,真正的 `{reply, drive, op}` 由 worker 回的 salesperson_reply
   # 帧经流送达。body: %{"text", "caps"=[...], "history"=[{role,text,drive}]}
-  post "/api/:ws/:sid/stitch" do
+  post "/api/:ws/:sid/salesperson" do
     text = conn.body_params |> Map.get("text", "") |> to_string()
     caps = conn.body_params |> Map.get("caps", []) |> normalize_caps()
     history = conn.body_params |> Map.get("history", [])
@@ -167,16 +167,16 @@ defmodule EzagentPluginLoom.WebPlug do
     json_resp(
       conn,
       200,
-      dispatch_to_stitch(
+      dispatch_to_salesperson(
         ws,
         sid,
-        %{"mode" => "stitch", "text" => text, "caps" => caps, "history" => history},
+        %{"mode" => "salesperson", "text" => text, "caps" => caps, "history" => history},
         text
       )
     )
   end
 
-  # 2026-06-10 AiSpot ✨:同样走 stitch worker(mode=aispot,纯文本应答)。异步,回帧
+  # 2026-06-10 AiSpot ✨:同样走 salesperson worker(mode=aispot,纯文本应答)。异步,回帧
   # 经流按 ref_id 关联回那次 ✨ 请求。body: %{"feature", "context"}。
   post "/api/:ws/:sid/aispot" do
     feature = conn.body_params |> Map.get("feature", "") |> to_string()
@@ -186,7 +186,7 @@ defmodule EzagentPluginLoom.WebPlug do
     json_resp(
       conn,
       200,
-      dispatch_to_stitch(
+      dispatch_to_salesperson(
         ws,
         sid,
         %{"mode" => "aispot", "feature" => feature, "context" => context, "caps" => caps},
@@ -195,7 +195,7 @@ defmodule EzagentPluginLoom.WebPlug do
     )
   end
 
-  # 2026-06-09 知识库:编辑器写一段 md,作为消费侧 Stitch/AiSpot 的 grounding。
+  # 2026-06-09 知识库:编辑器写一段 md,作为消费侧 Salesperson/AiSpot 的 grounding。
   get "/api/:ws/:sid/knowledge" do
     json_resp(conn, 200, %{ok: true, md: Ezagent.PluginLoom.Knowledge.get(ws, sid)})
   end
@@ -314,9 +314,10 @@ defmodule EzagentPluginLoom.WebPlug do
           page: Map.get(snap, "page", %{}),
           ops: Map.get(snap, "ops", []),
           conversation: Map.get(snap, "conversation", []),
-          # 2026-06-11 — 只读快照视图的 Stitch 没有 bridge,样式只能靠这里带过去
+          # 2026-06-11 — 只读快照视图的 Salesperson 没有 bridge,样式只能靠这里带过去
           # (否则退回默认 fab,丢掉作者配的 bar / accent)。
-          stitch_config: Map.get(snap, "stitch_config"),
+          salesperson_config: Map.get(snap, "salesperson_config"),
+          danmaku_config: Map.get(snap, "danmaku_config"),
           ws: Map.get(snap, "ws"),
           origin_sid: Map.get(snap, "origin_sid")
         })
@@ -331,6 +332,17 @@ defmodule EzagentPluginLoom.WebPlug do
   # 前端用它做 fork 闸:未登录 → 跳登录;已登录 → 可 fork。
   get "/whoami" do
     json_resp(conn, 200, whoami(conn))
+  end
+
+  # 2026-06-15 — 接线员(operator)多 session API。登录身份(cookie)→ 跨 session:
+  # 列出「我所在的 session」、往指定 session 发消息(成员身份门控)。builder 可在
+  # 发布页上用它做群聊式接线台;发进去的消息也会以弹幕飘在该 session 的预览页。
+  get "/api/me/sessions" do
+    json_resp(conn, 200, list_my_sessions(conn))
+  end
+
+  post "/api/me/send" do
+    json_resp(conn, 200, operator_send(conn))
   end
 
   # 2026-06-05 fork:从分享快照建一个**自己的**新 session(无 v0,base=快照冻结页面),
@@ -417,21 +429,21 @@ defmodule EzagentPluginLoom.WebPlug do
     json_resp(conn, 200, %{ok: true, instruction: instruction})
   end
 
-  # 2026-06-15 — Stitch 接待模式开关:stitch(自动答访客)| human(不答,出运营分析)。
-  get "/api/:ws/:sid/stitch-mode" do
+  # 2026-06-15 — Salesperson 接待模式开关:salesperson(自动答访客)| human(不答,出运营分析)。
+  get "/api/:ws/:sid/salesperson-mode" do
     json_resp(conn, 200, %{
       ok: true,
-      mode: Ezagent.PluginLoom.WorkerConfig.get_stitch_mode(ws, sid)
+      mode: Ezagent.PluginLoom.WorkerConfig.get_salesperson_mode(ws, sid)
     })
   end
 
-  post "/api/:ws/:sid/stitch-mode" do
-    mode = (conn.body_params || %{}) |> Map.get("mode", "stitch") |> to_string()
-    _ = Ezagent.PluginLoom.WorkerConfig.put_stitch_mode(ws, sid, mode)
+  post "/api/:ws/:sid/salesperson-mode" do
+    mode = (conn.body_params || %{}) |> Map.get("mode", "salesperson") |> to_string()
+    _ = Ezagent.PluginLoom.WorkerConfig.put_salesperson_mode(ws, sid, mode)
 
     json_resp(conn, 200, %{
       ok: true,
-      mode: Ezagent.PluginLoom.WorkerConfig.get_stitch_mode(ws, sid)
+      mode: Ezagent.PluginLoom.WorkerConfig.get_salesperson_mode(ws, sid)
     })
   end
 
@@ -578,7 +590,7 @@ defmodule EzagentPluginLoom.WebPlug do
 
   # 2026-06-01 — 提取消息开头的 @<entity-id>(限定 loom 团队里 well-known
   # 命名:loommeta_<sid> / loomorch_<sid> / loomworker_<sid>_<theme> /
-  # loomv0_<sid>)。命中 → mentions = [那条 URI],visible_text 保留原样
+  # loombuilder_<sid>)。命中 → mentions = [那条 URI],visible_text 保留原样
   # (含 @ 前缀,这样 admin chat 视图看得到)。
   # 没命中(消息不是 @ 开头,或 @ 的不是已知 loom 成员)→ 默认 @ orchestrator,
   # 在 visible_text 前缀 "@<orch-id>" 让 admin 看得清。
@@ -586,8 +598,8 @@ defmodule EzagentPluginLoom.WebPlug do
     valid_ids = [
       "loommeta_#{sid}",
       "loomorch_#{sid}",
-      "loomv0_#{sid}",
-      "loomstitch_#{sid}"
+      "loombuilder_#{sid}",
+      "loomsalesperson_#{sid}"
     ]
 
     case Regex.run(~r/^\s*@([a-zA-Z_][a-zA-Z0-9_]*)\s*/, text) do
@@ -697,25 +709,25 @@ defmodule EzagentPluginLoom.WebPlug do
       "refId" => m.ref_id
     }
 
-    # stitch worker 回复:body 是纯文本,drive/op/mode 在 `stitch_reply` 字段 → 随帧
-    # 作独立 `stitch` 字段送前端(前端据此应用 drive、关联回 Promise)。
-    # stitch 决策 trace(`stitch_debug: true`)标 `stitchDebug` → 前端可据此在消费侧隐藏
-    # (编辑器/admin 时间线照常显示纯文本)。GET /stitch 因其无 stitch_reply 已自动跳过。
-    base = if debug_body?(m.body), do: Map.put(base, "stitchDebug", true), else: base
+    # salesperson worker 回复:body 是纯文本,drive/op/mode 在 `salesperson_reply` 字段 → 随帧
+    # 作独立 `salesperson` 字段送前端(前端据此应用 drive、关联回 Promise)。
+    # salesperson 决策 trace(`salesperson_debug: true`)标 `salespersonDebug` → 前端可据此在消费侧隐藏
+    # (编辑器/admin 时间线照常显示纯文本)。GET /salesperson 因其无 salesperson_reply 已自动跳过。
+    base = if debug_body?(m.body), do: Map.put(base, "salespersonDebug", true), else: base
 
-    case stitch_meta_of(m.body) do
+    case salesperson_meta_of(m.body) do
       nil -> base
-      meta -> Map.put(base, "stitch", meta)
+      meta -> Map.put(base, "salesperson", meta)
     end
   end
 
-  defp debug_body?(%{stitch_debug: true}), do: true
-  defp debug_body?(%{"stitch_debug" => true}), do: true
+  defp debug_body?(%{salesperson_debug: true}), do: true
+  defp debug_body?(%{"salesperson_debug" => true}), do: true
   defp debug_body?(_), do: false
 
-  defp stitch_meta_of(%{stitch_reply: m}) when is_map(m), do: m
-  defp stitch_meta_of(%{"stitch_reply" => m}) when is_map(m), do: m
-  defp stitch_meta_of(_), do: nil
+  defp salesperson_meta_of(%{salesperson_reply: m}) when is_map(m), do: m
+  defp salesperson_meta_of(%{"salesperson_reply" => m}) when is_map(m), do: m
+  defp salesperson_meta_of(_), do: nil
 
   defp role_of(%URI{} = u), do: role_of(URI.to_string(u))
   defp role_of("entity://user/" <> _), do: "user"
@@ -1017,7 +1029,7 @@ defmodule EzagentPluginLoom.WebPlug do
     # saved_state shape:
     #   %{ "orchestrator" => %{persona, loom_source},
     #      "workers"      => [%{theme, system_prompt, role}, ...],
-    #      "v0"           => %{} }
+    #      "builder"           => %{} }
     # 实例化时 LoomSession.pre_spawn_workers_if_saved 按数组逐个 spawn,
     # Team.ensure_team 用 worker_themes 跑出对应 URI。增/删/改 worker
     # 都通过这个数组持久化(目前无 UI 改动,等 UI 上来自动 work)。
@@ -1077,7 +1089,7 @@ defmodule EzagentPluginLoom.WebPlug do
          {:ok, [session_uri | _]} <- class_module.instantiate(sid, tmpl, workspace_uri),
          {:ok, user_uri} <- EzagentPluginLoom.TempUser.ensure_named(ws, "loomui_#{sid}"),
          :ok <- ensure_joined(session_uri, user_uri) do
-      # 知识库随发布物 seed 进这个消费会话 → 它的 Stitch 也有知识。
+      # 知识库随发布物 seed 进这个消费会话 → 它的 Salesperson 也有知识。
       _ =
         Ezagent.PluginLoom.Knowledge.put(
           ws,
@@ -1115,6 +1127,138 @@ defmodule EzagentPluginLoom.WebPlug do
     _ -> %{ok: true, logged_in: false}
   end
 
+  # --- 2026-06-15 接线员(operator)多 session helpers ---
+
+  # 从鉴权 cookie 解析当前登录 entity URI(同 whoami / LiveAuth 的 key)。
+  defp caller_entity(conn) do
+    conn = Plug.Conn.fetch_session(conn)
+
+    case Plug.Conn.get_session(conn, "current_entity_uri") do
+      uri when is_binary(uri) and uri != "" -> {:ok, Ezagent.URI.new!(uri)}
+      _ -> :error
+    end
+  rescue
+    _ -> :error
+  end
+
+  # 列出当前登录 entity **作为 chat 成员**的所有 session(跨 workspace)。
+  defp list_my_sessions(conn) do
+    case caller_entity(conn) do
+      {:ok, entity_uri} ->
+        sessions =
+          EzagentDomainInstanceMessage.list_sessions()
+          |> Enum.filter(&member_of?(&1, entity_uri))
+          |> Enum.map(&session_summary/1)
+          |> Enum.sort_by(& &1.title)
+
+        %{ok: true, logged_in: true, entity_uri: URI.to_string(entity_uri), sessions: sessions}
+
+      :error ->
+        %{ok: true, logged_in: false, sessions: []}
+    end
+  rescue
+    e -> %{ok: false, error: Exception.message(e), sessions: []}
+  end
+
+  # entity 是否是 session 的 chat 成员。
+  defp member_of?(%URI{} = session_uri, %URI{} = entity_uri) do
+    case Ezagent.Kind.get_slice(session_uri, :chat) do
+      {:ok, %{members: members}} when is_map(members) ->
+        target = URI.to_string(entity_uri)
+        Enum.any?(Map.keys(members), fn k -> member_uri_str(k) == target end)
+
+      _ ->
+        false
+    end
+  rescue
+    _ -> false
+  end
+
+  defp member_of?(_, _), do: false
+
+  defp member_uri_str(%URI{} = u), do: URI.to_string(u)
+  defp member_uri_str(s) when is_binary(s), do: s
+  defp member_uri_str(o), do: inspect(o)
+
+  defp session_summary(%URI{} = session_uri) do
+    {ws, sid} = sess_ws_sid(session_uri)
+
+    last_text =
+      case last_session_message(session_uri) do
+        %Ezagent.Message{body: body} -> body |> body_text() |> String.slice(0, 80)
+        _ -> ""
+      end
+
+    %{uri: URI.to_string(session_uri), ws: ws, sid: sid, title: sid, last_text: last_text}
+  end
+
+  defp last_session_message(session_uri) do
+    session_uri |> Ezagent.MessageStore.recent_in_session(1) |> List.first()
+  rescue
+    _ -> nil
+  end
+
+  # session://<tmpl>/<ws>/<sid> → {ws, sid}(workspace = 第一段 path,sid = 第二段)。
+  defp sess_ws_sid(%URI{path: path}) when is_binary(path) do
+    case path |> String.trim_leading("/") |> String.split("/") do
+      [ws, sid | _] -> {ws, sid}
+      [ws] -> {ws, ""}
+      _ -> {"", ""}
+    end
+  end
+
+  defp sess_ws_sid(_), do: {"", ""}
+
+  # 以登录 entity 的身份往一个 session 发消息(成员身份门控)。无 @ → 默认只到
+  # session 的 User 成员(mention-gated),即「人对人群聊」;同时 sender host=user →
+  # 会以弹幕飘在该 session 的预览页。要触发编排器/worker 需在文本里显式 @。
+  defp operator_send(conn) do
+    body = conn.body_params || %{}
+    uri_str = body |> Map.get("uri", "") |> to_string()
+    text = body |> Map.get("text", "") |> to_string() |> String.trim()
+
+    with {:ok, entity_uri} <- caller_entity(conn),
+         %URI{scheme: "session"} = session_uri <- safe_session_uri(uri_str),
+         true <- text != "",
+         true <- member_of?(session_uri, entity_uri) do
+      msg = Ezagent.Message.new(entity_uri, %{text: text, attachments: []}, mentions: [])
+
+      inv = %Ezagent.Invocation{
+        target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.send"),
+        mode: :cast,
+        args: %{message: msg},
+        ctx: %{
+          caller: entity_uri,
+          caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+          reply: :ignore
+        }
+      }
+
+      case Ezagent.Invocation.dispatch(inv) do
+        :ok -> %{ok: true, id: msg.id}
+        {:ok, _} -> %{ok: true, id: msg.id}
+        {:error, reason} -> %{ok: false, error: inspect(reason)}
+      end
+    else
+      :error -> %{ok: false, error: "not_logged_in"}
+      false -> %{ok: false, error: "not_a_member_or_empty"}
+      _ -> %{ok: false, error: "bad_request"}
+    end
+  rescue
+    e -> %{ok: false, error: Exception.message(e)}
+  end
+
+  defp safe_session_uri(s) when is_binary(s) and s != "" do
+    case Ezagent.URI.new!(s) do
+      %URI{scheme: "session"} = u -> u
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp safe_session_uri(_), do: nil
+
   # 前端传来的 caps 直通(限制条数,防 prompt 过长)。只保留有 id 的对象。
   defp normalize_caps(caps) when is_list(caps) do
     caps |> Enum.filter(&(is_map(&1) and Map.get(&1, "id") not in [nil, ""])) |> Enum.take(40)
@@ -1122,26 +1266,26 @@ defmodule EzagentPluginLoom.WebPlug do
 
   defp normalize_caps(_), do: []
 
-  # --- Stitch / AiSpot → loomstitch worker(2026-06-10 重构)-------------
-  # preview 侧 AI 不再直连 DeepSeek。每次请求包成一条 `@loomstitch_<sid>` 消息派进
-  # session,由 stitch worker(DeepSeek)处理,回 `stitch_reply` 帧经 SSE 流回前端。
+  # --- Salesperson / AiSpot → loomsalesperson worker(2026-06-10 重构)-------------
+  # preview 侧 AI 不再直连 DeepSeek。每次请求包成一条 `@loomsalesperson_<sid>` 消息派进
+  # session,由 salesperson worker(DeepSeek)处理,回 `salesperson_reply` 帧经 SSE 流回前端。
 
   defp aispot_visible(""), do: "✨ AI 解读"
   defp aispot_visible(feature), do: "✨ " <> feature
 
-  # 幂等 spawn + join loomstitch worker(老会话兜底)。失败不阻断(派发仍会进行,
+  # 幂等 spawn + join loomsalesperson worker(老会话兜底)。失败不阻断(派发仍会进行,
   # 极端情况落 DLQ,但正常路径已就位)。
-  defp ensure_stitch_worker(%URI{} = suri, %URI{} = stitch_uri) do
-    _ = Ezagent.SpawnRegistry.spawn(stitch_uri)
-    _ = ensure_joined(suri, stitch_uri)
+  defp ensure_salesperson_worker(%URI{} = suri, %URI{} = salesperson_uri) do
+    _ = Ezagent.SpawnRegistry.spawn(salesperson_uri)
+    _ = ensure_joined(suri, salesperson_uri)
 
-    # 2026-06-12 — 同时确保 4 个 Stitch 子 worker 在场。老会话(在 ensure_team 加
+    # 2026-06-12 — 同时确保 4 个 Salesperson 子 worker 在场。老会话(在 ensure_team 加
     # 子 worker 之前创建的 zuatu / tudou 等)靠这里按需 spawn + join(幂等),
     # 否则编排器 fan-out 派给不存在的子 worker → 无 deliverable → 超时降级。
     with %URI{path: path} <- suri,
          [ws, sid | _] <- path |> to_string() |> String.trim_leading("/") |> String.split("/") do
-      Enum.each(EzagentPluginLoom.StitchExperts.role_keys(), fn role ->
-        sub = Ezagent.URI.new!("entity://agent/#{ws}/loomstitchsub_#{sid}_#{role}")
+      Enum.each(EzagentPluginLoom.SalespersonExperts.role_keys(), fn role ->
+        sub = Ezagent.URI.new!("entity://agent/#{ws}/loomsalespersonsub_#{sid}_#{role}")
         _ = Ezagent.SpawnRegistry.spawn(sub)
         _ = ensure_joined(suri, sub)
       end)
@@ -1152,30 +1296,30 @@ defmodule EzagentPluginLoom.WebPlug do
     _ -> :ok
   end
 
-  # 派 @loomstitch 消息(异步)。结构化负载放 body 的 `:stitch` 键;visible_text 是
+  # 派 @loomsalesperson 消息(异步)。结构化负载放 body 的 `:salesperson` 键;visible_text 是
   # admin/session 可见的那句。返回 `%{ok, id}`(id=消息 id,前端据此关联回帧)。
-  defp dispatch_to_stitch(ws, sid, payload, visible_text) do
+  defp dispatch_to_salesperson(ws, sid, payload, visible_text) do
     suri = session_uri(ws, sid)
-    stitch_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomstitch_#{sid}")
+    salesperson_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomsalesperson_#{sid}")
 
-    # 幂等保证 stitch worker 在场:老会话(zuatu / 发布物)boot 时不一定重跑 ensure_team,
+    # 幂等保证 salesperson worker 在场:老会话(zuatu / 发布物)boot 时不一定重跑 ensure_team,
     # 所以这里按需 spawn + join(已在则短路)。新会话由 Team.ensure_team 装配。
-    _ = ensure_stitch_worker(suri, stitch_uri)
+    _ = ensure_salesperson_worker(suri, salesperson_uri)
 
     with {:ok, user_uri} <- EzagentPluginLoom.TempUser.ensure_named(ws, "loomui_#{sid}"),
          :ok <- ensure_joined(suri, user_uri) do
       # 2026-06-12 — 与 `send_to_session`/`parse_mentions` 的编排器路径一致:在
-      # 可见文本前缀 `@loomstitch_<sid>`,让 admin/session 视图肉眼看得到这条确实
-      # @ 了 stitch(此前只塞了 `mentions` 结构化字段,人眼看不到,跟 @编排器 不一致)。
-      # 路由仍走 `mentions`(不依赖文本解析),前缀只是给人眼看。preview 侧 Stitch
+      # 可见文本前缀 `@loomsalesperson_<sid>`,让 admin/session 视图肉眼看得到这条确实
+      # @ 了 salesperson(此前只塞了 `mentions` 结构化字段,人眼看不到,跟 @编排器 不一致)。
+      # 路由仍走 `mentions`(不依赖文本解析),前缀只是给人眼看。preview 侧 Salesperson
       # 气泡用前端本地 echo,不受此前缀影响。
-      visible_with_mention = "@loomstitch_#{sid} " <> visible_text
+      visible_with_mention = "@loomsalesperson_#{sid} " <> visible_text
 
       msg =
         Ezagent.Message.new(
           user_uri,
-          %{text: visible_with_mention, attachments: [], stitch: payload},
-          mentions: [stitch_uri]
+          %{text: visible_with_mention, attachments: [], salesperson: payload},
+          mentions: [salesperson_uri]
         )
 
       inv = %Ezagent.Invocation{
@@ -1199,27 +1343,27 @@ defmodule EzagentPluginLoom.WebPlug do
     end
   end
 
-  # GET /stitch:从 session 历史重建 Stitch 聊天线程(取代旧 StitchChat)。只取
-  # mode=stitch 的用户消息(@loomstitch 发起)+ loomstitch 回的 stitch_reply。
+  # GET /salesperson:从 session 历史重建 Salesperson 聊天线程(取代旧 SalespersonChat)。只取
+  # mode=salesperson 的用户消息(@loomsalesperson 发起)+ loomsalesperson 回的 salesperson_reply。
   # AiSpot(mode=aispot)不进聊天面板。
-  defp stitch_conversation(ws, sid) do
-    stitch_name = "loomstitch_#{sid}"
+  defp salesperson_conversation(ws, sid) do
+    salesperson_name = "loomsalesperson_#{sid}"
 
     session_uri(ws, sid)
     |> Ezagent.MessageStore.recent_in_session(80)
     |> Enum.reverse()
-    |> Enum.flat_map(&stitch_turn(&1, stitch_name))
+    |> Enum.flat_map(&salesperson_turn(&1, salesperson_name))
   rescue
     _ -> []
   end
 
-  defp stitch_turn(%Ezagent.Message{sender: sender, body: body}, stitch_name) do
+  defp salesperson_turn(%Ezagent.Message{sender: sender, body: body}, salesperson_name) do
     cond do
-      # assistant:loomstitch 回的消息。body 是纯文本;mode/drive 在 stitch_reply 字段。
-      String.contains?(to_string(sender), "/" <> stitch_name) ->
-        case stitch_meta_of(body) do
+      # assistant:loomsalesperson 回的消息。body 是纯文本;mode/drive 在 salesperson_reply 字段。
+      String.contains?(to_string(sender), "/" <> salesperson_name) ->
+        case salesperson_meta_of(body) do
           %{} = meta ->
-            if to_string(meta["mode"] || meta[:mode] || "stitch") == "stitch",
+            if to_string(meta["mode"] || meta[:mode] || "salesperson") == "salesperson",
               do: [
                 %{
                   "role" => "assistant",
@@ -1233,13 +1377,13 @@ defmodule EzagentPluginLoom.WebPlug do
             []
         end
 
-      # user:@loomstitch 发起的 stitch 聊天(body.stitch.mode == "stitch")
+      # user:@loomsalesperson 发起的 salesperson 聊天(body.salesperson.mode == "salesperson")
       true ->
-        payload = (is_map(body) && (body["stitch"] || body[:stitch])) || nil
+        payload = (is_map(body) && (body["salesperson"] || body[:salesperson])) || nil
 
         case payload do
           %{} = p ->
-            if to_string(p["mode"] || p[:mode] || "stitch") == "stitch",
+            if to_string(p["mode"] || p[:mode] || "salesperson") == "salesperson",
               do: [%{"role" => "user", "text" => body_text(body)}],
               else: []
 
@@ -1249,10 +1393,10 @@ defmodule EzagentPluginLoom.WebPlug do
     end
   end
 
-  defp stitch_turn(_, _), do: []
+  defp salesperson_turn(_, _), do: []
 
   # 从当前 preview 会话冻结快照副本(页面取自 orchestrator 的 loom_source,ops 取自
-  # user_schema,**Stitch 对话取自 StitchChat**)。三者都是**副本**:之后 live 会话继续
+  # user_schema,**Salesperson 对话取自 SalespersonChat**)。三者都是**副本**:之后 live 会话继续
   # 增强/对话,这份快照不变,被分享者看到的是冻结时刻的状态。
   defp create_snapshot(ws, sid) do
     case read_orchestrator_snapshot(ws, sid) do
@@ -1262,12 +1406,13 @@ defmodule EzagentPluginLoom.WebPlug do
         Ezagent.PluginLoom.Snapshots.put(token, %{
           "ws" => ws,
           "page" => page,
-          # 2026-06-10 — Stitch 样式随快照冻结,fork 出的会话据此 seed。
-          "stitch_config" => Map.get(orch, "stitch_config"),
+          # 2026-06-10 — Salesperson 样式随快照冻结,fork 出的会话据此 seed。
+          "salesperson_config" => Map.get(orch, "salesperson_config"),
+          "danmaku_config" => Map.get(orch, "danmaku_config"),
           "ops" => Ezagent.PluginLoom.UserSchema.get(ws, sid),
-          # 2026-06-10 — Stitch 对话现在存在 session 消息里(不再是 StitchChat),
+          # 2026-06-10 — Salesperson 对话现在存在 session 消息里(不再是 SalespersonChat),
           # 从 session 历史重建,否则快照冻结的是空对话。
-          "conversation" => stitch_conversation(ws, sid),
+          "conversation" => salesperson_conversation(ws, sid),
           "knowledge" => Ezagent.PluginLoom.Knowledge.get(ws, sid),
           "origin_sid" => sid,
           "created_at" => DateTime.utc_now() |> DateTime.to_iso8601()
@@ -1293,11 +1438,12 @@ defmodule EzagentPluginLoom.WebPlug do
          tmpl = %{
            "class" => "session.loom",
            "session_name" => sid,
-           "no_v0" => true,
+           "no_builder" => true,
            "saved_state" => %{
              "orchestrator" =>
                %{"loom_source" => page}
-               |> put_if(snap, "stitch_config")
+               |> put_if(snap, "salesperson_config")
+               |> put_if(snap, "danmaku_config")
            }
          },
          {:ok, [session_uri | _]} <-
@@ -1308,9 +1454,9 @@ defmodule EzagentPluginLoom.WebPlug do
            ),
          {:ok, user_uri} <- EzagentPluginLoom.TempUser.ensure_named(ws, "loomui_#{sid}"),
          :ok <- ensure_joined(session_uri, user_uri) do
-      # 复制快照 ops + Stitch 对话 + 知识库进新 session(forker 之后改不影响快照)。
+      # 复制快照 ops + Salesperson 对话 + 知识库进新 session(forker 之后改不影响快照)。
       _ = Ezagent.PluginLoom.UserSchema.replace(ws, sid, Map.get(snap, "ops", []))
-      _ = Ezagent.PluginLoom.StitchChat.replace(ws, sid, Map.get(snap, "conversation", []))
+      _ = Ezagent.PluginLoom.SalespersonChat.replace(ws, sid, Map.get(snap, "conversation", []))
       _ = Ezagent.PluginLoom.Knowledge.put(ws, sid, Map.get(snap, "knowledge", ""))
       %{ok: true, ws: ws, sid: sid}
     else
@@ -1339,7 +1485,7 @@ defmodule EzagentPluginLoom.WebPlug do
     do: "pub_" <> (:crypto.strong_rand_bytes(6) |> Base.encode16(case: :lower))
 
   # Copy `key` from `src` into `map` only when present + non-empty (keeps the
-  # saved_state.orchestrator map lean — absent stitch_config stays absent).
+  # saved_state.orchestrator map lean — absent salesperson_config stays absent).
   defp put_if(map, src, key) do
     case Map.get(src, key) do
       v when is_map(v) and map_size(v) > 0 -> Map.put(map, key, v)
@@ -1351,13 +1497,13 @@ defmodule EzagentPluginLoom.WebPlug do
     case read_orchestrator_snapshot(ws, sid) do
       {:ok, orch_snapshot} ->
         workers = read_workers_snapshot(ws, sid)
-        v0 = read_v0_snapshot(ws, sid)
+        v0 = read_builder_snapshot(ws, sid)
 
         {:ok,
          %{
            "orchestrator" => orch_snapshot,
            "workers" => workers,
-           "v0" => v0
+           "builder" => v0
          }}
 
       {:error, _} = err ->
@@ -1424,17 +1570,17 @@ defmodule EzagentPluginLoom.WebPlug do
 
   # v0 当前 slice 没有 user-meaningful 字段(只有 count / last_error)。
   # 返回空 map 占位,以后 v0 有 user-customizable 状态时填充。
-  defp read_v0_snapshot(_ws, _sid), do: %{}
+  defp read_builder_snapshot(_ws, _sid), do: %{}
 
   # 抓 orchestrator slice 的"用户可感知"字段(persona + loom_source);
   # `pending` / `count` / `last_error` 是 runtime 易逝态,不进快照。
-  # workers 也不抓 —— 当前 LoomWorker 用 init 默认值,LoomV0Worker 无状态。
+  # workers 也不抓 —— 当前 LoomWorker 用 init 默认值,LoomBuilderWorker 无状态。
   defp read_orchestrator_snapshot(ws, sid) do
     orch_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomorch_#{sid}")
 
     # 2026-06-11 — 幂等补 spawn orchestrator(老会话兜底)。发布/消费会话(pub_*)是按需
     # mint 的临时会话,boot 时不重跑 Team.ensure_team,server 重启后 orchestrator 进程没了
-    # → get_slice 直接 :not_found,快照/存模板失败。这里像 ensure_stitch_worker 一样按需
+    # → get_slice 直接 :not_found,快照/存模板失败。这里像 ensure_salesperson_worker 一样按需
     # 复活:有持久化快照就 rehydrate 回 loom_source(已在则短路)。失败不阻断,交给下面读。
     _ =
       try do
@@ -1443,25 +1589,26 @@ defmodule EzagentPluginLoom.WebPlug do
         _ -> :ok
       end
 
-    # slice(orchestrator 缓存的源 + persona + stitch 样式)。可能滞后 / 为空 / 退化成
+    # slice(orchestrator 缓存的源 + persona + salesperson 样式)。可能滞后 / 为空 / 退化成
     # 默认页(老会话重启后被默认 seed),所以下面**优先用最新 page_update 消息**。
-    {slice_files, slice_cfg, persona} =
+    {slice_files, slice_cfg, slice_danmaku, persona} =
       case Ezagent.Kind.get_slice(orch_uri, :loom_orchestrator) do
         {:ok, slice} when is_map(slice) ->
           raw = slice[:loom_source] || slice["loom_source"]
           files = EzagentPluginLoom.Prompts.normalize_source(raw)
           sf = if raw in [nil, "", %{}] or map_size(files) == 0, do: nil, else: files
 
-          {sf, slice[:stitch_config] || slice["stitch_config"],
+          {sf, slice[:salesperson_config] || slice["salesperson_config"],
+           slice[:danmaku_config] || slice["danmaku_config"],
            slice[:persona] || slice["persona"] || "visitor"}
 
         _ ->
-          {nil, nil, "visitor"}
+          {nil, nil, nil, "visitor"}
       end
 
     # 2026-06-11 — 发布/快照冻结的应是**用户此刻看到的页面** = 编辑器从最新 page_update
     # 消息渲染的那一份。slice 只是 orchestrator 的缓存,可能滞后(直接改库 / 删快照后
-    # 退化成默认页),故**优先消息,slice 兜底**。消息没带 stitchConfig 时用 slice 的。
+    # 退化成默认页),故**优先消息,slice 兜底**。消息没带 salespersonConfig 时用 slice 的。
     {msg_files, msg_cfg} =
       case latest_page_update(ws, sid) do
         {f, c} -> {f, c}
@@ -1472,22 +1619,27 @@ defmodule EzagentPluginLoom.WebPlug do
     cfg = msg_cfg || slice_cfg
 
     if is_map(files) and map_size(files) > 0 do
-      {:ok, build_orch_snapshot(persona, files, cfg)}
+      {:ok, build_orch_snapshot(persona, files, cfg, slice_danmaku)}
     else
       {:error, :no_source_in_orchestrator}
     end
   end
 
-  # publish/snapshot 用的 orchestrator 快照 shape(persona + loom_source [+ stitch_config])。
-  defp build_orch_snapshot(persona, files, stitch_cfg) do
+  # publish/snapshot 用的 orchestrator 快照 shape(persona + loom_source [+ salesperson_config] [+ danmaku_config])。
+  defp build_orch_snapshot(persona, files, salesperson_cfg, danmaku_cfg \\ nil) do
     base = %{"persona" => to_string(persona || "visitor"), "loom_source" => files}
 
-    if is_map(stitch_cfg) and map_size(stitch_cfg) > 0,
-      do: Map.put(base, "stitch_config", stitch_cfg),
+    base =
+      if is_map(salesperson_cfg) and map_size(salesperson_cfg) > 0,
+        do: Map.put(base, "salesperson_config", salesperson_cfg),
+        else: base
+
+    if is_map(danmaku_cfg) and map_size(danmaku_cfg) > 0,
+      do: Map.put(base, "danmaku_config", danmaku_cfg),
       else: base
   end
 
-  # 从会话历史里取最新一条 page_update 的 {files, stitchConfig}(recent_in_session 按
+  # 从会话历史里取最新一条 page_update 的 {files, salespersonConfig}(recent_in_session 按
   # inserted_at DESC,故第一条命中即最新)。无则 nil。
   defp latest_page_update(ws, sid) do
     session_uri(ws, sid)
@@ -1510,7 +1662,7 @@ defmodule EzagentPluginLoom.WebPlug do
       files = EzagentPluginLoom.Prompts.normalize_source(decoded["files"] || decoded["source"])
 
       if is_map(files) and map_size(files) > 0,
-        do: {files, decoded["stitchConfig"]},
+        do: {files, decoded["salespersonConfig"]},
         else: nil
     else
       _ -> nil
