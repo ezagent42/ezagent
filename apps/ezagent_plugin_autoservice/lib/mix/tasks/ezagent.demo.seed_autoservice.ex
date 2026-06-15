@@ -90,6 +90,9 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
 
     :ok = ensure_workspace()
 
+    # Initialize content sandbox (souls, skills, KB, slots) via content plugin.
+    :ok = init_tenant_content(workspace_name)
+
     # Create all users first.
     :ok = seed_role_user(@admin_short, :admin, workspace_uri, ctx)
     :ok = seed_role_user(@operator_short, :operator, workspace_uri, ctx)
@@ -291,10 +294,28 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedAutoservice do
   defp user_uri(short), do: Ezagent.URI.new!("entity://#{@workspace_name}/user/#{short}")
 
   defp mix_task_ctx do
+    # Use admin user as caller so creator cap grant finds a real Kind.
+    # system:// principals lack Kind instances → grant_creator_manage_cap fails.
     %{
-      caller: Ezagent.SystemPrincipal.uri("mix-task"),
-      caps: Ezagent.SystemPrincipal.caps("system://mix-task")
+      caller: user_uri(@admin_short),
+      caps: Ezagent.SystemPrincipal.caps("system://bootstrap")
     }
+  end
+
+  defp init_tenant_content(tid) do
+    case EzagentPluginContent.Tenant.TenantProvisioner.create_tenant(tid, tid) do
+      {:ok, _info} ->
+        Mix.shell().info("  content sandbox initialized for #{tid}")
+        :ok
+
+      {:error, reason} ->
+        Mix.shell().info("  content sandbox init skipped: #{inspect(reason)}")
+        :ok
+    end
+  rescue
+    e ->
+      Mix.shell().info("  content sandbox init failed (non-fatal): #{Exception.message(e)}")
+      :ok
   end
 
   defp print_summary(results, deepseek_key, with_slow?) do
