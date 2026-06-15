@@ -66,5 +66,23 @@ defmodule Ezagent.RoleTest do
       assert role.prompt == "persona"
       assert role.session_template == "template://system/session/orchestrator"
     end
+
+    test "rejects malformed recipe shapes at the boundary (no crash deferred to Compose)" do
+      assert {:error, {:invalid_role_field, :behaviors, nil}} =
+               Role.new(%{"behaviors" => nil})
+
+      assert {:error, {:invalid_role_field, :requested_caps, "x"}} =
+               Role.new(%{"requested_caps" => "x"})
+
+      # requested_caps must be a list of cap-template MAPS (not bare atoms/tuples)
+      assert {:error, {:invalid_role_field, :requested_caps, _}} =
+               Role.new(%{requested_caps: [:not_a_cap_map]})
+
+      assert {:error, {:invalid_role_field, :skills, "nope"}} =
+               Role.new(%{"skills" => "nope"})
+
+      assert {:error, {:invalid_role_field, :prompt, 123}} =
+               Role.new(%{"prompt" => 123})
+    end
   end
 end

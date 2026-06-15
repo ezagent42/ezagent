@@ -60,7 +60,9 @@ defmodule Ezagent.Role do
   (`#{inspect(@flavor_fields)}`) — a Role MUST be flavor-agnostic so the same
   recipe composes identically across flavors.
   """
-  @spec new(map()) :: {:ok, t()} | {:error, {:flavor_field_in_role, atom()}}
+  @spec new(map()) ::
+          {:ok, t()}
+          | {:error, {:flavor_field_in_role, atom()} | {:invalid_role_field, atom(), term()}}
   def new(recipe) when is_map(recipe) do
     # A persisted role recipe (a `template://…/role/…` content slice) round-trips
     # through JSON/snapshot as STRING keys, so the flavor-field rejection AND the
@@ -68,20 +70,55 @@ defmodule Ezagent.Role do
     # `%{"flavor" => "cc"}` would slip past the flavor-agnostic boundary (codex).
     case Enum.find(@flavor_fields, &flavor_key_present?(recipe, &1)) do
       nil ->
-        {:ok,
-         %__MODULE__{
-           skills: get(recipe, :skills, []),
-           plugins: get(recipe, :plugins, []),
-           prompt: get(recipe, :prompt, nil),
-           behaviors: get(recipe, :behaviors, []),
-           requested_caps: get(recipe, :requested_caps, []),
-           session_template: get(recipe, :session_template, nil)
-         }}
+        # This is a persisted-content / operator-authored boundary, so SHAPE-
+        # validate before returning {:ok, role} — a malformed recipe (e.g.
+        # `behaviors: nil`, `requested_caps: "x"`) must fail HERE, not crash or
+        # feed non-cap input into the policy predicate downstream in Compose (codex).
+        validate(%__MODULE__{
+          skills: get(recipe, :skills, []),
+          plugins: get(recipe, :plugins, []),
+          prompt: get(recipe, :prompt, nil),
+          behaviors: get(recipe, :behaviors, []),
+          requested_caps: get(recipe, :requested_caps, []),
+          session_template: get(recipe, :session_template, nil)
+        })
 
       flavor_field ->
         {:error, {:flavor_field_in_role, flavor_field}}
     end
   end
+
+  # Shape-validate the recipe at the boundary so `Compose` can assume a
+  # well-formed `%Role{}`: the four collection fields are lists,
+  # `requested_caps` entries are cap-template MAPS (so the fail-closed policy
+  # predicate never receives a non-cap term), and `prompt`/`session_template`
+  # are `nil` or a string/URI ref.
+  defp validate(%__MODULE__{} = role) do
+    with :ok <- list_field(role.skills, :skills),
+         :ok <- list_field(role.plugins, :plugins),
+         :ok <- list_field(role.behaviors, :behaviors),
+         :ok <- caps_field(role.requested_caps),
+         :ok <- ref_field(role.prompt, :prompt),
+         :ok <- ref_field(role.session_template, :session_template) do
+      {:ok, role}
+    end
+  end
+
+  defp list_field(value, _name) when is_list(value), do: :ok
+  defp list_field(value, name), do: {:error, {:invalid_role_field, name, value}}
+
+  defp caps_field(value) when is_list(value) do
+    if Enum.all?(value, &is_map/1),
+      do: :ok,
+      else: {:error, {:invalid_role_field, :requested_caps, value}}
+  end
+
+  defp caps_field(value), do: {:error, {:invalid_role_field, :requested_caps, value}}
+
+  defp ref_field(nil, _name), do: :ok
+  defp ref_field(value, _name) when is_binary(value), do: :ok
+  defp ref_field(%URI{}, _name), do: :ok
+  defp ref_field(value, name), do: {:error, {:invalid_role_field, name, value}}
 
   # A forbidden flavor field is present in EITHER its atom or string form.
   defp flavor_key_present?(recipe, atom_field) do
