@@ -64,6 +64,54 @@ defmodule Ezagent.PluginLoom.WorkerConfig do
 
   defp skey(ws, sid), do: "session://loom/#{ws}/#{sid}"
 
+  # ── orchestrator instruction store (separate sidecar) ──
+  # per-session 自由文本,注入 loomorch 的 decompose / compose / direct-answer 提示词。
+  # 不碰 orchestrator 的 slice(它持有 loom_source),loomorch 每轮读这个文件。
+
+  @max_orch 8000
+
+  defp orch_file_path do
+    profile = System.get_env("EZAGENT_PROFILE") || "default"
+    Path.expand("~/.ezagent/#{profile}/loom_orchestrator.json")
+  end
+
+  defp load_orch do
+    case File.read(orch_file_path()) do
+      {:ok, body} ->
+        case Jason.decode(body) do
+          {:ok, m} when is_map(m) -> m
+          _ -> %{}
+        end
+
+      _ ->
+        %{}
+    end
+  end
+
+  @doc "读某 session 的编排器自定义指令(无 → 空串)。"
+  @spec get_orchestrator(String.t(), String.t()) :: String.t()
+  def get_orchestrator(ws, sid) when is_binary(ws) and is_binary(sid) do
+    Map.get(load_orch(), skey(ws, sid), "") |> to_string()
+  rescue
+    _ -> ""
+  end
+
+  def get_orchestrator(_, _), do: ""
+
+  @doc "写某 session 的编排器自定义指令(截断到上限)。"
+  @spec put_orchestrator(String.t(), String.t(), String.t()) :: :ok
+  def put_orchestrator(ws, sid, text) when is_binary(ws) and is_binary(sid) and is_binary(text) do
+    text = String.slice(text, 0, @max_orch)
+    path = orch_file_path()
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, load_orch() |> Map.put(skey(ws, sid), text) |> Jason.encode!(pretty: true))
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  def put_orchestrator(_, _, _), do: :ok
+
   @doc "新建 session 的默认 worker(2 个通用,可在 UI 改 / 删)。"
   def default_workers do
     [

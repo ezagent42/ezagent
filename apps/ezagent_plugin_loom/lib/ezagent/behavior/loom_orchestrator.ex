@@ -131,6 +131,10 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
     self_uri = ctx_self(ctx)
     session_uri = ctx_session(ctx)
     persona = ctx[:read].(:persona, "visitor")
+
+    # 2026-06-15 — 编排器自定义指令(用户在「团队」面板配),注入 decompose / compose /
+    # direct-answer 提示词。读旁路文件,不碰 slice(slice 持有 loom_source)。
+    instr = orch_instruction(session_uri)
     workers = effective_workers(ctx, session_uri)
     count = ctx[:read].(:count, 0)
 
@@ -144,12 +148,12 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
         busy_notice(self_uri, session_uri, msg)
 
       workers == [] ->
-        direct_answer(persona, msg, self_uri, session_uri, count)
+        direct_answer(persona, msg, self_uri, session_uri, count, instr)
 
       true ->
         loom_source = Prompts.normalize_source(ctx[:read].(:loom_source, %{}))
 
-        case LLM.chat(dispatch_messages(workers, text_of(msg)),
+        case LLM.chat(dispatch_messages(workers, text_of(msg), instr),
                temperature: 0.4,
                thinking_disabled: true,
                group: URI.to_string(session_uri)
@@ -157,14 +161,24 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
           {:ok, raw} ->
             case parse_dispatch(raw, workers) do
               {:ok, entries} ->
-                fan_out(msg, entries, self_uri, session_uri, persona, pending, count, loom_source)
+                fan_out(
+                  msg,
+                  entries,
+                  self_uri,
+                  session_uri,
+                  persona,
+                  pending,
+                  count,
+                  loom_source,
+                  instr
+                )
 
               :error ->
-                direct_answer(persona, msg, self_uri, session_uri, count)
+                direct_answer(persona, msg, self_uri, session_uri, count, instr)
             end
 
           {:error, _reason} ->
-            direct_answer(persona, msg, self_uri, session_uri, count)
+            direct_answer(persona, msg, self_uri, session_uri, count, instr)
         end
     end
   end
@@ -260,7 +274,8 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
          persona,
          pending,
          count,
-         loom_source
+         loom_source,
+         instr
        ) do
     turn_id = user_msg.id
 
@@ -282,6 +297,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
       session_uri: session_uri,
       user_uri: user_msg.sender,
       persona: persona,
+      orch_instruction: instr,
       expected: MapSet.new(subtask_ids),
       collected: %{}
     }
@@ -384,7 +400,13 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
         })
 
       true ->
-        case LLM.chat(compose_messages(turn.persona, frags, partial),
+        case LLM.chat(
+               compose_messages(
+                 turn.persona,
+                 frags,
+                 partial,
+                 Map.get(turn, :orch_instruction, "")
+               ),
                temperature: 0.6,
                thinking_disabled: true,
                group: URI.to_string(turn.session_uri)
@@ -398,13 +420,14 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
   # === direct-answer degradation (dispatch parse failed / no roster) ===
 
-  defp direct_answer(persona, %Message{} = msg, self_uri, session_uri, count) do
+  defp direct_answer(persona, %Message{} = msg, self_uri, session_uri, count, instr \\ "") do
     case LLM.chat(
            [
              %{"role" => "system", "content" => Prompts.web_system_prompt()},
-             %{"role" => "system", "content" => Prompts.persona_line(persona)},
-             %{"role" => "user", "content" => text_of(msg)}
-           ],
+             %{"role" => "system", "content" => Prompts.persona_line(persona)}
+           ] ++
+             instr_sys(instr) ++
+             [%{"role" => "user", "content" => text_of(msg)}],
            temperature: 0.6,
            thinking_disabled: true,
            group: URI.to_string(session_uri)
@@ -442,7 +465,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
   # === prompts ===
 
-  defp dispatch_messages(workers, user_text) do
+  defp dispatch_messages(workers, user_text, instr \\ "") do
     roster = workers |> Enum.map(&"- #{&1.label} #{worker_hint(&1)}") |> Enum.join("\n")
 
     sys = """
@@ -462,7 +485,8 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
     标签外不要写任何字。
     """
 
-    [%{"role" => "system", "content" => sys}, %{"role" => "user", "content" => user_text}]
+    [%{"role" => "system", "content" => sys}] ++
+      instr_sys(instr) ++ [%{"role" => "user", "content" => user_text}]
   end
 
   # `dispatch_messages/2` 已经按 `&"- #{&1.label} #{worker_hint(&1)}"` 调用,
@@ -491,7 +515,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
   defp read_worker_role(_, _), do: ""
 
-  defp compose_messages(persona, frags, partial) do
+  defp compose_messages(persona, frags, partial, instr \\ "") do
     joined =
       frags
       |> Enum.with_index(1)
@@ -511,10 +535,32 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
     [
       %{"role" => "system", "content" => Prompts.web_system_prompt()},
-      %{"role" => "system", "content" => Prompts.persona_line(persona)},
-      %{"role" => "user", "content" => composer}
-    ]
+      %{"role" => "system", "content" => Prompts.persona_line(persona)}
+    ] ++
+      instr_sys(instr) ++ [%{"role" => "user", "content" => composer}]
   end
+
+  # 编排器自定义指令 → 一条 system 消息(空则不加)。注入 decompose / compose / direct-answer。
+  defp instr_sys(instr) when is_binary(instr) do
+    case String.trim(instr) do
+      "" -> []
+      t -> [%{"role" => "system", "content" => "【本会话编排器的额外指令(用户配置,优先遵守)】\n" <> t}]
+    end
+  end
+
+  defp instr_sys(_), do: []
+
+  # 从 session_uri 读这个会话的编排器自定义指令(旁路文件)。
+  defp orch_instruction(%URI{path: path}) when is_binary(path) do
+    case path |> String.trim_leading("/") |> String.split("/") do
+      [ws, sid | _] -> Ezagent.PluginLoom.WorkerConfig.get_orchestrator(ws, sid)
+      _ -> ""
+    end
+  rescue
+    _ -> ""
+  end
+
+  defp orch_instruction(_), do: ""
 
   # === pure helpers (unit-tested) ===
 
@@ -748,7 +794,6 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
     (会作为 page_update 的 summary)。不要输出 /platform.js 或 /ezagent-ui.js。
     """
   end
-
 
   def data_owner(_), do: :no_owner
 end

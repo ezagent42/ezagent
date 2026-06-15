@@ -97,6 +97,7 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
       </button>
       <.session_selector current_session_uri={@current_session_uri} sessions={@sessions} />
       <.loom_link current_session_uri={@current_session_uri} />
+      <.loom_save_template_button current_session_uri={@current_session_uri} />
       <.create_session_button
         new_session_form={@new_session_form}
         template_class_options={@template_class_options}
@@ -165,6 +166,30 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
     >
       {gettext("Open Loom")} ↗
     </a>
+    """
+  end
+
+  # --- loom_save_template_button --------------------------------------------
+  # 2026-06-15: 「存为模板」从 loom iframe 的 ChatPanel 顶栏挪到 admin 顶栏(Open Loom 右侧)。
+  # 按钮在 iframe 外,点它经 JS hook 向 loom iframe postMessage,由 ChatPanel 开它现有的
+  # SaveAsTemplateModal(存模板逻辑仍在 loom 前端 + SDK,admin 只负责触发)。仅 loom session 显示。
+
+  attr(:current_session_uri, URI, required: true)
+
+  defp loom_save_template_button(assigns) do
+    assigns = assign(assigns, :is_loom, loom_session_url(assigns.current_session_uri) != nil)
+
+    ~H"""
+    <button
+      :if={@is_loom}
+      type="button"
+      id="loom-save-template-btn"
+      phx-hook="LoomSaveTemplate"
+      class="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950"
+      title={gettext("Save the current Loom page as a reusable template")}
+    >
+      {gettext("Save as Template")}
+    </button>
     """
   end
 

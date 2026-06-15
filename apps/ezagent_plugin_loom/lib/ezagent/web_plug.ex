@@ -402,6 +402,21 @@ defmodule EzagentPluginLoom.WebPlug do
     json_resp(conn, 200, remove_worker(ws, sid, key))
   end
 
+  # 2026-06-15 — 编排器(loomorch)自定义指令:一段自由文本,影响它怎么拆任务 / 组织回复。
+  # 存旁路文件,loomorch 每轮读;不改它的 slice(它持有 loom_source)。
+  get "/api/:ws/:sid/orchestrator" do
+    json_resp(conn, 200, %{
+      ok: true,
+      instruction: Ezagent.PluginLoom.WorkerConfig.get_orchestrator(ws, sid)
+    })
+  end
+
+  post "/api/:ws/:sid/orchestrator" do
+    instruction = (conn.body_params || %{}) |> Map.get("instruction", "") |> to_string()
+    _ = Ezagent.PluginLoom.WorkerConfig.put_orchestrator(ws, sid, instruction)
+    json_resp(conn, 200, %{ok: true, instruction: instruction})
+  end
+
   # 公开提供素材(图片等),让 v0 生成的 Sandpack 页面能 `<img src="/loom/materials/<ws>/<sid>/<path>">`。
   get "/materials/:ws/:sid/*path" do
     serve_material(conn, ws, sid, Enum.join(path, "/"))
