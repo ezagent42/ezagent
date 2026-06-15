@@ -83,7 +83,11 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # pointers are scoped by workspace; a config object for ws A must never
     # be resolved from ws B.
     {Ezagent.Socialware.ConfigObject, "socialware_config_objects"},
-    {Ezagent.Socialware.ConfigPointer, "socialware_config_pointers"}
+    {Ezagent.Socialware.ConfigPointer, "socialware_config_pointers"},
+    # Issue #51 — the anon external-user binding maps an anon-User to the public
+    # session it views; the workspace is DERIVED from that session (never supplied),
+    # so a binding can never span tenants.
+    {Ezagent.Socialware.AnonBinding, "socialware_anon_bindings"}
   ]
 
   # Per-tenant tables that have NO schema module (raw `Repo.insert_all`
