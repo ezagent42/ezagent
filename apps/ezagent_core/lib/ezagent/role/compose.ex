@@ -49,6 +49,13 @@ defmodule Ezagent.Role.Compose do
   @spec materialize(Role.t(), opts()) :: materialized()
   def materialize(%Role{} = role, %{flavor_behaviors: flavor_behaviors})
       when is_list(flavor_behaviors) do
+    # The role's behaviors are validated as real Behaviors by `Role.new/1` (they
+    # come from an untrusted persisted/operator recipe). The flavor's behaviors
+    # are NOT re-validated here: they are CODE-DECLARED by the flavor plugin
+    # (`AgentFlavorRegistry` `instance_behaviors`) — trusted input whose validity
+    # belongs at flavor-registration, and which the runtime independently refuses
+    # at dispatch ({:not_a_behavior, _}). Validating them in this pure composer
+    # would couple it to cross-app module load-state for marginal defense.
     %{
       behaviors: Enum.uniq(role.behaviors ++ flavor_behaviors),
       sandbox_content: %{

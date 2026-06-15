@@ -10,6 +10,10 @@ defmodule Ezagent.Role.ComposeTest do
   # flavor-independent (the §6 completion invariant). Cap authorization/minting
   # is NOT here — it needs full agent context and lives in the materialization
   # step (PR-1b).
+  #
+  # NB: behavior modules used here must be loadable in ezagent_core's own test
+  # context — `Ezagent.Behavior.Sandbox` is core; domain behaviors (Identity,
+  # ApiKeys, …) are not loaded here.
 
   defp role do
     {:ok, role} =
@@ -27,20 +31,18 @@ defmodule Ezagent.Role.ComposeTest do
   describe "materialize/2" do
     test "composes role behaviors with the flavor's behaviors (union, deduped)" do
       out =
-        Compose.materialize(role(), %{
-          flavor_behaviors: [Ezagent.Behavior.Identity, Ezagent.Behavior.Sandbox]
-        })
+        Compose.materialize(role(), %{flavor_behaviors: [Ezagent.Behavior.Sandbox, :flavor_b]})
 
-      assert Enum.sort(out.behaviors) ==
-               Enum.sort([Ezagent.Behavior.Sandbox, Ezagent.Behavior.Identity])
+      # role's [Sandbox] ∪ flavor's [Sandbox, :flavor_b], deduped
+      assert Enum.sort(out.behaviors) == Enum.sort([Ezagent.Behavior.Sandbox, :flavor_b])
     end
 
     test "sandbox CONTENTS are flavor-independent (same role → same content)" do
-      cc = Compose.materialize(role(), %{flavor_behaviors: [:cc_b]})
-      codex = Compose.materialize(role(), %{flavor_behaviors: [:codex_b]})
+      a = Compose.materialize(role(), %{flavor_behaviors: [:flavor_a]})
+      b = Compose.materialize(role(), %{flavor_behaviors: [:flavor_b]})
 
-      assert cc.sandbox_content == codex.sandbox_content
-      assert cc.sandbox_content == %{skills: ["orchestrator"], plugins: ["np"], prompt: "persona"}
+      assert a.sandbox_content == b.sandbox_content
+      assert a.sandbox_content == %{skills: ["orchestrator"], plugins: ["np"], prompt: "persona"}
     end
 
     test "does NOT emit caps (cap authorization/minting is the materialization step's job)" do
