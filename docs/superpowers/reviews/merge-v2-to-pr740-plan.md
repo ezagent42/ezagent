@@ -80,16 +80,39 @@ PR #740 的 `operator_live.ex` 保留了需要的东西：
 | `customer_live.ex` | CustomerFeed token 修复、visibility filter ✅ |
 | `uris.ex` | `cc_slow-` → `slow-` fix ✅ |
 | `refresh.ex` | 顶层位置简洁，已接线 publish 按钮 ✅ |
-| `roles.ex` | Turn caps 一致 ✅ |
 | `turn_adapter.ex` | 已增强 operator caps + cancel_turn ✅ |
 | `cr_engine.ex` | mark-before-flip + repair_current + 原子 rename ✅ |
-| 所有测试文件 | PR #740 真实测试 ✅ |
 | demo 文件 | 已录制 ✅ |
 
-> ⚠️ **测试适配**: `operator_takeover_gating_test.exs` 测试 TurnAdapter 直驱路径。
-> operator_live.ex 改为 CsOrchestrator dispatch 后，需将此测试的验证目标
-> 从 TurnAdapter 改为 CsOrchestrator（或新增 CsOrchestrator gating test，
-> 保留 TurnAdapter test 用于 cancel 路径）。
+### 🔴 PR #740 文件中需要修改的内容（Codex 发现）
+
+| 文件 | 问题 | 修复 |
+|------|------|------|
+| `roles.ex` | operator bundle 只授权 Turn caps，不授权 CsOrchestrator caps → 所有 cs_orchestrator.operator_claim/settle dispatch 返回 `:unauthorized` | 追加 `operator_cs_orchestrator_caps`（process_message/operator_claim/operator_settle） |
+| `operator_live.ex` settle | 调用 `enable_session_rule` 但 settle 走 CsOrchestrator 后应由其管理 | 移除 settle 中的 RuleStore 调用，由 CsOrchestrator 的 operator_settle 效果管理 |
+| `operator_live.ex` cancel | 调用 `enable_session_rule` + 不重置 CsOrchestrator 的 `open_turn_id` | 保留 RuleStore 调用（cancel 是轻量 TurnAdapter 路径），但需额外 dispatch 重置 CsOrchestrator state |
+| `operator_live.ex` claim | 调用 `disable_session_rule` | 保留（与 CsOrchestrator operator_active 组成双门控），待后续 CsOrchestrator 内部接管 RuleStore 管理后移除 |
+| `operator_live.ex` settle | 不 unsubscribe CustomerFeed topic | settle 后加 unsubscribe |
+| `cs_orchestrator.ex` | `handle_operator_claim` 只设 `operator_active=true`，不 disable routing rules | 当前由 operator_live 外部管理 RuleStore；后续迭代应移入 CsOrchestrator 效果列表 |
+| `cs_orchestrator.ex` | `normalize_message/1` 用 `String.to_existing_atom/1` → runtime 遇未知 key 崩溃 | 改用 `String.to_atom/1` 或白名单匹配 |
+| `customer_session.ex` routing | orch_receiver **前置**于 fast/slow，若 Resolver 匹配所有 receivers 则造成 agent 重复收消息 | 确认框架行为：若 Resolver 只投递**首个匹配** receiver，则追加安全；若全量投递，则必须移除 fast/slow。实施时验证 |
+
+### ⚠️ 测试适配
+
+| 测试 | 问题 | 修复 |
+|------|------|------|
+| `operator_takeover_gating_test.exs` | 测试 TurnAdapter 直驱 + Turn caps；CsOrchestrator dispatch 需要 CsOrchestrator caps | 改为 dispatch cs_orchestrator.operator_claim/settle，用包含 CsOrchestrator caps 的 operator bundle |
+| `operator_live.ex` cancel | 改为 dispatch cs_orchestrator.action 重置 state | 或保留 TurnAdapter.cancel + 追加 state reset dispatch |
+| `turn_driver_test.exs` | merge-v2 新增，与 PR #740 无冲突 | 直接复制 ✅ |
+
+### ⚠️ 其他注意
+
+| 项 | 说明 |
+|----|------|
+| `seed_autoservice.ex` | PR #740 路径为 `apps/ezagent_plugin_autoservice/lib/mix/tasks/ezagent.demo.seed_autoservice.ex`，与 merge-v2 相同路径 ✅ |
+| version 冲突 | PR #740 `application.ex` version `"0.2.0"`，merge-v2 `"0.3.0"` → 用 `"0.3.0"` |
+| 死代码 | `handle_agent_reply` (~30行) 因框架约束 #2 暂不可达，保留待框架升级 |
+| 测试数 | 预计 ~47，但 `operator_takeover_gating_test` 需重写 → 实际约 40-45 |
 
 ---
 
@@ -164,3 +187,24 @@ mix phx.server                    # 所有入口可达
 | D9 | TenantAdminLive dev 适配用 merge-v2 | 模块引用已适配 dev 代码库 |
 | D10 | customer_session routing 用 merge-v2 | orch_receiver 是 CsOrchestrator 必需 |
 | D11 | tenant_admin_live.ex 位置用 PR #740 | `autoservice/` 目录（与 customer_live/operator_live 同目录） |
+| D12 | 双门控：RuleStore + operator_active | operator_live 继续管理 RuleStore；后续迭代移入 CsOrchestrator 效果 |
+| D13 | routing 保留 fast/slow 为 fallback | 若框架匹配全部 receivers 则需移除；实施时验证 |
+
+---
+
+## 七、Codex Review 摘要 (2026-06-15)
+
+**结论: 方案方向正确，发现 10 个具体问题（3 HIGH / 4 MEDIUM / 3 LOW），已全部纳入计划。**
+
+| # | 严重度 | 问题 | 状态 |
+|---|--------|------|------|
+| 1 | 🔴 HIGH | `roles.ex` operator bundle 缺 CsOrchestrator caps → `:unauthorized` | 已纳入修改清单 |
+| 2 | 🔴 HIGH | `operator_live.ex` settle/cancel 的 RuleStore 调用与 CsOrchestrator 双门控冲突 | 已纳入修改清单 |
+| 3 | 🔴 HIGH | `handle_operator_claim` 不 disable routing rules | 双门控设计，operator_live 外部管理 |
+| 4 | 🟡 MEDIUM | routing `[orch, fast, slow]` — 需验证框架是否全量匹配 | 实施时验证 |
+| 5 | 🟡 MEDIUM | settle handler 不 unsubscribe CustomerFeed | 已纳入修改清单 |
+| 6 | 🟡 MEDIUM | `normalize_message` `String.to_existing_atom` 崩溃风险 | 已纳入修改清单 |
+| 7 | 🟡 MEDIUM | `seed_autoservice.ex` 路径确认 | 已确认与 merge-v2 相同 |
+| 8 | 🟢 LOW | cancel 不重置 CsOrchestrator `open_turn_id` | 轻量 TurnAdapter 路径，可接受 |
+| 9 | 🟢 LOW | `handle_agent_reply` 死代码 ~30行 | 保留待框架升级 |
+| 10 | 🟢 LOW | version 冲突 0.2.0 vs 0.3.0 | 用 0.3.0 |
