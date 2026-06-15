@@ -152,13 +152,20 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
                # not left usable for the revoked grant. No-grant agents skip this (nil ctx).
                :ok <- revalidate_grant_before_launch(grant_ctx),
                :ok <- ensure_pty_server(agent_uri, cwd, tmpl_with_dir) do
+            # #17 (c) — spawn-time OAuth freshness reminder. Best-effort, never
+            # blocks: surfaces `credential_stale` in meta (like `role_degraded`)
+            # + warns + telemetry when the materialized token is already expired,
+            # so the owner is told to re-login instead of the agent silently 401ing.
+            credential_meta =
+              EzagentPluginCc.CredentialFreshness.remind(agent_uri, config_dir)
+
             base_meta = %{
               fresh?: true,
               config_dir_path: config_dir,
               respawn_template_data: tmpl_with_dir
             }
 
-            {:ok, [agent_uri], Map.merge(base_meta, role_meta)}
+            {:ok, [agent_uri], base_meta |> Map.merge(role_meta) |> Map.merge(credential_meta)}
           else
             {:error, reason} ->
               _ = Ezagent.Kind.terminate(agent_uri)
@@ -258,6 +265,16 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
 
             case ensure_pty_server(agent_uri, cwd, respawn_data) do
               :ok ->
+                # #17 (c) — respawn is the cold-restart case where a day-old OAuth
+                # token most often relaunches MUTE (respawn does NOT re-materialize
+                # the config_dir). Best-effort reminder (warn + telemetry) so a dead
+                # token is visible instead of silently 401ing. Never blocks.
+                _ =
+                  EzagentPluginCc.CredentialFreshness.remind(
+                    agent_uri,
+                    resolve_config_home(agent_uri, respawn_data)
+                  )
+
                 Logger.info(
                   "cc.agent.ensure_subprocess_alive: respawned PtyServer for " <>
                     URI.to_string(agent_uri)
