@@ -417,6 +417,24 @@ defmodule EzagentPluginLoom.WebPlug do
     json_resp(conn, 200, %{ok: true, instruction: instruction})
   end
 
+  # 2026-06-15 — Stitch 接待模式开关:stitch(自动答访客)| human(不答,出运营分析)。
+  get "/api/:ws/:sid/stitch-mode" do
+    json_resp(conn, 200, %{
+      ok: true,
+      mode: Ezagent.PluginLoom.WorkerConfig.get_stitch_mode(ws, sid)
+    })
+  end
+
+  post "/api/:ws/:sid/stitch-mode" do
+    mode = (conn.body_params || %{}) |> Map.get("mode", "stitch") |> to_string()
+    _ = Ezagent.PluginLoom.WorkerConfig.put_stitch_mode(ws, sid, mode)
+
+    json_resp(conn, 200, %{
+      ok: true,
+      mode: Ezagent.PluginLoom.WorkerConfig.get_stitch_mode(ws, sid)
+    })
+  end
+
   # 公开提供素材(图片等),让 v0 生成的 Sandpack 页面能 `<img src="/loom/materials/<ws>/<sid>/<path>">`。
   get "/materials/:ws/:sid/*path" do
     serve_material(conn, ws, sid, Enum.join(path, "/"))

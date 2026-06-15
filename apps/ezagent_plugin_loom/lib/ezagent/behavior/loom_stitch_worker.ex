@@ -47,7 +47,8 @@ defmodule Ezagent.Behavior.LoomStitchWorker do
     returns: %{},
     caps: [:receive],
     modes: [:cast],
-    description: "loom Stitch orchestrator — route a preview turn to sub-workers, aggregate, reply"
+    description:
+      "loom Stitch orchestrator — route a preview turn to sub-workers, aggregate, reply"
   )
 
   def required_caps do
@@ -94,8 +95,56 @@ defmodule Ezagent.Behavior.LoomStitchWorker do
     count = ctx[:read].(:count, 0)
 
     case Map.get(payload, "mode", "stitch") do
-      "aispot" -> aspot_turn(payload, kb, ctx, msg, count)
-      _ -> stitch_turn(payload, kb, ctx, msg, pending, count)
+      "aispot" ->
+        aspot_turn(payload, kb, ctx, msg, count)
+
+      _ ->
+        # 2026-06-15 — Stitch 接待模式:human → 不自动答访客,出一段给运营看的分析。
+        if ws && sid && Ezagent.PluginLoom.WorkerConfig.get_stitch_mode(ws, sid) == "human" do
+          human_analysis_turn(payload, kb, ctx, msg, count)
+        else
+          stitch_turn(payload, kb, ctx, msg, pending, count)
+        end
+    end
+  end
+
+  # === human(真人接待)模式:不答访客,产出给运营看的要点分析 ===
+  # reply 标 mode "human" → preview 历史(GET /stitch 过滤 mode=="stitch")不收录,
+  # 访客侧看不到这条;admin 会话时间线照常显示(运营看)。
+  defp human_analysis_turn(payload, kb, ctx, msg, count) do
+    text = to_string(Map.get(payload, "text", ""))
+
+    sys = """
+    当前会话是「真人接待」模式:你**不直接回答访客**,而是给运营 / 真人一段简短分析,帮 ta 决定怎么回复。
+    #{if kb != "", do: "可参考的知识库:\n#{kb}\n", else: ""}
+    访客刚说的话见 user。请只输出**给运营看的要点分析**(不要对访客说话、不要客服口吻、不要 JSON):
+    1) 访客真实意图 / 想要什么;
+    2) 关注点或潜在顾虑;
+    3) 建议的回复要点(2-3 条)。
+    简洁、要点式、纯文本。
+    """
+
+    case DeepSeek.chat(
+           [%{"role" => "system", "content" => sys}, %{"role" => "user", "content" => text}],
+           temperature: 0.4,
+           thinking_disabled: true
+         ) do
+      {:ok, raw} ->
+        analysis = "【真人模式 · 给运营的分析(访客看不到自动答复)】\n" <> String.trim(raw)
+
+        {:ok, %{},
+         [{:set, :count, count + 1}, {:set, :last_error, nil}] ++
+           reply_effect(ctx, msg, analysis, stitch_meta(%{"mode" => "human"}))}
+
+      {:error, reason} ->
+        {:ok, %{},
+         [{:set, :last_error, reason}] ++
+           reply_effect(
+             ctx,
+             msg,
+             "(分析暂时不可用:#{inspect(reason)})",
+             stitch_meta(%{"mode" => "human"})
+           )}
     end
   end
 
@@ -111,7 +160,8 @@ defmodule Ezagent.Behavior.LoomStitchWorker do
     else
       sys = Stitch.aispot_prompt(feature, context, kb, caps)
 
-      case DeepSeek.chat([%{"role" => "system", "content" => sys}, %{"role" => "user", "content" => "生成。"}],
+      case DeepSeek.chat(
+             [%{"role" => "system", "content" => sys}, %{"role" => "user", "content" => "生成。"}],
              temperature: 0.5,
              thinking_disabled: true
            ) do
@@ -120,11 +170,13 @@ defmodule Ezagent.Behavior.LoomStitchWorker do
 
           _ = decision
 
-          {:ok, %{}, [{:set, :count, count + 1}, {:set, :last_error, nil}] ++
+          {:ok, %{},
+           [{:set, :count, count + 1}, {:set, :last_error, nil}] ++
              reply_effect(ctx, msg, card, %{"mode" => "aispot"})}
 
         {:error, reason} ->
-          {:ok, %{}, [{:set, :last_error, reason}] ++
+          {:ok, %{},
+           [{:set, :last_error, reason}] ++
              reply_effect(ctx, msg, "(增强助手暂时不可用:#{inspect(reason)})", %{"mode" => "aispot"})}
       end
     end
@@ -154,7 +206,8 @@ defmodule Ezagent.Behavior.LoomStitchWorker do
         fan_out(plan, text, caps, kb, roster, roster_view, ctx, msg, pending, count)
 
       {:error, reason} ->
-        {:ok, %{}, [{:set, :last_error, reason}] ++
+        {:ok, %{},
+         [{:set, :last_error, reason}] ++
            reply_effect(ctx, msg, "(增强助手暂时不可用:#{inspect(reason)})", stitch_meta(%{}))}
     end
   end
@@ -185,7 +238,9 @@ defmodule Ezagent.Behavior.LoomStitchWorker do
           end
 
         dispatch_effects =
-          Enum.map(subs, fn {_k, sub} -> {:dispatch, send_chat_cmd(session_uri, self_uri, sub)} end)
+          Enum.map(subs, fn {_k, sub} ->
+            {:dispatch, send_chat_cmd(session_uri, self_uri, sub)}
+          end)
 
         subtask_ids = Enum.map(subs, fn {_k, sub} -> sub.id end)
 
@@ -206,7 +261,11 @@ defmodule Ezagent.Behavior.LoomStitchWorker do
         Process.send_after(self(), {:stitch_agg_timeout, turn_id}, @agg_timeout_ms)
 
         {:ok, %{},
-         [{:set, :pending, Map.put(pending, turn_id, turn)}, {:set, :count, count + 1}, {:set, :last_error, nil}] ++
+         [
+           {:set, :pending, Map.put(pending, turn_id, turn)},
+           {:set, :count, count + 1},
+           {:set, :last_error, nil}
+         ] ++
            dispatch_effects}
     end
   end
@@ -277,7 +336,13 @@ defmodule Ezagent.Behavior.LoomStitchWorker do
         Enum.map(parts, fn p ->
           step("#{p["icon"]} #{p["label"]}", p["kind"], p["say"])
         end) ++
-        [step("compose", "stitch", "整理成一条回复#{if drives != [], do: " · 应用 #{length(drives)} 个动作", else: ""}")]
+        [
+          step(
+            "compose",
+            "stitch",
+            "整理成一条回复#{if drives != [], do: " · 应用 #{length(drives)} 个动作", else: ""}"
+          )
+        ]
 
     {reply, drives, chain}
   end
@@ -296,7 +361,14 @@ defmodule Ezagent.Behavior.LoomStitchWorker do
         meta = stitch_meta(%{"drives" => drives, "trace" => trace(turn.roster_view, chain)})
 
         for cmd <-
-              stitch_reply_cmds(self_uri, turn.session_uri, turn_id, turn.user_uri, reply_text, meta) do
+              stitch_reply_cmds(
+                self_uri,
+                turn.session_uri,
+                turn_id,
+                turn.user_uri,
+                reply_text,
+                meta
+              ) do
           Ezagent.Router.dispatch(cmd)
         end
 
@@ -313,7 +385,11 @@ defmodule Ezagent.Behavior.LoomStitchWorker do
   defp trace(roster_view, chain), do: %{"roster" => roster_view, "chain" => chain}
 
   defp step(label, kind, detail),
-    do: %{"step" => to_string(label), "kind" => to_string(kind), "detail" => to_string(detail || "")}
+    do: %{
+      "step" => to_string(label),
+      "kind" => to_string(kind),
+      "detail" => to_string(detail || "")
+    }
 
   # ---------------------------------------------------------------
   # payload / helpers
@@ -327,7 +403,8 @@ defmodule Ezagent.Behavior.LoomStitchWorker do
     Map.put_new(p, "worker", worker_key)
   end
 
-  defp part_of(_, worker_key), do: %{"kind" => "answer", "say" => "", "answer" => "", "worker" => worker_key}
+  defp part_of(_, worker_key),
+    do: %{"kind" => "answer", "say" => "", "answer" => "", "worker" => worker_key}
 
   defp normalize_caps(caps) when is_list(caps) do
     caps |> Enum.filter(&(is_map(&1) and Map.get(&1, "id") not in [nil, ""])) |> Enum.take(40)
@@ -372,7 +449,11 @@ defmodule Ezagent.Behavior.LoomStitchWorker do
   defp addressed_to_self?(%Message{mentions: mentions}, %{self_uri: %URI{} = self_uri})
        when is_list(mentions) do
     self_str = URI.to_string(self_uri)
-    Enum.any?(mentions, fn %URI{} = m -> URI.to_string(m) == self_str; _ -> false end)
+
+    Enum.any?(mentions, fn
+      %URI{} = m -> URI.to_string(m) == self_str
+      _ -> false
+    end)
   end
 
   defp addressed_to_self?(_, _), do: false
@@ -382,13 +463,31 @@ defmodule Ezagent.Behavior.LoomStitchWorker do
   # action-path reply (wrapped in {:dispatch, _}); reply to the request msg.
   defp reply_effect(ctx, %Message{} = req_msg, plain_text, meta)
        when is_binary(plain_text) and is_map(meta) do
-    stitch_reply_effect(Map.get(ctx, :self_uri), session_from_ctx(ctx), req_msg.id, req_msg.sender, plain_text, meta)
+    stitch_reply_effect(
+      Map.get(ctx, :self_uri),
+      session_from_ctx(ctx),
+      req_msg.id,
+      req_msg.sender,
+      plain_text,
+      meta
+    )
   end
 
   defp stitch_reply_effect(self_uri, session_uri, ref_id, to_uri, text, meta),
-    do: Enum.map(stitch_reply_cmds(self_uri, session_uri, ref_id, to_uri, text, meta), &{:dispatch, &1})
+    do:
+      Enum.map(
+        stitch_reply_cmds(self_uri, session_uri, ref_id, to_uri, text, meta),
+        &{:dispatch, &1}
+      )
 
-  defp stitch_reply_cmds(%URI{} = self_uri, %URI{scheme: "session"} = session_uri, ref_id, %URI{} = to_uri, text, meta) do
+  defp stitch_reply_cmds(
+         %URI{} = self_uri,
+         %URI{scheme: "session"} = session_uri,
+         ref_id,
+         %URI{} = to_uri,
+         text,
+         meta
+       ) do
     reply =
       Message.new(self_uri, %{text: text, attachments: [], stitch_reply: meta},
         ref_id: ref_id,
