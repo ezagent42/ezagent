@@ -396,7 +396,15 @@ defmodule Ezagent.Behavior.Template do
           # surface the failure to the session owner per Invariant #9.
           result =
             spawn_result
-            |> Map.take([:workers, :fresh?, :role_degraded, :role_degraded_reason])
+            |> Map.take([
+              :workers,
+              :fresh?,
+              :role_degraded,
+              :role_degraded_reason,
+              # #17 (c) — OAuth credential-staleness reminder, same passthrough.
+              :credential_stale,
+              :credential_stale_reason
+            ])
 
           {:ok, result, []}
         end

@@ -822,8 +822,16 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
 
   defp decompose_ensure({:ok, %URI{} = uri, _outcome}), do: {uri, %{}}
 
-  # `:ready` (+ optional `:role_degraded` surfacing per Invariant #9).
-  defp ready_meta(
+  # `:ready` (+ optional `:role_degraded` / `:credential_stale` owner surfacing per
+  # Invariant #9). Credential staleness is ORTHOGONAL to role degradation — both
+  # are surfaced; the orchestrator Agent is alive in every case.
+  defp ready_meta(%URI{} = orch_uri, owner_uri, session_uri, degraded_meta)
+       when is_map(degraded_meta) do
+    maybe_notify_orchestrator_credential_stale(owner_uri, session_uri, orch_uri, degraded_meta)
+    ready_meta_for_role(orch_uri, owner_uri, session_uri, degraded_meta)
+  end
+
+  defp ready_meta_for_role(
          %URI{} = orch_uri,
          owner_uri,
          session_uri,
@@ -838,7 +846,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     }
   end
 
-  defp ready_meta(%URI{} = orch_uri, _owner_uri, _session_uri, _degraded_meta) do
+  defp ready_meta_for_role(%URI{} = orch_uri, _owner_uri, _session_uri, _degraded_meta) do
     %{orchestrator_uri: orch_uri, orchestrator_status: :ready, orchestrator_error: nil}
   end
 
@@ -940,6 +948,77 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
       "EzagentDomainInstanceMessage.SessionCreator.create_session: orchestrator role-bootstrap DEGRADED for " <>
         "session=#{URI.to_string(session_uri)} orchestrator=#{URI.to_string(orch_uri)} " <>
         "reason=#{inspect(reason)} — owner is not a user URI; no inbox notification sent."
+    )
+
+    :ok
+  end
+
+  # #17 (c) — surface a STALE OAuth credential to the session owner (a re-login
+  # reminder), on the same best-effort owner-notification path as role_degraded.
+  # The orchestrator Agent is alive but will reply 401 until the owner re-logs in
+  # (`claude /login`). Only fires when the spawn meta carries `credential_stale`.
+  defp maybe_notify_orchestrator_credential_stale(
+         owner_uri,
+         %URI{} = session_uri,
+         %URI{} = orch_uri,
+         %{credential_stale: true} = meta
+       ) do
+    notify_orchestrator_credential_stale(owner_uri, session_uri, orch_uri, meta)
+  end
+
+  defp maybe_notify_orchestrator_credential_stale(_owner, _session, _orch, _meta), do: :ok
+
+  defp notify_orchestrator_credential_stale(
+         %URI{scheme: "entity"} = owner_uri,
+         %URI{} = session_uri,
+         %URI{} = orch_uri,
+         meta
+       ) do
+    unless Ezagent.URI.type?(owner_uri, :user) do
+      notify_orchestrator_credential_stale(:non_user_owner, session_uri, orch_uri, meta)
+    else
+      reason = Map.get(meta, :credential_stale_reason)
+
+      Logger.warning(
+        "EzagentDomainInstanceMessage.SessionCreator.create_session: orchestrator OAuth credential #{inspect(reason)} for " <>
+          "session=#{URI.to_string(session_uri)} orchestrator=#{URI.to_string(orch_uri)} — " <>
+          "the agent is alive but will reply 401 until re-login. The session owner has been notified (#17 c)."
+      )
+
+      try do
+        _ =
+          Ezagent.Notifications.notify(owner_uri, %{
+            type: :orchestrator_credential_stale,
+            body: %{
+              text:
+                "Orchestrator agent's Claude login is #{reason} — it will receive messages " <>
+                  "but cannot reply until you re-login (`claude /login` in its config dir).",
+              session_uri: session_uri,
+              orchestrator_uri: orch_uri,
+              reason: inspect(reason)
+            },
+            source: __MODULE__
+          })
+      rescue
+        error ->
+          Logger.warning(
+            "EzagentDomainInstanceMessage.SessionCreator.create_session: notify(:orchestrator_credential_stale) to " <>
+              "#{URI.to_string(owner_uri)} raised #{inspect(error)} — the orchestrator " <>
+              "is still alive; this is the notification path failing, not the spawn."
+          )
+      end
+
+      :ok
+    end
+  end
+
+  defp notify_orchestrator_credential_stale(_owner, %URI{} = session_uri, %URI{} = orch_uri, meta) do
+    reason = Map.get(meta, :credential_stale_reason)
+
+    Logger.warning(
+      "EzagentDomainInstanceMessage.SessionCreator.create_session: orchestrator OAuth credential #{inspect(reason)} for " <>
+        "session=#{URI.to_string(session_uri)} orchestrator=#{URI.to_string(orch_uri)} " <>
+        "— owner is not a user URI; no inbox notification sent."
     )
 
     :ok

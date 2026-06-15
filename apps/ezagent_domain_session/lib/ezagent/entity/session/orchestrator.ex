@@ -460,7 +460,15 @@ defmodule Ezagent.Entity.Session.Orchestrator do
       # path (`fresh? == false`). The 5-tuple is internal to this module.
       fresh? = Map.get(result, :fresh?, false) == true
       outcome = if fresh?, do: :created, else: :already_present
-      degraded_meta = Map.take(result, [:role_degraded, :role_degraded_reason])
+
+      degraded_meta =
+        Map.take(result, [
+          :role_degraded,
+          :role_degraded_reason,
+          # #17 (c) — OAuth credential-staleness reminder, surfaced to the owner.
+          :credential_stale,
+          :credential_stale_reason
+        ])
 
       {:ok, candidate_uri, outcome, fresh?, degraded_meta}
     end
@@ -735,17 +743,22 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   end
 
   # ─────────────────────────────────────────────────────────────────────
-@doc "Grant the orchestrator its scope-bounded delegation caps (RFC #402 caps #1–#4) at session create. Delegates to `Orchestrator.Caps`; idempotent (skips logically-equal re-grants)."
-defdelegate grant_orchestrator_scoped_caps(orchestrator_uri, session_uri, owner_uri),
-  to: Ezagent.Entity.Session.Orchestrator.Caps
+  @doc "Grant the orchestrator its scope-bounded delegation caps (RFC #402 caps #1–#4) at session create. Delegates to `Orchestrator.Caps`; idempotent (skips logically-equal re-grants)."
+  defdelegate grant_orchestrator_scoped_caps(orchestrator_uri, session_uri, owner_uri),
+    to: Ezagent.Entity.Session.Orchestrator.Caps
 
-@doc "Revoke exactly the scoped-cap set `grant_orchestrator_scoped_caps/3` adds — the rollback inverse on a failed create. Delegates to `Orchestrator.Caps`; best-effort + idempotent."
-defdelegate revoke_orchestrator_scoped_caps(orchestrator_uri, session_uri, owner_uri, workspace_uri),
-  to: Ezagent.Entity.Session.Orchestrator.Caps
+  @doc "Revoke exactly the scoped-cap set `grant_orchestrator_scoped_caps/3` adds — the rollback inverse on a failed create. Delegates to `Orchestrator.Caps`; best-effort + idempotent."
+  defdelegate revoke_orchestrator_scoped_caps(
+                orchestrator_uri,
+                session_uri,
+                owner_uri,
+                workspace_uri
+              ),
+              to: Ezagent.Entity.Session.Orchestrator.Caps
 
-@doc "Whether two caps are logically equal ignoring volatile metadata (e.g. `granted_at`) — the idempotency comparator used by the scoped-cap grant/revoke. Delegates to `Orchestrator.Caps`."
-defdelegate cap_equal_ignoring_metadata?(left, right),
-  to: Ezagent.Entity.Session.Orchestrator.Caps
+  @doc "Whether two caps are logically equal ignoring volatile metadata (e.g. `granted_at`) — the idempotency comparator used by the scoped-cap grant/revoke. Delegates to `Orchestrator.Caps`."
+  defdelegate cap_equal_ignoring_metadata?(left, right),
+    to: Ezagent.Entity.Session.Orchestrator.Caps
 
   # register_orchestrator_mcp_context  (2026-05-31 §4 step 7)
   # ─────────────────────────────────────────────────────────────────────
