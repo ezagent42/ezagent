@@ -53,25 +53,23 @@ defmodule EzagentPluginCc.MixProject do
       # cc.agent template now calls Ezagent.Domain.Pty.start/2 with
       # the full claude cmd string built here in the cc plugin.
       {:ezagent_domain_pty, in_umbrella: true},
-      # PRODUCTION decoupling preserved: bridge reply dispatch uses
-      # Ezagent.Invocation + Ezagent.Message from core; no chat-domain
-      # modules are called directly in lib/, so chat stays a runtime
-      # peer (always co-deployed via ezagent_web), NOT a compile dep.
-      #
-      # TEST-ONLY chat dep (post-lifecycle remediation): cc agents are
-      # the shared `Ezagent.Entity.Agent` Kind, which is DEFINED in
-      # ezagent_domain_session, and the `entity://agent` SpawnRegistry host
-      # handler (flavor-prefix → Kind resolution) is REGISTERED by
-      # chat's Application.start. Running the cc suite in isolation
-      # without chat leaves `Ezagent.Entity.Agent` unloadable and the
-      # agent-host handler unregistered, so every CcAgent.instantiate
-      # test fails with `{:no_entity_host_handler, "agent"}`. The full
-      # umbrella masks this because chat boots alongside cc. Depending
-      # on chat `only: :test` makes the isolated suite faithful to the
-      # production topology (chat always co-runs) without re-coupling
-      # the lib/ build. Mirrors ezagent_plugin_echo, which depends on
-      # chat outright for the same Agent-Kind/dispatcher reason.
-      {:ezagent_domain_session, in_umbrella: true, only: :test},
+      # cc → session is a REAL prod compile dep (#57). Transport #53 / PR-8
+      # relocated the orchestrator-MCP transport INTO this plugin
+      # (mcp_channel / mcp_registry / mcp_server / live_join_registry), and
+      # those lib/ modules call `Ezagent.Session.SessionManager` and
+      # `Ezagent.Entity.Session.*` directly — so the earlier `only: :test`
+      # declaration had become FALSE for prod lib/. It escaped a compile
+      # warning only by alphabetical umbrella build order (ezagent_domain_session
+      # sorts before ezagent_plugin_cc, so the session beam happened to exist
+      # when cc compiled) — a latent layering hazard, not a real decoupling.
+      # cc also implements `Ezagent.Session.OrchestratorReadinessPort` (the
+      # session → transport seam) and hosts cc agents (the shared
+      # `Ezagent.Entity.Agent` Kind, DEFINED in this domain). Declaring the
+      # honest dep mirrors ezagent_plugin_echo, which deps on session outright
+      # for the same Agent-Kind/dispatcher reason. The acyclic invariant is
+      # unaffected: plugin → session is allowed (only agent ⊅ session and
+      # session ⊅ im are forbidden), and session does NOT dep on cc — no cycle.
+      {:ezagent_domain_session, in_umbrella: true},
       # Absorbed from the deleted ezagent_plugin_cc_channel:
       # Phoenix.Socket/Channel for the v2 WS bridge mounted at
       # /cc_socket in EzagentWeb.Endpoint.
