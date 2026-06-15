@@ -131,6 +131,26 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
                scan_source(src, "apps/x/lib/legacy.ex")
     end
 
+    test "catches the explicit zero-arity `()` callback head (both callbacks)" do
+      lifecycle = """
+      defmodule Some.Behavior.ParensA do
+        def reads_siblings(), do: [:api_keys]
+      end
+      """
+
+      legacy = """
+      defmodule Some.Behavior.ParensB do
+        def reads_sibling_slices(), do: [:identity]
+      end
+      """
+
+      assert [%{key: :api_keys, via: :reads_siblings}] =
+               scan_source(lifecycle, "apps/x/lib/pa.ex")
+
+      assert [%{key: :identity, via: :reads_sibling_slices}] =
+               scan_source(legacy, "apps/x/lib/pb.ex")
+    end
+
     test "flags a Kind.get_slice on a sensitive slice (qualified + bare)" do
       qualified = """
       defmodule Some.Behavior.A do
@@ -228,10 +248,13 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
     sibling_reads(form, arg, file, module)
   end
 
-  # def reads_siblings, do: [...] / def reads_sibling_slices, do: [...] (0-arity)
+  # def reads_siblings, do: [...] / def reads_sibling_slices, do: [...] — every
+  # ZERO-ARITY head the runtime accepts via function_exported?/3: no-parens
+  # (`ctx` is nil/atom) AND explicit `()` (`ctx == []`). A head WITH args is
+  # `ctx == [arg, ...]` and must NOT match.
   defp node_reads({def_kw, _, [{form, _, ctx}, [{:do, body} | _]]}, file, module)
        when def_kw in [:def, :defp] and form in [:reads_siblings, :reads_sibling_slices] and
-              not is_list(ctx) do
+              (not is_list(ctx) or ctx == []) do
     sibling_reads(form, body, file, module)
   end
 
