@@ -4,6 +4,19 @@ defmodule Ezagent.Capability.Match do
   alias Ezagent.Capability
   alias Ezagent.Capability.Scope
 
+  @doc """
+  The pure 5-axis capability match. A cap authorizes `needed` iff its
+  `kind`, `behavior`, `action`, `instance`, and `workspace_uri` all match.
+  The wildcard semantics are ASYMMETRIC: a HELD cap's `:any` wildcards
+  `kind`/`behavior`/`action`/`instance` (a needed-side `:any` does NOT — it
+  matches only an `:any` held value), so a concrete held cap never authorizes
+  a wildcard request. `workspace_uri` is the exception — `:any` on EITHER side
+  matches (`workspace_match?/2`). `instance` additionally honors the held
+  cap's `{:within_session | :within_workspace | :spawned_by, _}` scope tuples
+  for scope-bounded delegation. The second clause defaults a missing `:action`
+  key to `:any` (pre-action-axis callers). No process calls — it is the pure
+  decision dispatch step 5.5 reuses. Backs `Ezagent.Capability.matches?/2`.
+  """
   @spec matches?(Capability.t(), %{
           required(:kind) => atom(),
           required(:behavior) => module(),
@@ -38,9 +51,23 @@ defmodule Ezagent.Capability.Match do
     matches?(cap, Map.put(needed, :action, :any))
   end
 
+  @doc """
+  Read a cap's `:action` axis, defaulting to `:any` for caps loaded from
+  pre-action-axis snapshots that lack the key (SPEC 2026-05-27
+  capability-action-axis §3.3.1 — the single missing-key-tolerance
+  chokepoint). Backs `Ezagent.Capability.action_of/1`.
+  """
   @spec action_of(Capability.t() | map()) :: atom()
   def action_of(cap), do: Map.get(cap, :action, :any)
 
+  @doc """
+  The logical-identity 5-tuple of a cap — `{kind, behavior, action, instance,
+  workspace_uri}`, with the two URI axes normalized via
+  `Ezagent.URI.stable_key/1`. Deliberately EXCLUDES `granted_by`/`granted_at`
+  provenance so revoke can match a held cap despite a different grant
+  timestamp (codex review HIGH-1, 2026-05-26 — full-struct equality silently
+  failed revoke). Backs `Ezagent.Capability.identity_key/1`.
+  """
   @spec identity_key(Capability.t()) ::
           {atom() | :any, module() | :any, atom() | :any,
            URI.t() | :any | Capability.scope_tuple(), URI.t() | :any}
@@ -54,6 +81,14 @@ defmodule Ezagent.Capability.Match do
       ),
       do: {k, b, action_of(cap), normalize_uri_for_key(i), normalize_uri_for_key(w)}
 
+  @doc """
+  Build the runtime `needed`-cap map for a `(kind_module, action,
+  target_uri)` triple: `behavior` via `BehaviorRegistry.lookup/2` (`:unknown`
+  on miss), `instance` as the target's bare instance URI, `workspace_uri` via
+  `Scope.workspace_of/1`. The legacy needed-shape builder dispatch step 5.5
+  falls back to when a Behavior hasn't declared `required_caps/0`. Backs
+  `Ezagent.Capability.cap_for_action/3`.
+  """
   @spec cap_for_action(module(), atom(), URI.t()) :: %{
           kind: atom(),
           behavior: module(),

@@ -4,6 +4,12 @@ defmodule Ezagent.Capability.Normalize do
   alias Ezagent.Capability
   alias Ezagent.Capability.Match
 
+  @doc """
+  Serialize a `%Capability{}` to a JSON-safe STRING-keyed map for
+  `users.caps_json` storage: atoms/modules → strings, URIs → strings, `:any`
+  → `"any"`, `granted_at` → ISO8601. Inverse of `from_map/1`. Backs
+  `Ezagent.Capability.to_map/1`.
+  """
   @spec to_map(Capability.t()) :: map()
   def to_map(%Capability{} = cap) do
     %{
@@ -17,6 +23,18 @@ defmodule Ezagent.Capability.Normalize do
     }
   end
 
+  @doc """
+  Deserialize a JSON-decoded STRING-keyed map back to `%Capability{}`. This is
+  the TOLERANT read-side decode (contrast the strict `normalize!/2` grant
+  chokepoint): a missing `"action"`/`"workspace_uri"` defaults to `:any` and an
+  unknown atom/module name collapses to `:any` rather than raising, so a row
+  authored before the action-axis / `workspace_uri` field still round-trips.
+  CAUTION: because a missing `"workspace_uri"` becomes `:any` (cross-workspace),
+  this decode does NOT itself reject a field-less row — the durable
+  `users.caps_json` path relies on every persisted cap actually carrying the
+  field (post-PR-3 grant code always writes it via `normalize!/2`). Inverse of
+  `to_map/1`; backs `Ezagent.Capability.from_map/1`.
+  """
   @spec from_map(map()) :: Capability.t()
   def from_map(%{} = m) do
     m = Map.put_new(m, "action", "any")
@@ -32,6 +50,21 @@ defmodule Ezagent.Capability.Normalize do
     }
   end
 
+  @doc """
+  Coerce any of the three accepted grant-input shapes to a canonical
+  `%Capability{}`: a `%Capability{}` (passthrough), a string-keyed
+  JSON-decoded map (CLI path), or an atom-keyed Elixir map (in-VM callers) —
+  stamping `granted_by`/`granted_at` when absent. The SINGLE chokepoint on
+  the grant path (Bug 2, Allen 2026-05-26), per
+  `feedback_let_it_crash_no_workarounds`: a missing `workspace_uri` RAISES in
+  BOTH the string-keyed and atom-keyed branches (no silent cross-workspace
+  default). The string-keyed (CLI/JSON) branch is strictest — a missing
+  `instance` also RAISES and unknown atoms/modules RAISE (never widened to
+  `:any`). The atom-keyed (in-VM Elixir) branch is laxer: it defaults a
+  missing `:instance` to `:any` (`Map.get(m, :instance, :any)`), so only
+  `workspace_uri` is structurally mandatory there. Backs
+  `Ezagent.Capability.normalize!/2`.
+  """
   @spec normalize!(Capability.t() | map(), URI.t() | String.t()) :: Capability.t()
   def normalize!(%Capability{} = cap, _granter), do: cap
 
