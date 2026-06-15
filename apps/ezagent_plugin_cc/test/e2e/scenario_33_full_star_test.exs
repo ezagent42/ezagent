@@ -35,6 +35,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
   alias Ezagent.Entity.{Agent, Session, User}
   alias Ezagent.Session.SessionManager
   alias Ezagent.AgentBridge.TokenStore
+  alias Ezagent.Orchestrator.McpServer
 
   @moduletag scenario: "33-full-star-orchestrator-all-flavors"
 
@@ -317,6 +318,41 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
 
       assert length(Enum.uniq(uris)) == 3,
              "the three flavor members must be distinct: #{inspect(uris)}"
+    end
+
+    # E2E coverage gap that let the #750 structuredContent bug escape: the tests
+    # above call `run_tool/` (SessionManager.run_tool) directly and assert the
+    # RAW `{:ok, %URI{}}` — they BYPASS the cc transport's MCP encode boundary
+    # (`McpServer.handle_tool_call` → `to_mcp_result`), which is where the bug
+    # lived. This test drives a URI-returning tool (add_managed_member) through
+    # that encode boundary and asserts the response is a VALID MCP result: a
+    # real MCP client (claude) requires `structuredContent` to be an OBJECT, and
+    # pre-fix the URI stringified to a bare string → "expected record, received
+    # string" → the orchestrator could not read back the member URI. (Found in
+    # prod only by Allen's manual Feishu test, 2026-06-15.)
+    test "add_managed_member through the cc MCP transport encodes a VALID object structuredContent (#750 regression)",
+         ctx do
+      raw =
+        run_tool(ctx.mcp, "add_managed_member", %{
+          "source_agent_template_uri" => URI.to_string(ctx.templates.cc),
+          "role_name" => "worker-mcp-encode"
+        })
+
+      assert {:ok, %URI{}} = raw, "add_managed_member must succeed: #{inspect(raw)}"
+
+      # The encode boundary the live transport (`handle_tool_call`) applies.
+      encoded = McpServer.to_mcp_result(raw)
+
+      refute encoded["isError"]
+
+      assert is_map(encoded["structuredContent"]),
+             "MCP structuredContent MUST be an object/record, not a bare string " <>
+               "(pre-#750-fix a {:ok, member_uri} encoded to a string → the bridge " <>
+               "rejected it) — got: #{inspect(encoded["structuredContent"])}"
+
+      assert is_binary(encoded["structuredContent"]["result"]) and
+               encoded["structuredContent"]["result"] =~ "entity://",
+             "the new member URI must be readable back from structuredContent.result"
     end
 
     test "define_rule_set_rule routes to each flavor member independently", ctx do
