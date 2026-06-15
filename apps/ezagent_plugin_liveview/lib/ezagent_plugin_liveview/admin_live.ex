@@ -2076,87 +2076,118 @@ defmodule EzagentPluginLiveview.AdminLive do
     caller_uri = Map.get(socket.assigns, :caller_uri) || socket.assigns[:current_entity_uri]
     caller_caps = Map.get(socket.assigns, :caller_caps)
 
-    case caller_uri do
-      %URI{} = caller_uri when not is_nil(caller_caps) ->
-        target = Ezagent.URI.with_action(session_uri, :chat, :join)
+    cond do
+      # 2026-06-15 — already a member → the auto-join is a no-op; skip it entirely.
+      # Pre-fix every mount/refresh re-dispatched chat.join even for sessions the
+      # caller already belongs to; when `caller_caps` was transiently empty/stale
+      # (User-Kind caps not yet reloaded — fixed by re-login) the redundant join
+      # came back `:unauthorized` and flashed the scary "No chat.join cap … ask the
+      # session owner to invite you" on the operator's OWN session on every refresh.
+      # Joining is only needed when you're NOT yet a member.
+      match?(%URI{}, caller_uri) and already_member?(session_uri, caller_uri) ->
+        socket
 
-        result =
-          Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-            target: target,
-            mode: :call,
-            args: %{member: caller_uri},
-            ctx: %{
-              caller: caller_uri,
-              caps: caller_caps,
-              reply: :ignore
-            }
-          })
+      not match?(%URI{}, caller_uri) or is_nil(caller_caps) ->
+        socket
 
-        case result do
-          :ok ->
-            socket
+      true ->
+        do_self_join_dispatch(socket, session_uri, caller_uri, caller_caps)
+    end
+  end
 
-          {:ok, _} ->
-            socket
-
-          {:error, :unauthorized} ->
-            # Let-it-crash spec — DO NOT silently auto-join (would
-            # require widening the principal to system-internal,
-            # which would defeat the per-session cap model). Surface
-            # the gap so the operator can act (request a cap from
-            # the session owner, or accept that they can read but
-            # not participate). `feedback_let_it_crash_no_workarounds`.
-            assign(
-              socket,
-              :flash_error,
-              gettext(
-                "No chat.join cap on %{session} — ask the session owner to invite you, or you can only observe.",
-                session: URI.to_string(session_uri)
-              )
-            )
-
-          {:error, :cross_workspace_denied} ->
-            assign(
-              socket,
-              :flash_error,
-              gettext(
-                "Session %{session} is in another workspace — auto-join skipped.",
-                session: URI.to_string(session_uri)
-              )
-            )
-
-          {:error, {:member_not_registered, _}} ->
-            # Caller's own Kind isn't alive yet (rare race during
-            # login → /sessions navigation before identity boot
-            # completes). Spawning a User Kind is the identity
-            # domain's job; we don't reach across.
-            require Logger
-
-            Logger.warning(
-              "AdminLive.maybe_self_join: caller Kind not registered " <>
-                "for #{URI.to_string(caller_uri)} on #{URI.to_string(session_uri)} — " <>
-                "skipping auto-join (next remount will retry)."
-            )
-
-            socket
-
-          {:error, reason} ->
-            # Unexpected — log + render. The session is still usable
-            # in observe-mode; we don't crash the LV mount because
-            # of a transient dispatch failure.
-            require Logger
-
-            Logger.warning(
-              "AdminLive.maybe_self_join: chat.join failed for " <>
-                "#{URI.to_string(caller_uri)} on #{URI.to_string(session_uri)}: " <>
-                inspect(reason)
-            )
-
-            socket
-        end
+  # 2026-06-15 — caller 是否已是 session 的成员(已是 → 不必 auto-join)。
+  defp already_member?(%URI{} = session_uri, %URI{} = caller_uri) do
+    case Ezagent.Kind.get_slice(session_uri, :chat) do
+      {:ok, %{members: m}} when is_map(m) ->
+        target = URI.to_string(caller_uri)
+        Enum.any?(Map.keys(m), fn k -> member_key_str(k) == target end)
 
       _ ->
-        # Anonymous / not-signed-in / no caps assigned yet — skip.
+        false
+    end
+  rescue
+    _ -> false
+  end
+
+  defp member_key_str(%URI{} = u), do: URI.to_string(u)
+  defp member_key_str(s) when is_binary(s), do: s
+  defp member_key_str(o), do: inspect(o)
+
+  defp do_self_join_dispatch(socket, %URI{} = session_uri, %URI{} = caller_uri, caller_caps) do
+    target = Ezagent.URI.with_action(session_uri, :chat, :join)
+
+    result =
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        target: target,
+        mode: :call,
+        args: %{member: caller_uri},
+        ctx: %{
+          caller: caller_uri,
+          caps: caller_caps,
+          reply: :ignore
+        }
+      })
+
+    case result do
+      :ok ->
+        socket
+
+      {:ok, _} ->
+        socket
+
+      {:error, :unauthorized} ->
+        # Let-it-crash spec — DO NOT silently auto-join (would
+        # require widening the principal to system-internal,
+        # which would defeat the per-session cap model). Surface
+        # the gap so the operator can act (request a cap from
+        # the session owner, or accept that they can read but
+        # not participate). `feedback_let_it_crash_no_workarounds`.
+        assign(
+          socket,
+          :flash_error,
+          gettext(
+            "No chat.join cap on %{session} — ask the session owner to invite you, or you can only observe.",
+            session: URI.to_string(session_uri)
+          )
+        )
+
+      {:error, :cross_workspace_denied} ->
+        assign(
+          socket,
+          :flash_error,
+          gettext(
+            "Session %{session} is in another workspace — auto-join skipped.",
+            session: URI.to_string(session_uri)
+          )
+        )
+
+      {:error, {:member_not_registered, _}} ->
+        # Caller's own Kind isn't alive yet (rare race during
+        # login → /sessions navigation before identity boot
+        # completes). Spawning a User Kind is the identity
+        # domain's job; we don't reach across.
+        require Logger
+
+        Logger.warning(
+          "AdminLive.maybe_self_join: caller Kind not registered " <>
+            "for #{URI.to_string(caller_uri)} on #{URI.to_string(session_uri)} — " <>
+            "skipping auto-join (next remount will retry)."
+        )
+
+        socket
+
+      {:error, reason} ->
+        # Unexpected — log + render. The session is still usable
+        # in observe-mode; we don't crash the LV mount because
+        # of a transient dispatch failure.
+        require Logger
+
+        Logger.warning(
+          "AdminLive.maybe_self_join: chat.join failed for " <>
+            "#{URI.to_string(caller_uri)} on #{URI.to_string(session_uri)}: " <>
+            inspect(reason)
+        )
+
         socket
     end
   end
