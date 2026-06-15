@@ -41,8 +41,9 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
   import Phoenix.Component
 
   alias EzagentPluginAutoservice.Assembly.Refresh
-  alias EzagentPluginContent.{TenantContent, TenantPaths}
-  alias EzagentPluginCr.{CrStore, Lint, Publisher}
+  alias EzagentPluginContent.Tenant.{TenantRuntime, TenantConfig}
+  alias EzagentPluginCr.{CrEngine, CrLint}
+  alias EzagentPluginAutoservice.Assembly.Refresh
 
   require Logger
 
@@ -99,7 +100,7 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
   def handle_event("save_soul", %{"soul" => content}, socket) do
     if socket.assigns.can_write? do
       tid = socket.assigns.tid
-      path = Path.join([TenantPaths.sandbox_dir(tid), "souls", "customer.md"])
+      path = Path.join([TenantRuntime.sandbox_path(tid), "souls", "customer.md"])
 
       case File.mkdir_p(Path.dirname(path)) do
         :ok ->
@@ -132,7 +133,7 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
       case YamlElixir.read_from_string(content) do
         {:ok, _parsed} ->
           tid = socket.assigns.tid
-          path = Path.join([TenantPaths.sandbox_dir(tid), "slots", "customer.yaml"])
+          path = Path.join([TenantRuntime.sandbox_path(tid), "slots", "customer.yaml"])
 
           case File.mkdir_p(Path.dirname(path)) do
             :ok ->
@@ -164,8 +165,9 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
       tid = socket.assigns.tid
       admin_uri_str = URI.to_string(socket.assigns.admin_uri)
 
-      case Publisher.publish(tid, admin_uri_str) do
-        {:ok, %{version: v, warnings: warnings}} ->
+      case CrEngine.publish(tid) do
+        {:ok, published} ->
+          v = published["published_version"]
           # F4: trigger agent refresh after successful publish.
           case Refresh.refresh_agents(tid) do
             :ok ->
@@ -179,12 +181,7 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
               )
           end
 
-          flash_msg =
-            if warnings == [] do
-              "发布成功 v#{v}"
-            else
-              "发布成功 v#{v}，警告: #{Enum.join(warnings, "; ")}"
-            end
+          flash_msg = "发布成功 v#{v}"
 
           cr_info = load_cr_info(tid)
           lint_results = load_lint_results(tid)
@@ -211,17 +208,23 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
 
   def handle_event("preview", _params, socket) do
     tid = socket.assigns.tid
+    sandbox = TenantRuntime.sandbox_path(tid)
 
-    case TenantContent.provision_context(tid, "slow", source: :sandbox) do
-      {:ok, sctx} ->
-        {:noreply, assign(socket, :preview_content, sctx.claude_md || "(empty)")}
+    # Read sandbox soul + slots and render inline preview
+    soul_path = Path.join([sandbox, "souls", "customer.md"])
+    slots_path = Path.join([sandbox, "slots", "customer.yaml"])
 
-      {:error, reason} ->
-        {:noreply,
-         socket
-         |> assign(:preview_content, nil)
-         |> put_flash(:error, "预览失败: #{inspect(reason)}")}
-    end
+    preview =
+      case File.read(soul_path) do
+        {:ok, soul_content} ->
+          slot_values = parse_slots(File.read(slots_path))
+          "[Preview] #{soul_content}\n\nSlots: #{inspect(slot_values)}"
+
+        {:error, _} ->
+          "(sandbox soul not found at #{soul_path})"
+      end
+
+    {:noreply, assign(socket, :preview_content, preview)}
   end
 
   def handle_event("refresh_lint", _params, socket) do
@@ -237,7 +240,7 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
   # ---------------------------------------------------------------------------
 
   defp read_sandbox_soul(tid) do
-    path = Path.join([TenantPaths.sandbox_dir(tid), "souls", "customer.md"])
+    path = Path.join([TenantRuntime.sandbox_path(tid), "souls", "customer.md"])
 
     case File.read(path) do
       {:ok, content} -> content
@@ -246,7 +249,7 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
   end
 
   defp read_sandbox_slots(tid) do
-    path = Path.join([TenantPaths.sandbox_dir(tid), "slots", "customer.yaml"])
+    path = Path.join([TenantRuntime.sandbox_path(tid), "slots", "customer.yaml"])
 
     case File.read(path) do
       {:ok, content} -> content
@@ -255,7 +258,7 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
   end
 
   defp load_cr_info(tid) do
-    case CrStore.get(tid) do
+    case TenantConfig.read_cr(tid, "active") do
       {:ok, cr} -> cr
       {:error, :not_found} -> nil
     end
@@ -263,10 +266,10 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
 
   defp load_lint_results(tid) do
     # Lint uses the sandbox content — only run if sandbox exists.
-    sandbox = TenantPaths.sandbox_dir(tid)
+    sandbox = TenantRuntime.sandbox_path(tid)
 
     if File.dir?(sandbox) do
-      case Lint.run(tid) do
+      case CrLint.check(tid) do
         {:ok, warnings} -> %{ok: true, warnings: warnings}
         {:error, reason} -> %{ok: false, error: reason}
       end
@@ -276,7 +279,7 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
   end
 
   defp list_skills(tid) do
-    skills_dir = Path.join([TenantPaths.sandbox_dir(tid), "skills"])
+    skills_dir = Path.join([TenantRuntime.sandbox_path(tid), "skills"])
 
     if File.dir?(skills_dir) do
       Path.wildcard(Path.join(skills_dir, "/**/SKILL.md"))
@@ -308,6 +311,10 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
   # ---------------------------------------------------------------------------
   # Helpers — formatting
   # ---------------------------------------------------------------------------
+
+  defp parse_slots({:ok, content}), do: parse_slots(content)
+  defp parse_slots(binary) when is_binary(binary), do: binary
+  defp parse_slots(_), do: %{}
 
   defp yaml_error_message(%{message: msg}) when is_binary(msg), do: msg
   defp yaml_error_message(reason), do: inspect(reason)

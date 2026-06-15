@@ -187,6 +187,7 @@ defmodule EzagentWeb.Router do
       # === AutoService v2 ===
       live "/autoservice", AutoService.CustomerLive
       live "/autoservice/operator", AutoService.OperatorLive
+      live "/autoservice/admin", Tenant.TenantAdminLive
     end
 
     # Codex PR #305 round-2 HIGH fix — centralized admin gate.
