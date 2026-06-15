@@ -43,6 +43,12 @@ defmodule EzagentPluginLiveview.MixProject do
       {:ezagent_domain_workspace, in_umbrella: true},
       # Phase 6 PR 3: shadcn-like HEEx primitives shared across plugin UIs.
       {:ezagent_domain_ui, in_umbrella: true},
+      # #57: terminal_live + admin/member_panel render the agent terminal by
+      # calling `Ezagent.Domain.Pty.alive?/1` (and Pty.Server snapshots)
+      # UNGUARDED — a real prod compile dep that was undeclared (it only
+      # avoided a "module not available" warning by alphabetical umbrella build
+      # order, ezagent_domain_pty < ezagent_plugin_liveview). Declare it.
+      {:ezagent_domain_pty, in_umbrella: true},
       # NOTE: deliberately do NOT depend on :ezagent_web here. ezagent_web
       # owns routing and references this plugin's LiveView modules by
       # atom — having the plugin also depend on ezagent_web would create a
