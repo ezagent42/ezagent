@@ -193,7 +193,17 @@ defmodule Ezagent.Invariants.SingleSpawnEntryTest do
       # Allowlist landed in PR #438 rebase (the bridge_sidecar/app_server
       # call-sites came in with PR #436 but the allowlist entry was missed).
       "apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/bridge_sidecar.ex",
-      "apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/app_server.ex"
+      "apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/app_server.ex",
+      # Ezagent.Session.SessionManager (Transport #53 Decision C, the
+      # im→session→agent split) — `ensure_started/1` spawns the
+      # PER-ORCHESTRATOR MCP-executor GenServer (`start_link/1`, a
+      # `:transient` child of the session-domain DynamicSupervisor). It is a
+      # sidecar that runs the orchestrator's MCP tools session-side with the
+      # Session cap-checked at the dispatch chokepoint — NOT a Kind. The
+      # call-site came in with the transport split but the allowlist entry was
+      # missed (same class as the PR #436 codex miss above), leaving `mix test`
+      # RED on main; this restores it.
+      "apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex"
     ]
   end
 end
