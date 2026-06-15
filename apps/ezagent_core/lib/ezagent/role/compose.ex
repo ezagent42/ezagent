@@ -63,7 +63,32 @@ defmodule Ezagent.Role.Compose do
       # `{:ok, false}` a mis-integrated policy predicate might return) must NOT
       # authorize the cap. A rejected cap is dropped (never copied), so
       # effective ⊆ requested ∩ policy.
-      effective_caps: Enum.filter(role.requested_caps, &(authorize.(&1) == true))
+      #
+      # A persisted role recipe carries STRING-keyed caps; normalize the known
+      # cap AXIS keys to atoms first so an atom-key policy predicate
+      # (`%{action: a}`) matches instead of raising FunctionClauseError. (Only
+      # KEYS — VALUE normalization, e.g. a module-name string → module atom, is
+      # the materialization step's job via `Ezagent.Capability.normalize!/2`,
+      # PR-1b; an un-normalized VALUE merely fails the predicate → fail-closed
+      # reject, never a crash.)
+      effective_caps:
+        role.requested_caps
+        |> Enum.map(&normalize_cap_keys/1)
+        |> Enum.filter(&(authorize.(&1) == true))
     }
   end
+
+  # Normalize a cap template's known AXIS keys from persisted-string to atom
+  # form so an atom-key policy predicate matches. Only the closed set of cap
+  # axes is atomized; any other string key passes through unchanged so arbitrary
+  # persisted content can never grow the atom table.
+  defp normalize_cap_keys(cap) when is_map(cap), do: Map.new(cap, fn {k, v} -> {axis(k), v} end)
+  defp normalize_cap_keys(other), do: other
+
+  defp axis("behavior"), do: :behavior
+  defp axis("action"), do: :action
+  defp axis("instance"), do: :instance
+  defp axis("workspace_uri"), do: :workspace_uri
+  defp axis("kind"), do: :kind
+  defp axis(k), do: k
 end

@@ -68,6 +68,23 @@ defmodule Ezagent.Role.ComposeTest do
       assert out.effective_caps == role().requested_caps
     end
 
+    test "normalizes STRING-keyed cap axes so an atom-key policy predicate matches (no crash)" do
+      {:ok, role} =
+        Role.new(%{
+          "requested_caps" => [
+            %{"behavior" => "Ezagent.Behavior.Chat", "action" => :send},
+            %{"behavior" => "Ezagent.Behavior.Pty", "action" => :drive}
+          ]
+        })
+
+      # an atom-key predicate — would FunctionClauseError on raw string-keyed caps
+      authorize = fn %{action: action} -> action == :send end
+
+      out = Compose.materialize(role, %{flavor_behaviors: [], authorize_cap: authorize})
+
+      assert out.effective_caps == [%{behavior: "Ezagent.Behavior.Chat", action: :send}]
+    end
+
     test "FAIL-CLOSED on truthy non-boolean policy result (only strict true grants)" do
       # a mis-integrated policy that returns a truthy non-`true` value (e.g.
       # `{:error, :not_permitted}`) must NOT authorize the cap.
