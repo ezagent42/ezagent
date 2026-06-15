@@ -234,19 +234,24 @@ defmodule EzagentPluginAutoservice.MultitenantIsolationTest do
     end
   end
 
-  # `install_routing` builds receivers = [fast_uri | slow] with matcher
-  # {:and, [{:in_session, session}, {:from, customer}]}. Assert the rule for
-  # THIS tenant's fast agent carries THIS session and never the OTHER's.
+  # CsOrchestrator routing: receivers = [orch_receiver] where orch_receiver
+  # is session?action=cs_orchestrator.process_message. Look for the
+  # cs_orchestrator action in receivers (not direct agent URIs).
   defp assert_session_scoped(self_tenant, other_tenant) do
     self_session = URI.to_string(self_tenant.session_uri)
     other_session = URI.to_string(other_tenant.session_uri)
-    self_fast = URI.to_string(self_tenant.fast_uri)
 
     rules = Ezagent.Routing.RuleStore.list(@routing_table)
-    self_rules = Enum.filter(rules, fn r -> self_fast in (r.receivers || []) end)
+    self_rules =
+      Enum.filter(rules, fn r ->
+        Enum.any?(r.receivers || [], fn recv ->
+          String.contains?(recv, "cs_orchestrator.process_message") and
+            String.contains?(recv, self_session)
+        end)
+      end)
 
     assert length(self_rules) >= 1,
-           "expected >=1 routing rule for #{self_tenant.tid} fast agent #{self_fast}"
+           "expected >=1 routing rule with cs_orchestrator.process_message for #{self_tenant.tid}"
 
     Enum.each(self_rules, fn rule ->
       matcher_str = matcher_to_string(rule.matcher_data)
