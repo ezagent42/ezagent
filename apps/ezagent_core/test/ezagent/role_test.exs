@@ -1,0 +1,50 @@
+defmodule Ezagent.RoleTest do
+  use ExUnit.Case, async: true
+
+  alias Ezagent.Role
+
+  # Task #54 PR-1 §2.1 — a Role is the FLAVOR-AGNOSTIC sandbox-content recipe
+  # (the content of a `template://<ws>/role/<name>` Template). It names skills,
+  # plugins, a prompt persona, the behavior subset, REQUESTED caps (authorized
+  # fail-closed at materialization — §2.3.1, never copied), and a
+  # session-template REFERENCE. None of its fields may name a flavor
+  # (cc/codex/curl, kind, bridge_adapter) — that re-entangles role with flavor.
+
+  describe "new/1" do
+    test "builds a %Role{} from a full recipe map" do
+      assert {:ok, role} =
+               Role.new(%{
+                 skills: ["orchestrator"],
+                 plugins: ["np"],
+                 prompt: "you are an orchestrator",
+                 behaviors: [Ezagent.Behavior.Sandbox],
+                 requested_caps: [%{behavior: Ezagent.Behavior.Pty, action: :drive}],
+                 session_template: "template://system/session/orchestrator"
+               })
+
+      assert role.skills == ["orchestrator"]
+      assert role.plugins == ["np"]
+      assert role.prompt == "you are an orchestrator"
+      assert role.behaviors == [Ezagent.Behavior.Sandbox]
+      assert role.requested_caps == [%{behavior: Ezagent.Behavior.Pty, action: :drive}]
+      assert role.session_template == "template://system/session/orchestrator"
+    end
+
+    test "defaults empty/absent recipe fields" do
+      assert {:ok, role} = Role.new(%{})
+      assert role.skills == []
+      assert role.plugins == []
+      assert role.behaviors == []
+      assert role.requested_caps == []
+      assert role.prompt == nil
+      assert role.session_template == nil
+    end
+
+    test "rejects a recipe that names a FLAVOR field (must be flavor-agnostic)" do
+      for flavor_field <- [:flavor, :kind, :bridge_adapter, :template_class] do
+        assert {:error, {:flavor_field_in_role, ^flavor_field}} =
+                 Role.new(Map.put(%{skills: ["x"]}, flavor_field, "cc"))
+      end
+    end
+  end
+end
