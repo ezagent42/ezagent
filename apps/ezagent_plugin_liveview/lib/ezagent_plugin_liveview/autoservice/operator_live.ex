@@ -13,7 +13,7 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
   import Phoenix.Component
 
   alias Ezagent.Behavior.Chat
-  alias EzagentPluginAutoservice.ChatUI
+  alias EzagentPluginAutoservice.{ChatUI, TurnAdapter}
   alias Ezagent.Socialware.CustomerFeed
 
   require Logger
@@ -200,6 +200,12 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
       # Re-enable the routing rule (restore agent routing)
       _ = enable_session_rule(session_uri)
 
+      # Unsubscribe from CustomerFeed — operator is done
+      feed_topic = socket.assigns[:subscribed_feed_topic]
+      if connected?(socket) and is_binary(feed_topic) do
+        Phoenix.PubSub.unsubscribe(EzagentCore.PubSub, feed_topic)
+      end
+
       # Post the operator's final message to the session
       msg = Ezagent.Message.new(op_uri, %{text: "客服已结束本次人工对话。", attachments: []})
       chat_target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
@@ -217,6 +223,60 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
       )
 
       {:noreply, assign(socket, claimed: false, open_turn_id: nil)}
+    end
+  end
+
+  def handle_event("cancel", _params, socket) do
+    %{selected: session_uri, operator_uri: op_uri, open_turn_id: turn_id} = socket.assigns
+
+    if is_nil(session_uri) do
+      {:noreply, socket}
+    else
+      # Cancel the turn (lightweight TurnAdapter path for operator abort).
+      if is_binary(turn_id) do
+        case TurnAdapter.cancel_turn(session_uri, turn_id) do
+          {:ok, _} ->
+            Logger.info(
+              "Operator #{URI.to_string(op_uri)} cancelled turn #{turn_id}"
+            )
+
+          {:error, reason} ->
+            Logger.warning(
+              "OperatorLive: cancel_turn failed: #{inspect(reason)} — proceeding"
+            )
+        end
+      end
+
+      # Re-enable AI routing
+      _ = enable_session_rule(session_uri)
+
+      # Unsubscribe from CustomerFeed
+      feed_topic = socket.assigns[:subscribed_feed_topic]
+      if connected?(socket) and is_binary(feed_topic) do
+        Phoenix.PubSub.unsubscribe(EzagentCore.PubSub, feed_topic)
+      end
+
+      # Reset CsOrchestrator state via operator_settle (clears open_turn_id + operator_active)
+      _ =
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target:
+            Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=cs_orchestrator.operator_settle"),
+          mode: :cast,
+          args: %{},
+          ctx: %{
+            caller: op_uri,
+            caps: socket.assigns.caps,
+            reply: :ignore
+          }
+        })
+
+      {:noreply,
+       assign(socket,
+         claimed: false,
+         claiming: false,
+         open_turn_id: nil,
+         subscribed_feed_topic: nil
+       )}
     end
   end
 
@@ -443,6 +503,12 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
               class="rounded-lg bg-zinc-600 text-white px-3 py-1.5 text-sm font-medium hover:bg-zinc-700"
             >
               结束人工对话
+            </button>
+            <button
+              phx-click="cancel"
+              class="rounded-lg bg-red-500 text-white px-3 py-1.5 text-sm font-medium hover:bg-red-600 ml-2"
+            >
+              取消接管
             </button>
           </div>
           <ChatUI.composer

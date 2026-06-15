@@ -33,12 +33,18 @@ defmodule EzagentPluginLiveview.AutoService.CustomerLive do
         caps = Ezagent.Identity.list_caps_for(customer_uri)
         messages = load_messages(session_uri, customer_uri)
         initial_cursor = CustomerFeed.latest_cursor(session_uri)
+        # Customer token for the gated CustomerFeed replay. Without it
+        # `CustomerFeed.replay(_, nil, _)` returns :unauthorized and settled
+        # operator/bot deliveries never render live. Ported from PR #740.
+        workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+        customer_token = Ezagent.Socialware.CustomerAuth.issue_token(session_uri, workspace_uri)
 
         {:ok,
          assign(socket,
            page_title: "在线客服",
            customer_uri: customer_uri,
            session_uri: session_uri,
+           customer_token: customer_token,
            caps: caps,
            messages: messages,
            compose_nonce: 0,
@@ -100,18 +106,20 @@ defmodule EzagentPluginLiveview.AutoService.CustomerLive do
 
   @impl true
   def handle_info({:customer_delivery, %{message_ids: _ids}}, socket) do
-    %{session_uri: session_uri, customer_uri: customer_uri, cursor: cursor} = socket.assigns
+    %{
+      session_uri: session_uri,
+      customer_uri: customer_uri,
+      cursor: cursor,
+      customer_token: customer_token
+    } = socket.assigns
 
     if is_nil(session_uri) do
       {:noreply, socket}
     else
-      # Use replay to pull the gated snapshot with fresh deliveries since cursor.
-      # In a full implementation, the customer token would be taken from the
-      # socket (e.g., socket.assigns.customer_token). For the LiveView-backed
-      # customer feed, the customer's Phoenix session already carries identity,
-      # so we pass nil for the token (the CustomerAuth gate is satisfied by the
-      # LiveView authentication).
-      case CustomerFeed.replay(session_uri, nil, cursor) do
+      # Replay the gated feed with the customer token issued at mount.
+      # A nil token fails the CustomerAuth gate → settled operator/bot
+      # deliveries would never render live. Ported from PR #740.
+      case CustomerFeed.replay(session_uri, customer_token, cursor) do
         {:ok, %{snapshot: %{messages: committed_msgs}, cursor: new_cursor}} ->
           # Convert committed messages to view rows.
           # Deduplicate against optimistic echo rows already in the list

@@ -63,11 +63,20 @@ defmodule EzagentPluginAutoservice.Uris do
     Ezagent.URI.new!("entity://#{ws}/agent/curl_fast-#{name}")
   end
 
-  @doc "Slow (cc) agent URI: `entity://<ws>/agent/cc_slow-<name>`."
+  @doc """
+  Slow (cc) agent URI: `entity://<ws>/agent/slow-<name>`.
+
+  MUST equal what `Workspace.create_agent` produces from
+  `slow_agent_create_name/1`. `create_agent` composes the agent URI as
+  `entity://<ws>/agent/<name>` (it does NOT prepend the flavor),
+  so the URI here uses the bare `slow-<name>` create-name.
+  A prior `cc_slow-<name>` value silently broke routing/join.
+  Ported from PR #740.
+  """
   @spec slow_agent_uri(URI.t()) :: URI.t()
   def slow_agent_uri(%URI{} = customer_uri) do
     {ws, name} = decompose_customer(customer_uri)
-    Ezagent.URI.new!("entity://#{ws}/agent/cc_slow-#{name}")
+    Ezagent.URI.new!("entity://#{ws}/agent/slow-#{name}")
   end
 
   @doc """
