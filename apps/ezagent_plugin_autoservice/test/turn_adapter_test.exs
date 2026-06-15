@@ -1,31 +1,21 @@
 defmodule EzagentPluginAutoservice.TurnAdapterTest do
-  @moduledoc """
-  TurnAdapter function shape tests. Full integration tests require
-  a running SocialwareSession — see operator_takeover_gating_test.exs.
-  """
+  @moduledoc "TurnAdapter module existence and basic shape tests."
   use ExUnit.Case, async: true
 
-  alias EzagentPluginAutoservice.TurnAdapter
-
-  @session Ezagent.URI.new!("session://test/cs/adapter-test")
-
-  test "open_turn/2 function exists" do
-    assert function_exported?(TurnAdapter, :open_turn, 2)
+  test "TurnAdapter module is defined" do
+    assert Code.ensure_loaded?(EzagentPluginAutoservice.TurnAdapter)
   end
 
-  test "compose_turn/3 function exists" do
-    assert function_exported?(TurnAdapter, :compose_turn, 3)
+  test "cancel_turn/2 exists" do
+    assert {:cancel_turn, 2} in EzagentPluginAutoservice.TurnAdapter.__info__(:functions)
   end
 
-  test "settle_turn/2 function exists" do
-    assert function_exported?(TurnAdapter, :settle_turn, 2)
-  end
-
-  test "claim_turn/3 function exists" do
-    assert function_exported?(TurnAdapter, :claim_turn, 3)
-  end
-
-  test "cancel_turn/2 function exists" do
-    assert function_exported?(TurnAdapter, :cancel_turn, 2)
+  test "all lifecycle functions present" do
+    funs = EzagentPluginAutoservice.TurnAdapter.__info__(:functions)
+    assert {:open_turn, 2} in funs
+    assert {:compose_turn, 3} in funs
+    assert {:settle_turn, 2} in funs
+    assert {:claim_turn, 3} in funs
+    assert {:cancel_turn, 2} in funs
   end
 end

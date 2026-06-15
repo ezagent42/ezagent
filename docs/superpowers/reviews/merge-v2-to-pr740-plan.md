@@ -198,13 +198,13 @@ mix phx.server                    # 所有入口可达
 
 | # | 严重度 | 问题 | 状态 |
 |---|--------|------|------|
-| 1 | 🔴 HIGH | `roles.ex` operator bundle 缺 CsOrchestrator caps → `:unauthorized` | 已纳入修改清单 |
-| 2 | 🔴 HIGH | `operator_live.ex` settle/cancel 的 RuleStore 调用与 CsOrchestrator 双门控冲突 | 已纳入修改清单 |
-| 3 | 🔴 HIGH | `handle_operator_claim` 不 disable routing rules | 双门控设计，operator_live 外部管理 |
-| 4 | 🟡 MEDIUM | routing `[orch, fast, slow]` — 需验证框架是否全量匹配 | 实施时验证 |
-| 5 | 🟡 MEDIUM | settle handler 不 unsubscribe CustomerFeed | 已纳入修改清单 |
-| 6 | 🟡 MEDIUM | `normalize_message` `String.to_existing_atom` 崩溃风险 | 已纳入修改清单 |
-| 7 | 🟡 MEDIUM | `seed_autoservice.ex` 路径确认 | 已确认与 merge-v2 相同 |
-| 8 | 🟢 LOW | cancel 不重置 CsOrchestrator `open_turn_id` | 轻量 TurnAdapter 路径，可接受 |
-| 9 | 🟢 LOW | `handle_agent_reply` 死代码 ~30行 | 保留待框架升级 |
-| 10 | 🟢 LOW | version 冲突 0.2.0 vs 0.3.0 | 用 0.3.0 |
+| 1 | 🔴 HIGH | `roles.ex` operator bundle 缺 CsOrchestrator caps → `:unauthorized` | ✅ merge-v2 已修复 (`6ea66d81` + 本次) |
+| 2 | 🔴 HIGH | `operator_live.ex` settle/cancel 的 RuleStore 调用与 CsOrchestrator 双门控冲突 | ⬜ PR #740 合入时修复 |
+| 3 | 🔴 HIGH | `handle_operator_claim` 不 disable routing rules | ⬜ 双门控设计，后续迭代移入 CsOrchestrator |
+| 4 | 🟡 MEDIUM | routing `[orch, fast, slow]` — 需验证框架是否全量匹配 | ⬜ 实施时验证 |
+| 5 | 🟡 MEDIUM | settle handler 不 unsubscribe CustomerFeed | ⬜ PR #740 合入时修复 |
+| 6 | 🟡 MEDIUM | `normalize_message` `String.to_existing_atom` 崩溃风险 | ✅ merge-v2 已修复（白名单 + String.to_atom fallback） |
+| 7 | 🟡 MEDIUM | `seed_autoservice.ex` 路径确认 | ✅ 已确认相同路径 |
+| 8 | 🟢 LOW | cancel 不重置 CsOrchestrator `open_turn_id` | ⬜ 轻量 TurnAdapter 路径，可接受 |
+| 9 | 🟢 LOW | `handle_agent_reply` 死代码 ~30行 | ✅ 保留待框架升级 |
+| 10 | 🟢 LOW | version 冲突 0.2.0 vs 0.3.0 | ⬜ 合入时用 0.3.0 |

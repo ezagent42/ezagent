@@ -391,8 +391,15 @@ defmodule Ezagent.Behavior.CsOrchestrator do
     %{msg | sender: sender}
   end
 
+  # Whitelist known Message struct keys to avoid String.to_existing_atom/1
+  # crash when unexpected string keys arrive at runtime.
+  # Codex MEDIUM #6.
+  @message_keys [:id, :sender, :mentions, :legend_triggers, :body, :ref_id,
+                 :inserted_at, :visibility, :session_uri, :workspace_uri]
+
   defp to_atom_key(k) when is_atom(k), do: k
-  defp to_atom_key(k) when is_binary(k), do: String.to_existing_atom(k)
+  defp to_atom_key(k) when is_binary(k) and k in @message_keys, do: String.to_existing_atom(k)
+  defp to_atom_key(k) when is_binary(k), do: String.to_atom(k)
 
   defp extract_text(%{text: t}) when is_binary(t), do: t
   defp extract_text(%{"text" => t}) when is_binary(t), do: t

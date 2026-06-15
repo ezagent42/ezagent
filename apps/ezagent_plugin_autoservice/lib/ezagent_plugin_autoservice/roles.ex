@@ -43,7 +43,7 @@ defmodule EzagentPluginAutoservice.Roles do
       grantable_session_any(:join, workspace_uri, now),
       grantable_session_any(:send, workspace_uri, now),
       grantable_session_any(:receive, workspace_uri, now)
-    ] ++ operator_turn_caps(workspace_uri, now)
+    ] ++ operator_turn_caps(workspace_uri, now) ++ operator_cs_orchestrator_caps(workspace_uri, now)
   end
 
   def bundle(:admin, %URI{scheme: "workspace"} = workspace_uri) do
@@ -115,6 +115,24 @@ defmodule EzagentPluginAutoservice.Roles do
       %Capability{
         kind: :session,
         behavior: Ezagent.Behavior.Turn,
+        action: action,
+        instance: :any,
+        workspace_uri: workspace_uri,
+        granted_by: @granted_by,
+        granted_at: now
+      }
+    end
+  end
+
+  # Operator gets CsOrchestrator caps so OperatorLive can dispatch
+  # cs_orchestrator.operator_claim/settle with the operator's own authority.
+  # Without these, the dispatch returns {:error, :unauthorized}.
+  # Codex HIGH #1.
+  defp operator_cs_orchestrator_caps(%URI{} = workspace_uri, %DateTime{} = now) do
+    for action <- [:process_message, :operator_claim, :operator_settle] do
+      %Capability{
+        kind: :session,
+        behavior: Ezagent.Behavior.CsOrchestrator,
         action: action,
         instance: :any,
         workspace_uri: workspace_uri,
