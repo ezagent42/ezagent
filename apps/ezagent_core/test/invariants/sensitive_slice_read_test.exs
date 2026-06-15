@@ -94,7 +94,10 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
     # --- dynamic-key get_slice: the generic URI-query slice resolver ---
     {"apps/ezagent_domain_session/lib/ezagent_domain_instance_message/uri_query_resolvers.ex",
      @dynamic_key} =>
-      "generic UriQuery slice resolver — slice_key derived from a parsed (cap-gated dispatch) URI query"
+      "generic UriQuery slice resolver — slice_key derived from a parsed (cap-gated dispatch) URI query",
+    # --- ExUnit case template (test support shipped in lib): generic slice peek ---
+    {"apps/ezagent_core/lib/ezagent/lifecycle_case.ex", @dynamic_key} =>
+      "Lifecycle ExUnit case template — generic get_raw_slice(uri, slice_key) test helper, not production"
   }
 
   describe "scan_source/2 (AST scanner, fixture-pinned)" do
@@ -196,6 +199,42 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
       assert [%{key: :identity, via: :reads_siblings}] = scan_source(src, "apps/x/lib/g.ex")
     end
 
+    test "catches get_raw_slice/2 (the second raw slice accessor)" do
+      src = """
+      defmodule Some.Behavior.Raw do
+        def peek(uri), do: Ezagent.Kind.get_raw_slice(uri, :api_keys)
+      end
+      """
+
+      assert [%{key: :api_keys, via: :get_slice}] = scan_source(src, "apps/x/lib/raw.ex")
+    end
+
+    test "attributes a read to its INNERMOST module (multi-module file)" do
+      # First module IS the slice owner; a SECOND non-owner module reads the
+      # sensitive slice and must be reported under its own module name.
+      src = """
+      defmodule Ezagent.Behavior.Identity do
+        def own(uri), do: Ezagent.Kind.get_slice(uri, :identity)
+      end
+
+      defmodule Some.Behavior.IdentityAdmin do
+        def peek(uri), do: Ezagent.Kind.get_slice(uri, :identity)
+      end
+      """
+
+      reads = scan_source(src, "apps/x/lib/identity.ex")
+      # the owner module's read is attributed to the owner (exempt later);
+      # the second module's read is attributed to IT (NOT auto-exempt).
+      assert %{module: "Some.Behavior.IdentityAdmin", key: :identity} =
+               Enum.find(reads, &(&1.module == "Some.Behavior.IdentityAdmin"))
+
+      refute owner_self_read?(%{
+               file: "x",
+               module: "Some.Behavior.IdentityAdmin",
+               key: :identity
+             })
+    end
+
     test "FAIL-CLOSED: a non-literal get_slice key is flagged :__dynamic__" do
       src = """
       defmodule Some.Behavior.Dyn do
@@ -260,14 +299,37 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
   defp mechanism_file?(file),
     do: Enum.any?(@mechanism_definition_files, &String.ends_with?(file, &1))
 
+  # Walk the AST tracking a MODULE STACK (push on `defmodule` enter, pop on
+  # exit) so every read is attributed to its INNERMOST enclosing module — a
+  # later non-owner module in a multi-module file cannot inherit the first
+  # module's owner identity.
   defp scan_ast(ast, file) do
-    module = top_module(ast)
+    {_ast, {_stack, reads}} =
+      Macro.traverse(
+        ast,
+        {[], []},
+        fn
+          {:defmodule, _, [{:__aliases__, _, parts} | _]} = node, {stack, reads} ->
+            {node, {[module_name(parts) | stack], reads}}
 
-    {_ast, reads} =
-      Macro.prewalk(ast, [], fn node, acc -> {node, node_reads(node, file, module) ++ acc} end)
+          node, {stack, reads} ->
+            {node, {stack, node_reads(node, file, List.first(stack)) ++ reads}}
+        end,
+        fn
+          {:defmodule, _, _} = node, {stack, reads} -> {node, {tl_safe(stack), reads}}
+          node, acc -> {node, acc}
+        end
+      )
 
     Enum.reverse(reads)
   end
+
+  defp module_name(parts) when is_list(parts) do
+    if Enum.all?(parts, &is_atom/1), do: Enum.map_join(parts, ".", &Atom.to_string/1), else: nil
+  end
+
+  defp tl_safe([]), do: []
+  defp tl_safe([_ | t]), do: t
 
   # reads_siblings([...]) / reads_sibling_slices([...]) macro-call form
   defp node_reads({form, _, [arg]}, file, module)
@@ -292,17 +354,19 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
     end
   end
 
-  # Qualified `*.get_slice(uri, key)` (Ezagent.Kind.get_slice/Kind.get_slice) AND
-  # bare `get_slice(uri, key)` (after `import Ezagent.Kind`). The slice KEY is the
-  # LAST arg of the call node — which makes a piped `uri |> get_slice(:key)` (a
-  # 1-arg node pre-expansion) match too: its last arg IS the key.
-  defp node_reads({{:., _, [_mod, :get_slice]}, _, args}, file, module)
-       when is_list(args) and args != [] do
+  # Qualified `*.get_slice/get_raw_slice(uri, key)` AND bare `get_slice/
+  # get_raw_slice(uri, key)` (after `import Ezagent.Kind`). BOTH raw slice-read
+  # accessors (`get_slice/2` + `get_raw_slice/2`, Kind.ex) send the same
+  # `{:ezagent_get_slice, key}` server message. The slice KEY is the LAST arg of
+  # the call node — so a piped `uri |> get_slice(:key)` (a 1-arg node
+  # pre-expansion) matches too: its last arg IS the key.
+  defp node_reads({{:., _, [_mod, fname]}, _, args}, file, module)
+       when fname in [:get_slice, :get_raw_slice] and is_list(args) and args != [] do
     get_slice_read(List.last(args), file, module)
   end
 
-  defp node_reads({:get_slice, _, args}, file, module)
-       when is_list(args) and args != [] do
+  defp node_reads({fname, _, args}, file, module)
+       when fname in [:get_slice, :get_raw_slice] and is_list(args) and args != [] do
     get_slice_read(List.last(args), file, module)
   end
 
@@ -336,19 +400,6 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
 
   defp get_slice_read(_non_literal, file, module) do
     [%{file: file, module: module, key: @dynamic_key, via: :get_slice}]
-  end
-
-  defp top_module(ast) do
-    {_ast, name} =
-      Macro.prewalk(ast, nil, fn
-        {:defmodule, _, [{:__aliases__, _, parts} | _]} = node, nil ->
-          {node, Enum.map_join(parts, ".", &Atom.to_string/1)}
-
-        node, acc ->
-          {node, acc}
-      end)
-
-    name
   end
 
   defp scan_tree do
