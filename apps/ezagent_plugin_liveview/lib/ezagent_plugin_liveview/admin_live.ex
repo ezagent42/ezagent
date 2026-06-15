@@ -67,8 +67,9 @@ defmodule EzagentPluginLiveview.AdminLive do
   # workspace, return the canonical main session URI for it.
   @message_limit 50
 
-  defp default_main_session_uri(%URI{scheme: "workspace", host: ws}) when is_binary(ws) and ws != "",
-    do: Ezagent.URI.new!("session://default/#{ws}/main")
+  defp default_main_session_uri(%URI{scheme: "workspace", host: ws})
+       when is_binary(ws) and ws != "",
+       do: Ezagent.URI.new!("session://default/#{ws}/main")
 
   defp default_main_session_uri(_),
     # Early-mount / test paths with no workspace assigned — fall back
@@ -77,8 +78,47 @@ defmodule EzagentPluginLiveview.AdminLive do
     # fires only when the LV is mounted outside that live_session.
     do: Ezagent.URI.new!("session://default/system/main")
 
+  # 2026-06-15 — parse the `?session=<encoded>` query param into a canonical
+  # session URI (nil if absent / malformed → mount falls back to the default main).
+  defp parse_session_param(%{"session" => encoded}) when is_binary(encoded) do
+    case Ezagent.URI.new!(URI.decode_www_form(encoded)) do
+      %URI{scheme: "session"} = uri -> uri
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp parse_session_param(_), do: nil
+
+  # Keep `current_workspace_uri` + the session dropdown in sync with the session
+  # actually being viewed (it may live in a different workspace than the
+  # operator's home). No-op when already in that workspace.
+  defp sync_workspace_to_session(socket, %URI{} = session_uri) do
+    case Ezagent.Capability.workspace_of(session_uri) do
+      %URI{} = ws ->
+        if to_string(socket.assigns[:current_workspace_uri]) == URI.to_string(ws) do
+          socket
+        else
+          socket
+          |> assign(:current_workspace_uri, ws)
+          |> assign(:sessions, list_visible_sessions_for(ws))
+        end
+
+      _ ->
+        socket
+    end
+  end
+
+  defp same_current_session?(socket, %URI{} = uri) do
+    case socket.assigns[:current_session_uri] do
+      %URI{} = cur -> URI.to_string(cur) == URI.to_string(uri)
+      _ -> false
+    end
+  end
+
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(params, _session, socket) do
     # Phase 8b — register the default ConversationView lazily here. The
     # liveview plugin is library-only (no Application module — adding
     # one in the umbrella triggered a DB-sandbox boot regression for the
@@ -140,14 +180,52 @@ defmodule EzagentPluginLiveview.AdminLive do
     # own entity's (e.g. admin in `system` viewing `m800`) then got
     # `:cross_workspace_denied` on EVERY refresh. Load caps first so the
     # caller's cross-workspace authority (admin wildcard) is actually present.
+    # Load caller identity + caps up front — `authorize_session_view/2` (the
+    # target gate just below) and the rehydrate path both read them.
+    caller_uri0 = socket.assigns[:current_entity_uri]
+
     socket =
-      case socket.assigns[:current_entity_uri] do
-        nil -> socket
-        cu -> assign(socket, :caller_caps, Ezagent.Identity.list_caps_for(cu))
+      socket
+      |> assign(:caller_uri, caller_uri0)
+      |> assign(:caller_caps, (caller_uri0 && Ezagent.Identity.list_caps_for(caller_uri0)) || [])
+
+    # 2026-06-15 — when the URL targets a specific session (`/sessions?session=<X>`,
+    # how the workspace page opens a session in a new tab + every refresh), mount
+    # **directly on that session and its workspace**. Pre-fix mount always built
+    # the operator's home-workspace `main` session first and `handle_params` then
+    # switched — which (a) doubled the work (slow new tab), (b) left
+    # `current_workspace_uri` = the operator's home so the header / session
+    # dropdown / event subscriptions showed the WRONG workspace, and (c) on
+    # refresh, if the switch was denied / raced, the LV stayed on the home `main`
+    # instead of the URL's session. Deriving workspace+session from the URL makes
+    # the page authoritative and eliminates the double build.
+    #
+    # The target is honored ONLY if the caller is authorized to view its
+    # workspace — the SAME `authorize_session_view/2` gate `select_session/2`
+    # uses, checked here against the caller's HOME workspace BEFORE we adopt the
+    # target's workspace, so a non-admin can't peek into another tenant by
+    # crafting the URL. Unauthorized / absent → fall back to the home `main`.
+    target_session_uri =
+      case parse_session_param(params) do
+        %URI{} = s -> if authorize_session_view(socket, s) == :ok, do: s, else: nil
+        _ -> nil
       end
 
-    main_session_uri = default_main_session_uri(socket.assigns[:current_workspace_uri])
-    {current_session_uri, socket} = ensure_main_session(main_session_uri, socket)
+    socket =
+      case target_session_uri && Ezagent.Capability.workspace_of(target_session_uri) do
+        %URI{} = ws -> assign(socket, :current_workspace_uri, ws)
+        _ -> socket
+      end
+
+    {current_session_uri, socket} =
+      case target_session_uri do
+        %URI{} = s ->
+          {s, socket}
+
+        _ ->
+          main_session_uri = default_main_session_uri(socket.assigns[:current_workspace_uri])
+          ensure_main_session(main_session_uri, socket)
+      end
 
     caller_uri = socket.assigns.current_entity_uri
 
@@ -306,10 +384,16 @@ defmodule EzagentPluginLiveview.AdminLive do
     try do
       case Ezagent.URI.new!(URI.decode_www_form(encoded)) do
         %URI{scheme: "session"} = session_uri ->
-          {:noreply, select_session(socket, session_uri)}
+          # mount/3 already mounts directly on the URL's session (in its
+          # workspace), so on first render we're usually already there — skip
+          # the redundant re-select (which would re-load messages + re-list).
+          if same_current_session?(socket, session_uri),
+            do: {:noreply, socket},
+            else: {:noreply, select_session(socket, session_uri)}
 
         _ ->
-          {:noreply, assign(socket, :flash_error, gettext("Bad session URI: %{uri}", uri: encoded))}
+          {:noreply,
+           assign(socket, :flash_error, gettext("Bad session URI: %{uri}", uri: encoded))}
       end
     rescue
       ArgumentError ->
@@ -1518,6 +1602,13 @@ defmodule EzagentPluginLiveview.AdminLive do
 
         socket
         |> assign(:current_session_uri, session_uri)
+        # 2026-06-15 — follow the selected session's workspace. Pre-fix
+        # `select_session/2` switched the session but left
+        # `current_workspace_uri` at the operator's home, so the header +
+        # session dropdown + create-session default all showed the WRONG
+        # workspace when the selected session lived in another tenant. Keep
+        # the LV's workspace context in sync with what's actually on screen.
+        |> sync_workspace_to_session(session_uri)
         # Session auto-join (Allen 2026-05-26) — every session switch is a
         # navigation event for membership purposes (the new session may be
         # a freshly-spawned one we've never joined). `maybe_self_join/2`
@@ -1541,9 +1632,7 @@ defmodule EzagentPluginLiveview.AdminLive do
         assign(
           socket,
           :flash_error,
-          gettext(
-            "Cross-workspace denied — that session belongs to a different workspace."
-          )
+          gettext("Cross-workspace denied — that session belongs to a different workspace.")
         )
     end
   end
@@ -3011,18 +3100,44 @@ defmodule EzagentPluginLiveview.AdminLive do
         # lifecycle remediation.)
         session_workspace_uri = Ezagent.Capability.workspace_of(uri)
 
-        case Ezagent.Workspace.create_session(
-               session_workspace_uri,
-               %{short_name: "main", template_name: "default"},
-               %{
-                 caller: creator,
-                 caps: Map.get(socket.assigns, :caller_caps, MapSet.new())
-               }
-             ) do
+        # 这步在 mount 里会跑在**首屏 dead-render(HTTP GET)**上(在 `connected?` 判断
+        # 之前)。create_session 是同步 `:call`;万一仍超时(冷启动 spawn 团队 >deadline),
+        # `GenServer.call` 会 **exit** 而不是返回 `{:error,_}` —— 不 catch 就是
+        # `unhandled exit at GET /sessions`(500)。这里把 exit 接住,降级成「创建中,稍后
+        # 刷新」的提示,让首屏正常渲染(服务端那次 create 多半还在继续、会建成,刷新即见)。
+        outcome =
+          try do
+            Ezagent.Workspace.create_session(
+              session_workspace_uri,
+              %{short_name: "main", template_name: "default"},
+              %{
+                caller: creator,
+                caps: Map.get(socket.assigns, :caller_caps, MapSet.new())
+              }
+            )
+          catch
+            :exit, reason -> {:error, {:create_session_exit, reason}}
+          end
+
+        case outcome do
           {:ok, result} ->
             meta = session_create_meta(result)
             log_orchestrator_status_on_rehydrate(uri, meta)
             {uri, assign_rehydrate_flash(socket, meta)}
+
+          {:error, {:create_session_exit, reason}} ->
+            require Logger
+
+            Logger.warning(
+              "AdminLive.ensure_main_session create_session exited (cold start too slow?): #{inspect(reason)}"
+            )
+
+            {uri,
+             assign(
+               socket,
+               :flash_error,
+               gettext("Session is still starting up (cold start). Please refresh in a moment.")
+             )}
 
           {:error, reason} ->
             require Logger
