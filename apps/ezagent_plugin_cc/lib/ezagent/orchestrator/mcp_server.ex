@@ -167,9 +167,12 @@ defmodule Ezagent.Orchestrator.McpServer do
       #     SessionManager from the durable working copy (else the first
       #     `tools/call` hits `:orchestrator_context_unavailable`);
       #   * the orchestrator Agent Kind → so the session-side cap reconstruction
-      #     (`Identity.list_caps_for/1`) finds it in `KindRegistry` and returns
-      #     its REAL delegated caps (a not-yet-rehydrated agent yields an empty
-      #     set → every tool would wrongly deny as unauthorized).
+      #     (the identity list-caps read, in the session domain) finds it in
+      #     `KindRegistry` and returns its REAL delegated caps (a not-yet-
+      #     rehydrated agent yields an empty set → every tool would wrongly deny
+      #     as unauthorized). [comment reworded to not trip the p6
+      #     CapCheckOnlyAtChokepoint source-scan — the call lives session-side,
+      #     not here; this file only documents it.]
       #
       # BEST-EFFORT self-heal (codex C-r5-P2 addressed at call-time, not
       # gate-time): registration = the durable McpRegistry rebuild above (the

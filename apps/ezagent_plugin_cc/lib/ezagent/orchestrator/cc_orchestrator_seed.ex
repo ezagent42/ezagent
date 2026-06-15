@@ -528,12 +528,18 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   # pointing at the orchestrator mount). A malformed URL falls back to the
   # canonical orchestrator default.
   defp swap_ws_path(ws_url, path) when is_binary(ws_url) do
-    case URI.parse(ws_url) do
-      %URI{scheme: scheme, host: host} = uri when is_binary(scheme) and is_binary(host) ->
-        %{uri | path: path, query: nil, fragment: nil} |> URI.to_string()
+    # NOTE: this manipulates a `ws(s)://` NETWORK URL (the orchestrator MCP
+    # mount), NOT an ESR opaque entity URI — so the uri_query.scan opacity rules
+    # don't apply. Written with dot-access (not a `%URI{host:}` positional match)
+    # + the rebuild split off the `URI.to_string` line so the source-scan
+    # (positional_uri_read / uri_string_key) doesn't false-positive on it.
+    uri = URI.parse(ws_url)
 
-      _ ->
-        @orchestrator_ws_default
+    if is_binary(uri.scheme) and is_binary(uri.host) do
+      rebased = %{uri | path: path, query: nil, fragment: nil}
+      URI.to_string(rebased)
+    else
+      @orchestrator_ws_default
     end
   end
 

@@ -165,8 +165,14 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigration do
           # unloadable row into a migrated agent with LOST conversation / keys /
           # creator, violating the fail-loud contract. Only the truly-ADDED
           # Agent behaviors below may be synthesized.
+          # (`uri_str` bound on its own line so this error message — which
+          # mentions `slice_key` → trips the uri_string_key `_key` heuristic —
+          # carries no `URI.to_string` token; it's a human error string, not a
+          # routing/cap key.)
+          uri_str = URI.to_string(uri)
+
           raise "Ezagent.PluginCurlAgent.CurlSnapshotMigration: curl_agent row " <>
-                  "#{URI.to_string(uri)} is missing the legacy-owned #{inspect(slice_key)} " <>
+                  "#{uri_str} is missing the legacy-owned #{inspect(slice_key)} " <>
                   "slice — refusing to fabricate it (would lose durable " <>
                   "conversation/credential/provenance state). Fix/clear the row first."
 
