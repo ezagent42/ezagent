@@ -265,6 +265,10 @@ defmodule EzagentWeb.Router do
   # north star ("beyond webhook route registration").
   forward "/api/feishu/webhook", EzagentPluginFeishu.WebhookPlug
 
+  # loom vertical: customer 入站 transport adapter（page-SDK 服务端入口）。
+  # 唯一对 ezagent_web 的触碰 = 路由注册(同 feishu webhook 先例)。
+  forward "/loom", EzagentPluginLoom.WebPlug
+
   # Phase 6 PR 9: canonical auto-derived JSON API. Single controller
   # dispatches every `{kind, action}` registered in BehaviorRegistry.
   # GET /api/v1 = introspection (route catalog + interfaces).

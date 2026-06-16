@@ -34,7 +34,8 @@ defmodule EzagentPluginLoom.MixProject do
       {:ezagent_domain_identity, in_umbrella: true},
       {:ezagent_domain_workspace, in_umbrella: true},
       {:ezagent_domain_session, in_umbrella: true},
-      {:ezagent_domain_socialware, in_umbrella: true}
+      {:ezagent_domain_socialware, in_umbrella: true},
+      {:plug, "~> 1.16"}
     ]
   end
 end
