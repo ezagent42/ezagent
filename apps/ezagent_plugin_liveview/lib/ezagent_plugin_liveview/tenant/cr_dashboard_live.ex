@@ -222,6 +222,24 @@ defmodule EzagentPluginLiveview.Tenant.CrDashboardLive do
             <% end %>
           </div>
 
+          <%!-- Sandbox diff items --%>
+          <%= if @cr["sandbox_diff"] && @cr["sandbox_diff"]["items"] not in [nil, []] do %>
+            <div class="mt-4 pt-3 border-t border-zinc-100 dark:border-zinc-800">
+              <h3 class="text-sm font-medium mb-2">
+                {gettext("Sandbox Changes")} ({@cr["sandbox_diff"]["files_changed"] || 0})
+              </h3>
+              <div class="space-y-1">
+                <%= for item <- @cr["sandbox_diff"]["items"] do %>
+                  <div class="flex items-center gap-2 text-xs py-1">
+                    <span class={"inline-block w-1.5 h-1.5 rounded-full #{diff_item_color(item["kind"])}"}></span>
+                    <span class="font-mono text-zinc-600 dark:text-zinc-400">{item["path"]}</span>
+                    <span class="text-zinc-400">{item["kind"]}</span>
+                  </div>
+                <% end %>
+              </div>
+            </div>
+          <% end %>
+
           <%!-- Action buttons --%>
           <div class="flex gap-2">
             <button
@@ -277,4 +295,10 @@ defmodule EzagentPluginLiveview.Tenant.CrDashboardLive do
   defp cr_status_variant(%{"status" => "published"}), do: "success"
   defp cr_status_variant(%{"status" => "cancelled"}), do: "danger"
   defp cr_status_variant(_), do: "default"
+
+  defp diff_item_color("added"), do: "bg-green-500"
+  defp diff_item_color("removed"), do: "bg-red-500"
+  defp diff_item_color("modified"), do: "bg-yellow-400"
+  defp diff_item_color("dir_modified"), do: "bg-yellow-400"
+  defp diff_item_color(_), do: "bg-zinc-400"
 end

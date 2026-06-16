@@ -93,15 +93,39 @@ defmodule EzagentPluginCr.CrEngine do
     write_cr(tid, cr["cr_id"], Map.put(cr, "status", "cancelled"))
   end
 
+  @doc """
+  Compute the diff between sandbox and the current release (`release/_current`).
+  Hashes key files and directories to determine which items have changed.
+  Returns a map with `:items` (list of change entries) and `:count`.
+  """
+  @spec compute_sandbox_diff(String.t()) :: %{items: [map()], count: non_neg_integer()}
+  def compute_sandbox_diff(tid) do
+    sandbox = EzagentPluginContent.Tenant.TenantRuntime.sandbox_path(tid)
+    release = Path.join([EzagentPluginContent.Tenant.TenantRuntime.release_path(tid), "_current"])
+
+    items =
+      [
+        check_file_diff("souls/customer.md", sandbox, release),
+        check_file_diff("slots/customer.yaml", sandbox, release),
+        check_dir_diff("skills/customer", sandbox, release),
+        check_kb_diff(tid, sandbox, release)
+      ]
+      |> Enum.filter(& &1)
+
+    %{items: items, count: length(items)}
+  end
+
   @doc "Record a sandbox file change on the active CR's sandbox_diff."
   @spec record_file_change(String.t(), String.t(), keyword()) :: :ok | {:error, term()}
   def record_file_change(tid, path, opts \\ []) do
     with {:ok, cr} <- ensure_active_cr(tid) do
+      diff = compute_sandbox_diff(tid)
       existing = cr["sandbox_diff"] || %{}
       new_paths = Enum.uniq((existing["paths"] || []) ++ [path])
       merged = %{
-        "files_changed" => (existing["files_changed"] || 0) + 1,
+        "files_changed" => diff.count,
         "paths" => new_paths,
+        "items" => diff.items,
         "lines_added" => (existing["lines_added"] || 0) + Keyword.get(opts, :lines_added, 0),
         "lines_removed" => (existing["lines_removed"] || 0) + Keyword.get(opts, :lines_removed, 0)
       }
@@ -208,6 +232,90 @@ defmodule EzagentPluginCr.CrEngine do
     |> case do
       {:ok, _} -> {:ok, cr}
       e -> e
+    end
+  end
+
+  # --- sandbox diff helpers ---
+
+  defp check_file_diff(rel_path, sandbox, release) do
+    s = Path.join(sandbox, rel_path)
+    r = Path.join(release, rel_path)
+    s_exists = File.exists?(s)
+    r_exists = File.exists?(r)
+
+    cond do
+      s_exists && r_exists ->
+        if hash_file(s) != hash_file(r), do: %{path: rel_path, kind: :modified}, else: nil
+
+      s_exists ->
+        %{path: rel_path, kind: :added}
+
+      r_exists ->
+        %{path: rel_path, kind: :removed}
+
+      true ->
+        nil
+    end
+  end
+
+  defp check_dir_diff(rel_path, sandbox, release) do
+    s_dir = Path.join(sandbox, rel_path)
+    r_dir = Path.join(release, rel_path)
+    s_exists = File.dir?(s_dir)
+    r_exists = File.dir?(r_dir)
+
+    cond do
+      s_exists && r_exists ->
+        if dir_files_sorted(s_dir) != dir_files_sorted(r_dir),
+          do: %{path: rel_path, kind: :dir_modified},
+          else: nil
+
+      s_exists ->
+        %{path: rel_path, kind: :added}
+
+      r_exists ->
+        %{path: rel_path, kind: :removed}
+
+      true ->
+        nil
+    end
+  end
+
+  defp check_kb_diff(_tid, sandbox, release) do
+    s = Path.join([sandbox, "kb", "kb.db"])
+    r = Path.join([release, "kb", "kb.db"])
+    s_exists = File.exists?(s)
+    r_exists = File.exists?(r)
+
+    cond do
+      s_exists && r_exists ->
+        if hash_file(s) != hash_file(r), do: %{path: "kb/kb.db", kind: :modified}, else: nil
+
+      s_exists ->
+        %{path: "kb/kb.db", kind: :added}
+
+      r_exists ->
+        %{path: "kb/kb.db", kind: :removed}
+
+      true ->
+        nil
+    end
+  end
+
+  defp hash_file(path) do
+    File.stream!(path, [], 2048)
+    |> Enum.reduce(:crypto.hash_init(:sha256), &:crypto.hash_update(&2, &1))
+    |> :crypto.hash_final()
+    |> Base.encode16(case: :lower)
+  end
+
+  defp dir_files_sorted(dir) do
+    with {:ok, entries} <- File.ls(dir) do
+      entries
+      |> Enum.filter(&(File.exists?(Path.join(dir, &1)) && !File.dir?(Path.join(dir, &1))))
+      |> Enum.sort()
+    else
+      _ -> []
     end
   end
 end
