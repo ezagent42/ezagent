@@ -1,6 +1,9 @@
 defmodule EzagentPluginContent.Kb.KbStore do
   @moduledoc "KB entry CRUD. Wraps Python MCP script calls."
 
+  @chunk_max_chars 600
+  @chunk_min_chars 50
+
   @spec search(binary(), String.t()) :: [map()]
   def search(kb_dir, query) do
     script = Path.join(kb_dir, "kb_search_mcp.py")
@@ -59,7 +62,7 @@ defmodule EzagentPluginContent.Kb.KbStore do
         url_dir = Path.join(sources_dir, "url")
         File.mkdir_p!(url_dir)
         File.write!(Path.join(url_dir, "#{hash}.html"), html)
-        text = strip_html(html) |> String.slice(0, 5000)
+        text = strip_html(html)
 
         entry = %{
           "id" => "url:#{hash}",
@@ -68,7 +71,13 @@ defmodule EzagentPluginContent.Kb.KbStore do
           "source_type" => "url",
           "source_id" => hash
         }
-        upsert(kb_dir, entry)
+
+        chunks = chunk_text(text)
+        Enum.each(chunks, fn chunk ->
+          chunk_entry = Map.put(entry, "content", chunk)
+          upsert(kb_dir, chunk_entry)
+        end)
+        if chunks == [], do: upsert(kb_dir, entry)
 
       {output, code} when code != 0 ->
         {:error, "curl exit #{code}: #{String.slice(output, 0, 200)}"}
@@ -93,7 +102,7 @@ defmodule EzagentPluginContent.Kb.KbStore do
     File.cp!(file_path, dest)
 
     # Read content based on extension
-    content = read_file_content(file_path) |> String.slice(0, 5000)
+    content = read_file_content(file_path)
     ext = Path.extname(fname)
     hash = :crypto.hash(:sha256, content) |> Base.encode16(case: :lower) |> String.slice(0, 12)
 
@@ -104,7 +113,13 @@ defmodule EzagentPluginContent.Kb.KbStore do
       "source_type" => "file",
       "source_id" => hash
     }
-    upsert(kb_dir, entry)
+
+    chunks = chunk_text(content)
+    Enum.each(chunks, fn chunk ->
+      chunk_entry = Map.put(entry, "content", chunk)
+      upsert(kb_dir, chunk_entry)
+    end)
+    if chunks == [], do: upsert(kb_dir, entry)
   rescue
     e -> {:error, Exception.message(e)}
   end
@@ -117,6 +132,23 @@ defmodule EzagentPluginContent.Kb.KbStore do
   end
 
   # -- Private helpers --
+
+  defp chunk_text(text) when is_binary(text) do
+    text
+    |> String.split(~r/\n\n+/, trim: true)
+    |> Enum.flat_map(fn para ->
+      if String.length(para) > @chunk_max_chars do
+        para
+        |> String.split(~r/(?<=[。！？\.\!\?])\s*/, trim: true)
+        |> Enum.chunk_every(3)
+        |> Enum.map(&Enum.join(&1, ""))
+      else
+        [para]
+      end
+    end)
+    |> Enum.filter(&(String.length(&1) >= @chunk_min_chars))
+    |> Enum.map(&String.slice(&1, 0, @chunk_max_chars))
+  end
 
   defp strip_html(html) do
     html
