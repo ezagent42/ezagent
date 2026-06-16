@@ -13,7 +13,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
   alias EzagentPluginCr.CrEngine
 
   @role "customer"
-  @allowed_exts ~w(.txt .md .csv .json .yaml .yml)
+  @allowed_exts ~w(.txt .md .csv .json .yaml )
 
   @impl true
   def mount(%{"tid" => tid}, _session, socket) do
@@ -42,7 +42,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
        upload_flash: nil
      )
      |> allow_upload(:kb_file,
-       accept: ~w(.txt .md .csv .json .yaml .yml),
+       accept: ~w(.txt .md .csv .json),
        max_entries: 10,
        auto_upload: false
      )}
@@ -483,7 +483,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
           </div>
           <div class="p-4 space-y-3">
             <p class="text-xs text-gray-500 dark:text-zinc-400">
-              支持格式: .txt / .md / .csv / .json / .yaml / .yml。文件将复制到 KB sources 目录并索引。
+              支持格式: .txt / .md / .csv / .json / .yaml / 。文件将复制到 KB sources 目录并索引。
             </p>
             <%= if @upload_flash do %>
               <div class={[

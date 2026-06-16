@@ -34,8 +34,8 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
     release_values = if release_values == %{}, do: nil, else: release_values
 
     # Compute diff
-    release_content = if release_values, do: YamlElixir.write!(release_values), else: ""
-    sandbox_content = YamlElixir.write!(slot_values)
+    release_content = if release_values, do: inspect(release_values, pretty: true), else: ""
+    sandbox_content = inspect(slot_values, pretty: true)
     diff = DiffEngine.diff(release_content, sandbox_content)
 
     {:ok,
@@ -67,7 +67,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
     {:noreply,
      assign(socket,
        slot_values: new_values,
-       yaml_content: YamlElixir.write!(new_values),
+       yaml_content: inspect(new_values, pretty: true),
        diff: diff,
        saved_flash: "#{key} 已保存"
      )}
@@ -99,7 +99,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
          assign(socket,
            slot_values: new_values,
            all_keys: all_keys,
-           yaml_content: YamlElixir.write!(new_values),
+           yaml_content: inspect(new_values, pretty: true),
            diff: diff,
            saved_flash: "#{key} 已添加"
          )}
@@ -123,7 +123,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
      assign(socket,
        slot_values: new_values,
        all_keys: all_keys,
-       yaml_content: YamlElixir.write!(new_values),
+       yaml_content: inspect(new_values, pretty: true),
        diff: diff,
        saved_flash: "#{key} 已删除"
      )}
@@ -398,8 +398,8 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
   defp recompute_diff(nil, _new_values), do: nil
 
   defp recompute_diff(release_values, new_values) do
-    release_content = YamlElixir.write!(release_values)
-    sandbox_content = YamlElixir.write!(new_values)
+    release_content = inspect(release_values, pretty: true)
+    sandbox_content = inspect(new_values, pretty: true)
     DiffEngine.diff(release_content, sandbox_content)
   end
 end
