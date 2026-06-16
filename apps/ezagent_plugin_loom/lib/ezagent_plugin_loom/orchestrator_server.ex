@@ -87,6 +87,8 @@ defmodule EzagentPluginLoom.OrchestratorServer do
          {:ok, _} <- dispatch(session_uri, "turn.settle", caller, %{turn_id: turn_id}) do
       :ok
     else
+      # 无 LLM key 环境(普通 gate、未配 key 的 session)静默跳过,不污染日志/不开 turn。
+      {:error, :no_api_key} -> :ok
       error -> Logger.warning("loom orchestrate failed: #{inspect(error)}")
     end
   end

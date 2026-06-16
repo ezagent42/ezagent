@@ -46,6 +46,7 @@ defmodule EzagentPluginLoom.Template.LoomSession do
                Ezagent.Behavior.Session.system_set_working_copy(session_uri, working_copy(tmpl)),
              :ok <- ensure_operator_user(operator_uri),
              {:ok, _} <- join_operator(session_uri, operator_uri) do
+          _ = start_orchestrator(session_uri)
           {:ok, [session_uri], %{fresh?: fresh?, vertical: :loom}}
         else
           {:error, _reason} = error ->
@@ -155,6 +156,19 @@ defmodule EzagentPluginLoom.Template.LoomSession do
         reply: {:caller_inbox, self()}
       }
     })
+  end
+
+  # 起 per-session 编排进程(订阅 session 事件 → 真实 LLM 编排)。生产接线:loom session
+  # 一经 materialize 即具备 multi-agent 编排能力。supervisor 缺失/已起都容错(隔离测试/幂等)。
+  defp start_orchestrator(session_uri) do
+    DynamicSupervisor.start_child(
+      EzagentPluginLoom.OrchestratorSupervisor,
+      {EzagentPluginLoom.OrchestratorServer, session_uri}
+    )
+  rescue
+    _ -> :ok
+  catch
+    :exit, _ -> :ok
   end
 
   defp cleanup_if_fresh(_session_uri, false), do: :ok

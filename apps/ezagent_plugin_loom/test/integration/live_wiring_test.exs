@@ -18,7 +18,7 @@ defmodule EzagentPluginLoom.Integration.LiveWiringTest do
   alias Ezagent.{Invocation, Message, Workspace, WorkspaceRegistry, KindRegistry}
   alias Ezagent.Entity.User
   alias Ezagent.Socialware.{CustomerAuth, CustomerFeed}
-  alias EzagentPluginLoom.{OrchestratorServer, Template.LoomSession}
+  alias EzagentPluginLoom.Template.LoomSession
 
   @valid_node_types ~w(text services companies detail steps form choices notice application intent page)
 
@@ -44,12 +44,9 @@ defmodule EzagentPluginLoom.Integration.LiveWiringTest do
     assert {:ok, _} = KindRegistry.lookup(session_uri)
     assert {:ok, ^workspace_uri} = WorkspaceRegistry.lookup(session_uri)
 
-    # 起编排进程(生产路径:DynamicSupervisor 起 per-session OrchestratorServer)
-    assert {:ok, _orch_pid} =
-             DynamicSupervisor.start_child(
-               EzagentPluginLoom.OrchestratorSupervisor,
-               {OrchestratorServer, session_uri}
-             )
+    # 编排进程由 LoomSession.instantiate 自动起(生产接线)；确认它在
+    assert [{_pid, _}] =
+             Registry.lookup(EzagentPluginLoom.OrchestratorRegistry, URI.to_string(session_uri))
 
     token = CustomerAuth.issue_token(session_uri, workspace_uri)
 
