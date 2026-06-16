@@ -140,37 +140,35 @@ defmodule EzagentPluginLiveview.Tenant.TenantDashboardLive do
         </button>
       </div>
 
+      <div class="grid grid-cols-2 gap-4 mb-6">
+        <a href={"/admin/autoservice/tenants/#{@tid}/agent/fast"} class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5 hover:shadow-md hover:border-blue-300 transition">
+          <div class="text-2xl mb-2">⚡</div>
+          <h3 class="font-semibold text-gray-900 dark:text-zinc-100">Fast Agent</h3>
+          <p class="text-xs text-gray-500 dark:text-zinc-400 mt-1">DeepSeek 即时安抚回复配置</p>
+          <div class="mt-2 text-xs text-gray-400 dark:text-zinc-500">sandbox/config/fast_ack_prompt.md</div>
+        </a>
+
+        <a href={"/admin/autoservice/tenants/#{@tid}/agent/slow"} class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5 hover:shadow-md hover:border-blue-300 transition">
+          <div class="text-2xl mb-2">🧠</div>
+          <h3 class="font-semibold text-gray-900 dark:text-zinc-100">Slow Agent</h3>
+          <p class="text-xs text-gray-500 dark:text-zinc-400 mt-1">Claude 知识库 Agent (Soul/Skills/KB)</p>
+          <div class="mt-2 text-xs text-gray-400 dark:text-zinc-500">6-tab 编辑器</div>
+        </a>
+      </div>
+
       <div class="grid grid-cols-3 gap-3 mb-6">
-        <.card>
-          <div class="flex flex-col gap-0.5">
-            <span class="text-xs uppercase tracking-wide text-zinc-500">
-              {gettext("Current Version")}
-            </span>
-            <span class="text-lg font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-              {@version}
-            </span>
-          </div>
-        </.card>
-        <.card>
-          <div class="flex flex-col gap-0.5">
-            <span class="text-xs uppercase tracking-wide text-zinc-500">
-              {gettext("Active CR Status")}
-            </span>
-            <span class="text-lg font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-              {cr_status_badge_text(@cr)}
-            </span>
-          </div>
-        </.card>
-        <.card>
-          <div class="flex flex-col gap-0.5">
-            <span class="text-xs uppercase tracking-wide text-zinc-500">
-              {gettext("Sandbox")}
-            </span>
-            <span class="text-sm text-zinc-900 dark:text-zinc-100">
-              {gettext("Ready")}
-            </span>
-          </div>
-        </.card>
+        <div class="rounded-lg border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 text-center">
+          <div class="text-xl font-bold text-gray-900 dark:text-zinc-100"><%= @version %></div>
+          <div class="text-xs text-gray-400 dark:text-zinc-500">Release</div>
+        </div>
+        <div class="rounded-lg border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 text-center">
+          <div class="text-xl font-bold text-amber-600"><%= cr_status_badge_text(@cr) %></div>
+          <div class="text-xs text-gray-400 dark:text-zinc-500">CR Status</div>
+        </div>
+        <div class="rounded-lg border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 text-center">
+          <a href={"/admin/autoservice/tenants/#{@tid}/orchestrate"} class="text-blue-600 hover:underline text-sm">View Routeset →</a>
+          <div class="text-xs text-gray-400 dark:text-zinc-500 mt-1">Orchestrate</div>
+        </div>
       </div>
 
       <%!-- Tenant Config Card --%>
@@ -233,31 +231,6 @@ defmodule EzagentPluginLiveview.Tenant.TenantDashboardLive do
             {gettext("No active CR found.")}
           </p>
         <% end %>
-      </.card>
-
-      <%!-- Quick Links --%>
-      <.card>
-        <:header>{gettext("Quick Links")}</:header>
-        <div class="grid grid-cols-2 gap-2">
-          <a
-            href={"/autoservice/tenant/#{@tid}/cr"}
-            class="block p-3 border border-zinc-200 dark:border-zinc-800 rounded-md hover:bg-zinc-50 dark:hover:bg-zinc-800 text-sm"
-          >
-            {gettext("CR Dashboard")} →
-          </a>
-          <a
-            href={"/autoservice/tenant/#{@tid}/operators"}
-            class="block p-3 border border-zinc-200 dark:border-zinc-800 rounded-md hover:bg-zinc-50 dark:hover:bg-zinc-800 text-sm"
-          >
-            {gettext("Operators")} →
-          </a>
-          <a
-            href="/autoservice/admin"
-            class="block p-3 border border-emerald-200 dark:border-emerald-800 rounded-md hover:bg-emerald-50 dark:hover:bg-emerald-900/30 text-sm font-medium text-emerald-700 dark:text-emerald-300"
-          >
-            {gettext("Content Edit")} →
-          </a>
-        </div>
       </.card>
     </div>
     """
