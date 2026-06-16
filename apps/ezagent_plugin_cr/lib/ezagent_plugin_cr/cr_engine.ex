@@ -28,6 +28,8 @@ defmodule EzagentPluginCr.CrEngine do
 
   @spec publish(String.t()) :: {:ok, map()} | {:error, term()}
   def publish(tid) do
+    require Logger
+
     # Heal any half-finished prior publish before allocating a new version.
     # Adapted from PR #740.
     with {:ok, _} <- repair_current(tid),
@@ -50,7 +52,86 @@ defmodule EzagentPluginCr.CrEngine do
         })
 
       write_cr(tid, cr["cr_id"], published)
+
+      # Refresh provisioned agents (slow cc + fast curl) with new release content
+      maybe_refresh_agents(tid)
+
       {:ok, published}
+    end
+  end
+
+  @doc """
+  Per-item publish: publish only the specified items from sandbox to a new
+  release version. The new release is built from the current release
+  (`_current`) as a baseline, then the specified items are overlaid from
+  sandbox. Runs lint before publishing. Returns the new version and items.
+  """
+  @spec publish_items(String.t(), [map()]) :: {:ok, map()} | {:error, term()}
+  def publish_items(tid, items) when is_list(items) do
+    require Logger
+
+    with {:ok, cr} <- ensure_active_cr(tid),
+         {:ok, _lint} <- CrLint.check(tid) do
+      sandbox = TenantRuntime.sandbox_path(tid)
+      release_base = TenantRuntime.release_path(tid)
+      version = next_version(tid)
+      release_dir = Path.join([release_base, version])
+      File.mkdir_p!(release_dir)
+
+      # Copy current release as baseline so unchanged files are preserved
+      current = TenantRuntime.current_release_path(tid)
+
+      if File.exists?(current) do
+        _ = File.cp_r(current, release_dir)
+      end
+
+      # Overlay the specified items from sandbox
+      Enum.each(items, fn item ->
+        src = Path.join(sandbox, item["path"])
+        dst = Path.join(release_dir, item["path"])
+
+        if File.exists?(src) do
+          File.mkdir_p!(Path.dirname(dst))
+          File.cp_r!(src, dst)
+        end
+      end)
+
+      update_current(tid, version)
+
+      # Mark CR as published with the new version
+      published =
+        Map.merge(cr, %{
+          "status" => "published",
+          "published_version" => version,
+          "published_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+        })
+
+      write_cr(tid, cr["cr_id"], published)
+
+      Logger.info("CrEngine.publish_items: published #{length(items)} items at version #{version} for tenant #{tid}")
+
+      {:ok, %{version: version, items: items}}
+    end
+  end
+
+  @doc """
+  Revert a single file from the current release (`_current`) back into the
+  sandbox. Records the file change on the active CR so the diff updates.
+  """
+  @spec revert_item(String.t(), String.t()) :: :ok | {:error, term()}
+  def revert_item(tid, path) do
+    release = Path.join([TenantRuntime.release_path(tid), "_current"])
+    sandbox = TenantRuntime.sandbox_path(tid)
+    src = Path.join(release, path)
+    dst = Path.join(sandbox, path)
+
+    if File.exists?(src) do
+      File.mkdir_p!(Path.dirname(dst))
+      File.cp_r!(src, dst)
+      record_file_change(tid, path)
+      :ok
+    else
+      {:error, :not_found}
     end
   end
 
@@ -177,6 +258,39 @@ defmodule EzagentPluginCr.CrEngine do
   # Full ConfigStore key matching TenantConfig.read_cr/2's construction:
   # ConfigStore.resolve(..., "cr:#{tid}:#{cr_id}")
   defp cr_key(tid), do: "cr:#{tid}:#{active_cr_id(tid)}"
+
+  # Determine the next version number by counting existing "v*" directories
+  # in the tenant release path. Mirrors CrSnapshot.snapshot/1.
+  defp next_version(tid) do
+    release = TenantRuntime.release_path(tid)
+    existing = Path.join(release, "v*") |> Path.wildcard()
+    "v#{length(existing) + 1}"
+  end
+
+  # Call Refresh.after_publish/1 if the autoservice plugin is available.
+  # Wrapped in Code.ensure_loaded? to avoid a hard compile-time dependency on
+  # :ezagent_plugin_autoservice (the CR plugin may be used independently).
+  defp maybe_refresh_agents(tid) do
+    require Logger
+
+    if Code.ensure_loaded?(EzagentPluginAutoservice.Refresh) do
+      Logger.info("Refresh.after_publish called for tenant #{tid} after publish")
+
+      case EzagentPluginAutoservice.Refresh.after_publish(tid) do
+        :ok ->
+          Logger.info("Refresh.after_publish succeeded for tenant #{tid}")
+
+        {:error, reason} ->
+          Logger.warning(
+            "Refresh.after_publish failed for tenant #{tid}: #{inspect(reason)}"
+          )
+      end
+    else
+      Logger.info(
+        "Refresh.after_publish skipped for tenant #{tid}: EzagentPluginAutoservice.Refresh not available"
+      )
+    end
+  end
 
   # Atomic symlink flip via tmp + rename. Adapted from PR #740:
   # `rm → ln_s` is NOT atomic — crash between rm and ln_s orphans `current`.

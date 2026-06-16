@@ -163,6 +163,34 @@ defmodule EzagentPluginLiveview.Tenant.CrDashboardLive do
     e -> {:noreply, assign(socket, :error, Exception.message(e))}
   end
 
+  def handle_event("revert_item", %{"path" => path}, socket) do
+    tid = socket.assigns.tid
+    mod = EzagentPluginCr.CrEngine
+
+    result =
+      if Code.ensure_loaded?(mod) and function_exported?(mod, :revert_item, 2) do
+        apply(mod, :revert_item, [tid, path])
+      else
+        {:error, "CrEngine.revert_item not available"}
+      end
+
+    case result do
+      :ok ->
+        {:noreply,
+         socket
+         |> assign(:cr, load_cr(tid))
+         |> assign(:flash_info, gettext("Reverted %{path}.", path: path))}
+
+      {:error, :not_found} ->
+        {:noreply, assign(socket, :error, gettext("File not found in release: %{path}", path: path))}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :error, gettext("Revert failed: %{reason}", reason: inspect(reason)))}
+    end
+  rescue
+    e -> {:noreply, assign(socket, :error, Exception.message(e))}
+  end
+
   def handle_event("refresh", _params, socket) do
     {:noreply,
      socket
@@ -262,6 +290,15 @@ defmodule EzagentPluginLiveview.Tenant.CrDashboardLive do
                     </span>
                     <span class="font-mono text-zinc-600 dark:text-zinc-400">{item["path"]}</span>
                     <span class="text-zinc-400">{item["kind"]}</span>
+                    <button
+                      :if={item["kind"] in ["modified", "added"]}
+                      phx-click="revert_item"
+                      phx-value-path={item["path"]}
+                      class="ml-auto px-1.5 py-0.5 text-xs border border-zinc-300 dark:border-zinc-600 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
+                      title={gettext("Revert this file from release")}
+                    >
+                      {gettext("Revert")}
+                    </button>
                   </div>
                 <% end %>
               </div>

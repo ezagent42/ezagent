@@ -71,7 +71,10 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SoulEditorLive do
        diff: diff,
        saved_flash: nil,
        view_mode: "edit",
-       etag: etag
+       etag: etag,
+       ai_prompt: "",
+       ai_suggestion: nil,
+       ai_loading: false
      )}
   end
 
@@ -142,6 +145,53 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SoulEditorLive do
   def handle_event("toggle_view_mode", _params, socket) do
     new_mode = if socket.assigns.view_mode == "edit", do: "preview", else: "edit"
     {:noreply, assign(socket, view_mode: new_mode)}
+  end
+
+  @impl true
+  def handle_event("update_ai_prompt", %{"ai_prompt" => prompt}, socket) do
+    {:noreply, assign(socket, ai_prompt: prompt)}
+  end
+
+  @impl true
+  def handle_event("ai_submit", _params, socket) do
+    prompt = socket.assigns.ai_prompt |> String.trim()
+
+    if prompt == "" do
+      {:noreply, assign(socket, ai_suggestion: nil)}
+    else
+      # Mock AI: echo the user's request and generate a suggestion block
+      current = socket.assigns.soul_content || ""
+      suggestion = generate_mock_ai_suggestion(prompt, current)
+      {:noreply, assign(socket, ai_suggestion: suggestion, ai_loading: false)}
+    end
+  end
+
+  @impl true
+  def handle_event("ai_accept", _params, socket) do
+    suggestion = socket.assigns.ai_suggestion
+
+    if suggestion do
+      new_content = insert_suggestion(socket.assigns.soul_content, suggestion)
+      slot_sections = SoulSlotParser.parse_slots(new_content)
+      diff = DiffEngine.diff(socket.assigns.release_soul, new_content)
+
+      {:noreply,
+       assign(socket,
+         soul_content: new_content,
+         slot_sections: slot_sections,
+         diff: diff,
+         ai_suggestion: nil,
+         ai_prompt: "",
+         saved_flash: nil
+       )}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("ai_reject", _params, socket) do
+    {:noreply, assign(socket, ai_suggestion: nil)}
   end
 
   @impl true
@@ -353,16 +403,123 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SoulEditorLive do
               <div class="px-4 py-2.5 bg-gray-800 dark:bg-zinc-800 text-white">
                 <h3 class="font-semibold text-sm">AI Assist</h3>
               </div>
-              <div class="p-8 text-center">
-                <p class="text-sm text-gray-400 dark:text-zinc-500">AI Assist 功能即将推出</p>
-                <p class="text-xs text-gray-300 dark:text-zinc-600 mt-1">使用 AI 辅助编写和优化 Soul 内容</p>
+
+              <%!-- Prompt input --%>
+              <div class="p-4 space-y-3">
+                <label class="block text-sm font-medium text-gray-700 dark:text-zinc-300">
+                  描述你想要的修改
+                </label>
+                <textarea
+                  name="ai_prompt"
+                  phx-change="update_ai_prompt"
+                  phx-debounce="150"
+                  rows="3"
+                  placeholder="例如：增加投诉处理流程、优化问候语、添加退换货政策..."
+                  class="w-full rounded-lg border border-gray-300 dark:border-zinc-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100 resize-y"
+                ><%= @ai_prompt %></textarea>
+
+                <button
+                  phx-click="ai_submit"
+                  disabled={@ai_prompt |> String.trim() == ""}
+                  class={[
+                    "rounded px-4 py-1.5 text-sm font-medium transition-colors",
+                    if(@ai_prompt |> String.trim() == "",
+                      do: "bg-gray-300 dark:bg-zinc-700 text-gray-500 cursor-not-allowed",
+                      else: "bg-purple-600 text-white hover:bg-purple-700"
+                    )
+                  ]}
+                >
+                  生成建议
+                </button>
               </div>
+
+              <%!-- AI Suggestion card --%>
+              <%= if @ai_suggestion do %>
+                <div class="border-t border-gray-200 dark:border-zinc-800 p-4 space-y-3">
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs font-medium text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950 px-2 py-0.5 rounded">
+                      AI 建议
+                    </span>
+                    <span class="text-xs text-gray-400 dark:text-zinc-500">
+                      根据你的描述生成的建议内容
+                    </span>
+                  </div>
+
+                  <%!-- Diff preview of suggestion --%>
+                  <div class="rounded-lg border border-gray-200 dark:border-zinc-800 bg-gray-50 dark:bg-zinc-950 p-4 max-h-64 overflow-y-auto">
+                    <pre class="text-xs font-mono leading-relaxed whitespace-pre-wrap text-gray-900 dark:text-zinc-100"><%= @ai_suggestion %></pre>
+                  </div>
+
+                  <%!-- Accept / Reject buttons --%>
+                  <div class="flex gap-2">
+                    <button
+                      phx-click="ai_accept"
+                      class="rounded bg-green-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-green-700 transition-colors"
+                    >
+                      Accept
+                    </button>
+                    <button
+                      phx-click="ai_reject"
+                      class="rounded border border-gray-300 dark:border-zinc-600 px-4 py-1.5 text-sm font-medium text-gray-700 dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800 transition-colors"
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              <% end %>
+
+              <%!-- Empty state --%>
+              <%= if is_nil(@ai_suggestion) and @ai_prompt |> String.trim() == "" do %>
+                <div class="p-8 text-center">
+                  <p class="text-sm text-gray-400 dark:text-zinc-500">描述你想要的修改，AI 会生成建议</p>
+                  <p class="text-xs text-gray-300 dark:text-zinc-600 mt-1">当前为离线模式，建议内容为模拟生成（LLM 集成待接入）</p>
+                </div>
+              <% end %>
             </div>
           <% end %>
         </div>
       </main>
     </div>
     """
+  end
+
+  # ---------------------------------------------------------------------------
+  # AI Assist helpers (mock/offline — ready for LLM integration)
+  # ---------------------------------------------------------------------------
+
+  # Generate a mock AI suggestion block based on the user's prompt.
+  # In offline mode, this echoes the prompt and wraps it in a formatted
+  # suggestion block appended to the current content.
+  defp generate_mock_ai_suggestion(prompt, _current) do
+    # Build a simple suggestion block that echoes the user's intent
+    timestamp = Calendar.strftime(DateTime.utc_now(), "%Y-%m-%d %H:%M UTC")
+
+    """
+    ## AI 建议: #{String.trim(prompt)}
+
+    <!--
+      提示: #{String.trim(prompt)}
+      模式: 离线/Mock（LLM 集成后替换为真实生成）
+      时间: #{timestamp}
+      -->
+
+    **[待接入 LLM]** 这里是 AI 根据你描述的 "#{String.trim(prompt)}" 生成的建议内容。
+    当前为离线模式，接入 LLM 后将返回真实生成的内容。
+    """
+    |> String.trim()
+  end
+
+  # Insert the AI suggestion into the current soul content.
+  # Appends the suggestion block after the current content with a separator.
+  defp insert_suggestion(current, suggestion) when is_binary(current) and is_binary(suggestion) do
+    trimmed_current = String.trim(current)
+    trimmed_suggestion = String.trim(suggestion)
+
+    if trimmed_current == "" do
+      trimmed_suggestion
+    else
+      trimmed_current <> "\n\n---\n\n" <> trimmed_suggestion
+    end
   end
 
   defp compute_etag(content) do
