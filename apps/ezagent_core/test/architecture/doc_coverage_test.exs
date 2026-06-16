@@ -49,10 +49,13 @@ defmodule EzagentCore.Architecture.DocCoverageTest do
       offenders = Mix.Tasks.Ezagent.Doc.Scan.scan_source(source)
 
       assert {:plain_def, 1} in offenders
+
       assert {:delegated, 1} in offenders,
              "a public defdelegate without @doc must count toward the ratchet"
+
       assert {:a_macro, 1} in offenders,
              "a public defmacro without @doc must count toward the ratchet"
+
       assert {:is_thing, 1} in offenders,
              "a public defguard without @doc must count toward the ratchet"
     end
@@ -264,7 +267,9 @@ defmodule EzagentCore.Architecture.DocCoverageTest do
       end
       """
 
-      assert {:undocumented_after_callback, 1} in Mix.Tasks.Ezagent.Doc.Scan.scan_source(callback_source),
+      assert {:undocumented_after_callback, 1} in Mix.Tasks.Ezagent.Doc.Scan.scan_source(
+               callback_source
+             ),
              "a def after a documented @callback must still count as undocumented"
 
       assert {:undocumented_after_type, 1} in Mix.Tasks.Ezagent.Doc.Scan.scan_source(type_source),

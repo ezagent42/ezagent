@@ -509,8 +509,11 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
             # leak onto a later def.
             defs =
               case container_branches(form) do
-                nil -> defs
-                branches -> Enum.reduce(branches, defs, fn b, acc -> merge_defs(acc, collect_defs(b)) end)
+                nil ->
+                  defs
+
+                branches ->
+                  Enum.reduce(branches, defs, fn b, acc -> merge_defs(acc, collect_defs(b)) end)
               end
 
             {defs, :none, nil, false}
@@ -538,7 +541,12 @@ defmodule Mix.Tasks.Ezagent.Doc.Scan do
   # undocumented sibling. @impl is OR-ed; doc_text takes whichever is present.
   defp merge_defs(a, b) do
     Map.merge(a, b, fn _key, da, db ->
-      %{da | doc: merge_doc(da.doc, db.doc), doc_text: da.doc_text || db.doc_text, impl: da.impl or db.impl}
+      %{
+        da
+        | doc: merge_doc(da.doc, db.doc),
+          doc_text: da.doc_text || db.doc_text,
+          impl: da.impl or db.impl
+      }
     end)
   end
 

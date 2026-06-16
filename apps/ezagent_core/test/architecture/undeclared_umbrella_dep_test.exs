@@ -74,7 +74,9 @@ defmodule Ezagent.Architecture.UndeclaredUmbrellaDepTest do
     offenders =
       Path.wildcard(Path.join(@repo_root, "apps/*/lib/**/*.ex"))
       |> Enum.flat_map(fn file ->
-        app = file |> Path.relative_to(@repo_root) |> Path.split() |> Enum.at(1) |> String.to_atom()
+        app =
+          file |> Path.relative_to(@repo_root) |> Path.split() |> Enum.at(1) |> String.to_atom()
+
         ast = parse(file)
         declared = Map.get(deps, app, MapSet.new())
         rel = Path.relative_to(file, @repo_root)
@@ -131,7 +133,9 @@ defmodule Ezagent.Architecture.UndeclaredUmbrellaDepTest do
   end
 
   defp add_mod(acc, parts) do
-    if is_list(parts) and Enum.all?(parts, &is_atom/1), do: [Module.concat(parts) | acc], else: acc
+    if is_list(parts) and Enum.all?(parts, &is_atom/1),
+      do: [Module.concat(parts) | acc],
+      else: acc
   end
 
   # ── module → defining app, and app → prod deps (mix.exs) ──────────────────
@@ -201,7 +205,8 @@ defmodule Ezagent.Architecture.UndeclaredUmbrellaDepTest do
   defp reject_allowlisted(offenders), do: Enum.reject(offenders, &(&1 in @allowlist))
 
   defp parse(file) do
-    File.read!(file) |> Code.string_to_quoted!(warn_on_unnecessary_quotes: false, emit_warnings: false)
+    File.read!(file)
+    |> Code.string_to_quoted!(warn_on_unnecessary_quotes: false, emit_warnings: false)
   rescue
     e -> flunk("AST parse failed for #{file}: #{Exception.message(e)}")
   end
