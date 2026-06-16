@@ -27,7 +27,9 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SoulEditorLive do
     sandbox_soul = read_file(sandbox_soul_path)
 
     # Read release soul content (for diff)
-    release_soul_path = Path.join([TenantRuntime.current_release_path(tid), "souls", "#{@role}.md"])
+    release_soul_path =
+      Path.join([TenantRuntime.current_release_path(tid), "souls", "#{@role}.md"])
+
     release_soul = read_file(release_soul_path)
 
     # Read slot values from YAML
@@ -49,6 +51,10 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SoulEditorLive do
     # Full CLAUDE.md preview
     preview = SoulRenderer.full_claude_md(templates, slot_values, skill_index)
 
+    # ETag for concurrency control
+    etag_content = sandbox_soul || ""
+    etag = compute_etag(etag_content)
+
     {:ok,
      assign(socket,
        page_title: "Soul 编辑",
@@ -64,7 +70,8 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SoulEditorLive do
        preview: preview,
        diff: diff,
        saved_flash: nil,
-       view_mode: "edit"
+       view_mode: "edit",
+       etag: etag
      )}
   end
 
@@ -87,12 +94,24 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SoulEditorLive do
     tid = socket.assigns.tid
     sandbox_path = Path.join([TenantRuntime.sandbox_path(tid), "souls", "#{@role}.md"])
 
-    File.mkdir_p!(Path.dirname(sandbox_path))
-    File.write!(sandbox_path, socket.assigns.soul_content)
+    # ETag concurrency check
+    current = read_file(sandbox_path) || ""
+    current_etag = compute_etag(current)
 
-    CrEngine.record_file_change(tid, "souls/customer.md")
+    if current_etag != socket.assigns.etag do
+      {:noreply, assign(socket, saved_flash: "⚠️ 文件已被他人修改，请刷新后重试")}
+    else
+      File.mkdir_p!(Path.dirname(sandbox_path))
+      File.write!(sandbox_path, socket.assigns.soul_content)
 
-    {:noreply, assign(socket, saved_flash: "Soul 已保存到 sandbox")}
+      CrEngine.record_file_change(tid, "souls/customer.md")
+
+      {:noreply,
+       assign(socket,
+         saved_flash: "Soul 已保存到 sandbox",
+         etag: compute_etag(socket.assigns.soul_content)
+       )}
+    end
   rescue
     e ->
       {:noreply, put_flash(socket, :error, "保存失败: #{Exception.message(e)}")}
@@ -132,193 +151,222 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SoulEditorLive do
       <.admin_sidebar tid={@tid} />
       <main class="flex-1 p-6">
         <div class="max-w-5xl mx-auto">
-      <div class="flex items-center justify-between mb-4">
-        <div>
-          <h1 class="text-xl font-bold text-gray-900 dark:text-zinc-100">Soul 编辑</h1>
-          <p class="text-sm text-gray-500 dark:text-zinc-400">
-            Tenant: <%= @tid %> / Role: <%= @role %>
-          </p>
-        </div>
-        <a
-          href={"/admin/autoservice/tenants/#{@tid}"}
-          class="text-sm text-gray-500 dark:text-zinc-400 hover:text-gray-700 dark:hover:text-zinc-300 underline"
-        >
-          &larr; 返回 Tenant Dashboard
-        </a>
-      </div>
-
-      <%= if @saved_flash do %>
-        <div class="text-sm text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-950 rounded px-3 py-2 mb-4">
-          <%= @saved_flash %>
-        </div>
-      <% end %>
-
-      <%!-- Tab bar --%>
-      <div class="flex gap-0.5 mb-0">
-        <button
-          phx-click="switch_tab" phx-value-tab="source"
-          class={[
-            "px-4 py-2 text-sm font-medium rounded-t-lg transition-colors",
-            @tab == "source" && "bg-gray-800 dark:bg-zinc-800 text-white",
-            @tab != "source" && "bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-400 hover:bg-gray-200 dark:hover:bg-zinc-700"
-          ]}
-        >
-          Source
-        </button>
-        <button
-          phx-click="switch_tab" phx-value-tab="diff"
-          class={[
-            "px-4 py-2 text-sm font-medium rounded-t-lg transition-colors",
-            @tab == "diff" && "bg-gray-800 dark:bg-zinc-800 text-white",
-            @tab != "diff" && "bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-400 hover:bg-gray-200 dark:hover:bg-zinc-700"
-          ]}
-        >
-          Diff
-        </button>
-        <button
-          phx-click="switch_tab" phx-value-tab="preview"
-          class={[
-            "px-4 py-2 text-sm font-medium rounded-t-lg transition-colors",
-            @tab == "preview" && "bg-gray-800 dark:bg-zinc-800 text-white",
-            @tab != "preview" && "bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-400 hover:bg-gray-200 dark:hover:bg-zinc-700"
-          ]}
-        >
-          Preview
-        </button>
-        <button
-          phx-click="switch_tab" phx-value-tab="ai_assist"
-          class={[
-            "px-4 py-2 text-sm font-medium rounded-t-lg transition-colors",
-            @tab == "ai_assist" && "bg-gray-800 dark:bg-zinc-800 text-white",
-            @tab != "ai_assist" && "bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-400 hover:bg-gray-200 dark:hover:bg-zinc-700"
-          ]}
-        >
-          AI Assist
-        </button>
-      </div>
-
-      <%!-- Tab: Source --%>
-      <%= if @tab == "source" do %>
-        <div class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden rounded-tl-none">
-          <%!-- Layer info bar --%>
-          <div class="px-4 py-2 bg-gray-50 dark:bg-zinc-950 border-b border-gray-200 dark:border-zinc-800 flex items-center gap-3">
-            <span class="text-xs text-gray-500 dark:text-zinc-400">Layers:</span>
-            <span class="text-xs font-medium text-gray-700 dark:text-zinc-300">
-              <%= length(@templates) %> template(s) loaded (L0&ndash;L3 + tenant override)
-            </span>
-            <span :if={@templates == []} class="text-xs text-amber-600 dark:text-amber-400 font-medium">
-              No templates found &mdash; sandbox only
-            </span>
-          </div>
-
-          <%!-- Slot tags bar --%>
-          <div :if={@slot_sections != []} class="px-4 py-2 bg-gray-50 dark:bg-zinc-950 border-b border-gray-200 dark:border-zinc-800">
-            <div class="flex flex-wrap gap-1.5 items-center">
-              <span class="text-xs text-gray-500 dark:text-zinc-400 mr-1">Slots:</span>
-              <%= for section <- @slot_sections do %>
-                <%= for key <- section.keys do %>
-                  <button
-                    phx-click="insert_slot"
-                    phx-value-key={key}
-                    class="text-xs bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 rounded px-1.5 py-0.5 hover:bg-blue-100 dark:hover:bg-blue-900 border border-blue-200 dark:border-blue-800 cursor-pointer transition-colors"
-                    title={"Click to insert slot: #{key}"}
-                  >
-                    &lbrace;&lbrace;<%= key %>&rbrace;&rbrace;
-                  </button>
-                <% end %>
-              <% end %>
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h1 class="text-xl font-bold text-gray-900 dark:text-zinc-100">Soul 编辑</h1>
+              <p class="text-sm text-gray-500 dark:text-zinc-400">
+                Tenant: {@tid} / Role: {@role}
+              </p>
             </div>
+            <a
+              href={"/admin/autoservice/tenants/#{@tid}"}
+              class="text-sm text-gray-500 dark:text-zinc-400 hover:text-gray-700 dark:hover:text-zinc-300 underline"
+            >
+              &larr; 返回 Tenant Dashboard
+            </a>
           </div>
 
-          <%!-- View mode toggle --%>
-          <div class="px-4 py-2 bg-gray-50 dark:bg-zinc-950 border-b border-gray-200 dark:border-zinc-800 flex items-center justify-between">
-            <span class="text-xs text-gray-500 dark:text-zinc-400">
-              <%= if @view_mode == "edit", do: "编辑模式", else: "预览模式" %>
-            </span>
+          <%= if @saved_flash do %>
+            <div class="text-sm text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-950 rounded px-3 py-2 mb-4">
+              {@saved_flash}
+            </div>
+          <% end %>
+
+          <%!-- Tab bar --%>
+          <div class="flex gap-0.5 mb-0">
             <button
-              phx-click="toggle_view_mode"
-              class="text-xs rounded border border-gray-300 dark:border-zinc-700 px-2.5 py-1 text-gray-700 dark:text-zinc-300 hover:bg-gray-200 dark:hover:bg-zinc-700 transition-colors"
+              phx-click="switch_tab"
+              phx-value-tab="source"
+              class={[
+                "px-4 py-2 text-sm font-medium rounded-t-lg transition-colors",
+                @tab == "source" && "bg-gray-800 dark:bg-zinc-800 text-white",
+                @tab != "source" &&
+                  "bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-400 hover:bg-gray-200 dark:hover:bg-zinc-700"
+              ]}
             >
-              <%= if @view_mode == "edit", do: "[预览]", else: "[编辑]" %>
+              Source
+            </button>
+            <button
+              phx-click="switch_tab"
+              phx-value-tab="diff"
+              class={[
+                "px-4 py-2 text-sm font-medium rounded-t-lg transition-colors",
+                @tab == "diff" && "bg-gray-800 dark:bg-zinc-800 text-white",
+                @tab != "diff" &&
+                  "bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-400 hover:bg-gray-200 dark:hover:bg-zinc-700"
+              ]}
+            >
+              Diff
+            </button>
+            <button
+              phx-click="switch_tab"
+              phx-value-tab="preview"
+              class={[
+                "px-4 py-2 text-sm font-medium rounded-t-lg transition-colors",
+                @tab == "preview" && "bg-gray-800 dark:bg-zinc-800 text-white",
+                @tab != "preview" &&
+                  "bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-400 hover:bg-gray-200 dark:hover:bg-zinc-700"
+              ]}
+            >
+              Preview
+            </button>
+            <button
+              phx-click="switch_tab"
+              phx-value-tab="ai_assist"
+              class={[
+                "px-4 py-2 text-sm font-medium rounded-t-lg transition-colors",
+                @tab == "ai_assist" && "bg-gray-800 dark:bg-zinc-800 text-white",
+                @tab != "ai_assist" &&
+                  "bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-400 hover:bg-gray-200 dark:hover:bg-zinc-700"
+              ]}
+            >
+              AI Assist
             </button>
           </div>
 
-          <%!-- Editor or Preview --%>
-          <div class="p-4">
-            <%= if @view_mode == "edit" do %>
-              <textarea
-                name="soul_content"
-                phx-change="update_content"
-                phx-debounce="300"
-                rows="28"
-                class="w-full rounded-lg border border-gray-300 dark:border-zinc-700 px-4 py-3 text-sm font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100 resize-y"
-              ><%= @soul_content %></textarea>
-            <% else %>
-              <div class="rounded-lg border border-gray-200 dark:border-zinc-800 bg-gray-50 dark:bg-zinc-950 p-5 max-h-[70vh] overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
-                <%= render_markdown(@soul_content) %>
+          <%!-- Tab: Source --%>
+          <%= if @tab == "source" do %>
+            <div class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden rounded-tl-none">
+              <%!-- Layer info bar --%>
+              <div class="px-4 py-2 bg-gray-50 dark:bg-zinc-950 border-b border-gray-200 dark:border-zinc-800 flex items-center gap-3">
+                <span class="text-xs text-gray-500 dark:text-zinc-400">Layers:</span>
+                <span class="text-xs font-medium text-gray-700 dark:text-zinc-300">
+                  {length(@templates)} template(s) loaded (L0&ndash;L3 + tenant override)
+                </span>
+                <span
+                  :if={@templates == []}
+                  class="text-xs text-amber-600 dark:text-amber-400 font-medium"
+                >
+                  No templates found &mdash; sandbox only
+                </span>
               </div>
-            <% end %>
-          </div>
 
-          <%!-- Save bar --%>
-          <div class="px-4 py-3 bg-gray-50 dark:bg-zinc-950 border-t border-gray-200 dark:border-zinc-800 flex items-center justify-between">
-            <span class="text-xs text-gray-400 dark:text-zinc-500 font-mono">
-              sandbox/souls/<%= @role %>.md
-            </span>
-            <button
-              phx-click="save_soul"
-              class="rounded bg-blue-600 text-white px-5 py-1.5 text-sm font-medium hover:bg-blue-700 transition-colors"
-            >
-              保存
-            </button>
-          </div>
-        </div>
-      <% end %>
+              <%!-- Slot tags bar --%>
+              <div
+                :if={@slot_sections != []}
+                class="px-4 py-2 bg-gray-50 dark:bg-zinc-950 border-b border-gray-200 dark:border-zinc-800"
+              >
+                <div class="flex flex-wrap gap-1.5 items-center">
+                  <span class="text-xs text-gray-500 dark:text-zinc-400 mr-1">Slots:</span>
+                  <%= for section <- @slot_sections do %>
+                    <%= for key <- section.keys do %>
+                      <button
+                        phx-click="insert_slot"
+                        phx-value-key={key}
+                        class="text-xs bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 rounded px-1.5 py-0.5 hover:bg-blue-100 dark:hover:bg-blue-900 border border-blue-200 dark:border-blue-800 cursor-pointer transition-colors"
+                        title={"Click to insert slot: #{key}"}
+                      >
+                        &lbrace;&lbrace;{key}&rbrace;&rbrace;
+                      </button>
+                    <% end %>
+                  <% end %>
+                </div>
+              </div>
 
-      <%!-- Tab: Diff --%>
-      <%= if @tab == "diff" do %>
-        <div class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden rounded-tl-none">
-          <div class="px-4 py-2.5 bg-gray-800 dark:bg-zinc-800 text-white">
-            <h3 class="font-semibold text-sm">Sandbox vs Release</h3>
-          </div>
-          <EzagentPluginLiveview.AutoService.Admin.Components.SoulDiffView.soul_diff_view diff={@diff} />
-          <div :if={@diff.added == [] and @diff.removed == []} class="px-4 py-8 text-center">
-            <p class="text-sm text-gray-400 dark:text-zinc-500">No differences between sandbox and release</p>
-          </div>
-        </div>
-      <% end %>
+              <%!-- View mode toggle --%>
+              <div class="px-4 py-2 bg-gray-50 dark:bg-zinc-950 border-b border-gray-200 dark:border-zinc-800 flex items-center justify-between">
+                <span class="text-xs text-gray-500 dark:text-zinc-400">
+                  {if @view_mode == "edit", do: "编辑模式", else: "预览模式"}
+                </span>
+                <button
+                  phx-click="toggle_view_mode"
+                  class="text-xs rounded border border-gray-300 dark:border-zinc-700 px-2.5 py-1 text-gray-700 dark:text-zinc-300 hover:bg-gray-200 dark:hover:bg-zinc-700 transition-colors"
+                >
+                  {if @view_mode == "edit", do: "[预览]", else: "[编辑]"}
+                </button>
+              </div>
 
-      <%!-- Tab: Preview --%>
-      <%= if @tab == "preview" do %>
-        <div class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden rounded-tl-none">
-          <div class="px-4 py-2.5 bg-gray-800 dark:bg-zinc-800 text-white">
-            <h3 class="font-semibold text-sm">Full CLAUDE.md Preview</h3>
-          </div>
-          <div class="p-4">
-            <pre class="text-xs font-mono leading-relaxed whitespace-pre-wrap bg-gray-50 dark:bg-zinc-950 rounded-lg p-5 max-h-[70vh] overflow-y-auto border border-gray-200 dark:border-zinc-800 text-gray-900 dark:text-zinc-100"><%= @preview %></pre>
-          </div>
-          <div :if={@preview == ""} class="px-4 py-8 text-center">
-            <p class="text-sm text-gray-400 dark:text-zinc-500">Preview is empty &mdash; no templates or content loaded</p>
-          </div>
-        </div>
-      <% end %>
+              <%!-- Editor or Preview --%>
+              <div class="p-4">
+                <%= if @view_mode == "edit" do %>
+                  <textarea
+                    name="soul_content"
+                    phx-change="update_content"
+                    phx-debounce="300"
+                    rows="28"
+                    class="w-full rounded-lg border border-gray-300 dark:border-zinc-700 px-4 py-3 text-sm font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100 resize-y"
+                  ><%= @soul_content %></textarea>
+                <% else %>
+                  <div class="rounded-lg border border-gray-200 dark:border-zinc-800 bg-gray-50 dark:bg-zinc-950 p-5 max-h-[70vh] overflow-y-auto prose prose-sm dark:prose-invert max-w-none">
+                    {render_markdown(@soul_content)}
+                  </div>
+                <% end %>
+              </div>
 
-      <%!-- Tab: AI Assist --%>
-      <%= if @tab == "ai_assist" do %>
-        <div class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden rounded-tl-none">
-          <div class="px-4 py-2.5 bg-gray-800 dark:bg-zinc-800 text-white">
-            <h3 class="font-semibold text-sm">AI Assist</h3>
-          </div>
-          <div class="p-8 text-center">
-            <p class="text-sm text-gray-400 dark:text-zinc-500">AI Assist 功能即将推出</p>
-            <p class="text-xs text-gray-300 dark:text-zinc-600 mt-1">使用 AI 辅助编写和优化 Soul 内容</p>
-          </div>
-        </div>
-      <% end %>
+              <%!-- Save bar --%>
+              <div class="px-4 py-3 bg-gray-50 dark:bg-zinc-950 border-t border-gray-200 dark:border-zinc-800 flex items-center justify-between">
+                <span class="text-xs text-gray-400 dark:text-zinc-500 font-mono">
+                  sandbox/souls/{@role}.md
+                </span>
+                <button
+                  phx-click="save_soul"
+                  class="rounded bg-blue-600 text-white px-5 py-1.5 text-sm font-medium hover:bg-blue-700 transition-colors"
+                >
+                  保存
+                </button>
+              </div>
+            </div>
+          <% end %>
+
+          <%!-- Tab: Diff --%>
+          <%= if @tab == "diff" do %>
+            <div class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden rounded-tl-none">
+              <div class="px-4 py-2.5 bg-gray-800 dark:bg-zinc-800 text-white">
+                <h3 class="font-semibold text-sm">Sandbox vs Release</h3>
+              </div>
+              <EzagentPluginLiveview.AutoService.Admin.Components.SoulDiffView.soul_diff_view diff={
+                @diff
+              } />
+              <div :if={@diff.added == [] and @diff.removed == []} class="px-4 py-8 text-center">
+                <p class="text-sm text-gray-400 dark:text-zinc-500">
+                  No differences between sandbox and release
+                </p>
+              </div>
+            </div>
+          <% end %>
+
+          <%!-- Tab: Preview --%>
+          <%= if @tab == "preview" do %>
+            <div class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden rounded-tl-none">
+              <div class="px-4 py-2.5 bg-gray-800 dark:bg-zinc-800 text-white">
+                <h3 class="font-semibold text-sm">Full CLAUDE.md Preview</h3>
+              </div>
+              <div class="p-4">
+                <pre class="text-xs font-mono leading-relaxed whitespace-pre-wrap bg-gray-50 dark:bg-zinc-950 rounded-lg p-5 max-h-[70vh] overflow-y-auto border border-gray-200 dark:border-zinc-800 text-gray-900 dark:text-zinc-100"><%= @preview %></pre>
+                <div class="text-xs text-gray-400 mt-2">
+                  Byte count: {byte_size(@preview)} | Line count: {Enum.count(
+                    String.split(@preview, "\n")
+                  )}
+                </div>
+              </div>
+              <div :if={@preview == ""} class="px-4 py-8 text-center">
+                <p class="text-sm text-gray-400 dark:text-zinc-500">
+                  Preview is empty &mdash; no templates or content loaded
+                </p>
+              </div>
+            </div>
+          <% end %>
+
+          <%!-- Tab: AI Assist --%>
+          <%= if @tab == "ai_assist" do %>
+            <div class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden rounded-tl-none">
+              <div class="px-4 py-2.5 bg-gray-800 dark:bg-zinc-800 text-white">
+                <h3 class="font-semibold text-sm">AI Assist</h3>
+              </div>
+              <div class="p-8 text-center">
+                <p class="text-sm text-gray-400 dark:text-zinc-500">AI Assist 功能即将推出</p>
+                <p class="text-xs text-gray-300 dark:text-zinc-600 mt-1">使用 AI 辅助编写和优化 Soul 内容</p>
+              </div>
+            </div>
+          <% end %>
         </div>
       </main>
     </div>
     """
+  end
+
+  defp compute_etag(content) do
+    :crypto.hash(:sha256, content) |> Base.encode16(case: :lower)
   end
 
   defp read_file(path) do
@@ -392,7 +440,10 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SoulEditorLive do
     text
     |> String.replace(~r/\*\*(.+?)\*\*/, "<strong>\\1</strong>")
     |> String.replace(~r/\*(.+?)\*/, "<em>\\1</em>")
-    |> String.replace(~r/`(.+?)`/, "<code style='background:rgba(0,0,0,0.08);padding:0.15em 0.3em;border-radius:3px;font-size:0.9em;'>\\1</code>")
+    |> String.replace(
+      ~r/`(.+?)`/,
+      "<code style='background:rgba(0,0,0,0.08);padding:0.15em 0.3em;border-radius:3px;font-size:0.9em;'>\\1</code>"
+    )
     |> escape_html_except_tags()
   end
 
