@@ -12,10 +12,13 @@ defmodule EzagentPluginLiveview.Tenant.TenantDashboardLive do
   use EzagentDomainUi.Components
   import Phoenix.Component
 
+  alias EzagentPluginContent.Tenant.TenantRuntime
+
   @impl true
   def mount(%{"tid" => tid}, _session, socket) do
     config = load_tenant_config(tid)
     cr = load_active_cr(tid)
+    initialized? = check_initialized?(tid)
 
     {:ok,
      socket
@@ -24,6 +27,7 @@ defmodule EzagentPluginLiveview.Tenant.TenantDashboardLive do
      |> assign(:tid, tid)
      |> assign(:config, config)
      |> assign(:cr, cr)
+     |> assign(:initialized?, initialized?)
      |> assign(:version, cr && cr["published_version"] || gettext("none"))
      |> assign(:flash_info, nil)}
   end
@@ -53,6 +57,13 @@ defmodule EzagentPluginLiveview.Tenant.TenantDashboardLive do
     end
   rescue
     _ -> nil
+  end
+
+  defp check_initialized?(tid) do
+    current = Path.join([TenantRuntime.release_path(tid), "_current"])
+    File.exists?(current)
+  rescue
+    _ -> false
   end
 
   defp load_active_cr(tid) do
@@ -94,7 +105,33 @@ defmodule EzagentPluginLiveview.Tenant.TenantDashboardLive do
         {@flash_info}
       </p>
 
-      <div class="flex items-center justify-between mb-4">
+      <%!-- Initialization CTA (shown when tenant is pending) --%>
+      <div :if={!@initialized?} class="max-w-3xl mx-auto border-2 border-amber-300 rounded-xl overflow-hidden">
+        <div class="bg-amber-50 px-6 py-5">
+          <div class="flex items-start gap-4">
+            <div class="text-4xl">🚀</div>
+            <div class="flex-1">
+              <h3 class="text-lg font-bold text-amber-900">{gettext("Tenant Not Initialized")}</h3>
+              <p class="text-sm text-amber-700 mt-1">
+                {gettext("This tenant has not completed initialization. The wizard will auto-generate the Soul template from your brand/industry info, prefill slot values, inherit platform skills, and create the initial release.")}
+              </p>
+              <div class="mt-4 flex gap-3">
+                <a
+                  href={"/admin/autoservice/tenants/#{@tid}/init"}
+                  class="bg-amber-600 text-white rounded-lg px-6 py-2.5 text-sm font-medium hover:bg-amber-700 shadow"
+                >
+                  {gettext("Start Initialization")} →
+                </a>
+                <span class="text-xs text-amber-500 self-center">
+                  💡 {gettext("Or use the sidebar menu to manually edit each module first.")}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div :if={@initialized?} class="flex items-center justify-between mb-4">
         <h2 class="text-sm font-semibold uppercase tracking-wide text-zinc-500">
           {gettext("Overview")}
         </h2>
