@@ -190,7 +190,8 @@ defmodule Ezagent.PluginLoom.Pages do
         [] -> Map.get(prev_by_id, @default_id) || fresh_default()
       end
 
-    [default_page | rest]
+    # 默认页始终是「首页」(id=home,名固定);新页永远不会成为默认页。
+    [Map.put(default_page, "title", "首页") | rest]
   end
 
   defp fresh_default do
