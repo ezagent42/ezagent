@@ -77,8 +77,8 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
        skill_new_name: "",
        skills_flash: nil,
        # KB panel
-      kb_fetch_url: "",
-      kb_upload_file: nil,
+       kb_fetch_url: "",
+       kb_upload_file: nil,
        kb_entries: kb_entries,
        kb_new_id: "",
        kb_new_title: "",
@@ -119,6 +119,7 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
            socket
            |> assign(:soul_content, content)
            |> assign(:soul_saved_flash, "已保存")}
+
         {:error, reason} ->
           {:noreply, put_flash(socket, :error, "保存失败: #{inspect(reason)}")}
       end
@@ -140,6 +141,7 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
                socket
                |> assign(:slots_content, content)
                |> assign(:slots_saved_flash, "已保存")}
+
             {:error, reason} ->
               {:noreply, put_flash(socket, :error, "保存失败: #{inspect(reason)}")}
           end
@@ -325,11 +327,17 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
     if socket.assigns.can_write? && url != "" do
       tid = socket.assigns.tid
       kb_dir = kb_sandbox_dir(tid)
+
       case KbStore.fetch_url(kb_dir, url) do
         :ok ->
           kb_entries = list_kb_entries(tid)
           _ = lazy_cr_ensure(tid)
-          {:noreply, socket |> assign(:kb_entries, kb_entries) |> assign(:kb_flash, "URL 抓取成功: #{String.slice(url, 0, 60)}")}
+
+          {:noreply,
+           socket
+           |> assign(:kb_entries, kb_entries)
+           |> assign(:kb_flash, "URL 抓取成功: #{String.slice(url, 0, 60)}")}
+
         {:error, reason} ->
           {:noreply, assign(socket, :kb_flash, "抓取失败: #{inspect(reason)}")}
       end
@@ -345,12 +353,18 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
       # Save temp file, then ingest
       tmp_path = Path.join(System.tmp_dir!(), upload.filename)
       File.cp!(upload.path, tmp_path)
+
       case KbStore.ingest_file(kb_dir, tmp_path) do
         :ok ->
           File.rm(tmp_path)
           kb_entries = list_kb_entries(tid)
           _ = lazy_cr_ensure(tid)
-          {:noreply, socket |> assign(:kb_entries, kb_entries) |> assign(:kb_flash, "文件上传成功: #{upload.filename}")}
+
+          {:noreply,
+           socket
+           |> assign(:kb_entries, kb_entries)
+           |> assign(:kb_flash, "文件上传成功: #{upload.filename}")}
+
         {:error, reason} ->
           File.rm(tmp_path)
           {:noreply, assign(socket, :kb_flash, "上传失败: #{inspect(reason)}")}
@@ -363,10 +377,12 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
   def handle_event("kb_rebuild", _params, socket) do
     tid = socket.assigns.tid
     kb_dir = kb_sandbox_dir(tid)
+
     case KbStore.rebuild(kb_dir) do
       :ok ->
         kb_entries = list_kb_entries(tid)
         {:noreply, socket |> assign(:kb_entries, kb_entries) |> assign(:kb_flash, "KB 重建完成")}
+
       {:error, reason} ->
         {:noreply, assign(socket, :kb_flash, "重建失败: #{inspect(reason)}")}
     end
@@ -390,9 +406,11 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
                socket
                |> assign(:fast_prompt, content)
                |> assign(:fast_prompt_flash, "已保存")}
+
             {:error, reason} ->
               {:noreply, put_flash(socket, :error, "保存失败: #{inspect(reason)}")}
           end
+
         {:error, reason} ->
           {:noreply, put_flash(socket, :error, "目录创建失败: #{inspect(reason)}")}
       end
@@ -415,9 +433,14 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
 
           case Refresh.refresh_agents(tid) do
             :ok ->
-              Logger.info("TenantAdminLive: agents refreshed for tenant #{tid} after publish v#{v}")
+              Logger.info(
+                "TenantAdminLive: agents refreshed for tenant #{tid} after publish v#{v}"
+              )
+
             {:error, reason} ->
-              Logger.warning("TenantAdminLive: refresh_agents failed (non-fatal) for tenant #{tid}: #{inspect(reason)}")
+              Logger.warning(
+                "TenantAdminLive: refresh_agents failed (non-fatal) for tenant #{tid}: #{inspect(reason)}"
+              )
           end
 
           cr_info = load_cr_info(tid)
@@ -452,6 +475,7 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
         {:ok, soul_content} ->
           slot_values = parse_slots(File.read(slots_path))
           "[Preview] #{soul_content}\n\nSlots: #{inspect(slot_values)}"
+
         {:error, _} ->
           "(sandbox soul not found at #{soul_path})"
       end
@@ -512,7 +536,9 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
 
   defp soul_path(tid), do: Path.join([TenantRuntime.sandbox_path(tid), "souls", "customer.md"])
   defp slots_path(tid), do: Path.join([TenantRuntime.sandbox_path(tid), "slots", "customer.yaml"])
-  defp fast_prompt_path(tid), do: Path.join([TenantRuntime.sandbox_path(tid), "config", "fast_ack_prompt.md"])
+
+  defp fast_prompt_path(tid),
+    do: Path.join([TenantRuntime.sandbox_path(tid), "config", "fast_ack_prompt.md"])
 
   defp read_fast_prompt(tid) do
     case File.read(fast_prompt_path(tid)) do
@@ -532,12 +558,9 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
     sandbox = TenantRuntime.sandbox_path(tid)
 
     if File.dir?(sandbox) do
-      case CrLint.check(tid) do
-        {:ok, warnings} -> %{ok: true, warnings: warnings}
-        {:error, reason} -> %{ok: false, error: reason}
-      end
+      CrLint.check(tid)
     else
-      %{ok: true, warnings: []}
+      {:ok, %{warnings: [], ok: []}}
     end
   end
 
@@ -578,6 +601,7 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
   # Ensure an active CR exists for this tenant (CR change tracking).
   defp lazy_cr_ensure(tid) do
     mod = EzagentPluginCr.CrEngine
+
     if Code.ensure_loaded?(mod) and function_exported?(mod, :ensure_active_cr, 1) do
       apply(mod, :ensure_active_cr, [tid])
     end
@@ -663,10 +687,13 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
       <main class="flex-1 p-6">
         <div class="flex items-center justify-between mb-6">
           <h1 class="text-xl font-bold text-gray-900 dark:text-zinc-100">租户管理控制台</h1>
-          <span class="text-xs text-gray-400 dark:text-zinc-500">workspace://<%= @tid %></span>
+          <span class="text-xs text-gray-400 dark:text-zinc-500">workspace://{@tid}</span>
         </div>
 
-        <div :if={!@can_write?} class="rounded border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950 px-4 py-3 text-sm text-amber-800 dark:text-amber-200 mb-6">
+        <div
+          :if={!@can_write?}
+          class="rounded border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950 px-4 py-3 text-sm text-amber-800 dark:text-amber-200 mb-6"
+        >
           无权限：当前账号不持有编辑权限，部分功能为只读模式。
         </div>
 
@@ -677,12 +704,68 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
           </div>
           <div class="rounded-lg border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
             <h3 class="text-sm font-medium text-gray-900 dark:text-zinc-100">提示</h3>
-            <p class="text-xs text-gray-500 dark:text-zinc-400 mt-1">每次编辑会自动关联到 Active CR，发布前请检查 CR Dashboard 的 Lint 结果。</p>
+            <p class="text-xs text-gray-500 dark:text-zinc-400 mt-1">
+              每次编辑会自动关联到 Active CR，发布前请检查 CR Dashboard 的 Lint 结果。
+            </p>
           </div>
         </div>
+
+        <%!-- Lint Results with severity badges --%>
+        <%= if @lint_results do %>
+          <% lint_ok? = elem(@lint_results, 0) == :ok
+          lint_data = elem(@lint_results, 1) %>
+          <div class="mt-6 rounded-lg border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-sm font-medium text-gray-900 dark:text-zinc-100">Lint 检查</h3>
+              <div class="flex items-center gap-2">
+                <span class={"text-xs font-semibold px-2 py-0.5 rounded #{if lint_ok?, do: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200", else: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"}"}>
+                  {if lint_ok?, do: "PASS", else: "FAIL"}
+                </span>
+                <button
+                  phx-click="refresh_lint"
+                  class="text-xs underline text-zinc-400 hover:text-zinc-600"
+                >
+                  刷新
+                </button>
+              </div>
+            </div>
+            <div class="text-xs font-mono space-y-1">
+              <%!-- Error items --%>
+              <%= for {:error, msg} <- lint_data[:errors] || [] do %>
+                <div class="flex items-center gap-1.5">
+                  <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+                    ERROR
+                  </span>
+                  <span class="text-red-700 dark:text-red-300">{msg}</span>
+                </div>
+              <% end %>
+              <%!-- Warning items --%>
+              <%= for {:warning, msg} <- lint_data[:warnings] || [] do %>
+                <div class="flex items-center gap-1.5">
+                  <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">
+                    WARN
+                  </span>
+                  <span class="text-amber-700 dark:text-amber-300">{msg}</span>
+                </div>
+              <% end %>
+              <%!-- OK items --%>
+              <%= for {:ok, msg} <- lint_data[:ok] || [] do %>
+                <div class="flex items-center gap-1.5">
+                  <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                    OK
+                  </span>
+                  <span class="text-green-700 dark:text-green-300">{msg}</span>
+                </div>
+              <% end %>
+              <%!-- Empty state --%>
+              <%= if (lint_data[:errors] || []) == [] and (lint_data[:warnings] || []) == [] and (lint_data[:ok] || []) == [] do %>
+                <div class="text-zinc-400 italic">暂无 Lint 检查结果。</div>
+              <% end %>
+            </div>
+          </div>
+        <% end %>
       </main>
     </div>
     """
-
   end
 end

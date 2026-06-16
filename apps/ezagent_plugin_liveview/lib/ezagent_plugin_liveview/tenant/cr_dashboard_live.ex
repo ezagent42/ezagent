@@ -21,6 +21,7 @@ defmodule EzagentPluginLiveview.Tenant.CrDashboardLive do
      |> assign(:tid, tid)
      |> assign(:cr, load_cr(tid))
      |> assign(:cr_history, load_cr_history(tid))
+     |> assign(:lint_results, load_lint(tid))
      |> assign(:error, nil)
      |> assign(:flash_info, nil)}
   end
@@ -33,6 +34,7 @@ defmodule EzagentPluginLiveview.Tenant.CrDashboardLive do
      |> assign(:tid, nil)
      |> assign(:cr, nil)
      |> assign(:cr_history, [])
+     |> assign(:lint_results, nil)
      |> assign(:error, nil)
      |> assign(:flash_info, gettext("No tenant ID provided."))}
   end
@@ -64,6 +66,7 @@ defmodule EzagentPluginLiveview.Tenant.CrDashboardLive do
           |> Enum.map(fn dir ->
             full = Path.join(release, dir)
             stat = File.stat!(full, time: :posix)
+
             time_str =
               stat.mtime
               |> DateTime.from_unix!()
@@ -72,7 +75,8 @@ defmodule EzagentPluginLiveview.Tenant.CrDashboardLive do
             {dir, time_str}
           end)
 
-        {:error, _} -> []
+        {:error, _} ->
+          []
       end
     else
       []
@@ -89,6 +93,18 @@ defmodule EzagentPluginLiveview.Tenant.CrDashboardLive do
   end
 
   defp extract_version(_), do: 0
+
+  defp load_lint(tid) do
+    mod = EzagentPluginCr.CrLint
+
+    if Code.ensure_loaded?(mod) and function_exported?(mod, :check, 1) do
+      apply(mod, :check, [tid])
+    else
+      {:ok, %{warnings: [], ok: []}}
+    end
+  rescue
+    _ -> {:ok, %{warnings: [], ok: []}}
+  end
 
   @impl true
   def handle_event("publish", _params, socket) do
@@ -107,11 +123,15 @@ defmodule EzagentPluginLiveview.Tenant.CrDashboardLive do
         {:noreply,
          socket
          |> assign(:cr, cr)
+         |> assign(:lint_results, load_lint(tid))
          |> assign(:error, nil)
          |> assign(:flash_info, gettext("Published successfully."))}
 
       {:error, reason} ->
-        {:noreply, assign(socket, :error, inspect(reason))}
+        {:noreply,
+         socket
+         |> assign(:lint_results, load_lint(tid))
+         |> assign(:error, inspect(reason))}
     end
   rescue
     e -> {:noreply, assign(socket, :error, Exception.message(e))}
@@ -147,6 +167,7 @@ defmodule EzagentPluginLiveview.Tenant.CrDashboardLive do
     {:noreply,
      socket
      |> assign(:cr, load_cr(socket.assigns.tid))
+     |> assign(:lint_results, load_lint(socket.assigns.tid))
      |> assign(:error, nil)}
   end
 
@@ -168,11 +189,17 @@ defmodule EzagentPluginLiveview.Tenant.CrDashboardLive do
         </a>
       </div>
 
-      <p :if={@flash_info} class="mb-4 text-sm text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950 p-3 rounded-md">
+      <p
+        :if={@flash_info}
+        class="mb-4 text-sm text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950 p-3 rounded-md"
+      >
         {@flash_info}
       </p>
 
-      <p :if={@error} class="mb-4 text-sm text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950 p-3 rounded-md">
+      <p
+        :if={@error}
+        class="mb-4 text-sm text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950 p-3 rounded-md"
+      >
         {@error}
       </p>
 
@@ -231,7 +258,8 @@ defmodule EzagentPluginLiveview.Tenant.CrDashboardLive do
               <div class="space-y-1">
                 <%= for item <- @cr["sandbox_diff"]["items"] do %>
                   <div class="flex items-center gap-2 text-xs py-1">
-                    <span class={"inline-block w-1.5 h-1.5 rounded-full #{diff_item_color(item["kind"])}"}></span>
+                    <span class={"inline-block w-1.5 h-1.5 rounded-full #{diff_item_color(item["kind"])}"}>
+                    </span>
                     <span class="font-mono text-zinc-600 dark:text-zinc-400">{item["path"]}</span>
                     <span class="text-zinc-400">{item["kind"]}</span>
                   </div>
@@ -263,6 +291,55 @@ defmodule EzagentPluginLiveview.Tenant.CrDashboardLive do
           <p class="text-sm text-zinc-500 italic">
             {gettext("No active CR found. A new CR will be created when the first change is made.")}
           </p>
+        </.card>
+      <% end %>
+
+      <%!-- Lint Results --%>
+      <%= if @lint_results do %>
+        <% lint_ok? = elem(@lint_results, 0) == :ok
+        lint_data = elem(@lint_results, 1) %>
+        <.card class="mb-4">
+          <:header>
+            <div class="flex items-center justify-between">
+              <span>{gettext("Lint Results")}</span>
+              <span class={"text-xs font-semibold px-2 py-0.5 rounded #{if lint_ok?, do: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200", else: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"}"}>
+                {if lint_ok?, do: gettext("PASS"), else: gettext("FAIL")}
+              </span>
+            </div>
+          </:header>
+          <div class="text-xs font-mono space-y-1">
+            <%!-- Error items --%>
+            <%= for {:error, msg} <- lint_data[:errors] || [] do %>
+              <div class="flex items-center gap-1.5">
+                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+                  ERROR
+                </span>
+                <span class="text-red-700 dark:text-red-300">{msg}</span>
+              </div>
+            <% end %>
+            <%!-- Warning items --%>
+            <%= for {:warning, msg} <- lint_data[:warnings] || [] do %>
+              <div class="flex items-center gap-1.5">
+                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">
+                  WARN
+                </span>
+                <span class="text-amber-700 dark:text-amber-300">{msg}</span>
+              </div>
+            <% end %>
+            <%!-- OK items --%>
+            <%= for {:ok, msg} <- lint_data[:ok] || [] do %>
+              <div class="flex items-center gap-1.5">
+                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                  OK
+                </span>
+                <span class="text-green-700 dark:text-green-300">{msg}</span>
+              </div>
+            <% end %>
+            <%!-- Empty state --%>
+            <%= if (lint_data[:errors] || []) == [] and (lint_data[:warnings] || []) == [] and (lint_data[:ok] || []) == [] do %>
+              <div class="text-zinc-400 italic">{gettext("No lint rules executed.")}</div>
+            <% end %>
+          </div>
         </.card>
       <% end %>
 

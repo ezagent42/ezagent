@@ -32,7 +32,7 @@ defmodule EzagentPluginCr.CrEngine do
     # Adapted from PR #740.
     with {:ok, _} <- repair_current(tid),
          {:ok, cr} <- ensure_active_cr(tid),
-         :ok <- CrLint.check(tid),
+         {:ok, _lint_result} <- CrLint.check(tid),
          {:ok, new_ver} <- CrSnapshot.snapshot(tid),
          # mark-before-flip: persist "published vN" status BEFORE symlink flip.
          # If a crash occurs during the flip, repair_current/1 detects the
@@ -122,6 +122,7 @@ defmodule EzagentPluginCr.CrEngine do
       diff = compute_sandbox_diff(tid)
       existing = cr["sandbox_diff"] || %{}
       new_paths = Enum.uniq((existing["paths"] || []) ++ [path])
+
       merged = %{
         "files_changed" => diff.count,
         "paths" => new_paths,
@@ -129,8 +130,12 @@ defmodule EzagentPluginCr.CrEngine do
         "lines_added" => (existing["lines_added"] || 0) + Keyword.get(opts, :lines_added, 0),
         "lines_removed" => (existing["lines_removed"] || 0) + Keyword.get(opts, :lines_removed, 0)
       }
+
       cr_id = cr["cr_id"]
-      updated_cr = Map.merge(cr, %{"sandbox_diff" => merged, "updated_at" => DateTime.utc_now() |> DateTime.to_iso8601()})
+
+      updated_cr =
+        Map.merge(cr, %{"sandbox_diff" => merged, "updated_at" => DateTime.utc_now() |> DateTime.to_iso8601()})
+
       _ = TenantConfig.update_cr(tid, cr_id, updated_cr)
       :ok
     end
