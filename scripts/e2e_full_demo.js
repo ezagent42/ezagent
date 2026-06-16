@@ -46,7 +46,7 @@ async function startServer() {
       }
     } catch (e) {}
     if (i % 15 === 0 && i > 0) console.log(`[server] waiting... (${i}s)`);
-    await sleep(1000);
+    await sleep(2000);
   }
   throw new Error('Server timeout');
 }
@@ -55,7 +55,7 @@ async function gotoAuth(page, path) {
   const url = path.includes('?') ? `${BASE_URL}${path}` : `${BASE_URL}${path}`;
   await page.goto(url, { waitUntil: 'networkidle', timeout: 20000 });
   await page.waitForSelector('[data-phx-main]', { timeout: 15000 }).catch(() => {});
-  await sleep(1500);
+  await sleep(2500); // 让用户看清页面内容
   return page;
 }
 
@@ -99,7 +99,7 @@ async function main() {
       await tidInput.fill(TEST_TENANT);
       if (await brandInput.isVisible()) await brandInput.fill('Demo租户');
       await page.locator('button', { hasText: /Next|下一步|继续/ }).click();
-      await sleep(1500);
+      await sleep(2500);
       await screenshot(page, '02b-tenant-onboard-step2.png');
     }
 
@@ -108,7 +108,7 @@ async function main() {
     if (await adminNameInput.isVisible()) {
       await adminNameInput.fill('demo-admin');
       await page.locator('button', { hasText: /Next|下一步|继续/ }).click();
-      await sleep(1500);
+      await sleep(2500);
       await screenshot(page, '02c-tenant-onboard-step3.png');
     }
 
@@ -127,25 +127,27 @@ async function main() {
     await gotoAuth(page, `/autoservice/admin?as=admin&workspace=${WS}`);
     await screenshot(page, '03a-soul-editor-initial.png');
 
-    // Edit soul content (skip if readonly — cap gate protects editing)
+    // Edit soul content — type slowly to show the editing process
     const soulTextarea = page.locator('textarea[name="soul"]');
     if (await soulTextarea.isVisible()) {
       const isReadonly = await soulTextarea.getAttribute('readonly');
       if (isReadonly === null) {
-        const currentSoul = await soulTextarea.inputValue();
-        const newSoul = currentSoul + '\n\n## 额外说明\n这是通过 E2E 测试添加的内容。';
-        await soulTextarea.fill(newSoul);
-        await sleep(500);
+        // Clear and type new content character by character
+        await soulTextarea.click();
+        await soulTextarea.fill(''); // clear
+        const newSoul = '# Acme Corp 智能客服\n\n## 欢迎语\n您好！欢迎来到Acme Corp，我是您的智能客服。\n\n## 服务\n- 7×24小时在线\n- 退款/退货快速处理\n- VIP会员专属通道\n\n## E2E 测试标记\n此内容由自动化测试于 ' + new Date().toISOString() + ' 写入。';
+        await soulTextarea.type(newSoul, { delay: 30 });
+        await sleep(2000);
         await page.locator('button', { hasText: '保存' }).first().click();
-        await sleep(1000);
+        await sleep(2000); // 让用户看清保存成功
         await screenshot(page, '03b-soul-editor-saved.png');
       } else {
-        console.log('  ⚠️ Soul editor is readonly (cap gate), skipping edit');
+        console.log('  ⚠️ Soul editor is readonly, skipping edit');
       }
     }
 
     // ===================================================================
-    // 4. Slots Edit
+    // 4. Slots Edit — type slowly
     // ===================================================================
     console.log('\n=== 4. Slots Edit ===');
     await gotoAuth(page, `/autoservice/admin?as=admin&workspace=${WS}`);
@@ -153,17 +155,19 @@ async function main() {
     if (await slotsTextarea.isVisible()) {
       const isReadonly = await slotsTextarea.getAttribute('readonly');
       if (isReadonly === null) {
-        const newSlots = 'brand_name: "Cinnox"\nindustry: "通讯"\nservice_hours: "7×24小时"\ntest_key: "E2E测试值"';
-        await slotsTextarea.fill(newSlots);
-        await sleep(500);
+        const newSlots = 'brand_name: "Acme Corp"\nindustry: "零售电商"\nservice_hours: "7×24小时"\nhotline: "400-888-9999"\ntest_key: "E2E测试值-' + Date.now() + '"';
+        await slotsTextarea.click();
+        await slotsTextarea.fill('');
+        await slotsTextarea.type(newSlots, { delay: 20 });
+        await sleep(2000);
         const saveBtns = page.locator('button', { hasText: '保存' });
         if (await saveBtns.count() >= 2) {
           await saveBtns.nth(1).click();
-          await sleep(1000);
+          await sleep(2000); // 看清保存成功
         }
         await screenshot(page, '04-slots-editor-saved.png');
       } else {
-        console.log('  ⚠️ Slots editor readonly, taking screenshot of current state');
+        console.log('  ⚠️ Slots editor readonly');
         await screenshot(page, '04-slots-editor-readonly.png');
       }
     }
@@ -178,7 +182,7 @@ async function main() {
     const skillsTab = page.locator('button', { hasText: 'Skills' });
     if (await skillsTab.isVisible()) {
       await skillsTab.click();
-      await sleep(1000);
+      await sleep(2000);
     }
     await screenshot(page, '05a-skills-tab.png');
 
@@ -190,21 +194,21 @@ async function main() {
       if (skillReadonly === null) {
         await skillNameInput.fill('e2e-test-skill');
         await page.locator('button', { hasText: '创建' }).click();
-        await sleep(1000);
+        await sleep(2000);
         await screenshot(page, '05b-skill-created.png');
 
         // Edit the skill
         const editBtn = page.locator('button', { hasText: '编辑' }).first();
         if (await editBtn.isVisible()) {
           await editBtn.click();
-          await sleep(800);
+          await sleep(2500);
           const skillEditor = page.locator('textarea[name="content"]');
           if (await skillEditor.isVisible()) {
             const contentReadonly = await skillEditor.getAttribute('readonly');
             if (contentReadonly === null) {
               await skillEditor.fill('# E2E Test Skill\n\nThis skill was created during E2E testing.\n\n## 功能\n- 测试 skill 编辑功能\n- 验证保存和删除');
               await page.locator('button', { hasText: '保存' }).last().click();
-              await sleep(1000);
+              await sleep(2000);
             }
           }
           await screenshot(page, '05c-skill-edited.png');
@@ -222,7 +226,7 @@ async function main() {
     const kbTab = page.locator('button', { hasText: 'KB' });
     if (await kbTab.isVisible()) {
       await kbTab.click();
-      await sleep(1000);
+      await sleep(2000);
     }
     await screenshot(page, '06a-kb-tab.png');
 
@@ -237,7 +241,7 @@ async function main() {
         const kbContent = page.locator('textarea[name="content"]');
         if (await kbContent.isVisible()) await kbContent.fill('这是通过 E2E 测试添加的 KB 条目内容。包含测试数据和验证信息。');
         await page.locator('button', { hasText: '添加' }).click();
-        await sleep(1500);
+        await sleep(2500);
         await screenshot(page, '06b-kb-entry-added.png');
       } else {
         console.log('  ⚠️ KB input readonly, taking screenshot of current state');
@@ -252,7 +256,7 @@ async function main() {
     const publishTab = page.locator('button', { hasText: '发布' });
     if (await publishTab.isVisible()) {
       await publishTab.click();
-      await sleep(1000);
+      await sleep(2000);
       await screenshot(page, '07a-publish-tab.png');
 
       const publishBtn = page.locator('button', { hasText: '发布' }).last();
