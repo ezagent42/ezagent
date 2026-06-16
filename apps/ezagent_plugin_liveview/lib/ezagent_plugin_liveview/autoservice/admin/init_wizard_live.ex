@@ -8,6 +8,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.InitWizardLive do
   """
   use Phoenix.LiveView
   import Phoenix.Component
+  import EzagentPluginLiveview.AutoService.Admin.Components.AdminSidebar
 
   alias EzagentPluginContent.Tenant.{TenantRuntime, TenantProvisioner}
   alias EzagentPluginContent.Soul.{SoulLoader, SoulRenderer, SoulSlotParser}
@@ -125,7 +126,10 @@ defmodule EzagentPluginLiveview.AutoService.Admin.InitWizardLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="max-w-3xl mx-auto p-6">
+    <div class="flex min-h-screen">
+      <.admin_sidebar tid={@tid} />
+      <main class="flex-1 p-6">
+        <div class="max-w-3xl mx-auto">
       <h1 class="text-xl font-bold text-gray-900 dark:text-zinc-100 mb-2">初始化向导</h1>
       <p class="text-sm text-gray-500 dark:text-zinc-400 mb-4">Step <%= @step %> of 3</p>
 
@@ -245,6 +249,8 @@ defmodule EzagentPluginLiveview.AutoService.Admin.InitWizardLive do
           </div>
         </div>
       <% end %>
+        </div>
+      </main>
     </div>
     """
   end

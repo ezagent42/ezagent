@@ -5,6 +5,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
   """
   use Phoenix.LiveView
   import Phoenix.Component
+  import EzagentPluginLiveview.AutoService.Admin.Components.AdminSidebar
 
   alias EzagentPluginContent.Tenant.TenantRuntime
   alias EzagentPluginContent.Soul.SoulSlotParser
@@ -187,7 +188,10 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="max-w-5xl mx-auto p-6">
+    <div class="flex min-h-screen">
+      <.admin_sidebar tid={@tid} />
+      <main class="flex-1 p-6">
+        <div class="max-w-5xl mx-auto">
       <div class="flex items-center justify-between mb-4">
         <div>
           <h1 class="text-xl font-bold text-gray-900 dark:text-zinc-100">Slot Editor</h1>
@@ -362,6 +366,8 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
           <p class="text-sm text-gray-400 dark:text-zinc-500">No differences between sandbox and release</p>
         </div>
       </div>
+        </div>
+      </main>
     </div>
     """
   end

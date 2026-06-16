@@ -6,9 +6,10 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
   """
   use Phoenix.LiveView
   import Phoenix.Component
+  import EzagentPluginLiveview.AutoService.Admin.Components.AdminSidebar
 
   alias EzagentPluginContent.Tenant.TenantRuntime
-  alias EzagentPluginContent.Kb.{KbStore, KbRebuilder, KbSourceTracker}
+  alias EzagentPluginContent.Kb.{KbStore, KbRebuilder, SourceTracker}
   alias EzagentPluginCr.CrEngine
 
   @role "customer"
@@ -25,7 +26,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
        role: @role,
        tab: "sources",
        kb_dir: kb_dir,
-       sources: KbSourceTracker.list_sources(kb_dir),
+       sources: SourceTracker.list_sources(kb_dir),
        url_input: "",
        url_flash: nil,
        manual_id: "",
@@ -53,7 +54,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
 
     assigns =
       case tab do
-        "sources" -> [sources: KbSourceTracker.list_sources(kb_dir)]
+        "sources" -> [sources: SourceTracker.list_sources(kb_dir)]
         _ -> []
       end
 
@@ -71,7 +72,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
 
     {:noreply,
      assign(socket,
-       sources: KbSourceTracker.list_sources(kb_dir),
+       sources: SourceTracker.list_sources(kb_dir),
        rebuild_flash: nil
      )}
   end
@@ -90,7 +91,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
          assign(socket,
            url_input: "",
            url_flash: "URL 抓取成功",
-           sources: KbSourceTracker.list_sources(kb_dir)
+           sources: SourceTracker.list_sources(kb_dir)
          )}
 
       {:error, reason} ->
@@ -120,7 +121,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
        manual_title: "",
        manual_content: "",
        manual_flash: "条目 #{id} 已添加",
-       sources: KbSourceTracker.list_sources(kb_dir)
+       sources: SourceTracker.list_sources(kb_dir)
      )}
   end
 
@@ -154,7 +155,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
     {:noreply,
      assign(socket,
        upload_flash: "#{success_count} 个文件已上传",
-       sources: KbSourceTracker.list_sources(kb_dir)
+       sources: SourceTracker.list_sources(kb_dir)
      )}
   end
 
@@ -266,7 +267,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
         CrEngine.ensure_active_cr(tid)
 
         {:noreply,
-         assign(socket, rebuild_flash: "KB 重建成功", sources: KbSourceTracker.list_sources(kb_dir))}
+         assign(socket, rebuild_flash: "KB 重建成功", sources: SourceTracker.list_sources(kb_dir))}
 
       {:error, reason} ->
         {:noreply, assign(socket, rebuild_flash: "重建失败: #{inspect(reason)}")}
@@ -276,7 +277,10 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="max-w-6xl mx-auto p-6">
+    <div class="flex min-h-screen">
+      <.admin_sidebar tid={@tid} />
+      <main class="flex-1 p-6">
+        <div class="max-w-6xl mx-auto">
       <div class="flex items-center justify-between mb-4">
         <div>
           <h1 class="text-xl font-bold text-gray-900 dark:text-zinc-100">KB 知识库管理</h1>
@@ -699,6 +703,8 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
           </div>
         </div>
       <% end %>
+        </div>
+      </main>
     </div>
     """
   end

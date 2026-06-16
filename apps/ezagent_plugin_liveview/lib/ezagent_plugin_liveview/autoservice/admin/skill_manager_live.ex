@@ -6,6 +6,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
   """
   use Phoenix.LiveView
   import Phoenix.Component
+  import EzagentPluginLiveview.AutoService.Admin.Components.AdminSidebar
 
   alias EzagentPluginContent.Tenant.TenantRuntime
   alias EzagentPluginContent.Skill.{SkillLoader, SkillStore}
@@ -164,7 +165,10 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="max-w-6xl mx-auto p-6">
+    <div class="flex min-h-screen">
+      <.admin_sidebar tid={@tid} />
+      <main class="flex-1 p-6">
+        <div class="max-w-6xl mx-auto">
       <div class="flex items-center justify-between mb-4">
         <div>
           <h1 class="text-xl font-bold text-gray-900 dark:text-zinc-100">Skill 管理</h1>
@@ -364,6 +368,8 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
           <span class="w-3 h-3 rounded border border-blue-300 dark:border-blue-700 inline-block"></span> 可编辑 (tenant layer)
         </span>
       </div>
+        </div>
+      </main>
     </div>
     """
   end

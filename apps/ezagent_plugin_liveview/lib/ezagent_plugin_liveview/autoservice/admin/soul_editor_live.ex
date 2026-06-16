@@ -5,6 +5,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SoulEditorLive do
   """
   use Phoenix.LiveView
   import Phoenix.Component
+  import EzagentPluginLiveview.AutoService.Admin.Components.AdminSidebar
 
   alias EzagentPluginContent.Tenant.TenantRuntime
   alias EzagentPluginContent.Soul.{SoulLoader, SoulRenderer, SoulSlotParser}
@@ -127,7 +128,10 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SoulEditorLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="max-w-5xl mx-auto p-6">
+    <div class="flex min-h-screen">
+      <.admin_sidebar tid={@tid} />
+      <main class="flex-1 p-6">
+        <div class="max-w-5xl mx-auto">
       <div class="flex items-center justify-between mb-4">
         <div>
           <h1 class="text-xl font-bold text-gray-900 dark:text-zinc-100">Soul 编辑</h1>
@@ -311,6 +315,8 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SoulEditorLive do
           </div>
         </div>
       <% end %>
+        </div>
+      </main>
     </div>
     """
   end
