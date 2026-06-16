@@ -179,13 +179,34 @@ defmodule EzagentPluginLiveview.AutoService.CustomerLive do
     |> Enum.map(&ChatUI.row(&1, viewer_uri))
   end
 
+  # Extract tid from session URI for preview link.
+  # Session URI format: session://cs/<tid>/<name>
+  defp preview_link(%URI{path: "/cs/" <> rest}) do
+    tid = rest |> String.split("/", trim: true) |> List.first() || ""
+    "/admin/autoservice/tenants/#{tid}/preview"
+  end
+
+  defp preview_link(_), do: "#"
+
   @impl true
   def render(assigns) do
     ~H"""
     <div class="mx-auto max-w-2xl h-[calc(100vh-2rem)] my-4 flex flex-col rounded-xl border border-zinc-200 dark:border-zinc-700 shadow-sm overflow-hidden bg-white dark:bg-zinc-950">
       <header class="px-4 py-3 border-b border-blue-700 bg-blue-600 text-white">
-        <h1 class="font-semibold">在线客服</h1>
-        <p class="text-xs opacity-80">{URI.to_string(@customer_uri)}</p>
+        <div class="flex items-center justify-between">
+          <div>
+            <h1 class="font-semibold">在线客服</h1>
+            <p class="text-xs opacity-80">{URI.to_string(@customer_uri)}</p>
+          </div>
+          <a
+            :if={@session_uri}
+            href={preview_link(@session_uri)}
+            target="_blank"
+            class="text-xs bg-white/20 hover:bg-white/30 text-white rounded px-2 py-1 transition-colors"
+          >
+            👁 Preview
+          </a>
+        </div>
       </header>
 
       <p

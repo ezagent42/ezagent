@@ -439,9 +439,19 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
             <h1 class="font-semibold text-sm">客服工作台</h1>
             <p class="text-[11px] opacity-70">{workspace_label(@workspace_uri)}</p>
           </div>
-          <button phx-click="refresh" class="text-xs underline opacity-80 hover:opacity-100">
-            刷新
-          </button>
+          <div class="flex items-center gap-2">
+            <a
+              :if={@workspace_uri}
+              href={preview_link(@workspace_uri)}
+              target="_blank"
+              class="text-[11px] bg-white/20 hover:bg-white/30 text-white rounded px-2 py-0.5 transition-colors"
+            >
+              👁 Preview
+            </a>
+            <button phx-click="refresh" class="text-xs underline opacity-80 hover:opacity-100">
+              刷新
+            </button>
+          </div>
         </header>
         <div class="flex-1 overflow-y-auto">
           <p :if={@sessions == []} class="p-4 text-sm text-zinc-400 dark:text-zinc-500">该工作区暂无客服会话</p>
@@ -531,4 +541,10 @@ defmodule EzagentPluginLiveview.AutoService.OperatorLive do
 
   defp workspace_label(%URI{scheme: "workspace", host: name}), do: name
   defp workspace_label(_), do: "—"
+
+  defp preview_link(%URI{scheme: "workspace", host: tid}) do
+    "/admin/autoservice/tenants/#{tid}/preview"
+  end
+
+  defp preview_link(_), do: "#"
 end

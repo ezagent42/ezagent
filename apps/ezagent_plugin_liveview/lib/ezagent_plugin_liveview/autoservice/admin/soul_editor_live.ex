@@ -15,6 +15,15 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SoulEditorLive do
 
   @role "customer"
 
+  # Layer definitions for the section browser tree
+  @layers [
+    %{id: "L0", name: "L0 Framework", level: :l0},
+    %{id: "L1", name: "L1 Platform", level: :l1},
+    %{id: "L2", name: "L2 Industry", level: :l2},
+    %{id: "L3", name: "L3 Template", level: :l3},
+    %{id: "TX", name: "Tenant Override", level: :tx}
+  ]
+
   @impl true
   def mount(%{"tid" => tid}, _session, socket) do
     priv_dir = Application.app_dir(:ezagent_plugin_content, "priv")
@@ -55,6 +64,9 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SoulEditorLive do
     etag_content = sandbox_soul || ""
     etag = compute_etag(etag_content)
 
+    # Build layer tree meta for the section browser
+    layer_tree = build_layer_tree(priv_dir, tid)
+
     {:ok,
      assign(socket,
        page_title: "Soul 编辑",
@@ -74,7 +86,9 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SoulEditorLive do
        etag: etag,
        ai_prompt: "",
        ai_suggestion: nil,
-       ai_loading: false
+       ai_loading: false,
+       layer_tree: layer_tree,
+       expanded_layers: MapSet.new(["L0", "L1", "L2", "L3", "TX"])
      )}
   end
 
@@ -195,6 +209,18 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SoulEditorLive do
   end
 
   @impl true
+  def handle_event("toggle_layer", %{"layer" => layer_id}, socket) do
+    expanded = socket.assigns.expanded_layers
+
+    expanded =
+      if MapSet.member?(expanded, layer_id),
+        do: MapSet.delete(expanded, layer_id),
+        else: MapSet.put(expanded, layer_id)
+
+    {:noreply, assign(socket, expanded_layers: expanded)}
+  end
+
+  @impl true
   def render(assigns) do
     ~H"""
     <div class="flex min-h-screen">
@@ -277,18 +303,69 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SoulEditorLive do
           <%!-- Tab: Source --%>
           <%= if @tab == "source" do %>
             <div class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden rounded-tl-none">
-              <%!-- Layer info bar --%>
-              <div class="px-4 py-2 bg-gray-50 dark:bg-zinc-950 border-b border-gray-200 dark:border-zinc-800 flex items-center gap-3">
-                <span class="text-xs text-gray-500 dark:text-zinc-400">Layers:</span>
-                <span class="text-xs font-medium text-gray-700 dark:text-zinc-300">
-                  {length(@templates)} template(s) loaded (L0&ndash;L3 + tenant override)
-                </span>
-                <span
-                  :if={@templates == []}
-                  class="text-xs text-amber-600 dark:text-amber-400 font-medium"
-                >
-                  No templates found &mdash; sandbox only
-                </span>
+              <%!-- Section Browser Tree (L0-L3 + TX) --%>
+              <div class="border-b border-gray-200 dark:border-zinc-800">
+                <div class="px-4 py-2 bg-gray-100 dark:bg-zinc-950 border-b border-gray-200 dark:border-zinc-800">
+                  <span class="text-xs font-semibold text-gray-600 dark:text-zinc-400 uppercase tracking-wide">
+                    Section Browser
+                  </span>
+                  <span class="text-xs text-gray-400 dark:text-zinc-500 ml-2">
+                    {length(@templates)} template(s) loaded
+                  </span>
+                </div>
+                <%= for layer <- @layer_tree do %>
+                  <div class="border-b border-gray-100 dark:border-zinc-800 last:border-0">
+                    <%!-- Layer header (clickable to expand/collapse) --%>
+                    <button
+                      phx-click="toggle_layer"
+                      phx-value-layer={layer.id}
+                      class="w-full px-4 py-2 flex items-center gap-2 hover:bg-gray-50 dark:hover:bg-zinc-900 transition-colors text-left"
+                    >
+                      <span class="text-xs w-4 text-center">
+                        {if MapSet.member?(@expanded_layers, layer.id), do: "▾", else: "▸"}
+                      </span>
+                      <span class={[
+                        "text-xs font-medium rounded px-1.5 py-0.5",
+                        layer_badge_class(layer.id, layer.present?)
+                      ]}>
+                        {layer.id}
+                      </span>
+                      <span class="text-xs text-gray-700 dark:text-zinc-300 flex-1">{layer.name}</span>
+                      <%= if layer.present? do %>
+                        <span class="text-[11px] text-gray-400 dark:text-zinc-500 tabular-nums">
+                          {layer.slot_count} slots
+                        </span>
+                      <% else %>
+                        <span class="text-[11px] text-amber-500 dark:text-amber-400 italic">
+                          missing
+                        </span>
+                      <% end %>
+                    </button>
+                    <%!-- Expanded details --%>
+                    <%= if MapSet.member?(@expanded_layers, layer.id) do %>
+                      <div class="px-4 py-2 bg-gray-50 dark:bg-zinc-950 border-t border-gray-100 dark:border-zinc-800">
+                        <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+                          <span class="text-gray-400 dark:text-zinc-500">Path:</span>
+                          <span class="text-gray-600 dark:text-zinc-400 font-mono truncate" title={layer.short_path}>
+                            {layer.short_path}
+                          </span>
+                          <span class="text-gray-400 dark:text-zinc-500">Size:</span>
+                          <span class="text-gray-600 dark:text-zinc-400 tabular-nums">
+                            {if layer.present?, do: "#{layer.byte_count} bytes", else: "—"}
+                          </span>
+                          <span class="text-gray-400 dark:text-zinc-500">Slots:</span>
+                          <span class="text-gray-600 dark:text-zinc-400 tabular-nums">
+                            {layer.slot_count}
+                          </span>
+                          <span class="text-gray-400 dark:text-zinc-500">Modified:</span>
+                          <span class="text-gray-600 dark:text-zinc-400 font-mono">
+                            {layer.last_modified}
+                          </span>
+                        </div>
+                      </div>
+                    <% end %>
+                  </div>
+                <% end %>
               </div>
 
               <%!-- Slot tags bar --%>
@@ -521,6 +598,78 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SoulEditorLive do
       trimmed_current <> "\n\n---\n\n" <> trimmed_suggestion
     end
   end
+
+  # Build layer tree metadata: for each layer, compute file path, content,
+  # slot count, file size, and last modified time.
+  defp build_layer_tree(priv_dir, tid) do
+    @layers
+    |> Enum.map(fn %{id: id, name: name, level: level} ->
+      {content, path, mtime} =
+        case level do
+          :tx ->
+            # Tenant override — read from sandbox
+            override_path =
+              Path.join([TenantRuntime.sandbox_path(tid), "souls", "#{@role}.md"])
+
+            {read_file(override_path), override_path, file_mtime(override_path)}
+
+          _ ->
+            full_path = layer_path(priv_dir, level)
+            {read_file(full_path), full_path, file_mtime(full_path)}
+        end
+
+      slot_count =
+        if content, do: count_slots(content), else: 0
+
+      byte_count = if content, do: byte_size(content), else: 0
+      present? = not is_nil(content)
+      short_path = if path, do: Path.relative_to(path, priv_dir) |> then(&(&1 || path)), else: "—"
+
+      %{
+        id: id,
+        name: name,
+        short_path: short_path,
+        present?: present?,
+        slot_count: slot_count,
+        byte_count: byte_count,
+        last_modified: format_mtime(mtime)
+      }
+    end)
+  end
+
+  defp layer_path(priv_dir, :l0), do: Path.join(priv_dir, "platform/framework/#{@role}/soul.md")
+  defp layer_path(priv_dir, :l1), do: Path.join(priv_dir, "platform/platform/#{@role}.md")
+  defp layer_path(priv_dir, :l2), do: Path.join(priv_dir, "platform/industry/cloud-comms/#{@role}/soul.md")
+  defp layer_path(priv_dir, :l3), do: Path.join(priv_dir, "platform/templates/#{@role}/soul.md")
+
+  defp count_slots(content) when is_binary(content) do
+    ~r/\{\{[a-z][a-z0-9_.-]*\}\}/
+    |> Regex.scan(content)
+    |> length()
+  end
+
+  defp file_mtime(path) do
+    case File.stat(path) do
+      {:ok, %{mtime: mtime}} -> mtime
+      _ -> nil
+    end
+  end
+
+  defp format_mtime(nil), do: "—"
+  defp format_mtime({{y, m, d}, {h, min, s}}) do
+    "#{pad2(y)}-#{pad2(m)}-#{pad2(d)} #{pad2(h)}:#{pad2(min)}:#{pad2(s)}"
+  end
+
+  defp pad2(n) when n < 10, do: "0#{n}"
+  defp pad2(n), do: "#{n}"
+
+  defp layer_badge_class("L0", true), do: "bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300"
+  defp layer_badge_class("L1", true), do: "bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300"
+  defp layer_badge_class("L2", true), do: "bg-green-100 dark:bg-green-950 text-green-700 dark:text-green-300"
+  defp layer_badge_class("L3", true), do: "bg-orange-100 dark:bg-orange-950 text-orange-700 dark:text-orange-300"
+  defp layer_badge_class("TX", true), do: "bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300"
+  defp layer_badge_class(_, false), do: "bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500"
+  defp layer_badge_class(_, _), do: "bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500"
 
   defp compute_etag(content) do
     :crypto.hash(:sha256, content) |> Base.encode16(case: :lower)

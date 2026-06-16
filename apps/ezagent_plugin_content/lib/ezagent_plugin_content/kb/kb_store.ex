@@ -53,8 +53,8 @@ defmodule EzagentPluginContent.Kb.KbStore do
   end
 
   @doc "Fetch a URL and add its content as a KB entry. Downloads HTML via curl, strips tags, upserts."
-  @spec fetch_url(binary(), String.t()) :: :ok | {:error, term()}
-  def fetch_url(kb_dir, url) do
+  @spec fetch_url(binary(), String.t(), keyword()) :: :ok | {:error, term()}
+  def fetch_url(kb_dir, url, opts \\ []) do
     case System.cmd("curl", ["-sL", "--max-time", "10", url], stderr_to_stdout: true) do
       {html, 0} when byte_size(html) > 100 ->
         hash = :crypto.hash(:sha256, html) |> Base.encode16(case: :lower) |> String.slice(0, 16)
@@ -71,6 +71,12 @@ defmodule EzagentPluginContent.Kb.KbStore do
           "source_type" => "url",
           "source_id" => hash
         }
+
+        entry = Map.merge(entry, %{
+          "domain" => Map.get(opts, :domain, "general"),
+          "region" => Map.get(opts, :region, "global"),
+          "language" => Map.get(opts, :language, "zh")
+        })
 
         chunks = chunk_text(text)
 
@@ -92,8 +98,8 @@ defmodule EzagentPluginContent.Kb.KbStore do
   end
 
   @doc "Ingest an uploaded file into KB. Copies file to _sources/files/, reads text, upserts."
-  @spec ingest_file(binary(), binary()) :: :ok | {:error, term()}
-  def ingest_file(kb_dir, file_path) do
+  @spec ingest_file(binary(), binary(), keyword()) :: :ok | {:error, term()}
+  def ingest_file(kb_dir, file_path, opts \\ []) do
     unless File.exists?(file_path), do: throw({:error, :enoent})
 
     fname = Path.basename(file_path)
@@ -115,6 +121,12 @@ defmodule EzagentPluginContent.Kb.KbStore do
       "source_type" => "file",
       "source_id" => hash
     }
+
+    entry = Map.merge(entry, %{
+      "domain" => Map.get(opts, :domain, "general"),
+      "region" => Map.get(opts, :region, "global"),
+      "language" => Map.get(opts, :language, "zh")
+    })
 
     chunks = chunk_text(content)
 

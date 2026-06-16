@@ -90,8 +90,16 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
     kb_dir = socket.assigns.kb_dir
     tid = socket.assigns.tid
 
+    # Look up source_type before deletion for raw file cleanup
+    source = Enum.find(socket.assigns.sources, &(&1.source_id == source_id))
+
     KbStore.delete(kb_dir, source_id)
     CrEngine.record_file_change(tid, "kb/sources")
+
+    # Clean up raw files in _sources/
+    if source do
+      cleanup_raw_files(kb_dir, source.source_type, source_id)
+    end
 
     {:noreply,
      assign(socket,
@@ -303,6 +311,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
     {:noreply,
      assign(socket,
        url_flash: "抓取完成",
+       ingest_task: nil,
        sources: SourceTracker.list_sources(kb_dir),
        entries: reload_entries(kb_dir)
      )}
@@ -311,7 +320,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
   @impl true
   def handle_info({ref, {{:error, reason}, url}}, socket) when is_reference(ref) do
     Process.demonitor(ref, [:flush])
-    {:noreply, assign(socket, url_flash: "抓取失败: #{inspect(reason)}")}
+    {:noreply, assign(socket, url_flash: "抓取失败: #{inspect(reason)}", ingest_task: nil)}
   end
 
   @impl true
@@ -328,6 +337,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
 
     {:noreply,
      assign(socket,
+       upload_task: nil,
        upload_flash: "#{success_count} 个文件已上传",
        sources: SourceTracker.list_sources(kb_dir),
        entries: reload_entries(kb_dir)
@@ -474,8 +484,17 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
                         <th class="text-left px-4 py-2 font-medium text-gray-600 dark:text-zinc-400 text-xs">
                           标题
                         </th>
+                        <th class="text-left px-4 py-2 font-medium text-gray-600 dark:text-zinc-400 text-xs">
+                          URL
+                        </th>
+                        <th class="text-left px-4 py-2 font-medium text-gray-600 dark:text-zinc-400 text-xs">
+                          最后更新
+                        </th>
                         <th class="text-right px-4 py-2 font-medium text-gray-600 dark:text-zinc-400 text-xs">
                           分块数
+                        </th>
+                        <th class="text-center px-4 py-2 font-medium text-gray-600 dark:text-zinc-400 text-xs">
+                          启用
                         </th>
                         <th class="text-right px-4 py-2 font-medium text-gray-600 dark:text-zinc-400 text-xs">
                           操作
@@ -502,8 +521,26 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
                           >
                             {src.title}
                           </td>
+                          <td
+                            class="px-4 py-2 text-xs text-blue-500 dark:text-blue-400 font-mono max-w-[180px] truncate"
+                            title={src.source_url}
+                          >
+                            {src.source_url || "-"}
+                          </td>
+                          <td class="px-4 py-2 text-xs text-gray-400 dark:text-zinc-500 whitespace-nowrap">
+                            {if src.latest_chunk_time, do: src.latest_chunk_time |> String.slice(0, 10), else: "-"}
+                          </td>
                           <td class="px-4 py-2 text-right text-xs text-gray-500 dark:text-zinc-400">
                             {src.chunk_count}
+                          </td>
+                          <td class="px-4 py-2 text-center">
+                            <span class={[
+                              "text-[10px] px-1.5 py-0.5 rounded",
+                              src.enabled && "text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-950",
+                              !src.enabled && "text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950"
+                            ]}>
+                              {if src.enabled, do: "启用", else: "停用"}
+                            </span>
                           </td>
                           <td class="px-4 py-2 text-right">
                             <button
@@ -545,6 +582,9 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
                     {@url_flash}
                   </div>
                 <% end %>
+                <%= if @ingest_task do %>
+                  <div class="text-xs text-blue-600 animate-pulse">🔄 处理中...</div>
+                <% end %>
                 <form phx-submit="fetch_url" class="flex gap-2">
                   <input
                     type="url"
@@ -585,6 +625,9 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
                   ]}>
                     {@upload_flash}
                   </div>
+                <% end %>
+                <%= if @upload_task do %>
+                  <div class="text-xs text-blue-600 animate-pulse">🔄 处理中...</div>
                 <% end %>
 
                 <form phx-submit="upload_files" phx-change="validate_upload">
@@ -870,4 +913,32 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
   defp upload_error_to_string(:not_accepted), do: "不支持的文件类型"
   defp upload_error_to_string(:too_many_files), do: "文件数量超限 (最多 10 个)"
   defp upload_error_to_string(_), do: "上传错误"
+
+  defp cleanup_raw_files(kb_dir, "url", source_id) do
+    url_dir = Path.join([kb_dir, "_sources", "url"])
+    html_path = Path.join(url_dir, "#{source_id}.html")
+    if File.exists?(html_path), do: File.rm(html_path)
+  end
+
+  defp cleanup_raw_files(kb_dir, "file", source_id) do
+    files_dir = Path.join([kb_dir, "_sources", "files"])
+
+    with {:ok, files} <- File.ls(files_dir) do
+      Enum.each(files, fn fname ->
+        fpath = Path.join(files_dir, fname)
+
+        if File.exists?(fpath) do
+          file_hash =
+            File.read!(fpath)
+            |> then(&:crypto.hash(:sha256, &1))
+            |> Base.encode16(case: :lower)
+            |> String.slice(0, 12)
+
+          if file_hash == source_id, do: File.rm(fpath)
+        end
+      end)
+    end
+  end
+
+  defp cleanup_raw_files(_kb_dir, _source_type, _source_id), do: :ok
 end

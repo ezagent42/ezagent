@@ -5,10 +5,10 @@ defmodule EzagentPluginCr.CrEngine do
   alias Ezagent.Socialware.ConfigStore
   alias EzagentPluginCr.{CrLint, CrSnapshot}
 
-  @spec ensure_active_cr(String.t()) :: {:ok, map()} | {:error, term()}
-  def ensure_active_cr(tid) do
+  @spec ensure_active_cr(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
+  def ensure_active_cr(tid, actor \\ "system://cr-engine") do
     case TenantConfig.read_cr(tid, active_cr_id(tid)) do
-      {:ok, %{"status" => "open"} = cr} ->
+      {:ok, %{"status" => status} = cr} when status in ["open", "ready_for_review"] ->
         {:ok, cr}
 
       _ ->
@@ -18,7 +18,7 @@ defmodule EzagentPluginCr.CrEngine do
           "cr_id" => cr_id,
           "tenant_id" => tid,
           "status" => "open",
-          "created_by" => "system://cr-engine",
+          "created_by" => actor,
           "created_at" => DateTime.utc_now() |> DateTime.to_iso8601()
         }
 
@@ -28,36 +28,43 @@ defmodule EzagentPluginCr.CrEngine do
 
   @spec publish(String.t()) :: {:ok, map()} | {:error, term()}
   def publish(tid) do
-    require Logger
+    with_publish_lock(tid, fn ->
+      require Logger
 
-    # Heal any half-finished prior publish before allocating a new version.
-    # Adapted from PR #740.
-    with {:ok, _} <- repair_current(tid),
-         {:ok, cr} <- ensure_active_cr(tid),
-         {:ok, _lint_result} <- CrLint.check(tid),
-         {:ok, new_ver} <- CrSnapshot.snapshot(tid),
-         # mark-before-flip: persist "published vN" status BEFORE symlink flip.
-         # If a crash occurs during the flip, repair_current/1 detects the
-         # "published vN"-but-stale-pointer gap and re-runs the flip.
-         # mark_publishing → write_cr returns `{:ok, cr}` (ConfigStore.write_and_point
-         # returns `{:ok, _}` on main), NOT bare `:ok`. Match the 2-tuple so the
-         # `with` does not short-circuit here and skip the symlink flip below.
-         {:ok, _} <- mark_publishing(tid, cr, new_ver),
-         :ok <- update_current(tid, new_ver) do
-      published =
-        Map.merge(cr, %{
-          "status" => "published",
-          "published_version" => new_ver,
-          "published_at" => DateTime.utc_now() |> DateTime.to_iso8601()
-        })
+      # Heal any half-finished prior publish before allocating a new version.
+      # Adapted from PR #740.
+      with {:ok, _} <- repair_current(tid),
+           {:ok, cr} <- ensure_active_cr(tid),
+           {:ok, _lint_result} <- CrLint.check(tid),
+           {:ok, new_ver} <- CrSnapshot.snapshot(tid) do
+        # Atomic release directory: rename vN → .partial_vN,
+        # write manifest, then atomically rename back to vN.
+        release_base = TenantRuntime.release_path(tid)
+        ver_dir = Path.join(release_base, new_ver)
+        partial = Path.join(release_base, ".partial_#{new_ver}")
 
-      write_cr(tid, cr["cr_id"], published)
+        File.rename!(ver_dir, partial)
+        write_manifest(partial, new_ver, cr)
+        File.rename!(partial, ver_dir)
 
-      # Refresh provisioned agents (slow cc + fast curl) with new release content
-      maybe_refresh_agents(tid)
+        with {:ok, _} <- mark_publishing(tid, cr, new_ver),
+             :ok <- update_current(tid, new_ver) do
+          published =
+            Map.merge(cr, %{
+              "status" => "published",
+              "published_version" => new_ver,
+              "published_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+            })
 
-      {:ok, published}
-    end
+          write_cr(tid, cr["cr_id"], published)
+
+          # Refresh provisioned agents (slow cc + fast curl) with new release content
+          maybe_refresh_agents(tid)
+
+          {:ok, published}
+        end
+      end
+    end)
   end
 
   @doc """
@@ -68,50 +75,61 @@ defmodule EzagentPluginCr.CrEngine do
   """
   @spec publish_items(String.t(), [map()]) :: {:ok, map()} | {:error, term()}
   def publish_items(tid, items) when is_list(items) do
-    require Logger
+    with_publish_lock(tid, fn ->
+      require Logger
 
-    with {:ok, cr} <- ensure_active_cr(tid),
-         {:ok, _lint} <- CrLint.check(tid) do
-      sandbox = TenantRuntime.sandbox_path(tid)
-      release_base = TenantRuntime.release_path(tid)
-      version = next_version(tid)
-      release_dir = Path.join([release_base, version])
-      File.mkdir_p!(release_dir)
+      with {:ok, cr} <- ensure_active_cr(tid),
+           {:ok, _lint} <- CrLint.check(tid) do
+        sandbox = TenantRuntime.sandbox_path(tid)
+        release_base = TenantRuntime.release_path(tid)
+        version = next_version(tid)
 
-      # Copy current release as baseline so unchanged files are preserved
-      current = TenantRuntime.current_release_path(tid)
+        # Write to partial directory first, then atomically rename
+        partial = Path.join([release_base, ".partial_#{version}"])
+        File.mkdir_p!(partial)
 
-      if File.exists?(current) do
-        _ = File.cp_r(current, release_dir)
-      end
+        # Copy current release as baseline so unchanged files are preserved
+        current = TenantRuntime.current_release_path(tid)
 
-      # Overlay the specified items from sandbox
-      Enum.each(items, fn item ->
-        src = Path.join(sandbox, item["path"])
-        dst = Path.join(release_dir, item["path"])
-
-        if File.exists?(src) do
-          File.mkdir_p!(Path.dirname(dst))
-          File.cp_r!(src, dst)
+        if File.exists?(current) do
+          _ = File.cp_r(current, partial)
         end
-      end)
 
-      update_current(tid, version)
+        # Overlay the specified items from sandbox
+        Enum.each(items, fn item ->
+          src = Path.join(sandbox, item["path"])
+          dst = Path.join(partial, item["path"])
 
-      # Mark CR as published with the new version
-      published =
-        Map.merge(cr, %{
-          "status" => "published",
-          "published_version" => version,
-          "published_at" => DateTime.utc_now() |> DateTime.to_iso8601()
-        })
+          if File.exists?(src) do
+            File.mkdir_p!(Path.dirname(dst))
+            File.cp_r!(src, dst)
+          end
+        end)
 
-      write_cr(tid, cr["cr_id"], published)
+        # Write release manifest
+        write_manifest(partial, version, cr)
 
-      Logger.info("CrEngine.publish_items: published #{length(items)} items at version #{version} for tenant #{tid}")
+        # Atomically rename partial to versioned directory
+        release_dir = Path.join([release_base, version])
+        File.rename(partial, release_dir)
 
-      {:ok, %{version: version, items: items}}
-    end
+        update_current(tid, version)
+
+        # Mark CR as published with the new version
+        published =
+          Map.merge(cr, %{
+            "status" => "published",
+            "published_version" => version,
+            "published_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+          })
+
+        write_cr(tid, cr["cr_id"], published)
+
+        Logger.info("CrEngine.publish_items: published #{length(items)} items at version #{version} for tenant #{tid}")
+
+        {:ok, %{version: version, items: items}}
+      end
+    end)
   end
 
   @doc """
@@ -172,6 +190,20 @@ defmodule EzagentPluginCr.CrEngine do
   def cancel(tid) do
     {:ok, cr} = ensure_active_cr(tid)
     write_cr(tid, cr["cr_id"], Map.put(cr, "status", "cancelled"))
+  end
+
+  @doc "Mark the active CR as ready for review."
+  @spec mark_ready(String.t()) :: {:ok, map()} | {:error, term()}
+  def mark_ready(tid) do
+    {:ok, cr} = ensure_active_cr(tid)
+    write_cr(tid, cr["cr_id"], Map.put(cr, "status", "ready_for_review"))
+  end
+
+  @doc "Abandon the active CR."
+  @spec abandon(String.t()) :: {:ok, map()} | {:error, term()}
+  def abandon(tid) do
+    {:ok, cr} = ensure_active_cr(tid)
+    write_cr(tid, cr["cr_id"], Map.put(cr, "status", "abandoned"))
   end
 
   @doc """
@@ -258,6 +290,46 @@ defmodule EzagentPluginCr.CrEngine do
   # Full ConfigStore key matching TenantConfig.read_cr/2's construction:
   # ConfigStore.resolve(..., "cr:#{tid}:#{cr_id}")
   defp cr_key(tid), do: "cr:#{tid}:#{active_cr_id(tid)}"
+
+  # File-based publish lock to prevent concurrent publishes on the same tenant.
+  defp with_publish_lock(tid, fun) do
+    lock_path = Path.join([TenantRuntime.sandbox_path(tid), ".publish_lock"])
+
+    if File.exists?(lock_path) do
+      {:error, :publish_in_progress}
+    else
+      File.write!(lock_path, DateTime.utc_now() |> DateTime.to_iso8601())
+
+      try do
+        fun.()
+      after
+        File.rm(lock_path)
+      end
+    end
+  end
+
+  # Write a manifest.yaml to the release directory after publish.
+  defp write_manifest(release_dir, version, cr) do
+    now = DateTime.utc_now() |> DateTime.to_iso8601()
+    items = (cr["sandbox_diff"] || %{}) |> Map.get("items", [])
+    actor = cr["created_by"] || "system://cr-engine"
+
+    items_yaml =
+      Enum.map_join(items, "\n", fn item ->
+        "  - path: #{item["path"]}\n    kind: #{item["kind"]}"
+      end)
+
+    yaml = """
+    version: #{version}
+    published_at: \"#{now}\"
+    actor: \"#{actor}\"
+    items:
+    #{items_yaml}
+    """
+
+    manifest_path = Path.join(release_dir, "manifest.yaml")
+    File.write!(manifest_path, yaml)
+  end
 
   # Determine the next version number by counting existing "v*" directories
   # in the tenant release path. Mirrors CrSnapshot.snapshot/1.

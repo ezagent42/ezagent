@@ -99,6 +99,40 @@ defmodule EzagentPluginLiveview.Tenant.OperatorsLive do
     end
   end
 
+  def handle_event("toggle_operator", %{"handle" => handle, "enabled" => enabled}, socket) do
+    tid = socket.assigns.tid
+    _workspace = "workspace://#{tid}"
+    mod = Ezagent.Behavior.WorkspaceUserAdmin
+    action = if enabled == "true", do: :disable_user, else: :enable_user
+
+    # Dispatch to workspace user admin behavior
+    _result =
+      if Code.ensure_loaded?(mod) do
+        case action do
+          :disable_user ->
+            Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+              target: Ezagent.URI.new!("workspace://#{tid}?action=workspace_user_admin.disable_user"),
+              mode: :cast,
+              args: %{user_handle: handle},
+              ctx: %{caller: socket.assigns[:current_entity_uri], caps: MapSet.new(), reply: :ignore}
+            })
+
+          :enable_user ->
+            Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+              target: Ezagent.URI.new!("workspace://#{tid}?action=workspace_user_admin.enable_user"),
+              mode: :cast,
+              args: %{user_handle: handle},
+              ctx: %{caller: socket.assigns[:current_entity_uri], caps: MapSet.new(), reply: :ignore}
+            })
+        end
+      end
+
+    {:noreply,
+     socket
+     |> assign(:operators, list_operators(socket.assigns.workspace_uri))
+     |> assign(:flash_info, gettext("Operator %{handle} %{action}ed", handle: handle, action: action))}
+  end
+
   def handle_event("disable_operator", %{"uri" => _uri_str}, socket) do
     {:noreply,
      assign(socket, :flash_info, gettext("Disable not yet implemented in this version."))}
@@ -245,8 +279,9 @@ defmodule EzagentPluginLiveview.Tenant.OperatorsLive do
               </td>
               <td class="py-2 pr-4 text-right">
                 <button
-                  phx-click="disable_operator"
-                  phx-value-uri={op.uri_str}
+                  phx-click="toggle_operator"
+                  phx-value-handle={op.handle}
+                  phx-value-enabled="true"
                   class="text-xs text-rose-600 dark:text-rose-400 hover:text-rose-800 dark:hover:text-rose-300"
                 >
                   {gettext("disable")}
