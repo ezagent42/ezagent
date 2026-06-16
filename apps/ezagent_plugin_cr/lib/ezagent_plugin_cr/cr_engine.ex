@@ -34,10 +34,13 @@ defmodule EzagentPluginCr.CrEngine do
          {:ok, cr} <- ensure_active_cr(tid),
          :ok <- CrLint.check(tid),
          {:ok, new_ver} <- CrSnapshot.snapshot(tid),
-         # mark-before-flip: persist "publishing" status BEFORE symlink flip.
-         # If crash occurs during flip, repair_current/1 detects "publishing"
-         # and re-runs the flip without re-snapshotting.
-         :ok <- mark_publishing(tid, cr, new_ver),
+         # mark-before-flip: persist "published vN" status BEFORE symlink flip.
+         # If a crash occurs during the flip, repair_current/1 detects the
+         # "published vN"-but-stale-pointer gap and re-runs the flip.
+         # mark_publishing → write_cr returns `{:ok, cr}` (ConfigStore.write_and_point
+         # returns `{:ok, _}` on main), NOT bare `:ok`. Match the 2-tuple so the
+         # `with` does not short-circuit here and skip the symlink flip below.
+         {:ok, _} <- mark_publishing(tid, cr, new_ver),
          :ok <- update_current(tid, new_ver) do
       published =
         Map.merge(cr, %{
@@ -52,31 +55,25 @@ defmodule EzagentPluginCr.CrEngine do
   end
 
   @doc """
-  Detect and heal the mark-before-flip gap: if a CR is marked "publishing"
-  but the symlink points to an older version, re-run the flip.
+  Detect and heal the mark-before-flip gap: `publish/1` marks the CR
+  "published vN" (durable write) BEFORE flipping `_current` → vN. If a CR
+  says "published vN" but the symlink still points elsewhere, re-run the flip.
+
+  Reads the CR pointer DIRECTLY (not via `ensure_active_cr/1`, which would
+  auto-create a fresh "open" CR and erase the half-finished state we need to
+  detect).
   """
   @spec repair_current(String.t()) :: {:ok, :repaired | :consistent} | {:error, term()}
   def repair_current(tid) do
-    case ensure_active_cr(tid) do
-      {:ok, %{"status" => "publishing", "published_version" => ver}} ->
+    case TenantConfig.read_cr(tid, active_cr_id(tid)) do
+      {:ok, %{"status" => "published", "published_version" => ver} = cr} when is_binary(ver) ->
         if current_points_to?(tid, ver) do
-          # Symlink is already correct — just update status.
-          cr = ensure_active_cr!(tid)
-          write_cr(tid, cr["cr_id"], Map.put(cr, "status", "published"))
           {:ok, :consistent}
         else
-          # Symlink is stale — re-run the flip.
+          # Symlink is stale — complete the flip idempotently.
           case update_current(tid, ver) do
             :ok ->
-              cr = ensure_active_cr!(tid)
-
-              published =
-                Map.merge(cr, %{
-                  "status" => "published",
-                  "published_at" => DateTime.utc_now() |> DateTime.to_iso8601()
-                })
-
-              write_cr(tid, cr["cr_id"], published)
+              _ = write_cr(tid, cr["cr_id"], cr)
               {:ok, :repaired}
 
             {:error, reason} ->
@@ -84,11 +81,9 @@ defmodule EzagentPluginCr.CrEngine do
           end
         end
 
-      {:ok, _cr} ->
+      _ ->
+        # No CR, or an open/cancelled CR — nothing half-finished to repair.
         {:ok, :consistent}
-
-      {:error, reason} ->
-        {:error, reason}
     end
   end
 
@@ -129,14 +124,15 @@ defmodule EzagentPluginCr.CrEngine do
   end
 
   defp mark_publishing(tid, cr, new_ver) do
-    publishing =
+    # Durable "published vN" write BEFORE the symlink flip (mark-before-flip).
+    marked =
       Map.merge(cr, %{
-        "status" => "publishing",
+        "status" => "published",
         "published_version" => new_ver,
         "published_at" => DateTime.utc_now() |> DateTime.to_iso8601()
       })
 
-    write_cr(tid, cr["cr_id"], publishing)
+    write_cr(tid, cr["cr_id"], marked)
   end
 
   defp current_points_to?(tid, ver) do
@@ -147,11 +143,6 @@ defmodule EzagentPluginCr.CrEngine do
       {:ok, link_target} -> link_target == target
       _ -> false
     end
-  end
-
-  defp ensure_active_cr!(tid) do
-    {:ok, cr} = ensure_active_cr(tid)
-    cr
   end
 
   defp write_cr(tid, _cr_id, cr) do
