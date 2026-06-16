@@ -20,7 +20,7 @@ defmodule EzagentWeb.Socialware.ChatFeedControllerTest do
     * `missing` / `non-session` `session_uri` → 400.
   """
   use EzagentCore.DataCase, async: false
-  use Phoenix.ConnTest
+  import Phoenix.ConnTest
 
   alias Ezagent.Behavior.Session.ConfigActions
   alias Ezagent.Entity.{Session, SessionTemplate}
@@ -47,7 +47,12 @@ defmodule EzagentWeb.Socialware.ChatFeedControllerTest do
   # (the materializing Template the PublicView resolver reads). Mirrors the
   # anon_public_view_test fixture but in team-alpha so the workspace exists.
   defp session_for_template(template_uri) do
-    uri = Ezagent.URI.session(:team_alpha, :default, "cfc-#{u()}")
+    # Use the hyphenated workspace string ("team-alpha") so the session's workspace
+    # segment matches the Template's persisted workspace EXACTLY. (The atom form
+    # `Ezagent.URI.session(:team_alpha, ...)` yields host "team_alpha" with an
+    # underscore, which would NOT match the "team-alpha" template workspace and would
+    # fail-close `PublicView.validate_template_uri/2`.)
+    uri = Ezagent.URI.new!("session://team-alpha/default/cfc-#{u()}")
 
     {:ok, _pid} =
       Ezagent.Kind.spawn(Session, %{uri: uri, behaviors: Session.socialware_behaviors()})
