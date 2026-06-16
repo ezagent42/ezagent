@@ -318,6 +318,20 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
         # (the agent never even came up).
         with :ok <- establish_post_spawn_obligations(workers, spawned_by_uri, workspace_uri),
              :ok <- record_sandbox_state(workers, instantiate_meta, template_class) do
+          # #54 deferral (1) — threading the role's caps HERE is BLOCKED on an
+          # architecture Decision (see `grant_role_caps/5` + the §"NOT WIRED"
+          # note below + `docs/notes/54-d1-caps-behaviors-spawn.md`). The
+          # fail-closed authorization+mint mechanism is implemented and proven
+          # (`grant_role_caps/5`), but DELIVERING a minted concrete cap onto the
+          # fresh agent identity hits the `identity.grant_cap` data-owner
+          # chokepoint (`:grant_not_owner`) — no materialization principal is
+          # authorized to grant a concrete cap onto another Kind's identity. The
+          # correct home is the agent's born-with `initial_caps`
+          # (`Identity.init_slice`), which — like role BEHAVIORS — requires
+          # widening the arity-1 `SpawnRegistry.spawn_detailed/1` scheme-fn
+          # contract that the cc flavor spawns through. So this call is
+          # deliberately NOT made here pending that Decision (no dead/degrading
+          # call in the live spawn lane).
           {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
         else
           {:error, reason} ->
@@ -616,4 +630,195 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
 
   defp record_lineage(agent_uri, granted_by),
     do: Ezagent.Entity.Agent.SpawnObligations.record_lineage(agent_uri, granted_by)
+
+  # ── #54 deferral (1): role caps → spawn — PROPOSED, NOT WIRED ─────────────
+  #
+  # STATUS: this function is the fail-closed authorization+mint mechanism for
+  # threading a role's caps into a spawned agent, BUT it is **deliberately NOT
+  # called** from the live spawn path. Reason (an architecture Decision flagged
+  # to Allen — see `docs/notes/54-d1-caps-behaviors-spawn.md`):
+  #
+  #   * Every minted cap is `kind: :agent` + a CONCRETE `behavior` (CapMint drops
+  #     wildcard-behavior requests). The `identity.grant_cap` chokepoint
+  #     authorizes a concrete cap by the **data-owner of the cap's `behavior`**.
+  #     For `data_owner = self` behaviors (Identity-family: `data_owner(uri) =
+  #     uri`) the agent owns its own identity, the granter is NOT the agent, and
+  #     no reachable materialization principal holds the bootstrap wildcard
+  #     `holds_admin_caps?` needs → `:grant_not_owner`. (For `data_owner -> :any`
+  #     behaviors the grant already succeeds via the workspace-admin path
+  #     `template-materialize` satisfies — so delivery is ASYMMETRIC by
+  #     data_owner, NOT uniformly blocked. codex adversarial-review corrected an
+  #     earlier "always blocked" overstatement — see the notes doc.)
+  #     The correct uniform home is the agent's **born-with `initial_caps`**
+  #     (`Identity.init_slice`) — which, exactly like role BEHAVIORS, requires
+  #     widening the arity-1 `SpawnRegistry.spawn_detailed/1` scheme-fn contract
+  #     that the cc flavor spawns through (caps + behaviors share ONE blocker).
+  #
+  # It is retained (with `Ezagent.Entity.Agent.TemplateSpawn.RoleCapsMechanismTest`)
+  # as EVIDENCE that the fail-closed authorization is correct: the new logic
+  # beyond the already-tested core `CapMint`/`Materialize` (#800) is the
+  # GRANTER-DELEGATION policy (`granter_delegation_policy/1`). NOTE
+  # `grant_caps_to_worker/3` grants one-by-one with NO rollback, so a MIXED
+  # requested-cap list could PARTIALLY deliver (a `data_owner -> :any` cap grants,
+  # a later Identity cap fails) — multi-cap atomicity is an option-(b) constraint,
+  # deliberately NOT built into unwired evidence (option (a)'s born-with path makes
+  # this function moot). The task gate (wildcard never minted; unauthorized
+  # rejected before grant) is unaffected. Until the Decision lands, nothing calls
+  # this in production.
+  #
+  # Thread the role's REQUESTED caps (a list of `%{behavior:, action:}` request
+  # templates carried on the AgentTemplate content as `role_requested_caps`)
+  # into a worker's identity, FAIL-CLOSED.
+  #
+  # Pipeline (all reused from existing primitives):
+  #   1. `Ezagent.Role.new/1` validates the request templates (core).
+  #   2. `Ezagent.Role.Materialize.materialize/4` derives the cap `kind` from the
+  #      flavor's Kind `type_name/0` (rejecting `:any`/nil/non-atom fail-closed)
+  #      and runs `CapMint` — `requested ∩ policy`, minting ONLY survivors as
+  #      canonical `%Capability{}`.
+  #   3. `policy` = GRANTER-DELEGATION: the granter (`spawned_by_uri`) must hold a
+  #      cap matching the request. We read the granter's `:identity` caps ONCE via
+  #      core `Ezagent.Kind.get_slice/2` (no domain-identity compile dep; fail-
+  #      closed to an empty set on any miss) and keep only caps it holds. You
+  #      cannot delegate what you don't hold — forward-compatible with a future
+  #      per-flavor policy source.
+  #   4. Grant the survivors onto each worker via `Ezagent.Invocation.dispatch`
+  #      (`identity.grant_cap` under `system://template-materialize` — the same
+  #      runtime/IoC grant path `Ezagent.Entity.Session.Orchestrator.Caps` uses).
+  #
+  # BEST-EFFORT: returns `%{}` when the role requested no caps OR everything
+  # succeeded; `%{role_degraded: true, role_degraded_reason: reason}` on a compose
+  # / materialize / grant-dispatch failure. NEVER returns `{:error, _}` — a
+  # degraded role does not fail the spawn (task #54 deferral-1; matches the
+  # role-content best-effort pattern). The fail-closed AUTHORIZATION is in step
+  # 2/3 BEFORE any grant, so a degraded role never grants a cap the granter lacks.
+  @doc false
+  @spec grant_role_caps(map(), [URI.t()], URI.t(), URI.t(), String.t()) :: map()
+  def grant_role_caps(content, workers, %URI{} = spawned_by_uri, %URI{} = workspace_uri, flavor)
+      when is_map(content) and is_list(workers) and is_binary(flavor) do
+    case role_requested_caps(content) do
+      [] ->
+        %{}
+
+      requested when is_list(requested) ->
+        do_grant_role_caps(requested, workers, spawned_by_uri, workspace_uri, flavor)
+    end
+  rescue
+    error -> %{role_degraded: true, role_degraded_reason: {:role_caps_exception, error}}
+  end
+
+  defp do_grant_role_caps(requested, workers, spawned_by_uri, workspace_uri, flavor) do
+    # `instantiate/3` returns a single worker (`[agent_uri]`), so the accumulator
+    # is effectively a fold over one element; we keep `reduce_while` for the
+    # general shape but the result is the last worker's degraded-meta (or `%{}`).
+    # `_acc` is intentionally ignored — each worker independently yields `%{}` on
+    # success / a degraded map on failure (halt).
+    Enum.reduce_while(workers, %{}, fn worker_uri, _acc ->
+      case mint_role_caps(requested, worker_uri, spawned_by_uri, workspace_uri, flavor) do
+        {:ok, []} ->
+          # All requested caps were rejected by the fail-closed authorization
+          # (granter held none) — nothing to grant. NOT a degradation: the role
+          # was authorized to request, the grant was correctly denied.
+          {:cont, %{}}
+
+        {:ok, minted} ->
+          case grant_caps_to_worker(minted, worker_uri, spawned_by_uri) do
+            :ok -> {:cont, %{}}
+            {:error, reason} -> {:halt, role_degraded(reason)}
+          end
+
+        {:error, reason} ->
+          {:halt, role_degraded(reason)}
+      end
+    end)
+  end
+
+  defp role_degraded(reason), do: %{role_degraded: true, role_degraded_reason: reason}
+
+  # Build a `%Role{}` from the requested-cap templates + materialize → minted
+  # `%Capability{}` survivors, fail-closed. Returns `{:ok, [Capability.t()]}` or
+  # `{:error, reason}` (unknown flavor / undeterminable flavor Kind / malformed
+  # recipe).
+  defp mint_role_caps(requested, worker_uri, spawned_by_uri, workspace_uri, flavor) do
+    with {:ok, role} <- Ezagent.Role.new(%{requested_caps: requested}),
+         {:ok, %{caps: caps}} <-
+           Ezagent.Role.Materialize.materialize(
+             role,
+             flavor,
+             %{
+               instance: worker_uri,
+               workspace_uri: workspace_uri,
+               granter: spawned_by_uri
+             },
+             granter_delegation_policy(spawned_by_uri)
+           ) do
+      {:ok, caps}
+    end
+  end
+
+  # Granter-delegation policy: keep ONLY caps the granter already holds. Read the
+  # granter's `:identity` caps ONCE (fail-closed → empty set on any miss: a cold
+  # / not-ready / non-cap-bearing granter delegates NOTHING). `CapMint` hands the
+  # predicate a `needed` map; `Capability.matches?/2` consumes exactly that shape.
+  defp granter_delegation_policy(%URI{} = spawned_by_uri) do
+    held = granter_caps(spawned_by_uri)
+    fn needed -> Enum.any?(held, &Ezagent.Capability.matches?(&1, needed)) end
+  end
+
+  defp granter_caps(%URI{} = spawned_by_uri) do
+    case Ezagent.Kind.get_slice(spawned_by_uri, :identity) do
+      {:ok, %{caps: %MapSet{} = caps}} -> caps
+      _ -> MapSet.new()
+    end
+  rescue
+    _ -> MapSet.new()
+  catch
+    _, _ -> MapSet.new()
+  end
+
+  # Grant each minted `%Capability{}` onto the worker via the identity grant
+  # chokepoint, runtime/IoC (no compile dep on the identity domain — domain_agent
+  # deps only on core + agent_bridge). Runs under `system://template-materialize`
+  # (closed Catalog), with the granter as caller for provenance — identical to
+  # `Ezagent.Entity.Session.Orchestrator.Caps.grant_orchestrator_scoped_caps/3`.
+  # A worker just spawned may still be `:not_ready`; `ReadyGate.await/2` bounds
+  # the wait (same guard `record_sandbox_state` uses). The first grant failure
+  # short-circuits to `{:error, _}` (best-effort caller degrades, never crashes).
+  defp grant_caps_to_worker(minted, %URI{} = worker_uri, %URI{} = spawned_by_uri) do
+    _ = Ezagent.ReadyGate.await(worker_uri, 5_000)
+    target = Ezagent.URI.with_action(worker_uri, :identity, :grant_cap)
+
+    ctx = %{
+      caller: spawned_by_uri,
+      caps:
+        "template-materialize" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
+      reply: :ignore
+    }
+
+    Enum.reduce_while(minted, :ok, fn cap, :ok ->
+      cap = %{cap | granted_at: DateTime.utc_now()}
+
+      case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+             target: target,
+             mode: :call,
+             args: %{cap: cap},
+             ctx: ctx
+           }) do
+        {:ok, _} -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {:role_cap_grant_failed, reason}}}
+      end
+    end)
+  end
+
+  # The role's REQUESTED caps ride the AgentTemplate `:template` content as a
+  # `role_requested_caps` list (atom OR string key — persisted JSON round-trips
+  # to strings). Distinct from `default_caps` (template structural policy,
+  # unconsumed) and `desired_caps` (direct additive grant, PR-5). Absent / not a
+  # list → no role caps.
+  defp role_requested_caps(content) do
+    case Map.get(content, :role_requested_caps) || Map.get(content, "role_requested_caps") do
+      list when is_list(list) -> list
+      _ -> []
+    end
+  end
 end
