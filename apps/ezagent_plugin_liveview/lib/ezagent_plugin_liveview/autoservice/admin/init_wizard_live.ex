@@ -88,7 +88,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.InitWizardLive do
 
     slots_path = Path.join([TenantRuntime.sandbox_path(tid), "slots", "customer.yaml"])
     File.mkdir_p!(Path.dirname(slots_path))
-    File.write!(slots_path, YamlElixir.write!(slot_values))
+    File.write!(slots_path, map_to_yaml(slot_values))
 
     # Copy fast_ack_prompt.md from skeleton
     skeleton_prompt = Path.join([priv_dir, "skeleton", "config", "fast_ack_prompt.md"])
@@ -680,4 +680,6 @@ defmodule EzagentPluginLiveview.AutoService.Admin.InitWizardLive do
       0
     end
   end
+  defp map_to_yaml(map) when is_map(map), do: map |> Enum.map(fn {k, v} -> "#{k}: #{inspect(v)}" end) |> Enum.join("\n")
 end
+

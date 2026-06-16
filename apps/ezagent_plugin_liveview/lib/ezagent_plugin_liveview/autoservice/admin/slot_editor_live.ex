@@ -74,7 +74,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
         CrEngine.record_file_change(tid, "slots/customer.yaml")
 
         diff = recompute_diff(socket.assigns.release_values, new_values)
-        new_etag = compute_etag(YamlElixir.write!(new_values))
+        new_etag = compute_etag(inspect(new_values, pretty: true))
 
         {:noreply,
          assign(socket,
@@ -123,7 +123,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
             CrEngine.record_file_change(tid, "slots/customer.yaml")
 
             diff = recompute_diff(socket.assigns.release_values, new_values)
-            new_etag = compute_etag(YamlElixir.write!(new_values))
+            new_etag = compute_etag(inspect(new_values, pretty: true))
 
             flash_msg = warn_flash || "#{key} 已添加"
 
@@ -158,7 +158,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
         CrEngine.record_file_change(tid, "slots/customer.yaml")
 
         diff = recompute_diff(socket.assigns.release_values, new_values)
-        new_etag = compute_etag(YamlElixir.write!(new_values))
+        new_etag = compute_etag(inspect(new_values, pretty: true))
 
         {:noreply,
          assign(socket,
@@ -178,7 +178,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
   @impl true
   def handle_event("toggle_yaml", _params, socket) do
     new_show_yaml = !socket.assigns.show_yaml
-    yaml_content = YamlElixir.write!(socket.assigns.slot_values)
+    yaml_content = inspect(socket.assigns.slot_values, pretty: true)
 
     {:noreply, assign(socket, show_yaml: new_show_yaml, yaml_content: yaml_content)}
   end
@@ -212,7 +212,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
 
             diff = recompute_diff(socket.assigns.release_values, new_values)
             CrEngine.record_file_change(tid, "slots/customer.yaml")
-            new_etag = compute_etag(YamlElixir.write!(new_values))
+            new_etag = compute_etag(inspect(new_values, pretty: true))
 
             {:noreply,
              assign(socket,
@@ -464,7 +464,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
   defp write_slots_file(tid, values) do
     path = Path.join([TenantRuntime.sandbox_path(tid), "slots", "#{@role}.yaml"])
     File.mkdir_p!(Path.dirname(path))
-    File.write!(path, YamlElixir.write!(values))
+    File.write!(path, inspect(values, pretty: true))
   end
 
   defp recompute_diff(nil, _new_values), do: nil
