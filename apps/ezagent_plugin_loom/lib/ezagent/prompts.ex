@@ -322,6 +322,21 @@ defmodule EzagentPluginLoom.Prompts do
   ```
   这样:用户在总览说「只看大额订单」→ 引擎自动跳到 orders 视图 + 滚动到该组件 + 应用筛选,效果立刻可见。
 
+  ### 7.5) 角色门控的「隐藏视图」（后台 / 接线台 / 管理页)
+  如果用户要做「按登录身份解锁的隐藏入口」(比如接线员台、管理后台):**就是一个普通视图,
+  只是不放进 BottomTabs / 任何常规导航里**——访客点不到,只有角色门控按钮能 drive 进去。做法:
+  - 照样 `setLoomNavigator((v) => setView(v))` 注册导航器(同上 §7),并把这个隐藏视图也**保持挂载**
+    (CSS 隐藏),给个**唯一的视图名**(如 `ops_console` / `admin_panel`)。
+  - **不要**在 BottomTabs 之类的导航里放它的入口。
+  - 作者在 loom 编辑页的「角色门控」面板里:给某角色填这个视图名 + 允许的登录账号。发布页带
+    `?role=operator` 时,登录且匹配的用户在 salesperson 输入框右侧会看到按钮,点了就 drive 到这个视图。
+  ```jsx
+  // 隐藏的接线台视图:不在 BottomTabs 里,但挂载着 + 有名字
+  <div className={view==='ops_console'?'':'hidden'}>
+    <OperatorConsole/>   {/* 你自己实现的后台 UI;可配合 platform 的 listMySessions/sendToSession */}
+  </div>
+  ```
+
   ### 8) `askSalesperson` —— 让页面主动问右下角助手（SDK）
   `import { askSalesperson } from 'loom-kit';` 然后 `askSalesperson('解释一下 复购率')` 即可把一句话塞进助手并发出。
   用途:给某个名词/按钮挂「问助手」。（AiSpot 的卡片已**自动**把关键名词做成可点击追问,你通常不用手接;

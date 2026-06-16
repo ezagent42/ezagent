@@ -447,6 +447,21 @@ defmodule EzagentPluginLoom.WebPlug do
     })
   end
 
+  # 2026-06-16 — 角色门控(发布物隐藏入口)。编辑页配 operator/admin/superadmin 各自的
+  # 登录账号 + 目标视图;发布页带 `?role=` 时按 cookie 身份核对。
+  get "/api/:ws/:sid/roles" do
+    json_resp(conn, 200, roles_get(conn, ws, sid))
+  end
+
+  post "/api/:ws/:sid/roles" do
+    json_resp(conn, 200, roles_put(conn, ws, sid))
+  end
+
+  get "/api/:ws/:sid/role-check" do
+    role = conn_query(conn) |> Map.get("role", "") |> to_string()
+    json_resp(conn, 200, role_check(conn, ws, sid, role))
+  end
+
   # 公开提供素材(图片等),让 v0 生成的 Sandpack 页面能 `<img src="/loom/materials/<ws>/<sid>/<path>">`。
   get "/materials/:ws/:sid/*path" do
     serve_material(conn, ws, sid, Enum.join(path, "/"))
@@ -1125,6 +1140,77 @@ defmodule EzagentPluginLoom.WebPlug do
     end
   rescue
     _ -> %{ok: true, logged_in: false}
+  end
+
+  # --- 2026-06-16 角色门控(发布物隐藏入口)helpers ---
+
+  defp caller_entity_str(conn) do
+    case caller_entity(conn) do
+      {:ok, %URI{} = u} -> URI.to_string(u)
+      _ -> nil
+    end
+  end
+
+  # 编辑页读角色配置(登录 → 顺便捕获创建者 = 超管)。
+  defp roles_get(conn, ws, sid) do
+    who = caller_entity_str(conn)
+
+    config =
+      if who,
+        do: Ezagent.PluginLoom.RoleConfig.ensure_creator(ws, sid, who),
+        else: Ezagent.PluginLoom.RoleConfig.get(ws, sid)
+
+    %{ok: true, logged_in: who != nil, entity_uri: who, roles: config}
+  rescue
+    e -> %{ok: false, error: Exception.message(e)}
+  end
+
+  # 编辑页写角色配置。
+  defp roles_put(conn, ws, sid) do
+    body = conn.body_params || %{}
+    incoming = Map.get(body, "roles", body)
+
+    if who = caller_entity_str(conn) do
+      _ = Ezagent.PluginLoom.RoleConfig.ensure_creator(ws, sid, who)
+    end
+
+    case Ezagent.PluginLoom.RoleConfig.put(ws, sid, incoming) do
+      {:ok, cfg} -> %{ok: true, roles: cfg}
+      {:error, e} -> %{ok: false, error: to_string(e)}
+    end
+  rescue
+    e -> %{ok: false, error: Exception.message(e)}
+  end
+
+  # 发布页:按 cookie 身份核对 `?role=`。三态:未登录 / 已登录+通过 / 已登录+无权限。
+  defp role_check(conn, ws, sid, role) do
+    alias_rc = Ezagent.PluginLoom.RoleConfig
+
+    if not alias_rc.valid_role?(role) do
+      %{ok: false, error: "bad_role"}
+    else
+      label = alias_rc.role_label(role)
+
+      case caller_entity_str(conn) do
+        nil ->
+          %{ok: true, logged_in: false, role: role, role_label: label, granted: false, view: ""}
+
+        who ->
+          {granted, view} = alias_rc.check(ws, sid, role, who)
+
+          %{
+            ok: true,
+            logged_in: true,
+            entity_uri: who,
+            role: role,
+            role_label: label,
+            granted: granted,
+            view: view
+          }
+      end
+    end
+  rescue
+    e -> %{ok: false, error: Exception.message(e)}
   end
 
   # --- 2026-06-15 接线员(operator)多 session helpers ---
