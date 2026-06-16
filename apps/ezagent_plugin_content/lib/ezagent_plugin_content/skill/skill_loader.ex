@@ -20,13 +20,13 @@ defmodule EzagentPluginContent.Skill.SkillLoader do
     scan_dir(dir, :industry)
   end
 
-  def list(base_dir, _tid, _role, :platform) do
-    dir = Path.join([base_dir, "platform", "skills"])
+  def list(base_dir, _tid, role, :platform) do
+    dir = Path.join([base_dir, "platform", "platform", role, "skills"])
     scan_dir(dir, :platform)
   end
 
-  def list(base_dir, _tid, _role, :framework) do
-    dir = Path.join([base_dir, "platform", "skills"])
+  def list(base_dir, _tid, role, :framework) do
+    dir = Path.join([base_dir, "platform", "framework", role, "skills"])
     scan_dir(dir, :framework)
   end
 

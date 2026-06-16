@@ -33,6 +33,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
        editing_skill: nil,
        editing_meta: %{},
        editing_body: nil,
+       editing_etag: nil,
        creating_skill: false,
        new_skill_name: "",
        new_skill_description: "",
@@ -80,13 +81,23 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
     base_dir = TenantRuntime.base_dir()
     tid = socket.assigns.tid
 
-    {meta, body} =
+    {meta, body, raw_content} =
       case SkillStore.read(base_dir, tid, @role, name) do
-        {:ok, content} -> parse_skill_frontmatter(content)
-        :not_found -> {%{}, ""}
+        {:ok, content} ->
+          {m, b} = parse_skill_frontmatter(content)
+          {m, b, content}
+        :not_found -> {%{}, "", ""}
       end
 
-    {:noreply, assign(socket, editing_skill: name, editing_meta: meta, editing_body: body)}
+    etag = compute_etag(raw_content)
+
+    {:noreply,
+     assign(socket,
+       editing_skill: name,
+       editing_meta: meta,
+       editing_body: body,
+       editing_etag: etag
+     )}
   end
 
   @impl true
@@ -94,30 +105,42 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
     base_dir = TenantRuntime.base_dir()
     tid = socket.assigns.tid
 
-    meta =
-      socket.assigns.editing_meta
-      |> Map.put("description", desc)
-      |> Map.put("intent_trigger", trigger)
+    # ETag concurrency check
+    current_raw =
+      case SkillStore.read(base_dir, tid, @role, name) do
+        {:ok, content} -> content
+        :not_found -> ""
+      end
 
-    content = build_skill_content(meta, body)
+    if compute_etag(current_raw) != socket.assigns.editing_etag do
+      {:noreply, assign(socket, saved_flash: "⚠️ 文件已被他人修改，请刷新后重试")}
+    else
+      meta =
+        socket.assigns.editing_meta
+        |> Map.put("description", desc)
+        |> Map.put("intent_trigger", trigger)
 
-    SkillStore.write(base_dir, tid, @role, name, content)
-    CrEngine.record_file_change(tid, "skills/customer/#{name}/SKILL.md")
+      content = build_skill_content(meta, body)
 
-    layers = load_all_layers(base_dir, tid, @role)
-    skill_meta = load_all_skill_meta(base_dir, tid, @role)
-    filtered = apply_search(layers, socket.assigns.search_query)
+      SkillStore.write(base_dir, tid, @role, name, content)
+      CrEngine.record_file_change(tid, "skills/customer/#{name}/SKILL.md")
 
-    {:noreply,
-     assign(socket,
-       layers: layers,
-       skill_meta: skill_meta,
-       filtered_layers: filtered,
-       editing_skill: nil,
-       editing_meta: %{},
-       editing_body: nil,
-       saved_flash: "技能 #{name} 已保存到 sandbox"
-     )}
+      layers = load_all_layers(base_dir, tid, @role)
+      skill_meta = load_all_skill_meta(base_dir, tid, @role)
+      filtered = apply_search(layers, socket.assigns.search_query)
+
+      {:noreply,
+       assign(socket,
+         layers: layers,
+         skill_meta: skill_meta,
+         filtered_layers: filtered,
+         editing_skill: nil,
+         editing_meta: %{},
+         editing_body: nil,
+         editing_etag: nil,
+         saved_flash: "技能 #{name} 已保存到 sandbox"
+       )}
+    end
   end
 
   @impl true
@@ -191,7 +214,8 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
 
   @impl true
   def handle_event("close_editor", _params, socket) do
-    {:noreply, assign(socket, editing_skill: nil, editing_meta: %{}, editing_body: nil)}
+    {:noreply,
+     assign(socket, editing_skill: nil, editing_meta: %{}, editing_body: nil, editing_etag: nil)}
   end
 
   @impl true
@@ -464,6 +488,10 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
   end
 
   # -- Private helpers --
+
+  defp compute_etag(content) do
+    :crypto.hash(:sha256, content) |> Base.encode16(case: :lower)
+  end
 
   defp load_all_layers(base_dir, tid, role) do
     [

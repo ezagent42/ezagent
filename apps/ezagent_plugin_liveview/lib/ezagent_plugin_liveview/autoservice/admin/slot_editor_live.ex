@@ -38,6 +38,10 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
     sandbox_content = inspect(slot_values, pretty: true)
     diff = DiffEngine.diff(release_content, sandbox_content)
 
+    # ETag for concurrency control (raw file content)
+    etag_content = read_file(slots_path) || ""
+    etag = compute_etag(etag_content)
+
     {:ok,
      assign(socket,
        page_title: "Slot Editor",
@@ -50,27 +54,37 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
        diff: diff,
        show_yaml: false,
        yaml_content: sandbox_content,
-       saved_flash: nil
+       saved_flash: nil,
+       etag: etag
      )}
   end
 
   @impl true
   def handle_event("save_slot", %{"key" => key, "value" => value}, socket) do
     tid = socket.assigns.tid
-    new_values = Map.put(socket.assigns.slot_values, key, value)
 
-    write_slots_file(tid, new_values)
-    CrEngine.record_file_change(tid, "slots/customer.yaml")
+    case etag_guard(socket, tid) do
+      {:conflict, socket} ->
+        {:noreply, socket}
 
-    diff = recompute_diff(socket.assigns.release_values, new_values)
+      {:ok, socket} ->
+        new_values = Map.put(socket.assigns.slot_values, key, value)
 
-    {:noreply,
-     assign(socket,
-       slot_values: new_values,
-       yaml_content: inspect(new_values, pretty: true),
-       diff: diff,
-       saved_flash: "#{key} 已保存"
-     )}
+        write_slots_file(tid, new_values)
+        CrEngine.record_file_change(tid, "slots/customer.yaml")
+
+        diff = recompute_diff(socket.assigns.release_values, new_values)
+        new_etag = compute_etag(YamlElixir.write!(new_values))
+
+        {:noreply,
+         assign(socket,
+           slot_values: new_values,
+           yaml_content: inspect(new_values, pretty: true),
+           diff: diff,
+           saved_flash: "#{key} 已保存",
+           etag: new_etag
+         )}
+    end
   rescue
     e ->
       {:noreply, put_flash(socket, :error, "保存失败: #{Exception.message(e)}")}
@@ -88,21 +102,41 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
         {:noreply, put_flash(socket, :error, "Slot key '#{key}' 已存在")}
 
       true ->
-        new_values = Map.put(socket.assigns.slot_values, key, value)
-        write_slots_file(tid, new_values)
-        all_keys = Enum.uniq([key | socket.assigns.all_keys])
-        CrEngine.record_file_change(tid, "slots/customer.yaml")
+        case etag_guard(socket, tid) do
+          {:conflict, socket} ->
+            {:noreply, socket}
 
-        diff = recompute_diff(socket.assigns.release_values, new_values)
+          {:ok, socket} ->
+            # Soft validation: check if slot key exists in soul template
+            soul_path = Path.join([TenantRuntime.sandbox_path(tid), "souls", "#{@role}.md"])
+            soul_content = read_file(soul_path) || ""
+            template_slots = extract_template_slots(soul_content)
 
-        {:noreply,
-         assign(socket,
-           slot_values: new_values,
-           all_keys: all_keys,
-           yaml_content: inspect(new_values, pretty: true),
-           diff: diff,
-           saved_flash: "#{key} 已添加"
-         )}
+            warn_flash =
+              if template_slots != [] and key not in template_slots do
+                "⚠️ 槽位 '#{key}' 未在 Soul 模板中声明 ({{#{key}}})，已保存但可能无效"
+              end
+
+            new_values = Map.put(socket.assigns.slot_values, key, value)
+            write_slots_file(tid, new_values)
+            all_keys = Enum.uniq([key | socket.assigns.all_keys])
+            CrEngine.record_file_change(tid, "slots/customer.yaml")
+
+            diff = recompute_diff(socket.assigns.release_values, new_values)
+            new_etag = compute_etag(YamlElixir.write!(new_values))
+
+            flash_msg = warn_flash || "#{key} 已添加"
+
+            {:noreply,
+             assign(socket,
+               slot_values: new_values,
+               all_keys: all_keys,
+               yaml_content: inspect(new_values, pretty: true),
+               diff: diff,
+               saved_flash: flash_msg,
+               etag: new_etag
+             )}
+        end
     end
   rescue
     e ->
@@ -112,21 +146,30 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
   @impl true
   def handle_event("delete_slot", %{"key" => key}, socket) do
     tid = socket.assigns.tid
-    new_values = Map.delete(socket.assigns.slot_values, key)
-    write_slots_file(tid, new_values)
-    all_keys = List.delete(socket.assigns.all_keys, key)
-    CrEngine.record_file_change(tid, "slots/customer.yaml")
 
-    diff = recompute_diff(socket.assigns.release_values, new_values)
+    case etag_guard(socket, tid) do
+      {:conflict, socket} ->
+        {:noreply, socket}
 
-    {:noreply,
-     assign(socket,
-       slot_values: new_values,
-       all_keys: all_keys,
-       yaml_content: inspect(new_values, pretty: true),
-       diff: diff,
-       saved_flash: "#{key} 已删除"
-     )}
+      {:ok, socket} ->
+        new_values = Map.delete(socket.assigns.slot_values, key)
+        write_slots_file(tid, new_values)
+        all_keys = List.delete(socket.assigns.all_keys, key)
+        CrEngine.record_file_change(tid, "slots/customer.yaml")
+
+        diff = recompute_diff(socket.assigns.release_values, new_values)
+        new_etag = compute_etag(YamlElixir.write!(new_values))
+
+        {:noreply,
+         assign(socket,
+           slot_values: new_values,
+           all_keys: all_keys,
+           yaml_content: inspect(new_values, pretty: true),
+           diff: diff,
+           saved_flash: "#{key} 已删除",
+           etag: new_etag
+         )}
+    end
   rescue
     e ->
       {:noreply, put_flash(socket, :error, "删除失败: #{Exception.message(e)}")}
@@ -149,36 +192,44 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
   def handle_event("save_all_yaml", _params, socket) do
     tid = socket.assigns.tid
 
-    case YamlElixir.read_from_string(socket.assigns.yaml_content) do
-      {:ok, new_values} when is_map(new_values) ->
-        write_slots_file(tid, new_values)
-        # Re-derive keys from soul content
-        soul_path = Path.join([TenantRuntime.sandbox_path(tid), "souls", "#{@role}.md"])
-        soul_content = read_file(soul_path) || ""
-        slot_sections = SoulSlotParser.parse_slots(soul_content)
-        all_keys = Enum.flat_map(slot_sections, & &1.keys) |> Enum.uniq()
+    case etag_guard(socket, tid) do
+      {:conflict, socket} ->
+        {:noreply, socket}
 
-        # Also include keys only in YAML but not in soul
-        yaml_keys = Map.keys(new_values)
-        all_keys = Enum.uniq(all_keys ++ yaml_keys)
+      {:ok, socket} ->
+        case YamlElixir.read_from_string(socket.assigns.yaml_content) do
+          {:ok, new_values} when is_map(new_values) ->
+            write_slots_file(tid, new_values)
+            # Re-derive keys from soul content
+            soul_path = Path.join([TenantRuntime.sandbox_path(tid), "souls", "#{@role}.md"])
+            soul_content = read_file(soul_path) || ""
+            slot_sections = SoulSlotParser.parse_slots(soul_content)
+            all_keys = Enum.flat_map(slot_sections, & &1.keys) |> Enum.uniq()
 
-        diff = recompute_diff(socket.assigns.release_values, new_values)
-        CrEngine.record_file_change(tid, "slots/customer.yaml")
+            # Also include keys only in YAML but not in soul
+            yaml_keys = Map.keys(new_values)
+            all_keys = Enum.uniq(all_keys ++ yaml_keys)
 
-        {:noreply,
-         assign(socket,
-           slot_values: new_values,
-           all_keys: all_keys,
-           slot_sections: slot_sections,
-           diff: diff,
-           saved_flash: "全部 slot 已保存"
-         )}
+            diff = recompute_diff(socket.assigns.release_values, new_values)
+            CrEngine.record_file_change(tid, "slots/customer.yaml")
+            new_etag = compute_etag(YamlElixir.write!(new_values))
 
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "YAML 解析失败: #{reason}")}
+            {:noreply,
+             assign(socket,
+               slot_values: new_values,
+               all_keys: all_keys,
+               slot_sections: slot_sections,
+               diff: diff,
+               saved_flash: "全部 slot 已保存",
+               etag: new_etag
+             )}
 
-      _ ->
-        {:noreply, put_flash(socket, :error, "YAML 内容必须是一个 map")}
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, "YAML 解析失败: #{reason}")}
+
+          _ ->
+            {:noreply, put_flash(socket, :error, "YAML 内容必须是一个 map")}
+        end
     end
   rescue
     e ->
@@ -374,8 +425,29 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
 
   # --- Private Helpers ---
 
+  defp compute_etag(content) do
+    :crypto.hash(:sha256, content) |> Base.encode16(case: :lower)
+  end
+
+  defp etag_guard(socket, tid) do
+    path = Path.join([TenantRuntime.sandbox_path(tid), "slots", "#{@role}.yaml"])
+    current = read_file(path) || ""
+    if compute_etag(current) != socket.assigns.etag do
+      {:conflict, assign(socket, saved_flash: "⚠️ 文件已被他人修改，请刷新后重试")}
+    else
+      {:ok, socket}
+    end
+  end
+
   defp read_file(path) do
     if File.exists?(path), do: File.read!(path), else: nil
+  end
+
+  defp extract_template_slots(content) do
+    ~r/\{\{(\w+)\}\}/
+    |> Regex.scan(content)
+    |> Enum.map(fn [_, key] -> key end)
+    |> Enum.uniq()
   end
 
   defp read_yaml(path) do
