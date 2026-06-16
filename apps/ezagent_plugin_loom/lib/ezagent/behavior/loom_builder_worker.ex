@@ -67,12 +67,16 @@ defmodule Ezagent.Behavior.LoomBuilderWorker do
       count = ctx[:read].(:count, 0)
 
       # 2026-06-12 素材库:把本 session 素材目录设为 Claude Code 的 cwd(放开 Read)+ 给它清单;
-      # 它需要素材内容时直接 Read 文件,不靠 prompt 塞。无素材 → 不传(行为同前)。
+      # 它需要素材内容时直接 Read 文件,不靠 prompt 塞。
+      # 2026-06-16 — 只有用户**明确提到**素材(或本条消息带附件)时,才给清单 + 放开 Read;
+      # 否则不塞清单、不开读权 → builder 不会无端去读/用素材库(用户没要求就别碰)。
       {mws, msid} = builder_ws_sid(ctx)
-      manifest = if mws, do: Materials.render_for_builder(mws, msid), else: ""
+      wants_mat? = mws != nil and wants_materials?(subtask, msg)
+
+      manifest = if wants_mat?, do: Materials.render_for_builder(mws, msid), else: ""
 
       materials_dir =
-        if mws && Materials.list(mws, msid) != [], do: Materials.dir(mws, msid), else: nil
+        if wants_mat? and Materials.list(mws, msid) != [], do: Materials.dir(mws, msid), else: nil
 
       case LLM.chat(
              [
@@ -364,6 +368,18 @@ defmodule Ezagent.Behavior.LoomBuilderWorker do
         subtask <> materials
     end
   end
+
+  # 用户是否**明确**要用/读素材 —— 否则 builder 不该主动碰素材库(没要求就别读)。
+  # 触发:本条消息带附件,或文本里出现素材相关词。保守取词,避免「数据图表」之类误触发。
+  @materials_kw ~r/素材|资料库|文件夹|附件|上传|我传的?|传了|图片|照片|截图|配图|插图|logo|标志|参考图|参考资料|material|asset|\bimage|\bphoto|picture|\blogo\b|folder|upload|attachment|reference|screenshot/iu
+
+  defp wants_materials?(text, %Message{body: body}) do
+    has_attachments?(body) or (is_binary(text) and Regex.match?(@materials_kw, text))
+  end
+
+  defp has_attachments?(%{attachments: a}) when is_list(a) and a != [], do: true
+  defp has_attachments?(%{"attachments" => a}) when is_list(a) and a != [], do: true
+  defp has_attachments?(_), do: false
 
   # 把本次消息附件入库 + 渲染本 session 整个素材库(2026-06-12 素材库)。
   # 从 session 推 {ws, sid}(本 session 素材目录的 key);非 loom session → {nil, nil}。
