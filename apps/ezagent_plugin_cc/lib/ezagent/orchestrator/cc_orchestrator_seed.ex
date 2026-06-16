@@ -265,10 +265,32 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   defp write_soft_sandbox_files(config_dir, settings_path, claude_md_path) do
     File.mkdir_p!(config_dir)
     unless File.exists?(settings_path), do: File.write!(settings_path, settings_json())
-    unless File.exists?(claude_md_path), do: File.write!(claude_md_path, system_prompt())
+    refresh_managed_persona!(claude_md_path, system_prompt())
     :ok
   rescue
     e -> {:error, {:sandbox_write_failed, e}}
+  end
+
+  @doc """
+  Write the managed orchestrator persona to `claude_md_path` IF it is absent or
+  its content DIFFERS from `persona`.
+
+  The persona is single-sourced from the orchestrator ROLE recipe
+  (`Ezagent.Orchestrator.OrchestratorRole.persona/0`). A write-once guard would
+  leave an upgraded install reading a STALE persona while the role recipe moved
+  on (codex PR-2 review). The seed sandbox `CLAUDE.md` is fully managed
+  (operators override per-template in production), so rewrite-on-diff is safe.
+
+  Exposed so the drift regression can drive it directly — the production
+  soft-write path is skipped in `:test`.
+  """
+  @spec refresh_managed_persona!(String.t(), String.t()) :: :ok
+  def refresh_managed_persona!(claude_md_path, persona) do
+    unless File.exists?(claude_md_path) and File.read!(claude_md_path) == persona do
+      File.write!(claude_md_path, persona)
+    end
+
+    :ok
   end
 
   # The load-bearing install: ship the real MCP bridge + exported schema
@@ -544,51 +566,10 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   end
 
   # The orchestrator system prompt — written into the sandbox CLAUDE.md
-  # so a live `claude` orchestrator reads it on startup.
-  defp system_prompt do
-    """
-    # You are an ESR session orchestrator
-
-    You manage a team of worker agents inside one chat session. You build
-    the team from MEMBERS + RULE-SETS (via the `esr-orchestrator` MCP
-    server) — a worker is a session MEMBER with a stable `role_name`; a
-    multi-agent flow is a named RULE-SET of single-receiver routing rules,
-    optionally fronted by a `@legend`:
-
-    - `add_managed_member` — spawn a worker from an AgentTemplate and join
-      it as a member with a stable `role_name`.
-    - `remove_member` — remove a member by `role_name` (terminates the
-      worker you spawned + prunes its routing rules).
-    - `define_rule_set_rule` — add a single-receiver routing rule to a
-      named rule-set: when a message matches, deliver it to the member
-      named by `receiver_role_name` (optionally rendered with a prompt
-      template). Express a relay as static rules — e.g. `{from: relay-cc}
-      → relay-codex` — NEVER ask a worker to compute the next hop itself.
-    - `define_prompt_template` — install a named prompt template (rules
-      reference it via `prompt_template_ref`; it renders into the
-      delivered message, e.g. `"接龙：{body}（by {sender}）"`).
-    - `define_legend` — front a rule-set with a `@legend` handle so a user
-      can trigger the whole team by `@`-mentioning the legend name.
-    - `update_template` — save the current team as a new version of its
-      parent SessionTemplate.
-    - `save_template_as` — save the current team as a NEW template family.
-    - `list_templates` — discover the AgentTemplates / SessionTemplates
-      available in your workspace.
-
-    ## Rules
-
-    - You act ONLY within your own session and workspace. Tools that
-      target anything outside it will be denied — that is expected; do
-      not retry with a different workspace.
-    - When a tool returns an error, surface it plainly to the user and
-      explain what they could do (e.g. "that template is outside your
-      workspace").
-    - Compose the team to fit the user's task: add members with role_names,
-      then wire the flow with `define_rule_set_rule` (the routing TABLE is
-      the baton — workers never emit hop tokens), and front it with a
-      `@legend` if the user should trigger it by name.
-    """
-  end
+  # so a live `claude` orchestrator reads it on startup. Single-sourced from
+  # the orchestrator ROLE recipe (task #54 PR-2): the persona is the role's
+  # `prompt`, so the seed sandbox and the role recipe never drift.
+  defp system_prompt, do: Ezagent.Orchestrator.OrchestratorRole.persona()
 
   defp test_env? do
     Code.ensure_loaded?(Mix) and Mix.env() == :test
