@@ -421,6 +421,14 @@ defmodule Ezagent.Behavior.IdentityAdmin do
         cap_struct
       )
 
+      # SPEC 2026-06-16 §4 (Decision #88) — manager provenance. A
+      # manager-delegated grant (NOT self, NOT admin, but authorized because
+      # the caller holds a Manage cap over the target + the cap is delegable)
+      # is recorded with `via_manage: true` in the audit/telemetry emit so it
+      # is distinguishable from a self/admin grant. The provenance lives on
+      # the EVENT payload, not the `%Capability{}` struct (the struct is
+      # `@enforce_keys` + `to_map`/`from_map`/`identity_key`/Jason-coupled, and
+      # `granted_by` already carries the manager URI via `normalize!/2`).
       {:ok, %{caps: MapSet.to_list(new_caps)},
        [
          {:set, :caps, new_caps},
@@ -428,6 +436,7 @@ defmodule Ezagent.Behavior.IdentityAdmin do
           %{
             target_uri: Map.get(ctx, :self_uri) |> uri_to_str(),
             cap: cap_struct,
+            via_manage: manager_delegated_grant?(cap_struct, ctx),
             at: DateTime.utc_now()
           }}
        ]}
@@ -556,9 +565,29 @@ defmodule Ezagent.Behavior.IdentityAdmin do
         %URI{} = owner ->
           caller = Map.get(ctx, :caller)
 
+          # Grant-authorizer set (SPEC 2026-06-16 §1, Decision #88):
+          # `{self, admin, manager-of-target}`.
+          #   * self  — caller IS the data-owner of the target slice.
+          #   * admin — bootstrap wildcard holder.
+          #   * manager — caller holds a `Behavior.Manage`/`:any`-action cap
+          #     scoped to THIS target instance (it manages the instance).
+          #
+          # The manager branch is delegation-bounded (codex P1): `grant_cap`
+          # does NOT inherit `Role.CapMint`'s delegation policy (that policy
+          # is not on this runtime path), so a manager added to the authorizer
+          # without a held-cap check could grant arbitrary concrete-action
+          # caps it does not hold (escalation). For the manager case ONLY we
+          # therefore require the cap-to-grant to `Capability.matches?` a cap
+          # the CALLER ITSELF holds — a manager grants only caps it holds
+          # whose scope covers the target. `Capability.Match` is asymmetric
+          # (a concrete held cap never authorizes a wildcard request), so a
+          # manager cannot fabricate authority it lacks; fail-closed
+          # `:grant_not_delegable` if no held cap matches. Self/admin keep
+          # their existing behavior (no delegation bound).
           cond do
             caller == owner -> :ok
             holds_admin_caps?(ctx) -> :ok
+            holds_manage_over_target?(ctx, instance) -> check_delegable_by_caller(cap, ctx)
             true -> {:error, :grant_not_owner}
           end
 
@@ -574,6 +603,130 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   end
 
   defp check_grant_authorized(_cap, _ctx), do: :ok
+
+  # SPEC 2026-06-16 §4 (Decision #88) — manager-provenance predicate for the
+  # `:cap_granted` audit emit. True iff the grant was authorized via the NEW
+  # manager branch: the cap resolves to a concrete `%URI{}` data-owner, the
+  # caller is NOT that owner, NOT bootstrap-admin, but DOES hold a Manage cap
+  # over the target AND the cap is delegable. Mirrors the
+  # `check_grant_authorized/2` manager branch exactly so provenance can never
+  # diverge from the authorization decision (self/admin/non-manager → false).
+  defp manager_delegated_grant?(%Ezagent.Capability{behavior: behavior, instance: instance}, ctx)
+       when is_atom(behavior) do
+    if Code.ensure_loaded?(behavior) and function_exported?(behavior, :data_owner, 1) do
+      case Ezagent.Behavior.data_owner_of(behavior, instance) do
+        %URI{} = owner ->
+          Map.get(ctx, :caller) != owner and
+            not holds_admin_caps?(ctx) and
+            holds_manage_over_target?(ctx, instance)
+
+        _ ->
+          false
+      end
+    else
+      false
+    end
+  end
+
+  defp manager_delegated_grant?(_cap, _ctx), do: false
+
+  # SPEC 2026-06-16 §1 (Decision #88) — "caller holds Manage over target".
+  # The manager of an instance is the principal holding a
+  # `Behavior.Manage`, `:any`-action cap scoped to that instance (the shape
+  # `Ezagent.CreatorGrant.manage_cap/4` mints at create — `cap(:<kind>,
+  # Manage, :any, instance, ws)`). We test the caller's caps (`ctx.caps`)
+  # with a DIRECT predicate (not `Capability.matches?` against a fixed
+  # `needed`): the `kind` axis of a Manage cap is the managed Kind's concrete
+  # type (`:agent`/`:session`/…), and `matches?`'s asymmetric rule means a
+  # `needed.kind: :any` would NOT match a concrete held kind — so a needed
+  # map cannot express "Manage over target, any kind" in one shot. The
+  # predicate instead pins `behavior == Manage` + `action_of == :any` (the
+  # Manage shape) and reuses the instance-scope match
+  # (`Capability.matches?` on a kind/behavior/action/workspace-wildcarded
+  # needed) so the held cap's instance-scope tuples
+  # (`:within_workspace`/`:spawned_by`/concrete instance/`:any`) are honored
+  # against the target. A generic cap cannot masquerade as Manage authority.
+  defp holds_manage_over_target?(ctx, instance) do
+    target = manage_target_instance(instance)
+
+    ctx
+    |> caller_caps()
+    |> Enum.any?(fn
+      %Ezagent.Capability{behavior: Ezagent.Behavior.Manage} = held ->
+        Ezagent.Capability.action_of(held) == :any and
+          held_instance_covers_target?(held, target)
+
+      _ ->
+        false
+    end)
+  end
+
+  # Does the held Manage cap's instance scope cover `target`? We reuse
+  # `Capability.matches?`'s instance-scope semantics by building a `needed`
+  # whose kind/behavior/action/workspace AXES ECHO the held cap's own values
+  # (so those four axes match trivially — sidestepping the asymmetric-`:any`
+  # rule which would reject a `needed.kind: :any` against a concrete held
+  # kind), leaving the INSTANCE axis as the only real constraint. This
+  # honors the held cap's `:within_workspace`/`:spawned_by`/concrete-URI/`:any`
+  # instance scopes against the target.
+  defp held_instance_covers_target?(%Ezagent.Capability{} = held, %URI{} = target) do
+    needed = %{
+      kind: held.kind,
+      behavior: held.behavior,
+      action: Ezagent.Capability.action_of(held),
+      instance: target,
+      workspace_uri: held.workspace_uri
+    }
+
+    Ezagent.Capability.matches?(held, needed)
+  end
+
+  defp held_instance_covers_target?(_held, _target), do: false
+
+  # The "target" a Manage cap must cover is the cap-to-grant's `instance`.
+  # When that instance is itself a scope tuple (e.g. `{:within_session, _}`),
+  # use the inner concrete URI as the managed target — a manager of the
+  # session/agent/workspace instance is what the Manage cap is scoped to.
+  defp manage_target_instance({_scope, %URI{} = uri}), do: uri
+  defp manage_target_instance(other), do: other
+
+  # codex P1 (MANDATORY) — explicit held-cap delegation bound for the
+  # MANAGER case only. The cap-to-grant must `Capability.matches?` a cap the
+  # CALLER ITSELF holds: `Capability.matches?(held, needed)` treats the
+  # held cap as the authorizer and the cap-to-grant as the request, so the
+  # asymmetric wildcard rule applies — a concrete held cap never authorizes a
+  # wildcard-axis request, and the held cap's instance-scope tuples bound
+  # WHICH targets it reaches. Fail-closed `:grant_not_delegable` if none
+  # matches. (Self/admin never reach here — they keep their existing,
+  # delegation-unbounded behavior.)
+  defp check_delegable_by_caller(%Ezagent.Capability{} = cap, ctx) do
+    needed = %{
+      kind: cap.kind,
+      behavior: cap.behavior,
+      action: Ezagent.Capability.action_of(cap),
+      instance: cap.instance,
+      workspace_uri: cap.workspace_uri
+    }
+
+    if ctx |> caller_caps() |> Enum.any?(&Ezagent.Capability.matches?(&1, needed)) do
+      :ok
+    else
+      {:error, :grant_not_delegable}
+    end
+  end
+
+  # The caller's held caps, from the dispatch ctx (`ctx.caps`, the same
+  # source `holds_admin_caps?/1` reads). Tolerates a MapSet, a list, or a
+  # `%{caps: _}` wrapper; anything else → empty (fail-closed).
+  defp caller_caps(ctx) do
+    case Map.get(ctx, :caps) do
+      %MapSet{} = set -> MapSet.to_list(set)
+      list when is_list(list) -> list
+      %{caps: %MapSet{} = set} -> MapSet.to_list(set)
+      %{caps: list} when is_list(list) -> list
+      _ -> []
+    end
+  end
 
   defp require_workspace_admin(ctx, :any, _cap) do
     if holds_admin_caps?(ctx) or holds_cross_workspace_admin_cap?(ctx) do
