@@ -320,6 +320,57 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
     {:noreply, assign(socket, kb_search_query: query, kb_entries: results)}
   end
 
+  def handle_event("kb_fetch_url", %{"url" => url}, socket) do
+    if socket.assigns.can_write? && url != "" do
+      tid = socket.assigns.tid
+      kb_dir = kb_sandbox_dir(tid)
+      case KbStore.fetch_url(kb_dir, url) do
+        :ok ->
+          kb_entries = list_kb_entries(tid)
+          _ = lazy_cr_ensure(tid)
+          {:noreply, socket |> assign(:kb_entries, kb_entries) |> assign(:kb_flash, "URL 抓取成功: #{String.slice(url, 0, 60)}")}
+        {:error, reason} ->
+          {:noreply, assign(socket, :kb_flash, "抓取失败: #{inspect(reason)}")}
+      end
+    else
+      {:noreply, assign(socket, :kb_flash, "请输入 URL")}
+    end
+  end
+
+  def handle_event("kb_upload", %{"kb_file" => %Plug.Upload{} = upload}, socket) do
+    if socket.assigns.can_write? do
+      tid = socket.assigns.tid
+      kb_dir = kb_sandbox_dir(tid)
+      # Save temp file, then ingest
+      tmp_path = Path.join(System.tmp_dir!(), upload.filename)
+      File.cp!(upload.path, tmp_path)
+      case KbStore.ingest_file(kb_dir, tmp_path) do
+        :ok ->
+          File.rm(tmp_path)
+          kb_entries = list_kb_entries(tid)
+          _ = lazy_cr_ensure(tid)
+          {:noreply, socket |> assign(:kb_entries, kb_entries) |> assign(:kb_flash, "文件上传成功: #{upload.filename}")}
+        {:error, reason} ->
+          File.rm(tmp_path)
+          {:noreply, assign(socket, :kb_flash, "上传失败: #{inspect(reason)}")}
+      end
+    else
+      {:noreply, assign(socket, :kb_flash, "无权限")}
+    end
+  end
+
+  def handle_event("kb_rebuild", _params, socket) do
+    tid = socket.assigns.tid
+    kb_dir = kb_sandbox_dir(tid)
+    case KbStore.rebuild(kb_dir) do
+      :ok ->
+        kb_entries = list_kb_entries(tid)
+        {:noreply, socket |> assign(:kb_entries, kb_entries) |> assign(:kb_flash, "KB 重建完成")}
+      {:error, reason} ->
+        {:noreply, assign(socket, :kb_flash, "重建失败: #{inspect(reason)}")}
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # handle_event — Fast Agent Prompt
   # ---------------------------------------------------------------------------
@@ -522,6 +573,16 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
   end
 
   defp kb_sandbox_dir(tid), do: Path.join([TenantRuntime.base_dir(), tid, "sandbox", "kb"])
+
+  # Ensure an active CR exists for this tenant (CR change tracking).
+  defp lazy_cr_ensure(tid) do
+    mod = EzagentPluginCr.CrEngine
+    if Code.ensure_loaded?(mod) and function_exported?(mod, :ensure_active_cr, 1) do
+      apply(mod, :ensure_active_cr, [tid])
+    end
+  rescue
+    _ -> nil
+  end
 
   defp ensure_dir_and_write(path, content) do
     dir = Path.dirname(path)
@@ -765,10 +826,53 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
             </div>
           </section>
 
+          <%!-- KB URL Fetch --%>
+          <section :if={@can_write?}>
+            <header class="px-4 py-2.5 bg-gray-800 text-white rounded-t-lg">
+              <h2 class="font-semibold text-sm">URL 抓取 (自动下载并索引网页内容)</h2>
+            </header>
+            <div class="border border-t-0 border-gray-200 rounded-b-lg p-4">
+              <form phx-submit="kb_fetch_url" class="flex gap-2">
+                <input type="url" name="url" value={@kb_fetch_url} placeholder="https://example.com/page"
+                  class="flex-1 rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                <button type="submit" class="rounded bg-emerald-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-emerald-700">抓取</button>
+              </form>
+              <p class="mt-1 text-xs text-gray-400">输入网页 URL，系统会自动下载、提取文本并索引到 KB 中。</p>
+            </div>
+          </section>
+
+          <%!-- KB File Upload --%>
+          <section :if={@can_write?}>
+            <header class="px-4 py-2.5 bg-gray-800 text-white rounded-t-lg">
+              <h2 class="font-semibold text-sm">文件上传 (支持 .txt .md .csv .json .yaml)</h2>
+            </header>
+            <div class="border border-t-0 border-gray-200 rounded-b-lg p-4">
+              <form phx-submit="kb_upload" class="flex gap-2 items-center">
+                <input type="file" name="kb_file" accept=".txt,.md,.csv,.json,.yaml,.yml"
+                  class="flex-1 text-sm text-gray-600 file:mr-2 file:rounded file:border-0 file:bg-blue-50 file:px-3 file:py-1 file:text-sm file:text-blue-700 hover:file:bg-blue-100" />
+                <button type="submit" class="rounded bg-violet-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-violet-700">上传</button>
+              </form>
+              <p class="mt-1 text-xs text-gray-400">上传文件后自动索引内容到 KB。支持文本格式文件。</p>
+            </div>
+          </section>
+
+          <%!-- KB Rebuild --%>
+          <section :if={@can_write?}>
+            <header class="px-4 py-2.5 bg-gray-800 text-white rounded-t-lg flex justify-between items-center">
+              <h2 class="font-semibold text-sm">KB 重建</h2>
+            </header>
+            <div class="border border-t-0 border-gray-200 rounded-b-lg p-4">
+              <button phx-click="kb_rebuild" class="rounded bg-amber-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-amber-700">
+                从 _sources + glossary 重建 KB
+              </button>
+              <p class="mt-1 text-xs text-gray-400">扫描 _sources/url/ 和 _sources/files/ 目录，重新索引所有内容。</p>
+            </div>
+          </section>
+
           <%!-- KB Add --%>
           <section :if={@can_write?}>
             <header class="px-4 py-2.5 bg-gray-800 text-white rounded-t-lg">
-              <h2 class="font-semibold text-sm">添加 KB 条目</h2>
+              <h2 class="font-semibold text-sm">手动添加 KB 条目</h2>
             </header>
             <div class="border border-t-0 border-gray-200 rounded-b-lg p-4 space-y-3">
               <form phx-submit="kb_add">
