@@ -327,7 +327,21 @@ defmodule Ezagent.SystemPrincipal.Catalog do
       # caps_json and cannot self-leave (spec §3.3), so the system sweeper needs
       # this grant (Allen 2026-06-15 — Option A: a dedicated closed-catalog GC
       # principal, not ambient/per-session authority).
-      {principal("socialware-gc"), [Capability.cap(:session, Session, :leave)]}
+      {principal("socialware-gc"), [Capability.cap(:session, Session, :leave)]},
+      # #51 external-user anonymous access (§4.1 first-open) — the public-route
+      # controller (`EzagentWeb.Socialware.ChatFeedController`) admits a freshly
+      # minted, read-only anon-User into a `public_view` socialware session by
+      # dispatching `session.join` under THIS principal. The anon-User holds an
+      # EMPTY caps_json by construction (spec §3.3) so it cannot self-join; the
+      # system controller supplies the join authority. Narrowed to exactly Session
+      # `:join` — the `users` row + binding row writes are direct context fns
+      # (`AnonUser.mint/1` + `AnonBinding.touch/3`), NOT dispatches, so they need no
+      # cap. This is the access-GRANTING direction (unlike `socialware-gc`'s
+      # fail-safe `:leave`); what bounds it is the controller being the sole caller,
+      # which mints a fresh anon and joins ONLY that anon into ONLY a session that
+      # `Ezagent.Socialware.PublicView.public_view?/1` has confirmed public — the
+      # cap itself admits no one without that controller-enforced precondition.
+      {principal("socialware-anon-access"), [Capability.cap(:session, Session, :join)]}
     ]
   end
 

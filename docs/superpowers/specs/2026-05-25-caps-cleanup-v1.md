@@ -354,8 +354,9 @@ Each system-internal dispatch gets a named principal URI under the `system://` s
 | `system://lv-anon-mount` | LV mount path when no `current_entity_uri` is in session | `[]` (empty — LV anon mounts cannot dispatch; replaces the silent `User.admin_caps()` fallback that hid auth bugs) |
 | `system://credential-materializer` | #17 cascade PR-0 — credential-materializer audit identity (per-grant narrow `sandbox.read`, no standing cap) | `[]` (empty audit identity) |
 | `system://socialware-gc` | #51 §3.4 — in-app GC sweeper (`Socialware.AnonUser.Sweeper`) `chat.leave`s abandoned anon-Users (the `users`/binding row deletes are direct context fns, no dispatch) | `cap(:session, Behavior.Session, :leave)` (narrowed to exactly Session `:leave`) |
+| `system://socialware-anon-access` | #51 §4.1 — public-route controller (`EzagentWeb.Socialware.ChatFeedController`) admits a freshly minted read-only anon-User into a `public_view` session via `session.join` (the anon holds empty caps and cannot self-join; the `users`/binding writes are direct context fns, no dispatch) | `cap(:session, Behavior.Session, :join)` (narrowed to exactly Session `:join`) |
 
-Total: 16 principals (14 original + `credential-materializer` (#17) + `socialware-gc` (#51)). **The list is enforced closed — `Ezagent.SystemPrincipal.Catalog` is the single source of truth (per r2 HIGH-2 fix).** Adding a 15th principal requires (a) editing `Catalog`, (b) editing this SPEC, (c) shipping in a separate PR. The catalog is enforced at three layers:
+Total: 17 principals (14 original + `credential-materializer` (#17) + `socialware-gc` (#51) + `socialware-anon-access` (#51)). **The list is enforced closed — `Ezagent.SystemPrincipal.Catalog` is the single source of truth (per r2 HIGH-2 fix).** Adding a 15th principal requires (a) editing `Catalog`, (b) editing this SPEC, (c) shipping in a separate PR. The catalog is enforced at three layers:
 
 1. Runtime: `SystemPrincipal.ensure/2` rejects URIs not in the catalog (raise).
 2. Compile-time: `:ezagent_plugin_check` check 11 greps every `system://` URI literal in app source and asserts membership in the catalog (build fails).

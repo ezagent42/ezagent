@@ -68,6 +68,14 @@ defmodule EzagentWeb.MixProject do
       # the shared atom palette (button / card / page_header) for the
       # wizard layout.
       {:ezagent_domain_session, in_umbrella: true},
+      # #51 §4.1 — the socialware chat-feed controller calls
+      # `Ezagent.Socialware.{AnonUser, AnonBinding, PublicView, ChatFeedAuth}`
+      # directly (anon-access mint/join/cookie). Declared as a prod dep so the
+      # hard refs are backed by a declared umbrella dependency (the #57
+      # `undeclared_umbrella_dep_test` gate); previously `ChatFeedAuth` was only
+      # transitively reachable via plugin_liveview/advisor (a latent layering
+      # hazard now closed).
+      {:ezagent_domain_socialware, in_umbrella: true},
       {:ezagent_domain_agent_bridge, in_umbrella: true},
       {:ezagent_domain_ui, in_umbrella: true},
       # Plugin registration: ezagent_web's router references plugin LiveViews
