@@ -37,4 +37,24 @@ defmodule EzagentPluginContent.Tenant.TenantConfig do
       :none -> :none
     end
   end
+
+  @doc """
+  Update an existing CR's body via ConfigStore.write_and_point.
+  """
+  @spec update_cr(String.t(), String.t(), map()) :: {:ok, map()} | {:error, term()}
+  def update_cr(tid, cr_id, body) do
+    Ezagent.Socialware.ConfigStore.write_and_point(%{
+      layer: "workspace",
+      workspace_uri: "workspace://#{tid}",
+      subject_uri: "entity://system/cr",
+      key: "cr:#{tid}:#{cr_id}",
+      body: body,
+      actor_uri: "system://cr-engine",
+      source_turn_id: "update_#{System.unique_integer([:monotonic])}"
+    })
+    |> case do
+      {:ok, _} -> {:ok, body}
+      e -> e
+    end
+  end
 end

@@ -93,6 +93,55 @@ defmodule EzagentPluginCr.CrEngine do
     write_cr(tid, cr["cr_id"], Map.put(cr, "status", "cancelled"))
   end
 
+  @doc "Record a sandbox file change on the active CR's sandbox_diff."
+  @spec record_file_change(String.t(), String.t(), keyword()) :: :ok | {:error, term()}
+  def record_file_change(tid, path, opts \\ []) do
+    with {:ok, cr} <- ensure_active_cr(tid) do
+      existing = cr["sandbox_diff"] || %{}
+      new_paths = Enum.uniq((existing["paths"] || []) ++ [path])
+      merged = %{
+        "files_changed" => (existing["files_changed"] || 0) + 1,
+        "paths" => new_paths,
+        "lines_added" => (existing["lines_added"] || 0) + Keyword.get(opts, :lines_added, 0),
+        "lines_removed" => (existing["lines_removed"] || 0) + Keyword.get(opts, :lines_removed, 0)
+      }
+      cr_id = cr["cr_id"]
+      updated_cr = Map.merge(cr, %{"sandbox_diff" => merged, "updated_at" => DateTime.utc_now() |> DateTime.to_iso8601()})
+      _ = TenantConfig.update_cr(tid, cr_id, updated_cr)
+      :ok
+    end
+  end
+
+  @doc """
+  List all CRs for a tenant, ordered by inserted_at desc.
+  Returns a list of CR body maps, each with a "cr_id" key set.
+  Queries ConfigObject (immutable, append-only) so historical CR
+  versions are retained even after the pointer advances.
+  """
+  @spec list_crs(String.t()) :: [map()]
+  def list_crs(tid) do
+    try do
+      import Ecto.Query
+      alias Ezagent.Socialware.ConfigObject
+      alias EzagentCore.Repo
+
+      Repo.all(
+        from(o in ConfigObject,
+          where: like(o.key, ^"cr:#{tid}:%"),
+          order_by: [desc: o.inserted_at],
+          select: {o.key, o.body}
+        )
+      )
+      |> Enum.map(fn {key, body} ->
+        cr_id = String.replace_prefix(key, "cr:#{tid}:", "")
+        body_map = body || %{}
+        Map.put(body_map, "cr_id", cr_id)
+      end)
+    rescue
+      _ -> []
+    end
+  end
+
   # The local ID passed to TenantConfig.read_cr/2 (which prepends "cr:#{tid}:")
   defp active_cr_id(_tid), do: "active"
 
