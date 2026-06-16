@@ -20,12 +20,21 @@ defmodule EzagentPluginLoom.WebPlug do
 
   alias Ezagent.{Invocation, Message, SystemPrincipal}
   alias Ezagent.Socialware.{AnonBinding, AnonUser, CustomerAuth, CustomerFeed}
-  alias EzagentPluginLoom.Intent
+  alias Ezagent.Uploads
+  alias Ezagent.Uploads.DownloadToken
+  alias EzagentPluginLoom.{Intent, Materials}
 
   @gateway_uri "system://loom-customer-gateway"
 
   plug(:match)
-  plug(Plug.Parsers, parsers: [:json], pass: ["application/json"], json_decoder: Jason)
+
+  plug(Plug.Parsers,
+    parsers: [:json, :multipart],
+    pass: ["application/json", "multipart/form-data"],
+    json_decoder: Jason,
+    length: 20_000_000
+  )
+
   plug(:dispatch)
 
   post "/c/:ws/:sid/messages" do
@@ -56,6 +65,47 @@ defmodule EzagentPluginLoom.WebPlug do
     else
       {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})
       _ -> json(conn, 400, %{ok: false, error: "bad_request"})
+    end
+  end
+
+  # 素材上传(multipart file + token)。落 Uploads.store! + 记进 session 清单。
+  post "/c/:ws/:sid/materials/upload" do
+    with {:ok, session_uri, ws_uri} <- uris(ws, sid),
+         token when is_binary(token) <- conn.body_params["token"],
+         :ok <- CustomerAuth.authorize(token, session_uri, ws_uri),
+         %Plug.Upload{path: tmp, filename: filename} <- conn.body_params["file"] do
+      stored = "#{System.unique_integer([:positive])}-#{filename}"
+      resource_uri = Uploads.store!(ws, stored, tmp)
+      :ok = Materials.register(session_uri, resource_uri, filename)
+      json(conn, 200, %{ok: true, uri: URI.to_string(resource_uri), name: filename})
+    else
+      {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})
+      _ -> json(conn, 400, %{ok: false, error: "bad_request"})
+    end
+  end
+
+  # 列素材清单。
+  get "/c/:ws/:sid/materials" do
+    conn = Plug.Conn.fetch_query_params(conn)
+
+    with {:ok, session_uri, ws_uri} <- uris(ws, sid),
+         token when is_binary(token) <- conn.query_params["token"],
+         :ok <- CustomerAuth.authorize(token, session_uri, ws_uri) do
+      json(conn, 200, %{ok: true, materials: Materials.list(session_uri)})
+    else
+      {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})
+      _ -> json(conn, 400, %{ok: false, error: "bad_request"})
+    end
+  end
+
+  # 受控服务素材文件(download token，红线 #6:不裸 FS 服务)。
+  get "/m/:dtoken" do
+    with {:ok, %URI{} = resource_uri} <- DownloadToken.verify(dtoken),
+         ws when is_binary(ws) <- Ezagent.URI.workspace_name!(resource_uri),
+         path when is_binary(path) <- Uploads.path!(resource_uri, %{workspace: ws}) do
+      Plug.Conn.send_file(conn, 200, path)
+    else
+      _ -> send_resp(conn, 404, "not found")
     end
   end
 

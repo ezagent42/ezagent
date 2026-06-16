@@ -48,6 +48,9 @@ defmodule EzagentPluginLoom.Orchestrator do
   """
   @spec run(String.t(), keyword()) :: {:ok, [map()]} | {:error, term()}
   def run(user_text, opts \\ []) when is_binary(user_text) do
+    # 素材库注入:compose 时让 LLM 知道本 session 有哪些素材可引用。
+    opts = Keyword.put(opts, :materials, materials_hint(opts[:session_uri]))
+
     case decompose(user_text, opts) do
       {:ok, [_ | _] = themes} ->
         fragments = gather(user_text, themes, opts)
@@ -112,8 +115,13 @@ defmodule EzagentPluginLoom.Orchestrator do
     compose_from([%{role: "user", content: content}], opts)
   end
 
+  defp materials_hint(nil), do: nil
+  defp materials_hint(session_uri), do: EzagentPluginLoom.Materials.prompt_block(session_uri)
+
   # 共享:一次 LLM 调用产 {chat, page} JSON → result_refs
   defp compose_from(messages, opts) do
+    messages = maybe_add_materials(messages, opts[:materials])
+
     with {:ok, text} <- LLM.chat(messages, Keyword.put(opts, :system, @system)),
          {:ok, %{"chat" => chat, "page" => page}} <- extract_json(text),
          true <- is_binary(chat) and is_map(page) do
@@ -143,4 +151,7 @@ defmodule EzagentPluginLoom.Orchestrator do
   end
 
   defp normalize_tree(_), do: %{"type" => "text", "props" => %{}, "children" => []}
+
+  defp maybe_add_materials(messages, nil), do: messages
+  defp maybe_add_materials(messages, block), do: messages ++ [%{role: "user", content: block}]
 end
