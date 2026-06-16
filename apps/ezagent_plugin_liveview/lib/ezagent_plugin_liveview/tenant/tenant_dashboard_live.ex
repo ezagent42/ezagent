@@ -140,35 +140,72 @@ defmodule EzagentPluginLiveview.Tenant.TenantDashboardLive do
         </button>
       </div>
 
+      <%!-- Publish Flow --%>
+      <div class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-gradient-to-r from-blue-50 to-green-50 dark:from-blue-950 dark:to-green-950 p-4 mb-6">
+        <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Publish Flow</h3>
+        <div class="flex items-center gap-1.5 text-xs flex-wrap">
+          <a href={"/admin/autoservice/tenants/#{@tid}/agent/slow"} class="px-3 py-1.5 rounded-lg bg-blue-100 text-blue-700 font-medium hover:bg-blue-200 transition">📝 1. Config</a>
+          <span class="text-gray-300">→</span>
+          <a href={"/admin/autoservice/tenants/#{@tid}/orchestrate"} class="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 transition">🔀 2. Orchestrate</a>
+          <span class="text-gray-300">→</span>
+          <a href={"/admin/autoservice/tenants/#{@tid}/debug"} class="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 transition">🧪 3. Test</a>
+          <span class="text-gray-300">→</span>
+          <a href={"/admin/autoservice/tenants/#{@tid}/cr"} class="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 transition">🔄 4. Review & Publish</a>
+        </div>
+      </div>
+
+      <%!-- Agent Cards --%>
+      <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Agents</h2>
       <div class="grid grid-cols-2 gap-4 mb-6">
-        <a href={"/admin/autoservice/tenants/#{@tid}/agent/fast"} class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5 hover:shadow-md hover:border-blue-300 transition">
-          <div class="text-2xl mb-2">⚡</div>
+        <a href={"/admin/autoservice/tenants/#{@tid}/agent/fast"} class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5 hover:shadow-md hover:border-amber-300 transition">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-2xl">⚡</span>
+            <span class="text-[10px] bg-gray-100 dark:bg-zinc-800 px-2 py-0.5 rounded-full">Soul only</span>
+          </div>
           <h3 class="font-semibold text-gray-900 dark:text-zinc-100">Fast Agent</h3>
-          <p class="text-xs text-gray-500 dark:text-zinc-400 mt-1">DeepSeek 即时安抚回复配置</p>
-          <div class="mt-2 text-xs text-gray-400 dark:text-zinc-500">sandbox/config/fast_ack_prompt.md</div>
+          <p class="text-xs text-gray-500 dark:text-zinc-400 mt-1">Quick reply via ACK prompt — no Skills/KB</p>
+          <div class="text-[10px] text-gray-400 mt-2 font-mono">sandbox/config/fast_ack_prompt.md</div>
+          <div class="flex gap-2 mt-3">
+            <span class="text-[10px] text-blue-600 hover:underline">Configure</span>
+            <span class="text-[10px] text-gray-300">|</span>
+            <a href={"/admin/autoservice/tenants/#{@tid}/debug"} class="text-[10px] text-blue-600 hover:underline">Debug</a>
+          </div>
         </a>
 
-        <a href={"/admin/autoservice/tenants/#{@tid}/agent/slow"} class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5 hover:shadow-md hover:border-blue-300 transition">
-          <div class="text-2xl mb-2">🧠</div>
+        <a href={"/admin/autoservice/tenants/#{@tid}/agent/slow"} class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5 hover:shadow-md hover:border-purple-300 transition">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-2xl">🧠</span>
+            <span class="text-[10px] bg-gray-100 dark:bg-zinc-800 px-2 py-0.5 rounded-full">Full config</span>
+          </div>
           <h3 class="font-semibold text-gray-900 dark:text-zinc-100">Slow Agent</h3>
-          <p class="text-xs text-gray-500 dark:text-zinc-400 mt-1">Claude 知识库 Agent (Soul/Skills/KB)</p>
-          <div class="mt-2 text-xs text-gray-400 dark:text-zinc-500">6-tab 编辑器</div>
+          <p class="text-xs text-gray-500 dark:text-zinc-400 mt-1">Soul · Skills · KB · Slots — full-featured agent</p>
+          <div class="text-[10px] text-gray-400 mt-2 font-mono">sandbox/ — 6-tab editor</div>
+          <div class="flex gap-2 mt-3">
+            <span class="text-[10px] text-blue-600 hover:underline">Configure</span>
+            <span class="text-[10px] text-gray-300">|</span>
+            <a href={"/admin/autoservice/tenants/#{@tid}/debug"} class="text-[10px] text-blue-600 hover:underline">Debug</a>
+          </div>
         </a>
       </div>
 
-      <div class="grid grid-cols-3 gap-3 mb-6">
-        <div class="rounded-lg border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 text-center">
+      <%!-- KPI Cards --%>
+      <div class="grid grid-cols-4 gap-3 mb-6">
+        <a href={"/admin/autoservice/tenants/#{@tid}/versions"} class="rounded-lg border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 text-center hover:shadow transition">
           <div class="text-xl font-bold text-gray-900 dark:text-zinc-100"><%= @version %></div>
           <div class="text-xs text-gray-400 dark:text-zinc-500">Release</div>
-        </div>
-        <div class="rounded-lg border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 text-center">
+        </a>
+        <a href={"/admin/autoservice/tenants/#{@tid}/cr"} class="rounded-lg border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 text-center hover:shadow transition">
           <div class="text-xl font-bold text-amber-600"><%= cr_status_badge_text(@cr) %></div>
           <div class="text-xs text-gray-400 dark:text-zinc-500">CR Status</div>
-        </div>
-        <div class="rounded-lg border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 text-center">
-          <a href={"/admin/autoservice/tenants/#{@tid}/orchestrate"} class="text-blue-600 hover:underline text-sm">View Routeset →</a>
-          <div class="text-xs text-gray-400 dark:text-zinc-500 mt-1">Orchestrate</div>
-        </div>
+        </a>
+        <a href={"/admin/autoservice/tenants/#{@tid}/orchestrate"} class="rounded-lg border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 text-center hover:shadow transition">
+          <div class="text-xl font-bold text-purple-600">🔀</div>
+          <div class="text-xs text-gray-400 dark:text-zinc-500">Routeset</div>
+        </a>
+        <a href={"/admin/autoservice/tenants/#{@tid}/debug"} class="rounded-lg border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 text-center hover:shadow transition">
+          <div class="text-xl font-bold text-blue-600">🧪</div>
+          <div class="text-xs text-gray-400 dark:text-zinc-500">Debug</div>
+        </a>
       </div>
 
       <%!-- Tenant Config Card --%>
@@ -220,7 +257,7 @@ defmodule EzagentPluginLiveview.Tenant.TenantDashboardLive do
           </div>
           <div class="flex gap-2">
             <a
-              href={"/autoservice/tenant/#{@tid}/cr"}
+              href={"/admin/autoservice/tenants/#{@tid}/cr"}
               class="px-3 py-1.5 text-sm border border-zinc-300 dark:border-zinc-700 rounded-md hover:bg-zinc-50 dark:hover:bg-zinc-800"
             >
               {gettext("Manage CR")} →

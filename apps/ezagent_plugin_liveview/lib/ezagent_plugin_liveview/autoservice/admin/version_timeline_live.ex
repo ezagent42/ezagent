@@ -40,6 +40,13 @@ defmodule EzagentPluginLiveview.AutoService.Admin.VersionTimelineLive do
   end
   defp extract_version(_), do: 0
 
+  def handle_event("refresh", _params, socket) do
+    tid = socket.assigns.tid
+    versions = list_versions(tid)
+    current = get_current(tid)
+    {:noreply, assign(socket, versions: versions, current: current)}
+  end
+
   def handle_event("rollback", %{"version" => version}, socket) do
     tid = socket.assigns.tid
     release_path = TenantRuntime.release_path(tid)
@@ -77,7 +84,10 @@ defmodule EzagentPluginLiveview.AutoService.Admin.VersionTimelineLive do
       <.admin_sidebar tid={@tid} />
       <main class="flex-1 p-6">
         <div class="max-w-3xl mx-auto">
-      <h1 class="text-xl font-bold text-gray-900 dark:text-zinc-100 mb-4">版本历史</h1>
+      <h1 class="text-xl font-bold text-gray-900 dark:text-zinc-100 mb-4">📋 版本历史</h1>
+      <div class="flex justify-end mb-3">
+        <button phx-click="refresh" class="text-xs border border-gray-300 dark:border-zinc-600 rounded-lg px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-zinc-800 transition">🔄 Refresh</button>
+      </div>
       <div :if={@flash_msg} class="text-sm text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-950 rounded px-3 py-2 mb-4">{@flash_msg}</div>
       <div class="space-y-2">
         <%= for v <- @versions do %>
