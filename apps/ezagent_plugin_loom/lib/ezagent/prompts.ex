@@ -415,7 +415,16 @@ defmodule EzagentPluginLoom.Prompts do
 
   - 这是**轮询模型**(目前没有跨 session 实时推送):进入时 `listMySessions()`,选中一个 session 后 `getSessionMessages(uri)`;用 `setInterval`(如每 3~5 秒)刷新当前 session 的消息 + 列表的 `last_text`。
   - `logged_in:false` → 提示用户先登录(接线台必须登录;它跟单会话的 `sendMessage`/`onMessage` 不同,后者是匿名访客也能用的)。
-  - 消息渲染同样用 `<EzagentMessage frame={f} />`。
+  - 消息渲染:`<EzagentMessage frame={f} />` 只渲染**消息内容**,**不渲染发言者**。接线台**必须自己**
+    在每条消息上标出**是谁说的**(头像/名字/左右气泡),用 `frame.sender` + `frame.role` + 你自己的
+    `entity_uri`(从 `listMySessions` 拿)三者判定:
+    - `role === 'agent'` → **AI**(sender URI 里:`loomorch_`=编排器、`loomsalesperson_`=导购、
+      `loombuilder_`=builder、`loommeta_`=管家;可映射成友好名)。
+    - `role === 'user' && sender === entity_uri` → **自己**(当前接线员)。
+    - `role === 'user' && sender !== entity_uri` → **用户 / 其他真人**(显示名 = sender URI 最后一段,
+      如 `entity://user/m800/li` → `li`;访客是 `loomui_<sid>`)。
+    例:`const who = f.role === 'agent' ? 'AI' : (f.sender === me ? '我' : f.sender.split('/').pop());`
+    数据本身**够用**(每条都带 sender+role,listMySessions 带 entity_uri)—— 区分自己/用户/AI/真人靠这三样。
   - 只在「多会话工作台」场景用这组;普通单会话页用上面的 `sendMessage`/`onMessage`/`getHistory`。
 
   标准范式（参考，不要照抄，按用户需求改 UI）：
