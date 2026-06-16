@@ -13,6 +13,8 @@ defmodule EzagentWeb.Router do
   alias EzagentPluginLiveview.AutoService.Admin.InitWizardLive
   alias EzagentPluginLiveview.AutoService.Admin.SlotEditorLive
   alias EzagentPluginLiveview.AutoService.Admin.SoulEditorLive
+  alias EzagentPluginLiveview.AutoService.Admin.SkillManagerLive
+  alias EzagentPluginLiveview.AutoService.Admin.KbManagerLive
 
   alias EzagentPluginLiveview.Tenant.{
     TenantOnboardLive,
@@ -238,6 +240,8 @@ defmodule EzagentWeb.Router do
       live "/admin/autoservice/tenants/:tid/init", AutoService.Admin.InitWizardLive
       live "/admin/autoservice/tenants/:tid/soul", AutoService.Admin.SoulEditorLive
       live "/admin/autoservice/tenants/:tid/soul/slots", AutoService.Admin.SlotEditorLive
+      live "/admin/autoservice/tenants/:tid/skills", AutoService.Admin.SkillManagerLive
+      live "/admin/autoservice/tenants/:tid/kb", AutoService.Admin.KbManagerLive
       # CapabilityRegistry SPEC `docs/superpowers/specs/2026-05-23-capability-registry.md`
       # §8.1 — surfaces every cap subject registered via
       # `Ezagent.CapabilityRegistry` (dispatchable + cap-only) plus
