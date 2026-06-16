@@ -1637,6 +1637,8 @@ defmodule EzagentPluginLoom.WebPlug do
           "knowledge" => Ezagent.PluginLoom.Knowledge.get(ws, sid),
           # 多页随快照冻结(活动页源码用本次 snapshot 的 page 覆盖)→ fork / 只读 ?page= 用。
           "pages" => Ezagent.PluginLoom.Pages.bundle(ws, sid, page),
+          # 角色门控配置随快照冻结 → fork 出的会话 seed 它(创建者 + 各角色账号一起带过去)。
+          "roles" => Ezagent.PluginLoom.RoleConfig.get(ws, sid),
           "origin_sid" => sid,
           "created_at" => DateTime.utc_now() |> DateTime.to_iso8601()
         })
@@ -1683,6 +1685,9 @@ defmodule EzagentPluginLoom.WebPlug do
       _ = Ezagent.PluginLoom.Knowledge.put(ws, sid, Map.get(snap, "knowledge", ""))
       # 多页随快照 seed 进 fork 出的会话。
       _ = Ezagent.PluginLoom.Pages.seed(ws, sid, Map.get(snap, "pages", %{}))
+
+      # 角色门控随快照 seed 进 fork 出的会话(创建者 + 各角色账号),fork 后该 session 自带角色门控。
+      _ = Ezagent.PluginLoom.RoleConfig.seed(ws, sid, Map.get(snap, "roles", %{}))
       %{ok: true, ws: ws, sid: sid}
     else
       :error -> %{ok: false, error: "unknown token"}
