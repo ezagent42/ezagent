@@ -10,6 +10,7 @@ defmodule EzagentWeb.Router do
   use EzagentWeb, :router
 
   alias EzagentPluginLiveview.Master.MasterDashboardLive
+  alias EzagentPluginLiveview.AutoService.Admin.InitWizardLive
 
   alias EzagentPluginLiveview.Tenant.{
     TenantOnboardLive,
@@ -232,6 +233,7 @@ defmodule EzagentWeb.Router do
       live "/admin/autoservice/tenants/:tid", Tenant.TenantDashboardLive
       live "/admin/autoservice/tenants/:tid/cr", Tenant.CrDashboardLive
       live "/admin/autoservice/tenants/:tid/operators", Tenant.OperatorsLive
+      live "/admin/autoservice/tenants/:tid/init", AutoService.Admin.InitWizardLive
       # CapabilityRegistry SPEC `docs/superpowers/specs/2026-05-23-capability-registry.md`
       # §8.1 — surfaces every cap subject registered via
       # `Ezagent.CapabilityRegistry` (dispatchable + cap-only) plus
