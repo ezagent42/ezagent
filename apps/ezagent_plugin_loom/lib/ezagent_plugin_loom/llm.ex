@@ -50,6 +50,7 @@ defmodule EzagentPluginLoom.LLM do
 
       case :httpc.request(:post, request, http_opts, body_format: :binary) do
         {:ok, {{_v, 200, _r}, _resp_headers, resp_body}} ->
+          emit_telemetry(resp_body, opts)
           parse_text(resp_body)
 
         {:ok, {{_v, status, _r}, _resp_headers, resp_body}} ->
@@ -68,6 +69,25 @@ defmodule EzagentPluginLoom.LLM do
       "" -> {:error, :no_api_key}
       key -> {:ok, key}
     end
+  end
+
+  # stats → telemetry(文档清单 A：emit :telemetry.execute [:ezagent,...] events,
+  # 不落旁路 JSON,不进 customer feed)。每次成功 LLM 调用 emit token 用量。
+  defp emit_telemetry(resp_body, opts) do
+    with {:ok, %{"usage" => usage} = decoded} when is_map(usage) <- Jason.decode(resp_body) do
+      :telemetry.execute(
+        [:ezagent, :loom, :llm, :call],
+        %{
+          input_tokens: usage["input_tokens"] || 0,
+          output_tokens: usage["output_tokens"] || 0
+        },
+        %{model: decoded["model"], role: opts[:role]}
+      )
+    end
+
+    :ok
+  rescue
+    _ -> :ok
   end
 
   defp parse_text(resp_body) do
