@@ -47,6 +47,15 @@ defmodule EzagentPluginLoom.WebPlug do
     only: ["_next", "favicon.ico", "404.html", "index.txt"]
   )
 
+  # 2026-06-16 Live2D 看板娘:同源托管模型 + 库(pixi / cubism2 core / pixi-live2d-display)。
+  # 浏览器路径 = `/loom/live2d/...`(本 plug forward 在 `/loom` 下)。**故意同源**,不走外部
+  # CDN —— 外部源对路线敏感(zuatu.com 那次教训),换网络就缺图。
+  plug(Plug.Static,
+    at: "/live2d",
+    from: {:ezagent_plugin_loom, "priv/static/live2d"},
+    only: ["lib", "models"]
+  )
+
   plug(:match)
   plug(:dispatch)
 

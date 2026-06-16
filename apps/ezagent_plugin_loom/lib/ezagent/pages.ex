@@ -74,11 +74,18 @@ defmodule Ezagent.PluginLoom.Pages do
       "slug" => id,
       "title" => p |> Map.get("title", "") |> to_string() |> default_title(id),
       "salesperson" => Map.get(p, "salesperson", true) == true,
+      # 2026-06-16 Live2D 看板娘:每页一份配置(随发布/快照/fork 走)。这里按原样透传
+      # 前端给的 map(enabled/model/position/scale/opacity/draggable/greeting),不细校验
+      # ——前端引擎解释它,后端只存。非 map(老数据 / 未配)→ nil。
+      "live2d" => norm_live2d(Map.get(p, "live2d")),
       "source" => normalize_source(Map.get(p, "source"))
     }
   end
 
   defp norm_page(_, idx), do: norm_page(%{}, idx)
+
+  defp norm_live2d(m) when is_map(m), do: m
+  defp norm_live2d(_), do: nil
 
   defp normalize_id(id, idx) do
     if Regex.match?(@id_re, id), do: id, else: if(idx == 0, do: @default_id, else: "page#{idx}")
