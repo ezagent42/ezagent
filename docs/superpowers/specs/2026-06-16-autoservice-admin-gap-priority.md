@@ -25,8 +25,8 @@
 | 4 | 异步 Ingest Jobs（URL/文件上传不阻塞UI） | ✅ | ❌ | **P1** | 大文件同步上传会超时，影响体验 |
 | 5 | URL 爬虫（BFS同域多页+robots.txt+rate limit） | ✅ | ❌ | **P2** | 单页fetch够基础使用，多页爬虫可后补 |
 | 6 | KB Source 元数据（source_url/latest_created_at/enabled） | ✅ | ❌ | **P2** | 列表显示增强，不影响功能 |
-| 7 | Flow Directive（intent触发词+enable/disable） | ✅ | ❌ | **P2** | 独立功能模块，KB的子类型 |
-| 8 | 18列KB Schema（domain/region/language等过滤字段） | ✅ | ❌ | **P2** | 多租户场景需要，当前单租户够用 |
+| 7 | ~~Flow Directive（intent触发词+enable/disable）~~ | ✅ | 已废弃 | — | 迭代废弃，不需要 |
+| 8 | KB Source 元数据（source_url/latest_created_at/enabled） | ✅ | ❌ | **P2** | 列表显示增强，不影响功能 |
 | 9 | FTS5 trigram CJK搜索 | ✅ | ⚠️ | **P1** | 中文搜索精度，当前Python脚本可能未启用trigram |
 
 ---
@@ -137,14 +137,13 @@
 | 60 | Management Chat（/命令式管理） | ✅ | ❌ | **P3** | Admin Session替代 |
 | 61 | Master Platform/Industry/Templates Soul管理 | ✅ | ❌ | **P2** | Platform管理页面 |
 | 62 | Master Skills管理（L0/L1/L2） | ✅ | ❌ | **P2** | Platform管理页面 |
-| 63 | Flow Directives（intent编辑） | ✅ | ❌ | **P2** | KB子类型 |
-| 64 | Glossary编辑器 | — | ✅ | — | Ezagent独有，已实现 |
+| 63 | Glossary编辑器 | — | ✅ | — | Ezagent独有，已实现 |
 
 ---
 
 ## 优先级汇总
 
-### P0 — 必须立即修复（5项）
+### P0 — 必须立即修复（4项）
 
 | # | 功能 | 影响 |
 |:--:|------|------|
@@ -173,7 +172,7 @@
 | 37-38 | InitWizard URL/Doc Upload 步骤 |
 | 43 | AI Assist 面板（SoulEditor） |
 
-### P2 — 可以后续实现（17项）
+### P2 — 可以后续实现（15项）
 
 | # | 功能 |
 |:--:|------|
