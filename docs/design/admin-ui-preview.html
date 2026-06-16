@@ -80,13 +80,17 @@
         <span>🛠️</span> Platform Skills
       </a>
       <a href="#" class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-800">
-        <span>⚖️</span> Priority
+        <span>📖</span> Glossary
       </a>
     </div>
 
-    <!-- Future -->
+    <!-- AI Assistant (future) -->
     <div class="px-3 py-3 border-t border-gray-700">
-      <div class="text-xs uppercase tracking-wider text-gray-500 mb-2 px-2">AI</div>
+      <div class="text-xs uppercase tracking-wider text-gray-500 mb-2 px-2">AI Assistant</div>
+      <a href="#" class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-800 opacity-50">
+        <span>🤖</span> Edit Assistant
+        <span class="text-[10px] bg-gray-700 px-1 rounded ml-auto">soon</span>
+      </a>
       <a href="#" class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-800 opacity-50">
         <span>💬</span> Admin Session
         <span class="text-[10px] bg-gray-700 px-1 rounded ml-auto">soon</span>
@@ -498,10 +502,246 @@
     </section>
 
     <!-- ═══════════════════════════════════════════════════════ -->
-    <!-- Page 6: Init Wizard Step 1 -->
+    <!-- Page 6: Glossary Editor -->
     <!-- ═══════════════════════════════════════════════════════ -->
     <section class="mb-12">
-      <h2 class="text-lg font-bold text-gray-900 mb-2">🚀 初始化向导 — Step 1: Soul 生成</h2>
+      <h2 class="text-lg font-bold text-gray-900 mb-2">📖 Glossary Editor</h2>
+      <p class="text-sm text-gray-500 mb-4">sandbox/kb/glossary.json — KB 重建时的术语定义源</p>
+
+      <div class="max-w-3xl mx-auto">
+        <div class="section-card">
+          <div class="section-header flex justify-between items-center">
+            <h3 class="font-semibold text-sm">Glossary 术语表</h3>
+            <span class="text-xs text-gray-300">用于 KB 重建时生成 chunk</span>
+          </div>
+
+          <!-- Term List -->
+          <div class="divide-y divide-gray-100">
+            <div class="flex items-center px-4 py-2.5 hover:bg-gray-50 group">
+              <div class="flex-1">
+                <span class="font-mono text-sm text-gray-800">退货流程</span>
+                <p class="text-xs text-gray-500 mt-0.5">客户申请退货→系统生成退货单→客户寄回→仓库验收→退款到账。时效：7天内申请，验收后1-3个工作日退款</p>
+              </div>
+              <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition">
+                <button class="text-xs text-blue-600 hover:underline">编辑</button>
+                <button class="text-xs text-red-500 hover:underline">删除</button>
+              </div>
+            </div>
+            <div class="flex items-center px-4 py-2.5 hover:bg-gray-50 group">
+              <div class="flex-1">
+                <span class="font-mono text-sm text-gray-800">换货流程</span>
+                <p class="text-xs text-gray-500 mt-0.5">客户申请换货→系统生成换货单→客户寄回→仓库验收→发出新商品。时效：验收后1-2个工作日发货</p>
+              </div>
+              <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition">
+                <button class="text-xs text-blue-600 hover:underline">编辑</button>
+                <button class="text-xs text-red-500 hover:underline">删除</button>
+              </div>
+            </div>
+            <div class="flex items-center px-4 py-2.5 hover:bg-gray-50 group">
+              <div class="flex-1">
+                <span class="font-mono text-sm text-gray-800">VIP会员</span>
+                <p class="text-xs text-gray-500 mt-0.5">银卡(满1000元)9.5折，金卡(满5000元)9折+免运费，钻石卡(满20000元)8.5折+免运费+专属客服</p>
+              </div>
+              <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition">
+                <button class="text-xs text-blue-600 hover:underline">编辑</button>
+                <button class="text-xs text-red-500 hover:underline">删除</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Add New -->
+          <div class="border-t border-gray-200 p-4 bg-gray-50">
+            <div class="flex gap-2">
+              <input type="text" placeholder="术语名称" class="input-field w-40" />
+              <input type="text" placeholder="定义（用于 KB 检索）" class="input-field flex-1" />
+              <button class="btn-primary text-xs">+ 新增</button>
+            </div>
+            <p class="text-xs text-gray-400 mt-1">添加后在 KB Manager 中点击"重建 KB"即可生效</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- Page 7: AI Assistant Integration -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <section class="mb-12">
+      <h2 class="text-lg font-bold text-gray-900 mb-2">🤖 AI Assistant 集成 (未来)</h2>
+      <p class="text-sm text-gray-500 mb-4">每个编辑器页面右侧可展开 AI 助手面板</p>
+
+      <div class="max-w-5xl mx-auto">
+        <!-- Soul Editor + AI Sidebar -->
+        <div class="flex gap-4">
+          <!-- Main Editor -->
+          <div class="flex-1 section-card">
+            <div class="section-header flex justify-between items-center">
+              <h3 class="font-semibold text-sm">Soul Editor</h3>
+              <button class="text-xs bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700" title="Toggle AI Assistant">🤖 AI 助手</button>
+            </div>
+            <div class="p-3">
+              <textarea rows="12" class="w-full font-mono text-xs border border-gray-300 rounded p-2 focus:outline-none focus:ring-2 focus:ring-blue-400"># {{brand_name}} 智能客服 Agent
+你是 {{brand_name}} 的客服助手...</textarea>
+              <div class="flex justify-between mt-2">
+                <span class="text-xs text-green-700">✅ 已保存</span>
+                <button class="btn-primary text-xs">保存</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- AI Assistant Sidebar -->
+          <div class="w-80 flex-shrink-0">
+            <div class="section-card border-purple-300">
+              <div class="px-4 py-2.5 bg-purple-800 text-white rounded-t-xl flex items-center justify-between">
+                <h3 class="font-semibold text-xs">🤖 AI 编辑助手</h3>
+                <button class="text-xs opacity-70 hover:opacity-100">✕</button>
+              </div>
+
+              <!-- Chat area -->
+              <div class="p-3 space-y-3 max-h-96 overflow-y-auto">
+                <!-- System -->
+                <div class="text-xs text-gray-400 text-center">AI 助手可以帮你编辑内容</div>
+
+                <!-- User message -->
+                <div class="flex justify-end">
+                  <div class="bg-blue-600 text-white rounded-lg px-3 py-1.5 text-xs max-w-[85%]">
+                    增加一个投诉处理流程，包含记录投诉和升级到人工客服
+                  </div>
+                </div>
+
+                <!-- AI response with diff preview -->
+                <div class="flex justify-start">
+                  <div class="bg-gray-100 rounded-lg px-3 py-1.5 text-xs max-w-[90%]">
+                    <p class="text-gray-700 mb-2">建议修改：</p>
+                    <div class="font-mono text-[11px] space-y-0.5">
+                      <div class="text-green-700 bg-green-50 rounded px-1.5 py-0.5">+ ## 投诉处理</div>
+                      <div class="text-green-700 bg-green-50 rounded px-1.5 py-0.5">+ 1. 记录投诉内容与客户信息</div>
+                      <div class="text-green-700 bg-green-50 rounded px-1.5 py-0.5">+ 2. 评估投诉严重级别</div>
+                      <div class="text-green-700 bg-green-50 rounded px-1.5 py-0.5">+ 3. 必要时升级到人工客服</div>
+                    </div>
+                    <div class="flex gap-2 mt-2">
+                      <button class="bg-green-600 text-white rounded px-2 py-0.5 text-[10px] hover:bg-green-700">Accept</button>
+                      <button class="border border-gray-300 rounded px-2 py-0.5 text-[10px] hover:bg-gray-200">Reject</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Quick actions -->
+                <div class="border-t border-gray-200 pt-2 mt-2">
+                  <p class="text-[10px] text-gray-400 mb-1.5">快捷操作</p>
+                  <div class="flex flex-wrap gap-1">
+                    <button class="text-[10px] bg-gray-100 hover:bg-purple-50 hover:text-purple-700 rounded px-2 py-0.5 transition">优化语气</button>
+                    <button class="text-[10px] bg-gray-100 hover:bg-purple-50 hover:text-purple-700 rounded px-2 py-0.5 transition">检查完整性</button>
+                    <button class="text-[10px] bg-gray-100 hover:bg-purple-50 hover:text-purple-700 rounded px-2 py-0.5 transition">翻译为英文</button>
+                    <button class="text-[10px] bg-gray-100 hover:bg-purple-50 hover:text-purple-700 rounded px-2 py-0.5 transition">生成测试对话</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Input -->
+              <div class="border-t border-gray-200 p-2 flex gap-1">
+                <input type="text" placeholder="描述你想要的操作..." class="flex-1 rounded border border-gray-300 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-purple-400" />
+                <button class="bg-purple-600 text-white rounded px-3 py-1 text-xs hover:bg-purple-700">发送</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- Page 8: Admin Session (Chat-based Management) -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <section class="mb-12">
+      <h2 class="text-lg font-bold text-gray-900 mb-2">💬 Admin Session — 对话式管理 (未来)</h2>
+      <p class="text-sm text-gray-500 mb-4">与 Admin Agent 对话完成管理操作，结果以卡片形式展示</p>
+
+      <div class="max-w-3xl mx-auto">
+        <div class="section-card">
+          <div class="section-header flex justify-between">
+            <h3 class="font-semibold text-sm">Admin Session — demo-acme</h3>
+            <span class="text-xs bg-green-600 px-2 py-0.5 rounded">Agent online</span>
+          </div>
+
+          <!-- Chat Messages -->
+          <div class="p-4 space-y-4 bg-gray-50 min-h-[400px]">
+            <!-- User -->
+            <div class="flex justify-end">
+              <div class="bg-blue-600 text-white rounded-2xl rounded-br-md px-4 py-2 text-sm max-w-[70%]">
+                帮我检查 demo-acme 的当前状态
+              </div>
+            </div>
+
+            <!-- Agent with Card -->
+            <div class="flex justify-start">
+              <div class="max-w-[85%] space-y-2">
+                <div class="bg-white rounded-2xl rounded-bl-md px-4 py-2 text-sm border border-gray-200">
+                  demo-acme 当前状态如下：
+                </div>
+                <!-- Embedded Card: Tenant Status -->
+                <div class="bg-white rounded-xl border border-gray-200 p-3 shadow-sm">
+                  <div class="text-xs font-medium text-gray-700 mb-2">📊 Tenant Status: demo-acme</div>
+                  <div class="grid grid-cols-3 gap-2 text-xs">
+                    <div class="bg-gray-50 rounded p-2 text-center">
+                      <div class="text-lg font-bold text-gray-800">v4</div>
+                      <div class="text-gray-400">Release</div>
+                    </div>
+                    <div class="bg-yellow-50 rounded p-2 text-center">
+                      <div class="text-lg font-bold text-yellow-700">1</div>
+                      <div class="text-gray-400">Active CR</div>
+                    </div>
+                    <div class="bg-gray-50 rounded p-2 text-center">
+                      <div class="text-lg font-bold text-gray-800">15</div>
+                      <div class="text-gray-400">KB Entries</div>
+                    </div>
+                  </div>
+                  <div class="flex gap-2 mt-2">
+                    <button class="text-[10px] bg-blue-50 text-blue-700 rounded px-2 py-0.5 hover:bg-blue-100">View CR →</button>
+                    <button class="text-[10px] bg-gray-50 text-gray-600 rounded px-2 py-0.5 hover:bg-gray-100">Preview Soul →</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- User -->
+            <div class="flex justify-end">
+              <div class="bg-blue-600 text-white rounded-2xl rounded-br-md px-4 py-2 text-sm max-w-[70%]">
+                发布这个 CR
+              </div>
+            </div>
+
+            <!-- Agent with Publish Result Card -->
+            <div class="flex justify-start">
+              <div class="max-w-[85%]">
+                <div class="bg-green-50 rounded-xl border border-green-200 p-3 shadow-sm">
+                  <div class="flex items-center gap-2 mb-2">
+                    <span class="text-lg">✅</span>
+                    <span class="text-sm font-medium text-green-800">发布成功</span>
+                  </div>
+                  <div class="text-xs text-green-700 space-y-0.5">
+                    <div>Version: <span class="font-mono font-medium">v5</span></div>
+                    <div>Published: <span>2026-06-16 14:30</span></div>
+                    <div>Files: <span>5 files promoted to release</span></div>
+                    <div>Agents: <span>refresh triggered for demo-acme</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Compose -->
+          <div class="border-t border-gray-200 p-3 flex gap-2">
+            <input type="text" placeholder="输入管理命令，例如：检查 demo-acme CR 状态、发布 CR、编辑 Soul..." class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400" />
+            <button class="bg-purple-600 text-white rounded-lg px-5 py-2 text-sm font-medium hover:bg-purple-700">发送</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- Page 9: Init Wizard Step 1 -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <section class="mb-12">
+      <h2 class="text-lg font-bold text-gray-900 mb-2">🚀 初始化向导 — Step 1/3: Soul 生成</h2>
       <p class="text-sm text-gray-500 mb-4">Tenant Admin 登录后看到 → 开始初始化 → Step 1/3</p>
 
       <div class="max-w-2xl mx-auto">
@@ -570,7 +810,7 @@
     <!-- Page 7: Init Wizard Step 3 (Preview + Publish) -->
     <!-- ═══════════════════════════════════════════════════════ -->
     <section class="mb-12">
-      <h2 class="text-lg font-bold text-gray-900 mb-2">🚀 初始化向导 — Step 3: 预览并发布</h2>
+      <h2 class="text-lg font-bold text-gray-900 mb-2">🚀 初始化向导 — Step 3/3: 预览并发布</h2>
 
       <div class="max-w-2xl mx-auto">
         <div class="flex gap-2 mb-4">
