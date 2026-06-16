@@ -71,7 +71,9 @@ defmodule Mix.Tasks.Ezagent.Session.MigrateSlice do
       {:ok, remaining} = SliceMigration.gate()
 
       if remaining == 0 do
-        Mix.shell().info("Gate: 0 session rows with a :chat slice — safe to start new-code nodes.")
+        Mix.shell().info(
+          "Gate: 0 session rows with a :chat slice — safe to start new-code nodes."
+        )
       else
         Mix.raise(
           "Gate: #{remaining} session row(s) STILL carry a :chat slice after migration — NO-GO."

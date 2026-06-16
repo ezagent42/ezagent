@@ -42,7 +42,8 @@
   # session (whose `session` spawn fn restarts the per-orchestrator
   # SessionManager) after a BEAM restart. +1 module (sanctioned, so
   # off_chokepoint is unchanged).
-  spawn_registry_modules: 33, # arch-cap-bump: Decision C cold-restart self-heal (cc transport → SpawnRegistry chokepoint)
+  # arch-cap-bump: Decision C cold-restart self-heal (cc transport → SpawnRegistry chokepoint)
+  spawn_registry_modules: 33,
   spawn_registry_off_chokepoint_modules: 25,
   create_session_call_sites: 6,
   create_session_modules: 5,

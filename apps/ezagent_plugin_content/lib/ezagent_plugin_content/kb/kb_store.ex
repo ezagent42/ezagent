@@ -192,50 +192,169 @@ defmodule EzagentPluginContent.Kb.KbStore do
   end
 
   defp extract_pdf_text(path) do
-    # Try pdftotext system command
-    case System.cmd("pdftotext", ["-layout", path, "-"], stderr_to_stdout: true) do
-      {text, 0} when byte_size(text) > 50 -> text
-      _ -> "PDF file: #{Path.basename(path)} (text extraction unavailable — install poppler-utils for pdftotext)"
+    case System.cmd("pdftotext", ["-layout", "-enc", "UTF-8", path, "-"], stderr_to_stdout: true) do
+      {text, 0} when byte_size(text) > 50 ->
+        text |> String.split("\f") |> Enum.map(&String.trim/1) |> Enum.join("\n\n")
+
+      _ ->
+        case System.cmd(
+               "python3",
+               [
+                 "-c",
+                 "import pypdf;r=pypdf.PdfReader('#{path}');print('\\n\\n'.join(p.extract_text() or '' for p in r.pages))"
+               ],
+               stderr_to_stdout: true
+             ) do
+          {text, 0} when byte_size(text) > 50 -> text
+          _ -> "PDF file: #{Path.basename(path)} (install pypdf: pip install pypdf)"
+        end
     end
   end
 
   defp extract_xlsx_text(path) do
-    # XLSX files are ZIP archives. Extract shared strings and sheet data.
     try do
       case :zip.extract(String.to_charlist(path), [:memory]) do
         {:ok, files} ->
-          # Find shared strings
-          strings =
+          # Build shared strings lookup table
+          strings_index =
             case List.keyfind(files, ~c'xl/sharedStrings.xml', 0) do
               {_, data} ->
-                ~r/<si>.*?<t[^>]*>(.*?)<\/t>.*?<\/si>/s
+                ~r/<si>(.*?)<\/si>/s
                 |> Regex.scan(to_string(data), capture: :all_but_first)
-                |> List.flatten()
-                |> Enum.join(" ")
+                |> Enum.map(fn [si_content] ->
+                  ~r/<t[^>]*>(.*?)<\/t>/s
+                  |> Regex.scan(si_content, capture: :all_but_first)
+                  |> List.flatten()
+                  |> Enum.join("")
+                end)
 
               _ ->
-                ""
+                []
             end
 
-          # Find sheet data
-          sheets =
-            files
-            |> Enum.filter(fn {name, _} -> to_string(name) =~ ~r/xl\/worksheets\/sheet\d*\.xml/ end)
-            |> Enum.map(fn {_, data} ->
-              ~r/<v>(.*?)<\/v>/
-              |> Regex.scan(to_string(data), capture: :all_but_first)
-              |> List.flatten()
-              |> Enum.join(" ")
-            end)
-            |> Enum.join(" | ")
+          # Get sheet names from workbook.xml
+          sheet_names =
+            case List.keyfind(files, ~c'xl/workbook.xml', 0) do
+              {_, data} ->
+                ~r/<sheet name="([^"]*)"/s
+                |> Regex.scan(to_string(data), capture: :all_but_first)
+                |> List.flatten()
 
-          "#{strings} #{sheets}" |> String.slice(0, 5000)
+              _ ->
+                []
+            end
+
+          # Find sheet files sorted by number
+          sheet_files =
+            files
+            |> Enum.filter(fn {name, _} ->
+              to_string(name) =~ ~r/xl\/worksheets\/sheet\d*\.xml/
+            end)
+            |> Enum.sort_by(fn {name, _} ->
+              case Regex.run(~r/sheet(\d+)\.xml/, to_string(name), capture: :all_but_first) do
+                [n] -> String.to_integer(n)
+                _ -> 0
+              end
+            end)
+
+          # Extract per-sheet structured data
+          sheet_data =
+            sheet_files
+            |> Enum.with_index()
+            |> Enum.map(fn {{_name, data}, idx} ->
+              sheet_name = Enum.at(sheet_names, idx) || "Sheet#{idx + 1}"
+              extract_sheet_rows(data, strings_index, sheet_name)
+            end)
+            |> Enum.filter(&(&1 != ""))
+            |> Enum.join("\n")
+
+          if sheet_data != "" do
+            String.slice(sheet_data, 0, 5000)
+          else
+            "XLSX file: #{Path.basename(path)} (no readable data)"
+          end
 
         _ ->
           "XLSX file: #{Path.basename(path)}"
       end
     rescue
       _ -> "XLSX file: #{Path.basename(path)} (parsing failed)"
+    end
+  end
+
+  defp extract_sheet_rows(data, strings_index, sheet_name) do
+    rows =
+      ~r/<row[^>]*>(.*?)<\/row>/s
+      |> Regex.scan(to_string(data), capture: :all_but_first)
+      |> List.flatten()
+
+    row_texts =
+      rows
+      |> Enum.map(fn row_xml ->
+        cells =
+          ~r/<c r="([A-Z]+)\d*"(?:\s+t="([^"]*)")?>(.*?)<\/c>/s
+          |> Regex.scan(row_xml, capture: :all_but_first)
+          |> Enum.reduce(%{}, fn [col_ref, type, cell_content], acc ->
+            value = extract_cell_value(cell_content, type, strings_index)
+            if value != "", do: Map.put(acc, col_ref, value), else: acc
+          end)
+
+        if map_size(cells) == 0 do
+          nil
+        else
+          {cells, Map.get(cells, "A", "")}
+        end
+      end)
+      |> Enum.filter(&(&1 != nil))
+      |> Enum.map(fn {cells, key_a} ->
+        other_cols =
+          cells
+          |> Enum.reject(fn {col, _} -> col == "A" end)
+          |> Enum.sort()
+          |> Enum.map(fn {col, val} -> "#{col}: #{val}" end)
+          |> Enum.join("; ")
+
+        if key_a != "" do
+          "#{key_a}: #{other_cols}"
+        else
+          cells
+          |> Enum.sort()
+          |> Enum.map(fn {col, val} -> "#{col}: #{val}" end)
+          |> Enum.join("; ")
+        end
+      end)
+      |> Enum.filter(&(&1 != ""))
+
+    if row_texts != [] do
+      "\n[Sheet: #{sheet_name}]\n" <> Enum.join(row_texts, "\n")
+    else
+      ""
+    end
+  end
+
+  defp extract_cell_value(cell_content, type, strings_index) do
+    cond do
+      type == "s" ->
+        case Regex.run(~r/<v>(\d+)<\/v>/, cell_content, capture: :all_but_first) do
+          [idx_str] ->
+            idx = String.to_integer(idx_str)
+            Enum.at(strings_index, idx) || ""
+
+          _ ->
+            ""
+        end
+
+      type in ["str", "inlineStr"] ->
+        case Regex.run(~r/<t[^>]*>(.*?)<\/t>/s, cell_content, capture: :all_but_first) do
+          [text] -> text
+          _ -> ""
+        end
+
+      true ->
+        case Regex.run(~r/<v>(.*?)<\/v>/, cell_content, capture: :all_but_first) do
+          [val] -> val
+          _ -> ""
+        end
     end
   end
 

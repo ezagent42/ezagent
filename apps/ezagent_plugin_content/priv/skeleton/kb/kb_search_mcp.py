@@ -11,7 +11,7 @@ CLI modes:
 Stores entries as kb_entries.json (a JSON array of objects).
 """
 
-import argparse, json, os, sys, hashlib, re, html as html_mod
+import argparse, json, os, sys, hashlib, re, html as html_mod, sqlite3
 from pathlib import Path
 
 
@@ -31,20 +31,121 @@ def _save_entries(db_dir: str, entries: list):
     p.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+# ── FTS5 helpers (trigram tokenizer for CJK support) ──
+
+def _get_fts_conn(db_dir: str):
+    """Open FTS connection. Returns (conn, tokenizer) or (None, None) if unavailable."""
+    db_path = str(Path(db_dir) / "kb_fts.db")
+    try:
+        conn = sqlite3.connect(db_path)
+        # Try trigram tokenizer first (best for CJK), then unicode61, then give up
+        for tok in ["trigram", "unicode61"]:
+            try:
+                conn.execute(
+                    f"CREATE VIRTUAL TABLE IF NOT EXISTS kb_fts "
+                    f"USING fts5(id, title, content, tokenize='{tok}')"
+                )
+                conn.commit()
+                return conn, tok
+            except sqlite3.OperationalError:
+                continue
+        conn.close()
+        return None, None
+    except Exception:
+        return None, None
+
+
+def _fts_upsert(conn, entry: dict):
+    """Insert or replace an entry in the FTS index."""
+    eid = entry.get("id", "")
+    title = entry.get("title", "") or ""
+    content = entry.get("content", "") or ""
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO kb_fts(rowid, id, title, content) "
+            "VALUES ((SELECT rowid FROM kb_fts WHERE id=?), ?, ?, ?)",
+            (eid, eid, str(title), str(content)),
+        )
+        conn.commit()
+    except Exception:
+        pass
+
+
+def _fts_delete(conn, entry_id: str):
+    """Delete an entry from the FTS index."""
+    try:
+        conn.execute("DELETE FROM kb_fts WHERE id=?", (entry_id,))
+        conn.commit()
+    except Exception:
+        pass
+
+
+def _fts_search(conn, query: str, limit: int = 20) -> list:
+    """Search FTS5 and return matching entry IDs in score order."""
+    tokens = query.strip().split()
+    if not tokens:
+        return []
+    safe_terms = " AND ".join(
+        '"' + t.replace('"', '""') + '"' for t in tokens if t
+    )
+    try:
+        rows = conn.execute(
+            f"SELECT id FROM kb_fts WHERE kb_fts MATCH ? ORDER BY rank LIMIT ?",
+            (safe_terms, limit),
+        ).fetchall()
+        return [r[0] for r in rows]
+    except Exception:
+        return []
+
+
+def _fts_rebuild_conn(db_dir: str):
+    """Drop and recreate FTS table, return (conn, tokenizer)."""
+    db_path = str(Path(db_dir) / "kb_fts.db")
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.execute("DROP TABLE IF EXISTS kb_fts")
+        conn.commit()
+    except Exception:
+        return None, None
+    return _get_fts_conn(db_dir)
+
+
 def cmd_search(args):
     entries = _load_entries(args.db_path)
-    query = args.query.lower().strip()
+    query = (args.query or "").strip()
     if not query:
         return entries[:20]
-    # Simple substring match with scoring
+
+    # Try FTS5 search first (trigram tokenizer for CJK support)
+    conn, tokenizer = _get_fts_conn(args.db_path)
+    if conn:
+        try:
+            matched_ids = _fts_search(conn, query)
+            if matched_ids:
+                conn.close()
+                id_set = set(matched_ids)
+                id_order = {eid: i for i, eid in enumerate(matched_ids)}
+                results = [e for e in entries if e.get("id") in id_set]
+                results.sort(key=lambda e: id_order.get(e.get("id"), 999))
+                return results[:20]
+        except Exception:
+            pass
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    # Fallback: substring match with scoring
+    q_lower = query.lower()
     scored = []
     for e in entries:
         title = (e.get("title", "") or "").lower()
         content = (e.get("content", "") or "").lower()
         score = 0
-        if query in title:
+        if q_lower in title:
             score += 10
-        if query in content:
+        if q_lower in content:
             score += 1
         if score > 0:
             scored.append((score, e))
@@ -65,12 +166,26 @@ def cmd_upsert(args):
     if not found:
         entries.append(entry)
     _save_entries(args.db_path, entries)
+    # Index into FTS5
+    conn, _ = _get_fts_conn(args.db_path)
+    if conn:
+        try:
+            _fts_upsert(conn, entry)
+        finally:
+            conn.close()
 
 
 def cmd_delete(args):
     entries = _load_entries(args.db_path)
     entries = [e for e in entries if e.get("id") != args.delete]
     _save_entries(args.db_path, entries)
+    # Remove from FTS5
+    conn, _ = _get_fts_conn(args.db_path)
+    if conn:
+        try:
+            _fts_delete(conn, args.delete)
+        finally:
+            conn.close()
 
 
 def _plain_text_from_html(html: str) -> str:
@@ -143,7 +258,22 @@ def cmd_rebuild(args):
     existing = [e for e in _load_entries(str(db_dir)) if not e.get("source_type")]
     all_entries = existing + entries
     _save_entries(str(db_dir), all_entries)
-    print(f"Rebuilt: {len(all_entries)} entries ({len(existing)} manual + {len(entries)} sourced)")
+    # Rebuild FTS5 index
+    conn, tokenizer = _fts_rebuild_conn(str(db_dir))
+    if conn:
+        try:
+            for e in all_entries:
+                _fts_upsert(conn, e)
+            tokenizer_info = f" (tokenizer: {tokenizer})" if tokenizer else ""
+            print(
+                f"Rebuilt: {len(all_entries)} entries "
+                f"({len(existing)} manual + {len(entries)} sourced)"
+                f"{tokenizer_info}"
+            )
+        finally:
+            conn.close()
+    else:
+        print(f"Rebuilt: {len(all_entries)} entries ({len(existing)} manual + {len(entries)} sourced)")
 
 
 def main():

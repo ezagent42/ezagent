@@ -59,8 +59,7 @@ defmodule Ezagent.Invariants.NoSandboxOwnerNoiseTest do
 
         {:ok, %{id: id}} =
           Invocation.dispatch(%Invocation{
-            target:
-              URI.parse("#{URI.to_string(uri)}?action=routing.add_rule"),
+            target: URI.parse("#{URI.to_string(uri)}?action=routing.add_rule"),
             mode: :call,
             args: %{
               table: MentionRouting,
