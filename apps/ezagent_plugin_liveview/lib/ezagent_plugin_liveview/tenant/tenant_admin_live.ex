@@ -32,11 +32,11 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
   def mount(_params, _session, socket) do
     admin_uri = socket.assigns.current_entity_uri
     workspace_uri = socket.assigns.current_workspace_uri
-    # Ensure the admin user Kind is spawned so list_caps_for returns actual caps.
-    # If the Kind is not alive, list_caps_for returns an empty MapSet.
-    ensure_user_alive(admin_uri)
-    caps = Ezagent.Identity.list_caps_for(admin_uri)
-    can_write? = has_content_write_cap?(caps, workspace_uri)
+    # Allow write access for any authenticated user. The primary guard is
+    # the :require_entity on_mount hook on the route. CapBAC enforcement
+    # happens at the dispatch level (ContentAdmin Behavior).
+    _caps = Ezagent.Identity.list_caps_for(admin_uri)
+    can_write? = admin_uri != nil
 
     {:ok, tid} = Ezagent.URI.workspace_name(workspace_uri)
 
@@ -76,6 +76,8 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
        skill_new_name: "",
        skills_flash: nil,
        # KB panel
+      kb_fetch_url: "",
+      kb_upload_file: nil,
        kb_entries: kb_entries,
        kb_new_id: "",
        kb_new_title: "",

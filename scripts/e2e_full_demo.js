@@ -19,7 +19,7 @@ const fs = require('fs');
 
 const BASE_URL = 'http://localhost:10042';
 const RECORDING_DIR = path.join(__dirname, 'e2e_recordings');
-const WS = 'cinnox';
+const WS = 'demo-acme';
 const ADMIN_WS = 'system';
 
 const TEST_TENANT = 'demo-' + Date.now().toString(36);
