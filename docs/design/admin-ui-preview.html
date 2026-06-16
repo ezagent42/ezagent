@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ezagent AutoService Admin UI - Preview</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  .tab-active { @apply bg-white border border-gray-200 border-b-white text-blue-700 -mb-px; }
+  .tab-inactive { @apply text-gray-500 hover:text-gray-700; }
+  .section-card { @apply rounded-xl border border-gray-200 bg-white overflow-hidden; }
+  .section-header { @apply px-4 py-2.5 bg-gray-800 text-white; }
+  .btn-primary { @apply rounded bg-blue-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-blue-700 disabled:opacity-40; }
+  .btn-success { @apply rounded bg-emerald-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-emerald-700; }
+  .btn-danger { @apply text-xs rounded bg-red-50 text-red-600 px-2.5 py-1 hover:bg-red-100; }
+  .btn-outline { @apply rounded border border-gray-300 text-gray-700 px-4 py-1.5 text-sm hover:bg-gray-50; }
+  .input-field { @apply rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400; }
+  .badge-green { @apply rounded px-2 py-0.5 text-xs bg-green-100 text-green-800; }
+  .badge-yellow { @apply rounded px-2 py-0.5 text-xs bg-yellow-100 text-yellow-800; }
+  .badge-red { @apply rounded px-2 py-0.5 text-xs bg-red-100 text-red-700; }
+</style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- 整体布局: 侧边栏 + 内容区 -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="flex min-h-screen">
+
+  <!-- 侧边栏 -->
+  <aside class="w-56 bg-gray-900 text-gray-300 flex-shrink-0 min-h-screen">
+    <div class="px-4 py-4 border-b border-gray-700">
+      <div class="text-white font-bold text-lg">ezagent</div>
+      <div class="text-xs text-gray-500 mt-0.5">AutoService Admin</div>
+    </div>
+
+    <!-- Tenant Admin Section -->
+    <div class="px-3 py-3">
+      <div class="text-xs uppercase tracking-wider text-gray-500 mb-2 px-2">Tenant Admin</div>
+      <a href="#" class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-800">
+        <span>📊</span> Overview
+      </a>
+      <a href="#" class="flex items-center gap-2 px-2 py-1.5 rounded text-sm bg-gray-800 text-white">
+        <span>📝</span> Soul Editor
+      </a>
+      <a href="#" class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-800">
+        <span>🏷️</span> Slot Editor
+      </a>
+      <a href="#" class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-800">
+        <span>📚</span> Skills
+      </a>
+      <a href="#" class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-800">
+        <span>🗄️</span> KB Manager
+      </a>
+      <a href="#" class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-800">
+        <span>🔄</span> CR Dashboard
+      </a>
+      <a href="#" class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-800">
+        <span>📋</span> Versions
+      </a>
+      <a href="#" class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-800">
+        <span>👁️</span> Preview
+      </a>
+      <a href="#" class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-800">
+        <span>⚡</span> Fast Prompt
+      </a>
+      <a href="#" class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-800">
+        <span>👤</span> Operators
+      </a>
+    </div>
+
+    <!-- Platform Section -->
+    <div class="px-3 py-3 border-t border-gray-700">
+      <div class="text-xs uppercase tracking-wider text-gray-500 mb-2 px-2">Platform (Master)</div>
+      <a href="#" class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-800">
+        <span>🏗️</span> Platform Soul
+      </a>
+      <a href="#" class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-800">
+        <span>🛠️</span> Platform Skills
+      </a>
+      <a href="#" class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-800">
+        <span>⚖️</span> Priority
+      </a>
+    </div>
+
+    <!-- Future -->
+    <div class="px-3 py-3 border-t border-gray-700">
+      <div class="text-xs uppercase tracking-wider text-gray-500 mb-2 px-2">AI</div>
+      <a href="#" class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-800 opacity-50">
+        <span>💬</span> Admin Session
+        <span class="text-[10px] bg-gray-700 px-1 rounded ml-auto">soon</span>
+      </a>
+    </div>
+  </aside>
+
+  <!-- 主内容区 -->
+  <main class="flex-1 p-6 overflow-auto">
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- Page 1: Soul Editor -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <section class="mb-12">
+      <h2 class="text-lg font-bold text-gray-900 mb-2">📝 Soul Editor</h2>
+      <p class="text-sm text-gray-500 mb-4">Route: /admin/autoservice/tenants/demo-acme/soul</p>
+
+      <div class="max-w-4xl mx-auto">
+        <!-- Toolbar -->
+        <div class="flex items-center justify-between mb-4">
+          <h1 class="text-xl font-bold text-gray-900">Soul 编辑</h1>
+          <div class="flex items-center gap-3">
+            <span class="text-xs text-gray-400">workspace://demo-acme</span>
+            <select class="input-field text-xs">
+              <option>Role: customer</option>
+              <option>Role: lead</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Tabs -->
+        <nav class="flex border-b border-gray-200 space-x-1 mb-0">
+          <button class="px-4 py-2 text-sm font-medium rounded-t-lg tab-active">Source</button>
+          <button class="px-4 py-2 text-sm font-medium rounded-t-lg tab-inactive">Diff</button>
+          <button class="px-4 py-2 text-sm font-medium rounded-t-lg tab-inactive">Preview</button>
+          <button class="px-4 py-2 text-sm font-medium rounded-t-lg tab-inactive">AI Assist</button>
+        </nav>
+
+        <!-- Source Tab Content -->
+        <div class="section-card rounded-tl-none">
+          <!-- Layer Info -->
+          <div class="border-b border-gray-200 px-4 py-3 bg-gray-50">
+            <div class="flex items-center gap-4 text-xs">
+              <span class="text-gray-400">L0 Framework</span>
+              <span class="text-gray-300">→</span>
+              <span class="text-gray-400">L1 Platform</span>
+              <span class="text-gray-300">→</span>
+              <span class="text-gray-400">L2 Industry: 零售电商</span>
+              <span class="text-gray-300">→</span>
+              <span class="text-blue-700 font-medium">L3 Tenant ★</span>
+            </div>
+          </div>
+
+          <!-- Slot Tags -->
+          <div class="border-b border-gray-200 px-4 py-2 bg-gray-50">
+            <div class="flex items-center gap-2 text-xs">
+              <span class="text-gray-500">Slots:</span>
+              <span class="bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full cursor-pointer hover:bg-blue-100">brand_name</span>
+              <span class="bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full cursor-pointer hover:bg-blue-100">industry</span>
+              <span class="bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full cursor-pointer hover:bg-blue-100">hotline</span>
+              <span class="bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full cursor-pointer hover:bg-blue-100">service_hours</span>
+            </div>
+          </div>
+
+          <!-- Editor -->
+          <div class="p-4">
+            <textarea rows="14" class="w-full font-mono text-sm border border-gray-300 rounded p-3 focus:outline-none focus:ring-2 focus:ring-blue-400"># {{brand_name}} 智能客服 Agent
+
+你是 {{brand_name}} 的智能客服助手，专注于 {{industry}} 行业。
+
+## 品牌信息
+- 品牌名称：{{brand_name}}
+- 行业：{{industry}}
+- 服务时间：{{service_hours}}
+- 客服热线：{{hotline}}
+
+## 服务范围
+1. 订单查询与跟踪
+2. 退换货处理
+3. 产品咨询
+4. 价格与优惠查询
+5. 投诉与建议
+
+## 回复原则
+1. **友好专业**：始终保持礼貌、耐心的态度
+2. **准确高效**：优先使用知识库中的准确信息
+3. **主动解决**：无法直接回答时，提供替代方案或引导转人工</textarea>
+            <div class="mt-3 flex justify-end gap-2">
+              <button class="btn-outline">重置</button>
+              <button class="btn-primary">保存到 Sandbox</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- Page 2: Slot Editor -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <section class="mb-12">
+      <h2 class="text-lg font-bold text-gray-900 mb-2">🏷️ Slot Editor</h2>
+      <p class="text-sm text-gray-500 mb-4">Route: /admin/autoservice/tenants/demo-acme/soul/slots</p>
+
+      <div class="max-w-3xl mx-auto">
+        <div class="section-card">
+          <div class="section-header">
+            <h3 class="font-semibold text-sm">Slot 值编辑 — sandbox/slots/customer.yaml</h3>
+          </div>
+
+          <!-- Form Fields -->
+          <div class="p-4 space-y-3">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs text-gray-500 font-medium">brand_name</label>
+                <input type="text" value="Acme Corp" class="input-field w-full mt-0.5" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 font-medium">industry</label>
+                <input type="text" value="零售电商" class="input-field w-full mt-0.5" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 font-medium">hotline</label>
+                <input type="text" value="400-888-9999" class="input-field w-full mt-0.5" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 font-medium">service_hours</label>
+                <input type="text" value="7×24小时" class="input-field w-full mt-0.5" />
+              </div>
+            </div>
+
+            <!-- Add new slot -->
+            <div class="flex gap-2 pt-2 border-t border-gray-100">
+              <input type="text" placeholder="新 key" class="input-field w-32" />
+              <input type="text" placeholder="新 value" class="input-field flex-1" />
+              <button class="btn-outline text-xs">+ 新增</button>
+            </div>
+
+            <div class="flex justify-between items-center pt-3 border-t border-gray-100">
+              <span class="text-xs text-green-700">✅ 已保存</span>
+              <div class="flex gap-2">
+                <button class="btn-outline text-xs">切换为 YAML 编辑</button>
+                <button class="btn-primary">保存全部</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Diff -->
+          <div class="border-t border-gray-200 p-4 bg-gray-50">
+            <h4 class="text-xs font-medium text-gray-700 mb-2">Sandbox ←→ Release 对比</h4>
+            <div class="text-xs space-y-1 font-mono">
+              <div class="text-green-700">+ brand_name: "Acme Corp" (was "Cinnox")</div>
+              <div class="text-green-700">+ industry: "零售电商" (was unset)</div>
+              <div class="text-gray-400">  hotline: "400-888-9999" (unchanged)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- Page 3: Skill Manager -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <section class="mb-12">
+      <h2 class="text-lg font-bold text-gray-900 mb-2">📚 Skill Manager</h2>
+      <p class="text-sm text-gray-500 mb-4">Route: /admin/autoservice/tenants/demo-acme/skills</p>
+
+      <div class="max-w-4xl mx-auto">
+        <!-- Filters -->
+        <div class="flex items-center gap-3 mb-4">
+          <input type="text" placeholder="搜索 skill..." class="input-field w-48" />
+          <select class="input-field text-xs"><option>Layer: 全部</option></select>
+          <select class="input-field text-xs"><option>Safety: 全部</option></select>
+          <div class="flex-1"></div>
+          <span class="text-xs text-gray-400">Role: customer</span>
+        </div>
+
+        <!-- L0 -->
+        <div class="mb-4">
+          <h4 class="text-xs font-medium text-gray-500 mb-2 px-1">L0 Framework (只读)</h4>
+          <div class="grid grid-cols-4 gap-3">
+            <div class="section-card p-3 opacity-50 bg-gray-50">
+              <div class="flex justify-between items-start">
+                <span class="font-mono text-sm font-medium">greeting</span>
+                <span class="badge-green text-[10px]">safe</span>
+              </div>
+              <p class="text-xs text-gray-500 mt-1">L0 · 框架层</p>
+              <p class="text-xs text-amber-500 mt-1">被 L3 覆盖</p>
+            </div>
+            <div class="section-card p-3">
+              <div class="flex justify-between items-start">
+                <span class="font-mono text-sm font-medium">order-lookup</span>
+                <span class="badge-green text-[10px]">safe</span>
+              </div>
+              <p class="text-xs text-gray-500 mt-1">L0 · 框架层</p>
+            </div>
+            <div class="section-card p-3">
+              <div class="flex justify-between items-start">
+                <span class="font-mono text-sm font-medium">refund-policy</span>
+                <span class="badge-green text-[10px]">safe</span>
+              </div>
+              <p class="text-xs text-gray-500 mt-1">L0 · 框架层</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- L1 -->
+        <div class="mb-4">
+          <h4 class="text-xs font-medium text-gray-500 mb-2 px-1">L1 Platform</h4>
+          <div class="grid grid-cols-4 gap-3">
+            <div class="section-card p-3">
+              <div class="flex justify-between items-start">
+                <span class="font-mono text-sm font-medium">product-qa</span>
+                <span class="badge-green text-[10px]">safe</span>
+              </div>
+              <p class="text-xs text-gray-500 mt-1">L1 · 平台层</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- L2 -->
+        <div class="mb-4">
+          <h4 class="text-xs font-medium text-gray-500 mb-2 px-1">L2 Industry: 零售电商</h4>
+          <div class="grid grid-cols-4 gap-3">
+            <div class="section-card p-3">
+              <div class="flex justify-between items-start">
+                <span class="font-mono text-sm font-medium">vip-service</span>
+                <span class="badge-green text-[10px]">safe</span>
+              </div>
+              <p class="text-xs text-gray-500 mt-1">L2 · 行业层</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- L3 (editable) -->
+        <div>
+          <div class="flex items-center justify-between mb-2 px-1">
+            <h4 class="text-xs font-medium text-blue-700">L3 Tenant: demo-acme ★</h4>
+            <button class="btn-primary text-xs">+ 新建 Skill</button>
+          </div>
+          <div class="grid grid-cols-4 gap-3">
+            <div class="section-card p-3 border-blue-300">
+              <div class="flex justify-between items-start">
+                <span class="font-mono text-sm font-medium">order-lookup</span>
+                <span class="badge-green text-[10px]">safe</span>
+              </div>
+              <p class="text-xs text-gray-500 mt-1">L3 · 租户层</p>
+              <div class="flex gap-2 mt-2">
+                <button class="text-xs text-blue-600 hover:underline">编辑</button>
+                <button class="text-xs text-red-500 hover:underline">删除</button>
+              </div>
+            </div>
+            <div class="section-card p-3 border-blue-300">
+              <div class="flex justify-between items-start">
+                <span class="font-mono text-sm font-medium">custom-faq</span>
+                <span class="badge-yellow text-[10px]">draft</span>
+              </div>
+              <p class="text-xs text-gray-500 mt-1">L3 · 租户层</p>
+              <div class="flex gap-2 mt-2">
+                <button class="text-xs text-blue-600 hover:underline">编辑</button>
+                <button class="text-xs text-red-500 hover:underline">删除</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- Page 4: KB Manager -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <section class="mb-12">
+      <h2 class="text-lg font-bold text-gray-900 mb-2">🗄️ KB Manager</h2>
+      <p class="text-sm text-gray-500 mb-4">Route: /admin/autoservice/tenants/demo-acme/kb</p>
+
+      <div class="max-w-4xl mx-auto">
+        <!-- Tabs -->
+        <nav class="flex border-b border-gray-200 space-x-1 mb-0">
+          <button class="px-4 py-2 text-sm font-medium rounded-t-lg tab-active">Sources 列表</button>
+          <button class="px-4 py-2 text-sm font-medium rounded-t-lg tab-inactive">URL 抓取</button>
+          <button class="px-4 py-2 text-sm font-medium rounded-t-lg tab-inactive">文件上传</button>
+          <button class="px-4 py-2 text-sm font-medium rounded-t-lg tab-inactive">手动添加</button>
+          <button class="px-4 py-2 text-sm font-medium rounded-t-lg tab-inactive">搜索</button>
+        </nav>
+
+        <div class="section-card rounded-tl-none">
+          <!-- Source Table -->
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-50 border-b border-gray-200">
+                <tr class="text-left text-xs uppercase text-gray-500">
+                  <th class="px-4 py-2">Type</th>
+                  <th class="py-2">Source</th>
+                  <th class="py-2">Chunks</th>
+                  <th class="py-2">Updated</th>
+                  <th class="py-2"></th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                <tr class="hover:bg-gray-50">
+                  <td class="px-4 py-2"><span class="badge-green text-[10px]">url</span></td>
+                  <td class="py-2 font-mono text-xs">docs.acmecorp.com</td>
+                  <td class="py-2 text-xs">12</td>
+                  <td class="py-2 text-xs text-gray-400">2026-06-16</td>
+                  <td class="py-2"><button class="btn-danger">删除</button></td>
+                </tr>
+                <tr class="hover:bg-gray-50">
+                  <td class="px-4 py-2"><span class="badge-yellow text-[10px]">file</span></td>
+                  <td class="py-2 font-mono text-xs">product-guide.pdf</td>
+                  <td class="py-2 text-xs">8</td>
+                  <td class="py-2 text-xs text-gray-400">2026-06-15</td>
+                  <td class="py-2"><button class="btn-danger">删除</button></td>
+                </tr>
+                <tr class="hover:bg-gray-50">
+                  <td class="px-4 py-2"><span class="text-[10px] bg-gray-100 px-1.5 py-0.5 rounded">manual</span></td>
+                  <td class="py-2 font-mono text-xs">kb-001 (退换货流程)</td>
+                  <td class="py-2 text-xs">1</td>
+                  <td class="py-2 text-xs text-gray-400">2026-06-16</td>
+                  <td class="py-2"><button class="btn-danger">删除</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Actions -->
+          <div class="border-t border-gray-200 px-4 py-3 bg-gray-50 flex justify-between">
+            <button class="bg-amber-600 text-white px-4 py-1.5 rounded text-sm hover:bg-amber-700">从 _sources + glossary 重建 KB</button>
+            <span class="text-xs text-gray-400 self-center">Total: 21 chunks from 6 sources</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- Page 5: CR Dashboard -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <section class="mb-12">
+      <h2 class="text-lg font-bold text-gray-900 mb-2">🔄 CR Dashboard</h2>
+      <p class="text-sm text-gray-500 mb-4">Route: /admin/autoservice/tenants/demo-acme/cr</p>
+
+      <div class="max-w-3xl mx-auto">
+        <!-- Active CR Card -->
+        <div class="section-card mb-4">
+          <div class="section-header flex justify-between">
+            <h3 class="font-semibold text-sm">Active CR</h3>
+            <span class="badge-yellow">draft</span>
+          </div>
+          <div class="p-4">
+            <div class="text-sm space-y-1 mb-4">
+              <div class="flex justify-between"><span class="text-gray-500">CR ID</span><span class="font-mono text-xs">cr-a1b2c3d4e5f6</span></div>
+              <div class="flex justify-between"><span class="text-gray-500">Created</span><span class="text-xs">2026-06-16 10:30</span></div>
+              <div class="flex justify-between"><span class="text-gray-500">Files Changed</span><span class="font-medium">5</span></div>
+              <div class="flex justify-between"><span class="text-gray-500">Lines</span><span class="text-green-700 text-xs">+21</span> <span class="text-red-600 text-xs">-1</span></div>
+            </div>
+
+            <!-- Tracked Changes -->
+            <div class="space-y-1 mb-4">
+              <div class="flex items-center justify-between text-xs bg-gray-50 rounded px-3 py-1.5">
+                <span class="font-mono">souls/customer.md</span>
+                <span class="text-green-700">+12 -1 lines</span>
+                <button class="text-gray-400 hover:text-red-500 ml-2">↩</button>
+              </div>
+              <div class="flex items-center justify-between text-xs bg-gray-50 rounded px-3 py-1.5">
+                <span class="font-mono">slots/customer.yaml</span>
+                <span class="text-green-700">+3 lines</span>
+                <button class="text-gray-400 hover:text-red-500 ml-2">↩</button>
+              </div>
+              <div class="flex items-center justify-between text-xs bg-gray-50 rounded px-3 py-1.5">
+                <span class="font-mono">skills/order-lookup/SKILL.md</span>
+                <span class="text-blue-600">new file</span>
+                <button class="text-gray-400 hover:text-red-500 ml-2">↩</button>
+              </div>
+            </div>
+
+            <!-- Lint -->
+            <div class="bg-gray-50 rounded p-3 mb-4 text-xs space-y-1">
+              <div class="text-green-700">✓ R01: No broken symlinks</div>
+              <div class="text-green-700">✓ R02: All required files present</div>
+              <div class="text-amber-700">⚠ R04: Slot template syntax warning</div>
+            </div>
+
+            <!-- Actions -->
+            <div class="flex gap-2">
+              <button class="btn-outline text-xs">Refresh Lint</button>
+              <button class="btn-success">Publish CR</button>
+              <button class="bg-red-50 text-red-700 px-4 py-1.5 rounded text-sm border border-red-200 hover:bg-red-100">Cancel CR</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- CR History -->
+        <div class="section-card">
+          <div class="section-header"><h3 class="font-semibold text-sm">CR History (3)</h3></div>
+          <div class="divide-y divide-gray-100 text-xs">
+            <div class="flex items-center justify-between px-4 py-2">
+              <span class="font-mono">cr-prev-001</span>
+              <span class="badge-green">published</span>
+              <span>v3</span>
+              <span class="text-gray-400">2026-06-15</span>
+            </div>
+            <div class="flex items-center justify-between px-4 py-2">
+              <span class="font-mono">cr-prev-002</span>
+              <span class="badge-red">cancelled</span>
+              <span>—</span>
+              <span class="text-gray-400">2026-06-14</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- Page 6: Init Wizard Step 1 -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <section class="mb-12">
+      <h2 class="text-lg font-bold text-gray-900 mb-2">🚀 初始化向导 — Step 1: Soul 生成</h2>
+      <p class="text-sm text-gray-500 mb-4">Tenant Admin 登录后看到 → 开始初始化 → Step 1/3</p>
+
+      <div class="max-w-2xl mx-auto">
+        <!-- Progress -->
+        <div class="flex gap-2 mb-4">
+          <div class="flex-1 h-1.5 rounded-full bg-gray-800"></div>
+          <div class="flex-1 h-1.5 rounded-full bg-gray-200"></div>
+          <div class="flex-1 h-1.5 rounded-full bg-gray-200"></div>
+        </div>
+        <p class="text-xs text-gray-500 mb-4">Step 1 of 3: Brand Info → Soul Generation</p>
+
+        <div class="section-card">
+          <div class="p-4 space-y-3">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-xs font-medium text-gray-700">Brand Name *</label>
+                <input type="text" value="Acme Corp" class="input-field w-full mt-0.5" />
+              </div>
+              <div>
+                <label class="text-xs font-medium text-gray-700">Industry *</label>
+                <select class="input-field w-full mt-0.5 text-xs">
+                  <option>零售电商</option>
+                  <option>通讯</option>
+                  <option>金融</option>
+                  <option>教育</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-xs font-medium text-gray-700">Service Hours</label>
+                <input type="text" value="7×24小时" class="input-field w-full mt-0.5" />
+              </div>
+              <div>
+                <label class="text-xs font-medium text-gray-700">Hotline</label>
+                <input type="text" value="400-888-9999" class="input-field w-full mt-0.5" />
+              </div>
+            </div>
+
+            <!-- Live Soul Preview -->
+            <div class="border border-gray-200 rounded-lg p-3 bg-gray-50">
+              <div class="text-xs text-gray-500 mb-2 flex items-center gap-2">
+                <span>📄 Soul 预览 (实时生成)</span>
+                <span class="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[10px]">L0+L1+L2→L3</span>
+              </div>
+              <div class="font-mono text-xs text-gray-700 whitespace-pre-wrap leading-relaxed"># Acme Corp 智能客服 Agent
+
+你是 Acme Corp 的智能客服助手，专注于 零售电商 行业。
+
+## 品牌信息
+- 品牌名称：Acme Corp
+- 行业：零售电商
+- 服务时间：7×24小时
+- 客服热线：400-888-9999</div>
+              <div class="text-[10px] text-gray-400 mt-2">Auto-generated from template: L0(framework) + L1(platform) + L2(零售电商) → L3(tenant)</div>
+            </div>
+
+            <div class="flex justify-between pt-2">
+              <button class="btn-outline text-xs">跳过</button>
+              <button class="btn-primary">下一步: KB 初始化 →</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- Page 7: Init Wizard Step 3 (Preview + Publish) -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <section class="mb-12">
+      <h2 class="text-lg font-bold text-gray-900 mb-2">🚀 初始化向导 — Step 3: 预览并发布</h2>
+
+      <div class="max-w-2xl mx-auto">
+        <div class="flex gap-2 mb-4">
+          <div class="flex-1 h-1.5 rounded-full bg-gray-800"></div>
+          <div class="flex-1 h-1.5 rounded-full bg-gray-800"></div>
+          <div class="flex-1 h-1.5 rounded-full bg-gray-800"></div>
+        </div>
+        <p class="text-xs text-gray-500 mb-4">Step 3 of 3: Preview & Publish</p>
+
+        <!-- Summary -->
+        <div class="section-card mb-4">
+          <div class="section-header"><h3 class="font-semibold text-sm">初始化 Summary</h3></div>
+          <div class="p-4 text-sm space-y-1.5">
+            <div class="flex items-center gap-2"><span class="text-green-600">✅</span> Soul: 已从模板生成 (85 lines, 2,048 bytes)</div>
+            <div class="flex items-center gap-2"><span class="text-green-600">✅</span> Slots: 已预填 5 个值</div>
+            <div class="flex items-center gap-2"><span class="text-green-600">✅</span> Skills: 3 platform skills inherited</div>
+            <div class="flex items-center gap-2"><span class="text-green-600">✅</span> Fast Prompt: 已配置</div>
+            <div class="flex items-center gap-2"><span class="text-blue-600">ℹ️</span> KB: 2 manual entries (skip URL/file)</div>
+          </div>
+        </div>
+
+        <!-- Lint -->
+        <div class="section-card mb-4">
+          <div class="section-header"><h3 class="font-semibold text-sm">Lint Results</h3></div>
+          <div class="p-4 text-xs space-y-1 font-mono">
+            <div class="text-green-700">✓ R01 No broken symlinks</div>
+            <div class="text-green-700">✓ R02 Required files present</div>
+            <div class="text-green-700">✓ R03 No empty skill dirs</div>
+            <div class="text-green-700">✓ R04 Slot syntax valid</div>
+            <div class="text-green-700">✓ R05 KB integrity OK</div>
+          </div>
+        </div>
+
+        <div class="flex justify-between">
+          <button class="btn-outline">← 上一步</button>
+          <button class="btn-success text-base px-6 py-2">发布初始化 → v1</button>
+        </div>
+      </div>
+    </section>
+
+    <div class="text-center text-gray-400 text-xs py-8 border-t border-gray-200 mt-12">
+      ezagent AutoService Admin UI v2 — Design Preview — June 2026
+    </div>
+  </main>
+</div>
+
+</body>
+</html>
