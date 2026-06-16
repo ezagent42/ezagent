@@ -18,6 +18,22 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
   @impl true
   def mount(%{"tid" => tid}, _session, socket) do
     kb_dir = Path.join([TenantRuntime.sandbox_path(tid), "kb"])
+    ensure_kb_initialized(kb_dir)
+
+    glossary = read_glossary(kb_dir)
+    glossary = if glossary == [] or glossary == %{} do
+      glossary_path = Path.join(kb_dir, "glossary.json")
+      defaults = [
+        %{"term" => "退换货流程", "definition" => "客户申请→生成单号→寄回→验收→退款"},
+        %{"term" => "订单查询", "definition" => "提供订单号查询物流状态、预计送达时间"},
+        %{"term" => "客服热线", "definition" => "工作时间拨打400-888-9999"}
+      ]
+      File.mkdir_p!(kb_dir)
+      File.write!(glossary_path, Jason.encode!(defaults, pretty: true))
+      defaults
+    else
+      glossary
+    end
 
     {:ok,
      assign(socket,
@@ -27,13 +43,14 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
        tab: "sources",
        kb_dir: kb_dir,
        sources: SourceTracker.list_sources(kb_dir),
+       entries: reload_entries(kb_dir),
        url_input: "",
        url_flash: nil,
        manual_id: "",
        manual_title: "",
        manual_content: "",
        manual_flash: nil,
-       glossary: read_glossary(kb_dir),
+       glossary: glossary,
        glossary_term: "",
        glossary_definition: "",
        glossary_edit_idx: nil,
@@ -68,11 +85,12 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
     tid = socket.assigns.tid
 
     KbStore.delete(kb_dir, source_id)
-    CrEngine.ensure_active_cr(tid)
+    CrEngine.record_file_change(tid, "kb/sources")
 
     {:noreply,
      assign(socket,
        sources: SourceTracker.list_sources(kb_dir),
+       entries: reload_entries(kb_dir),
        rebuild_flash: nil
      )}
   end
@@ -85,13 +103,14 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
 
     case KbStore.fetch_url(kb_dir, url) do
       :ok ->
-        CrEngine.ensure_active_cr(tid)
+        CrEngine.record_file_change(tid, "kb/sources")
 
         {:noreply,
          assign(socket,
            url_input: "",
            url_flash: "URL 抓取成功",
-           sources: SourceTracker.list_sources(kb_dir)
+           sources: SourceTracker.list_sources(kb_dir),
+           entries: reload_entries(kb_dir)
          )}
 
       {:error, reason} ->
@@ -113,7 +132,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
       "source_id" => id
     })
 
-    CrEngine.ensure_active_cr(tid)
+    CrEngine.record_file_change(tid, "kb/sources")
 
     {:noreply,
      assign(socket,
@@ -121,7 +140,8 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
        manual_title: "",
        manual_content: "",
        manual_flash: "条目 #{id} 已添加",
-       sources: SourceTracker.list_sources(kb_dir)
+       sources: SourceTracker.list_sources(kb_dir),
+       entries: reload_entries(kb_dir)
      )}
   end
 
@@ -150,12 +170,13 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
       end)
 
     success_count = length(uploaded)
-    CrEngine.ensure_active_cr(tid)
+    CrEngine.record_file_change(tid, "kb/sources")
 
     {:noreply,
      assign(socket,
        upload_flash: "#{success_count} 个文件已上传",
-       sources: SourceTracker.list_sources(kb_dir)
+       sources: SourceTracker.list_sources(kb_dir),
+       entries: reload_entries(kb_dir)
      )}
   end
 
@@ -167,7 +188,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
 
     updated = Map.put(glossary, term, definition)
     write_glossary(kb_dir, updated)
-    CrEngine.ensure_active_cr(socket.assigns.tid)
+    CrEngine.record_file_change(socket.assigns.tid, "kb/sources")
 
     {:noreply,
      assign(socket,
@@ -219,7 +240,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
       |> Map.put(term, definition)
 
     write_glossary(kb_dir, updated)
-    CrEngine.ensure_active_cr(socket.assigns.tid)
+    CrEngine.record_file_change(socket.assigns.tid, "kb/sources")
 
     {:noreply,
      assign(socket,
@@ -237,7 +258,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
     glossary = socket.assigns.glossary || %{}
     updated = Map.delete(glossary, term)
     write_glossary(kb_dir, updated)
-    CrEngine.ensure_active_cr(socket.assigns.tid)
+    CrEngine.record_file_change(socket.assigns.tid, "kb/sources")
 
     {:noreply,
      assign(socket,
@@ -262,12 +283,18 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
     kb_dir = socket.assigns.kb_dir
     tid = socket.assigns.tid
 
+    ensure_kb_initialized(kb_dir)
+
     case KbRebuilder.rebuild(kb_dir) do
       :ok ->
-        CrEngine.ensure_active_cr(tid)
+        CrEngine.record_file_change(tid, "kb/sources")
 
         {:noreply,
-         assign(socket, rebuild_flash: "KB 重建成功", sources: SourceTracker.list_sources(kb_dir))}
+         assign(socket,
+           rebuild_flash: "KB 重建成功",
+           sources: SourceTracker.list_sources(kb_dir),
+           entries: reload_entries(kb_dir)
+         )}
 
       {:error, reason} ->
         {:noreply, assign(socket, rebuild_flash: "重建失败: #{inspect(reason)}")}
@@ -710,6 +737,21 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
   end
 
   # -- Private helpers --
+
+  defp ensure_kb_initialized(kb_dir) do
+    script_path = Path.join(kb_dir, "kb_search_mcp.py")
+    unless File.exists?(script_path) do
+      skeleton = Path.join([Application.app_dir(:ezagent_plugin_content), "priv", "skeleton", "kb", "kb_search_mcp.py"])
+      if File.exists?(skeleton) do
+        File.mkdir_p!(kb_dir)
+        File.cp!(skeleton, script_path)
+      end
+    end
+  end
+
+  defp reload_entries(kb_dir) do
+    KbStore.search(kb_dir, "") |> Enum.take(20)
+  end
 
   defp read_glossary(kb_dir) do
     path = Path.join(kb_dir, "glossary.json")

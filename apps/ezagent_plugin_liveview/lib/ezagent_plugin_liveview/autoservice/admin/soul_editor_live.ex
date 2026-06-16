@@ -90,7 +90,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SoulEditorLive do
     File.mkdir_p!(Path.dirname(sandbox_path))
     File.write!(sandbox_path, socket.assigns.soul_content)
 
-    CrEngine.ensure_active_cr(tid)
+    CrEngine.record_file_change(tid, "souls/customer.md")
 
     {:noreply, assign(socket, saved_flash: "Soul 已保存到 sandbox")}
   rescue

@@ -90,7 +90,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
     tid = socket.assigns.tid
 
     SkillStore.write(base_dir, tid, @role, name, content)
-    CrEngine.ensure_active_cr(tid)
+    CrEngine.record_file_change(tid, "skills/customer/#{name}/SKILL.md")
 
     layers = load_all_layers(base_dir, tid, @role)
     filtered = apply_search(layers, socket.assigns.search_query)
@@ -131,7 +131,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
     tid = socket.assigns.tid
 
     SkillStore.write(base_dir, tid, @role, name, content)
-    CrEngine.ensure_active_cr(tid)
+    CrEngine.record_file_change(tid, "skills/customer/#{name}/SKILL.md")
 
     layers = load_all_layers(base_dir, tid, @role)
     filtered = apply_search(layers, socket.assigns.search_query)

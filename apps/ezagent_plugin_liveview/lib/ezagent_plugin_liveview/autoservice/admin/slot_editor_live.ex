@@ -60,7 +60,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
     new_values = Map.put(socket.assigns.slot_values, key, value)
 
     write_slots_file(tid, new_values)
-    CrEngine.ensure_active_cr(tid)
+    CrEngine.record_file_change(tid, "slots/customer.yaml")
 
     diff = recompute_diff(socket.assigns.release_values, new_values)
 
@@ -91,7 +91,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
         new_values = Map.put(socket.assigns.slot_values, key, value)
         write_slots_file(tid, new_values)
         all_keys = Enum.uniq([key | socket.assigns.all_keys])
-        CrEngine.ensure_active_cr(tid)
+        CrEngine.record_file_change(tid, "slots/customer.yaml")
 
         diff = recompute_diff(socket.assigns.release_values, new_values)
 
@@ -115,7 +115,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
     new_values = Map.delete(socket.assigns.slot_values, key)
     write_slots_file(tid, new_values)
     all_keys = List.delete(socket.assigns.all_keys, key)
-    CrEngine.ensure_active_cr(tid)
+    CrEngine.record_file_change(tid, "slots/customer.yaml")
 
     diff = recompute_diff(socket.assigns.release_values, new_values)
 
@@ -163,7 +163,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
         all_keys = Enum.uniq(all_keys ++ yaml_keys)
 
         diff = recompute_diff(socket.assigns.release_values, new_values)
-        CrEngine.ensure_active_cr(tid)
+        CrEngine.record_file_change(tid, "slots/customer.yaml")
 
         {:noreply,
          assign(socket,
