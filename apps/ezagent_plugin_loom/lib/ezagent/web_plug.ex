@@ -319,7 +319,9 @@ defmodule EzagentPluginLoom.WebPlug do
           salesperson_config: Map.get(snap, "salesperson_config"),
           danmaku_config: Map.get(snap, "danmaku_config"),
           ws: Map.get(snap, "ws"),
-          origin_sid: Map.get(snap, "origin_sid")
+          origin_sid: Map.get(snap, "origin_sid"),
+          # 多页随快照带走 → 只读视图 ?page= 可达。
+          pages: Map.get(snap, "pages")
         })
 
       :error ->
@@ -465,6 +467,30 @@ defmodule EzagentPluginLoom.WebPlug do
   # 角色面板:列房间里的「人」(给账号多选下拉用)。
   get "/api/:ws/:sid/members" do
     json_resp(conn, 200, roster_humans(conn, ws, sid))
+  end
+
+  # 2026-06-16 — 多页:发布物默认一页,作者可增删页;builder 改的是「活动页」;发布时全部一起发。
+  get "/api/:ws/:sid/pages" do
+    json_resp(conn, 200, pages_get(ws, sid))
+  end
+
+  post "/api/:ws/:sid/pages" do
+    json_resp(conn, 200, pages_put_meta(ws, sid, conn.body_params || %{}))
+  end
+
+  post "/api/:ws/:sid/active-page" do
+    id = (conn.body_params || %{}) |> Map.get("id", "") |> to_string()
+    json_resp(conn, 200, pages_set_active(ws, sid, id))
+  end
+
+  post "/api/:ws/:sid/page-source" do
+    body = conn.body_params || %{}
+
+    json_resp(
+      conn,
+      200,
+      pages_put_source(ws, sid, Map.get(body, "id", ""), Map.get(body, "source"))
+    )
   end
 
   # 公开提供素材(图片等),让 v0 生成的 Sandpack 页面能 `<img src="/loom/materials/<ws>/<sid>/<path>">`。
@@ -1081,7 +1107,9 @@ defmodule EzagentPluginLoom.WebPlug do
           # 知识库随发布物带走 → 打开链接的消费会话 seed 它(open_published)。
           "knowledge" => Ezagent.PluginLoom.Knowledge.get(ws, sid),
           # 角色门控配置随发布物带走 → 消费会话 seed 它,`?role=` 在发布链接里也查得到。
-          "roles" => Ezagent.PluginLoom.RoleConfig.get(ws, sid)
+          "roles" => Ezagent.PluginLoom.RoleConfig.get(ws, sid),
+          # 多页随发布物带走(活动页源码用 slice 最新覆盖)→ 消费会话 seed,`?page=` 全可达。
+          "pages" => Ezagent.PluginLoom.Pages.bundle(ws, sid, live_active_source(ws, sid))
         }
 
         # 发布物 = **纯模板**(无快照)。打开它的链接 = 交互增强页(浮层 + 标注 +
@@ -1128,6 +1156,14 @@ defmodule EzagentPluginLoom.WebPlug do
           ws,
           sid,
           Ezagent.PluginLoom.SavedClasses.roles_for_token(token)
+        )
+
+      # 2026-06-16 — 多页随发布物 seed 进消费会话 → `?page=<slug>` 全可达。
+      _ =
+        Ezagent.PluginLoom.Pages.seed(
+          ws,
+          sid,
+          Ezagent.PluginLoom.SavedClasses.pages_for_token(token)
         )
 
       %{ok: true, ws: ws, sid: sid}
@@ -1212,6 +1248,58 @@ defmodule EzagentPluginLoom.WebPlug do
     %{ok: true, members: people}
   rescue
     e -> %{ok: false, error: Exception.message(e), members: []}
+  end
+
+  # --- 2026-06-16 多页 helpers ---
+
+  # 活动页的**实时**源码(slice / 最新 page_update);无 → 空 map。
+  defp live_active_source(ws, sid) do
+    case read_orchestrator_snapshot(ws, sid) do
+      {:ok, %{"loom_source" => files}} when is_map(files) -> files
+      _ -> %{}
+    end
+  rescue
+    _ -> %{}
+  end
+
+  # 读多页结构。活动页源码用 slice 的最新覆盖(保证编辑器切回活动页时是最新)。
+  defp pages_get(ws, sid) do
+    alias_p = Ezagent.PluginLoom.Pages
+    live = live_active_source(ws, sid)
+    data = alias_p.bundle(ws, sid, live)
+    %{ok: true, active: data["active"], pages: data["pages"]}
+  rescue
+    e -> %{ok: false, error: Exception.message(e), active: "home", pages: []}
+  end
+
+  # 写元数据(增删/改名/salesperson 开关)。默认页源码兜底用 slice 最新。
+  defp pages_put_meta(ws, sid, body) do
+    case Ezagent.PluginLoom.Pages.put_meta(ws, sid, body, live_active_source(ws, sid)) do
+      {:ok, data} -> %{ok: true, active: data["active"], pages: data["pages"]}
+      {:error, e} -> %{ok: false, error: to_string(e)}
+    end
+  rescue
+    e -> %{ok: false, error: Exception.message(e)}
+  end
+
+  # 切活动页(builder 之后改这页)。
+  defp pages_set_active(ws, sid, id) do
+    case Ezagent.PluginLoom.Pages.set_active(ws, sid, id, live_active_source(ws, sid)) do
+      {:ok, data} -> %{ok: true, active: data["active"]}
+      {:error, e} -> %{ok: false, error: to_string(e)}
+    end
+  rescue
+    e -> %{ok: false, error: Exception.message(e)}
+  end
+
+  # 回存某页源码(前端渲染后 / 切页前)。
+  defp pages_put_source(ws, sid, id, source) do
+    case Ezagent.PluginLoom.Pages.put_source(ws, sid, to_string(id), source || %{}) do
+      {:ok, _} -> %{ok: true}
+      {:error, e} -> %{ok: false, error: to_string(e)}
+    end
+  rescue
+    e -> %{ok: false, error: Exception.message(e)}
   end
 
   # 发布页:按 cookie 身份核对 `?role=<key>`。角色不存在 → exists:false(前端不出按钮);
@@ -1537,6 +1625,8 @@ defmodule EzagentPluginLoom.WebPlug do
           # 从 session 历史重建,否则快照冻结的是空对话。
           "conversation" => salesperson_conversation(ws, sid),
           "knowledge" => Ezagent.PluginLoom.Knowledge.get(ws, sid),
+          # 多页随快照冻结(活动页源码用本次 snapshot 的 page 覆盖)→ fork / 只读 ?page= 用。
+          "pages" => Ezagent.PluginLoom.Pages.bundle(ws, sid, page),
           "origin_sid" => sid,
           "created_at" => DateTime.utc_now() |> DateTime.to_iso8601()
         })
@@ -1581,6 +1671,8 @@ defmodule EzagentPluginLoom.WebPlug do
       _ = Ezagent.PluginLoom.UserSchema.replace(ws, sid, Map.get(snap, "ops", []))
       _ = Ezagent.PluginLoom.SalespersonChat.replace(ws, sid, Map.get(snap, "conversation", []))
       _ = Ezagent.PluginLoom.Knowledge.put(ws, sid, Map.get(snap, "knowledge", ""))
+      # 多页随快照 seed 进 fork 出的会话。
+      _ = Ezagent.PluginLoom.Pages.seed(ws, sid, Map.get(snap, "pages", %{}))
       %{ok: true, ws: ws, sid: sid}
     else
       :error -> %{ok: false, error: "unknown token"}

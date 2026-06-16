@@ -393,22 +393,35 @@ defmodule Ezagent.Behavior.LoomBuilderWorker do
     end
   end
 
-  # 读编排器当前 loom_source(files map);无 / 为种子占位页 → nil(当首次生成处理)。
+  # 读**活动页**当前源码(files map);无 / 为种子占位页 → nil(当首次生成处理)。
+  # 2026-06-16 多页:优先读多页旁路的「活动页」源码(切页 = 改 active → builder 自然改新页);
+  # 无多页(老会话)回退到编排器 slice 的 loom_source。
   defp current_source(ctx) do
+    {ws, sid} = builder_ws_sid(ctx)
+    page_src = if ws, do: Ezagent.PluginLoom.Pages.active_source(ws, sid), else: nil
+
+    files =
+      case page_src do
+        m when is_map(m) and map_size(m) > 0 -> m
+        _ -> slice_source(ctx)
+      end
+
+    if is_map(files) and map_size(files) > 0 and
+         files != EzagentPluginLoom.Prompts.loom_seed_files() do
+      files
+    else
+      nil
+    end
+  end
+
+  # 编排器 slice 的 loom_source(老会话兜底)。
+  defp slice_source(ctx) do
     with %URI{} = self_uri <- Map.get(ctx, :self_uri),
          %URI{} = orch <- orchestrator_uri(self_uri),
          {:ok, slice} when is_map(slice) <- Ezagent.Kind.get_slice(orch, :loom_orchestrator) do
-      files =
-        EzagentPluginLoom.Prompts.normalize_source(slice[:loom_source] || slice["loom_source"])
-
-      if is_map(files) and map_size(files) > 0 and
-           files != EzagentPluginLoom.Prompts.loom_seed_files() do
-        files
-      else
-        nil
-      end
+      EzagentPluginLoom.Prompts.normalize_source(slice[:loom_source] || slice["loom_source"])
     else
-      _ -> nil
+      _ -> %{}
     end
   end
 
