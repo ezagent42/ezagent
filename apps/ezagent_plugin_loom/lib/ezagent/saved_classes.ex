@@ -249,8 +249,15 @@ defmodule Ezagent.PluginLoom.SavedClasses do
       _ = :code.delete(module)
     end
 
+    # 发布物(published=true)= 冻结、衍生 session 无 builder;存为模板(备份)= 可编辑、有 builder。
+    published? = Map.get(entry, "published") == true
+
     contents =
-      quote bind_quoted: [class_name: class_name, saved_state: Macro.escape(saved_state)] do
+      quote bind_quoted: [
+              class_name: class_name,
+              saved_state: Macro.escape(saved_state),
+              published?: published?
+            ] do
         @behaviour Ezagent.Kind.Template
         # 关键:也要实现 Ezagent.UI.Form,否则 `Ezagent.UI.Form.list_form_classes/0`
         # 用 `function_exported?(module, :form_fields, 0)` 过滤会把这条筛掉,
@@ -259,6 +266,8 @@ defmodule Ezagent.PluginLoom.SavedClasses do
 
         @class_name class_name
         @saved_state saved_state
+        # 发布物 → 衍生 session 无 v0(冻结);存为模板备份 → 有 v0(可继续编辑)。
+        @published published?
 
         @impl Ezagent.Kind.Template
         def template_name, do: @class_name
@@ -281,9 +290,10 @@ defmodule Ezagent.PluginLoom.SavedClasses do
           augmented =
             tmpl
             |> Map.put("class", "session.loom")
-            # 2026-06-05 — 发布物(SavedClass)衍生的 session 一律无 v0:base 冻结,
-            # 只能 user_schema 叠加。只有最初的 session.loom 有 v0。
-            |> Map.put("no_builder", true)
+            # 2026-06-05 / 改 2026-06-16 — **发布物**(published=true)衍生的 session 才无 v0
+            # (base 冻结,只能 user_schema 叠加);**存为模板**(备份)衍生的 session **有 v0**,
+            # 可以继续用 builder 编辑(它就是个可复用的起点)。
+            |> Map.put("no_builder", @published)
             |> then(fn t -> Map.merge(%{"saved_state" => @saved_state}, t) end)
 
           Ezagent.PluginLoom.Template.LoomSession.instantiate(tmpl_name, augmented, ws_uri)
