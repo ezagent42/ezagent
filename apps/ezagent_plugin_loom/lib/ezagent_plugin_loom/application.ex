@@ -37,6 +37,16 @@ defmodule EzagentPluginLoom.Application do
   @impl Ezagent.Plugin
   def config_surface, do: nil
 
+  # 务实版 multi-agent wiring：per-session 编排进程的注册表 + 动态 supervisor。
+  # loom session 起一个 OrchestratorServer 订阅 session 事件 → 真实 LLM 编排 → Turn。
+  @impl Ezagent.Plugin
+  def children do
+    [
+      {Registry, keys: :unique, name: EzagentPluginLoom.OrchestratorRegistry},
+      {DynamicSupervisor, name: EzagentPluginLoom.OrchestratorSupervisor, strategy: :one_for_one}
+    ]
+  end
+
   # 同 advisor: customer feed + chat feed 两个 BARE `:pull` adapter(socialware 现成),
   # 安装 `allow_customer_feed` / `allow_chat_feed` cap subject,不 spawn Worker。
   @impl Ezagent.Plugin
