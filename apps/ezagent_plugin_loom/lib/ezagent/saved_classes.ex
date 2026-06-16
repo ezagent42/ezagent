@@ -115,6 +115,17 @@ defmodule Ezagent.PluginLoom.SavedClasses do
 
   def knowledge_for_token(_), do: ""
 
+  @doc "读发布物(token)随带的角色门控配置(无则空 map)。供 open_published seed 消费会话。"
+  @spec roles_for_token(String.t()) :: map()
+  def roles_for_token(token) when is_binary(token) and token != "" do
+    load_all()
+    |> Enum.find_value(%{}, fn {_cn, entry} ->
+      if Map.get(entry, "token") == token, do: Map.get(entry, "roles", %{})
+    end)
+  end
+
+  def roles_for_token(_), do: %{}
+
   @doc """
   List published templates(发布历史)—— 只返回 `published: true` 的条目,带 token /
   ws / 说明 / 发布时间 / 来源 session,**新的在前**。loom 发布弹窗用它展示历史 + 链接,

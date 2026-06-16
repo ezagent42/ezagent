@@ -1079,7 +1079,9 @@ defmodule EzagentPluginLoom.WebPlug do
           "ws" => ws,
           "published_from" => sid,
           # 知识库随发布物带走 → 打开链接的消费会话 seed 它(open_published)。
-          "knowledge" => Ezagent.PluginLoom.Knowledge.get(ws, sid)
+          "knowledge" => Ezagent.PluginLoom.Knowledge.get(ws, sid),
+          # 角色门控配置随发布物带走 → 消费会话 seed 它,`?role=` 在发布链接里也查得到。
+          "roles" => Ezagent.PluginLoom.RoleConfig.get(ws, sid)
         }
 
         # 发布物 = **纯模板**(无快照)。打开它的链接 = 交互增强页(浮层 + 标注 +
@@ -1119,6 +1121,14 @@ defmodule EzagentPluginLoom.WebPlug do
 
       # 2026-06-10 — 标记为发布消费会话:它不该有 loom 编辑视图 tab(LoomSessionView)。
       _ = Ezagent.PluginLoom.ConsumerSession.mark(ws, sid)
+
+      # 2026-06-16 — 角色门控随发布物 seed 进消费会话 → `?role=` 在发布链接里查得到。
+      _ =
+        Ezagent.PluginLoom.RoleConfig.seed(
+          ws,
+          sid,
+          Ezagent.PluginLoom.SavedClasses.roles_for_token(token)
+        )
 
       %{ok: true, ws: ws, sid: sid}
     else

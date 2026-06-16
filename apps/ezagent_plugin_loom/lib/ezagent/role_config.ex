@@ -193,6 +193,33 @@ defmodule Ezagent.PluginLoom.RoleConfig do
   def put(_, _, _), do: {:error, :bad_args}
 
   @doc """
+  整盘 seed 一个(消费)session 的角色配置 —— 发布物打开时把作者那份角色配置拷进 mint 出来的
+  消费会话,这样 `?role=` 在发布链接里也查得到(刷新后 resume 同一 sid 仍在)。只在有内容时写。
+  """
+  @spec seed(String.t(), String.t(), map()) :: :ok
+  def seed(ws, sid, config) when is_binary(ws) and is_binary(sid) and is_map(config) do
+    normalized = norm_config(config)
+
+    if has_content?(normalized) do
+      all = load_all() |> Map.put(skey(ws, sid), normalized)
+      save_all(all)
+    end
+
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  def seed(_, _, _), do: :ok
+
+  defp has_content?(%{"creator" => c, "super" => s, "roles" => roles}) do
+    is_binary(c) or roles != [] or
+      (is_map(s) and (s["label"] != "" or s["view"] != "" or s["url"] != ""))
+  end
+
+  defp has_content?(_), do: false
+
+  @doc """
   核对 `entity_uri` 是否属于 key=`role` 的角色。返回 `{granted?, role_map | nil}`
   (role_map = %{"label","effect","view","url"};role 不存在 → `{false, nil}`)。
 
