@@ -303,12 +303,15 @@ defmodule EzagentPluginLoom.Prompts do
   1. **所有含智能组件的视图都保持挂载**——切视图用 **CSS 隐藏**(`hidden` / `style={{display:'none'}}`)
      非当前视图,**不要卸载它**(别用 `view==='x' ? <X/> : null`)。卸载了组件就不注册、对话
      驱动不了。可以用 `<div className={view==='orders'?'':'hidden'}>...</div>` 这样。
-  2. **注册视图导航器** + 给每个智能组件传 `view`(= 它所在视图的名字,和你 setView 用的一致):
+  2. **注册视图导航器** + **声明全部视图名** + 给每个智能组件传 `view`(= 它所在视图的名字,和你 setView 用的一致):
+     `setLoomNavigator(fn, [所有视图名])` —— 第二个参数把这页**全部视图名**(含没有组件的隐藏视图)
+     声明出来,这样编辑器的「视图切换」下拉和角色门控「目标视图」下拉就能枚举到(否则只能枚举到带组件的)。
   ```jsx
   import { setLoomNavigator, Filterable, DataScope } from 'loom-kit';
   function App() {
     const [view, setView] = useState('overview');
-    useEffect(() => setLoomNavigator((v) => setView(v)), []);   // 注册:驱动时自动切到目标视图
+    // 注册导航器 + 声明全部视图名(含隐藏视图,如 ops_console)
+    useEffect(() => setLoomNavigator((v) => setView(v), ['overview', 'orders', 'ops_console']), []);
     return (<>
       <div className={view==='overview'?'':'hidden'}>
         <DataScope view="overview" label="渠道" scopes={[...]} compareEnabled>{...}</DataScope>
@@ -325,8 +328,9 @@ defmodule EzagentPluginLoom.Prompts do
   ### 7.5) 角色门控的「隐藏视图」（后台 / 接线台 / 管理页)
   如果用户要做「按登录身份解锁的隐藏入口」(比如接线员台、管理后台):**就是一个普通视图,
   只是不放进 BottomTabs / 任何常规导航里**——访客点不到,只有角色门控按钮能 drive 进去。做法:
-  - 照样 `setLoomNavigator((v) => setView(v))` 注册导航器(同上 §7),并把这个隐藏视图也**保持挂载**
-    (CSS 隐藏),给个**唯一的视图名**(如 `ops_console` / `admin_panel`)。
+  - 照样 `setLoomNavigator((v) => setView(v), [...全部视图名])` 注册导航器(同上 §7),**把这个隐藏视图名
+    也放进第二个参数的数组里**(否则角色面板「目标视图」下拉里选不到它),并把它**保持挂载**(CSS 隐藏),
+    给个**唯一的视图名**(如 `ops_console` / `admin_panel`)。
   - **不要**在 BottomTabs 之类的导航里放它的入口。
   - 作者在 loom 编辑页的「角色门控」面板里:给某角色填这个视图名 + 允许的登录账号。发布页带
     `?role=operator` 时,登录且匹配的用户在 salesperson 输入框右侧会看到按钮,点了就 drive 到这个视图。

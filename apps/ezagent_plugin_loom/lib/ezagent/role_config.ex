@@ -8,7 +8,7 @@ defmodule Ezagent.PluginLoom.RoleConfig do
      (作者本人,首次打开角色面板时捕获)。作者只配:`label`(按钮文本)+ `effect`/`view`/`url`
      (按钮动作),**不配人**(就是他自己)。
   2. **自定义角色**(作者自由增删)—— 每个配 `key`(`?role=<key>`)、`label`、`effect`
-     (`navigate` 幕跳转 / `link` 新标签开链接)、`view`/`url`、`entities`(哪些登录账号属于它;
+     (`navigate` 视图跳转 / `link` 新标签开链接)、`view`/`url`、`entities`(哪些登录账号属于它;
      一个人可同时属于多个角色)。
 
   发布页带 `?role=<key>` 时(此时 `?intent=` 不生效,任何 role 都看首页),salesperson 输入框
