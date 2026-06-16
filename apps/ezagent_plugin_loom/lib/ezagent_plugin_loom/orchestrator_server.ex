@@ -73,7 +73,7 @@ defmodule EzagentPluginLoom.OrchestratorServer do
   end
 
   defp orchestrate(session_uri, msg, caller) do
-    with {:ok, result_refs} <- Orchestrator.compose_scene(text_of(msg)),
+    with {:ok, result_refs} <- Orchestrator.run(text_of(msg)),
          {:ok, %{turn_id: turn_id}} <-
            dispatch(session_uri, "turn.open", caller, %{
              trigger: %{message_id: msg.id},
