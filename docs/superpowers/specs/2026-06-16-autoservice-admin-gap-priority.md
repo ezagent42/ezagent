@@ -26,7 +26,7 @@
 | 5 | URL 爬虫（BFS同域多页+robots.txt+rate limit） | ✅ | ❌ | **P2** | 单页fetch够基础使用，多页爬虫可后补 |
 | 6 | KB Source 元数据（source_url/latest_created_at/enabled） | ✅ | ❌ | **P2** | 列表显示增强，不影响功能 |
 | 7 | ~~Flow Directive（intent触发词+enable/disable）~~ | ✅ | 已废弃 | — | 迭代废弃，不需要 |
-| 8 | KB Source 元数据（source_url/latest_created_at/enabled） | ✅ | ❌ | **P2** | 列表显示增强，不影响功能 |
+| 8 | 18列KB Schema（domain/region/language等过滤字段） | ✅ | ❌ | **P2** | 多租户+中文精准查询，当前单租户够用 |
 | 9 | FTS5 trigram CJK搜索 | ✅ | ⚠️ | **P1** | 中文搜索精度，当前Python脚本可能未启用trigram |
 
 ---
@@ -172,7 +172,7 @@
 | 37-38 | InitWizard URL/Doc Upload 步骤 |
 | 43 | AI Assist 面板（SoulEditor） |
 
-### P2 — 可以后续实现（15项）
+### P2 — 可以后续实现（16项）
 
 | # | 功能 |
 |:--:|------|
