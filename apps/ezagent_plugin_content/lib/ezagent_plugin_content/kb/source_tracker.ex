@@ -66,10 +66,12 @@ defmodule EzagentPluginContent.Kb.SourceTracker do
       {:ok, files} ->
         files
         |> Enum.map(&Path.join(files_dir, &1))
-        |> Enum.filter(&(Path.basename(&1) |> String.starts_with?(source_id) or
-                          (:crypto.hash(:sha256, File.read!(&1))
-                           |> Base.encode16(case: :lower)
-                           |> String.slice(0, 12)) == source_id))
+        |> Enum.filter(
+          &(Path.basename(&1) |> String.starts_with?(source_id) or
+              :crypto.hash(:sha256, File.read!(&1))
+              |> Base.encode16(case: :lower)
+              |> String.slice(0, 12) == source_id)
+        )
         |> Enum.map(&file_mtime/1)
         |> Enum.reject(&is_nil/1)
         |> case do
@@ -77,7 +79,8 @@ defmodule EzagentPluginContent.Kb.SourceTracker do
           times -> Enum.max(times, DateTime)
         end
 
-      _ -> nil
+      _ ->
+        nil
     end
   end
 

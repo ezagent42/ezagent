@@ -72,11 +72,12 @@ defmodule EzagentPluginContent.Kb.KbStore do
           "source_id" => hash
         }
 
-        entry = Map.merge(entry, %{
-          "domain" => Map.get(opts, :domain, "general"),
-          "region" => Map.get(opts, :region, "global"),
-          "language" => Map.get(opts, :language, "zh")
-        })
+        entry =
+          Map.merge(entry, %{
+            "domain" => Map.get(opts, :domain, "general"),
+            "region" => Map.get(opts, :region, "global"),
+            "language" => Map.get(opts, :language, "zh")
+          })
 
         chunks = chunk_text(text)
 
@@ -122,11 +123,12 @@ defmodule EzagentPluginContent.Kb.KbStore do
       "source_id" => hash
     }
 
-    entry = Map.merge(entry, %{
-      "domain" => Map.get(opts, :domain, "general"),
-      "region" => Map.get(opts, :region, "global"),
-      "language" => Map.get(opts, :language, "zh")
-    })
+    entry =
+      Map.merge(entry, %{
+        "domain" => Map.get(opts, :domain, "general"),
+        "region" => Map.get(opts, :region, "global"),
+        "language" => Map.get(opts, :language, "zh")
+      })
 
     chunks = chunk_text(content)
 

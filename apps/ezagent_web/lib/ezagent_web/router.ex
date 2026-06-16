@@ -11,12 +11,7 @@ defmodule EzagentWeb.Router do
 
   alias EzagentPluginLiveview.Master.MasterDashboardLive
   alias EzagentPluginLiveview.AutoService.Admin.InitWizardLive
-  alias EzagentPluginLiveview.AutoService.Admin.SlotEditorLive
-  alias EzagentPluginLiveview.AutoService.Admin.SoulEditorLive
-  alias EzagentPluginLiveview.AutoService.Admin.SkillManagerLive
-  alias EzagentPluginLiveview.AutoService.Admin.KbManagerLive
   alias EzagentPluginLiveview.AutoService.Admin.VersionTimelineLive
-  alias EzagentPluginLiveview.AutoService.Admin.SandboxPreviewLive
   alias EzagentPluginLiveview.AutoService.Admin.AdminSessionLive
   alias EzagentPluginLiveview.AutoService.Admin.Platform.PlatformSoulLive
   alias EzagentPluginLiveview.AutoService.Admin.Platform.PlatformSkillLive
@@ -247,12 +242,7 @@ defmodule EzagentWeb.Router do
       live "/admin/autoservice/tenants/:tid/cr", Tenant.CrDashboardLive
       live "/admin/autoservice/tenants/:tid/operators", Tenant.OperatorsLive
       live "/admin/autoservice/tenants/:tid/init", AutoService.Admin.InitWizardLive
-      live "/admin/autoservice/tenants/:tid/soul", AutoService.Admin.SoulEditorLive
-      live "/admin/autoservice/tenants/:tid/soul/slots", AutoService.Admin.SlotEditorLive
-      live "/admin/autoservice/tenants/:tid/skills", AutoService.Admin.SkillManagerLive
-      live "/admin/autoservice/tenants/:tid/kb", AutoService.Admin.KbManagerLive
       live "/admin/autoservice/tenants/:tid/versions", AutoService.Admin.VersionTimelineLive
-      live "/admin/autoservice/tenants/:tid/preview", AutoService.Admin.SandboxPreviewLive
       live "/admin/autoservice/agent", AutoService.Admin.AdminSessionLive
       live "/admin/autoservice/platform/soul", AutoService.Admin.Platform.PlatformSoulLive
       live "/admin/autoservice/platform/skills", AutoService.Admin.Platform.PlatformSkillLive

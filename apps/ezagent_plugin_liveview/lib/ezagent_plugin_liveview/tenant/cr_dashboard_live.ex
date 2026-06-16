@@ -283,22 +283,31 @@ defmodule EzagentPluginLiveview.Tenant.CrDashboardLive do
               <h3 class="text-sm font-medium mb-2">
                 {gettext("Sandbox Changes")} ({@cr["sandbox_diff"]["files_changed"] || 0})
               </h3>
-              <div class="space-y-1">
-                <%= for item <- @cr["sandbox_diff"]["items"] do %>
-                  <div class="flex items-center gap-2 text-xs py-1">
-                    <span class={"inline-block w-1.5 h-1.5 rounded-full #{diff_item_color(item["kind"])}"}>
-                    </span>
-                    <span class="font-mono text-zinc-600 dark:text-zinc-400">{item["path"]}</span>
-                    <span class="text-zinc-400">{item["kind"]}</span>
-                    <button
-                      :if={item["kind"] in ["modified", "added"]}
-                      phx-click="revert_item"
-                      phx-value-path={item["path"]}
-                      class="ml-auto px-1.5 py-0.5 text-xs border border-zinc-300 dark:border-zinc-600 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
-                      title={gettext("Revert this file from release")}
-                    >
-                      {gettext("Revert")}
-                    </button>
+              <div class="space-y-3">
+                <%= for {group_label, group_items} <- group_by_agent(@cr["sandbox_diff"]["items"]) |> Enum.sort_by(fn {label, _} -> group_sort_order(label) end) do %>
+                  <div>
+                    <h4 class="text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1 uppercase tracking-wide">
+                      {group_label} ({length(group_items)})
+                    </h4>
+                    <div class="space-y-1">
+                      <%= for item <- group_items do %>
+                        <div class="flex items-center gap-2 text-xs py-1">
+                          <span class={"inline-block w-1.5 h-1.5 rounded-full #{diff_item_color(item["kind"])}"}>
+                          </span>
+                          <span class="font-mono text-zinc-600 dark:text-zinc-400">{item["path"]}</span>
+                          <span class="text-zinc-400">{item["kind"]}</span>
+                          <button
+                            :if={item["kind"] in ["modified", "added"]}
+                            phx-click="revert_item"
+                            phx-value-path={item["path"]}
+                            class="ml-auto px-1.5 py-0.5 text-xs border border-zinc-300 dark:border-zinc-600 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
+                            title={gettext("Revert this file from release")}
+                          >
+                            {gettext("Revert")}
+                          </button>
+                        </div>
+                      <% end %>
+                    </div>
                   </div>
                 <% end %>
               </div>
@@ -415,4 +424,24 @@ defmodule EzagentPluginLiveview.Tenant.CrDashboardLive do
   defp diff_item_color("modified"), do: "bg-yellow-400"
   defp diff_item_color("dir_modified"), do: "bg-yellow-400"
   defp diff_item_color(_), do: "bg-zinc-400"
+
+  defp group_by_agent(items) do
+    items
+    |> Enum.group_by(fn item ->
+      path = item["path"] || ""
+
+      cond do
+        String.starts_with?(path, "config/") -> "⚡ Fast Agent"
+        String.starts_with?(path, "souls/") -> "🧠 Slow Agent"
+        String.starts_with?(path, "skills/") -> "🧠 Slow Agent"
+        String.starts_with?(path, "slots/") -> "🧠 Slow Agent"
+        String.starts_with?(path, "kb/") -> "🧠 Slow Agent"
+        true -> "📦 Other"
+      end
+    end)
+  end
+
+  defp group_sort_order("⚡ Fast Agent"), do: 1
+  defp group_sort_order("🧠 Slow Agent"), do: 2
+  defp group_sort_order(_), do: 3
 end

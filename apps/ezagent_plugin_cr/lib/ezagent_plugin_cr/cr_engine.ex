@@ -353,14 +353,10 @@ defmodule EzagentPluginCr.CrEngine do
           Logger.info("Refresh.after_publish succeeded for tenant #{tid}")
 
         {:error, reason} ->
-          Logger.warning(
-            "Refresh.after_publish failed for tenant #{tid}: #{inspect(reason)}"
-          )
+          Logger.warning("Refresh.after_publish failed for tenant #{tid}: #{inspect(reason)}")
       end
     else
-      Logger.info(
-        "Refresh.after_publish skipped for tenant #{tid}: EzagentPluginAutoservice.Refresh not available"
-      )
+      Logger.info("Refresh.after_publish skipped for tenant #{tid}: EzagentPluginAutoservice.Refresh not available")
     end
   end
 
