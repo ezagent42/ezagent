@@ -52,3 +52,4 @@ __pycache__/
 *.pyc
 .worktrees/
 claude.sh
+node_modules/
