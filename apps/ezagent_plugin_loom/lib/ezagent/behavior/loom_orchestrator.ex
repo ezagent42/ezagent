@@ -109,7 +109,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
       # it directly. (If v0 was bundled with policy/company in the same
       # dispatch — shouldn't happen per the prompt — the others' replies
       # become orphans and get dropped silently. v1 trade-off.)
-      page_files -> handle_page_update(msg, page_files, pending)
+      page_files -> handle_page_update(msg, page_files, pending, ctx)
       worker_deliverable?(msg, pending) -> handle_deliverable(msg, ctx, pending)
       user_turn?(msg) -> handle_user_turn(msg, ctx, pending)
       # loop-guard: stray / un-addressed / worker chatter → ignore.
@@ -726,7 +726,8 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
   # Cache the new source on slice; close the pending turn (if any) so the
   # aggregator no-ops and the compose path is skipped — v0's message already
   # rendered to the session.
-  defp handle_page_update(%Message{ref_id: ref} = msg, files, pending) when is_binary(ref) do
+  defp handle_page_update(%Message{ref_id: ref} = msg, files, pending, ctx) when is_binary(ref) do
+    sync_active_page_source(ctx, files)
     cfg = salesperson_config_effects(msg) ++ danmaku_config_effects(msg)
 
     case find_turn_by_subtask(pending, ref) do
@@ -739,10 +740,44 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
     end
   end
 
-  defp handle_page_update(msg, files, _pending) do
+  defp handle_page_update(msg, files, _pending, ctx) do
+    sync_active_page_source(ctx, files)
+
     {:ok, %{},
      [{:set, :loom_source, files}] ++
        salesperson_config_effects(msg) ++ danmaku_config_effects(msg)}
+  end
+
+  # 2026-06-16 多页:builder 改的是「活动页」→ 把这次源码**服务端**写进多页旁路的活动页,
+  # 让旁路始终是最新的(不依赖前端回存,避免切页渲染到陈旧源)。best-effort,失败不影响主流程。
+  defp sync_active_page_source(ctx, files) do
+    case orch_ws_sid(ctx) do
+      {ws, sid} ->
+        Ezagent.PluginLoom.Pages.put_source(
+          ws,
+          sid,
+          Ezagent.PluginLoom.Pages.active_id(ws, sid),
+          files
+        )
+
+      _ ->
+        :ok
+    end
+
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  defp orch_ws_sid(ctx) do
+    with %URI{path: path} <- Map.get(ctx, :self_uri),
+         [ws, agent | _] <- path |> to_string() |> String.trim_leading("/") |> String.split("/"),
+         "loomorch_" <> sid <- agent,
+         true <- ws != "" and sid != "" do
+      {ws, sid}
+    else
+      _ -> nil
+    end
   end
 
   # page_update span 里可选 `salespersonConfig`(页面助手样式)。带了才 set —— 后续不带
