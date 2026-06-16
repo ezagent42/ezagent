@@ -1151,30 +1151,20 @@ defmodule EzagentPluginLoom.WebPlug do
     end
   end
 
-  # 编辑页读角色配置(登录 → 顺便捕获创建者 = 超管)。
+  # 编辑页读角色配置(+ 当前登录身份,方便作者把自己加进某角色)。
   defp roles_get(conn, ws, sid) do
     who = caller_entity_str(conn)
-
-    config =
-      if who,
-        do: Ezagent.PluginLoom.RoleConfig.ensure_creator(ws, sid, who),
-        else: Ezagent.PluginLoom.RoleConfig.get(ws, sid)
-
-    %{ok: true, logged_in: who != nil, entity_uri: who, roles: config}
+    cfg = Ezagent.PluginLoom.RoleConfig.get(ws, sid)
+    %{ok: true, logged_in: who != nil, entity_uri: who, roles: cfg}
   rescue
     e -> %{ok: false, error: Exception.message(e)}
   end
 
-  # 编辑页写角色配置。
+  # 编辑页写角色配置(整盘 `%{"roles" => [...]}`)。
   defp roles_put(conn, ws, sid) do
     body = conn.body_params || %{}
-    incoming = Map.get(body, "roles", body)
 
-    if who = caller_entity_str(conn) do
-      _ = Ezagent.PluginLoom.RoleConfig.ensure_creator(ws, sid, who)
-    end
-
-    case Ezagent.PluginLoom.RoleConfig.put(ws, sid, incoming) do
+    case Ezagent.PluginLoom.RoleConfig.put(ws, sid, body) do
       {:ok, cfg} -> %{ok: true, roles: cfg}
       {:error, e} -> %{ok: false, error: to_string(e)}
     end
@@ -1182,32 +1172,37 @@ defmodule EzagentPluginLoom.WebPlug do
     e -> %{ok: false, error: Exception.message(e)}
   end
 
-  # 发布页:按 cookie 身份核对 `?role=`。三态:未登录 / 已登录+通过 / 已登录+无权限。
+  # 发布页:按 cookie 身份核对 `?role=<key>`。角色不存在 → exists:false(前端不出按钮);
+  # 存在则三态:未登录 / 已登录+通过(带 label/effect/view/url)/ 已登录+无权限。
   defp role_check(conn, ws, sid, role) do
-    alias_rc = Ezagent.PluginLoom.RoleConfig
+    who = caller_entity_str(conn)
+    {granted, role_map} = Ezagent.PluginLoom.RoleConfig.check(ws, sid, role, who)
 
-    if not alias_rc.valid_role?(role) do
-      %{ok: false, error: "bad_role"}
-    else
-      label = alias_rc.role_label(role)
+    base = %{
+      ok: true,
+      exists: role_map != nil,
+      role: role,
+      logged_in: who != nil,
+      granted: granted
+    }
 
-      case caller_entity_str(conn) do
-        nil ->
-          %{ok: true, logged_in: false, role: role, role_label: label, granted: false, view: ""}
-
-        who ->
-          {granted, view} = alias_rc.check(ws, sid, role, who)
-
-          %{
-            ok: true,
-            logged_in: true,
-            entity_uri: who,
-            role: role,
-            role_label: label,
-            granted: granted,
-            view: view
-          }
+    base =
+      case who do
+        nil -> base
+        w -> Map.put(base, :entity_uri, w)
       end
+
+    case role_map do
+      %{} = m ->
+        Map.merge(base, %{
+          label: Map.get(m, "label", ""),
+          effect: Map.get(m, "effect", "navigate"),
+          view: Map.get(m, "view", ""),
+          url: Map.get(m, "url", "")
+        })
+
+      _ ->
+        Map.merge(base, %{label: "", effect: "navigate", view: "", url: ""})
     end
   rescue
     e -> %{ok: false, error: Exception.message(e)}
