@@ -42,15 +42,32 @@ defmodule EzagentPluginLiveview.AutoService.Admin.VersionTimelineLive do
 
   def handle_event("rollback", %{"version" => version}, socket) do
     tid = socket.assigns.tid
-    current_link = Path.join([TenantRuntime.release_path(tid), "_current"])
-    target = Path.join([TenantRuntime.release_path(tid), version])
-    if File.exists?(target) do
-      File.rm!(current_link)
-      File.ln_s!(target, current_link)
-      {:noreply, assign(socket, current: version, flash_msg: "Rolled back to #{version}")}
-    else
-      {:noreply, assign(socket, flash_msg: "Version #{version} not found")}
+    release_path = TenantRuntime.release_path(tid)
+    sandbox_path = TenantRuntime.sandbox_path(tid)
+
+    source = Path.join([release_path, version])
+
+    # Copy release files back to sandbox
+    ["souls", "slots", "skills", "kb", "config"]
+    |> Enum.each(fn dir ->
+      src = Path.join([source, dir])
+      dst = Path.join([sandbox_path, dir])
+      if File.exists?(src) do
+        File.rm_rf!(dst)
+        File.cp_r!(src, dst)
+      end
+    end)
+
+    # Flip symlink
+    current = Path.join([release_path, "_current"])
+    if File.exists?(current) do
+      File.rm!(current)
     end
+    File.ln_s!(source, current)
+
+    {:noreply, assign(socket, current: version, flash_msg: "已回滚到 #{version}，sandbox 已恢复")}
+  rescue
+    e -> {:noreply, assign(socket, flash_msg: "回滚失败: #{Exception.message(e)}")}
   end
 
   @impl true
