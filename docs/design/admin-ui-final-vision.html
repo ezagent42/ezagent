@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ezagent AutoService Admin UI — Final Design</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+  .page { display: none; }
+  .page.active { display: flex; }
+  .sb-link { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.5rem; border-radius: 0.375rem; font-size: 0.8125rem; color: #374151; transition: all 0.12s; cursor: pointer; }
+  .sb-link:hover { background: #e5e7eb; }
+  .sb-link.active { background: #dbeafe; color: #1d4ed8; font-weight: 600; }
+  .card { background: white; border: 1px solid #e5e7eb; border-radius: 0.75rem; padding: 1.25rem; }
+  .badge { font-size: 0.65rem; padding: 0.15rem 0.5rem; border-radius: 0.25rem; font-weight: 600; }
+  .tab { cursor: pointer; padding: 0.5rem 0.75rem; font-size: 0.8125rem; border-bottom: 2px solid transparent; transition: all 0.12s; white-space: nowrap; }
+  .tab:hover { color: #2563eb; }
+  .tab.active { border-bottom-color: #2563eb; color: #2563eb; font-weight: 600; }
+  .agent-card { cursor: pointer; transition: all 0.15s; }
+  .agent-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); transform: translateY(-1px); }
+  .route-node { display: flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1rem; border-radius: 0.75rem; border: 2px solid; font-weight: 500; }
+  .route-arrow { display: flex; flex-direction: column; align-items: center; color: #9ca3af; font-size: 0.75rem; }
+</style>
+</head>
+<body class="bg-gray-100">
+
+<!-- TOP BAR -->
+<header class="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between sticky top-0 z-50 shadow-sm">
+  <div class="flex items-center gap-4"><span class="font-bold text-lg text-gray-800">⚡ ezagent Admin</span><span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">AutoService v2</span></div>
+  <div class="flex items-center gap-3 text-sm"><span class="text-gray-500">Tenant:</span><select class="border border-gray-300 rounded px-2 py-1 text-sm"><option>demo-acme</option><option>demo-beta</option></select><span class="text-gray-400">|</span><span class="text-gray-600 text-xs">admin@system</span></div>
+</header>
+
+<div class="flex min-h-[calc(100vh-57px)]">
+
+<!-- SIDEBAR: Agent-centric -->
+<nav class="w-52 bg-gray-50 border-r border-gray-200 p-3 flex flex-col gap-0.5 shrink-0">
+
+  <div class="text-[10px] uppercase tracking-widest text-gray-400 mb-1 px-1 mt-1">Master</div>
+  <a class="sb-link" href="#" onclick="show('master')"><span>🏠</span> Dashboard</a>
+  <a class="sb-link" href="#" onclick="show('tenants')"><span>🏢</span> Tenants</a>
+  <a class="sb-link" href="#" onclick="show('onboard')"><span>➕</span> New Tenant</a>
+
+  <div class="border-t border-gray-200 my-2"></div>
+  <div class="text-[10px] uppercase tracking-widest text-gray-400 mb-1 px-1">Tenant: <span class="text-blue-600 font-semibold">demo-acme</span></div>
+
+  <!-- Agents -->
+  <div class="text-[10px] uppercase tracking-widest text-gray-400 mb-1 px-1 mt-1">Agents</div>
+  <a class="sb-link" href="#" onclick="show('fast-agent')"><span>⚡</span> Fast Agent</a>
+  <a class="sb-link" href="#" onclick="show('slow-agent')"><span>🧠</span> Slow Agent</a>
+
+  <!-- Orchestrate -->
+  <div class="text-[10px] uppercase tracking-widest text-gray-400 mb-1 px-1 mt-3">Orchestrate</div>
+  <a class="sb-link" href="#" onclick="show('orchestrate')"><span>🔀</span> Routeset</a>
+
+  <!-- Verify & Release -->
+  <div class="text-[10px] uppercase tracking-widest text-gray-400 mb-1 px-1 mt-3">Verify & Release</div>
+  <a class="sb-link" href="#" onclick="show('debug')"><span>🧪</span> Debug Agent</a>
+  <a class="sb-link" href="#" onclick="show('cr')"><span>🔄</span> CR Review <span class="ml-auto text-[10px] bg-green-100 text-green-700 px-1.5 rounded-full">open</span></a>
+  <a class="sb-link" href="#" onclick="show('history')"><span>📋</span> History</a>
+
+  <!-- Config -->
+  <div class="text-[10px] uppercase tracking-widest text-gray-400 mb-1 px-1 mt-3">Config</div>
+  <a class="sb-link" href="#" onclick="show('overview')"><span>📊</span> Overview</a>
+  <a class="sb-link" href="#" onclick="show('operators')"><span>👥</span> Operators</a>
+
+  <div class="border-t border-gray-200 my-2"></div>
+  <div class="text-[10px] uppercase tracking-widest text-gray-300 mb-1 px-1">Future</div>
+  <a class="sb-link text-gray-400 cursor-not-allowed" href="#"><span>🤖</span> Admin Session</a>
+
+  <div class="mt-auto pt-2 border-t border-gray-200"><div class="text-[10px] text-gray-400 px-1">P0 ✅ | P1 🔄</div></div>
+</nav>
+
+<!-- MAIN CONTENT -->
+<main class="flex-1 p-6 overflow-auto bg-gray-50">
+
+<!-- ================================================================ -->
+<!-- TENANT OVERVIEW -->
+<!-- ================================================================ -->
+<div id="overview" class="page active">
+  <div class="max-w-5xl">
+    <div class="flex items-center justify-between mb-4">
+      <div><h1 class="text-xl font-bold text-gray-900">📊 demo-acme</h1><p class="text-sm text-gray-500">Acme Corp · Retail · v12 published</p></div>
+      <button onclick="show('onboard')" class="text-sm border border-blue-300 text-blue-600 px-3 py-1.5 rounded-lg hover:bg-blue-50">🚀 Init Wizard</button>
+    </div>
+
+    <!-- Publish Flow -->
+    <div class="card mb-6 bg-gradient-to-r from-blue-50 to-green-50">
+      <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Publish Flow</h3>
+      <div class="flex items-center gap-2 text-xs">
+        <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-100 text-blue-700 font-medium cursor-pointer" onclick="show('slow-agent')">📝 1. Config Agents</div>
+        <span class="text-gray-300">→</span>
+        <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-100 text-gray-500 cursor-pointer" onclick="show('orchestrate')">🔀 2. Orchestrate</div>
+        <span class="text-gray-300">→</span>
+        <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-100 text-gray-500 cursor-pointer" onclick="show('debug')">🧪 3. Test</div>
+        <span class="text-gray-300">→</span>
+        <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-100 text-gray-500 cursor-pointer" onclick="show('cr')">🔄 4. Review & Publish</div>
+      </div>
+    </div>
+
+    <!-- Agents Summary -->
+    <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Agents</h2>
+    <div class="grid grid-cols-2 gap-3 mb-6">
+      <div class="card agent-card" onclick="show('fast-agent')">
+        <div class="flex items-center justify-between mb-2"><span class="text-base font-semibold">⚡ Fast Agent</span><span class="badge bg-green-100 text-green-700">live</span></div>
+        <div class="text-xs text-gray-500 space-y-0.5">
+          <div>📄 Soul: <code class="bg-gray-100 px-1 rounded">fast_ack_prompt.md</code></div>
+          <div>🔄 Sandbox: <span class="text-amber-600">0 changes</span></div>
+        </div>
+        <div class="flex gap-2 mt-2"><span class="text-[10px] text-blue-600 hover:underline cursor-pointer" onclick="event.stopPropagation();show('fast-agent')">Configure</span><span class="text-[10px] text-blue-600 hover:underline cursor-pointer" onclick="event.stopPropagation();show('debug')">Debug</span></div>
+      </div>
+      <div class="card agent-card" onclick="show('slow-agent')">
+        <div class="flex items-center justify-between mb-2"><span class="text-base font-semibold">🧠 Slow Agent</span><span class="badge bg-green-100 text-green-700">live</span></div>
+        <div class="text-xs text-gray-500 space-y-0.5">
+          <div>📄 Soul: <code class="bg-gray-100 px-1 rounded">souls/customer.md</code></div>
+          <div>📚 Skills: 23 (L0-L3) · 🗄️ KB: 12 entries · 🏷️ Slots: 8</div>
+          <div>🔄 Sandbox: <span class="text-amber-600">5 files changed</span></div>
+        </div>
+        <div class="flex gap-2 mt-2"><span class="text-[10px] text-blue-600 hover:underline cursor-pointer" onclick="event.stopPropagation();show('slow-agent')">Configure</span><span class="text-[10px] text-blue-600 hover:underline cursor-pointer" onclick="event.stopPropagation();show('debug')">Debug</span></div>
+      </div>
+    </div>
+
+    <!-- Routeset Mini -->
+    <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Routeset</h2>
+    <div class="card cursor-pointer hover:shadow-md" onclick="show('orchestrate')">
+      <div class="flex items-center justify-center gap-2 text-sm py-2">
+        <span class="bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg font-medium">💬 Customer</span>
+        <span class="text-gray-400">→</span>
+        <span class="bg-amber-100 text-amber-700 px-3 py-1.5 rounded-lg font-medium">⚡ Fast</span>
+        <span class="text-gray-400">→</span>
+        <span class="bg-purple-100 text-purple-700 px-3 py-1.5 rounded-lg font-medium">🧠 Slow</span>
+        <span class="text-gray-400">→</span>
+        <span class="bg-gray-100 text-gray-600 px-3 py-1.5 rounded-lg font-medium">👤 Operator</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ -->
+<!-- FAST AGENT CONFIG -->
+<!-- ================================================================ -->
+<div id="fast-agent" class="page">
+  <div class="max-w-3xl">
+    <h1 class="text-xl font-bold text-gray-900 mb-1">⚡ Fast Agent</h1>
+    <p class="text-sm text-gray-500 mb-4">
+      Lightweight agent — quick responses, no skills or KB.
+      📂 <code class="text-xs bg-gray-100 px-1.5 py-0.5 rounded font-mono">sandbox/config/fast_ack_prompt.md</code>
+    </p>
+
+    <!-- Only Soul tab for Fast Agent -->
+    <div class="flex gap-0 border-b border-gray-200 mb-4">
+      <div class="tab active" onclick="switchFastTab('soul')">🧬 Soul</div>
+    </div>
+
+    <div id="fast-soul" class="card">
+      <div class="flex justify-between items-center mb-2">
+        <span class="text-xs text-gray-500">Defines how the agent responds to customer messages quickly</span>
+        <button class="text-xs bg-amber-600 text-white px-4 py-1.5 rounded hover:bg-amber-700 font-medium" onclick="toast('fast')">💾 Save to Sandbox</button>
+      </div>
+      <textarea class="w-full h-48 font-mono text-xs p-4 border border-gray-200 rounded-lg bg-gray-50">You are a fast-response customer service agent for Acme Corp.
+Respond quickly and professionally.
+Keep replies under 3 sentences.
+If the issue is complex, escalate to the slow agent.</textarea>
+      <div id="toast-fast" style="display:none" class="mt-2 text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-3 py-2">✅ Saved to sandbox · CR tracked</div>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ -->
+<!-- SLOW AGENT CONFIG -->
+<!-- ================================================================ -->
+<div id="slow-agent" class="page">
+  <div class="max-w-5xl">
+    <h1 class="text-xl font-bold text-gray-900 mb-1">🧠 Slow Agent</h1>
+    <p class="text-sm text-gray-500 mb-4">
+      Full-featured agent — Soul + Skills + KB + Slots.
+      📂 <code class="text-xs bg-gray-100 px-1.5 py-0.5 rounded font-mono">sandbox/</code>
+    </p>
+
+    <!-- Tabs: Soul / Skills / KB / Slots -->
+    <div class="flex gap-0 border-b border-gray-200 mb-4">
+      <div class="tab active" onclick="switchSlowTab('soul')">🧬 Soul</div>
+      <div class="tab" onclick="switchSlowTab('skills')">📚 Skills <span class="text-[10px] bg-gray-100 px-1 rounded-full">23</span></div>
+      <div class="tab" onclick="switchSlowTab('kb')">🗄️ KB <span class="text-[10px] bg-gray-100 px-1 rounded-full">12</span></div>
+      <div class="tab" onclick="switchSlowTab('slots')">🏷️ Slots <span class="text-[10px] bg-gray-100 px-1 rounded-full">8</span></div>
+      <div class="tab" onclick="switchSlowTab('diff')">Δ Diff</div>
+      <div class="tab" onclick="switchSlowTab('preview')">👁️ Preview</div>
+    </div>
+
+    <!-- Soul Tab -->
+    <div id="slow-soul">
+      <div class="card">
+        <div class="flex justify-between items-center mb-2"><span class="text-xs text-gray-500">Core agent behavior — tone, style, persona, policies</span><button class="text-xs bg-amber-600 text-white px-4 py-1.5 rounded hover:bg-amber-700 font-medium" onclick="toast('slow-soul')">💾 Save to Sandbox</button></div>
+        <textarea class="w-full h-72 font-mono text-xs p-4 border border-gray-200 rounded-lg bg-gray-50"># Customer Soul — Acme Corp
+## Brand Identity
+Brand: Acme Corp | Industry: Retail | 7×24 | Hotline: 400-123-4567
+## {{agent_greeting}}
+Welcome to Acme Corp! How can I help you?
+## {{escalation_policy}}
+Escalate to support@acmecorp.com for complex issues.</textarea>
+        <div id="toast-slow-soul" style="display:none" class="mt-2 text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-3 py-2">✅ Saved to sandbox/souls/customer.md · CR tracked</div>
+      </div>
+    </div>
+
+    <!-- Skills Tab -->
+    <div id="slow-skills" style="display:none">
+      <div class="card mb-4"><div class="flex justify-between mb-3"><span class="font-medium text-sm">📚 Skills</span><button class="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">+ New Skill</button></div>
+        <div class="space-y-3">
+          <div><h4 class="text-[10px] font-semibold text-gray-400 uppercase mb-1">L0 · Framework</h4><div class="grid grid-cols-3 gap-2"><div class="border rounded-lg p-2.5 text-xs cursor-pointer hover:border-blue-300"><div class="font-mono font-medium">greeting</div><div class="text-gray-400 text-[10px]">Standard greeting</div></div></div></div>
+          <div><h4 class="text-[10px] font-semibold text-gray-400 uppercase mb-1">L1 · Platform</h4><div class="grid grid-cols-3 gap-2"><div class="border rounded-lg p-2.5 text-xs cursor-pointer hover:border-blue-300"><div class="font-mono font-medium">order_lookup</div><div class="text-gray-400 text-[10px]">Query order</div></div></div></div>
+          <div class="border-l-4 border-blue-300 pl-3"><h4 class="text-[10px] font-semibold text-gray-400 uppercase mb-1">L3 · Tenant ✏️</h4><div class="grid grid-cols-3 gap-2"><div class="border border-blue-200 rounded-lg p-2.5 text-xs cursor-pointer hover:border-blue-400"><div class="font-mono font-medium">acme_vip</div><div class="text-gray-400 text-[10px]">VIP handling</div></div></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- KB Tab -->
+    <div id="slow-kb" style="display:none">
+      <div class="card">
+        <div class="flex gap-0 border-b border-gray-100 mb-3 text-xs"><div class="tab active">📂 Sources (3)</div><div class="tab">🔍 Search</div><div class="tab">🌐 Fetch URL</div><div class="tab">📁 Upload</div></div>
+        <table class="w-full text-xs"><thead><tr class="text-left text-gray-400 uppercase border-b"><th class="py-2">Source</th><th>Title</th><th>Type</th><th class="text-right">Chunks</th></tr></thead>
+        <tbody><tr class="border-b"><td class="py-2 font-mono">help.acme.com</td><td>Help Center</td><td><span class="badge bg-blue-100 text-blue-700">url</span></td><td class="text-right">45</td></tr></tbody></table>
+      </div>
+    </div>
+
+    <!-- Slots Tab -->
+    <div id="slow-slots" style="display:none">
+      <div class="max-w-2xl space-y-2">
+        <div class="card flex items-center gap-3 py-2.5"><span class="text-xs font-mono text-gray-500 w-28">brand_name</span><input value="Acme Corp" class="flex-1 border border-gray-200 rounded px-3 py-1.5 text-sm"><button class="text-xs bg-amber-600 text-white px-3 py-1 rounded font-medium">Save</button></div>
+        <div class="card flex items-center gap-3 py-2.5"><span class="text-xs font-mono text-gray-500 w-28">hotline</span><input value="400-123-4567" class="flex-1 border border-gray-200 rounded px-3 py-1.5 text-sm"><button class="text-xs bg-amber-600 text-white px-3 py-1 rounded font-medium">Save</button></div>
+        <div class="card flex items-center gap-3 py-2.5"><span class="text-xs font-mono text-gray-500 w-28">industry</span><input value="Retail" class="flex-1 border border-gray-200 rounded px-3 py-1.5 text-sm"><button class="text-xs bg-amber-600 text-white px-3 py-1 rounded font-medium">Save</button></div>
+      </div>
+    </div>
+
+    <!-- Diff Tab -->
+    <div id="slow-diff" style="display:none" class="card">
+      <h4 class="text-sm font-medium mb-3">Sandbox vs Release (v12)</h4>
+      <div class="text-xs font-mono space-y-1"><div class="text-green-700 bg-green-50 rounded px-2 py-0.5">+ Hotline: 400-123-4567</div><div class="text-red-700 bg-red-50 rounded px-2 py-0.5">- Hotline: 400-xxx-xxxx</div><div class="text-green-700 bg-green-50 rounded px-2 py-0.5">+ ## {{escalation_policy}}</div></div>
+    </div>
+
+    <!-- Preview Tab -->
+    <div id="slow-preview" style="display:none" class="card">
+      <pre class="text-xs font-mono bg-gray-50 rounded p-4 max-h-80 overflow-auto"># CLAUDE.md — Acme Corp (customer)
+## Soul: Brand: Acme Corp | Retail | 7×24 | Hotline: 400-123-4567
+## Skills Index: greeting(L0), order_lookup(L1), acme_vip(L3)
+## KB: 3 sources, 81 chunks</pre>
+    </div>
+
+  </div>
+</div>
+
+<!-- ================================================================ -->
+<!-- ORCHESTRATE — Routeset -->
+<!-- ================================================================ -->
+<div id="orchestrate" class="page">
+  <div class="max-w-3xl">
+    <h1 class="text-xl font-bold text-gray-900 mb-1">🔀 Routeset</h1>
+    <p class="text-sm text-gray-500 mb-6">Define how customer messages flow through agents</p>
+
+    <!-- Route visualization -->
+    <div class="space-y-1 mb-6">
+      <!-- Customer -->
+      <div class="route-node border-blue-400 bg-blue-50"><span class="text-lg">💬</span><div><div class="text-sm font-semibold text-blue-800">Customer Message</div><div class="text-[10px] text-blue-600">Entry point — any message from customer</div></div></div>
+      <div class="route-arrow py-1">│ unmatched →</div>
+      <!-- Fast Agent -->
+      <div class="route-node border-amber-400 bg-amber-50"><span class="text-lg">⚡</span><div class="flex-1"><div class="flex justify-between"><span class="text-sm font-semibold text-amber-800">Fast Agent</span><span class="badge bg-amber-100 text-amber-700">quick reply</span></div><div class="text-[10px] text-amber-600">Timeout: 5s · Model: claude-haiku</div></div><button class="text-[10px] text-blue-600 hover:underline">Configure →</button></div>
+      <div class="route-arrow py-1">│ unresolved →</div>
+      <!-- Slow Agent -->
+      <div class="route-node border-purple-400 bg-purple-50"><span class="text-lg">🧠</span><div class="flex-1"><div class="flex justify-between"><span class="text-sm font-semibold text-purple-800">Slow Agent</span><span class="badge bg-purple-100 text-purple-700">deep think</span></div><div class="text-[10px] text-purple-600">Timeout: 30s · Model: claude-sonnet · Soul + Skills + KB</div></div><button class="text-[10px] text-blue-600 hover:underline">Configure →</button></div>
+      <div class="route-arrow py-1">│ unresolved →</div>
+      <!-- Operator -->
+      <div class="route-node border-gray-400 bg-gray-50"><span class="text-lg">👤</span><div class="flex-1"><div class="flex justify-between"><span class="text-sm font-semibold text-gray-700">Operator</span><span class="badge bg-gray-200 text-gray-600">human</span></div><div class="text-[10px] text-gray-500">Manual takeover · No timeout</div></div></div>
+    </div>
+
+    <!-- Route config -->
+    <div class="card">
+      <h3 class="text-sm font-semibold mb-3">Route Rules</h3>
+      <div class="space-y-3 text-xs">
+        <div class="flex items-center justify-between p-2 bg-gray-50 rounded"><span>Fast Agent → Slow Agent</span><span>Condition: confidence &lt; 0.8 or timeout</span><button class="text-blue-600 hover:underline">Edit</button></div>
+        <div class="flex items-center justify-between p-2 bg-gray-50 rounded"><span>Slow Agent → Operator</span><span>Condition: user requests human or escalation_policy triggers</span><button class="text-blue-600 hover:underline">Edit</button></div>
+        <div class="flex items-center justify-between p-2 bg-gray-50 rounded"><span>Operator → Slow Agent</span><span>Condition: operator resolves + returns to bot</span><button class="text-blue-600 hover:underline">Edit</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ -->
+<!-- DEBUG AGENT -->
+<!-- ================================================================ -->
+<div id="debug" class="page">
+  <div class="max-w-6xl w-full">
+    <div class="flex items-center justify-between mb-4">
+      <div><h1 class="text-xl font-bold text-gray-900">🧪 Debug Agent</h1><p class="text-sm text-gray-500">Test any agent with sandbox content</p></div>
+      <div class="flex items-center gap-2">
+        <select class="border border-gray-300 rounded-lg px-3 py-1.5 text-sm"><option>⚡ Fast Agent (sandbox)</option><option>🧠 Slow Agent (sandbox)</option><option>⚡ Fast Agent (release v12)</option><option>🧠 Slow Agent (release v12)</option></select>
+        <button class="text-xs border rounded-lg px-3 py-1.5 hover:bg-gray-50">📄 View Source</button>
+      </div>
+    </div>
+
+    <!-- Side-by-side chat -->
+    <div class="grid grid-cols-2 gap-4">
+      <div class="card border-2 border-amber-300">
+        <div class="flex items-center justify-between mb-3"><div><h3 class="text-sm font-semibold text-amber-800">🧪 Sandbox Agent</h3><p class="text-[10px] text-amber-600">Slow Agent · sandbox · 5 files changed</p></div><span class="badge bg-amber-100 text-amber-700">unpublished</span></div>
+        <div class="space-y-3 mb-3 min-h-[320px] max-h-[400px] overflow-y-auto bg-gray-50 rounded-lg p-3">
+          <div class="text-xs text-gray-400 text-center">— Chat with sandbox agent —</div>
+          <div class="flex gap-2 justify-end"><div class="bg-blue-500 text-white rounded-lg rounded-tr-none px-3 py-2 text-xs max-w-[75%]">I want to return order #12345</div></div>
+          <div class="flex gap-2"><div class="bg-white border rounded-lg rounded-tl-none px-3 py-2 text-xs max-w-[75%]">I'd be happy to help! Order #12345 is eligible for return. Refund will be processed in 5-7 business days.<br><span class="text-amber-600 text-[10px] mt-1 block">📋 sandbox return_policy skill</span></div></div>
+          <div class="flex gap-2 justify-end"><div class="bg-blue-500 text-white rounded-lg rounded-tr-none px-3 py-2 text-xs max-w-[75%]">What's your hotline?</div></div>
+          <div class="flex gap-2"><div class="bg-white border rounded-lg rounded-tl-none px-3 py-2 text-xs max-w-[75%]">Our hotline is <strong>400-123-4567</strong>, 7×24.<br><span class="text-green-600 text-[10px] mt-1 block">✅ slot hotline: 400-123-4567</span></div></div>
+        </div>
+        <div class="flex gap-2"><input placeholder="Type test message..." class="flex-1 border rounded-lg px-3 py-2 text-sm"><button class="bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-medium">Send</button></div>
+      </div>
+
+      <div class="card border-2 border-green-300">
+        <div class="flex items-center justify-between mb-3"><div><h3 class="text-sm font-semibold text-green-800">✅ Release Agent</h3><p class="text-[10px] text-green-600">Slow Agent · release/v12 · live</p></div><span class="badge bg-green-100 text-green-700">published</span></div>
+        <div class="space-y-3 mb-3 min-h-[320px] max-h-[400px] overflow-y-auto bg-gray-50 rounded-lg p-3">
+          <div class="text-xs text-gray-400 text-center">— Same input, release agent —</div>
+          <div class="flex gap-2 justify-end"><div class="bg-blue-500 text-white rounded-lg rounded-tr-none px-3 py-2 text-xs max-w-[75%]">I want to return order #12345</div></div>
+          <div class="flex gap-2"><div class="bg-white border rounded-lg rounded-tl-none px-3 py-2 text-xs max-w-[75%]">I can help with returns. Order #12345 is within the 30-day window.<br><span class="text-gray-500 text-[10px] mt-1 block">📋 release return_policy skill</span></div></div>
+          <div class="flex gap-2 justify-end"><div class="bg-blue-500 text-white rounded-lg rounded-tr-none px-3 py-2 text-xs max-w-[75%]">What's your hotline?</div></div>
+          <div class="flex gap-2"><div class="bg-white border rounded-lg rounded-tl-none px-3 py-2 text-xs max-w-[75%]">Our hotline is <strong>400-xxx-xxxx</strong>, 7×24.<br><span class="text-red-500 text-[10px] mt-1 block">⚠️ old hotline: 400-xxx-xxxx</span></div></div>
+        </div>
+        <div class="flex gap-2 opacity-50"><input disabled placeholder="Same input..." class="flex-1 border rounded-lg px-3 py-2 text-sm bg-gray-100"><button disabled class="bg-gray-400 text-white px-4 py-2 rounded-lg text-sm">Send</button></div>
+      </div>
+    </div>
+
+    <div class="mt-4 card bg-amber-50 border border-amber-200">
+      <div class="flex items-center justify-between"><div><span class="text-sm font-semibold text-amber-900">📊 Diff: sandbox adds hotline 400-123-4567</span><p class="text-xs text-amber-700 mt-1">1 slot change · return_policy response similar</p></div><a href="#" onclick="show('cr')" class="text-sm bg-amber-600 text-white px-4 py-2 rounded hover:bg-amber-700">🔄 Review & Publish →</a></div>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ -->
+<!-- CR REVIEW -->
+<!-- ================================================================ -->
+<div id="cr" class="page">
+  <div class="max-w-3xl">
+    <h1 class="text-xl font-bold text-gray-900 mb-1">🔄 CR Review</h1>
+    <p class="text-sm text-gray-500 mb-4">Review sandbox changes before publishing</p>
+    <div class="card mb-4">
+      <div class="flex justify-between items-center mb-3"><span class="font-semibold">Active CR</span><span class="badge bg-amber-100 text-amber-700">open</span></div>
+      <div class="text-sm space-y-1 mb-4"><div class="flex justify-between py-1 border-b"><span class="text-gray-500">CR ID</span><span class="font-mono text-xs">cr-2026-06-17-723</span></div></div>
+      <h4 class="text-xs font-semibold text-gray-500 uppercase mb-2">Sandbox Changes</h4>
+      <div class="grid grid-cols-3 gap-3 mb-3"><div class="bg-gray-50 rounded-lg p-3 text-center"><div class="text-xl font-bold">5</div><div class="text-[10px] text-gray-500">Files</div></div><div class="bg-green-50 rounded-lg p-3 text-center"><div class="text-xl font-bold text-green-700">+12</div><div class="text-[10px] text-gray-500">Added</div></div><div class="bg-red-50 rounded-lg p-3 text-center"><div class="text-xl font-bold text-red-700">-3</div><div class="text-[10px] text-gray-500">Removed</div></div></div>
+      <div class="text-xs font-mono space-y-1 mb-4">
+        <div class="bg-gray-50 rounded px-2 py-1">🧠 Slow Agent: souls/customer.md (+4 -1)</div>
+        <div class="bg-gray-50 rounded px-2 py-1">🧠 Slow Agent: slots/customer.yaml (+2 -0)</div>
+        <div class="bg-gray-50 rounded px-2 py-1">🧠 Slow Agent: skills/customer/acme_vip/SKILL.md (+6 -0)</div>
+        <div class="bg-gray-50 rounded px-2 py-1">⚡ Fast Agent: <span class="text-gray-400">0 changes</span></div>
+      </div>
+      <div class="bg-green-50 rounded-lg p-3 mb-4 text-sm"><span class="text-green-600">✅ Lint: all checks passed</span></div>
+      <div class="flex gap-2"><button class="text-sm bg-gray-800 text-white px-6 py-2 rounded hover:bg-gray-700 font-medium">🚀 Publish to Release</button><button class="text-sm border border-red-300 text-red-700 px-4 py-2 rounded hover:bg-red-50">Cancel CR</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ -->
+<!-- SIMPLE PAGES (abbreviated) -->
+<!-- ================================================================ -->
+<div id="history" class="page"><div class="max-w-3xl"><h1 class="text-xl font-bold text-gray-900 mb-4">📋 Version History</h1><div class="space-y-2"><div class="card flex justify-between"><div><span class="font-mono font-semibold">v12</span><span class="badge bg-green-100 text-green-700 ml-2">CURRENT</span></div><span class="text-xs text-gray-400">2026-06-17 10:30</span></div><div class="card flex justify-between opacity-60"><div><span class="font-mono">v11</span></div><span class="text-xs text-gray-400">2026-06-16 14:20</span></div></div></div></div>
+<div id="operators" class="page"><div class="max-w-3xl"><h1 class="text-xl font-bold text-gray-900 mb-4">👥 Operators</h1><div class="card"><table class="w-full text-sm"><thead><tr class="text-left text-xs text-gray-500 border-b"><th class="py-2">URI</th><th>Status</th><th></th></tr></thead><tbody><tr class="border-b"><td class="py-2 font-mono text-xs">entity://user/demo-acme/op-alice</td><td><span class="badge bg-green-100 text-green-700">active</span></td><td><button class="text-xs text-red-600">Disable</button></td></tr></tbody></table></div></div></div>
+<div id="master" class="page"><div class="max-w-5xl"><h1 class="text-xl font-bold text-gray-900 mb-1">🏠 Master Dashboard</h1><p class="text-sm text-gray-500 mb-6">Platform overview</p><div class="grid grid-cols-4 gap-4 mb-6"><div class="card text-center"><div class="text-3xl font-bold text-blue-600">12</div><div class="text-xs text-gray-500 mt-1">Tenants</div></div><div class="card text-center"><div class="text-3xl font-bold text-green-600">8</div><div class="text-xs text-gray-500 mt-1">Published</div></div></div></div></div>
+<div id="tenants" class="page"><div class="max-w-5xl"><h1 class="text-xl font-bold text-gray-900 mb-4">🏢 Tenants</h1><div class="card"><table class="w-full text-sm"><thead><tr class="text-left text-xs text-gray-500 border-b"><th class="py-2">ID</th><th>Brand</th><th>Status</th><th></th></tr></thead><tbody><tr class="border-b"><td class="py-2 font-mono text-xs">demo-acme</td><td>Acme Corp</td><td><span class="badge bg-green-100 text-green-700">active</span></td><td><a href="#" onclick="show('overview')" class="text-blue-600 text-xs">Open →</a></td></tr></tbody></table></div></div></div>
+<div id="onboard" class="page"><div class="max-w-lg mx-auto"><h1 class="text-xl font-bold text-gray-900 mb-1">➕ New Tenant</h1><div class="card space-y-4"><div><label class="block text-sm font-medium mb-1">Tenant ID *</label><input placeholder="demo-acme" class="w-full border rounded-lg px-3 py-2 text-sm"></div><div><label class="block text-sm font-medium mb-1">Brand Name</label><input placeholder="Acme Corp" class="w-full border rounded-lg px-3 py-2 text-sm"></div><button class="w-full bg-blue-600 text-white rounded-lg py-2.5 text-sm font-medium hover:bg-blue-700">Create</button></div></div></div>
+
+</main></div>
+
+<script>
+function show(id) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  var el = document.getElementById(id);
+  if (el) el.classList.add('active');
+}
+function switchFastTab(t) { document.querySelectorAll('#fast-agent [id^="fast-"]').forEach(e => e.style.display='none'); var el=document.getElementById('fast-'+t); if(el) el.style.display='block'; }
+function switchSlowTab(t) { document.querySelectorAll('#slow-agent [id^="slow-"]').forEach(e => e.style.display='none'); var el=document.getElementById('slow-'+t); if(el) el.style.display='block'; }
+function toast(id) { var el=document.getElementById('toast-'+id); if(el){el.style.display='block';setTimeout(function(){el.style.display='none'},2000);} }
+</script>
+</body>
+</html>
