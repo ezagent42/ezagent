@@ -116,6 +116,12 @@ defmodule EzagentPluginLoom.WebPlug do
     json_resp(conn, 200, %{ok: true, items: items})
   end
 
+  # 2026-06-16 — 衍生谱系树:本 ws 下「创作 session → 发布模板 → 冻结消费 / fork」
+  # 的层级关系(发布弹窗里展示,让操作员看清谁从谁衍生)。
+  get "/api/:ws/lineage" do
+    json_resp(conn, 200, %{ok: true, ws: ws, roots: Ezagent.PluginLoom.Lineage.tree(ws)})
+  end
+
   # 删除一个 template entry。
   delete "/api/:ws/templates/:name" do
     json_resp(conn, 200, remove_template_entry(ws, name))
@@ -1125,6 +1131,10 @@ defmodule EzagentPluginLoom.WebPlug do
         # 分享按钮)。快照由 preview 页的"分享"按钮另行创建(见 create_snapshot/2)。
         case Ezagent.PluginLoom.SavedClasses.save_one(name, full_snapshot, description, meta) do
           {:ok, class_name} ->
+            # 谱系:这个模板由 sid(创作 session)发布 → 记一条 published_from。
+            _ =
+              Ezagent.PluginLoom.Lineage.record_publish(ws, sid, class_name, token, description)
+
             %{ok: true, token: token, link: "/loom/p/#{token}", class_name: class_name}
 
           {:error, reason} ->
@@ -1174,6 +1184,9 @@ defmodule EzagentPluginLoom.WebPlug do
           sid,
           Ezagent.PluginLoom.SavedClasses.pages_for_token(token)
         )
+
+      # 谱系:这个冻结消费 session 由 class_name 模板 mint → 记一条 derived_from。
+      _ = Ezagent.PluginLoom.Lineage.record_consume(ws, sid, class_name)
 
       %{ok: true, ws: ws, sid: sid}
     else
@@ -1688,6 +1701,10 @@ defmodule EzagentPluginLoom.WebPlug do
 
       # 角色门控随快照 seed 进 fork 出的会话(创建者 + 各角色账号),fork 后该 session 自带角色门控。
       _ = Ezagent.PluginLoom.RoleConfig.seed(ws, sid, Map.get(snap, "roles", %{}))
+
+      # 谱系:这个 fork 从快照的 origin_sid(被分享的消费 session)衍生 → 记一条 forked_from。
+      _ = Ezagent.PluginLoom.Lineage.record_fork(ws, sid, Map.get(snap, "origin_sid"))
+
       %{ok: true, ws: ws, sid: sid}
     else
       :error -> %{ok: false, error: "unknown token"}
@@ -1921,8 +1938,13 @@ defmodule EzagentPluginLoom.WebPlug do
   defp remove_template_entry(_ws, name) do
     # 2026-06-01 — Class-级:从 SavedClasses 删 + deregister 模块。
     case Ezagent.PluginLoom.SavedClasses.delete_one(name) do
-      :ok -> %{ok: true}
-      {:error, reason} -> %{ok: false, error: inspect(reason)}
+      :ok ->
+        # 谱系:模板被删 → 忘掉它这个节点(子节点变孤儿,树仍可渲染)。
+        _ = Ezagent.PluginLoom.Lineage.forget(name)
+        %{ok: true}
+
+      {:error, reason} ->
+        %{ok: false, error: inspect(reason)}
     end
   end
 
