@@ -1,19 +1,19 @@
-defmodule EzagentPluginLoom.Stitch do
+defmodule EzagentPluginLoom.Salesperson do
   @moduledoc """
-  Stitch 共享逻辑(2026-06-10 重构)。
+  Salesperson 共享逻辑(2026-06-10 重构)。
 
-  原先 Stitch / AiSpot 在 `WebPlug` 里**直连 DeepSeek**。重构后,preview 侧 AI 一律
-  走 session 里的 **`loomstitch_<sid>` worker**(`Ezagent.Behavior.LoomStitchWorker`,
+  原先 Salesperson / AiSpot 在 `WebPlug` 里**直连 DeepSeek**。重构后,preview 侧 AI 一律
+  走 session 里的 **`loomsalesperson_<sid>` worker**(`Ezagent.Behavior.LoomSalespersonWorker`,
   仍调 DeepSeek,但作为 team 成员、@-only、对话进 session 持久化)。本模块抽出与传输无关
   的纯逻辑,供 worker 复用:
 
-  - `system_prompt/2` —— Stitch 聊天系统提示(能力驱动 + DRIVE 强制 + 知识库 grounding)。
+  - `system_prompt/2` —— Salesperson 聊天系统提示(能力驱动 + DRIVE 强制 + 知识库 grounding)。
   - `aispot_prompt/3` —— AiSpot ✨ 卡片系统提示(紧扣热点 + `[[术语]]` 标注)。
   - `build_messages/3` —— 把历史(带 drive)+ 新输入拼成 DeepSeek messages(防 history 污染)。
   - `parse_reply/1` —— 从回复抽 `DRIVE:` / `OP:` 行 → `{text, op, drive}`。
   """
 
-  # ---- Stitch 聊天系统提示 ----------------------------------------------
+  # ---- Salesperson 聊天系统提示 ----------------------------------------------
 
   @spec system_prompt([map()], String.t()) :: String.t()
   def system_prompt(caps, kb) do
@@ -30,7 +30,7 @@ defmodule EzagentPluginLoom.Stitch do
       end
 
     """
-    你是 Stitch —— 嵌在一个网页里的友好助手。页面作者声明了若干「能力」(见下方 JSON,
+    你是 Salesperson —— 嵌在一个网页里的友好助手。页面作者声明了若干「能力」(见下方 JSON,
     每项是参数化指令集:`options` 可选值 + `commands` 命令形状)。你每次回复,要么**操作页面**,
     要么**回答问题**。
 
@@ -111,7 +111,7 @@ defmodule EzagentPluginLoom.Stitch do
     (有知识库就结合),不要套话/客套/免责声明。
 
     回答里可以放**最多 3 个可点击标记**,用 `[[显示词|点击后要对页面助手说的话]]` 语法(竖线左边是
-    展示的短词,右边是用户点击时**自动发给助手 Stitch 的那句话**)。两类标记**只标真正有价值的**:
+    展示的短词,右边是用户点击时**自动发给助手 Salesperson 的那句话**)。两类标记**只标真正有价值的**:
 
     1. **可解释的实词** —— 知识库里出现的、或有一定门槛/专业性的名词(如 `[[唾液酸|什么是唾液酸?]]`)。
        **普通常识词不要标**(如「价格」「商品」这种谁都懂的不标)。点击 = 让助手解释它。

@@ -21,16 +21,16 @@ defmodule Ezagent.Domain.Pty.Server.AutoPromptsTest do
   # first time claude runs in a cwd not yet recorded as trusted.
   @trust_buffer "\e[1CAccessing\e[1Cworkspace:\r\r\n\e[1C/Users/x/poc-sandbox-phase2/cinnox\r\r\n" <>
                   "\e[1CQuick\e[1Csafety\e[1Ccheck:\e[1CIs\e[1Cthis\e[1Ca\e[1Cproject\e[1Cyou\e[1Ccreated\e[1Cor\e[1Cone\e[1Cyou\e[1Ctrust?\r\r\n" <>
-                  "\e[1C\x{276F}\e[1C1.\e[1CYes,\e[1CI\e[1Ctrust\e[1Cthis\e[1Cfolder\r\r\n\e[3C2.\e[1CNo,\e[1Cexit\r\r\n" <>
-                  "\e[1CEnter\e[1Cto\e[1Cconfirm\e[1C\x{00B7}\e[1CEsc\e[1Cto\e[1Ccancel"
+                  "\e[1C❯\e[1C1.\e[1CYes,\e[1CI\e[1Ctrust\e[1Cthis\e[1Cfolder\r\r\n\e[3C2.\e[1CNo,\e[1Cexit\r\r\n" <>
+                  "\e[1CEnter\e[1Cto\e[1Cconfirm\e[1C·\e[1CEsc\e[1Cto\e[1Ccancel"
 
   # Real dev-channels warning, where claude animates the banner so the
   # "o" of "Loading" is drawn via a cursor move → strips to "L ading".
   @dev_channels_buffer "\e[13A WARNING:\e[1CL\e[1Cading development\e[1Cchannels\r" <>
                          "\e[2B --dangerously-l\e[1Cad-development-chan\e[1Cels\e[1Cis\e[1Cfor\e[1Clocal\e[1Cchannel\e[1Cdevelopment\e[1Conly.\r" <>
                          "\e[2B Channels: server:esr-bridg\e[1C\r" <>
-                         "\e[2B \x{276F} 1. I am using\e[1Cthis\e[1Cfor\e[1Clocal\e[1Cdevelopment\r\e[4C\e[1B2.\e[1CExit\r" <>
-                         "\e[1BEnter to confirm\e[1C\x{00B7}\e[1CEsc\e[1Cto\e[1Ccancel"
+                         "\e[2B ❯ 1. I am using\e[1Cthis\e[1Cfor\e[1Clocal\e[1Cdevelopment\r\e[4C\e[1B2.\e[1CExit\r" <>
+                         "\e[1BEnter to confirm\e[1C·\e[1CEsc\e[1Cto\e[1Ccancel"
 
   defp spec(name),
     do: Enum.find(PtyServer.default_auto_prompts(), &(&1.name == name))

@@ -1,6 +1,6 @@
-defmodule Ezagent.Behavior.LoomV0Worker do
+defmodule Ezagent.Behavior.LoomBuilderWorker do
   @moduledoc """
-  Loom v0worker Behavior — the in-session AI page generator. Sibling to
+  Loom builderworker Behavior — the in-session AI page generator. Sibling to
   `Ezagent.Behavior.LoomWorker` (same dispatch+mention+ref_id contract)
   but with **two** specializations:
 
@@ -17,7 +17,7 @@ defmodule Ezagent.Behavior.LoomV0Worker do
   ## Loop-guard
 
   Same as LoomWorker — `handle_receive` only acts when the message
-  `@mentions` this v0worker. Anything else → ignore.
+  `@mentions` this builderworker. Anything else → ignore.
 
   ## Reply addressing
 
@@ -43,15 +43,15 @@ defmodule Ezagent.Behavior.LoomV0Worker do
     caps: [:receive],
     modes: [:cast],
     description:
-      "loom v0worker — page-gen Claude Code call; reply with `<span type=\"page_update\">{source, summary}</span>` body"
+      "loom builderworker — page-gen Claude Code call; reply with `<span type=\"page_update\">{source, summary}</span>` body"
   )
 
-  # Pin the kind axis `:loomv0` (macro's auto-derived default is `:any`).
+  # Pin the kind axis `:loombuilder` (macro's auto-derived default is `:any`).
   def required_caps do
-    %{receive: Ezagent.Capability.cap(:loomv0, __MODULE__, :receive)}
+    %{receive: Ezagent.Capability.cap(:loombuilder, __MODULE__, :receive)}
   end
 
-  def state_slice, do: :loom_v0
+  def state_slice, do: :loom_builder
 
   def init_slice(_args) do
     %{count: 0, last_error: nil}
@@ -68,8 +68,8 @@ defmodule Ezagent.Behavior.LoomV0Worker do
 
       # 2026-06-12 素材库:把本 session 素材目录设为 Claude Code 的 cwd(放开 Read)+ 给它清单;
       # 它需要素材内容时直接 Read 文件,不靠 prompt 塞。无素材 → 不传(行为同前)。
-      {mws, msid} = v0_ws_sid(ctx)
-      manifest = if mws, do: Materials.render_for_v0(mws, msid), else: ""
+      {mws, msid} = builder_ws_sid(ctx)
+      manifest = if mws, do: Materials.render_for_builder(mws, msid), else: ""
 
       materials_dir =
         if mws && Materials.list(mws, msid) != [], do: Materials.dir(mws, msid), else: nil
@@ -83,22 +83,30 @@ defmodule Ezagent.Behavior.LoomV0Worker do
              thinking_disabled: true,
              group: group_id(ctx),
              materials_dir: materials_dir,
-             role: "v0"
+             role: "builder"
            ) do
         # 用户中止 → 静默丢弃:不发 page_update、不发 error 卡 → :loom_source 不变、页面不变。
         {:error, :stopped} ->
           {:ok, %{}, []}
 
         {:ok, reply_text} ->
-          # 2026-06-10:先抽可选 stitchConfig,再把该块从文本剥掉(否则会被 file 正则
+          # 2026-06-10:先抽可选 salespersonConfig,再把该块从文本剥掉(否则会被 file 正则
           # 误当成一个代码块文件)。文件抽取走剥干净的文本。
-          stitch_cfg = extract_stitch_config(reply_text)
-          files_text = Regex.replace(~r/```stitchConfig\s*\n[\s\S]*?```/, reply_text, "")
+          salesperson_cfg = extract_salesperson_config(reply_text)
+
+          # 2026-06-15 — 弹幕样式(danmakuConfig),跟 salespersonConfig 同机制:builder 可选地
+          # 随页面发一块 ```danmakuConfig{...}```,控制弹幕(session 人类发言飘过 preview)的样式。
+          danmaku_cfg = extract_danmaku_config(reply_text)
+
+          files_text =
+            reply_text
+            |> then(&Regex.replace(~r/```salespersonConfig\s*\n[\s\S]*?```/, &1, ""))
+            |> then(&Regex.replace(~r/```danmakuConfig\s*\n[\s\S]*?```/, &1, ""))
 
           case extract_files_and_summary(files_text) do
             {:ok, files, summary} ->
               # span 带 `files`(权威)+ `source`(= /App.jsx,旧 dist 降级兼容)+ `summary`
-              # + 可选 `stitchConfig`(页面助手样式)。
+              # + 可选 `salespersonConfig`(页面助手样式)+ 可选 `danmakuConfig`(弹幕样式)。
               base = %{
                 "files" => files,
                 "source" => Map.get(files, "/App.jsx", ""),
@@ -106,7 +114,19 @@ defmodule Ezagent.Behavior.LoomV0Worker do
               }
 
               span_map =
-                if is_map(stitch_cfg), do: Map.put(base, "stitchConfig", stitch_cfg), else: base
+                base
+                |> then(
+                  &if(is_map(salesperson_cfg),
+                    do: Map.put(&1, "salespersonConfig", salesperson_cfg),
+                    else: &1
+                  )
+                )
+                |> then(
+                  &if(is_map(danmaku_cfg),
+                    do: Map.put(&1, "danmakuConfig", danmaku_cfg),
+                    else: &1
+                  )
+                )
 
               body_text = Span.span("page_update", span_map)
 
@@ -120,8 +140,7 @@ defmodule Ezagent.Behavior.LoomV0Worker do
               # danger 错误卡。只有连文字都没有(真·空回复)才报 :no_jsx_block。
               case conversational_reply(files_text) do
                 prose when is_binary(prose) and prose != "" ->
-                  {:ok, %{},
-                   [{:set, :last_error, nil}] ++ reply_effect(ctx, msg, prose)}
+                  {:ok, %{}, [{:set, :last_error, nil}] ++ reply_effect(ctx, msg, prose)}
 
                 _ ->
                   {:ok, %{},
@@ -217,11 +236,11 @@ defmodule Ezagent.Behavior.LoomV0Worker do
     end
   end
 
-  # 2026-06-10 — 抽 ```stitchConfig\n{...}\n``` 块(可选):v0 用它控制页面助手(Stitch)
+  # 2026-06-10 — 抽 ```salespersonConfig\n{...}\n``` 块(可选):builder 用它控制页面助手(Salesperson)
   # 的**样式/位置**(placement: bottom-right|bottom-center,draggable,accent),功能不变。
-  # 前端 loom-bridge 从 page_update 的 stitchConfig 字段读它。无块 → nil。
-  defp extract_stitch_config(text) when is_binary(text) do
-    case Regex.run(~r/```stitchConfig\s*\n([\s\S]*?)```/, text) do
+  # 前端 loom-bridge 从 page_update 的 salespersonConfig 字段读它。无块 → nil。
+  defp extract_salesperson_config(text) when is_binary(text) do
+    case Regex.run(~r/```salespersonConfig\s*\n([\s\S]*?)```/, text) do
       [_, json] ->
         case Jason.decode(String.trim(json)) do
           {:ok, m} when is_map(m) -> m
@@ -233,7 +252,24 @@ defmodule Ezagent.Behavior.LoomV0Worker do
     end
   end
 
-  defp extract_stitch_config(_), do: nil
+  defp extract_salesperson_config(_), do: nil
+
+  # 2026-06-15 — 抽 ```danmakuConfig\n{...}\n``` 块(可选):builder 用它控制弹幕样式
+  # (color/fontSize/speed/opacity/density/enabled)。前端从 page_update 的 danmakuConfig 读。无块 → nil。
+  defp extract_danmaku_config(text) when is_binary(text) do
+    case Regex.run(~r/```danmakuConfig\s*\n([\s\S]*?)```/, text) do
+      [_, json] ->
+        case Jason.decode(String.trim(json)) do
+          {:ok, m} when is_map(m) -> m
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp extract_danmaku_config(_), do: nil
 
   # ---------------------------------------------------------------
   # boilerplate — mention guard + reply dispatch (copied from LoomWorker)
@@ -275,9 +311,9 @@ defmodule Ezagent.Behavior.LoomV0Worker do
     end
   end
 
-  # 2026-06-05 v0 解耦:v0 可能被**直接 @**(sender=用户),此时编排器收不到这条
+  # 2026-06-05 v0 解耦:builder 可能被**直接 @**(sender=用户),此时编排器收不到这条
   # page_update → loom_source 不更新 → publish/snapshot 失效。所以回复**始终也 @ 编排器**
-  # (`loomorch_<sid>`,从 self_uri 的 `loomv0_` 推导),保证编排器缓存源。dedupe:
+  # (`loomorch_<sid>`,从 self_uri 的 `loombuilder_` 推导),保证编排器缓存源。dedupe:
   # 编排器派发场景 sender 本就是编排器。
   defp reply_mentions(%URI{} = self_uri, sender) do
     case orchestrator_uri(self_uri) do
@@ -289,9 +325,9 @@ defmodule Ezagent.Behavior.LoomV0Worker do
   defp orchestrator_uri(%URI{} = self_uri) do
     s = URI.to_string(self_uri)
 
-    if String.contains?(s, "/loomv0_") do
+    if String.contains?(s, "/loombuilder_") do
       try do
-        Ezagent.URI.new!(String.replace(s, "/loomv0_", "/loomorch_"))
+        Ezagent.URI.new!(String.replace(s, "/loombuilder_", "/loomorch_"))
       rescue
         _ -> nil
       end
@@ -331,7 +367,7 @@ defmodule Ezagent.Behavior.LoomV0Worker do
 
   # 把本次消息附件入库 + 渲染本 session 整个素材库(2026-06-12 素材库)。
   # 从 session 推 {ws, sid}(本 session 素材目录的 key);非 loom session → {nil, nil}。
-  defp v0_ws_sid(ctx) do
+  defp builder_ws_sid(ctx) do
     with %URI{path: path} <- session_from_ctx(ctx),
          [ws, sid | _] <- path |> to_string() |> String.trim_leading("/") |> String.split("/"),
          true <- ws != "" and sid != "" do

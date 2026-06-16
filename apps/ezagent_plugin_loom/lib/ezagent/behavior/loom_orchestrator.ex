@@ -83,11 +83,14 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
           Map.get(args, :initial_loom_source) || Map.get(args, "initial_loom_source") ||
             Prompts.loom_seed_files()
         ),
-      # 2026-06-10 — 页面助手(Stitch)样式。v0 在 page_update span 里可选带
-      # `stitchConfig`(位置/外观),缓存到 slice → publish/snapshot 读 orchestrator
+      # 2026-06-10 — 页面助手(Salesperson)样式。v0 在 page_update span 里可选带
+      # `salespersonConfig`(位置/外观),缓存到 slice → publish/snapshot 读 orchestrator
       # slice 时带走,seed 给消费会话(published/pub)也保留。nil = 用前端默认。
-      stitch_config:
-        Map.get(args, :initial_stitch_config) || Map.get(args, "initial_stitch_config")
+      salesperson_config:
+        Map.get(args, :initial_salesperson_config) || Map.get(args, "initial_salesperson_config"),
+      # 2026-06-15 — 弹幕样式(随 publish/snapshot 带走,跟 salesperson_config 同)。
+      danmaku_config:
+        Map.get(args, :initial_danmaku_config) || Map.get(args, "initial_danmaku_config")
     }
   end
 
@@ -196,11 +199,11 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
           end
       end
 
-    # 2026-06-05 — v0 从编排器解耦(同 loommeta 的 mention-gated 模型):v0 不进编排器
-    # 可派发的 worker 列表。只有**直接 @loomv0** 才改页;@编排器说"改页"无效(编排器
-    # 不再把改页派给 v0)。v0 仍是 session 成员、回复仍 @编排器(见 LoomV0Worker),
+    # 2026-06-05 — v0 从编排器解耦(同 loommeta 的 mention-gated 模型):builder 不进编排器
+    # 可派发的 worker 列表。只有**直接 @loombuilder** 才改页;@编排器说"改页"无效(编排器
+    # 不再把改页派给 v0)。v0 仍是 session 成员、回复仍 @编排器(见 LoomBuilderWorker),
     # 让编排器继续缓存 loom_source(publish/snapshot 依赖)。
-    Enum.reject(raw, fn w -> w[:label] == "v0" end)
+    Enum.reject(raw, fn w -> w[:label] == "builder" end)
   end
 
   @doc """
@@ -241,8 +244,8 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
   def worker_label(s) when is_binary(s) do
     cond do
-      String.contains?(s, "/loomv0_") ->
-        "v0"
+      String.contains?(s, "/loombuilder_") ->
+        "builder"
 
       not String.contains?(s, "/loomworker_") ->
         # loommeta_ / loomorch_ / user URIs / 等等 — 不算 worker
@@ -281,10 +284,14 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
     subs =
       for %{uri: worker_uri, task: task} <- entries do
-        # 2026-06-02 修意图丢失:v0(页面生成)直接拿**用户原话**,不用编排器转述的
+        # 2026-06-02 修意图丢失:builder(页面生成)直接拿**用户原话**,不用编排器转述的
         # `task`(转述会丢 URL / "1:1" / 行业等关键细节,导致 v0 跑偏)。业务 worker
         # 仍用编排器拆出的子任务。
-        text = if v0?(worker_uri), do: v0_task(text_of(user_msg), task, loom_source), else: task
+        text =
+          if builder?(worker_uri),
+            do: builder_task(text_of(user_msg), task, loom_source),
+            else: task
+
         Message.new(self_uri, %{text: text, attachments: []}, mentions: [worker_uri])
       end
 
@@ -475,7 +482,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
     用户这轮的话见下。把这轮任务拆成给 worker 的子任务并派发出去(不要自己直接回答用户)。
 
     **分类规则**:
-    - 当用户的请求是关于**生成、修改、设计页面 / UI**(例如"做一个登录页"、"把按钮改深色"、"加一个登录表单"),只派给 `v0`(它已有当前页面源码,会输出新的 jsx)。**不要**同时派给业务类 worker。
+    - 当用户的请求是关于**生成、修改、设计页面 / UI**(例如"做一个登录页"、"把按钮改深色"、"加一个登录表单"),只派给 `builder`(它已有当前页面源码,会输出新的 jsx)。**不要**同时派给业务类 worker。
     - 当用户的请求是关于**业务咨询、政策、企业匹配**等,派给上面括号里描述匹配的业务 worker(可一条或多条);**不要**派给 v0。
     - **不要**派给 `meta`(团队管家)—— 它只处理 @-mention,不接编排器分配。
     - 用户加入的新 worker(label 不在 policy/company/v0/meta 中)也可以派,只要其括号里的描述跟用户请求对得上。
@@ -491,7 +498,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
   # `dispatch_messages/2` 已经按 `&"- #{&1.label} #{worker_hint(&1)}"` 调用,
   # 收到的是 `%{uri, label, role}` map(2026-06-01 加了 role 字段)。
-  defp worker_hint(%{label: "v0"}), do: "(页面生成/修改:UI/页面相关请求)"
+  defp worker_hint(%{label: "builder"}), do: "(页面生成/修改:UI/页面相关请求)"
   defp worker_hint(%{label: "policy"}), do: "(政策/资源面)"
   defp worker_hint(%{label: "company"}), do: "(企业匹配/对接面)"
 
@@ -502,7 +509,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
   # 自定义 worker 的 role 从 :loom_worker slice 里读;预制 worker 不用读
   # (worker_hint 直接 hard-code)。
-  defp read_worker_role(label, _uri) when label in ["v0", "policy", "company"], do: ""
+  defp read_worker_role(label, _uri) when label in ["builder", "policy", "company"], do: ""
 
   defp read_worker_role(_label, %URI{} = uri) do
     case Ezagent.Kind.get_slice(uri, :loom_worker) do
@@ -720,7 +727,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
   # aggregator no-ops and the compose path is skipped — v0's message already
   # rendered to the session.
   defp handle_page_update(%Message{ref_id: ref} = msg, files, pending) when is_binary(ref) do
-    cfg = stitch_config_effects(msg)
+    cfg = salesperson_config_effects(msg) ++ danmaku_config_effects(msg)
 
     case find_turn_by_subtask(pending, ref) do
       nil ->
@@ -733,27 +740,29 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
   end
 
   defp handle_page_update(msg, files, _pending) do
-    {:ok, %{}, [{:set, :loom_source, files}] ++ stitch_config_effects(msg)}
+    {:ok, %{},
+     [{:set, :loom_source, files}] ++
+       salesperson_config_effects(msg) ++ danmaku_config_effects(msg)}
   end
 
-  # page_update span 里可选 `stitchConfig`(页面助手样式)。带了才 set —— 后续不带
+  # page_update span 里可选 `salespersonConfig`(页面助手样式)。带了才 set —— 后续不带
   # cfg 的编辑不清掉已存样式(v0 不必每次都重发样式块)。
-  defp stitch_config_effects(%Message{} = msg) do
-    case page_update_stitch_config(msg) do
-      cfg when is_map(cfg) and map_size(cfg) > 0 -> [{:set, :stitch_config, cfg}]
+  defp salesperson_config_effects(%Message{} = msg) do
+    case page_update_salesperson_config(msg) do
+      cfg when is_map(cfg) and map_size(cfg) > 0 -> [{:set, :salesperson_config, cfg}]
       _ -> []
     end
   end
 
-  defp stitch_config_effects(_), do: []
+  defp salesperson_config_effects(_), do: []
 
-  defp page_update_stitch_config(%Message{body: body}) do
+  defp page_update_salesperson_config(%Message{body: body}) do
     text = body_text(body)
 
     case Regex.run(~r/<span\s+type="page_update"\s*>([\s\S]*)<\/span>/, text) do
       [_full, inner] ->
         case Jason.decode(String.trim(inner)) do
-          {:ok, %{"stitchConfig" => cfg}} when is_map(cfg) -> cfg
+          {:ok, %{"salespersonConfig" => cfg}} when is_map(cfg) -> cfg
           _ -> nil
         end
 
@@ -762,17 +771,44 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
     end
   end
 
-  defp page_update_stitch_config(_), do: nil
+  defp page_update_salesperson_config(_), do: nil
 
-  defp v0?(%URI{} = uri), do: String.contains?(URI.to_string(uri), "/loomv0_")
-  defp v0?(_), do: false
+  # 2026-06-15 — 弹幕样式 danmakuConfig,跟 salespersonConfig 同机制:带了才 set,缓存到 slice。
+  defp danmaku_config_effects(%Message{} = msg) do
+    case page_update_danmaku_config(msg) do
+      cfg when is_map(cfg) and map_size(cfg) > 0 -> [{:set, :danmaku_config, cfg}]
+      _ -> []
+    end
+  end
+
+  defp danmaku_config_effects(_), do: []
+
+  defp page_update_danmaku_config(%Message{body: body}) do
+    text = body_text(body)
+
+    case Regex.run(~r/<span\s+type="page_update"\s*>([\s\S]*)<\/span>/, text) do
+      [_full, inner] ->
+        case Jason.decode(String.trim(inner)) do
+          {:ok, %{"danmakuConfig" => cfg}} when is_map(cfg) -> cfg
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp page_update_danmaku_config(_), do: nil
+
+  defp builder?(%URI{} = uri), do: String.contains?(URI.to_string(uri), "/loombuilder_")
+  defp builder?(_), do: false
 
   # Compose the v0 subtask text:current files + user's modification request +
   # 用户上传的素材(参考 HTML/文本 → 内容;图片 → 可引用的 URL)。
   # v0's system prompt (`Prompts.page_gen_system_prompt`) handles output rules.
   # 2026-06-02 多文件:current_source 现为 files map,逐文件渲染成带 file= 的代码块。
   # 2026-06-12:把用户消息的 attachments(resource://uploads/…)解析进来喂给 v0。
-  defp v0_task(user_request, dispatch_hint, current_files) do
+  defp builder_task(user_request, dispatch_hint, current_files) do
     files_block =
       current_files
       |> Prompts.normalize_source()

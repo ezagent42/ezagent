@@ -9,7 +9,7 @@ defmodule Ezagent.Entity.LoomMetaAgent do
   - `list` → chat.send 回复当前 worker roster
   - `unknown` → chat.send 把澄清问题发回去
 
-  Behavior 跑在 `Ezagent.Behavior.LoomMetaAgent`,跟 `LoomV0Worker` 同样
+  Behavior 跑在 `Ezagent.Behavior.LoomMetaAgent`,跟 `LoomBuilderWorker` 同样
   mention-gated:不 @ 它就不响应。
 
   跟 orchestrator 协作不是通过 dispatch action(那需要新 caps + 新

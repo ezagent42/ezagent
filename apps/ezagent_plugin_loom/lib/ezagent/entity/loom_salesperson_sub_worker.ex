@@ -1,19 +1,19 @@
-defmodule Ezagent.Entity.LoomStitchSubWorker do
+defmodule Ezagent.Entity.LoomSalespersonSubWorker do
   @moduledoc """
-  Stitch sub-worker Kind (2026-06-12) — composes only
-  `Ezagent.Behavior.LoomStitchSubWorker`. One per Stitch role,
-  `entity://agent/<workspace>/loomstitchsub_<sid>_<role>` (flavor
-  `loomstitchsub`). Ephemeral, under the chat domain's AgentSupervisor —
+  Salesperson sub-worker Kind (2026-06-12) — composes only
+  `Ezagent.Behavior.LoomSalespersonSubWorker`. One per Salesperson role,
+  `entity://agent/<workspace>/loomsalespersonsub_<sid>_<role>` (flavor
+  `loomsalespersonsub`). Ephemeral, under the chat domain's AgentSupervisor —
   role comes from the URI name, no per-instance state to persist.
   """
 
   @behaviour Ezagent.Kind
 
   @impl Ezagent.Kind
-  def type_name, do: :loomstitchsub
+  def type_name, do: :loomsalespersonsub
 
   @impl Ezagent.Kind
-  def behaviors, do: [Ezagent.Behavior.LoomStitchSubWorker]
+  def behaviors, do: [Ezagent.Behavior.LoomSalespersonSubWorker]
 
   @impl Ezagent.Kind
   def persistence, do: :ephemeral

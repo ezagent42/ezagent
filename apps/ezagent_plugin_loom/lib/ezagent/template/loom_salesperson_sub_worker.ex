@@ -1,10 +1,10 @@
-defmodule Ezagent.PluginLoom.Template.LoomStitchSubWorker do
+defmodule Ezagent.PluginLoom.Template.LoomSalespersonSubWorker do
   @moduledoc """
-  Stitch sub-worker Template Class (2026-06-12) — pure-spawn, no PTY.
+  Salesperson sub-worker Template Class (2026-06-12) — pure-spawn, no PTY.
 
   Mirrors `Ezagent.PluginLoom.Template.LoomWorker`: satisfies the flavor
   declaration the `:ezagent_plugin_check` gate requires and is the fallback
-  creation path for `loomstitchsub_*` agents. Spawned in bulk by
+  creation path for `loomsalespersonsub_*` agents. Spawned in bulk by
   `EzagentPluginLoom.Team.ensure_team/2`.
   """
 
@@ -13,13 +13,13 @@ defmodule Ezagent.PluginLoom.Template.LoomStitchSubWorker do
   require Logger
 
   @impl Ezagent.Kind.Template
-  def template_name, do: "loom.stitchsub"
+  def template_name, do: "loom.salespersonsub"
 
   @impl Ezagent.Kind.Template
-  def validate(%{"class" => "loom.stitchsub", "agent_uri" => uri}) when is_binary(uri) and uri != "",
+  def validate(%{"class" => "loom.salespersonsub", "agent_uri" => uri}) when is_binary(uri) and uri != "",
     do: :ok
 
-  def validate(%{"class" => "loom.stitchsub"}), do: {:error, :missing_agent_uri}
+  def validate(%{"class" => "loom.salespersonsub"}), do: {:error, :missing_agent_uri}
   def validate(%{"class" => other}), do: {:error, {:wrong_class, other}}
   def validate(_), do: {:error, :missing_class_field}
 
@@ -32,7 +32,7 @@ defmodule Ezagent.PluginLoom.Template.LoomStitchSubWorker do
       {:ok, :already_started, _pid} -> {:ok, [agent_uri], %{fresh?: false}}
       {:error, reason} ->
         Logger.warning(
-          "loom.stitchsub: spawn_detailed failed for #{URI.to_string(agent_uri)}: #{inspect(reason)}"
+          "loom.salespersonsub: spawn_detailed failed for #{URI.to_string(agent_uri)}: #{inspect(reason)}"
         )
 
         {:error, {:agent_spawn_failed, reason}}

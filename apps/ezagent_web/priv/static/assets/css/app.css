@@ -4228,6 +4228,13 @@
       }
     }
   }
+  .hover\:bg-emerald-50 {
+    &:hover {
+      @media (hover: hover) {
+        background-color: var(--color-emerald-50);
+      }
+    }
+  }
   .hover\:bg-emerald-200 {
     &:hover {
       @media (hover: hover) {
@@ -4971,6 +4978,15 @@
       &:hover {
         @media (hover: hover) {
           background-color: var(--color-emerald-500);
+        }
+      }
+    }
+  }
+  .dark\:hover\:bg-emerald-950 {
+    &:where([data-theme=dark], [data-theme=dark] *) {
+      &:hover {
+        @media (hover: hover) {
+          background-color: var(--color-emerald-950);
         }
       }
     }

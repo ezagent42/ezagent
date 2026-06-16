@@ -1,10 +1,10 @@
-defmodule EzagentPluginLoom.StitchExperts do
+defmodule EzagentPluginLoom.SalespersonExperts do
   @moduledoc """
-  Stitch worker roster + prompts + parsers (2026-06-12, real-worker rewrite).
+  Salesperson worker roster + prompts + parsers (2026-06-12, real-worker rewrite).
 
-  Stitch runs as an **orchestrator** (`loomstitch_<sid>`) over a fixed set of
+  Salesperson runs as an **orchestrator** (`loomsalesperson_<sid>`) over a fixed set of
   **real worker Kinds** spawned with every loom session
-  (`loomstitchsub_<sid>_<role>`, see `Ezagent.Behavior.LoomStitchSubWorker`).
+  (`loomsalespersonsub_<sid>_<role>`, see `Ezagent.Behavior.LoomSalespersonSubWorker`).
   Per preview turn the orchestrator: routes → dispatches to the relevant
   workers → collects each worker's result → composes one reply. This module
   holds the **transport-agnostic** pieces both sides share:
@@ -111,7 +111,7 @@ defmodule EzagentPluginLoom.StitchExperts do
   """
   def router_messages(roster, kb, history, text) do
     sys = """
-    你是页面助手 Stitch 的调度器。看用户这句话 + 下面可用的 worker,**选出要处理这条消息的
+    你是页面助手 Salesperson 的调度器。看用户这句话 + 下面可用的 worker,**选出要处理这条消息的
     worker**(一个或多个),各给一句子任务 task。
 
     【可用 worker】
@@ -161,7 +161,7 @@ defmodule EzagentPluginLoom.StitchExperts do
     caps_json = if caps == [], do: "[]", else: Jason.encode!(caps)
 
     sys = """
-    你是页面助手 Stitch 调度下的一个 worker,负责:#{role_meta.desc}(#{role_meta.label})。
+    你是页面助手 Salesperson 调度下的一个 worker,负责:#{role_meta.desc}(#{role_meta.label})。
     读用户原话 + 你的子任务,输出**二选一**:
 
     1) 操作页面 —— 当子任务对应你管的某能力的某 command:
@@ -206,7 +206,7 @@ defmodule EzagentPluginLoom.StitchExperts do
   @doc "Messages for the final compose call (parts → one natural reply TO the user)."
   def composer_messages(parts, user_text) do
     sys = """
-    你是页面助手 Stitch,正在**直接跟用户对话**。下面是为了回应用户这句话、内部收集到的信息
+    你是页面助手 Salesperson,正在**直接跟用户对话**。下面是为了回应用户这句话、内部收集到的信息
     和已经做的页面操作。请**自然地用一段话回复用户**(第一人称、友好、简洁、中文),就像聊天:
     - 做了页面操作 → 顺带轻描淡写说一下(如「帮你切到 1955 和 2028 对比了」);
     - 是讲解 / 回答 → 把答案自然说出来;

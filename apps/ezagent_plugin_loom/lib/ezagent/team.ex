@@ -8,7 +8,7 @@ defmodule EzagentPluginLoom.Team do
   - orchestrator `entity://agent/<ws>/loomorch_<sid>`
   - worker `entity://agent/<ws>/loomworker_<sid>_policy` (政策侧)
   - worker `entity://agent/<ws>/loomworker_<sid>_company` (企业侧)
-  - v0worker `entity://agent/<ws>/loomv0_<sid>` (页面生成,2026-06-01)
+  - builderworker `entity://agent/<ws>/loombuilder_<sid>` (页面生成,2026-06-01)
 
   This is the **B path** chosen for the demo (no SessionTemplate /
   AgentTemplate records). The orchestrator discovers its roster at
@@ -53,8 +53,8 @@ defmodule EzagentPluginLoom.Team do
     #   抽 theme 列表)→ 保留原行为:bare theme URI,prompt 由 LoomSession.pre_spawn 注入。
     saved_themes = Keyword.get(opts, :worker_themes)
     # 2026-06-05 — 可关 v0。只有最初的 session.loom 有 v0(页面创作);发布物 fork
-    # 出的 session `include_v0: false`,base 冻结、只能叠 user_schema ops,不能重写源码。
-    include_v0? = Keyword.get(opts, :include_v0, true)
+    # 出的 session `include_builder: false`,base 冻结、只能叠 user_schema ops,不能重写源码。
+    include_builder? = Keyword.get(opts, :include_builder, true)
 
     with {:ok, ws, sid} <- session_parts(session_uri) do
       # 2026-06-12 — session 初始化即建好素材库根目录(目录即库;v0/Claude Code 用 cwd+Read 读)。
@@ -71,19 +71,19 @@ defmodule EzagentPluginLoom.Team do
       worker_specs = resolve_worker_specs(ws, sid, saved_themes)
       workers = Enum.map(worker_specs, & &1.uri)
 
-      v0_members =
-        if include_v0?,
-          do: [Ezagent.URI.new!("entity://agent/#{ws}/loomv0_#{sid}")],
+      builder_members =
+        if include_builder?,
+          do: [Ezagent.URI.new!("entity://agent/#{ws}/loombuilder_#{sid}")],
           else: []
 
-      # 2026-06-10 — preview-side AI orchestrator(Stitch chat + AiSpot)。和 v0 平级、
-      # @-only,不受 include_v0 门控:发布物 / fork 出的无-v0 会话也要有 Stitch。
-      # 2026-06-12 — Stitch 现在是 orchestrator,外加一组固定的 sub-worker
+      # 2026-06-10 — preview-side AI orchestrator(Salesperson chat + AiSpot)。和 v0 平级、
+      # @-only,不受 include_builder 门控:发布物 / fork 出的无-v0 会话也要有 Salesperson。
+      # 2026-06-12 — Salesperson 现在是 orchestrator,外加一组固定的 sub-worker
       # (chat/navigation/controls/content),每个 loom session 创建即全量自带。
-      stitch_members =
-        [Ezagent.URI.new!("entity://agent/#{ws}/loomstitch_#{sid}")] ++
-          Enum.map(EzagentPluginLoom.StitchExperts.role_keys(), fn role ->
-            Ezagent.URI.new!("entity://agent/#{ws}/loomstitchsub_#{sid}_#{role}")
+      salesperson_members =
+        [Ezagent.URI.new!("entity://agent/#{ws}/loomsalesperson_#{sid}")] ++
+          Enum.map(EzagentPluginLoom.SalespersonExperts.role_keys(), fn role ->
+            Ezagent.URI.new!("entity://agent/#{ws}/loomsalespersonsub_#{sid}_#{role}")
           end)
 
       # 2026-06-01 — team manager,接收 @ 的自然语言加 / 删 worker 指令。
@@ -91,15 +91,15 @@ defmodule EzagentPluginLoom.Team do
       meta = Ezagent.URI.new!("entity://agent/#{ws}/loommeta_#{sid}")
 
       # workers 走带配置 spawn(default 路径)/ bare spawn(saved 路径);
-      # 其余成员(orchestrator / v0 / stitch / meta)走 SpawnRegistry bare spawn。
-      others = [orchestrator | v0_members] ++ stitch_members ++ [meta]
-      members = [orchestrator | workers] ++ v0_members ++ stitch_members ++ [meta]
+      # 其余成员(orchestrator / v0 / salesperson / meta)走 SpawnRegistry bare spawn。
+      others = [orchestrator | builder_members] ++ salesperson_members ++ [meta]
+      members = [orchestrator | workers] ++ builder_members ++ salesperson_members ++ [meta]
 
       with :ok <- Enum.reduce_while(worker_specs, :ok, &spawn_worker_step/2),
            :ok <- Enum.reduce_while(others, :ok, &spawn_step/2),
            :ok <- Enum.reduce_while(members, :ok, fn uri, _ -> join_step(session_uri, uri) end) do
         {:ok,
-         %{orchestrator: orchestrator, workers: workers ++ v0_members ++ stitch_members ++ [meta]}}
+         %{orchestrator: orchestrator, workers: workers ++ builder_members ++ salesperson_members ++ [meta]}}
       end
     end
   end

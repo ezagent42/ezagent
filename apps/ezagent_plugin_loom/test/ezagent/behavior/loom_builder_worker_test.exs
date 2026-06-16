@@ -1,7 +1,7 @@
-defmodule Ezagent.Behavior.LoomV0WorkerTest do
+defmodule Ezagent.Behavior.LoomBuilderWorkerTest do
   use ExUnit.Case, async: true
 
-  alias Ezagent.Behavior.LoomV0Worker
+  alias Ezagent.Behavior.LoomBuilderWorker
 
   describe "extract_files_and_summary/1 (2026-06-02 多文件)" do
     test "单个未标 file= 的裸 jsx 块 → 归到 /App.jsx" do
@@ -12,7 +12,7 @@ defmodule Ezagent.Behavior.LoomV0WorkerTest do
       ```
       """
 
-      assert {:ok, files, summary} = LoomV0Worker.extract_files_and_summary(text)
+      assert {:ok, files, summary} = LoomBuilderWorker.extract_files_and_summary(text)
       assert Map.keys(files) == ["/App.jsx"]
       assert files["/App.jsx"] =~ "export default function App"
       assert summary == "好的，给你做一个页面"
@@ -30,7 +30,7 @@ defmodule Ezagent.Behavior.LoomV0WorkerTest do
       ```
       """
 
-      assert {:ok, files, _summary} = LoomV0Worker.extract_files_and_summary(text)
+      assert {:ok, files, _summary} = LoomBuilderWorker.extract_files_and_summary(text)
       assert Enum.sort(Map.keys(files)) == ["/App.jsx", "/components/Header.jsx"]
       assert files["/components/Header.jsx"] =~ "function Header"
     end
@@ -51,7 +51,7 @@ defmodule Ezagent.Behavior.LoomV0WorkerTest do
       ```
       """
 
-      assert {:ok, files, _} = LoomV0Worker.extract_files_and_summary(text)
+      assert {:ok, files, _} = LoomBuilderWorker.extract_files_and_summary(text)
       assert Map.keys(files) == ["/App.jsx"]
       refute Map.has_key?(files, "/platform.js")
       refute Map.has_key?(files, "/ezagent-ui.js")
@@ -67,12 +67,12 @@ defmodule Ezagent.Behavior.LoomV0WorkerTest do
       ```
       """
 
-      assert {:ok, files, _} = LoomV0Worker.extract_files_and_summary(text)
+      assert {:ok, files, _} = LoomBuilderWorker.extract_files_and_summary(text)
       assert Enum.sort(Map.keys(files)) == ["/App.jsx", "/components/Card.jsx"]
     end
 
     test "没有任何代码块 → :error" do
-      assert :error = LoomV0Worker.extract_files_and_summary("我没法理解这个需求")
+      assert :error = LoomBuilderWorker.extract_files_and_summary("我没法理解这个需求")
     end
 
     test "只有受保护文件(无有效页面文件)→ :error" do
@@ -82,7 +82,7 @@ defmodule Ezagent.Behavior.LoomV0WorkerTest do
       ```
       """
 
-      assert :error = LoomV0Worker.extract_files_and_summary(text)
+      assert :error = LoomBuilderWorker.extract_files_and_summary(text)
     end
 
     test "缺 summary prose → fallback 页面已更新" do
@@ -92,7 +92,7 @@ defmodule Ezagent.Behavior.LoomV0WorkerTest do
       ```
       """
 
-      assert {:ok, _files, "页面已更新"} = LoomV0Worker.extract_files_and_summary(text)
+      assert {:ok, _files, "页面已更新"} = LoomBuilderWorker.extract_files_and_summary(text)
     end
   end
 end

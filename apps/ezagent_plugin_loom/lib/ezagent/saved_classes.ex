@@ -261,7 +261,7 @@ defmodule Ezagent.PluginLoom.SavedClasses do
             |> Map.put("class", "session.loom")
             # 2026-06-05 — 发布物(SavedClass)衍生的 session 一律无 v0:base 冻结,
             # 只能 user_schema 叠加。只有最初的 session.loom 有 v0。
-            |> Map.put("no_v0", true)
+            |> Map.put("no_builder", true)
             |> then(fn t -> Map.merge(%{"saved_state" => @saved_state}, t) end)
 
           Ezagent.PluginLoom.Template.LoomSession.instantiate(tmpl_name, augmented, ws_uri)

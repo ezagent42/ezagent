@@ -112,41 +112,41 @@ defmodule Ezagent.PluginLoom.WorkerConfig do
 
   def put_orchestrator(_, _, _), do: :ok
 
-  # ── stitch 接待模式(stitch | human)──
-  # human:Stitch 不自动答访客,改出一段给运营看的分析(见 LoomStitchWorker)。
+  # ── salesperson 接待模式(salesperson | human)──
+  # human:Salesperson 不自动答访客,改出一段给运营看的分析(见 LoomSalespersonWorker)。
 
-  defp stitch_mode_file do
+  defp salesperson_mode_file do
     profile = System.get_env("EZAGENT_PROFILE") || "default"
-    Path.expand("~/.ezagent/#{profile}/loom_stitch_mode.json")
+    Path.expand("~/.ezagent/#{profile}/loom_salesperson_mode.json")
   end
 
-  @doc "读 stitch 接待模式(默认 stitch)。"
-  @spec get_stitch_mode(String.t(), String.t()) :: String.t()
-  def get_stitch_mode(ws, sid) when is_binary(ws) and is_binary(sid) do
-    case File.read(stitch_mode_file()) do
+  @doc "读 salesperson 接待模式(默认 salesperson)。"
+  @spec get_salesperson_mode(String.t(), String.t()) :: String.t()
+  def get_salesperson_mode(ws, sid) when is_binary(ws) and is_binary(sid) do
+    case File.read(salesperson_mode_file()) do
       {:ok, body} ->
         case Jason.decode(body) do
           {:ok, m} when is_map(m) ->
-            if Map.get(m, skey(ws, sid)) == "human", do: "human", else: "stitch"
+            if Map.get(m, skey(ws, sid)) == "human", do: "human", else: "salesperson"
 
           _ ->
-            "stitch"
+            "salesperson"
         end
 
       _ ->
-        "stitch"
+        "salesperson"
     end
   rescue
-    _ -> "stitch"
+    _ -> "salesperson"
   end
 
-  def get_stitch_mode(_, _), do: "stitch"
+  def get_salesperson_mode(_, _), do: "salesperson"
 
-  @doc "写 stitch 接待模式(只接受 stitch | human)。"
-  @spec put_stitch_mode(String.t(), String.t(), String.t()) :: :ok
-  def put_stitch_mode(ws, sid, mode) when is_binary(ws) and is_binary(sid) do
-    mode = if mode == "human", do: "human", else: "stitch"
-    path = stitch_mode_file()
+  @doc "写 salesperson 接待模式(只接受 salesperson | human)。"
+  @spec put_salesperson_mode(String.t(), String.t(), String.t()) :: :ok
+  def put_salesperson_mode(ws, sid, mode) when is_binary(ws) and is_binary(sid) do
+    mode = if mode == "human", do: "human", else: "salesperson"
+    path = salesperson_mode_file()
 
     all =
       case File.read(path) do
@@ -167,7 +167,7 @@ defmodule Ezagent.PluginLoom.WorkerConfig do
     _ -> :ok
   end
 
-  def put_stitch_mode(_, _, _), do: :ok
+  def put_salesperson_mode(_, _, _), do: :ok
 
   @doc "新建 session 的默认 worker(2 个通用,可在 UI 改 / 删)。"
   def default_workers do

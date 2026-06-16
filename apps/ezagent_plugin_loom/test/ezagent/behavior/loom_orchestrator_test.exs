@@ -4,8 +4,8 @@ defmodule Ezagent.Behavior.LoomOrchestratorTest do
   alias Ezagent.Behavior.LoomOrchestrator
   alias Ezagent.Message
 
-  @policy URI.parse("entity://agent/system/loomworker_policy")
-  @company URI.parse("entity://agent/system/loomworker_company")
+  @policy URI.parse("entity://agent/system/loomworker_main_policy")
+  @company URI.parse("entity://agent/system/loomworker_main_company")
   @orch URI.parse("entity://agent/system/loomorch_main")
   @session URI.parse("session://system/s_test")
   @user URI.parse("entity://user/system/tmp_x")
@@ -150,8 +150,9 @@ defmodule Ezagent.Behavior.LoomOrchestratorTest do
       assert LoomOrchestrator.worker_label(URI.parse("entity://agent/system/loomorch_s1")) == nil
       assert LoomOrchestrator.worker_label(URI.parse("entity://user/system/tmp_x")) == nil
 
+      # 自定义 worker(worker-config 后,任意 theme suffix 都作 label,供编排器区分派发)。
       assert LoomOrchestrator.worker_label(URI.parse("entity://agent/system/loomworker_s1_extra")) ==
-               "worker"
+               "extra"
     end
   end
 end

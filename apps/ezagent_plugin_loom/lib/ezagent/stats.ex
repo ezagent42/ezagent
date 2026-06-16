@@ -17,13 +17,13 @@ defmodule Ezagent.PluginLoom.Stats do
            "duration_ms"    => N,    # 累计 wall-clock
            "first_at"       => iso8601,
            "last_at"        => iso8601,
-           "by_role"        => %{"v0" => %{同上数值字段}, ...},
+           "by_role"        => %{"builder" => %{同上数值字段}, ...},
            "history"        => [%{"at","role","in","out","cost"} ...]  # 最近 60 次,新在后
          } }
 
   token / 成本由 `EzagentPluginLoom.ClaudeCode` 在每次 result 事件里抽 `usage` +
   `total_cost_usd` + `duration_ms`,经 `record/3` 累加(v0 / orchestrator / worker
-  都走 claude_code)。Stitch(DeepSeek)暂不计入。
+  都走 claude_code)。Salesperson(DeepSeek)暂不计入。
   """
 
   @num_fields ~w(input fresh_input cache_read cache_creation output cost_usd duration_ms)
@@ -110,10 +110,10 @@ defmodule Ezagent.PluginLoom.Stats do
   @spec role_of(String.t() | nil) :: String.t()
   def role_of(uri) when is_binary(uri) do
     cond do
-      String.contains?(uri, "loomv0_") -> "v0"
+      String.contains?(uri, "loombuilder_") -> "builder"
       String.contains?(uri, "loomorch_") -> "orchestrator"
-      String.contains?(uri, "loomstitchsub_") -> "stitch-worker"
-      String.contains?(uri, "loomstitch_") -> "stitch"
+      String.contains?(uri, "loomsalespersonsub_") -> "salesperson-worker"
+      String.contains?(uri, "loomsalesperson_") -> "salesperson"
       String.contains?(uri, "loommeta_") -> "meta"
       String.contains?(uri, "loomworker_") -> "worker"
       true -> "other"

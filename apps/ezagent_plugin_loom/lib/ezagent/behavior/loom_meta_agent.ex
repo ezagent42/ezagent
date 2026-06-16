@@ -4,7 +4,7 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
 
   ## Mention-gated
 
-  跟 `LoomWorker` / `LoomV0Worker` 一样 — `handle_receive` 只在被 @ 时
+  跟 `LoomWorker` / `LoomBuilderWorker` 一样 — `handle_receive` 只在被 @ 时
   动手。其它消息(orchestrator 派单、worker reply 互相走)一律忽略。
 
   ## 一次 @,一次 DeepSeek,一次 op
@@ -41,7 +41,7 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
 
   # 预制 worker(用户不能误删 — manager 在 prompt 里就说不能删,但代码也兜底)。
   @builtin_themes ~w(policy company)
-  @builtin_kinds ~w(v0 loomv0)
+  @builtin_kinds ~w(v0 loombuilder)
 
   action(:receive,
     args: %{message: :map},
@@ -429,7 +429,7 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
   defp session_parts(_), do: {nil, nil}
 
   # ---------------------------------------------------------------
-  # boilerplate(copy LoomV0Worker pattern)
+  # boilerplate(copy LoomBuilderWorker pattern)
   # ---------------------------------------------------------------
 
   defp addressed_to_self?(%Message{mentions: mentions}, %{self_uri: %URI{} = self_uri})

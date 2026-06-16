@@ -1,11 +1,11 @@
-defmodule Ezagent.PluginLoom.Template.LoomStitchWorker do
+defmodule Ezagent.PluginLoom.Template.LoomSalespersonWorker do
   @moduledoc """
-  Loom stitchworker Template Class — pure-spawn, mirrors
-  `Ezagent.PluginLoom.Template.LoomV0Worker`. 满足 `:ezagent_plugin_check` gate 对
-  `loomstitch` flavor 的声明要求。2026-06-10。
+  Loom salespersonworker Template Class — pure-spawn, mirrors
+  `Ezagent.PluginLoom.Template.LoomBuilderWorker`. 满足 `:ezagent_plugin_check` gate 对
+  `loomsalesperson` flavor 的声明要求。2026-06-10。
 
-      %{ "class" => "loom.stitchworker",
-         "agent_uri" => "entity://agent/<workspace>/loomstitch_<name>" }
+      %{ "class" => "loom.salespersonworker",
+         "agent_uri" => "entity://agent/<workspace>/loomsalesperson_<name>" }
   """
 
   @behaviour Ezagent.Kind.Template
@@ -13,7 +13,7 @@ defmodule Ezagent.PluginLoom.Template.LoomStitchWorker do
   require Logger
 
   @impl Ezagent.Kind.Template
-  def template_name, do: "loom.stitchworker"
+  def template_name, do: "loom.salespersonworker"
 
   @impl Ezagent.Kind.Template
   def validate(tmpl) when is_map(tmpl) do
@@ -25,7 +25,7 @@ defmodule Ezagent.PluginLoom.Template.LoomStitchWorker do
 
   def validate(_), do: {:error, :not_a_map}
 
-  defp check_class(%{"class" => "loom.stitchworker"}), do: :ok
+  defp check_class(%{"class" => "loom.salespersonworker"}), do: :ok
   defp check_class(%{"class" => other}), do: {:error, {:wrong_class, other}}
   defp check_class(_), do: {:error, :missing_class_field}
 
@@ -36,22 +36,22 @@ defmodule Ezagent.PluginLoom.Template.LoomStitchWorker do
                String.split(rest, "/", parts: 2),
              [flavor, suffix] when flavor != "" and suffix != "" <-
                String.split(entity_name, "_", parts: 2) do
-          if flavor == "loomstitch" do
+          if flavor == "loomsalesperson" do
             :ok
           else
-            {:error, {:wrong_agent_flavor, flavor, expected: "loomstitch"}}
+            {:error, {:wrong_agent_flavor, flavor, expected: "loomsalesperson"}}
           end
         else
           _ ->
             {:error,
              {:missing_flavor_prefix, uri_str,
-              "agent URIs must be `entity://agent/<workspace>/loomstitch_<name>`"}}
+              "agent URIs must be `entity://agent/<workspace>/loomsalesperson_<name>`"}}
         end
 
       {:ok, %URI{scheme: "entity"}} ->
         {:error,
          {:invalid_agent_uri, uri_str,
-          "agent URIs must be `entity://agent/<workspace>/loomstitch_<name>`"}}
+          "agent URIs must be `entity://agent/<workspace>/loomsalesperson_<name>`"}}
 
       _ ->
         {:error, {:bad_agent_uri, uri_str}}
@@ -73,7 +73,7 @@ defmodule Ezagent.PluginLoom.Template.LoomStitchWorker do
 
       {:error, reason} ->
         Logger.warning(
-          "loom.stitchworker: SpawnRegistry.spawn_detailed failed for " <>
+          "loom.salespersonworker: SpawnRegistry.spawn_detailed failed for " <>
             "#{URI.to_string(agent_uri)}: #{inspect(reason)}"
         )
 

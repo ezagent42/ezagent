@@ -1,10 +1,10 @@
-defmodule Ezagent.Entity.LoomV0Worker do
+defmodule Ezagent.Entity.LoomBuilderWorker do
   @moduledoc """
-  Loom v0worker Kind — the in-session "AI page generator" worker. Modeled
+  Loom builderworker Kind — the in-session "AI page generator" worker. Modeled
   on `Ezagent.Entity.LoomWorker`; only differences are `type_name` (axis
   for caps) and the bound Behavior.
 
-  `entity://agent/<workspace>/loomv0_<name>` — flavor `loomv0`. Ephemeral
+  `entity://agent/<workspace>/loombuilder_<name>` — flavor `loombuilder`. Ephemeral
   (re-spawns clean; canonical state lives on the orchestrator's
   `:loom_source` slice + session chat history's `page_update` spans).
 
@@ -14,10 +14,10 @@ defmodule Ezagent.Entity.LoomV0Worker do
   @behaviour Ezagent.Kind
 
   @impl Ezagent.Kind
-  def type_name, do: :loomv0
+  def type_name, do: :loombuilder
 
   @impl Ezagent.Kind
-  def behaviors, do: [Ezagent.Behavior.LoomV0Worker]
+  def behaviors, do: [Ezagent.Behavior.LoomBuilderWorker]
 
   @impl Ezagent.Kind
   def persistence, do: :ephemeral

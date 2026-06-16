@@ -56,7 +56,7 @@ defmodule EzagentPluginLoom.WebPlugTest do
   end
 
   # `POST /api/chat` was removed in the 2026-06-01 redesign (page generation
-  # moved to LoomV0Worker dispatched by the session orchestrator).
+  # moved to LoomBuilderWorker dispatched by the session orchestrator).
 
   describe "POST /api/:ws/:sid/stop (中断当前生成)" do
     # 无在跑 claude / 未注册编排器时仍确定性返回 200 {ok:true}:

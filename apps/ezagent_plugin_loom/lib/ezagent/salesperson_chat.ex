@@ -1,23 +1,23 @@
-defmodule Ezagent.PluginLoom.StitchChat do
+defmodule Ezagent.PluginLoom.SalespersonChat do
   @moduledoc """
-  **Stitch** 对话存储(2026-06-05)。
+  **Salesperson** 对话存储(2026-06-05)。
 
-  Stitch = preview 页右下角固定叠加的聊天界面。访客跟 Stitch(独立 DeepSeek-v4-flash,
+  Salesperson = preview 页右下角固定叠加的聊天界面。访客跟 Salesperson(独立 DeepSeek-v4-flash,
   非思考)对话,做简单页面增强。这里存**每个 preview 会话一份对话**(user/assistant
   消息序列),从属于 session。
 
-  本轮重点:Stitch 对话**被持久化** → 分享时冻结进快照 → 被分享者只读能看见。
+  本轮重点:Salesperson 对话**被持久化** → 分享时冻结进快照 → 被分享者只读能看见。
 
   ## 持久化(旁路 JSON)
 
-  `~/.ezagent/<profile>/loom_stitch_chats.json`,key=session uri:
+  `~/.ezagent/<profile>/loom_salesperson_chats.json`,key=session uri:
 
       %{ "session://loom/<ws>/<sid>" => [%{"role"=>"user"|"assistant","text"=>..,"id"=>..}, ...] }
   """
 
   defp file_path do
     profile = System.get_env("EZAGENT_PROFILE") || "default"
-    Path.expand("~/.ezagent/#{profile}/loom_stitch_chats.json")
+    Path.expand("~/.ezagent/#{profile}/loom_salesperson_chats.json")
   end
 
   defp load_all do
@@ -41,7 +41,7 @@ defmodule Ezagent.PluginLoom.StitchChat do
 
   defp key(ws, sid), do: "session://loom/#{ws}/#{sid}"
 
-  @doc "读某 session 的 Stitch 对话(无则空列表)。"
+  @doc "读某 session 的 Salesperson 对话(无则空列表)。"
   @spec get(String.t(), String.t()) :: [map()]
   def get(ws, sid) when is_binary(ws) and is_binary(sid) do
     case Map.get(load_all(), key(ws, sid)) do

@@ -99,8 +99,8 @@ defmodule Ezagent.PluginLoom.Materials do
   渲染本 session 素材库**清单**给 v0(Claude Code 用 cwd + Read 读实际内容,这里只给目录树)。
   无素材 → "".
   """
-  @spec render_for_v0(String.t(), String.t()) :: String.t()
-  def render_for_v0(ws, sid) do
+  @spec render_for_builder(String.t(), String.t()) :: String.t()
+  def render_for_builder(ws, sid) do
     items = list(ws, sid)
 
     if items == [] do

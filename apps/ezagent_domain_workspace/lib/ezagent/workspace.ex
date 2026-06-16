@@ -772,7 +772,17 @@ defmodule Ezagent.Workspace do
         target: target,
         action: :create_session,
         args: args,
-        ctx: %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+        # `:call` 默认 5s(invocation.ex)对冷启动建会话太紧:首次要同步 spawn 整支
+        # 团队(loom session 尤甚)→ 常 >5s → GenServer.call 超时 → 调用方(LiveView
+        # dead-render)exit → `unhandled exit at GET /sessions`。放宽到 30s,跟
+        # session-creator「atomic gate 30s 内成功/失败」的设计一致。
+        ctx: %{
+          mode: :call,
+          caller: caller,
+          caps: caps,
+          reply: {:caller_inbox, self()},
+          deadline_ms: 30_000
+        }
       })
     end
   end

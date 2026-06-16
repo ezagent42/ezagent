@@ -1,6 +1,6 @@
 defmodule Ezagent.PluginLoom.Template.LoomMetaAgent do
   @moduledoc """
-  Loom team manager Template Class — pure-spawn,跟 `LoomV0Worker` 同款。
+  Loom team manager Template Class — pure-spawn,跟 `LoomBuilderWorker` 同款。
   Satisfies the flavor declaration the `:ezagent_plugin_check` gate
   requires for the `loommeta` flavor。
 

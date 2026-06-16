@@ -2,7 +2,7 @@ defmodule Ezagent.PluginLoom.Knowledge do
   @moduledoc """
   Loom **知识库**(2026-06-09)。
 
-  编辑者在 loom 编辑器里写一段 Markdown 知识库;它作为**消费侧 Stitch / AiSpot 的
+  编辑者在 loom 编辑器里写一段 Markdown 知识库;它作为**消费侧 Salesperson / AiSpot 的
   grounding**——访客提问时,助手据这段知识作答(而不是"不懂")。
 
   从属于 session(每个会话一段)。发布时随模板带走、fork 时复制,这样消费侧会话也有。
