@@ -51,7 +51,10 @@ defmodule EzagentPluginAutoservice.Roles do
 
     [
       grantable(:workspace, Ezagent.Behavior.Workspace, :any, workspace_uri, now),
-      grantable(:workspace, Ezagent.Behavior.WorkspaceUserAdmin, :create_user, workspace_uri, now)
+      grantable(:workspace, Ezagent.Behavior.WorkspaceUserAdmin, :create_user, workspace_uri, now),
+      # Content management caps for TenantAdminLive soul/slots/skills/KB editing
+      grantable(:content, EzagentPluginContent.Behavior.ContentAdmin, :write, workspace_uri, now),
+      grantable(:content, EzagentPluginContent.Behavior.ContentAdmin, :any, workspace_uri, now)
     ]
   end
 

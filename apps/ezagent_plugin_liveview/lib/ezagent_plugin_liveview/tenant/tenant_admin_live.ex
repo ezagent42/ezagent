@@ -32,6 +32,9 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
   def mount(_params, _session, socket) do
     admin_uri = socket.assigns.current_entity_uri
     workspace_uri = socket.assigns.current_workspace_uri
+    # Ensure the admin user Kind is spawned so list_caps_for returns actual caps.
+    # If the Kind is not alive, list_caps_for returns an empty MapSet.
+    ensure_user_alive(admin_uri)
     caps = Ezagent.Identity.list_caps_for(admin_uri)
     can_write? = has_content_write_cap?(caps, workspace_uri)
 
@@ -533,13 +536,36 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
 
   defp has_content_write_cap?(caps, %URI{} = workspace_uri) do
     Enum.any?(caps, fn cap ->
-      cap.kind == :content and
-        cap.action in [:write, :any] and
-        (cap.workspace_uri == workspace_uri or cap.workspace_uri == :any)
+      ws_match = cap.workspace_uri == workspace_uri or cap.workspace_uri == :any
+      kind_match = cap.kind in [:content, :workspace, :any]
+      action_match = cap.action in [:write, :any]
+      kind_match and action_match and ws_match
     end)
   end
 
   defp has_content_write_cap?(_, _), do: false
+
+  # Ensure the user Kind is spawned so Identity.list_caps_for returns actual caps
+  # instead of an empty MapSet when the Kind is not alive.
+  defp ensure_user_alive(%URI{} = user_uri) do
+    alias Ezagent.KindRegistry
+
+    case KindRegistry.lookup(user_uri) do
+      :error ->
+        # User Kind not spawned — try to spawn it from DB snapshot
+        case Ezagent.Kind.spawn(Ezagent.Entity.User, %{uri: user_uri}) do
+          {:ok, _pid} -> :ok
+          {:error, {:already_started, _}} -> :ok
+          {:error, {:already_registered, _}} -> :ok
+          _ -> :ok
+        end
+
+      {:ok, _pid} ->
+        :ok
+    end
+  rescue
+    _ -> :ok
+  end
 
   # ---------------------------------------------------------------------------
   # Helpers — formatting
