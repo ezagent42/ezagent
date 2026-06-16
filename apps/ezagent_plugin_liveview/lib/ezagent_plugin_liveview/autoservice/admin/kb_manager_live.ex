@@ -893,6 +893,11 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
 
     if File.exists?(path) do
       case Jason.decode(File.read!(path)) do
+        {:ok, list} when is_list(list) ->
+          # Normalize list-of-maps to term→definition map
+          Map.new(list, fn item ->
+            {Map.get(item, "term", item["id"] || "?"), Map.get(item, "definition", "")}
+          end)
         {:ok, map} when is_map(map) -> map
         _ -> %{}
       end

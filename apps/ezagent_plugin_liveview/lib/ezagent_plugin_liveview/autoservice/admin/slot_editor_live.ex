@@ -74,12 +74,12 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
         CrEngine.record_file_change(tid, "slots/customer.yaml")
 
         diff = recompute_diff(socket.assigns.release_values, new_values)
-        new_etag = compute_etag(inspect(new_values, pretty: true))
+        new_etag = compute_etag(EzagentPluginContent.YamlWriter.write(new_values))
 
         {:noreply,
          assign(socket,
            slot_values: new_values,
-           yaml_content: inspect(new_values, pretty: true),
+           yaml_content: EzagentPluginContent.YamlWriter.write(new_values),
            diff: diff,
            saved_flash: "#{key} 已保存",
            etag: new_etag
@@ -123,7 +123,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
             CrEngine.record_file_change(tid, "slots/customer.yaml")
 
             diff = recompute_diff(socket.assigns.release_values, new_values)
-            new_etag = compute_etag(inspect(new_values, pretty: true))
+            new_etag = compute_etag(EzagentPluginContent.YamlWriter.write(new_values))
 
             flash_msg = warn_flash || "#{key} 已添加"
 
@@ -131,7 +131,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
              assign(socket,
                slot_values: new_values,
                all_keys: all_keys,
-               yaml_content: inspect(new_values, pretty: true),
+               yaml_content: EzagentPluginContent.YamlWriter.write(new_values),
                diff: diff,
                saved_flash: flash_msg,
                etag: new_etag
@@ -158,13 +158,13 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
         CrEngine.record_file_change(tid, "slots/customer.yaml")
 
         diff = recompute_diff(socket.assigns.release_values, new_values)
-        new_etag = compute_etag(inspect(new_values, pretty: true))
+        new_etag = compute_etag(EzagentPluginContent.YamlWriter.write(new_values))
 
         {:noreply,
          assign(socket,
            slot_values: new_values,
            all_keys: all_keys,
-           yaml_content: inspect(new_values, pretty: true),
+           yaml_content: EzagentPluginContent.YamlWriter.write(new_values),
            diff: diff,
            saved_flash: "#{key} 已删除",
            etag: new_etag
@@ -178,7 +178,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
   @impl true
   def handle_event("toggle_yaml", _params, socket) do
     new_show_yaml = !socket.assigns.show_yaml
-    yaml_content = inspect(socket.assigns.slot_values, pretty: true)
+    yaml_content = EzagentPluginContent.YamlWriter.write(socket.assigns.slot_values)
 
     {:noreply, assign(socket, show_yaml: new_show_yaml, yaml_content: yaml_content)}
   end
@@ -212,7 +212,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
 
             diff = recompute_diff(socket.assigns.release_values, new_values)
             CrEngine.record_file_change(tid, "slots/customer.yaml")
-            new_etag = compute_etag(inspect(new_values, pretty: true))
+            new_etag = compute_etag(EzagentPluginContent.YamlWriter.write(new_values))
 
             {:noreply,
              assign(socket,
@@ -425,6 +425,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
 
   # --- Private Helpers ---
 
+  defp compute_etag(nil), do: "0000000000000000000000000000000000000000000000000000000000000000"
   defp compute_etag(content) do
     :crypto.hash(:sha256, content) |> Base.encode16(case: :lower)
   end
@@ -464,14 +465,14 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlotEditorLive do
   defp write_slots_file(tid, values) do
     path = Path.join([TenantRuntime.sandbox_path(tid), "slots", "#{@role}.yaml"])
     File.mkdir_p!(Path.dirname(path))
-    File.write!(path, inspect(values, pretty: true))
+    File.write!(path, EzagentPluginContent.YamlWriter.write(values))
   end
 
   defp recompute_diff(nil, _new_values), do: nil
 
   defp recompute_diff(release_values, new_values) do
     release_content = inspect(release_values, pretty: true)
-    sandbox_content = inspect(new_values, pretty: true)
+    sandbox_content = EzagentPluginContent.YamlWriter.write(new_values)
     DiffEngine.diff(release_content, sandbox_content)
   end
 end

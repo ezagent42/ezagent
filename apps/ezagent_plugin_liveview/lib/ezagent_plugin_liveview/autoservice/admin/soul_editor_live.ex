@@ -671,6 +671,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SoulEditorLive do
   defp layer_badge_class(_, false), do: "bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500"
   defp layer_badge_class(_, _), do: "bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500"
 
+  defp compute_etag(nil), do: "0000000000000000000000000000000000000000000000000000000000000000"
   defp compute_etag(content) do
     :crypto.hash(:sha256, content) |> Base.encode16(case: :lower)
   end

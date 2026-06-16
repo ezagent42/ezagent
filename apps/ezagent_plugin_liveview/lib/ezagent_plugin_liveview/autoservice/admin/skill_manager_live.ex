@@ -489,6 +489,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
 
   # -- Private helpers --
 
+  defp compute_etag(nil), do: "0000000000000000000000000000000000000000000000000000000000000000"
   defp compute_etag(content) do
     :crypto.hash(:sha256, content) |> Base.encode16(case: :lower)
   end
