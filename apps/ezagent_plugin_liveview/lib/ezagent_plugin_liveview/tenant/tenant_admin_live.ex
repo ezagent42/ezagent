@@ -654,53 +654,56 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="max-w-5xl mx-auto p-6 space-y-6">
-      <div class="flex items-center justify-between">
-        <h1 class="text-xl font-bold text-gray-900">租户管理控制台</h1>
-        <span class="text-xs text-gray-400">workspace://<%= @tid %></span>
-      </div>
-
-      <div :if={!@can_write?} class="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-        无权限：当前账号不持有编辑权限，部分功能为只读模式。
-      </div>
-
-      <div class="grid grid-cols-2 gap-4">
-        <a href={"/admin/autoservice/tenants/#{@tid}/soul"} class="rounded-xl border border-gray-200 bg-white p-5 hover:shadow-md hover:border-blue-300 transition">
-          <div class="text-2xl mb-2">📝</div>
-          <h3 class="font-semibold text-gray-900">Soul 编辑</h3>
-          <p class="text-xs text-gray-500 mt-1">编辑租户 Soul 模板、Diff 对比、预览渲染</p>
+    <div class="flex min-h-screen">
+      <%!-- Left Tab Navigation --%>
+      <nav class="w-48 flex-shrink-0 border-r border-gray-200 dark:border-zinc-800 bg-gray-50 dark:bg-zinc-950 p-3 space-y-1">
+        <div class="text-xs uppercase tracking-wider text-gray-500 dark:text-zinc-400 mb-2 px-2">Content</div>
+        <a href={"/admin/autoservice/tenants/#{@tid}/soul"} class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-200 dark:hover:bg-zinc-800 text-gray-700 dark:text-zinc-300">
+          <span>📝</span> Soul 编辑
         </a>
-
-        <a href={"/admin/autoservice/tenants/#{@tid}/soul/slots"} class="rounded-xl border border-gray-200 bg-white p-5 hover:shadow-md hover:border-blue-300 transition">
-          <div class="text-2xl mb-2">🏷️</div>
-          <h3 class="font-semibold text-gray-900">Slot 编辑</h3>
-          <p class="text-xs text-gray-500 mt-1">编辑 Soul 变量值、YAML 批量编辑</p>
+        <a href={"/admin/autoservice/tenants/#{@tid}/soul/slots"} class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-200 dark:hover:bg-zinc-800 text-gray-700 dark:text-zinc-300">
+          <span>🏷️</span> Slot 编辑
         </a>
-
-        <a href={"/admin/autoservice/tenants/#{@tid}/skills"} class="rounded-xl border border-gray-200 bg-white p-5 hover:shadow-md hover:border-blue-300 transition">
-          <div class="text-2xl mb-2">📚</div>
-          <h3 class="font-semibold text-gray-900">Skill 管理</h3>
-          <p class="text-xs text-gray-500 mt-1">4层 Skill 管理、创建编辑删除</p>
+        <a href={"/admin/autoservice/tenants/#{@tid}/skills"} class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-200 dark:hover:bg-zinc-800 text-gray-700 dark:text-zinc-300">
+          <span>📚</span> Skill 管理
         </a>
-
-        <a href={"/admin/autoservice/tenants/#{@tid}/kb"} class="rounded-xl border border-gray-200 bg-white p-5 hover:shadow-md hover:border-blue-300 transition">
-          <div class="text-2xl mb-2">🗄️</div>
-          <h3 class="font-semibold text-gray-900">KB 管理</h3>
-          <p class="text-xs text-gray-500 mt-1">知识库管理、URL抓取、文件上传、Glossary</p>
+        <a href={"/admin/autoservice/tenants/#{@tid}/kb"} class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-200 dark:hover:bg-zinc-800 text-gray-700 dark:text-zinc-300">
+          <span>🗄️</span> KB 管理
         </a>
-
-        <a href={"/admin/autoservice/tenants/#{@tid}/cr"} class="rounded-xl border border-gray-200 bg-white p-5 hover:shadow-md hover:border-blue-300 transition">
-          <div class="text-2xl mb-2">🔄</div>
-          <h3 class="font-semibold text-gray-900">CR Dashboard</h3>
-          <p class="text-xs text-gray-500 mt-1">Change Request 管理、Publish、Lint、History</p>
+        <div class="border-t border-gray-200 dark:border-zinc-700 my-2"></div>
+        <a href={"/admin/autoservice/tenants/#{@tid}/cr"} class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-200 dark:hover:bg-zinc-800 text-gray-700 dark:text-zinc-300">
+          <span>🔄</span> CR Dashboard
         </a>
-
-        <a href={"/admin/autoservice/tenants/#{@tid}/versions"} class="rounded-xl border border-gray-200 bg-white p-5 hover:shadow-md hover:border-blue-300 transition">
-          <div class="text-2xl mb-2">📋</div>
-          <h3 class="font-semibold text-gray-900">版本历史</h3>
-          <p class="text-xs text-gray-500 mt-1">发布版本列表、回滚操作</p>
+        <a href={"/admin/autoservice/tenants/#{@tid}/versions"} class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-200 dark:hover:bg-zinc-800 text-gray-700 dark:text-zinc-300">
+          <span>📋</span> 版本历史
         </a>
-      </div>
+        <a href={"/admin/autoservice/tenants/#{@tid}"} class="flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-gray-200 dark:hover:bg-zinc-800 text-gray-700 dark:text-zinc-300">
+          <span>📊</span> Dashboard
+        </a>
+      </nav>
+
+      <%!-- Right Content Area — Welcome/overview --%>
+      <main class="flex-1 p-6">
+        <div class="flex items-center justify-between mb-6">
+          <h1 class="text-xl font-bold text-gray-900 dark:text-zinc-100">租户管理控制台</h1>
+          <span class="text-xs text-gray-400 dark:text-zinc-500">workspace://<%= @tid %></span>
+        </div>
+
+        <div :if={!@can_write?} class="rounded border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950 px-4 py-3 text-sm text-amber-800 dark:text-amber-200 mb-6">
+          无权限：当前账号不持有编辑权限，部分功能为只读模式。
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div class="rounded-lg border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
+            <h3 class="text-sm font-medium text-gray-900 dark:text-zinc-100">快速操作</h3>
+            <p class="text-xs text-gray-500 dark:text-zinc-400 mt-1">从左侧菜单选择管理模块，或点击下方链接直接进入各编辑页面。</p>
+          </div>
+          <div class="rounded-lg border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
+            <h3 class="text-sm font-medium text-gray-900 dark:text-zinc-100">提示</h3>
+            <p class="text-xs text-gray-500 dark:text-zinc-400 mt-1">每次编辑会自动关联到 Active CR，发布前请检查 CR Dashboard 的 Lint 结果。</p>
+          </div>
+        </div>
+      </main>
     </div>
     """
 

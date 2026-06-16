@@ -126,30 +126,30 @@ defmodule EzagentPluginLiveview.AutoService.Admin.InitWizardLive do
   def render(assigns) do
     ~H"""
     <div class="max-w-3xl mx-auto p-6">
-      <h1 class="text-xl font-bold text-gray-900 mb-2">初始化向导</h1>
-      <p class="text-sm text-gray-500 mb-4">Step <%= @step %> of 3</p>
+      <h1 class="text-xl font-bold text-gray-900 dark:text-zinc-100 mb-2">初始化向导</h1>
+      <p class="text-sm text-gray-500 dark:text-zinc-400 mb-4">Step <%= @step %> of 3</p>
 
       <%!-- Progress bar --%>
       <div class="flex gap-2 mb-6">
-        <div class={["flex-1 h-1.5 rounded-full", @step >= 1 && "bg-gray-800", @step < 1 && "bg-gray-200"]}></div>
-        <div class={["flex-1 h-1.5 rounded-full", @step >= 2 && "bg-gray-800", @step < 2 && "bg-gray-200"]}></div>
-        <div class={["flex-1 h-1.5 rounded-full", @step >= 3 && "bg-gray-800", @step < 3 && "bg-gray-200"]}></div>
+        <div class={["flex-1 h-1.5 rounded-full", @step >= 1 && "bg-gray-800 dark:bg-zinc-800", @step < 1 && "bg-gray-200 dark:bg-zinc-700"]}></div>
+        <div class={["flex-1 h-1.5 rounded-full", @step >= 2 && "bg-gray-800 dark:bg-zinc-800", @step < 2 && "bg-gray-200 dark:bg-zinc-700"]}></div>
+        <div class={["flex-1 h-1.5 rounded-full", @step >= 3 && "bg-gray-800 dark:bg-zinc-800", @step < 3 && "bg-gray-200 dark:bg-zinc-700"]}></div>
       </div>
 
       <%= if @step == 1 do %>
-        <div class="rounded-xl border border-gray-200 bg-white overflow-hidden">
-          <div class="px-4 py-2.5 bg-gray-800 text-white rounded-t-lg"><h3 class="font-semibold text-sm">Step 1: Brand Info → Soul 生成</h3></div>
+        <div class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
+          <div class="px-4 py-2.5 bg-gray-800 dark:bg-zinc-800 text-white rounded-t-lg"><h3 class="font-semibold text-sm">Step 1: Brand Info → Soul 生成</h3></div>
           <div class="p-4">
             <form phx-submit="step1_next" class="space-y-3">
               <div class="grid grid-cols-2 gap-3">
                 <div>
-                  <label class="text-xs font-medium text-gray-700">Brand Name *</label>
+                  <label class="text-xs font-medium text-gray-700 dark:text-zinc-300">Brand Name *</label>
                   <input type="text" name="brand_name" value={@brand_name} required
-                    class="w-full rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 mt-0.5" />
+                    class="w-full rounded border border-gray-300 dark:border-zinc-700 px-3 py-1.5 text-sm bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-400 mt-0.5" />
                 </div>
                 <div>
-                  <label class="text-xs font-medium text-gray-700">Industry *</label>
-                  <select name="industry" class="w-full rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 mt-0.5">
+                  <label class="text-xs font-medium text-gray-700 dark:text-zinc-300">Industry *</label>
+                  <select name="industry" class="w-full rounded border border-gray-300 dark:border-zinc-700 px-3 py-1.5 text-sm bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-400 mt-0.5">
                     <option value="零售电商" selected={@industry == "零售电商"}>零售电商</option>
                     <option value="通讯" selected={@industry == "通讯"}>通讯</option>
                     <option value="金融" selected={@industry == "金融"}>金融</option>
@@ -157,18 +157,18 @@ defmodule EzagentPluginLiveview.AutoService.Admin.InitWizardLive do
                   </select>
                 </div>
                 <div>
-                  <label class="text-xs font-medium text-gray-700">Service Hours</label>
+                  <label class="text-xs font-medium text-gray-700 dark:text-zinc-300">Service Hours</label>
                   <input type="text" name="service_hours" value={@service_hours}
-                    class="w-full rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 mt-0.5" />
+                    class="w-full rounded border border-gray-300 dark:border-zinc-700 px-3 py-1.5 text-sm bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-400 mt-0.5" />
                 </div>
                 <div>
-                  <label class="text-xs font-medium text-gray-700">Hotline</label>
+                  <label class="text-xs font-medium text-gray-700 dark:text-zinc-300">Hotline</label>
                   <input type="text" name="hotline" value={@hotline}
-                    class="w-full rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 mt-0.5" />
+                    class="w-full rounded border border-gray-300 dark:border-zinc-700 px-3 py-1.5 text-sm bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-400 mt-0.5" />
                 </div>
               </div>
               <div class="flex justify-between pt-3">
-                <a href={"/admin/autoservice/tenants/#{@tid}"} class="rounded border border-gray-300 text-gray-700 px-4 py-1.5 text-sm hover:bg-gray-50">跳过</a>
+                <a href={"/admin/autoservice/tenants/#{@tid}"} class="rounded border border-gray-300 dark:border-zinc-700 text-gray-700 dark:text-zinc-300 px-4 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-zinc-800">跳过</a>
                 <button type="submit" class="rounded bg-blue-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-blue-700">下一步: KB 初始化 →</button>
               </div>
             </form>
@@ -177,22 +177,22 @@ defmodule EzagentPluginLiveview.AutoService.Admin.InitWizardLive do
       <% end %>
 
       <%= if @step == 2 do %>
-        <div class="rounded-xl border border-gray-200 bg-white overflow-hidden">
-          <div class="px-4 py-2.5 bg-gray-800 text-white rounded-t-lg"><h3 class="font-semibold text-sm">Step 2: KB 知识库 (可选)</h3></div>
+        <div class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
+          <div class="px-4 py-2.5 bg-gray-800 dark:bg-zinc-800 text-white rounded-t-lg"><h3 class="font-semibold text-sm">Step 2: KB 知识库 (可选)</h3></div>
           <div class="p-4 space-y-3">
-            <div :if={@kb_flash} class="text-xs text-green-700 bg-green-50 rounded px-3 py-1.5">{@kb_flash}</div>
+            <div :if={@kb_flash} class="text-xs text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-950 rounded px-3 py-1.5">{@kb_flash}</div>
             <form phx-submit="kb_fetch_url" class="flex gap-2">
-              <input type="url" name="url" placeholder="https://docs.example.com" class="flex-1 rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+              <input type="url" name="url" placeholder="https://docs.example.com" class="flex-1 rounded border border-gray-300 dark:border-zinc-700 px-3 py-1.5 text-sm bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-400" />
               <button type="submit" class="rounded bg-emerald-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-emerald-700">抓取</button>
             </form>
             <form phx-submit="kb_add_manual" class="space-y-2">
-              <input type="text" name="id" placeholder="条目 ID" class="w-full rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-              <input type="text" name="title" placeholder="标题" class="w-full rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-              <textarea name="content" rows="2" placeholder="内容" class="w-full rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"></textarea>
+              <input type="text" name="id" placeholder="条目 ID" class="w-full rounded border border-gray-300 dark:border-zinc-700 px-3 py-1.5 text-sm bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+              <input type="text" name="title" placeholder="标题" class="w-full rounded border border-gray-300 dark:border-zinc-700 px-3 py-1.5 text-sm bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+              <textarea name="content" rows="2" placeholder="内容" class="w-full rounded border border-gray-300 dark:border-zinc-700 px-3 py-1.5 text-sm bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-400"></textarea>
               <button type="submit" class="rounded bg-blue-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-blue-700">添加条目</button>
             </form>
             <div class="flex justify-between pt-3">
-              <button phx-click="step2_skip" class="rounded border border-gray-300 text-gray-700 px-4 py-1.5 text-sm hover:bg-gray-50">跳过</button>
+              <button phx-click="step2_skip" class="rounded border border-gray-300 dark:border-zinc-700 text-gray-700 dark:text-zinc-300 px-4 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-zinc-800">跳过</button>
               <button phx-click="step2_skip" class="rounded bg-blue-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-blue-700">下一步: 预览发布 →</button>
             </div>
           </div>
@@ -201,25 +201,25 @@ defmodule EzagentPluginLiveview.AutoService.Admin.InitWizardLive do
 
       <%= if @step == 3 do %>
         <div class="space-y-4">
-          <div class="rounded-xl border border-gray-200 bg-white overflow-hidden">
-            <div class="px-4 py-2.5 bg-gray-800 text-white rounded-t-lg"><h3 class="font-semibold text-sm">Summary</h3></div>
+          <div class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
+            <div class="px-4 py-2.5 bg-gray-800 dark:bg-zinc-800 text-white rounded-t-lg"><h3 class="font-semibold text-sm">Summary</h3></div>
             <div class="p-4 text-sm space-y-1.5">
-              <div class="flex items-center gap-2"><span class="text-green-600">✅</span> Soul: 已生成 (from <%= @brand_name %> / <%= @industry %> template)</div>
-              <div class="flex items-center gap-2"><span class="text-green-600">✅</span> Slots: 已预填 (brand_name, industry, service_hours, hotline)</div>
-              <div class="flex items-center gap-2"><span class="text-green-600">✅</span> Fast Prompt: 已从 skeleton 复制</div>
-              <div class="flex items-center gap-2"><span class="text-green-600">✅</span> CR: 已创建 draft</div>
+              <div class="flex items-center gap-2"><span class="text-green-600 dark:text-green-400">✅</span> Soul: 已生成 (from <%= @brand_name %> / <%= @industry %> template)</div>
+              <div class="flex items-center gap-2"><span class="text-green-600 dark:text-green-400">✅</span> Slots: 已预填 (brand_name, industry, service_hours, hotline)</div>
+              <div class="flex items-center gap-2"><span class="text-green-600 dark:text-green-400">✅</span> Fast Prompt: 已从 skeleton 复制</div>
+              <div class="flex items-center gap-2"><span class="text-green-600 dark:text-green-400">✅</span> CR: 已创建 draft</div>
             </div>
           </div>
 
           <%= if @lint_results do %>
-            <div class="rounded-xl border border-gray-200 bg-white overflow-hidden">
-              <div class="px-4 py-2.5 bg-gray-800 text-white rounded-t-lg"><h3 class="font-semibold text-sm">Lint Results</h3></div>
+            <div class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
+              <div class="px-4 py-2.5 bg-gray-800 dark:bg-zinc-800 text-white rounded-t-lg"><h3 class="font-semibold text-sm">Lint Results</h3></div>
               <div class="p-4 text-xs font-mono space-y-1">
                 <%= if @lint_results.ok do %>
-                  <div :for={w <- @lint_results.warnings} class="text-amber-700">⚠ <%= w %></div>
-                  <div :if={@lint_results.warnings == []} class="text-green-700">✓ All checks passed</div>
+                  <div :for={w <- @lint_results.warnings} class="text-amber-700 dark:text-amber-300">⚠ <%= w %></div>
+                  <div :if={@lint_results.warnings == []} class="text-green-700 dark:text-green-300">✓ All checks passed</div>
                 <% else %>
-                  <div class="text-red-700">✗ <%= inspect(@lint_results.error) %></div>
+                  <div class="text-red-700 dark:text-red-300">✗ <%= inspect(@lint_results.error) %></div>
                 <% end %>
               </div>
             </div>
@@ -227,18 +227,18 @@ defmodule EzagentPluginLiveview.AutoService.Admin.InitWizardLive do
 
           <%= if @publish_result do %>
             <div class={["rounded-lg border p-4",
-              elem(@publish_result, 0) == :ok && "bg-green-50 border-green-300",
-              elem(@publish_result, 0) == :error && "bg-red-50 border-red-300"]}>
+              elem(@publish_result, 0) == :ok && "bg-green-50 dark:bg-green-950 border-green-300 dark:border-green-700",
+              elem(@publish_result, 0) == :error && "bg-red-50 dark:bg-red-950 border-red-300 dark:border-red-700"]}>
               <%= if elem(@publish_result, 0) == :ok do %>
-                <div class="text-green-800 font-medium">✅ Published v<%= elem(@publish_result, 1) %></div>
+                <div class="text-green-800 dark:text-green-200 font-medium">✅ Published v<%= elem(@publish_result, 1) %></div>
               <% else %>
-                <div class="text-red-800">❌ Publish failed: <%= inspect(elem(@publish_result, 1)) %></div>
+                <div class="text-red-800 dark:text-red-200">❌ Publish failed: <%= inspect(elem(@publish_result, 1)) %></div>
               <% end %>
             </div>
           <% end %>
 
           <div class="flex justify-between pt-3">
-            <button phx-click="step3_back" class="rounded border border-gray-300 text-gray-700 px-4 py-1.5 text-sm hover:bg-gray-50">← 上一步</button>
+            <button phx-click="step3_back" class="rounded border border-gray-300 dark:border-zinc-700 text-gray-700 dark:text-zinc-300 px-4 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-zinc-800">← 上一步</button>
             <%= if !@publish_result || elem(@publish_result, 0) == :error do %>
               <button phx-click="step3_publish" class="rounded bg-emerald-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-emerald-700">发布初始化 → v1</button>
             <% end %>

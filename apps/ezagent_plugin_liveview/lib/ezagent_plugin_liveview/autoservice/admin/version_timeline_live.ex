@@ -56,27 +56,27 @@ defmodule EzagentPluginLiveview.AutoService.Admin.VersionTimelineLive do
   def render(assigns) do
     ~H"""
     <div class="max-w-3xl mx-auto p-6">
-      <h1 class="text-xl font-bold text-gray-900 mb-4">版本历史</h1>
-      <div :if={@flash_msg} class="text-sm text-green-700 bg-green-50 rounded px-3 py-2 mb-4">{@flash_msg}</div>
+      <h1 class="text-xl font-bold text-gray-900 dark:text-zinc-100 mb-4">版本历史</h1>
+      <div :if={@flash_msg} class="text-sm text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-950 rounded px-3 py-2 mb-4">{@flash_msg}</div>
       <div class="space-y-2">
         <%= for v <- @versions do %>
           <div class={["flex items-center justify-between rounded-lg border px-4 py-3",
-            v.version == @current && "border-blue-300 bg-blue-50",
-            v.version != @current && "border-gray-200 bg-white"]}>
+            v.version == @current && "border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950",
+            v.version != @current && "border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900"]}>
             <div>
-              <span class="font-mono text-sm font-medium"><%= v.version %></span>
+              <span class="font-mono text-sm font-medium text-gray-900 dark:text-zinc-100"><%= v.version %></span>
               <span :if={v.version == @current} class="ml-2 text-xs bg-blue-600 text-white px-1.5 py-0.5 rounded">current</span>
             </div>
             <button :if={v.version != @current}
               phx-click="rollback" phx-value-version={v.version}
               phx-confirm={"确认回滚到 #{v.version} ？"}
-              class="rounded border border-red-300 text-red-700 px-3 py-1 text-xs hover:bg-red-50">
+              class="rounded border border-red-300 dark:border-red-800 text-red-700 dark:text-red-400 px-3 py-1 text-xs hover:bg-red-50 dark:hover:bg-red-950">
               Rollback
             </button>
           </div>
         <% end %>
       </div>
-      <p :if={@versions == []} class="text-sm text-gray-400">No published versions yet.</p>
+      <p :if={@versions == []} class="text-sm text-gray-400 dark:text-zinc-500">No published versions yet.</p>
     </div>
     """
   end

@@ -167,21 +167,21 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
     <div class="max-w-6xl mx-auto p-6">
       <div class="flex items-center justify-between mb-4">
         <div>
-          <h1 class="text-xl font-bold text-gray-900">Skill 管理</h1>
-          <p class="text-sm text-gray-500">
+          <h1 class="text-xl font-bold text-gray-900 dark:text-zinc-100">Skill 管理</h1>
+          <p class="text-sm text-gray-500 dark:text-zinc-400">
             Tenant: {@tid} / Role: {@role}
           </p>
         </div>
         <a
           href={"/admin/autoservice/tenants/#{@tid}"}
-          class="text-sm text-gray-500 hover:text-gray-700 underline"
+          class="text-sm text-gray-500 dark:text-zinc-400 hover:text-gray-700 dark:hover:text-zinc-300 underline"
         >
           &larr; 返回 Tenant Dashboard
         </a>
       </div>
 
       <%= if @saved_flash do %>
-        <div class="text-sm text-green-700 bg-green-50 rounded px-3 py-2 mb-4">
+        <div class="text-sm text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-950 rounded px-3 py-2 mb-4">
           {@saved_flash}
         </div>
       <% end %>
@@ -196,10 +196,10 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
             phx-change="search"
             phx-debounce="200"
             placeholder="搜索技能名称..."
-            class="w-full rounded-lg border border-gray-300 pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+            class="w-full rounded-lg border border-gray-300 dark:border-zinc-700 pl-9 pr-3 py-2 text-sm bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
           />
           <svg
-            class="absolute left-3 top-2.5 w-4 h-4 text-gray-400"
+            class="absolute left-3 top-2.5 w-4 h-4 text-gray-400 dark:text-zinc-500"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -222,35 +222,35 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
 
       <%!-- Create form --%>
       <%= if @creating_skill do %>
-        <div class="rounded-xl border border-blue-300 bg-blue-50 p-4 mb-4">
-          <h3 class="text-sm font-semibold text-gray-800 mb-3">新建技能</h3>
+        <div class="rounded-xl border border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950 p-4 mb-4">
+          <h3 class="text-sm font-semibold text-gray-800 dark:text-zinc-200 mb-3">新建技能</h3>
           <form phx-submit="create_skill" class="space-y-3">
             <div>
-              <label class="text-xs font-medium text-gray-700">技能名称</label>
+              <label class="text-xs font-medium text-gray-700 dark:text-zinc-300">技能名称</label>
               <input
                 type="text"
                 name="name"
                 value={@new_skill_name}
                 required
                 placeholder="例如: refund-policy"
-                class="w-full rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 mt-0.5"
+                class="w-full rounded border border-gray-300 dark:border-zinc-700 px-3 py-1.5 text-sm bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-400 mt-0.5"
               />
             </div>
             <div>
-              <label class="text-xs font-medium text-gray-700">技能内容 (SKILL.md)</label>
+              <label class="text-xs font-medium text-gray-700 dark:text-zinc-300">技能内容 (SKILL.md)</label>
               <textarea
                 name="content"
                 rows="10"
                 required
                 placeholder="# Skill Name\n\nDescription..."
-                class="w-full rounded border border-gray-300 px-3 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400 mt-0.5"
+                class="w-full rounded border border-gray-300 dark:border-zinc-700 px-3 py-1.5 text-sm font-mono bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-400 mt-0.5"
               ><%= @new_skill_content %></textarea>
             </div>
             <div class="flex justify-end gap-2">
               <button
                 type="button"
                 phx-click="cancel_create"
-                class="rounded border border-gray-300 text-gray-700 px-4 py-1.5 text-sm hover:bg-gray-50"
+                class="rounded border border-gray-300 dark:border-zinc-700 text-gray-700 dark:text-zinc-300 px-4 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-zinc-800"
               >
                 取消
               </button>
@@ -267,15 +267,15 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
 
       <%!-- Editor panel --%>
       <%= if @editing_skill do %>
-        <div class="rounded-xl border border-gray-200 bg-white overflow-hidden mb-4">
-          <div class="px-4 py-2.5 bg-gray-800 text-white flex items-center justify-between">
+        <div class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden mb-4">
+          <div class="px-4 py-2.5 bg-gray-800 dark:bg-zinc-800 text-white flex items-center justify-between">
             <h3 class="font-semibold text-sm">
               {@editing_skill}
-              <span class="text-gray-400 font-normal text-xs ml-2">SKILL.md</span>
+              <span class="text-gray-400 dark:text-zinc-500 font-normal text-xs ml-2">SKILL.md</span>
             </h3>
             <button
               phx-click="close_editor"
-              class="text-gray-300 hover:text-white text-sm"
+              class="text-gray-300 dark:text-zinc-400 hover:text-white text-sm"
             >
               &times; 关闭
             </button>
@@ -287,14 +287,14 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
                 <textarea
                   name="content"
                   rows="18"
-                  class="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-400 resize-y"
+                  class="w-full rounded-lg border border-gray-300 dark:border-zinc-700 px-4 py-3 text-sm font-mono leading-relaxed bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-400 resize-y"
                 ><%= @editing_content %></textarea>
                 <div class="flex justify-between">
                   <button
                     type="button"
                     phx-click="delete_skill"
                     phx-value-name={@editing_skill}
-                    class="rounded border border-red-300 text-red-600 px-3 py-1.5 text-sm hover:bg-red-50"
+                    class="rounded border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 px-3 py-1.5 text-sm hover:bg-red-50 dark:hover:bg-red-950"
                     onclick={"return confirm('确定要删除技能 #{@editing_skill} 吗？')"}
                   >
                     删除
@@ -308,8 +308,8 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
                 </div>
               </form>
             <% else %>
-              <pre class="text-xs font-mono leading-relaxed whitespace-pre-wrap bg-gray-50 rounded-lg p-5 max-h-[60vh] overflow-y-auto border border-gray-200"><%= @editing_content %></pre>
-              <p class="text-xs text-gray-400 mt-2">只读 — 该技能属于上层 layer，无法在此编辑</p>
+              <pre class="text-xs font-mono leading-relaxed whitespace-pre-wrap bg-gray-50 dark:bg-zinc-950 rounded-lg p-5 max-h-[60vh] overflow-y-auto border border-gray-200 dark:border-zinc-800 text-gray-900 dark:text-zinc-100"><%= @editing_content %></pre>
+              <p class="text-xs text-gray-400 dark:text-zinc-500 mt-2">只读 — 该技能属于上层 layer，无法在此编辑</p>
             <% end %>
           </div>
         </div>
@@ -318,17 +318,17 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
       <%!-- 4-layer card grid --%>
       <div class="space-y-6">
         <%= for {layer, entries} <- @filtered_layers do %>
-          <div class="rounded-xl border border-gray-200 bg-white overflow-hidden">
-            <div class="px-4 py-2.5 bg-gray-800 text-white">
+          <div class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
+            <div class="px-4 py-2.5 bg-gray-800 dark:bg-zinc-800 text-white">
               <div class="flex items-center gap-2">
                 <h3 class="font-semibold text-sm">{layer_label(layer)}</h3>
-                <span class="text-[10px] bg-gray-600 px-1.5 py-0.5 rounded">L{layer_num(layer)}</span>
-                <span class="text-xs text-gray-400">{length(entries)} skills</span>
+                <span class="text-[10px] bg-gray-600 dark:bg-zinc-600 px-1.5 py-0.5 rounded">L{layer_num(layer)}</span>
+                <span class="text-xs text-gray-400 dark:text-zinc-500">{length(entries)} skills</span>
               </div>
             </div>
             <div class="p-4">
               <%= if entries == [] do %>
-                <p class="text-xs text-gray-400 text-center py-4">暂无技能</p>
+                <p class="text-xs text-gray-400 dark:text-zinc-500 text-center py-4">暂无技能</p>
               <% else %>
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                   <%= for entry <- entries do %>
@@ -354,14 +354,14 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
       <%!-- Legend --%>
       <div
         :if={all_entries_count(@filtered_layers) > 0}
-        class="mt-4 flex items-center gap-4 text-xs text-gray-400"
+        class="mt-4 flex items-center gap-4 text-xs text-gray-400 dark:text-zinc-500"
       >
         <span class="flex items-center gap-1">
-          <span class="w-3 h-3 rounded bg-gray-50 border border-gray-200 inline-block"></span>
+          <span class="w-3 h-3 rounded bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 inline-block"></span>
           overridden (被上层同名覆盖)
         </span>
         <span class="flex items-center gap-1">
-          <span class="w-3 h-3 rounded border border-blue-300 inline-block"></span> 可编辑 (tenant layer)
+          <span class="w-3 h-3 rounded border border-blue-300 dark:border-blue-700 inline-block"></span> 可编辑 (tenant layer)
         </span>
       </div>
     </div>

@@ -13,30 +13,31 @@ defmodule EzagentPluginLiveview.AutoService.Admin.Components.SkillCard do
     ~H"""
     <div class={[
       "rounded-lg border p-3 transition hover:shadow-md",
-      @shadowed && "opacity-50 bg-gray-50",
-      @editable && "border-blue-300 cursor-pointer",
-      !@editable && "cursor-default"
+      @shadowed && "opacity-50 bg-gray-50 dark:bg-zinc-950",
+      @editable && "border-blue-300 dark:border-blue-700 cursor-pointer",
+      !@editable && "border-gray-200 dark:border-zinc-800 cursor-default",
+      !@shadowed && !@editable && "bg-white dark:bg-zinc-900"
     ]}>
       <div class="flex justify-between items-start">
-        <span class="font-mono text-sm font-medium">{@name}</span>
+        <span class="font-mono text-sm font-medium text-gray-900 dark:text-zinc-100">{@name}</span>
         <span class={[
           "text-[10px] px-1.5 py-0.5 rounded",
-          @safety_class == "critical" && "bg-red-100 text-red-700",
-          @safety_class == "safe" && "bg-green-100 text-green-800"
+          @safety_class == "critical" && "bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-300",
+          @safety_class == "safe" && "bg-green-100 dark:bg-green-950 text-green-800 dark:text-green-200"
         ]}>
           {@safety_class}
         </span>
       </div>
       <div class="flex items-center gap-2 mt-1">
-        <span class="text-[10px] bg-gray-100 px-1.5 py-0.5 rounded text-gray-500">
+        <span class="text-[10px] bg-gray-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-gray-500 dark:text-zinc-400">
           L{layer_num(@layer)}
         </span>
         <%= if @shadowed do %>
-          <span class="text-[10px] text-amber-600">overridden</span>
+          <span class="text-[10px] text-amber-600 dark:text-amber-400">overridden</span>
         <% end %>
       </div>
       <%= if @description != "" do %>
-        <p class="text-xs text-gray-500 mt-1 line-clamp-2">{@description}</p>
+        <p class="text-xs text-gray-500 dark:text-zinc-400 mt-1 line-clamp-2">{@description}</p>
       <% end %>
     </div>
     """
