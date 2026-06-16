@@ -61,12 +61,19 @@ caller holds a Manage cap over the target  -> :ok    # NEW: manager/creator
 true                       -> {:error, :grant_not_owner}
 ```
 
-Bounded, fail-closed, by the EXISTING gates — no new escalation surface:
-- **Delegation** (already in `Role.CapMint` / the manager path): a manager may grant only
-  caps it *itself holds* whose scope covers the target. `Capability.Match` is asymmetric —
-  a concrete held cap never authorizes a wildcard request, so a manager cannot fabricate
-  authority it lacks; `{:spawned_by, mgr}` / `{:within_workspace, ws}` / `:any` / concrete
-  instance scopes bound *which* targets a held cap reaches.
+Bounded, fail-closed — but the delegation bound is NOT inherited and MUST be added
+explicitly (codex P1):
+- **Delegation (NEW, explicit at the `grant_cap` chokepoint — codex P1).** `grant_cap`
+  /`IdentityAdmin.handle_grant_cap/2` today runs ONLY the wildcard-action guard + owner/admin
+  authorization; `Role.CapMint`'s delegation policy is NOT on this runtime path. So adding
+  `manager` to the authorizer WITHOUT a held-cap check would let a manager grant arbitrary
+  concrete-action caps it does not hold (escalation). PR-a MUST, for the manager case, add an
+  explicit check: the cap-to-grant must `Capability.matches?` a cap the **caller itself
+  holds** before any write (a manager grants only caps it holds whose scope covers the
+  target). `Capability.Match` is asymmetric — a concrete held cap never authorizes a wildcard
+  request, so a manager cannot fabricate authority it lacks; `{:spawned_by, mgr}` /
+  `{:within_workspace, ws}` / `:any` / concrete instance scopes bound *which* targets a held
+  cap reaches. Fail-closed (`:grant_not_delegable`) if no held cap matches.
 - **Wildcard-action** grants still require admin
   (`check_action_wildcard_grant_authorized`, unchanged).
 - **Audit**: record manager-provenance on the grant (`granted_by` = the manager + a
@@ -75,8 +82,15 @@ Bounded, fail-closed, by the EXISTING gates — no new escalation surface:
   chokepoint.)
 
 `grant_cap` stays the single cap-write chokepoint. **First migration consumer:**
-`Orchestrator.Caps` grants via this path (owner holds the orchestrator's Manage cap from
-create) instead of the `template-materialize`+owner-caller workaround.
+`Orchestrator.Caps`. **Prerequisite within PR-a (codex P2):** the orchestrator spawn path
+(`Session.ensure_orchestrator` → `Agent.spawn_from_template_content/5`) does NOT currently
+grant the owner a Manage cap over the orchestrator — it bypasses `CreatorGrant` /
+`Workspace.grant_creator_manage_cap/4`. So the owner is NOT yet a manager of the
+orchestrator, and a naive migration would fail (`:grant_not_owner`). PR-a must FIRST wire the
+owner's Manage cap at orchestrator spawn (route through `grant_creator_manage_cap/4` or grant
+the `CreatorGrant.manage_cap` there). THEN `Orchestrator.Caps` grants via the
+manager-delegated `grant_cap` path instead of the `template-materialize`+owner-caller
+workaround. (Migration parity test must still hold — same resulting caps.)
 
 ### 2. behaviors — dynamic mount/unmount (the genuinely new capability)
 
@@ -86,10 +100,14 @@ mounts/unmounts behaviors on its managed instance):
 - `mount_behavior` / `unmount_behavior` — **only within the Kind's declared `behaviors/0`
   superset** (you cannot add a behavior the Kind does not declare — that would be a
   different Kind). Fail-closed (`{:error, :not_in_superset}`) otherwise; idempotent.
-- **Slice lifecycle**: mounting a behavior initializes its state slice (`init_slice`);
-  unmounting removes/archives it. Keep minimal: mount = ensure slice present (default
-  init); unmount = drop the slice. Define the semantics for an already-mounted /
-  already-absent behavior as no-ops.
+- **Slice lifecycle + persisted membership (codex P2 — REQUIRED).** Mounting (a) adds the
+  behavior to the persisted `:kind_base` behavior list AND (b) initializes its state slice
+  (`init_slice`); unmounting removes it from `:kind_base` AND drops the slice. The runtime
+  derives the active behavior set after load via `BehaviorSet.effective_set/2` from the
+  persisted `:kind_base` slice — so the `:kind_base` update is NOT optional: without it a
+  mounted behavior vanishes on reload and an unmounted one is re-enumerated from the stale
+  set. Keep minimal: mount = add-to-kind_base + ensure slice; unmount = remove-from-kind_base
+  + drop slice. Already-mounted / already-absent = no-ops.
 - Authorized by the same `{self, admin, manager}` set (the manager holds the target's
   Manage cap). Cap-gated, audited.
 
