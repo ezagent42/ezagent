@@ -22,7 +22,7 @@ defmodule EzagentPluginLoom.WebPlug do
   alias Ezagent.Socialware.{AnonBinding, AnonUser, CustomerAuth, CustomerFeed}
   alias Ezagent.Uploads
   alias Ezagent.Uploads.DownloadToken
-  alias EzagentPluginLoom.{Intent, Materials}
+  alias EzagentPluginLoom.{Intent, Materials, Stitch}
 
   @gateway_uri "system://loom-customer-gateway"
 
@@ -106,6 +106,21 @@ defmodule EzagentPluginLoom.WebPlug do
       Plug.Conn.send_file(conn, 200, path)
     else
       _ -> send_resp(conn, 404, "not found")
+    end
+  end
+
+  # Stitch:发布页 preview 辅助 AI。body {text, token, page?}
+  post "/c/:ws/:sid/stitch" do
+    with {:ok, session_uri, ws_uri} <- uris(ws, sid),
+         token when is_binary(token) <- token(conn),
+         :ok <- CustomerAuth.authorize(token, session_uri, ws_uri),
+         text when is_binary(text) and text != "" <- conn.body_params["text"],
+         {:ok, result} <- Stitch.reply(text, page: conn.body_params["page"]) do
+      json(conn, 200, %{ok: true, reply: result.reply, drive: result.drive})
+    else
+      {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})
+      {:error, _} -> json(conn, 502, %{ok: false, error: "stitch_failed"})
+      _ -> json(conn, 400, %{ok: false, error: "bad_request"})
     end
   end
 
