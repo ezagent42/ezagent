@@ -657,358 +657,52 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
     <div class="max-w-5xl mx-auto p-6 space-y-6">
       <div class="flex items-center justify-between">
         <h1 class="text-xl font-bold text-gray-900">租户管理控制台</h1>
-        <span class="text-xs text-gray-400">{URI.to_string(@workspace_uri)}</span>
+        <span class="text-xs text-gray-400">workspace://<%= @tid %></span>
       </div>
 
       <div :if={!@can_write?} class="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-        无权限：当前账号不持有 content:write 能力，页面为只读模式。
+        无权限：当前账号不持有编辑权限，部分功能为只读模式。
       </div>
 
-      <%!-- Tab bar --%>
-      <nav class="flex border-b border-gray-200 space-x-1">
-        <button phx-click="switch_tab" phx-value-tab="soul_slots"
-          class={["px-4 py-2 text-sm font-medium rounded-t-lg", @active_tab == :soul_slots && "bg-white border border-gray-200 border-b-white text-blue-700 -mb-px", @active_tab != :soul_slots && "text-gray-500 hover:text-gray-700"]}>
-          Soul &amp; Slots
-        </button>
-        <button phx-click="switch_tab" phx-value-tab="skills"
-          class={["px-4 py-2 text-sm font-medium rounded-t-lg", @active_tab == :skills && "bg-white border border-gray-200 border-b-white text-blue-700 -mb-px", @active_tab != :skills && "text-gray-500 hover:text-gray-700"]}>
-          Skills
-        </button>
-        <button phx-click="switch_tab" phx-value-tab="kb"
-          class={["px-4 py-2 text-sm font-medium rounded-t-lg", @active_tab == :kb && "bg-white border border-gray-200 border-b-white text-blue-700 -mb-px", @active_tab != :kb && "text-gray-500 hover:text-gray-700"]}>
-          KB
-        </button>
-        <button phx-click="switch_tab" phx-value-tab="fast_prompt"
-          class={["px-4 py-2 text-sm font-medium rounded-t-lg", @active_tab == :fast_prompt && "bg-white border border-gray-200 border-b-white text-blue-700 -mb-px", @active_tab != :fast_prompt && "text-gray-500 hover:text-gray-700"]}>
-          Fast Agent
-        </button>
-        <button phx-click="switch_tab" phx-value-tab="publish"
-          class={["px-4 py-2 text-sm font-medium rounded-t-lg", @active_tab == :publish && "bg-white border border-gray-200 border-b-white text-blue-700 -mb-px", @active_tab != :publish && "text-gray-500 hover:text-gray-700"]}>
-          发布
-        </button>
-      </nav>
+      <div class="grid grid-cols-2 gap-4">
+        <a href={"/admin/autoservice/tenants/#{@tid}/soul"} class="rounded-xl border border-gray-200 bg-white p-5 hover:shadow-md hover:border-blue-300 transition">
+          <div class="text-2xl mb-2">📝</div>
+          <h3 class="font-semibold text-gray-900">Soul 编辑</h3>
+          <p class="text-xs text-gray-500 mt-1">编辑租户 Soul 模板、Diff 对比、预览渲染</p>
+        </a>
 
-      <%!-- Tab content --%>
-      <div class="bg-white rounded-b-xl border border-t-0 border-gray-200">
+        <a href={"/admin/autoservice/tenants/#{@tid}/soul/slots"} class="rounded-xl border border-gray-200 bg-white p-5 hover:shadow-md hover:border-blue-300 transition">
+          <div class="text-2xl mb-2">🏷️</div>
+          <h3 class="font-semibold text-gray-900">Slot 编辑</h3>
+          <p class="text-xs text-gray-500 mt-1">编辑 Soul 变量值、YAML 批量编辑</p>
+        </a>
 
-        <%!-- Soul & Slots Tab --%>
-        <div :if={@active_tab == :soul_slots} class="p-4 space-y-6">
-          <%!-- Soul --%>
-          <section>
-            <header class="px-4 py-3 bg-gray-800 text-white rounded-t-lg flex items-center justify-between">
-              <h2 class="font-semibold text-sm">Soul 编辑 (sandbox/souls/customer.md)</h2>
-              <span :if={@soul_saved_flash} class="text-xs rounded bg-green-200 text-green-800 px-2 py-0.5">{@soul_saved_flash}</span>
-            </header>
-            <div class="border border-t-0 border-gray-200 rounded-b-lg p-4">
-              <form phx-submit="save_soul">
-                <textarea name="soul" rows="14" readonly={!@can_write?}
-                  class={["w-full font-mono text-sm border border-gray-300 rounded p-2 focus:outline-none focus:ring-2 focus:ring-blue-400", !@can_write? && "bg-gray-50 text-gray-500 cursor-not-allowed"]}
-                >{@soul_content}</textarea>
-                <div class="mt-2 flex justify-end">
-                  <button type="submit" disabled={!@can_write?}
-                    class="rounded bg-blue-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed">
-                    保存
-                  </button>
-                </div>
-              </form>
-            </div>
-          </section>
+        <a href={"/admin/autoservice/tenants/#{@tid}/skills"} class="rounded-xl border border-gray-200 bg-white p-5 hover:shadow-md hover:border-blue-300 transition">
+          <div class="text-2xl mb-2">📚</div>
+          <h3 class="font-semibold text-gray-900">Skill 管理</h3>
+          <p class="text-xs text-gray-500 mt-1">4层 Skill 管理、创建编辑删除</p>
+        </a>
 
-          <%!-- Slots --%>
-          <section>
-            <header class="px-4 py-3 bg-gray-800 text-white rounded-t-lg">
-              <h2 class="font-semibold text-sm">Slots 编辑 (sandbox/slots/customer.yaml)</h2>
-            </header>
-            <div class="border border-t-0 border-gray-200 rounded-b-lg p-4">
-              <form phx-submit="save_slots">
-                <textarea name="slots" rows="8" readonly={!@can_write?}
-                  class={["w-full font-mono text-sm border border-gray-300 rounded p-2 focus:outline-none focus:ring-2 focus:ring-blue-400", !@can_write? && "bg-gray-50 text-gray-500 cursor-not-allowed"]}
-                >{@slots_content}</textarea>
-                <div class="mt-2 flex items-center justify-between">
-                  <span :if={@slots_saved_flash} class="text-xs text-green-700">{@slots_saved_flash}</span>
-                  <div class="ml-auto">
-                    <button type="submit" disabled={!@can_write?}
-                      class="rounded bg-blue-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed">
-                      保存
-                    </button>
-                  </div>
-                </div>
-              </form>
-            </div>
-          </section>
-        </div>
+        <a href={"/admin/autoservice/tenants/#{@tid}/kb"} class="rounded-xl border border-gray-200 bg-white p-5 hover:shadow-md hover:border-blue-300 transition">
+          <div class="text-2xl mb-2">🗄️</div>
+          <h3 class="font-semibold text-gray-900">KB 管理</h3>
+          <p class="text-xs text-gray-500 mt-1">知识库管理、URL抓取、文件上传、Glossary</p>
+        </a>
 
-        <%!-- Skills Tab --%>
-        <div :if={@active_tab == :skills} class="p-4 space-y-4">
-          <div :if={@skills_flash} class="text-xs text-green-700 bg-green-50 rounded px-3 py-1.5">{@skills_flash}</div>
+        <a href={"/admin/autoservice/tenants/#{@tid}/cr"} class="rounded-xl border border-gray-200 bg-white p-5 hover:shadow-md hover:border-blue-300 transition">
+          <div class="text-2xl mb-2">🔄</div>
+          <h3 class="font-semibold text-gray-900">CR Dashboard</h3>
+          <p class="text-xs text-gray-500 mt-1">Change Request 管理、Publish、Lint、History</p>
+        </a>
 
-          <%!-- Create new skill --%>
-          <section :if={@can_write?}>
-            <header class="px-4 py-2.5 bg-gray-800 text-white rounded-t-lg">
-              <h2 class="font-semibold text-sm">新建 Skill</h2>
-            </header>
-            <div class="border border-t-0 border-gray-200 rounded-b-lg p-4">
-              <form phx-submit="skill_create" class="flex gap-2">
-                <input type="text" name="name" value={@skill_new_name} placeholder="skill-name (不含 SKILL.md)"
-                  class="flex-1 rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                <button type="submit" class="rounded bg-blue-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-blue-700">创建</button>
-              </form>
-            </div>
-          </section>
-
-          <%!-- Skill list --%>
-          <section>
-            <header class="px-4 py-2.5 bg-gray-800 text-white rounded-t-lg flex justify-between items-center">
-              <h2 class="font-semibold text-sm">Sandbox Skills ({length(@skills)} 个)</h2>
-            </header>
-            <div class="border border-t-0 border-gray-200 rounded-b-lg">
-              <p :if={@skills == []} class="p-4 text-sm text-gray-400">沙箱中暂无 skill 文件。使用上方表单创建。</p>
-              <div :if={@skills != []} class="divide-y divide-gray-100">
-                <%= for skill <- @skills do %>
-                  <div class="px-4 py-2.5 flex items-center justify-between hover:bg-gray-50">
-                    <div>
-                      <span class="font-mono text-xs text-gray-700">{skill.role}/{skill.name}</span>
-                    </div>
-                    <div class="flex gap-2">
-                      <button phx-click="skill_edit" phx-value-name={skill.name}
-                        class="text-xs rounded bg-gray-100 text-gray-700 px-2.5 py-1 hover:bg-blue-100 hover:text-blue-700">
-                        编辑
-                      </button>
-                      <button :if={@can_write?} phx-click="skill_delete" phx-value-name={skill.name}
-                        class="text-xs rounded bg-red-50 text-red-600 px-2.5 py-1 hover:bg-red-100"
-                        phx-confirm={"确认删除 skill '#{skill.name}'?"}>
-                        删除
-                      </button>
-                    </div>
-                  </div>
-                <% end %>
-              </div>
-            </div>
-          </section>
-
-          <%!-- Skill Editor (shown when a skill is selected) --%>
-          <section :if={@skill_edit_name}>
-            <header class="px-4 py-2.5 bg-gray-800 text-white rounded-t-lg flex justify-between items-center">
-              <h2 class="font-semibold text-sm">编辑: {@skill_edit_name}</h2>
-              <button phx-click="skill_cancel_edit" class="text-xs underline opacity-80 hover:opacity-100">取消</button>
-            </header>
-            <div class="border border-t-0 border-gray-200 rounded-b-lg p-4">
-              <form phx-submit="skill_save">
-                <textarea name="content" rows="16" readonly={!@can_write?}
-                  class={["w-full font-mono text-sm border border-gray-300 rounded p-2 focus:outline-none focus:ring-2 focus:ring-blue-400", !@can_write? && "bg-gray-50 text-gray-500 cursor-not-allowed"]}
-                >{@skill_edit_content}</textarea>
-                <div class="mt-2 flex justify-end gap-2">
-                  <button type="button" phx-click="skill_cancel_edit"
-                    class="rounded border border-gray-300 text-gray-700 px-4 py-1.5 text-sm hover:bg-gray-50">取消</button>
-                  <button type="submit" disabled={!@can_write?}
-                    class="rounded bg-blue-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-blue-700 disabled:opacity-40">保存</button>
-                </div>
-              </form>
-            </div>
-          </section>
-        </div>
-
-        <%!-- KB Tab --%>
-        <div :if={@active_tab == :kb} class="p-4 space-y-4">
-          <div :if={@kb_flash} class="text-xs text-green-700 bg-green-50 rounded px-3 py-1.5">{@kb_flash}</div>
-
-          <%!-- KB Search --%>
-          <section>
-            <header class="px-4 py-2.5 bg-gray-800 text-white rounded-t-lg">
-              <h2 class="font-semibold text-sm">KB 搜索</h2>
-            </header>
-            <div class="border border-t-0 border-gray-200 rounded-b-lg p-4">
-              <form phx-submit="kb_search" class="flex gap-2">
-                <input type="text" name="query" value={@kb_search_query} placeholder="输入搜索关键词..."
-                  class="flex-1 rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                <button type="submit" class="rounded bg-blue-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-blue-700">搜索</button>
-              </form>
-            </div>
-          </section>
-
-          <%!-- KB URL Fetch --%>
-          <section :if={@can_write?}>
-            <header class="px-4 py-2.5 bg-gray-800 text-white rounded-t-lg">
-              <h2 class="font-semibold text-sm">URL 抓取 (自动下载并索引网页内容)</h2>
-            </header>
-            <div class="border border-t-0 border-gray-200 rounded-b-lg p-4">
-              <form phx-submit="kb_fetch_url" class="flex gap-2">
-                <input type="url" name="url" value={@kb_fetch_url} placeholder="https://example.com/page"
-                  class="flex-1 rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                <button type="submit" class="rounded bg-emerald-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-emerald-700">抓取</button>
-              </form>
-              <p class="mt-1 text-xs text-gray-400">输入网页 URL，系统会自动下载、提取文本并索引到 KB 中。</p>
-            </div>
-          </section>
-
-          <%!-- KB File Upload --%>
-          <section :if={@can_write?}>
-            <header class="px-4 py-2.5 bg-gray-800 text-white rounded-t-lg">
-              <h2 class="font-semibold text-sm">文件上传 (支持 .txt .md .csv .json .yaml)</h2>
-            </header>
-            <div class="border border-t-0 border-gray-200 rounded-b-lg p-4">
-              <form phx-submit="kb_upload" class="flex gap-2 items-center">
-                <input type="file" name="kb_file" accept=".txt,.md,.csv,.json,.yaml,.yml"
-                  class="flex-1 text-sm text-gray-600 file:mr-2 file:rounded file:border-0 file:bg-blue-50 file:px-3 file:py-1 file:text-sm file:text-blue-700 hover:file:bg-blue-100" />
-                <button type="submit" class="rounded bg-violet-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-violet-700">上传</button>
-              </form>
-              <p class="mt-1 text-xs text-gray-400">上传文件后自动索引内容到 KB。支持文本格式文件。</p>
-            </div>
-          </section>
-
-          <%!-- KB Rebuild --%>
-          <section :if={@can_write?}>
-            <header class="px-4 py-2.5 bg-gray-800 text-white rounded-t-lg flex justify-between items-center">
-              <h2 class="font-semibold text-sm">KB 重建</h2>
-            </header>
-            <div class="border border-t-0 border-gray-200 rounded-b-lg p-4">
-              <button phx-click="kb_rebuild" class="rounded bg-amber-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-amber-700">
-                从 _sources + glossary 重建 KB
-              </button>
-              <p class="mt-1 text-xs text-gray-400">扫描 _sources/url/ 和 _sources/files/ 目录，重新索引所有内容。</p>
-            </div>
-          </section>
-
-          <%!-- KB Add --%>
-          <section :if={@can_write?}>
-            <header class="px-4 py-2.5 bg-gray-800 text-white rounded-t-lg">
-              <h2 class="font-semibold text-sm">手动添加 KB 条目</h2>
-            </header>
-            <div class="border border-t-0 border-gray-200 rounded-b-lg p-4 space-y-3">
-              <form phx-submit="kb_add">
-                <div class="grid grid-cols-1 gap-2">
-                  <input type="text" name="id" value={@kb_new_id} placeholder="条目 ID（唯一标识）"
-                    class="rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                  <input type="text" name="title" value={@kb_new_title} placeholder="标题"
-                    class="rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                  <textarea name="content" rows="4" placeholder="内容"
-                    class="w-full rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  >{@kb_new_content}</textarea>
-                </div>
-                <div class="mt-2 flex justify-end">
-                  <button type="submit" class="rounded bg-blue-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-blue-700">添加</button>
-                </div>
-              </form>
-            </div>
-          </section>
-
-          <%!-- KB Entries List --%>
-          <section>
-            <header class="px-4 py-2.5 bg-gray-800 text-white rounded-t-lg flex justify-between items-center">
-              <h2 class="font-semibold text-sm">KB 条目 ({length(@kb_entries)} 个)</h2>
-            </header>
-            <div class="border border-t-0 border-gray-200 rounded-b-lg">
-              <p :if={@kb_entries == []} class="p-4 text-sm text-gray-400">
-                KB 中暂无几录。输入搜索关键词或使用上方表单添加。
-              </p>
-              <div :if={@kb_entries != []} class="divide-y divide-gray-100">
-                <%= for entry <- @kb_entries do %>
-                  <div class="px-4 py-2.5">
-                    <div class="flex items-center justify-between">
-                      <div class="flex-1 min-w-0">
-                        <span class="font-mono text-xs text-gray-500">{entry["id"]}</span>
-                        <span :if={entry["title"]} class="ml-2 text-sm text-gray-800 font-medium">{entry["title"]}</span>
-                      </div>
-                      <button :if={@can_write?} phx-click="kb_delete" phx-value-id={entry["id"]}
-                        class="text-xs rounded bg-red-50 text-red-600 px-2.5 py-1 hover:bg-red-100 ml-2 flex-shrink-0"
-                        phx-confirm={"确认删除 KB 条目 '#{entry["id"]}'?"}>
-                        删除
-                      </button>
-                    </div>
-                    <p :if={entry["content"]} class="mt-1 text-xs text-gray-600 line-clamp-2">{String.slice(entry["content"], 0, 200)}</p>
-                  </div>
-                <% end %>
-              </div>
-            </div>
-          </section>
-        </div>
-
-        <%!-- Fast Agent Prompt Tab --%>
-        <div :if={@active_tab == :fast_prompt} class="p-4 space-y-4">
-          <section>
-            <header class="px-4 py-3 bg-gray-800 text-white rounded-t-lg flex items-center justify-between">
-              <div>
-                <h2 class="font-semibold text-sm">Fast Agent ACK Prompt</h2>
-                <p class="text-xs opacity-60 mt-0.5">sandbox/config/fast_ack_prompt.md — DeepSeek 即时安抚回复的提示词</p>
-              </div>
-              <span :if={@fast_prompt_flash} class="text-xs rounded bg-green-200 text-green-800 px-2 py-0.5">{@fast_prompt_flash}</span>
-            </header>
-            <div class="border border-t-0 border-gray-200 rounded-b-lg p-4">
-              <form phx-submit="save_fast_prompt">
-                <textarea name="prompt" rows="12" readonly={!@can_write?}
-                  class={["w-full font-mono text-sm border border-gray-300 rounded p-2 focus:outline-none focus:ring-2 focus:ring-blue-400", !@can_write? && "bg-gray-50 text-gray-500 cursor-not-allowed"]}
-                >{@fast_prompt}</textarea>
-                <div class="mt-2 flex justify-between items-center">
-                  <p class="text-xs text-gray-400">发布 CR 后，Refresh.after_publish 会将此提示词写入 fast agent 的 system_prompt</p>
-                  <button type="submit" disabled={!@can_write?}
-                    class="rounded bg-blue-600 text-white px-4 py-1.5 text-sm font-medium hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed">
-                    保存
-                  </button>
-                </div>
-              </form>
-            </div>
-          </section>
-        </div>
-
-        <%!-- Publish Tab --%>
-        <div :if={@active_tab == :publish} class="p-4 space-y-6">
-          <%!-- CR panel --%>
-          <section>
-            <header class="px-4 py-3 bg-gray-800 text-white rounded-t-lg flex items-center justify-between">
-              <h2 class="font-semibold text-sm">发布 (Change Request)</h2>
-              <button phx-click="refresh_lint" class="text-xs underline opacity-80 hover:opacity-100">重新检查</button>
-            </header>
-            <div class="border border-t-0 border-gray-200 rounded-b-lg p-4 space-y-3">
-              <div class="text-sm text-gray-700">
-                <span :if={is_nil(@cr_info)} class="text-gray-400">暂无 CR 记录</span>
-                <%= if @cr_info do %>
-                  <span class="font-mono text-xs text-gray-500">{@cr_info["cr_id"]}</span>
-                  <span class={["ml-2 rounded px-2 py-0.5 text-xs", @cr_info["status"] == "draft" && "bg-yellow-100 text-yellow-800", @cr_info["status"] == "published" && "bg-green-100 text-green-800"]}>
-                    {@cr_info["status"]}
-                  </span>
-                  <span :if={@cr_info["published_version"]} class="ml-2 text-xs text-gray-500">v{@cr_info["published_version"]}</span>
-                <% end %>
-              </div>
-
-              <%!-- Lint results --%>
-              <div :if={@lint_results}>
-                <p :if={@lint_results.ok && @lint_results.warnings == []} class="text-xs text-green-700">✓ Lint 通过，无警告</p>
-                <div :if={@lint_results.ok && @lint_results.warnings != []} class="space-y-1">
-                  <p class="text-xs text-amber-700 font-medium">Lint 警告:</p>
-                  <ul class="list-disc list-inside text-xs text-amber-700 space-y-0.5">
-                    <li :for={w <- @lint_results.warnings}>{w}</li>
-                  </ul>
-                </div>
-                <div :if={!@lint_results.ok} class="text-xs text-red-700">Lint 错误: {inspect(@lint_results[:error])}</div>
-              </div>
-
-              <%!-- Publish flash --%>
-              <div :if={@publish_flash} class={["rounded border px-3 py-2 text-sm", @publish_flash_type == :ok && "bg-green-50 border-green-300 text-green-800", @publish_flash_type == :error && "bg-red-50 border-red-300 text-red-800"]}>
-                {@publish_flash}
-              </div>
-
-              <div class="flex justify-end">
-                <button phx-click="publish" disabled={!@can_write?}
-                  class="rounded bg-emerald-600 text-white px-5 py-2 text-sm font-medium hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed">发布</button>
-              </div>
-            </div>
-          </section>
-
-          <%!-- Preview panel --%>
-          <section>
-            <header class="px-4 py-3 bg-gray-800 text-white rounded-t-lg flex items-center justify-between">
-              <h2 class="font-semibold text-sm">预览渲染 (sandbox CLAUDE.md)</h2>
-              <button phx-click="preview" class="text-xs rounded bg-blue-500 text-white px-3 py-1 hover:bg-blue-600">预览渲染</button>
-            </header>
-            <div class="border border-t-0 border-gray-200 rounded-b-lg p-4">
-              <p :if={is_nil(@preview_content)} class="text-sm text-gray-400">点击「预览渲染」查看沙箱内容渲染结果（不创建 agent，仅本地渲染）</p>
-              <pre :if={@preview_content} class="text-xs text-gray-800 whitespace-pre-wrap font-mono bg-gray-50 border border-gray-200 rounded p-3 overflow-auto max-h-96">{@preview_content}</pre>
-            </div>
-          </section>
-        </div>
-
+        <a href={"/admin/autoservice/tenants/#{@tid}/versions"} class="rounded-xl border border-gray-200 bg-white p-5 hover:shadow-md hover:border-blue-300 transition">
+          <div class="text-2xl mb-2">📋</div>
+          <h3 class="font-semibold text-gray-900">版本历史</h3>
+          <p class="text-xs text-gray-500 mt-1">发布版本列表、回滚操作</p>
+        </a>
       </div>
     </div>
     """
+
   end
 end
