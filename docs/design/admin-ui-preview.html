@@ -102,6 +102,112 @@
   <main class="flex-1 p-6 overflow-auto">
 
     <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- Page 0: 初始化入口 (未初始化时显示) -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <section class="mb-12">
+      <h2 class="text-lg font-bold text-gray-900 mb-2">🚀 初始化入口 (Tenant Dashboard — 未初始化状态)</h2>
+      <p class="text-sm text-gray-500 mb-4">
+        Tenant 创建后状态为 <span class="badge-yellow text-[10px]">pending</span>，Dashboard 显示初始化引导。<br/>
+        侧边栏所有页面可访问（允许独立编辑），但带有 ⚡ 待初始化标记。
+      </p>
+
+      <!-- Sidebar excerpt: tenant section with pending badges -->
+      <div class="grid grid-cols-2 gap-4 mb-4">
+        <div class="border border-gray-200 rounded-lg p-3 bg-gray-50 text-xs">
+          <div class="text-gray-500 mb-1 font-medium">侧边栏 (pending 状态):</div>
+          <div class="space-y-1">
+            <div class="flex items-center gap-2">
+              <span>📊 Overview</span>
+              <span class="bg-yellow-100 text-yellow-700 text-[10px] px-1 rounded">⚡ init</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span>📝 Soul Editor</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span>🏷️ Slot Editor</span>
+            </div>
+            <div class="flex items-center gap-2 text-gray-400">
+              <span>📚 Skills</span>
+              <span class="text-[10px]">(empty)</span>
+            </div>
+            <div class="flex items-center gap-2 text-gray-400">
+              <span>🗄️ KB</span>
+              <span class="text-[10px]">(empty)</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="border border-green-200 rounded-lg p-3 bg-green-50 text-xs">
+          <div class="text-green-700 mb-1 font-medium">侧边栏 (active 状态 — 初始化完成后):</div>
+          <div class="space-y-1">
+            <div class="flex items-center gap-2">
+              <span>📊 Overview</span>
+              <span class="bg-green-100 text-green-700 text-[10px] px-1 rounded">v1 active</span>
+            </div>
+            <div class="flex items-center gap-2"><span>📝 Soul Editor</span></div>
+            <div class="flex items-center gap-2"><span>🏷️ Slot Editor</span></div>
+            <div class="flex items-center gap-2"><span>📚 Skills</span> <span class="text-green-600 text-[10px]">3</span></div>
+            <div class="flex items-center gap-2"><span>🗄️ KB</span> <span class="text-green-600 text-[10px]">2</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tenant Dashboard: Pending State -->
+      <div class="max-w-3xl mx-auto border-2 border-amber-300 rounded-xl overflow-hidden">
+        <div class="bg-amber-50 px-6 py-5">
+          <div class="flex items-start gap-4">
+            <div class="text-4xl">🚀</div>
+            <div class="flex-1">
+              <h3 class="text-lg font-bold text-amber-900">租户未初始化</h3>
+              <p class="text-sm text-amber-700 mt-1">
+                此租户尚未完成初始化配置。运行初始化向导将自动完成以下设置：
+              </p>
+              <div class="mt-3 space-y-1 text-sm text-amber-800">
+                <div class="flex items-center gap-2"><span class="text-amber-500">1.</span> Soul 模板生成 (基于品牌+行业信息)</div>
+                <div class="flex items-center gap-2"><span class="text-amber-500">2.</span> Slot 值预填</div>
+                <div class="flex items-center gap-2"><span class="text-amber-500">3.</span> Skill 继承 (从平台模板)</div>
+                <div class="flex items-center gap-2"><span class="text-amber-500">4.</span> KB 知识库初始化 (可选)</div>
+                <div class="flex items-center gap-2"><span class="text-amber-500">5.</span> Fast Agent 提示词配置</div>
+              </div>
+
+              <div class="mt-4 flex gap-3">
+                <button class="bg-amber-600 text-white rounded-lg px-6 py-2.5 text-sm font-medium hover:bg-amber-700 shadow">
+                  开始初始化 →
+                </button>
+                <button class="border border-amber-300 text-amber-700 rounded-lg px-4 py-2.5 text-sm hover:bg-amber-100">
+                  稍后再说，我先手动编辑
+                </button>
+              </div>
+
+              <p class="text-xs text-amber-500 mt-3">
+                💡 初始化期间，你仍可通过左侧菜单访问 Soul Editor / Slot Editor / Skills / KB 等页面手动编辑。
+                初始化完成后，此入口将关闭，所有管理功能正常使用。
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- KPI cards (minimal, pending state) -->
+        <div class="bg-white px-6 py-4 border-t border-amber-200">
+          <div class="grid grid-cols-3 gap-3">
+            <div class="bg-gray-50 rounded-lg p-3 text-center">
+              <div class="text-2xl font-bold text-gray-300">—</div>
+              <div class="text-xs text-gray-400 mt-0.5">Current Release</div>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-3 text-center">
+              <div class="text-2xl font-bold text-gray-300">—</div>
+              <div class="text-xs text-gray-400 mt-0.5">Active CR</div>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-3 text-center">
+              <div class="text-2xl font-bold text-gray-300">0</div>
+              <div class="text-xs text-gray-400 mt-0.5">KB Entries</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
     <!-- Page 1: Soul Editor -->
     <!-- ═══════════════════════════════════════════════════════ -->
     <section class="mb-12">
