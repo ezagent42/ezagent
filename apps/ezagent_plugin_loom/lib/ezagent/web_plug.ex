@@ -1337,11 +1337,12 @@ defmodule EzagentPluginLoom.WebPlug do
           label: Map.get(m, "label", ""),
           effect: Map.get(m, "effect", "navigate"),
           view: Map.get(m, "view", ""),
-          url: Map.get(m, "url", "")
+          url: Map.get(m, "url", ""),
+          page: Map.get(m, "page", "")
         })
 
       _ ->
-        Map.merge(base, %{label: "", effect: "navigate", view: "", url: ""})
+        Map.merge(base, %{label: "", effect: "navigate", view: "", url: "", page: ""})
     end
   rescue
     e -> %{ok: false, error: Exception.message(e)}

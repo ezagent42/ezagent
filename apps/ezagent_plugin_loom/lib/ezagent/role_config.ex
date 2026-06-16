@@ -25,7 +25,7 @@ defmodule Ezagent.PluginLoom.RoleConfig do
 
   @super_key "superadmin"
   @key_re ~r/^[a-z0-9][a-z0-9_-]*$/
-  @effects ~w(navigate link)
+  @effects ~w(navigate link page)
   @max_roles 24
   @max_entities 50
 
@@ -59,7 +59,8 @@ defmodule Ezagent.PluginLoom.RoleConfig do
     File.write!(path, Jason.encode!(map, pretty: true))
   end
 
-  defp blank_super, do: %{"label" => "", "effect" => "navigate", "view" => "", "url" => ""}
+  defp blank_super,
+    do: %{"label" => "", "effect" => "navigate", "view" => "", "url" => "", "page" => ""}
 
   @doc "读某 session 的角色配置(`%{\"creator\",\"super\",\"roles\"}`)。"
   @spec get(String.t(), String.t()) :: map()
@@ -96,7 +97,8 @@ defmodule Ezagent.PluginLoom.RoleConfig do
       "label" => s |> Map.get("label", "") |> to_string(),
       "effect" => effect_of(Map.get(s, "effect")),
       "view" => s |> Map.get("view", "") |> to_string(),
-      "url" => s |> Map.get("url", "") |> to_string()
+      "url" => s |> Map.get("url", "") |> to_string(),
+      "page" => s |> Map.get("page", "") |> to_string()
     }
   end
 
@@ -109,6 +111,7 @@ defmodule Ezagent.PluginLoom.RoleConfig do
       "effect" => effect_of(Map.get(r, "effect")),
       "view" => r |> Map.get("view", "") |> to_string(),
       "url" => r |> Map.get("url", "") |> to_string(),
+      "page" => r |> Map.get("page", "") |> to_string(),
       "entities" => entities_of(r)
     }
   end
@@ -214,7 +217,7 @@ defmodule Ezagent.PluginLoom.RoleConfig do
 
   defp has_content?(%{"creator" => c, "super" => s, "roles" => roles}) do
     is_binary(c) or roles != [] or
-      (is_map(s) and (s["label"] != "" or s["view"] != "" or s["url"] != ""))
+      (is_map(s) and (s["label"] != "" or s["view"] != "" or s["url"] != "" or s["page"] != ""))
   end
 
   defp has_content?(_), do: false
@@ -230,7 +233,7 @@ defmodule Ezagent.PluginLoom.RoleConfig do
     cfg = get(ws, sid)
     creator = cfg["creator"]
     granted = is_binary(entity_uri) and entity_uri != "" and entity_uri == creator
-    {granted, Map.take(cfg["super"], ["label", "effect", "view", "url"])}
+    {granted, Map.take(cfg["super"], ["label", "effect", "view", "url", "page"])}
   rescue
     _ -> {false, nil}
   end
@@ -246,7 +249,7 @@ defmodule Ezagent.PluginLoom.RoleConfig do
         granted =
           is_binary(entity_uri) and entity_uri != "" and entity_uri in (r["entities"] || [])
 
-        {granted, Map.take(r, ["label", "effect", "view", "url"])}
+        {granted, Map.take(r, ["label", "effect", "view", "url", "page"])}
     end
   rescue
     _ -> {false, nil}
