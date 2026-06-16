@@ -43,6 +43,21 @@ defmodule EzagentPluginLiveview.AutoService.Admin.Components.SkillCard do
     """
   end
 
+  @doc """
+  Parse YAML frontmatter from skill content.
+  Returns `{meta_map, body_string}` where meta is a string-keyed map of YAML fields.
+  """
+  def parse_skill_frontmatter(content) do
+    case String.split(content, "---\n", parts: 3) do
+      [_, fm, body] ->
+        case YamlElixir.read_from_string(fm) do
+          {:ok, meta} -> {meta, String.trim(body)}
+          _ -> {%{}, content}
+        end
+      _ -> {%{}, content}
+    end
+  end
+
   defp layer_num(:l0), do: "0"
   defp layer_num(:l1), do: "1"
   defp layer_num(:l2), do: "2"

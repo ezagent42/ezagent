@@ -19,6 +19,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
     base_dir = TenantRuntime.base_dir()
 
     layers = load_all_layers(base_dir, tid, @role)
+    skill_meta = load_all_skill_meta(base_dir, tid, @role)
 
     {:ok,
      assign(socket,
@@ -26,13 +27,17 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
        tid: tid,
        role: @role,
        layers: layers,
+       skill_meta: skill_meta,
        search_query: "",
        filtered_layers: layers,
        editing_skill: nil,
-       editing_content: nil,
+       editing_meta: %{},
+       editing_body: nil,
        creating_skill: false,
        new_skill_name: "",
-       new_skill_content: "",
+       new_skill_description: "",
+       new_skill_intent_trigger: "",
+       new_skill_body: "",
        saved_flash: nil
      )}
   end
@@ -61,13 +66,13 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
     base_dir = TenantRuntime.base_dir()
     tid = socket.assigns.tid
 
-    content =
+    {meta, body} =
       case SkillStore.read(base_dir, tid, @role, name) do
-        {:ok, content} -> content
-        :not_found -> "(not found)"
+        {:ok, content} -> parse_skill_frontmatter(content)
+        :not_found -> {%{}, "(not found)"}
       end
 
-    {:noreply, assign(socket, editing_skill: name, editing_content: content)}
+    {:noreply, assign(socket, editing_skill: name, editing_meta: meta, editing_body: body)}
   end
 
   @impl true
@@ -75,32 +80,42 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
     base_dir = TenantRuntime.base_dir()
     tid = socket.assigns.tid
 
-    content =
+    {meta, body} =
       case SkillStore.read(base_dir, tid, @role, name) do
-        {:ok, content} -> content
-        :not_found -> ""
+        {:ok, content} -> parse_skill_frontmatter(content)
+        :not_found -> {%{}, ""}
       end
 
-    {:noreply, assign(socket, editing_skill: name, editing_content: content)}
+    {:noreply, assign(socket, editing_skill: name, editing_meta: meta, editing_body: body)}
   end
 
   @impl true
-  def handle_event("save_skill", %{"name" => name, "content" => content}, socket) do
+  def handle_event("save_skill", %{"name" => name, "meta_description" => desc, "meta_intent_trigger" => trigger, "body" => body}, socket) do
     base_dir = TenantRuntime.base_dir()
     tid = socket.assigns.tid
+
+    meta =
+      socket.assigns.editing_meta
+      |> Map.put("description", desc)
+      |> Map.put("intent_trigger", trigger)
+
+    content = build_skill_content(meta, body)
 
     SkillStore.write(base_dir, tid, @role, name, content)
     CrEngine.record_file_change(tid, "skills/customer/#{name}/SKILL.md")
 
     layers = load_all_layers(base_dir, tid, @role)
+    skill_meta = load_all_skill_meta(base_dir, tid, @role)
     filtered = apply_search(layers, socket.assigns.search_query)
 
     {:noreply,
      assign(socket,
        layers: layers,
+       skill_meta: skill_meta,
        filtered_layers: filtered,
        editing_skill: nil,
-       editing_content: nil,
+       editing_meta: %{},
+       editing_body: nil,
        saved_flash: "技能 #{name} 已保存到 sandbox"
      )}
   end
@@ -113,36 +128,46 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
     SkillStore.delete(base_dir, tid, @role, name)
 
     layers = load_all_layers(base_dir, tid, @role)
+    skill_meta = load_all_skill_meta(base_dir, tid, @role)
     filtered = apply_search(layers, socket.assigns.search_query)
 
     {:noreply,
      assign(socket,
        layers: layers,
+       skill_meta: skill_meta,
        filtered_layers: filtered,
        editing_skill: nil,
-       editing_content: nil,
+       editing_meta: %{},
+       editing_body: nil,
        saved_flash: "技能 #{name} 已删除"
      )}
   end
 
   @impl true
-  def handle_event("create_skill", %{"name" => name, "content" => content}, socket) do
+  def handle_event("create_skill", %{"name" => name, "meta_description" => desc, "meta_intent_trigger" => trigger, "body" => body}, socket) do
     base_dir = TenantRuntime.base_dir()
     tid = socket.assigns.tid
+
+    meta = %{"name" => name, "description" => desc, "intent_trigger" => trigger}
+    content = build_skill_content(meta, body)
 
     SkillStore.write(base_dir, tid, @role, name, content)
     CrEngine.record_file_change(tid, "skills/customer/#{name}/SKILL.md")
 
     layers = load_all_layers(base_dir, tid, @role)
+    skill_meta = load_all_skill_meta(base_dir, tid, @role)
     filtered = apply_search(layers, socket.assigns.search_query)
 
     {:noreply,
      assign(socket,
        layers: layers,
+       skill_meta: skill_meta,
        filtered_layers: filtered,
        creating_skill: false,
        new_skill_name: "",
-       new_skill_content: "",
+       new_skill_description: "",
+       new_skill_intent_trigger: "",
+       new_skill_body: "",
        saved_flash: "技能 #{name} 已创建"
      )}
   end
@@ -154,12 +179,19 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
 
   @impl true
   def handle_event("cancel_create", _params, socket) do
-    {:noreply, assign(socket, creating_skill: false, new_skill_name: "", new_skill_content: "")}
+    {:noreply,
+     assign(socket,
+       creating_skill: false,
+       new_skill_name: "",
+       new_skill_description: "",
+       new_skill_intent_trigger: "",
+       new_skill_body: ""
+     )}
   end
 
   @impl true
   def handle_event("close_editor", _params, socket) do
-    {:noreply, assign(socket, editing_skill: nil, editing_content: nil)}
+    {:noreply, assign(socket, editing_skill: nil, editing_meta: %{}, editing_body: nil)}
   end
 
   @impl true
@@ -241,14 +273,34 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
               />
             </div>
             <div>
-              <label class="text-xs font-medium text-gray-700 dark:text-zinc-300">技能内容 (SKILL.md)</label>
+              <label class="text-xs font-medium text-gray-700 dark:text-zinc-300">Description</label>
+              <input
+                type="text"
+                name="meta_description"
+                value={@new_skill_description}
+                placeholder="技能描述"
+                class="w-full rounded border border-gray-300 dark:border-zinc-700 px-3 py-1.5 text-sm bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-400 mt-0.5"
+              />
+            </div>
+            <div>
+              <label class="text-xs font-medium text-gray-700 dark:text-zinc-300">Intent Trigger</label>
+              <input
+                type="text"
+                name="meta_intent_trigger"
+                value={@new_skill_intent_trigger}
+                placeholder="触发词，逗号分隔"
+                class="w-full rounded border border-gray-300 dark:border-zinc-700 px-3 py-1.5 text-sm bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-400 mt-0.5"
+              />
+            </div>
+            <div>
+              <label class="text-xs font-medium text-gray-700 dark:text-zinc-300">Body (Markdown)</label>
               <textarea
-                name="content"
+                name="body"
                 rows="10"
                 required
                 placeholder="# Skill Name\n\nDescription..."
                 class="w-full rounded border border-gray-300 dark:border-zinc-700 px-3 py-1.5 text-sm font-mono bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-400 mt-0.5"
-              ><%= @new_skill_content %></textarea>
+              ><%= @new_skill_body %></textarea>
             </div>
             <div class="flex justify-end gap-2">
               <button
@@ -288,11 +340,32 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
             <%= if skill_on_tenant_layer?(@layers, @editing_skill) do %>
               <form phx-submit="save_skill" class="space-y-3">
                 <input type="hidden" name="name" value={@editing_skill} />
-                <textarea
-                  name="content"
-                  rows="18"
-                  class="w-full rounded-lg border border-gray-300 dark:border-zinc-700 px-4 py-3 text-sm font-mono leading-relaxed bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-400 resize-y"
-                ><%= @editing_content %></textarea>
+                <div>
+                  <label class="text-xs font-medium text-gray-700 dark:text-zinc-300">Description</label>
+                  <input
+                    type="text"
+                    name="meta_description"
+                    value={@editing_meta["description"]}
+                    class="w-full rounded border border-gray-300 dark:border-zinc-700 px-3 py-1.5 text-sm bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-400 mt-0.5"
+                  />
+                </div>
+                <div>
+                  <label class="text-xs font-medium text-gray-700 dark:text-zinc-300">Intent Trigger</label>
+                  <input
+                    type="text"
+                    name="meta_intent_trigger"
+                    value={@editing_meta["intent_trigger"]}
+                    class="w-full rounded border border-gray-300 dark:border-zinc-700 px-3 py-1.5 text-sm bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-400 mt-0.5"
+                  />
+                </div>
+                <div>
+                  <label class="text-xs font-medium text-gray-700 dark:text-zinc-300">Body (Markdown)</label>
+                  <textarea
+                    name="body"
+                    rows="14"
+                    class="w-full rounded-lg border border-gray-300 dark:border-zinc-700 px-4 py-3 text-sm font-mono leading-relaxed bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-400 resize-y"
+                  ><%= @editing_body %></textarea>
+                </div>
                 <div class="flex justify-between">
                   <button
                     type="button"
@@ -312,7 +385,21 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
                 </div>
               </form>
             <% else %>
-              <pre class="text-xs font-mono leading-relaxed whitespace-pre-wrap bg-gray-50 dark:bg-zinc-950 rounded-lg p-5 max-h-[60vh] overflow-y-auto border border-gray-200 dark:border-zinc-800 text-gray-900 dark:text-zinc-100"><%= @editing_content %></pre>
+              <div class="space-y-3 mb-4">
+                <%= if @editing_meta["description"] not in [nil, ""] do %>
+                  <div>
+                    <span class="text-xs font-medium text-gray-500 dark:text-zinc-400">Description:</span>
+                    <p class="text-sm text-gray-900 dark:text-zinc-100"><%= @editing_meta["description"] %></p>
+                  </div>
+                <% end %>
+                <%= if @editing_meta["intent_trigger"] not in [nil, ""] do %>
+                  <div>
+                    <span class="text-xs font-medium text-gray-500 dark:text-zinc-400">Intent Trigger:</span>
+                    <p class="text-sm text-gray-900 dark:text-zinc-100"><%= @editing_meta["intent_trigger"] %></p>
+                  </div>
+                <% end %>
+              </div>
+              <pre class="text-xs font-mono leading-relaxed whitespace-pre-wrap bg-gray-50 dark:bg-zinc-950 rounded-lg p-5 max-h-[60vh] overflow-y-auto border border-gray-200 dark:border-zinc-800 text-gray-900 dark:text-zinc-100"><%= @editing_body %></pre>
               <p class="text-xs text-gray-400 dark:text-zinc-500 mt-2">只读 — 该技能属于上层 layer，无法在此编辑</p>
             <% end %>
           </div>
@@ -343,6 +430,8 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
                       <EzagentPluginLiveview.AutoService.Admin.Components.SkillCard.skill_card
                         name={entry.name}
                         layer={card_layer(layer)}
+                        description={get_in(@skill_meta, [entry.name, :description]) || ""}
+                        safety_class={get_in(@skill_meta, [entry.name, :safety_class]) || "safe"}
                         shadowed={shadowed?(entry, layer, @filtered_layers)}
                         editable={layer == :tenant}
                       />
@@ -383,6 +472,56 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SkillManagerLive do
       industry: SkillLoader.list(base_dir, tid, role, :industry),
       tenant: SkillLoader.list(base_dir, tid, role, :tenant)
     ]
+  end
+
+  defp load_all_skill_meta(base_dir, tid, role) do
+    all_entries =
+      SkillLoader.list(base_dir, tid, role, :framework) ++
+        SkillLoader.list(base_dir, tid, role, :platform) ++
+        SkillLoader.list(base_dir, tid, role, :industry) ++
+        SkillLoader.list(base_dir, tid, role, :tenant)
+
+    Map.new(all_entries, fn entry ->
+      content =
+        case File.read(entry.path) do
+          {:ok, c} -> c
+          _ -> ""
+        end
+
+      {meta, _body} = parse_skill_frontmatter(content)
+
+      {entry.name,
+       %{
+         description: Map.get(meta, "description", ""),
+         safety_class: Map.get(meta, "safety_class", "safe"),
+         intent_trigger: Map.get(meta, "intent_trigger", "")
+       }}
+    end)
+  end
+
+  defp parse_skill_frontmatter(content) do
+    case String.split(content, "---\n", parts: 3) do
+      [_, fm, body] ->
+        case YamlElixir.read_from_string(fm) do
+          {:ok, meta} -> {meta, String.trim(body)}
+          _ -> {%{}, content}
+        end
+      _ -> {%{}, content}
+    end
+  end
+
+  defp build_skill_content(meta, body) when is_map(meta) do
+    meta_str =
+      meta
+      |> Enum.reject(fn {_k, v} -> is_nil(v) || v == "" end)
+      |> Enum.map(fn {k, v} -> "#{k}: #{v}" end)
+      |> Enum.join("\n")
+
+    if meta_str == "" do
+      body
+    else
+      "---\n#{meta_str}\n---\n#{body}"
+    end
   end
 
   defp apply_search(layers, ""), do: layers
