@@ -439,9 +439,9 @@ defmodule Ezagent.PluginLoom.View.LoomDashboardView do
   defp role_label("builder"), do: "页面生成 (builder)"
   defp role_label("orchestrator"), do: "编排器"
   defp role_label("worker"), do: "主题 Worker"
-  defp role_label("salesperson"), do: "Salesperson 预览助手"
+  defp role_label("salesperson"), do: "Salesperson 团队"
   defp role_label("salesperson-worker"), do: "Salesperson 子助手"
-  defp role_label("meta"), do: "元代理"
+  defp role_label("meta"), do: "worker管家"
   defp role_label("user"), do: "用户"
   defp role_label(_), do: "其它"
 
