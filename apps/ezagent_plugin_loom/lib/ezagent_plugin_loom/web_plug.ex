@@ -20,6 +20,7 @@ defmodule EzagentPluginLoom.WebPlug do
 
   alias Ezagent.{Invocation, Message, SystemPrincipal}
   alias Ezagent.Socialware.{AnonBinding, AnonUser, CustomerAuth, CustomerFeed}
+  alias EzagentPluginLoom.Intent
 
   @gateway_uri "system://loom-customer-gateway"
 
@@ -55,6 +56,21 @@ defmodule EzagentPluginLoom.WebPlug do
     else
       {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})
       _ -> json(conn, 400, %{ok: false, error: "bad_request"})
+    end
+  end
+
+  # 意图推荐(session-less，独有功能)。body {intent, catalog: [%{id,name,desc}]}
+  post "/intent" do
+    intent = conn.body_params["intent"]
+    catalog = conn.body_params["catalog"] || []
+
+    with true <- is_binary(intent) and intent != "",
+         true <- is_list(catalog),
+         {:ok, picks} <- Intent.recommend(intent, catalog) do
+      json(conn, 200, %{ok: true, picks: picks})
+    else
+      false -> json(conn, 400, %{ok: false, error: "bad_request"})
+      {:error, _} -> json(conn, 502, %{ok: false, error: "recommend_failed"})
     end
   end
 

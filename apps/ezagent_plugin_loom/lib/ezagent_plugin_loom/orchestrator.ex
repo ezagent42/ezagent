@@ -129,35 +129,7 @@ defmodule EzagentPluginLoom.Orchestrator do
     end
   end
 
-  # LLM 可能用 ```json 包裹或夹带文字 — 抽第一个完整 JSON 对象。
-  defp extract_json(text) do
-    text = String.trim(text)
-
-    candidate =
-      cond do
-        String.starts_with?(text, "{") -> text
-        true -> slice_first_object(text)
-      end
-
-    case candidate && Jason.decode(candidate) do
-      {:ok, map} when is_map(map) -> {:ok, map}
-      _ -> {:error, :no_json_object}
-    end
-  end
-
-  defp slice_first_object(text) do
-    case :binary.match(text, "{") do
-      {start, _} ->
-        # 从第一个 { 到最后一个 } — 简单但对单对象足够
-        case :binary.matches(text, "}") do
-          [] -> nil
-          matches -> {last, _} = List.last(matches); binary_part(text, start, last - start + 1)
-        end
-
-      :nomatch ->
-        nil
-    end
-  end
+  defp extract_json(text), do: EzagentPluginLoom.Json.extract_object(text)
 
   # 统一成字符串键的 %{type, props, children},剔除未知 type。
   defp normalize_tree(%{"type" => type} = node) do
