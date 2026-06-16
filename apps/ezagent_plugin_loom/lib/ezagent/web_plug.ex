@@ -462,6 +462,11 @@ defmodule EzagentPluginLoom.WebPlug do
     json_resp(conn, 200, role_check(conn, ws, sid, role))
   end
 
+  # 角色面板:列房间里的「人」(给账号多选下拉用)。
+  get "/api/:ws/:sid/members" do
+    json_resp(conn, 200, roster_humans(conn, ws, sid))
+  end
+
   # 公开提供素材(图片等),让 v0 生成的 Sandpack 页面能 `<img src="/loom/materials/<ws>/<sid>/<path>">`。
   get "/materials/:ws/:sid/*path" do
     serve_material(conn, ws, sid, Enum.join(path, "/"))
@@ -1151,18 +1156,21 @@ defmodule EzagentPluginLoom.WebPlug do
     end
   end
 
-  # 编辑页读角色配置(+ 当前登录身份,方便作者把自己加进某角色)。
+  # 编辑页读角色配置。作者首次打开面板 → 捕获创建者(= 超级管理员)。
   defp roles_get(conn, ws, sid) do
     who = caller_entity_str(conn)
-    cfg = Ezagent.PluginLoom.RoleConfig.get(ws, sid)
+    cfg = Ezagent.PluginLoom.RoleConfig.ensure_creator(ws, sid, who)
     %{ok: true, logged_in: who != nil, entity_uri: who, roles: cfg}
   rescue
     e -> %{ok: false, error: Exception.message(e)}
   end
 
-  # 编辑页写角色配置(整盘 `%{"roles" => [...]}`)。
+  # 编辑页写角色配置(整盘 `%{"super"=>..., "roles"=>[...]}`;creator 服务端保留)。
   defp roles_put(conn, ws, sid) do
     body = conn.body_params || %{}
+    # 顺手补一次创建者捕获(万一 GET 时还没登录)。
+    if who = caller_entity_str(conn),
+      do: Ezagent.PluginLoom.RoleConfig.ensure_creator(ws, sid, who)
 
     case Ezagent.PluginLoom.RoleConfig.put(ws, sid, body) do
       {:ok, cfg} -> %{ok: true, roles: cfg}
@@ -1170,6 +1178,30 @@ defmodule EzagentPluginLoom.WebPlug do
     end
   rescue
     e -> %{ok: false, error: Exception.message(e)}
+  end
+
+  # 编辑页:列出房间里的「人」(entity://user/...,含作者自己),给角色面板的账号下拉用。
+  # 排除 AI(entity://agent/...)和 session 自身。session 没活着 → 空列表(降级)。
+  defp roster_humans(_conn, ws, sid) do
+    suri = Ezagent.URI.new!("session://loom/#{ws}/#{sid}")
+
+    members =
+      case Ezagent.Kind.get_slice(suri, :chat) do
+        {:ok, %{members: m}} when is_map(m) -> Map.keys(m)
+        _ -> []
+      end
+
+    people =
+      members
+      |> Enum.map(&member_uri_str/1)
+      |> Enum.filter(&String.starts_with?(&1, "entity://user/"))
+      |> Enum.uniq()
+      |> Enum.sort()
+      |> Enum.map(fn uri -> %{uri: uri, name: uri |> String.split("/") |> List.last()} end)
+
+    %{ok: true, members: people}
+  rescue
+    e -> %{ok: false, error: Exception.message(e), members: []}
   end
 
   # 发布页:按 cookie 身份核对 `?role=<key>`。角色不存在 → exists:false(前端不出按钮);
