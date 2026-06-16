@@ -308,7 +308,17 @@ defmodule Ezagent.SystemPrincipal.Catalog do
       # and passed as the dispatch caps for the single `sandbox.read` on the
       # validated source. A broad standing cap here would defeat the per-source
       # scoping — so the entry is deliberately empty (like `lv-anon-mount`).
-      {principal("credential-materializer"), []}
+      {principal("credential-materializer"), []},
+      # #51 external-user anonymous access (§3.4 GC) — the in-app GC sweeper
+      # (`Ezagent.Socialware.AnonUser.Sweeper`) reaps abandoned anon-Users: it
+      # `chat.leave`s each from its session under THIS principal. Narrowed to
+      # exactly Session `:leave` — the `users` row + binding row deletes are
+      # direct context fns (`Users.delete/1` + `AnonBinding.claim_for_reaping/3` /
+      # `delete/1`), NOT dispatches, so they need no cap. The anon-User holds an EMPTY
+      # caps_json and cannot self-leave (spec §3.3), so the system sweeper needs
+      # this grant (Allen 2026-06-15 — Option A: a dedicated closed-catalog GC
+      # principal, not ambient/per-session authority).
+      {principal("socialware-gc"), [Capability.cap(:session, Session, :leave)]}
     ]
   end
 
