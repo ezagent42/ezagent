@@ -42,7 +42,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.KbManagerLive do
        upload_flash: nil
      )
      |> allow_upload(:kb_file,
-       accept: ~w(.txt .md .csv .json),
+       accept: ~w(.txt .md .csv .json .pdf .xlsx),
        max_entries: 10,
        auto_upload: false
      )}

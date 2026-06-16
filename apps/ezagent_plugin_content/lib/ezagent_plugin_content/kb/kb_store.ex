@@ -140,12 +140,55 @@ defmodule EzagentPluginContent.Kb.KbStore do
     case ext do
       ext when ext in [".txt", ".md", ".csv", ".json", ".yaml", ".yml"] ->
         File.read!(path)
+      ".pdf" ->
+        extract_pdf_text(path)
+      ".xlsx" ->
+        extract_xlsx_text(path)
       _ ->
-        # For binary files, note only
         "Binary file: #{Path.basename(path)} (#{ext})"
     end
   rescue
     _ -> "Unable to read file: #{Path.basename(path)}"
+  end
+
+  defp extract_pdf_text(path) do
+    # Try pdftotext system command
+    case System.cmd("pdftotext", ["-layout", path, "-"], stderr_to_stdout: true) do
+      {text, 0} when byte_size(text) > 50 -> text
+      _ -> "PDF file: #{Path.basename(path)} (text extraction unavailable — install poppler-utils for pdftotext)"
+    end
+  end
+
+  defp extract_xlsx_text(path) do
+    # XLSX files are ZIP archives. Extract shared strings and sheet data.
+    try do
+      case :zip.extract(String.to_charlist(path), [:memory]) do
+        {:ok, files} ->
+          # Find shared strings
+          strings = case List.keyfind(files, ~c'xl/sharedStrings.xml', 0) do
+            {_, data} ->
+              ~r/<si>.*?<t[^>]*>(.*?)<\/t>.*?<\/si>/s
+              |> Regex.scan(to_string(data), capture: :all_but_first)
+              |> List.flatten()
+              |> Enum.join(" ")
+            _ -> ""
+          end
+          # Find sheet data
+          sheets = files
+          |> Enum.filter(fn {name, _} -> to_string(name) =~ ~r/xl\/worksheets\/sheet\d*\.xml/ end)
+          |> Enum.map(fn {_, data} ->
+            ~r/<v>(.*?)<\/v>/
+            |> Regex.scan(to_string(data), capture: :all_but_first)
+            |> List.flatten()
+            |> Enum.join(" ")
+          end)
+          |> Enum.join(" | ")
+          "#{strings} #{sheets}" |> String.slice(0, 5000)
+        _ -> "XLSX file: #{Path.basename(path)}"
+      end
+    rescue
+      _ -> "XLSX file: #{Path.basename(path)} (parsing failed)"
+    end
   end
 
   defp decode_json_list(str) do
