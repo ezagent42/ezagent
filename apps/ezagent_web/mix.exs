@@ -103,6 +103,9 @@ defmodule EzagentWeb.MixProject do
       # SW5: advisor socialware vertical. Web boot must start the plugin
       # so `session.advisor` is registered in TemplateRegistry.
       {:ezagent_plugin_advisor, in_umbrella: true},
+      # loom socialware vertical. Web boot must start the plugin
+      # so `session.loom` is registered in TemplateRegistry.
+      {:ezagent_plugin_loom, in_umbrella: true},
       {:jason, "~> 1.2"},
       {:bandit, "~> 1.5"}
     ]
