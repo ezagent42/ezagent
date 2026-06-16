@@ -146,10 +146,13 @@ defmodule Ezagent.Socialware.AnonUserGCTest do
       join(session_uri, a)
       {:ok, _} = AnonBinding.touch(a, session_uri, DateTime.add(now, -49 * 60 * 60, :second))
 
-      # A stuck/incomplete reap must NOT be a silent no-op (codex r4) — attach to the
-      # GC's telemetry so the keep-claimed path proves it emits. This reachable
-      # `:leave_unconfirmed` path exercises the SAME `signal_stuck_reap/3` mechanism
-      # the (publicly-unreachable) `:user_delete_not_confirmed` branch rides.
+      # A skipped/incomplete reap must NOT be a silent no-op (codex r4/r5) — attach to
+      # the GC's telemetry so the keep-claimed path proves it emits. This reachable
+      # `:leave_unconfirmed` path exercises the SAME `signal_stuck_reap/3` mechanism the
+      # publicly-unreachable `:user_delete_not_confirmed` (DB-only: Users.delete reports
+      # :ok though the row survives) and `:claim_failed` (DB-only: claim_for_reaping
+      # rescues a Repo.update_all exception) reasons ride — no FK / mock lib makes those
+      # two reachable without a test seam, so the mechanism is proven here once.
       test_pid = self()
       handler_id = {:gc_unconfirmed_test, make_ref()}
 
@@ -180,8 +183,8 @@ defmodule Ezagent.Socialware.AnonUserGCTest do
       assert Ezagent.Users.get_by_uri(a) != nil
 
       # ...and the stuck reap surfaced telemetry (alertable, not a silent leak loop).
-      assert_receive {:telemetry, [:ezagent, :socialware, :gc, :reap_unconfirmed],
-                      %{count: 1}, %{reason: :leave_unconfirmed, entity_uri: e}}
+      assert_receive {:telemetry, [:ezagent, :socialware, :gc, :reap_unconfirmed], %{count: 1},
+                      %{reason: :leave_unconfirmed, entity_uri: e}}
 
       assert e == URI.to_string(a)
     end

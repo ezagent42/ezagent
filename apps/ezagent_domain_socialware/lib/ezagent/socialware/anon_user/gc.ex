@@ -25,13 +25,16 @@ defmodule Ezagent.Socialware.AnonUser.GC do
 
   @ttl_ms 48 * 60 * 60 * 1000
 
-  # Telemetry emitted when a claimed reap could NOT be confirmed complete (the
-  # `users` row survived `Users.delete`), so the binding stays `reaping_at`-claimed.
-  # Measurements `%{count: 1}`; metadata `%{entity_uri, session_uri, reason}`.
-  # Operators alert on this to detect a stuck-reap retry loop (codex r4).
+  # Telemetry emitted when the sweep could NOT progress an expired candidate this
+  # pass — the claim raised (`:claim_failed`), the leave was unconfirmable
+  # (`:leave_unconfirmed`), or the `users` row survived `Users.delete`
+  # (`:user_delete_not_confirmed`). The binding stays `reaping_at`-claimed (or
+  # unclaimed) for the next sweep. Measurements `%{count: 1}`; metadata
+  # `%{entity_uri, session_uri, reason}`. Operators alert on this to detect a
+  # retry loop / degraded dependency (codex r4/r5).
   @reap_unconfirmed_event [:ezagent, :socialware, :gc, :reap_unconfirmed]
 
-  @doc "The telemetry event emitted for an unconfirmed (stuck) reap."
+  @doc "The telemetry event emitted when a sweep candidate could not be reaped this pass."
   @spec reap_unconfirmed_event() :: [atom()]
   def reap_unconfirmed_event, do: @reap_unconfirmed_event
 
@@ -94,10 +97,14 @@ defmodule Ezagent.Socialware.AnonUser.GC do
   non-member) — not a usable principal. Closing it would mean changing the shared
   identity domain, out of this sweeper's lane.
 
-  Every keep-claimed outcome (leave unconfirmed OR users row survived) emits the
-  `#{inspect(@reap_unconfirmed_event)}` telemetry event so a stuck/retrying reap is
-  ALERTABLE rather than a silent no-op (codex r4) — the should-never-happen
-  `:user_delete_not_confirmed` case additionally logs a warning.
+  Every outcome where the sweep cannot progress a candidate this pass — the claim
+  raised (`:claim_failed`), the leave was unconfirmable (`:leave_unconfirmed`), or
+  the `users` row survived (`:user_delete_not_confirmed`) — emits the
+  `#{inspect(@reap_unconfirmed_event)}` telemetry event so a stuck/retrying sweep is
+  ALERTABLE rather than a silent no-op (codex r4/r5); the should-never-happen
+  reasons additionally log a warning. The reducer over `claim_for_reaping/3` is
+  TOTAL — `{:ok, :claimed}` / `{:ok, :not_claimed}` / `{:error, _}` are each handled,
+  so no claim result is silently swallowed.
   """
   @spec sweep(DateTime.t()) :: {:ok, non_neg_integer()}
   def sweep(%DateTime{} = now) do
@@ -111,9 +118,23 @@ defmodule Ezagent.Socialware.AnonUser.GC do
           {:ok, :claimed} ->
             if reap(binding), do: acc + 1, else: acc
 
-          # {:ok, :not_claimed} (refreshed since listing / another sweeper holds it)
-          # or {:error, _} — never destroy without a claim.
-          _ ->
+          # Expected contention: a concurrent `touch/3` refreshed the row past the
+          # cutoff, or another sweeper already holds the claim. Normal race
+          # resolution — never destroy without a claim, and nothing to surface.
+          {:ok, :not_claimed} ->
+            acc
+
+          # The claim ITSELF failed — `claim_for_reaping/3` rescues a `Repo.update_all`
+          # exception (DB write error / schema drift) into `{:error, _}`. Distinct from
+          # `:not_claimed`: the candidate is skipped through NO contention, so it MUST
+          # be observable (codex r5) rather than silently folded into a clean
+          # `{:ok, 0}` pass under exactly the degraded conditions this sweeper exists to
+          # surface. Telemetry + warn, then continue — one row's claim failing does not
+          # abort the sweep (same isolation as `reap/1`'s rescue). Handling this arm
+          # makes the reducer TOTAL: every `claim_for_reaping/3` return is now accounted
+          # for and observable.
+          {:error, _reason} ->
+            signal_stuck_reap(binding.entity_uri, binding.session_uri, :claim_failed)
             acc
         end
       end)
@@ -209,15 +230,17 @@ defmodule Ezagent.Socialware.AnonUser.GC do
     Ezagent.Users.get_by_uri(entity_uri) == nil
   end
 
-  # Make a stuck/incomplete reap OBSERVABLE rather than a silent no-op (codex r4):
-  # always emit telemetry so a binding held `reaping_at`-claimed is alertable, not
-  # indistinguishable from "nothing to reap". Log severity splits by reason:
+  # Make a skipped/incomplete reap OBSERVABLE rather than a silent no-op (codex
+  # r4/r5): always emit telemetry so a candidate the sweep could NOT progress is
+  # alertable, not indistinguishable from "nothing to reap". Log severity splits by
+  # reason — EXPECTED backpressure is telemetry-only (a warning each sweep would be
+  # noise); SHOULD-NEVER-HAPPEN reasons also warn:
   #
-  #   * `:user_delete_not_confirmed` — SHOULD-NEVER-HAPPEN (member confirmed gone, yet
-  #     `Users.delete` reported `:ok` while the row survived) → telemetry + WARN.
-  #   * `:leave_unconfirmed` — EXPECTED backpressure (cast buffered / session down) →
-  #     telemetry ONLY, no log (it recurs every sweep until the session settles; a
-  #     warning each pass would be noise).
+  #   * `:leave_unconfirmed` — cast buffered / session down → telemetry only.
+  #   * `:user_delete_not_confirmed` — member confirmed gone yet `Users.delete`
+  #     reported `:ok` while the row survived → telemetry + WARN.
+  #   * `:claim_failed` — `claim_for_reaping/3` raised (DB write / schema drift) →
+  #     telemetry + WARN.
   defp signal_stuck_reap(entity_uri, session_uri, reason)
        when is_binary(entity_uri) and is_binary(session_uri) and is_atom(reason) do
     :telemetry.execute(
@@ -226,15 +249,27 @@ defmodule Ezagent.Socialware.AnonUser.GC do
       %{entity_uri: entity_uri, session_uri: session_uri, reason: reason}
     )
 
-    if reason == :user_delete_not_confirmed do
-      Logger.warning(
-        "Socialware GC: reap of #{inspect(entity_uri)} left the users row live " <>
-          "(Users.delete reported :ok but get_by_uri still resolves) — binding stays " <>
-          "claimed (reaping_at), retried next sweep (§3.4)."
-      )
+    case warn_message(reason, entity_uri) do
+      nil -> :ok
+      msg -> Logger.warning(msg)
     end
 
     :ok
+  end
+
+  # `nil` → telemetry only (expected backpressure); a string → also warn (anomalous).
+  defp warn_message(:leave_unconfirmed, _entity_uri), do: nil
+
+  defp warn_message(:user_delete_not_confirmed, entity_uri) do
+    "Socialware GC: reap of #{inspect(entity_uri)} left the users row live " <>
+      "(Users.delete reported :ok but get_by_uri still resolves) — binding stays " <>
+      "claimed (reaping_at), retried next sweep (§3.4)."
+  end
+
+  defp warn_message(:claim_failed, entity_uri) do
+    "Socialware GC: claim of #{inspect(entity_uri)} FAILED " <>
+      "(claim_for_reaping raised — DB write / schema drift?) — candidate skipped this " <>
+      "pass, retried next sweep (§3.4)."
   end
 
   # `chat.leave` the anon-User from its session via the sanctioned `session.leave`
