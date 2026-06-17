@@ -555,9 +555,11 @@ defmodule EzagentPluginLoom.WebPlug do
   # 冻结当前页 → 快照 token + 分享链接(publish/snapshot 共用)。
   defp loom_freeze(ws, sid) do
     session_uri = Ezagent.URI.session(ws, :loom, sid)
-    page = current_page(session_uri)
+    # 快照 `page` = **files map**(同 loom-stitch:create_snapshot 存 loom_source=files);
+    # 前端只读/消费视图把 `page` 直接当 files 喂 Sandpack。不是 {files,source,summary} 包装。
+    files = current_page(session_uri) |> Map.get("files", %{})
 
-    if map_size(page) == 0 do
+    if not is_map(files) or map_size(files) == 0 do
       %{ok: false, error: "no_page_yet"}
     else
       token = Snapshots.mint_token()
@@ -565,7 +567,7 @@ defmodule EzagentPluginLoom.WebPlug do
       Snapshots.put(token, %{
         "ws" => ws,
         "origin_sid" => sid,
-        "page" => page,
+        "page" => files,
         "ops" => [],
         "conversation" => [],
         "knowledge" => Knowledge.get(session_uri) || "",
@@ -600,7 +602,7 @@ defmodule EzagentPluginLoom.WebPlug do
   defp loom_open_published(token) do
     with {:ok, snap} <- Snapshots.get(token),
          ws when is_binary(ws) <- Map.get(snap, "ws"),
-         page when is_map(page) <- Map.get(snap, "page", %{}),
+         files when is_map(files) and map_size(files) > 0 <- Map.get(snap, "page", %{}),
          sid = "pub_" <> Snapshots.mint_token(),
          workspace_uri = Ezagent.URI.workspace(ws),
          {:ok, [session_uri | _], _} <-
@@ -614,7 +616,7 @@ defmodule EzagentPluginLoom.WebPlug do
              },
              workspace_uri
            ) do
-      _ = seed_page_update(session_uri, ws, sid, page)
+      _ = seed_page_update(session_uri, ws, sid, files)
       %{ok: true, ws: ws, sid: sid}
     else
       :error -> %{ok: false, error: "unknown token"}
@@ -622,10 +624,18 @@ defmodule EzagentPluginLoom.WebPlug do
     end
   end
 
-  # 把冻结页作 page_update span 发进新 session(loomv0 agent 身份)→ 前端 Sandpack 渲染。
-  defp seed_page_update(session_uri, ws, sid, page) do
+  # 把冻结页(files map)包成完整 page_update span({files,source,summary})发进新 session
+  # (loomv0 agent 身份)→ 前端从 history/stream 读 .files → Sandpack 渲染。
+  defp seed_page_update(session_uri, ws, sid, files) do
     sender = Ezagent.URI.agent(ws, "loomv0_#{sid}")
-    span = ~s(<span type="page_update">#{Jason.encode!(page)}</span>)
+
+    page_map = %{
+      "files" => files,
+      "source" => Map.get(files, "/App.jsx", ""),
+      "summary" => "发布页"
+    }
+
+    span = ~s(<span type="page_update">#{Jason.encode!(page_map)}</span>)
     msg = Message.new(sender, %{text: span})
 
     Invocation.dispatch(%Invocation{

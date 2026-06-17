@@ -66,7 +66,8 @@ defmodule EzagentPluginLoom.Integration.PublishTest do
       |> WebPlug.call(@opts)
       |> then(&Jason.decode!(&1.resp_body))
 
-    assert %{"ok" => true, "page" => %{"files" => %{"/App.jsx" => _}}} = snap
+    # 快照 page = files map(同 loom-stitch),前端直接当 files 喂 Sandpack。
+    assert %{"ok" => true, "page" => %{"/App.jsx" => _}} = snap
 
     # published 列表含本 session。
     listed =
