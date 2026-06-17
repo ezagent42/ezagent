@@ -376,6 +376,26 @@ defmodule Ezagent.Kind.Runtime do
       }
 
       cond do
+        # SPEC 2026-06-17 §3.3 + §4 PR-2 — the rule-authorization branch.
+        # A `{:rule, name, configurer}` grant carries `ctx.caps = []`
+        # (the configurer entity does NOT hold the IdentityAdmin
+        # grant/revoke cap), so the ctx.caps/holds_cap? checks below would
+        # deny it `:unauthorized` BEFORE the handler's `check_grant_authorized`
+        # rule branch (`Ezagent.Behavior.IdentityAdmin`) ever runs. This
+        # branch makes the rule path REACHABLE: when `ctx[:authorization_rule]`
+        # is set we defer the authorization decision to the handler, which
+        # enforces the `rule_cap_bounded?/1` structural bound (a rule may NOT
+        # mint a wildcard / cross-behavior cap; §3.3). The bypass is SCOPED to
+        # exactly `IdentityAdmin.grant_cap` / `:revoke_cap` — the only actions
+        # the chokepoint emits a rule tag for — because `:authorization_rule`
+        # can ONLY enter ctx via `Ezagent.Identity.Grant`'s `{:rule, …}` tag
+        # (grant/revoke dispatch construction is grep-gated to that single
+        # chokepoint module). A non-IdentityAdmin dispatch that somehow carried
+        # the key would NOT bypass. Decision #154 / dormant infra goes live.
+        rule_authorized_grant?(behavior_module, action, ctx) ->
+          :telemetry.execute([:ezagent, :authz, :granted], %{}, Map.put(meta, :via_rule, true))
+          :ok
+
         is_nil(needed) ->
           :telemetry.execute([:ezagent, :authz, :denied], %{}, meta)
           {:error, :unauthorized}
@@ -413,6 +433,19 @@ defmodule Ezagent.Kind.Runtime do
           {:error, :unauthorized}
       end
     end
+  end
+
+  # SPEC 2026-06-17 §3.3 — the rule-authorization predicate for step 5.5.
+  # True iff this dispatch is an `IdentityAdmin` `grant_cap`/`revoke_cap`
+  # carrying an `:authorization_rule` flag (set ONLY by
+  # `Ezagent.Identity.Grant`'s `{:rule, …}` tag). When true, authorization
+  # is deferred to the handler's `check_grant_authorized/2` rule branch,
+  # which enforces the `rule_cap_bounded?/1` structural bound. Narrowly
+  # scoped so no other action can ride the rule flag past the cap gate.
+  defp rule_authorized_grant?(behavior_module, action, ctx) do
+    is_map_key(ctx, :authorization_rule) and
+      behavior_module == Ezagent.Behavior.IdentityAdmin and
+      action in [:grant_cap, :revoke_cap]
   end
 
   # Compute the runtime cap shape from the Behavior's declared

@@ -60,15 +60,16 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
         Enum.any?(current, &cap_equal_ignoring_metadata?(&1, want))
       end)
 
-    # Grant chokepoint (SPEC 2026-06-17 §3.5 site #7). Authorizer stays
-    # `system://template-materialize` (template materialization at session
-    # creation); the entity `granted_by` is the session OWNER.
-    authorization =
-      {:system, Ezagent.SystemPrincipal.uri("template-materialize"), owner_uri}
-
+    # Grant chokepoint (SPEC 2026-06-17 §4 PR-2, site #7). This is a MIXED
+    # cap set: caps #1/#2 are `behavior: :any` (NOT rule-bounded — they
+    # need genesis/admin authority, like `grant_owner_orchestrator_manage_cap`)
+    # while caps #3/#4 are `Template/{:within_workspace}` (rule-bounded).
+    # `tag_for/2` selects the right authorization PER CAP — one shared tag
+    # would be wrong for one half. `template-materialize` is no longer the
+    # authorizer for either; entity `granted_by` is the session OWNER.
     results =
       Enum.map(to_grant, fn want ->
-        Ezagent.Identity.Grant.grant_cap(orchestrator_uri, want, authorization)
+        Ezagent.Identity.Grant.grant_cap(orchestrator_uri, want, tag_for(want, owner_uri))
       end)
 
     case Enum.reject(results, &(&1 == :ok)) do
@@ -104,17 +105,44 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
       ) do
     desired = build_desired_caps(orchestrator_uri, session_uri, owner_uri, workspace_uri)
 
-    # Grant chokepoint (SPEC 2026-06-17 §3.5 site #14 — the rollback
-    # revoke twin of site #7). Authorizer stays
-    # `system://template-materialize`; entity `granted_by` is the owner.
-    authorization =
-      {:system, Ezagent.SystemPrincipal.uri("template-materialize"), owner_uri}
-
+    # Grant chokepoint (SPEC 2026-06-17 §4 PR-2, site #14 — the rollback
+    # revoke twin of site #7). Same MIXED cap set, so the SAME per-cap
+    # `tag_for/2` selection: caps #1/#2 revoke under `{:system, bootstrap}`
+    # (pass dispatch step 5.5 via the bootstrap wildcard), caps #3/#4 under
+    # `{:rule, …}`. `template-materialize` is no longer the authorizer.
     Enum.each(desired, fn cap ->
-      _ = Ezagent.Identity.Grant.revoke_cap(orchestrator_uri, cap, authorization)
+      _ = Ezagent.Identity.Grant.revoke_cap(orchestrator_uri, cap, tag_for(cap, owner_uri))
     end)
 
     :ok
+  end
+
+  # Per-cap authorization-tag selection (SPEC 2026-06-17 §4 PR-2, sites
+  # #7/#14). The orchestrator scoped-cap set is heterogeneous:
+  #
+  #   * caps #1/#2 (`session/:any/{:within_session}`,
+  #     `agent/:any/{:spawned_by}`) carry `behavior: :any`, which
+  #     `IdentityAdmin.rule_cap_bounded?/1` REJECTS (a rule may not mint a
+  #     cross-behavior wildcard — §3.3). `IdentityAdmin.check_grant_authorized`
+  #     routes a `behavior: :any` cap through `require_workspace_admin`, so
+  #     they genuinely need genesis/admin authority → `{:system, bootstrap,
+  #     owner}` (Decision #154's extreme fallback; governed by
+  #     `no_wildcard_system_principals_test`, NOT `no_unowned`). This is the
+  #     identical shape `grant_owner_orchestrator_manage_cap/2` already routes
+  #     through bootstrap. (NOTE: SPEC §4 said "cap#2 qualifies via rule" —
+  #     that is an authoring error; cap#2's `behavior: :any` is rule-ineligible
+  #     by §3.3. Code wins.)
+  #   * caps #3/#4 (`<*_template>/Template/:any/{:within_workspace}`) are
+  #     concrete kind + behavior + scope-bounded instance → rule-bounded →
+  #     `{:rule, :template_materialize, owner}`.
+  #
+  # `granted_by` is the session OWNER in both branches (the tag derives it).
+  defp tag_for(%Ezagent.Capability{} = cap, %URI{} = owner_uri) do
+    if Ezagent.Behavior.IdentityAdmin.rule_cap_bounded?(cap) do
+      {:rule, :template_materialize, owner_uri}
+    else
+      {:system, Ezagent.SystemPrincipal.uri("bootstrap"), owner_uri}
+    end
   end
 
   defp build_desired_caps(
