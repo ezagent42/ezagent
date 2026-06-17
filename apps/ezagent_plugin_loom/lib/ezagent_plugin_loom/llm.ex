@@ -2,16 +2,16 @@ defmodule EzagentPluginLoom.LLM do
   @moduledoc """
   Loom LLM client — 对齐 socialware 现成约定,**不自造 HTTP 客户端、不用 anthropic 命名**。
 
-  两条 flavor(对应现成 `Ezagent.AgentFlavorRegistry` 里的 `curl` / `cc`):
+  两条 flavor(对应现成 `Ezagent.AgentFlavorRegistry` 里的 `cc` / `curl`):
 
-  - **`:curl`(默认)** — provider HTTP 调用,**复用 `Ezagent.PluginCurlAgent.ApiClient`**
-    (OpenAI/DeepSeek-shape `/chat/completions`,跟 curl_agent 共用一份客户端,不重复造)。
-    配置按 **provider 语义** 命名(同 `curl.agent` template 的 `provider`/`api_url`/`model`):
+  - **`:cc`(默认)** — 本地 `claude` 二进制(headless `-p`),跟随本地登录态,**无需任何 key**。
+  - **`:curl`** — provider HTTP 调用(设 `LOOM_LLM_FLAVOR=curl` 启用),**复用
+    `Ezagent.PluginCurlAgent.ApiClient`**(OpenAI/DeepSeek-shape `/chat/completions`,跟 curl_agent
+    共用一份客户端,不重复造)。配置按 **provider 语义**(同 `curl.agent` template):
       - `provider` — `opts[:provider]` > env `LOOM_LLM_PROVIDER` > `"deepseek"`
       - `api_url`  — `opts[:api_url]` > env `LOOM_LLM_API_URL` > provider 默认端点
       - `model`    — `opts[:model]` > env `LOOM_LLM_MODEL` > provider 默认 model
       - **API key** — env `<PROVIDER>_API_KEY`(如 `DEEPSEEK_API_KEY`),**只在用该 provider 时取该 provider 的 key**
-  - **`:cc`** — 本地 `claude` 二进制(headless `-p`),跟随本地登录态。
 
   > ⚠️ 凭证只到「provider-named env」这层。绑定到 socialware **durable 凭证级联**
   > (`Ezagent.Credential.Resolver` + agent `:api_keys` slice)是 **agent-scoped** 的
@@ -48,13 +48,14 @@ defmodule EzagentPluginLoom.LLM do
     end
   end
 
-  # flavor:opts[:flavor] > env LOOM_LLM_FLAVOR > :curl(默认 provider HTTP)。
-  # 对应 AgentFlavorRegistry 的 curl/cc;完整「走真实 flavor agent」是预留项 3。
+  # flavor:opts[:flavor] > env LOOM_LLM_FLAVOR > **:cc(默认,本地 claude,无需 key)**。
+  # 设 LOOM_LLM_FLAVOR=curl 切到 DeepSeek(需 DEEPSEEK_API_KEY)。对应 AgentFlavorRegistry
+  # 的 cc/curl;完整「走真实 flavor agent」是预留项 3。
   defp flavor(opts) do
     case opts[:flavor] || System.get_env("LOOM_LLM_FLAVOR") do
-      :cc -> :cc
-      "cc" -> :cc
-      _ -> :curl
+      :curl -> :curl
+      "curl" -> :curl
+      _ -> :cc
     end
   end
 
