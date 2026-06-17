@@ -210,7 +210,10 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
     "toggle_mode" => {:ui_only, "form/json toggle in routing form"},
     "toggle_debug_panel" => {:ui_only, "show/hide a debug sidebar"},
     "switch_session" => {:ui_only, "chat-panel session navigation"},
-    "refresh_session" => {:ui_only, "re-select current session + reload session list; no backend mutation"},
+    "refresh_session" =>
+      {:ui_only, "re-select current session + reload session list; no backend mutation"},
+    "toggle_right_sidebar" =>
+      {:ui_only, "collapse/expand the right Members panel; pure UI state"},
     "switch_view" => {:ui_only, "chat/terminal view toggle"},
     "switch_to_pty_for_agent" => {:ui_only, "PTY agent picker"},
     "switch_tab" => {:ui_only, "observability tab switch"},
@@ -228,7 +231,8 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
     "preview" => {:ui_only, "preview computed shape; no persistence"},
     "validate_compose" => {:ui_only, "live form validation"},
     "cancel_upload" => {:ui_only, "cancel ongoing upload; LV-only state"},
-    "mark_displayed" => {:ui_only, "client-side read tracking (Ezagent.Session.ReadMarker.mark/4)"},
+    "mark_displayed" =>
+      {:ui_only, "client-side read tracking (Ezagent.Session.ReadMarker.mark/4)"},
     "load_older_messages" => {:ui_only, "pagination — pure UI"},
     "update_test_recipient" => {:ui_only, "settings test-email recipient field"},
     "refresh" => {:ui_only, "force re-mount listings"},

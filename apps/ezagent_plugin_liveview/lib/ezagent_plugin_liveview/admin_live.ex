@@ -147,6 +147,8 @@ defmodule EzagentPluginLiveview.AdminLive do
       |> assign(:cc_events, [])
       |> assign(:debug_open, false)
       |> assign(:invite_open, false)
+      # 右侧 Members 栏默认折叠(用户偏好:默认收起,需要时展开)。
+      |> assign(:right_sidebar_collapsed, true)
       |> assign(:compose_form, to_form(%{"text" => ""}, as: "chat"))
       |> assign(
         :new_session_form,
@@ -360,6 +362,11 @@ defmodule EzagentPluginLiveview.AdminLive do
   # loom 前端集成 — header 刷新按钮:重选当前 session(重载 tabs/members/state)**+ 刷新
   # session 列表**(下拉里出现新建/衍生出来的会话)。loom view 迟注册 + 衍生会话场景下,
   # 此前只能整页刷新才看得到。
+  # 右侧栏(成员 / 编排器健康)整体折叠开关。server state → 重渲染不复位。
+  def handle_event("toggle_right_sidebar", _params, socket) do
+    {:noreply, assign(socket, :right_sidebar_collapsed, !socket.assigns.right_sidebar_collapsed)}
+  end
+
   def handle_event("refresh_session", _params, socket) do
     socket =
       case socket.assigns[:current_session_uri] do
@@ -779,6 +786,8 @@ defmodule EzagentPluginLiveview.AdminLive do
           current_entity_uri={@caller_uri_str}
           current_path="/sessions"
           status={@status}
+          collapsible_right={true}
+          right_collapsed={@right_sidebar_collapsed}
         >
           <:main_window>
             <SessionEditor.session_editor

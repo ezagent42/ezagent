@@ -59,6 +59,12 @@ defmodule EzagentDomainUi.WorkspaceShell do
   slot(:main_window, required: true)
   slot(:right_sidebar)
 
+  # 右侧栏整体折叠(默认关闭;只有显式 opt-in 的页面才出折叠按钮,其它页面行为不变)。
+  # collapsed 状态由 host LiveView 管(server state → 重渲染不复位),折叠/展开按钮发
+  # `toggle_right_sidebar` 事件,host 自己 handle。
+  attr(:collapsible_right, :boolean, default: false)
+  attr(:right_collapsed, :boolean, default: false)
+
   def workspace_shell(assigns) do
     ~H"""
     <div
@@ -91,9 +97,40 @@ defmodule EzagentDomainUi.WorkspaceShell do
         <div
           :if={@right_sidebar != []}
           id="right-sidebar"
-          class="hidden lg:block lg:static fixed top-10 bottom-6 right-0 z-40 w-72 max-w-[80vw] border-l border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-y-auto shadow-xl lg:shadow-none"
+          class={[
+            "hidden lg:block lg:static fixed top-10 bottom-6 right-0 z-40 max-w-[80vw] border-l border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-y-auto shadow-xl lg:shadow-none",
+            if(@collapsible_right and @right_collapsed, do: "w-72 lg:w-9", else: "w-72")
+          ]}
         >
-          {render_slot(@right_sidebar)}
+          <%!-- 折叠态:桌面只显示一条竖窄条 + 展开按钮(« 把面板拉回来);移动端覆盖层
+                仍显示全部内容(lg:hidden 只在桌面隐藏内容)。 --%>
+          <button
+            :if={@collapsible_right and @right_collapsed}
+            type="button"
+            phx-click="toggle_right_sidebar"
+            title={gettext("Expand panel")}
+            aria-label={gettext("Expand panel")}
+            class="hidden lg:flex w-full items-center justify-center py-2 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          >
+            «
+          </button>
+
+          <div class={[(@collapsible_right and @right_collapsed) && "lg:hidden"]}>
+            <div
+              :if={@collapsible_right}
+              class="flex justify-end px-2 py-1 border-b border-zinc-200 dark:border-zinc-800"
+            >
+              <button
+                type="button"
+                phx-click="toggle_right_sidebar"
+                title={gettext("Collapse panel")}
+                class="inline-flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 px-1.5 py-0.5 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              >
+                » {gettext("Collapse")}
+              </button>
+            </div>
+            {render_slot(@right_sidebar)}
+          </div>
         </div>
       </div>
 
