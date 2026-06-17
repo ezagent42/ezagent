@@ -20,13 +20,18 @@ defmodule EzagentPluginContent.Skill.SkillLoader do
     scan_dir(dir, :industry)
   end
 
+  # Platform + framework share the canonical skeleton dir
+  # `platform/skills/<role>/<name>/SKILL.md` (there is no separate
+  # `framework` tree in the skeleton). They differ only by the `:layer`
+  # tag scan_dir/2 stamps, which drives the override priority in
+  # `SkillStore.read/4` (tenant > industry > platform > framework).
   def list(base_dir, _tid, role, :platform) do
-    dir = Path.join([base_dir, "platform", "platform", role, "skills"])
+    dir = Path.join([base_dir, "platform", "skills", role])
     scan_dir(dir, :platform)
   end
 
   def list(base_dir, _tid, role, :framework) do
-    dir = Path.join([base_dir, "platform", "framework", role, "skills"])
+    dir = Path.join([base_dir, "platform", "skills", role])
     scan_dir(dir, :framework)
   end
 

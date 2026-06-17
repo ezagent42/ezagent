@@ -8,12 +8,13 @@ defmodule EzagentPluginContent.Skill.SkillLoaderTest do
     tenant = Path.join([tmp, "tenants", "test-tenant", "sandbox", "skills", "customer", "lead"])
     File.mkdir_p!(tenant)
     File.write!(Path.join(tenant, "SKILL.md"), "# Tenant lead")
-    # Platform skill (same name, lower priority)
-    plat = Path.join([tmp, "platform", "skills", "lead"])
+    # Platform skill (same name, lower priority) — canonical skeleton
+    # layout is platform/skills/<role>/<name>/SKILL.md.
+    plat = Path.join([tmp, "platform", "skills", "customer", "lead"])
     File.mkdir_p!(plat)
     File.write!(Path.join(plat, "SKILL.md"), "# Platform lead")
-    # Framework skill (different name)
-    fw = Path.join([tmp, "platform", "skills", "greeting"])
+    # Framework skill (different name) — shares the platform/skills/<role> dir.
+    fw = Path.join([tmp, "platform", "skills", "customer", "greeting"])
     File.mkdir_p!(fw)
     File.write!(Path.join(fw, "SKILL.md"), "# Framework greeting")
     {:ok, tmp: tmp}

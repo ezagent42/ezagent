@@ -12,7 +12,8 @@ defmodule EzagentPluginContent.Skill.SkillIndexerTest do
       "---\nname: Lead Collection\ndescription: Collect lead info\n---\n# Lead"
     )
 
-    fw = Path.join([tmp, "platform", "skills", "greeting"])
+    # Canonical skeleton layout: platform/skills/<role>/<name>/SKILL.md.
+    fw = Path.join([tmp, "platform", "skills", "customer", "greeting"])
     File.mkdir_p!(fw)
     File.write!(Path.join(fw, "SKILL.md"), "---\nname: Customer Greeting\n---\n# Greeting")
     {:ok, tmp: tmp}

@@ -17,6 +17,20 @@ defmodule EzagentPluginLiveview.Admin.MemberPanelTest do
 
   alias EzagentPluginLiveview.Admin.MemberPanel
 
+  # The redesigned `<.avatar>` resolves an agent's flavor from the durable
+  # snapshot store (`stored_agent_flavor/1` → `SnapshotStore.latest/1`, a DB
+  # read) during render. That dependency post-dates this suite's original
+  # "pure render, no DB" design, so the avatar path now needs the Ecto sandbox.
+  # `async: false` (above) + shared mode lets the render — and any helper
+  # process it touches the repo from — use the checked-out connection. An empty
+  # test DB simply resolves to the default flavor, which is fine for these
+  # structural render assertions.
+  setup do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
+    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+    :ok
+  end
+
   defp render_panel(assigns) do
     rendered_to_string(~H"""
     <MemberPanel.member_panel
