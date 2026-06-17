@@ -92,29 +92,19 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
     if Enum.any?(current, &Session.cap_equal_ignoring_metadata?(&1, want)) do
       :ok
     else
-      target = Ezagent.URI.with_action(owner_uri, :identity, :grant_cap)
-      cap = %{want | granted_at: DateTime.utc_now()}
-
+      # Grant chokepoint (SPEC 2026-06-17 §3.5 site #6). Authorizer stays
+      # `system://template-materialize` (template-materialization grant);
+      # the entity `granted_by` is the session OWNER.
       result =
-        Invocation.dispatch(%Invocation{
-          target: target,
-          mode: :call,
-          args: %{cap: cap},
-          ctx: %{
-            caller: owner_uri,
-            caps:
-              "template-materialize"
-              |> Ezagent.SystemPrincipal.uri()
-              |> Ezagent.SystemPrincipal.caps(),
-            reply: {:caller_inbox, self()}
-          }
-        })
+        Ezagent.Identity.Grant.grant_cap(
+          owner_uri,
+          want,
+          {:system, Ezagent.SystemPrincipal.uri("template-materialize"), owner_uri}
+        )
 
       case result do
-        {:ok, _} -> :ok
         :ok -> :ok
         {:error, reason} -> {:error, {:orchestrator_admin_cap_grant_failed, reason}}
-        other -> {:error, {:orchestrator_admin_cap_grant_unexpected, other}}
       end
     end
   end

@@ -730,7 +730,16 @@ defmodule Ezagent.Behavior.Workspace do
     unless Ezagent.URI.type?(member_uri, :user) do
       []
     else
-      [{:dispatch, member_create_session_cap_cmd(:grant_cap, workspace_uri, member_uri)}]
+      # Grant chokepoint (SPEC 2026-06-17 §3.5 site #4 — the BLOCKER-3
+      # variable-action builder is GONE; grant + revoke now call distinct
+      # chokepoint wrappers). The async `{:dispatch, %Cmd{}}` grant.
+      [
+        Ezagent.Identity.Grant.grant_cap_effect(
+          member_uri,
+          member_create_session_cap(workspace_uri),
+          member_create_session_authorization()
+        )
+      ]
     end
   end
 
@@ -750,8 +759,16 @@ defmodule Ezagent.Behavior.Workspace do
          %URI{scheme: "entity"} = member_uri
        ) do
     if Ezagent.URI.type?(member_uri, :user) do
-      cmd = member_create_session_cap_cmd(:revoke_cap, workspace_uri, member_uri, :sync)
-      [{:dispatch_returning, cmd, bind_as: :member_create_session_revoke}]
+      # Grant chokepoint (SPEC 2026-06-17 §3.5 site #4) — the synchronous,
+      # failure-propagating `{:dispatch_returning, %Cmd{}, bind_as:}` revoke.
+      [
+        Ezagent.Identity.Grant.revoke_cap_returning_effect(
+          member_uri,
+          member_create_session_cap(workspace_uri),
+          member_create_session_authorization(),
+          :member_create_session_revoke
+        )
+      ]
     else
       []
     end
@@ -759,42 +776,32 @@ defmodule Ezagent.Behavior.Workspace do
 
   defp revoke_member_create_session_cap_effects(_workspace_uri, _member_uri), do: []
 
-  # Shared cap shape + dispatch envelope for the add/remove pair. The
-  # cap is the workspace-scoped `:create_session` grant; `granted_at`
-  # is only load-bearing on the grant (revoke matches by identity_key,
-  # which excludes `granted_at`/`granted_by`). `reply_mode` is `:async`
-  # (buffered cast — the add-time grant, member Kind may be not-ready) or
-  # `:sync` (call — the remove-time revoke, member Kind is live).
-  defp member_create_session_cap_cmd(action, workspace_uri, member_uri, reply_mode \\ :async)
-       when action in [:grant_cap, :revoke_cap] do
-    cap = %Ezagent.Capability{
+  # Shared cap shape for the add/remove pair: the workspace-scoped
+  # `:create_session` grant. `granted_by`/`granted_at` are OVERWRITTEN by
+  # the chokepoint (`Ezagent.Identity.Grant.prepare/4`) per the
+  # authorization tag, so the placeholder values here are inert (revoke
+  # matches by identity_key, which excludes `granted_at`/`granted_by`).
+  defp member_create_session_cap(%URI{scheme: "workspace"} = workspace_uri) do
+    %Ezagent.Capability{
       kind: :workspace,
       behavior: __MODULE__,
       action: :create_session,
       instance: workspace_uri,
       workspace_uri: workspace_uri,
-      granted_by: Ezagent.SystemPrincipal.uri("template-materialize"),
+      granted_by: Ezagent.Entity.User.admin_uri(),
       granted_at: DateTime.utc_now()
     }
+  end
 
-    reply =
-      case reply_mode do
-        :sync -> {:caller_inbox, self()}
-        :async -> :ignore
-      end
-
-    %Ezagent.Cmd{
-      target: member_uri,
-      action: action,
-      args: %{cap: cap},
-      ctx: %{
-        caller: Ezagent.SystemPrincipal.uri("template-materialize"),
-        caps:
-          "template-materialize"
-          |> Ezagent.SystemPrincipal.uri()
-          |> Ezagent.SystemPrincipal.caps(),
-        reply: reply
-      }
-    }
+  # Authorization tag (SPEC 2026-06-17 §3.5 site #4): the AUTHORIZER stays
+  # `system://template-materialize` (preserving today's grant authority —
+  # adding a workspace member is a template-materialization side effect),
+  # while the entity `granted_by` becomes the documented Decision #154
+  # fallback `entity://system/user/admin` (no more specific configurer
+  # entity is threaded to this Behavior handler — the workspace has no
+  # owner field; PR-2 converts this to a `{:rule, …}`/`{:held_by, …}` tag).
+  defp member_create_session_authorization do
+    {:system, Ezagent.SystemPrincipal.uri("template-materialize"),
+     Ezagent.Entity.User.admin_uri()}
   end
 end

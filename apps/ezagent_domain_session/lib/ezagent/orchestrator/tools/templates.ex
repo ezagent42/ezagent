@@ -5,7 +5,6 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
 
   alias Ezagent.Behavior.Session
   alias Ezagent.Entity.SessionTemplate
-  alias Ezagent.Invocation
 
   @spec update_template(keyword()) :: {:ok, URI.t()} | {:error, term()}
   def update_template(opts \\ []) do
@@ -132,22 +131,15 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
       granted_at: DateTime.utc_now()
     }
 
-    target = Ezagent.URI.with_action(owner_uri, :identity, :grant_cap)
-
-    case Invocation.dispatch(%Invocation{
-           target: target,
-           mode: :call,
-           args: %{cap: cap},
-           ctx: %{
-             caller: Ezagent.SystemPrincipal.uri("template-materialize"),
-             caps:
-               "template-materialize"
-               |> Ezagent.SystemPrincipal.uri()
-               |> Ezagent.SystemPrincipal.caps(),
-             reply: :ignore
-           }
-         }) do
-      {:ok, _} ->
+    # Grant chokepoint (SPEC 2026-06-17 §3.5 site #11). Authorizer stays
+    # `system://template-materialize` (template-materialization
+    # side-effect); the entity `granted_by` is the template OWNER.
+    case Ezagent.Identity.Grant.grant_cap(
+           owner_uri,
+           cap,
+           {:system, Ezagent.SystemPrincipal.uri("template-materialize"), owner_uri}
+         ) do
+      :ok ->
         :ok
 
       other ->
