@@ -46,6 +46,14 @@ defmodule EzagentPluginLoom.WebPlug do
 
   @gateway_uri "system://loom-customer-gateway"
 
+  @upload_max_bytes 20_000_000
+  @upload_ext_blocklist ~w(.exe .bat .cmd .sh .com .scr .msi .dll .app)
+  @upload_mime_blocklist [
+    "application/x-msdownload",
+    "application/x-sh",
+    "application/x-msdos-program"
+  ]
+
   # loom 真实前端(Next 静态导出,带 Sandpack 预览引擎)。命中真实文件即返回,否则 fall
   # through 到路由 → SPA 兜底 send_index。迁移自 loom-stitch(原本 loom 前端,非占位 SPA)。
   @loom_ui_root "priv/static/loom_ui"
@@ -695,6 +703,27 @@ defmodule EzagentPluginLoom.WebPlug do
     end
   end
 
+  # SDK v2:文件上传(multipart `file`)→ resource://uploads/<ws>/<stored> + 落 Home/uploads。
+  post "/api/:ws/:sid/upload" do
+    json(conn, 200, do_upload(conn, ws))
+  end
+
+  # resource:// 上传的公开提供(SDK uploadFile/openResource 的图片等)。
+  get "/uploads/:name" do
+    serve_upload(conn, name)
+  end
+
+  # resource:// URI → 302 到 /loom/uploads/<name>(强校验同 ws,防跨工作区)。?uri=...
+  get "/api/:ws/:sid/resource" do
+    case do_open_resource(conn, ws) do
+      {:ok, redirect_to} ->
+        conn |> Plug.Conn.put_resp_header("location", redirect_to) |> send_resp(302, "")
+
+      {:error, reason} ->
+        json(conn, 400, %{ok: false, error: to_string(reason)})
+    end
+  end
+
   # 未实现的 /api/* → JSON 404(否则被下面 SPA 兜底返回 HTML,前端 r.json() 会崩)。
   match "/api/*_rest" do
     json(conn, 404, %{ok: false, error: "not_implemented"})
@@ -936,6 +965,118 @@ defmodule EzagentPluginLoom.WebPlug do
     MIME.from_path(name)
   rescue
     _ -> "application/octet-stream"
+  end
+
+  # SDK v2 上传:落 Home/uploads/<uuid>-<safe>,返回 resource://uploads/<ws>/<stored>。
+  defp do_upload(conn, ws) do
+    case Map.get(conn.body_params, "file") do
+      %Plug.Upload{path: tmp, filename: original, content_type: mime} ->
+        with :ok <- check_upload_size(tmp),
+             :ok <- check_upload_mime(original, mime) do
+          stored = "#{Ecto.UUID.generate()}-#{sanitize_upload_filename(original)}"
+          dest = Path.join(Ezagent.Home.path("uploads"), stored)
+          File.mkdir_p!(Path.dirname(dest))
+          File.cp!(tmp, dest)
+          {:ok, %File.Stat{size: size}} = File.stat(dest)
+
+          %{
+            ok: true,
+            uri: "resource://uploads/#{ws}/#{stored}",
+            name: original,
+            stored_name: stored,
+            size: size,
+            mime: mime || "application/octet-stream"
+          }
+        else
+          {:error, reason} -> %{ok: false, error: to_string(reason)}
+        end
+
+      _ ->
+        %{ok: false, error: "missing or invalid 'file' upload field"}
+    end
+  rescue
+    e -> %{ok: false, error: "upload_failed: #{Exception.message(e)}"}
+  end
+
+  defp check_upload_size(tmp) do
+    case File.stat(tmp) do
+      {:ok, %File.Stat{size: s}} when s <= @upload_max_bytes -> :ok
+      {:ok, _} -> {:error, :file_too_large}
+      _ -> {:error, :upload_no_stat}
+    end
+  end
+
+  defp check_upload_mime(filename, mime) do
+    ext = filename |> Path.extname() |> String.downcase()
+
+    cond do
+      mime in @upload_mime_blocklist -> {:error, :mime_blocked}
+      ext in @upload_ext_blocklist -> {:error, :ext_blocked}
+      true -> :ok
+    end
+  end
+
+  # 保留 alnum + - _ . + CJK(≥0x80),其余 → "_"。
+  defp sanitize_upload_filename(name) do
+    name
+    |> :binary.bin_to_list()
+    |> Enum.map(fn b ->
+      cond do
+        b >= ?a and b <= ?z -> b
+        b >= ?A and b <= ?Z -> b
+        b >= ?0 and b <= ?9 -> b
+        b in [?-, ?_, ?.] -> b
+        b >= 0x80 -> b
+        true -> ?_
+      end
+    end)
+    |> :binary.list_to_bin()
+  end
+
+  # 公开提供 Home/uploads/<name>;basename only(拒 / \\ ..)防遍历。
+  defp serve_upload(conn, name) do
+    name = to_string(name)
+
+    if name != "" and not String.contains?(name, ["/", "\\", ".."]) do
+      path = Path.join(Ezagent.Home.path("uploads"), name)
+
+      if File.regular?(path) do
+        conn
+        |> Plug.Conn.put_resp_content_type(mime_for(name))
+        |> Plug.Conn.put_resp_header("cache-control", "public, max-age=86400")
+        |> Plug.Conn.send_file(200, path)
+      else
+        send_resp(conn, 404, "not found")
+      end
+    else
+      send_resp(conn, 404, "not found")
+    end
+  end
+
+  # resource://uploads/<ws>/<file> → /loom/uploads/<file>(同 ws 才放行)。
+  defp do_open_resource(conn, ws) do
+    case Plug.Conn.fetch_query_params(conn).query_params["uri"] do
+      uri_str when is_binary(uri_str) and uri_str != "" ->
+        case URI.new(uri_str) do
+          {:ok, %URI{scheme: "resource", host: "uploads", path: "/" <> rest}} ->
+            case String.split(rest, "/", parts: 2) do
+              [^ws, filename] when filename != "" ->
+                {:ok, "/loom/uploads/" <> URI.encode(filename)}
+
+              [other_ws, _] ->
+                {:error, "cross_workspace_denied: #{ws} vs #{other_ws}"}
+
+              _ ->
+                {:error, "bad_resource_uri"}
+            end
+
+          _ ->
+            {:error, "not_a_resource_upload_uri"}
+        end
+
+      _ ->
+        {:error, "missing uri"}
+    end
   end
 
   # Stitch/AiSpot 回复作 frame 发进 session(loomstitch agent 身份,ref_id 关联请求)→ /stream。
