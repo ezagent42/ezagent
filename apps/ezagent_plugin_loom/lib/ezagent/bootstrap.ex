@@ -81,7 +81,7 @@ defmodule EzagentPluginLoom.Bootstrap do
   defp ensure_session(opts) do
     case opt(opts, "session_uri") do
       s when is_binary(s) and s != "" ->
-        case URI.new(s) do
+        case Ezagent.URI.parse(s) do
           {:ok, %URI{scheme: "session"} = uri} -> reuse_or_create(uri)
           _ -> create_session()
         end
@@ -113,7 +113,7 @@ defmodule EzagentPluginLoom.Bootstrap do
     # built-in orchestrator info and normalize back to `{:ok, session_uri}`.
     case EzagentDomainInstanceMessage.SessionCreator.create_session(sid, nil,
            template_name: "loom",
-           workspace_uri: URI.parse("workspace://#{@workspace}")
+           workspace_uri: Ezagent.URI.new!("workspace://#{@workspace}")
          ) do
       {:ok, %URI{} = uri, _orchestrator_info} -> {:ok, uri}
       {:error, _} = err -> err
@@ -124,7 +124,7 @@ defmodule EzagentPluginLoom.Bootstrap do
   # --- join the temp user ------------------------------------------------
 
   defp join_member(%URI{} = session_uri, %URI{} = member_uri) do
-    target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+    target = Ezagent.URI.with_action(session_uri, :session, :join)
 
     result =
       Invocation.dispatch(%Invocation{

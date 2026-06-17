@@ -304,7 +304,14 @@ defmodule Ezagent.Behavior.LoomSalespersonWorker do
     meta = salesperson_meta(%{"drives" => drives, "trace" => trace(turn.roster_view, chain)})
 
     effects =
-      salesperson_reply_effect(self_uri, turn.session_uri, turn_id, turn.user_uri, reply_text, meta)
+      salesperson_reply_effect(
+        self_uri,
+        turn.session_uri,
+        turn_id,
+        turn.user_uri,
+        reply_text,
+        meta
+      )
 
     {:ok, %{}, [{:set, :pending, Map.delete(pending, turn_id)}] ++ effects}
   end
@@ -395,7 +402,9 @@ defmodule Ezagent.Behavior.LoomSalespersonWorker do
   # payload / helpers
   # ---------------------------------------------------------------
 
-  defp salesperson_payload(body) when is_map(body), do: body["salesperson"] || body[:salesperson] || %{}
+  defp salesperson_payload(body) when is_map(body),
+    do: body["salesperson"] || body[:salesperson] || %{}
+
   defp salesperson_payload(_), do: %{}
 
   defp part_of(body, worker_key) when is_map(body) do
@@ -500,7 +509,7 @@ defmodule Ezagent.Behavior.LoomSalespersonWorker do
   defp salesperson_reply_cmds(_, _, _, _, _, _), do: []
 
   defp send_chat_cmd(%URI{} = session_uri, %URI{} = sender, %Message{} = m) do
-    target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
+    target = Ezagent.URI.with_action(session_uri, :session, :send)
 
     Cmd.new(target, :send, %{message: m}, %{
       caller: sender,
@@ -512,7 +521,7 @@ defmodule Ezagent.Behavior.LoomSalespersonWorker do
   defp session_from_ctx(%{caller: %URI{} = u}), do: u
 
   defp session_from_ctx(%{caller: s}) when is_binary(s) do
-    case URI.new(s) do
+    case Ezagent.URI.parse(s) do
       {:ok, u} -> u
       _ -> nil
     end

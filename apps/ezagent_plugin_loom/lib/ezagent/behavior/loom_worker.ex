@@ -159,7 +159,7 @@ defmodule Ezagent.Behavior.LoomWorker do
           mentions: [subtask_msg.sender]
         )
 
-      target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
+      target = Ezagent.URI.with_action(session_uri, :session, :send)
 
       cmd =
         Cmd.new(target, :send, %{message: reply}, %{
@@ -213,7 +213,7 @@ defmodule Ezagent.Behavior.LoomWorker do
   defp session_from_ctx(%{caller: %URI{} = u}), do: u
 
   defp session_from_ctx(%{caller: s}) when is_binary(s) do
-    case URI.new(s) do
+    case Ezagent.URI.parse(s) do
       {:ok, u} -> u
       _ -> nil
     end

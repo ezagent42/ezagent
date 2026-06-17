@@ -34,7 +34,7 @@ defmodule EzagentPluginLoom.TempUser do
   @spec temp_uri(String.t()) :: URI.t()
   def temp_uri(workspace_name) when is_binary(workspace_name) and workspace_name != "" do
     id = :crypto.strong_rand_bytes(6) |> Base.encode16(case: :lower)
-    URI.parse("entity://user/#{workspace_name}/tmp_#{id}")
+    Ezagent.URI.new!("entity://user/#{workspace_name}/tmp_#{id}")
   end
 
   @doc """

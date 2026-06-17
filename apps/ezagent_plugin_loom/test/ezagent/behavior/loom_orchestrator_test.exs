@@ -7,7 +7,7 @@ defmodule Ezagent.Behavior.LoomOrchestratorTest do
   @policy URI.parse("entity://agent/system/loomworker_main_policy")
   @company URI.parse("entity://agent/system/loomworker_main_company")
   @orch URI.parse("entity://agent/system/loomorch_main")
-  @session URI.parse("session://system/s_test")
+  @session URI.parse("session://system/run/s_test")
   @user URI.parse("entity://user/system/tmp_x")
 
   defp workers, do: [%{uri: @policy, label: "policy"}, %{uri: @company, label: "company"}]

@@ -1,34 +1,25 @@
 defmodule Ezagent.PluginLoom.SavedClasses do
   @moduledoc """
-  Loom 的"存为模板"实现:**Class 级**(与 `session.loom` 同级)。
+  Loom 的"存为模板" / "发布"实现 —— **Plan B(loom-port):纯数据,不合成模块**。
 
-  每次保存生成一个新 Template Class 模块,template_name 形如
-  `session.<user-name>`,在 `Ezagent.TemplateRegistry` 注册;
-  `/workspaces/<ws>` 的 "Add template" Class picker 自动看见。
+  存模板物 / 发布物是 JSON 条目,**不再**在 runtime 合成 Template Class 模块、
+  **不碰** `Ezagent.TemplateRegistry`(main 的 plugin gate「declare don't call」
+  禁止插件调 `*Registry`)。`save_one/4` 只写盘;`open` / `fork` / `derive` 时由
+  `instantiate_from_data/3` 读条目的 `saved_state` + `published` 标记,直接实例化
+  `session.loom`(发布物冻结无 builder;存模板可编辑有 builder)。
 
   ## 持久化
 
-  JSON 文件:`~/.ezagent/<EZAGENT_PROFILE>/loom_saved_classes.json`。
-  Plugin Application 的 `after_boot/0` 调 `register_all_from_disk/0`,
-  把文件里每条 reincarnate 成模块 + 注册。
-
-  ## 生成模块
-
-  `Module.create/3` 在 runtime 编译模块,模块 body 引用闭包式的 `@saved_state`
-  常量。`instantiate/3` 把 `tmpl` 里的 `"class"` 重写成 `"session.loom"`
-  + 注入 `saved_state`,直接 delegate 给
-  `Ezagent.PluginLoom.Template.LoomSession.instantiate/3`(避免重复整个 spawn
-  + team + seed 流程的代码,只换"什么 source / persona")。
+  JSON 文件:`~/.ezagent/<EZAGENT_PROFILE>/loom_saved_classes.json`。无 boot-time
+  注册步骤 —— 条目即数据,按需 `load_all/0` 读取。
 
   ## 同名再保存
 
-  覆盖旧条目;`:code.purge/1` + `:code.delete/1` 把老模块卸了,再
-  `Module.create` 新的。
+  `save_one/4` 直接覆盖同 key 的旧条目(纯 map put)。
 
   ## 删除
 
-  `TemplateRegistry` 没有 deregister API,这里直接 `:ets.delete/2`
-  那张表(table 名 `Ezagent.TemplateRegistry.table/0`)。模块本身 purge。
+  `delete_one/1` 从 map 删 key 后写盘。
   """
 
   require Logger

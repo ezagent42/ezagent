@@ -203,7 +203,7 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
 
   # 扫 session 的 chat.members,找 `loomworker_<sid>_<theme>` 但不是预制 theme 的。
   defp find_custom_workers(session_uri, sid) do
-    case Ezagent.Kind.get_slice(session_uri, :chat) do
+    case Ezagent.Kind.get_slice(session_uri, :session) do
       {:ok, %{members: members}} when is_map(members) ->
         prefix = "loomworker_#{sid}_"
 
@@ -372,7 +372,7 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
 
     sender = Ezagent.SystemPrincipal.uri("session-internal")
     msg = Ezagent.Message.new(sender, %{text: body, attachments: []}, mentions: [])
-    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.send")
+    target = Ezagent.URI.with_action(session_uri, :session, :send)
 
     inv = %Ezagent.Invocation{
       target: target,
@@ -530,7 +530,7 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
   end
 
   defp join_members(%URI{} = session_uri, members) when is_list(members) do
-    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+    target = Ezagent.URI.with_action(session_uri, :session, :join)
 
     Enum.each(members, fn member_uri_str ->
       case safe_member_uri(member_uri_str) do

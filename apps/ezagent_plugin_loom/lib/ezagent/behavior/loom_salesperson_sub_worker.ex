@@ -58,7 +58,11 @@ defmodule Ezagent.Behavior.LoomSalespersonSubWorker do
         {:ok, raw} ->
           part =
             SalespersonExperts.parse_part(raw)
-            |> Map.merge(%{"worker" => role_key, "label" => role_meta.label, "icon" => role_meta.icon})
+            |> Map.merge(%{
+              "worker" => role_key,
+              "label" => role_meta.label,
+              "icon" => role_meta.icon
+            })
 
           {:ok, %{},
            [{:set, :count, count + 1}, {:set, :last_error, nil}] ++
@@ -96,7 +100,9 @@ defmodule Ezagent.Behavior.LoomSalespersonSubWorker do
 
   def role_of(_), do: "chat"
 
-  defp sub_payload(body) when is_map(body), do: body["salesperson_sub"] || body[:salesperson_sub] || %{}
+  defp sub_payload(body) when is_map(body),
+    do: body["salesperson_sub"] || body[:salesperson_sub] || %{}
+
   defp sub_payload(_), do: %{}
 
   defp normalize_caps(caps) when is_list(caps), do: Enum.filter(caps, &is_map/1) |> Enum.take(40)
@@ -105,7 +111,11 @@ defmodule Ezagent.Behavior.LoomSalespersonSubWorker do
   defp addressed_to_self?(%Message{mentions: mentions}, %{self_uri: %URI{} = self_uri})
        when is_list(mentions) do
     self_str = URI.to_string(self_uri)
-    Enum.any?(mentions, fn %URI{} = m -> URI.to_string(m) == self_str; _ -> false end)
+
+    Enum.any?(mentions, fn
+      %URI{} = m -> URI.to_string(m) == self_str
+      _ -> false
+    end)
   end
 
   defp addressed_to_self?(_, _), do: false
@@ -123,7 +133,7 @@ defmodule Ezagent.Behavior.LoomSalespersonSubWorker do
           mentions: [subtask_msg.sender]
         )
 
-      target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
+      target = Ezagent.URI.with_action(session_uri, :session, :send)
 
       cmd =
         Cmd.new(target, :send, %{message: reply}, %{
@@ -141,7 +151,7 @@ defmodule Ezagent.Behavior.LoomSalespersonSubWorker do
   defp session_from_ctx(%{caller: %URI{} = u}), do: u
 
   defp session_from_ctx(%{caller: s}) when is_binary(s) do
-    case URI.new(s) do
+    case Ezagent.URI.parse(s) do
       {:ok, u} -> u
       _ -> nil
     end

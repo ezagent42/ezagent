@@ -683,7 +683,7 @@ defmodule EzagentPluginLoom.WebPlug do
         )
 
       inv = %Ezagent.Invocation{
-        target: URI.new!("#{URI.to_string(suri)}?action=session.send"),
+        target: Ezagent.URI.with_action(suri, :session, :send),
         mode: :cast,
         args: %{message: msg},
         ctx: %{
@@ -742,7 +742,7 @@ defmodule EzagentPluginLoom.WebPlug do
 
   defp ensure_joined(%URI{} = suri, %URI{} = member_uri) do
     inv = %Ezagent.Invocation{
-      target: URI.new!("#{URI.to_string(suri)}?action=session.join"),
+      target: Ezagent.URI.with_action(suri, :session, :join),
       mode: :call,
       args: %{member: member_uri},
       ctx: %{
@@ -1040,15 +1040,23 @@ defmodule EzagentPluginLoom.WebPlug do
         {:error, "empty uri"}
 
       uri_str when is_binary(uri_str) ->
-        case URI.new(uri_str) do
+        case Ezagent.URI.parse(uri_str) do
           {:ok, %URI{scheme: "resource", host: "uploads", path: "/" <> rest}} ->
             case String.split(rest, "/", parts: 2) do
               [^ws, filename] when filename != "" ->
-                # 302 to the canonical /files/:filename. The :show endpoint
-                # already enforces authz against current_entity_uri — for
-                # the loom SDK case, the temp UI user is the uploader so
-                # the per-uploader check there will succeed.
-                {:ok, "/files/" <> URI.encode(filename)}
+                # main retired the `/files/:filename` route — uploads are served via
+                # the signed-capability endpoint `/uploads/download?token=`
+                # (Ezagent.Uploads.DownloadToken). loom stores to the SAME core upload
+                # layout (uploads/<ws>/<name>), so translate loom's
+                # `resource://uploads/<ws>/<name>` shape → main's canonical
+                # `resource://<ws>/uploads/<name>`, mint a short-TTL (5min) token,
+                # and 302 there (the browser carries the session cookie → RequireEntity
+                # + ws-segment authority serve it).
+                # TODO(loom-port PR#2): confirm loom's upload WRITE path matches main's
+                # FsResolver `uploads` layout on a booted server (PR#1 smoke test).
+                canonical = Ezagent.URI.new!("resource://#{ws}/uploads/#{filename}")
+                token = Ezagent.Uploads.DownloadToken.mint!(canonical)
+                {:ok, "/uploads/download?token=" <> URI.encode(token)}
 
               [other_ws, _] ->
                 {:error, "cross_workspace_denied: ws=#{ws} vs uri=#{other_ws}"}
@@ -1326,7 +1334,7 @@ defmodule EzagentPluginLoom.WebPlug do
       )
 
     inv = %Ezagent.Invocation{
-      target: URI.new!("#{URI.to_string(suri)}?action=session.send"),
+      target: Ezagent.URI.with_action(suri, :session, :send),
       mode: :cast,
       args: %{message: msg},
       ctx: %{
@@ -1505,7 +1513,7 @@ defmodule EzagentPluginLoom.WebPlug do
     suri = Ezagent.URI.new!("session://loom/#{ws}/#{sid}")
 
     members =
-      case Ezagent.Kind.get_slice(suri, :chat) do
+      case Ezagent.Kind.get_slice(suri, :session) do
         {:ok, %{members: m}} when is_map(m) -> Map.keys(m)
         _ -> []
       end
@@ -1584,6 +1592,7 @@ defmodule EzagentPluginLoom.WebPlug do
         suri = session_uri(ws, sid)
         # 1) 会话所有权转移:正式账号成为成员(force-join,system caps)。
         _ = ensure_joined(suri, target)
+
         # 2) 对话历史迁移:当前 Salesperson 对话快照归到账号名下(底层消息表不动)。
         convo = salesperson_conversation(ws, sid)
         _ = Ezagent.PluginLoom.OwnedSessions.claim(URI.to_string(target), ws, sid, convo)
@@ -1694,7 +1703,7 @@ defmodule EzagentPluginLoom.WebPlug do
 
   # entity 是否是 session 的 chat 成员。
   defp member_of?(%URI{} = session_uri, %URI{} = entity_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :chat) do
+    case Ezagent.Kind.get_slice(session_uri, :session) do
       {:ok, %{members: members}} when is_map(members) ->
         target = URI.to_string(entity_uri)
         Enum.any?(Map.keys(members), fn k -> member_uri_str(k) == target end)
@@ -1783,7 +1792,7 @@ defmodule EzagentPluginLoom.WebPlug do
       msg = Ezagent.Message.new(entity_uri, %{text: text, attachments: []}, mentions: [])
 
       inv = %Ezagent.Invocation{
-        target: Ezagent.URI.new!("#{URI.to_string(target)}?action=session.send"),
+        target: Ezagent.URI.with_action(target, :session, :send),
         mode: :cast,
         args: %{message: msg},
         ctx: %{
@@ -1819,7 +1828,7 @@ defmodule EzagentPluginLoom.WebPlug do
       msg = Ezagent.Message.new(entity_uri, %{text: text, attachments: []}, mentions: [])
 
       inv = %Ezagent.Invocation{
-        target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
+        target: Ezagent.URI.with_action(session_uri, :session, :send),
         mode: :cast,
         args: %{message: msg},
         ctx: %{
@@ -1918,7 +1927,7 @@ defmodule EzagentPluginLoom.WebPlug do
         )
 
       inv = %Ezagent.Invocation{
-        target: URI.new!("#{URI.to_string(suri)}?action=session.send"),
+        target: Ezagent.URI.with_action(suri, :session, :send),
         mode: :cast,
         args: %{message: msg},
         ctx: %{
@@ -2213,7 +2222,7 @@ defmodule EzagentPluginLoom.WebPlug do
   defp read_workers_snapshot(ws, sid) do
     session_uri = Ezagent.URI.new!("session://loom/#{ws}/#{sid}")
 
-    case Ezagent.Kind.get_slice(session_uri, :chat) do
+    case Ezagent.Kind.get_slice(session_uri, :session) do
       {:ok, %{members: members}} when is_map(members) ->
         members
         |> Map.keys()
@@ -2396,7 +2405,8 @@ defmodule EzagentPluginLoom.WebPlug do
       end
 
     with [_full, inner] <- Regex.run(~r/<span\s+type="page_update"\s*>([\s\S]*)<\/span>/, text),
-         {:ok, %{"summary" => s}} when is_binary(s) and s != "" <- Jason.decode(String.trim(inner)) do
+         {:ok, %{"summary" => s}} when is_binary(s) and s != "" <-
+           Jason.decode(String.trim(inner)) do
       s
     else
       _ -> nil

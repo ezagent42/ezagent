@@ -47,8 +47,13 @@ defmodule EzagentPluginLoom.SalespersonExperts do
   @spec roster([map()]) :: [map()]
   def roster(caps) when is_list(caps) do
     Enum.map(@roles, fn r ->
-      cs = if r.key == "chat", do: [], else: Enum.filter(caps, &(bucket_for(cap_type(&1)) == r.key))
-      Map.merge(r, %{caps: cs, owns: Enum.map(cs, &cap_label/1) |> Enum.reject(&(&1 in [nil, ""]))})
+      cs =
+        if r.key == "chat", do: [], else: Enum.filter(caps, &(bucket_for(cap_type(&1)) == r.key))
+
+      Map.merge(r, %{
+        caps: cs,
+        owns: Enum.map(cs, &cap_label/1) |> Enum.reject(&(&1 in [nil, ""]))
+      })
     end)
   end
 
@@ -76,9 +81,14 @@ defmodule EzagentPluginLoom.SalespersonExperts do
 
   defp bucket_for(type) do
     cond do
-      type in ["datascope", "multiview", "view", "nav", "navigation"] -> "navigation"
-      type in ["filter", "filterable", "spotlight", "stepper", "reveal", "revealable"] -> "controls"
-      true -> "content"
+      type in ["datascope", "multiview", "view", "nav", "navigation"] ->
+        "navigation"
+
+      type in ["filter", "filterable", "spotlight", "stepper", "reveal", "revealable"] ->
+        "controls"
+
+      true ->
+        "content"
     end
   end
 
@@ -129,7 +139,8 @@ defmodule EzagentPluginLoom.SalespersonExperts do
     【知识库】#{kb_block(kb)}
     """
 
-    [%{"role" => "system", "content" => sys}] ++ history_messages(history) ++
+    [%{"role" => "system", "content" => sys}] ++
+      history_messages(history) ++
       [%{"role" => "user", "content" => text}]
   end
 
@@ -194,7 +205,12 @@ defmodule EzagentPluginLoom.SalespersonExperts do
         %{"kind" => "act", "say" => nz(m["say"], "已操作页面"), "drive" => d, "answer" => nil}
 
       %{"kind" => "answer"} = m ->
-        %{"kind" => "answer", "say" => nz(m["say"], "作答"), "drive" => nil, "answer" => nz(m["answer"], "")}
+        %{
+          "kind" => "answer",
+          "say" => nz(m["say"], "作答"),
+          "drive" => nil,
+          "answer" => nz(m["answer"], "")
+        }
 
       _ ->
         %{"kind" => "answer", "say" => "作答", "drive" => nil, "answer" => reply_of(raw)}
@@ -265,9 +281,14 @@ defmodule EzagentPluginLoom.SalespersonExperts do
 
       tail =
         case p["kind"] do
-          "act" -> "[指令] #{p["say"]}"
-          "answer" -> "[内容] #{p["say"]}#{if p["answer"] not in [nil, ""], do: " — " <> String.slice(to_string(p["answer"]), 0, 240), else: ""}"
-          _ -> to_string(p["say"])
+          "act" ->
+            "[指令] #{p["say"]}"
+
+          "answer" ->
+            "[内容] #{p["say"]}#{if p["answer"] not in [nil, ""], do: " — " <> String.slice(to_string(p["answer"]), 0, 240), else: ""}"
+
+          _ ->
+            to_string(p["say"])
         end
 
       "- #{label}:#{tail}"
@@ -281,7 +302,12 @@ defmodule EzagentPluginLoom.SalespersonExperts do
     |> Enum.flat_map(fn h ->
       role = to_string(h["role"] || h[:role] || "user")
       t = to_string(h["text"] || h[:text] || "")
-      if t == "", do: [], else: [%{"role" => if(role == "assistant", do: "assistant", else: "user"), "content" => t}]
+
+      if t == "",
+        do: [],
+        else: [
+          %{"role" => if(role == "assistant", do: "assistant", else: "user"), "content" => t}
+        ]
     end)
   end
 

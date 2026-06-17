@@ -44,7 +44,11 @@ defmodule EzagentPluginLoom.Application do
   use Application
   use Ezagent.Plugin
 
-  @default_uri URI.parse("entity://agent/system/loom_agent")
+  # entity://agent/system/loom_agent — the default Loom instance. Built at runtime
+  # via `default_uri/0` (NOT a compile-time module attr) so it uses the canonical
+  # `Ezagent.URI.new!/1`; that needs the SchemeRegistry, which is up by the time
+  # `after_boot/0` / `default_uri/0` run.
+  @default_uri_str "entity://agent/system/loom_agent"
 
   # --- OTP Application -------------------------------------------------
 
@@ -69,16 +73,22 @@ defmodule EzagentPluginLoom.Application do
 
     [{:proxy, "HTTP_PROXY"}, {:https_proxy, "HTTPS_PROXY"}]
     |> Enum.each(fn {opt, var} ->
-      with url when is_binary(url) <-
-             System.get_env(var) || System.get_env(String.downcase(var)),
-           %URI{host: host, port: port} when is_binary(host) and is_integer(port) <-
-             URI.parse(url) do
-        :httpc.set_options([{opt, {{String.to_charlist(host), port}, no_proxy}}])
+      url = System.get_env(var) || System.get_env(String.downcase(var))
 
-        require Logger
-        Logger.info("EzagentPluginLoom: httpc #{opt} → #{host}:#{port}")
-      else
-        _ -> :ok
+      # An external HTTP(S)_PROXY URL is NOT an ezagent-scheme URI, so the canonical
+      # `Ezagent.URI` helpers don't apply. Parse it with Erlang's `:uri_string` (avoids
+      # stdlib `URI.parse/1`, which the uri-canonicalization invariant reserves for
+      # ezagent-scheme URIs). Returns a map (host binary, port integer) or an error.
+      parsed = is_binary(url) && :uri_string.parse(url)
+
+      case parsed do
+        %{host: host, port: port} when is_binary(host) and is_integer(port) ->
+          :httpc.set_options([{opt, {{String.to_charlist(host), port}, no_proxy}}])
+          require Logger
+          Logger.info("EzagentPluginLoom: httpc #{opt} → #{host}:#{port}")
+
+        _ ->
+          :ok
       end
     end)
 
@@ -129,7 +139,8 @@ defmodule EzagentPluginLoom.Application do
       {Ezagent.Entity.LoomSalespersonWorker, :receive, Ezagent.Behavior.LoomSalespersonWorker},
       # 2026-06-12 — salesperson sub-workers (chat/navigation/controls/content):
       # real worker Kinds the Salesperson orchestrator fans a turn out to.
-      {Ezagent.Entity.LoomSalespersonSubWorker, :receive, Ezagent.Behavior.LoomSalespersonSubWorker},
+      {Ezagent.Entity.LoomSalespersonSubWorker, :receive,
+       Ezagent.Behavior.LoomSalespersonSubWorker},
       # 2026-06-01 — team manager: @-mention-driven add/remove worker agent.
       # Uses DeepSeek NL parsing → spawn/terminate Kind + chat.join/leave.
       {Ezagent.Entity.LoomMetaAgent, :receive, Ezagent.Behavior.LoomMetaAgent}
@@ -221,7 +232,7 @@ defmodule EzagentPluginLoom.Application do
   """
   @impl Ezagent.Plugin
   def after_boot do
-    case Ezagent.SpawnRegistry.spawn(@default_uri) do
+    case Ezagent.SpawnRegistry.spawn(default_uri()) do
       {:ok, _pid} ->
         :ok
 
@@ -247,5 +258,5 @@ defmodule EzagentPluginLoom.Application do
   end
 
   @doc "URI of the default Loom instance — seeded by `after_boot/0`."
-  def default_uri, do: @default_uri
+  def default_uri, do: Ezagent.URI.new!(@default_uri_str)
 end

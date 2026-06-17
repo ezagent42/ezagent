@@ -6,7 +6,7 @@ defmodule Ezagent.Behavior.LoomWorkerTest do
 
   @worker_uri URI.parse("entity://agent/system/loomworker_policy")
   @orchestrator_uri URI.parse("entity://agent/system/loom_orch")
-  @session_uri URI.parse("session://system/s_test")
+  @session_uri URI.parse("session://system/run/s_test")
 
   # New-contract ctx: `:read` exposes the slice to the handler (Kind.Runtime
   # injects it); `:self_uri` + `:caller` (= session on chat.receive) mirror

@@ -38,7 +38,8 @@ defmodule Ezagent.PluginLoom.Materials do
   # ---- 增 / 删 / 列 --------------------------------------------------------
 
   @doc "把一个上传文件存进素材目录的 `rel_path`(保留文件夹)。返回 {:ok, rel} | {:error, _}。"
-  @spec save_file(String.t(), String.t(), String.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
+  @spec save_file(String.t(), String.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, term()}
   def save_file(ws, sid, rel_path, src_tmp_path) when is_binary(src_tmp_path) do
     with {:ok, rel} <- safe_rel(rel_path) do
       dest = Path.join(ensure_dir(ws, sid), rel)

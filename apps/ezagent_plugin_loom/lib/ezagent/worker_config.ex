@@ -352,7 +352,7 @@ defmodule Ezagent.PluginLoom.WorkerConfig do
     do: dispatch_membership(session_uri, member_uri, :leave)
 
   defp dispatch_membership(session_uri, member_uri, action) do
-    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.#{action}")
+    target = Ezagent.URI.with_action(session_uri, :session, action)
 
     Invocation.dispatch(%Invocation{
       target: target,
@@ -374,7 +374,7 @@ defmodule Ezagent.PluginLoom.WorkerConfig do
 
   # 扫 chat.members 找 `loomworker_<sid>_<key>` 的 key 列表。
   defp live_worker_keys(session_uri, sid) do
-    case Ezagent.Kind.get_slice(session_uri, :chat) do
+    case Ezagent.Kind.get_slice(session_uri, :session) do
       {:ok, %{members: members}} when is_map(members) ->
         prefix = "loomworker_#{sid}_"
 
@@ -391,7 +391,7 @@ defmodule Ezagent.PluginLoom.WorkerConfig do
 
   # 没配置但活团队里已有 worker(老 session)→ 从 slice 读 role/system_prompt 导入。
   defp import_from_live(session_uri, sid) do
-    case Ezagent.Kind.get_slice(session_uri, :chat) do
+    case Ezagent.Kind.get_slice(session_uri, :session) do
       {:ok, %{members: members}} when is_map(members) ->
         prefix = "loomworker_#{sid}_"
 
@@ -440,7 +440,7 @@ defmodule Ezagent.PluginLoom.WorkerConfig do
         end
 
       s when is_binary(s) ->
-        case URI.new(s) do
+        case Ezagent.URI.parse(s) do
           {:ok, u} -> worker_key_of(u, prefix)
           _ -> []
         end

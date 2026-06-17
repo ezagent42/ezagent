@@ -376,7 +376,7 @@ defmodule Ezagent.PluginLoom.View.LoomDashboardView do
   defp gather(_, _, _), do: nil
 
   defp members(uri) do
-    case safe(fn -> Ezagent.Kind.get_slice(uri, :chat) end, :error) do
+    case safe(fn -> Ezagent.Kind.get_slice(uri, :session) end, :error) do
       {:ok, %{members: m}} when is_map(m) ->
         m
         |> Map.keys()
@@ -472,7 +472,8 @@ defmodule Ezagent.PluginLoom.View.LoomDashboardView do
   defp role_chip("worker"),
     do: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
 
-  defp role_chip("salesperson"), do: "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+  defp role_chip("salesperson"),
+    do: "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
 
   defp role_chip("salesperson-worker"),
     do: "bg-orange-50 text-orange-700 dark:bg-orange-950 dark:text-orange-300"

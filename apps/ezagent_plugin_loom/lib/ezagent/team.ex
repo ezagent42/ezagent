@@ -99,7 +99,10 @@ defmodule EzagentPluginLoom.Team do
            :ok <- Enum.reduce_while(others, :ok, &spawn_step/2),
            :ok <- Enum.reduce_while(members, :ok, fn uri, _ -> join_step(session_uri, uri) end) do
         {:ok,
-         %{orchestrator: orchestrator, workers: workers ++ builder_members ++ salesperson_members ++ [meta]}}
+         %{
+           orchestrator: orchestrator,
+           workers: workers ++ builder_members ++ salesperson_members ++ [meta]
+         }}
       end
     end
   end
@@ -181,7 +184,7 @@ defmodule EzagentPluginLoom.Team do
   # `auto_join_session_members` uses). `:call` so a CapBAC / missing-member
   # failure is observable (no silent swallow).
   defp join_step(%URI{} = session_uri, %URI{} = member_uri) do
-    target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+    target = Ezagent.URI.with_action(session_uri, :session, :join)
 
     result =
       Invocation.dispatch(%Invocation{

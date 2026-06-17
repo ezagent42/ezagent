@@ -140,7 +140,7 @@ defmodule Ezagent.Behavior.Loom do
   # No-op when no `session` arg is given.
   defp mirror_effects(args, ctx, history, reply_span) do
     with s when is_binary(s) and s != "" <- Map.get(args, :session) || Map.get(args, "session"),
-         {:ok, %URI{scheme: "session"} = session_uri} <- URI.new(s) do
+         {:ok, %URI{scheme: "session"} = session_uri} <- Ezagent.URI.parse(s) do
       user_text = (List.last(history) || %{})["content"] || ""
 
       send_cmd(session_uri, ctx_caller(ctx), user_text) ++
@@ -164,7 +164,7 @@ defmodule Ezagent.Behavior.Loom do
             reply_msg =
               Message.new(self_uri, %{text: reply_text, attachments: []}, ref_id: msg.id)
 
-            target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
+            target = Ezagent.URI.with_action(session_uri, :session, :send)
 
             [
               {:dispatch,
@@ -188,7 +188,7 @@ defmodule Ezagent.Behavior.Loom do
 
   defp send_cmd(%URI{} = session_uri, %URI{} = sender_uri, text) when is_binary(text) do
     msg = Message.new(sender_uri, %{text: text, attachments: []})
-    target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
+    target = Ezagent.URI.with_action(session_uri, :session, :send)
 
     [
       {:dispatch,
@@ -223,7 +223,7 @@ defmodule Ezagent.Behavior.Loom do
   defp ctx_caller(%{caller: %URI{} = u}), do: u
 
   defp ctx_caller(%{caller: s}) when is_binary(s) do
-    case URI.new(s) do
+    case Ezagent.URI.parse(s) do
       {:ok, u} -> u
       _ -> nil
     end
@@ -234,7 +234,7 @@ defmodule Ezagent.Behavior.Loom do
   defp session_uri_from_caller(%{caller: %URI{} = u}), do: u
 
   defp session_uri_from_caller(%{caller: s}) when is_binary(s) do
-    case URI.new(s) do
+    case Ezagent.URI.parse(s) do
       {:ok, u} -> u
       _ -> nil
     end

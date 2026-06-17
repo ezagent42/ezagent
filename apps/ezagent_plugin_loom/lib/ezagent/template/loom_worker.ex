@@ -46,7 +46,7 @@ defmodule Ezagent.PluginLoom.Template.LoomWorker do
   defp check_class(_), do: {:error, :missing_class_field}
 
   defp check_agent_uri(%{"agent_uri" => uri_str}) when is_binary(uri_str) and uri_str != "" do
-    case URI.new(uri_str) do
+    case Ezagent.URI.parse(uri_str) do
       {:ok, %URI{scheme: "entity", host: "agent", path: "/" <> rest}} when rest != "" ->
         with [_workspace, entity_name] when entity_name != "" <-
                String.split(rest, "/", parts: 2),
@@ -78,7 +78,7 @@ defmodule Ezagent.PluginLoom.Template.LoomWorker do
 
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => uri_str}, _workspace_uri) do
-    agent_uri = URI.parse(uri_str)
+    agent_uri = Ezagent.URI.new!(uri_str)
 
     case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
       {:ok, :started, _pid} ->

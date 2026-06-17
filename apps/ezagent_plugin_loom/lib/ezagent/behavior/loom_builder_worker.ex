@@ -309,7 +309,7 @@ defmodule Ezagent.Behavior.LoomBuilderWorker do
           mentions: reply_mentions(self_uri, subtask_msg.sender)
         )
 
-      target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
+      target = Ezagent.URI.with_action(session_uri, :session, :send)
 
       cmd =
         Cmd.new(target, :send, %{message: reply}, %{
@@ -388,7 +388,8 @@ defmodule Ezagent.Behavior.LoomBuilderWorker do
 
   defp wants_materials?(text, %Message{body: body}) do
     has_attachments?(body) or
-      (is_binary(text) and (Regex.match?(@materials_kw, text) or Regex.match?(@file_mention, text)))
+      (is_binary(text) and
+         (Regex.match?(@materials_kw, text) or Regex.match?(@file_mention, text)))
   end
 
   defp has_attachments?(%{attachments: a}) when is_list(a) and a != [], do: true
@@ -449,7 +450,7 @@ defmodule Ezagent.Behavior.LoomBuilderWorker do
   defp session_from_ctx(%{caller: %URI{} = u}), do: u
 
   defp session_from_ctx(%{caller: s}) when is_binary(s) do
-    case URI.new(s) do
+    case Ezagent.URI.parse(s) do
       {:ok, u} -> u
       _ -> nil
     end

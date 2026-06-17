@@ -208,12 +208,12 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
   @doc """
   Discover worker agents (`loomworker_*`) currently joined to `session_uri`
-  by reading its `:chat` slice members (the sanctioned cross-Kind read).
+  by reading its `:session` slice members (the sanctioned cross-Kind read).
   Returns `[%{uri, label}]`.
   """
   @spec discover_workers(URI.t()) :: [map()]
   def discover_workers(%URI{} = session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :chat) do
+    case Ezagent.Kind.get_slice(session_uri, :session) do
       {:ok, %{members: members}} when is_map(members) ->
         members
         |> Map.keys()
@@ -643,7 +643,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
   defp to_uri(%URI{} = u), do: u
 
   defp to_uri(s) when is_binary(s) do
-    case URI.new(s) do
+    case Ezagent.URI.parse(s) do
       {:ok, u} -> u
       _ -> nil
     end
@@ -657,7 +657,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
   # `{:dispatch, _}` effect (action path) or `Router.dispatch/1` it
   # directly (lifecycle path).
   defp send_chat_cmd(%URI{} = session_uri, %URI{} = sender, %Message{} = m) do
-    target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
+    target = Ezagent.URI.with_action(session_uri, :session, :send)
 
     Cmd.new(target, :send, %{message: m}, %{
       caller: sender,
@@ -672,7 +672,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
   defp ctx_session(%{caller: %URI{} = u}), do: u
 
   defp ctx_session(%{caller: s}) when is_binary(s) do
-    case URI.new(s) do
+    case Ezagent.URI.parse(s) do
       {:ok, u} -> u
       _ -> nil
     end

@@ -33,7 +33,7 @@ defmodule EzagentPluginLoom.ClaudeCodeTest do
   describe "stop/1 中断派发" do
     test "给同 group 的在跑收集进程发 :stop_requested" do
       ensure_table()
-      group = "session://system/s_stop_#{System.unique_integer([:positive])}"
+      group = "session://system/run/s_stop_#{System.unique_integer([:positive])}"
       :ets.insert(@runs_table, {111, group, self()})
 
       assert ClaudeCode.stop(group) == :ok
@@ -42,7 +42,7 @@ defmodule EzagentPluginLoom.ClaudeCodeTest do
 
     test "同 group 多个在跑 → 全部收到 :stop_requested" do
       ensure_table()
-      group = "session://system/s_multi_#{System.unique_integer([:positive])}"
+      group = "session://system/run/s_multi_#{System.unique_integer([:positive])}"
       parent = self()
       c1 = spawn(fn -> relay(parent, :c1) end)
       c2 = spawn(fn -> relay(parent, :c2) end)
@@ -56,8 +56,8 @@ defmodule EzagentPluginLoom.ClaudeCodeTest do
 
     test "group 隔离:只中断目标 group,不误伤其它 group 的在跑" do
       ensure_table()
-      target = "session://system/s_target_#{System.unique_integer([:positive])}"
-      other = "session://system/s_other_#{System.unique_integer([:positive])}"
+      target = "session://system/run/s_target_#{System.unique_integer([:positive])}"
+      other = "session://system/run/s_other_#{System.unique_integer([:positive])}"
       parent = self()
       other_collector = spawn(fn -> relay(parent, :other) end)
       :ets.insert(@runs_table, {301, target, self()})

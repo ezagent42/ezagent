@@ -300,8 +300,8 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
       # 同上 — terminate 走同步 framework API,不走 effect 系统。
       # 注意:terminate 必须在 chat.leave dispatch 之后才被调,但 Kind.terminate
       # 是同步的会立刻杀进程,而 dispatch 是 cast 异步。两者顺序可能颠倒。
-      # 影响不大:就算 terminate 先发生,chat.leave 还是能 dispatch 成功
-      # (Behavior.Chat.handle_leave 通过 URI 拆掉 members 那条),但 monitor 已经
+      # 影响不大:就算 terminate 先发生,session.leave 还是能 dispatch 成功
+      # (Behavior.Session.handle_leave 通过 URI 拆掉 members 那条),但 monitor 已经
       # 没机会触发 :DOWN(终止已发生)。最终 members 没那位,符合预期。
       card =
         Span.span("team_change", %{
@@ -320,7 +320,7 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
   end
 
   defp join_cmd(session_uri, member_uri) do
-    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+    target = Ezagent.URI.with_action(session_uri, :session, :join)
 
     Cmd.new(target, :join, %{member: member_uri}, %{
       caller: Ezagent.SystemPrincipal.uri("session-internal"),
@@ -330,7 +330,7 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
   end
 
   defp leave_cmd(session_uri, member_uri) do
-    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.leave")
+    target = Ezagent.URI.with_action(session_uri, :session, :leave)
 
     Cmd.new(target, :leave, %{member: member_uri}, %{
       caller: Ezagent.SystemPrincipal.uri("session-internal"),
@@ -359,7 +359,7 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
   defp workers_in_session(%URI{} = session_uri) do
     {_ws, sid} = session_parts(session_uri)
 
-    case Ezagent.Kind.get_slice(session_uri, :chat) do
+    case Ezagent.Kind.get_slice(session_uri, :session) do
       {:ok, %{members: members}} when is_map(members) ->
         members
         |> Map.keys()
@@ -455,7 +455,7 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
           mentions: [subtask_msg.sender]
         )
 
-      target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
+      target = Ezagent.URI.with_action(session_uri, :session, :send)
 
       cmd =
         Cmd.new(target, :send, %{message: reply}, %{
@@ -473,7 +473,7 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
   defp session_from_ctx(%{caller: %URI{} = u}), do: u
 
   defp session_from_ctx(%{caller: s}) when is_binary(s) do
-    case URI.new(s) do
+    case Ezagent.URI.parse(s) do
       {:ok, u} -> u
       _ -> nil
     end

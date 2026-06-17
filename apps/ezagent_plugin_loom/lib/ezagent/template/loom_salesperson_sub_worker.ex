@@ -16,8 +16,9 @@ defmodule Ezagent.PluginLoom.Template.LoomSalespersonSubWorker do
   def template_name, do: "loom.salespersonsub"
 
   @impl Ezagent.Kind.Template
-  def validate(%{"class" => "loom.salespersonsub", "agent_uri" => uri}) when is_binary(uri) and uri != "",
-    do: :ok
+  def validate(%{"class" => "loom.salespersonsub", "agent_uri" => uri})
+      when is_binary(uri) and uri != "",
+      do: :ok
 
   def validate(%{"class" => "loom.salespersonsub"}), do: {:error, :missing_agent_uri}
   def validate(%{"class" => other}), do: {:error, {:wrong_class, other}}
@@ -25,11 +26,15 @@ defmodule Ezagent.PluginLoom.Template.LoomSalespersonSubWorker do
 
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => uri_str}, _workspace_uri) do
-    agent_uri = URI.parse(uri_str)
+    agent_uri = Ezagent.URI.new!(uri_str)
 
     case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
-      {:ok, :started, _pid} -> {:ok, [agent_uri], %{fresh?: true}}
-      {:ok, :already_started, _pid} -> {:ok, [agent_uri], %{fresh?: false}}
+      {:ok, :started, _pid} ->
+        {:ok, [agent_uri], %{fresh?: true}}
+
+      {:ok, :already_started, _pid} ->
+        {:ok, [agent_uri], %{fresh?: false}}
+
       {:error, reason} ->
         Logger.warning(
           "loom.salespersonsub: spawn_detailed failed for #{URI.to_string(agent_uri)}: #{inspect(reason)}"
