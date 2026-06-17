@@ -40,7 +40,8 @@ defmodule EzagentPluginLoom.WebPlug do
     Dashboard,
     SavedTemplates,
     Snapshots,
-    PageStore
+    PageStore,
+    MaterialFiles
   }
 
   @gateway_uri "system://loom-customer-gateway"
@@ -650,6 +651,50 @@ defmodule EzagentPluginLoom.WebPlug do
     json(conn, 200, %{ok: true, conversation: conv})
   end
 
+  # 素材库(目录即库,MaterialFiles 文件树):上传(保留文件夹)/ 列 / 删 / 公开提供。
+  post "/api/:ws/:sid/materials/upload" do
+    case conn.body_params["file"] do
+      %Plug.Upload{path: tmp, filename: fname} ->
+        rel = (conn.body_params["path"] || "") |> to_string() |> String.trim()
+        rel = if rel == "", do: fname, else: rel
+
+        case MaterialFiles.save_file(ws, sid, rel, tmp) do
+          {:ok, saved} -> json(conn, 200, %{ok: true, path: saved})
+          {:error, e} -> json(conn, 200, %{ok: false, error: to_string(e)})
+        end
+
+      _ ->
+        json(conn, 200, %{ok: false, error: "missing file"})
+    end
+  end
+
+  get "/api/:ws/:sid/materials" do
+    items =
+      MaterialFiles.list(ws, sid)
+      |> Enum.map(&Map.put(&1, "url", "/loom/materials/#{ws}/#{sid}/#{&1["path"]}"))
+
+    json(conn, 200, %{ok: true, items: items})
+  end
+
+  delete "/api/:ws/:sid/materials" do
+    path = Plug.Conn.fetch_query_params(conn).query_params["path"] || ""
+    _ = MaterialFiles.remove(ws, sid, to_string(path))
+    json(conn, 200, %{ok: true})
+  end
+
+  # 公开提供素材(图片等),v0 生成的页面 `<img src="/loom/materials/<ws>/<sid>/<path>">`。
+  get "/materials/:ws/:sid/*path" do
+    case MaterialFiles.read(ws, sid, Enum.join(path, "/")) do
+      {:ok, bin, rel} ->
+        conn
+        |> Plug.Conn.put_resp_content_type(mime_for(rel))
+        |> Plug.Conn.send_resp(200, bin)
+
+      :error ->
+        send_resp(conn, 404, "not found")
+    end
+  end
+
   # 未实现的 /api/* → JSON 404(否则被下面 SPA 兜底返回 HTML,前端 r.json() 会崩)。
   match "/api/*_rest" do
     json(conn, 404, %{ok: false, error: "not_implemented"})
@@ -886,6 +931,12 @@ defmodule EzagentPluginLoom.WebPlug do
   end
 
   defp loom_uri(ws, sid), do: Ezagent.URI.session(ws, :loom, sid)
+
+  defp mime_for(name) do
+    MIME.from_path(name)
+  rescue
+    _ -> "application/octet-stream"
+  end
 
   # Stitch/AiSpot 回复作 frame 发进 session(loomstitch agent 身份,ref_id 关联请求)→ /stream。
   defp emit_stitch_frame(session_uri, ws, sid, req_id, meta) do
