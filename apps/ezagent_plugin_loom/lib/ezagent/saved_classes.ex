@@ -137,6 +137,22 @@ defmodule Ezagent.PluginLoom.SavedClasses do
 
   def pages_for_token(_), do: %{}
 
+  @doc "读发布物(token)的整盘 saved_state(衍生**可编辑**新会话用)。无 → nil。"
+  @spec saved_state_for_token(String.t()) :: map() | nil
+  def saved_state_for_token(token) when is_binary(token) and token != "" do
+    load_all()
+    |> Enum.find_value(fn {_cn, entry} ->
+      if Map.get(entry, "token") == token do
+        case Map.get(entry, "saved_state") do
+          %{} = ss -> ss
+          _ -> nil
+        end
+      end
+    end)
+  end
+
+  def saved_state_for_token(_), do: nil
+
   @doc """
   List published templates(发布历史)—— 只返回 `published: true` 的条目,带 token /
   ws / 说明 / 发布时间 / 来源 session,**新的在前**。loom 发布弹窗用它展示历史 + 链接,

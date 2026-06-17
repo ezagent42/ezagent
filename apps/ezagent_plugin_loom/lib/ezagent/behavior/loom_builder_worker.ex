@@ -111,11 +111,20 @@ defmodule Ezagent.Behavior.LoomBuilderWorker do
             {:ok, files, summary} ->
               # span 带 `files`(权威)+ `source`(= /App.jsx,旧 dist 降级兼容)+ `summary`
               # + 可选 `salespersonConfig`(页面助手样式)+ 可选 `danmakuConfig`(弹幕样式)。
-              base = %{
-                "files" => files,
-                "source" => Map.get(files, "/App.jsx", ""),
-                "summary" => summary
-              }
+              base =
+                %{
+                  "files" => files,
+                  "source" => Map.get(files, "/App.jsx", ""),
+                  "summary" => summary
+                }
+                # 2026-06-17 — 给 page_update 打上**它改的是哪一页**(= builder 此刻读的活动页)。
+                # 编排器 sync 据此回写到正确的页(而非盲目写活动页),回退也据此回退正确的页。
+                |> then(fn m ->
+                  case mws && Ezagent.PluginLoom.Pages.active_id(mws, msid) do
+                    pg when is_binary(pg) and pg != "" -> Map.put(m, "page", pg)
+                    _ -> m
+                  end
+                end)
 
               span_map =
                 base

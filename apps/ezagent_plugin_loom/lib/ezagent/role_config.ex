@@ -257,6 +257,55 @@ defmodule Ezagent.PluginLoom.RoleConfig do
 
   def check(_, _, _, _), do: {false, nil}
 
+  @doc """
+  列出 `entity_uri` 在该 session 里**符合的所有角色**(按钮配置)。一个人可同时属于多个角色,
+  全都返回 → 前端有几个就显示几个按钮。superadmin(= creator)排在最前。每项:
+  `%{"key","label","effect","view","url","page"}`。只收 `label` 非空的(没配按钮文本的不出按钮)。
+  未登录 / 不匹配任何角色 → `[]`。
+  """
+  @spec roles_for(String.t(), String.t(), String.t() | nil) :: [map()]
+  def roles_for(ws, sid, entity_uri) when is_binary(ws) and is_binary(sid) do
+    cfg = get(ws, sid)
+    who = if is_binary(entity_uri) and entity_uri != "", do: entity_uri, else: nil
+
+    super_btn =
+      if who != nil and who == cfg["creator"] and to_string(cfg["super"]["label"]) != "" do
+        [
+          cfg["super"]
+          |> Map.take(["label", "effect", "view", "url", "page"])
+          |> Map.put("key", @super_key)
+        ]
+      else
+        []
+      end
+
+    custom =
+      cfg["roles"]
+      |> Enum.filter(fn r -> who != nil and who in (r["entities"] || []) end)
+      |> Enum.filter(fn r -> to_string(r["label"]) != "" end)
+      |> Enum.map(&Map.take(&1, ["key", "label", "effect", "view", "url", "page"]))
+
+    super_btn ++ custom
+  rescue
+    _ -> []
+  end
+
+  def roles_for(_, _, _), do: []
+
+  @doc """
+  该 session 是否配了**任何**角色门控(决定未登录者要不要显示登录按钮 —— 没配门控的普通
+  发布页不该催访客登录)。= 有自定义角色,或 creator 已捕获且超管配了按钮文本。
+  """
+  @spec gated?(String.t(), String.t()) :: boolean()
+  def gated?(ws, sid) when is_binary(ws) and is_binary(sid) do
+    cfg = get(ws, sid)
+    cfg["roles"] != [] or (is_binary(cfg["creator"]) and to_string(cfg["super"]["label"]) != "")
+  rescue
+    _ -> false
+  end
+
+  def gated?(_, _), do: false
+
   defp canonical_entity("entity://" <> _ = uri, _ws), do: uri
 
   defp canonical_entity(name, ws) when is_binary(name) and name != "",

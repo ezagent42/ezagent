@@ -719,6 +719,26 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
   defp page_update_files(_), do: nil
 
+  # 2026-06-17 — page_update 里 builder 打的「这条改的是哪一页」(页 id)。无 → nil(老消息)。
+  defp page_update_page(%Message{body: body}) do
+    text = body_text(body)
+
+    case Regex.run(~r/<span\s+type="page_update"\s*>([\s\S]*)<\/span>/, text) do
+      [_full, inner] ->
+        case Jason.decode(String.trim(inner)) do
+          {:ok, %{"page" => p}} when is_binary(p) and p != "" -> p
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp page_update_page(_), do: nil
+
   defp body_text(%{text: t}) when is_binary(t), do: t
   defp body_text(%{"text" => t}) when is_binary(t), do: t
   defp body_text(_), do: ""
@@ -727,7 +747,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
   # aggregator no-ops and the compose path is skipped — v0's message already
   # rendered to the session.
   defp handle_page_update(%Message{ref_id: ref} = msg, files, pending, ctx) when is_binary(ref) do
-    sync_active_page_source(ctx, files)
+    sync_active_page_source(ctx, files, page_update_page(msg))
     cfg = salesperson_config_effects(msg) ++ danmaku_config_effects(msg)
 
     case find_turn_by_subtask(pending, ref) do
@@ -741,7 +761,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
   end
 
   defp handle_page_update(msg, files, _pending, ctx) do
-    sync_active_page_source(ctx, files)
+    sync_active_page_source(ctx, files, page_update_page(msg))
 
     {:ok, %{},
      [{:set, :loom_source, files}] ++
@@ -750,15 +770,26 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
   # 2026-06-16 多页:builder 改的是「活动页」→ 把这次源码**服务端**写进多页旁路的活动页,
   # 让旁路始终是最新的(不依赖前端回存,避免切页渲染到陈旧源)。best-effort,失败不影响主流程。
-  defp sync_active_page_source(ctx, files) do
+  # 2026-06-17 — 回写到**这条 page_update 标的页**(builder 打的 `page`),而非盲目写活动页。
+  # 这样切页竞态 / 回退别的页都不会串源;老消息无 `page` → 兜底用活动页(旧行为)。
+  defp sync_active_page_source(ctx, files, page) do
     case orch_ws_sid(ctx) do
       {ws, sid} ->
-        Ezagent.PluginLoom.Pages.put_source(
-          ws,
-          sid,
-          Ezagent.PluginLoom.Pages.active_id(ws, sid),
-          files
-        )
+        target =
+          if is_binary(page) and page != "",
+            do: page,
+            else: Ezagent.PluginLoom.Pages.active_id(ws, sid)
+
+        # 一次性记下这页**第一次构建前**的源码 = 初始版本(回退历史永远能回到最初)。
+        _ =
+          Ezagent.PluginLoom.PageInit.capture(
+            ws,
+            sid,
+            target,
+            Ezagent.PluginLoom.Pages.page_source(ws, sid, target) || %{}
+          )
+
+        Ezagent.PluginLoom.Pages.put_source(ws, sid, target, files)
 
       _ ->
         :ok

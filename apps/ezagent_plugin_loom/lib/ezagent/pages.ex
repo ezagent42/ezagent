@@ -287,6 +287,23 @@ defmodule Ezagent.PluginLoom.Pages do
     _ -> nil
   end
 
+  @doc "取某一页(按 id)的源码;无 → nil。"
+  @spec page_source(String.t(), String.t(), String.t()) :: map() | nil
+  def page_source(ws, sid, id) when is_binary(id) do
+    case get(ws, sid) do
+      %{"pages" => pages} ->
+        case Enum.find(pages, &(&1["id"] == id)) do
+          %{"source" => src} -> src
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  rescue
+    _ -> nil
+  end
+
   @doc "按 slug 找页(发布页 ?page= 解析用)。"
   def find_by_slug(ws, sid, slug) do
     case get(ws, sid) do

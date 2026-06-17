@@ -70,12 +70,25 @@ defmodule EzagentPluginLoom.WebPlug do
   # 发消息:以稳定临时用户 loomui_<sid> 身份投进 session,自动 @编排器。
   post "/api/:ws/:sid/messages" do
     text = conn.body_params |> Map.get("text", "") |> to_string()
-    json_resp(conn, 200, send_to_session(ws, sid, text))
+    json_resp(conn, 200, send_to_session(conn, ws, sid, text))
   end
 
   # 历史消息(最近 50,正序)。
   get "/api/:ws/:sid/history" do
     json_resp(conn, 200, session_history(ws, sid))
+  end
+
+  # 2026-06-16 — builder 编辑回退。body: %{"to_id" => "<某条 page_update 消息 id>"}。
+  # **不回退 session 历史**:让 builder「再发一条」page_update(append),带那个旧版本的
+  # 源码 + 回退说明,并把活动页旁路源码直接回退到该版本。
+  post "/api/:ws/:sid/revert" do
+    to_id = conn.body_params |> Map.get("to_id", "") |> to_string()
+    json_resp(conn, 200, do_revert(ws, sid, to_id))
+  end
+
+  # 2026-06-17 — 回退历史(按页):每页「初始版本」+ 最近编辑(共 ≤10/页),最新一条标 current。
+  get "/api/:ws/:sid/edit-versions" do
+    json_resp(conn, 200, edit_versions(ws, sid))
   end
 
   # SSE:订阅 session 全量消息流。
@@ -120,6 +133,21 @@ defmodule EzagentPluginLoom.WebPlug do
   # 的层级关系(发布弹窗里展示,让操作员看清谁从谁衍生)。
   get "/api/:ws/lineage" do
     json_resp(conn, 200, %{ok: true, ws: ws, roots: Ezagent.PluginLoom.Lineage.tree(ws)})
+  end
+
+  # 2026-06-17 — **本 session** 的衍生谱系(以当前 session 为根的子树),修「不管在哪个
+  # session 都看到整个 workspace 的谱系」。发布弹窗改用这条。
+  get "/api/:ws/:sid/lineage" do
+    json_resp(conn, 200, %{ok: true, ws: ws, roots: Ezagent.PluginLoom.Lineage.tree_for(ws, sid)})
+  end
+
+  # 2026-06-17 — 从发布模板**衍生一个全新的、全套可编辑** loom 会话(带 builder + 整个团队 +
+  # 多页 + 角色 + 知识库,以模板状态为起点)。区别于打开分享链接(那是冻结消费会话)。
+  # body: %{"token" => <发布物 token>, "name" => <新会话名>}。返回 `link` = `/loom/<ws>/<name>`。
+  post "/api/:ws/derive" do
+    token = conn.body_params |> Map.get("token", "") |> to_string()
+    name = conn.body_params |> Map.get("name", "") |> to_string()
+    json_resp(conn, 200, derive_editable(token, name))
   end
 
   # 删除一个 template entry。
@@ -183,6 +211,7 @@ defmodule EzagentPluginLoom.WebPlug do
       conn,
       200,
       dispatch_to_salesperson(
+        conn,
         ws,
         sid,
         %{"mode" => "salesperson", "text" => text, "caps" => caps, "history" => history},
@@ -202,6 +231,7 @@ defmodule EzagentPluginLoom.WebPlug do
       conn,
       200,
       dispatch_to_salesperson(
+        conn,
         ws,
         sid,
         %{"mode" => "aispot", "feature" => feature, "context" => context, "caps" => caps},
@@ -362,6 +392,16 @@ defmodule EzagentPluginLoom.WebPlug do
     json_resp(conn, 200, operator_send(conn))
   end
 
+  # 2026-06-17 — 接线员台**按发布版本** scoped:`:ws/:sid` = 接线员当前会话,只列/只发给
+  # 「与它同一个发布版本衍生」的会话(同伴集),不再是登录用户加入的所有 session。
+  get "/api/:ws/:sid/operator-sessions" do
+    json_resp(conn, 200, operator_sessions(conn, ws, sid))
+  end
+
+  post "/api/:ws/:sid/operator-send" do
+    json_resp(conn, 200, operator_send_scoped(conn, ws, sid))
+  end
+
   # 2026-06-05 fork:从分享快照建一个**自己的**新 session(无 v0,base=快照冻结页面),
   # 把快照 ops 复制进新 session 的 user_schema。浮层对话由前端只读展示。返回 {ws, sid}。
   post "/p/:token/fork" do
@@ -477,6 +517,20 @@ defmodule EzagentPluginLoom.WebPlug do
   get "/api/:ws/:sid/role-check" do
     role = conn_query(conn) |> Map.get("role", "") |> to_string()
     json_resp(conn, 200, role_check(conn, ws, sid, role))
+  end
+
+  # 2026-06-17 — 列出当前登录身份在该 session 里**符合的全部角色**(按钮)。任何用户(含
+  # 发布链接进来的临时未登录用户)都查;登录了就返回他的角色,未登录返回空 + configured 标记
+  # (前端据此对未登录者显示登录按钮)。取代旧的 `?role=` 单角色核对。
+  get "/api/:ws/:sid/my-roles" do
+    json_resp(conn, 200, my_roles(conn, ws, sid))
+  end
+
+  # 2026-06-17 — 临时用户升级:注册/登录成功后,正式账号「接管」这个消费会话 ——
+  # join 进 session(成员 = 拥有权)+ 把当前 Salesperson 对话历史快照归到账号名下。
+  # 底层消息表不改写(临时用户的历史发言原样保留)。须已登录。
+  post "/api/:ws/:sid/upgrade-temp" do
+    json_resp(conn, 200, upgrade_temp(conn, ws, sid))
   end
 
   # 角色面板:列房间里的「人」(给账号多选下拉用)。
@@ -608,7 +662,7 @@ defmodule EzagentPluginLoom.WebPlug do
   # 2026-06-01 UX fix: prepend `@<orch-id>` to the visible text so the admin
   # session-view shows the @ — routing 还是基于 `mentions` 字段(不依赖文本
   # 解析),前缀只是给人眼看。loom UI 自己的用户气泡也会带上前缀,接受。
-  defp send_to_session(ws, sid, text) do
+  defp send_to_session(conn, ws, sid, text) do
     suri = session_uri(ws, sid)
     orch_id = "loomorch_#{sid}"
     orchestrator = Ezagent.URI.new!("entity://agent/#{ws}/#{orch_id}")
@@ -619,7 +673,7 @@ defmodule EzagentPluginLoom.WebPlug do
     # 文本可见层不动 — 让 admin chat 看见用户实际打的字。
     {mentions, visible_text} = parse_mentions(text, ws, sid, orchestrator)
 
-    with {:ok, user_uri} <- EzagentPluginLoom.TempUser.ensure_named(ws, "loomui_#{sid}"),
+    with {:ok, user_uri} <- consumer_sender(conn, ws, sid),
          :ok <- ensure_joined(suri, user_uri) do
       msg =
         Ezagent.Message.new(
@@ -1103,6 +1157,192 @@ defmodule EzagentPluginLoom.WebPlug do
     end
   end
 
+  # --- 编辑回退 helpers ------------------------------------------------
+
+  # 回退到某条 page_update 版本:不动历史,append 一条 builder 的新 page_update(带旧源),
+  # 同时把活动页旁路源码直接回退到该版本(立即生效,编辑器/builder/发布都读旁路)。
+  # 回退「初始版本」:to_id = `init:<page>`。
+  defp do_revert(ws, sid, "init:" <> page) when is_binary(page) and page != "" do
+    case Ezagent.PluginLoom.PageInit.get(ws, sid, page) do
+      src when is_map(src) and map_size(src) > 0 ->
+        title = page_title(ws, sid, page)
+        _ = Ezagent.PluginLoom.Pages.put_source(ws, sid, page, src)
+        emit_builder_page_update(ws, sid, src, "↩️ 已把「#{title}」回退到初始版本", page)
+
+      _ ->
+        %{ok: false, error: "这一页还没有初始版本(改过一次后才有)"}
+    end
+  rescue
+    e -> %{ok: false, error: Exception.message(e)}
+  end
+
+  defp do_revert(ws, sid, to_id) when is_binary(to_id) and to_id != "" do
+    suri = session_uri(ws, sid)
+
+    msg =
+      suri
+      |> Ezagent.MessageStore.recent_in_session(200)
+      |> Enum.find(fn %Ezagent.Message{id: id} -> id == to_id end)
+
+    with %Ezagent.Message{} = m <- msg,
+         {files, _cfg} when is_map(files) and map_size(files) > 0 <- parse_page_update_msg(m),
+         page when is_binary(page) and page != "" <- page_update_msg_page(m) do
+      # 回退**这条改的那一页**(page tag),而非当前活动页 —— 用户可能已切到别的页。
+      title = page_title(ws, sid, page)
+      # 1) 直接把那一页的旁路源码回退(立即生效)。
+      _ = Ezagent.PluginLoom.Pages.put_source(ws, sid, page, files)
+
+      # 2) builder append 一条带旧源 + **该页 tag** 的 page_update(不回退历史)→ 编排器 sync
+      #    也回写到这页,编辑器若正看着这页则经 onFiles 实时刷新。
+      emit_builder_page_update(ws, sid, files, "↩️ 已把「#{title}」回退到这个版本", page)
+    else
+      nil ->
+        %{ok: false, error: "no such page_update version"}
+
+      _ ->
+        # 无 page tag = 改 page-tag 之前的老构建,无法确定属于哪一页 → 拒绝(避免串源)。
+        %{ok: false, error: "version has no page tag — cannot safely revert (rebuild first)"}
+    end
+  rescue
+    e -> %{ok: false, error: Exception.message(e)}
+  end
+
+  defp do_revert(_, _, _), do: %{ok: false, error: "to_id required"}
+
+  # session 某页的标题(展示用);无 → 页 id。
+  defp page_title(ws, sid, pageid) do
+    case Ezagent.PluginLoom.Pages.get(ws, sid) do
+      %{"pages" => pages} ->
+        case Enum.find(pages, &(&1["id"] == pageid)) do
+          %{"title" => t} when is_binary(t) and t != "" -> t
+          _ -> pageid
+        end
+
+      _ ->
+        pageid
+    end
+  rescue
+    _ -> pageid
+  end
+
+  # 回退历史(按页):每页「初始版本」+ 最近编辑(共 ≤10/页),最新一条标 current(= 当前,
+  # 点了无意义)。版本来自会话历史里带 page tag 的 page_update;初始版本来自 PageInit。
+  defp edit_versions(ws, sid) do
+    suri = session_uri(ws, sid)
+    pages = pages_get(ws, sid)[:pages] || []
+    title_of = Map.new(pages, fn p -> {p["id"], p["title"]} end)
+
+    # 真实版本(新→旧),按页分组。
+    by_page =
+      suri
+      |> Ezagent.MessageStore.recent_in_session(60)
+      |> Enum.flat_map(fn m ->
+        with {files, _cfg} when is_map(files) and map_size(files) > 0 <- parse_page_update_msg(m),
+             page when is_binary(page) and page != "" <- page_update_msg_page(m) do
+          [
+            %{
+              id: m.id,
+              page: page,
+              summary: page_update_msg_summary(m) || "页面更新",
+              at: m.inserted_at && DateTime.to_iso8601(m.inserted_at)
+            }
+          ]
+        else
+          _ -> []
+        end
+      end)
+      |> Enum.group_by(& &1.page)
+
+    versions =
+      Enum.flat_map(pages, fn p ->
+        pid = p["id"]
+        title = title_of[pid] || pid
+
+        # 该页最近编辑(新→旧),最多 9 条(留 1 条给初始 → 每页 ≤10)。
+        reals =
+          by_page
+          |> Map.get(pid, [])
+          |> Enum.take(9)
+          |> Enum.with_index()
+          |> Enum.map(fn {v, i} ->
+            %{
+              "id" => v.id,
+              "page" => pid,
+              "pageTitle" => title,
+              "summary" => v.summary,
+              "at" => v.at,
+              "current" => i == 0,
+              "init" => false
+            }
+          end)
+
+        init =
+          case Ezagent.PluginLoom.PageInit.get(ws, sid, pid) do
+            src when is_map(src) and map_size(src) > 0 ->
+              [
+                %{
+                  "id" => "init:" <> pid,
+                  "page" => pid,
+                  "pageTitle" => title,
+                  "summary" => "初始版本",
+                  "at" => nil,
+                  "current" => false,
+                  "init" => true
+                }
+              ]
+
+            _ ->
+              []
+          end
+
+        reals ++ init
+      end)
+
+    %{ok: true, versions: versions}
+  rescue
+    e -> %{ok: false, error: Exception.message(e), versions: []}
+  end
+
+  # 以 builder 身份往 session 发一条 page_update(@ 编排器),用于回退。带 `page` tag →
+  # 编排器 sync 回写到这一页(而非活动页)。
+  defp emit_builder_page_update(ws, sid, files, summary, page) do
+    suri = session_uri(ws, sid)
+    builder_uri = Ezagent.URI.new!("entity://agent/#{ws}/loombuilder_#{sid}")
+    orch_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomorch_#{sid}")
+
+    body_text =
+      EzagentPluginLoom.Span.span("page_update", %{
+        "files" => files,
+        "source" => Map.get(files, "/App.jsx", ""),
+        "summary" => summary,
+        "page" => page
+      })
+
+    msg =
+      Ezagent.Message.new(
+        builder_uri,
+        %{text: body_text, attachments: []},
+        mentions: [orch_uri]
+      )
+
+    inv = %Ezagent.Invocation{
+      target: URI.new!("#{URI.to_string(suri)}?action=chat.send"),
+      mode: :cast,
+      args: %{message: msg},
+      ctx: %{
+        caller: builder_uri,
+        caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+        reply: :ignore
+      }
+    }
+
+    case Ezagent.Invocation.dispatch(inv) do
+      :ok -> %{ok: true, id: msg.id}
+      {:ok, _} -> %{ok: true, id: msg.id}
+      {:error, reason} -> %{ok: false, error: inspect(reason)}
+    end
+  end
+
   # --- 发布 / share-link helpers --------------------------------------
 
   # 把当前 session 快照成一个不可变 published Template Class + token,返回链接。
@@ -1224,6 +1464,16 @@ defmodule EzagentPluginLoom.WebPlug do
     end
   end
 
+  # 2026-06-17 — 消费会话的发言身份:**已登录就用真实账号**,否则用稳定临时用户
+  # `loomui_<sid>`。临时用户「升级」(账号接管会话)后,新发言自然归正式账号,而升级前
+  # 那段历史发言仍留在临时用户名下(不改写消息表,不碰 core)。
+  defp consumer_sender(conn, ws, sid) do
+    case caller_entity(conn) do
+      {:ok, %URI{scheme: "entity", host: "user"} = u} -> {:ok, u}
+      _ -> EzagentPluginLoom.TempUser.ensure_named(ws, "loomui_#{sid}")
+    end
+  end
+
   # 编辑页读角色配置。作者首次打开面板 → 捕获创建者(= 超级管理员)。
   defp roles_get(conn, ws, sid) do
     who = caller_entity_str(conn)
@@ -1326,6 +1576,53 @@ defmodule EzagentPluginLoom.WebPlug do
 
   # 发布页:按 cookie 身份核对 `?role=<key>`。角色不存在 → exists:false(前端不出按钮);
   # 存在则三态:未登录 / 已登录+通过(带 label/effect/view/url)/ 已登录+无权限。
+  # 临时用户升级:正式账号接管会话。须已登录(cookie 身份)。
+  defp upgrade_temp(conn, ws, sid) do
+    case caller_entity(conn) do
+      {:ok, %URI{scheme: "entity", host: "user"} = target} ->
+        suri = session_uri(ws, sid)
+        # 1) 会话所有权转移:正式账号成为成员(force-join,system caps)。
+        _ = ensure_joined(suri, target)
+        # 2) 对话历史迁移:当前 Salesperson 对话快照归到账号名下(底层消息表不动)。
+        convo = salesperson_conversation(ws, sid)
+        _ = Ezagent.PluginLoom.OwnedSessions.claim(URI.to_string(target), ws, sid, convo)
+
+        %{ok: true, entity_uri: URI.to_string(target), migrated_turns: length(convo)}
+
+      _ ->
+        %{ok: false, error: "not logged in"}
+    end
+  rescue
+    e -> %{ok: false, error: Exception.message(e)}
+  end
+
+  # 当前登录身份在该 session 符合的全部角色 + 是否配了门控(给登录按钮判断用)。
+  defp my_roles(conn, ws, sid) do
+    who = caller_entity_str(conn)
+    roles = Ezagent.PluginLoom.RoleConfig.roles_for(ws, sid, who)
+
+    base = %{
+      ok: true,
+      logged_in: who != nil,
+      configured: Ezagent.PluginLoom.RoleConfig.gated?(ws, sid),
+      roles:
+        Enum.map(roles, fn r ->
+          %{
+            key: Map.get(r, "key", ""),
+            label: Map.get(r, "label", ""),
+            effect: Map.get(r, "effect", "navigate"),
+            view: Map.get(r, "view", ""),
+            url: Map.get(r, "url", ""),
+            page: Map.get(r, "page", "")
+          }
+        end)
+    }
+
+    if who, do: Map.put(base, :entity_uri, who), else: base
+  rescue
+    e -> %{ok: false, error: Exception.message(e), roles: [], logged_in: false, configured: false}
+  end
+
   defp role_check(conn, ws, sid, role) do
     who = caller_entity_str(conn)
     {granted, role_map} = Ezagent.PluginLoom.RoleConfig.check(ws, sid, role, who)
@@ -1446,6 +1743,69 @@ defmodule EzagentPluginLoom.WebPlug do
   # 以登录 entity 的身份往一个 session 发消息(成员身份门控)。无 @ → 默认只到
   # session 的 User 成员(mention-gated),即「人对人群聊」;同时 sender host=user →
   # 会以弹幕飘在该 session 的预览页。要触发编排器/worker 需在文本里显式 @。
+  # 接线员同伴集:本会话(ws,sid)所属发布版本衍生的所有会话(不含自己)。须已登录。
+  defp operator_sessions(conn, ws, sid) do
+    case caller_entity(conn) do
+      {:ok, %URI{} = who} ->
+        sessions =
+          Ezagent.PluginLoom.Lineage.cohort(ws, sid)
+          |> Enum.flat_map(fn ref ->
+            case safe_session_uri(ref) do
+              %URI{} = u -> [session_summary(u)]
+              _ -> []
+            end
+          end)
+          |> Enum.sort_by(& &1.title)
+
+        %{ok: true, logged_in: true, entity_uri: URI.to_string(who), sessions: sessions}
+
+      :error ->
+        %{ok: true, logged_in: false, sessions: []}
+    end
+  rescue
+    e -> %{ok: false, error: Exception.message(e), sessions: []}
+  end
+
+  # 接线员发消息(scoped):只能发给本版本同伴集里的会话。接线员若非目标会话成员 → 先 join。
+  defp operator_send_scoped(conn, ws, sid) do
+    body = conn.body_params || %{}
+    uri_str = body |> Map.get("uri", "") |> to_string()
+    text = body |> Map.get("text", "") |> to_string() |> String.trim()
+
+    with {:ok, entity_uri} <- caller_entity(conn),
+         %URI{scheme: "session"} = target <- safe_session_uri(uri_str),
+         true <- text != "",
+         {tws, tsid} <- sess_ws_sid(target),
+         true <- Ezagent.PluginLoom.Lineage.in_cohort?(ws, sid, tws, tsid) do
+      # 接线员可能不是目标会话成员 → 先 force-join,再以登录身份发(message 飘进该会话)。
+      _ = ensure_joined(target, entity_uri)
+      msg = Ezagent.Message.new(entity_uri, %{text: text, attachments: []}, mentions: [])
+
+      inv = %Ezagent.Invocation{
+        target: Ezagent.URI.new!("#{URI.to_string(target)}?action=chat.send"),
+        mode: :cast,
+        args: %{message: msg},
+        ctx: %{
+          caller: entity_uri,
+          caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+          reply: :ignore
+        }
+      }
+
+      case Ezagent.Invocation.dispatch(inv) do
+        :ok -> %{ok: true, id: msg.id}
+        {:ok, _} -> %{ok: true, id: msg.id}
+        {:error, reason} -> %{ok: false, error: inspect(reason)}
+      end
+    else
+      :error -> %{ok: false, error: "not_logged_in"}
+      false -> %{ok: false, error: "not_in_cohort_or_empty"}
+      _ -> %{ok: false, error: "bad_request"}
+    end
+  rescue
+    e -> %{ok: false, error: Exception.message(e)}
+  end
+
   defp operator_send(conn) do
     body = conn.body_params || %{}
     uri_str = body |> Map.get("uri", "") |> to_string()
@@ -1532,7 +1892,7 @@ defmodule EzagentPluginLoom.WebPlug do
 
   # 派 @loomsalesperson 消息(异步)。结构化负载放 body 的 `:salesperson` 键;visible_text 是
   # admin/session 可见的那句。返回 `%{ok, id}`(id=消息 id,前端据此关联回帧)。
-  defp dispatch_to_salesperson(ws, sid, payload, visible_text) do
+  defp dispatch_to_salesperson(conn, ws, sid, payload, visible_text) do
     suri = session_uri(ws, sid)
     salesperson_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomsalesperson_#{sid}")
 
@@ -1540,7 +1900,7 @@ defmodule EzagentPluginLoom.WebPlug do
     # 所以这里按需 spawn + join(已在则短路)。新会话由 Team.ensure_team 装配。
     _ = ensure_salesperson_worker(suri, salesperson_uri)
 
-    with {:ok, user_uri} <- EzagentPluginLoom.TempUser.ensure_named(ws, "loomui_#{sid}"),
+    with {:ok, user_uri} <- consumer_sender(conn, ws, sid),
          :ok <- ensure_joined(suri, user_uri) do
       # 2026-06-12 — 与 `send_to_session`/`parse_mentions` 的编排器路径一致:在
       # 可见文本前缀 `@loomsalesperson_<sid>`,让 admin/session 视图肉眼看得到这条确实
@@ -1666,6 +2026,94 @@ defmodule EzagentPluginLoom.WebPlug do
   # fork:从分享快照建一个**无 v0** 的新 session(用冻结页面作 base)+ 复制快照 ops。
   # base 是快照冻结的页面(经 saved_state.orchestrator.loom_source 注入 + seed);
   # 不依赖原 preview 会话仍存活。
+  # 从发布模板衍生一个全套**可编辑**会话(no_builder=false → 带 builder)。
+  defp derive_editable(token, name) do
+    name = String.trim(name)
+
+    if Regex.match?(~r/^[a-zA-Z0-9_-]+$/, name) do
+      case Ezagent.PluginLoom.SavedClasses.find_by_token(token) do
+        {:ok, class_name, ws} -> do_derive(token, class_name, ws, name)
+        _ -> %{ok: false, error: "找不到这个发布物 token"}
+      end
+    else
+      %{ok: false, error: "名字只能含字母 / 数字 / _ / -,且非空"}
+    end
+  rescue
+    e -> %{ok: false, error: Exception.message(e)}
+  end
+
+  defp do_derive(token, class_name, ws, name) do
+    suri = Ezagent.URI.new!("session://loom/#{ws}/#{name}")
+
+    cond do
+      session_alive?(suri) ->
+        %{ok: false, error: "会话「#{name}」已存在,换个名字"}
+
+      true ->
+        case Ezagent.PluginLoom.SavedClasses.saved_state_for_token(token) do
+          %{} = saved_state ->
+            workspace_uri = Ezagent.URI.new!("workspace://#{ws}")
+
+            tmpl = %{
+              "class" => "session.loom",
+              "session_name" => name,
+              # **可编辑**:带 builder(区别于发布物冻结消费会话的 no_builder=true)。
+              "no_builder" => false,
+              "saved_state" => saved_state
+            }
+
+            case Ezagent.PluginLoom.Template.LoomSession.instantiate(
+                   "session.loom",
+                   tmpl,
+                   workspace_uri
+                 ) do
+              {:ok, [_session_uri | _]} ->
+                # 多页 / 角色 / 知识库随模板带过去。
+                _ =
+                  Ezagent.PluginLoom.Pages.seed(
+                    ws,
+                    name,
+                    Ezagent.PluginLoom.SavedClasses.pages_for_token(token)
+                  )
+
+                _ =
+                  Ezagent.PluginLoom.RoleConfig.seed(
+                    ws,
+                    name,
+                    Ezagent.PluginLoom.SavedClasses.roles_for_token(token)
+                  )
+
+                _ =
+                  Ezagent.PluginLoom.Knowledge.put(
+                    ws,
+                    name,
+                    Ezagent.PluginLoom.SavedClasses.knowledge_for_token(token)
+                  )
+
+                # 谱系:挂在该模板下(forked_from)。
+                _ = Ezagent.PluginLoom.Lineage.record_derive(ws, name, class_name)
+
+                %{ok: true, ws: ws, sid: name, link: "/loom/#{ws}/#{name}"}
+
+              {:error, reason} ->
+                %{ok: false, error: inspect(reason)}
+
+              other ->
+                %{ok: false, error: inspect({:unexpected, other})}
+            end
+
+          _ ->
+            %{ok: false, error: "这个发布物没有 saved_state,无法衍生"}
+        end
+    end
+  end
+
+  defp session_alive?(%URI{} = suri) do
+    match?({:ok, _}, Ezagent.KindRegistry.lookup(suri))
+  rescue
+    _ -> false
+  end
+
   defp fork_published(token) do
     with {:ok, snap} <- Ezagent.PluginLoom.Snapshots.get(token),
          ws = Map.get(snap, "ws"),
@@ -1917,6 +2365,44 @@ defmodule EzagentPluginLoom.WebPlug do
   end
 
   defp parse_page_update_msg(_), do: nil
+
+  # 2026-06-17 — page_update 里 builder 打的「这条改的是哪一页」(页 id)。无 → nil(老消息)。
+  defp page_update_msg_page(%Ezagent.Message{body: body}) do
+    text =
+      case body do
+        %{text: t} when is_binary(t) -> t
+        %{"text" => t} when is_binary(t) -> t
+        _ -> ""
+      end
+
+    with [_full, inner] <- Regex.run(~r/<span\s+type="page_update"\s*>([\s\S]*)<\/span>/, text),
+         {:ok, %{"page" => p}} when is_binary(p) and p != "" <- Jason.decode(String.trim(inner)) do
+      p
+    else
+      _ -> nil
+    end
+  end
+
+  defp page_update_msg_page(_), do: nil
+
+  # page_update 里 builder 给这次编辑的说明(无 → nil)。
+  defp page_update_msg_summary(%Ezagent.Message{body: body}) do
+    text =
+      case body do
+        %{text: t} when is_binary(t) -> t
+        %{"text" => t} when is_binary(t) -> t
+        _ -> ""
+      end
+
+    with [_full, inner] <- Regex.run(~r/<span\s+type="page_update"\s*>([\s\S]*)<\/span>/, text),
+         {:ok, %{"summary" => s}} when is_binary(s) and s != "" <- Jason.decode(String.trim(inner)) do
+      s
+    else
+      _ -> nil
+    end
+  end
+
+  defp page_update_msg_summary(_), do: nil
 
   # 2026-06-01 — Class-级:从 SavedClasses JSON 文件读保存项,不再扫
   # workspace.session_templates(那里现在是 Instance 级别,跟保存的 Class 是不同概念)。

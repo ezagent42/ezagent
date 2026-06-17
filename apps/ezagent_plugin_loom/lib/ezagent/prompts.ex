@@ -401,7 +401,8 @@ defmodule EzagentPluginLoom.Prompts do
   ```jsx
   import { listMySessions, getSessionMessages, sendToSession } from 'platform';
 
-  // 1) 列出当前登录用户作为成员的所有 session。
+  // 1) 列出**本发布版本衍生出来的会话**(同伴集)——「从这个分享链接进来的访客会话」。
+  //    不是「我加入的所有 session」:不同发布版本(A/B)各自隔离,跨 workspace / 根会话都看不到。
   //    → { ok, logged_in, entity_uri, sessions: [{ uri, ws, sid, title, last_text }] }
   const { logged_in, sessions } = await listMySessions();
 

@@ -150,6 +150,27 @@ defmodule Ezagent.PluginLoom.Lineage do
     _ -> :ok
   end
 
+  @doc """
+  记一次**从模板衍生可编辑会话**:editable session `sid` 以模板 `class_name` 的全套 saved_state
+  为起点新建(带 builder)。挂在该模板节点下(rel `forked_from`,parent = 模板 class_name)。
+  """
+  @spec record_derive(String.t(), String.t(), String.t()) :: :ok
+  def record_derive(ws, sid, class_name)
+      when is_binary(ws) and is_binary(sid) and is_binary(class_name) do
+    node = %{
+      "kind" => "fork",
+      "ws" => ws,
+      "parent" => %{"rel" => "forked_from", "ref" => class_name},
+      "at" => now()
+    }
+
+    load_all() |> Map.put(session_uri(ws, sid), node) |> save_all()
+  rescue
+    _ -> :ok
+  end
+
+  def record_derive(_, _, _), do: :ok
+
   @doc "删一个节点(模板被删 / 会话被删时调用,保持谱系干净)。"
   @spec forget(String.t()) :: :ok
   def forget(ref) when is_binary(ref) do
@@ -221,6 +242,88 @@ defmodule Ezagent.PluginLoom.Lineage do
 
     (roots ++ orphan_roots)
     |> Enum.sort_by(& &1["ref"])
+  end
+
+  @doc """
+  只返回**当前 session** 相关的那棵子树:它本身是某棵树里的节点(创作根 / 派生节点)→ 返回
+  以它为根的子树;它没出现在任何谱系里 → `[]`。修「不管在哪个 session 都看到整个 workspace
+  的谱系」。
+  """
+  @spec tree_for(String.t(), String.t()) :: [map()]
+  def tree_for(ws, sid) when is_binary(ws) and is_binary(sid) do
+    ref = session_uri(ws, sid)
+
+    case find_node(tree(ws), ref) do
+      nil -> []
+      node -> [node]
+    end
+  rescue
+    _ -> []
+  end
+
+  defp find_node(nodes, ref) do
+    Enum.find_value(nodes, fn n ->
+      if n["ref"] == ref, do: n, else: find_node(n["children"] || [], ref)
+    end)
+  end
+
+  @doc """
+  **接线员同伴集**:`(ws,sid)` 所属**发布版本**(往上最近的模板祖先)下衍生出来的所有**会话**
+  (消费 + fork,递归),**不含自己**。用于接线员页:只列「本版本衍生的会话」,而非「登录用户
+  加入的所有 session」。无版本祖先(如根创作 session、其它 ws)→ `[]`。
+  """
+  @spec cohort(String.t(), String.t()) :: [String.t()]
+  def cohort(ws, sid) when is_binary(ws) and is_binary(sid) do
+    self_ref = session_uri(ws, sid)
+    all = load_all()
+
+    case nearest_template(self_ref, all) do
+      nil ->
+        []
+
+      tmpl_ref ->
+        tmpl_ref
+        |> session_descendants(all)
+        |> Enum.reject(&(&1 == self_ref))
+        |> Enum.uniq()
+    end
+  rescue
+    _ -> []
+  end
+
+  def cohort(_, _), do: []
+
+  @doc "`(tws,tsid)` 是否在 `(ws,sid)` 的同伴集里(同一发布版本衍生)。"
+  @spec in_cohort?(String.t(), String.t(), String.t(), String.t()) :: boolean()
+  def in_cohort?(ws, sid, tws, tsid) do
+    session_uri(tws, tsid) in cohort(ws, sid)
+  rescue
+    _ -> false
+  end
+
+  # 从 ref 往上找最近的「模板」祖先(class_name `session.pub_*`,kind=template);无 → nil。
+  defp nearest_template(ref, all) do
+    case get_in(all, [ref, "parent", "ref"]) do
+      pref when is_binary(pref) ->
+        cond do
+          match?(%{"kind" => "template"}, Map.get(all, pref)) -> pref
+          Map.has_key?(all, pref) -> nearest_template(pref, all)
+          true -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  # 模板下所有**会话**后代(消费 + fork,递归)。
+  defp session_descendants(parent_ref, all) do
+    direct = for {ref, n} <- all, get_in(n, ["parent", "ref"]) == parent_ref, do: ref
+
+    Enum.flat_map(direct, fn ref ->
+      mine = if String.starts_with?(ref, "session://"), do: [ref], else: []
+      mine ++ session_descendants(ref, all)
+    end)
   end
 
   defp build_children(parent_ref, nodes, children) do
