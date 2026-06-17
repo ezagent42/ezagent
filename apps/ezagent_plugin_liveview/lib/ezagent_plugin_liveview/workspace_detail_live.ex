@@ -373,6 +373,31 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
     end
   end
 
+  # loom 前端集成 — 模板名做成「新标签打开」链接:解析该模板配方的第一个 session URI
+  # （类 export `session_uris_for_recipe/3` 时,如 LoomSession），跳到 /sessions?session=…。
+  # 类没有这个 callback → 返回 nil → 渲染纯文本。
+  defp template_open_url(tmpl_name, %{"class" => class_name} = recipe, %URI{} = ws_uri)
+       when is_binary(tmpl_name) and is_binary(class_name) do
+    with {:ok, module} <- Ezagent.TemplateRegistry.lookup(class_name),
+         true <- function_exported?(module, :session_uris_for_recipe, 3),
+         [%URI{} = session_uri | _] <-
+           try_session_uris(module, tmpl_name, recipe, ws_uri) do
+      "/sessions?session=" <> URI.encode_www_form(URI.to_string(session_uri))
+    else
+      _ -> nil
+    end
+  end
+
+  defp template_open_url(_, _, _), do: nil
+
+  defp try_session_uris(module, tmpl_name, recipe, ws_uri) do
+    apply(module, :session_uris_for_recipe, [tmpl_name, recipe, ws_uri])
+  rescue
+    _ -> []
+  catch
+    _, _ -> []
+  end
+
   @impl true
   def render(%{not_found: true} = assigns) do
     # Nested-shell PR-3 — the not-found page is still an admin surface;
@@ -578,7 +603,22 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
                       :for={{tmpl_name, tmpl_data} <- @workspace.session_templates}
                       class="border-b border-zinc-100 dark:border-zinc-900"
                     >
-                      <td class="px-1 py-1 font-medium">{tmpl_name}</td>
+                      <td class="px-1 py-1 font-medium">
+                        <% open_url = template_open_url(tmpl_name, tmpl_data, @workspace.uri) %>
+                        <%= if open_url do %>
+                          <a
+                            href={open_url}
+                            target="_blank"
+                            rel="noopener"
+                            class="text-sky-700 dark:text-sky-300 hover:underline"
+                            title={gettext("Open in new tab")}
+                          >
+                            {tmpl_name}
+                          </a>
+                        <% else %>
+                          {tmpl_name}
+                        <% end %>
+                      </td>
                       <td class="font-mono text-[11px]">{template_class_name(tmpl_data)}</td>
                       <td>{template_member_count(tmpl_data)}</td>
                       <td class={template_status_class(template_status(tmpl_data))}>
