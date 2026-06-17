@@ -22,7 +22,7 @@ defmodule EzagentPluginLoom.WebPlug do
   alias Ezagent.Socialware.{AnonBinding, AnonUser, CustomerAuth, CustomerFeed}
   alias Ezagent.Uploads
   alias Ezagent.Uploads.DownloadToken
-  alias EzagentPluginLoom.{Fork, Intent, Knowledge, Materials, Stitch}
+  alias EzagentPluginLoom.{Fork, Intent, Knowledge, Materials, Stitch, Tool, FetchProxy}
 
   @gateway_uri "system://loom-customer-gateway"
 
@@ -165,6 +165,37 @@ defmodule EzagentPluginLoom.WebPlug do
       json(conn, 200, %{ok: true})
     else
       {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})
+      _ -> json(conn, 400, %{ok: false, error: "bad_request"})
+    end
+  end
+
+  # page-SDK 工具 RPC(platform.tool)。body {name, args, token}
+  post "/c/:ws/:sid/tool" do
+    with {:ok, session_uri, ws_uri} <- uris(ws, sid),
+         token when is_binary(token) <- token(conn),
+         :ok <- CustomerAuth.authorize(token, session_uri, ws_uri),
+         name when is_binary(name) <- conn.body_params["name"],
+         {:ok, result} <- Tool.invoke(name, conn.body_params["args"] || %{}) do
+      json(conn, 200, %{ok: true, result: result})
+    else
+      {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})
+      {:error, reason} -> json(conn, 400, %{ok: false, error: to_string(reason)})
+      _ -> json(conn, 400, %{ok: false, error: "bad_request"})
+    end
+  end
+
+  # page-SDK fetch 代理(platform.fetch,白名单)。body {preset, url, token}
+  post "/c/:ws/:sid/fetch" do
+    with {:ok, session_uri, ws_uri} <- uris(ws, sid),
+         token when is_binary(token) <- token(conn),
+         :ok <- CustomerAuth.authorize(token, session_uri, ws_uri),
+         preset when is_binary(preset) <- conn.body_params["preset"],
+         url when is_binary(url) <- conn.body_params["url"],
+         {:ok, resp} <- FetchProxy.fetch(preset, url) do
+      json(conn, 200, %{ok: true, status: resp.status, body: resp.body})
+    else
+      {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})
+      {:error, reason} -> json(conn, 400, %{ok: false, error: to_string(reason)})
       _ -> json(conn, 400, %{ok: false, error: "bad_request"})
     end
   end
