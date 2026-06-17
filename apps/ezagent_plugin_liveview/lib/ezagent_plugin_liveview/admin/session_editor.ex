@@ -89,7 +89,7 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
       <button
         type="button"
         phx-click="refresh_session"
-        title={gettext("Refresh this session (reload tabs / members / state)")}
+        title={gettext("Refresh session list + reload this session (tabs / members / state)")}
         aria-label={gettext("Refresh session")}
         class="shrink-0 p-1 rounded text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800"
       >

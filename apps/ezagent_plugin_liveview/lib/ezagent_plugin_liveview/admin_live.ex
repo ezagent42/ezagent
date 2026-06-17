@@ -374,6 +374,8 @@ defmodule EzagentPluginLiveview.AdminLive do
       |> assign(:debug_open, false)
       # V1 UI SPEC §2C.3 — MemberPanel's Invite modal visibility.
       |> assign(:invite_open, false)
+      # 2026-06-16 — 右侧栏(成员/编排器健康)默认折叠,腾出空间给主区。
+      |> assign(:right_sidebar_collapsed, true)
       |> assign(:compose_form, to_form(%{"text" => ""}, as: "chat"))
       |> assign(
         :new_session_form,
@@ -920,10 +922,20 @@ defmodule EzagentPluginLiveview.AdminLive do
   # applicable_views(tab)、成员、orchestrator 状态等,无需整页刷新。用于
   # 注册/视图变化后(如 loom tab 迟注册)就地拉到最新状态。
   def handle_event("refresh_session", _params, socket) do
-    case socket.assigns[:current_session_uri] do
-      %URI{} = uri -> {:noreply, select_session(socket, uri)}
-      _ -> {:noreply, socket}
-    end
+    # 2026-06-17 — 重选当前 session(重载 tabs/members/state)**+ 刷新 session 列表**
+    # (下拉里出现新建/衍生出来的会话)。此前只重选当前 session,不重载列表 → 看着「没效果」。
+    socket =
+      case socket.assigns[:current_session_uri] do
+        %URI{} = uri -> select_session(socket, uri)
+        _ -> socket
+      end
+
+    {:noreply,
+     assign(
+       socket,
+       :sessions,
+       list_visible_sessions_for(socket.assigns[:current_workspace_uri])
+     )}
   end
 
   # SPEC #366 (Allen 2026-05-26) — `template_class` is now a required
@@ -1134,6 +1146,11 @@ defmodule EzagentPluginLiveview.AdminLive do
   end
 
   # V1 UI SPEC §2C.3 — MemberPanel's Invite modal open/close.
+  # 2026-06-16 — 右侧栏(成员/编排器健康)整体折叠开关。server state → 重渲染不复位。
+  def handle_event("toggle_right_sidebar", _params, socket) do
+    {:noreply, assign(socket, :right_sidebar_collapsed, !socket.assigns.right_sidebar_collapsed)}
+  end
+
   def handle_event("open_invite_modal", _params, socket) do
     {:noreply, assign(socket, :invite_open, true)}
   end
@@ -1912,6 +1929,8 @@ defmodule EzagentPluginLiveview.AdminLive do
           current_entity_uri={@caller_uri_str}
           current_path="/sessions"
           status={@status}
+          collapsible_right={true}
+          right_collapsed={@right_sidebar_collapsed}
         >
           <:main_window>
             <SessionEditor.session_editor
@@ -3156,59 +3175,88 @@ defmodule EzagentPluginLiveview.AdminLive do
         # lifecycle remediation.)
         session_workspace_uri = Ezagent.Capability.workspace_of(uri)
 
-        # 这步在 mount 里会跑在**首屏 dead-render(HTTP GET)**上(在 `connected?` 判断
-        # 之前)。create_session 是同步 `:call`;万一仍超时(冷启动 spawn 团队 >deadline),
-        # `GenServer.call` 会 **exit** 而不是返回 `{:error,_}` —— 不 catch 就是
-        # `unhandled exit at GET /sessions`(500)。这里把 exit 接住,降级成「创建中,稍后
-        # 刷新」的提示,让首屏正常渲染(服务端那次 create 多半还在继续、会建成,刷新即见)。
-        outcome =
-          try do
-            Ezagent.Workspace.create_session(
-              session_workspace_uri,
-              %{short_name: "main", template_name: "default"},
-              %{
-                caller: creator,
-                caps: Map.get(socket.assigns, :caller_caps, MapSet.new())
-              }
-            )
-          catch
-            :exit, reason -> {:error, {:create_session_exit, reason}}
-          end
+        # 2026-06-17 — 不再在 mount 里**同步**冷启动 session。原来 create_session 是同步
+        # `:call`,冷启动 spawn 团队很慢 → **阻塞 mount / 首屏 dead-render**,切工作区时就「卡住」,
+        # 刷新(此时已建好)才好。改成:
+        #   • dead render(HTTP GET):**不** spawn → 首屏立刻渲染(空 session,不阻塞)。
+        #   • connected mount:后台 **Task** spawn(LiveView 进程不阻塞、照常可交互),建好经
+        #     handle_info 自动刷新列表 + 重选该 session。
+        if connected?(socket) do
+          caps = Map.get(socket.assigns, :caller_caps, MapSet.new())
+          parent = self()
 
-        case outcome do
-          {:ok, result} ->
-            meta = session_create_meta(result)
-            log_orchestrator_status_on_rehydrate(uri, meta)
-            {uri, assign_rehydrate_flash(socket, meta)}
+          Task.start(fn ->
+            result =
+              try do
+                Ezagent.Workspace.create_session(
+                  session_workspace_uri,
+                  %{short_name: "main", template_name: "default"},
+                  %{caller: creator, caps: caps}
+                )
+              catch
+                :exit, reason -> {:error, {:create_session_exit, reason}}
+              end
 
-          {:error, {:create_session_exit, reason}} ->
-            require Logger
+            send(parent, {:main_session_started, uri, result})
+          end)
 
-            Logger.warning(
-              "AdminLive.ensure_main_session create_session exited (cold start too slow?): #{inspect(reason)}"
-            )
-
-            {uri,
-             assign(
-               socket,
-               :flash_error,
-               gettext("Session is still starting up (cold start). Please refresh in a moment.")
-             )}
-
-          {:error, reason} ->
-            require Logger
-            Logger.warning("AdminLive.ensure_main_session failed: #{inspect(reason)}")
-
-            {uri,
-             assign(
-               socket,
-               :flash_error,
-               gettext("Main session rehydrate failed: %{reason}",
-                 reason: inspect(reason)
-               )
-             )}
+          {uri,
+           assign(
+             socket,
+             :flash_error,
+             gettext("Session is starting up… (it'll appear automatically when ready)")
+           )}
+        else
+          {uri, socket}
         end
     end
+  end
+
+  # 后台冷启动结果回来:清掉「启动中」提示,刷新 session 列表,若还停在这个 session 就重选它
+  # (此时它已活了 → 重载消息/成员/state)。
+  def handle_info({:main_session_started, %URI{} = uri, result}, socket) do
+    socket =
+      case result do
+        {:ok, res} ->
+          meta = session_create_meta(res)
+          log_orchestrator_status_on_rehydrate(uri, meta)
+
+          socket
+          |> assign(:flash_error, nil)
+          |> assign_rehydrate_flash(meta)
+          |> assign(
+            :sessions,
+            list_visible_sessions_for(socket.assigns[:current_workspace_uri])
+          )
+          |> then(fn s ->
+            if s.assigns[:current_session_uri] == uri, do: select_session(s, uri), else: s
+          end)
+
+        {:error, {:create_session_exit, reason}} ->
+          require Logger
+
+          Logger.warning(
+            "AdminLive cold-start main session exited (still slow?): #{inspect(reason)}"
+          )
+
+          assign(
+            socket,
+            :flash_error,
+            gettext("Session is still starting (cold start). Please refresh in a moment.")
+          )
+
+        {:error, reason} ->
+          require Logger
+          Logger.warning("AdminLive cold-start main session failed: #{inspect(reason)}")
+
+          assign(
+            socket,
+            :flash_error,
+            gettext("Main session start failed: %{reason}", reason: inspect(reason))
+          )
+      end
+
+    {:noreply, socket}
   end
 
   # codex PR #408 review MED-1 — translate the orchestrator-status meta
