@@ -81,7 +81,7 @@ defmodule EzagentPluginLoom.LLM do
           input_tokens: usage["input_tokens"] || 0,
           output_tokens: usage["output_tokens"] || 0
         },
-        %{model: decoded["model"], role: opts[:role]}
+        %{model: decoded["model"], role: opts[:role], session: opts[:session_uri]}
       )
     end
 
