@@ -240,13 +240,15 @@ defmodule EzagentWeb.SessionController do
   defp canonicalize_signup(account) do
     canonical = SessionPrincipal.canonicalize(account)
 
+    # main canonical entity URI is workspace-first `entity://<ws>/user/<name>`
+    # (host is the workspace; "user" is the type = path segment 1).
     case Ezagent.URI.new!(canonical) do
-      %URI{scheme: "entity", host: "user"} -> {:ok, canonical}
-      _ -> {:error, "只能注册用户身份(entity://user/<工作区>/<名字>)"}
+      %URI{scheme: "entity", path: "/user/" <> _} -> {:ok, canonical}
+      _ -> {:error, "只能注册用户身份(entity://<工作区>/user/<名字>)"}
     end
   rescue
     ArgumentError ->
-      {:error, "身份 URI 不合法,格式应为 entity://user/<工作区>/<名字>"}
+      {:error, "身份 URI 不合法,格式应为 entity://<工作区>/user/<名字>"}
   end
 
   defp loom_user_exists?(uri) do

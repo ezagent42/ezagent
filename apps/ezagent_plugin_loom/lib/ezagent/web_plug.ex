@@ -844,11 +844,12 @@ defmodule EzagentPluginLoom.WebPlug do
   defp salesperson_meta_of(%{"salesperson_reply" => m}) when is_map(m), do: m
   defp salesperson_meta_of(_), do: nil
 
-  # main canonical entity URI is workspace-first `entity://<ws>/<type>/<name>`,
-  # so the role/type is path segment 2 (not the host as in stitch's type-first form).
+  # main canonical entity URI is workspace-first `entity://<ws>/<type>/<name>` —
+  # host is the workspace, so the role/type is path segment 1 (the FIRST path
+  # segment), e.g. entity://system/user/admin → "user".
   defp role_of(%URI{path: "/" <> rest}) do
     case String.split(rest, "/") do
-      [_ws, type | _] when type in ["user", "agent", "worker"] -> type
+      [type | _] when type in ["user", "agent", "worker"] -> type
       _ -> "unknown"
     end
   end

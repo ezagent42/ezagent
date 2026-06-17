@@ -158,7 +158,8 @@ defmodule Ezagent.PluginLoom.RoleConfig do
   defp user_entity?(uri) when is_binary(uri) do
     case Ezagent.URI.parse(uri) do
       {:ok, %URI{scheme: "entity", path: "/" <> rest}} ->
-        match?([_ws, "user" | _], String.split(rest, "/"))
+        # workspace-first: host is the ws, so "user" is path segment 1.
+        match?(["user" | _], String.split(rest, "/"))
 
       _ ->
         false
