@@ -39,4 +39,14 @@ defmodule EzagentPluginLoom.Integration.SessionViewsTest do
     refute :loom in non_loom_ids
     refute :loom_dashboard in non_loom_ids
   end
+
+  test "发布消费会话(ConsumerSession 标记)不显示编辑器 tab" do
+    pub = Ezagent.URI.session("demo", :loom, "pub_abc123")
+    refute EzagentPluginLoom.ConsumerSession.consumer?("demo", "pub_abc123")
+    assert LoomSessionView.applies_to?(pub)
+
+    :ok = EzagentPluginLoom.ConsumerSession.mark("demo", "pub_abc123")
+    refute LoomSessionView.applies_to?(pub)
+    refute LoomDashboardView.applies_to?(pub)
+  end
 end

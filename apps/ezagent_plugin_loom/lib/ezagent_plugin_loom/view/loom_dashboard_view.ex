@@ -24,9 +24,9 @@ defmodule EzagentPluginLoom.View.LoomDashboardView do
   def icon, do: "dashboard"
 
   @impl true
-  def applies_to?(%URI{scheme: "session", path: "/loom/" <> name})
-      when is_binary(name) and name != "",
-      do: true
+  def applies_to?(%URI{scheme: "session", host: ws, path: "/loom/" <> name})
+      when is_binary(ws) and is_binary(name) and name != "",
+      do: not EzagentPluginLoom.ConsumerSession.consumer?(ws, name)
 
   def applies_to?(_), do: false
 

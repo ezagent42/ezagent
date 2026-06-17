@@ -27,11 +27,11 @@ defmodule EzagentPluginLoom.View.LoomSessionView do
   @impl true
   def icon, do: "puzzle"
 
-  # 仅创作型 loom session 显示(`session://<ws>/loom/<name>`)。
+  # 仅**创作型** loom session 显示(`session://<ws>/loom/<name>`);发布消费会话(pub_<hex>)不显示。
   @impl true
-  def applies_to?(%URI{scheme: "session", path: "/loom/" <> name})
-      when is_binary(name) and name != "",
-      do: true
+  def applies_to?(%URI{scheme: "session", host: ws, path: "/loom/" <> name})
+      when is_binary(ws) and is_binary(name) and name != "",
+      do: not EzagentPluginLoom.ConsumerSession.consumer?(ws, name)
 
   def applies_to?(_), do: false
 

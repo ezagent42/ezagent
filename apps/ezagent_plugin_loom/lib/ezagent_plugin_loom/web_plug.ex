@@ -41,7 +41,8 @@ defmodule EzagentPluginLoom.WebPlug do
     SavedTemplates,
     Snapshots,
     PageStore,
-    MaterialFiles
+    MaterialFiles,
+    ConsumerSession
   }
 
   @gateway_uri "system://loom-customer-gateway"
@@ -918,6 +919,8 @@ defmodule EzagentPluginLoom.WebPlug do
              workspace_uri
            ) do
       _ = seed_page_update(session_uri, ws, sid, files)
+      # 标记为发布消费会话 → admin 不显示编辑器(Loom/Dashboard)tab。
+      _ = ConsumerSession.mark(ws, sid)
       %{ok: true, ws: ws, sid: sid}
     else
       :error -> %{ok: false, error: "unknown token"}
