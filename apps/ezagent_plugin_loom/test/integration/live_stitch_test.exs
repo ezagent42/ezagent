@@ -59,4 +59,31 @@ defmodule EzagentPluginLoom.Integration.LiveStitchTest do
     assert %{"ok" => true, "reply" => reply} = Jason.decode!(conn.resp_body)
     assert is_binary(reply) and reply != ""
   end
+
+  test "POST aispot rejects a bad token", ctx do
+    conn =
+      conn(:post, "/c/#{ctx.ws}/#{ctx.sid}/aispot", Jason.encode!(%{topic: "手冲咖啡", token: "bogus"}))
+      |> put_req_header("content-type", "application/json")
+      |> WebPlug.call(@opts)
+
+    assert conn.status == 401
+  end
+
+  @tag :live
+  test "AiSpot generates a card with title + body" do
+    assert {:ok, %{title: title, body: body}} = Stitch.aispot("手冲咖啡的风味特点")
+    assert is_binary(title) and title != ""
+    assert is_binary(body) and body != ""
+  end
+
+  @tag :live
+  test "POST aispot returns a card end-to-end", ctx do
+    conn =
+      conn(:post, "/c/#{ctx.ws}/#{ctx.sid}/aispot", Jason.encode!(%{topic: "意式浓缩", token: ctx.token}))
+      |> put_req_header("content-type", "application/json")
+      |> WebPlug.call(@opts)
+
+    assert conn.status == 200
+    assert %{"ok" => true, "card" => %{"title" => _, "body" => _}} = Jason.decode!(conn.resp_body)
+  end
 end

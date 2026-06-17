@@ -43,4 +43,25 @@ defmodule EzagentPluginLoom.Stitch do
       _ -> nil
     end
   end
+
+  @aispot_system """
+  你是 loom 的 AiSpot ✨ 卡片生成器。针对给定话题产出一张简短中文信息卡片:
+  一个标题 + 2-3 句要点,紧扣话题,可用 [[术语]] 标注关键词。
+  严格只输出 JSON,不要 markdown: {"title": "卡片标题", "body": "2-3 句中文要点"}
+  """
+
+  @doc """
+  AiSpot ✨ 卡片(单次 LLM,无 fan-out)。`topic` 为话题/选中文本。
+  返回 `{:ok, %{title, body}}` | `{:error, reason}`。
+  """
+  @spec aispot(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  def aispot(topic, opts \\ []) when is_binary(topic) do
+    with {:ok, text} <- LLM.chat([%{role: "user", content: topic}], Keyword.put(opts, :system, @aispot_system)),
+         {:ok, %{"title" => title, "body" => body}} when is_binary(title) and is_binary(body) <-
+           Json.extract_object(text) do
+      {:ok, %{title: title, body: body}}
+    else
+      _ -> {:error, :aispot_failed}
+    end
+  end
 end

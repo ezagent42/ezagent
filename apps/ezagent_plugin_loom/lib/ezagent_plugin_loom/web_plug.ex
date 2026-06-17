@@ -140,6 +140,21 @@ defmodule EzagentPluginLoom.WebPlug do
     end
   end
 
+  # AiSpot ✨ 卡片。body {topic, token}
+  post "/c/:ws/:sid/aispot" do
+    with {:ok, session_uri, ws_uri} <- uris(ws, sid),
+         token when is_binary(token) <- token(conn),
+         :ok <- CustomerAuth.authorize(token, session_uri, ws_uri),
+         topic when is_binary(topic) and topic != "" <- conn.body_params["topic"],
+         {:ok, card} <- Stitch.aispot(topic) do
+      json(conn, 200, %{ok: true, card: card})
+    else
+      {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})
+      {:error, _} -> json(conn, 502, %{ok: false, error: "aispot_failed"})
+      _ -> json(conn, 400, %{ok: false, error: "bad_request"})
+    end
+  end
+
   # 意图推荐(session-less，独有功能)。body {intent, catalog: [%{id,name,desc}]}
   post "/intent" do
     intent = conn.body_params["intent"]
