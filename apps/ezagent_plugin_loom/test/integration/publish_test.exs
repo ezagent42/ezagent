@@ -30,13 +30,16 @@ defmodule EzagentPluginLoom.Integration.PublishTest do
     %{ws: ws, sid: sid, session_uri: session_uri}
   end
 
-  test "无 page_update 页时发布 → no_page_yet(非崩溃,合法 JSON)", ctx do
-    resp =
-      conn(:post, "/api/#{ctx.ws}/#{ctx.sid}/publish", "{}")
-      |> put_req_header("content-type", "application/json")
-      |> WebPlug.call(@opts)
+  test "fresh session 的 seed starter 页即可发布(publish ok)", ctx do
+    # instantiate 会 seed 一张 starter page_update span → 立即可发布(不再 no_page_yet)。
+    assert eventually(fn ->
+             resp =
+               conn(:post, "/api/#{ctx.ws}/#{ctx.sid}/publish", "{}")
+               |> put_req_header("content-type", "application/json")
+               |> WebPlug.call(@opts)
 
-    assert %{"ok" => false, "error" => "no_page_yet"} = Jason.decode!(resp.resp_body)
+             match?(%{"ok" => true}, Jason.decode!(resp.resp_body))
+           end)
   end
 
   test "有页 → publish 出 token+link → /snapshot 只读 → /p/:token/open 建新 session", ctx do

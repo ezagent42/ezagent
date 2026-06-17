@@ -78,56 +78,44 @@ defmodule EzagentPluginLoom.OrchestratorServer do
   end
 
   @doc """
-  Seed 一张静态初始页(无 LLM)→ 经 Turn(open/compose/settle, mode:auto 即 customer 可见),
-  让打开 loom 时不再是空的"(operator 批准后显示)"。best-effort。
+  Seed 一张初始页(无 LLM)—— 作 **page_update span**(starter JSX)发进 session,让真实
+  loom 前端(loom_ui)打开即有 starter 页 + 立即可发布(publish 读 page_update span)。
+  `files` 给定则 seed 它(saved_template / fork 复用),否则 starter。best-effort。
   """
   @spec seed_page(URI.t(), map() | nil) :: :ok
-  def seed_page(session_uri, tree \\ nil)
+  def seed_page(session_uri, files \\ nil)
 
-  def seed_page(%URI{} = session_uri, tree) do
-    caller = Ezagent.URI.new!(@caller_uri)
-    page_tree = if is_map(tree), do: tree, else: starter_tree()
+  def seed_page(%URI{} = session_uri, files) do
+    page_files = if is_map(files) and map_size(files) > 0, do: files, else: starter_files()
 
-    refs = [
-      %{kind: :chat, text: "页面已就绪 ✨ 在右侧聊天框告诉我你想做什么样的页面,我来帮你生成。"},
-      %{kind: :page, tree: page_tree}
-    ]
+    page = %{
+      "files" => page_files,
+      "source" => Map.get(page_files, "/App.jsx", ""),
+      "summary" => "初始页"
+    }
 
-    with {:ok, %{turn_id: turn_id}} <-
-           dispatch(session_uri, "turn.open", caller, %{
-             trigger: %{message_id: "seed-#{System.unique_integer([:positive])}"},
-             opened_at: System.system_time(:millisecond)
-           }),
-         {:ok, _} <-
-           dispatch(session_uri, "turn.compose", caller, %{turn_id: turn_id, result_refs: refs}),
-         {:ok, _} <- dispatch(session_uri, "turn.settle", caller, %{turn_id: turn_id}) do
-      :ok
-    else
-      _ -> :ok
-    end
+    emit_v0(session_uri, ~s(<span type="page_update">#{Jason.encode!(page)}</span>))
   rescue
     _ -> :ok
   catch
     :exit, _ -> :ok
   end
 
-  defp starter_tree do
+  # starter 页 = 一个合法 React App(Sandpack 直接渲染),提示用户在聊天框描述需求。
+  defp starter_files do
     %{
-      "type" => "page",
-      "props" => %{},
-      "children" => [
-        %{
-          "type" => "services",
-          "props" => %{"title" => "欢迎使用 Loom"},
-          "children" => [
-            %{
-              "type" => "detail",
-              "props" => %{"text" => "在右侧聊天框描述你想要的页面(产品、活动、落地页…),我会帮你生成并实时呈现。"},
-              "children" => []
-            }
-          ]
-        }
-      ]
+      "/App.jsx" => """
+      export default function App() {
+        return (
+          <div className="min-h-screen flex items-center justify-center bg-gray-50">
+            <div className="text-center p-8">
+              <h1 className="text-3xl font-bold text-gray-900">欢迎使用 Loom</h1>
+              <p className="mt-3 text-gray-500">在左侧聊天框描述你想要的页面,我来帮你生成并实时预览。</p>
+            </div>
+          </div>
+        );
+      }
+      """
     }
   end
 
@@ -164,10 +152,10 @@ defmodule EzagentPluginLoom.OrchestratorServer do
   end
 
   # 读当前页 files(最近一条含 page_update span 的消息)→ 供 v0 增量改。无 → nil。
+  # 最近一条 page_update 的 files(newest-first,不 reverse → 取最新)。
   defp read_current_files(session_uri) do
     session_uri
     |> Ezagent.MessageStore.recent_in_session(50)
-    |> Enum.reverse()
     |> Enum.find_value(nil, fn m ->
       with text when is_binary(text) <- text_of(m),
            [_, json] <- Regex.run(~r/<span type="page_update">([\s\S]*?)<\/span>/, text),

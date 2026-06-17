@@ -5,8 +5,6 @@ defmodule EzagentPluginLoom.Integration.TeamTest do
   """
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Socialware.CustomerAuth
-  alias Ezagent.Socialware.CustomerFeed
   alias Ezagent.Entity.User
   alias EzagentPluginLoom.Template.LoomSession
 
@@ -45,15 +43,15 @@ defmodule EzagentPluginLoom.Integration.TeamTest do
     assert Enum.any?(names, &String.contains?(&1, "/user/"))
   end
 
-  test "seed 初始页让 customer feed 打开即有页面(非空)", ctx do
-    token = CustomerAuth.issue_token(ctx.session_uri, ctx.ws_uri)
-
-    # seed turn 的 settle 是异步 cast,等 approved 页面落定。
+  test "seed 初始页 = page_update span(真实前端 Sandpack 打开即有 starter 页)", ctx do
+    # seed 作 page_update span 消息发进 session;前端从 history/stream 读它 → Sandpack。
     assert eventually(fn ->
-             case CustomerFeed.snapshot(ctx.session_uri, token) do
-               {:ok, %{page: page}} -> not is_nil(page)
-               _ -> false
-             end
+             ctx.session_uri
+             |> Ezagent.MessageStore.recent_in_session(50)
+             |> Enum.any?(fn m ->
+               text = (m.body || %{})["text"] || (m.body || %{})[:text] || ""
+               is_binary(text) and String.contains?(text, ~s(<span type="page_update">))
+             end)
            end)
   end
 

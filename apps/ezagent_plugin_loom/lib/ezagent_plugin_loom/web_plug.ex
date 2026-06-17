@@ -262,19 +262,19 @@ defmodule EzagentPluginLoom.WebPlug do
     end
   end
 
-  # 存当前 approved 页为可复用模板(operator 在 admin 点 "Save as Template")。body {name, token}
+  # 存当前页(page_update span 的 files)为可复用模板(admin "Save as Template")。body {name, token}
   post "/c/:ws/:sid/save-template" do
     with {:ok, session_uri, ws_uri} <- uris(ws, sid),
          token when is_binary(token) <- token(conn),
          :ok <- CustomerAuth.authorize(token, session_uri, ws_uri),
          name when is_binary(name) and name != "" <- conn.body_params["name"],
-         tree when is_map(tree) <- approved_page_tree(session_uri) do
-      :ok = SavedTemplates.save(ws, name, tree)
+         page when is_map(page) and map_size(page) > 0 <- current_page(session_uri),
+         files when is_map(files) and map_size(files) > 0 <- Map.get(page, "files", page) do
+      :ok = SavedTemplates.save(ws, name, files)
       json(conn, 200, %{ok: true, name: name})
     else
       {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})
-      nil -> json(conn, 400, %{ok: false, error: "no_approved_page"})
-      _ -> json(conn, 400, %{ok: false, error: "bad_request"})
+      _ -> json(conn, 400, %{ok: false, error: "no_page_yet"})
     end
   end
 
@@ -578,11 +578,11 @@ defmodule EzagentPluginLoom.WebPlug do
     e -> %{ok: false, error: inspect(e)}
   end
 
-  # 当前页 = 最近一条 page_update span 的 map(%{"files","source","summary"});无 → %{}。
+  # 当前页 = **最近**一条 page_update span 的 map(%{"files","source","summary"});无 → %{}。
+  # recent_in_session 已是 newest-first,直接 find_value 取最新(不 reverse,否则取到最旧的 seed)。
   defp current_page(session_uri) do
     session_uri
     |> Ezagent.MessageStore.recent_in_session(50)
-    |> Enum.reverse()
     |> Enum.find_value(%{}, fn m ->
       with text when is_binary(text) <- loom_body_text(m.body),
            [_, json] <- Regex.run(~r/<span type="page_update">([\s\S]*?)<\/span>/, text),
@@ -646,21 +646,6 @@ defmodule EzagentPluginLoom.WebPlug do
     {:ok, Ezagent.URI.session(ws, :loom, sid), Ezagent.URI.workspace(ws)}
   rescue
     _ -> :error
-  end
-
-  # 读 session 当前 approved surface 页 tree(无 → nil)。
-  defp approved_page_tree(session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :surface) do
-      {:ok, %{approved: v, versions: versions}} when not is_nil(v) ->
-        case versions[v] do
-          %{tree: tree} -> tree
-          %{"tree" => tree} -> tree
-          _ -> nil
-        end
-
-      _ ->
-        nil
-    end
   end
 
   defp token(conn) do

@@ -28,13 +28,8 @@ defmodule EzagentPluginLoom.Integration.SavedTemplatesTest do
         workspace_uri
       )
 
-    # seed 初始页是异步 settle,等 approved 落定再存。
-    assert eventually(fn ->
-             match?(
-               {:ok, %{approved: a}} when not is_nil(a),
-               Ezagent.Kind.get_slice(session_uri, :surface)
-             )
-           end)
+    # seed = page_update span 消息,等它落进 session。
+    assert eventually(fn -> page_files(session_uri) != nil end)
 
     %{ws: ws, sid: sid, session_uri: session_uri, wsuri: workspace_uri}
   end
@@ -53,11 +48,11 @@ defmodule EzagentPluginLoom.Integration.SavedTemplatesTest do
 
     assert %{"ok" => true, "name" => "我的模板"} = Jason.decode!(resp.resp_body)
 
-    # 落进 SavedTemplates(workspace 级)。
-    assert [%{name: "我的模板", tree: saved_tree}] = SavedTemplates.list(ctx.ws)
-    assert is_map(saved_tree)
+    # 落进 SavedTemplates(workspace 级,存的是 page_update 的 files map)。
+    assert [%{name: "我的模板", tree: saved_files}] = SavedTemplates.list(ctx.ws)
+    assert is_map(saved_files) and Map.has_key?(saved_files, "/App.jsx")
 
-    # 新 session 用 saved_template 复用 → approved 页 == 存的页。
+    # 新 session 用 saved_template 复用 → seed 的 page_update files == 存的 files。
     new_sid = "reuse-#{System.unique_integer([:positive])}"
     new_uri = Ezagent.URI.session(ctx.ws, :loom, new_sid)
 
@@ -73,15 +68,7 @@ defmodule EzagentPluginLoom.Integration.SavedTemplatesTest do
         ctx.wsuri
       )
 
-    assert eventually(fn ->
-             case Ezagent.Kind.get_slice(new_uri, :surface) do
-               {:ok, %{approved: a, versions: v}} when not is_nil(a) ->
-                 match?(%{tree: ^saved_tree}, v[a])
-
-               _ ->
-                 false
-             end
-           end)
+    assert eventually(fn -> page_files(new_uri) == saved_files end)
   end
 
   test "save-template 拒绝坏 token", ctx do
@@ -95,6 +82,22 @@ defmodule EzagentPluginLoom.Integration.SavedTemplatesTest do
       |> WebPlug.call(@opts)
 
     assert resp.status == 401
+  end
+
+  # 最近一条 page_update span 的 files(无 → nil)。
+  defp page_files(session_uri) do
+    session_uri
+    |> Ezagent.MessageStore.recent_in_session(50)
+    |> Enum.find_value(nil, fn m ->
+      text = (m.body || %{})["text"] || (m.body || %{})[:text] || ""
+
+      with [_, json] <- Regex.run(~r/<span type="page_update">([\s\S]*?)<\/span>/, text),
+           {:ok, %{"files" => files}} <- Jason.decode(json) do
+        files
+      else
+        _ -> nil
+      end
+    end)
   end
 
   defp eventually(fun, n \\ 150)
