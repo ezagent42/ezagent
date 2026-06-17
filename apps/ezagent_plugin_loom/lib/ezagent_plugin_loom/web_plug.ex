@@ -34,7 +34,7 @@ defmodule EzagentPluginLoom.WebPlug do
     UserSchema
   }
 
-  alias EzagentPluginLoom.{MetaAgent, WorkerConfig, Dashboard, SavedTemplates}
+  alias EzagentPluginLoom.{MetaAgent, WorkerConfig, Dashboard, SavedTemplates, Snapshots}
 
   @gateway_uri "system://loom-customer-gateway"
 
@@ -401,6 +401,53 @@ defmodule EzagentPluginLoom.WebPlug do
     json(conn, 200, %{ok: true, role: "operator"})
   end
 
+  # ── 发布 / 分享(迁移自 loom-stitch;editor 端无 token)──────────────────────
+  # 把当前页冻结成不可变快照 → token + 分享链接 /loom/p/<token>。publish 与 snapshot
+  # 在迁移版同义(都冻结当前 page_update 页);打开分享链接走 GET /snapshot/:token(只读)
+  # 或 POST /p/:token/open|fork(从快照 mint 新 session)。
+
+  post "/api/:ws/:sid/publish" do
+    json(conn, 200, loom_freeze(ws, sid))
+  end
+
+  post "/api/:ws/:sid/snapshot" do
+    json(conn, 200, loom_freeze(ws, sid))
+  end
+
+  get "/api/:ws/published" do
+    json(conn, 200, %{ok: true, items: Snapshots.list_for_ws(ws)})
+  end
+
+  get "/api/:ws/:sid/published" do
+    items = Snapshots.list_for_ws(ws) |> Enum.filter(&(&1.published_from == sid))
+    json(conn, 200, %{ok: true, items: items})
+  end
+
+  get "/snapshot/:token" do
+    case Snapshots.get(token) do
+      {:ok, snap} ->
+        json(conn, 200, %{
+          ok: true,
+          page: Map.get(snap, "page", %{}),
+          ops: Map.get(snap, "ops", []),
+          conversation: Map.get(snap, "conversation", []),
+          ws: Map.get(snap, "ws"),
+          origin_sid: Map.get(snap, "origin_sid")
+        })
+
+      :error ->
+        json(conn, 200, %{ok: false, error: "unknown token"})
+    end
+  end
+
+  post "/p/:token/open" do
+    json(conn, 200, loom_open_published(token))
+  end
+
+  post "/p/:token/fork" do
+    json(conn, 200, loom_open_published(token))
+  end
+
   # SPA 兜底:任何其它 GET → index.html(前端按 /loom/<ws>/<sid> 读路由)。
   get "/*_path" do
     send_index(conn)
@@ -504,6 +551,96 @@ defmodule EzagentPluginLoom.WebPlug do
   defp loom_body_text(%{text: t}) when is_binary(t), do: t
   defp loom_body_text(%{"text" => t}) when is_binary(t), do: t
   defp loom_body_text(_), do: ""
+
+  # 冻结当前页 → 快照 token + 分享链接(publish/snapshot 共用)。
+  defp loom_freeze(ws, sid) do
+    session_uri = Ezagent.URI.session(ws, :loom, sid)
+    page = current_page(session_uri)
+
+    if map_size(page) == 0 do
+      %{ok: false, error: "no_page_yet"}
+    else
+      token = Snapshots.mint_token()
+
+      Snapshots.put(token, %{
+        "ws" => ws,
+        "origin_sid" => sid,
+        "page" => page,
+        "ops" => [],
+        "conversation" => [],
+        "knowledge" => Knowledge.get(session_uri) || "",
+        "created_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+      })
+
+      %{ok: true, token: token, link: "/loom/p/#{token}", url: "/loom/p/#{token}"}
+    end
+  rescue
+    e -> %{ok: false, error: inspect(e)}
+  end
+
+  # 当前页 = 最近一条 page_update span 的 map(%{"files","source","summary"});无 → %{}。
+  defp current_page(session_uri) do
+    session_uri
+    |> Ezagent.MessageStore.recent_in_session(50)
+    |> Enum.reverse()
+    |> Enum.find_value(%{}, fn m ->
+      with text when is_binary(text) <- loom_body_text(m.body),
+           [_, json] <- Regex.run(~r/<span type="page_update">([\s\S]*?)<\/span>/, text),
+           {:ok, %{} = page} <- Jason.decode(json) do
+        page
+      else
+        _ -> nil
+      end
+    end)
+  rescue
+    _ -> %{}
+  end
+
+  # 从快照 mint 一个新 loom session(no_seed)+ 发 page_update span(冻结页)→ {ok, ws, sid}。
+  defp loom_open_published(token) do
+    with {:ok, snap} <- Snapshots.get(token),
+         ws when is_binary(ws) <- Map.get(snap, "ws"),
+         page when is_map(page) <- Map.get(snap, "page", %{}),
+         sid = "pub_" <> Snapshots.mint_token(),
+         workspace_uri = Ezagent.URI.workspace(ws),
+         {:ok, [session_uri | _], _} <-
+           EzagentPluginLoom.Template.LoomSession.instantiate(
+             "loom-published",
+             %{
+               "class" => "session.loom",
+               "session_name" => sid,
+               "operator_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+               "no_seed" => true
+             },
+             workspace_uri
+           ) do
+      _ = seed_page_update(session_uri, ws, sid, page)
+      %{ok: true, ws: ws, sid: sid}
+    else
+      :error -> %{ok: false, error: "unknown token"}
+      error -> %{ok: false, error: inspect(error)}
+    end
+  end
+
+  # 把冻结页作 page_update span 发进新 session(loomv0 agent 身份)→ 前端 Sandpack 渲染。
+  defp seed_page_update(session_uri, ws, sid, page) do
+    sender = Ezagent.URI.agent(ws, "loomv0_#{sid}")
+    span = ~s(<span type="page_update">#{Jason.encode!(page)}</span>)
+    msg = Message.new(sender, %{text: span})
+
+    Invocation.dispatch(%Invocation{
+      target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
+      mode: :cast,
+      args: %{message: msg},
+      ctx: %{
+        caller: sender,
+        caps: SystemPrincipal.caps("system://bootstrap"),
+        reply: :ignore
+      }
+    })
+  rescue
+    _ -> :ok
+  end
 
   defp uris(ws, sid) do
     {:ok, Ezagent.URI.session(ws, :loom, sid), Ezagent.URI.workspace(ws)}
