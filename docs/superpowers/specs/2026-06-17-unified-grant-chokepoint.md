@@ -173,11 +173,20 @@ authorized/2` runs BEFORE `check_grant_authorized/2`, so with `ctx.caps = []` an
 by the wildcard gate before the rule branch is reached. `rule_cap_bounded?` above is
 therefore written to **match the wildcard gate's existing logic exactly** — it never permits
 the unreachable shape (`action: :any` requires a scope-bounded instance, identical to
-`check_action_wildcard_grant_authorized`'s `scope_bounded_instance?` branch). cap#2
-(`agent/:any-action/{:spawned_by}`) is scope-bounded so it passes both gates; a concrete-
-`%URI{}` instance is allowed only with a concrete action. No change to
+`check_action_wildcard_grant_authorized`'s `scope_bounded_instance?` branch). A
+scope-bounded cap (e.g. `Session/:any-action/{:within_session, _}`) passes both gates; a
+concrete-`%URI{}` instance is allowed only with a concrete action. No change to
 `check_action_wildcard_grant_authorized` is needed; the two predicates are consistent by
 construction. The rule name is recorded for audit.
+
+**NOTE (rev 4 — code wins, security-review FINDING 1):** orchestrator cap#1/#2
+(`agent/_/{:spawned_by}`) are `behavior: :any`, so `rule_cap_bounded?` REJECTS them
+(behavior `:any` is not concrete) — they are rule-INELIGIBLE and the implementation
+routes them via `{:system, bootstrap, owner}` (genesis authority — same shape as the
+owner→orchestrator Manage grant), NOT `{:rule,…}`. Only concrete-`behavior` template caps
+(`Template/{:within_workspace}`, orchestrator `:restart`, member create-session) take the
+`{:rule,…}` tag. An earlier draft wrongly listed cap#2 under `{:rule}`; do not "fix" the
+code back to it.
 
 ### 3.4 The grep invariant gate (addresses BLOCKER-3, NIT on teeth)
 
@@ -232,13 +241,16 @@ authorization semantics unchanged (the `{:system, …}` tag keeps the principal 
   identical while forcing an entity `granted_by`. Grep gate green at allowlist=1.
   `no_unowned` **unchanged** (no principal removed yet). Acceptance: gate green; every grant
   site routes through the chokepoint; every `:cap_granted` emit has an **entity** granted_by.
-- **PR-2** convert the `template-materialize` family (sites #4, #6-#9, and #2/#10 if
-  system-authorized) from `{:system, template-materialize, _}` to `{:rule,
-  :orchestrator_template/:template_materialize, owner}` (rule branch, concrete-scoped) or
-  `{:held_by, owner}` where the owner genuinely holds the authority (manager-delegation,
-  #811). Then remove `template-materialize` from the Catalog → shrink `no_unowned` allowlist.
-  cap#2 (`agent/:any/{:spawned_by}`) is scope-bounded `{:spawned_by}` so it passes
-  `rule_cap_bounded?`; granter = owner.
+- **PR-2 (as implemented, rev 4)** demote `template-materialize` from a grant MINTER:
+  drop its `grant_cap`/`revoke_cap` (and grant-path `Workspace:any`) caps — it stays in the
+  Catalog as a NON-minter for its legitimate `template.read`/write dispatch authority, so it
+  falls out of the `no_unowned` minter set. Each grant/revoke site picks its tag by cap shape:
+  concrete-`behavior` caps (`Template/{:within_workspace}`, orchestrator `:restart`, member
+  create-session — sites #4/#8/#9/#11/#13) → `{:rule, :template_materialize/:workspace_membership,
+  owner|admin}`; `behavior: :any` orchestrator cap#1/#2 + the owner→orchestrator Manage (sites
+  #6/#7) → `{:system, bootstrap, owner}` (genesis — rule-ineligible). `granted_by` is the owner
+  (or admin extreme-fallback) entity in every case. Then shrink the `no_unowned` allowlist
+  (drop `template-materialize`, leaving only `feishu-binding-policy`).
 - **PR-3** convert `feishu binding_policy` (#12) → `{:rule, :feishu_binding, configurer}`.
   The configurer URI (the bind operator, `admin_uri`) is **already threaded** to the call
   site — `binding_policy.apply(user_uri, admin_uri)` carries it down to the grant

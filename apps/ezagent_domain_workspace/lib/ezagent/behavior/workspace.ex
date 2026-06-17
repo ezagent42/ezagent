@@ -793,15 +793,17 @@ defmodule Ezagent.Behavior.Workspace do
     }
   end
 
-  # Authorization tag (SPEC 2026-06-17 §3.5 site #4): the AUTHORIZER stays
-  # `system://template-materialize` (preserving today's grant authority —
-  # adding a workspace member is a template-materialization side effect),
-  # while the entity `granted_by` becomes the documented Decision #154
-  # fallback `entity://system/user/admin` (no more specific configurer
-  # entity is threaded to this Behavior handler — the workspace has no
-  # owner field; PR-2 converts this to a `{:rule, …}`/`{:held_by, …}` tag).
+  # Authorization tag (SPEC 2026-06-17 §4 PR-2, site #4). The cap is
+  # `workspace/Workspace/:create_session/<concrete workspace URI>` —
+  # concrete kind + behavior, concrete `%URI{}` instance, concrete action
+  # `:create_session` — so `IdentityAdmin.rule_cap_bounded?/1` is true →
+  # the `{:rule, …}` branch authorizes it (Decision #154).
+  # `template-materialize` is no longer the authorizer. No workspace-owner
+  # field is threaded to this Behavior handler, so the configurer (and
+  # entity `granted_by`) is the documented Decision #154 extreme-case
+  # fallback `entity://system/user/admin` — the accountable entity for the
+  # workspace-membership rule. (KNOWN OVER-GRANT note above unchanged.)
   defp member_create_session_authorization do
-    {:system, Ezagent.SystemPrincipal.uri("template-materialize"),
-     Ezagent.Entity.User.admin_uri()}
+    {:rule, :workspace_membership, Ezagent.Entity.User.admin_uri()}
   end
 end

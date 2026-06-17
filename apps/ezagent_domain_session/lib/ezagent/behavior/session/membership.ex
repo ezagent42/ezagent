@@ -203,15 +203,18 @@ defmodule Ezagent.Behavior.Session.Membership do
           granted_at: DateTime.utc_now()
         }
 
-        # Grant chokepoint (SPEC 2026-06-17 §3.5 site #10). The `:async`
+        # Grant chokepoint (SPEC 2026-06-17 §4 PR-2, site #10). The `:async`
         # reply preserves the deliberate `:cast` mode (see the comment
         # above — a synchronous grant would deadlock the Session calling
-        # back into `Session.owner`). Authorizer stays
-        # `system://template-materialize`; entity `granted_by` = owner.
+        # back into `Session.owner`). Cap is
+        # `session/OrchestratorAdmin/:restart/<session_uri>` (concrete
+        # instance + concrete action) → `rule_cap_bounded?` true → the
+        # `{:rule, …}` branch authorizes it; configurer + `granted_by` =
+        # owner. `template-materialize` is no longer the authorizer.
         case Ezagent.Identity.Grant.grant_cap_via_router(
                owner_uri,
                want,
-               {:system, Ezagent.SystemPrincipal.uri("template-materialize"), owner_uri},
+               {:rule, :template_materialize, owner_uri},
                :async
              ) do
           :ok ->

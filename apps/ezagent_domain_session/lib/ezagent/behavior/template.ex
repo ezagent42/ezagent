@@ -721,16 +721,20 @@ defmodule Ezagent.Behavior.Template do
   defp grant_agent_template_owner_cap(_, _), do: :ok
 
   # Generic owner-cap grant — routes through the grant chokepoint
-  # (SPEC 2026-06-17 §3.5 site #9). The WHO-may-fork authority was
+  # (SPEC 2026-06-17 §4 PR-2, site #9). The WHO-may-fork authority was
   # already enforced by dispatch CapBAC against the parent URI's `:fork`
   # action; this is purely the followup grant so the owner can later
-  # operate on the fork. Authorizer stays `system://template-materialize`
-  # (Template fork side-effect); the entity `granted_by` is the OWNER.
+  # operate on the fork. The cap is `<*_template>/Template/:any/
+  # {:within_workspace}` — concrete kind + behavior, scope-bounded
+  # instance — so `IdentityAdmin.rule_cap_bounded?/1` is true → the
+  # `{:rule, …}` branch authorizes it (Decision #154). The configurer of
+  # the fork-materialization rule is the OWNER (also the entity
+  # `granted_by`); `template-materialize` is no longer the authorizer.
   defp grant_cap(%URI{} = owner_uri, %Ezagent.Capability{} = cap) do
     Ezagent.Identity.Grant.grant_cap_via_router(
       owner_uri,
       cap,
-      {:system, Ezagent.SystemPrincipal.uri("template-materialize"), owner_uri},
+      {:rule, :template_materialize, owner_uri},
       :sync
     )
   end

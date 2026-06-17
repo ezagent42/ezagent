@@ -108,14 +108,17 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
       granted_at: nil
     }
 
-    # Grant chokepoint (SPEC 2026-06-17 §3.5 site #13 — the revoke inverse
-    # of the materializer grant). Authorizer stays
-    # `system://template-materialize`; entity `granted_by` = owner.
+    # Grant chokepoint (SPEC 2026-06-17 §4 PR-2, site #13 — the revoke
+    # inverse of the materializer grant, site #6). Same cap shape
+    # (`session/OrchestratorAdmin/:restart/<session_uri>`), so the SAME
+    # `{:rule, …}` tag: rule-bounded, configurer = owner. (Revoke has no
+    # `granted_by` concern but routes through the chokepoint for the grep
+    # gate + reaches dispatch via the rule branch.)
     _ =
       Ezagent.Identity.Grant.revoke_cap(
         owner_uri,
         cap,
-        {:system, Ezagent.SystemPrincipal.uri("template-materialize"), owner_uri}
+        {:rule, :template_materialize, owner_uri}
       )
 
     :ok

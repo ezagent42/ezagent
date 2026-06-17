@@ -131,13 +131,19 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
       granted_at: DateTime.utc_now()
     }
 
-    # Grant chokepoint (SPEC 2026-06-17 §3.5 site #11). Authorizer stays
-    # `system://template-materialize` (template-materialization
-    # side-effect); the entity `granted_by` is the template OWNER.
+    # Grant chokepoint (SPEC 2026-06-17 §4 PR-2, site #11). The cap is
+    # `session_template/Template/:any/{:within_workspace}` (same shape as
+    # site #8) — concrete kind + behavior, scope-bounded instance →
+    # `IdentityAdmin.rule_cap_bounded?/1` true → the `{:rule, …}` branch
+    # authorizes it (Decision #154). `template-materialize` is no longer
+    # the authorizer; configurer + entity `granted_by` = template OWNER.
+    # (SPEC §3.5 provisionally tagged this `{:held_by, owner}`; that is
+    # dead — the owner does not hold the IdentityAdmin grant cap, so step
+    # 5.5 would deny it. The rule path is the reachable conversion. Code wins.)
     case Ezagent.Identity.Grant.grant_cap(
            owner_uri,
            cap,
-           {:system, Ezagent.SystemPrincipal.uri("template-materialize"), owner_uri}
+           {:rule, :template_materialize, owner_uri}
          ) do
       :ok ->
         :ok
