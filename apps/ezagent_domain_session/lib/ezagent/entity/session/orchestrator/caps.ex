@@ -60,32 +60,18 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
         Enum.any?(current, &cap_equal_ignoring_metadata?(&1, want))
       end)
 
-    target = Ezagent.URI.with_action(orchestrator_uri, :identity, :grant_cap)
-
-    # SPEC caps-cleanup-v1 §4.4 — granting scoped caps to the
-    # orchestrator at session creation is template materialization;
-    # runs under `system://template-materialize` (closed Catalog).
-    # `owner_uri` stays as caller for provenance.
-    ctx = %{
-      caller: owner_uri,
-      caps:
-        "template-materialize" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
-      reply: :ignore
-    }
+    # Grant chokepoint (SPEC 2026-06-17 §3.5 site #7). Authorizer stays
+    # `system://template-materialize` (template materialization at session
+    # creation); the entity `granted_by` is the session OWNER.
+    authorization =
+      {:system, Ezagent.SystemPrincipal.uri("template-materialize"), owner_uri}
 
     results =
       Enum.map(to_grant, fn want ->
-        cap = %{want | granted_at: DateTime.utc_now()}
-
-        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-          target: target,
-          mode: :call,
-          args: %{cap: cap},
-          ctx: ctx
-        })
+        Ezagent.Identity.Grant.grant_cap(orchestrator_uri, want, authorization)
       end)
 
-    case Enum.reject(results, &match?({:ok, _}, &1)) do
+    case Enum.reject(results, &(&1 == :ok)) do
       [] -> :ok
       [err | _] -> {:error, {:scoped_cap_grant_failed, err}}
     end
@@ -117,23 +103,15 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
         %URI{} = workspace_uri
       ) do
     desired = build_desired_caps(orchestrator_uri, session_uri, owner_uri, workspace_uri)
-    target = Ezagent.URI.with_action(orchestrator_uri, :identity, :revoke_cap)
 
-    ctx = %{
-      caller: owner_uri,
-      caps:
-        "template-materialize" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
-      reply: :ignore
-    }
+    # Grant chokepoint (SPEC 2026-06-17 §3.5 site #14 — the rollback
+    # revoke twin of site #7). Authorizer stays
+    # `system://template-materialize`; entity `granted_by` is the owner.
+    authorization =
+      {:system, Ezagent.SystemPrincipal.uri("template-materialize"), owner_uri}
 
     Enum.each(desired, fn cap ->
-      _ =
-        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-          target: target,
-          mode: :call,
-          args: %{cap: cap},
-          ctx: ctx
-        })
+      _ = Ezagent.Identity.Grant.revoke_cap(orchestrator_uri, cap, authorization)
     end)
 
     :ok

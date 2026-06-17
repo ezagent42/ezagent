@@ -870,19 +870,15 @@ defmodule Ezagent.Workspace do
   def grant_initial_caps(_agent_uri, [], _ctx), do: :ok
 
   def grant_initial_caps(%URI{} = agent_uri, [cap | rest], ctx) when is_map(ctx) do
-    target =
-      Ezagent.URI.with_action(agent_uri, :identity, :grant_cap)
-
+    # Grant chokepoint (SPEC 2026-06-17 §3.5 site #2). The CALLER is the
+    # authorizer — its real held caps drive CapBAC — so `{:held_by,
+    # caller}` reproduces the prior `caller`/`caps` ctx exactly (the
+    # chokepoint re-reads the caller's held caps) while making the
+    # entity `granted_by` explicit.
     caller = Map.fetch!(ctx, :caller)
-    caps = Map.fetch!(ctx, :caps)
 
-    case Router.dispatch(%Cmd{
-           target: target,
-           action: :grant_cap,
-           args: %{cap: cap},
-           ctx: %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
-         }) do
-      {:ok, _} -> grant_initial_caps(agent_uri, rest, ctx)
+    case Ezagent.Identity.Grant.grant_cap(agent_uri, cap, {:held_by, caller}) do
+      :ok -> grant_initial_caps(agent_uri, rest, ctx)
       {:error, reason} -> {:error, {:grant_failed, cap, reason}}
     end
   end
@@ -914,24 +910,22 @@ defmodule Ezagent.Workspace do
     if Enum.any?(current, &Ezagent.CreatorGrant.same_authority?(&1, cap)) do
       :ok
     else
-      target = Ezagent.URI.with_action(creator_uri, :identity, :grant_cap)
+      # Grant chokepoint (SPEC 2026-06-17 §3.5 site #3). `Manage :any` is
+      # a wildcard-action cap whose target Behavior has no data owner, so
+      # the grant boundary requires bootstrap-admin AUTHORITY — preserved
+      # by the `{:system, bootstrap, …}` tag (loads the bootstrap caps as
+      # `ctx.caps`). The entity `granted_by` is the CREATOR: the business
+      # authority comes from the successful create operation, not from the
+      # abstract bootstrap principal.
+      bootstrap = Ezagent.SystemPrincipal.uri("bootstrap")
 
-      case Router.dispatch(%Cmd{
-             target: target,
-             action: :grant_cap,
-             args: %{cap: cap},
-             ctx: %{
-               mode: :call,
-               caller: creator_uri,
-               caps:
-                 "bootstrap" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
-               reply: :ignore
-             }
-           }) do
-        {:ok, _} -> :ok
+      case Ezagent.Identity.Grant.grant_cap_via_router(
+             creator_uri,
+             cap,
+             {:system, bootstrap, creator_uri}
+           ) do
         :ok -> :ok
         {:error, reason} -> {:error, {:creator_manage_cap_grant_failed, reason}}
-        other -> {:error, {:creator_manage_cap_grant_unexpected, other}}
       end
     end
   end
