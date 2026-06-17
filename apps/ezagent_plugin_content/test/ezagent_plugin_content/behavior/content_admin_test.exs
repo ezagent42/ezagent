@@ -218,6 +218,78 @@ defmodule EzagentPluginContent.Behavior.ContentAdminTest do
     end
   end
 
+  # ---- Re-route Phase 0: create_skill / write_fast_prompt / rebuild_kb / revert_item ----
+
+  describe "create_skill" do
+    test "creates a skill via dispatch", %{ws_uri: ws_uri} do
+      name = "new-skill-#{System.unique_integer([:positive])}"
+
+      assert {:ok, _result} =
+               Invocation.dispatch(%Invocation{
+                 target: target(ws_uri, "create_skill"),
+                 mode: :call,
+                 args: %{role: @test_role, name: name},
+                 ctx: admin_ctx()
+               })
+    end
+
+    test "returns :unauthorized with no caps", %{ws_uri: ws_uri} do
+      assert {:error, :unauthorized} =
+               Invocation.dispatch(%Invocation{
+                 target: target(ws_uri, "create_skill"),
+                 mode: :call,
+                 args: %{role: @test_role, name: "sk"},
+                 ctx: no_cap_ctx()
+               })
+    end
+  end
+
+  describe "write_fast_prompt" do
+    test "writes the fast ACK prompt via dispatch", %{ws_uri: ws_uri} do
+      assert {:ok, _result} =
+               Invocation.dispatch(%Invocation{
+                 target: target(ws_uri, "write_fast_prompt"),
+                 mode: :call,
+                 args: %{content: "您好,正在为您接入..."},
+                 ctx: admin_ctx()
+               })
+    end
+
+    test "returns :unauthorized with no caps", %{ws_uri: ws_uri} do
+      assert {:error, :unauthorized} =
+               Invocation.dispatch(%Invocation{
+                 target: target(ws_uri, "write_fast_prompt"),
+                 mode: :call,
+                 args: %{content: "x"},
+                 ctx: no_cap_ctx()
+               })
+    end
+  end
+
+  describe "rebuild_kb" do
+    test "returns :unauthorized with no caps", %{ws_uri: ws_uri} do
+      assert {:error, :unauthorized} =
+               Invocation.dispatch(%Invocation{
+                 target: target(ws_uri, "rebuild_kb"),
+                 mode: :call,
+                 args: %{},
+                 ctx: no_cap_ctx()
+               })
+    end
+  end
+
+  describe "revert_item" do
+    test "returns :unauthorized with no caps", %{ws_uri: ws_uri} do
+      assert {:error, :unauthorized} =
+               Invocation.dispatch(%Invocation{
+                 target: target(ws_uri, "revert_item"),
+                 mode: :call,
+                 args: %{path: "skills/customer/x/SKILL.md"},
+                 ctx: no_cap_ctx()
+               })
+    end
+  end
+
   # ---- Non-workspace dispatch ----
 
   describe "non-workspace dispatch" do

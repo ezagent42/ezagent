@@ -87,6 +87,42 @@ defmodule EzagentPluginContent.Behavior.ContentAdmin do
     description: "create a sandbox preview session for this workspace tenant's role"
   )
 
+  # ---- Re-route Phase 0 (2026-06-17): admin UI write ops as dispatch actions.
+  # Same stateless thin-wrapper pattern; caps reuse the existing 5 atoms.
+  # UI not wired yet (waits on caps grant PR #88/#154) — backend + tests only. ----
+
+  action(:create_skill,
+    args: %{role: :string, name: :string},
+    returns: %{},
+    caps: [:write_skill],
+    modes: [:call],
+    description: "create a new skill (SKILL.md template) in this tenant's sandbox"
+  )
+
+  action(:write_fast_prompt,
+    args: %{content: :string},
+    returns: %{},
+    caps: [:write_soul_slot],
+    modes: [:call],
+    description: "write the fast agent ACK prompt (config/fast_ack_prompt.md) to sandbox"
+  )
+
+  action(:rebuild_kb,
+    args: %{},
+    returns: %{},
+    caps: [:write_kb],
+    modes: [:call],
+    description: "rebuild the KB search index for this tenant's sandbox"
+  )
+
+  action(:revert_item,
+    args: %{path: :string},
+    returns: %{},
+    caps: [:publish_cr],
+    modes: [:call],
+    description: "revert a single file from the current release back into sandbox"
+  )
+
   # ---- Cap declarations ----
 
   def required_caps do
@@ -97,7 +133,12 @@ defmodule EzagentPluginContent.Behavior.ContentAdmin do
       upsert_kb: Ezagent.Capability.cap(:workspace, __MODULE__, :write_kb),
       delete_kb: Ezagent.Capability.cap(:workspace, __MODULE__, :write_kb),
       publish_cr: Ezagent.Capability.cap(:workspace, __MODULE__, :publish_cr),
-      preview_sandbox: Ezagent.Capability.cap(:workspace, __MODULE__, :preview_sandbox)
+      preview_sandbox: Ezagent.Capability.cap(:workspace, __MODULE__, :preview_sandbox),
+      # Re-route Phase 0 — reuse the existing cap atoms by domain.
+      create_skill: Ezagent.Capability.cap(:workspace, __MODULE__, :write_skill),
+      write_fast_prompt: Ezagent.Capability.cap(:workspace, __MODULE__, :write_soul_slot),
+      rebuild_kb: Ezagent.Capability.cap(:workspace, __MODULE__, :write_kb),
+      revert_item: Ezagent.Capability.cap(:workspace, __MODULE__, :publish_cr)
     }
   end
 
@@ -184,6 +225,48 @@ defmodule EzagentPluginContent.Behavior.ContentAdmin do
       end
     else
       {:error, :preview_unavailable}
+    end
+  end
+
+  def handle_create_skill(args, ctx) do
+    %{role: role, name: name} = args
+    {:ok, tid} = extract_tid(ctx)
+    base_dir = TenantRuntime.base_dir()
+
+    template = "---\nname: #{name}\ndescription: \n---\n# #{name}\n"
+    :ok = SkillStore.write(base_dir, tid, role, name, template)
+    {:ok, %{}}
+  end
+
+  def handle_write_fast_prompt(args, ctx) do
+    %{content: content} = args
+    {:ok, tid} = extract_tid(ctx)
+    path = Path.join([TenantRuntime.sandbox_path(tid), "config", "fast_ack_prompt.md"])
+
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, content)
+    _ = lazy_cr(:record_file_change, [tid, "config/fast_ack_prompt.md"])
+    {:ok, %{}}
+  end
+
+  def handle_rebuild_kb(_args, ctx) do
+    {:ok, tid} = extract_tid(ctx)
+
+    case KbStore.rebuild(kb_sandbox_dir(tid)) do
+      :ok -> {:ok, %{}}
+      {:ok, _} -> {:ok, %{}}
+      {:error, _} = err -> err
+    end
+  end
+
+  def handle_revert_item(args, ctx) do
+    %{path: path} = args
+    {:ok, tid} = extract_tid(ctx)
+
+    case lazy_cr(:revert_item, [tid, path]) do
+      :ok -> {:ok, %{}}
+      {:ok, _} -> {:ok, %{}}
+      {:error, _} = err -> err
     end
   end
 
