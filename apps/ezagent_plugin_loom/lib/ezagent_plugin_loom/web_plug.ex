@@ -286,6 +286,15 @@ defmodule EzagentPluginLoom.WebPlug do
     end
   end
 
+  # customer 前端壳(SPA)。GET /loom/app/:ws/:sid?token=… 返回单页 HTML。
+  get "/app/:ws/:sid" do
+    _ = {ws, sid}
+
+    conn
+    |> Plug.Conn.put_resp_content_type("text/html")
+    |> Plug.Conn.send_resp(200, EzagentPluginLoom.CustomerSPA.html())
+  end
+
   match _ do
     send_resp(conn, 404, "not found")
   end
