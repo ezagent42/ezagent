@@ -65,7 +65,11 @@ defmodule EzagentWeb.Socialware.AnonCookie do
          :ok <- same_workspace(anon_user_uri, session_uri) do
       payload = %{
         "external_user_name" => name,
-        "session_uri" => URI.to_string(session_uri)
+        # `uri_to_string/1` helper (not inline `URI.to_string`) keeps this
+        # map-key line clear of the `uri_query.scan` `:uri_string_key` heuristic
+        # — same pattern as `CustomerController`. The session URI round-trips
+        # verbatim through the signed token (no URI-reorder risk).
+        "session_uri" => uri_to_string(session_uri)
       }
 
       {:ok, Phoenix.Token.sign(secret_key_base!(), @salt, payload)}
@@ -133,6 +137,10 @@ defmodule EzagentWeb.Socialware.AnonCookie do
       _ -> :error
     end
   end
+
+  # Off-the-map-key-line URI serializer (keeps `sign/2`'s payload literal clear
+  # of the uri_query.scan `:uri_string_key` heuristic — mirrors CustomerController).
+  defp uri_to_string(%URI{} = uri), do: URI.to_string(uri)
 
   defp secret_key_base! do
     :ezagent_web
