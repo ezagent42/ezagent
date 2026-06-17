@@ -20,7 +20,8 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
   alias EzagentPluginContent.Tenant.{TenantRuntime, TenantConfig}
   alias EzagentPluginContent.Skill.SkillStore
   alias EzagentPluginContent.Kb.KbStore
-  alias EzagentPluginCr.{CrEngine, CrLint}
+  alias EzagentPluginContent.Behavior.ContentAdmin
+  alias EzagentPluginCr.CrLint
   alias EzagentPluginAutoservice.Refresh
 
   require Logger
@@ -33,11 +34,16 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
   def mount(_params, _session, socket) do
     admin_uri = socket.assigns.current_entity_uri
     workspace_uri = socket.assigns.current_workspace_uri
-    # Allow write access for any authenticated user. The primary guard is
-    # the :require_entity on_mount hook on the route. CapBAC enforcement
-    # happens at the dispatch level (ContentAdmin Behavior).
-    _caps = Ezagent.Identity.list_caps_for(admin_uri)
-    can_write? = admin_uri != nil
+    # Every write goes through ContentAdmin dispatch, which enforces CapBAC.
+    # `can_write?` is only the UI affordance (show/hide edit controls) — it
+    # mirrors the same cap the dispatch will check, so the buttons match the
+    # real authority instead of the old `admin_uri != nil` (which let ANY
+    # authenticated user write).
+    # list_caps_for returns [] if the user Kind is dormant — spawn it first so
+    # an admin with the role actually sees their caps (and can write).
+    ensure_user_alive(admin_uri)
+    caller_caps = Ezagent.Identity.list_caps_for(admin_uri)
+    can_write? = content_writable?(caller_caps, workspace_uri)
 
     {:ok, tid} = Ezagent.URI.workspace_name(workspace_uri)
 
@@ -55,6 +61,7 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
        page_title: "租户管理",
        admin_uri: admin_uri,
        workspace_uri: workspace_uri,
+       caller_caps: caller_caps,
        tid: tid,
        can_write?: can_write?,
        # Tab state
@@ -110,18 +117,15 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
 
   def handle_event("save_soul", %{"soul" => content}, socket) do
     if socket.assigns.can_write? do
-      tid = socket.assigns.tid
-      path = soul_path(tid)
-
-      case ensure_dir_and_write(path, content) do
-        :ok ->
+      case dispatch_content(socket, :write_soul, %{role: "customer", content: content}) do
+        {:ok, _} ->
           {:noreply,
            socket
            |> assign(:soul_content, content)
            |> assign(:soul_saved_flash, "已保存")}
 
         {:error, reason} ->
-          {:noreply, put_flash(socket, :error, "保存失败: #{inspect(reason)}")}
+          {:noreply, put_flash(socket, :error, "保存失败: #{dispatch_error(reason)}")}
       end
     else
       {:noreply, put_flash(socket, :error, "无权限")}
@@ -130,24 +134,18 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
 
   def handle_event("save_slots", %{"slots" => content}, socket) do
     if socket.assigns.can_write? do
-      case YamlElixir.read_from_string(content) do
-        {:ok, _parsed} ->
-          tid = socket.assigns.tid
-          path = slots_path(tid)
+      case dispatch_content(socket, :write_slots, %{role: "customer", content: content}) do
+        {:ok, _} ->
+          {:noreply,
+           socket
+           |> assign(:slots_content, content)
+           |> assign(:slots_saved_flash, "已保存")}
 
-          case ensure_dir_and_write(path, content) do
-            :ok ->
-              {:noreply,
-               socket
-               |> assign(:slots_content, content)
-               |> assign(:slots_saved_flash, "已保存")}
-
-            {:error, reason} ->
-              {:noreply, put_flash(socket, :error, "保存失败: #{inspect(reason)}")}
-          end
+        {:error, {:invalid_yaml, reason}} ->
+          {:noreply, put_flash(socket, :error, "YAML 格式错误: #{yaml_error_message(reason)}")}
 
         {:error, reason} ->
-          {:noreply, put_flash(socket, :error, "YAML 格式错误: #{yaml_error_message(reason)}")}
+          {:noreply, put_flash(socket, :error, "保存失败: #{dispatch_error(reason)}")}
       end
     else
       {:noreply, put_flash(socket, :error, "无权限")}
@@ -176,20 +174,24 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
 
   def handle_event("skill_save", %{"content" => content}, socket) do
     if socket.assigns.can_write? && socket.assigns.skill_edit_name do
-      tid = socket.assigns.tid
-      base_dir = TenantRuntime.base_dir()
       name = socket.assigns.skill_edit_name
 
-      :ok = SkillStore.write(base_dir, tid, "customer", name, content)
+      case dispatch_content(socket, :write_skill, %{
+             role: "customer",
+             name: name,
+             content: content
+           }) do
+        {:ok, _} ->
+          {:noreply,
+           socket
+           |> assign(:skills, list_skills(socket.assigns.tid))
+           |> assign(:skill_edit_name, nil)
+           |> assign(:skill_edit_content, "")
+           |> assign(:skills_flash, "#{name} 已保存")}
 
-      skills = list_skills(tid)
-
-      {:noreply,
-       socket
-       |> assign(:skills, skills)
-       |> assign(:skill_edit_name, nil)
-       |> assign(:skill_edit_content, "")
-       |> assign(:skills_flash, "#{name} 已保存")}
+        {:error, reason} ->
+          {:noreply, assign(socket, :skills_flash, "保存失败: #{dispatch_error(reason)}")}
+      end
     else
       {:noreply, put_flash(socket, :error, "无权限")}
     end
@@ -204,14 +206,8 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
 
   def handle_event("skill_delete", %{"name" => name}, socket) do
     if socket.assigns.can_write? do
-      tid = socket.assigns.tid
-      base_dir = TenantRuntime.base_dir()
-
-      case SkillStore.delete(base_dir, tid, "customer", name) do
-        :ok ->
-          skills = list_skills(tid)
-          flash = "#{name} 已删除"
-
+      case dispatch_content(socket, :delete_skill, %{role: "customer", name: name}) do
+        {:ok, _} ->
           socket =
             if socket.assigns.skill_edit_name == name do
               socket |> assign(:skill_edit_name, nil) |> assign(:skill_edit_content, "")
@@ -219,10 +215,16 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
               socket
             end
 
-          {:noreply, socket |> assign(:skills, skills) |> assign(:skills_flash, flash)}
+          {:noreply,
+           socket
+           |> assign(:skills, list_skills(socket.assigns.tid))
+           |> assign(:skills_flash, "#{name} 已删除")}
 
         {:error, :not_found} ->
           {:noreply, put_flash(socket, :error, "Skill 不存在: #{name}")}
+
+        {:error, reason} ->
+          {:noreply, put_flash(socket, :error, "删除失败: #{dispatch_error(reason)}")}
       end
     else
       {:noreply, put_flash(socket, :error, "无权限")}
@@ -231,25 +233,22 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
 
   def handle_event("skill_create", %{"name" => name}, socket) do
     if socket.assigns.can_write? && name != "" do
-      tid = socket.assigns.tid
-      base_dir = TenantRuntime.base_dir()
-
-      # Check duplicate
-      skills = list_skills(tid)
-      existing = Enum.map(skills, & &1.name)
+      existing = socket.assigns.tid |> list_skills() |> Enum.map(& &1.name)
 
       if name in existing do
         {:noreply, assign(socket, :skills_flash, "Skill '#{name}' 已存在")}
       else
-        default = "# #{name}\n\n> TODO: describe this skill\n\n"
-        :ok = SkillStore.write(base_dir, tid, "customer", name, default)
-        skills = list_skills(tid)
+        case dispatch_content(socket, :create_skill, %{role: "customer", name: name}) do
+          {:ok, _} ->
+            {:noreply,
+             socket
+             |> assign(:skills, list_skills(socket.assigns.tid))
+             |> assign(:skill_new_name, "")
+             |> assign(:skills_flash, "#{name} 已创建")}
 
-        {:noreply,
-         socket
-         |> assign(:skills, skills)
-         |> assign(:skill_new_name, "")
-         |> assign(:skills_flash, "#{name} 已创建")}
+          {:error, reason} ->
+            {:noreply, assign(socket, :skills_flash, "创建失败: #{dispatch_error(reason)}")}
+        end
       end
     else
       {:noreply, assign(socket, :skills_flash, "请输入 Skill 名称")}
@@ -262,29 +261,20 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
 
   def handle_event("kb_add", %{"id" => id, "title" => title, "content" => content}, socket) do
     if socket.assigns.can_write? && id != "" do
-      tid = socket.assigns.tid
-      kb_dir = kb_sandbox_dir(tid)
+      entry = %{"id" => id, "title" => title, "content" => content}
 
-      entry = %{
-        "id" => id,
-        "title" => title,
-        "content" => content
-      }
-
-      case KbStore.upsert(kb_dir, entry) do
-        :ok ->
-          kb_entries = list_kb_entries(tid)
-
+      case dispatch_content(socket, :upsert_kb, %{entry: entry}) do
+        {:ok, _} ->
           {:noreply,
            socket
-           |> assign(:kb_entries, kb_entries)
+           |> assign(:kb_entries, list_kb_entries(socket.assigns.tid))
            |> assign(:kb_new_id, "")
            |> assign(:kb_new_title, "")
            |> assign(:kb_new_content, "")
            |> assign(:kb_flash, "#{id} 已添加")}
 
         {:error, reason} ->
-          {:noreply, assign(socket, :kb_flash, "写入失败: #{inspect(reason)}")}
+          {:noreply, assign(socket, :kb_flash, "写入失败: #{dispatch_error(reason)}")}
       end
     else
       {:noreply, assign(socket, :kb_flash, "请输入 KB 条目 ID")}
@@ -293,16 +283,16 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
 
   def handle_event("kb_delete", %{"id" => id}, socket) do
     if socket.assigns.can_write? do
-      tid = socket.assigns.tid
-      kb_dir = kb_sandbox_dir(tid)
+      case dispatch_content(socket, :delete_kb, %{id: id}) do
+        {:ok, _} ->
+          {:noreply,
+           socket
+           |> assign(:kb_entries, list_kb_entries(socket.assigns.tid))
+           |> assign(:kb_flash, "#{id} 已删除")}
 
-      :ok = KbStore.delete(kb_dir, id)
-      kb_entries = list_kb_entries(tid)
-
-      {:noreply,
-       socket
-       |> assign(:kb_entries, kb_entries)
-       |> assign(:kb_flash, "#{id} 已删除")}
+        {:error, reason} ->
+          {:noreply, assign(socket, :kb_flash, "删除失败: #{dispatch_error(reason)}")}
+      end
     else
       {:noreply, put_flash(socket, :error, "无权限")}
     end
@@ -325,21 +315,15 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
 
   def handle_event("kb_fetch_url", %{"url" => url}, socket) do
     if socket.assigns.can_write? && url != "" do
-      tid = socket.assigns.tid
-      kb_dir = kb_sandbox_dir(tid)
-
-      case KbStore.fetch_url(kb_dir, url) do
-        :ok ->
-          kb_entries = list_kb_entries(tid)
-          _ = lazy_cr_ensure(tid)
-
+      case dispatch_content(socket, :fetch_kb_url, %{url: url}) do
+        {:ok, _} ->
           {:noreply,
            socket
-           |> assign(:kb_entries, kb_entries)
+           |> assign(:kb_entries, list_kb_entries(socket.assigns.tid))
            |> assign(:kb_flash, "URL 抓取成功: #{String.slice(url, 0, 60)}")}
 
         {:error, reason} ->
-          {:noreply, assign(socket, :kb_flash, "抓取失败: #{inspect(reason)}")}
+          {:noreply, assign(socket, :kb_flash, "抓取失败: #{dispatch_error(reason)}")}
       end
     else
       {:noreply, assign(socket, :kb_flash, "请输入 URL")}
@@ -348,26 +332,23 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
 
   def handle_event("kb_upload", %{"kb_file" => %Plug.Upload{} = upload}, socket) do
     if socket.assigns.can_write? do
-      tid = socket.assigns.tid
-      kb_dir = kb_sandbox_dir(tid)
-      # Save temp file, then ingest
+      # Stage the upload to a server-side temp path, then let ContentAdmin
+      # ingest it (same node, so the path is readable by the handler).
       tmp_path = Path.join(System.tmp_dir!(), upload.filename)
       File.cp!(upload.path, tmp_path)
 
-      case KbStore.ingest_file(kb_dir, tmp_path) do
-        :ok ->
-          File.rm(tmp_path)
-          kb_entries = list_kb_entries(tid)
-          _ = lazy_cr_ensure(tid)
+      result = dispatch_content(socket, :ingest_kb_file, %{file_path: tmp_path})
+      File.rm(tmp_path)
 
+      case result do
+        {:ok, _} ->
           {:noreply,
            socket
-           |> assign(:kb_entries, kb_entries)
+           |> assign(:kb_entries, list_kb_entries(socket.assigns.tid))
            |> assign(:kb_flash, "文件上传成功: #{upload.filename}")}
 
         {:error, reason} ->
-          File.rm(tmp_path)
-          {:noreply, assign(socket, :kb_flash, "上传失败: #{inspect(reason)}")}
+          {:noreply, assign(socket, :kb_flash, "上传失败: #{dispatch_error(reason)}")}
       end
     else
       {:noreply, assign(socket, :kb_flash, "无权限")}
@@ -375,16 +356,19 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
   end
 
   def handle_event("kb_rebuild", _params, socket) do
-    tid = socket.assigns.tid
-    kb_dir = kb_sandbox_dir(tid)
+    if socket.assigns.can_write? do
+      case dispatch_content(socket, :rebuild_kb, %{}) do
+        {:ok, _} ->
+          {:noreply,
+           socket
+           |> assign(:kb_entries, list_kb_entries(socket.assigns.tid))
+           |> assign(:kb_flash, "KB 重建完成")}
 
-    case KbStore.rebuild(kb_dir) do
-      :ok ->
-        kb_entries = list_kb_entries(tid)
-        {:noreply, socket |> assign(:kb_entries, kb_entries) |> assign(:kb_flash, "KB 重建完成")}
-
-      {:error, reason} ->
-        {:noreply, assign(socket, :kb_flash, "重建失败: #{inspect(reason)}")}
+        {:error, reason} ->
+          {:noreply, assign(socket, :kb_flash, "重建失败: #{dispatch_error(reason)}")}
+      end
+    else
+      {:noreply, put_flash(socket, :error, "无权限")}
     end
   end
 
@@ -394,25 +378,15 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
 
   def handle_event("save_fast_prompt", %{"prompt" => content}, socket) do
     if socket.assigns.can_write? do
-      tid = socket.assigns.tid
-      path = fast_prompt_path(tid)
-      sandbox = Path.dirname(Path.dirname(path))
-
-      case File.mkdir_p(sandbox) do
-        :ok ->
-          case File.write(path, content) do
-            :ok ->
-              {:noreply,
-               socket
-               |> assign(:fast_prompt, content)
-               |> assign(:fast_prompt_flash, "已保存")}
-
-            {:error, reason} ->
-              {:noreply, put_flash(socket, :error, "保存失败: #{inspect(reason)}")}
-          end
+      case dispatch_content(socket, :write_fast_prompt, %{content: content}) do
+        {:ok, _} ->
+          {:noreply,
+           socket
+           |> assign(:fast_prompt, content)
+           |> assign(:fast_prompt_flash, "已保存")}
 
         {:error, reason} ->
-          {:noreply, put_flash(socket, :error, "目录创建失败: #{inspect(reason)}")}
+          {:noreply, put_flash(socket, :error, "保存失败: #{dispatch_error(reason)}")}
       end
     else
       {:noreply, put_flash(socket, :error, "无权限")}
@@ -427,8 +401,8 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
     if socket.assigns.can_write? do
       tid = socket.assigns.tid
 
-      case CrEngine.publish(tid) do
-        {:ok, published} ->
+      case dispatch_content(socket, :publish_cr, %{}) do
+        {:ok, %{cr: published}} ->
           v = published["published_version"]
 
           case Refresh.refresh_agents(tid) do
@@ -494,6 +468,48 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
 
   @impl true
   def handle_info(_other, socket), do: {:noreply, socket}
+
+  # ---------------------------------------------------------------------------
+  # Helpers — ContentAdmin dispatch (re-route Phase 2)
+  # ---------------------------------------------------------------------------
+
+  # All admin WRITES go through ContentAdmin dispatch: CapBAC-enforced (P15),
+  # audited via telemetry (P19), and reachable by agents/CLI — instead of the
+  # LV writing files directly behind a `can_write?` flag.
+  defp dispatch_content(socket, action, args) do
+    target = Ezagent.URI.with_action(socket.assigns.workspace_uri, :content_admin, action)
+
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      target: target,
+      mode: :call,
+      args: args,
+      ctx: %{
+        caller: socket.assigns.admin_uri,
+        caps: socket.assigns.caller_caps,
+        reply: {:caller_inbox, self()}
+      }
+    })
+  end
+
+  # UI affordance only — does the caller hold a cap authorizing ContentAdmin
+  # writes on this workspace? Mirrors the dispatch-time check so controls match
+  # real authority. The dispatch itself remains the security boundary.
+  defp content_writable?(caps, %URI{} = workspace_uri) do
+    needed = %{
+      kind: :workspace,
+      behavior: ContentAdmin,
+      action: :write_skill,
+      instance: workspace_uri,
+      workspace_uri: workspace_uri
+    }
+
+    Enum.any?(caps, &Ezagent.Capability.matches?(&1, needed))
+  end
+
+  defp content_writable?(_caps, _), do: false
+
+  defp dispatch_error(:unauthorized), do: "无权限"
+  defp dispatch_error(reason), do: inspect(reason)
 
   # ---------------------------------------------------------------------------
   # Helpers — reload tab data
@@ -598,40 +614,9 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
 
   defp kb_sandbox_dir(tid), do: Path.join([TenantRuntime.base_dir(), tid, "sandbox", "kb"])
 
-  # Ensure an active CR exists for this tenant (CR change tracking).
-  defp lazy_cr_ensure(tid) do
-    mod = EzagentPluginCr.CrEngine
-
-    if Code.ensure_loaded?(mod) and function_exported?(mod, :ensure_active_cr, 1) do
-      apply(mod, :ensure_active_cr, [tid])
-    end
-  rescue
-    _ -> nil
-  end
-
-  defp ensure_dir_and_write(path, content) do
-    dir = Path.dirname(path)
-
-    case File.mkdir_p(dir) do
-      :ok -> File.write(path, content)
-      {:error, _} = err -> err
-    end
-  end
-
   # ---------------------------------------------------------------------------
   # Helpers — cap check
   # ---------------------------------------------------------------------------
-
-  defp has_content_write_cap?(caps, %URI{} = workspace_uri) do
-    Enum.any?(caps, fn cap ->
-      ws_match = cap.workspace_uri == workspace_uri or cap.workspace_uri == :any
-      kind_match = cap.kind in [:content, :workspace, :any]
-      action_match = cap.action in [:write, :any]
-      kind_match and action_match and ws_match
-    end)
-  end
-
-  defp has_content_write_cap?(_, _), do: false
 
   # Ensure the user Kind is spawned so Identity.list_caps_for returns actual caps
   # instead of an empty MapSet when the Kind is not alive.
@@ -654,6 +639,8 @@ defmodule EzagentPluginLiveview.Tenant.TenantAdminLive do
   rescue
     _ -> :ok
   end
+
+  defp ensure_user_alive(_), do: :ok
 
   # ---------------------------------------------------------------------------
   # Helpers — formatting
