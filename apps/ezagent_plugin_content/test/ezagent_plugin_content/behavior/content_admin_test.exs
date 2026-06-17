@@ -290,6 +290,112 @@ defmodule EzagentPluginContent.Behavior.ContentAdminTest do
     end
   end
 
+  # ---- Re-route Phase 0 batch 2: write_soul / write_slots / fetch_kb_url / ingest_kb_file / rollback_version ----
+
+  describe "write_soul" do
+    test "writes the full soul markdown via dispatch", %{ws_uri: ws_uri} do
+      assert {:ok, _result} =
+               Invocation.dispatch(%Invocation{
+                 target: target(ws_uri, "write_soul"),
+                 mode: :call,
+                 args: %{role: @test_role, content: "# Soul\n\nBe helpful."},
+                 ctx: admin_ctx()
+               })
+    end
+
+    test "returns :unauthorized with no caps", %{ws_uri: ws_uri} do
+      assert {:error, :unauthorized} =
+               Invocation.dispatch(%Invocation{
+                 target: target(ws_uri, "write_soul"),
+                 mode: :call,
+                 args: %{role: @test_role, content: "x"},
+                 ctx: no_cap_ctx()
+               })
+    end
+  end
+
+  describe "write_slots" do
+    test "writes valid slots YAML via dispatch", %{ws_uri: ws_uri} do
+      assert {:ok, _result} =
+               Invocation.dispatch(%Invocation{
+                 target: target(ws_uri, "write_slots"),
+                 mode: :call,
+                 args: %{role: @test_role, content: "greeting: hello\ntone: warm\n"},
+                 ctx: admin_ctx()
+               })
+    end
+
+    test "rejects malformed YAML", %{ws_uri: ws_uri} do
+      assert {:error, {:invalid_yaml, _}} =
+               Invocation.dispatch(%Invocation{
+                 target: target(ws_uri, "write_slots"),
+                 mode: :call,
+                 args: %{role: @test_role, content: "key: [unclosed\n  bad: : :"},
+                 ctx: admin_ctx()
+               })
+    end
+
+    test "returns :unauthorized with no caps", %{ws_uri: ws_uri} do
+      assert {:error, :unauthorized} =
+               Invocation.dispatch(%Invocation{
+                 target: target(ws_uri, "write_slots"),
+                 mode: :call,
+                 args: %{role: @test_role, content: "k: v\n"},
+                 ctx: no_cap_ctx()
+               })
+    end
+  end
+
+  describe "fetch_kb_url" do
+    test "returns :unauthorized with no caps", %{ws_uri: ws_uri} do
+      assert {:error, :unauthorized} =
+               Invocation.dispatch(%Invocation{
+                 target: target(ws_uri, "fetch_kb_url"),
+                 mode: :call,
+                 args: %{url: "https://example.com/doc"},
+                 ctx: no_cap_ctx()
+               })
+    end
+  end
+
+  describe "ingest_kb_file" do
+    test "ingests a local file via dispatch", %{ws_uri: ws_uri} do
+      tmp = Path.join(System.tmp_dir!(), "kb_ingest_#{System.unique_integer([:positive])}.md")
+      File.write!(tmp, "# KB Doc\n\nSome knowledge.")
+      on_exit(fn -> File.rm(tmp) end)
+
+      assert {:ok, _result} =
+               Invocation.dispatch(%Invocation{
+                 target: target(ws_uri, "ingest_kb_file"),
+                 mode: :call,
+                 args: %{file_path: tmp},
+                 ctx: admin_ctx()
+               })
+    end
+
+    test "returns :unauthorized with no caps", %{ws_uri: ws_uri} do
+      assert {:error, :unauthorized} =
+               Invocation.dispatch(%Invocation{
+                 target: target(ws_uri, "ingest_kb_file"),
+                 mode: :call,
+                 args: %{file_path: "/tmp/nonexistent"},
+                 ctx: no_cap_ctx()
+               })
+    end
+  end
+
+  describe "rollback_version" do
+    test "returns :unauthorized with no caps", %{ws_uri: ws_uri} do
+      assert {:error, :unauthorized} =
+               Invocation.dispatch(%Invocation{
+                 target: target(ws_uri, "rollback_version"),
+                 mode: :call,
+                 args: %{version: "v1"},
+                 ctx: no_cap_ctx()
+               })
+    end
+  end
+
   # ---- Non-workspace dispatch ----
 
   describe "non-workspace dispatch" do

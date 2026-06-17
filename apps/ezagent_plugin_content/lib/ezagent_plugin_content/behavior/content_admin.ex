@@ -123,6 +123,50 @@ defmodule EzagentPluginContent.Behavior.ContentAdmin do
     description: "revert a single file from the current release back into sandbox"
   )
 
+  # ---- Re-route Phase 0 batch 2 (2026-06-17): remaining admin-UI write ops.
+  # Covers full-file soul/slots writes, KB url-fetch + file-ingest, and
+  # release rollback. Same stateless pattern; caps reuse the 5 atoms. ----
+
+  action(:write_soul,
+    args: %{role: :string, content: :string},
+    returns: %{},
+    caps: [:write_soul_slot],
+    modes: [:call],
+    description: "write the full soul markdown (souls/<role>.md) to this tenant's sandbox"
+  )
+
+  action(:write_slots,
+    args: %{role: :string, content: :string},
+    returns: %{},
+    caps: [:write_soul_slot],
+    modes: [:call],
+    description: "write the full slots YAML (slots/<role>.yaml) to this tenant's sandbox"
+  )
+
+  action(:fetch_kb_url,
+    args: %{url: :string},
+    returns: %{},
+    caps: [:write_kb],
+    modes: [:call],
+    description: "fetch a URL into the KB for this tenant's sandbox"
+  )
+
+  action(:ingest_kb_file,
+    args: %{file_path: :string},
+    returns: %{},
+    caps: [:write_kb],
+    modes: [:call],
+    description: "ingest a local file into the KB for this tenant's sandbox"
+  )
+
+  action(:rollback_version,
+    args: %{version: :string},
+    returns: %{},
+    caps: [:publish_cr],
+    modes: [:call],
+    description: "roll the current release symlink back to a prior version"
+  )
+
   # ---- Cap declarations ----
 
   def required_caps do
@@ -138,7 +182,13 @@ defmodule EzagentPluginContent.Behavior.ContentAdmin do
       create_skill: Ezagent.Capability.cap(:workspace, __MODULE__, :write_skill),
       write_fast_prompt: Ezagent.Capability.cap(:workspace, __MODULE__, :write_soul_slot),
       rebuild_kb: Ezagent.Capability.cap(:workspace, __MODULE__, :write_kb),
-      revert_item: Ezagent.Capability.cap(:workspace, __MODULE__, :publish_cr)
+      revert_item: Ezagent.Capability.cap(:workspace, __MODULE__, :publish_cr),
+      # Re-route Phase 0 batch 2.
+      write_soul: Ezagent.Capability.cap(:workspace, __MODULE__, :write_soul_slot),
+      write_slots: Ezagent.Capability.cap(:workspace, __MODULE__, :write_soul_slot),
+      fetch_kb_url: Ezagent.Capability.cap(:workspace, __MODULE__, :write_kb),
+      ingest_kb_file: Ezagent.Capability.cap(:workspace, __MODULE__, :write_kb),
+      rollback_version: Ezagent.Capability.cap(:workspace, __MODULE__, :publish_cr)
     }
   end
 
@@ -270,7 +320,86 @@ defmodule EzagentPluginContent.Behavior.ContentAdmin do
     end
   end
 
+  def handle_write_soul(%{role: role, content: content}, ctx) do
+    {:ok, tid} = extract_tid(ctx)
+    rel = Path.join(["souls", "#{role}.md"])
+    write_sandbox_file(tid, rel, content)
+  end
+
+  def handle_write_slots(%{role: role, content: content}, ctx) do
+    {:ok, tid} = extract_tid(ctx)
+
+    with :ok <- validate_yaml(content) do
+      write_sandbox_file(tid, Path.join(["slots", "#{role}.yaml"]), content)
+    end
+  end
+
+  def handle_fetch_kb_url(%{url: url}, ctx) do
+    {:ok, tid} = extract_tid(ctx)
+
+    case KbStore.fetch_url(kb_sandbox_dir(tid), url) do
+      :ok ->
+        _ = lazy_cr(:ensure_active_cr, [tid])
+        {:ok, %{}}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  def handle_ingest_kb_file(%{file_path: file_path}, ctx) do
+    {:ok, tid} = extract_tid(ctx)
+
+    case KbStore.ingest_file(kb_sandbox_dir(tid), file_path) do
+      :ok ->
+        _ = lazy_cr(:ensure_active_cr, [tid])
+        {:ok, %{}}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  def handle_rollback_version(%{version: version}, ctx) do
+    {:ok, tid} = extract_tid(ctx)
+
+    case lazy_mod(EzagentPluginCr.CrRollback, :rollback, [tid, version]) do
+      :ok -> {:ok, %{}}
+      {:ok, _} -> {:ok, %{}}
+      {:error, _} = err -> err
+    end
+  end
+
   # ---- Helpers ----
+
+  defp write_sandbox_file(tid, rel_path, content) do
+    path = Path.join(TenantRuntime.sandbox_path(tid), rel_path)
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, content)
+    _ = lazy_cr(:record_file_change, [tid, rel_path])
+    {:ok, %{}}
+  end
+
+  defp validate_yaml(content) do
+    if Code.ensure_loaded?(YamlElixir) do
+      case YamlElixir.read_from_string(content) do
+        {:ok, _} -> :ok
+        {:error, reason} -> {:error, {:invalid_yaml, reason}}
+      end
+    else
+      :ok
+    end
+  end
+
+  # Generic lazy module call — same cycle-avoidance rationale as lazy_cr,
+  # for cr-plugin modules other than CrEngine (e.g. CrRollback).
+  defp lazy_mod(mod, fun, args) do
+    if Code.ensure_loaded?(mod) and function_exported?(mod, fun, length(args)) do
+      apply(mod, fun, args)
+    else
+      {:error, :module_unavailable}
+    end
+  end
 
   # Lazy-load CrEngine — cr plugin depends on content, so we can't
   # depend back. Code.ensure_loaded? avoids compile-time cycles.
