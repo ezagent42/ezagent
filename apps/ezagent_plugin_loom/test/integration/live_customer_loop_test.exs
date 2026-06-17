@@ -3,8 +3,8 @@ defmodule EzagentPluginLoom.Integration.LiveCustomerLoopTest do
   LIVE: 完整 customer 闭环 —— customer HTTP 发消息 → auto-started 编排进程(真实 LLM
   多 agent)→ Turn → customer HTTP feed 出 page。全经 WebPlug(真实入站/读出路径),无人工。
 
-  需 `ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY`,默认排除(`:live`)。跑:
-  `ANTHROPIC_BASE_URL=... ANTHROPIC_API_KEY=... mix test --include live \
+  需 `DEEPSEEK_API_KEY`(provider key),默认排除(`:live`)。跑:
+  `DEEPSEEK_API_KEY=sk-... mix test --include live \
      apps/ezagent_plugin_loom/test/integration/live_customer_loop_test.exs`
   """
   use EzagentCore.DataCase, async: false

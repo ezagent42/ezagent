@@ -1,27 +1,43 @@
 defmodule EzagentPluginLoom.LLM do
   @moduledoc """
-  Loom LLM client — anthropic-兼容 messages 端点的非流式 HTTP 调用（curl-flavor 路径）。
+  Loom LLM client — 对齐 socialware 现成约定,**不自造 HTTP 客户端、不用 anthropic 命名**。
 
-  端点 + key 从进程环境读(同 cc-flavor 约定),**不硬编码 key**:
-  - `ANTHROPIC_BASE_URL`(默认 `https://api.deepseek.com/anthropic`)
-  - `ANTHROPIC_API_KEY`(必需,缺失 → `{:error, :no_api_key}`)
+  两条 flavor(对应现成 `Ezagent.AgentFlavorRegistry` 里的 `curl` / `cc`):
 
-  用 stdlib `:httpc`(loom `extra_applications` 声明 `:inets`/`:ssl`),verify_peer + 系统 CA。
-  比 `claude -p` 便宜得多(后者每次加载 ~30k context token);loom 编排侧的单次结构化调用走这里。
+  - **`:curl`(默认)** — provider HTTP 调用,**复用 `Ezagent.PluginCurlAgent.ApiClient`**
+    (OpenAI/DeepSeek-shape `/chat/completions`,跟 curl_agent 共用一份客户端,不重复造)。
+    配置按 **provider 语义** 命名(同 `curl.agent` template 的 `provider`/`api_url`/`model`):
+      - `provider` — `opts[:provider]` > env `LOOM_LLM_PROVIDER` > `"deepseek"`
+      - `api_url`  — `opts[:api_url]` > env `LOOM_LLM_API_URL` > provider 默认端点
+      - `model`    — `opts[:model]` > env `LOOM_LLM_MODEL` > provider 默认 model
+      - **API key** — env `<PROVIDER>_API_KEY`(如 `DEEPSEEK_API_KEY`),**只在用该 provider 时取该 provider 的 key**
+  - **`:cc`** — 本地 `claude` 二进制(headless `-p`),跟随本地登录态。
+
+  > ⚠️ 凭证只到「provider-named env」这层。绑定到 socialware **durable 凭证级联**
+  > (`Ezagent.Credential.Resolver` + agent `:api_keys` slice)是 **agent-scoped** 的
+  > (resolver 必须 `agent_uri`/`owner_uri`/grant),loom 编排器不是 agent →
+  > 该绑定随真实 agent-Kind 落地(预留清单项 3),不在本层硬塞。
   """
 
   require Logger
 
-  @default_base "https://api.deepseek.com/anthropic"
-  @default_model "deepseek-chat"
-  @default_max_tokens 4096
+  alias Ezagent.PluginCurlAgent.ApiClient
+
+  @default_provider "deepseek"
   @timeout_ms 120_000
+
+  # provider → {默认 /chat/completions 端点, 默认 model}。DeepSeek 是 OpenAI-shape,
+  # 同 `Ezagent.PluginCurlAgent.ApiClient` 的 moduledoc 约定。
+  @provider_defaults %{
+    "deepseek" => {"https://api.deepseek.com/chat/completions", "deepseek-chat"},
+    "openai" => {"https://api.openai.com/v1/chat/completions", "gpt-4o-mini"}
+  }
 
   @type message :: %{role: String.t(), content: String.t()}
 
   @doc """
   调一轮 chat。`messages` = `[%{role: "user"|"assistant", content: "..."}]`;
-  `opts`: `:system`(系统提示)、`:model`、`:max_tokens`、`:temperature`。
+  `opts`: `:system`、`:provider`、`:api_url`、`:model`、`:flavor`、`:role`、`:session_uri`。
   返回 `{:ok, text}` | `{:error, reason}`。
   """
   @spec chat([message()], keyword()) :: {:ok, String.t()} | {:error, term()}
@@ -32,7 +48,8 @@ defmodule EzagentPluginLoom.LLM do
     end
   end
 
-  # flavor:opts[:flavor] > env LOOM_LLM_FLAVOR > :curl(默认便宜 HTTP)。
+  # flavor:opts[:flavor] > env LOOM_LLM_FLAVOR > :curl(默认 provider HTTP)。
+  # 对应 AgentFlavorRegistry 的 curl/cc;完整「走真实 flavor agent」是预留项 3。
   defp flavor(opts) do
     case opts[:flavor] || System.get_env("LOOM_LLM_FLAVOR") do
       :cc -> :cc
@@ -41,8 +58,67 @@ defmodule EzagentPluginLoom.LLM do
     end
   end
 
-  # cc-flavor:用本地 claude 二进制(-p headless),跟随本地登录态/ANTHROPIC env。
-  # one-shot(非 PTY 常驻);完整 PTY 常驻 agent 待真实 agent Kind 化(项 3)。
+  # ── curl flavor:复用 curl_agent 的 ApiClient,provider 语义命名 ──────────────
+  defp chat_curl(messages, opts) do
+    provider = provider(opts)
+    {default_url, default_model} = Map.get(@provider_defaults, provider, {nil, nil})
+    api_url = opts[:api_url] || System.get_env("LOOM_LLM_API_URL") || default_url
+    model = opts[:model] || System.get_env("LOOM_LLM_MODEL") || default_model
+
+    with {:ok, key} <- api_key(provider),
+         :ok <- require_url(api_url) do
+      # 注:ApiClient 当前不透传 max_tokens(只 model/messages/stream),故不在 req 里塞无效字段。
+      req = %{
+        api_url: api_url,
+        api_key: key,
+        model: model,
+        messages: openai_messages(messages, opts[:system]),
+        timeout_ms: @timeout_ms
+      }
+
+      case ApiClient.chat_completion(req) do
+        {:ok, %{content: text, usage: usage}} ->
+          emit_telemetry(usage, model, opts)
+          {:ok, text}
+
+        {:error, _reason} = err ->
+          err
+      end
+    end
+  end
+
+  defp provider(opts) do
+    (opts[:provider] || System.get_env("LOOM_LLM_PROVIDER") || @default_provider)
+    |> to_string()
+    |> String.downcase()
+  end
+
+  # API key 按 provider 命名读:DEEPSEEK_API_KEY / OPENAI_API_KEY ...
+  # **只在用该 provider 时取该 provider 的 key**(回应「命名应反映 provider」)。
+  defp api_key(provider) do
+    env = "#{String.upcase(provider)}_API_KEY"
+
+    case System.get_env(env) do
+      nil -> {:error, {:no_api_key, env}}
+      "" -> {:error, {:no_api_key, env}}
+      key -> {:ok, key}
+    end
+  end
+
+  defp require_url(url) when is_binary(url) and url != "", do: :ok
+  defp require_url(_), do: {:error, :no_api_url}
+
+  # 把 loom 内部 `[%{role, content}]` + 可选 system 提示转成 OpenAI messages
+  # (system 作为 role: "system" 首条;ApiClient 用的就是 OpenAI shape)。
+  defp openai_messages(messages, nil), do: Enum.map(messages, &normalize_msg/1)
+
+  defp openai_messages(messages, system) when is_binary(system) do
+    [%{role: "system", content: system} | Enum.map(messages, &normalize_msg/1)]
+  end
+
+  defp normalize_msg(%{role: r, content: c}), do: %{role: to_string(r), content: c}
+
+  # ── cc flavor:本地 claude 二进制(one-shot;PTY 常驻随项 3) ──────────────────
   defp chat_cc(messages, opts) do
     case System.find_executable("claude") do
       nil ->
@@ -52,8 +128,18 @@ defmodule EzagentPluginLoom.LLM do
         prompt = Enum.map_join(messages, "\n", &"#{&1.role}: #{&1.content}")
 
         args =
-          ["-p", prompt, "--output-format", "json", "--max-turns", "6", "--exclude-dynamic-system-prompt-sections"]
-          |> then(fn a -> if opts[:system], do: a ++ ["--system-prompt", opts[:system]], else: a end)
+          [
+            "-p",
+            prompt,
+            "--output-format",
+            "json",
+            "--max-turns",
+            "6",
+            "--exclude-dynamic-system-prompt-sections"
+          ]
+          |> then(fn a ->
+            if opts[:system], do: a ++ ["--system-prompt", opts[:system]], else: a
+          end)
 
         # 不混 stderr(claude 的日志在 stderr;--output-format json 的 stdout 才是纯 JSON)。
         case System.cmd(bin, args, stderr_to_stdout: false) do
@@ -89,100 +175,20 @@ defmodule EzagentPluginLoom.LLM do
 
   defp emit_cc_telemetry(_, _), do: :ok
 
-  defp chat_curl(messages, opts) do
-    with {:ok, key} <- api_key() do
-      base = System.get_env("ANTHROPIC_BASE_URL") || @default_base
-      url = String.to_charlist("#{base}/v1/messages")
-
-      body =
-        %{
-          model: opts[:model] || @default_model,
-          max_tokens: opts[:max_tokens] || @default_max_tokens,
-          messages: Enum.map(messages, &%{role: &1.role, content: &1.content})
-        }
-        |> maybe_put(:system, opts[:system])
-        |> maybe_put(:temperature, opts[:temperature])
-        |> Jason.encode!()
-
-      headers = [
-        {~c"x-api-key", String.to_charlist(key)},
-        {~c"anthropic-version", ~c"2023-06-01"}
-      ]
-
-      request = {url, headers, ~c"application/json", body}
-      http_opts = [ssl: ssl_opts(), timeout: @timeout_ms]
-
-      case :httpc.request(:post, request, http_opts, body_format: :binary) do
-        {:ok, {{_v, 200, _r}, _resp_headers, resp_body}} ->
-          emit_telemetry(resp_body, opts)
-          parse_text(resp_body)
-
-        {:ok, {{_v, status, _r}, _resp_headers, resp_body}} ->
-          Logger.warning("loom LLM HTTP #{status}: #{String.slice(to_string(resp_body), 0, 300)}")
-          {:error, {:http_status, status}}
-
-        {:error, reason} ->
-          {:error, {:http_error, reason}}
-      end
-    end
-  end
-
-  defp api_key do
-    case System.get_env("ANTHROPIC_API_KEY") do
-      nil -> {:error, :no_api_key}
-      "" -> {:error, :no_api_key}
-      key -> {:ok, key}
-    end
-  end
-
-  # stats → telemetry(文档清单 A：emit :telemetry.execute [:ezagent,...] events,
-  # 不落旁路 JSON,不进 customer feed)。每次成功 LLM 调用 emit token 用量。
-  defp emit_telemetry(resp_body, opts) do
-    with {:ok, %{"usage" => usage} = decoded} when is_map(usage) <- Jason.decode(resp_body) do
-      :telemetry.execute(
-        [:ezagent, :loom, :llm, :call],
-        %{
-          input_tokens: usage["input_tokens"] || 0,
-          output_tokens: usage["output_tokens"] || 0
-        },
-        %{model: decoded["model"], role: opts[:role], session: opts[:session_uri]}
-      )
-    end
-
-    :ok
+  # stats → telemetry(文档清单 A)。ApiClient usage = %{prompt, completion, total};
+  # 映射到 loom 既有事件的 input_tokens/output_tokens。
+  defp emit_telemetry(usage, model, opts) when is_map(usage) do
+    :telemetry.execute(
+      [:ezagent, :loom, :llm, :call],
+      %{
+        input_tokens: Map.get(usage, :prompt, 0),
+        output_tokens: Map.get(usage, :completion, 0)
+      },
+      %{model: model, role: opts[:role], session: opts[:session_uri], flavor: :curl}
+    )
   rescue
     _ -> :ok
   end
 
-  defp parse_text(resp_body) do
-    case Jason.decode(resp_body) do
-      {:ok, %{"content" => content}} when is_list(content) ->
-        text =
-          content
-          |> Enum.filter(&(&1["type"] == "text"))
-          |> Enum.map_join("", & &1["text"])
-
-        {:ok, text}
-
-      {:ok, other} ->
-        {:error, {:unexpected_response, other}}
-
-      {:error, reason} ->
-        {:error, {:bad_json, reason}}
-    end
-  end
-
-  defp ssl_opts do
-    [
-      verify: :verify_peer,
-      cacerts: :public_key.cacerts_get(),
-      depth: 3,
-      customize_hostname_check: [
-        match_fun: :public_key.pkix_verify_hostname_match_fun(:https)
-      ]
-    ]
-  end
-
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+  defp emit_telemetry(_, _, _), do: :ok
 end

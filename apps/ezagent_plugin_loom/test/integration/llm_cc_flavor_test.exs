@@ -1,5 +1,5 @@
 defmodule EzagentPluginLoom.Integration.LlmCcFlavorTest do
-  @moduledoc "LLM cc-flavor:用本地 claude 二进制(one-shot)。live 需 claude + ANTHROPIC env。"
+  @moduledoc "LLM cc-flavor:用本地 claude 二进制(one-shot)。live 需 claude + provider key env。"
   use ExUnit.Case, async: true
 
   alias EzagentPluginLoom.LLM

@@ -2,8 +2,8 @@ defmodule EzagentPluginLoom.Integration.LiveOrchestrationTest do
   @moduledoc """
   LIVE: 真实 LLM → loom orchestrator → Turn → customer feed 端到端。
 
-  需真实端点(`ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY`),默认排除(`:live` tag)。
-  跑: `ANTHROPIC_BASE_URL=... ANTHROPIC_API_KEY=... mix test --include live \
+  需真实端点(`DEEPSEEK_API_KEY`(provider key)),默认排除(`:live` tag)。
+  跑: `DEEPSEEK_API_KEY=sk-... mix test --include live \
         apps/ezagent_plugin_loom/test/integration/live_orchestration_test.exs`
 
   证明 multi-agent wiring 第一片(单 agent compose)用真实 LLM 跑通:编排器把 customer

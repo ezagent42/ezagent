@@ -35,6 +35,9 @@ defmodule EzagentPluginLoom.MixProject do
       {:ezagent_domain_workspace, in_umbrella: true},
       {:ezagent_domain_session, in_umbrella: true},
       {:ezagent_domain_socialware, in_umbrella: true},
+      # 复用现成 OpenAI/DeepSeek-shape HTTP 客户端(Ezagent.PluginCurlAgent.ApiClient),
+      # 不自造 :httpc 调用。ApiClient 是无状态纯模块,无需 curl_agent 起 app 进程。
+      {:ezagent_plugin_curl_agent, in_umbrella: true},
       {:plug, "~> 1.16"}
     ]
   end

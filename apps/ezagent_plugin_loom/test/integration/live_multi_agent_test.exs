@@ -2,8 +2,8 @@ defmodule EzagentPluginLoom.Integration.LiveMultiAgentTest do
   @moduledoc """
   LIVE: 完整多 agent 编排 —— decompose → 并发 themed worker → 聚合 compose。
 
-  需 `ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY`,默认排除(`:live`)。跑:
-  `ANTHROPIC_BASE_URL=... ANTHROPIC_API_KEY=... mix test --include live \
+  需 `DEEPSEEK_API_KEY`(provider key),默认排除(`:live`)。跑:
+  `DEEPSEEK_API_KEY=sk-... mix test --include live \
      apps/ezagent_plugin_loom/test/integration/live_multi_agent_test.exs`
 
   验证 `Orchestrator.run/1` 走完整多 agent 路径(非单 agent 兜底)产出可用 result_refs。

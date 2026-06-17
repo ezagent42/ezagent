@@ -15,8 +15,12 @@ Loom socialware vertical — **多 agent 编排 + AI page-builder**。访客对�
   customer 消息 → `decompose → 并发 themed worker → compose`（真实 LLM）→ dispatch
   `turn.open/compose/settle` → operator gate → customer feed。务实版（编排逻辑内并发 LLM）；
   真实 agent Kind fan-out 待架构决策（见预留清单项 3）。
-- **LLM** = `EzagentPluginLoom.LLM`，flavor 开关：`curl`（默认，HTTP anthropic 端点，便宜）/
-  `cc`（本地 claude 二进制，跟随登录态）。`ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY` 或本地 claude。
+- **LLM** = `EzagentPluginLoom.LLM`，对齐现成约定:**复用 `Ezagent.PluginCurlAgent.ApiClient`**
+  (不自造 HTTP 客户端),flavor 开关对应 `Ezagent.AgentFlavorRegistry` 的 `curl`/`cc`:`curl`(默认,
+  provider HTTP,OpenAI/DeepSeek-shape)/ `cc`(本地 claude 二进制)。配置按 **provider 语义**:
+  `provider`(默认 `deepseek`)/ `api_url` / `model`,key 读 `<PROVIDER>_API_KEY`(如 `DEEPSEEK_API_KEY`,
+  **只在用该 provider 时取该 provider 的 key**)。绑定 durable 凭证级联(`Ezagent.Credential.Resolver`
+  + agent `:api_keys` slice)是 agent-scoped → 随真实 agent-Kind 落地(预留项 3)。
 - **transport** = `EzagentPluginLoom.WebPlug`（`forward "/loom"`），customer 经 HTTP 交互。
 
 ## HTTP 端点（`/loom` 前缀）
@@ -49,13 +53,13 @@ Loom socialware vertical — **多 agent 编排 + AI page-builder**。访客对�
 # 2. 签 customer token，浏览器开 /loom/app/myws/demo?token=<token>
 token = Ezagent.Socialware.CustomerAuth.issue_token(session_uri, Ezagent.URI.workspace("myws"))
 ```
-customer 在 SPA 发消息 → 编排器（需 `ANTHROPIC_*` env 或本地 claude）→ operator 审批后页面可见。
+customer 在 SPA 发消息 → 编排器（需 `DEEPSEEK_API_KEY` 等 provider key,或 `LOOM_LLM_FLAVOR=cc` 走本地 claude）→ operator 审批后页面可见。
 
 ## Testing
 
 ```bash
 mix test apps/ezagent_plugin_loom/test                 # 单元/集成（默认排除 :live）
-ANTHROPIC_BASE_URL=… ANTHROPIC_API_KEY=… \
+DEEPSEEK_API_KEY=sk-… \
   mix test --include live apps/ezagent_plugin_loom/test # 含真实 LLM 的 live 测试
 ```
 

@@ -1,7 +1,7 @@
 defmodule EzagentPluginLoom.Integration.LiveStitchTest do
   @moduledoc """
   Stitch(preview 辅助 AI):非-live 验 HTTP 鉴；live 验真实 LLM 答 + drive。
-  需 `ANTHROPIC_*` 跑 live。
+  需 `DEEPSEEK_API_KEY` 跑 live。
   """
   use EzagentCore.DataCase, async: false
   use Plug.Test

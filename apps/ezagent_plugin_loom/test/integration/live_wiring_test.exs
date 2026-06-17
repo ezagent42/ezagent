@@ -3,8 +3,8 @@ defmodule EzagentPluginLoom.Integration.LiveWiringTest do
   LIVE: 务实版 multi-agent wiring 端到端 —— customer 消息 → 编排进程(订阅) →
   真实 LLM compose → Turn → customer feed。
 
-  需 `ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY`,默认排除(`:live`)。跑:
-  `ANTHROPIC_BASE_URL=... ANTHROPIC_API_KEY=... mix test --include live \
+  需 `DEEPSEEK_API_KEY`(provider key),默认排除(`:live`)。跑:
+  `DEEPSEEK_API_KEY=sk-... mix test --include live \
      apps/ezagent_plugin_loom/test/integration/live_wiring_test.exs`
 
   证明:一条进 session 的 customer 消息,经 `OrchestratorServer` 订阅感知 → 真实 LLM

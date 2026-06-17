@@ -1,7 +1,7 @@
 defmodule EzagentPluginLoom.Integration.LiveIntentTest do
   @moduledoc """
   意图推荐(Intent):非-live 验 HTTP 鉴(bad request)；live 验真实 LLM 选品。
-  需 `ANTHROPIC_*` 跑 live: `... mix test --include live <this>`。
+  需 `DEEPSEEK_API_KEY` 跑 live: `... mix test --include live <this>`。
   """
   use ExUnit.Case, async: false
   use Plug.Test

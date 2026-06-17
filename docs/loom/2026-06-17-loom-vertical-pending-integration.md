@@ -46,16 +46,23 @@
   「编排控制器」，框架内无现成落位——需 Allen 拍「编排控制器型 agent 怎么在 socialware 落位」。
 - **接入点**：`orchestrator.ex` / `orchestrator_server.ex` / `stitch_experts.ex`（务实实现，注释已标）。
   功能上无缺口；标准化是架构演进，非功能阻塞。
+- **已部分对齐（2026-06-17）**：LLM 调用层已迁到现成约定——`llm.ex` 复用
+  `Ezagent.PluginCurlAgent.ApiClient`（不再自造 HTTP），配置改 provider 语义
+  （`provider`/`api_url`/`model` + `<PROVIDER>_API_KEY`），flavor 对齐 `AgentFlavorRegistry`
+  的 curl/cc。**仍待项 3**：绑定 durable 凭证级联（`Ezagent.Credential.Resolver` + agent
+  `:api_keys` slice）是 agent-scoped（需 `agent_uri`/`owner`/grant），编排器非 agent 故暂用
+  provider-named env，随 agent-Kind 落地一并接通。
 
 ## 4. cc-flavor PTY（claude 二进制）
 
-- **现状**：LLM 调用走 `EzagentPluginLoom.LLM`（`:httpc` anthropic-兼容端点，`ANTHROPIC_BASE_URL`/
-  `ANTHROPIC_API_KEY`，curl-flavor 等价路径），live 验证通。
+- **现状**：LLM 调用走 `EzagentPluginLoom.LLM`，curl flavor 复用
+  `Ezagent.PluginCurlAgent.ApiClient`（OpenAI/DeepSeek-shape `/chat/completions`，provider 命名），
+  cc flavor 走本地 `claude -p`。live 验证通。
 - **需补（可选，等价替换价值低）**：若要文档原 cc-flavor PTY（claude 二进制长驻进程）——它依赖项 3
-  的真实 agent Kind 化（cc-flavor 是 agent flavor）。当前 `ANTHROPIC_BASE_URL` 已可指向任意
-  anthropic-兼容后端（含 claude），功能等价；cc-flavor PTY 主要差异是「常驻进程跨轮上下文」
+  的真实 agent Kind 化（cc-flavor 是 agent flavor）。当前 `LOOM_LLM_API_URL` 已可指向任意
+  OpenAI-兼容后端，功能等价；cc-flavor PTY 主要差异是「常驻进程跨轮上下文」
   （loom 当前 stateless per-turn，prompt 按此设计）。
-- **接入点**：`llm.ex`（端点可配）；真实 cc-flavor 随项 3 一起。
+- **接入点**：`llm.ex`（provider/端点可配）；真实 cc-flavor 随项 3 一起。
 
 ---
 

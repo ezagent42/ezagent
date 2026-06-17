@@ -4,7 +4,7 @@ defmodule EzagentPluginLoom.Integration.LiveTelemetryTest do
   `[:ezagent, :loom, :llm, :call]` 携带 token 用量 —— 替代旧 loom_stats.json,
   数据走 ezagent telemetry、不进 customer feed。
 
-  需 `ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY`,默认排除(`:live`)。
+  需 `DEEPSEEK_API_KEY`(provider key),默认排除(`:live`)。
   """
   use ExUnit.Case, async: false
   @moduletag :live

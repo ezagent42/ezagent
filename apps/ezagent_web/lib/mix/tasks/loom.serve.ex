@@ -5,7 +5,9 @@ defmodule Mix.Tasks.Loom.Serve do
   起完整 app(含 HTTP listener)→ seed 一个 loom demo session(经 instantiate,会起编排进程)
   → 打印 customer URL/token → 保持运行。
 
-      PORT=10042 ANTHROPIC_BASE_URL=… ANTHROPIC_API_KEY=… mix loom.serve
+      PORT=10042 DEEPSEEK_API_KEY=sk-… mix loom.serve
+      # provider/model/端点可选覆盖:LOOM_LLM_PROVIDER / LOOM_LLM_API_URL / LOOM_LLM_MODEL
+      # cc flavor:LOOM_LLM_FLAVOR=cc(走本地 claude,不需要 key)
 
   非生产工具(prod 由 OTP release 起 endpoint)。
   """
