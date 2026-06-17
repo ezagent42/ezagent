@@ -100,10 +100,22 @@ defmodule EzagentPluginLoom.Application do
   # 的 dep,故 `Ezagent.UI.*` 一定先编译并 application_start,这里不需要
   # `Code.ensure_loaded?` 兜底。注册失败不能影响 plugin boot — try/rescue。
   defp register_session_views do
-    # PR#1(loom-port):loom 在 admin session 视图里的 tab(LoomSessionView / LoomDashboardView)
-    # 属于 **admin-UI 集成**,划到 PR #2;而且 main 的 plugin gate 禁止插件直接调
-    # `*Registry.register`(要走 Ezagent.Plugin 声明式)。PR #2 再按 main 规范接入。
-    :ok
+    # PR#2(loom-port):the plugin_check gate's forbidden registries are only the
+    # core dispatch/routing ones (Adapter/Binding/Behavior/Spawn/Template/Plugin/
+    # AgentFlavor/Routing) — `SessionViewRegistry` (UI) is NOT one of them, and
+    # main's own admin_live mount registers views the same way. So loom registers
+    # its admin session tabs here. `init/0` is idempotent (admin_live's mount
+    # re-init doesn't wipe these); register failure must not abort plugin boot.
+    try do
+      :ok = Ezagent.UI.SessionViewRegistry.init()
+      :ok = Ezagent.UI.SessionViewRegistry.register(Ezagent.PluginLoom.View.LoomSessionView)
+      :ok = Ezagent.UI.SessionViewRegistry.register(Ezagent.PluginLoom.View.LoomDashboardView)
+    rescue
+      e ->
+        require Logger
+        Logger.warning("EzagentPluginLoom: SessionView register failed: #{inspect(e)}")
+        :ok
+    end
   end
 
   # --- Ezagent.Plugin contract ---------------------------------------

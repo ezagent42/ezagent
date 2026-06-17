@@ -23,7 +23,7 @@ defmodule Ezagent.PluginLoom.View.LoomDashboardView do
   @behaviour Ezagent.UI.SessionView
   use Phoenix.Component
 
-  alias Ezagent.PluginLoom.{Materials, Stats, Knowledge, ConsumerSession, SavedClasses}
+  alias Ezagent.PluginLoom.{Materials, Stats, Knowledge, SavedClasses}
 
   @impl true
   def id, do: :loom_dashboard
@@ -35,9 +35,13 @@ defmodule Ezagent.PluginLoom.View.LoomDashboardView do
   def icon, do: "dashboard"
 
   @impl true
-  def applies_to?(%URI{scheme: "session", host: "loom", path: path}) when is_binary(path) do
+  # loom-port PR#2 — Dashboard is GENERAL: it applies to EVERY session, not just
+  # loom (Allen: "dashboard 也变成通用的,不管是不是 loom session 都具有"). Non-loom
+  # sessions have no loom usage stats / materials / knowledge, so those sections
+  # render empty/zero ("数据有则显示"); the members roster (session slice) is general.
+  def applies_to?(%URI{scheme: "session", path: path}) when is_binary(path) do
     case String.split(path, "/", trim: true) do
-      [ws, name | _] -> name != "" and not ConsumerSession.consumer?(ws, name)
+      [_ws, name | _] -> name != ""
       _ -> false
     end
   end
@@ -575,7 +579,9 @@ defmodule Ezagent.PluginLoom.View.LoomDashboardView do
   defp mem_to_s(s) when is_binary(s), do: s
   defp mem_to_s(other), do: inspect(other)
 
-  defp ws_sid(%URI{scheme: "session", host: "loom", path: path}) when is_binary(path) do
+  # loom-port PR#2 — generalized from `host: "loom"` to ANY session host so the
+  # Dashboard works for every session (loom stats just come back empty for non-loom).
+  defp ws_sid(%URI{scheme: "session", path: path}) when is_binary(path) do
     case String.split(path, "/", trim: true) do
       [ws, sid | _] -> {ws, sid}
       _ -> {nil, nil}
