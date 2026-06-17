@@ -63,8 +63,9 @@ ANTHROPIC_BASE_URL=… ANTHROPIC_API_KEY=… \
 
 ✅ 完整 + 验证：脚手架、SW-USE/DEV/UPD E2E、多 agent 编排、customer 入站闭环、素材库、知识库、
 Stitch（含 4 sub-worker）、AiSpot、intent、fork、user_schema、meta agent、telemetry、Dashboard、
-page-SDK tool/fetch、前端壳（customer + operator）。
+page-SDK tool/fetch、前端 SPA（customer + operator，**已真实浏览器交互 E2E 验证**：发消息→真实 LLM
+编排→页面渲染，`mix loom.serve` + agent-browser）。
 
 🔶 预留（待外部资源 / 架构决策，见 `docs/loom/2026-06-17-loom-vertical-pending-integration.md`）：
-飞书真实投递（凭证 + main facade）、前端浏览器交互验证（agent-browser）、真实 agent Kind 化
-（Allen 架构决策）、cc-flavor PTY 常驻（依赖前者）。
+飞书真实投递（凭证 + main facade）、真实 agent Kind 化（Allen 架构决策）、cc-flavor PTY 常驻
+（依赖前者、价值低）。

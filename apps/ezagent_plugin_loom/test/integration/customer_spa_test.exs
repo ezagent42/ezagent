@@ -25,4 +25,11 @@ defmodule EzagentPluginLoom.Integration.CustomerSpaTest do
     html = EzagentPluginLoom.CustomerSPA.html()
     refute html =~ ~r/<script\s+src=/
   end
+
+  test "SPA extracts ws/sid from path, not query (regression: /c/null/null/*)" do
+    # 回归:URL 把 ws/sid 放在 path(/loom/app/:ws/:sid),早期版本从 query 读 → null/null → 401。
+    html = EzagentPluginLoom.CustomerSPA.html()
+    assert html =~ "location.pathname.match"
+    assert html =~ "/loom/app/"
+  end
 end

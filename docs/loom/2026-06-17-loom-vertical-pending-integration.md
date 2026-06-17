@@ -22,15 +22,19 @@
   平面镜像」caller 豁免；customer-visible 镜像还需 main 补 `ExternalMirror` visibility filter（spec §4.3 待做）。
 - **接入点**：`apps/ezagent_plugin_loom/lib/ezagent_plugin_loom/feishu_mirror.ex`（moduledoc 待接入 §1-4）
 
-## 2. 前端 SPA / Dashboard operator UI
+## 2. 前端 SPA / Dashboard operator UI ✅ 已浏览器验证
 
-- **现状**：**后端全部就绪并验证**——customer 入站/feed/素材/Stitch/AiSpot/intent/team/knowledge/
-  user_schema/tool/fetch 全部 HTTP 端点 + Dashboard 数据聚合（`Dashboard.summary/1`）。
-- **需你补**：浏览器里的 UI 壳。本 session **无 agent-browser 工具**（ToolSearch 搜 browser/playwright/e2e
-  无返回；`/reload-plugins` 报 "1 error during load" 疑似它）。
-- **接入点**：confirm agent-browser 怎么调起（MCP/CLI），或 `! <cmd>` 在 session 里手动跑、输出进对话；
-  customer 渲染可复用 socialware `customer_app.js` + `json_render.mjs`（#732），operator Dashboard UI 读
-  `Dashboard.summary/1` 渲 HEEx PageView。
+- **现状**：**后端就绪 + 浏览器内交互 E2E 已通过**。customer SPA（`/loom/app/:ws/:sid`）经真实
+  Chrome（agent-browser CLI）验证：发消息 → 真实多 agent LLM 编排 → Turn（`mode:auto` settle）→
+  feed 出页面 → SPA `renderNode` 渲成 DOM（page/services/detail/notice/choices 节点正确）。
+  截图见 session（headless Chrome 缺 CJK 字体，文字显示为方块，非代码问题）。
+- **本 session 修复的 bug**：SPA 从 query 读 `ws/sid`，但 URL 把它们放在 **path**
+  （`/loom/app/:ws/:sid`），导致 POST/feed 命中 `/c/null/null/*` → 401。已改为从 `location.pathname`
+  正则提取（`customer_spa.ex` / `dashboard_spa.ex`，query 兜底兼容）。
+- **可选演进（非阻塞）**：生产可换 socialware `customer_app.js` + `json_render.mjs`（#732），operator
+  Dashboard UI 读 `Dashboard.summary/1` 渲 HEEx PageView。当前 loom 自包含 vanilla-JS 壳已端到端可用。
+- **dev 工具**：`mix loom.serve`（put_env server:true → seed demo session → 打印 customer URL/token，
+  供浏览器 E2E）。
 
 ## 3. 真实 agent Kind fan-out（编排 + Stitch）
 
@@ -60,10 +64,10 @@
 | 项 | 状态 | 阻塞 |
 |---|---|---|
 | 飞书镜像 | 预留桩 + 测试 | 飞书凭证 + main facade caller 豁免 |
-| 前端 / Dashboard UI | 后端就绪 | 浏览器工具（agent-browser 未加载） |
+| 前端 / Dashboard UI | ✅ 浏览器 E2E 已通过 | （无；可选换 socialware 渲染器） |
 | 真实 agent Kind fan-out | 务实版 live 验证 | Allen 架构决策 |
 | cc-flavor PTY | curl 等价已通 | 依赖项 3 + 价值低 |
 
 **功能上**：customer 端到端体验（对话→多 agent 编排→页面→feed→Stitch/AiSpot/intent/team/素材/知识/
-增强/工具/发布 fork）全部可工作。**缺的**：飞书外发（需凭证）、浏览器 UI 壳（需工具）、agent 标准化
-（架构演进）。这三类都已预留好接入点，资源/决策到位即可接通。
+增强/工具/发布 fork）全部可工作，前端已在真实浏览器验证。**仍待外部的只剩**：飞书外发（需凭证）、
+真实 agent Kind 标准化（Allen 架构决策）、cc-flavor PTY（随 agent 标准化、价值低）。均已预留接入点。

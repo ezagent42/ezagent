@@ -27,7 +27,9 @@ defmodule EzagentPluginLoom.DashboardSPA do
       <div class="grid" id="grid"><p>加载中…</p></div>
     <script>
     const q = new URLSearchParams(location.search);
-    const ws=q.get('ws'), sid=q.get('sid'), token=q.get('token');
+    // ws/sid 在 path(/loom/dashboard/:ws/:sid),token 在 query;query 兜底兼容。
+    const pm = location.pathname.match(/\\/loom\\/dashboard\\/([^\\/]+)\\/([^\\/]+)/);
+    const ws=(pm&&pm[1])||q.get('ws'), sid=(pm&&pm[2])||q.get('sid'), token=q.get('token');
     function card(v,l){ return `<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`; }
     async function load(){
       try{

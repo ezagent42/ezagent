@@ -41,7 +41,11 @@ defmodule EzagentPluginLoom.CustomerSPA do
       </div>
     <script>
     const q = new URLSearchParams(location.search);
-    const ws = q.get('ws'), sid = q.get('sid'), token = q.get('token');
+    // ws/sid 在 path(/loom/app/:ws/:sid),token 在 query;query 兜底兼容。
+    const pm = location.pathname.match(/\\/loom\\/app\\/([^\\/]+)\\/([^\\/]+)/);
+    const ws = (pm && pm[1]) || q.get('ws');
+    const sid = (pm && pm[2]) || q.get('sid');
+    const token = q.get('token');
     const base = `/loom/c/${ws}/${sid}`;
     const seen = new Set();
 
