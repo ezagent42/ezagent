@@ -328,6 +328,11 @@ defmodule Ezagent.SystemPrincipal.Catalog do
       # this grant (Allen 2026-06-15 — Option A: a dedicated closed-catalog GC
       # principal, not ambient/per-session authority).
       {principal("socialware-gc"), [Capability.cap(:session, Session, :leave)]}
+      # NOTE (#51 §4.1 / Decision #154): the anonymous public-view access path
+      # does NOT use a system principal. `Ezagent.Socialware.AnonUser.mint_for_public_session/1`
+      # mints the anon holding its OWN narrow `session.join` cap (granted_by the
+      # session owner), so the controller joins the anon AS ITSELF — no ambient
+      # `system://` join authority. See `EzagentWeb.Socialware.ChatFeedController`.
     ]
   end
 

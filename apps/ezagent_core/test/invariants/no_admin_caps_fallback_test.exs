@@ -92,6 +92,8 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
         # #17 cascade PR-0 — credential-materializer (empty-cap audit identity).
         "system://credential-materializer",
         # #51 §3.4 — socialware GC sweeper (Session :leave only).
+        # NOTE: #51 §4.1 anon public-view access does NOT add a principal —
+        # the anon holds its own narrow join cap (Decision #154).
         "system://socialware-gc"
       ]
 
