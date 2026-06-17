@@ -444,6 +444,11 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   end
 
   @doc "Revoke a capability from this principal — normalizes the `cap` then removes the identity-key match via `Ezagent.Capability.revoke/2`, notifies the principal, and emits `:cap_revoked`."
+  # NOTE (SPEC 2026-06-17 §3.3): a revoke dispatched under a `{:rule,…}` tag is
+  # authorized SOLELY by the `Kind.Runtime` step-5.5 rule bypass; this handler runs
+  # NO authorization check and `rule_cap_bounded?/1` is grant-only. Safe because
+  # revoke strictly de-escalates (removes authority), but it is intentional that
+  # the rule-branch structural bound does not constrain revoke.
   def handle_revoke_cap(%{cap: cap}, ctx) do
     cap_struct = Ezagent.Capability.normalize!(cap, granter_from_ctx(ctx))
     current_caps = ctx[:read].(:caps, MapSet.new())
