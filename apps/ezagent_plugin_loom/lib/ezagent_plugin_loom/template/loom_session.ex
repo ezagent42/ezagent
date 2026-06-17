@@ -10,6 +10,10 @@ defmodule EzagentPluginLoom.Template.LoomSession do
   """
 
   @behaviour Ezagent.Kind.Template
+  # 让 `session.loom` 出现在 admin "/workspaces/:name → add template" 下拉里:
+  # `Ezagent.UI.Form.list_form_classes/0` 只收录实现了 `Ezagent.UI.Form` 的 template class
+  # (curl.agent 同此做法)。仅声明字段,框架自动渲表单 + `default_form_to_args` 注入 "class"。
+  @behaviour Ezagent.UI.Form
 
   alias Ezagent.{Invocation, KindRegistry, WorkspaceRegistry}
   alias Ezagent.Entity.{Session, User}
@@ -17,6 +21,27 @@ defmodule EzagentPluginLoom.Template.LoomSession do
 
   @impl Ezagent.Kind.Template
   def template_name, do: "session.loom"
+
+  # 表单字段 = `validate/1` + `instantiate/3` 需要的入参(class 由 default_form_to_args 自动注入)。
+  @impl Ezagent.UI.Form
+  def form_fields do
+    [
+      %{
+        name: "session_name",
+        type: :text,
+        label: "Session 名称(short name)",
+        required: true,
+        placeholder: "main"
+      },
+      %{
+        name: "operator_uri",
+        type: :uri,
+        label: "Operator 用户 URI",
+        required: true,
+        placeholder: "entity://<workspace>/user/<name>"
+      }
+    ]
+  end
 
   @impl Ezagent.Kind.Template
   def validate(tmpl) when is_map(tmpl) do

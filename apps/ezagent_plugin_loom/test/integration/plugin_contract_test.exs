@@ -15,6 +15,19 @@ defmodule EzagentPluginLoom.Integration.PluginContractTest do
     assert {:ok, LoomSession} = TemplateRegistry.lookup("session.loom")
   end
 
+  test "session.loom is selectable in the admin add-template dropdown (implements UI.Form)" do
+    # 回归:list_form_classes/0 只收录实现了 Ezagent.UI.Form 的 class;早期 LoomSession
+    # 没实现 → admin /workspaces add-template 下拉看不到 session.loom。
+    assert Ezagent.UI.Form.implements?(LoomSession)
+
+    names = Enum.map(Ezagent.UI.Form.list_form_classes(), fn {name, _mod, _fields} -> name end)
+    assert "session.loom" in names
+
+    field_names = Enum.map(LoomSession.form_fields(), & &1.name)
+    assert "session_name" in field_names
+    assert "operator_uri" in field_names
+  end
+
   test "loom session template validates its locked shape" do
     assert LoomSession.template_name() == "session.loom"
 
