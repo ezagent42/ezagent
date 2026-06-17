@@ -33,8 +33,6 @@ defmodule Ezagent.PluginLoom.SavedClasses do
 
   require Logger
 
-  alias Ezagent.TemplateRegistry
-
   @class_prefix "session."
 
   # --- file IO ---------------------------------------------------------
@@ -204,10 +202,10 @@ defmodule Ezagent.PluginLoom.SavedClasses do
       map = load_all() |> Map.put(class_name, entry)
       save_all(map)
 
-      case register_one(class_name, entry) do
-        :ok -> {:ok, class_name}
-        {:error, _} = err -> err
-      end
+      # Plan B(loom-port):发布/存模板物 = **纯数据**,不再合成 Template Class 模块、不碰
+      # `TemplateRegistry`(main 的 plugin「declare don't call」gate 禁止插件调 *Registry)。
+      # open/fork/derive 时由 `instantiate_from_data/3` 直接实例化 `session.loom`。
+      {:ok, class_name}
     else
       {:error, :invalid_name}
     end
@@ -224,194 +222,37 @@ defmodule Ezagent.PluginLoom.SavedClasses do
 
       {_removed, new_map} ->
         save_all(new_map)
-        deregister_one(class_name)
         :ok
     end
   end
 
   @doc """
-  Read the JSON file and (re)register every saved Class.
-  Called from `EzagentPluginLoom.Application.after_boot/0`.
+  Plan B(loom-port)—— 数据驱动实例化(取代旧的合成-Template-Class-模块流程)。
+
+  读 `class_name`(`session.pub_*` / 存模板备份)的 entry,把 `saved_state` + `published`
+  标记注入,直接实例化 `session.loom`(发布物冻结无 builder;存模板可编辑有 builder)。
+  open_published / fork / derive 都走这条,**不碰 TemplateRegistry**(顺从 main plugin gate)。
   """
-  def register_all_from_disk do
-    load_all()
-    |> Enum.each(fn {class_name, entry} ->
-      try do
-        case register_one(class_name, entry) do
-          :ok ->
-            :ok
+  @spec instantiate_from_data(String.t(), String.t(), URI.t()) ::
+          {:ok, [URI.t()]} | {:error, term()}
+  def instantiate_from_data(class_name, session_name, %URI{} = ws_uri)
+      when is_binary(class_name) and is_binary(session_name) do
+    case load_all() |> Map.get(class_name) do
+      %{} = entry ->
+        saved_state = Map.get(entry, "saved_state") || %{}
+        published? = Map.get(entry, "published") == true
 
-          {:error, reason} ->
-            Logger.warning(
-              "SavedClasses: register #{class_name} returned error: #{inspect(reason)}"
-            )
-        end
-      rescue
-        e ->
-          Logger.warning("SavedClasses: register #{class_name} raised: #{inspect(e)}")
-      end
-    end)
-  end
+        tmpl = %{
+          "class" => "session.loom",
+          "session_name" => session_name,
+          "no_builder" => published?,
+          "saved_state" => saved_state
+        }
 
-  # --- module synthesis ------------------------------------------------
+        Ezagent.PluginLoom.Template.LoomSession.instantiate("session.loom", tmpl, ws_uri)
 
-  defp register_one(class_name, entry) when is_binary(class_name) do
-    saved_state = Map.get(entry, "saved_state") || %{}
-    module = module_for(class_name)
-
-    # Hot-replace if already loaded (e.g., re-save same suffix).
-    if :code.is_loaded(module) do
-      _ = :code.purge(module)
-      _ = :code.delete(module)
+      _ ->
+        {:error, :not_found}
     end
-
-    # 发布物(published=true)= 冻结、衍生 session 无 builder;存为模板(备份)= 可编辑、有 builder。
-    published? = Map.get(entry, "published") == true
-
-    contents =
-      quote bind_quoted: [
-              class_name: class_name,
-              saved_state: Macro.escape(saved_state),
-              published?: published?
-            ] do
-        @behaviour Ezagent.Kind.Template
-        # 关键:也要实现 Ezagent.UI.Form,否则 `Ezagent.UI.Form.list_form_classes/0`
-        # 用 `function_exported?(module, :form_fields, 0)` 过滤会把这条筛掉,
-        # /workspaces/<ws> 的 Add template Class picker 就看不见。
-        @behaviour Ezagent.UI.Form
-
-        @class_name class_name
-        @saved_state saved_state
-        # 发布物 → 衍生 session 无 v0(冻结);存为模板备份 → 有 v0(可继续编辑)。
-        @published published?
-
-        @impl Ezagent.Kind.Template
-        def template_name, do: @class_name
-
-        @impl Ezagent.Kind.Template
-        def validate(%{"class" => name, "session_name" => sn})
-            when name == @class_name and is_binary(sn) and sn != "",
-            do: :ok
-
-        def validate(%{"class" => name}) when name == @class_name,
-          do: {:error, :missing_or_empty_session_name}
-
-        def validate(_), do: {:error, :wrong_class}
-
-        @impl Ezagent.Kind.Template
-        def instantiate(tmpl_name, %{"class" => @class_name, "session_name" => _} = tmpl, ws_uri) do
-          # 委托给 LoomSession,把 class 重写成 "session.loom"、saved_state 注入。
-          # `Map.merge(saved_state, tmpl)` 让 tmpl 里的字段(尤其 session_name)
-          # 不被 saved_state 覆盖,但 saved_state 的 orchestrator 快照覆盖默认。
-          augmented =
-            tmpl
-            |> Map.put("class", "session.loom")
-            # 2026-06-05 / 改 2026-06-16 — **发布物**(published=true)衍生的 session 才无 v0
-            # (base 冻结,只能 user_schema 叠加);**存为模板**(备份)衍生的 session **有 v0**,
-            # 可以继续用 builder 编辑(它就是个可复用的起点)。
-            |> Map.put("no_builder", @published)
-            |> then(fn t -> Map.merge(%{"saved_state" => @saved_state}, t) end)
-
-          Ezagent.PluginLoom.Template.LoomSession.instantiate(tmpl_name, augmented, ws_uri)
-        end
-
-        def instantiate(_tmpl_name, tmpl, _ws_uri),
-          do: {:error, {:invalid_template, tmpl}}
-
-        # --- cleanup(tmpl_name, tmpl, ws_uri) — `WorkspaceDetailLive` calls
-        # this on Remove if the function is exported. Delegate to LoomSession
-        # which knows how to terminate the team + snapshots + Feishu binding.
-        def cleanup(tmpl_name, %{"class" => @class_name} = tmpl, ws_uri) do
-          augmented = Map.put(tmpl, "class", "session.loom")
-          Ezagent.PluginLoom.Template.LoomSession.cleanup(tmpl_name, augmented, ws_uri)
-        end
-
-        def cleanup(_tmpl_name, _tmpl, _ws_uri), do: :ok
-
-        # --- session_uris_for_recipe — visibility filter for /sessions
-        # dropdown. Delegates to LoomSession (which produces
-        # `session://loom/<ws>/<sn>` regardless of the saved-class
-        # specialization, because `instantiate/3` itself delegates).
-        # See LoomSession.session_uris_for_recipe/3 for rationale.
-        def session_uris_for_recipe(tmpl_name, %{"class" => @class_name} = tmpl, ws_uri) do
-          augmented = Map.put(tmpl, "class", "session.loom")
-
-          Ezagent.PluginLoom.Template.LoomSession.session_uris_for_recipe(
-            tmpl_name,
-            augmented,
-            ws_uri
-          )
-        end
-
-        def session_uris_for_recipe(_tmpl_name, _tmpl, _ws_uri), do: []
-
-        # --- saved?/0 + delete_self!/0 — duck-typed deletability ---------
-        #
-        # The admin LV (workspace_detail_live) renders a 🗑️ next to any
-        # Class in the Add-template picker whose module returns
-        # `saved?/0 == true`, then calls `delete_self!/0` on click.
-        # This keeps liveview plugin-agnostic — it never needs to know
-        # `Ezagent.PluginLoom.SavedClasses` exists.
-        #
-        # Built-in Classes (LoomSession, CcAgent, etc.) don't implement
-        # these → no delete button, can't be removed via UI.
-        def saved?, do: true
-
-        def delete_self! do
-          Ezagent.PluginLoom.SavedClasses.delete_one(@class_name)
-        end
-
-        # --- Ezagent.UI.Form ---------------------------------------------
-
-        @impl Ezagent.UI.Form
-        def form_fields do
-          [
-            %{
-              name: "session_name",
-              type: :text,
-              label: "Session name",
-              required: true,
-              placeholder: "<short-name> (becomes session://#{@class_name}/<ws>/<name>)"
-            }
-          ]
-        end
-
-        @impl Ezagent.UI.Form
-        def form_to_args(params) do
-          %{
-            "class" => @class_name,
-            "session_name" => Map.get(params, "session_name", ""),
-            "members" => []
-          }
-        end
-      end
-
-    try do
-      Module.create(module, contents, Macro.Env.location(__ENV__))
-      TemplateRegistry.register(module)
-    rescue
-      e -> {:error, e}
-    end
-  end
-
-  defp deregister_one(class_name) do
-    table = TemplateRegistry.table()
-    _ = :ets.delete(table, class_name)
-
-    module = module_for(class_name)
-
-    if :code.is_loaded(module) do
-      _ = :code.purge(module)
-      _ = :code.delete(module)
-    end
-
-    :ok
-  end
-
-  defp module_for(class_name) do
-    suffix = String.replace_prefix(class_name, @class_prefix, "")
-    sanitized = String.replace(suffix, ~r/[^a-zA-Z0-9]/, "_")
-    camelized = Macro.camelize(sanitized)
-    String.to_atom("Elixir.Ezagent.PluginLoom.Template.Generated." <> camelized)
   end
 end

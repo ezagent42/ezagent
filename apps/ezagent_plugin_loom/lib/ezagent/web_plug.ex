@@ -1391,11 +1391,12 @@ defmodule EzagentPluginLoom.WebPlug do
   defp open_published(token) do
     with {:ok, class_name, ws} <- Ezagent.PluginLoom.SavedClasses.find_by_token(token),
          :ok <- validate_published_ws(ws),
-         {:ok, class_module} <- Ezagent.TemplateRegistry.lookup(class_name),
          sid = mint_published_sid(),
          workspace_uri = Ezagent.URI.new!("workspace://#{ws}"),
-         tmpl = %{"class" => class_name, "session_name" => sid},
-         {:ok, [session_uri | _]} <- class_module.instantiate(sid, tmpl, workspace_uri),
+         # Plan B(loom-port):发布物 = 纯数据 → 直接数据驱动实例化 session.loom(冻结),
+         # 不再经 TemplateRegistry 查合成模块。
+         {:ok, [session_uri | _]} <-
+           Ezagent.PluginLoom.SavedClasses.instantiate_from_data(class_name, sid, workspace_uri),
          {:ok, user_uri} <- EzagentPluginLoom.TempUser.ensure_named(ws, "loomui_#{sid}"),
          :ok <- ensure_joined(session_uri, user_uri) do
       # 知识库随发布物 seed 进这个消费会话 → 它的 Salesperson 也有知识。
@@ -2447,19 +2448,20 @@ defmodule EzagentPluginLoom.WebPlug do
     end
   end
 
-  # 2026-06-01 — Class 级 spawn:`class_name` 是 `session.<saved>`(在
-  # `TemplateRegistry` 里能查到 SavedClasses 生成的模块);拿这模块直接
-  # instantiate(Module 内部已经把 saved_state 注好,delegate 给 LoomSession)。
+  # 2026-06-01 / Plan B(loom-port)— Class 级 spawn:`class_name` 是 `session.<saved>`
+  # (存模板备份)。改成数据驱动实例化(不再经 TemplateRegistry 查合成模块)。
   defp do_spawn_from_template(ws, class_name, new_session_name) do
-    with {:ok, class_module} <- Ezagent.TemplateRegistry.lookup(class_name),
-         :ok <- refuse_if_session_exists(ws, new_session_name),
-         tmpl = %{"class" => class_name, "session_name" => new_session_name},
+    with :ok <- refuse_if_session_exists(ws, new_session_name),
          workspace_uri = Ezagent.URI.new!("workspace://#{ws}"),
          {:ok, [session_uri | _]} <-
-           class_module.instantiate(new_session_name, tmpl, workspace_uri) do
+           Ezagent.PluginLoom.SavedClasses.instantiate_from_data(
+             class_name,
+             new_session_name,
+             workspace_uri
+           ) do
       %{ok: true, session_uri: URI.to_string(session_uri)}
     else
-      :error -> %{ok: false, error: "class_not_registered"}
+      {:error, :not_found} -> %{ok: false, error: "class_not_found"}
       {:error, reason} -> %{ok: false, error: inspect(reason)}
       other -> %{ok: false, error: inspect({:unexpected, other})}
     end

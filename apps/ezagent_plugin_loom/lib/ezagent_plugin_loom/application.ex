@@ -90,17 +90,10 @@ defmodule EzagentPluginLoom.Application do
   # 的 dep,故 `Ezagent.UI.*` 一定先编译并 application_start,这里不需要
   # `Code.ensure_loaded?` 兜底。注册失败不能影响 plugin boot — try/rescue。
   defp register_session_views do
-    try do
-      :ok = Ezagent.UI.SessionViewRegistry.init()
-      :ok = Ezagent.UI.SessionViewRegistry.register(Ezagent.PluginLoom.View.LoomSessionView)
-      # 2026-06-12 — loom session 的 Dashboard tab(token/分享/素材/团队统计)。
-      :ok = Ezagent.UI.SessionViewRegistry.register(Ezagent.PluginLoom.View.LoomDashboardView)
-    rescue
-      e ->
-        require Logger
-        Logger.warning("EzagentPluginLoom: LoomSessionView register failed: #{inspect(e)}")
-        :ok
-    end
+    # PR#1(loom-port):loom 在 admin session 视图里的 tab(LoomSessionView / LoomDashboardView)
+    # 属于 **admin-UI 集成**,划到 PR #2;而且 main 的 plugin gate 禁止插件直接调
+    # `*Registry.register`(要走 Ezagent.Plugin 声明式)。PR #2 再按 main 规范接入。
+    :ok
   end
 
   # --- Ezagent.Plugin contract ---------------------------------------
@@ -242,12 +235,9 @@ defmodule EzagentPluginLoom.Application do
         :ok
     end
 
-    # 2026-06-01 — Class-level "save as template":每个保存项都是一个 runtime
-    # 生成的 Template Class 模块,跟 `session.loom` 同级。`register_all_from_disk`
-    # 读 `~/.ezagent/<profile>/loom_saved_classes.json`,逐个 `Module.create` +
-    # `TemplateRegistry.register`。Phase 3 的 after_boot 比 Phase 2 publish 晚,
-    # 所以 TemplateRegistry 已就绪。
-    Ezagent.PluginLoom.SavedClasses.register_all_from_disk()
+    # Plan B(loom-port):存模板/发布物 = **纯数据**,不再 boot 时合成 + 注册 Template Class
+    # 模块(顺从 main 的 plugin「declare don't call」gate)。open/fork/derive 时由
+    # `SavedClasses.instantiate_from_data/3` 直接实例化 session.loom。
 
     # 2026-06-02 — SDK v2 tools.把 `:tools` config 列表注册进 ETS 注册表。
     # 失败不阻塞 boot:某个工具模块挂了不该让整个 plugin 起不来。
