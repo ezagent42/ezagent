@@ -22,8 +22,19 @@ defmodule EzagentPluginLoom.WebPlug do
   alias Ezagent.Socialware.{AnonBinding, AnonUser, CustomerAuth, CustomerFeed}
   alias Ezagent.Uploads
   alias Ezagent.Uploads.DownloadToken
-  alias EzagentPluginLoom.{Fork, Intent, Knowledge, Materials, Stitch, Tool, FetchProxy, UserSchema}
-  alias EzagentPluginLoom.{MetaAgent, WorkerConfig, Dashboard}
+
+  alias EzagentPluginLoom.{
+    Fork,
+    Intent,
+    Knowledge,
+    Materials,
+    Stitch,
+    Tool,
+    FetchProxy,
+    UserSchema
+  }
+
+  alias EzagentPluginLoom.{MetaAgent, WorkerConfig, Dashboard, SavedTemplates}
 
   @gateway_uri "system://loom-customer-gateway"
 
@@ -142,9 +153,10 @@ defmodule EzagentPluginLoom.WebPlug do
          text when is_binary(text) and text != "" <- conn.body_params["text"],
          sopts = [page: conn.body_params["page"], knowledge: Knowledge.get(session_uri)],
          {:ok, result} <-
-           (if conn.body_params["mode"] == "deep",
-              do: Stitch.reply_deep(text, sopts),
-              else: Stitch.reply(text, sopts)) do
+           if(conn.body_params["mode"] == "deep",
+             do: Stitch.reply_deep(text, sopts),
+             else: Stitch.reply(text, sopts)
+           ) do
       json(conn, 200, %{ok: true, reply: result.reply, drive: result.drive})
     else
       {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})
@@ -187,7 +199,8 @@ defmodule EzagentPluginLoom.WebPlug do
     with {:ok, session_uri, ws_uri} <- uris(ws, sid),
          token when is_binary(token) <- token(conn),
          :ok <- CustomerAuth.authorize(token, session_uri, ws_uri),
-         instruction when is_binary(instruction) and instruction != "" <- conn.body_params["instruction"],
+         instruction when is_binary(instruction) and instruction != "" <-
+           conn.body_params["instruction"],
          {:ok, result} <- MetaAgent.interpret(session_uri, instruction) do
       json(conn, 200, %{ok: true, result: result})
     else
@@ -233,6 +246,36 @@ defmodule EzagentPluginLoom.WebPlug do
          md when is_binary(md) <- conn.body_params["markdown"] do
       :ok = Knowledge.put(session_uri, md)
       json(conn, 200, %{ok: true})
+    else
+      {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})
+      _ -> json(conn, 400, %{ok: false, error: "bad_request"})
+    end
+  end
+
+  # 存当前 approved 页为可复用模板(operator 在 admin 点 "Save as Template")。body {name, token}
+  post "/c/:ws/:sid/save-template" do
+    with {:ok, session_uri, ws_uri} <- uris(ws, sid),
+         token when is_binary(token) <- token(conn),
+         :ok <- CustomerAuth.authorize(token, session_uri, ws_uri),
+         name when is_binary(name) and name != "" <- conn.body_params["name"],
+         tree when is_map(tree) <- approved_page_tree(session_uri) do
+      :ok = SavedTemplates.save(ws, name, tree)
+      json(conn, 200, %{ok: true, name: name})
+    else
+      {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})
+      nil -> json(conn, 400, %{ok: false, error: "no_approved_page"})
+      _ -> json(conn, 400, %{ok: false, error: "bad_request"})
+    end
+  end
+
+  # 列出本 workspace 已存模板(供"新建 session 时选已存模板"复用)。?token=
+  get "/c/:ws/:sid/saved-templates" do
+    conn = Plug.Conn.fetch_query_params(conn)
+
+    with {:ok, session_uri, ws_uri} <- uris(ws, sid),
+         token when is_binary(token) <- conn.query_params["token"],
+         :ok <- CustomerAuth.authorize(token, session_uri, ws_uri) do
+      json(conn, 200, %{ok: true, templates: Enum.map(SavedTemplates.list(ws), &%{name: &1.name})})
     else
       {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})
       _ -> json(conn, 400, %{ok: false, error: "bad_request"})
@@ -328,6 +371,21 @@ defmodule EzagentPluginLoom.WebPlug do
     {:ok, Ezagent.URI.session(ws, :loom, sid), Ezagent.URI.workspace(ws)}
   rescue
     _ -> :error
+  end
+
+  # 读 session 当前 approved surface 页 tree(无 → nil)。
+  defp approved_page_tree(session_uri) do
+    case Ezagent.Kind.get_slice(session_uri, :surface) do
+      {:ok, %{approved: v, versions: versions}} when not is_nil(v) ->
+        case versions[v] do
+          %{tree: tree} -> tree
+          %{"tree" => tree} -> tree
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
   end
 
   defp token(conn) do

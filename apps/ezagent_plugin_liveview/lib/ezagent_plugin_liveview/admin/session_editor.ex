@@ -87,6 +87,8 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
     ~H"""
     <header class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shrink-0">
       <.session_selector current_session_uri={@current_session_uri} sessions={@sessions} />
+      <.loom_link current_session_uri={@current_session_uri} />
+      <.loom_save_template_button current_session_uri={@current_session_uri} />
       <.create_session_button
         new_session_form={@new_session_form}
         template_class_options={@template_class_options}
@@ -103,6 +105,72 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
       />
     </header>
     """
+  end
+
+  # --- loom buttons ---------------------------------------------------------
+  # loom 前端集成:仅对 `session://<ws>/loom/<name>` 显示(非 loom session → nil → 不渲染)。
+  # "Open Loom" 新标签打开 customer SPA;"Save as Template" 经 JS hook 提示命名 → POST
+  # /loom 存当前页为可复用模板。两个按钮硬编码在此(同 loom-stitch);URL/token 由 loom
+  # 路由 + socialware CustomerAuth 提供。
+
+  attr(:current_session_uri, URI, required: true)
+
+  defp loom_link(assigns) do
+    assigns = assign(assigns, :loom_url, loom_app_url(assigns.current_session_uri))
+
+    ~H"""
+    <a
+      :if={@loom_url}
+      href={@loom_url}
+      target="_blank"
+      rel="noopener"
+      class="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950"
+      title={gettext("Open this session's Loom page-builder in a new tab")}
+    >
+      {gettext("Open Loom")} ↗
+    </a>
+    """
+  end
+
+  attr(:current_session_uri, URI, required: true)
+
+  defp loom_save_template_button(assigns) do
+    assigns = assign(assigns, :loom, loom_ws_name(assigns.current_session_uri))
+
+    ~H"""
+    <button
+      :if={@loom}
+      type="button"
+      id="loom-save-template-btn"
+      phx-hook="LoomSaveTemplate"
+      data-ws={elem(@loom, 0)}
+      data-sid={elem(@loom, 1)}
+      data-token={token_for(@current_session_uri, elem(@loom, 0))}
+      class="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950"
+      title={gettext("Save the current Loom page as a reusable template")}
+    >
+      {gettext("Save as Template")}
+    </button>
+    """
+  end
+
+  # `session://<ws>/loom/<name>` → {ws, name};非 loom → nil。
+  defp loom_ws_name(%URI{scheme: "session", host: ws, path: "/loom/" <> name})
+       when is_binary(ws) and is_binary(name) and name != "",
+       do: {ws, name}
+
+  defp loom_ws_name(_), do: nil
+
+  # customer SPA URL(带现签 CustomerAuth token,供 operator 新标签预览)。
+  defp loom_app_url(%URI{} = uri) do
+    case loom_ws_name(uri) do
+      {ws, name} -> "/loom/app/#{ws}/#{name}?token=#{token_for(uri, ws)}"
+      nil -> nil
+    end
+  end
+
+  defp token_for(%URI{} = session_uri, ws) do
+    Ezagent.Socialware.CustomerAuth.issue_token(session_uri, Ezagent.URI.workspace(ws))
   end
 
   # --- session_selector -----------------------------------------------------

@@ -74,10 +74,14 @@ defmodule EzagentPluginLoom.Template.LoomSession do
           # agent team:起一队 loom 编排控制器作为 Member(admin Members 面板可见)。
           _ = EzagentPluginLoom.Team.ensure_team(session_uri)
 
-          # seed 一张初始页 → 打开 loom 不再空白("operator 批准后显示")。best-effort。
-          # fork 出的 session 自带源页(`no_seed`),跳过以免和 Fork 的 page-copy 竞态。
+          # seed 初始页 → 打开 loom 不再空白("operator 批准后显示")。best-effort。
+          # fork 出的 session 自带源页(`no_seed`)跳过;`saved_template` 则 seed 已存模板页。
           if Map.get(tmpl, "no_seed") != true,
-            do: EzagentPluginLoom.OrchestratorServer.seed_page(session_uri)
+            do:
+              EzagentPluginLoom.OrchestratorServer.seed_page(
+                session_uri,
+                saved_template_tree(tmpl, workspace_name)
+              )
 
           {:ok, [session_uri], %{fresh?: fresh?, vertical: :loom}}
         else
@@ -139,6 +143,17 @@ defmodule EzagentPluginLoom.Template.LoomSession do
   defp resolve_operator_uri(_tmpl, workspace_name) do
     Ezagent.URI.user(workspace_name, "admin")
   end
+
+  # `saved_template` 入参 → 取该 workspace 已存模板的 page tree(供 seed);无则 nil(用默认 starter)。
+  defp saved_template_tree(%{"saved_template" => name}, workspace_name)
+       when is_binary(name) and name != "" do
+    case EzagentPluginLoom.SavedTemplates.get(workspace_name, name) do
+      %{tree: tree} -> tree
+      _ -> nil
+    end
+  end
+
+  defp saved_template_tree(_tmpl, _ws), do: nil
 
   defp ensure_session(session_uri) do
     # 同 advisor: spawn 统一 `Entity.Session` Kind,显式线程 SOCIALWARE subset

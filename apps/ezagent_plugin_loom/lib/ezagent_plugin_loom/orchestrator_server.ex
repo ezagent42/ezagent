@@ -78,13 +78,16 @@ defmodule EzagentPluginLoom.OrchestratorServer do
   Seed 一张静态初始页(无 LLM)→ 经 Turn(open/compose/settle, mode:auto 即 customer 可见),
   让打开 loom 时不再是空的"(operator 批准后显示)"。best-effort。
   """
-  @spec seed_page(URI.t()) :: :ok
-  def seed_page(%URI{} = session_uri) do
+  @spec seed_page(URI.t(), map() | nil) :: :ok
+  def seed_page(session_uri, tree \\ nil)
+
+  def seed_page(%URI{} = session_uri, tree) do
     caller = Ezagent.URI.new!(@caller_uri)
+    page_tree = if is_map(tree), do: tree, else: starter_tree()
 
     refs = [
       %{kind: :chat, text: "页面已就绪 ✨ 在右侧聊天框告诉我你想做什么样的页面,我来帮你生成。"},
-      %{kind: :page, tree: starter_tree()}
+      %{kind: :page, tree: page_tree}
     ]
 
     with {:ok, %{turn_id: turn_id}} <-
