@@ -1,7 +1,8 @@
 # Unified Grant Chokepoint — design (rev 2)
 
-**Status:** spec rev 2 (rev 1 RECONSIDER per subagent adversarial review 2026-06-17;
-this rev addresses all 3 BLOCKERs + 6 HIGH/MEDIUM findings).
+**Status:** spec rev 3 — APPROVED to implement (rev 1 RECONSIDER → rev 2 addressed 3
+BLOCKERs → 2nd subagent review SHIP-WITH-CHANGES → rev 3 applies the 3 must-fixes +
+should-fixes). Ready for PR-1.
 **Decision basis:** GLOSSARY Decision #154 ("no unowned permissions") + #153 (grant
 authorizer {self, admin, manager-of-target}).
 **Program:** CapBAC "no unowned caps" step ③ — chokepoint first, update test gate, then
@@ -113,7 +114,14 @@ def revoke_cap_returning_effect(target, cap, authorization, bind_as) # the secur
 ```
 
 `prepare/3` is the single source of truth; all wrappers delegate to it. `granted_by`
-derivation lives **only** in `prepare/3`. `Ezagent.Identity.grant_cap/3` becomes a
+derivation lives **only** in `prepare/3`. **Error policy (rev 3, LOW-N5):** the imperative
+wrappers (`grant_cap`, `grant_cap_via_router`, `revoke_cap`) return `prepare/3`'s
+`{:error, _}`; the effect-constructor wrappers (`grant_cap_effect`,
+`grant_cap_returning_effect`, `revoke_cap_returning_effect`) **raise** on a `prepare/3`
+error — an effect site cannot return an `{:error}` tuple as an effect, and a non-entity
+granter on a `{:system, p, entity}` tag is a compile-fixed programmer error (fail-fast,
+let-it-crash). (System-principal caps are read via `Ezagent.SystemPrincipal.caps/1` /
+`Catalog.caps_for!/1` — the §2 table's `Catalog.caps(principal)` is shorthand.) `Ezagent.Identity.grant_cap/3` becomes a
 back-compat shim: `grant_cap(e, c, granter_uri)` → `Grant.grant_cap(e, c, {:held_by,
 granter_uri})` (behavior-preserving — it already loads `read_granter_caps(granter)` into
 `ctx.caps`, which is exactly `{:held_by, actor}`'s semantics).
@@ -127,10 +135,17 @@ granter_uri})` (behavior-preserving — it already loads `read_granter_caps(gran
    place);
 3. **validate** `match?(%URI{scheme: "entity"}, granted_by)` else `{:error,
    {:granter_not_entity, granted_by}}`. (`Ezagent.Entity.User.admin_uri/0` =
-   `entity://system/user/admin` *is* entity-scheme, so the admin fallback passes. The
-   `bootstrap_granter`/`granter_from_ctx` `system://bootstrap` fallbacks are removed —
-   replaced by the admin entity, or let-it-crash if `admin_uri/0` is unavailable; the
-   `function_exported?` hedge is dropped per let-it-crash.);
+   `entity://system/user/admin` *is* entity-scheme, so the admin fallback passes.)
+   **Scope of the `system://bootstrap` fallback removal (rev 3, MEDIUM-N3):** there are
+   THREE `bootstrap_granter`-family functions; remove ONLY the one on the grant-handler
+   path — `IdentityAdmin.granter_from_ctx`'s `bootstrap_granter_uri`
+   (`behavior/identity.ex:479-492`), whose fallback becomes unreachable once `prepare/3`
+   always sets `ctx.caller` to an entity. Do NOT touch (a) the create-time self-cap stamper
+   `behavior/identity.ex:205` (create-time caps_json seeding — a §2 NON-GOAL, not a grant
+   dispatch) or (b) `capability_registry.ex:441`'s `Code.ensure_loaded?` hedge — that hedge
+   is a load-bearing umbrella-dep boundary (core has no compile edge to `domain.identity`;
+   removing it crashes core-only/test builds). The let-it-crash applies only to (the
+   grant-path) case once it is provably reachable only with an entity caller.
 4. record `authorization` (the tag, minus secrets) + `granted_by` on the `:cap_granted`
    emit (extends the existing `via_manage` provenance field).
 
@@ -139,20 +154,30 @@ granter_uri})` (behavior-preserving — it already loads `read_granter_caps(gran
 A new clause fires only when `ctx[:authorization_rule]` is set (only `prepare/3` sets it,
 only for `{:rule, …}`). It authorizes on the rule's assertion (the caller verified the rule
 precondition before the call — e.g. `PublicView.public_view?/1`). **Structural bound (the
-fix for HIGH-2 — `check_action_wildcard_grant_authorized` alone is insufficient because it
-only fires on `action: :any`):** a rule grant is rejected unless the cap is
-**concrete-scoped** —
+fix for HIGH-2):** a rule grant is rejected unless the cap is **concrete-scoped** —
 
 ```
 rule_cap_bounded?(cap) :=
   cap.kind != :any and cap.behavior != :any and
-  (match?(%URI{}, cap.instance) or scope_bounded_instance?(cap.instance))
+  (scope_bounded_instance?(cap.instance) or
+   (match?(%URI{}, cap.instance) and Capability.action_of(cap) != :any))
 ```
 
-i.e. a rule may NOT mint `kind: :any` / `behavior: :any` / unscoped-`:any` instance, with
-ANY action (wildcard or concrete). Else `{:error, :rule_grant_must_be_concrete_scoped}`.
-The rule name is recorded for audit. (The existing `check_action_wildcard_grant_authorized`
-still also applies.)
+i.e. a rule may NOT mint `kind: :any` / `behavior: :any`; and an `action: :any` cap is
+allowed ONLY when the instance is scope-bounded (`{:within_session/within_workspace/
+spawned_by, %URI{}}`). Else `{:error, :rule_grant_must_be_concrete_scoped}`.
+
+**Reachability fix (rev 3, addresses the BLOCKER-1 residue):** `check_action_wildcard_grant_
+authorized/2` runs BEFORE `check_grant_authorized/2`, so with `ctx.caps = []` an `action:
+:any` rule cap whose instance is a *concrete `%URI{}`* (not scope-bounded) would be rejected
+by the wildcard gate before the rule branch is reached. `rule_cap_bounded?` above is
+therefore written to **match the wildcard gate's existing logic exactly** — it never permits
+the unreachable shape (`action: :any` requires a scope-bounded instance, identical to
+`check_action_wildcard_grant_authorized`'s `scope_bounded_instance?` branch). cap#2
+(`agent/:any-action/{:spawned_by}`) is scope-bounded so it passes both gates; a concrete-
+`%URI{}` instance is allowed only with a concrete action. No change to
+`check_action_wildcard_grant_authorized` is needed; the two predicates are consistent by
+construction. The rule name is recorded for audit.
 
 ### 3.4 The grep invariant gate (addresses BLOCKER-3, NIT on teeth)
 
@@ -190,9 +215,12 @@ still also applies.)
 | 10 | `behavior/session/membership.ex:207` | Router %Cmd (imperative) | (verify) | `{:held_by, owner}` / `{:system,…}` |
 | 11 | `orchestrator/tools/templates.ex:135` | Invocation | (verify) | `{:held_by, owner}` |
 | 12 | `feishu binding_policy.ex:253` | Invocation | `system://feishu-binding-policy` | `{:system, feishu-binding-policy, <configurer entity>}` |
+| 13 | `rollback.ex:112` revoke (Invocation) | Invocation `:call` | `system://template-materialize` | `revoke_cap` `{:system, template-materialize, owner}` |
+| 14 | `orchestrator/caps.ex:120` `revoke_orchestrator_scoped_caps` | Invocation `:call` | `system://template-materialize` | `revoke_cap` `{:system, template-materialize, owner}` |
 
 (PR-1 implementation re-verifies each "(verify)" basis from the live `ctx.caps` before
-choosing the tag.) **Every site's `granted_by` becomes a real entity in PR-1** via the tag's
+choosing the tag. #13/#14 are imperative revokes — caught by the literal `action:
+:revoke_cap` grep tooth — and route through the `revoke_cap/3` imperative wrapper.) **Every site's `granted_by` becomes a real entity in PR-1** via the tag's
 derived granter — fixing BLOCKER-3's and the other non-entity granters immediately, with
 authorization semantics unchanged (the `{:system, …}` tag keeps the principal as authorizer).
 
@@ -212,10 +240,12 @@ authorization semantics unchanged (the `{:system, …}` tag keeps the principal 
   cap#2 (`agent/:any/{:spawned_by}`) is scope-bounded `{:spawned_by}` so it passes
   `rule_cap_bounded?`; granter = owner.
 - **PR-3** convert `feishu binding_policy` (#12) → `{:rule, :feishu_binding, configurer}`.
-  **Requires threading the configurer URI** (the admin who ran `mix ezagent.feishu.bind`)
-  down to `binding_policy` — it is not in scope there today (MEDIUM-2); PR-3 adds that
-  plumbing (or defines configurer = the bound user's workspace admin, documented). Remove
-  `feishu-binding-policy` from the Catalog → `no_unowned` allowlist reaches **0**.
+  The configurer URI (the bind operator, `admin_uri`) is **already threaded** to the call
+  site — `binding_policy.apply(user_uri, admin_uri)` carries it down to the grant
+  (`binding_policy.ex:87 → 199 → 252`) where it is currently *discarded* as `_admin_uri`
+  (rev 3 correction, MEDIUM-N2: no new plumbing needed — PR-3 just stops dropping it and
+  passes `{:rule, :feishu_binding, admin_uri}`). Remove `feishu-binding-policy` from the
+  Catalog → `no_unowned` allowlist reaches **0**.
 
 Each PR: TDD, full gate suite, **subagent adversarial-review** (NOT codex — Allen 2026-06-17),
 admin-merge.
