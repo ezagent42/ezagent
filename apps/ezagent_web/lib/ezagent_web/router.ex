@@ -43,6 +43,9 @@ defmodule EzagentWeb.Router do
     post "/login", SessionController, :create
     get "/login/credentials", SessionController, :credentials_new
     post "/login/credentials", SessionController, :credentials_create
+    # loom 分享页轻量自助注册(开放,跳过邮箱验证)。用户名+密码 → 建
+    # entity://user/<ws>/<username> + 即登录。仅 loom modal 用。
+    post "/loom-signup", SessionController, :loom_signup
     delete "/logout", SessionController, :delete
     post "/logout", SessionController, :delete
     get "/auth/magic/:token", MagicLinkController, :consume
@@ -266,6 +269,11 @@ defmodule EzagentWeb.Router do
   # ezagent_plugin_feishu makes to ezagent_web — explicit exception per SPEC v2
   # north star ("beyond webhook route registration").
   forward "/api/feishu/webhook", EzagentPluginFeishu.WebhookPlug
+
+  # loom 前端集成 — 同飞书 webhook 的 plugin→web 唯一触碰模式:一条 forward,所有逻辑
+  # (Next.js 静态产物 + SDK bridge)都在 EzagentPluginLoom.WebPlug 里。顶层 forward
+  # (绕过 :browser 管线,无 CSRF),必须在末尾兜底 `get "/*path"` 之前。
+  forward "/loom", EzagentPluginLoom.WebPlug
 
   # Phase 6 PR 9: canonical auto-derived JSON API. Single controller
   # dispatches every `{kind, action}` registered in BehaviorRegistry.

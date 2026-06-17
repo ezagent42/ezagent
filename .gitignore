@@ -47,6 +47,10 @@ docs/phase-specs/phase3/artifacts/phase3-multi-agent*
 .cf-access.env
 .cf-access*.env
 
+# 本地环境变量(operator-local),由 config/runtime.exs 加载。Never commit。模板见 .env.example。
+.env
+.env.local
+
 # Python bytecode cache
 __pycache__/
 *.pyc

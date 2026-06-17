@@ -6,6 +6,45 @@ import Config
 # and secrets from environment variables or elsewhere. Do not define
 # any compile-time configuration in here, as it won't be applied.
 
+# 本地 .env 加载(dev/test;prod 走真正的环境变量/secrets,不读 .env)。把仓库根 `.env`
+# 的 `KEY=VALUE` 注入进程环境,`System.get_env/1`(如 loom 的 `DEEPSEEK_KEY`)无需改代码即可读到。
+# 真实环境变量优先,.env 只兜底。`.env` 不进仓库。
+# TODO(loom-port): 跟 main owner 确认是否接受这个 .env 便利加载,还是另走 env 策略。
+if config_env() != :prod do
+  env_file = Path.expand("../.env", __DIR__)
+
+  if File.exists?(env_file) do
+    env_file
+    |> File.read!()
+    |> String.split("\n", trim: true)
+    |> Enum.each(fn line ->
+      trimmed = String.trim(line)
+
+      unless trimmed == "" or String.starts_with?(trimmed, "#") do
+        case String.split(trimmed, "=", parts: 2) do
+          [key, value] ->
+            key = String.trim(key)
+            value = value |> String.trim() |> String.trim("\"") |> String.trim("'")
+            if System.get_env(key) in [nil, ""], do: System.put_env(key, value)
+
+          _ ->
+            :ok
+        end
+      end
+    end)
+  end
+end
+
+# --- Loom LLM backend select(boot 时读一次,不热切换)---
+# `LOOM_LLM_BACKEND`: `claude_code`(默认,本地 Claude Code CLI)| `deepseek`(需 `DEEPSEEK_KEY`)。
+loom_backend =
+  case System.get_env("LOOM_LLM_BACKEND") do
+    "deepseek" -> :deepseek
+    _ -> :claude_code
+  end
+
+config :ezagent_plugin_loom, :llm_backend, loom_backend
+
 # Dev DB path comes from EZAGENT_HOME so the working tree stays clean
 # (Phase 6 PR 1). Test keeps its own ephemeral DB in repo root via
 # config/test.exs (Sandbox pool, gitignored). Prod still requires
