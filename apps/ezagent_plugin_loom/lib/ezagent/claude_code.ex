@@ -261,6 +261,8 @@ defmodule EzagentPluginLoom.ClaudeCode do
   end
 
   # Anthropic 服务端临时性错误 → 值得重试(过载/限流/5xx)。代码类错误不重试。
+  # 2026-06-17 — `error_max_turns` 也自动重试一次:回合打满多半是模型这一跑读得太碎
+  # (非确定),换一跑常能在预算内收敛;比直接抛给用户手动重发好。
   defp transient?({:claude_error, msg}) when is_binary(msg) do
     String.contains?(msg, [
       "Overloaded",
@@ -269,7 +271,8 @@ defmodule EzagentPluginLoom.ClaudeCode do
       "rate limit",
       "429",
       "503",
-      "529"
+      "529",
+      "error_max_turns"
     ])
   end
 
@@ -546,6 +549,11 @@ defmodule EzagentPluginLoom.ClaudeCode do
         do: ~c"WebFetch,WebSearch,Skill,Read,Glob,LS",
         else: ~c"WebFetch,WebSearch,Skill"
 
+    # 2026-06-17 — 回合预算随「是否读素材」分级。读素材时模型要在大文件夹里**选读多个文件**
+    # (每个 Read 占一回合),写死 6 远远不够 → `error_max_turns`。读时给 30;纯生成给 10
+    # (从「试调被拒工具」里恢复也够)。
+    max_turns = if read_files?, do: ~c"30", else: ~c"10"
+
     base = [
       String.to_charlist(bin),
       ~c"-p",
@@ -556,7 +564,7 @@ defmodule EzagentPluginLoom.ClaudeCode do
       ~c"--include-partial-messages",
       ~c"--verbose",
       ~c"--max-turns",
-      ~c"6",
+      max_turns,
       # 放开联网(2026-06-02):白名单 WebFetch/WebSearch + Skill → headless 下
       # **自动执行**(不弹权限、不被拒)。Skill 让模型能调用下面 --plugin-dir 挂上的
       # 设计 skill。其余工具(Bash/Write/…)不在白名单 → 仍被自动拒绝,靠 --max-turns

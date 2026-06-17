@@ -380,10 +380,15 @@ defmodule Ezagent.Behavior.LoomBuilderWorker do
 
   # 用户是否**明确**要用/读素材 —— 否则 builder 不该主动碰素材库(没要求就别读)。
   # 触发:本条消息带附件,或文本里出现素材相关词。保守取词,避免「数据图表」之类误触发。
-  @materials_kw ~r/素材|资料库|文件夹|附件|上传|我传的?|传了|图片|照片|截图|配图|插图|logo|标志|参考图|参考资料|material|asset|\bimage|\bphoto|picture|\blogo\b|folder|upload|attachment|reference|screenshot/iu
+  @materials_kw ~r/素材|资料库|文件夹|附件|上传|我传的?|传了|图片|照片|截图|配图|插图|logo|标志|参考|参照|material|asset|\bimage|\bphoto|picture|\blogo\b|folder|upload|attachment|reference|screenshot/iu
+
+  # 2026-06-17 — 用户点名一个**文件**(带扩展名,可能在子目录)→ 多半要参考素材 → 放开 Read。
+  # 修「严格参考 xxx.html」不命中关键词、builder 拿不到读权 → 空转打满回合(error_max_turns)。
+  @file_mention ~r/\.(?:html?|jsx?|tsx?|css|md|json|txt|vue|svelte|astro|ya?ml)\b/iu
 
   defp wants_materials?(text, %Message{body: body}) do
-    has_attachments?(body) or (is_binary(text) and Regex.match?(@materials_kw, text))
+    has_attachments?(body) or
+      (is_binary(text) and (Regex.match?(@materials_kw, text) or Regex.match?(@file_mention, text)))
   end
 
   defp has_attachments?(%{attachments: a}) when is_list(a) and a != [], do: true
