@@ -82,11 +82,28 @@ const ScrollOnUpdate = {
 // to apps/ezagent_web/assets/js/hooks/pty_terminal.js. Import is at
 // the top of this file alongside the other hooks.
 
+// loom 前端集成: the admin header "Save as Template" button lives OUTSIDE the Loom
+// iframe; clicking it postMessages the loom ChatPanel to open its SaveAsTemplateModal
+// (the save logic stays in the loom frontend + SDK; admin only triggers it).
+const LoomSaveTemplate = {
+  mounted() {
+    this.el.addEventListener("click", () => {
+      const f = document.querySelector('iframe[title="Loom"]')
+      if (f && f.contentWindow) {
+        f.contentWindow.postMessage({__loom_cmd: "open_save_template"}, "*")
+      } else {
+        // 当前不在 Loom tab(iframe 未渲染)→ 提示先切到 Loom 标签
+        alert("请先切到 Loom 标签页再存为模板")
+      }
+    })
+  },
+}
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, ScrollOnUpdate, PtyTerminal, MentionAutocomplete, CountUp, UriPicker, ViewportMarkRead},
+  hooks: {...colocatedHooks, ScrollOnUpdate, PtyTerminal, MentionAutocomplete, CountUp, UriPicker, ViewportMarkRead, LoomSaveTemplate},
 })
 
 // Show progress bar on live navigation and form submits

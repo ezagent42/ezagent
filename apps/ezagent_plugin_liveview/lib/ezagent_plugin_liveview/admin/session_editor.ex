@@ -86,7 +86,18 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
   defp session_header(assigns) do
     ~H"""
     <header class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shrink-0">
+      <button
+        type="button"
+        phx-click="refresh_session"
+        title={gettext("Refresh session list + reload this session (tabs / members / state)")}
+        aria-label={gettext("Refresh session")}
+        class="shrink-0 p-1 rounded text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+      >
+        <.icon name="refresh" size="sm" />
+      </button>
       <.session_selector current_session_uri={@current_session_uri} sessions={@sessions} />
+      <.loom_link current_session_uri={@current_session_uri} />
+      <.loom_save_template_button current_session_uri={@current_session_uri} />
       <.create_session_button
         new_session_form={@new_session_form}
         template_class_options={@template_class_options}
@@ -104,6 +115,64 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
     </header>
     """
   end
+
+  # --- loom_link ------------------------------------------------------------
+  # loom 前端集成: 给 loom session 在 header 加一个"打开 Loom"入口,新标签打开该
+  # session 专属的 ai-ui-builder 页(/loom/:ws/:name,由 EzagentPluginLoom.WebPlug
+  # 提供)。仅对 session://loom/... 显示;非 loom session 返回 nil → 不渲染。
+
+  attr(:current_session_uri, URI, required: true)
+
+  defp loom_link(assigns) do
+    assigns = assign(assigns, :loom_url, loom_session_url(assigns.current_session_uri))
+
+    ~H"""
+    <a
+      :if={@loom_url}
+      href={@loom_url}
+      target="_blank"
+      rel="noopener"
+      class="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950"
+      title={gettext("Open this session's Loom page-builder in a new tab")}
+    >
+      {gettext("Open Loom")} ↗
+    </a>
+    """
+  end
+
+  # --- loom_save_template_button --------------------------------------------
+  # 「存为模板」按钮在 loom iframe 外,点它经 JS hook 向 loom iframe postMessage,由
+  # ChatPanel 开它现有的 SaveAsTemplateModal(存模板逻辑仍在 loom 前端 + SDK,admin
+  # 只负责触发)。仅 loom session 显示。
+
+  attr(:current_session_uri, URI, required: true)
+
+  defp loom_save_template_button(assigns) do
+    assigns = assign(assigns, :is_loom, loom_session_url(assigns.current_session_uri) != nil)
+
+    ~H"""
+    <button
+      :if={@is_loom}
+      type="button"
+      id="loom-save-template-btn"
+      phx-hook="LoomSaveTemplate"
+      class="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950"
+      title={gettext("Save the current Loom page as a reusable template")}
+    >
+      {gettext("Save as Template")}
+    </button>
+    """
+  end
+
+  # session://loom/<ws>/<name>  →  "/loom/<ws>/<name>"; nil for non-loom sessions.
+  defp loom_session_url(%URI{scheme: "session", host: "loom", path: path}) when is_binary(path) do
+    case String.split(path, "/", trim: true) do
+      [ws, name | _] -> "/loom/#{ws}/#{name}"
+      _ -> nil
+    end
+  end
+
+  defp loom_session_url(_), do: nil
 
   # --- session_selector -----------------------------------------------------
 

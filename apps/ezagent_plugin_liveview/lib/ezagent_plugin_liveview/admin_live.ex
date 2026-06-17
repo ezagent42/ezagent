@@ -357,6 +357,24 @@ defmodule EzagentPluginLiveview.AdminLive do
     end
   end
 
+  # loom 前端集成 — header 刷新按钮:重选当前 session(重载 tabs/members/state)**+ 刷新
+  # session 列表**(下拉里出现新建/衍生出来的会话)。loom view 迟注册 + 衍生会话场景下,
+  # 此前只能整页刷新才看得到。
+  def handle_event("refresh_session", _params, socket) do
+    socket =
+      case socket.assigns[:current_session_uri] do
+        %URI{} = uri -> SessionContext.select_session(socket, uri)
+        _ -> socket
+      end
+
+    {:noreply,
+     assign(
+       socket,
+       :sessions,
+       SessionContext.list_sessions_for(socket.assigns[:current_workspace_uri])
+     )}
+  end
+
   # Create sessions in the operator's current workspace; template_class is required.
   def handle_event(
         "create_session",
