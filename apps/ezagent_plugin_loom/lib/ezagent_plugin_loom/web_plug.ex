@@ -38,6 +38,16 @@ defmodule EzagentPluginLoom.WebPlug do
 
   @gateway_uri "system://loom-customer-gateway"
 
+  # loom 真实前端(Next 静态导出,带 Sandpack 预览引擎)。命中真实文件即返回,否则 fall
+  # through 到路由 → SPA 兜底 send_index。迁移自 loom-stitch(原本 loom 前端,非占位 SPA)。
+  @loom_ui_root "priv/static/loom_ui"
+
+  plug(Plug.Static,
+    at: "/",
+    from: {:ezagent_plugin_loom, @loom_ui_root},
+    only: ["_next", "favicon.ico", "404.html", "index.txt"]
+  )
+
   plug(:match)
 
   plug(Plug.Parsers,
