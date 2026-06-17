@@ -6,7 +6,7 @@ defmodule EzagentPluginLoom.Stitch do
   务实版用 loom LLM client(curl 平面);完整「orchestrator + 4 sub-worker」体系作后续。
   """
 
-  alias EzagentPluginLoom.{Json, LLM}
+  alias EzagentPluginLoom.{Json, LLM, StitchExperts}
 
   @system """
   你是 loom 发布页的辅助助手 Stitch。访客就当前页面提问,你简短(1-3 句)中文作答。
@@ -37,6 +37,39 @@ defmodule EzagentPluginLoom.Stitch do
       {:ok, %{reply: r, drive: drive}}
     else
       _ -> {:error, :stitch_failed}
+    end
+  end
+
+  @doc """
+  Stitch deep 模式:route → 4-role fan-out → compose 合成一条回复 + drives。
+  route 选不到 role 时回退单 agent `reply/2`。
+  返回 `{:ok, %{reply, drive, drives, parts}}` | `{:error, reason}`。
+  """
+  @spec reply_deep(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  def reply_deep(user_text, opts \\ []) when is_binary(user_text) do
+    case StitchExperts.route(user_text, opts) do
+      {:ok, [_ | _] = role_keys} ->
+        parts = StitchExperts.gather(user_text, role_keys, opts)
+        compose_parts(user_text, parts)
+
+      _ ->
+        # 无相关 role → fast 单 agent
+        with {:ok, r} <- reply(user_text, opts), do: {:ok, Map.put(r, :parts, [])}
+    end
+  end
+
+  defp compose_parts(_user_text, []), do: {:error, :stitch_failed}
+
+  defp compose_parts(user_text, parts) do
+    says = parts |> Enum.map(& &1.say) |> Enum.reject(&(&1 in [nil, ""]))
+    drives = parts |> Enum.map(& &1.drive) |> Enum.reject(&is_nil/1)
+
+    material = Enum.map_join(parts, "\n", &"[#{&1.role}] #{&1.say}")
+    content = "访客：#{user_text}\n\n各专员意见：\n#{material}\n\n综合成一句给访客的中文回复。"
+
+    case LLM.chat([%{role: "user", content: content}], system: "你把多位专员意见综合成一句简短中文回复,只输出回复文本(不要 JSON)。") do
+      {:ok, reply} -> {:ok, %{reply: String.trim(reply), drive: List.first(drives), drives: drives, parts: parts}}
+      _ -> {:ok, %{reply: Enum.join(says, " "), drive: List.first(drives), drives: drives, parts: parts}}
     end
   end
 

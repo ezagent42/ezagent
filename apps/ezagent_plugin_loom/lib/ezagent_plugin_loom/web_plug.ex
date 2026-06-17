@@ -139,8 +139,11 @@ defmodule EzagentPluginLoom.WebPlug do
          token when is_binary(token) <- token(conn),
          :ok <- CustomerAuth.authorize(token, session_uri, ws_uri),
          text when is_binary(text) and text != "" <- conn.body_params["text"],
+         sopts = [page: conn.body_params["page"], knowledge: Knowledge.get(session_uri)],
          {:ok, result} <-
-           Stitch.reply(text, page: conn.body_params["page"], knowledge: Knowledge.get(session_uri)) do
+           (if conn.body_params["mode"] == "deep",
+              do: Stitch.reply_deep(text, sopts),
+              else: Stitch.reply(text, sopts)) do
       json(conn, 200, %{ok: true, reply: result.reply, drive: result.drive})
     else
       {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})

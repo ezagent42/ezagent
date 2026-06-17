@@ -70,6 +70,21 @@ defmodule EzagentPluginLoom.Integration.LiveStitchTest do
   end
 
   @tag :live
+  test "Stitch deep mode fans out to role experts and composes one reply" do
+    assert {:ok, %{reply: reply, parts: parts}} =
+             Stitch.reply_deep("这页能不能只看美国的产品，并解释一下第一个")
+
+    assert is_binary(reply) and reply != ""
+    # route 应选到相关 role(controls/content 等),fan-out 产 parts
+    assert is_list(parts)
+
+    if parts != [] do
+      assert Enum.all?(parts, &(&1.role in EzagentPluginLoom.StitchExperts.role_keys()))
+      assert Enum.all?(parts, &is_binary(&1.say))
+    end
+  end
+
+  @tag :live
   test "AiSpot generates a card with title + body" do
     assert {:ok, %{title: title, body: body}} = Stitch.aispot("手冲咖啡的风味特点")
     assert is_binary(title) and title != ""
