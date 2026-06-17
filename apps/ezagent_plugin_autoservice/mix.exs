@@ -51,6 +51,10 @@ defmodule EzagentPluginAutoservice.MixProject do
       {:ezagent_domain_session, in_umbrella: true},
       # UI primitives for chat
       {:ezagent_domain_ui, in_umbrella: true},
+      # Workspace domain: customer_session.ex + seed task hard-ref `Ezagent.Workspace`
+      # (defined here). Declared per #57 — a hard compile ref needs a real dep,
+      # not alphabetical umbrella-build-order luck.
+      {:ezagent_domain_workspace, in_umbrella: true},
       {:phoenix_live_view, ">= 0.0.0"},
       {:phoenix_html, "~> 4.1"},
       {:jason, "~> 1.2"}

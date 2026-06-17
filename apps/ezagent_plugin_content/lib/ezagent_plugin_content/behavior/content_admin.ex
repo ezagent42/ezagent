@@ -50,7 +50,7 @@ defmodule EzagentPluginContent.Behavior.ContentAdmin do
   action(:delete_skill,
     args: %{role: :string, name: :string},
     returns: %{},
-    caps: [:write_skill],
+    caps: [:delete_skill],
     modes: [:call],
     description: "delete a skill directory from this workspace tenant's sandbox"
   )
@@ -58,7 +58,7 @@ defmodule EzagentPluginContent.Behavior.ContentAdmin do
   action(:upsert_kb,
     args: %{entry: :map},
     returns: %{},
-    caps: [:write_kb],
+    caps: [:upsert_kb],
     modes: [:call],
     description: "upsert a knowledge base entry for this workspace tenant's sandbox"
   )
@@ -66,7 +66,7 @@ defmodule EzagentPluginContent.Behavior.ContentAdmin do
   action(:delete_kb,
     args: %{id: :string},
     returns: %{},
-    caps: [:write_kb],
+    caps: [:delete_kb],
     modes: [:call],
     description: "delete a knowledge base entry from this workspace tenant's sandbox"
   )
@@ -88,13 +88,14 @@ defmodule EzagentPluginContent.Behavior.ContentAdmin do
   )
 
   # ---- Re-route Phase 0 (2026-06-17): admin UI write ops as dispatch actions.
-  # Same stateless thin-wrapper pattern; caps reuse the existing 5 atoms.
-  # UI not wired yet (waits on caps grant PR #88/#154) — backend + tests only. ----
+  # Same stateless thin-wrapper pattern; each action declares its own cap atom
+  # (action-axis A5 — action_of must match the action name). UI not wired yet
+  # (waits on caps grant PR #88/#154) — backend + tests only. ----
 
   action(:create_skill,
     args: %{role: :string, name: :string},
     returns: %{},
-    caps: [:write_skill],
+    caps: [:create_skill],
     modes: [:call],
     description: "create a new skill (SKILL.md template) in this tenant's sandbox"
   )
@@ -102,7 +103,7 @@ defmodule EzagentPluginContent.Behavior.ContentAdmin do
   action(:write_fast_prompt,
     args: %{content: :string},
     returns: %{},
-    caps: [:write_soul_slot],
+    caps: [:write_fast_prompt],
     modes: [:call],
     description: "write the fast agent ACK prompt (config/fast_ack_prompt.md) to sandbox"
   )
@@ -110,7 +111,7 @@ defmodule EzagentPluginContent.Behavior.ContentAdmin do
   action(:rebuild_kb,
     args: %{},
     returns: %{},
-    caps: [:write_kb],
+    caps: [:rebuild_kb],
     modes: [:call],
     description: "rebuild the KB search index for this tenant's sandbox"
   )
@@ -118,19 +119,19 @@ defmodule EzagentPluginContent.Behavior.ContentAdmin do
   action(:revert_item,
     args: %{path: :string},
     returns: %{},
-    caps: [:publish_cr],
+    caps: [:revert_item],
     modes: [:call],
     description: "revert a single file from the current release back into sandbox"
   )
 
   # ---- Re-route Phase 0 batch 2 (2026-06-17): remaining admin-UI write ops.
   # Covers full-file soul/slots writes, KB url-fetch + file-ingest, and
-  # release rollback. Same stateless pattern; caps reuse the 5 atoms. ----
+  # release rollback. Same stateless pattern; per-action cap atoms (A5). ----
 
   action(:write_soul,
     args: %{role: :string, content: :string},
     returns: %{},
-    caps: [:write_soul_slot],
+    caps: [:write_soul],
     modes: [:call],
     description: "write the full soul markdown (souls/<role>.md) to this tenant's sandbox"
   )
@@ -138,7 +139,7 @@ defmodule EzagentPluginContent.Behavior.ContentAdmin do
   action(:write_slots,
     args: %{role: :string, content: :string},
     returns: %{},
-    caps: [:write_soul_slot],
+    caps: [:write_slots],
     modes: [:call],
     description: "write the full slots YAML (slots/<role>.yaml) to this tenant's sandbox"
   )
@@ -146,7 +147,7 @@ defmodule EzagentPluginContent.Behavior.ContentAdmin do
   action(:fetch_kb_url,
     args: %{url: :string},
     returns: %{},
-    caps: [:write_kb],
+    caps: [:fetch_kb_url],
     modes: [:call],
     description: "fetch a URL into the KB for this tenant's sandbox"
   )
@@ -154,7 +155,7 @@ defmodule EzagentPluginContent.Behavior.ContentAdmin do
   action(:ingest_kb_file,
     args: %{file_path: :string},
     returns: %{},
-    caps: [:write_kb],
+    caps: [:ingest_kb_file],
     modes: [:call],
     description: "ingest a local file into the KB for this tenant's sandbox"
   )
@@ -162,33 +163,37 @@ defmodule EzagentPluginContent.Behavior.ContentAdmin do
   action(:rollback_version,
     args: %{version: :string},
     returns: %{},
-    caps: [:publish_cr],
+    caps: [:rollback_version],
     modes: [:call],
     description: "roll the current release symlink back to a prior version"
   )
 
   # ---- Cap declarations ----
 
+  # Each entry's cap action_of MUST equal its action key (capability-action-axis
+  # A5, SPEC 2026-05-27) — a cap named for one action may not gate a differently
+  # named action. Per-action atoms preserve fine-grained grants; a `:any`
+  # wildcard grant (Phase 1) still subsumes them all via check_action_wildcard.
   def required_caps do
     %{
       write_soul_slot: Ezagent.Capability.cap(:workspace, __MODULE__, :write_soul_slot),
       write_skill: Ezagent.Capability.cap(:workspace, __MODULE__, :write_skill),
-      delete_skill: Ezagent.Capability.cap(:workspace, __MODULE__, :write_skill),
-      upsert_kb: Ezagent.Capability.cap(:workspace, __MODULE__, :write_kb),
-      delete_kb: Ezagent.Capability.cap(:workspace, __MODULE__, :write_kb),
+      delete_skill: Ezagent.Capability.cap(:workspace, __MODULE__, :delete_skill),
+      upsert_kb: Ezagent.Capability.cap(:workspace, __MODULE__, :upsert_kb),
+      delete_kb: Ezagent.Capability.cap(:workspace, __MODULE__, :delete_kb),
       publish_cr: Ezagent.Capability.cap(:workspace, __MODULE__, :publish_cr),
       preview_sandbox: Ezagent.Capability.cap(:workspace, __MODULE__, :preview_sandbox),
-      # Re-route Phase 0 — reuse the existing cap atoms by domain.
-      create_skill: Ezagent.Capability.cap(:workspace, __MODULE__, :write_skill),
-      write_fast_prompt: Ezagent.Capability.cap(:workspace, __MODULE__, :write_soul_slot),
-      rebuild_kb: Ezagent.Capability.cap(:workspace, __MODULE__, :write_kb),
-      revert_item: Ezagent.Capability.cap(:workspace, __MODULE__, :publish_cr),
+      # Re-route Phase 0.
+      create_skill: Ezagent.Capability.cap(:workspace, __MODULE__, :create_skill),
+      write_fast_prompt: Ezagent.Capability.cap(:workspace, __MODULE__, :write_fast_prompt),
+      rebuild_kb: Ezagent.Capability.cap(:workspace, __MODULE__, :rebuild_kb),
+      revert_item: Ezagent.Capability.cap(:workspace, __MODULE__, :revert_item),
       # Re-route Phase 0 batch 2.
-      write_soul: Ezagent.Capability.cap(:workspace, __MODULE__, :write_soul_slot),
-      write_slots: Ezagent.Capability.cap(:workspace, __MODULE__, :write_soul_slot),
-      fetch_kb_url: Ezagent.Capability.cap(:workspace, __MODULE__, :write_kb),
-      ingest_kb_file: Ezagent.Capability.cap(:workspace, __MODULE__, :write_kb),
-      rollback_version: Ezagent.Capability.cap(:workspace, __MODULE__, :publish_cr)
+      write_soul: Ezagent.Capability.cap(:workspace, __MODULE__, :write_soul),
+      write_slots: Ezagent.Capability.cap(:workspace, __MODULE__, :write_slots),
+      fetch_kb_url: Ezagent.Capability.cap(:workspace, __MODULE__, :fetch_kb_url),
+      ingest_kb_file: Ezagent.Capability.cap(:workspace, __MODULE__, :ingest_kb_file),
+      rollback_version: Ezagent.Capability.cap(:workspace, __MODULE__, :rollback_version)
     }
   end
 
