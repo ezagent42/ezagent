@@ -92,7 +92,11 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
         # #17 cascade PR-0 — credential-materializer (empty-cap audit identity).
         "system://credential-materializer",
         # T1A.1 — turn-adapter dispatches turn lifecycle actions on customer-service Sessions.
-        "system://turn-adapter"
+        "system://turn-adapter",
+        # #51 §3.4 — socialware GC sweeper (Session :leave only).
+        # NOTE: #51 §4.1 anon public-view access does NOT add a principal —
+        # the anon holds its own narrow join cap (Decision #154).
+        "system://socialware-gc"
       ]
 
       assert Enum.sort(uris) == Enum.sort(expected),

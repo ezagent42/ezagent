@@ -206,57 +206,16 @@ defmodule Ezagent.Identity do
   def grant_cap(entity_uri, %Ezagent.Capability{} = cap, granter_uri) do
     target_uri = parse_uri(entity_uri)
     granter = parse_uri(granter_uri)
-    target = Ezagent.URI.with_action(target_uri, :identity, :grant_cap)
 
-    # PR-OWN-2 (caps-data-ownership SPEC #306 §5.2 + r4 fix): pass
-    # the granter's REAL caps into dispatch ctx, not a hardcoded
-    # admin-caps shape. Round-1 SPEC's §5.2 wildcard pre-check
-    # was moot because every call presented as admin regardless of
-    # granter's actual caps. Now `Behavior.Identity.invoke(:grant_cap,
-    # ...)` (and the dispatch CapBAC) sees the granter's true cap set.
-    #
-    # **Known limitation (codex round-2 HIGH-1)**: the owner-delegated
-    # facade path is INCOMPLETE in PR-OWN-2. Dispatch step 5.5 (CapBAC)
-    # authorizes against the grantee/action BEFORE `invoke/4` runs the
-    # §5.2 owner check. A non-admin session owner trying to grant via
-    # this facade gets `:unauthorized` from dispatch — never reaches
-    # §5.2's owner branch.
-    #
-    # Admin-path grants (admin caps in granter's slice) still work
-    # correctly because dispatch CapBAC passes for them; §5.2 runs
-    # inside `invoke` and accepts admin under `holds_admin_caps?`.
-    #
-    # PR-OWN-3 fixes this by (a) splitting Identity into Identity
-    # (safe) + IdentityAdmin (privileged) so :grant_cap moves to a
-    # cap-only Behavior, AND (b) adding `Ezagent.Kind.trusted_slice_update/3`
-    # so the facade can do the §5.2 check itself + mutate grantee's
-    # slice without going through dispatch CapBAC. Until PR-OWN-3,
-    # owner-delegated grants must call lower-level APIs.
-    granter_caps = read_granter_caps(granter)
-
-    # `:call` mode returns the handler result directly from the Kind's
-    # GenServer.call — the `reply` target is only consulted on the
-    # `:cast` path (Kind.Server.handle_cast). The legacy `reply: :sync`
-    # was inert for a `:call` (it never reached `Invocation.reply/2`);
-    # `:ignore` is the canonical call-mode reply and avoids relying on a
-    # reply atom Router/Invocation don't model.
-    cmd = %Cmd{
-      target: target,
-      action: :grant_cap,
-      args: %{cap: cap},
-      ctx: %{
-        mode: :call,
-        caller: granter,
-        caps: granter_caps,
-        reply: :ignore
-      }
-    }
-
-    case Router.dispatch(cmd) do
-      {:ok, _} -> :ok
-      :ok -> :ok
-      err -> err
-    end
+    # Grant-chokepoint shim (SPEC 2026-06-17 §3.1 / §3.5 site #1).
+    # Behavior-preserving: this facade already loaded the granter's
+    # REAL held caps into `ctx.caps` (`read_granter_caps/1`) and set
+    # `ctx.caller`/`granted_by` to the granter — which is EXACTLY the
+    # `{:held_by, actor}` tag's semantics. `Ezagent.Identity.Grant`
+    # now owns the envelope construction (the single place a
+    # grant/revoke dispatch is built) and derives + validates the
+    # entity `granted_by`.
+    Ezagent.Identity.Grant.grant_cap(target_uri, cap, {:held_by, granter})
   end
 
   # Read the granter's current Identity slice caps directly via
@@ -294,6 +253,21 @@ defmodule Ezagent.Identity do
       granted_at: Map.get(p, :granted_at, DateTime.utc_now())
     }
   end
+
+  @doc """
+  Read `actor`'s current Identity-slice caps as a `MapSet.t(Capability.t())`.
+
+  This is the `{:held_by, actor}` / `{:admin, admin}` authorizer source
+  for `Ezagent.Identity.Grant.prepare/4`: the actor's REAL held caps
+  (the same set dispatch step 5.5 authorizes against). Reads the live
+  `:identity` slice via `Ezagent.Kind.get_slice/2`, falling back to the
+  persisted `users.caps_json` row when the Kind is not live (boot-order
+  gap). Returns an EMPTY MapSet for an unknown URI — dispatch CapBAC
+  then rejects cleanly rather than nil-deref'ing. Neither path is
+  spoofable (the DB row was written under the §5.2 grant gate).
+  """
+  @spec read_held_caps(URI.t() | String.t()) :: MapSet.t(Ezagent.Capability.t())
+  def read_held_caps(actor_uri), do: read_granter_caps(parse_uri(actor_uri))
 
   # PR-OWN-2 (caps-data-ownership SPEC #306 §5.2 + r4):
   # Read the granter's current Identity slice caps via

@@ -255,7 +255,14 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
       # can notify the session owner per Invariant #9.
       role_degraded_passthrough =
         instantiate_meta
-        |> Map.take([:role_degraded, :role_degraded_reason])
+        |> Map.take([
+          :role_degraded,
+          :role_degraded_reason,
+          # #17 (c) — spawn-time OAuth credential-staleness reminder, propagated on
+          # the same owner-surfacing path as role_degraded.
+          :credential_stale,
+          :credential_stale_reason
+        ])
         |> case do
           map when map_size(map) == 0 -> %{}
           map -> map
@@ -365,37 +372,37 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
     end
   end
 
-defp resolve_cascade_content(
-       content,
-       template_class,
-       agent_uri,
-       spawned_by_uri,
-       workspace_uri,
-       flavor,
-       opts
-     ) do
-  Ezagent.Entity.Agent.TemplateSpawn.Cascade.resolve_content(
-    content,
-    template_class,
-    agent_uri,
-    spawned_by_uri,
-    workspace_uri,
-    flavor,
-    opts
-  )
-end
+  defp resolve_cascade_content(
+         content,
+         template_class,
+         agent_uri,
+         spawned_by_uri,
+         workspace_uri,
+         flavor,
+         opts
+       ) do
+    Ezagent.Entity.Agent.TemplateSpawn.Cascade.resolve_content(
+      content,
+      template_class,
+      agent_uri,
+      spawned_by_uri,
+      workspace_uri,
+      flavor,
+      opts
+    )
+  end
 
-@doc false
-def sanitize_respawn_template_data(respawn_data, template_content) do
-  Ezagent.Entity.Agent.TemplateSpawn.Cascade.sanitize_respawn_template_data(
-    respawn_data,
-    template_content
-  )
-end
+  @doc false
+  def sanitize_respawn_template_data(respawn_data, template_content) do
+    Ezagent.Entity.Agent.TemplateSpawn.Cascade.sanitize_respawn_template_data(
+      respawn_data,
+      template_content
+    )
+  end
 
-defp put_respawn_flavor(meta, template_content_map) do
-  Ezagent.Entity.Agent.TemplateSpawn.Cascade.put_respawn_flavor(meta, template_content_map)
-end
+  defp put_respawn_flavor(meta, template_content_map) do
+    Ezagent.Entity.Agent.TemplateSpawn.Cascade.put_respawn_flavor(meta, template_content_map)
+  end
 
   # codex round-6 HIGH-1 + PR3 2026-05-24 — call the plugin Template
   # Class's `instantiate/3` and normalize its return to `{:ok, workers,
@@ -588,6 +595,7 @@ end
   defp undo_fresh_workers(workers) do
     Enum.each(workers, fn worker_uri ->
       _ = Ezagent.Kind.terminate(worker_uri)
+
       Ezagent.Entity.Agent.SpawnObligations.safe(fn ->
         Ezagent.WorkspaceRegistry.unbind(worker_uri)
       end)

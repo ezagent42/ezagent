@@ -86,6 +86,17 @@ defmodule EzagentWeb.Router do
     # signed UploadToken bound to the upload URI, with serve-time approved-only
     # re-validation in CustomerFeed.authorized_attachment_path/4.
     get "/socialware/customer/download", Socialware.CustomerController, :download
+
+    # #51 §4.1 — the CHAT external SPA. MOVED OUT of the RequireEntity scope into
+    # the public `:browser` scope so an anonymous visitor can VIEW a `public_view`
+    # session. The controller resolves the caller itself: a still-signed-in member
+    # (recovered via `optional_current_entity/1`) gets a token for that principal;
+    # an anonymous visitor to a `Ezagent.Socialware.PublicView.public_view?/1`
+    # session is minted a read-only anon-User (cookie-bound) and joined; an
+    # anonymous visitor to a PRIVATE session bounces to /login (the gate is the
+    # public-view check, NOT a plug). The live ChatMembership re-check at the
+    # channel remains the authorization.
+    get "/socialware/chat", Socialware.ChatFeedController, :show
   end
 
   # /admin* requires login (Phase 4-completion Spec 05 §A.2.3 +
@@ -120,15 +131,6 @@ defmodule EzagentWeb.Router do
     # session-clearing POSTs.
     post "/workspaces/switch", WorkspaceSwitchController, :switch
 
-    # P4 (codex finding 3) — the CHAT external SPA. Mounted under
-    # RequireEntity so the viewer is an AUTHENTICATED signed-in principal
-    # (`conn.assigns.current_entity_uri`); the controller mints a
-    # `ChatFeedAuth` token binding THAT principal to the session and renders
-    # the shared SPA pointed at /socialware_chat_socket + socialware:chat_feed.
-    # Unlike the public customer feed (anonymous-but-token-bound), chat
-    # viewers are members — the live ChatMembership re-check at the channel
-    # remains the authorization, the login just supplies a trusted identity.
-    get "/socialware/chat", Socialware.ChatFeedController, :show
   end
 
   scope "/", EzagentPluginLiveview do

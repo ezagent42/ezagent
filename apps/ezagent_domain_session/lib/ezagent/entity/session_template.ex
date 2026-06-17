@@ -668,29 +668,19 @@ defmodule Ezagent.Entity.SessionTemplate do
         granted_at: DateTime.utc_now()
       }
 
-      target = Ezagent.URI.with_action(owner_uri, :identity, :grant_cap)
-
-      case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-             target: target,
-             mode: :call,
-             args: %{cap: cap},
-             # SPEC caps-cleanup-v1 §4.4 — granting owner the
-             # `:within_workspace` SessionTemplate cap is template
-             # materialization side-effect; runs under
-             # `system://template-materialize` (closed Catalog).
-             ctx: %{
-               caller: Ezagent.SystemPrincipal.uri("template-materialize"),
-               caps:
-                 "template-materialize"
-                 |> Ezagent.SystemPrincipal.uri()
-                 |> Ezagent.SystemPrincipal.caps(),
-               reply: {:caller_inbox, self()}
-             }
-           }) do
-        {:ok, _} -> :ok
-        {:error, _} = err -> err
-        other -> {:error, {:owner_cap_grant_failed, other}}
-      end
+      # Grant chokepoint (SPEC 2026-06-17 §4 PR-2, site #8). The cap is
+      # `session_template/Template/:any/{:within_workspace}` — kind +
+      # behavior concrete, instance scope-bounded `{:within_workspace}` —
+      # so `IdentityAdmin.rule_cap_bounded?/1` is true → the `{:rule, …}`
+      # branch authorizes it (Decision #154). The configurer of the
+      # template-materialization rule is the template OWNER (also the
+      # entity `granted_by`); `template-materialize` is no longer the
+      # authorizer.
+      Ezagent.Identity.Grant.grant_cap(
+        owner_uri,
+        cap,
+        {:rule, :template_materialize, owner_uri}
+      )
     end
   end
 
@@ -708,10 +698,14 @@ defmodule Ezagent.Entity.SessionTemplate do
   # content key (PR-8 removes the slot tools). Dropping it here means a
   # caller-supplied (string-keyed) `agent_slots` no longer atom-coerces into
   # the persisted content — it is not a template content field.
+  # `public_view` (issue #51, spec §3.5 / OQ-6) — a SessionTemplate-level flag
+  # marking a materialized session anonymously viewable. A content key so a
+  # JSON-boundary (string-keyed) `"public_view"` atom-coerces into persisted
+  # content; `Ezagent.Socialware.PublicView.public_view?/1` reads it back.
   @config_atom_keys ~w(name description members prompt_templates legends
                        orchestrator_template_uri routing_rules
                        default_workspace_uri parent_template_uri
-                       version_tag created_by created_at)a
+                       version_tag created_by created_at public_view)a
   defp normalize_config_keys(config) do
     Map.new(config, fn
       {k, v} when is_atom(k) ->

@@ -92,31 +92,64 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
     if Enum.any?(current, &Session.cap_equal_ignoring_metadata?(&1, want)) do
       :ok
     else
-      target = Ezagent.URI.with_action(owner_uri, :identity, :grant_cap)
-      cap = %{want | granted_at: DateTime.utc_now()}
-
+      # Grant chokepoint (SPEC 2026-06-17 §4 PR-2, site #6). The cap is
+      # `session/OrchestratorAdmin/:restart/<session_uri>` — concrete
+      # instance + concrete action, so `IdentityAdmin.rule_cap_bounded?/1`
+      # is true → authorized via the `{:rule, …}` branch (Decision #154).
+      # `template-materialize` is no longer the authorizer; the configurer
+      # of the orchestrator-template-materialization rule is the session
+      # OWNER (also the entity `granted_by`).
       result =
-        Invocation.dispatch(%Invocation{
-          target: target,
-          mode: :call,
-          args: %{cap: cap},
-          ctx: %{
-            caller: owner_uri,
-            caps:
-              "template-materialize"
-              |> Ezagent.SystemPrincipal.uri()
-              |> Ezagent.SystemPrincipal.caps(),
-            reply: {:caller_inbox, self()}
-          }
-        })
+        Ezagent.Identity.Grant.grant_cap(
+          owner_uri,
+          want,
+          {:rule, :template_materialize, owner_uri}
+        )
 
       case result do
-        {:ok, _} -> :ok
         :ok -> :ok
         {:error, reason} -> {:error, {:orchestrator_admin_cap_grant_failed, reason}}
-        other -> {:error, {:orchestrator_admin_cap_grant_unexpected, other}}
       end
     end
+  end
+
+  @doc """
+  Grant the session owner a `Behavior.Manage :any` cap OVER the orchestrator
+  agent (SPEC 2026-06-16 §5, codex P2 prerequisite, Decision #88).
+
+  The orchestrator spawn path (`Session.ensure_orchestrator` →
+  `Agent.spawn_from_template_content/5`) does NOT route through `CreatorGrant`
+  / `Workspace.grant_creator_manage_cap/4`, so the owner is NOT a manager of
+  the orchestrator and could not equip it via the new manager-delegated
+  `grant_cap` path. This wires the missing Manage cap, making the owner the
+  orchestrator's manager — the same `cap(:agent, Manage, :any, orchestrator_uri,
+  ws)` shape every other created Kind grants its creator at create.
+
+  Delegates to `Ezagent.Workspace.grant_creator_manage_cap/4`, which is
+  idempotent (skips a logically-equal re-grant) and dispatches under the
+  closed bootstrap system principal because `Manage :any` is a
+  wildcard-action cap whose target Behavior has no data owner (Identity's
+  grant boundary correctly requires admin authority for that shape). The
+  issued cap still records `granted_by: owner_uri`.
+  """
+  @spec grant_owner_orchestrator_manage_cap(URI.t(), URI.t()) :: :ok | {:error, term()}
+  def grant_owner_orchestrator_manage_cap(%URI{} = orchestrator_uri, %URI{} = owner_uri) do
+    workspace_uri =
+      case Ezagent.WorkspaceRegistry.lookup(orchestrator_uri) do
+        {:ok, %URI{} = ws} ->
+          ws
+
+        :error ->
+          raise "orchestrator #{URI.to_string(orchestrator_uri)} has no workspace binding " <>
+                  "— cannot derive workspace_uri for the owner Manage cap"
+      end
+
+    Ezagent.Workspace.grant_creator_manage_cap(
+      :agent,
+      orchestrator_uri,
+      workspace_uri,
+      owner_uri
+    )
   end
 
   def join_session_members(%URI{} = session_uri, members) when is_list(members) do

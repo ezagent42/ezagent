@@ -5,7 +5,6 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
 
   alias Ezagent.Behavior.Session
   alias Ezagent.Entity.SessionTemplate
-  alias Ezagent.Invocation
 
   @spec update_template(keyword()) :: {:ok, URI.t()} | {:error, term()}
   def update_template(opts \\ []) do
@@ -132,22 +131,21 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
       granted_at: DateTime.utc_now()
     }
 
-    target = Ezagent.URI.with_action(owner_uri, :identity, :grant_cap)
-
-    case Invocation.dispatch(%Invocation{
-           target: target,
-           mode: :call,
-           args: %{cap: cap},
-           ctx: %{
-             caller: Ezagent.SystemPrincipal.uri("template-materialize"),
-             caps:
-               "template-materialize"
-               |> Ezagent.SystemPrincipal.uri()
-               |> Ezagent.SystemPrincipal.caps(),
-             reply: :ignore
-           }
-         }) do
-      {:ok, _} ->
+    # Grant chokepoint (SPEC 2026-06-17 §4 PR-2, site #11). The cap is
+    # `session_template/Template/:any/{:within_workspace}` (same shape as
+    # site #8) — concrete kind + behavior, scope-bounded instance →
+    # `IdentityAdmin.rule_cap_bounded?/1` true → the `{:rule, …}` branch
+    # authorizes it (Decision #154). `template-materialize` is no longer
+    # the authorizer; configurer + entity `granted_by` = template OWNER.
+    # (SPEC §3.5 provisionally tagged this `{:held_by, owner}`; that is
+    # dead — the owner does not hold the IdentityAdmin grant cap, so step
+    # 5.5 would deny it. The rule path is the reachable conversion. Code wins.)
+    case Ezagent.Identity.Grant.grant_cap(
+           owner_uri,
+           cap,
+           {:rule, :template_materialize, owner_uri}
+         ) do
+      :ok ->
         :ok
 
       other ->

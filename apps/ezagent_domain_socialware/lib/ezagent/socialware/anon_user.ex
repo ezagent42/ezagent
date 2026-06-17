@@ -80,6 +80,92 @@ defmodule Ezagent.Socialware.AnonUser do
   def mint(other), do: {:error, {:not_a_session, other}}
 
   @doc """
+  Mint a read-only anon-User **authorized to participate in a `public_view`
+  session** — the issue #51 §4.1 anonymous-access chokepoint (GLOSSARY
+  Decision #154, no unowned permissions).
+
+  This is the structural-authorization branch: `public_view == true` is ITSELF
+  the rule that authorizes minting the anon a NARROW participation grant. The
+  authority is NOT routed through `Behavior.IdentityAdmin.grant_cap`'s
+  `{self, admin, manager}` chokepoint (the anonymous HTTP path is none of those
+  — all three branches fail closed), and NO `system://` principal is involved.
+  Instead the grant is born WITH the identity, written into the anon's
+  `caps_json` at create time (the same create-time mechanism `default_caps/1`
+  uses), so the anon hydrates the cap on demand-spawn and joins ONLY its own
+  session under its OWN authority.
+
+  Returns:
+
+    * `{:ok, anon_uri}` — `session_uri` is a live `public_view` session; a fresh
+      read-only anon-User is created holding EXACTLY one cap:
+      `cap(:session, Behavior.Session, :join, instance: <session>, ws: <session ws>)`,
+      `granted_by:` the session owner (the configurer of the public_view rule —
+      accountability only, never the caller), falling back to
+      `entity://system/user/admin` for a not-yet-claimed ownerless session
+      (Decision #154's named extreme-case granter; never a `system://` principal).
+    * `{:error, :not_public_view}` — `session_uri` is private (or its public-view
+      flag cannot be resolved). The rule branch checks the flag is ACTUALLY true;
+      a private session NEVER mints an anon-access identity.
+    * `{:error, term()}` — workspace/owner/row-creation failure.
+
+  The minted cap's `instance` is the CONCRETE session URI (`Ezagent.URI.instance/1`
+  — exactly the needed-instance dispatch derives for a `session.join` on this
+  session), strictly tighter than a `{:within_session, _}` scope tuple: it
+  authorizes this session ONLY (not its sub-resources, never another session) and
+  is JSON-serializable for `caps_json` (a scope tuple is not — see
+  `Ezagent.Capability.Normalize.to_map/1`).
+  """
+  @spec mint_for_public_session(URI.t()) :: {:ok, URI.t()} | {:error, term()}
+  def mint_for_public_session(%URI{scheme: "session"} = session_uri) do
+    if Ezagent.Socialware.PublicView.public_view?(session_uri) do
+      with {:ok, workspace_name} <- workspace_name(session_uri) do
+        anon_uri = Ezagent.URI.entity(workspace_name, :user, anon_name())
+
+        case Users.create_read_only(anon_uri, [join_cap(session_uri)]) do
+          {:ok, _row} -> {:ok, anon_uri}
+          {:error, _} = err -> err
+        end
+      end
+    else
+      {:error, :not_public_view}
+    end
+  end
+
+  def mint_for_public_session(other), do: {:error, {:not_a_session, other}}
+
+  # The single narrow participation grant the anon is born with. Concrete-URI
+  # instance (NOT a `{:within_session, _}` tuple — see the @doc) so it matches
+  # ONLY this session's `session.join` need + serializes into caps_json.
+  # `granted_by` = the session owner (the configurer of the public_view rule);
+  # for a not-yet-owner-claimed session it falls back to the admin entity —
+  # Decision #154's named extreme-case granter — never a `system://` principal.
+  defp join_cap(%URI{} = session_uri) do
+    %Ezagent.Capability{
+      kind: :session,
+      behavior: Ezagent.Behavior.Session,
+      action: :join,
+      instance: Ezagent.URI.instance(session_uri),
+      workspace_uri: Ezagent.Capability.workspace_of(session_uri),
+      granted_by: public_view_granter(session_uri),
+      granted_at: DateTime.utc_now()
+    }
+  end
+
+  defp public_view_granter(%URI{} = session_uri) do
+    case Ezagent.Entity.Session.owner(session_uri) do
+      {:ok, %URI{} = owner} -> owner
+      _ -> Ezagent.Entity.User.admin_uri()
+    end
+  end
+
+  defp workspace_name(%URI{} = session_uri) do
+    case Ezagent.URI.workspace_name(session_uri) do
+      {:ok, _name} = ok -> ok
+      :error -> {:error, {:no_workspace, session_uri}}
+    end
+  end
+
+  @doc """
   Whether `uri` is an anon-User URI — a bare `user` principal whose name carries
   the `anon-` prefix. Used by GC + "hide anonymous viewers" filters.
   """

@@ -1,0 +1,283 @@
+defmodule Ezagent.Socialware.AnonPublicViewGrantTest do
+  @moduledoc """
+  Issue #51 §4.1 / GLOSSARY Decision #154 — the anonymous public-view access path
+  authorizes a visitor WITHOUT any abstract `system://` principal.
+
+  `Ezagent.Socialware.AnonUser.mint_for_public_session/1` is the structural
+  authorization chokepoint: `public_view == true` is itself the rule that
+  authorizes minting the anon a NARROW participation grant. The grant is born WITH
+  the identity (written into `caps_json` at create time), so the anon joins ONLY
+  its own session under its OWN authority — no system principal in the dispatch.
+
+  ## The escalation risk this test exists to close
+
+  A too-broad authorization branch. These tests prove:
+
+    * a `public_view == true` session authorizes ONLY a `{this session}`-scoped
+      join grant — nothing broader, nothing touching another session;
+    * a `public_view == false` / private session REFUSES the grant (the rule
+      branch checks the flag is ACTUALLY true);
+    * `granted_by` on the resulting cap = the session owner entity (a real
+      accountable entity, satisfying Decision #154), never a `system://` principal;
+    * an OWNERLESS public session falls back `granted_by` to the admin ENTITY
+      (`entity://system/user/admin`), Decision #154's named extreme-case granter,
+      still never a `system://` principal;
+    * (positive, end-to-end) an anon minted via this path joins the session AS
+      ITSELF (caller = anon, NO `ctx.caps`) and becomes a live registered member
+      able to participate — proving no system principal is needed for the join.
+  """
+  use EzagentCore.DataCase, async: false
+
+  alias Ezagent.Behavior.Session.ConfigActions
+  alias Ezagent.Entity.{Session, SessionTemplate, User}
+  alias Ezagent.{Capability, KindRegistry}
+  alias Ezagent.Socialware.{AnonUser, ChatFeed}
+
+  setup do
+    # spawned Session / User Kinds run in their own processes — share the sandbox.
+    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+    :ok
+  end
+
+  # ----- fixtures --------------------------------------------------------
+
+  @workspace "team-alpha"
+  @owner_default Ezagent.URI.new!("entity://team-alpha/user/pv-owner")
+
+  # A live session in `team-alpha` whose materializing Template declares
+  # `public_view` per `flag`, optionally with an `owner_uri`. The session +
+  # template share the SAME workspace STRING (`PublicView.validate_template_uri`
+  # requires same-workspace, by string equality — `:team_alpha` (underscore) ≠
+  # `"team-alpha"` (hyphen) would fail closed).
+  defp public_session(flag, owner_uri \\ @owner_default) do
+    u = System.unique_integer([:positive])
+
+    {:ok, tmpl_uri} =
+      SessionTemplate.persist_version_as_system(
+        %{name: "pv-grant-tmpl-#{u}", public_view: flag},
+        @workspace
+      )
+
+    session_uri = Ezagent.URI.new!("session://#{@workspace}/default/pv-grant-#{u}")
+
+    spawn_opts = %{uri: session_uri, behaviors: Session.socialware_behaviors()}
+    spawn_opts = if owner_uri, do: Map.put(spawn_opts, :owner_uri, owner_uri), else: spawn_opts
+
+    {:ok, _pid} = Ezagent.Kind.spawn(Session, spawn_opts)
+    :ok = Ezagent.WorkspaceRegistry.bind(session_uri, Capability.workspace_of(session_uri))
+
+    {:ok, _} =
+      ConfigActions.system_set_working_copy(session_uri, %{session_template_uri: tmpl_uri})
+
+    on_exit(fn -> terminate(Session, session_uri) end)
+    session_uri
+  end
+
+  defp spawn_anon_kind(anon_uri) do
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(User, %{
+        uri: anon_uri,
+        initial_caps: User.initial_caps_for_spawn(anon_uri)
+      })
+
+    on_exit(fn -> terminate(User, anon_uri) end)
+    :ok
+  end
+
+  defp terminate(kind, uri) do
+    case KindRegistry.lookup(uri) do
+      {:ok, pid} ->
+        sup =
+          case kind do
+            Session -> EzagentDomainInstanceMessage.SessionSupervisor
+            User -> EzagentDomainIdentity.Application.UserSupervisor
+          end
+
+        DynamicSupervisor.terminate_child(sup, pid)
+
+      :error ->
+        :ok
+    end
+  end
+
+  defp minted_join_cap(anon_uri) do
+    %{caps: caps} = Ezagent.Users.get_by_uri(anon_uri)
+
+    Enum.find(caps, fn
+      %Capability{behavior: Ezagent.Behavior.Session, action: :join} -> true
+      _ -> false
+    end)
+  end
+
+  # The needed cap dispatch derives for a `session.join` on `session_uri`.
+  defp join_need(session_uri) do
+    %{
+      kind: :session,
+      behavior: Ezagent.Behavior.Session,
+      action: :join,
+      instance: Ezagent.URI.instance(session_uri),
+      workspace_uri: Capability.workspace_of(session_uri)
+    }
+  end
+
+  # ----- NEGATIVE: scope is exactly this session, nothing broader --------
+
+  describe "the grant is scoped to EXACTLY the public session (no escalation)" do
+    test "a public session mints ONE join cap that authorizes ONLY itself" do
+      session = public_session(true)
+      {:ok, anon} = AnonUser.mint_for_public_session(session)
+
+      cap = minted_join_cap(anon)
+      assert %Capability{} = cap, "expected exactly one Session :join cap in caps_json"
+
+      # Concrete-instance, action exactly :join (NOT :any), workspace pinned.
+      assert cap.action == :join
+      refute cap.action == :any
+      assert cap.kind == :session
+      assert cap.instance == Ezagent.URI.instance(session)
+      assert cap.workspace_uri == Capability.workspace_of(session)
+
+      # It authorizes a join into THIS session …
+      assert Capability.matches?(cap, join_need(session))
+    end
+
+    test "the grant does NOT authorize a join into ANOTHER session" do
+      session_a = public_session(true)
+      session_b = public_session(true, Ezagent.URI.entity(:team_alpha, :user, "pv-owner-b"))
+
+      {:ok, anon_a} = AnonUser.mint_for_public_session(session_a)
+      cap = minted_join_cap(anon_a)
+
+      assert Capability.matches?(cap, join_need(session_a))
+
+      refute Capability.matches?(cap, join_need(session_b)),
+             "a public-view grant for session A must NOT authorize joining session B"
+    end
+
+    test "the anon holds NO cap broader than the single session-join grant" do
+      session = public_session(true)
+      {:ok, anon} = AnonUser.mint_for_public_session(session)
+      %{caps: caps} = Ezagent.Users.get_by_uri(anon)
+
+      # Exactly one cap, no wildcards on any axis, no foreign-instance reach.
+      assert length(caps) == 1
+      [cap] = caps
+      refute cap.kind == :any
+      refute cap.behavior == :any
+      refute cap.action == :any
+      refute cap.instance == :any
+      refute cap.workspace_uri == :any
+    end
+  end
+
+  # ----- NEGATIVE: private session refuses the grant ---------------------
+
+  describe "a non-public session REFUSES the grant (the rule checks the flag)" do
+    test "public_view == false → {:error, :not_public_view}, no anon minted" do
+      session = public_session(false)
+      assert {:error, :not_public_view} = AnonUser.mint_for_public_session(session)
+    end
+
+    test "a session with no materializing public-view Template → refused (fail-closed)" do
+      bare =
+        Ezagent.URI.session(
+          :team_alpha,
+          :default,
+          "pv-bare-#{System.unique_integer([:positive])}"
+        )
+
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(Session, %{uri: bare, behaviors: Session.socialware_behaviors()})
+
+      :ok = Ezagent.WorkspaceRegistry.bind(bare, Capability.workspace_of(bare))
+      on_exit(fn -> terminate(Session, bare) end)
+
+      assert {:error, :not_public_view} = AnonUser.mint_for_public_session(bare)
+    end
+
+    test "a non-session URI is refused" do
+      assert {:error, {:not_a_session, _}} =
+               AnonUser.mint_for_public_session(Ezagent.URI.entity(:team_alpha, :user, "alice"))
+    end
+  end
+
+  # ----- granted_by is a REAL accountable entity (Decision #154) ---------
+
+  describe "granted_by is the session owner entity, never a system:// principal" do
+    test "granted_by = the session owner for an owned public session" do
+      owner = Ezagent.URI.entity(:team_alpha, :user, "pv-real-owner")
+      session = public_session(true, owner)
+
+      {:ok, anon} = AnonUser.mint_for_public_session(session)
+      cap = minted_join_cap(anon)
+
+      assert cap.granted_by == owner
+      assert match?(%URI{scheme: "entity"}, cap.granted_by)
+      refute match?(%URI{scheme: "system"}, cap.granted_by)
+    end
+
+    test "granted_by falls back to the admin ENTITY for an ownerless public session" do
+      # nil owner — RFC #402 first-join-owner not yet claimed.
+      session = public_session(true, nil)
+
+      {:ok, anon} = AnonUser.mint_for_public_session(session)
+      cap = minted_join_cap(anon)
+
+      assert cap.granted_by == User.admin_uri()
+      assert match?(%URI{scheme: "entity"}, cap.granted_by)
+      refute match?(%URI{scheme: "system"}, cap.granted_by)
+    end
+  end
+
+  # ----- POSITIVE: end-to-end join AS THE ANON ITSELF (no system principal)
+
+  describe "an anon minted for a public session joins AS ITSELF and participates" do
+    test "join succeeds with caller=anon and NO ctx.caps → live registered member" do
+      session = public_session(true)
+      {:ok, anon} = AnonUser.mint_for_public_session(session)
+
+      # Real controller order: mint → spawn (hydrates the join cap from caps_json)
+      # → join AS THE ANON, no system principal, no admin caps.
+      :ok = spawn_anon_kind(anon)
+
+      target = Ezagent.URI.with_action(session, :session, :join)
+
+      result =
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target: target,
+          mode: :call,
+          args: %{member: anon},
+          # The whole point: caller is the anon, ctx carries NO caps. Step 5.5
+          # must authorize purely from the anon's own slice cap.
+          ctx: %{caller: anon, reply: :ignore}
+        })
+
+      assert match?(:ok, result) or match?({:ok, _}, result),
+             "anon self-join must succeed under its own authority, got: #{inspect(result)}"
+
+      # And it is now a real member able to read the feed (membership-only access).
+      assert {:ok, %{messages: _}} = ChatFeed.snapshot(session, anon)
+    end
+
+    test "an anon for session A canNOT self-join session B (scope holds at dispatch)" do
+      session_a = public_session(true)
+      session_b = public_session(true, Ezagent.URI.entity(:team_alpha, :user, "pv-owner-b2"))
+
+      {:ok, anon_a} = AnonUser.mint_for_public_session(session_a)
+      :ok = spawn_anon_kind(anon_a)
+
+      target_b = Ezagent.URI.with_action(session_b, :session, :join)
+
+      result =
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target: target_b,
+          mode: :call,
+          args: %{member: anon_a},
+          ctx: %{caller: anon_a, reply: :ignore}
+        })
+
+      assert match?({:error, :unauthorized}, result),
+             "anon_a's session-A grant must NOT authorize joining session B, got: #{inspect(result)}"
+    end
+  end
+end
