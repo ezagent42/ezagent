@@ -22,7 +22,7 @@ defmodule EzagentPluginLoom.WebPlug do
   alias Ezagent.Socialware.{AnonBinding, AnonUser, CustomerAuth, CustomerFeed}
   alias Ezagent.Uploads
   alias Ezagent.Uploads.DownloadToken
-  alias EzagentPluginLoom.{Intent, Materials, Stitch}
+  alias EzagentPluginLoom.{Fork, Intent, Materials, Stitch}
 
   @gateway_uri "system://loom-customer-gateway"
 
@@ -106,6 +106,22 @@ defmodule EzagentPluginLoom.WebPlug do
       Plug.Conn.send_file(conn, 200, path)
     else
       _ -> send_resp(conn, 404, "not found")
+    end
+  end
+
+  # fork:从发布物派生新 loom session。body {token, name, operator_uri}
+  post "/c/:ws/:sid/fork" do
+    with {:ok, session_uri, ws_uri} <- uris(ws, sid),
+         token when is_binary(token) <- token(conn),
+         :ok <- CustomerAuth.authorize(token, session_uri, ws_uri),
+         name when is_binary(name) and name != "" <- conn.body_params["name"],
+         operator when is_binary(operator) <- conn.body_params["operator_uri"],
+         {:ok, new_uri} <- Fork.fork(session_uri, name, operator) do
+      json(conn, 200, %{ok: true, session: URI.to_string(new_uri)})
+    else
+      {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})
+      {:error, reason} -> json(conn, 502, %{ok: false, error: inspect(reason)})
+      _ -> json(conn, 400, %{ok: false, error: "bad_request"})
     end
   end
 
