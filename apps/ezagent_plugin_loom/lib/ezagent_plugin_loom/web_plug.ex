@@ -23,7 +23,7 @@ defmodule EzagentPluginLoom.WebPlug do
   alias Ezagent.Uploads
   alias Ezagent.Uploads.DownloadToken
   alias EzagentPluginLoom.{Fork, Intent, Knowledge, Materials, Stitch, Tool, FetchProxy, UserSchema}
-  alias EzagentPluginLoom.{MetaAgent, WorkerConfig}
+  alias EzagentPluginLoom.{MetaAgent, WorkerConfig, Dashboard}
 
   @gateway_uri "system://loom-customer-gateway"
 
@@ -168,6 +168,20 @@ defmodule EzagentPluginLoom.WebPlug do
     end
   end
 
+  # Dashboard 运营数据(operator)。⚠️ operator-only:当前用 session token,真正 operator auth 待集成。
+  get "/c/:ws/:sid/dashboard" do
+    conn = Plug.Conn.fetch_query_params(conn)
+
+    with {:ok, session_uri, ws_uri} <- uris(ws, sid),
+         token when is_binary(token) <- conn.query_params["token"],
+         :ok <- CustomerAuth.authorize(token, session_uri, ws_uri) do
+      json(conn, 200, %{ok: true, summary: Dashboard.summary(session_uri)})
+    else
+      {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})
+      _ -> json(conn, 400, %{ok: false, error: "bad_request"})
+    end
+  end
+
   # 团队管家(meta agent):@自然语言改 team。body {instruction, token}
   post "/c/:ws/:sid/team" do
     with {:ok, session_uri, ws_uri} <- uris(ws, sid),
@@ -293,6 +307,15 @@ defmodule EzagentPluginLoom.WebPlug do
     conn
     |> Plug.Conn.put_resp_content_type("text/html")
     |> Plug.Conn.send_resp(200, EzagentPluginLoom.CustomerSPA.html())
+  end
+
+  # operator Dashboard 前端壳。GET /loom/dashboard/:ws/:sid?token=…
+  get "/dashboard/:ws/:sid" do
+    _ = {ws, sid}
+
+    conn
+    |> Plug.Conn.put_resp_content_type("text/html")
+    |> Plug.Conn.send_resp(200, EzagentPluginLoom.DashboardSPA.html())
   end
 
   match _ do
