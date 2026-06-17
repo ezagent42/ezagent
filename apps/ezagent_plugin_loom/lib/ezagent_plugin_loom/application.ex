@@ -47,6 +47,7 @@ defmodule EzagentPluginLoom.Application do
       EzagentPluginLoom.Stats,
       EzagentPluginLoom.UserSchema,
       EzagentPluginLoom.WorkerConfig,
+      EzagentPluginLoom.FeishuMirror,
       {Registry, keys: :unique, name: EzagentPluginLoom.OrchestratorRegistry},
       {DynamicSupervisor, name: EzagentPluginLoom.OrchestratorSupervisor, strategy: :one_for_one}
     ]
