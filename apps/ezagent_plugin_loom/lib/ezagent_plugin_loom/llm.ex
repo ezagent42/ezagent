@@ -26,6 +26,70 @@ defmodule EzagentPluginLoom.LLM do
   """
   @spec chat([message()], keyword()) :: {:ok, String.t()} | {:error, term()}
   def chat(messages, opts \\ []) when is_list(messages) do
+    case flavor(opts) do
+      :cc -> chat_cc(messages, opts)
+      _ -> chat_curl(messages, opts)
+    end
+  end
+
+  # flavor:opts[:flavor] > env LOOM_LLM_FLAVOR > :curl(默认便宜 HTTP)。
+  defp flavor(opts) do
+    case opts[:flavor] || System.get_env("LOOM_LLM_FLAVOR") do
+      :cc -> :cc
+      "cc" -> :cc
+      _ -> :curl
+    end
+  end
+
+  # cc-flavor:用本地 claude 二进制(-p headless),跟随本地登录态/ANTHROPIC env。
+  # one-shot(非 PTY 常驻);完整 PTY 常驻 agent 待真实 agent Kind 化(项 3)。
+  defp chat_cc(messages, opts) do
+    case System.find_executable("claude") do
+      nil ->
+        {:error, :no_claude_binary}
+
+      bin ->
+        prompt = Enum.map_join(messages, "\n", &"#{&1.role}: #{&1.content}")
+
+        args =
+          ["-p", prompt, "--output-format", "json", "--max-turns", "6", "--exclude-dynamic-system-prompt-sections"]
+          |> then(fn a -> if opts[:system], do: a ++ ["--system-prompt", opts[:system]], else: a end)
+
+        # 不混 stderr(claude 的日志在 stderr;--output-format json 的 stdout 才是纯 JSON)。
+        case System.cmd(bin, args, stderr_to_stdout: false) do
+          {out, 0} -> parse_cc(out, opts)
+          {out, code} -> {:error, {:claude_exit, code, String.slice(out, 0, 200)}}
+        end
+    end
+  end
+
+  defp parse_cc(out, opts) do
+    case Jason.decode(out) do
+      {:ok, %{"result" => result, "is_error" => false} = j} when is_binary(result) ->
+        emit_cc_telemetry(j, opts)
+        {:ok, result}
+
+      {:ok, %{"is_error" => true}} ->
+        {:error, :claude_error}
+
+      _ ->
+        {:error, :bad_cc_output}
+    end
+  end
+
+  defp emit_cc_telemetry(%{"usage" => usage} = j, opts) when is_map(usage) do
+    :telemetry.execute(
+      [:ezagent, :loom, :llm, :call],
+      %{input_tokens: usage["input_tokens"] || 0, output_tokens: usage["output_tokens"] || 0},
+      %{model: j["model"], role: opts[:role], session: opts[:session_uri], flavor: :cc}
+    )
+  rescue
+    _ -> :ok
+  end
+
+  defp emit_cc_telemetry(_, _), do: :ok
+
+  defp chat_curl(messages, opts) do
     with {:ok, key} <- api_key() do
       base = System.get_env("ANTHROPIC_BASE_URL") || @default_base
       url = String.to_charlist("#{base}/v1/messages")
