@@ -246,8 +246,17 @@ defmodule Ezagent.SystemPrincipal.Catalog do
        ]},
       {principal("agent-internal"),
        [
-         # `user.identity.grant_cap` → IdentityAdmin Behavior on User Kind.
-         Capability.cap(:user, IdentityAdmin, :grant_cap),
+         # 2026-06-16 (Decision #154 "no unowned permissions", Allen's ruling) —
+         # `cap(:user, IdentityAdmin, :grant_cap)` DROPPED. It was vestigial: the
+         # PR-CC-2-v2 bootstrap-wildcard bridge once masked a dependency, but a
+         # repo-wide `git grep` (2026-06-16) confirms NO live `grant_cap`/`revoke_cap`
+         # dispatch ever ran under `system://agent-internal` as caller — its only
+         # live use is the `sandbox.write_path` self-authority below
+         # (`template_spawn.ex:523`, a `Sandbox` action). Dropping it makes
+         # agent-internal a NON-minter → category A in the no-unowned gate. The
+         # honest granter for any future agent-creation cap grant is the agent's
+         # creator entity (via manager-delegation #153), never this abstract
+         # principal.
          # Agent.do_record_sandbox_state/3 dispatches sandbox.write_path
          # under this principal (pathology-B follow-up: PR-CC-2-v2's
          # bootstrap-wildcard bridge masked this dependency). The cap
