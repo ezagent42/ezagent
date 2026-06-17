@@ -557,10 +557,11 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
   defp instr_sys(_), do: []
 
-  # 从 session_uri 读这个会话的编排器自定义指令(旁路文件)。
-  defp orch_instruction(%URI{path: path}) when is_binary(path) do
+  # 从 session_uri 读这个会话的编排器自定义指令(旁路文件)。workspace-first:ws = host。
+  defp orch_instruction(%URI{host: ws, path: path})
+       when is_binary(ws) and ws != "" and is_binary(path) do
     case path |> String.trim_leading("/") |> String.split("/") do
-      [ws, sid | _] -> Ezagent.PluginLoom.WorkerConfig.get_orchestrator(ws, sid)
+      [_class, sid | _] -> Ezagent.PluginLoom.WorkerConfig.get_orchestrator(ws, sid)
       _ -> ""
     end
   rescue
@@ -800,11 +801,14 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
     _ -> :ok
   end
 
+  # main canonical entity URI is workspace-first `entity://<ws>/agent/<name>`, so the
+  # workspace is the HOST (not path segment 1, which is now the "agent" type segment).
   defp orch_ws_sid(ctx) do
-    with %URI{path: path} <- Map.get(ctx, :self_uri),
-         [ws, agent | _] <- path |> to_string() |> String.trim_leading("/") |> String.split("/"),
+    with %URI{host: ws, path: path} <- Map.get(ctx, :self_uri),
+         [_type, agent | _] <-
+           path |> to_string() |> String.trim_leading("/") |> String.split("/"),
          "loomorch_" <> sid <- agent,
-         true <- ws != "" and sid != "" do
+         true <- is_binary(ws) and ws != "" and sid != "" do
       {ws, sid}
     else
       _ -> nil
