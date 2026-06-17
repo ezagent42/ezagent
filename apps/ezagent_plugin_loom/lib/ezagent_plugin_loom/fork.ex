@@ -28,7 +28,13 @@ defmodule EzagentPluginLoom.Fork do
          {:ok, [new_uri], _} <-
            LoomSession.instantiate(
              "loom-fork",
-             %{"class" => "session.loom", "session_name" => new_name, "operator_uri" => operator_uri},
+             %{
+               "class" => "session.loom",
+               "session_name" => new_name,
+               "operator_uri" => operator_uri,
+               # fork 自带源页,跳过 instantiate 的初始页 seed(避免和下面 seed_page 竞态)。
+               "no_seed" => true
+             },
              Ezagent.URI.workspace(ws)
            ),
          :ok <- seed_page(new_uri, tree) do

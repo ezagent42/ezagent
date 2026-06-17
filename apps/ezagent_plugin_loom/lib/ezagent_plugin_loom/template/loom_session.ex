@@ -5,8 +5,10 @@ defmodule EzagentPluginLoom.Template.LoomSession do
   Materialize 一个 domain-owned、socialware-subset 的 `Ezagent.Entity.Session`,并把它的
   chat working copy 标注上 loom vertical metadata (node_types / roles / sample_tree)。
 
-  脚手架阶段刻意**不 spawn 真实 sidecar agent**(orchestrator/worker/v0);agent 团队装配
-  + live agent-browser 验证按迁移文档后续任务推进(同 advisor 的 P5 handoff 边界)。
+  instantiate 还装配 **agent team**(`EzagentPluginLoom.Team.ensure_team` —— orchestrator /
+  v0 / worker / meta / stitch 作为 Session Member,admin Members 面板可见)+ seed 一张初始页
+  (`OrchestratorServer.seed_page`,fork 出的 session `no_seed` 跳过)。编排控制器留 loom 自实现;
+  调 LLM 统一走 `EzagentPluginLoom.LLM`(已对接 socialware/ezagent)。
   """
 
   @behaviour Ezagent.Kind.Template
@@ -69,6 +71,14 @@ defmodule EzagentPluginLoom.Template.LoomSession do
              :ok <- ensure_operator_user(operator_uri),
              {:ok, _} <- join_operator(session_uri, operator_uri) do
           _ = start_orchestrator(session_uri)
+          # agent team:起一队 loom 编排控制器作为 Member(admin Members 面板可见)。
+          _ = EzagentPluginLoom.Team.ensure_team(session_uri)
+
+          # seed 一张初始页 → 打开 loom 不再空白("operator 批准后显示")。best-effort。
+          # fork 出的 session 自带源页(`no_seed`),跳过以免和 Fork 的 page-copy 竞态。
+          if Map.get(tmpl, "no_seed") != true,
+            do: EzagentPluginLoom.OrchestratorServer.seed_page(session_uri)
+
           {:ok, [session_uri], %{fresh?: fresh?, vertical: :loom}}
         else
           {:error, _reason} = error ->

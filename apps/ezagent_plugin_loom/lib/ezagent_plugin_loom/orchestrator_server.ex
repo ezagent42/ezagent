@@ -64,12 +64,65 @@ defmodule EzagentPluginLoom.OrchestratorServer do
 
   defp turn_correlated?(msg) do
     body = msg.body || %{}
-    get_in(body, ["metadata", "correlation"]) != nil or get_in(body, [:metadata, :correlation]) != nil
+
+    get_in(body, ["metadata", "correlation"]) != nil or
+      get_in(body, [:metadata, :correlation]) != nil
   end
 
   defp text_of(msg) do
     body = msg.body || %{}
     body["text"] || body[:text]
+  end
+
+  @doc """
+  Seed 一张静态初始页(无 LLM)→ 经 Turn(open/compose/settle, mode:auto 即 customer 可见),
+  让打开 loom 时不再是空的"(operator 批准后显示)"。best-effort。
+  """
+  @spec seed_page(URI.t()) :: :ok
+  def seed_page(%URI{} = session_uri) do
+    caller = Ezagent.URI.new!(@caller_uri)
+
+    refs = [
+      %{kind: :chat, text: "页面已就绪 ✨ 在右侧聊天框告诉我你想做什么样的页面,我来帮你生成。"},
+      %{kind: :page, tree: starter_tree()}
+    ]
+
+    with {:ok, %{turn_id: turn_id}} <-
+           dispatch(session_uri, "turn.open", caller, %{
+             trigger: %{message_id: "seed-#{System.unique_integer([:positive])}"},
+             opened_at: System.system_time(:millisecond)
+           }),
+         {:ok, _} <-
+           dispatch(session_uri, "turn.compose", caller, %{turn_id: turn_id, result_refs: refs}),
+         {:ok, _} <- dispatch(session_uri, "turn.settle", caller, %{turn_id: turn_id}) do
+      :ok
+    else
+      _ -> :ok
+    end
+  rescue
+    _ -> :ok
+  catch
+    :exit, _ -> :ok
+  end
+
+  defp starter_tree do
+    %{
+      "type" => "page",
+      "props" => %{},
+      "children" => [
+        %{
+          "type" => "services",
+          "props" => %{"title" => "欢迎使用 Loom"},
+          "children" => [
+            %{
+              "type" => "detail",
+              "props" => %{"text" => "在右侧聊天框描述你想要的页面(产品、活动、落地页…),我会帮你生成并实时呈现。"},
+              "children" => []
+            }
+          ]
+        }
+      ]
+    }
   end
 
   defp orchestrate(session_uri, msg, caller) do

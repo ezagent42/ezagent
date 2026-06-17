@@ -67,8 +67,11 @@ defmodule EzagentPluginLoom.Integration.SwUseLogicTest do
              })
 
     assert {:ok, before_settle} = CustomerFeed.snapshot(ctx.session, ctx.token)
-    assert before_settle.messages == []
-    assert before_settle.page == nil
+
+    # instantiate 会 seed 一张初始欢迎页(占 baseline)。gating 关键 = 这个 NEW turn 的
+    # 内容在 settle 前对 customer 不可见(message 不在 feed、page 仍是 seed 不是 page_tree)。
+    refute message_id in Enum.map(before_settle.messages, & &1.id)
+    assert before_settle.page != page_tree
 
     assert {:ok, %{status: :settled}} = dispatch(ctx.session, :turn, :settle, %{turn_id: turn_id})
 
@@ -110,8 +113,10 @@ defmodule EzagentPluginLoom.Integration.SwUseLogicTest do
     assert message.visibility == :operator_only
 
     assert {:ok, held} = CustomerFeed.snapshot(ctx.session, ctx.token)
-    assert held.messages == []
-    assert held.page == nil
+
+    # claim → operator_only:本 turn 内容对 customer 不可见(seed 初始页仍是 baseline)。
+    refute message_id in Enum.map(held.messages, & &1.id)
+    assert held.page != page_tree
 
     assert {:ok, %{status: :settled}} = dispatch(ctx.session, :turn, :settle, %{turn_id: turn_id})
 
