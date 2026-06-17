@@ -23,9 +23,9 @@ defmodule EzagentPluginLoom.Integration.PluginContractTest do
     names = Enum.map(Ezagent.UI.Form.list_form_classes(), fn {name, _mod, _fields} -> name end)
     assert "session.loom" in names
 
+    # 对齐 loom-stitch:loom 表单字段只有 session_name(operator_uri 可选,缺省默认 ws admin)。
     field_names = Enum.map(LoomSession.form_fields(), & &1.name)
-    assert "session_name" in field_names
-    assert "operator_uri" in field_names
+    assert field_names == ["session_name"]
   end
 
   test "loom session template validates its locked shape" do
@@ -41,10 +41,19 @@ defmodule EzagentPluginLoom.Integration.PluginContractTest do
     assert {:error, :missing_session_name} =
              LoomSession.validate(%{"class" => "session.loom"})
 
-    assert {:error, :missing_operator_uri} =
+    # operator_uri 可选(loom-stitch 对齐):缺省 → :ok(instantiate 默认 ws admin)。
+    assert :ok =
              LoomSession.validate(%{
                "class" => "session.loom",
                "session_name" => "main"
+             })
+
+    # 提供但非法 user URI → 报错。
+    assert {:error, _} =
+             LoomSession.validate(%{
+               "class" => "session.loom",
+               "session_name" => "main",
+               "operator_uri" => "not-a-user-uri"
              })
 
     assert {:error, {:wrong_class, "session.generic"}} =

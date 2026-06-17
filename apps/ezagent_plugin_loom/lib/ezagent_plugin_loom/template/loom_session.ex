@@ -22,7 +22,8 @@ defmodule EzagentPluginLoom.Template.LoomSession do
   @impl Ezagent.Kind.Template
   def template_name, do: "session.loom"
 
-  # 表单字段 = `validate/1` + `instantiate/3` 需要的入参(class 由 default_form_to_args 自动注入)。
+  # 表单只暴露 session_name(对齐 loom-stitch:loom 字段只有这一个)。operator_uri 可选,
+  # 缺省时 instantiate 默认 workspace admin —— class 由 default_form_to_args 自动注入。
   @impl Ezagent.UI.Form
   def form_fields do
     [
@@ -32,13 +33,6 @@ defmodule EzagentPluginLoom.Template.LoomSession do
         label: "Session 名称(short name)",
         required: true,
         placeholder: "main"
-      },
-      %{
-        name: "operator_uri",
-        type: :uri,
-        label: "Operator 用户 URI",
-        required: true,
-        placeholder: "entity://<workspace>/user/<name>"
       }
     ]
   end
@@ -57,18 +51,21 @@ defmodule EzagentPluginLoom.Template.LoomSession do
   @impl Ezagent.Kind.Template
   def instantiate(
         _tmpl_name,
-        %{"session_name" => session_name, "operator_uri" => _operator_uri} = tmpl,
+        %{"session_name" => session_name} = tmpl,
         %URI{} = workspace_uri
       ) do
     workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
     session_uri = Ezagent.URI.session(workspace_name, :loom, session_name)
-    operator_uri = operator_uri!(tmpl)
+    operator_uri = resolve_operator_uri(tmpl, workspace_name)
 
     case ensure_session(session_uri) do
       {:ok, fresh?} ->
         with :ok <- WorkspaceRegistry.bind(session_uri, workspace_uri),
              {:ok, _} <-
-               Ezagent.Behavior.Session.system_set_working_copy(session_uri, working_copy(tmpl)),
+               Ezagent.Behavior.Session.system_set_working_copy(
+                 session_uri,
+                 working_copy(tmpl, operator_uri)
+               ),
              :ok <- ensure_operator_user(operator_uri),
              {:ok, _} <- join_operator(session_uri, operator_uri) do
           _ = start_orchestrator(session_uri)
@@ -95,6 +92,8 @@ defmodule EzagentPluginLoom.Template.LoomSession do
 
   defp check_session_name(_), do: {:error, :missing_session_name}
 
+  # operator_uri 可选(对齐 loom-stitch:它无 operator 概念)。提供则必须是合法 user entity URI;
+  # 空串/缺省 → :ok(instantiate 默认 workspace admin)。
   defp check_operator_uri(%{"operator_uri" => uri}) when is_binary(uri) and uri != "" do
     case parse_user_uri(uri) do
       {:ok, _} -> :ok
@@ -102,8 +101,10 @@ defmodule EzagentPluginLoom.Template.LoomSession do
     end
   end
 
+  defp check_operator_uri(%{"operator_uri" => ""}), do: :ok
+  defp check_operator_uri(%{"operator_uri" => nil}), do: :ok
   defp check_operator_uri(%{"operator_uri" => _}), do: {:error, :bad_operator_uri}
-  defp check_operator_uri(_), do: {:error, :missing_operator_uri}
+  defp check_operator_uri(_), do: :ok
 
   defp parse_user_uri(uri_str) do
     uri = Ezagent.URI.new!(uri_str)
@@ -117,9 +118,16 @@ defmodule EzagentPluginLoom.Template.LoomSession do
     ArgumentError -> {:error, :bad_operator_uri}
   end
 
-  defp operator_uri!(%{"operator_uri" => uri_str}) do
+  # operator_uri:tmpl 提供则用;否则默认同 workspace 的 admin(`entity://<ws>/user/admin`)——
+  # 同域避免 join 跨 prefix 成员校验问题。loom-stitch 无 operator,此默认是迁移的兼容兜底。
+  defp resolve_operator_uri(%{"operator_uri" => uri_str}, _workspace_name)
+       when is_binary(uri_str) and uri_str != "" do
     {:ok, uri} = parse_user_uri(uri_str)
     uri
+  end
+
+  defp resolve_operator_uri(_tmpl, workspace_name) do
+    Ezagent.URI.user(workspace_name, "admin")
   end
 
   defp ensure_session(session_uri) do
@@ -136,14 +144,12 @@ defmodule EzagentPluginLoom.Template.LoomSession do
     end
   end
 
-  defp working_copy(tmpl) do
-    operator_uri_str = tmpl |> operator_uri!() |> URI.to_string()
-
+  defp working_copy(tmpl, %URI{} = operator_uri) do
     %{
       "class" => template_name(),
       "vertical" => "loom",
       "session_name" => Map.fetch!(tmpl, "session_name"),
-      "operator_uri" => operator_uri_str,
+      "operator_uri" => URI.to_string(operator_uri),
       "roles" => NodeTypes.default_roles(),
       "node_types" => NodeTypes.node_types(),
       "sample_tree" => NodeTypes.sample_tree()
