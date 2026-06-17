@@ -590,6 +590,71 @@ defmodule EzagentPluginLoom.WebPlug do
     json(conn, 200, %{ok: true})
   end
 
+  # Stitch(发布页助手)异步:立即 {ok, id},真正 {reply, drive} 由 stitch frame 经 /stream
+  # 送达(前端按 refId 关联)。body {text, page?}
+  post "/api/:ws/:sid/stitch" do
+    su = loom_uri(ws, sid)
+    text = (conn.body_params || %{}) |> Map.get("text", "") |> to_string()
+    page = conn.body_params["page"]
+    deep? = conn.body_params["mode"] == "deep"
+    req_id = Snapshots.mint_token()
+
+    Task.start(fn ->
+      reply_fn = if deep?, do: &Stitch.reply_deep/2, else: &Stitch.reply/2
+
+      case reply_fn.(text, page: page, knowledge: Knowledge.get(su)) do
+        {:ok, %{reply: reply} = r} ->
+          emit_stitch_frame(su, ws, sid, req_id, %{
+            "reply" => reply,
+            "drive" => Map.get(r, :drive),
+            "mode" => "stitch"
+          })
+
+        _ ->
+          :ok
+      end
+    end)
+
+    json(conn, 200, %{ok: true, id: req_id})
+  end
+
+  # AiSpot ✨ 异步:同上,mode=aispot。body {feature, context}
+  post "/api/:ws/:sid/aispot" do
+    su = loom_uri(ws, sid)
+    feature = (conn.body_params || %{}) |> Map.get("feature", "") |> to_string()
+    context = (conn.body_params || %{}) |> Map.get("context", "") |> to_string()
+    req_id = Snapshots.mint_token()
+
+    Task.start(fn ->
+      case Stitch.aispot("#{feature}: #{context}", knowledge: Knowledge.get(su)) do
+        {:ok, card} ->
+          emit_stitch_frame(su, ws, sid, req_id, %{"card" => card, "mode" => "aispot"})
+
+        _ ->
+          :ok
+      end
+    end)
+
+    json(conn, 200, %{ok: true, id: req_id})
+  end
+
+  # GET stitch:读对话线程(从 session 历史的 stitch frame 重建)。
+  get "/api/:ws/:sid/stitch" do
+    conv =
+      loom_uri(ws, sid)
+      |> Ezagent.MessageStore.recent_in_session(50)
+      |> Enum.reverse()
+      |> Enum.map(&loom_frame/1)
+      |> Enum.filter(&Map.has_key?(&1, "stitch"))
+
+    json(conn, 200, %{ok: true, conversation: conv})
+  end
+
+  # 未实现的 /api/* → JSON 404(否则被下面 SPA 兜底返回 HTML,前端 r.json() 会崩)。
+  match "/api/*_rest" do
+    json(conn, 404, %{ok: false, error: "not_implemented"})
+  end
+
   # SPA 兜底:任何其它 GET → index.html(前端按 /loom/<ws>/<sid> 读路由)。
   get "/*_path" do
     send_index(conn)
@@ -674,14 +739,25 @@ defmodule EzagentPluginLoom.WebPlug do
   # frame 格式照搬 loom-stitch:前端按 sender/role/body 渲染,body 里的 page_update span
   # 由前端识别 → Sandpack 预览(Phase 2 让 v0 产出该 span)。
   defp loom_frame(%Message{} = m) do
-    %{
+    base = %{
       "id" => m.id,
       "sender" => URI.to_string(m.sender),
       "role" => loom_role_of(m.sender),
       "body" => loom_body_text(m.body),
       "refId" => Map.get(m, :ref_id)
     }
+
+    # Stitch / AiSpot worker 回复:body 带 stitch_reply → 随帧作 `stitch` 字段(前端按
+    # refId 关联回发起的 Promise,应用 drive/card)。
+    case stitch_meta(m.body) do
+      nil -> base
+      meta -> Map.put(base, "stitch", meta)
+    end
   end
+
+  defp stitch_meta(%{stitch_reply: m}) when is_map(m), do: m
+  defp stitch_meta(%{"stitch_reply" => m}) when is_map(m), do: m
+  defp stitch_meta(_), do: nil
 
   defp loom_role_of(%URI{} = u), do: loom_role_of(URI.to_string(u))
 
@@ -810,6 +886,22 @@ defmodule EzagentPluginLoom.WebPlug do
   end
 
   defp loom_uri(ws, sid), do: Ezagent.URI.session(ws, :loom, sid)
+
+  # Stitch/AiSpot 回复作 frame 发进 session(loomstitch agent 身份,ref_id 关联请求)→ /stream。
+  defp emit_stitch_frame(session_uri, ws, sid, req_id, meta) do
+    sender = Ezagent.URI.agent(ws, "loomstitch_#{sid}")
+    text = Map.get(meta, "reply") || (Map.get(meta, "card") && "✨") || ""
+    msg = Message.new(sender, %{text: to_string(text), stitch_reply: meta}, ref_id: req_id)
+
+    Invocation.dispatch(%Invocation{
+      target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
+      mode: :cast,
+      args: %{message: msg},
+      ctx: %{caller: sender, caps: SystemPrincipal.caps("system://bootstrap"), reply: :ignore}
+    })
+  rescue
+    _ -> :ok
+  end
 
   # 从已存模板建一个新 loom session(seed 模板的 files)→ {ok, ws, sid}。
   defp loom_spawn_from_template(ws, name, sid) do

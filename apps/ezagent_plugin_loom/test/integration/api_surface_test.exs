@@ -97,4 +97,21 @@ defmodule EzagentPluginLoom.Integration.ApiSurfaceTest do
   test "stop no-op ok", ctx do
     assert %{"ok" => true} = post_json(ctx.ws, ctx.sid, "stop", %{})
   end
+
+  test "stitch/aispot 异步返回 {ok, id}", ctx do
+    assert %{"ok" => true, "id" => id} = post_json(ctx.ws, ctx.sid, "stitch", %{text: "你好"})
+    assert is_binary(id)
+
+    assert %{"ok" => true, "id" => _} =
+             post_json(ctx.ws, ctx.sid, "aispot", %{feature: "退订", context: "x"})
+
+    # GET stitch 对话(初始空)。
+    assert %{"ok" => true, "conversation" => _} = get_json("/api/#{ctx.ws}/#{ctx.sid}/stitch")
+  end
+
+  test "未实现的 /api/* 返回 JSON 404(非 HTML)", ctx do
+    resp = conn(:get, "/api/#{ctx.ws}/#{ctx.sid}/nope") |> WebPlug.call(@opts)
+    assert resp.status == 404
+    assert %{"ok" => false} = Jason.decode!(resp.resp_body)
+  end
 end
