@@ -101,7 +101,10 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # `system://agent-internal` Sandbox:read drop replaced the old #607 comment
     # block with a (one-line-longer) note above this ApiKeys-flip comment. Same
     # sanctioned `ctx[:all_slices][:api_keys]` mention, one line lower.
-    {"apps/ezagent_core/lib/ezagent/system_principal/catalog.ex", 272}
+    # Decision #154 (no-unowned, 2026-06-16) — shifted 272→281: the
+    # `system://agent-internal` `cap(:user, IdentityAdmin, :grant_cap)` drop added
+    # a 9-line vestigial-cap-drop rationale block ABOVE this ApiKeys-flip comment.
+    {"apps/ezagent_core/lib/ezagent/system_principal/catalog.ex", 281}
   ]
 
   @runtime_file "apps/ezagent_core/lib/ezagent/kind/runtime.ex"
