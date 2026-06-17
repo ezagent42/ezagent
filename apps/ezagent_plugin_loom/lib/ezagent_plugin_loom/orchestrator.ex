@@ -51,7 +51,7 @@ defmodule EzagentPluginLoom.Orchestrator do
     # 素材库注入:compose 时让 LLM 知道本 session 有哪些素材可引用。
     opts = Keyword.put(opts, :materials, materials_hint(opts[:session_uri]))
 
-    case decompose(user_text, opts) do
+    case themes_for(user_text, opts) do
       {:ok, [_ | _] = themes} ->
         fragments = gather(user_text, themes, opts)
         compose_multi(user_text, fragments, opts)
@@ -71,6 +71,21 @@ defmodule EzagentPluginLoom.Orchestrator do
   end
 
   # --- 多 agent 各阶段 ------------------------------------------------------
+
+  # 有 per-session worker 配置(MetaAgent 管理)→ 用配置的 worker desc 作 themes;
+  # 否则动态 decompose。
+  defp themes_for(user_text, opts) do
+    configured =
+      case opts[:session_uri] do
+        %URI{} = s -> EzagentPluginLoom.WorkerConfig.list(s)
+        _ -> []
+      end
+
+    case configured do
+      [_ | _] = workers -> {:ok, Enum.map(workers, &(&1["desc"] || &1[:desc])) |> Enum.reject(&(&1 in [nil, ""]))}
+      _ -> decompose(user_text, opts)
+    end
+  end
 
   # 编排器:拆主题
   defp decompose(user_text, opts) do
