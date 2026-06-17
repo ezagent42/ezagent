@@ -371,11 +371,139 @@ defmodule EzagentPluginLoom.WebPlug do
     |> Plug.Conn.send_resp(200, EzagentPluginLoom.DashboardSPA.html())
   end
 
+  # ── 真实 loom 前端的 API 面(迁移自 loom-stitch;editor 端内部,不走 token)──────
+  # 前端(loom_ui)按 loom 原本 contract 调;此处 bridge 到当前 socialware session 的共享
+  # infra(MessageStore / Chat 事件 / OrchestratorServer)。Phase 1:load + chat 闭环。
+  # frame 格式照搬 loom-stitch(id/sender/role/body/refId),前端识别 page_update span 走预览。
+
+  # 发消息(editor 左栏)→ 进 session(OrchestratorServer 自动编排)。body {text}
+  post "/api/:ws/:sid/messages" do
+    text = conn.body_params |> Map.get("text", "") |> to_string()
+
+    case loom_send(ws, sid, text) do
+      {:ok, id} -> json(conn, 200, %{ok: true, id: id})
+      _ -> json(conn, 200, %{ok: false})
+    end
+  end
+
+  # 历史(最近 50,正序)→ frame 列表(裸 list,同 loom-stitch)。
+  get "/api/:ws/:sid/history" do
+    json(conn, 200, loom_history(ws, sid))
+  end
+
+  # SSE:订阅 session 消息流 → frame。
+  get "/api/:ws/:sid/stream" do
+    loom_stream(conn, ws, sid)
+  end
+
+  # 前端 boot 调;editor 端最小返回。
+  get "/whoami" do
+    json(conn, 200, %{ok: true, role: "operator"})
+  end
+
+  # SPA 兜底:任何其它 GET → index.html(前端按 /loom/<ws>/<sid> 读路由)。
+  get "/*_path" do
+    send_index(conn)
+  end
+
   match _ do
     send_resp(conn, 404, "not found")
   end
 
   # --- helpers --------------------------------------------------------------
+
+  defp send_index(conn) do
+    path = Application.app_dir(:ezagent_plugin_loom, "#{@loom_ui_root}/index.html")
+
+    case File.read(path) do
+      {:ok, html} ->
+        conn
+        |> Plug.Conn.put_resp_content_type("text/html")
+        |> Plug.Conn.put_resp_header("cache-control", "no-cache, must-revalidate")
+        |> Plug.Conn.send_resp(200, html)
+
+      {:error, _} ->
+        conn
+        |> Plug.Conn.put_resp_content_type("text/plain")
+        |> Plug.Conn.send_resp(500, "loom UI 未构建(缺 priv/static/loom_ui/index.html)。")
+    end
+  end
+
+  # 发消息进 session:以 workspace operator(admin,已是 member)为 sender → chat.send;
+  # OrchestratorServer 据此触发编排(Phase 2 v0 → page_update span)。
+  defp loom_send(_ws, _sid, ""), do: {:error, :empty}
+
+  defp loom_send(ws, sid, text) do
+    session_uri = Ezagent.URI.session(ws, :loom, sid)
+    sender = Ezagent.URI.user(ws, "admin")
+    send_message(session_uri, sender, text)
+  rescue
+    _ -> :error
+  end
+
+  defp loom_history(ws, sid) do
+    Ezagent.URI.session(ws, :loom, sid)
+    |> Ezagent.MessageStore.recent_in_session(50)
+    |> Enum.reverse()
+    |> Enum.map(&loom_frame/1)
+  rescue
+    _ -> []
+  end
+
+  # SSE:订阅 session 事件 topic,把每条 chat_message 作 frame 推给前端。
+  defp loom_stream(conn, ws, sid) do
+    session_uri = Ezagent.URI.session(ws, :loom, sid)
+    topic = Ezagent.Behavior.Session.session_events_topic(session_uri)
+    Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
+
+    conn
+    |> Plug.Conn.put_resp_header("content-type", "text/event-stream")
+    |> Plug.Conn.put_resp_header("cache-control", "no-cache")
+    |> Plug.Conn.send_chunked(200)
+    |> loom_sse_loop()
+  end
+
+  defp loom_sse_loop(conn) do
+    receive do
+      {:chat_message, _src, %Message{} = msg} ->
+        case Plug.Conn.chunk(conn, "data: " <> Jason.encode!(loom_frame(msg)) <> "\n\n") do
+          {:ok, conn} -> loom_sse_loop(conn)
+          {:error, _} -> conn
+        end
+
+      _other ->
+        loom_sse_loop(conn)
+    after
+      25_000 ->
+        case Plug.Conn.chunk(conn, ": ping\n\n") do
+          {:ok, conn} -> loom_sse_loop(conn)
+          {:error, _} -> conn
+        end
+    end
+  end
+
+  # frame 格式照搬 loom-stitch:前端按 sender/role/body 渲染,body 里的 page_update span
+  # 由前端识别 → Sandpack 预览(Phase 2 让 v0 产出该 span)。
+  defp loom_frame(%Message{} = m) do
+    %{
+      "id" => m.id,
+      "sender" => URI.to_string(m.sender),
+      "role" => loom_role_of(m.sender),
+      "body" => loom_body_text(m.body),
+      "refId" => Map.get(m, :ref_id)
+    }
+  end
+
+  defp loom_role_of(%URI{} = u), do: loom_role_of(URI.to_string(u))
+
+  defp loom_role_of("entity://" <> rest),
+    do: if(String.contains?(rest, "/user/"), do: "user", else: "agent")
+
+  defp loom_role_of(_), do: "unknown"
+
+  defp loom_body_text(%{text: t}) when is_binary(t), do: t
+  defp loom_body_text(%{"text" => t}) when is_binary(t), do: t
+  defp loom_body_text(_), do: ""
 
   defp uris(ws, sid) do
     {:ok, Ezagent.URI.session(ws, :loom, sid), Ezagent.URI.workspace(ws)}

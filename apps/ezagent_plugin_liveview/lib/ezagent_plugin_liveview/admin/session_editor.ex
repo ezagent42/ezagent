@@ -161,10 +161,10 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
 
   defp loom_ws_name(_), do: nil
 
-  # customer SPA URL(带现签 CustomerAuth token,供 operator 新标签预览)。
+  # 真实 loom 前端(loom_ui SPA,/loom/<ws>/<name>;editor 端内部,无 token)。
   defp loom_app_url(%URI{} = uri) do
     case loom_ws_name(uri) do
-      {ws, name} -> "/loom/app/#{ws}/#{name}?token=#{token_for(uri, ws)}"
+      {ws, name} -> "/loom/#{ws}/#{name}"
       nil -> nil
     end
   end

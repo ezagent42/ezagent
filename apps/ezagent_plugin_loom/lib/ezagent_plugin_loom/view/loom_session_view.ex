@@ -49,11 +49,10 @@ defmodule EzagentPluginLoom.View.LoomSessionView do
     """
   end
 
-  # `session://<ws>/loom/<name>` → `/loom/app/<ws>/<name>?token=<现签 CustomerAuth token>`。
-  defp loom_app_url(%URI{scheme: "session", host: ws, path: "/loom/" <> name} = session_uri)
+  # `session://<ws>/loom/<name>` → `/loom/<ws>/<name>`(真实 loom 前端 SPA,editor 端内部)。
+  defp loom_app_url(%URI{scheme: "session", host: ws, path: "/loom/" <> name})
        when is_binary(ws) and is_binary(name) and name != "" do
-    token = Ezagent.Socialware.CustomerAuth.issue_token(session_uri, Ezagent.URI.workspace(ws))
-    "/loom/app/#{ws}/#{name}?token=#{token}"
+    "/loom/#{ws}/#{name}"
   end
 
   defp loom_app_url(_), do: nil
