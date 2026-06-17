@@ -32,11 +32,19 @@ defmodule EzagentPluginLoom.Fork do
              Ezagent.URI.workspace(ws)
            ),
          :ok <- seed_page(new_uri, tree) do
+      copy_knowledge(src_session_uri, new_uri)
       {:ok, new_uri}
     else
       nil -> {:error, :no_approved_page}
       {:error, _} = error -> error
       other -> {:error, {:fork_failed, other}}
+    end
+  end
+
+  defp copy_knowledge(src, dst) do
+    case EzagentPluginLoom.Knowledge.get(src) do
+      md when is_binary(md) and md != "" -> EzagentPluginLoom.Knowledge.put(dst, md)
+      _ -> :ok
     end
   end
 

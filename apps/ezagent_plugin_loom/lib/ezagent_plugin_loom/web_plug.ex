@@ -22,7 +22,7 @@ defmodule EzagentPluginLoom.WebPlug do
   alias Ezagent.Socialware.{AnonBinding, AnonUser, CustomerAuth, CustomerFeed}
   alias Ezagent.Uploads
   alias Ezagent.Uploads.DownloadToken
-  alias EzagentPluginLoom.{Fork, Intent, Materials, Stitch}
+  alias EzagentPluginLoom.{Fork, Intent, Knowledge, Materials, Stitch}
 
   @gateway_uri "system://loom-customer-gateway"
 
@@ -131,11 +131,40 @@ defmodule EzagentPluginLoom.WebPlug do
          token when is_binary(token) <- token(conn),
          :ok <- CustomerAuth.authorize(token, session_uri, ws_uri),
          text when is_binary(text) and text != "" <- conn.body_params["text"],
-         {:ok, result} <- Stitch.reply(text, page: conn.body_params["page"]) do
+         {:ok, result} <-
+           Stitch.reply(text, page: conn.body_params["page"], knowledge: Knowledge.get(session_uri)) do
       json(conn, 200, %{ok: true, reply: result.reply, drive: result.drive})
     else
       {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})
       {:error, _} -> json(conn, 502, %{ok: false, error: "stitch_failed"})
+      _ -> json(conn, 400, %{ok: false, error: "bad_request"})
+    end
+  end
+
+  # 知识库读(grounding)。
+  get "/c/:ws/:sid/knowledge" do
+    conn = Plug.Conn.fetch_query_params(conn)
+
+    with {:ok, session_uri, ws_uri} <- uris(ws, sid),
+         token when is_binary(token) <- conn.query_params["token"],
+         :ok <- CustomerAuth.authorize(token, session_uri, ws_uri) do
+      json(conn, 200, %{ok: true, knowledge: Knowledge.get(session_uri)})
+    else
+      {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})
+      _ -> json(conn, 400, %{ok: false, error: "bad_request"})
+    end
+  end
+
+  # 知识库写(编辑者)。body {markdown, token}
+  post "/c/:ws/:sid/knowledge" do
+    with {:ok, session_uri, ws_uri} <- uris(ws, sid),
+         token when is_binary(token) <- token(conn),
+         :ok <- CustomerAuth.authorize(token, session_uri, ws_uri),
+         md when is_binary(md) <- conn.body_params["markdown"] do
+      :ok = Knowledge.put(session_uri, md)
+      json(conn, 200, %{ok: true})
+    else
+      {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})
       _ -> json(conn, 400, %{ok: false, error: "bad_request"})
     end
   end
@@ -146,7 +175,7 @@ defmodule EzagentPluginLoom.WebPlug do
          token when is_binary(token) <- token(conn),
          :ok <- CustomerAuth.authorize(token, session_uri, ws_uri),
          topic when is_binary(topic) and topic != "" <- conn.body_params["topic"],
-         {:ok, card} <- Stitch.aispot(topic) do
+         {:ok, card} <- Stitch.aispot(topic, knowledge: Knowledge.get(session_uri)) do
       json(conn, 200, %{ok: true, card: card})
     else
       {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})

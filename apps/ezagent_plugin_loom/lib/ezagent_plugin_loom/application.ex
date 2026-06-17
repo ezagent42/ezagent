@@ -43,6 +43,7 @@ defmodule EzagentPluginLoom.Application do
   def children do
     [
       EzagentPluginLoom.Materials,
+      EzagentPluginLoom.Knowledge,
       {Registry, keys: :unique, name: EzagentPluginLoom.OrchestratorRegistry},
       {DynamicSupervisor, name: EzagentPluginLoom.OrchestratorSupervisor, strategy: :one_for_one}
     ]

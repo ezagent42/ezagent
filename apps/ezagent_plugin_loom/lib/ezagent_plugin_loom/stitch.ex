@@ -23,10 +23,13 @@ defmodule EzagentPluginLoom.Stitch do
   @spec reply(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def reply(user_text, opts \\ []) when is_binary(user_text) do
     content =
-      case opts[:page] do
-        page when is_binary(page) and page != "" -> "当前页面：#{page}\n\n访客：#{user_text}"
-        _ -> user_text
-      end
+      [
+        knowledge_line(opts[:knowledge]),
+        page_line(opts[:page]),
+        "访客：#{user_text}"
+      ]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.join("\n\n")
 
     with {:ok, text} <- LLM.chat([%{role: "user", content: content}], Keyword.put(opts, :system, @system)),
          {:ok, %{"reply" => r}} when is_binary(r) <- Json.extract_object(text) do
@@ -36,6 +39,12 @@ defmodule EzagentPluginLoom.Stitch do
       _ -> {:error, :stitch_failed}
     end
   end
+
+  defp knowledge_line(kb) when is_binary(kb) and kb != "", do: "知识库(据此作答)：\n#{kb}"
+  defp knowledge_line(_), do: nil
+
+  defp page_line(page) when is_binary(page) and page != "", do: "当前页面：#{page}"
+  defp page_line(_), do: nil
 
   defp parse_drive(text) do
     case Json.extract_object(text) do
@@ -56,7 +65,12 @@ defmodule EzagentPluginLoom.Stitch do
   """
   @spec aispot(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def aispot(topic, opts \\ []) when is_binary(topic) do
-    with {:ok, text} <- LLM.chat([%{role: "user", content: topic}], Keyword.put(opts, :system, @aispot_system)),
+    content =
+      [knowledge_line(opts[:knowledge]), "话题：#{topic}"]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.join("\n\n")
+
+    with {:ok, text} <- LLM.chat([%{role: "user", content: content}], Keyword.put(opts, :system, @aispot_system)),
          {:ok, %{"title" => title, "body" => body}} when is_binary(title) and is_binary(body) <-
            Json.extract_object(text) do
       {:ok, %{title: title, body: body}}
