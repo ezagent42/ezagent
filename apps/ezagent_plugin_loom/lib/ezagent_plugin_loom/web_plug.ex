@@ -22,7 +22,7 @@ defmodule EzagentPluginLoom.WebPlug do
   alias Ezagent.Socialware.{AnonBinding, AnonUser, CustomerAuth, CustomerFeed}
   alias Ezagent.Uploads
   alias Ezagent.Uploads.DownloadToken
-  alias EzagentPluginLoom.{Fork, Intent, Knowledge, Materials, Stitch, Tool, FetchProxy}
+  alias EzagentPluginLoom.{Fork, Intent, Knowledge, Materials, Stitch, Tool, FetchProxy, UserSchema}
 
   @gateway_uri "system://loom-customer-gateway"
 
@@ -57,10 +57,18 @@ defmodule EzagentPluginLoom.WebPlug do
     with {:ok, session_uri, _ws_uri} <- uris(ws, sid),
          token when is_binary(token) <- conn.query_params["token"],
          {:ok, snapshot} <- CustomerFeed.snapshot(session_uri, token) do
+      # per-visitor 页面增强:base page(approved,共享)+ 本访客 ops(前端叠加)
+      ops =
+        case conn.query_params["visitor"] do
+          v when is_binary(v) and v != "" -> UserSchema.ops(session_uri, v)
+          _ -> []
+        end
+
       json(conn, 200, %{
         ok: true,
         messages: render_messages(snapshot.messages),
-        page: snapshot.page
+        page: snapshot.page,
+        user_schema_ops: ops
       })
     else
       {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})
@@ -137,6 +145,21 @@ defmodule EzagentPluginLoom.WebPlug do
     else
       {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})
       {:error, _} -> json(conn, 502, %{ok: false, error: "stitch_failed"})
+      _ -> json(conn, 400, %{ok: false, error: "bad_request"})
+    end
+  end
+
+  # per-visitor 页面增强:追加一个 op。body {visitor, op, token}
+  post "/c/:ws/:sid/user-schema" do
+    with {:ok, session_uri, ws_uri} <- uris(ws, sid),
+         token when is_binary(token) <- token(conn),
+         :ok <- CustomerAuth.authorize(token, session_uri, ws_uri),
+         visitor when is_binary(visitor) and visitor != "" <- conn.body_params["visitor"],
+         op when not is_nil(op) <- conn.body_params["op"] do
+      :ok = UserSchema.add(session_uri, visitor, op)
+      json(conn, 200, %{ok: true, ops: UserSchema.ops(session_uri, visitor)})
+    else
+      {:error, :unauthorized} -> json(conn, 401, %{ok: false, error: "unauthorized"})
       _ -> json(conn, 400, %{ok: false, error: "bad_request"})
     end
   end

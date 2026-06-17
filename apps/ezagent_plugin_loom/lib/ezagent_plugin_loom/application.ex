@@ -45,6 +45,7 @@ defmodule EzagentPluginLoom.Application do
       EzagentPluginLoom.Materials,
       EzagentPluginLoom.Knowledge,
       EzagentPluginLoom.Stats,
+      EzagentPluginLoom.UserSchema,
       {Registry, keys: :unique, name: EzagentPluginLoom.OrchestratorRegistry},
       {DynamicSupervisor, name: EzagentPluginLoom.OrchestratorSupervisor, strategy: :one_for_one}
     ]
