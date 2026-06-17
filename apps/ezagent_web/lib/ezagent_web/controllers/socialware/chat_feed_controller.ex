@@ -36,13 +36,18 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
      an identity (security property #6). If `touch/3` signals `{:error, {:reaping, _}}`
      — the binding was claimed by the GC sweeper — we do NOT resurrect it; we mint a
      FRESH anon identity (design §4.1a).
-  3. **First open / fresh** — `AnonUser.mint/1` → a read-only anon-User in the
-     session's workspace; `Entity.spawn_principal/1` brings up its Kind (so it is a
-     registered member-target for the join — Session `:join` requires a LIVE
-     registered Kind, else `{:member_not_registered}`); `AnonBinding.touch/3` records
-     the binding; `session.join` admits it under the
-     `system://socialware-anon-access` principal (the anon holds empty caps and cannot
-     self-join). The signed cookie is set so the next visit reuses this identity.
+  3. **First open / fresh** — `AnonUser.mint_for_public_session/1` re-checks the
+     public-view rule and mints a read-only anon-User in the session's workspace
+     holding EXACTLY one narrow `cap(:session, Behavior.Session, :join,
+     instance: <session>)` whose `granted_by` is the session owner (GLOSSARY
+     Decision #154 — no unowned permissions, no `system://` principal);
+     `Entity.spawn_principal/1` brings up its Kind AND hydrates that cap from
+     caps_json into the live `:caps` slice (so it is a registered member-target for
+     the join — Session `:join` requires a LIVE registered Kind, else
+     `{:member_not_registered}` — AND holds the join authority); `AnonBinding.touch/3`
+     records the binding; `session.join` is dispatched AS THE ANON ITSELF — step 5.5
+     authorizes it from the anon's own slice cap, NO system principal. The signed
+     cookie is set so the next visit reuses this identity.
   4. Either path mints `ChatFeedAuth.issue_token(caller_uri, session_uri)` and embeds
      it in the SPA shell. The token is NOT the authorization — the live membership
      read (`ChatFeed`, `ChatFeedChannel`) re-checks on every join/replay, so an
@@ -60,8 +65,6 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
 
   alias Ezagent.Socialware.{AnonBinding, AnonUser, ChatFeedAuth, PublicView}
   alias EzagentWeb.Socialware.AnonCookie
-
-  @anon_join_principal "socialware-anon-access"
 
   @doc """
   Render the chat external SPA shell for `?session_uri=<session://...>`.
@@ -132,7 +135,12 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
   end
 
   defp mint_fresh(conn, session_uri) do
-    with {:ok, anon_uri} <- AnonUser.mint(session_uri),
+    # `mint_for_public_session/1` re-checks `public_view?` and mints the anon
+    # holding ITS OWN narrow `session.join` cap (granted_by the session owner —
+    # Decision #154, no `system://` principal). `spawn_principal` then hydrates
+    # that cap from caps_json into the live `:caps` slice BEFORE the join, so the
+    # anon joins under its own authority.
+    with {:ok, anon_uri} <- AnonUser.mint_for_public_session(session_uri),
          :ok <- Ezagent.Entity.spawn_principal(anon_uri),
          {:ok, _row} <- AnonBinding.touch(anon_uri, session_uri, DateTime.utc_now()),
          :ok <- join_anon(session_uri, anon_uri),
@@ -149,10 +157,13 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
     end
   end
 
-  # `session.join` under the closed-catalog `system://socialware-anon-access`
-  # principal (Session `:join` only) — the anon holds empty caps and cannot
-  # self-join. `:call` so the membership is committed before we render the SPA (the
-  # live channel re-reads it on connect).
+  # `session.join` dispatched AS THE ANON ITSELF — no `system://` principal. The
+  # anon was minted (`AnonUser.mint_for_public_session/1`) holding exactly one
+  # `cap(:session, Behavior.Session, :join, instance: <session>)` whose
+  # `granted_by` is the session owner (Decision #154). Step 5.5
+  # (`granted_via_holds_cap?`) reads that cap from the anon's own `:caps` slice,
+  # so the anon is a self-sufficient caller. `:call` so membership is committed
+  # before we render the SPA (the live channel re-reads it on connect).
   defp join_anon(session_uri, anon_uri) do
     target = Ezagent.URI.with_action(session_uri, :session, :join)
 
@@ -162,8 +173,7 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
         mode: :call,
         args: %{member: anon_uri},
         ctx: %{
-          caller: Ezagent.SystemPrincipal.uri(@anon_join_principal),
-          caps: @anon_join_principal |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
+          caller: anon_uri,
           reply: :ignore
         }
       })

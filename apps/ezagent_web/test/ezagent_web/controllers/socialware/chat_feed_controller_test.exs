@@ -83,8 +83,11 @@ defmodule EzagentWeb.Socialware.ChatFeedControllerTest do
 
   defp terminate(uri) do
     case Ezagent.KindRegistry.lookup(uri) do
-      {:ok, pid} -> DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, pid)
-      :error -> :ok
+      {:ok, pid} ->
+        DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, pid)
+
+      :error ->
+        :ok
     end
   rescue
     _ -> :ok
@@ -160,8 +163,10 @@ defmodule EzagentWeb.Socialware.ChatFeedControllerTest do
       assert is_binary(value)
       assert {:ok, ^anon} = AnonCookie.verify(value, session)
 
-      # The anon-User is read-only by construction (empty caps) AND a real member
-      # (the join landed) — so its membership read passes.
+      # The anon-User is read-only by construction (its only cap is the narrow
+      # `session.join` grant — no WRITE cap) AND a real member (the join landed,
+      # dispatched AS the anon under its own grant, no system principal) — so its
+      # membership read passes.
       assert {:ok, _} = Ezagent.Socialware.ChatFeed.snapshot(session, anon)
 
       # A binding row exists (the GC index + cookie resolver).
