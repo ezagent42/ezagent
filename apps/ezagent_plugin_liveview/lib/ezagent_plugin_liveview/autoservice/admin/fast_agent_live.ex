@@ -8,7 +8,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.FastAgentLive do
   import EzagentPluginLiveview.AutoService.Admin.Components.AdminSidebar
 
   alias EzagentPluginContent.Tenant.TenantRuntime
-  alias EzagentPluginCr.CrEngine
+  alias EzagentPluginLiveview.Admin.ContentAdminClient
 
   @impl true
   def mount(%{"tid" => tid}, _session, socket) do
@@ -20,16 +20,45 @@ defmodule EzagentPluginLiveview.AutoService.Admin.FastAgentLive do
         _ -> ""
       end
 
-    {:ok, assign(socket, page_title: "Fast Agent", tid: tid, content: content, saved_flash: nil)}
+    # Re-route Phase 2: writes go through ContentAdmin dispatch, CapBAC-scoped to
+    # this tenant's workspace. can_write? is the UI affordance; the dispatch is
+    # the boundary (closes the old "any admin writes any tenant" gap — there was
+    # no per-workspace cap check before).
+    workspace_uri = Ezagent.URI.workspace(tid)
+    admin_uri = socket.assigns.current_entity_uri
+    caps = ContentAdminClient.load_caps(admin_uri)
+
+    {:ok,
+     assign(socket,
+       page_title: "Fast Agent",
+       tid: tid,
+       workspace_uri: workspace_uri,
+       admin_uri: admin_uri,
+       caller_caps: caps,
+       can_write?: ContentAdminClient.writable?(caps, workspace_uri),
+       content: content,
+       saved_flash: nil
+     )}
   end
 
   def handle_event("save", %{"content" => content}, socket) do
-    tid = socket.assigns.tid
-    path = Path.join([TenantRuntime.sandbox_path(tid), "config", "fast_ack_prompt.md"])
-    File.mkdir_p!(Path.dirname(path))
-    File.write!(path, content)
-    CrEngine.record_file_change(tid, "config/fast_ack_prompt.md")
-    {:noreply, assign(socket, content: content, saved_flash: "已保存")}
+    if socket.assigns.can_write? do
+      case ContentAdminClient.dispatch(
+             socket.assigns.workspace_uri,
+             socket.assigns.admin_uri,
+             socket.assigns.caller_caps,
+             :write_fast_prompt,
+             %{content: content}
+           ) do
+        {:ok, _} ->
+          {:noreply, assign(socket, content: content, saved_flash: "已保存")}
+
+        {:error, reason} ->
+          {:noreply, put_flash(socket, :error, "保存失败: #{ContentAdminClient.error_msg(reason)}")}
+      end
+    else
+      {:noreply, put_flash(socket, :error, "无权限")}
+    end
   end
 
   @impl true
