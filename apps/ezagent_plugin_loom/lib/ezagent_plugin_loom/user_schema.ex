@@ -32,6 +32,31 @@ defmodule EzagentPluginLoom.UserSchema do
     end
   end
 
+  # --- session 级 ops(前端 /api/:ws/:sid/user-schema:发布页增强,非 per-visitor)---
+  @doc "读 session 级 op 序列(无 → [])。"
+  def session_ops(session_uri) do
+    ensure_table()
+
+    case :ets.lookup(@table, session_key(session_uri)) do
+      [{_k, list}] -> list
+      [] -> []
+    end
+  end
+
+  @doc "session 级追加一个 op。"
+  def append_session_op(session_uri, op) do
+    ensure_table()
+    :ets.insert(@table, {session_key(session_uri), session_ops(session_uri) ++ [op]})
+    {:ok, session_ops(session_uri)}
+  end
+
+  @doc "session 级整盘替换。"
+  def replace_session_ops(session_uri, ops) when is_list(ops) do
+    ensure_table()
+    :ets.insert(@table, {session_key(session_uri), ops})
+    {:ok, ops}
+  end
+
   @impl true
   def init(:ok) do
     create_table()
@@ -39,6 +64,7 @@ defmodule EzagentPluginLoom.UserSchema do
   end
 
   defp key(session_uri, visitor), do: {URI.to_string(session_uri), visitor}
+  defp session_key(session_uri), do: {URI.to_string(session_uri), :__session__}
 
   defp create_table do
     if :ets.whereis(@table) == :undefined do

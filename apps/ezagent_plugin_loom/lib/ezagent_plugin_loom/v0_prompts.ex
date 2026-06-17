@@ -29,7 +29,7 @@ defmodule EzagentPluginLoom.V0Prompts do
 
   defp dynamic_block do
     if function_exported?(EzagentPluginLoom.FetchProxy, :prompt_block, 0) do
-      EzagentPluginLoom.FetchProxy.prompt_block()
+      apply(EzagentPluginLoom.FetchProxy, :prompt_block, [])
     else
       ""
     end

@@ -38,6 +38,15 @@ defmodule EzagentPluginLoom.SavedTemplates do
     Enum.find(list(ws), &(&1.name == name))
   end
 
+  @doc "按名删除。"
+  @spec delete(String.t(), String.t()) :: :ok
+  def delete(ws, name) when is_binary(ws) and is_binary(name) do
+    ensure_table()
+    kept = Enum.reject(list(ws), &(&1.name == name))
+    :ets.insert(@table, {ws, kept})
+    :ok
+  end
+
   @impl true
   def init(:ok) do
     create_table()

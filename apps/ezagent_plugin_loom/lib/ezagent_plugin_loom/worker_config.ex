@@ -38,6 +38,29 @@ defmodule EzagentPluginLoom.WorkerConfig do
     :ok
   end
 
+  # per-session 编排器自定义指令(loomorch 每轮读)。
+  def get_orchestrator(session_uri), do: get_cfg(session_uri, :orchestrator, "")
+  def put_orchestrator(session_uri, v), do: put_cfg(session_uri, :orchestrator, to_string(v))
+
+  # per-session Stitch 接待模式:"stitch"(自动答访客)| "human"(不答)。
+  def get_stitch_mode(session_uri), do: get_cfg(session_uri, :stitch_mode, "stitch")
+  def put_stitch_mode(session_uri, v), do: put_cfg(session_uri, :stitch_mode, to_string(v))
+
+  defp get_cfg(session_uri, k, default) do
+    ensure_table()
+
+    case :ets.lookup(@table, {key(session_uri), k}) do
+      [{_, v}] -> v
+      [] -> default
+    end
+  end
+
+  defp put_cfg(session_uri, k, v) do
+    ensure_table()
+    :ets.insert(@table, {{key(session_uri), k}, v})
+    :ok
+  end
+
   @impl true
   def init(:ok) do
     create_table()

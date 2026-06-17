@@ -455,6 +455,141 @@ defmodule EzagentPluginLoom.WebPlug do
     json(conn, 200, loom_open_published(token))
   end
 
+  # ── 前端 /api 面(editor 端,无 token;bridge 到现有 loom 模块)──────────────────
+
+  get "/api/:ws/:sid/knowledge" do
+    json(conn, 200, %{ok: true, md: Knowledge.get(loom_uri(ws, sid))})
+  end
+
+  post "/api/:ws/:sid/knowledge" do
+    md =
+      (conn.body_params || %{})
+      |> Map.get("md", conn.body_params["markdown"] || "")
+      |> to_string()
+
+    :ok = Knowledge.put(loom_uri(ws, sid), md)
+    json(conn, 200, %{ok: true})
+  end
+
+  # worker roster(团队面板):列 / 增改(upsert by key)/ 删。
+  get "/api/:ws/:sid/workers" do
+    json(conn, 200, %{ok: true, workers: WorkerConfig.list(loom_uri(ws, sid))})
+  end
+
+  post "/api/:ws/:sid/workers" do
+    su = loom_uri(ws, sid)
+    _ = WorkerConfig.add(su, conn.body_params || %{})
+    json(conn, 200, %{ok: true, workers: WorkerConfig.list(su)})
+  end
+
+  delete "/api/:ws/:sid/workers" do
+    su = loom_uri(ws, sid)
+    key = Plug.Conn.fetch_query_params(conn).query_params["key"] || ""
+    _ = WorkerConfig.remove(su, to_string(key))
+    json(conn, 200, %{ok: true, workers: WorkerConfig.list(su)})
+  end
+
+  # 编排器自定义指令。
+  get "/api/:ws/:sid/orchestrator" do
+    json(conn, 200, %{ok: true, instruction: WorkerConfig.get_orchestrator(loom_uri(ws, sid))})
+  end
+
+  post "/api/:ws/:sid/orchestrator" do
+    instruction = (conn.body_params || %{}) |> Map.get("instruction", "") |> to_string()
+    _ = WorkerConfig.put_orchestrator(loom_uri(ws, sid), instruction)
+    json(conn, 200, %{ok: true, instruction: instruction})
+  end
+
+  # Stitch 接待模式。
+  get "/api/:ws/:sid/stitch-mode" do
+    json(conn, 200, %{ok: true, mode: WorkerConfig.get_stitch_mode(loom_uri(ws, sid))})
+  end
+
+  post "/api/:ws/:sid/stitch-mode" do
+    mode = (conn.body_params || %{}) |> Map.get("mode", "stitch") |> to_string()
+    _ = WorkerConfig.put_stitch_mode(loom_uri(ws, sid), mode)
+    json(conn, 200, %{ok: true, mode: mode})
+  end
+
+  # 发布页 session 级 user-schema ops(增强重放)。
+  get "/api/:ws/:sid/user-schema" do
+    json(conn, 200, %{ok: true, ops: UserSchema.session_ops(loom_uri(ws, sid))})
+  end
+
+  post "/api/:ws/:sid/user-schema" do
+    su = loom_uri(ws, sid)
+
+    result =
+      case conn.body_params do
+        %{"ops" => ops} when is_list(ops) -> UserSchema.replace_session_ops(su, ops)
+        %{"op" => op} -> UserSchema.append_session_op(su, op)
+        _ -> {:error, :missing_op_or_ops}
+      end
+
+    case result do
+      {:ok, ops} -> json(conn, 200, %{ok: true, ops: ops})
+      {:error, reason} -> json(conn, 200, %{ok: false, error: to_string(reason)})
+    end
+  end
+
+  # 模板:列 / 删 / 从模板建 session。
+  get "/api/:ws/templates" do
+    json(conn, 200, %{ok: true, items: Enum.map(SavedTemplates.list(ws), &%{name: &1.name})})
+  end
+
+  delete "/api/:ws/templates/:name" do
+    _ = SavedTemplates.delete(ws, name)
+    json(conn, 200, %{ok: true})
+  end
+
+  post "/api/:ws/templates/:name/spawn" do
+    new_sid =
+      (conn.body_params || %{}) |> Map.get("session_name", "") |> to_string() |> String.trim()
+
+    json(conn, 200, loom_spawn_from_template(ws, name, new_sid))
+  end
+
+  # 存当前页为模板(前端按钮)。body {name}
+  post "/api/:ws/:sid/save-as-template" do
+    su = loom_uri(ws, sid)
+    name = (conn.body_params || %{}) |> Map.get("name", "") |> to_string() |> String.trim()
+    files = current_page(su) |> Map.get("files", %{})
+
+    if name != "" and is_map(files) and map_size(files) > 0 do
+      :ok = SavedTemplates.save(ws, name, files)
+      json(conn, 200, %{ok: true, name: name})
+    else
+      json(conn, 200, %{ok: false, error: "no_page_or_name"})
+    end
+  end
+
+  # page-SDK 工具 / fetch(无 token 版,同 /c 逻辑)。
+  post "/api/:ws/:sid/tool" do
+    name = conn.body_params["name"]
+
+    case is_binary(name) and Tool.invoke(name, conn.body_params["args"] || %{}) do
+      {:ok, result} -> json(conn, 200, %{ok: true, result: result})
+      {:error, reason} -> json(conn, 200, %{ok: false, error: to_string(reason)})
+      _ -> json(conn, 200, %{ok: false, error: "bad_request"})
+    end
+  end
+
+  post "/api/:ws/:sid/fetch" do
+    preset = conn.body_params["preset"]
+    url = conn.body_params["url"]
+
+    case is_binary(preset) and is_binary(url) and FetchProxy.fetch(preset, url) do
+      {:ok, resp} -> json(conn, 200, %{ok: true, status: resp.status, body: resp.body})
+      {:error, reason} -> json(conn, 200, %{ok: false, error: to_string(reason)})
+      _ -> json(conn, 200, %{ok: false, error: "bad_request"})
+    end
+  end
+
+  # 中断生成(cc one-shot,无持久进程 → no-op)。
+  post "/api/:ws/:sid/stop" do
+    json(conn, 200, %{ok: true})
+  end
+
   # SPA 兜底:任何其它 GET → index.html(前端按 /loom/<ws>/<sid> 读路由)。
   get "/*_path" do
     send_index(conn)
@@ -672,6 +807,31 @@ defmodule EzagentPluginLoom.WebPlug do
     {:ok, Ezagent.URI.session(ws, :loom, sid), Ezagent.URI.workspace(ws)}
   rescue
     _ -> :error
+  end
+
+  defp loom_uri(ws, sid), do: Ezagent.URI.session(ws, :loom, sid)
+
+  # 从已存模板建一个新 loom session(seed 模板的 files)→ {ok, ws, sid}。
+  defp loom_spawn_from_template(ws, name, sid) do
+    sid = if sid == "", do: "main#{System.unique_integer([:positive])}", else: sid
+
+    with %{tree: _files} <- SavedTemplates.get(ws, name),
+         {:ok, [_uri | _], _} <-
+           EzagentPluginLoom.Template.LoomSession.instantiate(
+             "loom-from-template",
+             %{
+               "class" => "session.loom",
+               "session_name" => sid,
+               "operator_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+               "saved_template" => name
+             },
+             Ezagent.URI.workspace(ws)
+           ) do
+      %{ok: true, ws: ws, sid: sid}
+    else
+      nil -> %{ok: false, error: "no_such_template"}
+      error -> %{ok: false, error: inspect(error)}
+    end
   end
 
   defp token(conn) do
