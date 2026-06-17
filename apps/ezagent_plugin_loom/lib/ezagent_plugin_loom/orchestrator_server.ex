@@ -19,7 +19,6 @@ defmodule EzagentPluginLoom.OrchestratorServer do
 
   alias Ezagent.{Invocation, SystemPrincipal}
   alias Ezagent.Behavior.Session, as: SessionBehavior
-  alias EzagentPluginLoom.Orchestrator
 
   @caller_uri "system://loom-orchestrator"
 
@@ -59,8 +58,12 @@ defmodule EzagentPluginLoom.OrchestratorServer do
   # 以及带 turn correlation 的 worker 委派/deliver 消息。
   defp customer_message?(msg, caller) do
     URI.to_string(msg.sender) != URI.to_string(caller) and not turn_correlated?(msg) and
-      is_binary(text_of(msg)) and text_of(msg) != ""
+      not agent_sender?(msg.sender) and is_binary(text_of(msg)) and text_of(msg) != ""
   end
+
+  # 排除 agent 发的消息(v0/worker 回复)——否则 v0 的 page_update 回帖会再触发编排 → 死循环。
+  defp agent_sender?(%URI{} = uri), do: String.contains?(URI.to_string(uri), "/agent/")
+  defp agent_sender?(_), do: false
 
   defp turn_correlated?(msg) do
     body = msg.body || %{}
@@ -128,26 +131,61 @@ defmodule EzagentPluginLoom.OrchestratorServer do
     }
   end
 
-  defp orchestrate(session_uri, msg, caller) do
-    with {:ok, result_refs} <- Orchestrator.run(text_of(msg), session_uri: session_uri),
-         {:ok, %{turn_id: turn_id}} <-
-           dispatch(session_uri, "turn.open", caller, %{
-             trigger: %{message_id: msg.id},
-             opened_at: System.system_time(:millisecond)
-           }),
-         {:ok, _} <-
-           dispatch(session_uri, "turn.compose", caller, %{
-             turn_id: turn_id,
-             result_refs: result_refs
-           }),
-         {:ok, _} <- dispatch(session_uri, "turn.settle", caller, %{turn_id: turn_id}) do
-      :ok
-    else
-      # 无 LLM key 环境(普通 gate、未配 key 的 session)静默跳过,不污染日志/不开 turn。
-      {:error, :no_api_key} -> :ok
-      error -> Logger.warning("loom orchestrate failed: #{inspect(error)}")
+  # Phase 2:用回 loom 原本的 v0 页面生成 —— 调 V0(走对齐 LLM)产 `page_update` JSX span,
+  # 作 v0 agent 的消息发进 session;前端 loom_ui 从 history/stream 读该 span → Sandpack 预览。
+  # (socialware Turn/surface 的 UI-tree 模型用于 customer 审批流,builder 预览走 loom 自己的引擎。)
+  defp orchestrate(session_uri, msg, _caller) do
+    text = text_of(msg)
+
+    case EzagentPluginLoom.V0.generate(text,
+           current_files: read_current_files(session_uri),
+           session_uri: session_uri
+         ) do
+      {:page_update, span} -> emit_v0(session_uri, span)
+      {:prose, prose} -> emit_v0(session_uri, prose)
+      {:error, reason} when reason in [:no_api_key, {:no_api_key, "DEEPSEEK_API_KEY"}] -> :ok
+      {:error, {:no_api_key, _}} -> :ok
+      {:error, reason} -> Logger.warning("loom v0 failed: #{inspect(reason)}")
     end
   end
+
+  # 以 loomv0 agent(session Member)身份把 v0 产出发进 session(chat.send / session.send)。
+  defp emit_v0(session_uri, body_text) do
+    case ws_sid(session_uri) do
+      {ws, sid} ->
+        sender = Ezagent.URI.agent(ws, "loomv0_#{sid}")
+        msg = Ezagent.Message.new(sender, %{text: body_text})
+        dispatch(session_uri, "session.send", sender, %{message: msg})
+        :ok
+
+      _ ->
+        :ok
+    end
+  end
+
+  # 读当前页 files(最近一条含 page_update span 的消息)→ 供 v0 增量改。无 → nil。
+  defp read_current_files(session_uri) do
+    session_uri
+    |> Ezagent.MessageStore.recent_in_session(50)
+    |> Enum.reverse()
+    |> Enum.find_value(nil, fn m ->
+      with text when is_binary(text) <- text_of(m),
+           [_, json] <- Regex.run(~r/<span type="page_update">([\s\S]*?)<\/span>/, text),
+           {:ok, %{"files" => files}} when is_map(files) <- Jason.decode(json) do
+        files
+      else
+        _ -> nil
+      end
+    end)
+  rescue
+    _ -> nil
+  end
+
+  defp ws_sid(%URI{scheme: "session", host: ws, path: "/loom/" <> sid})
+       when is_binary(ws) and is_binary(sid) and sid != "",
+       do: {ws, sid}
+
+  defp ws_sid(_), do: nil
 
   defp dispatch(session_uri, action, caller, args) do
     Invocation.dispatch(%Invocation{
