@@ -71,3 +71,9 @@ config :phoenix_live_view,
 # Prod default is 500ms; the ExUnit sandbox / DBConnection checkout can
 # stretch a Kind post-init/activate well past that, so give tests headroom.
 config :ezagent_core, :spawn_await_ready_ms, 5_000
+
+# A3 (loom-port) — admin_live's cold-start main session is async (background Task)
+# in prod for non-blocking mount, but a Task has no DB-sandbox ownership in ExUnit,
+# so tests spawn it INLINE (deterministic; existing admin_live tests assert the
+# session synchronously). Prod default is async (true).
+config :ezagent_plugin_liveview, :async_main_session, false

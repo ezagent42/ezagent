@@ -207,6 +207,53 @@ defmodule EzagentPluginLiveview.AdminLive do
     {:noreply, socket}
   end
 
+  # A3 — the cold-start main session spawned by `ensure_main_session/2`'s background
+  # Task (prod async path) finished; refresh the session list + re-select if it's
+  # still the active one. (In the sync/test path this message is never sent.)
+  def handle_info({:main_session_started, %URI{} = uri, result}, socket) do
+    socket =
+      case result do
+        {:ok, res} ->
+          meta = SessionContext.session_create_meta(res)
+          SessionContext.log_orchestrator_status_on_rehydrate(uri, meta)
+
+          socket
+          |> assign(:flash_error, nil)
+          |> RehydrateFlash.assign(meta)
+          |> assign(
+            :sessions,
+            SessionContext.list_sessions_for(socket.assigns[:current_workspace_uri])
+          )
+          |> then(fn s ->
+            if s.assigns[:current_session_uri] == uri,
+              do: SessionContext.select_session(s, uri),
+              else: s
+          end)
+
+        {:error, {:create_session_exit, reason}} ->
+          Logger.warning(
+            "AdminLive cold-start main session exited (still slow?): #{inspect(reason)}"
+          )
+
+          assign(
+            socket,
+            :flash_error,
+            gettext("Session is still starting (cold start). Please refresh in a moment.")
+          )
+
+        {:error, reason} ->
+          Logger.warning("AdminLive cold-start main session failed: #{inspect(reason)}")
+
+          assign(
+            socket,
+            :flash_error,
+            gettext("Main session start failed: %{reason}", reason: inspect(reason))
+          )
+      end
+
+    {:noreply, socket}
+  end
+
   def handle_info({:cc_event, event}, socket) do
     {:noreply, assign(socket, :cc_events, [event | socket.assigns.cc_events] |> Enum.take(20))}
   end
@@ -945,31 +992,73 @@ defmodule EzagentPluginLiveview.AdminLive do
         creator = Map.get(socket.assigns, :current_entity_uri) || Ezagent.Entity.User.admin_uri()
         session_workspace_uri = Ezagent.Capability.workspace_of(uri)
 
-        case Ezagent.Workspace.create_session(
-               session_workspace_uri,
-               %{short_name: "main", template_name: "default"},
-               %{
-                 caller: creator,
-                 caps: Map.get(socket.assigns, :caller_caps, MapSet.new())
-               }
-             ) do
-          {:ok, result} ->
-            meta = SessionContext.session_create_meta(result)
-            SessionContext.log_orchestrator_status_on_rehydrate(uri, meta)
-            {uri, RehydrateFlash.assign(socket, meta)}
+        caps = Map.get(socket.assigns, :caller_caps, MapSet.new())
 
-          {:error, reason} ->
-            Logger.warning("AdminLive.ensure_main_session failed: #{inspect(reason)}")
+        # A3 (loom-port) — 不在 mount 里**同步**冷启动 session(原来 create_session 同步 `:call`,
+        # 冷启动 spawn 很慢 → 阻塞 mount / 切工作区「卡住」,刷新才好)。
+        #   • dead render(HTTP GET):不 spawn → 首屏立刻渲染,连上 WS 再补;
+        #   • connected + 异步开启(prod):后台 Task spawn(不阻塞);建好经 handle_info 刷新 + 重选。
+        #     就绪前对 current_session_uri 的 dispatch 由核心 ReadyGate / lazy-revive 兜住(P22)。
+        #   • connected + 异步关闭(test):LV 进程内同步建,确定性 + 持有 DB sandbox(Task 没有)。
+        # **异步路径(prod)需 booted server 冒烟验证**;test 走同步路径,行为同改动前。
+        cond do
+          not connected?(socket) ->
+            {uri, socket}
+
+          async_main_session?() ->
+            parent = self()
+
+            Task.start(fn ->
+              result =
+                try do
+                  Ezagent.Workspace.create_session(
+                    session_workspace_uri,
+                    %{short_name: "main", template_name: "default"},
+                    %{caller: creator, caps: caps}
+                  )
+                catch
+                  :exit, reason -> {:error, {:create_session_exit, reason}}
+                end
+
+              send(parent, {:main_session_started, uri, result})
+            end)
 
             {uri,
              assign(
                socket,
                :flash_error,
-               gettext("Main session rehydrate failed: %{reason}", reason: inspect(reason))
+               gettext("Session is starting up… (it'll appear automatically when ready)")
              )}
+
+          true ->
+            case Ezagent.Workspace.create_session(
+                   session_workspace_uri,
+                   %{short_name: "main", template_name: "default"},
+                   %{caller: creator, caps: caps}
+                 ) do
+              {:ok, result} ->
+                meta = SessionContext.session_create_meta(result)
+                SessionContext.log_orchestrator_status_on_rehydrate(uri, meta)
+                {uri, RehydrateFlash.assign(socket, meta)}
+
+              {:error, reason} ->
+                Logger.warning("AdminLive.ensure_main_session failed: #{inspect(reason)}")
+
+                {uri,
+                 assign(
+                   socket,
+                   :flash_error,
+                   gettext("Main session rehydrate failed: %{reason}", reason: inspect(reason))
+                 )}
+            end
         end
     end
   end
+
+  # async only outside the ExUnit sandbox (config-gated): a Task has no DB-sandbox
+  # ownership in tests, so test spawns the main session inline (deterministic).
+  defp async_main_session?,
+    do: Application.get_env(:ezagent_plugin_liveview, :async_main_session, true)
 
   defp ctx(socket) do
     %{
