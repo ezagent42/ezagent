@@ -210,6 +210,7 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
     "toggle_mode" => {:ui_only, "form/json toggle in routing form"},
     "toggle_debug_panel" => {:ui_only, "show/hide a debug sidebar"},
     "switch_session" => {:ui_only, "chat-panel session navigation"},
+    "refresh_session" => {:ui_only, "re-select current session + reload session list; no backend mutation"},
     "switch_view" => {:ui_only, "chat/terminal view toggle"},
     "switch_to_pty_for_agent" => {:ui_only, "PTY agent picker"},
     "switch_tab" => {:ui_only, "observability tab switch"},
