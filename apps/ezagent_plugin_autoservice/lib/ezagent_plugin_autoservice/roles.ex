@@ -30,6 +30,7 @@ defmodule EzagentPluginAutoservice.Roles do
   @spec bundle(role(), URI.t()) :: [Capability.t()]
   def bundle(:customer, %URI{scheme: "workspace"} = workspace_uri) do
     now = DateTime.utc_now()
+
     [
       grantable_session_any(:send, workspace_uri, now),
       grantable_session_any(:receive, workspace_uri, now)
@@ -43,7 +44,8 @@ defmodule EzagentPluginAutoservice.Roles do
       grantable_session_any(:join, workspace_uri, now),
       grantable_session_any(:send, workspace_uri, now),
       grantable_session_any(:receive, workspace_uri, now)
-    ] ++ operator_turn_caps(workspace_uri, now) ++ operator_cs_orchestrator_caps(workspace_uri, now)
+    ] ++
+      operator_turn_caps(workspace_uri, now) ++ operator_cs_orchestrator_caps(workspace_uri, now)
   end
 
   def bundle(:admin, %URI{scheme: "workspace"} = workspace_uri) do
@@ -51,10 +53,20 @@ defmodule EzagentPluginAutoservice.Roles do
 
     [
       grantable(:workspace, Ezagent.Behavior.Workspace, :any, workspace_uri, now),
-      grantable(:workspace, Ezagent.Behavior.WorkspaceUserAdmin, :create_user, workspace_uri, now),
-      # Content management caps for TenantAdminLive soul/slots/skills/KB editing
-      grantable(:content, EzagentPluginContent.Behavior.ContentAdmin, :write, workspace_uri, now),
-      grantable(:content, EzagentPluginContent.Behavior.ContentAdmin, :any, workspace_uri, now)
+      grantable(
+        :workspace,
+        Ezagent.Behavior.WorkspaceUserAdmin,
+        :create_user,
+        workspace_uri,
+        now
+      ),
+      # Content management caps for TenantAdminLive soul/slots/skills/KB editing.
+      # kind MUST be :workspace — ContentAdmin dispatches to the workspace Kind, so
+      # ContentAdmin.required_caps use cap(:workspace, …) (same as Workspace /
+      # WorkspaceUserAdmin above). The old :content kind never matched the
+      # required_caps kind axis (latent bug, masked while the UI never dispatched).
+      # `:any` on the action axis grants every ContentAdmin action in one cap.
+      grantable(:workspace, EzagentPluginContent.Behavior.ContentAdmin, :any, workspace_uri, now)
     ]
   end
 
