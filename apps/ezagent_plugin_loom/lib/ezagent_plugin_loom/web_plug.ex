@@ -412,9 +412,10 @@ defmodule EzagentPluginLoom.WebPlug do
     loom_stream(conn, ws, sid)
   end
 
-  # 前端 boot 调;editor 端最小返回。
+  # 前端 boot 调:从 cookie session 解析登录态(endpoint 顶层 Plug.Session 已配,可 fetch)。
+  # 前端据此做 fork 闸(未登录 → 注册/登录 modal)。
   get "/whoami" do
-    json(conn, 200, %{ok: true, role: "operator"})
+    whoami_response(conn)
   end
 
   # ── 发布 / 分享(迁移自 loom-stitch;editor 端无 token)──────────────────────
@@ -960,6 +961,20 @@ defmodule EzagentPluginLoom.WebPlug do
   end
 
   defp loom_uri(ws, sid), do: Ezagent.URI.session(ws, :loom, sid)
+
+  defp whoami_response(conn) do
+    conn = Plug.Conn.fetch_session(conn)
+
+    case Plug.Conn.get_session(conn, "current_entity_uri") do
+      uri when is_binary(uri) and uri != "" ->
+        json(conn, 200, %{ok: true, logged_in: true, entity_uri: uri})
+
+      _ ->
+        json(conn, 200, %{ok: true, logged_in: false})
+    end
+  rescue
+    _ -> json(conn, 200, %{ok: true, logged_in: false})
+  end
 
   defp mime_for(name) do
     MIME.from_path(name)

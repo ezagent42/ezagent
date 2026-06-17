@@ -27,12 +27,11 @@ defmodule EzagentPluginLoom.V0Prompts do
     end
   end
 
+  # tools + presets 块(替换 page_gen 模板的 #DYNAMIC_TOOL_AND_PRESET_BLOCK#)。
   defp dynamic_block do
-    if function_exported?(EzagentPluginLoom.FetchProxy, :prompt_block, 0) do
-      apply(EzagentPluginLoom.FetchProxy, :prompt_block, [])
-    else
-      ""
-    end
+    [EzagentPluginLoom.Tool.prompt_block(), EzagentPluginLoom.FetchProxy.prompt_block()]
+    |> Enum.reject(&(&1 in ["", nil]))
+    |> Enum.join("\n\n")
   rescue
     _ -> ""
   end

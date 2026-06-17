@@ -411,4 +411,89 @@ defmodule EzagentWeb.SessionController do
       {:error, _} -> :error
     end
   end
+
+  # ── loom 分享页轻量自助注册(2026-06-05 Allen 批准,迁移自 loom-stitch)──────────
+  # 开放注册(跳过邮箱验证)+ 即登录。仅 loom preview 的登录/注册 modal 用。无 CSRF
+  # (走 :loom_auth pipeline);signup 是建新账号,CSRF 风险低。须填完整 entity:// 用户 URI。
+  def loom_signup(conn, %{"username" => account, "password" => password})
+      when is_binary(account) and is_binary(password) do
+    account = String.trim(account)
+
+    cond do
+      account == "" or String.length(password) < 4 ->
+        signup_json(conn, %{ok: false, error: "身份 URI 必填,密码至少 4 位"})
+
+      not String.starts_with?(account, "entity://") ->
+        signup_json(conn, %{
+          ok: false,
+          error: "注册请填写完整身份 URI:entity://<工作区>/user/<用户名>"
+        })
+
+      true ->
+        case canonicalize_signup(account) do
+          {:ok, uri} ->
+            cond do
+              loom_user_exists?(uri) ->
+                signup_json(conn, %{ok: false, error: "用户名已被占用"})
+
+              true ->
+                case Ezagent.Users.create(uri, password, []) do
+                  {:ok, _} ->
+                    _ = loom_safe_spawn_user(uri)
+
+                    conn
+                    |> SessionPrincipal.put(uri)
+                    |> signup_json(%{ok: true, entity_uri: uri})
+
+                  {:error, reason} ->
+                    require Logger
+                    Logger.warning("loom_signup create failed for #{uri}: #{inspect(reason)}")
+                    signup_json(conn, %{ok: false, error: "注册失败,请换个用户名重试"})
+                end
+            end
+
+          {:error, msg} ->
+            signup_json(conn, %{ok: false, error: msg})
+        end
+    end
+  end
+
+  def loom_signup(conn, _params), do: signup_json(conn, %{ok: false, error: "参数缺失"})
+
+  # 完整 entity:// URI → 规范字符串。复用登录同款 canonicalize;只收 user(URI.type? :user)。
+  defp canonicalize_signup(account) do
+    canonical = SessionPrincipal.canonicalize(account)
+    uri = Ezagent.URI.new!(canonical)
+
+    if uri.scheme == "entity" and Ezagent.URI.type?(uri, :user),
+      do: {:ok, canonical},
+      else: {:error, "只能注册用户身份(entity://<工作区>/user/<名字>)"}
+  rescue
+    ArgumentError -> {:error, "身份 URI 不合法,格式应为 entity://<工作区>/user/<名字>"}
+  end
+
+  defp loom_user_exists?(uri), do: not is_nil(Ezagent.Users.get_by_uri(uri))
+
+  defp loom_safe_spawn_user(uri) do
+    u = Ezagent.URI.new!(uri)
+
+    case Ezagent.KindRegistry.lookup(u) do
+      {:ok, _} ->
+        :ok
+
+      :error ->
+        Ezagent.Kind.spawn(Ezagent.Entity.User, %{
+          uri: u,
+          initial_caps: Ezagent.Entity.User.initial_caps_for_spawn(u)
+        })
+    end
+  rescue
+    _ -> :ok
+  end
+
+  defp signup_json(conn, data) do
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, Jason.encode!(data))
+  end
 end

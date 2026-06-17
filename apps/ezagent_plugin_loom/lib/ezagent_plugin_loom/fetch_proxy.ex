@@ -28,6 +28,15 @@ defmodule EzagentPluginLoom.FetchProxy do
     ArgumentError -> {:error, :unknown_preset}
   end
 
+  @doc "page_gen 提示词的 preset 清单块(告诉 AI platform.fetch 有哪些白名单 preset)。"
+  @spec prompt_block() :: String.t()
+  def prompt_block do
+    case Application.get_env(:ezagent_plugin_loom, :fetch_presets, %{}) |> Map.keys() do
+      [] -> ""
+      ks -> "## platform.fetch(preset, url) 可用 preset\n" <> Enum.map_join(ks, "\n", &"- `#{&1}`")
+    end
+  end
+
   defp url_allowed?(%{url: %Regex{} = re}, url), do: Regex.match?(re, url)
   defp url_allowed?(_, _), do: false
 
@@ -35,7 +44,9 @@ defmodule EzagentPluginLoom.FetchProxy do
   defp method_allowed?(_, method), do: method == :get
 
   defp do_fetch(url) do
-    case :httpc.request(:get, {String.to_charlist(url), []}, [timeout: @timeout_ms], body_format: :binary) do
+    case :httpc.request(:get, {String.to_charlist(url), []}, [timeout: @timeout_ms],
+           body_format: :binary
+         ) do
       {:ok, {{_v, status, _r}, _headers, body}} -> {:ok, %{status: status, body: to_string(body)}}
       {:error, reason} -> {:error, {:http_error, reason}}
     end

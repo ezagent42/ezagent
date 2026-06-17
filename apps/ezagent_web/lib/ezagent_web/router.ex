@@ -29,6 +29,18 @@ defmodule EzagentWeb.Router do
     plug :accepts, ["json"]
   end
 
+  # loom 分享页自助注册:有 session(写登录 cookie)、无 CSRF(loom iframe 由 WebPlug 服务、
+  # 无 CSRF token)。仅 /loom-signup 用;signup 建新账号,CSRF 风险低(同 loom-stitch)。
+  pipeline :loom_auth do
+    plug :accepts, ["json"]
+    plug :fetch_session
+  end
+
+  scope "/", EzagentWeb do
+    pipe_through :loom_auth
+    post "/loom-signup", SessionController, :loom_signup
+  end
+
   scope "/", EzagentWeb do
     pipe_through :browser
 

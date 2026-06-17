@@ -261,4 +261,29 @@ defmodule EzagentWeb.SessionControllerTest do
       refute Plug.Conn.get_session(conn, :current_entity_uri)
     end
   end
+
+  describe "POST /loom-signup (loom 分享页自助注册)" do
+    test "建用户 + 即登录(写 session)" do
+      uri = "entity://demo/user/loomsignup#{System.unique_integer([:positive])}"
+      conn = build_conn() |> post("/loom-signup", %{"username" => uri, "password" => "pw1234"})
+      assert %{"ok" => true, "entity_uri" => ^uri} = json_response(conn, 200)
+      assert Ezagent.Users.get_by_uri(uri)
+      assert Plug.Conn.get_session(conn, :current_entity_uri) == uri
+    end
+
+    test "非 entity:// URI 被拒" do
+      conn =
+        build_conn() |> post("/loom-signup", %{"username" => "alice", "password" => "pw1234"})
+
+      assert %{"ok" => false} = json_response(conn, 200)
+    end
+
+    test "短密码被拒" do
+      conn =
+        build_conn()
+        |> post("/loom-signup", %{"username" => "entity://demo/user/x", "password" => "1"})
+
+      assert %{"ok" => false} = json_response(conn, 200)
+    end
+  end
 end
