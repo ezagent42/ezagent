@@ -21,6 +21,7 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
   """
 
   use Phoenix.LiveView
+  require Logger
   # i18n (Allen 2026-05-22) — runtime backend reference; no compile-time
   # dep on :ezagent_web.
   use Gettext, backend: EzagentPluginLiveview.Gettext
@@ -257,11 +258,20 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
   end
 
   def handle_event("remove_template", %{"name" => tmpl_name}, socket) do
-    case Ezagent.Workspace.remove_template(socket.assigns.name, tmpl_name) do
+    ws_name = socket.assigns.name
+    # loom 前端集成 — read the recipe BEFORE removal so we can tear down the Session
+    # the Template Instance auto-materialized (a Template Instance + its spawned
+    # Session are conceptually one object — "删除了之后它们的一切应该都没了"). main's
+    # Workspace.remove_template only drops the map entry, so cleanup is done here.
+    recipe = recipe_for(socket.assigns.workspace, tmpl_name)
+
+    case Ezagent.Workspace.remove_template(ws_name, tmpl_name) do
       :ok ->
+        _ = maybe_call_class_cleanup(recipe, ws_name, tmpl_name)
+
         {:noreply,
          socket
-         |> assign(:workspace, Ezagent.Workspace.Store.get_by_name(socket.assigns.name))
+         |> assign(:workspace, Ezagent.Workspace.Store.get_by_name(ws_name))
          |> assign(:flash_error, nil)}
 
       {:error, reason} ->
@@ -273,6 +283,40 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
          )}
     end
   end
+
+  defp recipe_for(%{session_templates: tmpls}, tmpl_name) when is_map(tmpls),
+    do: Map.get(tmpls, tmpl_name)
+
+  defp recipe_for(_, _), do: nil
+
+  # Fire-and-forget: Template Classes that own spawned Kinds implement the
+  # duck-typed `cleanup/3` (no formal callback in `Ezagent.Kind.Template` yet) —
+  # LoomSession does, to terminate the loom team + delete sidecars. Classes
+  # without it (or unregistered/Plan-B published entries) no-op. Never raises.
+  defp maybe_call_class_cleanup(recipe, ws_name, tmpl_name) when is_map(recipe) do
+    with class_name when is_binary(class_name) <- Map.get(recipe, "class"),
+         {:ok, class_module} <- Ezagent.TemplateRegistry.lookup(class_name),
+         true <- function_exported?(class_module, :cleanup, 3) do
+      try do
+        class_module.cleanup(tmpl_name, recipe, Ezagent.URI.workspace(ws_name))
+      rescue
+        e ->
+          Logger.warning("remove_template[#{tmpl_name}] cleanup raised: #{inspect(e)}")
+          :ok
+      catch
+        kind, reason ->
+          Logger.warning(
+            "remove_template[#{tmpl_name}] cleanup threw #{inspect(kind)} #{inspect(reason)}"
+          )
+
+          :ok
+      end
+    else
+      _ -> :ok
+    end
+  end
+
+  defp maybe_call_class_cleanup(_, _, _), do: :ok
 
   def handle_event("remove_member", %{"member_uri" => uri_str}, socket) do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
