@@ -22,6 +22,10 @@ Loom socialware vertical — **多 agent 编排 + AI page-builder**。访客对�
   **只在用该 provider 时取该 provider 的 key**)。绑定 durable 凭证级联(`Ezagent.Credential.Resolver`
   + agent `:api_keys` slice)是 agent-scoped → 随真实 agent-Kind 落地(预留项 3)。
 - **transport** = `EzagentPluginLoom.WebPlug`（`forward "/loom"`），customer 经 HTTP 交互。
+- **admin 集成** = 两个 `Ezagent.UI.SessionView`（`LoomSessionView` "Loom" / `LoomDashboardView`
+  "Dashboard"），loom 自己 boot 时注册进 `SessionViewRegistry`，admin view-switcher 对 loom
+  session 通用渲染这两个标签（iframe 嵌入 `/loom/app` 与 `/loom/dashboard`，带现签 CustomerAuth
+  token）。**零改 admin** —— 走公开注册 API，不在共享 admin 里写 loom 专属代码。
 
 ## HTTP 端点（`/loom` 前缀）
 

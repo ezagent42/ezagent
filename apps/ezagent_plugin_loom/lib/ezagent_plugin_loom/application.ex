@@ -19,7 +19,20 @@ defmodule EzagentPluginLoom.Application do
   use Ezagent.Plugin
 
   @impl Application
-  def start(_type, _args), do: Ezagent.Plugin.boot(__MODULE__)
+  def start(_type, _args) do
+    register_session_views()
+    Ezagent.Plugin.boot(__MODULE__)
+  end
+
+  # loom 自包含地把 "Loom"/"Dashboard" 标签注册进 admin view-switcher(零改 admin)。
+  # SessionViewRegistry.init/0 幂等(create-if-not-exists);domain_ui 是 dep,先 boot 持有 ETS,
+  # 此处只是 register。register/1 同 id 覆盖,boot 多次安全。
+  defp register_session_views do
+    :ok = Ezagent.UI.SessionViewRegistry.init()
+    :ok = Ezagent.UI.SessionViewRegistry.register(EzagentPluginLoom.View.LoomSessionView)
+    :ok = Ezagent.UI.SessionViewRegistry.register(EzagentPluginLoom.View.LoomDashboardView)
+    :ok
+  end
 
   @impl Ezagent.Plugin
   def plugin_info do

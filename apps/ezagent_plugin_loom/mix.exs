@@ -38,6 +38,10 @@ defmodule EzagentPluginLoom.MixProject do
       # 复用现成 OpenAI/DeepSeek-shape HTTP 客户端(Ezagent.PluginCurlAgent.ApiClient),
       # 不自造 :httpc 调用。ApiClient 是无状态纯模块,无需 curl_agent 起 app 进程。
       {:ezagent_plugin_curl_agent, in_umbrella: true},
+      # SessionView 插件:loom 注册 "Loom"/"Dashboard" 标签进 Ezagent.UI.SessionViewRegistry,
+      # admin view-switcher 通用渲染(零改 admin)。需 Phoenix.Component 渲 iframe view。
+      {:ezagent_domain_ui, in_umbrella: true},
+      {:phoenix_live_view, ">= 0.0.0"},
       {:plug, "~> 1.16"}
     ]
   end
