@@ -919,10 +919,17 @@ defmodule Ezagent.Workspace do
       # abstract bootstrap principal.
       bootstrap = Ezagent.SystemPrincipal.uri("bootstrap")
 
+      # `:sync` (NOT the default `:async`): the base site dispatched with
+      # `mode: :call`, and the create operation gates its success on this
+      # grant (`with :ok <- grant_creator_manage_cap/4`). `:cast` would
+      # silently swallow a grant failure — reporting a successful create
+      # while the creator does NOT hold the Manage cap. Force synchronous,
+      # error-propagating `:call` mode.
       case Ezagent.Identity.Grant.grant_cap_via_router(
              creator_uri,
              cap,
-             {:system, bootstrap, creator_uri}
+             {:system, bootstrap, creator_uri},
+             :sync
            ) do
         :ok -> :ok
         {:error, reason} -> {:error, {:creator_manage_cap_grant_failed, reason}}

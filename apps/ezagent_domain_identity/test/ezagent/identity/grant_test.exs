@@ -123,6 +123,46 @@ defmodule Ezagent.Identity.GrantTest do
     end
   end
 
+  describe "grant_cap_via_router/4 reply mode — regression guard (workspace.ex site #3)" do
+    # The base `grant_creator_manage_cap` grant used `mode: :call` so its
+    # caller gates create-success on the grant result. The chokepoint default
+    # is `:async` (:cast), which would SILENTLY SWALLOW a grant failure. This
+    # pins that `:sync` propagates the error and `:async` does not — the exact
+    # contract site #3 relies on.
+    test ":sync propagates a grant-authorization failure; :async swallows it (:cast)" do
+      grantee = target_user()
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(grantee)
+      Ezagent.ReadyGate.await(grantee, 2_000)
+
+      # An actor with NO admin/grant authority.
+      unauth = target_user()
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(unauth)
+      Ezagent.ReadyGate.await(unauth, 2_000)
+
+      # A full-wildcard cap: `check_action_wildcard_grant_authorized` rejects
+      # it for a non-admin caller — a deterministic authz failure independent
+      # of any data-owner branch. granted_by is overwritten to `unauth` (entity).
+      wildcard = %Capability{
+        kind: :any,
+        behavior: :any,
+        action: :any,
+        instance: :any,
+        workspace_uri: :any,
+        granted_by: @admin_uri,
+        granted_at: ~U[2020-01-01 00:00:00Z]
+      }
+
+      # :sync → :call → the authorization failure PROPAGATES.
+      assert {:error, _} =
+               Grant.grant_cap_via_router(grantee, wildcard, {:held_by, unauth}, :sync)
+
+      # :async → :cast → the dispatch returns :ok immediately; the failure is
+      # swallowed. This is the regression the site #3 `:sync` fix prevents.
+      assert :ok =
+               Grant.grant_cap_via_router(grantee, wildcard, {:held_by, unauth}, :async)
+    end
+  end
+
   # rule_cap_bounded?/1 is tested as a PURE PREDICATE on `IdentityAdmin`,
   # NOT through dispatch. The rule branch is dormant in PR-1: a `{:rule, …}`
   # grant carries `ctx.caps = []`, so dispatch step 5.5 denies with
