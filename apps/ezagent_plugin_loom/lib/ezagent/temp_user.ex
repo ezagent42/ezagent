@@ -34,7 +34,7 @@ defmodule EzagentPluginLoom.TempUser do
   @spec temp_uri(String.t()) :: URI.t()
   def temp_uri(workspace_name) when is_binary(workspace_name) and workspace_name != "" do
     id = :crypto.strong_rand_bytes(6) |> Base.encode16(case: :lower)
-    Ezagent.URI.new!("entity://user/#{workspace_name}/tmp_#{id}")
+    Ezagent.URI.new!("entity://#{workspace_name}/user/tmp_#{id}")
   end
 
   @doc """
@@ -69,7 +69,7 @@ defmodule EzagentPluginLoom.TempUser do
     # 2026-06-01 — 用 canonical `Ezagent.URI.new!`(走 URI.new!,无 :authority
     # 字段);deprecated `URI.parse/1` 留 `authority: "user"`,跟 chat.members
     # 里其它 canonical key 不匹配,同一逻辑 URI 在 slice 占两条。
-    uri = Ezagent.URI.new!("entity://user/#{ws}/#{name}")
+    uri = Ezagent.URI.new!("entity://#{ws}/user/#{name}")
     _ = Users.create(uri, nil, [])
 
     case spawn_user(uri) do

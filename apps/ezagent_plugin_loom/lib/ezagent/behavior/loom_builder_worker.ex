@@ -399,9 +399,9 @@ defmodule Ezagent.Behavior.LoomBuilderWorker do
   # 把本次消息附件入库 + 渲染本 session 整个素材库(2026-06-12 素材库)。
   # 从 session 推 {ws, sid}(本 session 素材目录的 key);非 loom session → {nil, nil}。
   defp builder_ws_sid(ctx) do
-    with %URI{path: path} <- session_from_ctx(ctx),
-         [ws, sid | _] <- path |> to_string() |> String.trim_leading("/") |> String.split("/"),
-         true <- ws != "" and sid != "" do
+    with %URI{host: ws, path: path} when is_binary(ws) and ws != "" <- session_from_ctx(ctx),
+         [_class, sid | _] <- path |> to_string() |> String.trim_leading("/") |> String.split("/"),
+         true <- sid != "" do
       {ws, sid}
     else
       _ -> {nil, nil}

@@ -244,7 +244,7 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
 
   defp do_add(theme, %{role_desc: role_desc, system_prompt: sp}, ctx, session_uri, msg) do
     {ws, sid} = session_parts(session_uri)
-    new_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomworker_#{sid}_#{theme}")
+    new_uri = Ezagent.URI.new!("entity://#{ws}/agent/loomworker_#{sid}_#{theme}")
 
     resolved_sp =
       if sp == "" do
@@ -288,7 +288,7 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
 
   defp do_remove(theme, ctx, session_uri, msg) do
     {ws, sid} = session_parts(session_uri)
-    target_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomworker_#{sid}_#{theme}")
+    target_uri = Ezagent.URI.new!("entity://#{ws}/agent/loomworker_#{sid}_#{theme}")
 
     # 检查这条 URI 是不是真的在 session 里 — 不在的话回个友好提示
     workers = workers_in_session(session_uri)
@@ -419,9 +419,9 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
   # URI 拆分
   # ---------------------------------------------------------------
 
-  defp session_parts(%URI{path: "/" <> rest}) do
+  defp session_parts(%URI{host: ws, path: "/" <> rest}) when is_binary(ws) and ws != "" do
     case String.split(rest, "/") do
-      [ws, sid | _] -> {ws, sid}
+      [_class, sid | _] -> {ws, sid}
       _ -> {nil, nil}
     end
   end

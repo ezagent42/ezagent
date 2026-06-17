@@ -637,14 +637,14 @@ defmodule EzagentPluginLoom.WebPlug do
 
   # --- loom SDK 桥 helpers --------------------------------------------
 
-  defp session_uri(ws, sid), do: Ezagent.URI.new!("session://loom/#{ws}/#{sid}")
+  defp session_uri(ws, sid), do: Ezagent.URI.new!("session://#{ws}/loom/#{sid}")
 
   # 停止本 session 的生成:(1) 中断所有在跑的 claude(group=session 字符串);
   # (2) 给编排器发 {:cancel,:all} 清在飞回合(丢弃,不写 :loom_source)。
   defp stop_session(ws, sid) do
     EzagentPluginLoom.LLM.stop(URI.to_string(session_uri(ws, sid)))
 
-    orch_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomorch_#{sid}")
+    orch_uri = Ezagent.URI.new!("entity://#{ws}/agent/loomorch_#{sid}")
 
     case Ezagent.KindRegistry.lookup(orch_uri) do
       {:ok, pid} -> send(pid, {:cancel, :all})
@@ -665,7 +665,7 @@ defmodule EzagentPluginLoom.WebPlug do
   defp send_to_session(conn, ws, sid, text) do
     suri = session_uri(ws, sid)
     orch_id = "loomorch_#{sid}"
-    orchestrator = Ezagent.URI.new!("entity://agent/#{ws}/#{orch_id}")
+    orchestrator = Ezagent.URI.new!("entity://#{ws}/agent/#{orch_id}")
 
     # 2026-06-01 — 识别消息开头的 @<entity-id>。
     # - 用户写 "@loommeta_<sid> 加 painter" → mentions = [loommeta_<sid>]
@@ -721,12 +721,12 @@ defmodule EzagentPluginLoom.WebPlug do
       [_full, target_id] ->
         cond do
           target_id in valid_ids ->
-            uri = Ezagent.URI.new!("entity://agent/#{ws}/#{target_id}")
+            uri = Ezagent.URI.new!("entity://#{ws}/agent/#{target_id}")
             {[uri], text}
 
           # 也允许 @loomworker_<sid>_<theme>(自定义 worker 也能直接 @)
           String.starts_with?(target_id, "loomworker_#{sid}_") ->
-            uri = Ezagent.URI.new!("entity://agent/#{ws}/#{target_id}")
+            uri = Ezagent.URI.new!("entity://#{ws}/agent/#{target_id}")
             {[uri], text}
 
           true ->
@@ -844,9 +844,22 @@ defmodule EzagentPluginLoom.WebPlug do
   defp salesperson_meta_of(%{"salesperson_reply" => m}) when is_map(m), do: m
   defp salesperson_meta_of(_), do: nil
 
-  defp role_of(%URI{} = u), do: role_of(URI.to_string(u))
-  defp role_of("entity://user/" <> _), do: "user"
-  defp role_of("entity://agent/" <> _), do: "agent"
+  # main canonical entity URI is workspace-first `entity://<ws>/<type>/<name>`,
+  # so the role/type is path segment 2 (not the host as in stitch's type-first form).
+  defp role_of(%URI{path: "/" <> rest}) do
+    case String.split(rest, "/") do
+      [_ws, type | _] when type in ["user", "agent", "worker"] -> type
+      _ -> "unknown"
+    end
+  end
+
+  defp role_of(s) when is_binary(s) do
+    case Ezagent.URI.parse(s) do
+      {:ok, u} -> role_of(u)
+      _ -> "unknown"
+    end
+  end
+
   defp role_of(_), do: "unknown"
 
   defp body_text(%{text: t}) when is_binary(t), do: t
@@ -1315,8 +1328,8 @@ defmodule EzagentPluginLoom.WebPlug do
   # 编排器 sync 回写到这一页(而非活动页)。
   defp emit_builder_page_update(ws, sid, files, summary, page) do
     suri = session_uri(ws, sid)
-    builder_uri = Ezagent.URI.new!("entity://agent/#{ws}/loombuilder_#{sid}")
-    orch_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomorch_#{sid}")
+    builder_uri = Ezagent.URI.new!("entity://#{ws}/agent/loombuilder_#{sid}")
+    orch_uri = Ezagent.URI.new!("entity://#{ws}/agent/loomorch_#{sid}")
 
     body_text =
       EzagentPluginLoom.Span.span("page_update", %{
@@ -1478,7 +1491,7 @@ defmodule EzagentPluginLoom.WebPlug do
   # 那段历史发言仍留在临时用户名下(不改写消息表,不碰 core)。
   defp consumer_sender(conn, ws, sid) do
     case caller_entity(conn) do
-      {:ok, %URI{scheme: "entity", host: "user"} = u} -> {:ok, u}
+      {:ok, %URI{scheme: "entity", path: "/user/" <> _} = u} -> {:ok, u}
       _ -> EzagentPluginLoom.TempUser.ensure_named(ws, "loomui_#{sid}")
     end
   end
@@ -1510,7 +1523,7 @@ defmodule EzagentPluginLoom.WebPlug do
   # 编辑页:列出房间里的「人」(entity://user/...,含作者自己),给角色面板的账号下拉用。
   # 排除 AI(entity://agent/...)和 session 自身。session 没活着 → 空列表(降级)。
   defp roster_humans(_conn, ws, sid) do
-    suri = Ezagent.URI.new!("session://loom/#{ws}/#{sid}")
+    suri = Ezagent.URI.new!("session://#{ws}/loom/#{sid}")
 
     members =
       case Ezagent.Kind.get_slice(suri, :session) do
@@ -1521,7 +1534,7 @@ defmodule EzagentPluginLoom.WebPlug do
     people =
       members
       |> Enum.map(&member_uri_str/1)
-      |> Enum.filter(&String.starts_with?(&1, "entity://user/"))
+      |> Enum.filter(&(role_of(&1) == "user"))
       |> Enum.uniq()
       |> Enum.sort()
       |> Enum.map(fn uri -> %{uri: uri, name: uri |> String.split("/") |> List.last()} end)
@@ -1588,7 +1601,7 @@ defmodule EzagentPluginLoom.WebPlug do
   # 临时用户升级:正式账号接管会话。须已登录(cookie 身份)。
   defp upgrade_temp(conn, ws, sid) do
     case caller_entity(conn) do
-      {:ok, %URI{scheme: "entity", host: "user"} = target} ->
+      {:ok, %URI{scheme: "entity", path: "/user/" <> _} = target} ->
         suri = session_uri(ws, sid)
         # 1) 会话所有权转移:正式账号成为成员(force-join,system caps)。
         _ = ensure_joined(suri, target)
@@ -1739,12 +1752,12 @@ defmodule EzagentPluginLoom.WebPlug do
     _ -> nil
   end
 
-  # session://<tmpl>/<ws>/<sid> → {ws, sid}(workspace = 第一段 path,sid = 第二段)。
-  defp sess_ws_sid(%URI{path: path}) when is_binary(path) do
+  # workspace-first `session://<ws>/<class>/<sid>` → {ws, sid}(ws = host,sid = name 段)。
+  defp sess_ws_sid(%URI{host: ws, path: path})
+       when is_binary(ws) and ws != "" and is_binary(path) do
     case path |> String.trim_leading("/") |> String.split("/") do
-      [ws, sid | _] -> {ws, sid}
-      [ws] -> {ws, ""}
-      _ -> {"", ""}
+      [_class, sid | _] -> {ws, sid}
+      _ -> {ws, ""}
     end
   end
 
@@ -1886,10 +1899,10 @@ defmodule EzagentPluginLoom.WebPlug do
     # 2026-06-12 — 同时确保 4 个 Salesperson 子 worker 在场。老会话(在 ensure_team 加
     # 子 worker 之前创建的 zuatu / tudou 等)靠这里按需 spawn + join(幂等),
     # 否则编排器 fan-out 派给不存在的子 worker → 无 deliverable → 超时降级。
-    with %URI{path: path} <- suri,
-         [ws, sid | _] <- path |> to_string() |> String.trim_leading("/") |> String.split("/") do
+    with %URI{host: ws, path: path} when is_binary(ws) and ws != "" <- suri,
+         [_class, sid | _] <- path |> to_string() |> String.trim_leading("/") |> String.split("/") do
       Enum.each(EzagentPluginLoom.SalespersonExperts.role_keys(), fn role ->
-        sub = Ezagent.URI.new!("entity://agent/#{ws}/loomsalespersonsub_#{sid}_#{role}")
+        sub = Ezagent.URI.new!("entity://#{ws}/agent/loomsalespersonsub_#{sid}_#{role}")
         _ = Ezagent.SpawnRegistry.spawn(sub)
         _ = ensure_joined(suri, sub)
       end)
@@ -1904,7 +1917,7 @@ defmodule EzagentPluginLoom.WebPlug do
   # admin/session 可见的那句。返回 `%{ok, id}`(id=消息 id,前端据此关联回帧)。
   defp dispatch_to_salesperson(conn, ws, sid, payload, visible_text) do
     suri = session_uri(ws, sid)
-    salesperson_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomsalesperson_#{sid}")
+    salesperson_uri = Ezagent.URI.new!("entity://#{ws}/agent/loomsalesperson_#{sid}")
 
     # 幂等保证 salesperson worker 在场:老会话(zuatu / 发布物)boot 时不一定重跑 ensure_team,
     # 所以这里按需 spawn + join(已在则短路)。新会话由 Team.ensure_team 装配。
@@ -2053,7 +2066,7 @@ defmodule EzagentPluginLoom.WebPlug do
   end
 
   defp do_derive(token, class_name, ws, name) do
-    suri = Ezagent.URI.new!("session://loom/#{ws}/#{name}")
+    suri = Ezagent.URI.new!("session://#{ws}/loom/#{name}")
 
     cond do
       session_alive?(suri) ->
@@ -2220,7 +2233,7 @@ defmodule EzagentPluginLoom.WebPlug do
   # 对每个 worker 读 :loom_worker slice,出 {theme, system_prompt, role} 三件套。
   # 找不到 session / slice 缺数据 → 空列表(降级到 Team 默认)。
   defp read_workers_snapshot(ws, sid) do
-    session_uri = Ezagent.URI.new!("session://loom/#{ws}/#{sid}")
+    session_uri = Ezagent.URI.new!("session://#{ws}/loom/#{sid}")
 
     case Ezagent.Kind.get_slice(session_uri, :session) do
       {:ok, %{members: members}} when is_map(members) ->
@@ -2281,7 +2294,7 @@ defmodule EzagentPluginLoom.WebPlug do
   # `pending` / `count` / `last_error` 是 runtime 易逝态,不进快照。
   # workers 也不抓 —— 当前 LoomWorker 用 init 默认值,LoomBuilderWorker 无状态。
   defp read_orchestrator_snapshot(ws, sid) do
-    orch_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomorch_#{sid}")
+    orch_uri = Ezagent.URI.new!("entity://#{ws}/agent/loomorch_#{sid}")
 
     # 2026-06-11 — 幂等补 spawn orchestrator(老会话兜底)。发布/消费会话(pub_*)是按需
     # mint 的临时会话,boot 时不重跑 Team.ensure_team,server 重启后 orchestrator 进程没了
@@ -2478,7 +2491,7 @@ defmodule EzagentPluginLoom.WebPlug do
   end
 
   defp refuse_if_session_exists(ws, name) do
-    uri = Ezagent.URI.new!("session://loom/#{ws}/#{name}")
+    uri = Ezagent.URI.new!("session://#{ws}/loom/#{name}")
 
     case Ezagent.KindRegistry.lookup(uri) do
       {:ok, _pid} -> {:error, :session_already_exists}

@@ -66,7 +66,7 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"session_name" => session_name} = tmpl, %URI{} = workspace_uri) do
     ws = workspace_uri.host
-    session_uri = Ezagent.URI.new!("session://loom/#{ws}/#{session_name}")
+    session_uri = Ezagent.URI.new!("session://#{ws}/loom/#{session_name}")
 
     # 2026-06-01 save-as-template:可选 `saved_state` 字段,装上一个 session 的
     # orchestrator slice 快照(`persona` + `loom_source`)。有就用 Kind.spawn 把
@@ -166,17 +166,17 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
       when is_binary(session_name) and session_name != "" and is_binary(ws) do
     Logger.info("LoomSession.cleanup: tearing down session=#{session_name} workspace=#{ws}")
 
-    session_uri = Ezagent.URI.new!("session://loom/#{ws}/#{session_name}")
+    session_uri = Ezagent.URI.new!("session://#{ws}/loom/#{session_name}")
 
     # 2026-06-01 — 加 loommeta_<sid>;之前只清了 orchestrator + v0 + 2 worker。
     # 自定义 worker(painter / lawyer 等用户加的)也得清,但我们这里硬列预制 4
     # 名;custom worker 通过 chat.members 扫描另算。
     team_uri_strs = [
-      "entity://agent/#{ws}/loomorch_#{session_name}",
-      "entity://agent/#{ws}/loombuilder_#{session_name}",
-      "entity://agent/#{ws}/loommeta_#{session_name}",
-      "entity://agent/#{ws}/loomworker_#{session_name}_policy",
-      "entity://agent/#{ws}/loomworker_#{session_name}_company"
+      "entity://#{ws}/agent/loomorch_#{session_name}",
+      "entity://#{ws}/agent/loombuilder_#{session_name}",
+      "entity://#{ws}/agent/loommeta_#{session_name}",
+      "entity://#{ws}/agent/loomworker_#{session_name}_policy",
+      "entity://#{ws}/agent/loomworker_#{session_name}_company"
     ]
 
     team_uris = Enum.map(team_uri_strs, &Ezagent.URI.new!/1)
@@ -261,7 +261,7 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
   """
   def session_uris_for_recipe(_tmpl_name, %{"session_name" => sn}, %URI{host: ws})
       when is_binary(sn) and sn != "" and is_binary(ws) do
-    [Ezagent.URI.new!("session://loom/#{ws}/#{sn}")]
+    [Ezagent.URI.new!("session://#{ws}/loom/#{sn}")]
   end
 
   def session_uris_for_recipe(_tmpl_name, _recipe, _ws_uri), do: []
@@ -467,7 +467,7 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
       role = Map.get(worker, "role") || theme
 
       if theme != "" do
-        worker_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomworker_#{sid}_#{theme}")
+        worker_uri = Ezagent.URI.new!("entity://#{ws}/agent/loomworker_#{sid}_#{theme}")
 
         args = %{
           uri: worker_uri,
@@ -496,7 +496,7 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
   defp pre_spawn_orchestrator_if_saved(_ws, _sid, saved) when map_size(saved) == 0, do: :ok
 
   defp pre_spawn_orchestrator_if_saved(ws, sid, saved) when is_map(saved) do
-    orch_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomorch_#{sid}")
+    orch_uri = Ezagent.URI.new!("entity://#{ws}/agent/loomorch_#{sid}")
 
     args = %{
       uri: orch_uri,

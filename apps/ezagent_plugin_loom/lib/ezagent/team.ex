@@ -65,7 +65,7 @@ defmodule EzagentPluginLoom.Team do
       # canonicalize_uris/1 在 snapshot load 时把 chat.members 的 key 全 rewrite
       # 到 canonical;若这里再用 URI.parse 加非 canonical key,Map.put 视为
       # 两个不同 key → 同一 agent 出现两条成员行(2026-06-01 demo6 双倍 bug)。
-      orchestrator = Ezagent.URI.new!("entity://agent/#{ws}/loomorch_#{sid}")
+      orchestrator = Ezagent.URI.new!("entity://#{ws}/agent/loomorch_#{sid}")
 
       # worker_specs:%{uri, role, prompt};role/prompt=nil → bare spawn(saved 路径)。
       worker_specs = resolve_worker_specs(ws, sid, saved_themes)
@@ -73,7 +73,7 @@ defmodule EzagentPluginLoom.Team do
 
       builder_members =
         if include_builder?,
-          do: [Ezagent.URI.new!("entity://agent/#{ws}/loombuilder_#{sid}")],
+          do: [Ezagent.URI.new!("entity://#{ws}/agent/loombuilder_#{sid}")],
           else: []
 
       # 2026-06-10 — preview-side AI orchestrator(Salesperson chat + AiSpot)。和 v0 平级、
@@ -81,14 +81,14 @@ defmodule EzagentPluginLoom.Team do
       # 2026-06-12 — Salesperson 现在是 orchestrator,外加一组固定的 sub-worker
       # (chat/navigation/controls/content),每个 loom session 创建即全量自带。
       salesperson_members =
-        [Ezagent.URI.new!("entity://agent/#{ws}/loomsalesperson_#{sid}")] ++
+        [Ezagent.URI.new!("entity://#{ws}/agent/loomsalesperson_#{sid}")] ++
           Enum.map(EzagentPluginLoom.SalespersonExperts.role_keys(), fn role ->
-            Ezagent.URI.new!("entity://agent/#{ws}/loomsalespersonsub_#{sid}_#{role}")
+            Ezagent.URI.new!("entity://#{ws}/agent/loomsalespersonsub_#{sid}_#{role}")
           end)
 
       # 2026-06-01 — team manager,接收 @ 的自然语言加 / 删 worker 指令。
       # 默认每个 loom session 都有。Behavior 是 mention-gated,不 @ 不动。
-      meta = Ezagent.URI.new!("entity://agent/#{ws}/loommeta_#{sid}")
+      meta = Ezagent.URI.new!("entity://#{ws}/agent/loommeta_#{sid}")
 
       # workers 走带配置 spawn(default 路径)/ bare spawn(saved 路径);
       # 其余成员(orchestrator / v0 / salesperson / meta)走 SpawnRegistry bare spawn。
@@ -122,7 +122,7 @@ defmodule EzagentPluginLoom.Team do
       is_list(saved_themes) and saved_themes != [] ->
         Enum.map(saved_themes, fn theme ->
           %{
-            uri: Ezagent.URI.new!("entity://agent/#{ws}/loomworker_#{sid}_#{theme}"),
+            uri: Ezagent.URI.new!("entity://#{ws}/agent/loomworker_#{sid}_#{theme}"),
             role: nil,
             prompt: nil
           }
@@ -136,7 +136,7 @@ defmodule EzagentPluginLoom.Team do
 
   defp config_spec(ws, sid, w) do
     %{
-      uri: Ezagent.URI.new!("entity://agent/#{ws}/loomworker_#{sid}_#{w["key"]}"),
+      uri: Ezagent.URI.new!("entity://#{ws}/agent/loomworker_#{sid}_#{w["key"]}"),
       role: w["desc"],
       prompt: w["prompt"]
     }
@@ -162,9 +162,12 @@ defmodule EzagentPluginLoom.Team do
   # authority) → {workspace, short_name}. Agents live in <workspace>;
   # their names carry <short_name> for per-session uniqueness + the worker
   # theme suffix (`_policy` / `_company`).
-  defp session_parts(%URI{path: path} = uri) when is_binary(path) do
+  # main canonical session URI is workspace-first `session://<ws>/<class>/<sid>`
+  # (host = workspace), so ws comes from the host and sid is the name segment.
+  defp session_parts(%URI{host: ws, path: path} = uri)
+       when is_binary(ws) and ws != "" and is_binary(path) do
     case path |> String.trim_leading("/") |> String.split("/") do
-      [ws, sid | _] when ws != "" and sid != "" -> {:ok, ws, sid}
+      [_class, sid | _] when sid != "" -> {:ok, ws, sid}
       _ -> {:error, {:bad_session_uri, URI.to_string(uri)}}
     end
   end
@@ -172,12 +175,34 @@ defmodule EzagentPluginLoom.Team do
   defp session_parts(uri), do: {:error, {:bad_session_uri, URI.to_string(uri)}}
 
   defp spawn_step(%URI{} = uri, _acc) do
+    # main resolves an agent's Kind from a flavor STORED in AgentFlavorAttributes
+    # (it does NOT derive the flavor from the URI name like stitch did) — so a bare
+    # `SpawnRegistry.spawn/1` fails with `{:no_kind_module_for_agent, _}` unless the
+    # flavor was recorded first. Every loom agent name is `<flavor>_<rest>` with a
+    # registered loom flavor, so store it pre-spawn (mirrors echo/cc/np templates).
+    _ = put_loom_flavor(uri)
+
     case Ezagent.SpawnRegistry.spawn(uri) do
       {:ok, _pid} -> {:cont, :ok}
       {:error, {:already_started, _pid}} -> {:cont, :ok}
       {:error, reason} -> {:halt, {:error, {:spawn_failed, URI.to_string(uri), reason}}}
     end
   end
+
+  # Derive the flavor (first `_`-segment of the agent name = a registered loom
+  # flavor) and store it so the entity-spawn Kind resolver can find the module.
+  defp put_loom_flavor(%URI{path: path} = uri) when is_binary(path) do
+    with name when is_binary(name) <- path |> String.split("/") |> List.last(),
+         [flavor | _] when flavor != "" <- String.split(name, "_", parts: 2) do
+      Ezagent.AgentFlavorAttributes.put(uri, flavor)
+    else
+      _ -> :ok
+    end
+  rescue
+    _ -> :ok
+  end
+
+  defp put_loom_flavor(_), do: :ok
 
   # Join under `system://session-internal` — the Catalog principal that
   # holds `cap(:any, Chat, :any)` (same principal the Generator's

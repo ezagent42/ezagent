@@ -73,12 +73,12 @@ defmodule Ezagent.Behavior.LoomSalespersonWorker do
     end
   end
 
-  defp user_turn?(%Message{sender: %URI{host: "user"}} = msg, ctx),
+  defp user_turn?(%Message{sender: %URI{path: "/user/" <> _}} = msg, ctx),
     do: addressed_to_self?(msg, ctx) and salesperson_payload(msg.body) != %{}
 
   defp user_turn?(_, _), do: false
 
-  defp deliverable?(%Message{sender: %URI{host: "agent"}, ref_id: ref}, pending)
+  defp deliverable?(%Message{sender: %URI{path: "/agent/" <> _}, ref_id: ref}, pending)
        when is_binary(ref),
        do: find_turn_by_subtask(pending, ref) != nil
 
@@ -225,7 +225,7 @@ defmodule Ezagent.Behavior.LoomSalespersonWorker do
         # 每个子任务 @ 对应 sub-worker,body 带它该处理的 caps + 子任务 + 用户原话。
         subs =
           for %{key: key, task: task} <- plan do
-            worker_uri = Ezagent.URI.new!("entity://agent/#{ws}/loomsalespersonsub_#{sid}_#{key}")
+            worker_uri = Ezagent.URI.new!("entity://#{ws}/agent/loomsalespersonsub_#{sid}_#{key}")
             owned = bucket_caps(roster, key)
 
             body = %{
@@ -444,9 +444,9 @@ defmodule Ezagent.Behavior.LoomSalespersonWorker do
 
   defp ws_sid(ctx) do
     case session_from_ctx(ctx) do
-      %URI{path: path} when is_binary(path) ->
+      %URI{host: ws, path: path} when is_binary(ws) and ws != "" and is_binary(path) ->
         case path |> String.trim_leading("/") |> String.split("/") do
-          [ws, sid | _] -> {ws, sid}
+          [_class, sid | _] -> {ws, sid}
           _ -> {nil, nil}
         end
 

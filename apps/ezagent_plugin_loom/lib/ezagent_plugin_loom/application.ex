@@ -33,7 +33,7 @@ defmodule EzagentPluginLoom.Application do
 
   ## Default instance seeding — `after_boot/0`
 
-  The default instance `entity://agent/system/loom_agent` is spawned in
+  The default instance `entity://system/agent/loom_agent` is spawned in
   Phase 3 (`after_boot/0`), AFTER Phase-2 `publish/1` registered
   `agent_flavors/0` so the resolver can map the flavor. This plugin's
   dep on `ezagent_domain_instance_message` makes OTP boot chat first, so the
@@ -44,11 +44,11 @@ defmodule EzagentPluginLoom.Application do
   use Application
   use Ezagent.Plugin
 
-  # entity://agent/system/loom_agent — the default Loom instance. Built at runtime
+  # entity://system/agent/loom_agent — the default Loom instance. Built at runtime
   # via `default_uri/0` (NOT a compile-time module attr) so it uses the canonical
   # `Ezagent.URI.new!/1`; that needs the SchemeRegistry, which is up by the time
   # `after_boot/0` / `default_uri/0` run.
-  @default_uri_str "entity://agent/system/loom_agent"
+  @default_uri_str "entity://system/agent/loom_agent"
 
   # --- OTP Application -------------------------------------------------
 
@@ -244,6 +244,9 @@ defmodule EzagentPluginLoom.Application do
   """
   @impl Ezagent.Plugin
   def after_boot do
+    # main's entity-spawn resolver needs the flavor STORED before a bare spawn.
+    _ = Ezagent.AgentFlavorAttributes.put(default_uri(), "loom")
+
     case Ezagent.SpawnRegistry.spawn(default_uri()) do
       {:ok, _pid} ->
         :ok

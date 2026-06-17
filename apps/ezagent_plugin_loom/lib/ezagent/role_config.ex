@@ -139,8 +139,7 @@ defmodule Ezagent.PluginLoom.RoleConfig do
   def ensure_creator(ws, sid, uri) when is_binary(ws) and is_binary(sid) do
     cfg = get(ws, sid)
 
-    if cfg["creator"] in [nil, ""] and is_binary(uri) and
-         String.starts_with?(uri, "entity://user/") do
+    if cfg["creator"] in [nil, ""] and is_binary(uri) and user_entity?(uri) do
       updated = Map.put(cfg, "creator", uri)
       all = load_all() |> Map.put(skey(ws, sid), updated)
       save_all(all)
@@ -153,6 +152,20 @@ defmodule Ezagent.PluginLoom.RoleConfig do
   end
 
   def ensure_creator(ws, sid, _), do: get(ws, sid)
+
+  # main canonical entity URI is workspace-first `entity://<ws>/<type>/<name>`,
+  # so a user entity has "user" as path segment 2 (not the host).
+  defp user_entity?(uri) when is_binary(uri) do
+    case Ezagent.URI.parse(uri) do
+      {:ok, %URI{scheme: "entity", path: "/" <> rest}} ->
+        match?([_ws, "user" | _], String.split(rest, "/"))
+
+      _ ->
+        false
+    end
+  end
+
+  defp user_entity?(_), do: false
 
   @doc """
   整盘写某 session 的角色配置。保留已捕获的 `creator`;写 `super`(label/effect/view/url,
@@ -309,7 +322,7 @@ defmodule Ezagent.PluginLoom.RoleConfig do
   defp canonical_entity("entity://" <> _ = uri, _ws), do: uri
 
   defp canonical_entity(name, ws) when is_binary(name) and name != "",
-    do: "entity://user/#{ws}/#{name}"
+    do: "entity://#{ws}/user/#{name}"
 
   defp canonical_entity(_, _), do: ""
 end

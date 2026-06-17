@@ -581,9 +581,10 @@ defmodule Ezagent.PluginLoom.View.LoomDashboardView do
 
   # loom-port PR#2 — generalized from `host: "loom"` to ANY session host so the
   # Dashboard works for every session (loom stats just come back empty for non-loom).
-  defp ws_sid(%URI{scheme: "session", path: path}) when is_binary(path) do
+  defp ws_sid(%URI{scheme: "session", host: ws, path: path})
+       when is_binary(ws) and ws != "" and is_binary(path) do
     case String.split(path, "/", trim: true) do
-      [ws, sid | _] -> {ws, sid}
+      [_class, sid | _] -> {ws, sid}
       _ -> {nil, nil}
     end
   end

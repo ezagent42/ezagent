@@ -453,7 +453,7 @@ defmodule Ezagent.PluginLoom.WorkerConfig do
   # ── helpers ──
 
   defp worker_uri(ws, sid, key),
-    do: Ezagent.URI.new!("entity://agent/#{ws}/loomworker_#{sid}_#{key}")
+    do: Ezagent.URI.new!("entity://#{ws}/agent/loomworker_#{sid}_#{key}")
 
   defp validate(raw) do
     key = raw |> Map.get("key", Map.get(raw, :key, "")) |> to_string() |> String.trim()
@@ -480,9 +480,10 @@ defmodule Ezagent.PluginLoom.WorkerConfig do
     end
   end
 
-  defp parts(%URI{scheme: "session", path: path}) when is_binary(path) do
+  defp parts(%URI{scheme: "session", host: ws, path: path})
+       when is_binary(ws) and ws != "" and is_binary(path) do
     case path |> String.trim_leading("/") |> String.split("/") do
-      [ws, sid | _] when ws != "" and sid != "" -> {:ok, ws, sid}
+      [_class, sid | _] when sid != "" -> {:ok, ws, sid}
       _ -> {:error, :bad_session_uri}
     end
   end

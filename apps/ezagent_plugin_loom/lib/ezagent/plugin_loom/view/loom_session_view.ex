@@ -41,9 +41,12 @@ defmodule Ezagent.PluginLoom.View.LoomSessionView do
   # 只有**创作会话**(直接 session.loom / 手存模板如 zuatu)显示 loom 视图;**发布消费
   # 会话**(`/p/:token/open` 从 published 物 mint 的 `pub_<hex>`,经 `ConsumerSession.mark`
   # 持久标记)不显示。按来源持久标志判,不靠名字、不靠有没有 v0(2026-06-10)。
-  def applies_to?(%URI{scheme: "session", host: "loom", path: path}) when is_binary(path) do
+  # main canonical session URI is workspace-first `session://<ws>/loom/<name>`
+  # (host = workspace, class = path segment 1).
+  def applies_to?(%URI{scheme: "session", host: ws, path: path})
+      when is_binary(ws) and ws != "" and is_binary(path) do
     case String.split(path, "/", trim: true) do
-      [ws, name | _] ->
+      ["loom", name | _] ->
         name != "" and not Ezagent.PluginLoom.ConsumerSession.consumer?(ws, name)
 
       _ ->
@@ -77,9 +80,10 @@ defmodule Ezagent.PluginLoom.View.LoomSessionView do
 
   # `session://loom/<ws>/<name>` → `/loom/<ws>/<name>` (与 session_editor.ex
   # 的 `loom_link/1` 同样的 URL 推导;只是这里嵌 iframe,那里开新标签)。
-  defp loom_url(%URI{scheme: "session", host: "loom", path: path}) when is_binary(path) do
+  defp loom_url(%URI{scheme: "session", host: ws, path: path})
+       when is_binary(ws) and ws != "" and is_binary(path) do
     case String.split(path, "/", trim: true) do
-      [ws, name | _] -> "/loom/#{ws}/#{name}"
+      ["loom", name | _] -> "/loom/#{ws}/#{name}"
       _ -> nil
     end
   end

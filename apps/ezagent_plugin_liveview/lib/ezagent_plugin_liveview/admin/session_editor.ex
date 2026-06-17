@@ -164,10 +164,12 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
     """
   end
 
-  # session://loom/<ws>/<name>  →  "/loom/<ws>/<name>"; nil for non-loom sessions.
-  defp loom_session_url(%URI{scheme: "session", host: "loom", path: path}) when is_binary(path) do
+  # workspace-first session URI `session://<ws>/loom/<name>` → "/loom/<ws>/<name>";
+  # nil for non-loom sessions (class segment != "loom").
+  defp loom_session_url(%URI{scheme: "session", host: ws, path: path})
+       when is_binary(ws) and ws != "" and is_binary(path) do
     case String.split(path, "/", trim: true) do
-      [ws, name | _] -> "/loom/#{ws}/#{name}"
+      ["loom", name | _] -> "/loom/#{ws}/#{name}"
       _ -> nil
     end
   end

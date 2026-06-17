@@ -119,10 +119,10 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
   # === classification ===
 
-  defp user_turn?(%Message{sender: %URI{host: "user"}}), do: true
+  defp user_turn?(%Message{sender: %URI{path: "/user/" <> _}}), do: true
   defp user_turn?(_), do: false
 
-  defp worker_deliverable?(%Message{sender: %URI{host: "agent"}, ref_id: ref}, pending)
+  defp worker_deliverable?(%Message{sender: %URI{path: "/agent/" <> _}, ref_id: ref}, pending)
        when is_binary(ref),
        do: find_turn_by_subtask(pending, ref) != nil
 

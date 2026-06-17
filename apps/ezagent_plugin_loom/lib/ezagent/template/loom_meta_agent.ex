@@ -38,7 +38,7 @@ defmodule Ezagent.PluginLoom.Template.LoomMetaAgent do
 
   defp check_agent_uri(%{"agent_uri" => uri_str}) when is_binary(uri_str) and uri_str != "" do
     case Ezagent.URI.parse(uri_str) do
-      {:ok, %URI{scheme: "entity", host: "agent", path: "/" <> rest}} when rest != "" ->
+      {:ok, %URI{scheme: "entity", path: "/" <> rest}} when rest != "" ->
         with [_workspace, entity_name] when entity_name != "" <-
                String.split(rest, "/", parts: 2),
              [flavor, suffix] when flavor != "" and suffix != "" <-
