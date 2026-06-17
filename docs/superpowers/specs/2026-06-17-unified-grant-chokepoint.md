@@ -1,188 +1,239 @@
-# Unified Grant Chokepoint — design
+# Unified Grant Chokepoint — design (rev 2)
 
-**Status:** spec (Allen-approved direction 2026-06-17; awaiting spec-review gate)
+**Status:** spec rev 2 (rev 1 RECONSIDER per subagent adversarial review 2026-06-17;
+this rev addresses all 3 BLOCKERs + 6 HIGH/MEDIUM findings).
 **Decision basis:** GLOSSARY Decision #154 ("no unowned permissions") + #153 (grant
 authorizer {self, admin, manager-of-target}).
-**Program:** CapBAC "no unowned caps" step ③ — build the chokepoint first, update the
-test gate, then migrate the remaining conversions (feishu-binding-policy,
-template-materialize/cap#2) through it.
+**Program:** CapBAC "no unowned caps" step ③ — chokepoint first, update test gate, then
+migrate the conversions (template-materialize family, feishu-binding-policy) through it.
 
 ---
 
 ## 1. Problem
 
-A capability grant has **three distinct roles** that the current code collapses into one
-`ctx.caller` / `granter_uri` value:
+A capability grant has **three distinct roles** the current code conflates:
 
-| role | meaning | today |
-|------|---------|-------|
-| **caller** | the code path that mechanically invokes the grant (an HTTP handler, a boot reconciler, an orchestrator-assembly effect — often not a person) | `ctx.caller` |
-| **authorizer** | the basis the grant is permitted on: a held cap, admin status, manager-delegation, **or a rule** | `check_grant_authorized/2` reads `ctx.caller` |
-| **granter** (`granted_by`) | the real, accountable entity the cap is recorded under | `granter_from_ctx(ctx)` = `ctx.caller` (fallback admin) |
+| role | meaning | mechanism today |
+|------|---------|-----------------|
+| **caller** | the code path that invokes the grant (HTTP handler, reconciler, assembly effect — often not a person) | `ctx.caller` |
+| **authorizer** | *what makes the grant permitted* | **`ctx.caps`** — the cap set the dispatch carries (NOT `ctx.caller`; verified: `check_grant_authorized/2` + `holds_admin_caps?`/`holds_manage_over_target?`/`require_workspace_admin` all read `ctx.caps`; `ctx.caller` is used only for the `caller == owner` self-check) |
+| **granter** (`granted_by`) | the real accountable entity recorded on the cap | `granter_from_ctx(ctx)` → `ctx.caller`, fallback admin |
 
-In the manual case (an owner grants a member a cap) all three coincide, so the conflation
-is invisible. It breaks for **rule-driven auto-grants**: the caller is an automated path
-with no business being the accountable entity, and the authorizer is a *rule* (e.g.
-`public_view == true`), not the caller's held caps. The accountable entity is whoever
-*configured the rule* — the session owner. This is precisely the `#808` anon-access and the
-`feishu-binding-policy` / `template-materialize` cases.
+**Two structural problems:**
 
-The structural problem: **there is no single grant chokepoint.** ~13 sites
-(`grep "action: :grant_cap" / ":identity, :grant_cap"`) each independently construct the
-grant-dispatch envelope and each independently decide the granter. Every new site can
-re-introduce the `granter = caller` trap. The `no_unowned` ratchet gate (#812) catches
-*system-principal* minters but does not stop a fresh hand-rolled grant site from stamping a
-non-entity / wrong granter.
+1. **No single chokepoint.** 15 grant-dispatch sites each independently build the envelope,
+   each independently pick `ctx.caps` (the authorizer) AND `granted_by` (the granter). Every
+   new site can re-introduce a wrong/non-entity granter. The `no_unowned` gate (#812) only
+   catches *Catalog* minters, not a fresh hand-rolled grant site.
+2. **The dominant real authorizer is a `system://` principal in `ctx.caps`** while
+   `granted_by` is set separately — and at several sites `granted_by` is *itself* a
+   non-entity `system://` URI (e.g. `behavior/workspace.ex:776`,
+   `session_template.ex`, `template.ex`), directly violating Decision #154 **today**.
+
+This is the heart of Decision #154: the *granter* (provenance) must be a real entity even
+when the *authorizer* (the caps that let the grant through the boundary) is, transitionally,
+a system principal. The end state removes the system principal as authorizer too (shrinking
+`no_unowned` to 0); the chokepoint is what makes that migration safe and prevents regression.
 
 ## 2. Goal
 
-One chokepoint that **all** grant sites route through, whose API makes `granter = caller`
-**structurally impossible to express**:
+One chokepoint all grant/revoke dispatches route through, whose API makes the three roles
+**explicit and independently named**, so `granter = caller` is impossible to express and a
+non-entity granter is refused:
 
-- `granted_by` is never defaulted from the caller. It is **derived from an explicit,
-  tagged authorization basis** — the dev cannot omit it.
-- The authorization basis is one of a small closed set, each of which fixes the granter:
-  - `{:held_by, actor_uri}` — `actor_uri` holds the cap / is the target's owner /
-    is manager-delegated (the #811 path). `granted_by = actor_uri`.
-  - `{:admin, admin_uri}` — admin authority. `granted_by = admin_uri`.
-  - `{:rule, rule_name, configurer_uri}` — a rule-driven auto-grant; `rule_name` is the
-    rule (e.g. `:public_view`, `:feishu_binding`, `:orchestrator_template`),
-    `configurer_uri` is whoever configured it. `granted_by = configurer_uri`.
-- The chokepoint **rejects a non-entity granter at runtime** (`granted_by` MUST be
-  `%URI{scheme: "entity"}`; a `system://…` granter is refused) — Decision #154 enforced on
-  the runtime grant path, not just the static Catalog audit.
-- A **grep invariant gate** forbids constructing an `:identity, :grant_cap` dispatch
-  envelope anywhere except the chokepoint module.
+- The **authorization basis is a closed tagged set**; each tag fixes BOTH which caps load
+  into `ctx.caps` (the authorizer) AND the derived `granted_by` (a real entity):
 
-Non-goals: changing the *authorization* semantics for the existing held/admin/manager
-branches (those are #811, unchanged); changing create-time `caps_json` seeding (a different
-mechanism — #808's anon path; already #154-compliant); a UI.
+  | tag | `ctx.caps` (authorizer) | `ctx.caller` | derived `granted_by` |
+  |-----|-------------------------|--------------|----------------------|
+  | `{:held_by, actor}` | `read_caps(actor)` — actor's real cap slice | `actor` | `actor` |
+  | `{:admin, admin}` | `read_caps(admin)` (must contain admin authority) | `admin` | `admin` |
+  | `{:rule, name, configurer}` | `[]` + `ctx.authorization_rule = name` (rule branch, §3.3) | `configurer` | `configurer` |
+  | `{:system, principal, granted_by}` *(transitional)* | `Catalog.caps(principal)` | `principal` | `granted_by` (MUST be entity) |
+
+  `{:held_by, actor}` subsumes self (actor == target owner), admin (actor holds admin
+  caps), and **#811 manager-delegation** (actor holds a Manage cap over target) — all decided
+  by `ctx.caps` exactly as today. `{:admin, _}` is a convenience alias when the actor is
+  known to be admin. `{:system, …}` is the **transitional** tag: it preserves today's
+  system-principal *authorization* while forcing `granted_by` to a real **entity** — so
+  PR-1 fixes the #154 granter violations everywhere without changing authorization
+  semantics. PR-2/PR-3 convert `{:system, …}` calls to `{:rule, …}`/`{:held_by, …}` and the
+  principal leaves the Catalog (shrinking `no_unowned`).
+
+- **`granted_by` is derived from the tag** — never a parameter the caller can set to the
+  caller, never silently inherited. The chokepoint **explicitly overwrites** the cap's
+  `granted_by` (struct update — NOT via `normalize!/2`, which returns a `%Capability{}`
+  unchanged and would drop the derived granter) and then **validates it is
+  `%URI{scheme: "entity"}`**, else `{:error, {:granter_not_entity, uri}}` (the runtime #154
+  guard; fail-closed).
+
+- A **grep invariant gate** forbids constructing a grant/revoke dispatch (literal OR
+  variable action) anywhere except the chokepoint module.
+
+Non-goals: changing authorization *semantics* of the held/admin/manager branches (#811,
+unchanged); create-time `caps_json` seeding (#808's anon path — a different mechanism,
+already #154-compliant); a UI.
 
 ## 3. Design
 
-### 3.1 The chokepoint module — `Ezagent.Identity.Grant`
+### 3.1 The chokepoint module — `Ezagent.Identity.Grant` (in `ezagent_domain_identity`)
 
-Lives in `ezagent_domain_identity` (it dispatches `identity.grant_cap`, the same domain as
-`Ezagent.Identity.grant_cap/3` today). Two faces, because grant sites split into imperative
-callers and behavior handlers that *return* an effect:
+Dep-safe: `ezagent_domain_workspace`, `ezagent_domain_session`, `ezagent_plugin_feishu`,
+`ezagent_plugin_liveview` already declare `{:ezagent_domain_identity, in_umbrella: true}` —
+routing grants through it creates **no new umbrella edge** (verified; the acyclic/undeclared-
+dep gate won't fire).
+
+The sites use **three** dispatch mechanisms (verified), so the chokepoint owns one private
+`prepare/3` plus a thin wrapper per mechanism (revoke twins included so the variable-action
+builder lives here too):
 
 ```elixir
 @type authorization ::
         {:held_by, URI.t()}
         | {:admin, URI.t()}
         | {:rule, atom(), URI.t()}
+        | {:system, URI.t(), URI.t()}   # {principal, granted_by_entity} — transitional
 
-# Imperative — for plain callers (workspace.ex, feishu binding_policy, liveview,
-# orchestrator tools). Builds the dispatch + sends it the same way Identity.grant_cap/3
-# does today.
-@spec grant_cap(target :: URI.t() | String.t(), Ezagent.Capability.t() | map(), authorization) ::
-        {:ok, term()} | {:error, term()}
-def grant_cap(target, cap, authorization)
+# CORE — derives ctx.caps + granted_by + rule flag from the tag, overwrites the cap's
+# granted_by (struct update), validates it is an entity URI. Returns the canonical
+# {target_with_action, cap', ctx'} or {:error, _}. The ONLY place granted_by is derived.
+@spec prepare(target :: URI.t(), Ezagent.Capability.t(), authorization, action :: :grant_cap | :revoke_cap) ::
+        {:ok, {URI.t(), Ezagent.Capability.t(), map()}} | {:error, term()}
+defp prepare(target, cap, authorization, action)
 
-# Effect constructor — for behavior handlers that return a dispatch effect
-# (template.ex, membership.ex, orchestrator/caps.ex, materializer.ex, session_template.ex).
-# Returns the canonical `{:dispatch, target, %{action: :grant_cap, cap: ...}, opts}` effect
-# (exact effect shape per the dispatch-returning-effect SPEC), never hand-rolled.
-@spec grant_cap_effect(target :: URI.t(), Ezagent.Capability.t() | map(), authorization) ::
-        Ezagent.Effect.t()
-def grant_cap_effect(target, cap, authorization)
+# Imperative wrappers (build envelope + send):
+def grant_cap(target, cap, authorization)              # Invocation.dispatch  (mode :call)
+def grant_cap_via_router(target, cap, authorization, reply_mode \\ :async)  # Router.dispatch %Cmd
+def revoke_cap(target, cap, authorization)             # symmetric
+
+# Effect-constructor wrappers (return effect tuples for behavior handlers):
+def grant_cap_effect(target, cap, authorization)       # {:dispatch, %Cmd{}}
+def grant_cap_returning_effect(target, cap, authorization, bind_as)  # {:dispatch_returning, %Cmd{}, bind_as:}
+def revoke_cap_returning_effect(target, cap, authorization, bind_as) # the security-revoke twin
 ```
 
-Both call one private `build/3` that:
-1. derives `granted_by` from the authorization tag (`held_by`→actor, `admin`→admin,
-   `rule`→configurer);
-2. **validates** `granted_by` is `%URI{scheme: "entity"}` — else `{:error,
-   {:granter_not_entity, granted_by}}` (fail-closed; the runtime #154 guard);
-3. stamps `granted_by` onto the cap (`Capability.normalize!/2`);
-4. sets the dispatch `ctx` so the downstream authz check sees the right basis:
-   - `:caller` carries the actor (for `held_by`/`admin` — the existing
-     `check_grant_authorized/2` branches are unchanged);
-   - for `{:rule, rule_name, _}` the ctx carries `authorization_rule: rule_name`, which
-     activates a **new rule branch** in `check_grant_authorized/2` (3.2).
-5. records `authorization` (the tag) + `granted_by` on the `:cap_granted` emit for audit
-   (extends the existing `via_manage` provenance field).
+`prepare/3` is the single source of truth; all wrappers delegate to it. `granted_by`
+derivation lives **only** in `prepare/3`. `Ezagent.Identity.grant_cap/3` becomes a
+back-compat shim: `grant_cap(e, c, granter_uri)` → `Grant.grant_cap(e, c, {:held_by,
+granter_uri})` (behavior-preserving — it already loads `read_granter_caps(granter)` into
+`ctx.caps`, which is exactly `{:held_by, actor}`'s semantics).
 
-`Ezagent.Identity.grant_cap/3` becomes a thin back-compat shim that maps the old
-`granter_uri` 3rd arg to `{:held_by, granter_uri}` (preserving today's behavior) and
-delegates to `Grant.grant_cap/3`. It is deprecated in favor of the explicit-authorization
-arity; the grep gate (3.3) does not flag it because it routes through the chokepoint.
+### 3.2 `prepare/3` details (addresses HIGH-1, MEDIUM-1)
 
-### 3.2 The rule branch in `check_grant_authorized/2`
+1. derive `ctx.caps`, `ctx.caller`, `granted_by`, and `authorization_rule` per the §2 table;
+2. **overwrite** the cap: `cap = %{cap | granted_by: granted_by, granted_at: now}` (explicit
+   struct update — `normalize!/2` is NOT used for granter stamping; it ignores the granter
+   for a `%Capability{}` and would leave a pre-existing system-principal `granted_by` in
+   place);
+3. **validate** `match?(%URI{scheme: "entity"}, granted_by)` else `{:error,
+   {:granter_not_entity, granted_by}}`. (`Ezagent.Entity.User.admin_uri/0` =
+   `entity://system/user/admin` *is* entity-scheme, so the admin fallback passes. The
+   `bootstrap_granter`/`granter_from_ctx` `system://bootstrap` fallbacks are removed —
+   replaced by the admin entity, or let-it-crash if `admin_uri/0` is unavailable; the
+   `function_exported?` hedge is dropped per let-it-crash.);
+4. record `authorization` (the tag, minus secrets) + `granted_by` on the `:cap_granted`
+   emit (extends the existing `via_manage` provenance field).
 
-A new clause: when `ctx[:authorization_rule]` is set (only the chokepoint sets it, only for
-`{:rule, …}`), authorization is granted on the rule's assertion — the caller is responsible
-for having verified the rule's precondition before calling (e.g. `PublicView.public_view?/1`
-returned true). The cap is **still** subject to `check_action_wildcard_grant_authorized/2`
-(a rule may NOT mint a full-wildcard cap; rule-granted caps must be scope-bounded or
-concrete-instance). The rule name is recorded for audit. This is the same structural
-authorization branch #808 introduced for `public_view`, generalized so every rule-driven
-grant expresses itself uniformly.
+### 3.3 The rule branch in `check_grant_authorized/2` (addresses HIGH-2)
 
-### 3.3 The grep invariant gate
+A new clause fires only when `ctx[:authorization_rule]` is set (only `prepare/3` sets it,
+only for `{:rule, …}`). It authorizes on the rule's assertion (the caller verified the rule
+precondition before the call — e.g. `PublicView.public_view?/1`). **Structural bound (the
+fix for HIGH-2 — `check_action_wildcard_grant_authorized` alone is insufficient because it
+only fires on `action: :any`):** a rule grant is rejected unless the cap is
+**concrete-scoped** —
 
-`apps/ezagent_core/test/invariants/grant_dispatch_chokepoint_test.exs` (modeled on the
-existing `no_unowned_system_principal_grant_test.exs` / `undeclared_umbrella_dep_test`
-ratchet pattern):
+```
+rule_cap_bounded?(cap) :=
+  cap.kind != :any and cap.behavior != :any and
+  (match?(%URI{}, cap.instance) or scope_bounded_instance?(cap.instance))
+```
 
-- scans every non-test `apps/**/*.ex` for a grant-dispatch construction signature
-  (`action: :grant_cap` in a dispatch map, or `with_action(_, :identity, :grant_cap)`);
-- the allowlist is the chokepoint module file only (`…/identity/grant.ex`);
-- **teeth:** (1) every match is either in the chokepoint or in the allowlist; (2) the
-  allowlist is shrink-only (a CI-checkable constant); (3) a new bypass site fails the gate.
+i.e. a rule may NOT mint `kind: :any` / `behavior: :any` / unscoped-`:any` instance, with
+ANY action (wildcard or concrete). Else `{:error, :rule_grant_must_be_concrete_scoped}`.
+The rule name is recorded for audit. (The existing `check_action_wildcard_grant_authorized`
+still also applies.)
 
-A second tooth, the runtime #154 guard: a unit test that `Grant.build/3` refuses a
-`{:rule, _, system_uri}` / any non-entity granter.
+### 3.4 The grep invariant gate (addresses BLOCKER-3, NIT on teeth)
 
-### 3.4 Migration (the ~13 sites)
+`apps/ezagent_core/test/invariants/grant_dispatch_chokepoint_test.exs` (ratchet idiom from
+`no_unowned_system_principal_grant_test` / `undeclared_umbrella_dep_test`):
 
-PR-1 introduces the module + gate and migrates every **currently-correct** site to call it,
-seeding the allowlist at the chokepoint only (all real sites move through it the same day):
+- scans every non-test `apps/**/*.ex` for a grant/revoke dispatch construction:
+  - literal: `action: :grant_cap` / `action: :revoke_cap` inside a `%Cmd{}`/`%Invocation{}`
+    /effect map;
+  - **variable** (the BLOCKER-3 evasion): a function whose body builds a `%Cmd{action:
+    <var>}` / `%Invocation{}` where the var is constrained `when action in [:grant_cap,
+    :revoke_cap]`, and any `with_action(_, :identity, :grant_cap|:revoke_cap)`;
+- allowlist = the chokepoint module file ONLY;
+- **teeth:** (1) every match is in the chokepoint; (2) allowlist is shrink-only (compile-
+  time constant); (3) a new bypass site (literal or variable-action) fails the gate.
+- second tooth (runtime #154 guard): a unit test that `prepare/3` refuses any non-entity
+  derived `granted_by` (incl. `{:system, p, system://…}` → refused — the granted_by arg of
+  `{:system, …}` must be an entity).
 
-| site | today's basis | new authorization |
-|------|---------------|-------------------|
-| `identity.ex:grant_cap/3` | `granter_uri` | shim → `{:held_by, granter_uri}` |
-| `workspace.ex:874/917` (member create-session cap; creator manage cap) | caller=owner/admin | `{:held_by, caller}` |
-| `liveview entity_caps_live.ex:34` | admin UI | `{:held_by, admin}` |
-| `session_creator/materializer.ex:95` (owner orchestrator Manage, #811) | owner | `{:held_by, owner}` |
-| `behavior/template.ex:731`, `session/membership.ex:209` | effect, owner | `grant_cap_effect` `{:held_by, owner}` |
-| `entity/session_template.ex:671`, `orchestrator/tools/templates.ex:135` | owner | `{:held_by, owner}` |
+### 3.5 Complete site inventory (addresses BLOCKER-2, BLOCKER-3, MEDIUM-3)
 
-The two **conversions** ride later PRs (their authorization tag is the whole point):
+15 sites, corrected imperative-vs-effect classification and real authorizer:
 
-| site | today (violation) | conversion |
-|------|-------------------|-----------|
-| `orchestrator/caps.ex:63` (cap#2 worker-spawn) | `system://template-materialize` | `{:rule, :orchestrator_template, owner}` — removes `template-materialize` from the `no_unowned` allowlist |
-| `feishu binding_policy.ex:253` | `system://feishu-binding-policy` | `{:rule, :feishu_binding, binding_configurer}` (the admin who configured the binding, NOT the bound user) — removes `feishu-binding-policy` |
+| # | site | dispatch API | authorizer today (`ctx.caps`) | PR-1 tag |
+|---|------|--------------|-------------------------------|----------|
+| 1 | `identity.ex:206` grant_cap/3 | Router %Cmd | granter's real caps | shim → `{:held_by, granter}` |
+| 2 | `workspace.ex:874` member create-session cap | Invocation | (verify) | `{:held_by, caller}` or `{:system,…}` |
+| 3 | `workspace.ex:917` creator manage cap | Invocation | **bootstrap wildcard** (`Manage :any` needs admin) | `{:admin, creator?}` / `{:system, bootstrap, creator}` |
+| 4 | `behavior/workspace.ex:726-794` member-cap **grant+revoke** (variable action, BLOCKER-3) | effect `{:dispatch}` / `{:dispatch_returning, bind_as}` | **`system://template-materialize`**, granted_by **non-entity** | `grant_cap_effect` / `revoke_cap_returning_effect` `{:system, template-materialize, <member's workspace owner entity>}` |
+| 5 | `liveview entity_caps_live.ex:34` | Invocation | admin UI caps | `{:held_by, admin}` |
+| 6 | `materializer.ex:95` owner orchestrator-Manage (#811) | Invocation | `system://template-materialize` | `{:system, template-materialize, owner}` |
+| 7 | `orchestrator/caps.ex:63` cap#1-#4 (incl cap#2 worker-spawn) | Invocation | `system://template-materialize` | `{:system, template-materialize, owner}` |
+| 8 | `entity/session_template.ex:671` | Invocation | `system://template-materialize` | `{:system, template-materialize, owner}` |
+| 9 | `behavior/template.ex:728` fork owner cap | Router %Cmd (imperative, NOT effect) | `system://template-materialize` | `{:system, template-materialize, owner}` |
+| 10 | `behavior/session/membership.ex:207` | Router %Cmd (imperative) | (verify) | `{:held_by, owner}` / `{:system,…}` |
+| 11 | `orchestrator/tools/templates.ex:135` | Invocation | (verify) | `{:held_by, owner}` |
+| 12 | `feishu binding_policy.ex:253` | Invocation | `system://feishu-binding-policy` | `{:system, feishu-binding-policy, <configurer entity>}` |
 
-When both convert, the `no_unowned` allowlist reaches 0 and the chokepoint allowlist is the
-single module — both gates closed.
+(PR-1 implementation re-verifies each "(verify)" basis from the live `ctx.caps` before
+choosing the tag.) **Every site's `granted_by` becomes a real entity in PR-1** via the tag's
+derived granter — fixing BLOCKER-3's and the other non-entity granters immediately, with
+authorization semantics unchanged (the `{:system, …}` tag keeps the principal as authorizer).
 
 ## 4. PR sequence
 
-- **PR-1** chokepoint module + rule branch + grep gate + runtime #154 guard + migrate all
-  currently-correct sites. No `no_unowned` change (no system principal converted yet); the
-  new grep gate goes green at allowlist=1.
-- **PR-2** convert `orchestrator/caps.ex` cap#2 → `{:rule, :orchestrator_template, owner}`;
-  shrink `no_unowned` allowlist (drop `template-materialize`).
-- **PR-3** convert `feishu binding_policy.ex` → `{:rule, :feishu_binding, configurer}`;
-  shrink `no_unowned` allowlist to 0.
+- **PR-1** (mechanical, behavior-preserving): introduce `Ezagent.Identity.Grant` (prepare +
+  6 wrappers) + the rule branch + the grep gate + the runtime entity guard; migrate ALL 15
+  sites to call it; the `{:system, principal, entity}` tag keeps each site's authorization
+  identical while forcing an entity `granted_by`. Grep gate green at allowlist=1.
+  `no_unowned` **unchanged** (no principal removed yet). Acceptance: gate green; every grant
+  site routes through the chokepoint; every `:cap_granted` emit has an **entity** granted_by.
+- **PR-2** convert the `template-materialize` family (sites #4, #6-#9, and #2/#10 if
+  system-authorized) from `{:system, template-materialize, _}` to `{:rule,
+  :orchestrator_template/:template_materialize, owner}` (rule branch, concrete-scoped) or
+  `{:held_by, owner}` where the owner genuinely holds the authority (manager-delegation,
+  #811). Then remove `template-materialize` from the Catalog → shrink `no_unowned` allowlist.
+  cap#2 (`agent/:any/{:spawned_by}`) is scope-bounded `{:spawned_by}` so it passes
+  `rule_cap_bounded?`; granter = owner.
+- **PR-3** convert `feishu binding_policy` (#12) → `{:rule, :feishu_binding, configurer}`.
+  **Requires threading the configurer URI** (the admin who ran `mix ezagent.feishu.bind`)
+  down to `binding_policy` — it is not in scope there today (MEDIUM-2); PR-3 adds that
+  plumbing (or defines configurer = the bound user's workspace admin, documented). Remove
+  `feishu-binding-policy` from the Catalog → `no_unowned` allowlist reaches **0**.
 
-Each PR: TDD, full gate suite, `/codex:adversarial-review`, admin-merge.
+Each PR: TDD, full gate suite, **subagent adversarial-review** (NOT codex — Allen 2026-06-17),
+admin-merge.
 
 ## 5. Testing
 
-- `grant_dispatch_chokepoint_test.exs` — the grep ratchet (3.3).
-- `Grant` unit tests — each authorization tag derives the correct `granted_by`; non-entity
-  granter refused; `{:rule, …}` activates the rule branch; a rule cannot mint a wildcard
-  (goes through `check_action_wildcard_grant_authorized`).
-- the existing `no_unowned_system_principal_grant_test.exs` stays green throughout; shrinks
-  in PR-2/PR-3.
-- per-site: the migrated sites keep their existing behavior tests green (the shim + tag
-  mapping is behavior-preserving for the held/admin sites).
+- `grant_dispatch_chokepoint_test.exs` — the grep ratchet (3.4), incl. variable-action teeth.
+- `Grant` unit tests: each tag derives correct `ctx.caps` + `granted_by`; non-entity granter
+  refused (incl. `{:system, p, system://…}`); a `%Capability{}` arriving with
+  `granted_by: system://…` is **overwritten** to the entity (HIGH-1 regression); `{:rule,…}`
+  sets the rule flag; `rule_cap_bounded?` rejects kind/behavior/instance `:any` (HIGH-2);
+  the `{:held_by, manager}` path still authorizes a #811 manager-delegated grant.
+- existing `no_unowned_system_principal_grant_test.exs` stays green; shrinks in PR-2/PR-3.
+- per-site behavior tests stay green (PR-1 is behavior-preserving by the `{:system,…}` tag).
 
 ## 6. Acceptance
 
-(1) `grant_dispatch_chokepoint_test` passes with allowlist = the chokepoint module only;
-(2) no non-test file outside the chokepoint constructs an `:identity, :grant_cap` dispatch;
-(3) every `:cap_granted` emit carries an `authorization` tag + an entity `granted_by`;
-(4) after PR-3 the `no_unowned` allowlist is empty.
+Program-level (after PR-3): (1) grep gate passes, allowlist = chokepoint only; (2) no
+non-test file outside the chokepoint constructs a grant/revoke dispatch (literal or
+variable); (3) every `:cap_granted` emit carries an `authorization` tag + an **entity**
+`granted_by`; (4) `no_unowned` allowlist empty. PR-1 satisfies (1)(2)(3); (4) lands in PR-3.
