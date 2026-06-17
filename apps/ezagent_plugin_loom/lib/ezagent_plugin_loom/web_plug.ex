@@ -34,7 +34,14 @@ defmodule EzagentPluginLoom.WebPlug do
     UserSchema
   }
 
-  alias EzagentPluginLoom.{MetaAgent, WorkerConfig, Dashboard, SavedTemplates, Snapshots}
+  alias EzagentPluginLoom.{
+    MetaAgent,
+    WorkerConfig,
+    Dashboard,
+    SavedTemplates,
+    Snapshots,
+    PageStore
+  }
 
   @gateway_uri "system://loom-customer-gateway"
 
@@ -580,9 +587,17 @@ defmodule EzagentPluginLoom.WebPlug do
     e -> %{ok: false, error: inspect(e)}
   end
 
-  # 当前页 = **最近**一条 page_update span 的 map(%{"files","source","summary"});无 → %{}。
-  # recent_in_session 已是 newest-first,直接 find_value 取最新(不 reverse,否则取到最旧的 seed)。
+  # 当前页(权威):优先 PageStore(seed/v0 同步写,= loom-stitch 的 loom_source 语义)→
+  # 返回 %{"files"=>...};回退扫消息历史(测试直接注入 span 的场景)。无 → %{}。
   defp current_page(session_uri) do
+    case PageStore.get(session_uri) do
+      files when is_map(files) and map_size(files) > 0 -> %{"files" => files}
+      _ -> current_page_from_history(session_uri)
+    end
+  end
+
+  # recent_in_session 已是 newest-first,直接 find_value 取最新(不 reverse,否则取到最旧的 seed)。
+  defp current_page_from_history(session_uri) do
     session_uri
     |> Ezagent.MessageStore.recent_in_session(50)
     |> Enum.find_value(%{}, fn m ->
@@ -628,6 +643,7 @@ defmodule EzagentPluginLoom.WebPlug do
   # (loomv0 agent 身份)→ 前端从 history/stream 读 .files → Sandpack 渲染。
   defp seed_page_update(session_uri, ws, sid, files) do
     sender = Ezagent.URI.agent(ws, "loomv0_#{sid}")
+    PageStore.put(session_uri, files)
 
     page_map = %{
       "files" => files,

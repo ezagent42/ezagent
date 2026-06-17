@@ -67,7 +67,9 @@ defmodule EzagentPluginLoom.Integration.PublishTest do
       |> then(&Jason.decode!(&1.resp_body))
 
     # 快照 page = files map(同 loom-stitch),前端直接当 files 喂 Sandpack。
-    assert %{"ok" => true, "page" => %{"/App.jsx" => _}} = snap
+    # 关键:必须是**最新注入的** v0 页,不能是 instantiate 的 seed starter 页。
+    assert %{"ok" => true, "page" => %{"/App.jsx" => app}} = snap
+    assert app == "export default function App(){return <div>hi</div>}"
 
     # published 列表含本 session。
     listed =
@@ -96,6 +98,9 @@ defmodule EzagentPluginLoom.Integration.PublishTest do
   defp seed_page_update(session_uri, page) do
     %URI{host: ws, path: "/loom/" <> sid} = session_uri
     sender = Ezagent.URI.agent(ws, "loomv0_#{sid}")
+
+    # 真实 v0 产出会同步写 PageStore(权威当前页);测试模拟也要写,否则 current_page 取到 seed。
+    EzagentPluginLoom.PageStore.put(session_uri, page["files"])
     span = ~s(<span type="page_update">#{Jason.encode!(page)}</span>)
     msg = Ezagent.Message.new(sender, %{text: span})
 

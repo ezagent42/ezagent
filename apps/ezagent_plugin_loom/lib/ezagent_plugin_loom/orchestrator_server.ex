@@ -94,6 +94,7 @@ defmodule EzagentPluginLoom.OrchestratorServer do
       "summary" => "初始页"
     }
 
+    EzagentPluginLoom.PageStore.put(session_uri, page_files)
     emit_v0(session_uri, ~s(<span type="page_update">#{Jason.encode!(page)}</span>))
   rescue
     _ -> :ok
@@ -129,11 +130,21 @@ defmodule EzagentPluginLoom.OrchestratorServer do
            current_files: read_current_files(session_uri),
            session_uri: session_uri
          ) do
-      {:page_update, span} -> emit_v0(session_uri, span)
-      {:prose, prose} -> emit_v0(session_uri, prose)
-      {:error, reason} when reason in [:no_api_key, {:no_api_key, "DEEPSEEK_API_KEY"}] -> :ok
-      {:error, {:no_api_key, _}} -> :ok
-      {:error, reason} -> Logger.warning("loom v0 failed: #{inspect(reason)}")
+      {:page_update, span, files} ->
+        EzagentPluginLoom.PageStore.put(session_uri, files)
+        emit_v0(session_uri, span)
+
+      {:prose, prose} ->
+        emit_v0(session_uri, prose)
+
+      {:error, reason} when reason in [:no_api_key, {:no_api_key, "DEEPSEEK_API_KEY"}] ->
+        :ok
+
+      {:error, {:no_api_key, _}} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("loom v0 failed: #{inspect(reason)}")
     end
   end
 

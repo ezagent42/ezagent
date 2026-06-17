@@ -21,7 +21,7 @@ defmodule EzagentPluginLoom.V0 do
   - `{:error, reason}`
   """
   @spec generate(String.t(), keyword()) ::
-          {:page_update, String.t()} | {:prose, String.t()} | {:error, term()}
+          {:page_update, String.t(), map()} | {:prose, String.t()} | {:error, term()}
   def generate(user_text, opts \\ []) when is_binary(user_text) do
     messages = [
       %{role: "system", content: V0Prompts.page_gen_system_prompt()},
@@ -44,7 +44,7 @@ defmodule EzagentPluginLoom.V0 do
             span_map =
               if is_map(stitch_cfg), do: Map.put(base, "stitchConfig", stitch_cfg), else: base
 
-            {:page_update, Span.span("page_update", span_map)}
+            {:page_update, Span.span("page_update", span_map), files}
 
           :error ->
             case conversational_reply(files_text) do

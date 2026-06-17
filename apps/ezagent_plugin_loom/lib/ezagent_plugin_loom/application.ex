@@ -62,6 +62,7 @@ defmodule EzagentPluginLoom.Application do
       EzagentPluginLoom.WorkerConfig,
       EzagentPluginLoom.SavedTemplates,
       EzagentPluginLoom.Snapshots,
+      EzagentPluginLoom.PageStore,
       EzagentPluginLoom.FeishuMirror,
       {Registry, keys: :unique, name: EzagentPluginLoom.OrchestratorRegistry},
       {DynamicSupervisor, name: EzagentPluginLoom.OrchestratorSupervisor, strategy: :one_for_one}
