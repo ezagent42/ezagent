@@ -749,6 +749,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
   # rendered to the session.
   defp handle_page_update(%Message{ref_id: ref} = msg, files, pending, ctx) when is_binary(ref) do
     sync_active_page_source(ctx, files, page_update_page(msg))
+    _ = land_page_in_surface(ctx, files)
     cfg = salesperson_config_effects(msg) ++ danmaku_config_effects(msg)
 
     case find_turn_by_subtask(pending, ref) do
@@ -763,10 +764,31 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
   defp handle_page_update(msg, files, _pending, ctx) do
     sync_active_page_source(ctx, files, page_update_page(msg))
+    _ = land_page_in_surface(ctx, files)
 
     {:ok, %{},
      [{:set, :loom_source, files}] ++
        salesperson_config_effects(msg) ++ danmaku_config_effects(msg)}
+  end
+
+  # 2026-06-18 — loom-as-socialware-vertical: land the builder's page into the
+  # substrate `Surface` (a Turn driven via the within-session cap), so consumers
+  # read it through `CustomerFeed`. Best-effort; the loom_source cache + the
+  # page_update message (SPA channel) are unaffected on failure.
+  defp land_page_in_surface(ctx, files) do
+    with %URI{} = self_uri <- ctx_self(ctx),
+         %URI{scheme: "session"} = session_uri <- ctx_session(ctx),
+         true <- is_map(files) and map_size(files) > 0 do
+      Ezagent.PluginLoom.TurnManager.build_page(session_uri, self_uri, "page", fn _ ->
+        {:ok, %{tree: files, reply: ""}}
+      end)
+    end
+
+    :ok
+  rescue
+    _ -> :ok
+  catch
+    _, _ -> :ok
   end
 
   # 2026-06-16 多页:builder 改的是「活动页」→ 把这次源码**服务端**写进多页旁路的活动页,

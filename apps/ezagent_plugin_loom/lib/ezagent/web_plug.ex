@@ -702,9 +702,12 @@ defmodule EzagentPluginLoom.WebPlug do
   # auto-creates + seeds it on first open (and revives after restart). Gated on
   # liveness so the common case (already alive) is one registry lookup.
   defp heal_team(ws, sid) do
-    suri = session_uri(ws, sid)
+    # Gate on the meta agent (a team member, never snapshotted → dies on restart
+    # while the session itself revives). If it's gone, re-ensure the whole vertical
+    # session + team (idempotent: live session/members short-circuit) + seed.
+    meta = Ezagent.URI.new!("entity://#{ws}/agent/loommeta_#{sid}")
 
-    case Ezagent.KindRegistry.lookup(suri) do
+    case Ezagent.KindRegistry.lookup(meta) do
       {:ok, _pid} ->
         :ok
 

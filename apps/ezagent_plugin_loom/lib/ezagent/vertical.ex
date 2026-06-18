@@ -59,6 +59,14 @@ defmodule Ezagent.PluginLoom.Vertical do
           })
 
         _ = maybe_join_operator(session_uri, operator_uri)
+
+        # 2026-06-18 — restore the multi-agent team as members of the vertical
+        # SocialwareSession (orchestrator + workers + builder + meta + salesperson).
+        # They keep their @-mention interactions; the builder's page lands in
+        # Surface via `LoomOrchestrator.handle_page_update` (→ CustomerFeed). This
+        # is the substrate-native team: member agents on the unified session.
+        _ = EzagentPluginLoom.Team.ensure_team(session_uri)
+
         {:ok, session_uri}
     end
   rescue
@@ -89,25 +97,32 @@ defmodule Ezagent.PluginLoom.Vertical do
   """
   @spec author(URI.t(), URI.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def author(%URI{} = session_uri, %URI{} = sender_uri, request) when is_binary(request) do
-    _ = emit_message(session_uri, sender_uri, %{text: request, attachments: []}, [])
+    {ws, sid} = ws_sid(session_uri)
+    mention = route_mention(request, ws, sid)
+    msg = emit_message(session_uri, sender_uri, %{text: request, attachments: []}, [mention])
+    {:ok, %{ok: true, id: msg.id}}
+  end
 
-    current = current_files(session_uri)
+  # Route the user's authoring message to the right team member:
+  # `@loommeta_<sid>` → meta, `@loomworker_<sid>_<theme>` → that worker,
+  # everything else (including `@loombuilder` and the no-@ default) → the
+  # builder (the page maker). The builder's page_update reply is caught by the
+  # orchestrator (loom_source cache + Surface landing).
+  defp route_mention(text, ws, sid) do
+    target =
+      case Regex.run(~r/^\s*@(loom(?:meta|orch|builder|worker)[A-Za-z0-9_]*)/, to_string(text)) do
+        [_, id] -> id
+        _ -> "loombuilder_#{sid}"
+      end
 
-    case PageGen.generate(request, current) do
-      {:ok, %{tree: files, reply: summary}} ->
-        manager = manager_uri(session_uri)
+    # only honor a mention that belongs to THIS session; otherwise default builder
+    target = if String.contains?(target, sid), do: target, else: "loombuilder_#{sid}"
+    Ezagent.URI.new!("entity://#{ws}/agent/#{target}")
+  end
 
-        _ =
-          TurnManager.build_page(session_uri, manager, request, fn _ ->
-            {:ok, %{tree: files, reply: ""}}
-          end)
-
-        update = emit_page_update(session_uri, manager, files, summary)
-        {:ok, %{ok: true, id: msg_id(update)}}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
+  defp ws_sid(%URI{host: ws, path: "/" <> rest}) do
+    sid = rest |> String.split("/") |> List.last()
+    {ws, sid}
   end
 
   # ── reads ──
