@@ -69,7 +69,7 @@ defmodule Ezagent.Behavior.LoomBuilderWorker do
       # 包括 admin 控制台的 HomeLive 会话视图(它不订阅 gen_progress),不只是 loom 建站 SPA。
       # 无论消息从哪条路径发来(loom SPA `POST /messages` 还是 admin LiveView),都经过 builder
       # 的 handle_receive,所以这是唯一覆盖全路径的公共点。
-      _ = emit_status_now(ctx, "🔨 builder 已收到,正在生成页面…")
+      _ = emit_status_now(ctx, "🔨 已收到需求,正在生成页面…")
 
       subtask = extract_text(msg.body)
       count = ctx[:read].(:count, 0)
@@ -86,17 +86,26 @@ defmodule Ezagent.Behavior.LoomBuilderWorker do
       materials_dir =
         if wants_mat? and Materials.list(mws, msid) != [], do: Materials.dir(mws, msid), else: nil
 
-      case LLM.chat(
-             [
-               %{"role" => "system", "content" => Prompts.page_gen_system_prompt()},
-               %{"role" => "user", "content" => build_user_message(ctx, subtask, manifest)}
-             ],
-             temperature: 0.7,
-             thinking_disabled: true,
-             group: group_id(ctx),
-             materials_dir: materials_dir,
-             role: "builder"
-           ) do
+      # 友好的阶段进度:生成是慢的(claude_code 可达分钟级),期间用心跳发几条**人话**状态,
+      # 让用户知道「现在在干嘛」,而不是看一条原始 token 流。心跳在 LLM 调用前起、调用后停。
+      hb = start_progress_heartbeat(ctx)
+
+      result =
+        LLM.chat(
+          [
+            %{"role" => "system", "content" => Prompts.page_gen_system_prompt()},
+            %{"role" => "user", "content" => build_user_message(ctx, subtask, manifest)}
+          ],
+          temperature: 0.7,
+          thinking_disabled: true,
+          group: group_id(ctx),
+          materials_dir: materials_dir,
+          role: "builder"
+        )
+
+      _ = stop_progress_heartbeat(hb)
+
+      case result do
         # 用户中止 → 静默丢弃:不发 page_update、不发 error 卡 → :loom_source 不变、页面不变。
         {:error, :stopped} ->
           {:ok, %{}, []}
@@ -150,6 +159,8 @@ defmodule Ezagent.Behavior.LoomBuilderWorker do
                 )
 
               body_text = Span.span("page_update", span_map)
+
+              _ = emit_status_now(ctx, "✅ 页面已生成,正在更新预览…")
 
               {:ok, %{},
                [{:set, :count, count + 1}, {:set, :last_error, nil}] ++
@@ -330,6 +341,27 @@ defmodule Ezagent.Behavior.LoomBuilderWorker do
   rescue
     _ -> :ok
   end
+
+  # 友好进度心跳:生成期间(builder 阻塞在 LLM 调用里,自己发不了消息)起一个轻量进程,
+  # 隔一段时间发一条**人话**状态(不是原始 token 流)。生成结束后由 `stop_progress_heartbeat`
+  # kill 掉;若生成很快(早于第一条心跳),用户就只看到「已收到」+「已生成」两条,不会多嘴。
+  defp start_progress_heartbeat(ctx) do
+    hb_ctx = Map.take(ctx, [:self_uri, :caller])
+
+    spawn(fn ->
+      Process.sleep(12_000)
+      emit_status_now(hb_ctx, "✍️ 正在编写页面代码,请稍候…")
+      Process.sleep(30_000)
+      emit_status_now(hb_ctx, "⏳ 仍在生成中,马上就好…")
+    end)
+  end
+
+  defp stop_progress_heartbeat(pid) when is_pid(pid) do
+    if Process.alive?(pid), do: Process.exit(pid, :kill)
+    :ok
+  end
+
+  defp stop_progress_heartbeat(_), do: :ok
 
   defp reply_effect(ctx, %Message{} = subtask_msg, text) when is_binary(text) do
     with %URI{} = self_uri <- Map.get(ctx, :self_uri),
