@@ -7,7 +7,6 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SandboxPreviewLive do
   """
   use Phoenix.LiveView
   import Phoenix.Component
-  import EzagentPluginLiveview.AutoService.Admin.Components.AdminSidebar
 
   alias EzagentPluginContent.Tenant.TenantRuntime
   alias EzagentPluginContent.Soul.{SoulLoader, SoulRenderer}
@@ -16,7 +15,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SandboxPreviewLive do
   @role "customer"
 
   @impl true
-  def mount(%{"tid" => tid}, _session, socket) do
+  def mount(_params, %{"tid" => tid}, socket) do
     priv_dir = Application.app_dir(:ezagent_plugin_content, "priv")
     base_dir = TenantRuntime.base_dir()
 
@@ -77,57 +76,48 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SandboxPreviewLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="flex min-h-screen">
-      <.admin_sidebar tid={@tid} />
-      <main class="flex-1 p-6">
-        <div class="max-w-5xl mx-auto">
-          <div class="flex items-center justify-between mb-4">
-            <div>
-              <h1 class="text-xl font-bold text-gray-900 dark:text-zinc-100">CLAUDE.md Preview</h1>
-              <p class="text-sm text-gray-500 dark:text-zinc-400">
-                Tenant: {@tid} / Role: {@role}
-              </p>
+    <div>
+      <div class="max-w-5xl mx-auto">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h1 class="text-xl font-bold text-gray-900 dark:text-zinc-100">CLAUDE.md Preview</h1>
+            <p class="text-sm text-gray-500 dark:text-zinc-400">
+              Tenant: {@tid} / Role: {@role}
+            </p>
+          </div>
+          <div class="flex items-center gap-3">
+            <button
+              phx-click="refresh"
+              class="text-sm rounded border border-gray-300 dark:border-zinc-600 px-3 py-1.5 text-gray-700 dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800 transition-colors"
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        <%= if @preview_empty? do %>
+          <div class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-8 text-center">
+            <p class="text-sm text-gray-400 dark:text-zinc-500">
+              Preview is empty &mdash; no templates or content loaded.
+            </p>
+            <p class="text-xs text-gray-300 dark:text-zinc-600 mt-2">
+              Initialize this tenant via the Init Wizard or edit the soul to populate content.
+            </p>
+          </div>
+        <% else %>
+          <div class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
+            <div class="px-4 py-2.5 bg-gray-800 dark:bg-zinc-800 text-white flex items-center justify-between">
+              <h3 class="font-semibold text-sm">Full CLAUDE.md</h3>
+              <span class="text-xs text-gray-300 dark:text-zinc-400 font-mono">
+                {@line_count} lines / {@byte_size} bytes
+              </span>
             </div>
-            <div class="flex items-center gap-3">
-              <button
-                phx-click="refresh"
-                class="text-sm rounded border border-gray-300 dark:border-zinc-600 px-3 py-1.5 text-gray-700 dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-800 transition-colors"
-              >
-                Refresh
-              </button>
-              <a
-                href={"/admin/autoservice/tenants/#{@tid}/soul"}
-                class="text-sm text-gray-500 dark:text-zinc-400 hover:text-gray-700 dark:hover:text-zinc-300 underline"
-              >
-                &larr; Soul Editor
-              </a>
+            <div class="p-4">
+              <pre class="text-xs font-mono leading-relaxed whitespace-pre-wrap bg-gray-50 dark:bg-zinc-950 rounded-lg p-5 max-h-[80vh] overflow-y-auto border border-gray-200 dark:border-zinc-800 text-gray-900 dark:text-zinc-100"><%= @preview %></pre>
             </div>
           </div>
-
-          <%= if @preview_empty? do %>
-            <div class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-8 text-center">
-              <p class="text-sm text-gray-400 dark:text-zinc-500">
-                Preview is empty &mdash; no templates or content loaded.
-              </p>
-              <p class="text-xs text-gray-300 dark:text-zinc-600 mt-2">
-                Initialize this tenant via the Init Wizard or edit the soul to populate content.
-              </p>
-            </div>
-          <% else %>
-            <div class="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
-              <div class="px-4 py-2.5 bg-gray-800 dark:bg-zinc-800 text-white flex items-center justify-between">
-                <h3 class="font-semibold text-sm">Full CLAUDE.md</h3>
-                <span class="text-xs text-gray-300 dark:text-zinc-400 font-mono">
-                  {@line_count} lines / {@byte_size} bytes
-                </span>
-              </div>
-              <div class="p-4">
-                <pre class="text-xs font-mono leading-relaxed whitespace-pre-wrap bg-gray-50 dark:bg-zinc-950 rounded-lg p-5 max-h-[80vh] overflow-y-auto border border-gray-200 dark:border-zinc-800 text-gray-900 dark:text-zinc-100"><%= @preview %></pre>
-              </div>
-            </div>
-          <% end %>
-        </div>
-      </main>
+        <% end %>
+      </div>
     </div>
     """
   end
