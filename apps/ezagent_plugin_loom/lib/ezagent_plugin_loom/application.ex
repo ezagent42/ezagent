@@ -176,7 +176,12 @@ defmodule EzagentPluginLoom.Application do
       Ezagent.PluginLoom.Template.LoomMetaAgent,
       # Session template: "create a loom session" auto-assembles the team
       # (orchestrator + 2 workers + builderworker + manager) instead of a bare session.
-      Ezagent.PluginLoom.Template.LoomSession
+      Ezagent.PluginLoom.Template.LoomSession,
+      # 2026-06-18 — loom-as-socialware-vertical (P0): spawns the unified
+      # Entity.Session with the socialware behavior subset (Turn/Surface active).
+      # Strangler entry, runs alongside the legacy session.loom; see
+      # docs/loom-port/SOCIALWARE-VERTICAL.md.
+      Ezagent.PluginLoom.Template.LoomVerticalSession
     ]
 
   @impl Ezagent.Plugin
