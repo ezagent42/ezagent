@@ -52,11 +52,24 @@ ezagent 是一个 Elixir umbrella,分三层 + 插件:
 
 **loom 就是其中一个 plugin**(`ezagent_plugin_loom`),跟 cc/echo/np 平级。
 
-### 跟 socialware 基座的关系
+### loom 与 socialware / autoservice 的关系(平行 vertical,loom 都不依赖)
 
-`ezagent_domain_socialware` 是**面向消费者/匿名访客**的领域 app:`customer_feed` / `anon_user` / `customer_auth` / `public_view` / `chat_feed` / `page_view`。它定义了「一个发布出去的页面被陌生人打开、临时身份、customer-visible 的消息流」这套模型。
+**结论先行**:loom **不依赖 `ezagent_domain_socialware`**,也**完全不碰 autoservice**。三者是同一个 ezagent 基座上的**平行 vertical**,不是上下游 —— 别把 loom 理解成「建在 socialware/autoservice 之上」。
 
-loom 的**消费侧**(发布链接、访客临时用户、接线员控制台、`:customer_visible` 消息、弹幕/导购预览 AI)正是**建立在 socialware 这套基座之上**:loom 不重新发明匿名访客/消费会话,而是复用 socialware 的 customer/anon 模型 + UI 的 `SessionViewRegistry` 视图注册,自己只负责「建站 + 多智能体编排」这部分增量。所以 loom 与基座是 **「消费 + 叠加」** 而不是 **「替换」** 的关系。
+**和 socialware**
+
+`ezagent_domain_socialware` 是面向消费者/匿名访客的领域 app(`customer_feed` / `anon_user` / `public_view` / `chat_feed` / `config_projection`(soul)…)。但:
+
+- loom 的 mix 依赖只有 `ezagent_core` / `ezagent_domain_session` / `_external_mirror` / `_ui` —— **列表里没有 `ezagent_domain_socialware`**。
+- 「发布页被陌生人打开 / 临时身份 / 弹幕 / 导购预览 AI」这套消费侧,loom 是**自己实现**的(`temp_user.ex` / `consumer_session.ex` / `snapshots.ex` / `owned_sessions.ex` / `salesperson*.ex` / `role_config.ex`),**不**调 socialware 的 `customer_feed` / `anon_user` / `public_view`。
+- 真正共享的只是更底层的 **core 概念**:`:customer_visible` 消息可见性(定义在 `ezagent_core/message.ex`,不是 socialware 专属)+ Session / dispatch / CapBAC。所以 loom 和 socialware 是**同站在 core 上、各做各的消费侧**(sibling),不是 loom 建在 socialware 之上。
+- (路线图上 #810「socialware loom vertical」是另一个「把 loom 做成 socialware 原生 vertical」的方向;**本 PR 移植的是 stitch 自带消费侧、与 socialware app 解耦的那版 loom plugin**。)
+
+**和 autoservice**
+
+- autoservice 是**另一条独立产品线 vertical**(客服方向:cinnox「soul」= 一篇 markdown → 经 `socialware/config_projection` 投影成 cc bot 的 `CLAUDE.md`),在自己的 `autoservice-dev` 分支上演进,**建在 socialware 之上**。
+- **loom 源码对 autoservice 零引用**(在 loom `.ex` 里 grep `autoservice` / `customer_chat` / `cinnox` 全空),autoservice 也不用 loom。两者唯一交集是**共同的 ezagent 基座**。
+- 一句话:**socialware 上挂着 autoservice 这条客服 vertical;loom 是另一条、连 socialware app 都没用上。本 PR 既没用到 autoservice,也不依赖 socialware app —— 只复用最底层的 core。**
 
 ---
 
