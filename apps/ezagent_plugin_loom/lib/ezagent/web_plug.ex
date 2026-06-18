@@ -711,19 +711,25 @@ defmodule EzagentPluginLoom.WebPlug do
   # auto-creates + seeds it on first open (and revives after restart). Gated on
   # liveness so the common case (already alive) is one registry lookup.
   defp heal_team(ws, sid) do
-    # Gate on the meta agent (a team member, never snapshotted → dies on restart
-    # while the session itself revives). If it's gone, re-ensure the whole vertical
-    # session + team (idempotent: live session/members short-circuit) + seed.
+    # Gate on team members that are never snapshotted → die on restart while the
+    # session itself revives. Check BOTH the meta agent AND the builder: an OLD
+    # session can have a live meta (a prior heal spawned it) yet no builder (it was
+    # never assembled / created with include_builder:false), so a meta-only gate
+    # would short-circuit and leave @builder dead. If EITHER is missing, re-ensure
+    # the whole vertical session + team (idempotent: live members short-circuit).
     meta = Ezagent.URI.new!("entity://#{ws}/agent/loommeta_#{sid}")
+    builder = Ezagent.URI.new!("entity://#{ws}/agent/loombuilder_#{sid}")
 
-    case Ezagent.KindRegistry.lookup(meta) do
-      {:ok, _pid} ->
-        :ok
+    alive? = fn uri ->
+      match?({:ok, _pid}, Ezagent.KindRegistry.lookup(uri))
+    end
 
-      :error ->
-        _ = Ezagent.PluginLoom.Vertical.ensure_session(ws, sid, nil)
-        _ = Ezagent.PluginLoom.Vertical.seed_page(ws, sid, nil)
-        :ok
+    if alive?.(meta) and alive?.(builder) do
+      :ok
+    else
+      _ = Ezagent.PluginLoom.Vertical.ensure_session(ws, sid, nil)
+      _ = Ezagent.PluginLoom.Vertical.seed_page(ws, sid, nil)
+      :ok
     end
   rescue
     _ -> :ok
