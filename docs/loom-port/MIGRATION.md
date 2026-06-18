@@ -6,9 +6,36 @@
 
 ---
 
-## 1. 一句话
+## 1. Loom 是什么(前端 / 后端各做什么)
 
-把 loom 这个**功能完整的产品**(AI 建站 + 多智能体编排 + 发布/接线员/消费会话)从 stitch 整体搬到 main,**不改 main 一行核心逻辑**(只动 12 个声明式钩子点),靠 ezagent 的 **plugin 契约**接入基座,再把 stitch 与 main 之间的**约定差异**在 plugin 边界逐条桥接,最终 main 原有能力和 loom 全量能力都不丢。
+Loom 是一个跑在 ezagent 上的 **AI 建站 + 多智能体编排**产品。它由**两半**组成:一个前端 SPA 和一个 Elixir 后端 plugin。
+
+### 前端(Next.js SPA)
+
+> **源码在另一个独立仓库,不在本仓库。本仓库只保存它的编译产物**(Next.js 静态导出),vendored 在 `apps/ezagent_plugin_loom/priv/static/loom_ui`(basePath `/loom`)。所以**不要直接改 `loom_ui` 下的文件**——会被下次构建覆盖。
+
+负责全部界面与交互:
+
+- **建站工作台**:用户对话驱动生成 / 编辑一个实时 React 页面(由 builder 完成,**v0 式**),Sandpack 沙箱里实时预览;
+- **发布与版本**:把当前页发布成可分享链接;多版本 + 编辑回退;
+- **发布页消费体验**:访客打开链接看到成品页 + 预览侧 AI 导购(Stitch)聊天 + 动态「✨」卡片(AiSpot)+ 弹幕 + 按登录身份解锁的隐藏入口(角色门控);
+- **运营页**(如接线员控制台):本身也是 builder 生成的页面,用 loom SDK 跨会话看 / 接待访客;
+- session 切换、历史、素材上传;
+- 通过 **SDK bridge**(`platform` 模块)调后端 `/loom/api/*`,自己不直接碰数据库。
+
+### 后端(Elixir plugin `ezagent_plugin_loom`)
+
+负责编排、LLM、持久化、给前端的 SDK API:
+
+- **`WebPlug`** —— 唯一 web 入口(`forward "/loom"`):既发上面那份静态产物,又提供 `/api/*` 的 SDK 桥;
+- **每个 session 一支 agent team**:orchestrator(拆解 → fan-out → 聚合 → 合成)、workers(按主题分工)、**builder**(团队里唯一能改页面源码的)、meta-agent(收 @ 自然语言指令加 / 删团队成员)、salesperson(预览侧导购 orchestrator + 一组固定 sub-worker);
+- **LLM dispatcher**:team 的推理走可切换后端(`claude_code` 本地 headless / `deepseek` HTTP);预览侧 AI(Stitch / AiSpot)**固定直连 DeepSeek**,不走这个 dispatcher;
+- **持久化**:页面源码 + 运行态进 SQLite,边角 config 进旁路 JSON,大素材进文件系统(详见 `STORAGE.md`);
+- **业务逻辑**:发布 / fork / 衍生谱系 / 角色门控 / 接线员同伴集 / 匿名临时用户等。
+
+### 这次做了什么(一句话)
+
+把上面整套(前端编译产物 + 后端 plugin)从 stitch 整体搬到 main,**不改 main 一行核心逻辑**(只加少数声明式钩子点),靠 ezagent 的 **plugin 契约**接入基座,再把 stitch 与 main 之间的**约定差异**在 plugin 边界逐条桥接,最终 main 原有能力和 loom 全量能力都不丢。
 
 ---
 

@@ -43,7 +43,7 @@
   | `state_binary` | **Erlang ETF 二进制**(`<<131,...>>`)—— slice 的真身 |
   | `state` | JSON 镜像(可读) |
   | `version` / `workspace_uri` / `ever_created` | 版本 / 工作区 / 是否建过 |
-- **谁能改**:只有**创作型 session** 的 v0/builder worker 能改源码 —— 它走 `{:set, :loom_source, <new>}` effect → 框架写新快照。消费/发布/fork 出来的会话拿到的是**冻结 base**,只能在上面叠 `user_schema` ops(见 §2),**不能重写源码**。
+- **谁能改**:只有**创作型 session** 的 builder worker 能改源码 —— 它走 `{:set, :loom_source, <new>}` effect → 框架写新快照。消费/发布/fork 出来的会话拿到的是**冻结 base**,只能在上面叠 `user_schema` ops(见 §2),**不能重写源码**。
 
 ### 1.2 历史版本源码 → `messages` 表(page_update 消息)
 
@@ -90,7 +90,7 @@
 ```
 
 - `Materials.ensure_dir(ws, sid)` 在 session 初始化时建好这个目录(目录即库)。
-- v0 / Claude Code 以它为 **cwd**,用 `Read` 等工具按需读文件 —— **只在用户要求时才读**,避免把大文件塞进 prompt(见近期 commit「builder reads materials only when the user asks」)。
+- builder / Claude Code 以它为 **cwd**,用 `Read` 等工具按需读文件 —— **只在用户要求时才读**,避免把大文件塞进 prompt(见近期 commit「builder reads materials only when the user asks」)。
 - 改:往这个目录放/删文件即可。
 
 ---
@@ -99,7 +99,7 @@
 
 | 想改的东西 | 怎么改 |
 |---|---|
-| **当前页面源码** | 走 builder/v0:在创作会话里 @builder 让它改 → `{:set, :loom_source}` → 新快照 + 一条 page_update。**不要手改 DB**。 |
+| **当前页面源码** | 走 builder:在创作会话里 @builder 让它改 → `{:set, :loom_source}` → 新快照 + 一条 page_update。**不要手改 DB**。 |
 | **回退到旧版页面** | `POST /loom/api/:ws/:sid/revert` `{"to_id": <page_update 消息 id>}`,或前端「回退历史」。 |
 | **消费侧的页面叠加** | user_schema ops(`/user-schema`),只 append,不动 base。 |
 | **worker / 角色 / 知识库 / 多页** | 对应 HTTP endpoint(`/workers`、`/roles`、…)或直接编辑对应 `loom_*.json`。 |
