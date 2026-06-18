@@ -111,7 +111,7 @@
 | **消费侧的页面叠加** | user_schema ops(`/user-schema`),只 append,不动 base。 |
 | **worker / 角色 / 知识库 / 多页** | 对应 HTTP endpoint(`/workers`、`/roles`、…)或直接编辑对应 `loom_*.json`。 |
 | **素材** | 往 `loom_materials/<ws>/<sid>/` 放/删文件。 |
-| **排障 / 手工迁移** | 直接编辑 `loom_*.json`(注意 key 必须是**规范 workspace-first** `session://<ws>/loom/<sid>`;本次 port 就手动迁过 `loom_lineage.json` 的旧 stitch 顺序 key)。DB 里的 slice 不要手改 ETF;要重置就删对应 `kind_snapshots` 行让它重建(注意会丢状态)。 |
+| **排障 / 手工迁移** | 直接编辑 `loom_*.json`(注意 key 必须是**规范 workspace-first** `session://<ws>/loom/<sid>`)。DB 里的 slice 不要手改 ETF;要重置就删对应 `kind_snapshots` 行让它重建(注意会丢状态)。 |
 
 ---
 

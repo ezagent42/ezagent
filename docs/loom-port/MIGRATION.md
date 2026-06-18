@@ -2,7 +2,7 @@
 
 > 配套文档:`SOCIALWARE-VERTICAL.md`(设计 spec + 决策)、`STORAGE.md`(产物怎么存)。
 >
-> 分支:`loom-socialware-vertical`(基于 `main`)。目标:把 Loom 重做成 **socialware substrate 上的一个 vertical**(而不是 stitch 那套自带独立 Kind 栈的 plugin)。工作隔离在 worktree `/home/ning/ezagent-port`,profile=`port`(独立端口 + sidecar + SQLite 库),不影响线上 stitch。
+> 目标:把 Loom 做成 **socialware substrate 上的一个 vertical** —— 跟 advisor / autoservice 一样,站在统一的 socialware substrate 上(统一 Session + 行为子集 + 成员),而不是自带一套独立的 Kind 栈。
 
 ---
 
@@ -22,7 +22,7 @@ Loom 是跑在 ezagent 上的 **AI 建站 + 多智能体编排**产品,由前端
 
 ## 2. 架构:socialware vertical(实现)
 
-样板是 `EzagentPluginAdvisor.Template.AdvisorSession`(P5-1b collapse 后的范式):**全局一个 session Kind,vertical = Template + 行为子集 + working-copy 配置 + 成员**。
+样板是 advisor vertical(`EzagentPluginAdvisor.Template.AdvisorSession`):**全局一个 session Kind,vertical = Template + 行为子集 + working-copy 配置 + 成员**。
 
 ```
 建 loom session
@@ -61,12 +61,11 @@ Loom 是跑在 ezagent 上的 **AI 建站 + 多智能体编排**产品,由前端
 - 消费侧用 **socialware**(`ezagent_domain_socialware`:`CustomerFeed` / `CustomerAuth` / `Surface`/`Turn` 的 settlement / `AnonUser` 等);loom deps 现在**含 `ezagent_domain_socialware`**。
 - 唯一 web 入口 `EzagentPluginLoom.WebPlug`(`/loom`),既发静态产物又提供 `/api/*` SDK 桥。
 
-## 5. 跟 stitch 比,体验差在哪(老实说)
+## 5. 关键设计取舍
 
-- **一致(已实测)**:前端同一份;`@builder` 出页;`@meta` 团队 modal;`@worker`;salesperson;发布→消费。
-- **按 Allen 指令改过的一处**:不 @ 的默认行为 —— stitch 的 SPA 默认 `@` 编排器(可能触发场景卡 fan-out),现在改成 **"不@ = 纯发言、不出页"**,只 `@builder` 出页。
-- **还没逐个回归测的外围**(从 stitch 复用,可能有细微差异):AiSpot ✨ / 弹幕 / 接线员控制台 / fork / 编辑回退 / 多页 / 角色门控 / 素材库 / save-as-template。
-- **内部不可见**:页面落 Surface(+ CustomerFeed 投递),stitch 只有 orchestrator 的 `loom_source` slice;每次改页多驱动一个 Turn(几乎无感)。
+- **出页只走 `@builder`**:builder 是团队里唯一出页的成员。不 @ 的消息只是普通在 session 发言,不触发出页 —— 编排器 mention-gated,只在被 @ 时才驱动。
+- **页面真相在 Surface**:builder 出的页经一个 Turn 落进 `Surface`(substrate 真相),消费侧经 `CustomerFeed` 读 committed 版本;loom_ui 编辑器另从 `page_update` 消息渲染。一次出页两条通道同时写。
+- **创作与消费分离**:创作侧(operator + 团队)写 Surface;消费侧(访客)只读 `CustomerFeed`,不能改源码,只能在冻结 base 上叠 `user_schema` ops。
 
 ## 6. 怎么保证 main 功能不丢
 
@@ -76,8 +75,8 @@ loom 是独立 OTP plugin,不改 main 的 core/domain 逻辑(只加少数声明�
 
 分期(P0→P3,见 `SOCIALWARE-VERTICAL.md`)逐个打通并实测:P0 统一 SocialwareSession;P1 TurnManager 驱动 Turn/Surface;P2 CustomerFeed 消费;F1 把 loom_ui 接到 substrate(create-on-access + @builder 出页);团队作为成员 agent 恢复(@builder/@meta/@worker/salesperson)。ExUnit 5 个 vertical 测试 + 运行期对着 port profile(DeepSeek)实测。
 
-## 8. 待办 / 已知边界
+## 8. 边界与后续
 
-- 外围功能(§5 第三档)逐个回归。
-- 默认建站让 workers 自动参与(编排器协作流)—— 暂不做(Allen:保持默认=纯发言、出页只走 @builder)。
-- main 会话的 Claude Code 编排器在无 `claude`/MCP 的测试环境 90s 超时 —— 环境问题,不影响 loom。
+- 前端 SPA 源码在另一个仓库,本仓库只保存编译产物(`priv/static/loom_ui`);改界面要回那个仓库构建再同步。
+- 匿名访客身份依赖 substrate 的 `public_view`(当前 `:pending_impl`);带 publish token 的消费路径已可用。
+- 默认建站让 workers 自动参与(编排器协作流)是一个可选方向;当前刻意保持「不 @ = 纯发言、出页只走 @builder」。

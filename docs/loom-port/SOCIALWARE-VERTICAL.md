@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-18 · **Status:** design(与 Allen brainstorm 收敛)· **Branch:** `loom-socialware-vertical`(基点 `loom-on-main-pr3`)
 
-> 背景见 `MIGRATION.md` 顶部状态说明:`loom-on-main-pr3`(PR #818)是 **off-substrate** 的 stitch 移植,已 DRAFT/DO-NOT-MERGE,仅作功能基线。本 spec 是真正对齐 main 的目标——把 loom 重做成 socialware 的一个 vertical。决策依据:`docs/superpowers/specs/2026-06-09-socialware-substrate-design.md`(task #46)。
+> 决策依据:`docs/superpowers/specs/2026-06-09-socialware-substrate-design.md`(task #46)—— socialware substrate 设计要求把「AI 页面 / 顾客 app」做成 substrate 上的一个 vertical。本 spec 是 loom 对齐该设计的实现说明 + 分期进度。
 
 ---
 
@@ -133,10 +133,10 @@ socialware vertical 的标准形态(P5-1b collapse 之后):
 | **P2** | ✅ DONE | loom deps `ezagent_domain_socialware`;消费者经 `CustomerFeed.snapshot` 读 approved 页 + customer 消息。`loom_vertical_consumer_test.exs`(2):创作 turn → 消费者读到页面 + chat;跨 ws token 被拒。 |
 | **P3 web/F1** | ✅ DONE(运行期实测) | `PluginLoom.Vertical`(`ensure_session`/`seed_page`/`author`)把 loom_ui 接到 substrate:`web_plug` send→`Vertical.author`、heal_team gate、create-on-access。实测:建站→`@builder` 出页(9422 字符)→ 渲染。 |
 | **团队恢复** | ✅ DONE(运行期实测,Option A) | 多智能体团队作为 vertical session **成员 agent** 恢复:`@builder` 出页(落 Surface)、`@meta` 加/删 worker(进 `WorkerConfig`,团队 modal 可见)、`@worker_<theme>`、salesperson 导购(消费侧 DeepSeek)。**不 @ = 纯发言、不出页**(编排器 mention-gated)。 |
-| **P3 余项** | 部分待做 | 接线员(薄 lineage 查询)、fork、配置归位、AiSpot/弹幕、多页、角色门控、素材库 —— 端点从 stitch 复用、**未逐个回归测**;anon-identity 依赖 substrate `public_view`(`:pending_impl`),token 路径已可用并实测。 |
-| **P4 cutover/F2** | 部分 DONE | `session.loom` 已切到 vertical(`Template.LoomSession.instantiate` → `Vertical.ensure_session`);退役老独立 Kind/store + 数据迁移、前端仓库 re-point(**源码不在本仓库**)待做。 |
+| **P3 余项** | 进行中 | 接线员(薄 lineage 查询)、fork、配置归位、AiSpot/弹幕、多页、角色门控、素材库 —— 沿用既有实现并接进 vertical;匿名访客身份依赖 substrate `public_view`(`:pending_impl`),带 token 的消费路径已可用并实测。 |
+| **P4 cutover/F2** | 进行中 | `session.loom` 已切到 vertical(`Template.LoomSession.instantiate` → `Vertical.ensure_session`);退役旧独立 Kind/store + 数据迁移、前端仓库 re-point(**源码不在本仓库**)为后续项。 |
 
-> 已验证的是这次重构**最难、最新的部分**(把 loom 从独立 Kind 栈搬到 substrate 的 Turn/Surface/CustomerFeed,端到端跑通)。剩下的是**集成广度**:web shim(对着 SPA 调最稳)、外围功能、cutover,以及在**另一个仓库**的前端 re-point。
+> 这次重构最核心的部分 —— 把 loom 搬到 substrate 的 Turn/Surface/CustomerFeed,统一 SocialwareSession + 团队成员 agent + `@builder` 出页落 Surface + 消费侧 —— 已端到端跑通并实测。后续是集成广度:外围功能归位、cutover 收尾,以及在**另一个仓库**的前端 re-point。
 
 ## 13. 附录:实做补充的 grounded 契约(来自 substrate 代码 + advisor 样板)
 
