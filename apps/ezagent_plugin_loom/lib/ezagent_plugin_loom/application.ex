@@ -234,8 +234,37 @@ defmodule EzagentPluginLoom.Application do
     %{kind: :flavor, flavor: "loom", label: "Loom Agents"}
   end
 
+  # main resolves an agent's Kind from a flavor STORED in `AgentFlavorAttributes`
+  # (in-memory ETS), NOT derived from the name as stitch did. That ETS is empty
+  # after a restart, so existing loom agents (their snapshots persist) can't be
+  # lazy-revived on the next dispatch → `{:no_kind_module_for_agent}`. Loom agents
+  # store the flavor as their snapshot `kind_type` (loomorch / loombuilder / …), so
+  # re-seed the flavor map from the durable snapshots at boot. Read-only; failure
+  # must not abort boot.
+  defp restore_agent_flavors do
+    import Ecto.Query
+    flavors = ~w(loom loomorch loomworker loombuilder loomsalesperson loomsalespersonsub loommeta)
+
+    from(k in "kind_snapshots", where: k.kind_type in ^flavors, select: {k.uri, k.kind_type})
+    |> EzagentCore.Repo.all()
+    |> Enum.each(fn {uri_str, flavor} ->
+      try do
+        _ = Ezagent.AgentFlavorAttributes.put(Ezagent.URI.new!(uri_str), flavor)
+      rescue
+        _ -> :ok
+      end
+    end)
+
+    :ok
+  rescue
+    e ->
+      require Logger
+      Logger.warning("EzagentPluginLoom: restore_agent_flavors failed: #{inspect(e)}")
+      :ok
+  end
+
   @doc """
-  Phase 3 post-register hook — seed the default Loom agent.
+  Phase 3 post-register hook — seed the default Loom agent + restore agent flavors.
 
   `Ezagent.Plugin.boot/1` calls this AFTER Phase-2 `publish/1` has
   registered `agent_flavors/0`, so `Ezagent.AgentFlavorRegistry` maps
@@ -246,6 +275,7 @@ defmodule EzagentPluginLoom.Application do
   def after_boot do
     # main's entity-spawn resolver needs the flavor STORED before a bare spawn.
     _ = Ezagent.AgentFlavorAttributes.put(default_uri(), "loom")
+    _ = restore_agent_flavors()
 
     case Ezagent.SpawnRegistry.spawn(default_uri()) do
       {:ok, _pid} ->
