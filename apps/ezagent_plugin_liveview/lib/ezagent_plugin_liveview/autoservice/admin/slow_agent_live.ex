@@ -13,7 +13,6 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlowAgentLive do
   """
   use Phoenix.LiveView
   import Phoenix.Component
-  import EzagentPluginLiveview.AutoService.Admin.Components.AdminSidebar
 
   @impl true
   def mount(%{"tid" => tid}, _session, socket) do
@@ -23,9 +22,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlowAgentLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="flex min-h-screen text-zinc-900 dark:text-zinc-100">
-      <.admin_sidebar tid={@tid} />
-      <main class="flex-1 p-6">
+    <div>
         <div class="max-w-3xl">
           <h1 class="text-xl font-bold mb-1">🧠 Slow Agent 配置</h1>
           <p class="text-sm text-gray-500 dark:text-zinc-400 mb-6">
@@ -62,8 +59,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.SlowAgentLive do
             </div>
           </div>
         </div>
-      </main>
-    </div>
+      </div>
     """
   end
 end

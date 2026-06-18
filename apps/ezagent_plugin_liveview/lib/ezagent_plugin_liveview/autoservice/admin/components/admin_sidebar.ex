@@ -3,32 +3,8 @@ defmodule EzagentPluginLiveview.AutoService.Admin.Components.AdminSidebar do
   attr(:tid, :string, required: true)
 
   def admin_sidebar(assigns) do
-    tids =
-      [assigns[:tid] | list_tids()]
-      |> Enum.reject(&(&1 in [nil, ""]))
-      |> Enum.uniq()
-      |> Enum.sort()
-
-    assigns = assign(assigns, :tids, tids)
-
     ~H"""
     <nav class="w-48 flex-shrink-0 border-r border-gray-200 dark:border-zinc-800 bg-gray-50 dark:bg-zinc-950 p-3 space-y-1 min-h-screen">
-      <%!-- Tenant switcher --%>
-      <div class="px-2 pb-3 mb-1 border-b border-gray-200 dark:border-zinc-700">
-        <div class="text-[10px] uppercase tracking-wider text-gray-400 dark:text-zinc-500 mb-1">
-          Tenant
-        </div>
-        <select
-          onchange="if(this.value){window.location.href='/admin/autoservice/tenants/'+this.value}"
-          class="w-full text-sm font-medium border border-gray-300 dark:border-zinc-700 rounded px-2 py-1 bg-white dark:bg-zinc-900 text-gray-900 dark:text-zinc-100"
-        >
-          <option :for={t <- @tids} value={t} selected={t == @tid}>{t}</option>
-        </select>
-        <a href="/admin/autoservice" class="block mt-2 text-[11px] text-blue-600 hover:underline">
-          ← All Tenants
-        </a>
-      </div>
-
       <div class="text-xs uppercase tracking-wider text-gray-500 dark:text-zinc-400 mb-2 px-2">
         Config Agents
       </div>
@@ -103,23 +79,5 @@ defmodule EzagentPluginLiveview.AutoService.Admin.Components.AdminSidebar do
       </a>
     </nav>
     """
-  end
-
-  # All known tenant ids, from the ConfigPointer rows (same source the master
-  # dashboard uses). Cheap query; degrades to [] on any error.
-  defp list_tids do
-    import Ecto.Query
-    alias Ezagent.Socialware.ConfigPointer
-    alias EzagentCore.Repo
-
-    Repo.all(
-      from(p in ConfigPointer,
-        where: like(p.key, "tenant:%:config"),
-        select: p.key
-      )
-    )
-    |> Enum.map(fn key -> key |> String.split(":") |> Enum.at(1) end)
-  rescue
-    _ -> []
   end
 end

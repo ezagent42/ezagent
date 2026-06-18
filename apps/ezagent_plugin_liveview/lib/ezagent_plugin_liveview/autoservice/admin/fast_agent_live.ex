@@ -7,7 +7,6 @@ defmodule EzagentPluginLiveview.AutoService.Admin.FastAgentLive do
   """
   use Phoenix.LiveView
   import Phoenix.Component
-  import EzagentPluginLiveview.AutoService.Admin.Components.AdminSidebar
 
   alias EzagentPluginContent.Tenant.TenantRuntime
   alias EzagentPluginContent.Soul.{SoulLoader, SoulRenderer}
@@ -117,9 +116,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.FastAgentLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="flex min-h-screen">
-      <.admin_sidebar tid={@tid} />
-      <main class="flex-1 p-6">
+    <div>
         <div class="max-w-4xl mx-auto">
           <h1 class="text-xl font-bold text-gray-900 dark:text-zinc-100 mb-1">⚡ Fast Agent 配置</h1>
           <p class="text-xs text-gray-500 dark:text-zinc-400 mb-2">
@@ -207,8 +204,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.FastAgentLive do
             </div>
           <% end %>
         </div>
-      </main>
-    </div>
+      </div>
     """
   end
 end

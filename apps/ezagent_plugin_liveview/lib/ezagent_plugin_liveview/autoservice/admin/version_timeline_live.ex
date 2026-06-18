@@ -1,7 +1,6 @@
 defmodule EzagentPluginLiveview.AutoService.Admin.VersionTimelineLive do
   use Phoenix.LiveView
   import Phoenix.Component
-  import EzagentPluginLiveview.AutoService.Admin.Components.AdminSidebar
   alias EzagentPluginContent.Tenant.TenantRuntime
 
   @impl true
@@ -80,9 +79,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.VersionTimelineLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="flex min-h-screen">
-      <.admin_sidebar tid={@tid} />
-      <main class="flex-1 p-6">
+    <div>
         <div class="max-w-3xl mx-auto">
       <h1 class="text-xl font-bold text-gray-900 dark:text-zinc-100 mb-4">📋 版本历史</h1>
       <div class="flex justify-end mb-3">
@@ -109,8 +106,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.VersionTimelineLive do
       </div>
       <p :if={@versions == []} class="text-sm text-gray-400 dark:text-zinc-500">No published versions yet.</p>
         </div>
-      </main>
-    </div>
+      </div>
     """
   end
 end

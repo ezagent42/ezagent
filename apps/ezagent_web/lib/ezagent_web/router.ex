@@ -234,22 +234,15 @@ defmodule EzagentWeb.Router do
       # the existing /plugins/auto/:kind LV for raw slice inspection.
       live "/admin/templates", AdminTemplatesLive
 
-      # === AutoService v2 Admin ===
-      # === AutoService v2 Admin ===
+      # === AutoService v2 Admin — non-tenant pages (master / onboard / platform) ===
+      # Per-tenant pages (tenants/:tid/*) moved to the
+      # `live_session :require_admin_autoservice` below, which applies the shared
+      # top-bar + sidebar chrome layout so no per-tenant page can lose it.
       live "/admin/autoservice", Master.MasterDashboardLive
       live "/admin/autoservice/tenants/new", Tenant.TenantOnboardLive
-      live "/admin/autoservice/tenants/:tid", Tenant.TenantDashboardLive
-      live "/admin/autoservice/tenants/:tid/cr", Tenant.CrDashboardLive
-      live "/admin/autoservice/tenants/:tid/operators", Tenant.OperatorsLive
-      live "/admin/autoservice/tenants/:tid/init", AutoService.Admin.InitWizardLive
-      live "/admin/autoservice/tenants/:tid/versions", AutoService.Admin.VersionTimelineLive
       live "/admin/autoservice/agent", AutoService.Admin.AdminSessionLive
       live "/admin/autoservice/platform/soul", AutoService.Admin.Platform.PlatformSoulLive
       live "/admin/autoservice/platform/skills", AutoService.Admin.Platform.PlatformSkillLive
-      live "/admin/autoservice/tenants/:tid/agent/fast", AutoService.Admin.FastAgentLive
-      live "/admin/autoservice/tenants/:tid/agent/slow", AutoService.Admin.SlowAgentLive
-      live "/admin/autoservice/tenants/:tid/orchestrate", AutoService.Admin.OrchestrateLive
-      live "/admin/autoservice/tenants/:tid/debug", AutoService.Admin.DebugAgentLive
       # CapabilityRegistry SPEC `docs/superpowers/specs/2026-05-23-capability-registry.md`
       # §8.1 — surfaces every cap subject registered via
       # `Ezagent.CapabilityRegistry` (dispatchable + cap-only) plus
@@ -285,6 +278,23 @@ defmodule EzagentWeb.Router do
       # bind flow this LV drives.
       live "/admin/sessions/:id/external_mirror",
            Admin.SessionExternalMirrorLive
+    end
+
+    # Per-tenant AutoService admin pages — same :require_admin gate, but wrapped
+    # in the shared AdminLayout (global top bar + sidebar) so no page loses the
+    # chrome. Each LV here renders only its inner content (no own sidebar).
+    live_session :require_admin_autoservice,
+      on_mount: {EzagentWeb.LiveAuth, :require_admin},
+      layout: {EzagentPluginLiveview.AutoService.Admin.Components.AdminLayout, :shell} do
+      live "/admin/autoservice/tenants/:tid", Tenant.TenantDashboardLive
+      live "/admin/autoservice/tenants/:tid/cr", Tenant.CrDashboardLive
+      live "/admin/autoservice/tenants/:tid/operators", Tenant.OperatorsLive
+      live "/admin/autoservice/tenants/:tid/init", AutoService.Admin.InitWizardLive
+      live "/admin/autoservice/tenants/:tid/versions", AutoService.Admin.VersionTimelineLive
+      live "/admin/autoservice/tenants/:tid/agent/fast", AutoService.Admin.FastAgentLive
+      live "/admin/autoservice/tenants/:tid/agent/slow", AutoService.Admin.SlowAgentLive
+      live "/admin/autoservice/tenants/:tid/orchestrate", AutoService.Admin.OrchestrateLive
+      live "/admin/autoservice/tenants/:tid/debug", AutoService.Admin.DebugAgentLive
     end
   end
 

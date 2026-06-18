@@ -11,7 +11,6 @@ defmodule EzagentPluginLiveview.AutoService.Admin.OrchestrateLive do
   """
   use Phoenix.LiveView
   import Phoenix.Component
-  import EzagentPluginLiveview.AutoService.Admin.Components.AdminSidebar
 
   alias EzagentPluginAutoservice.Refresh
 
@@ -134,9 +133,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.OrchestrateLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="flex min-h-screen">
-      <.admin_sidebar tid={@tid} />
-      <main class="flex-1 p-6">
+    <div>
         <div class="max-w-3xl mx-auto">
           <h1 class="text-xl font-bold text-gray-900 dark:text-zinc-100 mb-1">🔀 Routeset</h1>
           <p class="text-sm text-gray-500 dark:text-zinc-400 mb-4">
@@ -215,8 +212,7 @@ defmodule EzagentPluginLiveview.AutoService.Admin.OrchestrateLive do
             <% end %>
           </div>
         </div>
-      </main>
-    </div>
+      </div>
     """
   end
 end

@@ -11,7 +11,6 @@ defmodule EzagentPluginLiveview.Tenant.TenantDashboardLive do
   use Gettext, backend: EzagentPluginLiveview.Gettext
   use EzagentDomainUi.Components
   import Phoenix.Component
-  import EzagentPluginLiveview.AutoService.Admin.Components.AdminSidebar
 
   alias EzagentPluginContent.Tenant.TenantRuntime
 
@@ -185,9 +184,7 @@ defmodule EzagentPluginLiveview.Tenant.TenantDashboardLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="flex min-h-screen text-zinc-900 dark:text-zinc-100">
-      <.admin_sidebar :if={@tid} tid={@tid} />
-      <main class="flex-1 px-6 py-6 max-w-4xl">
+    <div>
         <.page_header title={"📊 " <> (@tid || gettext("Tenant"))}>
           <:subtitle>
             {tenant_subtitle(@config, @version)}
@@ -375,8 +372,7 @@ defmodule EzagentPluginLiveview.Tenant.TenantDashboardLive do
             </span>
           </div>
         </a>
-      </main>
-    </div>
+      </div>
     """
   end
 
