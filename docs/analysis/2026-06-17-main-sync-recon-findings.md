@@ -14,7 +14,7 @@
 - **合并机械层 trivial** —— autoservice-dev 落后 main 仅 18 commit,只有 3 个冲突且全是 "keep-both" 并集,合并后**从零编译全绿**。"强迁代码撞 #814 新签名"的担忧被否掉。
 - **测试层:21 baseline 失败 → 26(+5)**,这 +5 全是 main 更严的 guard 抓出的存量债。
 - **其中 2 个 plugin 侧的,我已自行修好并 push**(A5 cap-axis、#57 未声明 dep)。
-- **剩 3 个需要你拍板**,都落在 core/domain / CI-gated catalog —— 见下方 §3。
+- **剩 2 个需要你拍板**(turn-adapter 已按 main #821 system-principal 消除 ratchet 定调:消除,见 §3.1),都落在 core/domain / CI-gated —— 见下方 §3。
 
 ---
 
@@ -37,7 +37,7 @@
 
 | # | guard 失败 | 指向 | owner | 状态 |
 |---|---|---|---|---|
-| **#8** | Catalog 17 个 principal,SPEC §4.1 期望 16 | `turn-adapter` principal | **Allen**(catalog CI-gated) | ⬇ §3.1 待拍板 |
+| **#8** | Catalog 17 个 principal,SPEC §4.1 期望 16 | `turn-adapter` principal | **Allen**(catalog CI-gated) | ✅ 已解决:按 #821 消除(§3.1) |
 | **#21** | oversized >1000 模块 measured 3 > cap 2 | 合并树叠加效应 | **Allen / domain** | ⬇ §3.2 待拍板 |
 | **#22** | god-function `session_creator` 35 def > cap 30 | 同上 | **Allen / domain** | ⬇ §3.2 待拍板 |
 | **#11** | 未声明 umbrella dep(#57):`autoservice → domain_workspace` | `customer_session.ex` + seed task | **我们**(plugin) | ✅ 已修 `2fe6ac9e` |
@@ -49,18 +49,25 @@
 
 ## 3. 待 Allen 拍板的 3 项
 
-### 3.1 `turn-adapter` 第 17 个 system principal(#8)
+### 3.1 `turn-adapter` 第 17 个 system principal(#8) — ✅ 已解决:消除
 
 autoservice-dev 为 Chat→Session turn lifecycle(open / compose / settle / claim)新增了
 `system://turn-adapter`,cap = `Capability.cap(:session, Chat, :any)`。
 main 的 SPEC §4.1 hard-codes **16** 个 principal,`NoAdminCapsFallbackTest` 断言
 `length(uris) == 16`。合并后 17 → 红。
 
-**需决定:**
-- (a) main 接纳 `turn-adapter` 进 §4.1(catalog → 17),或
-- (b) 这条 turn lifecycle 改用 #814 `Ezagent.Identity.Grant` 的 `:held_by` / `:rule`
-  授予路径实现,从而**不需要常驻 system principal**(更符合 #154 把 `{:system,…}`
-  逐步转 `{:rule,…}`/`{:held_by,…}` 的方向)。
+**结论(2026-06-17,main 自身机制定调,无需单独拍板):**
+- `turn-adapter` **不在 main**,纯是 autoservice-dev 的新增。
+- main 已合 **#821 `system_principal_elimination_test`**(Allen north-star ratchet:
+  *eliminate `system://` principals entirely,allowlist **only shrinks***)。新增一个
+  system principal 会**直接撞破 ratchet**,所以 (a) 接纳进 §4.1 **不可行**。
+- → 采用 **(b) 的精神:消除 `turn-adapter`**。turn 是 Session 上的有状态生命周期
+  (`Behavior.Turn`,durable `:turns` slice),不是路由变化;open/compose/settle 由
+  **orchestrator 用它自己的 Session cap** 驱动,`claim` 由 **operator 用自己的 Turn cap**
+  (`roles.ex` 的 operator bundle 已授)。两边都是真实 entity 的权威,删掉
+  `system://turn-adapter`,catalog 退回 16。
+- 待佳哥确认:"客户消息→开 turn" 那一刻的 caller 是否跑在 orchestrator(持 Session 权威)
+  上下文里 —— 是,则直接用其 cap 开 turn,principal 整个删除。
 
 ### 3.2 oversized-module(3>2)+ god-function `session_creator`(35>30)(#21/#22)
 
