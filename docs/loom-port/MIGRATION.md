@@ -58,7 +58,8 @@ Loom 是跑在 ezagent 上的 **AI 建站 + 多智能体编排**产品,由前端
 
 - 作为独立 OTP plugin 实现 `Ezagent.Plugin` 契约(`behaviors / agent_flavors / after_boot / register_session_views`)+ `forward "/loom"` + `/loom-signup`。
 - **session 用统一 `Entity.Session`**(domain_session),不再自造 session Kind。
-- 消费侧用 **socialware**(`ezagent_domain_socialware`:`CustomerFeed` / `CustomerAuth` / `Surface`/`Turn` 的 settlement / `AnonUser` 等);loom deps 现在**含 `ezagent_domain_socialware`**。
+- 消费侧用 **socialware**(`ezagent_domain_socialware`:`CustomerFeed` / `CustomerAuth` / `Surface`/`Turn` 的 settlement 等);loom deps 现在**含 `ezagent_domain_socialware`**。
+- **消费读走 substrate**:`/p/:token/open` 下发一张 `CustomerAuth` token;`GET /api/:ws/:sid/customer-feed?token=` 经 `CustomerFeed.snapshot` 读 **committed Surface 的页面 + 客户可见消息**(visibility-gated,错 token → unauthorized)。即消费侧真相从 loom 老存储 cut 到了 substrate。
 - 唯一 web 入口 `EzagentPluginLoom.WebPlug`(`/loom`),既发静态产物又提供 `/api/*` SDK 桥。
 
 ## 5. 关键设计取舍
@@ -95,6 +96,6 @@ loom 是独立 OTP plugin,不改 main 的 core/domain 逻辑(只加少数声明�
 
 ## 8. 边界与后续
 
-- 前端 SPA 源码在另一个仓库,本仓库只保存编译产物(`priv/static/loom_ui`);改界面要回那个仓库构建再同步。
-- 匿名访客身份依赖 substrate 的 `public_view`(当前 `:pending_impl`);带 publish token 的消费路径已可用。
+- 前端 SPA 源码在另一个仓库,本仓库只保存编译产物(`priv/static/loom_ui`);改界面要回那个仓库构建再同步。消费读端点(`/customer-feed`)已就绪,前端 re-point 到它即可把消费完全跑在 substrate 上。
+- 消费侧身份继续走 substrate:把 token 模型从 loom `TempUser` 迁到 `AnonUser`/`AnonBinding`、并把 `CustomerFeed` 注册成 `ExternalAdapter`(§3.3),是接下来的归一项;带 publish token 的消费读已可用。
 - 默认建站让 workers 自动参与(编排器协作流)是一个可选方向;当前刻意保持「不 @ = 纯发言、出页只走 @builder」。
