@@ -112,13 +112,21 @@ defmodule Ezagent.PluginLoom.Vertical do
     builder = agent_uri(ws, "loombuilder_#{sid}")
 
     if builder in mentions do
-      body = %{
-        text: "🔨 builder 已收到需求,正在生成页面,请稍候…(生成过程会实时显示,完成后预览自动更新)",
-        attachments: []
-      }
-
-      emit_message(session_uri, builder, body, [])
+      # SPA 的「builder 正在生成页面… 已 Ns」指示器吃的是 gen_progress 进度流
+      # (`loom:gen_progress:<session>` → `/stream` SSE → `__loom_progress` 帧),而该流第一帧
+      # 要等 LLM 进程启动 + 首 token(那几秒),用户发完会干等。这里在 @builder 瞬间**先推一帧**
+      # → 指示器/计时器第 0 秒就亮,claude 的 token 流随后接上。两种 backend 都受益(deepseek
+      # 无 token 流,这一帧就是它的即时反馈)。
+      Phoenix.PubSub.broadcast(
+        EzagentCore.PubSub,
+        "loom:gen_progress:" <> URI.to_string(session_uri),
+        {:loom_gen_progress, "🔨 收到,开始生成页面…\n"}
+      )
     end
+
+    :ok
+  rescue
+    _ -> :ok
   end
 
   # Route by the leading @-mention. `@builder`/`@loombuilder_<sid>` → builder (the
