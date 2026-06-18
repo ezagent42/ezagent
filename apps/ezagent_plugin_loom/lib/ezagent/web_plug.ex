@@ -547,6 +547,15 @@ defmodule EzagentPluginLoom.WebPlug do
     json_resp(conn, 200, pages_get(ws, sid))
   end
 
+  # 2026-06-18 — substrate 消费读(取 #810 之长):发布页内容 + 客户可见消息走 socialware
+  # `CustomerFeed.snapshot`(visibility-gated、只读 **committed** Surface),token 由
+  # `/p/:token/open` 下发。这是消费侧真相从 loom 老存储 cut 到 substrate 的读端点;
+  # per-visitor user_schema ops 仍由前端在 base page 上叠加(同 #810)。
+  get "/api/:ws/:sid/customer-feed" do
+    token = conn_query(conn) |> Map.get("token", "") |> to_string()
+    json_resp(conn, 200, customer_feed(ws, sid, token))
+  end
+
   post "/api/:ws/:sid/pages" do
     json_resp(conn, 200, pages_put_meta(ws, sid, conn.body_params || %{}))
   end
@@ -1515,7 +1524,12 @@ defmodule EzagentPluginLoom.WebPlug do
       # 谱系:这个冻结消费 session 由 class_name 模板 mint → 记一条 derived_from。
       _ = Ezagent.PluginLoom.Lineage.record_consume(ws, sid, class_name)
 
-      %{ok: true, ws: ws, sid: sid}
+      # 2026-06-18 — substrate 消费读:发一张 socialware `CustomerAuth` token,前端用它
+      # 走 `GET /api/:ws/:sid/customer-feed` 读 committed Surface(已发布页经 `seed_page`
+      # 的 turn 落进 Surface)+ 客户可见消息,即消费侧真相走 substrate 而非 loom 老存储。
+      customer_token = Ezagent.Socialware.CustomerAuth.issue_token(session_uri, workspace_uri)
+
+      %{ok: true, ws: ws, sid: sid, customer_token: customer_token}
     else
       :error -> %{ok: false, error: "unknown token"}
       {:error, reason} -> %{ok: false, error: inspect(reason)}
@@ -1629,6 +1643,23 @@ defmodule EzagentPluginLoom.WebPlug do
     %{ok: true, active: data["active"], pages: data["pages"]}
   rescue
     e -> %{ok: false, error: Exception.message(e), active: "home", pages: []}
+  end
+
+  # 2026-06-18 — substrate 消费读:经 socialware `CustomerFeed.snapshot` 取 committed
+  # Surface 的页面 + 客户可见消息(token 内部鉴权,visibility-gated)。这是消费侧从
+  # loom 老存储 cut 到 substrate 真相的读路径。
+  defp customer_feed(ws, sid, token) do
+    session_uri = session_uri(ws, sid)
+
+    case Ezagent.Socialware.CustomerFeed.snapshot(session_uri, token) do
+      {:ok, %{page: page, messages: messages}} ->
+        %{ok: true, page: page, messages: messages}
+
+      {:error, reason} ->
+        %{ok: false, error: to_string(reason)}
+    end
+  rescue
+    e -> %{ok: false, error: Exception.message(e)}
   end
 
   # 写元数据(增删/改名/salesperson 开关)。默认页源码兜底用 slice 最新。
