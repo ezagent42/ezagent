@@ -1,6 +1,14 @@
 # Loom → main 迁移说明
 
-> 配套文档:`STORAGE.md`(loom 产物怎么存)。本文讲**怎么做的**、**怎么跟基座结合**、**怎么保证 main 和 loom 功能都不丢**。
+> ⚠️ **状态(2026-06-18 修正,重要)**:本文记录的是 **stitch 时代独立 loom plugin 的移植**——它**跑在 socialware 基座旁边、并没有走 socialware**(自带 `LoomOrchestrator`/`LoomWorker` 等独立 Kind + 自己的 `temp_user`/`consumer_session`/`/loom/p` 匿名消费侧;mix 依赖里没有 `ezagent_domain_socialware`)。
+>
+> 但 main 的架构(**socialware substrate**,task #46,`docs/superpowers/specs/2026-06-09-socialware-substrate-design.md`)明确要求 **「AI 建站 / customer app」(就是 loom)必须做成 socialware 的一个 vertical** —— 即在**一个** `SocialwareSession` Kind 上组合 `Chat / Turn / Surface / ConfigUpdate / Publisher` 行为 + 声明外部 SPA view 的一个 **Template**(`#810 "socialware loom vertical"` 就是这件事)。
+>
+> **所以这版移植不满足 main 的要求,不作为最终目标合入。** 本文保留为**功能基线 / 参考**(证明各功能在 main 上能跑通、URI/flavor 等基座差异怎么填);真正的目标是 **「loom 作为 socialware vertical」**,需另行设计实施(见本文档目录下后续的评估/设计文档)。
+
+---
+
+> 配套文档:`STORAGE.md`(loom 产物怎么存)。本文讲(在上述「独立 plugin 移植」语境下)**怎么做的**、**基座差异怎么填**。
 >
 > 源分支:`loom-stitch`(下称 stitch)。目标:`main`。工作隔离在 worktree `/home/ning/ezagent-port`,profile=`port`(独立端口 + sidecar + SQLite 库),不影响线上 stitch 服务/数据。
 
