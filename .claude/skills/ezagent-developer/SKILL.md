@@ -34,7 +34,8 @@ For every task:
 5. Use **`references/how-to-recipes.md`** for common contributor tasks (add plugin, Kind, Behavior, Template Class, routing rule, invariant test, ExternalMirror adapter).
 6. When debugging, jump to **`references/debug-recipes.md`** — symptom-first.
 7. For UI/frontend work, load **`references/ui-contract.md`** — 3-layer architecture + nested shell + DO/DON'T lists.
-8. Cross-reference **`references/pointer-index.md`** for the durable record (Decision Log, forensic notes, SPEC, current-state snapshot).
+8. **Before ANY code that grants / revokes / checks / declares a capability, read `references/capbac.md`.** CapBAC is the most pitfall-prone area in the repo (granter≠caller, `ctx.caps` is the authorizer, the `Ezagent.Identity.Grant` chokepoint + tag decision tree, `rule_cap_bounded?`, the system-principal Catalog, Decision #154). The §9 pitfalls list is the set of mistakes that have actually shipped.
+9. Cross-reference **`references/pointer-index.md`** for the durable record (Decision Log, forensic notes, SPEC, current-state snapshot).
 
 For larger changes, also load `docs/phase-specs/phase7/SPEC.md` and `docs/phase-specs/phase7/VERIFICATION.md` directly — they have the V1-V5 acceptance criteria the system was built against, and `docs/notes/uri-design.md` §5 — the URI SPEC v2/v3 normative spec.
 
@@ -77,6 +78,8 @@ The references are organized so you only load the file relevant to your current 
 | "What's the effects vocabulary?" | `references/lifecycle.md` + `references/new-contract.md` §"Effect vocabulary" |
 | "state vs transients / cold-restart bug class / activate?" | `references/lifecycle.md` two-container model |
 | "§11 naming (NP-1/2/3) / why was it renamed?" | `references/lifecycle.md` §"naming principles" |
+| "How do I grant/revoke/check a capability? Which authority do I use?" | **`references/capbac.md`** (READ before any grant/cap code — the 3 roles, the `Ezagent.Identity.Grant` chokepoint + tag decision tree, `rule_cap_bounded?`, default_caps, the gates, the pitfalls) |
+| "What's a system principal / why is this `granted_by` wrong / Decision #154?" | `references/capbac.md` §1/§7 |
 
 ## Key invariants at a glance (full list in references/architecture-invariants.md)
 

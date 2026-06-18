@@ -731,6 +731,17 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
 
         # Steps 6-8.
         with :ok <- Materializer.store_session_orchestrator_uri(session_uri, orchestrator_uri),
+             # SPEC 2026-06-16 §5 (codex P2 prerequisite, Decision #88) — make
+             # the owner the orchestrator's MANAGER by granting it the
+             # `Manage :any` cap over the orchestrator. The orchestrator spawn
+             # path bypasses `CreatorGrant`, so without this the owner is not a
+             # manager and the manager-delegated `grant_cap` path (§1) could not
+             # equip the orchestrator. Idempotent (skips an equal re-grant).
+             :ok <-
+               Materializer.grant_owner_orchestrator_manage_cap(
+                 orchestrator_uri,
+                 effective_owner
+               ),
              :ok <-
                Session.grant_orchestrator_scoped_caps(
                  orchestrator_uri,

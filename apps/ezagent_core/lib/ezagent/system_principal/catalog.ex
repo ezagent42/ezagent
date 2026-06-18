@@ -188,35 +188,38 @@ defmodule Ezagent.SystemPrincipal.Catalog do
        ]},
       {principal("template-materialize"),
        [
-         # Deviation: original `workspace.template.*` doesn't structurally
-         # map (Template lives on AgentTemplate/SessionTemplate). Mapped
-         # to a Template Behavior cap on :any-Kind (template:// is
-         # cross-cutting). The session-spawn half of the original glob
-         # `session.*` becomes a Session-wildcard cap on Session Kind.
-         # PR-CC-2-v2 added IdentityAdmin grant_cap on User — the
-         # `grant_owner_template_cap/2` flow in SessionTemplate.create/3
-         # / fork/3 dispatches `identity.grant_cap` on the owner User
-         # Kind under this principal (template materialization side-
-         # effect). Pre-PR-CC-2-v2 worked because the bridge widened
-         # every non-empty entry to a wildcard cap; post-narrowing this
-         # MUST be declared structurally. The Workspace Behavior cap
-         # (`workspace_uri: :any`) is the cross-workspace authority
-         # needed so `IdentityAdmin.check_grant_authorized` accepts the
-         # principal as a "workspace admin" for the target workspace
-         # (per the PR-CC-2-v2 amendment to `holds_workspace_admin_cap?`).
+         # 2026-06-17 (Decision #154 "no unowned permissions", PR-2 of the
+         # CapBAC no-unowned-caps program) — the TWO grant-minting caps
+         # `cap(:user, IdentityAdmin, :grant_cap)` + `:revoke_cap` AND the
+         # grant-path-only `cap(:workspace, Workspace, :any)` are DROPPED.
+         # Every template-materialization GRANT now routes through the
+         # `Ezagent.Identity.Grant` chokepoint under a real-entity tag:
+         #   * rule-bounded caps (`Template/{:within_workspace}`,
+         #     orchestrator-admin `:restart`, member create-session) →
+         #     `{:rule, :template_materialize | :workspace_membership, owner}`
+         #     — authorized by `IdentityAdmin.check_grant_authorized`'s rule
+         #     branch (`rule_cap_bounded?/1`), made reachable by the step-5.5
+         #     `authorization_rule` honoring (`Kind.Runtime`);
+         #   * `behavior: :any` orchestrator scoped caps #1/#2 (rule-ineligible
+         #     by §3.3) → `{:system, bootstrap, owner}` (genesis authority,
+         #     same shape as `grant_owner_orchestrator_manage_cap`).
+         # The `granted_by` is the real configurer ENTITY (the session/template
+         # OWNER) in every case — never this abstract principal. With its
+         # grant caps gone, template-materialize is a NON-minter → category A
+         # in the no_unowned gate (the gate's tooth-3 "neuter" path, mirroring
+         # the 2026-06-16 agent-internal grant_cap drop).
+         #
+         # The principal STAYS in the Catalog because it is still a live
+         # NON-grant authorizer for template materialization READS/WRITES
+         # (NOT a Decision #154 / grant concern): `Template` covers
+         # `template.read` (Orchestrator.read_template_content) +
+         # `template.write` (cc orchestrator seed); `Session` covers the
+         # `session.join` / session-spawn during materialization
+         # (advisor + generic_session templates, SessionTemplate.system_ctx).
+         # Migrating those ambient-authority readers off the principal is a
+         # separate, non-#154 program (out of PR-2 scope).
          Capability.cap(:any, Template, :any),
-         Capability.cap(:session, Session, :any),
-         Capability.cap(:user, IdentityAdmin, :grant_cap),
-         # 2026-05-31 orchestrator-startup-atomicity §4 step 9
-         # (codex-review Q1) — rollback is the symmetric INVERSE of the
-         # materialization grant: `EzagentDomainInstanceMessage.rollback_session/3`
-         # dispatches `identity.revoke_cap` (owner restart cap +
-         # orchestrator scoped caps) under THIS principal. Without the
-         # revoke_cap cap those revokes are denied and the owner restart
-         # cap survives on the durable owner User Kind — exactly the Q1
-         # residue. Symmetric with the grant_cap above.
-         Capability.cap(:user, IdentityAdmin, :revoke_cap),
-         Capability.cap(:workspace, Workspace, :any)
+         Capability.cap(:session, Session, :any)
        ]},
       {principal("orchestrator-tools"),
        [
@@ -246,8 +249,17 @@ defmodule Ezagent.SystemPrincipal.Catalog do
        ]},
       {principal("agent-internal"),
        [
-         # `user.identity.grant_cap` → IdentityAdmin Behavior on User Kind.
-         Capability.cap(:user, IdentityAdmin, :grant_cap),
+         # 2026-06-16 (Decision #154 "no unowned permissions", Allen's ruling) —
+         # `cap(:user, IdentityAdmin, :grant_cap)` DROPPED. It was vestigial: the
+         # PR-CC-2-v2 bootstrap-wildcard bridge once masked a dependency, but a
+         # repo-wide `git grep` (2026-06-16) confirms NO live `grant_cap`/`revoke_cap`
+         # dispatch ever ran under `system://agent-internal` as caller — its only
+         # live use is the `sandbox.write_path` self-authority below
+         # (`template_spawn.ex:523`, a `Sandbox` action). Dropping it makes
+         # agent-internal a NON-minter → category A in the no-unowned gate. The
+         # honest granter for any future agent-creation cap grant is the agent's
+         # creator entity (via manager-delegation #153), never this abstract
+         # principal.
          # Agent.do_record_sandbox_state/3 dispatches sandbox.write_path
          # under this principal (pathology-B follow-up: PR-CC-2-v2's
          # bootstrap-wildcard bridge masked this dependency). The cap
@@ -319,6 +331,11 @@ defmodule Ezagent.SystemPrincipal.Catalog do
       # this grant (Allen 2026-06-15 — Option A: a dedicated closed-catalog GC
       # principal, not ambient/per-session authority).
       {principal("socialware-gc"), [Capability.cap(:session, Session, :leave)]}
+      # NOTE (#51 §4.1 / Decision #154): the anonymous public-view access path
+      # does NOT use a system principal. `Ezagent.Socialware.AnonUser.mint_for_public_session/1`
+      # mints the anon holding its OWN narrow `session.join` cap (granted_by the
+      # session owner), so the controller joins the anon AS ITSELF — no ambient
+      # `system://` join authority. See `EzagentWeb.Socialware.ChatFeedController`.
     ]
   end
 

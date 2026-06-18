@@ -225,7 +225,13 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
                dispatch(:add_member, %{member: user_uri}, ctx, slice)
 
       assert [{:dispatch, %Ezagent.Cmd{} = cmd}] = buckets.dispatches
-      assert cmd.target == user_uri
+      # SPEC 2026-06-17 (grant chokepoint): the effect is now built by
+      # `Ezagent.Identity.Grant.grant_cap_effect/3`, which pre-bakes the
+      # `?action=identity.grant_cap` query onto the target (canonical
+      # across all chokepoint wrappers). Router's `annotate_target_with_action`
+      # is a no-op when already present, so the dispatch outcome is
+      # IDENTICAL to the legacy plain-target form (behavior-preserving).
+      assert cmd.target == Ezagent.URI.with_action(user_uri, :identity, :grant_cap)
       assert cmd.action == :grant_cap
 
       # The cap carried by the dispatch is the workspace.create_session
@@ -237,6 +243,13 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
       assert cap.action == :create_session
       assert cap.instance == workspace_uri
       assert cap.workspace_uri == workspace_uri
+
+      # Decision #154 (grant chokepoint): the entity `granted_by` is now
+      # derived + stamped by the chokepoint — the documented admin
+      # fallback (`entity://system/user/admin`), an ENTITY (no more the
+      # non-entity `system://template-materialize`).
+      assert cap.granted_by == Ezagent.Entity.User.admin_uri()
+      assert %URI{scheme: "entity"} = cap.granted_by
 
       # The Cmd is a fire-and-forget cast (reply :ignore → Router
       # derives :cast mode — Task #46 invariant preserved).

@@ -376,30 +376,30 @@ defmodule Ezagent.Kind.Runtime do
       }
 
       cond do
+        # SPEC 2026-06-17 §3.3 PR-2 — rule-authorization branch. A `{:rule,…}`
+        # grant carries `ctx.caps = []`; defer to the handler's
+        # `check_grant_authorized` rule branch (enforces `rule_cap_bounded?/1`:
+        # no wildcard / cross-behavior cap). `:authorization_rule` enters ctx
+        # ONLY via the grep-gated `Ezagent.Identity.Grant` `{:rule,…}` tag;
+        # scoped here to IdentityAdmin grant/revoke so nothing else rides it.
+        is_map_key(ctx, :authorization_rule) and
+          behavior_module == Ezagent.Behavior.IdentityAdmin and
+            action in [:grant_cap, :revoke_cap] ->
+          :telemetry.execute([:ezagent, :authz, :granted], %{}, Map.put(meta, :via_rule, true))
+          :ok
+
         is_nil(needed) ->
           :telemetry.execute([:ezagent, :authz, :denied], %{}, meta)
           {:error, :unauthorized}
 
-        # 2026-05-26 (Allen perf bug): reorder ctx.caps check BEFORE the
-        # holds_cap? slice lookup. The slice path issues a
-        # `GenServer.call(caller_kind_pid, ...)` to read the caller's
-        # `:identity` slice. For non-user/non-agent callers (e.g.
-        # `entity://worker/system/em_*`, system workers, plugin pseudo-
-        # entities) `resolve_caller_kind/1` returns nil so the call
-        # falls through to `default_holds_cap?/2` which STILL calls
-        # `Kind.get_slice(caller_uri, :identity)` — and when the caller
-        # IS the dispatching process (worker dispatching its own
-        # subscribe_from), that GenServer.call deadlocks against
-        # itself until the 5s default timeout fires.
-        #
-        # Workers carry their compile-time caps via `ctx.caps` (the
-        # `system://worker-publish` system principal — see Catalog).
-        # Checking ctx.caps first means workers (and any other
-        # ctx.caps-bearing caller) never trigger the self-call deadlock,
-        # AND the cheap path runs first for everyone. Slice-resolved
-        # caps still work — they're just the second-line check, used
-        # by ordinary user/agent dispatches whose identity slice IS
-        # the source of truth.
+        # 2026-05-26 (Allen perf bug): check ctx.caps BEFORE the holds_cap?
+        # slice lookup. The slice path does `Kind.get_slice(caller_uri,
+        # :identity)` via GenServer.call; when the caller dispatches to ITSELF
+        # (e.g. a worker's own subscribe_from) that call deadlocks until the 5s
+        # timeout. Workers carry compile-time caps in `ctx.caps` (the
+        # `system://worker-publish` principal), so ctx.caps-first avoids the
+        # self-call deadlock AND runs the cheap path first; slice-resolved caps
+        # remain the second-line check for ordinary user/agent dispatches.
         granted_via_ctx_caps?(ctx, needed) ->
           :telemetry.execute([:ezagent, :authz, :granted], %{}, meta)
           :ok

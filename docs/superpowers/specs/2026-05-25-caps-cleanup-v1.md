@@ -355,6 +355,14 @@ Each system-internal dispatch gets a named principal URI under the `system://` s
 | `system://credential-materializer` | #17 cascade PR-0 — credential-materializer audit identity (per-grant narrow `sandbox.read`, no standing cap) | `[]` (empty audit identity) |
 | `system://socialware-gc` | #51 §3.4 — in-app GC sweeper (`Socialware.AnonUser.Sweeper`) `chat.leave`s abandoned anon-Users (the `users`/binding row deletes are direct context fns, no dispatch) | `cap(:session, Behavior.Session, :leave)` (narrowed to exactly Session `:leave`) |
 
+> **#51 §4.1 anon public-view access adds NO system principal (Decision #154).** The
+> public-route controller does not dispatch `session.join` under an ambient
+> `system://` principal. Instead `Ezagent.Socialware.AnonUser.mint_for_public_session/1`
+> mints the anon holding its OWN narrow `cap(:session, Behavior.Session, :join,
+> instance: <session>)` whose `granted_by` is the session owner (the public_view
+> rule configurer; admin entity for an ownerless session), and the controller joins
+> the anon AS ITSELF. There is no unowned ambient join authority to add to this table.
+
 Total: 16 principals (14 original + `credential-materializer` (#17) + `socialware-gc` (#51)). **The list is enforced closed — `Ezagent.SystemPrincipal.Catalog` is the single source of truth (per r2 HIGH-2 fix).** Adding a 15th principal requires (a) editing `Catalog`, (b) editing this SPEC, (c) shipping in a separate PR. The catalog is enforced at three layers:
 
 1. Runtime: `SystemPrincipal.ensure/2` rejects URIs not in the catalog (raise).

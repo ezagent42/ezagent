@@ -108,22 +108,34 @@ defmodule Ezagent.Users do
   end
 
   @doc """
-  Create a **read-only** User row — NO password and an EMPTY caps_json.
+  Create a **read-only** User row — NO password and a caps_json of EXACTLY the
+  supplied `caps` (default `[]`, the empty-caps read-only-by-construction shape).
 
   Unlike `create/3`, this path does NOT prepend `Ezagent.Entity.User.default_caps/1`
   (the broad `{kind: :session, behavior: :any, action: :any}` baseline cap that lets
   a normal user attempt `chat.send`). It is the minting path for the socialware
   anonymous external user (issue #51): an entity that may only READ a session it is
-  a member of, and whose read-only-ness IS the absence of any session cap. The User
-  Kind demand-spawns this row via `Ezagent.Entity.User.initial_caps_for_spawn/1`,
+  a member of, and whose read-only-ness IS the absence of any session WRITE cap. The
+  User Kind demand-spawns this row via `Ezagent.Entity.User.initial_caps_for_spawn/1`,
   which hydrates from `caps_json` — an empty caps_json yields no session cap, so the
   spawned anon-User holds only the structural self-Identity cap.
+
+  `caps` defaults to `[]` (the historical empty-caps invariant). The
+  `public_view` anon-access path (issue #51 §4.1) passes a SINGLE narrow,
+  concrete-instance `session.join` cap whose `granted_by` is the session owner
+  (Decision #154 — no unowned permissions): the anon is then a self-sufficient
+  caller that joins ONLY its own session under its OWN authority, with no
+  `system://` principal in the dispatch ctx. NOTE the caps MUST be
+  `to_map/1`-serializable — concrete-`%URI{}` (or `:any`) instance axes only; a
+  scope tuple (`{:within_session, _}`) is NOT JSON-serializable on this path
+  (only the slice snapshot carries tuples).
 
   The row carries no `password_hash`, so `verify_password/2` refuses login for it
   (a read-only viewer is never a login principal).
   """
-  @spec create_read_only(URI.t() | String.t()) :: {:ok, decoded()} | {:error, term()}
-  def create_read_only(uri) do
+  @spec create_read_only(URI.t() | String.t(), [Ezagent.Capability.t()]) ::
+          {:ok, decoded()} | {:error, term()}
+  def create_read_only(uri, caps \\ []) when is_list(caps) do
     uri_str = uri_to_str(uri)
     user_workspace = Ezagent.URI.entity_workspace_uri(Ezagent.URI.new!(uri_str))
 
@@ -132,8 +144,9 @@ defmodule Ezagent.Users do
       |> Ecto.Changeset.change(%{
         uri: uri_str,
         password_hash: nil,
-        # EMPTY caps — the read-only-by-construction guarantee (no default_caps).
-        caps_json: encode_caps([]),
+        # NO default_caps — read-only-by-construction. The only caps written are
+        # the explicit narrow grants the caller supplies (default none).
+        caps_json: encode_caps(caps),
         workspace_uri: URI.to_string(user_workspace)
       })
       |> Ecto.Changeset.unique_constraint(:uri, name: :users_uri_index)

@@ -98,7 +98,13 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # `system://agent-internal` Sandbox:read drop replaced the old #607 comment
     # block with a (one-line-longer) note above this ApiKeys-flip comment. Same
     # sanctioned `ctx[:all_slices][:api_keys]` mention, one line lower.
-    {"apps/ezagent_core/lib/ezagent/system_principal/catalog.ex", 272}
+    # Decision #154 (no-unowned, 2026-06-16) — shifted 272→281: the
+    # `system://agent-internal` `cap(:user, IdentityAdmin, :grant_cap)` drop added
+    # a 9-line vestigial-cap-drop rationale block ABOVE this ApiKeys-flip comment.
+    # Decision #154 PR-2 (template-materialize → non-minter, 2026-06-17) — shifted
+    # 281→284: dropping template-materialize's grant-minter caps replaced the
+    # entry's cap list with a 3-line-longer rationale block ABOVE this comment.
+    {"apps/ezagent_core/lib/ezagent/system_principal/catalog.ex", 284}
   ]
 
   @runtime_file "apps/ezagent_core/lib/ezagent/kind/runtime.ex"
