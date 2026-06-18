@@ -42,7 +42,7 @@ defmodule Ezagent.PluginLoom.Lineage do
          } }
 
   节点 ref:模板用 class_name(`session.pub_xxx`),消费/fork 用 session URI
-  (`session://loom/<ws>/<sid>`)。
+  (canonical workspace-first `session://<ws>/loom/<sid>`)。
   """
 
   defp file_path do
@@ -72,7 +72,12 @@ defmodule Ezagent.PluginLoom.Lineage do
 
   defp now, do: DateTime.utc_now() |> DateTime.to_iso8601()
 
-  defp session_uri(ws, sid), do: "session://loom/#{ws}/#{sid}"
+  # main canonical loom session URI is workspace-first `session://<ws>/loom/<sid>`
+  # (host = workspace, "loom" = class segment). This ref is used both as the
+  # lineage node key AND as the cohort output that the operator console feeds to
+  # `MessageStore.recent_in_session/2` — so it MUST match the canonical form the
+  # message store is keyed by, or operator-sessions + operator-send silently miss.
+  defp session_uri(ws, sid), do: "session://#{ws}/loom/#{sid}"
 
   @doc """
   记一次**发布**:模板 `class_name` 由 `from_sid`(创作 session)发布。

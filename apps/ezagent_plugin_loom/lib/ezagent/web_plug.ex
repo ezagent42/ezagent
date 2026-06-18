@@ -75,6 +75,10 @@ defmodule EzagentPluginLoom.WebPlug do
 
   # 历史消息(最近 50,正序)。
   get "/api/:ws/:sid/history" do
+    # Loom-owned hook hit on every loom-tab load — self-heal a team that a
+    # server restart left without its (un-snapshotted) members before the SPA
+    # starts streaming, so @mentions land on a live recipient.
+    _ = heal_team(ws, sid)
     json_resp(conn, 200, session_history(ws, sid))
   end
 
@@ -639,6 +643,75 @@ defmodule EzagentPluginLoom.WebPlug do
 
   defp session_uri(ws, sid), do: Ezagent.URI.new!("session://#{ws}/loom/#{sid}")
 
+  # ── canonical (backend) ⇄ stitch-layout (frontend) session URI ──
+  #
+  # The vendored loom SPA is stitch-era: it parses a session-URI STRING as
+  # `session://<class>/<ws>/<sid>` (class-first). main's canonical layout is
+  # workspace-first `session://<ws>/loom/<sid>`. The message store, cohort and
+  # dispatch all speak canonical, but any session URI we *hand the SPA* (and get
+  # echoed back) must be in the layout the SPA's parser expects, or it reads the
+  # wrong `ws` and navigates to a non-existent session (operator cohort bug).
+  #
+  # So the WebPlug is the adapter: `fe_session_uri/2` formats OUTbound,
+  # `parse_fe_session_uri/1` normalizes INbound back to a canonical %URI{}.
+
+  # Outbound: canonical → SPA layout `session://loom/<ws>/<sid>`.
+  defp fe_session_uri(ws, sid), do: "session://loom/#{ws}/#{sid}"
+
+  # Inbound: a session URI string from the SPA → canonical %URI{}. Tolerant of
+  # both the SPA's stitch layout (host = "loom", path = "/<ws>/<sid>") and an
+  # already-canonical URI (host = <ws>, path = "/loom/<sid>") — no real workspace
+  # is named "loom", so host == "loom" unambiguously marks the stitch layout.
+  defp parse_fe_session_uri(s) when is_binary(s) and s != "" do
+    case Ezagent.URI.new!(s) do
+      %URI{scheme: "session", host: "loom", path: "/" <> rest} ->
+        case String.split(rest, "/") do
+          [ws, sid | _] when ws != "" and sid != "" -> session_uri(ws, sid)
+          _ -> nil
+        end
+
+      %URI{scheme: "session", host: ws, path: "/" <> rest} when is_binary(ws) and ws != "" ->
+        case String.split(rest, "/") do
+          [_class, sid | _] when sid != "" -> session_uri(ws, sid)
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp parse_fe_session_uri(_), do: nil
+
+  # Self-heal a loom session's agent team after a server restart.
+  #
+  # The orchestrator carries a durable snapshot (its slice changes as it works)
+  # and its flavor is re-seeded at boot, so it lazy-revives on dispatch. The rest
+  # of the team — meta-agent, workers, builder, salesperson — are effectively
+  # stateless: they never write a snapshot, so there is nothing to revive them
+  # from and a `@mention` to a dead member is delivered to no one.
+  #
+  # `ensure_team/1` is the idempotent reconciler that (re-)spawns the whole team.
+  # Gate on the meta-agent's liveness (present in every loom session, never
+  # snapshotted) so the common case — team already alive — costs one registry
+  # lookup, and the full reconcile only runs when a member is actually missing.
+  defp heal_team(ws, sid) do
+    meta = Ezagent.URI.new!("entity://#{ws}/agent/loommeta_#{sid}")
+
+    case Ezagent.KindRegistry.lookup(meta) do
+      {:ok, _pid} ->
+        :ok
+
+      :error ->
+        _ = EzagentPluginLoom.Team.ensure_team(session_uri(ws, sid))
+        :ok
+    end
+  rescue
+    _ -> :ok
+  end
+
   # 停止本 session 的生成:(1) 中断所有在跑的 claude(group=session 字符串);
   # (2) 给编排器发 {:cancel,:all} 清在飞回合(丢弃,不写 :loom_source)。
   defp stop_session(ws, sid) do
@@ -664,6 +737,14 @@ defmodule EzagentPluginLoom.WebPlug do
   # 解析),前缀只是给人眼看。loom UI 自己的用户气泡也会带上前缀,接受。
   defp send_to_session(conn, ws, sid, text) do
     suri = session_uri(ws, sid)
+
+    # Self-heal the team before delivery: non-orchestrator members (builder /
+    # workers / meta) are effectively stateless and never write a durable snapshot,
+    # so after a server restart they're gone and a dispatch to a dead
+    # `@loombuilder_<sid>` finds no live Kind to deliver to. Re-spawn the missing
+    # members (idempotent reconciler) before sending.
+    _ = heal_team(ws, sid)
+
     orch_id = "loomorch_#{sid}"
     orchestrator = Ezagent.URI.new!("entity://#{ws}/agent/#{orch_id}")
 
@@ -769,6 +850,11 @@ defmodule EzagentPluginLoom.WebPlug do
   end
 
   defp stream_session(conn, ws, sid) do
+    # The SPA's EventSource auto-reconnects here after a server restart dropped
+    # the stream — the most reliable hook to revive an already-open loom tab's
+    # (un-snapshotted) team before the user's next @mention.
+    _ = heal_team(ws, sid)
+
     topic = Ezagent.Behavior.Session.session_events_topic(session_uri(ws, sid))
     Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
     # 也订阅本 session 的 v0 生成进度(ClaudeCode 流式 token 广播到这)。
@@ -1744,7 +1830,9 @@ defmodule EzagentPluginLoom.WebPlug do
         _ -> ""
       end
 
-    %{uri: URI.to_string(session_uri), ws: ws, sid: sid, title: sid, last_text: last_text}
+    # `uri` is what the SPA parses to navigate to a cohort session, so emit it in
+    # the SPA's stitch layout; `last_text` above already used the canonical URI.
+    %{uri: fe_session_uri(ws, sid), ws: ws, sid: sid, title: sid, last_text: last_text}
   end
 
   defp last_session_message(session_uri) do
@@ -1797,7 +1885,7 @@ defmodule EzagentPluginLoom.WebPlug do
     text = body |> Map.get("text", "") |> to_string() |> String.trim()
 
     with {:ok, entity_uri} <- caller_entity(conn),
-         %URI{scheme: "session"} = target <- safe_session_uri(uri_str),
+         %URI{scheme: "session"} = target <- parse_fe_session_uri(uri_str),
          true <- text != "",
          {tws, tsid} <- sess_ws_sid(target),
          true <- Ezagent.PluginLoom.Lineage.in_cohort?(ws, sid, tws, tsid) do
@@ -1836,7 +1924,7 @@ defmodule EzagentPluginLoom.WebPlug do
     text = body |> Map.get("text", "") |> to_string() |> String.trim()
 
     with {:ok, entity_uri} <- caller_entity(conn),
-         %URI{scheme: "session"} = session_uri <- safe_session_uri(uri_str),
+         %URI{scheme: "session"} = session_uri <- parse_fe_session_uri(uri_str),
          true <- text != "",
          true <- member_of?(session_uri, entity_uri) do
       msg = Ezagent.Message.new(entity_uri, %{text: text, attachments: []}, mentions: [])
@@ -2483,7 +2571,9 @@ defmodule EzagentPluginLoom.WebPlug do
              new_session_name,
              workspace_uri
            ) do
-      %{ok: true, session_uri: URI.to_string(session_uri)}
+      # Hand the SPA a stitch-layout URI so its parser navigates to the right ws.
+      {sws, ssid} = sess_ws_sid(session_uri)
+      %{ok: true, session_uri: fe_session_uri(sws, ssid)}
     else
       {:error, :not_found} -> %{ok: false, error: "class_not_found"}
       {:error, reason} -> %{ok: false, error: inspect(reason)}
