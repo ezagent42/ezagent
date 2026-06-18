@@ -61,6 +61,7 @@ Loom 是跑在 ezagent 上的 **AI 建站 + 多智能体编排**产品,由前端
 - 消费侧用 **socialware**(`ezagent_domain_socialware`:`CustomerFeed` / `CustomerAuth` / `Surface`/`Turn` 的 settlement 等);loom deps 现在**含 `ezagent_domain_socialware`**。
 - **消费读走 substrate**:`/p/:token/open` 下发一张 `CustomerAuth` token;`GET /api/:ws/:sid/customer-feed?token=` 经 `CustomerFeed.snapshot` 读 **committed Surface 的页面 + 客户可见消息**(visibility-gated,错 token → unauthorized)。即消费侧真相从 loom 老存储 cut 到了 substrate。
 - **消费身份走 substrate**:消费者 = `AnonUser`(只读 anon)+ `AnonBinding`(落 `socialware_anon_bindings` 表),每消费会话一个稳定 anon(存 `ConsumerSession` 复用),取代 loom 自有 `TempUser`;失败兜底回 `TempUser`,不破坏已验流程。
+- **注册 ExternalAdapter**(spec §3.3):`Ezagent.Plugin` 的 `adapters/0` 声明 `CustomerFeedAdapter` + `ChatFeedAdapter` 两个 BARE `:pull` adapter(同 advisor),boot 时经 `publish_adapters!` 注册。`:pull` = 消费侧轮询读 `CustomerFeed.snapshot`,无 push binding。
 - 唯一 web 入口 `EzagentPluginLoom.WebPlug`(`/loom`),既发静态产物又提供 `/api/*` SDK 桥。
 
 ## 5. 关键设计取舍
@@ -98,5 +99,5 @@ loom 是独立 OTP plugin,不改 main 的 core/domain 逻辑(只加少数声明�
 ## 8. 边界与后续
 
 - 前端 SPA 源码在另一个仓库,本仓库只保存编译产物(`priv/static/loom_ui`);改界面要回那个仓库构建再同步。消费读端点(`/customer-feed`)已就绪,前端 re-point 到它即可把消费完全跑在 substrate 上。
-- 把 `CustomerFeed` 注册成 `ExternalAdapter`(§3.3 的目标形态)是剩下的归一项;消费读 + 消费身份(`AnonUser`/`AnonBinding`)均已走 substrate。
+- 消费侧已端到端走 substrate:committed-Surface 读(`CustomerFeed`)+ `AnonUser`/`AnonBinding` 身份 + 注册的 `ExternalAdapter`(`:pull`)。后续可选:`:pull` → push 投递(Channel)+ 前端 re-point 到 `/customer-feed`。
 - 默认建站让 workers 自动参与(编排器协作流)是一个可选方向;当前刻意保持「不 @ = 纯发言、出页只走 @builder」。
