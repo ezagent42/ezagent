@@ -24,9 +24,17 @@ defmodule Ezagent.PluginLoom.PageGen do
       %{"role" => "user", "content" => user_prompt(request, current_tree)}
     ]
 
-    case LLM.chat(messages) do
+    case LLM.chat(messages, temperature: 0.7, thinking_disabled: true, role: "builder") do
       {:ok, text} ->
-        case Ezagent.Behavior.LoomBuilderWorker.extract_files_and_summary(text) do
+        # Mirror loom's builder: STRIP the optional ```salespersonConfig``` /
+        # ```danmakuConfig``` blocks BEFORE parsing files — otherwise the file
+        # regex grabs a config block as App.jsx (garbage page).
+        files_text =
+          text
+          |> then(&Regex.replace(~r/```salespersonConfig\s*\n[\s\S]*?```/, &1, ""))
+          |> then(&Regex.replace(~r/```danmakuConfig\s*\n[\s\S]*?```/, &1, ""))
+
+        case Ezagent.Behavior.LoomBuilderWorker.extract_files_and_summary(files_text) do
           {:ok, files, summary} when is_map(files) and map_size(files) > 0 ->
             {:ok, %{tree: files, reply: to_string(summary)}}
 
@@ -44,9 +52,21 @@ defmodule Ezagent.PluginLoom.PageGen do
   def generator(current_tree \\ nil), do: fn request -> generate(request, current_tree) end
 
   defp user_prompt(request, tree) when is_map(tree) and map_size(tree) > 0 do
-    "当前页面源码(在此基础上修改):\n" <>
-      inspect(tree, limit: :infinity, printable_limit: :infinity) <>
-      "\n\n用户要求:\n" <> to_string(request)
+    source =
+      tree
+      |> Enum.map(fn {path, content} -> "// #{path}\n#{content}" end)
+      |> Enum.join("\n\n")
+
+    """
+    这是当前页面的源码,请在它的基础上按用户要求修改(只改需要改的部分,保持其余不变):
+
+    ```jsx
+    #{source}
+    ```
+
+    用户要求:
+    #{to_string(request)}
+    """
   end
 
   defp user_prompt(request, _no_current), do: to_string(request)
