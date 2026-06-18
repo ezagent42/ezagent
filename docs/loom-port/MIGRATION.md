@@ -75,6 +75,24 @@ loom 是独立 OTP plugin,不改 main 的 core/domain 逻辑(只加少数声明�
 
 分期(P0→P3,见 `SOCIALWARE-VERTICAL.md`)逐个打通并实测:P0 统一 SocialwareSession;P1 TurnManager 驱动 Turn/Surface;P2 CustomerFeed 消费;F1 把 loom_ui 接到 substrate(create-on-access + @builder 出页);团队作为成员 agent 恢复(@builder/@meta/@worker/salesperson)。ExUnit 5 个 vertical 测试 + 运行期对着 port profile(DeepSeek)实测。
 
+全部外围功能也在 vertical 上逐个 runtime 回归过(port profile):
+
+| 功能 | 验证 |
+|---|---|
+| 编辑版本 / 回退 | 建多版页 → `edit-versions` 列出各版 → `revert` 到旧版页面回退 |
+| 多页 | 加页 → `active-page` 切换 → `page-source` 写入 |
+| AiSpot ✨ | 真生成卡片(tag `mode=aispot`) |
+| 角色门控 | 配角色 → `my-roles` 翻 `configured` → `role-check` 对匿名 `granted:false` |
+| 素材库 | 上传(嵌套路径)→ 列表 → serve(字节一致)→ 删除 |
+| 导购 salesperson + mode | 真导购回复;`ai↔human` 切换持久 |
+| 发布 / 消费 | publish token → 列表 → `/loom/p/<token>` 消费页 |
+| snapshot / fork | snapshot token → 浏览页;fork 出带源码的可编辑会话 |
+| save-as-template / spawn | 存模板 → spawn 新会话带源码 → 删模板 |
+| 接线员 operator | **全链路**:登录 → 两访客 open 发布页 → `operator-sessions` 见同伴 → `operator-send` 消息飘进对方会话 |
+| 弹幕 danmaku | 会话人类消息即飘在预览页的弹幕;样式 `danmakuConfig` 由 builder 可选随页发出 |
+
+> 契约点:`fork` 走 snapshot token(`/p/<snapshot_token>/fork` → `Snapshots.get`),不是 publish token;`danmakuConfig` 是 builder 可选块,无块即默认无自定义弹幕样式。
+
 ## 8. 边界与后续
 
 - 前端 SPA 源码在另一个仓库,本仓库只保存编译产物(`priv/static/loom_ui`);改界面要回那个仓库构建再同步。

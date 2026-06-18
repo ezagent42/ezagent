@@ -133,7 +133,7 @@ socialware vertical 的标准形态(P5-1b collapse 之后):
 | **P2** | ✅ DONE | loom deps `ezagent_domain_socialware`;消费者经 `CustomerFeed.snapshot` 读 approved 页 + customer 消息。`loom_vertical_consumer_test.exs`(2):创作 turn → 消费者读到页面 + chat;跨 ws token 被拒。 |
 | **P3 web/F1** | ✅ DONE(运行期实测) | `PluginLoom.Vertical`(`ensure_session`/`seed_page`/`author`)把 loom_ui 接到 substrate:`web_plug` send→`Vertical.author`、heal_team gate、create-on-access。实测:建站→`@builder` 出页(9422 字符)→ 渲染。 |
 | **团队恢复** | ✅ DONE(运行期实测,Option A) | 多智能体团队作为 vertical session **成员 agent** 恢复:`@builder` 出页(落 Surface)、`@meta` 加/删 worker(进 `WorkerConfig`,团队 modal 可见)、`@worker_<theme>`、salesperson 导购(消费侧 DeepSeek)。**不 @ = 纯发言、不出页**(编排器 mention-gated)。 |
-| **P3 余项** | 进行中 | 接线员(薄 lineage 查询)、fork、配置归位、AiSpot/弹幕、多页、角色门控、素材库 —— 沿用既有实现并接进 vertical;匿名访客身份依赖 substrate `public_view`(`:pending_impl`),带 token 的消费路径已可用并实测。 |
+| **P3 余项** | ✅ DONE(runtime 回归) | 接线员、fork、AiSpot/弹幕、多页、角色门控、素材库、编辑版本/回退、save-as-template/spawn —— 全部在 vertical 上逐个 runtime 验过(见 `MIGRATION.md §7`)。匿名访客身份依赖 substrate `public_view`(`:pending_impl`),带 token 的消费路径已可用并实测。 |
 | **P4 cutover/F2** | 进行中 | `session.loom` 已切到 vertical(`Template.LoomSession.instantiate` → `Vertical.ensure_session`);退役旧独立 Kind/store + 数据迁移、前端仓库 re-point(**源码不在本仓库**)为后续项。 |
 
 > 这次重构最核心的部分 —— 把 loom 搬到 substrate 的 Turn/Surface/CustomerFeed,统一 SocialwareSession + 团队成员 agent + `@builder` 出页落 Surface + 消费侧 —— 已端到端跑通并实测。后续是集成广度:外围功能归位、cutover 收尾,以及在**另一个仓库**的前端 re-point。
