@@ -184,6 +184,17 @@ defmodule EzagentPluginLoom.Application do
       Ezagent.PluginLoom.Template.LoomVerticalSession
     ]
 
+  # 2026-06-18 — socialware ExternalAdapter 注册(spec §3.3 的目标形态,同 advisor)。
+  # 两个 BARE `:pull` adapter(socialware 现成):customer feed(已发布页的 committed
+  # Surface + 客户可见消息,经 `GET /api/:ws/:sid/customer-feed` 拉)+ chat feed。
+  # `:pull` = 消费侧轮询读 `CustomerFeed.snapshot`,无 push binding。
+  @impl Ezagent.Plugin
+  def adapters,
+    do: [
+      Ezagent.Socialware.CustomerFeedAdapter,
+      Ezagent.Socialware.ChatFeedAdapter
+    ]
+
   @impl Ezagent.Plugin
   def agent_flavors do
     [
