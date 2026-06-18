@@ -10,6 +10,11 @@
    compiled into the output CSS. */
 @source "../../../ezagent_plugin_liveview/lib";
 @source "../../../ezagent_domain_ui/lib";
+/* Loom's server-rendered session views (Dashboard etc.) live here too —
+   without this their Tailwind utility classes get purged and the Dashboard
+   tab renders unstyled. (The LOOM tab is an iframe with its own bundled CSS,
+   so it's unaffected; only the inline ~H views need scanning.) */
+@source "../../../ezagent_plugin_loom/lib";
 
 /* A Tailwind plugin that makes "hero-#{ICON}" classes available.
    The heroicons installation itself is managed by your mix.exs */
