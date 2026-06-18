@@ -27,7 +27,7 @@ defmodule Ezagent.PluginLoom.PageGen do
     case LLM.chat(messages) do
       {:ok, text} ->
         case Ezagent.Behavior.LoomBuilderWorker.extract_files_and_summary(text) do
-          {files, summary} when is_map(files) and map_size(files) > 0 ->
+          {:ok, files, summary} when is_map(files) and map_size(files) > 0 ->
             {:ok, %{tree: files, reply: to_string(summary)}}
 
           _ ->

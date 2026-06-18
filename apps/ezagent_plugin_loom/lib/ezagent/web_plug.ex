@@ -697,15 +697,20 @@ defmodule EzagentPluginLoom.WebPlug do
   # Gate on the meta-agent's liveness (present in every loom session, never
   # snapshotted) so the common case — team already alive — costs one registry
   # lookup, and the full reconcile only runs when a member is actually missing.
+  # 2026-06-18 vertical cutover: ensure the loom session exists as a unified
+  # SocialwareSession (Turn/Surface) on access — opening /loom/:ws/:name
+  # auto-creates + seeds it on first open (and revives after restart). Gated on
+  # liveness so the common case (already alive) is one registry lookup.
   defp heal_team(ws, sid) do
-    meta = Ezagent.URI.new!("entity://#{ws}/agent/loommeta_#{sid}")
+    suri = session_uri(ws, sid)
 
-    case Ezagent.KindRegistry.lookup(meta) do
+    case Ezagent.KindRegistry.lookup(suri) do
       {:ok, _pid} ->
         :ok
 
       :error ->
-        _ = EzagentPluginLoom.Team.ensure_team(session_uri(ws, sid))
+        _ = Ezagent.PluginLoom.Vertical.ensure_session(ws, sid, nil)
+        _ = Ezagent.PluginLoom.Vertical.seed_page(ws, sid, nil)
         :ok
     end
   rescue
@@ -735,48 +740,18 @@ defmodule EzagentPluginLoom.WebPlug do
   # 2026-06-01 UX fix: prepend `@<orch-id>` to the visible text so the admin
   # session-view shows the @ — routing 还是基于 `mentions` 字段(不依赖文本
   # 解析),前缀只是给人眼看。loom UI 自己的用户气泡也会带上前缀,接受。
+  # 2026-06-18 vertical cutover: authoring is the substrate loop —
+  # `Vertical.author` records the user message, generates the page (PageGen),
+  # lands it in Surface via a Turn (→ customer delivery), and emits the
+  # `page_update` message the loom_ui SPA renders. No @-mention / orchestrator
+  # agent anymore.
   defp send_to_session(conn, ws, sid, text) do
     suri = session_uri(ws, sid)
 
-    # Self-heal the team before delivery: non-orchestrator members (builder /
-    # workers / meta) are effectively stateless and never write a durable snapshot,
-    # so after a server restart they're gone and a dispatch to a dead
-    # `@loombuilder_<sid>` finds no live Kind to deliver to. Re-spawn the missing
-    # members (idempotent reconciler) before sending.
-    _ = heal_team(ws, sid)
-
-    orch_id = "loomorch_#{sid}"
-    orchestrator = Ezagent.URI.new!("entity://#{ws}/agent/#{orch_id}")
-
-    # 2026-06-01 — 识别消息开头的 @<entity-id>。
-    # - 用户写 "@loommeta_<sid> 加 painter" → mentions = [loommeta_<sid>]
-    # - 用户写 "改成蓝色" → 默认 mention = orchestrator(老行为)
-    # 文本可见层不动 — 让 admin chat 看见用户实际打的字。
-    {mentions, visible_text} = parse_mentions(text, ws, sid, orchestrator)
-
     with {:ok, user_uri} <- consumer_sender(conn, ws, sid),
          :ok <- ensure_joined(suri, user_uri) do
-      msg =
-        Ezagent.Message.new(
-          user_uri,
-          %{text: visible_text, attachments: []},
-          mentions: mentions
-        )
-
-      inv = %Ezagent.Invocation{
-        target: Ezagent.URI.with_action(suri, :session, :send),
-        mode: :cast,
-        args: %{message: msg},
-        ctx: %{
-          caller: user_uri,
-          caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
-          reply: :ignore
-        }
-      }
-
-      case Ezagent.Invocation.dispatch(inv) do
-        :ok -> %{ok: true, id: msg.id}
-        {:ok, _} -> %{ok: true, id: msg.id}
+      case Ezagent.PluginLoom.Vertical.author(suri, user_uri, to_string(text)) do
+        {:ok, resp} -> resp
         {:error, reason} -> %{ok: false, error: inspect(reason)}
       end
     else

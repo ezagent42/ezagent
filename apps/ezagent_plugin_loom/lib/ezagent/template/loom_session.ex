@@ -63,71 +63,43 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
   def validate(%{"class" => other}), do: {:error, {:wrong_class, other}}
   def validate(_), do: {:error, :not_a_map}
 
+  # 2026-06-18 — loom-as-socialware-vertical CUTOVER. `session.loom` now spawns
+  # the UNIFIED `Entity.Session` with the socialware behavior subset (Turn/Surface
+  # active) via `Ezagent.PluginLoom.Vertical`, NOT the old standalone agent team.
+  # The page lives in Surface; the loom_ui SPA is fed the same `page_update`
+  # message protocol it already speaks. saved_state.loom_source (save-as-template
+  # / fork) seeds the initial page. See docs/loom-port/SOCIALWARE-VERTICAL.md.
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"session_name" => session_name} = tmpl, %URI{} = workspace_uri) do
     ws = workspace_uri.host
-    session_uri = Ezagent.URI.new!("session://#{ws}/loom/#{session_name}")
 
-    # 2026-06-01 save-as-template:可选 `saved_state` 字段,装上一个 session 的
-    # orchestrator slice 快照(`persona` + `loom_source`)。有就用 Kind.spawn 把
-    # orchestrator 提前 init,让 LoomOrchestrator.init_slice 自然吃 args;
-    # Team.ensure_team 后到再用幂等 spawn 把 orchestrator 当 already_started 跳过。
-    # 没有 saved_state → fallback 走默认 seed 页 + 默认 persona。
-    saved_state = Map.get(tmpl, "saved_state") || %{}
-    saved_orch = Map.get(saved_state, "orchestrator") || %{}
+    saved_orch = (Map.get(tmpl, "saved_state") || %{}) |> Map.get("orchestrator", %{})
 
-    seed_source =
-      Map.get(saved_orch, "loom_source") ||
-        Map.get(tmpl, "loom_source") ||
-        EzagentPluginLoom.Prompts.loom_seed_source()
+    seed_files =
+      case Map.get(saved_orch, "loom_source") || Map.get(tmpl, "loom_source") do
+        src when is_binary(src) or is_map(src) -> EzagentPluginLoom.Prompts.normalize_source(src)
+        _ -> nil
+      end
 
-    seed_summary = Map.get(tmpl, "loom_summary") || "初始页"
+    operator = first_member_uri(Map.get(tmpl, "members", []))
 
-    # 2026-06-10 — 页面助手(Salesperson)样式。发布/快照时由 read_orchestrator_snapshot
-    # 存进 saved_state.orchestrator.salesperson_config;这里取出 → seed 进 page_update span
-    # (前端 extractSalespersonConfig 从这条消息读),让 published/pub 会话保持作者配的样式。
-    seed_salesperson_config = Map.get(saved_orch, "salesperson_config")
-    # 2026-06-15 — 弹幕样式同理 seed 进 page_update span。
-    seed_danmaku_config = Map.get(saved_orch, "danmaku_config")
-
-    saved_workers = Map.get(saved_state, "workers") || []
-    worker_themes = worker_themes_from_saved(saved_workers)
-    # 2026-06-05 — 发布物 fork 出的 session 不含 v0(base 冻结,只能 user_schema
-    # 叠加,不能 @v0 重写源码)。原 session.loom 不带此标记 → v0 照常。
-    include_builder? = Map.get(tmpl, "no_builder") != true
-
-    with {:ok, _session_pid} <- spawn_session(session_uri),
-         :ok <- pre_spawn_orchestrator_if_saved(ws, session_name, saved_orch),
-         :ok <- pre_spawn_workers_if_saved(ws, session_name, saved_workers),
-         {:ok, %{orchestrator: _orch, workers: _workers}} <-
-           Team.ensure_team(session_uri,
-             worker_themes: worker_themes,
-             include_builder: include_builder?
-           ),
-         :ok <- join_members(session_uri, Map.get(tmpl, "members", [])) do
-      # 2026-06-01 redesign: seed a `<span type="page_update">` message into
-      # the session so the loom-view bridge has something to render on first
-      # open. Best-effort (don't fail instantiate if the dispatch errors).
-      # Idempotent (2026-06-01): skip if a page_update span already exists
-      # in chat — `Workspace.add_template/3` triggers instantiate twice
-      # via an ESR-layer slice-change side-effect (deferred root-cause fix),
-      # leading to duplicate seeds before this guard.
-      maybe_seed_loom_source(
-        session_uri,
-        seed_source,
-        seed_summary,
-        seed_salesperson_config,
-        seed_danmaku_config
-      )
-
-      # Best-effort one-way Feishu mirror (gated by FEISHU_MIRROR_ENABLED=1),
-      # mirroring EzagentPluginLoom.Bootstrap — so a UI-created loom session
-      # also mirrors to the demo Feishu group, not just the script path.
-      # Failure must NOT fail instantiate; idempotent on re-add.
-      maybe_bind_feishu(session_uri)
+    with {:ok, session_uri} <-
+           Ezagent.PluginLoom.Vertical.ensure_session(ws, session_name, operator) do
+      Ezagent.PluginLoom.Vertical.seed_page(ws, session_name, seed_files)
       {:ok, [session_uri]}
     end
   end
+
+  defp first_member_uri(members) when is_list(members) do
+    Enum.find_value(members, fn m ->
+      case Ezagent.URI.parse(to_string(m)) do
+        {:ok, %URI{scheme: "entity"} = u} -> u
+        _ -> nil
+      end
+    end)
+  end
+
+  defp first_member_uri(_), do: nil
 
   def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
 
