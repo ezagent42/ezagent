@@ -100,7 +100,25 @@ defmodule Ezagent.PluginLoom.Vertical do
     {ws, sid} = ws_sid(session_uri)
     mentions = route_mentions(request, ws, sid)
     msg = emit_message(session_uri, sender_uri, %{text: request, attachments: []}, mentions)
+    _ = maybe_emit_builder_ack(session_uri, ws, sid, mentions)
     {:ok, %{ok: true, id: msg.id}}
+  end
+
+  # 2026-06-18 — 出页要等 builder 调 LLM(十几秒),期间用户干等不知状态。@builder 一发,
+  # 立刻以 **builder 身份**冒一条状态消息——经现有 SSE `/stream` 实时推到聊天,用户秒级知道
+  # "收到 + 在生成"。纯状态:`ref_id: nil` / `mentions: []` / 无 page_update span,所以编排器
+  # 不会把它当页面或 deliverable 处理(只是一条可见气泡)。完成时真页面(page_update)再跟上。
+  defp maybe_emit_builder_ack(session_uri, ws, sid, mentions) do
+    builder = agent_uri(ws, "loombuilder_#{sid}")
+
+    if builder in mentions do
+      body = %{
+        text: "🔨 builder 已收到需求,正在生成页面…(通常十几秒,完成后预览会自动更新)",
+        attachments: []
+      }
+
+      emit_message(session_uri, builder, body, [])
+    end
   end
 
   # Route by the leading @-mention. `@builder`/`@loombuilder_<sid>` → builder (the
