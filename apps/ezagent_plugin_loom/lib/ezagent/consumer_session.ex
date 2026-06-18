@@ -48,7 +48,17 @@ defmodule Ezagent.PluginLoom.ConsumerSession do
   @doc "标记某 session 为发布消费会话(无 loom 视图)。在 `/p/:token/open` 调用。"
   @spec mark(String.t(), String.t()) :: :ok
   def mark(ws, sid) when is_binary(ws) and is_binary(sid) do
-    load_all() |> Map.put(key(ws, sid), true) |> save_all()
+    all = load_all()
+
+    # 合并而非覆盖:`put_anon` 可能已先写了 `%{"anon"=>uri}`,mark 只加 consumer 标记,
+    # 不能把 anon 冲掉。
+    entry =
+      case Map.get(all, key(ws, sid)) do
+        %{} = m -> Map.put(m, "consumer", true)
+        _ -> %{"consumer" => true}
+      end
+
+    all |> Map.put(key(ws, sid), entry) |> save_all()
     :ok
   rescue
     _ -> :ok
@@ -56,10 +66,52 @@ defmodule Ezagent.PluginLoom.ConsumerSession do
 
   def mark(_ws, _sid), do: :ok
 
-  @doc "是否是发布消费会话(无 loom 视图)。"
+  @doc """
+  记下这个消费会话的 substrate **anon 身份**(`AnonUser.mint` 出来的只读 anon,经
+  `AnonBinding` 绑定)。entry 从 legacy `true` 升级成 `%{"consumer"=>true,"anon"=>uri}`,
+  `consumer?` 仍兼容两种形态。`consumer_sender` 读它复用稳定身份(每消费会话一个 anon)。
+  """
+  @spec put_anon(String.t(), String.t(), String.t()) :: :ok
+  def put_anon(ws, sid, anon_uri)
+      when is_binary(ws) and is_binary(sid) and is_binary(anon_uri) do
+    all = load_all()
+
+    # 不隐含 consumer 标记:anon 存储与「是否消费会话」是两件事 —— 创作会话的
+    # 导购预览也会 mint anon,但它不是发布消费会话(loom 编辑视图必须留着)。
+    entry =
+      case Map.get(all, key(ws, sid)) do
+        true -> %{"consumer" => true}
+        %{} = m -> m
+        _ -> %{}
+      end
+
+    all |> Map.put(key(ws, sid), Map.put(entry, "anon", anon_uri)) |> save_all()
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  @doc "读这个消费会话已绑定的 substrate anon URI(无 → nil)。"
+  @spec anon(String.t(), String.t()) :: String.t() | nil
+  def anon(ws, sid) when is_binary(ws) and is_binary(sid) do
+    case Map.get(load_all(), key(ws, sid)) do
+      %{"anon" => a} when is_binary(a) and a != "" -> a
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  def anon(_ws, _sid), do: nil
+
+  @doc "是否是发布消费会话(无 loom 视图)。兼容 legacy `true` 与新的 map entry。"
   @spec consumer?(String.t(), String.t()) :: boolean()
   def consumer?(ws, sid) when is_binary(ws) and is_binary(sid) do
-    Map.get(load_all(), key(ws, sid)) == true
+    case Map.get(load_all(), key(ws, sid)) do
+      true -> true
+      %{"consumer" => true} -> true
+      _ -> false
+    end
   rescue
     _ -> false
   end

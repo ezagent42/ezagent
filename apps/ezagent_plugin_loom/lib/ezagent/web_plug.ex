@@ -1492,7 +1492,7 @@ defmodule EzagentPluginLoom.WebPlug do
          # 不再经 TemplateRegistry 查合成模块。
          {:ok, [session_uri | _]} <-
            Ezagent.PluginLoom.SavedClasses.instantiate_from_data(class_name, sid, workspace_uri),
-         {:ok, user_uri} <- EzagentPluginLoom.TempUser.ensure_named(ws, "loomui_#{sid}"),
+         {:ok, user_uri} <- ensure_consumer_anon(ws, sid),
          :ok <- ensure_joined(session_uri, user_uri) do
       # 知识库随发布物 seed 进这个消费会话 → 它的 Salesperson 也有知识。
       _ =
@@ -1571,8 +1571,36 @@ defmodule EzagentPluginLoom.WebPlug do
   defp consumer_sender(conn, ws, sid) do
     case caller_entity(conn) do
       {:ok, %URI{scheme: "entity", path: "/user/" <> _} = u} -> {:ok, u}
-      _ -> EzagentPluginLoom.TempUser.ensure_named(ws, "loomui_#{sid}")
+      _ -> ensure_consumer_anon(ws, sid)
     end
+  end
+
+  # 2026-06-18 — 消费身份走 substrate `AnonUser`(只读 anon + `AnonBinding`),取代 loom
+  # `TempUser`。每消费会话一个**稳定** anon:首开 mint(`AnonUser.mint`)+ 绑定
+  # (`AnonBinding.touch`)+ 存进 `ConsumerSession`,后续复用同一个。任何一步失败 →
+  # fallback 回 `TempUser`,保证消费/导购/接线员等已验流程不被身份迁移破坏。
+  # 发送权限来自 `system://session-internal`(非 user caps),故只读 anon 作发送者 URI 无碍。
+  defp ensure_consumer_anon(ws, sid) do
+    case Ezagent.PluginLoom.ConsumerSession.anon(ws, sid) do
+      a when is_binary(a) ->
+        anon_uri = Ezagent.URI.new!(a)
+        _ = Ezagent.SpawnRegistry.spawn(anon_uri)
+        {:ok, anon_uri}
+
+      _ ->
+        session_uri = session_uri(ws, sid)
+
+        with {:ok, anon_uri} <- Ezagent.Socialware.AnonUser.mint(session_uri),
+             _ <- Ezagent.SpawnRegistry.spawn(anon_uri),
+             _ <- Ezagent.Socialware.AnonBinding.touch(anon_uri, session_uri, DateTime.utc_now()) do
+          _ = Ezagent.PluginLoom.ConsumerSession.put_anon(ws, sid, URI.to_string(anon_uri))
+          {:ok, anon_uri}
+        else
+          _ -> EzagentPluginLoom.TempUser.ensure_named(ws, "loomui_#{sid}")
+        end
+    end
+  rescue
+    _ -> EzagentPluginLoom.TempUser.ensure_named(ws, "loomui_#{sid}")
   end
 
   # 编辑页读角色配置。作者首次打开面板 → 捕获创建者(= 超级管理员)。
@@ -2259,7 +2287,7 @@ defmodule EzagentPluginLoom.WebPlug do
              tmpl,
              workspace_uri
            ),
-         {:ok, user_uri} <- EzagentPluginLoom.TempUser.ensure_named(ws, "loomui_#{sid}"),
+         {:ok, user_uri} <- ensure_consumer_anon(ws, sid),
          :ok <- ensure_joined(session_uri, user_uri) do
       # 复制快照 ops + Salesperson 对话 + 知识库进新 session(forker 之后改不影响快照)。
       _ = Ezagent.PluginLoom.UserSchema.replace(ws, sid, Map.get(snap, "ops", []))
