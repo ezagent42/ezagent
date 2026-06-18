@@ -254,24 +254,15 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
         sp
       end
 
-    # 在 Behavior handle_receive 内直接同步调用 `Kind.spawn` —— 不走 effect 路径
-    # (effect 是给 state-mutation / dispatch 用的,在 `:effect, fn, args` 的 3-tuple
-    # 形式)。Kind.spawn 是 framework 同步 API,handler 里直接调安全。
+    # 2026-06-18 — 走 WorkerConfig.upsert:它**持久化进 WorkerConfig**(团队 modal /workers
+    # 读这里 → 能看到)+ reconcile 进活团队(spawn + join 成 session 成员)。一步到位,
+    # 取代原来手动 Kind.spawn + chat.join(那样只是成员、不进 WorkerConfig → modal 看不到)。
     _ =
-      case Ezagent.Kind.spawn(Ezagent.Entity.LoomWorker, %{
-             uri: new_uri,
-             role: theme,
-             system_prompt: resolved_sp
-           }) do
-        {:ok, _} ->
-          :ok
-
-        {:error, {:already_started, _}} ->
-          :ok
-
-        {:error, reason} ->
-          Logger.warning("meta: spawn worker #{theme} failed: #{inspect(reason)}")
-      end
+      Ezagent.PluginLoom.WorkerConfig.upsert(session_uri, %{
+        "key" => theme,
+        "desc" => role_desc,
+        "prompt" => resolved_sp
+      })
 
     card =
       Span.span("team_change", %{
@@ -282,8 +273,7 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
         "text" => "已加入 #{theme} worker(#{role_desc})"
       })
 
-    # chat.join 走 session-internal 主体(跟 Team.ensure_team 同款)
-    [{:dispatch, join_cmd(session_uri, new_uri)}] ++ reply_with_body(ctx, msg, card)
+    reply_with_body(ctx, msg, card)
   end
 
   defp do_remove(theme, ctx, session_uri, msg) do
@@ -311,11 +301,9 @@ defmodule Ezagent.Behavior.LoomMetaAgent do
           "text" => "已移除 #{theme} worker"
         })
 
-      effects =
-        [{:dispatch, leave_cmd(session_uri, target_uri)}] ++ reply_with_body(ctx, msg, card)
-
-      _ = Ezagent.Kind.terminate(target_uri)
-      effects
+      # WorkerConfig.remove:从 WorkerConfig 删(modal 不再显示)+ 从活团队 leave + terminate。
+      _ = Ezagent.PluginLoom.WorkerConfig.remove(session_uri, theme)
+      reply_with_body(ctx, msg, card)
     end
   end
 
