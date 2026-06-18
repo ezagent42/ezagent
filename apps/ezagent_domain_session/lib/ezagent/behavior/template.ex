@@ -720,33 +720,23 @@ defmodule Ezagent.Behavior.Template do
 
   defp grant_agent_template_owner_cap(_, _), do: :ok
 
-  # Generic owner-cap grant — dispatches `identity.grant_cap` on the
-  # owner's User Kind under a system ctx. The WHO-may-fork authority
-  # was already enforced by dispatch CapBAC against the parent URI's
-  # `:fork` action; this is purely the followup grant so the owner can
-  # later operate on the fork.
+  # Generic owner-cap grant — routes through the grant chokepoint
+  # (SPEC 2026-06-17 §4 PR-2, site #9). The WHO-may-fork authority was
+  # already enforced by dispatch CapBAC against the parent URI's `:fork`
+  # action; this is purely the followup grant so the owner can later
+  # operate on the fork. The cap is `<*_template>/Template/:any/
+  # {:within_workspace}` — concrete kind + behavior, scope-bounded
+  # instance — so `IdentityAdmin.rule_cap_bounded?/1` is true → the
+  # `{:rule, …}` branch authorizes it (Decision #154). The configurer of
+  # the fork-materialization rule is the OWNER (also the entity
+  # `granted_by`); `template-materialize` is no longer the authorizer.
   defp grant_cap(%URI{} = owner_uri, %Ezagent.Capability{} = cap) do
-    case Ezagent.Router.dispatch(%Cmd{
-           target: owner_uri,
-           action: :grant_cap,
-           args: %{cap: cap},
-           # SPEC caps-cleanup-v1 §4.4 — Template fork side-effect
-           # grants owner cap on the fork; runs under
-           # `system://template-materialize` (closed Catalog).
-           ctx: %{
-             caller: Ezagent.SystemPrincipal.uri("template-materialize"),
-             caps:
-               "template-materialize"
-               |> Ezagent.SystemPrincipal.uri()
-               |> Ezagent.SystemPrincipal.caps(),
-             reply: {:caller_inbox, self()}
-           }
-         }) do
-      :ok -> :ok
-      {:ok, _} -> :ok
-      {:error, _} = err -> err
-      other -> {:error, {:owner_cap_grant_failed, other}}
-    end
+    Ezagent.Identity.Grant.grant_cap_via_router(
+      owner_uri,
+      cap,
+      {:rule, :template_materialize, owner_uri},
+      :sync
+    )
   end
 
   # PR-OWN-4 (caps-data-ownership SPEC #306 §6): workspace-scoped

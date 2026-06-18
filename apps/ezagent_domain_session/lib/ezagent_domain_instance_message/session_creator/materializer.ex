@@ -92,29 +92,23 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
     if Enum.any?(current, &Session.cap_equal_ignoring_metadata?(&1, want)) do
       :ok
     else
-      target = Ezagent.URI.with_action(owner_uri, :identity, :grant_cap)
-      cap = %{want | granted_at: DateTime.utc_now()}
-
+      # Grant chokepoint (SPEC 2026-06-17 §4 PR-2, site #6). The cap is
+      # `session/OrchestratorAdmin/:restart/<session_uri>` — concrete
+      # instance + concrete action, so `IdentityAdmin.rule_cap_bounded?/1`
+      # is true → authorized via the `{:rule, …}` branch (Decision #154).
+      # `template-materialize` is no longer the authorizer; the configurer
+      # of the orchestrator-template-materialization rule is the session
+      # OWNER (also the entity `granted_by`).
       result =
-        Invocation.dispatch(%Invocation{
-          target: target,
-          mode: :call,
-          args: %{cap: cap},
-          ctx: %{
-            caller: owner_uri,
-            caps:
-              "template-materialize"
-              |> Ezagent.SystemPrincipal.uri()
-              |> Ezagent.SystemPrincipal.caps(),
-            reply: {:caller_inbox, self()}
-          }
-        })
+        Ezagent.Identity.Grant.grant_cap(
+          owner_uri,
+          want,
+          {:rule, :template_materialize, owner_uri}
+        )
 
       case result do
-        {:ok, _} -> :ok
         :ok -> :ok
         {:error, reason} -> {:error, {:orchestrator_admin_cap_grant_failed, reason}}
-        other -> {:error, {:orchestrator_admin_cap_grant_unexpected, other}}
       end
     end
   end

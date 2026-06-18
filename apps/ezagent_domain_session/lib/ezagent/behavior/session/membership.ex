@@ -13,7 +13,6 @@ defmodule Ezagent.Behavior.Session.Membership do
 
   require Logger
 
-  alias Ezagent.Cmd
   alias Ezagent.Behavior.Session.{Delivery, Members}
 
   @doc """
@@ -204,20 +203,21 @@ defmodule Ezagent.Behavior.Session.Membership do
           granted_at: DateTime.utc_now()
         }
 
-        case Ezagent.Router.dispatch(%Cmd{
-               target: owner_uri,
-               action: :grant_cap,
-               args: %{cap: want},
-               ctx: %{
-                 caller: owner_uri,
-                 caps: system_caps("template-materialize"),
-                 reply: :ignore
-               }
-             }) do
+        # Grant chokepoint (SPEC 2026-06-17 §4 PR-2, site #10). The `:async`
+        # reply preserves the deliberate `:cast` mode (see the comment
+        # above — a synchronous grant would deadlock the Session calling
+        # back into `Session.owner`). Cap is
+        # `session/OrchestratorAdmin/:restart/<session_uri>` (concrete
+        # instance + concrete action) → `rule_cap_bounded?` true → the
+        # `{:rule, …}` branch authorizes it; configurer + `granted_by` =
+        # owner. `template-materialize` is no longer the authorizer.
+        case Ezagent.Identity.Grant.grant_cap_via_router(
+               owner_uri,
+               want,
+               {:rule, :template_materialize, owner_uri},
+               :async
+             ) do
           :ok ->
-            :ok
-
-          {:ok, _} ->
             :ok
 
           {:error, reason} ->
@@ -241,11 +241,5 @@ defmodule Ezagent.Behavior.Session.Membership do
         # Session not workspace-bound.
         :ok
     end
-  end
-
-  defp system_caps(name) when is_binary(name) do
-    name
-    |> Ezagent.SystemPrincipal.uri()
-    |> Ezagent.SystemPrincipal.caps()
   end
 end

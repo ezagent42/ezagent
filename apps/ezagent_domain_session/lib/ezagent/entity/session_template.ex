@@ -668,29 +668,19 @@ defmodule Ezagent.Entity.SessionTemplate do
         granted_at: DateTime.utc_now()
       }
 
-      target = Ezagent.URI.with_action(owner_uri, :identity, :grant_cap)
-
-      case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-             target: target,
-             mode: :call,
-             args: %{cap: cap},
-             # SPEC caps-cleanup-v1 §4.4 — granting owner the
-             # `:within_workspace` SessionTemplate cap is template
-             # materialization side-effect; runs under
-             # `system://template-materialize` (closed Catalog).
-             ctx: %{
-               caller: Ezagent.SystemPrincipal.uri("template-materialize"),
-               caps:
-                 "template-materialize"
-                 |> Ezagent.SystemPrincipal.uri()
-                 |> Ezagent.SystemPrincipal.caps(),
-               reply: {:caller_inbox, self()}
-             }
-           }) do
-        {:ok, _} -> :ok
-        {:error, _} = err -> err
-        other -> {:error, {:owner_cap_grant_failed, other}}
-      end
+      # Grant chokepoint (SPEC 2026-06-17 §4 PR-2, site #8). The cap is
+      # `session_template/Template/:any/{:within_workspace}` — kind +
+      # behavior concrete, instance scope-bounded `{:within_workspace}` —
+      # so `IdentityAdmin.rule_cap_bounded?/1` is true → the `{:rule, …}`
+      # branch authorizes it (Decision #154). The configurer of the
+      # template-materialization rule is the template OWNER (also the
+      # entity `granted_by`); `template-materialize` is no longer the
+      # authorizer.
+      Ezagent.Identity.Grant.grant_cap(
+        owner_uri,
+        cap,
+        {:rule, :template_materialize, owner_uri}
+      )
     end
   end
 

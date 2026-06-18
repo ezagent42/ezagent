@@ -28,9 +28,12 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
   (Allen rules each minter → A or → B). So the honest invariant is *"every
   grant-minter must be EXPLICITLY classified"* — in `@confirmed_b_allowlist` OR in
   `@needs_allen`. A minter may never be silently parked in `@category_a` ("conforms,
-  nothing to see"). After Allen's final ruling (2026-06-16) exactly two principals
-  mint: `template-materialize` and `feishu-binding-policy` — both confirmed-B (the
-  conversions are later PRs). `@needs_allen` is now empty.
+  nothing to see"). After PR-2 of the no-unowned-caps program (2026-06-17) only
+  ONE principal mints: `feishu-binding-policy` — confirmed-B (PR-3 converts it →
+  allowlist 0). `template-materialize` was confirmed-B but PR-2 dropped its grant
+  caps (its grants now route through `Ezagent.Identity.Grant` under real-entity
+  rule/bootstrap tags), neutering it to category A (the gate's tooth-3 path).
+  `@needs_allen` is empty.
 
   ## Why detection uses the RUNTIME matcher (codex P2 fix, 2026-06-16)
 
@@ -121,7 +124,16 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
     "system://mix-task",
     "system://lv-anon-mount",
     "system://credential-materializer",
-    "system://socialware-gc"
+    "system://socialware-gc",
+    # 2026-06-17 (PR-2 of the no-unowned-caps program) — template-materialize
+    # was B (the §1 spec-named workaround). Its grant caps are now DROPPED
+    # (Catalog) and every grant routes through `Ezagent.Identity.Grant` under
+    # a real-entity tag (`{:rule, …}` for bounded caps, `{:system, bootstrap}`
+    # for the `behavior: :any` orchestrator scoped caps). It is now a
+    # NON-minter retaining only NON-grant template read/write/session-spawn
+    # authority → category A (the gate's tooth-3 neuter path, same as the
+    # 2026-06-16 agent-internal grant_cap drop).
+    "system://template-materialize"
   ]
 
   # (B) CONFIRMED violates — principals that MINT permissions a real configurer
@@ -132,7 +144,11 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
   # ratchets toward 0 as conversions land (#808 anon-access + #811 cap#2 are the
   # first removals; feishu + template are the next).
   @confirmed_b_allowlist [
-    "system://template-materialize",
+    # PR-2 (2026-06-17) shrank this from
+    # ["system://template-materialize", "system://feishu-binding-policy"] to
+    # feishu-only: template-materialize's grant caps were dropped → it is no
+    # longer a minter (moved to @category_a). feishu-binding-policy is the
+    # last confirmed-B minter (PR-3 converts it → allowlist reaches 0).
     "system://feishu-binding-policy"
   ]
 
@@ -204,13 +220,16 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
              "#{inspect(phantom)} — a principal was renamed/removed. Update the bucket(s)."
   end
 
-  test "live grant-minters are EXACTLY template-materialize + feishu-binding-policy" do
-    # Locks the codex-P2 + Allen-ruling reconciliation: after the agent-internal
-    # grant_cap drop, the only minters are the two confirmed-B principals. If
-    # chat-router/chat-reply/mix-task/bootstrap appear here the sentinel exclusion
-    # has regressed (the full wildcard is leaking into minter detection).
-    assert Enum.sort(live_grant_minters()) ==
-             ["system://feishu-binding-policy", "system://template-materialize"]
+  test "live grant-minters are EXACTLY feishu-binding-policy (post PR-2 template-materialize neuter)" do
+    # Locks the PR-2 reconciliation: after template-materialize's grant caps
+    # were dropped (its grants now route through `Ezagent.Identity.Grant` under
+    # real-entity rule/bootstrap tags), the only remaining minter is
+    # feishu-binding-policy (PR-3 converts it → empty). If
+    # chat-router/chat-reply/mix-task/bootstrap appear here the sentinel
+    # exclusion has regressed (the full wildcard is leaking into minter
+    # detection); if template-materialize reappears its grant caps were
+    # re-introduced.
+    assert Enum.sort(live_grant_minters()) == ["system://feishu-binding-policy"]
   end
 
   describe "wildcard-shaped grant-minter detection (codex P2)" do

@@ -41,7 +41,7 @@ defmodule EzagentPluginFeishu.BindingPolicy do
   policy can stub the store.
   """
 
-  alias Ezagent.{Capability, Invocation}
+  alias Ezagent.Capability
 
   @doc """
   Apply binding side-effects: ensure the user Kind is alive and the
@@ -249,33 +249,22 @@ defmodule EzagentPluginFeishu.BindingPolicy do
     chat_caps ++ publisher_caps
   end
 
-  defp grant_cap(user_uri, _admin_uri, %Capability{} = cap) do
-    target = Ezagent.URI.with_action(Ezagent.URI.new!(to_str(user_uri)), :identity, :grant_cap)
+  # Grant chokepoint (SPEC 2026-06-17 §3.5 site #12). The AUTHORIZER stays
+  # `system://feishu-binding-policy` (the bind is a policy action, gated
+  # upstream by the operator's admin-cap check on `mix ezagent.feishu.bind`).
+  # Decision #154 fix: `admin_uri` — the bind operator/configurer ENTITY,
+  # already threaded down from `apply/2` (no longer discarded as
+  # `_admin_uri`) — becomes the real `granted_by`. PR-3 converts this to
+  # `{:rule, :feishu_binding, admin_uri}` once the principal leaves the
+  # Catalog.
+  defp grant_cap(user_uri, admin_uri, %Capability{} = cap) do
+    target = Ezagent.URI.new!(to_str(user_uri))
 
-    inv = %Invocation{
-      target: target,
-      mode: :call,
-      args: %{cap: cap},
-      # SPEC caps-cleanup-v1 §4.4 — re-grant of default caps on
-      # Feishu bind is a policy action, not operator-driven; runs
-      # under `system://feishu-binding-policy` per the closed Catalog.
-      # The operator-supplied `admin_uri` was the previous
-      # ambient-authority caller and is no longer load-bearing.
-      ctx: %{
-        caller: Ezagent.SystemPrincipal.uri("feishu-binding-policy"),
-        caps:
-          "feishu-binding-policy"
-          |> Ezagent.SystemPrincipal.uri()
-          |> Ezagent.SystemPrincipal.caps(),
-        reply: :sync
-      }
-    }
-
-    case Invocation.dispatch(inv) do
-      {:ok, _} -> :ok
-      :ok -> :ok
-      err -> err
-    end
+    Ezagent.Identity.Grant.grant_cap(
+      target,
+      cap,
+      {:system, Ezagent.SystemPrincipal.uri("feishu-binding-policy"), to_uri(admin_uri)}
+    )
   end
 
   defp to_uri(%URI{} = u), do: u

@@ -28,16 +28,16 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
   ## CLI equivalence
 
   No dedicated mix task exists for grant/revoke today — this LV is
-  the canonical operator surface. The underlying calls are:
+  the canonical operator surface. Grant/revoke route through the unified
+  grant chokepoint (SPEC 2026-06-17) under the `{:held_by, admin}` tag
+  (the operator IS the authorizer; its FRESH held caps drive CapBAC):
 
-      Invocation.dispatch(%Invocation{
-        target: Ezagent.URI.with_action(entity_uri, :identity, :grant_cap),
-        mode: :call,
-        args: %{cap: %Capability{...}},
-        ctx: %{caller: admin_uri, caps: admin_caps, reply: :sync}
-      })
+      Ezagent.Identity.Grant.grant_cap(entity_uri, cap, {:held_by, admin_uri})
+      Ezagent.Identity.Grant.revoke_cap(entity_uri, cap, {:held_by, admin_uri})
 
-  (replace `grant_cap` with `revoke_cap` / `list_caps` as appropriate).
+  The chokepoint derives + validates the entity `granted_by` and builds
+  the dispatch envelope (the ONLY place a grant/revoke dispatch is
+  constructed). `list_caps` still dispatches directly (a safe read).
   """
 
   use Phoenix.LiveView
@@ -219,24 +219,24 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
   end
 
   defp do_grant_or_revoke(socket, action, cap, msg) do
-    target =
-      Ezagent.URI.with_action(socket.assigns.entity_uri, :identity, action)
+    # Grant chokepoint (SPEC 2026-06-17 §3.5 site #5). The admin operator
+    # IS the authorizer — its FRESH held caps drive CapBAC at mutation
+    # time (a cap revoked after mount can no longer authorize) — so
+    # `{:held_by, caller}` reproduces the prior `caller`/`caps` ctx
+    # exactly while making the entity `granted_by` explicit. The action
+    # variable is dispatched through the chokepoint's DISTINCT
+    # grant/revoke wrappers (no variable-action dispatch shape escapes).
+    caller = socket.assigns.caller_uri
+    entity = socket.assigns.entity_uri
 
-    case Invocation.dispatch(%Invocation{
-           target: target,
-           mode: :call,
-           args: %{cap: cap},
-           ctx: %{
-             caller: socket.assigns.caller_uri,
-             # codex review HIGH: recompute the caller's caps FRESH at
-             # mutation time (not the mount-time `:caller_caps` snapshot)
-             # so a cap revoked after mount can no longer authorize a
-             # grant/revoke until the socket remounts.
-             caps: Ezagent.Identity.list_caps_for(socket.assigns.caller_uri),
-             reply: :sync
-           }
-         }) do
-      {:ok, _} ->
+    result =
+      case action do
+        :grant_cap -> Ezagent.Identity.Grant.grant_cap(entity, cap, {:held_by, caller})
+        :revoke_cap -> Ezagent.Identity.Grant.revoke_cap(entity, cap, {:held_by, caller})
+      end
+
+    case result do
+      :ok ->
         {:noreply,
          socket
          |> assign(:flash_info, msg)

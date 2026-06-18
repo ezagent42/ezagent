@@ -444,6 +444,11 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   end
 
   @doc "Revoke a capability from this principal — normalizes the `cap` then removes the identity-key match via `Ezagent.Capability.revoke/2`, notifies the principal, and emits `:cap_revoked`."
+  # NOTE (SPEC 2026-06-17 §3.3): a revoke dispatched under a `{:rule,…}` tag is
+  # authorized SOLELY by the `Kind.Runtime` step-5.5 rule bypass; this handler runs
+  # NO authorization check and `rule_cap_bounded?/1` is grant-only. Safe because
+  # revoke strictly de-escalates (removes authority), but it is intentional that
+  # the rule-branch structural bound does not constrain revoke.
   def handle_revoke_cap(%{cap: cap}, ctx) do
     cap_struct = Ezagent.Capability.normalize!(cap, granter_from_ctx(ctx))
     current_caps = ctx[:read].(:caps, MapSet.new())
@@ -476,20 +481,18 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   defp uri_to_str(%URI{} = uri), do: URI.to_string(uri)
   defp uri_to_str(other), do: inspect(other)
 
-  defp granter_from_ctx(ctx) do
-    case Map.get(ctx, :caller) do
-      %URI{} = uri -> uri
-      _ -> bootstrap_granter_uri()
-    end
-  end
-
-  defp bootstrap_granter_uri do
-    if function_exported?(Ezagent.Entity.User, :admin_uri, 0) do
-      Ezagent.Entity.User.admin_uri()
-    else
-      Ezagent.URI.system(:bootstrap, :grant_cap)
-    end
-  end
+  # SPEC 2026-06-17 §3.2 (MEDIUM-N3) — the `system://bootstrap` grant-path
+  # fallback is REMOVED. Every grant/revoke now routes through
+  # `Ezagent.Identity.Grant`, which always sets `ctx.caller` to a real
+  # entity (it derives + validates the entity `granted_by` and stamps it
+  # on the `%Capability{}` BEFORE dispatch). So `granter_from_ctx/1` is
+  # only ever consulted for the string/atom-keyed CLI cap shape (where
+  # `normalize!/2` uses the granter to stamp `granted_by`); a missing
+  # entity caller there is a programmer error (let-it-crash), not a
+  # silent bootstrap impersonation. (NOTE: the create-time self-cap
+  # stamper at the top of this file and `capability_registry.ex`'s
+  # `Code.ensure_loaded?` hedge are deliberately untouched per §3.2.)
+  defp granter_from_ctx(%{caller: %URI{} = uri}), do: uri
 
   defp notify_cap_change(ctx, kind, text, cap) do
     target_uri = Map.get(ctx, :self_uri)
@@ -529,7 +532,67 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   defp scope_bounded_instance?({:spawned_by, %URI{}}), do: true
   defp scope_bounded_instance?(_), do: false
 
+  @doc """
+  Structural bound a `{:rule, …}` grant must satisfy (SPEC 2026-06-17 §3.3).
+
+  A rule may NOT mint `kind: :any` / `behavior: :any`; and an
+  `action: :any` cap is allowed ONLY when the instance is scope-bounded
+  (`{:within_session/within_workspace/spawned_by, %URI{}}`) — a concrete
+  `%URI{}` instance is allowed only with a concrete action.
+
+  This is written to MATCH `check_action_wildcard_grant_authorized/2`
+  exactly (an `action: :any` cap needs a scope-bounded instance there
+  too), so the two gates are consistent by construction and the
+  wildcard gate (which runs first) never rejects a shape this branch
+  would have accepted. PUBLIC for direct unit testing (matching the
+  precedent of `holds_admin_caps?/1` etc.) — the rule branch itself is
+  not yet reachable end-to-end via dispatch (see `check_grant_authorized/2`).
+  """
+  @spec rule_cap_bounded?(Ezagent.Capability.t()) :: boolean()
+  def rule_cap_bounded?(%Ezagent.Capability{kind: :any}), do: false
+  def rule_cap_bounded?(%Ezagent.Capability{behavior: :any}), do: false
+
+  def rule_cap_bounded?(%Ezagent.Capability{instance: instance} = cap) do
+    scope_bounded_instance?(instance) or
+      (match?(%URI{}, instance) and Ezagent.Capability.action_of(cap) != :any)
+  end
+
   # PR-OWN-2 §5.2 enforcement helpers — called from `handle_grant_cap/2`.
+
+  # Rule branch (SPEC 2026-06-17 §3.3, Decision #154). Fires ONLY when
+  # `ctx[:authorization_rule]` is set — and ONLY `Ezagent.Identity.Grant`
+  # (the chokepoint) sets it, exclusively for the `{:rule, name,
+  # configurer}` tag, after the caller verified the rule's precondition
+  # (e.g. `PublicView.public_view?/1`). The grant is then authorized on
+  # the rule's assertion rather than on `ctx.caps` (which is `[]` for a
+  # rule grant). The STRUCTURAL bound: a rule may NOT mint a wildcard
+  # cap. `rule_cap_bounded?/1` is written to MATCH
+  # `check_action_wildcard_grant_authorized/2`'s logic EXACTLY (an
+  # `action: :any` cap is allowed only with a scope-bounded instance),
+  # so the two gates are consistent by construction and the wildcard
+  # gate never rejects a shape the rule branch would have accepted.
+  #
+  # ⚠️ NOT REACHABLE END-TO-END IN PR-1 (dormant infrastructure). A
+  # `{:rule, …}` grant carries `ctx.caps = []`, so dispatch step 5.5
+  # (`Ezagent.Kind.Runtime` cap check, ~runtime.ex:407) denies it with
+  # `:unauthorized` BEFORE this handler runs. PR-1 ships ZERO sites using
+  # `{:rule, …}` (all 14 use `{:held_by}`/`{:system}`, which carry caps),
+  # so this branch + `rule_cap_bounded?/1` are verified as a pure
+  # predicate, not through dispatch. PR-2/PR-3 (which introduce the first
+  # `{:rule, …}` callers) MUST make the path reachable — either teach
+  # dispatch step 5.5 to honor `ctx[:authorization_rule]`, or route rule
+  # grants via `Ezagent.Kind.trusted_slice_update/3` (which already
+  # bypasses dispatch CapBAC). That is an authorization-path change,
+  # deliberately OUT of PR-1's mechanical/behavior-preserving scope.
+  defp check_grant_authorized(%Ezagent.Capability{} = cap, ctx)
+       when is_map_key(ctx, :authorization_rule) do
+    if rule_cap_bounded?(cap) do
+      :ok
+    else
+      {:error, :rule_grant_must_be_concrete_scoped}
+    end
+  end
+
   defp check_grant_authorized(
          %Ezagent.Capability{
            kind: :any,
