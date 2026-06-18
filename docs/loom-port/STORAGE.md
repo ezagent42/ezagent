@@ -55,6 +55,13 @@
 
 > 小结:**活动态在 `kind_snapshots`,版本史在 `messages`**。两者都在那一个 SQLite 文件里。
 
+### 1.3 substrate 真相 → `Surface` slice(socialware vertical 新增)
+
+- loom 现在是 **socialware vertical**(见 `MIGRATION.md`),session 是统一 `Entity.Session`,带 `Behavior.Surface`。builder 出页后,orchestrator 经 `TurnManager` 驱动一个 **Turn**(open→compose→settle),把页面 tree 落进 **`:surface` slice**(`%{versions, approved, version_seq}`)—— 这是 substrate 侧的页面真相。
+- settlement 后页面经 **`CustomerFeed`** 投给消费者(`CustomerFeed.snapshot/2` 读 committed surface_version,而非 builder 的 raw `loom_source`)。
+- `:surface` 跟其它 slice 一样按 snapshot-on-change 落 `kind_snapshots`(`uri` = `session://<ws>/loom/<sid>`)。
+- 跟 §1.1 的关系:`loom_source`(orchestrator slice)是 **loom_ui 编辑器通道**的源;`:surface` 是 **消费侧真相**。出页时两边都写(orchestrator 缓存 loom_source + 发 page_update,同时 land 进 Surface)。
+
 ---
 
 ## 2. 旁路 JSON 存储(plugin 自管)
@@ -110,7 +117,7 @@
 
 ## 5. 一句话记忆
 
-- **源码/运行态** → SQLite(`kind_snapshots` 活动态 + `messages` 版本史)。
+- **源码/运行态** → SQLite(`kind_snapshots` 活动态[含 `:surface`]+ `messages` 版本史)。消费侧真相在 `Surface`,经 `CustomerFeed` 投递。
 - **边角 config/谱系/角色/知识** → `~/.ezagent/<profile>/loom_*.json`(整盘 JSON,key=规范 session URI)。
 - **大素材** → `~/.ezagent/<profile>/loom_materials/<ws>/<sid>/`(真实文件)。
 - 换 `EZAGENT_PROFILE` = 换一整套数据根,互不干扰。

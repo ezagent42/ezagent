@@ -131,9 +131,10 @@ socialware vertical 的标准形态(P5-1b collapse 之后):
 | **P1** | ✅ DONE | `PluginLoom.TurnManager.build_page/4` 用**生产 within-session cap**(非 bootstrap)驱动 open→compose→settle,页面落 approved Surface 版本。`turn_manager_test.exs`(2)。 |
 | **P1b** | ✅ DONE(LLM 路径 compile + 运行期验,非 CI) | `PluginLoom.PageGen` 把 loom 现有 builder codegen(`Prompts.page_gen_system_prompt`+`LLM.chat`+`extract_files_and_summary`)包成注入的 generator。 |
 | **P2** | ✅ DONE | loom deps `ezagent_domain_socialware`;消费者经 `CustomerFeed.snapshot` 读 approved 页 + customer 消息。`loom_vertical_consumer_test.exs`(2):创作 turn → 消费者读到页面 + chat;跨 ws token 被拒。 |
-| **P3 web/F1** | 待做 | 把 loom_ui 现有 `/loom/api/*` 端点 re-point 到 substrate(history→session 消息、page/pages→Surface、send→TurnManager+PageGen、stream→CustomerDelivery、published/consumer→CustomerFeed)。大 + 琐碎,**最好对着跑起来的 loom_ui 边调边测**;不宜盲改。 |
-| **P3 余项** | 待做 | 接线员(薄 lineage 查询)、fork(template/snapshot)、配置归位(working-copy/ConfigUpdate)、AiSpot/弹幕、anon-identity(依赖 substrate `public_view`,后者本身 `:pending_impl`;token 路径已可用)。 |
-| **P4 cutover/F2** | 待做 | `session.loom` 切到 vertical + 退役老 Kind/store + 数据迁移;前端仓库 re-point(**源码不在本仓库**)。 |
+| **P3 web/F1** | ✅ DONE(运行期实测) | `PluginLoom.Vertical`(`ensure_session`/`seed_page`/`author`)把 loom_ui 接到 substrate:`web_plug` send→`Vertical.author`、heal_team gate、create-on-access。实测:建站→`@builder` 出页(9422 字符)→ 渲染。 |
+| **团队恢复** | ✅ DONE(运行期实测,Option A) | 多智能体团队作为 vertical session **成员 agent** 恢复:`@builder` 出页(落 Surface)、`@meta` 加/删 worker(进 `WorkerConfig`,团队 modal 可见)、`@worker_<theme>`、salesperson 导购(消费侧 DeepSeek)。**不 @ = 纯发言、不出页**(编排器 mention-gated)。 |
+| **P3 余项** | 部分待做 | 接线员(薄 lineage 查询)、fork、配置归位、AiSpot/弹幕、多页、角色门控、素材库 —— 端点从 stitch 复用、**未逐个回归测**;anon-identity 依赖 substrate `public_view`(`:pending_impl`),token 路径已可用并实测。 |
+| **P4 cutover/F2** | 部分 DONE | `session.loom` 已切到 vertical(`Template.LoomSession.instantiate` → `Vertical.ensure_session`);退役老独立 Kind/store + 数据迁移、前端仓库 re-point(**源码不在本仓库**)待做。 |
 
 > 已验证的是这次重构**最难、最新的部分**(把 loom 从独立 Kind 栈搬到 substrate 的 Turn/Surface/CustomerFeed,端到端跑通)。剩下的是**集成广度**:web shim(对着 SPA 调最稳)、外围功能、cutover,以及在**另一个仓库**的前端 re-point。
 
