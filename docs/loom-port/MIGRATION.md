@@ -1,6 +1,6 @@
 # Loom → main 迁移说明
 
-> 配套文档:`INVENTORY.md`(Phase 0 功能/钩子/不兼容清单)。本文讲**怎么做的**、**怎么跟基座结合**、**怎么保证 main 和 loom 功能都不丢**。
+> 配套文档:`STORAGE.md`(loom 产物怎么存)。本文讲**怎么做的**、**怎么跟基座结合**、**怎么保证 main 和 loom 功能都不丢**。
 >
 > 源分支:`loom-stitch`(下称 stitch)。目标:`main`。工作隔离在 worktree `/home/ning/ezagent-port`,profile=`port`(独立端口 + sidecar + SQLite 库),不影响线上 stitch 服务/数据。
 
@@ -95,7 +95,7 @@ vendored 的 loom 前端是 **stitch 时代的静态产物**(`priv/static/loom_u
 
 - **A3**:admin 冷启动建 main 会话改成 config 可控的异步挂载(`async_main_session`,test=同步、dev/prod=异步)。
 - **Tailwind**:loom 的服务端渲染视图(Dashboard 等内联 `~H`)要被 Tailwind 扫到,在 `app.css` 加 `@source ".../ezagent_plugin_loom/lib"`,否则工具类被 purge、样式丢失。
-- **系统主体**:loom 的 3 个 system principal 注册进 main Catalog 并归类(对应 INVENTORY 的 C2)。
+- **系统主体**:loom 的 3 个 system principal 经 plugin 声明登记进 main Catalog 并归类(不编辑 `catalog.ex`)。
 
 ---
 
@@ -104,7 +104,7 @@ vendored 的 loom 前端是 **stitch 时代的静态产物**(`priv/static/loom_u
 **靠 plugin 隔离 + 把对共享文件的改动收敛成一份显式清单。**
 
 - loom 是独立 OTP app,main 的 core/domain 代码**不被 loom 改**;loom 只**消费**基座 API。
-- 对 main 共享文件的改动只有 **12 个钩子点**(INVENTORY §B 列全),且都是「加一条声明 / 加一个 forward / 注册一个视图」式的加法,不改原有分支语义。典型如:`router.ex` 加 `forward "/loom"` + `/loom-signup`;`app.css` 加一行 `@source`;admin_live 加 A3 异步分支。
+- 对 main 共享文件的改动只有**少数几个钩子点**,且都是「加一条声明 / 加一个 forward / 注册一个视图」式的加法,不改原有分支语义。典型如:`router.ex` 加 `forward "/loom"` + `/loom-signup`;`app.css` 加一行 `@source`;admin_live 加 A3 异步分支。
 - 遵守 main 的 grep-gate 不变式(dispatch-only、`Ezagent.URI`、2 段 URI、chat→session slice 等),CI 门控不破。
 - 通用改进(非 loom 的 UX/infra)单独成提交,跟 loom PR 分开,避免「顺手改基座」。
 
@@ -114,7 +114,7 @@ vendored 的 loom 前端是 **stitch 时代的静态产物**(`priv/static/loom_u
 
 **靠功能清单 + e2e 验收 + 运行期逐个补齐。**
 
-- INVENTORY §A 是验收依据(建站对话生成、发布、fork、接线员、弹幕、导购 AI、多智能体 @ 加/删成员、素材库……),逐项对照 stitch 不缺。
+- 验收依据是功能清单(建站对话生成、发布、fork、接线员、弹幕、导购 AI、多智能体 @ 加/删成员、素材库……),逐项对照 stitch 不缺。
 - 运行期实测把 §4 的差异一个个打绿:team 能起、@builder 有回应且跨重启自愈(4.2)、发布页能开/能 fork(4.3)、接线员同伴列表能看能点能发消息(4.4)、Dashboard 样式回归(4.5)、注册按提示也能成(4.4)。
 - 已知**非 loom**、属环境的项(main 会话的 Claude Code 编排器在无 `claude` 的 port 测试环境 90s 超时)明确标注为环境问题,不计入 loom 回归。
 
@@ -125,11 +125,3 @@ vendored 的 loom 前端是 **stitch 时代的静态产物**(`priv/static/loom_u
 - `mix compile` 干净(仅 main 既有的历史 warning,无 loom 新增)。
 - port profile 隔离启动(`EZAGENT_PROFILE=port PORT=10088 LOOM_LLM_BACKEND=deepseek`),loom LLM 走 DeepSeek,不依赖 `claude`/MCP。
 - 关键路径以服务端日志 + 直连 endpoint 实证(如 `/history` 返回完整帧、cohort 解析出正确 ws、flavor restore `QUERY OK`)。
-
----
-
-## 8. 待办 / 已知边界
-
-- vendored 前端的几处 stitch 文案(注册弹窗 `entity://user/<ws>/<name>`、接线员页消息轮询的 `seenRef` bug)属于前端产物,后端已做容错(注册双向接受),彻底修正需重建前端仓库。
-- INVENTORY §C 的不兼容三项(A1 重设计、A3 异步、W3 删除走 Plan-B)按 owner 拍板推进。
-- 其余 loom URI 规范化/LV-parity 的收尾按既有 follow-up 处理。
