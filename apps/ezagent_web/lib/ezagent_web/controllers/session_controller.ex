@@ -194,7 +194,7 @@ defmodule EzagentWeb.SessionController do
   """
   def loom_signup(conn, %{"username" => account, "password" => password})
       when is_binary(account) and is_binary(password) do
-    account = String.trim(account)
+    account = account |> String.trim() |> normalize_signup_order()
 
     cond do
       account == "" or String.length(password) < 4 ->
@@ -203,7 +203,7 @@ defmodule EzagentWeb.SessionController do
       not String.starts_with?(account, "entity://") ->
         signup_json(conn, %{
           ok: false,
-          error: "注册请填写完整身份 URI:entity://user/<工作区>/<用户名>"
+          error: "注册请填写完整身份 URI:entity://<工作区>/user/<用户名>"
         })
 
       true ->
@@ -236,7 +236,28 @@ defmodule EzagentWeb.SessionController do
 
   def loom_signup(conn, _params), do: signup_json(conn, %{ok: false, error: "参数缺失"})
 
-  # 完整 entity:// URI → 规范 `entity://user/<ws>/<name>`(复用登录同款 canonicalize)。只收 user。
+  # The vendored loom signup modal is stitch-era and tells users to type a
+  # TYPE-first URI `entity://user/<ws>/<name>`. main is workspace-first
+  # `entity://<ws>/user/<name>`. Accept the stitch layout the modal still
+  # instructs and flip it to canonical, so following the modal's hint works
+  # either way. Heuristic: a leading host that is itself an entity TYPE
+  # (user/agent/worker) marks stitch order — no real workspace is named that.
+  defp normalize_signup_order(account) when is_binary(account) do
+    with true <- String.starts_with?(account, "entity://"),
+         %URI{scheme: "entity", host: host, path: "/" <> rest}
+         when host in ["user", "agent", "worker"] <- Ezagent.URI.new!(account),
+         [ws, name | _] when ws != "" and name != "" <- String.split(rest, "/") do
+      "entity://#{ws}/#{host}/#{name}"
+    else
+      _ -> account
+    end
+  rescue
+    _ -> account
+  end
+
+  defp normalize_signup_order(account), do: account
+
+  # 完整 entity:// URI → 规范 `entity://<ws>/user/<name>`(复用登录同款 canonicalize)。只收 user。
   defp canonicalize_signup(account) do
     canonical = SessionPrincipal.canonicalize(account)
 
