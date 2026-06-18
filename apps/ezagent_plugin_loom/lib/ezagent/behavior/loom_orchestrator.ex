@@ -111,7 +111,10 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
       # become orphans and get dropped silently. v1 trade-off.)
       page_files -> handle_page_update(msg, page_files, pending, ctx)
       worker_deliverable?(msg, pending) -> handle_deliverable(msg, ctx, pending)
-      user_turn?(msg) -> handle_user_turn(msg, ctx, pending)
+      # 2026-06-18 vertical: only act on a user turn when the orchestrator is
+      # EXPLICITLY @mentioned. A plain (no-@) user message is just an ordinary
+      # session utterance — no page build, no fan-out. (@builder is the page path.)
+      user_turn?(msg) and addressed_to_orch?(msg, ctx) -> handle_user_turn(msg, ctx, pending)
       # loop-guard: stray / un-addressed / worker chatter → ignore.
       true -> {:ok, %{}, []}
     end
@@ -121,6 +124,24 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
   defp user_turn?(%Message{sender: %URI{path: "/user/" <> _}}), do: true
   defp user_turn?(_), do: false
+
+  # The orchestrator only drives a user turn when it is explicitly @mentioned.
+  defp addressed_to_orch?(%Message{mentions: mentions}, ctx) when is_list(mentions) do
+    case ctx_self(ctx) do
+      %URI{} = self_uri ->
+        s = URI.to_string(self_uri)
+        Enum.any?(mentions, fn m -> mention_str(m) == s end)
+
+      _ ->
+        false
+    end
+  end
+
+  defp addressed_to_orch?(_, _), do: false
+
+  defp mention_str(%URI{} = u), do: URI.to_string(u)
+  defp mention_str(s) when is_binary(s), do: s
+  defp mention_str(_), do: ""
 
   defp worker_deliverable?(%Message{sender: %URI{path: "/agent/" <> _}, ref_id: ref}, pending)
        when is_binary(ref),

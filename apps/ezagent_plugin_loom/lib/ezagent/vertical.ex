@@ -98,27 +98,37 @@ defmodule Ezagent.PluginLoom.Vertical do
   @spec author(URI.t(), URI.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def author(%URI{} = session_uri, %URI{} = sender_uri, request) when is_binary(request) do
     {ws, sid} = ws_sid(session_uri)
-    mention = route_mention(request, ws, sid)
-    msg = emit_message(session_uri, sender_uri, %{text: request, attachments: []}, [mention])
+    mentions = route_mentions(request, ws, sid)
+    msg = emit_message(session_uri, sender_uri, %{text: request, attachments: []}, mentions)
     {:ok, %{ok: true, id: msg.id}}
   end
 
-  # Route the user's authoring message to the right team member:
-  # `@loommeta_<sid>` → meta, `@loomworker_<sid>_<theme>` → that worker,
-  # everything else (including `@loombuilder` and the no-@ default) → the
-  # builder (the page maker). The builder's page_update reply is caught by the
-  # orchestrator (loom_source cache + Surface landing).
-  defp route_mention(text, ws, sid) do
-    target =
-      case Regex.run(~r/^\s*@(loom(?:meta|orch|builder|worker)[A-Za-z0-9_]*)/, to_string(text)) do
-        [_, id] -> id
-        _ -> "loombuilder_#{sid}"
-      end
+  # Route by the leading @-mention. `@builder`/`@loombuilder_<sid>` → builder (the
+  # page path); `@meta`/`@loommeta_<sid>` → meta; `@worker_<theme>`/
+  # `@loomworker_<sid>_<theme>` → that worker. NO @ → no mention: the message is
+  # just an ordinary session utterance, NOT a page build (only @builder builds).
+  defp route_mentions(text, ws, sid) do
+    t = text |> to_string() |> String.trim_leading()
 
-    # only honor a mention that belongs to THIS session; otherwise default builder
-    target = if String.contains?(target, sid), do: target, else: "loombuilder_#{sid}"
-    Ezagent.URI.new!("entity://#{ws}/agent/#{target}")
+    cond do
+      Regex.match?(~r/^@(loombuilder_#{sid}|builder|v0)\b/i, t) ->
+        [agent_uri(ws, "loombuilder_#{sid}")]
+
+      Regex.match?(~r/^@(loommeta_#{sid}|meta)\b/i, t) ->
+        [agent_uri(ws, "loommeta_#{sid}")]
+
+      match = Regex.run(~r/^@loomworker_#{sid}_([a-z0-9_]+)/i, t) ->
+        [agent_uri(ws, "loomworker_#{sid}_#{Enum.at(match, 1)}")]
+
+      match = Regex.run(~r/^@worker[_\s]+([a-z0-9_]+)/i, t) ->
+        [agent_uri(ws, "loomworker_#{sid}_#{Enum.at(match, 1)}")]
+
+      true ->
+        []
+    end
   end
+
+  defp agent_uri(ws, name), do: Ezagent.URI.new!("entity://#{ws}/agent/#{name}")
 
   defp ws_sid(%URI{host: ws, path: "/" <> rest}) do
     sid = rest |> String.split("/") |> List.last()
