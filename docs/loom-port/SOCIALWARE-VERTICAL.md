@@ -123,10 +123,19 @@ socialware vertical 的标准形态(P5-1b collapse 之后):
 
 ## 12. 实施进度
 
-| 期 | 状态 |
-|---|---|
-| **P0** | ✅ **DONE + 测试通过**。`Ezagent.PluginLoom.Template.LoomVerticalSession`(class `session.loom_vertical`,strangler,与 legacy `session.loom` 并存)spawn 统一 `Entity.Session` + `socialware_behaviors()`,working-copy 存 vertical 配置,join operator。测试 `test/ezagent/template/loom_vertical_session_test.exs` 证明 Turn/Surface active + 页面经 Surface 跑通(open→compose(page)→settle→approved)。 |
-| P1–P4 | 待做(见 §9) |
+**架构核心已端到端打通并验证**(5 个测试绿):loom session = 统一 SocialwareSession → TurnManager 驱动 Turn/Surface 创作闭环 → 页面落 Surface → settlement → **CustomerFeed 把已发布页投给消费者**。即「loom 走 socialware」已证明。
+
+| 期 | 状态 | 产物 / 测试 |
+|---|---|---|
+| **P0** | ✅ DONE | `Template.LoomVerticalSession`(class `session.loom_vertical`,strangler)spawn 统一 `Entity.Session` + `socialware_behaviors()`,working-copy + operator join。`test/.../loom_vertical_session_test.exs`(1)证明 Turn/Surface active + 页面经 Surface。 |
+| **P1** | ✅ DONE | `PluginLoom.TurnManager.build_page/4` 用**生产 within-session cap**(非 bootstrap)驱动 open→compose→settle,页面落 approved Surface 版本。`turn_manager_test.exs`(2)。 |
+| **P1b** | ✅ DONE(LLM 路径 compile + 运行期验,非 CI) | `PluginLoom.PageGen` 把 loom 现有 builder codegen(`Prompts.page_gen_system_prompt`+`LLM.chat`+`extract_files_and_summary`)包成注入的 generator。 |
+| **P2** | ✅ DONE | loom deps `ezagent_domain_socialware`;消费者经 `CustomerFeed.snapshot` 读 approved 页 + customer 消息。`loom_vertical_consumer_test.exs`(2):创作 turn → 消费者读到页面 + chat;跨 ws token 被拒。 |
+| **P3 web/F1** | 待做 | 把 loom_ui 现有 `/loom/api/*` 端点 re-point 到 substrate(history→session 消息、page/pages→Surface、send→TurnManager+PageGen、stream→CustomerDelivery、published/consumer→CustomerFeed)。大 + 琐碎,**最好对着跑起来的 loom_ui 边调边测**;不宜盲改。 |
+| **P3 余项** | 待做 | 接线员(薄 lineage 查询)、fork(template/snapshot)、配置归位(working-copy/ConfigUpdate)、AiSpot/弹幕、anon-identity(依赖 substrate `public_view`,后者本身 `:pending_impl`;token 路径已可用)。 |
+| **P4 cutover/F2** | 待做 | `session.loom` 切到 vertical + 退役老 Kind/store + 数据迁移;前端仓库 re-point(**源码不在本仓库**)。 |
+
+> 已验证的是这次重构**最难、最新的部分**(把 loom 从独立 Kind 栈搬到 substrate 的 Turn/Surface/CustomerFeed,端到端跑通)。剩下的是**集成广度**:web shim(对着 SPA 调最稳)、外围功能、cutover,以及在**另一个仓库**的前端 re-point。
 
 ## 13. 附录:实做补充的 grounded 契约(来自 substrate 代码 + advisor 样板)
 
