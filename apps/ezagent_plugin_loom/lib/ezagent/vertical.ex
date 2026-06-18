@@ -113,7 +113,7 @@ defmodule Ezagent.PluginLoom.Vertical do
 
     if builder in mentions do
       body = %{
-        text: "🔨 builder 已收到需求,正在生成页面…(通常十几秒,完成后预览会自动更新)",
+        text: "🔨 builder 已收到需求,正在生成页面,请稍候…(生成过程会实时显示,完成后预览自动更新)",
         attachments: []
       }
 
