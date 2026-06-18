@@ -55,6 +55,11 @@ defmodule EzagentPluginLoom.MixProject do
       # NOTE(loom-port): main 把 app 从 `:ezagent_domain_instance_message` 改名为
       # `:ezagent_domain_session`(模块命名空间 `EzagentDomainInstanceMessage` 不变)。
       {:ezagent_domain_session, in_umbrella: true},
+      # loom-as-socialware-vertical (2026-06-18) — the vertical's consumer side
+      # reads the approved Surface + customer-visible messages via
+      # `Ezagent.Socialware.CustomerFeed` / `CustomerAuth` (replacing loom's own
+      # temp_user/`/loom/p`). See docs/loom-port/SOCIALWARE-VERTICAL.md.
+      {:ezagent_domain_socialware, in_umbrella: true},
       # loom v0.2 — `EzagentPluginLoom.Feishu` binds bootstrapped
       # sessions to the demo Feishu group via `Ezagent.ExternalMirror.BindingRow`
       # + spawns `Ezagent.Entity.ExternalMirrorWorker` (one-way mirror, PRD §5.4).
