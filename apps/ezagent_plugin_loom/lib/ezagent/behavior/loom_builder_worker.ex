@@ -63,6 +63,14 @@ defmodule Ezagent.Behavior.LoomBuilderWorker do
 
   def handle_receive(%{message: %Message{} = msg}, ctx) do
     if addressed_to_self?(msg, ctx) do
+      # 2026-06-18 — 即时反馈。生成要等 LLM(claude_code ~十几秒),期间用户干等。这里在
+      # 真正调 LLM 前**立刻**以 builder 身份往 session 发一条状态消息。它是普通 session 消息
+      # (不是 loom 专属的 gen_progress 流),所以**所有渲染 session 消息的视图都看得到** ——
+      # 包括 admin 控制台的 HomeLive 会话视图(它不订阅 gen_progress),不只是 loom 建站 SPA。
+      # 无论消息从哪条路径发来(loom SPA `POST /messages` 还是 admin LiveView),都经过 builder
+      # 的 handle_receive,所以这是唯一覆盖全路径的公共点。
+      _ = emit_status_now(ctx, "🔨 builder 已收到,正在生成页面…")
+
       subtask = extract_text(msg.body)
       count = ctx[:read].(:count, 0)
 
@@ -299,6 +307,29 @@ defmodule Ezagent.Behavior.LoomBuilderWorker do
   end
 
   defp addressed_to_self?(_, _), do: false
+
+  # 即时状态消息(非 effect):在 handler 内、调 LLM 前**立刻**派发,让各视图秒级看到
+  # 「正在生成」。纯状态:`ref_id: nil` / `mentions: []` / 无 span → 编排器忽略(非页面/
+  # 非 deliverable/非 user-turn/未 @ 它)。:cast 异步,不阻塞、不重入。
+  defp emit_status_now(ctx, text) when is_binary(text) do
+    with %URI{} = self_uri <- Map.get(ctx, :self_uri),
+         %URI{scheme: "session"} = session_uri <- session_from_ctx(ctx) do
+      msg = Message.new(self_uri, %{text: text, attachments: []}, mentions: [])
+
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        target: Ezagent.URI.with_action(session_uri, :session, :send),
+        mode: :cast,
+        args: %{message: msg},
+        ctx: %{
+          caller: self_uri,
+          caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
+          reply: :ignore
+        }
+      })
+    end
+  rescue
+    _ -> :ok
+  end
 
   defp reply_effect(ctx, %Message{} = subtask_msg, text) when is_binary(text) do
     with %URI{} = self_uri <- Map.get(ctx, :self_uri),
