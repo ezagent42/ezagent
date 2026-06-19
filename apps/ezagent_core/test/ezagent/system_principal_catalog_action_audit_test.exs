@@ -43,8 +43,10 @@ defmodule Ezagent.SystemPrincipalCatalogActionAuditTest do
                         "system://template-materialize",
                         "system://orchestrator-tools",
                         "system://session-internal",
-                        "system://workspace-loader",
-                        "system://feishu-binding-policy"
+                        "system://workspace-loader"
+                        # no-unowned-caps PR-1 (2026-06-17): feishu-binding-policy
+                        # DELETED from the Catalog (it held cap(:workspace,
+                        # Workspace, :any)).
                       ])
 
   describe "(a) per-entry action atom validity — concrete actions match the named Behavior's actions/0" do

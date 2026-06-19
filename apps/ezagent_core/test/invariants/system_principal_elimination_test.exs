@@ -43,7 +43,10 @@ defmodule Ezagent.SystemPrincipalEliminationTest do
     "system://agent-internal",
     "system://workspace-loader",
     "system://mix-task",
-    "system://feishu-binding-policy",
+    # no-unowned-caps PR-1 (2026-06-17): "system://feishu-binding-policy"
+    # ELIMINATED — it was the last grant-minter; its only consumer
+    # (`BindingPolicy.apply/2` re-granting a broad workspace session
+    # baseline) was removed when participation moved to per-session join.
     "system://lv-anon-mount",
     "system://credential-materializer",
     "system://socialware-gc"

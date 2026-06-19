@@ -67,11 +67,13 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
   end
 
   describe "Catalog sanity" do
-    test "Catalog returns the expected 16 principals" do
+    test "Catalog returns the expected 15 principals" do
       uris = Ezagent.SystemPrincipal.Catalog.uris()
 
-      assert length(uris) == 16,
-             "SPEC §4.1 declares 16 system principals; Catalog has #{length(uris)}: " <>
+      # no-unowned-caps PR-1 (2026-06-17): "system://feishu-binding-policy"
+      # DELETED (the last grant-minter) → 15 principals.
+      assert length(uris) == 15,
+             "SPEC §4.1 declares 15 system principals; Catalog has #{length(uris)}: " <>
                inspect(uris)
 
       expected = [
@@ -87,7 +89,6 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
         "system://agent-internal",
         "system://workspace-loader",
         "system://mix-task",
-        "system://feishu-binding-policy",
         "system://lv-anon-mount",
         # #17 cascade PR-0 — credential-materializer (empty-cap audit identity).
         "system://credential-materializer",

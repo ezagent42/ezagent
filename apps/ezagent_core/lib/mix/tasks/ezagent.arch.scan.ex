@@ -107,7 +107,12 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # Decision #154 PR-2 (template-materialize → non-minter, 2026-06-17) — shifted
     # 281→284: dropping template-materialize's grant-minter caps replaced the
     # entry's cap list with a 3-line-longer rationale block ABOVE this comment.
-    {"apps/ezagent_core/lib/ezagent/system_principal/catalog.ex", 284}
+    # no-unowned-caps PR-1 (per-session participation, 2026-06-17) — shifted
+    # 284→290: deleting the `feishu-binding-policy` Catalog entry (the last
+    # grant-minter) ABOVE this comment net +6 lines (replaced a 15-line entry
+    # with a 9-line deletion-rationale block). Same sanctioned
+    # `ctx[:all_slices][:api_keys]` ApiKeys-flip comment, six lines lower.
+    {"apps/ezagent_core/lib/ezagent/system_principal/catalog.ex", 290}
   ]
 
   @runtime_file "apps/ezagent_core/lib/ezagent/kind/runtime.ex"

@@ -7,10 +7,14 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   the runtime `SystemPrincipal.ensure/1` enforces it at boot;
   invariant test `no_admin_caps_fallback_test.exs` is the test-time gate.
 
-  Adding a 15th principal requires:
+  Adding a principal requires:
   1. Add row here.
   2. Update SPEC `2026-05-25-caps-cleanup-v1.md` §4.1 catalog table.
   3. Ship in a separate PR (review surface = "are we adding ambient authority?").
+
+  (no-unowned-caps PR-1 deleted `system://feishu-binding-policy` — the last
+  grant-minter — so the set is shrinking toward the north-star single
+  genesis primitive; see capbac.md §7.)
 
   Per `feedback_let_it_crash_no_workarounds` — every entry is closed;
   there is no fallback path that mints an ad-hoc principal.
@@ -84,7 +88,9 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   alias Ezagent.Behavior.ExternalMirror
   alias Ezagent.Behavior.ExternalMirrorWorker
   alias Ezagent.Behavior.Identity
-  alias Ezagent.Behavior.IdentityAdmin
+  # no-unowned-caps PR-1: `alias Ezagent.Behavior.IdentityAdmin` removed —
+  # its only use was `feishu-binding-policy`'s now-deleted
+  # `cap(:user, IdentityAdmin, :grant_cap)` (the last grant-minter).
   # 2026-05-26 — Publisher.SessionImpl lives in `ezagent_domain_session`.
   # Like the other Behavior aliases in this block, the module is
   # resolved at runtime (catalog evaluation), not compile time, so
@@ -297,21 +303,17 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # explicitly exempted from the no-wildcard invariant test.
          bootstrap_wildcard()
        ]},
-      {principal("feishu-binding-policy"),
-       [
-         # `user.identity.grant_cap` → IdentityAdmin Behavior on User.
-         Capability.cap(:user, IdentityAdmin, :grant_cap),
-         # Workspace cap (any workspace) — so the policy can grant
-         # `User.default_caps/1` (which mints session-scoped caps with
-         # a concrete workspace_uri); `check_grant_authorized` requires
-         # workspace-admin authority for the target workspace, and a
-         # `:any`-workspace `Workspace` cap satisfies that check (see
-         # `holds_workspace_admin_cap?/2`). Pathology-B follow-up:
-         # before the bootstrap-wildcard bridge removal, the policy
-         # received admin authority transitively and didn't need this
-         # explicit cap.
-         Capability.cap(:workspace, Workspace, :any)
-       ]},
+      # no-unowned-caps PR-1 (Decision #154 / capbac.md §7) — the
+      # `feishu-binding-policy` principal is DELETED. It was the LAST
+      # grant-minter (held `cap(:user, IdentityAdmin, :grant_cap)` +
+      # `cap(:workspace, Workspace, :any)`) — used ONLY by
+      # `EzagentPluginFeishu.BindingPolicy` to re-grant a bound user the
+      # broad workspace-wide session baseline. That baseline is gone:
+      # participation is now granted per-session at join under the session
+      # owner's real-entity authority (`Ezagent.Behavior.Session.Membership`),
+      # and `BindingPolicy.apply/2` no longer grants anything. With its only
+      # consumer removed, the principal leaves the Catalog and `no_unowned`
+      # reaches 0 live grant-minters.
       {principal("lv-anon-mount"), []},
       # #17 cascade PR-0 (spec §5.1, codex H1) — the credential-materializer
       # IDENTITY. This is an AUDIT identity only: it holds NO standing caps. The
