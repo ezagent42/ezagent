@@ -111,9 +111,11 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # `ctx[:all_slices][:api_keys]` ApiKeys-flip comment, six lines lower.
     # System-principal elimination (worker-publish, 2026-06-19) — shifted
     # 290→293: deleting the `worker-publish` Catalog entry + its two Behavior
-    # aliases ABOVE this comment net +3 lines (a 15-line entry → ~20-line
-    # deletion-rationale block, minus two single-line alias→comment swaps).
-    {"apps/ezagent_core/lib/ezagent/system_principal/catalog.ex", 293}
+    # aliases ABOVE this comment net +3 lines.
+    # System-principal elimination (adapter-install + boot-reconciler dead-delete,
+    # 2026-06-19) — shifted 293→292: the two dead entries collapsed to shorter
+    # deletion-rationale comments, net -1 (incl. the ExternalMirror alias→comment swap).
+    {"apps/ezagent_core/lib/ezagent/system_principal/catalog.ex", 292}
   ]
 
   @runtime_file "apps/ezagent_core/lib/ezagent/kind/runtime.ex"

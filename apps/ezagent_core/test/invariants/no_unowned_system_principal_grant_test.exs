@@ -119,7 +119,6 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
   # grant_cap (no live grant_cap/revoke_cap caller ran under it — its only live
   # use is sandbox.write_path self-authority; git-grep confirmed 2026-06-16).
   @category_a [
-    "system://boot-reconciler",
     "system://chat-router",
     "system://chat-reply",
     # ELIMINATED (north star): "system://worker-publish" — the

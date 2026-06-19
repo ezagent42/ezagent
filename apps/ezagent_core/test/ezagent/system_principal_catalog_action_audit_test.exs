@@ -39,7 +39,6 @@ defmodule Ezagent.SystemPrincipalCatalogActionAuditTest do
                         "system://mix-task",
                         "system://chat-router",
                         "system://chat-reply",
-                        "system://boot-reconciler",
                         "system://template-materialize",
                         "system://orchestrator-tools",
                         "system://session-internal",

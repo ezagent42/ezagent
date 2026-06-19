@@ -67,20 +67,19 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
   end
 
   describe "Catalog sanity" do
-    test "Catalog returns the expected 12 principals" do
+    test "Catalog returns the expected 11 principals" do
       uris = Ezagent.SystemPrincipal.Catalog.uris()
 
       # System-principal elimination (north star): feishu-binding-policy (#824),
       # credential-materializer (#825), worker-publish (#826), then the DEAD
-      # adapter-install DELETED → 12 principals (shrinking toward genesis-only;
-      # see system_principal_elimination_test.exs).
-      assert length(uris) == 12,
-             "expected 12 system principals; Catalog has #{length(uris)}: " <>
+      # adapter-install + boot-reconciler DELETED → 11 principals (shrinking
+      # toward genesis-only; see system_principal_elimination_test.exs).
+      assert length(uris) == 11,
+             "expected 11 system principals; Catalog has #{length(uris)}: " <>
                inspect(uris)
 
       expected = [
         "system://bootstrap",
-        "system://boot-reconciler",
         "system://chat-router",
         "system://chat-reply",
         # (worker-publish ELIMINATED — north star; the ExternalMirrorWorker's
@@ -164,9 +163,9 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
     end
 
     test "uri/1 returns a parsed URI for a registered service" do
-      uri = Ezagent.SystemPrincipal.uri("boot-reconciler")
+      uri = Ezagent.SystemPrincipal.uri("chat-router")
       assert %URI{scheme: "system"} = uri
-      assert URI.to_string(uri) == "system://boot-reconciler"
+      assert URI.to_string(uri) == "system://chat-router"
     end
 
     test "uri/1 raises on uncataloged service name" do
