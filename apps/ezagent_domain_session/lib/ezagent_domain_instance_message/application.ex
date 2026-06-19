@@ -544,49 +544,15 @@ defmodule EzagentDomainInstanceMessage.Application do
     |> Enum.uniq_by(&URI.to_string/1)
   end
 
-  # Task #58 — the deployment seam: the orchestrator AgentTemplate URI the
-  # default SessionTemplate is seeded with. `nil` (cc-less build) → a plain
-  # default template. Accepts a `%URI{}`, a string (normalized via
-  # `Ezagent.URI.new!/1`), or `nil`. An empty string is treated as `nil`
-  # so a deployment can blank the key without removing it.
-  @spec default_orchestrator_template_uri() :: URI.t() | nil
-  defp default_orchestrator_template_uri do
-    case Application.get_env(:ezagent_domain_session, :default_orchestrator_template_uri) do
-      %URI{} = uri -> uri
-      uri_str when is_binary(uri_str) and uri_str != "" -> Ezagent.URI.new!(uri_str)
-      _ -> nil
-    end
-  end
-
   defp do_seed_default_session_template(%URI{scheme: "workspace"} = workspace_uri) do
     workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
-    # Task #58 — DECOUPLE the default SessionTemplate from cc.
-    #
-    # The default template's `orchestrator_template_uri` is now a
-    # DEPLOYMENT SEAM read from config, not a hardcoded reference to the
-    # cc-orchestrator AgentTemplate. The session domain no longer NAMES
-    # cc: it reads `:default_orchestrator_template_uri` (a `URI.t()`,
-    # `String.t()`, or `nil`).
-    #
-    #   * cc-INCLUSIVE build (the standard release) — `config/config.exs`
-    #     sets this key to `template://agent/system/cc-orchestrator`, so
-    #     the default template is orchestrator-bearing exactly as before
-    #     (behavior-identical; the wizard / Feishu / `mix create_session`
-    #     all still bring up the orchestrator from `default`).
-    #   * cc-LESS build (`im-without-cc`) — the deployment OMITS the key
-    #     (→ `nil`), so the default template is a PLAIN session template.
-    #     `create_session(... template_name: "default")` then takes the
-    #     `orchestrator_template_uri == nil` arm in `SessionCreator`
-    #     (a plain session — no `ensure_orchestrator`, no rollback),
-    #     instead of failing with `{:orchestrator_ensure_failed,
-    #     {:unknown_flavor, "cc"}}` because the `"cc"` flavor + the
-    #     cc-orchestrator AgentTemplate are absent.
-    #
-    # No boot-order trap: this is a build-time config value, read at
-    # seed time — NOT an `AgentFlavorRegistry.lookup` (the `"cc"` flavor
-    # is registered by the cc plugin AFTER this app boots) and NOT an
-    # app-spec probe (cc deps on this app → starts later).
-    orchestrator_uri = default_orchestrator_template_uri()
+    # Task #58 — orchestrator URI is a config SEAM, decoupled from cc (see config.exs).
+    orchestrator_uri =
+      case Application.get_env(:ezagent_domain_session, :default_orchestrator_template_uri) do
+        %URI{} = uri -> uri
+        s when is_binary(s) and s != "" -> Ezagent.URI.new!(s)
+        _ -> nil
+      end
 
     content = %{
       name: "default",
