@@ -67,14 +67,14 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
   end
 
   describe "Catalog sanity" do
-    test "Catalog returns the expected 14 principals" do
+    test "Catalog returns the expected 13 principals" do
       uris = Ezagent.SystemPrincipal.Catalog.uris()
 
-      # System-principal elimination (north star): "feishu-binding-policy" (#824)
-      # then "credential-materializer" DELETED → 14 principals (shrinking toward
-      # genesis-only; see system_principal_elimination_test.exs).
-      assert length(uris) == 14,
-             "expected 14 system principals; Catalog has #{length(uris)}: " <>
+      # System-principal elimination (north star): "feishu-binding-policy" (#824),
+      # "credential-materializer", then "worker-publish" DELETED → 13 principals
+      # (shrinking toward genesis-only; see system_principal_elimination_test.exs).
+      assert length(uris) == 13,
+             "expected 13 system principals; Catalog has #{length(uris)}: " <>
                inspect(uris)
 
       expected = [
@@ -83,7 +83,8 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
         "system://adapter-install",
         "system://chat-router",
         "system://chat-reply",
-        "system://worker-publish",
+        # (worker-publish ELIMINATED — north star; the ExternalMirrorWorker's
+        #  internal dispatches now carry their own inline authorizer caps.)
         "system://template-materialize",
         "system://orchestrator-tools",
         "system://session-internal",

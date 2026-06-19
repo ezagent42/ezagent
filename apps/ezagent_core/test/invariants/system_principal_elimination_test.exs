@@ -36,7 +36,10 @@ defmodule Ezagent.SystemPrincipalEliminationTest do
     "system://adapter-install",
     "system://chat-router",
     "system://chat-reply",
-    "system://worker-publish",
+    # ELIMINATED: "system://worker-publish" — the ExternalMirrorWorker's two
+    # internal self-dispatches now carry their OWN inline authorizer caps
+    # (`caller: self_uri` + self-authority publish cap / admin-granted
+    # subscribe cap) instead of borrowing this ambient principal.
     "system://template-materialize",
     "system://orchestrator-tools",
     "system://session-internal",

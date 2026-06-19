@@ -382,9 +382,9 @@ defmodule Ezagent.Kind.Runtime do
         # no wildcard / cross-behavior cap). `:authorization_rule` enters ctx
         # ONLY via the grep-gated `Ezagent.Identity.Grant` `{:rule,…}` tag;
         # scoped here to IdentityAdmin grant/revoke so nothing else rides it.
-        (is_map_key(ctx, :authorization_rule) and
-           behavior_module == Ezagent.Behavior.IdentityAdmin and
-           action in [:grant_cap, :revoke_cap]) ->
+        is_map_key(ctx, :authorization_rule) and
+          behavior_module == Ezagent.Behavior.IdentityAdmin and
+            action in [:grant_cap, :revoke_cap] ->
           :telemetry.execute([:ezagent, :authz, :granted], %{}, Map.put(meta, :via_rule, true))
           :ok
 
@@ -396,10 +396,12 @@ defmodule Ezagent.Kind.Runtime do
         # slice lookup. The slice path does `Kind.get_slice(caller_uri,
         # :identity)` via GenServer.call; when the caller dispatches to ITSELF
         # (e.g. a worker's own subscribe_from) that call deadlocks until the 5s
-        # timeout. Workers carry compile-time caps in `ctx.caps` (the
-        # `system://worker-publish` principal), so ctx.caps-first avoids the
-        # self-call deadlock AND runs the cheap path first; slice-resolved caps
-        # remain the second-line check for ordinary user/agent dispatches.
+        # timeout. The ExternalMirrorWorker carries its OWN inline caps in
+        # `ctx.caps` (its self-authority publish + session subscribe caps —
+        # the deleted `system://worker-publish` principal's replacement, north
+        # star / Decision #154), so ctx.caps-first avoids the self-call
+        # deadlock AND runs the cheap path first; slice-resolved caps remain
+        # the second-line check for ordinary user/agent dispatches.
         granted_via_ctx_caps?(ctx, needed) ->
           :telemetry.execute([:ezagent, :authz, :granted], %{}, meta)
           :ok

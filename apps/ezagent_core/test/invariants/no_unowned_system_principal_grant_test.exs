@@ -108,8 +108,9 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
 
   @bootstrap "system://bootstrap"
 
-  # ── classification of the 15 named Catalog principals (audit 2026-06-16,
-  #    Allen's FINAL ruling on all 6 prior needs-Allen entries) ──
+  # ── classification of the named Catalog principals (audit 2026-06-16,
+  #    Allen's FINAL ruling on all 6 prior needs-Allen entries; worker-publish
+  #    ELIMINATED 2026-06-19 — north star) ──
 
   # (A) Conforms — boot/operator infra, self-authority, fan-out proxy, or
   # empty-cap audit identity (no authority ⇒ nothing to be unowned). Allen
@@ -122,7 +123,9 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
     "system://adapter-install",
     "system://chat-router",
     "system://chat-reply",
-    "system://worker-publish",
+    # ELIMINATED (north star): "system://worker-publish" — the
+    # ExternalMirrorWorker's internal dispatches now carry their own inline
+    # authorizer caps (self-authority publish + admin-granted subscribe).
     "system://orchestrator-tools",
     "system://session-internal",
     "system://agent-internal",
@@ -240,7 +243,9 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
     end
 
     test "exact cap(:user, IdentityAdmin, :revoke_cap) is a minter" do
-      assert grant_minting_cap?(Capability.cap(:user, Ezagent.Behavior.IdentityAdmin, :revoke_cap))
+      assert grant_minting_cap?(
+               Capability.cap(:user, Ezagent.Behavior.IdentityAdmin, :revoke_cap)
+             )
     end
 
     test "action-wildcard cap(:user, IdentityAdmin, :any) is a minter (the codex-P2 miss)" do
