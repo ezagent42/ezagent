@@ -124,7 +124,13 @@ git add -A && git commit -m "feat(identity): confirmed attribute on users (#154 
 - Produces: `Membership.mount_participation_caps(session_uri, member_uri, owner_uri) :: :ok` (class-keyed: confirmed user → send+leave+subscribe_from; unconfirmed → subscribe_from; agent → handled at spawn in 甲-3, no-op here).
 - Consumes: `Ezagent.Users.confirmed?/1` (甲-1).
 
-- [ ] **Step 1: Audit the 8 prior failures FIRST.** `git log/show e5b51888`; run that branch's suite or read its failure signatures. For each failing path, identify whether join was authorized by the broad baseline. Write them down in the PR description. This audit DEFINES the join-authz fix.
+- [x] **Step 1: Audit DONE (2026-06-19).** Root cause: `session.ex action(:join, caps: [:join])` ⇒ dispatch step-5.5 requires the caller hold `cap(:session, Session, :join, instance)`; today that comes from `User.default_caps` broad `cap(:session,:any,:any)` (matches :join). The prior branch zeroed `default_caps` with NO replacement join authority → self-join unauthorized → 8 failures.
+  **Join access-point census (who joins + current authority):**
+  - `anon_user.ex` mint + `chat_feed_controller.ex` — anon joins with its OWN minted `cap(:session,Session,:join,instance)`, `granted_by` owner (fallback admin). **Owner-rooted already ✓.**
+  - `admin/invite.ex`, orchestrator `member_template.ex`, `template_team.ex`/`materializer.ex` (creation) — inviter/creator/owner authority. **Owner-rooted ✓.**
+  - `stress.ex`, `seed_cc_agent.ex` — operator/admin inline caps. **System/operator ✓.**
+  - **`admin/session_context.ex do_maybe_self_join` + `home_live.ex` — THE crux.** A logged-in user self-joins via the LV using `caller: caller_uri, caps: caller_caps` (their OWN caps incl. the broad baseline). This is the ONLY baseline-dependent join path. **KEY FINDING: it ALREADY degrades gracefully** — on `{:error, :unauthorized}` it flashes "ask the session owner to invite you, or you can only observe" (session_context.ex:133). So narrowing the baseline turns unauthorized self-joins into "observe", NOT crashes. The 8 failures are tests asserting self-join SUCCEEDS that now need per-policy provisioning or test updates to the new model.
+  **Implication for the fix:** the should-SUCCEED self-join cases need policy-provisioned authority: (a) `public_view` session → provision the joiner a `cap(:session,Session,:join,instance)` `granted_by` owner at the access point (mirror anon mint); (b) owner/already-member → already authorized; (c) first-non-anon-join owner-claim → self-claim path. Everyone else → graceful "observe" (already handled).
 
 - [ ] **Step 2: Write the join-authority tests (failing)** — `join_authority_test.exs`: (a) a confirmed user joins a `public_view` session WITHOUT any pre-held broad baseline → authorized; (b) a private session join by a non-owner without invite → rejected; (c) first-non-anon join claims owner. Encode the 8 audited paths as cases.
 
