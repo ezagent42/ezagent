@@ -37,7 +37,11 @@ defmodule Ezagent.SystemPrincipalCatalogActionAuditTest do
   @wildcard_allowlist MapSet.new([
                         "system://bootstrap",
                         "system://chat-router",
-                        "system://chat-reply",
+                        # ELIMINATED 2026-06-20, 甲-3 (#154 north star):
+                        # `system://chat-reply` DELETED (it held bootstrap_wildcard
+                        # → action: :any) — the 5 agent/plugin bridges now present
+                        # their OWN inline narrow `session.send` cap on the concrete
+                        # reply session instead of borrowing this wildcard.
                         "system://template-materialize",
                         "system://session-internal"
                         # ELIMINATED 2026-06-19 (#154 north star):

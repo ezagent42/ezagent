@@ -33,7 +33,15 @@ defmodule Ezagent.SystemPrincipalEliminationTest do
   # Shrink-only: the north star is `@remaining == []`.
   @remaining [
     "system://chat-router",
-    "system://chat-reply",
+    # ELIMINATED 2026-06-20, 甲-3: "system://chat-reply" — it held
+    # `bootstrap_wildcard()` and was borrowed by the 5 agent/plugin bridge
+    # adapters (curl_agent, plugin_codex, plugin_cc, echo, np_agent) to dispatch
+    # `session.send` into the originating session. Each agent is a real entity
+    # whose reply dispatch already used `caller: self_uri`/`agent_uri`; each now
+    # presents its OWN inline narrow `session.send` cap on the concrete reply
+    # session (`granted_by: <agent_uri>` self-authority, least privilege) as the
+    # step-5.5 authorizer (`granted_via_ctx_caps?`) instead of borrowing this
+    # ambient wildcard. Same play as worker-publish / agent-internal.
     # ELIMINATED: "system://worker-publish" — the ExternalMirrorWorker's two
     # internal self-dispatches now carry their OWN inline authorizer caps
     # (`caller: self_uri` + self-authority publish cap / admin-granted

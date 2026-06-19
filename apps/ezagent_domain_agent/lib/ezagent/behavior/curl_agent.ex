@@ -75,10 +75,11 @@ defmodule Ezagent.Behavior.CurlAgent do
   segment `CurlAgent` → `:curl_agent`) equals the historical snapshot key,
   so NO `state_slice:` override is needed.
 
-  ## Caller cap reuse
+  ## Caller cap
 
-  The reply dispatch runs under `Ezagent.SystemPrincipal`
-  (`system://chat-reply`) per SPEC caps-cleanup-v1 §4.4.
+  The reply dispatch presents the agent's OWN inline narrow `session.send`
+  cap on the concrete reply session (#154 — the `system://chat-reply`
+  wildcard principal is eliminated; least privilege).
   """
 
   use Ezagent.Lifecycle
@@ -304,9 +305,27 @@ defmodule Ezagent.Behavior.CurlAgent do
         cmd =
           Cmd.new(target, :send, %{message: reply_msg}, %{
             caller: self_uri,
-            # SPEC caps-cleanup-v1 §4.4 — agent reply path uses
-            # `system://chat-reply` per Catalog.
-            caps: "chat-reply" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
+            # System-principal elimination (#154): the ambient
+            # `system://chat-reply` WILDCARD principal is DELETED. The agent
+            # presents its OWN narrow `session.send` cap on the concrete
+            # session being replied to (least privilege). `granted_by:
+            # self_uri` is a real entity (#154-ok); inline = provenance-only,
+            # the step-5.5 authorizer (`granted_via_ctx_caps?`), never routed
+            # through `Ezagent.Identity.Grant`.
+            caps:
+              MapSet.new([
+                %Ezagent.Capability{
+                  Ezagent.Capability.cap(
+                    :session,
+                    Ezagent.Behavior.Session,
+                    :send,
+                    Ezagent.URI.instance(session),
+                    Ezagent.Capability.workspace_of(session)
+                  )
+                  | granted_by: self_uri,
+                    granted_at: DateTime.utc_now()
+                }
+              ]),
             reply: :ignore
           })
 

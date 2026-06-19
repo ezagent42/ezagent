@@ -238,9 +238,9 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
       assert reply_text =~ "no API key for provider `deepseek`"
       assert reply_text =~ "api-keys"
 
-      # Reply runs under the SystemPrincipal `system://chat-reply` —
-      # per SPEC caps-cleanup-v1 §4.4 (the agent reply path's
-      # canonical principal).
+      # Reply presents the agent's OWN inline narrow `session.send` cap
+      # on the concrete reply session (#154, 甲-3 — the `system://chat-reply`
+      # wildcard is eliminated; the cap is the step-5.5 authorizer).
       assert is_struct(cmd.ctx.caps, MapSet)
     end
   end

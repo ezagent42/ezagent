@@ -77,14 +77,18 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
       # (2026-06-19, operator → admin entity), then orchestrator-tools
       # (2026-06-19, DEAD caller — orchestrator runs as itself) → 7 principals
       # (shrinking toward genesis-only; see system_principal_elimination_test.exs).
-      assert length(uris) == 7,
-             "expected 7 system principals; Catalog has #{length(uris)}: " <>
+      # 2026-06-20, 甲-3: chat-reply ELIMINATED → 6 principals.
+      assert length(uris) == 6,
+             "expected 6 system principals; Catalog has #{length(uris)}: " <>
                inspect(uris)
 
       expected = [
         "system://bootstrap",
         "system://chat-router",
-        "system://chat-reply",
+        # (chat-reply ELIMINATED 2026-06-20, 甲-3 — north star; the 5 agent/plugin
+        #  bridge adapters now present their OWN inline narrow `session.send` cap
+        #  on the concrete reply session instead of borrowing this ambient
+        #  wildcard. Same play as worker-publish self-authority.)
         # (worker-publish ELIMINATED — north star; the ExternalMirrorWorker's
         #  internal dispatches now carry their own inline authorizer caps.)
         "system://template-materialize",
@@ -145,9 +149,9 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
     end
 
     test "caps/1 returns narrowed struct caps for narrow-catalog principals" do
-      # Pathology-B follow-up to PR-CC-2-v2: chat-router/chat-reply are
-      # in the wildcard-exempt allowlist now (open-plugin fan-out
-      # structural — see catalog.ex moduledoc +
+      # Pathology-B follow-up to PR-CC-2-v2: chat-router is in the
+      # wildcard-exempt allowlist now (open-plugin fan-out structural;
+      # chat-reply ELIMINATED 2026-06-20, 甲-3 — see catalog.ex moduledoc +
       # no_wildcard_system_principals_test.exs). Pick
       # `system://session-internal` for the narrow-catalog assertion —
       # a single-Behavior principal that legitimately should NOT hold

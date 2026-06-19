@@ -4,7 +4,7 @@ defmodule Ezagent.SystemPrincipal do
   replacement for ambient `User.admin_caps/0` authority.
 
   Per SPEC `2026-05-25-caps-cleanup-v1.md` §4. Each system-internal
-  dispatch ledger gets a NAMED principal URI (e.g. `system://chat-reply`,
+  dispatch ledger gets a NAMED principal URI (e.g. `system://chat-router`,
   `system://lv-anon-mount`) instead of impersonating the bootstrap
   admin. (The set is shrinking toward genesis-only under the eliminate-
   system-principals north star — see `capbac.md` §7.) The
@@ -136,14 +136,16 @@ defmodule Ezagent.SystemPrincipal do
   bridge):
 
   - `system://bootstrap` — Decision #81 admin invariant.
-  - `system://chat-router` / `system://chat-reply` — structural
-    open-plugin `chat.receive`/`chat.send` fan-out (the Catalog cannot
-    enumerate the open plugin Behavior set).
+  - `system://chat-router` — structural open-plugin `chat.receive`
+    fan-out (the Catalog cannot enumerate the open plugin Behavior set).
 
   (`system://mix-task` — operator-driven, in-VM trust model §10.5 —
   was ELIMINATED 2026-06-19; the operator CLI tasks now route their
   authority through the real `entity://system/user/admin` entity with an
-  inline per-action admin cap, not this ambient wildcard principal.)
+  inline per-action admin cap, not this ambient wildcard principal.
+  `system://chat-reply` — agent reply fan-out — was ELIMINATED
+  2026-06-20, 甲-3; each agent bridge now presents its OWN inline narrow
+  `session.send` cap with `granted_by: <agent_uri>` self-authority.)
 
   ## History — the pathology-B sweep removed the transitional wildcard
 

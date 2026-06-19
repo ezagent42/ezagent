@@ -100,7 +100,26 @@ defmodule EzagentPluginCodex.BridgeAdapter do
         args: %{message: msg},
         ctx: %{
           caller: agent_uri,
-          caps: "chat-reply" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
+          # System-principal elimination (#154): the ambient
+          # `system://chat-reply` WILDCARD principal is DELETED. The agent
+          # presents its OWN narrow `session.send` cap on the concrete session
+          # being replied to (least privilege). `granted_by: agent_uri` is a
+          # real entity (#154-ok); inline = provenance-only, the step-5.5
+          # authorizer (`granted_via_ctx_caps?`), never routed through Grant.
+          caps:
+            MapSet.new([
+              %Ezagent.Capability{
+                Ezagent.Capability.cap(
+                  :session,
+                  Ezagent.Behavior.Session,
+                  :send,
+                  Ezagent.URI.instance(session_uri),
+                  Ezagent.Capability.workspace_of(session_uri)
+                )
+                | granted_by: agent_uri,
+                  granted_at: DateTime.utc_now()
+              }
+            ]),
           reply: :ignore
         }
       })
