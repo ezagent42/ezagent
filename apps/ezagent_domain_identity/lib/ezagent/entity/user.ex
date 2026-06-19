@@ -26,10 +26,6 @@ defmodule Ezagent.Entity.User do
   # members hold cross-workspace authority by membership (see
   # `Ezagent.Capability.cross_workspace?/2`); the structural admin cap
   # keeps `workspace_uri: :any` for defence in depth.
-  # Static granted_at — admin capability is a structural bootstrap, not
-  # a time-varying grant. Same value across boots so tests/fixtures stay
-  # deterministic.
-  @admin_granted_at ~U[2026-01-01 00:00:00Z]
 
   @doc "Bootstrap admin principal URI: `entity://user/system/admin`."
   @spec admin_uri() :: URI.t()
@@ -123,68 +119,55 @@ defmodule Ezagent.Entity.User do
   # invariant test `no_admin_caps_fallback_test.exs` is the gate
   # against re-introduction.
   #
-  # `@admin_granted_at` stays static because `default_caps/1` uses it as
-  # deterministic grant attribution.
-
-  defp system_bootstrap_uri, do: Ezagent.URI.system(:bootstrap, :default)
+  # PR-甲-2 (#154): `default_caps/1` no longer mints a `system://bootstrap`-
+  # granted session baseline (it returns `[]`), so the former
+  # `system_bootstrap_uri/0` helper + `@admin_granted_at` static timestamp it
+  # used for grant attribution are gone — participation is granted per-session
+  # at the trusted access points with the session owner as `granted_by`.
 
   @doc """
-  Default caps every non-admin User starts life with.
+  Default caps every non-admin User starts life with — now **empty** (`[]`).
 
-  PR 27 (Allen 2026-05-18): every ESR User is, by construction, a
-  principal that can attempt to participate in a session — without
-  this baseline cap, even the most basic Feishu-delegate / CLI-test
-  path is unauthorized and silently drops. Making this a User Kind
-  structural default keeps every creation site (LV, mix task, Feishu
-  bind) consistent without forcing each caller to remember the
-  boilerplate.
+  ## no-unowned-caps north star PR-甲-2 (Decision #154 / capbac.md §6)
 
-  This is NOT an authorization escape hatch. The cap says "this
-  principal may attempt to invoke session behaviors on some session
-  instance"; whether the message actually lands depends on session
-  membership and routing rules, not on this cap. Admin's wildcard
-  `admin_caps/0` is the only true escape hatch, and is granted only
-  to `entity://user/system/admin`.
+  HISTORY: PR 27 (Allen 2026-05-18) gave every ESR User a single broad
+  baseline cap at creation —
+  `cap(:session, behavior: :any, action: :any, instance: :any, ws)`,
+  granted by `system://bootstrap`. The intent was "every user can attempt
+  to participate in a session"; the consequence was that a member NOT
+  pulled into a session still held that session's permissions across the
+  ENTIRE workspace, and the `granted_by` was an abstract `system://`
+  principal (a Decision #154 violation).
 
-  **Behavior wildcard**: `:any` follows the existing project
-  convention. Modeling specific behaviors here would require
-  ezagent_domain_identity
-  to depend on ezagent_domain_session (circular), or runtime
-  BehaviorRegistry lookups at user-creation time (boot-order
-  fragile). `:any` plus a narrow `:kind` scope is the consistent
-  trade-off the codebase already uses.
+  Allen-approved target model (spec
+  `2026-06-19-membership-mount-anon-model-design.md`): "a member not pulled
+  into a session has no session perms; participation is granted per-session
+  at join, by the session owner." Join authority is rooted at SESSION POLICY
+  (`Ezagent.Behavior.Session.Membership.provision_join_authority/2`, owner-
+  rooted) and the participation TIER is mounted at the trusted access points
+  after a successful join (`Membership.mount_participation_caps/2`) — both
+  with a real-entity `granted_by` (the session owner; admin only as the named
+  extreme-case granter), never a `system://` principal.
 
-  Prepended to user-supplied caps in `Ezagent.Domain.Identity.Users.create/3`.
-  Idempotently re-granted by Feishu `BindingPolicy.apply/2` to handle
-  pre-PR-27 users that were created without it.
+  With participation + join moved to the access points, this baseline is no
+  longer needed and returns `[]`. A fresh User holds ONLY the structural
+  self-Identity cap (added by `Behavior.Identity.init_slice/1` via
+  `add_owner_identity_cap/2`) — exactly the least-privilege "no session perms
+  until pulled in" target.
 
-  ## Phase 9 PR-3 (SPEC v3 §4.5) — workspace dimension
+  The `%URI{scheme: "workspace"}` argument is retained for signature stability
+  (callers + `CapabilityRegistry.register_default_grant/2` pass the user's
+  workspace URI) and for any future workspace-scoped NON-session baseline; it
+  is currently unused.
 
-  The default cap is scoped to the user's own workspace via
-  `workspace_uri:`. Cross-workspace chat requires an explicit
-  cross-workspace cap (PR-4). Callers pass the workspace URI
-  derived from the user's URI (`Ezagent.URI.entity_workspace_uri/1`).
+  Prepended to user-supplied caps in `Ezagent.Domain.Identity.Users.create/3`
+  (a `[]` prepend is a no-op). Feishu `BindingPolicy.apply/2` re-grants
+  `default_caps/1` and so becomes a natural no-op — a bound user participates
+  per-session via join like everyone else (the bind is only the open_id↔user
+  link).
   """
   @spec default_caps(URI.t()) :: [Ezagent.Capability.t()]
-  def default_caps(%URI{scheme: "workspace"} = workspace_uri) do
-    [
-      %Ezagent.Capability{
-        kind: :session,
-        behavior: :any,
-        # SPEC 2026-05-27 capability-action-axis — default user baseline
-        # cap is intentionally broad (any session-behavior any-action in
-        # the user's own workspace). The `behavior: :any` axis already
-        # makes this a workspace-wildcard; `action: :any` is symmetric.
-        # Granted by `system://bootstrap` so the grant-boundary check
-        # (§3.6.1.b) doesn't reject it during user creation.
-        action: :any,
-        instance: :any,
-        workspace_uri: workspace_uri,
-        granted_by: system_bootstrap_uri(),
-        granted_at: @admin_granted_at
-      }
-    ]
-  end
+  def default_caps(%URI{scheme: "workspace"} = _workspace_uri), do: []
 
   # --- Ezagent.Kind callbacks -----------------------------------------------
   @behaviour Ezagent.Kind

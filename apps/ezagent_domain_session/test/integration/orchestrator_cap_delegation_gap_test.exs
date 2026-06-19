@@ -74,11 +74,15 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorCapDelegationGapT
     cap1_delegable = Enum.any?(owner_caps, &Capability.matches?(&1, needed_cap1))
     cap2_delegable = Enum.any?(owner_caps, &Capability.matches?(&1, needed_cap2))
 
-    # Cap #1 IS delegable (the default session/:any/:any/:any/ws cap covers a
-    # within-session-scoped request) — so a placement-broadened manager check
-    # COULD authorize it. Documented for the future §6 design.
-    assert cap1_delegable,
-           "expected the owner's default session cap to cover orchestrator cap #1"
+    # Cap #1 is NO LONGER delegable. PR-甲-2 (#154) removed the broad
+    # `session/:any/:any/:any/ws` default baseline that used to cover a
+    # within-session-scoped request — a fresh owner now holds NO standing
+    # session cap, so neither scoped orchestrator cap is delegable by the
+    # owner's own caps. This STRENGTHENS the §6 deferral evidence: the gap is
+    # not "cap #2 only" but "both caps need authority the owner does not hold".
+    refute cap1_delegable,
+           "the broad default session baseline that used to cover cap #1 is gone " <>
+             "(PR-甲-2) — the owner no longer holds a standing session:any cap"
 
     # Cap #2 is NOT delegable by ANY owner cap — the structural blocker.
     refute cap2_delegable,

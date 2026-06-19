@@ -437,10 +437,16 @@ defmodule EzagentDomainIdentity.Application do
 
     # CapabilityRegistry SPEC rev 4 §5 — register User.default_caps/1
     # with the registry so /admin/caps + future audit can enumerate
-    # "what does a fresh User get in this workspace". The function
-    # stays as-is in `Ezagent.Entity.User`; existing callers
-    # (`Users.create/3`, Feishu `BindingPolicy.ensure_user_default_caps/2`,
-    # `mix ezagent.stress`, tests) continue to call it directly.
+    # "what does a fresh User get in this workspace". PR-甲-2 (#154):
+    # `default_caps/1` now returns `[]` (participation + join authority are
+    # granted per-session at the trusted access points — see
+    # `Ezagent.Behavior.Session.Membership.{provision_join_authority,
+    # mount_participation_caps}`). The registration is KEPT as an honest
+    # no-op so the audit answer is the truthful "a fresh user gets no
+    # standing session caps", and a future workspace-scoped NON-session
+    # baseline has a registration site ready. `Users.create/3` still calls
+    # `default_caps/1` directly (`[] ++ caps`); Feishu `BindingPolicy.apply/2`
+    # re-grants it and so becomes a natural no-op.
     :ok = CapabilityRegistry.register_default_grant(User, &User.default_caps/1)
 
     :ok

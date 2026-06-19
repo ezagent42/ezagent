@@ -111,6 +111,20 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
       %URI{} = caller_uri when not is_nil(caller_caps) ->
         target = Ezagent.URI.with_action(session_uri, :session, :join)
 
+        # #154 PR-甲-2 §B — session-policy join authority. `User.default_caps`
+        # no longer mints a broad `cap(:session,:any,:any)` baseline, so the
+        # self-joiner's `caller_caps` no longer carries `:join`. Provision the
+        # per-session `:join` cap JUST-IN-TIME, owner-rooted (owner / existing
+        # member / first-non-anon owner-claim → granted; anyone else → denied →
+        # the existing `:unauthorized` flash degrades to "observe"). `:sync` so
+        # the cap lands in the joiner's slice before the dispatch authorizes via
+        # the live slice read (`granted_via_holds_cap?`).
+        _ =
+          Ezagent.Behavior.Session.Membership.provision_join_authority(
+            session_uri,
+            caller_uri
+          )
+
         result =
           Ezagent.Invocation.dispatch(%Ezagent.Invocation{
             target: target,
@@ -125,9 +139,24 @@ defmodule EzagentPluginLiveview.Admin.SessionContext do
 
         case result do
           :ok ->
+            # #154 PR-甲-2 §A — mount the per-class participation tier AFTER a
+            # successful join (caller-side; resolves `Users.confirmed?` from the
+            # DB, never `handle_join`). Best-effort + no-op for agents.
+            _ =
+              Ezagent.Behavior.Session.Membership.mount_participation_caps(
+                session_uri,
+                caller_uri
+              )
+
             socket
 
           {:ok, _} ->
+            _ =
+              Ezagent.Behavior.Session.Membership.mount_participation_caps(
+                session_uri,
+                caller_uri
+              )
+
             socket
 
           {:error, :unauthorized} ->

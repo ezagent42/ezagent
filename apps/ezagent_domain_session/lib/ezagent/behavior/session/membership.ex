@@ -251,4 +251,327 @@ defmodule Ezagent.Behavior.Session.Membership do
         :ok
     end
   end
+
+  @member_chat_actions [:send, :leave]
+  @member_publisher_actions [:subscribe_from]
+
+  @doc """
+  Provision the per-session `:join` authority on a prospective joiner BEFORE the
+  `session.join` dispatch, rooted at SESSION POLICY (#154 spec 甲 / PR-甲-2 §B —
+  the chicken-and-egg fix).
+
+  ## Why this exists
+
+  `session.join` is itself cap-gated: `Behavior.Session action(:join, caps: [:join])`
+  ⇒ dispatch step-5.5 requires the caller hold
+  `cap(:session, Session, :join, instance: <session>)`. Before this PR that cap
+  came from `User.default_caps`'s broad workspace-wide `cap(:session, :any, :any)`
+  baseline. PR-甲-2 narrows that baseline to `[]`, so the join authority must be
+  rooted at the session OWNER instead of an ambient universal baseline — otherwise
+  every self-join / invite path loses its `:join` cap (the prior branch's 8
+  failures).
+
+  This grant is the JUST-IN-TIME per-session join cap, distinct from the
+  participation TIER (`mount_participation_caps/2`, granted AFTER a successful
+  join). Per spec §3.1 `:join` is never in a mounted tier — it is provisioned
+  here, ahead of the dispatch, exactly as `anon_user.mint_for_public_session/1`
+  mints the anon's join cap. It is granted `:sync` (caller-side, ordinary
+  cross-process `Session.owner` call — no self-deadlock) so it lands in the
+  joiner's slice BEFORE the dispatch; the runtime authorizes the subsequent join
+  via the live slice read (`granted_via_holds_cap?`).
+
+  ## Policy (who may be provisioned a join cap)
+
+    * joiner is the session OWNER, or an existing MEMBER → provision; granter =
+      owner (owner-rooted — spec §8 g2).
+    * ownerless session + a NON-anon user joiner → provision the first-non-anon
+      join so it can claim ownership (RFC #402); granter = `entity://system/user/admin`
+      (the #154 named extreme-case granter, spec §8 g2 exception (ii)).
+    * anyone else (a non-owner non-member self-joining a private session) →
+      `{:error, :no_authority}`: NOT provisioned, so the existing `session.join`
+      dispatch returns `{:error, :unauthorized}` and the access point degrades to
+      "observe" (spec §8 g1).
+
+  `public_view` open-join is NOT handled here — that is the anon web path, whose
+  join cap is minted by `anon_user.mint_for_public_session/1`. The admin LV
+  (the caller of this function) serves owned/private sessions only.
+
+  Returns `:ok` when a join cap is provisioned (or the joiner is an agent — agents
+  carry their own caps), `{:error, :no_authority}` when policy denies provisioning.
+  Best-effort on the GRANT itself: a failed grant dispatch is logged + telemetry'd
+  and still returns `:ok` (the join then fails closed at the chokepoint → observe).
+  """
+  @spec provision_join_authority(URI.t(), URI.t()) :: :ok | {:error, :no_authority}
+  def provision_join_authority(%URI{} = session_uri, %URI{} = joiner_uri) do
+    cond do
+      not user_uri?(joiner_uri) ->
+        # Agents/workers carry their own provisioned caps (甲-3); the
+        # system-internal creation joins (orchestrator) run under
+        # `system://session-internal`. Nothing to provision here.
+        :ok
+
+      true ->
+        do_provision_join_authority(session_uri, joiner_uri)
+    end
+  end
+
+  def provision_join_authority(_, _), do: {:error, :no_authority}
+
+  defp do_provision_join_authority(%URI{} = session_uri, %URI{} = joiner_uri) do
+    owner = session_owner(session_uri)
+
+    granter =
+      case join_authority_basis(session_uri, joiner_uri, owner) do
+        {:authorized, granter} -> granter
+        :denied -> nil
+      end
+
+    case granter do
+      nil ->
+        {:error, :no_authority}
+
+      %URI{} = granter ->
+        grant_join_cap(session_uri, joiner_uri, granter)
+        :ok
+    end
+  end
+
+  # The owner-rooted join policy (spec §8 g1/g2). Returns the GRANTER for an
+  # authorized join, or `:denied`.
+  defp join_authority_basis(%URI{} = session_uri, %URI{} = joiner_uri, owner) do
+    cond do
+      # Owner self-join, or an existing member re-joining: owner-rooted.
+      match?(%URI{}, owner) and joiner_uri == owner ->
+        {:authorized, owner}
+
+      already_member?(session_uri, joiner_uri) ->
+        # An existing member re-navigating; the join is owner-authorized
+        # (the member was added under the owner's authority). Granter = the
+        # owner when present, else the admin fallback (ownerless legacy).
+        {:authorized, owner_or_admin(owner)}
+
+      # Ownerless session + a non-anon user: the first-non-anon-join owner-claim
+      # (RFC #402). Granter = admin (the #154 named extreme-case granter).
+      is_nil(owner) and not anon_member?(joiner_uri) ->
+        {:authorized, Ezagent.Entity.User.admin_uri()}
+
+      true ->
+        :denied
+    end
+  end
+
+  defp owner_or_admin(%URI{} = owner), do: owner
+  defp owner_or_admin(_), do: Ezagent.Entity.User.admin_uri()
+
+  defp session_owner(%URI{} = session_uri) do
+    case Ezagent.Entity.Session.owner(session_uri) do
+      {:ok, %URI{} = owner} -> owner
+      _ -> nil
+    end
+  end
+
+  defp already_member?(%URI{} = session_uri, %URI{} = joiner_uri) do
+    case Ezagent.Kind.get_slice(session_uri, :session) do
+      {:ok, %{state: %{members: members}}} when is_map(members) ->
+        Map.has_key?(members, joiner_uri)
+
+      {:ok, %{members: members}} when is_map(members) ->
+        Map.has_key?(members, joiner_uri)
+
+      _ ->
+        false
+    end
+  end
+
+  defp grant_join_cap(%URI{} = session_uri, %URI{} = joiner_uri, %URI{} = granter) do
+    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+
+    # Idempotency: if the joiner already holds a cap authorizing `:join` on this
+    # session (admin's wildcard, the anon's own minted join cap, or a prior
+    # provision), skip — avoids re-grant slice churn on every navigation.
+    if already_authorized?(
+         Ezagent.Identity.list_caps_for(joiner_uri),
+         Ezagent.Behavior.Session,
+         :join,
+         session_uri,
+         workspace_uri
+       ) do
+      :ok
+    else
+      do_grant_join_cap(session_uri, joiner_uri, granter, workspace_uri)
+    end
+  end
+
+  defp do_grant_join_cap(session_uri, joiner_uri, granter, workspace_uri) do
+    cap =
+      Ezagent.Capability.cap(
+        :session,
+        Ezagent.Behavior.Session,
+        :join,
+        session_uri,
+        workspace_uri
+      )
+
+    case Ezagent.Identity.Grant.grant_cap_via_router(
+           joiner_uri,
+           cap,
+           {:rule, :session_participation, granter},
+           :sync
+         ) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "Session.Membership.provision_join_authority: join-cap grant failed for " <>
+            "joiner=#{URI.to_string(joiner_uri)} on session=" <>
+            "#{URI.to_string(session_uri)}: #{inspect(reason)} " <>
+            "(best-effort; join fails closed → observe)."
+        )
+
+        :telemetry.execute(
+          [:ezagent, :session, :join_cap, :failed],
+          %{count: 1},
+          %{session_uri: session_uri, joiner_uri: joiner_uri, reason: reason}
+        )
+
+        :ok
+    end
+  end
+
+  @doc """
+  Mount the per-session participation cap tier on a freshly-joined member
+  (#154 spec 甲 / PR-甲-2). Called by the TRUSTED join access points (LV
+  self-join, invite, home, anon mint) AFTER a successful join — never inside
+  `handle_join` (a DB read in the Session Kind is the 甲-1 sandbox/hot-path
+  hazard) and never from forgeable join args.
+
+  By-design-secure ([[feedback_analyze_caller_before_defending]]): the tier is
+  chosen from the AUTHORITATIVE `Ezagent.Users.confirmed?/1` (a DB fact),
+  resolved here in the CALLER's process (which has DB access), NOT from any
+  caller-supplied input — so there is nothing to forge and no anti-forgery
+  guard is needed. Running caller-side (not in the Session Kind) also means the
+  grant's `Session.owner` lookup is an ordinary cross-process call, so the
+  grant is `:sync` (no self-deadlock — unlike `grant_first_join_owner_cap`).
+
+  Tiers (scoped to THIS session instance):
+    * unconfirmed user → `Publisher.SessionImpl.:subscribe_from` (read-only)
+    * confirmed user   → the above + `Session.:send` + `Session.:leave`
+    * agent            → no-op (agents get `:send` provisioned at spawn, 甲-3)
+
+  Authority `{:rule, :session_participation, owner}` (concrete instance +
+  action ⇒ `rule_cap_bounded?` ⇒ the rule branch authorizes; `granted_by` =
+  owner entity). Owner = the session owner; for an ownerless session it falls
+  back to `entity://system/user/admin` (the #154 named extreme-case granter,
+  same as `anon_user.public_view_granter/1`). Best-effort: a failed grant is
+  logged + telemetry'd, never raised — a missing participation cap degrades to
+  "observe", it does not break the join.
+  """
+  @spec mount_participation_caps(URI.t(), URI.t()) :: :ok
+  def mount_participation_caps(%URI{} = session_uri, %URI{} = member_uri) do
+    if user_uri?(member_uri) do
+      do_mount_participation_caps(session_uri, member_uri)
+    else
+      :ok
+    end
+  end
+
+  def mount_participation_caps(_, _), do: :ok
+
+  # The session OWNER is the participation granter (the #154 owner-rooted rule);
+  # an ownerless session falls back to the admin entity (the named extreme-case
+  # granter, same as `anon_user.public_view_granter/1`). Resolved HERE (caller
+  # process, cross-process `Session.owner` call — no self-deadlock) so the
+  # access-point callers don't each have to look it up.
+  defp do_mount_participation_caps(%URI{} = session_uri, %URI{} = member_uri) do
+    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+
+    granter =
+      case Ezagent.Entity.Session.owner(session_uri) do
+        {:ok, %URI{} = owner} -> owner
+        _ -> Ezagent.Entity.User.admin_uri()
+      end
+
+    confirmed? = Ezagent.Users.confirmed?(member_uri)
+
+    actions =
+      if confirmed? do
+        Enum.map(@member_chat_actions, &{Ezagent.Behavior.Session, &1}) ++
+          Enum.map(@member_publisher_actions, &{Ezagent.Behavior.Publisher.SessionImpl, &1})
+      else
+        Enum.map(@member_publisher_actions, &{Ezagent.Behavior.Publisher.SessionImpl, &1})
+      end
+
+    held = Ezagent.Identity.list_caps_for(member_uri)
+
+    Enum.each(actions, fn {behavior, action} ->
+      cap =
+        Ezagent.Capability.cap(:session, behavior, action, session_uri, workspace_uri)
+
+      # Idempotency: skip the grant when the member ALREADY holds a cap that
+      # authorizes this action (e.g. admin's bootstrap wildcard, or a prior
+      # mount). Without this, every re-navigation re-grants (caps carry a fresh
+      # `granted_at`, so the slice MapSet never dedupes) → spurious `:identity`
+      # slice-change churn + flash noise on every session select.
+      if already_authorized?(held, behavior, action, session_uri, workspace_uri) do
+        :ok
+      else
+        case Ezagent.Identity.Grant.grant_cap_via_router(
+               member_uri,
+               cap,
+               {:rule, :session_participation, granter},
+               :sync
+             ) do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning(
+              "Session.Membership.mount_participation_caps: grant failed for " <>
+                "member=#{URI.to_string(member_uri)} on session=" <>
+                "#{URI.to_string(session_uri)} action=#{inspect(action)}: " <>
+                "#{inspect(reason)} (best-effort; member degrades to observe)."
+            )
+
+            :telemetry.execute(
+              [:ezagent, :session, :participation_cap, :failed],
+              %{count: 1},
+              %{session_uri: session_uri, member_uri: member_uri, reason: reason}
+            )
+
+            :ok
+        end
+      end
+    end)
+  end
+
+  # True iff `held` (the member's current caps) already contains a cap that
+  # authorizes `behavior`.`action` on this session instance — same `matches?/2`
+  # semantics the runtime step-5.5 check uses. Lets the mount/provision grants
+  # be idempotent (no re-grant churn for admin's wildcard or an already-mounted
+  # member).
+  defp already_authorized?(held, behavior, action, session_uri, workspace_uri) do
+    needed = %{
+      kind: :session,
+      behavior: behavior,
+      action: action,
+      instance: Ezagent.URI.instance(session_uri),
+      workspace_uri: workspace_uri
+    }
+
+    held
+    |> caps_to_list()
+    |> Enum.any?(fn
+      %Ezagent.Capability{} = cap -> Ezagent.Capability.matches?(cap, needed)
+      _ -> false
+    end)
+  end
+
+  defp caps_to_list(caps) do
+    cond do
+      is_list(caps) -> caps
+      is_struct(caps, MapSet) -> MapSet.to_list(caps)
+      true -> List.wrap(caps)
+    end
+  end
 end
