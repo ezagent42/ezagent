@@ -145,12 +145,12 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # behavior-wildcard pattern.
          Capability.cap(:session, ExternalMirror, :any)
        ]},
-      {principal("adapter-install"),
-       [
-         # adapter-install fires session.<flavor>.bind — the bind action
-         # is the ExternalMirror Behavior's gate. Narrowed to bind.
-         Capability.cap(:session, ExternalMirror, :bind)
-       ]},
+      # System-principal elimination (north star): `adapter-install` DELETED —
+      # it was a DEAD principal (zero live consumers; grep across apps/**/*.ex
+      # found no `SystemPrincipal.uri("adapter-install")` / dispatch under it).
+      # Its documented `session.<flavor>.bind` flow is served by
+      # `boot-reconciler` (above) + the live adapter wiring; this orphan entry
+      # held a `cap(:session, ExternalMirror, :bind)` nothing dispatched under.
       {principal("chat-router"),
        [
          # `cap(:any, Session, :any)` covers Session-registered receivers
