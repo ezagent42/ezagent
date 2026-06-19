@@ -160,6 +160,25 @@ defmodule Ezagent.Behavior.Session do
     description: "Remove a member from the session"
   )
 
+  # #154 spec 甲-5 — a CONFIRMED user takes over an anonymous user's session
+  # footprint (the anon's membership + read markers transfer to the confirmed
+  # user; the anon ENTITY is retired separately by the socialware-side
+  # `Ezagent.Socialware.AnonTakeover` orchestrator). `:call` — the caller needs
+  # the result AND the transfer must complete BEFORE the orchestrator retires
+  # the anon (never orphan a half-transfer). Authorized by the orchestrator's
+  # inline `:takeover` cap (granted_by the confirmed member — self-claim,
+  # provenance-only) PLUS its out-of-band AnonBinding-possession + `confirmed?`
+  # checks; no new principal, no new cap axis beyond this action's own.
+  action(:takeover,
+    args: %{anon: :uri, member: :uri},
+    returns: %{members: {:list, :uri}},
+    caps: [:takeover],
+    modes: [:call],
+    description:
+      "A confirmed user supersedes an anonymous user's session footprint " <>
+        "(membership + read-marker transfer; #154 甲-5)"
+  )
+
   action(:set_working_copy,
     args: %{template_working_copy: :map},
     returns: %{template_working_copy: :map},
@@ -642,6 +661,17 @@ defmodule Ezagent.Behavior.Session do
        {:set_transient, :monitors, new_monitors},
        {:set, :last_seen, new_last_seen}
      ] ++ Delivery.broadcast_membership_effects(ctx[:self_uri], {:member_left, member_uri})}
+  end
+
+  # --- :takeover ---------------------------------------------------------
+
+  # #154 甲-5 — delegate to `Membership.do_takeover/4`, which runs in THIS
+  # GenServer (like `handle_join`) and does the socialware-symbol-free footprint
+  # transfer (confirmed-user join + anon removal + ReadMarker re-point). The
+  # anon ENTITY retire (Users.delete + AnonBinding.delete) is the orchestrator's
+  # job, AFTER this returns `:ok`.
+  def handle_takeover(%{anon: %URI{} = anon_uri, member: %URI{} = member_uri}, ctx) do
+    Membership.do_takeover(anon_uri, member_uri, ctx, __MODULE__)
   end
 
   # --- :set_working_copy -------------------------------------------------

@@ -130,6 +130,109 @@ defmodule Ezagent.Behavior.Session.Membership do
      ] ++ Delivery.broadcast_membership_effects(session_uri, {:member_joined, member_uri})}
   end
 
+  @doc """
+  The `:takeover` handler body (甲-5) — a CONFIRMED user supersedes an
+  anonymous user's footprint in a single in-Kind step. Builds the
+  `{:ok, result, [effect]}` tuple `handle_takeover/2` returns.
+
+  Runs IN the Session Kind GenServer (like `do_join`). It performs ONLY
+  slice-state work — NO `Session.owner` lookup / `:sync` cap grant (those
+  self-deadlock from inside this process, see `grant_first_join_owner_cap`)
+  and NO socialware symbols (this domain does not depend on socialware — the
+  `anon_uri` / `member_uri` arrive as plain `%URI{}` and the anon ENTITY retire
+  lives in the socialware-side `Ezagent.Socialware.AnonTakeover` orchestrator).
+
+  Steps (atomic — composed into ONE set of `:members`/`:monitors`/`:last_seen`
+  effects so the two membership mutations never compete on the same slice key):
+
+    1. `do_join` the confirmed `member_uri` (installs its monitor + member meta;
+       its own effects carry the post-join `members`/`monitors`/`last_seen`).
+       A `do_join` `{:error, _}` (e.g. role_name conflict) is propagated.
+    2. Remove the `anon_uri` from the post-join membership map, demonitor +
+       drop its monitor ref, drop its `last_seen`.
+    3. `ReadMarker.repoint(session, anon_uri, member_uri)` — transfer the anon's
+       read footprint onto the confirmed user (collision-safe, never regresses).
+    4. Emit the composed effects + a `member_left` broadcast for the anon.
+
+  The confirmed-tier participation caps are mounted CALLER-SIDE by the
+  orchestrator (`mount_participation_caps/2`, after the dispatch returns) — its
+  `:sync` grant must not run in this process.
+  """
+  @spec do_takeover(URI.t(), URI.t(), map(), module()) ::
+          {:ok, map(), [term()]} | {:error, term()}
+  def do_takeover(%URI{} = anon_uri, %URI{} = member_uri, ctx, source_module) do
+    session_uri = ctx[:self_uri]
+
+    case Ezagent.KindRegistry.lookup(member_uri) do
+      {:ok, member_pid} ->
+        # The confirmed user takes no member facets in a takeover.
+        case do_join(member_uri, member_pid, ctx, %{}, source_module) do
+          {:ok, _join_result, join_effects} ->
+            build_takeover_effects(session_uri, anon_uri, member_uri, join_effects)
+
+          {:error, _} = err ->
+            err
+        end
+
+      :error ->
+        {:error, {:member_not_registered, member_uri}}
+    end
+  end
+
+  # Compose the anon-removal INTO the join's `:members`/`:monitors`/`:last_seen`
+  # effects (same slice keys — must not be emitted twice). Re-points the anon's
+  # read markers onto the confirmed user, then appends the anon `member_left`
+  # broadcast.
+  defp build_takeover_effects(session_uri, anon_uri, member_uri, join_effects) do
+    members_after_join = effect_value(join_effects, {:set, :members})
+    monitors_after_join = effect_value(join_effects, {:set_transient, :monitors})
+    last_seen_after_join = effect_value(join_effects, {:set, :last_seen})
+
+    new_members = Map.delete(members_after_join, anon_uri)
+
+    {anon_ref, monitors_after_anon} = Delivery.pop_monitor_ref(monitors_after_join, anon_uri)
+    if anon_ref, do: Process.demonitor(anon_ref, [:flush])
+
+    new_last_seen = Map.delete(last_seen_after_join, anon_uri)
+
+    # Footprint transfer — in-Kind, touches only read_markers (no deadlock).
+    _ = Ezagent.Session.ReadMarker.repoint(session_uri, anon_uri, member_uri)
+
+    # Carry over any join effects that AREN'T the three membership keys we
+    # rewrote (e.g. owner_uri, the join's member_joined broadcast), then emit our
+    # composed membership effects + the anon member_left broadcast.
+    passthrough =
+      Enum.reject(join_effects, fn
+        {:set, :members, _} -> true
+        {:set_transient, :monitors, _} -> true
+        {:set, :last_seen, _} -> true
+        _ -> false
+      end)
+
+    {:ok, %{members: Map.keys(new_members)},
+     [
+       {:set, :members, new_members},
+       {:set_transient, :monitors, monitors_after_anon},
+       {:set, :last_seen, new_last_seen}
+     ] ++
+       passthrough ++
+       Delivery.broadcast_membership_effects(session_uri, {:member_left, anon_uri})}
+  end
+
+  defp effect_value(effects, {:set, key}) do
+    Enum.find_value(effects, %{}, fn
+      {:set, ^key, v} -> v
+      _ -> false
+    end)
+  end
+
+  defp effect_value(effects, {:set_transient, key}) do
+    Enum.find_value(effects, %{}, fn
+      {:set_transient, ^key, v} -> v
+      _ -> false
+    end)
+  end
+
   # Notifier/flash audit 2026-05-24 — same predicate
   # `Ezagent.Domain.Workspace.user_uri?/1` uses. Keeps the agent-target
   # silence guarantee local to Chat without crossing the

@@ -778,6 +778,11 @@ defmodule EzagentDomainInstanceMessage.Application do
     :ok = CapabilityRegistry.register(Session, :send, SessionBehavior)
     :ok = CapabilityRegistry.register(Session, :join, SessionBehavior)
     :ok = CapabilityRegistry.register(Session, :leave, SessionBehavior)
+    # #154 甲-5 — `?action=session.takeover` on the Session Kind: a confirmed
+    # user supersedes an anonymous user's footprint. Authorized by the
+    # socialware `AnonTakeover` orchestrator's inline `:takeover` cap (+ its
+    # AnonBinding-possession / confirmed? out-of-band checks).
+    :ok = CapabilityRegistry.register(Session, :takeover, SessionBehavior)
     # Phase 7 completion PR-4 (SPEC §1.6) — the Generator + the
     # orchestrator slot tools write the durable `template_working_copy`
     # field via `?action=session.set_working_copy` on the Session Kind.
