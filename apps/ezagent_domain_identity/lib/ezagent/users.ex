@@ -34,6 +34,12 @@ defmodule Ezagent.Users do
     # workspace (admin's cross-workspace cap is the documented
     # exception per SPEC §4.4, stored on admin's row).
     field(:workspace_uri, :string)
+    # #154 spec 甲 (2026-06-19) — `confirmed` is the REAL source of truth for
+    # anon-ness (replaces the `anon-` URI name-prefix hack). `false` = an
+    # anonymous / unconfirmed user (mounts the reduced participation tier at
+    # join); `true` = a confirmed user. `create/3` → true, `create_read_only/2`
+    # → false.
+    field(:confirmed, :boolean, default: false)
     # PR #142: per-user `cli_token` field removed — bearer tokens now
     # live in `entity_tokens` (entity-agnostic, supports agents too).
     # See `Ezagent.Entity.Token`.
@@ -44,7 +50,8 @@ defmodule Ezagent.Users do
           id: integer() | nil,
           uri: URI.t(),
           password_hash: String.t() | nil,
-          caps: [Ezagent.Capability.t()]
+          caps: [Ezagent.Capability.t()],
+          confirmed: boolean()
         }
 
   # --- write paths ---------------------------------------------------
@@ -97,7 +104,9 @@ defmodule Ezagent.Users do
         caps_json: encode_caps(final_caps),
         # Phase 9 PR-6 (SPEC v3 §7) — derive the workspace_uri column
         # from the entity URI so SELECTs can scope by workspace.
-        workspace_uri: URI.to_string(user_workspace)
+        workspace_uri: URI.to_string(user_workspace),
+        # #154 spec 甲 — a normal `create/3` user is CONFIRMED.
+        confirmed: true
       })
       |> Ecto.Changeset.unique_constraint(:uri, name: :users_uri_index)
 
@@ -147,7 +156,10 @@ defmodule Ezagent.Users do
         # NO default_caps — read-only-by-construction. The only caps written are
         # the explicit narrow grants the caller supplies (default none).
         caps_json: encode_caps(caps),
-        workspace_uri: URI.to_string(user_workspace)
+        workspace_uri: URI.to_string(user_workspace),
+        # #154 spec 甲 — the anonymous-viewer mint is UNCONFIRMED. This (not the
+        # `anon-` URI name) is the source of truth for anon-ness.
+        confirmed: false
       })
       |> Ecto.Changeset.unique_constraint(:uri, name: :users_uri_index)
 
@@ -254,6 +266,19 @@ defmodule Ezagent.Users do
   end
 
   @doc """
+  Whether `uri` is a CONFIRMED user (#154 spec 甲). `false` for an unconfirmed
+  (anonymous) user OR an absent row (fail-closed: unknown ⇒ unconfirmed). This is
+  the source of truth for anon-ness — preferred over the `anon-` URI name-prefix.
+  """
+  @spec confirmed?(URI.t() | String.t()) :: boolean()
+  def confirmed?(uri) do
+    case get_by_uri(uri) do
+      %{confirmed: confirmed} -> confirmed == true
+      _ -> false
+    end
+  end
+
+  @doc """
   List ALL users across all workspaces.
 
   **System-scope read** — intentional cross-workspace listing for the
@@ -299,7 +324,10 @@ defmodule Ezagent.Users do
       id: row.id,
       uri: Ezagent.URI.new!(row.uri),
       password_hash: row.password_hash,
-      caps: decode_caps(row.caps_json)
+      caps: decode_caps(row.caps_json),
+      # `confirmed` may be absent on a row read before the column existed
+      # (defensive): treat nil as false (unconfirmed).
+      confirmed: row.confirmed == true
     }
   end
 

@@ -150,6 +150,15 @@ defmodule Ezagent.Behavior.Session.Membership do
   # mints them (mirrors `Ezagent.Socialware.AnonUser.anon_uri?/1`). The
   # suppression direction is safe even if a non-anon user is mis-named
   # `anon-…`: it would only DECLINE ownership, never escalate.
+  #
+  # #154 spec 甲 (2026-06-19): the AUTHORITATIVE anon signal is now
+  # `users.confirmed == false` (PR-甲-1 added the attribute + `Users.confirmed?/1`).
+  # This function STILL uses the name-prefix because it runs inside the Session
+  # Kind's GenServer (`handle_join`), where a synchronous `Repo` read is both a
+  # sandbox-ownership hazard in tests and a hot-path DB coupling in prod. PR-甲-2
+  # reworks the join flow to resolve the member CLASS at the caller/dispatch layer
+  # (which holds DB access) and pass it into `handle_join`, at which point this
+  # name-prefix check is replaced by the `confirmed` attribute and retired.
   @anon_user_name_prefix "anon-"
   def anon_member?(%URI{scheme: "entity"} = uri) do
     user_uri?(uri) and
