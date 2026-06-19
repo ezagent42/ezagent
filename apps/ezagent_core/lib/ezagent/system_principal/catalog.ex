@@ -86,16 +86,16 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   # dispatches `identity.get_api_key` anymore.
   alias Ezagent.Behavior.Session
   alias Ezagent.Behavior.ExternalMirror
-  alias Ezagent.Behavior.ExternalMirrorWorker
+  # System-principal elimination — `alias Ezagent.Behavior.ExternalMirrorWorker`
+  # removed with the `system://worker-publish` entry (its only consumer).
   alias Ezagent.Behavior.Identity
   # no-unowned-caps PR-1: `alias Ezagent.Behavior.IdentityAdmin` removed —
   # its only use was `feishu-binding-policy`'s now-deleted
   # `cap(:user, IdentityAdmin, :grant_cap)` (the last grant-minter).
-  # 2026-05-26 — Publisher.SessionImpl lives in `ezagent_domain_session`.
-  # Like the other Behavior aliases in this block, the module is
-  # resolved at runtime (catalog evaluation), not compile time, so
-  # core's no-umbrella-dep rule is preserved.
-  alias Ezagent.Behavior.Publisher.SessionImpl, as: PublisherSI
+  # System-principal elimination — `alias Ezagent.Behavior.Publisher.SessionImpl,
+  # as: PublisherSI` removed with the `system://worker-publish` entry (its only
+  # consumer). The ExternalMirrorWorker now carries its own inline
+  # `(:session, PublisherSI, :subscribe_from)` authorizer cap.
   alias Ezagent.Behavior.Sandbox
   alias Ezagent.Behavior.Template
   alias Ezagent.Behavior.Workspace
@@ -177,21 +177,24 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # right shape for an open-plugin fan-out principal.
          bootstrap_wildcard()
        ]},
-      {principal("worker-publish"),
-       [
-         Capability.cap(:external_mirror_worker, ExternalMirrorWorker, :publish),
-         # 2026-05-26 (Allen e2e blocker): Worker.subscribe_to_session_publisher/2
-         # dispatches `session://...?action=publisher.subscribe_from` to
-         # subscribe to its bound session's Publisher (SPEC §8.1).
-         # CapBAC step 5.5 needs the cap shape registered against the
-         # Session Kind by `EzagentDomainInstanceMessage.Application` — see
-         # `CapabilityRegistry.register(Session, action, PublisherSI)`
-         # over `PublisherSI.actions()` = `[:subscribe_from, :snapshot,
-         # :history]`. Without this cap the worker is stuck in a
-         # `:unauthorized` retry loop the moment a binding is created;
-         # outbound external_mirror never delivers a single event.
-         Capability.cap(:session, PublisherSI, :subscribe_from)
-       ]},
+      # System-principal elimination (north star / Decision #154) — the
+      # `system://worker-publish` principal is DELETED. It held two caps —
+      # `(:external_mirror_worker, ExternalMirrorWorker, :publish)` and
+      # `(:session, PublisherSI, :subscribe_from)` — that authorized the
+      # ExternalMirrorWorker's two internal self-dispatches (the `:publish`
+      # self-dispatch + the `publisher.subscribe_from` to its bound session).
+      # The Worker is a real entity Kind (`entity://worker/...`); both
+      # dispatches already used `caller: self_uri`. They now carry the worker's
+      # OWN inline caps in `ctx.caps` (the step-5.5 authorizer) instead of
+      # borrowing this ambient principal — see
+      # `Ezagent.Behavior.ExternalMirrorWorker.worker_publish_caps/1` +
+      # `worker_subscribe_caps/0`. The publish cap's `granted_by` is the worker
+      # itself (genuine self-authority); the subscribe cap's is
+      # `entity://system/user/admin` (authority over the session — the formal
+      # `{:within_session}` Cap 3 delegation stays PR-EM-3 future work). The
+      # inline caps are authorizers only (never granted/persisted), so this is
+      # no Decision #154 grant regression. With the principal gone the
+      # elimination ratchet drops to 12 remaining.
       {principal("template-materialize"),
        [
          # 2026-06-17 (Decision #154 "no unowned permissions", PR-2 of the

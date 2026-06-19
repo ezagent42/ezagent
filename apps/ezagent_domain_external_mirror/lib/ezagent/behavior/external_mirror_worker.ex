@@ -826,29 +826,15 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
 
   # ----- internals ----------------------------------------------------------
 
-  # PR-EM-2 wiring of Publisher.subscribe_from. Uses an inline
-  # admin-elevated ctx for the subscribe so step 5.5 admits the
-  # call — PR-EM-3 replaces this with the formal scope-bounded
-  # cap (`{:within_session, session_uri}` per SPEC §7.3 Cap 3)
-  # delegated to the Session Kind at bind time.
-  #
-  # codex round-1 STRUCTURAL fix (2026-05-25): the PR-EM-2 deferral
-  # to PR-EM-3 covers BOTH internal dispatch sites —
-  # `subscribe_to_session_publisher_from/3` AND `dispatch_publish_effect/2`
-  # (the `:publish` dispatch effect on the `{:publisher_event, _}` signal).
-  # Both currently use the inline admin caps; PR-EM-3 will:
-  #
-  #   - subscribe path: switch to the scope-bounded
-  #     `{:within_session, session_uri}` Cap 3 delegated at bind time
-  #   - publish path: switch to the Worker's own default-granted
-  #     publish cap (auto-granted on spawn per SPEC §7.3 Cap 3 +
-  #     caps-data-ownership §4.1)
-  #
-  # The Worker NEVER accepts admin caps from external callers;
-  # admin caps appear ONLY in these two internal self-dispatches
-  # for the structural reason that ezagent's dispatch pipeline
-  # has no ambient-caps mechanism (every Invocation.dispatch/1
-  # requires explicit ctx.caps per CapBAC step 5.5).
+  # Wiring of Publisher.subscribe_from — carries the Worker's OWN inline
+  # subscribe cap (`worker_subscribe_caps/0`) in `ctx.caps` so step 5.5
+  # (`granted_via_ctx_caps?`) admits the call. System-principal elimination
+  # (#154, 2026-06-19): BOTH internal dispatch sites (this one +
+  # `dispatch_publish_effect/2`) previously borrowed the ambient
+  # `system://worker-publish` principal; that principal is DELETED and each
+  # now carries the Worker's OWN inline authorizer cap (`caller: self_uri`).
+  # See the self-authority helpers below for the granted_by rationale + the
+  # PR-EM-3 `{:within_session}` Cap 3 follow-up.
   #
   # We don't call `Ezagent.Entity.Session.subscribe_from/4`
   # directly: `:ezagent_domain_session` depends on
@@ -898,12 +884,13 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
         session_uri,
         :subscribe_from,
         %{subscriber_pid: subscriber_pid, cursor: cursor},
-        # SPEC caps-cleanup-v1 §4.4 — Worker's internal dispatches run
-        # under `system://worker-publish` per the closed Catalog.
+        # System-principal elimination (#154): the `system://worker-publish`
+        # principal is GONE — this subscribe carries the Worker's OWN inline
+        # subscribe cap (`worker_subscribe_caps/0`); see the internals
+        # comment block above for the self-authority rationale.
         %{
           caller: self_uri,
-          caps:
-            "worker-publish" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
+          caps: worker_subscribe_caps(),
           reply: {:caller_inbox, self()},
           # 2026-05-26 (Allen e2e blocker): Session.handle_call queues
           # subscribe_from behind concurrent list_bindings polls, chat
@@ -948,16 +935,66 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
        self_uri,
        :publish,
        %{event: event},
-       # SPEC caps-cleanup-v1 §4.4 — Worker outbound publish runs
-       # under `system://worker-publish` (closed Catalog).
+       # System-principal elimination (#154): the `system://worker-publish`
+       # principal is GONE — this self-dispatch carries the Worker's OWN
+       # inline publish cap (`worker_publish_caps/1`, genuine self-authority).
+       # `ctx.caps`-first authz (step 5.5) AVOIDS the `granted_via_holds_cap?`
+       # self-deadlock (a self-dispatch reading its own `:identity` slice via
+       # GenServer.call blocks on itself — runtime.ex step-5.5 comment). See
+       # the internals comment block above.
        %{
          caller: self_uri,
-         caps:
-           "worker-publish" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
+         caps: worker_publish_caps(self_uri),
          reply: :ignore,
          command_uuid: idem,
          idempotency_key: idem
        }
      )}
+  end
+
+  # ----- self-authority caps (system-principal elimination, #154) -----------
+  #
+  # Replace the deleted `system://worker-publish` principal: the Worker's two
+  # internal dispatches carry these caps in `ctx.caps` as the step-5.5
+  # authorizer (`granted_via_ctx_caps?`). AUTHORIZERS only — never
+  # granted/persisted (no `Ezagent.Identity.Grant` route applies), so the
+  # `granted_by` axis is provenance (`identity_key/1` / `matches?/2` ignore it)
+  # — no #154 grant regression. Each helper mints ONLY the cap its site needs
+  # (least privilege). Public `@doc false` — pure constructors exposed for
+  # `Ezagent.Behavior.ExternalMirrorWorkerSelfCapsTest`.
+
+  # `:publish` self-dispatch cap — GENUINE self-authority, so `granted_by` =
+  # `self_uri` (real entity per #154). Shape = `required_caps/0[:publish]`.
+  @doc false
+  def worker_publish_caps(%URI{} = self_uri) do
+    [
+      %Ezagent.Capability{
+        Ezagent.Capability.cap(:external_mirror_worker, __MODULE__, :publish)
+        | granted_by: self_uri,
+          granted_at: DateTime.utc_now()
+      }
+    ]
+  end
+
+  # The `publisher.subscribe_from` cap — authority over the SESSION's
+  # Publisher (NOT self-authority), so `granted_by` is the genesis admin
+  # entity `entity://system/user/admin` (a real accountable entity, not a
+  # `system://` principal). The formal scope-bounded `{:within_session}`
+  # Cap 3 delegated at bind time (SPEC §7.3) stays PR-EM-3 future work. Same
+  # shape the deleted `worker-publish` entry held; `PublisherSI` is named at
+  # runtime (lives in `:ezagent_domain_session` — alias would cycle).
+  @doc false
+  def worker_subscribe_caps do
+    [
+      %Ezagent.Capability{
+        Ezagent.Capability.cap(
+          :session,
+          Ezagent.Behavior.Publisher.SessionImpl,
+          :subscribe_from
+        )
+        | granted_by: Ezagent.URI.user(:system, :admin),
+          granted_at: DateTime.utc_now()
+      }
+    ]
   end
 end
