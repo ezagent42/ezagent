@@ -128,7 +128,11 @@
   path_expand_home: 1,
   spawn_fresh_audit_references: 5,
   spawn_fresh_unsanctioned: 0,
-  all_slices_occurrences: 3,
+  # System-principal elimination (agent-internal, 2026-06-19) RATCHET-DOWN 3 → 2:
+  # the deleted `system://agent-internal` Catalog entry contained the sanctioned
+  # `ctx[:all_slices][:api_keys]` ApiKeys-flip comment; its `:all_slices` mention
+  # is gone with the entry, so the occurrence count drops and the cap follows.
+  all_slices_occurrences: 2,
   all_slices_unsanctioned: 0,
   # PR-2 config-evolve adds the `{:set, :applied, …}` applied-turn idempotency
   # marker effect in Behavior.ConfigEvolve.handle_apply_config_delta (the agent's

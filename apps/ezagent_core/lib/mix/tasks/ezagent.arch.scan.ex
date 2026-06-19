@@ -115,7 +115,12 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # System-principal elimination (adapter-install + boot-reconciler dead-delete,
     # 2026-06-19) — shifted 293→292: the two dead entries collapsed to shorter
     # deletion-rationale comments, net -1 (incl. the ExternalMirror alias→comment swap).
-    {"apps/ezagent_core/lib/ezagent/system_principal/catalog.ex", 292}
+    # System-principal elimination (agent-internal, 2026-06-19) — catalog entry
+    # REMOVED. The sanctioned `ctx[:all_slices][:api_keys]` ApiKeys-flip comment
+    # lived INSIDE the deleted `system://agent-internal` entry, so its `:all_slices`
+    # mention is gone with the entry — the catalog sanctioned line is dropped (it
+    # no longer points at an `:all_slices` hit). The remaining sanctioned hits
+    # (runtime.ex, behavior.ex) are untouched.
   ]
 
   @runtime_file "apps/ezagent_core/lib/ezagent/kind/runtime.ex"

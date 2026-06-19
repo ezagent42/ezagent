@@ -67,15 +67,16 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
   end
 
   describe "Catalog sanity" do
-    test "Catalog returns the expected 11 principals" do
+    test "Catalog returns the expected 10 principals" do
       uris = Ezagent.SystemPrincipal.Catalog.uris()
 
       # System-principal elimination (north star): feishu-binding-policy (#824),
       # credential-materializer (#825), worker-publish (#826), then the DEAD
-      # adapter-install + boot-reconciler DELETED → 11 principals (shrinking
-      # toward genesis-only; see system_principal_elimination_test.exs).
-      assert length(uris) == 11,
-             "expected 11 system principals; Catalog has #{length(uris)}: " <>
+      # adapter-install + boot-reconciler DELETED, then agent-internal
+      # (2026-06-19, sandbox.write_path → agent self-authority) → 10 principals
+      # (shrinking toward genesis-only; see system_principal_elimination_test.exs).
+      assert length(uris) == 10,
+             "expected 10 system principals; Catalog has #{length(uris)}: " <>
                inspect(uris)
 
       expected = [
@@ -87,7 +88,9 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
         "system://template-materialize",
         "system://orchestrator-tools",
         "system://session-internal",
-        "system://agent-internal",
+        # (agent-internal ELIMINATED 2026-06-19 — north star; its only authority
+        #  `sandbox.write_path` is the agent writing its OWN sandbox slice →
+        #  genuine self-authority, carried inline at the TemplateSpawn dispatch.)
         "system://workspace-loader",
         "system://mix-task",
         "system://lv-anon-mount",

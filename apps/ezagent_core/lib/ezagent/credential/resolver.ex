@@ -26,8 +26,9 @@ defmodule Ezagent.Credential.Resolver do
       cap-check the chosen source's `sandbox.read` against the caller's caps (the existing
       `sandbox.read` seam — see `Ezagent.Behavior.Workspace.resolve_source_config_dir/2`),
       then mint a durable `Ezagent.Credential.GrantRow` recording
-      `{agent, source, approved_by, approved_scope, version}`. NEVER reads a source under
-      `system://agent-internal` caps (codex H1 — privilege-escalation leak). The
+      `{agent, source, approved_by, approved_scope, version}`. NEVER mints a grant under
+      ANY `system://` principal's caps (codex H1 — privilege-escalation leak; a system
+      principal is an authorizer, never an accountable approver entity, #154). The
       materialize-time fetch/revalidate already exist in PR-0; PR-1 only mints the grant.
 
   ## Why this lives in `Ezagent.Credential.*` (core)
@@ -232,13 +233,14 @@ defmodule Ezagent.Credential.Resolver do
 
   Cap-check: builds the needed `sandbox.read` cap for `source` the SAME way the dispatch
   does (`Capability.cap_for_action(<AgentKind>, :read, source)`) and asserts at least one
-  of `caps` `matches?/2` it. **Refuses** to mint a grant when the caller is the internal
-  `system://agent-internal` principal (codex H1 — no source read under blanket internal
-  caps). On cap success, persists `GrantRow` with `approved_scope == source` (so the PR-0
+  of `caps` `matches?/2` it. **Refuses** to mint a grant when the caller is ANY `system://`
+  principal (codex H1 — no source read/grant under an ambient system-principal's caps; a
+  system principal is an authorizer, never an accountable approver entity, #154). On cap
+  success, persists `GrantRow` with `approved_scope == source` (so the PR-0
   `fetch_for_materialize/1` scope-identity check holds) and `version: 1`.
 
   Returns `{:ok, %GrantRow{}}` | `{:error, :unauthorized | {:source_unauthorized, uri} |
-  :internal_principal_forbidden | term()}`. No file ops; no materialization.
+  :system_principal_forbidden | term()}`. No file ops; no materialization.
   """
   @spec authorize_and_mint_grant!(map()) :: {:ok, GrantRow.t()} | {:error, term()}
   def authorize_and_mint_grant!(
@@ -257,9 +259,13 @@ defmodule Ezagent.Credential.Resolver do
     approved_by = Map.get(args, :approved_by, caller)
 
     cond do
-      internal_principal?(caller) ->
-        # codex H1 — never read a source under system://agent-internal caps.
-        {:error, :internal_principal_forbidden}
+      system_principal_caller?(caller) ->
+        # codex H1 — never mint a credential grant under a `system://`
+        # principal's caps. A system principal is an authorizer, never an
+        # accountable approver entity (#154); generalized 2026-06-19 from the
+        # narrow `system://agent-internal` check when that principal was
+        # eliminated.
+        {:error, :system_principal_forbidden}
 
       URI.to_string(approved_by) != URI.to_string(caller) ->
         {:error, :approver_must_be_caller}
@@ -388,7 +394,16 @@ defmodule Ezagent.Credential.Resolver do
     match?({:ok, _}, Ezagent.SnapshotStore.latest(source))
   end
 
-  defp internal_principal?(%URI{} = uri) do
-    uri == Ezagent.SystemPrincipal.uri("agent-internal")
-  end
+  # System-principal elimination (#154 north star, 2026-06-19) — was
+  # `uri == SystemPrincipal.uri("agent-internal")`, a guard against minting a
+  # credential grant under that ONE ambient principal's blanket caps (codex
+  # H1). With `system://agent-internal` deleted that exact comparison would now
+  # RAISE (`SystemPrincipal.uri/1` raises on an uncataloged service), and the
+  # narrow check was always under-broad anyway: per #154 NO `system://`
+  # principal is a valid grant approver (a principal is an authorizer, never an
+  # accountable `granted_by`). Generalize the H1 invariant to reject ANY
+  # `system://`-scheme caller — same forward defense, no dependency on a
+  # specific (now-eliminated) principal, and strictly more #154-aligned.
+  defp system_principal_caller?(%URI{scheme: "system"}), do: true
+  defp system_principal_caller?(%URI{}), do: false
 end
