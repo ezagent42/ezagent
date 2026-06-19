@@ -190,6 +190,21 @@ and `bootstrap` (genesis, last) — out of this spec's scope.
   (no `:send`); (b) the same user re-joining as confirmed holds `:send`; (c) removing the baseline
   breaks NO existing join path (the re-run of the 8 prior failures is the gate); (d) takeover
   re-points read-markers + membership and leaves no live anon row.
+- **OWNER-ROOTED-JOIN GATE (Allen 2026-06-19 — the 甲-2 acceptance invariant).** This is THE
+  correctness gate proving the chicken-and-egg fix: join authority is rooted at the session owner,
+  never an ambient/universal baseline. Concretely:
+  - **(g1)** a user holding NO broad baseline CANNOT self-join a PRIVATE session — it is rejected
+    unless authorized by the owner (the owner adds them, or an owner-granted inviter does).
+  - **(g2)** when a join IS authorized, the authorizing grant's `granted_by` == the session **owner**,
+    EXCEPT the three principled exceptions: (i) **first-non-anon-join-becomes-owner** (no owner exists
+    yet → self-authorized owner-claim); (ii) **ownerless-session fallback** `granted_by =
+    entity://system/user/admin` (the #154 named extreme-case granter, per `anon_user.public_view_granter/1`);
+    (iii) **system/boot joins** (e.g. admin → `session://system/default/main`) authorized by
+    bootstrap/admin.
+  - **(g3)** a `public_view` session admits a join via the public-view RULE (configurer = owner).
+  A test that asserts (g1)–(g3) FAILS if join authority ever comes from a universal baseline — it is
+  the invariant that "removing the baseline" is correct AND that authority is owner-rooted
+  ([[feedback_completion_requires_invariant_test]]).
 - Zero new test failures proven against a clean base ([[feedback_zero_new_failures_baseline_proof]]).
 
 ## 9. Risks

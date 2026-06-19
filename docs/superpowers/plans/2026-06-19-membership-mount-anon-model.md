@@ -138,7 +138,24 @@ git add -A && git commit -m "feat(identity): confirmed attribute on users (#154 
 
 - [ ] **Step 7: Re-run the 8 prior failures as the gate** — the `join_authority_test.exs` cases (Step 2) must all PASS with the narrowed baseline. This is the chicken-and-egg proof. If any fails, the join-authz model (Step 3) is incomplete — fix it, do NOT re-add the baseline.
 
-- [ ] **Step 8: Full identity + session + socialware suites green** — `cd apps/ezagent_domain_identity && mix test`; `cd apps/ezagent_domain_session && mix test`; `cd apps/ezagent_domain_socialware && mix test`. Behavioral proof.
+- [ ] **Step 7b: OWNER-ROOTED-JOIN GATE (the 甲-2 acceptance invariant, spec §8 / Allen 2026-06-19).** Add `owner_rooted_join_test.exs` asserting: **(g1)** a user with NO broad baseline is REJECTED self-joining a private session (must be owner-authorized); **(g2)** an authorized join's grant `granted_by == session owner`, except the three documented exceptions — first-non-anon-join owner-claim / ownerless→`entity://system/user/admin` fallback / system-boot (bootstrap/admin); **(g3)** a `public_view` session admits a join via the public-view rule (configurer = owner). This test FAILS if join authority ever comes from a universal baseline — it is THE proof that the baseline removal is correct AND authority is owner-rooted. Run from the umbrella ROOT (cross-app deps), not `cd app`.
+
+```elixir
+# owner_rooted_join_test.exs (sketch — fill exact fixtures from Membership/Session)
+test "g1: no-baseline user cannot self-join a PRIVATE session" do
+  # owner O creates a private session; user U holds NO Session caps
+  assert {:error, :unauthorized} = join_as(U, private_session)
+end
+test "g2: an authorized join's grant is granted_by the owner" do
+  # O adds U → U joins; the participation/join grant's granted_by == O
+  assert grant_granted_by(U, session) == O
+end
+test "g3: public_view session admits a join via the owner-configured rule" do
+  assert {:ok, _} = join_as(U, public_view_session)
+end
+```
+
+- [ ] **Step 8: Full identity + session + socialware suites green** — run from the umbrella ROOT (`mix test apps/ezagent_domain_identity/test`, etc.) — standalone `cd app` runs hit cross-app load artifacts (lesson 甲-1). Prove any residual failure pre-existing on a clean base. Behavioral proof.
 
 - [ ] **Step 9: FULL gate suite + zero-new-failure baseline proof.** Ratchet still 6 (no principal removed yet — removals are 甲-3..6); `no_unowned` 0.
 
