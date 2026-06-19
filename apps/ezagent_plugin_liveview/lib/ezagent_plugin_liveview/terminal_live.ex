@@ -229,16 +229,15 @@ defmodule EzagentPluginLiveview.TerminalLive do
 
   # Caller context for dispatch — SPEC caps-cleanup-v1 §4.4:
   # admin caps now live in the User Kind's slice (seeded by
-  # SystemPrincipal at boot). Missing caller falls back to the
-  # `system://lv-anon-mount` principal (empty caps — surfaces auth
-  # bugs the previous admin-caps fallback was hiding).
+  # SystemPrincipal at boot). Anonymous mount → nil caller + empty caps
+  # (#154 甲-6 deleted the `system://lv-anon-mount` placeholder; nil +
+  # empty caps fails every cap check, surfacing auth bugs).
   defp ctx(socket) do
     case socket.assigns[:current_entity_uri] do
       nil ->
         %{
-          caller: Ezagent.SystemPrincipal.uri("lv-anon-mount"),
-          caps:
-            "lv-anon-mount" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
+          caller: nil,
+          caps: MapSet.new([]),
           reply: :ignore
         }
 

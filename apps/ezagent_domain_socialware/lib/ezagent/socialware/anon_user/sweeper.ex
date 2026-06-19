@@ -11,11 +11,11 @@ defmodule Ezagent.Socialware.AnonUser.Sweeper do
 
   ## Authority
 
-  The reaping `chat.leave` runs under the closed-catalog `system://socialware-gc`
-  principal (Session `:leave` only — see `Ezagent.SystemPrincipal.Catalog`). The
-  GenServer `ensure/1`s that principal identity at boot (best-effort hygiene; the
-  leave dispatch passes the caps inline, so a boot-time ensure failure does not
-  disable the sweep — the next tick re-ensures).
+  The reaping `session.leave` runs under the genesis admin entity
+  `entity://system/user/admin` (system maintenance — the anon holds no `:leave`
+  cap; see `GC.leave_session/2`), presenting an INLINE admin-granted `session.leave`
+  cap. The former `system://socialware-gc` principal was ELIMINATED (#154 甲-6), so
+  there is no principal identity to ensure at boot.
 
   ## Configuration
 
@@ -31,7 +31,6 @@ defmodule Ezagent.Socialware.AnonUser.Sweeper do
   alias Ezagent.Socialware.AnonUser.GC
 
   @default_interval_ms 60 * 60 * 1000
-  @gc_principal "socialware-gc"
 
   @doc """
   Start the sweeper. `:interval_ms` overrides the configured/default interval;
@@ -64,21 +63,15 @@ defmodule Ezagent.Socialware.AnonUser.Sweeper do
   # ----- internals -----------------------------------------------------------
 
   defp run_sweep do
-    ensure_principal()
+    # System-principal elimination (#154 甲-6) — the `system://socialware-gc`
+    # principal is DELETED; the reaper's `session.leave` dispatch now presents an
+    # inline admin-granted cap (see `GC.leave_session/2`), so there is no longer a
+    # principal Kind to ensure at sweep time.
     {:ok, count} = GC.sweep(DateTime.utc_now())
     if count > 0, do: Logger.info("Socialware GC: reaped #{count} abandoned anon-User(s)")
     :ok
   rescue
     e -> Logger.warning("Socialware GC sweep failed (will retry next tick): #{inspect(e)}")
-  end
-
-  # Best-effort: the principal identity is hygiene, not load-bearing (the leave
-  # dispatch passes caps inline, so authz does not need the principal Kind alive).
-  # Idempotent — re-running each sweep is cheap.
-  defp ensure_principal do
-    Ezagent.SystemPrincipal.ensure(Ezagent.SystemPrincipal.uri(@gc_principal))
-  rescue
-    e -> Logger.debug("Socialware GC: ensure #{@gc_principal} deferred: #{inspect(e)}")
   end
 
   defp schedule(interval_ms), do: Process.send_after(self(), :sweep, interval_ms)

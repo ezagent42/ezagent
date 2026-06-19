@@ -95,8 +95,13 @@ defmodule Ezagent.SystemPrincipalEliminationTest do
     # ELIMINATED: "system://feishu-binding-policy" (#824 — last grant-minter;
     # redundant re-grant removed) and "system://credential-materializer"
     # (api-key materialization → agent self-authority; per-grant GrantCap remains).
-    "system://lv-anon-mount",
-    "system://socialware-gc"
+    # ELIMINATED 2026-06-20, 甲-6: "system://lv-anon-mount" — an EMPTY-caps
+    # placeholder caller for unauthenticated LV mounts; the 4 LV paths now pass
+    # `caller: nil` + empty caps directly (identical authz, no placeholder).
+    # ELIMINATED 2026-06-20, 甲-6: "system://socialware-gc" — the abandoned-anon
+    # GC reaper's `session.leave` now runs under the genesis admin entity with an
+    # inline `session.leave` cap (system maintenance; the anon can't self-leave),
+    # same play as mix-task.
   ]
 
   test "the live Catalog is EXACTLY the genesis primitive + the not-yet-eliminated allowlist" do
