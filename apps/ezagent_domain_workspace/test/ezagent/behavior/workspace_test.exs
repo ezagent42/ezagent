@@ -220,7 +220,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
 
     test "rejects non-entity member (system://)" do
       workspace_uri = Ezagent.URI.new!("workspace://system")
-      member_uri = Ezagent.URI.new!("system://workspace-loader")
+      member_uri = Ezagent.URI.new!("system://some-non-entity")
       slice = slice(%{})
 
       ctx = %{self_uri: workspace_uri}
@@ -407,7 +407,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
 
     test "removes non-entity members (system://, workspace://) too" do
       workspace_uri = Ezagent.URI.new!("workspace://h2oslabs")
-      bad_system = Ezagent.URI.new!("system://workspace-loader")
+      bad_system = Ezagent.URI.new!("system://some-non-entity")
       legit = Ezagent.URI.new!("entity://h2oslabs/user/alice")
 
       slice = slice(%{members: [bad_system, legit]})

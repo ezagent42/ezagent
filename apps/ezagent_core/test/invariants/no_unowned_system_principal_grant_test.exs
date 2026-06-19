@@ -132,7 +132,12 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
     # on its OWN slice → genuine self-authority, now carried inline at the
     # `Agent.TemplateSpawn` dispatch (`caller: worker_uri`). With its last cap
     # re-attributed to the agent, the principal leaves the Catalog.
-    "system://workspace-loader",
+    # ELIMINATED 2026-06-19 (north star): "system://workspace-loader" — a
+    # NON-minter holding only `cap(:workspace, Workspace, :any)`. That is the
+    # workspace dispatching its OWN self-maintenance actions on its OWN slice →
+    # genuine self-authority, now carried inline per-action at the Workspace
+    # facade + Loader dispatches (`caller: workspace_uri`). With its last cap
+    # re-attributed to the workspace, the principal leaves the Catalog.
     "system://mix-task",
     "system://lv-anon-mount",
     "system://socialware-gc",

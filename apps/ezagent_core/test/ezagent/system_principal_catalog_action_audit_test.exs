@@ -41,11 +41,14 @@ defmodule Ezagent.SystemPrincipalCatalogActionAuditTest do
                         "system://chat-reply",
                         "system://template-materialize",
                         "system://orchestrator-tools",
-                        "system://session-internal",
-                        "system://workspace-loader"
+                        "system://session-internal"
                         # no-unowned-caps PR-1 (2026-06-17): feishu-binding-policy
                         # DELETED from the Catalog (it held cap(:workspace,
                         # Workspace, :any)).
+                        # ELIMINATED 2026-06-19 (#154 north star):
+                        # `system://workspace-loader` DELETED (it held
+                        # cap(:workspace, Workspace, :any)) — re-attributed to the
+                        # workspace's own per-action self-authority.
                       ])
 
   describe "(a) per-entry action atom validity — concrete actions match the named Behavior's actions/0" do

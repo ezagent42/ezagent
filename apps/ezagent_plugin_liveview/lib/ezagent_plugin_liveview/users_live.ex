@@ -268,8 +268,8 @@ defmodule EzagentPluginLiveview.UsersLive do
     # bypass): route through the cap-checked `add_member/3` carrying the
     # logged-in caller's FRESH caps so dispatch step 5.5 runs against
     # THIS caller — identical to `mix ezagent.workspace.add_member system
-    # <uri>`. The `/2` programmatic variant dispatches under
-    # `system://workspace-loader` (no caller cap-check); reaching it from
+    # <uri>`. The `/2` programmatic variant dispatches under the WORKSPACE's
+    # own self-authority (no caller cap-check); reaching it from
     # this `:require_entity`-only route let a non-admin promote to system.
     with {:ok, user_uri} <- parse_user_uri(uri_str),
          :ok <-
