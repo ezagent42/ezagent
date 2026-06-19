@@ -138,7 +138,11 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
     # genuine self-authority, now carried inline per-action at the Workspace
     # facade + Loader dispatches (`caller: workspace_uri`). With its last cap
     # re-attributed to the workspace, the principal leaves the Catalog.
-    "system://mix-task",
+    # ELIMINATED 2026-06-19 (north star): "system://mix-task" — a NON-minter that
+    # held `bootstrap_wildcard()`, borrowed by the OPERATOR CLI mix tasks. The
+    # operator's authority now routes through the real `entity://system/user/admin`
+    # entity (inline per-action admin caps; the one grant sub-path uses the
+    # chokepoint `{:held_by, admin_uri()}`), so the principal leaves the Catalog.
     "system://lv-anon-mount",
     "system://socialware-gc",
     # 2026-06-17 (PR-2 of the no-unowned-caps program) — template-materialize

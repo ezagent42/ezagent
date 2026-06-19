@@ -131,11 +131,19 @@ defmodule Ezagent.SystemPrincipal do
   minimum required authority per SPEC `2026-05-25-caps-cleanup-v1-r4-impl.md`
   §5; this function is a pure pass-through.
 
-  Two principals retain wildcard authority by deployment contract,
-  declared INSIDE the catalog (not as a runtime bridge):
+  Wildcard authority is held by the genesis root + the two open-plugin
+  chat fan-out principals, declared INSIDE the catalog (not as a runtime
+  bridge):
 
   - `system://bootstrap` — Decision #81 admin invariant.
-  - `system://mix-task` — operator-driven; in-VM trust model §10.5.
+  - `system://chat-router` / `system://chat-reply` — structural
+    open-plugin `chat.receive`/`chat.send` fan-out (the Catalog cannot
+    enumerate the open plugin Behavior set).
+
+  (`system://mix-task` — operator-driven, in-VM trust model §10.5 —
+  was ELIMINATED 2026-06-19; the operator CLI tasks now route their
+  authority through the real `entity://system/user/admin` entity with an
+  inline per-action admin cap, not this ambient wildcard principal.)
 
   ## History — the pathology-B sweep removed the transitional wildcard
 

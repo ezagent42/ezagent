@@ -8,9 +8,13 @@ defmodule EzagentCore.Invariants.NoWildcardSystemPrincipalsTest do
   invariant per Decision #81 + SPEC v3 §4.4. Pre-PR-CC-2-v2 (the
   PR-CC-1 bridge window) EVERY non-empty catalog entry effectively
   carried this shape via the bridge. Post-PR-CC-2-v2 the catalog
-  holds STRUCTURALLY NARROW caps; only `system://bootstrap` and the
-  operator-driven `system://mix-task` retain wildcards by deployment
-  contract (in-VM trust model §10.5).
+  holds STRUCTURALLY NARROW caps; only `system://bootstrap` (genesis)
+  and the two open-plugin chat fan-out principals `system://chat-router`
+  / `system://chat-reply` retain wildcards. (`system://mix-task` formerly
+  also retained an operator-driven wildcard per in-VM trust §10.5; it was
+  ELIMINATED 2026-06-19 — the operator CLI tasks now route their authority
+  through the real `entity://system/user/admin` entity with an inline
+  per-action admin cap, not the ambient wildcard.)
 
   See SPEC docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md §5.
   """
@@ -20,7 +24,6 @@ defmodule EzagentCore.Invariants.NoWildcardSystemPrincipalsTest do
   alias Ezagent.SystemPrincipal.Catalog
 
   @bootstrap_uri "system://bootstrap"
-  @mix_task_uri "system://mix-task"
   # Open-plugin fan-out principals — chat-router + chat-reply fan
   # `chat.receive` out to whichever Behavior is BehaviorRegistry-
   # registered on the recipient Kind for the `:receive` action. That
@@ -34,18 +37,17 @@ defmodule EzagentCore.Invariants.NoWildcardSystemPrincipalsTest do
   @chat_router_uri "system://chat-router"
   @chat_reply_uri "system://chat-reply"
 
-  test "non-bootstrap, non-mix-task, non-chat-fanout system principals do NOT hold wildcard caps" do
+  test "non-bootstrap, non-chat-fanout system principals do NOT hold wildcard caps" do
     offenders =
       for {uri, caps} <- Catalog.entries(),
           uri != @bootstrap_uri,
-          uri != @mix_task_uri,
           uri != @chat_router_uri,
           uri != @chat_reply_uri,
           Enum.any?(caps, &wildcard_cap?/1),
           do: uri
 
     assert offenders == [],
-           "principals must not carry wildcard caps (only bootstrap + mix-task + chat-router + chat-reply may): " <>
+           "principals must not carry wildcard caps (only bootstrap + chat-router + chat-reply may): " <>
              inspect(offenders) <>
              "\nSee SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §5."
   end

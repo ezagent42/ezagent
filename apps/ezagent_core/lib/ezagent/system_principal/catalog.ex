@@ -31,10 +31,16 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   §5) closes that gap. Each entry's struct(s) precisely encode the
   Behavior's actual `required_caps/0` shape, so dispatch step 5.5's
   `holds_cap?/2` consults a structurally narrowed cap set instead of
-  a uniform wildcard. Two principals retain full-wildcard caps:
-  `system://bootstrap` (the all-caps invariant per Decision #81 + SPEC
-  v3 §4.4) and `system://mix-task` (operator-driven; same authority as
-  admin User per in-VM trust §10.5). All others are narrowed.
+  a uniform wildcard. The full-wildcard caps are held by the genesis
+  root `system://bootstrap` (the all-caps invariant per Decision #81 +
+  SPEC v3 §4.4) and the two open-plugin chat fan-out principals
+  `system://chat-router` / `system://chat-reply` (structural — they
+  dispatch `chat.receive`/`chat.send` across the OPEN plugin Behavior
+  set, which the Catalog cannot enumerate). All others are narrowed.
+  (`system://mix-task` formerly retained a wildcard "operator = admin"
+  authority; it was ELIMINATED 2026-06-19 — the operator now routes
+  through the real `entity://system/user/admin` entity, see its removal
+  NOTE below.)
 
   ## Deviations from SPEC §5 provisional table
 
@@ -293,13 +299,25 @@ defmodule Ezagent.SystemPrincipal.Catalog do
       # and `system://agent-internal`. With its last cap re-attributed to the
       # workspace, the principal has no remaining authority and leaves the
       # closed Catalog.
-      {principal("mix-task"),
-       [
-         # Operator-driven; same authority as admin User by deployment
-         # contract (in-VM trust model §10.5). Wildcard cap is
-         # explicitly exempted from the no-wildcard invariant test.
-         bootstrap_wildcard()
-       ]},
+      # ELIMINATED 2026-06-19 (#154 north star, "operator → admin entity"
+      # re-attribution) — `system://mix-task` is DELETED. It held
+      # `bootstrap_wildcard()` and was borrowed by the OPERATOR CLI mix tasks
+      # (create_session / agent.create / credential.adopt / stress / the cc demo
+      # seeders) as an ambient "operator has shell = admin authority" principal
+      # (in-VM trust model §10.5). The operator's authority is now routed through
+      # the REAL genesis admin entity `entity://system/user/admin`
+      # (`Ezagent.Entity.User.admin_uri/0`, seeded with the bootstrap wildcard by
+      # `User.initial_caps_for_spawn/1`): each operator task dispatches with
+      # `caller = admin_uri()` carrying an INLINE per-action admin-authority cap
+      # in `ctx.caps` (the step-5.5 authorizer) — same play as the eliminated
+      # `system://worker-publish` / `agent-internal` / `workspace-loader`. The
+      # `granted_by` on those inline caps is `admin_uri()` (a real accountable
+      # entity, #154-compliant); they are authorizers only, never granted/
+      # persisted through `Ezagent.Identity.Grant`. The one GRANT sub-path
+      # (`agent.create --caps` → `Workspace.grant_initial_caps`) routes through
+      # the chokepoint as `{:held_by, admin_uri()}`, which reads the admin
+      # entity's REAL held wildcard caps — no inline cap involved. With its last
+      # consumer re-attributed, the principal leaves the closed Catalog.
       # no-unowned-caps PR-1 (Decision #154 / capbac.md §7) — the
       # `feishu-binding-policy` principal is DELETED. It was the LAST
       # grant-minter (held `cap(:user, IdentityAdmin, :grant_cap)` +

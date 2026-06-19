@@ -67,16 +67,17 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
   end
 
   describe "Catalog sanity" do
-    test "Catalog returns the expected 10 principals" do
+    test "Catalog returns the expected 8 principals" do
       uris = Ezagent.SystemPrincipal.Catalog.uris()
 
       # System-principal elimination (north star): feishu-binding-policy (#824),
       # credential-materializer (#825), worker-publish (#826), then the DEAD
-      # adapter-install + boot-reconciler DELETED, then agent-internal
-      # (2026-06-19, sandbox.write_path → agent self-authority) → 10 principals
-      # (shrinking toward genesis-only; see system_principal_elimination_test.exs).
-      assert length(uris) == 9,
-             "expected 9 system principals; Catalog has #{length(uris)}: " <>
+      # adapter-install + boot-reconciler DELETED, then agent-internal +
+      # workspace-loader (2026-06-19, self-authority), then mix-task
+      # (2026-06-19, operator → admin entity) → 8 principals (shrinking toward
+      # genesis-only; see system_principal_elimination_test.exs).
+      assert length(uris) == 8,
+             "expected 8 system principals; Catalog has #{length(uris)}: " <>
                inspect(uris)
 
       expected = [
@@ -95,7 +96,9 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
         #  `cap(:workspace, Workspace, :any)` is the workspace dispatching its OWN
         #  self-maintenance on its OWN slice → genuine self-authority, carried
         #  inline per-action at the Workspace facade + Loader dispatches.)
-        "system://mix-task",
+        # (mix-task ELIMINATED 2026-06-19 — north star; the operator CLI tasks
+        #  now route their authority through the real `entity://system/user/admin`
+        #  entity with an inline per-action admin cap, not the ambient wildcard.)
         "system://lv-anon-mount",
         # (credential-materializer ELIMINATED — north star; api-key materialization
         #  now runs under agent self-authority.)

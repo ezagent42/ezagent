@@ -50,9 +50,30 @@ defmodule Mix.Tasks.Ezagent.Workspace.CreateSession do
   defp create_session(workspace_name, short_name, template_name) do
     workspace_uri = workspace_name |> String.trim() |> Ezagent.URI.workspace()
 
+    # System-principal elimination (#154, 2026-06-19) — the OPERATOR CLI runs
+    # under the real genesis admin entity (`User.admin_uri/0`), NOT the
+    # eliminated `system://mix-task` ambient wildcard. Shell access = admin
+    # authority (in-VM trust §10.5), so the operator IS admin. The dispatch
+    # carries an INLINE per-action `cap(:workspace, Workspace, :create_session)`
+    # scoped to the target workspace (the step-5.5 authorizer) — tightest
+    # least-privilege for this single non-grant dispatch; `granted_by` =
+    # `admin_uri()` (a real entity per #154, provenance only on an inline
+    # authorizer never routed through `Ezagent.Identity.Grant`).
     ctx = %{
       caller: Ezagent.Entity.User.admin_uri(),
-      caps: "mix-task" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps()
+      caps: [
+        %Ezagent.Capability{
+          Ezagent.Capability.cap(
+            :workspace,
+            Ezagent.Behavior.Workspace,
+            :create_session,
+            Ezagent.URI.instance(workspace_uri),
+            Ezagent.Capability.workspace_of(workspace_uri)
+          )
+          | granted_by: Ezagent.Entity.User.admin_uri(),
+            granted_at: DateTime.utc_now()
+        }
+      ]
     }
 
     case Ezagent.Workspace.create_session(

@@ -255,15 +255,42 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
 
     target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=template.write")
 
+    admin_uri = Ezagent.Entity.User.admin_uri()
+
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
       mode: :call,
       args: %{content: content},
-      # SPEC caps-cleanup-v1 §4.4 — operator demo mix task runs under
-      # `system://mix-task` (closed Catalog).
+      # System-principal elimination (#154, 2026-06-19) — operator demo task runs
+      # under the real genesis admin entity (`User.admin_uri/0`), NOT the
+      # eliminated `system://mix-task` ambient wildcard (shell access = admin
+      # authority, in-VM trust §10.5). This is a NON-grant `template.write`
+      # dispatch on the AgentTemplate Kind; the INLINE `cap(:any, Template,
+      # :write)` scoped to this template instance is the step-5.5 authorizer
+      # (`:any` kind axis mirrors the catalog's former `template-materialize`
+      # Template cap — `template://` is cross-cutting, Template.workspace_scoped?
+      # = false). `granted_by` = `admin_uri` (a real entity per #154, provenance
+      # only on an inline authorizer never routed through `Ezagent.Identity.Grant`).
       ctx: %{
-        caller: Ezagent.SystemPrincipal.uri("mix-task"),
-        caps: "mix-task" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
+        caller: admin_uri,
+        caps: [
+          %Ezagent.Capability{
+            Ezagent.Capability.cap(
+              :any,
+              Ezagent.Behavior.Template,
+              :write,
+              Ezagent.URI.instance(uri),
+              :any
+            )
+            | # `workspace_uri: :any` mirrors the catalog's former
+              # `template-materialize` Template cap — `template://` is
+              # cross-cutting (Template.workspace_scoped? = false), so the
+              # workspace axis is not the scoping dimension; the concrete
+              # template `instance` is.
+              granted_by: admin_uri,
+              granted_at: DateTime.utc_now()
+          }
+        ],
         reply: {:caller_inbox, self()}
       }
     })

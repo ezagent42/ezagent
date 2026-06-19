@@ -24,7 +24,29 @@ defmodule Ezagent.Credential.AdoptTest do
     uri_str
   end
 
-  defp admin_caps, do: Ezagent.SystemPrincipal.caps("system://mix-task")
+  # System-principal elimination (#154, 2026-06-19) — the operator credential
+  # adopt path now dispatches `:set_default_credential_source` under the real
+  # admin entity carrying the INLINE per-action cap scoped to the OWNER (the
+  # step-5.5 authorizer), replacing the eliminated `system://mix-task` wildcard.
+  defp admin_uri, do: Ezagent.Entity.User.admin_uri()
+
+  defp admin_caps(owner_str) do
+    owner_uri = Ezagent.URI.new!(owner_str)
+
+    [
+      %Ezagent.Capability{
+        Ezagent.Capability.cap(
+          :user,
+          Ezagent.Behavior.UserDefaultCredentialSource,
+          :set_default_credential_source,
+          Ezagent.URI.instance(owner_uri),
+          Ezagent.Capability.workspace_of(owner_uri)
+        )
+        | granted_by: admin_uri(),
+          granted_at: DateTime.utc_now()
+      }
+    ]
+  end
 
   setup do
     suffix = System.unique_integer([:positive])
@@ -44,8 +66,8 @@ defmodule Ezagent.Credential.AdoptTest do
 
     assert {:ok, src} =
              Adopt.adopt(ctx.owner_str, @ws, "cc", candidates,
-               caller: "system://mix-task",
-               caps: admin_caps()
+               caller: admin_uri(),
+               caps: admin_caps(ctx.owner_str)
              )
 
     assert src == ctx.base
@@ -59,8 +81,8 @@ defmodule Ezagent.Credential.AdoptTest do
 
     assert {:error, {:ambiguous, ^candidates}} =
              Adopt.adopt(ctx.owner_str, @ws, "cc", candidates,
-               caller: "system://mix-task",
-               caps: admin_caps()
+               caller: admin_uri(),
+               caps: admin_caps(ctx.owner_str)
              )
   end
 
@@ -80,8 +102,8 @@ defmodule Ezagent.Credential.AdoptTest do
   test "empty candidate list returns :no_candidate", ctx do
     assert {:error, :no_candidate} =
              Adopt.adopt(ctx.owner_str, @ws, "cc", [],
-               caller: "system://mix-task",
-               caps: admin_caps()
+               caller: admin_uri(),
+               caps: admin_caps(ctx.owner_str)
              )
   end
 end

@@ -36,7 +36,6 @@ defmodule Ezagent.SystemPrincipalCatalogActionAuditTest do
   # here.
   @wildcard_allowlist MapSet.new([
                         "system://bootstrap",
-                        "system://mix-task",
                         "system://chat-router",
                         "system://chat-reply",
                         "system://template-materialize",
@@ -49,6 +48,10 @@ defmodule Ezagent.SystemPrincipalCatalogActionAuditTest do
                         # `system://workspace-loader` DELETED (it held
                         # cap(:workspace, Workspace, :any)) — re-attributed to the
                         # workspace's own per-action self-authority.
+                        # ELIMINATED 2026-06-19 (#154 north star): `system://mix-task`
+                        # DELETED (it held bootstrap_wildcard) — the operator CLI
+                        # tasks now route authority through entity://system/user/admin
+                        # with inline per-action admin caps.
                       ])
 
   describe "(a) per-entry action atom validity — concrete actions match the named Behavior's actions/0" do
