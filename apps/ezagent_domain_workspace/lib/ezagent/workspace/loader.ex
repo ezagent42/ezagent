@@ -166,8 +166,9 @@ defmodule Ezagent.Workspace.Loader do
   #
   # The boot Loader does the conversion CASCADE-FREE (`content_to_template_data/2`,
   # NOT `spawn_from_template_content/5`). The credential cascade keys off the
-  # agent OWNER; at cold boot the only principal is the workspace-loader, NOT the
-  # human who created the agent — re-resolving a user-default under that wrong
+  # agent OWNER; at cold boot the dispatch runs under the workspace's own boot
+  # self-authority, NOT the human who created the agent — re-resolving a
+  # user-default under that wrong
   # owner (and minting/persisting a grant for it) would be incorrect. Credential
   # re-resolution at cold restart is the Agent Kind's `Sandbox.activate →
   # ensure_subprocess_alive → CascadeRuntime` self-heal, which reads the ORIGINAL
@@ -445,17 +446,20 @@ defmodule Ezagent.Workspace.Loader do
            target: target,
            action: :instantiate,
            args: %{},
-           # SPEC caps-cleanup-v1 §4.4 — Workspace Loader re-spawn at
-           # boot runs under `system://workspace-loader` (closed Catalog).
-           ctx: %{
-             mode: :call,
-             caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
-             caps:
-               "workspace-loader"
-               |> Ezagent.SystemPrincipal.uri()
-               |> Ezagent.SystemPrincipal.caps(),
-             reply: {:caller_inbox, self()}
-           }
+           # System-principal elimination (#154 north star, 2026-06-19) — the
+           # boot-time re-spawn dispatches `:instantiate` on the WORKSPACE's own
+           # Kind to bring its OWN children (members / templates) to life. That
+           # is GENUINE self-authority (capbac.md §7 "actor-self"), NOT an
+           # ambient `system://workspace-loader` borrow. So the dispatch runs
+           # under the workspace's OWN entity URI as `caller`, carrying its OWN
+           # `cap(:workspace, Workspace, :instantiate)` INLINE in `ctx.caps` —
+           # the step-5.5 authorizer (`granted_via_ctx_caps?`, deadlock-free).
+           # Replaces the deleted `system://workspace-loader` Catalog principal.
+           ctx:
+             Map.merge(
+               workspace_instantiate_self_ctx(workspace_uri),
+               %{mode: :call, reply: {:caller_inbox, self()}}
+             )
          }) do
       {:ok, %{children: children}} ->
         children
@@ -467,6 +471,35 @@ defmodule Ezagent.Workspace.Loader do
 
         []
     end
+  end
+
+  # System-principal elimination (#154, 2026-06-19) — the workspace's OWN
+  # `:instantiate` self-authority cap, the step-5.5 authorizer for the boot
+  # re-spawn dispatch (replaces the deleted `system://workspace-loader`
+  # principal). Shape mirrors
+  # `Ezagent.Behavior.Workspace.required_caps/0[:instantiate]` =
+  # `cap(:workspace, Workspace, :instantiate)` but SCOPED to the concrete
+  # workspace (`instance`/`workspace_uri` from `workspace_uri`) for tightest
+  # least-privilege — the runtime substitutes the same concrete instance from
+  # the dispatch target, so concrete==concrete matches. `granted_by` =
+  # `workspace_uri` (genuine self-authority: a real entity per #154);
+  # provenance only on an INLINE authorizer never routed through
+  # `Ezagent.Identity.Grant`.
+  defp workspace_instantiate_self_ctx(%URI{} = workspace_uri) do
+    cap =
+      %Ezagent.Capability{
+        Ezagent.Capability.cap(
+          :workspace,
+          Ezagent.Behavior.Workspace,
+          :instantiate,
+          Ezagent.URI.instance(workspace_uri),
+          Ezagent.Capability.workspace_of(workspace_uri)
+        )
+        | granted_by: workspace_uri,
+          granted_at: DateTime.utc_now()
+      }
+
+    %{caller: workspace_uri, caps: [cap]}
   end
 
   defp spawn_child({:member, %URI{} = uri}, _workspace_uri) do

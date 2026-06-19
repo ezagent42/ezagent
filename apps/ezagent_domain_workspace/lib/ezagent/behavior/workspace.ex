@@ -352,10 +352,11 @@ defmodule Ezagent.Behavior.Workspace do
       # Gap C — workspace-scoped session creation. Invariant #2: cap
       # subject uses MODULE reference (`__MODULE__`), not atom shorthand.
       create_session: Ezagent.Capability.cap(:workspace, __MODULE__, :create_session),
-      # Task #55 round-2 codex HIGH-2 — admin-only cleanup. The mix
-      # task dispatches under `system://workspace-loader` so the system
-      # principal's caps satisfy this; no operator-facing entry point
-      # holds it.
+      # Task #55 round-2 codex HIGH-2 — admin-only cleanup. The facade
+      # dispatches this under the workspace's OWN instance-scoped
+      # `cap(:workspace, Workspace, :remove_cross_prefix_members)` self-authority
+      # (#154 elimination of `system://workspace-loader`); no operator-facing
+      # entry point holds it.
       remove_cross_prefix_members:
         Ezagent.Capability.cap(:workspace, __MODULE__, :remove_cross_prefix_members)
     }

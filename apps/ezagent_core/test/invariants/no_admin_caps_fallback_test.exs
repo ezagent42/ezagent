@@ -75,8 +75,8 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
       # adapter-install + boot-reconciler DELETED, then agent-internal
       # (2026-06-19, sandbox.write_path → agent self-authority) → 10 principals
       # (shrinking toward genesis-only; see system_principal_elimination_test.exs).
-      assert length(uris) == 10,
-             "expected 10 system principals; Catalog has #{length(uris)}: " <>
+      assert length(uris) == 9,
+             "expected 9 system principals; Catalog has #{length(uris)}: " <>
                inspect(uris)
 
       expected = [
@@ -91,7 +91,10 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
         # (agent-internal ELIMINATED 2026-06-19 — north star; its only authority
         #  `sandbox.write_path` is the agent writing its OWN sandbox slice →
         #  genuine self-authority, carried inline at the TemplateSpawn dispatch.)
-        "system://workspace-loader",
+        # (workspace-loader ELIMINATED 2026-06-19 — north star; its only authority
+        #  `cap(:workspace, Workspace, :any)` is the workspace dispatching its OWN
+        #  self-maintenance on its OWN slice → genuine self-authority, carried
+        #  inline per-action at the Workspace facade + Loader dispatches.)
         "system://mix-task",
         "system://lv-anon-mount",
         # (credential-materializer ELIMINATED — north star; api-key materialization
@@ -140,10 +143,10 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
       # in the wildcard-exempt allowlist now (open-plugin fan-out
       # structural — see catalog.ex moduledoc +
       # no_wildcard_system_principals_test.exs). Pick
-      # `system://workspace-loader` for the narrow-catalog assertion —
+      # `system://session-internal` for the narrow-catalog assertion —
       # a single-Behavior principal that legitimately should NOT hold
       # a wildcard.
-      caps = Ezagent.SystemPrincipal.caps("system://workspace-loader")
+      caps = Ezagent.SystemPrincipal.caps("system://session-internal")
       assert %MapSet{} = caps
       assert MapSet.size(caps) >= 1
 

@@ -111,14 +111,14 @@ defmodule Ezagent.Workspace do
   """
   @spec add_member(String.t(), URI.t()) :: :ok | {:error, term()}
   def add_member(name, %URI{} = member_uri) do
-    do_add_member(name, member_uri, system_loader_ctx())
+    do_add_member(name, member_uri, workspace_self_ctx(name, :add_member))
   end
 
   @doc """
   Cap-checked variant of `add_member/2`: dispatches `:add_member` under
   the CALLER's caps (`ctx` is `%{caller: URI.t(), caps: Enumerable.t()}`)
-  so step 5.5 CapBAC runs against the logged-in entity, NOT
-  `system://workspace-loader`. Web surfaces (LiveView) MUST use this; the
+  so step 5.5 CapBAC runs against the logged-in entity, NOT the
+  workspace's own self-authority. Web surfaces (LiveView) MUST use this; the
   `/2` variant is for trusted in-VM CLI / mix-task / Loader callers.
   SPEC 2026-05-27-capability-action-axis §7. Mirrors `create_user/3`.
   """
@@ -234,7 +234,7 @@ defmodule Ezagent.Workspace do
 
   @spec remove_member(String.t(), URI.t()) :: :ok | {:error, term()}
   def remove_member(name, %URI{} = member_uri) do
-    do_remove_member(name, member_uri, system_loader_ctx())
+    do_remove_member(name, member_uri, workspace_self_ctx(name, :remove_member))
   end
 
   @doc """
@@ -340,15 +340,11 @@ defmodule Ezagent.Workspace do
                target: target,
                action: :remove_cross_prefix_members,
                args: %{},
-               ctx: %{
-                 mode: :call,
-                 caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
-                 caps:
-                   "workspace-loader"
-                   |> Ezagent.SystemPrincipal.uri()
-                   |> Ezagent.SystemPrincipal.caps(),
-                 reply: {:caller_inbox, self()}
-               }
+               ctx:
+                 Map.merge(
+                   workspace_self_ctx(name, :remove_cross_prefix_members),
+                   %{mode: :call, reply: {:caller_inbox, self()}}
+                 )
              }) do
           {:ok, %{removed: removed, kept_count: kept_count}} when is_list(removed) ->
             # Mutation already committed in slice. Persist the kept
@@ -385,15 +381,11 @@ defmodule Ezagent.Workspace do
            target: target,
            action: :list_members,
            args: %{},
-           ctx: %{
-             mode: :call,
-             caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
-             caps:
-               "workspace-loader"
-               |> Ezagent.SystemPrincipal.uri()
-               |> Ezagent.SystemPrincipal.caps(),
-             reply: {:caller_inbox, self()}
-           }
+           ctx:
+             Map.merge(
+               workspace_self_ctx(name, :list_members),
+               %{mode: :call, reply: {:caller_inbox, self()}}
+             )
          }) do
       {:ok, %{members: members}} when is_list(members) -> {:ok, members}
       {:error, _} = err -> err
@@ -544,8 +536,20 @@ defmodule Ezagent.Workspace do
   # Default `:cast` mode preserves existing call sites (add_template,
   # remove_template, remove_member, set_routing_rules) that are
   # validator-free and don't need synchronous error propagation.
+  #
+  # System-principal elimination (#154, 2026-06-19) — the self-cap is
+  # scoped to the SPECIFIC action being dispatched (`action_str` is in
+  # scope here), so each programmatic mutation runs under the workspace's
+  # own least-privilege `cap(:workspace, Workspace, <action>)`.
   defp dispatch_mutation(name, action_str, args),
-    do: dispatch_mutation(name, action_str, args, :cast, system_loader_ctx())
+    do:
+      dispatch_mutation(
+        name,
+        action_str,
+        args,
+        :cast,
+        workspace_self_ctx(name, String.to_existing_atom(action_str))
+      )
 
   # Task #55 round-2 codex CRIT-1 — `:call` mode for add_member so the
   # facade can see the Behavior validator's rejection (cross-prefix
@@ -603,15 +607,49 @@ defmodule Ezagent.Workspace do
 
   defp caller_ctx(_other), do: {:error, :invalid_caller_ctx}
 
-  # SPEC caps-cleanup-v1 §4.4 — programmatic mutations run under the
-  # closed `system://workspace-loader` Catalog principal.
-  defp system_loader_ctx do
+  # System-principal elimination (#154 north star, 2026-06-19) — the
+  # programmatic `/2` mutations + the boot-time self-maintenance dispatches
+  # (`remove_cross_prefix_members` / `list_members`) are the WORKSPACE acting
+  # on its OWN slice (member set / templates / routing rules). That is GENUINE
+  # self-authority (capbac.md §7 "actor-self"), NOT an ambient
+  # `system://workspace-loader` borrow. So the dispatch runs under the
+  # workspace's OWN entity URI as `caller`, carrying its OWN
+  # `cap(:workspace, Workspace, <action>)` INLINE in `ctx.caps` — the step-5.5
+  # authorizer (`granted_via_ctx_caps?`, checked first), which ALSO avoids the
+  # `granted_via_holds_cap?` self-call deadlock. Replaces the deleted
+  # `system://workspace-loader` Catalog principal (same play as the eliminated
+  # `system://worker-publish` / `system://agent-internal`).
+  defp workspace_self_ctx(name, action) when is_binary(name) and is_atom(action) do
+    workspace_uri = Ezagent.URI.workspace(name)
+
     %{
-      caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
-      caps:
-        "workspace-loader"
-        |> Ezagent.SystemPrincipal.uri()
-        |> Ezagent.SystemPrincipal.caps()
+      caller: workspace_uri,
+      caps: [workspace_self_cap(workspace_uri, action)]
+    }
+  end
+
+  # The workspace's OWN self-authority cap for the dispatched Workspace
+  # Behavior `action`, the step-5.5 authorizer for `workspace_self_ctx/2`.
+  # Shape mirrors `Ezagent.Behavior.Workspace.required_caps/0[action]` =
+  # `cap(:workspace, Workspace, action)` but SCOPED to the concrete workspace
+  # (`instance`/`workspace_uri` derived from `workspace_uri`) for tightest
+  # least-privilege — the runtime substitutes the same concrete instance from
+  # the dispatch target, so concrete==concrete matches. `granted_by` =
+  # `workspace_uri` (genuine self-authority: a real entity per #154); it is
+  # provenance only (`matches?/2`/`identity_key/1` ignore it) on an INLINE
+  # authorizer cap that is never granted/persisted through
+  # `Ezagent.Identity.Grant`, so no grant-chokepoint route applies.
+  defp workspace_self_cap(%URI{} = workspace_uri, action) when is_atom(action) do
+    %Ezagent.Capability{
+      Ezagent.Capability.cap(
+        :workspace,
+        Ezagent.Behavior.Workspace,
+        action,
+        Ezagent.URI.instance(workspace_uri),
+        Ezagent.Capability.workspace_of(workspace_uri)
+      )
+      | granted_by: workspace_uri,
+        granted_at: DateTime.utc_now()
     }
   end
 

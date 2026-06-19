@@ -333,8 +333,10 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
       {:ok, _pid} =
         Ezagent.Kind.spawn(User, %{uri: member_uri, initial_caps: MapSet.new()})
 
-      # Dispatch :add_member as the SystemPrincipal (skips CapBAC
-      # since it's the mediator used by the Workspace facade itself).
+      # Dispatch :add_member under the WORKSPACE's OWN self-authority — the
+      # workspace acting on its own member set (#154 elimination of
+      # `system://workspace-loader`; same inline self-cap the `Ezagent.Workspace`
+      # facade now carries).
       target =
         URI.new!("#{URI.to_string(workspace_uri)}?action=workspace.add_member")
 
@@ -344,8 +346,20 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
           mode: :call,
           args: %{member: member_uri},
           ctx: %{
-            caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
-            caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
+            caller: workspace_uri,
+            caps: [
+              %Ezagent.Capability{
+                Ezagent.Capability.cap(
+                  :workspace,
+                  Ezagent.Behavior.Workspace,
+                  :add_member,
+                  Ezagent.URI.instance(workspace_uri),
+                  Ezagent.Capability.workspace_of(workspace_uri)
+                )
+                | granted_by: workspace_uri,
+                  granted_at: DateTime.utc_now()
+              }
+            ],
             reply: {:caller_inbox, self()}
           }
         })

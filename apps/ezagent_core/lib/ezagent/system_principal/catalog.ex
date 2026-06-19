@@ -168,7 +168,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # This is the smallest deviation from the bootstrap-wildcard
          # bridge that preserves the open-plugin chat-router semantic;
          # the SPEC §5 narrowing applies to single-Behavior principals
-         # (workspace-loader, session-internal, …) which have a closed
+         # (session-internal, orchestrator-tools, …) which have a closed
          # cap set.
          bootstrap_wildcard()
        ]},
@@ -277,11 +277,22 @@ defmodule Ezagent.SystemPrincipal.Catalog do
       # `Ezagent.Credential.Resolver`'s former `internal_principal?` guard (which
       # special-cased this principal) was generalized to reject ANY `system://`
       # caller (`system_principal_caller?/1`), so no live code references it.
-      {principal("workspace-loader"),
-       [
-         # `workspace.workspace.*` → Workspace Behavior on Workspace Kind.
-         Capability.cap(:workspace, Workspace, :any)
-       ]},
+      # ELIMINATED 2026-06-19 (#154 north star, per-class collapse "actor-self")
+      # — `system://workspace-loader` is DELETED. Its ONLY authority was
+      # `cap(:workspace, Workspace, :any)`, used by the `Ezagent.Workspace`
+      # facade + `Workspace.Loader` to dispatch the workspace's OWN
+      # self-maintenance actions (`add_member`/`remove_member`/`add_template`/
+      # `remove_template`/`set_routing_rules` programmatic mutations, plus
+      # `remove_cross_prefix_members`/`list_members`/`instantiate` at boot) on
+      # ITS OWN slice. That is the WORKSPACE acting on ITSELF → genuine
+      # self-authority (capbac.md §7): each dispatch now carries the workspace's
+      # own instance-scoped, per-action `cap(:workspace, Workspace, <action>)`
+      # INLINE in `ctx.caps` (`Ezagent.Workspace.workspace_self_cap/2` +
+      # `Workspace.Loader.workspace_instantiate_self_ctx/1`, `caller =
+      # workspace_uri`) — same play as the eliminated `system://worker-publish`
+      # and `system://agent-internal`. With its last cap re-attributed to the
+      # workspace, the principal has no remaining authority and leaves the
+      # closed Catalog.
       {principal("mix-task"),
        [
          # Operator-driven; same authority as admin User by deployment

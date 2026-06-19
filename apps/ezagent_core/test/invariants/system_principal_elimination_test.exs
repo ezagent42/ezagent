@@ -48,7 +48,13 @@ defmodule Ezagent.SystemPrincipalEliminationTest do
     # `sandbox.write_path` cap inline (`caller: worker_uri`); the
     # `Credential.Resolver` guard that special-cased this principal was
     # generalized to reject any `system://` caller.
-    "system://workspace-loader",
+    # ELIMINATED 2026-06-19: "system://workspace-loader" — its only authority
+    # (`cap(:workspace, Workspace, :any)`, the workspace dispatching its OWN
+    # self-maintenance actions on its OWN slice) is GENUINE self-authority. The
+    # `Ezagent.Workspace` facade + `Workspace.Loader` dispatches now carry the
+    # workspace's own instance-scoped, per-action `cap(:workspace, Workspace,
+    # <action>)` inline (`caller: workspace_uri`); same play as worker-publish /
+    # agent-internal.
     "system://mix-task",
     # ELIMINATED: "system://feishu-binding-policy" (#824 — last grant-minter;
     # redundant re-grant removed) and "system://credential-materializer"

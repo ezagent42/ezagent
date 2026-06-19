@@ -114,9 +114,23 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
           target: Ezagent.URI.new!("workspace://#{workspace_name}?action=workspace.list_members"),
           mode: :call,
           args: %{},
+          # Workspace's OWN self-authority — listing its own members (#154
+          # elimination of `system://workspace-loader`).
           ctx: %{
-            caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
-            caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
+            caller: ws_uri,
+            caps: [
+              %Ezagent.Capability{
+                Ezagent.Capability.cap(
+                  :workspace,
+                  Ezagent.Behavior.Workspace,
+                  :list_members,
+                  Ezagent.URI.instance(ws_uri),
+                  Ezagent.Capability.workspace_of(ws_uri)
+                )
+                | granted_by: ws_uri,
+                  granted_at: DateTime.utc_now()
+              }
+            ],
             reply: {:caller_inbox, self()}
           }
         })

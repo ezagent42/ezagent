@@ -157,8 +157,8 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   isolated config_dir + spawn the Kind.
 
   The boot Loader MUST NOT run the credential cascade: the cascade keys off the
-  agent OWNER, and at cold boot the only available principal is the
-  workspace-loader, NOT the human who originally created the agent — resolving a
+  agent OWNER, and at cold boot the dispatch runs under the workspace's own boot
+  self-authority, NOT the human who originally created the agent — resolving a
   user-default under the wrong owner would be incorrect. Credential
   re-resolution at cold restart is the Agent Kind's `Sandbox.activate →
   ensure_subprocess_alive → CascadeRuntime` self-heal, which reads the ORIGINAL
