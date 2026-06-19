@@ -45,11 +45,14 @@ defmodule Ezagent.Behavior.ChatTest do
       # PR-2 (im/session/agent decomposition §OQ-4): `:receive` is no
       # longer a Session action — it split into `user.receive` /
       # `agent.receive` (their own Behaviors, on their own Kinds).
+      # #154 甲-5 — `:takeover` joins (declared after `:leave`): a confirmed
+      # user supersedes an anon's footprint.
       assert SessionBehavior.actions() ==
                [
                  :send,
                  :join,
                  :leave,
+                 :takeover,
                  :set_working_copy,
                  :set_legends,
                  :set_prompt_templates
@@ -135,12 +138,13 @@ defmodule Ezagent.Behavior.ChatTest do
                SessionBehavior.default_template_working_copy()
     end
 
-    test "interface/0 declares the 6 Session actions (:receive split out — PR-2)" do
+    test "interface/0 declares the 7 Session actions (:receive split out — PR-2; :takeover added 甲-5)" do
       keys = SessionBehavior.interface() |> Map.keys() |> Enum.sort()
       # team-routing-unification §3.6 (PR-6) — :set_legends added;
       # §3.4/§3.7 (PR-7) — :set_prompt_templates added.
       # PR-2 (im/session/agent decomposition §OQ-4) — :receive removed
       # (now `user.receive` / `agent.receive`).
+      # #154 甲-5 — :takeover added (anon→login footprint supersession).
       assert keys ==
                [
                  :join,
@@ -148,7 +152,8 @@ defmodule Ezagent.Behavior.ChatTest do
                  :send,
                  :set_legends,
                  :set_prompt_templates,
-                 :set_working_copy
+                 :set_working_copy,
+                 :takeover
                ]
     end
   end
