@@ -146,7 +146,12 @@
   # prior baseline comment mis-stated LegacyConfig as −8; the scanned regex
   # counts 7). The PR-2 applied-turn marker remains.
   # arch-cap-bump: PR-2 applied-turn marker; curl legacy shims deleted (−14)
-  set_effect_sites: 121,
+  # arch-cap-bump (#154 甲-5, +4): `Membership.do_takeover/4` emits the takeover
+  # footprint transfer — composed `{:set, :members}` + `{:set_transient,
+  # :monitors}` + `{:set, :last_seen}` effects (+ their match clauses the scanner
+  # counts) for the in-Kind anon→confirmed-user membership swap. Legitimate new
+  # effect sites; no cross-slice violation (all on the Session's own slice keys).
+  set_effect_sites: 125,
   cross_slice_set_violations: 0,
   missing_cap_check_mutating_actions: 0,
   kind_runtime_ordering_violations: 0,

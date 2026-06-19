@@ -669,7 +669,9 @@ defmodule Ezagent.Behavior.Session do
   # GenServer (like `handle_join`) and does the socialware-symbol-free footprint
   # transfer (confirmed-user join + anon removal + ReadMarker re-point). The
   # anon ENTITY retire (Users.delete + AnonBinding.delete) is the orchestrator's
-  # job, AFTER this returns `:ok`.
+  # job, AFTER this returns `:ok`. (`@doc false` — an internal dispatch handler,
+  # like the sibling `handle_join`/`handle_leave`; not a public API surface.)
+  @doc false
   def handle_takeover(%{anon: %URI{} = anon_uri, member: %URI{} = member_uri}, ctx) do
     Membership.do_takeover(anon_uri, member_uri, ctx, __MODULE__)
   end
