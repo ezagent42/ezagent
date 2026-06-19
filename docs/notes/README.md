@@ -58,6 +58,7 @@ Six notes have bilingual `.zh_cn.md` companions (marked **[zh]** below).
 - [ezagent Web Admin — Static HTML Prototype Brief](prototype-design-prompt.md) — **[zh]** prototype design brief for the Web Admin.
 - [ezagent Web Admin — IDE-shell Prototype Brief](prototype-design-prompt.ide-shell.zh_cn.md) — **[zh]** IDE-shell variant of the Web Admin prototype brief.
 - [Grill report — IDE-shell prototype brief](prototype-design-prompt.ide-shell.grill.md) — grill review of the IDE-shell prototype brief.
+- [Frontend: replace LiveView so admin becomes "a socialware"? (2026-06-19)](2026-06-19-frontend-socialware-unification-research.md) — research: thesis does NOT hold (rev8 dual-surface already decided admin=LiveView, customer=React+json-render); json-render is display-only (can't express admin UI); `/api/v1`+`lv_cli_parity` is the real UI-agnostic contract; if any JS, React-SPA not Next.js; loom investment belongs on the agent-generated customer surface.
 
 ## Stress / capacity tests
 
