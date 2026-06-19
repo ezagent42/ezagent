@@ -33,7 +33,6 @@ defmodule Ezagent.SystemPrincipalEliminationTest do
   # Shrink-only: the north star is `@remaining == []`.
   @remaining [
     "system://boot-reconciler",
-    "system://adapter-install",
     "system://chat-router",
     "system://chat-reply",
     # ELIMINATED: "system://worker-publish" — the ExternalMirrorWorker's two

@@ -120,7 +120,6 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
   # use is sandbox.write_path self-authority; git-grep confirmed 2026-06-16).
   @category_a [
     "system://boot-reconciler",
-    "system://adapter-install",
     "system://chat-router",
     "system://chat-reply",
     # ELIMINATED (north star): "system://worker-publish" — the
