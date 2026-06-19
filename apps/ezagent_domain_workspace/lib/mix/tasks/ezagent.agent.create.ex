@@ -152,21 +152,35 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
     from_str = Keyword.get(opts, :from)
     flavor = opts |> Keyword.get(:flavor, "") |> to_string() |> String.trim()
 
-    # SPEC caps-cleanup-v1 §4.4 — operator mix task runs under
-    # `system://mix-task` (closed Catalog; operator already has shell
-    # access — principal exists for audit traceability). The granter
-    # for parsed caps stays `User.admin_uri()` (real admin entity, the
-    # legitimate granted_by for operator-minted caps).
+    # System-principal elimination (#154, 2026-06-19) — the operator mix task
+    # runs under the real genesis admin entity `User.admin_uri()`, NOT the
+    # eliminated `system://mix-task` ambient wildcard (shell access = admin
+    # authority, in-VM trust §10.5). `admin_ctx` is used on TWO sub-paths with
+    # DIFFERENT authorization mechanics:
+    #
+    #   * `Workspace.create_agent/3` — a NON-grant dispatch authorized by
+    #     `ctx.caps` at step 5.5. It carries an INLINE
+    #     `cap(:workspace, Workspace, :create_agent)` scoped to the target
+    #     workspace; `granted_by` = `admin_uri` (provenance only on an inline
+    #     authorizer, never routed through `Ezagent.Identity.Grant`).
+    #
+    #   * `Workspace.grant_initial_caps/3` — a GRANT path that routes through
+    #     the `Ezagent.Identity.Grant` chokepoint as `{:held_by, ctx.caller}`.
+    #     The chokepoint RE-READS the caller's REAL held caps
+    #     (`Ezagent.Identity.read_held_caps/1`) to authorize, so `caller` MUST
+    #     be `admin_uri` — the admin User Kind is seeded with the bootstrap
+    #     wildcard (`User.initial_caps_for_spawn/1`), which authorizes granting
+    #     the operator-parsed caps. (The prior `caller: mix-task` here was a
+    #     latent bug — `read_held_caps` on a `system://` URI returns empty, so
+    #     any `--caps` grant would have failed; it only ever short-circuited
+    #     because the empty-caps clause returns `:ok` when no `--caps` given.)
+    #     The inline `ctx.caps` is moot on this sub-path.
     admin_uri = Ezagent.Entity.User.admin_uri()
-
-    admin_ctx = %{
-      caller: Ezagent.SystemPrincipal.uri("mix-task"),
-      caps: "mix-task" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps()
-    }
 
     with {:ok, agent_uri} <- parse_uri(agent_uri_str),
          :ok <- require_flavor(flavor),
          {:ok, workspace_uri, name} <- decompose(agent_uri),
+         admin_ctx = operator_admin_ctx(admin_uri, workspace_uri),
          {:ok, from_uri} <- parse_from(from_str),
          :ok <- check_allcaps_flag(caps_str, allow_allcaps),
          {:ok, caps} <- Ezagent.Capability.Parser.parse(caps_str, admin_uri),
@@ -188,6 +202,33 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
     else
       {:error, reason} -> Mix.raise("create failed: #{inspect(reason)}")
     end
+  end
+
+  # System-principal elimination (#154, 2026-06-19) — the operator → admin
+  # entity ctx for the `create_agent` NON-grant dispatch (replaces the
+  # eliminated `system://mix-task` ambient wildcard). `caller` = `admin_uri`
+  # (a real entity, also the `{:held_by}` actor the chokepoint re-reads on the
+  # downstream `grant_initial_caps` sub-path); `caps` carries the INLINE
+  # `cap(:workspace, Workspace, :create_agent)` scoped to the target workspace
+  # (the step-5.5 authorizer), `granted_by` = `admin_uri` (provenance only on
+  # an inline authorizer never routed through `Ezagent.Identity.Grant`).
+  defp operator_admin_ctx(%URI{} = admin_uri, %URI{scheme: "workspace"} = workspace_uri) do
+    %{
+      caller: admin_uri,
+      caps: [
+        %Ezagent.Capability{
+          Ezagent.Capability.cap(
+            :workspace,
+            Ezagent.Behavior.Workspace,
+            :create_agent,
+            Ezagent.URI.instance(workspace_uri),
+            Ezagent.Capability.workspace_of(workspace_uri)
+          )
+          | granted_by: admin_uri,
+            granted_at: DateTime.utc_now()
+        }
+      ]
+    }
   end
 
   # `--from` is optional. When omitted → no `:from` key in args.

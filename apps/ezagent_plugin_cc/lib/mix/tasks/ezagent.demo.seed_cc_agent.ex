@@ -138,16 +138,35 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
   defp join_agent_to_session(%URI{} = agent_uri, %URI{} = session_uri) do
     target = Ezagent.URI.with_action(session_uri, :session, :join)
 
-    # SPEC caps-cleanup-v1 §4.4 — operator demo mix task runs under
-    # `system://mix-task` (closed Catalog; operator already has shell
-    # access, principal exists for audit traceability).
+    admin_uri = Ezagent.Entity.User.admin_uri()
+
+    # System-principal elimination (#154, 2026-06-19) — operator demo task runs
+    # under the real genesis admin entity (`User.admin_uri/0`), NOT the
+    # eliminated `system://mix-task` ambient wildcard (shell access = admin
+    # authority, in-VM trust §10.5). This is a NON-grant `session.join` dispatch;
+    # the INLINE `cap(:session, Session, :join)` scoped to the target session is
+    # the step-5.5 authorizer. `granted_by` = `admin_uri` (a real entity per
+    # #154, provenance only on an inline authorizer never routed through
+    # `Ezagent.Identity.Grant`).
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
       mode: :cast,
       args: %{member: agent_uri},
       ctx: %{
-        caller: Ezagent.SystemPrincipal.uri("mix-task"),
-        caps: "mix-task" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
+        caller: admin_uri,
+        caps: [
+          %Ezagent.Capability{
+            Ezagent.Capability.cap(
+              :session,
+              Ezagent.Behavior.Session,
+              :join,
+              Ezagent.URI.instance(session_uri),
+              Ezagent.Capability.workspace_of(session_uri)
+            )
+            | granted_by: admin_uri,
+              granted_at: DateTime.utc_now()
+          }
+        ],
         reply: :ignore
       }
     })

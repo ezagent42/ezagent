@@ -78,11 +78,34 @@ defmodule Mix.Tasks.Ezagent.Stress do
   defp user_mod, do: @user_mod
   defp echo_mod, do: @echo_mod
   defp admin_uri, do: apply(@user_mod, :admin_uri, [])
-  # SPEC caps-cleanup-v1 §4.4 — operator stress task runs under
-  # `system://mix-task` (closed Catalog). The local `admin_caps/0`
-  # helper now returns the SystemPrincipal bridge MapSet.
-  defp admin_caps,
-    do: "mix-task" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps()
+
+  # System-principal elimination (#154, 2026-06-19) — the operator stress
+  # harness runs under the real genesis admin entity (`admin_uri/0`), NOT the
+  # eliminated `system://mix-task` ambient wildcard (shell access = admin
+  # authority, in-VM trust §10.5). `admin_caps/0` is called from BOTH the
+  # `session.send` traffic injector (`inject_messages/4`) and the `session.join`
+  # member binding (`join!/2`), across MANY dynamically-created stress sessions
+  # in `workspace://system`. So it carries BOTH per-action `cap(:session,
+  # Session, :send | :join)` authorizers with `instance: :any` (the harness
+  # creates sessions on the fly — pinning a concrete instance is impractical and
+  # the operator IS admin). `granted_by` = `admin_uri` (a real entity per #154,
+  # provenance only on inline authorizers never routed through
+  # `Ezagent.Identity.Grant`). Returns a list — step 5.5 iterates either a list
+  # or a MapSet and picks the matching action.
+  defp admin_caps do
+    admin = admin_uri()
+    # All stress sessions live in `workspace://system` (see scenario builders).
+    ws = Ezagent.URI.workspace("system")
+    session_behavior = Module.concat([:Ezagent, :Behavior, :Session])
+
+    Enum.map([:send, :join], fn action ->
+      %Ezagent.Capability{
+        Ezagent.Capability.cap(:session, session_behavior, action, :any, ws)
+        | granted_by: admin,
+          granted_at: DateTime.utc_now()
+      }
+    end)
+  end
 
   defp user_default_caps(ws_uri), do: apply(@user_mod, :default_caps, [ws_uri])
 

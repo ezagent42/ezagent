@@ -146,6 +146,62 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
     end
   end
 
+  # System-principal elimination (#154, 2026-06-19) — behavioral proof for the
+  # ONE grant sub-path of `mix ezagent.agent.create --caps`: the operator's ctx
+  # now carries `caller: User.admin_uri()`, and `grant_initial_caps/3` routes
+  # through the `Ezagent.Identity.Grant` chokepoint as `{:held_by, caller}`,
+  # which RE-READS the caller's REAL held caps (`Ezagent.Identity.read_held_caps/1`)
+  # to authorize. This proves the admin entity (a) resolves and (b) holds the
+  # bootstrap wildcard (`User.initial_caps_for_spawn/1`) — i.e. the grant
+  # AUTHORIZES. (The prior mix-task code passed `caller: system://mix-task`,
+  # whose `read_held_caps` returns EMPTY → any `--caps` grant would have failed;
+  # it only ever short-circuited because no `--caps` were given.)
+  describe "Ezagent.Workspace.grant_initial_caps/3 — operator → admin-entity grant (#154)" do
+    test "a non-empty cap grant under caller=admin_uri authorizes + lands on the agent", %{
+      ws_name: ws_name,
+      workspace_uri: workspace_uri,
+      admin_ctx: admin_ctx
+    } do
+      # Create a real agent through the same facade the mix task uses.
+      name = "graphite-#{System.unique_integer([:positive])}"
+
+      assert {:ok, %{agent_uri: agent_uri}} =
+               Workspace.create_agent(
+                 workspace_uri,
+                 %{flavor: "curl", name: name, cwd: "", with_pty: false},
+                 admin_ctx
+               )
+
+      # The operator-parsed cap to grant the new agent (a concrete, non-wildcard
+      # cap so this exercises the real authorization, not just the empty path).
+      granted_cap =
+        Ezagent.Capability.cap(
+          :session,
+          Ezagent.Behavior.Session,
+          :send,
+          Ezagent.URI.new!("session://#{ws_name}/default/main"),
+          workspace_uri
+        )
+
+      # mix-task ctx: caller is the real admin entity (NOT system://mix-task).
+      operator_ctx = %{caller: User.admin_uri(), caps: admin_ctx.caps}
+
+      assert :ok = Workspace.grant_initial_caps(agent_uri, [granted_cap], operator_ctx)
+
+      # The grant landed on the agent's identity slice, with granted_by = admin.
+      assert agent_uri
+             |> Ezagent.Identity.list_caps_for()
+             |> Enum.any?(fn
+               %Ezagent.Capability{behavior: Ezagent.Behavior.Session, granted_by: gb} = c ->
+                 Ezagent.Capability.action_of(c) == :send and gb == User.admin_uri()
+
+               _ ->
+                 false
+             end),
+             "expected the operator → admin-entity grant to land on the agent's caps"
+    end
+  end
+
   describe "Ezagent.Workspace.create_agent/3 — `--from` source resolution (agent.duplicate simple SPEC)" do
     # These tests exercise the contract surface of the `--from` flag:
     #   - flavor gating (only `cc` supports clone)

@@ -24,7 +24,29 @@ defmodule Ezagent.Credential.ResolverDbTest do
     uri_str
   end
 
-  defp admin_caps, do: Ezagent.SystemPrincipal.caps("system://mix-task")
+  # System-principal elimination (#154, 2026-06-19) — the operator credential
+  # adopt path now dispatches `:set_default_credential_source` under the real
+  # admin entity carrying the INLINE per-action cap scoped to the OWNER (the
+  # step-5.5 authorizer), replacing the eliminated `system://mix-task` wildcard.
+  defp admin_uri, do: Ezagent.Entity.User.admin_uri()
+
+  defp admin_caps(owner_str) do
+    owner_uri = Ezagent.URI.new!(owner_str)
+
+    [
+      %Ezagent.Capability{
+        Ezagent.Capability.cap(
+          :user,
+          Ezagent.Behavior.UserDefaultCredentialSource,
+          :set_default_credential_source,
+          Ezagent.URI.instance(owner_uri),
+          Ezagent.Capability.workspace_of(owner_uri)
+        )
+        | granted_by: admin_uri(),
+          granted_at: DateTime.utc_now()
+      }
+    ]
+  end
 
   setup do
     suffix = System.unique_integer([:positive])
@@ -50,8 +72,8 @@ defmodule Ezagent.Credential.ResolverDbTest do
     # seed the user default source pointer via the authorized chokepoint
     {:ok, _} =
       Adopt.adopt(ctx.owner_str, @ws, "cc", [ctx.base],
-        caller: "system://mix-task",
-        caps: admin_caps()
+        caller: admin_uri(),
+        caps: admin_caps(ctx.owner_str)
       )
 
     assert {:ok, picked} =
@@ -83,8 +105,8 @@ defmodule Ezagent.Credential.ResolverDbTest do
        ctx do
     {:ok, _} =
       Adopt.adopt(ctx.owner_str, @ws, "cc", [ctx.base],
-        caller: "system://mix-task",
-        caps: admin_caps()
+        caller: admin_uri(),
+        caps: admin_caps(ctx.owner_str)
       )
 
     base_uri = Ezagent.URI.new!(ctx.base)
@@ -104,8 +126,8 @@ defmodule Ezagent.Credential.ResolverDbTest do
        ctx do
     {:ok, _} =
       Adopt.adopt(ctx.owner_str, @ws, "cc", [ctx.base],
-        caller: "system://mix-task",
-        caps: admin_caps()
+        caller: admin_uri(),
+        caps: admin_caps(ctx.owner_str)
       )
 
     # No injected predicate → uses SnapshotStore existence. base was seeded ⇒ picked.
@@ -228,8 +250,8 @@ defmodule Ezagent.Credential.ResolverDbTest do
        ctx do
     {:ok, _} =
       Adopt.adopt(ctx.owner_str, @ws, "cc", [ctx.base],
-        caller: "system://mix-task",
-        caps: admin_caps()
+        caller: admin_uri(),
+        caps: admin_caps(ctx.owner_str)
       )
 
     assert {:ok, %{config_layers: layers, secret_source: secret}} =

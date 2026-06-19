@@ -55,7 +55,18 @@ defmodule Ezagent.SystemPrincipalEliminationTest do
     # workspace's own instance-scoped, per-action `cap(:workspace, Workspace,
     # <action>)` inline (`caller: workspace_uri`); same play as worker-publish /
     # agent-internal.
-    "system://mix-task",
+    # ELIMINATED 2026-06-19: "system://mix-task" — it held `bootstrap_wildcard()`
+    # and was borrowed by the OPERATOR CLI mix tasks (create_session /
+    # agent.create / credential.adopt / stress / cc demo seeders) as an ambient
+    # "operator has shell = admin authority" principal (in-VM trust §10.5). The
+    # operator's authority now routes through the REAL genesis admin entity
+    # `entity://system/user/admin` (`User.admin_uri/0`, seeded with the bootstrap
+    # wildcard): each task dispatches with `caller: admin_uri()` carrying an
+    # INLINE per-action admin cap in `ctx.caps`. The one GRANT sub-path
+    # (`agent.create --caps` → `grant_initial_caps`) routes through the
+    # `Ezagent.Identity.Grant` chokepoint as `{:held_by, admin_uri()}`, reading
+    # the admin entity's REAL held wildcard. Same play as worker-publish /
+    # agent-internal / workspace-loader.
     # ELIMINATED: "system://feishu-binding-policy" (#824 — last grant-minter;
     # redundant re-grant removed) and "system://credential-materializer"
     # (api-key materialization → agent self-authority; per-grant GrantCap remains).
