@@ -97,7 +97,11 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   # as: PublisherSI` removed with the `system://worker-publish` entry (its only
   # consumer). The ExternalMirrorWorker now carries its own inline
   # `(:session, PublisherSI, :subscribe_from)` authorizer cap.
-  alias Ezagent.Behavior.Sandbox
+  # System-principal elimination (#154, 2026-06-19) — `alias
+  # Ezagent.Behavior.Sandbox` removed with the `system://agent-internal` entry
+  # (its only consumer, `cap(:agent, Sandbox, :write_path)`). The agent now
+  # carries its own inline `sandbox.write_path` self-authority cap at the
+  # `Agent.TemplateSpawn` dispatch site.
   alias Ezagent.Behavior.Template
   alias Ezagent.Behavior.Workspace
 
@@ -164,7 +168,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # This is the smallest deviation from the bootstrap-wildcard
          # bridge that preserves the open-plugin chat-router semantic;
          # the SPEC §5 narrowing applies to single-Behavior principals
-         # (workspace-loader, agent-internal, …) which have a closed
+         # (workspace-loader, session-internal, …) which have a closed
          # cap set.
          bootstrap_wildcard()
        ]},
@@ -255,44 +259,24 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          Capability.cap(:any, Session, :any),
          Capability.cap(:workspace, Workspace, :any)
        ]},
-      {principal("agent-internal"),
-       [
-         # 2026-06-16 (Decision #154 "no unowned permissions", Allen's ruling) —
-         # `cap(:user, IdentityAdmin, :grant_cap)` DROPPED. It was vestigial: the
-         # PR-CC-2-v2 bootstrap-wildcard bridge once masked a dependency, but a
-         # repo-wide `git grep` (2026-06-16) confirms NO live `grant_cap`/`revoke_cap`
-         # dispatch ever ran under `system://agent-internal` as caller — its only
-         # live use is the `sandbox.write_path` self-authority below
-         # (`template_spawn.ex:523`, a `Sandbox` action). Dropping it makes
-         # agent-internal a NON-minter → category A in the no-unowned gate. The
-         # honest granter for any future agent-creation cap grant is the agent's
-         # creator entity (via manager-delegation #153), never this abstract
-         # principal.
-         # Agent.do_record_sandbox_state/3 dispatches sandbox.write_path
-         # under this principal (pathology-B follow-up: PR-CC-2-v2's
-         # bootstrap-wildcard bridge masked this dependency). The cap
-         # is narrowed to the exact Behavior + action; the runtime
-         # dispatch path substitutes the per-agent instance + workspace.
-         Capability.cap(:agent, Sandbox, :write_path)
-         # 2026-06-11 — `cap(:agent, Sandbox, :read)` was part of
-         # `system://agent-internal` for #607 self-evolve (SW-UPD), when
-         # `Socialware.CascadeRepoint` reached ACROSS the entity boundary to
-         # read+rewrite a target agent's `cascade_resolution`. Config-evolve
-         # is now AGENT-OWNED (`Ezagent.Behavior.ConfigEvolve` on the Agent
-         # Kind, spec 2026-06-11): the agent reads its OWN `:sandbox` sibling
-         # slice IN-PROCESS (no dispatch, no cap) and the cascade write is the
-         # agent acting on ITSELF under its self-scoped
-         # `cap(:agent, Sandbox, :write_path)`. So the cross-entity read
-         # escalation is dropped — same play as the ApiKeys-to-Agent flip
-         # below. `:write_path` STAYS (still used by
-         # `Agent.do_record_sandbox_state/3` above).
-         # Allen 2026-05-26 — `cap(:user, ApiKeys, :get_api_key)` was
-         # part of `system://agent-internal` pre ApiKeys-to-Agent flip.
-         # Post-flip, ApiKeys lives on the agent's own Kind and the
-         # CurlAgent reads its OWN slice via `ctx[:all_slices][:api_keys]`
-         # IN-PROCESS (the deadlock-free path) — no dispatch, hence no
-         # cap required. The entry is dropped from this principal.
-       ]},
+      # ELIMINATED 2026-06-19 (#154 north star, per-class collapse "actor-self")
+      # — `system://agent-internal` is DELETED. Its ONLY live authority was
+      # `cap(:agent, Sandbox, :write_path)`, used by
+      # `Agent.TemplateSpawn.do_record_sandbox_state/4` to write the freshly-
+      # spawned worker's OWN `:sandbox` slice. That is the AGENT acting on
+      # ITSELF → genuine self-authority (capbac.md §7): the dispatch now carries
+      # the agent's own instance-scoped `sandbox.write_path` cap INLINE in
+      # `ctx.caps` (`TemplateSpawn.sandbox_write_path_self_cap/1`, `caller =
+      # worker_uri`) — same play as the eliminated `system://worker-publish`.
+      # The vestigial `grant_cap` (no live caller) was already dropped 2026-06-16;
+      # the cross-entity `Sandbox:read` (#607 self-evolve) became agent-owned
+      # in-process (`Ezagent.Behavior.ConfigEvolve`, 2026-06-11); the
+      # `ApiKeys:get_api_key` cap moved to the agent's own slice (ApiKeys-to-Agent
+      # flip, 2026-05-26). With its last cap re-attributed to the agent, the
+      # principal has no remaining authority and leaves the closed Catalog.
+      # `Ezagent.Credential.Resolver`'s former `internal_principal?` guard (which
+      # special-cased this principal) was generalized to reject ANY `system://`
+      # caller (`system_principal_caller?/1`), so no live code references it.
       {principal("workspace-loader"),
        [
          # `workspace.workspace.*` → Workspace Behavior on Workspace Kind.

@@ -41,7 +41,13 @@ defmodule Ezagent.SystemPrincipalEliminationTest do
     "system://template-materialize",
     "system://orchestrator-tools",
     "system://session-internal",
-    "system://agent-internal",
+    # ELIMINATED 2026-06-19: "system://agent-internal" — its only live authority
+    # (`cap(:agent, Sandbox, :write_path)`, the freshly-spawned worker writing
+    # its OWN `:sandbox` slice) is GENUINE self-authority. The
+    # `Agent.TemplateSpawn` dispatch now carries the agent's own instance-scoped
+    # `sandbox.write_path` cap inline (`caller: worker_uri`); the
+    # `Credential.Resolver` guard that special-cased this principal was
+    # generalized to reject any `system://` caller.
     "system://workspace-loader",
     "system://mix-task",
     # ELIMINATED: "system://feishu-binding-policy" (#824 — last grant-minter;

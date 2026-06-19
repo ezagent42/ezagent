@@ -126,7 +126,12 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
     # authorizer caps (self-authority publish + admin-granted subscribe).
     "system://orchestrator-tools",
     "system://session-internal",
-    "system://agent-internal",
+    # ELIMINATED 2026-06-19 (north star): "system://agent-internal" — it was a
+    # NON-minter (its vestigial grant_cap dropped 2026-06-16), holding only
+    # `cap(:agent, Sandbox, :write_path)`. That sandbox write is the agent acting
+    # on its OWN slice → genuine self-authority, now carried inline at the
+    # `Agent.TemplateSpawn` dispatch (`caller: worker_uri`). With its last cap
+    # re-attributed to the agent, the principal leaves the Catalog.
     "system://workspace-loader",
     "system://mix-task",
     "system://lv-anon-mount",

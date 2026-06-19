@@ -163,19 +163,23 @@ defmodule Ezagent.Credential.ResolverDbTest do
     refute GrantRow.active?(ctx.new_agent)
   end
 
-  test "NEVER reads a source under system://agent-internal caps (codex H1)", ctx do
+  test "NEVER mints a grant under any system:// principal's caps (codex H1)", ctx do
     source = Ezagent.URI.new!(ctx.base)
     agent = Ezagent.URI.new!(ctx.new_agent)
-    internal = Ezagent.URI.new!("system://agent-internal")
-    # even with a 'good' cap, an internal caller/approver is refused outright
+    # System-principal elimination (#154, 2026-06-19) — the guard was generalized
+    # from the (now-deleted) `system://agent-internal` to ANY `system://` caller.
+    # Use the most-privileged system principal (`bootstrap`) to prove even it is
+    # refused: a system principal is an authorizer, never an accountable approver.
+    system_caller = Ezagent.URI.new!("system://bootstrap")
+    # even with a 'good' cap, a system-principal caller/approver is refused outright
     good_cap = GrantCap.read_cap_for(source)
 
-    assert {:error, :internal_principal_forbidden} =
+    assert {:error, :system_principal_forbidden} =
              Resolver.authorize_and_mint_grant!(%{
                agent_uri: agent,
                source: source,
-               approved_by: internal,
-               caller: internal,
+               approved_by: system_caller,
+               caller: system_caller,
                caps: [good_cap]
              })
 

@@ -206,10 +206,12 @@ authority?"). Four shapes:
 - **genesis full-wildcard** (`bootstrap`, and `chat-router`/`chat-reply`/`mix-task` which hold
   `bootstrap_wildcard`): all-5-axes `:any`. Governed by `no_wildcard_system_principals_test`,
   EXCLUDED from the no_unowned minter check. `bootstrap` is the accepted genesis root.
-- **narrow** (boot-reconciler, adapter-install, worker-publish, workspace-loader,
-  orchestrator-tools, session-internal, agent-internal, template-materialize [non-minter
-  after PR #815], socialware-gc): a precise `Capability.cap/N` per the Behavior's real
-  `required_caps`.
+- **narrow** (workspace-loader, orchestrator-tools, session-internal, template-materialize
+  [non-minter after PR #815], socialware-gc): a precise `Capability.cap/N` per the Behavior's
+  real `required_caps`. (`agent-internal` was eliminated 2026-06-19 — its sole
+  `cap(:agent, Sandbox, :write_path)` was the agent writing its OWN sandbox → re-attributed
+  to agent self-authority carried inline at the `Agent.TemplateSpawn` dispatch; same play as
+  the already-eliminated `worker-publish`.)
 - **empty / audit-only** (lv-anon-mount, credential-materializer): hold NO standing caps;
   least-privilege authority is minted per-use (e.g. credential `GrantCap`).
 - **minter** (holds `IdentityAdmin :grant_cap`/`:revoke_cap`): the `no_unowned` program is

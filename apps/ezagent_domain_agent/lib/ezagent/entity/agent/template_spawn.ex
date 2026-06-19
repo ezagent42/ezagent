@@ -516,15 +516,27 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
                template_class: template_class,
                respawn_template_data: respawn_data
              },
-             # SPEC caps-cleanup-v1 §4.4 — Agent sandbox-state record
-             # is an agent-internal action; runs under
-             # `system://agent-internal` (closed Catalog).
+             # System-principal elimination (#154 north star, 2026-06-19) —
+             # this is the AGENT acting on its OWN sandbox: the dispatch
+             # target (`worker_uri?action=sandbox.write_path`) IS the agent
+             # whose `:sandbox` slice is written. So it is GENUINE
+             # self-authority (capbac.md §7 "actor-self → {:held_by, self}"),
+             # NOT an ambient `system://agent-internal` borrow. The agent is
+             # live at this point (`ReadyGate.await/2` above), so `worker_uri`
+             # is a valid `caller` entity. We carry the agent's OWN
+             # `sandbox.write_path` cap INLINE in `ctx.caps` (same precedent as
+             # `ExternalMirrorWorker.worker_publish_caps/1`): the cap is the
+             # step-5.5 authorizer (`granted_via_ctx_caps?`), which ALSO avoids
+             # the `granted_via_holds_cap?` self-call deadlock (a self-dispatch
+             # reading its own `:identity` slice via `GenServer.call` blocks on
+             # itself — runtime.ex step-5.5 comment). Scoped to the SPECIFIC
+             # agent (`instance:`/`workspace_uri:` from `worker_uri`) for tightest
+             # least-privilege; `granted_by` = the agent itself (a real entity,
+             # #154-compliant) — provenance only on an inline authorizer
+             # (never routed through `Ezagent.Identity.Grant`).
              ctx: %{
-               caller: Ezagent.SystemPrincipal.uri("agent-internal"),
-               caps:
-                 "agent-internal"
-                 |> Ezagent.SystemPrincipal.uri()
-                 |> Ezagent.SystemPrincipal.caps(),
+               caller: worker_uri,
+               caps: [sandbox_write_path_self_cap(worker_uri)],
                reply: {:caller_inbox, self()}
              }
            }) do
@@ -532,6 +544,33 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
         {:error, reason} -> {:halt, {:error, {:sandbox_write_path_failed, worker_uri, reason}}}
       end
     end)
+  end
+
+  # System-principal elimination (#154, 2026-06-19) — the agent's OWN
+  # `sandbox.write_path` self-authority cap, the step-5.5 authorizer for
+  # `do_record_sandbox_state/4`'s self-dispatch (replaces the deleted
+  # `system://agent-internal` principal). Shape mirrors
+  # `Ezagent.Behavior.Sandbox.required_caps/0[:write_path]` =
+  # `cap(:agent, Sandbox, :write_path)` but SCOPED to the specific agent
+  # (`instance`/`workspace_uri` derived from `agent_uri`) for tightest
+  # least-privilege — the runtime substitutes the same concrete instance from
+  # the target, so concrete==concrete matches at dispatch. `granted_by` =
+  # `agent_uri` (genuine self-authority: a real entity per #154); it is
+  # provenance only (`matches?/2`/`identity_key/1` ignore it) on an INLINE
+  # authorizer cap that is never granted/persisted through
+  # `Ezagent.Identity.Grant`, so no grant-chokepoint route applies.
+  defp sandbox_write_path_self_cap(%URI{} = agent_uri) do
+    %Ezagent.Capability{
+      Ezagent.Capability.cap(
+        :agent,
+        Ezagent.Behavior.Sandbox,
+        :write_path,
+        Ezagent.URI.instance(agent_uri),
+        Ezagent.Capability.workspace_of(agent_uri)
+      )
+      | granted_by: agent_uri,
+        granted_at: DateTime.utc_now()
+    }
   end
 
   # PR3 2026-05-24 — additional rollback (beyond `undo_fresh_workers/1`)
