@@ -54,14 +54,15 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
   — the same decision dispatch uses — so wildcard-shaped minters are caught.
 
   The ONE exclusion: the full bootstrap-wildcard sentinel (all five axes `:any`)
-  is NOT counted here. `system://bootstrap`, `system://mix-task`, `system://chat-router`
-  and `system://chat-reply` hold that sentinel; it authorizes minting at runtime,
-  but those four are governed by `no_wildcard_system_principals_test.exs` (only
-  bootstrap + mix-task + chat-router + chat-reply may hold it) and the audit's
-  fan-out / operator-trust rationale puts them in category A. Counting the full
-  sentinel here would force chat-router/chat-reply out of A — contradicting Allen's
-  ruling — so this gate scopes to the PARTIAL/grant-shaped wildcards codex P2
-  cares about and defers the full sentinel to its dedicated gate. (Mirrors the
+  is NOT counted here. `system://bootstrap` and `system://chat-router` hold that
+  sentinel; it authorizes minting at runtime, but they are governed by
+  `no_wildcard_system_principals_test.exs` (only bootstrap + chat-router may hold
+  it now — `mix-task` ELIMINATED 2026-06-19, `chat-reply` ELIMINATED 2026-06-20
+  甲-3) and the audit's fan-out / operator-trust rationale puts them in category
+  A. Counting the full sentinel here would force chat-router out of A —
+  contradicting Allen's ruling — so this gate scopes to the PARTIAL/grant-shaped
+  wildcards codex P2 cares about and defers the full sentinel to its dedicated
+  gate. (Mirrors the
   `wildcard_cap?/1` predicate in that sibling test.)
 
   The gate has FOUR teeth (none is a tautology):
@@ -120,7 +121,14 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
   # use is sandbox.write_path self-authority; git-grep confirmed 2026-06-16).
   @category_a [
     "system://chat-router",
-    "system://chat-reply",
+    # ELIMINATED 2026-06-20, 甲-3 (north star): "system://chat-reply" — a
+    # NON-minter holding only `bootstrap_wildcard()`, borrowed by the 5
+    # agent/plugin bridge adapters to dispatch `session.send` into the reply
+    # session. That reply is a single concrete `session.send` (not an
+    # open-plugin fan-out), so each agent now presents its OWN inline narrow
+    # `session.send` cap on the concrete session (`granted_by: <agent_uri>`,
+    # self-authority). With its last cap re-attributed to the agent, the
+    # principal leaves the Catalog.
     # ELIMINATED (north star): "system://worker-publish" — the
     # ExternalMirrorWorker's internal dispatches now carry their own inline
     # authorizer caps (self-authority publish + admin-granted subscribe).

@@ -33,10 +33,12 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   `holds_cap?/2` consults a structurally narrowed cap set instead of
   a uniform wildcard. The full-wildcard caps are held by the genesis
   root `system://bootstrap` (the all-caps invariant per Decision #81 +
-  SPEC v3 §4.4) and the two open-plugin chat fan-out principals
-  `system://chat-router` / `system://chat-reply` (structural — they
-  dispatch `chat.receive`/`chat.send` across the OPEN plugin Behavior
-  set, which the Catalog cannot enumerate). All others are narrowed.
+  SPEC v3 §4.4) and the open-plugin chat fan-out principal
+  `system://chat-router` (structural — it dispatches `chat.receive`
+  across the OPEN plugin Behavior set, which the Catalog cannot
+  enumerate). All others are narrowed. (`system://chat-reply` was
+  ELIMINATED 2026-06-20, 甲-3 — each agent bridge now presents its OWN
+  inline narrow `session.send` cap; see its removal NOTE below.)
   (`system://mix-task` formerly retained a wildcard "operator = admin"
   authority; it was ELIMINATED 2026-06-19 — the operator now routes
   through the real `entity://system/user/admin` entity, see its removal
@@ -53,8 +55,6 @@ defmodule Ezagent.SystemPrincipal.Catalog do
     list is `[:send, :receive, :join, :leave, :set_working_copy]`); the
     string was a dead cap. The struct entry KEEPS only `:send` — the
     only chat-router action that actually fires in dispatch.
-  - `system://chat-reply` originally had `session.chat.reaction` —
-    same situation; `:reaction` is not an action. KEEPS only `:send`.
   - `system://template-materialize` originally had `workspace.template.*` —
     `workspace.template.*` doesn't structurally map (Template Behavior
     lives on AgentTemplate/SessionTemplate Kinds, not Workspace). The
@@ -179,14 +179,20 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # cap set.
          bootstrap_wildcard()
        ]},
-      {principal("chat-reply"),
-       [
-         # Same rationale as chat-router — Plugin CC's channel
-         # dispatches `chat.send` AND `chat.receive` across plugin
-         # Behaviors (Echo, NpAgent, …). Wildcard is the structural
-         # right shape for an open-plugin fan-out principal.
-         bootstrap_wildcard()
-       ]},
+      # System-principal elimination (north star / Decision #154, 甲-3) — the
+      # `system://chat-reply` principal is DELETED. It held the
+      # `bootstrap_wildcard()` cap, borrowed by the 5 agent/plugin bridge
+      # adapters (curl_agent, plugin_codex, plugin_cc, echo, np_agent) so they
+      # could dispatch `session.send` into the originating session. Each agent
+      # is a real entity (`entity://agent/...`) and its reply dispatch already
+      # used `caller: self_uri`/`caller: agent_uri`. Each now presents its OWN
+      # inline narrow `session.send` cap on the concrete reply session
+      # (`granted_by: <agent_uri>`, genuine self-authority, least privilege) as
+      # the step-5.5 authorizer (`granted_via_ctx_caps?`) instead of borrowing
+      # this ambient wildcard. The inline caps are authorizers only (never
+      # granted/persisted), so this is no Decision #154 grant regression. With
+      # the principal gone the elimination ratchet drops to 5 remaining
+      # (+ genesis).
       # System-principal elimination (north star / Decision #154) — the
       # `system://worker-publish` principal is DELETED. It held two caps —
       # `(:external_mirror_worker, ExternalMirrorWorker, :publish)` and

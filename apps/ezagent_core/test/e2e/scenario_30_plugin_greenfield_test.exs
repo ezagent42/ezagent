@@ -139,8 +139,9 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
 
       # Inner dispatch runs as :system so the cap check short-circuits
       # (per `Ezagent.Kind.default_holds_cap?/2` :system clause). A
-      # production plugin would use SystemPrincipal.caps("system://chat-reply")
-      # or similar; for the greenfield E2E we keep the fixture minimal.
+      # production plugin would present its own inline narrow cap in
+      # `ctx.caps` (the step-5.5 authorizer; #154 — no `system://chat-reply`
+      # wildcard); for the greenfield E2E we keep the fixture minimal.
       # Set `mode: :call` so the inner dispatch is synchronous — the
       # framework's execute_dispatches awaits the inner Router.dispatch
       # return, so by the time the outer call returns, the second

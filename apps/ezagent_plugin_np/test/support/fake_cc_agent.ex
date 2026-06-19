@@ -29,8 +29,9 @@ defmodule Ezagent.PluginNp.Test.FakeCcAgent do
       backslash hints to the downstream agent that this is LaTeX
       (the curl-agent's job is to convert LaTeX → numpy expr).
     * Loop safety — ignores messages whose sender is itself.
-    * Reply dispatched under `system://chat-reply` caps (matches the
-      real cc Channel's reply path).
+    * Reply dispatched under the agent's OWN inline narrow `session.send`
+      cap (matches the real cc Channel's reply path; #154 — no
+      `system://chat-reply` wildcard).
 
   ## Lifecycle migration (post-lifecycle remediation, 2026-05-30)
 
@@ -148,7 +149,8 @@ defmodule Ezagent.PluginNp.Test.FakeCcAgent do
 
   # Build the `{:dispatch, %Cmd{}}` effect that posts the transformed
   # reply back into the originating session via `chat.send`. Mirrors
-  # the real CC agent's reply path (`system://chat-reply`).
+  # the real CC agent's reply path (agent's OWN inline `session.send`
+  # cap; #154 — no `system://chat-reply` wildcard).
   defp reply_effect(nil, _agent_uri, _text, _in_msg), do: nil
 
   defp reply_effect(%URI{scheme: "session"} = session, agent_uri, text, %Message{} = in_msg) do
@@ -161,7 +163,23 @@ defmodule Ezagent.PluginNp.Test.FakeCcAgent do
        args: %{message: reply_msg},
        ctx: %{
          caller: agent_uri,
-         caps: "chat-reply" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
+         # System-principal elimination (#154): the deleted `system://chat-reply`
+         # WILDCARD is replaced by the agent's OWN narrow `session.send` cap on
+         # the concrete session (mirrors the real bridge reply path).
+         caps:
+           MapSet.new([
+             %Ezagent.Capability{
+               Ezagent.Capability.cap(
+                 :session,
+                 Ezagent.Behavior.Session,
+                 :send,
+                 Ezagent.URI.instance(session),
+                 Ezagent.Capability.workspace_of(session)
+               )
+               | granted_by: agent_uri,
+                 granted_at: DateTime.utc_now()
+             }
+           ]),
          reply: :ignore
        }
      }}
