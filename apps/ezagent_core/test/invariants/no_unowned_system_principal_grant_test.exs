@@ -17,9 +17,11 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
   it cannot honestly own — i.e. it holds a cap that AUTHORIZES `grant_cap` /
   `revoke_cap` on `IdentityAdmin` (including wildcard-shaped caps). Such a grant's
   `granted_by` points at the abstract `system://…` principal rather than the real
-  configurer entity (session owner / agent creator / rule configurer). Per the
-  audit + Allen's final ruling (2026-06-16), two principals are **confirmed-B**
-  today: `system://template-materialize` and `system://feishu-binding-policy`.
+  configurer entity (session owner / agent creator / rule configurer). HISTORY:
+  the audit + Allen's 2026-06-16 ruling named two confirmed-B principals,
+  `system://template-materialize` and `system://feishu-binding-policy`; both are
+  now resolved (template-materialize neutered by PR-2; feishu-binding-policy
+  DELETED by no-unowned-caps PR-1), so the confirmed-B set is empty.
 
   Note the distinction the gate is built on: `grant_minting_cap?/1` identifies
   grant-*minters* (a STRUCTURAL fact — the principal holds a cap that AUTHORIZES
@@ -28,12 +30,16 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
   (Allen rules each minter → A or → B). So the honest invariant is *"every
   grant-minter must be EXPLICITLY classified"* — in `@confirmed_b_allowlist` OR in
   `@needs_allen`. A minter may never be silently parked in `@category_a` ("conforms,
-  nothing to see"). After PR-2 of the no-unowned-caps program (2026-06-17) only
-  ONE principal mints: `feishu-binding-policy` — confirmed-B (PR-3 converts it →
-  allowlist 0). `template-materialize` was confirmed-B but PR-2 dropped its grant
-  caps (its grants now route through `Ezagent.Identity.Grant` under real-entity
-  rule/bootstrap tags), neutering it to category A (the gate's tooth-3 path).
-  `@needs_allen` is empty.
+  nothing to see").
+
+  NORTH-STAR REACHED (no-unowned-caps PR-1, 2026-06-17): there are now ZERO live
+  grant-minters. PR-2 had neutered `template-materialize` (its grants route through
+  `Ezagent.Identity.Grant` under real-entity tags), leaving `feishu-binding-policy`
+  as the last minter. PR-1 of the per-session program DELETES
+  `feishu-binding-policy` outright — its only consumer (`BindingPolicy.apply/2`
+  re-granting a broad workspace session baseline) was removed when participation
+  moved to per-session join. `@confirmed_b_allowlist` is therefore `[]` and
+  `@needs_allen` is empty: Decision #154's "no unowned permissions" ratchet is at 0.
 
   ## Why detection uses the RUNTIME matcher (codex P2 fix, 2026-06-16)
 
@@ -137,20 +143,17 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
   ]
 
   # (B) CONFIRMED violates — principals that MINT permissions a real configurer
-  # entity should own. Allen ruled (2026-06-16): template-materialize (the §1
-  # spec-named workaround owner/manager-delegation #153 replaces) AND
-  # feishu-binding-policy (granter should be the binding configurer/admin —
-  # `admin_uri` already flows in; conversion is a later PR). The allowlist
-  # ratchets toward 0 as conversions land (#808 anon-access + #811 cap#2 are the
-  # first removals; feishu + template are the next).
-  @confirmed_b_allowlist [
-    # PR-2 (2026-06-17) shrank this from
-    # ["system://template-materialize", "system://feishu-binding-policy"] to
-    # feishu-only: template-materialize's grant caps were dropped → it is no
-    # longer a minter (moved to @category_a). feishu-binding-policy is the
-    # last confirmed-B minter (PR-3 converts it → allowlist reaches 0).
-    "system://feishu-binding-policy"
-  ]
+  # entity should own. HISTORY: Allen ruled (2026-06-16) template-materialize +
+  # feishu-binding-policy were confirmed-B. Both are now resolved.
+  # no-unowned-caps PR-1 (2026-06-17) reaches the north-star target: 0.
+  # PR-2 had shrunk this to feishu-only (template-materialize neutered);
+  # PR-1 of the per-session program DELETES `system://feishu-binding-policy`
+  # entirely (it was the last grant-minter — its only consumer,
+  # `BindingPolicy.apply/2`'s broad workspace session-baseline re-grant, was
+  # removed when participation moved to per-session join). With no live
+  # grant-minters left, the confirmed-B allowlist is EMPTY: Decision #154's
+  # "no unowned permissions" ratchet has reached 0.
+  @confirmed_b_allowlist []
 
   # needs-Allen — EMPTY. Allen ruled all 6 prior entries on 2026-06-16:
   # chat-router/chat-reply/orchestrator-tools/session-internal → A;
@@ -220,16 +223,16 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
              "#{inspect(phantom)} — a principal was renamed/removed. Update the bucket(s)."
   end
 
-  test "live grant-minters are EXACTLY feishu-binding-policy (post PR-2 template-materialize neuter)" do
-    # Locks the PR-2 reconciliation: after template-materialize's grant caps
-    # were dropped (its grants now route through `Ezagent.Identity.Grant` under
-    # real-entity rule/bootstrap tags), the only remaining minter is
-    # feishu-binding-policy (PR-3 converts it → empty). If
-    # chat-router/chat-reply/mix-task/bootstrap appear here the sentinel
-    # exclusion has regressed (the full wildcard is leaking into minter
-    # detection); if template-materialize reappears its grant caps were
-    # re-introduced.
-    assert Enum.sort(live_grant_minters()) == ["system://feishu-binding-policy"]
+  test "there are NO live grant-minters (no-unowned-caps north star reached: 0)" do
+    # no-unowned-caps PR-1 (2026-06-17): after `system://feishu-binding-policy`
+    # (the last minter) was DELETED from the Catalog, no principal holds a cap
+    # that authorizes `grant_cap`/`revoke_cap` on IdentityAdmin. Every cap
+    # grant now routes through `Ezagent.Identity.Grant` under a real-entity tag
+    # ({:held_by} / {:rule, _, configurer} / genesis {:system, bootstrap, owner}).
+    # If ANY principal reappears here, a grant-minting cap was re-introduced;
+    # if chat-router/chat-reply/mix-task/bootstrap appear, the full-wildcard
+    # sentinel exclusion has regressed (see moduledoc).
+    assert live_grant_minters() == []
   end
 
   describe "wildcard-shaped grant-minter detection (codex P2)" do

@@ -172,8 +172,8 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   def cap_subjects do
     [
       {:bind,
-       "bind a Feishu open_id to a local ESR user URI (also applies " <>
-         "BindingPolicy default session-participation cap)"},
+       "bind a Feishu open_id to a local ESR user URI (the bound user " <>
+         "participates per-session via join, like every member)"},
       {:unbind, "remove a Feishu open_id binding"},
       {:list_feishu_bindings, "list all open_id → user URI bindings (read-only)"}
     ]
