@@ -45,11 +45,13 @@ defmodule Ezagent.Credential.GrantCapTest do
     refute Capability.matches?(cap, needed_other)
   end
 
-  test "credential-materializer is a cataloged identity with no standing caps" do
-    uri = Ezagent.URI.new!("system://credential-materializer")
-    assert Ezagent.SystemPrincipal.Catalog.member?(uri)
-    # audit identity only — holds NO standing caps (per-source authority is the
-    # narrow derived cap above). caps_for!/1 must not raise.
-    assert Ezagent.SystemPrincipal.Catalog.caps_for!(uri) == []
+  test "credential-materializer principal is ELIMINATED (north star) — authority is the per-grant GrantCap + agent self" do
+    # System-principal elimination: the `credential-materializer` audit label is
+    # removed from the Catalog. Credential source-read authority is the narrow
+    # per-grant `GrantCap` cap (asserted above); api-key materialization runs under
+    # the agent's own entity self-authority — no cataloged principal is involved.
+    refute Ezagent.SystemPrincipal.Catalog.member?(
+             Ezagent.URI.new!("system://credential-materializer")
+           )
   end
 end

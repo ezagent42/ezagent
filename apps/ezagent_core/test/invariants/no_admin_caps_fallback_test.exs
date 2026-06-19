@@ -67,13 +67,14 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
   end
 
   describe "Catalog sanity" do
-    test "Catalog returns the expected 15 principals" do
+    test "Catalog returns the expected 14 principals" do
       uris = Ezagent.SystemPrincipal.Catalog.uris()
 
-      # no-unowned-caps PR-1 (2026-06-17): "system://feishu-binding-policy"
-      # DELETED (the last grant-minter) → 15 principals.
-      assert length(uris) == 15,
-             "SPEC §4.1 declares 15 system principals; Catalog has #{length(uris)}: " <>
+      # System-principal elimination (north star): "feishu-binding-policy" (#824)
+      # then "credential-materializer" DELETED → 14 principals (shrinking toward
+      # genesis-only; see system_principal_elimination_test.exs).
+      assert length(uris) == 14,
+             "expected 14 system principals; Catalog has #{length(uris)}: " <>
                inspect(uris)
 
       expected = [
@@ -90,8 +91,8 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
         "system://workspace-loader",
         "system://mix-task",
         "system://lv-anon-mount",
-        # #17 cascade PR-0 — credential-materializer (empty-cap audit identity).
-        "system://credential-materializer",
+        # (credential-materializer ELIMINATED — north star; api-key materialization
+        #  now runs under agent self-authority.)
         # #51 §3.4 — socialware GC sweeper (Session :leave only).
         # NOTE: #51 §4.1 anon public-view access does NOT add a principal —
         # the anon holds its own narrow join cap (Decision #154).

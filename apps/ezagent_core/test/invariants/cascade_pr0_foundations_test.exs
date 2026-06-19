@@ -13,9 +13,12 @@ defmodule Ezagent.Invariants.CascadePr0FoundationsTest do
     assert Code.ensure_loaded?(Ezagent.Credential.GrantCap)
     assert function_exported?(Ezagent.Credential.GrantCap, :read_cap_for, 1)
 
-    # the cataloged materializer identity exists; the REJECTED per-grant dynamic
-    # principal accessor does NOT
-    assert Ezagent.SystemPrincipal.Catalog.member?(
+    # System-principal elimination (north star): the `credential-materializer`
+    # audit-label principal is REMOVED — api-key materialization runs under the
+    # agent's own entity self-authority and per-grant source-read authority is the
+    # narrow `GrantCap` cap (no cataloged principal). The REJECTED per-grant dynamic
+    # principal accessor also does NOT exist.
+    refute Ezagent.SystemPrincipal.Catalog.member?(
              Ezagent.URI.new!("system://credential-materializer")
            )
 

@@ -129,7 +129,6 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
     "system://workspace-loader",
     "system://mix-task",
     "system://lv-anon-mount",
-    "system://credential-materializer",
     "system://socialware-gc",
     # 2026-06-17 (PR-2 of the no-unowned-caps program) — template-materialize
     # was B (the §1 spec-named workaround). Its grant caps are now DROPPED

@@ -4,8 +4,10 @@ defmodule Ezagent.Credential.GrantCap do
   (spec §5.1, codex H1). The caller passes this SINGLE cap as the dispatch caps
   for the source read (`sandbox.read` on the source agent) — never a broad set.
 
-  The materialize identity (`system://credential-materializer`) holds NO standing
-  caps; all source-read authority is this narrow, per-source derived cap.
+  All source-read authority is this narrow, per-source derived cap — there is no
+  standing principal cap. (The former `system://credential-materializer` audit
+  identity was eliminated under the no-system-principals north star; the dispatch
+  caller is now the agent's own entity, with this per-grant cap as the authority.)
   """
 
   @doc """

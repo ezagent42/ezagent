@@ -291,7 +291,13 @@ defmodule Ezagent.PluginCurlAgent.Template do
       mode: :call,
       args: %{provider: provider, key: key},
       ctx: %{
-        caller: Ezagent.SystemPrincipal.uri("credential-materializer"),
+        # System-principal elimination (north star): put_api_key materializes the
+        # agent's OWN credential into its OWN `:api_keys` slice — self-authority.
+        # Caller is the agent ENTITY (a real accountable entity), not the deleted
+        # `system://credential-materializer` audit label. Authorization is the
+        # narrow inline `caps` (put_api_key on this agent); `caller == data_owner`
+        # (the agent owns its api_keys slice) so the self-check also passes.
+        caller: agent_uri,
         caps: caps,
         reply: {:caller_inbox, self()}
       }
