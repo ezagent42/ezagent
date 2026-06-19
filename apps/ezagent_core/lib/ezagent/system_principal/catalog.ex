@@ -308,21 +308,22 @@ defmodule Ezagent.SystemPrincipal.Catalog do
       # grant-minter (held `cap(:user, IdentityAdmin, :grant_cap)` +
       # `cap(:workspace, Workspace, :any)`) — used ONLY by
       # `EzagentPluginFeishu.BindingPolicy` to re-grant a bound user the
-      # broad workspace-wide session baseline. That baseline is gone:
-      # participation is now granted per-session at join under the session
-      # owner's real-entity authority (`Ezagent.Behavior.Session.Membership`),
-      # and `BindingPolicy.apply/2` no longer grants anything. With its only
-      # consumer removed, the principal leaves the Catalog and `no_unowned`
-      # reaches 0 live grant-minters.
+      # broad workspace-wide session baseline — which was REDUNDANT: a bound user
+      # already holds that baseline via `User.default_caps/1` (applied at spawn by
+      # `Ezagent.Entity.User.initial_caps_for_spawn/1`). So `BindingPolicy.apply/2`
+      # no longer grants anything (no behavior change), and with its only consumer
+      # removed the principal leaves the Catalog → `no_unowned` reaches 0 live
+      # grant-minters. (Narrowing `default_caps` itself to a per-session model is a
+      # separate, deferred refactor — not done here.)
       {principal("lv-anon-mount"), []},
-      # #17 cascade PR-0 (spec §5.1, codex H1) — the credential-materializer
-      # IDENTITY. This is an AUDIT identity only: it holds NO standing caps. The
-      # least-privilege source-read authority is a NARROW `Capability.cap/5`
-      # derived per-grant at materialize time (see `Ezagent.Credential.GrantCap`)
-      # and passed as the dispatch caps for the single `sandbox.read` on the
-      # validated source. A broad standing cap here would defeat the per-source
-      # scoping — so the entry is deliberately empty (like `lv-anon-mount`).
-      {principal("credential-materializer"), []},
+      # System-principal elimination (north star): `credential-materializer` is
+      # DELETED. It was an empty-cap AUDIT label used only as the `caller` of the
+      # curl-agent api-key materialization (`CurlAgent.put_target_api_key/3`); the
+      # real authority is the narrow inline `put_api_key` cap. That dispatch now
+      # runs under the AGENT's own entity URI (self-authority over its own
+      # `:api_keys` slice) — a real accountable entity. The per-grant source-read
+      # authority remains the narrow `Ezagent.Credential.GrantCap` cap (no standing
+      # principal cap was ever needed).
       # #51 external-user anonymous access (§3.4 GC) — the in-app GC sweeper
       # (`Ezagent.Socialware.AnonUser.Sweeper`) reaps abandoned anon-Users: it
       # `chat.leave`s each from its session under THIS principal. Narrowed to
