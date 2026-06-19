@@ -139,8 +139,24 @@ defmodule Ezagent.TestSupport.TemplateAgentSpawn do
              respawn_template_data: %{"class" => template_class_name(flavor), "flavor" => flavor}
            },
            ctx: %{
-             caller: Ezagent.SystemPrincipal.uri("agent-internal"),
-             caps: Ezagent.SystemPrincipal.caps("system://agent-internal"),
+             # #830 fallout fix — `system://agent-internal` was eliminated; mirror
+             # production `Agent.TemplateSpawn.sandbox_write_path_self_cap/1`: the
+             # agent records its OWN sandbox state under its OWN inline
+             # `sandbox.write_path` self-authority (a real entity granter).
+             caller: agent_uri,
+             caps: [
+               %Ezagent.Capability{
+                 Ezagent.Capability.cap(
+                   :agent,
+                   Ezagent.Behavior.Sandbox,
+                   :write_path,
+                   Ezagent.URI.instance(agent_uri),
+                   Ezagent.Capability.workspace_of(agent_uri)
+                 )
+                 | granted_by: agent_uri,
+                   granted_at: DateTime.utc_now()
+               }
+             ],
              reply: {:caller_inbox, self()}
            }
          }) do
