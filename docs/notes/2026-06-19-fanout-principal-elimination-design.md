@@ -8,6 +8,78 @@ they need a **new grant/feature**, and they intersect a refactor that already fa
 (`feat/per-session-default-caps`, 8 join-authorization failures, reverted). This note grounds the design
 so implementation doesn't repeat the failure.
 
+---
+
+## UNIFIED MEMBERSHIP-MOUNT MODEL (Allen design session, 2026-06-19) — supersedes the per-principal hedging below
+
+Allen reframed the whole anon/participation problem into one model that also dissolves the join
+chicken-and-egg and several principals at once. **This is the foundation; the per-principal sections
+below are now read through it.**
+
+**Core: joining a session is ONE flow for everyone; the only difference is which cap set is *mounted* at
+join, keyed on the member's identity class.**
+- A member joins → the session **mounts** the cap set appropriate to that member's class onto them
+  (scoped to the concrete session): an `:unconfirmed` user mounts a **reduced** set (view/receive only —
+  no `:send`); a `:confirmed` user mounts the **full** set (`:send`/`:leave`/`subscribe_from`); an agent
+  mounts its provisioned set.
+- **"Upgrade" = re-join at a higher identity.** An anonymous viewer who logs in as an existing or
+  newly-registered (confirmed) user simply **re-joins**, and the full set is mounted. No special upgrade
+  path — re-running join at the higher class re-mounts.
+
+**`confirmed` is a real entity attribute (NOT a name hack).** Anonymous = a registered-but-**unconfirmed**
+user (`confirmed: false`). Today anon-ness is detected by a URI **name-prefix hack**
+(`@anon_user_name_prefix "anon-"`; `Membership.anon_member?/1` splits the URI string) — this violates the
+"never key off mutable display names" rule ([[uuid_is_canonical_identifier]]). Replace it with a
+`confirmed` boolean on the User/entity (+ migration); `anon_member?` reads the attribute; the reserved
+`anon-` naming convention retires. More general than "anonymous public view" — covers any unconfirmed
+user (e.g. email-unverified registration).
+
+**MOUNT, don't STRIP — this is what fixes the 8-failure chicken-and-egg.** Implement as "grant the
+per-class set *at* join" (mount), NEVER "grant a broad baseline to everyone then strip it for anon." The
+strip model is exactly the prior failure: it depends on a universal broad baseline, and removing that
+baseline also removes the authority to *join* in the first place. Under the mount model:
+- **Who authorizes the join itself = the SESSION's policy, not a per-user baseline.** A `public_view`
+  session → open join (mounts the reduced/unconfirmed set); a private session → owner/inviter authorizes
+  the join (then mounts the member's set). So the broad `default_caps` baseline can be removed without
+  breaking join, because join authority now comes from session policy.
+- **After join → mount the per-class cap set** (the `{:rule, :session_participation | :unconfirmed_member,
+  owner}` grant, `:async`/`:cast` to dodge the Session→`Session.owner`→`get_slice` deadlock).
+
+**Owner is the creator (code-verified).** `session_creator.ex:329` `effective_owner = creator_uri ||
+User.admin_uri()` (RFC #402 threads the creator as `owner_uri`). So a published session's owner is the
+operator who configured the publish; admin is only a fallback for creator-less system-internal creates.
+There is no genuine "ownerless" for normally-created sessions — the send-cap granter is that owner. The
+earlier "ownerless → admin" hedging covers only the edge/legacy cases.
+
+**What this model collapses:**
+- `lv-anon-mount` + `socialware-gc` (the anon family) — anon stops being a special entity/mint; the LV
+  mount + GC reap operate on a `confirmed: false` user via the same membership flow. The principals
+  dissolve.
+- The fan-out send/receive caps become **two tiers of the same mount** (`:send` is in the confirmed tier;
+  `:receive` is mounted for all tiers) — `chat-reply`/`chat-router`'s receive-side stops needing an
+  ambient principal once the receive cap is mounted at join.
+- `feishu-binding-policy`'s workspace-wide `subscribe_from` grant → just the confirmed-tier mount
+  (already partly done via #824).
+
+**Implementation surface (the foundational PR ①, "per-session membership mount"):**
+1. `confirmed` attribute on User/entity (+ migration); `Membership.anon_member?/1` → reads it; retire the
+   `anon-` name convention.
+2. Remove the broad `User.default_caps` baseline; keep ONLY a narrow `Session:join` if any self-join path
+   still needs it (audit the 8 prior failures — most should be re-authorized via session policy).
+3. `Membership.mount_participation_caps/3` (the renamed/generalized `grant_participation_caps`): keyed on
+   member class (`confirmed?` / agent / anon), mounts the per-tier cap set at join, `:async`, best-effort,
+   owner-authorized (`{:rule, …, owner}`).
+4. Session-policy join authorization: `public_view` → open join (mount unconfirmed tier); private →
+   owner/inviter authorizes.
+5. Gates: a test that an unconfirmed member holds ONLY the reduced set; that a confirmed re-join mounts
+   `:send`; that removing the baseline doesn't break any existing join path (re-run the 8 prior failures).
+
+This is design-first and is the ENTITY-MODEL piece Allen wants — bigger than "eliminate a principal," but
+once it lands, chat-reply / chat-router-receive / lv-anon-mount / socialware-gc fall out of it. **Awaiting
+Allen's go to implement.**
+
+---
+
 ## The partition (advisor, 2026-06-19)
 - **Subagent-safe** = pure re-attribution: `caller → existing real entity + inline ctx.caps cap`. (Done: the 5 above.)
 - **Design-first** = needs a NEW grant. The fan-out send/receive caps are here.
