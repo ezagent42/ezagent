@@ -74,10 +74,11 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
       # credential-materializer (#825), worker-publish (#826), then the DEAD
       # adapter-install + boot-reconciler DELETED, then agent-internal +
       # workspace-loader (2026-06-19, self-authority), then mix-task
-      # (2026-06-19, operator → admin entity) → 8 principals (shrinking toward
-      # genesis-only; see system_principal_elimination_test.exs).
-      assert length(uris) == 8,
-             "expected 8 system principals; Catalog has #{length(uris)}: " <>
+      # (2026-06-19, operator → admin entity), then orchestrator-tools
+      # (2026-06-19, DEAD caller — orchestrator runs as itself) → 7 principals
+      # (shrinking toward genesis-only; see system_principal_elimination_test.exs).
+      assert length(uris) == 7,
+             "expected 7 system principals; Catalog has #{length(uris)}: " <>
                inspect(uris)
 
       expected = [
@@ -87,7 +88,9 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
         # (worker-publish ELIMINATED — north star; the ExternalMirrorWorker's
         #  internal dispatches now carry their own inline authorizer caps.)
         "system://template-materialize",
-        "system://orchestrator-tools",
+        # (orchestrator-tools ELIMINATED 2026-06-19 — north star; DEAD caller:
+        #  the orchestrator runs its tools as itself with its own caps, and the
+        #  set_legends allowlist entry was never reached in production.)
         "system://session-internal",
         # (agent-internal ELIMINATED 2026-06-19 — north star; its only authority
         #  `sandbox.write_path` is the agent writing its OWN sandbox slice →

@@ -704,9 +704,11 @@ defmodule Ezagent.Behavior.Session do
   # (`legends_write_authorized?/1`): the caller must EITHER
   #
   #   - be a trusted system principal — `ctx.caller` ∈ a small allowlist
-  #     (`system://session-internal` / `system://orchestrator-tools`), the same
-  #     provenance-setting pattern; the `system_set_legends/2` path dispatches
-  #     under `system://session-internal` so it still works, OR
+  #     (`system://session-internal`; `orchestrator-tools` was removed 2026-06-19
+  #     when that principal was eliminated — it never reached this path in
+  #     production), the same provenance-setting pattern; the
+  #     `system_set_legends/2` path dispatches under `system://session-internal`
+  #     so it still works, OR
   #   - be the session's orchestrator — hold the exact `{:within_session,
   #     self_uri}` delegated cap (cap #1, granted only by the Generator).
   #

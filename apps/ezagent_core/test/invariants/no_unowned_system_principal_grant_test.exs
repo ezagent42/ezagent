@@ -124,7 +124,9 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
     # ELIMINATED (north star): "system://worker-publish" — the
     # ExternalMirrorWorker's internal dispatches now carry their own inline
     # authorizer caps (self-authority publish + admin-granted subscribe).
-    "system://orchestrator-tools",
+    # ELIMINATED 2026-06-19 (north star): "system://orchestrator-tools" — a DEAD
+    # caller (orchestrator runs its tools as itself; the set_legends allowlist
+    # entry was unreachable in production). Held no minter cap; leaves Catalog.
     "system://session-internal",
     # ELIMINATED 2026-06-19 (north star): "system://agent-internal" — it was a
     # NON-minter (its vestigial grant_cap dropped 2026-06-16), holding only
