@@ -251,4 +251,93 @@ defmodule Ezagent.Behavior.Session.Membership do
         :ok
     end
   end
+
+  @member_chat_actions [:send, :leave]
+  @member_publisher_actions [:subscribe_from]
+
+  @doc """
+  Mount the per-session participation cap tier on a freshly-joined member
+  (#154 spec 甲 / PR-甲-2). Called by the TRUSTED join access points (LV
+  self-join, invite, home, anon mint) AFTER a successful join — never inside
+  `handle_join` (a DB read in the Session Kind is the 甲-1 sandbox/hot-path
+  hazard) and never from forgeable join args.
+
+  By-design-secure ([[feedback_analyze_caller_before_defending]]): the tier is
+  chosen from the AUTHORITATIVE `Ezagent.Users.confirmed?/1` (a DB fact),
+  resolved here in the CALLER's process (which has DB access), NOT from any
+  caller-supplied input — so there is nothing to forge and no anti-forgery
+  guard is needed. Running caller-side (not in the Session Kind) also means the
+  grant's `Session.owner` lookup is an ordinary cross-process call, so the
+  grant is `:sync` (no self-deadlock — unlike `grant_first_join_owner_cap`).
+
+  Tiers (scoped to THIS session instance):
+    * unconfirmed user → `Publisher.SessionImpl.:subscribe_from` (read-only)
+    * confirmed user   → the above + `Session.:send` + `Session.:leave`
+    * agent            → no-op (agents get `:send` provisioned at spawn, 甲-3)
+
+  Authority `{:rule, :session_participation, owner}` (concrete instance +
+  action ⇒ `rule_cap_bounded?` ⇒ the rule branch authorizes; `granted_by` =
+  owner entity). Owner = the session owner; for an ownerless session it falls
+  back to `entity://system/user/admin` (the #154 named extreme-case granter,
+  same as `anon_user.public_view_granter/1`). Best-effort: a failed grant is
+  logged + telemetry'd, never raised — a missing participation cap degrades to
+  "observe", it does not break the join.
+  """
+  @spec mount_participation_caps(URI.t(), URI.t(), URI.t() | nil) :: :ok
+  def mount_participation_caps(%URI{} = session_uri, %URI{} = member_uri, owner_uri) do
+    cond do
+      not user_uri?(member_uri) ->
+        :ok
+
+      true ->
+        do_mount_participation_caps(session_uri, member_uri, owner_uri)
+    end
+  end
+
+  def mount_participation_caps(_, _, _), do: :ok
+
+  defp do_mount_participation_caps(%URI{} = session_uri, %URI{} = member_uri, owner_uri) do
+    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+    granter = owner_uri || Ezagent.Entity.User.admin_uri()
+    confirmed? = Ezagent.Users.confirmed?(member_uri)
+
+    actions =
+      if confirmed? do
+        Enum.map(@member_chat_actions, &{Ezagent.Behavior.Session, &1}) ++
+          Enum.map(@member_publisher_actions, &{Ezagent.Behavior.Publisher.SessionImpl, &1})
+      else
+        Enum.map(@member_publisher_actions, &{Ezagent.Behavior.Publisher.SessionImpl, &1})
+      end
+
+    Enum.each(actions, fn {behavior, action} ->
+      cap =
+        Ezagent.Capability.cap(:session, behavior, action, session_uri, workspace_uri)
+
+      case Ezagent.Identity.Grant.grant_cap_via_router(
+             member_uri,
+             cap,
+             {:rule, :session_participation, granter},
+             :sync
+           ) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning(
+            "Session.Membership.mount_participation_caps: grant failed for " <>
+              "member=#{URI.to_string(member_uri)} on session=" <>
+              "#{URI.to_string(session_uri)} action=#{inspect(action)}: " <>
+              "#{inspect(reason)} (best-effort; member degrades to observe)."
+          )
+
+          :telemetry.execute(
+            [:ezagent, :session, :participation_cap, :failed],
+            %{count: 1},
+            %{session_uri: session_uri, member_uri: member_uri, reason: reason}
+          )
+
+          :ok
+      end
+    end)
+  end
 end
