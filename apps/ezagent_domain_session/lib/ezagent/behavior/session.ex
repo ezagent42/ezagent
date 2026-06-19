@@ -483,7 +483,7 @@ defmodule Ezagent.Behavior.Session do
         # need a ReadMarker side effect.
         for {recipient, rule_ctx} <- recipients_with_ctx do
           if recipient.scheme == "session" do
-            Delivery.dispatch_cross_session_call(recipient, msg)
+            Delivery.dispatch_cross_session_call(recipient, msg, session_uri)
           else
             # Path-A delivery transform (§3.4): render the matched rule's
             # prompt template into THIS recipient's message (no template →

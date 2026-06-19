@@ -135,9 +135,10 @@ defmodule Ezagent.Behavior.Session.MentionFailedTest do
       Capability.cap(:any, Ezagent.Behavior.Session, :send),
       # PR-2 (im/session/agent decomposition §OQ-4): `:receive` is now
       # `Behavior.User.Receive` / `Behavior.Agent.Receive` per Kind. The
-      # actual fan-out receive dispatches under `system://chat-router`
-      # (not the caller's caps), so this defensive grant is vestigial —
-      # but keep it shaped to the post-split behaviors for correctness.
+      # the actual fan-out mints a per-recipient `:receive` cap itself
+      # (#154 甲-4 — not the caller's caps; the former system://chat-router
+      # wildcard is gone), so this defensive grant is vestigial — but keep
+      # it shaped to the post-split behaviors for correctness.
       Capability.cap(:any, Ezagent.Behavior.User.Receive, :receive),
       Capability.cap(:any, Ezagent.Behavior.Agent.Receive, :receive)
     ]

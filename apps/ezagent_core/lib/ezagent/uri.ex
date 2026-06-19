@@ -478,7 +478,7 @@ defmodule Ezagent.URI do
   Build a single-segment `system://<principal>` URI.
 
   System principals are a closed catalog of dispatch callers
-  (`system://bootstrap`, `system://chat-router`, ...). They are not part of
+  (`system://bootstrap`, `system://template-materialize`, ...). They are not part of
   the per-tenant workspace-first reorder and intentionally keep the current
   single-segment shape.
   """

@@ -42,9 +42,12 @@ defmodule Ezagent.Routing.Resolver do
   `slice.members` is NOT a trust boundary: `chat.join` accepts any
   live `member_uri` and template instantiation joins configured URIs
   under the `system://template-materialize` principal, so a
-  cross-workspace entity can sit in `slice.members`. Since
-  `chat.receive` dispatches under `system://chat-router`, an
-  unvalidated receiver is a privilege hole.
+  cross-workspace entity can sit in `slice.members`. The Session
+  delivery fan-out mints a `:receive` cap PER RECIPIENT it is handed
+  (#154 甲-4 — the former `system://chat-router` admin wildcard is gone),
+  so an unvalidated receiver would have a `:receive` cap minted for it
+  and the membership filter is the ONLY thing keeping delivery to real
+  members — a privilege hole if skipped.
 
   `valid_member?/2` is the shared predicate guarding BOTH
   `$session_users` and `$mentions`: a candidate URI is a valid
@@ -316,9 +319,11 @@ defmodule Ezagent.Routing.Resolver do
   # "$mentions" — message.mentions, each through the valid_member?/2
   # trust boundary, excluding the sender. The mention-gated routing
   # primitive. message.mentions is user-controlled (raw compose text /
-  # global registry scan) and chat.receive dispatches under
-  # `system://chat-router`, so unvalidated mentions would be a
-  # privilege hole.
+  # global registry scan) and the Session delivery fan-out mints a
+  # `:receive` cap PER RECIPIENT it is handed (#154 甲-4 — the former
+  # `system://chat-router` admin wildcard is gone), so unvalidated
+  # mentions would be a privilege hole — the membership filter is what
+  # bounds the minted cap to real members.
   defp expand_receiver(@mentions_token, message, current_session_uri, members, _ws) do
     sender_str = sender_string(message)
 
@@ -364,11 +369,13 @@ defmodule Ezagent.Routing.Resolver do
 
   Anything failing — cross-workspace, cross-session, non-member,
   malformed, non-canonical, wrong shape — returns `false` and is
-  dropped. This is the security boundary: `chat.receive` dispatches
-  under `system://chat-router`, so an unvalidated receiver would be
-  a privilege hole (a cross-workspace entity placed in
-  `slice.members` via programmatic `chat.join` / template
-  instantiation must receive NOTHING).
+  dropped. This is the security boundary: the Session delivery fan-out
+  mints a `:receive` cap PER RECIPIENT it is handed (#154 甲-4 — the
+  former `system://chat-router` admin wildcard is gone), so an
+  unvalidated receiver would be a privilege hole (a cross-workspace
+  entity placed in `slice.members` via programmatic `chat.join` /
+  template instantiation must receive NOTHING — the membership filter
+  is the only thing bounding the minted cap to real members).
 
   Never raises — `Ezagent.URI.new!/1` raises on bad input, so the
   canonicalization is wrapped; a malformed candidate is a `false`,

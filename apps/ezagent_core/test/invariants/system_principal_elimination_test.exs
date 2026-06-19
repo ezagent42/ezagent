@@ -32,7 +32,19 @@ defmodule Ezagent.SystemPrincipalEliminationTest do
   # The principals still awaiting elimination. Each per-class PR REMOVES its entries.
   # Shrink-only: the north star is `@remaining == []`.
   @remaining [
-    "system://chat-router",
+    # ELIMINATED 2026-06-20, 甲-4: "system://chat-router" — the last non-genesis
+    # wildcard holder. It was borrowed by the Session delivery fan-out for three
+    # dispatches, each now re-attributed to a real entity presenting its OWN
+    # inline narrow cap (the step-5.5 authorizer `granted_via_ctx_caps?`):
+    # (1) the `<entity>.receive` fan-out (`delivery.ex`) presents the RECIPIENT's
+    # own `:receive` cap on its own instance (`granted_by: recipient_uri`,
+    # member self-consent); (2) the cross-session forward presents `session.send`
+    # on the concrete target (`granted_by: source_session`) GUARDED to
+    # same-workspace forwards; (3) the agent's `:sync_result` self-dispatch
+    # presents an inline self-cap (`granted_by: self_uri`). The per-recipient
+    # inline cap is minted at dispatch from the recipient's own URI, so the
+    # "open plugin Behavior set cannot be enumerated" rationale for the wildcard
+    # is moot. Same play as chat-reply / worker-publish / agent-internal.
     # ELIMINATED 2026-06-20, 甲-3: "system://chat-reply" — it held
     # `bootstrap_wildcard()` and was borrowed by the 5 agent/plugin bridge
     # adapters (curl_agent, plugin_codex, plugin_cc, echo, np_agent) to dispatch

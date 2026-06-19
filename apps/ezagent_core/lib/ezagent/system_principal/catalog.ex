@@ -31,14 +31,17 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   §5) closes that gap. Each entry's struct(s) precisely encode the
   Behavior's actual `required_caps/0` shape, so dispatch step 5.5's
   `holds_cap?/2` consults a structurally narrowed cap set instead of
-  a uniform wildcard. The full-wildcard caps are held by the genesis
-  root `system://bootstrap` (the all-caps invariant per Decision #81 +
-  SPEC v3 §4.4) and the open-plugin chat fan-out principal
-  `system://chat-router` (structural — it dispatches `chat.receive`
-  across the OPEN plugin Behavior set, which the Catalog cannot
-  enumerate). All others are narrowed. (`system://chat-reply` was
-  ELIMINATED 2026-06-20, 甲-3 — each agent bridge now presents its OWN
-  inline narrow `session.send` cap; see its removal NOTE below.)
+  a uniform wildcard. The ONLY full-wildcard cap is now held by the
+  genesis root `system://bootstrap` (the all-caps invariant per Decision
+  #81 + SPEC v3 §4.4). All others are narrowed.
+  (`system://chat-router`, the former open-plugin chat fan-out wildcard,
+  was ELIMINATED 2026-06-20, 甲-4 — the receive fan-out now mints a
+  per-recipient inline `:receive` cap from the recipient's own URI, so no
+  central enumeration of the open plugin Behavior set is needed; see its
+  removal NOTE below.)
+  (`system://chat-reply` was ELIMINATED 2026-06-20, 甲-3 — each agent
+  bridge now presents its OWN inline narrow `session.send` cap; see its
+  removal NOTE below.)
   (`system://mix-task` formerly retained a wildcard "operator = admin"
   authority; it was ELIMINATED 2026-06-19 — the operator now routes
   through the real `entity://system/user/admin` entity, see its removal
@@ -161,24 +164,32 @@ defmodule Ezagent.SystemPrincipal.Catalog do
       # Its documented `session.<flavor>.bind` flow is served by
       # `boot-reconciler` (above) + the live adapter wiring; this orphan entry
       # held a `cap(:session, ExternalMirror, :bind)` nothing dispatched under.
-      {principal("chat-router"),
-       [
-         # `cap(:any, Session, :any)` covers Session-registered receivers
-         # (Session, User). But chat fan-out also dispatches
-         # `chat.receive` to Agent Kinds whose BehaviorRegistry routes
-         # `:receive` to a PLUGIN-DEFINED Behavior (e.g. Echo's
-         # `Behavior.Echo` for `entity://agent/<ws>/echo_X`). Each
-         # plugin declares its own `required_caps[:receive]`; the
-         # catalog cannot enumerate them across the open plugin set.
-         # The wildcard cap is therefore STRUCTURAL — chat-router
-         # legitimately needs admin authority for the `:receive` fan-out.
-         # This is the smallest deviation from the bootstrap-wildcard
-         # bridge that preserves the open-plugin chat-router semantic;
-         # the SPEC §5 narrowing applies to single-Behavior principals
-         # (session-internal, orchestrator-tools, …) which have a closed
-         # cap set.
-         bootstrap_wildcard()
-       ]},
+      # System-principal elimination (north star / Decision #154, 甲-4) — the
+      # `system://chat-router` principal is DELETED. It held the
+      # `bootstrap_wildcard()` cap (the last non-genesis wildcard holder),
+      # borrowed by the session delivery fan-out for three dispatches, each
+      # now re-attributed to a real entity that presents its OWN inline narrow
+      # cap (the step-5.5 authorizer `granted_via_ctx_caps?`, never persisted):
+      #   1. `dispatch_receive_call` (delivery.ex) — the `<entity>.receive`
+      #      fan-out now presents the RECIPIENT's own `:receive` cap on its
+      #      OWN instance (`granted_by: recipient_uri`, the member's
+      #      self-consent at join). `behavior: :any` avoids a literal ref to
+      #      the cross-app `Behavior.Agent.Receive` (undeclared-umbrella-dep
+      #      gate); `kind`/`action`/`instance` keep it least-privilege.
+      #   2. `dispatch_cross_session_call` (delivery.ex) — a Decision-#97
+      #      cross-session forward now presents `session.send` on the concrete
+      #      target (`granted_by: source_session`), GUARDED to same-workspace
+      #      forwards only (cross-ws forward has no designed use case).
+      #   3. `sync_result_effect` (agent/receive.ex) — the agent's own
+      #      `:sync_result` self-dispatch presents an inline self-cap
+      #      (`granted_by: self_uri`).
+      # The wildcard was previously called "STRUCTURAL — the catalog cannot
+      # enumerate the open plugin `:receive` Behaviors". That is sidestepped
+      # entirely: the inline cap is minted PER-RECIPIENT at dispatch time from
+      # the recipient's own URI, so no central enumeration is needed and the
+      # ambient admin authority is gone. With the principal removed the
+      # elimination ratchet drops to 4 remaining (+ genesis); only
+      # `system://bootstrap` remains a wildcard holder.
       # System-principal elimination (north star / Decision #154, 甲-3) — the
       # `system://chat-reply` principal is DELETED. It held the
       # `bootstrap_wildcard()` cap, borrowed by the 5 agent/plugin bridge

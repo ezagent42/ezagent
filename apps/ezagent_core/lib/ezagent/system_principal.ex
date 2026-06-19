@@ -4,12 +4,13 @@ defmodule Ezagent.SystemPrincipal do
   replacement for ambient `User.admin_caps/0` authority.
 
   Per SPEC `2026-05-25-caps-cleanup-v1.md` §4. Each system-internal
-  dispatch ledger gets a NAMED principal URI (e.g. `system://chat-router`,
-  `system://lv-anon-mount`) instead of impersonating the bootstrap
-  admin. (The set is shrinking toward genesis-only under the eliminate-
-  system-principals north star — see `capbac.md` §7.) The
+  dispatch ledger gets a NAMED principal URI (e.g.
+  `system://template-materialize`, `system://lv-anon-mount`) instead of
+  impersonating the bootstrap admin. (The set is shrinking toward
+  genesis-only under the eliminate-system-principals north star — see
+  `capbac.md` §7; as of 甲-4 the live set is down to 5 (+ genesis).) The
   `Ezagent.SystemPrincipal.Catalog` declares the closed set
-  of 14 principals + their permitted cap strings.
+  of principals + their permitted cap structs.
 
   ## Two responsibilities
 
@@ -131,13 +132,10 @@ defmodule Ezagent.SystemPrincipal do
   minimum required authority per SPEC `2026-05-25-caps-cleanup-v1-r4-impl.md`
   §5; this function is a pure pass-through.
 
-  Wildcard authority is held by the genesis root + the two open-plugin
-  chat fan-out principals, declared INSIDE the catalog (not as a runtime
-  bridge):
+  Wildcard authority is now held ONLY by the genesis root, declared
+  INSIDE the catalog (not as a runtime bridge):
 
   - `system://bootstrap` — Decision #81 admin invariant.
-  - `system://chat-router` — structural open-plugin `chat.receive`
-    fan-out (the Catalog cannot enumerate the open plugin Behavior set).
 
   (`system://mix-task` — operator-driven, in-VM trust model §10.5 —
   was ELIMINATED 2026-06-19; the operator CLI tasks now route their
@@ -145,7 +143,12 @@ defmodule Ezagent.SystemPrincipal do
   inline per-action admin cap, not this ambient wildcard principal.
   `system://chat-reply` — agent reply fan-out — was ELIMINATED
   2026-06-20, 甲-3; each agent bridge now presents its OWN inline narrow
-  `session.send` cap with `granted_by: <agent_uri>` self-authority.)
+  `session.send` cap with `granted_by: <agent_uri>` self-authority.
+  `system://chat-router` — the structural open-plugin `chat.receive`
+  fan-out, the LAST non-genesis wildcard holder — was ELIMINATED
+  2026-06-20, 甲-4; the fan-out now mints a per-recipient inline
+  `:receive` cap from the recipient's own URI [member self-consent], so
+  the Catalog no longer needs to enumerate the open plugin Behavior set.)
 
   ## History — the pathology-B sweep removed the transitional wildcard
 

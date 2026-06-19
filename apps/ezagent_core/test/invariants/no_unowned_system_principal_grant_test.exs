@@ -120,7 +120,14 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
   # grant_cap (no live grant_cap/revoke_cap caller ran under it — its only live
   # use is sandbox.write_path self-authority; git-grep confirmed 2026-06-16).
   @category_a [
-    "system://chat-router",
+    # ELIMINATED 2026-06-20, 甲-4 (north star): "system://chat-router" — a
+    # NON-minter holding only `bootstrap_wildcard()` (the last non-genesis
+    # wildcard holder), borrowed by the Session delivery fan-out. Re-attributed:
+    # the `<entity>.receive` fan-out mints a per-recipient inline `:receive` cap
+    # (member self-consent); the cross-session forward presents `session.send`
+    # granted_by the source session (same-workspace-guarded); the agent
+    # sync_result presents an inline self-cap. With its last cap re-attributed,
+    # the principal leaves the Catalog.
     # ELIMINATED 2026-06-20, 甲-3 (north star): "system://chat-reply" — a
     # NON-minter holding only `bootstrap_wildcard()`, borrowed by the 5
     # agent/plugin bridge adapters to dispatch `session.send` into the reply

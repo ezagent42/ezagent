@@ -67,20 +67,43 @@ defmodule Ezagent.Behavior.Session.Delivery do
 
   defp to_uri_struct(_), do: nil
 
-  @spec dispatch_cross_session_call(URI.t(), Message.t()) :: term()
-  def dispatch_cross_session_call(target_session_uri, %Message{} = msg) do
-    send_target = Ezagent.URI.with_action(target_session_uri, :session, :send)
+  @spec dispatch_cross_session_call(URI.t(), Message.t(), URI.t()) :: term()
+  def dispatch_cross_session_call(target_session_uri, %Message{} = msg, source_session_uri) do
+    # System-principal elimination (#154 甲-4): the ambient
+    # `system://chat-router` WILDCARD principal is DELETED. A cross-session
+    # forward (Decision-#97 routing) now presents a narrow inline
+    # `session.send` cap on the CONCRETE target session, granted_by the
+    # SOURCE session (a real entity — the forwarding session is the
+    # authorizing party; `granted_by` is provenance-only, the step-5.5
+    # authorizer is `granted_via_ctx_caps?`, never routed through Grant).
+    #
+    # SAME-WORKSPACE GUARD: the only designed cross-session-forward use case
+    # is intra-workspace oncall/escalation routing (cross-workspace forward
+    # has no designed use case — grep-confirmed clean). Forbidding cross-ws
+    # forward is the by-design containment that bounds this minted cap to a
+    # trusted blast radius (keeps Decision-#97 honest, defaults-closed).
+    if same_workspace?(source_session_uri, target_session_uri) do
+      send_target = Ezagent.URI.with_action(target_session_uri, :session, :send)
 
-    Ezagent.Router.dispatch(%Cmd{
-      target: send_target,
-      action: :send,
-      args: %{message: msg},
-      ctx: %{
-        caller: msg.sender,
-        caps: system_caps("chat-router"),
-        reply: :ignore
-      }
-    })
+      Ezagent.Router.dispatch(%Cmd{
+        target: send_target,
+        action: :send,
+        args: %{message: msg},
+        ctx: %{
+          caller: msg.sender,
+          caps: cross_session_send_caps(target_session_uri, source_session_uri),
+          reply: :ignore
+        }
+      })
+    else
+      Logger.warning(
+        "Ezagent.Behavior.Session: refusing cross-WORKSPACE session forward " <>
+          "#{URI.to_string(source_session_uri)} -> #{URI.to_string(target_session_uri)} " <>
+          "(no designed use case; #154 甲-4 same-workspace guard)"
+      )
+
+      {:error, :cross_workspace_forward_forbidden}
+    end
   end
 
   @spec render_for_delivery(Message.t(), map() | nil, map(), URI.t()) :: Message.t()
@@ -137,7 +160,7 @@ defmodule Ezagent.Behavior.Session.Delivery do
         args: %{message: msg},
         ctx: %{
           caller: session_uri,
-          caps: system_caps("chat-router"),
+          caps: member_receive_caps(recipient_uri),
           reply: :ignore
         }
       })
@@ -200,9 +223,77 @@ defmodule Ezagent.Behavior.Session.Delivery do
     end)
   end
 
-  defp system_caps(name) when is_binary(name) do
-    name
-    |> Ezagent.SystemPrincipal.uri()
-    |> Ezagent.SystemPrincipal.caps()
+  # System-principal elimination (#154 甲-4) — the receive fan-out presents
+  # the RECIPIENT's own narrow `<entity>.receive` cap on its OWN instance
+  # instead of borrowing the ambient `system://chat-router` WILDCARD. The
+  # grant traces to the member itself (`granted_by: recipient_uri`) — a real
+  # entity (#154-ok), the self-consent the member gave by joining the
+  # session. Inline = provenance-only, the step-5.5 authorizer
+  # (`granted_via_ctx_caps?`), never routed through Grant.
+  #
+  # `kind`/`behavior: :any`: the needed-cap (kind, behavior) pair for
+  # `:receive` varies across the OPEN plugin set — `(:user,
+  # Behavior.User.Receive)` for a user, `(:agent, Behavior.Agent.Receive)`
+  # for the unified agent, and a per-plugin Kind/Behavior for flavors with
+  # their own Kind (echo/np/…). Enumerating that set is exactly what the
+  # former `system://chat-router` wildcard avoided; `instance` (THIS one
+  # recipient) already uniquely identifies the target entity, so pinning
+  # `action: :receive` + `instance` keeps the cap least-privilege (it
+  # authorizes ONLY a receive into this exact member, nothing else) without
+  # the enumeration — and a literal ref to the cross-app
+  # `Behavior.Agent.Receive` would also trip the `undeclared_umbrella_dep_test`
+  # gate (allowlist `[]`).
+  @spec member_receive_caps(URI.t()) :: MapSet.t()
+  defp member_receive_caps(%URI{} = recipient_uri) do
+    MapSet.new([
+      %Ezagent.Capability{
+        Ezagent.Capability.cap(
+          :any,
+          :any,
+          :receive,
+          Ezagent.URI.instance(recipient_uri),
+          Ezagent.Capability.workspace_of(recipient_uri)
+        )
+        | granted_by: recipient_uri,
+          granted_at: DateTime.utc_now()
+      }
+    ])
+  end
+
+  # System-principal elimination (#154 甲-4) — the cross-session forward
+  # presents a narrow `session.send` cap on the CONCRETE target session,
+  # granted_by the SOURCE session (a real entity; provenance-only). The
+  # behavior axis IS concrete (`Ezagent.Behavior.Session`, the registered
+  # `:send` Behavior in THIS app — same as the merged 甲-3 chat-reply
+  # pattern) so the cap is least-privilege on every axis: only `session.send`
+  # into this exact target session.
+  @spec cross_session_send_caps(URI.t(), URI.t()) :: MapSet.t()
+  defp cross_session_send_caps(%URI{} = target_session_uri, %URI{} = source_session_uri) do
+    MapSet.new([
+      %Ezagent.Capability{
+        Ezagent.Capability.cap(
+          :session,
+          Ezagent.Behavior.Session,
+          :send,
+          Ezagent.URI.instance(target_session_uri),
+          Ezagent.Capability.workspace_of(target_session_uri)
+        )
+        | granted_by: source_session_uri,
+          granted_at: DateTime.utc_now()
+      }
+    ])
+  end
+
+  # The cross-session-forward containment guard: a forward is permitted only
+  # when source and target sessions share a workspace. `workspace_of/1`
+  # normalizes both to their workspace URI; `:any` (unscoped) never matches a
+  # concrete workspace, so an unresolvable workspace fails closed.
+  @spec same_workspace?(URI.t(), URI.t()) :: boolean()
+  defp same_workspace?(%URI{} = source_session_uri, %URI{} = target_session_uri) do
+    src = Ezagent.Capability.workspace_of(source_session_uri)
+    tgt = Ezagent.Capability.workspace_of(target_session_uri)
+
+    match?(%URI{}, src) and match?(%URI{}, tgt) and
+      URI.to_string(src) == URI.to_string(tgt)
   end
 end
