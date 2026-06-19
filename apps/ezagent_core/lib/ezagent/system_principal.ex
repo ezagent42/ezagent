@@ -4,10 +4,11 @@ defmodule Ezagent.SystemPrincipal do
   replacement for ambient `User.admin_caps/0` authority.
 
   Per SPEC `2026-05-25-caps-cleanup-v1.md` §4. Each system-internal
-  dispatch ledger gets a NAMED principal URI (e.g.
-  `system://boot-reconciler`, `system://chat-reply`,
+  dispatch ledger gets a NAMED principal URI (e.g. `system://chat-reply`,
   `system://lv-anon-mount`) instead of impersonating the bootstrap
-  admin. The `Ezagent.SystemPrincipal.Catalog` declares the closed set
+  admin. (The set is shrinking toward genesis-only under the eliminate-
+  system-principals north star — see `capbac.md` §7.) The
+  `Ezagent.SystemPrincipal.Catalog` declares the closed set
   of 14 principals + their permitted cap strings.
 
   ## Two responsibilities

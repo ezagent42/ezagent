@@ -32,7 +32,6 @@ defmodule Ezagent.SystemPrincipalEliminationTest do
   # The principals still awaiting elimination. Each per-class PR REMOVES its entries.
   # Shrink-only: the north star is `@remaining == []`.
   @remaining [
-    "system://boot-reconciler",
     "system://chat-router",
     "system://chat-reply",
     # ELIMINATED: "system://worker-publish" — the ExternalMirrorWorker's two

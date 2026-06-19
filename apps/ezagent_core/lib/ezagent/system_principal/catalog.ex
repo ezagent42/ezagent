@@ -85,7 +85,8 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   # slice in-process via `ctx[:sibling_slices]`, so no system principal
   # dispatches `identity.get_api_key` anymore.
   alias Ezagent.Behavior.Session
-  alias Ezagent.Behavior.ExternalMirror
+  # `alias Ezagent.Behavior.ExternalMirror` removed — its last consumer
+  # (`boot-reconciler`/`adapter-install` ExternalMirror caps) was eliminated.
   # System-principal elimination — `alias Ezagent.Behavior.ExternalMirrorWorker`
   # removed with the `system://worker-publish` entry (its only consumer).
   alias Ezagent.Behavior.Identity
@@ -137,14 +138,12 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   def entries do
     [
       {principal(:bootstrap), [bootstrap_wildcard()]},
-      {principal("boot-reconciler"),
-       [
-         # boot reconciler dispatches against external_mirror Behavior
-         # on Session Kind (bind/unbind/list_bindings) — matches the
-         # original `session.external_mirror.*` glob via the
-         # behavior-wildcard pattern.
-         Capability.cap(:session, ExternalMirror, :any)
-       ]},
+      # System-principal elimination (north star): `boot-reconciler` DELETED — it
+      # was a DEAD principal (zero live consumers; grep found only docstrings +
+      # this entry). The external-mirror boot reconcile is now IN-PROCESS
+      # (`ExternalMirror.reconcile_bindings/2` in `activate/2`, not a dispatch);
+      # the spawned workers publish/subscribe under their OWN self-authority
+      # (#826). Nothing dispatches under this principal.
       # System-principal elimination (north star): `adapter-install` DELETED —
       # it was a DEAD principal (zero live consumers; grep across apps/**/*.ex
       # found no `SystemPrincipal.uri("adapter-install")` / dispatch under it).
