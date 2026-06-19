@@ -241,6 +241,34 @@ defmodule Ezagent.Socialware.AnonTakeoverTest do
       # No AnonBinding.touch — no binding row.
       assert {:error, :no_anon_binding} = AnonTakeover.takeover(anon, confirmed, session)
     end
+
+    test "a session flipped public→private (stale binding) → :not_public_view" do
+      # MED hardening (甲-5 adversarial review): a session can flip public→private
+      # at runtime while a live AnonBinding still points at it. The takeover-time
+      # public_view? re-check must refuse — else the cap-less do_join would land
+      # the confirmed user in a now-private session.
+      session = public_session()
+      {anon, _msg} = seeded_anon(session)
+      confirmed = confirmed_user("takeover-erin-#{System.unique_integer([:positive])}")
+
+      # Repoint the working copy to a NON-public template (the runtime flip).
+      {:ok, private_tmpl} =
+        SessionTemplate.persist_version_as_system(
+          %{name: "takeover-private-#{System.unique_integer([:positive])}", public_view: false},
+          @workspace
+        )
+
+      {:ok, _} =
+        Ezagent.Behavior.Session.ConfigActions.system_set_working_copy(session, %{
+          session_template_uri: private_tmpl
+        })
+
+      assert {:error, :not_public_view} = AnonTakeover.takeover(anon, confirmed, session)
+
+      # State untouched — anon still a member + binding intact.
+      assert Map.has_key?(session_members(session), anon)
+      refute is_nil(AnonBinding.get(anon))
+    end
   end
 
   # ----- helpers -------------------------------------------------------------

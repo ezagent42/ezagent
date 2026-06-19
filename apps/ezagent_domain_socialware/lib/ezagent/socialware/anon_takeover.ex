@@ -6,14 +6,13 @@ defmodule Ezagent.Socialware.AnonTakeover do
   anon is retired. This is the socialware-domain chokepoint that ties together
   the cross-domain pieces a single domain cannot:
 
-    1. **Validate the possession handle.** `AnonBinding.get(anon_uri)` must
-       exist AND its `session_uri` must equal the target session. The
-       `socialware_anon` cookie (a signed token carrying `{anon_name,
-       session_uri}`) is what the frontend holds; the binding row IS the
-       cookie→entity resolution. Possessing the cookie ⇒ being able to name a
-       valid `(anon_uri, session_uri)` pair (the anon name is 128-bit random,
-       unguessable). Failing this is fail-closed (`:no_anon_binding` /
-       `:session_mismatch`).
+    1. **Consistency check (NOT the possession proof).**
+       `AnonBinding.get(anon_uri)` must exist AND its `session_uri` must equal
+       the target session, AND the session must STILL be public-view
+       (`PublicView.public_view?/1` — a session can flip public→private at
+       runtime via `set_working_copy`, so a stale binding must not let a
+       cap-less `do_join` land a confirmed user in a now-private session).
+       Fail-closed (`:no_anon_binding` / `:session_mismatch` / `:not_public_view`).
     2. **Assert the caller is confirmed.** `Users.confirmed?(confirmed_user_uri)`
        — fail-closed otherwise. An anonymous user cannot take over another anon.
     3. **Dispatch the session `:takeover` action** (footprint transfer:
@@ -28,24 +27,42 @@ defmodule Ezagent.Socialware.AnonTakeover do
        reap). STRICTLY after a successful transfer, so a half-transfer never
        leaves the anon orphaned.
 
-  ## The authority model (load-bearing)
+  ## CALLER CONTRACT (HARD REQUIREMENT — the possession proof lives HERE'S CALLER)
 
-  No new `system://` principal and no new cap axis (#154 north star). The three
-  authorizers are all checks against TRUSTED state:
+  **`takeover/3` does NOT prove the caller possesses `anon_uri`.** Anon URIs are
+  observable (anon users appear in session member lists), and BOTH `anon_uri`
+  and `session_uri` are caller-supplied, so step-1's `AnonBinding` lookup is a
+  CONSISTENCY check, never a possession proof. The cryptographic possession
+  proof is the signed `socialware_anon` cookie, verified by
+  `EzagentWeb.Socialware.AnonCookie.verify/2` — which lives in the WEB layer
+  (`ezagent_web`), because verifying it needs the endpoint secret, and
+  `ezagent_domain_socialware` must not depend on `ezagent_web`.
 
-    * the AnonBinding-possession handle (step 1) — the right to retire THIS anon;
-    * the caller being a confirmed user (step 2);
-    * the session `:takeover` action's cap, presented INLINE in the dispatch
-      `ctx.caps` as `cap(:session, Behavior.Session, :takeover, <session>)`
-      `granted_by:` the confirmed member itself (self-claim, provenance-only —
-      the same inline-authorizer pattern the 5 agent reply bridges use; never
-      routed through `Identity.Grant`, never persisted).
+  Therefore the SOLE sanctioned caller is the spec-乙 web controller, which MUST:
+  (a) `AnonCookie.verify/2` the request's anon cookie → derive the TRUSTED
+  `anon_uri` + `session_uri` (NEVER from a request param / the member list),
+  (b) authenticate the confirmed user, (c) call `takeover/3` with those verified
+  values. Calling `takeover/3` with an unverified, caller-chosen `anon_uri` is a
+  hijack vector — the function trusts its caller to have done (a). Until that
+  controller lands (spec 乙), this module has NO production caller and is inert.
+
+  ## The authorization model (#154 — no new principal / cap axis)
+
+  Beyond the caller's cookie verify, the `:takeover` dispatch is authorized by an
+  INLINE `cap(:session, Behavior.Session, :takeover, <session>)` `granted_by:`
+  the confirmed member (self-claim, provenance-only — the same inline-authorizer
+  pattern the agent reply bridges use; never routed through `Identity.Grant`,
+  never persisted). No entity is ever GRANTED a `:takeover` cap, so the action is
+  reachable ONLY by code that mints this inline cap — i.e. this orchestrator —
+  never by an external `/api/v1` caller (whose `ctx.caps` come from authenticated
+  HELD caps, not arbitrary inline caps).
 
   `provision_join_authority/2` is deliberately NOT used: the session is an OWNED
   public-view session, so that owner-rooted policy would deny a non-owner /
-  non-member confirmed user. The takeover's authorizer is cookie possession, not
-  join policy; `do_takeover` calls `do_join` DIRECTLY (a function call, not a
-  re-dispatch of `session.join`), so no `:join` cap is ever consulted.
+  non-member confirmed user. `do_takeover` calls `do_join` DIRECTLY (a function
+  call, not a re-dispatch of `session.join`), so no `:join` cap is consulted —
+  safe because the step-1 `public_view?` re-check confines takeover to
+  open-join public sessions the confirmed user could have joined anyway.
 
   ## Cross-domain seam (Task 1 decision)
 
@@ -61,6 +78,7 @@ defmodule Ezagent.Socialware.AnonTakeover do
 
   alias Ezagent.Behavior.Session.Membership
   alias Ezagent.Socialware.AnonBinding
+  alias Ezagent.Socialware.PublicView
   alias Ezagent.Users
 
   @doc """
@@ -76,6 +94,7 @@ defmodule Ezagent.Socialware.AnonTakeover do
           {:ok, %{members: [URI.t()]}} | {:error, term()}
   def takeover(%URI{} = anon_uri, %URI{} = confirmed_user_uri, %URI{} = session_uri) do
     with :ok <- validate_binding(anon_uri, session_uri),
+         :ok <- validate_public_view(session_uri),
          :ok <- validate_confirmed(confirmed_user_uri),
          {:ok, result} <- dispatch_takeover(anon_uri, confirmed_user_uri, session_uri) do
       # Footprint transfer succeeded — now mount the confirmed tier caller-side
@@ -103,6 +122,14 @@ defmodule Ezagent.Socialware.AnonTakeover do
           {:error, :session_mismatch}
         end
     end
+  end
+
+  # A session can flip public→private at runtime (`set_working_copy` repoints the
+  # working copy). A stale `AnonBinding` must NOT let the cap-less `do_join` land
+  # a confirmed user in a now-private session — re-check public-view at takeover
+  # time, not just at anon-mint time.
+  defp validate_public_view(%URI{} = session_uri) do
+    if PublicView.public_view?(session_uri), do: :ok, else: {:error, :not_public_view}
   end
 
   defp validate_confirmed(%URI{} = confirmed_user_uri) do

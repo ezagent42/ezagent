@@ -196,7 +196,22 @@ defmodule Ezagent.Behavior.Session.Membership do
     new_last_seen = Map.delete(last_seen_after_join, anon_uri)
 
     # Footprint transfer — in-Kind, touches only read_markers (no deadlock).
-    _ = Ezagent.Session.ReadMarker.repoint(session_uri, anon_uri, member_uri)
+    # Best-effort: membership transfer is the critical step (a failed marker
+    # re-key must not block login), but a silent drop would orphan the anon's
+    # read state, so LOG on error instead of discarding.
+    case Ezagent.Session.ReadMarker.repoint(session_uri, anon_uri, member_uri) do
+      {:ok, _moved} ->
+        :ok
+
+      {:error, reason} ->
+        require Logger
+
+        Logger.warning(
+          "Membership.do_takeover: ReadMarker.repoint failed for " <>
+            "#{URI.to_string(anon_uri)} -> #{URI.to_string(member_uri)} in " <>
+            "#{URI.to_string(session_uri)}: #{inspect(reason)} (read markers not transferred)"
+        )
+    end
 
     # Carry over any join effects that AREN'T the three membership keys we
     # rewrote (e.g. owner_uri, the join's member_joined broadcast), then emit our
