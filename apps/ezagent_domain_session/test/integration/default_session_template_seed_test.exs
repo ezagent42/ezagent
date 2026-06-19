@@ -57,7 +57,10 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
   test "seed_default_session_template_now/1 seeds `default` in the requested workspace" do
     workspace_uri = Ezagent.URI.new!("workspace://team-alpha")
 
-    assert :ok = EzagentDomainInstanceMessage.Application.seed_default_session_template_now(workspace_uri)
+    assert :ok =
+             EzagentDomainInstanceMessage.Application.seed_default_session_template_now(
+               workspace_uri
+             )
 
     snapshots = KindSnapshot.list_in_workspace("workspace://team-alpha")
 
@@ -193,6 +196,108 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
     # The carve-out only applies in :test — guard that we ARE in test env
     # (otherwise this assertion is meaningless).
     assert Mix.env() == :test
+  end
+
+  # ── Task #58 — default SessionTemplate ⇄ cc decoupling ──────────────
+  #
+  # The orchestrator AgentTemplate URI the default template is seeded with
+  # is now a deployment seam read from
+  # `:ezagent_domain_session, :default_orchestrator_template_uri`. The
+  # tests above prove the cc-INCLUSIVE side (key set in config/config.exs →
+  # the default is orchestrator-bearing, pointing at cc-orchestrator). The
+  # tests below force the cc-LESS (`im-without-cc`) side: blank the key so
+  # the default seeds PLAIN, and assert `create_session("default")`
+  # succeeds as a plain session — the edge that previously broke with
+  # `{:orchestrator_ensure_failed, {:unknown_flavor, "cc"}}` when the cc
+  # plugin (and so the `"cc"` flavor + cc-orchestrator AgentTemplate) is
+  # absent.
+  #
+  # We force the condition explicitly (set config → nil) rather than rely
+  # on ambient state: the monorepo test build always loads cc, so a test
+  # depending on ambient composition would pass trivially and prove
+  # nothing.
+  describe "Task #58 — cc-less (im-without-cc) deployment" do
+    setup do
+      prior = Application.get_env(:ezagent_domain_session, :default_orchestrator_template_uri)
+      # cc-LESS deployment omits the seam → nil.
+      Application.delete_env(:ezagent_domain_session, :default_orchestrator_template_uri)
+
+      on_exit(fn ->
+        case prior do
+          nil ->
+            Application.delete_env(:ezagent_domain_session, :default_orchestrator_template_uri)
+
+          _ ->
+            Application.put_env(
+              :ezagent_domain_session,
+              :default_orchestrator_template_uri,
+              prior
+            )
+        end
+      end)
+
+      :ok
+    end
+
+    test "the default template seeds PLAIN (nil orchestrator) when the seam is unset" do
+      workspace_name = "ccless-ws-#{System.unique_integer([:positive])}"
+      workspace_uri = Ezagent.URI.new!("workspace://#{workspace_name}")
+
+      assert :ok =
+               EzagentDomainInstanceMessage.Application.seed_default_session_template_now(
+                 workspace_uri
+               )
+
+      snapshot =
+        KindSnapshot.list_in_workspace(URI.to_string(workspace_uri))
+        |> Enum.find(fn snap ->
+          is_binary(snap.uri) and
+            String.starts_with?(snap.uri, default_template_uri_prefix(workspace_name))
+        end)
+
+      assert snapshot != nil, "expected a default template seeded for #{workspace_name}"
+
+      {:ok, state} = KindSnapshot.decode_state(snapshot)
+      template_slice = Map.get(state, :template) || Map.get(state, "template") || %{}
+
+      template_persistent =
+        Map.get(template_slice, :state) || Map.get(template_slice, "state") || template_slice
+
+      content =
+        Map.get(template_persistent, :content) || Map.get(template_persistent, "content") || %{}
+
+      orchestrator_uri =
+        Map.get(content, :orchestrator_template_uri) ||
+          Map.get(content, "orchestrator_template_uri")
+
+      assert orchestrator_uri in [nil, ""],
+             "expected the cc-less default template to carry a nil " <>
+               "orchestrator_template_uri; got #{inspect(orchestrator_uri)}"
+    end
+
+    test "create_session(default) succeeds as a PLAIN session without cc" do
+      workspace_name = "ccless-create-#{System.unique_integer([:positive])}"
+      workspace_uri = Ezagent.URI.new!("workspace://#{workspace_name}")
+      short = "from-default-#{System.unique_integer([:positive])}"
+
+      {:ok, _pid} = Ezagent.Workspace.create(workspace_name, %{})
+
+      assert {:ok, session_uri, meta} =
+               EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(),
+                 workspace_uri: workspace_uri,
+                 template_name: "default"
+               )
+
+      assert URI.to_string(session_uri) == "session://#{workspace_name}/default/#{short}"
+
+      # The 2-state contract's "no orchestrator role" signal — NOT an
+      # error; the session is valid + usable (SessionCreator.plain_session_meta).
+      assert %{
+               orchestrator_uri: nil,
+               orchestrator_status: :failed,
+               orchestrator_error: :no_orchestrator
+             } = meta
+    end
   end
 
   defp default_template_uri_prefix(workspace_name),

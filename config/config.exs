@@ -13,6 +13,24 @@ import Config
 config :ezagent_core,
   ecto_repos: [EzagentCore.Repo]
 
+# Task #58 — default SessionTemplate ⇄ cc-orchestrator decoupling.
+#
+# The `default` SessionTemplate's `orchestrator_template_uri` is a
+# DEPLOYMENT SEAM (read by
+# `EzagentDomainInstanceMessage.Application.do_seed_default_session_template/1`),
+# not a value the session domain hardcodes. This is the cc-INCLUSIVE
+# build (the standard umbrella release ships the cc plugin), so the
+# default template is orchestrator-bearing exactly as before —
+# `create_session(template_name: "default")` brings up the
+# cc-orchestrator (wizard / Feishu / `mix create_session`).
+#
+# A cc-LESS deployment (`im-without-cc`) OMITS or blanks this key (→
+# `nil`), making the default a PLAIN session template so
+# `create_session("default")` succeeds without the `"cc"` flavor /
+# cc-orchestrator AgentTemplate (which a cc-less build never seeds).
+config :ezagent_domain_session,
+  default_orchestrator_template_uri: "template://system/agent/cc-orchestrator"
+
 config :ezagent_web,
   ecto_repos: [EzagentCore.Repo],
   generators: [context_app: :ezagent_core]

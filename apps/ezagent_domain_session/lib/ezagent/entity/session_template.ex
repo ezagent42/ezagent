@@ -49,7 +49,11 @@ defmodule Ezagent.Entity.SessionTemplate do
         prompt_templates:           %{optional(String.t()) => String.t()},
         # `legends` — the §3.6 legend defs: name => %{member_set, bound_rule_set, fold}.
         legends:                    %{optional(String.t()) => map()},
-        orchestrator_template_uri:  URI.t(),
+        # `nil` for a PLAIN (orchestrator-less) template — the create flow
+        # in `SessionCreator` takes its no-orchestrator arm. Task #58 made
+        # the default template's value a deployment seam, so a cc-less build
+        # seeds the default with `nil` here.
+        orchestrator_template_uri:  URI.t() | nil,
         # rule-set routing rules (§3.3): each
         #   `%{matcher, receivers, rule_set, position, prompt_template_ref}`.
         routing_rules:              [map()],

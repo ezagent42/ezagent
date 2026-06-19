@@ -546,11 +546,13 @@ defmodule EzagentDomainInstanceMessage.Application do
 
   defp do_seed_default_session_template(%URI{scheme: "workspace"} = workspace_uri) do
     workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
-    # PR-8 (transport #53) — `Ezagent.Orchestrator.CcOrchestratorSeed.template_uri/0`
-    # relocated into the cc plugin with the rest of the orchestrator-MCP
-    # subsystem. This app no longer names that module; inline the SAME URI it
-    # returned (`template://agent/system/cc-orchestrator`). Behavior-identical.
-    orchestrator_uri = Ezagent.URI.template(:system, :agent, "cc-orchestrator")
+    # Task #58 — orchestrator URI is a config SEAM, decoupled from cc (see config.exs).
+    orchestrator_uri =
+      case Application.get_env(:ezagent_domain_session, :default_orchestrator_template_uri) do
+        %URI{} = uri -> uri
+        s when is_binary(s) and s != "" -> Ezagent.URI.new!(s)
+        _ -> nil
+      end
 
     content = %{
       name: "default",
