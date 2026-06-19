@@ -78,13 +78,19 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
       # (2026-06-19, DEAD caller — orchestrator runs as itself) → 7 principals
       # (shrinking toward genesis-only; see system_principal_elimination_test.exs).
       # 2026-06-20, 甲-3: chat-reply ELIMINATED → 6 principals.
-      assert length(uris) == 6,
-             "expected 6 system principals; Catalog has #{length(uris)}: " <>
+      # 2026-06-20, 甲-4: chat-router ELIMINATED → 5 principals.
+      assert length(uris) == 5,
+             "expected 5 system principals; Catalog has #{length(uris)}: " <>
                inspect(uris)
 
       expected = [
         "system://bootstrap",
-        "system://chat-router",
+        # (chat-router ELIMINATED 2026-06-20, 甲-4 — north star; the last
+        #  non-genesis wildcard holder. The Session delivery fan-out now mints a
+        #  per-recipient inline `:receive` cap (member self-consent), the
+        #  cross-session forward presents `session.send` granted_by the source
+        #  session (same-workspace-guarded), and the agent sync_result presents
+        #  an inline self-cap — none borrow this ambient wildcard.)
         # (chat-reply ELIMINATED 2026-06-20, 甲-3 — north star; the 5 agent/plugin
         #  bridge adapters now present their OWN inline narrow `session.send` cap
         #  on the concrete reply session instead of borrowing this ambient
@@ -149,9 +155,9 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
     end
 
     test "caps/1 returns narrowed struct caps for narrow-catalog principals" do
-      # Pathology-B follow-up to PR-CC-2-v2: chat-router is in the
-      # wildcard-exempt allowlist now (open-plugin fan-out structural;
-      # chat-reply ELIMINATED 2026-06-20, 甲-3 — see catalog.ex moduledoc +
+      # Pathology-B follow-up to PR-CC-2-v2: after 甲-3 (chat-reply) and 甲-4
+      # (chat-router) eliminations, `system://bootstrap` is the ONLY
+      # wildcard-exempt principal (see catalog.ex moduledoc +
       # no_wildcard_system_principals_test.exs). Pick
       # `system://session-internal` for the narrow-catalog assertion —
       # a single-Behavior principal that legitimately should NOT hold
@@ -179,9 +185,11 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
     end
 
     test "uri/1 returns a parsed URI for a registered service" do
-      uri = Ezagent.SystemPrincipal.uri("chat-router")
+      # (was "chat-router" — ELIMINATED 2026-06-20, 甲-4; pick any still-cataloged
+      #  service so this asserts the success path, not the raise path below.)
+      uri = Ezagent.SystemPrincipal.uri("template-materialize")
       assert %URI{scheme: "system"} = uri
-      assert URI.to_string(uri) == "system://chat-router"
+      assert URI.to_string(uri) == "system://template-materialize"
     end
 
     test "uri/1 raises on uncataloged service name" do

@@ -312,12 +312,20 @@ defmodule Ezagent.Behavior.CurlAgent do
             # self_uri` is a real entity (#154-ok); inline = provenance-only,
             # the step-5.5 authorizer (`granted_via_ctx_caps?`), never routed
             # through `Ezagent.Identity.Grant`.
+            #
+            # `behavior: :any` (NOT a literal `Ezagent.Behavior.Session`): this
+            # module lives in the AGENT domain, and a literal session-Behavior
+            # reference would violate the im → session → agent acyclic gate
+            # (`im_session_agent_acyclic_test`). The needed `:send` behavior is
+            # the concrete `Behavior.Session`; `:any` field-matches it while
+            # `kind` (`:session`), `action` (`:send`) and `instance` (THIS
+            # session) keep the cap least-privilege.
             caps:
               MapSet.new([
                 %Ezagent.Capability{
                   Ezagent.Capability.cap(
                     :session,
-                    Ezagent.Behavior.Session,
+                    :any,
                     :send,
                     Ezagent.URI.instance(session),
                     Ezagent.Capability.workspace_of(session)

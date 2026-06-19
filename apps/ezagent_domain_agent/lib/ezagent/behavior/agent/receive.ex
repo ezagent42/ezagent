@@ -259,10 +259,19 @@ defmodule Ezagent.Behavior.Agent.Receive do
   def data_owner(_), do: :no_owner
 
   # Build the `{:dispatch, %Cmd{}}` that hands the `:in_process_sync`
-  # delivery result to the agent's own `:sync_result` action. Runs under
-  # the `system://chat-router` principal (same as the `:receive` dispatch
-  # the result came from) so the in-process re-dispatch carries no ambient
-  # authority.
+  # delivery result to the agent's own `:sync_result` action.
+  #
+  # System-principal elimination (#154 甲-4) — the ambient
+  # `system://chat-router` WILDCARD principal is DELETED. This is a pure
+  # SELF-dispatch (the agent persists its OWN sync_result on its OWN
+  # instance), so the agent presents its OWN narrow `:sync_result` self-cap
+  # (`granted_by: self_uri`, a real entity — genuine self-authority;
+  # provenance-only, the step-5.5 authorizer `granted_via_ctx_caps?`, never
+  # routed through Grant). `kind`/`behavior` are `:any` because each agent
+  # FLAVOR (cc/codex/echo/np/curl) declares its own `required_caps[:sync_result]`
+  # behavior module — `:any` field-matches them all while `action`
+  # (`:sync_result`) + `instance` (the agent's OWN URI) keep it
+  # least-privilege: it authorizes only this agent's own sync_result.
   defp sync_result_effect(%Message{} = msg, ctx, sync_result) do
     self_uri = ctx[:self_uri]
     source_session = ctx[:caller]
@@ -277,7 +286,20 @@ defmodule Ezagent.Behavior.Agent.Receive do
         %{result: sync_result, source_session: source_session, user_text: user_text},
         %{
           caller: source_session,
-          caps: "chat-router" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
+          caps:
+            MapSet.new([
+              %Ezagent.Capability{
+                Ezagent.Capability.cap(
+                  :any,
+                  :any,
+                  :sync_result,
+                  Ezagent.URI.instance(self_uri),
+                  Ezagent.Capability.workspace_of(self_uri)
+                )
+                | granted_by: self_uri,
+                  granted_at: DateTime.utc_now()
+              }
+            ]),
           reply: :ignore
         }
       )

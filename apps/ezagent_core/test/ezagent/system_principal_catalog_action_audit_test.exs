@@ -36,7 +36,14 @@ defmodule Ezagent.SystemPrincipalCatalogActionAuditTest do
   # here.
   @wildcard_allowlist MapSet.new([
                         "system://bootstrap",
-                        "system://chat-router",
+                        # ELIMINATED 2026-06-20, 甲-4 (#154 north star):
+                        # `system://chat-router` DELETED (it held bootstrap_wildcard
+                        # → action: :any; the last non-genesis wildcard holder) — the
+                        # Session delivery fan-out now mints a per-recipient inline
+                        # `:receive` cap (member self-consent) + presents a
+                        # same-workspace-guarded `session.send` for cross-session
+                        # forwards + an inline self-cap for the agent sync_result,
+                        # instead of borrowing this wildcard.
                         # ELIMINATED 2026-06-20, 甲-3 (#154 north star):
                         # `system://chat-reply` DELETED (it held bootstrap_wildcard
                         # → action: :any) — the 5 agent/plugin bridges now present
