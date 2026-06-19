@@ -43,12 +43,13 @@ defmodule EzagentPluginLiveview.Admin.Invite do
 
   defp dispatch_invite(socket, session_uri, workspace_uri, trimmed) do
     target = Ezagent.URI.with_action(session_uri, :session, :join)
+    member_uri = Ezagent.URI.new!(trimmed)
 
     result =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
         target: target,
         mode: :call,
-        args: %{member: Ezagent.URI.new!(trimmed)},
+        args: %{member: member_uri},
         ctx: %{
           caller: socket.assigns.caller_uri,
           caps: socket.assigns.caller_caps,
@@ -56,7 +57,29 @@ defmodule EzagentPluginLiveview.Admin.Invite do
         }
       })
 
+    # #154 PR-甲-2 §A — mount the per-class participation tier on the INVITED
+    # member after a successful owner-authorized join (caller-side, best-effort,
+    # no-op for agents). The inviter's OWN `:join` authority comes from their
+    # self-join on this LV (`SessionContext.maybe_self_join`, owner-rooted §B),
+    # which runs on `/sessions` mount before any invite click — so this invite
+    # dispatch authorizes via the live slice read; no provisioning needed here.
+    case result do
+      :ok -> mount_invited_member(session_uri, member_uri)
+      {:ok, _} -> mount_invited_member(session_uri, member_uri)
+      _ -> :ok
+    end
+
     invite_result(socket, session_uri, workspace_uri, result)
+  end
+
+  defp mount_invited_member(%URI{} = session_uri, %URI{} = member_uri) do
+    _ =
+      Ezagent.Behavior.Session.Membership.mount_participation_caps(
+        session_uri,
+        member_uri
+      )
+
+    :ok
   end
 
   defp invite_result(socket, session_uri, _workspace_uri, :ok),

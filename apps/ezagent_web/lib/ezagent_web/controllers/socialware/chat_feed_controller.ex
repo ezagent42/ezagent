@@ -179,10 +179,26 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
       })
 
     case result do
-      :ok -> :ok
-      {:ok, _} -> :ok
+      :ok -> mount_anon_participation(session_uri, anon_uri)
+      {:ok, _} -> mount_anon_participation(session_uri, anon_uri)
       {:error, _} = err -> err
     end
+  end
+
+  # #154 PR-甲-2 §A — mount the per-class participation tier on the anon AFTER a
+  # successful join (caller-side; the helper resolves `Users.confirmed?` from the
+  # DB and grants the UNCONFIRMED tier — `Publisher.SessionImpl.:subscribe_from`,
+  # read-only, no `:send`). Best-effort: a failed mount degrades the anon to
+  # "observe via membership", it does not break the page. Returns `:ok` so the
+  # `with` chain in `mint_fresh/2` continues to cookie + render.
+  defp mount_anon_participation(%URI{} = session_uri, %URI{} = anon_uri) do
+    _ =
+      Ezagent.Behavior.Session.Membership.mount_participation_caps(
+        session_uri,
+        anon_uri
+      )
+
+    :ok
   end
 
   # --- the SPA shell -----------------------------------------------------
