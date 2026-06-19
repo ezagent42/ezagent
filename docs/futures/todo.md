@@ -14,6 +14,18 @@
 
 ## Active follow-ups (post-2026-05-24 batch)
 
+### Frontend islands architecture (spec 乙) — IMPLEMENT after spec 甲 lands (Allen 2026-06-19)
+
+> **OPEN — deferred until spec 甲 (membership-mount) is complete** (Allen 2026-06-19:
+> "LV 岛化 dispatch subagent 去写[spec],并将实施加入计划列表,等完成当前任务后再进行").
+> Spec: `docs/superpowers/specs/2026-06-19-frontend-islands-architecture-design.md` (#839).
+> LV = front-of-backend shell + dispatch; React/`@json-render/*` islands = front-of-frontend
+> via `phx-hook` → `Invocation.dispatch` (NOT `/api/v1` — keeps `lv_cli_parity`, no auth bridge).
+> Phased: Phase 0 = swap the customer-surface renderer to `@json-render/*`; Phase 1 = de-risk
+> spike of ONE mutating admin surface (routing add-rule / cap grant) as a json-render island
+> beside the existing LV → decision gate before broader admin migration. Non-goals: SSR, runtime
+> Node tier, big-bang LV rewrite. The anon-login UX consumes spec 甲's takeover mechanism (PR-甲-5).
+
 ### Autoservice / SW-UPD: customer-serving agent update mechanism — verify doc + tests (Allen 2026-06-09)
 
 > **OPEN.** In the prior `autoservice` work, how does one **update the agent that
