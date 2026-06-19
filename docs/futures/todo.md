@@ -14,6 +14,34 @@
 
 ## Active follow-ups (post-2026-05-24 batch)
 
+### `session_creator.ex` oversized + def-count refactor — OPEN (MED, two arch.scan reds on main)
+
+> **OPEN, surfaced 2026-06-20 (甲-4 #849).** Two `mix ezagent.arch.scan` counters are
+> RED on clean `main` (pre-existing, NOT from 甲-4 — identical on the parent commit):
+> `oversized_modules_gt_1000` = **3** (cap 2) and `def_count_session_creator` = **35**
+> (cap 30). Both root in `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator.ex`
+> (**1071 lines / 35 defs**). The 3 oversized modules: `session_creator.ex` 1071,
+> `ezagent_domain_pty/.../server.ex` 1027, `ezagent_core/.../kind.ex` 1013.
+> **Why deferred:** SessionCreator is a critical create/rollback path → deserves a
+> focused refactor PR + review, NOT mixed into a security PR. Fix = extract a helper
+> module (e.g. the orchestrator-ensure / rollback steps) to drop session_creator
+> under 1000 lines + ≤30 defs, then ratchet both caps down. **Caveat learned:** prior
+> elimination PRs' "full gate" claims missed `arch.scan` (+ `im_session_agent_acyclic_test`,
+> which 甲-3 broke and 甲-4 fixed) — the program's green claims need a one-time re-audit;
+> run ALL gates (`arch.scan` + `check_invariants` + `doc.scan` + the invariant test dirs)
+> going forward, per [[feedback_run_check_invariants_gate]].
+
+### Routing explicit-URI receiver bypasses `valid_member?` — OPEN (LOW, pre-existing, audit)
+
+> **OPEN, carried from 甲-4 adversarial review (2026-06-20).** `Routing.Resolver.expand_receiver/5`
+> for an explicit-URI rule receiver (`resolver.ex:337`) does NOT pass through `valid_member?/2`,
+> so a routing rule naming an explicit URI can fan a `:receive` to any URI. NOT weakened by 甲-4
+> (before: chat-router wildcard authorized it; after: a per-recipient cap minted from that same URI
+> authorizes the identical delivery) and operator-gated (requires authority to write the rule),
+> structurally analogous to the `$session_members` "operator consciously asks for fan-out" token.
+> Overlaps the 甲-3 reply-target-validation audit. Decide whether explicit-URI receivers should be
+> membership-constrained or remain an intentional operator escape hatch.
+
 ### Frontend islands architecture (spec 乙) — IMPLEMENT after spec 甲 lands (Allen 2026-06-19)
 
 > **OPEN — deferred until spec 甲 (membership-mount) is complete** (Allen 2026-06-19:
