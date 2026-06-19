@@ -159,6 +159,93 @@ defmodule Ezagent.Session.ReadMarkerTest do
     end
   end
 
+  describe "repoint/3 — re-key user_uri (anon→confirmed footprint transfer)" do
+    test "plain re-point (to_user has NO existing markers) moves all rows + returns count" do
+      session = unique_session_uri("repoint_plain")
+      from_user = unique_user_uri("repoint_plain_from")
+      to_user = unique_user_uri("repoint_plain_to")
+
+      m1 = insert_message(session, from_user, inserted_at: ~U[2026-01-01 12:00:00.000000Z])
+      m2 = insert_message(session, from_user, inserted_at: ~U[2026-01-01 12:00:01.000000Z])
+
+      assert {:ok, :updated} = ReadMarker.mark(session, from_user, m1, :delivered)
+      assert {:ok, :updated} = ReadMarker.mark(session, from_user, m2, :read)
+
+      assert {:ok, 2} = ReadMarker.repoint(session, from_user, to_user)
+
+      # from_user has no rows left; to_user now owns both markers unchanged.
+      assert ReadMarker.last_read(session, from_user, :delivered) == nil
+      assert ReadMarker.last_read(session, from_user, :read) == nil
+      assert ReadMarker.last_read(session, to_user, :delivered) == m1
+      assert ReadMarker.last_read(session, to_user, :read) == m2
+    end
+
+    test "collision (to_user already has a :read marker) keeps the MORE-ADVANCED one, no crash" do
+      session = unique_session_uri("repoint_collide")
+      from_user = unique_user_uri("repoint_collide_from")
+      to_user = unique_user_uri("repoint_collide_to")
+
+      old_msg = insert_message(session, from_user, inserted_at: ~U[2026-01-01 12:00:00.000000Z])
+      new_msg = insert_message(session, from_user, inserted_at: ~U[2026-01-01 13:00:00.000000Z])
+
+      # to_user is AHEAD on :read (new_msg); from_user is behind on :read (old_msg).
+      assert {:ok, :updated} = ReadMarker.mark(session, to_user, new_msg, :read)
+      assert {:ok, :updated} = ReadMarker.mark(session, from_user, old_msg, :read)
+
+      # No duplicate-key crash; the more-advanced (to_user's new_msg) survives.
+      assert {:ok, count} = ReadMarker.repoint(session, from_user, to_user)
+      assert is_integer(count)
+
+      assert ReadMarker.last_read(session, to_user, :read) == new_msg
+      assert ReadMarker.last_read(session, from_user, :read) == nil
+    end
+
+    test "collision where FROM_USER is more advanced → to_user inherits the from_user marker" do
+      session = unique_session_uri("repoint_collide2")
+      from_user = unique_user_uri("repoint_collide2_from")
+      to_user = unique_user_uri("repoint_collide2_to")
+
+      old_msg = insert_message(session, from_user, inserted_at: ~U[2026-01-01 12:00:00.000000Z])
+      new_msg = insert_message(session, from_user, inserted_at: ~U[2026-01-01 13:00:00.000000Z])
+
+      # to_user behind on :read (old_msg); from_user ahead on :read (new_msg).
+      assert {:ok, :updated} = ReadMarker.mark(session, to_user, old_msg, :read)
+      assert {:ok, :updated} = ReadMarker.mark(session, from_user, new_msg, :read)
+
+      assert {:ok, _count} = ReadMarker.repoint(session, from_user, to_user)
+
+      assert ReadMarker.last_read(session, to_user, :read) == new_msg
+      assert ReadMarker.last_read(session, from_user, :read) == nil
+    end
+
+    test "no-op when from_user has no rows → {:ok, 0}" do
+      session = unique_session_uri("repoint_noop")
+      from_user = unique_user_uri("repoint_noop_from")
+      to_user = unique_user_uri("repoint_noop_to")
+
+      assert {:ok, 0} = ReadMarker.repoint(session, from_user, to_user)
+    end
+
+    test "only re-keys rows for the GIVEN session, leaving other sessions untouched" do
+      session_a = unique_session_uri("repoint_scoped_a")
+      session_b = unique_session_uri("repoint_scoped_b")
+      from_user = unique_user_uri("repoint_scoped_from")
+      to_user = unique_user_uri("repoint_scoped_to")
+
+      ma = insert_message(session_a, from_user)
+      mb = insert_message(session_b, from_user)
+      assert {:ok, :updated} = ReadMarker.mark(session_a, from_user, ma, :read)
+      assert {:ok, :updated} = ReadMarker.mark(session_b, from_user, mb, :read)
+
+      assert {:ok, 1} = ReadMarker.repoint(session_a, from_user, to_user)
+
+      # session_a moved; session_b for from_user is untouched.
+      assert ReadMarker.last_read(session_a, to_user, :read) == ma
+      assert ReadMarker.last_read(session_b, from_user, :read) == mb
+      assert ReadMarker.last_read(session_b, to_user, :read) == nil
+    end
+  end
+
   describe "list_for/2 + PubSub broadcast" do
     test "list_for returns all sources keyed by atom" do
       session = unique_session_uri("list_for")

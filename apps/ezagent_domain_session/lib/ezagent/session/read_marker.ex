@@ -164,6 +164,124 @@ defmodule Ezagent.Session.ReadMarker do
     )
   end
 
+  @doc """
+  Re-key every read marker for `session_uri` from `from_user` to `to_user` —
+  the footprint-transfer primitive for anon→login takeover (甲-5).
+
+  Rewrites `user_uri` on each of `from_user`'s rows in this session to
+  `to_user`. Returns `{:ok, count_moved}` (`{:ok, 0}` when `from_user` has no
+  rows for the session).
+
+  ## Collision rule
+
+  The unique index is `(workspace_uri, session_uri, user_uri, source)`. If
+  `to_user` ALREADY has a row for a given `source`, re-keying `from_user`'s row
+  to `to_user` would violate the index. Per source we therefore KEEP the
+  more-advanced marker (the one whose `last_read_message_uri` is later by the
+  canonical message ordering `mark/4` uses) and DROP the loser, so the transfer
+  never regresses read state and never collides:
+
+    * `to_user` is already ahead (or equal) → drop `from_user`'s row, keep
+      `to_user`'s.
+    * `from_user` is ahead → delete `to_user`'s stale row, then re-key
+      `from_user`'s row to `to_user`.
+
+  A `source` only `from_user` has is plainly re-keyed. The count returned is the
+  number of `from_user` rows that ended up re-keyed (collisions where `to_user`
+  won do NOT count — that row was dropped, not moved).
+
+  Runs in a transaction so the per-source delete/re-key pairs are atomic.
+  """
+  @spec repoint(URI.t() | String.t(), URI.t() | String.t(), URI.t() | String.t()) ::
+          {:ok, non_neg_integer()} | {:error, term()}
+  def repoint(session_uri, from_user, to_user) do
+    session_str = to_str(session_uri)
+    from_str = to_str(from_user)
+    to_str_uri = to_str(to_user)
+
+    from_rows = rows_for(session_str, from_str)
+
+    if from_rows == [] do
+      {:ok, 0}
+    else
+      do_repoint(session_str, from_str, to_str_uri, from_rows)
+    end
+  end
+
+  defp do_repoint(session_str, from_str, to_str_uri, from_rows) do
+    to_by_source =
+      session_str
+      |> rows_for(to_str_uri)
+      |> Enum.into(%{}, fn r -> {r.source, r} end)
+
+    txn =
+      Repo.transaction(fn ->
+        Enum.reduce(from_rows, 0, fn from_row, moved ->
+          case Map.get(to_by_source, from_row.source) do
+            nil ->
+              # No collision — plain re-key.
+              rekey_row(session_str, from_str, to_str_uri, from_row.source)
+              moved + 1
+
+            to_row ->
+              resolve_collision(session_str, from_str, to_str_uri, from_row, to_row, moved)
+          end
+        end)
+      end)
+
+    case txn do
+      {:ok, moved} -> {:ok, moved}
+      {:error, _} = err -> err
+    end
+  end
+
+  # `from_user` strictly more advanced → delete the stale `to_user` row, re-key
+  # `from_user`'s row up. Otherwise (`to_user` ahead/equal) → drop `from_user`'s
+  # loser row, keep `to_user`'s.
+  defp resolve_collision(session_str, from_str, to_str_uri, from_row, to_row, moved) do
+    if message_newer?(from_row.last_read_message_uri, to_row.last_read_message_uri) do
+      delete_row(session_str, to_str_uri, from_row.source)
+      rekey_row(session_str, from_str, to_str_uri, from_row.source)
+      moved + 1
+    else
+      delete_row(session_str, from_str, from_row.source)
+      moved
+    end
+  end
+
+  defp rows_for(session_str, user_str) do
+    Repo.all(
+      from(m in __MODULE__,
+        where: m.session_uri == ^session_str and m.user_uri == ^user_str
+      )
+    )
+  end
+
+  defp rekey_row(session_str, from_str, to_str_uri, src_str) do
+    now = DateTime.utc_now()
+
+    Repo.update_all(
+      from(m in __MODULE__,
+        where:
+          m.session_uri == ^session_str and
+            m.user_uri == ^from_str and
+            m.source == ^src_str
+      ),
+      set: [user_uri: to_str_uri, updated_at: now]
+    )
+  end
+
+  defp delete_row(session_str, user_str, src_str) do
+    Repo.delete_all(
+      from(m in __MODULE__,
+        where:
+          m.session_uri == ^session_str and
+            m.user_uri == ^user_str and
+            m.source == ^src_str
+      )
+    )
+  end
+
   # ----- Read side -----------------------------------------------------------
 
   @doc """
