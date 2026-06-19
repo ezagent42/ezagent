@@ -283,22 +283,31 @@ defmodule Ezagent.Behavior.Session.Membership do
   logged + telemetry'd, never raised — a missing participation cap degrades to
   "observe", it does not break the join.
   """
-  @spec mount_participation_caps(URI.t(), URI.t(), URI.t() | nil) :: :ok
-  def mount_participation_caps(%URI{} = session_uri, %URI{} = member_uri, owner_uri) do
-    cond do
-      not user_uri?(member_uri) ->
-        :ok
-
-      true ->
-        do_mount_participation_caps(session_uri, member_uri, owner_uri)
+  @spec mount_participation_caps(URI.t(), URI.t()) :: :ok
+  def mount_participation_caps(%URI{} = session_uri, %URI{} = member_uri) do
+    if user_uri?(member_uri) do
+      do_mount_participation_caps(session_uri, member_uri)
+    else
+      :ok
     end
   end
 
-  def mount_participation_caps(_, _, _), do: :ok
+  def mount_participation_caps(_, _), do: :ok
 
-  defp do_mount_participation_caps(%URI{} = session_uri, %URI{} = member_uri, owner_uri) do
+  # The session OWNER is the participation granter (the #154 owner-rooted rule);
+  # an ownerless session falls back to the admin entity (the named extreme-case
+  # granter, same as `anon_user.public_view_granter/1`). Resolved HERE (caller
+  # process, cross-process `Session.owner` call — no self-deadlock) so the
+  # access-point callers don't each have to look it up.
+  defp do_mount_participation_caps(%URI{} = session_uri, %URI{} = member_uri) do
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
-    granter = owner_uri || Ezagent.Entity.User.admin_uri()
+
+    granter =
+      case Ezagent.Entity.Session.owner(session_uri) do
+        {:ok, %URI{} = owner} -> owner
+        _ -> Ezagent.Entity.User.admin_uri()
+      end
+
     confirmed? = Ezagent.Users.confirmed?(member_uri)
 
     actions =
