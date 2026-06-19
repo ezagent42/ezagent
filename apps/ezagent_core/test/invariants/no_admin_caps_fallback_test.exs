@@ -79,8 +79,9 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
       # (shrinking toward genesis-only; see system_principal_elimination_test.exs).
       # 2026-06-20, 甲-3: chat-reply ELIMINATED → 6 principals.
       # 2026-06-20, 甲-4: chat-router ELIMINATED → 5 principals.
-      assert length(uris) == 5,
-             "expected 5 system principals; Catalog has #{length(uris)}: " <>
+      # 2026-06-20, 甲-6: lv-anon-mount + socialware-gc ELIMINATED → 3 principals.
+      assert length(uris) == 3,
+             "expected 3 system principals; Catalog has #{length(uris)}: " <>
                inspect(uris)
 
       expected = [
@@ -101,7 +102,7 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
         # (orchestrator-tools ELIMINATED 2026-06-19 — north star; DEAD caller:
         #  the orchestrator runs its tools as itself with its own caps, and the
         #  set_legends allowlist entry was never reached in production.)
-        "system://session-internal",
+        "system://session-internal"
         # (agent-internal ELIMINATED 2026-06-19 — north star; its only authority
         #  `sandbox.write_path` is the agent writing its OWN sandbox slice →
         #  genuine self-authority, carried inline at the TemplateSpawn dispatch.)
@@ -112,13 +113,14 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
         # (mix-task ELIMINATED 2026-06-19 — north star; the operator CLI tasks
         #  now route their authority through the real `entity://system/user/admin`
         #  entity with an inline per-action admin cap, not the ambient wildcard.)
-        "system://lv-anon-mount",
+        # (lv-anon-mount ELIMINATED 2026-06-20, 甲-6 — north star; an EMPTY-caps
+        #  placeholder caller for unauthenticated LV mounts; the 4 LV paths now
+        #  pass `caller: nil` + empty caps directly.)
         # (credential-materializer ELIMINATED — north star; api-key materialization
         #  now runs under agent self-authority.)
-        # #51 §3.4 — socialware GC sweeper (Session :leave only).
-        # NOTE: #51 §4.1 anon public-view access does NOT add a principal —
-        # the anon holds its own narrow join cap (Decision #154).
-        "system://socialware-gc"
+        # (socialware-gc ELIMINATED 2026-06-20, 甲-6 — north star; the abandoned-anon
+        #  GC reaper's `session.leave` now runs under the genesis admin entity with
+        #  an inline `session.leave` cap; the anon can't self-leave.)
       ]
 
       assert Enum.sort(uris) == Enum.sort(expected),
@@ -173,10 +175,9 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
              "narrow-catalog principal must not carry a wildcard cap"
     end
 
-    test "caps/1 returns empty MapSet for system://lv-anon-mount" do
-      assert Ezagent.SystemPrincipal.caps("system://lv-anon-mount") == MapSet.new(),
-             "anonymous LV mount must NOT carry ambient authority per SPEC §4.4"
-    end
+    # (was "caps/1 returns empty MapSet for system://lv-anon-mount" — the
+    #  principal was ELIMINATED 2026-06-20, 甲-6; anonymous LV mounts now pass
+    #  `caller: nil` + empty caps directly, so there is no principal to query.)
 
     test "caps/1 raises on non-system URI" do
       assert_raise ArgumentError, ~r/expects a system URI/, fn ->

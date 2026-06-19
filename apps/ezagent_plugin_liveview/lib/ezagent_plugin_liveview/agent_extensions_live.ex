@@ -81,19 +81,18 @@ defmodule EzagentPluginLiveview.AgentExtensionsLive do
     end
   end
 
-  # SPEC caps-cleanup-v1 §4.4 — anonymous LV mount path runs under
-  # `system://lv-anon-mount` (closed Catalog) with EMPTY caps. This
-  # surfaces auth bugs that the previous admin-caps fallback
-  # was hiding: anonymous mounts SHOULD have been denied. The outer
-  # session pipeline still rejects unauthenticated probes; this guard
-  # is defense in depth.
+  # System-principal elimination (#154 甲-6) — an anonymous (unauthenticated)
+  # LV mount has NO real identity and NO authority: caller is `nil` + caps is the
+  # EMPTY set (was the `system://lv-anon-mount` empty-caps placeholder principal,
+  # now deleted). A nil caller + empty caps fails every cap check exactly as the
+  # empty-caps principal did — anonymous mounts SHOULD be denied; the outer session
+  # pipeline rejects unauthenticated probes and this is defense in depth.
   #
   # For authenticated callers, `Ezagent.Identity.list_caps_for/1`
   # reads from the User Kind's slice — admin's slice already carries
   # the bootstrap wildcard cap (seeded via `SystemPrincipal` at
   # identity-domain boot), so no admin special-case is needed.
-  defp resolve_caller_caps(nil),
-    do: "lv-anon-mount" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps()
+  defp resolve_caller_caps(nil), do: MapSet.new([])
 
   defp resolve_caller_caps(caller_uri) do
     Ezagent.Identity.list_caps_for(caller_uri)
@@ -179,11 +178,10 @@ defmodule EzagentPluginLiveview.AgentExtensionsLive do
            target: target,
            mode: :call,
            args: %{},
-           # SPEC caps-cleanup-v1 §4.4 — missing caller falls back to
-           # the `system://lv-anon-mount` principal (closed Catalog),
-           # not the deleted ambient admin_uri.
+           # #154 甲-6 — anonymous mount: nil caller + empty caps (the
+           # `system://lv-anon-mount` placeholder principal is deleted).
            ctx: %{
-             caller: caller_uri || Ezagent.SystemPrincipal.uri("lv-anon-mount"),
+             caller: caller_uri,
              caps: caller_caps,
              reply: {:caller_inbox, self()}
            }

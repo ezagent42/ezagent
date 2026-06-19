@@ -62,8 +62,10 @@ defmodule Ezagent.Socialware.AnonUser.GC do
      is the authority to destroy; `{:ok, :not_claimed}` means a concurrent `touch/3`
      refreshed it (or another sweeper holds it) → SKIP, nothing destructive.
   2. On a claim: `chat.leave` the anon-User from its session (`session.leave`
-     dispatch under the closed-catalog `system://socialware-gc` principal — the
-     anon-User holds empty caps and cannot self-leave, §3.3), delete its `users`
+     dispatch under the genesis admin entity with an inline admin-granted
+     `session.leave` cap — the anon holds no `:leave` cap and cannot self-leave,
+     §3.3; #154 甲-6 eliminated the former `system://socialware-gc` principal),
+     delete its `users`
      row (`Users.delete/1`), best-effort stop its Kind, then **hard-delete the
      binding LAST** (`AnonBinding.delete/1`).
 
@@ -273,19 +275,42 @@ defmodule Ezagent.Socialware.AnonUser.GC do
   end
 
   # `chat.leave` the anon-User from its session via the sanctioned `session.leave`
-  # dispatch, under the closed-catalog `system://socialware-gc` principal (Session
-  # `:leave` only). `:cast` — eventually-consistent; a failure DLQs.
+  # dispatch. `:cast` — eventually-consistent; a failure DLQs.
+  #
+  # System-principal elimination (#154 甲-6): the ambient `system://socialware-gc`
+  # principal is DELETED. Reaping an abandoned anon is SYSTEM MAINTENANCE — the
+  # anon itself holds no `:leave` cap (甲-2 mounts unconfirmed members only
+  # `subscribe_from`), so the authority is the genesis admin entity
+  # `entity://system/user/admin` (which has authority over every session), exactly
+  # as the operator CLI now routes (mix-task #833). The reaper presents an INLINE
+  # narrow `session.leave` cap on the concrete session, `granted_by:` the admin
+  # entity (a real entity — #154-ok; provenance-only, the step-5.5 authorizer
+  # `granted_via_ctx_caps?`, never routed through Grant).
   defp leave_session(session_uri, member_uri)
        when is_binary(session_uri) and is_binary(member_uri) do
     target = Ezagent.URI.new!(session_uri <> "?action=session.leave")
+    admin_uri = Ezagent.Entity.User.admin_uri()
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
       mode: :cast,
       args: %{member: Ezagent.URI.new!(member_uri)},
       ctx: %{
-        caller: Ezagent.SystemPrincipal.uri("socialware-gc"),
-        caps: "socialware-gc" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
+        caller: admin_uri,
+        caps:
+          MapSet.new([
+            %Ezagent.Capability{
+              Ezagent.Capability.cap(
+                :session,
+                Ezagent.Behavior.Session,
+                :leave,
+                Ezagent.URI.instance(target),
+                Ezagent.Capability.workspace_of(target)
+              )
+              | granted_by: admin_uri,
+                granted_at: DateTime.utc_now()
+            }
+          ]),
         reply: :ignore
       }
     })

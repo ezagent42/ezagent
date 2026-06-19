@@ -160,8 +160,12 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
     # operator's authority now routes through the real `entity://system/user/admin`
     # entity (inline per-action admin caps; the one grant sub-path uses the
     # chokepoint `{:held_by, admin_uri()}`), so the principal leaves the Catalog.
-    "system://lv-anon-mount",
-    "system://socialware-gc",
+    # ELIMINATED 2026-06-20, 甲-6 (north star): "system://lv-anon-mount" (an
+    # EMPTY-caps placeholder caller for unauthenticated LV mounts → the 4 LV paths
+    # now pass `caller: nil` + empty caps) and "system://socialware-gc" (the
+    # abandoned-anon GC reaper's `session.leave` now runs under the genesis admin
+    # entity with an inline `session.leave` cap; the anon can't self-leave). Both
+    # were NON-minters; both leave the Catalog.
     # 2026-06-17 (PR-2 of the no-unowned-caps program) — template-materialize
     # was B (the §1 spec-named workaround). Its grant caps are now DROPPED
     # (Catalog) and every grant routes through `Ezagent.Identity.Grant` under

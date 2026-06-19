@@ -350,7 +350,12 @@ defmodule Ezagent.SystemPrincipal.Catalog do
       # removed the principal leaves the Catalog → `no_unowned` reaches 0 live
       # grant-minters. (Narrowing `default_caps` itself to a per-session model is a
       # separate, deferred refactor — not done here.)
-      {principal("lv-anon-mount"), []},
+      # ELIMINATED 2026-06-20, 甲-6 (#154 north star): `system://lv-anon-mount` —
+      # an EMPTY-caps placeholder used as the `caller` for unauthenticated LV
+      # mounts (agent_detail/extensions/new/terminal_live). It granted NO
+      # authority; it existed only to be a non-nil caller. The LV anon paths now
+      # pass `caller: nil` + an EMPTY cap set directly — identical authz behavior
+      # (every cap check fails the same way), no placeholder principal needed.
       # System-principal elimination (north star): `credential-materializer` is
       # DELETED. It was an empty-cap AUDIT label used only as the `caller` of the
       # curl-agent api-key materialization (`CurlAgent.put_target_api_key/3`); the
@@ -359,16 +364,16 @@ defmodule Ezagent.SystemPrincipal.Catalog do
       # `:api_keys` slice) — a real accountable entity. The per-grant source-read
       # authority remains the narrow `Ezagent.Credential.GrantCap` cap (no standing
       # principal cap was ever needed).
-      # #51 external-user anonymous access (§3.4 GC) — the in-app GC sweeper
-      # (`Ezagent.Socialware.AnonUser.Sweeper`) reaps abandoned anon-Users: it
-      # `chat.leave`s each from its session under THIS principal. Narrowed to
-      # exactly Session `:leave` — the `users` row + binding row deletes are
-      # direct context fns (`Users.delete/1` + `AnonBinding.claim_for_reaping/3` /
-      # `delete/1`), NOT dispatches, so they need no cap. The anon-User holds an EMPTY
-      # caps_json and cannot self-leave (spec §3.3), so the system sweeper needs
-      # this grant (Allen 2026-06-15 — Option A: a dedicated closed-catalog GC
-      # principal, not ambient/per-session authority).
-      {principal("socialware-gc"), [Capability.cap(:session, Session, :leave)]}
+      # ELIMINATED 2026-06-20, 甲-6 (#154 north star): `system://socialware-gc` —
+      # the in-app GC sweeper (`Ezagent.Socialware.AnonUser.Sweeper`) reaps
+      # abandoned anon-Users by `session.leave`-ing each from its session. The
+      # anon holds no `:leave` cap (甲-2 mounts unconfirmed members only
+      # `subscribe_from`) and cannot self-leave, so reaping is SYSTEM MAINTENANCE:
+      # the sweeper now dispatches under the genesis admin entity
+      # `entity://system/user/admin` with an INLINE narrow `session.leave` cap
+      # (`granted_by: admin_uri`, a real accountable entity — same play as the
+      # eliminated `system://mix-task`; see `GC.leave_session/2`). With its last
+      # cap re-attributed, the principal leaves the closed Catalog.
       # NOTE (#51 §4.1 / Decision #154): the anonymous public-view access path
       # does NOT use a system principal. `Ezagent.Socialware.AnonUser.mint_for_public_session/1`
       # mints the anon holding its OWN narrow `session.join` cap (granted_by the

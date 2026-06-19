@@ -54,13 +54,9 @@ defmodule EzagentCore.Invariants.NoWildcardSystemPrincipalsTest do
            "system://bootstrap must hold the wildcard cap (Decision #81 admin invariant)"
   end
 
-  test "system://lv-anon-mount carries empty cap list" do
-    {_uri, caps} =
-      Enum.find(Catalog.entries(), fn {uri, _} -> uri == "system://lv-anon-mount" end)
-
-    assert caps == [],
-           "system://lv-anon-mount must carry NO caps so the auth bug surfaces (SPEC §4.4)"
-  end
+  # (was "system://lv-anon-mount carries empty cap list" — the principal was
+  #  ELIMINATED 2026-06-20, 甲-6; anonymous LV mounts now pass `caller: nil` +
+  #  empty caps directly, so there is no Catalog entry to assert against.)
 
   defp wildcard_cap?(%Ezagent.Capability{
          kind: :any,

@@ -29,11 +29,9 @@ defmodule Ezagent.SystemPrincipalCatalogActionAuditTest do
   # carry at least one `action: :any` cap. The justification for each
   # is documented inline in `SystemPrincipal.Catalog.entries/0`.
   #
-  # SPEC §5 C2 — codex r4 MED-2 fix: per-codex evidence,
-  # `system://lv-anon-mount` has empty caps (catalog.ex:272) — NOT a
-  # wildcard holder; the `no_wildcard_system_principals_test.exs`
-  # already exempts empty-cap entries, so we don't list lv-anon-mount
-  # here.
+  # SPEC §5 C2 — `system://lv-anon-mount` (an empty-caps placeholder) and
+  # `system://socialware-gc` (a concrete `session.leave` cap, never a wildcard)
+  # were both ELIMINATED 2026-06-20, 甲-6, so neither is listed here.
   @wildcard_allowlist MapSet.new([
                         "system://bootstrap",
                         # ELIMINATED 2026-06-20, 甲-4 (#154 north star):

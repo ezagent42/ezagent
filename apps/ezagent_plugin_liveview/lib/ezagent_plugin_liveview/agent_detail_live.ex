@@ -226,8 +226,8 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
 
   # SPEC caps-cleanup-v1 §4.4 — admin caps now live in the User
   # Kind's slice (seeded by SystemPrincipal at boot); no special
-  # admin branch needed. Anonymous mount falls back to
-  # `system://lv-anon-mount` (empty caps).
+  # admin branch needed. Anonymous mount → nil caller + empty caps
+  # (#154 甲-6 deleted the `system://lv-anon-mount` placeholder).
   defp pty_ctx(socket) do
     {caller, caps} = resolve_caller(socket)
     %{caller: caller, caps: caps, reply: :ignore}
@@ -243,8 +243,7 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
   defp resolve_caller(socket) do
     case socket.assigns[:current_entity_uri] do
       nil ->
-        uri = Ezagent.SystemPrincipal.uri("lv-anon-mount")
-        {uri, Ezagent.SystemPrincipal.caps(uri)}
+        {nil, MapSet.new([])}
 
       caller ->
         {caller, Ezagent.Identity.list_caps_for(caller)}
