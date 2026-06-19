@@ -39,7 +39,12 @@ defmodule Ezagent.SystemPrincipalEliminationTest do
     # (`caller: self_uri` + self-authority publish cap / admin-granted
     # subscribe cap) instead of borrowing this ambient principal.
     "system://template-materialize",
-    "system://orchestrator-tools",
+    # ELIMINATED 2026-06-19: "system://orchestrator-tools" — a DEAD caller. The
+    # orchestrator's tools run AS the orchestrator agent with ITS OWN caps
+    # (`SessionManager.opts` sets caller=orchestrator_uri, caps via in-process
+    # `Identity.list_caps_for/1`); the `set_legends` allowlist entry was never
+    # reached in production (system path uses session-internal; the orchestrator
+    # uses its `{:within_session, self}` delegated cap). Both caps unreachable.
     "system://session-internal",
     # ELIMINATED 2026-06-19: "system://agent-internal" — its only live authority
     # (`cap(:agent, Sandbox, :write_path)`, the freshly-spawned worker writing

@@ -94,8 +94,9 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   # `alias Ezagent.Behavior.ExternalMirror` removed — its last consumer
   # (`boot-reconciler`/`adapter-install` ExternalMirror caps) was eliminated.
   # System-principal elimination — `alias Ezagent.Behavior.ExternalMirrorWorker`
-  # removed with the `system://worker-publish` entry (its only consumer).
-  alias Ezagent.Behavior.Identity
+  # removed with the `system://worker-publish` entry (its only consumer); and
+  # `alias Ezagent.Behavior.Identity` removed 2026-06-19 with `orchestrator-tools`
+  # (its only use was that principal's `cap(:agent, Identity, :list_caps)`).
   # no-unowned-caps PR-1: `alias Ezagent.Behavior.IdentityAdmin` removed —
   # its only use was `feishu-binding-policy`'s now-deleted
   # `cap(:user, IdentityAdmin, :grant_cap)` (the last grant-minter).
@@ -239,21 +240,23 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          Capability.cap(:any, Template, :any),
          Capability.cap(:session, Session, :any)
        ]},
-      {principal("orchestrator-tools"),
-       [
-         # `session.*` → Session behavior on Session (orchestrator tools
-         # write into the session's chat slice).
-         Capability.cap(:session, Session, :any),
-         # `agent.identity.list_caps` — the MCP McpServer loads the
-         # orchestrator AGENT's OWN four delegated caps from its
-         # `:identity` slice under this principal
-         # (`McpServer.load_orchestrator_caps/1` dispatches
-         # `identity.list_caps` against the agent URI). Identity is hosted
-         # on the Agent Kind, so the principal needs an agent-scoped
-         # list_caps cap; without it the cap load returns empty and every
-         # orchestrator tool runs cap-less → unauthorized.
-         Capability.cap(:agent, Identity, :list_caps)
-       ]},
+      # ELIMINATED 2026-06-19 (#154 north star, per-class collapse "dead caller")
+      # — `system://orchestrator-tools` is DELETED. It had NO live dispatch
+      # caller: (1) the orchestrator's tools run AS the orchestrator AGENT with
+      # ITS OWN reconstructed caps — `SessionManager.opts/3` sets
+      # `caller: binding.orchestrator_uri` + `caps: load_orchestrator_caps/1`,
+      # where `load_orchestrator_caps` calls `Ezagent.Identity.list_caps_for/1`
+      # IN-PROCESS (no dispatch, no principal — the stale catalog comment claimed
+      # `McpServer.load_orchestrator_caps` dispatched `identity.list_caps` under
+      # this principal; it never did). So the `agent.Identity.list_caps` cap was
+      # dead. (2) Its only other reference was the `Legends.@legends_trusted_principals`
+      # allowlist, but no production path EVER sets `caller: orchestrator-tools`
+      # for `set_legends` — the real system path dispatches under
+      # `system://session-internal` (`Session.system_set_legends/2`), and the
+      # orchestrator sets legends via its REAL `{:within_session, self}` delegated
+      # cap (chat_legends_test "the session's orchestrator (within_session cap)"),
+      # NOT this principal. The allowlist entry was redundant + unreachable; both
+      # it and the `session.Session.:any` cap are removed.
       {principal("session-internal"),
        [
          # Deviation: original `workspace.workspace.read` mapped to a

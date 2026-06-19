@@ -39,8 +39,13 @@ defmodule Ezagent.SystemPrincipalCatalogActionAuditTest do
                         "system://chat-router",
                         "system://chat-reply",
                         "system://template-materialize",
-                        "system://orchestrator-tools",
                         "system://session-internal"
+                        # ELIMINATED 2026-06-19 (#154 north star):
+                        # `system://orchestrator-tools` DELETED (it held
+                        # cap(:session, Session, :any) + cap(:agent, Identity,
+                        # :list_caps)) — a DEAD caller: the orchestrator runs its
+                        # tools as itself; the set_legends allowlist entry was
+                        # unreachable in production.
                         # no-unowned-caps PR-1 (2026-06-17): feishu-binding-policy
                         # DELETED from the Catalog (it held cap(:workspace,
                         # Workspace, :any)).

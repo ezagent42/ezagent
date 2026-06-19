@@ -20,7 +20,12 @@ defmodule Ezagent.Behavior.Session.Legends do
   # the older `system_internal`-flag gate (`working_copy_write_authorized?/1`) —
   # codex flagged it shares the same flaw; tracked separately (see report), this
   # PR fixes `set_legends` properly.
-  @legends_trusted_principals ["session-internal", "orchestrator-tools"]
+  # `orchestrator-tools` removed 2026-06-19 (#154 — principal eliminated): no
+  # production path ever dispatched `set_legends` under it (the system path uses
+  # `session-internal`; the orchestrator installs legends via its
+  # `{:within_session, self}` delegated cap, NOT this allowlist). Only
+  # `session-internal` remains a trusted legends principal.
+  @legends_trusted_principals ["session-internal"]
 
   @doc false
   @spec legends_write_authorized?(map()) :: boolean()

@@ -55,10 +55,15 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
       assert Enum.any?(effects, fn {:set, :legends, l} -> l == legends; _ -> false end)
     end
 
-    test "system://orchestrator-tools is also a trusted caller" do
+    test "system://orchestrator-tools is NO LONGER a trusted caller (#154 — principal eliminated)" do
+      # 2026-06-19: `system://orchestrator-tools` was eliminated. No production
+      # path ever dispatched `set_legends` under it (the system path uses
+      # `session-internal`; the orchestrator installs legends via its
+      # `{:within_session, self}` delegated cap — see the next test). It is now
+      # rejected like any other untrusted caller carrying no authorizing cap.
       legends = Legend.put(%{}, "team", member_set: [], bound_rule_set: "rs")
       ctx = %{self_uri: uri("session://team/default/s1"), caller: uri("system://orchestrator-tools")}
-      assert {:ok, _, _} = SessionBehavior.handle_set_legends(%{legends: legends}, ctx)
+      assert {:error, :unauthorized} = SessionBehavior.handle_set_legends(%{legends: legends}, ctx)
     end
 
     test "the session's orchestrator (within_session cap) is authorized" do
