@@ -4,13 +4,14 @@ defmodule Ezagent.UsersTest do
   alias Ezagent.Users
 
   describe "create/3" do
-    # PR 27 (Allen 2026-05-18): Users.create prepends
-    # `Ezagent.Entity.User.default_caps()` so every new user has a baseline
-    # set (session.chat today) and creation sites don't have to remember
-    # the boilerplate. These tests cover both the empty-caller-caps and
-    # custom-caller-caps shapes.
+    # PR-甲-2 (Allen 2026-06-19, #154): `Users.create` still prepends
+    # `Ezagent.Entity.User.default_caps()`, but that is now `[]` (the broad
+    # session baseline is removed — participation is granted per-session at
+    # join, owner-rooted). So an empty-caller-caps create yields a user with
+    # NO standing caps; a custom-caps create round-trips exactly the supplied
+    # caps with nothing added.
 
-    test "empty caller caps → user still has default_caps installed" do
+    test "empty caller caps → user starts with NO standing caps (default_caps is [])" do
       uri = "entity://team-alpha/user/test-#{System.unique_integer([:positive])}"
 
       {:ok, decoded} = Users.create(uri, "secret", [])
@@ -20,11 +21,13 @@ defmodule Ezagent.UsersTest do
       assert decoded.password_hash != "secret"
 
       default = Ezagent.Entity.User.default_caps(URI.new!("workspace://team-alpha"))
+      assert default == []
       assert length(decoded.caps) == length(default)
 
-      assert Enum.any?(decoded.caps, fn c ->
+      refute Enum.any?(decoded.caps, fn c ->
                c.kind == :session and c.behavior == :any
-             end)
+             end),
+             "PR-甲-2: no broad session baseline is installed at create"
     end
 
     test "nil password leaves password_hash nil" do
@@ -34,7 +37,7 @@ defmodule Ezagent.UsersTest do
       assert decoded.password_hash == nil
     end
 
-    test "caller caps + default_caps both round-trip through JSON" do
+    test "caller caps round-trip through JSON (no session baseline added — #154 甲-2)" do
       uri = "entity://team-alpha/user/caps-#{System.unique_integer([:positive])}"
 
       cap = %Ezagent.Capability{
@@ -53,9 +56,14 @@ defmodule Ezagent.UsersTest do
                c.kind == :workspace and c.behavior == Ezagent.Behavior.Workspace
              end)
 
-      assert Enum.any?(decoded.caps, fn c ->
+      # PR-甲-2: default_caps is [], so the ONLY cap is the caller-supplied one
+      # — no broad session baseline is prepended.
+      refute Enum.any?(decoded.caps, fn c ->
                c.kind == :session and c.behavior == :any
-             end)
+             end),
+             "no session baseline should be added to the caller's caps"
+
+      assert length(decoded.caps) == 1, "exactly the one caller-supplied cap"
     end
 
     test "duplicate uri returns error" do

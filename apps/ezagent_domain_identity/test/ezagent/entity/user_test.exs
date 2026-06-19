@@ -70,42 +70,39 @@ defmodule Ezagent.Entity.UserTest do
     assert User.persistence() == {:snapshot, :on_change}
   end
 
-  describe "default_caps/1 (PR 27 + Phase 9 PR-3)" do
+  describe "default_caps/1 (PR-甲-2, #154 — narrowed to [])" do
     @workspace URI.new!("workspace://team-alpha")
 
-    test "includes a kind=:session cap so every user can attempt session behaviors" do
-      caps = User.default_caps(@workspace)
+    # PR-甲-2 (spec 2026-06-19-membership-mount-anon-model-design): the broad
+    # `cap(:session, :any, :any)` baseline (granted_by system://bootstrap) is
+    # REMOVED. Participation + join authority are granted per-session at the
+    # trusted access points (owner-rooted), not as a creation baseline — so a
+    # fresh user starts with NO standing session caps (least-privilege).
+    test "returns [] — no broad session baseline (least-privilege, owner-rooted join)" do
+      assert User.default_caps(@workspace) == [],
+             "default_caps must be empty after PR-甲-2 — participation is " <>
+               "per-session at join, not a universal baseline"
+    end
 
-      assert is_list(caps)
-
-      assert Enum.any?(caps, fn c ->
+    test "no session:any:any baseline is present (the removed #154 violation)" do
+      refute Enum.any?(User.default_caps(@workspace), fn c ->
                c.kind == :session and c.behavior == :any and c.instance == :any
              end),
-             "expected a session:any:any cap in default_caps, got: #{inspect(caps)}"
+             "the broad workspace-wide session baseline must be gone"
     end
 
-    test "default caps are granted_by system://bootstrap (structural, not human-issued)" do
-      for c <- User.default_caps(@workspace) do
-        assert c.granted_by.scheme == "system"
-        assert c.granted_by.host == "bootstrap"
-      end
+    test "no system://bootstrap-granted cap (the removed unowned-grant)" do
+      refute Enum.any?(User.default_caps(@workspace), fn c ->
+               c.granted_by.scheme == "system"
+             end),
+             "default_caps must mint no system://-granted cap (Decision #154)"
     end
 
-    test "default_caps does NOT include the admin wildcard" do
+    test "does NOT include the admin wildcard" do
       refute Enum.any?(User.default_caps(@workspace), fn c ->
                c.kind == :any and c.behavior == :any and c.instance == :any
              end),
              "default_caps must not grant the admin escape hatch to ordinary users"
-    end
-
-    test "default caps carry the workspace URI passed in (Phase 9 PR-3 §4.5)" do
-      ws = URI.new!("workspace://team-alpha")
-
-      for c <- User.default_caps(ws) do
-        assert URI.to_string(c.workspace_uri) == "workspace://team-alpha",
-               "default_caps/1 must propagate workspace_uri so per-user caps " <>
-                 "are workspace-scoped (cross-workspace requires explicit cap)"
-      end
     end
   end
 end

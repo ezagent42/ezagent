@@ -173,6 +173,23 @@ defmodule EzagentPluginLiveview.UsersLiveTest do
     defp underprivileged_conn(handle) do
       uri = "entity://team-alpha/user/#{handle}-#{System.unique_integer([:positive])}"
       {:ok, _} = Ezagent.Users.create(uri, "pw", [])
+
+      # PR-甲-2 (#154): a real onboarded user is added to its workspace's
+      # MEMBER set (`Registration.create_principal` → `Workspace.add_member`);
+      # `default_caps` is now `[]` (no broad session baseline). Mirror that here
+      # so `list_workspaces_for/2` keeps team-alpha visible via `member_match?`
+      # (the workspace `<select>` therefore renders "team-alpha"), while the
+      # caller still holds NO `:create_user` cap — which is the actual thing this
+      # CapBAC-parity test asserts is denied. Pre-甲-2 the dropdown only rendered
+      # because the broad baseline accidentally seeded the cap's `workspace_uri`.
+      existing =
+        case Ezagent.Workspace.Store.get_by_name("team-alpha") do
+          %{members: members} when is_list(members) -> members
+          _ -> []
+        end
+
+      {:ok, _} = Ezagent.Workspace.Store.update_members("team-alpha", [uri | existing])
+
       # Spawn the User Kind so `Ezagent.Identity.list_caps_for/1`
       # resolves the caller's real (non-admin) caps via dispatch.
       if Code.ensure_loaded?(Ezagent.SpawnRegistry) do

@@ -32,6 +32,19 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
 
   @cascade_key "advisor.behavior"
 
+  # PR-甲-2 (#154): `User.default_caps/1` is now `[]` (the broad
+  # `cap(:session,:any,:any)` baseline that used to silently authorize the
+  # session turn lifecycle was removed). In production a settler holds the
+  # specific session-scoped Turn caps (or runs under the orchestrator/system
+  # authority that drives turns); the test must mirror that instead of leaning
+  # on the wildcard baseline. These are the concrete `cap(:session, Turn, <a>)`
+  # caps the open→compose→claim→settle drive needs, scoped to THIS session.
+  defp turn_drive_caps(session, workspace) do
+    for action <- [:open, :compose, :claim, :settle, :deliver, :dispatch, :cancel] do
+      Ezagent.Capability.cap(:session, Ezagent.Behavior.Turn, action, session, workspace)
+    end
+  end
+
   setup do
     session =
       Ezagent.URI.session(:team_alpha, :socialware, "tce-#{System.unique_integer([:positive])}")
@@ -59,7 +72,7 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
 
   test "a settled config_delta evolves the TARGET AGENT when the settler holds the manage-cap",
        %{session: session, workspace: workspace, agent: agent} do
-    manager = spawn_manager_with_manage_cap(agent, workspace)
+    manager = spawn_manager_with_manage_cap(session, agent, workspace)
 
     turn_id = run_turn_to_settle(session, manager, workspace, agent)
 
@@ -83,7 +96,10 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
     # agent's manage-cap.
     settler = %{
       uri: Ezagent.URI.entity(:team_alpha, :user, "nomgr-#{System.unique_integer([:positive])}"),
-      caps: MapSet.new(User.default_caps(workspace))
+      # Holds the session turn-drive caps (so it CAN run the turn) but NOT the
+      # agent's manage-cap — the point of this test (the agent-side apply is
+      # denied for lack of the manage-cap, not for lack of turn authority).
+      caps: MapSet.new(turn_drive_caps(session, workspace))
     }
 
     _turn_id = run_turn_to_settle(session, settler, workspace, agent)
@@ -99,7 +115,7 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
 
   test "recovery replays the config apply under the recorded manager (still authorized)",
        %{session: session, workspace: workspace, agent: agent} do
-    manager = spawn_manager_with_manage_cap(agent, workspace)
+    manager = spawn_manager_with_manage_cap(session, agent, workspace)
 
     settled_turn = settled_turn_with_delta(workspace, agent, manager.uri)
     turn_id = "#{URI.to_string(session)}#turn-recover-ok"
@@ -124,7 +140,7 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
 
   test "recovery DENIES the config apply when the recorded manager's manage-cap was revoked",
        %{session: session, workspace: workspace, agent: agent} do
-    manager = spawn_manager_with_manage_cap(agent, workspace)
+    manager = spawn_manager_with_manage_cap(session, agent, workspace)
     # Revoke the manage-cap from the manager's identity (current authority lost).
     revoke_manage_cap(manager.uri, agent, workspace)
 
@@ -175,13 +191,13 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
   # Spawn a manager User Kind whose Identity slice holds the agent's manage-cap,
   # so both the normal-path dispatch caps AND `Identity.list_caps_for/1`
   # (recovery) see it.
-  defp spawn_manager_with_manage_cap(agent, workspace) do
+  defp spawn_manager_with_manage_cap(session, agent, workspace) do
     manager = Ezagent.URI.entity(:team_alpha, :user, "mgr-#{System.unique_integer([:positive])}")
     manage_cap = CreatorGrant.manage_cap(:agent, agent, workspace, manager)
     # The settler drives the session turn (open/compose/claim/settle), so it
-    # also holds ordinary session-scoped user caps — plus the agent's manage-cap
-    # that authorizes the agent-side apply.
-    caps = MapSet.new([manage_cap | User.default_caps(workspace)])
+    # holds the concrete session-scoped Turn caps — plus the agent's manage-cap
+    # that authorizes the agent-side apply. (PR-甲-2: no broad default baseline.)
+    caps = MapSet.new([manage_cap | turn_drive_caps(session, workspace)])
     {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: manager, initial_caps: caps})
     %{uri: manager, caps: caps}
   end
