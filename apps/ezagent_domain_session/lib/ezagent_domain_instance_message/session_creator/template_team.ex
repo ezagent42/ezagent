@@ -205,17 +205,32 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
        when is_map(facets) do
     target = Ezagent.URI.with_action(session_uri, :session, :join)
 
+    admin_uri = Ezagent.Entity.User.admin_uri()
+
     result =
       Invocation.dispatch(%Invocation{
         target: target,
         mode: :call,
         args: Map.put(facets, :member, member_uri),
+        # #154 — `system://session-internal` ELIMINATED. Joining a template-team
+        # member during MATERIALIZATION is system-mediated → genesis admin entity
+        # + inline `session.join` cap (granted_by admin; #533 refines to owner).
         ctx: %{
-          caller: Ezagent.SystemPrincipal.uri("session-internal"),
+          caller: admin_uri,
           caps:
-            "session-internal"
-            |> Ezagent.SystemPrincipal.uri()
-            |> Ezagent.SystemPrincipal.caps(),
+            MapSet.new([
+              %Ezagent.Capability{
+                Ezagent.Capability.cap(
+                  :session,
+                  :any,
+                  :join,
+                  Ezagent.URI.instance(session_uri),
+                  Ezagent.Capability.workspace_of(session_uri)
+                )
+                | granted_by: admin_uri,
+                  granted_at: DateTime.utc_now()
+              }
+            ]),
           reply: {:caller_inbox, self()}
         }
       })

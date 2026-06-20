@@ -204,13 +204,27 @@ defmodule EzagentWeb.HomeLive do
         target: target,
         mode: :cast,
         args: %{member: echo_uri},
-        # SPEC caps-cleanup-v1 §4.4 — wizard echo-join is Session
-        # slice-internal (member sync); runs under
-        # `system://session-internal` (closed Catalog).
+        # #154 — `system://session-internal` ELIMINATED. The wizard operator
+        # (`caller_uri`) just created this session, so it is the OWNER and can
+        # join a member: present an inline `session.join` cap granted_by the
+        # operator itself (a real entity; owner authority), instead of borrowing
+        # the deleted principal.
         ctx: %{
           caller: caller_uri,
           caps:
-            "session-internal" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps(),
+            MapSet.new([
+              %Ezagent.Capability{
+                Ezagent.Capability.cap(
+                  :session,
+                  :any,
+                  :join,
+                  Ezagent.URI.instance(session_uri),
+                  Ezagent.Capability.workspace_of(session_uri)
+                )
+                | granted_by: caller_uri,
+                  granted_at: DateTime.utc_now()
+              }
+            ]),
           reply: :ignore
         }
       })

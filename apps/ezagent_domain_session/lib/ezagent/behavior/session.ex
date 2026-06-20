@@ -703,12 +703,13 @@ defmodule Ezagent.Behavior.Session do
   # The fix gates on a TRUSTED IDENTITY, not a ctx boolean
   # (`legends_write_authorized?/1`): the caller must EITHER
   #
-  #   - be a trusted system principal — `ctx.caller` ∈ a small allowlist
-  #     (`system://session-internal`; `orchestrator-tools` was removed 2026-06-19
-  #     when that principal was eliminated — it never reached this path in
-  #     production), the same provenance-setting pattern; the
-  #     `system_set_legends/2` path dispatches under `system://session-internal`
-  #     so it still works, OR
+  #   - be the session ITSELF — `ctx.caller == ctx.self_uri` (#154,
+  #     2026-06-20: `system://session-internal` was eliminated; the
+  #     `system_set_legends/2` path now dispatches with `caller = the session`
+  #     and this gate recognizes session-self authority. An external caller
+  #     cannot forge `caller == self_uri` — `ctx.caller` is the authenticated
+  #     entity, and `Entity.authenticate` never succeeds for a `session://`
+  #     URI), OR
   #   - be the session's orchestrator — hold the exact `{:within_session,
   #     self_uri}` delegated cap (cap #1, granted only by the Generator).
   #

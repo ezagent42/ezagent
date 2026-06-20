@@ -81,12 +81,16 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
       # 2026-06-20, 甲-4: chat-router ELIMINATED → 5 principals.
       # 2026-06-20, 甲-6: lv-anon-mount + socialware-gc ELIMINATED → 3 principals.
       # 2026-06-20: template-materialize ELIMINATED → 2 principals.
-      assert length(uris) == 2,
-             "expected 2 system principals; Catalog has #{length(uris)}: " <>
+      # 2026-06-20: session-internal ELIMINATED → 1 principal (genesis only).
+      assert length(uris) == 1,
+             "expected 1 system principal (genesis only); Catalog has #{length(uris)}: " <>
                inspect(uris)
 
       expected = [
-        "system://bootstrap",
+        "system://bootstrap"
+        # (session-internal ELIMINATED 2026-06-20 — the LAST non-genesis principal;
+        #  its 6 sites re-attributed to session-self / admin / operator authority.
+        #  Only the bootstrap genesis remains — elimination ratchet 0.)
         # (chat-router ELIMINATED 2026-06-20, 甲-4 — north star; the last
         #  non-genesis wildcard holder. The Session delivery fan-out now mints a
         #  per-recipient inline `:receive` cap (member self-consent), the
@@ -105,7 +109,6 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
         # (orchestrator-tools ELIMINATED 2026-06-19 — north star; DEAD caller:
         #  the orchestrator runs its tools as itself with its own caps, and the
         #  set_legends allowlist entry was never reached in production.)
-        "system://session-internal"
         # (agent-internal ELIMINATED 2026-06-19 — north star; its only authority
         #  `sandbox.write_path` is the agent writing its OWN sandbox slice →
         #  genuine self-authority, carried inline at the TemplateSpawn dispatch.)
@@ -159,24 +162,12 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
                cap
     end
 
-    test "caps/1 returns narrowed struct caps for narrow-catalog principals" do
-      # Pathology-B follow-up to PR-CC-2-v2: after 甲-3 (chat-reply) and 甲-4
-      # (chat-router) eliminations, `system://bootstrap` is the ONLY
-      # wildcard-exempt principal (see catalog.ex moduledoc +
-      # no_wildcard_system_principals_test.exs). Pick
-      # `system://session-internal` for the narrow-catalog assertion —
-      # a single-Behavior principal that legitimately should NOT hold
-      # a wildcard.
-      caps = Ezagent.SystemPrincipal.caps("system://session-internal")
-      assert %MapSet{} = caps
-      assert MapSet.size(caps) >= 1
-
-      refute Enum.any?(caps, fn cap ->
-               cap.kind == :any and cap.behavior == :any and
-                 cap.instance == :any and cap.workspace_uri == :any
-             end),
-             "narrow-catalog principal must not carry a wildcard cap"
-    end
+    # (was "caps/1 returns narrowed struct caps for narrow-catalog principals" —
+    #  ELIMINATED 2026-06-20: with `system://session-internal` (the last narrow
+    #  principal) gone, the ONLY remaining Catalog entry is `system://bootstrap`,
+    #  which legitimately holds the wildcard. There is no narrow-catalog principal
+    #  left to assert against; the wildcard-exemption invariant is covered by
+    #  `no_wildcard_system_principals_test.exs`.)
 
     # (was "caps/1 returns empty MapSet for system://lv-anon-mount" — the
     #  principal was ELIMINATED 2026-06-20, 甲-6; anonymous LV mounts now pass
@@ -189,11 +180,12 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
     end
 
     test "uri/1 returns a parsed URI for a registered service" do
-      # (was "chat-router" then "template-materialize" — both ELIMINATED; pick any
-      #  still-cataloged service so this asserts the success path, not the raise.)
-      uri = Ezagent.SystemPrincipal.uri("session-internal")
+      # (was "chat-router"/"template-materialize"/"session-internal" — all
+      #  ELIMINATED; `bootstrap` (genesis) is the only cataloged service left, so
+      #  this asserts the success path against it.)
+      uri = Ezagent.SystemPrincipal.uri("bootstrap")
       assert %URI{scheme: "system"} = uri
-      assert URI.to_string(uri) == "system://session-internal"
+      assert URI.to_string(uri) == "system://bootstrap"
     end
 
     test "uri/1 raises on uncataloged service name" do
