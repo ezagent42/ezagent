@@ -36,6 +36,7 @@ defmodule Ezagent.RouterTest do
     test ":call returns the handler result", %{target: target} do
       cmd =
         Cmd.new(target, :noop, %{msg: "hi-router"}, %{
+          caller: :vm_internal,
           reply: {:caller_inbox, self()},
           caps: MapSet.new()
         })
@@ -51,6 +52,7 @@ defmodule Ezagent.RouterTest do
       cmd =
         Cmd.new(target, :noop, %{msg: "cast-router"}, %{
           mode: :cast,
+          caller: :vm_internal,
           reply: {:caller_inbox, self()},
           caps: MapSet.new()
         })
@@ -67,7 +69,7 @@ defmodule Ezagent.RouterTest do
           Ezagent.URI.new!("entity://team-alpha/agent/test_nope-not-exist"),
           :noop,
           %{msg: "x"},
-          %{reply: {:caller_inbox, self()}, caps: MapSet.new()}
+          %{caller: :vm_internal, reply: {:caller_inbox, self()}, caps: MapSet.new()}
         )
 
       assert {:error, :no_such_actor} = Router.dispatch(cmd)
@@ -89,6 +91,7 @@ defmodule Ezagent.RouterTest do
 
       cmd =
         Cmd.new(target, :noop, %{msg: "x"}, %{
+          caller: :vm_internal,
           reply: {:caller_inbox, self()},
           caps: MapSet.new()
         })
@@ -101,6 +104,7 @@ defmodule Ezagent.RouterTest do
     test "handler {:error, _} propagates as Router {:error, _}", %{target: target} do
       cmd =
         Cmd.new(target, :fail, %{}, %{
+          caller: :vm_internal,
           reply: {:caller_inbox, self()},
           caps: MapSet.new()
         })
@@ -120,7 +124,7 @@ defmodule Ezagent.RouterTest do
 
   describe "Cmd construction" do
     test "Cmd.new/4 fills ctx defaults" do
-      cmd = Cmd.new("entity://x/agent/y", :ping, %{}, %{})
+      cmd = Cmd.new("entity://x/agent/y", :ping, %{}, %{caller: :vm_internal})
       assert cmd.action == :ping
       assert cmd.ctx.caller == :vm_internal
       assert cmd.ctx.reply == :ignore
@@ -129,7 +133,7 @@ defmodule Ezagent.RouterTest do
 
     test "Cmd.new/4 accepts %URI{} target unchanged" do
       uri = Ezagent.URI.new!("entity://x/agent/y")
-      cmd = Cmd.new(uri, :ping, %{}, %{})
+      cmd = Cmd.new(uri, :ping, %{}, %{caller: :vm_internal})
       assert cmd.target == uri
     end
 

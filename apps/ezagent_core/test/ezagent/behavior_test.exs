@@ -148,7 +148,7 @@ defmodule Ezagent.BehaviorTest do
     end
 
     test ":dispatch effects collect into dispatches bucket" do
-      cmd = Cmd.new("entity://test/agent/x", :ping, %{}, %{})
+      cmd = Cmd.new("entity://test/agent/x", :ping, %{}, %{caller: :vm_internal})
 
       assert {:ok, result} = Behavior.apply_effects([{:dispatch, cmd}], %{})
       assert [{:dispatch, ^cmd}] = result.dispatches
