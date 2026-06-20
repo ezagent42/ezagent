@@ -307,13 +307,17 @@ defmodule Ezagent.Capability do
   schemes pass); `false` for a `system://` granter.
   """
   @spec granted_by_entity?(t()) :: boolean()
-  # POSITIVE check (advisor-tightened): authority must trace to a real spawned
-  # Kind — a `%URI{}` whose scheme is NOT `system`. This rejects not only
-  # `system://` granters but also a `nil`/atom `granted_by` (no provenance — a
-  # forged inline cap cannot authorize by omitting its granter).
+  # Rejects EXACTLY a `system://` granter (Allen's predicate A: "reject all
+  # permissions not granted by an entity" — the `system://` principal is what
+  # #154 eliminated). Everything else passes: entity/session/workspace granters,
+  # and the `:plugin_declared` atom / `nil` sentinels that `Capability.cap/5`
+  # stamps on declared + ad-hoc caps (those are NOT `system://` principals, and
+  # rejecting them breaks legitimate `cap/5`-built authorizers, e.g. turn-drive
+  # caps). The "granter must be a real `entity://`" rule is enforced at the GRANT
+  # chokepoint (`Identity.Grant`); this runtime predicate is the narrower
+  # standing backstop that no `system://` principal authorizes a dispatch.
   def granted_by_entity?(%__MODULE__{granted_by: %URI{scheme: "system"}}), do: false
-  def granted_by_entity?(%__MODULE__{granted_by: %URI{}}), do: true
-  def granted_by_entity?(%__MODULE__{}), do: false
+  def granted_by_entity?(%__MODULE__{}), do: true
 
   # Canonical-string URI equality (tolerant of representation differences from
   # snapshot round-trips). Non-URI granted_by (e.g. the `:plugin_declared`
