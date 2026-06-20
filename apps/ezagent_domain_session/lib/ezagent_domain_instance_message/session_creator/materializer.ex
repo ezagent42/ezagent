@@ -158,17 +158,34 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
     Enum.reduce_while(members, :ok, fn %URI{} = member_uri, :ok ->
       _ = EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(member_uri)
 
+      admin_uri = Ezagent.Entity.User.admin_uri()
+
       result =
         Invocation.dispatch(%Invocation{
           target: target,
           mode: :call,
           args: %{member: member_uri},
+          # #154 — `system://session-internal` ELIMINATED. Joining a configured
+          # member during session MATERIALIZATION is system-mediated → runs under
+          # the genesis admin entity with an inline `session.join` cap (granted_by
+          # admin; #533 refines to per-creator/owner). Same play as
+          # template-materialize.
           ctx: %{
-            caller: Ezagent.SystemPrincipal.uri("session-internal"),
+            caller: admin_uri,
             caps:
-              "session-internal"
-              |> Ezagent.SystemPrincipal.uri()
-              |> Ezagent.SystemPrincipal.caps(),
+              MapSet.new([
+                %Ezagent.Capability{
+                  Ezagent.Capability.cap(
+                    :session,
+                    :any,
+                    :join,
+                    Ezagent.URI.instance(session_uri),
+                    Ezagent.Capability.workspace_of(session_uri)
+                  )
+                  | granted_by: admin_uri,
+                    granted_at: DateTime.utc_now()
+                }
+              ]),
             reply: {:caller_inbox, self()}
           }
         })

@@ -128,12 +128,16 @@ defmodule Ezagent.Behavior.Session.ConfigActions do
            target: session_uri,
            action: :set_working_copy,
            args: %{template_working_copy: working_copy},
-           # SPEC caps-cleanup-v1 §4.4 — Session slice-internal write
-           # of the durable template working_copy runs under
-           # `system://session-internal` (closed Catalog).
+           # #154 — `system://session-internal` ELIMINATED. Writing the session's
+           # OWN durable working_copy slice is SESSION SELF-authority (the session
+           # acting on its own slice, like workspace-loader #832). caller = the
+           # session itself; inline `set_working_copy` cap granted_by the session
+           # (a real entity). `system_internal: true` STAYS — it is the handler's
+           # forge-resistant gate (`working_copy_write_authorized?`), independent
+           # of the principal; only this trusted internal path sets it.
            ctx: %{
-             caller: Ezagent.SystemPrincipal.uri("session-internal"),
-             caps: system_caps("session-internal"),
+             caller: session_uri,
+             caps: session_self_cap(session_uri, :set_working_copy),
              system_internal: true,
              reply: {:caller_inbox, self()}
            }
@@ -152,8 +156,9 @@ defmodule Ezagent.Behavior.Session.ConfigActions do
   (which installs a template's `prompt_templates` at create_session time,
   before any orchestrator cap exists).
 
-  Authorization rides the TRUSTED `caller` (`system://session-internal` ∈ the
-  `set_legends`/`set_prompt_templates` allowlist), NOT a ctx flag.
+  Authorization is SESSION SELF-authority (#154): the dispatch runs as the
+  session itself (`caller == self_uri`), recognized by
+  `Legends.legends_write_authorized?` — NOT a ctx flag, NOT a system principal.
   """
   @spec system_set_prompt_templates(URI.t(), map()) :: {:ok, map()} | {:error, term()}
   def system_set_prompt_templates(%URI{} = session_uri, prompt_templates)
@@ -162,9 +167,13 @@ defmodule Ezagent.Behavior.Session.ConfigActions do
            target: session_uri,
            action: :set_prompt_templates,
            args: %{prompt_templates: prompt_templates},
+           # #154 — `system://session-internal` ELIMINATED. Session SELF-authority
+           # (writes the session's own prompt-template slice); caller = the session,
+           # inline cap granted_by the session. `legends_write_authorized?` now
+           # recognizes `caller == self_uri`.
            ctx: %{
-             caller: Ezagent.SystemPrincipal.uri("session-internal"),
-             caps: system_caps("session-internal"),
+             caller: session_uri,
+             caps: session_self_cap(session_uri, :set_prompt_templates),
              reply: {:caller_inbox, self()}
            }
          }) do
@@ -174,9 +183,30 @@ defmodule Ezagent.Behavior.Session.ConfigActions do
     end
   end
 
-  defp system_caps(name) when is_binary(name) do
-    name
-    |> Ezagent.SystemPrincipal.uri()
-    |> Ezagent.SystemPrincipal.caps()
+  @doc """
+  Build the session's OWN inline cap (as a `MapSet`) for a self-slice config
+  write (`:set_working_copy` / `:set_legends` / `:set_prompt_templates`).
+
+  `granted_by` the session itself — a real entity exercising self-authority over
+  its own `:chat` slice (the workspace-loader #832 pattern; #154 replaces the
+  eliminated `system://session-internal` principal). `behavior: :any` avoids
+  pinning the Session behavior module; `kind`/`action`/`instance` keep it
+  least-privilege. Shared by `Legends.system_set_legends/2`.
+  """
+  @spec session_self_cap(URI.t(), atom()) :: MapSet.t()
+  def session_self_cap(%URI{} = session_uri, action) when is_atom(action) do
+    MapSet.new([
+      %Ezagent.Capability{
+        Ezagent.Capability.cap(
+          :session,
+          :any,
+          action,
+          Ezagent.URI.instance(session_uri),
+          Ezagent.Capability.workspace_of(session_uri)
+        )
+        | granted_by: session_uri,
+          granted_at: DateTime.utc_now()
+      }
+    ])
   end
 end

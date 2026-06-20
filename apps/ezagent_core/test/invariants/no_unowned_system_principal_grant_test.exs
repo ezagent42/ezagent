@@ -142,7 +142,11 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
     # ELIMINATED 2026-06-19 (north star): "system://orchestrator-tools" — a DEAD
     # caller (orchestrator runs its tools as itself; the set_legends allowlist
     # entry was unreachable in production). Held no minter cap; leaves Catalog.
-    "system://session-internal",
+    # ELIMINATED 2026-06-20 (north star): "system://session-internal" — the LAST
+    # non-genesis principal. A NON-minter; its 6 dispatch sites re-attributed to
+    # session-self authority (config writes), genesis admin (materialization
+    # joins), and the operator (wizard join). @category_a is now empty — only the
+    # `@bootstrap` genesis remains (covered by the @bootstrap bucket).
     # ELIMINATED 2026-06-19 (north star): "system://agent-internal" — it was a
     # NON-minter (its vestigial grant_cap dropped 2026-06-16), holding only
     # `cap(:agent, Sandbox, :write_path)`. That sandbox write is the agent acting

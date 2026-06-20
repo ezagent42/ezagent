@@ -38,16 +38,16 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
   end
 
   describe "handle_set_legends/2 — install path + authorization (codex HIGH #2 fix)" do
-    test "a TRUSTED system-principal caller is authorized → emits a {:set, :legends, ...} effect" do
+    test "the session itself (caller == self_uri) is authorized → emits a {:set, :legends, ...} effect" do
       legends = Legend.put(%{}, "传话游戏", member_set: ["relay-cc"], bound_rule_set: "telephone")
 
-      # Authority rides the TRUSTED `caller` (a closed allowlist), NOT a
-      # caller-supplied ctx boolean. `system://session-internal` is the
-      # principal `system_set_legends/2` dispatches under.
-      ctx = %{
-        self_uri: uri("session://team/default/s1"),
-        caller: uri("system://session-internal")
-      }
+      # #154 — `system://session-internal` ELIMINATED. Authority is now SESSION
+      # SELF: `system_set_legends/2` dispatches with `caller == the session
+      # itself`, and `legends_write_authorized?` recognizes `caller == self_uri`.
+      # Only the trusted internal path sets caller=session_uri (a user dispatch
+      # carries the user's own caller and cannot forge it).
+      sess = uri("session://team/default/s1")
+      ctx = %{self_uri: sess, caller: sess}
 
       assert {:ok, %{legends: ^legends}, effects} =
                SessionBehavior.handle_set_legends(%{legends: legends}, ctx)
@@ -55,14 +55,12 @@ defmodule Ezagent.Behavior.ChatLegendsTest do
       assert Enum.any?(effects, fn {:set, :legends, l} -> l == legends; _ -> false end)
     end
 
-    test "system://orchestrator-tools is NO LONGER a trusted caller (#154 — principal eliminated)" do
-      # 2026-06-19: `system://orchestrator-tools` was eliminated. No production
-      # path ever dispatched `set_legends` under it (the system path uses
-      # `session-internal`; the orchestrator installs legends via its
-      # `{:within_session, self}` delegated cap — see the next test). It is now
-      # rejected like any other untrusted caller carrying no authorizing cap.
+    test "a system principal caller (e.g. the eliminated session-internal) is NOT authorized" do
+      # #154 — no system principal is trusted for legends anymore; authority is
+      # session-self (caller==self_uri) or the orchestrator's within_session cap.
+      # A `system://...` caller is neither → rejected like any untrusted caller.
       legends = Legend.put(%{}, "team", member_set: [], bound_rule_set: "rs")
-      ctx = %{self_uri: uri("session://team/default/s1"), caller: uri("system://orchestrator-tools")}
+      ctx = %{self_uri: uri("session://team/default/s1"), caller: uri("system://session-internal")}
       assert {:error, :unauthorized} = SessionBehavior.handle_set_legends(%{legends: legends}, ctx)
     end
 

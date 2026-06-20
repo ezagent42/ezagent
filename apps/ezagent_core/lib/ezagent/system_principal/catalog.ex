@@ -93,7 +93,9 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   # post ApiKeys-to-Agent flip CurlAgent reads its own `:api_keys`
   # slice in-process via `ctx[:sibling_slices]`, so no system principal
   # dispatches `identity.get_api_key` anymore.
-  alias Ezagent.Behavior.Session
+  # `alias Ezagent.Behavior.Session` removed 2026-06-20 — its last use
+  # (the `session-internal` Catalog cap `cap(:any, Session, :any)`) was
+  # eliminated (#154); only `system://bootstrap` genesis remains.
   # `alias Ezagent.Behavior.ExternalMirror` removed — its last consumer
   # (`boot-reconciler`/`adapter-install` ExternalMirror caps) was eliminated.
   # System-principal elimination — `alias Ezagent.Behavior.ExternalMirrorWorker`
@@ -114,7 +116,9 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   # `Agent.TemplateSpawn` dispatch site.
   # `alias Ezagent.Behavior.Template` removed 2026-06-20 — its last use
   # (the `template-materialize` Catalog cap) was eliminated (#154).
-  alias Ezagent.Behavior.Workspace
+  # `alias Ezagent.Behavior.Workspace` removed 2026-06-20 — its last use
+  # (the `session-internal` Catalog cap `cap(:workspace, Workspace, :any)`)
+  # was eliminated (#154).
 
   # The bootstrap structural sentinel — granted_by/granted_at on the
   # generated wildcard cap so `admin_invariant?/1` recognises it.
@@ -255,17 +259,24 @@ defmodule Ezagent.SystemPrincipal.Catalog do
       # cap (chat_legends_test "the session's orchestrator (within_session cap)"),
       # NOT this principal. The allowlist entry was redundant + unreachable; both
       # it and the `session.Session.:any` cap are removed.
-      {principal("session-internal"),
-       [
-         # Deviation: original `workspace.workspace.read` mapped to a
-         # Workspace Behavior wildcard cap so session-internal can read
-         # any workspace state. Original `session.chat.*` widened to
-         # `:any`-Kind Session — session-internal dispatches `chat.receive`
-         # on User AND Agent Kinds during fan-out, so the Kind axis must
-         # cross those (same multi-Kind pattern as chat-router).
-         Capability.cap(:any, Session, :any),
-         Capability.cap(:workspace, Workspace, :any)
-       ]},
+      # ELIMINATED 2026-06-20, session-internal (#154 north star — the LAST
+      # non-genesis principal). It held `cap(:any, Session, :any)` +
+      # `cap(:workspace, Workspace, :any)`, borrowed at 6 dispatch sites, each
+      # now re-attributed to a real entity:
+      #   - config writes (set_working_copy / set_legends / set_prompt_templates,
+      #     `ConfigActions` + `Legends`) = SESSION SELF-authority: the session
+      #     writes its OWN slice (`caller == self_uri`, inline cap granted_by the
+      #     session; `legends_write_authorized?` recognizes `caller == self_uri`,
+      #     `set_working_copy` keeps its `system_internal` handler gate). The
+      #     workspace-loader #832 "acts on its own slice" pattern.
+      #   - member joins during MATERIALIZATION (`session_creator/materializer` +
+      #     `template_team`) = genesis admin entity + inline `session.join` cap
+      #     (system-mediated; same as template-materialize; #533 → per-creator).
+      #   - the wizard echo-join (`home_live`) = the operator's OWN authority
+      #     (caller = operator, inline `session.join` cap granted_by operator —
+      #     it just created the session, so it is the owner).
+      # With its last consumer re-attributed, ONLY `system://bootstrap` (genesis)
+      # remains — the elimination ratchet reaches 0 + genesis.
       # ELIMINATED 2026-06-19 (#154 north star, per-class collapse "actor-self")
       # — `system://agent-internal` is DELETED. Its ONLY live authority was
       # `cap(:agent, Sandbox, :write_path)`, used by

@@ -20,39 +20,47 @@ defmodule Ezagent.Behavior.Session.Legends do
   # the older `system_internal`-flag gate (`working_copy_write_authorized?/1`) —
   # codex flagged it shares the same flaw; tracked separately (see report), this
   # PR fixes `set_legends` properly.
-  # `orchestrator-tools` removed 2026-06-19 (#154 — principal eliminated): no
-  # production path ever dispatched `set_legends` under it (the system path uses
-  # `session-internal`; the orchestrator installs legends via its
-  # `{:within_session, self}` delegated cap, NOT this allowlist). Only
-  # `session-internal` remains a trusted legends principal.
-  @legends_trusted_principals ["session-internal"]
+  # #154 — `system://session-internal` ELIMINATED. The legends / prompt-template
+  # write is SESSION SELF-authority: the trusted internal path
+  # (`system_set_legends/2`) dispatches with `caller == the session itself`, and
+  # this gate recognizes that (the workspace-loader #832 "acts on its own slice"
+  # pattern). `orchestrator-tools` was already removed 2026-06-19. The
+  # orchestrator still installs legends via its `{:within_session, self}`
+  # delegated cap (the `orchestrator_cap_present?` branch).
 
   @doc false
   @spec legends_write_authorized?(map()) :: boolean()
   def legends_write_authorized?(ctx) do
-    trusted_legends_principal?(ctx) or ConfigActions.orchestrator_cap_present?(ctx)
+    session_self_caller?(ctx) or ConfigActions.orchestrator_cap_present?(ctx)
   end
 
-  # True iff `ctx.caller` is one of the trusted system principals allowed to
-  # install legends. The caller is set by the dispatch path, NOT freely by an
-  # arbitrary user dispatch (a user dispatch carries the user's own
-  # `entity://user/...` caller), so unlike the old `system_internal` boolean
-  # this cannot be spoofed by setting a ctx field.
-  defp trusted_legends_principal?(ctx) do
-    case Map.get(ctx, :caller) do
-      %URI{} = caller -> trusted_principal?(caller)
-      caller when is_binary(caller) -> caller |> Ezagent.URI.new!() |> trusted_principal?()
+  # True iff `ctx.caller` IS the session being acted on (`ctx.self_uri`) — the
+  # session writing its OWN legends/prompt-template slice. Only the trusted
+  # internal `system_set_*` path sets `caller == self_uri`; a user dispatch
+  # carries the user's own `entity://user/...` caller (set by the api/dispatch
+  # layer, NOT freely spoofable), so it can never present `caller == self_uri`.
+  defp session_self_caller?(ctx) do
+    with %URI{} = caller <- to_uri(Map.get(ctx, :caller)),
+         %URI{} = self_uri <- to_uri(Map.get(ctx, :self_uri)) do
+      same_instance?(caller, self_uri)
+    else
       _ -> false
     end
   end
 
-  defp trusted_principal?(%URI{} = caller) do
-    caller = caller |> Ezagent.URI.instance() |> URI.to_string()
-
-    Enum.any?(@legends_trusted_principals, fn name ->
-      name |> Ezagent.SystemPrincipal.uri() |> URI.to_string() == caller
-    end)
+  defp same_instance?(%URI{} = a, %URI{} = b) do
+    URI.to_string(Ezagent.URI.instance(a)) == URI.to_string(Ezagent.URI.instance(b))
   end
+
+  defp to_uri(%URI{} = uri), do: uri
+
+  defp to_uri(s) when is_binary(s) do
+    Ezagent.URI.new!(s)
+  rescue
+    _ -> nil
+  end
+
+  defp to_uri(_), do: nil
 
   @doc """
   Read the session-scoped legend registry from a `:chat` slice, defaulting to
@@ -99,10 +107,10 @@ defmodule Ezagent.Behavior.Session.Legends do
   by the PR-7 template materialization path (which installs a template's
   legends at create_session time, before any orchestrator cap exists).
 
-  Authorization rides the TRUSTED `caller` (`system://session-internal` ∈ the
-  `set_legends` allowlist), NOT a ctx flag (codex 2026-06-01 HIGH #2). The old
-  `system_internal: true` marker is no longer consulted for legends — it is
-  omitted here.
+  Authorization is SESSION SELF-authority (#154): the dispatch runs as the
+  session itself (`caller == self_uri`), recognized by `legends_write_authorized?`
+  — NOT a system principal, NOT a ctx flag (codex 2026-06-01 HIGH #2 stays fixed;
+  the `system_internal: true` marker is still not consulted for legends).
   """
   @spec system_set_legends(URI.t(), Legend.registry()) :: {:ok, map()} | {:error, term()}
   def system_set_legends(%URI{} = session_uri, legends) when is_map(legends) do
@@ -110,9 +118,11 @@ defmodule Ezagent.Behavior.Session.Legends do
            target: session_uri,
            action: :set_legends,
            args: %{legends: legends},
+           # #154 — `system://session-internal` ELIMINATED. Session SELF-authority:
+           # caller = the session, inline cap granted_by the session.
            ctx: %{
-             caller: Ezagent.SystemPrincipal.uri("session-internal"),
-             caps: system_caps("session-internal"),
+             caller: session_uri,
+             caps: ConfigActions.session_self_cap(session_uri, :set_legends),
              reply: {:caller_inbox, self()}
            }
          }) do
@@ -120,11 +130,5 @@ defmodule Ezagent.Behavior.Session.Legends do
       {:error, _} = err -> err
       other -> {:error, {:unexpected_set_legends_result, other}}
     end
-  end
-
-  defp system_caps(name) when is_binary(name) do
-    name
-    |> Ezagent.SystemPrincipal.uri()
-    |> Ezagent.SystemPrincipal.caps()
   end
 end

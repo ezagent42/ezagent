@@ -53,7 +53,13 @@ defmodule Ezagent.SystemPrincipalCatalogActionAuditTest do
                         # both action: :any) — its 5 materialization dispatch sites
                         # now run under the genesis admin entity with inline
                         # per-action caps; #533 refines to per-creator.
-                        "system://session-internal"
+                        # ELIMINATED 2026-06-20 (#154 north star):
+                        # `system://session-internal` DELETED (it held
+                        # cap(:any, Session, :any) + cap(:workspace, Workspace, :any),
+                        # both action: :any) — the LAST non-genesis principal; its 6
+                        # sites re-attributed to session-self / admin / operator
+                        # authority. Only `system://bootstrap` (genesis) remains in
+                        # the allowlist.
                         # ELIMINATED 2026-06-19 (#154 north star):
                         # `system://orchestrator-tools` DELETED (it held
                         # cap(:session, Session, :any) + cap(:agent, Identity,

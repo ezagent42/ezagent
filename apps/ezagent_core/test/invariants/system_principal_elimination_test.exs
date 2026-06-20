@@ -67,9 +67,14 @@ defmodule Ezagent.SystemPrincipalEliminationTest do
     # orchestrator's tools run AS the orchestrator agent with ITS OWN caps
     # (`SessionManager.opts` sets caller=orchestrator_uri, caps via in-process
     # `Identity.list_caps_for/1`); the `set_legends` allowlist entry was never
-    # reached in production (system path uses session-internal; the orchestrator
-    # uses its `{:within_session, self}` delegated cap). Both caps unreachable.
-    "system://session-internal",
+    # reached in production. Both caps unreachable.
+    # ELIMINATED 2026-06-20: "system://session-internal" — the LAST non-genesis
+    # principal. Its 6 dispatch sites re-attributed: config writes
+    # (set_working_copy/set_legends/set_prompt_templates) → SESSION SELF-authority
+    # (caller==self_uri, inline cap granted_by session); materialization joins
+    # (materializer/template_team) → genesis admin inline `session.join`; wizard
+    # echo-join (home_live) → the operator's own authority. @remaining is now [];
+    # only `system://bootstrap` genesis remains (ratchet 0).
     # ELIMINATED 2026-06-19: "system://agent-internal" — its only live authority
     # (`cap(:agent, Sandbox, :write_path)`, the freshly-spawned worker writing
     # its OWN `:sandbox` slice) is GENUINE self-authority. The

@@ -4,12 +4,12 @@ defmodule Ezagent.SystemPrincipal do
   replacement for ambient `User.admin_caps/0` authority.
 
   Per SPEC `2026-05-25-caps-cleanup-v1.md` §4. Each system-internal
-  dispatch ledger gets a NAMED principal URI (e.g.
-  `system://session-internal`) instead of impersonating the bootstrap
-  admin. (The set is shrinking toward genesis-only under the
-  eliminate-system-principals north star — see `capbac.md` §7; as of the
-  2026-06-20 template-materialize elimination the live set is down to 1
-  (`system://session-internal`) + genesis.) The
+  dispatch ledger formerly got a NAMED principal URI instead of
+  impersonating the bootstrap admin. (The eliminate-system-principals
+  north star — see `capbac.md` §7 — has reached GENESIS-ONLY: as of the
+  2026-06-20 session-internal elimination, every non-genesis principal is
+  gone and `system://bootstrap` is the sole remaining entry. The final
+  step collapses even that genesis into `entity://system/user/admin`.) The
   `Ezagent.SystemPrincipal.Catalog` declares the closed set
   of principals + their permitted cap structs.
 
