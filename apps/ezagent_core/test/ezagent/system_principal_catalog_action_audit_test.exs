@@ -47,7 +47,12 @@ defmodule Ezagent.SystemPrincipalCatalogActionAuditTest do
                         # → action: :any) — the 5 agent/plugin bridges now present
                         # their OWN inline narrow `session.send` cap on the concrete
                         # reply session instead of borrowing this wildcard.
-                        "system://template-materialize",
+                        # ELIMINATED 2026-06-20 (#154 north star):
+                        # `system://template-materialize` DELETED (it held
+                        # cap(:any, Template, :any) + cap(:session, Session, :any),
+                        # both action: :any) — its 5 materialization dispatch sites
+                        # now run under the genesis admin entity with inline
+                        # per-action caps; #533 refines to per-creator.
                         "system://session-internal"
                         # ELIMINATED 2026-06-19 (#154 north star):
                         # `system://orchestrator-tools` DELETED (it held

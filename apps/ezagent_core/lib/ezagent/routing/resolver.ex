@@ -41,7 +41,8 @@ defmodule Ezagent.Routing.Resolver do
 
   `slice.members` is NOT a trust boundary: `chat.join` accepts any
   live `member_uri` and template instantiation joins configured URIs
-  under the `system://template-materialize` principal, so a
+  under the genesis admin entity (#154 — the former
+  `system://template-materialize` principal is gone), so a
   cross-workspace entity can sit in `slice.members`. The Session
   delivery fan-out mints a `:receive` cap PER RECIPIENT it is handed
   (#154 甲-4 — the former `system://chat-router` admin wildcard is gone),

@@ -58,7 +58,11 @@ defmodule Ezagent.SystemPrincipalEliminationTest do
     # internal self-dispatches now carry their OWN inline authorizer caps
     # (`caller: self_uri` + self-authority publish cap / admin-granted
     # subscribe cap) instead of borrowing this ambient principal.
-    "system://template-materialize",
+    # ELIMINATED 2026-06-20, template-materialize — its 5 materialization
+    # dispatch sites (cc_orchestrator_seed/advisor_session/generic_session/
+    # session_template/orchestrator) now run under the genesis admin entity with
+    # inline per-action caps (system-mediated materialization; same as mix-task
+    # #833). #533 will refine admin authority to per-creator.
     # ELIMINATED 2026-06-19: "system://orchestrator-tools" — a DEAD caller. The
     # orchestrator's tools run AS the orchestrator agent with ITS OWN caps
     # (`SessionManager.opts` sets caller=orchestrator_uri, caps via in-process

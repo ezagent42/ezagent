@@ -394,18 +394,32 @@ defmodule Ezagent.Entity.SessionTemplate do
   defp normalize_caps_set(_), do: MapSet.new()
 
   defp system_ctx do
-    # SPEC caps-cleanup-v1 §4.4 — SessionTemplate system context for
-    # opts-less calls runs under `system://template-materialize`
-    # (closed Catalog). Caller paths supplying their own ctx
-    # (`persist_version/3` with caller_opts) preserve operator
-    # provenance per HIGH-9.
+    # #154 — `system://template-materialize` ELIMINATED. The opts-less
+    # SessionTemplate system context (template.write/read materialization) now
+    # runs under the genesis admin entity with INLINE narrow `template.write` +
+    # `template.read` caps (granted_by admin; #533 refines to per-creator).
+    # This builder is target-agnostic (the dispatch sets the target), so the
+    # caps are `instance: :any`; behavior: :any avoids a cross-app Behavior.Template
+    # literal. Caller paths supplying their own ctx (`persist_version/3` with
+    # caller_opts) still preserve operator provenance per HIGH-9.
+    admin_uri = Ezagent.Entity.User.admin_uri()
+
     %{
-      caller: Ezagent.SystemPrincipal.uri("template-materialize"),
+      caller: admin_uri,
       caps:
-        "template-materialize"
-        |> Ezagent.SystemPrincipal.uri()
-        |> Ezagent.SystemPrincipal.caps(),
+        MapSet.new([
+          template_admin_cap(:write, admin_uri),
+          template_admin_cap(:read, admin_uri)
+        ]),
       reply: {:caller_inbox, self()}
+    }
+  end
+
+  defp template_admin_cap(action, %URI{} = admin_uri) when is_atom(action) do
+    %Ezagent.Capability{
+      Ezagent.Capability.cap(:any, :any, action, :any, :any)
+      | granted_by: admin_uri,
+        granted_at: DateTime.utc_now()
     }
   end
 

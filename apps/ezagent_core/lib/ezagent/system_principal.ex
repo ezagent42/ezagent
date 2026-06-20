@@ -5,10 +5,11 @@ defmodule Ezagent.SystemPrincipal do
 
   Per SPEC `2026-05-25-caps-cleanup-v1.md` §4. Each system-internal
   dispatch ledger gets a NAMED principal URI (e.g.
-  `system://template-materialize`, `system://lv-anon-mount`) instead of
-  impersonating the bootstrap admin. (The set is shrinking toward
-  genesis-only under the eliminate-system-principals north star — see
-  `capbac.md` §7; as of 甲-4 the live set is down to 5 (+ genesis).) The
+  `system://session-internal`) instead of impersonating the bootstrap
+  admin. (The set is shrinking toward genesis-only under the
+  eliminate-system-principals north star — see `capbac.md` §7; as of the
+  2026-06-20 template-materialize elimination the live set is down to 1
+  (`system://session-internal`) + genesis.) The
   `Ezagent.SystemPrincipal.Catalog` declares the closed set
   of principals + their permitted cap structs.
 

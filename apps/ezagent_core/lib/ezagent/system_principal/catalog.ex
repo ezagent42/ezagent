@@ -112,7 +112,8 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   # (its only consumer, `cap(:agent, Sandbox, :write_path)`). The agent now
   # carries its own inline `sandbox.write_path` self-authority cap at the
   # `Agent.TemplateSpawn` dispatch site.
-  alias Ezagent.Behavior.Template
+  # `alias Ezagent.Behavior.Template` removed 2026-06-20 — its last use
+  # (the `template-materialize` Catalog cap) was eliminated (#154).
   alias Ezagent.Behavior.Workspace
 
   # The bootstrap structural sentinel — granted_by/granted_at on the
@@ -222,41 +223,21 @@ defmodule Ezagent.SystemPrincipal.Catalog do
       # inline caps are authorizers only (never granted/persisted), so this is
       # no Decision #154 grant regression. With the principal gone the
       # elimination ratchet drops to 12 remaining.
-      {principal("template-materialize"),
-       [
-         # 2026-06-17 (Decision #154 "no unowned permissions", PR-2 of the
-         # CapBAC no-unowned-caps program) — the TWO grant-minting caps
-         # `cap(:user, IdentityAdmin, :grant_cap)` + `:revoke_cap` AND the
-         # grant-path-only `cap(:workspace, Workspace, :any)` are DROPPED.
-         # Every template-materialization GRANT now routes through the
-         # `Ezagent.Identity.Grant` chokepoint under a real-entity tag:
-         #   * rule-bounded caps (`Template/{:within_workspace}`,
-         #     orchestrator-admin `:restart`, member create-session) →
-         #     `{:rule, :template_materialize | :workspace_membership, owner}`
-         #     — authorized by `IdentityAdmin.check_grant_authorized`'s rule
-         #     branch (`rule_cap_bounded?/1`), made reachable by the step-5.5
-         #     `authorization_rule` honoring (`Kind.Runtime`);
-         #   * `behavior: :any` orchestrator scoped caps #1/#2 (rule-ineligible
-         #     by §3.3) → `{:system, bootstrap, owner}` (genesis authority,
-         #     same shape as `grant_owner_orchestrator_manage_cap`).
-         # The `granted_by` is the real configurer ENTITY (the session/template
-         # OWNER) in every case — never this abstract principal. With its
-         # grant caps gone, template-materialize is a NON-minter → category A
-         # in the no_unowned gate (the gate's tooth-3 "neuter" path, mirroring
-         # the 2026-06-16 agent-internal grant_cap drop).
-         #
-         # The principal STAYS in the Catalog because it is still a live
-         # NON-grant authorizer for template materialization READS/WRITES
-         # (NOT a Decision #154 / grant concern): `Template` covers
-         # `template.read` (Orchestrator.read_template_content) +
-         # `template.write` (cc orchestrator seed); `Session` covers the
-         # `session.join` / session-spawn during materialization
-         # (advisor + generic_session templates, SessionTemplate.system_ctx).
-         # Migrating those ambient-authority readers off the principal is a
-         # separate, non-#154 program (out of PR-2 scope).
-         Capability.cap(:any, Template, :any),
-         Capability.cap(:session, Session, :any)
-       ]},
+      # ELIMINATED 2026-06-20, template-materialize (#154 north star) — the last
+      # non-grant authorizer for template materialization READS/WRITES/JOINS. Its
+      # grant-minting caps were already dropped 2026-06-17 (PR-2, → non-minter);
+      # the remaining `cap(:any, Template, :any)` + `cap(:session, Session, :any)`
+      # were borrowed by 5 materialization dispatch sites (cc_orchestrator_seed
+      # template.write, advisor_session/generic_session session.join,
+      # session_template system_ctx template.write/read, orchestrator
+      # read_template_content template.read). Materialization is system-mediated,
+      # so each site now dispatches under the genesis admin entity
+      # `entity://system/user/admin` with an INLINE narrow per-action cap
+      # (granted_by: admin_uri — a real accountable entity; the step-5.5
+      # authorizer, never routed through Grant), exactly as mix-task #833 /
+      # socialware-gc (甲-6) route. #533 creation-unification will later refine
+      # admin authority to per-creator. With its last consumer re-attributed, the
+      # principal leaves the closed Catalog.
       # ELIMINATED 2026-06-19 (#154 north star, per-class collapse "dead caller")
       # — `system://orchestrator-tools` is DELETED. It had NO live dispatch
       # caller: (1) the orchestrator's tools run AS the orchestrator AGENT with

@@ -80,8 +80,9 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
       # 2026-06-20, 甲-3: chat-reply ELIMINATED → 6 principals.
       # 2026-06-20, 甲-4: chat-router ELIMINATED → 5 principals.
       # 2026-06-20, 甲-6: lv-anon-mount + socialware-gc ELIMINATED → 3 principals.
-      assert length(uris) == 3,
-             "expected 3 system principals; Catalog has #{length(uris)}: " <>
+      # 2026-06-20: template-materialize ELIMINATED → 2 principals.
+      assert length(uris) == 2,
+             "expected 2 system principals; Catalog has #{length(uris)}: " <>
                inspect(uris)
 
       expected = [
@@ -98,7 +99,9 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
         #  wildcard. Same play as worker-publish self-authority.)
         # (worker-publish ELIMINATED — north star; the ExternalMirrorWorker's
         #  internal dispatches now carry their own inline authorizer caps.)
-        "system://template-materialize",
+        # (template-materialize ELIMINATED 2026-06-20 — north star; its 5
+        #  materialization dispatch sites now run under the genesis admin entity
+        #  with inline per-action caps; #533 refines to per-creator.)
         # (orchestrator-tools ELIMINATED 2026-06-19 — north star; DEAD caller:
         #  the orchestrator runs its tools as itself with its own caps, and the
         #  set_legends allowlist entry was never reached in production.)
@@ -186,11 +189,11 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
     end
 
     test "uri/1 returns a parsed URI for a registered service" do
-      # (was "chat-router" — ELIMINATED 2026-06-20, 甲-4; pick any still-cataloged
-      #  service so this asserts the success path, not the raise path below.)
-      uri = Ezagent.SystemPrincipal.uri("template-materialize")
+      # (was "chat-router" then "template-materialize" — both ELIMINATED; pick any
+      #  still-cataloged service so this asserts the success path, not the raise.)
+      uri = Ezagent.SystemPrincipal.uri("session-internal")
       assert %URI{scheme: "system"} = uri
-      assert URI.to_string(uri) == "system://template-materialize"
+      assert URI.to_string(uri) == "system://session-internal"
     end
 
     test "uri/1 raises on uncataloged service name" do
