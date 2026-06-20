@@ -14,39 +14,53 @@
 
 ## Active follow-ups (post-2026-05-24 batch)
 
-### #154 genesis-collapse hardening: predicate A at secondary sites + `:system` caller bypass — OPEN (LOW, defense-in-depth)
+### #154 genesis-collapse hardening — TRIAGED 2026-06-20: predicate-A sweep = confirmed NON-GAP; only residual = `:system` caller bypass (needs Allen decision)
 
-> **OPEN, surfaced 2026-06-20 (genesis collapse, task #71).** The genesis
-> collapse landed predicate A (`Capability.granted_by_entity?/1`, rejects every
-> `system://`-granted cap) at the TWO load-bearing dispatch authorizer sites:
-> `Kind.Runtime.authorizes?/2` (inline `ctx.caps`) and `Kind.default_holds_cap?/2`
-> (slice-held caps). Two narrower hardening items remain, both **NOT externally
-> exploitable** (verified — see below) so deferred out of the security-core PR:
+> **Updated 2026-06-20 after a full per-site trace (Allen asked "if no external
+> caller, why need authz at all?").** The genesis collapse landed predicate A
+> (`Capability.granted_by_entity?/1`, rejects every `system://`-granted cap) at the
+> TWO load-bearing dispatch authorizer sites: `Kind.Runtime.authorizes?/2` (inline
+> `ctx.caps`) + `Kind.default_holds_cap?/2` (slice-held). Conceptual framing for the
+> rest: **authentication ≠ authorization.** Server-populated caps at ingress is the
+> *authentication* guarantee (can't forge who you are); `matches?` is the
+> *authorization* guarantee (a real, authenticated caller still needs a cap — user A
+> can't act on B's session). The cap mechanism is load-bearing at the dispatch
+> chokepoint *because real authenticated callers exist there*. Predicate A
+> specifically is a narrow guard against *stale pre-collapse `system://`-granted
+> caps* in a slice — and post-migration slices are clean + the grant chokepoint
+> prevents new ones, so it is low-value defense-in-depth everywhere and pure theater
+> where no real caps flow.
 >
-> 1. **~6 secondary cap-authz sites call `Capability.matches?/2` WITHOUT
->    predicate A:** `presence.ex:172`, `notification_subscriptions.ex:508` +
->    structural-admin ~546, `notifications.ex:230`, `external_mirror/gates.ex:178+219`,
->    `external_mirror.ex:429`, `credential/resolver.ex:314`. **Verified not
->    externally reachable with caller-controlled caps:** `register_subscription/3`
->    has no `apps/*/lib` callers; `Presence.subscribe/2` callers are all internal
->    (`presence_fanout.ex` passing `%{caps: :system}`); no web/LV/feishu controller
->    passes caller-supplied caps to these paths. Fix = thread `granted_by_entity?/1`
->    through each before `matches?/2` (mechanical), one sweep PR.
-> 2. **`:system` atom caller blanket bypass:** `Kind.default_holds_cap?(:system, _)
->    -> true` + `%Cmd{}` defaults `caller: :system` (cmd.ex:91). This is a SEPARATE
->    axis (caller, not granted_by) and in-VM only — `ctx.caller`/`ctx.caps` are
->    server-populated at external ingress (`api_v1_controller` reads caps from
->    `Entity.authenticate/2`; LV/feishu resolve the entity server-side), so a remote
->    caller cannot set `caller: :system`. Fix = replace the blanket atom bypass with
->    an explicit internal-service entity granter, or scope it. Coordinate with the
->    `cmd.ex` default.
+> **The ~6 secondary `matches?` sites — traced, ALL non-gaps (do NOT blind-sweep):**
+> - **A. Dormant (`:system`-bypassed, internal-only callers):** `presence.ex`
+>   (`check_subscribe_cap!(%{caps: :system}) -> :ok`; sole caller `presence_fanout`
+>   passes `:system`) + `notifications.ex` (`check_cap!(%{caps: :system}) -> :ok`;
+>   `notify/2` callers use the `:system` default). The `matches?` branch **never runs
+>   in production** → predicate A = pure theater. Honest options = delete the dead
+>   check, or (better) kill the `:system` bypass so it becomes live.
+> - **B. Unwired hardened public API:** `notification_subscriptions.ex` deliberately
+>   *rejects* `%{caps: :system}` (codex round-2 CRITICAL) and requires real caps, but
+>   `register_subscription/3` has **no production caller**. Adding predicate A now =
+>   YAGNI; add it if/when the API is wired.
+> - **C. Real caps flow, but the site is/behind the authoritative chokepoint:**
+>   `external_mirror/gates.ex` (operator caps via admin LV / mix tasks, BUT the actual
+>   mutation re-dispatches through step-5.5 **which already has predicate A** — the
+>   gate is a redundant pre-filter) + `credential/resolver.ex` `source_read_authorized?`
+>   (the create chokepoint's own helper on the creator's real caps — the chokepoint IS
+>   the gate). Predicate A here = consistency-only; the chokepoint behind it covers it.
+> - **Verdict:** the "thread `granted_by_entity?` through ~6 sites" sweep is the exact
+>   theater Allen's question suspects → **NOT NEEDED.**
 >
-> **Why deferred:** both are in-VM defense-in-depth, not forgery controls; the
-> primary forgery control (server-populated ctx at ingress) is already in place.
-> Bundling them into the genesis-collapse PR would mix a broad mechanical sweep +
-> a cross-cutting caller-axis change into a security-core PR. See
-> [[feedback_let_it_crash_no_workarounds]] for the `:system`-bypass direction
-> (prefer an explicit entity granter over keeping the atom shim).
+> **Residual REAL item (needs Allen decision, NOT auto-done):** the `:system` atom
+> caller blanket bypass — `Kind.default_holds_cap?(:system, _) -> true` + `%Cmd{}`
+> default `caller: :system` (cmd.ex:91) + `presence_fanout` / every internal path
+> that relies on it. This is what makes the category-A checks dormant. In-VM only
+> (external ingress is server-populated, can't set `caller: :system`). Replacing it
+> with an explicit internal-service ENTITY identity ([[feedback_let_it_crash_no_workarounds]]:
+> prefer a real granter over a shim) would make every path go through genuine authz —
+> but it's a **pervasive, risky refactor**, not a small follow-up. Options: (a) do the
+> refactor, (b) delete the dormant A-checks as dead code, (c) close as
+> accepted-in-VM-trust. Surfaced to Allen 2026-06-20.
 
 ### `session_creator.ex` oversized + def-count refactor — OPEN (MED, two arch.scan reds on main)
 
