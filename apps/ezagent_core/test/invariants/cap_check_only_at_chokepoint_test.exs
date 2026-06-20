@@ -157,7 +157,17 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         # skip+log). This is ctx CONSTRUCTION feeding the chokepoint, NOT a
         # cap-gate decision outside it — same class as the home_live wizard
         # and the session_creator idempotency reads above.
-        "apps/ezagent_domain_session/lib/ezagent/behavior/turn.ex"
+        "apps/ezagent_domain_session/lib/ezagent/behavior/turn.ex",
+        # Session membership grant path — `grant_join_cap/3` and
+        # `do_mount_participation_caps/2` read the GRANTEE's OWN caps to skip a
+        # duplicate grant (idempotency: caps carry a fresh `granted_at`, so the
+        # slice MapSet never dedupes → re-grant on every navigation = `:identity`
+        # slice-change churn). These reads gate ONLY whether to GRANT (both return
+        # `:ok` either way; the actual grant goes through `grant_cap_via_router`);
+        # they NEVER gate whether the join/action itself proceeds — that stays at
+        # the dispatch chokepoint. Identical class to the session_creator +
+        # workspace idempotency reads allowlisted above.
+        "apps/ezagent_domain_session/lib/ezagent/behavior/session/membership.ex"
       ]
     },
     %{

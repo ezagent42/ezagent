@@ -245,7 +245,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
       # caller: (1) the orchestrator's tools run AS the orchestrator AGENT with
       # ITS OWN reconstructed caps — `SessionManager.opts/3` sets
       # `caller: binding.orchestrator_uri` + `caps: load_orchestrator_caps/1`,
-      # where `load_orchestrator_caps` calls `Ezagent.Identity.list_caps_for/1`
+      # where `load_orchestrator_caps` calls `Ezagent.Identity`'s `list_caps_for/1`
       # IN-PROCESS (no dispatch, no principal — the stale catalog comment claimed
       # `McpServer.load_orchestrator_caps` dispatched `identity.list_caps` under
       # this principal; it never did). So the `agent.Identity.list_caps` cap was
