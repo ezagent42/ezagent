@@ -9,7 +9,7 @@ authoritative architecture lives in `../../ARCHITECTURE.md` and
 `../phase-specs/`. When notes and the normative docs disagree, the
 normative docs win.
 
-Six notes have bilingual `.zh_cn.md` companions (marked **[zh]** below).
+Seven notes have bilingual `.zh_cn.md` companions (marked **[zh]** below).
 
 ## Phase forensics / post-mortems
 
@@ -35,6 +35,7 @@ Six notes have bilingual `.zh_cn.md` companions (marked **[zh]** below).
 - [Socialware 基座化 live E2E validation (2026-06-15)](2026-06-15-socialware-substrate-live-e2e-validation.md) — closes #63's live tier: the im→session→agent refactor validated end-to-end on the disposable stack (orchestrator readiness + session→agent transport + cc reply roundtrip, 3/3); the bug it fixed (#783) + the 3 disposable-stack/#17 provisioning gaps it surfaced (admin-caps non-bug, per-agent claude login, Feishu caller-open_id) — all orthogonal to the refactor.
 - [Live orchestrator MCP-registration deadlock (2026-06-15)](2026-06-15-live-orchestrator-mcp-registration-bug.md) — fresh-stack E2E finding: the durable session→orchestrator binding was written at step 6, AFTER the step-5 readiness gate that the live MCP join (self-registering via `McpServer` lazy rebuild) needs — so every join was rejected `:orchestrator_not_registered` → 90s timeout → create rollback. Fix pre-persists the deterministic planned URI before the gate; deterministic tests masked it (test-mode signals readiness without a live join).
 - [CapBAC system-principal audit — "No unowned permissions" (2026-06-16)](2026-06-16-capbac-system-principal-audit.md) — GLOSSARY Decision #154: every cap's `granted_by` must be a real entity; abstract `system://…` principals that MINT permissions (hold `grant_cap`/`revoke_cap`) are "unowned". A/B classification of all 15 Catalog principals (8 A / 1 confirmed-B `template-materialize` / 6 needs-Allen, of which agent-internal + feishu-binding-policy are strong-B-lean minters). Backs the ratchet gate `no_unowned_system_principal_grant_test.exs`; conversions (#811 cap#2, #808 anon-access) shrink the allowlist → 0.
+- [Keep the bespoke `ezagent_core` framework — Ash / actor-framework ROI (2026-06-20)](2026-06-20-bespoke-core-framework-roi-decision.md) — **[zh]** Allen-decided: keep the in-house Kind/Behavior actor runtime (~37.6K, ~30%) on raw OTP rather than migrate. Four studies: code composition (auth ~7% but pervasive), size benchmark (healthy/lean — app layer ~88K is in-band; the framework is the "looks big" factor), Ash-ROI (Ash is declarative-data not actor; snapshots are `term_to_binary` blobs = Ash-hostile; ~3-5K addressable, negative ROI), actor-framework survey (primitives already OTP; no lib replaces the abstraction; Commanded is rewrite-not-migration + its wins are already in-house via `event_log`/`saga_runner`). Greenfield-only Ash for new relational/authz; Horde only for multi-node.
 
 ## Walkthroughs / demos
 
