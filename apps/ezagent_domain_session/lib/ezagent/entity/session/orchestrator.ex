@@ -808,15 +808,27 @@ defmodule Ezagent.Entity.Session.Orchestrator do
            target: target,
            mode: :call,
            args: %{},
-           # SPEC caps-cleanup-v1 §4.4 — reading template content
-           # during materialization; runs under
-           # `system://template-materialize` (closed Catalog).
+           # #154 — `system://template-materialize` ELIMINATED. Reading template
+           # content during materialization is system-mediated → runs under the
+           # genesis admin entity with an INLINE narrow `template.read` cap
+           # (granted_by admin; #533 refines). behavior: :any avoids a cross-app
+           # `Behavior.Template` literal.
            ctx: %{
-             caller: Ezagent.SystemPrincipal.uri("template-materialize"),
+             caller: Ezagent.Entity.User.admin_uri(),
              caps:
-               "template-materialize"
-               |> Ezagent.SystemPrincipal.uri()
-               |> Ezagent.SystemPrincipal.caps(),
+               MapSet.new([
+                 %Ezagent.Capability{
+                   Ezagent.Capability.cap(
+                     :any,
+                     :any,
+                     :read,
+                     Ezagent.URI.instance(target),
+                     Ezagent.Capability.workspace_of(target)
+                   )
+                   | granted_by: Ezagent.Entity.User.admin_uri(),
+                     granted_at: DateTime.utc_now()
+                 }
+               ]),
              reply: {:caller_inbox, self()}
            }
          }) do

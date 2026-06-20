@@ -166,15 +166,12 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
     # abandoned-anon GC reaper's `session.leave` now runs under the genesis admin
     # entity with an inline `session.leave` cap; the anon can't self-leave). Both
     # were NON-minters; both leave the Catalog.
-    # 2026-06-17 (PR-2 of the no-unowned-caps program) — template-materialize
-    # was B (the §1 spec-named workaround). Its grant caps are now DROPPED
-    # (Catalog) and every grant routes through `Ezagent.Identity.Grant` under
-    # a real-entity tag (`{:rule, …}` for bounded caps, `{:system, bootstrap}`
-    # for the `behavior: :any` orchestrator scoped caps). It is now a
-    # NON-minter retaining only NON-grant template read/write/session-spawn
-    # authority → category A (the gate's tooth-3 neuter path, same as the
-    # 2026-06-16 agent-internal grant_cap drop).
-    "system://template-materialize"
+    # ELIMINATED 2026-06-20 (#154 north star): "system://template-materialize" — a
+    # NON-minter (its grant caps were dropped in PR-2 2026-06-17) retaining only
+    # NON-grant template read/write/session-join materialization authority. Its 5
+    # dispatch sites now run under the genesis admin entity with inline per-action
+    # caps (system-mediated materialization; same as mix-task). With its last cap
+    # re-attributed, the principal leaves the Catalog.
   ]
 
   # (B) CONFIRMED violates — principals that MINT permissions a real configurer

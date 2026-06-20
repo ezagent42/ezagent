@@ -445,15 +445,28 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
            target: target,
            mode: :call,
            args: %{content: content},
-           # SPEC caps-cleanup-v1 §4.4 — system-mediated CC orchestrator
-           # template seed runs under `system://template-materialize`
-           # (closed Catalog).
+           # #154 — `system://template-materialize` ELIMINATED. The CC
+           # orchestrator template seed is system-mediated materialization →
+           # runs under the genesis admin entity with an INLINE narrow
+           # `template.write` cap (granted_by admin; #533 will refine to
+           # per-creator authority). Same play as mix-task #833 / socialware-gc.
+           # behavior: :any avoids a cross-app `Behavior.Template` literal.
            ctx: %{
-             caller: Ezagent.SystemPrincipal.uri("template-materialize"),
+             caller: Ezagent.Entity.User.admin_uri(),
              caps:
-               "template-materialize"
-               |> Ezagent.SystemPrincipal.uri()
-               |> Ezagent.SystemPrincipal.caps(),
+               MapSet.new([
+                 %Ezagent.Capability{
+                   Ezagent.Capability.cap(
+                     :any,
+                     :any,
+                     :write,
+                     Ezagent.URI.instance(target),
+                     Ezagent.Capability.workspace_of(target)
+                   )
+                   | granted_by: Ezagent.Entity.User.admin_uri(),
+                     granted_at: DateTime.utc_now()
+                 }
+               ]),
              reply: {:caller_inbox, self()}
            }
          }) do

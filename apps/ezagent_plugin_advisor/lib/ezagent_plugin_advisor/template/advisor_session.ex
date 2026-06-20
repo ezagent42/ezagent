@@ -150,12 +150,26 @@ defmodule EzagentPluginAdvisor.Template.AdvisorSession do
       target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
       mode: :call,
       args: %{member: operator_uri, role_name: "operator", in_session_template: true},
+      # #154 — `system://template-materialize` ELIMINATED. Joining the operator
+      # during template instantiation is system-mediated materialization → runs
+      # under the genesis admin entity with an INLINE narrow `session.join` cap
+      # (granted_by admin; #533 refines to per-creator). behavior: :any.
       ctx: %{
-        caller: Ezagent.SystemPrincipal.uri("template-materialize"),
+        caller: Ezagent.Entity.User.admin_uri(),
         caps:
-          "template-materialize"
-          |> Ezagent.SystemPrincipal.uri()
-          |> Ezagent.SystemPrincipal.caps(),
+          MapSet.new([
+            %Ezagent.Capability{
+              Ezagent.Capability.cap(
+                :session,
+                :any,
+                :join,
+                Ezagent.URI.instance(session_uri),
+                Ezagent.Capability.workspace_of(session_uri)
+              )
+              | granted_by: Ezagent.Entity.User.admin_uri(),
+                granted_at: DateTime.utc_now()
+            }
+          ]),
         reply: {:caller_inbox, self()}
       }
     })
