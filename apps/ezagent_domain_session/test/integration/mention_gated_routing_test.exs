@@ -91,7 +91,7 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
         args: %{member: member},
         ctx: %{
           caller: member,
-          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
           reply: :ignore
         }
       })
@@ -110,7 +110,7 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
         args: %{message: msg},
         ctx: %{
           caller: sender,
-          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
           reply: :ignore
         }
       })

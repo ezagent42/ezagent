@@ -56,7 +56,7 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
       args: %{msg: "hello"},
       ctx: %{
         caller: Ezagent.Entity.User.admin_uri(),
-        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
         reply: {:caller_inbox, self()}
       }
     }
@@ -105,7 +105,7 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
       args: %{msg: "via-cast"},
       ctx: %{
         caller: Ezagent.Entity.User.admin_uri(),
-        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
         reply: {:caller_inbox, self()}
       }
     }
@@ -144,7 +144,7 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
         args: %{member: echo_agent_uri},
         ctx: %{
           caller: admin_uri,
-          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
           reply: {:caller_inbox, self()}
         }
       })
@@ -169,7 +169,7 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
         args: %{message: msg},
         ctx: %{
           caller: admin_uri,
-          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
           reply: :ignore
         }
       })
@@ -216,7 +216,7 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
       args: %{msg: 42},
       ctx: %{
         caller: Ezagent.Entity.User.admin_uri(),
-        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
         reply: {:caller_inbox, self()}
       }
     }

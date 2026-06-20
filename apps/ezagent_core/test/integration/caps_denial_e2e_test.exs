@@ -130,7 +130,7 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
   describe "Scenario 4 — admin's superset cap matches everything" do
     test "admin can chat.send (control case: positive path proves the test setup is valid)" do
       admin_uri = Ezagent.Entity.User.admin_uri()
-      admin_caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+      admin_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
       session_uri = default_session()
 
       result = dispatch_send(admin_uri, admin_caps, session_uri, "hi from admin")

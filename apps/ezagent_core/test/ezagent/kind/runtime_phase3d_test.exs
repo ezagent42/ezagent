@@ -78,7 +78,7 @@ defmodule Ezagent.Kind.RuntimePhase3dTest do
       args: %{msg: "should be granted"},
       ctx: %{
         caller: Ezagent.Entity.User.admin_uri(),
-        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
         reply: :ignore
       }
     }

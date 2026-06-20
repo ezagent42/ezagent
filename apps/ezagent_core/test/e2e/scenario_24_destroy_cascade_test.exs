@@ -64,7 +64,7 @@ defmodule Ezagent.E2E.Scenario24DestroyCascadeTest do
   defp admin_ctx do
     %{
       caller: User.admin_uri(),
-      caps: SystemPrincipal.caps("system://bootstrap"),
+      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
       reply: {:caller_inbox, self()}
     }
   end

@@ -163,7 +163,7 @@ defmodule Ezagent.InvocationTest do
   defp ctx_for(pid) do
     %{
       caller: Ezagent.URI.new!("entity://system/user/admin"),
-      caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
       reply: {:caller_inbox, pid}
     }
   end

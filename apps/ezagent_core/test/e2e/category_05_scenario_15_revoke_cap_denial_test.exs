@@ -85,7 +85,7 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
            Ezagent.Workspace.create_session(
              workspace_uri,
              %{short_name: short_name, template_name: template_name},
-             %{caller: creator_uri, caps: Ezagent.SystemPrincipal.caps("system://bootstrap")}
+             %{caller: creator_uri, caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])}
            ) do
       {:ok, result.session_uri,
        %{
@@ -263,7 +263,7 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
         action: :any,
         instance: :any,
         workspace_uri: :any,
-        granted_by: URI.new!("system://bootstrap/default"),
+        granted_by: Ezagent.URI.user(:system, :admin),
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
 
@@ -280,7 +280,7 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
   describe "admin can chat.send — control case (proves test infra is valid)" do
     test "admin's superset cap matches every action" do
       admin_uri = Ezagent.Entity.User.admin_uri()
-      admin_caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+      admin_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
       session = default_session()
 
       result = dispatch_send(admin_uri, admin_caps, session, "hi from admin")

@@ -201,7 +201,7 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
       args: %{},
       ctx: %{
         caller: Ezagent.URI.new!("entity://system/user/admin"),
-        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
         reply: :ignore
       }
     }

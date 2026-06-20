@@ -48,7 +48,7 @@ defmodule Ezagent.Kind.ServerTest do
       args: %{msg: "hello"},
       ctx: %{
         caller: Ezagent.URI.new!("entity://system/user/admin"),
-        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
         reply: :ignore
       }
     }
@@ -66,7 +66,7 @@ defmodule Ezagent.Kind.ServerTest do
       args: %{msg: "via-cast"},
       ctx: %{
         caller: Ezagent.URI.new!("entity://system/user/admin"),
-        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
         reply: {:caller_inbox, self()}
       }
     }
@@ -85,7 +85,7 @@ defmodule Ezagent.Kind.ServerTest do
       args: %{msg: "pre-ready"},
       ctx: %{
         caller: Ezagent.URI.new!("entity://system/user/admin"),
-        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
         reply: {:caller_inbox, self()}
       }
     }

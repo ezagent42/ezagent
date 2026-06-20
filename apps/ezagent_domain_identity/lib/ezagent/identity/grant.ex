@@ -35,31 +35,32 @@ defmodule Ezagent.Identity.Grant do
   | `{:held_by, actor}` | the actor's real cap slice | `actor` | `actor` |
   | `{:admin, admin}` | the admin's real cap slice | `admin` | `admin` |
   | `{:rule, name, configurer}` | `[]` + `ctx.authorization_rule = name` | `configurer` | `configurer` |
-  | `{:system, principal, granted_by}` *(transitional)* | `SystemPrincipal.caps(principal)` | `granted_by` | `granted_by` (MUST be entity) |
+  | `{:genesis, granted_by}` | `[admin_genesis_cap()]` (the admin-granted genesis wildcard) | `granted_by` | `granted_by` (MUST be entity) |
 
-  > NOTE (deviation from SPEC §2 table): for `{:system, …}` the `ctx.caller`
-  > is the ENTITY `granted_by`, NOT the principal. `ctx.caps` carries the
-  > principal's authority (satisfying dispatch step 5.5, which the entity
-  > caller lacks), while `ctx.caller` stays the accountable entity so the
-  > handler's `caller == owner` self-check still authorizes a
-  > concrete-data_owner grant (the original sites split on caller; the
-  > self-check is load-bearing). See `derive/1`.
+  > NOTE (deviation from SPEC §2 table): for `{:genesis, …}` the `ctx.caller`
+  > is the ENTITY `granted_by`. `ctx.caps` carries the genesis authority
+  > (satisfying dispatch step 5.5 for wildcard / no-data-owner grants the
+  > entity caller's own caps lack), while `ctx.caller` stays the accountable
+  > entity so the handler's `caller == owner` self-check still authorizes a
+  > concrete-data_owner grant. See `derive/1`.
 
   `{:held_by, actor}` subsumes self (actor == target owner), admin
   (actor holds admin caps), and #811 manager-delegation (actor holds a
   Manage cap over the target) — all decided by `ctx.caps` exactly as
-  before. `{:system, …}` is the **transitional** tag: it preserves
-  today's system-principal *authorization* while forcing `granted_by`
-  to a real entity, so PR-1 fixes the #154 granter violations
-  everywhere without changing authorization semantics. PR-2/PR-3
-  convert `{:system, …}` calls to `{:rule, …}` / `{:held_by, …}` and
-  the principal then leaves the Catalog.
+  before. `{:genesis, granted_by}` is the **extreme-fallback** tag (#154
+  genesis collapse, 2026-06-20): it supplies the canonical admin-granted
+  genesis wildcard as the AUTHORIZER for the rare grant whose target has
+  no data owner / a `behavior: :any` shape (rule-ineligible) that neither
+  `{:held_by}` nor `{:rule}` can authorize, while the granted cap's
+  `granted_by` stays a real entity (creator/owner). It replaced the retired
+  `{:system, principal, granted_by}` tag — there is no longer any
+  `system://` principal in the authorization path.
 
   `granted_by` is **derived from the tag** — never a parameter the
   caller can set to itself. The chokepoint EXPLICITLY OVERWRITES the
   cap's `granted_by` (a struct update — NOT via `normalize!/2`, which
   returns a `%Capability{}` unchanged and would leave a pre-existing
-  system-principal `granted_by` in place) and then VALIDATES it is
+  non-entity `granted_by` in place) and then VALIDATES it is
   `%URI{scheme: "entity"}`, else `{:error, {:granter_not_entity, uri}}`
   (the runtime #154 guard; fail-closed).
 
@@ -71,7 +72,7 @@ defmodule Ezagent.Identity.Grant do
   `grant_cap_returning_effect/4`, `revoke_cap_returning_effect/4`)
   RAISE on a `prepare/4` error — an effect site cannot return an
   `{:error}` tuple as an effect, and a non-entity granter on a
-  `{:system, p, entity}` tag is a compile-fixed programmer error
+  `{:genesis, entity}` tag is a compile-fixed programmer error
   (fail-fast, let-it-crash).
   """
 
@@ -81,7 +82,7 @@ defmodule Ezagent.Identity.Grant do
           {:held_by, URI.t()}
           | {:admin, URI.t()}
           | {:rule, atom(), URI.t()}
-          | {:system, URI.t(), URI.t()}
+          | {:genesis, URI.t()}
 
   @type grant_action :: :grant_cap | :revoke_cap
 
@@ -212,20 +213,21 @@ defmodule Ezagent.Identity.Grant do
     {MapSet.new(), configurer, configurer, name}
   end
 
-  defp derive({:system, %URI{} = principal, %URI{} = granted_by}) do
-    # ctx.caps = the principal's catalog caps (the AUTHORIZER — satisfies
-    # dispatch step 5.5, which needs the IdentityAdmin grant cap the owner
-    # does NOT hold). ctx.caller = the ENTITY `granted_by` (NOT the
-    # principal) — the handler's `check_grant_authorized` self-check reads
-    # `ctx.caller` and rejects `:grant_not_owner` for a concrete-data_owner
-    # cap unless caller == owner. This matches what the original sites
-    # 6/7/10 ran (`caller: owner_uri` + `caps: template-materialize`) and is
-    # safe at the caller=principal sites (their handler authz is caps-based:
-    # `Template.data_owner/1` == :any → require_workspace_admin reads caps).
-    # DEVIATION from SPEC §2 table (which says caller=principal): the
-    # original sites split on caller, and the caller self-check is
-    # load-bearing wherever data_owner is concrete. (code-wins-over-spec.)
-    {Ezagent.SystemPrincipal.caps(principal), granted_by, granted_by, nil}
+  defp derive({:genesis, %URI{} = granted_by}) do
+    # #154 genesis collapse (2026-06-20) — the genesis authorizer. ctx.caps =
+    # the canonical admin-granted genesis wildcard
+    # (`Ezagent.Capability.admin_genesis_cap/0`, granted_by the admin entity —
+    # a real entity, NOT the eliminated `system://bootstrap` principal). It
+    # satisfies dispatch step 5.5 for the wildcard/no-data-owner grants the
+    # owner's own caps cannot. ctx.caller = the ENTITY `granted_by` — the
+    # handler's `check_grant_authorized` self-check reads `ctx.caller` and
+    # rejects `:grant_not_owner` for a concrete-data_owner cap unless
+    # caller == owner. The granted cap's `granted_by` is stamped to this same
+    # real entity (creator/owner). Replaces the retired
+    # `{:system, principal, granted_by}` tag (the authorizer caps came from
+    # the bootstrap principal's Catalog row; now they come from the admin
+    # entity's immutable genesis cap, with no `system://` reference anywhere).
+    {MapSet.new([Ezagent.Capability.admin_genesis_cap()]), granted_by, granted_by, nil}
   end
 
   # ── shared envelope helpers ───────────────────────────────────────────
@@ -262,7 +264,7 @@ defmodule Ezagent.Identity.Grant do
         raise ArgumentError,
               "Ezagent.Identity.Grant: cannot build #{action} effect — #{inspect(reason)}. " <>
                 "An effect site cannot carry an {:error} tuple; a non-entity granted_by on a " <>
-                "{:system, principal, entity} tag is a programmer error (Decision #154)."
+                "{:genesis, entity} tag is a programmer error (Decision #154)."
     end
   end
 

@@ -436,14 +436,22 @@ defmodule Ezagent.CapabilityRegistry do
   # so we can't reference it from here at compile time. Resolution via
   # `Code.ensure_loaded?/1` + `apply/3` at runtime so the dependency
   # arrow stays correct and the URI matches the real admin once domain.identity
-  # is started. Falls back to `system://bootstrap/pr-own-1` if the User
-  # module isn't loaded (test envs without the identity app).
+  # is started.
+  #
+  # #154 genesis collapse: the fallback (User module not loaded, e.g. the
+  # standalone ezagent_core test env) must NOT mint a `system://bootstrap/...`
+  # granter — predicate A (`Capability.granted_by_entity?/1`) now rejects every
+  # `system://`-granted cap, so such a default grant would be silently inert.
+  # `Ezagent.Entity.User.admin_uri/0` is exactly `Ezagent.URI.user(:system,
+  # :admin)` (entity://system/user/admin), which lives in ezagent_core and is
+  # the canonical genesis admin entity — so the fallback returns the SAME
+  # entity granter the primary branch would, keeping the cap live.
   defp bootstrap_granter do
     if Code.ensure_loaded?(Ezagent.Entity.User) and
          function_exported?(Ezagent.Entity.User, :admin_uri, 0) do
       apply(Ezagent.Entity.User, :admin_uri, [])
     else
-      Ezagent.URI.system(:bootstrap, "pr-own-1")
+      Ezagent.URI.user(:system, :admin)
     end
   end
 

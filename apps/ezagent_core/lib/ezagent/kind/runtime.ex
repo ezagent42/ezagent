@@ -544,31 +544,30 @@ defmodule Ezagent.Kind.Runtime do
         false
 
       is_struct(caps, MapSet) ->
-        Enum.any?(caps, fn cap ->
-          try do
-            Ezagent.Capability.matches?(cap, needed_map)
-          rescue
-            _ -> false
-          catch
-            _, _ -> false
-          end
-        end)
+        Enum.any?(caps, &authorizes?(&1, needed_map))
 
       is_list(caps) ->
-        Enum.any?(caps, fn cap ->
-          try do
-            Ezagent.Capability.matches?(cap, needed_map)
-          rescue
-            _ -> false
-          catch
-            _, _ -> false
-          end
-        end)
+        Enum.any?(caps, &authorizes?(&1, needed_map))
 
       true ->
         false
     end
   end
+
+  # #154 predicate A: an authorizing cap counts only if it traces to a real
+  # entity (`Capability.granted_by_entity?/1`) AND `matches?/2` the needed cap.
+  defp authorizes?(%Ezagent.Capability{} = cap, needed_map) do
+    Ezagent.Capability.granted_by_entity?(cap) and
+      try do
+        Ezagent.Capability.matches?(cap, needed_map)
+      rescue
+        _ -> false
+      catch
+        _, _ -> false
+      end
+  end
+
+  defp authorizes?(_, _), do: false
 
   defp needed_map_to_struct(
          %{

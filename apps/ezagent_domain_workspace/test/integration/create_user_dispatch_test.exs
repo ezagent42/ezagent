@@ -41,7 +41,7 @@ defmodule Ezagent.Integration.CreateUserDispatchTest do
 
     admin_ctx = %{
       caller: User.admin_uri(),
-      caps: Ezagent.SystemPrincipal.caps("system://bootstrap")
+      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
     }
 
     {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx}
@@ -77,10 +77,11 @@ defmodule Ezagent.Integration.CreateUserDispatchTest do
       # Verify the DB row is real — same surface
       # `Ezagent.Users.verify_password/2` reads.
       assert %{uri: %URI{}, caps: caps} = Users.get_by_uri(user_uri_str)
-      # PR-27 default cap (user-scope `:session, :any, :any` in the
-      # user's workspace) is prepended by Users.create/3 — that's the
-      # 1 row we expect even with caps: "".
-      assert length(caps) >= 1
+      # PR-甲-2 (#154) narrowed `User.default_caps/1` to `[]` — participation
+      # is granted per-session at join, not as a creation baseline. So with
+      # `caps: ""` the user's caps_json is empty (the structural self-Identity
+      # cap is added at SPAWN by Behavior.Identity, not stored in caps_json).
+      assert caps == []
       assert Users.verify_password(user_uri_str, "test-password-not-secret")
     end
 

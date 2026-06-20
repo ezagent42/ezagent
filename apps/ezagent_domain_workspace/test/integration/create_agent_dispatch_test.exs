@@ -33,7 +33,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
 
     admin_ctx = %{
       caller: User.admin_uri(),
-      caps: Ezagent.SystemPrincipal.caps("system://bootstrap")
+      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
     }
 
     {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx}

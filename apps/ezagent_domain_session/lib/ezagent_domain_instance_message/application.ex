@@ -255,7 +255,7 @@ defmodule EzagentDomainInstanceMessage.Application do
             %{short_name: "main", template_name: "default"},
             %{
               caller: User.admin_uri(),
-              caps: "bootstrap" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps()
+              caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
             }
           )
         end

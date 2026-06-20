@@ -577,7 +577,7 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
   end
 
   defp spawn_owner_and_session(%URI{} = owner_uri, %URI{} = session_uri) do
-    :ok = spawn_user(owner_uri, Ezagent.SystemPrincipal.caps("system://bootstrap"))
+    :ok = spawn_user(owner_uri, MapSet.new([Ezagent.Capability.admin_genesis_cap()]))
 
     # P5-0b — thread the explicit chat-Session behavior set so :kind_base is
     # non-nil and the scoped effective_set/2 guard does not crash the session.
@@ -637,7 +637,7 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
             behavior: :any,
             instance: :any,
             workspace_uri: :any,
-            granted_by: Ezagent.URI.new!("system://bootstrap/default"),
+            granted_by: Ezagent.URI.user(:system, :admin),
             granted_at: ~U[2026-01-01 00:00:00Z]
           }
         ]),

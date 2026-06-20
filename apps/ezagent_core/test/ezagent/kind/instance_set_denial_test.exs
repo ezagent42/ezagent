@@ -363,7 +363,7 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
     refute match?({:error, :behavior_not_in_instance_set}, result)
   end
 
-  defp admin_caps, do: Ezagent.SystemPrincipal.caps("system://bootstrap")
+  defp admin_caps, do: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
 
   # === Task 11 (E4): mailbox handle_signal path through the instance set ===
 

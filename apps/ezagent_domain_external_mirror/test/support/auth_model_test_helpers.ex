@@ -133,7 +133,7 @@ defmodule Ezagent.ExternalMirror.AuthModelTestHelpers do
     :ok =
       spawn_user(
         owner_uri,
-        "bootstrap" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps()
+        MapSet.new([Ezagent.Capability.admin_genesis_cap()])
       )
 
     # `behaviors` is resolved at RUNTIME via `apply/3`: this app deliberately

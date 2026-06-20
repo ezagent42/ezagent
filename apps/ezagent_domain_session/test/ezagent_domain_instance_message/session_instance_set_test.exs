@@ -50,7 +50,7 @@ defmodule Ezagent.SessionInstanceSetTest do
   test "REAL chat join + send round-trips through dispatch on the default Session (unchanged)" do
     session_uri = Session.default_uri()
     sender = User.admin_uri()
-    bootstrap_caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+    bootstrap_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
 
     # --- chat.join: add a transient member through dispatch ---
     member_uri =

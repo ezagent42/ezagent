@@ -1,28 +1,21 @@
 defmodule EzagentCore.Invariants.NoWildcardSystemPrincipalsTest do
   @moduledoc """
-  PR-CC-2-v2 §5 — non-bootstrap system principals MUST NOT carry the
-  full-wildcard cap shape in the catalog.
+  PR-CC-2-v2 §5 — system principals must not carry the full-wildcard cap shape.
 
   The "full-wildcard" shape is `%Capability{kind: :any, behavior: :any,
-  instance: :any, workspace_uri: :any}` — the structural admin
-  invariant per Decision #81 + SPEC v3 §4.4. Pre-PR-CC-2-v2 (the
-  PR-CC-1 bridge window) EVERY non-empty catalog entry effectively
-  carried this shape via the bridge. Post-PR-CC-2-v2 the catalog
-  holds STRUCTURALLY NARROW caps; `system://bootstrap` (genesis) is now
-  the ONLY principal that retains the wildcard. (`system://mix-task`
-  formerly also retained an operator-driven wildcard per in-VM trust
-  §10.5; it was ELIMINATED 2026-06-19 — the operator CLI tasks now route
-  their authority through the real `entity://system/user/admin` entity
-  with an inline per-action admin cap, not the ambient wildcard.
-  `system://chat-reply` formerly retained an open-plugin reply wildcard;
-  it was ELIMINATED 2026-06-20, 甲-3 — each agent bridge now presents its
-  OWN inline narrow `session.send` cap instead of borrowing the wildcard.
-  `system://chat-router` was the LAST non-genesis wildcard holder — the
-  open-plugin `chat.receive` fan-out; it was ELIMINATED 2026-06-20, 甲-4 —
-  the fan-out now mints a per-recipient inline `:receive` cap from the
-  recipient's own URI [member self-consent], so the "catalog cannot
-  enumerate the open plugin Behavior set" rationale for the wildcard is
-  moot.)
+  instance: :any, workspace_uri: :any}` — the structural admin invariant per
+  Decision #81 + SPEC v3 §4.4.
+
+  #154 genesis collapse (2026-06-20) — the LAST wildcard-holding principal,
+  `system://bootstrap`, was collapsed into the admin ENTITY. The closed Catalog
+  is now EMPTY, so NO `system://` principal holds a wildcard (the strongest form
+  of this invariant). The genesis wildcard now lives on the admin entity, minted
+  by `Ezagent.Capability.admin_genesis_cap/0` (granted_by
+  `entity://system/user/admin`) — verified by `system_principal_elimination_test.exs`.
+
+  (This gate is vestigial post-collapse — the empty Catalog makes the first test
+  vacuous — and is slated for deletion in the follow-up cleanup; it is kept green
+  here so the ratchet-0 commit stays green.)
 
   See SPEC docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md §5.
   """
@@ -31,32 +24,26 @@ defmodule EzagentCore.Invariants.NoWildcardSystemPrincipalsTest do
 
   alias Ezagent.SystemPrincipal.Catalog
 
-  @bootstrap_uri "system://bootstrap"
-
-  test "non-bootstrap system principals do NOT hold wildcard caps" do
+  test "NO system principal holds a wildcard cap (Catalog is empty post-collapse)" do
     offenders =
       for {uri, caps} <- Catalog.entries(),
-          uri != @bootstrap_uri,
           Enum.any?(caps, &wildcard_cap?/1),
           do: uri
 
     assert offenders == [],
-           "principals must not carry wildcard caps (only bootstrap may): " <>
-             inspect(offenders) <>
-             "\nSee SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §5."
+           "system principals must not carry wildcard caps; the genesis wildcard " <>
+             "now lives on the admin entity, not a `system://` principal. Offenders: " <>
+             inspect(offenders)
   end
 
-  test "system://bootstrap holds exactly the wildcard cap" do
-    {_uri, caps} =
-      Enum.find(Catalog.entries(), fn {uri, _} -> uri == @bootstrap_uri end)
+  test "the genesis wildcard now lives on the admin entity, not a system principal" do
+    cap = Ezagent.Capability.admin_genesis_cap()
+    assert wildcard_cap?(cap), "admin_genesis_cap/0 must be the all-:any wildcard"
 
-    assert Enum.any?(caps, &wildcard_cap?/1),
-           "system://bootstrap must hold the wildcard cap (Decision #81 admin invariant)"
+    assert %URI{scheme: "entity"} = cap.granted_by,
+           "the genesis wildcard's granted_by must be a real entity, got: " <>
+             inspect(cap.granted_by)
   end
-
-  # (was "system://lv-anon-mount carries empty cap list" — the principal was
-  #  ELIMINATED 2026-06-20, 甲-6; anonymous LV mounts now pass `caller: nil` +
-  #  empty caps directly, so there is no Catalog entry to assert against.)
 
   defp wildcard_cap?(%Ezagent.Capability{
          kind: :any,

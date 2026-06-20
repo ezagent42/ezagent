@@ -330,7 +330,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
   end
 
   defp spawn_owner_and_session(%URI{} = owner_uri, %URI{} = session_uri) do
-    :ok = spawn_user(owner_uri, Ezagent.SystemPrincipal.caps("system://bootstrap"))
+    :ok = spawn_user(owner_uri, MapSet.new([Ezagent.Capability.admin_genesis_cap()]))
 
     case Ezagent.Kind.spawn(Session, %{
            uri: session_uri,
@@ -435,7 +435,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
         behavior: :any,
         instance: :any,
         workspace_uri: :any,
-        granted_by: Ezagent.URI.new!("system://bootstrap/default"),
+        granted_by: Ezagent.URI.user(:system, :admin),
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
     ])

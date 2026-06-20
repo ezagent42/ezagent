@@ -50,7 +50,7 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
 
     Process.put(
       :ezagent_cli_caller_override,
-      {test_user_uri, Ezagent.SystemPrincipal.caps("system://bootstrap")}
+      {test_user_uri, MapSet.new([Ezagent.Capability.admin_genesis_cap()])}
     )
 
     {:ok, caller_uri: test_user_uri}
@@ -108,7 +108,7 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
       Ezagent.Users.create(
         caller_uri,
         nil,
-        MapSet.to_list(Ezagent.SystemPrincipal.caps("system://bootstrap"))
+        MapSet.to_list(MapSet.new([Ezagent.Capability.admin_genesis_cap()]))
       )
 
     {plain_token, _row} = Ezagent.Entity.Token.mint(caller_uri, label: "test-cli-token")

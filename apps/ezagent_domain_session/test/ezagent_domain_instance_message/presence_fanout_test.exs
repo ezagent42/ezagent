@@ -177,7 +177,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanoutTest do
                args: %{member: member_uri},
                ctx: %{
                  caller: admin_uri,
-                 caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+                 caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
                  reply: :inline
                }
              }) do

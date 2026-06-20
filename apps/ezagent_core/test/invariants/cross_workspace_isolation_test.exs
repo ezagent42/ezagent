@@ -296,7 +296,7 @@ defmodule EzagentCore.Invariants.CrossWorkspaceIsolationTest do
         send_invocation(
           ctx.team_alpha_session_uri,
           User.admin_uri(),
-          Ezagent.SystemPrincipal.caps("system://bootstrap")
+          MapSet.new([Ezagent.Capability.admin_genesis_cap()])
         )
 
       result = Invocation.dispatch(inv)

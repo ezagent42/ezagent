@@ -151,8 +151,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
           mode: :call,
           args: %{member: user_uri},
           ctx: %{
-            caller: Ezagent.SystemPrincipal.uri("session-internal"),
-            caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+            caller: Ezagent.Entity.User.admin_uri(),
+            caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
             reply: {:caller_inbox, self()}
           }
         })
@@ -203,8 +203,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
       join_target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
       ctx = %{
-        caller: Ezagent.SystemPrincipal.uri("session-internal"),
-        caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+        caller: Ezagent.Entity.User.admin_uri(),
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
         reply: {:caller_inbox, self()}
       }
 
@@ -282,8 +282,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
           mode: :call,
           args: %{member: agent_uri},
           ctx: %{
-            caller: Ezagent.SystemPrincipal.uri("session-internal"),
-            caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+            caller: Ezagent.Entity.User.admin_uri(),
+            caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
             reply: {:caller_inbox, self()}
           }
         })

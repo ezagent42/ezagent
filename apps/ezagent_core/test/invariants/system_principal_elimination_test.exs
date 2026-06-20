@@ -1,150 +1,75 @@
 defmodule Ezagent.SystemPrincipalEliminationTest do
   @moduledoc """
-  NORTH-STAR ratchet: eliminate `system://` principals entirely (Allen 2026-06-17).
+  NORTH-STAR ratchet, TERMINAL state (Allen 2026-06-17; genesis collapse 2026-06-20).
 
-  `system://` principals are an artifact of not having modeled the real authority. The
-  goal is to collapse `SystemPrincipal.Catalog` to a SINGLE genesis primitive
-  (`system://bootstrap`, itself slated to become `entity://system/user/admin` self-authority
-  in the final step); every other authority must trace to a real accountable entity
-  (the actor's own held caps, a rule attributed to a real configurer, or the genesis admin).
+  `system://` principals were an artifact of not having modeled the real authority.
+  The program collapsed `SystemPrincipal.Catalog` to a SINGLE genesis primitive
+  (`system://bootstrap`) and then, in the final step, collapsed even that into the
+  admin ENTITY (`entity://system/user/admin`) self-authority. Every authority now
+  traces to a real accountable entity (the actor's own held caps, a rule attributed
+  to a real configurer, or the genesis admin entity).
 
-  This is the broader sibling of `no_unowned_system_principal_grant_test.exs` (which only
-  ratchets the GRANT-MINTERS). This gate ratchets the ENTIRE principal set.
+  This was the broader sibling of `no_unowned_system_principal_grant_test.exs` (which
+  only ratchets the GRANT-MINTERS). This gate ratcheted the ENTIRE principal set to
+  ZERO.
 
-  Mechanism (mirrors the no_unowned idiom Allen accepted): `@remaining` is the named set of
-  not-yet-eliminated principals; the live Catalog must equal `@remaining ++ [@genesis]`
-  exactly. Any Catalog change FORCES an edit here — adding a principal grows `@remaining`
-  (a review surface that contradicts the north star → reject), removing one shrinks it
-  (the per-class elimination PR's job). The allowlist only shrinks; the terminal state is
-  `@remaining == []`, then `@genesis` collapses to the admin entity (the last PR).
+  ## Terminal invariants (literal ratchet 0)
 
-  Per-class collapse plan — see `.claude/skills/ezagent-developer/references/capbac.md` §7
-  "NORTH STAR".
+  1. The closed `Catalog` is EMPTY — no `system://` URI is an authorization principal.
+  2. The genesis authority traces to a REAL ENTITY: the canonical genesis cap
+     (`Ezagent.Capability.admin_genesis_cap/0`) is the all-`:any` wildcard whose
+     `granted_by` is `entity://system/user/admin` (scheme `entity`, NOT `system`),
+     and `Ezagent.Capability.admin_invariant?/1` recognizes it as the revoke-protected
+     genesis cap.
+
+  Adding ANY entry back to the Catalog fails invariant (1) — a Decision-#154 review
+  surface. Re-pointing the genesis cap's `granted_by` to a `system://` URI fails
+  invariant (2). Together they are the standing guard against re-introducing a
+  `system://` principal.
+
+  Per-class collapse history — see
+  `.claude/skills/ezagent-developer/references/capbac.md` §7 "NORTH STAR".
   """
 
   use ExUnit.Case, async: true
 
   alias Ezagent.SystemPrincipal.Catalog
 
-  # The one genesis primitive — eliminated LAST (collapses to entity://system/user/admin).
-  @genesis "system://bootstrap"
+  @admin_uri Ezagent.URI.user(:system, :admin)
 
-  # The principals still awaiting elimination. Each per-class PR REMOVES its entries.
-  # Shrink-only: the north star is `@remaining == []`.
-  @remaining [
-    # ELIMINATED 2026-06-20, 甲-4: "system://chat-router" — the last non-genesis
-    # wildcard holder. It was borrowed by the Session delivery fan-out for three
-    # dispatches, each now re-attributed to a real entity presenting its OWN
-    # inline narrow cap (the step-5.5 authorizer `granted_via_ctx_caps?`):
-    # (1) the `<entity>.receive` fan-out (`delivery.ex`) presents the RECIPIENT's
-    # own `:receive` cap on its own instance (`granted_by: recipient_uri`,
-    # member self-consent); (2) the cross-session forward presents `session.send`
-    # on the concrete target (`granted_by: source_session`) GUARDED to
-    # same-workspace forwards; (3) the agent's `:sync_result` self-dispatch
-    # presents an inline self-cap (`granted_by: self_uri`). The per-recipient
-    # inline cap is minted at dispatch from the recipient's own URI, so the
-    # "open plugin Behavior set cannot be enumerated" rationale for the wildcard
-    # is moot. Same play as chat-reply / worker-publish / agent-internal.
-    # ELIMINATED 2026-06-20, 甲-3: "system://chat-reply" — it held
-    # `bootstrap_wildcard()` and was borrowed by the 5 agent/plugin bridge
-    # adapters (curl_agent, plugin_codex, plugin_cc, echo, np_agent) to dispatch
-    # `session.send` into the originating session. Each agent is a real entity
-    # whose reply dispatch already used `caller: self_uri`/`agent_uri`; each now
-    # presents its OWN inline narrow `session.send` cap on the concrete reply
-    # session (`granted_by: <agent_uri>` self-authority, least privilege) as the
-    # step-5.5 authorizer (`granted_via_ctx_caps?`) instead of borrowing this
-    # ambient wildcard. Same play as worker-publish / agent-internal.
-    # ELIMINATED: "system://worker-publish" — the ExternalMirrorWorker's two
-    # internal self-dispatches now carry their OWN inline authorizer caps
-    # (`caller: self_uri` + self-authority publish cap / admin-granted
-    # subscribe cap) instead of borrowing this ambient principal.
-    # ELIMINATED 2026-06-20, template-materialize — its 5 materialization
-    # dispatch sites (cc_orchestrator_seed/advisor_session/generic_session/
-    # session_template/orchestrator) now run under the genesis admin entity with
-    # inline per-action caps (system-mediated materialization; same as mix-task
-    # #833). #533 will refine admin authority to per-creator.
-    # ELIMINATED 2026-06-19: "system://orchestrator-tools" — a DEAD caller. The
-    # orchestrator's tools run AS the orchestrator agent with ITS OWN caps
-    # (`SessionManager.opts` sets caller=orchestrator_uri, caps via in-process
-    # `Identity.list_caps_for/1`); the `set_legends` allowlist entry was never
-    # reached in production. Both caps unreachable.
-    # ELIMINATED 2026-06-20: "system://session-internal" — the LAST non-genesis
-    # principal. Its 6 dispatch sites re-attributed: config writes
-    # (set_working_copy/set_legends/set_prompt_templates) → SESSION SELF-authority
-    # (caller==self_uri, inline cap granted_by session); materialization joins
-    # (materializer/template_team) → genesis admin inline `session.join`; wizard
-    # echo-join (home_live) → the operator's own authority. @remaining is now [];
-    # only `system://bootstrap` genesis remains (ratchet 0).
-    # ELIMINATED 2026-06-19: "system://agent-internal" — its only live authority
-    # (`cap(:agent, Sandbox, :write_path)`, the freshly-spawned worker writing
-    # its OWN `:sandbox` slice) is GENUINE self-authority. The
-    # `Agent.TemplateSpawn` dispatch now carries the agent's own instance-scoped
-    # `sandbox.write_path` cap inline (`caller: worker_uri`); the
-    # `Credential.Resolver` guard that special-cased this principal was
-    # generalized to reject any `system://` caller.
-    # ELIMINATED 2026-06-19: "system://workspace-loader" — its only authority
-    # (`cap(:workspace, Workspace, :any)`, the workspace dispatching its OWN
-    # self-maintenance actions on its OWN slice) is GENUINE self-authority. The
-    # `Ezagent.Workspace` facade + `Workspace.Loader` dispatches now carry the
-    # workspace's own instance-scoped, per-action `cap(:workspace, Workspace,
-    # <action>)` inline (`caller: workspace_uri`); same play as worker-publish /
-    # agent-internal.
-    # ELIMINATED 2026-06-19: "system://mix-task" — it held `bootstrap_wildcard()`
-    # and was borrowed by the OPERATOR CLI mix tasks (create_session /
-    # agent.create / credential.adopt / stress / cc demo seeders) as an ambient
-    # "operator has shell = admin authority" principal (in-VM trust §10.5). The
-    # operator's authority now routes through the REAL genesis admin entity
-    # `entity://system/user/admin` (`User.admin_uri/0`, seeded with the bootstrap
-    # wildcard): each task dispatches with `caller: admin_uri()` carrying an
-    # INLINE per-action admin cap in `ctx.caps`. The one GRANT sub-path
-    # (`agent.create --caps` → `grant_initial_caps`) routes through the
-    # `Ezagent.Identity.Grant` chokepoint as `{:held_by, admin_uri()}`, reading
-    # the admin entity's REAL held wildcard. Same play as worker-publish /
-    # agent-internal / workspace-loader.
-    # ELIMINATED: "system://feishu-binding-policy" (#824 — last grant-minter;
-    # redundant re-grant removed) and "system://credential-materializer"
-    # (api-key materialization → agent self-authority; per-grant GrantCap remains).
-    # ELIMINATED 2026-06-20, 甲-6: "system://lv-anon-mount" — an EMPTY-caps
-    # placeholder caller for unauthenticated LV mounts; the 4 LV paths now pass
-    # `caller: nil` + empty caps directly (identical authz, no placeholder).
-    # ELIMINATED 2026-06-20, 甲-6: "system://socialware-gc" — the abandoned-anon
-    # GC reaper's `session.leave` now runs under the genesis admin entity with an
-    # inline `session.leave` cap (system maintenance; the anon can't self-leave),
-    # same play as mix-task.
-  ]
-
-  test "the live Catalog is EXACTLY the genesis primitive + the not-yet-eliminated allowlist" do
-    live = MapSet.new(Catalog.uris())
-    accounted = MapSet.new([@genesis | @remaining])
-
-    unlisted = MapSet.difference(live, accounted) |> MapSet.to_list()
-    stale = MapSet.difference(accounted, live) |> MapSet.to_list()
-
-    assert unlisted == [],
-           "New/unaccounted system principal(s): #{inspect(unlisted)} — the north star is to " <>
-             "ELIMINATE system principals, not add them. If this is genuinely unavoidable, it is " <>
-             "a Decision-#154 review surface; otherwise model the authority as a real entity " <>
-             "(self-held caps / a rule with a configurer / the genesis admin). See capbac.md §7."
-
-    assert stale == [],
-           "Allowlist entr(ies) no longer in the Catalog: #{inspect(stale)} — an elimination PR " <>
-             "removed the principal. Remove it from @remaining too (the allowlist only shrinks)."
+  test "the closed Catalog is EMPTY — literal ratchet 0, no system:// authorization principal" do
+    assert Catalog.uris() == [],
+           "The north star is ZERO system principals. Catalog still has: " <>
+             "#{inspect(Catalog.uris())}. Every authority must trace to a real entity " <>
+             "(self-held caps / a rule with a configurer / the genesis admin entity). " <>
+             "Re-adding a Catalog entry is a Decision-#154 violation. See capbac.md §7."
   end
 
-  test "the elimination ratchet is monotonic — count never exceeds the allowlist" do
-    # A defensive companion to the exact-match test: even if someone swaps (removes one,
-    # adds one) the total must not grow beyond the recorded allowlist size.
-    assert length(Catalog.uris()) <= length(@remaining) + 1,
-           "System-principal count grew. The north star is monotonic elimination; the only " <>
-             "permitted Catalog change is REMOVAL (+ a matching @remaining shrink)."
+  test "genesis authority traces to the admin ENTITY, not a system:// principal" do
+    cap = Ezagent.Capability.admin_genesis_cap()
+
+    # (a) It is the all-:any wildcard (the Decision #81 admin invariant shape).
+    assert cap.kind == :any and cap.behavior == :any and cap.action == :any and
+             cap.instance == :any and cap.workspace_uri == :any,
+           "genesis cap must be the all-:any wildcard, got: #{inspect(cap)}"
+
+    # (b) Its granter is a REAL ENTITY (scheme `entity`), specifically the admin
+    #     entity — NOT the eliminated `system://bootstrap` principal.
+    assert %URI{scheme: "entity"} = cap.granted_by,
+           "genesis cap granted_by must be an entity:// URI, got: #{inspect(cap.granted_by)}"
+
+    assert URI.to_string(cap.granted_by) == URI.to_string(@admin_uri),
+           "genesis cap granted_by must be the admin entity #{URI.to_string(@admin_uri)}, " <>
+             "got: #{URI.to_string(cap.granted_by)}"
+
+    # (c) The revoke-protection recognizer still identifies it as the genesis cap.
+    assert Ezagent.Capability.admin_invariant?(cap),
+           "admin_invariant?/1 must recognize the admin-granted genesis cap as " <>
+             "revoke-protected; the recognizer + minter must not drift."
   end
 
-  test "north-star progress is observable" do
-    remaining = length(@remaining)
-    # Not an assertion on a target (the program lands across PRs) — a visible counter so the
-    # ratchet's progress is legible in CI output. Terminal target: 0 remaining (+ genesis,
-    # which the final PR collapses to entity://system/user/admin).
-    assert remaining >= 0
-    IO.puts("\n[north-star] system principals remaining to eliminate: #{remaining} (+ genesis)\n")
+  test "north-star reached — 0 system principals remain (+ genesis collapsed to admin entity)" do
+    assert length(Catalog.uris()) == 0
+    IO.puts("\n[north-star] system principals remaining to eliminate: 0 (genesis collapsed to entity://system/user/admin)\n")
   end
 end

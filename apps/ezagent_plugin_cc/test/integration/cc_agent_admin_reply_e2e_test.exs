@@ -480,7 +480,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
           args: %{message: inbound_msg},
           ctx: %{
             caller: admin_uri,
-            caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+            caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
             reply: :ignore
           }
         })
@@ -593,7 +593,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
       args: %{member: member_uri},
       ctx: %{
         caller: member_uri,
-        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
         reply: {:caller_inbox, self()}
       }
     })

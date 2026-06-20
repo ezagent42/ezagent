@@ -158,7 +158,7 @@ defmodule Ezagent.Kind.SnapshotTest do
     uri =
       Ezagent.URI.new!("entity://team-alpha/user/snap-rt-#{System.unique_integer([:positive])}")
 
-    caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+    caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
 
     :ok = Snapshot.save_now(uri, Ezagent.Entity.User, %{identity: %{caps: caps}})
 
@@ -193,7 +193,7 @@ defmodule Ezagent.Kind.SnapshotTest do
         "entity://team-alpha/user/snap-mapset-#{System.unique_integer([:positive])}"
       )
 
-    caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+    caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
 
     :ok = Snapshot.save_now(uri, Ezagent.Entity.User, %{identity: %{caps: caps}})
 
@@ -228,7 +228,7 @@ defmodule Ezagent.Kind.SnapshotTest do
       )
 
     uri_str = URI.to_string(uri)
-    caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+    caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
 
     # Seed a GOOD snapshot row (stand-in for the live 256KB session snapshot).
     :ok = Snapshot.save_now(uri, Ezagent.Entity.User, %{identity: %{caps: caps}})

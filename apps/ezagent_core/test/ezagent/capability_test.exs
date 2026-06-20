@@ -165,13 +165,16 @@ defmodule Ezagent.CapabilityTest do
     end
 
     test "refuses to revoke admin all-caps invariant" do
+      # #154 genesis collapse — the genesis trust root is the admin entity
+      # self-granting its all-caps wildcard (granted_by the admin URI), not the
+      # eliminated `system://bootstrap` principal.
       admin =
         cap(
           kind: :any,
           behavior: :any,
           instance: :any,
           workspace_uri: :any,
-          granted_by: Ezagent.URI.new!("system://bootstrap/default"),
+          granted_by: Ezagent.URI.new!("entity://system/user/admin"),
           granted_at: @now
         )
 
@@ -179,8 +182,8 @@ defmodule Ezagent.CapabilityTest do
       assert {:error, :cannot_revoke_admin} = Capability.revoke(caps, admin)
     end
 
-    test "quadruple-:any but granted by non-bootstrap is revokable" do
-      # Edge: same shape as admin but granted by a normal user — that's
+    test "quadruple-:any but granted by a non-admin entity is revokable" do
+      # Edge: same shape as the genesis admin cap but granted by a normal user —
       # a delegated grant, not the structural invariant, so revokable.
       c =
         cap(
@@ -283,7 +286,7 @@ defmodule Ezagent.CapabilityTest do
     end
 
     test "admin all-cap matches the needed shape (closed-loop integration)" do
-      [admin_cap] = MapSet.to_list(Ezagent.SystemPrincipal.caps("system://bootstrap"))
+      [admin_cap] = MapSet.to_list(MapSet.new([Ezagent.Capability.admin_genesis_cap()]))
 
       session_uri =
         URI.new!(

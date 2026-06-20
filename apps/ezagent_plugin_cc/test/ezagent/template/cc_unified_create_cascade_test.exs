@@ -48,7 +48,7 @@ defmodule Ezagent.PluginCc.Template.CcUnifiedCreateCascadeTest do
 
     admin_ctx = %{
       caller: User.admin_uri(),
-      caps: Ezagent.SystemPrincipal.caps("system://bootstrap")
+      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
     }
 
     cwd = System.tmp_dir!()

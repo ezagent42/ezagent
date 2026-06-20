@@ -69,7 +69,7 @@ defmodule Ezagent.Entity.SessionTemplateMembersTest do
       args: %{},
       ctx: %{
         caller: User.admin_uri(),
-        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
         reply: {:caller_inbox, self()}
       }
     })

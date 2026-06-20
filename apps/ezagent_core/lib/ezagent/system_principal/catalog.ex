@@ -81,7 +81,9 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   while keeping the per-Kind narrowing.
   """
 
-  alias Ezagent.Capability
+  # `alias Ezagent.Capability` removed 2026-06-20 — after #154 every principal
+  # entry is eliminated; the sole remaining cap (the genesis wildcard) is minted
+  # via `Ezagent.Capability.admin_genesis_cap/0` (fully qualified).
 
   # Aliases for the Behavior modules referenced below. Inline-aliased
   # for readability; lazy-loaded at compile time so behavior modules
@@ -120,24 +122,11 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   # (the `session-internal` Catalog cap `cap(:workspace, Workspace, :any)`)
   # was eliminated (#154).
 
-  # The bootstrap structural sentinel — granted_by/granted_at on the
-  # generated wildcard cap so `admin_invariant?/1` recognises it.
-  @bootstrap_granted_at ~U[2026-01-01 00:00:00Z]
-
-  defp bootstrap_wildcard do
-    %Capability{
-      kind: :any,
-      behavior: :any,
-      # SPEC 2026-05-27 capability-action-axis — bootstrap admin
-      # invariant is FIVE-axis wildcard. The admin_invariant?/1
-      # predicate matches this exact shape.
-      action: :any,
-      instance: :any,
-      workspace_uri: :any,
-      granted_by: Ezagent.URI.system(:bootstrap, :default),
-      granted_at: @bootstrap_granted_at
-    }
-  end
+  # #154 genesis collapse (2026-06-20) — `bootstrap_wildcard/0` DELETED with the
+  # `system://bootstrap` Catalog entry. The genesis all-caps wildcard is now the
+  # admin entity's SELF-GRANTED cap, minted by `Ezagent.Capability.admin_genesis_cap/0`
+  # (granted_by `entity://system/user/admin`, a real entity), with `admin_invariant?/1`
+  # as its recognizer — no `system://` principal involved.
 
   @doc """
   The closed allowlist mapped from principal URI →
@@ -156,7 +145,16 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   @spec entries() :: [{String.t(), [%Ezagent.Capability{}]}]
   def entries do
     [
-      {principal(:bootstrap), [bootstrap_wildcard()]},
+      # #154 genesis collapse (2026-06-20) — the closed Catalog is now EMPTY.
+      # The LAST entry, `system://bootstrap` (the genesis all-caps wildcard),
+      # was collapsed into the admin ENTITY: the genesis cap is now minted by
+      # `Ezagent.Capability.admin_genesis_cap/0` (granted_by
+      # `entity://system/user/admin`, a real entity). No `system://` PRINCIPAL
+      # grants authority anymore; the elimination ratchet is at literal 0. (The
+      # `system://` SCHEME survives only for global RESOURCES — credentials,
+      # routing defaults, snapshots — which are never authorization principals.)
+      # The history of every eliminated principal is preserved below.
+      #
       # System-principal elimination (north star): `boot-reconciler` DELETED — it
       # was a DEAD principal (zero live consumers; grep found only docstrings +
       # this entry). The external-mirror boot reconcile is now IN-PROCESS
@@ -409,7 +407,9 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   @spec uris() :: [String.t()]
   def uris, do: Enum.map(entries(), fn {uri, _caps} -> uri end)
 
-  defp principal(name), do: name |> Ezagent.URI.system_principal() |> URI.to_string()
+  # `principal/1` DELETED with the `system://bootstrap` Catalog entry (#154
+  # genesis collapse, 2026-06-20) — the Catalog is now empty, so nothing mints
+  # a principal URI key.
 
   defp normalize(%URI{} = u), do: URI.to_string(u)
   defp normalize(s) when is_binary(s), do: s

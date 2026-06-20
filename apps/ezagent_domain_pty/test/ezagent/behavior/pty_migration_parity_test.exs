@@ -59,7 +59,7 @@ defmodule Ezagent.Behavior.PtyMigrationParityTest do
       if Process.alive?(pty_pid), do: Process.exit(pty_pid, :shutdown)
     end)
 
-    admin_caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+    admin_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
 
     {:ok, agent_uri: agent_uri, admin_caps: admin_caps}
   end
