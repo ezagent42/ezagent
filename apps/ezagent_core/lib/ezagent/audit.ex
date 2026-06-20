@@ -428,18 +428,19 @@ defmodule Ezagent.Audit do
   defp uri_to_str(nil), do: nil
 
   # Phase 4 Item 4 — `Ezagent.Cmd.new/4` defaults `ctx.caller` to the atom
-  # `:system` (the canonical "system-originated dispatch" marker — see
-  # `apps/ezagent_core/lib/ezagent/cmd.ex`). The audit telemetry handler
-  # receives that atom verbatim via the `:invoke` / `:authz` events. We
-  # canonicalize the atom at the boundary into a `system://` URI string
-  # so it flows through the strict `system_scoped_uri?/1` allowlist and
-  # lands the audit row in `workspace://system` (admin tier) — the same
-  # treatment as any other system-scoped caller. Without this clause the
-  # handler crashes (no-function-clause), telemetry detaches the handler
-  # for the rest of the node lifetime, and the audit log silently goes
-  # missing (see scenario_30_plugin_greenfield_test.exs's pre-detach
-  # workaround at line 169 — removed once this clause lands).
-  defp uri_to_str(:system), do: :anonymous |> Ezagent.URI.system_principal() |> URI.to_string()
+  # `:vm_internal` (the trusted in-VM caller marker; #154, renamed from the
+  # overloaded `:system` — see `apps/ezagent_core/lib/ezagent/cmd.ex`). The
+  # audit telemetry handler receives that atom verbatim via the `:invoke` /
+  # `:authz` events. We canonicalize the atom at the boundary into a
+  # `system://` URI string so it flows through the strict
+  # `system_scoped_uri?/1` allowlist and lands the audit row in
+  # `workspace://system` (admin tier) — the same treatment as any other
+  # system-scoped caller. Without this clause the handler crashes
+  # (no-function-clause), telemetry detaches the handler for the rest of the
+  # node lifetime, and the audit log silently goes missing (see
+  # scenario_30_plugin_greenfield_test.exs's pre-detach workaround).
+  defp uri_to_str(:vm_internal),
+    do: :anonymous |> Ezagent.URI.system_principal() |> URI.to_string()
   defp uri_to_str(a) when is_atom(a), do: a |> Ezagent.URI.system_principal() |> URI.to_string()
   defp stringify(nil), do: nil
   defp stringify(a) when is_atom(a), do: Atom.to_string(a)

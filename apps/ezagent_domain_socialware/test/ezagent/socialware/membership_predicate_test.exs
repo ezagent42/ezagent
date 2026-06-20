@@ -68,7 +68,7 @@ defmodule Ezagent.Session.MembershipTest do
     end
 
     test ":system caller, nil owner → unauthorized" do
-      assert {:error, :unauthorized} = Membership.authorize(owned_chat(nil, %{}), :system)
+      assert {:error, :unauthorized} = Membership.authorize(owned_chat(nil, %{}), :vm_internal)
     end
   end
 

@@ -163,9 +163,9 @@ defmodule Ezagent.Kind.Runtime.Effects do
         # ref substitution against the full `returning2` map (effect_returning
         # + dispatch_returning bindings) THEN `enrich_dispatch_cmd/2` so a
         # handler-supplied Cmd without an explicit caller inherits the
-        # emitting Kind's `self_uri` (NOT `:system` — codex HIGH: a raw
-        # deferred Cmd would default to `caller: :system` and be authorized
-        # as system). Return them resolved; `Kind.Server` runs them after the
+        # emitting Kind's `self_uri` (NOT `:vm_internal` — codex HIGH: a raw
+        # deferred Cmd would default to `caller: :vm_internal` and be authorized
+        # as trusted in-VM). Return them resolved; `Kind.Server` runs them after the
         # parent slice durably commits.
         deferred =
           buckets
@@ -330,7 +330,7 @@ defmodule Ezagent.Kind.Runtime.Effects do
 
   defp maybe_put_default(map, key, default) do
     case Map.get(map, key) do
-      :system -> Map.put(map, key, default)
+      :vm_internal -> Map.put(map, key, default)
       nil -> Map.put(map, key, default)
       _ -> map
     end
@@ -425,11 +425,11 @@ defmodule Ezagent.Kind.Runtime.Effects do
   end
 
   # `Ezagent.EventLog.append/4`'s `:caller` accepts only nil / URI /
-  # binary. The dispatch ctx may carry `:system` (atom) for internal
-  # callers — translate to nil so the audit row records "system" as
+  # binary. The dispatch ctx may carry `:vm_internal` (atom) for trusted
+  # in-VM callers — translate to nil so the audit row records it as
   # "no entity caller" instead of FunctionClauseError'ing inside
   # EventLog's URI helper.
-  defp normalize_caller_for_audit(:system), do: nil
+  defp normalize_caller_for_audit(:vm_internal), do: nil
   defp normalize_caller_for_audit(nil), do: nil
   defp normalize_caller_for_audit(%URI{} = u), do: u
   defp normalize_caller_for_audit(s) when is_binary(s), do: s

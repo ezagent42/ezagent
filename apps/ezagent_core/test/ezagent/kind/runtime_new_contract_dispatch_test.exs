@@ -224,7 +224,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
           target_str,
           :bump,
           %{msg: "from-effect-dispatch"},
-          %{caller: :system, reply: :ignore, caps: MapSet.new()}
+          %{caller: :vm_internal, reply: :ignore, caps: MapSet.new()}
         )
 
       {:ok, :ok, [{:dispatch, cmd}]}
@@ -303,7 +303,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
           target_str,
           :bump,
           %{},
-          %{caller: :system, reply: {:caller_inbox, self()}, caps: MapSet.new()}
+          %{caller: :vm_internal, reply: {:caller_inbox, self()}, caps: MapSet.new()}
         )
 
       {:ok, :ok, [{:dispatch_returning, cmd, bind_as: :bumped}]}
@@ -320,7 +320,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
           target_str,
           :bump,
           %{},
-          %{caller: :system, reply: {:caller_inbox, self()}, caps: MapSet.new()}
+          %{caller: :vm_internal, reply: {:caller_inbox, self()}, caps: MapSet.new()}
         )
 
       {:ok, :ok,
@@ -338,7 +338,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
           target_str,
           :bump,
           %{},
-          %{caller: :system, reply: {:caller_inbox, self()}, caps: MapSet.new()}
+          %{caller: :vm_internal, reply: {:caller_inbox, self()}, caps: MapSet.new()}
         )
 
       {:ok, :ok,
@@ -420,7 +420,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
       mode: :call,
       args: args,
       ctx: %{
-        caller: :system,
+        caller: :vm_internal,
         caps: MapSet.new(),
         reply: :ignore
       }
@@ -519,7 +519,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
       args: args,
       ctx:
         Map.merge(
-          %{caller: :system, caps: MapSet.new(), reply: :ignore},
+          %{caller: :vm_internal, caps: MapSet.new(), reply: :ignore},
           extra_ctx
         )
     }

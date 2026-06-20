@@ -104,7 +104,7 @@ defmodule Ezagent.Behavior.IdentityLifecycleColdLoadTest do
                  target: put_target,
                  mode: :call,
                  args: %{provider: "deepseek", key: "sk-aaaabbbbccccdddd"},
-                 ctx: %{caller: :system, caps: MapSet.new(), reply: {:caller_inbox, self()}}
+                 ctx: %{caller: :vm_internal, caps: MapSet.new(), reply: {:caller_inbox, self()}}
                })
 
       {:ok, %{state: state1}} = Ezagent.Kind.get_raw_slice(uri, :api_keys)

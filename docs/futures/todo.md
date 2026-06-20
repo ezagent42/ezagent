@@ -14,53 +14,43 @@
 
 ## Active follow-ups (post-2026-05-24 batch)
 
-### #154 genesis-collapse hardening — TRIAGED 2026-06-20: predicate-A sweep = confirmed NON-GAP; only residual = `:system` caller bypass (needs Allen decision)
+### #154 genesis-collapse hardening — RESOLVED 2026-06-20 (Allen: VM-internal-trust, formalized)
 
-> **Updated 2026-06-20 after a full per-site trace (Allen asked "if no external
-> caller, why need authz at all?").** The genesis collapse landed predicate A
-> (`Capability.granted_by_entity?/1`, rejects every `system://`-granted cap) at the
-> TWO load-bearing dispatch authorizer sites: `Kind.Runtime.authorizes?/2` (inline
-> `ctx.caps`) + `Kind.default_holds_cap?/2` (slice-held). Conceptual framing for the
-> rest: **authentication ≠ authorization.** Server-populated caps at ingress is the
-> *authentication* guarantee (can't forge who you are); `matches?` is the
-> *authorization* guarantee (a real, authenticated caller still needs a cap — user A
-> can't act on B's session). The cap mechanism is load-bearing at the dispatch
-> chokepoint *because real authenticated callers exist there*. Predicate A
-> specifically is a narrow guard against *stale pre-collapse `system://`-granted
-> caps* in a slice — and post-migration slices are clean + the grant chokepoint
-> prevents new ones, so it is low-value defense-in-depth everywhere and pure theater
-> where no real caps flow.
+> **RESOLVED.** Allen's decision (2026-06-20): adopt VM-internal trust as the
+> explicit model, delete the A-class dormant checks, and rename the `:system`
+> caller marker to `:vm_internal` + remove the implicit `%Cmd` caller default.
+> Shipped in three steps:
+> - **(1) PR #858** — deleted the A-class dormant cap-checks in `Presence`/
+>   `Notifications` (the `matches?` branch never ran in prod; sole callers were
+>   internal `:system`-bypass). `Behavior.Presence`/`Behavior.Notifications` cap
+>   subjects are now dead config (eligible for a later sweep — see below).
+> - **(2a)** — renamed the caller-axis trust marker `:system` → `:vm_internal`
+>   (self-explaining; disambiguates from the `system` workspace / admin entity /
+>   System Kind). Producer + consumers flipped in lockstep; static audit = zero
+>   caller-axis `:system` in lib.
+> - **(2b)** — removed the implicit `%Cmd` caller default; `Cmd.new/4` now RAISES
+>   on a missing caller (let-it-crash; the permanent gate against regression).
+>   Test-first probe proved ALL implicit-default reliance was test-only — every
+>   prod `Cmd.new` already passes an explicit caller.
 >
-> **The ~6 secondary `matches?` sites — traced, ALL non-gaps (do NOT blind-sweep):**
-> - **A. Dormant (`:system`-bypassed, internal-only callers):** `presence.ex`
->   (`check_subscribe_cap!(%{caps: :system}) -> :ok`; sole caller `presence_fanout`
->   passes `:system`) + `notifications.ex` (`check_cap!(%{caps: :system}) -> :ok`;
->   `notify/2` callers use the `:system` default). The `matches?` branch **never runs
->   in production** → predicate A = pure theater. Honest options = delete the dead
->   check, or (better) kill the `:system` bypass so it becomes live.
-> - **B. Unwired hardened public API:** `notification_subscriptions.ex` deliberately
->   *rejects* `%{caps: :system}` (codex round-2 CRITICAL) and requires real caps, but
->   `register_subscription/3` has **no production caller**. Adding predicate A now =
->   YAGNI; add it if/when the API is wired.
-> - **C. Real caps flow, but the site is/behind the authoritative chokepoint:**
->   `external_mirror/gates.ex` (operator caps via admin LV / mix tasks, BUT the actual
->   mutation re-dispatches through step-5.5 **which already has predicate A** — the
->   gate is a redundant pre-filter) + `credential/resolver.ex` `source_read_authorized?`
->   (the create chokepoint's own helper on the creator's real caps — the chokepoint IS
->   the gate). Predicate A here = consistency-only; the chokepoint behind it covers it.
-> - **Verdict:** the "thread `granted_by_entity?` through ~6 sites" sweep is the exact
->   theater Allen's question suspects → **NOT NEEDED.**
+> **Conceptual record (Allen asked "if no external caller, why authz at all?"):**
+> authentication ≠ authorization. Server-populated caps at ingress = authentication
+> (can't forge who you are); `matches?` = authorization (a real authenticated caller
+> still needs a cap). The cap mechanism is load-bearing at the dispatch chokepoint
+> because real authenticated callers exist there. `:vm_internal` is the explicit
+> "trusted in-VM code, not an external entity" marker that bypasses the slice-held
+> cap check at that chokepoint.
 >
-> **Residual REAL item (needs Allen decision, NOT auto-done):** the `:system` atom
-> caller blanket bypass — `Kind.default_holds_cap?(:system, _) -> true` + `%Cmd{}`
-> default `caller: :system` (cmd.ex:91) + `presence_fanout` / every internal path
-> that relies on it. This is what makes the category-A checks dormant. In-VM only
-> (external ingress is server-populated, can't set `caller: :system`). Replacing it
-> with an explicit internal-service ENTITY identity ([[feedback_let_it_crash_no_workarounds]]:
-> prefer a real granter over a shim) would make every path go through genuine authz —
-> but it's a **pervasive, risky refactor**, not a small follow-up. Options: (a) do the
-> refactor, (b) delete the dormant A-checks as dead code, (c) close as
-> accepted-in-VM-trust. Surfaced to Allen 2026-06-20.
+> **The ~6 secondary `matches?` sites = confirmed NON-GAPS (predicate-A sweep NOT
+> done, by design):** A) dormant (deleted in step 1), B) unwired hardened API
+> (`notification_subscriptions`, YAGNI), C) real caps but at/behind the
+> step-5.5-predicate-A chokepoint (`external_mirror/gates`, `credential/resolver` —
+> redundant pre-filters). Re-confirmed not externally reachable.
+>
+> **Tiny leftover (LOW, optional):** `Behavior.Presence` / `Behavior.Notifications`
+> are now cap-definition modules with no consumer (`:online`/`:notify`/`:subscribe`
+> subjects unreferenced). A future cleanup could remove them, but it touches
+> behavior-registration gates → left as a standalone sweep, not urgent.
 
 ### `session_creator.ex` oversized + def-count refactor — OPEN (MED, two arch.scan reds on main)
 

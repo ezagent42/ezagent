@@ -26,7 +26,7 @@ defmodule Ezagent.Capability.Scope do
   `false`. Backs `Ezagent.Capability.cross_workspace?/2`; consumed by
   `Kind.Runtime` step 5.6 to decide whether to override workspace isolation.
   """
-  @spec cross_workspace?(Capability.t(), URI.t() | :system | nil) :: boolean()
+  @spec cross_workspace?(Capability.t(), URI.t() | :vm_internal | nil) :: boolean()
   def cross_workspace?(%Capability{workspace_uri: :any}, _caller_uri), do: true
 
   def cross_workspace?(%Capability{}, %URI{} = caller_uri) do

@@ -148,7 +148,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
       # widget's slice has been updated.
       cmd =
         Cmd.new(target_uri, :process, %{input: payload}, %{
-          caller: :system,
+          caller: :vm_internal,
           mode: :call,
           reply: {:caller_inbox, self()},
           caps: MapSet.new()
@@ -171,7 +171,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
     # Phase 4 Item 4 (2026-05-28) — `Ezagent.Audit.uri_to_str/1` now has
     # an explicit `:system` clause that canonicalizes to `"system://anonymous"`,
     # so the ambient `esr-audit` telemetry handler no longer crashes on
-    # `caller: :system`. The pre-detach workaround that lived here has
+    # `caller: :vm_internal`. The pre-detach workaround that lived here has
     # been removed; the test now exercises the real audit pipeline end-
     # to-end, matching production behaviour.
 
@@ -223,6 +223,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
     test "process action persists `last_input` + `count` after dispatch", %{target: target} do
       cmd =
         Cmd.new(target, :process, %{input: "hello-greenfield"}, %{
+          caller: :vm_internal,
           reply: {:caller_inbox, self()},
           caps: MapSet.new()
         })
@@ -240,6 +241,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
       _ =
         Router.dispatch(
           Cmd.new(target, :process, %{input: "a"}, %{
+            caller: :vm_internal,
             reply: {:caller_inbox, self()},
             caps: MapSet.new()
           })
@@ -248,6 +250,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
       _ =
         Router.dispatch(
           Cmd.new(target, :process, %{input: "b"}, %{
+            caller: :vm_internal,
             reply: {:caller_inbox, self()},
             caps: MapSet.new()
           })
@@ -269,6 +272,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
 
       cmd =
         Cmd.new(target, :broadcast, %{message: message}, %{
+          caller: :vm_internal,
           mode: :cast,
           reply: {:caller_inbox, self()},
           caps: MapSet.new()
@@ -316,7 +320,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
       # dispatch chain works in production runtime by construction.
       target_uri = Ezagent.URI.new!("entity://team-alpha/widget/widget_inner_target")
 
-      inner_cmd = Cmd.new(target_uri, :process, %{input: "from-effect"}, %{})
+      inner_cmd = Cmd.new(target_uri, :process, %{input: "from-effect"}, %{caller: :vm_internal})
 
       effects = [
         {:set, :forwarded_marker, true},
@@ -355,6 +359,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
       # action.
       cmd =
         Cmd.new(target, :greet, %{name: "tester"}, %{
+          caller: :vm_internal,
           reply: {:caller_inbox, self()},
           caps: MapSet.new()
         })
@@ -365,6 +370,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
     test "cap-check propagates {:invalid_args, _} for malformed args", %{target: target} do
       cmd =
         Cmd.new(target, :process, %{input: 42}, %{
+          caller: :vm_internal,
           reply: {:caller_inbox, self()},
           caps: MapSet.new()
         })

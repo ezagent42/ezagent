@@ -24,7 +24,7 @@ defmodule Ezagent.Cmd do
   ## `ctx` shape
 
       %{
-        caller: URI.t() | :system,           # principal initiating the dispatch
+        caller: URI.t() | :vm_internal,      # principal initiating the dispatch (:vm_internal = trusted in-VM code)
         reply: Ezagent.Invocation.reply_target(),  # where to route the result
         trace_id: String.t() | nil,          # optional — propagates across cross-Kind dispatches
         command_uuid: String.t() | nil,      # optional — caller-supplied idempotency key
@@ -50,7 +50,7 @@ defmodule Ezagent.Cmd do
   defstruct [:target, :action, :args, :ctx]
 
   @type ctx :: %{
-          required(:caller) => URI.t() | :system,
+          required(:caller) => URI.t() | :vm_internal,
           required(:reply) => Ezagent.Invocation.reply_target(),
           optional(:trace_id) => String.t() | nil,
           optional(:command_uuid) => String.t() | nil,
@@ -81,6 +81,24 @@ defmodule Ezagent.Cmd do
         s when is_binary(s) -> Ezagent.URI.new!(s)
       end
 
+    # #154 — NO implicit `caller` default. Every dispatch MUST name its
+    # principal explicitly: a `%URI{}` entity, or `:vm_internal` for trusted
+    # in-VM code. A missing caller is a programming error (let-it-crash) rather
+    # than a silent trust grant (the old `caller: :system` default) or a silent
+    # deny. The other ctx keys keep their defaults.
+    caller =
+      case Map.fetch(ctx, :caller) do
+        {:ok, c} ->
+          c
+
+        :error ->
+          raise ArgumentError,
+                "Ezagent.Cmd.new/4 requires an explicit ctx.caller — a %URI{} entity, " <>
+                  "or :vm_internal for trusted in-VM code. The implicit default was " <>
+                  "removed in #154 (VM-internal-trust). target=#{inspect(target_uri)} " <>
+                  "action=#{inspect(action)}"
+      end
+
     %__MODULE__{
       target: target_uri,
       action: action,
@@ -88,14 +106,13 @@ defmodule Ezagent.Cmd do
       ctx:
         Map.merge(
           %{
-            caller: :system,
             reply: :ignore,
             trace_id: nil,
             command_uuid: nil,
             deadline_ms: nil,
             caps: nil
           },
-          ctx
+          Map.put(ctx, :caller, caller)
         )
     }
   end

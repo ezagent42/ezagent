@@ -38,7 +38,7 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
 
     # `:trigger` emits a `{:dispatch_after_commit, cmd}` targeting THIS same
     # Kind's `:probe` action (self-dispatch — same workspace, cap-exempt).
-    # The deferred Cmd is built with the default `caller: :system` so the
+    # The deferred Cmd is built with the default `caller: :vm_internal` so the
     # test can prove enrichment overrode it to `self_uri`.
     action(:trigger,
       args: %{},
@@ -101,8 +101,9 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
           ctx.self_uri,
           :probe,
           %{},
-          # NO caller → defaults to :system; enrichment must rewrite it.
-          %{reply: :ignore, caps: MapSet.new()}
+          # caller :vm_internal is the trusted-in-VM placeholder; enrichment
+          # must rewrite it to the emitting Kind's self_uri.
+          %{caller: :vm_internal, reply: :ignore, caps: MapSet.new()}
         )
 
       {:ok, :ok,
@@ -129,7 +130,7 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
       missing = Ezagent.URI.new!("entity://team-alpha/agent/dac-missing-target")
 
       cmd =
-        Ezagent.Cmd.new(missing, :probe, %{}, %{reply: :ignore, caps: MapSet.new()})
+        Ezagent.Cmd.new(missing, :probe, %{}, %{caller: :vm_internal, reply: :ignore, caps: MapSet.new()})
 
       {:ok, :ok,
        [
@@ -140,7 +141,7 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
 
     def handle_trigger_self_fail(_args, ctx) do
       cmd =
-        Ezagent.Cmd.new(ctx.self_uri, :probe_fail, %{}, %{reply: :ignore, caps: MapSet.new()})
+        Ezagent.Cmd.new(ctx.self_uri, :probe_fail, %{}, %{caller: :vm_internal, reply: :ignore, caps: MapSet.new()})
 
       {:ok, :ok,
        [

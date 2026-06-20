@@ -66,7 +66,7 @@ defmodule Ezagent.AuditTest do
   # to `"system://anonymous"` at `uri_to_str/1` so the handler stays
   # attached AND the row routes to `workspace://system` via the
   # `system_scoped_uri?/1` allowlist.
-  test ":invoke :stop with caller: :system does NOT crash the audit handler" do
+  test ":invoke :stop with caller: :vm_internal does NOT crash the audit handler" do
     target = Ezagent.URI.new!("entity://system/agent/sys-caller-test")
 
     # Capture handler-detach events so a crash would surface clearly
@@ -88,7 +88,7 @@ defmodule Ezagent.AuditTest do
       %{duration_us: 42},
       %{
         target: target,
-        caller: :system,
+        caller: :vm_internal,
         action: :test,
         kind_module: Foo,
         behavior_module: Bar,

@@ -19,7 +19,7 @@ defmodule Ezagent.Session.Membership do
 
     1. `caller` is a WELL-FORMED identity-principal `%URI{}` — a canonical
        `entity://<workspace>/<user|agent|worker>/<name>` (reject nil / `:any` /
-       `:system` / non-URI AND a malformed/non-canonical/non-entity `%URI{}`);
+       `:vm_internal` / non-URI AND a malformed/non-canonical/non-entity `%URI{}`);
     2. `chat` is a present, readable map;
     3. EITHER `chat.owner_uri` is a `%URI{}` AND `== caller`,
        OR `caller` is a key of `chat.members` (URIs).

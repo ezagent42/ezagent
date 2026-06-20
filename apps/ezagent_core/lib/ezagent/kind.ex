@@ -201,9 +201,13 @@ defmodule Ezagent.Kind do
 
   SPEC §3 default impl.
   """
-  @spec default_holds_cap?(URI.t() | String.t() | :system | nil, Ezagent.Capability.t()) ::
+  @spec default_holds_cap?(URI.t() | String.t() | :vm_internal | nil, Ezagent.Capability.t()) ::
           boolean()
-  def default_holds_cap?(:system, %Ezagent.Capability{}), do: true
+  # `:vm_internal` is the trusted in-VM caller marker (#154 VM-internal-trust;
+  # renamed from the overloaded `:system`). A dispatch whose `ctx.caller` is
+  # `:vm_internal` originates from trusted in-VM code, not an authenticated
+  # external entity, so it bypasses the slice-held cap check.
+  def default_holds_cap?(:vm_internal, %Ezagent.Capability{}), do: true
 
   def default_holds_cap?(nil, %Ezagent.Capability{}), do: false
 

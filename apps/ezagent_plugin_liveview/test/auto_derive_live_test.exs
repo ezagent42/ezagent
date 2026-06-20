@@ -160,7 +160,7 @@ defmodule EzagentPluginLiveview.AutoDeriveLiveTest do
                    }
                  }
                },
-               ctx: %{caller: :system, caps: :system, reply: :sync}
+               ctx: %{caller: :vm_internal, caps: :system, reply: :sync}
              })
 
     assert {:ok, _grant} =

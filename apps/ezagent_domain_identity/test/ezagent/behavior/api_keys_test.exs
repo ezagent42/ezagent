@@ -10,7 +10,7 @@ defmodule Ezagent.Behavior.ApiKeysTest do
 
   defp ctx_with_keys(keys) do
     %{
-      caller: :system,
+      caller: :vm_internal,
       caps: MapSet.new(),
       self_uri: Ezagent.URI.new!("entity://team-alpha/agent/curl_test"),
       reply: :sync,

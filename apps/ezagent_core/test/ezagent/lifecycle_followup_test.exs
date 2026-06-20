@@ -126,7 +126,7 @@ defmodule Ezagent.LifecycleFollowupTest do
           target: target,
           mode: :call,
           args: %{},
-          ctx: %{caller: :system, reply: {:caller_inbox, self()}}
+          ctx: %{caller: :vm_internal, reply: {:caller_inbox, self()}}
         })
 
       # The transient hits counter advanced (slice key pinned to :transient_only)...
@@ -170,7 +170,7 @@ defmodule Ezagent.LifecycleFollowupTest do
           target: target,
           mode: :call,
           args: %{},
-          ctx: %{caller: :system, reply: {:caller_inbox, self()}}
+          ctx: %{caller: :vm_internal, reply: {:caller_inbox, self()}}
         })
 
       # The legacy-flat sibling AND the Lifecycle two-container sibling
@@ -326,7 +326,7 @@ defmodule Ezagent.LifecycleFollowupTest do
           target: target,
           mode: :call,
           args: %{n: 3},
-          ctx: %{caller: :system, reply: {:caller_inbox, self()}}
+          ctx: %{caller: :vm_internal, reply: {:caller_inbox, self()}}
         })
 
       # pre_handle doubled n (3 → 6) before the handler ran.
@@ -353,7 +353,7 @@ defmodule Ezagent.LifecycleFollowupTest do
           target: target,
           mode: :call,
           args: %{},
-          ctx: %{caller: :system, reply: {:caller_inbox, self()}}
+          ctx: %{caller: :vm_internal, reply: {:caller_inbox, self()}}
         })
 
       assert result == %{denied: true}
@@ -434,7 +434,7 @@ defmodule Ezagent.LifecycleFollowupTest do
           target: target,
           mode: :call,
           args: %{},
-          ctx: %{caller: :system, reply: {:caller_inbox, self()}}
+          ctx: %{caller: :vm_internal, reply: {:caller_inbox, self()}}
         })
 
       # The handler observed the structural rejection.

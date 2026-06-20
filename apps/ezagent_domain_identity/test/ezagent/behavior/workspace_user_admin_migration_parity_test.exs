@@ -51,7 +51,7 @@ defmodule Ezagent.Behavior.WorkspaceUserAdminMigrationParityTest do
       target: target,
       mode: :call,
       args: args,
-      ctx: %{caller: :system, caps: MapSet.new(), reply: :sync}
+      ctx: %{caller: :vm_internal, caps: MapSet.new(), reply: :sync}
     }
   end
 
