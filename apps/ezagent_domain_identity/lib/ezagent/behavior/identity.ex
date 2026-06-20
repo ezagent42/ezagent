@@ -202,11 +202,17 @@ defmodule Ezagent.Behavior.Identity do
 
   defp kind_for_uri(_), do: :user
 
+  # #154 genesis collapse: the fallback must not mint a `system://bootstrap/...`
+  # granter — predicate A rejects every `system://`-granted cap, so such a
+  # self-scoped/owner cap would be silently inert. `admin_uri/0` is
+  # `Ezagent.URI.user(:system, :admin)` (entity://system/user/admin), the
+  # canonical genesis admin entity defined in ezagent_core, so the fallback
+  # returns the same entity granter the primary branch would.
   defp bootstrap_granter do
     if function_exported?(Ezagent.Entity.User, :admin_uri, 0) do
       Ezagent.Entity.User.admin_uri()
     else
-      Ezagent.URI.system(:bootstrap, :"pr-own-3")
+      Ezagent.URI.user(:system, :admin)
     end
   end
 
