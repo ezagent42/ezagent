@@ -44,7 +44,7 @@ defmodule Ezagent.Behavior.OrchestratorAdmin do
   ## Why cap-only
 
   No action is invoked against this Behavior — it's a pure cap shim,
-  the same pattern `Ezagent.Behavior.Presence` uses. The dispatch
+  the same pattern `Ezagent.Behavior.Notifications` uses. The dispatch
   CapBAC chokepoint records the cap subject + checks against caller
   caps; the handler is unreachable in practice (the LV reads the cap
   and dispatches `template.instantiate` directly).
@@ -84,7 +84,7 @@ defmodule Ezagent.Behavior.OrchestratorAdmin do
   `Orchestrator`-named domain module is permitted. NP-3 (width): the name
   is broader than its single `:restart` action — but it names a coherent
   authority surface (session-owner authority over the orchestrator),
-  matching the existing `Presence` cap-only sibling, and a rename would
+  matching the `Notifications` cap-only sibling, and a rename would
   touch the `:orchestrator_admin` snapshot key + the LV's restart gate +
   the first-join owner-cap grant in `Chat.grant_first_join_owner_cap/2`
   for no clarity gain. Kept as-is.

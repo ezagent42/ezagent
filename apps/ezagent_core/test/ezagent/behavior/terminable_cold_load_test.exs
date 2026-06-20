@@ -1,14 +1,13 @@
 defmodule Ezagent.Behavior.TerminableColdLoadTest do
   @moduledoc """
-  Phase B cold-load proof for the four no-transient core Behaviors
+  Phase B cold-load proof for the three no-transient core Behaviors
   migrated to `use Ezagent.Lifecycle` (SPEC `2026-05-29-lifecycle-hooks-design.md`
   §5 amendment A2 "no-transients modules: create→rehydrate+no-recreate
   test").
 
-  These four —
+  These three —
     - `Ezagent.Behavior.Terminable` (persistent `%{terminations: N}`)
     - `Ezagent.Behavior.Notifications` (cap-only, empty state)
-    - `Ezagent.Behavior.Presence` (cap-only, empty state)
     - `Ezagent.Behavior.Routing` (persistent `%{calls: N}`)
   — hold NO transients (no PIDs/refs/handles), so the
   `Ezagent.LifecycleCase.assert_transients_rebuilt/2` gate (which requires
@@ -33,7 +32,7 @@ defmodule Ezagent.Behavior.TerminableColdLoadTest do
 
   use Ezagent.LifecycleCase
 
-  alias Ezagent.Behavior.{Notifications, Presence, Routing, Terminable}
+  alias Ezagent.Behavior.{Notifications, Routing, Terminable}
   alias Ezagent.Ecto.KindSnapshot
 
   # A minimal Kind that lists Terminable in behaviors/0 so the engine's
@@ -81,13 +80,8 @@ defmodule Ezagent.Behavior.TerminableColdLoadTest do
       assert Notifications.init_slice(%{}) == %{state: %{}, transients: %{}}
     end
 
-    test "Presence: cap-only create/1 is empty; init_slice wraps it" do
-      assert Presence.create(%{}) == {:ok, %{}}
-      assert Presence.init_slice(%{}) == %{state: %{}, transients: %{}}
-    end
-
     test "every module's slice has an EMPTY transients container (nothing to strip)" do
-      for mod <- [Terminable, Routing, Notifications, Presence] do
+      for mod <- [Terminable, Routing, Notifications] do
         assert %{transients: tr} = mod.init_slice(%{})
         assert tr == %{}, "#{inspect(mod)} must declare no transients"
       end

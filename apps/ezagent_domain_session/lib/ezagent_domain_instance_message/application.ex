@@ -913,7 +913,7 @@ defmodule EzagentDomainInstanceMessage.Application do
     # is the single cap subject (held by `slice.chat.owner_uri` + bootstrap admin
     # via `:any`); `OrchestratorHealthCard` consults it to gate the Restart
     # button. `dispatchable?: false` → writes ONLY the subject row, no dispatch
-    # path can invoke `:restart` (same pattern as `Behavior.Presence`).
+    # path can invoke `:restart` (same pattern as `Behavior.Notifications`).
     alias Ezagent.Behavior.OrchestratorAdmin, as: OrchAdminB
 
     Enum.each(OrchAdminB.actions(), fn action ->

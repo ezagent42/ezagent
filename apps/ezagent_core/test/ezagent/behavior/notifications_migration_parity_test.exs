@@ -5,20 +5,29 @@ defmodule Ezagent.Behavior.NotificationsMigrationParityTest do
   Level 1 (dispatch parity).
 
   Notifications is a cap-only marker Behavior (`dispatchable?/0 ==
-  false`, same shape as `Ezagent.Behavior.Presence` + the per-adapter
-  `*.Allow` markers). The migration moves it from legacy
-  `@behaviour Ezagent.Behavior` to the new `use Ezagent.Behavior` +
-  declarative `action/3` shape with raising `handle_notify/2` +
-  `handle_subscribe/2` (handlers must exist for the macro's
-  @before_compile invariant but are never invoked because
+  false`, same shape as the per-adapter `*.Allow` markers). The
+  migration moves it from legacy `@behaviour Ezagent.Behavior` to the
+  new `use Ezagent.Behavior` + declarative `action/3` shape with a
+  raising `handle_subscribe/2` (the handler must exist for the macro's
+  @before_compile invariant but is never invoked because
   `dispatchable?/0 == false` prevents routing — defence in depth).
 
   ## Why no full `Kind.Runtime.handle_dispatch/4` path
 
-  Cap-only Behaviors are intentionally unreachable via dispatch — see
-  the longer note in `presence_migration_parity_test.exs`. This test
+  Cap-only Behaviors are intentionally unreachable via dispatch — the
+  CapabilityRegistry records the cap subject but does NOT write to
+  `BehaviorRegistry`, so the dispatch lookup returns `:error` and
+  `Invocation.dispatch/1` returns `{:error, :no_behaviour}`. This test
   pins the contract markers + cap-axis preservation + raising-handler
   defence instead.
+
+  ## #154 cleanup (2026-06-20)
+
+  The dead `:notify` action was removed — notification push became
+  VM-internal (`Ezagent.Notifications.notify/2` has no cap check), so
+  nothing consumed the `:notify` cap. Only `:subscribe` remains: it is
+  the live cap-only subject that `Ezagent.NotificationSubscriptions`
+  authorizes cross-entity subscribe/admin against.
   """
   use ExUnit.Case, async: true
 
@@ -33,22 +42,19 @@ defmodule Ezagent.Behavior.NotificationsMigrationParityTest do
       assert Notifications.__behavior__?()
     end
 
-    test "__action_names__/0 lists [:notify, :subscribe]" do
-      assert Enum.sort(Notifications.__action_names__()) == [:notify, :subscribe]
+    test "__action_names__/0 lists [:subscribe]" do
+      assert Notifications.__action_names__() == [:subscribe]
     end
 
-    test "__action_spec__/1 carries args/returns/caps/modes for each action" do
-      for action <- [:notify, :subscribe] do
-        spec = Notifications.__action_spec__(action)
-        assert spec.name == action
-        assert spec.args == %{}
-        assert action in spec.caps
-        assert :call in spec.modes
-      end
+    test "__action_spec__(:subscribe) carries args/returns/caps/modes" do
+      spec = Notifications.__action_spec__(:subscribe)
+      assert spec.name == :subscribe
+      assert spec.args == %{}
+      assert :subscribe in spec.caps
+      assert :call in spec.modes
     end
 
-    test "handle_notify/2 + handle_subscribe/2 are exported (macro invariant)" do
-      assert function_exported?(Notifications, :handle_notify, 2)
+    test "handle_subscribe/2 is exported (macro invariant)" do
       assert function_exported?(Notifications, :handle_subscribe, 2)
     end
   end
@@ -60,9 +66,6 @@ defmodule Ezagent.Behavior.NotificationsMigrationParityTest do
 
     test "required_caps/0 uses the :user axis (User Kind only registration)" do
       caps = Notifications.required_caps()
-
-      assert %Ezagent.Capability{kind: :user, behavior: Notifications, action: :notify} =
-               caps[:notify]
 
       assert %Ezagent.Capability{kind: :user, behavior: Notifications, action: :subscribe} =
                caps[:subscribe]
@@ -81,12 +84,6 @@ defmodule Ezagent.Behavior.NotificationsMigrationParityTest do
       assert Notifications.data_owner(:something_else) == :no_owner
     end
 
-    test "handle_notify/2 raises if ever invoked (defence in depth)" do
-      assert_raise RuntimeError, ~r/cap-only/, fn ->
-        Notifications.handle_notify(%{}, %{})
-      end
-    end
-
     test "handle_subscribe/2 raises if ever invoked (defence in depth)" do
       assert_raise RuntimeError, ~r/cap-only/, fn ->
         Notifications.handle_subscribe(%{}, %{})
@@ -96,13 +93,13 @@ defmodule Ezagent.Behavior.NotificationsMigrationParityTest do
 
   describe "legacy callbacks remain available (framework wiring)" do
     test "actions/0, interface/0, cap_subjects/0 all defined" do
-      assert Enum.sort(Notifications.actions()) == [:notify, :subscribe]
+      assert Notifications.actions() == [:subscribe]
       # Cap-only Behaviors have an empty interface() since they're
       # never dispatched — this matches the pre-migration shape.
       assert Notifications.interface() == %{} or is_map(Notifications.interface())
 
       subjects = Notifications.cap_subjects() |> Enum.map(&elem(&1, 0))
-      assert Enum.sort(subjects) == [:notify, :subscribe]
+      assert subjects == [:subscribe]
     end
 
     test "state_slice/0 preserved + create/1 builds persistent state (Lifecycle migration)" do

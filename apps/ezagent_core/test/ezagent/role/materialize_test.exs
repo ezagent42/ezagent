@@ -82,7 +82,7 @@ defmodule Ezagent.Role.MaterializeTest do
           requested_caps: [%{behavior: Ezagent.Behavior.Sandbox, action: :read}]
         })
 
-      flavor_a = register_flavor([Ezagent.Behavior.Presence])
+      flavor_a = register_flavor([Ezagent.Behavior.Notifications])
       flavor_b = register_flavor([Ezagent.Behavior.Routing])
 
       assert {:ok, ma} = Materialize.materialize(role, flavor_a, ctx(), fn _ -> true end)
@@ -99,7 +99,7 @@ defmodule Ezagent.Role.MaterializeTest do
 
       # behaviors are the role's ∪ the flavor's — so they DIFFER by flavor
       assert Ezagent.Behavior.Sandbox in ma.behaviors
-      assert Ezagent.Behavior.Presence in ma.behaviors
+      assert Ezagent.Behavior.Notifications in ma.behaviors
       assert Ezagent.Behavior.Sandbox in mb.behaviors
       assert Ezagent.Behavior.Routing in mb.behaviors
       refute Ezagent.Behavior.Routing in ma.behaviors

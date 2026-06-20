@@ -141,13 +141,13 @@ defmodule EzagentCore.Application do
     # `system://routing/default`, spawned below.
     :ok = register_system_kind()
 
-    # Presence SPEC `docs/superpowers/specs/2026-05-23-presence.md` §4 —
-    # register the cap-only `Ezagent.Behavior.Presence` against User +
-    # Agent so `Ezagent.Presence.subscribe/2` finds a coherent cap shape
-    # via `CapabilityRegistry.needed_for/3`. `dispatchable?: false` keeps
-    # this out of `BehaviorRegistry` — `Invocation.dispatch/1` can never
-    # accidentally invoke `:online`.
-    :ok = register_presence_behavior()
+    # #154 cleanup (2026-06-20) — register the cap-only
+    # `Ezagent.Behavior.Notifications` `:subscribe` cap against User. This
+    # is the ONE live cap-only subject: `Ezagent.NotificationSubscriptions`
+    # authorizes cross-entity subscribe/admin against it. `Behavior.Presence`
+    # and the dead `:notify` action were deleted — presence is VM-internal
+    # (lives in `Ezagent.Presence`, no cap), and nothing consumed `:notify`.
+    :ok = register_notifications_behavior()
 
     # Phase 7 completion PR-3 (SPEC §1.7 (c)) — hydrate the TemplateTags
     # ETS read cache from the `template_tags` SQLite table, the
@@ -277,27 +277,22 @@ defmodule EzagentCore.Application do
     end
   end
 
-  defp register_presence_behavior do
-    # Presence SPEC `docs/superpowers/specs/2026-05-23-presence.md` §4 —
-    # register cap-only Behavior against User + Agent. CapabilityRegistry
-    # handles the dispatchable?: false sentinel: subjects table gets
-    # `(User|Agent, :online, Ezagent.Behavior.Presence)` entries, but
-    # BehaviorRegistry is NOT touched. `Ezagent.Presence.subscribe/2`
-    # uses `CapabilityRegistry.needed_for(kind, :online, uri)` to build
-    # the needed-cap shape for authorization.
-    alias Ezagent.Behavior.Presence, as: PB
-
-    :ok = Ezagent.CapabilityRegistry.register(Ezagent.Entity.User, :online, PB)
-    :ok = Ezagent.CapabilityRegistry.register(Ezagent.Entity.Agent, :online, PB)
-
-    # PR-C Notifications (Allen 2026-05-23) — cap-only Behavior for
-    # the unified user-notifications inbox. Registered ONLY against
-    # User Kind (agents don't have an inbox; they receive via
-    # chat.receive dispatch). `Ezagent.Notifications.notify/2` checks
-    # `:notify` cap; `.subscribe/2` checks `:subscribe` cap.
+  defp register_notifications_behavior do
+    # PR-C Notifications (Allen 2026-05-23) — cap-only Behavior for the
+    # unified user-notifications inbox. Registered ONLY against User Kind
+    # (agents don't have an inbox; they receive via chat.receive dispatch).
+    # CapabilityRegistry handles the `dispatchable?: false` sentinel: the
+    # subjects table gets a `(User, :subscribe, Ezagent.Behavior.Notifications)`
+    # entry, but BehaviorRegistry is NOT touched.
+    #
+    # #154 cleanup (2026-06-20): only `:subscribe` is registered now. It is
+    # the live cap-only subject — `Ezagent.NotificationSubscriptions`
+    # authorizes cross-entity subscribe/admin against it. The `:notify`
+    # action was deleted: notification-push is VM-internal under #154
+    # (`Ezagent.Notifications.notify/2` has no cap check), so nothing
+    # consumed the `:notify` cap.
     alias Ezagent.Behavior.Notifications, as: NB
 
-    :ok = Ezagent.CapabilityRegistry.register(Ezagent.Entity.User, :notify, NB)
     :ok = Ezagent.CapabilityRegistry.register(Ezagent.Entity.User, :subscribe, NB)
 
     :ok
