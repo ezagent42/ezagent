@@ -187,7 +187,7 @@ defmodule EzagentPluginLiveview.AdminCapsLive do
                 </h1>
                 <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
                   {gettext(
-                    "Every cap subject registered via Ezagent.CapabilityRegistry. Includes dispatchable (BehaviorRegistry-wired) and cap-only (Presence-style) subjects."
+                    "Every cap subject registered via Ezagent.CapabilityRegistry. Includes dispatchable (BehaviorRegistry-wired) and cap-only (subjects-table-only) subjects."
                   )}
                 </p>
               </header>

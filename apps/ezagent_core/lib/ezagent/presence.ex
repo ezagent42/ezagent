@@ -101,10 +101,12 @@ defmodule Ezagent.Presence do
   chokepoint, which serves external callers; this helper is reached
   only from trusted in-VM code, so a secondary cap check here was
   dormant (its sole callers passed the trusted bypass) and was removed.
+  The cap-only `Ezagent.Behavior.Presence` marker that the dormant check
+  consumed was deleted in the #154 cleanup (2026-06-20).
 
-  The URI scheme is still validated: `entity://user/...` →
-  `Ezagent.Entity.User`, `entity://agent/...` → `Ezagent.Entity.Agent`.
-  Other schemes raise `ArgumentError` (no Presence Behavior registered).
+  The URI scheme is still validated: only `entity://user/...` and
+  `entity://agent/...` URIs are supported; any other scheme raises
+  `ArgumentError`.
 
   Subscribers receive `{:ezagent_presence_diff, topic, %{joins,
   leaves, current}}` messages.
@@ -143,8 +145,8 @@ defmodule Ezagent.Presence do
 
   defp raise_unsupported_kind!(%URI{} = uri) do
     raise ArgumentError,
-          "Ezagent.Presence.subscribe/1: no Presence Behavior registered for " <>
-            "URI #{inspect(Ezagent.URI.stable_key(uri))}. Only entity user and " <>
+          "Ezagent.Presence.subscribe/1: unsupported URI " <>
+            "#{inspect(Ezagent.URI.stable_key(uri))}. Only entity user and " <>
             "entity agent URIs are supported in V1."
   end
 end

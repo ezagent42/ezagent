@@ -2,12 +2,12 @@ defmodule Ezagent.Behavior.Notifications do
   @moduledoc """
   Cap-only Behavior for the unified user-notifications inbox.
 
-  `:notify` and `:subscribe` are the cap shapes
-  `Ezagent.Notifications.notify/2` + `Ezagent.Notifications.subscribe/2`
-  check against. `dispatchable?/0` returns `false` so neither action
-  can be accidentally invoked through `Invocation.dispatch/1` —
-  notifications are PubSub fan-outs, not dispatch targets (same
-  reasoning as `Ezagent.Behavior.Presence.:online`).
+  `:subscribe` is the cap shape `Ezagent.NotificationSubscriptions`
+  checks against to authorize cross-entity subscribe/admin (registering
+  or unregistering a notification stream on behalf of another user).
+  `dispatchable?/0` returns `false` so the action can never be invoked
+  through `Invocation.dispatch/1` — notifications are PubSub fan-outs,
+  not dispatch targets.
 
   Registered against `Ezagent.Entity.User` (only User Kinds have an
   inbox) in `EzagentCore.Application.start/2`.
@@ -15,6 +15,15 @@ defmodule Ezagent.Behavior.Notifications do
   Per SPEC trigger: Allen 2026-05-23 "plugin 是否有注册 notification 的
   统一入口？" → `Ezagent.Notifications` is the unified entry; this
   Behavior is its CapBAC subject.
+
+  ## #154 cleanup (2026-06-20) — `:notify` action removed
+
+  Notification PUSH (`Ezagent.Notifications.notify/2`) became
+  VM-internal under the #154 VM-internal-trust model — its only callers
+  are trusted in-VM code (workspace fan-out, session creator, credential
+  notifier), so its cap check was removed and the `:notify` cap had no
+  remaining consumer. The dead `:notify` action + `handle_notify/2` were
+  deleted. Only `:subscribe` (a genuine cross-entity authorization) remains.
 
   ## Migration to §2.2 declarative contract (Phase 2.5 — 2026-05-28)
 
@@ -40,14 +49,6 @@ defmodule Ezagent.Behavior.Notifications do
 
   use Ezagent.Lifecycle
 
-  action(:notify,
-    args: %{},
-    returns: :ok,
-    caps: [:notify],
-    modes: [:call],
-    description: "push a notification into a user's inbox (used by plugins / domains)"
-  )
-
   action(:subscribe,
     args: %{},
     returns: :ok,
@@ -63,7 +64,6 @@ defmodule Ezagent.Behavior.Notifications do
   # to match the existing grants.
   def required_caps do
     %{
-      notify: Ezagent.Capability.cap(:user, __MODULE__, :notify),
       subscribe: Ezagent.Capability.cap(:user, __MODULE__, :subscribe)
     }
   end
@@ -80,14 +80,9 @@ defmodule Ezagent.Behavior.Notifications do
   # declared action requires a matching handler). Raises identically
   # to the legacy contract clause; `dispatchable?/0 == false`
   # prevents the framework dispatcher from ever routing here.
-  def handle_notify(_args, _ctx) do
-    raise "Ezagent.Behavior.Notifications.:notify is cap-only — " <>
-            "use Ezagent.Notifications.notify/2 instead of dispatching."
-  end
-
   def handle_subscribe(_args, _ctx) do
     raise "Ezagent.Behavior.Notifications.:subscribe is cap-only — " <>
-            "use Ezagent.Notifications.subscribe/2 instead of dispatching."
+            "use Ezagent.Notifications.subscribe/1 instead of dispatching."
   end
 
   # PR-OWN-4 (caps-data-ownership SPEC #306 §6): per-entity Behavior

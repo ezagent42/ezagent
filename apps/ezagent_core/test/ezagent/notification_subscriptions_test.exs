@@ -31,9 +31,13 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     }
   end
 
-  # A `:notify`-scoped cross-workspace cap — the action a plugin holds
-  # to PUSH a notification into a user's inbox. It must NOT count as
-  # subscription-admin (cross-action elevation regression).
+  # A `:notify`-scoped cross-workspace cap. NOTE: since the #154 cleanup
+  # (2026-06-20) `:notify` is no longer a DECLARED action on
+  # `Behavior.Notifications` (push became VM-internal); it survives here
+  # purely as an arbitrary non-`:subscribe` action, to prove the
+  # subscription-admin predicate matches the `:subscribe` action axis
+  # EXPLICITLY and rejects any other action cap (cross-action elevation
+  # regression). A plain `%Capability{}` can hold any action atom.
   defp notify_only_cap do
     %Ezagent.Capability{
       kind: :user,

@@ -156,9 +156,9 @@ defmodule Ezagent.Behavior do
   surfaces in `/admin/caps`, the future `mix ezagent.caps.list` CLI,
   and audit/forensic queries.
 
-  Cap-only Behaviors (`dispatchable?/0 == false`, e.g. a future
-  `Ezagent.Behavior.Presence`) still list their actions here — that
-  is HOW Presence-style auth gates get their cap shape into
+  Cap-only Behaviors (`dispatchable?/0 == false`, e.g.
+  `Ezagent.Behavior.Notifications`) still list their actions here — that
+  is HOW cap-only auth gates get their cap shape into
   `Ezagent.CapabilityRegistry`.
 
   Enforcement is via the `@behaviour` compile warning + CI's
@@ -180,8 +180,8 @@ defmodule Ezagent.Behavior do
   Is this Behavior dispatchable? Default `true` — most Behaviors
   expose `invoke/4` for action dispatch. Set to `false` for
   cap-only Behaviors (the cap shape exists for auth but there is
-  no dispatchable action) — e.g. a future `Ezagent.Behavior.Presence`'s
-  `:online` action is a subscription gate, not a dispatch target.
+  no dispatchable action) — e.g. `Ezagent.Behavior.Notifications`'s
+  `:subscribe` action is an auth gate, not a dispatch target.
 
   When `dispatchable?/0 == false`, `Ezagent.CapabilityRegistry.register/3`
   records the cap subject but does NOT write to

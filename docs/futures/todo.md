@@ -47,10 +47,28 @@
 > step-5.5-predicate-A chokepoint (`external_mirror/gates`, `credential/resolver` —
 > redundant pre-filters). Re-confirmed not externally reachable.
 >
-> **Tiny leftover (LOW, optional):** `Behavior.Presence` / `Behavior.Notifications`
-> are now cap-definition modules with no consumer (`:online`/`:notify`/`:subscribe`
-> subjects unreferenced). A future cleanup could remove them, but it touches
-> behavior-registration gates → left as a standalone sweep, not urgent.
+> **Dead cap-only behavior cleanup — RESOLVED 2026-06-20 (Allen: keep `Ezagent.Presence`,
+> delete `Behavior.Presence`; narrow Notifications).** These were cap-only Behaviors
+> (`dispatchable?: false`) whose sole job was to provide a `%Capability{behavior: …}`
+> shape for runtime helpers to check. #858 reclassified presence + notify-push as
+> VM-internal PubSub fan-outs and removed those checks, orphaning the cap subjects:
+> - `Behavior.Presence` `:online` — truly dead (presence is VM-internal infra in
+>   `Ezagent.Presence`, a thin Phoenix.Presence wrapper; nothing checked the cap, and
+>   `subscribe/1` never even consulted the Behavior). **DELETED the whole module.**
+> - `Behavior.Notifications` `:notify` — dead (push is VM-internal). **Action removed.**
+> - `Behavior.Notifications` `:subscribe` — LIVE: `Ezagent.NotificationSubscriptions`
+>   gates cross-entity subscribe/admin against it. **Kept** (the module survives).
+>
+> Decision rule applied: a thing is a Behavior only if it is dispatchable OR defines
+> a cap that gates an externally-reachable op. Presence is neither → not a Behavior;
+> Notifications `:subscribe` is a real cross-entity authz → stays a Behavior. Done in
+> PR-presence-behavior-elimination: deleted module + parity test, removed `:notify`,
+> fixed the `presence.ex` "no Presence Behavior registered" → "unsupported URI" guard
+> message, updated the cap-only-marker exemplar comments (behavior.ex / capability_registry.ex
+> / orchestrator_admin.ex / im application.ex / kind/runtime.ex) to cite Notifications,
+> swapped the `role/materialize_test` fixture, ratcheted `undocumented_public_defs`
+> 446→441. Full gate suite green (zero new failures vs the 3 pre-existing arch reds +
+> sandbox-pollution flakes). Nature: hygiene (granted-but-never-checked cap = noise).
 
 ### `session_creator.ex` oversized + def-count refactor — OPEN (MED, two arch.scan reds on main)
 

@@ -7,7 +7,7 @@ defmodule Ezagent.CapabilityRegistry do
   Before this module, `Ezagent.BehaviorRegistry.register/3` was a bare
   ETS insert any code could call — no central enumeration of "what
   caps can be granted", no way to declare a cap-only subject
-  (Presence-style auth gate without dispatch), no machine-checkable
+  (a cap-only auth gate without dispatch), no machine-checkable
   prevention of drift between cap subjects and dispatch entries.
 
   Per SPEC `docs/superpowers/specs/2026-05-23-capability-registry.md`
@@ -21,7 +21,7 @@ defmodule Ezagent.CapabilityRegistry do
     actions + descriptions (compile warning via `@behaviour` callback;
     CI's `--warnings-as-errors` turns warning into failure).
   - Behaviors may implement `dispatchable?/0` (optional; default
-    `true`). Cap-only Behaviors (Presence's `:online`) return `false` —
+    `true`). Cap-only Behaviors (Notifications's `:subscribe`) return `false` —
     `register/3` then writes ONLY to the subjects table, skipping
     BehaviorRegistry so dispatch can never accidentally invoke them.
 
@@ -31,8 +31,8 @@ defmodule Ezagent.CapabilityRegistry do
   `/admin/caps` LV (renders the cap surface) and the future `mix
   ezagent.caps.list` CLI. `needed_for/3` returns the 4-field needed-cap
   map used by `Capability.matches?/2` — the same shape
-  `Capability.cap_for_action/3` returns today, so Presence and any
-  future cap-only consumer feeds it into the standard authorization
+  `Capability.cap_for_action/3` returns today, so cap-only consumers
+  feed it into the standard authorization
   path uniformly.
 
   ## Default grants
@@ -265,7 +265,7 @@ defmodule Ezagent.CapabilityRegistry do
 
   # Optional callback probe — Behaviors that don't define `dispatchable?/0`
   # default to `true` (the common case; only cap-only Behaviors like
-  # Presence override).
+  # Notifications override).
   defp behavior_dispatchable?(behavior) do
     if function_exported?(behavior, :dispatchable?, 0) do
       behavior.dispatchable?()

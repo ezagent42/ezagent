@@ -455,7 +455,7 @@ defmodule Ezagent.Kind.Runtime do
                 end
 
               # When the declared kind axis is `:any` (multi-Kind
-              # Behavior — e.g. Chat / Routing / Presence / Identity /
+              # Behavior — e.g. Chat / Routing / Identity /
               # Template), substitute the actual target Kind's
               # type_name/0 so the check matches a cap held against
               # the concrete Kind. SPEC §7 check 11(b).

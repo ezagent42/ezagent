@@ -169,7 +169,7 @@ defmodule Ezagent.PresenceTest do
 
   describe "subscribe/1 — argument validation" do
     test "non-User/Agent scheme raises ArgumentError" do
-      assert_raise ArgumentError, ~r/no Presence Behavior registered/, fn ->
+      assert_raise ArgumentError, ~r/unsupported URI/, fn ->
         Presence.subscribe(Ezagent.URI.new!("session://system/default/main"))
       end
     end
