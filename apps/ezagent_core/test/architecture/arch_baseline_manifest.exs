@@ -40,7 +40,7 @@
   #   (Stages 1+3). These are the small, focused recognizer/minter/predicate
   #   functions for the genesis trust root; co-located in capability.ex so minter +
   #   recognizer never drift. 22→28.
-  def_count_capability: 28,
+  def_count_capability: 28, # arch-cap-bump: #154 genesis collapse — admin trust-root minter/recognizer/predicate-A fns (see block above) 22→28
   spawn_registry_call_sites: 37,
   # Transport #53 Decision C (codex C-rC-P1): the orchestrator MCP transport
   # (`mcp_server.ex`) references the Session Kind it routes to through the
