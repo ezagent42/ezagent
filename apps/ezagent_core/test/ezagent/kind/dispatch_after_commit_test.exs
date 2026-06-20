@@ -38,7 +38,7 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
 
     # `:trigger` emits a `{:dispatch_after_commit, cmd}` targeting THIS same
     # Kind's `:probe` action (self-dispatch — same workspace, cap-exempt).
-    # The deferred Cmd is built with the default `caller: :system` so the
+    # The deferred Cmd is built with the default `caller: :vm_internal` so the
     # test can prove enrichment overrode it to `self_uri`.
     action(:trigger,
       args: %{},

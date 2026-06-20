@@ -35,7 +35,7 @@ defmodule Ezagent.Behavior.UserCredentialsMigrationParityTest do
       mode: :call,
       args: args,
       ctx: %{
-        caller: :system,
+        caller: :vm_internal,
         caps: MapSet.new(),
         reply: :sync
       }

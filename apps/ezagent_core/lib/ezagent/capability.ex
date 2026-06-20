@@ -353,7 +353,7 @@ defmodule Ezagent.Capability do
   Used by `Ezagent.Kind.Runtime` step 5.6 to decide whether to
   override workspace isolation when caller and target differ.
   """
-  @spec cross_workspace?(t(), URI.t() | :system | nil) :: boolean()
+  @spec cross_workspace?(t(), URI.t() | :vm_internal | nil) :: boolean()
   def cross_workspace?(%__MODULE__{} = cap, caller_uri),
     do: Scope.cross_workspace?(cap, caller_uri)
 

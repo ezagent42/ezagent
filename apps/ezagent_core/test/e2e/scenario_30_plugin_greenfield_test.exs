@@ -148,7 +148,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
       # widget's slice has been updated.
       cmd =
         Cmd.new(target_uri, :process, %{input: payload}, %{
-          caller: :system,
+          caller: :vm_internal,
           mode: :call,
           reply: {:caller_inbox, self()},
           caps: MapSet.new()
@@ -171,7 +171,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
     # Phase 4 Item 4 (2026-05-28) — `Ezagent.Audit.uri_to_str/1` now has
     # an explicit `:system` clause that canonicalizes to `"system://anonymous"`,
     # so the ambient `esr-audit` telemetry handler no longer crashes on
-    # `caller: :system`. The pre-detach workaround that lived here has
+    # `caller: :vm_internal`. The pre-detach workaround that lived here has
     # been removed; the test now exercises the real audit pipeline end-
     # to-end, matching production behaviour.
 

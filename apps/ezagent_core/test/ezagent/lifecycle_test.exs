@@ -214,7 +214,7 @@ defmodule Ezagent.LifecycleTest do
                  target: target,
                  mode: :call,
                  args: %{by: 2},
-                 ctx: %{caller: :system, reply: {:caller_inbox, self()}}
+                 ctx: %{caller: :vm_internal, reply: {:caller_inbox, self()}}
                })
 
       {:ok, %{state: state1, transients: tr1}} =
@@ -245,7 +245,7 @@ defmodule Ezagent.LifecycleTest do
                 target: target,
                 mode: :call,
                 args: %{by: 5},
-                ctx: %{caller: :system, reply: {:caller_inbox, self()}}
+                ctx: %{caller: :vm_internal, reply: {:caller_inbox, self()}}
               })
           end
         )

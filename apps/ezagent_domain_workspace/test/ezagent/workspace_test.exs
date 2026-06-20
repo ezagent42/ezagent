@@ -157,7 +157,7 @@ defmodule Ezagent.WorkspaceTest do
     # cannot slip past step 5.5 via Runtime's `default_holds_cap?(:system)`
     # all-caps bypass. Trusted ambient callers MUST use `/2`.
 
-    test "add_member/3 with caller: :system is rejected (no membership change)" do
+    test "add_member/3 with caller: :vm_internal is rejected (no membership change)" do
       name = "ctx-sys-#{System.unique_integer([:positive])}"
       {:ok, _pid} = Ezagent.Workspace.create(name, %{})
       member = Ezagent.URI.new!("entity://#{name}/user/mallory")
@@ -165,7 +165,7 @@ defmodule Ezagent.WorkspaceTest do
       before = Ezagent.Workspace.Store.get_by_name(name).members
 
       assert {:error, :invalid_caller_ctx} =
-               Ezagent.Workspace.add_member(name, member, %{caller: :system, caps: []})
+               Ezagent.Workspace.add_member(name, member, %{caller: :vm_internal, caps: []})
 
       assert Ezagent.Workspace.Store.get_by_name(name).members == before
     end

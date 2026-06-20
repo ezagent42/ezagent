@@ -217,7 +217,7 @@ defmodule Ezagent.Router do
 
   # The legacy ctx expects `:caps` as a MapSet of `%Capability{}`
   # structs. New-style `%Cmd{}` callers may pass `nil` (caller is
-  # `:system`) — we substitute the admin-equivalent empty set
+  # `:vm_internal`) — we substitute the admin-equivalent empty set
   # rather than treat as a missing key.
   defp normalize_caps(%{caps: nil} = ctx), do: %{ctx | caps: MapSet.new()}
   defp normalize_caps(%{caps: %MapSet{}} = ctx), do: ctx

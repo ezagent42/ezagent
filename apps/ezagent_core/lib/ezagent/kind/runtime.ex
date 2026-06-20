@@ -67,7 +67,7 @@ defmodule Ezagent.Kind.Runtime do
   - **5.6**: workspace isolation — caller and target must share a
     workspace, OR caller must hold a cross-workspace cap
     (`workspace_uri: :any`). Phase 9 PR-4 (SPEC v3 §5). Bypass
-    conditions: caller is `:system` (no entity URI), target is a
+    conditions: caller is `:vm_internal` (no entity URI), target is a
     cross-cutting scheme (`system://`, `template://`, `resource://`
     — workspace_of returns `:any`), or caller already holds a
     cross-workspace cap. Returns `{:error, :cross_workspace_denied}`
@@ -527,7 +527,7 @@ defmodule Ezagent.Kind.Runtime do
 
       is_nil(caller_kind) ->
         # Unknown caller Kind — use the default impl directly. Covers
-        # `:system` callers (default_holds_cap?(:system, _) → true) and
+        # `:vm_internal` callers (default_holds_cap?(:vm_internal, _) → true) and
         # nil callers (→ false).
         Ezagent.Kind.default_holds_cap?(caller, needed_struct)
 
@@ -594,7 +594,7 @@ defmodule Ezagent.Kind.Runtime do
   defp needed_map_to_struct(_), do: nil
 
   # Derive the caller's Kind module from the caller URI scheme.
-  # Returns `nil` when the caller is not a per-Kind URI (e.g. `:system`
+  # Returns `nil` when the caller is not a per-Kind URI (e.g. `:vm_internal`
   # atom, nil, or a `system://` URI principal whose Kind module is not
   # loaded in this build).
   #
@@ -630,10 +630,10 @@ defmodule Ezagent.Kind.Runtime do
   # hold a cross-workspace cap (`workspace_uri: :any`). Bypass
   # conditions:
   #
-  # - Caller is `:system` (no entity URI — bootstrap / internal paths
-  #   like Workspace.create dispatch_mutation use `:system` as caller).
+  # - Caller is `:vm_internal` (no entity URI — internal paths like
+  #   Workspace.create dispatch_mutation use `:vm_internal` as caller).
   #   Returning :ok here matches the existing CapBAC-bypass posture
-  #   for `:system` callers historically — they're trusted.
+  #   for `:vm_internal` callers — they're trusted in-VM code.
   # - Target's workspace is `:any` (cross-cutting schemes like
   #   `system://routing/default`, `template://`, `resource://` — these
   #   are not workspace-scoped by design).
@@ -693,14 +693,14 @@ defmodule Ezagent.Kind.Runtime do
 
   # Caller workspace derivation:
   #
-  # - `:system` (atom) → `:any` (bypass — bootstrap path)
+  # - `:vm_internal` (atom) → `:any` (bypass — trusted in-VM path)
   # - `entity://<type>/<workspace>/<name>` → workspace URI
   # - `session://<template>/<name>` → WorkspaceRegistry lookup
   # - `workspace://<name>` → the URI itself
-  # - `system://...` callers → `:any`
+  # - `:vm_internal` (trusted in-VM caller) → `:any`
   # - nil or unknown → `:any` (degraded; the authz step would have
   #   denied without a real principal)
-  defp workspace_of_caller(:system), do: :any
+  defp workspace_of_caller(:vm_internal), do: :any
   defp workspace_of_caller(nil), do: :any
 
   defp workspace_of_caller(%URI{} = uri) do
@@ -724,7 +724,7 @@ defmodule Ezagent.Kind.Runtime do
   # Phase 9 PR-8 (SPEC v3 §13.3) — the arity-2 form honors the
   # membership-based bypass: ANY cap held by a `workspace://system`
   # member counts as cross-workspace (Keycloak realm-admin model).
-  # The `:system` caller short-circuit above already returns :ok for
+  # The `:vm_internal` caller short-circuit above already returns :ok for
   # internal-only flows, so the predicate here only fires for real
   # entity URIs.
   defp caps_have_cross_workspace?(ctx) do

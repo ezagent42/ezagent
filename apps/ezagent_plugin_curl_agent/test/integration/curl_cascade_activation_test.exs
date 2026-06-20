@@ -222,7 +222,7 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
                target: target,
                mode: :call,
                args: %{provider: provider, key: key},
-               ctx: %{caller: :system, caps: :system, reply: {:caller_inbox, self()}}
+               ctx: %{caller: :vm_internal, caps: :system, reply: {:caller_inbox, self()}}
              })
 
     source_uri

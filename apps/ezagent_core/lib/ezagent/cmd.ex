@@ -24,7 +24,7 @@ defmodule Ezagent.Cmd do
   ## `ctx` shape
 
       %{
-        caller: URI.t() | :system,           # principal initiating the dispatch
+        caller: URI.t() | :vm_internal,      # principal initiating the dispatch (:vm_internal = trusted in-VM code)
         reply: Ezagent.Invocation.reply_target(),  # where to route the result
         trace_id: String.t() | nil,          # optional — propagates across cross-Kind dispatches
         command_uuid: String.t() | nil,      # optional — caller-supplied idempotency key
@@ -50,7 +50,7 @@ defmodule Ezagent.Cmd do
   defstruct [:target, :action, :args, :ctx]
 
   @type ctx :: %{
-          required(:caller) => URI.t() | :system,
+          required(:caller) => URI.t() | :vm_internal,
           required(:reply) => Ezagent.Invocation.reply_target(),
           optional(:trace_id) => String.t() | nil,
           optional(:command_uuid) => String.t() | nil,
@@ -88,7 +88,7 @@ defmodule Ezagent.Cmd do
       ctx:
         Map.merge(
           %{
-            caller: :system,
+            caller: :vm_internal,
             reply: :ignore,
             trace_id: nil,
             command_uuid: nil,

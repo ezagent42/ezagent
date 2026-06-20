@@ -122,7 +122,7 @@ defmodule Ezagent.RouterTest do
     test "Cmd.new/4 fills ctx defaults" do
       cmd = Cmd.new("entity://x/agent/y", :ping, %{}, %{})
       assert cmd.action == :ping
-      assert cmd.ctx.caller == :system
+      assert cmd.ctx.caller == :vm_internal
       assert cmd.ctx.reply == :ignore
       assert cmd.ctx.command_uuid == nil
     end

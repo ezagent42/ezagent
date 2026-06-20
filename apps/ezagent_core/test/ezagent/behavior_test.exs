@@ -220,13 +220,13 @@ defmodule Ezagent.BehaviorTest do
     test "valid :dispatch_returning is bucketed into :dispatches_returning, preserving declared order" do
       cmd1 =
         Cmd.new("entity://acme/user/alice", :ping, %{}, %{
-          caller: :system,
+          caller: :vm_internal,
           reply: {:caller_inbox, self()}
         })
 
       cmd2 =
         Cmd.new("entity://acme/user/bob", :ping, %{}, %{
-          caller: :system,
+          caller: :vm_internal,
           reply: {:caller_inbox, self()}
         })
 
@@ -253,7 +253,7 @@ defmodule Ezagent.BehaviorTest do
     test ":dispatch_returning without :bind_as raises ArgumentError" do
       cmd =
         Cmd.new("entity://acme/user/alice", :ping, %{}, %{
-          caller: :system,
+          caller: :vm_internal,
           reply: {:caller_inbox, self()}
         })
 

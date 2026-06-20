@@ -11,7 +11,7 @@ defmodule Ezagent.Behavior.IdentityTest do
 
   defp ctx_with_caps(caps) do
     %{
-      caller: :system,
+      caller: :vm_internal,
       caps: MapSet.new(),
       self_uri: Ezagent.URI.new!("entity://team-alpha/user/test"),
       reply: :sync,

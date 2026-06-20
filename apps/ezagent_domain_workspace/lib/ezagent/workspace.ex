@@ -595,10 +595,10 @@ defmodule Ezagent.Workspace do
   # SPEC §7 (codex review HIGH — fail-closed caller ctx). The cap-checked
   # `/3` path carries the caller's fresh caps. REQUIRE a concrete
   # `%URI{}` caller + a list/MapSet of caps; REJECT the ambient-authority
-  # shapes (`:system`, nil, atom, string) so a programmatic caller that
+  # shapes (`:vm_internal`, nil, atom, string) so a programmatic caller that
   # accidentally reaches `/3` cannot slip past step 5.5 via Runtime's
-  # `default_holds_cap?(:system)` all-caps bypass. Trusted ambient callers
-  # MUST use the explicit `/2` path (`system_loader_ctx/0`).
+  # `default_holds_cap?(:vm_internal)` all-caps bypass. Trusted ambient callers
+  # MUST use the explicit `/2` path.
   defp caller_ctx(%{caller: %URI{} = caller, caps: caps}) when is_list(caps),
     do: {:ok, %{caller: caller, caps: caps}}
 

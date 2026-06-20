@@ -171,7 +171,7 @@ defmodule Ezagent.Behavior.SocialwarePublisherReadTest do
 
     test ":system caller, nil owner → unauthorized" do
       chat = owned_chat(nil, %{})
-      assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(:system, chat))
+      assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(:vm_internal, chat))
     end
 
     test "a nil/:any caller MUST NOT match a nil owner_uri (no allow-if-owner-nil branch)" do
