@@ -263,7 +263,7 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
         action: :any,
         instance: :any,
         workspace_uri: :any,
-        granted_by: URI.new!("system://bootstrap/default"),
+        granted_by: Ezagent.URI.user(:system, :admin),
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
 

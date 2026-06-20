@@ -32,8 +32,14 @@ defmodule Ezagent.SystemPrincipalCatalogActionAuditTest do
   # SPEC §5 C2 — `system://lv-anon-mount` (an empty-caps placeholder) and
   # `system://socialware-gc` (a concrete `session.leave` cap, never a wildcard)
   # were both ELIMINATED 2026-06-20, 甲-6, so neither is listed here.
+  # #154 genesis collapse (2026-06-20): `system://bootstrap` (the LAST
+  # wildcard-holding principal, the genesis) was collapsed into the admin
+  # ENTITY. The Catalog is now EMPTY, so NO system principal holds an
+  # `action: :any` cap — the wildcard allowlist is EMPTY. The genesis wildcard
+  # now lives on the admin entity (`Ezagent.Capability.admin_genesis_cap/0`).
   @wildcard_allowlist MapSet.new([
-                        "system://bootstrap",
+                        # ELIMINATED 2026-06-20 (#154 genesis collapse):
+                        # `system://bootstrap` — collapsed into the admin entity.
                         # ELIMINATED 2026-06-20, 甲-4 (#154 north star):
                         # `system://chat-router` DELETED (it held bootstrap_wildcard
                         # → action: :any; the last non-genesis wildcard holder) — the

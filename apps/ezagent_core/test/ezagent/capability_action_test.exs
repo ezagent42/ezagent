@@ -52,7 +52,7 @@ defmodule Ezagent.CapabilityActionTest do
         action: :add_member,
         instance: :any,
         workspace_uri: URI.new!("workspace://team-alpha"),
-        granted_by: URI.new!("system://bootstrap"),
+        granted_by: Ezagent.URI.user(:system, :admin),
         granted_at: DateTime.utc_now()
       }
 
@@ -133,7 +133,7 @@ defmodule Ezagent.CapabilityActionTest do
         action: :any,
         instance: :any,
         workspace_uri: :any,
-        granted_by: Ezagent.URI.new!("system://bootstrap/default"),
+        granted_by: Ezagent.URI.user(:system, :admin),
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
 
@@ -150,7 +150,7 @@ defmodule Ezagent.CapabilityActionTest do
         action: :any,
         instance: :any,
         workspace_uri: :any,
-        granted_by: Ezagent.URI.new!("system://bootstrap/default"),
+        granted_by: Ezagent.URI.user(:system, :admin),
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
 
@@ -177,7 +177,7 @@ defmodule Ezagent.CapabilityActionTest do
             action: :any,
             instance: :any,
             workspace_uri: :any,
-            granted_by: Ezagent.URI.new!("system://bootstrap/default"),
+            granted_by: Ezagent.URI.user(:system, :admin),
             granted_at: ~U[2026-01-01 00:00:00Z]
           },
           :action
