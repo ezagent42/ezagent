@@ -3,7 +3,7 @@ defmodule Ezagent.Presence do
   Cross-node liveness tracking for entity URIs. Thin URI-shaped wrapper
   over `Ezagent.Presence.Tracker` (Phoenix.Presence). Transport-agnostic;
   plugins write via `track/3`, anyone reads via `list/1` / `present?/1`
-  / `subscribe/2`.
+  / `subscribe/1`.
 
   ## Subscribe events
 
@@ -33,7 +33,6 @@ defmodule Ezagent.Presence do
   See SPEC `docs/superpowers/specs/2026-05-23-presence.md` §6.
   """
 
-  alias Ezagent.{Capability, CapabilityRegistry}
   alias Ezagent.Presence.Tracker
 
   @type entity_uri :: URI.t() | String.t()
@@ -95,27 +94,25 @@ defmodule Ezagent.Presence do
   @doc """
   Subscribe the calling process to presence diffs for `uri`.
 
-  Caller MUST pass `ctx` containing `:caps`. Either:
-  - `ctx.caps == :system` — internal trusted bypass (chat-domain
-    PresenceFanout, system admin LV; matches the `Ezagent.Audit.Writer`
-    pattern)
-  - `ctx.caps == MapSet.t(Ezagent.Capability.t())` — checked against
-    `CapabilityRegistry.needed_for(kind, :online, uri)`; raises
-    `Ezagent.Capability.Unauthorized` on cap miss
+  No cap check: presence subscription is an in-VM-internal operation
+  (the only callers are trusted internal fan-out, e.g.
+  `EzagentDomainInstanceMessage.PresenceFanout`). Under the #154
+  VM-internal-trust model the authorization boundary is the dispatch
+  chokepoint, which serves external callers; this helper is reached
+  only from trusted in-VM code, so a secondary cap check here was
+  dormant (its sole callers passed the trusted bypass) and was removed.
 
-  `kind` is resolved from the URI: `entity://user/...` →
+  The URI scheme is still validated: `entity://user/...` →
   `Ezagent.Entity.User`, `entity://agent/...` → `Ezagent.Entity.Agent`.
   Other schemes raise `ArgumentError` (no Presence Behavior registered).
 
   Subscribers receive `{:ezagent_presence_diff, topic, %{joins,
   leaves, current}}` messages.
   """
-  @spec subscribe(entity_uri(), ctx :: map()) :: :ok
-  def subscribe(uri, ctx) do
+  @spec subscribe(entity_uri()) :: :ok
+  def subscribe(uri) do
     parsed_uri = parse_uri!(uri)
-    kind_module = kind_module_of!(parsed_uri)
-
-    check_subscribe_cap!(ctx, kind_module, parsed_uri)
+    _ = kind_module_of!(parsed_uri)
 
     Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic(parsed_uri))
   end
@@ -146,31 +143,8 @@ defmodule Ezagent.Presence do
 
   defp raise_unsupported_kind!(%URI{} = uri) do
     raise ArgumentError,
-          "Ezagent.Presence.subscribe/2: no Presence Behavior registered for " <>
+          "Ezagent.Presence.subscribe/1: no Presence Behavior registered for " <>
             "URI #{inspect(Ezagent.URI.stable_key(uri))}. Only entity user and " <>
             "entity agent URIs are supported in V1."
   end
-
-  defp check_subscribe_cap!(%{caps: :system}, _kind, _uri), do: :ok
-
-  defp check_subscribe_cap!(ctx, kind_module, %URI{} = uri) do
-    needed = CapabilityRegistry.needed_for(kind_module, :online, uri)
-    caps = Map.get(ctx, :caps, MapSet.new())
-
-    if any_cap_matches?(caps, needed) do
-      :ok
-    else
-      raise Ezagent.Capability.Unauthorized,
-        needed: needed,
-        message:
-          "Ezagent.Presence.subscribe/2: caller does not hold a :online cap " <>
-            "matching #{inspect(needed)}."
-    end
-  end
-
-  defp any_cap_matches?(caps, needed) when is_struct(caps, MapSet) do
-    Enum.any?(caps, &Capability.matches?(&1, needed))
-  end
-
-  defp any_cap_matches?(_caps, _needed), do: false
 end

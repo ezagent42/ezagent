@@ -64,7 +64,7 @@ defmodule Ezagent.Agent.CredentialNotifierTest do
       # record the agent's creator without needing a live Agent Kind or the DB.
       :ets.insert(Ezagent.AgentLineage.table(), {URI.to_string(uri), URI.to_string(owner)})
 
-      :ok = Ezagent.Notifications.subscribe(owner, %{caps: :system})
+      :ok = Ezagent.Notifications.subscribe(owner)
 
       Phoenix.PubSub.broadcast(
         EzagentCore.PubSub,
@@ -87,7 +87,7 @@ defmodule Ezagent.Agent.CredentialNotifierTest do
       :ets.insert(Ezagent.AgentLineage.table(), {URI.to_string(worker), URI.to_string(orch)})
       :ets.insert(Ezagent.AgentLineage.table(), {URI.to_string(orch), URI.to_string(owner)})
 
-      :ok = Ezagent.Notifications.subscribe(owner, %{caps: :system})
+      :ok = Ezagent.Notifications.subscribe(owner)
 
       Phoenix.PubSub.broadcast(
         EzagentCore.PubSub,

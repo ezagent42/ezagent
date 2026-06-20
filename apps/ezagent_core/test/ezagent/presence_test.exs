@@ -5,8 +5,7 @@ defmodule Ezagent.PresenceTest do
   - `track + list + present?` round-trips (auto-untrack on process exit)
   - Multiple transport_ids on the same URI
   - `track/4` with explicit pid arg
-  - `subscribe/2` event delivery (tuple shape, NOT %Phoenix.Socket.Broadcast)
-  - Subscribe cap gating: system bypass + explicit cap pass + explicit cap fail
+  - `subscribe/1` event delivery (tuple shape, NOT %Phoenix.Socket.Broadcast)
   - Event-shape normalization (`%{transport_id => [meta]}`, NOT
     `%{transport_id => %{metas: [meta]}}` — codex rev-2 round-2 HIGH-2
     regression test)
@@ -123,10 +122,10 @@ defmodule Ezagent.PresenceTest do
     end
   end
 
-  describe "subscribe/2 — event delivery" do
+  describe "subscribe/1 — event delivery" do
     test "subscriber receives tuple-shape :joins diff" do
       uri = unique_user_uri("sub_join")
-      :ok = Presence.subscribe(uri, %{caps: :system})
+      :ok = Presence.subscribe(uri)
 
       spawn(fn ->
         {:ok, _} = Presence.track(uri, "j1", %{transport: :liveview})
@@ -149,7 +148,7 @@ defmodule Ezagent.PresenceTest do
 
     test "subscriber receives tuple-shape :leaves diff on process exit" do
       uri = unique_user_uri("sub_leave")
-      :ok = Presence.subscribe(uri, %{caps: :system})
+      :ok = Presence.subscribe(uri)
 
       tracker =
         spawn(fn ->
@@ -168,59 +167,10 @@ defmodule Ezagent.PresenceTest do
     end
   end
 
-  describe "subscribe/2 — cap gating" do
-    test "system bypass succeeds (ctx.caps == :system)" do
-      uri = unique_user_uri("cap_system")
-      assert :ok == Presence.subscribe(uri, %{caps: :system})
-    end
-
-    test "no caps in ctx raises Unauthorized" do
-      uri = unique_user_uri("cap_none")
-
-      assert_raise Ezagent.Capability.Unauthorized, fn ->
-        Presence.subscribe(uri, %{caps: MapSet.new()})
-      end
-    end
-
-    test "holding the right :online cap succeeds" do
-      uri = unique_user_uri("cap_ok")
-      workspace_uri = Ezagent.Capability.workspace_of(uri)
-
-      cap = %Ezagent.Capability{
-        kind: :user,
-        behavior: Ezagent.Behavior.Presence,
-        instance: :any,
-        workspace_uri: workspace_uri,
-        granted_by: Ezagent.URI.new!("entity://team-alpha/user/system"),
-        granted_at: ~U[2026-01-01 00:00:00Z]
-      }
-
-      assert :ok == Presence.subscribe(uri, %{caps: MapSet.new([cap])})
-    end
-
-    test "holding a cap for a DIFFERENT behavior is rejected" do
-      uri = unique_user_uri("cap_wrong_behavior")
-      workspace_uri = Ezagent.Capability.workspace_of(uri)
-
-      cap = %Ezagent.Capability{
-        kind: :user,
-        behavior: Ezagent.Behavior.Session,
-        instance: :any,
-        workspace_uri: workspace_uri,
-        granted_by: Ezagent.URI.new!("entity://team-alpha/user/system"),
-        granted_at: ~U[2026-01-01 00:00:00Z]
-      }
-
-      assert_raise Ezagent.Capability.Unauthorized, fn ->
-        Presence.subscribe(uri, %{caps: MapSet.new([cap])})
-      end
-    end
-  end
-
-  describe "subscribe/2 — argument validation" do
+  describe "subscribe/1 — argument validation" do
     test "non-User/Agent scheme raises ArgumentError" do
       assert_raise ArgumentError, ~r/no Presence Behavior registered/, fn ->
-        Presence.subscribe(Ezagent.URI.new!("session://system/default/main"), %{caps: :system})
+        Presence.subscribe(Ezagent.URI.new!("session://system/default/main"))
       end
     end
   end

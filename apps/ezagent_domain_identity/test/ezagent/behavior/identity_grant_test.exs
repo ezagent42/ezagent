@@ -89,7 +89,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
   describe "notify_cap_change — `Notifications.notify` shape (regression: E2E 2026-05-25)" do
     test "grant_cap with `:self_uri` user ctx does NOT raise ArgumentError" do
       user_uri = Ezagent.URI.new!("entity://team-alpha/user/notify_shape_grant")
-      :ok = Ezagent.Notifications.subscribe(user_uri, %{caps: :system})
+      :ok = Ezagent.Notifications.subscribe(user_uri)
 
       ctx = %{
         caller: @granter,
@@ -121,7 +121,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
 
     test "revoke_cap with `:self_uri` user ctx does NOT raise ArgumentError" do
       user_uri = Ezagent.URI.new!("entity://team-alpha/user/notify_shape_revoke")
-      :ok = Ezagent.Notifications.subscribe(user_uri, %{caps: :system})
+      :ok = Ezagent.Notifications.subscribe(user_uri)
 
       cap = echo_cap()
 
