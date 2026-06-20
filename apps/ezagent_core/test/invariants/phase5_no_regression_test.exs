@@ -32,7 +32,7 @@ defmodule EzagentCore.Invariants.Phase5NoRegressionTest do
       assert Process.alive?(pid)
 
       # Admin must carry the global admin cap set so admin LV can do anything.
-      caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+      caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
       assert MapSet.size(caps) > 0
     end
 

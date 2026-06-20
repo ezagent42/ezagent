@@ -84,7 +84,7 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
       args: %{member: member},
       ctx: %{
         caller: User.admin_uri(),
-        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
         reply: {:caller_inbox, self()}
       }
     })
@@ -115,7 +115,7 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
         args: %{message: msg},
         ctx: %{
           caller: @sender,
-          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
           reply: {:caller_inbox, self()}
         }
       })

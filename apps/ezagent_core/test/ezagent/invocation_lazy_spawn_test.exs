@@ -109,7 +109,7 @@ defmodule Ezagent.InvocationLazySpawnTest do
         args: %{msg: "lazy-spawn-test"},
         ctx: %{
           caller: Ezagent.URI.new!("entity://system/user/admin"),
-          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
           reply: {:caller_inbox, self()}
         }
       }
@@ -148,7 +148,7 @@ defmodule Ezagent.InvocationLazySpawnTest do
 
       ctx = %{
         caller: Ezagent.URI.new!("entity://system/user/admin"),
-        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
         reply: {:caller_inbox, self()}
       }
 
@@ -193,7 +193,7 @@ defmodule Ezagent.InvocationLazySpawnTest do
         args: %{msg: "cast-lazy"},
         ctx: %{
           caller: Ezagent.URI.new!("entity://system/user/admin"),
-          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
           reply: {:caller_inbox, self()}
         }
       }
@@ -222,7 +222,7 @@ defmodule Ezagent.InvocationLazySpawnTest do
         args: %{msg: "x"},
         ctx: %{
           caller: Ezagent.URI.new!("entity://system/user/admin"),
-          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
           reply: {:caller_inbox, self()}
         }
       }

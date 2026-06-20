@@ -76,7 +76,7 @@ defmodule Ezagent.Invariants.CapHasWorkspaceTest do
 
   describe "admin bootstrap cap" do
     test "carries workspace_uri: :any (SPEC v3 §4.4 — structural cross-workspace)" do
-      [admin_cap] = MapSet.to_list(Ezagent.SystemPrincipal.caps("system://bootstrap"))
+      [admin_cap] = MapSet.to_list(MapSet.new([Ezagent.Capability.admin_genesis_cap()]))
 
       assert admin_cap.workspace_uri == :any,
              "admin's bootstrap cap MUST have workspace_uri: :any so it is " <>
@@ -85,7 +85,7 @@ defmodule Ezagent.Invariants.CapHasWorkspaceTest do
     end
 
     test "admin_invariant?/1 requires the workspace_uri: :any field" do
-      [admin_cap] = MapSet.to_list(Ezagent.SystemPrincipal.caps("system://bootstrap"))
+      [admin_cap] = MapSet.to_list(MapSet.new([Ezagent.Capability.admin_genesis_cap()]))
       assert Capability.admin_invariant?(admin_cap)
 
       # A bootstrap-granted cap with a CONCRETE workspace is NOT the

@@ -89,7 +89,7 @@ defmodule EzagentDomainIdentity.Application do
         # PR-M (Allen 2026-05-20) — DB write skipped in :test env to
         # avoid Sandbox checkout contention. Tests that need the admin
         # row can call `Ezagent.Users.create(admin_uri, nil,
-        # MapSet.to_list(SystemPrincipal.caps("system://bootstrap")))` in setup. Dev/prod see
+        # MapSet.to_list(MapSet.new([Ezagent.Capability.admin_genesis_cap()])))` in setup. Dev/prod see
         # the seed on every boot (idempotent).
         :ok = maybe_ensure_admin_user()
         _ = maybe_seed_smtp_config()
@@ -191,15 +191,14 @@ defmodule EzagentDomainIdentity.Application do
       # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
       # User Kind declares `EzagentDomainIdentity.Application.UserSupervisor`
       # via supervisor/0 — destination preserved.
-      # SPEC caps-cleanup-v1 §4.4 — admin's bootstrap caps now come
-      # from `Ezagent.SystemPrincipal.caps/1` (closed Catalog, granted
-      # by `system://bootstrap`), not the deleted `User.admin_caps/0`.
+      # #154 genesis collapse (2026-06-20) — admin's genesis caps are the
+      # single canonical self-granted wildcard (`granted_by` the admin entity
+      # `entity://system/user/admin`), minted via
+      # `Ezagent.Capability.admin_genesis_cap/0`. The eliminated
+      # `system://bootstrap` principal no longer mediates this.
       case Ezagent.Kind.spawn(User, %{
              uri: admin_uri,
-             initial_caps:
-               "bootstrap"
-               |> Ezagent.SystemPrincipal.uri()
-               |> Ezagent.SystemPrincipal.caps()
+             initial_caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
            }) do
         {:ok, _pid} ->
           :ok
@@ -250,13 +249,11 @@ defmodule EzagentDomainIdentity.Application do
       try do
         case Ezagent.Users.get_by_uri(admin_uri) do
           nil ->
-            # SPEC caps-cleanup-v1 §4.4 — bootstrap caps come from the
-            # closed Catalog via `Ezagent.SystemPrincipal`.
-            admin_cap_list =
-              "bootstrap"
-              |> Ezagent.SystemPrincipal.uri()
-              |> Ezagent.SystemPrincipal.caps()
-              |> MapSet.to_list()
+            # #154 genesis collapse (2026-06-20) — admin's genesis caps are the
+            # canonical self-granted wildcard from
+            # `Ezagent.Capability.admin_genesis_cap/0` (granted_by the admin
+            # entity), not the eliminated `system://bootstrap` principal.
+            admin_cap_list = [Ezagent.Capability.admin_genesis_cap()]
 
             case Ezagent.Users.create(admin_uri, nil, admin_cap_list) do
               {:ok, _decoded} ->

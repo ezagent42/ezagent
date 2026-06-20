@@ -132,8 +132,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
           mode: :cast,
           args: %{member: admin},
           ctx: %{
-            caller: Ezagent.SystemPrincipal.uri("session-internal"),
-            caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+            caller: Ezagent.Entity.User.admin_uri(),
+            caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
             reply: :ignore
           }
         })
@@ -175,8 +175,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
             mode: :cast,
             args: %{member: admin},
             ctx: %{
-              caller: Ezagent.SystemPrincipal.uri("session-internal"),
-              caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+              caller: Ezagent.Entity.User.admin_uri(),
+              caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
               reply: :ignore
             }
           })
@@ -335,8 +335,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
 
   defp join_ctx(reply) do
     %{
-      caller: Ezagent.SystemPrincipal.uri("session-internal"),
-      caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+      caller: Ezagent.Entity.User.admin_uri(),
+      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
       reply: reply
     }
   end

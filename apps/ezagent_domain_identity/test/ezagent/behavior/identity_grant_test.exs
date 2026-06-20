@@ -47,7 +47,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
     new_cap = echo_cap()
 
     # PR-OWN-2 §5.2: wildcard caps require bootstrap-admin caller.
-    ctx = ctx_with(Ezagent.SystemPrincipal.caps("system://bootstrap"), MapSet.new())
+    ctx = ctx_with(MapSet.new([Ezagent.Capability.admin_genesis_cap()]), MapSet.new())
 
     {:ok, %{caps: caps}, effects} =
       IdentityAdmin.handle_grant_cap(%{cap: new_cap}, ctx)
@@ -72,7 +72,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
 
   test "grant_cap is idempotent (MapSet semantics + identity-tuple dedup)" do
     cap = echo_cap()
-    ctx = ctx_with(Ezagent.SystemPrincipal.caps("system://bootstrap"), MapSet.new([cap]))
+    ctx = ctx_with(MapSet.new([Ezagent.Capability.admin_genesis_cap()]), MapSet.new([cap]))
 
     {:ok, _result, effects} = IdentityAdmin.handle_grant_cap(%{cap: cap}, ctx)
     assert {:set, :caps, new_set} = Enum.find(effects, &match?({:set, :caps, _}, &1))
@@ -93,7 +93,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
 
       ctx = %{
         caller: @granter,
-        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
         self_uri: user_uri,
         read: fn key, default ->
           case key do
@@ -174,7 +174,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
 
     test "only the all-four-wildcards bootstrap-admin shape qualifies" do
       cap_to_grant = echo_cap()
-      ctx = ctx_with(Ezagent.SystemPrincipal.caps("system://bootstrap"), MapSet.new())
+      ctx = ctx_with(MapSet.new([Ezagent.Capability.admin_genesis_cap()]), MapSet.new())
 
       assert {:ok, _result, _effects} =
                IdentityAdmin.handle_grant_cap(%{cap: cap_to_grant}, ctx)

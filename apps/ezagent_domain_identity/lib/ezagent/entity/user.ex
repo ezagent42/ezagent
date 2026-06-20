@@ -43,7 +43,7 @@ defmodule Ezagent.Entity.User do
   Three cases:
 
   1. **Admin URI** (`entity://user/system/admin`) — bootstrap caps
-     from the closed catalog at `Ezagent.SystemPrincipal.caps("system://bootstrap")`
+     from the closed catalog at `MapSet.new([Ezagent.Capability.admin_genesis_cap()])`
      (the `[:any, :any, :any, :any]` wildcard structural invariant
      plus catalog rows). Same value across boots; admin has no
      `users.caps_json` row at the time of the very first boot before
@@ -114,7 +114,7 @@ defmodule Ezagent.Entity.User do
   # The ambient all-caps escape hatch is replaced by the closed
   # `Ezagent.SystemPrincipal.Catalog` allowlist of 14 system
   # principals + their permitted caps. Admin's bootstrap caps now
-  # come from `Ezagent.SystemPrincipal.caps("system://bootstrap")`,
+  # come from `MapSet.new([Ezagent.Capability.admin_genesis_cap()])`,
   # which mints the same structural wildcard cap (granted by
   # `system://bootstrap/default`) so the `Capability.revoke/2`
   # admin-invariant + admin-bootstrap behavior are preserved.

@@ -58,7 +58,7 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
     agent_uri =
       Ezagent.URI.new!("entity://parity/agent/cc_sandbox-#{System.unique_integer([:positive])}")
 
-    admin_caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+    admin_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
 
     # Lifecycle two-container slice — `init_slice/1` now returns
     # `%{state: ..., transients: %{}}` (SPEC §2.1). `create/1` (run on

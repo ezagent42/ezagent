@@ -71,7 +71,7 @@ defmodule EzagentCli.Integration.PluginIsolationCLITest do
     # admin. Tests set the per-process caller override.
     Process.put(
       :ezagent_cli_caller_override,
-      {Ezagent.Entity.User.admin_uri(), Ezagent.SystemPrincipal.caps("system://bootstrap")}
+      {Ezagent.Entity.User.admin_uri(), MapSet.new([Ezagent.Capability.admin_genesis_cap()])}
     )
 
     :ok

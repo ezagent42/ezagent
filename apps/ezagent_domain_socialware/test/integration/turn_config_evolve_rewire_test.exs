@@ -213,7 +213,7 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
         args: %{cap: cap},
         ctx: %{
           caller: User.admin_uri(),
-          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
           reply: {:caller_inbox, self()}
         }
       })
@@ -305,7 +305,7 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
   end
 
   defp bootstrap_caps?(caps) do
-    bootstrap = "bootstrap" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps()
+    bootstrap = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
     MapSet.equal?(MapSet.new(caps), MapSet.new(bootstrap))
   end
 

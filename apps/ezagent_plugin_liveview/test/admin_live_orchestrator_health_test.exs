@@ -42,7 +42,7 @@ defmodule EzagentPluginLiveview.AdminLiveOrchestratorHealthTest do
            Ezagent.Workspace.create_session(
              workspace_uri,
              %{short_name: short_name, template_name: template_name},
-             %{caller: creator_uri, caps: Ezagent.SystemPrincipal.caps("system://bootstrap")}
+             %{caller: creator_uri, caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])}
            ) do
       {:ok, result.session_uri,
        %{

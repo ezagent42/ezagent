@@ -110,7 +110,12 @@ defmodule Ezagent.Identity do
         action: :list_caps,
         instance: user_uri,
         workspace_uri: workspace_uri,
-        granted_by: Ezagent.SystemPrincipal.uri("bootstrap"),
+        # #154 genesis collapse (2026-06-20) — this is the entity's OWN
+        # `:list_caps` self-cap (the "self-grant" above), so its `granted_by`
+        # is the entity ITSELF (self-authority, a real entity), not the
+        # eliminated `system://bootstrap` principal. Every cap now traces to a
+        # real entity; a self-cap traces to its owner.
+        granted_by: user_uri,
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
     ])

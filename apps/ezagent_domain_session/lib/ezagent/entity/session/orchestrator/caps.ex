@@ -107,8 +107,8 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
 
     # Grant chokepoint (SPEC 2026-06-17 §4 PR-2, site #14 — the rollback
     # revoke twin of site #7). Same MIXED cap set, so the SAME per-cap
-    # `tag_for/2` selection: caps #1/#2 revoke under `{:system, bootstrap}`
-    # (pass dispatch step 5.5 via the bootstrap wildcard), caps #3/#4 under
+    # `tag_for/2` selection: caps #1/#2 revoke under `{:genesis, …}`
+    # (pass dispatch step 5.5 via the genesis wildcard), caps #3/#4 under
     # `{:rule, …}`. `template-materialize` is no longer the authorizer.
     Enum.each(desired, fn cap ->
       _ = Ezagent.Identity.Grant.revoke_cap(orchestrator_uri, cap, tag_for(cap, owner_uri))
@@ -141,7 +141,10 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
     if Ezagent.Behavior.IdentityAdmin.rule_cap_bounded?(cap) do
       {:rule, :template_materialize, owner_uri}
     else
-      {:system, Ezagent.SystemPrincipal.uri("bootstrap"), owner_uri}
+      # #154 genesis collapse (2026-06-20) — the genesis wildcard authorizer
+      # is now the canonical admin-granted cap, supplied by `{:genesis, …}`;
+      # the eliminated `{:system, bootstrap, owner}` tag is gone.
+      {:genesis, owner_uri}
     end
   end
 

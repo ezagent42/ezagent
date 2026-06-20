@@ -13,8 +13,8 @@ defmodule Ezagent.Entity.UserTest do
     assert uri.path == "/user/admin"
   end
 
-  test "admin_caps/0 returns a MapSet containing exactly the structural all-caps cap" do
-    caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+  test "admin genesis cap is exactly the structural all-caps wildcard, self-granted by the admin entity" do
+    caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
     assert %MapSet{} = caps
     assert MapSet.size(caps) == 1
 
@@ -25,14 +25,15 @@ defmodule Ezagent.Entity.UserTest do
     # Phase 9 PR-3 (SPEC v3 §4.4): admin's structural cap gains
     # `workspace_uri: :any` so it is cross-workspace by design.
     assert cap.workspace_uri == :any
-    # PR #141 SPEC v2 §5.1: system://bootstrap → system://bootstrap/default
-    assert cap.granted_by.scheme == "system"
-    assert cap.granted_by.host == "bootstrap"
-    assert cap.granted_by.path == "/default"
+    # #154 genesis collapse (2026-06-20): the genesis cap is now granted by the
+    # admin ENTITY (a real entity), NOT the eliminated `system://bootstrap`
+    # principal. granted_by == entity://system/user/admin.
+    assert cap.granted_by.scheme == "entity"
+    assert URI.to_string(cap.granted_by) == URI.to_string(User.admin_uri())
   end
 
   test "admin_caps cap matches any invocation" do
-    [cap] = MapSet.to_list(Ezagent.SystemPrincipal.caps("system://bootstrap"))
+    [cap] = MapSet.to_list(MapSet.new([Ezagent.Capability.admin_genesis_cap()]))
 
     assert Capability.matches?(cap, %{
              kind: :random,
@@ -43,8 +44,8 @@ defmodule Ezagent.Entity.UserTest do
   end
 
   test "admin_caps cap is refused by revoke/2" do
-    [admin_cap] = MapSet.to_list(Ezagent.SystemPrincipal.caps("system://bootstrap"))
-    caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+    [admin_cap] = MapSet.to_list(MapSet.new([Ezagent.Capability.admin_genesis_cap()]))
+    caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
     assert {:error, :cannot_revoke_admin} = Capability.revoke(caps, admin_cap)
   end
 

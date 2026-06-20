@@ -101,7 +101,7 @@ defmodule Ezagent.Behavior.RoutingMigrationParityTest do
     :ok = BehaviorRegistry.register(StubRoutingKind, :enable_rule, Routing)
 
     self_uri = Ezagent.URI.new!("system://routing/default")
-    admin_caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+    admin_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
     state = %{routing: %{calls: 0}}
 
     {:ok, self_uri: self_uri, admin_caps: admin_caps, state: state}

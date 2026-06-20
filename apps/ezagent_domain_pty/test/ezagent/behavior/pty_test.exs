@@ -62,7 +62,7 @@ defmodule Ezagent.Behavior.PtyTest do
   defp admin_ctx do
     %{
       caller: Ezagent.Entity.User.admin_uri(),
-      caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
       reply: {:caller_inbox, self()}
     }
   end

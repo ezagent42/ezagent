@@ -132,7 +132,7 @@ defmodule Ezagent.Behavior.Turn do
     # principal driving the session would hold). Without this the self-dispatch
     # is denied at authz and the settlement stays pending.
     bootstrap_caps =
-      "bootstrap" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps()
+      MapSet.new([Ezagent.Capability.admin_genesis_cap()])
 
     bootstrap_ctx = Map.put(ctx, :caps, bootstrap_caps)
 

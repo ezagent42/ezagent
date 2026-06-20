@@ -133,7 +133,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
   defp admin_ctx do
     %{
       caller: @granter,
-      caps: Ezagent.SystemPrincipal.caps("system://bootstrap")
+      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
     }
   end
 
@@ -675,13 +675,15 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
     # accepted; legacy missing-key caps rejected.
 
     test "admin_invariant?: explicit action: :any post-SPEC admin cap is accepted" do
+      # #154 genesis collapse (2026-06-20): the genesis granter is the admin
+      # ENTITY (entity://system/user/admin), not the eliminated system://bootstrap.
       post_spec = %Ezagent.Capability{
         kind: :any,
         behavior: :any,
         action: :any,
         instance: :any,
         workspace_uri: :any,
-        granted_by: Ezagent.URI.new!("system://bootstrap"),
+        granted_by: Ezagent.URI.user(:system, :admin),
         granted_at: DateTime.utc_now()
       }
 
@@ -699,7 +701,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
         action: :any,
         instance: :any,
         workspace_uri: :any,
-        granted_by: Ezagent.URI.new!("system://bootstrap"),
+        granted_by: Ezagent.URI.user(:system, :admin),
         granted_at: DateTime.utc_now()
       }
 
@@ -718,7 +720,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
         action: :create_session,
         instance: :any,
         workspace_uri: :any,
-        granted_by: Ezagent.URI.new!("system://bootstrap"),
+        granted_by: Ezagent.URI.user(:system, :admin),
         granted_at: DateTime.utc_now()
       }
 
@@ -726,7 +728,9 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
              "narrow-action admin-shaped cap MUST NOT confer admin authority"
     end
 
-    test "admin_invariant?: non-bootstrap granted_by rejected regardless of cap shape" do
+    test "admin_invariant?: non-admin-entity granted_by rejected regardless of cap shape" do
+      # #154 genesis collapse: the genesis granter is the admin ENTITY; an
+      # admin-SHAPED wildcard granted by any OTHER entity is not the genesis cap.
       fake_admin = %Ezagent.Capability{
         kind: :any,
         behavior: :any,
@@ -738,7 +742,8 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       }
 
       refute Capability.admin_invariant?(fake_admin),
-             "granted_by MUST be system://bootstrap — admin-shape with non-bootstrap granter is not admin"
+             "granted_by MUST be entity://system/user/admin — admin-shape with a " <>
+               "non-admin-entity granter is not the genesis cap"
     end
   end
 end

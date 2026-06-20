@@ -122,13 +122,11 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   # (the `session-internal` Catalog cap `cap(:workspace, Workspace, :any)`)
   # was eliminated (#154).
 
-  # #154 genesis collapse (2026-06-20) — the genesis all-caps wildcard is now the
-  # admin entity's SELF-GRANTED cap (granted_by `entity://system/user/admin`, a
-  # real entity), not the eliminated `system://bootstrap` principal's. Single
-  # canonical source in core so the minter + `admin_invariant?/1` recognizer never
-  # drift. (The `system://bootstrap` Catalog KEY is removed in the same collapse;
-  # while this entry exists transitionally it holds the admin-granted genesis cap.)
-  defp bootstrap_wildcard, do: Ezagent.Capability.admin_genesis_cap()
+  # #154 genesis collapse (2026-06-20) — `bootstrap_wildcard/0` DELETED with the
+  # `system://bootstrap` Catalog entry. The genesis all-caps wildcard is now the
+  # admin entity's SELF-GRANTED cap, minted by `Ezagent.Capability.admin_genesis_cap/0`
+  # (granted_by `entity://system/user/admin`, a real entity), with `admin_invariant?/1`
+  # as its recognizer — no `system://` principal involved.
 
   @doc """
   The closed allowlist mapped from principal URI →
@@ -147,7 +145,16 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   @spec entries() :: [{String.t(), [%Ezagent.Capability{}]}]
   def entries do
     [
-      {principal(:bootstrap), [bootstrap_wildcard()]},
+      # #154 genesis collapse (2026-06-20) — the closed Catalog is now EMPTY.
+      # The LAST entry, `system://bootstrap` (the genesis all-caps wildcard),
+      # was collapsed into the admin ENTITY: the genesis cap is now minted by
+      # `Ezagent.Capability.admin_genesis_cap/0` (granted_by
+      # `entity://system/user/admin`, a real entity). No `system://` PRINCIPAL
+      # grants authority anymore; the elimination ratchet is at literal 0. (The
+      # `system://` SCHEME survives only for global RESOURCES — credentials,
+      # routing defaults, snapshots — which are never authorization principals.)
+      # The history of every eliminated principal is preserved below.
+      #
       # System-principal elimination (north star): `boot-reconciler` DELETED — it
       # was a DEAD principal (zero live consumers; grep found only docstrings +
       # this entry). The external-mirror boot reconcile is now IN-PROCESS
@@ -400,7 +407,9 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   @spec uris() :: [String.t()]
   def uris, do: Enum.map(entries(), fn {uri, _caps} -> uri end)
 
-  defp principal(name), do: name |> Ezagent.URI.system_principal() |> URI.to_string()
+  # `principal/1` DELETED with the `system://bootstrap` Catalog entry (#154
+  # genesis collapse, 2026-06-20) — the Catalog is now empty, so nothing mints
+  # a principal URI key.
 
   defp normalize(%URI{} = u), do: URI.to_string(u)
   defp normalize(s) when is_binary(s), do: s

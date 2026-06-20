@@ -188,7 +188,7 @@ defmodule Ezagent.Behavior.IdentityManagerDelegatedGrantTest do
     # must still succeed (the delegation bound is manager-case ONLY).
     admin_ctx = %{
       caller: URI.new!("entity://system/user/admin"),
-      caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
       self_uri: target_instance(),
       read: fn :caps, _d -> MapSet.new() end
     }

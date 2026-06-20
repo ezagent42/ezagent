@@ -7,7 +7,7 @@ defmodule Ezagent.Behavior.IdentityTest do
   """
   use ExUnit.Case, async: true
   alias Ezagent.Behavior.Identity
-  alias Ezagent.{Capability, Entity.User}
+  alias Ezagent.Capability
 
   defp ctx_with_caps(caps) do
     %{
@@ -42,13 +42,13 @@ defmodule Ezagent.Behavior.IdentityTest do
     end
 
     test "accepts initial_caps as MapSet (admin path)" do
-      admin_caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+      admin_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
       assert {:ok, %{caps: caps}} = Identity.create(%{initial_caps: admin_caps})
       assert caps == admin_caps
     end
 
     test "accepts initial_caps as list" do
-      [cap] = MapSet.to_list(Ezagent.SystemPrincipal.caps("system://bootstrap"))
+      [cap] = MapSet.to_list(MapSet.new([Ezagent.Capability.admin_genesis_cap()]))
       assert {:ok, %{caps: caps}} = Identity.create(%{initial_caps: [cap]})
       assert MapSet.size(caps) == 1
     end
@@ -56,7 +56,7 @@ defmodule Ezagent.Behavior.IdentityTest do
 
   describe "handle_list_caps/2" do
     test "returns list of all caps in slice (read via ctx[:read])" do
-      caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+      caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
       ctx = ctx_with_caps(caps)
 
       assert {:ok, %{caps: list}, []} = Identity.handle_list_caps(%{}, ctx)
@@ -71,7 +71,7 @@ defmodule Ezagent.Behavior.IdentityTest do
 
   describe "handle_has_cap?/2" do
     test "returns true for admin all-cap match" do
-      caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+      caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
       ctx = ctx_with_caps(caps)
 
       needed = %{
@@ -127,7 +127,7 @@ defmodule Ezagent.Behavior.IdentityTest do
   describe "Capability.matches? integration sanity" do
     test "admin all-cap matches arbitrary needed cap (the gate Phase 3d uses)" do
       {:ok, slice} =
-        Identity.create(%{initial_caps: Ezagent.SystemPrincipal.caps("system://bootstrap")})
+        Identity.create(%{initial_caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])})
 
       [admin_cap] = MapSet.to_list(slice.caps)
 

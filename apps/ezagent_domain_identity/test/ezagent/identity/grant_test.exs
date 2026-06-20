@@ -11,7 +11,12 @@ defmodule Ezagent.Identity.GrantTest do
   alias Ezagent.Capability
   alias Ezagent.Identity.Grant
 
-  @template_materialize Ezagent.SystemPrincipal.uri("template-materialize")
+  # A non-entity (system-scheme) URI used to prove the chokepoint OVERWRITES a
+  # pre-existing non-entity `granted_by` and REFUSES a non-entity derived
+  # granter. (#154 genesis collapse 2026-06-20 — the former
+  # `@template_materialize` principal was eliminated; a raw `system://` URI
+  # serves the same "deliberately wrong granter" role without a Catalog lookup.)
+  @nonentity_granter Ezagent.URI.new!("system://bootstrap")
   @admin_uri Ezagent.Entity.User.admin_uri()
 
   defp ws, do: Ezagent.URI.new!("workspace://team-alpha")
@@ -29,26 +34,25 @@ defmodule Ezagent.Identity.GrantTest do
       action: :any,
       instance: {:within_workspace, ws()},
       workspace_uri: ws(),
-      # a deliberately WRONG (system-principal) granted_by, to prove the
-      # chokepoint OVERWRITES it.
-      granted_by: @template_materialize,
+      # a deliberately WRONG (non-entity, system-scheme) granted_by, to prove
+      # the chokepoint OVERWRITES it.
+      granted_by: @nonentity_granter,
       granted_at: ~U[2020-01-01 00:00:00Z]
     }
   end
 
   describe "prepare derivation (via grant_cap_effect — no dispatch)" do
-    test "{:system, principal, entity} loads the principal's caps + entity granted_by" do
+    test "{:genesis, entity} loads the genesis caps + entity granted_by" do
       configurer = Ezagent.URI.new!("entity://team-alpha/user/owner")
 
       {:dispatch, cmd} =
-        Grant.grant_cap_effect(target_user(), concrete_cap(), {:system, @template_materialize, configurer})
+        Grant.grant_cap_effect(target_user(), concrete_cap(), {:genesis, configurer})
 
-      # ctx.caps == the principal's catalog caps (the authorizer)
-      expected = Ezagent.SystemPrincipal.caps(@template_materialize)
+      # ctx.caps == the canonical admin-granted genesis wildcard (the authorizer)
+      expected = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
       assert cmd.ctx.caps == expected
-      # ctx.caller == the ENTITY granted_by (NOT the principal) — the
-      # handler self-check reads ctx.caller; caps carries the principal's
-      # authority. See derive/1's deviation note.
+      # ctx.caller == the ENTITY granted_by — the handler self-check reads
+      # ctx.caller; caps carries the genesis authority. See derive/1's note.
       assert cmd.ctx.caller == configurer
       # granted_by OVERWRITTEN to the entity configurer (HIGH-1 regression)
       assert cmd.args.cap.granted_by == configurer
@@ -61,10 +65,10 @@ defmodule Ezagent.Identity.GrantTest do
     test "a %Capability{} arriving with a system:// granted_by is OVERWRITTEN to the entity" do
       configurer = Ezagent.URI.new!("entity://team-alpha/user/owner")
       cap = concrete_cap()
-      assert cap.granted_by == @template_materialize
+      assert cap.granted_by == @nonentity_granter
 
       {:dispatch, cmd} =
-        Grant.grant_cap_effect(target_user(), cap, {:system, @template_materialize, configurer})
+        Grant.grant_cap_effect(target_user(), cap, {:genesis, configurer})
 
       assert cmd.args.cap.granted_by == configurer
     end
@@ -88,7 +92,7 @@ defmodule Ezagent.Identity.GrantTest do
         Grant.revoke_cap_returning_effect(
           target_user(),
           concrete_cap(),
-          {:system, @template_materialize, configurer},
+          {:genesis, configurer},
           :my_bind
         )
 
@@ -99,24 +103,22 @@ defmodule Ezagent.Identity.GrantTest do
   end
 
   describe "the runtime #154 entity guard (prepare/4 refuses a non-entity granted_by)" do
-    test "{:system, p, system://…} is REFUSED — the granted_by arg must be an entity" do
-      non_entity = Ezagent.SystemPrincipal.uri("template-materialize")
+    test "{:genesis, system://…} is REFUSED — the granted_by arg must be an entity" do
+      non_entity = @nonentity_granter
 
       assert {:error, {:granter_not_entity, ^non_entity}} =
-               Grant.grant_cap(target_user(), concrete_cap(), {:system, @template_materialize, non_entity})
+               Grant.grant_cap(target_user(), concrete_cap(), {:genesis, non_entity})
     end
 
     test "effect wrappers RAISE on a non-entity derived granted_by (fail-fast)" do
-      non_entity = Ezagent.SystemPrincipal.uri("template-materialize")
-
       assert_raise ArgumentError, ~r/granter_not_entity/, fn ->
-        Grant.grant_cap_effect(target_user(), concrete_cap(), {:system, @template_materialize, non_entity})
+        Grant.grant_cap_effect(target_user(), concrete_cap(), {:genesis, @nonentity_granter})
       end
     end
 
     test "the documented admin fallback (entity://system/user/admin) passes the guard" do
       {:dispatch, cmd} =
-        Grant.grant_cap_effect(target_user(), concrete_cap(), {:system, @template_materialize, @admin_uri})
+        Grant.grant_cap_effect(target_user(), concrete_cap(), {:genesis, @admin_uri})
 
       assert cmd.args.cap.granted_by == @admin_uri
       assert %URI{scheme: "entity"} = cmd.args.cap.granted_by

@@ -88,7 +88,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatReceiveUserSliceChangeTes
         target: URI.new!("#{URI.to_string(session)}?action=session.join"),
         mode: :cast,
         args: %{member: member},
-        ctx: %{caller: member, caps: Ezagent.SystemPrincipal.caps("system://bootstrap"), reply: :ignore}
+        ctx: %{caller: member, caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]), reply: :ignore}
       })
 
     Process.sleep(50)
@@ -102,7 +102,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatReceiveUserSliceChangeTes
         target: URI.new!("#{URI.to_string(session)}?action=session.send"),
         mode: :cast,
         args: %{message: msg},
-        ctx: %{caller: sender, caps: Ezagent.SystemPrincipal.caps("system://bootstrap"), reply: :ignore}
+        ctx: %{caller: sender, caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]), reply: :ignore}
       })
 
     msg

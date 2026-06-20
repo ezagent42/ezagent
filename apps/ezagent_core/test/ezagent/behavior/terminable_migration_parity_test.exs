@@ -58,7 +58,7 @@ defmodule Ezagent.Behavior.TerminableMigrationParityTest do
     # Bootstrap-admin caps satisfy the dispatch's CapBAC gate at step
     # 5.5 — the `cap(:agent, Terminable, :terminate)` shape is covered
     # by the admin's triple-:any cap.
-    admin_caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+    admin_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
 
     state = %{lifecycle: %{terminations: 0}}
 

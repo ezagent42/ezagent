@@ -73,7 +73,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
         target: target,
         mode: :cast,
         args: %{message: msg},
-        ctx: %{caller: sender, caps: Ezagent.SystemPrincipal.caps("system://bootstrap"), reply: :ignore}
+        ctx: %{caller: sender, caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]), reply: :ignore}
       })
 
     # Session-level broadcast (for LV chat stream)
@@ -112,7 +112,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
         target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
         mode: :cast,
         args: %{member: transient_uri},
-        ctx: %{caller: transient_uri, caps: Ezagent.SystemPrincipal.caps("system://bootstrap"), reply: :ignore}
+        ctx: %{caller: transient_uri, caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]), reply: :ignore}
       })
 
     # Allow cast to process
@@ -140,7 +140,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
         target: URI.new!("#{URI.to_string(session_uri)}?action=session.leave"),
         mode: :cast,
         args: %{member: transient_uri},
-        ctx: %{caller: transient_uri, caps: Ezagent.SystemPrincipal.caps("system://bootstrap"), reply: :ignore}
+        ctx: %{caller: transient_uri, caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]), reply: :ignore}
       })
   end
 

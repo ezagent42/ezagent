@@ -155,7 +155,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
         args: %{},
         ctx: %{
           caller: Ezagent.URI.new!("entity://system/user/admin"),
-          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
           reply: :ignore
         }
       }
@@ -227,7 +227,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
         args: %{msg: "during-post-init"},
         ctx: %{
           caller: Ezagent.URI.new!("entity://system/user/admin"),
-          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
           reply: {:caller_inbox, self()}
         }
       }
@@ -274,7 +274,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
           args: %{msg: "pre-ready-#{n}"},
           ctx: %{
             caller: Ezagent.URI.new!("entity://system/user/admin"),
-            caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+            caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
             reply: :ignore
           }
         }

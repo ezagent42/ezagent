@@ -86,10 +86,11 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
        shape a #153 manager-delegation conversion produces) drops out of the live
        minter set; the now-non-load-bearing allowlist entry goes RED.
 
-    4. **Every principal is classified** — the union of the four buckets
-       (`@category_a`, `@confirmed_b_allowlist`, `@needs_allen`, `@bootstrap`)
-       MUST equal `Catalog.uris()` exactly. A new principal (a 17th catalog
-       entry) FORCES a classification decision here — it cannot be silently added.
+    4. **Every principal is classified** — the union of the three buckets
+       (`@category_a`, `@confirmed_b_allowlist`, `@needs_allen`) MUST equal
+       `Catalog.uris()` exactly. Post #154 genesis collapse the Catalog is EMPTY,
+       so every bucket is `[]`; ANY new principal FORCES a classification
+       decision here — it cannot be silently added.
 
   `@needs_allen` is a SEPARATE bucket the gate tracks but does NOT conflate with
   B: Allen moves each → A (drop) or → B (add to the allowlist, then convert). The
@@ -107,7 +108,10 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
   alias Ezagent.Capability
   alias Ezagent.SystemPrincipal.Catalog
 
-  @bootstrap "system://bootstrap"
+  # `@bootstrap` DELETED (#154 genesis collapse, 2026-06-20) — the genesis
+  # `system://bootstrap` principal was collapsed into the admin entity, so it is
+  # no longer a Catalog member to classify. The Catalog is now EMPTY; every
+  # classification bucket is `[]` and their union must equal `Catalog.uris()` == [].
 
   # ── classification of the named Catalog principals (audit 2026-06-16,
   #    Allen's FINAL ruling on all 6 prior needs-Allen entries; worker-publish
@@ -241,7 +245,7 @@ defmodule EzagentCore.Invariants.NoUnownedSystemPrincipalGrantTest do
 
   test "every Catalog principal is classified (a 16th forces a classification entry)" do
     classified =
-      MapSet.new(@category_a ++ @confirmed_b_allowlist ++ @needs_allen ++ [@bootstrap])
+      MapSet.new(@category_a ++ @confirmed_b_allowlist ++ @needs_allen)
 
     live = MapSet.new(Catalog.uris())
 

@@ -268,7 +268,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
         args: %{message: msg},
         ctx: %{
           caller: operator,
-          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
           reply: :ignore
         }
       })
@@ -856,7 +856,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
         },
         ctx: %{
           caller: User.admin_uri(),
-          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
           reply: {:caller_inbox, self()}
         }
       })
@@ -934,7 +934,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
         },
         ctx: %{
           caller: User.admin_uri(),
-          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
           reply: {:caller_inbox, self()}
         }
       })
@@ -983,7 +983,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
         },
         ctx: %{
           caller: User.admin_uri(),
-          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
           reply: {:caller_inbox, self()}
         }
       })

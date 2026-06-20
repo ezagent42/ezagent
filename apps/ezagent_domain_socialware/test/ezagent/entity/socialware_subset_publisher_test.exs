@@ -76,7 +76,7 @@ defmodule Ezagent.Entity.SocialwareSubsetPublisherTest do
       args: %{turn_id: turn_id, tree: %{type: "text", props: %{text: turn_id}}},
       ctx: %{
         caller: User.admin_uri(),
-        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
         reply: {:caller_inbox, self()}
       }
     })

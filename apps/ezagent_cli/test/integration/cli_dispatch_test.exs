@@ -13,7 +13,7 @@ defmodule EzagentCli.Integration.CLIDispatchTest do
     # in production after token authentication.
     Process.put(
       :ezagent_cli_caller_override,
-      {Ezagent.Entity.User.admin_uri(), Ezagent.SystemPrincipal.caps("system://bootstrap")}
+      {Ezagent.Entity.User.admin_uri(), MapSet.new([Ezagent.Capability.admin_genesis_cap()])}
     )
 
     :ok
@@ -79,7 +79,7 @@ defmodule EzagentCli.Integration.CLIDispatchTest do
                  args: %{},
                  ctx: %{
                    caller: Ezagent.Entity.User.admin_uri(),
-                   caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+                   caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
                    reply: {:caller_inbox, self()}
                  }
                })

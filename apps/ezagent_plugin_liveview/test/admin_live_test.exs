@@ -243,7 +243,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
           args: %{member: agent_uri},
           ctx: %{
             caller: Ezagent.Entity.User.admin_uri(),
-            caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+            caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
             reply: :ignore
           }
         })
@@ -306,7 +306,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
           args: %{member: agent_uri},
           ctx: %{
             caller: Ezagent.Entity.User.admin_uri(),
-            caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+            caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
             reply: :ignore
           }
         })
@@ -772,7 +772,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
           args: %{message: stored},
           ctx: %{
             caller: sender,
-            caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+            caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
             reply: :ignore
           }
         })
@@ -825,7 +825,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
           args: %{message: ghost_msg},
           ctx: %{
             caller: sender,
-            caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+            caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
             reply: :ignore
           }
         })
@@ -973,7 +973,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
               args: %{message: stored},
               ctx: %{
                 caller: sender,
-                caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+                caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
                 reply: :ignore
               }
             })
@@ -1068,7 +1068,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
           args: %{message: stored},
           ctx: %{
             caller: sender,
-            caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+            caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
             reply: :ignore
           }
         })

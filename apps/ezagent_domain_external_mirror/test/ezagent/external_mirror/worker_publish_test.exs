@@ -639,7 +639,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
   end
 
   defp spawn_owner_and_session(%URI{} = owner_uri, %URI{} = session_uri) do
-    :ok = spawn_user(owner_uri, Ezagent.SystemPrincipal.caps("system://bootstrap"))
+    :ok = spawn_user(owner_uri, MapSet.new([Ezagent.Capability.admin_genesis_cap()]))
 
     case Ezagent.Kind.spawn(Session, %{
            uri: session_uri,

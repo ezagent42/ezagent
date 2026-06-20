@@ -27,7 +27,7 @@ defmodule Ezagent.Behavior.Identity do
 
   `init_slice(args)` reads `args[:initial_caps]` (default `MapSet.new()`).
   Chat plugin Application passes
-  `initial_caps: Ezagent.SystemPrincipal.caps("system://bootstrap")` when
+  `initial_caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])` when
   spawning admin User (PR-CC-1; replaces the previous deleted helper).
 
   ## Actions

@@ -138,7 +138,7 @@ defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
       # spawning principal, not the dispatch caller; the orch.cap
       # gate is bypassed by using bootstrap-admin caps for the test
       # dispatch (lineage notification is independent of cap surface).
-      admin_caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+      admin_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
 
       assert {:ok, {:ok, :terminated}} = terminate(worker_uri, User.admin_uri(), admin_caps)
 

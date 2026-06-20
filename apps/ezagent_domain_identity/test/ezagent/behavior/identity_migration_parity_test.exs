@@ -44,7 +44,7 @@ defmodule Ezagent.Behavior.IdentityMigrationParityTest do
     n = System.unique_integer([:positive])
     user_uri = Ezagent.URI.new!("entity://identity-parity/user/alice-#{n}")
 
-    admin_caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+    admin_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
     state = %{identity: %{caps: admin_caps}}
 
     {:ok, user_uri: user_uri, state: state, admin_caps: admin_caps}

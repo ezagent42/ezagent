@@ -145,7 +145,7 @@ defmodule EzagentPluginNp.Integration.Comprehensive4AgentE2eTest do
         args: %{member: member},
         ctx: %{
           caller: member,
-          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
           reply: :ignore
         }
       })
@@ -256,7 +256,7 @@ defmodule EzagentPluginNp.Integration.Comprehensive4AgentE2eTest do
                  args: %{provider: "deepseek", key: "sk-fake-test-key-1234567890"},
                  ctx: %{
                    caller: admin_uri,
-                   caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+                   caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
                    reply: {:caller_inbox, self()}
                  }
                })
@@ -318,7 +318,7 @@ defmodule EzagentPluginNp.Integration.Comprehensive4AgentE2eTest do
           args: %{message: inbound_msg},
           ctx: %{
             caller: admin_uri,
-            caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+            caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
             reply: :ignore
           }
         })

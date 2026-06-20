@@ -63,7 +63,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
 
     admin_ctx = %{
       caller: User.admin_uri(),
-      caps: Ezagent.SystemPrincipal.caps("system://bootstrap")
+      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
     }
 
     Application.put_env(:ezagent_domain_workspace, :session_facade, FakeSessionFacade)
