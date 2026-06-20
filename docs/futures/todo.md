@@ -14,6 +14,40 @@
 
 ## Active follow-ups (post-2026-05-24 batch)
 
+### #154 genesis-collapse hardening: predicate A at secondary sites + `:system` caller bypass — OPEN (LOW, defense-in-depth)
+
+> **OPEN, surfaced 2026-06-20 (genesis collapse, task #71).** The genesis
+> collapse landed predicate A (`Capability.granted_by_entity?/1`, rejects every
+> `system://`-granted cap) at the TWO load-bearing dispatch authorizer sites:
+> `Kind.Runtime.authorizes?/2` (inline `ctx.caps`) and `Kind.default_holds_cap?/2`
+> (slice-held caps). Two narrower hardening items remain, both **NOT externally
+> exploitable** (verified — see below) so deferred out of the security-core PR:
+>
+> 1. **~6 secondary cap-authz sites call `Capability.matches?/2` WITHOUT
+>    predicate A:** `presence.ex:172`, `notification_subscriptions.ex:508` +
+>    structural-admin ~546, `notifications.ex:230`, `external_mirror/gates.ex:178+219`,
+>    `external_mirror.ex:429`, `credential/resolver.ex:314`. **Verified not
+>    externally reachable with caller-controlled caps:** `register_subscription/3`
+>    has no `apps/*/lib` callers; `Presence.subscribe/2` callers are all internal
+>    (`presence_fanout.ex` passing `%{caps: :system}`); no web/LV/feishu controller
+>    passes caller-supplied caps to these paths. Fix = thread `granted_by_entity?/1`
+>    through each before `matches?/2` (mechanical), one sweep PR.
+> 2. **`:system` atom caller blanket bypass:** `Kind.default_holds_cap?(:system, _)
+>    -> true` + `%Cmd{}` defaults `caller: :system` (cmd.ex:91). This is a SEPARATE
+>    axis (caller, not granted_by) and in-VM only — `ctx.caller`/`ctx.caps` are
+>    server-populated at external ingress (`api_v1_controller` reads caps from
+>    `Entity.authenticate/2`; LV/feishu resolve the entity server-side), so a remote
+>    caller cannot set `caller: :system`. Fix = replace the blanket atom bypass with
+>    an explicit internal-service entity granter, or scope it. Coordinate with the
+>    `cmd.ex` default.
+>
+> **Why deferred:** both are in-VM defense-in-depth, not forgery controls; the
+> primary forgery control (server-populated ctx at ingress) is already in place.
+> Bundling them into the genesis-collapse PR would mix a broad mechanical sweep +
+> a cross-cutting caller-axis change into a security-core PR. See
+> [[feedback_let_it_crash_no_workarounds]] for the `:system`-bypass direction
+> (prefer an explicit entity granter over keeping the atom shim).
+
 ### `session_creator.ex` oversized + def-count refactor — OPEN (MED, two arch.scan reds on main)
 
 > **OPEN, surfaced 2026-06-20 (甲-4 #849).** Two `mix ezagent.arch.scan` counters are
