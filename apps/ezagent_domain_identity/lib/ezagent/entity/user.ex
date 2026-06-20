@@ -81,7 +81,12 @@ defmodule Ezagent.Entity.User do
   @spec initial_caps_for_spawn(URI.t()) :: MapSet.t(Ezagent.Capability.t())
   def initial_caps_for_spawn(%URI{} = uri) do
     if uri == admin_uri() do
-      "bootstrap" |> Ezagent.SystemPrincipal.uri() |> Ezagent.SystemPrincipal.caps()
+      # #154 genesis collapse (2026-06-20) — the admin entity is the SELF-GRANTED
+      # genesis trust root: its all-caps wildcard is granted_by itself (a real
+      # entity), NOT the eliminated `system://bootstrap` principal. The canonical
+      # genesis cap lives in core (`Ezagent.Capability.admin_genesis_cap/0`), so
+      # this minter + `admin_invariant?/1`'s recognizer never drift.
+      MapSet.new([Ezagent.Capability.admin_genesis_cap()])
     else
       hydrate_from_caps_json(uri)
     end

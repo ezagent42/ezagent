@@ -66,6 +66,10 @@ defmodule Ezagent.Capability do
   @plugin_declared_granter :plugin_declared
   @compile_time_granted_at :compile_time
 
+  # #154 genesis collapse — stable granted_at for the admin self-granted genesis
+  # cap (provenance only; `admin_invariant?/1` matches on granted_by, not this).
+  @genesis_granted_at ~U[2026-01-01 00:00:00Z]
+
   alias Ezagent.Capability.{Match, Normalize, Scope}
 
   @doc """
@@ -180,10 +184,12 @@ defmodule Ezagent.Capability do
   @doc """
   Remove a capability from a MapSet of caps.
 
-  Refuses to remove the admin all-caps invariant — `entity://user/system/admin`'s
-  quadruple-`:any` capability granted_by `system://bootstrap/default`
-  is structural per Decision #81 + SPEC v3 §4.4 and would break the
-  bootstrap principal.
+  Refuses to remove the admin all-caps invariant — the admin entity
+  `entity://system/user/admin`'s quadruple-`:any` capability self-granted
+  (granted_by the admin URI) is the genesis trust root (Decision #81 + SPEC v3
+  §4.4; #154 genesis collapse 2026-06-20 re-rooted it from the eliminated
+  `system://bootstrap` principal to the admin entity itself) and removing it
+  would break all authority.
 
   ## Identity-tuple match (codex review HIGH-1, 2026-05-26)
 
@@ -222,14 +228,41 @@ defmodule Ezagent.Capability do
     end
   end
 
+  @doc """
+  The GENESIS all-caps capability — the irreducible trust root.
+
+  #154 genesis collapse (2026-06-20): the root authority is the admin ENTITY
+  `entity://system/user/admin` self-granting its quadruple-`:any` wildcard
+  (`granted_by == the admin URI`), replacing the former abstract
+  `system://bootstrap` principal. Every real cap now traces to a real entity —
+  including the genesis, which roots in itself. `admin_invariant?/1` recognizes
+  exactly this shape (it is the revoke-protected admin cap); `User.initial_caps_for_spawn/1`
+  mints exactly this for the admin entity. Co-located here so recognizer + minter
+  never drift.
+  """
+  @spec admin_genesis_cap() :: t()
+  def admin_genesis_cap do
+    %__MODULE__{
+      kind: :any,
+      behavior: :any,
+      action: :any,
+      instance: :any,
+      workspace_uri: :any,
+      granted_by: admin_genesis_granter(),
+      granted_at: @genesis_granted_at
+    }
+  end
+
+  # The genesis self-granter = the admin entity URI (core-constructible via
+  # `Ezagent.URI.user/2`, no dep on the identity app). #154: a real entity, not
+  # the abstract `system://bootstrap` principal.
+  defp admin_genesis_granter, do: Ezagent.URI.user(:system, :admin)
+
   @doc false
-  # SPEC v3 §4.4 — admin's structural invariant gains `workspace_uri:
-  # :any` so the cap is cross-workspace by structural design.
-  # SPEC 2026-05-27 capability-action-axis — admin invariant gains
-  # `action: :any` axis. Two clauses for old-shape (pre-action-axis)
-  # snapshot tolerance: legacy structs missing `:action` match the
-  # second clause if all four prior axes are `:any` AND `action_of/1`
-  # returns `:any` (which it does for missing-key structs).
+  # SPEC v3 §4.4 — admin's structural invariant is the FIVE-axis wildcard.
+  # #154 genesis collapse: identified by `granted_by == the admin entity`
+  # (self-granted genesis), NOT the eliminated `system://bootstrap` principal.
+  # This is the REVOKE-PROTECTED cap (`revoke/2` refuses to remove it).
   def admin_invariant?(%__MODULE__{
         kind: :any,
         behavior: :any,
@@ -238,7 +271,7 @@ defmodule Ezagent.Capability do
         workspace_uri: :any,
         granted_by: granted_by
       }),
-      do: Ezagent.URI.scheme?(granted_by, :system) and Ezagent.URI.type?(granted_by, :bootstrap)
+      do: same_uri?(granted_by, admin_genesis_granter())
 
   # codex r4 SPEC option-B: legacy fallback REMOVED. Pre-SPEC admin caps
   # missing `:action` no longer recognized — operators MUST re-grant
@@ -249,6 +282,12 @@ defmodule Ezagent.Capability do
   # fallback was redundant defense at this layer (matcher-boundary
   # tolerance per SPEC §3.3 still handles legacy at dispatch step 5.5).
   def admin_invariant?(%__MODULE__{}), do: false
+
+  # Canonical-string URI equality (tolerant of representation differences from
+  # snapshot round-trips). Non-URI granted_by (e.g. the `:plugin_declared`
+  # sentinel on needed-caps) → false.
+  defp same_uri?(%URI{} = a, %URI{} = b), do: URI.to_string(a) == URI.to_string(b)
+  defp same_uri?(_, _), do: false
 
   @doc """
   Is `cap` a cross-workspace cap (arity-1, structural form)?

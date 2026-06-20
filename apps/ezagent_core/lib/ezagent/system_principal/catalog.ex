@@ -81,7 +81,9 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   while keeping the per-Kind narrowing.
   """
 
-  alias Ezagent.Capability
+  # `alias Ezagent.Capability` removed 2026-06-20 — after #154 every principal
+  # entry is eliminated; the sole remaining cap (the genesis wildcard) is minted
+  # via `Ezagent.Capability.admin_genesis_cap/0` (fully qualified).
 
   # Aliases for the Behavior modules referenced below. Inline-aliased
   # for readability; lazy-loaded at compile time so behavior modules
@@ -120,24 +122,13 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   # (the `session-internal` Catalog cap `cap(:workspace, Workspace, :any)`)
   # was eliminated (#154).
 
-  # The bootstrap structural sentinel — granted_by/granted_at on the
-  # generated wildcard cap so `admin_invariant?/1` recognises it.
-  @bootstrap_granted_at ~U[2026-01-01 00:00:00Z]
-
-  defp bootstrap_wildcard do
-    %Capability{
-      kind: :any,
-      behavior: :any,
-      # SPEC 2026-05-27 capability-action-axis — bootstrap admin
-      # invariant is FIVE-axis wildcard. The admin_invariant?/1
-      # predicate matches this exact shape.
-      action: :any,
-      instance: :any,
-      workspace_uri: :any,
-      granted_by: Ezagent.URI.system(:bootstrap, :default),
-      granted_at: @bootstrap_granted_at
-    }
-  end
+  # #154 genesis collapse (2026-06-20) — the genesis all-caps wildcard is now the
+  # admin entity's SELF-GRANTED cap (granted_by `entity://system/user/admin`, a
+  # real entity), not the eliminated `system://bootstrap` principal's. Single
+  # canonical source in core so the minter + `admin_invariant?/1` recognizer never
+  # drift. (The `system://bootstrap` Catalog KEY is removed in the same collapse;
+  # while this entry exists transitionally it holds the admin-granted genesis cap.)
+  defp bootstrap_wildcard, do: Ezagent.Capability.admin_genesis_cap()
 
   @doc """
   The closed allowlist mapped from principal URI →
