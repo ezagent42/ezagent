@@ -3,16 +3,20 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
   Design 1 from `docs/notes/caps-e2e-design.md` — the single-file
   reference exhibit that proves CapBAC actually gates behavior.
 
-  Five denial-or-grant scenarios that exercise the central
+  Denial-or-grant scenarios that exercise the central
   `Ezagent.Invocation.dispatch/1` step 5.5 `Capability.matches?/2`
-  check + the `Ezagent.Presence.subscribe/2` cap-only gate.
+  check — the dispatch chokepoint, which is the real authorization
+  boundary (#154 VM-internal-trust model: external authenticated
+  callers are gated here; in-VM-internal helpers like
+  `Ezagent.Presence`/`Ezagent.Notifications` are NOT cap-gated, so the
+  former Presence-subscribe scenarios were removed).
 
   ## Why this file exists
 
   Allen 2026-05-23: "我其实没有太感受到当前 caps 有什么作用". Cap
   coverage was scattered across `routing_cap_test`,
   `cross_workspace_isolation_test`, etc. — none produced a single
-  "5 scenarios, 5 denials" report a human can read in 30 seconds.
+  human-readable denial report.
 
   This is THAT report.
 
@@ -21,10 +25,7 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
   | # | Caller | Caps | Action | Expected |
   |---|---|---|---|---|
   | 1 | non-admin | EMPTY | `chat.send` | `{:error, :unauthorized}` |
-  | 2 | non-admin | EMPTY | `Presence.subscribe` | raises `Capability.Unauthorized` |
-  | 3 | non-admin | correct `:online` cap | `Presence.subscribe` | `:ok` |
   | 4 | admin | full | `chat.send` | `:ok` |
-  | 5 | non-admin | wrong-behavior cap | `Presence.subscribe` | raises `Capability.Unauthorized` |
   """
 
   use ExUnit.Case, async: false
@@ -33,7 +34,7 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
   # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
   @moduletag :umbrella_only
 
-  alias Ezagent.{Capability, Invocation, Message, Presence, Users}
+  alias Ezagent.{Invocation, Message, Users}
 
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
@@ -93,40 +94,6 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
     end
   end
 
-  describe "Scenario 2 — non-admin with EMPTY caps cannot Presence.subscribe" do
-    test "subscribe/2 raises Ezagent.Capability.Unauthorized" do
-      {bob_uri, bob_caps} = setup_non_admin_user("bob_no_presence")
-
-      assert_raise Ezagent.Capability.Unauthorized, fn ->
-        Presence.subscribe(bob_uri, %{caps: bob_caps})
-      end
-    end
-  end
-
-  describe "Scenario 3 — non-admin with correct :online cap CAN subscribe" do
-    test "Presence.subscribe/2 returns :ok" do
-      # Watcher holds a workspace-scoped :online cap on Ezagent.Behavior.Presence
-      # → can subscribe to ANY entity://user/... in workspace://team-alpha
-      cap_online = %Capability{
-        kind: :user,
-        behavior: Ezagent.Behavior.Presence,
-        instance: :any,
-        workspace_uri: Ezagent.URI.new!("workspace://team-alpha"),
-        granted_by: Ezagent.Entity.User.admin_uri(),
-        granted_at: ~U[2026-01-01 00:00:00Z]
-      }
-
-      {_watcher_uri, watcher_caps} = setup_non_admin_user("watcher", [cap_online])
-
-      # Watcher subscribes to another user's presence — :ok
-      target = Ezagent.URI.new!("entity://team-alpha/user/observed_target")
-
-      assert :ok = Presence.subscribe(target, %{caps: watcher_caps})
-
-      Presence.unsubscribe(target)
-    end
-  end
-
   describe "Scenario 4 — admin's superset cap matches everything" do
     test "admin can chat.send (control case: positive path proves the test setup is valid)" do
       admin_uri = Ezagent.Entity.User.admin_uri()
@@ -141,40 +108,15 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
     end
   end
 
-  describe "Scenario 5 — non-admin with WRONG-behavior cap is rejected" do
-    test "watcher holding Chat cap (not Presence) cannot Presence.subscribe" do
-      # Watcher has a Chat behavior cap — should NOT pass Presence cap check
-      cap_chat = %Capability{
-        kind: :user,
-        behavior: Ezagent.Behavior.Session,
-        instance: :any,
-        workspace_uri: Ezagent.URI.new!("workspace://team-alpha"),
-        granted_by: Ezagent.Entity.User.admin_uri(),
-        granted_at: ~U[2026-01-01 00:00:00Z]
-      }
-
-      {_watcher_uri, watcher_caps} = setup_non_admin_user("wrong_behavior", [cap_chat])
-
-      target = Ezagent.URI.new!("entity://team-alpha/user/some_target")
-
-      assert_raise Ezagent.Capability.Unauthorized, fn ->
-        Presence.subscribe(target, %{caps: watcher_caps})
-      end
-    end
-  end
-
   describe "Summary report (printed on every run)" do
     test "report" do
       report = """
 
       ┌────────────────────────────────────────────────────────────────────┐
-      │ CapBAC denial e2e — 5 scenarios run (see preceding test outputs)   │
+      │ CapBAC denial e2e — dispatch chokepoint (step 5.5)                  │
       ├────────────────────────────────────────────────────────────────────┤
       │ #1 empty-caps → chat.send                  → :unauthorized   ✓     │
-      │ #2 empty-caps → Presence.subscribe          → Unauthorized    ✓     │
-      │ #3 correct :online cap → Presence.subscribe → :ok             ✓     │
       │ #4 admin → chat.send (control)              → :ok             ✓     │
-      │ #5 wrong-behavior cap → Presence.subscribe  → Unauthorized    ✓     │
       └────────────────────────────────────────────────────────────────────┘
       """
 

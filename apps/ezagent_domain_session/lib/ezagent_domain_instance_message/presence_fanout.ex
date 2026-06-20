@@ -22,7 +22,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanout do
     broadcast by `Ezagent.Behavior.Session.broadcast_membership/2`):
     - `{:session_membership_change, session_uri, {:member_joined, member_uri}}`
       → add `(session_uri ↔ member_uri)` to index; on FIRST mapping
-      for `member_uri`, `Presence.subscribe(member_uri, %{caps: :system})`.
+      for `member_uri`, `Presence.subscribe(member_uri)`.
     - `{:session_membership_change, _, {:member_left, member_uri}}` →
       remove from index; on LAST removal, `Presence.unsubscribe(member_uri)`.
     - `{:session_membership_change, _, {:member_offline, ...}}` → no
@@ -147,7 +147,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanout do
 
     # FIRST session for this member → subscribe to Presence diffs
     if MapSet.size(sessions) == 0 do
-      :ok = Presence.subscribe(member_uri, %{caps: :system})
+      :ok = Presence.subscribe(member_uri)
     end
 
     new_state = Map.put(state, member_uri, MapSet.put(sessions, session_uri))
@@ -276,7 +276,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanout do
     # (idempotent; Phoenix.PubSub.subscribe is safe to call twice
     # on the same topic from the same pid)
     if MapSet.size(sessions) == 0 do
-      :ok = Presence.subscribe(member_uri, %{caps: :system})
+      :ok = Presence.subscribe(member_uri)
     end
 
     Map.put(state, member_uri, MapSet.put(sessions, session_uri))

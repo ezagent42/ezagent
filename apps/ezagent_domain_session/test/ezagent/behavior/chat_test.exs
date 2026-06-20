@@ -1038,7 +1038,7 @@ defmodule Ezagent.Behavior.ChatTest do
       member_uri =
         URI.new!("entity://team-alpha/user/notify-#{System.unique_integer([:positive])}")
 
-      :ok = Ezagent.Notifications.subscribe(member_uri, %{caps: :system})
+      :ok = Ezagent.Notifications.subscribe(member_uri)
 
       {:ok, member_pid} = GenServer.start_link(__MODULE__.NoopServer, member_uri)
 

@@ -224,7 +224,7 @@ defmodule EzagentDomainInstanceMessage.Invariants.TemplateForkLineageTest do
       {parent_uri, _content} = persist_agent_template("at-fl-notify-parent-#{uniq()}")
       owner_uri = spawn_owner([agent_template_cap()])
 
-      :ok = Ezagent.Notifications.subscribe(owner_uri, %{caps: :system})
+      :ok = Ezagent.Notifications.subscribe(owner_uri)
 
       new_name = "at-fl-notify-fork-#{uniq()}"
 

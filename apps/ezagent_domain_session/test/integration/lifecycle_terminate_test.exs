@@ -130,7 +130,7 @@ defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
       # pin on the `{:notification, user_uri, _}` envelope must hold the
       # canonical struct, not the `URI.parse` (`authority: "user"`) form.
       user_uri = Ezagent.URI.new!("entity://team-alpha/user/spawner-#{uniq()}")
-      :ok = Ezagent.Notifications.subscribe(user_uri, %{caps: :system})
+      :ok = Ezagent.Notifications.subscribe(user_uri)
 
       worker_uri = spawn_worker(user_uri)
 

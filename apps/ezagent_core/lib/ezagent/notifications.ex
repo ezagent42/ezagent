@@ -15,11 +15,9 @@ defmodule Ezagent.Notifications do
   - `notify(user_uri, notification)` — push a notification into
     `user_uri`'s inbox. Broadcasts to `esr:user:<uri>:events`.
     Producers (chat domain, future plugins) call THIS instead of
-    raw PubSub.broadcast. Cap-gated: caller must hold a `:notify`
-    cap on the target user.
-  - `subscribe(user_uri, ctx)` — subscribe the calling process to
-    the user's notification stream. Cap-gated: caller must hold a
-    `:subscribe` cap on the target user. LV / admin / monitoring
+    raw PubSub.broadcast.
+  - `subscribe(user_uri)` — subscribe the calling process to
+    the user's notification stream. LV / admin / monitoring
     surfaces use this.
 
   ## Notification shape
@@ -51,17 +49,17 @@ defmodule Ezagent.Notifications do
   while migration completes — subscribers handle both shapes
   until V2.
 
-  ## Cap model
+  ## Authorization
 
-  Mirrors `Ezagent.Presence`: cap-only Behavior
-  (`Ezagent.Behavior.Notifications`) registered against
-  `Ezagent.Entity.User`. `notify/2` checks `:notify` cap;
-  `subscribe/2` checks `:subscribe` cap. System bypass via
-  `ctx.caps == :system` for trusted internal callers
-  (chat-domain Chat behavior, audit writer, etc.).
+  Notify/subscribe are in-VM-internal operations: the producers are
+  trusted in-VM code (chat-domain Chat behavior, audit writer, session
+  fan-out, etc.). Under the #154 VM-internal-trust model the
+  authorization boundary is the dispatch chokepoint (which serves
+  external authenticated callers); these helpers are reached only from
+  trusted in-VM code, so the previous secondary `:notify`/`:subscribe`
+  cap checks were dormant (every caller passed the trusted bypass) and
+  were removed. They take no `ctx`.
   """
-
-  alias Ezagent.{Capability, CapabilityRegistry}
 
   @type notification :: %{
           required(:type) => atom(),
@@ -79,17 +77,15 @@ defmodule Ezagent.Notifications do
   tagged envelope `{:notification, user_uri, notification}` on the
   user's `:events` topic.
 
-  Cap-gated: caller must hold a `:notify` cap (or `ctx.caps == :system`).
-  Validates the notification shape (`:type`, `:body`, `:source`
-  required). Raises `Ezagent.Capability.Unauthorized` on cap miss
-  or `ArgumentError` on bad notification shape.
+  In-VM-internal (no cap check — see "## Authorization"). Validates the
+  notification shape (`:type`, `:body`, `:source` required). Raises
+  `ArgumentError` on bad notification shape.
   """
-  @spec notify(URI.t() | String.t(), notification(), ctx :: map()) :: :ok
-  def notify(user_uri, notification, ctx \\ %{caps: :system}) do
+  @spec notify(URI.t() | String.t(), notification()) :: :ok
+  def notify(user_uri, notification) do
     parsed_uri = parse_uri!(user_uri)
     _ = kind_module_of!(parsed_uri)
     validate_notification!(notification)
-    check_cap!(ctx, parsed_uri, :notify)
 
     # Notifier/log audit 2026-05-24 MED — emit telemetry so notifications
     # become visible to the Audit pipeline. Per
@@ -105,7 +101,11 @@ defmodule Ezagent.Notifications do
         # always emitted `kind: nil` for shape-conformant callers.
         type: Map.fetch!(notification, :type),
         source: Map.fetch!(notification, :source),
-        caller: Map.get(ctx, :caller)
+        # In-VM-internal producer; no entity caller. (Was `Map.get(ctx, :caller)`
+        # which every caller left unset → always nil; kept nil to preserve the
+        # audit-pipeline contract, which resolves caller workspace via
+        # `Ezagent.Persistence.workspace_uri_for/1`.)
+        caller: nil
       }
     )
 
@@ -119,18 +119,14 @@ defmodule Ezagent.Notifications do
   @doc """
   Subscribe the calling process to `user_uri`'s notification stream.
 
-  Caller MUST pass `ctx` with `:caps`. Either `:system` (internal
-  trusted) or `MapSet.t(Capability.t())`. Raises
-  `Ezagent.Capability.Unauthorized` on cap miss.
-
-  Receives `{:notification, user_uri, notification_map}` messages
-  on the calling process.
+  In-VM-internal (no cap check — see "## Authorization"). Receives
+  `{:notification, user_uri, notification_map}` messages on the
+  calling process.
   """
-  @spec subscribe(URI.t() | String.t(), ctx :: map()) :: :ok
-  def subscribe(user_uri, ctx) do
+  @spec subscribe(URI.t() | String.t()) :: :ok
+  def subscribe(user_uri) do
     parsed_uri = parse_uri!(user_uri)
     _ = kind_module_of!(parsed_uri)
-    check_cap!(ctx, parsed_uri, :subscribe)
 
     Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic(parsed_uri))
   end
@@ -193,23 +189,6 @@ defmodule Ezagent.Notifications do
             "got: #{inspect(other)}"
   end
 
-  defp check_cap!(%{caps: :system}, _uri, _action), do: :ok
-
-  defp check_cap!(ctx, %URI{} = uri, action) do
-    needed = CapabilityRegistry.needed_for(kind_module_of!(uri), action, uri)
-    caps = Map.get(ctx, :caps, MapSet.new())
-
-    if any_cap_matches?(caps, needed) do
-      :ok
-    else
-      raise Ezagent.Capability.Unauthorized,
-        needed: needed,
-        message:
-          "Ezagent.Notifications.#{action}/2: caller does not hold the " <>
-            "required #{inspect(action)} cap on #{Ezagent.URI.stable_key(uri)}"
-    end
-  end
-
   defp kind_module_of!(%URI{scheme: "entity"} = uri) do
     if Ezagent.URI.type?(uri, :user) do
       Ezagent.Entity.User
@@ -225,10 +204,4 @@ defmodule Ezagent.Notifications do
           "Ezagent.Notifications: only entity user URIs are supported, " <>
             "got #{Ezagent.URI.stable_key(uri)}"
   end
-
-  defp any_cap_matches?(caps, needed) when is_struct(caps, MapSet) do
-    Enum.any?(caps, &Capability.matches?(&1, needed))
-  end
-
-  defp any_cap_matches?(_caps, _needed), do: false
 end
