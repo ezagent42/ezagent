@@ -307,8 +307,13 @@ defmodule Ezagent.Capability do
   schemes pass); `false` for a `system://` granter.
   """
   @spec granted_by_entity?(t()) :: boolean()
+  # POSITIVE check (advisor-tightened): authority must trace to a real spawned
+  # Kind — a `%URI{}` whose scheme is NOT `system`. This rejects not only
+  # `system://` granters but also a `nil`/atom `granted_by` (no provenance — a
+  # forged inline cap cannot authorize by omitting its granter).
   def granted_by_entity?(%__MODULE__{granted_by: %URI{scheme: "system"}}), do: false
-  def granted_by_entity?(%__MODULE__{}), do: true
+  def granted_by_entity?(%__MODULE__{granted_by: %URI{}}), do: true
+  def granted_by_entity?(%__MODULE__{}), do: false
 
   # Canonical-string URI equality (tolerant of representation differences from
   # snapshot round-trips). Non-URI granted_by (e.g. the `:plugin_declared`

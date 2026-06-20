@@ -1,0 +1,135 @@
+defmodule Ezagent.Invariants.PredicateARootCheckTest do
+  @moduledoc """
+  #154 genesis collapse — predicate A, the standing prevention gate.
+
+  Proves the central root-check actually HOLDS: an authorizing cap whose
+  `granted_by` is a `system://` principal does NOT authorize a dispatch, even
+  though it is structurally a 5-axis wildcard that `Capability.matches?/2` would
+  otherwise accept (matches?/2 ignores granted_by). The ONLY difference between
+  the denied and granted cases here is the `granted_by` scheme — so if
+  `Ezagent.Capability.granted_by_entity?/1` were removed from dispatch step 5.5
+  (`Kind.Runtime.authorizes?/2` for inline `ctx.caps`,
+  `Kind.default_holds_cap?/2` for slice-held caps), the denial assertions would
+  flip to authorized and this test fails. That is the gate Allen's "reject all
+  permissions not granted by an entity" requires.
+
+  Both authorizer sets are covered:
+  - inline `ctx.caps` (the forged-cap vector)
+  - slice-held caps (the stale-pre-collapse-snapshot vector)
+
+  Per `feedback_completion_requires_invariant_test`.
+  """
+
+  use ExUnit.Case, async: false
+
+  @moduletag :umbrella_only
+
+  alias Ezagent.{Capability, Invocation, Message, Users}
+
+  setup do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
+    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+    :ok
+  end
+
+  # A 5-axis wildcard cap (the genesis shape) with the given granter. matches?/2
+  # accepts it for ANY needed cap — so authorization hinges purely on predicate A.
+  defp wildcard_cap(granted_by) do
+    %Capability{
+      kind: :any,
+      behavior: :any,
+      action: :any,
+      instance: :any,
+      workspace_uri: :any,
+      granted_by: granted_by,
+      granted_at: ~U[2026-01-01 00:00:00Z]
+    }
+  end
+
+  defp system_granter, do: Ezagent.URI.new!("system://bootstrap/default")
+  defp entity_granter, do: Ezagent.Entity.User.admin_uri()
+
+  defp session do
+    short = "preda_#{System.unique_integer([:positive])}"
+
+    {:ok, uri, _meta} =
+      EzagentDomainInstanceMessage.SessionCreator.create_session(
+        short,
+        Ezagent.Entity.User.admin_uri(),
+        template_name: "default"
+      )
+
+    uri
+  end
+
+  defp send_target(session_uri),
+    do: URI.new!("#{URI.to_string(session_uri)}?action=session.send")
+
+  defp dispatch_send(caller_uri, caps, session_uri) do
+    msg = Message.new(caller_uri, %{text: "x", attachments: []}, mentions: [], ref_id: nil)
+
+    Invocation.dispatch(%Invocation{
+      target: send_target(session_uri),
+      mode: :call,
+      args: %{message: msg},
+      ctx: %{caller: caller_uri, caps: caps, reply: :inline}
+    })
+  end
+
+  describe "inline ctx.caps authorizer set" do
+    test "a system://-granted wildcard cap does NOT authorize (predicate A rejects)" do
+      caller = Ezagent.URI.new!("entity://team-alpha/user/preda_inline_sys")
+      session_uri = session()
+
+      assert {:error, :unauthorized} =
+               dispatch_send(caller, MapSet.new([wildcard_cap(system_granter())]), session_uri),
+             "a system://-granted wildcard cap MUST NOT authorize — predicate A is the gate"
+    end
+
+    test "the SAME wildcard cap granted by a real entity DOES authorize (control)" do
+      caller = Ezagent.URI.new!("entity://team-alpha/user/preda_inline_ent")
+      session_uri = session()
+
+      refute match?(
+               {:error, :unauthorized},
+               dispatch_send(caller, MapSet.new([wildcard_cap(entity_granter())]), session_uri)
+             ),
+             "the only difference from the denied case is granted_by — entity-granted MUST pass"
+    end
+  end
+
+  describe "slice-held authorizer set (stale-snapshot vector)" do
+    test "an entity holding a system://-granted wildcard in its slice is NOT authorized" do
+      uri_str = "entity://team-alpha/user/preda_held_sys_#{System.unique_integer([:positive])}"
+      {:ok, _} = Users.create(uri_str, nil, [wildcard_cap(system_granter())])
+      uri = Ezagent.URI.new!(uri_str)
+      {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
+      session_uri = session()
+
+      # No inline caps — authorization must come from the slice (held path).
+      assert {:error, :unauthorized} = dispatch_send(uri, MapSet.new(), session_uri),
+             "a slice-held system://-granted wildcard MUST NOT authorize via the held path"
+    end
+
+    test "an entity holding an ENTITY-granted wildcard in its slice IS authorized (control)" do
+      uri_str = "entity://team-alpha/user/preda_held_ent_#{System.unique_integer([:positive])}"
+      {:ok, _} = Users.create(uri_str, nil, [wildcard_cap(entity_granter())])
+      uri = Ezagent.URI.new!(uri_str)
+      {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
+      session_uri = session()
+
+      refute match?({:error, :unauthorized}, dispatch_send(uri, MapSet.new(), session_uri)),
+             "the entity-granted held wildcard MUST authorize — proves the held-path gate is granted_by-specific"
+    end
+  end
+
+  describe "the predicate itself" do
+    test "granted_by_entity?/1 rejects system:// and nil; accepts entity/session/workspace" do
+      refute Capability.granted_by_entity?(wildcard_cap(system_granter()))
+      refute Capability.granted_by_entity?(wildcard_cap(nil))
+      assert Capability.granted_by_entity?(wildcard_cap(entity_granter()))
+      assert Capability.granted_by_entity?(wildcard_cap(Ezagent.URI.new!("session://team-alpha/default/x")))
+      assert Capability.granted_by_entity?(wildcard_cap(Ezagent.URI.new!("workspace://team-alpha")))
+    end
+  end
+end
