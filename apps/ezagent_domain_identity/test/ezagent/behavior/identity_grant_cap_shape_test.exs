@@ -295,14 +295,10 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       # unconditionally; bootstrap admin's structural cap could be
       # removed. Post-fix, `Capability.revoke/2` guards via
       # `admin_invariant?/1`.
-      bootstrap_cap = %Capability{
-        kind: :any,
-        behavior: :any,
-        instance: :any,
-        workspace_uri: :any,
-        granted_by: Ezagent.URI.new!("system://bootstrap/default"),
-        granted_at: DateTime.utc_now()
-      }
+      # #154 genesis collapse (2026-06-20): the revoke-protected genesis cap is
+      # now the admin-entity-granted wildcard (`admin_genesis_cap/0`), recognized
+      # by `admin_invariant?/1` via granted_by == entity://system/user/admin.
+      bootstrap_cap = Ezagent.Capability.admin_genesis_cap()
 
       slice = %{caps: MapSet.new([bootstrap_cap])}
 
@@ -594,14 +590,9 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
     end
 
     test "revoke/2 refuses the bootstrap-admin invariant cap (codex HIGH-3)" do
-      bootstrap_cap = %Capability{
-        kind: :any,
-        behavior: :any,
-        instance: :any,
-        workspace_uri: :any,
-        granted_by: Ezagent.URI.new!("system://bootstrap/default"),
-        granted_at: DateTime.utc_now()
-      }
+      # #154 genesis collapse (2026-06-20): the revoke-protected genesis cap is
+      # the admin-entity-granted wildcard (`admin_genesis_cap/0`).
+      bootstrap_cap = Ezagent.Capability.admin_genesis_cap()
 
       caps = MapSet.new([bootstrap_cap])
       assert {:error, :cannot_revoke_admin} = Capability.revoke(caps, bootstrap_cap)
