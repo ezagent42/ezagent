@@ -34,7 +34,13 @@
   #   so the step-4.5 orchestrator pre-store can fail-fast ahead of the readiness
   #   gate (a readability seam-split — smaller functions). 29→30.
   def_count_session_creator: 30,
-  def_count_capability: 22,
+  # arch-cap-bump: #154 genesis collapse — the admin-entity trust root added
+  #   `admin_genesis_cap/0` + `admin_genesis_granter/0` (Stage 1) and predicate-A's
+  #   `granted_by_entity?/2` clauses + `admin_invariant?/2` clauses + `same_uri?/2`
+  #   (Stages 1+3). These are the small, focused recognizer/minter/predicate
+  #   functions for the genesis trust root; co-located in capability.ex so minter +
+  #   recognizer never drift. 22→28.
+  def_count_capability: 28,
   spawn_registry_call_sites: 37,
   # Transport #53 Decision C (codex C-rC-P1): the orchestrator MCP transport
   # (`mcp_server.ex`) references the Session Kind it routes to through the

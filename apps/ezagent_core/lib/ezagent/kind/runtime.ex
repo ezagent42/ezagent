@@ -554,14 +554,8 @@ defmodule Ezagent.Kind.Runtime do
     end
   end
 
-  # #154 genesis collapse (2026-06-20) — predicate A, the central root-check.
-  # An authorizing cap counts ONLY if (1) its authority traces to a real ENTITY
-  # (`Capability.granted_by_entity?/1` — never a `system://` principal) AND
-  # (2) it structurally `matches?/2` the needed cap. Applied to BOTH authorizer
-  # sets (inline `ctx.caps` here; slice-held caps in `Kind.default_holds_cap?`),
-  # so a `system://`-granted cap is inert as an authorizer — the standing
-  # prevention against re-introducing a `system://` principal. (matches?/2 itself
-  # ignores `granted_by`, so the entity check must be a separate gate here.)
+  # #154 predicate A: an authorizing cap counts only if it traces to a real
+  # entity (`Capability.granted_by_entity?/1`) AND `matches?/2` the needed cap.
   defp authorizes?(%Ezagent.Capability{} = cap, needed_map) do
     Ezagent.Capability.granted_by_entity?(cap) and
       try do
