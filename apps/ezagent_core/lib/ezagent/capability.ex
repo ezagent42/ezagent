@@ -283,6 +283,33 @@ defmodule Ezagent.Capability do
   # tolerance per SPEC §3.3 still handles legacy at dispatch step 5.5).
   def admin_invariant?(%__MODULE__{}), do: false
 
+  @doc """
+  Predicate A (#154 genesis collapse, 2026-06-20) — is this cap's authority
+  granted by a REAL ENTITY (not an abstract `system://` principal)?
+
+  The standing runtime guard that no `system://` principal can ever again confer
+  authorization. After the genesis collapse, every legitimate authorizing cap
+  traces to a real spawned Kind — `entity://` (users/agents), `session://`,
+  `workspace://`, etc. — minted either by the grant chokepoint (which validates
+  an `entity` granter) or inline at a dispatch site with the actor's own URI as
+  `granted_by`. A cap whose `granted_by` is a `system://` URI is, by
+  construction, the artifact this program eliminated; it MUST NOT authorize a
+  dispatch.
+
+  Dispatch step 5.5 (`Ezagent.Kind.Runtime`) filters BOTH authorizing cap sets
+  (inline `ctx.caps` and slice-held caps) through this predicate before the
+  `matches?/2` check, so a `system://`-granted cap is inert as an authorizer —
+  even if a caller forges one into `ctx.caps`, or a stale pre-collapse snapshot
+  carries one. (The `needed` cap's `granted_by` — e.g. the `:plugin_declared`
+  sentinel — is never an authorizer and is unaffected; `matches?/2` ignores it.)
+
+  Returns `true` for any non-`system://` `granted_by` (entity/session/workspace
+  schemes pass); `false` for a `system://` granter.
+  """
+  @spec granted_by_entity?(t()) :: boolean()
+  def granted_by_entity?(%__MODULE__{granted_by: %URI{scheme: "system"}}), do: false
+  def granted_by_entity?(%__MODULE__{}), do: true
+
   # Canonical-string URI equality (tolerant of representation differences from
   # snapshot round-trips). Non-URI granted_by (e.g. the `:plugin_declared`
   # sentinel on needed-caps) → false.

@@ -68,7 +68,7 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
       action: :any,
       instance: :any,
       workspace_uri: :any,
-      granted_by: Ezagent.URI.new!("system://bootstrap/default"),
+      granted_by: Ezagent.URI.user(:system, :admin),
       granted_at: DateTime.utc_now()
     }
   end

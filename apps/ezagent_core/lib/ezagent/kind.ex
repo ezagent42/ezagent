@@ -231,9 +231,17 @@ defmodule Ezagent.Kind do
     # deny-by-default per `feedback_let_it_crash_no_workarounds`.
     case get_slice(entity_uri, :identity) do
       {:ok, %{caps: caps}} when is_struct(caps, MapSet) ->
+        # #154 genesis collapse (2026-06-20) — predicate A: a slice-held cap
+        # authorizes ONLY if its authority traces to a real ENTITY
+        # (`granted_by_entity?/1`, never a `system://` principal). The grant
+        # chokepoint already forces an `entity` granter on every grant, so this
+        # is defense-in-depth against a stale pre-collapse snapshot carrying a
+        # `system://`-granted cap. Mirrors the inline-`ctx.caps` check in
+        # `Ezagent.Kind.Runtime.authorizes?/2`.
         Enum.any?(caps, fn held ->
           try do
-            Ezagent.Capability.matches?(held, needed_map)
+            Ezagent.Capability.granted_by_entity?(held) and
+              Ezagent.Capability.matches?(held, needed_map)
           rescue
             _ -> false
           catch
