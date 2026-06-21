@@ -142,6 +142,8 @@ defmodule Ezagent.AgentBridge.DeliverTest do
       meta: %{}
     }
 
+    put_flavor(agent_uri, "test")
+
     assert {:error, :no_bridge} = Ezagent.AgentBridge.deliver(agent_uri, payload)
   end
 

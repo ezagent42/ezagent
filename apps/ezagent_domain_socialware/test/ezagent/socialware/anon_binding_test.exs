@@ -17,12 +17,17 @@ defmodule Ezagent.Socialware.AnonBindingTest do
   """
   use EzagentCore.DataCase, async: false
 
+  import Ecto.Query
+
   alias Ezagent.Socialware.AnonBinding
   alias Ezagent.Socialware.AnonUser.GC
+  alias EzagentCore.Repo
 
   @session Ezagent.URI.session(:team_alpha, :socialware, "pub-1")
   @entity_a Ezagent.URI.entity(:team_alpha, :user, "anon-aaaa")
   @entity_b Ezagent.URI.entity(:team_alpha, :user, "anon-bbbb")
+  @login_a Ezagent.URI.entity(:team_alpha, :user, "alice")
+  @login_b Ezagent.URI.entity(:team_alpha, :user, "bob")
   @now ~U[2026-06-15 12:00:00.000000Z]
 
   describe "touch/3 — insert on first-open, bump on returning visit" do
@@ -211,6 +216,80 @@ defmodule Ezagent.Socialware.AnonBindingTest do
       assert {:ok, :deleted} = AnonBinding.delete(@entity_a)
       assert AnonBinding.get(@entity_a) == nil
       assert {:ok, :not_found} = AnonBinding.delete(@entity_a)
+    end
+  end
+
+  describe "claim_for_merge/3 — login merge claim and repair index" do
+    test "claims a binding for a concrete login entity and keeps it as a repair record" do
+      {:ok, _} = AnonBinding.touch(@entity_a, @session, @now)
+
+      assert {:ok, :claimed} = AnonBinding.claim_for_merge(@entity_a, @login_a, @now)
+
+      row = AnonBinding.get(@entity_a)
+      assert row.merging_to == URI.to_string(@login_a)
+      assert row.merge_state == "claimed"
+
+      assert [%AnonBinding{entity_uri: entity_uri}] = AnonBinding.list_merge_repair_candidates()
+      assert entity_uri == URI.to_string(@entity_a)
+    end
+
+    test "same target claim is idempotent; different target fails closed" do
+      {:ok, _} = AnonBinding.touch(@entity_a, @session, @now)
+
+      assert {:ok, :claimed} = AnonBinding.claim_for_merge(@entity_a, @login_a, @now)
+      assert {:ok, :already_claimed} = AnonBinding.claim_for_merge(@entity_a, @login_a, @now)
+
+      assert {:error, {:merge_conflict, existing}} =
+               AnonBinding.claim_for_merge(@entity_a, @login_b, @now)
+
+      assert existing == URI.to_string(@login_a)
+    end
+
+    test "refuses non-anon bindings and rows already claimed for reaping" do
+      assert {:error, {:not_anon_user, @login_a}} =
+               AnonBinding.claim_for_merge(@login_a, @login_b, @now)
+
+      ttl = GC.ttl_ms()
+      old = DateTime.add(@now, -49 * 3600, :second)
+      {:ok, _} = AnonBinding.touch(@entity_a, @session, old)
+      assert {:ok, :claimed} = AnonBinding.claim_for_reaping(@entity_a, @now, ttl)
+
+      assert {:error, {:reaping, entity_uri}} =
+               AnonBinding.claim_for_merge(@entity_a, @login_a, @now)
+
+      assert entity_uri == URI.to_string(@entity_a)
+    end
+
+    test "merge_state advances idempotently so a crash-mid-merge can be repaired" do
+      {:ok, _} = AnonBinding.touch(@entity_a, @session, @now)
+      assert {:ok, :claimed} = AnonBinding.claim_for_merge(@entity_a, @login_a, @now)
+
+      assert {:ok, :updated} = AnonBinding.mark_merge_state(@entity_a, :session_merged)
+      assert {:ok, :already_state} = AnonBinding.mark_merge_state(@entity_a, :session_merged)
+
+      row = AnonBinding.get(@entity_a)
+      assert row.merge_state == "session_merged"
+      assert row.merging_to == URI.to_string(@login_a)
+
+      assert [repair_row] = AnonBinding.list_merge_repair_candidates()
+      assert repair_row.entity_uri == URI.to_string(@entity_a)
+      assert Map.fetch!(repair_row, :merge_state) == "session_merged"
+    end
+
+    test "repair index includes abnormal claimed rows with missing merge_state" do
+      {:ok, _} = AnonBinding.touch(@entity_a, @session, @now)
+      assert {:ok, :claimed} = AnonBinding.claim_for_merge(@entity_a, @login_a, @now)
+
+      {1, _} =
+        Repo.update_all(
+          from(b in AnonBinding, where: b.entity_uri == ^URI.to_string(@entity_a)),
+          set: [merge_state: nil]
+        )
+
+      assert [%AnonBinding{entity_uri: entity_uri, merge_state: nil}] =
+               AnonBinding.list_merge_repair_candidates()
+
+      assert entity_uri == URI.to_string(@entity_a)
     end
   end
 end
