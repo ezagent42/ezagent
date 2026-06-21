@@ -289,6 +289,32 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
     slice
   end
 
+  defp confirmed_user(prefix) do
+    uri = Ezagent.URI.user("team-alpha", "#{prefix}-#{uniq()}")
+    {:ok, _row} = Ezagent.Users.create(uri, "pw-not-secret-#{uniq()}", [])
+    {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
+    :ok = Ezagent.WorkspaceRegistry.bind(uri, @workspace_uri)
+    uri
+  end
+
+  defp has_cap?(entity_uri, behavior, action, instance) do
+    Enum.any?(Ezagent.Identity.list_caps_for(entity_uri), fn
+      %Capability{} = cap ->
+        cap.kind == :session and cap.behavior == behavior and
+          Capability.action_of(cap) == action and cap.instance == instance
+
+      _ ->
+        false
+    end)
+  end
+
+  defp has_workspace_wide_session_cap?(entity_uri) do
+    Enum.any?(Ezagent.Identity.list_caps_for(entity_uri), fn
+      %Capability{} = cap -> cap.kind == :session and cap.instance == :any
+      _ -> false
+    end)
+  end
+
   describe "SessionManager lifecycle (codex C-rC fixes)" do
     test "ensure_for_session restarts the executor from the durable working copy (P1 self-heal)" do
       ctx = provision([:agent_template])
@@ -410,10 +436,11 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
   end
 
   describe "the orchestrator tool surface (§3.8 member/rule-set + template tools)" do
-    test "SessionManager.tool_names/0 is the 9-tool member + rule-set + template set" do
+    test "SessionManager.tool_names/0 is the member + participant + rule-set + template set" do
       assert MapSet.new(SessionManager.tool_names()) ==
                MapSet.new([
                  :add_managed_member,
+                 :add_participant,
                  :update_member_template,
                  :remove_member,
                  :define_rule_set_rule,
@@ -629,6 +656,33 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
       assert URI.to_string(resolved) == URI.to_string(member_uri)
       assert slice.members[resolved].in_session_template == true
       assert slice.members[resolved].source_template_uri == ctx.backend_uri
+    end
+
+    test "add_participant invites an existing human with session-scoped participation", ctx do
+      operator = confirmed_user("operator")
+
+      assert {:ok, ^operator} =
+               run_tool(ctx.orch, "add_participant", %{
+                 "ref" => URI.to_string(operator),
+                 "role_name" => "operator"
+               })
+
+      slice = chat_slice(ctx.orch.session_uri)
+      resolved = Behavior.Session.role_name_to_uri(slice.members, "operator")
+      assert resolved == operator
+
+      assert has_cap?(operator, Behavior.Session, :join, ctx.orch.session_uri)
+      assert has_cap?(operator, Behavior.Session, :send, ctx.orch.session_uri)
+      assert has_cap?(operator, Behavior.Session, :leave, ctx.orch.session_uri)
+
+      assert has_cap?(
+               operator,
+               Behavior.Publisher.SessionImpl,
+               :subscribe_from,
+               ctx.orch.session_uri
+             )
+
+      refute has_workspace_wide_session_cap?(operator)
     end
 
     test "remove_member terminates the orchestrator's own worker (cap-#2 happy path)", ctx do

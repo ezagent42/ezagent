@@ -19,8 +19,20 @@ defmodule EzagentDomainInstanceMessage.ApplicationTest do
   boot-invariant tests run. No per-test setup needed.
   """
 
-  use ExUnit.Case
+  use EzagentCore.DataCase, async: false
   alias Ezagent.{KindRegistry, ReadyGate}
+  alias Ezagent.Entity.User
+
+  setup do
+    _ =
+      EzagentDomainInstanceMessage.SessionCreator.create_session(
+        "main",
+        User.admin_uri(),
+        template_name: "default"
+      )
+
+    :ok
+  end
 
   test "session://system/default/main is registered in KindRegistry" do
     uri = Ezagent.Entity.Session.default_uri()

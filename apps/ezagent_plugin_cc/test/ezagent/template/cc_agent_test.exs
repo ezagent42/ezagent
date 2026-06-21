@@ -40,6 +40,28 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       assert data["operator_settings_path"] == "/tmp/settings.json"
       refute Map.has_key?(data, "derived_config")
     end
+
+    test "emits manifest MCP entries with empty ctx_caps" do
+      resolved = %{
+        instructions: "Use tools only through dispatch.",
+        skills: [],
+        tools: [
+          %{
+            name: "notify_owner",
+            type: :action,
+            action: "entity://system/user/admin?action=notifications.notify",
+            caps: [%{"kind" => "user"}],
+            optional: false
+          }
+        ]
+      }
+
+      assert {:ok, data} = CcAgent.compile(resolved, %{})
+
+      assert data["manifest_tools"] == resolved.tools
+      assert data["manifest_mcp_servers"]["notify_owner"]["ctx_caps"] == []
+      assert data["manifest_mcp_servers"]["notify_owner"]["tool_type"] == "action"
+    end
   end
 
   describe "validate/1" do

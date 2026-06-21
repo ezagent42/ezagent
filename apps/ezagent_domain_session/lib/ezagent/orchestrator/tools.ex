@@ -95,6 +95,7 @@ defmodule Ezagent.Orchestrator.Tools do
   alias Ezagent.Behavior.Session
   alias Ezagent.Invocation
   alias Ezagent.Orchestrator.Tools.MemberTemplate
+  alias Ezagent.Orchestrator.Tools.Participants
   alias Ezagent.Orchestrator.Tools.Templates
   alias Ezagent.Orchestrator.Tools.ToolCatalog
 
@@ -177,6 +178,18 @@ defmodule Ezagent.Orchestrator.Tools do
       end
     end
   end
+
+  @doc """
+  Add a participant by reference.
+
+  `ref` may name an existing entity URI (join only), a source AgentTemplate URI
+  (spawn + join through `add_managed_member/4`), or a manifest file path (load,
+  spawn from manifest, then join). Existing humans receive invited join
+  authority and the session-scoped participation tier before the tool returns.
+  """
+  @spec add_participant(String.t() | URI.t(), String.t(), keyword()) ::
+          {:ok, URI.t()} | {:error, term()}
+  defdelegate add_participant(ref, role_name, opts \\ []), to: Participants
 
   # Spawn the member fresh from its source AgentTemplate. Reuses the PR-7
   # spawn path: `Agent.spawn_fresh/4` (records lineage under the

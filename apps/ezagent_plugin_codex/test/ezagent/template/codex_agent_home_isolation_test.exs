@@ -45,6 +45,28 @@ defmodule Ezagent.PluginCodex.Template.CodexAgentHomeIsolationTest do
              }
     end
 
+    test "compile emits manifest MCP entries with empty ctx_caps" do
+      resolved = %{
+        instructions: "Use tools only through dispatch.",
+        skills: [],
+        tools: [
+          %{
+            name: "notify_owner",
+            type: :action,
+            action: "entity://system/user/admin?action=notifications.notify",
+            caps: [%{"kind" => "user"}],
+            optional: false
+          }
+        ]
+      }
+
+      assert {:ok, data} = CodexAgent.compile(resolved, %{})
+
+      assert data["manifest_tools"] == resolved.tools
+      assert data["manifest_mcp_servers"]["notify_owner"]["ctx_caps"] == []
+      assert data["manifest_mcp_servers"]["notify_owner"]["tool_type"] == "action"
+    end
+
     test "copies source codex auth/config into the allocated target home" do
       source = source_codex_home()
       agent_uri = URI.new!("entity://system/agent/codex_home-#{uniq()}")

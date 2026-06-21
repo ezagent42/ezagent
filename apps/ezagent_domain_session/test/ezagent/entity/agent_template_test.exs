@@ -185,6 +185,101 @@ defmodule Ezagent.Entity.AgentTemplateTest do
       assert data["system_prompt"] == "Fast ack only."
     end
 
+    test "manifest-resolved cc content emits one MCP entry per non-optional tool" do
+      content = %{
+        flavor: "cc",
+        project_cwd: "/tmp/c",
+        agent_manifest_resolved: %{
+          instructions: "Coordinate.",
+          skills: [],
+          tools: [
+            %{
+              name: "notify_owner",
+              type: :action,
+              action: "entity://system/user/admin?action=notifications.notify",
+              caps: [%{"kind" => "user"}],
+              optional: false
+            },
+            %{
+              name: "add_operator",
+              type: :participant,
+              ref: "entity://system/user/operator",
+              role_name: "operator",
+              optional: false
+            }
+          ]
+        },
+        agent_manifest_params: %{}
+      }
+
+      assert {:ok, data} = AgentTemplate.to_template_data(content, @cc_uri)
+
+      assert data["manifest_tools"] == content.agent_manifest_resolved.tools
+      assert %{"notify_owner" => action_entry, "add_operator" => participant_entry} =
+               data["manifest_mcp_servers"]
+
+      assert action_entry["ctx_caps"] == []
+      assert action_entry["dispatch"] == "entity://system/user/admin?action=notifications.notify"
+      assert participant_entry["tool_type"] == "participant"
+    end
+
+    test "tool-less curl compile rejects non-optional manifest tools" do
+      content = %{
+        flavor: "curl",
+        project_cwd: "/tmp/c",
+        agent_manifest_resolved: %{
+          instructions: "Fast ack only.",
+          skills: [],
+          tools: [
+            %{
+              name: "notify_owner",
+              type: :action,
+              action: "entity://system/user/admin?action=notifications.notify",
+              caps: [%{"kind" => "user"}],
+              optional: false
+            }
+          ]
+        },
+        agent_manifest_params: %{
+          "provider" => "deepseek",
+          "api_url" => "https://api.deepseek.com/chat/completions",
+          "model" => "deepseek-chat"
+        }
+      }
+
+      assert {:error, {:tools_unsupported, "curl", ["notify_owner"]}} =
+               AgentTemplate.to_template_data(content, @curl_uri)
+    end
+
+    test "tool-less curl compile drops optional manifest tools explicitly" do
+      content = %{
+        flavor: "curl",
+        project_cwd: "/tmp/c",
+        agent_manifest_resolved: %{
+          instructions: "Fast ack only.",
+          skills: [],
+          tools: [
+            %{
+              name: "notify_owner",
+              type: :action,
+              action: "entity://system/user/admin?action=notifications.notify",
+              caps: [%{"kind" => "user"}],
+              optional: true
+            }
+          ]
+        },
+        agent_manifest_params: %{
+          "provider" => "deepseek",
+          "api_url" => "https://api.deepseek.com/chat/completions",
+          "model" => "deepseek-chat"
+        }
+      }
+
+      assert {:ok, data} = AgentTemplate.to_template_data(content, @curl_uri)
+      refute Map.has_key?(data, "manifest_mcp_servers")
+      refute Map.has_key?(data, "manifest_tools")
+    end
+
     test "threads codex model/approval/sandbox" do
       content = %{
         flavor: "codex",

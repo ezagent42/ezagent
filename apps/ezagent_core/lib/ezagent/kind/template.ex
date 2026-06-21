@@ -438,11 +438,13 @@ defmodule Ezagent.Kind.Template do
           {:ok, template_data()} | {:error, term()}
   def compile_curl_agent_data(resolved, params, template_data_extra)
       when is_map(resolved) and is_map(params) and is_function(template_data_extra, 1) do
-    content =
-      params
-      |> Map.put("system_prompt", content_field(resolved, :instructions))
+    with :ok <- reject_required_tools(resolved, "curl") do
+      content =
+        params
+        |> Map.put("system_prompt", content_field(resolved, :instructions))
 
-    {:ok, compact_template_data(template_data_extra.(content))}
+      {:ok, compact_template_data(template_data_extra.(content))}
+    end
   end
 
   def compile_curl_agent_data(_resolved, _params, _template_data_extra),
@@ -460,6 +462,7 @@ defmodule Ezagent.Kind.Template do
         params
         |> template_data_extra.()
         |> Map.put("claude_md", claude_md)
+        |> put_manifest_tool_data(resolved)
         |> compact_template_data()
 
       {:ok, data}
@@ -479,6 +482,7 @@ defmodule Ezagent.Kind.Template do
         params
         |> template_data_extra.()
         |> Map.put("instructions", instructions)
+        |> put_manifest_tool_data(resolved)
         |> compact_template_data()
 
       {:ok, data}
@@ -493,6 +497,52 @@ defmodule Ezagent.Kind.Template do
       instructions when is_binary(instructions) -> {:ok, instructions}
       other -> {:error, {:invalid_instructions, other}}
     end
+  end
+
+  defp put_manifest_tool_data(data, resolved) do
+    case required_tools(resolved) do
+      [] ->
+        data
+
+      tools ->
+        data
+        |> Map.put("manifest_tools", tools)
+        |> Map.put("manifest_mcp_servers", manifest_mcp_servers(tools))
+    end
+  end
+
+  defp reject_required_tools(resolved, flavor) do
+    case required_tools(resolved) do
+      [] -> :ok
+      tools -> {:error, {:tools_unsupported, flavor, Enum.map(tools, & &1.name)}}
+    end
+  end
+
+  defp required_tools(resolved) do
+    resolved
+    |> content_field(:tools)
+    |> case do
+      tools when is_list(tools) -> Enum.reject(tools, &Map.get(&1, :optional, false))
+      _ -> []
+    end
+  end
+
+  defp manifest_mcp_servers(tools) do
+    tools
+    |> Enum.map(fn tool ->
+      {tool.name,
+       %{
+         "transport" => "ezagent-dispatch",
+         "tool_name" => tool.name,
+         "tool_type" => Atom.to_string(tool.type),
+         "dispatch" => Map.get(tool, :action),
+         "participant_ref" => Map.get(tool, :ref),
+         "role_name" => Map.get(tool, :role_name),
+         "ctx_caps" => []
+       }
+       |> compact_template_data()}
+    end)
+    |> Map.new()
   end
 
   defp compact_template_data(data) do
