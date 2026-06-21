@@ -123,6 +123,13 @@ Plus the shared **shadcn primitive set** (port the 13 `ezagent_domain_ui` "shadc
 - The `world` LV scope + `host: "world."` subdomain scoping live in the `ezagent_web` router (or a `world`-owned router macro mounted by `ezagent_web`).
 - **v1 does NOT generalize `Ezagent.UI.SessionView` / `Ezagent.Behavior.Surface`** (review B3 / D11): that session→Kind generalization is NOT a no-op (the `SessionView` callback contract is session-typed; `Surface.data_owner/1` matches only `session://`), and is descoped. Instead, `world` ships its own `Ezagent.World.LayoutManager` (layout store, §4.2) + its own workspace-scoped LV routes. The "ezagent app as a registered socialware View" remains the north-star but is a later phase. If a future phase reuses `SessionView`/`Surface`, it must specify the new callback signature, the workspace-Kind `data_owner` clause (returns `:any` per workspace convention), and a named session-View regression gate.
 
+### 8.1 Docker packaging (Allen 2026-06-21 — account for this now)
+The current `docker/Dockerfile.prod` builder (line 45) builds ONLY `apps/ezagent_web` assets via esbuild/tailwind (`mix assets.setup && mix assets.deploy`). The `world` plugin's **Vite build is a NEW builder step** that must be added:
+- Builder stage: `cd apps/ezagent_plugin_world/assets && npm ci && npm run build` (Vite prod build, BEFORE `mix release`), digested into the release's static path so `world.ezagent.chat` serves pre-built assets. (Node is already in BOTH the builder and runtime images — for the feishu WS sidecar — so NO new image infra; only the build step.)
+- Runtime config (`config/runtime.exs`, applied in-container): add `https://world.ezagent.chat` to `check_origin`; set session cookie `domain: ".ezagent.chat"`.
+- Cloudflare ingress is HOST-side (tunnel runs on the host, not in the container, pointing at the container's published port) — add `world.ezagent.chat → :<port>` ingress + `tunnel route dns` there (§6); config, not a Dockerfile change.
+- `docker/Dockerfile.dev` similarly needs the Vite dev-server wiring for HMR (gate #4) under dockerized dev.
+
 ## 9. Phasing (PR-per-step, gate #6) — codex self-drive order
 
 Each step is an independently-shippable PR onto `world`. Suggested order (codex may refine):
