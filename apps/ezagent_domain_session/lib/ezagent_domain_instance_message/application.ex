@@ -775,9 +775,10 @@ defmodule EzagentDomainInstanceMessage.Application do
   defp bind_session_workspace(_other), do: :ok
 
   defp register_session_behaviors do
-    :ok = CapabilityRegistry.register(Session, :send, SessionBehavior)
-    :ok = CapabilityRegistry.register(Session, :join, SessionBehavior)
-    :ok = CapabilityRegistry.register(Session, :leave, SessionBehavior)
+    for action <- [:send, :join, :leave, :merge_member] do
+      :ok = CapabilityRegistry.register(Session, action, SessionBehavior)
+    end
+
     # Phase 7 completion PR-4 (SPEC §1.6) — the Generator + the
     # orchestrator slot tools write the durable `template_working_copy`
     # field via `?action=session.set_working_copy` on the Session Kind.
@@ -801,7 +802,6 @@ defmodule EzagentDomainInstanceMessage.Application do
     # Phase 6 PR 2: Identity behavior registration (list_caps / has_cap?)
     # moved to ezagent_domain_identity.Application — Identity is the identity
     # domain's concern, not chat's.
-
     # PR #146 (SPEC v2 §5.7) — session-scoped routing rule mutations
     # dispatch to `session://<name>?action=routing.<action>` against
     # the Session Kind. The synthetic `routing-admin://default`
