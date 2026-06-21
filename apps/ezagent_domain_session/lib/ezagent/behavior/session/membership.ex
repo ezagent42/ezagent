@@ -130,6 +130,153 @@ defmodule Ezagent.Behavior.Session.Membership do
      ] ++ Delivery.broadcast_membership_effects(session_uri, {:member_joined, member_uri})}
   end
 
+  @doc """
+  Atomically relabel a session member from one URI to another.
+
+  This composes `do_join/5` directly, then rewrites the post-join effect set so
+  the anon removal, monitor cleanup, `last_seen` cleanup, `last_message` relabel,
+  and membership broadcasts commit as one Session slice mutation. It deliberately
+  contains no socialware symbols; the web/socialware orchestrator owns the
+  binding claim, message-store relabel, cap mounting, and anon retirement.
+  """
+  @spec do_merge_member(URI.t(), URI.t(), map(), module()) ::
+          {:ok, map(), [term()]} | {:error, term()}
+  def do_merge_member(%URI{} = from_uri, %URI{} = to_uri, ctx, source_module) do
+    session_uri = ctx[:self_uri]
+
+    if Ezagent.URI.instance(from_uri) == Ezagent.URI.instance(to_uri) do
+      members = ctx[:read].(:members, %{})
+      {:ok, %{members: Map.keys(members)}, []}
+    else
+      with {:ok, member_pid} <- lookup_merge_target(to_uri),
+           {:ok, _join_result, join_effects} <-
+             do_join(to_uri, member_pid, ctx, %{}, source_module) do
+        build_merge_member_effects(session_uri, from_uri, to_uri, ctx, join_effects)
+      end
+    end
+  end
+
+  defp lookup_merge_target(%URI{} = to_uri) do
+    case Ezagent.KindRegistry.lookup(to_uri) do
+      {:ok, pid} -> {:ok, pid}
+      :error -> {:error, {:member_not_registered, to_uri}}
+    end
+  end
+
+  defp build_merge_member_effects(session_uri, from_uri, to_uri, ctx, join_effects) do
+    # Read-marker repoint is a cross-store (read_markers DB) write that must
+    # converge before the membership slice mutation commits. Do it FIRST and
+    # ABORT the merge on failure — before any irreversible side-effect
+    # (demonitor) and before emitting the members/last_seen effects — so a
+    # repoint error never leaves read_markers rows pointing at a to-be-retired
+    # anon (FINAL design §3 "zero surviving refs"; `feedback_let_it_crash_no_workarounds`).
+    # `repoint/3` is idempotent, so the orchestrator's re-run after an abort is safe.
+    case repoint_read_markers(session_uri, from_uri, to_uri) do
+      :ok ->
+        members_after_join = effect_value(join_effects, :set, :members, ctx[:read].(:members, %{}))
+
+        monitors_after_join =
+          effect_value(
+            join_effects,
+            :set_transient,
+            :monitors,
+            (ctx[:transients] || %{})[:monitors] || %{}
+          )
+
+        last_seen_after_join =
+          effect_value(join_effects, :set, :last_seen, ctx[:read].(:last_seen, %{}))
+
+        new_members = Map.delete(members_after_join, from_uri)
+
+        {from_ref, monitors_after_from} = Delivery.pop_monitor_ref(monitors_after_join, from_uri)
+        if from_ref, do: Process.demonitor(from_ref, [:flush])
+
+        new_last_seen = Map.delete(last_seen_after_join, from_uri)
+        last_message = rewrite_last_message(ctx[:read].(:last_message, nil), from_uri, to_uri)
+
+        passthrough =
+          Enum.reject(join_effects, &merge_member_owned_effect?/1)
+
+        effects =
+          [
+            set_effect(:members, new_members),
+            transient_effect(:monitors, monitors_after_from),
+            set_effect(:last_seen, new_last_seen)
+          ] ++
+            last_message_effect(last_message) ++
+            passthrough ++
+            Delivery.broadcast_membership_effects(session_uri, {:member_left, from_uri})
+
+        {:ok, %{members: Map.keys(new_members)}, effects}
+
+      {:error, _reason} = err ->
+        err
+    end
+  end
+
+  defp repoint_read_markers(session_uri, from_uri, to_uri) do
+    case Ezagent.Session.ReadMarker.repoint(session_uri, from_uri, to_uri) do
+      {:ok, _moved} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "Session.Membership.do_merge_member: ReadMarker.repoint failed for " <>
+            "#{URI.to_string(from_uri)} -> #{URI.to_string(to_uri)} in " <>
+            "#{URI.to_string(session_uri)}: #{inspect(reason)} — aborting merge"
+        )
+
+        {:error, {:read_marker_repoint_failed, reason}}
+    end
+  end
+
+  defp rewrite_last_message(nil, _from_uri, _to_uri), do: nil
+
+  defp rewrite_last_message(%Ezagent.Message{} = message, from_uri, to_uri) do
+    %{
+      message
+      | sender: rewrite_uri(message.sender, from_uri, to_uri),
+        mentions: rewrite_uris(message.mentions, from_uri, to_uri)
+    }
+  end
+
+  defp rewrite_last_message(other, _from_uri, _to_uri), do: other
+
+  defp rewrite_uris(uris, from_uri, to_uri) when is_list(uris) do
+    Enum.map(uris, &rewrite_uri(&1, from_uri, to_uri))
+  end
+
+  defp rewrite_uris(other, _from_uri, _to_uri), do: other
+
+  defp rewrite_uri(%URI{} = uri, from_uri, to_uri) do
+    if Ezagent.URI.instance(uri) == Ezagent.URI.instance(from_uri), do: to_uri, else: uri
+  end
+
+  defp rewrite_uri(other, _from_uri, _to_uri), do: other
+
+  defp last_message_effect(nil), do: []
+  defp last_message_effect(message), do: [set_effect(:last_message, message)]
+
+  defp set_effect(key, value), do: {:set, key, value}
+  defp transient_effect(key, value), do: {:set_transient, key, value}
+
+  defp merge_member_owned_effect?({kind, key, _})
+       when kind == :set and key in [:members, :last_seen],
+       do: true
+
+  defp merge_member_owned_effect?({kind, key, _})
+       when kind == :set_transient and key == :monitors,
+       do: true
+
+  defp merge_member_owned_effect?(_), do: false
+
+  defp effect_value(effects, effect_kind, key, default) do
+    Enum.find_value(effects, default, fn
+      {^effect_kind, ^key, value} -> value
+      _ -> false
+    end)
+  end
+
   # Notifier/flash audit 2026-05-24 — same predicate
   # `Ezagent.Domain.Workspace.user_uri?/1` uses. Keeps the agent-target
   # silence guarantee local to Chat without crossing the

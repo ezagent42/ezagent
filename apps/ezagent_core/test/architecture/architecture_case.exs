@@ -87,10 +87,31 @@ defmodule EzagentCore.ArchitectureCase do
     @manifest_path
     |> File.read!()
     |> String.split("\n")
-    |> Enum.any?(fn line ->
-      String.contains?(line, name <> ":") and String.contains?(line, "# arch-cap-bump:")
-    end)
+    |> lines_have_cap_bump?(name, [])
   end
+
+  defp lines_have_cap_bump?([], _name, _comment_block), do: false
+
+  defp lines_have_cap_bump?([line | rest], name, comment_block) do
+    if String.contains?(line, name <> ":") do
+      String.contains?(line, "# arch-cap-bump:") or block_has_cap_bump?(comment_block)
+    else
+      lines_have_cap_bump?(rest, name, next_comment_block(line, comment_block))
+    end
+  end
+
+  defp next_comment_block(line, comment_block) do
+    trimmed = String.trim(line)
+
+    cond do
+      trimmed == "" -> comment_block
+      String.starts_with?(String.trim_leading(line), "#") -> [line | comment_block]
+      true -> []
+    end
+  end
+
+  defp block_has_cap_bump?(comment_block),
+    do: Enum.any?(comment_block, &String.contains?(&1, "# arch-cap-bump:"))
 
   defp repo_root do
     case System.cmd("git", ["rev-parse", "--show-toplevel"], stderr_to_stdout: false) do

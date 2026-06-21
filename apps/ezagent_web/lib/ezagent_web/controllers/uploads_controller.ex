@@ -68,7 +68,7 @@ defmodule EzagentWeb.UploadsController do
 
   import Ecto.Query
 
-  alias Ezagent.{Message, MessageRouting, MessageStore, Uploads}
+  alias Ezagent.{Message, MessageStore, Uploads}
   alias Ezagent.Uploads.DownloadToken
   alias Ezagent.URI, as: EzURI
   alias EzagentCore.Repo
@@ -200,10 +200,10 @@ defmodule EzagentWeb.UploadsController do
   defp caller_sent_in_any_session?(_caller_str, []), do: false
 
   defp caller_sent_in_any_session?(caller_str, session_uris) when is_list(session_uris) do
+    # Message session-scoping (2026-06-21): messages carry `session_uri` directly
+    # (the `message_routings` join table was removed).
     from(m in Message,
-      join: r in MessageRouting,
-      on: r.message_id == m.id,
-      where: m.sender == ^caller_str and r.session_uri in ^session_uris,
+      where: m.sender == ^caller_str and m.session_uri in ^session_uris,
       select: 1,
       limit: 1
     )

@@ -55,14 +55,8 @@ defmodule Ezagent.Session.ReadMarkerTest do
       }
     ])
 
-    Repo.insert_all("message_routings", [
-      %{
-        message_id: msg_uri,
-        session_uri: URI.to_string(session_uri),
-        inserted_at: inserted_at
-      }
-    ])
-
+    # Message session-scoping (2026-06-21): the `messages` row above carries
+    # `session_uri`; the `message_routings` join table was removed.
     msg_uri
   end
 

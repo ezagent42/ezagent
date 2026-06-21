@@ -104,8 +104,6 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     "workspaces" => "Workspace IS the tenant; trivially scoped by row id.",
     "routing_rules" =>
       "Already has workspace_uri (Phase 6 PR 8 / PR #146-149) — pre-dated this migration.",
-    "message_routings" =>
-      "Join table; inherits scope via FK to messages (which has workspace_uri NOT NULL).",
     "dlq" =>
       "Pre-tenant boundary — failure can precede workspace determination; operator triages from system scope.",
     "app_settings" =>

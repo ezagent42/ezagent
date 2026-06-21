@@ -42,7 +42,6 @@ defmodule EzagentCore.Invariants.NoDefaultWorkspaceRefsTest do
     {"users", ["uri", "workspace_uri", "caps_json"]},
     {"kind_snapshots", ["uri", "workspace_uri"]},
     {"external_mirror_bindings", ["session_uri", "workspace_uri"]},
-    {"message_routings", ["session_uri"]},
     {"feishu_user_bindings", ["user_uri"]},
     {"read_markers", ["workspace_uri", "session_uri", "user_uri"]},
     {"entity_profiles", ["entity_uri", "workspace_uri"]},

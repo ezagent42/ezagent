@@ -229,7 +229,52 @@ defmodule Ezagent.Session.ReadMarker do
     end)
   end
 
+  @doc """
+  Move all read markers in `session_uri` from `from_uri` to `to_uri`.
+
+  Collision-safe: if `to_uri` already has a marker for the same source, keep
+  the more advanced marker and delete the `from_uri` row. Re-running the same
+  repoint after a crash is a no-op.
+  """
+  @spec repoint(URI.t() | String.t(), URI.t() | String.t(), URI.t() | String.t()) ::
+          {:ok, non_neg_integer()} | {:error, term()}
+  def repoint(session_uri, from_uri, to_uri) do
+    session_str = to_str(session_uri)
+    from_str = to_str(from_uri)
+    to_str = to_str(to_uri)
+
+    Repo.transaction(fn ->
+      session_str
+      |> list_markers(from_str)
+      |> Enum.reduce(0, fn marker, moved ->
+        repoint_marker(marker, session_str, to_str)
+        moved + 1
+      end)
+    end)
+  end
+
   # ----- Private -------------------------------------------------------------
+
+  defp repoint_marker(marker, session_str, to_str) do
+    case get_marker(session_str, to_str, marker.source) do
+      nil ->
+        marker
+        |> change(%{user_uri: to_str})
+        |> Repo.update!()
+
+      target ->
+        if message_newer?(marker.last_read_message_uri, target.last_read_message_uri) do
+          target
+          |> change(%{
+            last_read_message_uri: marker.last_read_message_uri,
+            observed_at: marker.observed_at
+          })
+          |> Repo.update!()
+        end
+
+        Repo.delete!(marker)
+    end
+  end
 
   defp get_marker(session_str, user_str, src_str) do
     Repo.one(
@@ -285,10 +330,12 @@ defmodule Ezagent.Session.ReadMarker do
   end
 
   defp count_messages_in_session(session_str) do
+    # Message session-scoping (2026-06-21): count `messages` directly by
+    # `session_uri` (the `message_routings` join table was removed).
     Repo.one(
-      from(r in "message_routings",
-        where: r.session_uri == ^session_str,
-        select: count(r.message_id)
+      from(m in Ezagent.Message,
+        where: m.session_uri == ^session_str,
+        select: count(m.id)
       )
     ) || 0
   end
@@ -308,11 +355,9 @@ defmodule Ezagent.Session.ReadMarker do
 
       %DateTime{} = after_at ->
         Repo.one(
-          from(r in "message_routings",
-            join: msg in Ezagent.Message,
-            on: msg.id == r.message_id,
-            where: r.session_uri == ^session_str and msg.inserted_at > ^after_at,
-            select: count(r.message_id)
+          from(m in Ezagent.Message,
+            where: m.session_uri == ^session_str and m.inserted_at > ^after_at,
+            select: count(m.id)
           )
         ) || 0
     end

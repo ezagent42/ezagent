@@ -160,6 +160,14 @@ defmodule Ezagent.Behavior.Session do
     description: "Remove a member from the session"
   )
 
+  action(:merge_member,
+    args: %{from: :uri, to: :uri},
+    returns: %{members: {:list, :uri}},
+    caps: [:merge_member],
+    modes: [:call],
+    description: "Atomically relabel one session member URI to another"
+  )
+
   action(:set_working_copy,
     args: %{template_working_copy: :map},
     returns: %{template_working_copy: :map},
@@ -642,6 +650,13 @@ defmodule Ezagent.Behavior.Session do
        {:set_transient, :monitors, new_monitors},
        {:set, :last_seen, new_last_seen}
      ] ++ Delivery.broadcast_membership_effects(ctx[:self_uri], {:member_left, member_uri})}
+  end
+
+  # --- :merge_member ------------------------------------------------------
+
+  @doc false
+  def handle_merge_member(%{from: %URI{} = from_uri, to: %URI{} = to_uri}, ctx) do
+    Membership.do_merge_member(from_uri, to_uri, ctx, __MODULE__)
   end
 
   # --- :set_working_copy -------------------------------------------------

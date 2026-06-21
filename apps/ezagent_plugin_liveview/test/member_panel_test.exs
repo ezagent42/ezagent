@@ -10,7 +10,7 @@ defmodule EzagentPluginLiveview.Admin.MemberPanelTest do
   - An Invite button that opens a `<.modal>` carrying the "Add existing"
     `uri_picker` + a "Create new agent" link to `/identities/agents/new`.
   """
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   import Phoenix.Component
   import Phoenix.LiveViewTest

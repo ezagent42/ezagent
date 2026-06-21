@@ -45,7 +45,7 @@ defmodule Ezagent.MessageStore do
   """
 
   import Ecto.Query
-  alias Ezagent.{Message, MessageRouting}
+  alias Ezagent.Message
   alias EzagentCore.Repo
 
   @replay_cap 1000
@@ -77,71 +77,30 @@ defmodule Ezagent.MessageStore do
       |> Map.put(:session_uri, session_uri)
       |> Map.put(:workspace_uri, workspace_uri_str)
 
-    # `message_routings.inserted_at` keeps the message CREATION time (the
-    # message's own `inserted_at`) so the production pagination (`older_than/3` /
-    # `in_session_since/2`) and the customer feed — all ordered by
-    # `r.inserted_at` — are UNCHANGED.
-    routing_inserted_at = msg.inserted_at || DateTime.utc_now()
+    # Message session-scoping (2026-06-21): one `messages` row per session (the
+    # vestigial `message_routings` multi-routing was removed — cross-session
+    # forwarding copies a NEW message into the target session, per the copy+ref
+    # model). `routed_at` = the ROUTE-INTO-THIS-SESSION time, a FRESH timestamp at
+    # write (NOT `msg.inserted_at`): the chat-feed snapshot orders on it so a
+    # forwarded copy windows at its arrival here; `inserted_at` stays the CREATION
+    # time for pagination + the customer feed.
+    msg_with_session = Map.put(msg_with_session, :routed_at, DateTime.utc_now())
 
-    # `routed_at` is the ROUTE-INTO-THIS-SESSION time — a FRESH timestamp
-    # captured at write, NOT `msg.inserted_at` (P4 codex r4 HIGH). The
-    # cross-session relay path routes the SAME `%Message{}` (original, possibly
-    # OLD `inserted_at`) into a target session; keying the chat-feed cursor on
-    # `inserted_at` would let that relayed message sort BEHIND the target
-    # session's already-advanced cursor and be stranded forever. `routed_at = now`
-    # makes the chat-feed cursor reflect when the message actually entered THIS
-    # session.
-    routed_at = DateTime.utc_now()
+    # Single insert. `on_conflict: :nothing, conflict_target: :id` keeps
+    # idempotency (re-write of the same id is a no-op); re-fetch by id to return
+    # the ACTUALLY-PERSISTED row (PR-EM-6-PRE: a conflict returns the caller's
+    # struct, but downstream mirrors via SliceChange.last_message need the durable
+    # row). The row MUST exist after an :ok insert/conflict → nil is let-it-crash.
+    case Repo.insert(msg_with_session, on_conflict: :nothing, conflict_target: :id) do
+      {:ok, _} ->
+        case Repo.get(Message, msg.id) do
+          %Message{} = persisted -> {:ok, persisted}
+          nil -> {:error, {:persisted_row_missing, msg.id}}
+        end
 
-    # Two-step write: messages (upsert) + message_routings (insert).
-    # Wrapped in a transaction so we don't end up with messages row
-    # but missing routing, or vice versa.
-    Repo.transaction(fn ->
-      case Repo.insert(msg_with_session, on_conflict: :nothing, conflict_target: :id) do
-        {:ok, _} ->
-          routing = %MessageRouting{
-            message_id: msg.id,
-            session_uri: URI.to_string(session_uri),
-            inserted_at: routing_inserted_at,
-            routed_at: routed_at
-          }
-
-          case Repo.insert(routing,
-                 on_conflict: :nothing,
-                 conflict_target: [:message_id, :session_uri]
-               ) do
-            {:ok, _} ->
-              # PR-EM-6-PRE codex r2 HIGH (2026-05-25) — return the
-              # ACTUALLY-PERSISTED row, not the caller-built struct.
-              # With `on_conflict: :nothing, conflict_target: :id`,
-              # `Repo.insert/2` returns `{:ok, _}` even when an earlier
-              # row with the same id already existed; the returned
-              # struct in that case is the caller's input, NOT the
-              # persisted row. Downstream consumers (PR-EM-6-PRE
-              # external mirror via SliceChange.new_slice.last_message)
-              # depend on this being the row in `messages`, otherwise
-              # a misbehaving client that reuses an id with a different
-              # body could cause mirrors to publish content that never
-              # made it to durable storage.
-              #
-              # Re-fetch by id inside the same transaction so we hand
-              # back the authoritative row. The row MUST exist at this
-              # point (we just :ok-ed either an insert or a conflict on
-              # the same id), so `nil` here is a let-it-crash bug, not
-              # a normal control-flow signal.
-              case Repo.get(Message, msg.id) do
-                %Message{} = persisted -> persisted
-                nil -> Repo.rollback({:persisted_row_missing, msg.id})
-              end
-
-            {:error, reason} ->
-              Repo.rollback(reason)
-          end
-
-        {:error, reason} ->
-          Repo.rollback(reason)
-      end
-    end)
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   @doc """
@@ -162,12 +121,10 @@ defmodule Ezagent.MessageStore do
     workspace_str = Ezagent.Persistence.workspace_uri_for!(session_uri)
 
     from(m in Message,
-      join: r in MessageRouting,
-      on: r.message_id == m.id,
       where:
-        r.session_uri == ^session_str and r.inserted_at > ^since and
+        m.session_uri == ^session_str and m.inserted_at > ^since and
           m.workspace_uri == ^workspace_str,
-      order_by: [asc: r.inserted_at],
+      order_by: [asc: m.inserted_at],
       limit: @replay_cap
     )
     |> Repo.all()
@@ -187,10 +144,8 @@ defmodule Ezagent.MessageStore do
     workspace_str = Ezagent.Persistence.workspace_uri_for!(session_uri)
 
     from(m in Message,
-      join: r in MessageRouting,
-      on: r.message_id == m.id,
-      where: r.session_uri == ^session_str and m.workspace_uri == ^workspace_str,
-      order_by: [desc: r.inserted_at],
+      where: m.session_uri == ^session_str and m.workspace_uri == ^workspace_str,
+      order_by: [desc: m.inserted_at],
       limit: ^limit
     )
     |> Repo.all()
@@ -214,12 +169,10 @@ defmodule Ezagent.MessageStore do
     workspace_str = Ezagent.Persistence.workspace_uri_for!(session_uri)
 
     from(m in Message,
-      join: r in MessageRouting,
-      on: r.message_id == m.id,
       where:
-        r.session_uri == ^session_str and r.inserted_at < ^cursor and
+        m.session_uri == ^session_str and m.inserted_at < ^cursor and
           m.workspace_uri == ^workspace_str,
-      order_by: [desc: r.inserted_at],
+      order_by: [desc: m.inserted_at],
       limit: ^limit
     )
     |> Repo.all()
@@ -239,17 +192,15 @@ defmodule Ezagent.MessageStore do
     workspace_str = Ezagent.Persistence.workspace_uri_for!(session_uri)
 
     from(m in Message,
-      join: r in MessageRouting,
-      on: r.message_id == m.id,
       join: sm in "socialware_settlement_messages",
       on: sm.message_id == m.id,
       join: s in "socialware_settlements",
       on: s.turn_id == sm.turn_id,
       where:
-        r.session_uri == ^session_str and m.workspace_uri == ^workspace_str and
+        m.session_uri == ^session_str and m.workspace_uri == ^workspace_str and
           m.visibility == :customer_visible and s.status == "committed" and
           s.session_uri == ^session_str and s.workspace_uri == ^workspace_str,
-      order_by: [desc: r.inserted_at],
+      order_by: [desc: m.inserted_at],
       limit: ^limit
     )
     |> Repo.all()
@@ -272,18 +223,16 @@ defmodule Ezagent.MessageStore do
     workspace_str = Ezagent.Persistence.workspace_uri_for!(session_uri)
 
     from(m in Message,
-      join: r in MessageRouting,
-      on: r.message_id == m.id,
       join: sm in "socialware_settlement_messages",
       on: sm.message_id == m.id,
       join: s in "socialware_settlements",
       on: s.turn_id == sm.turn_id,
       where:
-        r.session_uri == ^session_str and m.workspace_uri == ^workspace_str and
+        m.session_uri == ^session_str and m.workspace_uri == ^workspace_str and
           m.visibility == :customer_visible and s.status == "committed" and
           s.session_uri == ^session_str and s.workspace_uri == ^workspace_str and
           m.id in ^ids,
-      order_by: [desc: r.inserted_at]
+      order_by: [desc: m.inserted_at]
     )
     |> Repo.all()
   end
@@ -323,16 +272,11 @@ defmodule Ezagent.MessageStore do
     workspace_str = Ezagent.Persistence.workspace_uri_for!(session_uri)
 
     from(m in Message,
-      join: r in MessageRouting,
-      on: r.message_id == m.id,
       where:
-        r.session_uri == ^session_str and m.workspace_uri == ^workspace_str and
+        m.session_uri == ^session_str and m.workspace_uri == ^workspace_str and
           m.visibility == :customer_visible,
-      order_by: [desc: r.routed_at, desc: r.message_id],
-      limit: ^limit,
-      # Surface the per-session ROUTE timestamp so the snapshot orders on the
-      # route-into-session time (a relayed message windows at its arrival here).
-      select_merge: %{routed_at: r.routed_at}
+      order_by: [desc: m.routed_at, desc: m.id],
+      limit: ^limit
     )
     |> Repo.all()
     |> Enum.reverse()
@@ -351,6 +295,82 @@ defmodule Ezagent.MessageStore do
 
     {:ok, count}
   end
+
+  @doc """
+  Relabel one identity's message references inside a single session.
+
+  This is the sanctioned anon→login mutation path after message session-scoping:
+  only rows owned by `session_uri` are considered, and both `sender` and
+  `mentions` are rewritten from `from_uri` to `to_uri`. Authorization belongs to
+  the merge orchestrator; this function is only the scoped storage primitive.
+  """
+  @spec relabel_identity(URI.t(), URI.t(), URI.t()) :: {:ok, non_neg_integer()} | {:error, term()}
+  def relabel_identity(%URI{} = session_uri, %URI{} = from_uri, %URI{} = to_uri) do
+    from_str = URI.to_string(from_uri)
+
+    if from_str == URI.to_string(to_uri) do
+      {:ok, 0}
+    else
+      session_str = URI.to_string(session_uri)
+      workspace_str = Ezagent.Persistence.workspace_uri_for!(session_uri)
+
+      Repo.transaction(fn ->
+        from(m in Message,
+          where: m.session_uri == ^session_str and m.workspace_uri == ^workspace_str
+        )
+        |> Repo.all()
+        |> Enum.reduce(0, fn %Message{} = message, count ->
+          case relabel_attrs(message, from_str, to_uri) do
+            [] ->
+              count
+
+            attrs ->
+              message
+              |> Ecto.Changeset.change(attrs)
+              |> Repo.update!()
+
+              count + 1
+          end
+        end)
+      end)
+      |> case do
+        {:ok, count} -> {:ok, count}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  defp relabel_attrs(%Message{} = message, from_str, %URI{} = to_uri) do
+    []
+    |> maybe_relabel_sender(message, from_str, to_uri)
+    |> maybe_relabel_mentions(message, from_str, to_uri)
+  end
+
+  defp maybe_relabel_sender(attrs, %Message{} = message, from_str, %URI{} = to_uri) do
+    if uri_string(message.sender) == from_str do
+      Keyword.put(attrs, :sender, to_uri)
+    else
+      attrs
+    end
+  end
+
+  defp maybe_relabel_mentions(attrs, %Message{} = message, from_str, %URI{} = to_uri) do
+    mentions = message.mentions || []
+
+    relabelled =
+      Enum.map(mentions, fn mention ->
+        if uri_string(mention) == from_str, do: to_uri, else: mention
+      end)
+
+    if Enum.map(relabelled, &uri_string/1) == Enum.map(mentions, &uri_string/1) do
+      attrs
+    else
+      Keyword.put(attrs, :mentions, relabelled)
+    end
+  end
+
+  defp uri_string(%URI{} = uri), do: URI.to_string(uri)
+  defp uri_string(uri) when is_binary(uri), do: uri
 
   @doc """
   Single Message lookup by id. Returns `{:ok, message}` or `:error`.
@@ -373,17 +393,20 @@ defmodule Ezagent.MessageStore do
   end
 
   @doc """
-  List all session URIs this message has been routed into.
+  The session URI(s) this message belongs to.
 
-  Phase 3 multi-session helper — for D8 ref/session_uris consistency
-  check in `Ezagent.Behavior.Session.handle_kind_message/3`.
+  Post message-session-scoping (2026-06-21): a message belongs to exactly ONE
+  session, so this returns a 0- or 1-element list of the session-URI string
+  (preserving the prior `[String.t()]` contract for callers like the uploads
+  download-auth flow). Cross-session forwarding creates a NEW message in the
+  target session, so there is never more than one.
   """
   @spec sessions_for_message(String.t()) :: [String.t()]
   def sessions_for_message(message_id) when is_binary(message_id) do
-    from(r in MessageRouting,
-      where: r.message_id == ^message_id,
-      select: r.session_uri
-    )
-    |> Repo.all()
+    case Repo.get(Message, message_id) do
+      %Message{session_uri: %URI{} = s} -> [URI.to_string(s)]
+      %Message{session_uri: s} when is_binary(s) -> [s]
+      _ -> []
+    end
   end
 end

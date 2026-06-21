@@ -61,6 +61,10 @@ defmodule Ezagent.Socialware.AnonBinding do
     # the row survives (as the retry record) until the reap completes, then is
     # hard-deleted. See `claim_for_reaping/3`.
     field(:reaping_at, :utc_datetime_usec)
+    # anon-user PR-2 — durable login-merge claim. Non-null while the anon
+    # footprint is being physically relabelled to the confirmed login entity.
+    field(:merging_to, :string)
+    field(:merge_state, :string)
 
     timestamps()
   end
@@ -71,6 +75,8 @@ defmodule Ezagent.Socialware.AnonBinding do
           workspace_uri: String.t(),
           last_seen_at: DateTime.t(),
           reaping_at: DateTime.t() | nil,
+          merging_to: String.t() | nil,
+          merge_state: String.t() | nil,
           inserted_at: DateTime.t(),
           updated_at: DateTime.t()
         }
@@ -306,6 +312,130 @@ defmodule Ezagent.Socialware.AnonBinding do
     e -> {:error, e}
   end
 
+  @merge_claimed "claimed"
+  @merge_states ~w(claimed session_merged read_markers_repointed messages_relabelled caps_mounted verified)
+
+  @doc """
+  Claim an anon binding for an in-flight anon→login merge.
+
+  The claim is durable and idempotent: the first caller stamps
+  `merging_to` + `merge_state = "claimed"`, repeat callers for the same
+  target get `{:ok, :already_claimed}`, and a different target is rejected.
+  The row is never deleted here; it remains the repair record until the
+  orchestrator verifies convergence and retires the anon.
+  """
+  @spec claim_for_merge(URI.t() | String.t(), URI.t(), DateTime.t()) ::
+          {:ok, :claimed | :already_claimed} | {:error, term()}
+  def claim_for_merge(%URI{} = entity_uri, %URI{} = to_uri, %DateTime{} = now) do
+    with :ok <- validate_anon(entity_uri) do
+      claim_for_merge(URI.to_string(entity_uri), to_uri, now)
+    end
+  end
+
+  def claim_for_merge(entity_uri, %URI{} = to_uri, %DateTime{} = now)
+      when is_binary(entity_uri) do
+    with {:ok, parsed_entity_uri} <- Ezagent.URI.parse(entity_uri),
+         :ok <- validate_anon(parsed_entity_uri),
+         :ok <- validate_login_target(to_uri),
+         {:ok, to_workspace} <- entity_workspace(to_uri) do
+      do_claim_for_merge(entity_uri, URI.to_string(to_uri), to_workspace, now)
+    end
+  end
+
+  defp do_claim_for_merge(entity_uri, to_str, to_workspace, now) do
+    query =
+      from(b in __MODULE__,
+        where:
+          b.entity_uri == ^entity_uri and b.workspace_uri == ^to_workspace and
+            is_nil(b.reaping_at) and is_nil(b.merging_to),
+        update: [set: [merging_to: ^to_str, merge_state: ^@merge_claimed, updated_at: ^now]]
+      )
+
+    case Repo.update_all(query, []) do
+      {1, _} ->
+        {:ok, :claimed}
+
+      {0, _} ->
+        case get(entity_uri) do
+          nil ->
+            {:error, :not_found}
+
+          %__MODULE__{workspace_uri: ws} when ws != to_workspace ->
+            {:error, {:cross_workspace, entity_uri, to_workspace}}
+
+          %__MODULE__{reaping_at: reaping_at} when not is_nil(reaping_at) ->
+            {:error, {:reaping, entity_uri}}
+
+          %__MODULE__{merging_to: ^to_str} ->
+            {:ok, :already_claimed}
+
+          %__MODULE__{merging_to: other} when is_binary(other) ->
+            {:error, {:merge_conflict, other}}
+
+          %__MODULE__{} ->
+            {:error, :claim_failed}
+        end
+    end
+  rescue
+    e -> {:error, e}
+  end
+
+  @doc """
+  Advance the durable merge state for an already-claimed binding.
+
+  States are intentionally coarse and idempotent; a repair pass can re-run the
+  step named by the current state and then advance again.
+  """
+  @spec mark_merge_state(URI.t() | String.t(), atom() | String.t()) ::
+          {:ok, :updated | :already_state} | {:error, term()}
+  def mark_merge_state(%URI{} = entity_uri, state),
+    do: mark_merge_state(URI.to_string(entity_uri), state)
+
+  def mark_merge_state(entity_uri, state) when is_binary(entity_uri) do
+    with {:ok, state_str} <- normalize_merge_state(state) do
+      now = DateTime.utc_now()
+
+      query =
+        from(b in __MODULE__,
+          where: b.entity_uri == ^entity_uri and not is_nil(b.merging_to),
+          update: [set: [merge_state: ^state_str, updated_at: ^now]]
+        )
+
+      case get(entity_uri) do
+        nil ->
+          {:error, :not_found}
+
+        %__MODULE__{merging_to: nil} ->
+          {:error, :not_claimed}
+
+        %__MODULE__{merge_state: ^state_str} ->
+          {:ok, :already_state}
+
+        %__MODULE__{} ->
+          case Repo.update_all(query, []) do
+            {0, _} -> {:error, :not_claimed}
+            {n, _} when n >= 1 -> {:ok, :updated}
+          end
+      end
+    end
+  rescue
+    e -> {:error, e}
+  end
+
+  @doc """
+  In-flight merge rows that a repair pass should re-run.
+  """
+  @spec list_merge_repair_candidates() :: [t()]
+  def list_merge_repair_candidates do
+    Repo.all(
+      from(b in __MODULE__,
+        where:
+          not is_nil(b.merging_to) and (is_nil(b.merge_state) or b.merge_state != "verified"),
+        order_by: [asc: b.updated_at, asc: b.entity_uri]
+      )
+    )
+  end
+
   @doc """
   Unconditionally delete the binding for `entity_uri`. Structured outcome (issue #53):
 
@@ -328,5 +458,36 @@ defmodule Ezagent.Socialware.AnonBinding do
     end
   rescue
     e -> {:error, e}
+  end
+
+  defp validate_login_target(%URI{} = to_uri) do
+    cond do
+      not Ezagent.URI.type?(to_uri, :user) ->
+        {:error, {:not_user, to_uri}}
+
+      AnonUser.anon_uri?(to_uri) ->
+        {:error, {:not_confirmed_login, to_uri}}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp entity_workspace(%URI{} = uri) do
+    case Ezagent.URI.workspace_of(uri) do
+      %URI{} = ws -> {:ok, URI.to_string(ws)}
+      :any -> {:error, {:no_workspace, uri}}
+    end
+  end
+
+  defp normalize_merge_state(state) when is_atom(state),
+    do: normalize_merge_state(Atom.to_string(state))
+
+  defp normalize_merge_state(state) when is_binary(state) do
+    if state in @merge_states do
+      {:ok, state}
+    else
+      {:error, {:invalid_merge_state, state}}
+    end
   end
 end
