@@ -343,12 +343,22 @@ defmodule Ezagent.World.IdentityData do
     _ -> nil
   end
 
-  defp can_edit_api_keys?(agent_uri, caller_uri) do
+  # Edit affordance — DERIVED from the real authorization model so the UI hint
+  # can't diverge from the dispatch gate. `Behavior.ApiKeys` authorizes
+  # `:put_api_key`/`:delete_api_key` by data_owner (the agent's creator) or
+  # admin, NOT by an explicitly-held cap; mirror that with the canonical
+  # `Ezagent.Identity.admin?/1` (same shape as the LiveView reference
+  # `agent_api_keys_live.ex`). Never hand-roll an inline caller/admin-principal
+  # equality here — that reconstructs the predicate, drifts from the gate, and
+  # the p13 probe rejects it (#154).
+  defp can_edit_api_keys?(agent_uri, %URI{} = caller_uri) do
     creator_uri = lookup_creator_uri(agent_uri)
 
-    same_uri?(caller_uri, Ezagent.Entity.User.admin_uri()) or
+    Ezagent.Identity.admin?(caller_uri) or
       (not is_nil(creator_uri) and same_uri?(caller_uri, creator_uri))
   end
+
+  defp can_edit_api_keys?(_agent_uri, _caller), do: false
 
   defp list_extensions(%URI{} = agent_uri, caller_uri, caller_caps) do
     with {:ok, template_class} <-

@@ -240,12 +240,15 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
     %{
       id: :p13,
       desc:
-        "authz via hardcoded admin-principal equality (e.g. `caller == admin_uri()`) — the " <>
-          "manage/admin decision must be a cap check at the dispatch chokepoint (hold the " <>
-          "`:manage`/admin cap), NOT a hand-written comparison to a fixed principal. A UI " <>
-          "affordance flag must mirror the cap, not reimplement a narrower hardcoded one. " <>
-          "Zero occurrences on main (2026-06-21) — regression-lock so caller==principal shortcuts fail.",
-      pattern: ~r/==.*admin_uri\(\)|admin_uri\(\)\s*==/,
+        "authz via hardcoded admin-principal equality (e.g. `caller == admin_uri()` OR the " <>
+          "helper-form `same_uri?(caller, admin_uri())`) — the manage/admin decision must be a " <>
+          "cap check at the dispatch chokepoint (hold the `:manage`/admin cap) or go through the " <>
+          "canonical `Ezagent.Identity.admin?/1`, NOT a hand-written comparison to a fixed " <>
+          "principal. A UI affordance flag must mirror the cap/`admin?`, not reimplement a " <>
+          "narrower hardcoded one. The `same_uri?(_, admin_uri())` branch was added 2026-06-21 " <>
+          "after the world plugin used it to evade the bare-`==` form (#154). " <>
+          "Zero occurrences on main — regression-lock so caller==principal shortcuts fail.",
+      pattern: ~r/==.*admin_uri\(\)|admin_uri\(\)\s*==|same_uri\?\([^)]*admin_uri\(\)/,
       allowlist: [
         # The canonical admin-definition home — these MUST compare to admin_uri:
         #   `Ezagent.Identity.admin?/1` is the single sanctioned "is this the admin?"

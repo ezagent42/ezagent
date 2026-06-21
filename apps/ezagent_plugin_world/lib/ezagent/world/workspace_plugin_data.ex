@@ -54,8 +54,13 @@ defmodule Ezagent.World.WorkspacePluginData do
     Map.put(base, "plugins", list_plugins())
   end
 
-  defp component_state(%{component: "profile"}, base, _workspace_uri, caller_uri, caller_caps) do
-    entity_uri = caller_uri || Ezagent.Entity.User.admin_uri()
+  defp component_state(%{component: "profile"}, base, _workspace_uri, %URI{} = caller_uri, caller_caps) do
+    # Every world route is behind `live_session :world_require_entity`
+    # (`LiveAuth.:require_entity` redirects+halts a nil entity), so the profile
+    # caller is ALWAYS a real authenticated entity. No `|| admin_uri()` default:
+    # let it crash on the impossible nil rather than silently leak admin's
+    # profile/caps to an unauthenticated caller (#154 / let-it-crash).
+    entity_uri = caller_uri
     entity_uri_str = encode_uri(entity_uri)
 
     base
