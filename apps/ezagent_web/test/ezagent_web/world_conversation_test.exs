@@ -76,6 +76,31 @@ defmodule EzagentWeb.WorldConversationTest do
     assert pushed["id"] == msg.id
   end
 
+  test "inbound bridge subscribes to the VIEWED session even when it is cold", %{conn: conn} do
+    # Regression for the PR-1 E2E bug: subscribing only to the live
+    # `list_sessions/1` set missed a viewed session that was not yet a live
+    # Kind (cold after a server restart), so the sender never saw their own
+    # `:cast` message. The conversation route must subscribe to the in-view
+    # session regardless of liveness. This session URI is never spawned, so it
+    # is absent from the live registry — yet a broadcast on its topic must
+    # still reach the island.
+    cold_uri = Ezagent.URI.new!("session://system/default/cold-#{System.unique_integer([:positive])}")
+    encoded = cold_uri |> URI.to_string() |> URI.encode_www_form()
+
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+
+    msg = Ezagent.Message.new(Ezagent.Entity.User.admin_uri(), %{text: "cold-session-inbound"})
+
+    Phoenix.PubSub.broadcast(
+      EzagentCore.PubSub,
+      SessionBehavior.session_events_topic(cold_uri),
+      {:chat_message, cold_uri, msg}
+    )
+
+    assert_push_event(view, "chat:message", %{"message" => pushed})
+    assert pushed["text"] == "cold-session-inbound"
+  end
+
   test "inbound chat for a FOREIGN session is dropped by the source guard", %{conn: conn} do
     session_uri = world_session_uri()
     encoded = session_uri |> URI.to_string() |> URI.encode_www_form()

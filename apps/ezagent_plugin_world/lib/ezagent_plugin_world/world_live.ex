@@ -18,15 +18,17 @@ defmodule EzagentPluginWorld.WorldLive do
     sessions = list_sessions(workspace)
     current_session_uri = List.first(sessions)
 
-    # Inbound realtime bridge (parity-migration PR-1): subscribe to EVERY
-    # session in the caller's workspace at mount and filter by source in
-    # `handle_info`, mirroring AdminLive's subscription model. Session
-    # switching is a `push_patch` → `handle_params` (current-session swap
-    # + reload), so it touches NO subscriptions — there is no per-switch
-    # teardown/resubscribe race that could silently drop a message. The
-    # composer dispatch is `:cast`, so the sender sees its OWN message only
-    # via this inbound broadcast; subscribe-at-mount guarantees that.
-    socket = subscribe_session_events(socket, sessions)
+    # Inbound realtime bridge (parity-migration PR-1): the conversation route
+    # subscribes (in `handle_params`) to the CURRENTLY-VIEWED session's events
+    # topic and filters by source in `handle_info`. Subscriptions accumulate
+    # in `:subscribed_topics` and are NEVER torn down — a switch (push_patch →
+    # handle_params) just adds the new topic, so there is no teardown/
+    # resubscribe race that could silently drop a message; the source guard
+    # ensures only the in-view session renders. The composer dispatch is
+    # `:cast`, so the sender sees its OWN message only via this broadcast —
+    # subscribing to the viewed session (even a cold one not yet in the live
+    # `list_sessions/1`) is what makes that work.
+    socket = assign(socket, :subscribed_topics, MapSet.new())
 
     caller_payload = %{
       "entity_uri" => encode_uri(caller),
@@ -78,9 +80,12 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   # Conversation deep-link (`/sessions?session=<encoded>`) selects the
-  # in-view session; the inbound `:chat_message` filter compares against it.
+  # in-view session; the inbound `:chat_message` filter compares against it,
+  # and we subscribe to its events topic so a `:cast` send (and any other
+  # member's message) reaches the island.
   defp maybe_set_current_session(socket, %{component: "conversation", session_uri: %URI{} = uri}) do
     socket
+    |> ensure_session_subscribed(uri)
     |> assign(:current_session_uri, uri)
     |> assign(:current_session_uri_str, encode_uri(uri))
   end
@@ -557,17 +562,20 @@ defmodule EzagentPluginWorld.WorldLive do
   # against core/domain survivors so the LiveView plugin can be deleted at
   # parity-migration PR-7 (world carries ZERO references to it — grep gate).
 
-  defp subscribe_session_events(socket, sessions) do
-    if connected?(socket) do
-      for %URI{} = session_uri <- sessions do
-        Phoenix.PubSub.subscribe(
-          EzagentCore.PubSub,
-          Ezagent.Behavior.Session.session_events_topic(session_uri)
-        )
-      end
-    end
+  # Subscribe to a session's events topic exactly once (deduped via
+  # `:subscribed_topics`), accumulating across switches with no teardown.
+  # Pre-connect mounts are skipped; `handle_params` re-runs on the connected
+  # mount, so the live view always ends up subscribed.
+  defp ensure_session_subscribed(socket, %URI{} = session_uri) do
+    topic = Ezagent.Behavior.Session.session_events_topic(session_uri)
+    subscribed = Map.get(socket.assigns, :subscribed_topics, MapSet.new())
 
-    socket
+    if connected?(socket) and not MapSet.member?(subscribed, topic) do
+      Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
+      assign(socket, :subscribed_topics, MapSet.put(subscribed, topic))
+    else
+      socket
+    end
   end
 
   defp conversation_session_param(params) when is_map(params) do
