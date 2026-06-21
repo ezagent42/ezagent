@@ -35,16 +35,15 @@ defmodule EzagentCli.TreeBuilder do
       |> Enum.reject(fn {_, t} -> is_nil(t) end)
       |> Map.new()
 
-    by_kind =
+    by_type =
       behavior_triples
       |> Enum.filter(fn {{kind_mod, _action}, _bhv} -> Map.has_key?(kind_to_type, kind_mod) end)
-      |> Enum.group_by(fn {{kind_mod, _action}, _bhv} -> kind_mod end)
+      |> Enum.group_by(fn {{kind_mod, _action}, _bhv} -> Map.fetch!(kind_to_type, kind_mod) end)
 
     kind_subcommands =
-      by_kind
-      |> Enum.map(fn {kind_module, actions} ->
-        type_name = Map.fetch!(kind_to_type, kind_module)
-        {type_name, kind_subcommand(kind_module, type_name, actions)}
+      by_type
+      |> Enum.map(fn {type_name, actions} ->
+        {type_name, kind_subcommand(type_name, actions)}
       end)
 
     type_names_in_use = MapSet.new(Map.values(kind_to_type))
@@ -71,10 +70,16 @@ defmodule EzagentCli.TreeBuilder do
     )
   end
 
-  defp kind_subcommand(kind_module, type_name, actions) do
+  defp kind_subcommand(type_name, actions) do
     action_subs =
       actions
-      |> Enum.map(fn {{_kind, action}, behavior_module} ->
+      |> Enum.group_by(fn {{_kind, action}, _behavior_module} -> action end)
+      |> Enum.map(fn {action, candidates} ->
+        {{kind_module, _action}, behavior_module} =
+          Enum.min_by(candidates, fn {{kind_module, _action}, behavior_module} ->
+            {kind_priority(kind_module), inspect(kind_module), inspect(behavior_module)}
+          end)
+
         {action, action_subcommand(kind_module, type_name, behavior_module, action)}
       end)
 
@@ -238,6 +243,13 @@ defmodule EzagentCli.TreeBuilder do
       end
     else
       nil
+    end
+  end
+
+  defp kind_priority(kind_mod) do
+    case Module.split(kind_mod) do
+      ["Ezagent", "Entity" | _] -> 0
+      _ -> 1
     end
   end
 end

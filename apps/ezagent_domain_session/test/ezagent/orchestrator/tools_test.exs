@@ -22,6 +22,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
 
   @expected [
     :add_managed_member,
+    :add_participant,
     :update_member_template,
     :remove_member,
     :define_rule_set_rule,
@@ -93,6 +94,11 @@ defmodule Ezagent.Orchestrator.ToolsTest do
                )
     end
 
+    test "add_participant surfaces :missing_opt for required ctx" do
+      assert {:error, {:missing_opt, :caller}} =
+               Tools.add_participant("entity://system/user/operator", "operator", [])
+    end
+
     test "remove_member surfaces :missing_opt for required ctx" do
       assert {:error, {:missing_opt, :caller}} = Tools.remove_member("role-x", [])
     end
@@ -138,6 +144,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
         {:list_templates, Tools.list_templates()},
         {:add_managed_member,
          Tools.add_managed_member(URI.new!("template://system/agent/x"), "role-x", true, [])},
+        {:add_participant, Tools.add_participant("entity://system/user/operator", "role-x", [])},
         {:update_member_template,
          Tools.update_member_template("role-x", URI.new!("template://system/agent/t2"), [])},
         {:remove_member, Tools.remove_member("role-x", [])},

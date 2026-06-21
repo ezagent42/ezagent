@@ -141,5 +141,29 @@ defmodule Ezagent.PluginCurlAgent.TemplateTest do
                "max_history" => 4
              }
     end
+
+    test "fails loud for non-optional manifest tools because curl has no MCP transport" do
+      resolved = %{
+        instructions: "Acknowledge the customer briefly.",
+        tools: [
+          %{
+            name: "notify_owner",
+            type: :action,
+            action: "entity://system/user/admin?action=notifications.notify",
+            caps: [%{"kind" => "user"}],
+            optional: false
+          }
+        ]
+      }
+
+      params = %{
+        "provider" => "deepseek",
+        "api_url" => "https://api.deepseek.com/chat/completions",
+        "model" => "deepseek-chat"
+      }
+
+      assert {:error, {:tools_unsupported, "curl", ["notify_owner"]}} =
+               Template.compile(resolved, params)
+    end
   end
 end

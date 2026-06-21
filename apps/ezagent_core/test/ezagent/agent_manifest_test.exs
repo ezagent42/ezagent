@@ -46,6 +46,72 @@ defmodule Ezagent.AgentManifestTest do
       assert manifest.executor.params == %{"provider" => "deepseek", "model" => "deepseek-chat"}
     end
 
+    test "normalizes action and participant tool declarations" do
+      input = %{
+        name: "dispatcher",
+        soul: "Act.",
+        tools: [
+          %{
+            "name" => "notify_owner",
+            "type" => "action",
+            "action" => "entity://system/user/admin?action=notifications.notify",
+            "caps" => [%{"kind" => "user"}]
+          },
+          %{
+            name: "add_operator",
+            type: :participant,
+            ref: "entity://system/user/operator",
+            role_name: "operator",
+            optional: true
+          }
+        ],
+        caps: [],
+        executor: %{flavor: ["cc"], params: %{"project_cwd" => "/tmp/project"}}
+      }
+
+      assert {:ok, manifest} = AgentManifest.load(input)
+
+      assert [
+               %{
+                 name: "notify_owner",
+                 type: :action,
+                 action: "entity://system/user/admin?action=notifications.notify",
+                 caps: [%{"kind" => "user"}],
+                 optional: false
+               },
+               %{
+                 name: "add_operator",
+                 type: :participant,
+                 ref: "entity://system/user/operator",
+                 role_name: "operator",
+                 optional: true
+               }
+             ] = manifest.tools
+    end
+
+    test "rejects incomplete tool declarations" do
+      base = %{
+        name: "bad-tools",
+        soul: "Act.",
+        caps: [],
+        executor: %{flavor: ["cc"], params: %{"project_cwd" => "/tmp/project"}}
+      }
+
+      assert {:error, {:invalid_tool_decl, 0, {:missing_required, :action}}} =
+               AgentManifest.load(
+                 Map.put(base, :tools, [
+                   %{name: "notify_owner", type: :action, caps: []}
+                 ])
+               )
+
+      assert {:error, {:invalid_tool_decl, 0, {:missing_required, :ref}}} =
+               AgentManifest.load(
+                 Map.put(base, :tools, [
+                   %{name: "add_operator", type: :participant, role_name: "operator"}
+                 ])
+               )
+    end
+
     test "rejects flavor in author fields" do
       input = %{
         name: "bad",

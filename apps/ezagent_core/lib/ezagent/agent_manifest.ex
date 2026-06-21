@@ -54,7 +54,7 @@ defmodule Ezagent.AgentManifest do
          {:ok, name} <- required_string(map, :name),
          {:ok, soul} <- required_string(map, :soul),
          {:ok, skills} <- string_list(map, :skills, []),
-         {:ok, tools} <- map_list(map, :tools, []),
+         {:ok, tools} <- tools(map),
          {:ok, caps} <- list_field(map, :caps, []),
          {:ok, lifecycle} <- lifecycle(map),
          {:ok, executor} <- executor(map) do
@@ -290,16 +290,75 @@ defmodule Ezagent.AgentManifest do
     end
   end
 
-  defp map_list(map, key, default) do
-    with {:ok, values} <- list_field(map, key, default) do
-      Enum.reduce_while(values, {:ok, []}, fn
-        value, {:ok, acc} when is_map(value) -> {:cont, {:ok, [value | acc]}}
-        other, _acc -> {:halt, {:error, {:invalid_list_item, key, other}}}
+  defp tools(map) do
+    with {:ok, values} <- list_field(map, :tools, []) do
+      values
+      |> Enum.with_index()
+      |> Enum.reduce_while({:ok, []}, fn {value, index}, {:ok, acc} ->
+        case normalize_tool_decl(value) do
+          {:ok, tool} -> {:cont, {:ok, [tool | acc]}}
+          {:error, reason} -> {:halt, {:error, {:invalid_tool_decl, index, reason}}}
+        end
       end)
       |> case do
         {:ok, values} -> {:ok, Enum.reverse(values)}
         {:error, _} = err -> err
       end
+    end
+  end
+
+  defp normalize_tool_decl(%{} = raw) do
+    with {:ok, name} <- required_string(raw, :name),
+         {:ok, type} <- tool_type(raw) do
+      optional = get_key(raw, :optional, false) == true
+
+      case type do
+        :action ->
+          with {:ok, action} <- required_string(raw, :action),
+               {:ok, caps} <- list_field(raw, :caps, []) do
+            {:ok,
+             %{
+               name: name,
+               type: :action,
+               action: action,
+               caps: caps,
+               optional: optional
+             }}
+          end
+
+        :participant ->
+          with {:ok, ref} <- required_string(raw, :ref) do
+            tool = %{
+              name: name,
+              type: :participant,
+              ref: ref,
+              optional: optional
+            }
+
+            {:ok, maybe_put_role_name(tool, raw)}
+          end
+      end
+    end
+  end
+
+  defp normalize_tool_decl(other), do: {:error, {:invalid_tool, other}}
+
+  defp tool_type(raw) do
+    case fetch_key(raw, :type) do
+      {:ok, value} when value in ["action", :action] -> {:ok, :action}
+      {:ok, value} when value in ["participant", :participant] -> {:ok, :participant}
+      {:ok, other} -> {:error, {:invalid_tool_type, other}}
+      :error -> {:error, {:missing_required, :type}}
+    end
+  end
+
+  defp maybe_put_role_name(tool, raw) do
+    case fetch_key(raw, :role_name) do
+      {:ok, role_name} when is_binary(role_name) and role_name != "" ->
+        Map.put(tool, :role_name, role_name)
+
+      _ ->
+        tool
     end
   end
 
