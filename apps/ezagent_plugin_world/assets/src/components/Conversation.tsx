@@ -1,7 +1,14 @@
 import React from "react"
-import {ChevronUp, Send} from "lucide-react"
+import {ChevronUp, Paperclip, Send, X} from "lucide-react"
 
 import {Button} from "./ui/primitives"
+
+// Server-rendered attachment: an uploads URI carries a signed download `href`
+// (`message_row/2`); any other value renders as a plain label (`href: null`).
+type Attachment = {
+  name: string
+  href?: string | null
+}
 
 type MessageRow = {
   id: string
@@ -9,9 +16,22 @@ type MessageRow = {
   sender_display?: string | null
   sender_kind?: string | null
   text?: string | null
-  attachments?: string[]
+  attachments?: Attachment[]
   at?: string | null
 }
+
+// A file uploaded to the cap-authed endpoint, held until the next send. `grant`
+// is the signed attach-token the server verifies before embedding the URI
+// (PR-2b anti-laundering). Removing a pending entry IS `cancel_upload` (purely
+// client state — the byte is already stored; a future GC reaps unreferenced).
+type Pending = {
+  id: string
+  name: string
+  grant: string
+}
+
+const MAX_FILE_BYTES = 10 * 1024 * 1024
+const MAX_FILES = 5
 
 type SessionRow = {
   uri: string
@@ -36,7 +56,7 @@ export type ConversationState = {
 
 type Props = {
   state: ConversationState
-  onSend: (sessionUri: string, text: string) => void
+  onSend: (sessionUri: string, text: string, grants: string[]) => void
   onSwitch: (sessionUri: string) => void
   onLoadOlder: (sessionUri: string, before: string) => void
   onMarkDisplayed: (sessionUri: string, msgId: string) => void
@@ -58,8 +78,12 @@ export function Conversation({state, onSend, onSwitch, onLoadOlder, onMarkDispla
   const [oldestCursor, setOldestCursor] = React.useState<string | null>(state.oldest_cursor || null)
   const [text, setText] = React.useState("")
   const [mentionQuery, setMentionQuery] = React.useState<string | null>(null)
+  const [pending, setPending] = React.useState<Pending[]>([])
+  const [uploadError, setUploadError] = React.useState<string | null>(null)
+  const [uploading, setUploading] = React.useState(false)
   const scrollRef = React.useRef<HTMLDivElement | null>(null)
   const inputRef = React.useRef<HTMLTextAreaElement | null>(null)
+  const fileRef = React.useRef<HTMLInputElement | null>(null)
   const markedRef = React.useRef<Set<string>>(new Set())
 
   // @mention autocomplete: the open token is the @word immediately before the
@@ -148,12 +172,72 @@ export function Conversation({state, onSend, onSwitch, onLoadOlder, onMarkDispla
     }
   }, [messages, sessionUri, onMarkDisplayed])
 
+  // Upload files to the cap-authed endpoint (parity: chat_compose attachments).
+  // Pre-flight validate (parity: validate_compose) before any POST: file count
+  // and per-file size are checked client-side for a friendly inline error; the
+  // server re-enforces both (never trusts the client).
+  const uploadFiles = async (files: File[]) => {
+    setUploadError(null)
+    if (!sessionUri || files.length === 0) return
+
+    if (pending.length + files.length > MAX_FILES) {
+      setUploadError(`At most ${MAX_FILES} attachments per message.`)
+      return
+    }
+
+    const oversize = files.find((f) => f.size > MAX_FILE_BYTES)
+    if (oversize) {
+      setUploadError(`"${oversize.name}" exceeds the 10 MB limit.`)
+      return
+    }
+
+    const csrf = document.querySelector("meta[name='csrf-token']")?.getAttribute("content") || ""
+
+    setUploading(true)
+    try {
+      for (const file of files) {
+        const form = new FormData()
+        form.append("session", sessionUri)
+        form.append("file", file)
+
+        const res = await fetch("/world/uploads", {
+          method: "POST",
+          headers: {"x-csrf-token": csrf},
+          body: form,
+          credentials: "same-origin",
+        })
+
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as {error?: string}
+          setUploadError(body.error || `Upload of "${file.name}" failed (${res.status}).`)
+          continue
+        }
+
+        const data = (await res.json()) as {name?: string; grant?: string}
+        if (data.grant) {
+          setPending((cur) => [...cur, {id: `${Date.now()}-${cur.length}`, name: data.name || file.name, grant: data.grant!}])
+        }
+      }
+    } catch (_e) {
+      setUploadError("Upload failed — network error.")
+    } finally {
+      setUploading(false)
+      if (fileRef.current) fileRef.current.value = ""
+    }
+  }
+
+  // cancel_upload parity: drop a pending attachment (client-only).
+  const removePending = (id: string) => setPending((cur) => cur.filter((p) => p.id !== id))
+
   const submit = (event: React.FormEvent) => {
     event.preventDefault()
     const trimmed = text.trim()
-    if (!trimmed || !sessionUri) return
-    onSend(sessionUri, trimmed)
+    // Parity: a message needs text OR at least one attachment.
+    if ((!trimmed && pending.length === 0) || !sessionUri) return
+    onSend(sessionUri, trimmed, pending.map((p) => p.grant))
     setText("")
+    setPending([])
+    setUploadError(null)
   }
 
   const loadOlder = () => {
@@ -219,7 +303,16 @@ export function Conversation({state, onSend, onSwitch, onLoadOlder, onMarkDispla
                 {message.attachments && message.attachments.length > 0 && (
                   <ul className="world-message-attachments">
                     {message.attachments.map((attachment, index) => (
-                      <li key={`${message.id}-att-${index}`}>{attachment}</li>
+                      <li key={`${message.id}-att-${index}`}>
+                        {attachment.href ? (
+                          <a href={attachment.href} className="world-attachment-link">
+                            <Paperclip aria-hidden="true" />
+                            {attachment.name}
+                          </a>
+                        ) : (
+                          attachment.name
+                        )}
+                      </li>
                     ))}
                   </ul>
                 )}
@@ -272,11 +365,51 @@ export function Conversation({state, onSend, onSwitch, onLoadOlder, onMarkDispla
             rows={2}
             aria-label="Message"
           />
+          {pending.length > 0 && (
+            <ul className="world-composer-chips" aria-label="Pending attachments">
+              {pending.map((p) => (
+                <li key={p.id} className="world-composer-chip">
+                  <Paperclip aria-hidden="true" />
+                  <span className="world-composer-chip-name">{p.name}</span>
+                  <button
+                    type="button"
+                    className="world-composer-chip-remove"
+                    aria-label={`Remove ${p.name}`}
+                    onClick={() => removePending(p.id)}
+                  >
+                    <X aria-hidden="true" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {uploadError && <p className="world-composer-error" role="alert">{uploadError}</p>}
         </div>
-        <Button type="submit" size="sm" disabled={!text.trim()}>
-          <Send aria-hidden="true" />
-          Send
-        </Button>
+        <div className="world-composer-actions">
+          <input
+            ref={fileRef}
+            type="file"
+            multiple
+            className="world-composer-file"
+            onChange={(event) => uploadFiles(Array.from(event.target.files || []))}
+            aria-hidden="true"
+            tabIndex={-1}
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            disabled={uploading || pending.length >= MAX_FILES}
+            onClick={() => fileRef.current?.click()}
+            aria-label="Attach files"
+          >
+            <Paperclip aria-hidden="true" />
+          </Button>
+          <Button type="submit" size="sm" disabled={uploading || (!text.trim() && pending.length === 0)}>
+            <Send aria-hidden="true" />
+            Send
+          </Button>
+        </div>
       </form>
       </section>
 

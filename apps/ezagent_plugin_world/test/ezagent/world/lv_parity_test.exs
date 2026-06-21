@@ -80,8 +80,12 @@ defmodule Ezagent.World.LvParityTest do
   # member_joined / member_left / member_offline / member_presence — now
   # re-reads the session members and pushes them to the React panel. invite/
   # remove (the WRITE side) is PR-3b.
+  # PR-2b (file upload) landed: the React composer uploads via the cap-authed
+  # `POST /world/uploads` → `:session :attach` chokepoint, holds pending
+  # attachment chips, and sends signed grants on `chat.send`:
+  #   validate_compose — client-side pre-flight (size/count) before POST.
+  #   cancel_upload    — ✕ on a pending chip drops it (client-only).
   @pending_migration ~w(
-    validate_compose cancel_upload
     create_session switch_view switch_to_pty_for_agent
     invite_member open_invite_modal close_invite_modal remove_member
     restart_orchestrator routing_rule_add_session routing_rule_toggle
@@ -93,7 +97,7 @@ defmodule Ezagent.World.LvParityTest do
     slice_changed audit_event authz_event
   )
 
-  @pending_baseline 35
+  @pending_baseline 33
 
   test "LV inventory has not silently shrunk below the recorded baseline" do
     assert length(@lv_events) >= @lv_events_baseline,

@@ -151,10 +151,10 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
                     args: {agent},
                   })
                 },
-                onChatSend: (sessionUri, text) => {
+                onChatSend: (sessionUri, text, grants) => {
                   pushEvent?.("world:dispatch", {
                     action: "chat.send",
-                    args: {session_uri: sessionUri, text},
+                    args: {session_uri: sessionUri, text, grants},
                   })
                 },
                 onSessionSwitch: (sessionUri) => {
@@ -202,7 +202,7 @@ type RenderContext = {
   onJoin: (sessionUri: string) => void
   onManageLayout: (layout: WorldLayout) => void
   onCreateAgent: (agent: Record<string, unknown>) => void
-  onChatSend: (sessionUri: string, text: string) => void
+  onChatSend: (sessionUri: string, text: string, grants: string[]) => void
   onSessionSwitch: (sessionUri: string) => void
   onLoadOlder: (sessionUri: string, before: string) => void
   onMarkDisplayed: (sessionUri: string, msgId: string) => void
