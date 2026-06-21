@@ -208,7 +208,7 @@ defmodule Ezagent.Orchestrator.McpServer.ToolCatalog do
           "properties" => %{
             "target_session_template_uri" => %{
               "type" => "string",
-              "description" => "Immutable template://.../session/<name>@<hash> target."
+              "description" => "Immutable session-template target URI (the versioned @hash form)."
             }
           },
           "required" => ["target_session_template_uri"]

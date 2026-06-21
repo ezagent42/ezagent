@@ -626,8 +626,15 @@ defmodule Ezagent.Entity.AgentTemplate do
 
   defp workspace_segment(%URI{scheme: "workspace"} = uri), do: Ezagent.URI.name!(uri)
 
-  defp workspace_segment(workspace) when is_binary(workspace),
-    do: workspace |> Ezagent.URI.new!() |> Ezagent.URI.name!()
+  # Accept either a full `workspace://<name>` URI string or an already-bare
+  # `<name>`. Parse-and-extract when it is a workspace URI; otherwise it is
+  # already the bare segment. (Avoids a raw `workspace://` literal — uri_query gate.)
+  defp workspace_segment(workspace) when is_binary(workspace) do
+    case Ezagent.URI.parse(workspace) do
+      {:ok, %URI{scheme: "workspace"} = uri} -> Ezagent.URI.name!(uri)
+      _ -> workspace
+    end
+  end
 
   defp workspace_segment(_), do: nil
 
