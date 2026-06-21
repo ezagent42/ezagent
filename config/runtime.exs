@@ -69,6 +69,7 @@ if config_env() == :prod do
     check_origin:
       [
         "https://app.ezagent.chat",
+        "https://world.ezagent.chat",
         "http://100.64.0.27:10042",
         "http://localhost:10042",
         "http://127.0.0.1:10042"
