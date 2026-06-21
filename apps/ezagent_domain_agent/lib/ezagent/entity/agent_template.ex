@@ -235,7 +235,8 @@ defmodule Ezagent.Entity.AgentTemplate do
     with {:ok, tc} <- resolve_template_class(content),
          {:ok, cwd} <- fetch_project_cwd(content),
          {:ok, config_dir} <- fetch_config_dir(content),
-         {:ok, cascade} <- fetch_cascade(content) do
+         {:ok, cascade} <- fetch_cascade(content),
+         {:ok, extra} <- template_extra(tc, content) do
       # config_dir promotion (PR-2, Allen 2026-06-03): config_dir is UNIVERSAL —
       # every flavor's config-home dir is emitted here under the neutral
       # `"config_dir"` data key. nil ⇒ dropped. The cc Template Class reads this
@@ -263,13 +264,6 @@ defmodule Ezagent.Entity.AgentTemplate do
         # path can grant the caps. Absent → omitted. Reads atom OR string keys.
         |> put_universal_desired(content, :desired_skills)
         |> put_universal_desired(content, :desired_caps)
-
-      extra =
-        if function_exported?(tc, :template_data_extra, 1) do
-          tc.template_data_extra(content)
-        else
-          %{}
-        end
 
       data = merge_template_extra(base, extra)
 
@@ -373,6 +367,43 @@ defmodule Ezagent.Entity.AgentTemplate do
 
   defp validate_for_flavor(tc, data) do
     if function_exported?(tc, :validate, 1), do: tc.validate(data), else: :ok
+  end
+
+  defp template_extra(tc, content) do
+    case manifest_compile_payload(content) do
+      {:ok, resolved, params} ->
+        if function_exported?(tc, :compile, 2) do
+          tc.compile(resolved, params)
+        else
+          {:error, {:compile_not_supported, tc}}
+        end
+
+      :none ->
+        if function_exported?(tc, :template_data_extra, 1) do
+          {:ok, tc.template_data_extra(content)}
+        else
+          {:ok, %{}}
+        end
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp manifest_compile_payload(content) do
+    resolved = content_get(content, :agent_manifest_resolved)
+    params = content_get(content, :agent_manifest_params)
+
+    cond do
+      is_nil(resolved) and is_nil(params) ->
+        :none
+
+      is_map(resolved) and (is_nil(params) or is_map(params)) ->
+        {:ok, resolved, params || %{}}
+
+      true ->
+        {:error, {:invalid_agent_manifest_compile_payload, resolved, params}}
+    end
   end
 
   # PR-2 (domain.agent): `project_cwd` is the universal "where the agent works /

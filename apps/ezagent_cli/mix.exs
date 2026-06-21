@@ -31,6 +31,7 @@ defmodule EzagentCli.MixProject do
   defp deps do
     [
       {:ezagent_core, in_umbrella: true},
+      {:ezagent_domain_agent, in_umbrella: true},
       {:ezagent_domain_identity, in_umbrella: true},
       {:ezagent_domain_workspace, in_umbrella: true},
       # TEST-ONLY (post-lifecycle remediation): the CLI invariant suites

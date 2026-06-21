@@ -26,6 +26,20 @@ defmodule EzagentCli.Application do
       about: "Create a new Workspace (persists + spawns the Kind)"
     })
 
+    EzagentCli.FacadeRegistry.register(
+      :agent,
+      :spawn_manifest,
+      &EzagentCli.AgentManifestFacade.spawn_manifest_facade/1,
+      %{
+        opts: [
+          manifest: :string,
+          agent: :uri,
+          slots: :string
+        ],
+        about: "Spawn an Agent from an AgentManifest YAML file"
+      }
+    )
+
     :ok
   end
 

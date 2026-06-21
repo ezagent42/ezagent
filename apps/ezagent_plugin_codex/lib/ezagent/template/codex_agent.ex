@@ -60,14 +60,13 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   # template_data fields, so an orchestrator-spawned codex worker carries
   # its model/approval/sandbox (pre-fix dropped by core's cc-only mapping).
   # `bridge_ws_url`/`codex_path` feed sidecar/app-server paths — emit them
-  # ONLY as non-empty binaries (codex review MED) so a stray empty value
-  # never reaches the runtime. nil values dropped by the caller.
+  # ONLY as non-empty binaries; nil values dropped by the caller.
   @impl Ezagent.Kind.Template
   def template_data_extra(content) when is_map(content) do
     %{
-      "model" => content_field(content, :model),
-      "approval_policy" => content_field(content, :approval_policy),
-      "sandbox" => content_field(content, :sandbox)
+      "model" => Ezagent.Kind.Template.content_field(content, :model),
+      "approval_policy" => Ezagent.Kind.Template.content_field(content, :approval_policy),
+      "sandbox" => Ezagent.Kind.Template.content_field(content, :sandbox)
     }
     |> maybe_put_binary(content, :bridge_ws_url, "bridge_ws_url")
     |> maybe_put_binary(content, :codex_path, "codex_path")
@@ -76,14 +75,15 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   def template_data_extra(_), do: %{}
 
   defp maybe_put_binary(map, content, key, str_key) do
-    case content_field(content, key) do
+    case Ezagent.Kind.Template.content_field(content, key) do
       v when is_binary(v) and v != "" -> Map.put(map, str_key, v)
       _ -> map
     end
   end
 
-  # Cleanup-2: shared tolerant content reader lives in core.
-  defp content_field(content, key), do: Ezagent.Kind.Template.content_field(content, key)
+  @impl Ezagent.Kind.Template
+  def compile(resolved, params),
+    do: Ezagent.Kind.Template.compile_codex_agent_data(resolved, params, &template_data_extra/1)
 
   @impl Ezagent.Kind.Template
   def validate(tmpl) when is_map(tmpl) do

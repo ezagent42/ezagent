@@ -26,6 +26,25 @@ defmodule Ezagent.PluginCodex.Template.CodexAgentHomeIsolationTest do
       assert Ezagent.Kind.Template.namespace_of(CodexAgent) == "codex"
     end
 
+    test "purely compiles resolved manifest instructions into codex template data" do
+      resolved = %{instructions: "Inspect the repo before editing.", skills: []}
+
+      params = %{
+        "model" => "gpt-5",
+        "approval_policy" => "on-request",
+        "sandbox" => "workspace-write"
+      }
+
+      assert {:ok, data} = CodexAgent.compile(resolved, params)
+
+      assert data == %{
+               "instructions" => "Inspect the repo before editing.",
+               "model" => "gpt-5",
+               "approval_policy" => "on-request",
+               "sandbox" => "workspace-write"
+             }
+    end
+
     test "copies source codex auth/config into the allocated target home" do
       source = source_codex_home()
       agent_uri = URI.new!("entity://system/agent/codex_home-#{uniq()}")

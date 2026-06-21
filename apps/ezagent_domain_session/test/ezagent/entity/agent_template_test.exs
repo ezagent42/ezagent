@@ -167,6 +167,24 @@ defmodule Ezagent.Entity.AgentTemplateTest do
       assert data["model"] == "deepseek-chat"
     end
 
+    test "manifest-resolved transient content compiles through the flavor callback before validation" do
+      content = %{
+        flavor: "curl",
+        project_cwd: "/tmp/c",
+        agent_manifest_resolved: %{instructions: "Fast ack only.", skills: []},
+        agent_manifest_params: %{
+          "provider" => "deepseek",
+          "api_url" => "https://api.deepseek.com/chat/completions",
+          "model" => "deepseek-chat"
+        }
+      }
+
+      assert {:ok, data} = AgentTemplate.to_template_data(content, @curl_uri)
+      assert data["class"] == "curl.agent"
+      assert data["provider"] == "deepseek"
+      assert data["system_prompt"] == "Fast ack only."
+    end
+
     test "threads codex model/approval/sandbox" do
       content = %{
         flavor: "codex",

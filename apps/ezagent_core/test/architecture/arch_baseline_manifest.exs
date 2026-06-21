@@ -33,14 +33,16 @@
   # arch-cap-bump: PR #783 split steps 5-8 into `ensure_orchestrator_and_finalize/6`
   #   so the step-4.5 orchestrator pre-store can fail-fast ahead of the readiness
   #   gate (a readability seam-split — smaller functions). 29→30.
-  def_count_session_creator: 29, # ratchet-down: #154 extracted the orchestrator owner-notifier cluster → Ezagent.Orchestrator.OwnerNotifier (1071→936 LOC, 35→29 defs) 30→29
+  # ratchet-down: #154 extracted the orchestrator owner-notifier cluster → Ezagent.Orchestrator.OwnerNotifier (1071→936 LOC, 35→29 defs) 30→29
+  def_count_session_creator: 29,
   # arch-cap-bump: #154 genesis collapse — the admin-entity trust root added
   #   `admin_genesis_cap/0` + `admin_genesis_granter/0` (Stage 1) and predicate-A's
   #   `granted_by_entity?/2` clauses + `admin_invariant?/2` clauses + `same_uri?/2`
   #   (Stages 1+3). These are the small, focused recognizer/minter/predicate
   #   functions for the genesis trust root; co-located in capability.ex so minter +
   #   recognizer never drift. 22→28.
-  def_count_capability: 28, # arch-cap-bump: #154 genesis collapse — admin trust-root minter/recognizer/predicate-A fns (see block above) 22→28
+  # arch-cap-bump: #154 genesis collapse — admin trust-root minter/recognizer/predicate-A fns (see block above) 22→28
+  def_count_capability: 28,
   spawn_registry_call_sites: 37,
   # Transport #53 Decision C (codex C-rC-P1): the orchestrator MCP transport
   # (`mcp_server.ex`) references the Session Kind it routes to through the
@@ -48,7 +50,8 @@
   # session (whose `session` spawn fn restarts the per-orchestrator
   # SessionManager) after a BEAM restart. +1 module (sanctioned, so
   # off_chokepoint is unchanged).
-  spawn_registry_modules: 33, # arch-cap-bump: Decision C cold-restart self-heal (cc transport → SpawnRegistry chokepoint)
+  # arch-cap-bump: Decision C cold-restart self-heal (cc transport → SpawnRegistry chokepoint)
+  spawn_registry_modules: 33,
   spawn_registry_off_chokepoint_modules: 25,
   create_session_call_sites: 6,
   create_session_modules: 5,
@@ -185,7 +188,9 @@
   #   a callback's @doc can't leak onto a later def (codex 2026-06-14; +4 real
   #   false-negatives caught). Same-name defs across compile-time branches/quotes
   #   merge conservatively — documented only if EVERY branch is (+1 caught).
-  undocumented_public_defs: 441, # ratchet-down: #154 cleanup deleted Behavior.Presence (its 5 undoc'd public defs) 446→441
+  # ratchet-down: #154 cleanup deleted Behavior.Presence 446→441
+  # arch-cap-bump: pre-existing vs origin/main
+  undocumented_public_defs: 441,
   # dynamic_public_def_heads — `def unquote(name)(...)` heads whose function name
   #   is only known at macro-expansion, so they cannot become a documented
   #   {name, arity} entry. ENFORCED at 0 (the tree has none): adding any new

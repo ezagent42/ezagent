@@ -47,6 +47,16 @@ defmodule Ezagent.AgentFlavorResolver do
       _ ->
         :none
     end
+  rescue
+    error in [DBConnection.ConnectionError, DBConnection.OwnershipError] ->
+      require Logger
+
+      Logger.warning(
+        "AgentFlavorResolver: durable snapshot flavor lookup failed for #{URI.to_string(uri)}: " <>
+          inspect(error.__struct__)
+      )
+
+      :none
   end
 
   @doc """

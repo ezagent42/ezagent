@@ -19,6 +19,14 @@ defmodule Ezagent.Kind.TemplateProvisionTest do
     def instantiate(_name, data, _ws), do: {:ok, [data["agent_uri"]], %{received: data}}
   end
 
+  defmodule FakeKind do
+  end
+
+  defmodule FailingClass do
+    def template_name, do: "failing.agent"
+    def instantiate(_name, _data, _ws), do: {:error, :boom}
+  end
+
   setup do
     tmp =
       Path.join(System.tmp_dir!(), "ezagent-provision-test-#{System.unique_integer([:positive])}")
@@ -63,5 +71,26 @@ defmodule Ezagent.Kind.TemplateProvisionTest do
 
     assert {:error, :config_dir_allocate_missing_agent_uri} =
              Template.provision_and_instantiate(FakeClass, "cc.agent", data, ws())
+  end
+
+  test "does not leave a flavor attribute when instantiate fails" do
+    flavor = "failing-#{System.unique_integer([:positive])}"
+    uri = Ezagent.URI.new!("entity://myws/agent/failing-one")
+
+    :ok =
+      Ezagent.AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: FakeKind,
+        template_class: FailingClass
+      })
+
+    :ok = Ezagent.AgentFlavorAttributes.delete(uri)
+
+    data = %{"agent_uri" => URI.to_string(uri), "cwd" => "/tmp"}
+
+    assert {:error, :boom} =
+             Template.provision_and_instantiate(FailingClass, "failing.agent", data, ws())
+
+    assert :none = Ezagent.AgentFlavorAttributes.get(uri)
   end
 end

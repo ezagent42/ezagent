@@ -93,7 +93,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # `instance_set_gate` denial-telemetry caller/target enrichment (audit
     # handler no longer detaches on a per-instance denial) under the LOC gate.
     {"apps/ezagent_core/lib/ezagent/kind/runtime.ex", 168},
-    {"apps/ezagent_core/lib/ezagent/behavior.ex", 454},
+    {"apps/ezagent_core/lib/ezagent/behavior.ex", 454}
     # PR-4 (agent-owned config-evolve) — shifted 271→272 when the #607
     # `system://agent-internal` Sandbox:read drop replaced the old #607 comment
     # block with a (one-line-longer) note above this ApiKeys-flip comment. Same

@@ -109,7 +109,6 @@ defmodule EzagentWeb.Router do
     # Must be inside `:require_entity` so anonymous traffic can't spam
     # session-clearing POSTs.
     post "/workspaces/switch", WorkspaceSwitchController, :switch
-
   end
 
   scope "/", EzagentPluginLiveview do

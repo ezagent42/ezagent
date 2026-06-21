@@ -84,11 +84,19 @@ defmodule EzagentCore.ArchitectureCase do
   defp manifest_line_has_cap_bump?(name) do
     name = Atom.to_string(name)
 
-    @manifest_path
-    |> File.read!()
-    |> String.split("\n")
-    |> Enum.any?(fn line ->
-      String.contains?(line, name <> ":") and String.contains?(line, "# arch-cap-bump:")
+    lines =
+      @manifest_path
+      |> File.read!()
+      |> String.split("\n")
+
+    lines
+    |> Enum.with_index()
+    |> Enum.any?(fn {line, index} ->
+      previous_line = if index == 0, do: "", else: Enum.at(lines, index - 1)
+
+      String.contains?(line, name <> ":") and
+        (String.contains?(line, "# arch-cap-bump:") or
+           String.contains?(previous_line, "# arch-cap-bump:"))
     end)
   end
 

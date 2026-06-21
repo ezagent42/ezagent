@@ -33,11 +33,15 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
     bundle_dir = Path.join([plugins_dir, ext_id])
     manifest_dir = Path.join(bundle_dir, ".claude-plugin")
     File.mkdir_p!(manifest_dir)
-    File.write!(Path.join(manifest_dir, "plugin.json"), Jason.encode!(%{
-      "name" => name,
-      "description" => description,
-      "version" => "1.0.0"
-    }))
+
+    File.write!(
+      Path.join(manifest_dir, "plugin.json"),
+      Jason.encode!(%{
+        "name" => name,
+        "description" => description,
+        "version" => "1.0.0"
+      })
+    )
 
     bundle_dir
   end
@@ -122,6 +126,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
   describe "toggle_extension/3 — path safety (defense in depth)" do
     test "rejects extension_id with path-traversal (../)" do
       config_dir = make_tmpdir("toggle-traversal")
+
       assert {:error, :unsafe_extension_path} =
                CcAgent.toggle_extension(config_dir, "../../etc", false)
     end
@@ -197,11 +202,31 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
       assert Bitwise.band(creds_stat.mode, 0o777) == 0o600
     end
 
+    test "writes compiled claude_md into the materialized config dir" do
+      reference = make_tmpdir("cc-compiled-ref")
+      File.write!(Path.join(reference, ".credentials.json"), "{}")
+
+      agent_uri = URI.new!("entity://team-alpha/agent/cc_compiled-#{uniq()}")
+      target = CcAgent.agent_config_dir(agent_uri)
+
+      tmpl = %{
+        "config_dir" => reference,
+        "allocated_config_dir" => target,
+        "claude_md" => "compiled persona\n"
+      }
+
+      assert {:ok, ^target} = CcAgent.create_agent_config_dir(agent_uri, tmpl)
+      on_exit(fn -> File.rm_rf(target) end)
+
+      assert File.read!(Path.join(target, "CLAUDE.md")) == "compiled persona\n"
+    end
+
     test "is IDEMPOTENT — re-call on existing dir is a no-op success" do
       reference = make_tmpdir("cc-idem-ref")
       File.write!(Path.join(reference, ".credentials.json"), "{}")
 
       agent_uri = URI.new!("entity://team-alpha/agent/cc_idem-test-#{uniq()}")
+
       tmpl = %{
         "config_dir" => reference,
         "allocated_config_dir" => CcAgent.agent_config_dir(agent_uri)
@@ -215,6 +240,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
 
       assert {:ok, dir2} = CcAgent.create_agent_config_dir(agent_uri, tmpl)
       assert dir1 == dir2
+
       assert File.exists?(Path.join(dir1, "user-added-marker")),
              "re-call must NOT re-copy from reference (would wipe live state)"
     end
@@ -302,7 +328,12 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
       # fresh reference stage so missing reference content (e.g. .claude/plugins) is
       # filled while user state wins (codex review P2).
       reference = make_tmpdir("cc-pr-b-ref")
-      File.write!(Path.join(reference, ".credentials.json"), ~s/{"claudeAiOauth":"REFERENCE-stale"}/)
+
+      File.write!(
+        Path.join(reference, ".credentials.json"),
+        ~s/{"claudeAiOauth":"REFERENCE-stale"}/
+      )
+
       File.write!(Path.join(reference, "settings.json"), ~s/{"from":"reference"}/)
       plugin_dir = Path.join([reference, ".claude", "plugins", "demo"])
       File.mkdir_p!(plugin_dir)
