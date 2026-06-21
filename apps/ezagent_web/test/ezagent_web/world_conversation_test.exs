@@ -228,6 +228,62 @@ defmodule EzagentWeb.WorldConversationTest do
     assert is_list(members)
   end
 
+  test "PR-3a: a COLD session's persisted members surface to a different viewer (self-join)",
+       %{conn: conn} do
+    # The gap PR-3a's `is_list(members)` assertion missed: `member_options/1`
+    # reads LIVE `get_slice`, which is EMPTY for a cold session even though
+    # membership is PERSISTED (`{:snapshot, :on_change}`). Self-join-on-view must
+    # spawn the session from its snapshot so a member joined by SOMEONE ELSE
+    # (before the session went cold) appears to the viewer. Without the self-join
+    # this test fails: the panel shows no members.
+    alice = "entity://system/user/world_cold_#{System.unique_integer([:positive])}"
+    alice_uri = Ezagent.URI.new!(alice)
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+
+    :ok =
+      create_read_only_user(alice_uri, [
+        session_cap(alice_uri, session_uri, :join),
+        session_cap(alice_uri, session_uri, :send)
+      ])
+
+    # alice joins → the session spawns live AND persists her to its snapshot.
+    :ok =
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        target: Ezagent.URI.with_action(session_uri, :session, :join),
+        mode: :call,
+        args: %{member: alice_uri},
+        ctx: %{
+          caller: alice_uri,
+          caps: MapSet.new([session_cap(alice_uri, session_uri, :join)]),
+          reply: :ignore
+        }
+      })
+      |> case do
+        :ok -> :ok
+        {:ok, _} -> :ok
+      end
+
+    # Make the session COLD: kill its Kind. `{:snapshot, :on_change}` already
+    # persisted alice on the join, so the snapshot survives the death — exactly
+    # the production shape (seed process joins, exits; server boots cold).
+    {:ok, pid} = Ezagent.KindRegistry.lookup(URI.to_string(session_uri))
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _}, 2_000
+
+    # A DIFFERENT caller (admin, who never joined) opens the conversation. The
+    # self-join lazily re-spawns the session from its snapshot, so the persisted
+    # member surfaces in the pushed member list.
+    {:ok, _view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+
+    # Read members straight from the now-live slice (the same source the panel
+    # renders) — robust against members:update push timing.
+    assert {:ok, %{members: members}} = Ezagent.Kind.get_slice(session_uri, :session)
+    member_uris = Enum.map(Map.keys(members), &URI.to_string/1)
+    assert alice in member_uris
+  end
+
   test "empty composer text is refused without dispatch", %{conn: conn} do
     session_uri = world_session_uri()
     encoded = session_uri |> URI.to_string() |> URI.encode_www_form()

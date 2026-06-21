@@ -88,6 +88,10 @@ defmodule EzagentPluginWorld.WorldLive do
     |> ensure_session_subscribed(uri)
     |> assign(:current_session_uri, uri)
     |> assign(:current_session_uri_str, encode_uri(uri))
+    # Self-join on view + push members (parity with LV `maybe_self_join`; see
+    # `ConversationActions.self_join/2` for the cold-session rationale).
+    |> ConversationActions.self_join(uri)
+    |> ConversationActions.push_members()
   end
 
   defp maybe_set_current_session(socket, _route), do: socket

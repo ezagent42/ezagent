@@ -9,6 +9,7 @@ section is the discoverable home for reusable operating procedures.)
 | guide | what |
 |-------|------|
 | [Dockerized E2E (disposable stack)](docs/guide/dockerized-e2e.md) | spin a clean isolated docker stack + run E2E (never hand-patch dev/prod) |
+| [World plugin E2E seed + dev server](docs/guide/world-e2e-seed.md) | seed a session with joined members on an isolated home, then visually verify the world conversation surface with agent-browser |
 
 > Add new operational how-tos under `docs/guide/<topic>.md` and index them here.
 
