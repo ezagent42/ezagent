@@ -175,6 +175,12 @@ function WorldApp({layout, state: initialState, caller, pushEvent, onServerEvent
                     args: {session_uri: sessionUri, msg_id: msgId},
                   })
                 },
+                onInvite: (sessionUri, member) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "session.invite",
+                    args: {session_uri: sessionUri, member},
+                  })
+                },
                 onPtyInput: (bytes) => {
                   pushEvent?.("pty_input", {bytes})
                 },
@@ -206,6 +212,7 @@ type RenderContext = {
   onSessionSwitch: (sessionUri: string) => void
   onLoadOlder: (sessionUri: string, before: string) => void
   onMarkDisplayed: (sessionUri: string, msgId: string) => void
+  onInvite: (sessionUri: string, member: string) => void
   onPtyInput: (bytes: string) => void
   onPtyResize: (size: {cols: number; rows: number}) => void
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
@@ -238,6 +245,7 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
         onSwitch={context.onSessionSwitch}
         onLoadOlder={context.onLoadOlder}
         onMarkDisplayed={context.onMarkDisplayed}
+        onInvite={context.onInvite}
         onServerEvent={context.onServerEvent}
       />
     )

@@ -427,6 +427,50 @@ defmodule EzagentWeb.WorldConversationTest do
     refute Enum.any?(attachments, &(&1 =~ "evil.pdf"))
   end
 
+  test "PR-3b: session.invite adds the invited entity to the session", %{conn: conn} do
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+
+    invitee = "entity://system/user/world_invitee_#{System.unique_integer([:positive])}"
+    invitee_uri = Ezagent.URI.new!(invitee)
+    # The invited member must be a registered/live Kind (:join requires it).
+    :ok = create_read_only_user(invitee_uri, [])
+
+    # admin opens the conversation → self-join provisions admin's owner-rooted
+    # :join authority (so the invite below authorizes via the live slice).
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+
+    html =
+      view
+      |> element("#world-root")
+      |> render_hook("world:dispatch", %{
+        "action" => "session.invite",
+        "args" => %{"session_uri" => URI.to_string(session_uri), "member" => invitee}
+      })
+
+    assert html =~ ~s(data-last-dispatch="ok")
+
+    assert {:ok, %{members: members}} = Ezagent.Kind.get_slice(session_uri, :session)
+    assert invitee in Enum.map(Map.keys(members), &URI.to_string/1)
+  end
+
+  test "PR-3b: session.invite with a malformed member URI yields an error status", %{conn: conn} do
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+
+    html =
+      view
+      |> element("#world-root")
+      |> render_hook("world:dispatch", %{
+        "action" => "session.invite",
+        "args" => %{"session_uri" => URI.to_string(session_uri), "member" => "not a uri"}
+      })
+
+    assert html =~ ~s(data-last-dispatch="error:bad_member_uri")
+  end
+
   test "empty composer text is refused without dispatch", %{conn: conn} do
     session_uri = world_session_uri()
     encoded = session_uri |> URI.to_string() |> URI.encode_www_form()

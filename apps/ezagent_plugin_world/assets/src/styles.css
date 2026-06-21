@@ -1024,6 +1024,49 @@
   color: #b91c1c;
 }
 
+/* PR-3b invite affordance */
+.world-section-header-compact {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.world-invite {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0 4px;
+  border-bottom: 1px solid var(--world-border);
+  margin-bottom: 10px;
+}
+
+.world-invite-label {
+  font-size: 11px;
+  color: var(--world-muted);
+}
+
+.world-invite-input {
+  width: 100%;
+  font-family: var(--world-mono);
+  font-size: 12px;
+  padding: 7px 9px;
+  border: 1px solid var(--world-border);
+  border-radius: 8px;
+  background: var(--world-panel);
+  color: var(--world-foreground);
+}
+
+.world-invite-input:focus-visible {
+  outline: 2px solid var(--world-accent);
+  outline-offset: 1px;
+}
+
+.world-invite-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .world-conversation-empty {
   margin: auto;
   text-align: center;

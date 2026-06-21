@@ -12,13 +12,70 @@ defmodule Ezagent.World.ConversationActions do
   """
 
   import Phoenix.Component, only: [assign: 3]
-  import Phoenix.LiveView, only: [push_event: 3, connected?: 1]
+  import Phoenix.LiveView, only: [push_event: 3, connected?: 1, push_patch: 2]
 
   require Logger
 
   alias Ezagent.Behavior.Session.Membership
   alias Ezagent.Invocation
   alias Ezagent.World.ConversationData
+
+  @doc """
+  Route a `world:dispatch` conversation action to its handler (the dispatcher
+  `WorldLive` delegates ALL conversation actions here, so the LiveView shell
+  stays a thin host as the conversation surface grows). Each clause parses the
+  `session_uri` arg then calls the matching action; an unknown action or a
+  malformed session URI yields an error status. Read-only actions
+  (`chat.load_older`/`chat.mark_displayed`) silently no-op on a bad URI.
+  """
+  @spec handle_dispatch(Phoenix.LiveView.Socket.t(), String.t(), map()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def handle_dispatch(socket, "chat.send", %{"session_uri" => sid, "text" => text} = args)
+      when is_binary(text) do
+    grants = Map.get(args, "grants", [])
+    with_session(socket, sid, &send_message(socket, &1, text, grants))
+  end
+
+  def handle_dispatch(socket, "chat.load_older", %{"session_uri" => sid, "before" => before})
+      when is_binary(before) do
+    with_session(socket, sid, &load_older(socket, &1, before), on_error: {:noreply, socket})
+  end
+
+  def handle_dispatch(socket, "chat.mark_displayed", %{"session_uri" => sid, "msg_id" => mid})
+      when is_binary(mid) and mid != "" do
+    with_session(socket, sid, &mark_displayed(socket, &1, mid), on_error: {:noreply, socket})
+  end
+
+  def handle_dispatch(socket, "session.switch", %{"session_uri" => sid}) do
+    with_session(socket, sid, fn uri ->
+      to = "/sessions?session=" <> URI.encode_www_form(URI.to_string(uri))
+      {:noreply, push_patch(socket, to: to)}
+    end)
+  end
+
+  def handle_dispatch(socket, "session.invite", %{"session_uri" => sid, "member" => member})
+      when is_binary(member) do
+    with_session(socket, sid, &invite_member(socket, &1, member))
+  end
+
+  def handle_dispatch(socket, _action, _args) do
+    {:noreply, assign(socket, :last_dispatch_status, "error:unsupported_action")}
+  end
+
+  # Parse the `session_uri` arg, then run `fun` with it. On a malformed URI use
+  # `opts[:on_error]` (default: a `bad_session_uri` status).
+  defp with_session(socket, sid, fun, opts \\ []) do
+    case Ezagent.URI.new!(sid) do
+      %URI{scheme: "session"} = uri -> fun.(uri)
+      _ -> on_session_error(socket, opts)
+    end
+  rescue
+    ArgumentError -> on_session_error(socket, opts)
+  end
+
+  defp on_session_error(socket, opts) do
+    Keyword.get(opts, :on_error, {:noreply, assign(socket, :last_dispatch_status, "error:bad_session_uri")})
+  end
 
   # Max attachments per message — server-enforced here (never trusts the client),
   # mirroring the LV `max_entries`. codex PR-2b #4.
@@ -95,6 +152,59 @@ defmodule Ezagent.World.ConversationActions do
       )
 
     {:noreply, socket}
+  end
+
+  @doc """
+  Invite an entity into the in-view session (LV→world parity PR-3b, mirroring
+  `Admin.Invite.dispatch_invite/4`). Dispatches `:session :join` with the
+  INVITED member; the inviter's own `:join` authority comes from their
+  self-join on mount (`self_join/2` provisions an owner-rooted `:join` cap that
+  the runtime reads from the live slice). On success, mounts the invited
+  member's participation tier (best-effort, no-op for agents) and pushes the
+  refreshed member list. A malformed URI or an unauthorized invite degrades to
+  an error status — the panel just doesn't gain the member.
+  """
+  @spec invite_member(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def invite_member(socket, %URI{} = session_uri, member_str) when is_binary(member_str) do
+    caller = socket.assigns.current_entity_uri
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+
+    case parse_member_uri(member_str) do
+      {:ok, %URI{} = member_uri} ->
+        # `:join` requires a LIVE member Kind (`:member_not_registered` else); a
+        # registered-but-cold invitee (e.g. a user who hasn't logged in this
+        # boot) is spawned from its snapshot first. Best-effort — a never-created
+        # URI stays unspawned and the join below fails closed to an error status.
+        _ = Ezagent.SpawnRegistry.spawn(member_uri)
+
+        result =
+          Invocation.dispatch(%Invocation{
+            target: Ezagent.URI.with_action(session_uri, :session, :join),
+            mode: :call,
+            args: %{member: member_uri},
+            ctx: %{caller: caller, caps: caps, reply: :ignore}
+          })
+
+        case result do
+          r when r == :ok or (is_tuple(r) and elem(r, 0) == :ok) ->
+            _ = Membership.mount_participation_caps(session_uri, member_uri)
+            {:noreply, push_members(assign(socket, :last_dispatch_status, "ok"))}
+
+          {:error, reason} ->
+            {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+        end
+
+      :error ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:bad_member_uri")}
+    end
+  end
+
+  defp parse_member_uri(str) do
+    case Ezagent.URI.parse(String.trim(str)) do
+      {:ok, %URI{} = uri} -> {:ok, uri}
+      _ -> :error
+    end
   end
 
   @doc """

@@ -189,58 +189,13 @@ defmodule EzagentPluginWorld.WorldLive do
     dispatch_agent_create(socket, agent_params)
   end
 
-  # PR-1 conversation core — composer send, history paging, read markers, and
-  # session switch. Thin clauses parse the session URI then delegate the body
-  # to `Ezagent.World.ConversationActions` (the `Admin.Compose` pattern), so
-  # the shell stays modular as later PRs grow the conversation surface.
-  def handle_event(
-        "world:dispatch",
-        %{"action" => "chat.send", "args" => %{"session_uri" => sid, "text" => text} = args},
-        socket
-      )
-      when is_binary(text) do
-    grants = Map.get(args, "grants", [])
-    with_session(socket, sid, &ConversationActions.send_message(socket, &1, text, grants))
-  end
-
-  def handle_event(
-        "world:dispatch",
-        %{
-          "action" => "chat.load_older",
-          "args" => %{"session_uri" => session_uri_str, "before" => before}
-        },
-        socket
-      )
-      when is_binary(before) do
-    with_session(socket, session_uri_str, &ConversationActions.load_older(socket, &1, before),
-      on_error: {:noreply, socket}
-    )
-  end
-
-  def handle_event(
-        "world:dispatch",
-        %{
-          "action" => "chat.mark_displayed",
-          "args" => %{"session_uri" => session_uri_str, "msg_id" => msg_id}
-        },
-        socket
-      )
-      when is_binary(msg_id) and msg_id != "" do
-    with_session(socket, session_uri_str, &ConversationActions.mark_displayed(socket, &1, msg_id),
-      on_error: {:noreply, socket}
-    )
-  end
-
-  # Session switch re-uses the `?session=` deep-link contract (codex H2) via
-  # push_patch, flowing through `handle_params` like a CmdK/landing nav.
-  def handle_event(
-        "world:dispatch",
-        %{"action" => "session.switch", "args" => %{"session_uri" => session_uri_str}},
-        socket
-      ) do
-    with_session(socket, session_uri_str, fn session_uri ->
-      {:noreply, push_patch(socket, to: "/sessions?session=#{encode_param(session_uri)}")}
-    end)
+  # Conversation actions (chat.send / chat.load_older / chat.mark_displayed /
+  # session.switch / session.invite) all route through one ConversationActions
+  # dispatcher, so the LiveView shell stays a thin host as the surface grows.
+  @conversation_actions ~w(chat.send chat.load_older chat.mark_displayed session.switch session.invite)
+  def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
+      when action in @conversation_actions and is_map(args) do
+    ConversationActions.handle_dispatch(socket, action, args)
   end
 
   def handle_event("pty_input", %{"bytes" => bytes}, socket) when is_binary(bytes) do
@@ -334,23 +289,6 @@ defmodule EzagentPluginWorld.WorldLive do
      |> assign(:current_session_uri_str, URI.to_string(session_uri))
      |> assign(:last_dispatch_status, "ok")
      |> push_patch(to: "/sessions?session=#{encode_param(session_uri)}")}
-  end
-
-  # Parse a session URI param then run `fun` with it; on a malformed URI
-  # default to a `bad_session_uri` status (override with `:on_error` for
-  # actions that should silently no-op, e.g. fire-and-forget markers).
-  defp with_session(socket, session_uri_str, fun, opts \\ []) do
-    case parse_session_uri(session_uri_str) do
-      {:ok, session_uri} ->
-        fun.(session_uri)
-
-      :error ->
-        Keyword.get(
-          opts,
-          :on_error,
-          {:noreply, assign(socket, :last_dispatch_status, "error:bad_session_uri")}
-        )
-    end
   end
 
   defp dispatch_layout_manage(socket, layout) when is_map(layout) do

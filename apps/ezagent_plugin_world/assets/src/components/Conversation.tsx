@@ -1,5 +1,5 @@
 import React from "react"
-import {ChevronUp, Paperclip, Send, X} from "lucide-react"
+import {ChevronUp, Paperclip, Send, UserPlus, X} from "lucide-react"
 
 import {Button} from "./ui/primitives"
 
@@ -60,6 +60,7 @@ type Props = {
   onSwitch: (sessionUri: string) => void
   onLoadOlder: (sessionUri: string, before: string) => void
   onMarkDisplayed: (sessionUri: string, msgId: string) => void
+  onInvite: (sessionUri: string, member: string) => void
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
 }
 
@@ -68,7 +69,7 @@ type Props = {
 // server-pushed `state.messages`. Within a mount, inbound `chat:message`
 // events append (sender sees their OWN cast'd message only via this bridge),
 // and `chat:older` prepends history.
-export function Conversation({state, onSend, onSwitch, onLoadOlder, onMarkDisplayed, onServerEvent}: Props) {
+export function Conversation({state, onSend, onSwitch, onLoadOlder, onMarkDisplayed, onInvite, onServerEvent}: Props) {
   const sessionUri = state.session_uri || ""
   const callerUri = state.caller_uri || ""
   const sessions = state.sessions || []
@@ -81,6 +82,8 @@ export function Conversation({state, onSend, onSwitch, onLoadOlder, onMarkDispla
   const [pending, setPending] = React.useState<Pending[]>([])
   const [uploadError, setUploadError] = React.useState<string | null>(null)
   const [uploading, setUploading] = React.useState(false)
+  const [inviteOpen, setInviteOpen] = React.useState(false)
+  const [inviteValue, setInviteValue] = React.useState("")
   const scrollRef = React.useRef<HTMLDivElement | null>(null)
   const inputRef = React.useRef<HTMLTextAreaElement | null>(null)
   const fileRef = React.useRef<HTMLInputElement | null>(null)
@@ -419,7 +422,57 @@ export function Conversation({state, onSend, onSwitch, onLoadOlder, onMarkDispla
             <p className="world-eyebrow">Members</p>
             <h2>{members.length}</h2>
           </div>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => setInviteOpen(true)}
+            aria-label="Invite a member"
+          >
+            <UserPlus aria-hidden="true" />
+            Invite
+          </Button>
         </div>
+        {inviteOpen && (
+          <form
+            className="world-invite"
+            onSubmit={(event) => {
+              event.preventDefault()
+              const member = inviteValue.trim()
+              if (!member || !sessionUri) return
+              onInvite(sessionUri, member)
+              setInviteValue("")
+              setInviteOpen(false)
+            }}
+          >
+            <label className="world-invite-label" htmlFor="world-invite-input">
+              Invite by entity URI
+            </label>
+            <input
+              id="world-invite-input"
+              className="world-invite-input"
+              value={inviteValue}
+              onChange={(event) => setInviteValue(event.target.value)}
+              placeholder="entity://workspace/user/name"
+              autoFocus
+            />
+            <div className="world-invite-actions">
+              <Button type="submit" size="sm" disabled={!inviteValue.trim()}>
+                Invite
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  setInviteOpen(false)
+                  setInviteValue("")
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
+        )}
         <ul className="world-members-list">
           {members.length === 0 ? (
             <li className="world-members-empty">No members yet.</li>

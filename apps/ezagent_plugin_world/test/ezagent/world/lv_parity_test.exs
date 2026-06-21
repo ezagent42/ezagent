@@ -85,9 +85,15 @@ defmodule Ezagent.World.LvParityTest do
   # attachment chips, and sends signed grants on `chat.send`:
   #   validate_compose — client-side pre-flight (size/count) before POST.
   #   cancel_upload    — ✕ on a pending chip drops it (client-only).
+  # PR-3b (session invite) landed: the members panel's Invite button opens an
+  # entity-URI form (open_invite_modal / close_invite_modal = client modal
+  # state) and submitting dispatches `:session :join` for the invited member
+  # (invite_member). `remove_member` stays pending — in LV it is WORKSPACE member
+  # removal (`workspace_detail_live`, `Ezagent.Workspace.remove_member`), a
+  # workspace-surface feature, not the session panel.
   @pending_migration ~w(
     create_session switch_view switch_to_pty_for_agent
-    invite_member open_invite_modal close_invite_modal remove_member
+    remove_member
     restart_orchestrator routing_rule_add_session routing_rule_toggle
     toggle_debug_panel toggle_expand cmdk_open cmdk_close cmdk_query cmdk_select
     set_default_source save_smtp send_test_email update_test_recipient
@@ -97,7 +103,7 @@ defmodule Ezagent.World.LvParityTest do
     slice_changed audit_event authz_event
   )
 
-  @pending_baseline 33
+  @pending_baseline 30
 
   test "LV inventory has not silently shrunk below the recorded baseline" do
     assert length(@lv_events) >= @lv_events_baseline,
