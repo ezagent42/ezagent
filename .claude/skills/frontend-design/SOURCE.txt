@@ -1,0 +1,1 @@
+source: https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md (vendored 2026-06-21 at Allen's request)
