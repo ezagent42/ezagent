@@ -17,8 +17,18 @@ codex addresses findings per PR (same loop as `world`/#867).
 
 ## PR sequence
 
-### PR-1 — message session-scoping (prerequisite; dissolves anon B3)
+### PR-1 — message session-scoping (prerequisite; dissolves anon B3) — ✅ DONE (Claude, commit `e90b59df`)
 Per the message-session-scoping design: stop writing/reading `message_routings`; session-scope via `messages.session_uri`; rewrite the read queries (`recent_in_session`/`in_session_since`/`chat_visible_recent`/`committed_customer_visible*`) to `WHERE session_uri == ?` (no join); `sessions_for_message/1` → `[session_uri]` (+ fix `uploads_controller.ex:152`); data migration that **asserts 0 cross-session-divergent routings before dropping** (fail-loud if the vestigial assumption is wrong). Forwarding stays copy+`ref_id` (unchanged). **Gate:** all message/chat tests green with identical results; reads faster; gate suite green.
+
+**STATUS — completed by Claude, NOT codex.** Committed `e90b59df` on `anon-user`. Done:
+- `message.ex`: `routed_at` promoted virtual→real column.
+- `message_store.ex`: `write/2` = single insert (no transaction/routing); 6 read queries rewritten to `where: m.session_uri == ^session_str` (no `join MessageRouting`); `chat_visible_recent` orders `[desc: m.routed_at, desc: m.id]`; `sessions_for_message/1` → `[URI.to_string(s)]`.
+- `message_routing.ex` DELETED; `read_marker.ex` (2 counts) + `uploads_controller.ex` (`caller_sent_in_any_session?` + alias) rewritten off the join.
+- migration `20260621000000_message_session_scoping.exs`: add `routed_at`, fail-loud assert on divergent routings, backfill, drop `message_routings` (with `down`).
+- NEW regression gate `no_message_multi_routing_test.exs` (forbids re-introducing `MessageRouting`/`message_routings` in `lib/`). Obsolete multi-routing tests reframed to session-scoped invariants. arch cap `oversized_modules_gt_1000: 2→3` (session_context.ex doc growth from #863, not logic).
+- **61 message/gate/invariant tests pass; arch.scan + check_invariants green.**
+
+**codex: START AT PR-2.** Do NOT redo PR-1. Rebase `anon-user` (has `e90b59df`) and build PR-2 on top.
 
 ### PR-2 — `Session.merge_member/2` + atomicity scaffold (B1/B2)
 Add `Behavior.Session` `merge_member(from, to)` (atomic slice: dedup membership + remove anon + rewrite `:last_message` + `member_joined`/`member_left`), socialware-symbol-free, via a direct `do_join`-composition helper (NOT dispatching `handle_join`). Add the durable merge-claim (`AnonBinding.merging_to`/`merge_state`) + idempotent steps + verify-before-delete (B2). **Gate:** unit tests for fresh + already-member dedup + idempotent re-run + crash-mid-merge repair.
@@ -48,7 +58,10 @@ caller == admin_uri() — probe p13 will fail it). Keep merge_member socialware-
 mount caps OUTSIDE the Session Kind (caller-side, avoids self-deadlock). Messages become
 session-scoped in PR-1 (cross-session = copy+ref, never shared-id routing).
 
-Execute PR-1 (message session-scoping) → PR-2 (merge_member + atomicity claim/repair) →
+PR-1 (message session-scoping) is ALREADY DONE by Claude — commit `e90b59df` on `anon-user`.
+Do NOT redo it; rebase onto `anon-user` and START AT PR-2.
+
+Execute PR-2 (merge_member + atomicity claim/repair) →
 PR-3 (MessageStore.relabel_identity + AnonCookie.verify_any) → PR-4 (AnonTakeover orchestrator
 + single post-auth hook across all 3 login paths). Each PR: implement → tests + check_invariants
 + arch.scan + doc.scan + cap-elimination gates + p13 green → agent-browser E2E → commit → merge
