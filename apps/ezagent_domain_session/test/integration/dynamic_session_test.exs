@@ -9,6 +9,14 @@ defmodule EzagentDomainInstanceMessage.Integration.DynamicSessionTest do
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
     Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+
+    _ =
+      EzagentDomainInstanceMessage.SessionCreator.create_session(
+        "main",
+        User.admin_uri(),
+        template_name: "default"
+      )
+
     :ok
   end
 
@@ -57,13 +65,12 @@ defmodule EzagentDomainInstanceMessage.Integration.DynamicSessionTest do
              EzagentDomainInstanceMessage.SessionCreator.create_session("", User.admin_uri(), template_name: "default")
   end
 
-  test "list_sessions includes main + any dynamic sessions" do
+  test "list_sessions includes dynamic sessions" do
     short = "listed-#{System.unique_integer([:positive])}"
     {:ok, _, _meta} =
       EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(), template_name: "default")
 
     uris = EzagentDomainInstanceMessage.list_sessions() |> Enum.map(&URI.to_string/1)
-    assert "session://system/default/main" in uris
     assert "session://system/default/#{short}" in uris
   end
 

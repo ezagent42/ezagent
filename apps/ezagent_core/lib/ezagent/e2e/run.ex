@@ -25,10 +25,30 @@ defmodule Ezagent.E2E.Run do
   @spec list() :: [String.t()]
   def list, do: Map.keys(@scenarios)
 
+  # Resolve a scenario ref to its module. Registered refs win; anything else is
+  # resolved BY CONVENTION at runtime — `ref` → `Ezagent.E2E.Scenarios.<Camelized>`.
+  #
+  # The convention path is what lets a scenario module live in a HIGHER tier than
+  # this core harness (e.g. `Ezagent.E2E.Scenarios.AgentContractG4` in
+  # `ezagent_domain_session`, which needs SessionCreator/Tools/migrate_session):
+  # `Module.concat/1` builds the atom at runtime, so there is NO compile-time
+  # `ezagent_core → ezagent_domain_*` edge (the umbrella acyclic gate stays green).
+  # The module just has to be LOADED in the running node, which it is.
+  @spec resolve(String.t()) :: {:ok, module()} | {:error, term()}
   defp resolve(ref) do
     case Map.fetch(@scenarios, ref) do
       {:ok, mod} -> {:ok, mod}
-      :error -> {:error, {:unknown_scenario, ref, Map.keys(@scenarios)}}
+      :error -> resolve_by_convention(ref)
+    end
+  end
+
+  defp resolve_by_convention(ref) do
+    mod = Module.concat([Ezagent.E2E.Scenarios, Macro.camelize(ref)])
+
+    if Code.ensure_loaded?(mod) and function_exported?(mod, :scenario, 0) do
+      {:ok, mod}
+    else
+      {:error, {:unknown_scenario, ref, Map.keys(@scenarios)}}
     end
   end
 end

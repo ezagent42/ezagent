@@ -2,7 +2,9 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateResolver do
   @moduledoc false
 
   alias Ezagent.Entity.Session
+  alias Ezagent.Entity.SessionTemplate
   alias Ezagent.KindRegistry
+  alias Ezagent.TemplateTags
 
   # PR-9 A2 (2026-06-14): `resolve_template_class/1` RELOCATED to
   # `Ezagent.Entity.AgentTemplate` (the agent domain) so agent-domain callers
@@ -83,7 +85,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateResolver do
       when is_binary(template_name) do
     workspace_name = workspace_name_of!(workspace_uri)
 
-    case find_session_template_uri(template_name, workspace_name) do
+    case find_session_template_uri(template_name, workspace_uri, workspace_name) do
       {:ok, %URI{} = session_template_uri} ->
         with {:ok, _pid} <- Session.ensure_template_alive(session_template_uri),
              {:ok, content} <- Session.read_template_content(session_template_uri) do
@@ -123,7 +125,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateResolver do
        ) do
     case EzagentDomainInstanceMessage.Application.ensure_default_session_template(workspace_uri) do
       :ok ->
-        case find_session_template_uri(template_name, workspace_name) do
+        case find_session_template_uri(template_name, workspace_uri, workspace_name) do
           {:ok, %URI{} = session_template_uri} ->
             with {:ok, _pid} <- Session.ensure_template_alive(session_template_uri),
                  {:ok, content} <- Session.read_template_content(session_template_uri) do
@@ -142,7 +144,17 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateResolver do
     end
   end
 
-  defp find_session_template_uri(template_name, workspace_name) do
+  defp find_session_template_uri(template_name, %URI{} = workspace_uri, workspace_name) do
+    case TemplateTags.resolve(workspace_uri, template_name, "current") do
+      {:ok, version_hash} ->
+        {:ok, SessionTemplate.build_uri(template_name, version_hash, workspace: workspace_name)}
+
+      :error ->
+        find_session_template_uri_by_scan(template_name, workspace_name)
+    end
+  end
+
+  defp find_session_template_uri_by_scan(template_name, workspace_name) do
     prefix =
       workspace_name
       |> Ezagent.URI.template(:session, "#{template_name}@")

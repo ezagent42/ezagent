@@ -179,6 +179,65 @@ defmodule Ezagent.Entity.AgentTemplate do
   def supervisor, do: EzagentDomainInstanceMessage.AgentTemplateSupervisor
 
   @doc """
+  Compute a content hash for an AgentTemplate version.
+
+  AgentTemplate's historical root URI remains versionless, but migrations need
+  edited member sources to mint a distinct immutable URI so
+  `update_member_template/3` can spawn-new before retiring the old worker.
+  """
+  @spec compute_version_hash(map()) :: String.t()
+  def compute_version_hash(content) when is_map(content) do
+    content
+    |> Map.drop([:created_at, :created_by, :version_hash, :version_tag, :name])
+    |> :erlang.term_to_binary([:deterministic])
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.encode16(case: :lower)
+  end
+
+  @doc "Build a hash-addressed AgentTemplate URI: `template://<ws>/agent/<name>@<hash>`."
+  @spec build_versioned_uri(String.t(), String.t(), keyword()) :: URI.t()
+  def build_versioned_uri(name, version_hash, opts \\ [])
+      when is_binary(name) and is_binary(version_hash) do
+    workspace =
+      Keyword.get(opts, :workspace) ||
+        raise ArgumentError,
+              "Ezagent.Entity.AgentTemplate.build_versioned_uri/3 requires opts[:workspace]"
+
+    Ezagent.URI.template(workspace, :agent, "#{name}@#{version_hash}")
+  end
+
+  @doc """
+  Persist a hash-addressed AgentTemplate version under the bootstrap principal.
+
+  This is the mainline semantic seam for spec-3's "per-edit version minting".
+  Authoring/front-end publish code may wrap it with stricter caller-threaded
+  auth, but migration consumes only the resulting immutable source URI.
+  """
+  @spec persist_version_as_system(map(), URI.t() | String.t()) :: {:ok, URI.t()} | {:error, term()}
+  def persist_version_as_system(content, workspace) when is_map(content) do
+    name = Map.get(content, :name) || Map.get(content, "name")
+    workspace_segment = workspace_segment(workspace)
+
+    cond do
+      not (is_binary(name) and name != "") ->
+        {:error, :missing_template_name}
+
+      is_nil(workspace_segment) ->
+        {:error, :invalid_workspace}
+
+      true ->
+        hash = compute_version_hash(content)
+        uri = build_versioned_uri(name, hash, workspace: workspace_segment)
+        versioned_content = Map.put(content, :version_hash, hash)
+
+        with {:ok, _pid} <- ensure_kind_alive(uri),
+             {:ok, _result} <- dispatch_write_as_system(uri, versioned_content) do
+          {:ok, uri}
+        end
+    end
+  end
+
+  @doc """
   Adapter — AgentTemplate `:template` slice content + a per-instance
   agent URI → the cc-flavored Template-Class data map (SPEC §1.5 (b)).
 
@@ -235,7 +294,8 @@ defmodule Ezagent.Entity.AgentTemplate do
     with {:ok, tc} <- resolve_template_class(content),
          {:ok, cwd} <- fetch_project_cwd(content),
          {:ok, config_dir} <- fetch_config_dir(content),
-         {:ok, cascade} <- fetch_cascade(content) do
+         {:ok, cascade} <- fetch_cascade(content),
+         {:ok, extra} <- template_extra(tc, content) do
       # config_dir promotion (PR-2, Allen 2026-06-03): config_dir is UNIVERSAL —
       # every flavor's config-home dir is emitted here under the neutral
       # `"config_dir"` data key. nil ⇒ dropped. The cc Template Class reads this
@@ -263,13 +323,6 @@ defmodule Ezagent.Entity.AgentTemplate do
         # path can grant the caps. Absent → omitted. Reads atom OR string keys.
         |> put_universal_desired(content, :desired_skills)
         |> put_universal_desired(content, :desired_caps)
-
-      extra =
-        if function_exported?(tc, :template_data_extra, 1) do
-          tc.template_data_extra(content)
-        else
-          %{}
-        end
 
       data = merge_template_extra(base, extra)
 
@@ -373,6 +426,43 @@ defmodule Ezagent.Entity.AgentTemplate do
 
   defp validate_for_flavor(tc, data) do
     if function_exported?(tc, :validate, 1), do: tc.validate(data), else: :ok
+  end
+
+  defp template_extra(tc, content) do
+    case manifest_compile_payload(content) do
+      {:ok, resolved, params} ->
+        if function_exported?(tc, :compile, 2) do
+          tc.compile(resolved, params)
+        else
+          {:error, {:compile_not_supported, tc}}
+        end
+
+      :none ->
+        if function_exported?(tc, :template_data_extra, 1) do
+          {:ok, tc.template_data_extra(content)}
+        else
+          {:ok, %{}}
+        end
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp manifest_compile_payload(content) do
+    resolved = content_get(content, :agent_manifest_resolved)
+    params = content_get(content, :agent_manifest_params)
+
+    cond do
+      is_nil(resolved) and is_nil(params) ->
+        :none
+
+      is_map(resolved) and (is_nil(params) or is_map(params)) ->
+        {:ok, resolved, params || %{}}
+
+      true ->
+        {:error, {:invalid_agent_manifest_compile_payload, resolved, params}}
+    end
   end
 
   # PR-2 (domain.agent): `project_cwd` is the universal "where the agent works /
@@ -518,6 +608,35 @@ defmodule Ezagent.Entity.AgentTemplate do
       {:error, _} = err -> err
     end
   end
+
+  defp dispatch_write_as_system(%URI{} = uri, content) do
+    target = Ezagent.URI.with_action(uri, :template, :write)
+
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      target: target,
+      mode: :call,
+      args: %{content: content},
+      ctx: %{
+        caller: Ezagent.URI.user(:system, :admin),
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        reply: {:caller_inbox, self()}
+      }
+    })
+  end
+
+  defp workspace_segment(%URI{scheme: "workspace"} = uri), do: Ezagent.URI.name!(uri)
+
+  # Accept either a full `workspace://<name>` URI string or an already-bare
+  # `<name>`. Parse-and-extract when it is a workspace URI; otherwise it is
+  # already the bare segment. (Avoids a raw `workspace://` literal — uri_query gate.)
+  defp workspace_segment(workspace) when is_binary(workspace) do
+    case Ezagent.URI.parse(workspace) do
+      {:ok, %URI{scheme: "workspace"} = uri} -> Ezagent.URI.name!(uri)
+      _ -> workspace
+    end
+  end
+
+  defp workspace_segment(_), do: nil
 
   defp normalize_caps_set(%MapSet{} = caps), do: caps
   defp normalize_caps_set(caps) when is_list(caps), do: MapSet.new(caps)

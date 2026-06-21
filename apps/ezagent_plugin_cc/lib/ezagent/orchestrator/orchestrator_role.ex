@@ -10,7 +10,7 @@ defmodule Ezagent.Orchestrator.OrchestratorRole do
   consults THIS recipe instead of hardcoding the `ezagent-session-orchestrator`
   skill / persona, so the same role recipe would compose identically against a
   future `codex` / `curl` flavor (the §6 invariant, proven by
-  `Ezagent.Role.MaterializeTest`).
+  `Ezagent.Role.ComposeTest`).
 
   ## Code-seeded built-in (Option B, Allen 2026-06-15)
 

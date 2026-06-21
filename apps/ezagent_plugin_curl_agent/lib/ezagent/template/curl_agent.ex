@@ -101,6 +101,10 @@ defmodule Ezagent.PluginCurlAgent.Template do
   defp content_field(content, key), do: Ezagent.Kind.Template.content_field(content, key)
 
   @impl Ezagent.Kind.Template
+  def compile(resolved, params),
+    do: Ezagent.Kind.Template.compile_curl_agent_data(resolved, params, &template_data_extra/1)
+
+  @impl Ezagent.Kind.Template
   def validate(tmpl) when is_map(tmpl) do
     with :ok <- check_class(tmpl),
          :ok <- check_agent_uri(tmpl),

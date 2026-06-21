@@ -415,6 +415,13 @@ defmodule Ezagent.Entity.Agent do
   defdelegate spawn_from_template_content(content, instance_uri, spawned_by, workspace_uri, opts),
     to: Ezagent.Entity.Agent.TemplateSpawn
 
+  @doc """
+  Spawn an agent from an authored `Ezagent.AgentManifest`, trying the
+  executor flavor list in order through the existing template spawn path.
+  """
+  defdelegate spawn_from_manifest(manifest, slots, instance_uri, spawned_by, workspace_uri, opts),
+    to: Ezagent.Entity.Agent.TemplateSpawn
+
   defdelegate sanitize_respawn_template_data(respawn_data, template_content),
     to: Ezagent.Entity.Agent.TemplateSpawn
 end

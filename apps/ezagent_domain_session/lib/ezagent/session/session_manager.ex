@@ -393,6 +393,19 @@ defmodule Ezagent.Session.SessionManager do
     end
   end
 
+  defp run_tool_op(:add_participant, args, opts) do
+    with {:ok, ref} <- arg_string(args, "ref"),
+         {:ok, role_name} <- arg_string(args, "role_name") do
+      participant_opts =
+        [
+          in_session_template: arg_optional_boolean(args, "in_session_template", true),
+          slots: arg_optional_map(args, "slots", %{})
+        ] ++ opts
+
+      Tools.add_participant(ref, role_name, participant_opts)
+    end
+  end
+
   defp run_tool_op(:update_member_template, args, opts) do
     with {:ok, role_name} <- arg_string(args, "role_name"),
          {:ok, new_tmpl_uri} <- arg_uri(args, "new_source_template_uri") do
@@ -445,6 +458,12 @@ defmodule Ezagent.Session.SessionManager do
     end
   end
 
+  defp run_tool_op(:migrate_session, args, opts) do
+    with {:ok, target_uri} <- arg_uri(args, "target_session_template_uri") do
+      Tools.migrate_session(target_uri, opts)
+    end
+  end
+
   defp run_tool_op(:list_templates, args, opts) do
     Tools.list_templates(arg_optional_string(args, "name_filter"), opts)
   end
@@ -494,6 +513,13 @@ defmodule Ezagent.Session.SessionManager do
   defp arg_optional_integer(args, key, default) do
     case Map.get(args, key) do
       i when is_integer(i) -> i
+      _ -> default
+    end
+  end
+
+  defp arg_optional_map(args, key, default) do
+    case Map.get(args, key) do
+      %{} = map -> map
       _ -> default
     end
   end

@@ -56,9 +56,22 @@ defmodule Ezagent.Kind.Template do
   @type template_data :: map()
   @type template_name :: String.t()
   @type instantiate_meta :: %{optional(:fresh?) => boolean()}
+  @type resolved_manifest :: map()
 
   @callback template_name() :: template_name()
   @callback validate(template_data()) :: :ok | {:error, term()}
+
+  @doc """
+  Compile a resolved `Ezagent.AgentManifest` plus executor params into
+  flavor-specific template data.
+
+  This is the pure, flavor-owned seam for authored agent definitions. Core
+  builds only the universal template base (`class` / `agent_uri` / `cwd` /
+  `config_dir`) and then validates the merged data through `validate/1`.
+  """
+  @callback compile(resolved_manifest(), params :: map()) ::
+              {:ok, template_data()} | {:error, term()}
+
   @callback instantiate(template_name(), template_data(), workspace_uri :: URI.t()) ::
               {:ok, [URI.t()]}
               | {:ok, [URI.t()], instantiate_meta()}
@@ -244,6 +257,7 @@ defmodule Ezagent.Kind.Template do
 
   @optional_callbacks [
     validate: 1,
+    compile: 2,
     template_data_extra: 1,
     config_dir_namespace: 0,
     list_extensions: 1,
@@ -295,7 +309,17 @@ defmodule Ezagent.Kind.Template do
       when is_atom(class_module) and is_map(tmpl_data) do
     with {:ok, data} <- maybe_allocate_config_dir(class_module, tmpl_data),
          :ok <- maybe_store_agent_flavor(class_module, data) do
-      class_module.instantiate(tmpl_name, data, workspace_uri)
+      case class_module.instantiate(tmpl_name, data, workspace_uri) do
+        {:ok, _workers} = ok ->
+          ok
+
+        {:ok, _workers, _meta} = ok ->
+          ok
+
+        {:error, _reason} = error ->
+          delete_agent_flavor(data)
+          error
+      end
     end
   end
 
@@ -329,6 +353,18 @@ defmodule Ezagent.Kind.Template do
         s
         |> Ezagent.URI.new!()
         |> Ezagent.AgentFlavorAttributes.maybe_put_from_template_class(class_module)
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp delete_agent_flavor(tmpl_data) do
+    case Map.get(tmpl_data, "agent_uri") do
+      s when is_binary(s) and s != "" ->
+        s
+        |> Ezagent.URI.new!()
+        |> Ezagent.AgentFlavorAttributes.delete()
 
       _ ->
         :ok
@@ -395,5 +431,123 @@ defmodule Ezagent.Kind.Template do
       nil -> Map.get(content, Atom.to_string(key))
       v -> v
     end
+  end
+
+  @doc false
+  @spec compile_curl_agent_data(map(), map(), (map() -> map())) ::
+          {:ok, template_data()} | {:error, term()}
+  def compile_curl_agent_data(resolved, params, template_data_extra)
+      when is_map(resolved) and is_map(params) and is_function(template_data_extra, 1) do
+    with :ok <- reject_required_tools(resolved, "curl") do
+      content =
+        params
+        |> Map.put("system_prompt", content_field(resolved, :instructions))
+
+      {:ok, compact_template_data(template_data_extra.(content))}
+    end
+  end
+
+  def compile_curl_agent_data(_resolved, _params, _template_data_extra),
+    do: {:error, :invalid_compile_args}
+
+  @doc false
+  @spec compile_cc_agent_data(map(), map(), (map() -> map())) ::
+          {:ok, template_data()} | {:error, term()}
+  def compile_cc_agent_data(resolved, params, template_data_extra)
+      when is_map(resolved) and is_map(params) and is_function(template_data_extra, 1) do
+    with {:ok, instructions} <- compile_manifest_instructions(resolved) do
+      claude_md = "#{content_field(params, :claude_md_preamble) || ""}#{instructions}"
+
+      data =
+        params
+        |> template_data_extra.()
+        |> Map.put("claude_md", claude_md)
+        |> put_manifest_tool_data(resolved)
+        |> compact_template_data()
+
+      {:ok, data}
+    end
+  end
+
+  def compile_cc_agent_data(_resolved, _params, _template_data_extra),
+    do: {:error, :invalid_compile_args}
+
+  @doc false
+  @spec compile_codex_agent_data(map(), map(), (map() -> map())) ::
+          {:ok, template_data()} | {:error, term()}
+  def compile_codex_agent_data(resolved, params, template_data_extra)
+      when is_map(resolved) and is_map(params) and is_function(template_data_extra, 1) do
+    with {:ok, instructions} <- compile_manifest_instructions(resolved) do
+      data =
+        params
+        |> template_data_extra.()
+        |> Map.put("instructions", instructions)
+        |> put_manifest_tool_data(resolved)
+        |> compact_template_data()
+
+      {:ok, data}
+    end
+  end
+
+  def compile_codex_agent_data(_resolved, _params, _template_data_extra),
+    do: {:error, :invalid_compile_args}
+
+  defp compile_manifest_instructions(resolved) do
+    case content_field(resolved, :instructions) do
+      instructions when is_binary(instructions) -> {:ok, instructions}
+      other -> {:error, {:invalid_instructions, other}}
+    end
+  end
+
+  defp put_manifest_tool_data(data, resolved) do
+    case required_tools(resolved) do
+      [] ->
+        data
+
+      tools ->
+        data
+        |> Map.put("manifest_tools", tools)
+        |> Map.put("manifest_mcp_servers", manifest_mcp_servers(tools))
+    end
+  end
+
+  defp reject_required_tools(resolved, flavor) do
+    case required_tools(resolved) do
+      [] -> :ok
+      tools -> {:error, {:tools_unsupported, flavor, Enum.map(tools, & &1.name)}}
+    end
+  end
+
+  defp required_tools(resolved) do
+    resolved
+    |> content_field(:tools)
+    |> case do
+      tools when is_list(tools) -> Enum.reject(tools, &Map.get(&1, :optional, false))
+      _ -> []
+    end
+  end
+
+  defp manifest_mcp_servers(tools) do
+    tools
+    |> Enum.map(fn tool ->
+      {tool.name,
+       %{
+         "transport" => "ezagent-dispatch",
+         "tool_name" => tool.name,
+         "tool_type" => Atom.to_string(tool.type),
+         "dispatch" => Map.get(tool, :action),
+         "participant_ref" => Map.get(tool, :ref),
+         "role_name" => Map.get(tool, :role_name),
+         "ctx_caps" => []
+       }
+       |> compact_template_data()}
+    end)
+    |> Map.new()
+  end
+
+  defp compact_template_data(data) do
+    data
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
   end
 end

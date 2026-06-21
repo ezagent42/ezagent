@@ -469,6 +469,36 @@ defmodule Ezagent.Behavior.Session.Membership do
 
   def provision_join_authority(_, _), do: {:error, :no_authority}
 
+  @doc """
+  Provision join authority for an explicit session invite.
+
+  Unlike `provision_join_authority/2`, this is not a self-join policy check.
+  Callers must already have proven invite authority at their own boundary
+  (the orchestrator tool preflights `{:within_session, session_uri}` before
+  calling this). The grant remains narrow: a concrete `Session.:join` cap for
+  this session only.
+  """
+  @spec provision_invited_join_authority(URI.t(), URI.t(), URI.t()) ::
+          :ok | {:error, :no_authority}
+  def provision_invited_join_authority(
+        %URI{} = session_uri,
+        %URI{} = joiner_uri,
+        %URI{} = _inviter_uri
+      ) do
+    if user_uri?(joiner_uri) do
+      session_uri
+      |> session_owner()
+      |> owner_or_admin()
+      |> then(fn granter -> grant_join_cap(session_uri, joiner_uri, granter) end)
+
+      :ok
+    else
+      :ok
+    end
+  end
+
+  def provision_invited_join_authority(_, _, _), do: {:error, :no_authority}
+
   defp do_provision_join_authority(%URI{} = session_uri, %URI{} = joiner_uri) do
     owner = session_owner(session_uri)
 
