@@ -236,10 +236,30 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
       desc: "macro-declared required_caps (defeats compile-time gate)",
       pattern: ~r/defmacro\s+required_caps\b|@__cap__/,
       allowlist: []
+    },
+    %{
+      id: :p13,
+      desc:
+        "authz via hardcoded admin-principal equality (e.g. `caller == admin_uri()`) — the " <>
+          "manage/admin decision must be a cap check at the dispatch chokepoint (hold the " <>
+          "`:manage`/admin cap), NOT a hand-written comparison to a fixed principal. A UI " <>
+          "affordance flag must mirror the cap, not reimplement a narrower hardcoded one. " <>
+          "Zero occurrences on main (2026-06-21) — regression-lock so caller==principal shortcuts fail.",
+      pattern: ~r/==.*admin_uri\(\)|admin_uri\(\)\s*==/,
+      allowlist: [
+        # The canonical admin-definition home — these MUST compare to admin_uri:
+        #   `Ezagent.Identity.admin?/1` is the single sanctioned "is this the admin?"
+        #   predicate; everything else needing an admin check calls IT (or, for
+        #   authz, a cap check), instead of re-hardcoding the comparison inline.
+        "apps/ezagent_domain_identity/lib/ezagent/identity.ex",
+        #   `Ezagent.Entity.User` owns `admin_uri/0` + the #154 genesis self-grant
+        #   (`initial_caps_for_spawn`), which legitimately tests `uri == admin_uri()`.
+        "apps/ezagent_domain_identity/lib/ezagent/entity/user.ex"
+      ]
     }
   ]
 
-  test "every probe finds zero unexpected occurrences (12 probes)" do
+  test "every probe finds zero unexpected occurrences (13 probes)" do
     umbrella_root = Path.expand("../../../..", __DIR__)
     all_files = Path.wildcard(Path.join(umbrella_root, "apps/*/lib/**/*.ex"))
 
