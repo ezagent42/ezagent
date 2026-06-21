@@ -306,6 +306,17 @@ defmodule EzagentPluginWorld.WorldLive do
     )
   end
 
+  defp state_for_route(%{group: :admin} = route, socket, layout) do
+    route
+    |> Ezagent.World.AdminData.state_for(%{
+      workspace_uri: socket.assigns.current_workspace_uri,
+      caller_uri: socket.assigns.current_entity_uri,
+      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+    })
+    |> Map.put("layout", layout)
+    |> Map.put("can_manage_layout", false)
+  end
+
   defp state_for_route(route, socket, layout) do
     route
     |> Ezagent.World.IdentityData.state_for(%{
@@ -390,6 +401,44 @@ defmodule EzagentPluginWorld.WorldLive do
       path == "/identities/agents/new" ->
         %{component: "agent_new_form", title: "New Agent", path: path}
 
+      path == "/admin" ->
+        %{group: :admin, component: "dashboard", title: "Admin Dashboard", path: path}
+
+      path == "/admin/logs" ->
+        %{group: :admin, component: "observability", title: "Observability", path: path}
+
+      path == "/admin/registry" ->
+        %{group: :admin, component: "entity_registry", title: "Entity Registry", path: path}
+
+      path == "/admin/snapshots" ->
+        %{group: :admin, component: "snapshots", title: "Snapshots", path: path}
+
+      path == "/admin/templates" ->
+        %{group: :admin, component: "templates", title: "Templates", path: path}
+
+      path == "/admin/caps" ->
+        %{group: :admin, component: "caps_admin", title: "Capabilities", path: path}
+
+      path == "/admin/audit/authz" ->
+        %{group: :admin, component: "authz_audit", title: "Authz Audit", path: path}
+
+      path == "/admin/settings" ->
+        %{group: :admin, component: "settings", title: "Settings", path: path}
+
+      path == "/admin/routing" ->
+        %{group: :admin, component: "routing", title: "Routing", path: path}
+
+      match = Regex.run(~r{\A/admin/sessions/([^/]+)/external_mirror\z}, path) ->
+        [_full, encoded] = match
+
+        %{
+          group: :admin,
+          component: "external_mirror",
+          title: "External Mirror",
+          path: path,
+          session_uri: parse_session_uri_param(encoded)
+        }
+
       match = Regex.run(~r{\A/identities/(users|agents)/([^/]+)/caps\z}, path) ->
         [_full, _kind, encoded] = match
 
@@ -447,6 +496,19 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp parse_entity_uri(_), do: nil
+
+  defp parse_session_uri_param(encoded) when is_binary(encoded) do
+    decoded = URI.decode_www_form(encoded)
+
+    case Ezagent.URI.new!(decoded) do
+      %URI{scheme: "session"} = uri -> uri
+      _ -> nil
+    end
+  rescue
+    ArgumentError -> nil
+  end
+
+  defp parse_session_uri_param(_), do: nil
 
   defp layout_manage_affordance?(%URI{} = workspace_uri, caps) do
     Enum.any?(caps, &layout_manage_cap?(&1, workspace_uri))

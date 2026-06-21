@@ -44,6 +44,16 @@ defmodule EzagentWeb.Router do
       live "/identities/agents/new", WorldLive
       live "/identities/agents/:uri/extensions", WorldLive
       live "/identities/agents/:uri", WorldLive
+      live "/admin", WorldLive
+      live "/admin/logs", WorldLive
+      live "/admin/registry", WorldLive
+      live "/admin/snapshots", WorldLive
+      live "/admin/templates", WorldLive
+      live "/admin/caps", WorldLive
+      live "/admin/audit/authz", WorldLive
+      live "/admin/settings", WorldLive
+      live "/admin/routing", WorldLive
+      live "/admin/sessions/:id/external_mirror", WorldLive
     end
   end
 
