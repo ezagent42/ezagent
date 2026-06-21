@@ -67,7 +67,7 @@ defmodule EzagentPluginLiveview.AgentApiKeysLive do
      )
      |> assign(
        :is_admin?,
-       URI.to_string(caller_uri) == URI.to_string(Ezagent.Entity.User.admin_uri())
+       Ezagent.Identity.admin?(caller_uri)
      )
      |> assign(:flash_error, nil)
      |> assign(:flash_info, nil)
