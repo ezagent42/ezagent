@@ -14,7 +14,7 @@ terminal · users · workspace_detail · workspaces
 ## 1 LiveComponent
 command_palette_component (events via `phx-target={@myself}` — invisible to parent inventory)
 
-## 70 handle_event (the action surface)
+## 63 handle_event (the action surface)
 add_member · add_rule · bind · cancel_edit_display_name · cancel_upload · chat_compose ·
 clear · close_dump · close_invite_modal · cmdk_close · cmdk_open · cmdk_query · cmdk_select ·
 create_agent · create_session · create_user · create_workspace · delete · delete_rule ·
