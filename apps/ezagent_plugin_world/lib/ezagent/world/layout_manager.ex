@@ -7,7 +7,18 @@ defmodule Ezagent.World.LayoutManager do
   persisted or pushed back to React.
   """
 
-  @registered_component_types MapSet.new(["layout_editor", "sessions_table"])
+  @registered_component_types MapSet.new([
+                                "agent_api_keys",
+                                "agent_detail",
+                                "agent_extensions",
+                                "agent_new_form",
+                                "agents_table",
+                                "entity_caps",
+                                "identities",
+                                "layout_editor",
+                                "sessions_table",
+                                "users_table"
+                              ])
   @layout_version 1
 
   @type layout :: map()

@@ -21,7 +21,15 @@ defmodule EzagentPluginWorld.WorldLive do
     }
 
     layout = layout_for(workspace)
-    state = sessions_state(sessions, current_session_uri, workspace, layout, caller)
+
+    state =
+      sessions_state(
+        sessions,
+        current_session_uri,
+        workspace,
+        layout,
+        Map.get(socket.assigns, :current_caps, MapSet.new())
+      )
 
     if connected?(socket), do: send(self(), :push_world_state)
 
@@ -37,6 +45,21 @@ defmodule EzagentPluginWorld.WorldLive do
      |> assign(:last_dispatch_status, "idle")
      |> assign(:world_module_url, world_module_url())
      |> assign(:world_css_url, world_css_url())}
+  end
+
+  @impl true
+  def handle_params(params, uri, socket) do
+    route = route_for(params, uri)
+    workspace = socket.assigns.current_workspace_uri
+    layout = layout_for_route(route, workspace)
+    state = state_for_route(route, socket, layout)
+
+    {:noreply,
+     socket
+     |> assign(:layout_json, Jason.encode!(layout))
+     |> assign(:world_state, state)
+     |> assign(:world_state_json, Jason.encode!(state))
+     |> assign(:world_component, route.component)}
   end
 
   @impl true
@@ -65,6 +88,14 @@ defmodule EzagentPluginWorld.WorldLive do
         socket
       ) do
     dispatch_layout_manage(socket, layout)
+  end
+
+  def handle_event(
+        "world:dispatch",
+        %{"action" => "agents.create", "args" => %{"agent" => agent_params}},
+        socket
+      ) do
+    dispatch_agent_create(socket, agent_params)
   end
 
   def handle_event("world:dispatch", _params, socket) do
@@ -186,6 +217,45 @@ defmodule EzagentPluginWorld.WorldLive do
      |> push_event("world:state", %{"layout" => saved_layout})}
   end
 
+  defp dispatch_agent_create(socket, params) when is_map(params) do
+    workspace_uri = socket.assigns.current_workspace_uri
+    caller = socket.assigns.current_entity_uri
+    caller_ctx = %{caller: caller, caps: Map.get(socket.assigns, :current_caps, MapSet.new())}
+
+    flavor = params |> Map.get("flavor", "") |> to_string() |> String.trim()
+    name = params |> Map.get("name", "") |> to_string() |> String.trim()
+    cwd = params |> Map.get("cwd", "") |> to_string() |> String.trim()
+    caps_str = params |> Map.get("caps", "") |> to_string() |> String.trim()
+    with_pty? = Map.get(params, "with_pty") in [true, "true", "on"]
+
+    with %URI{scheme: "workspace"} <- workspace_uri,
+         {:ok, caps} <- Ezagent.Capability.Parser.parse(caps_str, caller),
+         {:ok, %{agent_uri: agent_uri}} <-
+           Ezagent.Workspace.create_agent(
+             workspace_uri,
+             %{flavor: flavor, name: name, cwd: cwd, with_pty: with_pty?},
+             caller_ctx
+           ),
+         :ok <- Ezagent.Workspace.grant_initial_caps(agent_uri, caps, caller_ctx) do
+      encoded = agent_uri |> URI.to_string() |> URI.encode_www_form()
+
+      {:noreply,
+       socket
+       |> assign(:last_dispatch_status, "ok")
+       |> push_navigate(to: "/identities/agents/#{encoded}")}
+    else
+      {:error, reason} ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason_to_string(reason)}")}
+
+      _ ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:invalid_workspace_scope")}
+    end
+  end
+
+  defp dispatch_agent_create(socket, _params) do
+    {:noreply, assign(socket, :last_dispatch_status, "error:invalid_agent")}
+  end
+
   defp world_module_url do
     Application.get_env(:ezagent_plugin_world, :world_module_url, "/assets/world/main.js")
   end
@@ -200,7 +270,54 @@ defmodule EzagentPluginWorld.WorldLive do
   defp layout_for(_),
     do: Ezagent.World.LayoutManager.default_layout(Ezagent.URI.workspace(:system))
 
-  defp sessions_state(sessions, current_session_uri, workspace_uri, layout, caller) do
+  defp layout_for_route(%{component: "sessions_table"}, workspace_uri),
+    do: layout_for(workspace_uri)
+
+  defp layout_for_route(%{component: component, title: title}, workspace_uri) do
+    scope = encode_uri(workspace_uri) || URI.to_string(Ezagent.URI.workspace(:system))
+
+    %{
+      "version" => 1,
+      "scope" => scope,
+      "components" => [
+        %{
+          "id" => component,
+          "type" => component,
+          "placement" => %{"x" => 0, "y" => 0, "w" => 12, "h" => 8},
+          "props" => %{"title" => title}
+        }
+      ]
+    }
+  end
+
+  defp state_for_route(%{component: "sessions_table"}, socket, layout) do
+    sessions =
+      socket.assigns.current_workspace_uri
+      |> list_sessions()
+
+    current_session_uri = socket.assigns.current_session_uri || List.first(sessions)
+
+    sessions_state(
+      sessions,
+      current_session_uri,
+      socket.assigns.current_workspace_uri,
+      layout,
+      Map.get(socket.assigns, :current_caps, MapSet.new())
+    )
+  end
+
+  defp state_for_route(route, socket, layout) do
+    route
+    |> Ezagent.World.IdentityData.state_for(%{
+      workspace_uri: socket.assigns.current_workspace_uri,
+      caller_uri: socket.assigns.current_entity_uri,
+      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+    })
+    |> Map.put("layout", layout)
+    |> Map.put("can_manage_layout", false)
+  end
+
+  defp sessions_state(sessions, current_session_uri, workspace_uri, layout, caps) do
     workspace = encode_uri(workspace_uri)
     current_session = encode_uri(current_session_uri)
 
@@ -209,7 +326,7 @@ defmodule EzagentPluginWorld.WorldLive do
       "current_session_uri" => current_session,
       "workspace_uri" => workspace,
       "layout" => layout,
-      "can_manage_layout" => default_layout_manager?(workspace_uri, caller),
+      "can_manage_layout" => layout_manage_affordance?(workspace_uri, caps),
       "sessions" => Enum.map(sessions, &session_row/1)
     }
   end
@@ -244,12 +361,112 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp parse_session_uri(_), do: :error
 
-  defp default_layout_manager?(%URI{} = workspace_uri, %URI{} = caller) do
-    same_uri?(workspace_uri, Ezagent.URI.workspace(:system)) and
-      URI.to_string(caller) == URI.to_string(Ezagent.Entity.User.admin_uri())
+  defp route_for(params, uri) do
+    path = uri |> URI.parse() |> Map.get(:path, "/")
+
+    cond do
+      path in ["/", "/sessions"] ->
+        %{component: "sessions_table", title: "Sessions", path: path}
+
+      path == "/identities" ->
+        %{
+          component: "identities",
+          title: "Identities",
+          path: path,
+          filter: Map.get(params, "filter", "all")
+        }
+
+      path == "/identities/users" ->
+        %{component: "users_table", title: "Users", path: path}
+
+      path == "/identities/agents" ->
+        %{
+          component: "agents_table",
+          title: "Agents",
+          path: path,
+          filter: "agents"
+        }
+
+      path == "/identities/agents/new" ->
+        %{component: "agent_new_form", title: "New Agent", path: path}
+
+      match = Regex.run(~r{\A/identities/(users|agents)/([^/]+)/caps\z}, path) ->
+        [_full, _kind, encoded] = match
+
+        %{
+          component: "entity_caps",
+          title: "Entity Caps",
+          path: path,
+          entity_uri: parse_entity_uri(encoded)
+        }
+
+      match = Regex.run(~r{\A/identities/agents/([^/]+)/api-keys\z}, path) ->
+        [_full, encoded] = match
+
+        %{
+          component: "agent_api_keys",
+          title: "Agent API Keys",
+          path: path,
+          entity_uri: parse_entity_uri(encoded)
+        }
+
+      match = Regex.run(~r{\A/identities/agents/([^/]+)/extensions\z}, path) ->
+        [_full, encoded] = match
+
+        %{
+          component: "agent_extensions",
+          title: "Agent Extensions",
+          path: path,
+          entity_uri: parse_entity_uri(encoded)
+        }
+
+      match = Regex.run(~r{\A/identities/agents/([^/]+)\z}, path) ->
+        [_full, encoded] = match
+
+        %{
+          component: "agent_detail",
+          title: "Agent Detail",
+          path: path,
+          entity_uri: parse_entity_uri(encoded)
+        }
+
+      true ->
+        %{component: "sessions_table", title: "Sessions", path: path}
+    end
   end
 
-  defp default_layout_manager?(_, _), do: false
+  defp parse_entity_uri(encoded) when is_binary(encoded) do
+    decoded = URI.decode_www_form(encoded)
+
+    case Ezagent.URI.new!(decoded) do
+      %URI{scheme: "entity"} = uri -> uri
+      _ -> nil
+    end
+  rescue
+    ArgumentError -> nil
+  end
+
+  defp parse_entity_uri(_), do: nil
+
+  defp layout_manage_affordance?(%URI{} = workspace_uri, caps) do
+    Enum.any?(caps, &layout_manage_cap?(&1, workspace_uri))
+  end
+
+  defp layout_manage_affordance?(_, _), do: false
+
+  defp layout_manage_cap?(%Ezagent.Capability{} = cap, %URI{} = workspace_uri) do
+    cap.kind == :workspace and
+      cap.behavior == Ezagent.World.Behavior.Layout and
+      Ezagent.Capability.action_of(cap) in [:manage, :any] and
+      cap_scope_matches?(cap.instance, Ezagent.URI.instance(workspace_uri)) and
+      cap_scope_matches?(cap.workspace_uri, Ezagent.Capability.workspace_of(workspace_uri))
+  end
+
+  defp layout_manage_cap?(_, _), do: false
+
+  defp cap_scope_matches?(:any, _needed), do: true
+  defp cap_scope_matches?(%URI{} = actual, %URI{} = needed), do: same_uri?(actual, needed)
+  defp cap_scope_matches?(actual, needed), do: actual == needed
 
   defp same_uri?(%URI{} = left, %URI{} = right), do: URI.to_string(left) == URI.to_string(right)
 
