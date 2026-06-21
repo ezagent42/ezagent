@@ -227,6 +227,16 @@
   color: #101418;
 }
 
+.world-screen .world-main {
+  min-width: 0;
+}
+
+.world-layout-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .world-header {
   display: flex;
   align-items: flex-start;
@@ -270,6 +280,10 @@
   background: var(--world-panel);
 }
 
+.world-layout-editor {
+  min-height: 160px;
+}
+
 .world-section-header {
   display: flex;
   align-items: center;
@@ -284,6 +298,55 @@
 
 .world-table-wrap {
   overflow-x: auto;
+}
+
+.world-layout-list {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px 16px;
+}
+
+.world-layout-row {
+  display: flex;
+  min-height: 56px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px 12px;
+}
+
+.world-layout-type {
+  display: block;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.world-layout-id {
+  display: block;
+  margin-top: 3px;
+  color: var(--world-muted);
+  font-size: 12px;
+}
+
+.world-layout-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.world-layout-actions button,
+.world-layout-editor .world-section-header button {
+  gap: 6px;
+}
+
+.world-layout-actions svg,
+.world-layout-editor .world-section-header svg {
+  width: 14px;
+  height: 14px;
 }
 
 .world-table {
